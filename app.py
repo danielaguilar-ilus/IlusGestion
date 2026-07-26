@@ -5581,6 +5581,62 @@ def get_erp_stock_by_sku(sku):
         return None
 
 
+def get_erp_stock_by_skus(skus):
+    """Versión BATCH de get_erp_stock_by_sku (2026-07-25, Daniel — desglose de
+    saldo en el Cubicador/Asignar): 1 sola consulta a MAEPR para N SKUs en vez
+    de N consultas. Evita N round-trips a SQL Server por documento (regla de
+    performance <500ms). READ-ONLY, mismo camino blindado _random_sql_query.
+
+    Devuelve dict {SKU: {sku,nombre,fisico,devengado,comprometido,disponible,
+    hay_stock}} — solo incluye los SKUs que existen en MAEPR.
+    """
+    skus_u = sorted({(s or "").strip().upper() for s in (skus or []) if (s or "").strip()})
+    if not skus_u:
+        return {}
+    try:
+        placeholders = ",".join(["%s"] * len(skus_u))
+        rows = _random_sql_query(
+            f"""SELECT LTRIM(RTRIM(KOPR))   AS sku,
+                       LTRIM(RTRIM(NOKOPR)) AS nombre,
+                       STFI1                AS fisico,
+                       STDV1                AS devengado,
+                       STOCNV1              AS comprometido
+                  FROM {ERP_TABLE_PRODUCTS}
+                 WHERE UPPER(LTRIM(RTRIM(KOPR))) IN ({placeholders})""",
+            tuple(skus_u),
+            max_rows=len(skus_u) + 10,
+        ) or []
+
+        def _f(v):
+            try:
+                return float(v or 0)
+            except Exception:
+                return 0.0
+
+        out = {}
+        for r in rows:
+            sku = (r.get("sku") or "").strip().upper()
+            if not sku:
+                continue
+            fisico = _f(r.get("fisico"))
+            devengado = _f(r.get("devengado"))
+            comprometido = _f(r.get("comprometido"))
+            out[sku] = {
+                "sku": sku,
+                "nombre": (r.get("nombre") or "").strip(),
+                "fisico": round(fisico, 2),
+                "devengado": round(devengado, 2),
+                "comprometido": round(comprometido, 2),
+                "disponible": round(fisico - comprometido, 2),
+                "hay_stock": (fisico - comprometido) > 0,
+            }
+        return out
+    except Exception as _e:
+        print(f"[get_erp_stock_by_skus] {len(skus_u)} sku(s): "
+              f"{type(_e).__name__}: {str(_e)[:160]}", flush=True)
+        return {}
+
+
 @app.route("/api/erp/stock", methods=["GET"])
 @require_permission("retiros")
 def api_erp_stock():
@@ -17676,6 +17732,23 @@ def api_asignar_documento():
 
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
+    # ── Desglose de stock (físico/devengado/comprometido) por SKU (2026-07-25,
+    # Daniel: "poder ver el saldo... con respecto al comprometido y el
+    # devengado, cuánto es el stock físico"). El "saldo" de arriba es saldo
+    # DEL DOCUMENTO (CAPRCO1-CAPRAD1-CAPREX1-CAPRNC1, cuánto falta despachar
+    # de ESTA factura); esto es el STOCK GLOBAL del producto en bodega (MAEPR),
+    # un concepto distinto y complementario. 1 sola consulta batch para todas
+    # las líneas del documento (evita N round-trips al ERP). READ-ONLY.
+    try:
+        _skus_doc = [l.get("sku") for l in lineas_out if l.get("sku")]
+        _stock_map = get_erp_stock_by_skus(_skus_doc) if _skus_doc else {}
+        for _l in lineas_out:
+            _l["stock"] = _stock_map.get((_l.get("sku") or "").strip().upper())
+    except Exception as _e_stock:
+        print(f"[asignar_documento] desglose de stock falló: {_e_stock}", flush=True)
+        for _l in lineas_out:
+            _l.setdefault("stock", None)
+
     return jsonify({
         "ok":     True,
         "header": {**hdr, "postal_destino": postal_destino},
@@ -18482,6 +18555,28 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
             )
             evt_id = cur.lastrowid
         conn.commit()
+        # ── Propagar confirmación REAL de entrega al compromiso (FIX 2026-07-25) ──
+        # Antes NINGÚN evento de entrega real escribía transport_commitments.estado
+        # — la columna 'Entregado' del Monitor la llenaba SOLO el cálculo de saldo
+        # ERP (bug corregido más arriba en _tr_bulk_sync_erp_mysql: saldo==0 ahora
+        # escribe 'Despachado', no 'Entregado'). Sin esto, el kanban "Entregados"
+        # del Monitor quedaría vacío para siempre aunque el chofer/FedEx/SimpliRoute
+        # confirmen la entrega real. Acá SÍ hay indicio real (evento con fuente
+        # manual/chofer/fedex/aftership/sistema), así que se refleja en el
+        # compromiso. updated_by queda como 'sistema:<fuente>' (nunca 'sync'), por
+        # lo que el próximo sync de saldo del ERP NO lo va a pisar (ver el guard
+        # `AND updated_by='sync'` del CASE del UPSERT).
+        if estado == 'Entregado' and commitment_id:
+            try:
+                with conn.cursor() as cur2:
+                    cur2.execute(
+                        "UPDATE transport_commitments SET estado='Entregado', "
+                        "updated_by=%s WHERE id=%s",
+                        (f"sistema:{fuente}"[:190], commitment_id)
+                    )
+                conn.commit()
+            except Exception as _ce:
+                print(f"[tr_event] no se pudo propagar Entregado al commitment: {_ce}", flush=True)
         # Notificación al cliente (best-effort, no bloquea si falla).
         # 2026-06-14 (Daniel) — estados que notifican al cliente:
         #   En preparación        → al asignar la factura a un manifiesto
@@ -19142,7 +19237,19 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
     de 3 estados según su cobertura (cantidad despachada vs cantidad total):
         - 'Pendiente'           → saldo > 0 y SIN guía (NUDGIA NULL)
         - 'Despachado parcial'  → saldo > 0 y CON guía (NUDGIA con valor)
-        - 'Entregado'           → saldo == 0 (todo el ZZ ya despachado)
+        - 'Despachado'          → saldo == 0 (todo el ZZ ya facturado/cubierto en el ERP)
+
+    FIX 2026-07-25 (Daniel: "el 22703 figura como Entregado sin que nadie le
+    diera indicio al sistema"): este cálculo usaba el nombre 'Entregado' para
+    saldo==0, pero saldo==0 es un hecho FINANCIERO del ERP (el flete ZZ ya
+    quedó completamente facturado/cubierto), NO una confirmación FÍSICA de que
+    un courier o chofer entregó el paquete. Esa confirmación real vive en
+    `transport_manifest_items.estado_entrega` / `transport_tracking_events`,
+    alimentada por el chofer, el webhook de FedEx o el poll de SimpliRoute —
+    tablas DISTINTAS de `transport_commitments` (esta). Por eso ahora este
+    cálculo escribe 'Despachado' (ya existía en ESTADOS_COMPROMISO/ESTADO_COLORS)
+    y 'Entregado' queda reservado para cuando de verdad hay evidencia de
+    entrega física.
 
     Eso permite ver el flujo completo del día: lo que falta, lo que se
     está moviendo, y lo que ya salió. El frontend filtra por tab.
@@ -19400,9 +19507,13 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             # Reglas (de más urgente a menos):
             #   saldo > 0  y SIN guía  → 'Pendiente'  (todavía hay que despachar)
             #   saldo > 0  y CON guía  → 'Despachado parcial' (salió algo, falta resto)
-            #   saldo == 0             → 'Entregado'  (salió todo, doc cerrado)
+            #   saldo == 0             → 'Despachado'  (ZZ facturado/cubierto completo
+            #                             en el ERP — NO implica entrega física
+            #                             confirmada. Ver FIX 2026-07-25 arriba: antes
+            #                             esto escribía 'Entregado' por error, mezclando
+            #                             saldo financiero con confirmación de entrega.)
             if saldo_zz <= 0:
-                estado_auto = "Entregado"
+                estado_auto = "Despachado"
                 tiene_saldo_flag = 0
             elif guia:
                 estado_auto = "Despachado parcial"
@@ -19454,11 +19565,24 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
 
     # IMPORTANTE: el estado solo se sobreescribe automáticamente si actualmente
     # está en uno de los estados "auto-gestionados" (Pendiente, Despachado
-    # parcial, Entregado, Despachado, En proceso). Si el operador marcó otro
-    # estado manualmente (Problema, Garantía, Prioridad, etc.) se respeta — la
-    # sincronización no debe pisar decisiones del usuario. La cláusula CASE
-    # funciona idéntico bajo executemany porque MySQL evalúa por fila contra
-    # el valor existente en disco.
+    # parcial, Entregado, Despachado, En proceso) Y ADEMÁS el último que lo
+    # tocó fue el propio sync (updated_by='sync'). Si el operador marcó otro
+    # estado manualmente (Problema, Garantía, Prioridad, etc.) O tomó
+    # manualmente uno de los estados "auto-gestionados" (ej. confirmó
+    # 'Entregado' a mano tras ver la prueba de entrega) se respeta — la
+    # sincronización no debe pisar decisiones del usuario.
+    #
+    # FIX 2026-07-25: el guard `updated_by='sync'` es nuevo. Antes el CASE
+    # solo miraba el VALOR de estado, así que si un operador guardaba
+    # manualmente uno de los 5 estados de la lista (ej. 'Despachado'), el
+    # próximo sync lo pisaba igual con el auto-cálculo — el comentario de
+    # arriba prometía respetar decisiones manuales pero la implementación no
+    # lo hacía para esos 5 valores. También esto permite que el sync
+    # "autocorrija" documentos que quedaron mal etiquetados 'Entregado' por
+    # el bug de saldo (ver más arriba) en la próxima corrida, sin tocar nunca
+    # un estado puesto a mano por un humano.
+    # La cláusula CASE funciona idéntico bajo executemany porque MySQL evalúa
+    # por fila contra el valor existente en disco.
     #
     # PERF: el VALUES(...) debe contener SOLO %s placeholders (sin NOW() ni
     # literales) — esa es la única forma de que pymysql.executemany re-escriba
@@ -19499,6 +19623,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           clasificacion =VALUES(clasificacion),
           estado        =CASE
                            WHEN estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')
+                                AND updated_by='sync'
                              THEN VALUES(estado)
                            ELSE estado
                          END,
@@ -20002,6 +20127,309 @@ def tr_compromisos_json():
         },
         "vista": vista or "default",
     })
+
+
+@app.route("/transporte/api/lineas-pendientes")
+@_tr_required
+def tr_lineas_pendientes():
+    """Vista de PENDIENTES con granularidad de LÍNEA (Daniel 2026-07-25):
+    "quiero ver los compromisos NO despachados... con granularidad de línea,
+    no solo de documento". Lista cada línea de producto con saldo>0, sin
+    importar si el documento completo ya está o no en un manifiesto — así una
+    factura con 3 productos, 2 ya despachados y 1 pendiente, sigue apareciendo
+    acá SOLO por ese producto pendiente (nunca se "pierde" el saldo).
+
+    READ-ONLY: solo lee transport_commitment_lines + transport_commitments
+    (ya sincronizadas desde el ERP por _tr_bulk_sync_erp_mysql) — no toca el
+    ERP directo, cero riesgo para la Regla #4.1.
+
+    Filtros (querystring, todos opcionales):
+      sku       -> LIKE %sku% contra koprct/nokopr
+      preventa  -> 'auto' (preventa=1 automático del ERP) | 'manual_parcial' |
+                   'manual_total' | 'ninguna' (sin marcar de ninguna forma)
+      q         -> cliente / nº documento / comuna
+      comuna    -> exacto
+    """
+    sku      = (request.args.get("sku", "") or "").strip()
+    preventa_f = (request.args.get("preventa", "") or "").strip().lower()
+    q        = (request.args.get("q", "") or "").strip()
+    comuna_f = (request.args.get("comuna", "") or "").strip()
+
+    where = ["l.saldo > 0", "c.tido <> 'GDV'"]
+    params = []
+    if sku:
+        where.append("(l.koprct LIKE %s OR l.nokopr LIKE %s)")
+        params.extend([f"%{sku}%", f"%{sku}%"])
+    if q:
+        where.append("(c.cliente_nombre LIKE %s OR c.nudo LIKE %s OR c.comuna LIKE %s)")
+        qp = f"%{q}%"
+        params.extend([qp, qp, qp])
+    if comuna_f:
+        where.append("c.comuna = %s"); params.append(comuna_f)
+    if preventa_f == "auto":
+        where.append("c.preventa = 1")
+    elif preventa_f == "manual_parcial":
+        where.append("c.preventa_manual = 'parcial'")
+    elif preventa_f == "manual_total":
+        where.append("c.preventa_manual = 'total'")
+    elif preventa_f == "ninguna":
+        where.append("c.preventa = 0 AND (c.preventa_manual IS NULL OR c.preventa_manual = '')")
+
+    where_sql = " AND ".join(where)
+    rows = mysql_fetchall(
+        "SELECT l.id AS linea_id, l.commitment_id, l.koprct AS sku, l.nokopr AS nombre, "
+        "       l.cantidad, l.cant_despachada, l.saldo, "
+        "       c.tido, c.nudo, c.cliente_nombre, c.comuna, c.estado, "
+        "       COALESCE(c.preventa,0) AS preventa, "
+        "       COALESCE(c.preventa_manual,'') AS preventa_manual, "
+        "       c.fecha_emision, "
+        "       (c.id IN (SELECT commitment_id FROM transport_manifest_items)) AS en_manifiesto "
+        "  FROM transport_commitment_lines l "
+        "  JOIN transport_commitments c ON c.id = l.commitment_id "
+        " WHERE " + where_sql +
+        " ORDER BY c.fecha_emision ASC, c.nudo ASC LIMIT 2000",
+        tuple(params)
+    ) or []
+
+    # Desglose de stock físico/devengado/comprometido por SKU (batch, 1 sola
+    # consulta al ERP para TODOS los SKU visibles — reusa get_erp_stock_by_skus,
+    # ya construida por el módulo de Cubicador/Asignar para el mismo propósito).
+    skus_visibles = [r["sku"] for r in rows if r.get("sku")]
+    try:
+        stock_map = get_erp_stock_by_skus(skus_visibles) if skus_visibles else {}
+    except Exception as _e_stk:
+        print(f"[lineas_pendientes] stock desglose falló: {_e_stk}", flush=True)
+        stock_map = {}
+
+    out = []
+    for r in rows:
+        sku_u = (r.get("sku") or "").strip().upper()
+        out.append({
+            "linea_id":        r["linea_id"],
+            "commitment_id":   r["commitment_id"],
+            "sku":             r.get("sku") or "",
+            "nombre":          r.get("nombre") or "",
+            "cantidad":        float(r.get("cantidad") or 0),
+            "cant_despachada": float(r.get("cant_despachada") or 0),
+            "saldo":           float(r.get("saldo") or 0),
+            "tido":            r.get("tido") or "",
+            "nudo":            r.get("nudo") or "",
+            "cliente":         r.get("cliente_nombre") or "—",
+            "comuna":          r.get("comuna") or "",
+            "estado":          r.get("estado") or "",
+            "fecha_emision":   r["fecha_emision"].strftime("%d/%m/%Y") if r.get("fecha_emision") else "",
+            "preventa_auto":   int(r.get("preventa") or 0),
+            "preventa_manual": r.get("preventa_manual") or "",
+            "en_manifiesto":   bool(r.get("en_manifiesto")),
+            "stock":           stock_map.get(sku_u),
+        })
+
+    return jsonify({"ok": True, "lineas": out, "total": len(out)})
+
+
+@app.route("/transporte/api/compromisos/<int:cid>/preventa", methods=["PUT"])
+@_tr_required
+def tr_marcar_preventa_manual(cid):
+    """Marca manualmente una factura como 'preventa parcial' o 'preventa
+    total' (Daniel 2026-07-25: "si tengo una mancuerna pendiente de saldo,
+    quiero poder marcar esa factura como parcialmente preventa o preventa
+    total"). Distinto del flag automático `preventa` (calculado del stock del
+    ERP) — este es criterio del operador y SIEMPRE prevalece en la UI.
+    Enviar valor='' para desmarcar."""
+    data = request.get_json(silent=True) or {}
+    valor = (data.get("valor", "") or "").strip().lower()
+    if valor not in ("", "parcial", "total"):
+        return jsonify({"ok": False, "error": "valor inválido (usa '', 'parcial' o 'total')"}), 400
+    conn = get_db()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE transport_commitments SET preventa_manual=%s, updated_by=%s WHERE id=%s",
+            (valor, current_username(), cid)
+        )
+    conn.commit()
+    _tr_log("commitment", cid, "preventa_manual", valor or "(desmarcada)")
+    return jsonify({"ok": True, "preventa_manual": valor})
+
+
+@app.route("/transporte/api/lineas-pendientes/enviar-manifiesto", methods=["POST"])
+@_tr_required
+def tr_lineas_pendientes_enviar_manifiesto():
+    """Envío MASIVO de documentos pendientes-con-saldo a un manifiesto, en 1
+    sola acción (Daniel 2026-07-25: "poder enviarlos TODOS directo a un
+    manifiesto de una sola acción... ataca los quiebres de stock rápido").
+
+    GRANULARIDAD: hoy `transport_manifest_items` vincula manifiesto↔documento
+    completo (no existe todavía vínculo a nivel de LÍNEA individual). Por eso
+    esta acción agrega los DOCUMENTOS completos que tengan al menos una línea
+    seleccionada — sigue ahorrando el trabajo manual de buscarlos uno por uno,
+    pero una factura con líneas mixtas (unas con saldo, otras sin) entra
+    completa al manifiesto. Separar por línea dentro del manifiesto es un
+    cambio de esquema mayor, pendiente de una iteración futura (ver reporte).
+
+    GUARDA DE STOCK (Daniel 2026-07-25 — "esta app es el centro de control,
+    tiene que avisarme y detener movimientos si voy a procesar algo sin
+    stock"): antes de tocar nada se revalida en el SERVIDOR (nunca se confía
+    en lo que mande el navegador) el stock disponible de CADA línea
+    seleccionada, vía `get_erp_stock_by_skus` (mismo dato que ya expone
+    /transporte/api/lineas-pendientes). Si alguna línea seleccionada no tiene
+    stock disponible:
+      - Sin `autorizado:true`  → NO se toca la BD ni se crea nada. Responde
+        409 con `requiere_autorizacion:true` + el detalle de qué líneas
+        quedaron bloqueadas, para que el frontend las desmarque solas y avise.
+      - Con `autorizado:true` → requiere además que quien llama sea
+        admin/superadmin (mismo criterio que el candado de bultos FedEx y el
+        guard de manifiestos con actividad real); si no lo es, 403. Si lo es,
+        se registra en `transport_logs` quién autorizó y se envían igual.
+
+    Body: {"linea_ids": [10,11,12], "manifest_id": 5, "autorizado": false}
+       o: {"linea_ids": [...], "courier": "FedEx", "fecha": "2026-07-25", "notas": "..."}
+          (crea un manifiesto nuevo si no se manda manifest_id)
+    """
+    data = request.get_json(silent=True) or {}
+    linea_ids_raw = data.get("linea_ids") or []
+    try:
+        linea_ids = sorted({int(x) for x in linea_ids_raw if str(x).strip()})
+    except Exception:
+        return jsonify({"ok": False, "error": "linea_ids inválido"}), 400
+    if not linea_ids:
+        return jsonify({"ok": False, "error": "Selecciona al menos una línea"}), 400
+    autorizado = bool(data.get("autorizado"))
+
+    # ── Revalidación server-side del stock de cada línea seleccionada ──
+    ph = ",".join(["%s"] * len(linea_ids))
+    lineas_sel = mysql_fetchall(
+        "SELECT l.id AS linea_id, l.commitment_id, l.koprct AS sku, l.nokopr AS nombre, l.saldo, "
+        "       c.tido, c.nudo, c.cliente_nombre "
+        "  FROM transport_commitment_lines l "
+        "  JOIN transport_commitments c ON c.id = l.commitment_id "
+        " WHERE l.id IN (" + ph + ")",
+        tuple(linea_ids)
+    ) or []
+    if not lineas_sel:
+        return jsonify({"ok": False, "error": "No se encontraron las líneas seleccionadas"}), 404
+
+    skus_sel = [r["sku"] for r in lineas_sel if r.get("sku")]
+    try:
+        stock_map = get_erp_stock_by_skus(skus_sel) if skus_sel else {}
+    except Exception as _e_stk:
+        print(f"[lineas_pendientes_enviar] no se pudo validar stock: {_e_stk}", flush=True)
+        stock_map = {}
+
+    bloqueadas, permitidas_cids = [], set()
+    for r in lineas_sel:
+        sku_u = (r.get("sku") or "").strip().upper()
+        info_stock = stock_map.get(sku_u)
+        disponible = info_stock.get("disponible") if info_stock else None
+        sin_stock = (info_stock is None) or (disponible is not None and disponible <= 0)
+        if sin_stock:
+            bloqueadas.append({
+                "linea_id": r["linea_id"], "commitment_id": r["commitment_id"],
+                "sku": r.get("sku") or "", "nombre": r.get("nombre") or "",
+                "doc": f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
+                "cliente": r.get("cliente_nombre") or "—",
+                "disponible": disponible,
+            })
+        else:
+            permitidas_cids.add(r["commitment_id"])
+
+    if bloqueadas and not autorizado:
+        return jsonify({
+            "ok": False,
+            "requiere_autorizacion": True,
+            "error": (f"{len(bloqueadas)} de {len(lineas_sel)} producto(s) seleccionados NO tienen "
+                      "stock disponible confirmado. Se desmarcaron para evitar un quiebre — "
+                      "si de verdad quieres enviarlos igual, un admin/superadmin debe autorizarlo."),
+            "bloqueadas": bloqueadas,
+        }), 409
+
+    if bloqueadas and autorizado:
+        if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            return jsonify({
+                "ok": False,
+                "error": "Solo un administrador puede autorizar el envío de productos sin stock confirmado.",
+            }), 403
+        # Autorizado: TODAS las líneas seleccionadas (incluidas las sin stock) avanzan.
+        permitidas_cids = {r["commitment_id"] for r in lineas_sel}
+        for b in bloqueadas:
+            _tr_log("commitment", b["commitment_id"], "envío sin stock autorizado",
+                    f"{current_username()} autorizó enviar {b['sku']} ({b['nombre']}) "
+                    f"sin stock disponible confirmado")
+
+    cids = sorted(permitidas_cids)
+    if not cids:
+        return jsonify({"ok": False, "error": "Ningún documento quedó habilitado para enviar"}), 400
+
+    mid = data.get("manifest_id")
+    corr = None
+    conn = get_db()
+    try:
+        if not mid:
+            courier = (data.get("courier") or "").strip()
+            fecha   = (data.get("fecha") or "").strip()
+            notas   = (data.get("notas") or "").strip()
+            if not courier or not fecha:
+                return jsonify({"ok": False, "error": "Falta courier/fecha para crear el manifiesto"}), 400
+            from datetime import datetime as _dt
+            with conn.cursor() as cur:
+                for _intento in range(5):
+                    cur.execute(
+                        "SELECT COUNT(*)+1 AS n FROM transport_manifests "
+                        "WHERE YEAR(created_at)=YEAR(NOW())"
+                    )
+                    n = (cur.fetchone() or {}).get("n", 1)
+                    corr = f"MAN-{_dt.now().year}-{int(n):04d}"
+                    try:
+                        cur.execute(
+                            "INSERT INTO transport_manifests (correlativo,fecha,courier,notas,created_by) "
+                            "VALUES (%s,%s,%s,%s,%s)",
+                            (corr, fecha, courier, notas, current_username())
+                        )
+                        mid = cur.lastrowid
+                        break
+                    except Exception as e_corr:
+                        msg = str(e_corr)
+                        if ("1062" in msg or "Duplicate entry" in msg) and "correlativo" in msg:
+                            conn.rollback()
+                            continue
+                        raise
+            if not mid:
+                conn.rollback()
+                return jsonify({"ok": False, "error": "No se pudo generar un correlativo único, intenta de nuevo"}), 409
+            conn.commit()
+            _tr_log("manifest", mid, "creado", f"courier={courier} fecha={fecha} (envío masivo pendientes)")
+        else:
+            mid = int(mid)
+
+        _bloqueo, _aviso = _tr_manifiesto_guard_actividad(mid)
+        if _bloqueo:
+            return _bloqueo
+
+        agregados, ya_estaban = 0, 0
+        with conn.cursor() as cur:
+            for cid in cids:
+                cur.execute(
+                    "SELECT 1 AS x FROM transport_manifest_items WHERE manifest_id=%s AND commitment_id=%s",
+                    (mid, cid)
+                )
+                if cur.fetchone():
+                    ya_estaban += 1
+                    continue
+                cur.execute(
+                    "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
+                    "VALUES (%s,%s)", (mid, cid)
+                )
+                agregados += 1
+            _tr_recalc_totales_manifiesto(cur, mid)
+        conn.commit()
+        _tr_log("manifest", mid, "envío masivo de pendientes",
+                f"{agregados} documento(s) agregado(s), {ya_estaban} ya estaban")
+        resp = {"ok": True, "manifest_id": mid, "correlativo": corr,
+                "agregados": agregados, "ya_estaban": ya_estaban}
+        if _aviso:
+            resp["aviso"] = _aviso
+        return jsonify(resp)
+    finally:
+        conn.close()
 
 
 @app.route("/transporte/api/limpiar-monitor", methods=["POST"])
@@ -27161,7 +27589,17 @@ def chofer_ping():
 def tr_dashboard_hoy():
     """Dashboard del día — pantalla command center con stats agregadas:
     entregas hoy, choferes activos, alertas, últimas entregas con foto.
-    Para que Daniel/Alison entren al sistema y vean TODO de un vistazo."""
+    Para que Daniel/Alison entren al sistema y vean TODO de un vistazo.
+
+    FUSIONADO 2026-07-25 (Daniel: "ya tenemos un dashboard... eliminemos lo
+    de historial y KPI y agreguemos eso en el dashboard"): esta misma vista
+    ahora incluye ADEMÁS el historial de despachos + KPI operacional del
+    periodo (que antes vivía en /transporte/historial, ya eliminada). Los
+    cálculos siguen en logistica_kpi.py (import local, solo lectura) — acá
+    solo se arman los filtros desde la querystring y se pasan al template.
+    """
+    from logistica_kpi import _rango_fechas, _calcular_kpis, _listar_compromisos
+
     # Stats de HOY (zona horaria Santiago)
     stats = mysql_fetchone("""
         SELECT
@@ -27215,10 +27653,42 @@ def tr_dashboard_hoy():
           AND m.courier IS NOT NULL AND m.courier != ''
         GROUP BY m.courier ORDER BY entregas DESC LIMIT 5
     """) or []
+    # ── Historial de despachos + KPI operacional (ex /transporte/historial,
+    # fusionado acá 2026-07-25). Filtros por querystring, mismo criterio que
+    # tenía la página standalone.
+    periodo, desde, hasta = _rango_fechas()
+    hist_estado = (request.args.get("estado", "") or "").strip()
+    hist_courier = (request.args.get("courier", "") or "").strip()
+    hist_comuna = (request.args.get("comuna", "") or "").strip()
+    hist_q = (request.args.get("q", "") or "").strip()
+    try:
+        hist_page = int(request.args.get("page", "1"))
+    except (TypeError, ValueError):
+        hist_page = 1
+
+    kpis = _calcular_kpis(desde, hasta)
+    compromisos, hist_total, hist_page, hist_total_pages = _listar_compromisos(
+        desde, hasta, hist_estado, hist_courier, hist_comuna, hist_q, hist_page
+    )
+    hist_filtros = {
+        "periodo": periodo, "desde": desde, "hasta": hasta,
+        "estado": hist_estado, "courier": hist_courier,
+        "comuna": hist_comuna, "q": hist_q,
+    }
+
     return render_template("transporte/dashboard.html",
                            stats=stats, ultimas=ultimas,
                            top_couriers=top_couriers,
-                           gmaps_key=GOOGLE_MAPS_API_KEY)
+                           gmaps_key=GOOGLE_MAPS_API_KEY,
+                           kpis=kpis,
+                           compromisos=compromisos,
+                           hist_total=hist_total,
+                           hist_page=hist_page,
+                           hist_total_pages=hist_total_pages,
+                           hist_filtros=hist_filtros,
+                           estados=ESTADOS_COMPROMISO,
+                           couriers=COURIERS,
+                           estado_colors=ESTADO_COLORS)
 
 
 @app.route("/transporte/monitor")
@@ -34145,8 +34615,13 @@ def comm_killswitch_get():
         at = st.get("actualizado_at")
         at_iso = None
         try:
+            # FIX 2026-07-25 (Daniel: "dice que fue cerrado a las 20:48 y
+            # apenas son las 20:16 en Santiago") — MySQL guarda actualizado_at
+            # en UTC (NOW(), Regla #6 CLAUDE.md); esto lo mandaba crudo sin
+            # convertir a hora Chile, así que el front mostraba una hora que
+            # parece "en el futuro" respecto al reloj real de Santiago.
             if at is not None:
-                at_iso = at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(at, "strftime") else str(at)
+                at_iso = chile_fmt_filter(at, "%Y-%m-%d %H:%M:%S") if hasattr(at, "strftime") else str(at)
         except Exception:
             at_iso = None
         modulos.append({
@@ -71454,6 +71929,12 @@ def _ensure_transporte_columns():
         "peso_export":        "DECIMAL(10,3) DEFAULT 0",
         "n_bultos":           "INT DEFAULT 1",
         "preventa":           "TINYINT(1) DEFAULT 0",  # producto sin stock fisico suficiente (MAEPR.STFI1)
+        # Preventa MARCADA A MANO por el operador (2026-07-25, Daniel: "poder
+        # marcar esa factura como parcialmente preventa o preventa total").
+        # Distinta de `preventa` (automatica, calculada del stock del ERP):
+        # esta es la decision humana, prevalece en la UI. Valores: '' (sin
+        # marcar), 'parcial', 'total'.
+        "preventa_manual":    "VARCHAR(20) DEFAULT ''",
         "cobertura_pct":      "DECIMAL(5,1) DEFAULT 0",
         "cant_total_zz":      "DECIMAL(12,3) DEFAULT 0",
         "cant_despachada_zz": "DECIMAL(12,3) DEFAULT 0",
@@ -76140,20 +76621,6 @@ try:
     print("[logistica_tarifario] módulo registrado", flush=True)
 except Exception as _e_lt:
     print(f"[logistica_tarifario] NO se pudo registrar: {_e_lt}", flush=True)
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  HISTORIAL DE DESPACHOS + KPI DE TRANSPORTE (2026-07-25) — /transporte/historial
-#  Solo lectura sobre transport_commitments/transport_commitment_lines/
-#  transport_manifests/transport_manifest_items (sin ERP, sin escritura).
-#  Vive en logistica_kpi.py (módulo aparte, mismo criterio que cubicador_plus.py).
-# ══════════════════════════════════════════════════════════════════════
-try:
-    from logistica_kpi import register_logistica_kpi as _register_logistica_kpi
-    _register_logistica_kpi(app)
-    print("[logistica_kpi] módulo registrado", flush=True)
-except Exception as _e_lk:
-    print(f"[logistica_kpi] NO se pudo registrar: {_e_lk}", flush=True)
 
 
 if __name__ == "__main__":

@@ -445,6 +445,13 @@
 .pill-saldo.no{ background:#fee2e2; color:#991b1b; }
 .pill-saldo.nd{ background:#f3f4f6; color:#9ca3af; }
 .pill-saldo i{ font-size:.7rem; }
+/* Ícono info con el desglose de stock (físico/comprometido/devengado) del
+   producto en el ERP — tooltip Bootstrap, ver _stockTooltip() (2026-07-25) */
+.stock-info-ic{
+  color:#9ca3af; font-size:.82rem; cursor:help; margin-left:2px;
+  transition:color .15s;
+}
+.stock-info-ic:hover{ color:var(--ilus-red); }
 /* Botón papelera (eliminar producto de la vista/cotización) */
 .btn-cube-del{
   display:inline-flex; align-items:center; justify-content:center;
@@ -456,8 +463,8 @@
 }
 .btn-cube-del:hover{ background:#fee2e2; border-color:#fca5a5; }
 .btn-cube-del:active{ transform:scale(.92); }
-/* Botones medidas/etiquetas (mismo tamaño que la papelera, tono neutro) */
-.btn-cube-med, .btn-cube-eti{
+/* Botón medidas (mismo tamaño que la papelera, tono neutro) */
+.btn-cube-med{
   display:inline-flex; align-items:center; justify-content:center;
   min-width:34px; min-height:34px; padding:6px;
   border:1px solid #e5e7eb; border-radius:9px;
@@ -465,12 +472,12 @@
   cursor:pointer; transition:background .12s, transform .12s, border-color .12s;
   font-size:.95rem; line-height:1;
 }
-.btn-cube-med:hover, .btn-cube-eti:hover{ background:#f3f4f6; border-color:#d1d5db; }
-.btn-cube-med:active, .btn-cube-eti:active{ transform:scale(.92); }
+.btn-cube-med:hover{ background:#f3f4f6; border-color:#d1d5db; }
+.btn-cube-med:active{ transform:scale(.92); }
 @media (max-width:640px){
   /* touch target Apple HIG en mobile */
   .btn-cube-del{ min-width:44px; min-height:44px; font-size:1.05rem; }
-  .btn-cube-med, .btn-cube-eti{ min-width:44px; min-height:44px; font-size:1.05rem; }
+  .btn-cube-med{ min-width:44px; min-height:44px; font-size:1.05rem; }
 
   /* ── Tabla cubicaje → TARJETAS apiladas en móvil ──────────────
      12 columnas no caben en un celular sin scroll horizontal infinito.
@@ -2027,19 +2034,42 @@ function renderDoc(d, elapsedMs){
 
 // Badge de saldo por línea. saldo viene del backend (fórmula Random:
 // CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1, ya forzado a 0 si ESLIDO cierra).
+// Además, si el backend trae l.stock (desglose MAEPR: físico/devengado/
+// comprometido/disponible — stock GLOBAL del producto, distinto al saldo
+// DEL DOCUMENTO), se agrega un ícono de info con tooltip Bootstrap para no
+// llenar la tabla de números (Daniel 2026-07-25).
+function _fmtNum(v){
+  return (Math.round((Number(v)||0) * 100) / 100).toLocaleString('es-CL', {maximumFractionDigits: 2});
+}
+function _stockTooltip(st){
+  if(!st) return '';
+  // Datos 100% numéricos generados acá (nunca texto libre del ERP/usuario) —
+  // seguro pasarlos como HTML del tooltip (data-bs-html) para tener saltos
+  // de línea legibles.
+  const tip = `Stock físico (bodega): <b>${_fmtNum(st.fisico)}</b><br>`
+            + `Comprometido (vendido, pend. despacho): <b>${_fmtNum(st.comprometido)}</b><br>`
+            + `Devengado (en camino, no ha llegado): <b>${_fmtNum(st.devengado)}</b><br>`
+            + `Disponible real: <b>${_fmtNum(st.disponible)}</b>`;
+  // tip es 100% generado acá (números + etiquetas fijas, cero texto libre
+  // del ERP/usuario) — no se escapa para permitir el <br>, pero SÍ va sin
+  // comillas dobles propias (no las contiene).
+  return ` <i class="bi bi-info-circle stock-info-ic" data-bs-toggle="tooltip" data-bs-html="true" `
+       + `data-bs-placement="top" title="${tip}"></i>`;
+}
 function _saldoBadge(l){
   const s = l.saldo;
+  const stockTip = _stockTooltip(l.stock);
   if(s === undefined || s === null){
-    return '<span class="pill-saldo nd"><i class="bi bi-dash-circle"></i>s/d</span>';
+    return '<span class="pill-saldo nd"><i class="bi bi-dash-circle"></i>s/d</span>' + stockTip;
   }
   const v = Number(s);
   // Daniel (2026-07-25): quiere ver el NÚMERO real del saldo del ERP, no
   // solo el sí/no. Se muestra formateado (sin decimales si es entero).
-  const vTxt = (Math.round(v * 100) / 100).toLocaleString('es-CL', {maximumFractionDigits: 2});
+  const vTxt = _fmtNum(v);
   if(v > 0){
-    return '<span class="pill-saldo si"><i class="bi bi-check-circle-fill"></i>con saldo: ' + vTxt + '</span>';
+    return '<span class="pill-saldo si"><i class="bi bi-check-circle-fill"></i>con saldo: ' + vTxt + '</span>' + stockTip;
   }
-  return '<span class="pill-saldo no"><i class="bi bi-x-circle-fill"></i>sin saldo</span>';
+  return '<span class="pill-saldo no"><i class="bi bi-x-circle-fill"></i>sin saldo</span>' + stockTip;
 }
 
 function renderCubaje(){
@@ -2101,13 +2131,6 @@ function renderCubaje(){
                   data-nombre="${_nombreAttr}" data-bultos="${_bultosAttr}">
             <i class="bi bi-rulers"></i>
           </button>
-          {% if permissions.print %}
-          <button type="button" class="btn-cube-eti" title="Imprimir etiquetas"
-                  data-action="cub-etiquetas" data-sku="${_skuAttr}" data-app-id="${_appIdAttr}"
-                  data-nombre="${_nombreAttr}" data-bultos="${_bultosAttr}">
-            <i class="bi bi-tags"></i>
-          </button>
-          {% endif %}
           <button type="button" class="btn-cube-del" title="Quitar este producto de la cotización"
                   onclick="eliminarLineaCubaje(${idx})">
             <i class="bi bi-trash"></i>
@@ -2130,6 +2153,14 @@ function renderCubaje(){
   const _chkTodos = document.getElementById('chkTodosCubaje');
   if(_chkTodos) _chkTodos.checked = false;
   actualizarBotonEliminarSeleccionados();
+
+  // Tooltips del desglose de stock (bootstrap.Tooltip) — se recrean en cada
+  // render porque tbody.innerHTML reemplaza los nodos anteriores.
+  if(window.bootstrap && window.bootstrap.Tooltip){
+    tbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+      new bootstrap.Tooltip(el);
+    });
+  }
 
   // ── Persistir totales recalculados (los lee actualizarTarifas / resumen)
   // Si el operador ya cargó medidas MANUALES (documento sin ficha técnica,
@@ -4217,12 +4248,14 @@ function setBuscarLoading(on){
 })();
 </script>
 
-{# Medidas/etiquetas por fila (Daniel 2026-07-25: "necesito poder acceder a
-   las etiquetas y rellenarlo [el SKU sin ficha], y que se actualice, y que
-   se recalcule"). Mismo script que ya usan cubicador/index.html y
-   cubicador/ficha.html — esta página nunca lo había cargado, por eso los
-   botones data-action="cub-medidas"/"cub-etiquetas" de la tabla de arriba
-   no hacían nada. Debe declararse ANTES de cargar cubicador_tabs.js. #}
+{# Medidas por fila (Daniel 2026-07-25: "necesito poder acceder a las
+   etiquetas [medidas] y rellenarlo [el SKU sin ficha], y que se actualice,
+   y que se recalcule" -- ACLARADO después: se refería a reusar las medidas
+   del módulo de productos, NO a un botón de imprimir etiquetas -- ese botón
+   se agregó por error y se quitó). Mismo script que ya usan
+   cubicador/index.html y cubicador/ficha.html — esta página nunca lo había
+   cargado, por eso el botón data-action="cub-medidas" de la tabla de arriba
+   no hacía nada. Debe declararse ANTES de cargar cubicador_tabs.js. #}
 <script>
 window.CUBICADOR_TABS_CFG = {
   printSetupTpl: "{{ url_for('print_setup', pid=0) }}"

@@ -1,32 +1,29 @@
 """
-Modulo LOGISTICA KPI — Historial de despachos + Dashboard KPI de Transporte.
+Modulo LOGISTICA KPI — funciones de calculo para el Historial de despachos +
+KPI operacional de Transporte.
 
-Vive en un archivo APARTE (no en app.py) por dos razones:
-  1) app.py tiene ~75.000 lineas y hay otra sesion editandolo en paralelo
-     ahora mismo (modulo de Cotizaciones de logistica, tr_agregar_item /
-     tr_quitar_item / _tr_recalc_totales_manifiesto y el final del archivo).
-  2) Todo lo que hay aca es AGREGADO: no toca ni redefine nada de Transporte
-     existente (Regla #4.2). Solo LEE de transport_commitments /
-     transport_commitment_lines / transport_manifests / transport_manifest_items
-     (todas ya blindadas y en produccion) — cero escritura, cero migracion
-     de schema nueva.
+FUSIONADO al Dashboard 2026-07-25 (pedido de Daniel: "ya tenemos un
+dashboard... eliminemos lo de historial y KPI y agreguemos eso en el
+dashboard"). Ya NO expone una ruta Flask propia (/transporte/historial fue
+eliminada, junto con su template standalone y su link de sidebar) — este
+archivo quedo reducido a las 3 funciones puras de calculo, que ahora se
+importan directamente desde `tr_dashboard_hoy()` en app.py (import local
+dentro de la funcion, mismo criterio de import diferido que el resto del
+archivo). El resultado se pinta DENTRO de `templates/transporte/dashboard.html`
+con el mismo estilo visual del resto del dashboard.
 
-Se registra desde app.py con 3 lineas al FINAL del archivo (las agrega OTRO
-agente, mismo patron que cubicador_plus.py):
+Vive en un archivo APARTE (no en app.py) por la misma razon original:
+app.py es enorme (~75.000 lineas) y esto es logica de calculo aislada, facil
+de mantener sin tocar el resto de Transporte (Regla #4.2 — no se redefine
+nada existente). Solo LEE de transport_commitments / transport_commitment_lines
+/ transport_manifests / transport_manifest_items (todas ya blindadas y en
+produccion) — cero escritura, cero migracion de schema nueva.
 
-    try:
-        from logistica_kpi import register_logistica_kpi
-        register_logistica_kpi(app)
-        print("[ILUS] Modulo Logistica KPI registrado.")
-    except Exception as _logkpi_reg_err:
-        print(f"[ILUS][WARN] register_logistica_kpi: {_logkpi_reg_err}")
-
-RUTA QUE EXPONE (gate: login + g.permissions['transporte'], igual que el
-resto de /transporte/*)
-
-    GET  /transporte/historial   -> Historial de despachos + dashboard KPI
-                                     (server-rendered, filtros por GET query
-                                     string: desde/hasta/estado/courier/comuna/q)
+FUNCIONES REUSABLES (llamadas desde app.py:tr_dashboard_hoy):
+    _rango_fechas()                      -> (periodo, desde, hasta) desde request.args
+    _calcular_kpis(desde, hasta)          -> dict con los 4 KPI (ver abajo)
+    _listar_compromisos(desde, hasta, estado, courier, comuna, q, page)
+                                           -> (rows, total, page, total_pages)
 
 POR QUE ESTOS 4 KPI Y NO OTIF "REAL"
 -------------------------------------------------------------------------
@@ -70,11 +67,9 @@ template, nunca crudo en UTC).
 """
 
 import sys
-import traceback
 from datetime import date, timedelta
-from functools import wraps
 
-from flask import request, jsonify, g, flash, redirect, url_for, render_template
+from flask import request
 
 # ──────────────────────────────────────────────────────────────────────
 #  Acceso a los helpers de app.py — IMPORT DIFERIDO (mismo patron que
@@ -96,34 +91,6 @@ def _h(nombre, default=None):
     if mod is None:
         return default
     return getattr(mod, nombre, default)
-
-
-# ──────────────────────────────────────────────────────────────────────
-#  Gates de permiso — mismo criterio que _tr_required (app.py:19583):
-#  requiere login + g.permissions['transporte']. Esta pagina es solo
-#  lectura, asi que un unico gate de PAGINA alcanza (no hay endpoints JSON).
-# ──────────────────────────────────────────────────────────────────────
-
-def _hist_page(fn):
-    @wraps(fn)
-    def wrapped(*args, **kwargs):
-        permisos = getattr(g, "permissions", None) or {}
-        if not permisos.get("transporte"):
-            flash("Sin acceso al modulo Transporte.", "danger")
-            return redirect(url_for("index"))
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            print(f"[logistica_kpi][ERROR] {fn.__name__}: {e}", flush=True)
-            try:
-                print(traceback.format_exc(), flush=True)
-            except Exception:
-                pass
-            flash("No se pudo cargar el historial. Intenta nuevamente.", "danger")
-            return redirect(url_for("transporte_index"))
-
-    login_required = _h("login_required")
-    return login_required(wrapped) if callable(login_required) else wrapped
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -331,70 +298,3 @@ def _listar_compromisos(desde, hasta, estado, courier, comuna, q, page):
         r["nudo_display"] = nudo.lstrip("0") or nudo
 
     return rows, total, page, total_pages
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  REGISTRO DE RUTAS
-# ══════════════════════════════════════════════════════════════════════
-
-def register_logistica_kpi(app, ctx=None):
-    global _APP_MODULE_NAME
-    try:
-        nombre_mod = getattr(app, "import_name", None)
-        if nombre_mod and nombre_mod in sys.modules:
-            _APP_MODULE_NAME = nombre_mod
-    except Exception:
-        pass
-
-    @app.route("/transporte/historial", methods=["GET"])
-    @_hist_page
-    def tr_historial_kpi():
-        """Historial de despachos + dashboard KPI (server-rendered).
-
-        Filtros por querystring (todos opcionales, se conservan al paginar):
-          periodo=mes|3m|año|todo   -> atajos de fecha (igual que el Monitor)
-          desde=YYYY-MM-DD / hasta=YYYY-MM-DD -> rango custom
-          estado=<uno de ESTADOS_COMPROMISO>
-          courier=<uno de COURIERS>
-          comuna=<texto>
-          q=<texto o Nº doc>       -> buscador global (ignora los demas filtros
-                                       de fecha/estado, mismo criterio que
-                                       transporte_index para no "esconder" un
-                                       documento puntual fuera del rango)
-          page=<int>
-        """
-        periodo, desde, hasta = _rango_fechas()
-        estado = (request.args.get("estado", "") or "").strip()
-        courier = (request.args.get("courier", "") or "").strip()
-        comuna = (request.args.get("comuna", "") or "").strip()
-        q = (request.args.get("q", "") or "").strip()
-        try:
-            page = int(request.args.get("page", "1"))
-        except (TypeError, ValueError):
-            page = 1
-
-        kpis = _calcular_kpis(desde, hasta)
-        compromisos, total, page, total_pages = _listar_compromisos(
-            desde, hasta, estado, courier, comuna, q, page
-        )
-
-        filtros = {
-            "periodo": periodo, "desde": desde, "hasta": hasta,
-            "estado": estado, "courier": courier, "comuna": comuna, "q": q,
-        }
-
-        return render_template(
-            "transporte/historial.html",
-            kpis=kpis,
-            compromisos=compromisos,
-            total=total,
-            page=page,
-            total_pages=total_pages,
-            page_size=_PAGE_SIZE,
-            filtros=filtros,
-            estados=_h("ESTADOS_COMPROMISO") or [],
-            couriers=_h("COURIERS") or [],
-            estado_colors=_h("ESTADO_COLORS") or {},
-        )
-
-    return app

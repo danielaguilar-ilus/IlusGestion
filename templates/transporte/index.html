@@ -70,6 +70,12 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
       <i class="bi bi-plus-lg"></i>
       <span>Agregar uno</span>
     </button>
+    <button class="tr-btn tr-btn-ghost" data-bs-toggle="modal" data-bs-target="#lineasPendModal"
+            onclick="lpAbrir()"
+            title="Pendientes con granularidad de línea: qué producto exacto falta despachar por factura">
+      <i class="bi bi-list-check"></i>
+      <span>Pendientes por línea</span>
+    </button>
     <a href="{{ url_for('tr_manifiestos') }}" class="tr-btn tr-btn-dark"
        title="Ver manifiestos creados">
       <i class="bi bi-clipboard-check"></i>
@@ -1853,6 +1859,89 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
         <button type="button" class="btn btn-sm btn-ilus fw-bold" onclick="addDoc()" id="addDocBtn">
           <i class="bi bi-download me-1"></i>Importar desde ERP
         </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════
+   MODAL PENDIENTES POR LÍNEA (Daniel 2026-07-25)
+   Namespace propio "lp*" para no chocar con nada del resto del archivo.
+══════════════════════════════════════════ #}
+<div class="modal fade" id="lineasPendModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;overflow:hidden">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title">
+          <i class="bi bi-list-check me-2"></i>Pendientes por línea
+          <span class="badge bg-secondary ms-2" id="lpTotalBadge">—</span>
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="background:#f8fafc">
+        <div class="row g-2 mb-3">
+          <div class="col-6 col-md-3">
+            <input type="text" id="lpFiltroSku" class="form-control form-control-sm"
+                   placeholder="Filtrar por SKU/producto" style="font-size:16px" oninput="lpFiltrarDebounced()">
+          </div>
+          <div class="col-6 col-md-3">
+            <input type="text" id="lpFiltroQ" class="form-control form-control-sm"
+                   placeholder="Cliente / documento / comuna" style="font-size:16px" oninput="lpFiltrarDebounced()">
+          </div>
+          <div class="col-6 col-md-3">
+            <select id="lpFiltroPreventa" class="form-select form-select-sm" onchange="lpCargar()">
+              <option value="">Preventa: todas</option>
+              <option value="auto">Preventa automática (sin stock)</option>
+              <option value="manual_parcial">Marcada: parcial</option>
+              <option value="manual_total">Marcada: total</option>
+              <option value="ninguna">Sin marcar</option>
+            </select>
+          </div>
+          <div class="col-6 col-md-3 d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary flex-fill" onclick="lpCargar()">
+              <i class="bi bi-arrow-clockwise"></i> Actualizar
+            </button>
+          </div>
+        </div>
+
+        <div id="lpMsg" class="small text-muted mb-2">Cargando…</div>
+
+        <div class="table-responsive" style="max-height:50vh">
+          <table class="table table-sm table-hover align-middle" style="font-size:.82rem">
+            <thead style="position:sticky;top:0;background:#fff;z-index:2">
+              <tr>
+                <th style="width:30px">
+                  <input type="checkbox" id="lpCheckAll" onchange="lpToggleAll(this.checked)">
+                </th>
+                <th>Documento</th>
+                <th>Cliente</th>
+                <th>Comuna</th>
+                <th>SKU</th>
+                <th>Producto</th>
+                <th class="text-end">Saldo</th>
+                <th>Preventa</th>
+                <th>Stock ERP</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="lpTbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-between align-items-center">
+        <div class="small text-muted" id="lpSeleccion">0 líneas seleccionadas</div>
+        <div class="d-flex gap-2">
+          <select id="lpManifiestoExistente" class="form-select form-select-sm" style="width:200px">
+            <option value="">— Crear manifiesto nuevo —</option>
+          </select>
+          <input type="text" id="lpCourierNuevo" class="form-control form-control-sm"
+                 placeholder="Courier (si es nuevo)" style="width:150px;font-size:16px">
+          <input type="date" id="lpFechaNueva" class="form-control form-control-sm"
+                 style="width:150px;font-size:16px">
+          <button class="btn btn-sm btn-ilus fw-bold" onclick="lpEnviarAManifiesto()" id="lpEnviarBtn">
+            <i class="bi bi-send me-1"></i>Enviar seleccionados
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -4705,6 +4794,250 @@ function addDoc() {
       msg.innerHTML='<span class="text-danger">Error de conexión</span>';
       btn.disabled=false; btn.innerHTML='<i class="bi bi-download me-1"></i>Importar desde ERP';
     });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  PENDIENTES POR LÍNEA (Daniel 2026-07-25) — namespace "lp*" propio,
+//  no comparte variables con el resto del archivo. Usa
+//  /transporte/api/lineas-pendientes (lectura) y
+//  /transporte/api/lineas-pendientes/enviar-manifiesto (acción masiva).
+// ════════════════════════════════════════════════════════════════
+var _lpLineas = [];
+// FIX 2026-07-25: el backend (/transporte/api/lineas-pendientes/enviar-manifiesto)
+// valida y agrupa por linea_id (transport_commitment_lines.id), NO por
+// commitment_id -- necesita el id de LÍNEA para poder chequear el stock de
+// ESE producto puntual (una factura puede tener una línea con stock y otra
+// sin). Seleccionar por commitment_id habría mandado siempre "linea_ids"
+// vacío y el envío habría fallado con 400 "Selecciona al menos una línea".
+var _lpSeleccionLineaIds = new Set();
+var _lpFiltroTimer = null;
+
+function lpAbrir() {
+  lpCargarManifiestosAbiertos();
+  lpCargar();
+}
+
+function lpFiltrarDebounced() {
+  clearTimeout(_lpFiltroTimer);
+  _lpFiltroTimer = setTimeout(lpCargar, 350);
+}
+
+function lpCargarManifiestosAbiertos() {
+  fetch('/transporte/manifiestos?estado=' + encodeURIComponent('En preparación') + '&page_size=50')
+    .then(function(r){ return r.text(); })
+    .catch(function(){ });
+  // El listado de manifiestos abiertos vive en una página server-rendered
+  // (no JSON); para no duplicar esa ruta, el selector ofrece "crear nuevo"
+  // como opción principal — elegir uno existente es un refinamiento futuro
+  // si Daniel lo pide (requeriría un endpoint JSON de manifiestos abiertos).
+}
+
+function lpCargar() {
+  var sku = document.getElementById('lpFiltroSku').value.trim();
+  var q   = document.getElementById('lpFiltroQ').value.trim();
+  var pv  = document.getElementById('lpFiltroPreventa').value;
+  var url = '/transporte/api/lineas-pendientes?sku=' + encodeURIComponent(sku) +
+            '&q=' + encodeURIComponent(q) + '&preventa=' + encodeURIComponent(pv);
+  document.getElementById('lpMsg').textContent = 'Cargando…';
+  fetch(url).then(function(r){ return r.json(); }).then(function(d) {
+    if (!d.ok) {
+      document.getElementById('lpMsg').innerHTML = '<span class="text-danger">' + (d.error || 'Error al cargar') + '</span>';
+      return;
+    }
+    _lpLineas = d.lineas || [];
+    document.getElementById('lpTotalBadge').textContent = _lpLineas.length + ' línea(s)';
+    document.getElementById('lpMsg').textContent = _lpLineas.length
+      ? 'Mostrando ' + _lpLineas.length + ' línea(s) con saldo pendiente.'
+      : 'No hay líneas con saldo pendiente para este filtro.';
+    lpRenderTabla();
+  }).catch(function() {
+    document.getElementById('lpMsg').innerHTML = '<span class="text-danger">Error de conexión</span>';
+  });
+}
+
+function _lpEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function lpRenderTabla() {
+  var tbody = document.getElementById('lpTbody');
+  if (!_lpLineas.length) { tbody.innerHTML = ''; return; }
+  var html = '';
+  for (var i = 0; i < _lpLineas.length; i++) {
+    var l = _lpLineas[i];
+    var checked = _lpSeleccionLineaIds.has(l.linea_id) ? 'checked' : '';
+    var preventaBadge = '';
+    if (l.preventa_manual === 'total') {
+      preventaBadge = '<span class="badge bg-danger">Preventa total</span>';
+    } else if (l.preventa_manual === 'parcial') {
+      preventaBadge = '<span class="badge" style="background:#f59e0b">Preventa parcial</span>';
+    } else if (l.preventa_auto) {
+      preventaBadge = '<span class="badge bg-secondary">Sin stock (auto)</span>';
+    } else {
+      preventaBadge = '<span class="text-muted small">—</span>';
+    }
+    var stockHtml = '<span class="text-muted small">s/d</span>';
+    if (l.stock) {
+      var disp = l.stock.disponible;
+      var color = disp > 0 ? '#16a34a' : '#dc2626';
+      stockHtml = '<span style="color:' + color + '" title="Físico ' + l.stock.fisico +
+        ' · Comprometido ' + l.stock.comprometido + ' · Devengado ' + l.stock.devengado + '">' +
+        disp + ' disp.</span>';
+    }
+    html += '<tr' + (l.en_manifiesto ? ' style="opacity:.55" title="Ya está en un manifiesto (parcial)"' : '') + '>' +
+      '<td><input type="checkbox" data-linea-id="' + l.linea_id + '" ' + checked +
+        ' onchange="lpToggleLinea(' + l.linea_id + ', this.checked)"></td>' +
+      '<td class="font-monospace">' + _lpEsc(l.tido) + ' ' + _lpEsc(l.nudo) + '</td>' +
+      '<td>' + _lpEsc(l.cliente) + '</td>' +
+      '<td>' + _lpEsc(l.comuna) + '</td>' +
+      '<td class="font-monospace small">' + _lpEsc(l.sku) + '</td>' +
+      '<td class="small">' + _lpEsc(l.nombre) + '</td>' +
+      '<td class="text-end fw-bold">' + l.saldo + '</td>' +
+      '<td>' + preventaBadge +
+        '<div class="btn-group btn-group-sm mt-1">' +
+        '<button class="btn btn-outline-secondary btn-sm py-0 px-1" style="font-size:.68rem" ' +
+          'onclick="lpMarcarPreventa(' + l.commitment_id + ',\'parcial\')">Parcial</button>' +
+        '<button class="btn btn-outline-secondary btn-sm py-0 px-1" style="font-size:.68rem" ' +
+          'onclick="lpMarcarPreventa(' + l.commitment_id + ',\'total\')">Total</button>' +
+        '<button class="btn btn-outline-secondary btn-sm py-0 px-1" style="font-size:.68rem" ' +
+          'onclick="lpMarcarPreventa(' + l.commitment_id + ',\'\')" title="Desmarcar">✕</button>' +
+        '</div></td>' +
+      '<td>' + stockHtml + '</td>' +
+      '<td></td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+  lpActualizarSeleccion();
+}
+
+function lpToggleLinea(lineaId, on) {
+  if (on) _lpSeleccionLineaIds.add(lineaId); else _lpSeleccionLineaIds.delete(lineaId);
+  lpActualizarSeleccion();
+}
+
+function lpToggleAll(on) {
+  document.querySelectorAll('#lpTbody input[type=checkbox]').forEach(function(cb) {
+    cb.checked = on;
+    var lineaId = parseInt(cb.getAttribute('data-linea-id'), 10);
+    if (on) _lpSeleccionLineaIds.add(lineaId); else _lpSeleccionLineaIds.delete(lineaId);
+  });
+  lpActualizarSeleccion();
+}
+
+function lpActualizarSeleccion() {
+  var n = _lpSeleccionLineaIds.size;
+  document.getElementById('lpSeleccion').textContent =
+    n + ' línea(s) seleccionada(s) para enviar' +
+    (n ? ' (el documento completo entra al manifiesto — hoy el manifiesto no separa por línea individual)' : '');
+}
+
+function lpMarcarPreventa(cid, valor) {
+  fetch('/transporte/api/compromisos/' + cid + '/preventa', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({valor: valor})
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (d.ok) {
+      if (typeof ilusToast === 'function') {
+        ilusToast(valor ? ('Marcado como preventa ' + valor) : 'Desmarcado', {type:'success'});
+      }
+      lpCargar();
+    } else if (typeof ilusToast === 'function') {
+      ilusToast(d.error || 'No se pudo actualizar', {type:'error'});
+    }
+  }).catch(function() {
+    if (typeof ilusToast === 'function') ilusToast('Error de conexión', {type:'error'});
+  });
+}
+
+function lpEnviarAManifiesto() {
+  var lineaIds = Array.from(_lpSeleccionLineaIds);
+  if (!lineaIds.length) {
+    if (typeof ilusToast === 'function') ilusToast('Selecciona al menos una línea', {type:'warning'});
+    return;
+  }
+  var manifId = document.getElementById('lpManifiestoExistente').value;
+  var body = {linea_ids: lineaIds};
+  if (manifId) {
+    body.manifest_id = parseInt(manifId, 10);
+  } else {
+    var courier = document.getElementById('lpCourierNuevo').value.trim();
+    var fecha   = document.getElementById('lpFechaNueva').value;
+    if (!courier || !fecha) {
+      if (typeof ilusToast === 'function') {
+        ilusToast('Para crear un manifiesto nuevo indica courier y fecha (o elige uno existente)', {type:'warning'});
+      }
+      return;
+    }
+    body.courier = courier; body.fecha = fecha;
+  }
+  var btn = document.getElementById('lpEnviarBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando…';
+  _lpEnviarRequest(body, btn);
+}
+
+// FIX 2026-07-25: faltaba manejar el 409 "requiere_autorizacion" que devuelve
+// el backend cuando alguna línea seleccionada no tiene stock confirmado
+// (Daniel: "tiene que avisarme... a menos que haya una autorización"). Antes
+// esto solo mostraba un toast de error genérico y no ofrecía ninguna forma
+// de continuar -- ni siquiera para un admin/superadmin.
+function _lpEnviarRequest(body, btn) {
+  fetch('/transporte/api/lineas-pendientes/enviar-manifiesto', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r){ return r.json().then(function(d){ return {status:r.status, d:d}; }); })
+    .then(function(res) {
+    var d = res.d;
+    if (d.ok) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar seleccionados';
+      _lpSeleccionLineaIds.clear();
+      if (typeof ilusToast === 'function') {
+        ilusToast(d.agregados + ' documento(s) enviado(s) al manifiesto ' + (d.correlativo || '#' + d.manifest_id), {type:'success'});
+      }
+      lpCargar();
+      if (typeof cargarMonitor === 'function') cargarMonitor();
+      return;
+    }
+    if (res.status === 409 && d.requiere_autorizacion) {
+      var detalle = (d.bloqueadas || []).slice(0, 8).map(function(b) {
+        return '• ' + b.sku + ' (' + b.nombre + ') — ' + b.doc + ' · ' + b.cliente +
+               (b.disponible != null ? ' — disponible: ' + b.disponible : ' — sin dato de stock');
+      }).join('<br>');
+      if (d.bloqueadas && d.bloqueadas.length > 8) detalle += '<br>…y ' + (d.bloqueadas.length - 8) + ' más';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar seleccionados';
+      if (typeof ilusConfirm !== 'function') {
+        if (typeof ilusToast === 'function') ilusToast(d.error || 'Faltan productos sin stock por autorizar', {type:'error'});
+        return;
+      }
+      ilusConfirm({
+        title: 'Productos sin stock confirmado',
+        message: d.error || 'Algunos productos no tienen stock disponible confirmado.',
+        sub: detalle + '<br><br><strong>¿Enviar de todas formas?</strong> Esto puede generar un quiebre de stock — quedará registrado quién lo autorizó.',
+        subHtml: true,
+        okLabel: 'Sí, enviar sin stock', cancelLabel: 'Cancelar', danger: true,
+      }).then(function(ok) {
+        if (!ok) return;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando…';
+        body.autorizado = true;
+        _lpEnviarRequest(body, btn);
+      });
+      return;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar seleccionados';
+    if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudo enviar', {type:'error'});
+  }).catch(function() {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar seleccionados';
+    if (typeof ilusToast === 'function') ilusToast('Error de conexión', {type:'error'});
+  });
 }
 </script>
 {% endblock %}

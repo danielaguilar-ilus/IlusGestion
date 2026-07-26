@@ -1294,6 +1294,72 @@
 {% endif %}
 
 {# ════════════════════════════════════════════════════════════════════
+   Modal: subir facturas a SimpliRoute (Felca / Milling) — con progreso
+   ════════════════════════════════════════════════════════════════════ #}
+{% set _cl_sr = (manifiesto.courier or '')|lower %}
+{% if 'felca' in _cl_sr or 'milling' in _cl_sr %}
+<div class="modal fade" id="subirSimplirouteModal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#00b8a9;color:#fff">
+        <h6 class="modal-title"><i class="bi bi-geo-alt-fill me-2"></i>Subir a SimpliRoute</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" id="srModalCloseBtn"></button>
+      </div>
+      <div class="modal-body">
+
+        <div id="srIntro">
+          <div class="alert d-flex align-items-start gap-2 py-2 mb-3"
+               style="background:#e6fbf9;border:1px solid #00b8a9;color:#065f5a;border-radius:9px;font-size:.82rem">
+            <i class="bi bi-info-circle-fill fs-5"></i>
+            <div>
+              Se subirán las facturas de este manifiesto a la cuenta de SimpliRoute de
+              <strong>{{ manifiesto.courier }}</strong> como visitas para el
+              <strong>{{ manifiesto.fecha|chile_fmt('%d/%m/%Y') if manifiesto.fecha else '(sin fecha)' }}</strong>.
+              Las que ya se subieron antes se saltan (no se duplican).
+            </div>
+          </div>
+        </div>
+
+        <div id="srProgress" class="d-none">
+          <div class="progress" style="height:18px">
+            <div id="srProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                 role="progressbar" style="width:0%; background:#00b8a9">0%</div>
+          </div>
+          <div id="srProgressMsg" class="small text-muted mt-2 text-center">Conectando con SimpliRoute…</div>
+        </div>
+
+        <div id="srResultado" class="d-none mt-2"></div>
+
+        <div id="srDondeVerla" class="d-none mt-3">
+          <div class="alert py-2 mb-0"
+               style="background:#fff8e1;border:1px solid #f59e0b;color:#7a4a00;border-radius:9px;font-size:.82rem">
+            <div class="fw-bold mb-1"><i class="bi bi-signpost-split-fill me-1"></i>¿Dónde la encuentras en SimpliRoute?</div>
+            <div>Una visita subida por API <strong>NO aparece sola en una ruta o chofer</strong> — SimpliRoute la deja
+            primero "sin planificar". Pasos:</div>
+            <ol class="mb-0 mt-1 ps-3">
+              <li>Entra a <strong>Monitoreo</strong> (Monitoring) → pestaña <strong>Visitas</strong> → elige la fecha
+                  <strong id="srFechaTxt"></strong>: ahí SÍ aparecen todas, aunque no tengan ruta asignada.</li>
+              <li>Para asignarla a un chofer: módulo <strong>Router</strong> → abre o crea el plan de esa fecha →
+                  paso 2 "Visitas" → opción <strong>"Desde integración"</strong> (la API las dejó ahí, no se cargan solas
+                  al plan) → paso 3 "Rutas" → optimizar o arrastrarla manualmente a un vehículo.</li>
+            </ol>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal" id="srCancelarBtn">Cancelar</button>
+        <button type="button" class="btn btn-sm fw-bold" id="srConfirmarBtn" onclick="_srEjecutar()"
+                style="background:#00b8a9;color:#fff;border:none">
+          <i class="bi bi-cloud-upload-fill me-1"></i>Sí, subir a SimpliRoute
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
    Estilos
    ════════════════════════════════════════════════════════════════════ #}
 <style>
@@ -3077,71 +3143,122 @@ function _srEsc(s) {
   });
 }
 
-async function subirASimpliRoute() {
-  var btn = document.getElementById('btnSubirSR');
-  var ok = await ilusConfirm({
-    title: 'Subir a SimpliRoute',
-    message: '¿Subir las facturas de este manifiesto a SimpliRoute como visitas?',
-    sub: 'El transportista las verá cargadas en su cuenta y solo tendrá que asignar la ruta. ' +
-         'Las facturas que ya se subieron antes se saltan (no se duplican).',
-    okLabel: 'Sí, subir', cancelLabel: 'Cancelar',
-  });
-  if (!ok) return;
+var _srModal = null;
+var _srBusy = false;
 
-  var txtOriginal = btn ? btn.innerHTML : '';
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Subiendo…';
-  }
+// Abre el modal con progreso (reemplaza el spinner-en-botón + ilusAlert de
+// antes). Mismo patrón visual que "Crear OTs FedEx" (barra de progreso +
+// mensajes de estado dentro del modal), pedido por Daniel para que la subida
+// a SimpliRoute se sienta igual de premium.
+function subirASimpliRoute() {
+  if (!document.getElementById('subirSimplirouteModal')) return;
+  if (!_srModal) _srModal = new bootstrap.Modal(document.getElementById('subirSimplirouteModal'));
+
+  // Reset del modal cada vez que se abre
+  document.getElementById('srIntro').classList.remove('d-none');
+  document.getElementById('srProgress').classList.add('d-none');
+  document.getElementById('srResultado').classList.add('d-none');
+  document.getElementById('srResultado').innerHTML = '';
+  document.getElementById('srDondeVerla').classList.add('d-none');
+  document.getElementById('srProgressBar').style.width = '0%';
+  document.getElementById('srProgressBar').textContent = '0%';
+  document.getElementById('srConfirmarBtn').classList.remove('d-none');
+  document.getElementById('srConfirmarBtn').disabled = false;
+  document.getElementById('srCancelarBtn').textContent = 'Cancelar';
+  _srBusy = false;
+
+  _srModal.show();
+}
+
+async function _srEjecutar() {
+  if (_srBusy) return;
+  _srBusy = true;
+
+  var confirmarBtn = document.getElementById('srConfirmarBtn');
+  var cancelarBtn = document.getElementById('srCancelarBtn');
+  var closeBtn = document.getElementById('srModalCloseBtn');
+  confirmarBtn.disabled = true;
+  cancelarBtn.disabled = true;
+  if (closeBtn) closeBtn.disabled = true;
+
+  document.getElementById('srIntro').classList.add('d-none');
+  var prog = document.getElementById('srProgress');
+  var bar = document.getElementById('srProgressBar');
+  var msg = document.getElementById('srProgressMsg');
+  prog.classList.remove('d-none');
+
+  bar.style.width = '15%'; bar.textContent = '15%';
+  msg.textContent = 'Conectando con SimpliRoute…';
+
+  // Progreso simulado (la API responde en un solo POST, no hay eventos
+  // intermedios reales) — igual patrón que el modal de FedEx: mensajes que
+  // avanzan mientras se espera la respuesta, para que no se sienta colgado.
+  var _step2 = setTimeout(function () {
+    bar.style.width = '55%'; bar.textContent = '55%';
+    msg.textContent = 'Creando visitas en la cuenta del transportista…';
+  }, 600);
+
+  var d = null, errRed = null;
   try {
     var r = await fetch('/transporte/api/manifiestos/{{ manifiesto.id }}/subir-simpliroute',
                         { method: 'POST', headers: {'Content-Type':'application/json'} });
-    var d = await r.json();
-    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
-
-    if (d.creadas === 0 && d.errores === 0) {
-      await ilusAlert({
-        title: 'Sin cambios',
-        message: d.mensaje || 'Todas las facturas ya estaban en SimpliRoute.',
-        type: 'info',
-      });
-    } else if (d.errores === 0) {
-      await ilusAlert({
-        title: '✓ Subido a SimpliRoute',
-        message: d.creadas + ' visita(s) creada(s) en la cuenta de ' + (d.courier || 'el transportista') +
-                 ' para el ' + (d.fecha || '') + '.',
-        sub: d.ya_estaban ? (d.ya_estaban + ' factura(s) ya estaban subidas y se saltaron.') : '',
-        type: 'success',
-      });
-      setTimeout(function(){ location.reload(); }, 900);
-    } else {
-      var fallidos = (d.resultados || []).filter(function(x){ return !x.ok; });
-      await ilusAlert({
-        title: 'Subida parcial',
-        message: d.creadas + ' visita(s) creada(s), ' + d.errores + ' con problema.',
-        sub: fallidos.slice(0, 5).map(function(f){
-               return '• Item ' + f.item_id + ': ' + _srEsc(f.error || 'sin detalle');
-             }).join('<br>') + (fallidos.length > 5 ? '<br>…y ' + (fallidos.length - 5) + ' más' : ''),
-        subHtml: true,
-        type: 'warning',
-      });
-      setTimeout(function(){ location.reload(); }, 1200);
-    }
+    d = await r.json();
+    if (!r.ok || d.error) errRed = d.error || ('HTTP ' + r.status);
   } catch (e) {
-    // FIX 2026-07-25: esta pantalla NUNCA definió escHtml (vive en otros
-    // templates), así que la rama de "subida parcial" lanzaba
-    // "escHtml is not defined", caía acá y mostraba ese error de JavaScript
-    // EN LUGAR del motivo real que devolvió SimpliRoute. Daniel veía
-    // "No se pudo subir a SimpliRoute: escHtml is not defined" y se quedaba
-    // sin saber qué estaba mal con la factura.
-    await ilusAlert({
-      title: 'No se pudo subir a SimpliRoute',
-      message: e.message || 'Error de conexión',
-      type: 'error',
-    });
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = txtOriginal; }
+    errRed = 'Error de conexión con SimpliRoute';
   }
+  clearTimeout(_step2);
+
+  var resDiv = document.getElementById('srResultado');
+  resDiv.classList.remove('d-none');
+  confirmarBtn.classList.add('d-none');
+  cancelarBtn.disabled = false;
+  if (closeBtn) closeBtn.disabled = false;
+  cancelarBtn.textContent = 'Cerrar';
+
+  if (errRed) {
+    bar.classList.remove('progress-bar-animated');
+    bar.style.width = '100%'; bar.textContent = 'Error';
+    bar.style.background = '#dc2626';
+    msg.textContent = '';
+    resDiv.innerHTML = '<div class="alert alert-danger py-2 mb-0" style="font-size:.85rem">'
+      + '<i class="bi bi-x-circle-fill me-1"></i>No se pudo subir a SimpliRoute: '
+      + _srEsc(errRed) + '</div>';
+    _srBusy = false;
+    return;
+  }
+
+  bar.style.width = '100%'; bar.textContent = '100%';
+  msg.textContent = '¡Listo!';
+
+  var fechaLbl = d.fecha || '{{ manifiesto.fecha|chile_fmt("%d/%m/%Y") if manifiesto.fecha else "" }}';
+  var fechaEl = document.getElementById('srFechaTxt');
+  if (fechaEl) fechaEl.textContent = fechaLbl;
+
+  if (d.creadas === 0 && d.errores === 0) {
+    resDiv.innerHTML = '<div class="alert alert-info py-2 mb-0" style="font-size:.85rem">'
+      + '<i class="bi bi-info-circle-fill me-1"></i>' + _srEsc(d.mensaje || 'Todas las facturas ya estaban en SimpliRoute.')
+      + '</div>';
+  } else if (d.errores === 0) {
+    resDiv.innerHTML = '<div class="alert alert-success py-2 mb-1" style="font-size:.85rem">'
+      + '<i class="bi bi-check-circle-fill me-1"></i>' + d.creadas + ' visita(s) creada(s) en la cuenta de '
+      + _srEsc(d.courier || 'el transportista') + '.'
+      + (d.ya_estaban ? ' (' + d.ya_estaban + ' ya estaban subidas y se saltaron.)' : '') + '</div>';
+    document.getElementById('srDondeVerla').classList.remove('d-none');
+    setTimeout(function(){ location.reload(); }, 4500);
+  } else {
+    var fallidos = (d.resultados || []).filter(function(x){ return !x.ok; });
+    resDiv.innerHTML = '<div class="alert alert-warning py-2 mb-1" style="font-size:.85rem">'
+      + '<i class="bi bi-exclamation-triangle-fill me-1"></i>' + d.creadas + ' visita(s) creada(s), '
+      + d.errores + ' con problema.<br>'
+      + fallidos.slice(0, 5).map(function(f){
+          return '• Item ' + f.item_id + ': ' + _srEsc(f.error || 'sin detalle');
+        }).join('<br>') + (fallidos.length > 5 ? '<br>…y ' + (fallidos.length - 5) + ' más' : '')
+      + '</div>';
+    if (d.creadas > 0) document.getElementById('srDondeVerla').classList.remove('d-none');
+    setTimeout(function(){ location.reload(); }, 4500);
+  }
+  _srBusy = false;
 }
 
 function verImprimirEtiquetasFedex() {
