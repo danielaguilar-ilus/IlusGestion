@@ -22792,6 +22792,14 @@ def tr_compromiso_trazabilidad(cid):
     trazabilidad' del modal de vista (2026-07-26): eventos directos del
     compromiso + eventos de sus items de manifiesto, en una sola timeline.
     Reutiliza transport_logs — no crea una fuente de auditoría nueva.
+
+    FIX 2026-07-26 (modal consolidado SimpliRoute Felca/Milling, pedido de
+    Daniel): además del historial ILUS, ahora incluye el item de manifiesto
+    más reciente (id, estado, courier, doc, cliente) y — si ese item tiene
+    una visita de SimpliRoute activa — el estado EN VIVO consultado ahora
+    mismo contra la API (reutiliza _simpliroute_request, no se duplica la
+    llamada HTTP). Si la consulta en vivo falla, no se rompe el resto de la
+    respuesta: simplemente no se agrega 'simpliroute_live'.
     """
     c = mysql_fetchone(
         "SELECT id, public_token FROM transport_commitments WHERE id=%s", (cid,))
@@ -22823,7 +22831,57 @@ def tr_compromiso_trazabilidad(cid):
     token = c.get("public_token") or ""
     tracking_url = url_for("tr_public_tracking", token=token, _external=True) if token else None
 
-    return jsonify({"ok": True, "eventos": eventos, "tracking_url": tracking_url})
+    # Item de manifiesto más recientes de este compromiso (mismo criterio que
+    # tr_actualizar_estado_puntual): permite al modal mostrar el hero (doc,
+    # cliente, estado) y decidir si ofrece acciones de SimpliRoute.
+    mi = mysql_fetchone("""
+        SELECT tmi.id AS item_id, tmi.estado_entrega, tmi.simpliroute_visit_id,
+               tmi.simpliroute_tracking_id, tmi.simpliroute_error,
+               tc.tido, tc.nudo, tc.cliente_nombre, tm.courier
+        FROM transport_manifest_items tmi
+        LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
+        JOIN transport_commitments tc ON tc.id = tmi.commitment_id
+        WHERE tmi.commitment_id=%s
+        ORDER BY tmi.id DESC LIMIT 1
+    """, (cid,))
+
+    item = None
+    simpliroute_live = None
+    if mi:
+        item = {
+            "item_id":      mi.get("item_id"),
+            "estado":       mi.get("estado_entrega") or "",
+            "doc":          f"{mi.get('tido') or ''} {mi.get('nudo') or ''}".strip(),
+            "cliente":      mi.get("cliente_nombre") or "",
+            "courier":      mi.get("courier") or "",
+            "visit_id":     mi.get("simpliroute_visit_id") or "",
+            "tracking_id":  mi.get("simpliroute_tracking_id") or "",
+            "error":        mi.get("simpliroute_error") or "",
+        }
+        vid = (mi.get("simpliroute_visit_id") or "").strip()
+        if vid:
+            import simpliroute_client as _src
+            token_sr = _simpliroute_token_for_courier(mi.get("courier"))
+            if token_sr:
+                try:
+                    r_live = _simpliroute_request(
+                        "GET", f"{_src.EP_VISITS}{vid}/", token_sr, timeout=15)
+                    if r_live.get("ok") and isinstance(r_live.get("data"), dict):
+                        v = r_live["data"]
+                        simpliroute_live = {
+                            "status":       v.get("status"),
+                            "planned_date": v.get("planned_date"),
+                            "eta":          v.get("eta") or v.get("check_in_estimate"),
+                            "driver":       (v.get("route") or {}).get("driver_name")
+                                            if isinstance(v.get("route"), dict) else None,
+                        }
+                except Exception as e:
+                    print(f"[tr_compromiso_trazabilidad] consulta live SimpliRoute cid={cid}: {e}", flush=True)
+
+    return jsonify({
+        "ok": True, "eventos": eventos, "tracking_url": tracking_url,
+        "item": item, "simpliroute_live": simpliroute_live,
+    })
 
 
 @app.route("/transporte/api/compromisos/<int:cid>/lineas")
@@ -29187,6 +29245,220 @@ def tr_manifiesto_subir_simpliroute(mid):
         "ya_estaban": ya_subidos, "errores": errores, "resultados": resultados,
         "courier": courier, "fecha": planned_date,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Modal consolidado "Ver seguimiento y acciones" (Felca/Milling, SimpliRoute)
+#  2026-07-26 (pedido de Daniel): un solo modal con historial/tracking +
+#  cancelar visita + reprogramar fecha + reenviar individual. Reutiliza
+#  SIEMPRE los mismos choke-points ya existentes (_simpliroute_request,
+#  EP_BULK_DELETE, build_visit_payload, _tr_apply_carrier_status) — no se
+#  duplica ninguna llamada HTTP al courier.
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/api/items/<int:item_id>/simpliroute/cancelar", methods=["POST"])
+@_tr_required
+def tr_item_simpliroute_cancelar(item_id):
+    """Cancela/anula la visita de SimpliRoute de UN item puntual.
+
+    Reutiliza el MISMO patrón de borrado que ya usa tr_quitar_item cuando se
+    quita una factura del manifiesto (EP_BULK_DELETE) — no se reimplementa la
+    llamada HTTP. Tras cancelar, limpia simpliroute_visit_id/tracking_id del
+    item para que quede "sin visita" y se pueda reenviar después.
+    """
+    import simpliroute_client as _src
+    mi = mysql_fetchone("""
+        SELECT mi.id, mi.commitment_id, mi.simpliroute_visit_id, mi.manifest_id,
+               tm.courier
+        FROM transport_manifest_items mi
+        LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not mi:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+
+    vid = (mi.get("simpliroute_visit_id") or "").strip()
+    if not vid:
+        return jsonify({"ok": False,
+                         "error": "Este pedido no tiene una visita activa en "
+                                  "SimpliRoute para cancelar."}), 400
+
+    token = _simpliroute_token_for_courier(mi.get("courier"))
+    if not token:
+        return jsonify({"ok": False,
+                         "error": "Falta configurar el token de SimpliRoute de "
+                                  "este courier."}), 503
+
+    try:
+        r = _simpliroute_request("POST", _src.EP_BULK_DELETE, token,
+                                  payload={"visits": [int(vid)]}, timeout=20)
+    except Exception as e:
+        print(f"[simpliroute] excepción cancelando visita {vid} (item {item_id}): {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo conectar con SimpliRoute. Intenta de nuevo."}), 502
+
+    if not r.get("ok"):
+        return jsonify({"ok": False,
+                         "error": r.get("error") or "SimpliRoute rechazó la cancelación."}), 502
+
+    mysql_execute(
+        "UPDATE transport_manifest_items SET simpliroute_visit_id=NULL, "
+        "simpliroute_tracking_id=NULL, simpliroute_synced_at=NULL, "
+        "simpliroute_error=NULL WHERE id=%s", (item_id,))
+    _tr_log("manifest_item", item_id, "visita SimpliRoute cancelada",
+            f"visita {vid} anulada manualmente desde el modal de seguimiento")
+
+    return jsonify({"ok": True, "visit_id": vid})
+
+
+@app.route("/transporte/api/items/<int:item_id>/simpliroute/reprogramar", methods=["PATCH"])
+@_tr_required
+def tr_item_simpliroute_reprogramar(item_id):
+    """Intenta reprogramar la fecha planificada de la visita en SimpliRoute.
+
+    SUPUESTO SIN VERIFICAR: SimpliRoute es Django REST Framework y los
+    ViewSets DRF estándar suelen soportar PATCH parcial contra
+    /v1/routes/visits/<id>/ — esto NO estaba probado en este proyecto antes
+    de este cambio. Si la API rechaza el cambio (405/400/lo que sea), se
+    informa HONESTAMENTE al usuario — nunca se reporta éxito falso. La fecha
+    del manifiesto en ILUS no se toca: esto es informativo del lado del
+    courier, no reasigna el item entre manifiestos.
+    """
+    import simpliroute_client as _src
+    body = request.get_json(silent=True) or {}
+    fecha = (body.get("fecha") or "").strip()
+    if not fecha:
+        return jsonify({"ok": False, "error": "Falta la fecha nueva."}), 400
+    try:
+        datetime.strptime(fecha, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Fecha inválida (formato esperado AAAA-MM-DD)."}), 400
+
+    mi = mysql_fetchone("""
+        SELECT mi.id, mi.simpliroute_visit_id, tm.courier
+        FROM transport_manifest_items mi
+        LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not mi:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+
+    vid = (mi.get("simpliroute_visit_id") or "").strip()
+    if not vid:
+        return jsonify({"ok": False,
+                         "error": "Este pedido no tiene una visita activa en "
+                                  "SimpliRoute para reprogramar."}), 400
+
+    token = _simpliroute_token_for_courier(mi.get("courier"))
+    if not token:
+        return jsonify({"ok": False,
+                         "error": "Falta configurar el token de SimpliRoute de "
+                                  "este courier."}), 503
+
+    try:
+        r = _simpliroute_request("PATCH", f"{_src.EP_VISITS}{vid}/", token,
+                                  payload={"planned_date": fecha}, timeout=20)
+    except Exception as e:
+        print(f"[simpliroute] excepción reprogramando visita {vid} (item {item_id}): {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo conectar con SimpliRoute. Intenta de nuevo."}), 502
+
+    if not r.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": "SimpliRoute rechazó la reprogramación por API "
+                     f"({r.get('error') or 'error desconocido'}). Esta cuenta/plan "
+                     "puede no soportar cambiar la fecha vía API — reprograma "
+                     "manualmente desde el portal de SimpliRoute.",
+        }), 502
+
+    _tr_log("manifest_item", item_id, "visita SimpliRoute reprogramada",
+            f"visita {vid} → nueva fecha {fecha}")
+
+    return jsonify({"ok": True, "visit_id": vid, "fecha": fecha})
+
+
+@app.route("/transporte/api/items/<int:item_id>/simpliroute/reenviar", methods=["POST"])
+@_tr_required
+def tr_item_simpliroute_reenviar(item_id):
+    """Reenvía UN item puntual a SimpliRoute como visita nueva.
+
+    Útil cuando la visita se acaba de cancelar (endpoint de arriba) o cuando
+    la subida original del manifiesto falló y el item quedó con
+    simpliroute_error. Reutiliza build_visit_payload/_tr_manifiesto_items_
+    simpliroute y el mismo patrón de persistencia que
+    tr_manifiesto_subir_simpliroute, acotado a 1 item — no se reimplementa la
+    lógica de subida masiva.
+    """
+    import simpliroute_client as _src
+    mi = mysql_fetchone("""
+        SELECT mi.id, mi.manifest_id, mi.simpliroute_visit_id, tm.courier, tm.fecha
+        FROM transport_manifest_items mi
+        LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not mi:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+    if (mi.get("simpliroute_visit_id") or "").strip():
+        return jsonify({"ok": False,
+                         "error": "Este pedido ya tiene una visita activa en "
+                                  "SimpliRoute. Cancélala primero si quieres "
+                                  "re-crearla."}), 400
+
+    courier = (mi.get("courier") or "").strip()
+    if not _simpliroute_courier_integra(courier):
+        return jsonify({"ok": False,
+                         "error": f"El courier «{courier}» no trabaja con SimpliRoute."}), 400
+    token = _simpliroute_token_for_courier(courier)
+    if not token:
+        return jsonify({"ok": False,
+                         "error": "Falta configurar el token de SimpliRoute de "
+                                  "este courier."}), 503
+
+    _fecha = mi.get("fecha")
+    planned_date = _fecha.isoformat() if hasattr(_fecha, "isoformat") else str(_fecha or "").strip()
+    if not planned_date:
+        return jsonify({"ok": False, "error": "El manifiesto no tiene fecha de despacho."}), 400
+
+    items = _tr_manifiesto_items_simpliroute(mi["manifest_id"])
+    it = next((x for x in items if x.get("item_id") == item_id), None)
+    if not it:
+        return jsonify({"ok": False,
+                         "error": "No se encontraron los datos de esta factura "
+                                  "para armar la visita."}), 400
+
+    payload, errores = _src.build_visit_payload(it, planned_date=planned_date)
+    if errores:
+        return jsonify({"ok": False, "error": "Datos incompletos: " + "; ".join(errores)}), 400
+
+    try:
+        r = _simpliroute_request("POST", _src.EP_VISITS, token, payload=payload, timeout=30)
+    except Exception as e:
+        print(f"[simpliroute] excepción reenviando item {item_id}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo conectar con SimpliRoute. Intenta de nuevo."}), 502
+
+    if not r.get("ok"):
+        try:
+            mysql_execute("UPDATE transport_manifest_items SET simpliroute_error=%s WHERE id=%s",
+                          (str(r.get("error") or "Error desconocido")[:500], item_id))
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": r.get("error") or "SimpliRoute rechazó la visita."}), 502
+
+    visita = (_src.parse_visits_response(r.get("data")) or [{}])[0]
+    mysql_execute(
+        "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+        "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW(), "
+        "simpliroute_error=NULL WHERE id=%s",
+        (str(visita.get("id") or "")[:40], str(visita.get("tracking_id") or "")[:60], item_id))
+    _tr_log("manifest_item", item_id, "reenviado a SimpliRoute",
+            f"nueva visita {visita.get('id')}")
+    try:
+        _tr_apply_carrier_status(item_id, 'Entregado a transporte', fuente='sistema',
+                                 comentario='Visita re-creada en SimpliRoute',
+                                 notify_cliente=True)
+    except Exception as _e:
+        print(f"[tr_event sr_reenvio] item={item_id}: {_e}", flush=True)
+
+    return jsonify({"ok": True, "visit_id": visita.get("id"), "tracking_id": visita.get("tracking_id")})
 
 
 @app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])

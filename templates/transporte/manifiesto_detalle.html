@@ -545,19 +545,15 @@
                     onclick="mostrarLinkCliente({{ item.id }})">
               <i class="bi bi-link-45deg"></i>
             </button>
-            {# FIX 2026-07-27 (pedido Daniel): "cuando entra un manifiesto de
-               Felca/Milling, agrégale las mismas acciones que tiene FedEx —
-               actualizar estado y ver trazabilidad". Reusa los MISMOS
-               endpoints genéricos ya construidos para el modal de detalle
-               del monitor (funcionan con FedEx o SimpliRoute según lo que
-               tenga el item, no se duplica lógica de courier). #}
-            <button class="btn btn-sm btn-outline-info mfd-act-btn" title="Actualizar estado (consulta al courier ahora)"
-                    onclick="actualizarEstadoItemGenerico({{ item.commitment_id }}, this)">
-              <i class="bi bi-arrow-clockwise"></i>
-            </button>
-            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento y trazabilidad"
+            {# FIX 2026-07-27 (pedido Daniel): consolida "actualizar estado" +
+               "ver trazabilidad" en UN solo modal premium con acciones reales
+               (cancelar / reprogramar / reenviar la visita de SimpliRoute),
+               mismo nivel de pulido que el modal de tracking de FedEx.
+               Reusa los endpoints genéricos ya construidos — no se duplica
+               lógica de courier. #}
+            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento y acciones"
                     style="background:#0a0a0a;color:#fff;border:none"
-                    onclick="abrirTrazabilidadItemGenerico({{ item.commitment_id }})">
+                    onclick="abrirSimpliRouteModal({{ item_json }})">
               <i class="bi bi-geo-alt-fill"></i>
             </button>
             {% endif %}
@@ -750,6 +746,11 @@
           <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Link de seguimiento del cliente"
                   onclick="mostrarLinkCliente({{ item.id }})">
             <i class="bi bi-link-45deg"></i>
+          </button>
+          <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento y acciones"
+                  style="background:#0a0a0a;color:#fff;border:none"
+                  onclick="abrirSimpliRouteModal({{ item_json }})">
+            <i class="bi bi-geo-alt-fill"></i>
           </button>
           {% endif %}
           <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
@@ -1076,6 +1077,83 @@
         <a class="btn btn-sm btn-dark" id="trkFedexLink" href="#" target="_blank">
           <i class="bi bi-box-arrow-up-right me-1"></i>Ver en FedEx.com
         </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: SEGUIMIENTO Y ACCIONES — SimpliRoute (Felca/Milling)
+   Consolida "actualizar estado" + "trazabilidad" + acciones reales
+   (cancelar / reprogramar / reenviar / editar) en 1 modal premium,
+   mismo nivel de pulido que #trackingModal de FedEx (2026-07-27).
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="simpliRouteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content trk-modal">
+      <div class="trk-hero sr-hero" id="srHero">
+        <button type="button" class="btn-close btn-close-white trk-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        <div class="trk-hero-top">
+          <span class="sr-brand"><i class="bi bi-signpost-2-fill me-1"></i>SimpliRoute</span>
+          <span class="trk-doc" id="srDoc">—</span>
+        </div>
+        <div class="trk-state" id="srState"><i class="bi bi-hourglass-split"></i> <span id="srStateLabel">Cargando…</span></div>
+        <div class="trk-sub" id="srSub">—</div>
+      </div>
+      <div class="modal-body trk-body">
+        {# Tabs: Timeline / Acciones #}
+        <div class="trk-tabs">
+          <button class="trk-tab is-active" data-srtab="timeline" onclick="srSwitchTab('timeline')">
+            <i class="bi bi-clock-history me-1"></i>Timeline y trazabilidad
+          </button>
+          <button class="trk-tab" data-srtab="acciones" onclick="srSwitchTab('acciones')">
+            <i class="bi bi-tools me-1"></i>Acciones
+          </button>
+        </div>
+
+        <div id="srTabTimeline">
+          <div id="srLinkBox" style="display:none;margin:0 0 12px;padding:.5rem .6rem;background:#f3f4f6;
+               border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:.74rem;
+               word-break:break-all;border:1px solid #e5e7eb"></div>
+          <div id="srTimeline" class="trk-timeline"></div>
+        </div>
+
+        <div id="srTabAcciones" style="display:none">
+          <div class="sr-acc-row">
+            <button type="button" class="btn btn-outline-info sr-acc-btn" id="srBtnActualizar" onclick="srActualizarEstado()">
+              <i class="bi bi-arrow-clockwise me-1"></i>Actualizar estado
+            </button>
+            <button type="button" class="btn btn-outline-secondary sr-acc-btn" id="srBtnEditar" onclick="srAbrirEditar()">
+              <i class="bi bi-pencil-square me-1"></i>Editar contacto/bultos
+            </button>
+          </div>
+          <hr class="my-3">
+          <div class="sr-acc-block">
+            <label class="form-label small fw-semibold mb-1"><i class="bi bi-calendar-event me-1"></i>Reprogramar visita</label>
+            <div class="d-flex gap-2 flex-wrap">
+              <input type="date" class="form-control form-control-sm" id="srFechaInput" style="max-width:180px">
+              <button type="button" class="btn btn-sm btn-dark" id="srBtnReprogramar" onclick="srReprogramar()">
+                <i class="bi bi-calendar-check me-1"></i>Reprogramar
+              </button>
+            </div>
+            <div class="small text-muted mt-1">Se intenta actualizar directamente en SimpliRoute. Si la API la rechaza, te avisamos para hacerlo manual en el portal.</div>
+          </div>
+          <hr class="my-3">
+          <div class="sr-acc-row">
+            <button type="button" class="btn btn-outline-danger sr-acc-btn" id="srBtnCancelar" onclick="srCancelarVisita()">
+              <i class="bi bi-x-octagon me-1"></i>Cancelar visita
+            </button>
+            <button type="button" class="btn btn-ilus sr-acc-btn" id="srBtnReenviar" onclick="srReenviarVisita()">
+              <i class="bi bi-send-fill me-1"></i>Reenviar a SimpliRoute
+            </button>
+          </div>
+          <div id="srAccMsg" class="small mt-2"></div>
+        </div>
+      </div>
+      <div class="modal-footer trk-foot">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirSimpliRouteModal(window._srItemData, true)">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refrescar
+        </button>
       </div>
     </div>
   </div>
@@ -1684,6 +1762,15 @@
 .trk-empty { text-align:center; color:#9ca3af; font-size:.85rem; padding:24px 10px; }
 .trk-foot { justify-content:space-between; }
 @media (max-width:576px){ .trk-step-label{ font-size:.52rem; } .trk-state{ font-size:1.2rem; } }
+
+/* ── SimpliRoute modal ("Ver seguimiento y acciones") — mismo lenguaje
+   visual que .trk-*, pero con la paleta ILUS negro/rojo en vez del
+   morado de FedEx (esto NO es FedEx). ── */
+.sr-hero { background: linear-gradient(135deg, #0a0a0a 0%, #262626 100%); }
+.sr-brand { background:#dc2626; color:#fff; font-weight:900; font-size:12px; border-radius:5px; padding:3px 9px; letter-spacing:.3px; }
+.sr-acc-row { display:flex; gap:8px; flex-wrap:wrap; }
+.sr-acc-btn { font-weight:700; font-size:.82rem; flex:1 1 auto; min-height:44px; }
+.sr-acc-block { display:flex; flex-direction:column; gap:4px; }
 </style>
 
 {# ════════════════════════════════════════════════════════════════════
@@ -2383,6 +2470,178 @@ function trkSwitchTab(which) {
   });
   document.getElementById('trkTabFedex').style.display = (which === 'fedex' ? 'block' : 'none');
   document.getElementById('trkTabIlus').style.display = (which === 'ilus' ? 'block' : 'none');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  MODAL SIMPLIROUTE — "Ver seguimiento y acciones" (Felca/Milling)
+//  Consolida actualizar-estado + trazabilidad + acciones reales en 1 modal
+//  (2026-07-27). Reusa los endpoints genéricos/generic existentes — no
+//  duplica la llamada HTTP al courier.
+// ══════════════════════════════════════════════════════════════════════
+var _srModal = null;
+window._srItemData = null;
+
+function _srEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function srSwitchTab(which) {
+  document.querySelectorAll('#simpliRouteModal .trk-tab').forEach(function(t){
+    t.classList.toggle('is-active', t.dataset.srtab === which);
+  });
+  document.getElementById('srTabTimeline').style.display = (which === 'timeline' ? 'block' : 'none');
+  document.getElementById('srTabAcciones').style.display = (which === 'acciones' ? 'block' : 'none');
+}
+
+async function abrirSimpliRouteModal(data, force) {
+  data = data || {};
+  if (!data.id) return; // data.id = commitment_id
+  window._srItemData = data;
+  if (!_srModal) _srModal = new bootstrap.Modal(document.getElementById('simpliRouteModal'));
+  document.getElementById('srDoc').textContent = data.doc || '';
+  document.getElementById('srStateLabel').textContent = data.estado || 'Cargando…';
+  document.getElementById('srSub').textContent = data.cliente || '';
+  document.getElementById('srTimeline').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando trazabilidad…</div>';
+  document.getElementById('srLinkBox').style.display = 'none';
+  document.getElementById('srAccMsg').innerHTML = '';
+  // Fecha por defecto del picker de reprogramación: hoy
+  var fEl = document.getElementById('srFechaInput');
+  if (fEl && !fEl.value) fEl.value = new Date().toISOString().slice(0, 10);
+  srSwitchTab('timeline');
+  _srModal.show();
+
+  try {
+    var r = await fetch('/transporte/api/compromisos/' + data.id + '/trazabilidad');
+    var d = await r.json();
+    if (!d || !d.ok) {
+      document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">' + _srEsc((d && d.error) || 'No se pudo cargar la trazabilidad') + '</div>';
+      return;
+    }
+    if (d.tracking_url) {
+      var lb = document.getElementById('srLinkBox');
+      lb.style.display = '';
+      lb.textContent = d.tracking_url;
+    }
+    var eventos = d.eventos || [];
+    document.getElementById('srTimeline').innerHTML = eventos.length
+      ? eventos.map(function(ev){
+          return '<div class="trk-ev"><div class="trk-ev-desc">' + _srEsc(ev.accion) + '</div>'
+               + (ev.detalle ? '<div class="trk-ev-meta"><span>' + _srEsc(ev.detalle) + '</span></div>' : '')
+               + '<div class="trk-ev-meta"><span><i class="bi bi-clock me-1"></i>' + _srEsc(ev.created_at) + '</span>'
+               + (ev.usuario ? '<span><i class="bi bi-person me-1"></i>' + _srEsc(ev.usuario) + '</span>' : '') + '</div></div>';
+        }).join('')
+      : '<div class="trk-empty">Sin eventos registrados todavía.</div>';
+  } catch (e) {
+    document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
+  }
+}
+
+async function srActualizarEstado() {
+  var data = window._srItemData || {};
+  if (!data.id) return;
+  var btn = document.getElementById('srBtnActualizar');
+  await actualizarEstadoItemGenerico(data.id, btn);
+}
+
+function srAbrirEditar() {
+  var data = window._srItemData;
+  if (!data) return;
+  abrirEditar(data);
+}
+
+async function srCancelarVisita() {
+  var data = window._srItemData || {};
+  if (!data.item_id) return;
+  var ok = await ilusConfirm({
+    title: 'Cancelar visita SimpliRoute',
+    message: '¿Cancelar la visita de este pedido en SimpliRoute?',
+    sub: 'Se borra del lado del courier. Podrás reenviarla después si hace falta.',
+    okLabel: 'Sí, cancelar', cancelLabel: 'No', danger: true,
+  });
+  if (!ok) return;
+  var msg = document.getElementById('srAccMsg');
+  var btn = document.getElementById('srBtnCancelar');
+  btn.disabled = true;
+  msg.innerHTML = '<span class="text-muted">Cancelando…</span>';
+  try {
+    var r = await fetch('/transporte/api/items/' + data.item_id + '/simpliroute/cancelar', { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      msg.innerHTML = '<span class="text-danger">' + _srEsc(d.error || 'No se pudo cancelar') + '</span>';
+      ilusToast(d.error || 'No se pudo cancelar la visita', { type: 'error' });
+      return;
+    }
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Visita cancelada</span>';
+    ilusToast('✓ Visita cancelada en SimpliRoute', { type: 'success' });
+  } catch (e) {
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+    ilusToast('Error de conexión', { type: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function srReprogramar() {
+  var data = window._srItemData || {};
+  if (!data.item_id) return;
+  var fecha = (document.getElementById('srFechaInput').value || '').trim();
+  if (!fecha) { ilusToast('Elige una fecha', { type: 'warning' }); return; }
+  var msg = document.getElementById('srAccMsg');
+  var btn = document.getElementById('srBtnReprogramar');
+  btn.disabled = true;
+  msg.innerHTML = '<span class="text-muted">Reprogramando…</span>';
+  try {
+    var r = await fetch('/transporte/api/items/' + data.item_id + '/simpliroute/reprogramar', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fecha: fecha }),
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      msg.innerHTML = '<span class="text-danger">' + _srEsc(d.error || 'No se pudo reprogramar') + '</span>';
+      await ilusAlert({
+        title: 'No se pudo reprogramar vía API',
+        message: d.error || 'SimpliRoute rechazó el cambio de fecha.',
+        type: 'warning',
+      });
+      return;
+    }
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Reprogramada a ' + _srEsc(d.fecha) + '</span>';
+    ilusToast('✓ Visita reprogramada', { type: 'success' });
+  } catch (e) {
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+    ilusToast('Error de conexión', { type: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function srReenviarVisita() {
+  var data = window._srItemData || {};
+  if (!data.item_id) return;
+  var msg = document.getElementById('srAccMsg');
+  var btn = document.getElementById('srBtnReenviar');
+  btn.disabled = true;
+  msg.innerHTML = '<span class="text-muted">Reenviando a SimpliRoute…</span>';
+  try {
+    var r = await fetch('/transporte/api/items/' + data.item_id + '/simpliroute/reenviar', { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      msg.innerHTML = '<span class="text-danger">' + _srEsc(d.error || 'No se pudo reenviar') + '</span>';
+      ilusToast(d.error || 'No se pudo reenviar la visita', { type: 'error' });
+      return;
+    }
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Visita creada (id ' + _srEsc(d.visit_id) + ')</span>';
+    ilusToast('✓ Visita reenviada a SimpliRoute', { type: 'success' });
+    setTimeout(function(){ window.location.reload(); }, 1200);
+  } catch (e) {
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+    ilusToast('Error de conexión', { type: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function guardarEdicion() {
