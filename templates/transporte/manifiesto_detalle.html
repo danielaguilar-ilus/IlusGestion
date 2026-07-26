@@ -502,10 +502,15 @@
           {% endif %}
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
             {% if item.estado_entrega == 'Entregado' %}
-            <a class="btn btn-sm btn-outline-success mfd-act-btn" title="Ver prueba de entrega (foto, firma, GPS)"
-               href="/transporte/buscar?q={{ item.nudo }}" target="_blank">
+            {# FIX 2026-07-27 (Daniel: "arregla el modal para rescatar los
+               antecedentes, foto, GPS"): esto abría /transporte/buscar en
+               pestaña nueva -- igual que el resto de la sesión, se convierte
+               a un modal con iframe dentro de la misma página. #}
+            <button type="button" class="btn btn-sm btn-outline-success mfd-act-btn"
+                    title="Ver prueba de entrega (foto, firma, GPS)"
+                    onclick="abrirPruebaEntrega('{{ item.nudo }}')">
               <i class="bi bi-shield-check"></i>
-            </a>
+            </button>
             {% endif %}
             {% if not es_fedex %}
             <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas ILUS de esta factura"
@@ -1801,6 +1806,23 @@
    URL, más botón para descargar PDF y enviar por correo sin salir de
    la ficha del manifiesto.
    ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="pruebaEntregaModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:14px 20px">
+        <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Prueba de entrega</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="pruebaEntregaFrame" src="about:blank" style="width:100%;height:75vh;border:0"></iframe>
+      </div>
+      <div class="modal-footer" style="padding:12px 20px">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="manifiestoFirmaModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content" style="border-radius:14px;overflow:hidden">
@@ -3676,6 +3698,19 @@ async function actualizarEtiquetasFedex() {
 // modal con iframe a la misma URL /transporte/manifiestos/<id>/firma.
 // ═══════════════════════════════════════════════════════════════════
 var _manifiestoFirmaModal = null;
+var _pruebaEntregaModal = null;
+
+// FIX 2026-07-27 (Daniel: "arregla el modal para rescatar los antecedentes,
+// foto, GPS"): antes abría /transporte/buscar en pestaña nueva. Mismo
+// patrón de iframe-en-modal que abrirManifiestoFirma().
+function abrirPruebaEntrega(nudo) {
+  var url = '/transporte/buscar?q=' + encodeURIComponent(nudo);
+  document.getElementById('pruebaEntregaFrame').src = url;
+  if (!_pruebaEntregaModal) {
+    _pruebaEntregaModal = new bootstrap.Modal(document.getElementById('pruebaEntregaModal'));
+  }
+  _pruebaEntregaModal.show();
+}
 
 function abrirManifiestoFirma() {
   var url = '/transporte/manifiestos/' + MID + '/firma';
