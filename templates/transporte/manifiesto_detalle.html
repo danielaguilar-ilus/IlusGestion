@@ -523,18 +523,12 @@
             </button>
             {% endif %}
             {% if not es_fedex %}
-            {# FIX 2026-07-27 (Daniel: "las etiquetas quiero que las hagas en
-               un modal, y si ya se subió no se podrán editar también"):
-               antes abría pestaña nueva; ahora modal con iframe (mismo
-               patrón que Manifiesto de firma / Prueba de entrega). Se
-               bloquea si la factura ya está en gestión con el courier. #}
+            {# Ver/reimprimir siempre debe estar disponible. La política de
+               etiquetas bloquea dentro del modal únicamente la edición del
+               total de bultos cuando el proceso ya avanzó. #}
             <button class="btn btn-sm btn-outline-dark mfd-act-btn"
-                    {% if _en_gestion_courier %}
-                    disabled title="Bloqueado: ya está en gestión con el courier"
-                    {% else %}
-                    title="Ver/imprimir etiquetas ILUS de esta factura"
-                    onclick="abrirEtiquetasModal({{ item.commitment_id }})"
-                    {% endif %}>
+                    title="{% if _en_gestion_courier %}Ver/reimprimir etiquetas (edición bloqueada por estado){% else %}Ver/imprimir etiquetas ILUS de esta factura{% endif %}"
+                    onclick="abrirEtiquetasModal({{ item.commitment_id }}, this)">
               <i class="bi bi-tags"></i>
             </button>
             {% endif %}
@@ -762,12 +756,8 @@
         <div class="d-flex gap-1 no-print">
           {% if not es_fedex %}
           <button class="btn btn-sm btn-outline-dark mfd-act-btn"
-                  {% if _en_gestion_courier %}
-                  disabled title="Bloqueado: ya está en gestión con el courier"
-                  {% else %}
-                  title="Ver/imprimir etiquetas de esta factura"
-                  onclick="abrirEtiquetasModal({{ item.commitment_id }})"
-                  {% endif %}>
+                  title="{% if _en_gestion_courier %}Ver/reimprimir etiquetas (edición bloqueada por estado){% else %}Ver/imprimir etiquetas de esta factura{% endif %}"
+                  onclick="abrirEtiquetasModal({{ item.commitment_id }}, this)">
             <i class="bi bi-tags"></i>
           </button>
           {% endif %}
