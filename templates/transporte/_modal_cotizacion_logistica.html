@@ -242,6 +242,51 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
 .lc-courier-elegido{display:none;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #bbf7d0;
   color:#166534;border-radius:10px;padding:9px 12px;font-size:.82rem;margin-top:10px;}
 
+/* Tarjetas de courier "animadas y coloridas" (pedido Daniel 2026-07-25):
+   grid de tarjetas en vez de la lista plana anterior, con degradé propio
+   por posición (más barato = más verde), ganancia ILUS visible y un
+   pop de selección. Los datos (precio/estimado) siguen viniendo 100% de
+   /cubicador/api/cotizar — acá solo se le da otra piel + el cálculo de
+   margen (mismo % que Sección 6, ya existente, no se inventa nada nuevo). */
+.lc-courier-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:10px;}
+.lc-courier-card{position:relative;border-radius:14px;padding:13px 14px;cursor:pointer;
+  border:2px solid transparent;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);
+  transition:transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .18s, border-color .18s;
+  animation:lcCardIn .32s cubic-bezier(.34,1.56,.64,1) backwards;}
+@keyframes lcCardIn{from{opacity:0;transform:translateY(6px) scale(.97);}to{opacity:1;transform:none;}}
+.lc-courier-card:hover{transform:translateY(-3px);box-shadow:0 10px 24px -8px rgba(0,0,0,.18);}
+.lc-courier-card:active{transform:scale(.97);}
+.lc-courier-card.is-mejor-precio{background:linear-gradient(160deg,#fff,#f0fdf4);}
+.lc-courier-card.is-elegida{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.16),0 10px 24px -8px rgba(220,38,38,.28);
+  transform:translateY(-3px);}
+.lc-courier-card .lc-cc-badge{position:absolute;top:-8px;left:12px;background:#16a34a;color:#fff;
+  font-size:.6rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;padding:2px 9px;border-radius:50px;}
+.lc-courier-card .lc-cc-nombre{font-weight:900;font-size:.9rem;color:#0a0a0a;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.lc-courier-card .lc-cc-precio{font-family:'JetBrains Mono',monospace;font-weight:900;font-size:1.15rem;
+  color:#0a0a0a;margin-top:4px;}
+.lc-courier-card .lc-cc-margen{font-size:.68rem;font-weight:800;color:#15803d;margin-top:3px;
+  display:flex;align-items:center;gap:4px;}
+.lc-courier-card .lc-cc-check{position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:50%;
+  background:#dc2626;color:#fff;display:none;align-items:center;justify-content:center;font-size:.7rem;}
+.lc-courier-card.is-elegida .lc-cc-check{display:flex;}
+@media(max-width:480px){.lc-courier-grid{grid-template-columns:1fr 1fr;}}
+
+/* Gate de Productos hasta elegir courier (pedido Daniel: "ahí me da el
+   detalle de los productos con total"). Solo VISUAL — el botón "Traer
+   documento(s) del ERP" sigue funcionando siempre (hace falta cargar
+   ítems ANTES para poder cotizar el peso), pero la tabla con
+   flete/margen/total por línea queda cubierta con un overlay hasta que
+   haya un courier elegido. No borra nada: basta con quitar
+   "lc-items-locked" de la clase para volver a ver todo (ver
+   _lcActualizarGateProductos). */
+.lc-items-lockwrap{position:relative;}
+.lc-items-overlay{display:none;align-items:center;justify-content:center;flex-direction:column;gap:6px;
+  padding:30px 16px;text-align:center;background:#f9fafb;border:1.5px dashed #d1d5db;border-radius:10px;
+  color:#6b7280;font-size:.82rem;font-weight:700;}
+.lc-items-overlay i{font-size:1.4rem;color:#dc2626;}
+.lc-items-lockwrap.is-locked .lc-items-overlay{display:flex;}
+.lc-items-lockwrap.is-locked .lc-tabla-wrap{display:none;}
+
 /* Resumen */
 .lc-resumen{margin:8px 20px 4px;margin-left:auto;max-width:340px;background:#fff;
   border:1px solid #eef0f3;border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:5px;}
@@ -288,8 +333,20 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
               <div id="lcCliResultados" class="lc-dropdown" style="display:none;"></div>
             </div>
           </div>
-          <div class="lc-hint">También puedes traer los datos directamente desde un documento con el botón
-            "Traer documento(s) del ERP" de la Sección 6 — completa lo que esté vacío acá.</div>
+          {# 2026-07-25 (pedido Daniel): botón "Agregar del ERP" también acá,
+             en Cliente — llama al MISMO lcAbrirDocumentoErp() (tkaOpen,
+             multidocumento) que ya usa la Sección 5 "Productos y
+             documentos". Elegir un documento autocompleta cliente/RUT/
+             dirección (Sección 2) Y carga sus productos (Sección 5) en una
+             sola acción — ver _lcAsignarDesdeDocumento() más abajo, no se
+             duplica nada. #}
+          <button type="button" class="lc-btn lc-btn-outline" id="lcBtnTraerDocumentoCliente"
+                  onclick="lcAbrirDocumentoErp()" style="margin-top:10px;">
+            <i class="bi bi-file-earmark-arrow-down"></i>Agregar del ERP
+          </button>
+          <div class="lc-hint" style="margin-top:6px;">Trae un documento (nota de venta, cotización, factura o
+            boleta) y completa de una vez la Empresa/RUT/Dirección de la Sección 2 y los productos de la
+            Sección 5. Puedes repetir esto para agregar más de un documento.</div>
         </div>
       </div>
 
@@ -354,42 +411,18 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
         </div>
       </div>
 
-      {# ── Sección 4: condiciones ── #}
+      {# ── Sección 4: courier (tarjetas animadas) — pedido Daniel 2026-07-25:
+         "que sean tarjetitas bien animadas y coloridas... escoger según
+         precios... y ahí me da el detalle de los productos con total".
+         Reusa el MISMO comparador (/cubicador/api/cotizar) que ya existía
+         acá; solo se le da otra piel visual + ZZ Envío/ganancia por tarjeta.
+         Va ANTES de Productos a propósito: el peso para cotizar sale de
+         _LC.items, que ya puede estar poblado desde el botón "Agregar del
+         ERP" de la Sección 1 aunque la tabla de productos se vea más abajo. ── #}
       <div class="lc-card">
         <div class="lc-card-head">
           <span class="lc-card-num">4</span>
-          <span class="lc-card-title">Condiciones de la cotización</span>
-        </div>
-        <div class="lc-card-body">
-          <div class="lc-grid">
-            <div class="lc-campo" id="lcCampoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
-              <select id="lcEjecutivo" class="form-select"><option value="">Seleccione</option></select>
-              <div class="lc-campo-err">Obligatorio</div></div>
-            <div class="lc-campo" id="lcCampoValidoHasta"><label>Válido hasta</label>
-              <input id="lcValidoHasta" type="date" class="form-control">
-              <div class="lc-campo-err">Obligatorio</div></div>
-            <div class="lc-campo"><label>Margen % <span style="color:#9ca3af;font-weight:400;">(global)</span></label>
-              <input id="lcMargenPct" type="number" min="0" step="0.1" value="30" class="form-control" oninput="lcRecalcular()">
-              <div class="lc-hint">Se aplica sobre el costo del flete cotizado con el courier.</div></div>
-            <div class="lc-campo"><label>Descuento % <span style="color:#9ca3af;font-weight:400;">(global)</span></label>
-              <input id="lcDescuentoPct" type="number" min="0" max="100" step="0.1" value="0" class="form-control" oninput="lcRecalcular()">
-              <div class="lc-hint">Se aplica sobre el subtotal de ítems (flete + margen, ya con el descuento de cada línea).</div></div>
-            <div class="lc-campo full"><label>Observaciones (se visualizará en el PDF)</label>
-              <textarea id="lcNotas" class="form-control" rows="1" placeholder="Ej: Precios sujetos a disponibilidad del courier"></textarea></div>
-            <div class="lc-campo full"><label>Observaciones internas</label>
-              <textarea id="lcNotasInt" class="form-control" rows="1"></textarea></div>
-            <div class="lc-campo full"><label>Términos del PDF (uno por línea, formato "Clave: valor", opcional)</label>
-              <textarea id="lcTerminos" class="form-control" rows="2"
-                        placeholder="Ej: Precio: valores netos.&#10;Plazo: según coordinación con el courier."></textarea></div>
-          </div>
-        </div>
-      </div>
-
-      {# ── Sección 5: costo del flete (courier) ── #}
-      <div class="lc-card">
-        <div class="lc-card-head">
-          <span class="lc-card-num">5</span>
-          <span class="lc-card-title">Costo del flete</span>
+          <span class="lc-card-title">Elige tu courier</span>
           <span class="lc-card-sub">se cotiza con la comuna y el peso de los ítems marcados</span>
         </div>
         <div class="lc-card-body">
@@ -417,7 +450,7 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
             <button type="button" class="lc-btn lc-btn-dark" id="lcBtnCotizarFlete" onclick="lcCotizarFlete()" style="margin-top:10px;">
               <i class="bi bi-truck"></i>Cotizar con los couriers
             </button>
-            <div id="lcFleteResultados" class="lc-flete-resultados"></div>
+            <div id="lcFleteResultados" class="lc-courier-grid"></div>
             <div class="lc-courier-elegido" id="lcCourierElegido">
               <i class="bi bi-check-circle-fill"></i>
               <span id="lcCourierElegidoTxt"></span>
@@ -434,10 +467,10 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
         </div>
       </div>
 
-      {# ── Sección 6: productos (multidocumento) ── #}
+      {# ── Sección 5: productos (multidocumento) ── #}
       <div class="lc-card">
         <div class="lc-card-head">
-          <span class="lc-card-num">6</span>
+          <span class="lc-card-num">5</span>
           <span class="lc-card-title">Productos y documentos</span>
         </div>
         <div class="lc-card-body">
@@ -469,28 +502,65 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
             </button>
           </div>
 
-          <div class="lc-tabla-wrap">
-            <table class="lc-tabla">
-              <thead>
-                <tr>
-                  <th><input type="checkbox" id="lcCheckAll" class="lc-check" onchange="lcCheckAllToggle(this.checked)"></th>
-                  <th>Documento</th>
-                  <th>SKU</th>
-                  <th>Descripción</th>
-                  <th>Cant.</th>
-                  <th class="text-end">Peso pred.</th>
-                  <th>Medidas</th>
-                  <th class="text-end">Desc. línea %</th>
-                  <th class="text-end">Flete</th>
-                  <th class="text-end">Margen</th>
-                  <th class="text-end">Total línea</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="lcItemsBody">
-                <tr class="lc-vacio"><td colspan="12">Sin productos todavía — usa "Traer documento(s) del ERP"</td></tr>
-              </tbody>
-            </table>
+          <div class="lc-items-lockwrap is-locked" id="lcItemsLockwrap">
+            <div class="lc-items-overlay">
+              <i class="bi bi-lock-fill"></i>
+              <span>Elige un courier en la Sección 4 para ver el flete, margen y total de cada producto.</span>
+            </div>
+            <div class="lc-tabla-wrap">
+              <table class="lc-tabla">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="lcCheckAll" class="lc-check" onchange="lcCheckAllToggle(this.checked)"></th>
+                    <th>Documento</th>
+                    <th>SKU</th>
+                    <th>Descripción</th>
+                    <th>Cant.</th>
+                    <th class="text-end">Peso pred.</th>
+                    <th>Medidas</th>
+                    <th class="text-end">Desc. línea %</th>
+                    <th class="text-end">Flete</th>
+                    <th class="text-end">Margen</th>
+                    <th class="text-end">Total línea</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="lcItemsBody">
+                  <tr class="lc-vacio"><td colspan="12">Sin productos todavía — usa "Traer documento(s) del ERP"</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Sección 6: condiciones ── #}
+      <div class="lc-card">
+        <div class="lc-card-head">
+          <span class="lc-card-num">6</span>
+          <span class="lc-card-title">Condiciones de la cotización</span>
+        </div>
+        <div class="lc-card-body">
+          <div class="lc-grid">
+            <div class="lc-campo" id="lcCampoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
+              <select id="lcEjecutivo" class="form-select"><option value="">Seleccione</option></select>
+              <div class="lc-campo-err">Obligatorio</div></div>
+            <div class="lc-campo" id="lcCampoValidoHasta"><label>Válido hasta</label>
+              <input id="lcValidoHasta" type="date" class="form-control">
+              <div class="lc-campo-err">Obligatorio</div></div>
+            <div class="lc-campo"><label>Margen % <span style="color:#9ca3af;font-weight:400;">(global)</span></label>
+              <input id="lcMargenPct" type="number" min="0" step="0.1" value="30" class="form-control" oninput="lcRecalcular()">
+              <div class="lc-hint">Se aplica sobre el costo del flete cotizado con el courier.</div></div>
+            <div class="lc-campo"><label>Descuento % <span style="color:#9ca3af;font-weight:400;">(global)</span></label>
+              <input id="lcDescuentoPct" type="number" min="0" max="100" step="0.1" value="0" class="form-control" oninput="lcRecalcular()">
+              <div class="lc-hint">Se aplica sobre el subtotal de ítems (flete + margen, ya con el descuento de cada línea).</div></div>
+            <div class="lc-campo full"><label>Observaciones (se visualizará en el PDF)</label>
+              <textarea id="lcNotas" class="form-control" rows="1" placeholder="Ej: Precios sujetos a disponibilidad del courier"></textarea></div>
+            <div class="lc-campo full"><label>Observaciones internas</label>
+              <textarea id="lcNotasInt" class="form-control" rows="1"></textarea></div>
+            <div class="lc-campo full"><label>Términos del PDF (uno por línea, formato "Clave: valor", opcional)</label>
+              <textarea id="lcTerminos" class="form-control" rows="2"
+                        placeholder="Ej: Precio: valores netos.&#10;Plazo: según coordinación con el courier."></textarea></div>
           </div>
         </div>
       </div>
@@ -591,6 +661,11 @@ function _lcEstadoNuevo(){
     ufValor: null,
     ufFecha: null,
     docCache: {},        // 'TIDO|NUDO' -> lineas normalizadas, evita refetch
+    // true si algún documento traído del ERP ya traía una línea ZZ Envío
+    // (omitida del cálculo, ver _lcAsignarDesdeDocumento) — el comparador
+    // de couriers (/cubicador/api/cotizar) NO devuelve este dato por
+    // courier, así que se muestra a nivel de documento en las tarjetas.
+    docsConZz: false,
   };
 }
 function _lcItemNuevo(base){
@@ -633,6 +708,7 @@ function lcAbrir(editId){
   $('lcCostoCourierHint').textContent = 'Elige un courier arriba o escribe el valor a mano.';
   $('lcCourierElegido').style.display = 'none';
   $('lcFleteResultados').innerHTML = '';
+  _lcActualizarGateProductos();
   $('lcEjecutivo').value = '';
   $('lcContactoBody').style.display = 'none';
   $('lcContactoToggleBtn').innerHTML = '<i class="bi bi-plus-lg"></i> Agregar contacto';
@@ -991,6 +1067,7 @@ async function _lcAsignarDesdeDocumento(items, header){
     });
   }
 
+  if (zzOmitidas) _LC.docsConZz = true;
   if (!nuevos.length){
     if (zzOmitidas) toast('Solo había línea(s) de envío (ZZ) en ese documento — no aplican a este cálculo.', 'warning');
     return;
@@ -1297,6 +1374,10 @@ async function lcCotizarFlete(){
   }
 }
 var _lcFleteOpciones = [];
+function _lcMargenActualPct(){
+  var v = parseFloat($('lcMargenPct') ? $('lcMargenPct').value : 30);
+  return isFinite(v) && v >= 0 ? v : 30;
+}
 function _lcRenderFleteResultados(items, comunaResuelta){
   _lcFleteOpciones = items.map(function(c){
     var precio = (c.precio != null) ? c.precio : (c.subtotal != null) ? c.subtotal : (c.precio_venta != null ? c.precio_venta : null);
@@ -1306,6 +1387,11 @@ function _lcRenderFleteResultados(items, comunaResuelta){
       precio: (precio != null && isFinite(Number(precio))) ? Number(precio) : null,
       estimado: !!(c.es_estimado === true || String(c.fuente||'').toLowerCase() === 'estimado'),
       cobertura: (c.tiene_cobertura !== false) && precio != null,
+      // El comparador (/cubicador/api/cotizar) NO devuelve ZZ Envío por
+      // courier — es un dato de DOCUMENTO, no de tarifa. Se usa el flag
+      // _LC.docsConZz (true si algún documento traído del ERP ya traía una
+      // línea ZZ) para las 3 tarjetas por igual — ver _lcAsignarDesdeDocumento.
+      zzEnvio: !!(_LC && _LC.docsConZz),
     };
   });
   var conCobertura = _lcFleteOpciones.filter(function(c){ return c.cobertura; })
@@ -1314,30 +1400,48 @@ function _lcRenderFleteResultados(items, comunaResuelta){
     $('lcFleteResultados').innerHTML = '<div class="lc-hint warn"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ningún courier cotizó para esta comuna.</div>';
     return;
   }
-  $('lcFleteResultados').innerHTML = conCobertura.map(function(c, i){
-    return '<div class="lc-flete-opt" onclick="lcElegirCourier(' + _lcFleteOpciones.indexOf(c) + ')">' +
-      '<span class="nombre">' + esc(c.nombre) + (c.estimado ? ' <span class="lc-chip roja">Estimado</span>' : '') + '</span>' +
-      '<span class="precio">' + clp(c.precio) + '</span>' +
+  var margenPct = _lcMargenActualPct();
+  var precioMasBarato = conCobertura[0].precio;
+  $('lcFleteResultados').innerHTML = conCobertura.map(function(c){
+    var idx = _lcFleteOpciones.indexOf(c);
+    var ganancia = Math.round((c.precio || 0) * margenPct / 100);
+    var esMejor = c.precio === precioMasBarato;
+    return '<div class="lc-courier-card' + (esMejor ? ' is-mejor-precio' : '') + '" data-idx="' + idx + '"' +
+      ' style="animation-delay:' + (idx * 0.04) + 's" onclick="lcElegirCourier(' + idx + ')">' +
+      (esMejor ? '<span class="lc-cc-badge"><i class="bi bi-lightning-charge-fill"></i> Más conveniente</span>' : '') +
+      '<span class="lc-cc-check"><i class="bi bi-check-lg"></i></span>' +
+      '<div class="lc-cc-nombre">' + esc(c.nombre) +
+        (c.estimado ? '<span class="lc-chip roja">Estimado</span>' : '') +
+        (c.zzEnvio ? '<span class="lc-chip verde">ZZ Envío</span>' : '') +
+      '</div>' +
+      '<div class="lc-cc-precio">' + clp(c.precio) + '</div>' +
+      '<div class="lc-cc-margen"><i class="bi bi-graph-up-arrow"></i>Ganancia ILUS (' + margenPct + '%): ' + clp(ganancia) + '</div>' +
     '</div>';
   }).join('');
   _LC.courier.comunaResuelta = comunaResuelta;
+}
+function _lcActualizarGateProductos(){
+  var lock = $('lcItemsLockwrap');
+  if (!lock) return;
+  lock.classList.toggle('is-locked', !(_LC && _LC.courier && _LC.courier.id != null));
 }
 function lcElegirCourier(idx){
   var c = _lcFleteOpciones[idx];
   if (!c || !_LC) return;
   _LC.courier.id = c.id;
   _LC.courier.nombre = c.nombre;
-  // Cada tarjeta lleva su índice ORIGINAL de _lcFleteOpciones en el
-  // onclick (ver _lcRenderFleteResultados) — comparar contra ese string
-  // es más simple y correcto que reconstruir el índice visual.
-  var marcador = 'lcElegirCourier(' + idx + ')';
-  document.querySelectorAll('#lcFleteResultados .lc-flete-opt').forEach(function(el){
-    el.classList.toggle('is-elegida', el.getAttribute('onclick') === marcador);
+  document.querySelectorAll('#lcFleteResultados .lc-courier-card').forEach(function(el){
+    el.classList.toggle('is-elegida', parseInt(el.dataset.idx, 10) === idx);
   });
   $('lcCostoCourier').value = Math.round(c.precio || 0);
   $('lcCostoCourierHint').textContent = 'Tomado de ' + c.nombre + (c.estimado ? ' (estimado — confírmalo antes de comprometerlo)' : '') + '. Puedes editarlo a mano.';
   $('lcCourierElegido').style.display = 'flex';
   $('lcCourierElegidoTxt').textContent = 'Courier elegido: ' + c.nombre + ' · ' + clp(c.precio);
+  // Recién ACÁ se destapa el detalle de productos (pedido Daniel: "escoger
+  // según precios... y ahí me da el detalle de los productos con total").
+  _lcActualizarGateProductos();
+  var tabla = document.querySelector('#lcItemsLockwrap .lc-tabla-wrap');
+  if (tabla) tabla.scrollIntoView({behavior:'smooth', block:'nearest'});
   lcRecalcular();
 }
 
@@ -1454,7 +1558,7 @@ async function lcGuardar(){
   }
   var incluidos = _LC.items.filter(function(it){ return it.incluido; });
   if (!incluidos.length){
-    toast('Marca al menos un producto en la Sección 6', 'warning');
+    toast('Marca al menos un producto en la Sección 5', 'warning');
     return;
   }
   if (!(Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0) > 0)){
@@ -1589,6 +1693,7 @@ async function _lcCargarEdicion(cid){
       $('lcCourierElegido').style.display = 'flex';
       $('lcCourierElegidoTxt').textContent = 'Courier elegido: ' + c.courier_nombre + ' · ' + clp(c.costo_courier || 0);
     }
+    _lcActualizarGateProductos();
 
     var items = Array.isArray(d.items) ? d.items : [];
     _LC.items = items.map(function(it){
