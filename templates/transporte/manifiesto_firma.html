@@ -207,10 +207,12 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
         <th class="num" style="width:70px">Bultos</th>
         <th class="num" style="width:90px">Peso (kg)</th>
         <th class="num" style="width:110px">Costo courier</th>
+        <th style="width:110px">Estado</th>
       </tr>
     </thead>
     <tbody>
       {% for it in items %}
+      {% set _est = it.estado_entrega or 'En preparación' %}
       <tr>
         <td>{{ it.tido }} N°{{ it.nudo }}</td>
         <td>{{ it.cliente_nombre or '—' }}</td>
@@ -222,6 +224,11 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
             ${{ "{:,.0f}".format(it.costo_courier|float).replace(",", ".") }}
           {% else %}—{% endif %}
         </td>
+        {# FIX 2026-07-27 (Daniel: "el manifiesto tiene que indicarme el
+           estado de cada pedido"): reusa transport_manifest_items.
+           estado_entrega tal cual -- mismo texto que ya usa el Monitor/
+           tracking, no se inventa una nomenclatura nueva. #}
+        <td style="font-weight:700;{% if _est == 'Entregado' %}color:#16a34a;{% elif _est in ('Problema','Entrega fallida','Devolución') %}color:var(--ilus-red);{% endif %}">{{ _est }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -231,6 +238,7 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
         <td class="num">{{ _total_bultos }}</td>
         <td class="num">{{ '%.2f'|format(_total_peso) }}</td>
         <td class="num">${{ "{:,.0f}".format(_total_flete).replace(",", ".") }}</td>
+        <td></td>
       </tr>
     </tfoot>
   </table>
