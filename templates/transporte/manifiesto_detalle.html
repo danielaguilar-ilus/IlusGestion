@@ -17,12 +17,15 @@
     'Entregado a transporte': {'bg':'#06b6d4', 'icon':'bi-truck-flatbed'},
     'En ruta':                {'bg':'#3b82f6', 'icon':'bi-truck'},
     'Entregado':              {'bg':'#16a34a', 'icon':'bi-check-circle-fill'},
+    'Problema':               {'bg':'#dc2626', 'icon':'bi-x-octagon-fill'},
     'Entrega fallida':        {'bg':'#dc2626', 'icon':'bi-x-octagon-fill'},
     'Devolución':             {'bg':'#f59e0b', 'icon':'bi-arrow-return-left'}
   }.get(estado, {'bg':'#6b7280', 'icon':'bi-question-circle'}) -%}
-  {# editable=False (envío FedEx, usuario no-admin): badge informativo, NO
-     clickeable. El estado lo mueve solo la Track API; el cambio manual queda
-     restringido a admin/superadmin (decisión Daniel 2026-06-14). #}
+  {# editable=False (usuario no-admin): badge informativo, NO clickeable.
+     El cambio MANUAL del estado de entrega queda restringido a admin/
+     superadmin para CUALQUIER courier (decisión Daniel 2026-07-25, amplía
+     la de 2026-06-14 que solo aplicaba a FedEx). Las APIs (FedEx Track,
+     SimpliRoute, chofer) siguen moviendo el estado solas sin pasar por acá. #}
   <button type="button" class="badge-estado-entrega"
           id="badge-estado-{{ item_id }}"
           data-estado="{{ estado }}"
@@ -33,7 +36,7 @@
           onclick='abrirEditarEstado({{ manifiesto.id }}, {{ item_id }}, {{ estado|tojson }})'
           title="Click para cambiar el estado"
           {%- else -%}
-          title="Este envío se actualiza solo con FedEx · el cambio manual es solo para administradores"
+          title="El cambio manual del estado de entrega es solo para administradores · las APIs de transporte lo actualizan automáticamente"
           {%- endif %}>
     <i class="bi {{ m.icon }}"></i>
     <span>{{ estado }}</span>
@@ -50,10 +53,12 @@
 }.get(manifiesto.estado, 'secondary') %}
 
 {# ── ¿Puede el usuario cambiar el estado a mano? ──
-   Los envíos FedEx se actualizan solos (Track API). El cambio manual en FedEx
-   queda restringido a admin/superadmin. En couriers manuales, todos pueden. #}
+   2026-07-25 (Daniel): las APIs (FedEx Track, SimpliRoute, chofer) toman el
+   control del estado una vez el pedido sale a transporte — el cambio MANUAL
+   queda restringido a admin/superadmin para CUALQUIER courier (antes solo se
+   exigía para FedEx; se amplía la regla de 2026-06-14). #}
 {% set _es_admin = (current_user and (current_user.role in ('admin','superadmin'))) %}
-{% set puede_editar_estado = ((not es_fedex) or _es_admin) %}
+{% set puede_editar_estado = _es_admin %}
 
 {# ── Totales financieros del manifiesto ── #}
 {% set tot_cobrado = items|sum(attribute='zz_envio') %}
@@ -292,7 +297,7 @@
 
 {# ── Resumen de estados de entrega ── #}
 {% set total_entregados = items|selectattr('estado_entrega','eq','Entregado')|list|length %}
-{% set total_fallidos   = items|selectattr('estado_entrega','eq','Entrega fallida')|list|length %}
+{% set total_fallidos   = (items|selectattr('estado_entrega','eq','Entrega fallida')|list|length) + (items|selectattr('estado_entrega','eq','Problema')|list|length) %}
 {% set total_ruta       = items|selectattr('estado_entrega','eq','En ruta')|list|length %}
 {% set total_items      = items|length %}
 <div class="row g-2 mb-3 no-print">
@@ -2279,7 +2284,7 @@ function _trkRender(d) {
 
   // Stepper
   var cur = d.estado_step || 1;
-  var danger = (d.estado === 'Entrega fallida' || d.estado === 'Devolución');
+  var danger = (d.estado === 'Entrega fallida' || d.estado === 'Problema' || d.estado === 'Devolución');
   var stepsHtml = '';
   TRK_STEPS.forEach(function(s, i) {
     var n = i + 1;
@@ -2996,9 +3001,17 @@ var ESTADOS_META = {
   'Entregado a transporte': { bg:'#06b6d4', icon:'bi-truck-flatbed' },
   'En ruta':                { bg:'#3b82f6', icon:'bi-truck' },
   'Entregado':              { bg:'#16a34a', icon:'bi-check-circle-fill' },
-  'Entrega fallida':        { bg:'#dc2626', icon:'bi-x-octagon-fill' },
+  'Problema':               { bg:'#dc2626', icon:'bi-x-octagon-fill' },
+  'Entrega fallida':        { bg:'#dc2626', icon:'bi-x-octagon-fill' },  // compat: solo para pintar filas viejas, no seleccionable
   'Devolución':             { bg:'#f59e0b', icon:'bi-arrow-return-left' }
 };
+// Estados que el modal ofrece para elegir manualmente. 'Entrega fallida' queda
+// FUERA a propósito (2026-07-25): es el nombre viejo de 'Problema', ya no se
+// escribe desde acá — solo se conserva en ESTADOS_META para pintar bien el
+// badge de items ya guardados con ese valor.
+var ESTADOS_SELECCIONABLES = [
+  'En preparación', 'Entregado a transporte', 'En ruta', 'Entregado', 'Problema', 'Devolución'
+];
 var _modalEstado = null;
 var _editEstadoCtx = null;
 
@@ -3020,7 +3033,7 @@ function abrirEditarEstado(mid, itemId, currentEstado) {
 
   var box = document.getElementById('mee-buttons');
   box.innerHTML = '';
-  Object.keys(ESTADOS_META).forEach(function(estado) {
+  ESTADOS_SELECCIONABLES.forEach(function(estado) {
     var m = ESTADOS_META[estado];
     var btn = document.createElement('button');
     btn.type = 'button';
@@ -3040,9 +3053,22 @@ function abrirEditarEstado(mid, itemId, currentEstado) {
     }
     btn.innerHTML = '<i class="bi ' + m.icon + ' me-2" style="font-size:1.25rem"></i>' +
                     '<span>' + _esc(estado) + '</span>' + actualTag;
-    btn.onclick = function() {
+    btn.onclick = async function() {
       if (estado === currentEstado) { _modalEstado.hide(); return; }
-      aplicarCambioEstado(estado, btn);
+      // "Problema" exige motivo obligatorio (pedido Daniel 2026-07-25): el
+      // correo al cliente cuenta cuál fue el problema, así que sin motivo no
+      // se guarda. Usamos ilusPrompt (REGLA #1 — nunca prompt() nativo).
+      var _motivo = null;
+      if (estado === 'Problema') {
+        _motivo = await ilusPrompt({
+          title: 'Marcar "Problema"',
+          message: 'Cuéntanos qué pasó con la entrega. Este motivo se incluye en el correo que recibirá el cliente.',
+          placeholder: 'Ej: dirección incorrecta, destinatario ausente, producto dañado...',
+          required: true,
+        });
+        if (!_motivo) return;   // canceló o dejó vacío
+      }
+      aplicarCambioEstado(estado, btn, _motivo);
     };
     box.appendChild(btn);
   });
@@ -3050,7 +3076,7 @@ function abrirEditarEstado(mid, itemId, currentEstado) {
   _modalEstado.show();
 }
 
-async function aplicarCambioEstado(nuevoEstado, btnEl) {
+async function aplicarCambioEstado(nuevoEstado, btnEl, comentario) {
   if (!_editEstadoCtx) return;
   var mid = _editEstadoCtx.mid, itemId = _editEstadoCtx.itemId;
   if (btnEl) { btnEl.disabled = true; btnEl.style.opacity = '.6'; }
@@ -3058,7 +3084,7 @@ async function aplicarCambioEstado(nuevoEstado, btnEl) {
     var r = await fetch('/transporte/manifiestos/' + mid + '/items/' + itemId + '/estado', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ estado_entrega: nuevoEstado })
+      body: JSON.stringify({ estado_entrega: nuevoEstado, comentario: comentario || undefined })
     });
     var d = await r.json();
     if (!d.ok) {

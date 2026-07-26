@@ -347,7 +347,7 @@
           <td>
             {% if c.estado_entrega == 'Entregado' %}
               <span class="dh-badge-entrega ok"><i class="bi bi-check-lg"></i> Entregado</span>
-            {% elif c.estado_entrega in ('Entrega fallida', 'Devolución') %}
+            {% elif c.estado_entrega in ('Problema', 'Entrega fallida', 'Devolución') %}
               <span class="dh-badge-entrega bad"><i class="bi bi-x-lg"></i> {{ c.estado_entrega }}</span>
             {% elif c.estado_entrega == 'En ruta' %}
               <span class="dh-badge-entrega ruta"><i class="bi bi-truck"></i> En ruta</span>

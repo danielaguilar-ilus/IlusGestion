@@ -1602,8 +1602,8 @@ const TPL_ESTADOS_TRANSPORTE = [
     color:'#17a2b8', desc:'Se envía cuando el pedido está en reparto, llegará hoy' },
   { key:'entregado',     label:'Entregado',                 icon:'bi-check-circle',      grupo:'despacho',
     color:'#20c997', desc:'Se envía cuando el pedido fue entregado exitosamente' },
-  { key:'fallido',       label:'Fallido / No entregado',   icon:'bi-x-circle',          grupo:'despacho',
-    color:'#dc3545', desc:'Se envía cuando el courier no pudo entregar el pedido' },
+  { key:'fallido',       label:'Problema con la entrega',   icon:'bi-x-circle',          grupo:'despacho',
+    color:'#dc3545', desc:'Se envía cuando un supervisor marca "Problema" a mano (motivo obligatorio) o el courier reporta una excepción de entrega' },
 ];
 
 const TPL_ESTADOS_COTIZACIONES_TRANSPORTE = [
@@ -1921,12 +1921,12 @@ const TPL_DEFAULTS = {
   // ─── FALLIDO / NO ENTREGADO ──────────────────────────────────────────────
   fallido: {
     email: {
-      asunto: '⚠️ No pudimos entregar tu pedido {{id_pedido}} — ILUS',
-      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Lamentamos informarte que no fue posible entregar tu pedido <strong>{{id_pedido}}</strong> en el intento realizado.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff5f5;border-left:4px solid #dc3545;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Motivo:</strong>&nbsp; <span style="color:#dc3545;font-weight:600">{{motivo_falla}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección intentada:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">Nuestro equipo se pondrá en contacto contigo para coordinar una nueva fecha de entrega. Disculpa los inconvenientes ocasionados.</p>'
+      asunto: '⚠️ Hubo un problema con la entrega de tu pedido {{id_pedido}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Te contamos que hubo un problema con la entrega de tu pedido <strong>{{id_pedido}}</strong> en el intento realizado.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff5f5;border-left:4px solid #dc3545;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">¿Qué pasó?:</strong>&nbsp; <span style="color:#dc3545;font-weight:600">{{motivo_falla}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección intentada:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">Nuestro equipo se pondrá en contacto contigo para resolverlo y coordinar una nueva fecha de entrega. Disculpa los inconvenientes ocasionados.</p>'
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '⚠️ *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, lamentamos informarte que no pudimos entregar tu pedido *{{id_pedido}}*.\n\n❌ *Motivo:* {{motivo_falla}}\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n\nNos comunicaremos contigo para reagendar la entrega. Pedimos disculpas por el inconveniente. 🙏'
+      cuerpo: '⚠️ *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, hubo un problema con la entrega de tu pedido *{{id_pedido}}*.\n\n❌ *¿Qué pasó?:* {{motivo_falla}}\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n\nNos comunicaremos contigo para resolverlo y reagendar la entrega. Pedimos disculpas por el inconveniente. 🙏'
     }
   },
 

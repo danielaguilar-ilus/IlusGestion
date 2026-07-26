@@ -433,7 +433,7 @@ a.kv:active{ background:#fafafa; }
 <body>
 
 {% set cur = data.estado_step or 1 %}
-{% set terminal_danger = data.estado in ['Entrega fallida','Devolución'] %}
+{% set terminal_danger = data.estado in ['Problema','Entrega fallida','Devolución'] %}
 {% set entregado = data.estado == 'Entregado' %}
 {% set pct = 100 if entregado else (((cur - 1) / 3 * 100) | round | int) %}
 
@@ -481,7 +481,7 @@ a.kv:active{ background:#fafafa; }
       {% elif data.estado == 'En ruta' %}Tu pedido va en camino al destino.
       {% elif data.estado == 'Entregado a transporte' %}Tu pedido ya fue retirado por el transporte.
       {% elif data.estado == 'En preparación' %}Estamos preparando tu pedido en bodega.
-      {% elif data.estado == 'Entrega fallida' %}La entrega no pudo concretarse. Nos pondremos en contacto contigo.
+      {% elif data.estado in ('Problema', 'Entrega fallida') %}Hubo un problema con la entrega. Nos pondremos en contacto contigo.
       {% elif data.estado == 'Devolución' %}Tu pedido está en proceso de devolución.
       {% endif %}
     </div>
@@ -693,7 +693,8 @@ a.kv:active{ background:#fafafa; }
     'Entregado a transporte': 'Tu pedido ya fue retirado por el transporte.',
     'En ruta':                'Tu pedido va en camino al destino.',
     'Entregado':              'Tu pedido fue entregado.',
-    'Entrega fallida':        'La entrega no pudo concretarse. Nos pondremos en contacto contigo.',
+    'Entrega fallida':        'Hubo un problema con la entrega. Nos pondremos en contacto contigo.',
+    'Problema':               'Hubo un problema con la entrega. Nos pondremos en contacto contigo.',
     'Devolución':             'Tu pedido está en proceso de devolución.',
   };
   let lastEstado = {{ data.estado | tojson }};
@@ -794,7 +795,7 @@ a.kv:active{ background:#fafafa; }
 
     // Avance %
     const pct = entregado ? 100 : Math.round((cur - 1) / 3 * 100);
-    const malo  = data.estado === 'Entrega fallida' || data.estado === 'Devolución';
+    const malo  = data.estado === 'Entrega fallida' || data.estado === 'Problema' || data.estado === 'Devolución';
     const pctEl = document.getElementById('tkPct');
     if (pctEl) { pctEl.textContent = pct + '%'; pctEl.classList.toggle('is-bad', malo); }
     if (fill) {

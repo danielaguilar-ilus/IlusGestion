@@ -2498,7 +2498,7 @@ def init_transporte_tables():
                     orden           INT DEFAULT 0,
                     estado_entrega  ENUM(
                         'En preparación','Entregado a transporte',
-                        'En ruta','Entregado','Entrega fallida','Devolución'
+                        'En ruta','Entregado','Entrega fallida','Problema','Devolución'
                     ) DEFAULT 'En preparación',
                     added_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (manifest_id)
@@ -18369,18 +18369,28 @@ COURIERS = [
 ]
 ESTADOS_ENTREGA = [
     'En preparación', 'Entregado a transporte',
-    'En ruta', 'Entregado', 'Entrega fallida', 'Devolución',
+    'En ruta', 'Entregado', 'Problema', 'Devolución',
 ]
 
 # Stepper visual del tracking público (cliente).
-# El orden define la barra de progreso; los terminales (Entregado/fallida/Devolución)
+# El orden define la barra de progreso; los terminales (Entregado/Problema/Devolución)
 # pintan el último paso en su color.
+# 2026-07-25 (Daniel): "Entrega fallida" se renombró a "Problema" — es un estado
+# 100% MANUAL (solo lo pone un supervisor admin/superadmin, nunca una API/courier
+# automáticamente) y ahora exige comentario obligatorio (ver tr_estado_entrega).
+# Se conserva la clave vieja 'Entrega fallida' en este dict (mismo color/step/icono)
+# por COMPATIBILIDAD: filas ya guardadas en producción con ese valor (ej. las que
+# pone el poller automático de FedEx vía _FEDEX_STATUS_MAP) siguen pintando bien
+# el stepper sin necesitar un UPDATE en la BD (regla CLAUDE.md #4.2 — no perder
+# datos/funcionalidad existente). No se borra ni se migra nada: ambas claves
+# conviven, apuntando al mismo look visual.
 ESTADOS_ENTREGA_META = {
     'En preparación':         {'color': 'secondary', 'icon': 'bi-clipboard-check',     'step': 1},
     'Entregado a transporte': {'color': 'info',      'icon': 'bi-truck-flatbed',       'step': 2},
     'En ruta':                {'color': 'primary',   'icon': 'bi-truck',               'step': 3},
     'Entregado':              {'color': 'success',   'icon': 'bi-check-circle-fill',   'step': 4},
-    'Entrega fallida':        {'color': 'danger',    'icon': 'bi-x-octagon-fill',      'step': 4},
+    'Problema':               {'color': 'danger',    'icon': 'bi-x-octagon-fill',      'step': 4},
+    'Entrega fallida':        {'color': 'danger',    'icon': 'bi-x-octagon-fill',      'step': 4},  # compat valores viejos
     'Devolución':             {'color': 'warning',   'icon': 'bi-arrow-return-left',   'step': 4},
 }
 
@@ -18582,11 +18592,12 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
         #   En preparación        → al asignar la factura a un manifiesto
         #   Entregado a transporte → al generar la etiqueta FedEx
         #   En ruta / Entregado    → cambios detectados desde FedEx (autopoll)
-        #   Entrega fallida        → FedEx reportó problema de entrega
+        #   Entrega fallida/Problema → FedEx reportó problema de entrega, o un
+        #                              supervisor marcó "Problema" a mano
         # El anti-spam (600s) en _tr_notificar_cliente evita duplicados.
         if (notify_cliente and commitment_id and
                 estado in ('En preparación', 'Entregado a transporte',
-                           'En ruta', 'Entregado', 'Entrega fallida')):
+                           'En ruta', 'Entregado', 'Entrega fallida', 'Problema')):
             try:
                 _tr_notificar_cliente(commitment_id, estado, comentario=comentario)
             except Exception as _ne:
@@ -18684,12 +18695,15 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         titulo = "Tu despacho va en camino"
         cuerpo = "Buenas noticias: tu pedido salió a ruta y va camino a tu dirección."
         cta_label = "Ver seguimiento en vivo"
-    elif estado == 'Entrega fallida':
-        asunto = _brand_subject(f"Problema con la entrega de tu despacho {doc}")
-        status_label = "Entrega fallida"
-        titulo = "Tuvimos un inconveniente con la entrega"
-        cuerpo = ("FedEx reportó un problema al intentar entregar tu pedido. "
-                  "Estamos pendientes para reprogramar la entrega.")
+    elif estado in ('Entrega fallida', 'Problema'):
+        asunto = _brand_subject(f"Hubo un problema con la entrega de tu despacho {doc}")
+        status_label = "Problema con la entrega"
+        titulo = "Hubo un problema con tu entrega"
+        _motivo_txt = (comentario or "").strip()
+        cuerpo = ("Tuvimos un inconveniente al intentar entregar tu pedido"
+                  + (f": {_motivo_txt}." if _motivo_txt else ". ")
+                  + " Estamos pendientes para resolverlo y reprogramar la entrega. "
+                    "Si tienes dudas, contáctanos.")
         cta_label = "Ver detalle"
     else:   # Entregado
         asunto = _brand_subject(f"Tu despacho {doc} fue entregado")
@@ -18710,6 +18724,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
         'En ruta':                'en_camino',
         'Entregado':              'entregado',
         'Entrega fallida':        'fallido',
+        'Problema':               'fallido',
     }.get(estado, 'entregado')
     try:
         _vars = {
@@ -24220,27 +24235,36 @@ def tr_estado_entrega(mid, item_id):
     if estado not in ESTADOS_ENTREGA:
         return jsonify({"error": "estado inválido"}), 400
 
-    # Protección (decisión Daniel 2026-06-14): los envíos FedEx se actualizan
-    # SOLOS por la Track API. Para que nadie los desincronice por accidente, el
-    # cambio MANUAL de estado en un item con OT FedEx queda restringido a
-    # admin/superadmin. Los couriers manuales (sin tracking) no se afectan.
-    es_fedex_item = mysql_fetchone(
-        "SELECT 1 AS x FROM transport_manifest_items "
-        "WHERE id=%s AND manifest_id=%s "
-        "  AND ((tracking_number IS NOT NULL AND tracking_number <> '') "
-        "       OR (master_tracking_number IS NOT NULL AND master_tracking_number <> ''))",
-        (item_id, mid)
-    )
-    if es_fedex_item:
-        _u = getattr(g, "user", None) or {}
-        if (_u.get("role") or "") not in ("admin", "superadmin"):
-            return jsonify({
-                "ok": False,
-                "error": ("Este envío FedEx se actualiza automáticamente. "
-                          "Solo un administrador puede cambiar su estado a mano."),
-            }), 403
+    # Protección GENERAL (decisión Daniel 2026-07-25, amplía la de 2026-06-14):
+    # una vez el pedido queda "Entregado a transporte", las APIs (FedEx Track,
+    # SimpliRoute, chofer) toman el control del estado de entrega — este
+    # endpoint es el único camino MANUAL (usuario humano vía UI) y por eso
+    # queda restringido a admin/superadmin SIN IMPORTAR el courier (antes solo
+    # se exigía para items con tracking FedEx; los demás couriers quedaban
+    # abiertos a cualquier usuario con permiso 'transporte', lo cual ya no
+    # aplica). Los procesos automáticos (poller FedEx, chofer, sistema) NO
+    # pasan por este endpoint — llaman directo a `_tr_event()` con
+    # fuente='fedex'/'chofer'/'sistema', así que no quedan bloqueados por esta
+    # guarda.
+    _u = getattr(g, "user", None) or {}
+    if (_u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({
+            "ok": False,
+            "error": ("El cambio manual del estado de entrega es exclusivo de "
+                      "un supervisor (admin/superadmin). Las APIs de transporte "
+                      "actualizan el estado automáticamente."),
+        }), 403
 
     comentario = (body.get("comentario") or "").strip() or None
+
+    # "Problema" (antes "Entrega fallida") es el único estado 100% manual y
+    # exige motivo obligatorio: el correo al cliente depende de contarle
+    # cuál fue el problema (pedido explícito de Daniel 2026-07-25).
+    if estado in ("Problema", "Entrega fallida") and not comentario:
+        return jsonify({
+            "ok": False,
+            "error": "Para marcar 'Problema' debes indicar el motivo (obligatorio) — se incluye en el correo al cliente.",
+        }), 400
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
@@ -27512,7 +27536,7 @@ def chofer_cierre(mid):
     stats = mysql_fetchone("""
         SELECT
           SUM(CASE WHEN estado_entrega='Entregado' THEN 1 ELSE 0 END) AS entregadas,
-          SUM(CASE WHEN estado_entrega='Entrega fallida' THEN 1 ELSE 0 END) AS fallidas,
+          SUM(CASE WHEN estado_entrega IN ('Entrega fallida','Problema') THEN 1 ELSE 0 END) AS fallidas,
           COUNT(*) AS total,
           MIN(added_at) AS inicio,
           MAX(added_at) AS fin
@@ -27609,7 +27633,7 @@ def tr_dashboard_hoy():
              WHERE estado='Entregado'
                AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS entregados_hoy,
           (SELECT COUNT(*) FROM transport_tracking_events
-             WHERE estado='Entrega fallida'
+             WHERE estado IN ('Entrega fallida','Problema')
                AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS fallidos_hoy,
           (SELECT COUNT(*) FROM transport_tracking_events
              WHERE estado='En ruta'
@@ -27754,7 +27778,7 @@ def tr_monitor_snapshot():
                 SELECT
                   COUNT(*) AS total,
                   SUM(CASE WHEN estado_entrega='Entregado' THEN 1 ELSE 0 END) AS entregadas,
-                  SUM(CASE WHEN estado_entrega='Entrega fallida' THEN 1 ELSE 0 END) AS fallidas,
+                  SUM(CASE WHEN estado_entrega IN ('Entrega fallida','Problema') THEN 1 ELSE 0 END) AS fallidas,
                   SUM(CASE WHEN estado_entrega='En ruta' THEN 1 ELSE 0 END) AS en_ruta
                 FROM transport_manifest_items WHERE manifest_id=%s
             """, (mid,)) or {}
@@ -33636,7 +33660,7 @@ def tpl_email_estado_pedido(data):
     logo  = cc.get("logo_url", "")
     estado_badge = {
         "En preparación": "🔵", "En ruta": "🚚", "Entregado": "✅",
-        "Entrega fallida": "❌", "Pendiente": "⏳",
+        "Entrega fallida": "❌", "Problema": "❌", "Pendiente": "⏳",
     }.get(data.get("status", ""), "📦")
     header = _email_header_ilus(
         f"{estado_badge} {data.get('status','Actualización')}",
@@ -71967,6 +71991,31 @@ def _ensure_transporte_columns():
             print(f"[ensure_tr_cols] columna agregada: {col}", flush=True)
         except Exception as e_add:
             print(f"[ensure_tr_cols] no se pudo agregar {col}: {e_add}", flush=True)
+
+    # 2026-07-25 (Daniel): "Entrega fallida" -> "Problema" — el nuevo valor debe
+    # existir en el ENUM de transport_manifest_items.estado_entrega ANTES de
+    # que el endpoint manual intente escribirlo (si no, MySQL trunca a '' en
+    # modo no-estricto o lanza error). CREATE TABLE IF NOT EXISTS no alcanza
+    # en prod (la tabla ya existe con el ENUM viejo) — hay que MODIFY. Se
+    # AGREGA 'Problema' sin quitar 'Entrega fallida' del ENUM (compat con filas
+    # ya guardadas por el poller automático de FedEx, regla CLAUDE.md #4.2).
+    try:
+        _col = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_manifest_items' "
+            "  AND COLUMN_NAME='estado_entrega'"
+        )
+        _coltype = (_col or {}).get("COLUMN_TYPE") or ""
+        if _coltype and "'problema'" not in _coltype.lower():
+            mysql_execute(
+                "ALTER TABLE transport_manifest_items MODIFY COLUMN estado_entrega "
+                "ENUM('En preparación','Entregado a transporte','En ruta','Entregado',"
+                "'Entrega fallida','Problema','Devolución') DEFAULT 'En preparación'"
+            )
+            print("[ensure_tr_cols] ENUM estado_entrega ampliado con 'Problema'", flush=True)
+    except Exception as e_enum:
+        print(f"[ensure_tr_cols] no se pudo ampliar ENUM estado_entrega: {e_enum}", flush=True)
+
     return faltantes
 
 
@@ -72204,6 +72253,8 @@ def _ensure_transport_tracking_tables():
             except Exception as _e_add_it:
                 print(f"[tr_tracking] no se pudo agregar item.{col}: {_e_add_it}",
                       flush=True)
+    # Nota: el ENUM estado_entrega (incl. 'Problema') ya se amplía en
+    # _ensure_transport_columns() (~línea 71995) — no se repite acá.
     try:
         mysql_execute(
             "ALTER TABLE transport_manifest_items ADD INDEX idx_tmi_track (tracking_number)"

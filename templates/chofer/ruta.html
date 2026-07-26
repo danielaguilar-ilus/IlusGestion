@@ -83,7 +83,7 @@
       <div class="rt-stop-body">
         <div class="d-flex justify-content-between align-items-start gap-2">
           <div class="rt-stop-cli">{{ p.cliente_nombre or '—' }}</div>
-          <span class="rt-estado-badge {{ {'En preparación':'e-prep','Entregado a transporte':'e-trans','En ruta':'e-ruta','Entregado':'e-entreg','Entrega fallida':'e-fallida','Devolución':'e-fallida'}[est] or 'e-prep' }}">{{ est }}</span>
+          <span class="rt-estado-badge {{ {'En preparación':'e-prep','Entregado a transporte':'e-trans','En ruta':'e-ruta','Entregado':'e-entreg','Problema':'e-fallida','Entrega fallida':'e-fallida','Devolución':'e-fallida'}[est] or 'e-prep' }}">{{ est }}</span>
         </div>
         <div class="rt-stop-addr">{{ p.direccion or '—' }}{% if p.comuna %}, {{ p.comuna }}{% endif %}</div>
         <div class="rt-stop-meta">{{ p.tido }} {{ p.nudo }} · {{ p.bultos or 0 }} bulto{{ 's' if (p.bultos or 0) != 1 }}{% if p.telefono %} · {{ p.telefono }}{% endif %}</div>

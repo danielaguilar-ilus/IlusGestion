@@ -129,7 +129,7 @@ async function cargarDetalle(cid){
 
 function _fmtTs(t){ if(!t) return '—'; try{ return new Date(t.replace(' ','T')+'-04:00').toLocaleString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'America/Santiago'}); }catch(e){ return t; } }
 function _ageTxt(s){ if(s<60) return 'ahora'; if(s<3600) return 'hace '+Math.round(s/60)+' min'; return 'hace '+Math.round(s/3600)+'h'; }
-function _badgeClass(e){ return ({'En preparación':'b-prep','Entregado a transporte':'b-trans','En ruta':'b-ruta','Entregado':'b-entreg','Entrega fallida':'b-fallida','Devolución':'b-fallida'}[e] || 'b-prep'); }
+function _badgeClass(e){ return ({'En preparación':'b-prep','Entregado a transporte':'b-trans','En ruta':'b-ruta','Entregado':'b-entreg','Problema':'b-fallida','Entrega fallida':'b-fallida','Devolución':'b-fallida'}[e] || 'b-prep'); }
 
 function _renderDetalle(d){
   const c = d.commitment, mi = d.manifest_item, ch = d.chofer, lp = d.last_ping, p = d.proof;

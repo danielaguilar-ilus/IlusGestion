@@ -172,7 +172,10 @@ html, body { background: #fff; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2.5mm;
+  gap: 4mm; /* FIX Daniel: logos "centralizados dentro del segmentador" -- más
+               separación desde la línea divisora central para que cada logo
+               quede repartido a su lado (SHS un poco a la izquierda, ILUS un
+               poco a la derecha) en vez de apretados al centro. */
 }
 .lbl-head .brand-logo {
   display: flex;
@@ -224,22 +227,27 @@ html, body { background: #fff; }
   color: var(--ilus-red);
 }
 .lbl-head .brand-info {
+  /* FIX Daniel: "los datos déjalo un poquito más chiquito, no los considero
+     necesarios -- no estaban en la etiqueta original". Se deja (no se quita
+     del todo: sigue siendo el RUT/giro/dirección del remitente, útil para
+     aduana/reclamos) pero bien secundario -- mitad de tamaño que antes. */
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: center;
-  gap: .6mm 1.6mm;
-  padding-top: .8mm;
+  gap: .5mm 1.4mm;
+  padding-top: .6mm;
   border-top: .3mm solid #e5e7eb;
-  font-size: 2.1mm;
-  font-weight: 700;
-  line-height: 1.25;
-  color: var(--ilus-black);
+  font-size: 1.5mm;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ilus-gray);
   text-align: center;
 }
 .lbl-head .brand-info .rut {
-  font-size: 2.3mm;
-  font-weight: 900;
+  font-size: 1.6mm;
+  font-weight: 800;
+  color: var(--ilus-black);
 }
 .lbl-head .brand-info .giro {
   text-transform: uppercase;
@@ -311,7 +319,8 @@ html, body { background: #fff; }
   color: var(--ilus-red);
 }
 .lbl-doc .doc-number {
-  font-size: 9mm;
+  /* FIX Daniel: "el número no tan grande" (comparado con la referencia) */
+  font-size: 7mm;
   font-weight: 950;
   line-height: 1.02;
   letter-spacing: .2mm;
@@ -401,6 +410,13 @@ html, body { background: #fff; }
   font-size: 4mm;
   font-weight: 950;
 }
+/* FIX Daniel: "que destaque también la comuna" -- antes iba igual que
+   fono/dirección; el chofer la necesita a simple vista para ordenar rutas. */
+.dest-row .v.comuna {
+  font-size: 4.4mm;
+  font-weight: 950;
+  color: var(--ilus-red);
+}
 
 /* Caja BULTOS X de N — número grande arriba, QR debajo */
 .bultos-box {
@@ -439,18 +455,19 @@ html, body { background: #fff; }
   width: 90%;
 }
 .bultos-box .b-x {
-  font-size: 22mm;
+  /* FIX Daniel: "los bultos un poco más medianos" -- eran 22mm, desmedido */
+  font-size: 13mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
 }
 .bultos-box .b-de {
-  font-size: 4mm;
+  font-size: 3.6mm;
   font-weight: 800;
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 11mm;
+  font-size: 8mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
@@ -495,48 +512,15 @@ html, body { background: #fff; }
   line-height: 1.2;
 }
 
-/* STATUS DE SALIDA (caja vacía visible para sello/firma) */
-.lbl-status {
-  display: grid;
-  grid-template-columns: 32mm 1fr;
-  gap: 2mm;
-  border-bottom: .5mm solid var(--ilus-black);
-  padding: 2.2mm 3mm;
-  min-height: 16mm;
-  align-items: center;
-}
-.lbl-status .st-info {
-  display: flex;
-  align-items: center;
-  gap: 1.5mm;
-}
-.lbl-status .st-info svg {
-  width: 5mm;
-  height: 5mm;
-  flex-shrink: 0;
-}
-.lbl-status .st-text .st-title {
-  font-size: 2.8mm;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .3mm;
-  color: var(--ilus-black);
-  line-height: 1.1;
-}
-.lbl-status .st-text .st-hint {
-  font-size: 2mm;
-  font-weight: 600;
-  color: var(--ilus-gray);
-  margin-top: .5mm;
-}
-.lbl-status .st-box {
-  border: .4mm dashed var(--ilus-gray);
-  border-radius: 1.5mm;
-  min-height: 13mm;
-  background: #fafafa;
-}
+/* FIX 2026-07-25 (Daniel, captura real): el bloque "Status de salida"
+   (sello/firma) sumaba 16mm mínimos fijos que no entraban en el alto real
+   de la etiqueta, empujando y solapando el texto de Comuna con este bloque.
+   Daniel además mostró una referencia sin esta caja y pidió "tal cual como
+   está allí" -- se quita por completo (Regla #4.2: removido a pedido
+   explícito, no a discreción propia). El bloque .lbl-status/.st-* y su HTML
+   correspondiente en el <article> se eliminaron.
 
-/* Footer de íconos de cuidado */
+   Footer de íconos de cuidado */
 .lbl-foot {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1079,7 +1063,7 @@ html, body { background: #fff; }
           <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
           <div class="dest-row"><span class="k">Fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
           <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v">{{ f.direccion or '—' }}</span></div>
-          <div class="dest-row"><span class="k">Comuna</span><span class="v">{{ f.comuna or '—' }}</span></div>
+          <div class="dest-row"><span class="k">Comuna</span><span class="v comuna">{{ f.comuna or '—' }}</span></div>
         </div>
         <div class="bultos-box">
           <div class="b-title">
@@ -1103,18 +1087,6 @@ html, body { background: #fff; }
           <div class="qr-fallback">Usa el c&oacute;digo de barra de abajo</div>
           {% endif %}
         </div>
-      </div>
-
-      {# ─── STATUS DE SALIDA (caja vacía para sello/firma) ─── #}
-      <div class="lbl-status">
-        <div class="st-info">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.06 9l.94.94L5.92 19H5v-.92L14.06 9m3.6-6c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83a.996.996 0 000-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29zm-3.6 3.19L3 17.25V21h3.75L17.81 9.94 14.06 6.19z"/></svg>
-          <div class="st-text">
-            <div class="st-title">Status de salida</div>
-            <div class="st-hint">Sello / firma del transportista</div>
-          </div>
-        </div>
-        <div class="st-box"></div>
       </div>
 
       <footer class="lbl-foot">
