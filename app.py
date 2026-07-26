@@ -20134,8 +20134,16 @@ def tr_compromisos_json():
     if q:
         where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; params += [qp,qp,qp,qp,qp]
-    if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
-    if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
+    # FIX 2026-07-27 (Daniel, captura real MAN-2026-0011/VD 6371): "En
+    # gestión" es un ESTADO (¿está en un manifiesto activo ahora?), no algo
+    # que dependa de cuándo se emitió el documento — un pedido puede llevar
+    # semanas emitido y seguir hoy mismo en preparación/en ruta. Filtrar por
+    # fecha_emision lo escondía del todo si su emisión caía fuera del rango
+    # elegido (ej. "último mes"), aunque siguiera activo en un manifiesto de
+    # HOY. El rango de fechas solo aplica a pendientes/entregados/todos.
+    if vista != "en_gestion":
+        if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
+        if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
 
     # `WHERE 1=1` como base: con vista=todos sin más filtros, `where` puede
     # quedar vacío y romper el SQL. El 1=1 lo blinda sin cambiar resultados.
@@ -20213,7 +20221,6 @@ def tr_compromisos_json():
     conteos_row = mysql_fetchone(
         "SELECT "
         "  SUM(CASE WHEN " + _SQL_PENDIENTE + " THEN 1 ELSE 0 END) AS pendientes,"
-        "  SUM(CASE WHEN " + _SQL_ENGESTION + " THEN 1 ELSE 0 END) AS en_gestion,"
         "  SUM(CASE WHEN " + _SQL_ENTREGADO + " THEN 1 ELSE 0 END) AS entregados,"
         "  SUM(CASE WHEN preventa=1 THEN 1 ELSE 0 END) AS preventa,"
         "  SUM(CASE WHEN " + _SQL_PENDIENTE + " AND fecha_emision IS NOT NULL"
@@ -20222,6 +20229,23 @@ def tr_compromisos_json():
         " FROM transport_commitments" + base_w,
         tuple(base_params)
     ) or {}
+    # FIX 2026-07-27 (Daniel: "el pedido de Juan Daniel Aguilar debería estar
+    # en gestión y no hay nada" -- VD 6371, en manifiesto MAN-2026-0011 con
+    # estado 'Entregado a transporte'): "En gestión" NO se acota por fecha de
+    # emisión (ver mismo fix arriba en el listado) -- se cuenta aparte, sin
+    # base_where de fecha, para que un pedido activo hoy no desaparezca solo
+    # porque se emitió fuera del rango de fechas elegido.
+    _eg_where, _eg_params = ["tido <> 'GDV'"], []
+    if clasif: _eg_where.append("clasificacion=%s"); _eg_params.append(clasif)
+    if q:
+        _eg_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; _eg_params += [qp,qp,qp,qp,qp]
+    _eg_row = mysql_fetchone(
+        "SELECT SUM(CASE WHEN " + _SQL_ENGESTION + " THEN 1 ELSE 0 END) AS en_gestion "
+        "FROM transport_commitments WHERE " + " AND ".join(_eg_where),
+        tuple(_eg_params)
+    ) or {}
+    conteos_row["en_gestion"] = _eg_row.get("en_gestion")
 
     return jsonify({
         "ok": True,
