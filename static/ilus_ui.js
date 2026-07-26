@@ -152,7 +152,16 @@
           ).join('')}
         </div>
       </div>`;
-    document.body.appendChild(overlay);
+    // FIX 2026-07-27 (Daniel: "no me dejó ni siquiera agregar un correo" --
+    // ilusPrompt abierto DESDE un modal Bootstrap ya abierto): Bootstrap
+    // atrapa el foco dentro de su propio `.modal` (focus trap de
+    // accesibilidad) — cualquier elemento fuera de él, aunque tenga z-index
+    // más alto y se vea encima, pierde el foco apenas el usuario intenta
+    // escribir (el trap lo regresa al modal de Bootstrap). Si hay un modal
+    // Bootstrap abierto, el overlay se agrega COMO HIJO de ese modal en vez
+    // de document.body, para que el trap lo considere "adentro" y no le
+    // robe el foco al input.
+    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     return overlay;
   }
@@ -315,7 +324,16 @@
         `;
         document.head.appendChild(s);
       }
-      document.body.appendChild(overlay);
+      // FIX 2026-07-27 (Daniel: "no me dejó ni siquiera agregar un correo" --
+    // ilusPrompt abierto DESDE un modal Bootstrap ya abierto): Bootstrap
+    // atrapa el foco dentro de su propio `.modal` (focus trap de
+    // accesibilidad) — cualquier elemento fuera de él, aunque tenga z-index
+    // más alto y se vea encima, pierde el foco apenas el usuario intenta
+    // escribir (el trap lo regresa al modal de Bootstrap). Si hay un modal
+    // Bootstrap abierto, el overlay se agrega COMO HIJO de ese modal en vez
+    // de document.body, para que el trap lo considere "adentro" y no le
+    // robe el foco al input.
+    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
       const inputEl = overlay.querySelector('.ilus-prompt-input');
       setTimeout(() => { inputEl.focus(); inputEl.select && inputEl.select(); }, 200);
@@ -479,7 +497,16 @@
           <div class="ilus-sheet-body">${optsHtml}</div>
           <button type="button" class="ilus-sheet-cancel" data-cancel="1">${escapeHtml(cancelLabel)}</button>
         </div>`;
-      document.body.appendChild(overlay);
+      // FIX 2026-07-27 (Daniel: "no me dejó ni siquiera agregar un correo" --
+    // ilusPrompt abierto DESDE un modal Bootstrap ya abierto): Bootstrap
+    // atrapa el foco dentro de su propio `.modal` (focus trap de
+    // accesibilidad) — cualquier elemento fuera de él, aunque tenga z-index
+    // más alto y se vea encima, pierde el foco apenas el usuario intenta
+    // escribir (el trap lo regresa al modal de Bootstrap). Si hay un modal
+    // Bootstrap abierto, el overlay se agrega COMO HIJO de ese modal en vez
+    // de document.body, para que el trap lo considere "adentro" y no le
+    // robe el foco al input.
+    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
 
       function done(val){

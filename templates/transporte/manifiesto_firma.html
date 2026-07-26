@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manifiesto de entrega · {{ manifiesto.correlativo or manifiesto.id }}</title>
+<title>Manifiesto de retiro · {{ manifiesto.correlativo or manifiesto.id }}</title>
 <style>
 :root {
   --ilus-red:   #dc2626;
@@ -45,13 +45,14 @@ html, body {
 
 .hoja {
   width: 191mm;
-  margin: 16px auto;
+  margin: 16px auto 40px;
   background: #fff;
   box-shadow: 0 4px 18px rgba(0,0,0,.12);
 }
-.hoja:last-child { margin-bottom: 40px; }
 
-/* ── Header ── */
+/* ── Header ──
+   FIX 2026-07-27 (Daniel: "los logos un 60% más grandes"): SHS 32px→51px,
+   ILUS 80px→128px (ya venían de un ajuste previo de 58px→80px). */
 .hdr {
   display: flex; align-items: center; justify-content: space-between;
   background: var(--ilus-black); color: #fff;
@@ -60,35 +61,25 @@ html, body {
 .hdr-logos { display: flex; align-items: center; gap: 14px; }
 .hdr-shs {
   background: #fff; border-radius: 4px;
-  padding: 5px 10px; line-height: 0;
+  padding: 6px 12px; line-height: 0;
   display: flex; align-items: center; justify-content: center;
 }
-.hdr-shs img { height: 32px; width: auto; display: block; }
+.hdr-shs img { height: 51px; width: auto; display: block; }
 .hdr-shs-txt {
   background: #fff; color: #0a0a0a; border-radius: 4px;
-  padding: 6px 12px; line-height: 1.05; font-weight: 800;
+  padding: 8px 15px; line-height: 1.05; font-weight: 800;
 }
-.hdr-shs-txt .l1 { font-size: 14px; letter-spacing: .5px; }
-.hdr-shs-txt .l2 { font-size: 8px; color: #6b7280; font-weight: 700; letter-spacing: 2px; }
-.hdr-logos > img { height: 80px; }
+.hdr-shs-txt .l1 { font-size: 18px; letter-spacing: .5px; }
+.hdr-shs-txt .l2 { font-size: 10px; color: #6b7280; font-weight: 700; letter-spacing: 2px; }
+.hdr-logos > img { height: 128px; }
 .hdr-doc { text-align: right; }
 .hdr-doc .tit { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
 .hdr-doc .num { font-size: 20px; font-weight: 800; color: var(--ilus-red); }
 .hdr-doc .fec { font-size: 10px; color: #9ca3af; margin-top: 2px; }
 .accent { height: 6px; background: var(--ilus-red); }
 
-/* ── Cajas de datos ── */
-.datos { display: flex; }
-.datos .col { flex: 1; padding: 14px 20px; }
-.datos .col:first-child { border-right: 1px solid #e5e7eb; }
-.datos h4 {
-  margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .5px;
-}
-.datos .row { display: flex; gap: 6px; margin-bottom: 3px; font-size: 11px; }
-.datos .row b { min-width: 62px; flex-shrink: 0; }
-
 .infobar {
-  display: flex; gap: 24px; background: #f3f4f6;
+  display: flex; gap: 24px; flex-wrap: wrap; background: #f3f4f6;
   padding: 10px 20px; font-size: 11px;
 }
 .infobar b { color: var(--ilus-red); }
@@ -98,6 +89,12 @@ html, body {
   padding: 8px 20px; font-weight: 800; font-size: 12px;
   border-left: 5px solid var(--ilus-red);
   display: flex; justify-content: space-between; align-items: center;
+  margin-top: 14px;
+}
+.sec-sub {
+  background: #f3f4f6; color: #111827;
+  padding: 6px 20px; font-weight: 700; font-size: 11px;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 table.detalle { width: 100%; border-collapse: collapse; }
@@ -109,6 +106,7 @@ table.detalle th:first-child { padding-left: 20px; }
 table.detalle td { padding: 5px 20px; font-size: 11px; border-bottom: 1px solid #f0f0f0; }
 table.detalle tr:nth-child(even) td { background: #fafafa; }
 table.detalle td.num, table.detalle th.num { text-align: right; }
+table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-black); background: #f9fafb; }
 
 .totales {
   display: flex; justify-content: flex-end; gap: 26px;
@@ -121,11 +119,19 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
 .declaracion {
   padding: 12px 20px; font-size: 10.5px; color: #374151;
   background: #fffbeb; border-top: 1px solid #fde68a; border-bottom: 1px solid #fde68a;
+  margin-top: 14px;
 }
 
-.firmas { display: flex; gap: 18px; padding: 18px 20px 22px; }
-.firma-box { flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px 14px; }
-.firma-box .cap { font-size: 10.5px; font-weight: 700; text-align: center; margin-bottom: 34px; }
+/* FIX 2026-07-27 (Daniel: "una única firma... transporte Milling o
+   Felca"): antes había una firma por documento (ILUS/courier + cliente).
+   El manifiesto es la constancia de que EL COURIER retira todos los bultos
+   listados arriba -- una sola firma del transportista, al final. La
+   conformidad del cliente se recaba aparte, en el momento real de entrega
+   (ver /t/<token> y transport_delivery_proof), no acá. */
+.firmas { padding: 18px 20px 22px; }
+.firma-box { border: 1px solid #d1d5db; border-radius: 6px; padding: 14px 18px 18px; max-width: 420px; margin-left: auto; }
+.firma-box .cap { font-size: 11px; font-weight: 700; text-align: center; margin-bottom: 38px; }
+.firma-box .sub { font-size: 9.5px; color: var(--ilus-gray); text-align: center; margin-top: -34px; margin-bottom: 34px; }
 .firma-linea { border-top: 1px solid #9ca3af; margin-bottom: 6px; }
 .firma-campo { font-size: 9.5px; color: var(--ilus-gray); margin-top: 4px; }
 .firma-campo b { color: #111827; }
@@ -139,14 +145,14 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
   .toolbar { display: none !important; }
   body { background: #fff; }
   .hoja { box-shadow: none; margin: 0; width: auto; }
-  .hoja:not(:last-child) { page-break-after: always; }
+  .sec-hdr, table.detalle thead tr, .firmas { break-inside: avoid; }
 }
 </style>
 </head>
 <body>
 
 <div class="toolbar no-print">
-  <div class="tb-title">📋 Manifiesto de entrega · {{ manifiesto.correlativo or manifiesto.id }} — {{ items|length }} documento(s)</div>
+  <div class="tb-title">📋 Manifiesto de retiro · {{ manifiesto.correlativo or manifiesto.id }} — {{ items|length }} factura(s)</div>
   <div class="tb-actions">
     {% if pdf_url %}
     <a class="btn btn-outline" href="{{ pdf_url }}" target="_blank">⬇ Descargar PDF</a>
@@ -155,7 +161,10 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
   </div>
 </div>
 
-{% for it in items %}
+{% set _total_bultos = items|sum(attribute='n_bultos') %}
+{% set _total_peso   = items|sum(attribute='peso_declarar')|float %}
+{% set _total_flete  = items|sum(attribute='costo_courier')|float %}
+
 <div class="hoja">
   <div class="hdr">
     <div class="hdr-logos">
@@ -167,42 +176,74 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
       {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
     </div>
     <div class="hdr-doc">
-      <div class="tit">MANIFIESTO DE ENTREGA</div>
+      <div class="tit">MANIFIESTO DE RETIRO</div>
       <div class="num">N° {{ manifiesto.correlativo or manifiesto.id }}</div>
       <div class="fec">FECHA EMISIÓN: {{ fecha }}</div>
     </div>
   </div>
   <div class="accent"></div>
 
-  <div class="datos">
-    <div class="col">
-      <h4>DATOS DEL REMITENTE</h4>
-      <div class="row"><b>Razón social:</b> {{ remitente.nombre }}</div>
-      <div class="row"><b>R.U.T.:</b> {{ remitente.rut }}</div>
-      <div class="row"><b>Dirección:</b> {{ remitente.direccion }}</div>
-      <div class="row"><b>Bodega:</b> {{ remitente.bodega }}</div>
-      <div class="row"><b>Fono:</b> {{ remitente.telefono }}</div>
-    </div>
-    <div class="col">
-      <h4>DATOS DEL DESTINATARIO</h4>
-      <div class="row"><b>Nombre:</b> {{ it.cliente_nombre or '—' }}</div>
-      <div class="row"><b>R.U.T.:</b> {{ it.cliente_rut or '—' }}</div>
-      <div class="row"><b>Dirección:</b> {{ it.direccion or '—' }}</div>
-      <div class="row"><b>Comuna:</b> {{ it.comuna or '—' }}</div>
-      <div class="row"><b>Fono:</b> {{ it.telefono or '—' }}</div>
-    </div>
-  </div>
-
   <div class="infobar">
-    <span><b>Documento:</b> {{ it.tido }} N°{{ it.nudo }}</span>
     <span><b>Courier:</b> {{ manifiesto.courier or '—' }}</span>
-    <span><b>Bultos:</b> {{ it.n_bultos }}</span>
-    <span><b>Peso a declarar:</b> {{ '%.2f'|format(it.peso_declarar) }} kg</span>
+    <span><b>Facturas:</b> {{ items|length }}</span>
+    <span><b>Bultos totales:</b> {{ _total_bultos }}</span>
+    <span><b>Peso total a declarar:</b> {{ '%.2f'|format(_total_peso) }} kg</span>
   </div>
 
+  {# ── SECCIÓN 1: facturas del manifiesto + lo que se le cobra al courier.
+     Nunca costo_zz/costo_envio (lo cobrado al cliente) -- el transportista
+     solo debe ver lo que ÉL le cobra a ILUS por el flete (costo_courier),
+     jamás el margen/precio que ILUS le cobra a su propio cliente. #}
   <div class="sec-hdr">
-    <span>DETALLE DE PRODUCTOS A ENTREGAR</span>
-    <span>{{ it.lineas|length }} línea(s)</span>
+    <span>FACTURAS DEL MANIFIESTO</span>
+    <span>{{ items|length }} documento{{ 's' if items|length != 1 else '' }}</span>
+  </div>
+  <table class="detalle">
+    <thead>
+      <tr>
+        <th style="width:110px">Documento</th>
+        <th>Cliente</th>
+        <th>Comuna</th>
+        <th class="num" style="width:70px">Bultos</th>
+        <th class="num" style="width:90px">Peso (kg)</th>
+        <th class="num" style="width:110px">Costo courier</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr>
+        <td>{{ it.tido }} N°{{ it.nudo }}</td>
+        <td>{{ it.cliente_nombre or '—' }}</td>
+        <td>{{ it.comuna or '—' }}</td>
+        <td class="num">{{ it.n_bultos }}</td>
+        <td class="num">{{ '%.2f'|format(it.peso_declarar) }}</td>
+        <td class="num">
+          {% if it.costo_courier and it.costo_courier|float > 0 %}
+            ${{ "{:,.0f}".format(it.costo_courier|float).replace(",", ".") }}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3">TOTAL MANIFIESTO</td>
+        <td class="num">{{ _total_bultos }}</td>
+        <td class="num">{{ '%.2f'|format(_total_peso) }}</td>
+        <td class="num">${{ "{:,.0f}".format(_total_flete).replace(",", ".") }}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  {# ── SECCIÓN 2: detalle de productos por factura (lo que el transportista
+     retira físicamente de cada una). #}
+  <div class="sec-hdr">
+    <span>DETALLE DE PRODUCTOS POR FACTURA</span>
+  </div>
+  {% for it in items %}
+  <div class="sec-sub">
+    {{ it.tido }} N°{{ it.nudo }} · {{ it.cliente_nombre or '—' }} · {{ it.comuna or '—' }}
+    &nbsp;—&nbsp; {{ it.n_bultos }} bulto{{ 's' if it.n_bultos != 1 else '' }} · {{ '%.2f'|format(it.peso_declarar) }} kg
   </div>
   <table class="detalle">
     <thead>
@@ -223,54 +264,27 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
       {% endif %}
     </tbody>
   </table>
-
-  <div class="totales">
-    <div class="item"><div class="lbl">TOTAL BULTOS</div><div class="val">{{ it.n_bultos }}</div></div>
-    <div class="item"><div class="lbl">PESO A DECLARAR (KG)</div><div class="val">{{ '%.2f'|format(it.peso_declarar) }}</div></div>
-    {# Valorización del flete (Daniel 2026-07-22): lo que ILUS paga al
-       transportista por ESTE despacho (transport_commitments.costo_courier).
-       Se omite si es 0 para no mostrar "$0" en documentos sin costo cargado. #}
-    {% if it.costo_courier and it.costo_courier|float > 0 %}
-    <div class="item">
-      <div class="lbl">VALOR FLETE</div>
-      <div class="val">${{ "{:,.0f}".format(it.costo_courier|float).replace(",", ".") }}</div>
-    </div>
-    {% endif %}
-  </div>
-
-  {% set _total_flete = items|sum(attribute='costo_courier')|float %}
-  {% if _total_flete > 0 %}
-  <div style="display:flex;justify-content:space-between;align-items:center;
-              padding:8px 20px;background:#0a0a0a;color:#fff;font-size:11px">
-    <span style="letter-spacing:.5px">VALOR TOTAL DEL FLETE · MANIFIESTO COMPLETO
-      ({{ items|length }} documento{{ 's' if items|length != 1 else '' }})</span>
-    <span style="font-weight:800;font-size:13px">${{ "{:,.0f}".format(_total_flete).replace(",", ".") }}</span>
-  </div>
-  {% endif %}
+  {% endfor %}
 
   <div class="declaracion">
-    Declaro haber recibido conforme los productos detallados arriba, en las cantidades y condiciones indicadas,
-    a entera satisfacción. Cualquier daño, faltante o diferencia debe indicarse por escrito en este mismo documento antes de firmar.
+    El transportista declara haber retirado conforme la totalidad de los bultos detallados en este manifiesto
+    ({{ _total_bultos }} bulto{{ 's' if _total_bultos != 1 else '' }} · {{ items|length }} factura{{ 's' if items|length != 1 else '' }}),
+    en las cantidades y condiciones indicadas. Cualquier faltante o diferencia debe indicarse por escrito en este mismo documento antes de firmar.
+    La conformidad de entrega al cliente final se recaba por separado, al momento de cada despacho.
   </div>
 
   <div class="firmas">
     <div class="firma-box">
-      <div class="cap">Firma de quien entrega (ILUS / Courier)</div>
-      <div class="firma-linea"></div>
-      <div class="firma-campo">Nombre: ______________________________</div>
-      <div class="firma-campo">Fecha / Hora: ____________________</div>
-    </div>
-    <div class="firma-box">
-      <div class="cap">Firma de conformidad del cliente</div>
+      <div class="cap">Firma de retiro conforme</div>
+      <div class="sub">{{ manifiesto.courier or 'Transportista' }}</div>
       <div class="firma-linea"></div>
       <div class="firma-campo">Nombre: ______________________________</div>
       <div class="firma-campo">R.U.T.: ________________  Fecha / Hora: ____________</div>
     </div>
   </div>
 
-  <div class="footer-doc">Documento {{ loop.index }} de {{ items|length }} · Manifiesto {{ manifiesto.correlativo or manifiesto.id }} · Este comprobante es el respaldo oficial de entrega.</div>
+  <div class="footer-doc">Manifiesto {{ manifiesto.correlativo or manifiesto.id }} · {{ items|length }} factura{{ 's' if items|length != 1 else '' }} · {{ _total_bultos }} bulto{{ 's' if _total_bultos != 1 else '' }} · Este comprobante es el respaldo oficial de retiro.</div>
 </div>
-{% endfor %}
 
 </body>
 </html>
