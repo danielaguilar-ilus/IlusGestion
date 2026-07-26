@@ -129,14 +129,32 @@ html, body {
 @media print {
   html, body { background: #fff; }
   .toolbar, .selector-panel, .et-overlay { display: none !important; }
-  .sheet { padding: 0; gap: 0; }
-  .etiqueta {
-    box-shadow: none;
-    border-radius: 0;
+  .sheet {
+    display: block;
+    width: 100mm;
+    padding: 0;
+    gap: 0;
+  }
+  body.is-embedded .sheet { padding: 0; }
+  .et-wrap {
+    width: 99.5mm;
+    height: 149mm;
+    margin: 0 auto;
+    page-break-inside: avoid;
+    break-inside: avoid;
     page-break-after: always;
     break-after: page;
+    overflow: hidden;
   }
-  .etiqueta:last-child {
+  .et-wrap:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  .etiqueta {
+    width: 100%;
+    height: 100%;
+    box-shadow: none;
+    border-radius: 0;
     page-break-after: auto;
     break-after: auto;
   }
@@ -150,14 +168,32 @@ html, body {
 {% if pdf_mode %}
 html, body { background: #fff; }
 .toolbar, .selector-panel, .et-overlay { display: none !important; }
-.sheet { padding: 0; gap: 0; }
-.etiqueta {
-  box-shadow: none;
-  border-radius: 0;
+.sheet {
+  display: block;
+  width: 100mm;
+  padding: 0;
+  gap: 0;
+}
+body.is-embedded .sheet { padding: 0; }
+.et-wrap {
+  width: 99.5mm;
+  height: 149mm;
+  margin: 0 auto;
+  page-break-inside: avoid;
+  break-inside: avoid;
   page-break-after: always;
   break-after: page;
+  overflow: hidden;
 }
-.etiqueta:last-child { page-break-after: auto; break-after: auto; }
+.et-wrap:last-child { page-break-after: auto; break-after: auto; }
+.etiqueta {
+  width: 100%;
+  height: 100%;
+  box-shadow: none;
+  border-radius: 0;
+  page-break-after: auto;
+  break-after: auto;
+}
 {% endif %}
 
 /* HEADER ILUS — logos (SPORTS HEALTH SOLUTIONS + ILUS) + datos del
@@ -244,6 +280,7 @@ html, body { background: #fff; }
 .lbl-courier {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
+  height: 12.5mm;
   gap: 0;
   border-bottom: .5mm solid var(--ilus-black);
   background: var(--ilus-white);
@@ -251,7 +288,8 @@ html, body { background: #fff; }
 }
 .lbl-courier .cr-cell {
   border-right: .35mm solid var(--ilus-black);
-  min-height: 11mm;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -259,9 +297,40 @@ html, body { background: #fff; }
   text-align: left;
   padding: 1.6mm 1.8mm;
   gap: 1.5mm;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .lbl-courier .cr-cell:last-child {
   border-right: 0;
+}
+.lbl-courier .cr-cell.is-compact {
+  padding-left: 1mm;
+  padding-right: 1mm;
+  gap: .8mm;
+}
+.lbl-courier .cr-cell.is-compact .cr-icon {
+  width: 5.5mm;
+  height: 5.5mm;
+  flex-basis: 5.5mm;
+  font-size: 3.2mm;
+}
+.lbl-courier .cr-cell.is-compact .cr-label {
+  font-size: 1.4mm;
+  letter-spacing: .1mm;
+}
+.lbl-courier .cr-cell.is-tight {
+  padding-left: .7mm;
+  padding-right: .7mm;
+  gap: .6mm;
+}
+.lbl-courier .cr-cell.is-tight .cr-icon {
+  width: 4.5mm;
+  height: 4.5mm;
+  flex-basis: 4.5mm;
+  font-size: 2.8mm;
+}
+.lbl-courier .cr-cell.is-tight .cr-label {
+  font-size: 1.2mm;
 }
 .lbl-courier .cr-icon {
   display: inline-flex;
@@ -276,7 +345,12 @@ html, body { background: #fff; }
   background: var(--ilus-black);
   line-height: 1;
 }
-.lbl-courier .cr-content { min-width: 0; }
+.lbl-courier .cr-content {
+  min-width: 0;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
 .lbl-courier .cr-label {
   font-size: 1.7mm;
   font-weight: 800;
@@ -289,7 +363,7 @@ html, body { background: #fff; }
   font-weight: 850;
   color: var(--ilus-black);
   line-height: 1.15;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Bloque centrado ORDEN DE DESPACHO — foco visual principal de la etiqueta.
@@ -300,6 +374,7 @@ html, body { background: #fff; }
   padding: 2.4mm 2mm 2.8mm;
   text-align: center;
   flex-shrink: 0;
+  overflow: hidden;
 }
 .lbl-doc .doc-title-row {
   display: flex;
@@ -328,7 +403,8 @@ html, body { background: #fff; }
   line-height: .95;
   letter-spacing: .1mm;
   color: var(--ilus-black);
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
   margin-top: 1mm;
 }
 .lbl-doc .doc-type {
@@ -336,6 +412,8 @@ html, body { background: #fff; }
   font-weight: 700;
   text-transform: uppercase;
   color: var(--ilus-gray);
+  white-space: nowrap;
+  overflow: hidden;
   margin-top: .3mm;
 }
 
@@ -344,31 +422,36 @@ html, body { background: #fff; }
    orden; se mueve acá como sección propia antes del footer. */
 .lbl-scan {
   border-bottom: .5mm solid #000;
-  padding: 1.1mm 3mm 1.3mm;
+  padding: .8mm 1.2mm .9mm;
   text-align: center;
   flex-shrink: 0;
   position: relative;
   background: var(--ilus-white);
   z-index: 1;
+  overflow: hidden;
 }
 .lbl-scan .scan-title {
-  font-size: 1.7mm;
+  font-size: 1.6mm;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .3mm;
   color: var(--ilus-gray);
-  margin-bottom: .5mm;
+  margin-bottom: .25mm;
 }
 .barcode-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 6mm;
+  width: 100%;
+  min-height: 8.5mm;
+  padding: 0 1mm;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .barcode {
-  width: 70%;
-  height: 6mm;
-  max-height: 6mm;
+  width: 96%;
+  height: 8.5mm;
+  max-height: 8.5mm;
 }
 .lbl-scan .scan-number {
   font-family: 'Courier New', monospace;
@@ -376,21 +459,25 @@ html, body { background: #fff; }
   font-weight: 800;
   letter-spacing: .3mm;
   color: var(--ilus-black);
-  margin-top: .4mm;
+  white-space: nowrap;
+  overflow: hidden;
+  margin-top: .2mm;
 }
 
 /* Destinatario y bultos arriba; direccion y comuna a todo el ancho abajo. */
 .lbl-dest {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(31mm, .8fr);
+  grid-template-rows: 27mm minmax(25mm, 1fr);
   border-bottom: .5mm solid #000;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
 .dest-info {
-  padding: 2mm 2.5mm 1.8mm;
+  grid-column: 1;
+  grid-row: 1;
+  padding: 1.5mm 2.5mm 1mm;
   border-right: .4mm solid #000;
   overflow: hidden;
   display: flex;
@@ -416,12 +503,65 @@ html, body { background: #fff; }
   width: 4.5mm;
   height: 4.5mm;
 }
+.dest-info.is-compact {
+  padding: .8mm 2mm .5mm;
+  gap: .25mm;
+}
+.dest-info.is-compact .dest-label {
+  gap: 1mm;
+  padding: .7mm 1.5mm;
+  font-size: 2.8mm;
+}
+.dest-info.is-compact .dest-label svg {
+  width: 3.8mm;
+  height: 3.8mm;
+}
+.dest-info.is-compact .dest-line {
+  grid-template-columns: 5mm minmax(0, 1fr);
+  gap: 1mm;
+  padding: .3mm 0 .45mm;
+}
+.dest-info.is-compact .dest-line .dest-icon {
+  width: 5mm;
+  height: 5mm;
+  font-size: 3mm;
+}
+.dest-info.is-compact .dest-row .k {
+  font-size: 2mm;
+}
+.dest-info.is-tight .dest-label {
+  gap: .8mm;
+  padding: .45mm 1.2mm;
+  font-size: 2.5mm;
+}
+.dest-info.is-tight .dest-label svg {
+  width: 3.2mm;
+  height: 3.2mm;
+}
+.dest-info.is-tight .dest-line {
+  grid-template-columns: 4.5mm minmax(0, 1fr);
+  gap: .7mm;
+  padding: .15mm 0 .25mm;
+}
+.dest-info.is-tight .dest-line .dest-icon {
+  width: 4.5mm;
+  height: 4.5mm;
+  font-size: 2.7mm;
+}
 .dest-row .k {
   font-size: 2.4mm;
   font-weight: 800;
   text-transform: uppercase;
   color: var(--ilus-gray);
   display: block;
+}
+.dest-row {
+  min-width: 0;
+  overflow: hidden;
+}
+.dest-info > .dest-row,
+.dest-info > .dest-line {
+  flex: 0 0 auto;
 }
 .dest-line {
   display: grid;
@@ -451,10 +591,11 @@ html, body { background: #fff; }
   font-size: 4mm;
   font-weight: 850;
   line-height: 1.16;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .dest-route {
   grid-column: 1 / -1;
+  grid-row: 2;
   min-height: 0;
   padding: 1mm 2.5mm 1.3mm;
   border-top: .4mm solid var(--ilus-black);
@@ -503,9 +644,38 @@ html, body { background: #fff; }
   text-transform: uppercase;
   margin-top: .3mm;
 }
+.dest-route.is-compact {
+  padding: .6mm 1.8mm .7mm;
+}
+.dest-route.is-compact .dest-line {
+  grid-template-columns: 5.8mm minmax(0, 1fr);
+  gap: 1mm;
+  padding: .45mm 0 .55mm;
+}
+.dest-route.is-compact .dest-icon {
+  width: 5.8mm;
+  height: 5.8mm;
+  font-size: 3.3mm;
+}
+.dest-route.is-tight {
+  padding-top: .3mm;
+  padding-bottom: .35mm;
+}
+.dest-route.is-tight .dest-line {
+  grid-template-columns: 5mm minmax(0, 1fr);
+  gap: .8mm;
+  padding: .2mm 0 .3mm;
+}
+.dest-route.is-tight .dest-icon {
+  width: 5mm;
+  height: 5mm;
+  font-size: 2.9mm;
+}
 
 /* Caja BULTOS X de N, ubicada en la fila superior del destino. */
 .bultos-box {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -535,17 +705,21 @@ html, body { background: #fff; }
   height: 4.5mm;
 }
 .bultos-box .b-main {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto auto;
   align-items: baseline;
   justify-content: center;
   gap: 1mm;
-  margin-top: .4mm;
+  align-content: center;
+  flex: 1 1 auto;
+  margin-top: 0;
   padding-bottom: 0;
   width: 96%;
+  overflow: hidden;
 }
 .bultos-box .b-x {
   /* Grande para lectura a distancia, con margen para cantidades de dos dígitos. */
-  font-size: 15mm;
+  font-size: 13mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
@@ -556,15 +730,13 @@ html, body { background: #fff; }
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 15mm;
+  font-size: 13mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
 }
-/* FIX 2026-07-26 (pedido Daniel): se quitó el QR de esta caja. En vez de
-   dejar el espacio vacío, "Bultos" ahora ocupa toda la columna (b-main más
-   grande, ver abajo) para que la etiqueta se vea equilibrada y no
-   desproporcionada frente al bloque Destinatario. */
+/* El QR no ocupa esta caja. Bultos queda compacto en la fila superior para
+   reservar toda la franja inferior a dirección, comuna y región. */
 
 /* FIX 2026-07-25 (Daniel, captura real): el bloque "Status de salida"
    (sello/firma) sumaba 16mm mínimos fijos que no entraban en el alto real
@@ -594,7 +766,7 @@ html, body { background: #fff; }
   align-items: center;
   justify-content: center;
   gap: 1.5mm;
-  padding: 2.4mm 1mm;
+  padding: 1.5mm 1mm;
   text-align: center;
 }
 .foot-icon + .foot-icon { border-left: .35mm solid var(--ilus-black); }
@@ -1139,21 +1311,24 @@ html, body { background: #fff; }
           <i class="bi bi-truck cr-icon"></i>
           <div class="cr-content">
             <div class="cr-label">Carrier / Transporte</div>
-            <div class="cr-value">{{ courier or '—' }}</div>
+            <div class="cr-value label-dynamic js-fit-text"
+                 data-fit-min-mm="1.75" data-fit-within=".cr-content">{{ courier or '—' }}</div>
           </div>
         </div>
         <div class="cr-cell">
           <i class="bi bi-calendar-event cr-icon"></i>
           <div class="cr-content">
             <div class="cr-label">Fecha</div>
-            <div class="cr-value">{{ fecha or '—' }}</div>
+            <div class="cr-value label-dynamic js-fit-text"
+                 data-fit-min-mm="1.75" data-fit-within=".cr-content">{{ fecha or '—' }}</div>
           </div>
         </div>
         <div class="cr-cell">
           <i class="bi bi-file-earmark-text cr-icon"></i>
           <div class="cr-content">
             <div class="cr-label">Orden / Documento N&deg;</div>
-            <div class="cr-value">{{ f.doc_numero or '—' }}</div>
+            <div class="cr-value label-dynamic js-fit-text"
+                 data-fit-min-mm="1.75" data-fit-within=".cr-content">{{ f.doc_numero or '—' }}</div>
           </div>
         </div>
       </div>
@@ -1165,8 +1340,10 @@ html, body { background: #fff; }
           <span class="doc-title">Orden de Despacho</span>
           <span class="dash"></span>
         </div>
-        <div class="doc-number">{{ f.doc_numero or '—' }}</div>
-        {% if f.doc_tipo %}<div class="doc-type">{{ f.doc_tipo }}</div>{% endif %}
+        <div class="doc-number label-dynamic js-fit-text"
+             data-fit-min-mm="5.5" data-fit-within=".lbl-doc">{{ f.doc_numero or '—' }}</div>
+        {% if f.doc_tipo %}<div class="doc-type label-dynamic js-fit-text"
+             data-fit-min-mm="1.7" data-fit-within=".lbl-doc">{{ f.doc_tipo }}</div>{% endif %}
       </div>
 
       {# ─── DESTINATARIO + BULTOS arriba; ruta completa debajo ─── #}
@@ -1176,10 +1353,10 @@ html, body { background: #fff; }
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
             Destinatario
           </div>
-          <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
+          <div class="dest-row"><span class="k">Cliente</span><span class="v big label-dynamic">{{ f.cliente or '—' }}</span></div>
           <div class="dest-line">
             <span class="dest-icon"><i class="bi bi-telephone-fill"></i></span>
-            <div class="dest-row"><span class="k">Tel&eacute;fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
+            <div class="dest-row"><span class="k">Tel&eacute;fono</span><span class="v label-dynamic">{{ f.telefono or '—' }}</span></div>
           </div>
         </div>
         <div class="bultos-box">
@@ -1188,22 +1365,22 @@ html, body { background: #fff; }
             Bultos
           </div>
           <div class="b-main">
-            <span class="b-x">{{ b.num }}</span>
+            <span class="b-x label-dynamic">{{ b.num }}</span>
             <span class="b-de">de</span>
-            <span class="b-n">{{ b.total }}</span>
+            <span class="b-n label-dynamic">{{ b.total }}</span>
           </div>
         </div>
         <div class="dest-route">
           <div class="dest-line">
             <span class="dest-icon"><i class="bi bi-geo-alt-fill"></i></span>
-            <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v direccion">{{ f.direccion or '—' }}</span></div>
+            <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v direccion label-dynamic">{{ f.direccion or '—' }}</span></div>
           </div>
           <div class="dest-line">
             <span class="dest-icon"><i class="bi bi-map-fill"></i></span>
             <div class="dest-row">
               <span class="k">Comuna / Regi&oacute;n</span>
-              <span class="v comuna">{{ f.comuna or '—' }}</span>
-              <span class="v region">{{ f.region or '' }}</span>
+              <span class="v comuna label-dynamic">{{ f.comuna or '—' }}</span>
+              <span class="v region label-dynamic">{{ f.region or '' }}</span>
             </div>
           </div>
         </div>
@@ -1215,7 +1392,8 @@ html, body { background: #fff; }
         <div class="barcode-wrap">
           <svg class="barcode" data-code="{{ f.doc_numero }}"></svg>
         </div>
-        <div class="scan-number">{{ f.doc_numero or '—' }}</div>
+        <div class="scan-number label-dynamic js-fit-text"
+             data-fit-min-mm="1.7" data-fit-within=".lbl-scan">{{ f.doc_numero or '—' }}</div>
       </div>
 
       <footer class="lbl-foot">
@@ -1257,8 +1435,10 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!code) { barcode.dataset.rendered = "1"; return; }
     const wrap = barcode.closest(".barcode-wrap");
     const wrapWidth = wrap ? wrap.clientWidth : 280;
-    // Densidad similar a la del módulo de productos (CODE128, sin texto).
-    const lineWidth = Math.max(0.9, Math.min(2.6, wrapWidth / Math.max(code.length * 9.4, 1)));
+    // CODE128 ancho, con modulo minimo legible y zona silenciosa exterior.
+    const estimatedModules = 11 * (Math.max(code.length, 4) + 3) + 13;
+    const usableWidth = Math.max(wrapWidth * .94 - 24, 120);
+    const lineWidth = Math.max(1.25, Math.min(4.2, usableWidth / estimatedModules));
     try {
       JsBarcode(barcode, code, {
         format: "CODE128",
@@ -1266,8 +1446,8 @@ document.addEventListener("DOMContentLoaded", function () {
         lineColor: "#000",
         background: "#fff",
         width: lineWidth,
-        height: 34,
-        margin: 0
+        height: 46,
+        margin: 12
       });
     } catch (e) {
       // Código inválido: deja el SVG vacío sin romper la página.
@@ -1276,12 +1456,56 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   document.querySelectorAll(".barcode").forEach(renderBarcode);
 
+  const pxPerMm = 96 / 25.4;
+
+  function hasOverflow(element) {
+    return element.scrollHeight > element.clientHeight + 1
+      || element.scrollWidth > element.clientWidth + 1;
+  }
+
+  function fitTextElement(element) {
+    element.style.fontSize = "";
+    const selector = element.dataset.fitWithin;
+    const container = selector ? element.closest(selector) : element.parentElement;
+    if (!container || element.clientWidth <= 0) return;
+
+    let fontPx = parseFloat(window.getComputedStyle(element).fontSize) || 12;
+    const minPx = (parseFloat(element.dataset.fitMinMm) || 1.8) * pxPerMm;
+    const overflows = function () {
+      const textIsTooWide = element.scrollWidth > element.clientWidth + 1;
+      return textIsTooWide || hasOverflow(container);
+    };
+
+    for (let step = 0; step < 80 && overflows() && fontPx > minPx; step += 1) {
+      fontPx = Math.max(minPx, fontPx - .45);
+      element.style.fontSize = fontPx.toFixed(2) + "px";
+    }
+  }
+
+  function fitCourierCell(cell) {
+    const value = cell.querySelector(".js-fit-text");
+    const content = cell.querySelector(".cr-content");
+    if (!value || !content) return;
+
+    cell.classList.remove("is-compact", "is-tight");
+    fitTextElement(value);
+    if (hasOverflow(content)) {
+      cell.classList.add("is-compact");
+      fitTextElement(value);
+    }
+    if (hasOverflow(content)) {
+      cell.classList.add("is-tight");
+      fitTextElement(value);
+    }
+  }
+
   function fitDestinationRoute(route) {
     const address = route.querySelector(".direccion");
     const commune = route.querySelector(".comuna");
     const region = route.querySelector(".region");
     if (!address || !commune || route.clientHeight <= 0) return;
 
+    route.classList.remove("is-compact", "is-tight");
     let addressMm = 4.7;
     let communeMm = 5.5;
     let regionMm = 3;
@@ -1291,11 +1515,40 @@ document.addEventListener("DOMContentLoaded", function () {
       if (region) region.style.fontSize = regionMm.toFixed(2) + "mm";
     };
 
+    const overflows = function () {
+      return route.scrollHeight > route.clientHeight + 1
+        || route.scrollWidth > route.clientWidth + 1;
+    };
+
     applySizes();
-    for (let step = 0; step < 12 && route.scrollHeight > route.clientHeight + 1; step += 1) {
-      addressMm = Math.max(3.3, addressMm - .15);
-      communeMm = Math.max(4.1, communeMm - .12);
-      regionMm = Math.max(2.4, regionMm - .06);
+    for (let step = 0; step < 36 && overflows(); step += 1) {
+      if (step === 8) route.classList.add("is-compact");
+      if (step === 20) route.classList.add("is-tight");
+      addressMm = Math.max(2.75, addressMm - .11);
+      communeMm = Math.max(3.2, communeMm - .1);
+      regionMm = Math.max(2.05, regionMm - .05);
+      applySizes();
+    }
+  }
+
+  function fitRecipientInfo(info) {
+    const client = info.querySelector(".v.big");
+    const phone = info.querySelector(".dest-line .v");
+    if (!client || info.clientHeight <= 0) return;
+
+    info.classList.remove("is-compact", "is-tight");
+    let clientMm = 6.2;
+    let phoneMm = 4;
+    const applySizes = function () {
+      client.style.fontSize = clientMm.toFixed(2) + "mm";
+      if (phone) phone.style.fontSize = phoneMm.toFixed(2) + "mm";
+    };
+    applySizes();
+    for (let step = 0; step < 80 && info.scrollHeight > info.clientHeight + 1; step += 1) {
+      if (step === 6) info.classList.add("is-compact");
+      if (step === 22) info.classList.add("is-tight");
+      clientMm = Math.max(1.9, clientMm - .11);
+      phoneMm = Math.max(1.8, phoneMm - .05);
       applySizes();
     }
   }
@@ -1305,24 +1558,47 @@ document.addEventListener("DOMContentLoaded", function () {
     const total = main.querySelector(".b-n");
     if (!current || !total || main.clientWidth <= 0) return;
 
-    let numberMm = 15;
+    let numberMm = 13;
     current.style.fontSize = numberMm + "mm";
     total.style.fontSize = numberMm + "mm";
-    for (let step = 0; step < 12 && main.scrollWidth > main.clientWidth + 1; step += 1) {
-      numberMm = Math.max(9, numberMm - .5);
+    for (let step = 0; step < 24 && hasOverflow(main); step += 1) {
+      numberMm = Math.max(5.5, numberMm - .35);
       current.style.fontSize = numberMm + "mm";
       total.style.fontSize = numberMm + "mm";
     }
   }
 
   function fitLabelDetails() {
+    document.querySelectorAll(".cr-cell").forEach(fitCourierCell);
+    document.querySelectorAll(".dest-info").forEach(fitRecipientInfo);
     document.querySelectorAll(".dest-route").forEach(fitDestinationRoute);
     document.querySelectorAll(".b-main").forEach(fitPackageCount);
+    document.querySelectorAll(".js-fit-text").forEach(fitTextElement);
+    const watched = document.querySelectorAll(
+      ".etiqueta, .lbl-courier, .cr-cell, .cr-content, .lbl-doc, .dest-info, " +
+      ".dest-route, .b-main, .lbl-scan, .lbl-foot"
+    );
+    const layoutHasOverflow = Array.from(watched).some(function (element) {
+      const overflowing = hasOverflow(element);
+      element.dataset.layoutOverflow = overflowing ? "1" : "0";
+      return overflowing;
+    });
+    document.documentElement.dataset.labelLayoutOverflow = layoutHasOverflow ? "1" : "0";
+    document.documentElement.dataset.labelLayoutReady = layoutHasOverflow ? "0" : "1";
   }
 
   fitLabelDetails();
   requestAnimationFrame(fitLabelDetails);
   window.addEventListener("load", fitLabelDetails, { once: true });
+  window.addEventListener("beforeprint", fitLabelDetails);
+  let fitTimer = null;
+  window.addEventListener("resize", function () {
+    window.clearTimeout(fitTimer);
+    fitTimer = window.setTimeout(fitLabelDetails, 80);
+  });
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(fitLabelDetails);
+  }
 });
 
 /* ══════════════════════════════════════════════════════════════════════

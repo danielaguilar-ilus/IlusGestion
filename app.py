@@ -8,6 +8,7 @@ import secrets
 import smtplib
 import threading
 import time
+import unicodedata
 from datetime import datetime, timedelta
 
 # ════════════════════════════════════════════════════════════════════
@@ -22463,6 +22464,34 @@ def tr_agregar():
 def tr_update_compromiso(cid):
     """Actualiza campos operativos: estado, costo_zz, notas, fecha_agenda."""
     data   = request.get_json(silent=True) or {}
+    _operational_edit_fields = {
+        "telefono", "email", "direccion", "comuna", "region", "cod_postal",
+        "direccion_lat", "direccion_lng", "direccion_place_id",
+        "peso_export", "n_bultos",
+    }
+    if _operational_edit_fields.intersection(data):
+        _gestion_courier = mysql_fetchone(
+            "SELECT simpliroute_visit_id, master_tracking_number "
+            "FROM transport_manifest_items "
+            "WHERE commitment_id=%s "
+            "  AND (NULLIF(TRIM(simpliroute_visit_id),'') IS NOT NULL "
+            "       OR NULLIF(TRIM(master_tracking_number),'') IS NOT NULL) "
+            "ORDER BY id DESC LIMIT 1",
+            (cid,),
+        ) or {}
+        if (
+            str(_gestion_courier.get("simpliroute_visit_id") or "").strip()
+            or str(_gestion_courier.get("master_tracking_number") or "").strip()
+        ):
+            return jsonify({
+                "ok": False,
+                "error": (
+                    "Edición bloqueada: esta factura ya está en gestión con el "
+                    "courier (OT/visita creada). El seguimiento y las etiquetas "
+                    "siguen disponibles en modo de consulta."
+                ),
+                "bloqueado_por": "gestion_courier",
+            }), 409
     campos = {}
     _labels_manifest_id = None
     _labels_courier = ""
@@ -23568,6 +23597,76 @@ def _tr_attach_bultos_edit_policies(facturas, courier="", manifest_id=None):
     return facturas
 
 
+def _tr_label_display_address(address, postal_code="", comuna="", region=""):
+    """Limpia la direccion solo para impresion, sin modificar el dato fuente.
+
+    Google/ERP a veces guarda una direccion completa como:
+    "Colon 1265, 8380483 Independencia, Region Metropolitana". La etiqueta ya
+    muestra comuna y region en campos propios, por lo que repetirlos reduce el
+    espacio util y puede cortar la ruta. Tambien se elimina cualquier codigo
+    postal chileno de 7 digitos incluido en la direccion.
+    """
+    raw = re.sub(r"\s+", " ", str(address or "")).strip(" ,;")
+    if not raw:
+        return ""
+
+    def place_key(value):
+        normalized = unicodedata.normalize("NFKD", str(value or ""))
+        ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^a-z0-9]+", " ", ascii_value.lower()).strip()
+
+    cleaned = raw
+    postal_candidates = set()
+    explicit_postal = re.sub(r"\D", "", str(postal_code or ""))
+    if len(explicit_postal) == 7:
+        postal_candidates.add(explicit_postal)
+    for postal in postal_candidates:
+        cleaned = re.sub(
+            rf"(?<!\d){re.escape(postal)}(?!\d)",
+            " ",
+            cleaned,
+        )
+    # Respaldo para registros antiguos sin cod_postal separado: solo se quita
+    # un numero de 7 digitos cuando aparece inmediatamente antes de la comuna.
+    # Asi se cubre "8380483 Independencia" sin borrar numeros legitimos.
+    comuna_text = str(comuna or "").strip()
+    if comuna_text:
+        cleaned = re.sub(
+            rf"(?<!\d)\d{{7}}(?!\d)(?=\s*{re.escape(comuna_text)}\b)",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"\s+([,;])", r"\1", cleaned).strip(" ,;")
+
+    locality_keys = {
+        key
+        for key in (place_key(comuna), place_key(region), "chile")
+        if key
+    }
+    region_key = place_key(region)
+    if region_key:
+        locality_keys.add(re.sub(r"^region(?: de)?\s+", "", region_key))
+
+    parts = []
+    for part in re.split(r"\s*[,;]\s*", cleaned):
+        part = part.strip()
+        if not part:
+            continue
+        key = place_key(part)
+        key_without_prefix = re.sub(
+            r"^(?:comuna|region)(?: de)?\s+",
+            "",
+            key,
+        )
+        if key in locality_keys or key_without_prefix in locality_keys:
+            continue
+        parts.append(part)
+
+    return ", ".join(parts) or cleaned
+
+
 def _tr_etiqueta_facturas(commitment_ids):
     """Construye la estructura de etiquetas para una lista de commitment_ids.
 
@@ -23579,7 +23678,8 @@ def _tr_etiqueta_facturas(commitment_ids):
         return []
     _ph  = ",".join(["%s"] * len(commitment_ids))
     rows = mysql_fetchall(
-        "SELECT id, tido, nudo, cliente_nombre, comuna, region, direccion, telefono, "
+        "SELECT id, tido, nudo, cliente_nombre, comuna, region, direccion, "
+        "       cod_postal, telefono, "
         "       COALESCE(n_bultos, 1) AS n_bultos "
         "FROM transport_commitments "
         f"WHERE id IN ({_ph})",
@@ -23603,7 +23703,12 @@ def _tr_etiqueta_facturas(commitment_ids):
             "doc_full":      doc,
             "cliente":       (c.get("cliente_nombre") or "").strip(),
             "telefono":      (c.get("telefono") or "").strip(),
-            "direccion":     (c.get("direccion") or "").strip(),
+            "direccion":     _tr_label_display_address(
+                c.get("direccion"),
+                c.get("cod_postal"),
+                c.get("comuna"),
+                c.get("region"),
+            ),
             "comuna":        (c.get("comuna") or "").strip(),
             # FIX 2026-07-25 (réplica de referencia): la etiqueta ahora
             # muestra "Comuna / Región" en 2 líneas -- faltaba traer la
@@ -23940,7 +24045,8 @@ def _tr_render_etiquetas_pdf(facturas, *, fecha, titulo, courier, individual=Fal
         "const qrs = Array.from(document.querySelectorAll('.qr-box')); "
         "const bcsOk = bcs.every(b => b.dataset.rendered === '1'); "
         "const qrsOk = qrs.every(q => q.querySelector('img,canvas')); "
-        "return bcsOk && qrsOk; "
+        "const layoutOk = document.documentElement.dataset.labelLayoutReady === '1'; "
+        "return bcsOk && qrsOk && layoutOk; "
         "}"
     )
 
