@@ -2330,11 +2330,21 @@ const _COURIER_LOGOS = {
   'enviame':              '<b style="color:#16a34a;font-size:.86rem">Envíame</b>',
 };
 
+// FIX 2026-07-27 (Daniel, captura real): el nombre grande de la tarjeta
+// mostraba "Transportes Melling" (alias legacy mal escrito de la BD) mientras
+// el logo de al lado ya corregía a "Trans. Milling" -- quedaba inconsistente
+// y además el nombre largo rompía el layout en móvil. Normaliza el nombre
+// visible en TODOS los lugares que lo muestran, sin tocar el dato real de
+// la BD (que sigue igual para couriers/matching).
+function _courierDisplay(nombre){
+  const n = (nombre||'').trim();
+  return /^transportes?\s+melling$/i.test(n) ? 'Transportes Milling' : n;
+}
 function _logoFor(c){
   if(c.logo_url) return `<img src="${c.logo_url}" alt="" style="max-height:22px;max-width:90px;object-fit:contain">`;
   const key = (c.courier_nombre||'').trim().toLowerCase();
   if(_COURIER_LOGOS[key]) return _COURIER_LOGOS[key];
-  return `<b style="color:#374151;font-size:.82rem">${escHtml(c.courier_nombre||'—')}</b>`;
+  return `<b style="color:#374151;font-size:.82rem">${escHtml(_courierDisplay(c.courier_nombre)||'—')}</b>`;
 }
 
 function actualizarTarifas(){
@@ -2566,7 +2576,7 @@ function renderCouriers(opts){
                     display:flex;align-items:center;gap:8px">
           <span style="font-size:1.1rem">🏆</span>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;color:#92400e">Recomendado: ${escHtml(rec.courier_nombre)}</div>
+            <div style="font-weight:700;color:#92400e">Recomendado: ${escHtml(_courierDisplay(rec.courier_nombre))}</div>
             <div style="font-size:.7rem;color:#9a6411">${fClp(rec.precio)} · ${escHtml(rec.tiempo_transito||'—')}</div>
           </div>
         </div>`;
@@ -2651,7 +2661,7 @@ function renderCouriers(opts){
       <div class="courier-radio"></div>
       <div class="courier-logo">${_logoFor(c)}</div>
       <div class="courier-info">
-        <div class="courier-name">${escHtml(c.courier_nombre)}${recIcon}${profitIcon}${chipValid}${chipWarn}</div>
+        <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}</div>
         <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
         <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
       </div>
@@ -2679,7 +2689,7 @@ function renderCouriers(opts){
                        border:1px dashed #e5e7eb;border-radius:7px;background:#fafafa;opacity:.7">
               <div style="min-width:96px">${_logoFor(c)}</div>
               <div style="flex:1;font-size:.74rem;color:#6b7280">
-                <b>${escHtml(c.courier_nombre)}</b><br>
+                <b>${escHtml(_courierDisplay(c.courier_nombre))}</b><br>
                 <span style="font-size:.66rem">${escHtml(c.mensaje||'Sin cobertura')}</span>
               </div>
             </div>`).join('')}
@@ -3037,7 +3047,7 @@ function renderComparadorTop(conCob){
         </div>
         <div style="font-weight:700;color:#0f172a;font-size:.82rem;margin-top:2px;
                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-          ${escHtml(c.courier_nombre || '—')}
+          ${escHtml(_courierDisplay(c.courier_nombre) || '—')}
         </div>
         <div style="color:${color};font-weight:900;font-size:1.08rem;margin-top:1px">
           ${fmt(p)}
@@ -3193,7 +3203,7 @@ function _renderHistoricoDoc(el, data){
       const cheap = (c.precio_venta === minPrecio) ? ' 🏆' : '';
       const validIcon = c.validado ? ' <span title="Validada" style="color:#16a34a">✓</span>' : '';
       html += `<tr style="border-bottom:1px solid #f3f4f6">
-        <td style="padding:5px 8px;font-weight:600;color:#0f172a">${escHtml(c.courier_nombre)}${cheap}${validIcon}</td>
+        <td style="padding:5px 8px;font-weight:600;color:#0f172a">${escHtml(_courierDisplay(c.courier_nombre))}${cheap}${validIcon}</td>
         <td style="padding:5px 8px">
           <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:.7rem">${escHtml(c.bracket || '—')}</code>
         </td>

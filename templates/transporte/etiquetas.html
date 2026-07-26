@@ -113,7 +113,7 @@ html, body {
   height: var(--label-h);
   background: var(--ilus-white);
   border: 1.6mm solid var(--ilus-black);
-  border-radius: 4mm;
+  border-radius: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -128,7 +128,7 @@ html, body {
   .sheet { padding: 0; gap: 0; }
   .etiqueta {
     box-shadow: none;
-    border-radius: 4mm;
+    border-radius: 0;
     page-break-after: always;
     break-after: page;
   }
@@ -149,7 +149,7 @@ html, body { background: #fff; }
 .sheet { padding: 0; gap: 0; }
 .etiqueta {
   box-shadow: none;
-  border-radius: 4mm;
+  border-radius: 0;
   page-break-after: always;
   break-after: page;
 }
@@ -533,10 +533,16 @@ html, body { background: #fff; }
 
    Footer de íconos de cuidado */
 .lbl-foot {
+  /* FIX Daniel 2026-07-26: "que no sea tan negro para no dañar los
+     cabezales de la impresora" -- un bloque 100% negro de esquina a
+     esquina gasta más el cabezal térmico que texto/iconos sobre blanco.
+     El fondo pasa a blanco; el negro queda solo en el borde superior que
+     separa el footer del resto de la etiqueta y en el texto. */
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  background: var(--ilus-black);
-  color: var(--ilus-white);
+  background: var(--ilus-white);
+  color: var(--ilus-black);
+  border-top: .6mm solid var(--ilus-black);
   flex-shrink: 0;
 }
 .foot-icon {
@@ -548,7 +554,7 @@ html, body { background: #fff; }
   padding: 1.8mm 1mm;
   text-align: center;
 }
-.foot-icon + .foot-icon { border-left: .4mm solid #374151; }
+.foot-icon + .foot-icon { border-left: .35mm solid var(--ilus-black); }
 .foot-icon i { font-size: 6mm; line-height: 1; color: var(--ilus-red); }
 .foot-icon span {
   font-size: 2.1mm;
@@ -556,6 +562,7 @@ html, body { background: #fff; }
   text-transform: uppercase;
   letter-spacing: .2mm;
   line-height: 1.05;
+  color: var(--ilus-black);
 }
 
 /* ═══ SELECTOR ULTRAPOTENTE (solo pantalla) ═══ */
