@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ titulo or 'Etiquetas de transporte' }}</title>
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <link rel="preload" as="style"
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
       onload="this.onload=null;this.rel='stylesheet'">
@@ -36,6 +37,9 @@ html, body {
   font-family: Arial, Helvetica, sans-serif;
   color: var(--ilus-black);
 }
+.is-embedded .toolbar { display: none; }
+.is-embedded .selector-panel { margin-top: 8px; }
+.is-embedded .sheet { padding-top: 10px; }
 
 /* ── Barra de acciones (solo pantalla, NUNCA impresa) ── */
 .toolbar {
@@ -113,7 +117,7 @@ html, body {
   height: var(--label-h);
   background: var(--ilus-white);
   border: 1.6mm solid var(--ilus-black);
-  border-radius: 0;
+  border-radius: 4mm;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -128,7 +132,7 @@ html, body {
   .sheet { padding: 0; gap: 0; }
   .etiqueta {
     box-shadow: none;
-    border-radius: 0;
+    border-radius: 4mm;
     page-break-after: always;
     break-after: page;
   }
@@ -149,7 +153,7 @@ html, body { background: #fff; }
 .sheet { padding: 0; gap: 0; }
 .etiqueta {
   box-shadow: none;
-  border-radius: 0;
+  border-radius: 4mm;
   page-break-after: always;
   break-after: page;
 }
@@ -186,16 +190,16 @@ html, body { background: #fff; }
   min-width: 0;
 }
 .lbl-head .brand-logo-shs img {
-  max-width: 32mm;
-  max-height: 10mm;
+  max-width: 34mm;
+  max-height: 11mm;
   width: auto;
   height: auto;
   display: block;
   object-fit: contain;
 }
 .lbl-head .brand-logo-ilus img {
-  max-width: 30mm;
-  max-height: 9mm;
+  max-width: 32mm;
+  max-height: 10mm;
   width: auto;
   height: auto;
   display: block;
@@ -248,23 +252,30 @@ html, body { background: #fff; }
   border-right: .35mm solid var(--ilus-black);
   min-height: 11mm;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 1.6mm 1.5mm 2mm;
-  gap: .6mm;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 1.6mm 1.8mm;
+  gap: 1.5mm;
 }
 .lbl-courier .cr-cell:last-child {
   border-right: 0;
 }
 .lbl-courier .cr-icon {
-  /* FIX Daniel 2026-07-26: "un poquito más grandes" -- eran 3.6mm, muy
-     chicos respecto al valor de abajo (2.8mm de texto). */
-  font-size: 4.6mm;
-  color: var(--ilus-black);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 7mm;
+  height: 7mm;
+  flex: 0 0 7mm;
+  border-radius: 1.2mm;
+  font-size: 4mm;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
   line-height: 1;
 }
+.lbl-courier .cr-content { min-width: 0; }
 .lbl-courier .cr-label {
   font-size: 1.7mm;
   font-weight: 800;
@@ -273,7 +284,7 @@ html, body { background: #fff; }
   color: var(--ilus-gray);
 }
 .lbl-courier .cr-value {
-  font-size: 2.8mm;
+  font-size: 3mm;
   font-weight: 850;
   color: var(--ilus-black);
   line-height: 1.15;
@@ -382,7 +393,7 @@ html, body { background: #fff; }
    de forma inconsistente entre pantalla e impresión. */
 .lbl-dest {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr);
   border-bottom: .5mm solid #000;
   flex: 1 1 auto;
   min-height: 0;
@@ -394,7 +405,7 @@ html, body { background: #fff; }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 1.6mm;
+  gap: 1.1mm;
   min-height: 0;
 }
 .dest-info .dest-label {
@@ -405,9 +416,11 @@ html, body { background: #fff; }
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .3mm;
-  color: var(--ilus-black);
-  padding-bottom: 1mm;
-  border-bottom: .35mm solid var(--ilus-gray);
+  width: fit-content;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  border-radius: 1.2mm;
+  padding: 1.2mm 2.2mm;
 }
 .dest-info .dest-label svg {
   width: 4.5mm;
@@ -419,6 +432,26 @@ html, body { background: #fff; }
   text-transform: uppercase;
   color: var(--ilus-gray);
   display: block;
+}
+.dest-line {
+  display: grid;
+  grid-template-columns: 6mm minmax(0, 1fr);
+  align-items: center;
+  gap: 1.4mm;
+  padding: .7mm 0 1mm;
+  border-bottom: .3mm solid var(--ilus-black);
+}
+.dest-line:last-child { border-bottom: 0; }
+.dest-line .dest-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 6mm;
+  height: 6mm;
+  border-radius: 1mm;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  font-size: 3.5mm;
 }
 .dest-row .v {
   /* FIX Daniel 2026-07-26: "se ve desproporcionada, algunos datos más
@@ -442,7 +475,7 @@ html, body { background: #fff; }
   overflow: hidden;
 }
 .dest-row .v.big {
-  font-size: 5.2mm;
+  font-size: 6.2mm;
   font-weight: 950;
 }
 /* FIX Daniel: "que destaque también la comuna" -- antes iba igual que
@@ -482,7 +515,11 @@ html, body { background: #fff; }
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .4mm;
-  color: var(--ilus-black);
+  width: fit-content;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  border-radius: 1.2mm;
+  padding: 1.2mm 3mm;
 }
 .bultos-box .b-title svg {
   width: 4.5mm;
@@ -513,7 +550,7 @@ html, body { background: #fff; }
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 10mm;
+  font-size: 17mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
@@ -547,15 +584,15 @@ html, body { background: #fff; }
 }
 .foot-icon {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: .6mm;
-  padding: 1.8mm 1mm;
+  gap: 1.4mm;
+  padding: 2mm 1.2mm;
   text-align: center;
 }
 .foot-icon + .foot-icon { border-left: .35mm solid var(--ilus-black); }
-.foot-icon i { font-size: 6mm; line-height: 1; color: var(--ilus-red); }
+.foot-icon i { font-size: 6.5mm; line-height: 1; color: var(--ilus-black); }
 .foot-icon span {
   font-size: 2.1mm;
   font-weight: 900;
@@ -709,6 +746,38 @@ html, body { background: #fff; }
   border-color: #fca5a5;
 }
 .bf-card.is-saving { opacity: .7; pointer-events: none; }
+.bf-card.is-locked {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+}
+.bf-card.is-locked .bf-step,
+.bf-card.is-locked .bf-input {
+  color: #9ca3af;
+  background: #e5e7eb;
+  cursor: not-allowed;
+}
+.bf-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #166534;
+  background: #dcfce7;
+  font-size: 10px;
+  font-weight: 800;
+}
+.bf-card.is-locked .bf-state {
+  color: #6b7280;
+  background: #e5e7eb;
+}
+.bf-lock-reason {
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+}
 .bf-doc {
   display: flex;
   align-items: center;
@@ -878,7 +947,7 @@ html, body { background: #fff; }
 }
 </style>
 </head>
-<body>
+<body{% if embed_mode|default(false) %} class="is-embedded"{% endif %}>
 
 <div class="toolbar">
   <div class="tb-title">
@@ -942,23 +1011,36 @@ html, body { background: #fff; }
     </div>
     <div class="sp-bultos-grid">
       {% for f in facturas %}
-      <div class="bf-card" data-cid="{{ f.commitment_id }}" data-doc="{{ f.doc_numero }}">
+      <div class="bf-card{% if not f.bultos_editable|default(true) %} is-locked{% endif %}"
+           data-cid="{{ f.commitment_id }}" data-doc="{{ f.doc_numero }}">
         <div class="bf-doc">
           <i class="bi bi-receipt"></i>
           <strong>{{ f.doc_numero or '—' }}</strong>
           {% if f.doc_tipo %}<span class="bf-tipo">{{ f.doc_tipo }}</span>{% endif %}
         </div>
         <div class="bf-cliente">{{ f.cliente or '—' }}</div>
+        <span class="bf-state">
+          <i class="bi bi-{{ 'lock-fill' if not f.bultos_editable|default(true) else 'check-circle-fill' }}"></i>
+          {{ f.estado_entrega or f.manifest_estado or 'En preparaci&oacute;n' }}
+        </span>
         <div class="bf-input-wrap">
-          <button type="button" class="bf-step" data-step="-1" title="Quitar 1">&minus;</button>
+          <button type="button" class="bf-step" data-step="-1" title="Quitar 1"
+                  {% if not f.bultos_editable|default(true) %}disabled{% endif %}>&minus;</button>
           <input type="number" class="bf-input" min="1" max="999" value="{{ f.total_bultos }}"
-                 data-original="{{ f.total_bultos }}">
-          <button type="button" class="bf-step" data-step="1" title="Agregar 1">+</button>
+                 data-original="{{ f.total_bultos }}"
+                 {% if not f.bultos_editable|default(true) %}disabled{% endif %}>
+          <button type="button" class="bf-step" data-step="1" title="Agregar 1"
+                  {% if not f.bultos_editable|default(true) %}disabled{% endif %}>+</button>
           <span class="bf-label">bulto{{ 's' if f.total_bultos != 1 else '' }}</span>
         </div>
         <button type="button" class="bf-save" data-cid="{{ f.commitment_id }}" hidden>
           <i class="bi bi-check-lg"></i> Guardar y regenerar
         </button>
+        {% if not f.bultos_editable|default(true) and f.bultos_edit_reason %}
+        <div class="bf-lock-reason">
+          <i class="bi bi-info-circle me-1"></i>{{ f.bultos_edit_reason }}
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -1044,18 +1126,24 @@ html, body { background: #fff; }
       <div class="lbl-courier">
         <div class="cr-cell">
           <i class="bi bi-truck cr-icon"></i>
-          <div class="cr-label">Carrier / Transporte</div>
-          <div class="cr-value">{{ courier or '—' }}</div>
+          <div class="cr-content">
+            <div class="cr-label">Carrier / Transporte</div>
+            <div class="cr-value">{{ courier or '—' }}</div>
+          </div>
         </div>
         <div class="cr-cell">
           <i class="bi bi-calendar-event cr-icon"></i>
-          <div class="cr-label">Fecha / Hora</div>
-          <div class="cr-value">{{ fecha or '—' }}</div>
+          <div class="cr-content">
+            <div class="cr-label">Fecha</div>
+            <div class="cr-value">{{ fecha or '—' }}</div>
+          </div>
         </div>
         <div class="cr-cell">
           <i class="bi bi-file-earmark-text cr-icon"></i>
-          <div class="cr-label">Orden / Documento N&deg;</div>
-          <div class="cr-value">{{ f.doc_numero or '—' }}</div>
+          <div class="cr-content">
+            <div class="cr-label">Orden / Documento N&deg;</div>
+            <div class="cr-value">{{ f.doc_numero or '—' }}</div>
+          </div>
         </div>
       </div>
 
@@ -1078,12 +1166,21 @@ html, body { background: #fff; }
             Destinatario
           </div>
           <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
-          <div class="dest-row"><span class="k">Fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
-          <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v direccion">{{ f.direccion or '—' }}</span></div>
-          <div class="dest-row">
-            <span class="k">Comuna / Regi&oacute;n</span>
-            <span class="v comuna">{{ f.comuna or '—' }}</span>
-            <span class="v region">{{ f.region or '' }}</span>
+          <div class="dest-line">
+            <span class="dest-icon"><i class="bi bi-telephone-fill"></i></span>
+            <div class="dest-row"><span class="k">Tel&eacute;fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
+          </div>
+          <div class="dest-line">
+            <span class="dest-icon"><i class="bi bi-geo-alt-fill"></i></span>
+            <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v direccion">{{ f.direccion or '—' }}</span></div>
+          </div>
+          <div class="dest-line">
+            <span class="dest-icon"><i class="bi bi-map-fill"></i></span>
+            <div class="dest-row">
+              <span class="k">Comuna / Regi&oacute;n</span>
+              <span class="v comuna">{{ f.comuna or '—' }}</span>
+              <span class="v region">{{ f.region or '' }}</span>
+            </div>
           </div>
         </div>
         <div class="bultos-box">
@@ -1110,7 +1207,7 @@ html, body { background: #fff; }
 
       <footer class="lbl-foot">
         <div class="foot-icon">
-          <i class="bi bi-cup-hot"></i>
+          <i class="bi bi-cup-straw"></i>
           <span>Fr&aacute;gil</span>
         </div>
         <div class="foot-icon">
@@ -1130,10 +1227,7 @@ html, body { background: #fff; }
 </div>
 {% endif %}
 
-{# ilus_ui.js: helpers ilusConfirm/ilusAlert/ilusToast (Regla #1, CLAUDE.md).
-   Esta página es standalone (no extiende base.html) por eso antes NO se
-   cargaba — el JS de más abajo ya tenía un fallback a alert()/confirm()
-   nativos por si acaso. Se agrega acá para dejar de depender del fallback. #}
+{# Esta página es standalone y carga los helpers ILUS de forma explícita. #}
 <script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script>
@@ -1148,9 +1242,7 @@ document.addEventListener("DOMContentLoaded", function () {
     try {
       JsBarcode(barcode, code, {
         format: "CODE128",
-        displayValue: true,
-        fontSize: 13,
-        textMargin: 1,
+        displayValue: false,
         lineColor: "#000",
         background: "#fff",
         width: lineWidth,
@@ -1172,9 +1264,11 @@ document.addEventListener("DOMContentLoaded", function () {
   const PDF_MODE = {{ 'true' if pdf_mode else 'false' }};
   if (PDF_MODE) return;   // En modo Playwright no inicializa nada interactivo.
 
-  const TIPO    = {{ ('"manifiesto"' if manifiesto_id is defined and manifiesto_id else '"factura"') | safe }};
+  const MANIFEST_ID = {{ manifest_id|default(0, true)|int }};
+  const TIPO    = MANIFEST_ID ? "manifiesto" : "factura";
   const BASE_PDF = "{{ pdf_url|default('', true) }}";
   const BASE_ZIP = "{{ pdf_url|default('', true) }}";
+  const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 
   const wraps   = Array.from(document.querySelectorAll(".et-wrap"));
   const cntEl   = document.getElementById("sp-cnt");
@@ -1303,15 +1397,15 @@ document.addEventListener("DOMContentLoaded", function () {
   function descargar(individual) {
     const sel = getSeleccionParam();
     if (!sel) {
-      if (typeof ilusAlert !== "undefined") {
-        ilusAlert({ title: "Sin selección", message: "Marca al menos una etiqueta antes de descargar.", type: "warning" });
-      } else {
-        alert("Marca al menos una etiqueta antes de descargar.");
-      }
+      ilusAlert({ title: "Sin selección", message: "Marca al menos una etiqueta antes de descargar.", type: "warning" });
       return;
     }
     if (!BASE_PDF) {
-      alert("URL PDF no configurada en el template.");
+      ilusAlert({
+        title: "PDF no disponible",
+        message: "La ruta de descarga no está configurada para esta etiqueta.",
+        type: "error"
+      });
       return;
     }
     const btn = document.getElementById(individual ? "sp-zip" : "sp-pdf");
@@ -1405,7 +1499,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // Confirmación DELIBERADA (Daniel 2026-07-25): corregir el total de
     // bultos cambia TODAS las etiquetas ya emitidas de esta factura (el "de
     // N" que se repite en cada una) — nunca se dispara sin que quede claro
-    // el impacto. Regla #1: SIEMPRE ilusConfirm, jamás confirm() nativo.
+    // el impacto. La confirmación usa siempre el helper visual de ILUS.
     if (typeof ilusConfirm === "undefined") {
       if (typeof ilusToast !== "undefined") {
         ilusToast("No se pudo cargar el diálogo de confirmación. Recarga la página e intenta de nuevo.",
@@ -1429,17 +1523,20 @@ document.addEventListener("DOMContentLoaded", function () {
     try {
       const r = await fetch(`/transporte/factura/${cid}/n-bultos`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ n_bultos: nuevo })
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": CSRF_TOKEN
+        },
+        body: JSON.stringify({
+          n_bultos: nuevo,
+          expected_n_bultos: original,
+          manifest_id: MANIFEST_ID
+        })
       });
       const j = await r.json();
       if (!r.ok || !j.ok) {
         const msg = j.error || "Error guardando";
-        if (typeof ilusAlert !== "undefined") {
-          await ilusAlert({ title: "No se pudo actualizar", message: msg, type: "error" });
-        } else {
-          alert(msg);
-        }
+        await ilusAlert({ title: "No se pudo actualizar", message: msg, type: "error" });
         return;
       }
       if (typeof ilusToast !== "undefined") {
@@ -1460,11 +1557,7 @@ document.addEventListener("DOMContentLoaded", function () {
       // Recargar la página para que las nuevas etiquetas se rendericen
       setTimeout(() => { window.location.reload(); }, 800);
     } catch (e) {
-      if (typeof ilusAlert !== "undefined") {
-        await ilusAlert({ title: "Error de red", message: String(e), type: "error" });
-      } else {
-        alert("Error de red: " + e);
-      }
+      await ilusAlert({ title: "Error de red", message: String(e), type: "error" });
     } finally {
       card.classList.remove('is-saving');
     }

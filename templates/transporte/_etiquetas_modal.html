@@ -1,0 +1,96 @@
+{# Superficie compartida: cualquier ajuste en etiquetas.html se hereda aqui,
+   sin duplicar la etiqueta ni abrir una pestana nueva. #}
+<style>
+  .tr-label-modal .modal-dialog {
+    width: min(1180px, 96vw);
+    max-width: min(1180px, 96vw);
+    margin: 2vh auto;
+  }
+  .tr-label-modal .modal-content {
+    height: 96vh;
+    border: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .32);
+  }
+  .tr-label-modal .modal-header {
+    min-height: 58px;
+    padding: 12px 18px;
+    color: #fff;
+    background: #0a0a0a;
+    border: 0;
+  }
+  .tr-label-modal .modal-title {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    font-size: 1rem;
+    font-weight: 800;
+  }
+  .tr-label-modal .modal-title span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tr-label-modal .modal-body {
+    position: relative;
+    min-height: 0;
+    padding: 0;
+    background: #f3f4f6;
+  }
+  .tr-label-modal iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #f3f4f6;
+  }
+  .tr-label-modal-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    color: #4b5563;
+    background: #f3f4f6;
+    font-size: .88rem;
+    font-weight: 700;
+  }
+  .tr-label-modal-loading[hidden] { display: none; }
+  @media (max-width: 767.98px) {
+    .tr-label-modal .modal-dialog {
+      width: 100%;
+      max-width: none;
+      height: 100%;
+      margin: 0;
+    }
+    .tr-label-modal .modal-content {
+      height: 100%;
+      border-radius: 0;
+    }
+  }
+</style>
+
+<div class="modal fade tr-label-modal" id="transportLabelsModal" tabindex="-1"
+     aria-labelledby="transportLabelsModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title" id="transportLabelsModalTitle">
+          <i class="bi bi-tags-fill"></i>
+          <span id="transportLabelsModalTitleText">Etiquetas del manifiesto</span>
+        </h2>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="tr-label-modal-loading" id="transportLabelsModalLoading">
+          <span><i class="bi bi-hourglass-split me-2"></i>Cargando etiquetas...</span>
+        </div>
+        <iframe id="transportLabelsFrame" src="about:blank"
+                title="Gestion de etiquetas de transporte"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
