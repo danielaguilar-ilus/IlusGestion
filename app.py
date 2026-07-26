@@ -5796,6 +5796,25 @@ def _logo_shs_data_url():
     return ""
 
 
+def _logo_shs_pdf_data_url():
+    """Logo real SPORTS HEALTH SOLUTIONS ya pre-codificado en base64 en
+    static/logo_shs_pdf.txt — mismo patrón que _lc_cotiz_logo_shs_b64() en
+    logistica_cotizaciones.py / _tk_logo_shs_html() en tickets_module.py
+    (2026-07-26, Manifiesto de firma: reemplaza el header CSS reconstruido
+    ".hdr-shs" por la imagen real del logo, NO recodifica el PNG, solo lee
+    el .txt ya generado)."""
+    path = os.path.join(BASE_DIR, "static", "logo_shs_pdf.txt")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                b64 = f.read().strip()
+            if b64:
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+    return ""
+
+
 def _label_format(fmt):
     """Formatos FÍSICOS de etiqueta soportados.
 
@@ -29190,6 +29209,37 @@ def _tr_manifiesto_items_firma(mid):
     return items
 
 
+def _tr_manifiesto_firma_bytes(mid):
+    """Genera el PDF del documento de firma (misma lógica que
+    tr_manifiesto_firma_pdf) sin depender del request HTTP — reusado por el
+    endpoint de envío por correo (tr_manifiesto_firma_enviar) para no
+    duplicar el render del HTML ni la llamada a _pw_pdf.
+    Devuelve (manifiesto, pdf_bytes, nombre_archivo) o lanza excepción."""
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        raise ValueError("Manifiesto no encontrado")
+
+    items = _tr_manifiesto_items_firma(mid)
+    if not items:
+        raise ValueError("Manifiesto sin items para generar el documento de firma")
+
+    html = render_template(
+        "transporte/manifiesto_firma.html",
+        items       = items,
+        remitente   = ILUS_REMITENTE,
+        manifiesto  = manifiesto,
+        fecha       = _now_chile_str("%d-%m-%Y"),
+        logo_url    = _logo_data_url(),
+        logo_shs_url = _logo_shs_pdf_data_url(),
+        pdf_url     = "",
+    )
+    data = _pw_pdf(html, page_format="Letter", margin={"top": "0mm", "right": "0mm",
+                                                    "bottom": "0mm", "left": "0mm"})
+    correlativo = manifiesto.get("correlativo") or mid
+    fname = f"manifiesto-firma-{correlativo}.pdf"
+    return manifiesto, items, data, fname
+
+
 @app.route("/transporte/manifiestos/<int:mid>/firma")
 @_tr_required
 def tr_manifiesto_firma(mid):
@@ -29216,6 +29266,7 @@ def tr_manifiesto_firma(mid):
         manifiesto  = manifiesto,
         fecha       = _now_chile_str("%d-%m-%Y"),
         logo_url    = _logo_data_url(),
+        logo_shs_url = _logo_shs_pdf_data_url(),
         pdf_url     = url_for("tr_manifiesto_firma_pdf", mid=mid),
     )
 
@@ -29224,28 +29275,15 @@ def tr_manifiesto_firma(mid):
 @_tr_required
 def tr_manifiesto_firma_pdf(mid):
     """Descarga PDF del documento de firma — mismo HTML que la vista, vía
-    Playwright (_pw_pdf, A4). Si Chromium no está disponible, el botón
-    'Imprimir (navegador)' de la vista HTML sigue funcionando como respaldo."""
-    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
-    if not manifiesto:
-        return "Manifiesto no encontrado", 404
-
-    items = _tr_manifiesto_items_firma(mid)
-    if not items:
-        return "Manifiesto sin items para generar el documento de firma", 400
-
-    html = render_template(
-        "transporte/manifiesto_firma.html",
-        items       = items,
-        remitente   = ILUS_REMITENTE,
-        manifiesto  = manifiesto,
-        fecha       = _now_chile_str("%d-%m-%Y"),
-        logo_url    = _logo_data_url(),
-        pdf_url     = "",
-    )
+    Playwright (_pw_pdf, formato Letter/carta). Si Chromium no está
+    disponible, el botón 'Imprimir (navegador)' de la vista HTML sigue
+    funcionando como respaldo. Reusa _tr_manifiesto_firma_bytes (mismo
+    render + PDF que usa el envío por correo, sin duplicar HTML)."""
     try:
-        data = _pw_pdf(html, page_format="A4", margin={"top": "0mm", "right": "0mm",
-                                                        "bottom": "0mm", "left": "0mm"})
+        manifiesto, items, data, fname = _tr_manifiesto_firma_bytes(mid)
+    except ValueError as e:
+        msg = str(e)
+        return (msg, 404) if "no encontrado" in msg else (msg, 400)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}. Usa el botón 'Imprimir (navegador)' como alternativa.", 503)
     except Exception as e:
@@ -29253,10 +29291,96 @@ def tr_manifiesto_firma_pdf(mid):
         return f"Error generando PDF: {type(e).__name__}", 500
 
     _tr_log("manifest", mid, "documento firma pdf", f"{len(items)} documentos")
-    correlativo = manifiesto.get("correlativo") or mid
     return Response(data, mimetype="application/pdf", headers={
-        "Content-Disposition": f'inline; filename="manifiesto-firma-{correlativo}.pdf"'
+        "Content-Disposition": f'inline; filename="{fname}"'
     })
+
+
+@app.route("/transporte/manifiestos/<int:mid>/firma/enviar", methods=["POST"])
+@_tr_required
+def tr_manifiesto_firma_enviar(mid):
+    """Envía el PDF del manifiesto de firma por correo (marca ILUS
+    genérica — Regla #11), reusando el mismo render + PDF que
+    tr_manifiesto_firma_pdf (vía _tr_manifiesto_firma_bytes, sin
+    duplicar HTML). 2026-07-26, pedido de Daniel: botón 'Enviar por
+    correo' dentro del modal del manifiesto de firma. Valida
+    destinatarios con el MISMO patrón que lc_enviar (logistica_cotizaciones.py)."""
+    if not comm_is_enabled("email"):
+        return jsonify({"ok": False, "error": "El envío de correos está desactivado globalmente."})
+
+    body = request.get_json(silent=True) or {}
+    destinatarios_in = body.get("destinatarios") or []
+    if not isinstance(destinatarios_in, list) or not destinatarios_in:
+        return jsonify({"ok": False, "error": "Agrega al menos un destinatario."}), 400
+
+    buenos, malos, vistos = [], [], set()
+    for e in destinatarios_in[:15]:
+        e = (str(e) or "").strip()
+        if not e:
+            continue
+        if not _EMAIL_RE.match(e):
+            malos.append(e)
+        elif e.lower() not in vistos:
+            vistos.add(e.lower())
+            buenos.append(e)
+    if malos:
+        return jsonify({"ok": False, "error": "Hay correos inválidos: " + ", ".join(malos[:5])}), 400
+    if not buenos:
+        return jsonify({"ok": False, "error": "No hay destinatarios válidos."}), 400
+
+    try:
+        manifiesto, items, pdf_bytes, fname = _tr_manifiesto_firma_bytes(mid)
+    except ValueError as e:
+        msg = str(e)
+        return jsonify({"ok": False, "error": msg}), (404 if "no encontrado" in msg else 400)
+    except PDFEngineUnavailable:
+        return jsonify({"ok": False, "error": "El envío no está disponible en este entorno (motor PDF)."}), 503
+    except Exception as e:
+        print(f"[tr_manifiesto_firma_enviar] pdf mid={mid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo generar el PDF para adjuntar."}), 503
+
+    import html as _html_esc
+    correlativo = manifiesto.get("correlativo") or mid
+    n_docs = len(items)
+    mensaje = (body.get("mensaje") or "").strip()
+    subject = _brand_subject(
+        f"Manifiesto de entrega N° {correlativo} — {n_docs} documento(s)")
+
+    cuerpo = (
+        f"<p>Estimados,</p>"
+        f"<p>Adjuntamos el manifiesto de entrega <strong>N° {_html_esc.escape(str(correlativo))}</strong>, "
+        f"con <strong>{n_docs} documento{'s' if n_docs != 1 else ''}</strong> de despacho.</p>"
+        + (f"<p>{_html_esc.escape(mensaje)}</p>" if mensaje else "")
+        + "<p>Quedamos atentos a sus comentarios.</p>"
+    )
+    try:
+        html_body = _ilus_email_master({
+            "subject": subject,
+            "title": f"Manifiesto de entrega N° {correlativo}",
+            "subtitle": f"{n_docs} documento(s)",
+            "message": cuerpo,
+        })
+    except Exception as e:
+        print(f"[tr_manifiesto_firma_enviar] _ilus_email_master falló mid={mid}: {e}", flush=True)
+        html_body = cuerpo
+
+    adj = [(fname, pdf_bytes, "application/pdf")]
+    enviados, fallidos = [], []
+    for dest in buenos:
+        try:
+            ok = _send_ilus_email(dest, subject, html_body, modulo="transporte", attachments=adj)
+        except Exception as e:
+            print(f"[tr_manifiesto_firma_enviar] enviar {dest}: {e}", flush=True)
+            ok = False
+        (enviados if ok else fallidos).append(dest)
+
+    user = current_username() or "sistema"
+    _tr_log("manifest", mid, "documento firma correo",
+            f"enviados={enviados} fallidos={fallidos}")
+
+    if not enviados:
+        return jsonify({"ok": False, "error": "No se pudo enviar a ningún destinatario."}), 502
+    return jsonify({"ok": True, "enviados": enviados, "fallidos": fallidos})
 
 
 # ══════════════════════════════════════════════════════════════════════════

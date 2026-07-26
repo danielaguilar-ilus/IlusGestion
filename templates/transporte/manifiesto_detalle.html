@@ -116,7 +116,7 @@
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar carga masiva
     </a>
     <button class="btn btn-sm btn-outline-dark fw-bold"
-            onclick="window.open('/transporte/manifiestos/{{ manifiesto.id }}/firma', '_blank')"
+            onclick="abrirManifiestoFirma()"
             title="Documento imprimible con espacio de firma del cliente — respaldo de entrega">
       <i class="bi bi-file-earmark-check me-1"></i>Manifiesto de firma
     </button>
@@ -1790,6 +1790,37 @@
           <span id="mee-doc"></span>
         </div>
         <div id="mee-buttons" class="d-grid gap-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: Manifiesto de firma (2026-07-26) — antes abría en pestaña
+   nueva (window.open), ahora vive en un modal con iframe a la MISMA
+   URL, más botón para descargar PDF y enviar por correo sin salir de
+   la ficha del manifiesto.
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="manifiestoFirmaModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:14px 20px">
+        <h5 class="modal-title">
+          <i class="bi bi-file-earmark-check me-2"></i>Manifiesto de firma
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="manifiestoFirmaFrame" src="about:blank" style="width:100%;height:80vh;border:0"></iframe>
+      </div>
+      <div class="modal-footer" style="padding:12px 20px">
+        <a class="btn btn-sm btn-outline-dark fw-bold" id="mfPdfLink" href="#" target="_blank">
+          <i class="bi bi-download me-1"></i>Descargar PDF
+        </a>
+        <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="enviarManifiestoFirmaCorreo()">
+          <i class="bi bi-envelope-fill me-1"></i>Enviar por correo
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
       </div>
     </div>
   </div>
@@ -3630,6 +3661,64 @@ async function actualizarEtiquetasFedex() {
     setTimeout(function(){ location.reload(); }, 1500);
   } catch(e) {
     ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Modal: Manifiesto de firma (2026-07-26) — antes window.open, ahora
+// modal con iframe a la misma URL /transporte/manifiestos/<id>/firma.
+// ═══════════════════════════════════════════════════════════════════
+var _manifiestoFirmaModal = null;
+
+function abrirManifiestoFirma() {
+  var url = '/transporte/manifiestos/' + MID + '/firma';
+  document.getElementById('manifiestoFirmaFrame').src = url;
+  document.getElementById('mfPdfLink').href = url + '/pdf';
+  if (!_manifiestoFirmaModal) {
+    _manifiestoFirmaModal = new bootstrap.Modal(document.getElementById('manifiestoFirmaModal'));
+  }
+  _manifiestoFirmaModal.show();
+}
+
+async function enviarManifiestoFirmaCorreo() {
+  var destStr = await ilusPrompt({
+    title: 'Enviar manifiesto por correo',
+    message: 'Ingresa los correos destinatarios (separados por coma)',
+    placeholder: 'ejemplo1@correo.cl, ejemplo2@correo.cl',
+    required: true,
+  });
+  if (!destStr) return;
+  var destinatarios = destStr.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+  if (!destinatarios.length) {
+    ilusToast('No ingresaste ningún correo', { type: 'warning' });
+    return;
+  }
+  ilusToast('Enviando manifiesto…', { type: 'info' });
+  try {
+    var r = await fetch('/transporte/manifiestos/' + MID + '/firma/enviar', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({destinatarios: destinatarios}),
+    });
+    var d = await r.json();
+    if (d.ok) {
+      ilusToast('✓ Enviado a ' + d.enviados.join(', '), { type: 'success' });
+      if (d.fallidos && d.fallidos.length) {
+        await ilusAlert({
+          title: 'Algunos correos no se pudieron enviar',
+          message: 'Fallaron: ' + d.fallidos.join(', '),
+          type: 'warning',
+        });
+      }
+    } else {
+      await ilusAlert({
+        title: 'No se pudo enviar el manifiesto',
+        message: d.error || 'Error desconocido',
+        type: 'error',
+      });
+    }
+  } catch(e) {
+    ilusToast('Error de conexión al enviar', { type: 'error' });
   }
 }
 </script>

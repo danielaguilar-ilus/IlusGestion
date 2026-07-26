@@ -16,7 +16,7 @@
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
-@page { size: A4; margin: 10mm 12mm; }
+@page { size: letter; margin: 10mm 12mm; }
 html, body {
   margin: 0; padding: 0;
   background: #e5e7eb;
@@ -44,7 +44,7 @@ html, body {
 .btn-outline { background: transparent; color: #fff; border: 1.5px solid #444; }
 
 .hoja {
-  width: 186mm;
+  width: 191mm;
   margin: 16px auto;
   background: #fff;
   box-shadow: 0 4px 18px rgba(0,0,0,.12);
@@ -59,12 +59,18 @@ html, body {
 }
 .hdr-logos { display: flex; align-items: center; gap: 14px; }
 .hdr-shs {
+  background: #fff; border-radius: 4px;
+  padding: 5px 10px; line-height: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.hdr-shs img { height: 32px; width: auto; display: block; }
+.hdr-shs-txt {
   background: #fff; color: #0a0a0a; border-radius: 4px;
   padding: 6px 12px; line-height: 1.05; font-weight: 800;
 }
-.hdr-shs .l1 { font-size: 14px; letter-spacing: .5px; }
-.hdr-shs .l2 { font-size: 8px; color: #6b7280; font-weight: 700; letter-spacing: 2px; }
-.hdr-logos img { height: 58px; }
+.hdr-shs-txt .l1 { font-size: 14px; letter-spacing: .5px; }
+.hdr-shs-txt .l2 { font-size: 8px; color: #6b7280; font-weight: 700; letter-spacing: 2px; }
+.hdr-logos > img { height: 80px; }
 .hdr-doc { text-align: right; }
 .hdr-doc .tit { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
 .hdr-doc .num { font-size: 20px; font-weight: 800; color: var(--ilus-red); }
@@ -153,7 +159,11 @@ table.detalle td.num, table.detalle th.num { text-align: right; }
 <div class="hoja">
   <div class="hdr">
     <div class="hdr-logos">
-      <div class="hdr-shs"><div class="l1">SPORTS<br>HEALTH</div><div class="l2">SOLUTIONS</div></div>
+      {% if logo_shs_url %}
+      <div class="hdr-shs"><img src="{{ logo_shs_url }}" alt="Sports Health Solutions"></div>
+      {% else %}
+      <div class="hdr-shs-txt"><div class="l1">SPORTS<br>HEALTH</div><div class="l2">SOLUTIONS</div></div>
+      {% endif %}
       {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
     </div>
     <div class="hdr-doc">
