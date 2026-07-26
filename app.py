@@ -23472,7 +23472,8 @@ def _tr_bultos_edit_policy(commitment_id, courier="", manifest_id=None):
 
     if manifest_id:
         estado_row = mysql_fetchone(
-            "SELECT m.estado AS manifest_estado, mi.estado_entrega "
+            "SELECT m.estado AS manifest_estado, mi.estado_entrega, "
+            "       mi.simpliroute_visit_id, mi.master_tracking_number "
             "FROM transport_manifest_items mi "
             "JOIN transport_manifests m ON m.id=mi.manifest_id "
             "WHERE mi.commitment_id=%s AND mi.manifest_id=%s "
@@ -23482,7 +23483,8 @@ def _tr_bultos_edit_policy(commitment_id, courier="", manifest_id=None):
     else:
         estado_row = mysql_fetchone(
             "SELECT m.id AS manifest_id, m.estado AS manifest_estado, "
-            "       mi.estado_entrega "
+            "       mi.estado_entrega, mi.simpliroute_visit_id, "
+            "       mi.master_tracking_number "
             "FROM transport_manifest_items mi "
             "JOIN transport_manifests m ON m.id=mi.manifest_id "
             "WHERE mi.commitment_id=%s "
@@ -23513,6 +23515,16 @@ def _tr_bultos_edit_policy(commitment_id, courier="", manifest_id=None):
         policy["reason"] = (
             f"La factura está en '{estado_entrega}'. "
             "La cantidad de bultos ya quedó cerrada para el proceso de transporte."
+        )
+        return policy
+    if (
+        str(estado_row.get("simpliroute_visit_id") or "").strip()
+        or str(estado_row.get("master_tracking_number") or "").strip()
+    ):
+        policy["reason"] = (
+            "La factura ya está en gestión con el courier. "
+            "Puedes ver, descargar o reimprimir las etiquetas, "
+            "pero no cambiar el total de bultos."
         )
         return policy
 
