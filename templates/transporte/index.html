@@ -2252,12 +2252,71 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
             <i class="bi bi-envelope-check"></i>
             <span>Enviar estado por correo</span>
           </button>
+          <button class="tr-btn tr-btn-ghost" onclick="actualizarEstadoPuntual()" id="btnActualizarEstado"
+                  title="Consultar ahora el estado real contra el courier (sin esperar el chequeo automático)">
+            <i class="bi bi-arrow-repeat"></i>
+            <span>Actualizar estado</span>
+          </button>
+          <button class="tr-btn tr-btn-ghost" onclick="abrirTrazabilidad()" id="btnTrazabilidad"
+                  title="Ver el link de seguimiento del cliente y el historial completo">
+            <i class="bi bi-signpost-2"></i>
+            <span>Ver seguimiento y trazabilidad</span>
+          </button>
         </div>
         <button type="button" class="tr-btn tr-btn-ghost" data-bs-dismiss="modal">
           <i class="bi bi-x-lg"></i><span>Cerrar</span>
         </button>
       </div>
 
+    </div>
+  </div>
+</div>
+
+{# Mini-modal "Ver seguimiento y trazabilidad" (2026-07-26): link público del
+   cliente + timeline interna combinada (transport_logs commitment+manifest_item).
+   z-index 1090 igual que editPesoModal para que se vea SOBRE vistaModal. #}
+<div class="modal fade" id="trazaModal" tabindex="-1" style="z-index:1090">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width:560px">
+    <div class="modal-content">
+      <div class="modal-header py-2" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title small mb-0">
+          <i class="bi bi-signpost-2 me-2"></i>Seguimiento y trazabilidad
+        </h6>
+        <button type="button" class="btn-close btn-close-white btn-sm ms-auto" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        {# Link público del cliente #}
+        <div id="trazaLinkBlock" style="display:none">
+          <div class="small fw-semibold text-muted mb-1">
+            <i class="bi bi-link-45deg me-1"></i>Link de seguimiento del cliente
+          </div>
+          <div class="d-flex gap-2 align-items-center mb-3">
+            <input type="text" id="trazaLinkInput" readonly
+                   class="form-control form-control-sm font-monospace" style="font-size:.75rem">
+            <button class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.75rem" onclick="copiarLinkTraza()">
+              <i class="bi bi-clipboard"></i>
+            </button>
+            <a id="trazaLinkOpen" href="#" target="_blank" rel="noopener"
+               class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.75rem">
+              <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+          </div>
+        </div>
+
+        <div class="small fw-semibold text-muted mb-2">
+          <i class="bi bi-clock-history me-1"></i>Historial
+        </div>
+        <div id="trazaLoading" class="text-center py-4">
+          <div class="spinner-border spinner-border-sm text-danger"></div>
+        </div>
+        <div id="trazaEmpty" class="text-center text-muted small py-4" style="display:none">
+          Sin eventos registrados todavía.
+        </div>
+        <div id="trazaTimeline" style="display:none"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="tr-btn tr-btn-ghost" data-bs-dismiss="modal">Cerrar</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2417,6 +2476,7 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 // ── Init ────────────────────────────────────────────────────────
 var _vistaModal = null;
 var _fotoModal  = null;
+var _trazaModal = null;
 var _vistaCurrentSku = null;   // SKU activo para upload de fotos
 var _vistaCurrentEmail   = null;  // correo del cliente del compromiso abierto (para reenvío manual)
 var _vistaCurrentEstado  = '';    // estado_entrega actual del compromiso abierto
@@ -2427,6 +2487,7 @@ var _trSyncTimer    = null;
 document.addEventListener('DOMContentLoaded', function() {
   _vistaModal = new bootstrap.Modal(document.getElementById('vistaModal'));
   _fotoModal  = new bootstrap.Modal(document.getElementById('fotoModal'));
+  _trazaModal = new bootstrap.Modal(document.getElementById('trazaModal'));
   setSync(30);   // Pre-fill rango sync: último mes
   cargarMonitor();
   // Panel manifiesto: empieza CERRADO en escritorio y mobile.
@@ -2993,6 +3054,29 @@ function openVista(cid) {
     });
 }
 
+// Colorea/actualiza el badge de estado del modal de vista. Extraído de
+// renderVista() (2026-07-26) para que "Actualizar estado" pueda refrescar
+// el badge sin duplicar el mapa de colores.
+function renderEstadoBadge(estado) {
+  var elBadge = document.getElementById('vistaEstadoBadge');
+  if (!elBadge) return;
+  if (!estado) { elBadge.style.display = 'none'; return; }
+  var COLOR_ESTADO = {
+    'Entregado':               'background:#16a34a;color:#fff',
+    'Entregado completo':      'background:#16a34a;color:#fff',
+    'En ruta':                 'background:#3b82f6;color:#fff',
+    'Entregado a transporte':  'background:#3b82f6;color:#fff',
+    'En preparación':          'background:#f59e0b;color:#0a0a0a',
+    'En curso':                'background:#f59e0b;color:#0a0a0a',
+    'Entrega fallida':         'background:#dc2626;color:#fff',
+    'Problema':                'background:#dc2626;color:#fff',
+  };
+  elBadge.style.cssText = elBadge.style.cssText.replace(/background:[^;]*;?color:[^;]*;?/, '')
+    + ';' + (COLOR_ESTADO[estado] || 'background:#6b7280;color:#fff');
+  elBadge.textContent = estado;
+  elBadge.style.display = '';
+}
+
 function renderVista(d) {
   var c = d.compromiso;
   var lineas = d.lineas || [];
@@ -3018,24 +3102,7 @@ function renderVista(d) {
   _vistaCurrentEmail  = c.email  || null;
   _vistaCurrentEstado = c.estado || '';
   _vistaCurrentCliente = c.cliente || '';
-  (function() {
-    var elBadge = document.getElementById('vistaEstadoBadge');
-    if (!elBadge) return;
-    if (!c.estado) { elBadge.style.display = 'none'; return; }
-    var COLOR_ESTADO = {
-      'Entregado':               'background:#16a34a;color:#fff',
-      'Entregado completo':      'background:#16a34a;color:#fff',
-      'En ruta':                 'background:#3b82f6;color:#fff',
-      'Entregado a transporte':  'background:#3b82f6;color:#fff',
-      'En preparación':          'background:#f59e0b;color:#0a0a0a',
-      'En curso':                'background:#f59e0b;color:#0a0a0a',
-      'Entrega fallida':         'background:#dc2626;color:#fff',
-      'Problema':                'background:#dc2626;color:#fff',
-    };
-    elBadge.style.cssText += ';' + (COLOR_ESTADO[c.estado] || 'background:#6b7280;color:#fff');
-    elBadge.textContent = c.estado;
-    elBadge.style.display = '';
-  })();
+  renderEstadoBadge(c.estado);
 
   // Habilitar/deshabilitar el botón de reenvío según si el pedido tiene correo
   (function() {
@@ -5031,6 +5098,121 @@ async function reenviarNotificacionCliente() {
       btn.innerHTML = originalHtml;
     }
   }
+}
+
+// "Actualizar estado" desde el modal de vista (2026-07-26): consulta AHORA
+// el estado real de ESTE pedido contra su courier (FedEx/SimpliRoute), sin
+// esperar el poller automático de 24h/cron. Refresca el badge sin cerrar el modal.
+async function actualizarEstadoPuntual() {
+  if (!_cotizarCid) return;
+  var cid = _cotizarCid;
+  var btn = document.getElementById('btnActualizarEstado');
+  var originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span><span>Consultando…</span>';
+  }
+  try {
+    var r = await fetch('/transporte/api/compromisos/' + cid + '/actualizar-estado', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      await ilusAlert({ title: 'No se pudo actualizar', message: d.error || 'Ocurrió un error al consultar al courier.', type: 'error' });
+      return;
+    }
+    if (d.mensaje && !d.actualizado) {
+      ilusToast(d.mensaje, { type: 'info' });
+    } else if (d.actualizado) {
+      ilusToast('Estado actualizado: ' + (d.estado_actual || '—'), { type: 'success' });
+    } else {
+      ilusToast('Consultado — sin cambios de estado.', { type: 'info' });
+    }
+    if (d.estado_actual) {
+      _vistaCurrentEstado = d.estado_actual;
+      renderEstadoBadge(d.estado_actual);
+    }
+  } catch (e) {
+    await ilusAlert({ title: 'Error de conexión', message: 'No se pudo contactar al servidor. Intenta de nuevo.', type: 'error' });
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
+// "Ver seguimiento y trazabilidad" desde el modal de vista (2026-07-26):
+// abre un mini-modal con el link público que ya recibe el cliente (/t/<token>)
+// y el historial combinado (transport_logs de commitment + manifest_item).
+async function abrirTrazabilidad() {
+  if (!_cotizarCid) return;
+  var cid = _cotizarCid;
+
+  document.getElementById('trazaLinkBlock').style.display = 'none';
+  document.getElementById('trazaLoading').style.display = '';
+  document.getElementById('trazaEmpty').style.display = 'none';
+  var tlEl = document.getElementById('trazaTimeline');
+  tlEl.style.display = 'none';
+  tlEl.innerHTML = '';
+
+  _trazaModal.show();
+
+  try {
+    var r = await fetch('/transporte/api/compromisos/' + cid + '/trazabilidad');
+    var d = await r.json();
+    document.getElementById('trazaLoading').style.display = 'none';
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo cargar la trazabilidad.', { type: 'error' });
+      return;
+    }
+
+    if (d.tracking_url) {
+      document.getElementById('trazaLinkBlock').style.display = '';
+      document.getElementById('trazaLinkInput').value = d.tracking_url;
+      document.getElementById('trazaLinkOpen').href = d.tracking_url;
+    }
+
+    var eventos = d.eventos || [];
+    if (!eventos.length) {
+      document.getElementById('trazaEmpty').style.display = '';
+      return;
+    }
+
+    var ICONS = {
+      commitment: 'bi-file-earmark-text',
+      manifest_item: 'bi-truck',
+    };
+    var html = '<div class="d-flex flex-column gap-2">';
+    eventos.forEach(function(ev) {
+      var icon = ICONS[ev.entity_type] || 'bi-dot';
+      html += '<div class="d-flex gap-2" style="border-left:2px solid #e9ecef;padding:2px 0 2px 12px;margin-left:4px">'
+        + '<i class="bi ' + icon + ' text-danger" style="margin-left:-19px;background:#fff"></i>'
+        + '<div>'
+        + '<div class="fw-semibold" style="font-size:.82rem">' + esc(ev.accion || '') + '</div>'
+        + (ev.detalle ? '<div class="text-muted" style="font-size:.78rem">' + esc(ev.detalle) + '</div>' : '')
+        + '<div class="text-muted" style="font-size:.7rem">'
+        + (ev.usuario ? esc(ev.usuario) + ' · ' : '') + esc(ev.created_at || '')
+        + '</div></div></div>';
+    });
+    html += '</div>';
+    tlEl.innerHTML = html;
+    tlEl.style.display = '';
+  } catch (e) {
+    document.getElementById('trazaLoading').style.display = 'none';
+    ilusToast('Error de conexión al cargar la trazabilidad.', { type: 'error' });
+  }
+}
+
+function copiarLinkTraza() {
+  var input = document.getElementById('trazaLinkInput');
+  if (!input || !input.value) return;
+  navigator.clipboard.writeText(input.value).then(function() {
+    ilusToast('Link copiado al portapapeles', { type: 'success' });
+  }).catch(function() {
+    input.select();
+    ilusToast('Selecciona y copia el link manualmente', { type: 'warning' });
+  });
 }
 
 // ── FOTOS INLINE EN MODAL DE VISTA ───────────────────────────────

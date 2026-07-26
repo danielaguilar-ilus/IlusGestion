@@ -22660,6 +22660,172 @@ def tr_reenviar_notificacion(cid):
     return jsonify({"ok": True, "enviado_a": email})
 
 
+@app.route("/transporte/api/compromisos/<int:cid>/actualizar-estado", methods=["POST"])
+@_tr_required
+def tr_actualizar_estado_puntual(cid):
+    """Consulta AHORA el estado real de UN pedido puntual contra su courier
+    (FedEx o SimpliRoute), sin esperar al poller automático (2026-07-26,
+    pedido de Daniel: botón "Actualizar estado" en el modal de detalle).
+
+    Reutiliza el MISMO choke-point que usan los pollers automáticos
+    (_tr_apply_carrier_status) — NO se reimplementa la llamada HTTP al
+    courier, solo se acota la consulta a 1 item en vez del batch completo.
+    """
+    c = mysql_fetchone(
+        "SELECT id, estado FROM transport_commitments WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "Compromiso no encontrado"}), 404
+
+    # El item de manifiesto MÁS RECIENTE de este compromiso (mismo criterio
+    # que usa _tracking_payload para decidir cuál es "el actual" cuando hubo
+    # varios manifiestos).
+    mi = mysql_fetchone("""
+        SELECT tmi.id AS item_id, tmi.estado_entrega, tmi.tracking_number,
+               tmi.simpliroute_visit_id, tm.courier, tm.fecha
+        FROM transport_manifest_items tmi
+        LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
+        WHERE tmi.commitment_id=%s
+        ORDER BY tmi.id DESC LIMIT 1
+    """, (cid,))
+
+    if not mi:
+        return jsonify({
+            "ok": False,
+            "error": "Este pedido todavía no está asignado a ningún manifiesto, "
+                     "así que no tiene seguimiento automático activo.",
+        }), 400
+
+    if (mi.get("estado_entrega") or "") in ("Entregado", "Devolución"):
+        return jsonify({
+            "ok": True, "actualizado": False,
+            "estado_actual": mi.get("estado_entrega"),
+            "mensaje": "Este pedido ya está en un estado final; no hace falta actualizarlo.",
+        })
+
+    tn  = (mi.get("tracking_number") or "").strip()
+    vid = (mi.get("simpliroute_visit_id") or "").strip()
+    apply_res = None
+
+    if tn:
+        if not (FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET):
+            return jsonify({"ok": False,
+                             "error": "El seguimiento automático de FedEx no está disponible en este momento."}), 503
+        try:
+            results = _fedex_track_lookup([tn])
+        except Exception as e:
+            print(f"[tr_actualizar_estado_puntual] FedEx error cid={cid}: {e}", flush=True)
+            return jsonify({"ok": False,
+                             "error": "No se pudo consultar a FedEx en este momento. Intenta de nuevo."}), 502
+        r = next((x for x in (results or []) if x.get("tracking_number") == tn), None)
+        if not r:
+            return jsonify({"ok": False,
+                             "error": "FedEx todavía no tiene información de seguimiento para este envío."}), 502
+        comentario = r.get("last_event") or r.get("status_label") or ""
+        apply_res = _tr_apply_carrier_status(
+            mi["item_id"], r["estado_ilus"], fuente='fedex',
+            payload={"fedex": {
+                "status_code":  r.get("status_code"),
+                "status_label": r.get("status_label"),
+                "eta":          r.get("eta"),
+                "scans":        (r.get("scans") or [])[:5],
+            }},
+            comentario=comentario or None,
+            notify_cliente=True,
+        )
+    elif vid:
+        import simpliroute_client as _src
+        token = _simpliroute_token_for_courier(mi.get("courier"))
+        if not token:
+            return jsonify({"ok": False,
+                             "error": "El seguimiento automático de este courier no está configurado."}), 503
+        try:
+            r_uno = _simpliroute_request("GET", f"{_src.EP_VISITS}{vid}/", token, timeout=20)
+        except Exception as e:
+            print(f"[tr_actualizar_estado_puntual] SimpliRoute error cid={cid}: {e}", flush=True)
+            return jsonify({"ok": False,
+                             "error": "No se pudo consultar SimpliRoute en este momento. Intenta de nuevo."}), 502
+        if not r_uno.get("ok") or not isinstance(r_uno.get("data"), dict):
+            return jsonify({"ok": False,
+                             "error": "No se pudo consultar SimpliRoute en este momento. Intenta de nuevo."}), 502
+        visita = r_uno["data"]
+        estado_ilus, comentario = _src.estado_ilus_from_visit(visita)
+        if not estado_ilus:
+            return jsonify({
+                "ok": True, "actualizado": False,
+                "estado_actual": mi.get("estado_entrega") or c.get("estado") or "",
+                "mensaje": "SimpliRoute todavía no reporta un cambio de estado.",
+            })
+        apply_res = _tr_apply_carrier_status(
+            mi["item_id"], estado_ilus, fuente="simpliroute",
+            tracking_number=None, comentario=comentario, notify_cliente=True,
+        )
+        if (visita.get("status") or "").lower() in ("completed", "partial"):
+            try:
+                _sr_ingest_pod(mi["item_id"], cid, visita)
+            except Exception:
+                pass
+    else:
+        return jsonify({
+            "ok": False,
+            "error": "Este pedido no tiene seguimiento automático activo "
+                     "(sin tracking de FedEx ni visita de SimpliRoute asociada).",
+        }), 400
+
+    try:
+        _tr_log("commitment", cid, "actualizar_estado_puntual",
+                f"Consulta manual al courier — estado: {apply_res.get('nuevo')}"
+                + ("" if apply_res.get("changed") else " (sin cambios)"))
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "actualizado": bool(apply_res.get("changed")),
+        "estado_actual": apply_res.get("nuevo") or mi.get("estado_entrega") or "",
+    })
+
+
+@app.route("/transporte/api/compromisos/<int:cid>/trazabilidad")
+@_tr_required
+def tr_compromiso_trazabilidad(cid):
+    """Historial combinado de trazabilidad para el panel 'Ver seguimiento y
+    trazabilidad' del modal de vista (2026-07-26): eventos directos del
+    compromiso + eventos de sus items de manifiesto, en una sola timeline.
+    Reutiliza transport_logs — no crea una fuente de auditoría nueva.
+    """
+    c = mysql_fetchone(
+        "SELECT id, public_token FROM transport_commitments WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "Compromiso no encontrado"}), 404
+
+    rows = mysql_fetchall("""
+        SELECT accion, detalle, usuario, created_at, entity_type
+        FROM transport_logs
+        WHERE (entity_type='commitment' AND entity_id=%s)
+           OR (entity_type='manifest_item' AND entity_id IN (
+                 SELECT id FROM transport_manifest_items WHERE commitment_id=%s
+               ))
+        ORDER BY created_at DESC
+        LIMIT 100
+    """, (cid, cid)) or []
+
+    eventos = []
+    for r in rows:
+        ts = r.get("created_at")
+        eventos.append({
+            "accion":      r.get("accion") or "",
+            "detalle":     r.get("detalle") or "",
+            "usuario":     r.get("usuario") or "",
+            "created_at":  chile_fmt_filter(ts) if ts else "",
+            "entity_type": r.get("entity_type") or "",
+        })
+
+    token = c.get("public_token") or ""
+    tracking_url = url_for("tr_public_tracking", token=token, _external=True) if token else None
+
+    return jsonify({"ok": True, "eventos": eventos, "tracking_url": tracking_url})
+
+
 @app.route("/transporte/api/compromisos/<int:cid>/lineas")
 @_tr_required
 def tr_lineas(cid):
