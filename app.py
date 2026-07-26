@@ -29397,6 +29397,14 @@ def tr_manifiesto_firma_enviar(mid):
 # los nombres que Daniel ya configuró en Cloud Run.
 SIMPLIROUTE_TOKENS_ENV = {
     "milling": "SIMPLIROUTE_API_TOKEN_MILLING",
+    # FIX 2026-07-27 (Daniel: "no veo las acciones de milling"): hay
+    # manifiestos con el courier guardado como "Transportes Melling" (alias
+    # legacy mal escrito, ver ~línea 2670). "milling" NO es substring de
+    # "melling" (letras distintas en la 2ª posición), así que el match
+    # fallaba en silencio y TODAS las acciones de SimpliRoute (subir, ver
+    # seguimiento, cancelar, reprogramar, reenviar) quedaban deshabilitadas
+    # para esos manifiestos. Se agrega el alias con el MISMO token.
+    "melling": "SIMPLIROUTE_API_TOKEN_MILLING",
     "felca":   "SIMPLIROUTE_API_TOKEN_RAFA",   # la cuenta de Felca es de Rafael
 }
 
