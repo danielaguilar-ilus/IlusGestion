@@ -29812,6 +29812,29 @@ def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
     _tr_log("manifest", mid, "retiro registrado",
             f"chofer={chofer_nombre} rut={chofer_rut} patente={patente} por={registrado_por or 'chofer (link público)'}")
 
+    # FIX 2026-07-27 (Daniel: "una vez firmado... que cambie todo como
+    # entregado al transportista"): la firma de retiro (interna o por link
+    # público) ES la confirmación real de que el courier se llevó la
+    # mercadería -- debe disparar el mismo cambio de estado que ya usan
+    # FedEx/SimpliRoute (_tr_apply_carrier_status, el único choke-point,
+    # no se duplica) para TODOS los items del manifiesto que sigan en
+    # 'En preparación'. Items que ya avanzaron más (en ruta/entregado) no
+    # se tocan -- nunca retroceder un estado.
+    try:
+        _items_para_avanzar = mysql_fetchall(
+            "SELECT id FROM transport_manifest_items "
+            "WHERE manifest_id=%s AND estado_entrega='En preparación'",
+            (mid,)
+        ) or []
+        for _it in _items_para_avanzar:
+            _tr_apply_carrier_status(
+                _it["id"], "Entregado a transporte", fuente="sistema",
+                comentario=f"Retiro confirmado y firmado por {chofer_nombre}",
+                notify_cliente=True,
+            )
+    except Exception as _e_avance:
+        print(f"[tr_manifiesto_retiro_guardar] avance de estado mid={mid}: {_e_avance}", flush=True)
+
     enviado_a = None
     aviso = None
     try:

@@ -1165,6 +1165,14 @@
                border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:.74rem;
                word-break:break-all;border:1px solid #e5e7eb"></div>
           <div id="srTimeline" class="trk-timeline"></div>
+          {# FIX 2026-07-27 (Daniel: "falta ver las imágenes que ofrece
+             SimpliRoute en el modal"): SimpliRoute ya entrega firma/fotos
+             al completar la visita, y ya se guardan en
+             transport_delivery_proof (_sr_ingest_pod) -- se mostraban solo
+             en el botón aparte "Prueba de entrega". Se agregan también acá
+             para no obligar a abrir otro modal. Reusa las clases .pe-firma/
+             .pe-fotos ya definidas para ese modal, sin duplicar CSS. #}
+          <div id="srEvidencia"></div>
         </div>
 
         <div id="srTabAcciones" style="display:none">
@@ -1945,10 +1953,19 @@
             <i class="bi bi-hourglass-split me-1"></i>Cargando datos de retiro…
           </div>
 
-          <div style="margin-bottom:8px">
+          <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" class="btn btn-sm btn-outline-dark fw-bold" style="min-height:44px"
                     onclick="mrCopiarLinkFirma()">
-              <i class="bi bi-link-45deg me-1"></i>Copiar link para que el chofer firme
+              <i class="bi bi-link-45deg me-1"></i>Copiar link
+            </button>
+            {# FIX 2026-07-27 (Daniel: "mejorar cómo enviar por WhatsApp"):
+               abre WhatsApp con el mensaje y el link ya redactados -- si el
+               chofer elegido del roster tiene teléfono guardado, se lo
+               manda directo a ese número; si no, abre WhatsApp para elegir
+               el contacto a mano. #}
+            <button type="button" class="btn btn-sm fw-bold" style="min-height:44px;background:#25D366;color:#fff;border:none"
+                    onclick="mrEnviarWhatsapp()">
+              <i class="bi bi-whatsapp me-1"></i>Enviar por WhatsApp
             </button>
           </div>
 
@@ -2775,6 +2792,28 @@ async function abrirSimpliRouteModal(data, force) {
   } catch (e) {
     document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
   }
+
+  // Evidencia (firma/fotos que entrega SimpliRoute al completar la visita) —
+  // reusa el MISMO endpoint que ya usa "Prueba de entrega", no se duplica.
+  try {
+    var r2 = await fetch('/transporte/api/buscar/' + data.id);
+    var d2 = await r2.json();
+    var p = d2 && d2.ok ? d2.detalle.proof : null;
+    var ev = document.getElementById('srEvidencia');
+    if (p && (p.firma_url || (p.fotos && p.fotos.length))) {
+      var html = '<div class="pe-sec" style="margin-top:.9rem"><div class="pe-h"><i class="bi bi-camera-fill"></i>Evidencia (SimpliRoute)</div>';
+      if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma"></div>';
+      if (p.fotos && p.fotos.length) {
+        html += '<div class="pe-fotos mt-2">';
+        p.fotos.forEach(function(f){ html += '<img src="' + f + '" onclick="window.open(this.src,\'_blank\')">'; });
+        html += '</div>';
+      }
+      html += '</div>';
+      ev.innerHTML = html;
+    } else {
+      ev.innerHTML = '';
+    }
+  } catch (e2) { /* evidencia es un extra, no bloquea el resto del modal */ }
 }
 
 async function srActualizarEstado() {
@@ -4109,6 +4148,22 @@ async function mrCopiarLinkFirma() {
   } catch (e) {
     window.prompt('Copia el link manualmente (Ctrl+C):', _mrLinkFirma);
   }
+}
+
+// FIX 2026-07-27 (Daniel: "mejorar cómo enviar por WhatsApp"): arma el
+// mensaje + link ya redactados y abre WhatsApp Web/app directo — si hay
+// teléfono (del campo del formulario, que se autocompleta al elegir un
+// chofer del roster), se lo manda a ESE número; si no, abre WhatsApp para
+// elegir el contacto a mano (igual sirve para compartir el link).
+async function mrEnviarWhatsapp() {
+  if (!_mrLinkFirma) {
+    ilusToast('Aún no se pudo generar el link. Reintenta.', { type: 'warning' });
+    return;
+  }
+  var tel = (document.getElementById('mrChoferTelefono').value || '').replace(/[^\d+]/g, '');
+  var msg = 'Hola, por favor confirma el retiro de este manifiesto firmando desde tu celular: ' + _mrLinkFirma;
+  var url = 'https://wa.me/' + (tel ? tel.replace(/^\+/, '') : '') + '?text=' + encodeURIComponent(msg);
+  window.open(url, '_blank');
 }
 
 function mrMostrarReadonly(retiro) {
