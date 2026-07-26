@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a0a0a">
+<title>Firma de retiro · ILUS</title>
+<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<script src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+<style>
+:root{
+  --ink:#0a0a0a; --red:#dc2626; --paper:#f3f4f6; --line:#e5e7eb;
+  --gray:#6b7280; --green:#16a34a;
+  --display:'Barlow Condensed',system-ui,sans-serif;
+  --body:'Barlow',system-ui,-apple-system,sans-serif;
+}
+*,*::before,*::after{ box-sizing:border-box; margin:0; padding:0; }
+body{
+  font-family:var(--body); background:var(--paper); color:var(--ink);
+  line-height:1.5; padding-bottom:env(safe-area-inset-bottom);
+  -webkit-tap-highlight-color:transparent;
+}
+.shell{ max-width:520px; margin:0 auto; min-height:100dvh; background:#fff; }
+.hero{
+  background:linear-gradient(160deg,#0a0a0a,#181818);
+  color:#fff; padding:28px 20px 24px;
+}
+.hero .brand{ font-family:var(--display); font-weight:900; font-size:1.05rem; letter-spacing:.04em; color:var(--red); }
+.hero h1{ font-family:var(--display); font-weight:800; font-size:1.7rem; margin-top:6px; }
+.hero .sub{ color:#a1a1aa; font-size:.85rem; margin-top:2px; }
+.summary{
+  display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;
+}
+.summary .chip{
+  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.14);
+  border-radius:10px; padding:8px 12px; font-size:.8rem; flex:1; min-width:120px;
+}
+.summary .chip b{ display:block; font-size:1.15rem; font-family:var(--display); }
+.body{ padding:20px; }
+.card{ border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+label{ font-size:12px; font-weight:700; display:block; margin-bottom:4px; color:#374151; }
+select, input{
+  width:100%; font-size:16px; min-height:44px; border:1px solid #d1d5db;
+  border-radius:8px; padding:0 12px; margin-bottom:14px; background:#fff;
+}
+input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red); }
+.firma-input{ border-color:var(--red) !important; }
+.btn-confirm{
+  width:100%; min-height:48px; background:var(--red); color:#fff; border:none;
+  border-radius:10px; font-weight:800; font-size:1rem; letter-spacing:.02em;
+  cursor:pointer;
+}
+.btn-confirm:active{ transform:scale(.98); }
+.btn-confirm:disabled{ opacity:.6; }
+.footer-note{ font-size:.72rem; color:var(--gray); text-align:center; padding:14px 20px 24px; }
+.ok-panel{ text-align:center; padding:40px 20px; }
+.ok-panel i{ font-size:3rem; color:var(--green); }
+.ok-panel h2{ font-family:var(--display); font-weight:800; margin-top:12px; }
+.ok-panel p{ color:var(--gray); margin-top:6px; font-size:.9rem; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="hero">
+    <div class="brand">ILUS.</div>
+    <h1>Firma de retiro</h1>
+    <div class="sub">Manifiesto N° {{ manifiesto.correlativo or manifiesto.id }} · {{ manifiesto.courier or 'Transporte' }}</div>
+    <div class="summary">
+      <div class="chip">Facturas<b>{{ n_docs }}</b></div>
+      <div class="chip">Bultos<b>{{ n_bultos }}</b></div>
+    </div>
+  </div>
+
+  <div class="body" id="mrpBody">
+    {% if retiro %}
+    <div class="ok-panel">
+      <i class="bi bi-check-circle-fill"></i>
+      <h2>Retiro ya registrado</h2>
+      <p>Este manifiesto ya fue firmado por <strong>{{ retiro.chofer_nombre }}</strong>.</p>
+    </div>
+    {% else %}
+    <form id="mrpForm" onsubmit="return mrpGuardar(event)">
+      <div class="card">
+        {% if choferes %}
+        <label>¿Eres uno de estos choferes?</label>
+        <select id="mrpChoferGuardado" onchange="mrpAplicarChofer(this.value)">
+          <option value="">+ Soy un chofer nuevo (escribir a mano)</option>
+          {% for c in choferes %}
+          <option value="{{ c.id }}">{{ c.nombre }} — {{ c.rut }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
+
+        <label>Nombre completo *</label>
+        <input type="text" id="mrpNombre" placeholder="Ej: Juan Pérez Soto" required>
+
+        <label>RUT *</label>
+        <input type="text" id="mrpRut" placeholder="Ej: 12.345.678-9" required>
+
+        <label>Teléfono (opcional)</label>
+        <input type="text" id="mrpTelefono" placeholder="Ej: +56 9 1234 5678">
+
+        <label>Patente del vehículo *</label>
+        <input type="text" id="mrpPatente" placeholder="Ej: ABCD12" required>
+
+        <label>Firma digital — escribe tu nombre completo para confirmar *</label>
+        <input type="text" class="firma-input" id="mrpFirma" placeholder="Ej: Juan Pérez Soto" required>
+
+        <button type="submit" class="btn-confirm" id="mrpSubmitBtn">
+          <i class="bi bi-check2-circle me-1"></i>Confirmar retiro
+        </button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="footer-note">
+    ILUS Sport &amp; Health · Este link es de un solo uso operativo, no compartas tus datos con nadie más.
+  </div>
+</div>
+
+<script>
+var TOKEN = {{ token | tojson }};
+var CHOFERES = {{ choferes | tojson }};
+
+function mrpAplicarChofer(id) {
+  if (!id) return;
+  var c = CHOFERES.find(function(x){ return String(x.id) === String(id); });
+  if (!c) return;
+  document.getElementById('mrpNombre').value = c.nombre || '';
+  document.getElementById('mrpRut').value = c.rut || '';
+  document.getElementById('mrpTelefono').value = c.telefono || '';
+  document.getElementById('mrpPatente').value = c.patente || '';
+}
+
+async function mrpGuardar(ev) {
+  ev.preventDefault();
+  var btn = document.getElementById('mrpSubmitBtn');
+  var payload = {
+    chofer_nombre:   document.getElementById('mrpNombre').value.trim(),
+    chofer_rut:      document.getElementById('mrpRut').value.trim(),
+    chofer_telefono: document.getElementById('mrpTelefono').value.trim(),
+    patente:         document.getElementById('mrpPatente').value.trim(),
+    firma_nombre:    document.getElementById('mrpFirma').value.trim(),
+  };
+  if (!payload.chofer_nombre || !payload.chofer_rut || !payload.patente || !payload.firma_nombre) {
+    ilusToast('Completa los campos obligatorios (*)', { type: 'warning' });
+    return false;
+  }
+  // Si el chofer no estaba en la lista guardada, ofrecer guardarlo para la
+  // próxima vez (no automático).
+  var yaEnRoster = (CHOFERES || []).some(function(c){
+    return (c.rut || '').replace(/\./g,'').toUpperCase() === payload.chofer_rut.replace(/\./g,'').toUpperCase();
+  });
+  if (!yaEnRoster) {
+    var guardar = await ilusConfirm({
+      title: 'Guardar tus datos',
+      message: '¿Quieres que guardemos tus datos para que la próxima vez no tengas que escribirlos de nuevo?',
+      okLabel: 'Sí, guardar', cancelLabel: 'No, gracias',
+    });
+    payload.guardar_chofer = !!guardar;
+  }
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Guardando…';
+  try {
+    var r = await fetch('/firma-retiro/' + TOKEN, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    var d = await r.json();
+    if (d.ok) {
+      document.getElementById('mrpBody').innerHTML =
+        '<div class="ok-panel">' +
+        '<i class="bi bi-check-circle-fill"></i>' +
+        '<h2>Retiro confirmado</h2>' +
+        '<p>Gracias, ' + payload.chofer_nombre.replace(/[<>&]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];}) + '. Tu firma quedó registrada.</p>' +
+        '</div>';
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar retiro';
+      await ilusAlert({ title: 'No se pudo registrar', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar retiro';
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+  return false;
+}
+</script>
+</body>
+</html>

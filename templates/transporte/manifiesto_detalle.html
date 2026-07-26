@@ -1945,6 +1945,13 @@
             <i class="bi bi-hourglass-split me-1"></i>Cargando datos de retiro…
           </div>
 
+          <div style="margin-bottom:8px">
+            <button type="button" class="btn btn-sm btn-outline-dark fw-bold" style="min-height:44px"
+                    onclick="mrCopiarLinkFirma()">
+              <i class="bi bi-link-45deg me-1"></i>Copiar link para que el chofer firme
+            </button>
+          </div>
+
           {# Vista solo-lectura cuando ya existe un registro guardado #}
           <div id="mrReadonly" style="display:none">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -1966,6 +1973,13 @@
           {# Formulario de captura (vacío o precargado para editar) #}
           <form id="mrForm" style="display:none" onsubmit="return mrGuardar(event)">
             <div class="row g-2">
+              <div class="col-md-12" id="mrChoferGuardadoWrap" style="display:none">
+                <label class="form-label" style="font-size:12px;font-weight:700">Chofer guardado (opcional)</label>
+                <select class="form-select" id="mrChoferGuardado" style="font-size:16px;min-height:44px"
+                        onchange="mrAplicarChoferGuardado(this.value)">
+                  <option value="">+ Nuevo chofer (escribir a mano)</option>
+                </select>
+              </div>
               <div class="col-md-4">
                 <label class="form-label" style="font-size:12px;font-weight:700">Nombre del chofer *</label>
                 <input type="text" class="form-control" id="mrChoferNombre" style="font-size:16px;min-height:44px" required>
@@ -4015,6 +4029,10 @@ function abrirManifiestoFirma() {
 // editable. Al guardar, el backend intenta enviar el PDF firmado al
 // correo del courier automáticamente (best-effort).
 // ═══════════════════════════════════════════════════════════════════
+var _mrLinkFirma = null;
+var _mrCourierId = null;
+var _mrChoferesRoster = [];
+
 async function mrCargarRetiro() {
   document.getElementById('mrLoading').style.display = '';
   document.getElementById('mrReadonly').style.display = 'none';
@@ -4023,6 +4041,9 @@ async function mrCargarRetiro() {
     var r = await fetch('/transporte/manifiestos/' + MID + '/retiro');
     var d = await r.json();
     document.getElementById('mrLoading').style.display = 'none';
+    _mrLinkFirma = d.link_firma || null;
+    _mrCourierId = d.courier_id || null;
+    mrCargarChoferesRoster();
     if (d.ok && d.retiro) {
       mrMostrarReadonly(d.retiro);
     } else {
@@ -4031,6 +4052,62 @@ async function mrCargarRetiro() {
   } catch (e) {
     document.getElementById('mrLoading').style.display = 'none';
     mrToggleForm(false);
+  }
+}
+
+async function mrCargarChoferesRoster() {
+  var wrap = document.getElementById('mrChoferGuardadoWrap');
+  var sel = document.getElementById('mrChoferGuardado');
+  _mrChoferesRoster = [];
+  if (!_mrCourierId) { wrap.style.display = 'none'; return; }
+  try {
+    var r = await fetch('/transporte/couriers/' + _mrCourierId + '/choferes');
+    var d = await r.json();
+    if (d.ok && d.choferes && d.choferes.length) {
+      _mrChoferesRoster = d.choferes;
+      sel.innerHTML = '<option value="">+ Nuevo chofer (escribir a mano)</option>' +
+        d.choferes.map(function(c){
+          return '<option value="' + c.id + '">' + c.nombre.replace(/[<>&]/g, function(x){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[x];}) + ' — ' + (c.rut || '') + '</option>';
+        }).join('');
+      wrap.style.display = '';
+    } else {
+      wrap.style.display = 'none';
+    }
+  } catch (e) {
+    wrap.style.display = 'none';
+  }
+}
+
+function mrAplicarChoferGuardado(choferId) {
+  if (!choferId) return;
+  var c = _mrChoferesRoster.find(function(x){ return String(x.id) === String(choferId); });
+  if (!c) return;
+  document.getElementById('mrChoferNombre').value = c.nombre || '';
+  document.getElementById('mrChoferRut').value = c.rut || '';
+  document.getElementById('mrChoferTelefono').value = c.telefono || '';
+  document.getElementById('mrPatente').value = c.patente || '';
+}
+
+async function mrCopiarLinkFirma() {
+  if (!_mrLinkFirma) {
+    ilusToast('Aún no se pudo generar el link. Reintenta.', { type: 'warning' });
+    return;
+  }
+  await ilusAlert({
+    title: 'Link para que el chofer firme',
+    message: 'Comparte este link con el chofer (SMS/WhatsApp) para que confirme el retiro desde su celular, sin necesidad de iniciar sesión:',
+    sub: '<div style="margin:.5rem 0;padding:.6rem .7rem;background:#f3f4f6;border-radius:8px;'
+       + 'font-family:ui-monospace,Consolas,monospace;font-size:.78rem;word-break:break-all;border:1px solid #e5e7eb">'
+       + _mrLinkFirma + '</div>',
+    subHtml: true,
+    type: 'info',
+    okLabel: 'Copiar link',
+  });
+  try {
+    await navigator.clipboard.writeText(_mrLinkFirma);
+    ilusToast('✓ Link copiado al portapapeles', { type: 'success' });
+  } catch (e) {
+    window.prompt('Copia el link manualmente (Ctrl+C):', _mrLinkFirma);
   }
 }
 
@@ -4054,6 +4131,7 @@ function mrMostrarReadonly(retiro) {
 function mrToggleForm(editar) {
   document.getElementById('mrReadonly').style.display = 'none';
   var retiro = editar ? window._mrUltimoRetiro : null;
+  document.getElementById('mrChoferGuardado').value = '';
   document.getElementById('mrChoferNombre').value = retiro ? (retiro.chofer_nombre || '') : '';
   document.getElementById('mrChoferRut').value = retiro ? (retiro.chofer_rut || '') : '';
   document.getElementById('mrChoferTelefono').value = retiro ? (retiro.chofer_telefono || '') : '';
@@ -4094,6 +4172,31 @@ async function mrGuardar(ev) {
       ilusToast(msg, { type: 'success' });
       if (d.aviso) {
         await ilusAlert({ title: 'Aviso', message: d.aviso, type: 'warning' });
+      }
+      // Si el chofer no coincide con ninguno del roster guardado, se ofrece
+      // agregarlo para la próxima vez (no automático — pedido de Daniel).
+      var yaEnRoster = _mrChoferesRoster.some(function(c){
+        return (c.rut || '').replace(/\./g,'').toUpperCase() === payload.chofer_rut.replace(/\./g,'').toUpperCase();
+      });
+      if (_mrCourierId && !yaEnRoster) {
+        var agregar = await ilusConfirm({
+          title: 'Guardar chofer',
+          message: '¿Guardar a ' + payload.chofer_nombre + ' en el roster de este courier para la próxima vez?',
+          okLabel: 'Guardar', cancelLabel: 'No, gracias',
+        });
+        if (agregar) {
+          try {
+            await fetch('/transporte/couriers/' + _mrCourierId + '/choferes', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                nombre: payload.chofer_nombre, rut: payload.chofer_rut,
+                telefono: payload.chofer_telefono, patente: payload.patente,
+              }),
+            });
+            ilusToast('✓ Chofer guardado en el roster', { type: 'success' });
+          } catch (e) { /* best-effort */ }
+        }
       }
       mrCargarRetiro();
     } else {

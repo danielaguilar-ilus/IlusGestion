@@ -195,6 +195,12 @@
         <i class="bi bi-image me-1"></i>Logos
       </button>
     </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-choferes" type="button">
+        <i class="bi bi-person-badge me-1"></i>Choferes
+        {% if choferes %}<span class="badge bg-dark ms-1 small">{{ choferes|length }}</span>{% endif %}
+      </button>
+    </li>
   </ul>
 
   <div class="tab-content" id="fichaTabContent">
@@ -643,6 +649,58 @@
             Formatos soportados: PNG, JPG, SVG, WEBP. Tamaño recomendado máx. 2 MB.
           </div>
         </div>
+      </div>
+    </div>
+
+
+    {# ════════════════════════════════════
+       TAB: CHOFERES (roster para retiro de bodega, 2026-07-26)
+    ════════════════════════════════════ #}
+    <div class="tab-pane fade" id="tab-choferes" role="tabpanel">
+      <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+          <div class="fw-semibold">Choferes del courier</div>
+          <div class="text-muted small">Se usan para autocompletar los datos al registrar quién retiró la mercadería de bodega.</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="agregarChoferCourier()">
+          <i class="bi bi-plus me-1"></i>Agregar chofer
+        </button>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>RUT</th>
+              <th>Teléfono</th>
+              <th>Patente</th>
+              <th class="text-end">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tablaChoferesBody">
+            {% for ch in choferes %}
+            <tr id="chofer-row-{{ ch.id }}">
+              <td class="fw-semibold">{{ ch.nombre }}</td>
+              <td>{{ ch.rut }}</td>
+              <td>{{ ch.telefono or '—' }}</td>
+              <td>{{ ch.patente or '—' }}</td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-danger" style="min-height:44px"
+                        onclick="eliminarChoferCourier({{ ch.id }})">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr id="choferesEmptyRow">
+              <td colspan="5" class="text-center text-muted py-4">
+                <i class="bi bi-person-badge fs-3 d-block mb-2"></i>
+                Sin choferes guardados todavía. Agrega el primero con el botón de arriba.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -1160,6 +1218,72 @@ async function calcularPrecio() {
       </div>`;
   } else {
     el.innerHTML = `<small class="text-danger">${esc(d.error)}</small>`;
+  }
+}
+
+/* ════════════════════════
+   CHOFERES (roster del courier, 2026-07-26)
+   Usado para autocompletar la captura de retiro de bodega. Encadena
+   ilusPrompt (nombre → RUT → teléfono opcional → patente opcional) porque
+   son solo 4 campos cortos — no amerita un modal Bootstrap completo.
+════════════════════════ */
+async function agregarChoferCourier() {
+  const nombre = await ilusPrompt({
+    title: 'Agregar chofer', message: 'Nombre completo del chofer:',
+    placeholder: 'Ej: Juan Pérez Soto', required: true,
+  });
+  if (!nombre) return;
+  const rut = await ilusPrompt({
+    title: 'Agregar chofer', message: 'RUT del chofer:',
+    placeholder: 'Ej: 12.345.678-9', required: true,
+  });
+  if (!rut) return;
+  const telefono = await ilusPrompt({
+    title: 'Agregar chofer', message: 'Teléfono (opcional):',
+    placeholder: 'Ej: +56 9 1234 5678', required: false,
+  });
+  const patente = await ilusPrompt({
+    title: 'Agregar chofer', message: 'Patente (opcional):',
+    placeholder: 'Ej: ABCD12', required: false,
+  });
+  try {
+    const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ nombre, rut, telefono: telefono || '', patente: patente || '' }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast('✓ Chofer agregado', { type: 'success' });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'No se pudo agregar', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+async function eliminarChoferCourier(choferId) {
+  const ok = await ilusConfirm({
+    title: 'Quitar chofer',
+    message: '¿Quitar este chofer del roster del courier?',
+    sub: 'No se borra su historial de retiros, solo deja de aparecer como sugerencia.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes/${choferId}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) {
+      const row = document.getElementById('chofer-row-' + choferId);
+      if (row) row.remove();
+      ilusToast('✓ Chofer quitado', { type: 'success' });
+    } else {
+      await ilusAlert({ title: 'No se pudo quitar', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    ilusToast('Error de conexión', { type: 'error' });
   }
 }
 

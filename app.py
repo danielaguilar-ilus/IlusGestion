@@ -28982,6 +28982,93 @@ def tr_choferes_toggle(did):
 # #4.2 cubierta por pedido explícito previo de Daniel.
 
 
+# ── Roster de choferes POR COURIER (2026-07-26, Daniel) ──────────────────
+# Reusa la MISMA tabla transport_drivers (ya tiene nombre/rut/telefono/
+# patente/courier_id/activo — ver _ensure_transport_drivers_table más
+# arriba) en vez de crear una tabla nueva duplicada: aquí el chofer NO
+# inicia sesión (no hace falta pedirle PIN al operador), así que se le
+# genera un PIN aleatorio interno que nunca se muestra ni se usa para
+# login desde este flujo. Sirve para autocompletar nombre/RUT/teléfono/
+# patente al capturar un retiro (modal interno y link público del chofer).
+def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=None):
+    """Agrega (o reactiva) un chofer al roster de un courier. Si el RUT ya
+    existe (UNIQUE KEY uq_driver_rut), actualiza sus datos y lo reactiva en
+    vez de fallar — así el mismo chofer puede aparecer en el roster aunque
+    haya estado inactivo o pertenezca a otro courier legacy."""
+    rut_norm = normalizar_rut(rut) if rut else rut
+    existente = mysql_fetchone(
+        "SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
+    if existente:
+        mysql_execute(
+            "UPDATE transport_drivers SET nombre=%s, courier_id=%s, telefono=%s, "
+            "patente=%s, activo=1 WHERE id=%s",
+            (nombre, courier_id, telefono or None, patente or None, existente["id"])
+        )
+        return existente["id"]
+    pin_auto = secrets.token_hex(4)  # nunca se expone; este roster no hace login
+    mysql_execute(
+        "INSERT INTO transport_drivers (nombre, rut, pin_hash, courier_id, telefono, patente, created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (nombre, rut_norm, generate_password_hash(pin_auto), courier_id,
+         telefono or None, patente or None, current_username() or "roster-courier")
+    )
+    row = mysql_fetchone("SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
+    return row["id"] if row else None
+
+
+@app.route("/transporte/couriers/<int:cid>/choferes", methods=["GET"])
+@_tr_required
+def tr_courier_choferes_listar(cid):
+    """Lista los choferes activos del roster de un courier (para el selector
+    de 'chofer guardado' en la captura de retiro, interno y público)."""
+    choferes = mysql_fetchall(
+        "SELECT id, nombre, rut, telefono, patente FROM transport_drivers "
+        "WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
+    ) or []
+    return jsonify({"ok": True, "choferes": choferes})
+
+
+@app.route("/transporte/couriers/<int:cid>/choferes", methods=["POST"])
+@_tr_required
+def tr_courier_choferes_crear(cid):
+    """Agrega un chofer nuevo al roster de un courier, desde la ficha del
+    courier o desde el modal de captura de retiro ('+ Agregar chofer')."""
+    courier = mysql_fetchone("SELECT id FROM transport_couriers WHERE id=%s", (cid,))
+    if not courier:
+        return jsonify({"ok": False, "error": "Courier no encontrado"}), 404
+    f = request.get_json(silent=True) or {}
+    nombre = (f.get("nombre") or "").strip()
+    rut    = (f.get("rut") or "").strip()
+    tel    = (f.get("telefono") or "").strip() or None
+    patente = (f.get("patente") or "").strip() or None
+    if not nombre or not rut:
+        return jsonify({"ok": False, "error": "Nombre y RUT son obligatorios"}), 400
+    try:
+        chofer_id = _tr_courier_chofer_upsert(cid, nombre, rut, tel, patente)
+    except Exception as e:
+        print(f"[tr_courier_choferes_crear] cid={cid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo agregar el chofer."}), 500
+    _tr_log("courier", cid, "chofer agregado al roster", f"nombre={nombre} rut={rut}")
+    return jsonify({"ok": True, "id": chofer_id})
+
+
+@app.route("/transporte/couriers/<int:cid>/choferes/<int:chofer_id>", methods=["DELETE"])
+@_tr_required
+def tr_courier_choferes_eliminar(cid, chofer_id):
+    """Soft-delete: quita al chofer del roster activo (no lo borra, por si
+    tiene retiros históricos asociados por nombre/RUT)."""
+    try:
+        mysql_execute(
+            "UPDATE transport_drivers SET activo=0 WHERE id=%s AND courier_id=%s",
+            (chofer_id, cid)
+        )
+    except Exception as e:
+        print(f"[tr_courier_choferes_eliminar] cid={cid} chofer_id={chofer_id}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo quitar el chofer."}), 500
+    _tr_log("courier", cid, "chofer quitado del roster", f"chofer_id={chofer_id}")
+    return jsonify({"ok": True})
+
+
 # ── ZZ ENVÍO: saldo persistente por documento (2026-07-22, Daniel) ───────────
 # El ERP siempre trae el ZZ Envío TOTAL de la factura. Cuando un despacho se
 # hace de forma PARCIALIZADA (ej. queda 1 solo item con saldo de N que traía
@@ -29032,7 +29119,7 @@ def _ensure_transport_facturas_proveedor_tables():
             try:
                 cur.execute("""ALTER TABLE transport_logs
                     MODIFY COLUMN entity_type
-                    ENUM('commitment','manifest','manifest_item','factura_proveedor')
+                    ENUM('commitment','manifest','manifest_item','factura_proveedor','courier')
                     NOT NULL""")
             except Exception:
                 pass
@@ -29066,6 +29153,22 @@ def _ensure_transport_manifest_retiro_table():
                     FOREIGN KEY (manifest_id) REFERENCES transport_manifests(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Columna NUEVA (2026-07-26, firma remota por link): token público
+            # de firma de retiro, vive en transport_manifests. ALTER
+            # idempotente — se agrega SIEMPRE, incluso con
+            # ILUS_SKIP_MIGRATIONS=1 (mismo gotcha que columnas de 'region').
+            try:
+                cur.execute(
+                    "ALTER TABLE transport_manifests ADD COLUMN retiro_token VARCHAR(64) NULL "
+                    "COMMENT 'Token público para que el chofer firme el retiro sin login (/firma-retiro/<token>)'"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE transport_manifests ADD UNIQUE INDEX uq_manifest_retiro_token (retiro_token)")
+            except Exception:
+                pass
         conn.commit()
     finally:
         conn.close()
@@ -29598,75 +29701,90 @@ def _tr_manifiesto_retiro_get(mid):
         return None
 
 
-def _tr_courier_email(courier_nombre):
-    """Busca el correo declarado en la ficha del courier (transport_couriers)
-    a partir del texto libre guardado en transport_manifests.courier.
-    Primero intenta match exacto (normalizado), luego un LIKE tolerante
-    (mismo criterio laxo usado para los alias Felca/Milling/Melling en la
-    integración SimpliRoute) porque el texto libre trae inconsistencias de
-    ortografía conocidas."""
+def _tr_find_courier_row(courier_nombre):
+    """Encuentra la ficha del courier (transport_couriers) a partir del texto
+    libre guardado en transport_manifests.courier. Primero intenta match
+    exacto (normalizado), luego un LIKE tolerante en ambas direcciones (mismo
+    criterio laxo usado para los alias Felca/Milling/Melling en la
+    integración SimpliRoute), porque el texto libre trae inconsistencias de
+    ortografía conocidas. Devuelve la fila completa (id, email, etc.) o None.
+    Factorizado 2026-07-26 para reusar el mismo match en _tr_courier_email y
+    en la resolución de courier_id para el roster de choferes — NO duplicar."""
     if not courier_nombre:
         return None
     nombre = courier_nombre.strip()
     if not nombre:
         return None
     row = mysql_fetchone(
-        "SELECT email FROM transport_couriers WHERE LOWER(TRIM(nombre))=LOWER(TRIM(%s)) "
-        "AND email IS NOT NULL AND email <> '' LIMIT 1",
+        "SELECT * FROM transport_couriers WHERE LOWER(TRIM(nombre))=LOWER(TRIM(%s)) LIMIT 1",
         (nombre,)
     )
-    if row and row.get("email"):
-        return row["email"]
+    if row:
+        return row
     row = mysql_fetchone(
-        "SELECT email FROM transport_couriers WHERE LOWER(nombre) LIKE %s "
-        "AND email IS NOT NULL AND email <> '' LIMIT 1",
+        "SELECT * FROM transport_couriers WHERE LOWER(nombre) LIKE %s LIMIT 1",
         (f"%{nombre.lower()}%",)
     )
-    if row and row.get("email"):
-        return row["email"]
+    if row:
+        return row
     row = mysql_fetchone(
-        "SELECT email FROM transport_couriers WHERE %s LIKE CONCAT('%%', LOWER(nombre), '%%') "
-        "AND email IS NOT NULL AND email <> '' LIMIT 1",
+        "SELECT * FROM transport_couriers WHERE %s LIKE CONCAT('%%', LOWER(nombre), '%%') LIMIT 1",
         (nombre.lower(),)
     )
+    if row:
+        return row
+    return None
+
+
+def _tr_courier_email(courier_nombre):
+    """Busca el correo declarado en la ficha del courier a partir del texto
+    libre guardado en transport_manifests.courier. Ver _tr_find_courier_row."""
+    row = _tr_find_courier_row(courier_nombre)
     if row and row.get("email"):
         return row["email"]
     return None
 
 
-@app.route("/transporte/manifiestos/<int:mid>/retiro", methods=["GET", "POST"])
-@_tr_required
-def tr_manifiesto_retiro(mid):
-    """Captura de retiro de bodega (2026-07-26, Daniel): quién se llevó la
-    mercadería (chofer, RUT, teléfono, patente) + firma digital simple
-    (nombre tecleado, NO canvas). Al guardar, intenta mandar automáticamente
-    el PDF del manifiesto de firma al correo declarado en la ficha del
-    courier (transport_couriers.email). El correo es best-effort: si falla
-    o no hay email configurado, el registro igual queda guardado."""
-    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
-    if not manifiesto:
-        return jsonify({"ok": False, "error": "Manifiesto no encontrado"}), 404
+def _tr_ensure_manifest_retiro_token(mid):
+    """Garantiza que el manifiesto tenga su token público de firma remota
+    (lo crea lazy si falta). Vive en transport_manifests.retiro_token
+    (URL-safe, hasta 40 chars). Mismo patrón EXACTO que
+    _tr_ensure_public_token (transport_commitments), adaptado a manifiestos —
+    NO se reusa la función de commitments directo porque apunta a otra
+    tabla/columna. Devuelve el token (o None si falló crearlo)."""
+    try:
+        r = mysql_fetchone(
+            "SELECT retiro_token FROM transport_manifests WHERE id=%s", (mid,))
+        if not r:
+            return None
+        tok = (r.get("retiro_token") or "").strip()
+        if tok:
+            return tok
+        for _ in range(3):
+            new_tok = secrets.token_urlsafe(30)[:40]
+            try:
+                mysql_execute(
+                    "UPDATE transport_manifests SET retiro_token=%s WHERE id=%s",
+                    (new_tok, mid)
+                )
+                return new_tok
+            except Exception:
+                continue
+        return None
+    except Exception as _tok_err:
+        print(f"[tr_retiro_token] no se pudo generar token mid={mid}: {_tok_err}", flush=True)
+        return None
 
-    if request.method == "GET":
-        retiro = _tr_manifiesto_retiro_get(mid)
-        return jsonify({"ok": True, "retiro": retiro})
 
-    body = request.get_json(silent=True) or {}
-    chofer_nombre   = (body.get("chofer_nombre") or "").strip()
-    chofer_rut      = (body.get("chofer_rut") or "").strip()
-    chofer_telefono = (body.get("chofer_telefono") or "").strip()
-    patente         = (body.get("patente") or "").strip()
-    firma_nombre    = (body.get("firma_nombre") or "").strip()
-
-    faltantes = []
-    if not chofer_nombre: faltantes.append("nombre del chofer")
-    if not chofer_rut: faltantes.append("RUT del chofer")
-    if not patente: faltantes.append("patente")
-    if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
-    if faltantes:
-        return jsonify({"ok": False,
-                         "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
-
+def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
+                                   chofer_telefono, patente, firma_nombre,
+                                   ip_origen, registrado_por):
+    """Guarda (o actualiza) el registro de retiro de bodega de un manifiesto
+    y dispara el envío automático best-effort del PDF firmado al correo del
+    courier. Factorizado 2026-07-26 para que lo use TANTO el operador desde
+    el modal interno (tr_manifiesto_retiro) COMO el chofer desde el link
+    público sin login (tr_firma_retiro_publico) — misma lógica, no duplicar.
+    Devuelve (ok: bool, resp_dict, http_status)."""
     try:
         conn = get_mysql()
         try:
@@ -29682,17 +29800,17 @@ def tr_manifiesto_retiro(mid):
                     "firma_nombre=VALUES(firma_nombre), ip_origen=VALUES(ip_origen), "
                     "registrado_por=VALUES(registrado_por)",
                     (mid, chofer_nombre, chofer_rut, chofer_telefono, patente,
-                     firma_nombre, (request.remote_addr or "")[:60], current_username())
+                     firma_nombre, (ip_origen or "")[:60], registrado_por)
                 )
             conn.commit()
         finally:
             conn.close()
     except Exception as e:
-        print(f"[tr_manifiesto_retiro] guardar mid={mid}: {type(e).__name__}: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo guardar el registro de retiro."}), 500
+        print(f"[tr_manifiesto_retiro_guardar] guardar mid={mid}: {type(e).__name__}: {e}", flush=True)
+        return False, {"ok": False, "error": "No se pudo guardar el registro de retiro."}, 500
 
     _tr_log("manifest", mid, "retiro registrado",
-            f"chofer={chofer_nombre} rut={chofer_rut} patente={patente}")
+            f"chofer={chofer_nombre} rut={chofer_rut} patente={patente} por={registrado_por or 'chofer (link público)'}")
 
     enviado_a = None
     aviso = None
@@ -29733,13 +29851,156 @@ def tr_manifiesto_retiro(mid):
         else:
             aviso = "El registro quedó guardado, pero no hay correo configurado en la ficha del courier para enviarlo automáticamente."
     except Exception as e:
-        print(f"[tr_manifiesto_retiro] correo mid={mid}: {type(e).__name__}: {e}", flush=True)
+        print(f"[tr_manifiesto_retiro_guardar] correo mid={mid}: {type(e).__name__}: {e}", flush=True)
         aviso = "El registro quedó guardado, pero el envío automático de correo falló."
 
     resp = {"ok": True, "enviado_a": enviado_a}
     if aviso:
         resp["aviso"] = aviso
-    return jsonify(resp)
+    return True, resp, 200
+
+
+@app.route("/transporte/manifiestos/<int:mid>/retiro", methods=["GET", "POST"])
+@_tr_required
+def tr_manifiesto_retiro(mid):
+    """Captura de retiro de bodega (2026-07-26, Daniel): quién se llevó la
+    mercadería (chofer, RUT, teléfono, patente) + firma digital simple
+    (nombre tecleado, NO canvas). Al guardar, intenta mandar automáticamente
+    el PDF del manifiesto de firma al correo declarado en la ficha del
+    courier (transport_couriers.email). El correo es best-effort: si falla
+    o no hay email configurado, el registro igual queda guardado.
+
+    GET también devuelve courier_id (para el selector de choferes guardados
+    del roster, ver /transporte/couriers/<cid>/choferes) y link_firma (link
+    público de firma remota para el chofer, generado lazy)."""
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        return jsonify({"ok": False, "error": "Manifiesto no encontrado"}), 404
+
+    if request.method == "GET":
+        retiro = _tr_manifiesto_retiro_get(mid)
+        courier_row = _tr_find_courier_row(manifiesto.get("courier"))
+        tok = _tr_ensure_manifest_retiro_token(mid)
+        link_firma = (_public_base_url() + "/firma-retiro/" + tok) if tok else None
+        return jsonify({
+            "ok": True,
+            "retiro": retiro,
+            "courier_id": courier_row["id"] if courier_row else None,
+            "link_firma": link_firma,
+        })
+
+    body = request.get_json(silent=True) or {}
+    chofer_nombre   = (body.get("chofer_nombre") or "").strip()
+    chofer_rut      = (body.get("chofer_rut") or "").strip()
+    chofer_telefono = (body.get("chofer_telefono") or "").strip()
+    patente         = (body.get("patente") or "").strip()
+    firma_nombre    = (body.get("firma_nombre") or "").strip()
+
+    faltantes = []
+    if not chofer_nombre: faltantes.append("nombre del chofer")
+    if not chofer_rut: faltantes.append("RUT del chofer")
+    if not patente: faltantes.append("patente")
+    if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
+    if faltantes:
+        return jsonify({"ok": False,
+                         "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
+
+    ok, resp, status = _tr_manifiesto_retiro_guardar(
+        mid, manifiesto, chofer_nombre, chofer_rut, chofer_telefono, patente,
+        firma_nombre, request.remote_addr, current_username())
+    return jsonify(resp), status
+
+
+_RETIRO_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+@app.route("/firma-retiro/<token>", methods=["GET"])
+def tr_firma_retiro_publico(token):
+    """Página pública SIN LOGIN para que el chofer firme el retiro desde su
+    celular (link generado en el modal interno y enviado por SMS/WhatsApp
+    fuera de la app — ver GET /transporte/manifiestos/<mid>/retiro). Mismo
+    patrón de validación de token que tr_public_tracking (/t/<token>)."""
+    if not token or len(token) < 16 or len(token) > 80 or not _RETIRO_TOKEN_RE.match(token):
+        abort(404)
+    manifiesto = mysql_fetchone(
+        "SELECT id, correlativo, courier FROM transport_manifests WHERE retiro_token=%s", (token,))
+    if not manifiesto:
+        abort(404)
+    mid = manifiesto["id"]
+    resumen = mysql_fetchone(
+        "SELECT COUNT(*) AS n_docs, COALESCE(SUM(COALESCE(c.n_bultos,1)),0) AS n_bultos "
+        "FROM transport_manifest_items mi "
+        "JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.manifest_id=%s", (mid,))
+    n_docs = (resumen or {}).get("n_docs") or 0
+    n_bultos = (resumen or {}).get("n_bultos") or 0
+    courier_row = _tr_find_courier_row(manifiesto.get("courier"))
+    courier_id = courier_row["id"] if courier_row else None
+    retiro_existente = _tr_manifiesto_retiro_get(mid)
+    choferes = []
+    if courier_id:
+        choferes = mysql_fetchall(
+            "SELECT id, nombre, rut, telefono, patente FROM transport_drivers "
+            "WHERE courier_id=%s AND activo=1 ORDER BY nombre", (courier_id,)
+        ) or []
+    return render_template(
+        "transporte/firma_retiro_publico.html",
+        token=token,
+        manifiesto=manifiesto,
+        n_docs=n_docs,
+        n_bultos=n_bultos,
+        courier_id=courier_id,
+        choferes=choferes,
+        retiro=retiro_existente,
+    )
+
+
+@app.route("/firma-retiro/<token>", methods=["POST"])
+def tr_firma_retiro_publico_guardar(token):
+    """Guarda el retiro capturado por el chofer desde el link público. Misma
+    validación de token + misma función de guardado que el modal interno
+    (_tr_manifiesto_retiro_guardar) — NO se duplica la lógica."""
+    if not token or len(token) < 16 or len(token) > 80 or not _RETIRO_TOKEN_RE.match(token):
+        return jsonify({"ok": False, "error": "Link inválido o expirado."}), 404
+    manifiesto = mysql_fetchone(
+        "SELECT * FROM transport_manifests WHERE retiro_token=%s", (token,))
+    if not manifiesto:
+        return jsonify({"ok": False, "error": "Link inválido o expirado."}), 404
+    mid = manifiesto["id"]
+
+    body = request.get_json(silent=True) or {}
+    chofer_nombre   = (body.get("chofer_nombre") or "").strip()
+    chofer_rut      = (body.get("chofer_rut") or "").strip()
+    chofer_telefono = (body.get("chofer_telefono") or "").strip()
+    patente         = (body.get("patente") or "").strip()
+    firma_nombre    = (body.get("firma_nombre") or "").strip()
+
+    faltantes = []
+    if not chofer_nombre: faltantes.append("nombre del chofer")
+    if not chofer_rut: faltantes.append("RUT del chofer")
+    if not patente: faltantes.append("patente")
+    if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
+    if faltantes:
+        return jsonify({"ok": False,
+                         "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
+
+    ok, resp, status = _tr_manifiesto_retiro_guardar(
+        mid, manifiesto, chofer_nombre, chofer_rut, chofer_telefono, patente,
+        firma_nombre, request.remote_addr, None)
+
+    # Best-effort: si el chofer no estaba en el roster del courier, se
+    # ofrece agregarlo desde el propio formulario público (ver JS del
+    # template) — aquí solo se guarda si el frontend pide guardar_chofer=1.
+    if ok and body.get("guardar_chofer"):
+        courier_row = _tr_find_courier_row(manifiesto.get("courier"))
+        if courier_row:
+            try:
+                _tr_courier_chofer_upsert(courier_row["id"], chofer_nombre, chofer_rut,
+                                           chofer_telefono, patente)
+            except Exception as e:
+                print(f"[tr_firma_retiro_publico_guardar] roster mid={mid}: {e}", flush=True)
+
+    return jsonify(resp), status
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -31567,12 +31828,18 @@ def tr_courier_ficha(cid):
         "SELECT DISTINCT zona FROM transport_courier_comunas WHERE courier_id=%s AND zona!='' ORDER BY zona", (cid,)
     ) or []
 
+    choferes = mysql_fetchall(
+        "SELECT id, nombre, rut, telefono, patente FROM transport_drivers "
+        "WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
+    ) or []
+
     return render_template("transporte/courier_ficha.html",
         courier=courier,
         contratos=contratos,
         comunas_sample=comunas_sample,
         regions=[r['region'] for r in regions],
         zonas=[z['zona'] for z in zonas],
+        choferes=choferes,
     )
 
 
