@@ -1208,7 +1208,6 @@ function lcRenderItems(){
       '<td class="text-end" data-cell="pred-tot">' + (it.predTot > 0 ? fkg(it.predTot) : '<span class="text-muted">—</span>') + '</td>' +
       '<td class="lc-acciones-cel">' +
         '<button type="button" class="lc-mini-btn" title="Medidas" data-action="cub-medidas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '" data-bultos="' + esc(it.bultos) + '"><i class="bi bi-rulers"></i></button>' +
-        (window.CAN_PRINT === false ? '' : '<button type="button" class="lc-mini-btn" title="Etiquetas" data-action="cub-etiquetas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '" data-bultos="' + esc(it.bultos) + '"><i class="bi bi-tags"></i></button>') +
       '</td>' +
       '<td><input type="number" min="0" max="100" step="1" class="lc-input-desc" value="' + esc(it.descuentoPct) + '" oninput="lcDescLinea(' + i + ', this.value)"></td>' +
       '<td class="text-end lc-money lc-cell-flete">…</td>' +
