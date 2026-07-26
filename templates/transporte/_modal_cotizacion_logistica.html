@@ -863,7 +863,7 @@ function _lcInitDireccion(){
       hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada · <small>' + la + ', ' + ln + '</small>';
       _lcMarcar('lcCampoDireccion', true);
       _lcMarcar('lcCampoRegion', !!region);
-      if (_LC) _LC.direccionValidada = true;
+      if (_LC){ _LC.direccionValidada = true; _lcAutoCotizarSiListo(); }
     },
     onNoSelection: function(){
       $('lcDireccionHint').innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>Elige una opción de la lista para validar la dirección.';
@@ -1116,6 +1116,7 @@ async function _lcAsignarDesdeDocumento(items, header){
   var msg = '✓ ' + nuevos.length + ' producto(s) agregado(s)';
   if (zzOmitidas) msg += ' · ' + zzOmitidas + ' línea(s) de envío omitida(s)';
   toast(msg, 'success');
+  _lcAutoCotizarSiListo();
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1389,6 +1390,19 @@ function _lcActualizarPesoTxt(){
     ? 'suma de las líneas marcadas'
     : 'sin medidas cargadas todavía — carga "Medidas" en al menos una línea';
   return peso;
+}
+// FIX 2026-07-27 (pedido Daniel): "no quiero el botón de cotizar como paso
+// adicional, que sea automático al llamar el documento". Se dispara solo
+// (sin alert ni toast) apenas quedan dadas las 3 condiciones que ya exigía
+// el botón manual (dirección validada, comuna, peso) — si falta alguna, no
+// hace nada y el botón "Cotizar con los couriers" sigue disponible como
+// respaldo manual (ej. para volver a cotizar tras cambiar algo).
+function _lcAutoCotizarSiListo(){
+  if (!_LC || !_LC.direccionValidada) return;
+  if (!$('lcComuna').value.trim()) return;
+  if (!_LC.items.length) return;
+  if (!(_lcPesoFacturableMarcados() > 0)) return;
+  lcCotizarFlete();
 }
 async function lcCotizarFlete(){
   if (!_LC) return;
