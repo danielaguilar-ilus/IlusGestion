@@ -118,6 +118,11 @@
 .lc-head h5{margin:0;font-weight:900;color:#fff;display:flex;align-items:center;gap:8px;font-size:1.05rem;}
 .lc-head h5 i{color:#dc2626;}
 .lc-head .lc-sub{font-size:.72rem;color:#9ca3af;font-weight:600;margin-top:2px;}
+/* 2026-07-26 (pedido Daniel): "que ese modal tenga el logo de ILUS más
+   grande" — logo real (no solo el ícono de camión) en el header oscuro. */
+.lc-head-titulos{display:flex;align-items:center;gap:12px;min-width:0;}
+.lc-head-logo{height:40px;width:auto;flex:0 0 auto;object-fit:contain;}
+@media(max-width:480px){.lc-head-logo{height:32px;}}
 .lc-close{
   width:34px;height:34px;border:none;border-radius:9px;background:rgba(255,255,255,.1);color:#fff;
   display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;flex:0 0 auto;
@@ -253,9 +258,12 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
 <div id="lcBackdrop" class="lc-backdrop" aria-hidden="true">
   <div class="lc-panel" role="dialog" aria-modal="true" aria-labelledby="lcTitulo">
     <div class="lc-head">
-      <div>
-        <h5><i class="bi bi-truck"></i><span id="lcTitulo">Crear cotización de transporte</span></h5>
-        <div class="lc-sub" id="lcNumeroSub">Numeración CTR- · flete + margen + descuento</div>
+      <div class="lc-head-titulos">
+        <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS" class="lc-head-logo">
+        <div>
+          <h5><i class="bi bi-truck"></i><span id="lcTitulo">Crear cotización de transporte</span></h5>
+          <div class="lc-sub" id="lcNumeroSub">Numeración CTR- · flete + margen + descuento</div>
+        </div>
       </div>
       <button type="button" class="lc-close" onclick="lcCerrar()" aria-label="Cerrar">
         <i class="bi bi-x-lg"></i>
@@ -978,6 +986,7 @@ async function _lcAsignarDesdeDocumento(items, header){
         qty: (it.qty == null ? 1 : it.qty), koen: it.koen || null,
         appId: ln.app_id || null, tieneFicha: !!ln.tiene_ficha,
         predTot: Number(ln.pred_tot) || 0, predU: Number(ln.pred_u) || 0, bultos: Number(ln.total_bultos) || 0,
+        stock: ln.stock || null,
       }));
     });
   }
@@ -1000,6 +1009,22 @@ async function _lcAsignarDesdeDocumento(items, header){
    + data-action, ver static/cubicador_tabs.js — no se reescribe nada de
    esa lógica, solo se le dan filas con el contrato correcto).
    ══════════════════════════════════════════════════════════════════════ */
+// 2026-07-26 (pedido Daniel): "ver el devengado, el comprometido y el
+// stock físico" de cada producto de la cotización — reusa el desglose que
+// ya trae /api/erp/documento (get_erp_stock_by_skus, misma fuente que
+// Cubicador/Asignar y el Monitor). Se muestra como un chip con tooltip
+// bajo el SKU para no romper el ancho de la tabla existente.
+function _lcStockBadge(st){
+  if (!st) return '';
+  var f = function(n){ return (Math.round((n||0)*10)/10).toLocaleString('es-CL'); };
+  var tip = 'Físico: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido) +
+    ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
+  var color = st.hay_stock ? '#15803d' : '#b91c1c';
+  var bg = st.hay_stock ? '#dcfce7' : '#fee2e2';
+  return '<span title="' + esc(tip) + '" style="display:block;margin-top:2px;font-size:.62rem;font-weight:800;' +
+    'color:' + color + ';background:' + bg + ';border-radius:6px;padding:1px 5px;cursor:help;white-space:nowrap">' +
+    '<i class="bi bi-boxes me-1"></i>' + f(st.fisico) + ' físico</span>';
+}
 function lcRenderItems(){
   var body = $('lcItemsBody');
   if (!_LC || !_LC.items.length){
@@ -1013,9 +1038,10 @@ function lcRenderItems(){
       ' data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '"' +
       ' data-qty="' + esc(it.qty) + '" data-bultos="' + esc(it.bultos) + '" data-pred-tot="' + esc(it.predTot) + '"' +
       ' data-kg-tot="0" data-pv-tot="0" data-vol-tot="0" data-i="' + i + '">' +
-      '<td><input type="checkbox" class="lc-check" ' + (it.incluido ? 'checked' : '') + ' onchange="lcItemToggle(' + i + ', this.checked)"></td>' +
+      '<td><input type="checkbox" class="lc-check" ' + (it.incluido ? 'checked' : '') + ' onclick="lcItemClick(event, ' + i + ')" onchange="lcItemToggle(' + i + ', this.checked)"></td>' +
       '<td><span class="lc-doc-pill">' + doc + '</span></td>' +
       '<td data-cell="sku"><span class="lc-sku">' + esc(it.sku) + '</span>' +
+        _lcStockBadge(it.stock) +
         (!it.tieneFicha ? '<button type="button" class="lc-sinficha" data-action="cub-medidas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '"><i class="bi bi-exclamation-circle me-1"></i>Sin ficha · cargar medidas</button>' : '') +
         /* FIX 2026-07-25 (revisión adversarial, hallazgo ALTA): marcadores
            data-cell ocultos para bultos/kg-u/pv-u/vol-u/pred-u. Sin esto,
@@ -1058,11 +1084,34 @@ function lcItemToggle(i, checked){
   if (!_LC || !_LC.items[i]) return;
   _LC.items[i].incluido = !!checked;
   var row = document.querySelector('#lcItemsBody tr[data-i="' + i + '"]');
-  if (row) row.classList.toggle('lc-excluida', !checked);
+  if (row) {
+    row.classList.toggle('lc-excluida', !checked);
+    var chk = row.querySelector('.lc-check');
+    if (chk) chk.checked = !!checked;
+  }
   var todosMarcados = _LC.items.every(function(it){ return it.incluido; });
   $('lcCheckAll').checked = todosMarcados;
   _lcActualizarBulkToolbar();
   lcRecalcular();
+}
+
+// 2026-07-26 (pedido Daniel): "que los productos se puedan seleccionar
+// múltiples veces" -- shift+click en el checkbox de una fila marca/
+// desmarca TODO el rango entre la última fila clickeada y esta, igual que
+// Gmail/Excel. Sin esto, marcar 20 líneas seguidas para eliminarlas en
+// bloque (ver lcEliminarDesmarcados más arriba) era un click por fila.
+var _lcUltimoClickIdx = null;
+function lcItemClick(ev, i){
+  if (!_LC || !ev) return;
+  var checked = ev.target.checked;
+  if (ev.shiftKey && _lcUltimoClickIdx !== null && _lcUltimoClickIdx !== i){
+    var desde = Math.min(_lcUltimoClickIdx, i);
+    var hasta = Math.max(_lcUltimoClickIdx, i);
+    for (var k = desde; k <= hasta; k++){
+      if (_LC.items[k]) lcItemToggle(k, checked);
+    }
+  }
+  _lcUltimoClickIdx = i;
 }
 function lcCheckAllToggle(checked){
   if (!_LC) return;

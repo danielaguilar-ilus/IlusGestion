@@ -1033,11 +1033,60 @@ def register_cubicador_plus(app, ctx=None):
             data["producto_creado"] = bool(creado)
         return jsonify(data), status
 
+    def _cub_api_cotizar(fn):
+        """Variante de _cub_api SOLO para /cubicador/api/cotizar.
+
+        BUG reportado por Daniel 2026-07-26 ("el cotizar envío no sale sin
+        tarifa"): este endpoint también lo llama el wizard de Cotizaciones
+        de Transporte y Distribución (_modal_cotizacion_logistica.html,
+        botón "Cotizar flete" -> epCotizarFlete), pero _cub_api exige
+        ESTRICTAMENTE g.permissions['cubicador']. Un usuario con permiso
+        'transporte'/'logistica_cotizaciones' (que SÍ puede abrir ese
+        wizard, gateado por _lc_tiene_permiso en logistica_cotizaciones.py)
+        pero SIN el permiso 'cubicador' recibía un 403 "Sin permiso"
+        silencioso — el wizard solo mostraba un hint pequeño de advertencia,
+        que en la práctica se veía como "no cotiza nada".
+        Fix: para ESTE endpoint puntual, se acepta cubicador O transporte O
+        logistica_cotizaciones O superadmin (mismo OR que ya usa
+        logistica_cotizaciones._lc_tiene_permiso). Los otros 4 endpoints del
+        Cubicador siguen exigiendo SOLO 'cubicador' vía @_cub_api — no se
+        tocó su gate.
+        """
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            try:
+                permisos = getattr(g, "permissions", None) or {}
+                if not (permisos.get("cubicador") or permisos.get("transporte")
+                        or permisos.get("logistica_cotizaciones") or permisos.get("superadmin")):
+                    return jsonify({
+                        "ok": False,
+                        "error": "No tienes acceso para cotizar flete.",
+                        "error_codigo": "SIN_PERMISO",
+                    }), 403
+            except Exception as e_perm:
+                print(f"[cubicador_plus] fallo leyendo permisos (cotizar): {e_perm}", flush=True)
+                return jsonify({"ok": False, "error": "No se pudo validar tu sesion."}), 403
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                print(f"[cubicador_plus][ERROR] {fn.__name__}: {e}", flush=True)
+                try:
+                    print(traceback.format_exc(), flush=True)
+                except Exception:
+                    pass
+                return jsonify({
+                    "ok": False,
+                    "error": "Ocurrio un problema procesando la solicitud. "
+                             "Intenta nuevamente; si persiste avisa a soporte.",
+                }), 500
+        login_required = _h("login_required")
+        return login_required(wrapped) if callable(login_required) else wrapped
+
     # ──────────────────────────────────────────────────────────────
     #  POST /cubicador/api/cotizar — envoltorio del comparador
     # ──────────────────────────────────────────────────────────────
     @app.route("/cubicador/api/cotizar", methods=["POST"])
-    @_cub_api
+    @_cub_api_cotizar
     def cubicador_plus_cotizar():
         """Cotiza couriers desde la pestana del Cubicador.
 

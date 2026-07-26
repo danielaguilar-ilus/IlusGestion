@@ -14319,6 +14319,21 @@ def erp_documento_unificado():
         )
         out_lineas.append(out)
 
+    # 2026-07-26 (pedido Daniel, modal de cotización de transporte): "ver el
+    # devengado, el comprometido y el stock físico". Este endpoint es el
+    # motor único (/api/erp/documento) que usa, entre otros,
+    # _modal_cotizacion_logistica.html — reusa get_erp_stock_by_skus (Regla
+    # #4.2, ya construida para /asignar y el Monitor), 1 sola consulta batch.
+    try:
+        _skus_doc2 = [l.get("sku") for l in out_lineas if l.get("sku")]
+        _stock_map2 = get_erp_stock_by_skus(_skus_doc2) if _skus_doc2 else {}
+        for _l in out_lineas:
+            _l["stock"] = _stock_map2.get((_l.get("sku") or "").strip().upper())
+    except Exception as _e_stock2:
+        print(f"[cub-fetch] desglose de stock falló: {_e_stock2}", flush=True)
+        for _l in out_lineas:
+            _l.setdefault("stock", None)
+
     _resp_doc = {"hdr": h, "lineas": out_lineas}
     # ⚡ PERF: persistir 5min en cache
     try:
@@ -17936,7 +17951,17 @@ def api_asignar_cotizar_couriers():
         "recomendado_id": 2   # el más barato con cobertura
       }
     """
-    if not g.permissions.get("cubicador"):
+    # 2026-07-26 (bug reportado por Daniel: "el cotizar envío no sale sin
+    # tarifa"): este endpoint lo invoca en proceso _invocar_comparador() de
+    # cubicador_plus.py desde /cubicador/api/cotizar, que a su vez lo usa el
+    # wizard de Cotizaciones de Transporte y Distribución
+    # (_modal_cotizacion_logistica.html). Antes exigía SOLO 'cubicador' —
+    # un usuario con permiso 'transporte'/'logistica_cotizaciones' (que sí
+    # puede abrir ese wizard) caía en un 403 silencioso justo al cotizar el
+    # flete. Se amplía al mismo OR que ya usa
+    # logistica_cotizaciones._lc_tiene_permiso.
+    if not (g.permissions.get("cubicador") or g.permissions.get("transporte")
+            or g.permissions.get("logistica_cotizaciones") or g.permissions.get("superadmin")):
         return jsonify({"error": "Sin permiso"}), 403
 
     import concurrent.futures as _cf
@@ -22523,6 +22548,20 @@ def tr_detalle(cid):
     for l in lineas_prod:
         l["fotos"] = fotos_por_prod.get(l.get("app_id"), [])
 
+    # Desglose de stock (físico/devengado/comprometido) por SKU (2026-07-26,
+    # Daniel: "ver el devengado, el comprometido y el stock físico" en el
+    # modal de detalle de transporte). Mismo patrón que /api/asignar/documento
+    # (app.py, get_erp_stock_by_skus) — 1 sola consulta batch, READ-ONLY.
+    try:
+        _skus_doc = [l.get("sku") for l in lineas_prod if l.get("sku")]
+        _stock_map = get_erp_stock_by_skus(_skus_doc) if _skus_doc else {}
+        for _l in lineas_prod:
+            _l["stock"] = _stock_map.get((_l.get("sku") or "").strip().upper())
+    except Exception as _e_stock:
+        print(f"[tr_detalle] desglose de stock falló: {_e_stock}", flush=True)
+        for _l in lineas_prod:
+            _l.setdefault("stock", None)
+
     # Totales solo de líneas con saldo
     tot_kg   = round(sum(l["peso_kg_tot"]  for l in lineas_prod), 3)
     tot_pv   = round(sum(l["peso_vol_tot"] for l in lineas_prod), 3)
@@ -23007,7 +23046,7 @@ def _tr_etiqueta_facturas(commitment_ids):
         return []
     _ph  = ",".join(["%s"] * len(commitment_ids))
     rows = mysql_fetchall(
-        "SELECT id, tido, nudo, cliente_nombre, comuna, direccion, telefono, "
+        "SELECT id, tido, nudo, cliente_nombre, comuna, region, direccion, telefono, "
         "       COALESCE(n_bultos, 1) AS n_bultos "
         "FROM transport_commitments "
         f"WHERE id IN ({_ph})",
@@ -23033,6 +23072,10 @@ def _tr_etiqueta_facturas(commitment_ids):
             "telefono":      (c.get("telefono") or "").strip(),
             "direccion":     (c.get("direccion") or "").strip(),
             "comuna":        (c.get("comuna") or "").strip(),
+            # FIX 2026-07-25 (réplica de referencia): la etiqueta ahora
+            # muestra "Comuna / Región" en 2 líneas -- faltaba traer la
+            # región, que ya existe como columna en transport_commitments.
+            "region":        (c.get("region") or "").strip(),
             "total_bultos":  total,
             "bultos":        [{"num": n, "total": total} for n in range(1, total + 1)],
         })
@@ -24140,15 +24183,104 @@ def _tr_manifiesto_guard_actividad(mid):
     return None, aviso
 
 
+@app.route("/transporte/api/manifiestos/items-todos")
+@_tr_required
+def tr_manifiestos_items_todos():
+    """Lista TODOS los documentos que están hoy en algún manifiesto activo
+    (no cerrado/cancelado), para el Monitor (2026-07-26, pedido Daniel):
+    "en el monitor en gestión deberían estar todos los productos que están
+    en los manifiestos, con la opción de eliminarlo... siempre tiene que
+    avisar si hay duplicidad". Marca cada fila con `duplicado` (>1 manifiesto
+    activo) para que el frontend lo resalte. Solo lectura de nuestras
+    propias tablas MySQL (transport_manifests/transport_manifest_items/
+    transport_commitments) — no toca el ERP.
+    """
+    rows = mysql_fetchall("""
+        SELECT mi.id AS item_id, mi.manifest_id, mi.estado_entrega,
+               m.correlativo, m.estado AS manifest_estado, m.fecha AS manifest_fecha,
+               m.courier,
+               c.id AS commitment_id, c.tido, c.nudo, c.cliente_nombre,
+               c.comuna, COALESCE(c.n_bultos, 1) AS n_bultos,
+               COALESCE(c.costo_zz, 0) AS costo_zz,
+               (SELECT COUNT(*) FROM transport_manifest_items mi2
+                JOIN transport_manifests m2 ON m2.id = mi2.manifest_id
+                WHERE mi2.commitment_id = mi.commitment_id
+                  AND m2.estado NOT IN ('Cerrado','Cancelado')) AS n_manifiestos_activos
+        FROM transport_manifest_items mi
+        JOIN transport_manifests m ON m.id = mi.manifest_id
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE m.estado NOT IN ('Cerrado','Cancelado')
+        ORDER BY (SELECT COUNT(*) FROM transport_manifest_items mi3
+                  JOIN transport_manifests m3 ON m3.id = mi3.manifest_id
+                  WHERE mi3.commitment_id = mi.commitment_id
+                    AND m3.estado NOT IN ('Cerrado','Cancelado')) DESC,
+                 c.nudo, m.correlativo
+    """) or []
+    out = []
+    for r in rows:
+        out.append({
+            "item_id":        r["item_id"],
+            "manifest_id":    r["manifest_id"],
+            "correlativo":    r["correlativo"],
+            "manifest_estado": r["manifest_estado"],
+            "courier":        r["courier"],
+            "estado_entrega": r.get("estado_entrega"),
+            "commitment_id":  r["commitment_id"],
+            "doc":            f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
+            "cliente":        r.get("cliente_nombre") or "—",
+            "comuna":         r.get("comuna") or "",
+            "n_bultos":       r.get("n_bultos") or 1,
+            "costo_zz":       float(r.get("costo_zz") or 0),
+            "duplicado":      (r.get("n_manifiestos_activos") or 0) > 1,
+            "n_manifiestos_activos": r.get("n_manifiestos_activos") or 0,
+        })
+    return jsonify({"ok": True, "items": out,
+                     "n_duplicados": sum(1 for x in out if x["duplicado"])})
+
+
 @app.route("/transporte/manifiestos/<int:mid>/items", methods=["POST"])
 @_tr_required
 def tr_agregar_item(mid):
     _bloqueo, _aviso = _tr_manifiesto_guard_actividad(mid)
     if _bloqueo:
         return _bloqueo
-    cid = request.get_json(silent=True, force=True).get("commitment_id")
+    _body = request.get_json(silent=True, force=True) or {}
+    cid = _body.get("commitment_id")
     if not cid:
         return jsonify({"error": "commitment_id requerido"}), 400
+    # 2026-07-26 (pedido Daniel): "debería reconocer que la 22703 está hasta
+    # en varios manifiestos... siempre tiene que avisar si hay duplicidad".
+    # Antes NO existía ningún chequeo (uq_item solo es único por
+    # manifest_id+commitment_id, así que la MISMA factura podía agregarse a
+    # N manifiestos distintos sin aviso). Ahora: si el documento ya está en
+    # OTRO manifiesto, se avisa ANTES de insertar (409 con el detalle) — el
+    # frontend re-envía con confirm_dup=1 si el operador decide seguir
+    # igual (ej: se dividió el despacho a propósito). No bloquea duro.
+    _confirm_dup = bool(_body.get("confirm_dup"))
+    _otros = mysql_fetchall(
+        "SELECT m.id, m.correlativo, m.estado, m.fecha "
+        "FROM transport_manifest_items mi "
+        "JOIN transport_manifests m ON m.id = mi.manifest_id "
+        "WHERE mi.commitment_id=%s AND mi.manifest_id != %s",
+        (cid, mid)
+    ) or []
+    if _otros and not _confirm_dup:
+        _doc_info = mysql_fetchone(
+            "SELECT tido, nudo FROM transport_commitments WHERE id=%s", (cid,))
+        _doc_lbl = (f"{_doc_info.get('tido') or ''} {_doc_info.get('nudo') or ''}".strip()
+                    if _doc_info else f"commitment_id={cid}")
+        return jsonify({
+            "ok": False,
+            "error": "duplicado",
+            "msg": f"El documento {_doc_lbl} ya está en {len(_otros)} otro"
+                   f"{'s' if len(_otros) != 1 else ''} manifiesto"
+                   f"{'s' if len(_otros) != 1 else ''}.",
+            "duplicados": [
+                {"manifest_id": o["id"], "correlativo": o["correlativo"],
+                 "estado": o["estado"], "fecha": str(o["fecha"]) if o.get("fecha") else None}
+                for o in _otros
+            ],
+        }), 409
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -24169,6 +24301,10 @@ def tr_agregar_item(mid):
     else:
         _detalle = f"commitment_id={cid}"
     _tr_log("manifest", mid, "factura agregada", _detalle)
+    if _otros:
+        _tr_log("manifest", mid, "aviso",
+                 f"factura agregada aunque ya estaba en otro(s) manifiesto(s): "
+                 f"{', '.join(o['correlativo'] or str(o['id']) for o in _otros)}")
     resp = {"ok": True}
     if _aviso:
         resp["aviso"] = _aviso
@@ -28126,74 +28262,11 @@ def tr_choferes_toggle(did):
     return jsonify({"ok": True})
 
 
-@app.route("/transporte/api/manifiestos/<int:mid>/choferes-disponibles")
-@_tr_required
-def tr_choferes_disponibles(mid):
-    """Devuelve los choferes activos compatibles con este manifiesto.
-    Match por nombre del courier (LIKE bidireccional para tolerar variantes).
-    """
-    man = mysql_fetchone("SELECT courier FROM transport_manifests WHERE id=%s", (mid,))
-    courier_name = (man.get("courier") or "").strip().lower() if man else ""
-    rows = mysql_fetchall("""
-        SELECT d.id, d.nombre, d.rut, d.patente, d.telefono,
-               co.id AS courier_id, co.nombre AS courier_nombre,
-               (SELECT COUNT(*) FROM transport_manifest_drivers WHERE driver_id=d.id) AS asignados
-        FROM transport_drivers d
-        LEFT JOIN transport_couriers co ON co.id = d.courier_id
-        WHERE d.activo = 1
-        ORDER BY d.nombre
-    """) or []
-    # Marcar compatibles
-    out = []
-    for r in rows:
-        cn = (r.get("courier_nombre") or "").strip().lower()
-        compatible = (not cn or not courier_name
-                      or cn in courier_name or courier_name in cn)
-        out.append({**dict(r), "compatible": compatible})
-    # Asignado actual
-    current = mysql_fetchone(
-        "SELECT driver_id FROM transport_manifest_drivers WHERE manifest_id=%s", (mid,))
-    return jsonify({
-        "ok": True,
-        "courier_manifiesto": man.get("courier") if man else "",
-        "current_driver_id":  current.get("driver_id") if current else None,
-        "choferes": out,
-    })
-
-
-@app.route("/transporte/manifiestos/<int:mid>/asignar-chofer", methods=["POST"])
-@_tr_required
-def tr_asignar_chofer(mid):
-    """Asigna un manifiesto a un chofer (1 chofer por manifiesto)."""
-    did = ((request.get_json(silent=True) or request.form) or {}).get("driver_id")
-    if not did:
-        return jsonify({"error": "driver_id requerido"}), 400
-    drv = mysql_fetchone(
-        "SELECT d.id, d.nombre, d.courier_id, co.nombre AS courier_nombre "
-        "FROM transport_drivers d LEFT JOIN transport_couriers co ON co.id=d.courier_id "
-        "WHERE d.id=%s AND d.activo=1", (did,))
-    if not drv:
-        return jsonify({"error": "chofer no encontrado o inactivo"}), 404
-    # Validar que el transporte del chofer coincida con el del manifiesto.
-    man = mysql_fetchone("SELECT courier FROM transport_manifests WHERE id=%s", (mid,))
-    man_courier = (man.get("courier") or "").strip().lower() if man else ""
-    drv_courier = (drv.get("courier_nombre") or "").strip().lower()
-    if drv_courier and man_courier and drv_courier not in man_courier \
-            and man_courier not in drv_courier:
-        return jsonify({
-            "error": "courier_mismatch",
-            "msg": f"{drv['nombre']} pertenece a «{drv['courier_nombre']}», pero este "
-                   f"manifiesto es de «{man.get('courier')}». Asigna un chofer del "
-                   f"transporte correcto."
-        }), 409
-    mysql_execute("""
-        INSERT INTO transport_manifest_drivers (manifest_id, driver_id, fase, assigned_by)
-        VALUES (%s,%s,'asignado',%s)
-        ON DUPLICATE KEY UPDATE driver_id=VALUES(driver_id), fase='asignado',
-                                assigned_at=NOW(), assigned_by=VALUES(assigned_by)
-    """, (mid, did, current_username()))
-    _tr_log("manifest", mid, "chofer asignado", drv["nombre"])
-    return jsonify({"ok": True, "chofer": drv["nombre"]})
+# 2026-07-26 (pedido explícito de Daniel, reiterado): se eliminó el botón
+# "Asignar chofer" del menú del manifiesto (ver manifiesto_detalle.html).
+# Estos dos endpoints (tr_choferes_disponibles, tr_asignar_chofer) quedaron
+# sin caller desde el frontend y se eliminan del backend también — Regla
+# #4.2 cubierta por pedido explícito previo de Daniel.
 
 
 # ── ZZ ENVÍO: saldo persistente por documento (2026-07-22, Daniel) ───────────
@@ -76640,7 +76713,16 @@ except Exception as _e_cubplus:
 # ══════════════════════════════════════════════════════════════════════
 try:
     from logistica_cotizaciones import register_logistica_cotizaciones as _register_logistica_cotizaciones
-    _register_logistica_cotizaciones(app, globals())
+    # FIX 2026-07-26: _ensure_transport_cotiz_tables() usa get_db()/mysql_execute
+    # (basados en Flask `g`), que exigen app context activo. Sin este `with`,
+    # register_logistica_cotizaciones() corría en tiempo de import (sin
+    # contexto) y CADA CREATE TABLE fallaba en silencio con "Working outside
+    # of application context" (visto en logs de prod) -> transport_cotizaciones
+    # nunca se creaba -> 500 "Table 'ilus.transport_cotizaciones' doesn't
+    # exist" en /transporte/cotizaciones. Mismo patrón que init_db,
+    # _ensure_transporte_columns, etc. más abajo en este archivo.
+    with app.app_context():
+        _register_logistica_cotizaciones(app, globals())
     print("[logistica_cotizaciones] módulo registrado", flush=True)
 except Exception as _e_lc:
     print(f"[logistica_cotizaciones] NO se pudo registrar: {_e_lc}", flush=True)

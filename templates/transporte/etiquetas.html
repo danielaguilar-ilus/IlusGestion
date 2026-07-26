@@ -226,139 +226,135 @@ html, body { background: #fff; }
 .lbl-head .brand-text .red {
   color: var(--ilus-red);
 }
-.lbl-head .brand-info {
-  /* FIX Daniel: "los datos déjalo un poquito más chiquito, no los considero
-     necesarios -- no estaban en la etiqueta original". Se deja (no se quita
-     del todo: sigue siendo el RUT/giro/dirección del remitente, útil para
-     aduana/reclamos) pero bien secundario -- mitad de tamaño que antes. */
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: center;
-  gap: .5mm 1.4mm;
-  padding-top: .6mm;
-  border-top: .3mm solid #e5e7eb;
-  font-size: 1.5mm;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--ilus-gray);
-  text-align: center;
-}
-.lbl-head .brand-info .rut {
-  font-size: 1.6mm;
-  font-weight: 800;
-  color: var(--ilus-black);
-}
-.lbl-head .brand-info .giro {
-  text-transform: uppercase;
-  letter-spacing: .1mm;
-}
-.lbl-head .brand-info .dot {
-  color: var(--ilus-gray);
-}
-.lbl-head .brand-info .brand-info-break {
-  flex-basis: 100%;
-  height: 0;
-}
+/* brand-info (RUT/giro/dirección/teléfono del remitente) se removió por
+   completo del header (2026-07-25, réplica exacta de referencia) — no
+   queda CSS muerto asociado a propósito. */
 
-/* Banda Courier / N° Courier / Fecha — campos de captura del transportista */
+/* Franja de 3 casillas: CARRIER/TRANSPORTE · FECHA/HORA · ORDEN/DOCUMENTO N°
+   Rediseño 2026-07-25 (réplica exacta de referencia de Daniel): reemplaza
+   la banda anterior "Courier/N° Courier/Fecha" (casilla del medio vacía).
+   Cada casilla lleva ícono + label chico + valor debajo. */
 .lbl-courier {
   display: grid;
-  grid-template-columns: 1fr 1fr 26mm;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 0;
   border-bottom: .5mm solid var(--ilus-black);
   background: var(--ilus-white);
-}
-.lbl-courier > div {
-  padding: 2mm 3mm 2.5mm;
 }
 .lbl-courier .cr-cell {
   border-right: .35mm solid var(--ilus-black);
   min-height: 11mm;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1.6mm 1.5mm 2mm;
+  gap: .6mm;
 }
 .lbl-courier .cr-cell:last-child {
   border-right: 0;
 }
+.lbl-courier .cr-icon {
+  font-size: 3.6mm;
+  color: var(--ilus-black);
+  line-height: 1;
+}
 .lbl-courier .cr-label {
-  font-size: 2.2mm;
+  font-size: 1.7mm;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: .25mm;
+  letter-spacing: .2mm;
   color: var(--ilus-gray);
-  margin-bottom: 1mm;
 }
 .lbl-courier .cr-value {
-  font-size: 3mm;
-  font-weight: 800;
+  font-size: 2.8mm;
+  font-weight: 850;
   color: var(--ilus-black);
-  min-height: 4mm;
-  border-bottom: .3mm solid var(--ilus-gray);
-  padding-bottom: .5mm;
-}
-.lbl-courier .cr-value.fecha {
-  font-size: 2.7mm;
-  font-weight: 900;
-  border-bottom: 0;
   line-height: 1.15;
+  word-break: break-word;
 }
 
-/* Bloque grande: N° DOCUMENTO + barcode */
+/* Bloque centrado ORDEN DE DESPACHO — foco visual principal de la etiqueta.
+   Número GIGANTE, sin barcode acá (el barcode se movió a la sección final,
+   ver .lbl-scan más abajo). */
 .lbl-doc {
   border-bottom: .5mm solid #000;
-  padding: 2.2mm 3mm 2.6mm;
+  padding: 2.4mm 2mm 2.8mm;
   text-align: center;
 }
+.lbl-doc .doc-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2mm;
+}
+.lbl-doc .doc-title-row .dash {
+  flex: 1 1 auto;
+  max-width: 8mm;
+  height: .3mm;
+  background: var(--ilus-black);
+}
 .lbl-doc .doc-title {
-  font-size: 2.5mm;
+  font-size: 2.8mm;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: .35mm;
-  color: var(--ilus-red);
+  letter-spacing: .4mm;
+  color: var(--ilus-black);
+  white-space: nowrap;
 }
 .lbl-doc .doc-number {
-  /* FIX Daniel: "el número no tan grande" (comparado con la referencia) */
-  font-size: 7mm;
+  /* Réplica de referencia: número ENORME, ocupa casi todo el ancho */
+  font-size: 15mm;
   font-weight: 950;
-  line-height: 1.02;
-  letter-spacing: .2mm;
+  line-height: .95;
+  letter-spacing: .1mm;
   color: var(--ilus-black);
   word-break: break-all;
+  margin-top: 1mm;
 }
 .lbl-doc .doc-type {
-  font-size: 2.6mm;
+  font-size: 2.4mm;
   font-weight: 700;
   text-transform: uppercase;
   color: var(--ilus-gray);
   margin-top: .3mm;
 }
-/* Código de barras — respaldo SECUNDARIO. El código principal, escaneable
-   y prioritario para el chofer/bodega es el QR de cada bulto (ver .qr-box
-   más abajo); Daniel 2026-07-25: "el código de barra no es muy necesario,
-   el QR sí" — se deja más chico pero NUNCA se quita: si algún bulto llegara
-   sin QR asignado, este sigue siendo un código escaneable de respaldo. */
+
+/* Sección final: CÓDIGO DE RETIRO / CONTROL TRANSPORTISTA — barcode +
+   número monospace debajo. Antes el barcode iba pegado al número de
+   orden; se mueve acá como sección propia antes del footer. */
+.lbl-scan {
+  border-bottom: .5mm solid #000;
+  padding: 2mm 3mm 2.4mm;
+  text-align: center;
+}
+.lbl-scan .scan-title {
+  font-size: 2mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .3mm;
+  color: var(--ilus-gray);
+  margin-bottom: 1mm;
+}
 .barcode-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 1mm;
   min-height: 8mm;
 }
 .barcode {
   width: 78%;
   height: 8mm;
   max-height: 8mm;
-  opacity: .85;
 }
-.barcode-hint {
-  font-size: 1.7mm;
-  font-weight: 700;
-  text-transform: uppercase;
+.lbl-scan .scan-number {
+  font-family: 'Courier New', monospace;
+  font-size: 3mm;
+  font-weight: 800;
   letter-spacing: .3mm;
-  color: var(--ilus-gray);
-  margin-top: .3mm;
+  color: var(--ilus-black);
+  margin-top: .8mm;
 }
 
 /* DESTINATARIO + caja BULTOS */
@@ -415,7 +411,16 @@ html, body { background: #fff; }
 .dest-row .v.comuna {
   font-size: 4.4mm;
   font-weight: 950;
-  color: var(--ilus-red);
+  color: var(--ilus-black);
+  display: block;
+}
+.dest-row .v.region {
+  font-size: 2.4mm;
+  font-weight: 700;
+  color: var(--ilus-gray);
+  display: block;
+  text-transform: uppercase;
+  margin-top: .3mm;
 }
 
 /* Caja BULTOS X de N — número grande arriba, QR debajo */
@@ -996,7 +1001,10 @@ html, body { background: #fff; }
       {% endif %}
     <article class="etiqueta">
 
-      {# ─── HEADER: logos SPORTS HEALTH SOLUTIONS + ILUS, datos formales ─── #}
+      {# ─── HEADER: solo logos SPORTS HEALTH SOLUTIONS + ILUS. Réplica
+         exacta de referencia (2026-07-25): la franja de RUT/giro/dirección/
+         teléfono del remitente se QUITA POR COMPLETO en esta versión (no
+         solo se achica) — la referencia de Daniel no la trae. #}
       <header class="lbl-head">
         <div class="brand-logos">
           <div class="brand-logo brand-logo-shs">
@@ -1015,42 +1023,37 @@ html, body { background: #fff; }
             {% endif %}
           </div>
         </div>
-        <div class="brand-info">
-          <span class="rut">{{ remitente.rut or '76.996.964-0' }}</span>
-          <span class="dot">&middot;</span>
-          <span class="giro">{{ remitente.giro or 'IMPORTACIÓN Y VENTA DE MÁQUINAS DEPORTIVAS' }}</span>
-          <span class="brand-info-break"></span>
-          <span class="addr">{{ remitente.direccion }}</span>
-          <span class="dot">&middot;</span>
-          <span class="tel">{{ remitente.telefono or '+56229465970' }}</span>
-        </div>
       </header>
 
-      {# ─── BANDA: Courier · N° Courier · Fecha ─── #}
+      {# ─── Franja de 3 casillas: CARRIER/TRANSPORTE · FECHA/HORA ·
+         ORDEN/DOCUMENTO N° ─── #}
       <div class="lbl-courier">
         <div class="cr-cell">
-          <div class="cr-label">Courier</div>
-          <div class="cr-value">{{ courier or '&nbsp;' | safe }}</div>
+          <i class="bi bi-truck cr-icon"></i>
+          <div class="cr-label">Carrier / Transporte</div>
+          <div class="cr-value">{{ courier or '—' }}</div>
         </div>
         <div class="cr-cell">
-          <div class="cr-label">N&deg; Courier</div>
-          <div class="cr-value">&nbsp;</div>
+          <i class="bi bi-calendar-event cr-icon"></i>
+          <div class="cr-label">Fecha / Hora</div>
+          <div class="cr-value">{{ fecha or '—' }}</div>
         </div>
         <div class="cr-cell">
-          <div class="cr-label">Fecha</div>
-          <div class="cr-value fecha">{{ fecha }}</div>
+          <i class="bi bi-file-earmark-text cr-icon"></i>
+          <div class="cr-label">Orden / Documento N&deg;</div>
+          <div class="cr-value">{{ f.doc_numero or '—' }}</div>
         </div>
       </div>
 
-      {# ─── N° DOCUMENTO + BARCODE (código de respaldo, secundario) ─── #}
+      {# ─── Bloque centrado ORDEN DE DESPACHO — número gigante, sin barcode ─── #}
       <div class="lbl-doc">
-        <div class="doc-title">N&deg; Documento / Orden</div>
+        <div class="doc-title-row">
+          <span class="dash"></span>
+          <span class="doc-title">Orden de Despacho</span>
+          <span class="dash"></span>
+        </div>
         <div class="doc-number">{{ f.doc_numero or '—' }}</div>
         {% if f.doc_tipo %}<div class="doc-type">{{ f.doc_tipo }}</div>{% endif %}
-        <div class="barcode-wrap">
-          <svg class="barcode" data-code="{{ f.doc_numero }}"></svg>
-        </div>
-        <div class="barcode-hint">C&oacute;digo de respaldo del documento</div>
       </div>
 
       {# ─── DESTINATARIO + BULTOS (con QR debajo del número) ─── #}
@@ -1063,7 +1066,11 @@ html, body { background: #fff; }
           <div class="dest-row"><span class="k">Cliente</span><span class="v big">{{ f.cliente or '—' }}</span></div>
           <div class="dest-row"><span class="k">Fono</span><span class="v">{{ f.telefono or '—' }}</span></div>
           <div class="dest-row"><span class="k">Direcci&oacute;n</span><span class="v">{{ f.direccion or '—' }}</span></div>
-          <div class="dest-row"><span class="k">Comuna</span><span class="v comuna">{{ f.comuna or '—' }}</span></div>
+          <div class="dest-row">
+            <span class="k">Comuna / Regi&oacute;n</span>
+            <span class="v comuna">{{ f.comuna or '—' }}</span>
+            <span class="v region">{{ f.region or '' }}</span>
+          </div>
         </div>
         <div class="bultos-box">
           <div class="b-title">
@@ -1087,6 +1094,15 @@ html, body { background: #fff; }
           <div class="qr-fallback">Usa el c&oacute;digo de barra de abajo</div>
           {% endif %}
         </div>
+      </div>
+
+      {# ─── Sección final: CÓDIGO DE RETIRO / CONTROL TRANSPORTISTA ─── #}
+      <div class="lbl-scan">
+        <div class="scan-title">C&oacute;digo de retiro / Control transportista</div>
+        <div class="barcode-wrap">
+          <svg class="barcode" data-code="{{ f.doc_numero }}"></svg>
+        </div>
+        <div class="scan-number">{{ f.doc_numero or '—' }}</div>
       </div>
 
       <footer class="lbl-foot">

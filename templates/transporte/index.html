@@ -76,6 +76,16 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
       <i class="bi bi-list-check"></i>
       <span>Pendientes por línea</span>
     </button>
+    {# 2026-07-26 (pedido Daniel): "en el monitor en gestión deberían estar
+       todos los productos que están en los manifiestos, con la opción de
+       eliminarlo... debería reconocer que la 22703 está hasta en varios
+       manifiestos... siempre tiene que avisar si hay duplicidad". #}
+    <button class="tr-btn tr-btn-ghost" data-bs-toggle="modal" data-bs-target="#itemsManifiestosModal"
+            onclick="imAbrir()"
+            title="Todos los documentos ya agregados a un manifiesto activo, con opción de quitarlos">
+      <i class="bi bi-collection"></i>
+      <span>Ítems en manifiestos</span>
+    </button>
     <a href="{{ url_for('tr_manifiestos') }}" class="tr-btn tr-btn-dark"
        title="Ver manifiestos creados">
       <i class="bi bi-clipboard-check"></i>
@@ -503,6 +513,25 @@ async function limpiarYResync(){
   .tr-viewmode { width:100%; margin-left:0; margin-top:8px; }
   .tr-viewmode-btn { flex:1; justify-content:center; }
 }
+/* Ícono info con desglose de stock ERP en el modal de vista de documento —
+   mismo patrón que templates/cubicador/asignar.html (2026-07-25/26). */
+.stock-info-ic{
+  color:#9ca3af; font-size:.82rem; cursor:help; margin-left:2px;
+  transition:color .15s;
+}
+.stock-info-ic:hover{ color:var(--ilus-red); }
+/* Botón papelera "quitar de manifiesto" — mismo patrón que .btn-cube-del en
+   templates/cubicador/asignar.html (2026-07-26, modal Ítems en manifiestos). */
+.btn-cube-del{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:34px; min-height:34px; padding:6px;
+  border:1px solid #fecaca; border-radius:9px;
+  background:#fff; color:var(--ilus-red);
+  cursor:pointer; transition:background .12s, transform .12s, border-color .12s;
+  font-size:.95rem; line-height:1;
+}
+.btn-cube-del:hover{ background:#fee2e2; border-color:#fca5a5; }
+.btn-cube-del:active{ transform:scale(.92); }
 </style>
 
 <style>
@@ -1948,6 +1977,52 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 </div>
 
 {# ══════════════════════════════════════════
+   MODAL ÍTEMS EN MANIFIESTOS (Daniel 2026-07-26)
+   "en el monitor en gestión deberían estar todos los productos que están
+   en los manifiestos, con la opción de eliminarlo... siempre tiene que
+   avisar si hay duplicidad". Namespace propio "im*".
+══════════════════════════════════════════ #}
+<div class="modal fade" id="itemsManifiestosModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:12px;overflow:hidden">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title">
+          <i class="bi bi-collection me-2"></i>Ítems en manifiestos activos
+          <span class="badge bg-secondary ms-2" id="imTotalBadge">—</span>
+          <span class="badge bg-danger ms-1" id="imDupBadge" style="display:none"></span>
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="background:#f8fafc">
+        <div class="small text-muted mb-2">
+          Todo documento que hoy está agregado a un manifiesto en preparación/enviado
+          (no cerrado ni cancelado). Las filas en rojo están en <strong>más de un
+          manifiesto</strong> a la vez — revisa si es un envío duplicado antes de despachar.
+        </div>
+        <div id="imMsg" class="small text-muted mb-2">Cargando…</div>
+        <div class="table-responsive" style="max-height:55vh">
+          <table class="table table-sm table-hover align-middle" style="font-size:.82rem">
+            <thead style="position:sticky;top:0;background:#fff;z-index:2">
+              <tr>
+                <th>Documento</th>
+                <th>Cliente</th>
+                <th>Comuna</th>
+                <th>Manifiesto</th>
+                <th>Estado</th>
+                <th class="text-center">Bultos</th>
+                <th class="text-end">Envío</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="imTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════
    MODAL VISTA DE DOCUMENTO
 ══════════════════════════════════════════ #}
 <div class="modal fade" id="vistaModal" tabindex="-1">
@@ -1967,7 +2042,9 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
               <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
               <img src="{{ url_for('static', filename='Logo_optimized.png') }}"
                    alt="ILUS"
-                   style="height:62px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4))"
+                   {# 2026-07-26 (pedido Daniel): "que ese modal tenga el logo
+                      de ILUS más grande" — de 62px a 88px. #}
+                   style="height:88px;object-fit:contain;flex-shrink:0;filter:drop-shadow(0 2px 8px rgba(0,0,0,.4))"
                    decoding="async">
             </picture>
             {% else %}
@@ -2061,6 +2138,10 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
             <table class="table mb-0" style="font-size:.8rem" id="vistaTabla">
               <thead style="background:#f4f4f6;position:sticky;top:0;z-index:2">
                 <tr>
+                  {# 2026-07-26 (pedido Daniel): "que los productos se puedan
+                     seleccionar múltiples veces" — checkbox + shift-click
+                     para seleccionar un rango, ver selectVistaRow() más abajo. #}
+                  <th style="width:30px"><input type="checkbox" id="vistaCheckAll" title="Seleccionar todo" onclick="toggleVistaCheckAll(this)"></th>
                   <th style="width:52px"></th>
                   <th>SKU</th>
                   <th>Descripción</th>
@@ -2729,9 +2810,119 @@ function runExcel() {
   });
 }
 
+// ── Stock ERP (físico/comprometido/devengado) — mismo patrón que
+// _stockTooltip() en templates/cubicador/asignar.html (2026-07-25) ──────
+function _vistaFmtNum(v){
+  return (Math.round((Number(v)||0) * 100) / 100).toLocaleString('es-CL', {maximumFractionDigits: 2});
+}
+function vistaStockTooltip(st){
+  if(!st) return '';
+  var tip = 'Stock físico (bodega): <b>' + _vistaFmtNum(st.fisico) + '</b><br>'
+          + 'Comprometido (vendido, pend. despacho): <b>' + _vistaFmtNum(st.comprometido) + '</b><br>'
+          + 'Devengado (en camino, no ha llegado): <b>' + _vistaFmtNum(st.devengado) + '</b><br>'
+          + 'Disponible real: <b>' + _vistaFmtNum(st.disponible) + '</b>';
+  return ' <i class="bi bi-info-circle stock-info-ic" data-bs-toggle="tooltip" data-bs-html="true" ' +
+         'data-bs-placement="top" title="' + tip + '"></i>';
+}
+
+// ── Selección múltiple de líneas (checkbox + shift-click para rango) ────
+// 2026-07-26 (pedido Daniel): "que los productos se puedan seleccionar
+// múltiples veces" — permite marcar varias líneas a la vez para futuras
+// acciones en lote sobre la vista del documento.
+var _vistaLastCheckedIdx = null;
+function selectVistaRow(ev, idx) {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('#vistaTbody .vista-row-chk'));
+  if (ev && ev.shiftKey && _vistaLastCheckedIdx !== null) {
+    var a = Math.min(_vistaLastCheckedIdx, idx), b = Math.max(_vistaLastCheckedIdx, idx);
+    var checked = boxes[idx] ? boxes[idx].checked : true;
+    boxes.forEach(function(cb){
+      var i = parseInt(cb.dataset.idx, 10);
+      if (i >= a && i <= b) cb.checked = checked;
+    });
+  }
+  _vistaLastCheckedIdx = idx;
+  var all = document.getElementById('vistaCheckAll');
+  if (all) all.checked = boxes.length > 0 && boxes.every(function(cb){ return cb.checked; });
+}
+function toggleVistaCheckAll(master) {
+  document.querySelectorAll('#vistaTbody .vista-row-chk').forEach(function(cb){ cb.checked = master.checked; });
+}
+
+// ── Modal "Ítems en manifiestos" (Daniel 2026-07-26) ─────────────────────
+// Namespace "im*". Lista TODOS los documentos ya agregados a un manifiesto
+// activo (no cerrado/cancelado), avisando cuando el mismo documento está en
+// más de uno (duplicidad de envío), con botón para quitarlo del manifiesto.
+function imAbrir() {
+  var tbody = document.getElementById('imTbody');
+  var msg = document.getElementById('imMsg');
+  tbody.innerHTML = '';
+  msg.textContent = 'Cargando…';
+  msg.style.display = '';
+  fetch('/transporte/api/manifiestos/items-todos')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { msg.textContent = d.error || 'No se pudo cargar'; return; }
+      document.getElementById('imTotalBadge').textContent = d.items.length + ' ítem' + (d.items.length !== 1 ? 's' : '');
+      var dupBadge = document.getElementById('imDupBadge');
+      if (d.n_duplicados > 0) {
+        dupBadge.style.display = '';
+        dupBadge.textContent = d.n_duplicados + ' duplicado' + (d.n_duplicados !== 1 ? 's' : '');
+      } else {
+        dupBadge.style.display = 'none';
+      }
+      if (!d.items.length) {
+        msg.textContent = 'No hay documentos en manifiestos activos por ahora.';
+        return;
+      }
+      msg.style.display = 'none';
+      d.items.forEach(function(it){
+        var tr = document.createElement('tr');
+        if (it.duplicado) tr.style.background = '#fee2e2';
+        tr.innerHTML =
+          '<td class="font-monospace fw-bold">' + (it.doc || '') + '</td>' +
+          '<td>' + (it.cliente || '—') + '</td>' +
+          '<td>' + (it.comuna || '') + '</td>' +
+          '<td>' + (it.correlativo || ('#' + it.manifest_id)) +
+            (it.duplicado ? ' <span class="badge bg-danger" title="Está en ' + it.n_manifiestos_activos + ' manifiestos activos">'
+              + '<i class="bi bi-exclamation-triangle-fill"></i> x' + it.n_manifiestos_activos + '</span>' : '') +
+          '</td>' +
+          '<td>' + (it.manifest_estado || '') + '</td>' +
+          '<td class="text-center">' + (it.n_bultos || 1) + '</td>' +
+          '<td class="text-end">' + (it.costo_zz ? '$' + Math.round(it.costo_zz).toLocaleString('es-CL') : '—') + '</td>' +
+          '<td class="text-center">' +
+            '<button type="button" class="btn-cube-del" title="Quitar este documento del manifiesto" ' +
+            'onclick="imQuitar(' + it.manifest_id + ',' + it.item_id + ', this)">' +
+            '<i class="bi bi-trash"></i></button>' +
+          '</td>';
+        tbody.appendChild(tr);
+      });
+    })
+    .catch(function(){ msg.textContent = 'Error de conexión'; });
+}
+
+function imQuitar(manifestId, itemId, btn) {
+  ilusConfirm({
+    title: 'Quitar del manifiesto',
+    message: '¿Quitar este documento del manifiesto? Sigue disponible para agregarse de nuevo después.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  }).then(function(ok){
+    if (!ok) return;
+    fetch('/transporte/manifiestos/' + manifestId + '/items/' + itemId, { method: 'DELETE' })
+      .then(function(r){ return r.json().then(function(d){ return {status:r.status, d:d}; }); })
+      .then(function(res){
+        if (res.d && res.d.error) { ilusToast(res.d.error, {type:'error'}); return; }
+        ilusToast('✓ Quitado del manifiesto', {type:'success'});
+        var tr = btn.closest('tr'); if (tr) tr.remove();
+        imAbrir(); // recarga para refrescar contadores/duplicados
+      })
+      .catch(function(){ ilusToast('Error de conexión', {type:'error'}); });
+  });
+}
+
 // ── Modal de Vista de documento ─────────────────────────────────
 function openVista(cid) {
   _cotizarCid = cid;
+  _vistaLastCheckedIdx = null;
   document.getElementById('vistaCotizador').style.display = 'none';
   document.getElementById('btnCotizar').disabled = false;
   document.getElementById('btnCotizar').innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
@@ -2865,9 +3056,10 @@ function renderVista(d) {
 
     // Saldo
     var saldo = (l.saldo !== undefined && l.saldo !== null) ? l.saldo : l.cantidad;
+    var stockTip = vistaStockTooltip(l.stock);
     var saldoHtml = '<td class="text-center">' +
       (saldo > 0 ? '<span class="fw-bold" style="color:var(--ilus-red)">' + saldo + '</span>'
-                 : '<span class="text-muted">0</span>') + '</td>';
+                 : '<span class="text-muted">0</span>') + stockTip + '</td>';
 
     // Botón editar medidas (solo si no tiene bultos)
     var editBtn = '';
@@ -2882,6 +3074,8 @@ function renderVista(d) {
 
     var tr = document.createElement('tr');
     tr.innerHTML =
+      '<td class="text-center"><input type="checkbox" class="vista-row-chk" data-idx="' + rowIdx + '" ' +
+      'onclick="selectVistaRow(event, ' + rowIdx + ')"></td>' +
       '<td style="padding:8px 10px">' + fotosHtml + '</td>' +
       '<td class="font-monospace fw-bold" style="font-size:.77rem">' + (l.sku||'') + '</td>' +
       '<td>' +
@@ -2900,12 +3094,20 @@ function renderVista(d) {
     tbody.appendChild(tr);
   });
 
+  // Tooltips del desglose de stock (bootstrap.Tooltip) — se recrean en cada
+  // render porque tbody.innerHTML se reemplaza (mismo patrón que asignar.html).
+  if (window.bootstrap && window.bootstrap.Tooltip) {
+    tbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el){
+      new bootstrap.Tooltip(el);
+    });
+  }
+
   // Totales
   var esTotKg = (tot.kg || 0) >= (tot.pv || 0);
   var tfoot = document.getElementById('vistaTfoot');
   tfoot.innerHTML =
     '<tr>' +
-    '<td colspan="5" class="ps-3" style="font-size:.78rem;color:#666">TOTALES</td>' +
+    '<td colspan="6" class="ps-3" style="font-size:.78rem;color:#666">TOTALES</td>' +
     '<td class="text-end ' + (esTotKg  ? 'fw-bold' : 'text-muted') + '">' + fmt3(tot.kg)   + '</td>' +
     '<td class="text-end ' + (!esTotKg ? 'fw-bold' : 'text-muted') + '">' + fmt3(tot.pv)   + '</td>' +
     '<td class="text-end"></td>' +
@@ -4006,16 +4208,50 @@ function savePanel() {
       // Agregar a manifiesto si se seleccionó
       var mid = document.getElementById('panelManifiesto')?.value;
       if (mid) {
-        fetch('/transporte/manifiestos/' + mid + '/items', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({commitment_id: currentId})
-        });
+        agregarAManifiestoConAviso(mid, currentId, false);
+      } else {
+        setTimeout(function(){ location.reload(); }, 800);
       }
-      setTimeout(function(){ location.reload(); }, 800);
     } else {
       msg.innerHTML = '<span class="text-danger">' + (d.error||'Error') + '</span>';
     }
   });
+}
+
+// 2026-07-26 (pedido Daniel): avisar si el documento ya está en OTRO
+// manifiesto antes de agregarlo — "siempre tiene que avisar si hay
+// duplicidad, si estamos enviando algo dos veces". No bloquea: si el
+// operador confirma, se agrega igual (reenvía con confirm_dup=1).
+function agregarAManifiestoConAviso(mid, commitmentId, confirmDup) {
+  fetch('/transporte/manifiestos/' + mid + '/items', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({commitment_id: commitmentId, confirm_dup: !!confirmDup})
+  })
+  .then(function(r){ return r.json().then(function(d){ return {status:r.status, d:d}; }); })
+  .then(function(res){
+    if (res.status === 409 && res.d && res.d.error === 'duplicado') {
+      var dups = (res.d.duplicados || []).map(function(x){
+        return '<div>· <strong>' + (x.correlativo || ('#' + x.manifest_id)) + '</strong> ('+(x.estado||'—')+')</div>';
+      }).join('');
+      ilusConfirm({
+        title: 'Documento ya está en otro manifiesto',
+        message: res.d.msg || 'Este documento ya fue agregado a otro manifiesto.',
+        sub: dups,
+        subHtml: true,
+        okLabel: 'Agregar igual', cancelLabel: 'Cancelar',
+        danger: true,
+      }).then(function(ok){
+        if (ok) agregarAManifiestoConAviso(mid, commitmentId, true);
+        else setTimeout(function(){ location.reload(); }, 300);
+      });
+      return;
+    }
+    if (res.d && res.d.ok === false) {
+      ilusToast(res.d.error || 'No se pudo agregar al manifiesto', {type:'error'});
+    }
+    setTimeout(function(){ location.reload(); }, 600);
+  })
+  .catch(function(){ ilusToast('Error de conexión al agregar al manifiesto', {type:'error'}); });
 }
 
 function closePanel() {

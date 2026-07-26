@@ -42,11 +42,16 @@
    Los estilos los inyecta ese mismo archivo, por eso acá no hay <style>. #}
 <div class="cubtabs-wrap">
   <div class="cubtabs">
-    <button type="button" class="cubtab-btn active" data-tab="cubicador">
-      <i class="bi bi-calculator"></i>Cubicador
-    </button>
-    <button type="button" class="cubtab-btn" data-tab="cotizador">
+    {# 2026-07-25 (pedido Daniel): "coloca el Cotizador de primero" — el
+       Cotizador es el que más usa hoy, así que pasa a ser la pestaña activa
+       por defecto. El Cubicador clásico (calculadora de cubicaje, con
+       identidad propia y su propio link en el sidebar /cubicador) NO se
+       renombra ni se borra — Regla #4.2 — solo pasa a ser la 2ª pestaña. #}
+    <button type="button" class="cubtab-btn active" data-tab="cotizador">
       <i class="bi bi-cash-coin"></i>Cotizador
+    </button>
+    <button type="button" class="cubtab-btn" data-tab="cubicador">
+      <i class="bi bi-calculator"></i>Cubicador
     </button>
     <button type="button" class="cubtab-btn" data-tab="packing">
       <i class="bi bi-box-seam"></i>Packing List
@@ -57,7 +62,7 @@
   </div>
 </div>
 
-<div id="cubtab-cubicador" class="cubtab-pane active">
+<div id="cubtab-cubicador" class="cubtab-pane">
 
 {# ── Formulario multi-documento ── #}
 <div class="ilus-card mb-3">
@@ -964,7 +969,7 @@
 
 </div>{# /#cubtab-cubicador — fin del Cubicador original, intacto #}
 
-<div id="cubtab-cotizador" class="cubtab-pane">
+<div id="cubtab-cotizador" class="cubtab-pane active">
 
   {# ══════════════════════════════════════════════════════════════════
      PESTAÑA "COTIZADOR" (2026-07-25, corrección de alcance) — Daniel pidió
