@@ -121,8 +121,8 @@
 /* 2026-07-26 (pedido Daniel): "que ese modal tenga el logo de ILUS más
    grande" — logo real (no solo el ícono de camión) en el header oscuro. */
 .lc-head-titulos{display:flex;align-items:center;gap:12px;min-width:0;}
-.lc-head-logo{height:40px;width:auto;flex:0 0 auto;object-fit:contain;}
-@media(max-width:480px){.lc-head-logo{height:32px;}}
+.lc-head-logo{height:60px;width:auto;flex:0 0 auto;object-fit:contain;}
+@media(max-width:480px){.lc-head-logo{height:46px;}}
 .lc-close{
   width:34px;height:34px;border:none;border-radius:9px;background:rgba(255,255,255,.1);color:#fff;
   display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;flex:0 0 auto;
@@ -256,7 +256,20 @@ table.lc-tabla tr:last-child td{border-bottom:none;}
 @keyframes lcCardIn{from{opacity:0;transform:translateY(6px) scale(.97);}to{opacity:1;transform:none;}}
 .lc-courier-card:hover{transform:translateY(-3px);box-shadow:0 10px 24px -8px rgba(0,0,0,.18);}
 .lc-courier-card:active{transform:scale(.97);}
-.lc-courier-card.is-mejor-precio{background:linear-gradient(160deg,#fff,#f0fdf4);}
+/* 2026-07-26 (pedido Daniel: "que se vean con un poquito más de color"):
+   acento de color propio por tarjeta (rota entre 6 tonos de la paleta
+   ILUS + apoyo), vía border-top + degradé de fondo sutil. La tarjeta
+   "Más conveniente" (.is-mejor-precio, más abajo en la cascada) sigue
+   ganando con su verde — acá solo se le da vida al resto. */
+.lc-courier-card{border-top:4px solid var(--lc-cc-accent,#e5e7eb);}
+.lc-courier-card[data-color="0"]{--lc-cc-accent:#dc2626;background:linear-gradient(165deg,#fff,#fef2f2 88%);}
+.lc-courier-card[data-color="1"]{--lc-cc-accent:#2563eb;background:linear-gradient(165deg,#fff,#eff6ff 88%);}
+.lc-courier-card[data-color="2"]{--lc-cc-accent:#7c3aed;background:linear-gradient(165deg,#fff,#f5f3ff 88%);}
+.lc-courier-card[data-color="3"]{--lc-cc-accent:#d97706;background:linear-gradient(165deg,#fff,#fffbeb 88%);}
+.lc-courier-card[data-color="4"]{--lc-cc-accent:#0d9488;background:linear-gradient(165deg,#fff,#f0fdfa 88%);}
+.lc-courier-card[data-color="5"]{--lc-cc-accent:#db2777;background:linear-gradient(165deg,#fff,#fdf2f8 88%);}
+.lc-courier-card .lc-cc-nombre i.lc-cc-dot{color:var(--lc-cc-accent,#9ca3af);}
+.lc-courier-card.is-mejor-precio{--lc-cc-accent:#16a34a;background:linear-gradient(160deg,#fff,#f0fdf4);}
 .lc-courier-card.is-elegida{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.16),0 10px 24px -8px rgba(220,38,38,.28);
   transform:translateY(-3px);}
 .lc-courier-card .lc-cc-badge{position:absolute;top:-8px;left:12px;background:#16a34a;color:#fff;
@@ -666,6 +679,14 @@ function _lcEstadoNuevo(){
     // de couriers (/cubicador/api/cotizar) NO devuelve este dato por
     // courier, así que se muestra a nivel de documento en las tarjetas.
     docsConZz: false,
+    // 2026-07-26 (pedido Daniel): "no se puede cotizar flete sin haber
+    // validado la dirección con Google Places antes". true SOLO cuando el
+    // usuario elige una opción real del autocomplete (onPlaceSelected) o
+    // cuando se carga una cotización en edición que YA tenía lat/lng
+    // guardados (ver _lcCargarEdicion). Se vuelve false apenas el usuario
+    // teclea la dirección a mano de nuevo (ver listener 'input' más abajo)
+    // o al elegir un cliente del ERP (su dirección viene sin validar).
+    direccionValidada: false,
   };
 }
 function _lcItemNuevo(base){
@@ -680,6 +701,13 @@ function _lcItemNuevo(base){
     // que reabra el modal de Medidas solo para refrescar el total.
     predTot: 0, predU: 0, bultos: 0,
     incluido: true, descuentoPct: 0,
+    // 2026-07-26 (pedido Daniel: gate de STOCK, no de ficha): stock viene
+    // de get_erp_stock_by_skus (mismo dato ya mostrado en el chip bajo el
+    // SKU, ver _lcStockBadge). stockGestionado = el operador confirmó que
+    // sabe que no hay stock y quiere avanzar igual (backorder, se pide al
+    // proveedor, etc.) — sin esto, o sin quitar la línea, NO se puede
+    // guardar la cotización (ver lcGuardar).
+    stock: null, stockGestionado: false,
   }, base || {});
 }
 
@@ -835,10 +863,19 @@ function _lcInitDireccion(){
       hint.innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada · <small>' + la + ', ' + ln + '</small>';
       _lcMarcar('lcCampoDireccion', true);
       _lcMarcar('lcCampoRegion', !!region);
+      if (_LC) _LC.direccionValidada = true;
     },
     onNoSelection: function(){
       $('lcDireccionHint').innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>Elige una opción de la lista para validar la dirección.';
+      if (_LC) _LC.direccionValidada = false;
     }
+  });
+  // Si el usuario vuelve a escribir a mano DESPUÉS de haber validado (o de
+  // haber cargado una edición con lat/lng guardados), la dirección deja de
+  // considerarse válida hasta que elija de nuevo una opción de la lista —
+  // sin esto, tocar un carácter no invalidaba lat/lng viejos.
+  input.addEventListener('input', function(){
+    if (_LC) _LC.direccionValidada = false;
   });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _lcInitDireccion);
@@ -891,6 +928,7 @@ function lcElegirCliente(c){
   $('lcRut').value = c.rut || '';
   $('lcDireccionLat').value = ''; $('lcDireccionLng').value = ''; $('lcDireccionPlaceId').value = '';
   $('lcRegion').value = '';
+  _LC.direccionValidada = false; // dirección del ERP: sin validar por Google todavía
   if (c.direccion) $('lcDireccion').value = c.direccion;
   if (c.comuna) $('lcComuna').value = c.comuna;
   $('lcDireccionHint').innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>Dirección del ERP sin validar — vuelve a escribirla y elige una opción de la lista.';
@@ -1091,17 +1129,43 @@ async function _lcAsignarDesdeDocumento(items, header){
 // ya trae /api/erp/documento (get_erp_stock_by_skus, misma fuente que
 // Cubicador/Asignar y el Monitor). Se muestra como un chip con tooltip
 // bajo el SKU para no romper el ancho de la tabla existente.
-function _lcStockBadge(st){
+function _lcStockBadge(st, i, gestionado){
   if (!st) return '';
   var f = function(n){ return (Math.round((n||0)*10)/10).toLocaleString('es-CL'); };
   var tip = 'Físico: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido) +
     ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
   var color = st.hay_stock ? '#15803d' : '#b91c1c';
   var bg = st.hay_stock ? '#dcfce7' : '#fee2e2';
-  return '<span title="' + esc(tip) + '" style="display:block;margin-top:2px;font-size:.62rem;font-weight:800;' +
+  var out = '<span title="' + esc(tip) + '" style="display:block;margin-top:2px;font-size:.62rem;font-weight:800;' +
     'color:' + color + ';background:' + bg + ';border-radius:6px;padding:1px 5px;cursor:help;white-space:nowrap">' +
     '<i class="bi bi-boxes me-1"></i>' + f(st.fisico) + ' físico</span>';
+  // 2026-07-26 (pedido Daniel): gate INTELIGENTE por STOCK (no por ficha,
+  // eso ya existe y no se toca): si no hay stock, se ofrece "Gestionar"
+  // (el operador confirma que sabe del problema y quiere avanzar igual,
+  // ej. backorder) — mientras no se gestione ni se quite la línea, NO se
+  // puede crear la cotización (ver lcGuardar).
+  if (st.hay_stock === false){
+    out += gestionado
+      ? '<span style="display:block;margin-top:2px;font-size:.6rem;font-weight:800;color:#b45309;background:#fff8e1;border-radius:6px;padding:1px 5px;white-space:nowrap"><i class="bi bi-check2-circle me-1"></i>Sin stock · gestionado</span>'
+      : '<button type="button" class="lc-sinficha" style="color:#b91c1c" onclick="lcGestionarStock(' + i + ')"><i class="bi bi-exclamation-triangle-fill me-1"></i>Sin stock · gestionar</button>';
+  }
+  return out;
 }
+async function lcGestionarStock(i){
+  if (!_LC || !_LC.items[i]) return;
+  var it = _LC.items[i];
+  var ok = await window.ilusConfirm({
+    title: 'Producto sin stock disponible',
+    message: '"' + it.nombre + '" (SKU ' + it.sku + ') no tiene stock disponible en el ERP en este momento.',
+    sub: 'Marca esto solo si ya coordinaste el faltante (backorder, pedido al proveedor, etc.). Si no, mejor quítalo de la lista con el botón ✕.',
+    okLabel: 'Ya lo gestioné, avanzar igual', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  it.stockGestionado = true;
+  lcRenderItems();
+  toast('Línea marcada como gestionada — ya puedes avanzar con la cotización', 'success');
+}
+window.lcGestionarStock = lcGestionarStock;
 function lcRenderItems(){
   var body = $('lcItemsBody');
   if (!_LC || !_LC.items.length){
@@ -1118,7 +1182,7 @@ function lcRenderItems(){
       '<td><input type="checkbox" class="lc-check" ' + (it.incluido ? 'checked' : '') + ' onclick="lcItemClick(event, ' + i + ')" onchange="lcItemToggle(' + i + ', this.checked)"></td>' +
       '<td><span class="lc-doc-pill">' + doc + '</span></td>' +
       '<td data-cell="sku"><span class="lc-sku">' + esc(it.sku) + '</span>' +
-        _lcStockBadge(it.stock) +
+        _lcStockBadge(it.stock, i, it.stockGestionado) +
         (!it.tieneFicha ? '<button type="button" class="lc-sinficha" data-action="cub-medidas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '"><i class="bi bi-exclamation-circle me-1"></i>Sin ficha · cargar medidas</button>' : '') +
         /* FIX 2026-07-25 (revisión adversarial, hallazgo ALTA): marcadores
            data-cell ocultos para bultos/kg-u/pv-u/vol-u/pred-u. Sin esto,
@@ -1145,7 +1209,7 @@ function lcRenderItems(){
         '<button type="button" class="lc-mini-btn" title="Medidas" data-action="cub-medidas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '" data-bultos="' + esc(it.bultos) + '"><i class="bi bi-rulers"></i></button>' +
         (window.CAN_PRINT === false ? '' : '<button type="button" class="lc-mini-btn" title="Etiquetas" data-action="cub-etiquetas" data-sku="' + esc(it.sku) + '" data-app-id="' + esc(it.appId || '') + '" data-nombre="' + esc(it.nombre) + '" data-bultos="' + esc(it.bultos) + '"><i class="bi bi-tags"></i></button>') +
       '</td>' +
-      '<td><input type="number" min="0" max="100" step="1" class="lc-input-desc" value="' + esc(it.descuentoPct) + '" onchange="lcDescLinea(' + i + ', this.value)"></td>' +
+      '<td><input type="number" min="0" max="100" step="1" class="lc-input-desc" value="' + esc(it.descuentoPct) + '" oninput="lcDescLinea(' + i + ', this.value)"></td>' +
       '<td class="text-end lc-money lc-cell-flete">…</td>' +
       '<td class="text-end lc-money lc-cell-margen">…</td>' +
       '<td class="text-end lc-money total lc-cell-total">…</td>' +
@@ -1328,6 +1392,21 @@ function _lcActualizarPesoTxt(){
 }
 async function lcCotizarFlete(){
   if (!_LC) return;
+  // 2026-07-26 (pedido Daniel): "no dejar cotizar flete sin dirección
+  // validada por Google Places" -- sin esto, un cliente con dirección
+  // escrita a mano (o del ERP, sin geocodificar) podía cotizar igual y
+  // terminar comprometiendo un despacho con datos no verificados.
+  if (!_LC.direccionValidada){
+    await window.ilusAlert({
+      title: 'Dirección no validada',
+      message: 'Antes de cotizar el flete, escribe la dirección de despacho (Sección 2) y ELIGE una de las opciones que sugiere Google.',
+      sub: 'Así se guardan las coordenadas exactas que usa el courier para calcular la ruta y el recargo residencial.',
+      type: 'warning',
+    });
+    $('lcDireccion').focus();
+    $('lcDireccion').scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
   var comuna = $('lcComuna').value.trim();
   if (!comuna){
     toast('Completa la comuna del cliente (Sección 2) antes de cotizar el flete', 'warning');
@@ -1404,13 +1483,15 @@ function _lcRenderFleteResultados(items, comunaResuelta){
   var precioMasBarato = conCobertura[0].precio;
   $('lcFleteResultados').innerHTML = conCobertura.map(function(c){
     var idx = _lcFleteOpciones.indexOf(c);
+    var posOrden = conCobertura.indexOf(c);
     var ganancia = Math.round((c.precio || 0) * margenPct / 100);
     var esMejor = c.precio === precioMasBarato;
     return '<div class="lc-courier-card' + (esMejor ? ' is-mejor-precio' : '') + '" data-idx="' + idx + '"' +
+      ' data-color="' + (posOrden % 6) + '"' +
       ' style="animation-delay:' + (idx * 0.04) + 's" onclick="lcElegirCourier(' + idx + ')">' +
       (esMejor ? '<span class="lc-cc-badge"><i class="bi bi-lightning-charge-fill"></i> Más conveniente</span>' : '') +
       '<span class="lc-cc-check"><i class="bi bi-check-lg"></i></span>' +
-      '<div class="lc-cc-nombre">' + esc(c.nombre) +
+      '<div class="lc-cc-nombre"><i class="bi bi-circle-fill lc-cc-dot" style="font-size:.5rem;"></i>' + esc(c.nombre) +
         (c.estimado ? '<span class="lc-chip roja">Estimado</span>' : '') +
         (c.zzEnvio ? '<span class="lc-chip verde">ZZ Envío</span>' : '') +
       '</div>' +
@@ -1514,12 +1595,25 @@ function lcRecalcular(){
   var ivaMonto = Math.round(subtotal * 0.19);
   var total = subtotal + ivaMonto;
 
+  // FIX 2026-07-26 (Daniel: "el descuento no funciona"): 2 causas reales
+  // encontradas al trazar el cálculo completo —
+  //  1) el input de descuento POR LÍNEA disparaba con "onchange" (solo al
+  //     perder el foco/Enter), no en vivo como el resto de los campos de
+  //     este modal — visualmente parecía "no hacer nada" mientras el
+  //     usuario seguía escribiendo. Ahora usa "oninput" (ver lcRenderItems).
+  //  2) estas 2 filas del resumen se ocultaban según el MONTO (> 0), pero
+  //     el monto depende del costo del courier: si el usuario carga el %
+  //     de descuento ANTES de cotizar/elegir courier (costo = $0), el
+  //     monto siempre da $0 y la fila nunca aparecía — daba la impresión
+  //     de que el % ingresado se perdía. Ahora se muestran apenas hay un
+  //     % > 0 cargado, aunque el monto todavía sea $0 por falta de costo.
+  var hayDescLineaPct = incluidos.some(function(it){ return (it.descuentoPct || 0) > 0; });
   $('lcResFlete').textContent = clp(sumaFlete);
   $('lcResMargen').textContent = clp(sumaMargen);
-  $('lcResDescLineaRow').style.display = sumaDescLinea > 0 ? '' : 'none';
+  $('lcResDescLineaRow').style.display = (hayDescLineaPct || sumaDescLinea > 0) ? '' : 'none';
   $('lcResDescLinea').textContent = '−' + clp(sumaDescLinea);
   $('lcResSubtotalItems').textContent = clp(subtotalItems);
-  $('lcResDescGlobalRow').style.display = descuentoGlobalMonto > 0 ? '' : 'none';
+  $('lcResDescGlobalRow').style.display = (descuentoGlobalPct > 0 || descuentoGlobalMonto > 0) ? '' : 'none';
   $('lcResDescGlobal').textContent = '−' + clp(descuentoGlobalMonto);
   $('lcResIva').textContent = clp(ivaMonto);
   $('lcResTotal').textContent = clp(total);
@@ -1559,6 +1653,26 @@ async function lcGuardar(){
   var incluidos = _LC.items.filter(function(it){ return it.incluido; });
   if (!incluidos.length){
     toast('Marca al menos un producto en la Sección 5', 'warning');
+    return;
+  }
+  // 2026-07-26 (pedido Daniel): gate INTELIGENTE de STOCK — bloquea crear/
+  // guardar si alguna línea marcada no tiene stock disponible y todavía no
+  // fue ni "gestionada" (lcGestionarStock) ni quitada de la lista. OJO: la
+  // falta de FICHA (tiene_ficha=false, botón .lc-sinficha) es un caso
+  // distinto que NO bloquea — eso ya funcionaba así y no se toca acá.
+  var sinStock = incluidos.filter(function(it){
+    return it.stock && it.stock.hay_stock === false && !it.stockGestionado;
+  });
+  if (sinStock.length){
+    await window.ilusAlert({
+      title: 'Hay productos sin stock disponible',
+      message: 'No se puede crear la cotización mientras estas línea(s) no tengan stock y no las hayas gestionado ni quitado:\n' +
+        sinStock.map(function(it){ return '• ' + it.nombre + ' (SKU ' + it.sku + ')'; }).join('\n'),
+      sub: 'En la tabla de productos, usa el botón "Sin stock · gestionar" de cada línea (si ya coordinaste el faltante) o quítala con el botón ✕.',
+      type: 'warning',
+    });
+    var filaSinStock = document.querySelector('#lcItemsBody .lc-sinficha');
+    if (filaSinStock) filaSinStock.scrollIntoView({behavior:'smooth', block:'center'});
     return;
   }
   if (!(Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0) > 0)){
@@ -1676,7 +1790,10 @@ async function _lcCargarEdicion(cid){
     $('lcDireccion').value = c.direccion || ''; $('lcRegion').value = c.region || ''; $('lcComuna').value = c.comuna || '';
     $('lcDireccionLat').value = c.direccion_lat || ''; $('lcDireccionLng').value = c.direccion_lng || '';
     $('lcDireccionPlaceId').value = c.direccion_place_id || '';
-    if (c.direccion_lat) $('lcDireccionHint').innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección guardada.';
+    if (c.direccion_lat) {
+      $('lcDireccionHint').innerHTML = '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección guardada.';
+      _LC.direccionValidada = true;
+    }
     $('lcContactoNombre').value = c.contacto_nombre || ''; $('lcContactoCargo').value = c.contacto_cargo || '';
     $('lcContactoTel').value = c.contacto_tel || ''; $('lcContactoEmail').value = c.contacto_email || '';
     if (c.contacto_nombre || c.contacto_email || c.contacto_tel) lcToggleContacto();

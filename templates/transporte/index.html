@@ -2058,7 +2058,10 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
             </svg>
             {% endif %}
             <div>
-              <div class="fw-bold text-white font-monospace" style="font-size:1.45rem; letter-spacing:-.01em; line-height:1.1" id="vistaDocNum">—</div>
+              <div class="d-flex align-items-center gap-2">
+                <div class="fw-bold text-white font-monospace" style="font-size:1.45rem; letter-spacing:-.01em; line-height:1.1" id="vistaDocNum">—</div>
+                <span class="badge" id="vistaEstadoBadge" style="display:none;font-size:.68rem;font-weight:600"></span>
+              </div>
               <div style="color:#94a3b8;font-size:.8rem;margin-top:4px" id="vistaFecha"></div>
             </div>
           </div>
@@ -2244,6 +2247,11 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
             <i class="bi bi-pencil-square"></i>
             <span>Editar campos</span>
           </button>
+          <button class="tr-btn tr-btn-ghost" onclick="reenviarNotificacionCliente()" id="btnReenviarNotif"
+                  title="Reenviar el estado actual por correo al cliente">
+            <i class="bi bi-envelope-check"></i>
+            <span>Enviar estado por correo</span>
+          </button>
         </div>
         <button type="button" class="tr-btn tr-btn-ghost" data-bs-dismiss="modal">
           <i class="bi bi-x-lg"></i><span>Cerrar</span>
@@ -2410,6 +2418,9 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 var _vistaModal = null;
 var _fotoModal  = null;
 var _vistaCurrentSku = null;   // SKU activo para upload de fotos
+var _vistaCurrentEmail   = null;  // correo del cliente del compromiso abierto (para reenvío manual)
+var _vistaCurrentEstado  = '';    // estado_entrega actual del compromiso abierto
+var _vistaCurrentCliente = '';    // nombre del cliente del compromiso abierto
 var _trLastSync     = null;     // timestamp última sync para el header
 var _trSyncTimer    = null;
 
@@ -3002,6 +3013,39 @@ function renderVista(d) {
   };
   document.getElementById('vistaClasif').textContent  =
     clasifMap2[c.clasificacion] || '📦 Despacho';
+
+  // Badge de estado actual + datos para el reenvío manual de correo (2026-07-26)
+  _vistaCurrentEmail  = c.email  || null;
+  _vistaCurrentEstado = c.estado || '';
+  _vistaCurrentCliente = c.cliente || '';
+  (function() {
+    var elBadge = document.getElementById('vistaEstadoBadge');
+    if (!elBadge) return;
+    if (!c.estado) { elBadge.style.display = 'none'; return; }
+    var COLOR_ESTADO = {
+      'Entregado':               'background:#16a34a;color:#fff',
+      'Entregado completo':      'background:#16a34a;color:#fff',
+      'En ruta':                 'background:#3b82f6;color:#fff',
+      'Entregado a transporte':  'background:#3b82f6;color:#fff',
+      'En preparación':          'background:#f59e0b;color:#0a0a0a',
+      'En curso':                'background:#f59e0b;color:#0a0a0a',
+      'Entrega fallida':         'background:#dc2626;color:#fff',
+      'Problema':                'background:#dc2626;color:#fff',
+    };
+    elBadge.style.cssText += ';' + (COLOR_ESTADO[c.estado] || 'background:#6b7280;color:#fff');
+    elBadge.textContent = c.estado;
+    elBadge.style.display = '';
+  })();
+
+  // Habilitar/deshabilitar el botón de reenvío según si el pedido tiene correo
+  (function() {
+    var btn = document.getElementById('btnReenviarNotif');
+    if (!btn) return;
+    btn.disabled = !c.email;
+    btn.title = c.email
+      ? 'Reenviar el estado actual por correo al cliente (' + c.email + ')'
+      : 'Este pedido no tiene un correo de cliente registrado';
+  })();
 
   // Campos separados: dirección, teléfono, correo
   if (c.direccion) {
@@ -4935,6 +4979,58 @@ function vistaEditar() {
   var cid = _cotizarCid;
   if (_vistaModal) _vistaModal.hide();
   setTimeout(function(){ openPanel(cid); }, 220);
+}
+
+// "Enviar estado por correo" desde el modal de vista (2026-07-26): reenvío
+// MANUAL del correo de seguimiento, para cuando el cliente pregunta y Daniel
+// quiere reenviarle el link de tracking / estado actual sin esperar el
+// próximo cambio de estado automático. Salta el anti-spam de 600s en backend.
+async function reenviarNotificacionCliente() {
+  if (!_cotizarCid) return;
+  var btn = document.getElementById('btnReenviarNotif');
+  if (!_vistaCurrentEmail) {
+    await ilusAlert({
+      title: 'Sin correo registrado',
+      message: 'Este pedido no tiene un correo de cliente registrado, así que no se puede reenviar el estado.',
+      type: 'warning',
+    });
+    return;
+  }
+  var ok = await ilusConfirm({
+    title: 'Reenviar estado por correo',
+    message: '¿Reenviar el correo de seguimiento al cliente'
+      + (_vistaCurrentCliente ? ' (' + _vistaCurrentCliente + ')' : '') + '?',
+    sub: 'Se enviará a <strong>' + esc(_vistaCurrentEmail) + '</strong> con el estado actual'
+      + (_vistaCurrentEstado ? ' (<strong>' + esc(_vistaCurrentEstado) + '</strong>)' : '') + '.',
+    subHtml: true,
+    okLabel: 'Enviar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+
+  var cid = _cotizarCid;
+  var originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span><span>Enviando…</span>';
+  }
+  try {
+    var r = await fetch('/transporte/api/compromisos/' + cid + '/reenviar-notificacion', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      await ilusAlert({ title: 'No se pudo enviar', message: d.error || 'Ocurrió un error al enviar el correo.', type: 'error' });
+      return;
+    }
+    ilusToast('Correo de seguimiento reenviado a ' + d.enviado_a, { type: 'success' });
+  } catch (e) {
+    await ilusAlert({ title: 'Error de conexión', message: 'No se pudo contactar al servidor. Intenta de nuevo.', type: 'error' });
+  } finally {
+    if (btn) {
+      btn.disabled = !_vistaCurrentEmail;
+      btn.innerHTML = originalHtml;
+    }
+  }
 }
 
 // ── FOTOS INLINE EN MODAL DE VISTA ───────────────────────────────

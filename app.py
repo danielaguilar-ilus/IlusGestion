@@ -18633,13 +18633,16 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
         return None
 
 
-def _tr_notificar_cliente(commitment_id, estado, comentario=None):
+def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
     """Envía email al cliente cuando su despacho cambia a un estado clave.
     Best-effort: si no hay email, no envía. Usa el sistema de comunicaciones
     ILUS (branding global, kill switch global y por módulo).
     Anti-spam: solo envía si el último estado notificado es distinto al actual
     (controla con caché in-memory de 5 min — basta para evitar duplicados por
-    re-eventos del cron FedEx)."""
+    re-eventos del cron FedEx).
+    forzar=True (2026-07-26, reenvío manual desde el modal de detalle): salta
+    el anti-spam a propósito — un operador pidió explícitamente reenviar el
+    correo de seguimiento, no es un evento automático repetido."""
     # Anti-spam: caché simple
     import time as _t
     if not hasattr(_tr_notificar_cliente, "_cache"):
@@ -18651,7 +18654,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None):
     for k in list(cache.keys()):
         if now - cache[k] > 600:
             cache.pop(k, None)
-    if key in cache:
+    if key in cache and not forzar:
         return  # ya notificado recientemente
     cache[key] = now
 
@@ -22614,6 +22617,49 @@ def tr_detalle(cid):
     })
 
 
+@app.route("/transporte/api/compromisos/<int:cid>/reenviar-notificacion", methods=["POST"])
+@_tr_required
+def tr_reenviar_notificacion(cid):
+    """Reenvío MANUAL del correo de seguimiento al cliente (2026-07-26, Daniel:
+    botón "Enviar estado por correo" en el modal de detalle). A diferencia del
+    flujo automático de _tr_event (que dispara _tr_notificar_cliente en ciertos
+    cambios de estado), este endpoint lo activa un operador a mano — por eso
+    pasa forzar=True para saltar el anti-spam de 600s: el cliente preguntó y
+    Daniel quiere reenviarle el link de tracking YA, sin esperar el próximo
+    cambio de estado real."""
+    c = mysql_fetchone(
+        "SELECT id, estado, email, cliente_nombre FROM transport_commitments WHERE id=%s",
+        (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "Compromiso no encontrado"}), 404
+
+    email = (c.get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "Este pedido no tiene un correo de cliente registrado"}), 400
+
+    # Estados que el correo de seguimiento sabe redactar (ver _tr_notificar_cliente).
+    # Si el compromiso está en otro estado (ej. "Pendiente"), se reenvía como
+    # "En preparación" -- el estado real más cercano que el cliente entiende.
+    _ESTADOS_NOTIFICABLES = ('En preparación', 'Entregado a transporte',
+                              'En ruta', 'Entregado', 'Entrega fallida', 'Problema')
+    estado_actual = (c.get("estado") or "").strip()
+    estado_envio = estado_actual if estado_actual in _ESTADOS_NOTIFICABLES else 'En preparación'
+
+    try:
+        _tr_notificar_cliente(cid, estado_envio, comentario="Reenvío manual solicitado", forzar=True)
+    except Exception as e:
+        print(f"[tr_reenviar_notificacion] error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo enviar el correo, intenta de nuevo"}), 500
+
+    try:
+        _tr_log("commitment", cid, "reenvio_notificacion",
+                f"Reenvío manual del correo de seguimiento (estado: {estado_envio})")
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "enviado_a": email})
+
+
 @app.route("/transporte/api/compromisos/<int:cid>/lineas")
 @_tr_required
 def tr_lineas(cid):
@@ -23312,7 +23358,9 @@ def tr_manifiesto_etiquetas(mid):
         "transporte/etiquetas.html",
         facturas    = facturas,
         remitente   = ILUS_REMITENTE,
-        fecha       = _now_chile_str("%d-%m-%Y %H:%M"),
+        # Daniel 2026-07-26: "sácale la hora a la cuestión" -- la etiqueta solo
+        # necesita la fecha, la hora (ej. 00:02) no aporta y se ve raro.
+        fecha       = _now_chile_str("%d-%m-%Y"),
         titulo      = f"Etiquetas · Manifiesto {manifiesto.get('correlativo') or mid}",
         courier     = courier,
         total_etiquetas = total_etiquetas,
@@ -23357,7 +23405,7 @@ def tr_factura_etiquetas(commitment_id):
         "transporte/etiquetas.html",
         facturas    = facturas,
         remitente   = ILUS_REMITENTE,
-        fecha       = _now_chile_str("%d-%m-%Y %H:%M"),
+        fecha       = _now_chile_str("%d-%m-%Y"),  # solo fecha, sin hora (pedido Daniel)
         titulo      = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}",
         courier     = courier,
         total_etiquetas = total_etiquetas,
@@ -23450,7 +23498,7 @@ def tr_manifiesto_etiquetas_pdf(mid):
         return "No hay bultos que coincidan con la selección", 400
 
     individual = (request.args.get("individual") or "").strip() == "1"
-    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    fecha = _now_chile_str("%d-%m-%Y")  # solo fecha, sin hora (pedido Daniel)
     titulo = f"Etiquetas · Manifiesto {manifiesto.get('correlativo') or mid}"
 
     try:
@@ -23493,7 +23541,7 @@ def tr_factura_etiquetas_pdf(commitment_id):
         return "No hay bultos que coincidan con la selección", 400
 
     individual = (request.args.get("individual") or "").strip() == "1"
-    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    fecha = _now_chile_str("%d-%m-%Y")  # solo fecha, sin hora (pedido Daniel)
     titulo = f"Etiquetas · {facturas[0]['doc_full'] or commitment_id}"
 
     try:
@@ -24320,13 +24368,41 @@ def tr_quitar_item(mid, item_id):
     # Capturar datos del item ANTES de borrar, para una trazabilidad legible
     # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
     info = mysql_fetchone(
-        "SELECT mi.commitment_id, c.tido, c.nudo, c.cliente_nombre, "
+        "SELECT mi.commitment_id, mi.simpliroute_visit_id, c.tido, c.nudo, c.cliente_nombre, "
         "       COALESCE(c.costo_zz, 0) AS costo_zz, COALESCE(c.n_bultos, 1) AS n_bultos "
         "FROM transport_manifest_items mi "
         "JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.id=%s AND mi.manifest_id=%s",
         (item_id, mid)
     )
+
+    # FIX 2026-07-26 — antes de borrar el item, si ya tenía una visita creada
+    # en SimpliRoute, hay que borrarla ALLÁ también. Si no, al re-preparar el
+    # mismo pedido queda una visita "fantasma" duplicada en SimpliRoute con el
+    # mismo nombre de cliente (reportado por Daniel: "tenía dos fichas con mi
+    # nombre"), porque el item viejo nunca se limpiaba del lado del courier.
+    _visit_id_borrado = (info.get("simpliroute_visit_id") or "").strip() if info else ""
+    _simpliroute_borrado_ok = None
+    if _visit_id_borrado:
+        man_courier = mysql_fetchone(
+            "SELECT courier FROM transport_manifests WHERE id=%s", (mid,))
+        courier = (man_courier.get("courier") or "").strip() if man_courier else ""
+        token = _simpliroute_token_for_courier(courier)
+        if token:
+            try:
+                import simpliroute_client as _src
+                r = _simpliroute_request(
+                    "POST", _src.EP_BULK_DELETE, token,
+                    payload={"visits": [int(_visit_id_borrado)]}, timeout=20)
+                _simpliroute_borrado_ok = bool(r.get("ok"))
+                if not _simpliroute_borrado_ok:
+                    print(f"[simpliroute] no se pudo borrar visita {_visit_id_borrado} "
+                          f"(item {item_id}): {r.get('error')}", flush=True)
+            except Exception as e:
+                _simpliroute_borrado_ok = False
+                print(f"[simpliroute] excepción al borrar visita {_visit_id_borrado} "
+                      f"(item {item_id}): {e}", flush=True)
+
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
@@ -24352,6 +24428,9 @@ def tr_quitar_item(mid, item_id):
                    + f" · {nb} bulto/s")
     else:
         detalle = f"item_id={item_id}"
+    if _visit_id_borrado:
+        detalle += (f" · visita SimpliRoute {_visit_id_borrado} "
+                    f"{'borrada' if _simpliroute_borrado_ok else 'NO se pudo borrar (revisar manual)'}")
     _tr_log("manifest", mid, "factura quitada", detalle)
     resp = {
         "ok": True,
