@@ -502,13 +502,17 @@
           {% endif %}
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
             {% if item.estado_entrega == 'Entregado' %}
-            {# FIX 2026-07-27 (Daniel: "arregla el modal para rescatar los
-               antecedentes, foto, GPS"): esto abría /transporte/buscar en
-               pestaña nueva -- igual que el resto de la sesión, se convierte
-               a un modal con iframe dentro de la misma página. #}
+            {# FIX 2026-07-27 (Daniel: "quiero ver la firma, la foto, la
+               entrega, todo bien bonito" -- la versión anterior embebía la
+               PÁGINA COMPLETA de /transporte/buscar (con sidebar y buscador)
+               dentro de un iframe, una "subpágina chiquitita". Ahora es un
+               modal propio que llama directo al JSON ya existente
+               (/transporte/api/buscar/<commitment_id>, el mismo que usa esa
+               página) y renderiza solo el detalle -- estado, chofer/GPS,
+               firma, fotos, historial -- sin duplicar esa lógica. #}
             <button type="button" class="btn btn-sm btn-outline-success mfd-act-btn"
                     title="Ver prueba de entrega (foto, firma, GPS)"
-                    onclick="abrirPruebaEntrega('{{ item.nudo }}')">
+                    onclick="abrirPruebaEntrega({{ item.commitment_id }})">
               <i class="bi bi-shield-check"></i>
             </button>
             {% endif %}
@@ -1776,6 +1780,44 @@
 .sr-acc-row { display:flex; gap:8px; flex-wrap:wrap; }
 .sr-acc-btn { font-weight:700; font-size:.82rem; flex:1 1 auto; min-height:44px; }
 .sr-acc-block { display:flex; flex-direction:column; gap:4px; }
+
+/* ── Modal "Prueba de entrega" (2026-07-27) — mismo contenido que
+   templates/transporte/buscar_interno.html (.bi-*), prefijo "pe-" propio
+   para no chocar con clases ya usadas en este archivo. ── */
+.pe-hdr{ background:#0f172a; color:#fff; padding:1rem 1.2rem; margin:-1rem -1rem 1rem; }
+.pe-doc{ font-family:monospace; font-weight:800; font-size:1.1rem; }
+.pe-cli{ font-size:.92rem; color:#cbd5e1; margin-top:.15rem; }
+.pe-badge{ font-weight:700; padding:.3rem .65rem; border-radius:20px; font-size:.78rem; white-space:nowrap; }
+.pe-b-prep{ background:#f3f4f6; color:#6b7280; }
+.pe-b-trans{ background:#dbeafe; color:#1e40af; }
+.pe-b-ruta{ background:#e0e7ff; color:#4338ca; }
+.pe-b-entreg{ background:#dcfce7; color:#15803d; }
+.pe-b-fallida{ background:#fee2e2; color:#dc2626; }
+.pe-sec{ margin-bottom:1.3rem; }
+.pe-h{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; margin-bottom:.5rem; display:flex; align-items:center; gap:.4rem; }
+.pe-h i{ color:#dc2626; }
+.pe-kv{ display:flex; justify-content:space-between; padding:.3rem 0; font-size:.88rem; border-bottom:1px solid #f3f4f6; }
+.pe-kv:last-child{ border-bottom:none; }
+.pe-kv-k{ color:#6b7280; font-weight:600; font-size:.78rem; }
+.pe-kv-v{ color:#0f172a; font-weight:600; text-align:right; }
+.pe-driver{ background:linear-gradient(135deg,#fff,#fef2f2); border:1px solid #fecaca; border-radius:10px; padding:.8rem; }
+.pe-gps{ font-size:.74rem; color:#dc2626; text-decoration:none; font-weight:700; }
+.pe-firma{ padding:.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:10px; text-align:center; margin-top:.4rem; }
+.pe-firma img{ max-width:220px; max-height:70px; }
+.pe-fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:.4rem; }
+.pe-fotos img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; cursor:zoom-in; border:1px solid #e5e7eb; }
+.pe-tl{ position:relative; padding-left:1.3rem; }
+.pe-tl::before{ content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem; width:2px; background:#e5e7eb; }
+.pe-tl-row{ position:relative; padding:.35rem 0 .65rem .3rem; }
+.pe-tl-row::before{ content:""; position:absolute; left:-1.07rem; top:.55rem; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #cbd5e1; }
+.pe-tl-est{ font-weight:700; font-size:.88rem; }
+.pe-tl-ts{ font-size:.72rem; color:#6b7280; margin-top:.1rem; }
+.pe-tl-com{ font-size:.8rem; color:#374151; margin-top:.15rem; }
+.pe-tl-fnt{ display:inline-block; font-size:.66rem; font-weight:700; text-transform:uppercase; padding:.1rem .45rem; border-radius:10px; margin-left:.4rem; }
+.pe-fnt-chofer{ background:#e0e7ff; color:#4338ca; }
+.pe-fnt-fedex{ background:#fff3e0; color:#b45309; }
+.pe-fnt-manual{ background:#f3f4f6; color:#6b7280; }
+.pe-fnt-sistema{ background:#dcfce7; color:#15803d; }
 </style>
 
 {# ════════════════════════════════════════════════════════════════════
@@ -1813,8 +1855,10 @@
         <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Prueba de entrega</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
-      <div class="modal-body p-0">
-        <iframe id="pruebaEntregaFrame" src="about:blank" style="width:100%;height:75vh;border:0"></iframe>
+      <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+        <div id="pruebaEntregaBody">
+          <div class="text-center text-muted py-4"><i class="bi bi-hourglass-split"></i> Cargando…</div>
+        </div>
       </div>
       <div class="modal-footer" style="padding:12px 20px">
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
@@ -3761,16 +3805,124 @@ async function actualizarEtiquetasFedex() {
 var _manifiestoFirmaModal = null;
 var _pruebaEntregaModal = null;
 
-// FIX 2026-07-27 (Daniel: "arregla el modal para rescatar los antecedentes,
-// foto, GPS"): antes abría /transporte/buscar en pestaña nueva. Mismo
-// patrón de iframe-en-modal que abrirManifiestoFirma().
-function abrirPruebaEntrega(nudo) {
-  var url = '/transporte/buscar?q=' + encodeURIComponent(nudo);
-  document.getElementById('pruebaEntregaFrame').src = url;
+// FIX 2026-07-27 (Daniel: "quiero ver la firma, la foto, la entrega, todo
+// bien bonito... no fue lo que pedí" -- la versión anterior embebía la
+// página COMPLETA de /transporte/buscar, con sidebar y buscador, dentro de
+// un iframe). Ahora es un modal propio: llama al MISMO JSON que ya usa esa
+// página (/transporte/api/buscar/<commitment_id>) y renderiza solo el
+// detalle -- sin duplicar esa lógica de backend.
+async function abrirPruebaEntrega(commitmentId) {
   if (!_pruebaEntregaModal) {
     _pruebaEntregaModal = new bootstrap.Modal(document.getElementById('pruebaEntregaModal'));
   }
+  var body = document.getElementById('pruebaEntregaBody');
+  body.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-hourglass-split"></i> Cargando…</div>';
   _pruebaEntregaModal.show();
+  try {
+    var r = await fetch('/transporte/api/buscar/' + commitmentId);
+    var d = await r.json();
+    if (!d.ok) {
+      body.innerHTML = '<div class="text-center text-muted py-4">No se pudo cargar el detalle.</div>';
+      return;
+    }
+    body.innerHTML = _peRenderDetalle(d.detalle);
+  } catch (e) {
+    body.innerHTML = '<div class="text-center text-muted py-4">Error de conexión.</div>';
+  }
+}
+
+// Mismo renderizado que _renderDetalle() de templates/transporte/
+// buscar_interno.html (calcado, no se reimplementa el JSON del backend,
+// solo la vista) -- estado, cliente/destino, chofer+GPS, prueba de entrega
+// (receptor/hora/GPS/firma/fotos) e historial completo.
+function _peEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+  });
+}
+function _peBadgeClass(e) {
+  return ({'En preparación':'pe-b-prep','Entregado a transporte':'pe-b-trans','En ruta':'pe-b-ruta',
+           'Entregado':'pe-b-entreg','Problema':'pe-b-fallida','Entrega fallida':'pe-b-fallida',
+           'Devolución':'pe-b-fallida'}[e] || 'pe-b-prep');
+}
+function _peAgeTxt(s) {
+  if (s < 60) return 'ahora';
+  if (s < 3600) return 'hace ' + Math.round(s / 60) + ' min';
+  return 'hace ' + Math.round(s / 3600) + 'h';
+}
+function _peRenderDetalle(d) {
+  var c = d.commitment, mi = d.manifest_item, ch = d.chofer, lp = d.last_ping, p = d.proof;
+  var est = mi ? mi.estado_entrega : (c.estado || 'En preparación');
+  var html = '<div class="pe-hdr d-flex justify-content-between align-items-start gap-2">';
+  html += '<div><div class="pe-doc">' + _peEsc(c.tido) + ' ' + _peEsc(c.nudo) + '</div>';
+  html += '<div class="pe-cli">' + _peEsc(c.cliente_nombre || '—') + '</div></div>';
+  html += '<span class="pe-badge ' + _peBadgeClass(est) + '">' + _peEsc(est) + '</span></div>';
+
+  html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-person"></i>Cliente / Destino</div>';
+  html += '<div class="pe-kv"><span class="pe-kv-k">RUT</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(c.cliente_rut || '—') + '</span></div>';
+  html += '<div class="pe-kv"><span class="pe-kv-k">Dirección</span><span class="pe-kv-v">' + _peEsc(c.direccion || '—') + '</span></div>';
+  html += '<div class="pe-kv"><span class="pe-kv-k">Comuna</span><span class="pe-kv-v">' + _peEsc(c.comuna || '—') + '</span></div>';
+  if (c.telefono) html += '<div class="pe-kv"><span class="pe-kv-k">Teléfono</span><span class="pe-kv-v">' + _peEsc(c.telefono) + '</span></div>';
+  html += '</div>';
+
+  if (mi) {
+    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-truck"></i>Despacho</div>';
+    if (mi.correlativo) html += '<div class="pe-kv"><span class="pe-kv-k">Manifiesto</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(mi.correlativo) + '</span></div>';
+    if (mi.courier) html += '<div class="pe-kv"><span class="pe-kv-k">Transporte</span><span class="pe-kv-v">' + _peEsc(mi.courier) + '</span></div>';
+    if (mi.tracking_number) html += '<div class="pe-kv"><span class="pe-kv-k">N° tracking</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(mi.tracking_number) + '</span></div>';
+    html += '</div>';
+  }
+
+  if (ch) {
+    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-person-badge"></i>Chofer asignado</div>';
+    html += '<div class="pe-driver">';
+    html += '<div style="font-weight:800">' + _peEsc(ch.nombre) + '</div>';
+    html += '<div style="font-size:.78rem;color:#6b7280">' + _peEsc(ch.courier || '') + (ch.patente ? ' · ' + _peEsc(ch.patente) : '') + (ch.telefono ? ' · ' + _peEsc(ch.telefono) : '') + '</div>';
+    if (lp) {
+      html += '<div style="margin-top:.5rem;font-size:.8rem"><i class="bi bi-geo-alt-fill" style="color:#dc2626"></i> '
+            + '<a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + lp.lat + ',' + lp.lng + '">Ver en mapa</a> · ' + _peAgeTxt(lp.age_s)
+            + (lp.speed_kmh != null ? ' · ' + Math.round(lp.speed_kmh) + ' km/h' : '') + '</div>';
+    } else {
+      html += '<div style="margin-top:.5rem;font-size:.78rem;color:#9ca3af">Sin pings recientes</div>';
+    }
+    html += '</div></div>';
+  }
+
+  if (p) {
+    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-shield-check"></i>Prueba de entrega</div>';
+    html += '<div class="pe-kv"><span class="pe-kv-k">Receptor</span><span class="pe-kv-v">' + _peEsc(p.receptor_nombre || '—') + (p.receptor_relacion ? ' · ' + _peEsc(p.receptor_relacion) : '') + '</span></div>';
+    if (p.receptor_rut) html += '<div class="pe-kv"><span class="pe-kv-k">RUT receptor</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(p.receptor_rut) + '</span></div>';
+    if (p.entregado_at) html += '<div class="pe-kv"><span class="pe-kv-k">Hora entrega</span><span class="pe-kv-v">' + _peEsc(p.entregado_at) + '</span></div>';
+    if (p.lat && p.lng) html += '<div class="pe-kv"><span class="pe-kv-k">GPS entrega</span><span class="pe-kv-v"><a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + p.lat + ',' + p.lng + '">Ver punto</a></span></div>';
+    if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma"></div>';
+    if (p.fotos && p.fotos.length) {
+      html += '<div class="pe-fotos mt-2">';
+      p.fotos.forEach(function(f){ html += '<img src="' + f + '" onclick="window.open(this.src,\'_blank\')">'; });
+      html += '</div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-shield-check"></i>Prueba de entrega</div>'
+          + '<div style="color:#9ca3af;font-size:.85rem">Sin evidencia registrada todavía (el transportista no ha subido foto/firma para esta entrega).</div></div>';
+  }
+
+  html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-clock-history"></i>Historial completo</div>';
+  if (d.eventos && d.eventos.length) {
+    html += '<div class="pe-tl">';
+    d.eventos.forEach(function(e){
+      var fc = ({chofer:'pe-fnt-chofer', fedex:'pe-fnt-fedex', aftership:'pe-fnt-fedex', manual:'pe-fnt-manual', sistema:'pe-fnt-sistema'}[e.fuente] || 'pe-fnt-manual');
+      html += '<div class="pe-tl-row"><div class="pe-tl-est">' + _peEsc(e.estado) + '<span class="pe-tl-fnt ' + fc + '">' + _peEsc(e.fuente) + '</span></div>';
+      html += '<div class="pe-tl-ts">' + _peEsc(e.ts) + (e.usuario ? ' · ' + _peEsc(e.usuario) : '') + '</div>';
+      if (e.comentario) html += '<div class="pe-tl-com">' + _peEsc(e.comentario) + '</div>';
+      if (e.lat && e.lng) html += '<div class="pe-tl-com" style="font-size:.74rem"><a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + e.lat + ',' + e.lng + '">📍 Ver lugar del evento</a></div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="color:#9ca3af;font-size:.85rem">Sin eventos registrados aún.</div>';
+  }
+  html += '</div>';
+  return html;
 }
 
 function abrirManifiestoFirma() {
