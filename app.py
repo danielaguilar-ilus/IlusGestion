@@ -24690,13 +24690,27 @@ def tr_quitar_item(mid, item_id):
     # Capturar datos del item ANTES de borrar, para una trazabilidad legible
     # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
     info = mysql_fetchone(
-        "SELECT mi.commitment_id, mi.simpliroute_visit_id, c.tido, c.nudo, c.cliente_nombre, "
+        "SELECT mi.commitment_id, mi.simpliroute_visit_id, mi.master_tracking_number, "
+        "       c.tido, c.nudo, c.cliente_nombre, "
         "       COALESCE(c.costo_zz, 0) AS costo_zz, COALESCE(c.n_bultos, 1) AS n_bultos "
         "FROM transport_manifest_items mi "
         "JOIN transport_commitments c ON c.id = mi.commitment_id "
         "WHERE mi.id=%s AND mi.manifest_id=%s",
         (item_id, mid)
     )
+    # FIX 2026-07-27 (Daniel: "bloquea la edición también" -- una vez que la
+    # factura ya está en gestión con el courier -- OT FedEx o visita
+    # SimpliRoute creada -- ya no se puede quitar del manifiesto ni editar.
+    # Antes esta ruta borraba silenciosamente la visita de SimpliRoute y
+    # seguía con el borrado del item; ahora se bloquea de entrada (el
+    # frontend ya deshabilita el botón, esto es el mismo candado del lado
+    # del servidor para que no se pueda saltar por API directa).
+    if info and (info.get("master_tracking_number") or info.get("simpliroute_visit_id")):
+        return jsonify({
+            "ok": False,
+            "error": "Esta factura ya está en gestión con el courier (OT/visita creada) "
+                     "y no se puede quitar del manifiesto.",
+        }), 409
 
     # FIX 2026-07-26 — antes de borrar el item, si ya tenía una visita creada
     # en SimpliRoute, hay que borrarla ALLÁ también. Si no, al re-preparar el

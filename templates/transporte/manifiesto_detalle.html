@@ -381,6 +381,12 @@
           'estado': item.estado_entrega or '',
           'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
         } | tojson %}
+        {# FIX 2026-07-27 (Daniel: "bloquea la edición también" -- una vez
+           que la factura ya se subió al courier y empezó la gestión, no se
+           puede editar ni quitar del manifiesto). Se considera "en gestión
+           con el courier" si ya tiene OT FedEx (master_tracking_number) o
+           visita SimpliRoute (simpliroute_visit_id) creada. #}
+        {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) %}
         {% set nprod = item.productos|length %}
         <tr id="row-{{ item.id }}"
             class="mfd-frow {{ 'mfd-nosaldo' if not item.tiene_saldo }} {{ 'mfd-perdida-row' if item.es_perdida }}"
@@ -517,8 +523,18 @@
             </button>
             {% endif %}
             {% if not es_fedex %}
-            <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Imprimir etiquetas ILUS de esta factura"
-                    onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
+            {# FIX 2026-07-27 (Daniel: "las etiquetas quiero que las hagas en
+               un modal, y si ya se subió no se podrán editar también"):
+               antes abría pestaña nueva; ahora modal con iframe (mismo
+               patrón que Manifiesto de firma / Prueba de entrega). Se
+               bloquea si la factura ya está en gestión con el courier. #}
+            <button class="btn btn-sm btn-outline-dark mfd-act-btn"
+                    {% if _en_gestion_courier %}
+                    disabled title="Bloqueado: ya está en gestión con el courier"
+                    {% else %}
+                    title="Ver/imprimir etiquetas ILUS de esta factura"
+                    onclick="abrirEtiquetasModal({{ item.commitment_id }})"
+                    {% endif %}>
               <i class="bi bi-tags"></i>
             </button>
             {% endif %}
@@ -545,8 +561,12 @@
               <i class="bi bi-geo-alt-fill"></i>
             </button>
             {% endif %}
-            <button class="btn btn-sm btn-outline-secondary mfd-act-btn" title="Editar contacto, bultos y medidas"
-                    onclick='abrirEditar({{ item_json }})'>
+            <button class="btn btn-sm btn-outline-secondary mfd-act-btn"
+                    {% if _en_gestion_courier %}
+                    disabled title="Bloqueado: esta factura ya está en gestión con el courier (OT/visita creada). No se puede editar."
+                    {% else %}
+                    title="Editar contacto, bultos y medidas" onclick='abrirEditar({{ item_json }})'
+                    {% endif %}>
               <i class="bi bi-pencil-square"></i>
             </button>
             {% if not es_fedex %}
@@ -605,8 +625,12 @@
                 {% endif %}
               {% endif %}
             {% endif %}
-            <button class="btn btn-sm btn-outline-danger mfd-act-btn" title="Quitar del manifiesto"
-                    onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
+            <button class="btn btn-sm btn-outline-danger mfd-act-btn"
+                    {% if _en_gestion_courier %}
+                    disabled title="Bloqueado: esta factura ya está en gestión con el courier (OT/visita creada). No se puede quitar del manifiesto."
+                    {% else %}
+                    title="Quitar del manifiesto" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})"
+                    {% endif %}>
               <i class="bi bi-trash3"></i>
             </button>
           </td>
@@ -719,6 +743,7 @@
       'estado': item.estado_entrega or '',
       'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
     } | tojson %}
+    {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) %}
     {% set nprod = item.productos|length %}
     <div class="mfd-mcard {{ 'mfd-mcard-nosaldo' if not item.tiene_saldo }} {{ 'mfd-mcard-perdida' if item.es_perdida }}" id="card-{{ item.id }}">
       <div class="d-flex justify-content-between align-items-start mb-2">
@@ -736,8 +761,13 @@
         </div>
         <div class="d-flex gap-1 no-print">
           {% if not es_fedex %}
-          <button class="btn btn-sm btn-outline-dark mfd-act-btn" title="Etiquetas de esta factura"
-                  onclick="window.open('/transporte/factura/{{ item.commitment_id }}/etiquetas', '_blank')">
+          <button class="btn btn-sm btn-outline-dark mfd-act-btn"
+                  {% if _en_gestion_courier %}
+                  disabled title="Bloqueado: ya está en gestión con el courier"
+                  {% else %}
+                  title="Ver/imprimir etiquetas de esta factura"
+                  onclick="abrirEtiquetasModal({{ item.commitment_id }})"
+                  {% endif %}>
             <i class="bi bi-tags"></i>
           </button>
           {% endif %}
@@ -748,7 +778,12 @@
             <i class="bi bi-geo-alt-fill"></i>
           </button>
           {% endif %}
-          <button class="btn btn-sm btn-outline-secondary mfd-act-btn" onclick='abrirEditar({{ item_json }})'>
+          <button class="btn btn-sm btn-outline-secondary mfd-act-btn"
+                  {% if _en_gestion_courier %}
+                  disabled title="Bloqueado: ya está en gestión con el courier"
+                  {% else %}
+                  onclick='abrirEditar({{ item_json }})'
+                  {% endif %}>
             <i class="bi bi-pencil-square"></i>
           </button>
           {% if not es_fedex %}
@@ -762,7 +797,12 @@
             <i class="bi bi-geo-alt-fill"></i>
           </button>
           {% endif %}
-          <button class="btn btn-sm btn-outline-danger mfd-act-btn" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})">
+          <button class="btn btn-sm btn-outline-danger mfd-act-btn"
+                  {% if _en_gestion_courier %}
+                  disabled title="Bloqueado: ya está en gestión con el courier"
+                  {% else %}
+                  onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})"
+                  {% endif %}>
             <i class="bi bi-trash3"></i>
           </button>
         </div>
@@ -1848,6 +1888,26 @@
    URL, más botón para descargar PDF y enviar por correo sin salir de
    la ficha del manifiesto.
    ════════════════════════════════════════════════════════════════════ #}
+{# FIX 2026-07-27 (Daniel: "las etiquetas quiero que las hagas en un
+   modal"): antes abría /transporte/factura/<cid>/etiquetas en pestaña
+   nueva; ahora modal con iframe, mismo patrón que Manifiesto de firma. #}
+<div class="modal fade" id="etiquetasFacturaModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:14px 20px">
+        <h5 class="modal-title"><i class="bi bi-tags-fill me-2"></i>Etiquetas de la factura</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="etiquetasFacturaFrame" src="about:blank" style="width:100%;height:75vh;border:0"></iframe>
+      </div>
+      <div class="modal-footer" style="padding:12px 20px">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="pruebaEntregaModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content" style="border-radius:14px;overflow:hidden">
@@ -3804,6 +3864,19 @@ async function actualizarEtiquetasFedex() {
 // ═══════════════════════════════════════════════════════════════════
 var _manifiestoFirmaModal = null;
 var _pruebaEntregaModal = null;
+var _etiquetasFacturaModal = null;
+
+// FIX 2026-07-27 (Daniel: "las etiquetas quiero que las hagas en un
+// modal"): antes window.open a pestaña nueva. Mismo patrón iframe-en-modal
+// que abrirManifiestoFirma()/abrirPruebaEntrega().
+function abrirEtiquetasModal(commitmentId) {
+  var url = '/transporte/factura/' + commitmentId + '/etiquetas';
+  document.getElementById('etiquetasFacturaFrame').src = url;
+  if (!_etiquetasFacturaModal) {
+    _etiquetasFacturaModal = new bootstrap.Modal(document.getElementById('etiquetasFacturaModal'));
+  }
+  _etiquetasFacturaModal.show();
+}
 
 // FIX 2026-07-27 (Daniel: "quiero ver la firma, la foto, la entrega, todo
 // bien bonito... no fue lo que pedí" -- la versión anterior embebía la
