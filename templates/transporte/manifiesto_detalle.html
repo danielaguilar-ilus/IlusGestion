@@ -1833,7 +1833,68 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body p-0">
-        <iframe id="manifiestoFirmaFrame" src="about:blank" style="width:100%;height:80vh;border:0"></iframe>
+        {# ═══ Retiro de bodega (2026-07-26, Daniel): captura de quién se
+           llevó la mercadería + firma digital simple (nombre tecleado).
+           Vive arriba del iframe del PDF para no perder el flujo existente. ═══ #}
+        <div id="mrRetiroPanel" style="padding:16px 20px;border-bottom:1px solid #e5e7eb;background:linear-gradient(180deg,#fafafa,#fff)">
+          <div id="mrLoading" style="font-size:13px;color:#6b7280">
+            <i class="bi bi-hourglass-split me-1"></i>Cargando datos de retiro…
+          </div>
+
+          {# Vista solo-lectura cuando ya existe un registro guardado #}
+          <div id="mrReadonly" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+              <div style="font-size:13px;line-height:1.7">
+                <div><i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>
+                  <strong>Retiro registrado</strong></div>
+                <div>Chofer: <strong id="mrRoNombre"></strong> · RUT <span id="mrRoRut"></span></div>
+                <div>Patente: <strong id="mrRoPatente"></strong>
+                  <span id="mrRoTelWrap" style="display:none"> · Tel. <span id="mrRoTel"></span></span>
+                </div>
+                <div>Firma digital: "<span id="mrRoFirma"></span>"</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-dark fw-bold" style="min-height:44px" onclick="mrToggleForm(true)">
+                <i class="bi bi-pencil-fill me-1"></i>Editar
+              </button>
+            </div>
+          </div>
+
+          {# Formulario de captura (vacío o precargado para editar) #}
+          <form id="mrForm" style="display:none" onsubmit="return mrGuardar(event)">
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label" style="font-size:12px;font-weight:700">Nombre del chofer *</label>
+                <input type="text" class="form-control" id="mrChoferNombre" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" style="font-size:12px;font-weight:700">RUT chofer *</label>
+                <input type="text" class="form-control" id="mrChoferRut" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" style="font-size:12px;font-weight:700">Teléfono (opcional)</label>
+                <input type="text" class="form-control" id="mrChoferTelefono" style="font-size:16px;min-height:44px">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label" style="font-size:12px;font-weight:700">Patente *</label>
+                <input type="text" class="form-control" id="mrPatente" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label" style="font-size:12px;font-weight:700">
+                  Firma digital — escribe tu nombre completo para confirmar *
+                </label>
+                <input type="text" class="form-control" id="mrFirmaNombre" placeholder="Ej: Juan Pérez Soto"
+                       style="font-size:16px;min-height:44px;border-color:#dc2626" required>
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-dark fw-bold w-100" style="min-height:44px" id="mrSubmitBtn">
+                  <i class="bi bi-check2-circle me-1"></i>Confirmar retiro y firmar
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <iframe id="manifiestoFirmaFrame" src="about:blank" style="width:100%;height:70vh;border:0"></iframe>
       </div>
       <div class="modal-footer" style="padding:12px 20px">
         <a class="btn btn-sm btn-outline-dark fw-bold" id="mfPdfLink" href="#" target="_blank">
@@ -3720,6 +3781,109 @@ function abrirManifiestoFirma() {
     _manifiestoFirmaModal = new bootstrap.Modal(document.getElementById('manifiestoFirmaModal'));
   }
   _manifiestoFirmaModal.show();
+  mrCargarRetiro();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Retiro de bodega (2026-07-26): chofer + RUT + teléfono + patente +
+// firma digital simple (nombre tecleado). Un registro por manifiesto,
+// editable. Al guardar, el backend intenta enviar el PDF firmado al
+// correo del courier automáticamente (best-effort).
+// ═══════════════════════════════════════════════════════════════════
+async function mrCargarRetiro() {
+  document.getElementById('mrLoading').style.display = '';
+  document.getElementById('mrReadonly').style.display = 'none';
+  document.getElementById('mrForm').style.display = 'none';
+  try {
+    var r = await fetch('/transporte/manifiestos/' + MID + '/retiro');
+    var d = await r.json();
+    document.getElementById('mrLoading').style.display = 'none';
+    if (d.ok && d.retiro) {
+      mrMostrarReadonly(d.retiro);
+    } else {
+      mrToggleForm(false);
+    }
+  } catch (e) {
+    document.getElementById('mrLoading').style.display = 'none';
+    mrToggleForm(false);
+  }
+}
+
+function mrMostrarReadonly(retiro) {
+  document.getElementById('mrRoNombre').textContent = retiro.chofer_nombre || '';
+  document.getElementById('mrRoRut').textContent = retiro.chofer_rut || '';
+  document.getElementById('mrRoPatente').textContent = retiro.patente || '';
+  document.getElementById('mrRoFirma').textContent = retiro.firma_nombre || '';
+  if (retiro.chofer_telefono) {
+    document.getElementById('mrRoTel').textContent = retiro.chofer_telefono;
+    document.getElementById('mrRoTelWrap').style.display = '';
+  } else {
+    document.getElementById('mrRoTelWrap').style.display = 'none';
+  }
+  window._mrUltimoRetiro = retiro;
+  document.getElementById('mrReadonly').style.display = '';
+  document.getElementById('mrForm').style.display = 'none';
+}
+
+// editar=true precarga el formulario con el registro existente (para corregir datos)
+function mrToggleForm(editar) {
+  document.getElementById('mrReadonly').style.display = 'none';
+  var retiro = editar ? window._mrUltimoRetiro : null;
+  document.getElementById('mrChoferNombre').value = retiro ? (retiro.chofer_nombre || '') : '';
+  document.getElementById('mrChoferRut').value = retiro ? (retiro.chofer_rut || '') : '';
+  document.getElementById('mrChoferTelefono').value = retiro ? (retiro.chofer_telefono || '') : '';
+  document.getElementById('mrPatente').value = retiro ? (retiro.patente || '') : '';
+  document.getElementById('mrFirmaNombre').value = '';
+  document.getElementById('mrForm').style.display = '';
+}
+
+async function mrGuardar(ev) {
+  ev.preventDefault();
+  var btn = document.getElementById('mrSubmitBtn');
+  var payload = {
+    chofer_nombre:   document.getElementById('mrChoferNombre').value.trim(),
+    chofer_rut:      document.getElementById('mrChoferRut').value.trim(),
+    chofer_telefono: document.getElementById('mrChoferTelefono').value.trim(),
+    patente:         document.getElementById('mrPatente').value.trim(),
+    firma_nombre:    document.getElementById('mrFirmaNombre').value.trim(),
+  };
+  if (!payload.chofer_nombre || !payload.chofer_rut || !payload.patente || !payload.firma_nombre) {
+    ilusToast('Completa los campos obligatorios (*)', { type: 'warning' });
+    return false;
+  }
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Guardando…';
+  try {
+    var r = await fetch('/transporte/manifiestos/' + MID + '/retiro', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    var d = await r.json();
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar retiro y firmar';
+    if (d.ok) {
+      var msg = d.enviado_a
+        ? ('✓ Retiro registrado. Manifiesto enviado a ' + d.enviado_a)
+        : '✓ Retiro registrado.';
+      ilusToast(msg, { type: 'success' });
+      if (d.aviso) {
+        await ilusAlert({ title: 'Aviso', message: d.aviso, type: 'warning' });
+      }
+      mrCargarRetiro();
+    } else {
+      await ilusAlert({
+        title: 'No se pudo registrar el retiro',
+        message: d.error || 'Error desconocido',
+        type: 'error',
+      });
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar retiro y firmar';
+    ilusToast('Error de conexión al guardar', { type: 'error' });
+  }
+  return false;
 }
 
 async function enviarManifiestoFirmaCorreo() {

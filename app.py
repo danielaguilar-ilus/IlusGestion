@@ -29027,6 +29027,36 @@ def _ensure_transport_facturas_proveedor_tables():
         conn.close()
 
 
+def _ensure_transport_manifest_retiro_table():
+    """Tabla NUEVA (2026-07-26, Daniel): captura de quién retiró la
+    mercadería de bodega (chofer, RUT, teléfono, patente) + firma digital
+    simple (nombre tecleado). Se crea SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1 (init_transporte_tables no corre en prod).
+    Idempotente. Distinta de transport_delivery_proof (esa es la prueba de
+    entrega al cliente final; esta es el retiro desde bodega)."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_manifest_retiro (
+                    id                INT AUTO_INCREMENT PRIMARY KEY,
+                    manifest_id       INT NOT NULL UNIQUE,
+                    chofer_nombre     VARCHAR(150) NOT NULL,
+                    chofer_rut        VARCHAR(20)  NOT NULL,
+                    chofer_telefono   VARCHAR(50),
+                    patente           VARCHAR(20)  NOT NULL,
+                    firma_nombre      VARCHAR(150) NOT NULL,
+                    ip_origen         VARCHAR(60),
+                    registrado_por    VARCHAR(190),
+                    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (manifest_id) REFERENCES transport_manifests(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _ensure_transport_zz_saldo_table():
     """Tabla NUEVA — se crea SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 (no
     depende de init_transporte_tables, que en prod NO corre). Idempotente."""
@@ -29319,18 +29349,32 @@ def _tr_manifiesto_items_firma(mid):
     """, tuple(commitment_ids)) or []
     rut_por_commitment = {r["id"]: (r.get("cliente_rut") or "") for r in ruts}
 
+    # FIX 2026-07-27 (Daniel: "excluye el ZZPO... agrega los productos en
+    # cuanto a kilo"): las líneas ZZ* (envío/retiro/instalación/servicio
+    # técnico — nunca productos físicos) no deben aparecer en el detalle de
+    # productos que retira el transportista. Se filtran por prefijo "ZZ"
+    # (mismo criterio que ZZ_SKUS/_ZZ_SKUS ya usados en el resto del
+    # proyecto) en vez de listar códigos exactos, para cubrir cualquier
+    # variante (ZZPO incluido). Se agrega peso_unitario*cantidad por línea
+    # (columna ya existente en transport_commitment_lines, no hay que
+    # calcularla desde otro lado).
     lineas = mysql_fetchall(f"""
-        SELECT commitment_id, koprct AS sku, nokopr AS descripcion, cantidad
+        SELECT commitment_id, koprct AS sku, nokopr AS descripcion, cantidad,
+               peso_unitario
           FROM transport_commitment_lines
          WHERE commitment_id IN ({ph})
+           AND UPPER(koprct) NOT LIKE 'ZZ%%'
          ORDER BY id
     """, tuple(commitment_ids)) or []
     lineas_por_commitment = {}
     for l in lineas:
+        cantidad = float(l.get("cantidad") or 0)
+        peso_unitario = float(l.get("peso_unitario") or 0)
         lineas_por_commitment.setdefault(l["commitment_id"], []).append({
             "sku":         l.get("sku") or "",
             "descripcion": l.get("descripcion") or l.get("sku") or "",
-            "cantidad":    float(l.get("cantidad") or 0),
+            "cantidad":    cantidad,
+            "peso_kg":     round(peso_unitario * cantidad, 2),
         })
 
     for it in items:
@@ -29360,6 +29404,7 @@ def _tr_manifiesto_firma_bytes(mid):
         items       = items,
         remitente   = ILUS_REMITENTE,
         manifiesto  = manifiesto,
+        retiro      = _tr_manifiesto_retiro_get(mid),
         fecha       = _now_chile_str("%d-%m-%Y"),
         logo_url    = _logo_data_url(),
         logo_shs_url = _logo_shs_pdf_data_url(),
@@ -29396,6 +29441,7 @@ def tr_manifiesto_firma(mid):
         items       = items,
         remitente   = ILUS_REMITENTE,
         manifiesto  = manifiesto,
+        retiro      = _tr_manifiesto_retiro_get(mid),
         fecha       = _now_chile_str("%d-%m-%Y"),
         logo_url    = _logo_data_url(),
         logo_shs_url = _logo_shs_pdf_data_url(),
@@ -29513,6 +29559,160 @@ def tr_manifiesto_firma_enviar(mid):
     if not enviados:
         return jsonify({"ok": False, "error": "No se pudo enviar a ningún destinatario."}), 502
     return jsonify({"ok": True, "enviados": enviados, "fallidos": fallidos})
+
+
+def _tr_manifiesto_retiro_get(mid):
+    """Retorna el registro de retiro (chofer/RUT/patente/firma) de un
+    manifiesto, o None si aún no se ha capturado."""
+    try:
+        return mysql_fetchone(
+            "SELECT * FROM transport_manifest_retiro WHERE manifest_id=%s", (mid,))
+    except Exception:
+        return None
+
+
+def _tr_courier_email(courier_nombre):
+    """Busca el correo declarado en la ficha del courier (transport_couriers)
+    a partir del texto libre guardado en transport_manifests.courier.
+    Primero intenta match exacto (normalizado), luego un LIKE tolerante
+    (mismo criterio laxo usado para los alias Felca/Milling/Melling en la
+    integración SimpliRoute) porque el texto libre trae inconsistencias de
+    ortografía conocidas."""
+    if not courier_nombre:
+        return None
+    nombre = courier_nombre.strip()
+    if not nombre:
+        return None
+    row = mysql_fetchone(
+        "SELECT email FROM transport_couriers WHERE LOWER(TRIM(nombre))=LOWER(TRIM(%s)) "
+        "AND email IS NOT NULL AND email <> '' LIMIT 1",
+        (nombre,)
+    )
+    if row and row.get("email"):
+        return row["email"]
+    row = mysql_fetchone(
+        "SELECT email FROM transport_couriers WHERE LOWER(nombre) LIKE %s "
+        "AND email IS NOT NULL AND email <> '' LIMIT 1",
+        (f"%{nombre.lower()}%",)
+    )
+    if row and row.get("email"):
+        return row["email"]
+    row = mysql_fetchone(
+        "SELECT email FROM transport_couriers WHERE %s LIKE CONCAT('%%', LOWER(nombre), '%%') "
+        "AND email IS NOT NULL AND email <> '' LIMIT 1",
+        (nombre.lower(),)
+    )
+    if row and row.get("email"):
+        return row["email"]
+    return None
+
+
+@app.route("/transporte/manifiestos/<int:mid>/retiro", methods=["GET", "POST"])
+@_tr_required
+def tr_manifiesto_retiro(mid):
+    """Captura de retiro de bodega (2026-07-26, Daniel): quién se llevó la
+    mercadería (chofer, RUT, teléfono, patente) + firma digital simple
+    (nombre tecleado, NO canvas). Al guardar, intenta mandar automáticamente
+    el PDF del manifiesto de firma al correo declarado en la ficha del
+    courier (transport_couriers.email). El correo es best-effort: si falla
+    o no hay email configurado, el registro igual queda guardado."""
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        return jsonify({"ok": False, "error": "Manifiesto no encontrado"}), 404
+
+    if request.method == "GET":
+        retiro = _tr_manifiesto_retiro_get(mid)
+        return jsonify({"ok": True, "retiro": retiro})
+
+    body = request.get_json(silent=True) or {}
+    chofer_nombre   = (body.get("chofer_nombre") or "").strip()
+    chofer_rut      = (body.get("chofer_rut") or "").strip()
+    chofer_telefono = (body.get("chofer_telefono") or "").strip()
+    patente         = (body.get("patente") or "").strip()
+    firma_nombre    = (body.get("firma_nombre") or "").strip()
+
+    faltantes = []
+    if not chofer_nombre: faltantes.append("nombre del chofer")
+    if not chofer_rut: faltantes.append("RUT del chofer")
+    if not patente: faltantes.append("patente")
+    if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
+    if faltantes:
+        return jsonify({"ok": False,
+                         "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
+
+    try:
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO transport_manifest_retiro "
+                    "(manifest_id, chofer_nombre, chofer_rut, chofer_telefono, patente, "
+                    " firma_nombre, ip_origen, registrado_por) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE "
+                    "chofer_nombre=VALUES(chofer_nombre), chofer_rut=VALUES(chofer_rut), "
+                    "chofer_telefono=VALUES(chofer_telefono), patente=VALUES(patente), "
+                    "firma_nombre=VALUES(firma_nombre), ip_origen=VALUES(ip_origen), "
+                    "registrado_por=VALUES(registrado_por)",
+                    (mid, chofer_nombre, chofer_rut, chofer_telefono, patente,
+                     firma_nombre, (request.remote_addr or "")[:60], current_username())
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[tr_manifiesto_retiro] guardar mid={mid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el registro de retiro."}), 500
+
+    _tr_log("manifest", mid, "retiro registrado",
+            f"chofer={chofer_nombre} rut={chofer_rut} patente={patente}")
+
+    enviado_a = None
+    aviso = None
+    try:
+        email = _tr_courier_email(manifiesto.get("courier"))
+        if email:
+            correlativo = manifiesto.get("correlativo") or mid
+            _, items, pdf_bytes, fname = _tr_manifiesto_firma_bytes(mid)
+            n_docs = len(items)
+            subject = _brand_subject(
+                f"Manifiesto de retiro N° {correlativo} firmado — {n_docs} factura(s)")
+            import html as _html_esc
+            cuerpo = (
+                f"<p>Estimados,</p>"
+                f"<p>Se registró el retiro de bodega del manifiesto "
+                f"<strong>N° {_html_esc.escape(str(correlativo))}</strong> "
+                f"({n_docs} factura{'s' if n_docs != 1 else ''}).</p>"
+                f"<p>Retirado por <strong>{_html_esc.escape(chofer_nombre)}</strong>, "
+                f"RUT {_html_esc.escape(chofer_rut)}, patente {_html_esc.escape(patente)}.</p>"
+                f"<p>Adjuntamos el manifiesto firmado.</p>"
+            )
+            try:
+                html_body = _ilus_email_master({
+                    "subject": subject,
+                    "title": f"Manifiesto de retiro N° {correlativo}",
+                    "subtitle": f"{n_docs} factura(s)",
+                    "message": cuerpo,
+                })
+            except Exception:
+                html_body = cuerpo
+            ok = _send_ilus_email(email, subject, html_body, modulo="transporte",
+                                   attachments=[(fname, pdf_bytes, "application/pdf")])
+            if ok:
+                enviado_a = email
+                _tr_log("manifest", mid, "retiro correo enviado", f"a={email}")
+            else:
+                aviso = f"No se pudo enviar el correo a {email}."
+        else:
+            aviso = "El registro quedó guardado, pero no hay correo configurado en la ficha del courier para enviarlo automáticamente."
+    except Exception as e:
+        print(f"[tr_manifiesto_retiro] correo mid={mid}: {type(e).__name__}: {e}", flush=True)
+        aviso = "El registro quedó guardado, pero el envío automático de correo falló."
+
+    resp = {"ok": True, "enviado_a": enviado_a}
+    if aviso:
+        resp["aviso"] = aviso
+    return jsonify(resp)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -75633,6 +75833,16 @@ try:
         _ensure_transport_facturas_proveedor_tables()
 except Exception as _fp_err:
     print(f"[ILUS][WARN] _ensure_transport_facturas_proveedor_tables: {_fp_err}", flush=True)
+
+# CRÍTICO: garantizar tabla de retiro de bodega (transport_manifest_retiro)
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Captura chofer/patente/firma
+# al momento del retiro desde bodega (distinto de la prueba de entrega final
+# al cliente, que vive en transport_delivery_proof).
+try:
+    with app.app_context():
+        _ensure_transport_manifest_retiro_table()
+except Exception as _mr_err:
+    print(f"[ILUS][WARN] _ensure_transport_manifest_retiro_table: {_mr_err}", flush=True)
 
 # FASE 1 TRACKING: garantizar tablas/columnas de tracking + prueba de entrega
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. CREATE TABLE IF NOT EXISTS es

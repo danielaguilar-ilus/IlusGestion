@@ -52,6 +52,10 @@ body{
   -webkit-tap-highlight-color:transparent;
 }
 .shell{ max-width:var(--shell); margin:0 auto; }
+/* Wrappers de layout de escritorio -- en celular son invisibles para el
+   layout (sus hijos se comportan como si estuvieran directo en .shell,
+   cero cambio de comportamiento respecto a antes). */
+.dash-row, .dash-col{ display:contents; }
 
 /* ── HEADER ─────────────────────────────────────────────────── */
 .hd{
@@ -477,21 +481,25 @@ a.kv:active{ background:#fafafa; }
 
   .accent{ height:4px; }
 
-  /* El "shell" deja de ser una columna: pasa a ser el grid de 2 paneles. */
-  .shell{
-    display:grid;
-    grid-template-columns:392px 1fr;
-    column-gap:1.75rem;
-    align-items:start;
-    padding:1.75rem 1.5rem 0;
-  }
-  .hd,.accent{ grid-column:1 / -1; }
+  /* El "shell" deja de ser una columna: hd/accent siguen de ancho completo
+     arriba, y debajo un FLEX row (dash-row) con el hero a la izquierda y
+     el resto del contenido (dash-col) a la derecha.
+     FIX 2026-07-27 (Daniel: "hay un espacio vacío que no entiendo"): la
+     versión anterior usaba CSS Grid con hero/board compartiendo la misma
+     fila -- como hero es mucho más alto (sticky, con stepper y barra de
+     avance) y board son solo 3 tiles cortos, esa fila se estiraba a la
+     altura del hero y dejaba un hueco vacío bajo los tiles. Flexbox no
+     fuerza esa igualación de alturas entre hermanos "de distinta fila". */
+  .shell{ padding:1.75rem 1.5rem 0; }
   .hd{ padding:1.1rem 1.5rem; }
+  .dash-row{ display:flex; align-items:flex-start; gap:1.75rem; }
+  .dash-col{ display:block; flex:1; min-width:0; }
 
   /* Panel izquierdo: el hero se vuelve una tarjeta propia, pegajosa, con
      esquinas y sombra — ya no es la franja negra de borde a borde de
      celular. Todo su contenido interno no se toca (mismos elementos). */
   .hero{
+    flex:0 0 392px;
     border-radius:22px;
     padding:2rem 1.85rem 2.2rem;
     position:sticky; top:1.75rem;
@@ -502,16 +510,16 @@ a.kv:active{ background:#fafafa; }
   /* Panel derecho: el resumen de 3 tiles, el aviso de auto-actualización
      y las tarjetas quedan en una columna más ancha, con más aire. */
   .board{
-    grid-column:2; margin-top:0; padding:0;
+    margin-top:0; padding:0;
     grid-template-columns:repeat(3,minmax(0,1fr));
     gap:.85rem;
   }
   .tile{ padding:1.1rem .75rem 1rem; }
   .tile-n{ font-size:2.05rem; }
 
-  .autobar{ grid-column:2; justify-content:flex-start; padding:1rem 0 0; }
+  .autobar{ justify-content:flex-start; padding:1rem 0 0; }
 
-  .wrap{ grid-column:2; padding:1.15rem 0 3rem; }
+  .wrap{ padding:1.15rem 0 3rem; }
 
   /* Con más ancho, Destino + Historial conviven lado a lado -- son las 2
      tarjetas que más se leen juntas (dónde va y cómo va el avance). Prueba
@@ -574,6 +582,14 @@ a.kv:active{ background:#fafafa; }
 </header>
 <div class="accent"></div>
 
+{# FIX 2026-07-27 (Daniel: "hay un espacio vacío que no entiendo"): en
+   escritorio, hero y el resto del contenido compartían fila de un mismo
+   CSS Grid -- como el hero (sticky, alto) y los tiles (cortos) quedaban en
+   la MISMA fila, esa fila se estiraba a la altura del hero y dejaba un
+   hueco vacío bajo los tiles. Se envuelven en un flex row (dash-row) en
+   vez de compartir grid -- en celular estos wrappers son "display:contents"
+   (invisibles para el layout, cero cambio de comportamiento). #}
+<div class="dash-row">
 <section class="hero{% if entregado %} is-ok{% elif terminal_danger %} is-bad{% endif %}" id="tkHero">
   <button class="doc" id="btnDoc" type="button" title="Copiar número de documento">
     <i class="bi bi-receipt"></i>{{ data.doc }}
@@ -635,6 +651,7 @@ a.kv:active{ background:#fafafa; }
   </div>
 </section>
 
+<div class="dash-col">
 <!-- RESUMEN de un vistazo -->
 <div class="board">
   <div class="tile">
@@ -802,6 +819,8 @@ a.kv:active{ background:#fafafa; }
     </div>
   </div>
 </main>
+</div><!-- /dash-col -->
+</div><!-- /dash-row -->
 
 </div><!-- /shell -->
 

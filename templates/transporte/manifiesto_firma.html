@@ -258,7 +258,7 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
   </div>
   <table class="detalle">
     <thead>
-      <tr><th style="width:60px">#</th><th style="width:110px">SKU</th><th>Descripción</th><th class="num" style="width:80px">Cantidad</th></tr>
+      <tr><th style="width:60px">#</th><th style="width:110px">SKU</th><th>Descripción</th><th class="num" style="width:80px">Cantidad</th><th class="num" style="width:90px">Peso (kg)</th></tr>
     </thead>
     <tbody>
       {% if it.lineas %}
@@ -268,10 +268,11 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
           <td>{{ l.sku }}</td>
           <td>{{ l.descripcion }}</td>
           <td class="num">{{ l.cantidad|int if l.cantidad == l.cantidad|int else l.cantidad }}</td>
+          <td class="num">{{ '%.2f'|format(l.peso_kg or 0) }}</td>
         </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:14px 20px">Sin detalle de productos disponible para este documento.</td></tr>
+        <tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:14px 20px">Sin detalle de productos disponible para este documento.</td></tr>
       {% endif %}
     </tbody>
   </table>
@@ -284,13 +285,21 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
     La conformidad de entrega al cliente final se recaba por separado, al momento de cada despacho.
   </div>
 
+  {% if retiro %}
+  <div class="declaracion" style="border-color:#16a34a;background:#f0fdf4;color:#14532d">
+    <strong>Retirado por:</strong> {{ retiro.chofer_nombre }} · R.U.T. {{ retiro.chofer_rut }} · Patente {{ retiro.patente }}{% if retiro.chofer_telefono %} · Tel. {{ retiro.chofer_telefono }}{% endif %}
+    {% if retiro.created_at %} · {{ retiro.created_at | chile_fmt }}{% endif %}
+  </div>
+  {% endif %}
+
   <div class="firmas">
     <div class="firma-box">
       <div class="cap">Firma de retiro conforme</div>
       <div class="sub">{{ manifiesto.courier or 'Transportista' }}</div>
       <div class="firma-linea"></div>
-      <div class="firma-campo">Nombre: ______________________________</div>
-      <div class="firma-campo">R.U.T.: ________________  Fecha / Hora: ____________</div>
+      <div class="firma-campo">Nombre: {{ retiro.chofer_nombre if retiro else '______________________________' }}</div>
+      <div class="firma-campo">R.U.T.: {{ retiro.chofer_rut if retiro else '________________' }}  Fecha / Hora: {{ (retiro.created_at | chile_fmt) if retiro else '____________' }}</div>
+      {% if retiro %}<div class="firma-campo">Firmado digitalmente por: {{ retiro.firma_nombre }}</div>{% endif %}
     </div>
   </div>
 
