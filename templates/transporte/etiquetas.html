@@ -414,16 +414,20 @@ html, body { background: #fff; }
   height: 4.5mm;
 }
 .dest-row .k {
-  font-size: 2.2mm;
+  font-size: 2.4mm;
   font-weight: 800;
   text-transform: uppercase;
   color: var(--ilus-gray);
   display: block;
 }
 .dest-row .v {
-  font-size: 3.4mm;
+  /* FIX Daniel 2026-07-26: "se ve desproporcionada, algunos datos más
+     pequeños que otros" -- se sube la base de 3.4mm a 4mm, aprovechando el
+     espacio que dejó libre el QR quitado, para que todo el bloque
+     Destinatario se sienta parejo y grande, no apretado. */
+  font-size: 4mm;
   font-weight: 850;
-  line-height: 1.12;
+  line-height: 1.16;
   word-break: break-word;
 }
 /* FIX Daniel 2026-07-26: una dirección larga podía crecer sin límite y
@@ -438,19 +442,19 @@ html, body { background: #fff; }
   overflow: hidden;
 }
 .dest-row .v.big {
-  font-size: 4mm;
+  font-size: 5.2mm;
   font-weight: 950;
 }
 /* FIX Daniel: "que destaque también la comuna" -- antes iba igual que
    fono/dirección; el chofer la necesita a simple vista para ordenar rutas. */
 .dest-row .v.comuna {
-  font-size: 4.4mm;
+  font-size: 5mm;
   font-weight: 950;
   color: var(--ilus-black);
   display: block;
 }
 .dest-row .v.region {
-  font-size: 2.4mm;
+  font-size: 2.8mm;
   font-weight: 700;
   color: var(--ilus-gray);
   display: block;
@@ -463,7 +467,7 @@ html, body { background: #fff; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   text-align: center;
   padding: 2mm 1mm 2mm;
   background: #fff;
@@ -488,69 +492,36 @@ html, body { background: #fff; }
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 1.5mm;
-  margin-top: .5mm;
-  padding-bottom: 1mm;
-  border-bottom: .35mm solid var(--ilus-gray);
+  gap: 2mm;
+  margin-top: 1mm;
+  padding-bottom: 0;
   width: 90%;
 }
 .bultos-box .b-x {
-  /* FIX Daniel: "los bultos un poco más medianos" -- eran 22mm, desmedido */
-  font-size: 13mm;
+  /* FIX Daniel 2026-07-26: al quitar el QR de esta columna quedaba mucho
+     espacio vacío abajo -- se sube de 13mm a 17mm para que "Bultos" ocupe
+     bien el alto libre y quede a la par del bloque Destinatario, sin dejar
+     de respetar el límite anterior ("un poco más medianos" que 22mm). */
+  font-size: 17mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
 }
 .bultos-box .b-de {
-  font-size: 3.6mm;
+  font-size: 4mm;
   font-weight: 800;
   color: var(--ilus-gray);
 }
 .bultos-box .b-n {
-  font-size: 8mm;
+  font-size: 10mm;
   font-weight: 950;
   line-height: .9;
   color: var(--ilus-black);
 }
-/* QR único por bulto — código PRINCIPAL (Daniel 2026-07-25: "el código de
-   barra no es muy necesario, el QR sí"). El chofer/bodega lo escanea para
-   capturar el bulto — por eso es más grande que el barcode secundario de
-   arriba. */
-.bultos-box .qr-box {
-  width: 28mm;
-  height: 28mm;
-  margin-top: .8mm;
-}
-.bultos-box .qr-box img,
-.bultos-box .qr-box canvas {
-  width: 28mm !important;
-  height: 28mm !important;
-  display: block;
-}
-.bultos-box .qr-code-txt {
-  font-family: 'Courier New', monospace;
-  font-size: 2.6mm;
-  font-weight: 800;
-  letter-spacing: .3mm;
-  color: var(--ilus-black);
-  margin-top: .5mm;
-}
-/* Edge case: si por algo un bulto se quedara sin qr_code (no debería —
-   ver auto-reparación en _tr_attach_qr_codes), nunca dejamos la caja vacía
-   sin explicación: se avisa que el código de barra de abajo sigue siendo
-   válido para ese bulto puntual. */
-.bultos-box .qr-fallback {
-  max-width: 28mm;
-  margin-top: 2mm;
-  padding: 1.5mm;
-  border: .35mm dashed var(--ilus-red);
-  border-radius: 1.2mm;
-  font-size: 2mm;
-  font-weight: 800;
-  color: var(--ilus-red);
-  text-align: center;
-  line-height: 1.2;
-}
+/* FIX 2026-07-26 (pedido Daniel): se quitó el QR de esta caja. En vez de
+   dejar el espacio vacío, "Bultos" ahora ocupa toda la columna (b-main más
+   grande, ver abajo) para que la etiqueta se vea equilibrada y no
+   desproporcionada frente al bloque Destinatario. */
 
 /* FIX 2026-07-25 (Daniel, captura real): el bloque "Status de salida"
    (sello/firma) sumaba 16mm mínimos fijos que no entraban en el alto real
@@ -1118,10 +1089,6 @@ html, body { background: #fff; }
             <span class="b-de">de</span>
             <span class="b-n">{{ b.total }}</span>
           </div>
-          {# FIX 2026-07-26 (pedido Daniel — "sácalo, no le veo aporte"):
-             se quita el QR por bulto. El código de barras de la sección
-             final (.lbl-scan) sigue siendo el único código escaneable. #}
-          <div class="qr-fallback">Usa el c&oacute;digo de barra de abajo</div>
         </div>
       </div>
 
