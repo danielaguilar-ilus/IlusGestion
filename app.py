@@ -20217,8 +20217,19 @@ def tr_compromisos_json():
     # `WHERE 1=1` como base: con vista=todos sin más filtros, `where` puede
     # quedar vacío y romper el SQL. El 1=1 lo blinda sin cambiar resultados.
     where_sql = (" AND " + " AND ".join(where)) if where else ""
+    # Courier (2026-07-27, Daniel: "necesito ver quién lo tiene — Felca,
+    # Milling o FedEx" en la tabla del Monitor) — subquery al item de
+    # manifiesto MÁS RECIENTE de cada compromiso, igual criterio que usa
+    # tr_compromiso_trazabilidad para el panel de seguimiento.
+    _COURIER_SUB = (
+        "(SELECT tm.courier FROM transport_manifest_items tmi "
+        " JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
+        " WHERE tmi.commitment_id = transport_commitments.id "
+        " ORDER BY tmi.id DESC LIMIT 1)"
+    )
     rows = mysql_fetchall(
-        "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto "
+        "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto, "
+        + _COURIER_SUB + " AS courier_manifiesto "
         "FROM transport_commitments WHERE 1=1" + where_sql +
         " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
     )
@@ -20266,6 +20277,7 @@ def tr_compromisos_json():
             "cobertura_pct":float(r.get("cobertura_pct") or 0),
             "tiene_saldo":  tiene_saldo,
             "en_manifiesto":en_manif,
+            "courier":      r.get("courier_manifiesto") or "",
             "gestion":      gestion,
             "dias_atraso":  int(dias_atraso),
             "preventa":     int(r.get("preventa") or 0),
@@ -23079,6 +23091,7 @@ def tr_compromiso_trazabilidad(cid):
     mi = mysql_fetchone("""
         SELECT tmi.id AS item_id, tmi.estado_entrega, tmi.simpliroute_visit_id,
                tmi.simpliroute_tracking_id, tmi.simpliroute_error,
+               tmi.tracking_number, tmi.master_tracking_number,
                tc.tido, tc.nudo, tc.cliente_nombre, tm.courier
         FROM transport_manifest_items tmi
         LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
@@ -23090,6 +23103,13 @@ def tr_compromiso_trazabilidad(cid):
     item = None
     simpliroute_live = None
     if mi:
+        # Tracking NATIVO del courier (2026-07-27, Daniel: "poder acceder al
+        # tracking desde acá — Felca, Milling o FedEx"). FedEx trae número de
+        # guía real (master_tracking_number para multi-bulto, si no
+        # tracking_number) con link público directo; Felca/Milling rutean por
+        # SimpliRoute — no tienen número propio, se usa el link ILUS.
+        _courier_tn = (mi.get("master_tracking_number") or mi.get("tracking_number") or "").strip()
+        _courier_url = f"https://www.fedex.com/fedextrack/?trknbr={_courier_tn}" if _courier_tn else None
         item = {
             "item_id":      mi.get("item_id"),
             "estado":       mi.get("estado_entrega") or "",
@@ -23098,6 +23118,8 @@ def tr_compromiso_trazabilidad(cid):
             "courier":      mi.get("courier") or "",
             "visit_id":     mi.get("simpliroute_visit_id") or "",
             "tracking_id":  mi.get("simpliroute_tracking_id") or "",
+            "courier_tracking_number": _courier_tn,
+            "courier_tracking_url":    _courier_url,
             "error":        mi.get("simpliroute_error") or "",
         }
         vid = (mi.get("simpliroute_visit_id") or "").strip()

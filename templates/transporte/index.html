@@ -965,6 +965,7 @@ async function limpiarYResync(){
           <th class="text-center" title="ZZ envío detectados en el documento">ZZ</th>
           <th>Observaciones</th>
           <th>Estado</th>
+          <th class="text-center" title="Courier asignado en el manifiesto">Courier</th>
           <th class="text-center" title="Número de guía de despacho asociada en el ERP">Guía</th>
           <th class="text-center" title="% del ZZ ya despachado (cantidades por línea)">Cobertura</th>
           <th class="text-end">Costo</th>
@@ -973,7 +974,7 @@ async function limpiarYResync(){
         </tr>
       </thead>
       <tbody id="monitorTbody">
-        <tr><td colspan="14" class="tr-td-loading">
+        <tr><td colspan="15" class="tr-td-loading">
           <div class="tr-spinner"></div>
           <span>Cargando compromisos…</span>
         </td></tr>
@@ -2285,6 +2286,32 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
         <button type="button" class="btn-close btn-close-white btn-sm ms-auto" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        {# Última milla: courier + estado actual + tracking nativo del courier
+           (2026-07-27, Daniel: "quién lo tiene, cómo va el avance, poder
+           acceder al tracking desde acá — Felca, Milling o FedEx"). #}
+        <div id="trazaCourierBlock" class="mb-3 p-2"
+             style="display:none;background:#f8f9fa;border-radius:8px">
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+              <div class="small fw-semibold text-muted"><i class="bi bi-truck me-1"></i>Courier</div>
+              <div id="trazaCourierNombre" class="fw-bold" style="font-size:.9rem">—</div>
+            </div>
+            <span id="trazaCourierEstado" class="badge" style="font-size:.72rem"></span>
+          </div>
+          <div id="trazaCourierTrackingRow" class="mt-2 pt-2" style="display:none;border-top:1px solid #e9ecef">
+            <div class="small fw-semibold text-muted mb-1">
+              <i class="bi bi-upc-scan me-1"></i>N° de seguimiento del courier
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+              <span id="trazaCourierTN" class="font-monospace" style="font-size:.8rem"></span>
+              <a id="trazaCourierTNLink" href="#" target="_blank" rel="noopener"
+                 class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.72rem;display:none">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Rastrear en FedEx
+              </a>
+            </div>
+          </div>
+        </div>
+
         {# Link público del cliente #}
         <div id="trazaLinkBlock" style="display:none">
           <div class="small fw-semibold text-muted mb-1">
@@ -3912,7 +3939,7 @@ function cargarMonitor() {
           };
           var conf = emptyConfig[_vistaActual] || emptyConfig.todos;
           tbody.innerHTML =
-            '<tr><td colspan="14" style="padding:0">' +
+            '<tr><td colspan="15" style="padding:0">' +
               '<div class="tr-empty">' +
                 '<div class="tr-empty-icon"><i class="bi ' + conf.icon + '"></i></div>' +
                 '<div class="tr-empty-title">' + conf.title + '</div>' +
@@ -3973,13 +4000,20 @@ function cargarMonitor() {
             var cliEsc = (c.cliente||'').replace(/'/g,"\\'");
             return '<tr class="tr-monitor-row ' + rowFlowClass + '" data-id="' + c.id + '" ' +
               'data-clasif="' + (c.clasificacion||'despacho') + '" ' +
+              'data-en-manifiesto="' + (c.en_manifiesto ? '1' : '0') + '" ' +
               'data-label="' + lbl + '" data-cliente="' + cli + '">' +
 
-              /* ── Handle de drag ── */
-              '<td class="dp-drag-handle" title="Arrastrar al manifiesto" ' +
-                  'ondragstart="_dragHandleStart(event,' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')" draggable="true">' +
-                '<i class="bi bi-grip-vertical" style="font-size:1.1rem; color:var(--tr-text-soft); cursor:grab"></i>' +
-              '</td>' +
+              /* ── Handle de drag — deshabilitado si ya está en un manifiesto
+                 (2026-07-27, Daniel: "quitarle el manifiesto, porque ya está
+                 asignado" — evita arrastrar de nuevo algo que ya tiene gestión) ── */
+              (c.en_manifiesto
+                ? '<td class="dp-drag-handle" title="Ya está asignado a un manifiesto">' +
+                    '<i class="bi bi-check2-circle" style="font-size:1rem; color:var(--tr-text-soft); opacity:.5"></i>' +
+                  '</td>'
+                : '<td class="dp-drag-handle" title="Arrastrar al manifiesto" ' +
+                    'ondragstart="_dragHandleStart(event,' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')" draggable="true">' +
+                  '<i class="bi bi-grip-vertical" style="font-size:1.1rem; color:var(--tr-text-soft); cursor:grab"></i>' +
+                  '</td>') +
 
               /* ── Documento — TIDO + NUDO ── */
               '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
@@ -4040,6 +4074,13 @@ function cargarMonitor() {
                   _preventaBadge(c) +
                   _diasAtrasoHtml(c) +
                 '</div>' +
+              '</td>' +
+
+              /* ── Courier asignado (2026-07-27) ── */
+              '<td class="text-center">' +
+                (c.courier
+                  ? '<span class="tr-guia-pill" title="Courier asignado en el manifiesto">' + esc(c.courier) + '</span>'
+                  : '<span style="color:var(--tr-text-soft)">—</span>') +
               '</td>' +
 
               /* ── Guía de despacho (NUDGIA del ERP) ── */
@@ -4170,7 +4211,7 @@ function cargarMonitor() {
     .catch(function(e) {
       console.error('cargarMonitor error:', e);
       var tbody = document.getElementById('monitorTbody');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="14" class="text-center py-4 text-danger">Error al cargar</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="15" class="text-center py-4 text-danger">Error al cargar</td></tr>';
     });
 }
 
@@ -4427,6 +4468,13 @@ function _dragHandleStart(e, cid, label, cliente) {
 // ── DRAG ROWS (arrastrabilidad de la fila completa) ────────────────
 function initDragRows() {
   document.querySelectorAll('#monitorTbody tr[data-id]').forEach(function(tr) {
+    // No permitir re-arrastrar filas ya asignadas a un manifiesto
+    // (2026-07-27, Daniel) — el handle propio ya lo bloquea; esto cubre el
+    // arrastre desde cualquier punto de la fila completa.
+    if (tr.dataset.enManifiesto === '1') {
+      tr.removeAttribute('draggable');
+      return;
+    }
     tr.setAttribute('draggable', 'true');
     tr.style.cursor = 'default';  // el handle propio tiene cursor:grab
 
@@ -5151,6 +5199,7 @@ async function abrirTrazabilidad() {
   if (!_cotizarCid) return;
   var cid = _cotizarCid;
 
+  document.getElementById('trazaCourierBlock').style.display = 'none';
   document.getElementById('trazaLinkBlock').style.display = 'none';
   document.getElementById('trazaLoading').style.display = '';
   document.getElementById('trazaEmpty').style.display = 'none';
@@ -5167,6 +5216,29 @@ async function abrirTrazabilidad() {
     if (!d.ok) {
       ilusToast(d.error || 'No se pudo cargar la trazabilidad.', { type: 'error' });
       return;
+    }
+
+    // Última milla: courier + estado + tracking nativo (2026-07-27)
+    if (d.item && d.item.courier) {
+      document.getElementById('trazaCourierBlock').style.display = '';
+      document.getElementById('trazaCourierNombre').textContent = d.item.courier;
+      var estBadge = document.getElementById('trazaCourierEstado');
+      estBadge.textContent = d.item.estado || '—';
+      estBadge.className = 'badge ' + (ESTADO_COLORS[d.item.estado] ? 'text-bg-' + ESTADO_COLORS[d.item.estado] : 'text-bg-secondary');
+      var tnRow = document.getElementById('trazaCourierTrackingRow');
+      if (d.item.courier_tracking_number) {
+        tnRow.style.display = '';
+        document.getElementById('trazaCourierTN').textContent = d.item.courier_tracking_number;
+        var tnLink = document.getElementById('trazaCourierTNLink');
+        if (d.item.courier_tracking_url) {
+          tnLink.href = d.item.courier_tracking_url;
+          tnLink.style.display = '';
+        } else {
+          tnLink.style.display = 'none';
+        }
+      } else {
+        tnRow.style.display = 'none';
+      }
     }
 
     if (d.tracking_url) {
