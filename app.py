@@ -23637,6 +23637,14 @@ def _tr_label_display_address(address, postal_code="", comuna="", region=""):
             cleaned,
             flags=re.IGNORECASE,
         )
+    # Algunos registros traen el codigo postal separado por coma y junto a
+    # una localidad distinta de la comuna normalizada. Se cubre ese formato
+    # sin borrar un numero legitimo al final de una calle.
+    cleaned = re.sub(
+        r"(^|[,;]\s*)\d{7}(?=\s+[^\d,;]+(?:[,;]|$))",
+        r"\1",
+        cleaned,
+    )
     cleaned = re.sub(r"\s+", " ", cleaned)
     cleaned = re.sub(r"\s+([,;])", r"\1", cleaned).strip(" ,;")
 
