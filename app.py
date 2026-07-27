@@ -30216,6 +30216,35 @@ def tr_manifiesto_firma_pdf(mid):
     })
 
 
+@app.route("/transporte/manifiestos/<int:mid>/admin/pdf")
+@_tr_required
+def tr_manifiesto_admin_pdf(mid):
+    """Descarga manual del respaldo ADMINISTRATIVO/financiero del manifiesto
+    (costos/margen por courier) — Daniel 2026-07-27: tiene bloqueado el envío
+    de correos desde Transporte, así que necesita descargar este PDF para
+    compartirlo manualmente con el courier en vez de que la app lo mande.
+    Reusa _tr_manifiesto_admin_email_bytes (mismo render que usaría un envío
+    por correo, que hoy NO existe conectado — ver su docstring). Solo
+    superadmin: el documento trae costo/margen, dato financiero interno."""
+    if not bool(g.permissions.get("superadmin")):
+        return ("Solo un superadministrador puede descargar el respaldo financiero.", 403)
+    try:
+        manifiesto, items, data, fname = _tr_manifiesto_admin_email_bytes(mid)
+    except ValueError as e:
+        msg = str(e)
+        return (msg, 404) if "no encontrado" in msg else (msg, 400)
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}.", 503)
+    except Exception as e:
+        print(f"[tr_manifiesto_admin_pdf] error: {type(e).__name__}: {e}", flush=True)
+        return f"Error generando PDF: {type(e).__name__}", 500
+
+    _tr_log("manifest", mid, "documento admin pdf", f"{len(items)} documentos (descarga manual)")
+    return Response(data, mimetype="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{fname}"'
+    })
+
+
 @app.route("/transporte/manifiestos/<int:mid>/firma/enviar", methods=["POST"])
 @_tr_required
 def tr_manifiesto_firma_enviar(mid):
@@ -31778,11 +31807,20 @@ def tr_cubicador_enviar_manifiesto():
         _lng_f = float(lng_in) if lng_in not in (None, "") else None
     except (TypeError, ValueError):
         _lat_f = _lng_f = None
-    if _lat_f is None or _lng_f is None:
+    # Daniel 2026-07-27: boletas a consumidor final a veces traen una
+    # dirección que Google no reconoce/sugiere (o el cliente ni siquiera
+    # está identificado en el ERP) — antes esto bloqueaba en seco el
+    # despacho completo. El operador puede confirmar manualmente
+    # (checkbox "confirmarla manualmente" en el cubicador) y avanzar sin
+    # lat/lng; se marca en el commitment para que quede visible que la
+    # dirección NO fue geovalidada por Google.
+    _direccion_manual = bool(data.get("direccion_manual"))
+    if (_lat_f is None or _lng_f is None) and not _direccion_manual:
         return jsonify({
             "error": "La dirección debe validarse con el buscador de Google (selecciona una "
                      "sugerencia de la lista) antes de asignar a manifiesto — evita direcciones "
-                     "mal escritas o incompletas que después fallan al generar la guía."
+                     "mal escritas o incompletas que después fallan al generar la guía. Si Google "
+                     "no la reconoce, marca la casilla de confirmación manual."
         }), 400
 
     # 0) Validar coherencia courier ↔ manifiesto destino.
@@ -31922,6 +31960,20 @@ def tr_cubicador_enviar_manifiesto():
             )
     except Exception as e_hdr:
         print(f"[cub_enviar_manif] no se pudo guardar header: {e_hdr}", flush=True)
+
+    # 2e-bis) Nota de dirección NO geovalidada (Daniel 2026-07-27) — deja
+    # rastro visible de que el operador confirmó a mano en vez de elegir una
+    # sugerencia de Google, para que quede claro por qué falta lat/lng.
+    if _direccion_manual:
+        try:
+            mysql_execute(
+                "UPDATE transport_commitments SET notas = TRIM(CONCAT(COALESCE(notas,''), "
+                "CASE WHEN COALESCE(notas,'')='' THEN '' ELSE '\n' END, "
+                "'[AUTO] Dirección confirmada MANUALMENTE por el operador — Google no la reconoció.')) "
+                "WHERE id=%s", (comm_id,)
+            )
+        except Exception:
+            pass  # no fatal — la nota es informativa
 
     # 2f) Productos declarados (árbol manifiesto → factura → productos). Se guardan
     #     como JSON aparte de transport_commitment_lines (que alimenta el saldo).

@@ -122,6 +122,13 @@
             title="Documento imprimible con espacio de firma del cliente — respaldo de entrega">
       <i class="bi bi-file-earmark-check me-1"></i>Manifiesto de firma
     </button>
+    {% if is_superadmin %}
+    <a href="{{ url_for('tr_manifiesto_admin_pdf', mid=manifiesto.id) }}"
+       class="btn btn-sm btn-outline-dark fw-bold"
+       title="PDF con costos/margen por courier — para compartir manualmente (correos de Transporte bloqueados)">
+      <i class="bi bi-file-earmark-arrow-down me-1"></i>Descargar respaldo financiero
+    </a>
+    {% endif %}
     {# SimpliRoute: solo para los couriers que rutean ahí (Felca / Milling) #}
     {% set _cl = (manifiesto.courier or '')|lower %}
     {% if 'felca' in _cl or 'milling' in _cl or 'melling' in _cl %}

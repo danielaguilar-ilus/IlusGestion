@@ -844,8 +844,8 @@
 
           {# Row 1: Cliente, RUT, Fecha #}
           <div class="client-cell">
-            <div class="client-lbl">Cliente</div>
-            <div class="client-val big" id="cli-nombre">—</div>
+            <div class="client-lbl">Cliente <i class="bi bi-pencil editable-ico"></i></div>
+            <input class="client-input" type="text" id="cli-nombre" placeholder="Nombre del cliente">
           </div>
           <div class="client-cell">
             <div class="client-lbl">RUT</div>
@@ -888,6 +888,12 @@
             <div id="cli-dir-hint" style="font-size:.68rem;color:#9ca3af;margin-top:2px">
               <i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para validar la dirección
               — obligatorio para asignar a manifiesto.
+            </div>
+            <div style="margin-top:4px">
+              <label style="font-size:.7rem;color:#9ca3af;display:flex;align-items:center;gap:5px;cursor:pointer">
+                <input type="checkbox" id="cli-dir-manual-check" style="cursor:pointer">
+                Google no encuentra esta dirección — confirmarla manualmente
+              </label>
             </div>
           </div>
           <div class="client-cell">
@@ -1937,10 +1943,15 @@ function renderDoc(d, elapsedMs){
     `;
   }
 
-  // ── Datos del documento (campos de solo lectura)
+  // ── Datos del documento
   // Nombre del cliente — backend ya normaliza ("Cliente no informado por ERP"
-  // cuando no hay dato real). Si llega vacío, mostramos guion neutro.
-  setText('cli-nombre', h.cliente_nombre || 'Cliente no informado por ERP');
+  // cuando no hay dato real, p.ej. boletas a consumidor final). Daniel
+  // 2026-07-27: en ese caso el campo debe quedar editable y VACÍO (no el
+  // placeholder literal) para que el operador escriba el nombre real a
+  // mano — antes era un <div> de solo lectura y no había forma de agregarlo.
+  const _nomERP = (h.cliente_nombre || '').trim();
+  const _nomEsPlaceholder = !_nomERP || _nomERP.toLowerCase() === 'cliente no informado por erp';
+  setInput('cli-nombre', _nomEsPlaceholder ? '' : _nomERP);
   setText('cli-rut',    h.cliente_rut    || '—');
   setText('cli-fecha',  h.fecha          || '—');
   // Valor Neto ahora es editable (Daniel 2026-07-22): igual que ZZ Envío, si
@@ -3445,13 +3456,14 @@ async function validarParaManifiesto(){
   // pierde la validación y hay que volver a elegir.
   const lat = document.getElementById('cli-dir-lat')?.value;
   const lng = document.getElementById('cli-dir-lng')?.value;
-  if (!lat || !lng){
+  const _dirManual = !!document.getElementById('cli-dir-manual-check')?.checked;
+  if (!lat && !lng && !_dirManual){
     await ilusAlert({
       title: 'Dirección sin validar',
       message: 'La dirección debe validarse con el buscador de Google antes de asignar a manifiesto.',
-      sub: 'Escribe la dirección en el campo y elige una de las sugerencias del listado ' +
-           '(no basta con escribirla y no seleccionar nada) — evita direcciones mal escritas ' +
-           'que después fallan al generar la guía con el courier.',
+      sub: 'Escribe la dirección en el campo y elige una de las sugerencias del listado. ' +
+           'Si el documento es una boleta y Google no reconoce la dirección (caso frecuente ' +
+           'en consumidor final), marca la casilla "confirmarla manualmente" debajo del campo.',
       subHtml: true,
       type: 'error',
     });
@@ -3615,7 +3627,9 @@ async function enviarAManifiesto(){
     peso_predominante: _t.peso_pred || 0,
     n_bultos:          parseInt(_gv('cli-bultos') || _t.total_bultos || 0, 10) || null,
     // Header completo (lo que el operador VE/EDITA) → factura llega completa
-    cliente_nombre: _h.cliente_nombre || '',
+    // cliente_nombre ahora se lee del input editable (Daniel 2026-07-27):
+    // en boletas sin cliente identificado, el operador lo escribe a mano.
+    cliente_nombre: _gv('cli-nombre') || _h.cliente_nombre || '',
     cliente_rut:    _h.cliente_rut || '',
     email:          _gv('cli-email') || _h.email || '',
     telefono:       _gv('cli-tel')   || _h.telefono || '',
@@ -3630,6 +3644,11 @@ async function enviarAManifiesto(){
     direccion_lat:      _gv('cli-dir-lat')      || null,
     direccion_lng:      _gv('cli-dir-lng')      || null,
     direccion_place_id: _gv('cli-dir-place-id') || '',
+    // Confirmación manual (Daniel 2026-07-27): boletas a veces traen una
+    // dirección que Google no reconoce/sugiere. Con este checkbox marcado
+    // el operador confirma la dirección escrita a mano — ver
+    // #cli-dir-manual-check y el bypass correspondiente en el backend.
+    direccion_manual: !!document.getElementById('cli-dir-manual-check')?.checked,
   };
 
   if (modo === 'existente') {
