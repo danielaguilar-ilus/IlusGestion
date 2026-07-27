@@ -18443,6 +18443,14 @@ ESTADOS_COMPROMISO = [
     'Pedido de vuelta', 'Preventa', 'Indemnización', 'Garantía',
     'Logística inversa', 'Prioridad', 'Indemnización revisada',
     'Indemnización rechazada', 'Regalo', 'Reentrega',
+    # Estados OPERATIVOS del manifiesto (2026-07-27, Daniel: "el seguimiento
+    # de una factura debe ser único y absoluto — si cambia en el manifiesto,
+    # cambia en todos lados"). Antes solo 'Entregado' se propagaba desde
+    # transport_manifest_items.estado_entrega hacia acá (ver _tr_event); el
+    # Monitor mostraba 'Pendiente' aunque el manifiesto ya dijera 'En
+    # preparación'/'En ruta'/etc. Ahora _tr_event propaga TODOS los valores
+    # de ESTADOS_ENTREGA, así que deben poder mostrarse aquí también.
+    'En preparación', 'Entregado a transporte', 'En ruta', 'Devolución',
 ]
 COURIERS = [
     'FedEx', 'Envíame', 'Transportes Milling', 'Starken',
@@ -18505,6 +18513,11 @@ ESTADO_COLORS = {
     'Indemnización rechazada':'danger',
     'Regalo':                 'info',
     'Reentrega':              'warning',
+    # Estados operativos del manifiesto (ver comentario en ESTADOS_COMPROMISO)
+    'En preparación':         'secondary',
+    'Entregado a transporte': 'info',
+    'En ruta':                'primary',
+    'Devolución':             'warning',
 }
 
 
@@ -18661,28 +18674,31 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
             )
             evt_id = cur.lastrowid
         conn.commit()
-        # ── Propagar confirmación REAL de entrega al compromiso (FIX 2026-07-25) ──
-        # Antes NINGÚN evento de entrega real escribía transport_commitments.estado
-        # — la columna 'Entregado' del Monitor la llenaba SOLO el cálculo de saldo
-        # ERP (bug corregido más arriba en _tr_bulk_sync_erp_mysql: saldo==0 ahora
-        # escribe 'Despachado', no 'Entregado'). Sin esto, el kanban "Entregados"
-        # del Monitor quedaría vacío para siempre aunque el chofer/FedEx/SimpliRoute
-        # confirmen la entrega real. Acá SÍ hay indicio real (evento con fuente
-        # manual/chofer/fedex/aftership/sistema), así que se refleja en el
-        # compromiso. updated_by queda como 'sistema:<fuente>' (nunca 'sync'), por
-        # lo que el próximo sync de saldo del ERP NO lo va a pisar (ver el guard
-        # `AND updated_by='sync'` del CASE del UPSERT).
-        if estado == 'Entregado' and commitment_id:
+        # ── Propagar el estado del manifiesto al compromiso — FUENTE ÚNICA
+        # DE VERDAD (2026-07-27, Daniel: "el seguimiento de una factura debe
+        # ser único y absoluto — si cambia en el manifiesto, cambia en todos
+        # lados, y las BD no deben ser distintas"). Antes SOLO 'Entregado' se
+        # propagaba (fix 2026-07-25) — el Monitor podía mostrar 'Pendiente'
+        # mientras el manifiesto ya decía 'En preparación'/'En ruta'/etc.
+        # Ahora CUALQUIER estado_entrega válido (ESTADOS_ENTREGA) pisa
+        # transport_commitments.estado, sea cual sea la fuente (manual,
+        # chofer, fedex, simpliroute, sistema). updated_by queda como
+        # 'sistema:<fuente>' (nunca 'sync'), por lo que el próximo sync de
+        # saldo del ERP NO lo va a pisar (ver el guard `AND updated_by=
+        # 'sync'` del CASE del UPSERT en _tr_bulk_sync_erp_mysql) — el saldo
+        # financiero del ERP solo manda mientras el documento no tiene
+        # todavía movimiento operativo real en un manifiesto.
+        if estado in ESTADOS_ENTREGA and commitment_id:
             try:
                 with conn.cursor() as cur2:
                     cur2.execute(
-                        "UPDATE transport_commitments SET estado='Entregado', "
+                        "UPDATE transport_commitments SET estado=%s, "
                         "updated_by=%s WHERE id=%s",
-                        (f"sistema:{fuente}"[:190], commitment_id)
+                        (estado, f"sistema:{fuente}"[:190], commitment_id)
                     )
                 conn.commit()
             except Exception as _ce:
-                print(f"[tr_event] no se pudo propagar Entregado al commitment: {_ce}", flush=True)
+                print(f"[tr_event] no se pudo propagar estado '{estado}' al commitment: {_ce}", flush=True)
         # Notificación al cliente (best-effort, no bloquea si falla).
         # 2026-06-14 (Daniel) — estados que notifican al cliente:
         #   En preparación        → al asignar la factura a un manifiesto
