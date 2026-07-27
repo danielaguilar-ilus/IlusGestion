@@ -568,7 +568,8 @@ class PDFEngineUnavailable(Exception):
 def _pw_pdf(html: str, *, width: str = None, height: str = None,
             page_format: str = None, margin: dict = None,
             wait_fn: str = None, wait_timeout: int = 5000,
-            header_template: str = None, footer_template: str = None) -> bytes:
+            header_template: str = None, footer_template: str = None,
+            action_timeout: int = 45000) -> bytes:
     """
     Genera PDF con el browser pool compartido.
     - width/height → tamaño personalizado (etiquetas)
@@ -579,6 +580,13 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
       página impresa (mecanismo nativo, independiente del flujo del
       documento -- ver tk_cotizacion_pdf). Si ninguno se pasa, el
       comportamiento es IDÉNTICO al de antes (callers existentes intactos).
+    - action_timeout → timeout (ms) de page.set_content()/page.pdf(). 2026-07-26
+      (OT-2026-00039, 54 fotos): estos NO usaban wait_timeout, corrían con
+      el default de Playwright (30000ms) — con documentos grandes (muchas
+      imagenes base64 embebidas) se podia exceder y lanzar un TimeoutError
+      que el caller atrapa como "err generico" y cae al fallback HTML
+      (silencioso). Default subido a 45s. wait_timeout (5s) sigue intacto,
+      ese ya se atrapaba internamente sin bloquear.
 
     Si Playwright/Chromium no está instalado (problema de deploy), lanza
     PDFEngineUnavailable con mensaje útil — el endpoint que llama debe
@@ -605,13 +613,13 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
         raise
     page    = browser.new_page()
     try:
-        page.set_content(html, wait_until="domcontentloaded")
+        page.set_content(html, wait_until="domcontentloaded", timeout=action_timeout)
         if wait_fn:
             try:
                 page.wait_for_function(wait_fn, timeout=wait_timeout)
             except Exception:
                 pass   # timeout: seguimos con lo que hay
-        pdf_kw = dict(print_background=True)
+        pdf_kw = dict(print_background=True, timeout=action_timeout)
         mrg = margin or {"top": "0mm", "right": "0mm",
                          "bottom": "0mm", "left": "0mm"}
         if width and height:
@@ -61470,6 +61478,46 @@ def _ot_pdf_context(vid, embed_images=False):
     # arriba — evita que Chromium dependa de la red pública para 40+ fotos.
     if embed_images:
         _cache = {}
+        # 2026-07-26 (Daniel — OT-2026-00039, 19 equipos/54 fotos): antes cada
+        # foto se bajaba de GCS de forma SECUENCIAL dentro de _img_a_data_uri
+        # (un blob.download_as_bytes() a la vez). Con 50+ fotos esto sumaba
+        # varios segundos de red antes siquiera de llegar a Playwright, y
+        # además dejaba menos margen para el render/paint de Chromium dentro
+        # del timeout por defecto (30s) de page.set_content()/page.pdf() —
+        # eso es lo que producía la caída silenciosa al fallback HTML (ver
+        # except Exception más abajo en mant_visita_pdf). Prefetch en
+        # paralelo (ThreadPoolExecutor) de las URLs ÚNICAS antes de armar el
+        # contexto: reduce el tiempo de descarga a lo que tarda la más lenta
+        # en vez de la suma de todas.
+        try:
+            _urls_unicas = set()
+            for _campo in ("firma_tecnico_url", "firma_cliente_url", "firma_supervisor_url"):
+                if visita.get(_campo):
+                    _urls_unicas.add(visita[_campo])
+            for _e in equipos:
+                if _e.get("foto_url"):
+                    _urls_unicas.add(_e["foto_url"])
+            for _f in fotos:
+                if _f.get("url"):
+                    _urls_unicas.add(_f["url"])
+            for _lst in eq_fotos_idx.values():
+                for _f in _lst:
+                    if _f.get("url"):
+                        _urls_unicas.add(_f["url"])
+            for _f in fotos_generales:
+                if _f.get("url"):
+                    _urls_unicas.add(_f["url"])
+            for _lst in lev_fotos_idx.values():
+                for _f in _lst:
+                    if _f.get("cloudinary_url"):
+                        _urls_unicas.add(_f["cloudinary_url"])
+            if _urls_unicas:
+                from concurrent.futures import ThreadPoolExecutor as _TPE
+                with _TPE(max_workers=8) as _pool:
+                    for _u, _du in _pool.map(lambda u: (u, _img_a_data_uri(u)), _urls_unicas):
+                        _cache[_u] = _du
+        except Exception as _e_prefetch:
+            print(f"[ot_pdf_ctx] prefetch paralelo fotos vid={vid}: {_e_prefetch}", flush=True)
         for _campo in ("firma_tecnico_url", "firma_cliente_url", "firma_supervisor_url"):
             if visita.get(_campo):
                 visita[_campo] = _img_a_data_uri(visita[_campo], _cache)
@@ -61575,6 +61623,12 @@ def mant_visita_pdf(vid):
             # lo que causaba lentitud/caída a fallback con 40+ fotos.
             wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
             wait_timeout=5000,
+            # 2026-07-26 (OT-2026-00039, 19 equipos/54 fotos): action_timeout
+            # de set_content()/page.pdf() default (45s) puede no alcanzar con
+            # informes de levantamiento muy grandes (muchas fotos base64) —
+            # se sube a 60s solo en este endpoint (el de mayor volumen de
+            # imágenes por documento de toda la app).
+            action_timeout=60000,
         )
     except PDFEngineUnavailable:
         # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
