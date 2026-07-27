@@ -43,6 +43,7 @@ class TransportManifestUiTest(unittest.TestCase):
                 "cloud_tx": lambda value, *args: str(value or ""),
             }
         )
+        cls.environment.globals.update({"url_for": fake_url_for})
 
     def base_context(self):
         return {
@@ -237,6 +238,114 @@ class TransportManifestUiTest(unittest.TestCase):
         self.assertIn('body.is-embedded .sheet { padding: 0; }', rendered)
         self.assertIn('width: 99.5mm;', rendered)
         self.assertIn('height: 149mm;', rendered)
+
+    def test_manifest_operational_pdf_hides_financial_fields(self):
+        item = AttrDict(
+            commitment_id=1,
+            tido="BLV",
+            nudo="22703",
+            cliente_nombre="Macarena Vergara",
+            comuna="Independencia",
+            n_bultos=3,
+            peso_declarar=42.5,
+            costo_courier=12000,
+            zz_envio=25000,
+            margen_clp=13000,
+            es_perdida=False,
+            estado_entrega="En preparacion",
+            lineas=[AttrDict(sku="SKU-1", descripcion="Equipo fitness", cantidad=1)],
+        )
+        context = {
+            "items": [item],
+            "remitente": AttrDict(),
+            "manifiesto": AttrDict(id=11, correlativo="MAN-2026-0010", courier="Transporte Felca"),
+            "retiro": None,
+            "fecha": "27-07-2026",
+            "logo_url": "",
+            "logo_shs_url": "",
+            "pdf_url": "",
+        }
+
+        rendered = self.environment.get_template("transporte/manifiesto_firma.html").render(**context)
+
+        self.assertIn("BLV", rendered)
+        self.assertIn("Equipo fitness", rendered)
+        self.assertNotIn("Costo courier", rendered)
+        self.assertNotIn("25.000", rendered)
+        self.assertNotIn("12.000", rendered)
+        self.assertNotIn("Margen", rendered)
+
+    def test_manifest_admin_pdf_contains_financial_fields(self):
+        item = AttrDict(
+            commitment_id=1,
+            tido="BLV",
+            nudo="22703",
+            cliente_nombre="Macarena Vergara",
+            comuna="Independencia",
+            n_bultos=3,
+            peso_declarar=42.5,
+            costo_courier=12000,
+            zz_envio=25000,
+            margen_clp=13000,
+            margen_pct=52,
+            es_perdida=False,
+            estado_entrega="En preparacion",
+        )
+        context = {
+            "items": [item],
+            "remitente": AttrDict(),
+            "manifiesto": AttrDict(id=11, correlativo="MAN-2026-0010", courier="Transporte Felca"),
+            "retiro": None,
+            "fecha": "27-07-2026",
+            "logo_url": "",
+            "logo_shs_url": "",
+        }
+
+        rendered = self.environment.get_template("transporte/manifiesto_admin_email.html").render(**context)
+
+        self.assertIn("RESPALDO ADMINISTRATIVO", rendered)
+        self.assertIn("Costo courier", rendered)
+        self.assertIn("Cobrado ZZ", rendered)
+        self.assertIn("25.000", rendered)
+        self.assertIn("12.000", rendered)
+
+    def test_public_driver_signature_page_is_operational_only(self):
+        item = AttrDict(
+            commitment_id=1,
+            tido="BLV",
+            nudo="22703",
+            cliente_nombre="Macarena Vergara",
+            direccion="Colón 1265",
+            comuna="Independencia",
+            region="Región Metropolitana",
+            telefono="+56982894105",
+            n_bultos=3,
+            peso_declarar=42.5,
+            costo_courier=12000,
+            zz_envio=25000,
+            lineas=[AttrDict(sku="SKU-1", descripcion="Equipo fitness", cantidad=1)],
+        )
+        context = {
+            "token": "token-prueba",
+            "manifiesto": AttrDict(id=11, correlativo="MAN-2026-0010", courier="Transporte Felca"),
+            "n_docs": 1,
+            "n_bultos": 3,
+            "items": [item],
+            "courier_id": 1,
+            "choferes": [],
+            "retiro": None,
+        }
+
+        rendered = self.environment.get_template("transporte/firma_retiro_publico.html").render(**context)
+
+        self.assertIn("Detalle a retirar", rendered)
+        self.assertIn("Colón 1265", rendered)
+        self.assertIn("Equipo fitness", rendered)
+        self.assertIn("Firma real", rendered)
+        self.assertNotIn("Costo courier", rendered)
+        self.assertNotIn("Cobrado ZZ", rendered)
+        self.assertNotIn("25.000", rendered)
+        self.assertNotIn("12.000", rendered)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,12 @@ from flask import (Flask, Response, abort, flash, g, jsonify, make_response,
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
+try:
+    from cryptography.fernet import Fernet as _Fernet, InvalidToken as _FernetInvalidToken
+except Exception:
+    _Fernet = None
+    _FernetInvalidToken = Exception
+
 from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY, GCS_BUCKET, GCS_ENABLED
 try:
     from config import BRAND_CONFIG
@@ -29358,7 +29364,8 @@ def tr_choferes_toggle(did):
 # login desde este flujo. Sirve para autocompletar nombre/RUT/teléfono/
 # patente al capturar un retiro (modal interno y link público del chofer).
 def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=None,
-                              peso_max_kg=None, volumen_max_m3=None):
+                              peso_max_kg=None, volumen_max_m3=None, apellido=None,
+                              fecha_nacimiento=None, genero=None, email=None):
     """Agrega (o reactiva) un chofer al roster de un courier. Si el RUT ya
     existe (UNIQUE KEY uq_driver_rut), actualiza sus datos y lo reactiva en
     vez de fallar — así el mismo chofer puede aparecer en el roster aunque
@@ -29373,19 +29380,23 @@ def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=No
         "SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
     if existente:
         mysql_execute(
-            "UPDATE transport_drivers SET nombre=%s, courier_id=%s, telefono=%s, "
-            "patente=%s, peso_max_kg=%s, volumen_max_m3=%s, activo=1 WHERE id=%s",
-            (nombre, courier_id, telefono or None, patente or None,
+            "UPDATE transport_drivers SET nombre=%s, apellido=%s, courier_id=%s, "
+            "telefono=%s, email=%s, patente=%s, fecha_nacimiento=%s, genero=%s, "
+            "peso_max_kg=%s, volumen_max_m3=%s, activo=1 WHERE id=%s",
+            (nombre, apellido or None, courier_id, telefono or None, email or None,
+             patente or None, fecha_nacimiento or None, genero or None,
              peso_max_kg or None, volumen_max_m3 or None, existente["id"])
         )
         return existente["id"]
     pin_auto = secrets.token_hex(4)  # nunca se expone; este roster no hace login
     mysql_execute(
-        "INSERT INTO transport_drivers (nombre, rut, pin_hash, courier_id, telefono, patente, "
-        "peso_max_kg, volumen_max_m3, created_by) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-        (nombre, rut_norm, generate_password_hash(pin_auto), courier_id,
-         telefono or None, patente or None, peso_max_kg or None, volumen_max_m3 or None,
+        "INSERT INTO transport_drivers (nombre, apellido, rut, pin_hash, courier_id, "
+        "telefono, email, patente, fecha_nacimiento, genero, peso_max_kg, "
+        "volumen_max_m3, created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (nombre, apellido or None, rut_norm, generate_password_hash(pin_auto), courier_id,
+         telefono or None, email or None, patente or None, fecha_nacimiento or None,
+         genero or None, peso_max_kg or None, volumen_max_m3 or None,
          current_username() or "roster-courier")
     )
     row = mysql_fetchone("SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
@@ -29398,7 +29409,8 @@ def tr_courier_choferes_listar(cid):
     """Lista los choferes activos del roster de un courier (para el selector
     de 'chofer guardado' en la captura de retiro, interno y público)."""
     choferes = mysql_fetchall(
-        "SELECT id, nombre, rut, telefono, patente, peso_max_kg, volumen_max_m3 "
+        "SELECT id, nombre, apellido, rut, telefono, email, patente, "
+        "fecha_nacimiento, genero, peso_max_kg, volumen_max_m3 "
         "FROM transport_drivers WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
     ) or []
     return jsonify({"ok": True, "choferes": choferes})
@@ -29416,6 +29428,10 @@ def tr_courier_choferes_crear(cid):
     nombre = (f.get("nombre") or "").strip()
     rut    = (f.get("rut") or "").strip()
     tel    = (f.get("telefono") or "").strip() or None
+    email  = (f.get("email") or "").strip() or None
+    apellido = (f.get("apellido") or "").strip() or None
+    fecha_nacimiento = (f.get("fecha_nacimiento") or "").strip() or None
+    genero = (f.get("genero") or "").strip() or None
     patente = (f.get("patente") or "").strip() or None
     try:
         peso_max = float(f["peso_max_kg"]) if f.get("peso_max_kg") not in (None, "") else None
@@ -29427,8 +29443,37 @@ def tr_courier_choferes_crear(cid):
         vol_max = None
     if not nombre or not rut:
         return jsonify({"ok": False, "error": "Nombre y RUT son obligatorios"}), 400
+    ok_rut, rut_norm = validar_rut(rut, auto_completar_dv=False)
+    if not ok_rut:
+        return jsonify({"ok": False, "error": f"RUT invalido: {rut_norm}"}), 400
+    rut = rut_norm
+    if tel:
+        ok_tel, tel_norm = validar_telefono_chileno(tel)
+        if not ok_tel:
+            return jsonify({"ok": False, "error": tel_norm}), 400
+        tel = tel_norm
+    if email:
+        ok_email, email_norm = validar_email(email)
+        if not ok_email:
+            return jsonify({"ok": False, "error": email_norm}), 400
+        email = email_norm
+    if fecha_nacimiento:
+        ok_fecha, fecha_norm, fecha_err = _tr_validar_fecha_nacimiento(fecha_nacimiento)
+        if not ok_fecha:
+            return jsonify({"ok": False, "error": fecha_err}), 400
+        fecha_nacimiento = fecha_norm
+    if genero and genero not in _TR_GENEROS_CHOFER:
+        return jsonify({"ok": False, "error": "Genero invalido"}), 400
+    if patente:
+        patente = _tr_normalizar_patente(patente)
+        if not _TR_PATENTE_RE.match(patente):
+            return jsonify({"ok": False, "error": "Patente invalida"}), 400
     try:
-        chofer_id = _tr_courier_chofer_upsert(cid, nombre, rut, tel, patente, peso_max, vol_max)
+        chofer_id = _tr_courier_chofer_upsert(
+            cid, nombre, rut, tel, patente, peso_max, vol_max,
+            apellido=apellido, fecha_nacimiento=fecha_nacimiento,
+            genero=genero, email=email,
+        )
     except Exception as e:
         print(f"[tr_courier_choferes_crear] cid={cid}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo agregar el chofer."}), 500
@@ -29527,16 +29572,49 @@ def _ensure_transport_manifest_retiro_table():
                     id                INT AUTO_INCREMENT PRIMARY KEY,
                     manifest_id       INT NOT NULL UNIQUE,
                     chofer_nombre     VARCHAR(150) NOT NULL,
+                    chofer_apellido   VARCHAR(120),
                     chofer_rut        VARCHAR(20)  NOT NULL,
                     chofer_telefono   VARCHAR(50),
+                    chofer_email      VARCHAR(180),
+                    chofer_fecha_nac  DATE,
+                    chofer_genero     VARCHAR(30),
                     patente           VARCHAR(20)  NOT NULL,
                     firma_nombre      VARCHAR(150) NOT NULL,
+                    firma_url         LONGTEXT,
+                    firma_hash        VARCHAR(80),
+                    user_agent        VARCHAR(300),
                     ip_origen         VARCHAR(60),
                     registrado_por    VARCHAR(190),
                     created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at        DATETIME NULL,
                     FOREIGN KEY (manifest_id) REFERENCES transport_manifests(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            existing = set()
+            try:
+                cur.execute(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_manifest_retiro'"
+                )
+                existing = {(r.get("COLUMN_NAME") or "").lower() for r in (cur.fetchall() or [])}
+            except Exception:
+                existing = set()
+            retiro_cols = {
+                "chofer_apellido": "VARCHAR(120) NULL",
+                "chofer_email": "VARCHAR(180) NULL",
+                "chofer_fecha_nac": "DATE NULL",
+                "chofer_genero": "VARCHAR(30) NULL",
+                "firma_url": "LONGTEXT NULL",
+                "firma_hash": "VARCHAR(80) NULL",
+                "user_agent": "VARCHAR(300) NULL",
+                "updated_at": "DATETIME NULL",
+            }
+            for col, ddl in retiro_cols.items():
+                if col not in existing:
+                    try:
+                        cur.execute(f"ALTER TABLE transport_manifest_retiro ADD COLUMN {col} {ddl}")
+                    except Exception:
+                        pass
             # Columna NUEVA (2026-07-26, firma remota por link): token público
             # de firma de retiro, vive en transport_manifests. ALTER
             # idempotente — se agrega SIEMPRE, incluso con
@@ -29790,8 +29868,10 @@ def _tr_manifiesto_items_export(mid):
                           WHERE l.commitment_id = c.id)) AS peso_kg,
                COALESCE(c.peso_vol, 0)          AS peso_vol_kg,
                COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               COALESCE(c.volumen_m3, 0) AS volumen_m3,
                COALESCE(c.n_bultos, 1) AS n_bultos,
                COALESCE(c.valor_bruto, 0) AS valor_bruto,
+               COALESCE(c.zz_envio, 0) AS zz_envio,
                COALESCE(c.costo_courier, 0) AS costo_courier,
                mi.estado_entrega
           FROM transport_manifest_items mi
@@ -29896,6 +29976,11 @@ def _tr_manifiesto_items_firma(mid):
                 _prods = []
         it["lineas"] = _prods if _prods else lineas_fallback_por_commitment.get(cid, [])
         it["peso_declarar"] = round(_peso_a_declarar(it), 3)
+        cobrado = float(it.get("zz_envio") or 0)
+        costo = float(it.get("costo_courier") or 0)
+        it["margen_clp"] = round(cobrado - costo)
+        it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
+        it["es_perdida"] = bool(cobrado > 0 and costo > cobrado)
     return items
 
 
@@ -29928,6 +30013,34 @@ def _tr_manifiesto_firma_bytes(mid):
                                                     "bottom": "0mm", "left": "0mm"})
     correlativo = manifiesto.get("correlativo") or mid
     fname = f"manifiesto-firma-{correlativo}.pdf"
+    return manifiesto, items, data, fname
+
+
+def _tr_manifiesto_admin_bytes(mid):
+    """Genera el respaldo administrativo/financiero del manifiesto.
+
+    Este PDF se usa para correo interno/responsable. No se muestra al chofer.
+    """
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        raise ValueError("Manifiesto no encontrado")
+    items = _tr_manifiesto_items_firma(mid)
+    if not items:
+        raise ValueError("Manifiesto sin items para generar el respaldo administrativo")
+    html = render_template(
+        "transporte/manifiesto_admin_email.html",
+        items=items,
+        remitente=ILUS_REMITENTE,
+        manifiesto=manifiesto,
+        retiro=_tr_manifiesto_retiro_get(mid),
+        fecha=_now_chile_str("%d-%m-%Y"),
+        logo_url=_logo_data_url(),
+        logo_shs_url=_logo_shs_pdf_data_url(),
+    )
+    data = _pw_pdf(html, page_format="Letter", margin={"top": "0mm", "right": "0mm",
+                                                    "bottom": "0mm", "left": "0mm"})
+    correlativo = manifiesto.get("correlativo") or mid
+    fname = f"manifiesto-administrativo-{correlativo}.pdf"
     return manifiesto, items, data, fname
 
 
@@ -30021,7 +30134,7 @@ def tr_manifiesto_firma_enviar(mid):
         return jsonify({"ok": False, "error": "No hay destinatarios válidos."}), 400
 
     try:
-        manifiesto, items, pdf_bytes, fname = _tr_manifiesto_firma_bytes(mid)
+        manifiesto, items, pdf_bytes, fname = _tr_manifiesto_admin_bytes(mid)
     except ValueError as e:
         msg = str(e)
         return jsonify({"ok": False, "error": msg}), (404 if "no encontrado" in msg else 400)
@@ -30036,20 +30149,22 @@ def tr_manifiesto_firma_enviar(mid):
     n_docs = len(items)
     mensaje = (body.get("mensaje") or "").strip()
     subject = _brand_subject(
-        f"Manifiesto de entrega N° {correlativo} — {n_docs} documento(s)")
+        f"Respaldo administrativo manifiesto N° {correlativo} — {n_docs} documento(s)")
 
     cuerpo = (
         f"<p>Estimados,</p>"
-        f"<p>Adjuntamos el manifiesto de entrega <strong>N° {_html_esc.escape(str(correlativo))}</strong>, "
-        f"con <strong>{n_docs} documento{'s' if n_docs != 1 else ''}</strong> de despacho.</p>"
+        f"<p>Adjuntamos el respaldo administrativo del manifiesto "
+        f"<strong>N° {_html_esc.escape(str(correlativo))}</strong>, "
+        f"con <strong>{n_docs} documento{'s' if n_docs != 1 else ''}</strong>, "
+        f"montos, costos y control interno.</p>"
         + (f"<p>{_html_esc.escape(mensaje)}</p>" if mensaje else "")
         + "<p>Quedamos atentos a sus comentarios.</p>"
     )
     try:
         html_body = _ilus_email_master({
             "subject": subject,
-            "title": f"Manifiesto de entrega N° {correlativo}",
-            "subtitle": f"{n_docs} documento(s)",
+            "title": f"Respaldo administrativo N° {correlativo}",
+            "subtitle": f"{n_docs} documento(s) · uso interno",
             "message": cuerpo,
         })
     except Exception as e:
@@ -30067,7 +30182,7 @@ def tr_manifiesto_firma_enviar(mid):
         (enviados if ok else fallidos).append(dest)
 
     user = current_username() or "sistema"
-    _tr_log("manifest", mid, "documento firma correo",
+    _tr_log("manifest", mid, "documento administrativo correo",
             f"enviados={enviados} fallidos={fallidos}")
 
     if not enviados:
@@ -30079,8 +30194,11 @@ def _tr_manifiesto_retiro_get(mid):
     """Retorna el registro de retiro (chofer/RUT/patente/firma) de un
     manifiesto, o None si aún no se ha capturado."""
     try:
-        return mysql_fetchone(
+        row = mysql_fetchone(
             "SELECT * FROM transport_manifest_retiro WHERE manifest_id=%s", (mid,))
+        if row and row.get("firma_url"):
+            row["firma_url"] = _tr_firma_decrypt_if_needed(row.get("firma_url"))
+        return row
     except Exception:
         return None
 
@@ -30129,6 +30247,157 @@ def _tr_courier_email(courier_nombre):
     return None
 
 
+_TR_GENEROS_CHOFER = {"masculino", "femenino", "otro", "prefiero_no_decir"}
+_TR_PATENTE_RE = re.compile(r"^[A-Z0-9]{4,8}$")
+_TR_FIRMA_ENC_PREFIX = "enc:v1:"
+
+
+def _tr_normalizar_patente(raw):
+    return re.sub(r"[^A-Za-z0-9]", "", str(raw or "")).upper()
+
+
+def _tr_firma_cipher():
+    """Cifrado autenticado para firmas de retiro si no hay storage externo.
+
+    Deriva una clave Fernet desde FLASK_SECRET_KEY. No agrega secretos nuevos
+    al repo ni a la BD; en Cloud Run debe existir FLASK_SECRET_KEY estable.
+    """
+    if not _Fernet:
+        return None
+    secret = app.secret_key
+    secret_b = secret.encode("utf-8") if isinstance(secret, str) else (secret or b"ilus")
+    key = base64.urlsafe_b64encode(hashlib.sha256(b"ilus-transport-firma-v1:" + secret_b).digest())
+    return _Fernet(key)
+
+
+def _tr_firma_encrypt_data_url(data_url):
+    if not data_url or not str(data_url).startswith("data:image/"):
+        return data_url or ""
+    cipher = _tr_firma_cipher()
+    if not cipher:
+        return data_url
+    token = cipher.encrypt(data_url.encode("utf-8")).decode("ascii")
+    return _TR_FIRMA_ENC_PREFIX + token
+
+
+def _tr_firma_decrypt_if_needed(value):
+    value = value or ""
+    if not value.startswith(_TR_FIRMA_ENC_PREFIX):
+        return value
+    cipher = _tr_firma_cipher()
+    if not cipher:
+        return ""
+    try:
+        token = value[len(_TR_FIRMA_ENC_PREFIX):].encode("ascii")
+        return cipher.decrypt(token).decode("utf-8")
+    except _FernetInvalidToken:
+        return ""
+    except Exception:
+        return ""
+
+
+def _tr_firma_transportista_store(data_url, mid):
+    """Guarda la firma con preferencia por storage persistente y fallback cifrado."""
+    if not data_url:
+        return None, None
+    firma_hash = hashlib.sha256(data_url.encode("utf-8")).hexdigest()
+    firma_url = None
+    try:
+        subida = _subir_firma_cloudinary(data_url, mid, "transportista_retiro")
+        if subida and not subida.startswith("data:"):
+            firma_url = subida
+    except Exception as e_sig:
+        print(f"[tr_retiro_firma] upload mid={mid}: {type(e_sig).__name__}: {e_sig}", flush=True)
+    if not firma_url:
+        firma_url = _tr_firma_encrypt_data_url(data_url)
+    return firma_url, firma_hash
+
+
+def _tr_validar_fecha_nacimiento(raw):
+    raw = (str(raw or "").strip())[:10]
+    if not raw:
+        return False, None, "Fecha de nacimiento requerida"
+    try:
+        nac = datetime.strptime(raw, "%Y-%m-%d").date()
+    except Exception:
+        return False, None, "Fecha de nacimiento invalida"
+    hoy = datetime.now().date()
+    edad = hoy.year - nac.year - ((hoy.month, hoy.day) < (nac.month, nac.day))
+    if edad < 18:
+        return False, None, "El chofer debe ser mayor de edad"
+    if edad > 90:
+        return False, None, "Fecha de nacimiento fuera de rango"
+    return True, nac.isoformat(), None
+
+
+def _tr_validar_retiro_payload(body):
+    """Valida identidad/contacto del chofer para firma de retiro.
+
+    Devuelve (ok, payload_limpio, error). El mismo helper se usa en el modal
+    interno y en la firma publica para que no haya reglas distintas.
+    """
+    nombre = (body.get("chofer_nombre") or "").strip()[:150]
+    apellido = (body.get("chofer_apellido") or body.get("apellido") or "").strip()[:120]
+    rut = (body.get("chofer_rut") or "").strip()
+    telefono = (body.get("chofer_telefono") or body.get("telefono") or "").strip()
+    email = (body.get("chofer_email") or body.get("email") or "").strip()
+    fecha_nacimiento = body.get("chofer_fecha_nac") or body.get("fecha_nacimiento")
+    genero = (body.get("chofer_genero") or body.get("genero") or "").strip().lower()
+    patente = _tr_normalizar_patente(body.get("patente"))
+    firma_nombre = (body.get("firma_nombre") or "").strip()[:150]
+    firma_canvas = (body.get("firma_canvas") or body.get("firma_data_url") or "").strip()
+
+    faltantes = []
+    if not nombre: faltantes.append("nombre")
+    if not apellido: faltantes.append("apellido")
+    if not rut: faltantes.append("RUT")
+    if not telefono: faltantes.append("telefono")
+    if not email: faltantes.append("correo")
+    if not fecha_nacimiento: faltantes.append("fecha de nacimiento")
+    if not genero: faltantes.append("genero")
+    if not patente: faltantes.append("patente")
+    if not firma_nombre: faltantes.append("nombre de firma")
+    if not firma_canvas: faltantes.append("firma real")
+    if faltantes:
+        return False, {}, "Faltan datos obligatorios: " + ", ".join(faltantes)
+
+    ok_rut, rut_norm = validar_rut(rut, auto_completar_dv=False)
+    if not ok_rut:
+        return False, {}, f"RUT del chofer invalido: {rut_norm}"
+    ok_tel, tel_norm = validar_telefono_chileno(telefono)
+    if not ok_tel:
+        return False, {}, tel_norm
+    ok_email, email_norm = validar_email(email)
+    if not ok_email or not email_norm:
+        return False, {}, email_norm or "Correo invalido"
+    ok_fecha, fecha_norm, fecha_err = _tr_validar_fecha_nacimiento(fecha_nacimiento)
+    if not ok_fecha:
+        return False, {}, fecha_err
+    if genero not in _TR_GENEROS_CHOFER:
+        return False, {}, "Genero invalido"
+    if not _TR_PATENTE_RE.match(patente):
+        return False, {}, "Patente invalida"
+    if len(nombre.split()) > 4:
+        nombre = " ".join(nombre.split()[:4])
+    if len(firma_nombre.split()) < 2:
+        return False, {}, "La firma debe incluir nombre y apellido"
+    if firma_canvas and not firma_canvas.startswith("data:image/png;base64,"):
+        return False, {}, "La firma debe venir en formato PNG"
+
+    return True, {
+        "chofer_nombre": nombre,
+        "chofer_apellido": apellido,
+        "chofer_rut": rut_norm,
+        "chofer_telefono": tel_norm,
+        "chofer_email": email_norm,
+        "chofer_fecha_nac": fecha_norm,
+        "chofer_genero": genero,
+        "patente": patente,
+        "firma_nombre": firma_nombre,
+        "firma_canvas": firma_canvas,
+    }, None
+
+
 def _tr_ensure_manifest_retiro_token(mid):
     """Garantiza que el manifiesto tenga su token público de firma remota
     (lo crea lazy si falta). Vive en transport_manifests.retiro_token
@@ -30160,31 +30429,55 @@ def _tr_ensure_manifest_retiro_token(mid):
         return None
 
 
-def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
-                                   chofer_telefono, patente, firma_nombre,
-                                   ip_origen, registrado_por):
+def _tr_manifiesto_retiro_guardar(mid, manifiesto, retiro_data,
+                                   ip_origen, registrado_por, user_agent=None):
     """Guarda (o actualiza) el registro de retiro de bodega de un manifiesto
     y dispara el envío automático best-effort del PDF firmado al correo del
     courier. Factorizado 2026-07-26 para que lo use TANTO el operador desde
     el modal interno (tr_manifiesto_retiro) COMO el chofer desde el link
     público sin login (tr_firma_retiro_publico) — misma lógica, no duplicar.
     Devuelve (ok: bool, resp_dict, http_status)."""
+    chofer_nombre = retiro_data["chofer_nombre"]
+    chofer_apellido = retiro_data["chofer_apellido"]
+    chofer_rut = retiro_data["chofer_rut"]
+    chofer_telefono = retiro_data["chofer_telefono"]
+    chofer_email = retiro_data["chofer_email"]
+    chofer_fecha_nac = retiro_data["chofer_fecha_nac"]
+    chofer_genero = retiro_data["chofer_genero"]
+    patente = retiro_data["patente"]
+    firma_nombre = retiro_data["firma_nombre"]
+    firma_canvas = retiro_data.get("firma_canvas") or ""
+    firma_url, firma_hash = _tr_firma_transportista_store(firma_canvas, mid)
+    nombre_completo = f"{chofer_nombre} {chofer_apellido}".strip()
     try:
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO transport_manifest_retiro "
-                    "(manifest_id, chofer_nombre, chofer_rut, chofer_telefono, patente, "
-                    " firma_nombre, ip_origen, registrado_por) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                    "(manifest_id, chofer_nombre, chofer_apellido, chofer_rut, "
+                    " chofer_telefono, chofer_email, chofer_fecha_nac, chofer_genero, "
+                    " patente, firma_nombre, firma_url, firma_hash, ip_origen, "
+                    " user_agent, registrado_por, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()) "
                     "ON DUPLICATE KEY UPDATE "
-                    "chofer_nombre=VALUES(chofer_nombre), chofer_rut=VALUES(chofer_rut), "
-                    "chofer_telefono=VALUES(chofer_telefono), patente=VALUES(patente), "
-                    "firma_nombre=VALUES(firma_nombre), ip_origen=VALUES(ip_origen), "
-                    "registrado_por=VALUES(registrado_por)",
-                    (mid, chofer_nombre, chofer_rut, chofer_telefono, patente,
-                     firma_nombre, (ip_origen or "")[:60], registrado_por)
+                    "chofer_nombre=VALUES(chofer_nombre), "
+                    "chofer_apellido=VALUES(chofer_apellido), "
+                    "chofer_rut=VALUES(chofer_rut), "
+                    "chofer_telefono=VALUES(chofer_telefono), "
+                    "chofer_email=VALUES(chofer_email), "
+                    "chofer_fecha_nac=VALUES(chofer_fecha_nac), "
+                    "chofer_genero=VALUES(chofer_genero), "
+                    "patente=VALUES(patente), firma_nombre=VALUES(firma_nombre), "
+                    "firma_url=COALESCE(VALUES(firma_url), firma_url), "
+                    "firma_hash=COALESCE(VALUES(firma_hash), firma_hash), "
+                    "ip_origen=VALUES(ip_origen), user_agent=VALUES(user_agent), "
+                    "registrado_por=VALUES(registrado_por), updated_at=NOW()",
+                    (mid, chofer_nombre, chofer_apellido, chofer_rut,
+                     chofer_telefono, chofer_email, chofer_fecha_nac,
+                     chofer_genero, patente, firma_nombre, firma_url,
+                     firma_hash, (ip_origen or "")[:60],
+                     (user_agent or "")[:300], registrado_por)
                 )
             conn.commit()
         finally:
@@ -30194,7 +30487,7 @@ def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
         return False, {"ok": False, "error": "No se pudo guardar el registro de retiro."}, 500
 
     _tr_log("manifest", mid, "retiro registrado",
-            f"chofer={chofer_nombre} rut={chofer_rut} patente={patente} por={registrado_por or 'chofer (link público)'}")
+            f"chofer={nombre_completo} rut={chofer_rut} patente={patente} por={registrado_por or 'chofer (link publico)'}")
 
     # FIX 2026-07-27 (Daniel: "una vez firmado... que cambie todo como
     # entregado al transportista"): la firma de retiro (interna o por link
@@ -30213,13 +30506,14 @@ def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
         for _it in _items_para_avanzar:
             _tr_apply_carrier_status(
                 _it["id"], "Entregado a transporte", fuente="sistema",
-                comentario=f"Retiro confirmado y firmado por {chofer_nombre}",
+                comentario=f"Retiro confirmado y firmado por {nombre_completo}",
                 notify_cliente=True,
             )
     except Exception as _e_avance:
         print(f"[tr_manifiesto_retiro_guardar] avance de estado mid={mid}: {_e_avance}", flush=True)
 
     enviado_a = None
+    copia_chofer = None
     aviso = None
     try:
         email = _tr_courier_email(manifiesto.get("courier"))
@@ -30235,7 +30529,7 @@ def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
                 f"<p>Se registró el retiro de bodega del manifiesto "
                 f"<strong>N° {_html_esc.escape(str(correlativo))}</strong> "
                 f"({n_docs} factura{'s' if n_docs != 1 else ''}).</p>"
-                f"<p>Retirado por <strong>{_html_esc.escape(chofer_nombre)}</strong>, "
+                f"<p>Retirado por <strong>{_html_esc.escape(nombre_completo)}</strong>, "
                 f"RUT {_html_esc.escape(chofer_rut)}, patente {_html_esc.escape(patente)}.</p>"
                 f"<p>Adjuntamos el manifiesto firmado.</p>"
             )
@@ -30255,13 +30549,24 @@ def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
                 _tr_log("manifest", mid, "retiro correo enviado", f"a={email}")
             else:
                 aviso = f"No se pudo enviar el correo a {email}."
+            if chofer_email and chofer_email.lower() != str(email).lower():
+                try:
+                    ok_driver = _send_ilus_email(
+                        chofer_email, subject, html_body, modulo="transporte",
+                        attachments=[(fname, pdf_bytes, "application/pdf")]
+                    )
+                    if ok_driver:
+                        copia_chofer = chofer_email
+                        _tr_log("manifest", mid, "retiro copia chofer enviada", f"a={chofer_email}")
+                except Exception as e_drv:
+                    print(f"[tr_manifiesto_retiro_guardar] copia chofer mid={mid}: {e_drv}", flush=True)
         else:
             aviso = "El registro quedó guardado, pero no hay correo configurado en la ficha del courier para enviarlo automáticamente."
     except Exception as e:
         print(f"[tr_manifiesto_retiro_guardar] correo mid={mid}: {type(e).__name__}: {e}", flush=True)
         aviso = "El registro quedó guardado, pero el envío automático de correo falló."
 
-    resp = {"ok": True, "enviado_a": enviado_a}
+    resp = {"ok": True, "enviado_a": enviado_a, "copia_chofer": copia_chofer}
     if aviso:
         resp["aviso"] = aviso
     return True, resp, 200
@@ -30307,24 +30612,13 @@ def tr_manifiesto_retiro(mid):
         })
 
     body = request.get_json(silent=True) or {}
-    chofer_nombre   = (body.get("chofer_nombre") or "").strip()
-    chofer_rut      = (body.get("chofer_rut") or "").strip()
-    chofer_telefono = (body.get("chofer_telefono") or "").strip()
-    patente         = (body.get("patente") or "").strip()
-    firma_nombre    = (body.get("firma_nombre") or "").strip()
-
-    faltantes = []
-    if not chofer_nombre: faltantes.append("nombre del chofer")
-    if not chofer_rut: faltantes.append("RUT del chofer")
-    if not patente: faltantes.append("patente")
-    if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
-    if faltantes:
-        return jsonify({"ok": False,
-                         "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
+    ok_payload, retiro_data, error_payload = _tr_validar_retiro_payload(body)
+    if not ok_payload:
+        return jsonify({"ok": False, "error": error_payload}), 400
 
     ok, resp, status = _tr_manifiesto_retiro_guardar(
-        mid, manifiesto, chofer_nombre, chofer_rut, chofer_telefono, patente,
-        firma_nombre, request.remote_addr, current_username())
+        mid, manifiesto, retiro_data, request.remote_addr, current_username(),
+        request.headers.get("User-Agent", ""))
     return jsonify(resp), status
 
 
@@ -30354,10 +30648,12 @@ def tr_firma_retiro_publico(token):
     courier_row = _tr_find_courier_row(manifiesto.get("courier"))
     courier_id = courier_row["id"] if courier_row else None
     retiro_existente = _tr_manifiesto_retiro_get(mid)
+    items_operativos = _tr_manifiesto_items_firma(mid)
     choferes = []
     if courier_id:
         choferes = mysql_fetchall(
-            "SELECT id, nombre, rut, telefono, patente FROM transport_drivers "
+            "SELECT id, nombre, apellido, rut, telefono, email, patente, "
+            "fecha_nacimiento, genero FROM transport_drivers "
             "WHERE courier_id=%s AND activo=1 ORDER BY nombre", (courier_id,)
         ) or []
     return render_template(
@@ -30366,6 +30662,7 @@ def tr_firma_retiro_publico(token):
         manifiesto=manifiesto,
         n_docs=n_docs,
         n_bultos=n_bultos,
+        items=items_operativos,
         courier_id=courier_id,
         choferes=choferes,
         retiro=retiro_existente,
@@ -30384,26 +30681,20 @@ def tr_firma_retiro_publico_guardar(token):
     if not manifiesto:
         return jsonify({"ok": False, "error": "Link inválido o expirado."}), 404
     mid = manifiesto["id"]
+    if _tr_manifiesto_retiro_get(mid):
+        return jsonify({
+            "ok": False,
+            "error": "Este manifiesto ya tiene retiro firmado. La edición queda bloqueada desde el link público.",
+        }), 409
 
     body = request.get_json(silent=True) or {}
-    chofer_nombre   = (body.get("chofer_nombre") or "").strip()
-    chofer_rut      = (body.get("chofer_rut") or "").strip()
-    chofer_telefono = (body.get("chofer_telefono") or "").strip()
-    patente         = (body.get("patente") or "").strip()
-    firma_nombre    = (body.get("firma_nombre") or "").strip()
-
-    faltantes = []
-    if not chofer_nombre: faltantes.append("nombre del chofer")
-    if not chofer_rut: faltantes.append("RUT del chofer")
-    if not patente: faltantes.append("patente")
-    if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
-    if faltantes:
-        return jsonify({"ok": False,
-                         "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
+    ok_payload, retiro_data, error_payload = _tr_validar_retiro_payload(body)
+    if not ok_payload:
+        return jsonify({"ok": False, "error": error_payload}), 400
 
     ok, resp, status = _tr_manifiesto_retiro_guardar(
-        mid, manifiesto, chofer_nombre, chofer_rut, chofer_telefono, patente,
-        firma_nombre, request.remote_addr, None)
+        mid, manifiesto, retiro_data, request.remote_addr, None,
+        request.headers.get("User-Agent", ""))
 
     # Best-effort: si el chofer no estaba en el roster del courier, se
     # ofrece agregarlo desde el propio formulario público (ver JS del
@@ -30412,8 +30703,14 @@ def tr_firma_retiro_publico_guardar(token):
         courier_row = _tr_find_courier_row(manifiesto.get("courier"))
         if courier_row:
             try:
-                _tr_courier_chofer_upsert(courier_row["id"], chofer_nombre, chofer_rut,
-                                           chofer_telefono, patente)
+                _tr_courier_chofer_upsert(
+                    courier_row["id"], retiro_data["chofer_nombre"],
+                    retiro_data["chofer_rut"], retiro_data["chofer_telefono"],
+                    retiro_data["patente"], apellido=retiro_data["chofer_apellido"],
+                    fecha_nacimiento=retiro_data["chofer_fecha_nac"],
+                    genero=retiro_data["chofer_genero"],
+                    email=retiro_data["chofer_email"],
+                )
             except Exception as e:
                 print(f"[tr_firma_retiro_publico_guardar] roster mid={mid}: {e}", flush=True)
 
@@ -74497,12 +74794,20 @@ def _ensure_transport_drivers_table():
         # el manifiesto según su límite de peso/volumen"): confirmado con él
         # que la capacidad vive en el perfil del chofer (patente = 1 camión
         # fijo), no como entidad de vehículo aparte.
-        if "peso_max_kg" not in existing:
-            mysql_execute("ALTER TABLE transport_drivers ADD COLUMN peso_max_kg DECIMAL(10,2) NULL "
-                          "COMMENT 'Capacidad máxima de carga del camión, en kg (0/NULL = sin límite)'")
-        if "volumen_max_m3" not in existing:
-            mysql_execute("ALTER TABLE transport_drivers ADD COLUMN volumen_max_m3 DECIMAL(10,3) NULL "
-                          "COMMENT 'Capacidad máxima de carga del camión, en m³ (0/NULL = sin límite)'")
+        driver_cols = {
+            "apellido": "VARCHAR(120) NULL COMMENT 'Apellido del chofer para firma de manifiestos'",
+            "fecha_nacimiento": "DATE NULL COMMENT 'Fecha de nacimiento del chofer'",
+            "genero": "VARCHAR(30) NULL COMMENT 'Genero declarado por el chofer'",
+            "email": "VARCHAR(180) NULL COMMENT 'Correo del chofer para copia del manifiesto operativo'",
+            "peso_max_kg": "DECIMAL(10,2) NULL COMMENT 'Capacidad maxima de carga del camion, en kg (0/NULL = sin limite)'",
+            "volumen_max_m3": "DECIMAL(10,3) NULL COMMENT 'Capacidad maxima de carga del camion, en m3 (0/NULL = sin limite)'",
+        }
+        for _col, _ddl in driver_cols.items():
+            if _col not in existing:
+                try:
+                    mysql_execute(f"ALTER TABLE transport_drivers ADD COLUMN {_col} {_ddl}")
+                except Exception:
+                    pass
     except Exception:
         pass
     # Config de PRUEBA DE ENTREGA por transporte (estilo DispatchTrack):
