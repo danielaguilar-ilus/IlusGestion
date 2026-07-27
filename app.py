@@ -29,6 +29,15 @@ from flask import (Flask, Response, abort, flash, g, jsonify, make_response,
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
+# Cifrado de firmas de retiro (transporte) — ver _tr_firma_cipher más abajo.
+# Import opcional: si el paquete no está instalado, la firma simplemente se
+# guarda sin cifrar (mismo comportamiento de antes), no revienta el arranque.
+try:
+    from cryptography.fernet import Fernet as _Fernet, InvalidToken as _FernetInvalidToken
+except Exception:
+    _Fernet = None
+    _FernetInvalidToken = Exception
+
 from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY, GCS_BUCKET, GCS_ENABLED
 try:
     from config import BRAND_CONFIG
@@ -29576,6 +29585,26 @@ def _ensure_transport_manifest_retiro_table():
                     "ALTER TABLE transport_manifests ADD UNIQUE INDEX uq_manifest_retiro_token (retiro_token)")
             except Exception:
                 pass
+            # Columnas NUEVAS (2026-07-26, firma real con canvas táctil):
+            # firma_canvas guarda el PNG (data URL) de la firma dibujada,
+            # cifrado con Fernet (ver _tr_firma_cipher) — no queda en texto
+            # plano en la BD. firma_hash es el SHA256 del data URL original,
+            # como huella de auditoría verificable sin necesidad de
+            # descifrar. ALTER idempotente, mismo patrón que retiro_token.
+            try:
+                cur.execute(
+                    "ALTER TABLE transport_manifest_retiro ADD COLUMN firma_canvas LONGTEXT NULL "
+                    "COMMENT 'Firma dibujada a mano (PNG data URL), cifrada con Fernet'"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE transport_manifest_retiro ADD COLUMN firma_hash VARCHAR(80) NULL "
+                    "COMMENT 'SHA256 del data URL de la firma canvas, para auditoria'"
+                )
+            except Exception:
+                pass
         conn.commit()
     finally:
         conn.close()
@@ -29954,6 +29983,87 @@ def _tr_manifiesto_firma_bytes(mid):
     return manifiesto, items, data, fname
 
 
+def _tr_manifiesto_items_admin(mid):
+    """Items del manifiesto para el RESPALDO ADMINISTRATIVO/financiero
+    (2026-07-26, Daniel: "la versión que se envía por correo al responsable
+    lleva la parte financiera... el total... y la comuna de cada cual").
+
+    Reusa _tr_manifiesto_items_firma (misma fuente de peso/comuna/estado que
+    el documento operativo) y agrega SOLO lo financiero que ese documento NO
+    debe llevar: zz_envio (lo cobrado al cliente), margen_clp/margen_pct,
+    sin_precio y es_perdida — mismo cálculo que ya usa tr_manifiesto_detalle
+    para la vista interna del manifiesto (no se inventa una fórmula nueva).
+    costo_courier ya viene incluido en _tr_manifiesto_items_export."""
+    items = _tr_manifiesto_items_firma(mid)
+    if not items:
+        return items
+
+    commitment_ids = [it["commitment_id"] for it in items]
+    ph = ",".join(["%s"] * len(commitment_ids))
+    zz_rows = mysql_fetchall(
+        f"SELECT id, COALESCE(zz_envio, 0) AS zz_envio "
+        f"FROM transport_commitments WHERE id IN ({ph})",
+        tuple(commitment_ids)) or []
+    zz_por_commitment = {r["id"]: float(r.get("zz_envio") or 0) for r in zz_rows}
+
+    for it in items:
+        cobrado = zz_por_commitment.get(it["commitment_id"], 0.0)
+        costo = float(it.get("costo_courier") or 0)
+        it["zz_envio"] = cobrado
+        it["margen_clp"] = round(cobrado - costo)
+        it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
+        it["sin_precio"] = (cobrado <= 0)
+        it["es_perdida"] = (cobrado > 0 and costo > cobrado)
+    return items
+
+
+def _tr_manifiesto_admin_email_bytes(mid):
+    """Genera el PDF del RESPALDO ADMINISTRATIVO/financiero del manifiesto
+    (2026-07-26, Daniel) — mismo mecanismo que _tr_manifiesto_firma_bytes
+    (render_template + _pw_pdf), pero usando manifiesto_admin_email.html
+    (con costos/margen) en vez de manifiesto_firma.html (sin plata).
+
+    IMPORTANTE (honestidad del alcance): esta función NO está conectada a
+    ningún envío automático todavía. El correo que hoy se manda al courier
+    tras firmar (_tr_manifiesto_retiro_guardar) sigue enviando SOLO el
+    documento operativo (_tr_manifiesto_firma_bytes), sin plata, exactamente
+    igual que antes. Falta que Daniel confirme el destinatario correcto para
+    el respaldo financiero (¿un correo interno nuevo? ¿Alison? ¿un campo en
+    transport_couriers?) — no existe hoy ningún "correo del responsable" en
+    el sistema, así que no se inventa uno. Queda lista para conectar cuando
+    se confirme.
+
+    Devuelve (manifiesto, items, pdf_bytes, nombre_archivo) o lanza excepción."""
+    manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not manifiesto:
+        raise ValueError("Manifiesto no encontrado")
+
+    items = _tr_manifiesto_items_admin(mid)
+    if not items:
+        raise ValueError("Manifiesto sin items para generar el respaldo administrativo")
+
+    retiro = _tr_manifiesto_retiro_get(mid)
+    if retiro and retiro.get("firma_canvas"):
+        retiro = dict(retiro)
+        retiro["firma_url"] = _tr_firma_decrypt_if_needed(retiro.get("firma_canvas"))
+
+    html = render_template(
+        "transporte/manifiesto_admin_email.html",
+        items       = items,
+        remitente   = ILUS_REMITENTE,
+        manifiesto  = manifiesto,
+        retiro      = retiro,
+        fecha       = _now_chile_str("%d-%m-%Y"),
+        logo_url    = _logo_data_url(),
+        logo_shs_url = _logo_shs_pdf_data_url(),
+    )
+    data = _pw_pdf(html, page_format="Letter", margin={"top": "0mm", "right": "0mm",
+                                                    "bottom": "0mm", "left": "0mm"})
+    correlativo = manifiesto.get("correlativo") or mid
+    fname = f"manifiesto-admin-{correlativo}.pdf"
+    return manifiesto, items, data, fname
+
+
 @app.route("/transporte/manifiestos/<int:mid>/firma")
 @_tr_required
 def tr_manifiesto_firma(mid):
@@ -30183,15 +30293,78 @@ def _tr_ensure_manifest_retiro_token(mid):
         return None
 
 
+def _tr_firma_cipher():
+    """Cifrado autenticado (Fernet) para la firma canvas del retiro de
+    transporte. Deriva la clave desde FLASK_SECRET_KEY (no agrega secretos
+    nuevos al repo ni a la BD) — mismo patrón que otros HMAC de firma en la
+    app (ej. _ot_firma_key). Devuelve None si el paquete `cryptography` no
+    está instalado (fallback: se guarda sin cifrar, mejor que perder la
+    firma por completo)."""
+    try:
+        from cryptography.fernet import Fernet as _Fernet
+    except Exception:
+        return None
+    secret = app.secret_key or "ilus-transport-firma-fallback"
+    secret_b = secret.encode("utf-8") if isinstance(secret, str) else secret
+    key = base64.urlsafe_b64encode(hashlib.sha256(b"ilus-transport-firma-v1:" + secret_b).digest())
+    try:
+        return _Fernet(key)
+    except Exception:
+        return None
+
+
+_TR_FIRMA_ENC_PREFIX = "fernet:"
+
+
+def _tr_firma_encrypt_data_url(data_url):
+    """Cifra el data URL (PNG base64) de la firma canvas antes de guardarlo
+    en transport_manifest_retiro.firma_canvas. Si no hay cipher disponible,
+    devuelve el data URL tal cual (mejor guardarlo plano que perderlo)."""
+    if not data_url or not str(data_url).startswith("data:image/"):
+        return data_url or ""
+    cipher = _tr_firma_cipher()
+    if not cipher:
+        return data_url
+    token = cipher.encrypt(data_url.encode("utf-8")).decode("ascii")
+    return _TR_FIRMA_ENC_PREFIX + token
+
+
+def _tr_firma_decrypt_if_needed(value):
+    """Inverso de _tr_firma_encrypt_data_url — usado si en algún momento se
+    necesita mostrar la firma real (ej. en el PDF o en un panel de
+    auditoría). Devuelve "" si no se pudo descifrar."""
+    value = value or ""
+    if not value.startswith(_TR_FIRMA_ENC_PREFIX):
+        return value
+    cipher = _tr_firma_cipher()
+    if not cipher:
+        return ""
+    try:
+        token = value[len(_TR_FIRMA_ENC_PREFIX):].encode("ascii")
+        return cipher.decrypt(token).decode("utf-8")
+    except Exception:
+        return ""
+
+
 def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
                                    chofer_telefono, patente, firma_nombre,
-                                   ip_origen, registrado_por):
+                                   ip_origen, registrado_por, firma_canvas=None):
     """Guarda (o actualiza) el registro de retiro de bodega de un manifiesto
     y dispara el envío automático best-effort del PDF firmado al correo del
     courier. Factorizado 2026-07-26 para que lo use TANTO el operador desde
     el modal interno (tr_manifiesto_retiro) COMO el chofer desde el link
     público sin login (tr_firma_retiro_publico) — misma lógica, no duplicar.
+
+    firma_canvas (opcional, 2026-07-26): PNG data URL de la firma dibujada a
+    mano en el link público. Se guarda cifrada (Fernet) + su hash SHA256 de
+    auditoría, en transport_manifest_retiro.firma_canvas/firma_hash. No
+    reemplaza firma_nombre (el nombre tecleado sigue siendo obligatorio).
     Devuelve (ok: bool, resp_dict, http_status)."""
+    firma_canvas_enc = None
+    firma_hash = None
+    if firma_canvas and str(firma_canvas).startswith("data:image/"):
+        firma_hash = hashlib.sha256(firma_canvas.encode("utf-8")).hexdigest()
+        firma_canvas_enc = _tr_firma_encrypt_data_url(firma_canvas)
     try:
         conn = get_mysql()
         try:
@@ -30199,15 +30372,19 @@ def _tr_manifiesto_retiro_guardar(mid, manifiesto, chofer_nombre, chofer_rut,
                 cur.execute(
                     "INSERT INTO transport_manifest_retiro "
                     "(manifest_id, chofer_nombre, chofer_rut, chofer_telefono, patente, "
-                    " firma_nombre, ip_origen, registrado_por) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                    " firma_nombre, firma_canvas, firma_hash, ip_origen, registrado_por) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                     "ON DUPLICATE KEY UPDATE "
                     "chofer_nombre=VALUES(chofer_nombre), chofer_rut=VALUES(chofer_rut), "
                     "chofer_telefono=VALUES(chofer_telefono), patente=VALUES(patente), "
-                    "firma_nombre=VALUES(firma_nombre), ip_origen=VALUES(ip_origen), "
+                    "firma_nombre=VALUES(firma_nombre), "
+                    "firma_canvas=COALESCE(VALUES(firma_canvas), firma_canvas), "
+                    "firma_hash=COALESCE(VALUES(firma_hash), firma_hash), "
+                    "ip_origen=VALUES(ip_origen), "
                     "registrado_por=VALUES(registrado_por)",
                     (mid, chofer_nombre, chofer_rut, chofer_telefono, patente,
-                     firma_nombre, (ip_origen or "")[:60], registrado_por)
+                     firma_nombre, firma_canvas_enc, firma_hash,
+                     (ip_origen or "")[:60], registrado_por)
                 )
             conn.commit()
         finally:
@@ -30414,19 +30591,24 @@ def tr_firma_retiro_publico_guardar(token):
     chofer_telefono = (body.get("chofer_telefono") or "").strip()
     patente         = (body.get("patente") or "").strip()
     firma_nombre    = (body.get("firma_nombre") or "").strip()
+    # Firma real dibujada a mano (canvas), 2026-07-26 — obligatoria SOLO en
+    # el link público (el modal interno de escritorio sigue sin canvas).
+    firma_canvas    = (body.get("firma_canvas") or "").strip()
 
     faltantes = []
     if not chofer_nombre: faltantes.append("nombre del chofer")
     if not chofer_rut: faltantes.append("RUT del chofer")
     if not patente: faltantes.append("patente")
     if not firma_nombre: faltantes.append("firma (nombre de confirmación)")
+    if not firma_canvas or not firma_canvas.startswith("data:image/"):
+        faltantes.append("firma dibujada")
     if faltantes:
         return jsonify({"ok": False,
                          "error": "Faltan datos obligatorios: " + ", ".join(faltantes)}), 400
 
     ok, resp, status = _tr_manifiesto_retiro_guardar(
         mid, manifiesto, chofer_nombre, chofer_rut, chofer_telefono, patente,
-        firma_nombre, request.remote_addr, None)
+        firma_nombre, request.remote_addr, None, firma_canvas=firma_canvas)
 
     # Best-effort: si el chofer no estaba en el roster del courier, se
     # ofrece agregarlo desde el propio formulario público (ver JS del

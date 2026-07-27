@@ -111,6 +111,13 @@ input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red)
         <label>Firma digital — escribe tu nombre completo para confirmar *</label>
         <input type="text" class="firma-input" id="mrpFirma" placeholder="Ej: Juan Pérez Soto" required>
 
+        <label>Firma real — dibuja tu firma con el dedo *</label>
+        <canvas id="mrpFirmaCanvas" width="760" height="230"
+                style="width:100%;height:210px;background:#fff;border:2px dashed #111827;border-radius:8px;touch-action:none;display:block;margin-bottom:10px"></canvas>
+        <button type="button" onclick="mrpLimpiarFirma()" style="width:100%;min-height:42px;border:1px solid #d1d5db;background:#fff;border-radius:8px;font-weight:800;margin-bottom:14px">
+          <i class="bi bi-eraser me-1"></i>Limpiar firma
+        </button>
+
         <button type="submit" class="btn-confirm" id="mrpSubmitBtn">
           <i class="bi bi-check2-circle me-1"></i>Confirmar retiro
         </button>
@@ -127,6 +134,51 @@ input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red)
 <script>
 var TOKEN = {{ token | tojson }};
 var CHOFERES = {{ choferes | tojson }};
+var _mrpFirmaTieneTrazo = false;
+
+function mrpInitFirma() {
+  var cv = document.getElementById('mrpFirmaCanvas');
+  if (!cv || cv.dataset.bound === '1') return;
+  cv.dataset.bound = '1';
+  var ctx = cv.getContext('2d');
+  var rect = cv.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.round(rect.width * dpr));
+  cv.height = Math.max(1, Math.round(rect.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.strokeStyle = '#0a0a0a';
+  ctx.lineWidth = 2.8;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  var drawing = false;
+  function point(ev) {
+    var r = cv.getBoundingClientRect();
+    var t = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+  function start(ev) { ev.preventDefault(); drawing = true; var p = point(ev); ctx.beginPath(); ctx.moveTo(p.x, p.y); }
+  function move(ev) { if (!drawing) return; ev.preventDefault(); var p = point(ev); ctx.lineTo(p.x, p.y); ctx.stroke(); _mrpFirmaTieneTrazo = true; }
+  function end() { drawing = false; }
+  cv.addEventListener('mousedown', start);
+  cv.addEventListener('mousemove', move);
+  cv.addEventListener('mouseup', end);
+  cv.addEventListener('mouseleave', end);
+  cv.addEventListener('touchstart', start, { passive:false });
+  cv.addEventListener('touchmove', move, { passive:false });
+  cv.addEventListener('touchend', end);
+}
+
+function mrpLimpiarFirma() {
+  var cv = document.getElementById('mrpFirmaCanvas');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var rect = cv.getBoundingClientRect();
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  _mrpFirmaTieneTrazo = false;
+}
 
 function mrpAplicarChofer(id) {
   if (!id) return;
@@ -152,6 +204,12 @@ async function mrpGuardar(ev) {
     ilusToast('Completa los campos obligatorios (*)', { type: 'warning' });
     return false;
   }
+  var cv = document.getElementById('mrpFirmaCanvas');
+  if (!cv || !_mrpFirmaTieneTrazo) {
+    ilusToast('Falta dibujar tu firma', { type: 'warning' });
+    return false;
+  }
+  payload.firma_canvas = cv.toDataURL('image/png');
   // Si el chofer no estaba en la lista guardada, ofrecer guardarlo para la
   // próxima vez (no automático).
   var yaEnRoster = (CHOFERES || []).some(function(c){
@@ -193,6 +251,7 @@ async function mrpGuardar(ev) {
   }
   return false;
 }
+document.addEventListener('DOMContentLoaded', mrpInitFirma);
 </script>
 </body>
 </html>
