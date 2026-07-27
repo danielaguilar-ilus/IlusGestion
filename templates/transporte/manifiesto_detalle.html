@@ -381,7 +381,9 @@
           'costo': (item.costo_courier or 0)|float,
           'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
           'estado': item.estado_entrega or '',
-          'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
+          'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim,
+          'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else 0),
+          'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else '')
         } | tojson %}
         {# FIX 2026-07-27 (Daniel: "bloquea la edición también" -- una vez
            que la factura ya se subió al courier y empezó la gestión, no se
@@ -532,7 +534,7 @@
                     class="btn btn-sm btn-outline-dark mfd-act-btn js-open-etiquetas-modal"
                     title="{% if _en_gestion_courier %}Ver/reimprimir etiquetas (edición bloqueada por estado){% else %}Ver/imprimir etiquetas ILUS de esta factura{% endif %}"
                     data-etiquetas-url="{{ url_for('tr_factura_etiquetas', commitment_id=item.commitment_id, mid=manifiesto.id) }}"
-                    data-etiquetas-title="Etiquetas de la factura">
+                    data-etiquetas-title="Etiquetas de la factura{% if _en_gestion_courier %} · solo lectura{% endif %}">
               <i class="bi bi-tags"></i>
             </button>
             {% endif %}
@@ -578,9 +580,11 @@
                mismo nivel de pulido que el modal de tracking de FedEx.
                Reusa los endpoints genéricos ya construidos — no se duplica
                lógica de courier. #}
-            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento y acciones"
+            <button type="button"
+                    class="btn btn-sm mfd-act-btn js-open-simpliroute-actions"
+                    title="Ver seguimiento y acciones"
                     style="background:#0a0a0a;color:#fff;border:none"
-                    onclick="abrirSimpliRouteModal({{ item_json }})">
+                    data-sr-item='{{ item_json }}'>
               <i class="bi bi-geo-alt-fill"></i>
             </button>
             {% endif %}
@@ -739,7 +743,9 @@
       'costo': (item.costo_courier or 0)|float,
       'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
       'estado': item.estado_entrega or '',
-      'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim
+      'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim,
+      'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else 0),
+      'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else '')
     } | tojson %}
     {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) %}
     {% set nprod = item.productos|length %}
@@ -763,7 +769,7 @@
                   class="btn btn-sm btn-outline-dark mfd-act-btn js-open-etiquetas-modal"
                   title="{% if _en_gestion_courier %}Ver/reimprimir etiquetas (edición bloqueada por estado){% else %}Ver/imprimir etiquetas de esta factura{% endif %}"
                   data-etiquetas-url="{{ url_for('tr_factura_etiquetas', commitment_id=item.commitment_id, mid=manifiesto.id) }}"
-                  data-etiquetas-title="Etiquetas de la factura">
+                  data-etiquetas-title="Etiquetas de la factura{% if _en_gestion_courier %} · solo lectura{% endif %}">
             <i class="bi bi-tags"></i>
           </button>
           {% endif %}
@@ -787,9 +793,11 @@
                   onclick="mostrarLinkCliente({{ item.id }})">
             <i class="bi bi-link-45deg"></i>
           </button>
-          <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento y acciones"
+          <button type="button"
+                  class="btn btn-sm mfd-act-btn js-open-simpliroute-actions"
+                  title="Ver seguimiento y acciones"
                   style="background:#0a0a0a;color:#fff;border:none"
-                  onclick="abrirSimpliRouteModal({{ item_json }})">
+                  data-sr-item='{{ item_json }}'>
             <i class="bi bi-geo-alt-fill"></i>
           </button>
           {% endif %}
@@ -1179,6 +1187,10 @@
             <button type="button" class="btn btn-outline-secondary sr-acc-btn" id="srBtnEditar" onclick="srAbrirEditar()">
               <i class="bi bi-pencil-square me-1"></i>Editar contacto/bultos
             </button>
+          </div>
+          <div class="alert alert-secondary py-2 px-3 mt-2 mb-0" id="srEditLock" hidden>
+            <i class="bi bi-lock-fill me-1"></i>
+            <span id="srEditLockText">Edición bloqueada por el estado del pedido.</span>
           </div>
           <hr class="my-3">
           <div class="sr-acc-block">
@@ -2027,6 +2039,7 @@
 
 {% block scripts %}
 <script defer src="{{ url_for('static', filename='transporte_etiquetas_modal.js') }}"></script>
+<script defer src="{{ url_for('static', filename='transporte_manifiesto_acciones.js') }}"></script>
 <script>
 var MID    = {{ manifiesto.id }};
 var SIN_OT = {{ sin_ot | tojson | safe }};
@@ -2477,6 +2490,13 @@ function _edAutoVerificar() {
 
 function abrirEditar(data) {
   data = data || {};
+  if (data.edicion_bloqueada) {
+    ilusToast(
+      data.edicion_motivo || 'La edición está bloqueada porque el pedido ya está en gestión con el courier.',
+      { type: 'warning' }
+    );
+    return;
+  }
   document.getElementById('edCid').value        = data.id || '';
   var _eItem = document.getElementById('edItemId');
   if (_eItem) _eItem.value = data.item_id || '';
@@ -2719,6 +2739,7 @@ function trkSwitchTab(which) {
 // cargado) el otro modal terminaba mostrando/reusando la instancia
 // equivocada de Bootstrap. Se renombra a _srAccionesModal, único.
 var _srAccionesModal = null;
+var _srLoadToken = 0;
 window._srItemData = null;
 
 function _srEsc(s) {
@@ -2735,28 +2756,34 @@ function srSwitchTab(which) {
   document.getElementById('srTabAcciones').style.display = (which === 'acciones' ? 'block' : 'none');
 }
 
-async function abrirSimpliRouteModal(data, force) {
-  data = data || {};
-  if (!data.id) return; // data.id = commitment_id
-  window._srItemData = data;
-  if (!_srAccionesModal) _srAccionesModal = new bootstrap.Modal(document.getElementById('simpliRouteModal'));
-  document.getElementById('srDoc').textContent = data.doc || '';
-  document.getElementById('srStateLabel').textContent = data.estado || 'Cargando…';
-  document.getElementById('srSub').textContent = data.cliente || '';
-  document.getElementById('srTimeline').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando trazabilidad…</div>';
-  document.getElementById('srLinkBox').style.display = 'none';
-  document.getElementById('srAccMsg').innerHTML = '';
-  // Fecha por defecto del picker de reprogramación: hoy
-  var fEl = document.getElementById('srFechaInput');
-  if (fEl && !fEl.value) fEl.value = new Date().toISOString().slice(0, 10);
-  srSwitchTab('timeline');
-  _srAccionesModal.show();
+function _srAplicarPoliticaEdicion(data) {
+  var bloqueada = !!data.edicion_bloqueada;
+  var motivo = data.edicion_motivo
+    || 'Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).';
+  var btn = document.getElementById('srBtnEditar');
+  var aviso = document.getElementById('srEditLock');
+  var texto = document.getElementById('srEditLockText');
 
+  if (btn) {
+    btn.disabled = bloqueada;
+    btn.setAttribute('aria-disabled', bloqueada ? 'true' : 'false');
+    btn.title = bloqueada ? motivo : 'Editar contacto y bultos';
+  }
+  if (aviso) aviso.hidden = !bloqueada;
+  if (texto) texto.textContent = motivo;
+}
+
+async function _srCargarTrazabilidad(data, token, force) {
   try {
-    var r = await fetch('/transporte/api/compromisos/' + data.id + '/trazabilidad');
+    var r = await fetch(
+      '/transporte/api/compromisos/' + data.id + '/trazabilidad',
+      { cache: force ? 'reload' : 'default' }
+    );
     var d = await r.json();
+    if (token !== _srLoadToken) return;
     if (!d || !d.ok) {
-      document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">' + _srEsc((d && d.error) || 'No se pudo cargar la trazabilidad') + '</div>';
+      document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">'
+        + _srEsc((d && d.error) || 'No se pudo cargar la trazabilidad') + '</div>';
       return;
     }
     if (d.tracking_url) {
@@ -2774,22 +2801,32 @@ async function abrirSimpliRouteModal(data, force) {
         }).join('')
       : '<div class="trk-empty">Sin eventos registrados todavía.</div>';
   } catch (e) {
-    document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
+    if (token === _srLoadToken) {
+      document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
+    }
   }
+}
 
-  // Evidencia (firma/fotos que entrega SimpliRoute al completar la visita) —
-  // reusa el MISMO endpoint que ya usa "Prueba de entrega", no se duplica.
+async function _srCargarEvidencia(data, token, force) {
   try {
-    var r2 = await fetch('/transporte/api/buscar/' + data.id);
-    var d2 = await r2.json();
-    var p = d2 && d2.ok ? d2.detalle.proof : null;
+    var r = await fetch(
+      '/transporte/api/buscar/' + data.id,
+      { cache: force ? 'reload' : 'default' }
+    );
+    var d = await r.json();
+    if (token !== _srLoadToken) return;
+    var p = d && d.ok ? d.detalle.proof : null;
     var ev = document.getElementById('srEvidencia');
     if (p && (p.firma_url || (p.fotos && p.fotos.length))) {
       var html = '<div class="pe-sec" style="margin-top:.9rem"><div class="pe-h"><i class="bi bi-camera-fill"></i>Evidencia (SimpliRoute)</div>';
-      if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma"></div>';
+      if (p.firma_url) {
+        html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma"></div>';
+      }
       if (p.fotos && p.fotos.length) {
         html += '<div class="pe-fotos mt-2">';
-        p.fotos.forEach(function(f){ html += '<img src="' + f + '" onclick="window.open(this.src,\'_blank\')">'; });
+        p.fotos.forEach(function(f){
+          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" onclick="window.open(this.src,\'_blank\')">';
+        });
         html += '</div>';
       }
       html += '</div>';
@@ -2797,7 +2834,35 @@ async function abrirSimpliRouteModal(data, force) {
     } else {
       ev.innerHTML = '';
     }
-  } catch (e2) { /* evidencia es un extra, no bloquea el resto del modal */ }
+  } catch (e) {
+    // La evidencia es complementaria y no bloquea el seguimiento.
+  }
+}
+
+async function abrirSimpliRouteModal(data, force) {
+  data = data || {};
+  if (!data.id) return; // data.id = commitment_id
+  var token = ++_srLoadToken;
+  window._srItemData = data;
+  if (!_srAccionesModal) _srAccionesModal = new bootstrap.Modal(document.getElementById('simpliRouteModal'));
+  document.getElementById('srDoc').textContent = data.doc || '';
+  document.getElementById('srStateLabel').textContent = data.estado || 'Cargando…';
+  document.getElementById('srSub').textContent = data.cliente || '';
+  document.getElementById('srTimeline').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando trazabilidad…</div>';
+  document.getElementById('srLinkBox').style.display = 'none';
+  document.getElementById('srEvidencia').innerHTML = '';
+  document.getElementById('srAccMsg').innerHTML = '';
+  _srAplicarPoliticaEdicion(data);
+  // Fecha por defecto del picker de reprogramación: hoy
+  var fEl = document.getElementById('srFechaInput');
+  if (fEl && !fEl.value) fEl.value = new Date().toISOString().slice(0, 10);
+  srSwitchTab('timeline');
+  _srAccionesModal.show();
+
+  await Promise.allSettled([
+    _srCargarTrazabilidad(data, token, !!force),
+    _srCargarEvidencia(data, token, !!force),
+  ]);
 }
 
 async function srActualizarEstado() {
@@ -2810,6 +2875,13 @@ async function srActualizarEstado() {
 function srAbrirEditar() {
   var data = window._srItemData;
   if (!data) return;
+  if (data.edicion_bloqueada) {
+    ilusToast(
+      data.edicion_motivo || 'La edición está bloqueada porque el pedido ya está en gestión con el courier.',
+      { type: 'warning' }
+    );
+    return;
+  }
   abrirEditar(data);
 }
 
