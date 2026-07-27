@@ -30224,10 +30224,11 @@ def tr_manifiesto_admin_pdf(mid):
     de correos desde Transporte, así que necesita descargar este PDF para
     compartirlo manualmente con el courier en vez de que la app lo mande.
     Reusa _tr_manifiesto_admin_email_bytes (mismo render que usaría un envío
-    por correo, que hoy NO existe conectado — ver su docstring). Solo
-    superadmin: el documento trae costo/margen, dato financiero interno."""
-    if not bool(g.permissions.get("superadmin")):
-        return ("Solo un superadministrador puede descargar el respaldo financiero.", 403)
+    por correo, que hoy NO existe conectado — ver su docstring).
+
+    Permiso: cualquier usuario con acceso al módulo Transporte (ya exigido
+    por @_tr_required) — Daniel pidió explícitamente que Alison también lo
+    vea y lo descargue, no solo superadmin."""
     try:
         manifiesto, items, data, fname = _tr_manifiesto_admin_email_bytes(mid)
     except ValueError as e:
