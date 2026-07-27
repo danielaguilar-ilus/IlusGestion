@@ -2087,9 +2087,12 @@ window.catfEditarClase = async function(){
 };
 
 // ── Fotos: agregar / eliminar (rutas EXACTAS del contrato) ──
-document.getElementById('catfFotoInput').addEventListener('change', async function(e){
-  const file = e.target.files && e.target.files[0];
-  this.value = '';
+// Daniel 2026-07-27 (Jaizer): "podria hasta recibir alguna imagen que
+// este copiada en el portapapeles" -- se extrae la subida a una función
+// compartida para poder llamarla también desde Ctrl+V (pegar), no solo
+// desde el selector de archivos. Acepta cualquier tipo de imagen (el
+// backend ya no restringe por extensión — ver _img_resize_bytes).
+async function catfSubirFotoArchivo(file){
   if(!file) return;
   const fd = new FormData(); fd.append('file', file);
   ilusLoader.show('Subiendo foto…');
@@ -2100,7 +2103,29 @@ document.getElementById('catfFotoInput').addEventListener('change', async functi
     if(d.ok){ ilusToast('✓ Foto agregada', {type:'success'}); catfCargar(); cargarCatalogo(); }
     else ilusToast(d.error||'No se pudo subir la foto', {type:'error'});
   }catch(err){ ilusLoader.hide(); ilusToast('Sin conexión', {type:'error'}); }
+}
+document.getElementById('catfFotoInput').addEventListener('change', function(e){
+  const file = e.target.files && e.target.files[0];
+  this.value = '';
+  catfSubirFotoArchivo(file);
 });
+// Pegar imagen desde el portapapeles (Ctrl+V) mientras la ficha está
+// abierta — típico caso: recortar una captura de pantalla y pegarla
+// directo, sin tener que guardarla como archivo primero.
+if (catfModalEl){
+  catfModalEl.addEventListener('paste', function(e){
+    if(!catfProductoId) return;
+    const items = (e.clipboardData || window.clipboardData)?.items;
+    if(!items) return;
+    for (const item of items){
+      if(item.kind === 'file' && item.type.startsWith('image/')){
+        const file = item.getAsFile();
+        if(file) { e.preventDefault(); catfSubirFotoArchivo(file); }
+        break;
+      }
+    }
+  });
+}
 
 window.catfEliminarFoto = async function(fotoId){
   const ok = await ilusConfirm({title:'Eliminar foto', message:'¿Eliminar esta foto del producto?', danger:true, okLabel:'Eliminar'});
