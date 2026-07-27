@@ -24033,6 +24033,36 @@ def tr_manifiestos_bulk_eliminar():
     return jsonify({"ok": True, "eliminados": len(eliminados), "omitidos": omitidos})
 
 
+@app.route("/transporte/manifiestos/purga-total-unica-vez", methods=["POST"])
+@_tr_required
+def tr_manifiestos_purga_total_unica_vez():
+    """Endpoint temporal de un solo uso — Daniel 2026-07-27 autorizó explícitamente
+    borrar TODOS los manifiestos (todos son datos de prueba pre marcha-blanca
+    de agosto) porque el borrado masivo normal correctamente omite los que
+    tienen actividad de courier de prueba, y eso no sirve para este reset.
+    Hard-delete real (no soft-delete) de transport_manifests + sus
+    transport_manifest_items (cascada). NO usar para nada más — quitar este
+    endpoint apenas se use.
+    """
+    if not bool(g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un superadministrador puede hacer esto."}), 403
+    body = request.get_json(silent=True) or {}
+    if (body.get("confirm_text") or "").strip().upper() != "PURGAR TODO":
+        return jsonify({"ok": False, "error": "Escribe PURGAR TODO para confirmar."}), 400
+    try:
+        antes = mysql_fetchone("SELECT COUNT(*) AS n FROM transport_manifests")
+        n_antes = antes.get("n") if antes else 0
+        mysql_execute("DELETE FROM transport_manifests")
+        _tr_log("manifest", 0, "purga_total",
+                f"Purga total de manifiestos ({n_antes} eliminados) por {current_username()} — reset pre marcha blanca agosto 2026")
+    except Exception as e:
+        print(f"[tr_manifiestos_purga_total_unica_vez] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo purgar. Intenta de nuevo."}), 500
+    return jsonify({"ok": True, "eliminados": n_antes})
+
+    return jsonify({"ok": True, "eliminados": len(eliminados), "omitidos": omitidos})
+
+
 @app.route("/transporte/manifiestos/<int:mid>/etiquetas")
 @_tr_required
 def tr_manifiesto_etiquetas(mid):
