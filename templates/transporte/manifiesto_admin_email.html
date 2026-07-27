@@ -64,7 +64,7 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
     <table>
       <thead>
         <tr>
-          <th style="width:82px">Doc.</th><th>Cliente</th><th>Comuna</th>
+          <th style="width:82px">Doc.</th><th>Cliente</th><th>Dirección</th><th>Comuna</th>
           <th class="num">Bultos</th><th class="num">Peso</th>
           <th class="num">Costo courier</th>
         </tr>
@@ -74,6 +74,7 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
         <tr>
           <td>{{ it.tido }} {{ it.nudo }}</td>
           <td>{{ it.cliente_nombre or '—' }}</td>
+          <td>{{ it.direccion or '—' }}</td>
           <td>{{ it.comuna or '—' }}</td>
           <td class="num">{{ it.n_bultos }}</td>
           <td class="num">{{ '%.2f'|format(it.peso_declarar) }}</td>
