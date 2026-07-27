@@ -29937,6 +29937,7 @@ def _tr_manifiesto_items_export(mid):
                           WHERE l.commitment_id = c.id)) AS peso_kg,
                COALESCE(c.peso_vol, 0)          AS peso_vol_kg,
                COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               COALESCE(c.volumen_m3, 0)        AS volumen_m3,
                COALESCE(c.n_bultos, 1) AS n_bultos,
                COALESCE(c.valor_bruto, 0) AS valor_bruto,
                COALESCE(c.costo_courier, 0) AS costo_courier,
@@ -30113,20 +30114,19 @@ def _tr_manifiesto_items_admin(mid):
 
 
 def _tr_manifiesto_admin_email_bytes(mid):
-    """Genera el PDF del RESPALDO ADMINISTRATIVO/financiero del manifiesto
-    (2026-07-26, Daniel) — mismo mecanismo que _tr_manifiesto_firma_bytes
-    (render_template + _pw_pdf), pero usando manifiesto_admin_email.html
-    (con costos/margen) en vez de manifiesto_firma.html (sin plata).
+    """Genera el PDF del manifiesto profesional para el proveedor de
+    transporte (2026-07-26/27, Daniel). Reusa manifiesto_admin_email.html.
 
-    IMPORTANTE (honestidad del alcance): esta función NO está conectada a
-    ningún envío automático todavía. El correo que hoy se manda al courier
-    tras firmar (_tr_manifiesto_retiro_guardar) sigue enviando SOLO el
-    documento operativo (_tr_manifiesto_firma_bytes), sin plata, exactamente
-    igual que antes. Falta que Daniel confirme el destinatario correcto para
-    el respaldo financiero (¿un correo interno nuevo? ¿Alison? ¿un campo en
-    transport_couriers?) — no existe hoy ningún "correo del responsable" en
-    el sistema, así que no se inventa uno. Queda lista para conectar cuando
-    se confirme.
+    FIX 2026-07-27 (Daniel, cambio de alcance): este documento ahora SÍ está
+    pensado para compartirse directamente con el courier — "de cara al
+    proveedor de transporte". Por eso el template YA NO muestra Cobrado ZZ
+    ni Margen (precios internos de ILUS que el courier no debe ver) ni la
+    columna Estado (siempre "En preparación", sin valor informativo); solo
+    queda Costo courier (lo que el proveedor ya sabe que se le va a pagar).
+    Logo: se usa el logo ILUS negro sobre fondo claro (Daniel lo compartió
+    2026-07-25 para documentos formales de transporte), más apropiado para
+    un documento de cara al proveedor que la versión blanca/roja pensada
+    para fondos oscuros.
 
     Devuelve (manifiesto, items, pdf_bytes, nombre_archivo) o lanza excepción."""
     manifiesto = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
@@ -30135,7 +30135,7 @@ def _tr_manifiesto_admin_email_bytes(mid):
 
     items = _tr_manifiesto_items_admin(mid)
     if not items:
-        raise ValueError("Manifiesto sin items para generar el respaldo administrativo")
+        raise ValueError("Manifiesto sin items para generar el manifiesto")
 
     retiro = _tr_manifiesto_retiro_get(mid)
     if retiro and retiro.get("firma_canvas"):
@@ -30149,13 +30149,13 @@ def _tr_manifiesto_admin_email_bytes(mid):
         manifiesto  = manifiesto,
         retiro      = retiro,
         fecha       = _now_chile_str("%d-%m-%Y"),
-        logo_url    = _logo_data_url(),
+        logo_url    = _logo_ilus_black_data_url(),
         logo_shs_url = _logo_shs_pdf_data_url(),
     )
     data = _pw_pdf(html, page_format="Letter", margin={"top": "0mm", "right": "0mm",
                                                     "bottom": "0mm", "left": "0mm"})
     correlativo = manifiesto.get("correlativo") or mid
-    fname = f"manifiesto-admin-{correlativo}.pdf"
+    fname = f"manifiesto-{correlativo}.pdf"
     return manifiesto, items, data, fname
 
 
@@ -30219,12 +30219,12 @@ def tr_manifiesto_firma_pdf(mid):
 @app.route("/transporte/manifiestos/<int:mid>/admin/pdf")
 @_tr_required
 def tr_manifiesto_admin_pdf(mid):
-    """Descarga manual del respaldo ADMINISTRATIVO/financiero del manifiesto
-    (costos/margen por courier) — Daniel 2026-07-27: tiene bloqueado el envío
-    de correos desde Transporte, así que necesita descargar este PDF para
+    """Descarga manual del manifiesto profesional para el proveedor de
+    transporte (peso/volumen/predominante/costo courier — SIN precios
+    internos de ILUS) — Daniel 2026-07-27: tiene bloqueado el envío de
+    correos desde Transporte, así que necesita descargar este PDF para
     compartirlo manualmente con el courier en vez de que la app lo mande.
-    Reusa _tr_manifiesto_admin_email_bytes (mismo render que usaría un envío
-    por correo, que hoy NO existe conectado — ver su docstring).
+    Reusa _tr_manifiesto_admin_email_bytes (ver su docstring).
 
     Permiso: cualquier usuario con acceso al módulo Transporte (ya exigido
     por @_tr_required) — Daniel pidió explícitamente que Alison también lo

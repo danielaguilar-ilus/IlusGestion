@@ -124,8 +124,8 @@
     </button>
     <a href="{{ url_for('tr_manifiesto_admin_pdf', mid=manifiesto.id) }}"
        class="btn btn-sm btn-outline-dark fw-bold"
-       title="PDF con costos/margen por courier — para compartir manualmente (correos de Transporte bloqueados)">
-      <i class="bi bi-file-earmark-arrow-down me-1"></i>Descargar respaldo financiero
+       title="Manifiesto profesional para el proveedor de transporte (peso/volumen/costo courier, sin ZZ ni margen) — para compartir manualmente">
+      <i class="bi bi-file-earmark-arrow-down me-1"></i>Descargar manifiesto
     </a>
     {# SimpliRoute: solo para los couriers que rutean ahí (Felca / Milling) #}
     {% set _cl = (manifiesto.courier or '')|lower %}

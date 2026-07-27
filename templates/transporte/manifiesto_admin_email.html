@@ -14,8 +14,8 @@ body{margin:0;background:#e5e7eb;color:#111827;font-family:Arial,Helvetica,sans-
 .brand{display:flex;align-items:center;gap:12px;}
 .brand img{display:block;max-height:48px;width:auto;background:#fff;padding:5px 9px;}
 .title{text-align:right}.title h1{font-size:19px;margin:0;font-weight:800}.title .num{font-size:20px;color:#fecaca;font-weight:800;margin-top:3px}
-.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:13px 20px;background:#f9fafb;border-bottom:1px solid var(--line);}
-.box{border:1px solid var(--line);padding:8px 10px;background:#fff}.box span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;font-weight:700}.box b{font-size:13px}
+.meta{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;padding:13px 20px;background:#f9fafb;border-bottom:1px solid var(--line);}
+.box{border:1px solid var(--line);padding:8px 8px;background:#fff}.box span{display:block;color:var(--muted);font-size:8.5px;text-transform:uppercase;font-weight:700}.box b{font-size:12px}
 .sec{padding:14px 20px 0}.sec h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em}
 table{width:100%;border-collapse:collapse}th{background:#111827;color:#fff;text-align:left;font-size:9px;padding:6px}td{border-bottom:1px solid #eceff3;padding:6px;vertical-align:top}td.num,th.num{text-align:right}
 tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
@@ -29,9 +29,9 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
 <body>
 {% set total_bultos = items|sum(attribute='n_bultos') %}
 {% set total_peso = items|sum(attribute='peso_declarar')|float %}
-{% set total_cobrado = items|sum(attribute='zz_envio')|float %}
+{% set total_volumen = items|sum(attribute='volumen_m3')|float %}
+{% set total_predominante = items|sum(attribute='peso_predominante')|float %}
 {% set total_costo = items|sum(attribute='costo_courier')|float %}
-{% set total_margen = total_cobrado - total_costo %}
 <div class="sheet">
   <div class="head">
     <div class="brand">
@@ -39,9 +39,9 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
       {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
     </div>
     <div class="title">
-      <h1>RESPALDO ADMINISTRATIVO</h1>
+      <h1>MANIFIESTO DE DESPACHO</h1>
       <div class="num">{{ manifiesto.correlativo or manifiesto.id }}</div>
-      <div>{{ fecha }} · uso interno ILUS</div>
+      <div>{{ fecha }} · {{ manifiesto.courier or '—' }}</div>
     </div>
   </div>
   <div class="meta">
@@ -49,38 +49,35 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
     <div class="box"><span>Documentos</span><b>{{ items|length }}</b></div>
     <div class="box"><span>Bultos</span><b>{{ total_bultos }}</b></div>
     <div class="box"><span>Peso</span><b>{{ '%.2f'|format(total_peso) }} kg</b></div>
+    <div class="box"><span>Volumen</span><b>{{ '%.3f'|format(total_volumen) }} m³</b></div>
+    <div class="box"><span>Peso predominante</span><b>{{ '%.2f'|format(total_predominante) }} kg</b></div>
   </div>
 
-  {# Control financiero -- 2026-07-26 (Daniel, permiso explícito): documento
-     de USO INTERNO. Nunca enviar al chofer/courier ni al cliente. El
-     documento operativo que firma el chofer (manifiesto_firma.html) NO
-     lleva ningún monto -- este es el único que sí los lleva. #}
+  {# 2026-07-27 (Daniel, cambio de alcance): este documento ahora se comparte
+     directamente con el proveedor de transporte. Se retiraron "Cobrado ZZ"
+     y "Margen" (precios internos de ILUS que el courier no debe ver) y la
+     columna "Estado" (siempre "En preparación", sin valor informativo).
+     Solo queda "Costo courier" — lo que el proveedor ya sabe que se le
+     pagará por este manifiesto. #}
   <div class="sec">
-    <h2>Control financiero del manifiesto</h2>
+    <h2>Detalle del manifiesto</h2>
     <table>
       <thead>
         <tr>
           <th style="width:82px">Doc.</th><th>Cliente</th><th>Comuna</th>
           <th class="num">Bultos</th><th class="num">Peso</th>
-          <th class="num">Cobrado ZZ</th><th class="num">Costo courier</th>
-          <th class="num">Margen</th><th>Estado</th>
+          <th class="num">Costo courier</th>
         </tr>
       </thead>
       <tbody>
       {% for it in items %}
-        <tr class="{{ 'loss' if it.es_perdida else '' }}">
+        <tr>
           <td>{{ it.tido }} {{ it.nudo }}</td>
           <td>{{ it.cliente_nombre or '—' }}</td>
           <td>{{ it.comuna or '—' }}</td>
           <td class="num">{{ it.n_bultos }}</td>
           <td class="num">{{ '%.2f'|format(it.peso_declarar) }}</td>
-          <td class="num">${{ "{:,.0f}".format(it.zz_envio|float).replace(",", ".") }}</td>
           <td class="num">${{ "{:,.0f}".format(it.costo_courier|float).replace(",", ".") }}</td>
-          <td class="num">
-            ${{ "{:,.0f}".format(it.margen_clp|float).replace(",", ".") }}
-            {% if it.es_perdida %}<div class="tag">PÉRDIDA</div>{% elif it.sin_precio %}<div class="tag" style="color:#92400e">SIN COBRO</div>{% endif %}
-          </td>
-          <td>{{ it.estado_entrega or 'En preparación' }}</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -88,14 +85,7 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
   </div>
 
   <div class="totals">
-    <div><span>Total cobrado ZZ</span><b>${{ "{:,.0f}".format(total_cobrado).replace(",", ".") }}</b></div>
     <div><span>Total costo courier</span><b>${{ "{:,.0f}".format(total_costo).replace(",", ".") }}</b></div>
-    <div><span>Margen manifiesto</span><b>${{ "{:,.0f}".format(total_margen).replace(",", ".") }}</b></div>
-  </div>
-
-  <div class="audit">
-    Este respaldo contiene información financiera interna. No compartir con transportistas ni clientes.
-    El manifiesto operativo para el chofer se genera por separado (manifiesto de retiro) y no incluye montos.
   </div>
 
   <div class="sign">
@@ -119,7 +109,7 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
     </div>
   </div>
 
-  <div class="foot">ILUS Sport & Health · Respaldo administrativo de manifiesto · {{ manifiesto.correlativo or manifiesto.id }} · Uso interno, no distribuir.</div>
+  <div class="foot">ILUS Sport & Health · Manifiesto de despacho · {{ manifiesto.correlativo or manifiesto.id }}</div>
 </div>
 </body>
 </html>
