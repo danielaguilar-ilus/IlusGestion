@@ -154,6 +154,9 @@
 }
 .man-tabla thead th.center{ text-align:center; }
 .man-tabla thead th.right{ text-align:right; }
+.man-th-chk{ width:36px; text-align:center; }
+.man-th-chk input, .man-chk-fila{ width:18px; height:18px; cursor:pointer; }
+.man-tabla tbody tr.seleccionada{ background:#fef2f2; }
 .man-tabla tbody td{
   padding:18px 22px; font-size:14px;
   border-bottom:1px solid #f3f4f6;
@@ -218,6 +221,22 @@
 .empty-state{ padding:60px 20px; text-align:center; color:#9ca3af; }
 .empty-state i{ font-size:42px; opacity:.4; display:block; margin-bottom:8px; }
 .empty-state b{ display:block; color:#374151; font-size:15px; font-weight:800; margin-bottom:4px; }
+
+/* ── Barra flotante de selección múltiple (solo superadmin) ── */
+.man-barra-sel{
+  display:none; position:fixed; left:50%; bottom:26px; transform:translateX(-50%);
+  z-index:1200; background:var(--ilus-black); color:#fff;
+  padding:12px 18px; border-radius:14px;
+  align-items:center; gap:14px;
+  box-shadow:0 14px 34px -12px rgba(0,0,0,.45);
+  font-size:14px; font-weight:700;
+}
+.man-barra-sel .cnt{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:24px; height:24px; padding:0 6px;
+  background:var(--ilus-red); border-radius:999px; font-size:12.5px; font-weight:800;
+}
+.man-barra-sel .spacer{ width:1px; align-self:stretch; background:rgba(255,255,255,.18); }
 
 /* ── Footer tabla (paginación) ── */
 .man-tabla-foot{
@@ -391,6 +410,9 @@
     <table class="man-tabla">
       <thead>
         <tr>
+          {% if is_superadmin %}
+          <th class="man-th-chk"><input type="checkbox" id="manChkTodos" title="Seleccionar todos los visibles" onclick="manToggleSeleccionarTodo(this.checked)"></th>
+          {% endif %}
           <th>Correlativo</th>
           <th>Fecha <i class="bi bi-arrow-up" style="font-size:10px"></i></th>
           <th>Courier</th>
@@ -409,7 +431,12 @@
           'Cerrado':'cerr',
           'Entregado completo':'ok'
         }.get(m.estado, 'cerr') %}
-        <tr>
+        <tr id="man-row-{{ m.id }}">
+          {% if is_superadmin %}
+          <td data-label="" class="man-th-chk">
+            <input type="checkbox" class="man-chk-fila" data-id="{{ m.id }}" onchange="manToggleSeleccion({{ m.id }}, this.checked)">
+          </td>
+          {% endif %}
           <td data-label="Correlativo" class="cell-corr">{{ m.correlativo }}</td>
           <td data-label="Fecha" class="cell-fecha">
             {{ m.fecha | fecha_es }}
@@ -597,6 +624,10 @@
   </div>
 </div>
 
+{% if is_superadmin %}
+<div id="manBarraSeleccion" class="man-barra-sel" style="display:none;"></div>
+{% endif %}
+
 {% include 'transporte/_etiquetas_modal.html' %}
 {% endblock %}
 
@@ -693,6 +724,79 @@ async function eliminarManifiesto(mid, correlativo, confirmText) {
     await ilusAlert({ title: 'No se pudo eliminar', message: e.message || 'Error de conexión', type: 'error' });
   }
 }
+
+// Selección múltiple + borrado masivo de manifiestos (solo superadmin, marcha
+// blanca agosto 2026: Daniel necesita poder limpiar manifiestos de PRUEBA sin
+// pedirlo uno por uno). Mismo patrón visual/funcional que Catálogo (checkbox
+// por fila + "seleccionar todos" + barra flotante + ilusConfirm). Soft-delete
+// real vía el mismo endpoint que ya usa el borrado individual, en lote.
+let _manSeleccionados = new Set();
+
+window.manToggleSeleccion = function(id, checked){
+  if (checked) _manSeleccionados.add(id); else _manSeleccionados.delete(id);
+  const tr = document.getElementById('man-row-' + id);
+  if (tr) tr.classList.toggle('seleccionada', checked);
+  const todos = document.getElementById('manChkTodos');
+  if (todos) {
+    const visibles = document.querySelectorAll('.man-chk-fila').length;
+    const marcados = document.querySelectorAll('.man-chk-fila:checked').length;
+    todos.checked = visibles > 0 && marcados === visibles;
+    todos.indeterminate = marcados > 0 && marcados < visibles;
+  }
+  manRenderBarraSeleccion();
+};
+
+window.manToggleSeleccionarTodo = function(checked){
+  document.querySelectorAll('.man-chk-fila').forEach(function(chk){
+    chk.checked = checked;
+    const id = parseInt(chk.getAttribute('data-id'), 10);
+    if (checked) _manSeleccionados.add(id); else _manSeleccionados.delete(id);
+    const tr = document.getElementById('man-row-' + id);
+    if (tr) tr.classList.toggle('seleccionada', checked);
+  });
+  manRenderBarraSeleccion();
+};
+
+function manRenderBarraSeleccion(){
+  const bar = document.getElementById('manBarraSeleccion');
+  if (!bar) return;
+  const n = _manSeleccionados.size;
+  if (!n) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = '<i class="bi bi-check-square-fill"></i>'
+    + '<span class="cnt">' + n + '</span> manifiesto' + (n === 1 ? '' : 's') + ' seleccionado' + (n === 1 ? '' : 's')
+    + '<span class="spacer"></span>'
+    + '<button type="button" class="btn btn-sm btn-outline-light" onclick="manToggleSeleccionarTodo(false); document.querySelectorAll(\'.man-chk-fila\').forEach(c=>c.checked=false); const t=document.getElementById(\'manChkTodos\'); if(t){t.checked=false;t.indeterminate=false;}">Quitar selección</button>'
+    + '<button type="button" class="btn btn-sm btn-danger" onclick="manBorrarSeleccionados()"><i class="bi bi-trash me-1"></i>Eliminar seleccionados</button>';
+}
+
+window.manBorrarSeleccionados = async function(){
+  const ids = Array.from(_manSeleccionados);
+  if (!ids.length) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar ' + ids.length + ' manifiesto' + (ids.length === 1 ? '' : 's'),
+    message: '¿Eliminar ' + ids.length + ' manifiesto' + (ids.length === 1 ? '' : 's') + ' del listado?',
+    sub: 'Se archivan (soft-delete), no se borran para siempre — los despachos que agrupan y su historial de seguimiento no se pierden, solo dejan de mostrarse esta agrupación. Si alguno ya tiene actividad real con un courier, ese en particular no se tocará y se avisará por separado.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch('/transporte/manifiestos/bulk-eliminar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids }),
+    });
+    const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo eliminar', { type: 'error' }); return; }
+    let msg = '✓ ' + d.eliminados + ' manifiesto' + (d.eliminados === 1 ? '' : 's') + ' eliminado' + (d.eliminados === 1 ? '' : 's');
+    if (d.omitidos) msg += ' (' + d.omitidos + ' con actividad real, no se tocaron)';
+    ilusToast(msg, { type: d.eliminados ? 'success' : 'warning' });
+    _manSeleccionados.clear();
+    setTimeout(function(){ location.reload(); }, 700);
+  } catch (e) {
+    ilusToast('Sin conexión', { type: 'error' });
+  }
+};
 
 function crearManifiesto() {
   var courier = document.getElementById('newCourier').value.trim();

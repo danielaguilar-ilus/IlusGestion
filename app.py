@@ -23960,6 +23960,79 @@ def tr_manifiesto_eliminar(mid):
         return jsonify({"ok": False, "error": "No se pudo eliminar el manifiesto. Intenta de nuevo."}), 500
 
 
+@app.route("/transporte/manifiestos/bulk-eliminar", methods=["POST"])
+@_tr_required
+def tr_manifiestos_bulk_eliminar():
+    """Borrado masivo (soft-delete) de manifiestos — Daniel 2026-07-27: antes
+    de la marcha blanca de agosto, quiere poder limpiar él mismo los
+    manifiestos de PRUEBA (varios a la vez, con checkbox) sin pedírmelo uno
+    por uno. Mismo patrón que el borrado individual (`tr_manifiesto_eliminar`):
+    solo superadmin, soft-delete real (`eliminado=1`), nunca DROP de la fila,
+    y respeta la misma guarda de trazabilidad — si un manifiesto ya tiene
+    actividad real con un courier o prueba de entrega firmada, se omite del
+    lote en vez de exigir escribir el correlativo (impráctico en un borrado
+    masivo); el resultado indica cuántos se omitieron para que Daniel los
+    revise uno por uno si de verdad quiere borrarlos.
+    """
+    if not bool(g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar manifiestos."}), 403
+
+    body = request.get_json(silent=True) or {}
+    ids_in = body.get("ids") or []
+    if not isinstance(ids_in, list) or not ids_in:
+        return jsonify({"ok": False, "error": "No se enviaron manifiestos para eliminar"}), 400
+    try:
+        ids = list({int(x) for x in ids_in})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "IDs inválidos"}), 400
+    if len(ids) > 500:
+        return jsonify({"ok": False, "error": "Máximo 500 manifiestos por operación"}), 400
+
+    placeholders = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT id, correlativo FROM transport_manifests "
+        f"WHERE id IN ({placeholders}) AND (eliminado IS NULL OR eliminado=0)",
+        tuple(ids))
+    if not rows:
+        return jsonify({"ok": False, "error": "Ninguno de esos manifiestos existe o ya estaba eliminado"}), 404
+
+    eliminados = []
+    omitidos = 0
+    for r in rows:
+        rid = r["id"]
+        activo = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM transport_manifest_items "
+            "WHERE manifest_id=%s AND (tracking_number IS NOT NULL "
+            "OR simpliroute_visit_id IS NOT NULL)", (rid,))
+        tiene_courier = bool(activo and activo.get("n"))
+        tiene_pod = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM transport_delivery_proof dp "
+            "JOIN transport_manifest_items mi ON mi.commitment_id = dp.commitment_id "
+            "WHERE mi.manifest_id=%s", (rid,))
+        tiene_pod = bool(tiene_pod and tiene_pod.get("n"))
+        if tiene_courier or tiene_pod:
+            omitidos += 1
+            continue
+        eliminados.append(r)
+
+    if eliminados:
+        ids_reales = [r["id"] for r in eliminados]
+        ph2 = ",".join(["%s"] * len(ids_reales))
+        try:
+            mysql_execute(
+                f"UPDATE transport_manifests SET eliminado=1, eliminado_at=NOW(), "
+                f"eliminado_by=%s WHERE id IN ({ph2})",
+                tuple([current_username()] + ids_reales))
+        except Exception as e:
+            print(f"[tr_manifiestos_bulk_eliminar] {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo eliminar. Intenta de nuevo."}), 500
+        for r in eliminados:
+            _tr_log("manifest", r["id"], "eliminado",
+                    f"Manifiesto {r.get('correlativo') or r['id']} eliminado (masivo) por {current_username()}")
+
+    return jsonify({"ok": True, "eliminados": len(eliminados), "omitidos": omitidos})
+
+
 @app.route("/transporte/manifiestos/<int:mid>/etiquetas")
 @_tr_required
 def tr_manifiesto_etiquetas(mid):
