@@ -19989,41 +19989,6 @@ def _safe_float(v):
         return 0.0
 
 
-@app.route("/transporte/api/backfill-estado-unico", methods=["POST"])
-@login_required
-def tr_backfill_estado_unico():
-    """Endpoint temporal de un solo uso — Daniel 2026-07-27: el fix de
-    propagación de estado (_tr_event → transport_commitments.estado) solo
-    corrige transiciones NUEVAS a partir del deploy; los documentos que YA
-    estaban en un manifiesto con un estado_entrega avanzado (ej.
-    "Entregado a transporte") seguían mostrando "Pendiente" en el Monitor
-    porque nunca disparó un evento nuevo. Este backfill los pone al día una
-    sola vez: por cada commitment con item de manifiesto, toma el
-    estado_entrega del item MÁS RECIENTE y lo copia a transport_commitments
-    .estado (mismo guard updated_by='sistema:backfill' que usa _tr_event,
-    para que el sync de saldo ERP no lo pise). Quitar apenas se use."""
-    if not bool(g.permissions.get("superadmin")):
-        return jsonify({"ok": False, "error": "Solo un superadministrador puede hacer esto."}), 403
-    try:
-        n = mysql_execute_returning_rowcount("""
-            UPDATE transport_commitments c
-            JOIN (
-                SELECT mi.commitment_id, mi.estado_entrega
-                  FROM transport_manifest_items mi
-                  JOIN (SELECT commitment_id, MAX(id) AS max_id
-                          FROM transport_manifest_items
-                         GROUP BY commitment_id) latest
-                    ON latest.max_id = mi.id
-            ) x ON x.commitment_id = c.id
-            SET c.estado = x.estado_entrega, c.updated_by = 'sistema:backfill'
-            WHERE x.estado_entrega IS NOT NULL AND c.estado <> x.estado_entrega
-        """)
-    except Exception as e:
-        print(f"[tr_backfill_estado_unico] {e}", flush=True)
-        return jsonify({"ok": False, "error": str(e)}), 500
-    return jsonify({"ok": True, "actualizados": n})
-
-
 # ── RUTAS TRANSPORTE ─────────────────────────────────────────────
 
 def _tr_required(fn):
