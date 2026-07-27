@@ -423,8 +423,15 @@ def _jinja_hm(value):
 #  Thread-safe: un Lock protege el acceso concurrente.
 # ══════════════════════════════════════════════════════════════
 _pw_lock     = threading.Lock()
-_pw_ctx      = None   # sync_playwright() context manager
-_pw_browser  = None   # Browser instance reutilizado
+# 2026-07-26 (OT-2026-00039 — bug real en produccion: "Cannot switch to a
+# different thread"): Playwright sync API ata la conexion al driver al
+# thread del OS que hizo sync_playwright().__enter__() -- NO es
+# reutilizable desde otro thread. gunicorn sirve requests con varios
+# threads por worker, asi que un _pw_browser GLOBAL (compartido entre
+# threads) fallaba cada vez que un thread DISTINTO al que lo lanzo
+# intentaba usarlo. Fix: threading.local() -- cada thread lanza y
+# reutiliza su PROPIO browser, nunca cruza threads.
+_pw_local    = threading.local()
 _pw_install_attempted = False  # Solo intentamos auto-install una vez por proceso
 _pw_unavailable = False  # FAST-FAIL: si Chromium falla una vez, no reintentar en este proceso
                          # (evita colgar requests hasta 240s + serializar todos los PDF
@@ -497,7 +504,7 @@ def _pw_browser_get():
     Si Chromium no está instalado (build de Railway falló), intenta
     auto-instalarlo en runtime UNA SOLA VEZ por proceso.
     """
-    global _pw_ctx, _pw_browser, _pw_unavailable
+    global _pw_unavailable
     # FAST-FAIL: si en este proceso ya confirmamos que Chromium no está disponible,
     # fallar al instante — NO esperar el lock global ni el subprocess de install.
     # (Antes, el primer PDF tras cada deploy colgaba hasta 60s y serializaba TODOS los
@@ -505,30 +512,31 @@ def _pw_browser_get():
     if _pw_unavailable:
         raise PDFEngineUnavailable("Chromium no disponible en este proceso (fast-fail).")
     with _pw_lock:
-        # Verificar si el browser sigue vivo
-        if _pw_browser is not None:
+        # Verificar si el browser de ESTE thread sigue vivo (threading.local
+        # -- nunca leemos/lanzamos el de otro thread).
+        browser = getattr(_pw_local, "browser", None)
+        if browser is not None:
             try:
-                _ = _pw_browser.contexts  # ping liviano
-                return _pw_browser
+                _ = browser.contexts  # ping liviano
+                return browser
             except Exception:
                 # Murió — limpiar
                 try:
-                    _pw_ctx.__exit__(None, None, None)
+                    _pw_local.ctx.__exit__(None, None, None)
                 except Exception:
                     pass
-                _pw_ctx = _pw_browser = None
+                _pw_local.ctx = _pw_local.browser = None
 
-        # Lanzar nuevo browser — con auto-install fallback
+        # Lanzar nuevo browser (para ESTE thread) — con auto-install fallback
         from playwright.sync_api import sync_playwright
         def _try_launch():
-            global _pw_ctx, _pw_browser
-            _pw_ctx     = sync_playwright()
-            pw          = _pw_ctx.__enter__()
-            _pw_browser = pw.chromium.launch(
+            _pw_local.ctx     = sync_playwright()
+            pw                = _pw_local.ctx.__enter__()
+            _pw_local.browser = pw.chromium.launch(
                 args=["--no-sandbox", "--disable-dev-shm-usage",
                       "--disable-gpu", "--disable-extensions"]
             )
-            return _pw_browser
+            return _pw_local.browser
 
         try:
             return _try_launch()
@@ -538,12 +546,13 @@ def _pw_browser_get():
             if "Executable doesn't exist" in err_str or "playwright install" in err_str:
                 # Limpiar ctx parcial
                 try:
-                    if _pw_ctx is not None:
-                        _pw_ctx.__exit__(None, None, None)
+                    if getattr(_pw_local, "ctx", None) is not None:
+                        _pw_local.ctx.__exit__(None, None, None)
                 except Exception:
                     pass
-                _pw_ctx = _pw_browser = None
-                # Auto-install
+                _pw_local.ctx = _pw_local.browser = None
+                # Auto-install (subprocess a disco, comun a todos los threads
+                # -- el lock de arriba ya serializa esto entre threads)
                 if _pw_install_chromium_runtime():
                     # Reintentar launch
                     try:
@@ -580,11 +589,13 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
       página impresa (mecanismo nativo, independiente del flujo del
       documento -- ver tk_cotizacion_pdf). Si ninguno se pasa, el
       comportamiento es IDÉNTICO al de antes (callers existentes intactos).
-    - action_timeout → timeout (ms) de page.set_content()/page.pdf(). 2026-07-26
-      (OT-2026-00039, 54 fotos): estos NO usaban wait_timeout, corrían con
-      el default de Playwright (30000ms) — con documentos grandes (muchas
-      imagenes base64 embebidas) se podia exceder y lanzar un TimeoutError
-      que el caller atrapa como "err generico" y cae al fallback HTML
+    - action_timeout → timeout (ms) de page.set_content() (page.pdf() de esta
+      version de Playwright NO acepta kwarg timeout -- confirmado en logs de
+      produccion, no se le pasa). 2026-07-26 (OT-2026-00039, 54 fotos):
+      set_content no usaba wait_timeout, corria con el default de Playwright
+      (30000ms) — con documentos grandes (muchas imagenes base64 embebidas)
+      se podia exceder y lanzar un TimeoutError que el caller atrapa como
+      "err generico" y cae al fallback HTML
       (silencioso). Default subido a 45s. wait_timeout (5s) sigue intacto,
       ese ya se atrapaba internamente sin bloquear.
 
@@ -619,7 +630,11 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
                 page.wait_for_function(wait_fn, timeout=wait_timeout)
             except Exception:
                 pass   # timeout: seguimos con lo que hay
-        pdf_kw = dict(print_background=True, timeout=action_timeout)
+        # 2026-07-26: page.pdf() de esta version de Playwright NO acepta
+        # kwarg timeout (confirmado en logs de produccion: "Page.pdf() got
+        # an unexpected keyword argument 'timeout'") -- a diferencia de
+        # set_content(), que si lo soporta (ver arriba). Solo print_background.
+        pdf_kw = dict(print_background=True)
         mrg = margin or {"top": "0mm", "right": "0mm",
                          "bottom": "0mm", "left": "0mm"}
         if width and height:
