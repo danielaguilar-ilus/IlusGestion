@@ -19228,8 +19228,13 @@ def _tr_fetch_from_erp(tido, nudo):
     raw_lineas = doc.get("lineas_raw") or []
     zz_lines = [l for l in raw_lineas
                 if (l.get("KOPRCT") or "").strip().upper() in {s.upper() for s in ZZ_SKUS}]
-    if not zz_lines:
-        return None, "Documento sin líneas ZZ"
+    # Daniel 2026-07-27: NO bloquear el flujo cuando el documento no trae
+    # línea ZZ (ZZENVIO/ZZRETIRO/etc) — pasa con documentos cubiertos por
+    # garantía o servicios donde el flete no se factura aparte. Antes esto
+    # cortaba en seco "Enviar al manifiesto" sin dejar avanzar. Ahora se deja
+    # avanzar igual (costo/clasificación en 0) y se anota en `notas` para que
+    # el equipo revise después si corresponde marcarlo como garantía.
+    sin_zz_lines = not zz_lines
 
     saldo_total = sum(
         float(l.get("CAPRCO1") or 0) - float(l.get("CAPRAD1") or 0)
@@ -19343,6 +19348,21 @@ def _tr_fetch_from_erp(tido, nudo):
                 )
             except Exception:
                 pass  # columna garantizada por _ensure_transporte_columns; no fatal
+
+            # Daniel 2026-07-27: si el documento no trae línea ZZ, dejar una
+            # nota visible en vez de bloquear — puede ser garantía o un
+            # servicio donde el flete no se cobra aparte; se revisa después.
+            if sin_zz_lines:
+                try:
+                    cur.execute(
+                        "UPDATE transport_commitments SET notas = TRIM(CONCAT(COALESCE(notas,''), "
+                        "CASE WHEN COALESCE(notas,'')='' THEN '' ELSE '\n' END, "
+                        "'[AUTO] Documento sin línea ZZ (ZZENVIO/ZZRETIRO/etc) — verificar si es "
+                        "parte de una garantía o de un servicio con flete incluido.')) WHERE id=%s",
+                        (comm_id,)
+                    )
+                except Exception:
+                    pass  # no fatal — la nota es informativa
 
             # Líneas ZZ
             cur.execute("DELETE FROM transport_commitment_lines WHERE commitment_id=%s", (comm_id,))
