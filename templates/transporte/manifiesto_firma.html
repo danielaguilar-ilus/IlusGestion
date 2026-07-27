@@ -132,6 +132,8 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
 .firma-box { border: 1px solid #d1d5db; border-radius: 6px; padding: 14px 18px 18px; max-width: 420px; margin-left: auto; }
 .firma-box .cap { font-size: 11px; font-weight: 700; text-align: center; margin-bottom: 38px; }
 .firma-box .sub { font-size: 9.5px; color: var(--ilus-gray); text-align: center; margin-top: -34px; margin-bottom: 34px; }
+.firma-img { min-height: 38px; display:flex; align-items:center; justify-content:center; margin-bottom: 6px; }
+.firma-img img { max-width: 210px; max-height: 54px; display:block; }
 .firma-linea { border-top: 1px solid #9ca3af; margin-bottom: 6px; }
 .firma-campo { font-size: 9.5px; color: var(--ilus-gray); margin-top: 4px; }
 .firma-campo b { color: #111827; }
@@ -163,7 +165,6 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
 
 {% set _total_bultos = items|sum(attribute='n_bultos') %}
 {% set _total_peso   = items|sum(attribute='peso_declarar')|float %}
-{% set _total_flete  = items|sum(attribute='costo_courier')|float %}
 
 <div class="hoja">
   <div class="hdr">
@@ -190,10 +191,7 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
     <span><b>Peso total a declarar:</b> {{ '%.2f'|format(_total_peso) }} kg</span>
   </div>
 
-  {# ── SECCIÓN 1: facturas del manifiesto + lo que se le cobra al courier.
-     Nunca costo_zz/costo_envio (lo cobrado al cliente) -- el transportista
-     solo debe ver lo que ÉL le cobra a ILUS por el flete (costo_courier),
-     jamás el margen/precio que ILUS le cobra a su propio cliente. #}
+  {# Documento operativo para chofer: no expone montos, costos ni margen. #}
   <div class="sec-hdr">
     <span>FACTURAS DEL MANIFIESTO</span>
     <span>{{ items|length }} documento{{ 's' if items|length != 1 else '' }}</span>
@@ -206,7 +204,6 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
         <th>Comuna</th>
         <th class="num" style="width:70px">Bultos</th>
         <th class="num" style="width:90px">Peso (kg)</th>
-        <th class="num" style="width:110px">Costo courier</th>
         <th style="width:110px">Estado</th>
       </tr>
     </thead>
@@ -219,11 +216,6 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
         <td>{{ it.comuna or '—' }}</td>
         <td class="num">{{ it.n_bultos }}</td>
         <td class="num">{{ '%.2f'|format(it.peso_declarar) }}</td>
-        <td class="num">
-          {% if it.costo_courier and it.costo_courier|float > 0 %}
-            ${{ "{:,.0f}".format(it.costo_courier|float).replace(",", ".") }}
-          {% else %}—{% endif %}
-        </td>
         {# FIX 2026-07-27 (Daniel: "el manifiesto tiene que indicarme el
            estado de cada pedido"): reusa transport_manifest_items.
            estado_entrega tal cual -- mismo texto que ya usa el Monitor/
@@ -237,7 +229,6 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
         <td colspan="3">TOTAL MANIFIESTO</td>
         <td class="num">{{ _total_bultos }}</td>
         <td class="num">{{ '%.2f'|format(_total_peso) }}</td>
-        <td class="num">${{ "{:,.0f}".format(_total_flete).replace(",", ".") }}</td>
         <td></td>
       </tr>
     </tfoot>
@@ -295,10 +286,16 @@ table.detalle tfoot td { font-weight: 800; border-top: 2px solid var(--ilus-blac
     <div class="firma-box">
       <div class="cap">Firma de retiro conforme</div>
       <div class="sub">{{ manifiesto.courier or 'Transportista' }}</div>
+      {% if retiro and retiro.firma_url %}
+      <div class="firma-img"><img src="{{ retiro.firma_url }}" alt="Firma transportista"></div>
+      {% endif %}
       <div class="firma-linea"></div>
-      <div class="firma-campo">Nombre: {{ retiro.chofer_nombre if retiro else '______________________________' }}</div>
+      <div class="firma-campo">Nombre: {{ (retiro.chofer_nombre ~ ' ' ~ (retiro.chofer_apellido or '')) if retiro else '______________________________' }}</div>
       <div class="firma-campo">R.U.T.: {{ retiro.chofer_rut if retiro else '________________' }}  Fecha / Hora: {{ (retiro.created_at | chile_fmt) if retiro else '____________' }}</div>
-      {% if retiro %}<div class="firma-campo">Firmado digitalmente por: {{ retiro.firma_nombre }}</div>{% endif %}
+      {% if retiro %}
+      <div class="firma-campo">Firmado digitalmente por: {{ retiro.firma_nombre }}</div>
+      {% if retiro.chofer_email %}<div class="firma-campo">Correo copia: {{ retiro.chofer_email }}</div>{% endif %}
+      {% endif %}
     </div>
   </div>
 

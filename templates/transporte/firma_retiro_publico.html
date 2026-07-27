@@ -25,7 +25,7 @@ body{
   line-height:1.5; padding-bottom:env(safe-area-inset-bottom);
   -webkit-tap-highlight-color:transparent;
 }
-.shell{ max-width:520px; margin:0 auto; min-height:100dvh; background:#fff; }
+.shell{ max-width:560px; margin:0 auto; min-height:100dvh; background:#fff; }
 .hero{
   background:linear-gradient(160deg,#0a0a0a,#181818);
   color:#fff; padding:28px 20px 24px;
@@ -42,7 +42,40 @@ body{
 }
 .summary .chip b{ display:block; font-size:1.15rem; font-family:var(--display); }
 .body{ padding:20px; }
-.card{ border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; }
+.card{ border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:14px; }
+.secure-strip{
+  display:flex; gap:10px; align-items:flex-start; background:#f9fafb;
+  border:1px solid #d1d5db; border-radius:8px; padding:10px 12px;
+  margin-bottom:14px; color:#374151; font-size:.82rem;
+}
+.secure-strip i{ color:var(--green); font-size:1.05rem; margin-top:1px; }
+.section-title{
+  font-family:var(--display); font-size:1.05rem; font-weight:900;
+  letter-spacing:.03em; text-transform:uppercase; margin-bottom:10px;
+}
+.doc-list{ display:flex; flex-direction:column; gap:10px; }
+.doc{
+  border:1px solid var(--line); border-left:5px solid var(--red);
+  border-radius:8px; padding:12px; background:#fff;
+}
+.doc-top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.doc-code{ font-family:var(--display); font-size:1.1rem; font-weight:900; }
+.doc-badge{ background:#0a0a0a; color:#fff; border-radius:999px; padding:4px 8px; font-size:.72rem; font-weight:800; white-space:nowrap; }
+.doc-name{ font-weight:900; font-size:1rem; margin-top:7px; }
+.doc-line{ display:flex; gap:7px; margin-top:5px; color:#374151; font-size:.84rem; }
+.doc-line i{ color:var(--red); min-width:16px; margin-top:2px; }
+.doc-products{ margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); color:#4b5563; font-size:.78rem; }
+.doc-products b{ color:#111827; }
+.step-title{
+  display:flex; align-items:center; gap:8px; font-weight:900;
+  font-family:var(--display); text-transform:uppercase; letter-spacing:.03em;
+  margin-bottom:12px; font-size:1.08rem;
+}
+.step-title span{
+  width:24px; height:24px; display:inline-flex; align-items:center;
+  justify-content:center; border-radius:999px; background:var(--red);
+  color:#fff; font-family:var(--body); font-size:.82rem;
+}
 label{ font-size:12px; font-weight:700; display:block; margin-bottom:4px; color:#374151; }
 select, input{
   width:100%; font-size:16px; min-height:44px; border:1px solid #d1d5db;
@@ -52,7 +85,7 @@ input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red)
 .firma-input{ border-color:var(--red) !important; }
 .btn-confirm{
   width:100%; min-height:48px; background:var(--red); color:#fff; border:none;
-  border-radius:10px; font-weight:800; font-size:1rem; letter-spacing:.02em;
+  border-radius:8px; font-weight:800; font-size:1rem; letter-spacing:.02em;
   cursor:pointer;
 }
 .btn-confirm:active{ transform:scale(.98); }
@@ -84,8 +117,35 @@ input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red)
       <p>Este manifiesto ya fue firmado por <strong>{{ retiro.chofer_nombre }}</strong>.</p>
     </div>
     {% else %}
+    <div class="card">
+      <div class="section-title">Detalle a retirar</div>
+      <div class="doc-list">
+        {% for it in items %}
+        <div class="doc">
+          <div class="doc-top">
+            <div class="doc-code">{{ it.tido }} {{ it.nudo }}</div>
+            <div class="doc-badge">{{ it.n_bultos }} bulto{{ 's' if it.n_bultos != 1 else '' }} · {{ '%.2f'|format(it.peso_declarar) }} kg</div>
+          </div>
+          <div class="doc-name">{{ it.cliente_nombre or 'Destinatario sin nombre' }}</div>
+          <div class="doc-line"><i class="bi bi-geo-alt-fill"></i><span>{{ it.direccion or 'Dirección pendiente' }}</span></div>
+          <div class="doc-line"><i class="bi bi-map-fill"></i><span>{{ it.comuna or 'Comuna pendiente' }}{% if it.region %}, {{ it.region }}{% endif %}</span></div>
+          {% if it.telefono %}<div class="doc-line"><i class="bi bi-telephone-fill"></i><span>{{ it.telefono }}</span></div>{% endif %}
+          {% if it.lineas %}
+          <div class="doc-products">
+            <b>Productos:</b>
+            {% for ln in it.lineas[:3] %}
+              {{ ln.descripcion or ln.sku }}{% if ln.cantidad %} x{{ ln.cantidad }}{% endif %}{% if not loop.last %}; {% endif %}
+            {% endfor %}
+            {% if it.lineas|length > 3 %}; +{{ it.lineas|length - 3 }} más{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
     <form id="mrpForm" onsubmit="return mrpGuardar(event)">
       <div class="card">
+        <div class="step-title"><span>2</span>Identidad del chofer</div>
         {% if choferes %}
         <label>¿Eres uno de estos choferes?</label>
         <select id="mrpChoferGuardado" onchange="mrpAplicarChofer(this.value)">
@@ -96,20 +156,50 @@ input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red)
         </select>
         {% endif %}
 
-        <label>Nombre completo *</label>
-        <input type="text" id="mrpNombre" placeholder="Ej: Juan Pérez Soto" required>
+        <label>Nombre *</label>
+        <input type="text" id="mrpNombre" placeholder="Ej: Juan" required>
+
+        <label>Apellido *</label>
+        <input type="text" id="mrpApellido" placeholder="Ej: Pérez Soto" required>
 
         <label>RUT *</label>
         <input type="text" id="mrpRut" placeholder="Ej: 12.345.678-9" required>
 
-        <label>Teléfono (opcional)</label>
-        <input type="text" id="mrpTelefono" placeholder="Ej: +56 9 1234 5678">
+        <label>Teléfono *</label>
+        <input type="tel" id="mrpTelefono" placeholder="Ej: +56 9 1234 5678" required>
+
+        <label>Correo para copia *</label>
+        <input type="email" id="mrpEmail" placeholder="chofer@correo.cl" required>
+
+        <label>Fecha de nacimiento *</label>
+        <input type="date" id="mrpFechaNac" required>
+
+        <label>Género *</label>
+        <select id="mrpGenero" required>
+          <option value="">Seleccionar</option>
+          <option value="masculino">Masculino</option>
+          <option value="femenino">Femenino</option>
+          <option value="otro">Otro</option>
+          <option value="prefiero_no_decir">Prefiero no decir</option>
+        </select>
 
         <label>Patente del vehículo *</label>
         <input type="text" id="mrpPatente" placeholder="Ej: ABCD12" required>
 
         <label>Firma digital — escribe tu nombre completo para confirmar *</label>
         <input type="text" class="firma-input" id="mrpFirma" placeholder="Ej: Juan Pérez Soto" required>
+
+        <div class="secure-strip">
+          <i class="bi bi-shield-lock-fill"></i>
+          <div>Tu firma queda protegida con huella de auditoría, fecha, IP y dispositivo. Solo confirma si revisaste el detalle físico del retiro.</div>
+        </div>
+
+        <label>Firma real *</label>
+        <canvas id="mrpFirmaCanvas" width="760" height="230"
+                style="width:100%;height:210px;background:#fff;border:2px dashed #111827;border-radius:8px;touch-action:none;display:block;margin-bottom:10px"></canvas>
+        <button type="button" onclick="mrpLimpiarFirma()" style="width:100%;min-height:42px;border:1px solid #d1d5db;background:#fff;border-radius:8px;font-weight:800;margin-bottom:14px">
+          <i class="bi bi-eraser me-1"></i>Limpiar firma
+        </button>
 
         <button type="submit" class="btn-confirm" id="mrpSubmitBtn">
           <i class="bi bi-check2-circle me-1"></i>Confirmar retiro
@@ -127,14 +217,63 @@ input:focus, select:focus{ outline:2px solid var(--red); border-color:var(--red)
 <script>
 var TOKEN = {{ token | tojson }};
 var CHOFERES = {{ choferes | tojson }};
+var _mrpFirmaTieneTrazo = false;
+
+function mrpInitFirma() {
+  var cv = document.getElementById('mrpFirmaCanvas');
+  if (!cv || cv.dataset.bound === '1') return;
+  cv.dataset.bound = '1';
+  var ctx = cv.getContext('2d');
+  var rect = cv.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.round(rect.width * dpr));
+  cv.height = Math.max(1, Math.round(rect.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.strokeStyle = '#0a0a0a';
+  ctx.lineWidth = 2.8;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  var drawing = false;
+  function point(ev) {
+    var r = cv.getBoundingClientRect();
+    var t = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+  function start(ev) { ev.preventDefault(); drawing = true; var p = point(ev); ctx.beginPath(); ctx.moveTo(p.x, p.y); }
+  function move(ev) { if (!drawing) return; ev.preventDefault(); var p = point(ev); ctx.lineTo(p.x, p.y); ctx.stroke(); _mrpFirmaTieneTrazo = true; }
+  function end() { drawing = false; }
+  cv.addEventListener('mousedown', start);
+  cv.addEventListener('mousemove', move);
+  cv.addEventListener('mouseup', end);
+  cv.addEventListener('mouseleave', end);
+  cv.addEventListener('touchstart', start, { passive:false });
+  cv.addEventListener('touchmove', move, { passive:false });
+  cv.addEventListener('touchend', end);
+}
+
+function mrpLimpiarFirma() {
+  var cv = document.getElementById('mrpFirmaCanvas');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var rect = cv.getBoundingClientRect();
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  _mrpFirmaTieneTrazo = false;
+}
 
 function mrpAplicarChofer(id) {
   if (!id) return;
   var c = CHOFERES.find(function(x){ return String(x.id) === String(id); });
   if (!c) return;
   document.getElementById('mrpNombre').value = c.nombre || '';
+  document.getElementById('mrpApellido').value = c.apellido || '';
   document.getElementById('mrpRut').value = c.rut || '';
   document.getElementById('mrpTelefono').value = c.telefono || '';
+  document.getElementById('mrpEmail').value = c.email || '';
+  document.getElementById('mrpFechaNac').value = (c.fecha_nacimiento || '').slice(0, 10);
+  document.getElementById('mrpGenero').value = c.genero || '';
   document.getElementById('mrpPatente').value = c.patente || '';
 }
 
@@ -143,15 +282,27 @@ async function mrpGuardar(ev) {
   var btn = document.getElementById('mrpSubmitBtn');
   var payload = {
     chofer_nombre:   document.getElementById('mrpNombre').value.trim(),
+    chofer_apellido: document.getElementById('mrpApellido').value.trim(),
     chofer_rut:      document.getElementById('mrpRut').value.trim(),
     chofer_telefono: document.getElementById('mrpTelefono').value.trim(),
+    chofer_email:    document.getElementById('mrpEmail').value.trim(),
+    chofer_fecha_nac: document.getElementById('mrpFechaNac').value,
+    chofer_genero:   document.getElementById('mrpGenero').value,
     patente:         document.getElementById('mrpPatente').value.trim(),
     firma_nombre:    document.getElementById('mrpFirma').value.trim(),
   };
-  if (!payload.chofer_nombre || !payload.chofer_rut || !payload.patente || !payload.firma_nombre) {
+  if (!payload.chofer_nombre || !payload.chofer_apellido || !payload.chofer_rut ||
+      !payload.chofer_telefono || !payload.chofer_email || !payload.chofer_fecha_nac ||
+      !payload.chofer_genero || !payload.patente || !payload.firma_nombre) {
     ilusToast('Completa los campos obligatorios (*)', { type: 'warning' });
     return false;
   }
+  var cv = document.getElementById('mrpFirmaCanvas');
+  if (!cv || !_mrpFirmaTieneTrazo) {
+    ilusToast('Falta dibujar tu firma', { type: 'warning' });
+    return false;
+  }
+  payload.firma_canvas = cv.toDataURL('image/png');
   // Si el chofer no estaba en la lista guardada, ofrecer guardarlo para la
   // próxima vez (no automático).
   var yaEnRoster = (CHOFERES || []).some(function(c){
@@ -193,6 +344,7 @@ async function mrpGuardar(ev) {
   }
   return false;
 }
+document.addEventListener('DOMContentLoaded', mrpInitFirma);
 </script>
 </body>
 </html>

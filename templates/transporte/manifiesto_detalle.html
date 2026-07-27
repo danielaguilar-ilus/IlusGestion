@@ -1930,7 +1930,7 @@
     <div class="modal-content" style="border-radius:14px;overflow:hidden">
       <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:14px 20px">
         <h5 class="modal-title">
-          <i class="bi bi-file-earmark-check me-2"></i>Manifiesto de firma
+          <i class="bi bi-file-earmark-check me-2"></i>Manifiesto operativo
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
@@ -1969,6 +1969,7 @@
                 <div>Patente: <strong id="mrRoPatente"></strong>
                   <span id="mrRoTelWrap" style="display:none"> · Tel. <span id="mrRoTel"></span></span>
                 </div>
+                <div id="mrRoEmailWrap" style="display:none">Correo copia: <span id="mrRoEmail"></span></div>
                 <div>Firma digital: "<span id="mrRoFirma"></span>"</div>
               </div>
               <button type="button" class="btn btn-sm btn-outline-dark fw-bold" style="min-height:44px" onclick="mrToggleForm(true)">
@@ -1988,17 +1989,39 @@
                 </select>
                 <div id="mrCapacidadAviso" class="mt-2"></div>
               </div>
-              <div class="col-md-4">
+              <div class="col-md-3">
                 <label class="form-label" style="font-size:12px;font-weight:700">Nombre del chofer *</label>
                 <input type="text" class="form-control" id="mrChoferNombre" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" style="font-size:12px;font-weight:700">Apellido *</label>
+                <input type="text" class="form-control" id="mrChoferApellido" style="font-size:16px;min-height:44px" required>
               </div>
               <div class="col-md-3">
                 <label class="form-label" style="font-size:12px;font-weight:700">RUT chofer *</label>
                 <input type="text" class="form-control" id="mrChoferRut" style="font-size:16px;min-height:44px" required>
               </div>
               <div class="col-md-3">
-                <label class="form-label" style="font-size:12px;font-weight:700">Teléfono (opcional)</label>
-                <input type="text" class="form-control" id="mrChoferTelefono" style="font-size:16px;min-height:44px">
+                <label class="form-label" style="font-size:12px;font-weight:700">Teléfono *</label>
+                <input type="tel" class="form-control" id="mrChoferTelefono" placeholder="+56 9 1234 5678" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" style="font-size:12px;font-weight:700">Correo copia *</label>
+                <input type="email" class="form-control" id="mrChoferEmail" placeholder="chofer@correo.cl" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" style="font-size:12px;font-weight:700">Fecha nacimiento *</label>
+                <input type="date" class="form-control" id="mrChoferFechaNac" style="font-size:16px;min-height:44px" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" style="font-size:12px;font-weight:700">Género *</label>
+                <select class="form-select" id="mrChoferGenero" style="font-size:16px;min-height:44px" required>
+                  <option value="">Seleccionar</option>
+                  <option value="masculino">Masculino</option>
+                  <option value="femenino">Femenino</option>
+                  <option value="otro">Otro</option>
+                  <option value="prefiero_no_decir">Prefiero no decir</option>
+                </select>
               </div>
               <div class="col-md-2">
                 <label class="form-label" style="font-size:12px;font-weight:700">Patente *</label>
@@ -2010,6 +2033,19 @@
                 </label>
                 <input type="text" class="form-control" id="mrFirmaNombre" placeholder="Ej: Juan Pérez Soto"
                        style="font-size:16px;min-height:44px;border-color:#dc2626" required>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label" style="font-size:12px;font-weight:700">Firma real del transportista *</label>
+                <div style="border:2px dashed #cbd5e1;border-radius:10px;background:#fff;overflow:hidden">
+                  <canvas id="mrFirmaCanvas" width="900" height="260"
+                          style="display:block;width:100%;height:190px;touch-action:none;cursor:crosshair"></canvas>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                  <span class="text-muted" style="font-size:.78rem">Debe firmar quien retira físicamente el manifiesto.</span>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" onclick="mrLimpiarFirmaCanvas()">
+                    <i class="bi bi-eraser me-1"></i>Limpiar firma
+                  </button>
+                </div>
               </div>
               <div class="col-md-4 d-flex align-items-end">
                 <button type="submit" class="btn btn-dark fw-bold w-100" style="min-height:44px" id="mrSubmitBtn">
@@ -2027,7 +2063,7 @@
           <i class="bi bi-download me-1"></i>Descargar PDF
         </a>
         <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="enviarManifiestoFirmaCorreo()">
-          <i class="bi bi-envelope-fill me-1"></i>Enviar por correo
+          <i class="bi bi-envelope-fill me-1"></i>Enviar respaldo administrativo
         </button>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
       </div>
@@ -4180,6 +4216,72 @@ async function mrCargarChoferesRoster() {
 }
 
 var _mrChoferSeleccionado = null;
+var _mrFirmaCanvasBound = false;
+var _mrFirmaTieneTrazo = false;
+
+function mrInitFirmaCanvas() {
+  var cv = document.getElementById('mrFirmaCanvas');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var rect = cv.getBoundingClientRect();
+  var dpr = window.devicePixelRatio || 1;
+  var prev = _mrFirmaTieneTrazo ? cv.toDataURL('image/png') : null;
+  cv.width = Math.max(1, Math.round(rect.width * dpr));
+  cv.height = Math.max(1, Math.round(rect.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.strokeStyle = '#0a0a0a';
+  ctx.lineWidth = 2.6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (prev) {
+    var img = new Image();
+    img.onload = function(){ ctx.drawImage(img, 0, 0, rect.width, rect.height); };
+    img.src = prev;
+  }
+  if (_mrFirmaCanvasBound) return;
+  _mrFirmaCanvasBound = true;
+  var drawing = false;
+  function point(ev) {
+    var r = cv.getBoundingClientRect();
+    var t = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+  function start(ev) {
+    ev.preventDefault();
+    drawing = true;
+    var p = point(ev);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+  }
+  function move(ev) {
+    if (!drawing) return;
+    ev.preventDefault();
+    var p = point(ev);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    _mrFirmaTieneTrazo = true;
+  }
+  function end() { drawing = false; }
+  cv.addEventListener('mousedown', start);
+  cv.addEventListener('mousemove', move);
+  cv.addEventListener('mouseup', end);
+  cv.addEventListener('mouseleave', end);
+  cv.addEventListener('touchstart', start, { passive:false });
+  cv.addEventListener('touchmove', move, { passive:false });
+  cv.addEventListener('touchend', end);
+}
+
+function mrLimpiarFirmaCanvas() {
+  var cv = document.getElementById('mrFirmaCanvas');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var rect = cv.getBoundingClientRect();
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  _mrFirmaTieneTrazo = false;
+}
 
 function mrAplicarChoferGuardado(choferId) {
   var aviso = document.getElementById('mrCapacidadAviso');
@@ -4188,8 +4290,12 @@ function mrAplicarChoferGuardado(choferId) {
   if (!c) return;
   _mrChoferSeleccionado = c;
   document.getElementById('mrChoferNombre').value = c.nombre || '';
+  document.getElementById('mrChoferApellido').value = c.apellido || '';
   document.getElementById('mrChoferRut').value = c.rut || '';
   document.getElementById('mrChoferTelefono').value = c.telefono || '';
+  document.getElementById('mrChoferEmail').value = c.email || '';
+  document.getElementById('mrChoferFechaNac').value = (c.fecha_nacimiento || '').slice(0, 10);
+  document.getElementById('mrChoferGenero').value = c.genero || '';
   document.getElementById('mrPatente').value = c.patente || '';
   // FIX 2026-07-27 (Daniel: "comparativa con el camión, para restringir el
   // manifiesto según su límite de peso/volumen"): capacidad guardada en el
@@ -4241,23 +4347,33 @@ async function mrCopiarLinkFirma() {
 }
 
 // FIX 2026-07-27 (Daniel: "mejorar cómo enviar por WhatsApp"): arma el
-// mensaje + link ya redactados y abre WhatsApp Web/app directo — si hay
-// teléfono (del campo del formulario, que se autocompleta al elegir un
-// chofer del roster), se lo manda a ESE número; si no, abre WhatsApp para
-// elegir el contacto a mano (igual sirve para compartir el link).
+// mensaje + link ya redactados y abre WhatsApp Web/app directo al teléfono
+// del chofer. Si no está cargado, lo pide con ilusPrompt.
 async function mrEnviarWhatsapp() {
   if (!_mrLinkFirma) {
     ilusToast('Aún no se pudo generar el link. Reintenta.', { type: 'warning' });
     return;
   }
   var tel = (document.getElementById('mrChoferTelefono').value || '').replace(/[^\d+]/g, '');
+  if (!tel) {
+    tel = await ilusPrompt({
+      title: 'Teléfono del chofer',
+      message: 'Ingresa el teléfono para enviar el link de firma por WhatsApp.',
+      placeholder: '+56 9 1234 5678',
+      required: true,
+    });
+    if (!tel) return;
+    tel = tel.replace(/[^\d+]/g, '');
+    var inputTel = document.getElementById('mrChoferTelefono');
+    if (inputTel) inputTel.value = tel;
+  }
   var msg = 'Hola, por favor confirma el retiro de este manifiesto firmando desde tu celular: ' + _mrLinkFirma;
-  var url = 'https://wa.me/' + (tel ? tel.replace(/^\+/, '') : '') + '?text=' + encodeURIComponent(msg);
+  var url = 'https://wa.me/' + tel.replace(/^\+/, '') + '?text=' + encodeURIComponent(msg);
   window.open(url, '_blank');
 }
 
 function mrMostrarReadonly(retiro) {
-  document.getElementById('mrRoNombre').textContent = retiro.chofer_nombre || '';
+  document.getElementById('mrRoNombre').textContent = ((retiro.chofer_nombre || '') + ' ' + (retiro.chofer_apellido || '')).trim();
   document.getElementById('mrRoRut').textContent = retiro.chofer_rut || '';
   document.getElementById('mrRoPatente').textContent = retiro.patente || '';
   document.getElementById('mrRoFirma').textContent = retiro.firma_nombre || '';
@@ -4266,6 +4382,12 @@ function mrMostrarReadonly(retiro) {
     document.getElementById('mrRoTelWrap').style.display = '';
   } else {
     document.getElementById('mrRoTelWrap').style.display = 'none';
+  }
+  if (retiro.chofer_email) {
+    document.getElementById('mrRoEmail').textContent = retiro.chofer_email;
+    document.getElementById('mrRoEmailWrap').style.display = '';
+  } else {
+    document.getElementById('mrRoEmailWrap').style.display = 'none';
   }
   window._mrUltimoRetiro = retiro;
   document.getElementById('mrReadonly').style.display = '';
@@ -4278,11 +4400,17 @@ function mrToggleForm(editar) {
   var retiro = editar ? window._mrUltimoRetiro : null;
   document.getElementById('mrChoferGuardado').value = '';
   document.getElementById('mrChoferNombre').value = retiro ? (retiro.chofer_nombre || '') : '';
+  document.getElementById('mrChoferApellido').value = retiro ? (retiro.chofer_apellido || '') : '';
   document.getElementById('mrChoferRut').value = retiro ? (retiro.chofer_rut || '') : '';
   document.getElementById('mrChoferTelefono').value = retiro ? (retiro.chofer_telefono || '') : '';
+  document.getElementById('mrChoferEmail').value = retiro ? (retiro.chofer_email || '') : '';
+  document.getElementById('mrChoferFechaNac').value = retiro ? ((retiro.chofer_fecha_nac || '').slice(0, 10)) : '';
+  document.getElementById('mrChoferGenero').value = retiro ? (retiro.chofer_genero || '') : '';
   document.getElementById('mrPatente').value = retiro ? (retiro.patente || '') : '';
   document.getElementById('mrFirmaNombre').value = '';
   document.getElementById('mrForm').style.display = '';
+  _mrFirmaTieneTrazo = false;
+  setTimeout(mrInitFirmaCanvas, 120);
 }
 
 async function mrGuardar(ev) {
@@ -4290,15 +4418,27 @@ async function mrGuardar(ev) {
   var btn = document.getElementById('mrSubmitBtn');
   var payload = {
     chofer_nombre:   document.getElementById('mrChoferNombre').value.trim(),
+    chofer_apellido: document.getElementById('mrChoferApellido').value.trim(),
     chofer_rut:      document.getElementById('mrChoferRut').value.trim(),
     chofer_telefono: document.getElementById('mrChoferTelefono').value.trim(),
+    chofer_email:    document.getElementById('mrChoferEmail').value.trim(),
+    chofer_fecha_nac: document.getElementById('mrChoferFechaNac').value,
+    chofer_genero:   document.getElementById('mrChoferGenero').value,
     patente:         document.getElementById('mrPatente').value.trim(),
     firma_nombre:    document.getElementById('mrFirmaNombre').value.trim(),
   };
-  if (!payload.chofer_nombre || !payload.chofer_rut || !payload.patente || !payload.firma_nombre) {
+  if (!payload.chofer_nombre || !payload.chofer_apellido || !payload.chofer_rut ||
+      !payload.chofer_telefono || !payload.chofer_email || !payload.chofer_fecha_nac ||
+      !payload.chofer_genero || !payload.patente || !payload.firma_nombre) {
     ilusToast('Completa los campos obligatorios (*)', { type: 'warning' });
     return false;
   }
+  var cv = document.getElementById('mrFirmaCanvas');
+  if (!cv || !_mrFirmaTieneTrazo) {
+    ilusToast('Falta la firma real del transportista', { type: 'warning' });
+    return false;
+  }
+  payload.firma_canvas = cv.toDataURL('image/png');
   // FIX 2026-07-27 (Daniel: "restrinja el manifiesto según el límite del
   // camión"): si el chofer elegido del roster tiene capacidad cargada y el
   // manifiesto la excede, no se bloquea en silencio -- se exige una
@@ -4356,6 +4496,8 @@ async function mrGuardar(ev) {
               body: JSON.stringify({
                 nombre: payload.chofer_nombre, rut: payload.chofer_rut,
                 telefono: payload.chofer_telefono, patente: payload.patente,
+                apellido: payload.chofer_apellido, email: payload.chofer_email,
+                fecha_nacimiento: payload.chofer_fecha_nac, genero: payload.chofer_genero,
               }),
             });
             ilusToast('✓ Chofer guardado en el roster', { type: 'success' });
@@ -4380,8 +4522,8 @@ async function mrGuardar(ev) {
 
 async function enviarManifiestoFirmaCorreo() {
   var destStr = await ilusPrompt({
-    title: 'Enviar manifiesto por correo',
-    message: 'Ingresa los correos destinatarios (separados por coma)',
+    title: 'Enviar respaldo administrativo',
+    message: 'Ingresa los correos responsables (separados por coma). Este PDF incluye montos y control interno.',
     placeholder: 'ejemplo1@correo.cl, ejemplo2@correo.cl',
     required: true,
   });
