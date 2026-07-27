@@ -3268,7 +3268,7 @@ def register_tickets_routes(app, ctx):
             'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
             'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
             f'<span><b style="color:#0a0a0a">ILUS Sport &amp; Health</b> · www.ilusfitness.com · '
-            f'servicio.tecnico@ilusfitness.com</span>'
+            f'contacto@sphs.cl</span>'
             f'<span>Cotización <b style="color:#0a0a0a">{_footer_numero}</b>{_footer_vigencia} · '
             'Página <span class="pageNumber"></span> de <span class="totalPages"></span></span>'
             '</div>'

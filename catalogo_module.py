@@ -1361,13 +1361,33 @@ def register_catalogo_routes(app, ctx):
         if not key or not url:
             return jsonify({"ok": False, "error": "Subida sin resultado válido"}), 500
 
-        try:
-            mysql_execute(
-                "INSERT INTO cat_producto_fotos (producto_id, gcs_key, orden) "
-                "VALUES (%s,%s, (SELECT COALESCE(MAX(orden),0)+1 FROM cat_producto_fotos WHERE producto_id=%s))",
-                (pid, key, pid))
-        except Exception as _e:
-            print(f"[cat_upload_foto] INSERT fallo, limpiando blob pid={pid}: {_e}", flush=True)
+        # FIX 2026-07-27 (Jaizer: "no acepta WebP" — en realidad no era el
+        # formato, era una condición de carrera): el `orden` se calculaba con
+        # un SELECT MAX(orden)+1 subquery, sin lock. Si dos subidas caían muy
+        # cerca en el tiempo (doble clic, o el navegador reintentando una
+        # subida lenta — común con archivos WebP más pesados que un JPEG),
+        # ambas calculaban el MISMO orden y la segunda chocaba contra el
+        # UNIQUE KEY (producto_id, orden), reventando con "No se pudo
+        # registrar la foto" sin relación real con el tipo de archivo.
+        # Ahora se reintenta unas pocas veces recalculando el orden si el
+        # INSERT choca por duplicado, en vez de fallar a la primera.
+        _insertado = False
+        _last_err = None
+        for _intento in range(5):
+            try:
+                mysql_execute(
+                    "INSERT INTO cat_producto_fotos (producto_id, gcs_key, orden) "
+                    "VALUES (%s,%s, (SELECT COALESCE(MAX(orden),0)+1 FROM cat_producto_fotos WHERE producto_id=%s))",
+                    (pid, key, pid))
+                _insertado = True
+                break
+            except Exception as _e:
+                _last_err = _e
+                if "Duplicate entry" in str(_e) or "uq_cat_foto_orden" in str(_e):
+                    continue  # recalcula el orden y reintenta
+                break  # error distinto a la carrera de orden — no reintentar
+        if not _insertado:
+            print(f"[cat_upload_foto] INSERT falló, limpiando blob pid={pid}: {_last_err}", flush=True)
             if _uploader_destroy:
                 try:
                     _uploader_destroy(key)
