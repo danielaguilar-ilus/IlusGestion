@@ -28080,6 +28080,12 @@ def _simpliroute_poll_loop():
                            f"pod={res.get('pod', 0)} grupos={res.get('grupos', 0)}")
                     if res.get("errores"):
                         msg += f" errores={len(res['errores'])}"
+                    huer = res.get("huerfanos") or {}
+                    if huer.get("revisados") or huer.get("vinculados"):
+                        msg += (f" | huerfanos: revisados={huer.get('revisados', 0)} "
+                                f"vinculados={huer.get('vinculados', 0)}")
+                        if huer.get("errores"):
+                            msg += f" errores={len(huer['errores'])}"
                     print(f"[sr-autopoll] {msg}", flush=True)
                 finally:
                     _sr_poll_release_lease(msg)
