@@ -28054,8 +28054,11 @@ def _simpliroute_poll_batch(limit=400, dry=False):
             # que ya no es la vigente.
             visita_ref = por_ref.get(ref_it) if ref_it else None
             if "22738" in ref_it:
+                _nudo_solo = _sr_normalizar_reference((it.get("nudo") or "").strip())
+                _visita_bare = por_ref.get(_nudo_solo)
                 print(f"[sr-diag2] ref_it={ref_it!r} vid_guardado={vid!r} "
-                      f"encontrada={visita_ref is not None} "
+                      f"id_encontrado_full={visita_ref.get('id') if visita_ref else None} "
+                      f"id_encontrado_bare={_visita_bare.get('id') if _visita_bare else None} "
                       f"refs_disponibles={sorted(por_ref.keys())[:20]}", flush=True)
             if visita_ref and str(visita_ref.get("id")) != vid:
                 nuevo_id = str(visita_ref.get("id") or "")
