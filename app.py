@@ -27944,6 +27944,7 @@ def _simpliroute_poll_batch(limit=400, dry=False):
     dry=True → solo reporta qué haría, no escribe nada.
     """
     import simpliroute_client as _src
+    import datetime as _dt_mod
     out = {"ok": True, "consultados": 0, "actualizados": 0, "pod": 0,
            "grupos": 0, "errores": [], "items": [],
            "huerfanos": {}}
@@ -27954,9 +27955,10 @@ def _simpliroute_poll_batch(limit=400, dry=False):
     try:
         cands = mysql_fetchall("""
             SELECT mi.id AS item_id, mi.commitment_id, mi.simpliroute_visit_id,
-                   mi.estado_entrega, tm.fecha, tm.courier
+                   mi.estado_entrega, tm.fecha, tm.courier, c.tido, c.nudo
               FROM transport_manifest_items mi
               JOIN transport_manifests tm ON tm.id = mi.manifest_id
+              LEFT JOIN transport_commitments c ON c.id = mi.commitment_id
              WHERE mi.simpliroute_visit_id IS NOT NULL
                AND mi.simpliroute_visit_id <> ''
                AND (mi.estado_entrega IS NULL
@@ -27969,23 +27971,6 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         print(f"[sr-autopoll] consulta de candidatos falló: {e}", flush=True)
         return {"ok": False, "error": f"consulta de candidatos falló: {e}",
                 "consultados": 0, "actualizados": 0, "pod": 0, "grupos": 0, "errores": [str(e)]}
-
-    # DIAGNOSTICO TEMPORAL (Daniel 2026-07-28, caso BLV 22738 / Felca / Rafael
-    # Naranjo que no actualiza) -- confirmar el estado REAL en BD de ese item
-    # puntual sin acceso directo a MySQL. Quitar una vez resuelto el caso.
-    try:
-        _diag = mysql_fetchall("""
-            SELECT mi.id AS item_id, mi.manifest_id, mi.simpliroute_visit_id,
-                   mi.estado_entrega, tm.fecha, tm.courier, c.tido, c.nudo,
-                   c.id AS commitment_id
-              FROM transport_commitments c
-              LEFT JOIN transport_manifest_items mi ON mi.commitment_id = c.id
-              LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
-             WHERE c.nudo LIKE %s
-        """, ("%22738%",)) or []
-        print(f"[sr-diag] filas BLV/22738: {_diag}", flush=True)
-    except Exception as e:
-        print(f"[sr-diag] fallo: {e}", flush=True)
 
     if not cands:
         out["msg"] = "Sin visitas pendientes de actualizar."
@@ -28032,11 +28017,67 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                 if r_uno.get("ok") and isinstance(r_uno.get("data"), dict):
                     visita = r_uno["data"]
                 else:
-                    # Ahora sí: no existe / fue borrada / token sin acceso.
-                    if r_uno.get("status") not in (404, 0):
-                        out["errores"].append(
-                            f"{courier} visita {vid}: {r_uno.get('error')}")
-                    continue
+                    # FIX 2026-07-28 (Daniel: caso BLV 22738 / Felca — el
+                    # chofer entregaba en vivo y el manifiesto/Monitor nunca
+                    # se enteraban). El visit_id guardado por ILUS puede
+                    # quedar OBSOLETO: SimpliRoute puede reemplazar la visita
+                    # por una NUEVA (id distinto) sin avisar -- ni "reprogramar
+                    # fecha" (eso mueve la MISMA visita) ni "borrar" (eso
+                    # devolvía 404 antes de este fix, y aquí simplemente se
+                    # abandonaba con un error). Antes de rendirse: buscar una
+                    # visita viva con la MISMA reference (tido-nudo) entre las
+                    # de este grupo, y si no aparece, en las de HOY (por si el
+                    # reemplazo quedó planificado para otra fecha). Si se
+                    # encuentra, se re-vincula el item a la visita nueva.
+                    ref_it = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
+                    visita_nueva = None
+                    if ref_it:
+                        visita_nueva = next(
+                            (v for v in visitas
+                             if isinstance(v, dict) and (v.get("reference") or "").strip() == ref_it
+                             and str(v.get("id")) != vid),
+                            None)
+                        if not visita_nueva:
+                            hoy_s = _dt_mod.date.today().isoformat()
+                            if hoy_s != fecha_s:
+                                r_hoy = _simpliroute_request(
+                                    "GET", f"{_src.EP_VISITS}?planned_date={hoy_s}",
+                                    token, timeout=45)
+                                if r_hoy.get("ok"):
+                                    visitas_hoy = r_hoy.get("data")
+                                    visitas_hoy = visitas_hoy if isinstance(visitas_hoy, list) else []
+                                    visita_nueva = next(
+                                        (v for v in visitas_hoy
+                                         if isinstance(v, dict)
+                                         and (v.get("reference") or "").strip() == ref_it
+                                         and str(v.get("id")) != vid),
+                                        None)
+                    if visita_nueva:
+                        nuevo_id = str(visita_nueva.get("id") or "")
+                        try:
+                            mysql_execute(
+                                "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+                                "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() "
+                                "WHERE id=%s",
+                                (nuevo_id, visita_nueva.get("tracking_id") or "", it["item_id"]))
+                            _tr_log("manifest_item", it["item_id"],
+                                    "Visita SimpliRoute reemplazada automaticamente",
+                                    f"visit_id viejo {vid} ya no existia -> nuevo {nuevo_id} "
+                                    f"(reference={ref_it})")
+                            visita = visita_nueva
+                            vid = nuevo_id
+                        except Exception as e:
+                            out["errores"].append(
+                                f"item {it['item_id']}: encontrada visita nueva {nuevo_id} "
+                                f"pero no se pudo guardar ({e})")
+                            continue
+                    else:
+                        # Ahora sí: no existe / fue borrada / token sin acceso,
+                        # y tampoco hay una visita de reemplazo por reference.
+                        if r_uno.get("status") not in (404, 0):
+                            out["errores"].append(
+                                f"{courier} visita {vid}: {r_uno.get('error')}")
+                        continue
             estado_ilus, comentario = _src.estado_ilus_from_visit(visita)
             registro = {"item_id": it["item_id"], "visit_id": vid,
                         "sr_status": visita.get("status"),
@@ -28095,7 +28136,15 @@ def _simpliroute_poll_loop():
                 msg = "ciclo interrumpido"   # si el batch revienta, el lease
                                              # igual se libera con este texto
                 try:
-                    res = _simpliroute_poll_batch()
+                    # FIX 2026-07-28 (Daniel: manifiestos/Monitor no se
+                    # actualizaban): _simpliroute_poll_batch usa get_db()/g,
+                    # que exige contexto Flask -- sin este `with`, cada ciclo
+                    # fallaba en silencio con "Working outside of application
+                    # context" (el error se tragaba y se veia como
+                    # "consultados=0", indistinguible de "no hay nada que
+                    # hacer"). Mismo patron que _mant_cron_run_with_lock.
+                    with app.app_context():
+                        res = _simpliroute_poll_batch()
                     msg = (f"consultados={res.get('consultados', 0)} "
                            f"actualizados={res.get('actualizados', 0)} "
                            f"pod={res.get('pod', 0)} grupos={res.get('grupos', 0)}")
