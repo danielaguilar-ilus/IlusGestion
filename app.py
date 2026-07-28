@@ -27832,6 +27832,28 @@ def _sr_ingest_pod(item_id, commitment_id, visit):
         return False
 
 
+def _sr_normalizar_reference(ref):
+    """Normaliza una 'reference' tido-nudo para comparar de forma tolerante.
+
+    FIX 2026-07-28 (Daniel: caso BLV 22738 / Felca): el mismo documento
+    puede existir en transport_commitments con el nudo CON ceros a la
+    izquierda ('0000022738') y SIN ellos ('22738') -- dos filas de
+    commitment distintas para lo que humanamente es "el mismo pedido". La
+    reference que viaja a SimpliRoute usa el nudo tal cual esté guardado, así
+    que "BLV-22738" y "BLV-0000022738" son strings DISTINTOS que nunca
+    calzaban en una comparación exacta, aunque se refieran al mismo despacho.
+    Se normaliza quitando los ceros a la izquierda de la parte numérica final.
+    """
+    ref = (ref or "").strip()
+    if "-" not in ref:
+        return ref
+    tido, nudo = ref.rsplit("-", 1)
+    nudo = nudo.strip()
+    if nudo.isdigit():
+        nudo = str(int(nudo))
+    return f"{tido}-{nudo}"
+
+
 def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     """Vincula items SIN simpliroute_visit_id a una visita que YA EXISTE en
     SimpliRoute, buscándola por 'reference' (tido-nudo, ver
@@ -27890,7 +27912,7 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
         for it in items:
             ref = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
             if ref:
-                por_ref[ref] = it
+                por_ref[_sr_normalizar_reference(ref)] = it
 
         for fecha_s in fechas:
             if not por_ref:
@@ -27905,7 +27927,7 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
             for v in visitas:
                 if not isinstance(v, dict):
                     continue
-                ref = (v.get("reference") or "").strip()
+                ref = _sr_normalizar_reference((v.get("reference") or "").strip())
                 it = por_ref.get(ref)
                 if not it:
                     continue
@@ -28001,7 +28023,7 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         por_ref = {}
         for v in visitas:
             if isinstance(v, dict) and (v.get("reference") or "").strip():
-                por_ref.setdefault((v.get("reference") or "").strip(), v)
+                por_ref.setdefault(_sr_normalizar_reference((v.get("reference") or "").strip()), v)
 
         # FIX 2026-07-28 (Daniel: caso BLV 22738): la visita de REEMPLAZO
         # puede quedar agendada para HOY aunque el manifiesto sea de otra
@@ -28016,11 +28038,12 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                 data_hoy = r_hoy_grupo.get("data")
                 for v in (data_hoy if isinstance(data_hoy, list) else []):
                     if isinstance(v, dict) and (v.get("reference") or "").strip():
-                        por_ref.setdefault((v.get("reference") or "").strip(), v)
+                        por_ref.setdefault(_sr_normalizar_reference((v.get("reference") or "").strip()), v)
 
         for it in items:
             vid = str(it.get("simpliroute_visit_id") or "")
             ref_it = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
+            ref_it = _sr_normalizar_reference(ref_it)
 
             # FIX 2026-07-28 (Daniel: caso BLV 22738 / Felca): priorizar SIEMPRE
             # la visita por 'reference' (tido-nudo) por sobre el visit_id
@@ -28078,12 +28101,12 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                     # de este grupo, y si no aparece, en las de HOY (por si el
                     # reemplazo quedó planificado para otra fecha). Si se
                     # encuentra, se re-vincula el item a la visita nueva.
-                    ref_it = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
+                    ref_it = _sr_normalizar_reference(f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-"))
                     visita_nueva = None
                     if ref_it:
                         visita_nueva = next(
                             (v for v in visitas
-                             if isinstance(v, dict) and (v.get("reference") or "").strip() == ref_it
+                             if isinstance(v, dict) and _sr_normalizar_reference((v.get("reference") or "").strip()) == ref_it
                              and str(v.get("id")) != vid),
                             None)
                         if not visita_nueva:
@@ -28098,7 +28121,7 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                                     visita_nueva = next(
                                         (v for v in visitas_hoy
                                          if isinstance(v, dict)
-                                         and (v.get("reference") or "").strip() == ref_it
+                                         and _sr_normalizar_reference((v.get("reference") or "").strip()) == ref_it
                                          and str(v.get("id")) != vid),
                                         None)
                     if visita_nueva:
