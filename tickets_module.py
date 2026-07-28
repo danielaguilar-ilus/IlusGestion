@@ -8614,9 +8614,16 @@ def register_tickets_routes(app, ctx):
         # interno (TK_TIPOS_MODAL): la garantia deja de ser un TIPO de
         # solicitud propio y pasa a ser el toggle transversal es_garantia
         # (ya existe la columna, solo faltaba exponerla en este formulario).
+        # FIX 2026-07-28 (Daniel: "el formulario externo tenía tareas internas
+        # de bodega -- control de calidad, trabajo en bodega, capacitación --
+        # sácalas solo de acá, no del modal interno"): este formulario usaba
+        # TK_TIPOS_MODAL por error (la lista del backoffice, que SÍ incluye
+        # esos 3 tipos 100% internos sin cliente). El formulario público
+        # correcto es TK_TIPOS_PUBLICOS -- ya excluía justamente esos 3 tipos
+        # (ver su comentario de definición), solo que nunca se conectó acá.
         return render_template(
             "tickets/soporte_publico.html",
-            tk_tipos_publicos=TK_TIPOS_MODAL, tipo_label=TIPO_LABEL,
+            tk_tipos_publicos=TK_TIPOS_PUBLICOS, tipo_label=TIPO_LABEL,
             max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB)
 
     # ── GET /soporte/api/erp/productos — catalogo general (read-only) ──
