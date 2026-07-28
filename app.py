@@ -27832,6 +27832,110 @@ def _sr_ingest_pod(item_id, commitment_id, visit):
         return False
 
 
+def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
+    """Vincula items SIN simpliroute_visit_id a una visita que YA EXISTE en
+    SimpliRoute, buscándola por 'reference' (tido-nudo, ver
+    simpliroute_client.build_visit_payload) en las visitas de HOY y AYER de
+    la cuenta del courier.
+
+    Por qué hace falta (Daniel 2026-07-28, caso Felca/Rafael Naranjo): el
+    poller normal (_simpliroute_poll_batch) SOLO puede consultar visit_ids
+    que ya tiene guardados en transport_manifest_items -- si SimpliRoute
+    repite/duplica una ruta al día siguiente (o alguien recrea la visita
+    allá), nace un id NUEVO que ILUS nunca subió ni conoce, y sin este
+    parche esa visita queda invisible para siempre (0 candidatos, 0
+    actualizaciones, aunque el chofer sí esté entregando en vivo).
+
+    dry=True → solo reporta qué encontraría, no escribe nada.
+    """
+    import simpliroute_client as _src
+    import datetime as _dt
+    out = {"ok": True, "revisados": 0, "vinculados": 0, "errores": [], "items": []}
+    try:
+        cands = mysql_fetchall("""
+            SELECT mi.id AS item_id, tm.courier, c.tido, c.nudo
+              FROM transport_manifest_items mi
+              JOIN transport_manifests tm ON tm.id = mi.manifest_id
+              JOIN transport_commitments c ON c.id = mi.commitment_id
+             WHERE (mi.simpliroute_visit_id IS NULL OR mi.simpliroute_visit_id = '')
+               AND (mi.estado_entrega IS NULL
+                    OR mi.estado_entrega NOT IN ('Entregado','Devolución'))
+               AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+             ORDER BY tm.fecha DESC
+             LIMIT %s
+        """, (int(limit),)) or []
+    except Exception as e:
+        return {"ok": False, "error": f"consulta de huerfanos fallo: {e}"}
+
+    cands = [c for c in cands if _simpliroute_courier_integra(c.get("courier"))]
+    if not cands:
+        out["msg"] = "Sin items huerfanos que revisar."
+        return out
+    out["revisados"] = len(cands)
+
+    por_courier = {}
+    for c in cands:
+        por_courier.setdefault((c.get("courier") or "").strip(), []).append(c)
+
+    fechas = [_dt.date.today().isoformat(),
+              (_dt.date.today() - _dt.timedelta(days=1)).isoformat()]
+
+    for courier, items in por_courier.items():
+        token = _simpliroute_token_for_courier(courier)
+        if not token:
+            continue
+        por_ref = {}
+        for it in items:
+            ref = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
+            if ref:
+                por_ref[ref] = it
+
+        for fecha_s in fechas:
+            if not por_ref:
+                break
+            r = _simpliroute_request(
+                "GET", f"{_src.EP_VISITS}?planned_date={fecha_s}", token, timeout=45)
+            if not r.get("ok"):
+                out["errores"].append(f"{courier} {fecha_s}: {r.get('error')}")
+                continue
+            visitas = r.get("data")
+            visitas = visitas if isinstance(visitas, list) else []
+            for v in visitas:
+                if not isinstance(v, dict):
+                    continue
+                ref = (v.get("reference") or "").strip()
+                it = por_ref.get(ref)
+                if not it:
+                    continue
+                vid = v.get("id")
+                if not vid:
+                    continue
+                registro = {"item_id": it["item_id"], "reference": ref,
+                            "visit_id": vid, "fecha": fecha_s}
+                if dry:
+                    out["items"].append(registro)
+                    por_ref.pop(ref, None)
+                    continue
+                try:
+                    mysql_execute(
+                        "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+                        "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() "
+                        "WHERE id=%s",
+                        (str(vid), v.get("tracking_id") or "", it["item_id"]))
+                    out["vinculados"] += 1
+                    registro["changed"] = True
+                    out["items"].append(registro)
+                    _tr_log("manifest_item", it["item_id"],
+                            "Visita SimpliRoute reconciliada automaticamente",
+                            f"encontrada por reference={ref} -> visit_id={vid} "
+                            f"(planned_date {fecha_s})")
+                except Exception as e:
+                    out["errores"].append(f"item {it['item_id']}: no se pudo guardar ({e})")
+                por_ref.pop(ref, None)
+
+    return out
+
+
 def _simpliroute_poll_batch(limit=400, dry=False):
     """Un ciclo de polling. Devuelve dict con el resumen (nunca lanza).
 
@@ -27839,7 +27943,12 @@ def _simpliroute_poll_batch(limit=400, dry=False):
     """
     import simpliroute_client as _src
     out = {"ok": True, "consultados": 0, "actualizados": 0, "pod": 0,
-           "grupos": 0, "errores": [], "items": []}
+           "grupos": 0, "errores": [], "items": [],
+           "huerfanos": {}}
+    try:
+        out["huerfanos"] = _simpliroute_reconciliar_huerfanos(dry=dry)
+    except Exception as e:
+        out["huerfanos"] = {"ok": False, "error": f"reconciliacion fallo: {e}"}
     try:
         cands = mysql_fetchall("""
             SELECT mi.id AS item_id, mi.commitment_id, mi.simpliroute_visit_id,
