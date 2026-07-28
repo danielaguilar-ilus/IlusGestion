@@ -27913,6 +27913,11 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
             ref = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
             if ref:
                 por_ref[_sr_normalizar_reference(ref)] = it
+            # Cubre visitas recreadas a mano con el nudo pelado como
+            # reference (sin el prefijo del tido) -- ver caso BLV 22738.
+            nudo_solo = _sr_normalizar_reference((it.get("nudo") or "").strip())
+            if nudo_solo and nudo_solo not in por_ref:
+                por_ref[nudo_solo] = it
 
         for fecha_s in fechas:
             if not por_ref:
@@ -28053,13 +28058,19 @@ def _simpliroute_poll_batch(limit=400, dry=False):
             # guardado, la vieja "sí existe" y el poller nunca se entera de
             # que ya no es la vigente.
             visita_ref = por_ref.get(ref_it) if ref_it else None
-            if "22738" in ref_it:
+            # FIX 2026-07-28 (confirmado con datos reales, caso BLV 22738):
+            # si alguien re-crea la visita a mano DIRECTO en SimpliRoute
+            # (ej. Alison, cuando la original quedó atascada), suele escribir
+            # la referencia como el NUDO PELADO ('22738'), sin el prefijo del
+            # tido ('BLV-22738') que usa la subida automática de ILUS. Si la
+            # forma con tido no trae una visita nueva, probar también la
+            # forma pelada antes de rendirse.
+            if not visita_ref or str(visita_ref.get("id")) == vid:
                 _nudo_solo = _sr_normalizar_reference((it.get("nudo") or "").strip())
-                _visita_bare = por_ref.get(_nudo_solo)
-                print(f"[sr-diag2] ref_it={ref_it!r} vid_guardado={vid!r} "
-                      f"id_encontrado_full={visita_ref.get('id') if visita_ref else None} "
-                      f"id_encontrado_bare={_visita_bare.get('id') if _visita_bare else None} "
-                      f"refs_disponibles={sorted(por_ref.keys())[:20]}", flush=True)
+                if _nudo_solo and _nudo_solo != ref_it:
+                    _visita_bare = por_ref.get(_nudo_solo)
+                    if _visita_bare and str(_visita_bare.get("id")) != vid:
+                        visita_ref = _visita_bare
             if visita_ref and str(visita_ref.get("id")) != vid:
                 nuevo_id = str(visita_ref.get("id") or "")
                 try:
