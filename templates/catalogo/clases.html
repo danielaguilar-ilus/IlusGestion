@@ -213,17 +213,31 @@ function clcInputsTarifa(c){
   const copiaHint = esCopiaDeMantencion
     ? '<div class="clc-copia-hint" title="Valores de Mantención — edítalos para fijar los propios de este tipo">'
       + '<i class="bi bi-arrow-90deg-left"></i> copiado de Mantención</div>' : '';
+  // Precio fijo (2026-07-28, Daniel — categoría "Pisos"): algunas categorías
+  // se cobran a un precio unitario FIJO en pesos, no por horas×técnicos
+  // ("pisos = cantidad de pisos × precio unitario"). Con precio_fijo
+  // definido, horas/técnicos/piso quedan deshabilitados (no aplican) y el
+  // precio mostrado es directamente el fijo, no el calculado.
+  const fijo = c[tipo+'_fijo'];
+  const tieneFijo = fijo != null;
+  const dis = tieneFijo ? 'disabled title="No aplica — esta categoría usa precio fijo"' : '';
   return ''
     + copiaHint
-    + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '
+    + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '+dis+' '
     +   'placeholder="hr" data-id="'+c.id+'" data-campo="horas" onchange="clcGuardarTarifa(this)">'
-    + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '
+    + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '+dis+' '
     +   'placeholder="téc" data-id="'+c.id+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)">'
-    + ' <span class="clc-hh">'+hhTxt+'</span>' + puTxt
+    + (tieneFijo ? '' : (' <span class="clc-hh">'+hhTxt+'</span>' + puTxt))
     + '<div class="clc-piso-row">'
     +   '<label>Precio piso ($)</label>'
-    +   '<input type="number" step="1" min="0" class="clc-num clc-num-piso" value="'+(piso==null?'':piso)+'" '
+    +   '<input type="number" step="1" min="0" class="clc-num clc-num-piso" value="'+(piso==null?'':piso)+'" '+dis+' '
     +     'placeholder="sin piso" data-id="'+c.id+'" data-campo="piso" onchange="clcGuardarPiso(this)">'
+    + '</div>'
+    + '<div class="clc-piso-row">'
+    +   '<label title="Precio unitario fijo — reemplaza el cálculo por horas×técnicos. Cantidad × este precio.">'
+    +     'Precio unitario fijo ($)</label>'
+    +   '<input type="number" step="1" min="0" class="clc-num clc-num-piso" value="'+(fijo==null?'':fijo)+'" '
+    +     'placeholder="ej: 3500" data-id="'+c.id+'" data-campo="fijo" onchange="clcGuardarFijo(this)">'
     + '</div>';
 }
 
@@ -312,6 +326,30 @@ async function clcGuardarPiso(input){
     fila[tipo+'_piso'] = piso;
     clcRender();
     ilusToast('✓ Piso guardado', {type:'success'});
+  }catch(e){
+    ilusToast('Error de conexión al guardar', {type:'error'});
+  }finally{
+    input.disabled = false;
+  }
+}
+
+async function clcGuardarFijo(input){
+  const id = input.dataset.id, tipo = _clcServ;
+  const fila = _clcClases.find(c => String(c.id) === String(id));
+  if(!fila) return;
+  const fijo = input.value === '' ? null : parseFloat(input.value);
+  if (fijo != null && fijo < 0){ ilusToast('El precio fijo no puede ser negativo', {type:'warning'}); return; }
+  input.disabled = true;
+  try{
+    const r = await fetch('/catalogo/api/clases/'+id+'/tarifas', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tipo_servicio: tipo, precio_fijo: fijo})
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); await clcCargar(); return; }
+    fila[tipo+'_fijo'] = fijo;
+    clcRender();
+    ilusToast('✓ Precio fijo guardado', {type:'success'});
   }catch(e){
     ilusToast('Error de conexión al guardar', {type:'error'});
   }finally{

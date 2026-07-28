@@ -364,6 +364,18 @@ def register_catalogo_routes(app, ctx):
                     "DECIMAL(12,2) NULL COMMENT 'Precio mínimo por línea; NULL = sin piso'")
             except Exception:
                 pass  # columna ya existe
+            # 2026-07-28 (Daniel, categoría "Pisos"): algunas categorías se
+            # cobran por unidad a un precio FIJO en pesos, no por horas×técnicos
+            # (ej. "N pisos × $X c/u" en instalaciones de varios niveles). Con
+            # precio_fijo definido, ESE valor es el precio unitario directo —
+            # horas/técnicos/piso se ignoran para esa clase+tipo_servicio.
+            try:
+                mysql_execute(
+                    "ALTER TABLE cat_clase_producto_tarifas ADD COLUMN precio_fijo "
+                    "DECIMAL(12,2) NULL COMMENT 'Precio unitario fijo en CLP; si está definido, "
+                    "reemplaza el cálculo horas*tecnicos*valor_hh'")
+            except Exception:
+                pass  # columna ya existe
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_catalogo_tables: {_e}", flush=True)
 
@@ -723,7 +735,7 @@ def register_catalogo_routes(app, ctx):
             "SELECT id, slug, nombre, orden, activo FROM cat_clases_producto "
             "ORDER BY activo DESC, orden, nombre") or []
         tarifas = mysql_fetchall(
-            "SELECT clase_id, tipo_servicio, horas, tecnicos, precio_piso "
+            "SELECT clase_id, tipo_servicio, horas, tecnicos, precio_piso, precio_fijo "
             "FROM cat_clase_producto_tarifas") or []
         tmap = {}
         for t in tarifas:
@@ -736,12 +748,14 @@ def register_catalogo_routes(app, ctx):
                 horas = info.get("horas")
                 tecnicos = info.get("tecnicos")
                 piso = info.get("precio_piso")
+                fijo = info.get("precio_fijo")
                 horas_f = float(horas) if horas is not None else None
                 tecnicos_i = int(tecnicos) if tecnicos is not None else None
                 r[f"{ts}_horas"] = horas_f
                 r[f"{ts}_tecnicos"] = tecnicos_i
                 r[f"{ts}_hh"] = (horas_f * tecnicos_i) if (horas_f is not None and tecnicos_i is not None) else None
                 r[f"{ts}_piso"] = float(piso) if piso is not None else None
+                r[f"{ts}_fijo"] = float(fijo) if fijo is not None else None
             out.append(r)
         return jsonify({"ok": True, "clases": out,
                         "tipos_servicio": [{"key": k, "label": _CAT_TIPOS_SERVICIO_LABEL[k]}
@@ -948,7 +962,7 @@ def register_catalogo_routes(app, ctx):
         # estaban -- antes esto solo aceptaba horas+tecnicos juntos y
         # cualquier llamada parcial los habría dejado en NULL.
         _existente = mysql_fetchone(
-            "SELECT horas, tecnicos, precio_piso FROM cat_clase_producto_tarifas "
+            "SELECT horas, tecnicos, precio_piso, precio_fijo FROM cat_clase_producto_tarifas "
             "WHERE clase_id=%s AND tipo_servicio=%s", (clid, tipo_servicio)) or {}
 
         try:
@@ -967,6 +981,11 @@ def register_catalogo_routes(app, ctx):
                 piso_v = round(float(piso_in), 2) if piso_in not in (None, "") else None
             else:
                 piso_v = _existente.get("precio_piso")
+            if "precio_fijo" in d:
+                fijo_in = d.get("precio_fijo")
+                fijo_v = round(float(fijo_in), 2) if fijo_in not in (None, "") else None
+            else:
+                fijo_v = _existente.get("precio_fijo")
         except Exception:
             return jsonify({"ok": False, "error": "Valor inválido"}), 400
         # 2026-07-21 (revisión adversarial): horas=0 o técnicos=0 NO se
@@ -982,13 +1001,17 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "La cantidad de técnicos debe ser al menos 1 (deja el campo vacío si aún no está definida)"}), 400
         if piso_v is not None and piso_v < 0:
             return jsonify({"ok": False, "error": "El precio piso no puede ser negativo"}), 400
+        if fijo_v is not None and fijo_v < 0:
+            return jsonify({"ok": False, "error": "El precio fijo no puede ser negativo"}), 400
         user = current_username() or "sistema"
         mysql_execute(
-            "INSERT INTO cat_clase_producto_tarifas (clase_id, tipo_servicio, horas, tecnicos, precio_piso, updated_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s) "
+            "INSERT INTO cat_clase_producto_tarifas "
+            "(clase_id, tipo_servicio, horas, tecnicos, precio_piso, precio_fijo, updated_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) "
             "ON DUPLICATE KEY UPDATE horas=VALUES(horas), tecnicos=VALUES(tecnicos), "
-            "precio_piso=VALUES(precio_piso), updated_by=VALUES(updated_by)",
-            (clid, tipo_servicio, horas_v, tecnicos_v, piso_v, user))
+            "precio_piso=VALUES(precio_piso), precio_fijo=VALUES(precio_fijo), "
+            "updated_by=VALUES(updated_by)",
+            (clid, tipo_servicio, horas_v, tecnicos_v, piso_v, fijo_v, user))
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
@@ -2342,15 +2365,23 @@ def register_catalogo_routes(app, ctx):
         if not slug or tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
             return None
         row = mysql_fetchone(
-            "SELECT t.horas, t.tecnicos, t.precio_piso FROM cat_clase_producto_tarifas t "
+            "SELECT t.horas, t.tecnicos, t.precio_piso, t.precio_fijo "
+            "FROM cat_clase_producto_tarifas t "
             "JOIN cat_clases_producto c ON c.id=t.clase_id "
             "WHERE c.slug=%s AND c.activo=1 AND t.tipo_servicio=%s "
-            "  AND t.horas IS NOT NULL AND t.tecnicos IS NOT NULL",
+            # 2026-07-28: una clase puede tener tarifa SOLO por precio_fijo
+            # (ej. "Pisos" — se cobra $X por unidad, sin horas/técnicos), así
+            # que "tiene tarifa cargada" ahora es horas+tecnicos O precio_fijo.
+            "  AND (t.precio_fijo IS NOT NULL OR (t.horas IS NOT NULL AND t.tecnicos IS NOT NULL))",
             (slug, tipo_servicio))
         if not row:
             return None
-        return {"horas": float(row["horas"]), "tecnicos": int(row["tecnicos"]),
-                "precio_piso": float(row["precio_piso"]) if row.get("precio_piso") is not None else None}
+        horas = row.get("horas")
+        tecnicos = row.get("tecnicos")
+        return {"horas": float(horas) if horas is not None else None,
+                "tecnicos": int(tecnicos) if tecnicos is not None else None,
+                "precio_piso": float(row["precio_piso"]) if row.get("precio_piso") is not None else None,
+                "precio_fijo": float(row["precio_fijo"]) if row.get("precio_fijo") is not None else None}
 
     ctx["_cat_obtener_tarifa_clase"] = _cat_obtener_tarifa_clase
 
@@ -2368,13 +2399,17 @@ def register_catalogo_routes(app, ctx):
             return {}
         placeholders = ",".join(["%s"] * len(uniq))
         rows = mysql_fetchall(
-            "SELECT c.slug, t.horas, t.tecnicos, t.precio_piso FROM cat_clase_producto_tarifas t "
+            "SELECT c.slug, t.horas, t.tecnicos, t.precio_piso, t.precio_fijo "
+            "FROM cat_clase_producto_tarifas t "
             "JOIN cat_clases_producto c ON c.id=t.clase_id "
             f"WHERE c.activo=1 AND t.tipo_servicio=%s AND c.slug IN ({placeholders}) "
-            "  AND t.horas IS NOT NULL AND t.tecnicos IS NOT NULL",
+            "  AND (t.precio_fijo IS NOT NULL OR (t.horas IS NOT NULL AND t.tecnicos IS NOT NULL))",
             tuple([tipo_servicio] + uniq)) or []
-        return {r["slug"]: {"horas": float(r["horas"]), "tecnicos": int(r["tecnicos"]),
-                             "precio_piso": float(r["precio_piso"]) if r.get("precio_piso") is not None else None}
+        return {r["slug"]: {
+                    "horas": float(r["horas"]) if r.get("horas") is not None else None,
+                    "tecnicos": int(r["tecnicos"]) if r.get("tecnicos") is not None else None,
+                    "precio_piso": float(r["precio_piso"]) if r.get("precio_piso") is not None else None,
+                    "precio_fijo": float(r["precio_fijo"]) if r.get("precio_fijo") is not None else None}
                 for r in rows}
 
     ctx["_cat_tarifas_clases_batch"] = _cat_tarifas_clases_batch

@@ -2278,17 +2278,28 @@ def register_tickets_routes(app, ctx):
             tarifa = _cat_tarifa(clase_producto, tipo_servicio)
         if not tarifa:
             return None
-        hh = tarifa["horas"] * tarifa["tecnicos"]
-        costo = hh * cfg["valor_hh"]
-        precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
-        # Precio piso (2026-07-28, Daniel: "un mínimo... tres mil quinientos
-        # pesos"): si el cálculo automático queda por debajo del piso
-        # configurado para esta clase+tipo_servicio (/catalogo/clases), se usa
-        # el piso en vez del precio calculado. Protege ítems livianos/rápidos
-        # de cobrarse por debajo de un mínimo razonable.
-        _piso = tarifa.get("precio_piso")
-        if _piso is not None and precio_unitario < _piso:
-            precio_unitario = _tk_money_round(_piso)
+        # Precio fijo (2026-07-28, Daniel: categoría "Pisos" — "pisos =
+        # cantidad de pisos * precio unitario", editable en pesos chilenos,
+        # SIN pasar por horas×técnicos×valor_hh). Cuando esta clase+tipo
+        # tiene precio_fijo configurado, ESE es el precio unitario directo;
+        # horas/técnicos/piso no aplican para esta línea.
+        _fijo = tarifa.get("precio_fijo")
+        if _fijo is not None:
+            hh = 0.0
+            precio_unitario = _tk_money_round(_fijo)
+        else:
+            hh = tarifa["horas"] * tarifa["tecnicos"]
+            costo = hh * cfg["valor_hh"]
+            precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
+            # Precio piso (2026-07-28, Daniel: "un mínimo... tres mil
+            # quinientos pesos"): si el cálculo automático queda por debajo
+            # del piso configurado para esta clase+tipo_servicio
+            # (/catalogo/clases), se usa el piso en vez del precio calculado.
+            # Protege ítems livianos/rápidos de cobrarse por debajo de un
+            # mínimo razonable.
+            _piso = tarifa.get("precio_piso")
+            if _piso is not None and precio_unitario < _piso:
+                precio_unitario = _tk_money_round(_piso)
 
         # cantidad=0 EXPLÍCITO (el ERP/usuario excluyó el ítem) se respeta
         # tal cual -- `cantidad or 1` colapsaba 0 y None al mismo caso
