@@ -27865,7 +27865,9 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
              LIMIT %s
         """, (int(limit),)) or []
     except Exception as e:
-        return {"ok": False, "error": f"consulta de huerfanos fallo: {e}"}
+        print(f"[sr-autopoll] consulta de huerfanos fallo: {e}", flush=True)
+        return {"ok": False, "error": f"consulta de huerfanos fallo: {e}",
+                "revisados": 0, "vinculados": 0}
 
     cands = [c for c in cands if _simpliroute_courier_integra(c.get("courier"))]
     if not cands:
@@ -27964,7 +27966,9 @@ def _simpliroute_poll_batch(limit=400, dry=False):
              LIMIT %s
         """, (int(limit),)) or []
     except Exception as e:
-        return {"ok": False, "error": f"consulta de candidatos falló: {e}"}
+        print(f"[sr-autopoll] consulta de candidatos falló: {e}", flush=True)
+        return {"ok": False, "error": f"consulta de candidatos falló: {e}",
+                "consultados": 0, "actualizados": 0, "pod": 0, "grupos": 0, "errores": [str(e)]}
 
     # DIAGNOSTICO TEMPORAL (Daniel 2026-07-28, caso BLV 22738 / Felca / Rafael
     # Naranjo que no actualiza) -- confirmar el estado REAL en BD de ese item
