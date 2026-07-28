@@ -75,6 +75,11 @@
 <div class="mfd-hero">
   <div class="mfd-hero-info">
     <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+      {# Botón volver arriba, junto al título (Daniel 2026-07-28: "hace falta
+         un botón para ir atrás" — antes solo existía al fondo de la página). #}
+      <a href="{{ url_for('tr_manifiestos') }}" class="mfd-back-btn no-print" title="Volver a manifiestos">
+        <i class="bi bi-arrow-left"></i>
+      </a>
       <h4 class="font-monospace mb-0 mfd-hero-title">
         <i class="bi bi-clipboard-check"></i>{{ manifiesto.correlativo }}
       </h4>
@@ -130,11 +135,16 @@
     {# SimpliRoute: solo para los couriers que rutean ahí (Felca / Milling) #}
     {% set _cl = (manifiesto.courier or '')|lower %}
     {% if 'felca' in _cl or 'milling' in _cl or 'melling' in _cl %}
+    {# FIX 2026-07-28 (Daniel: "botones que están bloqueadas... cuando todas
+       las facturas están subidas, algo inteligente") -- si TODAS las
+       facturas ya tienen simpliroute_visit_id no queda nada por subir; el
+       botón se ve apagado/gris en vez de invitar a presionarlo de nuevo. #}
+    {% set _todos_subidos_sr = items and (items|rejectattr('simpliroute_visit_id')|list|length == 0) %}
     <button class="btn btn-sm fw-bold" id="btnSubirSR"
-            style="background:#00b8a9;border:none;color:#fff"
+            style="{{ 'background:#e5e7eb;border:none;color:#6b7280' if _todos_subidos_sr else 'background:#00b8a9;border:none;color:#fff' }}"
             onclick="subirASimpliRoute()"
-            title="Sube todas las facturas de este manifiesto a SimpliRoute como visitas, para que el transportista solo asigne la ruta">
-      <i class="bi bi-geo-alt-fill me-1"></i>Subir a SimpliRoute
+            title="{{ 'Todas las facturas ya están subidas a SimpliRoute. Puedes volver a presionarlo si agregas facturas nuevas.' if _todos_subidos_sr else 'Sube todas las facturas de este manifiesto a SimpliRoute como visitas, para que el transportista solo asigne la ruta' }}">
+      <i class="bi {{ 'bi-check-circle-fill' if _todos_subidos_sr else 'bi-geo-alt-fill' }} me-1"></i>{{ 'Ya subido a SimpliRoute' if _todos_subidos_sr else 'Subir a SimpliRoute' }}
     </button>
     {% endif %}
     {% if es_fedex %}
@@ -1545,6 +1555,13 @@
 }
 .mfd-hero-title{ font-size:1.4rem; letter-spacing:.5px; color:var(--ilus-black); }
 .mfd-hero-title i{ color:var(--ilus-red); margin-right:.45rem; }
+.mfd-back-btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:34px; height:34px; border-radius:9px; flex-shrink:0;
+  background:#fff; border:1px solid #e5e7eb; color:var(--ilus-black);
+  font-size:1.05rem; text-decoration:none; transition:all .15s;
+}
+.mfd-back-btn:hover{ background:var(--ilus-black); color:#fff; border-color:var(--ilus-black); }
 .mfd-hero-sub{ color:#6b7280; font-size:.85rem; display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; }
 .mfd-hero-sub .mfd-dot{ opacity:.4; }
 .mfd-hero-notas{ margin-top:.5rem; font-size:.82rem; color:#6b7280; background:rgba(0,0,0,.03); padding:.3rem .6rem; border-radius:8px; display:inline-block; }
@@ -1864,9 +1881,26 @@
 .pe-driver{ background:linear-gradient(135deg,#fff,#fef2f2); border:1px solid #fecaca; border-radius:10px; padding:.8rem; }
 .pe-gps{ font-size:.74rem; color:#dc2626; text-decoration:none; font-weight:700; }
 .pe-firma{ padding:.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:10px; text-align:center; margin-top:.4rem; }
-.pe-firma img{ max-width:220px; max-height:70px; }
+.pe-firma img{ max-width:220px; max-height:70px; cursor:zoom-in; }
 .pe-fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:.4rem; }
 .pe-fotos img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; cursor:zoom-in; border:1px solid #e5e7eb; }
+
+/* Lightbox de evidencia (Daniel 2026-07-28): abrir foto/firma en un modal
+   propio en vez de una pestaña nueva del navegador. */
+.ilus-lightbox-ov{
+  position:fixed; inset:0; z-index:2000; background:rgba(10,10,10,.92);
+  display:flex; align-items:center; justify-content:center; padding:2rem;
+  cursor:zoom-out;
+}
+.ilus-lightbox-ov img{
+  max-width:min(92vw,900px); max-height:88vh; object-fit:contain;
+  border-radius:8px; box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+.ilus-lightbox-close{
+  position:absolute; top:1rem; right:1.2rem; background:none; border:none;
+  color:#fff; font-size:2.2rem; line-height:1; cursor:pointer; opacity:.85;
+}
+.ilus-lightbox-close:hover{ opacity:1; }
 .pe-tl{ position:relative; padding-left:1.3rem; }
 .pe-tl::before{ content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem; width:2px; background:#e5e7eb; }
 .pe-tl-row{ position:relative; padding:.35rem 0 .65rem .3rem; }
@@ -2812,6 +2846,21 @@ async function _srCargarTrazabilidad(data, token, force) {
   }
 }
 
+// Lightbox simple para fotos/firmas de evidencia (Daniel 2026-07-28: "que la
+// abriera en un modal" en vez de abrir una pestaña nueva del navegador).
+// Reutilizado por la evidencia de SimpliRoute y por "Prueba de entrega".
+function _ilusLightbox(src, alt) {
+  var ov = document.createElement('div');
+  ov.className = 'ilus-lightbox-ov';
+  ov.innerHTML = '<img src="' + _srEsc(src) + '" alt="' + _srEsc(alt || 'Evidencia') + '">'
+    + '<button type="button" class="ilus-lightbox-close" aria-label="Cerrar">&times;</button>';
+  var cerrar = function () { ov.remove(); document.removeEventListener('keydown', onEsc); };
+  var onEsc = function (e) { if (e.key === 'Escape') cerrar(); };
+  ov.addEventListener('click', function (e) { if (e.target === ov || e.target.classList.contains('ilus-lightbox-close')) cerrar(); });
+  document.addEventListener('keydown', onEsc);
+  (document.querySelector('.modal.show') || document.body).appendChild(ov);
+}
+
 async function _srCargarEvidencia(data, token, force) {
   try {
     var r = await fetch(
@@ -2825,12 +2874,12 @@ async function _srCargarEvidencia(data, token, force) {
     if (p && (p.firma_url || (p.fotos && p.fotos.length))) {
       var html = '<div class="pe-sec" style="margin-top:.9rem"><div class="pe-h"><i class="bi bi-camera-fill"></i>Evidencia (SimpliRoute)</div>';
       if (p.firma_url) {
-        html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma"></div>';
+        html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma" onclick="_ilusLightbox(this.src, \'Firma\')"></div>';
       }
       if (p.fotos && p.fotos.length) {
         html += '<div class="pe-fotos mt-2">';
         p.fotos.forEach(function(f){
-          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" onclick="window.open(this.src,\'_blank\')">';
+          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" onclick="_ilusLightbox(this.src, \'Foto de entrega\')">';
         });
         html += '</div>';
       }
@@ -4083,10 +4132,10 @@ function _peRenderDetalle(d) {
     if (p.receptor_rut) html += '<div class="pe-kv"><span class="pe-kv-k">RUT receptor</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(p.receptor_rut) + '</span></div>';
     if (p.entregado_at) html += '<div class="pe-kv"><span class="pe-kv-k">Hora entrega</span><span class="pe-kv-v">' + _peEsc(p.entregado_at) + '</span></div>';
     if (p.lat && p.lng) html += '<div class="pe-kv"><span class="pe-kv-k">GPS entrega</span><span class="pe-kv-v"><a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + p.lat + ',' + p.lng + '">Ver punto</a></span></div>';
-    if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma"></div>';
+    if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma" onclick="_ilusLightbox(this.src, \'Firma\')"></div>';
     if (p.fotos && p.fotos.length) {
       html += '<div class="pe-fotos mt-2">';
-      p.fotos.forEach(function(f){ html += '<img src="' + f + '" onclick="window.open(this.src,\'_blank\')">'; });
+      p.fotos.forEach(function(f){ html += '<img src="' + f + '" alt="Foto de entrega" onclick="_ilusLightbox(this.src, \'Foto de entrega\')">'; });
       html += '</div>';
     }
     html += '</div>';
