@@ -27998,10 +27998,44 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         data = r.get("data")
         visitas = data if isinstance(data, list) else []
         por_id = {str(v.get("id")): v for v in visitas if isinstance(v, dict) and v.get("id")}
+        por_ref = {}
+        for v in visitas:
+            if isinstance(v, dict) and (v.get("reference") or "").strip():
+                por_ref.setdefault((v.get("reference") or "").strip(), v)
 
         for it in items:
             vid = str(it.get("simpliroute_visit_id") or "")
+            ref_it = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
+
+            # FIX 2026-07-28 (Daniel: caso BLV 22738 / Felca): priorizar SIEMPRE
+            # la visita por 'reference' (tido-nudo) por sobre el visit_id
+            # guardado. SimpliRoute puede dejar la visita VIEJA viva (en
+            # 'pending', nunca la completan) mientras la entrega real ocurre
+            # bajo una visita NUEVA con id distinto -- si se busca solo por id
+            # guardado, la vieja "sí existe" y el poller nunca se entera de
+            # que ya no es la vigente.
+            visita_ref = por_ref.get(ref_it) if ref_it else None
+            if visita_ref and str(visita_ref.get("id")) != vid:
+                nuevo_id = str(visita_ref.get("id") or "")
+                try:
+                    mysql_execute(
+                        "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+                        "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() "
+                        "WHERE id=%s",
+                        (nuevo_id, visita_ref.get("tracking_id") or "", it["item_id"]))
+                    _tr_log("manifest_item", it["item_id"],
+                            "Visita SimpliRoute reemplazada automaticamente",
+                            f"visit_id viejo {vid} sigue vivo pero superado -> nuevo {nuevo_id} "
+                            f"(reference={ref_it})")
+                    vid = nuevo_id
+                except Exception as e:
+                    out["errores"].append(
+                        f"item {it['item_id']}: encontrada visita nueva {nuevo_id} "
+                        f"pero no se pudo guardar ({e})")
+
             visita = por_id.get(vid)
+            if not visita and visita_ref and str(visita_ref.get("id")) == vid:
+                visita = visita_ref
             if not visita:
                 # BUG REAL (Daniel 2026-07-25, caso VD 6371 / MAN-2026-0011):
                 # el listado GET /v1/routes/visits/?planned_date=<fecha del
