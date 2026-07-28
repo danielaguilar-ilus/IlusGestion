@@ -27976,12 +27976,13 @@ def _simpliroute_poll_batch(limit=400, dry=False):
     try:
         _diag = mysql_fetchall("""
             SELECT mi.id AS item_id, mi.manifest_id, mi.simpliroute_visit_id,
-                   mi.estado_entrega, tm.fecha, tm.courier, c.tido, c.nudo
-              FROM transport_manifest_items mi
-              JOIN transport_manifests tm ON tm.id = mi.manifest_id
-              JOIN transport_commitments c ON c.id = mi.commitment_id
-             WHERE c.nudo LIKE '%22738%'
-        """) or []
+                   mi.estado_entrega, tm.fecha, tm.courier, c.tido, c.nudo,
+                   c.id AS commitment_id
+              FROM transport_commitments c
+              LEFT JOIN transport_manifest_items mi ON mi.commitment_id = c.id
+              LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
+             WHERE c.nudo LIKE %s
+        """, ("%22738%",)) or []
         print(f"[sr-diag] filas BLV/22738: {_diag}", flush=True)
     except Exception as e:
         print(f"[sr-diag] fallo: {e}", flush=True)
