@@ -19321,6 +19321,16 @@ def _tr_fetch_from_erp(tido, nudo):
     # NOTA: get_db() devuelve conexión del pool via g. NO llamar conn.close()
     # al final — teardown_appcontext la cierra. Cerrar aquí deja g._db
     # apuntando a una conexión cerrada.
+    # FIX 2026-07-27 (Daniel/Alison: "edito la dirección desde el manifiesto,
+    # queda guardada, pero después vuelve a aparecer sin dirección"): esta
+    # función corre en CADA "Enviar al manifiesto" y en cada sync masivo. El
+    # UPSERT de abajo pisaba comuna/direccion/telefono/email con lo que
+    # trajera el ERP EN ESE MOMENTO, sin importar que estuvieran vacíos —
+    # boletas a consumidor final casi siempre traen esos campos en blanco,
+    # así que cualquier resync borraba en silencio lo que un operador había
+    # completado a mano (tr_update_compromiso). Ahora el ERP solo pisa el
+    # dato cuando trae algo NO vacío; si el ERP no tiene el dato, se conserva
+    # lo que ya había en transport_commitments (editado a mano o no).
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -19333,8 +19343,10 @@ def _tr_fetch_from_erp(tido, nudo):
                 ON DUPLICATE KEY UPDATE
                   fecha_emision=VALUES(fecha_emision), fecha_entrega=VALUES(fecha_entrega),
                   cliente_nombre=VALUES(cliente_nombre), cliente_rut=VALUES(cliente_rut),
-                  comuna=VALUES(comuna), direccion=VALUES(direccion),
-                  telefono=VALUES(telefono), email=VALUES(email),
+                  comuna=IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna)),
+                  direccion=IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion)),
+                  telefono=IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono)),
+                  email=IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email)),
                   valor_neto=VALUES(valor_neto), valor_bruto=VALUES(valor_bruto),
                   costo_zz=CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
                   tiene_saldo=VALUES(tiene_saldo), guia_numero=VALUES(guia_numero),
@@ -19787,10 +19799,10 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           fecha_entrega =VALUES(fecha_entrega),
           cliente_nombre=VALUES(cliente_nombre),
           cliente_rut   =VALUES(cliente_rut),
-          comuna        =VALUES(comuna),
-          direccion     =VALUES(direccion),
-          telefono      =VALUES(telefono),
-          email         =VALUES(email),
+          comuna        =IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna)),
+          direccion     =IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion)),
+          telefono      =IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono)),
+          email         =IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email)),
           observaciones =VALUES(observaciones),
           zz_skus       =VALUES(zz_skus),
           valor_neto    =VALUES(valor_neto),
@@ -19961,8 +19973,8 @@ def _tr_import_from_excel(file_bytes, filename):
                           fecha_emision =VALUES(fecha_emision),
                           cliente_nombre=VALUES(cliente_nombre),
                           cliente_rut   =VALUES(cliente_rut),
-                          comuna        =VALUES(comuna),
-                          direccion     =VALUES(direccion),
+                          comuna        =IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna)),
+                          direccion     =IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion)),
                           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
                           tiene_saldo   =1,
                           clasificacion =VALUES(clasificacion),
