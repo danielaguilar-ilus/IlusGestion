@@ -28003,6 +28003,21 @@ def _simpliroute_poll_batch(limit=400, dry=False):
             if isinstance(v, dict) and (v.get("reference") or "").strip():
                 por_ref.setdefault((v.get("reference") or "").strip(), v)
 
+        # FIX 2026-07-28 (Daniel: caso BLV 22738): la visita de REEMPLAZO
+        # puede quedar agendada para HOY aunque el manifiesto sea de otra
+        # fecha (fecha_s) -- si no se trae también el listado de hoy, la
+        # búsqueda por reference nunca la encuentra y el poller solo ve la
+        # visita vieja (que sigue "viva" en su fecha original, atascada).
+        hoy_s = _dt_mod.date.today().isoformat()
+        if hoy_s != fecha_s:
+            r_hoy_grupo = _simpliroute_request(
+                "GET", f"{_src.EP_VISITS}?planned_date={hoy_s}", token, timeout=45)
+            if r_hoy_grupo.get("ok"):
+                data_hoy = r_hoy_grupo.get("data")
+                for v in (data_hoy if isinstance(data_hoy, list) else []):
+                    if isinstance(v, dict) and (v.get("reference") or "").strip():
+                        por_ref.setdefault((v.get("reference") or "").strip(), v)
+
         for it in items:
             vid = str(it.get("simpliroute_visit_id") or "")
             ref_it = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
