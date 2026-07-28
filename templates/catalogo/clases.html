@@ -19,6 +19,10 @@
 .clc-precio-lbl{font-size:.72rem;color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap}
 .clc-precio-lbl b{color:#dc2626}
 .clc-sinDatos{color:#c1c5cc;font-style:italic;font-size:.74rem}
+.clc-copia-hint{font-size:.66rem;color:#9ca3af;font-style:italic;margin-bottom:3px;display:flex;align-items:center;gap:3px}
+.clc-piso-row{margin-top:5px;display:flex;align-items:center;gap:6px}
+.clc-piso-row label{font-size:.66rem;color:#6b7280;white-space:nowrap}
+.clc-num-piso{width:80px}
 .clc-badge{font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:50px;white-space:nowrap}
 .clc-badge.on{background:#dcfce7;color:#166534}
 .clc-badge.off{background:#f3f4f6;color:#6b7280}
@@ -187,19 +191,40 @@ function clcPrecioUnit(hh){
 
 function clcInputsTarifa(c){
   const tipo = _clcServ;
-  const horas = c[tipo+'_horas'];
-  const tecnicos = c[tipo+'_tecnicos'];
-  const hh = c[tipo+'_hh'];
+  // Copiar de Mantención (2026-07-28, Daniel: "que la instalación y la
+  // visita repitiera los mismos valores... y me diera la oportunidad de
+  // editarla"): si este tipo AÚN no tiene horas/técnicos/piso propios
+  // (NULL — nunca se guardó nada acá), se muestran los valores de
+  // Mantención como punto de partida editable. Es solo un valor visual de
+  // arranque: mientras el operador no cambie nada, no se guarda ninguna
+  // fila nueva para este tipo; apenas edita y confirma, queda como un
+  // valor PROPIO de este tipo (deja de copiar a Mantención).
+  const esCopiaDeMantencion = (tipo !== 'mantencion'
+    && c[tipo+'_horas'] == null && c[tipo+'_tecnicos'] == null);
+  const horas = esCopiaDeMantencion ? c['mantencion_horas'] : c[tipo+'_horas'];
+  const tecnicos = esCopiaDeMantencion ? c['mantencion_tecnicos'] : c[tipo+'_tecnicos'];
+  const piso = (tipo !== 'mantencion' && c[tipo+'_piso'] == null && c['mantencion_piso'] != null)
+    ? c['mantencion_piso'] : c[tipo+'_piso'];
+  const hh = (horas!=null && tecnicos!=null) ? horas*tecnicos : null;
   const pu = clcPrecioUnit(hh);
   const hhTxt = (hh==null) ? '<span class="clc-sinDatos">sin definir</span>'
     : '<b>'+ (Math.round(hh*100)/100) +'</b> HH';
   const puTxt = (pu==null) ? '' : ' · <span class="clc-precio-lbl"><b>'+fmtCLP(pu)+'</b>/u</span>';
+  const copiaHint = esCopiaDeMantencion
+    ? '<div class="clc-copia-hint" title="Valores de Mantención — edítalos para fijar los propios de este tipo">'
+      + '<i class="bi bi-arrow-90deg-left"></i> copiado de Mantención</div>' : '';
   return ''
+    + copiaHint
     + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '
     +   'placeholder="hr" data-id="'+c.id+'" data-campo="horas" onchange="clcGuardarTarifa(this)">'
     + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '
     +   'placeholder="téc" data-id="'+c.id+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)">'
-    + ' <span class="clc-hh">'+hhTxt+'</span>' + puTxt;
+    + ' <span class="clc-hh">'+hhTxt+'</span>' + puTxt
+    + '<div class="clc-piso-row">'
+    +   '<label>Precio piso ($)</label>'
+    +   '<input type="number" step="1" min="0" class="clc-num clc-num-piso" value="'+(piso==null?'':piso)+'" '
+    +     'placeholder="sin piso" data-id="'+c.id+'" data-campo="piso" onchange="clcGuardarPiso(this)">'
+    + '</div>';
 }
 
 function clcRender(){
@@ -263,6 +288,30 @@ async function clcGuardarTarifa(input){
     fila[tipo+'_hh'] = (horas!=null && tecnicos!=null) ? horas*tecnicos : null;
     clcRender();
     ilusToast('✓ Guardado', {type:'success'});
+  }catch(e){
+    ilusToast('Error de conexión al guardar', {type:'error'});
+  }finally{
+    input.disabled = false;
+  }
+}
+
+async function clcGuardarPiso(input){
+  const id = input.dataset.id, tipo = _clcServ;
+  const fila = _clcClases.find(c => String(c.id) === String(id));
+  if(!fila) return;
+  const piso = input.value === '' ? null : parseFloat(input.value);
+  if (piso != null && piso < 0){ ilusToast('El precio piso no puede ser negativo', {type:'warning'}); return; }
+  input.disabled = true;
+  try{
+    const r = await fetch('/catalogo/api/clases/'+id+'/tarifas', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tipo_servicio: tipo, precio_piso: piso})
+    });
+    const d = await r.json();
+    if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); await clcCargar(); return; }
+    fila[tipo+'_piso'] = piso;
+    clcRender();
+    ilusToast('✓ Piso guardado', {type:'success'});
   }catch(e){
     ilusToast('Error de conexión al guardar', {type:'error'});
   }finally{

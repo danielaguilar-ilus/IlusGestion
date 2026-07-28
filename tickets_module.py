@@ -2281,6 +2281,14 @@ def register_tickets_routes(app, ctx):
         hh = tarifa["horas"] * tarifa["tecnicos"]
         costo = hh * cfg["valor_hh"]
         precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
+        # Precio piso (2026-07-28, Daniel: "un mínimo... tres mil quinientos
+        # pesos"): si el cálculo automático queda por debajo del piso
+        # configurado para esta clase+tipo_servicio (/catalogo/clases), se usa
+        # el piso en vez del precio calculado. Protege ítems livianos/rápidos
+        # de cobrarse por debajo de un mínimo razonable.
+        _piso = tarifa.get("precio_piso")
+        if _piso is not None and precio_unitario < _piso:
+            precio_unitario = _tk_money_round(_piso)
 
         # cantidad=0 EXPLÍCITO (el ERP/usuario excluyó el ítem) se respeta
         # tal cual -- `cantidad or 1` colapsaba 0 y None al mismo caso
