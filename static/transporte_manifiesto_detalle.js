@@ -485,9 +485,20 @@ function abrirEditar(data) {
   document.getElementById('edTelefono').value   = data.telefono || '';
   document.getElementById('edEmail').value      = data.email || '';
   document.getElementById('edDireccion').value  = data.direccion || '';
+  var _edRef = document.getElementById('edDireccionRef');
+  if (_edRef) _edRef.value = data.direccion_referencia || '';
   document.getElementById('edComuna').value     = data.comuna || '';
   document.getElementById('edRegion').value     = data.region || '';
   document.getElementById('edCodPostal').value  = data.cod_postal || '';
+  // Recotización (2026-07-29): guarda la comuna/courier de apertura para
+  // detectar si REALMENTE cambió de zona al guardar — ver guardarEdicion().
+  var _elComunaRc = document.getElementById('edComuna');
+  if (_elComunaRc) {
+    _elComunaRc.dataset.original = data.comuna || '';
+    _elComunaRc.dataset.courier  = data.courier || '';
+  }
+  var _rcBox = document.getElementById('edRecotizaBox');
+  if (_rcBox) _rcBox.style.display = 'none';
   document.getElementById('edPeso').value       = data.peso || '';
   document.getElementById('edBultos').value     = data.bultos || 1;
   // BLOQUEO DE BULTOS (Daniel 2026-07-22): con la OT FedEx ya emitida (y no
@@ -1082,17 +1093,30 @@ async function srReenviarVisita() {
   }
 }
 
+// Recotización (2026-07-29): si el operador toca la comuna a mano, el
+// cuadro de recotización que hubiera quedado de una edición anterior ya no
+// aplica — se oculta hasta el próximo Guardar.
+function _edComunaTocada() {
+  var box = document.getElementById('edRecotizaBox');
+  if (box) box.style.display = 'none';
+}
+
 function guardarEdicion() {
   var cid = document.getElementById('edCid').value;
   if (!cid) return;
   var btn = document.getElementById('edGuardarBtn');
   var msg = document.getElementById('edMsg');
   btn.disabled = true;
+  var _elComuna = document.getElementById('edComuna');
+  var _comunaOriginal = (_elComuna.dataset.original || '').trim();
+  var _comunaNueva    = _elComuna.value.trim();
+  var _courierItem    = _elComuna.dataset.courier || '';
   var payload = {
     telefono:    document.getElementById('edTelefono').value.trim(),
     email:       document.getElementById('edEmail').value.trim(),
     direccion:   document.getElementById('edDireccion').value.trim(),
-    comuna:      document.getElementById('edComuna').value.trim(),
+    direccion_referencia: (document.getElementById('edDireccionRef') || {}).value || '',
+    comuna:      _comunaNueva,
     region:      document.getElementById('edRegion').value.trim(),
     cod_postal:  document.getElementById('edCodPostal').value.trim(),
     peso_export: parseFloat(document.getElementById('edPeso').value) || 0,
@@ -1151,12 +1175,73 @@ function guardarEdicion() {
     btn.disabled = false;
     msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
     if (window.ilusToast) ilusToast('✓ Datos actualizados' + trackMsg, { type: 'success' });
+
+    // Recotización (2026-07-29, Daniel: "si le voy a cambiar la dirección
+    // por acá, me recotice... vamos a recotizar esto porque cambia según el
+    // courier"). Solo si la comuna REALMENTE cambió y el envío ya tiene
+    // courier asignado — si no, se recarga normal (comportamiento de antes).
+    var _cambioComuna = _comunaNueva && _comunaOriginal
+                       && _comunaNueva.toLowerCase() !== _comunaOriginal.toLowerCase();
+    if (_cambioComuna && _courierItem) {
+      try {
+        var rr = await fetch('/transporte/api/compromisos/' + cid + '/recotizar-courier?comuna=' + encodeURIComponent(_comunaNueva));
+        var dr = await rr.json();
+        if (dr.ok) {
+          window._edRecotizaCid = cid;
+          window._edRecotizaPrecio = dr.precio_nuevo;
+          var box = document.getElementById('edRecotizaBox');
+          var txt = document.getElementById('edRecotizaTexto');
+          if (box && txt) {
+            var signo = dr.diferencia > 0 ? '+' : '';
+            txt.innerHTML = '<i class="bi bi-info-circle me-1"></i>'
+              + 'Nueva comuna <b>' + dr.comuna + '</b> con <b>' + dr.courier + '</b>: '
+              + 'costo courier <b>$' + Math.round(dr.precio_nuevo).toLocaleString('es-CL') + '</b> '
+              + '(antes $' + Math.round(dr.precio_actual).toLocaleString('es-CL') + ', '
+              + signo + '$' + Math.round(dr.diferencia).toLocaleString('es-CL') + ')';
+            box.style.display = '';
+          }
+          return; // deja el modal abierto para que el operador vea/aplique la recotización
+        }
+        // Sin tarifa para la comuna nueva u otro error de cotización: no
+        // bloquea el guardado (la dirección YA se guardó bien), solo avisa.
+        if (window.ilusToast) ilusToast('Dirección guardada. ' + (dr.error || 'No se pudo recotizar automáticamente.'), { type: 'warning' });
+      } catch (e) { /* recotización es best-effort, no bloquea el guardado */ }
+    }
     setTimeout(function(){ location.reload(); }, 700);
   })
   .catch(function(){
     btn.disabled = false;
     msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
   });
+}
+
+async function _edAplicarRecotizacion() {
+  var cid = window._edRecotizaCid;
+  var nuevo = window._edRecotizaPrecio;
+  if (!cid || nuevo == null) return;
+  var btn = document.getElementById('edRecotizaBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    var r = await fetch('/transporte/api/compromisos/' + cid, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ costo_courier: nuevo }),
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      if (window.ilusToast) ilusToast(d.error || 'No se pudo aplicar el nuevo costo', { type: 'error' });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Aplicar nuevo costo';
+      return;
+    }
+    if (window.ilusToast) ilusToast('✓ Costo courier actualizado', { type: 'success' });
+    location.reload();
+  } catch (e) {
+    if (window.ilusToast) ilusToast('Error de conexión al aplicar la recotización', { type: 'error' });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Aplicar nuevo costo';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════

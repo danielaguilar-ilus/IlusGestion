@@ -199,6 +199,14 @@
               </label>
             </div>
           </div>
+          {# Campo separado (2026-07-29, Daniel): oficina/depto/piso NO va en
+             la calle — si va mezclado, se pierde cada vez que se elige una
+             sugerencia de Google (que reemplaza el input completo). #}
+          <div class="client-cell span2">
+            <div class="client-lbl">Referencia (oficina, depto, piso) <span style="color:#9ca3af;font-weight:400">— opcional</span></div>
+            <input class="client-input" type="text" id="cli-dir-ref" placeholder="Ej: Oficina 601, Torre B"
+                   maxlength="200" autocomplete="off">
+          </div>
           <div class="client-cell">
             <div class="client-lbl">Seguro (1,2%)</div>
             <div class="client-val red" id="cli-seguro">—</div>

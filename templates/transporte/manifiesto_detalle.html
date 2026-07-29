@@ -462,6 +462,8 @@
           'telefono': item.telefono or '',
           'email': item.email or '',
           'direccion': item.direccion or '',
+          'direccion_referencia': item.direccion_referencia or '',
+          'courier': manifiesto.courier or '',
           'comuna': item.comuna or '',
           'region': item.region or '',
           'cod_postal': item.cod_postal or '',
@@ -1163,10 +1165,19 @@ function mfdFiltrarTabla(){
           </label>
           <input type="text" id="edDireccion" class="form-control form-control-sm" autocomplete="off" placeholder="Empieza a escribir una dirección…">
         </div>
+        {# 2026-07-29 (Daniel): campo separado para oficina/depto/piso — si va
+           mezclado en la calle, se pierde cada vez que se elige una
+           sugerencia de Google (reemplaza el input completo). #}
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1 text-muted">Referencia (oficina, depto, piso) — opcional</label>
+          <input type="text" id="edDireccionRef" class="form-control form-control-sm" maxlength="200"
+                 autocomplete="off" placeholder="Ej: Oficina 601, Torre B">
+        </div>
         <div class="row g-2">
           <div class="col-12 col-sm-4">
             <label class="form-label small fw-semibold mb-1">Comuna</label>
-            <input type="text" id="edComuna" class="form-control form-control-sm">
+            <input type="text" id="edComuna" class="form-control form-control-sm"
+                   oninput="_edComunaTocada()">
           </div>
           <div class="col-12 col-sm-5">
             <label class="form-label small fw-semibold mb-1">Región</label>
@@ -1175,6 +1186,22 @@ function mfdFiltrarTabla(){
           <div class="col-12 col-sm-3">
             <label class="form-label small fw-semibold mb-1">Cód. postal</label>
             <input type="text" id="edCodPostal" class="form-control form-control-sm">
+          </div>
+        </div>
+        {# Recotización (2026-07-29, Daniel: "si le voy a cambiar la dirección
+           por acá, me recotice... vamos a recotizar esto porque, obviamente,
+           ahorita está en La Serena, y si lo cambio a Las Condes, esto tiene
+           que cambiar"). Aparece solo si la comuna cambió y el envío ya tiene
+           courier asignado — compara el costo courier actual contra la nueva
+           comuna, y deja aplicar el nuevo costo con un clic. #}
+        <div id="edRecotizaBox" style="display:none;background:#f5f3ff;border:1px solid #ddd6fe"
+             class="mt-2 p-2 rounded">
+          <div class="d-flex align-items-center justify-content-between gap-2">
+            <div id="edRecotizaTexto" class="small" style="color:#5b21b6"></div>
+            <button type="button" class="btn btn-sm btn-outline-dark flex-shrink-0" id="edRecotizaBtn"
+                    onclick="_edAplicarRecotizacion()">
+              <i class="bi bi-arrow-repeat me-1"></i>Aplicar nuevo costo
+            </button>
           </div>
         </div>
         <hr class="my-3">

@@ -761,6 +761,7 @@ function renderDoc(d, elapsedMs){
   setInput('cli-email', h.email     || '');
   setInput('cli-tel',   h.telefono  || '');
   setInput('cli-dir',   h.direccion || '');
+  setInput('cli-dir-ref', h.direccion_referencia || '');
   // Nuevo documento → la dirección del ERP aún NO está georreferenciada
   // (Daniel 2026-07-29: la georreferenciación con Google ya NO es obligatoria
   // para asignar — el operador puede escribir/editar la dirección libremente
@@ -773,7 +774,15 @@ function renderDoc(d, elapsedMs){
   // cuando el operador valide la dirección con Google.
   setInput('cli-region', h.region || '');
   const _dirHint0 = document.getElementById('cli-dir-hint');
-  if (_dirHint0) _dirHint0.innerHTML = '<i class="bi bi-info-circle"></i> Elige una sugerencia de Google para georreferenciarla (recomendado, no obligatorio).';
+  if (_dirHint0) {
+    // 2026-07-29 (Daniel): si esta dirección ya fue editada a mano antes,
+    // el backend la devuelve BLOQUEADA (no la del ERP) — avisar para que no
+    // parezca que "cambió sola" si el operador la ve distinta a la factura.
+    _dirHint0.innerHTML = h.direccion_bloqueada_por_edicion
+      ? '<i class="bi bi-shield-check" style="color:#16a34a"></i> '
+        + '<span style="color:#166534">Dirección ya confirmada manualmente — protegida contra el ERP</span>'
+      : '<i class="bi bi-info-circle"></i> Elige una sugerencia de Google para georreferenciarla (recomendado, no obligatorio).';
+  }
   if (document.getElementById('cli-dir')) document.getElementById('cli-dir').dataset.validatedValue = '';
   setInput('cli-obs',   h.observaciones || '');
   setInput('cli-notas', '');   // notas de entrega: las escribe el usuario, no vienen del ERP
@@ -2522,6 +2531,7 @@ async function enviarAManifiesto(){
     email:          _gv('cli-email') || _h.email || '',
     telefono:       _gv('cli-tel')   || _h.telefono || '',
     direccion:      _gv('cli-dir')   || _h.direccion || '',
+    direccion_referencia: _gv('cli-dir-ref') || '',
     comuna:         _gv('cli-comuna') || _h.comuna || '',
     region:         _gv('cli-region') || _h.region || '',
     valor_neto:     _h.valor_neto || 0,

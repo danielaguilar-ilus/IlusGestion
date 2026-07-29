@@ -17905,6 +17905,31 @@ def api_asignar_documento():
         except Exception as _e_com:
             print(f"[asignar_documento] resolver comuna '{_com_cod}' falló: {_e_com}", flush=True)
 
+    # ── Respetar la dirección que YA editó un humano (2026-07-29, Daniel:
+    # "algo lo está actualizando a la dirección del documento... debemos
+    # respetar la dirección que cambia Alison"). Root cause real: esta misma
+    # pantalla (Asignar y Cotizar) siempre pre-rellenaba con el dato CRUDO
+    # del ERP — si el operador reabría el documento para otro ajuste, veía
+    # (y sin querer volvía a guardar) la dirección genérica del ERP en vez de
+    # la que ya había corregido. Si el compromiso ya existe y tiene el
+    # candado direccion_editada_manual=1, el header devuelto usa esos datos
+    # guardados en vez de los del ERP — el ERP nunca vuelve a "ganar".
+    try:
+        _com_guardado = mysql_fetchone(
+            "SELECT direccion, comuna, region, cod_postal, telefono, email, "
+            "direccion_referencia FROM transport_commitments "
+            "WHERE tido=%s AND nudo=%s AND direccion_editada_manual=1",
+            (tido, nudo),
+        )
+        if _com_guardado:
+            for _campo in ("direccion", "comuna", "region", "cod_postal", "telefono", "email"):
+                if _com_guardado.get(_campo):
+                    hdr[_campo] = _com_guardado[_campo]
+            hdr["direccion_referencia"] = _com_guardado.get("direccion_referencia") or ""
+            hdr["direccion_bloqueada_por_edicion"] = True
+    except Exception as _e_dirlock:
+        print(f"[asignar_documento] chequeo direccion_editada_manual falló: {_e_dirlock}", flush=True)
+
     postal_destino = _comuna_to_postal(hdr.get("comuna", ""))
 
     # ── Desglose de stock (físico/devengado/comprometido) por SKU (2026-07-25,
@@ -19487,10 +19512,10 @@ def _tr_fetch_from_erp(tido, nudo):
                 ON DUPLICATE KEY UPDATE
                   fecha_emision=VALUES(fecha_emision), fecha_entrega=VALUES(fecha_entrega),
                   cliente_nombre=VALUES(cliente_nombre), cliente_rut=VALUES(cliente_rut),
-                  comuna=IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna)),
-                  direccion=IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion)),
-                  telefono=IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono)),
-                  email=IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email)),
+                  comuna=IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
+                  direccion=IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
+                  telefono=IF(direccion_editada_manual=1, telefono, IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono))),
+                  email=IF(direccion_editada_manual=1, email, IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email))),
                   valor_neto=VALUES(valor_neto), valor_bruto=VALUES(valor_bruto),
                   costo_zz=CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
                   tiene_saldo=VALUES(tiene_saldo), guia_numero=VALUES(guia_numero),
@@ -19943,10 +19968,10 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           fecha_entrega =VALUES(fecha_entrega),
           cliente_nombre=VALUES(cliente_nombre),
           cliente_rut   =VALUES(cliente_rut),
-          comuna        =IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna)),
-          direccion     =IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion)),
-          telefono      =IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono)),
-          email         =IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email)),
+          comuna        =IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
+          direccion     =IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
+          telefono      =IF(direccion_editada_manual=1, telefono, IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono))),
+          email         =IF(direccion_editada_manual=1, email, IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email))),
           observaciones =VALUES(observaciones),
           zz_skus       =VALUES(zz_skus),
           valor_neto    =VALUES(valor_neto),
@@ -20117,8 +20142,8 @@ def _tr_import_from_excel(file_bytes, filename):
                           fecha_emision =VALUES(fecha_emision),
                           cliente_nombre=VALUES(cliente_nombre),
                           cliente_rut   =VALUES(cliente_rut),
-                          comuna        =IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna)),
-                          direccion     =IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion)),
+                          comuna        =IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
+                          direccion     =IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
                           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
                           tiene_saldo   =1,
                           clasificacion =VALUES(clasificacion),
@@ -22757,7 +22782,7 @@ def tr_update_compromiso(cid):
     data   = request.get_json(silent=True) or {}
     _operational_edit_fields = {
         "telefono", "email", "direccion", "comuna", "region", "cod_postal",
-        "direccion_lat", "direccion_lng", "direccion_place_id",
+        "direccion_lat", "direccion_lng", "direccion_place_id", "direccion_referencia",
         "peso_export", "n_bultos",
     }
     if _operational_edit_fields.intersection(data):
@@ -22791,6 +22816,12 @@ def tr_update_compromiso(cid):
     if "costo_zz" in data:
         try: campos["costo_zz"] = float(data["costo_zz"])
         except: pass
+    if "costo_courier" in data:
+        # 2026-07-29 (Daniel): "si le voy a cambiar la dirección por acá, me
+        # recotice" — aplica el nuevo costo courier que devolvió
+        # /recotizar-courier tras un cambio de comuna.
+        try: campos["costo_courier"] = max(0.0, float(data["costo_courier"]))
+        except: pass
     if "notas" in data:
         campos["notas"] = data["notas"]
     if "fecha_agenda" in data:
@@ -22798,11 +22829,17 @@ def tr_update_compromiso(cid):
     # ── Datos de contacto y carga masiva (editables desde el modal del manifiesto) ──
     for _campo, _maxlen in (("telefono", 50), ("email", 150),
                             ("direccion", 300), ("comuna", 100),
-                            ("region", 80), ("cod_postal", 20)):
+                            ("region", 80), ("cod_postal", 20),
+                            ("direccion_referencia", 200)):
         if _campo in data:
             campos[_campo] = (str(data[_campo] or "").strip() or None)
             if campos[_campo] and _maxlen:
                 campos[_campo] = campos[_campo][:_maxlen]
+    # Candado anti-resync (2026-07-29): si el humano toca cualquiera de estos
+    # 4 campos desde este modal, quedan protegidos de por vida contra el
+    # resync del ERP (ver los 3 UPSERT de _tr_fetch_from_erp/_bulk_sync).
+    if {"telefono", "email", "direccion", "comuna"}.intersection(data):
+        campos["direccion_editada_manual"] = 1
     if "peso_export" in data:
         try: campos["peso_export"] = max(0.0, float(data["peso_export"] or 0))
         except: pass
@@ -22956,6 +22993,71 @@ def tr_update_compromiso(cid):
         detalle = (detalle + "; " if detalle else "") + "actualizó " + ",".join(_pii_cambiados)
     _tr_log("commitment", cid, "actualizado", detalle)
     return jsonify({"ok": True, "fedex_desfasada": _fedex_desfasada})
+
+
+@app.route("/transporte/api/compromisos/<int:cid>/recotizar-courier")
+@_tr_required
+def tr_recotizar_courier(cid):
+    """Recotiza el costo courier de un compromiso para una comuna NUEVA.
+
+    2026-07-29 (Daniel): "si le voy a cambiar la dirección por acá, me
+    recotice... vamos a recotizar esto porque, obviamente, ahorita está en
+    La Serena, y si lo cambio a Las Condes, esto tiene que cambiar." No
+    escribe nada — solo cotiza. El frontend (modal de edición del
+    manifiesto) llama a esto cuando la comuna cambia, muestra la
+    comparación, y si el operador confirma, aplica el nuevo valor con un
+    PUT normal a costo_courier (ver tr_update_compromiso).
+
+    Query param opcional ?comuna=... — si no viene, usa la comuna YA
+    guardada en el compromiso (sirve para re-chequear sin haber cambiado
+    nada todavía).
+    """
+    row = mysql_fetchone(
+        "SELECT c.comuna, c.peso_predominante, c.peso_export, c.costo_courier, "
+        "       tm.courier "
+        "FROM transport_commitments c "
+        "LEFT JOIN transport_manifest_items tmi ON tmi.commitment_id = c.id "
+        "LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
+        "WHERE c.id=%s ORDER BY tmi.id DESC LIMIT 1",
+        (cid,),
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Compromiso no encontrado"}), 404
+
+    courier_nombre = (row.get("courier") or "").strip()
+    if not courier_nombre:
+        return jsonify({"ok": False, "error": "Este envío aún no tiene courier asignado — no hay tarifa que recotizar."}), 400
+
+    comuna_nueva = (request.args.get("comuna") or row.get("comuna") or "").strip()
+    if not comuna_nueva:
+        return jsonify({"ok": False, "error": "Falta la comuna a cotizar."}), 400
+
+    courier_row = mysql_fetchone(
+        "SELECT id FROM transport_couriers WHERE LOWER(nombre)=LOWER(%s)", (courier_nombre,)
+    )
+    if not courier_row:
+        return jsonify({"ok": False, "error": f"Courier '{courier_nombre}' sin tarifario configurado."}), 400
+
+    peso_kg = float(row.get("peso_predominante") or row.get("peso_export") or 1) or 1.0
+    precio_nuevo = _courier_tarifa_lookup(courier_row["id"], comuna_nueva, peso_kg)
+    precio_actual = float(row.get("costo_courier") or 0)
+
+    if precio_nuevo is None:
+        return jsonify({
+            "ok": False,
+            "error": f"'{courier_nombre}' no tiene tarifa cargada para la comuna '{comuna_nueva}'.",
+            "courier": courier_nombre, "comuna": comuna_nueva,
+        }), 404
+
+    return jsonify({
+        "ok": True,
+        "courier": courier_nombre,
+        "comuna": comuna_nueva,
+        "peso_kg": round(peso_kg, 2),
+        "precio_actual": round(precio_actual, 0),
+        "precio_nuevo": round(float(precio_nuevo), 0),
+        "diferencia": round(float(precio_nuevo) - precio_actual, 0),
+    })
 
 
 @app.route("/transporte/api/compromisos/<int:cid>/detalle")
@@ -30639,6 +30741,19 @@ def _ensure_transport_commitments_geo_columns():
                 "COMMENT 'Longitud de la dirección, validada con Google Places'",
                 "ALTER TABLE transport_commitments ADD COLUMN direccion_place_id VARCHAR(200) NULL "
                 "COMMENT 'place_id de Google — referencia para re-geocodificar si hace falta'",
+                # 2026-07-29 (Daniel): bug real reportado en vivo — la dirección
+                # editada a mano (Alison) volvía a la del ERP (oficina SPHS)
+                # porque cada resync (Asignar y Cotizar, sync masivo) pisaba
+                # comuna/dirección/teléfono/email con lo del ERP apenas viniera
+                # NO VACÍO, sin importar que un humano ya la hubiera corregido.
+                # Este flag "candado": una vez que un humano edita estos datos,
+                # ningún resync del ERP los vuelve a tocar — ver los 3 UPSERT
+                # de _tr_fetch_from_erp / _tr_bulk_sync_erp_mysql.
+                "ALTER TABLE transport_commitments ADD COLUMN direccion_editada_manual TINYINT(1) "
+                "NOT NULL DEFAULT 0 COMMENT 'Candado: 1 = un humano ya editó direccion/comuna/"
+                "telefono/email — el resync del ERP ya NO los toca'",
+                "ALTER TABLE transport_commitments ADD COLUMN direccion_referencia VARCHAR(200) NULL "
+                "COMMENT 'Oficina, depto, piso, referencia adicional (Daniel 2026-07-29)'",
             ):
                 try:
                     cur.execute(_mig)
@@ -32925,11 +33040,17 @@ def tr_cubicador_enviar_manifiesto():
             "direccion_lat":      _lat_f,
             "direccion_lng":      _lng_f,
             "direccion_place_id": (data.get("direccion_place_id") or "").strip()[:200] or None,
+            "direccion_referencia": (data.get("direccion_referencia") or "").strip()[:200] or None,
         }
         _hs, _hv = [], []
         for col, val in _hdr_map.items():
             if val not in (None, ""):
                 _hs.append(f"{col}=%s"); _hv.append(val)
+        # Candado anti-resync (2026-07-29): "Asignar y Cotizar" es donde el
+        # operador DECLARA la dirección real ("yo necesito que es de asignar
+        # y cotizar lo que se declare" — Daniel). Desde este punto, ningún
+        # resync del ERP vuelve a pisar direccion/comuna/telefono/email.
+        _hs.append("direccion_editada_manual=1")
         _vn = data.get("valor_neto")
         if _vn not in (None, "") and float(_vn) > 0:
             _hs.append("valor_neto=%s"); _hv.append(float(_vn))
