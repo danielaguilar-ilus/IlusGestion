@@ -32793,21 +32793,16 @@ def tr_cubicador_enviar_manifiesto():
         _lng_f = float(lng_in) if lng_in not in (None, "") else None
     except (TypeError, ValueError):
         _lat_f = _lng_f = None
-    # Daniel 2026-07-27: boletas a consumidor final a veces traen una
-    # dirección que Google no reconoce/sugiere (o el cliente ni siquiera
-    # está identificado en el ERP) — antes esto bloqueaba en seco el
-    # despacho completo. El operador puede confirmar manualmente
-    # (checkbox "confirmarla manualmente" en el cubicador) y avanzar sin
-    # lat/lng; se marca en el commitment para que quede visible que la
-    # dirección NO fue geovalidada por Google.
-    _direccion_manual = bool(data.get("direccion_manual"))
-    if (_lat_f is None or _lng_f is None) and not _direccion_manual:
-        return jsonify({
-            "error": "La dirección debe validarse con el buscador de Google (selecciona una "
-                     "sugerencia de la lista) antes de asignar a manifiesto — evita direcciones "
-                     "mal escritas o incompletas que después fallan al generar la guía. Si Google "
-                     "no la reconoce, marca la casilla de confirmación manual."
-        }), 400
+    # Daniel 2026-07-29: la georreferenciación con Google YA NO es requisito
+    # para asignar a manifiesto — bloqueaba en seco a la operadora cuando
+    # Google no reconocía una dirección real (boletas a consumidor final,
+    # direcciones rurales). "El usuario tiene la responsabilidad de verificar
+    # la dirección... si la cambia es responsabilidad del usuario." La
+    # dirección en sí SIGUE siendo obligatoria (ver check de direccion_in
+    # arriba); lo que se eliminó es la exigencia de lat/lng. Si no vienen
+    # coords, se deja constancia en notas (ver _direccion_manual más abajo)
+    # sin bloquear el flujo.
+    _direccion_manual = bool(data.get("direccion_manual")) or (_lat_f is None or _lng_f is None)
 
     # 0) Validar coherencia courier ↔ manifiesto destino.
     #    Decisión Daniel (2026-05-31): un manifiesto = un solo courier. Si el

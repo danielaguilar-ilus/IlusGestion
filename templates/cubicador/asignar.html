@@ -185,14 +185,17 @@
             <input type="hidden" id="cli-dir-lat">
             <input type="hidden" id="cli-dir-lng">
             <input type="hidden" id="cli-dir-place-id">
+            {# 2026-07-29 (Daniel): la validación con Google ya NO es obligatoria
+               para avanzar — el operador puede escribir la dirección libremente
+               y es su responsabilidad verificarla. Google queda como ayuda. #}
             <div id="cli-dir-hint" style="font-size:.68rem;color:#9ca3af;margin-top:2px">
-              <i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para validar la dirección
-              — obligatorio para asignar a manifiesto.
+              <i class="bi bi-info-circle"></i> Elige una sugerencia de Google para georreferenciarla
+              (recomendado, no obligatorio).
             </div>
             <div style="margin-top:4px">
               <label style="font-size:.7rem;color:#9ca3af;display:flex;align-items:center;gap:5px;cursor:pointer">
                 <input type="checkbox" id="cli-dir-manual-check" style="cursor:pointer">
-                Google no encuentra esta dirección — confirmarla manualmente
+                Confirmo esta dirección manualmente (Google no la reconoce)
               </label>
             </div>
           </div>

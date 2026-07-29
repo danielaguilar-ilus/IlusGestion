@@ -762,8 +762,10 @@ function renderDoc(d, elapsedMs){
   setInput('cli-tel',   h.telefono  || '');
   setInput('cli-dir',   h.direccion || '');
   // Nuevo documento → la dirección del ERP aún NO está georreferenciada
-  // (Daniel 2026-07-22: obligatorio validarla con Google antes de asignar a
-  // manifiesto). Limpiar cualquier lat/lng que hubiera quedado del documento anterior.
+  // (Daniel 2026-07-29: la georreferenciación con Google ya NO es obligatoria
+  // para asignar — el operador puede escribir/editar la dirección libremente
+  // y es su responsabilidad verificarla. Google sigue disponible como ayuda).
+  // Limpiar cualquier lat/lng que hubiera quedado del documento anterior.
   setInput('cli-dir-lat', '');
   setInput('cli-dir-lng', '');
   setInput('cli-dir-place-id', '');
@@ -771,7 +773,7 @@ function renderDoc(d, elapsedMs){
   // cuando el operador valide la dirección con Google.
   setInput('cli-region', h.region || '');
   const _dirHint0 = document.getElementById('cli-dir-hint');
-  if (_dirHint0) _dirHint0.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para validar la dirección — obligatorio para asignar a manifiesto.';
+  if (_dirHint0) _dirHint0.innerHTML = '<i class="bi bi-info-circle"></i> Elige una sugerencia de Google para georreferenciarla (recomendado, no obligatorio).';
   if (document.getElementById('cli-dir')) document.getElementById('cli-dir').dataset.validatedValue = '';
   setInput('cli-obs',   h.observaciones || '');
   setInput('cli-notas', '');   // notas de entrega: las escribe el usuario, no vienen del ERP
@@ -2277,8 +2279,8 @@ function _wireDireccionPlaces(){
       document.getElementById('cli-dir-place-id').value = '';
       const hint = document.getElementById('cli-dir-hint');
       if (hint){
-        hint.innerHTML = '<i class="bi bi-info-circle"></i> Escribe y elige una sugerencia para ' +
-          'validar la dirección — obligatorio para asignar a manifiesto.';
+        hint.innerHTML = '<i class="bi bi-info-circle"></i> Elige una sugerencia de Google para ' +
+          'georreferenciarla (recomendado, no obligatorio).';
       }
     }
   });
@@ -2338,22 +2340,19 @@ async function validarParaManifiesto(){
     return false;
   }
 
-  // Dirección GEORREFERENCIADA obligatoria (Daniel 2026-07-22): la única
-  // forma de garantizar esto es exigir que el operador haya elegido una
-  // sugerencia del autocomplete de Google (eso llena cli-dir-lat/lng). Si el
-  // texto de la dirección cambió después de seleccionar la sugerencia, se
-  // pierde la validación y hay que volver a elegir.
-  const lat = document.getElementById('cli-dir-lat')?.value;
-  const lng = document.getElementById('cli-dir-lng')?.value;
-  const _dirManual = !!document.getElementById('cli-dir-manual-check')?.checked;
-  if (!lat && !lng && !_dirManual){
+  // Dirección obligatoria, pero YA NO exige validación de Google (Daniel
+  // 2026-07-29: "el usuario tiene la responsabilidad de verificar la
+  // dirección... si la cambia es responsabilidad del usuario" — la niña que
+  // usa la planilla quedaba bloqueada en seco cuando Google no reconocía una
+  // dirección real, sin que "confirmarla manualmente" fuera evidente). Si no
+  // hay lat/lng (no se eligió sugerencia), se marca automáticamente como
+  // dirección NO georreferenciada — igual que si el operador hubiera tildado
+  // el checkbox — y se avanza igual. El texto en sí SIGUE siendo obligatorio.
+  const dirTexto = (document.getElementById('cli-dir')?.value || '').trim();
+  if (!dirTexto){
     await ilusAlert({
-      title: 'Dirección sin validar',
-      message: 'La dirección debe validarse con el buscador de Google antes de asignar a manifiesto.',
-      sub: 'Escribe la dirección en el campo y elige una de las sugerencias del listado. ' +
-           'Si el documento es una boleta y Google no reconoce la dirección (caso frecuente ' +
-           'en consumidor final), marca la casilla "confirmarla manualmente" debajo del campo.',
-      subHtml: true,
+      title: 'Dirección requerida',
+      message: 'Escribe la dirección de destino antes de asignar a manifiesto.',
       type: 'error',
     });
     document.getElementById('cli-dir')?.focus();
@@ -2533,11 +2532,13 @@ async function enviarAManifiesto(){
     direccion_lat:      _gv('cli-dir-lat')      || null,
     direccion_lng:      _gv('cli-dir-lng')      || null,
     direccion_place_id: _gv('cli-dir-place-id') || '',
-    // Confirmación manual (Daniel 2026-07-27): boletas a veces traen una
-    // dirección que Google no reconoce/sugiere. Con este checkbox marcado
-    // el operador confirma la dirección escrita a mano — ver
-    // #cli-dir-manual-check y el bypass correspondiente en el backend.
-    direccion_manual: !!document.getElementById('cli-dir-manual-check')?.checked,
+    // Dirección NO georreferenciada (Daniel 2026-07-29: ya no es obligatorio
+    // elegir sugerencia de Google). Se marca sola cuando faltan lat/lng —
+    // deja rastro en las notas del compromiso sin bloquear al operador. El
+    // checkbox #cli-dir-manual-check sigue disponible como confirmación
+    // explícita, pero ya no es la única forma de avanzar.
+    direccion_manual: !!(document.getElementById('cli-dir-manual-check')?.checked
+                          || !(_gv('cli-dir-lat') && _gv('cli-dir-lng'))),
   };
 
   if (modo === 'existente') {
