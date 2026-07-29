@@ -9,7 +9,7 @@ import smtplib
 import threading
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ════════════════════════════════════════════════════════════════════
 #  PLAYWRIGHT — fijar PLAYWRIGHT_BROWSERS_PATH antes que NADIE lo importe.
@@ -264,6 +264,32 @@ def _now_chile():
 def _now_chile_str(fmt="%d-%m-%Y %H:%M"):
     """Atajo: devuelve hora Chile formateada como string."""
     return _now_chile().strftime(fmt)
+
+
+def _hoy_chile_rango_utc(fecha=None):
+    """Rango [inicio, fin) en UTC (naive) que representa "todo el día
+    `fecha` en hora Chile" (por defecto HOY). Devuelve (inicio_utc, fin_utc)
+    listos para pasar como PARÁMETROS a un WHERE col >= %s AND col < %s
+    sobre una columna *_utc guardada naive-UTC (ej. ts_utc).
+
+    Reemplaza el patrón `DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()`
+    que tenía 2 bugs confirmados (SEV-8d, 2026-07-28):
+      1) offset hardcodeado a -04:00 (Chile usa -03:00 en horario de verano,
+         DST, aprox. septiembre-abril) — zoneinfo lo maneja automático.
+      2) CURDATE() es la fecha del SERVIDOR MySQL (UTC), no la fecha en Chile
+         — una entrega hecha ~20:00-23:59 hora Chile ya cayó en el día
+         siguiente en UTC y quedaba invisible en los KPI "de hoy".
+    Calcular el rango en Python y comparar directo contra la columna UTC
+    (sin CONVERT_TZ en el WHERE) además permite usar el índice sobre esa
+    columna, cosa que CONVERT_TZ(col) en el WHERE no permite.
+    """
+    if fecha is None:
+        fecha = _now_chile().date()
+    inicio_local = datetime(fecha.year, fecha.month, fecha.day, 0, 0, 0, tzinfo=_TZ_CL)
+    fin_local = inicio_local + timedelta(days=1)
+    inicio_utc = inicio_local.astimezone(timezone.utc).replace(tzinfo=None)
+    fin_utc = fin_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return inicio_utc, fin_utc
 
 app = Flask(__name__)
 
@@ -26438,7 +26464,12 @@ def tr_get_tracking_fedex(item_id):
     return jsonify({
         "ok":                True,
         "tracking_number":   r.get("tracking_number") or "",
-        "last_poll":         str(r.get("last_carrier_poll_at") or "")[:19],
+        # FIX SEV-8a 2026-07-28: last_carrier_poll_at venía en UTC crudo
+        # (str(...)[:19]) sin pasar por chile_fmt -- se pintaba tal cual en
+        # el modal de tracking (transporte_manifiesto_detalle.js) 4 horas
+        # adelantado respecto a la hora de Santiago.
+        "last_poll":         (chile_fmt_filter(r.get("last_carrier_poll_at"), "%Y-%m-%d %H:%M:%S")
+                               if r.get("last_carrier_poll_at") else ""),
         "last_status":       r.get("last_carrier_status") or "",
         "source":            r.get("last_carrier_source") or "",
         "estado_entrega":    r.get("estado_entrega") or "",
@@ -29232,20 +29263,27 @@ def tr_dashboard_hoy():
     """
     from logistica_kpi import _rango_fechas, _calcular_kpis, _listar_compromisos
 
-    # Stats de HOY (zona horaria Santiago)
+    # Stats de HOY (zona horaria Santiago). Rango [inicio,fin) calculado en
+    # Python con zoneinfo (maneja DST) y pasado como parámetro — reemplaza
+    # el patrón viejo DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()
+    # que tenía 2 bugs confirmados (SEV-8d 2026-07-28): offset -04:00
+    # hardcodeado (sin DST) y CURDATE() = fecha del SERVIDOR MySQL en UTC,
+    # no la fecha en Chile (entregas desde ~20:00 hora Chile quedaban
+    # invisibles en los KPI "de hoy"). Ver _hoy_chile_rango_utc().
+    _hoy_ini_utc, _hoy_fin_utc = _hoy_chile_rango_utc()
     stats = mysql_fetchone("""
         SELECT
           (SELECT COUNT(*) FROM transport_manifests
              WHERE DATE(fecha) = CURDATE()) AS manifiestos_hoy,
           (SELECT COUNT(*) FROM transport_tracking_events
              WHERE estado='Entregado'
-               AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS entregados_hoy,
+               AND ts_utc >= %s AND ts_utc < %s) AS entregados_hoy,
           (SELECT COUNT(*) FROM transport_tracking_events
              WHERE estado IN ('Entrega fallida','Problema')
-               AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS fallidos_hoy,
+               AND ts_utc >= %s AND ts_utc < %s) AS fallidos_hoy,
           (SELECT COUNT(*) FROM transport_tracking_events
              WHERE estado='En ruta'
-               AND DATE(CONVERT_TZ(ts_utc,'+00:00','-04:00')) = CURDATE()) AS en_ruta_hoy,
+               AND ts_utc >= %s AND ts_utc < %s) AS en_ruta_hoy,
           (SELECT COUNT(DISTINCT driver_id) FROM transport_driver_pings
              WHERE ts > DATE_SUB(NOW(), INTERVAL 30 MINUTE)) AS choferes_activos,
           (SELECT COUNT(*) FROM transport_manifest_items mi
@@ -29254,7 +29292,7 @@ def tr_dashboard_hoy():
                AND (mi.tracking_number IS NULL OR mi.tracking_number='')
                AND mi.estado_entrega NOT IN ('Entregado','Devolución')
           ) AS sin_ot_fedex
-    """) or {}
+    """, (_hoy_ini_utc, _hoy_fin_utc, _hoy_ini_utc, _hoy_fin_utc, _hoy_ini_utc, _hoy_fin_utc)) or {}
     # Últimas 8 entregas con prueba
     ultimas = mysql_fetchall("""
         SELECT p.entregado_at, p.receptor_nombre, p.fotos_json, p.firma_url,
@@ -29274,17 +29312,19 @@ def tr_dashboard_hoy():
             u["foto_thumb"] = fotos[0] if fotos else ""
         except Exception:
             u["foto_thumb"] = ""
-    # Top transportes hoy (por entregas)
+    # Top transportes hoy (por entregas) — mismo rango [inicio,fin) en UTC
+    # calculado arriba con _hoy_chile_rango_utc() (evita repetir el bug de
+    # CONVERT_TZ+CURDATE()).
     top_couriers = mysql_fetchall("""
         SELECT m.courier, COUNT(*) AS entregas
         FROM transport_tracking_events e
         JOIN transport_manifest_items mi ON mi.id = e.manifest_item_id
         JOIN transport_manifests m ON m.id = mi.manifest_id
         WHERE e.estado='Entregado'
-          AND DATE(CONVERT_TZ(e.ts_utc,'+00:00','-04:00')) = CURDATE()
+          AND e.ts_utc >= %s AND e.ts_utc < %s
           AND m.courier IS NOT NULL AND m.courier != ''
         GROUP BY m.courier ORDER BY entregas DESC LIMIT 5
-    """) or []
+    """, (_hoy_ini_utc, _hoy_fin_utc)) or []
     # ── Historial de despachos + KPI operacional (ex /transporte/historial,
     # fusionado acá 2026-07-25). Filtros por querystring, mismo criterio que
     # tenía la página standalone.
@@ -29635,9 +29675,22 @@ def _tr_buscar_detalle(commitment_id):
                      # -- .tojson lo serializaba sin convertir a Chile.
                      "entregado_at": (chile_fmt_filter(p.get("entregado_at"), "%Y-%m-%d %H:%M:%S")
                                        if p.get("entregado_at") else None)}
+    mi_out = None
+    if mi:
+        mi_out = dict(mi)
+        # FIX SEV-8b 2026-07-28: last_carrier_poll_at venía en UTC crudo
+        # (datetime naive) dentro de dict(mi) -- Flask lo serializaba a JSON
+        # como string RFC ("Mon, 28 Jul 2026 15:28:00 GMT") sin pasar por
+        # chile_fmt, y _fmtTs() en buscar_interno.html no reconocía ese
+        # formato y lo mostraba crudo. Mismo bug de hora UTC del resto del
+        # módulo (ver entregado_at / eventos[].ts arriba).
+        if mi_out.get("last_carrier_poll_at"):
+            mi_out["last_carrier_poll_at"] = chile_fmt_filter(
+                mi_out["last_carrier_poll_at"], "%Y-%m-%d %H:%M:%S"
+            )
     return {
         "commitment": dict(c),
-        "manifest_item": dict(mi) if mi else None,
+        "manifest_item": mi_out,
         "chofer": dict(chofer) if chofer else None,
         "last_ping": dict(last_ping) if last_ping else None,
         "eventos": [{
@@ -31546,7 +31599,7 @@ def tr_item_simpliroute_cancelar(item_id):
     import simpliroute_client as _src
     mi = mysql_fetchone("""
         SELECT mi.id, mi.commitment_id, mi.simpliroute_visit_id, mi.manifest_id,
-               tm.courier
+               mi.estado_entrega, tm.courier
         FROM transport_manifest_items mi
         LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
         WHERE mi.id=%s
@@ -31583,6 +31636,29 @@ def tr_item_simpliroute_cancelar(item_id):
         "simpliroute_error=NULL WHERE id=%s", (item_id,))
     _tr_log("manifest_item", item_id, "visita SimpliRoute cancelada",
             f"visita {vid} anulada manualmente desde el modal de seguimiento")
+
+    # FIX 2026-07-28 (auditoría de trazabilidad, SEV-4): cancelar la visita
+    # dejaba el item CLAVADO en 'Entregado a transporte' para siempre — el
+    # poller (_simpliroute_poll_batch) solo mira items CON simpliroute_visit_id,
+    # y acá lo acabamos de limpiar. El cliente seguía viendo "tu pedido salió
+    # de bodega" sin ningún seguimiento activo detrás. Además, esto dejaba
+    # tr_item_simpliroute_reenviar sin efecto: como el estado ya era 'Entregado
+    # a transporte', _tr_apply_carrier_status() calculaba changed=False y no
+    # avisaba al cliente de la recoordinación.
+    # Si el item YA estaba en un estado terminal (Entregado/Devolución) no lo
+    # revertimos — cancelar la visita en ese punto es solo housekeeping, no
+    # implica que el pedido "vuelva a bodega".
+    estado_actual = (mi.get("estado_entrega") or "").strip()
+    if estado_actual in ESTADOS_ENTREGA_TERMINALES:
+        print(f"[simpliroute] item {item_id} ya estaba en estado terminal "
+              f"{estado_actual!r}; se limpió la visita {vid} sin tocar el estado", flush=True)
+    else:
+        try:
+            _tr_apply_carrier_status(item_id, 'En preparación', fuente='sistema',
+                                     comentario='Visita SimpliRoute cancelada',
+                                     notify_cliente=True)
+        except Exception as _e_sr_cancel:
+            print(f"[tr_event sr_cancelacion] item={item_id}: {_e_sr_cancel}", flush=True)
 
     return jsonify({"ok": True, "visit_id": vid})
 
