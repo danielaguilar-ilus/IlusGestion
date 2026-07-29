@@ -1816,6 +1816,41 @@ def register_tickets_routes(app, ctx):
         except Exception:
             pass   # columna ya existe -> no re-backfillear (pisaria personales)
 
+    def _ensure_cot_vendedores_externos():
+        """FIX 2026-07-29 (Daniel, pedido de Alison): "Ejecutivo o vendedor
+        solicitante" (dropdown de Cotizaciones-Tickets y Cotizacion
+        logistica-Transporte, ambos leen /tickets/api/asignables) solo
+        mostraba usuarios REALES del sistema con rol ejecutivo/tecnico.
+        Alison necesita agregar vendedores que NO tienen cuenta ILUS. Tabla
+        nueva, independiente de app_users, gestionable desde
+        /tickets/vendedores-externos (admin/superadmin). Idempotente:
+        INSERT IGNORE por nombre unico, nunca pisa ediciones posteriores."""
+        try:
+            conn = get_mysql()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS cot_vendedores_externos (
+                        id         INT AUTO_INCREMENT PRIMARY KEY,
+                        nombre     VARCHAR(120) NOT NULL,
+                        activo     TINYINT(1) DEFAULT 1,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE KEY uq_nombre (nombre)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+            conn.commit()
+            conn.close()
+            # Siembra 2026-07-29: nombres dictados por Daniel en vivo (pedido
+            # de Alison). "Génesis" quedó sin apellido claro en el audio --
+            # se deja así a propósito, editable desde la pantalla de gestión.
+            for _n in ("Roberto Frazzoni", "Génesis", "Alessandro Maccarini",
+                       "Luis Gallardo", "Antonia Mujica", "Felipe Gómez", "José Gómez"):
+                try:
+                    mysql_execute("INSERT IGNORE INTO cot_vendedores_externos (nombre) VALUES (%s)", (_n,))
+                except Exception as _e_seed:
+                    print(f"[cot-vendedores] seed '{_n}' fallo: {_e_seed}", flush=True)
+        except Exception as e:
+            print(f"[cot-vendedores] no se pudo asegurar tabla: {e}", flush=True)
+
     def _ensure_tk_sla_regla():
         """Siembra la regla editable 'tk_sla_horas' en mant_reglas_negocio
         (mismo patron INSERT IGNORE que _ensure_reglas_terreno de app.py:
@@ -1851,6 +1886,7 @@ def register_tickets_routes(app, ctx):
                 print(f"[ILUS] Cotizaciones históricas de Triple A restauradas: {_n_historico}", flush=True)
             _ensure_tk_plantillas_columns()
             _ensure_tk_sla_regla()
+            _ensure_cot_vendedores_externos()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_tickets_tables: {_e}", flush=True)
@@ -5825,7 +5861,89 @@ def register_tickets_routes(app, ctx):
             "   ) "
             " ORDER BY nombre"
         ) or []
-        return jsonify([dict(r) for r in rows])
+        result = [dict(r) for r in rows]
+        # FIX 2026-07-29 (Daniel/Alison: "vendedores que no son usuarios" en
+        # el dropdown "Ejecutivo o vendedor solicitante" -- Cotizaciones y
+        # Cotizacion logistica de Transporte comparten este mismo endpoint).
+        # id NEGATIVO adrede: nunca choca con un id real de app_users y deja
+        # claro (si algo llega a loguear el id) que no es una cuenta real.
+        try:
+            externos = mysql_fetchall(
+                "SELECT id, nombre FROM cot_vendedores_externos WHERE activo=1 ORDER BY nombre"
+            ) or []
+            for e in externos:
+                result.append({"id": -e["id"], "nombre": e["nombre"], "email": "", "role": "externo"})
+        except Exception as _e_ext:
+            print(f"[cot-vendedores] no se pudo leer externos: {_e_ext}", flush=True)
+        result.sort(key=lambda r: (r.get("nombre") or "").lower())
+        return jsonify(result)
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Gestión de vendedores externos (Daniel/Alison 2026-07-29): admin/
+    #  superadmin puede agregar, renombrar y desactivar nombres que NO son
+    #  usuarios reales del sistema pero deben salir seleccionables en
+    #  "Ejecutivo o vendedor solicitante".
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/vendedores-externos", methods=["GET"])
+    @_tickets_required
+    def tk_vendedores_externos_page():
+        if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            flash("Sin permiso para gestionar vendedores externos", "danger")
+            return redirect(url_for("tk_list"))
+        return render_template("tickets/vendedores_externos.html")
+
+    @app.route("/tickets/api/vendedores-externos", methods=["GET"])
+    @_tickets_required
+    def tk_api_vendedores_externos_list():
+        if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            return jsonify({"ok": False, "error": "Sin permiso"}), 403
+        rows = mysql_fetchall(
+            "SELECT id, nombre, activo FROM cot_vendedores_externos ORDER BY activo DESC, nombre"
+        ) or []
+        return jsonify({"ok": True, "vendedores": [dict(r) for r in rows]})
+
+    @app.route("/tickets/api/vendedores-externos", methods=["POST"])
+    @_tickets_required
+    def tk_api_vendedores_externos_crear():
+        if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            return jsonify({"ok": False, "error": "Sin permiso"}), 403
+        nombre = ((request.get_json(silent=True) or {}).get("nombre") or "").strip()
+        if not nombre:
+            return jsonify({"ok": False, "error": "El nombre es obligatorio"}), 400
+        try:
+            mysql_execute("INSERT INTO cot_vendedores_externos (nombre) VALUES (%s)", (nombre,))
+        except Exception as e:
+            if "Duplicate" in str(e) or "uq_nombre" in str(e):
+                return jsonify({"ok": False, "error": "Ya existe un vendedor con ese nombre"}), 409
+            print(f"[cot-vendedores] crear fallo: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo crear"}), 500
+        return jsonify({"ok": True})
+
+    @app.route("/tickets/api/vendedores-externos/<int:vid>", methods=["PATCH"])
+    @_tickets_required
+    def tk_api_vendedores_externos_editar(vid):
+        if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+            return jsonify({"ok": False, "error": "Sin permiso"}), 403
+        data = request.get_json(silent=True) or {}
+        sets, params = [], []
+        if "nombre" in data:
+            nombre = (data.get("nombre") or "").strip()
+            if not nombre:
+                return jsonify({"ok": False, "error": "El nombre no puede quedar vacío"}), 400
+            sets.append("nombre=%s"); params.append(nombre)
+        if "activo" in data:
+            sets.append("activo=%s"); params.append(1 if data.get("activo") else 0)
+        if not sets:
+            return jsonify({"ok": False, "error": "Nada que actualizar"}), 400
+        params.append(vid)
+        try:
+            mysql_execute(f"UPDATE cot_vendedores_externos SET {', '.join(sets)} WHERE id=%s", tuple(params))
+        except Exception as e:
+            if "Duplicate" in str(e) or "uq_nombre" in str(e):
+                return jsonify({"ok": False, "error": "Ya existe un vendedor con ese nombre"}), 409
+            print(f"[cot-vendedores] editar fallo: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo actualizar"}), 500
+        return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — Plantillas de mensajes (canned responses)

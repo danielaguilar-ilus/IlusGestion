@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Vendedores externos — ILUS{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-person-lines-fill me-2"></i>Vendedores externos</h4>
+    <div class="sub">Nombres seleccionables en "Ejecutivo o vendedor solicitante" que NO tienen cuenta en ILUS.</div>
+  </div>
+  <button type="button" class="btn btn-light fw-bold" onclick="vexAgregar()">
+    <i class="bi bi-plus-lg me-1"></i>Agregar vendedor
+  </button>
+</div>
+
+<div class="card" style="border-radius:12px;border:1px solid #e5e7eb">
+  <div class="card-body p-0">
+    <table class="table mb-0 align-middle">
+      <thead>
+        <tr>
+          <th style="padding:12px 16px">Nombre</th>
+          <th style="width:120px">Estado</th>
+          <th style="width:160px" class="text-end" style="padding-right:16px">Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="vexTbody">
+        <tr><td colspan="3" class="text-center text-muted py-4"><i class="bi bi-hourglass-split"></i> Cargando…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function vexCargar(){
+  const tbody = document.getElementById('vexTbody');
+  try {
+    const r = await fetch('/tickets/api/vendedores-externos');
+    const d = await r.json();
+    if (!d.ok) { tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-4">Error al cargar</td></tr>'; return; }
+    if (!d.vendedores.length) { tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">Sin vendedores externos todavía</td></tr>'; return; }
+    tbody.innerHTML = d.vendedores.map(function(v){
+      return '<tr>' +
+        '<td style="padding:10px 16px;font-weight:600">' + _vexEsc(v.nombre) + '</td>' +
+        '<td>' + (v.activo
+          ? '<span class="badge rounded-pill" style="background:#dcfce7;color:#15803d">Activo</span>'
+          : '<span class="badge rounded-pill" style="background:#f3f4f6;color:#6b7280">Inactivo</span>') + '</td>' +
+        '<td class="text-end" style="padding-right:16px">' +
+          '<button type="button" class="btn btn-sm btn-outline-dark me-1" onclick="vexEditar(' + v.id + ',\'' + _vexEscAttr(v.nombre) + '\')" title="Editar nombre"><i class="bi bi-pencil-fill"></i></button>' +
+          '<button type="button" class="btn btn-sm ' + (v.activo ? 'btn-outline-secondary' : 'btn-outline-success') + '" onclick="vexToggle(' + v.id + ',' + (v.activo ? 'false' : 'true') + ')" title="' + (v.activo ? 'Desactivar' : 'Activar') + '">' +
+            '<i class="bi ' + (v.activo ? 'bi-eye-slash' : 'bi-eye') + '"></i></button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-4">Error de conexión</td></tr>';
+  }
+}
+function _vexEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function _vexEscAttr(s){ return String(s==null?'':s).replace(/'/g, "\\u0027"); }
+
+async function vexAgregar(){
+  const nombre = await ilusPrompt({
+    title: 'Agregar vendedor',
+    message: 'Nombre completo del vendedor o ejecutivo',
+    placeholder: 'Ej: Roberto Frazzoni',
+    required: true,
+  });
+  if (!nombre) return;
+  try {
+    const r = await fetch('/tickets/api/vendedores-externos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: nombre })
+    });
+    const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo agregar', { type: 'error' }); return; }
+    ilusToast('✓ Vendedor agregado', { type: 'success' });
+    vexCargar();
+  } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
+}
+
+async function vexEditar(id, nombreActual){
+  const nombre = await ilusPrompt({
+    title: 'Editar nombre',
+    message: 'Nombre completo',
+    placeholder: 'Ej: Roberto Frazzoni',
+    defaultValue: nombreActual,
+    required: true,
+  });
+  if (!nombre || nombre === nombreActual) return;
+  try {
+    const r = await fetch('/tickets/api/vendedores-externos/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: nombre })
+    });
+    const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo editar', { type: 'error' }); return; }
+    ilusToast('✓ Actualizado', { type: 'success' });
+    vexCargar();
+  } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
+}
+
+async function vexToggle(id, nuevoActivo){
+  try {
+    const r = await fetch('/tickets/api/vendedores-externos/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activo: nuevoActivo })
+    });
+    const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo actualizar', { type: 'error' }); return; }
+    vexCargar();
+  } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
+}
+
+vexCargar();
+</script>
+{% endblock %}
