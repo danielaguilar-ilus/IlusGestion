@@ -25969,6 +25969,37 @@ def _tracking_payload(token):
     }
 
 
+def _tracking_payload_json_safe(payload):
+    """Copia de _tracking_payload() lista para servir como JSON crudo.
+
+    FIX 2026-07-28 (Daniel: "algunas fechas vienen en inglés"): _tracking_payload()
+    devuelve a propósito datetime objects reales -- ver comentario en esa función
+    ("NO pre-formatear acá") -- para que render_template() (vista /t/<token>) los
+    formatee con el filtro Jinja "| chile_fmt". Pero tr_public_tracking_status()
+    (el polling JSON de /t/<token>/status) llama jsonify() directo sobre ese mismo
+    dict, y Flask serializa un datetime crudo en RFC 1123 EN INGLÉS ("Mon, 28 Jul
+    2026 15:28:00 GMT") porque ahí no pasa por Jinja. Convertimos acá los mismos
+    campos a texto en hora Chile ANTES de jsonify -- en una copia, para no tocar
+    el dict que use el render_template (mismo patrón que FIX SEV-8a/8b de esta
+    noche en tr_get_tracking_fedex / _tr_buscar_detalle)."""
+    if not payload:
+        return payload
+    out = dict(payload)
+    if out.get("entregado_at"):
+        out["entregado_at"] = chile_fmt_filter(out["entregado_at"], "%Y-%m-%d %H:%M:%S")
+    if out.get("proof"):
+        proof = dict(out["proof"])
+        if proof.get("entregado_at"):
+            proof["entregado_at"] = chile_fmt_filter(proof["entregado_at"], "%Y-%m-%d %H:%M:%S")
+        out["proof"] = proof
+    if out.get("eventos"):
+        out["eventos"] = [
+            {**ev, "ts": chile_fmt_filter(ev["ts"], "%Y-%m-%d %H:%M:%S") if ev.get("ts") else ev.get("ts")}
+            for ev in out["eventos"]
+        ]
+    return out
+
+
 def _tracking_driver_live(commitment_id, estado_actual):
     """Devuelve la posición en vivo del chofer si está en ruta hacia esta factura.
     Solo cuando estado='En ruta' (privacidad: no se expone GPS si ya entregó
@@ -26052,6 +26083,9 @@ def tr_public_tracking_status(token):
     payload = _tracking_payload(token)
     if not payload:
         return jsonify({"ok": False, "error": "not_found"}), 404
+    # FIX 2026-07-28: ver _tracking_payload_json_safe() -- evita que jsonify()
+    # serialice los datetime crudos de _tracking_payload() en inglés (RFC 1123).
+    payload = _tracking_payload_json_safe(payload)
     _TRACK_POLL_CACHE[token] = {"payload": payload, "ts": _time.time()}
     # Limpieza barata si crece mucho
     if len(_TRACK_POLL_CACHE) > 500:
@@ -29688,8 +29722,15 @@ def _tr_buscar_detalle(commitment_id):
             mi_out["last_carrier_poll_at"] = chile_fmt_filter(
                 mi_out["last_carrier_poll_at"], "%Y-%m-%d %H:%M:%S"
             )
+    c_out = dict(c)
+    # FIX 2026-07-28 (mismo bug SEV-8b, un campo que quedó sin corregir esa
+    # noche): delivered_at del commitment también venía en UTC crudo dentro
+    # de dict(c) -- jsonify() lo serializaba en inglés (RFC 1123) igual que
+    # last_carrier_poll_at / entregado_at arriba.
+    if c_out.get("delivered_at"):
+        c_out["delivered_at"] = chile_fmt_filter(c_out["delivered_at"], "%Y-%m-%d %H:%M:%S")
     return {
-        "commitment": dict(c),
+        "commitment": c_out,
         "manifest_item": mi_out,
         "chofer": dict(chofer) if chofer else None,
         "last_ping": dict(last_ping) if last_ping else None,
@@ -33403,7 +33444,15 @@ def tr_courier_api_data(cid):
     courier = mysql_fetchone("SELECT * FROM transport_couriers WHERE id=%s", (cid,))
     if not courier:
         return jsonify({"error": "Not found"}), 404
-    return jsonify(dict(courier))
+    courier_out = dict(courier)
+    # FIX 2026-07-28 (Daniel: "algunas fechas vienen en inglés"): SELECT *
+    # trae created_at/updated_at (DATETIME) -- jsonify() los serializaba
+    # crudos en RFC 1123 inglés ("Mon, 28 Jul 2026..."). Mismo patrón que
+    # el resto de los fixes de esta noche (chile_fmt_filter antes de jsonify).
+    for _campo in ("created_at", "updated_at"):
+        if courier_out.get(_campo):
+            courier_out[_campo] = chile_fmt_filter(courier_out[_campo], "%Y-%m-%d %H:%M:%S")
+    return jsonify(courier_out)
 
 
 @app.route("/transporte/couriers/<int:cid>/contratos", methods=["POST"])
