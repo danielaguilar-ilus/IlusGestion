@@ -640,7 +640,7 @@
                botón queda SOLO para FedEx. En couriers SimpliRoute
                (Felca/Milling) la misma evidencia (firma, fotos, GPS) ya se
                muestra dentro del modal "Ver seguimiento y acciones" (ver
-               _srCargarEvidencia — consume el mismo JSON), así que tener
+               _srCargarDetalle — consume el mismo JSON), así que tener
                ambos era un duplicado. FedEx no tiene ese modal, conserva
                este acceso directo. #}
             <button type="button" class="btn btn-sm btn-outline-success mfd-act-btn"
@@ -1316,6 +1316,21 @@ function mfdFiltrarTabla(){
    Consolida "actualizar estado" + "trazabilidad" + acciones reales
    (cancelar / reprogramar / reenviar / editar) en 1 modal premium,
    mismo nivel de pulido que #trackingModal de FedEx (2026-07-27).
+
+   REDISEÑO 2026-07-29 (Daniel, en vivo): "el modal se ve muy simple...
+   algo potente, que te diga 'estuvo tantos días', pequeños KPIs, los
+   productos entregados, las fotos, el mapa — todo dentro del modal, y
+   el timeline contenido abajo con su propio scroll".
+   - Hero estilo #vistaModal del monitor (header oscuro + borde rojo ILUS
+     + tarjetas KPI translúcidas): tiempo de entrega / bultos / destino /
+     última actualización.
+   - Tab Timeline reorganizado en secciones: Productos del pedido (con
+     foto → _ilusLightbox), Evidencia de entrega (firma+fotos+receptor),
+     Chofer y ubicación (GPS → _ilusMapModal embebido), e Historial con
+     scroll propio (colapsado a los primeros eventos si es muy largo).
+   - Tab Acciones: MISMA lógica, solo re-vestido con las tarjetas .sr-sec.
+   Datos: /transporte/api/buscar/<cid> ahora también trae lineas (con
+   fotos por SKU) y tiempos (ver _tr_buscar_detalle en app.py).
    ════════════════════════════════════════════════════════════════════ #}
 <div class="modal fade" id="simpliRouteModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
@@ -1324,12 +1339,34 @@ function mfdFiltrarTabla(){
         <button type="button" class="btn-close btn-close-white trk-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         <div class="trk-hero-top">
           <span class="sr-brand"><i class="bi bi-signpost-2-fill me-1"></i>SimpliRoute</span>
+          <span class="sr-courier-chip" id="srCourier" style="display:none"></span>
           <span class="trk-doc" id="srDoc">—</span>
         </div>
-        <div class="trk-state" id="srState"><i class="bi bi-hourglass-split"></i> <span id="srStateLabel">Cargando…</span></div>
+        <div class="trk-state" id="srState"><i class="bi bi-hourglass-split" id="srStateIcon"></i> <span id="srStateLabel">Cargando…</span></div>
         <div class="trk-sub" id="srSub">—</div>
+        <div class="sr-live-chip" id="srLiveChip" style="display:none"></div>
+        {# KPIs translúcidos — mismo lenguaje visual que #vistaModal del monitor #}
+        <div class="sr-kpis">
+          <div class="sr-kpi" id="srKpiTiempoCard">
+            <span class="sr-kpi-k" id="srKpiTiempoLabel">Tiempo</span>
+            <span class="sr-kpi-v" id="srKpiTiempo">—</span>
+            <span class="sr-kpi-hint" id="srKpiTiempoHint"></span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Bultos</span>
+            <span class="sr-kpi-v" id="srKpiBultos">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Destino</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="srKpiComuna">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Última actualización</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="srKpiAct">—</span>
+          </div>
+        </div>
       </div>
-      <div class="modal-body trk-body">
+      <div class="modal-body trk-body sr-body">
         {# Tabs: Timeline / Acciones #}
         <div class="trk-tabs">
           <button class="trk-tab is-active" data-srtab="timeline" onclick="srSwitchTab('timeline')">
@@ -1341,52 +1378,77 @@ function mfdFiltrarTabla(){
         </div>
 
         <div id="srTabTimeline">
-          <div id="srLinkBox" style="display:none;margin:0 0 12px;padding:.5rem .6rem;background:#f3f4f6;
-               border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:.74rem;
-               word-break:break-all;border:1px solid #e5e7eb"></div>
-          <div id="srTimeline" class="trk-timeline"></div>
-          {# FIX 2026-07-27 (Daniel: "falta ver las imágenes que ofrece
+          {# ── Productos del pedido (líneas del documento + foto por SKU) ── #}
+          <div class="sr-sec" id="srSecProductos" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
+              <span class="sr-sec-count" id="srProdCount"></span></div>
+            <div id="srProductos"></div>
+          </div>
+
+          {# ── Evidencia de entrega (firma + fotos + receptor) ──
+             FIX 2026-07-27 (Daniel: "falta ver las imágenes que ofrece
              SimpliRoute en el modal"): SimpliRoute ya entrega firma/fotos
-             al completar la visita, y ya se guardan en
-             transport_delivery_proof (_sr_ingest_pod) -- se mostraban solo
-             en el botón aparte "Prueba de entrega". Se agregan también acá
-             para no obligar a abrir otro modal. Reusa las clases .pe-firma/
-             .pe-fotos ya definidas para ese modal, sin duplicar CSS. #}
-          <div id="srEvidencia"></div>
+             al completar la visita (transport_delivery_proof vía
+             _sr_ingest_pod). Reusa .pe-firma/.pe-fotos, sin duplicar CSS. #}
+          <div class="sr-sec" id="srSecEvidencia" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-patch-check-fill"></i>Evidencia de entrega</div>
+            <div id="srEvidencia"></div>
+          </div>
+
+          {# ── Chofer y GPS — mapa embebido con _ilusMapModal, sin pestañas ── #}
+          <div class="sr-sec" id="srSecChofer" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-person-badge-fill"></i>Chofer y ubicación</div>
+            <div id="srChofer"></div>
+          </div>
+
+          {# ── Historial contenido con scroll propio (pedido explícito de
+             Daniel: "el estado contenido abajito con un scroll aparte") ── #}
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-clock-history"></i>Historial y trazabilidad
+              <span class="sr-sec-count" id="srEvCount"></span></div>
+            <div id="srTimeline" class="trk-timeline sr-timeline-scroll"></div>
+          </div>
+
+          {# Link público de seguimiento del cliente — chip con botón copiar #}
+          <div id="srLinkBox" class="sr-link-chip" style="display:none"></div>
         </div>
 
         <div id="srTabAcciones" style="display:none">
-          <div class="sr-acc-row">
-            <button type="button" class="btn btn-outline-info sr-acc-btn" id="srBtnActualizar" onclick="srActualizarEstado()">
-              <i class="bi bi-arrow-clockwise me-1"></i>Actualizar estado
-            </button>
-            <button type="button" class="btn btn-outline-secondary sr-acc-btn" id="srBtnEditar" onclick="srAbrirEditar()">
-              <i class="bi bi-pencil-square me-1"></i>Editar contacto/bultos
-            </button>
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-lightning-charge-fill"></i>Estado y edición</div>
+            <div class="sr-acc-row">
+              <button type="button" class="btn btn-outline-info sr-acc-btn" id="srBtnActualizar" onclick="srActualizarEstado()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Actualizar estado
+              </button>
+              <button type="button" class="btn btn-outline-secondary sr-acc-btn" id="srBtnEditar" onclick="srAbrirEditar()">
+                <i class="bi bi-pencil-square me-1"></i>Editar contacto/bultos
+              </button>
+            </div>
+            <div class="alert alert-secondary py-2 px-3 mt-2 mb-0" id="srEditLock" hidden>
+              <i class="bi bi-lock-fill me-1"></i>
+              <span id="srEditLockText">Edición bloqueada por el estado del pedido.</span>
+            </div>
           </div>
-          <div class="alert alert-secondary py-2 px-3 mt-2 mb-0" id="srEditLock" hidden>
-            <i class="bi bi-lock-fill me-1"></i>
-            <span id="srEditLockText">Edición bloqueada por el estado del pedido.</span>
-          </div>
-          <hr class="my-3">
-          <div class="sr-acc-block">
-            <label class="form-label small fw-semibold mb-1"><i class="bi bi-calendar-event me-1"></i>Reprogramar visita</label>
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-calendar-event-fill"></i>Reprogramar visita</div>
             <div class="d-flex gap-2 flex-wrap">
-              <input type="date" class="form-control form-control-sm" id="srFechaInput" style="max-width:180px">
-              <button type="button" class="btn btn-sm btn-dark" id="srBtnReprogramar" onclick="srReprogramar()">
+              <input type="date" class="form-control form-control-sm sr-fecha-input" id="srFechaInput" style="max-width:180px">
+              <button type="button" class="btn btn-dark sr-acc-btn" style="flex:0 1 auto" id="srBtnReprogramar" onclick="srReprogramar()">
                 <i class="bi bi-calendar-check me-1"></i>Reprogramar
               </button>
             </div>
             <div class="small text-muted mt-1">Se intenta actualizar directamente en SimpliRoute. Si la API la rechaza, te avisamos para hacerlo manual en el portal.</div>
           </div>
-          <hr class="my-3">
-          <div class="sr-acc-row">
-            <button type="button" class="btn btn-outline-danger sr-acc-btn" id="srBtnCancelar" onclick="srCancelarVisita()">
-              <i class="bi bi-x-octagon me-1"></i>Cancelar visita
-            </button>
-            <button type="button" class="btn btn-ilus sr-acc-btn" id="srBtnReenviar" onclick="srReenviarVisita()">
-              <i class="bi bi-send-fill me-1"></i>Reenviar a SimpliRoute
-            </button>
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-signpost-2-fill"></i>Gestión de la visita</div>
+            <div class="sr-acc-row">
+              <button type="button" class="btn btn-outline-danger sr-acc-btn" id="srBtnCancelar" onclick="srCancelarVisita()">
+                <i class="bi bi-x-octagon me-1"></i>Cancelar visita
+              </button>
+              <button type="button" class="btn btn-ilus sr-acc-btn" id="srBtnReenviar" onclick="srReenviarVisita()">
+                <i class="bi bi-send-fill me-1"></i>Reenviar a SimpliRoute
+              </button>
+            </div>
           </div>
           <div id="srAccMsg" class="small mt-2"></div>
         </div>

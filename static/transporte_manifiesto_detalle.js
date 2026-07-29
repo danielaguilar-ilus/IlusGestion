@@ -764,6 +764,49 @@ function _srAplicarPoliticaEdicion(data) {
   if (texto) texto.textContent = motivo;
 }
 
+// Un evento del historial → HTML (factorizado para reusar en "ver todos")
+function _srEvHtml(ev) {
+  return '<div class="trk-ev"><div class="trk-ev-desc">' + _srEsc(ev.accion) + '</div>'
+       + (ev.detalle ? '<div class="trk-ev-meta"><span>' + _srEsc(ev.detalle) + '</span></div>' : '')
+       + '<div class="trk-ev-meta"><span><i class="bi bi-clock me-1"></i>' + _srEsc(ev.created_at) + '</span>'
+       + (ev.usuario ? '<span><i class="bi bi-person me-1"></i>' + _srEsc(ev.usuario) + '</span>' : '') + '</div></div>';
+}
+
+// Rediseño 2026-07-29 (Daniel: "tengo que darle mucho scroll... el estado
+// contenido abajito con un scroll aparte"): el historial vive en un
+// contenedor con scroll propio Y ADEMÁS se colapsa a los primeros eventos
+// si la lista es larga — el botón "Ver todos" los despliega sin salir del
+// modal. Escala bien aunque el poller vuelva a generar muchos eventos.
+var _SR_EV_COLAPSE = 6;
+window._srEventosCache = [];
+
+function srMostrarTodosEventos() {
+  var evs = window._srEventosCache || [];
+  document.getElementById('srTimeline').innerHTML = evs.map(_srEvHtml).join('');
+}
+
+function srCopiarLink(btn) {
+  var url = btn.dataset.url || '';
+  if (!url) return;
+  var done = function () {
+    btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Copiado';
+    ilusToast('✓ Link de seguimiento copiado', { type: 'success' });
+    setTimeout(function(){ btn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copiar'; }, 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done).catch(function(){
+      ilusToast('No se pudo copiar el link', { type: 'error' });
+    });
+  } else {
+    // Fallback (contexto no seguro): textarea temporal + execCommand
+    var ta = document.createElement('textarea');
+    ta.value = url; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); }
+    catch (e) { ilusToast('No se pudo copiar el link', { type: 'error' }); }
+    ta.remove();
+  }
+}
+
 async function _srCargarTrazabilidad(data, token, force) {
   try {
     var r = await fetch(
@@ -780,17 +823,38 @@ async function _srCargarTrazabilidad(data, token, force) {
     if (d.tracking_url) {
       var lb = document.getElementById('srLinkBox');
       lb.style.display = '';
-      lb.textContent = d.tracking_url;
+      lb.innerHTML =
+        '<i class="bi bi-link-45deg sr-link-ico"></i>' +
+        '<span class="sr-link-url">' + _srEsc(d.tracking_url) + '</span>' +
+        '<button type="button" class="sr-copy-btn" data-url="' + _srEsc(d.tracking_url) + '" onclick="srCopiarLink(this)">' +
+          '<i class="bi bi-clipboard me-1"></i>Copiar</button>';
+    }
+    // Estado EN VIVO de la visita en SimpliRoute (si el backend lo trae):
+    // chip discreto en el hero — le dice al operador qué ve el courier AHORA.
+    var live = d.simpliroute_live;
+    var lc = document.getElementById('srLiveChip');
+    if (lc && live && live.status) {
+      var partes = ['<i class="bi bi-broadcast me-1"></i>SimpliRoute en vivo: <strong>' + _srEsc(live.status) + '</strong>'];
+      if (live.planned_date) partes.push('plan ' + _srEsc(live.planned_date));
+      if (live.driver) partes.push('chofer ' + _srEsc(live.driver));
+      lc.innerHTML = partes.join(' · ');
+      lc.style.display = '';
     }
     var eventos = d.eventos || [];
-    document.getElementById('srTimeline').innerHTML = eventos.length
-      ? eventos.map(function(ev){
-          return '<div class="trk-ev"><div class="trk-ev-desc">' + _srEsc(ev.accion) + '</div>'
-               + (ev.detalle ? '<div class="trk-ev-meta"><span>' + _srEsc(ev.detalle) + '</span></div>' : '')
-               + '<div class="trk-ev-meta"><span><i class="bi bi-clock me-1"></i>' + _srEsc(ev.created_at) + '</span>'
-               + (ev.usuario ? '<span><i class="bi bi-person me-1"></i>' + _srEsc(ev.usuario) + '</span>' : '') + '</div></div>';
-        }).join('')
-      : '<div class="trk-empty">Sin eventos registrados todavía.</div>';
+    window._srEventosCache = eventos;
+    var cnt = document.getElementById('srEvCount');
+    if (cnt) cnt.textContent = eventos.length ? String(eventos.length) : '';
+    if (!eventos.length) {
+      document.getElementById('srTimeline').innerHTML =
+        '<div class="trk-empty">Sin eventos registrados todavía.</div>';
+      return;
+    }
+    var html = eventos.slice(0, _SR_EV_COLAPSE).map(_srEvHtml).join('');
+    if (eventos.length > _SR_EV_COLAPSE) {
+      html += '<button type="button" class="sr-more-btn" onclick="srMostrarTodosEventos()">' +
+        '<i class="bi bi-chevron-down me-1"></i>Ver los ' + eventos.length + ' movimientos</button>';
+    }
+    document.getElementById('srTimeline').innerHTML = html;
   } catch (e) {
     if (token === _srLoadToken) {
       document.getElementById('srTimeline').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
@@ -921,7 +985,41 @@ function _ilusMapModal(lat, lng, label) {
   _ilusMapModalInst.show();
 }
 
-async function _srCargarEvidencia(data, token, force) {
+// ── Hero: icono + color según estado (rediseño 2026-07-29) ──
+var _SR_ESTADO_UI = {
+  'En preparación':          { ico: 'bi-box-seam',                color: '#cbd5e1' },
+  'Entregado a transporte':  { ico: 'bi-box-arrow-right',         color: '#fbbf24' },
+  'En ruta':                 { ico: 'bi-truck',                   color: '#93c5fd' },
+  'Entregado':               { ico: 'bi-check-circle-fill',       color: '#4ade80' },
+  'Entrega fallida':         { ico: 'bi-x-octagon-fill',          color: '#f87171' },
+  'Problema':                { ico: 'bi-exclamation-triangle-fill', color: '#f87171' },
+  'Devolución':              { ico: 'bi-arrow-counterclockwise',  color: '#fca5a5' },
+};
+function _srAplicarEstadoHero(estado) {
+  var ui = _SR_ESTADO_UI[estado] || { ico: 'bi-geo-alt-fill', color: '#e2e8f0' };
+  var icoEl = document.getElementById('srStateIcon');
+  var stEl  = document.getElementById('srState');
+  if (icoEl) icoEl.className = 'bi ' + ui.ico;
+  if (stEl)  stEl.style.color = ui.color;
+  document.getElementById('srStateLabel').textContent = estado || '—';
+}
+
+// Formato humano de días: 0.4 d → "9 h", 1.0 → "1 día", 2.5 → "2,5 días"
+function _srFmtDias(d) {
+  if (d == null) return '—';
+  if (d < 1) {
+    var h = Math.round(d * 24);
+    return h <= 1 ? '1 h' : h + ' h';
+  }
+  var s = (Math.round(d * 10) / 10).toLocaleString('es-CL');
+  return s + (d === 1 ? ' día' : ' días');
+}
+
+// ── Detalle consolidado (rediseño 2026-07-29): un solo GET a
+// /transporte/api/buscar/<cid> alimenta KPIs de tiempo, productos con foto,
+// evidencia de entrega (firma+fotos+receptor) y chofer con GPS. Antes esta
+// función (_srCargarEvidencia) solo pintaba firma/fotos.
+async function _srCargarDetalle(data, token, force) {
   try {
     var r = await fetch(
       '/transporte/api/buscar/' + data.id,
@@ -929,28 +1027,132 @@ async function _srCargarEvidencia(data, token, force) {
     );
     var d = await r.json();
     if (token !== _srLoadToken) return;
-    var p = d && d.ok ? d.detalle.proof : null;
-    var ev = document.getElementById('srEvidencia');
-    if (p && (p.firma_url || (p.fotos && p.fotos.length))) {
-      var html = '<div class="pe-sec" style="margin-top:.9rem"><div class="pe-h"><i class="bi bi-camera-fill"></i>Evidencia (SimpliRoute)</div>';
+    if (!d || !d.ok) return;
+    var det = d.detalle || {};
+
+    // ── Estado del hero: preferir el estado fresco del item ──
+    var estadoFresco = (det.manifest_item && det.manifest_item.estado_entrega) || data.estado || '';
+    if (estadoFresco) _srAplicarEstadoHero(estadoFresco);
+
+    // ── KPI de tiempo ("ya, mira, estuvo tantos días") ──
+    var t = det.tiempos || {};
+    var kCard = document.getElementById('srKpiTiempoCard');
+    var kLab  = document.getElementById('srKpiTiempoLabel');
+    var kVal  = document.getElementById('srKpiTiempo');
+    var kHint = document.getElementById('srKpiTiempoHint');
+    kCard.classList.remove('sr-kpi-ok', 'sr-kpi-run');
+    if (t.dias_entrega != null) {
+      kLab.textContent  = 'Tiempo de entrega';
+      kVal.textContent  = _srFmtDias(t.dias_entrega);
+      kHint.textContent = t.entregado_at ? ('entregado ' + t.entregado_at) : '';
+      kCard.classList.add('sr-kpi-ok');
+    } else if (t.dias_en_courier != null) {
+      kLab.textContent  = 'En manos del courier';
+      kVal.textContent  = _srFmtDias(t.dias_en_courier);
+      kHint.textContent = t.en_courier_at ? ('desde ' + t.en_courier_at) : '';
+      kCard.classList.add('sr-kpi-run');
+    } else {
+      kLab.textContent  = 'Tiempo';
+      kVal.textContent  = '—';
+      kHint.textContent = 'aún sin retiro del courier';
+    }
+    if (t.ultima_act_at) document.getElementById('srKpiAct').textContent = t.ultima_act_at;
+
+    // ── Productos del pedido (con foto → _ilusLightbox, sin pestañas) ──
+    var lineas = det.lineas || [];
+    var secP = document.getElementById('srSecProductos');
+    if (lineas.length) {
+      window._srProdFotos = lineas.map(function(l){ return l.fotos || []; });
+      var pHtml = lineas.map(function(l, i) {
+        var thumb = (l.fotos && l.fotos.length)
+          ? '<img class="sr-prod-thumb" src="' + _srEsc(l.fotos[0]) + '" alt="' + _srEsc(l.nombre) + '" loading="lazy" ' +
+            'onclick="_ilusLightbox(window._srProdFotos[' + i + '], 0, \'' + _srEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
+          : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
+        var chips = '<span class="sr-qty-chip" title="Cantidad del documento">×' + (l.cantidad || 0) + '</span>';
+        if (l.despachada > 0 && l.despachada !== l.cantidad) {
+          chips += '<span class="sr-qty-chip desp" title="Cantidad ya despachada">desp. ' + l.despachada + '</span>';
+        }
+        if (l.saldo > 0 && l.saldo !== l.cantidad) {
+          chips += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + l.saldo + '</span>';
+        }
+        return '<div class="sr-prod">' + thumb +
+          '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
+          '<div class="sr-prod-sku">' + _srEsc(l.sku) + '</div></div>' +
+          '<div class="sr-prod-qty">' + chips + '</div></div>';
+      }).join('');
+      document.getElementById('srProductos').innerHTML = pHtml;
+      document.getElementById('srProdCount').textContent = String(lineas.length);
+      secP.style.display = '';
+    }
+
+    // ── Evidencia de entrega: receptor + firma + fotos ──
+    var p = det.proof;
+    var secE = document.getElementById('srSecEvidencia');
+    if (p && (p.firma_url || (p.fotos && p.fotos.length) || p.receptor_nombre)) {
+      var html = '';
+      if (p.receptor_nombre || p.entregado_at) {
+        html += '<div class="sr-recibio">' +
+          '<i class="bi bi-person-check-fill"></i><div>' +
+          (p.receptor_nombre
+            ? '<div class="sr-recibio-n">Recibió: ' + _srEsc(p.receptor_nombre) +
+              (p.receptor_relacion ? ' <span class="sr-recibio-rel">(' + _srEsc(p.receptor_relacion) + ')</span>' : '') + '</div>'
+            : '') +
+          (p.entregado_at ? '<div class="sr-recibio-ts"><i class="bi bi-clock me-1"></i>' + _srEsc(p.entregado_at) + '</div>' : '') +
+          '</div></div>';
+      }
       if (p.firma_url) {
-        html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma" onclick="_ilusLightbox(this.src, \'Firma\')"></div>';
+        html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma" onclick="_ilusLightbox(this.src, 0, \'Firma\')"></div>';
       }
       if (p.fotos && p.fotos.length) {
         window._peFotosActuales = p.fotos;   // mismo patron que _peRenderDetalle: array completo para navegar
         html += '<div class="pe-fotos mt-2">';
         p.fotos.forEach(function(f, i){
-          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" onclick="_ilusLightbox(window._peFotosActuales, ' + i + ', \'Foto de entrega\')">';
+          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" loading="lazy" onclick="_ilusLightbox(window._peFotosActuales, ' + i + ', \'Foto de entrega\')">';
         });
         html += '</div>';
       }
-      html += '</div>';
-      ev.innerHTML = html;
-    } else {
-      ev.innerHTML = '';
+      // Punto GPS exacto de la entrega → mapa embebido (nunca pestaña nueva)
+      if (p.lat && p.lng) {
+        html += '<button type="button" class="sr-map-btn mt-2" ' +
+          'onclick="_ilusMapModal(' + Number(p.lat) + ',' + Number(p.lng) + ', \'Punto de entrega\')">' +
+          '<i class="bi bi-geo-alt-fill me-1"></i>Ver punto de entrega en el mapa</button>';
+      }
+      document.getElementById('srEvidencia').innerHTML = html;
+      secE.style.display = '';
+    }
+
+    // ── Chofer + GPS en vivo (mapa embebido con _ilusMapModal) ──
+    var ch = det.chofer;
+    var secC = document.getElementById('srSecChofer');
+    if (ch && ch.nombre) {
+      var ping = det.last_ping;
+      var ini = (ch.nombre || '?').trim().charAt(0).toUpperCase();
+      var cHtml = '<div class="sr-driver-row">' +
+        '<div class="sr-driver-avatar">' + _srEsc(ini) + '</div>' +
+        '<div class="sr-driver-info"><div class="sr-driver-n">' + _srEsc(ch.nombre) + '</div>' +
+        '<div class="sr-driver-meta">' +
+        (ch.courier ? '<span><i class="bi bi-truck me-1"></i>' + _srEsc(ch.courier) + '</span>' : '') +
+        (ch.patente ? '<span><i class="bi bi-credit-card-2-front me-1"></i>' + _srEsc(ch.patente) + '</span>' : '') +
+        (ch.telefono ? '<span><i class="bi bi-telephone me-1"></i>' + _srEsc(ch.telefono) + '</span>' : '') +
+        '</div></div>';
+      if (ping && ping.lat && ping.lng) {
+        var age = '';
+        if (ping.age_s != null) {
+          var mins = Math.round(Number(ping.age_s) / 60);
+          age = mins < 1 ? 'ahora mismo' : (mins < 60 ? 'hace ' + mins + ' min' : 'hace ' + Math.round(mins / 60) + ' h');
+        }
+        cHtml += '<button type="button" class="sr-map-btn" ' +
+          'onclick="_ilusMapModal(' + Number(ping.lat) + ',' + Number(ping.lng) + ', \'Chofer: ' +
+          _srEsc(ch.nombre).replace(/'/g, '') + '\')">' +
+          '<i class="bi bi-geo-alt-fill me-1"></i>Ver en el mapa' +
+          (age ? ' <span class="sr-map-age">· GPS ' + age + '</span>' : '') + '</button>';
+      }
+      cHtml += '</div>';
+      document.getElementById('srChofer').innerHTML = cHtml;
+      secC.style.display = '';
     }
   } catch (e) {
-    // La evidencia es complementaria y no bloquea el seguimiento.
+    // El detalle es complementario y no bloquea el seguimiento.
   }
 }
 
@@ -960,12 +1162,41 @@ async function abrirSimpliRouteModal(data, force) {
   var token = ++_srLoadToken;
   window._srItemData = data;
   if (!_srAccionesModal) _srAccionesModal = new bootstrap.Modal(document.getElementById('simpliRouteModal'));
+
+  // ── Hero + KPIs (rediseño 2026-07-29): lo que ya sabemos del item se
+  // pinta al instante; el resto (tiempos, productos, evidencia, chofer)
+  // llega async y va rellenando sus secciones sin bloquear.
   document.getElementById('srDoc').textContent = data.doc || '';
-  document.getElementById('srStateLabel').textContent = data.estado || 'Cargando…';
-  document.getElementById('srSub').textContent = data.cliente || '';
+  _srAplicarEstadoHero(data.estado || '');
+  document.getElementById('srSub').textContent =
+    (data.cliente || '') + (data.comuna ? ' · ' + data.comuna : '');
+  var courierChip = document.getElementById('srCourier');
+  if (data.courier) {
+    courierChip.textContent = data.courier;
+    courierChip.style.display = '';
+  } else {
+    courierChip.style.display = 'none';
+  }
+  document.getElementById('srKpiBultos').textContent = data.bultos || '—';
+  document.getElementById('srKpiComuna').textContent = data.comuna || '—';
+  document.getElementById('srKpiAct').textContent = '—';
+  var kCard = document.getElementById('srKpiTiempoCard');
+  kCard.classList.remove('sr-kpi-ok', 'sr-kpi-run');
+  document.getElementById('srKpiTiempoLabel').textContent = 'Tiempo';
+  document.getElementById('srKpiTiempo').textContent = '…';
+  document.getElementById('srKpiTiempoHint').textContent = '';
+  document.getElementById('srLiveChip').style.display = 'none';
+
+  // ── Reset de secciones del tab Timeline ──
   document.getElementById('srTimeline').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando trazabilidad…</div>';
+  document.getElementById('srEvCount').textContent = '';
   document.getElementById('srLinkBox').style.display = 'none';
+  ['srSecProductos', 'srSecEvidencia', 'srSecChofer'].forEach(function(id){
+    document.getElementById(id).style.display = 'none';
+  });
+  document.getElementById('srProductos').innerHTML = '';
   document.getElementById('srEvidencia').innerHTML = '';
+  document.getElementById('srChofer').innerHTML = '';
   document.getElementById('srAccMsg').innerHTML = '';
   _srAplicarPoliticaEdicion(data);
   // Fecha por defecto del picker de reprogramación: hoy
@@ -976,7 +1207,7 @@ async function abrirSimpliRouteModal(data, force) {
 
   await Promise.allSettled([
     _srCargarTrazabilidad(data, token, !!force),
-    _srCargarEvidencia(data, token, !!force),
+    _srCargarDetalle(data, token, !!force),
   ]);
 }
 

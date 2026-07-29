@@ -30117,6 +30117,80 @@ def _tr_buscar_detalle(commitment_id):
                      # -- .tojson lo serializaba sin convertir a Chile.
                      "entregado_at": (chile_fmt_filter(p.get("entregado_at"), "%Y-%m-%d %H:%M:%S")
                                        if p.get("entregado_at") else None)}
+    # ── Líneas de producto + fotos (2026-07-29, rediseño modal SimpliRoute
+    # "Ver seguimiento y acciones", pedido de Daniel: "los productos que se
+    # entregaron... que veamos la foto"). Fuente: transport_commitment_lines
+    # (líneas del documento ya sincronizadas del ERP) cruzadas por SKU con
+    # app_products/app_photos — 2 queries batch locales, CERO round-trips al
+    # ERP (a diferencia de tr_detalle que llama _cubicador_fetch). Additivo:
+    # buscar_interno.html ignora las claves nuevas sin romperse.
+    lineas_out = []
+    try:
+        _lin_rows = mysql_fetchall("""
+            SELECT koprct, nokopr, cantidad, cant_despachada, saldo
+            FROM transport_commitment_lines
+            WHERE commitment_id=%s ORDER BY id
+        """, (commitment_id,)) or []
+        _skus = list({(l.get("koprct") or "").strip().upper()
+                      for l in _lin_rows if (l.get("koprct") or "").strip()})
+        _fotos_por_sku = {}
+        if _skus:
+            try:
+                _ph_sku = ",".join(["%s"] * len(_skus))
+                for _fr in (mysql_fetchall(
+                    f"""SELECT UPPER(TRIM(p.sku)) AS sku, f.filename
+                        FROM `{PRODUCTS_TABLE}` p
+                        JOIN `{PHOTOS_TABLE}` f ON f.product_id = p.id
+                        WHERE UPPER(TRIM(p.sku)) IN ({_ph_sku})
+                        ORDER BY f.product_id, f.orden""", tuple(_skus)) or []):
+                    if _fr.get("filename") and len(_fotos_por_sku.setdefault(_fr["sku"], [])) < 3:
+                        _fotos_por_sku[_fr["sku"]].append(_photo_src(_fr["filename"]))
+            except Exception as _e_fsku:
+                print(f"[_tr_buscar_detalle] fotos por SKU fallaron (no crítico): {_e_fsku}", flush=True)
+        for _l in _lin_rows:
+            _sku = (_l.get("koprct") or "").strip()
+            lineas_out.append({
+                "sku":        _sku,
+                "nombre":     (_l.get("nokopr") or "").strip(),
+                "cantidad":   float(_l.get("cantidad") or 0),
+                "despachada": float(_l.get("cant_despachada") or 0),
+                "saldo":      float(_l.get("saldo") or 0),
+                "fotos":      _fotos_por_sku.get(_sku.upper(), []),
+            })
+    except Exception as _e_lin:
+        print(f"[_tr_buscar_detalle] lineas fallaron (no crítico): {_e_lin}", flush=True)
+
+    # ── KPIs de tiempo (2026-07-29, Daniel: "algo que te diga 'ya, mira,
+    # estuvo tantos días'"). MISMO criterio que _fetch_items en
+    # tr_manifiesto_detalle: el reloj arranca en el PRIMER evento 'Entregado
+    # a transporte' y para en el ÚLTIMO 'Entregado'; si aún no se entrega,
+    # corre contra utcnow. ts_utc está en UTC — la conversión a Chile solo
+    # aplica al MOSTRAR (chile_fmt_filter).
+    tiempos = {"dias_entrega": None, "dias_en_courier": None,
+               "en_courier_at": None, "entregado_at": None, "ultima_act_at": None}
+    try:
+        _ts_courier = [e["ts_utc"] for e in eventos
+                       if e.get("ts_utc") and (e.get("estado") or "") == "Entregado a transporte"]
+        _ts_entreg  = [e["ts_utc"] for e in eventos
+                       if e.get("ts_utc") and (e.get("estado") or "") == "Entregado"]
+        _ts_all     = [e["ts_utc"] for e in eventos if e.get("ts_utc")]
+        _en_courier_ts = min(_ts_courier) if _ts_courier else None
+        _entregado_ts  = max(_ts_entreg) if _ts_entreg else None
+        if _en_courier_ts and _entregado_ts:
+            tiempos["dias_entrega"] = round(
+                (_entregado_ts - _en_courier_ts).total_seconds() / 86400, 1)
+        elif _en_courier_ts:
+            tiempos["dias_en_courier"] = round(
+                (datetime.utcnow() - _en_courier_ts).total_seconds() / 86400, 1)
+        if _en_courier_ts:
+            tiempos["en_courier_at"] = chile_fmt_filter(_en_courier_ts)
+        if _entregado_ts:
+            tiempos["entregado_at"] = chile_fmt_filter(_entregado_ts)
+        if _ts_all:
+            tiempos["ultima_act_at"] = chile_fmt_filter(max(_ts_all))
+    except Exception as _e_tmp:
+        print(f"[_tr_buscar_detalle] tiempos fallaron (no crítico): {_e_tmp}", flush=True)
+
     mi_out = None
     if mi:
         mi_out = dict(mi)
@@ -30154,6 +30228,8 @@ def _tr_buscar_detalle(commitment_id):
             "lng":        float(e["lng"]) if e.get("lng") else None,
         } for e in eventos],
         "proof": proof,
+        "lineas": lineas_out,
+        "tiempos": tiempos,
     }
 
 

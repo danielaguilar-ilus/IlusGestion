@@ -505,3 +505,166 @@
 }
 .mfd-act-chip-ok{ background:#dcfce7; color:#166534; }
 .mfd-act-chip-run{ background:#dbeafe; color:#1e40af; }
+
+/* ═══ 2026-07-29 (Daniel, en vivo): rediseño premium del modal SimpliRoute
+   "Ver seguimiento y acciones". Mismo lenguaje visual que #vistaModal del
+   monitor (header oscuro degradado + borde rojo ILUS + tarjetas KPI
+   translúcidas) — extiende la familia .trk-*/.sr-*, no crea otra. ═══ */
+
+/* Hero: degradado del vistaModal + borde inferior rojo ILUS (esta regla
+   viene DESPUÉS de la .sr-hero original de arriba, así que gana en la
+   cascada sin necesidad de !important) */
+.sr-hero{
+  background:linear-gradient(135deg, #0f172a 0%, #0a0a0a 100%);
+  border-bottom:3px solid var(--ilus-red);
+}
+.sr-courier-chip{
+  background:rgba(255,255,255,.12); color:#e2e8f0; font-weight:800;
+  font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+  border-radius:999px; padding:3px 10px;
+}
+.sr-live-chip{
+  display:inline-flex; align-items:center; gap:.3rem; margin-top:8px;
+  background:rgba(220,38,38,.18); border:1px solid rgba(220,38,38,.45);
+  color:#fecaca; font-size:.7rem; font-weight:600;
+  border-radius:999px; padding:3px 11px;
+}
+.sr-live-chip strong{ color:#fff; }
+
+/* KPIs translúcidos (patrón vistaModal: label gris mayúsculas + valor blanco) */
+.sr-kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:16px; }
+.sr-kpi{
+  background:rgba(255,255,255,.07); border-radius:8px; padding:9px 12px;
+  display:flex; flex-direction:column; gap:2px; min-width:0;
+}
+.sr-kpi-k{
+  font-size:.6rem; text-transform:uppercase; letter-spacing:1px; color:#94a3b8;
+  font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.sr-kpi-v{ font-size:1.18rem; font-weight:900; color:#fff; line-height:1.15;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sr-kpi-v-sm{ font-size:.84rem; font-weight:700; padding-top:3px; }
+.sr-kpi-hint{ font-size:.62rem; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sr-kpi-ok .sr-kpi-v{ color:#4ade80; }
+.sr-kpi-run .sr-kpi-v{ color:#93c5fd; }
+
+/* Cuerpo con fondo suave para que las tarjetas .sr-sec floten */
+.sr-body{ background:#f8fafc; }
+
+/* Tarjetas de sección (Productos / Evidencia / Chofer / Historial) */
+.sr-sec{
+  background:#fff; border:1px solid #eef0f2; border-radius:13px;
+  padding:.85rem .95rem; margin-bottom:.75rem;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);
+}
+.sr-sec-h{
+  font-size:.7rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px;
+  color:#6b7280; display:flex; align-items:center; gap:.45rem; margin-bottom:.6rem;
+}
+.sr-sec-h i{ color:var(--ilus-red); font-size:.85rem; }
+.sr-sec-count{
+  background:#f3f4f6; color:#374151; border-radius:999px;
+  padding:.08rem .5rem; font-size:.64rem; font-weight:800;
+}
+
+/* Historial: contenido, con su propio scroll (pedido explícito de Daniel) */
+.sr-timeline-scroll{ max-height:250px; overflow-y:auto; padding-right:6px; }
+.sr-more-btn{
+  display:flex; align-items:center; justify-content:center; width:100%;
+  min-height:44px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:9px;
+  color:#475569; font-size:.78rem; font-weight:700; cursor:pointer; margin-top:.2rem;
+  transition:background .15s, color .15s;
+}
+.sr-more-btn:hover{ background:#eef2f7; color:var(--ilus-red); }
+
+/* Productos del pedido */
+.sr-prod{
+  display:flex; align-items:center; gap:.65rem;
+  padding:.5rem 0; border-bottom:1px solid #f3f4f6;
+}
+.sr-prod:last-child{ border-bottom:none; padding-bottom:.1rem; }
+.sr-prod:first-child{ padding-top:.1rem; }
+.sr-prod-thumb{
+  width:48px; height:48px; border-radius:9px; object-fit:cover;
+  border:1px solid #e5e7eb; cursor:zoom-in; flex-shrink:0;
+  transition:transform .12s;
+}
+.sr-prod-thumb:hover{ transform:scale(1.05); }
+.sr-prod-thumb-ph{
+  width:48px; height:48px; border-radius:9px; background:#f3f4f6;
+  display:flex; align-items:center; justify-content:center;
+  color:#9ca3af; flex-shrink:0;
+}
+.sr-prod-info{ min-width:0; }
+.sr-prod-name{ font-size:.84rem; font-weight:700; color:#0a0a0a; line-height:1.25; }
+.sr-prod-sku{ font-family:ui-monospace,Consolas,monospace; font-size:.7rem; color:#6b7280; }
+.sr-prod-qty{ margin-left:auto; display:flex; gap:.3rem; flex-wrap:wrap; justify-content:flex-end; flex-shrink:0; }
+.sr-qty-chip{
+  font-size:.7rem; font-weight:800; background:var(--ilus-black); color:#fff;
+  border-radius:999px; padding:.18rem .55rem; white-space:nowrap;
+}
+.sr-qty-chip.desp{ background:#dcfce7; color:#15803d; }
+.sr-qty-chip.saldo{ background:#fff8e1; color:#b45309; border:1px solid #fde68a; }
+
+/* Evidencia: receptor */
+.sr-recibio{
+  display:flex; align-items:flex-start; gap:.55rem;
+  background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px;
+  padding:.55rem .7rem; margin-bottom:.5rem;
+}
+.sr-recibio i{ color:#16a34a; font-size:1.05rem; margin-top:.05rem; }
+.sr-recibio-n{ font-size:.84rem; font-weight:700; color:#14532d; }
+.sr-recibio-rel{ font-weight:600; color:#15803d; font-size:.76rem; }
+.sr-recibio-ts{ font-size:.72rem; color:#166534; margin-top:.1rem; }
+
+/* Chofer + GPS */
+.sr-driver-row{ display:flex; align-items:center; gap:.7rem; flex-wrap:wrap; }
+.sr-driver-avatar{
+  width:42px; height:42px; border-radius:50%; flex-shrink:0;
+  background:linear-gradient(135deg, var(--ilus-red) 0%, #991b1b 100%);
+  color:#fff; display:flex; align-items:center; justify-content:center;
+  font-weight:900; font-size:1.05rem;
+}
+.sr-driver-info{ min-width:0; }
+.sr-driver-n{ font-size:.88rem; font-weight:800; color:#0a0a0a; }
+.sr-driver-meta{ display:flex; gap:.35rem .8rem; flex-wrap:wrap; font-size:.74rem; color:#6b7280; font-weight:600; }
+.sr-map-btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:.15rem;
+  min-height:44px; margin-left:auto; padding:.4rem .95rem;
+  background:var(--ilus-black); color:#fff; border:none; border-radius:9px;
+  font-size:.8rem; font-weight:700; cursor:pointer;
+  transition:background .15s, transform .12s;
+}
+.sr-map-btn:hover{ background:var(--ilus-red); transform:translateY(-1px); }
+.sr-map-btn:active{ transform:scale(.97); }
+.sr-map-age{ font-weight:600; opacity:.75; font-size:.72rem; }
+
+/* Link público de seguimiento: chip con botón copiar */
+.sr-link-chip{
+  display:flex; align-items:center; gap:.5rem;
+  background:#fff; border:1px dashed #cbd5e1; border-radius:10px;
+  padding:.5rem .7rem; margin-bottom:.15rem;
+}
+.sr-link-ico{ color:var(--ilus-red); font-size:1rem; flex-shrink:0; }
+.sr-link-url{
+  font-family:ui-monospace,Consolas,monospace; font-size:.72rem; color:#475569;
+  word-break:break-all; min-width:0;
+}
+.sr-copy-btn{
+  margin-left:auto; flex-shrink:0; display:inline-flex; align-items:center;
+  min-height:34px; padding:.25rem .7rem;
+  background:#f3f4f6; border:1px solid #e5e7eb; border-radius:8px;
+  font-size:.72rem; font-weight:700; color:#374151; cursor:pointer;
+  transition:background .15s, color .15s;
+}
+.sr-copy-btn:hover{ background:var(--ilus-black); color:#fff; border-color:var(--ilus-black); }
+
+/* Input de fecha: 16px en mobile lo cubre mobile.css global, pero el modal
+   usa form-control-sm — reforzar acá el anti auto-zoom iOS. */
+@media (max-width:576px){
+  .sr-fecha-input{ font-size:16px !important; }
+  .sr-kpis{ grid-template-columns:repeat(2,1fr); }
+  .sr-kpi-v{ font-size:1.02rem; }
+  .sr-map-btn{ margin-left:0; width:100%; }
+  .sr-prod-qty{ flex-direction:column; align-items:flex-end; }
+}
