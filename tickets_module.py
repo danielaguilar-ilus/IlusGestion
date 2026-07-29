@@ -1851,11 +1851,20 @@ def register_tickets_routes(app, ctx):
                     print(f"[cot-vendedores] seed '{_n}' fallo: {_e_seed}", flush=True)
             # Corrige el registro sembrado ANTES de confirmar el apellido
             # (idempotente: no-op una vez ya renombrado o si nunca existió).
+            # FIX 2026-07-29 (deploy anterior): el bucle de arriba YA insertó
+            # "Génesis Jugador" como fila nueva (uq_nombre distinto de
+            # "Génesis"), así que este UPDATE choca con la unique key --
+            # se cae al fallback: solo desactivar la fila vieja incompleta,
+            # dejando "Génesis Jugador" como la única activa/seleccionable.
             try:
                 mysql_execute(
                     "UPDATE cot_vendedores_externos SET nombre='Génesis Jugador' WHERE nombre='Génesis'")
-            except Exception as _e_fix:
-                print(f"[cot-vendedores] fix nombre Genesis fallo: {_e_fix}", flush=True)
+            except Exception:
+                try:
+                    mysql_execute(
+                        "UPDATE cot_vendedores_externos SET activo=0 WHERE nombre='Génesis'")
+                except Exception as _e_fix2:
+                    print(f"[cot-vendedores] fix nombre Genesis (fallback) fallo: {_e_fix2}", flush=True)
         except Exception as e:
             print(f"[cot-vendedores] no se pudo asegurar tabla: {e}", flush=True)
 
