@@ -23825,7 +23825,7 @@ def tr_manifiesto_detalle(mid):
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
-                ORDER BY mi.orden, mi.id
+                ORDER BY (ultima_act_at IS NULL), ultima_act_at DESC, mi.orden, mi.id
             """, (mid,))
 
         items = _fetch_items()
@@ -23863,7 +23863,7 @@ def tr_manifiesto_detalle(mid):
             for pl in (mysql_fetchall(
                 f"""SELECT commitment_id, koprct, nokopr, cantidad, cant_despachada, saldo
                     FROM transport_commitment_lines
-                    WHERE commitment_id IN ({_ph})
+                    WHERE commitment_id IN ({_ph}) AND koprct NOT LIKE 'ZZ%%'
                     ORDER BY id""", tuple(comm_ids)) or []):
                 prod_por_comm.setdefault(pl["commitment_id"], []).append(pl)
         # Enriquecer cada item con margen y sus productos
@@ -30155,10 +30155,17 @@ def _tr_buscar_detalle(commitment_id):
     # buscar_interno.html ignora las claves nuevas sin romperse.
     lineas_out = []
     try:
+        # FIX 2026-07-29 (Daniel, en vivo: "los productos que está trayendo
+        # es el ZZ envío... yo quiero traer todo, menos los servicios"):
+        # faltaba excluir las líneas de SERVICIO (ZZENVIO, ZZRETIRO, etc.,
+        # SKU con prefijo "ZZ") — mismo criterio que usa el resto del
+        # proyecto (ver sku.upper().startswith("ZZ") en _cubicador_fetch y
+        # otros). Sin este filtro, el "producto" que se mostraba en el
+        # modal era literalmente el flete, no la mercadería real.
         _lin_rows = mysql_fetchall("""
             SELECT koprct, nokopr, cantidad, cant_despachada, saldo
             FROM transport_commitment_lines
-            WHERE commitment_id=%s ORDER BY id
+            WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%' ORDER BY id
         """, (commitment_id,)) or []
         _skus = list({(l.get("koprct") or "").strip().upper()
                       for l in _lin_rows if (l.get("koprct") or "").strip()})

@@ -821,13 +821,7 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
           ? '<img class="sr-prod-thumb" src="' + _trkEsc(l.fotos[0]) + '" alt="' + _trkEsc(l.nombre) + '" loading="lazy" ' +
             'onclick="_ilusLightbox(window._trkProdFotos[' + i + '], 0, \'' + _trkEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
           : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
-        var chips = '<span class="sr-qty-chip" title="Cantidad del documento">×' + (l.cantidad || 0) + '</span>';
-        if (l.despachada > 0 && l.despachada !== l.cantidad) {
-          chips += '<span class="sr-qty-chip desp" title="Cantidad ya despachada">desp. ' + l.despachada + '</span>';
-        }
-        if (l.saldo > 0 && l.saldo !== l.cantidad) {
-          chips += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + l.saldo + '</span>';
-        }
+        var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
         return '<div class="sr-prod">' + thumb +
           '<div class="sr-prod-info"><div class="sr-prod-name">' + _trkEsc(l.nombre || l.sku) + '</div>' +
           '<div class="sr-prod-sku">' + _trkEsc(l.sku) + '</div></div>' +
@@ -1259,13 +1253,7 @@ async function _srCargarDetalle(data, token, force) {
           ? '<img class="sr-prod-thumb" src="' + _srEsc(l.fotos[0]) + '" alt="' + _srEsc(l.nombre) + '" loading="lazy" ' +
             'onclick="_ilusLightbox(window._srProdFotos[' + i + '], 0, \'' + _srEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
           : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
-        var chips = '<span class="sr-qty-chip" title="Cantidad del documento">×' + (l.cantidad || 0) + '</span>';
-        if (l.despachada > 0 && l.despachada !== l.cantidad) {
-          chips += '<span class="sr-qty-chip desp" title="Cantidad ya despachada">desp. ' + l.despachada + '</span>';
-        }
-        if (l.saldo > 0 && l.saldo !== l.cantidad) {
-          chips += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + l.saldo + '</span>';
-        }
+        var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
         return '<div class="sr-prod">' + thumb +
           '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
           '<div class="sr-prod-sku">' + _srEsc(l.sku) + '</div></div>' +
@@ -2791,6 +2779,26 @@ function abrirEtiquetasManifiestoModal(trigger) {
 // modal FedEx consolidado #trackingModal (abrirTrackingDetalle +
 // _trkCargarDetalleExtra, más arriba). Verificado: no había otros callers.
 // Las clases CSS .pe-* siguen vivas (las usa también el modal SimpliRoute).
+
+// Chip de cumplimiento (despachado/pedido, con estado completo/parcial/
+// pendiente + saldo) — compartido por el modal SimpliRoute y el modal
+// FedEx consolidado, para que "cuánto salió vs. cuánto se pidió" se vea
+// igual en los tres couriers (Daniel: "estoy despachando cincuenta y son
+// cien... todo eso lo quiero ver inteligentemente").
+function _ilusQtyFillChips(cantidad, despachada, saldo) {
+  var qty = Number(cantidad) || 0;
+  var desp = Number(despachada) || 0;
+  var sal = (saldo === null || saldo === undefined) ? Math.max(qty - desp, 0) : Number(saldo);
+  var cls = 'pend', label = 'Pendiente';
+  if (qty > 0 && desp >= qty) { cls = 'ok'; label = 'Completo'; }
+  else if (desp > 0) { cls = 'parcial'; label = 'Parcial'; }
+  var html = '<span class="sr-qty-chip qty-fill ' + cls + '" title="Despachado ' + desp + ' de ' + qty + ' solicitados">'
+    + desp + '/' + qty + ' <span class="qf-label">' + label + '</span></span>';
+  if (sal > 0) {
+    html += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + sal + '</span>';
+  }
+  return html;
+}
 
 function abrirManifiestoFirma() {
   var url = '/transporte/manifiestos/' + MID + '/firma';
