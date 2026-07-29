@@ -275,10 +275,19 @@
   background: var(--trx-g1); color: var(--trx-muted);
   border: 1px solid var(--trx-g2);
 }
+.trx-courier-info { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .trx-courier-name {
   font-weight: 700; font-size: .84rem; color: var(--trx-ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* FIX 2026-07-29 (Daniel: "identificar en que manifiesto esta y que las
+   acciones me lleven ahi") — link directo al manifiesto bajo el nombre
+   del courier, en la tabla del Monitor. */
+.trx-courier-manifiesto {
+  font-size: .72rem; font-weight: 600; color: var(--trx-muted);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trx-courier-manifiesto:hover { color: var(--trx-red); text-decoration: underline; }
 /* Externo = neutro · Interno (flota propia ILUS) = rojo de marca */
 .trx-chip-externo { background: var(--trx-g1);        color: var(--trx-ink-3); border-color: var(--trx-g2); }
 .trx-chip-interno { background: var(--trx-danger-bg); color: #991b1b;          border-color: var(--trx-danger-bd); }

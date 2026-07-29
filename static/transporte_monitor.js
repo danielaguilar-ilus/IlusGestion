@@ -851,6 +851,21 @@ function renderVista(d) {
     }
   })();
 
+  // FIX 2026-07-29 (Daniel: "identificar en que manifiesto esta y que las
+  // acciones me lleven ahi") — botón "Ir al manifiesto", siempre activo
+  // (incluso si el documento está bloqueado por estado terminal).
+  (function() {
+    var btnIrManif = document.getElementById('btnVistaIrManifiesto');
+    if (!btnIrManif) return;
+    if (c.manifiesto_id) {
+      btnIrManif.href = '/transporte/manifiestos/' + c.manifiesto_id;
+      btnIrManif.title = 'Ir a ' + (c.manifiesto_correlativo || ('manifiesto #' + c.manifiesto_id));
+      btnIrManif.style.display = '';
+    } else {
+      btnIrManif.style.display = 'none';
+    }
+  })();
+
   // Campos separados: dirección, teléfono, correo
   if (c.direccion) {
     document.getElementById('vistaDir').textContent = c.direccion;
@@ -1822,10 +1837,23 @@ function cargarMonitor() {
                 }
                 var _ini = (c.courier.trim().split(/\s+/).slice(0,2)
                   .map(function(p){ return p.charAt(0) || ''; }).join('').toUpperCase()) || '?';
+                // FIX 2026-07-29 (Daniel: "quiero identificar en que manifiesto
+                // esta"): si el compromiso viene con manifiesto_id, se agrega
+                // el correlativo como link directo a esa ficha (stopPropagation
+                // para no disparar el onclick de la fila que abre "Ver").
+                var _manLink = (c.manifiesto_id)
+                  ? '<a class="trx-courier-manifiesto" href="/transporte/manifiestos/' + c.manifiesto_id + '" ' +
+                    'onclick="event.stopPropagation()" title="Ir al manifiesto">' +
+                      esc(c.manifiesto_correlativo || ('MAN #' + c.manifiesto_id)) +
+                    '</a>'
+                  : '';
                 return '<td class="text-center">' +
                   '<div class="trx-courier" title="Courier asignado en el manifiesto">' +
                     '<span class="trx-courier-fallback">' + esc(_ini) + '</span>' +
-                    '<span class="trx-courier-name">' + esc(c.courier) + '</span>' +
+                    '<div class="trx-courier-info">' +
+                      '<span class="trx-courier-name">' + esc(c.courier) + '</span>' +
+                      _manLink +
+                    '</div>' +
                   '</div>' +
                 '</td>';
               })() +
@@ -1856,6 +1884,15 @@ function cargarMonitor() {
                 var _lock = _term
                   ? ' disabled title="Bloqueado: este documento ya está entregado"'
                   : '';
+                // FIX 2026-07-29 (Daniel: "deberíamos tener un poquito más de
+                // acciones" en items bloqueados) — botón "Ir al manifiesto"
+                // cuando el compromiso está en uno; queda disponible siempre
+                // (incluso en items terminales, a diferencia de Agregar/Editar).
+                var _irManifiesto = c.manifiesto_id
+                  ? '<button class="tr-action" title="Ir al manifiesto ' + esc(c.manifiesto_correlativo || '') + '" ' +
+                    'onclick="location.href=\'/transporte/manifiestos/' + c.manifiesto_id + '\'">' +
+                    '<i class="bi bi-box-arrow-up-right"></i></button>'
+                  : '';
                 return '<td class="text-center tr-actions-cell" onclick="event.stopPropagation()">' +
                 '<button class="tr-action tr-action-primary" title="Ver detalle" ' +
                   'onclick="openVista(' + c.id + ')">' +
@@ -1864,6 +1901,7 @@ function cargarMonitor() {
                   '<i class="bi bi-clipboard-plus"></i></button>' +
                 '<button class="tr-action"' + (_term ? _lock : ' title="Editar" onclick="openPanel(' + c.id + ')"') + '>' +
                   '<i class="bi bi-pencil-square"></i></button>' +
+                _irManifiesto +
               '</td>';
               })() +
               '</tr>';
@@ -1946,6 +1984,14 @@ function cargarMonitor() {
                   : '<button class="tr-btn tr-btn-primary tr-btn-sm" style="flex:1" ' +
                     'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
                     '<i class="bi bi-clipboard-plus"></i><span>Manifiesto</span></button>') +
+                /* FIX 2026-07-29 (Daniel: "un poquito más de acciones") —
+                   "Ir al manifiesto" disponible en mobile card, aunque el
+                   documento esté bloqueado por estado terminal. */
+                (c.manifiesto_id
+                  ? '<button class="tr-btn tr-btn-ghost tr-btn-sm" style="flex:1" ' +
+                    'onclick="location.href=\'/transporte/manifiestos/' + c.manifiesto_id + '\'">' +
+                    '<i class="bi bi-box-arrow-up-right"></i><span>Ir al manifiesto</span></button>'
+                  : '') +
               '</div>' +
             '</div>';
           }).join('');

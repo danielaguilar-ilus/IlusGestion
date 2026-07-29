@@ -1096,6 +1096,15 @@
             <i class="bi bi-signpost-2"></i>
             <span>Ver seguimiento y trazabilidad</span>
           </button>
+          {# FIX 2026-07-29 (Daniel: "identificar en que manifiesto esta y que
+             las acciones me lleven ahi") — oculto por defecto; renderVista()
+             lo muestra y le pone el href cuando el compromiso trae
+             manifiesto_id. Siempre activo, incluso en documentos entregados. #}
+          <a class="tr-btn tr-btn-ghost" id="btnVistaIrManifiesto" href="#" style="display:none"
+             title="Ir a la ficha del manifiesto">
+            <i class="bi bi-box-arrow-up-right"></i>
+            <span>Ir al manifiesto</span>
+          </a>
         </div>
         <button type="button" class="tr-btn tr-btn-ghost" data-bs-dismiss="modal">
           <i class="bi bi-x-lg"></i><span>Cerrar</span>

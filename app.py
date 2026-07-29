@@ -20391,10 +20391,28 @@ def tr_compromisos_json():
         " WHERE tmi.commitment_id = transport_commitments.id "
         " ORDER BY tmi.id DESC LIMIT 1)"
     )
+    # FIX 2026-07-29 (Daniel: "quiero identificar en que manifiesto esta y que
+    # las acciones me lleven ahi") — mismo criterio (item de manifiesto MÁS
+    # RECIENTE) que _COURIER_SUB, para poder armar un link directo desde el
+    # Monitor al manifiesto sin una 2ª consulta.
+    _MANIFIESTO_ID_SUB = (
+        "(SELECT tm.id FROM transport_manifest_items tmi "
+        " JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
+        " WHERE tmi.commitment_id = transport_commitments.id "
+        " ORDER BY tmi.id DESC LIMIT 1)"
+    )
+    _MANIFIESTO_COD_SUB = (
+        "(SELECT tm.correlativo FROM transport_manifest_items tmi "
+        " JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
+        " WHERE tmi.commitment_id = transport_commitments.id "
+        " ORDER BY tmi.id DESC LIMIT 1)"
+    )
     rows = mysql_fetchall(
         "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto, "
         "(" + _EN_MANIF_ACTIVO + ") AS en_manifiesto_activo, "
-        + _COURIER_SUB + " AS courier_manifiesto "
+        + _COURIER_SUB + " AS courier_manifiesto, "
+        + _MANIFIESTO_ID_SUB + " AS manifiesto_id, "
+        + _MANIFIESTO_COD_SUB + " AS manifiesto_correlativo "
         "FROM transport_commitments WHERE 1=1" + where_sql +
         " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
     )
@@ -20448,6 +20466,8 @@ def tr_compromisos_json():
             "tiene_saldo":  tiene_saldo,
             "en_manifiesto":en_manif,
             "courier":      r.get("courier_manifiesto") or "",
+            "manifiesto_id":          r.get("manifiesto_id"),
+            "manifiesto_correlativo": r.get("manifiesto_correlativo") or "",
             "gestion":      gestion,
             "dias_atraso":  int(dias_atraso),
             "preventa":     int(r.get("preventa") or 0),
@@ -22994,6 +23014,15 @@ def tr_detalle(cid):
         if l["sku"].upper() == "ZZENVIO"
     )
 
+    # Manifiesto más reciente (2026-07-29, Daniel: "identificar en que
+    # manifiesto esta y que las acciones me lleven ahi") — mismo criterio
+    # que tr_compromisos_json (item de manifiesto MÁS RECIENTE).
+    _man_row2 = mysql_fetchone(
+        "SELECT tm.id, tm.correlativo FROM transport_manifest_items tmi "
+        "JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
+        "WHERE tmi.commitment_id=%s ORDER BY tmi.id DESC LIMIT 1", (cid,)
+    )
+
     # Commune: prefer DB stored, then ERP header
     comuna = c["comuna"] or header.get("comuna") or ""
     if not comuna:
@@ -23022,6 +23051,8 @@ def tr_detalle(cid):
             "clasificacion": c["clasificacion"] or "despacho",
             "fecha_emision": c["fecha_emision"].strftime("%d/%m/%Y") if c["fecha_emision"] else "",
             "estado":        c["estado"] or "",
+            "manifiesto_id":          (_man_row2 or {}).get("id"),
+            "manifiesto_correlativo": (_man_row2 or {}).get("correlativo") or "",
         },
         "lineas": lineas_prod,
         "lineas_zz": lineas_zz,
@@ -23356,7 +23387,10 @@ def tr_manifiestos():
         "courier": request.args.get("courier", "").strip(),
         "estado":  request.args.get("estado", "").strip(),
         "q":       request.args.get("q", "").strip(),
+        "vista":   (request.args.get("vista", "activos") or "activos").strip().lower(),
     }
+    if filtros["vista"] not in ("activos", "entregados"):
+        filtros["vista"] = "activos"
     try:
         page = max(1, int(request.args.get("page", "1")))
     except Exception:
@@ -23374,8 +23408,35 @@ def tr_manifiestos():
         where.append("(correlativo LIKE %s OR courier LIKE %s OR notas LIKE %s)")
         params.extend([q_like, q_like, q_like])
 
-    where_sql = " AND ".join(where)
-    # KPIs globales (respetan los filtros, NO la paginación)
+    # PESTAÑAS "Activos" / "Entregados" (2026-07-29, Daniel — demo directorio):
+    # un manifiesto pasa a "Entregados" solo cuando el 100% de sus items están
+    # en un estado TERMINAL ('Entregado' o 'Devolución'). Mismo criterio que ya
+    # usa _EN_MANIF_ACTIVO en tr_compromisos_json() para documentos individuales,
+    # aplicado ahora a nivel de manifiesto completo (todos sus items, no solo uno).
+    _TIENE_ITEMS       = "id IN (SELECT manifest_id FROM transport_manifest_items)"
+    _TIENE_NO_TERMINAL = ("id IN (SELECT manifest_id FROM transport_manifest_items "
+                          "WHERE estado_entrega NOT IN ('Entregado','Devolución'))")
+    _SQL_ACTIVOS    = f"(NOT ({_TIENE_ITEMS}) OR ({_TIENE_NO_TERMINAL}))"
+    _SQL_ENTREGADOS = f"({_TIENE_ITEMS} AND NOT ({_TIENE_NO_TERMINAL}))"
+
+    where_sql_base = " AND ".join(where)  # sin filtro de vista — para contar ambas pestañas
+    where_vista = where + [_SQL_ENTREGADOS if filtros["vista"] == "entregados" else _SQL_ACTIVOS]
+    where_sql = " AND ".join(where_vista)
+
+    # Conteo de cada pestaña (respeta courier/estado/q, no la vista elegida ni
+    # la paginación) — para mostrar el numerito en cada tab, igual que el Monitor.
+    tabs_row = mysql_fetchone(
+        "SELECT SUM(CASE WHEN " + _SQL_ACTIVOS + " THEN 1 ELSE 0 END) AS activos, "
+        "       SUM(CASE WHEN " + _SQL_ENTREGADOS + " THEN 1 ELSE 0 END) AS entregados "
+        "  FROM transport_manifests WHERE " + where_sql_base,
+        tuple(params)
+    ) or {}
+    tabs_count = {
+        "activos":    int(tabs_row.get("activos") or 0),
+        "entregados": int(tabs_row.get("entregados") or 0),
+    }
+
+    # KPIs globales (respetan los filtros incl. vista, NO la paginación)
     # OJO: la key NO puede llamarse "items" — en Jinja {{ kpis.items }} resuelve
     # al método dict.items() en vez del valor. Por eso usamos "bultos".
     kpi_row = mysql_fetchone(
@@ -23403,6 +23464,41 @@ def tr_manifiestos():
         " ORDER BY fecha DESC, id DESC LIMIT %s OFFSET %s",
         tuple(params) + (page_size, offset)
     )
+
+    # % de avance por manifiesto (2026-07-29, Daniel — demo directorio: "tiene
+    # catorce envíos pero nueve están enviados... no tiene sentido que todo
+    # esté en preparación"). UNA query batch agrupando por manifest_id sobre
+    # los IDs de la página actual — nunca N+1.
+    avance_por_manifest = {}
+    _mids_pagina = [m["id"] for m in manifiestos]
+    if _mids_pagina:
+        _ph = ",".join(["%s"] * len(_mids_pagina))
+        _avance_rows = mysql_fetchall(
+            "SELECT manifest_id, COUNT(*) AS total, "
+            "       SUM(CASE WHEN estado_entrega IN ('Entregado','Devolución') "
+            "                THEN 1 ELSE 0 END) AS entregados, "
+            "       SUM(CASE WHEN estado_entrega NOT IN "
+            "                ('En preparación','Entregado','Devolución') "
+            "                THEN 1 ELSE 0 END) AS en_movimiento "
+            "  FROM transport_manifest_items "
+            " WHERE manifest_id IN (" + _ph + ") "
+            " GROUP BY manifest_id",
+            tuple(_mids_pagina)
+        ) or []
+        for r in _avance_rows:
+            _tot = int(r.get("total") or 0)
+            _ent = int(r.get("entregados") or 0)
+            _mov = int(r.get("en_movimiento") or 0)
+            _pct = round(_ent / _tot * 100) if _tot else 0
+            avance_por_manifest[r["manifest_id"]] = {
+                "total": _tot, "entregados": _ent, "en_movimiento": _mov, "pct": _pct,
+            }
+
+    for m in manifiestos:
+        av = avance_por_manifest.get(m["id"], {"total": 0, "entregados": 0, "en_movimiento": 0, "pct": 0})
+        m["avance"] = av
+        m["cien_pct"] = bool(av["total"] > 0 and av["pct"] == 100)
+
     return render_template(
         "transporte/manifiestos.html",
         manifiestos=manifiestos,
@@ -23410,6 +23506,7 @@ def tr_manifiestos():
         couriers=COURIERS,
         estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
         kpis=kpis,
+        tabs_count=tabs_count,
         paginacion={
             "page": page,
             "total_pages": total_pages,
