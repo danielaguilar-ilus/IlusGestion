@@ -1068,13 +1068,7 @@ async function _srCargarDetalle(data, token, force) {
           ? '<img class="sr-prod-thumb" src="' + _srEsc(l.fotos[0]) + '" alt="' + _srEsc(l.nombre) + '" loading="lazy" ' +
             'onclick="_ilusLightbox(window._srProdFotos[' + i + '], 0, \'' + _srEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
           : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
-        var chips = '<span class="sr-qty-chip" title="Cantidad del documento">×' + (l.cantidad || 0) + '</span>';
-        if (l.despachada > 0 && l.despachada !== l.cantidad) {
-          chips += '<span class="sr-qty-chip desp" title="Cantidad ya despachada">desp. ' + l.despachada + '</span>';
-        }
-        if (l.saldo > 0 && l.saldo !== l.cantidad) {
-          chips += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + l.saldo + '</span>';
-        }
+        var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
         return '<div class="sr-prod">' + thumb +
           '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
           '<div class="sr-prod-sku">' + _srEsc(l.sku) + '</div></div>' +
@@ -2655,6 +2649,21 @@ async function abrirPruebaEntrega(commitmentId) {
 // buscar_interno.html (calcado, no se reimplementa el JSON del backend,
 // solo la vista) -- estado, cliente/destino, chofer+GPS, prueba de entrega
 // (receptor/hora/GPS/firma/fotos) e historial completo.
+function _ilusQtyFillChips(cantidad, despachada, saldo) {
+  var qty = Number(cantidad) || 0;
+  var desp = Number(despachada) || 0;
+  var sal = (saldo === null || saldo === undefined) ? Math.max(qty - desp, 0) : Number(saldo);
+  var cls = 'pend', label = 'Pendiente';
+  if (qty > 0 && desp >= qty) { cls = 'ok'; label = 'Completo'; }
+  else if (desp > 0) { cls = 'parcial'; label = 'Parcial'; }
+  var html = '<span class="sr-qty-chip qty-fill ' + cls + '" title="Despachado ' + desp + ' de ' + qty + ' solicitados">'
+    + desp + '/' + qty + ' <span class="qf-label">' + label + '</span></span>';
+  if (sal > 0) {
+    html += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + sal + '</span>';
+  }
+  return html;
+}
+
 function _peEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
@@ -2714,7 +2723,7 @@ function _peRenderDetalle(d) {
       html += '<div class="sr-prod">' + thumb
         + '<div class="sr-prod-info"><div class="sr-prod-name">' + _peEsc(l.nombre || l.sku || '—') + '</div>'
         + '<div class="sr-prod-sku">' + _peEsc(l.sku || '') + '</div></div>'
-        + '<div class="sr-prod-qty"><span class="sr-qty-chip" title="Cantidad del documento">×' + (l.cantidad || 0) + '</span></div>'
+        + '<div class="sr-prod-qty">' + _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo) + '</div>'
         + '</div>';
     });
     html += '</div>';

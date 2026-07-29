@@ -30151,10 +30151,17 @@ def _tr_buscar_detalle(commitment_id):
     # buscar_interno.html ignora las claves nuevas sin romperse.
     lineas_out = []
     try:
+        # FIX 2026-07-29 (Daniel, en vivo: "los productos que está trayendo
+        # es el ZZ envío... yo quiero traer todo, menos los servicios"):
+        # faltaba excluir las líneas de SERVICIO (ZZENVIO, ZZRETIRO, etc.,
+        # SKU con prefijo "ZZ") — mismo criterio que usa el resto del
+        # proyecto (ver sku.upper().startswith("ZZ") en _cubicador_fetch y
+        # otros). Sin este filtro, el "producto" que se mostraba en el
+        # modal era literalmente el flete, no la mercadería real.
         _lin_rows = mysql_fetchall("""
             SELECT koprct, nokopr, cantidad, cant_despachada, saldo
             FROM transport_commitment_lines
-            WHERE commitment_id=%s ORDER BY id
+            WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%' ORDER BY id
         """, (commitment_id,)) or []
         _skus = list({(l.get("koprct") or "").strip().upper()
                       for l in _lin_rows if (l.get("koprct") or "").strip()})

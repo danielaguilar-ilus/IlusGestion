@@ -605,6 +605,11 @@
 }
 .sr-qty-chip.desp{ background:#dcfce7; color:#15803d; }
 .sr-qty-chip.saldo{ background:#fff8e1; color:#b45309; border:1px solid #fde68a; }
+.sr-qty-chip.qty-fill{ display:inline-flex; align-items:center; gap:.3rem; }
+.sr-qty-chip.qty-fill .qf-label{ font-weight:700; text-transform:uppercase; font-size:.62rem; letter-spacing:.02em; }
+.sr-qty-chip.qty-fill.ok{ background:#dcfce7; color:#15803d; }
+.sr-qty-chip.qty-fill.parcial{ background:#fff8e1; color:#b45309; border:1px solid #fde68a; }
+.sr-qty-chip.qty-fill.pend{ background:#fee2e2; color:#b91c1c; }
 
 /* Evidencia: receptor */
 .sr-recibio{
