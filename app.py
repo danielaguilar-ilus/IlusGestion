@@ -25173,6 +25173,31 @@ def _tr_recalc_totales_manifiesto(cur, mid):
     """, (mid,))
 
 
+def _tr_next_manifest_correlativo_candidato(cur):
+    """Un candidato MAN-YYYY-NNNN (no lo inserta). El caller reintenta con un
+    candidato nuevo si choca contra el UNIQUE de `correlativo` (mismo patrón
+    anti-race de tr_crear_manifiesto, extraído para no duplicarlo).
+
+    FIX 2026-07-28 (levantamiento del "llamado de manifiesto"): había un
+    SEGUNDO generador de correlativo en tr_asignar_a_manifiesto que producía
+    el formato viejo 'MAN0001' (inconsistente con 'MAN-2026-0001' del resto
+    del sistema, hallazgo H2) con un COUNT sin protección de carrera, y
+    encima leía el resultado con `cur.fetchone()[0]` — con DictCursor (todo
+    el pool usa DictCursor) eso lanza KeyError. Ese era el motivo real por
+    el que el botón "Crear manifiesto" del panel del Monitor devolvía 500
+    SIEMPRE (hallazgo H1, confirmado leyendo el código: no hay ningún
+    `current_user` importado en todo app.py, así que la línea de abajo
+    también lanzaba NameError).
+    """
+    from datetime import datetime as _dt
+    cur.execute(
+        "SELECT COUNT(*)+1 AS n FROM transport_manifests "
+        "WHERE YEAR(created_at)=YEAR(NOW())"
+    )
+    n = (cur.fetchone() or {}).get("n", 1)
+    return f"MAN-{_dt.now().year}-{int(n):04d}"
+
+
 def _tr_manifiesto_guard_actividad(mid):
     """Guarda compartida de tr_agregar_item / tr_quitar_item (FIX 2026-07-25,
     revisión adversarial, hallazgo ALTA): antes, un manifiesto ya subido a
@@ -25313,17 +25338,25 @@ def tr_agregar_item(mid):
                 for o in _otros
             ],
         }), 409
+    # FIX 2026-07-28 (levantamiento "llamado de manifiesto", H3): este
+    # `conn.close()` cerraba la conexión SCOPED AL REQUEST (get_db() cachea
+    # en g._db, y teardown_appcontext ya la cierra sola al final) y DESPUÉS
+    # seguía usándola vía mysql_fetchone/_tr_log más abajo en esta misma
+    # función. get_db() no reabre porque "_db" ya está en g -- devuelve la
+    # conexión cerrada tal cual, así que esas llamadas posteriores fallaban.
+    # El item SÍ quedaba insertado (el commit ya había corrido), pero la
+    # request completa reventaba después, sin auditoría y devolviendo
+    # "Error de conexión" al operador aunque la factura ya se hubiera
+    # agregado. Mismo patrón correcto que ya usa tr_quitar_item al lado:
+    # no cerrar acá, dejar que teardown_appcontext lo haga.
     conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
-                "VALUES (%s,%s)", (mid, cid)
-            )
-            _tr_recalc_totales_manifiesto(cur, mid)
-        conn.commit()
-    finally:
-        conn.close()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
+            "VALUES (%s,%s)", (mid, cid)
+        )
+        _tr_recalc_totales_manifiesto(cur, mid)
+    conn.commit()
     # Trazabilidad legible: documento + cliente (no solo el id).
     _info = mysql_fetchone(
         "SELECT tido, nudo, cliente_nombre FROM transport_commitments WHERE id=%s", (cid,))
@@ -32078,31 +32111,109 @@ def _tr_manifiesto_export_impl(mid):
 @app.route("/transporte/api/manifiestos/asignar", methods=["POST"])
 @_tr_required
 def tr_asignar_a_manifiesto():
-    """Asigna uno o más compromisos a un manifiesto (crea si mid=None)."""
+    """Asigna uno o más compromisos a un manifiesto (crea si mid=None).
+
+    FIX 2026-07-28 (levantamiento del "llamado de manifiesto" — Daniel:
+    "el llamado de manifiesto lo veo un poco desordenado"). Este endpoint es
+    el que usa el Panel Manifiesto del Monitor (arrastre, botón 📋, FAB) —
+    el camino que Daniel más usa — y tenía 5 defectos confirmados leyendo
+    el código, corregidos todos acá:
+      H1  (CRÍTICO) el botón "Crear manifiesto" devolvía 500 SIEMPRE:
+          `cur.fetchone()[0]` con DictCursor lanza KeyError, y
+          `current_user.correo` era NameError (no existe ese nombre en
+          todo app.py). Se reemplaza por current_username() + el mismo
+          generador de correlativo (con reintento anti-race) que ya usa
+          tr_crear_manifiesto.
+      H2  el correlativo salía en formato viejo 'MAN0001', distinto del
+          'MAN-2026-0001' que usa el resto del sistema.
+      H6  no avisaba si el documento ya estaba en OTRO manifiesto (sí lo
+          hace tr_agregar_item desde 2026-07-26); ahora avisa igual acá.
+      H10 no aplicaba el guard de "manifiesto ya en gestión con el
+          courier" al agregar a un manifiesto EXISTENTE.
+      H11 solo recalculaba total_items, dejando costo_total desactualizado
+          (por eso el listado y la ficha podían mostrar montos distintos).
+    """
     data         = request.get_json(silent=True) or {}
     commitment_ids = data.get("commitment_ids", [])
     mid          = data.get("manifest_id")     # None → crear nuevo
+    confirm_dup  = bool(data.get("confirm_dup"))
 
     if not commitment_ids:
         return jsonify({"error": "sin compromisos"}), 400
 
+    # H10: si se agrega a un manifiesto EXISTENTE que ya está en gestión con
+    # el courier (o con prueba de entrega firmada), aplica la misma guarda
+    # que ya protege a tr_agregar_item/tr_quitar_item.
+    aviso_actividad = None
+    if mid:
+        _bloqueo, aviso_actividad = _tr_manifiesto_guard_actividad(mid)
+        if _bloqueo:
+            return _bloqueo
+
+    # H6: avisar si alguno de los documentos ya está en OTRO manifiesto —
+    # una sola consulta batch, no N consultas (esto puede venir en lote
+    # desde el arrastre múltiple del panel).
+    if not confirm_dup:
+        _ph = ",".join(["%s"] * len(commitment_ids))
+        _params = list(commitment_ids) + ([mid] if mid else [])
+        _otros_rows = mysql_fetchall(
+            "SELECT mi.commitment_id, m.id, m.correlativo, m.estado, m.fecha, "
+            "       c.tido, c.nudo "
+            "FROM transport_manifest_items mi "
+            "JOIN transport_manifests m ON m.id = mi.manifest_id "
+            "JOIN transport_commitments c ON c.id = mi.commitment_id "
+            f"WHERE mi.commitment_id IN ({_ph})"
+            + (" AND mi.manifest_id != %s" if mid else ""),
+            tuple(_params)
+        ) or []
+        if _otros_rows:
+            return jsonify({
+                "ok": False,
+                "error": "duplicado",
+                "msg": f"{len(set(r['commitment_id'] for r in _otros_rows))} documento(s) "
+                       f"ya están en otro manifiesto.",
+                "duplicados": [
+                    {"commitment_id": r["commitment_id"],
+                     "doc": f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
+                     "manifest_id": r["id"], "correlativo": r["correlativo"],
+                     "estado": r["estado"],
+                     "fecha": str(r["fecha"]) if r.get("fecha") else None}
+                    for r in _otros_rows
+                ],
+            }), 409
+
     conn = get_db()
     with conn.cursor() as cur:
-        # crear manifiesto nuevo si no se indicó uno
+        # crear manifiesto nuevo si no se indicó uno — mismo generador
+        # anti-race que tr_crear_manifiesto (ver _tr_next_manifest_correlativo_candidato).
         if not mid:
             courier = data.get("courier", "Por asignar")
             fecha   = data.get("fecha") or __import__("datetime").date.today().isoformat()
-            cur.execute(
-                "SELECT COALESCE(MAX(CAST(SUBSTRING(correlativo,4) AS UNSIGNED)),0)+1 FROM transport_manifests"
-            )
-            num = cur.fetchone()[0] or 1
-            correlativo = f"MAN{num:04d}"
-            cur.execute(
-                """INSERT INTO transport_manifests (correlativo, fecha, courier, created_by)
-                   VALUES (%s,%s,%s,%s)""",
-                (correlativo, fecha, courier, current_user.correo),
-            )
-            mid = cur.lastrowid
+            correlativo = None
+            for _intento in range(5):
+                candidato = _tr_next_manifest_correlativo_candidato(cur)
+                try:
+                    cur.execute(
+                        """INSERT INTO transport_manifests (correlativo, fecha, courier, created_by)
+                           VALUES (%s,%s,%s,%s)""",
+                        (candidato, fecha, courier, current_username()),
+                    )
+                    correlativo = candidato
+                    mid = cur.lastrowid
+                    break
+                except Exception as e_corr:
+                    msg = str(e_corr)
+                    if ("1062" in msg or "Duplicate entry" in msg) and "correlativo" in msg:
+                        conn.rollback()
+                        continue
+                    raise
+            if mid is None:
+                conn.rollback()
+                return jsonify({
+                    "ok": False,
+                    "error": "No se pudo generar un correlativo único para el manifiesto, "
+                             "intenta de nuevo.",
+                }), 409
         else:
             correlativo = None
 
@@ -32123,11 +32234,10 @@ def tr_asignar_a_manifiesto():
             except Exception:
                 dupes += 1
 
-        # recalcular total_items
-        cur.execute(
-            "UPDATE transport_manifests SET total_items=(SELECT COUNT(*) FROM transport_manifest_items WHERE manifest_id=%s) WHERE id=%s",
-            (mid, mid),
-        )
+        # H11: recalcular TODOS los totales (antes solo total_items, y
+        # costo_total quedaba viejo — mismo fix que ya se aplicó a
+        # tr_quitar_item/tr_agregar_item, ahora también acá).
+        _tr_recalc_totales_manifiesto(cur, mid)
 
     conn.commit()
 
@@ -32143,7 +32253,17 @@ def tr_asignar_a_manifiesto():
         except Exception as _e_prep:
             print(f"[tr_event preparacion] item={_mi_id}: {_e_prep}", flush=True)
 
-    return jsonify({"ok": True, "manifest_id": mid, "correlativo": correlativo, "added": added, "duplicados": dupes})
+    # Auditoría (H: antes A no dejaba NINGÚN registro de "se agregaron N
+    # facturas" — a diferencia de tr_agregar_item, que sí loguea legible).
+    if added:
+        _tr_log("manifest", mid, "facturas agregadas (panel)",
+                f"{added} agregada(s), {dupes} ya estaban en este manifiesto")
+
+    resp = {"ok": True, "manifest_id": mid, "correlativo": correlativo,
+            "added": added, "duplicados": dupes}
+    if aviso_actividad:
+        resp["aviso"] = aviso_actividad
+    return jsonify(resp)
 
 
 # ════════════════════════════════════════════════════════════════════════
