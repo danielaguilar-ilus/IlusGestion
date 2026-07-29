@@ -658,21 +658,13 @@
           </td>
           {% endif %}
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
-            {% if es_fedex and item.estado_entrega == 'Entregado' %}
-            {# 2026-07-29 (Daniel: "la prueba de entrega y el botón de
-               seguimiento y acciones tienen casi la misma función"): este
-               botón queda SOLO para FedEx. En couriers SimpliRoute
-               (Felca/Milling) la misma evidencia (firma, fotos, GPS) ya se
-               muestra dentro del modal "Ver seguimiento y acciones" (ver
-               _srCargarDetalle — consume el mismo JSON), así que tener
-               ambos era un duplicado. FedEx no tiene ese modal, conserva
-               este acceso directo. #}
-            <button type="button" class="btn btn-sm btn-outline-success mfd-act-btn"
-                    title="Ver prueba de entrega (foto, firma, GPS)"
-                    onclick="abrirPruebaEntrega({{ item.commitment_id }})">
-              <i class="bi bi-shield-check"></i>
-            </button>
-            {% endif %}
+            {# 2026-07-29 (Daniel: "el modal solamente aparece con la entrega
+               y necesito hacerle seguimiento a algo que ahora está en ruta...
+               ahorramos ahí un botón"): el botón "Ver prueba de entrega"
+               (escudo verde, gateado a estado Entregado) se FUSIONÓ con el
+               modal de seguimiento FedEx (#trackingModal). La evidencia
+               (firma/fotos/receptor/GPS) ahora vive dentro de ese modal y se
+               puede abrir en CUALQUIER estado — ver abrirTrackingDetalle. #}
             {% if not es_fedex %}
             {# Ver/reimprimir siempre debe estar disponible. La política de
                etiquetas bloquea dentro del modal únicamente la edición del
@@ -701,8 +693,11 @@
               <i class="bi bi-arrow-clockwise"></i>
             </button>
             {% endif %}
-            {% if es_fedex and item.get('master_tracking_number') %}
-            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento detallado (estados, scans FedEx, pesos y tarifa)"
+            {% if es_fedex %}
+            {# Sin gate de OT ni de estado (2026-07-29): el modal consolidado
+               degrada bien — sin OT muestra el historial ILUS, y la sección
+               de evidencia dice "aún sin evidencia" hasta que exista. #}
+            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento, ruta FedEx y prueba de entrega (foto, firma, GPS)"
                     style="background:#0a0a0a;color:#fff;border:none"
                     onclick="abrirTrackingDetalle({{ item.id }})">
               <i class="bi bi-geo-alt-fill"></i>
@@ -792,6 +787,16 @@
               <div class="mfd-prod-head">
                 <i class="bi bi-box me-1"></i>Productos de la factura
                 <span class="mfd-prod-count">{{ nprod }} línea{{ 's' if nprod != 1 }}</span>
+                {% if es_fedex %}
+                {# 2026-07-29 (Daniel: "yo lo mandaría por un modal cuando le
+                   hagamos clic al producto"): acceso prominente al modal FedEx
+                   consolidado desde la sub-fila expandida. #}
+                <button type="button" class="mfd-prod-track-btn no-print"
+                        title="Seguimiento, ruta FedEx y prueba de entrega de este pedido"
+                        onclick="event.stopPropagation(); abrirTrackingDetalle({{ item.id }})">
+                  <i class="bi bi-geo-alt-fill me-1"></i>Seguimiento y evidencia
+                </button>
+                {% endif %}
               </div>
               {# Cubicaje declarado (peso real / vol / volumen / predominante) #}
               <div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;font-size:.74rem">
@@ -814,7 +819,11 @@
                 </thead>
                 <tbody>
                   {% for p in item.productos %}
-                  <tr>
+                  {# En FedEx, clic en el producto abre el modal de seguimiento
+                     consolidado (pedido de Daniel 2026-07-29). #}
+                  <tr{% if es_fedex %} class="mfd-prod-click"
+                      title="Ver seguimiento y evidencia del pedido"
+                      onclick="abrirTrackingDetalle({{ item.id }})"{% endif %}>
                     <td class="font-monospace">{{ p.koprct or '—' }}</td>
                     <td>{{ p.nokopr or '—' }}</td>
                     <td class="text-center">{{ p.cantidad|int if p.cantidad is not none else '—' }}</td>
@@ -920,8 +929,8 @@
             <i class="bi bi-tags"></i>
           </button>
           {% endif %}
-          {% if es_fedex and item.get('master_tracking_number') %}
-          <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento detallado"
+          {% if es_fedex %}
+          <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento, ruta FedEx y prueba de entrega"
                   style="background:#0a0a0a;color:#fff;border:none"
                   onclick="abrirTrackingDetalle({{ item.id }})">
             <i class="bi bi-geo-alt-fill"></i>
@@ -1023,6 +1032,12 @@
         Ver productos <span class="mfd-prod-count">{{ nprod }}</span>
       </button>
       <div class="mfd-mprod-list" id="mprodrow-{{ item.id }}" hidden>
+        {% if es_fedex %}
+        <button type="button" class="mfd-prod-track-btn mfd-prod-track-btn-block no-print"
+                onclick="abrirTrackingDetalle({{ item.id }})">
+          <i class="bi bi-geo-alt-fill me-1"></i>Seguimiento y evidencia del pedido
+        </button>
+        {% endif %}
         {% if nprod %}
         {% for p in item.productos %}
         <div class="mfd-mprod-item">
@@ -1291,12 +1306,31 @@ function mfdFiltrarTabla(){
 </div>
 
 {# ════════════════════════════════════════════════════════════════════
-   Modal: SEGUIMIENTO DETALLADO (tracking premium con timeline FedEx)
+   Modal: SEGUIMIENTO FEDEX CONSOLIDADO (rediseño premium 2026-07-29)
+
+   Fusiona los 2 modales viejos de FedEx en UNO (pedido de Daniel: "el
+   modal solamente aparece con la entrega... necesito hacerle seguimiento
+   a algo que ahora está en ruta... ahorramos ahí un botón"):
+   - el antiguo #trackingModal (stepper + ficha pesos/tarifa + scans FedEx
+     + historial ILUS), y
+   - el antiguo #pruebaEntregaModal (evidencia: receptor, firma, fotos,
+     GPS de entrega — antes solo visible en estado "Entregado").
+
+   Mismo lenguaje visual premium que #simpliRouteModal: hero degradado
+   oscuro + borde rojo ILUS (.sr-hero), KPIs translúcidos (.sr-kpis) y
+   tarjetas de sección (.sr-sec). El chip FedEx mantiene la identidad
+   del courier dentro del marco ILUS.
+
+   Datos (2 fetch, ver abrirTrackingDetalle en el JS):
+   1. /transporte/api/items/<id>/tracking-detalle → estado, stepper,
+      pesos, tarifa, scans FedEx en vivo, historial ILUS.
+   2. /transporte/api/buscar/<commitment_id> (_tr_buscar_detalle) →
+      productos+foto, evidencia de entrega, tiempos, chofer.
    ════════════════════════════════════════════════════════════════════ #}
 <div class="modal fade" id="trackingModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
     <div class="modal-content trk-modal">
-      <div class="trk-hero" id="trkHero">
+      <div class="trk-hero sr-hero" id="trkHero">
         <button type="button" class="btn-close btn-close-white trk-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         <div class="trk-hero-top">
           <span class="trk-fx">Fed<span>Ex</span></span>
@@ -1307,21 +1341,68 @@ function mfdFiltrarTabla(){
         <div class="trk-tn" id="trkTn"></div>
         {# Stepper de estados ILUS #}
         <div class="trk-steps" id="trkSteps"></div>
-      </div>
-      <div class="modal-body trk-body">
-        {# Ficha: pesos + tarifa + bultos #}
-        <div class="trk-ficha" id="trkFicha"></div>
-        {# Tabs: FedEx scans / Historial ILUS #}
-        <div class="trk-tabs">
-          <button class="trk-tab is-active" data-tab="fedex" onclick="trkSwitchTab('fedex')">
-            <i class="bi bi-broadcast me-1"></i>Movimientos FedEx
-          </button>
-          <button class="trk-tab" data-tab="ilus" onclick="trkSwitchTab('ilus')">
-            <i class="bi bi-clock-history me-1"></i>Historial ILUS
-          </button>
+        {# KPIs translúcidos — mismo criterio que el modal SimpliRoute:
+           tiempo de entrega / bultos / destino / última actualización #}
+        <div class="sr-kpis">
+          <div class="sr-kpi" id="trkKpiTiempoCard">
+            <span class="sr-kpi-k" id="trkKpiTiempoLabel">Tiempo</span>
+            <span class="sr-kpi-v" id="trkKpiTiempo">—</span>
+            <span class="sr-kpi-hint" id="trkKpiTiempoHint"></span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Bultos</span>
+            <span class="sr-kpi-v" id="trkKpiBultos">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Destino</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="trkKpiComuna">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Última actualización</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="trkKpiAct">—</span>
+          </div>
         </div>
-        <div id="trkTabFedex" class="trk-timeline"></div>
-        <div id="trkTabIlus" class="trk-timeline" style="display:none"></div>
+      </div>
+      <div class="modal-body trk-body sr-body">
+        {# ── Carga y tarifa (ficha pesos/tarifa/bultos del modal original) ── #}
+        <div class="sr-sec">
+          <div class="sr-sec-h"><i class="bi bi-box2-fill"></i>Carga y tarifa</div>
+          <div class="trk-ficha" id="trkFicha"></div>
+        </div>
+
+        {# ── Productos del pedido (con foto → _ilusLightbox) ── #}
+        <div class="sr-sec" id="trkSecProductos" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
+            <span class="sr-sec-count" id="trkProdCount"></span></div>
+          <div id="trkProductos"></div>
+        </div>
+
+        {# ── Prueba de entrega — SIEMPRE visible: si aún no hay evidencia
+           (pedido en ruta), lo dice sin romper nada. ── #}
+        <div class="sr-sec" id="trkSecEvidencia">
+          <div class="sr-sec-h"><i class="bi bi-patch-check-fill"></i>Prueba de entrega</div>
+          <div id="trkEvidencia"></div>
+        </div>
+
+        {# ── Chofer y ubicación (solo si el manifiesto tiene chofer) ── #}
+        <div class="sr-sec" id="trkSecChofer" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-person-badge-fill"></i>Chofer y ubicación</div>
+          <div id="trkChofer"></div>
+        </div>
+
+        {# ── Tabs: Ruta FedEx en vivo / Historial ILUS — con scroll propio ── #}
+        <div class="sr-sec">
+          <div class="trk-tabs">
+            <button class="trk-tab is-active" data-tab="fedex" onclick="trkSwitchTab('fedex')">
+              <i class="bi bi-broadcast me-1"></i>Ruta FedEx (en vivo)
+            </button>
+            <button class="trk-tab" data-tab="ilus" onclick="trkSwitchTab('ilus')">
+              <i class="bi bi-clock-history me-1"></i>Historial ILUS
+            </button>
+          </div>
+          <div id="trkTabFedex" class="trk-timeline sr-timeline-scroll"></div>
+          <div id="trkTabIlus" class="trk-timeline sr-timeline-scroll" style="display:none"></div>
+        </div>
       </div>
       <div class="modal-footer trk-foot">
         <button type="button" class="btn btn-sm btn-outline-secondary" id="trkRefrescar" onclick="abrirTrackingDetalle(window._trkItemId, true)">
@@ -1902,24 +1983,10 @@ function mfdFiltrarTabla(){
    ════════════════════════════════════════════════════════════════════ #}
 {% include 'transporte/_etiquetas_modal.html' %}
 
-<div class="modal fade" id="pruebaEntregaModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content" style="border-radius:14px;overflow:hidden">
-      <div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:14px 20px">
-        <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>Prueba de entrega</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-      </div>
-      <div class="modal-body" style="max-height:75vh;overflow-y:auto">
-        <div id="pruebaEntregaBody">
-          <div class="text-center text-muted py-4"><i class="bi bi-hourglass-split"></i> Cargando…</div>
-        </div>
-      </div>
-      <div class="modal-footer" style="padding:12px 20px">
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
-      </div>
-    </div>
-  </div>
-</div>
+{# 2026-07-29: el modal #pruebaEntregaModal se retiró — su contenido
+   (evidencia de entrega, ruta FedEx, productos, chofer, historial) quedó
+   FUSIONADO dentro de #trackingModal (consolidación pedida por Daniel:
+   "ahorramos ahí un botón"). Ver abrirTrackingDetalle en el JS. #}
 
 <div class="modal fade" id="manifiestoFirmaModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">

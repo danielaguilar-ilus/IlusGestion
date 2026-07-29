@@ -723,3 +723,32 @@
 .mfd-dh-red{    background:#fef2f2; color:#b91c1c; border-left-color:#dc2626; }
 .mfd-dh-cyan{   background:#ecfeff; color:#0e7490; border-left-color:#0891b2; }
 .mfd-dh-amber{  background:#fffbeb; color:#92400e; border-left-color:#d97706; }
+
+/* ═══ 2026-07-29: modal FedEx consolidado (#trackingModal ahora usa el
+   lenguaje .sr-* premium) + acceso desde la sub-fila de productos
+   (Daniel: "yo lo mandaría por un modal cuando le hagamos clic al
+   producto — ahorramos ahí un botón"). ═══ */
+
+/* La cabecera de la sub-fila pasa a flex para poder anclar el botón de
+   seguimiento a la derecha (mismo contenido visual que antes). */
+.mfd-prod-head{ display:flex; align-items:center; flex-wrap:wrap; gap:.35rem; }
+
+/* Botón "Seguimiento y evidencia" dentro de la sub-fila expandida */
+.mfd-prod-track-btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  margin-left:auto; background:var(--ilus-black); color:#fff; border:none;
+  border-radius:8px; padding:.42rem .85rem; font-size:.74rem; font-weight:800;
+  letter-spacing:.2px; cursor:pointer; transition:background .15s, transform .1s;
+}
+.mfd-prod-track-btn:hover{ background:var(--ilus-red); color:#fff; }
+.mfd-prod-track-btn:active{ transform:scale(.97); }
+/* Variante mobile: ancho completo y altura táctil (Apple HIG 44px) */
+.mfd-prod-track-btn-block{ display:flex; width:100%; min-height:44px; margin:0 0 .6rem; }
+
+/* Filas de producto clicables (solo manifiestos FedEx) */
+.mfd-prod-table tbody tr.mfd-prod-click{ cursor:pointer; }
+.mfd-prod-table tbody tr.mfd-prod-click:hover td{ background:#fef2f2; }
+
+/* La ficha de pesos/tarifa ahora vive dentro de una tarjeta .sr-sec:
+   el margen inferior lo pone la tarjeta, no la ficha. */
+.sr-sec .trk-ficha{ margin-bottom:0; }

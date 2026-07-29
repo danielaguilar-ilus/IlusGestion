@@ -27501,6 +27501,10 @@ def tr_item_tracking_detalle(item_id):
     return jsonify({
         "ok": True,
         "item_id":   item_id,
+        # 2026-07-29 (modal FedEx consolidado): el frontend necesita el
+        # commitment_id para traer productos/evidencia/tiempos desde
+        # /transporte/api/buscar/<cid> (_tr_buscar_detalle). Additivo.
+        "commitment_id": row.get("commitment_id"),
         "doc":       doc or f"#{item_id}",
         "cliente":   row.get("cliente_nombre") or "—",
         "comuna":    row.get("comuna") or "",
