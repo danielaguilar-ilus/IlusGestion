@@ -879,6 +879,40 @@ def rut_fmt_filter(value):
     return _formato_rut_chile(value)
 
 
+@app.template_filter('dias_fmt')
+def dias_fmt_filter(value):
+    """Filtro Jinja: {{ item.dias_entrega | dias_fmt }} → '1 día 7 h'.
+
+    2026-07-29 (Daniel: "quería que fuera de 24 en 24 horas para que se
+    cumpla un día... si dice 1.3 tienes que sacar un día y cuánto es ese
+    0.3 en horas"): antes se mostraba el decimal crudo ("1.3 d"), que no
+    se entiende de un vistazo. Desglosa en días completos (24h cada uno)
+    + horas sueltas, con acarreo si el redondeo de horas llega a 24.
+    Réplica exacta de _srFmtDias() en transporte_manifiesto_detalle.js
+    (mismo criterio en la tabla del manifiesto y en los modales de
+    seguimiento).
+    """
+    if value is None:
+        return "—"
+    try:
+        d = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if d < 1:
+        h = round(d * 24)
+        return "1 h" if h <= 1 else f"{h} h"
+    total_min = round(d * 24 * 60)
+    dias, horas = divmod(total_min, 1440)
+    horas = round(horas / 60)
+    if horas == 24:
+        dias += 1
+        horas = 0
+    out = f"{dias} día" if dias == 1 else f"{dias} días"
+    if horas > 0:
+        out += f" {horas} h"
+    return out
+
+
 @app.template_filter('tel_chile_fmt')
 def tel_chile_fmt_filter(value):
     """Filtro Jinja: formatea un teléfono chileno raw a formato legible.
@@ -30328,6 +30362,31 @@ def _tr_buscar_detalle(commitment_id):
         LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
         WHERE mi.commitment_id=%s ORDER BY mi.id DESC LIMIT 1
     """, (commitment_id,))
+    # ── Otros despachos del MISMO documento (2026-07-29, Daniel: "si yo
+    # quiero ver una factura y la mandé en cuatro partes, quiero ver esas
+    # cuatro partes plasmadas allí"). transport_manifest_items NO tiene
+    # UNIQUE por commitment_id solo (solo por (manifest_id, commitment_id)
+    # -- ver init_transporte_tables), así que un mismo documento puede
+    # quedar repartido en varios manifiestos a lo largo del tiempo. Antes
+    # de esto, el modal solo mostraba el ÚLTIMO (arriba) y las partes
+    # anteriores eran invisibles.
+    despachos = mysql_fetchall("""
+        SELECT mi.id AS item_id, mi.manifest_id, mi.estado_entrega,
+               mi.tracking_number, tm.correlativo, tm.courier, tm.fecha AS manifest_fecha
+        FROM transport_manifest_items mi
+        LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
+        WHERE mi.commitment_id=%s ORDER BY mi.id ASC
+    """, (commitment_id,)) or []
+    despachos_out = [{
+        "item_id":        d["item_id"],
+        "manifest_id":    d["manifest_id"],
+        "correlativo":    d.get("correlativo"),
+        "courier":        d.get("courier"),
+        "estado_entrega": d.get("estado_entrega"),
+        "tracking_number": d.get("tracking_number"),
+        "fecha":          chile_fmt_filter(d["manifest_fecha"], "%d/%m/%Y") if d.get("manifest_fecha") else None,
+        "es_actual":      bool(mi and d["item_id"] == mi["item_id"]),
+    } for d in despachos]
     chofer = None
     last_ping = None
     if mi and mi.get("manifest_id"):
@@ -30488,6 +30547,7 @@ def _tr_buscar_detalle(commitment_id):
         "proof": proof,
         "lineas": lineas_out,
         "tiempos": tiempos,
+        "despachos": despachos_out,
     }
 
 

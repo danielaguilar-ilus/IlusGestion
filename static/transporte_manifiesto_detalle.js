@@ -621,6 +621,8 @@ async function abrirTrackingDetalle(itemId, force) {
   document.getElementById('trkKpiAct').textContent = '—';
   document.getElementById('trkSecProductos').style.display = 'none';
   document.getElementById('trkProductos').innerHTML = '';
+  var _trkSecDesp = document.getElementById('trkSecDespachos');
+  if (_trkSecDesp) { _trkSecDesp.style.display = 'none'; document.getElementById('trkDespachos').innerHTML = ''; }
   document.getElementById('trkSecChofer').style.display = 'none';
   document.getElementById('trkChofer').innerHTML = '';
   document.getElementById('trkEvidencia').innerHTML =
@@ -830,6 +832,20 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
       document.getElementById('trkProductos').innerHTML = pHtml;
       document.getElementById('trkProdCount').textContent = String(lineas.length);
       document.getElementById('trkSecProductos').style.display = '';
+    }
+
+    // ── Otros despachos de este documento (si la factura se repartió en
+    // más de un envío/manifiesto) ──
+    var despHtml = _ilusDespachosHtml(det.despachos);
+    var secDesp = document.getElementById('trkSecDespachos');
+    if (secDesp) {
+      if (despHtml) {
+        document.getElementById('trkDespachos').innerHTML = despHtml;
+        document.getElementById('trkDespachosCount').textContent = String(det.despachos.length);
+        secDesp.style.display = '';
+      } else {
+        secDesp.style.display = 'none';
+      }
     }
 
     // ── Evidencia de entrega: receptor + firma + fotos + GPS ──
@@ -1190,14 +1206,24 @@ function _srAplicarEstadoHero(estado) {
 }
 
 // Formato humano de días: 0.4 d → "9 h", 1.0 → "1 día", 2.5 → "2,5 días"
+// 2026-07-29 (Daniel: "quería que fuera de 24 en 24 horas para que se
+// cumpla un día... si dice 1.3 tienes que sacar un día y cuánto es ese
+// 0.3 en horas"): antes mostraba el decimal crudo ("1.3 días"), que no se
+// entiende a simple vista. Ahora desglosa en días completos (24h cada uno)
+// + horas sueltas, con acarreo si el redondeo de horas llega a 24.
 function _srFmtDias(d) {
   if (d == null) return '—';
   if (d < 1) {
     var h = Math.round(d * 24);
     return h <= 1 ? '1 h' : h + ' h';
   }
-  var s = (Math.round(d * 10) / 10).toLocaleString('es-CL');
-  return s + (d === 1 ? ' día' : ' días');
+  var totalMin = Math.round(d * 24 * 60);
+  var dias = Math.floor(totalMin / 1440);
+  var horas = Math.round((totalMin - dias * 1440) / 60);
+  if (horas === 24) { dias += 1; horas = 0; }
+  var out = dias + (dias === 1 ? ' día' : ' días');
+  if (horas > 0) out += ' ' + horas + ' h';
+  return out;
 }
 
 // ── Detalle consolidado (rediseño 2026-07-29): un solo GET a
@@ -1262,6 +1288,16 @@ async function _srCargarDetalle(data, token, force) {
       document.getElementById('srProductos').innerHTML = pHtml;
       document.getElementById('srProdCount').textContent = String(lineas.length);
       secP.style.display = '';
+    }
+
+    // ── Otros despachos de este documento (si la factura se repartió en
+    // más de un envío/manifiesto) ──
+    var despHtml = _ilusDespachosHtml(det.despachos);
+    var secDesp = document.getElementById('srSecDespachos');
+    if (despHtml) {
+      document.getElementById('srDespachos').innerHTML = despHtml;
+      document.getElementById('srDespachosCount').textContent = String(det.despachos.length);
+      secDesp.style.display = '';
     }
 
     // ── Evidencia de entrega: receptor + firma + fotos ──
@@ -1370,10 +1406,11 @@ async function abrirSimpliRouteModal(data, force) {
   document.getElementById('srTimeline').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando trazabilidad…</div>';
   document.getElementById('srEvCount').textContent = '';
   document.getElementById('srLinkBox').style.display = 'none';
-  ['srSecProductos', 'srSecEvidencia', 'srSecChofer'].forEach(function(id){
+  ['srSecProductos', 'srSecDespachos', 'srSecEvidencia', 'srSecChofer'].forEach(function(id){
     document.getElementById(id).style.display = 'none';
   });
   document.getElementById('srProductos').innerHTML = '';
+  document.getElementById('srDespachos').innerHTML = '';
   document.getElementById('srEvidencia').innerHTML = '';
   document.getElementById('srChofer').innerHTML = '';
   document.getElementById('srAccMsg').innerHTML = '';
@@ -2798,6 +2835,36 @@ function _ilusQtyFillChips(cantidad, despachada, saldo) {
     html += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + sal + '</span>';
   }
   return html;
+}
+
+// Lista "Otros despachos de este documento" (2026-07-29, Daniel: "si yo
+// quiero ver una factura y la mandé en cuatro partes, quiero ver esas
+// cuatro partes plasmadas allí"). Compartida por el modal SimpliRoute y el
+// FedEx consolidado -- viene de d.despachos (_tr_buscar_detalle, app.py).
+// Solo se pinta si hay más de 1 (el caso normal de 1 solo envío no necesita
+// esta sección).
+function _ilusDespachosHtml(despachos) {
+  if (!despachos || despachos.length < 2) return '';
+  var rows = despachos.map(function (d) {
+    var estCls = 'pend';
+    if (d.estado_entrega === 'Entregado') estCls = 'ok';
+    else if (d.estado_entrega === 'En ruta' || d.estado_entrega === 'Entregado a transporte') estCls = 'parcial';
+    else if (d.estado_entrega === 'Problema' || d.estado_entrega === 'Entrega fallida' || d.estado_entrega === 'Devolución') estCls = 'bad';
+    var link = d.manifest_id
+      ? ('<a href="/transporte/manifiestos/' + d.manifest_id + '#row-' + d.item_id + '" ' +
+         (d.es_actual ? 'onclick="event.preventDefault()" ' : '') +
+         'class="sr-desp-link">' + (d.correlativo || ('Manifiesto #' + d.manifest_id)) + '</a>')
+      : '<span class="text-muted">Sin manifiesto</span>';
+    return '<div class="sr-desp-row' + (d.es_actual ? ' is-actual' : '') + '">' +
+      '<div class="sr-desp-doc">' + link + (d.es_actual ? ' <span class="sr-desp-tag">este</span>' : '') + '</div>' +
+      '<div class="sr-desp-meta">' +
+        (d.courier ? '<span>' + d.courier + '</span>' : '') +
+        (d.fecha ? '<span>' + d.fecha + '</span>' : '') +
+      '</div>' +
+      '<span class="sr-qty-chip qty-fill ' + estCls + '">' + (d.estado_entrega || '—') + '</span>' +
+    '</div>';
+  }).join('');
+  return '<div class="sr-desp-list">' + rows + '</div>';
 }
 
 function abrirManifiestoFirma() {

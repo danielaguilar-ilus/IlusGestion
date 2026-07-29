@@ -429,7 +429,7 @@
   </div>
   <div class="col-6 col-sm">
     <div class="ilus-card p-2 text-center" title="Promedio desde 'Entregado a transporte' hasta 'Entregado', sobre las facturas ya entregadas de este manifiesto">
-      <div class="fw-bold fs-4" style="color:#7c3aed">{% if prom_entrega is not none %}{{ prom_entrega }} d{% else %}—{% endif %}</div>
+      <div class="fw-bold fs-4" style="color:#7c3aed">{{ prom_entrega | dias_fmt }}</div>
       <div class="small text-muted"><i class="bi bi-stopwatch me-1"></i>Prom. entrega</div>
     </div>
   </div>
@@ -613,12 +613,12 @@
             {% if item.dias_entrega is not none %}
             <div class="mfd-act-chip mfd-act-chip-ok"
                  title="Tiempo total: desde 'Entregado a transporte' hasta 'Entregado'">
-              <i class="bi bi-stopwatch me-1"></i>Entregado en {{ item.dias_entrega }} d
+              <i class="bi bi-stopwatch me-1"></i>Entregado en {{ item.dias_entrega | dias_fmt }}
             </div>
             {% elif item.dias_en_courier is not none %}
             <div class="mfd-act-chip mfd-act-chip-run"
-                 title="Días corriendo desde que se entregó al transportista (aún sin entregar)">
-              <i class="bi bi-truck me-1"></i>{{ item.dias_en_courier }} d en courier
+                 title="Tiempo corriendo desde que se entregó al transportista (aún sin entregar)">
+              <i class="bi bi-truck me-1"></i>{{ item.dias_en_courier | dias_fmt }} en courier
             </div>
             {% endif %}
           </td>
@@ -1375,6 +1375,16 @@ function mfdFiltrarTabla(){
           <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
             <span class="sr-sec-count" id="trkProdCount"></span></div>
           <div id="trkProductos"></div>
+        </div>
+
+        {# ── Otros despachos de este documento — solo aparece si la
+           factura se repartió en más de un envío/manifiesto (Daniel,
+           2026-07-29: "si la mandé en cuatro partes, quiero ver esas
+           cuatro partes plasmadas allí"). ── #}
+        <div class="sr-sec" id="trkSecDespachos" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-diagram-3-fill"></i>Otros despachos de este documento
+            <span class="sr-sec-count" id="trkDespachosCount"></span></div>
+          <div id="trkDespachos"></div>
         </div>
 
         {# ── Prueba de entrega — SIEMPRE visible: si aún no hay evidencia
