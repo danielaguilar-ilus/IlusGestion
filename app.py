@@ -24111,13 +24111,21 @@ def tr_manifiesto_eliminar(mid):
     borrar los manifiestos" para poder ir limpiando el Monitor él mismo,
     sin pedirme un script cada vez.
 
-    REGLA #5: tabla con datos críticos → soft-delete, nunca DROP de la fila.
-    Solo superadmin. NO toca transport_manifest_items ni las commitments
-    asociadas — el manifiesto desaparece de la lista, pero los despachos que
-    agrupaba y su historial de tracking siguen intactos (a proposito: borrar
-    la agrupación no debe borrar el despacho real). Si en el futuro Daniel
-    quiere que también libere los items para poder re-agruparlos en un
-    manifiesto nuevo, es un cambio aparte y explícito.
+    REGLA #5: tabla con datos críticos → soft-delete, nunca DROP de la fila
+    de transport_manifests.
+
+    FIX 2026-07-28 (hallazgo H5, decisión explícita de Daniel: "sí, liberarlas"):
+    antes NO se tocaba transport_manifest_items — el manifiesto desaparecía
+    de la lista pero sus documentos quedaban "secuestrados" en el predicado
+    `_EN_MANIF` (id IN transport_manifest_items) para siempre, sin volver a
+    "Pendiente" ni poder re-arrastrarse (initDragRows los excluye si
+    en_manifiesto=1). Ahora SÍ se borran las filas de transport_manifest_items
+    de este manifiesto -- es seguro desde el fix de "evidencia perdurable" de
+    esta misma noche: transport_tracking_events y transport_delivery_proof
+    ya anclan a commitment_id con ON DELETE SET NULL, así que el historial y
+    la prueba de entrega de cada documento sobreviven intactos aunque se
+    suelte su fila de manifiesto. Los documentos vuelven a "Pendiente" y se
+    pueden re-agrupar en un manifiesto nuevo.
     """
     if not bool(g.permissions.get("superadmin")):
         return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar manifiestos."}), 403
@@ -24162,13 +24170,23 @@ def tr_manifiesto_eliminar(mid):
             }), 409
 
     try:
-        mysql_execute(
-            "UPDATE transport_manifests SET eliminado=1, eliminado_at=NOW(), "
-            "eliminado_by=%s WHERE id=%s",
-            (current_username(), mid))
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE transport_manifests SET eliminado=1, eliminado_at=NOW(), "
+                "eliminado_by=%s WHERE id=%s",
+                (current_username(), mid))
+            # H5: liberar los documentos para que vuelvan a "Pendiente" y se
+            # puedan re-agrupar. La evidencia de cada uno sobrevive (ancla a
+            # commitment_id, ver comentario de arriba).
+            cur.execute(
+                "DELETE FROM transport_manifest_items WHERE manifest_id=%s", (mid,))
+            n_liberados = cur.rowcount
+        conn.commit()
         _tr_log("manifest", mid, "eliminado",
-                f"Manifiesto {m.get('correlativo') or mid} eliminado por {current_username()}")
-        return jsonify({"ok": True})
+                f"Manifiesto {m.get('correlativo') or mid} eliminado por {current_username()} "
+                f"— {n_liberados} documento(s) liberado(s) a Pendiente")
+        return jsonify({"ok": True, "liberados": n_liberados})
     except Exception as e:
         print(f"[tr_manifiesto_eliminar] mid={mid}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo eliminar el manifiesto. Intenta de nuevo."}), 500
@@ -24237,14 +24255,20 @@ def tr_manifiestos_bulk_eliminar():
                 f"UPDATE transport_manifests SET eliminado=1, eliminado_at=NOW(), "
                 f"eliminado_by=%s WHERE id IN ({ph2})",
                 tuple([current_username()] + ids_reales))
+            # H5 (mismo fix que tr_manifiesto_eliminar): liberar los documentos
+            # de estos manifiestos para que vuelvan a "Pendiente". Siempre es
+            # seguro acá porque este lote ya excluyó (arriba) cualquier
+            # manifiesto con courier/POD activo.
+            mysql_execute(
+                f"DELETE FROM transport_manifest_items WHERE manifest_id IN ({ph2})",
+                tuple(ids_reales))
         except Exception as e:
             print(f"[tr_manifiestos_bulk_eliminar] {e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo eliminar. Intenta de nuevo."}), 500
         for r in eliminados:
             _tr_log("manifest", r["id"], "eliminado",
-                    f"Manifiesto {r.get('correlativo') or r['id']} eliminado (masivo) por {current_username()}")
-
-    return jsonify({"ok": True, "eliminados": len(eliminados), "omitidos": omitidos})
+                    f"Manifiesto {r.get('correlativo') or r['id']} eliminado (masivo) por {current_username()} "
+                    f"— documentos liberados a Pendiente")
 
     return jsonify({"ok": True, "eliminados": len(eliminados), "omitidos": omitidos})
 

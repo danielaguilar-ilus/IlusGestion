@@ -1844,17 +1844,36 @@ function cargarMonitor() {
               /* ── Clasificación ── */
               '<td class="text-center">' + clasificHtml + '</td>' +
 
-              /* ── Acciones — botón primario "Ver" + botones secundarios ── */
-              '<td class="text-center tr-actions-cell" onclick="event.stopPropagation()">' +
+              /* ── Acciones — botón primario "Ver" + botones secundarios ──
+                 FIX 2026-07-28 (Daniel, mirando la demo de mañana: "todavía
+                 puedo agregar a manifiesto y todavía puedo editar" un
+                 documento que YA figura Entregado). Se bloquean "Editar" y
+                 "Agregar al manifiesto" cuando el estado es terminal
+                 (Entregado/Devolución) — mismo criterio que ya usa
+                 ESTADOS_ENTREGA_TERMINALES en el backend, y mismo patrón
+                 visual (disabled + title explicando por qué) que ya usa
+                 manifiesto_detalle.html para "en gestión con el courier".
+                 "Ver" queda siempre activo: hay que poder revisar un
+                 documento entregado. Nota: usa `estado` (terminal), no el
+                 bucket `gestion` -- un documento puede estar Entregado y
+                 seguir "en gestión" si el manifiesto sigue abierto con otros
+                 items pendientes; eso es un tema de saldo parcial que se
+                 resuelve en el proyecto de fases/despachos, no acá. ── */
+              (function(){
+                var _term = (c.estado === 'Entregado' || c.estado === 'Devolución');
+                var _lock = _term
+                  ? ' disabled title="Bloqueado: este documento ya está entregado"'
+                  : '';
+                return '<td class="text-center tr-actions-cell" onclick="event.stopPropagation()">' +
                 '<button class="tr-action tr-action-primary" title="Ver detalle" ' +
                   'onclick="openVista(' + c.id + ')">' +
                   '<i class="bi bi-eye"></i><span>Ver</span></button>' +
-                '<button class="tr-action" title="Agregar al manifiesto" ' +
-                  'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
+                '<button class="tr-action"' + (_term ? _lock : ' title="Agregar al manifiesto" onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')"') + '>' +
                   '<i class="bi bi-clipboard-plus"></i></button>' +
-                '<button class="tr-action" title="Editar" ' +
-                  'onclick="openPanel(' + c.id + ')"><i class="bi bi-pencil-square"></i></button>' +
-              '</td>' +
+                '<button class="tr-action"' + (_term ? _lock : ' title="Editar" onclick="openPanel(' + c.id + ')"') + '>' +
+                  '<i class="bi bi-pencil-square"></i></button>' +
+              '</td>';
+              })() +
               '</tr>';
           }).join('');
         }
@@ -1924,9 +1943,17 @@ function cargarMonitor() {
               '<div class="tr-mcard-actions" onclick="event.stopPropagation()">' +
                 '<button class="tr-btn tr-btn-ghost tr-btn-sm" style="flex:1" onclick="openVista(' + c.id + ')">' +
                   '<i class="bi bi-eye"></i><span>Ver detalle</span></button>' +
-                '<button class="tr-btn tr-btn-primary tr-btn-sm" style="flex:1" ' +
-                  'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
-                  '<i class="bi bi-clipboard-plus"></i><span>Manifiesto</span></button>' +
+                /* FIX 2026-07-28: mismo bloqueo de "Agregar al manifiesto"
+                   para documentos ya entregados que en la vista de tabla —
+                   ver el comentario largo junto al bloque de acciones de la
+                   tabla, unas líneas más arriba en este archivo. */
+                ((c.estado === 'Entregado' || c.estado === 'Devolución')
+                  ? '<button class="tr-btn tr-btn-ghost tr-btn-sm" style="flex:1" disabled ' +
+                    'title="Bloqueado: este documento ya está entregado">' +
+                    '<i class="bi bi-clipboard-plus"></i><span>Manifiesto</span></button>'
+                  : '<button class="tr-btn tr-btn-primary tr-btn-sm" style="flex:1" ' +
+                    'onclick="abrirDragPanelConCid(' + c.id + ',\'' + lblEsc + '\',\'' + cliEsc + '\')">' +
+                    '<i class="bi bi-clipboard-plus"></i><span>Manifiesto</span></button>') +
               '</div>' +
             '</div>';
           }).join('');
