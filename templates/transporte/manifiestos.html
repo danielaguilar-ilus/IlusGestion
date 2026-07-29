@@ -46,9 +46,36 @@
     </div>
   </div>
 
+  {# ── Pestañas Activos / Entregados (2026-07-29, Daniel — demo directorio):
+     mismo patron visual del segmented-control que ya usa el Monitor
+     (.tr-segment / .tr-segment-btn en templates/transporte/index.html), asi
+     no se inventa un sistema paralelo. Navegacion server-side (?vista=),
+     igual que el resto de esta pagina (filtros, page_size) — no hay fetch
+     JS para la tabla de manifiestos, asi que no se justifica AJAX aca. ── #}
+  <div class="tr-segment">
+    <span class="tr-segment-label">Vista</span>
+    <div class="tr-segment-group" role="tablist">
+      <a role="tab" class="tr-segment-btn {{ 'active' if filtros.vista == 'activos' }}"
+         href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=activos"
+         title="Manifiestos con al menos un item aún sin entregar">
+        <i class="bi bi-truck"></i>
+        <span>Activos</span>
+        <span class="tr-segment-badge tr-segment-badge-red">{{ tabs_count.activos }}</span>
+      </a>
+      <a role="tab" class="tr-segment-btn {{ 'active' if filtros.vista == 'entregados' }}"
+         href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados"
+         title="Manifiestos 100% entregados (o en devolución), con toda su evidencia">
+        <i class="bi bi-check2-all"></i>
+        <span>Entregados</span>
+        <span class="tr-segment-badge tr-segment-badge-green">{{ tabs_count.entregados }}</span>
+      </a>
+    </div>
+  </div>
+
   {# ── Filtros ── #}
   <form method="get" class="man-filtros" id="filtrosForm">
     <input type="hidden" name="page_size" value="{{ paginacion.page_size }}">
+    <input type="hidden" name="vista" value="{{ filtros.vista }}">
     <div class="search">
       <i class="bi bi-search"></i>
       <input type="text" name="q" value="{{ filtros.q }}"
@@ -132,6 +159,7 @@
           <th>Fecha <i class="bi bi-arrow-up" style="font-size:10px"></i></th>
           <th>Courier</th>
           <th class="center trx-ctr">Items</th>
+          <th style="min-width:170px">Avance</th>
           <th class="right trx-num">Costo total</th>
           <th>Estado</th>
           <th>Notas</th>
@@ -146,7 +174,15 @@
           'Cerrado':'cerr',
           'Entregado completo':'ok'
         }.get(m.estado, 'cerr') %}
-        <tr id="man-row-{{ m.id }}">
+        {% set estado_ico = {
+          'En preparación':'bi-hourglass-split',
+          'En curso':'bi-truck',
+          'Cerrado':'bi-lock-fill',
+          'Entregado completo':'bi-check2-all'
+        }.get(m.estado, 'bi-circle-fill') %}
+        {% set av = m.avance %}
+        {% set _row_accent = 'trx-row-ok' if m.cien_pct else ('trx-row-warn' if av.pct > 0 else '') %}
+        <tr id="man-row-{{ m.id }}" class="{{ _row_accent }}">
           {% if is_superadmin %}
           <td data-label="" class="man-th-chk">
             <input type="checkbox" class="man-chk-fila" data-id="{{ m.id }}" onchange="manToggleSeleccion({{ m.id }}, this.checked)">
@@ -171,6 +207,24 @@
           <td data-label="Items" class="center trx-ctr">
             <span class="cell-items-pill">{{ m.total_items or 0 }}</span>
           </td>
+          {# Barra de % de avance (2026-07-29, Daniel — demo directorio: "tiene
+             catorce envíos pero nueve están enviados... no tiene sentido que
+             todo esté en preparación"). Verde=100%, ámbar=en movimiento
+             parcial, gris=recién en preparación (nada entregado todavía). #}
+          <td data-label="Avance" class="cell-avance">
+            {% if av.total > 0 %}
+            {% set bar_variant = 'ok' if m.cien_pct else ('warn' if av.pct > 0 else 'idle') %}
+            <div class="trx-progress trx-progress-{{ bar_variant }}"
+                 title="{{ av.entregados }} de {{ av.total }} items entregados ({{ av.pct }}%)">
+              <div class="trx-progress-track">
+                <div class="trx-progress-fill" style="width:{{ av.pct }}%"></div>
+              </div>
+              <div class="trx-progress-label">{{ av.entregados }}/{{ av.total }} · {{ av.pct }}%</div>
+            </div>
+            {% else %}
+            <span style="color:#9ca3af;font-weight:500">—</span>
+            {% endif %}
+          </td>
           <td data-label="Costo" class="cell-costo trx-num">
             {% if m.costo_total %}
               ${{ "{:,.0f}".format(m.costo_total|float).replace(",", ".") }}
@@ -179,7 +233,7 @@
             {% endif %}
           </td>
           <td data-label="Estado">
-            <span class="estado-pill {{ estado_class }}">{{ m.estado }}</span>
+            <span class="estado-pill {{ estado_class }}"><i class="bi {{ estado_ico }}"></i>{{ m.estado }}</span>
           </td>
           <td data-label="Notas" class="cell-notas">
             {% if m.notas %}{{ m.notas[:32] }}{{ '…' if m.notas|length > 32 }}{% else %}—{% endif %}
@@ -284,6 +338,7 @@
           ('courier=' + filtros.courier) if filtros.courier else '',
           ('estado=' + filtros.estado) if filtros.estado else '',
           ('q=' + filtros.q) if filtros.q else '',
+          ('vista=' + filtros.vista),
           ('page_size=' + (paginacion.page_size|string)),
         )|select|join('&') %}
         {% set sep = '&' if base_qs else '' %}

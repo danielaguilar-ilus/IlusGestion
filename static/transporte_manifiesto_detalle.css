@@ -17,7 +17,13 @@
   border-radius:14px; padding:1.1rem 1.25rem; margin-bottom:1rem;
   box-shadow:0 1px 2px rgba(0,0,0,.04), 0 6px 18px -10px rgba(220,38,38,.18);
 }
-.mfd-hero-title{ font-size:1.4rem; letter-spacing:.5px; color:var(--ilus-black); }
+/* FIX 2026-07-29 (Daniel: "por que el header en etiquetas y retiro es negro
+   y en transporte es blanca"): esta ficha combina .mfd-hero (fondo viejo,
+   ya perdía la cascada contra el fondo oscuro de .trx-hero) CON clases de
+   texto propias (.mfd-hero-title/.mfd-hero-sub/.mfd-hero-notas) que NO son
+   sobreescritas por las reglas de .trx-hero h1/.trx-hero-sub -- quedaban
+   con texto oscuro sobre el nuevo fondo negro, ilegible. Se pasan a claro. */
+.mfd-hero-title{ font-size:1.4rem; letter-spacing:.5px; color:#fff; }
 .mfd-hero-title i{ color:var(--ilus-red); margin-right:.45rem; }
 .mfd-back-btn{
   display:inline-flex; align-items:center; justify-content:center;
@@ -25,10 +31,10 @@
   background:#fff; border:1px solid #e5e7eb; color:var(--ilus-black);
   font-size:1.05rem; text-decoration:none; transition:all .15s;
 }
-.mfd-back-btn:hover{ background:var(--ilus-black); color:#fff; border-color:var(--ilus-black); }
-.mfd-hero-sub{ color:#6b7280; font-size:.85rem; display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; }
-.mfd-hero-sub .mfd-dot{ opacity:.4; }
-.mfd-hero-notas{ margin-top:.5rem; font-size:.82rem; color:#6b7280; background:rgba(0,0,0,.03); padding:.3rem .6rem; border-radius:8px; display:inline-block; }
+.mfd-back-btn:hover{ background:var(--ilus-red); color:#fff; border-color:var(--ilus-red); }
+.mfd-hero-sub{ color:#cbd5e1; font-size:.85rem; display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; }
+.mfd-hero-sub .mfd-dot{ opacity:.5; }
+.mfd-hero-notas{ margin-top:.5rem; font-size:.82rem; color:#e2e8f0; background:rgba(255,255,255,.08); padding:.3rem .6rem; border-radius:8px; display:inline-block; }
 .mfd-hero-actions{ display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
 
 /* Badge estado clickeable */
@@ -377,3 +383,57 @@
 .pe-fnt-fedex{ background:#fff3e0; color:#b45309; }
 .pe-fnt-manual{ background:#f3f4f6; color:#6b7280; }
 .pe-fnt-sistema{ background:#dcfce7; color:#15803d; }
+
+/* ── Barra de % de avance de entrega (Daniel 2026-07-29: pedido para
+   presentación a directorio, "quiero ver el porcentaje de avance"). Vive
+   ADEMÁS de las 4 tarjetas KPI (.row.g-2 de arriba), no las reemplaza. ── */
+.mfd-avance{
+  border-radius:14px; border:1.5px solid #e5e7eb; background:#fff;
+  padding:1rem 1.15rem; margin-bottom:.75rem;
+  box-shadow:0 1px 2px rgba(15,23,42,.05);
+  display:flex; flex-direction:column; gap:.55rem;
+  transition:background .2s, border-color .2s;
+}
+.mfd-avance-top{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; }
+.mfd-avance-label{
+  font-size:.76rem; font-weight:800; text-transform:uppercase; letter-spacing:.4px;
+  color:#6b7280; display:flex; align-items:center; gap:.4rem;
+}
+.mfd-avance-mid{ display:flex; align-items:baseline; gap:.75rem; flex-wrap:wrap; }
+.mfd-avance-pct{ font-size:1.9rem; font-weight:900; line-height:1; font-variant-numeric:tabular-nums; }
+.mfd-avance-detalle{ font-size:.83rem; color:#6b7280; font-weight:600; }
+.mfd-avance-track{
+  width:100%; height:16px; border-radius:999px; background:#f3f4f6;
+  overflow:hidden; position:relative; border:1px solid #e5e7eb;
+}
+.mfd-avance-fill{ height:100%; border-radius:999px; transition:width .5s cubic-bezier(.22,1,.36,1); }
+.mfd-avance-chip{
+  display:inline-flex; align-items:center; gap:.3rem; font-size:.72rem; font-weight:700;
+  padding:3px 11px; border-radius:999px; border:1px solid transparent;
+}
+.mfd-avance-chip-ok{ background:#dcfce7; color:#15803d; border-color:#86efac; }
+.mfd-avance-chip-warn{ background:#fff8e1; color:#92400e; border-color:#fcd34d; }
+.mfd-avance-chip-dang{ background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+
+/* 100% entregado → verde vívido */
+.mfd-avance-full{ border-color:#bbf7d0; background:#f0fdf4; }
+.mfd-avance-full .mfd-avance-pct{ color:#16a34a; }
+.mfd-avance-full .mfd-avance-fill{ background:linear-gradient(90deg,#16a34a,#22c55e); }
+
+/* Avance parcial (algo entregado o en ruta, pero no todo) → ámbar */
+.mfd-avance-partial{ border-color:#fcd34d; background:#fffbeb; }
+.mfd-avance-partial .mfd-avance-pct{ color:#d97706; }
+.mfd-avance-partial .mfd-avance-fill{ background:linear-gradient(90deg,#f59e0b,#fbbf24); }
+
+/* 0% → todo en preparación: rayado rojo/gris tenue a barra LLENA para que
+   el estancamiento salte a la vista (una barra vacía pasa desapercibida) */
+.mfd-avance-stalled{ border-color:#fecaca; background:#fef2f2; }
+.mfd-avance-stalled .mfd-avance-pct{ color:#991b1b; }
+.mfd-avance-stalled .mfd-avance-fill{
+  width:100% !important; opacity:.5;
+  background:repeating-linear-gradient(135deg,#fca5a5,#fca5a5 9px,#f87171 9px,#f87171 18px);
+}
+
+@media (max-width:576px){
+  .mfd-avance-pct{ font-size:1.5rem; }
+}

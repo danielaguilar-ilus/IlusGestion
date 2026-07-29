@@ -73,8 +73,14 @@
 .trx-hero {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 1rem; flex-wrap: wrap;
-  background: #fff;
-  border: 1.5px solid var(--trx-g2);
+  /* FIX 2026-07-29 (Daniel: "por que el header en etiquetas y retiro es
+     negro y en transporte es blanca. No entiendo") — .trx-hero nació blanco
+     anoche (inspirado en /soporte) sin alinearlo al estándar oscuro que ya
+     usa TODO el resto de la app (.page-header/.mod-hero, static/style.css
+     ~línea 845: "gradiente negro estandarizado, usado en TODOS los módulos
+     para look uniforme"). Daniel eligió unificar: Transporte pasa a negro. */
+  background: linear-gradient(135deg, var(--trx-black) 0%, #1f2937 100%);
+  border: 1.5px solid var(--trx-black);
   border-left: 4px solid var(--trx-red);
   border-radius: var(--trx-r-md);
   padding: 18px 22px;
@@ -97,11 +103,11 @@
 }
 .trx-hero h1 {
   font-size: 1.25rem; font-weight: 900; margin: 0;
-  color: var(--trx-black); letter-spacing: -.01em; line-height: 1.2;
+  color: #fff; letter-spacing: -.01em; line-height: 1.2;
 }
 /* Bajada: SIEMPRE presente. Regla de /soporte — nunca un título solo. */
 .trx-hero-sub {
-  font-size: .82rem; color: var(--trx-muted);
+  font-size: .82rem; color: #cbd5e1;
   margin-top: 3px; line-height: 1.5;
 }
 .trx-hero-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
@@ -116,19 +122,23 @@
   text-decoration: none;
   transition: background .15s, color .15s, border-color .15s;
 }
+/* FIX 2026-07-29: vive dentro de .trx-hero, ahora oscuro — hover a rojo
+   en vez de negro (con fondo negro, el hover anterior se volvía invisible). */
 .trx-back:hover {
-  background: var(--trx-black); color: #fff; border-color: var(--trx-black);
+  background: var(--trx-red); color: #fff; border-color: var(--trx-red);
 }
 .trx-back:focus-visible { outline: none; box-shadow: var(--trx-ring); }
 
-/* ── Breadcrumb (patrón que ya existía bien en courier_ficha) ── */
+/* ── Breadcrumb (patrón que ya existía bien en courier_ficha) — vive DENTRO
+   de .trx-hero, ahora oscuro (ver fix 2026-07-29 arriba), por eso tonos
+   claros en vez de los --trx-muted (pensados para fondo blanco). ── */
 .trx-crumb {
-  font-size: .76rem; color: var(--trx-muted-2);
+  font-size: .76rem; color: #94a3b8;
   margin-bottom: 6px; display: flex; align-items: center;
   gap: 6px; flex-wrap: wrap;
 }
-.trx-crumb a { color: var(--trx-muted); text-decoration: none; font-weight: 600; }
-.trx-crumb a:hover { color: var(--trx-red); }
+.trx-crumb a { color: #cbd5e1; text-decoration: none; font-weight: 600; }
+.trx-crumb a:hover { color: #fecaca; }
 .trx-crumb .sep { opacity: .45; }
 
 /* ═══════════════════════════════════════════════════════════════════

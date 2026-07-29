@@ -330,3 +330,81 @@
   .man-kpis{ grid-template-columns:1fr; }
   .man-header h1{ font-size:22px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   2026-07-29 (Daniel, demo directorio): pestañas Activos/Entregados +
+   barra de % de avance por manifiesto. Autocontenido (usa las variables
+   --trx-* del design system ya cargado, static/ilus_transporte.css) para
+   no depender de static/transporte_monitor.css (--tr-* son locales a esa
+   pagina). El look replica a propósito el segmented-control del Monitor
+   (.tr-segment / .tr-segment-btn) para que se vea igual en ambas vistas.
+   ══════════════════════════════════════════════════════════════════════ */
+.tr-segment{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  margin-bottom:14px;
+}
+.tr-segment-label{
+  font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--trx-muted, #6b7280);
+}
+.tr-segment-group{
+  display:inline-flex; padding:4px; gap:2px;
+  background:#f1f5f9; border:1px solid var(--trx-g2, #e5e7eb);
+  border-radius:11px;
+}
+.tr-segment-btn{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:7px 14px; min-height:36px;
+  background:transparent; border:none; border-radius:8px;
+  font-size:.83rem; font-weight:600; color:var(--trx-muted, #6b7280);
+  cursor:pointer; transition:all .14s ease; line-height:1;
+  text-decoration:none;
+}
+.tr-segment-btn:hover{ color:var(--ilus-black); text-decoration:none; }
+.tr-segment-btn.active{
+  background:#fff; color:var(--ilus-black);
+  box-shadow:0 1px 3px rgba(15,23,42,.1), 0 1px 2px rgba(15,23,42,.06);
+  font-weight:700;
+}
+.tr-segment-btn i{ font-size:.9rem; }
+.tr-segment-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:22px; padding:2px 7px; border-radius:99px;
+  font-size:.66rem; font-weight:800; color:#fff;
+  font-feature-settings:"tnum";
+}
+.tr-segment-badge-red   { background:var(--ilus-red, #dc2626); }
+.tr-segment-badge-blue  { background:#3b82f6; }
+.tr-segment-badge-green { background:#16a34a; }
+.tr-segment-badge-gray  { background:#64748b; }
+@media (max-width:640px){
+  .tr-segment-group{ width:100%; overflow-x:auto; }
+  .tr-segment-btn span{ font-size:.78rem; }
+}
+
+/* ── Barra de % de avance por manifiesto (columna "Avance") ──
+   Verde = 100% entregado · Ámbar = en movimiento parcial ·
+   Gris = recién en preparación (nada entregado todavía). */
+.trx-progress{ display:flex; flex-direction:column; gap:4px; min-width:130px; }
+.trx-progress-track{
+  width:100%; height:8px; border-radius:999px;
+  background:#f1f5f9; border:1px solid #e5e7eb; overflow:hidden;
+}
+.trx-progress-fill{
+  height:100%; border-radius:999px;
+  transition:width .3s var(--trx-ease-out, ease);
+  background:#9ca3af; /* fallback: idle */
+}
+.trx-progress-idle .trx-progress-fill{ background:#9ca3af; }
+.trx-progress-warn .trx-progress-fill{ background:linear-gradient(90deg,#f59e0b,#d97706); }
+.trx-progress-ok   .trx-progress-fill{ background:linear-gradient(90deg,#16a34a,#15803d); }
+.trx-progress-label{
+  font-size:11.5px; font-weight:800; color:#6b7280;
+  font-feature-settings:"tnum"; white-space:nowrap;
+}
+.trx-progress-ok   .trx-progress-label{ color:#166534; }
+.trx-progress-warn .trx-progress-label{ color:#92400e; }
+@media (max-width:900px){
+  .cell-avance{ min-width:0; }
+  .trx-progress{ min-width:0; width:160px; }
+}
