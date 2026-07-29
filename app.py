@@ -23370,6 +23370,81 @@ def tr_compromiso_trazabilidad(cid):
     })
 
 
+@app.route("/api/vambee/pedido", methods=["GET"])
+def api_vambee_pedido():
+    """Consulta EXTERNA de estado de pedido — para Vambee (bot IA de la
+    empresa) u otra integración autorizada (2026-07-29, Daniel: "un endpoint
+    externo donde el cliente pueda ir a consultar el estado de su pedido, y
+    podría pedírselo a Vambee").
+
+    Seguridad: exige API key por header X-API-Key (o ?api_key=) que debe
+    calzar con la env var VAMBEE_API_KEY de Cloud Run. Sin la env var
+    configurada, el endpoint responde 503 (integración apagada) — nunca
+    queda abierto por accidente. Devuelve SOLO información apta para el
+    cliente final: estado, courier, línea de tiempo pública (comentarios
+    traducidos por _COMENTARIO_PUBLICO_MAP, igual que el tracking público
+    /t/<token>) y el link de seguimiento ILUS. NUNCA montos, costos,
+    márgenes ni datos internos.
+
+    Uso: GET /api/vambee/pedido?tido=BLV&nudo=22733
+    """
+    key_env = (os.environ.get("VAMBEE_API_KEY") or "").strip()
+    if not key_env:
+        return jsonify({"ok": False, "error": "Integración no habilitada"}), 503
+    key_in = (request.headers.get("X-API-Key") or request.args.get("api_key") or "").strip()
+    if key_in != key_env:
+        return jsonify({"ok": False, "error": "No autorizado"}), 403
+
+    tido = (request.args.get("tido") or "BLV").strip().upper()
+    nudo = (request.args.get("nudo") or request.args.get("documento") or "").strip()
+    if not nudo:
+        return jsonify({"ok": False, "error": "Falta el número de documento (nudo)"}), 400
+
+    c = mysql_fetchone(
+        "SELECT id, tido, nudo, cliente_nombre, comuna, estado, public_token "
+        "FROM transport_commitments WHERE tido=%s AND nudo=%s", (tido, nudo))
+    if not c:
+        return jsonify({"ok": False, "error": "Documento no encontrado"}), 404
+    cid = c["id"]
+
+    mi = mysql_fetchone("""
+        SELECT tmi.estado_entrega, tm.courier
+        FROM transport_manifest_items tmi
+        LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
+        WHERE tmi.commitment_id=%s ORDER BY tmi.id DESC LIMIT 1
+    """, (cid,))
+
+    evs = mysql_fetchall(
+        "SELECT estado, comentario, ts_utc FROM transport_tracking_events "
+        "WHERE commitment_id=%s ORDER BY ts_utc DESC LIMIT 20", (cid,)) or []
+    eventos = []
+    for e in evs:
+        # Comentarios operativos → texto apto para cliente (None = ocultar)
+        _com = (e.get("comentario") or "").strip()
+        if _com in _COMENTARIO_PUBLICO_MAP:
+            _com = _COMENTARIO_PUBLICO_MAP[_com] or ""
+        eventos.append({
+            "estado": e.get("estado") or "",
+            "fecha": chile_fmt_filter(e["ts_utc"]) if e.get("ts_utc") else "",
+            "comentario": _com,
+        })
+
+    token = c.get("public_token") or ""
+    tracking_url = url_for("tr_public_tracking", token=token, _external=True) if token else None
+
+    return jsonify({
+        "ok": True,
+        "documento": f"{c['tido']} {c['nudo']}",
+        "cliente": c.get("cliente_nombre") or "",
+        "comuna": c.get("comuna") or "",
+        "estado": (mi or {}).get("estado_entrega") or c.get("estado") or "Pendiente",
+        "courier": (mi or {}).get("courier") or "",
+        "ultima_actualizacion": eventos[0]["fecha"] if eventos else None,
+        "tracking_url": tracking_url,
+        "eventos": eventos,
+    })
+
+
 @app.route("/transporte/api/compromisos/<int:cid>/lineas")
 @_tr_required
 def tr_lineas(cid):
@@ -23606,6 +23681,16 @@ def tr_manifiesto_detalle(mid):
             return redirect(url_for("tr_manifiestos"))
 
         def _fetch_items():
+            # Métricas de tiempo por item (2026-07-29, Daniel: "quiero empezar
+            # a medir tiempos de entrega... la última actualización y desde
+            # que se entregó al transportista"). 3 subqueries a
+            # transport_tracking_events ancladas a commitment_id (el ancla
+            # perdurable — ver _ensure_transport_evidencia_perdurable):
+            #   ultima_act_at  → MAX(ts_utc) de cualquier evento (para ordenar
+            #                    la tabla "la última siempre arriba")
+            #   en_courier_at  → primer evento 'Entregado a transporte'
+            #                    (arranca el reloj logístico)
+            #   entregado_at   → último evento 'Entregado' (lo para)
             return mysql_fetchall("""
                 SELECT mi.*, c.tido, c.nudo, c.cliente_nombre, c.comuna,
                        c.direccion, c.telefono, c.email, c.region, c.cod_postal,
@@ -23621,7 +23706,15 @@ def tr_manifiesto_detalle(mid):
                        COALESCE(c.peso_vol, 0)          AS peso_vol,
                        COALESCE(c.volumen_m3, 0)        AS volumen_m3,
                        COALESCE(c.peso_predominante, 0) AS peso_predominante,
-                       c.productos_json
+                       c.productos_json,
+                       (SELECT MAX(e.ts_utc) FROM transport_tracking_events e
+                         WHERE e.commitment_id = mi.commitment_id) AS ultima_act_at,
+                       (SELECT MIN(e.ts_utc) FROM transport_tracking_events e
+                         WHERE e.commitment_id = mi.commitment_id
+                           AND e.estado = 'Entregado a transporte') AS en_courier_at,
+                       (SELECT MAX(e.ts_utc) FROM transport_tracking_events e
+                         WHERE e.commitment_id = mi.commitment_id
+                           AND e.estado = 'Entregado') AS entregado_evt_at
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
@@ -23707,6 +23800,34 @@ def tr_manifiesto_detalle(mid):
             it["ship_history_json"] = None
             # Ventana de cancelación FedEx (mismo día Chile, corte 16:00).
             it["cancel_window"] = _fedex_cancel_window(it.get("ship_created_at"))
+            # ── Métricas de tiempo (2026-07-29, Daniel: "quiero empezar a
+            # medir tiempos de entrega"). ts_utc está en UTC (default de la
+            # tabla); los deltas se calculan contra utcnow — la conversión a
+            # hora Chile solo aplica al MOSTRAR (filtro chile_fmt).
+            _now_utc = datetime.utcnow()
+            _en_courier = it.get("en_courier_at")
+            _entregado  = it.get("entregado_evt_at")
+            it["dias_en_courier"] = None       # días corriendo (aún no entregado)
+            it["dias_entrega"]    = None       # tiempo total puerta a puerta (cerrado)
+            try:
+                if _en_courier and _entregado:
+                    it["dias_entrega"] = round(
+                        (_entregado - _en_courier).total_seconds() / 86400, 1)
+                elif _en_courier:
+                    it["dias_en_courier"] = round(
+                        (_now_utc - _en_courier).total_seconds() / 86400, 1)
+            except Exception:
+                pass
+
+        # Orden logístico (Daniel: "la última actualización siempre arriba"):
+        # por defecto la tabla se ordena por último movimiento DESC; los items
+        # sin ningún evento quedan al final en su orden original de manifiesto.
+        try:
+            items.sort(key=lambda it: (it.get("ultima_act_at") is None,
+                                       -(it["ultima_act_at"].timestamp()
+                                         if it.get("ultima_act_at") else 0)))
+        except Exception:
+            pass
 
         # ── ALERTA "Facturas sin OT FedEx" (visión Daniel 2026-06-06) ──
         # FedEx se gestiona por API: una vez asignada la OT (tracking number),

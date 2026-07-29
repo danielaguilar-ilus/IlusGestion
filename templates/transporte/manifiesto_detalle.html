@@ -76,6 +76,11 @@
 {% set tot_bultos  = items|sum(attribute='n_bultos') %}
 {% set n_perdida   = items|selectattr('es_perdida')|list|length %}
 {% set n_sinprecio = items|selectattr('sin_precio')|list|length %}
+{# ── Métricas de TIEMPO de entrega (2026-07-29, Daniel: "quiero empezar a
+   medir tiempos de entrega") — dias_entrega viene calculado del backend
+   (evento 'Entregado a transporte' → evento 'Entregado', por item). #}
+{% set _tiempos = items|selectattr('dias_entrega','ne',none)|map(attribute='dias_entrega')|list %}
+{% set prom_entrega = ((_tiempos|sum / _tiempos|length)|round(1)) if _tiempos else None %}
 
 {# ════════════════════════════════════════════════════════════════════
    HERO / cabecera
@@ -227,7 +232,14 @@
 
 {# ════════════════════════════════════════════════════════════════════
    RESUMEN FINANCIERO del manifiesto (lo que Daniel quiere ver de primero)
+   2026-07-29 (Daniel: "KPIs bien potentes... todo ordenadito en cada
+   tarjeta, no mezclados"): tarjetas agrupadas por TEMA con título de
+   sección — Finanzas por un lado, Logística y entregas por otro. La 4ª
+   tarjeta financiera ya no mezcla bultos/facturas con pérdida/sin precio:
+   ahora es "Salud de cotización" (solo alertas de precio); los bultos
+   viven en la zona logística.
    ════════════════════════════════════════════════════════════════════ #}
+<div class="mfd-sec-title no-print"><i class="bi bi-cash-stack"></i>Finanzas del manifiesto</div>
 <div class="mfd-fin-grid mb-3">
   <div class="mfd-fin-card mfd-fin-cobrado">
     <div class="mfd-fin-label"><i class="bi bi-arrow-down-circle me-1"></i>Total cobrado (ZZ Envío)</div>
@@ -248,14 +260,17 @@
       {% if tot_pct is not none %}{{ "%.1f"|format(tot_pct) }}% global{% else %}Sin base de cobro{% endif %}
     </div>
   </div>
-  <div class="mfd-fin-card mfd-fin-meta">
-    <div class="mfd-fin-label"><i class="bi bi-box-seam-fill me-1"></i>Bultos · Facturas</div>
-    <div class="mfd-fin-value">{{ tot_bultos or 0 }} <span class="mfd-fin-sep">/</span> {{ items|length }}</div>
+  <div class="mfd-fin-card {{ 'mfd-fin-perdida' if (n_perdida or n_sinprecio) else 'mfd-fin-meta' }}">
+    <div class="mfd-fin-label"><i class="bi bi-clipboard-pulse me-1"></i>Salud de cotización</div>
+    <div class="mfd-fin-value">
+      {% if not n_perdida and not n_sinprecio %}<i class="bi bi-check-circle-fill text-success"></i> OK
+      {% else %}{{ n_perdida + n_sinprecio }} <span class="mfd-fin-sep">alerta{{ 's' if (n_perdida + n_sinprecio) != 1 }}</span>{% endif %}
+    </div>
     <div class="mfd-fin-hint">
       {% if n_perdida %}<span class="text-danger fw-semibold">{{ n_perdida }} con pérdida</span>{% endif %}
       {% if n_perdida and n_sinprecio %} · {% endif %}
       {% if n_sinprecio %}<span class="mfd-amber-text fw-semibold">{{ n_sinprecio }} sin precio</span>{% endif %}
-      {% if not n_perdida and not n_sinprecio %}<span class="text-success">Todo cotizado</span>{% endif %}
+      {% if not n_perdida and not n_sinprecio %}Todas las facturas cotizadas{% endif %}
     </div>
   </div>
 </div>
@@ -336,6 +351,7 @@
    salte a la vista en vez de pasar desapercibido. ── #}
 {% set pct_avance = ((total_entregados / total_items * 100)|round|int) if total_items else 0 %}
 {% set avance_estado = 'full' if (total_items and pct_avance >= 100) else ('stalled' if pct_avance == 0 else 'partial') %}
+<div class="mfd-sec-title no-print"><i class="bi bi-truck"></i>Logística y entregas</div>
 <div class="mfd-avance mfd-avance-{{ avance_estado }} no-print">
   <div class="mfd-avance-top">
     <div class="mfd-avance-label"><i class="bi bi-speedometer2"></i>Avance de entrega</div>
@@ -359,29 +375,38 @@
   </div>
 </div>
 
+{# 2026-07-29 (Daniel): zona LOGÍSTICA con sus propios KPIs — facturas+bultos
+   juntos (salen de la tarjeta financiera), y una tarjeta nueva de TIEMPO
+   promedio de entrega (courier→cliente) para empezar a medir tiempos. #}
 <div class="row g-2 mb-3 no-print">
-  <div class="col-6 col-sm-3">
+  <div class="col-6 col-sm">
     <div class="ilus-card p-2 text-center">
       <div class="fw-bold fs-4" style="color:var(--ilus-red)">{{ total_items }}</div>
-      <div class="small text-muted">Facturas</div>
+      <div class="small text-muted">Facturas · {{ tot_bultos or 0 }} bultos</div>
     </div>
   </div>
-  <div class="col-6 col-sm-3">
+  <div class="col-6 col-sm">
     <div class="ilus-card p-2 text-center">
       <div class="fw-bold fs-4 text-success">{{ total_entregados }}</div>
       <div class="small text-muted">Entregados</div>
     </div>
   </div>
-  <div class="col-6 col-sm-3">
+  <div class="col-6 col-sm">
     <div class="ilus-card p-2 text-center">
       <div class="fw-bold fs-4 text-primary">{{ total_ruta }}</div>
       <div class="small text-muted">En ruta</div>
     </div>
   </div>
-  <div class="col-6 col-sm-3">
+  <div class="col-6 col-sm">
     <div class="ilus-card p-2 text-center">
       <div class="fw-bold fs-4 text-danger">{{ total_fallidos }}</div>
       <div class="small text-muted">Fallidos</div>
+    </div>
+  </div>
+  <div class="col-6 col-sm">
+    <div class="ilus-card p-2 text-center" title="Promedio desde 'Entregado a transporte' hasta 'Entregado', sobre las facturas ya entregadas de este manifiesto">
+      <div class="fw-bold fs-4" style="color:#7c3aed">{% if prom_entrega is not none %}{{ prom_entrega }} d{% else %}—{% endif %}</div>
+      <div class="small text-muted"><i class="bi bi-stopwatch me-1"></i>Prom. entrega</div>
     </div>
   </div>
 </div>
@@ -392,20 +417,21 @@
 <div class="ilus-card mb-3">
   <div class="ilus-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
     <span><i class="bi bi-diagram-3 me-1"></i>Facturas del manifiesto</span>
-    <div class="d-flex align-items-center gap-2">
-      <span class="small text-muted no-print d-none d-md-inline">Haz clic en una factura para ver sus productos</span>
-      {# FIX 2026-07-29 (hallazgo H14, Daniel confirmo "si" a agregarlo):
-         antes solo se podia agregar una factura desde el Monitor o el
-         Cubicador -- desde ACA (la ficha) solo se podia quitar. Reusa el
-         mismo endpoint unificado /transporte/api/manifiestos/asignar que
-         ya corrigio el boton "Crear manifiesto" del panel esta noche
-         (valida duplicados entre manifiestos, guard de actividad,
-         recalcula totales). #}
-      <button type="button" class="btn btn-sm btn-outline-dark no-print"
-              onclick="abrirAgregarFactura()"
-              title="Buscar un documento pendiente y agregarlo a este manifiesto">
-        <i class="bi bi-plus-circle me-1"></i>Agregar factura
-      </button>
+    <div class="d-flex align-items-center gap-2 flex-wrap no-print">
+      <span class="small text-muted d-none d-xl-inline">Haz clic en una factura para ver sus productos</span>
+      {# 2026-07-29 (Daniel): se ELIMINÓ el botón "Agregar factura" (con su
+         modal y JS) — autorización explícita: "sacar ese botón y borrar el
+         código, ya podemos hacerlo directamente por Asignar y Cotizar".
+         En su lugar, FILTROS de la tabla (pedido del mismo mensaje). #}
+      <input type="text" id="mfdFiltroTexto" class="form-control form-control-sm"
+             style="width:200px" placeholder="Filtrar cliente, doc o comuna…"
+             oninput="mfdFiltrarTabla()">
+      <select id="mfdFiltroEstado" class="form-select form-select-sm" style="width:185px"
+              onchange="mfdFiltrarTabla()">
+        <option value="">Todos los estados</option>
+        {% for e in estados_entrega %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+      </select>
+      <span id="mfdFiltroCount" class="small text-muted"></span>
     </div>
   </div>
 
@@ -422,6 +448,7 @@
           <th class="text-end">Costo courier</th>
           <th class="text-end">Diferencia</th>
           <th style="min-width:185px">Estado entrega</th>
+          <th style="min-width:148px" title="Último movimiento registrado y tiempo en manos del courier">Actualización</th>
           {% if es_fedex %}<th style="min-width:138px">OT FedEx</th>{% endif %}
           <th class="no-print text-end" style="min-width:118px">Acciones</th>
         </tr>
@@ -463,6 +490,8 @@
         {% set nprod = item.productos|length %}
         <tr id="row-{{ item.id }}"
             class="mfd-frow {{ 'mfd-nosaldo' if not item.tiene_saldo }} {{ 'mfd-perdida-row' if item.es_perdida }}"
+            data-estado="{{ item.estado_entrega or 'En preparación' }}"
+            data-buscar="{{ ((item.tido or '') ~ ' ' ~ (item.nudo or '') ~ ' ' ~ (item.cliente_nombre or '') ~ ' ' ~ (item.comuna or ''))|lower }}"
             onclick="toggleProductos({{ item.id }})">
           <td class="text-center">
             <i class="bi bi-chevron-right mfd-chevron" id="chev-{{ item.id }}"></i>
@@ -544,6 +573,29 @@
             </div>
             {% endif %}
           </td>
+          {# ── Actualización + medición de tiempos (2026-07-29, Daniel:
+             "la última actualización... y los días desde que se entregó al
+             courier, para empezar a tener mediciones") ── #}
+          <td onclick="event.stopPropagation()" class="mfd-act-cell">
+            {% if item.ultima_act_at %}
+            <div class="mfd-act-fecha" title="Último movimiento registrado en la trazabilidad">
+              <i class="bi bi-clock-history me-1"></i>{{ item.ultima_act_at | chile_fmt }}
+            </div>
+            {% else %}
+            <span class="text-muted" style="font-size:.74rem">Sin movimientos</span>
+            {% endif %}
+            {% if item.dias_entrega is not none %}
+            <div class="mfd-act-chip mfd-act-chip-ok"
+                 title="Tiempo total: desde 'Entregado a transporte' hasta 'Entregado'">
+              <i class="bi bi-stopwatch me-1"></i>Entregado en {{ item.dias_entrega }} d
+            </div>
+            {% elif item.dias_en_courier is not none %}
+            <div class="mfd-act-chip mfd-act-chip-run"
+                 title="Días corriendo desde que se entregó al transportista (aún sin entregar)">
+              <i class="bi bi-truck me-1"></i>{{ item.dias_en_courier }} d en courier
+            </div>
+            {% endif %}
+          </td>
           {% if es_fedex %}
           <td onclick="event.stopPropagation()" style="min-width:165px">
             {% if item.get('master_tracking_number') %}
@@ -580,15 +632,15 @@
           </td>
           {% endif %}
           <td class="no-print text-end text-nowrap" onclick="event.stopPropagation()">
-            {% if item.estado_entrega == 'Entregado' %}
-            {# FIX 2026-07-27 (Daniel: "quiero ver la firma, la foto, la
-               entrega, todo bien bonito" -- la versión anterior embebía la
-               PÁGINA COMPLETA de /transporte/buscar (con sidebar y buscador)
-               dentro de un iframe, una "subpágina chiquitita". Ahora es un
-               modal propio que llama directo al JSON ya existente
-               (/transporte/api/buscar/<commitment_id>, el mismo que usa esa
-               página) y renderiza solo el detalle -- estado, chofer/GPS,
-               firma, fotos, historial -- sin duplicar esa lógica. #}
+            {% if es_fedex and item.estado_entrega == 'Entregado' %}
+            {# 2026-07-29 (Daniel: "la prueba de entrega y el botón de
+               seguimiento y acciones tienen casi la misma función"): este
+               botón queda SOLO para FedEx. En couriers SimpliRoute
+               (Felca/Milling) la misma evidencia (firma, fotos, GPS) ya se
+               muestra dentro del modal "Ver seguimiento y acciones" (ver
+               _srCargarEvidencia — consume el mismo JSON), así que tener
+               ambos era un duplicado. FedEx no tiene ese modal, conserva
+               este acceso directo. #}
             <button type="button" class="btn btn-sm btn-outline-success mfd-act-btn"
                     title="Ver prueba de entrega (foto, firma, GPS)"
                     onclick="abrirPruebaEntrega({{ item.commitment_id }})">
@@ -709,7 +761,7 @@
         {# ── Sub-fila colapsable: productos de la factura ── #}
         <tr class="mfd-prod-row" id="prodrow-{{ item.id }}" hidden>
           <td></td>
-          <td colspan="{{ 9 if es_fedex else 8 }}" class="mfd-prod-cell">
+          <td colspan="{{ 10 if es_fedex else 9 }}" class="mfd-prod-cell">
             <div class="mfd-prod-wrap">
               <div class="mfd-prod-head">
                 <i class="bi bi-box me-1"></i>Productos de la factura
@@ -760,7 +812,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="{{ 10 if es_fedex else 9 }}" class="text-center py-4 text-muted">
+          <td colspan="{{ 11 if es_fedex else 10 }}" class="text-center py-4 text-muted">
             <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>Sin facturas en este manifiesto
           </td>
         </tr>
@@ -780,7 +832,7 @@
             <div class="mfd-pct-chip {{ 'mfd-pct-neg' if tot_margen < 0 else ('mfd-pct-ok' if tot_pct >= 25 else 'mfd-pct-low') }}">{{ "%.1f"|format(tot_pct) }}%</div>
             {% endif %}
           </td>
-          <td colspan="{{ 3 if es_fedex else 2 }}"></td>
+          <td colspan="{{ 4 if es_fedex else 3 }}"></td>
         </tr>
       </tfoot>
       {% endif %}
@@ -1019,36 +1071,33 @@
   </a>
 </div>
 
-{# ════════════════════════════════════════════════════════════════════
-   Modal "Agregar factura" (hallazgo H14 -- ver boton en el header de la
-   tabla de facturas, mas arriba). Busca documentos PENDIENTES (con saldo,
-   sin manifiesto) por numero/cliente/comuna y los agrega a ESTE
-   manifiesto reusando /transporte/api/manifiestos/asignar.
-   ════════════════════════════════════════════════════════════════════ #}
-<div class="modal fade" id="agregarFacturaModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width:640px">
-    <div class="modal-content">
-      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
-        <h6 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Agregar factura al manifiesto</h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="input-group mb-3">
-          <span class="input-group-text"><i class="bi bi-search"></i></span>
-          <input type="text" class="form-control" id="agBuscarInput"
-                 placeholder="N° documento, cliente o comuna..."
-                 onkeydown="if(event.key==='Enter'){event.preventDefault(); agBuscar();}">
-          <button class="btn btn-outline-dark" type="button" onclick="agBuscar()">Buscar</button>
-        </div>
-        <div id="agResultados" style="min-height:80px">
-          <div class="text-muted small text-center py-3">
-            <i class="bi bi-search me-1"></i>Busca por número de documento, cliente o comuna.
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+{# 2026-07-29: modal "Agregar factura" ELIMINADO (autorización explícita de
+   Daniel: "sacar ese botón y borrar el código — ya podemos hacerlo
+   directamente por Asignar y Cotizar"). Las facturas se agregan desde el
+   Cubicador/Asignar y Cotizar o arrastrando desde el Monitor. #}
+
+{# ── Filtro de la tabla de facturas (2026-07-29, Daniel: "podemos poner
+   filtritos") — client-side, filtra por texto (doc/cliente/comuna) y por
+   estado de entrega usando los data-attributes de cada fila. ── #}
+<script>
+function mfdFiltrarTabla(){
+  var q   = (document.getElementById('mfdFiltroTexto').value || '').toLowerCase().trim();
+  var est = document.getElementById('mfdFiltroEstado').value || '';
+  var visibles = 0, total = 0;
+  document.querySelectorAll('#itemsTableBody tr.mfd-frow').forEach(function(tr){
+    total++;
+    var ok = (!q || (tr.dataset.buscar || '').indexOf(q) >= 0)
+          && (!est || tr.dataset.estado === est);
+    tr.hidden = !ok;
+    visibles += ok ? 1 : 0;
+    // La sub-fila de productos se cierra si su factura quedó filtrada fuera.
+    var pr = document.getElementById('prodrow-' + tr.id.replace('row-', ''));
+    if (pr && !ok) pr.hidden = true;
+  });
+  var lbl = document.getElementById('mfdFiltroCount');
+  if (lbl) lbl.textContent = (q || est) ? (visibles + ' de ' + total) : '';
+}
+</script>
 
 {# ════════════════════════════════════════════════════════════════════
    Modal cambio estado manifiesto

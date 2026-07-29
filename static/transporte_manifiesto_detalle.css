@@ -484,3 +484,24 @@
 @media (max-width:576px){
   .mfd-avance-pct{ font-size:1.5rem; }
 }
+
+/* ═══ 2026-07-29 (Daniel): rediseño logístico de la ficha del manifiesto ═══ */
+/* Títulos de sección para agrupar KPIs por tema (Finanzas / Logística) */
+.mfd-sec-title{
+  font-size:.68rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em;
+  color:#6b7280; margin:2px 0 8px; display:flex; align-items:center; gap:6px;
+}
+.mfd-sec-title i{ color:var(--ilus-red, #dc2626); }
+
+/* Botones del hero más compactos ("que no ocupen tanto espacio") */
+.mfd-hero-actions .btn{ padding:3px 10px; font-size:.74rem; }
+
+/* Columna "Actualización": último movimiento + chip de medición de tiempo */
+.mfd-act-cell{ min-width:148px; }
+.mfd-act-fecha{ font-size:.74rem; color:#374151; white-space:nowrap; }
+.mfd-act-chip{
+  display:inline-flex; align-items:center; margin-top:3px; padding:1px 8px;
+  border-radius:50px; font-size:.68rem; font-weight:700; white-space:nowrap;
+}
+.mfd-act-chip-ok{ background:#dcfce7; color:#166534; }
+.mfd-act-chip-run{ background:#dbeafe; color:#1e40af; }
