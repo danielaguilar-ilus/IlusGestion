@@ -26,6 +26,7 @@ from functools import wraps
 from flask import (Flask, Response, abort, flash, g, jsonify, make_response,
                    redirect, render_template, render_template_string, request,
                    send_file, session, url_for)
+from markupsafe import Markup  # static_inline(): embeber CSS/JS sin autoescape
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -310,6 +311,47 @@ def _static_cache_buster(endpoint, values):
         ver = _static_asset_version(values["filename"])
         if ver:
             values["v"] = ver
+
+
+# ── static_inline(): embeber un asset de /static DENTRO del HTML ───────────
+# Necesario SOLO para los templates que además se renderizan a PDF con
+# Playwright. _pw_pdf() usa page.set_content(html), y en ese modo el
+# documento queda con baseURI = "about:blank": Chromium NO puede resolver
+# rutas tipo /static/foo.css — ni siquiera dispara el request (verificado).
+# Es decir: un <link href="/static/..."> funciona perfecto en el navegador
+# del usuario, pero en el PDF sale sin estilos.
+# Con esto el CSS/JS vive UNA sola vez en /static (cacheable por el
+# navegador) y el render PDF lo embebe inline desde disco.
+#     Navegador : <link href="{{ url_for('static', filename='x.css') }}">
+#     PDF mode  : <style>{{ static_inline('x.css') }}</style>
+_STATIC_INLINE_CACHE = {}  # filename -> texto del archivo (1 lectura por proceso)
+
+@app.template_global()
+def static_inline(filename):
+    """Devuelve el contenido crudo de static/<filename> como Markup.
+
+    Markup (no str) porque el autoescape de Jinja convertiría `>` y `&&` en
+    entidades HTML y rompería tanto los selectores CSS (`.a > .b`) como el
+    JS. El archivo es nuestro y está en el repo — no es input de usuario.
+    Si el archivo no existe devuelve vacío en vez de romper la página.
+    """
+    if filename in _STATIC_INLINE_CACHE:
+        return Markup(_STATIC_INLINE_CACHE[filename])
+    texto = ""
+    try:
+        base = os.path.realpath(app.static_folder)
+        fpath = os.path.realpath(os.path.join(base, filename))
+        # Anti path-traversal: nunca salir de /static.
+        if os.path.commonpath([base, fpath]) == base and os.path.isfile(fpath):
+            with open(fpath, "r", encoding="utf-8") as fh:
+                texto = fh.read()
+        else:
+            print(f"[static_inline] fuera de /static o inexistente: {filename}", flush=True)
+    except Exception as e:
+        print(f"[static_inline] no se pudo leer {filename}: {type(e).__name__}: {e}", flush=True)
+        texto = ""
+    _STATIC_INLINE_CACHE[filename] = texto
+    return Markup(texto)
 
 
 # ── /version: diagnóstico simple — qué commit está corriendo el servidor ──
@@ -17429,7 +17471,12 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
 
     Returns: dict {changed: bool, estado_actual: str, comentario: str}
     """
-    if estado_ilus not in ESTADOS_ENTREGA:
+    # Valida contra ESTADOS_ENTREGA_VALIDOS (humanos + courier), NO contra
+    # ESTADOS_ENTREGA (que es solo el desplegable del admin). Ver el comentario
+    # extenso en la definición de ESTADOS_ENTREGA_COURIER.
+    if estado_ilus not in ESTADOS_ENTREGA_VALIDOS:
+        print(f"[tr_estado] estado inválido descartado: {estado_ilus!r} "
+              f"(item={item_id}, fuente={fuente})", flush=True)
         return {"changed": False, "error": "estado inválido"}
     cur_item = mysql_fetchone(
         "SELECT id, estado_entrega, commitment_id, manifest_id "
@@ -17439,6 +17486,37 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
     if not cur_item:
         return {"changed": False, "error": "item no encontrado"}
     actual = cur_item.get("estado_entrega") or ""
+
+    # ── GUARDA DE CONTINUIDAD (regla de Daniel, 2026-07-28) ──────────────
+    # Un poller automático NO puede sacar un pedido de un estado terminal.
+    # Antes, cada caller repetía esta exclusión en su propio SQL y 3 de 7 se la
+    # olvidaban. Caso real que esto evita: el chofer marca 'Entregado' con firma,
+    # alguien pulsa "Refrescar" en esa fila y FedEx todavía responde "in transit"
+    # → el pedido volvía a 'En ruta' y al cliente le llegaba el correo "tu pedido
+    # va en camino" DESPUÉS de haberle avisado que ya había llegado.
+    # Ahora la regla vive UNA sola vez, acá, y cubre a todos los callers.
+    # Una persona sí puede corregir a mano (fuente 'manual' / 'chofer' / 'sistema').
+    if (actual in ESTADOS_ENTREGA_TERMINALES
+            and fuente in FUENTES_AUTOMATICAS
+            and estado_ilus != actual):
+        # Aun así refrescamos la marca de poll: el courier respondió. Si no la
+        # tocáramos, el item se quedaría clavado al principio de la cola del
+        # poller para siempre (ORDER BY last_carrier_poll_at).
+        try:
+            mysql_execute(
+                "UPDATE transport_manifest_items "
+                "SET last_carrier_poll_at=NOW(), last_carrier_status=%s, "
+                "    last_carrier_source=%s WHERE id=%s",
+                ((estado_ilus or '')[:120], fuente, item_id))
+        except Exception as _e_poll:
+            print(f"[tr_estado] no se pudo refrescar el poll del item {item_id}: "
+                  f"{_e_poll}", flush=True)
+        print(f"[tr_estado] {fuente} intentó mover item {item_id} de "
+              f"{actual!r} (terminal) a {estado_ilus!r} — bloqueado", flush=True)
+        return {"changed": False, "estado_actual": actual, "anterior": actual,
+                "bloqueado_terminal": True,
+                "error": f"'{actual}' es un estado terminal; {fuente} no puede cambiarlo"}
+
     changed = (estado_ilus != actual)
     conn = get_db()
     with conn.cursor() as cur:
@@ -18461,6 +18539,43 @@ ESTADOS_ENTREGA = [
     'En ruta', 'Entregado', 'Problema', 'Devolución',
 ]
 
+# Estados que un COURIER puede reportar automáticamente pero que un humano NO
+# elige a mano (por eso viven fuera de ESTADOS_ENTREGA, que alimenta el
+# desplegable del admin en la ficha del manifiesto — ver tr_manifiesto_detalle).
+#
+# BUG REAL corregido 2026-07-28 (Daniel). El 2026-07-25 "Entrega fallida" se
+# renombró a "Problema" y se sacó de ESTADOS_ENTREGA, pero los DOS traductores
+# de courier siguieron emitiendo el valor viejo:
+#     _fedex_estado_ilus  → 'Entrega fallida' para DE/SE (app.py ~16590)
+#     simpliroute_client.estado_ilus_from_visit → 'Entrega fallida' si status=failed
+# Como _tr_apply_carrier_status valida contra la whitelist ANTES de tocar nada,
+# cada entrega fallida reportada por FedEx o Felca/Milling se descartaba en
+# silencio: sin cambio de estado, sin evento público, sin log, sin aviso al
+# cliente (que seguía viendo "En ruta" indefinidamente). Peor: el `return`
+# ocurría antes del UPDATE de last_carrier_poll_at, así que esos items nunca
+# refrescaban su marca de poll y se quedaban clavados al principio de cada lote
+# del poller, desplazando al resto de los envíos.
+#
+# Regla de Daniel (2026-07-28): "los documentos sí o sí deben tener trazabilidad
+# y reportabilidad tan profesional como el servicio en sí; el sistema debe tener
+# continuidad hasta terminar el proceso". Un evento del courier NUNCA se
+# descarta: entra, queda registrado y se le informa al cliente.
+ESTADOS_ENTREGA_COURIER = ['Entrega fallida']
+
+# Whitelist REAL del choke-point: lo que puede elegir un humano + lo que puede
+# reportar un courier. Usar esta lista para validar, y ESTADOS_ENTREGA solo para
+# poblar el desplegable del admin.
+ESTADOS_ENTREGA_VALIDOS = ESTADOS_ENTREGA + ESTADOS_ENTREGA_COURIER
+
+# Estados terminales: el proceso de entrega ya concluyó. Un poller automático no
+# puede sacarlos de acá (ver la guarda en _tr_apply_carrier_status); solo una
+# persona puede corregirlos a mano desde la ficha.
+ESTADOS_ENTREGA_TERMINALES = ('Entregado', 'Devolución')
+
+# Fuentes automáticas (APIs de courier). Se distinguen de las humanas
+# ('manual', 'chofer', 'sistema') para decidir si pueden pisar un estado final.
+FUENTES_AUTOMATICAS = ('fedex', 'simpliroute')
+
 # Stepper visual del tracking público (cliente).
 # El orden define la barra de progreso; los terminales (Entregado/Problema/Devolución)
 # pintan el último paso en su color.
@@ -18688,7 +18803,10 @@ def _tr_event(manifest_item_id, estado, fuente='manual',
         # 'sync'` del CASE del UPSERT en _tr_bulk_sync_erp_mysql) — el saldo
         # financiero del ERP solo manda mientras el documento no tiene
         # todavía movimiento operativo real en un manifiesto.
-        if estado in ESTADOS_ENTREGA and commitment_id:
+        # ESTADOS_ENTREGA_VALIDOS (no ESTADOS_ENTREGA): una 'Entrega fallida'
+        # reportada por el courier también debe propagarse al documento del
+        # Monitor, si no el Monitor y la ficha muestran cosas distintas.
+        if estado in ESTADOS_ENTREGA_VALIDOS and commitment_id:
             try:
                 with conn.cursor() as cur2:
                     cur2.execute(
