@@ -1547,7 +1547,7 @@ function distribuirOTs() {
   if (status) status.textContent = filled + ' tracking(s) distribuido(s)';
 }
 
-async function guardarOTsMasivo() {
+async function guardarOTsMasivo(confirmReenvio) {
   var items = [];
   document.querySelectorAll('.ot-input').forEach(function(inp) {
     var tn = (inp.value || '').trim().replace(/[^A-Za-z0-9]/g, '');
@@ -1569,7 +1569,7 @@ async function guardarOTsMasivo() {
     var r = await fetch('/transporte/api/manifiestos/' + MID + '/trackings-masivo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: items })
+      body: JSON.stringify({ items: items, confirm_re_envio: !!confirmReenvio })
     });
     res = await r.json();
   } catch(e) {
@@ -1584,6 +1584,27 @@ async function guardarOTsMasivo() {
     if (status) status.textContent = '';
     if (window.ilusToast) ilusToast((res && res.error) || 'Error al guardar', { type: 'error' });
     return;
+  }
+
+  // FIX 2026-07-29 (Daniel, en vivo: "bloquea la subida a menos que
+  // podamos... enviarlo"): algunas filas ya tenían OTRA OT asignada y el
+  // backend las dejó sin tocar (requiere_confirmacion). En vez de fallar
+  // en silencio, se pregunta UNA vez y se reintenta el lote completo con
+  // el reemplazo confirmado.
+  if (!confirmReenvio) {
+    var pendientes = (res.resultados || []).filter(function(r){ return r.requiere_confirmacion; });
+    if (pendientes.length) {
+      if (status) status.textContent = '';
+      var detalle = pendientes.map(function(r){ return 'item #' + r.item_id + ' (OT actual ' + r.ot_anterior + ')'; }).join(', ');
+      var ok = await ilusConfirm({
+        title: pendientes.length + ' factura(s) ya tienen otra OT asignada',
+        message: '¿Reemplazar la OT existente por la que acabas de pegar?',
+        sub: detalle,
+        okLabel: 'Sí, reemplazar', cancelLabel: 'No, dejar como está', danger: true,
+      });
+      if (ok) return guardarOTsMasivo(true);
+      // Si dice que no, seguimos mostrando el resultado normal (las demás filas sí se guardaron).
+    }
   }
 
   // Tally results
@@ -2595,6 +2616,36 @@ async function abrirPruebaEntrega(commitmentId) {
       return;
     }
     body.innerHTML = _peRenderDetalle(d.detalle);
+
+    // Ruta FedEx en vivo (2026-07-29, Daniel: "sacar toda la información
+    // posible de FedEx... podemos tener la ruta"). Best-effort, aparte del
+    // fetch principal — usa el mismo endpoint que ya alimenta el modal de
+    // tracking FedEx (/tracking-detalle), que trae scans con CIUDAD por
+    // evento (_fedex_parse_scans en app.py) — más rico que el timeline
+    // genérico de arriba, que no tiene ciudad.
+    var mi = d.detalle && d.detalle.manifest_item;
+    if (mi && mi.item_id && mi.tracking_number) {
+      try {
+        var r2 = await fetch('/transporte/api/items/' + mi.item_id + '/tracking-detalle');
+        var d2 = await r2.json();
+        if (d2 && d2.ok && d2.fedex_scans && d2.fedex_scans.length) {
+          var rutaHtml = '<div class="pe-sec"><div class="pe-h"><i class="bi bi-signpost-2-fill" style="color:#4d148c"></i>Ruta FedEx (en vivo)'
+            + (d2.eta ? ' <span class="small text-muted">· ETA ' + _peEsc(d2.eta) + '</span>' : '') + '</div>';
+          rutaHtml += '<div class="pe-tl">';
+          d2.fedex_scans.forEach(function(sc){
+            rutaHtml += '<div class="pe-tl-row"><div class="pe-tl-est">' + _peEsc(sc.descripcion || '—') + '</div>'
+              + '<div class="pe-tl-ts">' + _peEsc(sc.fecha_txt || '') + (sc.ubicacion ? ' · ' + _peEsc(sc.ubicacion) : '') + '</div></div>';
+          });
+          rutaHtml += '</div></div>';
+          // Se inserta justo antes de "Historial completo" (siempre la
+          // última sección que pinta _peRenderDetalle).
+          var secs = body.querySelectorAll('.pe-sec');
+          var historial = secs[secs.length - 1];
+          if (historial) historial.insertAdjacentHTML('beforebegin', rutaHtml);
+          else body.insertAdjacentHTML('beforeend', rutaHtml);
+        }
+      } catch (e2) { /* ruta FedEx es complementaria, no bloquea el resto */ }
+    }
   } catch (e) {
     body.innerHTML = '<div class="text-center text-muted py-4">Error de conexión.</div>';
   }
@@ -2639,6 +2690,33 @@ function _peRenderDetalle(d) {
     if (mi.correlativo) html += '<div class="pe-kv"><span class="pe-kv-k">Manifiesto</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(mi.correlativo) + '</span></div>';
     if (mi.courier) html += '<div class="pe-kv"><span class="pe-kv-k">Transporte</span><span class="pe-kv-v">' + _peEsc(mi.courier) + '</span></div>';
     if (mi.tracking_number) html += '<div class="pe-kv"><span class="pe-kv-k">N° tracking</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(mi.tracking_number) + '</span></div>';
+    if (d.tiempos) {
+      var t = d.tiempos;
+      if (t.dias_entrega != null) html += '<div class="pe-kv"><span class="pe-kv-k">Tiempo de entrega</span><span class="pe-kv-v" style="color:#16a34a;font-weight:700">' + t.dias_entrega + ' día(s)</span></div>';
+      else if (t.dias_en_courier != null) html += '<div class="pe-kv"><span class="pe-kv-k">En manos del courier</span><span class="pe-kv-v" style="color:#2563eb;font-weight:700">' + t.dias_en_courier + ' día(s)</span></div>';
+    }
+    html += '</div>';
+  }
+
+  // Productos del pedido (2026-07-29, Daniel: "obviamente los productos,
+  // como habíamos quedado" — reusa d.lineas, ya viene de _tr_buscar_detalle
+  // igual que en el modal de SimpliRoute, con foto por SKU si hay). Reusa
+  // las clases .sr-prod* para consistencia visual entre ambos modales.
+  if (d.lineas && d.lineas.length) {
+    window._peProdFotos = d.lineas.map(function(l){ return l.fotos || []; });
+    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido'
+          + ' <span class="small text-muted">(' + d.lineas.length + ')</span></div>';
+    d.lineas.forEach(function(l, i){
+      var thumb = (l.fotos && l.fotos.length)
+        ? '<img class="sr-prod-thumb" src="' + _peEsc(l.fotos[0]) + '" alt="' + _peEsc(l.nombre || '') + '" loading="lazy" '
+          + 'onclick="_ilusLightbox(window._peProdFotos[' + i + '], 0, \'' + _peEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
+        : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
+      html += '<div class="sr-prod">' + thumb
+        + '<div class="sr-prod-info"><div class="sr-prod-name">' + _peEsc(l.nombre || l.sku || '—') + '</div>'
+        + '<div class="sr-prod-sku">' + _peEsc(l.sku || '') + '</div></div>'
+        + '<div class="sr-prod-qty"><span class="sr-qty-chip" title="Cantidad del documento">×' + (l.cantidad || 0) + '</span></div>'
+        + '</div>';
+    });
     html += '</div>';
   }
 

@@ -680,3 +680,46 @@
 .cef-drop-icon{ font-size:2.2rem; color:var(--ilus-red); display:block; }
 .cef-drop-text{ font-weight:600; color:var(--ilus-black); margin-top:.4rem; }
 .cef-drop-sub{ color:#6b7280; font-size:.82rem; margin-top:.2rem; }
+
+/* ═══ 2026-07-29: FedEx dropdown — no chocar con la campanita + colores ═══
+   Daniel en vivo: "está topando con la campanita... no veo la flecha del
+   dropdown... lo veo muy en blanco y negro". #}*/
+
+/* La campanita de notificaciones es fixed (top:14px;right:18px;42px) en
+   TODAS las páginas (ver base.html) — en desktop, el hero de este manifiesto
+   queda pegado arriba y sus botones (siendo tantos) llegaban a ese rincón.
+   Se reserva espacio a la derecha solo en pantallas anchas (en mobile la
+   campanita vive en la topbar, no hay colisión). */
+@media (min-width:769px){
+  .mfd-hero-actions{ padding-right:56px; }
+}
+
+/* Caret del dropdown FedEx: el botón es #4d148c (morado oscuro) y el caret
+   por defecto de Bootstrap se perdía contra ese fondo — se agranda y se le
+   da más separación del badge de pendientes. */
+.mfd-fedex-dd .dropdown-toggle::after{
+  vertical-align:.14em; border-width:.32em; margin-left:.5rem;
+}
+
+/* Menú FedEx: mas ancho para que quepan los subtitulos, items con icono +
+   texto en columnas (icono grande y fijo a la izquierda). */
+.mfd-fedex-menu{ min-width:340px; padding:.4rem 0; }
+.mfd-fedex-menu .mfd-di{
+  display:flex; align-items:flex-start; gap:.6rem; padding:.5rem .9rem;
+}
+.mfd-fedex-menu .mfd-di i{ font-size:1rem; margin-top:.15rem; flex-shrink:0; width:1.1rem; text-align:center; }
+.mfd-fedex-menu .mfd-di > div > div:first-child{ font-weight:600; color:var(--ilus-black); }
+.mfd-fedex-menu .mfd-di:hover{ background:#f8f5ff; }
+
+/* Encabezados de sección: franja de color + fondo tintado propio, en vez de
+   texto gris plano — agrupa visualmente de un vistazo. */
+.mfd-fedex-menu .mfd-dh{
+  display:flex; align-items:center; gap:.5rem; font-weight:800;
+  font-size:.68rem; text-transform:uppercase; letter-spacing:.4px;
+  padding:.35rem .9rem .35rem .75rem; margin:0; border-left:3px solid transparent;
+}
+.mfd-dh-purple{ background:#f5f3ff; color:#6d28d9; border-left-color:#7c3aed; }
+.mfd-dh-blue{   background:#eff6ff; color:#1d4ed8; border-left-color:#2563eb; }
+.mfd-dh-red{    background:#fef2f2; color:#b91c1c; border-left-color:#dc2626; }
+.mfd-dh-cyan{   background:#ecfeff; color:#0e7490; border-left-color:#0891b2; }
+.mfd-dh-amber{  background:#fffbeb; color:#92400e; border-left-color:#d97706; }

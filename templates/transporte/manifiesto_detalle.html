@@ -173,22 +173,29 @@
       <span class="mfd-print-badge">{{ tot_bultos or n_con_ot }}</span>
     </button>
     {% endif %}
-    <div class="dropdown">
+    <div class="dropdown mfd-fedex-dd">
       <button class="btn btn-sm btn-ilus-fedex fw-bold dropdown-toggle" data-bs-toggle="dropdown">
         <i class="bi bi-truck-front me-1"></i>FedEx
         {% if sin_ot %}<span class="badge bg-danger ms-1">{{ sin_ot|length }}</span>{% endif %}
       </button>
-      <ul class="dropdown-menu dropdown-menu-end">
-        <li><h6 class="dropdown-header"><i class="bi bi-cloud-arrow-up me-1"></i>Generar OTs en FedEx</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="abrirCrearOtsFedex(); return false">
-          <i class="bi bi-magic me-1"></i>Crear OTs automáticamente
-          <div class="small text-muted">FedEx asigna TN + etiqueta · genera todas las pendientes</div>
+      {# 2026-07-29 (Daniel, en vivo: "lo veo muy en blanco y negro... si es
+         Excel, Excel, si es PDF..."): cada sección del menú queda con un
+         color de acento propio (franja izquierda + icono a color), en vez
+         de todo en negro/gris. Facilita ubicar de un vistazo la acción que
+         se busca. #}
+      <ul class="dropdown-menu dropdown-menu-end mfd-fedex-menu">
+        <li><h6 class="dropdown-header mfd-dh mfd-dh-purple"><i class="bi bi-cloud-arrow-up"></i>Generar OTs en FedEx</h6></li>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="abrirCrearOtsFedex(); return false">
+          <i class="bi bi-magic" style="color:#7c3aed"></i>
+          <div><div>Crear OTs automáticamente</div>
+          <div class="small text-muted">FedEx asigna TN + etiqueta · genera todas las pendientes</div></div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header"><i class="bi bi-pencil-square me-1"></i>OTs ya impresas en FedEx</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="abrirAsignarOtsMasivo(); return false">
-          <i class="bi bi-clipboard-check me-1"></i>Pegar TNs desde Excel
-          <div class="small text-muted">Si ya creaste las OTs en el portal FedEx</div>
+        <li><h6 class="dropdown-header mfd-dh mfd-dh-blue"><i class="bi bi-pencil-square"></i>OTs ya impresas en FedEx</h6></li>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="abrirAsignarOtsMasivo(); return false">
+          <i class="bi bi-clipboard-check" style="color:#2563eb"></i>
+          <div><div>Pegar TNs desde Excel</div>
+          <div class="small text-muted">Si ya creaste las OTs en el portal FedEx</div></div>
         </a></li>
         {# 2026-07-29 (Daniel): reemplaza la página aparte /transporte/ot-masivo
            (bug de CSRF ya corregido, pero además pidió sacarla del menú
@@ -196,43 +203,50 @@
            (/transporte/ot-masivo/preview y /aplicar), match por N° de
            factura — más robusto que "Pegar TNs" (que asume el mismo orden
            de filas). #}
-        <li><a class="dropdown-item" href="#" onclick="abrirCargaExcelFedex(); return false">
-          <i class="bi bi-file-earmark-arrow-up me-1"></i>Cargar Excel de OTs
-          <div class="small text-muted">Arrastra o selecciona el archivo — matchea por N° de factura</div>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="abrirCargaExcelFedex(); return false">
+          <i class="bi bi-file-earmark-excel-fill" style="color:#217346;font-size:1.15rem"></i>
+          <div><div>Cargar Excel de OTs</div>
+          <div class="small text-muted">Arrastra o selecciona el archivo — matchea por N° de factura</div></div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header"><i class="bi bi-printer me-1"></i>Impresión</h6></li>
-        <li><a class="dropdown-item"
+        <li><h6 class="dropdown-header mfd-dh mfd-dh-red"><i class="bi bi-printer"></i>Impresión</h6></li>
+        <li><a class="dropdown-item mfd-di"
                href="/transporte/manifiestos/{{ manifiesto.id }}/etiquetas-fedex/pdf"
                target="_blank">
-          <i class="bi bi-file-earmark-pdf me-1"></i>Imprimir todas las etiquetas FedEx
-          <div class="small text-muted">PDF único 4×6 con todas las etiquetas oficiales</div>
+          <i class="bi bi-file-earmark-pdf-fill" style="color:#dc2626;font-size:1.15rem"></i>
+          <div><div>Imprimir todas las etiquetas FedEx</div>
+          <div class="small text-muted">PDF único 4×6 con todas las etiquetas oficiales</div></div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header"><i class="bi bi-broadcast me-1"></i>Tracking</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="refrescarTrackingManifiesto(); return false">
-          <i class="bi bi-arrow-clockwise me-1"></i>Refrescar estados FedEx (todos)
-          <div class="small text-muted">Consulta Track API y actualiza estados del manifiesto</div>
+        <li><h6 class="dropdown-header mfd-dh mfd-dh-cyan"><i class="bi bi-broadcast"></i>Tracking</h6></li>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="refrescarTrackingManifiesto(); return false">
+          <i class="bi bi-arrow-clockwise" style="color:#0891b2"></i>
+          <div><div>Refrescar estados FedEx (todos)</div>
+          <div class="small text-muted">Consulta Track API y actualiza estados del manifiesto</div></div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header"><i class="bi bi-printer me-1"></i>Etiquetas</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="verImprimirEtiquetasFedex(); return false">
-          <i class="bi bi-printer-fill me-1"></i>Imprimir etiquetas FedEx (4×6 cortadas)
-          <div class="small text-muted">Vista imprimible con selector · sale al tamaño exacto 100×150mm</div>
+        <li><h6 class="dropdown-header mfd-dh mfd-dh-red"><i class="bi bi-printer"></i>Etiquetas</h6></li>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="verImprimirEtiquetasFedex(); return false">
+          <i class="bi bi-printer-fill" style="color:#dc2626"></i>
+          <div><div>Imprimir etiquetas FedEx (4×6 cortadas)</div>
+          <div class="small text-muted">Vista imprimible con selector · sale al tamaño exacto 100×150mm</div></div>
         </a></li>
-        <li><a class="dropdown-item" href="#" onclick="actualizarEtiquetasFedex(); return false">
-          <i class="bi bi-arrow-repeat me-1" style="color:#dc2626"></i>Actualizar etiquetas multi-bulto
-          <div class="small text-muted">Para OTs viejas con 1 sola etiqueta · re-emite y trae todas las piezas</div>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="actualizarEtiquetasFedex(); return false">
+          <i class="bi bi-arrow-repeat" style="color:#dc2626"></i>
+          <div><div>Actualizar etiquetas multi-bulto</div>
+          <div class="small text-muted">Para OTs viejas con 1 sola etiqueta · re-emite y trae todas las piezas</div></div>
         </a></li>
-        <li><a class="dropdown-item" href="#" onclick="descargarPdfEtiquetasFedex(); return false">
-          <i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF original (FedEx)
-          <div class="small text-muted">PDF crudo de FedEx con todas las etiquetas del manifiesto</div>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="descargarPdfEtiquetasFedex(); return false">
+          <i class="bi bi-file-earmark-pdf-fill" style="color:#dc2626;font-size:1.15rem"></i>
+          <div><div>Descargar PDF original (FedEx)</div>
+          <div class="small text-muted">PDF crudo de FedEx con todas las etiquetas del manifiesto</div></div>
         </a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><h6 class="dropdown-header"><i class="bi bi-calendar-event me-1"></i>Logística</h6></li>
-        <li><a class="dropdown-item" href="#" onclick="abrirPickupFedex(); return false">
-          <i class="bi bi-truck me-1"></i>Programar retiro FedEx
-          <div class="small text-muted">Agendar pickup en bodega Quilicura</div>
+        <li><h6 class="dropdown-header mfd-dh mfd-dh-amber"><i class="bi bi-calendar-event"></i>Logística</h6></li>
+        <li><a class="dropdown-item mfd-di" href="#" onclick="abrirPickupFedex(); return false">
+          <i class="bi bi-truck" style="color:#b45309"></i>
+          <div><div>Programar retiro FedEx</div>
+          <div class="small text-muted">Agendar pickup en bodega Quilicura</div></div>
         </a></li>
       </ul>
     </div>
@@ -490,15 +504,15 @@
           'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
           'estado': item.estado_entrega or '',
           'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim,
-          'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else 0),
-          'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else '')
+          'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) else 0),
+          'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) else '')
         } | tojson %}
         {# FIX 2026-07-27 (Daniel: "bloquea la edición también" -- una vez
            que la factura ya se subió al courier y empezó la gestión, no se
            puede editar ni quitar del manifiesto). Se considera "en gestión
            con el courier" si ya tiene OT FedEx (master_tracking_number) o
            visita SimpliRoute (simpliroute_visit_id) creada. #}
-        {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) %}
+        {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) %}
         {% set nprod = item.productos|length %}
         <tr id="row-{{ item.id }}"
             class="mfd-frow {{ 'mfd-nosaldo' if not item.tiene_saldo }} {{ 'mfd-perdida-row' if item.es_perdida }}"
@@ -880,7 +894,7 @@
       'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else 0),
       'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else '')
     } | tojson %}
-    {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) %}
+    {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) %}
     {% set nprod = item.productos|length %}
     <div class="mfd-mcard {{ 'mfd-mcard-nosaldo' if not item.tiene_saldo }} {{ 'mfd-mcard-perdida' if item.es_perdida }}" id="card-{{ item.id }}">
       <div class="d-flex justify-content-between align-items-start mb-2">

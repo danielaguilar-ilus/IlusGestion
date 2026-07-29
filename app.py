@@ -22786,18 +22786,23 @@ def tr_update_compromiso(cid):
         "peso_export", "n_bultos",
     }
     if _operational_edit_fields.intersection(data):
+        # FIX 2026-07-29 (Daniel, en vivo): faltaba tracking_number (OT
+        # cargada a mano vía Excel/pegado, sin pasar por el Ship API
+        # automático) — un item con esa OT quedaba SIN candado de edición.
         _gestion_courier = mysql_fetchone(
-            "SELECT simpliroute_visit_id, master_tracking_number "
+            "SELECT simpliroute_visit_id, master_tracking_number, tracking_number "
             "FROM transport_manifest_items "
             "WHERE commitment_id=%s "
             "  AND (NULLIF(TRIM(simpliroute_visit_id),'') IS NOT NULL "
-            "       OR NULLIF(TRIM(master_tracking_number),'') IS NOT NULL) "
+            "       OR NULLIF(TRIM(master_tracking_number),'') IS NOT NULL "
+            "       OR NULLIF(TRIM(tracking_number),'') IS NOT NULL) "
             "ORDER BY id DESC LIMIT 1",
             (cid,),
         ) or {}
         if (
             str(_gestion_courier.get("simpliroute_visit_id") or "").strip()
             or str(_gestion_courier.get("master_tracking_number") or "").strip()
+            or str(_gestion_courier.get("tracking_number") or "").strip()
         ):
             return jsonify({
                 "ok": False,
@@ -25791,7 +25796,7 @@ def tr_quitar_item(mid, item_id):
     # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
     info = mysql_fetchone(
         "SELECT mi.commitment_id, mi.simpliroute_visit_id, mi.master_tracking_number, "
-        "       mi.estado_entrega, "
+        "       mi.tracking_number, mi.estado_entrega, "
         "       c.tido, c.nudo, c.cliente_nombre, "
         "       COALESCE(c.costo_zz, 0) AS costo_zz, COALESCE(c.n_bultos, 1) AS n_bultos "
         "FROM transport_manifest_items mi "
@@ -25821,7 +25826,14 @@ def tr_quitar_item(mid, item_id):
     # seguía con el borrado del item; ahora se bloquea de entrada (el
     # frontend ya deshabilita el botón, esto es el mismo candado del lado
     # del servidor para que no se pueda saltar por API directa).
-    if info and (info.get("master_tracking_number") or info.get("simpliroute_visit_id")):
+    # FIX 2026-07-29 (Daniel, en vivo): el candado solo miraba
+    # master_tracking_number (OT creada vía Ship API automático) —
+    # tracking_number (el que carga "Pegar TNs desde Excel"/"Cargar Excel de
+    # OTs", una OT ya creada A MANO en el portal FedEx) quedaba SIN
+    # protección: se podía quitar del manifiesto una factura que ya tenía
+    # tracking real asignado. Se agrega al mismo candado.
+    if info and (info.get("master_tracking_number") or info.get("tracking_number")
+                 or info.get("simpliroute_visit_id")):
         return jsonify({
             "ok": False,
             "error": "Esta factura ya está en gestión con el courier (OT/visita creada) "
@@ -26775,14 +26787,20 @@ def tr_trackings_masivo(mid):
     if not validated:
         return jsonify({"error": "No hay tracking numbers válidos (mín. 10 chars)"}), 400
 
-    # Verify all items belong to this manifest
+    # Verify all items belong to this manifest — trae también el tracking YA
+    # guardado (FIX 2026-07-29, Daniel en vivo: "bloquea la subida a menos
+    # que podamos... enviarlo" — este flujo pegaba el TN nuevo SIN mirar si
+    # el item ya tenía uno, a diferencia de "Cargar Excel de OTs" que sí
+    # exige confirmación explícita para reemplazar). Mismo criterio acá.
     item_ids = [v["item_id"] for v in validated]
     _ph = ",".join(["%s"] * len(item_ids))
     db_items = mysql_fetchall(
-        f"SELECT id FROM transport_manifest_items WHERE id IN ({_ph}) AND manifest_id=%s",
+        f"SELECT id, tracking_number FROM transport_manifest_items "
+        f"WHERE id IN ({_ph}) AND manifest_id=%s",
         tuple(item_ids) + (mid,)
     )
-    valid_ids = {r["id"] for r in (db_items or [])}
+    valid_tn = {r["id"]: (r.get("tracking_number") or "").strip().upper() for r in (db_items or [])}
+    confirm_re_envio = bool(body.get("confirm_re_envio"))
 
     resultados = []
     tn_to_iid = {}   # tracking_number → item_id (para correlacionar respuesta FedEx)
@@ -26790,9 +26808,16 @@ def tr_trackings_masivo(mid):
     for entry in validated:
         iid = entry["item_id"]
         tn  = entry["tracking_number"]
-        if iid not in valid_ids:
+        if iid not in valid_tn:
             resultados.append({"item_id": iid, "tracking_number": tn,
                                 "error": "item no pertenece a este manifiesto"})
+            continue
+        _tn_actual = valid_tn[iid]
+        if _tn_actual and _tn_actual != tn.upper() and not confirm_re_envio:
+            resultados.append({"item_id": iid, "tracking_number": tn,
+                                "error": f"Este item ya tiene la OT {_tn_actual} — "
+                                         "requiere confirmar reemplazo.",
+                                "requiere_confirmacion": True, "ot_anterior": _tn_actual})
             continue
         try:
             mysql_execute(
