@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Tickets — ILUS{% endblock %}
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
 {% block content %}
 <style>
 .tk-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
@@ -315,12 +318,15 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
 }
 </style>
 
-<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
-  <div>
-    <h4><i class="bi bi-ticket-perforated me-2"></i>Tickets</h4>
-    <div class="sub">Central de soporte — solicitudes, fallas, garantías, repuestos y cotizaciones</div>
+<div class="page-header trx-hero d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div class="trx-hero-main">
+    <span class="trx-hero-ico"><i class="bi bi-ticket-perforated"></i></span>
+    <div>
+      <h4><i class="bi bi-ticket-perforated me-2 d-none"></i>Tickets</h4>
+      <div class="sub trx-hero-sub">Central de soporte — solicitudes, fallas, garantías, repuestos y cotizaciones</div>
+    </div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="d-flex gap-2 trx-hero-actions">
     {% if permissions.superadmin %}
     <button class="btn btn-sm btn-outline-light" id="btnImportarTaa" title="Importar los tickets históricos del sistema Triple A (CSV Reporte Tickets + Reporte SLA)">
       <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar CSV Triple A</button>
@@ -333,16 +339,16 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
     {% endif %}
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
       <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
-    <button class="btn btn-ilus" data-bs-toggle="modal" data-bs-target="#ntModal">
+    <button class="btn btn-ilus trx-btn-primary" data-bs-toggle="modal" data-bs-target="#ntModal">
       <i class="bi bi-plus-lg me-1"></i>Nuevo Ticket</button>
   </div>
 </div>
 
-<div class="tk-kpi-row">
-  <div class="tk-kpi t"><span class="num" id="kpiTotal">—</span><span class="lbl">Total</span></div>
-  <div class="tk-kpi a"><span class="num" id="kpiActivos">—</span><span class="lbl">Activos</span></div>
-  <div class="tk-kpi u"><span class="num" id="kpiUrgentes">—</span><span class="lbl">Urgentes</span></div>
-  <div class="tk-kpi v"><span class="num" id="kpiVencidos">—</span><span class="lbl">Vencidos (SLA)</span></div>
+<div class="tk-kpi-row trx-kpis">
+  <div class="tk-kpi t trx-kpi"><span class="num" id="kpiTotal">—</span><span class="lbl">Total</span></div>
+  <div class="tk-kpi a trx-kpi trx-kpi-red"><span class="num" id="kpiActivos">—</span><span class="lbl">Activos</span></div>
+  <div class="tk-kpi u trx-kpi trx-kpi-warn"><span class="num" id="kpiUrgentes">—</span><span class="lbl">Urgentes</span></div>
+  <div class="tk-kpi v trx-kpi trx-kpi-dang"><span class="num" id="kpiVencidos">—</span><span class="lbl">Vencidos (SLA)</span></div>
 </div>
 
 <div class="tk-filtros">
