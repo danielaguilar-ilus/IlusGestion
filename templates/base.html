@@ -626,6 +626,10 @@
          class="sidebar-link{% if request.endpoint in ['tr_facturas_proveedor','tr_factura_proveedor_detalle'] %} active{% endif %}">
         <i class="bi bi-receipt-cutoff"></i><span>Facturas Proveedor</span>
       </a>
+      <a href="{{ url_for('tr_producto') }}"
+         class="sidebar-link{% if request.endpoint in ['tr_producto'] %} active{% endif %}">
+        <i class="bi bi-box-seam"></i><span>Producto</span>
+      </a>
       {# 'Monitor en vivo' y 'Buscar despacho' temporalmente fuera del sidebar
          (Daniel 2026-06-13). Las rutas siguen vivas para no romper enlaces;
          se mantienen accesibles desde la búsqueda global o links directos. #}

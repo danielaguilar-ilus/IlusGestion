@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Trazabilidad por producto — ILUS{% endblock %}
+
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{# Reusa .sr-qty-chip (chip pedido/despachado/saldo) del panel de tracking
+   de los manifiestos — NO se redefine acá (regla del pedido: reutilizar,
+   no duplicar estilos). #}
+<link href="{{ url_for('static', filename='transporte_manifiesto_detalle.css') }}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+
+<div class="trx-crumb">
+  <a href="{{ url_for('transporte_index') }}">Transporte</a>
+  <span class="sep">/</span>
+  <span>Producto</span>
+</div>
+
+<div class="trx-hero">
+  <div class="trx-hero-main">
+    <a href="{{ url_for('transporte_index') }}" class="trx-back"
+       title="Volver al Monitor de Transporte" aria-label="Volver a Transporte">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="trx-hero-ico"><i class="bi bi-box-seam"></i></div>
+    <div style="min-width:0">
+      <h1>Trazabilidad por producto</h1>
+      <div class="trx-hero-sub">
+        Busca un <strong>SKU</strong> y mira cuántas veces se ha despachado,
+        con documentos, clientes, cantidades y estado de entrega.
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ────────────────────────────────────────────────────────────────
+   Estilos propios de esta página. Lo genérico (hero, tarjetas, KPIs,
+   tabla, chips) vive en ilus_transporte.css / transporte_manifiesto_detalle.css
+   y NO se redefine acá.
+   ──────────────────────────────────────────────────────────────── */
+
+/* Buscador con typeahead (mismo lenguaje visual que el buscador ERP de
+   Mantenciones: input + dropdown flotante .ac-item) */
+.pr-search-wrap { position:relative; max-width:640px; }
+.pr-search-input { font-size:16px; min-height:48px; border-radius:10px; padding-left:42px; }
+.pr-search-ico {
+  position:absolute; left:14px; top:50%; transform:translateY(-50%);
+  color:var(--trx-muted); pointer-events:none;
+}
+.pr-drop {
+  display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:40;
+  background:#fff; border:1.5px solid var(--trx-g2); border-radius:12px;
+  box-shadow:var(--trx-sh-md); max-height:340px; overflow-y:auto; padding:6px;
+}
+.pr-item {
+  padding:9px 12px; border-radius:8px; cursor:pointer; display:flex;
+  align-items:baseline; gap:8px; min-width:0;
+}
+.pr-item:hover, .pr-item.active { background:var(--trx-g1); }
+.pr-item-sku { font-family:'Courier New',monospace; font-weight:800; color:var(--trx-red); font-size:.86rem; flex-shrink:0; }
+.pr-item-nombre { font-size:.86rem; color:var(--trx-ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pr-drop-msg { padding:14px; text-align:center; color:var(--trx-muted); font-size:.84rem; }
+
+/* Filtros de fecha, en línea con el buscador */
+.pr-filtros { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-top:14px; }
+.pr-filtros label { font-size:.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--trx-muted); margin-bottom:4px; display:block; }
+.pr-filtros .form-control { font-size:16px; min-height:44px; border-radius:8px; }
+
+/* Estado vacío inicial (antes de buscar) */
+.pr-intro { text-align:center; padding:56px 22px; color:var(--trx-muted); }
+.pr-intro i { font-size:2.6rem; color:var(--trx-g3); margin-bottom:10px; display:block; }
+
+/* Ficha SKU seleccionado */
+.pr-sku-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
+.pr-sku-badge { font-family:'Courier New',monospace; font-weight:900; font-size:1.15rem; color:var(--trx-black); background:var(--trx-g1); border-radius:8px; padding:4px 12px; }
+.pr-sku-nombre { font-size:.92rem; color:var(--trx-ink-3); font-weight:600; }
+.pr-rango { font-size:.78rem; color:var(--trx-muted); }
+
+/* Stock ERP */
+.pr-stock-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:4px; margin-bottom:16px; }
+.pr-stock-chip {
+  flex:1 1 130px; background:#f8fafc; border:1px solid var(--trx-g2); border-radius:11px;
+  padding:8px 12px; display:flex; flex-direction:column; gap:2px;
+}
+.pr-stock-k { font-size:.62rem; font-weight:800; text-transform:uppercase; letter-spacing:.3px; color:var(--trx-muted); }
+.pr-stock-v { font-size:1.05rem; font-weight:900; color:var(--trx-black); }
+.pr-stock-chip.bad .pr-stock-v { color:var(--trx-danger); }
+.pr-stock-chip.ok .pr-stock-v { color:var(--trx-ok); }
+
+/* Badge simple de estado de entrega (sin el editor completo del manifiesto —
+   acá es solo lectura, Fase 1) */
+.pr-entrega { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:50px; font-size:.72rem; font-weight:800; white-space:nowrap; background:var(--trx-g1); color:var(--trx-muted); }
+.pr-entrega.ok    { background:var(--trx-ok-bg);     color:#166534; }
+.pr-entrega.bad   { background:var(--trx-danger-bg); color:#991b1b; }
+.pr-entrega.ruta  { background:var(--trx-info-bg);   color:#1e40af; }
+.pr-entrega.prev  { background:var(--trx-warn-bg);   color:#92400e; }
+
+.pr-doc-link { font-weight:700; color:var(--trx-black); text-decoration:none; }
+.pr-doc-link:hover { color:var(--trx-red); text-decoration:underline; }
+.pr-doc-sin { color:var(--trx-muted-2); font-size:.82rem; }
+
+.pr-preventa-tag { display:inline-flex; align-items:center; gap:4px; font-size:.68rem; font-weight:800; color:#92400e; background:var(--trx-warn-bg); border:1px solid var(--trx-warn-bd); border-radius:50px; padding:2px 8px; margin-left:6px; }
+
+.pr-loading { text-align:center; padding:40px 20px; color:var(--trx-muted); }
+</style>
+
+{# ═══ Buscador ═══ #}
+<section class="trx-card">
+  <div class="trx-card-head">
+    <div style="min-width:0">
+      <h2 class="trx-card-title"><i class="bi bi-search"></i>Buscar producto</h2>
+      <div class="trx-card-hint">Por SKU o nombre — mínimo 2 caracteres.</div>
+    </div>
+  </div>
+  <div class="trx-card-body">
+    <div class="pr-search-wrap">
+      <i class="bi bi-upc-scan pr-search-ico"></i>
+      <input type="text" id="prSearchInput" class="form-control pr-search-input"
+             placeholder="Ej: BAN-001 o Banco de pesas" autocomplete="off" autocorrect="off"
+             value="{{ sku_inicial or '' }}">
+      <div class="pr-drop" id="prDrop"></div>
+    </div>
+    <div class="pr-filtros">
+      <div>
+        <label>Desde</label>
+        <input type="date" id="prDesde" class="form-control">
+      </div>
+      <div>
+        <label>Hasta</label>
+        <input type="date" id="prHasta" class="form-control">
+      </div>
+      <div>
+        <button type="button" class="btn btn-ilus fw-bold" id="prBtnFiltrar" style="min-height:44px" disabled>
+          <i class="bi bi-funnel-fill me-1"></i>Aplicar rango
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+{# ═══ Resultado ═══ #}
+<div id="prResultado">
+  <section class="trx-card">
+    <div class="trx-card-body">
+      <div class="pr-intro" id="prIntro">
+        <i class="bi bi-box-seam"></i>
+        Busca un producto arriba para ver su trazabilidad de despachos.
+      </div>
+    </div>
+  </section>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.__PR_SKU_INICIAL = {{ sku_inicial|tojson }};
+</script>
+<script src="{{ url_for('static', filename='transporte_producto.js') }}" defer></script>
+{% endblock %}
