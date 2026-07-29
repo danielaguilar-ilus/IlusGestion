@@ -1,21 +1,47 @@
 {% extends "base.html" %}
 {% block title %}Couriers — ILUS Transporte{% endblock %}
 
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <style>
-/* ═══ TARJETA COURIER — diseño premium estilo Linear/Stripe ═══════════ */
+/* ═══ TARJETA COURIER — diseño premium estilo Linear/Stripe ═══════════
+   Colores y bordes alineados al DS de transporte (ilus_transporte.css):
+   rojo de marca = var(--trx-red) #dc2626, borde estándar 1.5px.       */
 .cr-card{
   background:#fff;
-  border:1px solid #e8e8e8; border-radius:14px;
+  border:1.5px solid var(--trx-g2, #e5e7eb); border-radius:14px;
   overflow:hidden;
   transition:border-color .15s, box-shadow .2s, transform .12s;
-  box-shadow:0 1px 2px rgba(0,0,0,.03);
+  box-shadow:var(--trx-sh-sm, 0 1px 2px rgba(0,0,0,.03));
   position:relative;
 }
 .cr-card:hover{
-  border-color:#CC0000;
-  box-shadow:0 12px 30px -14px rgba(204,0,0,.30), 0 4px 10px -4px rgba(0,0,0,.08);
+  border-color:var(--trx-red, #dc2626);
+  box-shadow:0 12px 30px -14px rgba(220,38,38,.30), 0 4px 10px -4px rgba(0,0,0,.08);
   transform:translateY(-3px);
+}
+
+/* Botón secundario del encabezado: el DS define sólo el primario
+   (.trx-btn-primary), así que este acompaña con el mismo lenguaje que
+   .trx-back (blanco → negro en hover) sin redefinir nombres del DS. */
+.cr-hero-alt{
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  min-height:44px; padding:11px 16px;
+  border-radius:var(--trx-r-sm, 10px);
+  background:#fff; border:1.5px solid var(--trx-g2, #e5e7eb);
+  color:var(--trx-black, #0a0a0a); font-size:.9rem; font-weight:800;
+  cursor:pointer; text-decoration:none;
+  transition:background .15s, color .15s, border-color .15s;
+}
+.cr-hero-alt:hover{ background:var(--trx-black,#0a0a0a); border-color:var(--trx-black,#0a0a0a); color:#fff; }
+/* En móvil el DS estira las acciones del hero: el dropdown debe estirarse
+   con ellas para que su botón no quede flotando a la izquierda. */
+@media (max-width: 767px){
+  .trx-hero-actions .dropdown{ display:flex; }
+  .trx-hero-actions .cr-hero-alt{ width:100%; }
 }
 .cr-card.cr-inactive{ opacity:.6; }
 .cr-card-link{
@@ -51,7 +77,7 @@
   width:72px; height:72px; margin:0 auto .75rem;
   border-radius:14px;
   background:linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
-  color:#CC0000; font-weight:900; font-size:1.5rem;
+  color:var(--trx-red, #dc2626); font-weight:900; font-size:1.5rem;
   display:flex; align-items:center; justify-content:center;
   box-shadow:0 4px 12px rgba(0,0,0,.15);
   letter-spacing:.5px;
@@ -118,10 +144,10 @@
 .cr-btn:last-child{ border-right:none; }
 .cr-btn i{ font-size:1.1rem; color:#9ca3af; transition:color .12s; }
 .cr-btn:hover{ background:#fff; color:#0a0a0a; }
-.cr-btn:hover i{ color:#CC0000; }
+.cr-btn:hover i{ color:var(--trx-red, #dc2626); }
 .cr-btn.cr-btn-primary{ background:#0a0a0a; color:#fff; }
-.cr-btn.cr-btn-primary i{ color:#CC0000; }
-.cr-btn.cr-btn-primary:hover{ background:#CC0000; color:#fff; }
+.cr-btn.cr-btn-primary i{ color:var(--trx-red, #dc2626); }
+.cr-btn.cr-btn-primary:hover{ background:var(--trx-red, #dc2626); color:#fff; }
 .cr-btn.cr-btn-primary:hover i{ color:#fff; }
 .cr-btn.cr-btn-danger{
   border-right:none; flex:0 0 54px; padding:.7rem .8rem;
@@ -131,19 +157,30 @@
 </style>
 <div class="container-fluid py-3 px-3 px-md-4">
 
-  {# ── HEADER NEGRO ESTANDARIZADO ── #}
-  <div class="mod-hero">
-    <div>
-      <h4><i class="bi bi-building me-2"></i>Couriers</h4>
-      <div class="mod-sub">Gestión de empresas de transporte y tarifas por comuna</div>
+  {# ── HEADER ESTANDARIZADO (DS transporte: .trx-hero) ── #}
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('transporte_index') }}"
+         title="Volver a Transporte" aria-label="Volver a Transporte">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="trx-hero-ico"><i class="bi bi-building"></i></div>
+      <div>
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span><span>Couriers</span>
+        </div>
+        <h1>Couriers</h1>
+        <div class="trx-hero-sub">Gestión de empresas de transporte y tarifas por comuna</div>
+      </div>
     </div>
-    <div class="d-flex gap-2 flex-wrap">
-      <button class="btn btn-ilus btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#modalNuevo">
-        <i class="bi bi-plus-lg me-1"></i>Nuevo courier
+    <div class="trx-hero-actions">
+      <button class="trx-btn-primary" data-bs-toggle="modal" data-bs-target="#modalNuevo">
+        <i class="bi bi-plus-lg"></i>Nuevo courier
       </button>
       {# Menú discreto de acciones avanzadas (importar tarifas / exportar) #}
       <div class="dropdown">
-        <button class="btn btn-outline-light btn-sm dropdown-toggle"
+        <button class="cr-hero-alt dropdown-toggle"
                 type="button" data-bs-toggle="dropdown" aria-expanded="false"
                 title="Más acciones">
           <i class="bi bi-three-dots"></i>
@@ -158,7 +195,7 @@
           </li>
           <li>
             <a class="dropdown-item" href="/transporte/couriers/export">
-              <i class="bi bi-download me-2"></i>Exportar tarifas
+              <i class="bi bi-file-earmark-excel me-2 text-success"></i>Exportar tarifas
             </a>
           </li>
           {% if g.permissions and g.permissions.get('superadmin') %}
@@ -172,7 +209,7 @@
           <li><hr class="dropdown-divider"></li>
           <li>
             <button class="dropdown-item" type="button" onclick="cargarLogos()">
-              <i class="bi bi-image me-2 text-primary"></i>Cargar logos oficiales
+              <i class="bi bi-image me-2" style="color:var(--trx-info,#3b82f6)"></i>Cargar logos oficiales
             </button>
           </li>
         </ul>
@@ -287,10 +324,18 @@
     </div>
     {% else %}
     <div class="col-12">
-      <div class="alert alert-secondary text-center py-5">
-        <i class="bi bi-building display-4 d-block mb-3 opacity-25"></i>
-        <div class="fw-semibold mb-1">No hay couriers registrados</div>
-        <div class="text-muted small">Agrega un courier con el botón "Nuevo courier".</div>
+      <div class="trx-card">
+        <div class="trx-empty">
+          <div class="trx-empty-ico"><i class="bi bi-building"></i></div>
+          <div class="trx-empty-t">Todavía no hay couriers registrados</div>
+          <div class="trx-empty-d">
+            Un courier es la empresa que traslada la carga (Felca, Milling, Clickex, FedEx…).
+            Crea el primero para poder cargarle sus tarifas por comuna y usarlo en manifiestos.
+          </div>
+          <button class="trx-btn-primary" data-bs-toggle="modal" data-bs-target="#modalNuevo">
+            <i class="bi bi-plus-lg"></i>Nuevo courier
+          </button>
+        </div>
       </div>
     </div>
     {% endfor %}
@@ -318,7 +363,7 @@
         <div id="dropZone"
              class="border border-secondary rounded text-center p-5"
              style="cursor:pointer;transition:border-color .2s,background .2s;"
-             ondragover="event.preventDefault();this.style.borderColor='#CC0000';this.style.background='rgba(204,0,0,.08)'"
+             ondragover="event.preventDefault();this.style.borderColor='#dc2626';this.style.background='rgba(220,38,38,.08)'"
              ondragleave="this.style.borderColor='';this.style.background=''"
              ondrop="onDrop(event)">
           <i class="bi bi-file-earmark-excel display-4 text-success d-block mb-2"></i>
@@ -523,7 +568,7 @@ function mostrarResultadosImport(d) {
     return `<tr>
       <td><strong>${esc(r.sheet)}</strong></td>
       <td>${esc(r.courier)}</td>
-      <td><span class="badge bg-success">${r.inserted} comunas</span></td>
+      <td><span class="trx-chip trx-chip-ok">${r.inserted} comunas</span></td>
     </tr>`;
   }).join('');
   el.innerHTML = `
@@ -657,13 +702,13 @@ async function guardarCourier() {
     notas         : gval('e_notas'),
     activo        : document.getElementById('e_activo')?.checked,
   };
-  if (!body.nombre) { alert('El nombre es obligatorio'); return; }
+  if (!body.nombre) { ilusToast('El nombre del courier es obligatorio', { type: 'warning' }); return; }
   const r = await fetch(`/transporte/couriers/${_editarId}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   });
   if (r.ok) { _modalEditar.hide(); location.reload(); }
-  else alert('Error al guardar');
+  else ilusToast('No se pudieron guardar los cambios', { type: 'error' });
 }
 
 /* ════════════════════════════════

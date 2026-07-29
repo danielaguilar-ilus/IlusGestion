@@ -1,398 +1,506 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — ILUS{% endblock %}
+
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 
-<div class="page-header">
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-    <div>
-      <h4><i class="bi bi-speedometer2 me-2"></i>Dashboard — Hoy
-        <span class="badge bg-danger ms-2" style="animation:pulse 2s infinite">EN VIVO</span>
-      </h4>
-      <div class="sub">Resumen del día. Auto-refresca cada 30s.</div>
+{# ══════════════════════════════════════════════════════════════════
+   ENCABEZADO — migrado a .trx-hero del design system de Transporte.
+   El título describe la PÁGINA COMPLETA (antes decía solo "Hoy",
+   pero la página además contiene el historial + KPI por periodo).
+   Cada mitad se explica dentro de su propia .trx-card más abajo.
+══════════════════════════════════════════════════════════════════ #}
+<div class="trx-crumb">
+  <a href="{{ url_for('transporte_index') }}">Transporte</a>
+  <span class="sep">/</span>
+  <span>Dashboard</span>
+</div>
+
+<div class="trx-hero">
+  <div class="trx-hero-main">
+    <a href="{{ url_for('transporte_index') }}" class="trx-back"
+       title="Volver al Monitor de Transporte" aria-label="Volver a Transporte">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="trx-hero-ico"><i class="bi bi-speedometer2"></i></div>
+    <div style="min-width:0">
+      <h1>Dashboard de Transporte</h1>
+      <div class="trx-hero-sub">
+        <strong>Resumen de hoy</strong> en vivo + <strong>historial y KPI</strong> por periodo.
+      </div>
     </div>
-    <div class="d-flex gap-2">
-      <a href="{{ url_for('tr_monitor_live') }}" class="btn btn-sm btn-outline-light">
-        <i class="bi bi-broadcast me-1"></i>Monitor en vivo
-      </a>
-      <a href="{{ url_for('tr_buscar_interno') }}" class="btn btn-sm btn-outline-light">
-        <i class="bi bi-search me-1"></i>Buscar despacho
-      </a>
-    </div>
+  </div>
+  <div class="trx-hero-actions">
+    <a href="{{ url_for('tr_monitor_live') }}" class="btn btn-sm btn-outline-dark fw-bold">
+      <i class="bi bi-broadcast me-1"></i>Monitor en vivo
+    </a>
+    <a href="{{ url_for('tr_buscar_interno') }}" class="btn btn-sm btn-outline-dark fw-bold">
+      <i class="bi bi-search me-1"></i>Buscar despacho
+    </a>
   </div>
 </div>
 
 <style>
-@keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.5 } }
-.dh-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:18px; }
-@media(max-width:900px){ .dh-grid{ grid-template-columns:repeat(2,1fr); } }
-@media(max-width:520px){ .dh-grid{ grid-template-columns:1fr; } }
-.dh-stat{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:1.2rem 1.3rem; position:relative; overflow:hidden;
-  box-shadow:0 1px 3px rgba(0,0,0,.04); transition:transform .15s; }
-.dh-stat:hover{ transform:translateY(-2px); }
-.dh-stat::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; }
-.dh-stat.ok::before{ background:#16a34a; } .dh-stat.warn::before{ background:#f59e0b; }
-.dh-stat.err::before{ background:#dc2626; } .dh-stat.live::before{ background:#dc2626; }
-.dh-stat.info::before{ background:#3b82f6; }
-.dh-lbl{ font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; display:flex; align-items:center; gap:.3rem; }
-.dh-num{ font-size:2.4rem; font-weight:900; line-height:1; margin-top:.4rem; color:#0a0a0a; }
-.dh-hint{ font-size:.74rem; color:#9ca3af; margin-top:.3rem; }
-.dh-stat.ok .dh-num{ color:#16a34a; } .dh-stat.warn .dh-num{ color:#f59e0b; }
-.dh-stat.err .dh-num{ color:#dc2626; } .dh-stat.live .dh-num{ color:#dc2626; }
-.dh-cta{ display:inline-block; margin-top:.6rem; font-size:.74rem; font-weight:700; color:#dc2626; text-decoration:none; }
+/* ────────────────────────────────────────────────────────────────
+   Estilos PROPIOS de esta página. Todo lo genérico (hero, tarjetas,
+   tabla, KPIs, estados vacíos, chips) vive en static/ilus_transporte.css
+   y NO se redefine acá — solo se usa.
+   ──────────────────────────────────────────────────────────────── */
+@keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.55 } }
+.dh-live{ animation:pulse 2s infinite; }
 
+/* Link de acción chico dentro de un KPI / estado vacío */
+.dh-cta{
+  display:inline-flex; align-items:center; gap:5px; margin-top:.55rem;
+  font-size:.76rem; font-weight:800; color:var(--trx-red); text-decoration:none;
+}
+.dh-cta:hover{ color:var(--trx-red-dk); text-decoration:underline; }
+
+/* KPI sin dato calculable en el periodo */
+.dh-kpi-empty{ font-size:1.05rem; font-style:italic; color:var(--trx-g3); }
+
+/* Dos paneles secundarios dentro de "Resumen de hoy" */
 .dh-row{ display:grid; grid-template-columns:1.4fr 1fr; gap:14px; }
 @media(max-width:1024px){ .dh-row{ grid-template-columns:1fr; } }
-.dh-card{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:1.1rem 1.2rem; box-shadow:0 1px 3px rgba(0,0,0,.04); }
-.dh-card-h{ font-size:.8rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#0f172a; margin-bottom:.85rem; display:flex; align-items:center; gap:.4rem; }
-.dh-card-h i{ color:#dc2626; }
-
-.dh-entrega{ display:flex; gap:.7rem; padding:.7rem .15rem; border-bottom:1px solid #f3f4f6; align-items:center; }
-.dh-entrega:last-child{ border-bottom:none; }
-.dh-entrega-foto{ width:48px; height:48px; border-radius:10px; object-fit:cover; flex-shrink:0; background:#f3f4f6; }
-.dh-entrega-empty{ width:48px; height:48px; border-radius:10px; background:#f3f4f6; display:flex; align-items:center; justify-content:center; color:#9ca3af; flex-shrink:0; }
-.dh-entrega-body{ flex:1; min-width:0; }
-.dh-entrega-cli{ font-weight:700; font-size:.88rem; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.dh-entrega-meta{ font-size:.74rem; color:#6b7280; }
-.dh-entrega-time{ font-size:.7rem; font-weight:700; color:#16a34a; }
-
-.dh-topcourier{ display:flex; justify-content:space-between; align-items:center; padding:.55rem 0; border-bottom:1px solid #f3f4f6; font-size:.88rem; }
-.dh-topcourier:last-child{ border-bottom:none; }
-.dh-topcourier-n{ font-weight:800; color:#0a0a0a; }
-.dh-topcourier-c{ flex:1; padding:0 .8rem; }
-.dh-topcourier-cnt{ background:#dcfce7; color:#15803d; padding:.2rem .6rem; border-radius:20px; font-size:.78rem; font-weight:700; }
-
-.dh-empty{ text-align:center; padding:1.8rem 1rem; color:#9ca3af; }
-.dh-empty i{ font-size:2rem; opacity:.5; display:block; margin-bottom:.4rem; }
-
-/* ── Historial de despachos + KPI operacional (fusionado 2026-07-25,
-   ex /transporte/historial) — mismas clases dh-* del dashboard para que no
-   se sienta una sección "pegada". ── */
-.dh-section-title{
-  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
-  margin:26px 0 12px;
+.dh-panel{ border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-sm); background:#fff; }
+.dh-panel-h{
+  font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--trx-black); padding:11px 14px; border-bottom:1.5px solid var(--trx-g2);
+  display:flex; align-items:center; gap:.4rem;
 }
-.dh-section-title h5{ margin:0; font-weight:800; font-size:1.05rem; color:#0a0a0a; }
-.dh-section-title h5 i{ color:#dc2626; margin-right:6px; }
-.dh-section-title .sub{ font-size:.78rem; color:#6b7280; }
+.dh-panel-h i{ color:var(--trx-red); }
+.dh-panel-b{ padding:4px 14px; }
 
+.dh-entrega{ display:flex; gap:.7rem; padding:.7rem .15rem; border-bottom:1px solid var(--trx-g1); align-items:center; }
+.dh-entrega:last-child{ border-bottom:none; }
+.dh-entrega-foto{ width:48px; height:48px; border-radius:10px; object-fit:cover; flex-shrink:0; background:var(--trx-g1); }
+.dh-entrega-empty{ width:48px; height:48px; border-radius:10px; background:var(--trx-g1); display:flex; align-items:center; justify-content:center; color:var(--trx-g3); flex-shrink:0; }
+.dh-entrega-body{ flex:1; min-width:0; }
+.dh-entrega-cli{ font-weight:700; font-size:.88rem; color:var(--trx-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dh-entrega-meta{ font-size:.74rem; color:var(--trx-muted); }
+.dh-entrega-time{ font-size:.7rem; font-weight:800; color:var(--trx-ok); }
+
+.dh-topcourier{ display:flex; justify-content:space-between; align-items:center; padding:.55rem 0; border-bottom:1px solid var(--trx-g1); font-size:.88rem; }
+.dh-topcourier:last-child{ border-bottom:none; }
+.dh-topcourier-n{ font-weight:800; color:var(--trx-black); }
+.dh-topcourier-c{ flex:1; padding:0 .8rem; }
+.dh-topcourier-cnt{ background:var(--trx-ok-bg); color:#15803d; border:1px solid var(--trx-ok-bd); padding:.2rem .6rem; border-radius:20px; font-size:.78rem; font-weight:800; }
+
+/* Nota metodológica del bloque de KPI */
+.dh-note{
+  font-size:.74rem; color:var(--trx-ink-3); line-height:1.55;
+  background:var(--trx-info-bg); border:1px solid #bfdbfe;
+  border-radius:var(--trx-r-sm); padding:10px 12px; margin-bottom:14px;
+}
+.dh-note i{ color:#1e40af; }
+
+/* Filtros del historial */
 .dh-chip-periodo{ display:inline-flex; gap:6px; flex-wrap:wrap; }
 .dh-chip-periodo a{
-  font-size:.76rem; font-weight:700; padding:6px 12px; border-radius:50px;
-  border:1px solid #e5e7eb; color:#374151; text-decoration:none;
-  min-height:32px; display:inline-flex; align-items:center;
+  font-size:.76rem; font-weight:800; padding:6px 12px; border-radius:50px;
+  border:1.5px solid var(--trx-g2); color:var(--trx-ink-3); text-decoration:none;
+  min-height:32px; display:inline-flex; align-items:center; background:#fff;
 }
-.dh-chip-periodo a.active{ background:#dc2626; color:#fff; border-color:#dc2626; }
+.dh-chip-periodo a:hover{ border-color:var(--trx-border-h); background:var(--trx-g1); }
+.dh-chip-periodo a.active{ background:var(--trx-red); color:#fff; border-color:var(--trx-red); }
 
-.dh-kpi-sub{ font-size:.72rem; color:#9ca3af; margin-top:.25rem; }
-.dh-kpi-empty{ color:#9ca3af; font-style:italic; font-size:1.3rem; }
-
-.dh-filters{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px 16px; margin-bottom:14px; }
+.dh-filters{ background:#fff; border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-sm); padding:14px 16px; margin-bottom:14px; }
 .dh-filters form{ display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); align-items:end; }
-.dh-filters label{ font-size:.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#6b7280; margin-bottom:4px; display:block; }
+.dh-filters label{ font-size:.66rem; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--trx-muted); margin-bottom:4px; display:block; }
 .dh-filters .form-control, .dh-filters .form-select{ font-size:16px; min-height:44px; border-radius:8px; }
-.dh-filters-actions{ grid-column:1/-1; display:flex; gap:8px; flex-wrap:wrap; padding-top:6px; border-top:1px solid #f3f4f6; margin-top:2px; }
+.dh-filters-actions{ grid-column:1/-1; display:flex; gap:8px; flex-wrap:wrap; padding-top:6px; border-top:1.5px solid var(--trx-g2); margin-top:2px; }
 
-.dh-table-wrap{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; overflow:hidden; }
-.dh-table-head{ padding:14px 18px; border-bottom:1px solid #f3f4f6; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
-.dh-table-head h6{ margin:0; font-weight:800; font-size:.92rem; color:#0f172a; }
-.dh-table-head .htot{ font-size:.78rem; color:#6b7280; }
+/* Cabecera de la tabla de compromisos */
+.dh-subhead{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin:0 0 10px; }
+.dh-subhead h3{ margin:0; font-weight:800; font-size:.92rem; color:var(--trx-black); display:flex; align-items:center; gap:.4rem; }
+.dh-subhead h3 i{ color:var(--trx-red); }
+.dh-subhead .htot{ font-size:.78rem; color:var(--trx-muted); font-weight:700; }
+
+/* La tabla necesita scroll horizontal propio DENTRO del .trx-table-wrap
+   (el wrap recorta las esquinas; este div hace el scroll). */
 .dh-scroll{ overflow-x:auto; }
-.dh-table{ width:100%; border-collapse:collapse; font-size:.84rem; min-width:820px; }
-.dh-table thead th{ background:#fafafa; font-size:.64rem; font-weight:800; text-transform:uppercase; color:#6b7280; letter-spacing:.05em; padding:9px 12px; border-bottom:2px solid #e5e7eb; text-align:left; white-space:nowrap; }
-.dh-table tbody td{ padding:10px 12px; border-bottom:1px solid #f3f4f6; vertical-align:middle; }
-.dh-table tbody tr:hover{ background:#fafafa; }
-.dh-table tbody tr:last-child td{ border-bottom:none; }
+.dh-scroll table{ min-width:880px; }
+
 .dh-badge-estado{ display:inline-block; padding:3px 10px; border-radius:50px; font-size:.7rem; font-weight:800; white-space:nowrap; color:#fff; }
 .dh-badge-estado.bg-warning,.dh-badge-estado.bg-info,.dh-badge-estado.bg-light{ color:#0f172a; }
-.dh-badge-entrega{ display:inline-block; padding:2px 9px; border-radius:50px; font-size:.66rem; font-weight:700; white-space:nowrap; background:#f3f4f6; color:#6b7280; }
-.dh-badge-entrega.ok{ background:#dcfce7; color:#166534; }
-.dh-badge-entrega.bad{ background:#fee2e2; color:#991b1b; }
-.dh-badge-entrega.ruta{ background:#dbeafe; color:#1e40af; }
-.dh-row-actions a{ font-size:.72rem; font-weight:700; text-decoration:none; padding:5px 10px; border-radius:7px; border:1px solid #e5e7eb; color:#374151; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
-.dh-row-actions a:hover{ background:#f3f4f6; }
+.dh-badge-entrega{ display:inline-block; padding:2px 9px; border-radius:50px; font-size:.66rem; font-weight:700; white-space:nowrap; background:var(--trx-g1); color:var(--trx-muted); }
+.dh-badge-entrega.ok{ background:var(--trx-ok-bg); color:#166534; }
+.dh-badge-entrega.bad{ background:var(--trx-danger-bg); color:#991b1b; }
+.dh-badge-entrega.ruta{ background:var(--trx-info-bg); color:#1e40af; }
 .dh-row-actions{ display:flex; gap:6px; flex-wrap:wrap; }
+.dh-row-actions a{ font-size:.72rem; font-weight:700; text-decoration:none; padding:5px 10px; border-radius:7px; border:1.5px solid var(--trx-g2); color:var(--trx-ink-3); display:inline-flex; align-items:center; gap:4px; white-space:nowrap; background:#fff; }
+.dh-row-actions a:hover{ background:var(--trx-black); color:#fff; border-color:var(--trx-black); }
 
-.dh-pager{ display:flex; align-items:center; justify-content:center; gap:10px; padding:14px 18px; border-top:1px solid #f3f4f6; }
-.dh-pager a, .dh-pager span{ font-size:.8rem; font-weight:700; padding:6px 12px; border-radius:8px; border:1px solid #e5e7eb; text-decoration:none; color:#374151; min-height:36px; display:inline-flex; align-items:center; }
-.dh-pager a:hover{ background:#f3f4f6; }
-.dh-pager .cur{ background:#0a0a0a; color:#fff; border-color:#0a0a0a; }
-
-@media (max-width:575px){ .dh-section-title h5{ font-size:.95rem; } }
+.dh-pager{ display:flex; align-items:center; justify-content:center; gap:10px; padding:14px 18px; }
+.dh-pager a, .dh-pager span{ font-size:.8rem; font-weight:700; padding:6px 12px; border-radius:8px; border:1.5px solid var(--trx-g2); text-decoration:none; color:var(--trx-ink-3); min-height:36px; display:inline-flex; align-items:center; background:#fff; }
+.dh-pager a:hover{ background:var(--trx-g1); }
+.dh-pager .cur{ background:var(--trx-black); color:#fff; border-color:var(--trx-black); }
 </style>
 
-{# ── Stats principales ── #}
-<div class="dh-grid">
-  <div class="dh-stat ok">
-    <div class="dh-lbl"><i class="bi bi-check-circle-fill"></i>Entregados hoy</div>
-    <div class="dh-num">{{ stats.entregados_hoy or 0 }}</div>
-    <div class="dh-hint">Despachos completados</div>
-  </div>
-  <div class="dh-stat info">
-    <div class="dh-lbl"><i class="bi bi-truck"></i>En ruta ahora</div>
-    <div class="dh-num">{{ stats.en_ruta_hoy or 0 }}</div>
-    <div class="dh-hint">Despachos en camino</div>
-  </div>
-  <div class="dh-stat live">
-    <div class="dh-lbl"><i class="bi bi-broadcast"></i>Choferes activos</div>
-    <div class="dh-num">{{ stats.choferes_activos or 0 }}</div>
-    <a href="{{ url_for('tr_monitor_live') }}" class="dh-cta">Ver monitor en vivo &rarr;</a>
-  </div>
-  <div class="dh-stat {{ 'warn' if (stats.sin_ot_fedex or 0) > 0 else 'ok' }}">
-    <div class="dh-lbl"><i class="bi bi-exclamation-triangle"></i>Sin OT FedEx</div>
-    <div class="dh-num">{{ stats.sin_ot_fedex or 0 }}</div>
-    <div class="dh-hint">{% if (stats.sin_ot_fedex or 0) > 0 %}Facturas FedEx sin tracking{% else %}Todo en orden{% endif %}</div>
-  </div>
-</div>
-
-<div class="dh-grid" style="grid-template-columns:repeat(3,1fr)">
-  <div class="dh-stat">
-    <div class="dh-lbl"><i class="bi bi-clipboard-check"></i>Manifiestos hoy</div>
-    <div class="dh-num" style="font-size:1.6rem">{{ stats.manifiestos_hoy or 0 }}</div>
-  </div>
-  <div class="dh-stat err">
-    <div class="dh-lbl"><i class="bi bi-x-octagon"></i>Fallidos hoy</div>
-    <div class="dh-num" style="font-size:1.6rem">{{ stats.fallidos_hoy or 0 }}</div>
-  </div>
-  <div class="dh-stat info">
-    <div class="dh-lbl"><i class="bi bi-graph-up"></i>Tasa éxito</div>
-    {% set total_int = (stats.entregados_hoy or 0) + (stats.fallidos_hoy or 0) %}
-    {% set tasa = ((stats.entregados_hoy or 0) / total_int * 100) if total_int > 0 else 0 %}
-    <div class="dh-num" style="font-size:1.6rem">{{ "%.0f"|format(tasa) }}%</div>
-  </div>
-</div>
-
-{# ── Últimas entregas + top couriers ── #}
-<div class="dh-row">
-  <div class="dh-card">
-    <div class="dh-card-h"><i class="bi bi-shield-check"></i>Últimas entregas</div>
-    {% if ultimas %}
-      {% for u in ultimas %}
-      <a class="dh-entrega" href="{{ url_for('tr_buscar_interno') }}?q={{ u.nudo }}" style="text-decoration:none;color:inherit">
-        {% if u.foto_thumb %}
-        <img class="dh-entrega-foto" src="{{ u.foto_thumb }}" alt="Entrega">
-        {% else %}
-        <div class="dh-entrega-empty"><i class="bi bi-box"></i></div>
-        {% endif %}
-        <div class="dh-entrega-body">
-          <div class="dh-entrega-cli">{{ u.cliente_nombre or '—' }}</div>
-          <div class="dh-entrega-meta">{{ u.tido }} {{ u.nudo }}{% if u.comuna %} · {{ u.comuna }}{% endif %}{% if u.receptor_nombre %} · recibió {{ u.receptor_nombre.split()[0] }}{% endif %}</div>
-        </div>
-        <div class="dh-entrega-time">{{ u.entregado_at | chile_fmt('%H:%M') }}</div>
-      </a>
-      {% endfor %}
-    {% else %}
-      <div class="dh-empty"><i class="bi bi-inbox"></i>Aún sin entregas registradas hoy.</div>
-    {% endif %}
-  </div>
-
-  <div class="dh-card">
-    <div class="dh-card-h"><i class="bi bi-trophy"></i>Top transportes hoy</div>
-    {% if top_couriers %}
-      {% for tc in top_couriers %}
-      <div class="dh-topcourier">
-        <span class="dh-topcourier-n">{{ loop.index }}.</span>
-        <span class="dh-topcourier-c">{{ tc.courier }}</span>
-        <span class="dh-topcourier-cnt">{{ tc.entregas }}</span>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="dh-empty"><i class="bi bi-graph-up"></i>Sin datos del día.</div>
-    {% endif %}
-  </div>
-</div>
 
 {# ══════════════════════════════════════════════════════════════════
-   HISTORIAL DE DESPACHOS + KPI OPERACIONAL
-   Fusionado 2026-07-25 (antes era /transporte/historial, página aparte).
-   Mismo estilo dh-* del resto del dashboard.
+   SECCIÓN 1 — RESUMEN DE HOY (en vivo)
 ══════════════════════════════════════════════════════════════════ #}
-<div class="dh-section-title">
-  <h5><i class="bi bi-clock-history"></i>Historial de despachos + KPI operacional</h5>
-  <div class="sub">Periodo seleccionado — no afecta las stats de HOY de más arriba</div>
-</div>
-
-<div class="dh-grid" style="grid-template-columns:repeat(4,1fr)">
-  <div class="dh-stat info">
-    <div class="dh-lbl"><i class="bi bi-box-seam"></i>Fill rate por línea</div>
-    {% if kpis.fill_rate.valor is not none %}
-      <div class="dh-num" style="font-size:1.7rem">{{ "%.1f"|format(kpis.fill_rate.valor) }}%</div>
-    {% else %}
-      <div class="dh-num dh-kpi-empty">Sin dato</div>
-    {% endif %}
-    <div class="dh-kpi-sub">{{ kpis.fill_rate.sub }}</div>
-  </div>
-  <div class="dh-stat ok">
-    <div class="dh-lbl"><i class="bi bi-check-circle"></i>Entrega exitosa</div>
-    {% if kpis.tasa_entrega.valor is not none %}
-      <div class="dh-num" style="font-size:1.7rem">{{ "%.1f"|format(kpis.tasa_entrega.valor) }}%</div>
-    {% else %}
-      <div class="dh-num dh-kpi-empty">Sin dato</div>
-    {% endif %}
-    <div class="dh-kpi-sub">{{ kpis.tasa_entrega.sub }}</div>
-  </div>
-  <div class="dh-stat err">
-    <div class="dh-lbl"><i class="bi bi-exclamation-octagon"></i>Tasa de incidencias</div>
-    {% if kpis.tasa_incidencias.valor is not none %}
-      <div class="dh-num" style="font-size:1.7rem">{{ "%.1f"|format(kpis.tasa_incidencias.valor) }}%</div>
-    {% else %}
-      <div class="dh-num dh-kpi-empty">Sin dato</div>
-    {% endif %}
-    <div class="dh-kpi-sub">{{ kpis.tasa_incidencias.sub }}</div>
-  </div>
-  <div class="dh-stat warn">
-    <div class="dh-lbl"><i class="bi bi-stopwatch"></i>Lead time promedio</div>
-    {% if kpis.lead_time.dias is not none %}
-      <div class="dh-num" style="font-size:1.7rem">{{ "%.1f"|format(kpis.lead_time.dias) }}<small style="font-size:.9rem">d</small></div>
-    {% else %}
-      <div class="dh-num dh-kpi-empty">Sin dato</div>
-    {% endif %}
-    <div class="dh-kpi-sub">{{ kpis.lead_time.sub }}</div>
-  </div>
-</div>
-<div class="text-muted small mb-3" style="font-size:.72rem;">
-  <i class="bi bi-info-circle me-1"></i>
-  Lead time = días entre emisión del documento y la primera confirmación de entrega.
-  No incluye OTIF "a tiempo" ni SLA por courier: ninguno de los dos tiene hoy una
-  fecha-compromiso ni un umbral de negocio confiablemente poblado — se deja fuera
-  a propósito, no es un dato perdido.
-</div>
-
-<div class="dh-filters">
-  <div class="dh-chip-periodo mb-2">
-    <a href="{{ url_for('tr_dashboard_hoy', periodo='mes') }}" class="{{ 'active' if hist_filtros.periodo=='mes' or not hist_filtros.periodo else '' }}">Último mes</a>
-    <a href="{{ url_for('tr_dashboard_hoy', periodo='3m') }}" class="{{ 'active' if hist_filtros.periodo=='3m' else '' }}">Últimos 3 meses</a>
-    <a href="{{ url_for('tr_dashboard_hoy', periodo='año') }}" class="{{ 'active' if hist_filtros.periodo=='año' else '' }}">Este año</a>
-    <a href="{{ url_for('tr_dashboard_hoy', periodo='todo') }}" class="{{ 'active' if hist_filtros.periodo=='todo' else '' }}">Todo</a>
-  </div>
-  <form method="get" action="{{ url_for('tr_dashboard_hoy') }}">
-    <div>
-      <label>Desde</label>
-      <input type="date" name="desde" class="form-control" value="{{ hist_filtros.desde }}">
+<section class="trx-card" id="resumen-hoy">
+  <div class="trx-card-head">
+    <div style="min-width:0">
+      <h2 class="trx-card-title"><i class="bi bi-sun"></i>Resumen de hoy</h2>
+      <div class="trx-card-hint">
+        Solo el día en curso (hora de Chile). Se actualiza solo cada 30 s, salvo que
+        estés filtrando el historial de más abajo.
+      </div>
     </div>
-    <div>
-      <label>Hasta</label>
-      <input type="date" name="hasta" class="form-control" value="{{ hist_filtros.hasta }}">
-    </div>
-    <div>
-      <label>Estado</label>
-      <select name="estado" class="form-select">
-        <option value="">Todos</option>
-        {% for e in estados %}
-        <option value="{{ e }}" {{ 'selected' if hist_filtros.estado==e else '' }}>{{ e }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div>
-      <label>Courier</label>
-      <select name="courier" class="form-select">
-        <option value="">Todos</option>
-        {% for c in couriers %}
-        <option value="{{ c }}" {{ 'selected' if hist_filtros.courier==c else '' }}>{{ c }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div>
-      <label>Comuna</label>
-      <input type="text" name="comuna" class="form-control" placeholder="Ej: Providencia" value="{{ hist_filtros.comuna }}">
-    </div>
-    <div>
-      <label>Buscar (documento o cliente)</label>
-      <input type="text" name="q" class="form-control" placeholder="N° doc o nombre" value="{{ hist_filtros.q }}">
-    </div>
-    <div class="dh-filters-actions">
-      <button type="submit" class="btn btn-ilus fw-bold" style="min-height:44px;">
-        <i class="bi bi-funnel-fill me-1"></i>Filtrar
-      </button>
-      <a href="{{ url_for('tr_dashboard_hoy') }}" class="btn btn-outline-secondary" style="min-height:44px;">
-        <i class="bi bi-x-lg me-1"></i>Limpiar
-      </a>
-    </div>
-  </form>
-</div>
-
-<div class="dh-table-wrap mb-4">
-  <div class="dh-table-head">
-    <h6><i class="bi bi-list-ul me-1" style="color:#dc2626"></i>Compromisos de despacho</h6>
-    <div class="htot">{{ hist_total }} resultado{{ 's' if hist_total != 1 else '' }}</div>
+    <span class="trx-chip trx-chip-dang dh-live"><i class="bi bi-broadcast"></i>EN VIVO</span>
   </div>
 
-  {% if compromisos %}
-  <div class="dh-scroll">
-    <table class="dh-table">
-      <thead>
-        <tr>
-          <th>Documento</th>
-          <th>Cliente</th>
-          <th>Comuna</th>
-          <th>Courier</th>
-          <th>Estado</th>
-          <th>Entrega</th>
-          <th>Fecha emisión</th>
-          <th>Entregado</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for c in compromisos %}
-        <tr>
-          <td style="font-weight:700;color:#0f172a">{{ c.tido }} {{ c.nudo_display }}</td>
-          <td>{{ c.cliente_nombre or '—' }}</td>
-          <td style="color:#6b7280;font-size:.78rem">{{ c.comuna or '—' }}</td>
-          <td>{{ c.courier or '—' }}</td>
-          <td>
-            <span class="dh-badge-estado bg-{{ estado_colors.get(c.estado, 'secondary') }}">
-              {{ c.estado or '—' }}
-            </span>
-          </td>
-          <td>
-            {% if c.estado_entrega == 'Entregado' %}
-              <span class="dh-badge-entrega ok"><i class="bi bi-check-lg"></i> Entregado</span>
-            {% elif c.estado_entrega in ('Problema', 'Entrega fallida', 'Devolución') %}
-              <span class="dh-badge-entrega bad"><i class="bi bi-x-lg"></i> {{ c.estado_entrega }}</span>
-            {% elif c.estado_entrega == 'En ruta' %}
-              <span class="dh-badge-entrega ruta"><i class="bi bi-truck"></i> En ruta</span>
-            {% elif c.estado_entrega %}
-              <span class="dh-badge-entrega">{{ c.estado_entrega }}</span>
-            {% else %}
-              <span class="dh-badge-entrega">Sin manifiesto</span>
-            {% endif %}
-          </td>
-          <td>{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision else '—' }}</td>
-          <td>{{ c.delivered_at | chile_fmt if c.delivered_at else '—' }}</td>
-          <td class="dh-row-actions">
-            <a href="{{ url_for('transporte_index', q=c.nudo) }}" target="_blank" rel="noopener" title="Ver en el Monitor de Transporte">
-              <i class="bi bi-display"></i>Monitor
+  <div class="trx-card-body">
+
+    {# ── KPIs del día (antes 3 escalas distintas de número; ahora todos .trx-kpi-v) ── #}
+    <div class="trx-kpis">
+      <div class="trx-kpi trx-kpi-ok">
+        <div class="trx-kpi-k"><i class="bi bi-check-circle-fill"></i>Entregados hoy</div>
+        <div class="trx-kpi-v">{{ stats.entregados_hoy or 0 }}</div>
+        <div class="trx-kpi-d">Despachos completados</div>
+      </div>
+
+      <div class="trx-kpi" style="border-left:4px solid var(--trx-info)">
+        <div class="trx-kpi-k"><i class="bi bi-truck"></i>En ruta ahora</div>
+        <div class="trx-kpi-v">{{ stats.en_ruta_hoy or 0 }}</div>
+        <div class="trx-kpi-d">Despachos en camino</div>
+      </div>
+
+      <div class="trx-kpi trx-kpi-red">
+        <div class="trx-kpi-k"><i class="bi bi-broadcast"></i>Choferes activos</div>
+        <div class="trx-kpi-v">{{ stats.choferes_activos or 0 }}</div>
+        <a href="{{ url_for('tr_monitor_live') }}" class="dh-cta">Ver monitor en vivo <i class="bi bi-arrow-right"></i></a>
+      </div>
+
+      <div class="trx-kpi {{ 'trx-kpi-warn' if (stats.sin_ot_fedex or 0) > 0 else 'trx-kpi-ok' }}">
+        <div class="trx-kpi-k"><i class="bi bi-exclamation-triangle"></i>Sin OT FedEx</div>
+        <div class="trx-kpi-v">{{ stats.sin_ot_fedex or 0 }}</div>
+        <div class="trx-kpi-d">{% if (stats.sin_ot_fedex or 0) > 0 %}Facturas FedEx sin tracking{% else %}Todo en orden{% endif %}</div>
+      </div>
+
+      <div class="trx-kpi">
+        <div class="trx-kpi-k"><i class="bi bi-clipboard-check"></i>Manifiestos hoy</div>
+        <div class="trx-kpi-v">{{ stats.manifiestos_hoy or 0 }}</div>
+        <div class="trx-kpi-d">Creados en el día</div>
+      </div>
+
+      <div class="trx-kpi trx-kpi-dang">
+        <div class="trx-kpi-k"><i class="bi bi-x-octagon"></i>Fallidos hoy</div>
+        <div class="trx-kpi-v">{{ stats.fallidos_hoy or 0 }}</div>
+        <div class="trx-kpi-d">Entregas con problema</div>
+      </div>
+
+      <div class="trx-kpi" style="border-left:4px solid var(--trx-info)">
+        <div class="trx-kpi-k"><i class="bi bi-graph-up"></i>Tasa éxito</div>
+        {% set total_int = (stats.entregados_hoy or 0) + (stats.fallidos_hoy or 0) %}
+        {% set tasa = ((stats.entregados_hoy or 0) / total_int * 100) if total_int > 0 else 0 %}
+        <div class="trx-kpi-v">{{ "%.0f"|format(tasa) }}%</div>
+        <div class="trx-kpi-d">Entregados sobre {{ total_int }} intento{{ 's' if total_int != 1 else '' }} de hoy</div>
+      </div>
+    </div>
+
+    {# ── Últimas entregas + top transportes ── #}
+    <div class="dh-row">
+      <div class="dh-panel">
+        <div class="dh-panel-h"><i class="bi bi-shield-check"></i>Últimas entregas</div>
+        <div class="dh-panel-b">
+          {% if ultimas %}
+            {% for u in ultimas %}
+            <a class="dh-entrega" href="{{ url_for('tr_buscar_interno') }}?q={{ u.nudo }}" style="text-decoration:none;color:inherit">
+              {% if u.foto_thumb %}
+              <img class="dh-entrega-foto" src="{{ u.foto_thumb }}" alt="Entrega">
+              {% else %}
+              <div class="dh-entrega-empty"><i class="bi bi-box"></i></div>
+              {% endif %}
+              <div class="dh-entrega-body">
+                <div class="dh-entrega-cli">{{ u.cliente_nombre or '—' }}</div>
+                <div class="dh-entrega-meta">{{ u.tido }} {{ u.nudo }}{% if u.comuna %} · {{ u.comuna }}{% endif %}{% if u.receptor_nombre %} · recibió {{ u.receptor_nombre.split()[0] }}{% endif %}</div>
+              </div>
+              <div class="dh-entrega-time">{{ u.entregado_at | chile_fmt('%H:%M') }}</div>
             </a>
-            {% if c.public_token %}
-            <a href="{{ url_for('tr_public_tracking', token=c.public_token) }}" target="_blank" rel="noopener" title="Tracking público del cliente">
-              <i class="bi bi-geo-alt"></i>Tracking
-            </a>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            {% endfor %}
+          {% else %}
+            <div class="trx-empty">
+              <div class="trx-empty-ico"><i class="bi bi-inbox"></i></div>
+              <div class="trx-empty-t">Aún sin entregas registradas hoy</div>
+              <div class="trx-empty-d">
+                Acá aparece cada entrega apenas el chofer la confirma con foto o firma.
+                Si esperabas ver alguna, revisa en el Monitor en vivo por dónde va la ruta.
+              </div>
+              <a href="{{ url_for('tr_monitor_live') }}" class="dh-cta">Abrir Monitor en vivo <i class="bi bi-arrow-right"></i></a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="dh-panel">
+        <div class="dh-panel-h"><i class="bi bi-trophy"></i>Top transportes hoy</div>
+        <div class="dh-panel-b">
+          {% if top_couriers %}
+            {% for tc in top_couriers %}
+            <div class="dh-topcourier">
+              <span class="dh-topcourier-n">{{ loop.index }}.</span>
+              <span class="dh-topcourier-c">{{ tc.courier }}</span>
+              <span class="dh-topcourier-cnt">{{ tc.entregas }}</span>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="trx-empty">
+              <div class="trx-empty-ico"><i class="bi bi-graph-up"></i></div>
+              <div class="trx-empty-t">Sin datos del día</div>
+              <div class="trx-empty-d">
+                El ranking se arma con las entregas confirmadas de HOY. Va a poblarse solo
+                apenas se confirme la primera; para ver el desempeño de días anteriores,
+                usa el historial por periodo de más abajo.
+              </div>
+              <a href="#historial" class="dh-cta">Ir al historial por periodo <i class="bi bi-arrow-down"></i></a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
   </div>
-  {% if hist_total_pages > 1 %}
-  <div class="dh-pager">
-    {% set base_args = hist_filtros.copy() %}
-    {% if hist_page > 1 %}
-    <a href="{{ url_for('tr_dashboard_hoy', page=hist_page-1, **base_args) }}"><i class="bi bi-chevron-left"></i></a>
+</section>
+
+
+{# ══════════════════════════════════════════════════════════════════
+   SECCIÓN 2 — HISTORIAL DE DESPACHOS + KPI OPERACIONAL
+   Fusionado 2026-07-25 (antes era /transporte/historial, página aparte).
+══════════════════════════════════════════════════════════════════ #}
+<section class="trx-card" id="historial">
+  <div class="trx-card-head">
+    <div style="min-width:0">
+      <h2 class="trx-card-title"><i class="bi bi-clock-history"></i>Historial y KPI por periodo</h2>
+      <div class="trx-card-hint">
+        Rango de fechas a tu elección — <strong>no afecta</strong> las cifras de HOY de la
+        sección anterior. Incluye los 4 KPI del periodo y la tabla completa de compromisos.
+      </div>
+    </div>
+    <span class="trx-chip trx-chip-dark">
+      <i class="bi bi-calendar-range"></i>
+      {% if hist_filtros.desde and hist_filtros.hasta %}{{ hist_filtros.desde }} → {{ hist_filtros.hasta }}{% else %}Todo el historial{% endif %}
+    </span>
+  </div>
+
+  <div class="trx-card-body">
+
+    {# ── KPIs del periodo ── #}
+    <div class="trx-kpis">
+      <div class="trx-kpi" style="border-left:4px solid var(--trx-info)">
+        <div class="trx-kpi-k"><i class="bi bi-box-seam"></i>Fill rate por línea</div>
+        {% if kpis.fill_rate.valor is not none %}
+          <div class="trx-kpi-v">{{ "%.1f"|format(kpis.fill_rate.valor) }}%</div>
+          <div class="trx-kpi-d">{{ kpis.fill_rate.sub }}</div>
+        {% else %}
+          <div class="trx-kpi-v dh-kpi-empty">Sin dato</div>
+          <div class="trx-kpi-d">{{ kpis.fill_rate.sub }} Amplía el rango de fechas (prueba «Todo») para poder calcularlo.</div>
+        {% endif %}
+      </div>
+
+      <div class="trx-kpi trx-kpi-ok">
+        <div class="trx-kpi-k"><i class="bi bi-check-circle"></i>Entrega exitosa</div>
+        {% if kpis.tasa_entrega.valor is not none %}
+          <div class="trx-kpi-v">{{ "%.1f"|format(kpis.tasa_entrega.valor) }}%</div>
+          <div class="trx-kpi-d">{{ kpis.tasa_entrega.sub }}</div>
+        {% else %}
+          <div class="trx-kpi-v dh-kpi-empty">Sin dato</div>
+          <div class="trx-kpi-d">{{ kpis.tasa_entrega.sub }} Amplía el rango de fechas (prueba «Todo») para poder calcularlo.</div>
+        {% endif %}
+      </div>
+
+      <div class="trx-kpi trx-kpi-dang">
+        <div class="trx-kpi-k"><i class="bi bi-exclamation-octagon"></i>Tasa de incidencias</div>
+        {% if kpis.tasa_incidencias.valor is not none %}
+          <div class="trx-kpi-v">{{ "%.1f"|format(kpis.tasa_incidencias.valor) }}%</div>
+          <div class="trx-kpi-d">{{ kpis.tasa_incidencias.sub }}</div>
+        {% else %}
+          <div class="trx-kpi-v dh-kpi-empty">Sin dato</div>
+          <div class="trx-kpi-d">{{ kpis.tasa_incidencias.sub }} Amplía el rango de fechas (prueba «Todo») para poder calcularlo.</div>
+        {% endif %}
+      </div>
+
+      <div class="trx-kpi trx-kpi-warn">
+        <div class="trx-kpi-k"><i class="bi bi-stopwatch"></i>Lead time promedio</div>
+        {% if kpis.lead_time.dias is not none %}
+          <div class="trx-kpi-v">{{ "%.1f"|format(kpis.lead_time.dias) }}<small style="font-size:.9rem">d</small></div>
+          <div class="trx-kpi-d">{{ kpis.lead_time.sub }}</div>
+        {% else %}
+          <div class="trx-kpi-v dh-kpi-empty">Sin dato</div>
+          <div class="trx-kpi-d">{{ kpis.lead_time.sub }} Amplía el rango de fechas (prueba «Todo») para poder calcularlo.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="dh-note">
+      <i class="bi bi-info-circle me-1"></i>
+      Lead time = días entre emisión del documento y la primera confirmación de entrega.
+      No incluye OTIF "a tiempo" ni SLA por courier: ninguno de los dos tiene hoy una
+      fecha-compromiso ni un umbral de negocio confiablemente poblado — se deja fuera
+      a propósito, no es un dato perdido.
+    </div>
+
+    {# ── Filtros del periodo ── #}
+    <div class="dh-filters">
+      <div class="dh-chip-periodo mb-2">
+        <a href="{{ url_for('tr_dashboard_hoy', periodo='mes') }}" class="{{ 'active' if hist_filtros.periodo=='mes' or not hist_filtros.periodo else '' }}">Último mes</a>
+        <a href="{{ url_for('tr_dashboard_hoy', periodo='3m') }}" class="{{ 'active' if hist_filtros.periodo=='3m' else '' }}">Últimos 3 meses</a>
+        <a href="{{ url_for('tr_dashboard_hoy', periodo='año') }}" class="{{ 'active' if hist_filtros.periodo=='año' else '' }}">Este año</a>
+        <a href="{{ url_for('tr_dashboard_hoy', periodo='todo') }}" class="{{ 'active' if hist_filtros.periodo=='todo' else '' }}">Todo</a>
+      </div>
+      <form method="get" action="{{ url_for('tr_dashboard_hoy') }}">
+        <div>
+          <label>Desde</label>
+          <input type="date" name="desde" class="form-control" value="{{ hist_filtros.desde }}">
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" name="hasta" class="form-control" value="{{ hist_filtros.hasta }}">
+        </div>
+        <div>
+          <label>Estado</label>
+          <select name="estado" class="form-select">
+            <option value="">Todos</option>
+            {% for e in estados %}
+            <option value="{{ e }}" {{ 'selected' if hist_filtros.estado==e else '' }}>{{ e }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Courier</label>
+          <select name="courier" class="form-select">
+            <option value="">Todos</option>
+            {% for c in couriers %}
+            <option value="{{ c }}" {{ 'selected' if hist_filtros.courier==c else '' }}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Comuna</label>
+          <input type="text" name="comuna" class="form-control" placeholder="Ej: Providencia" value="{{ hist_filtros.comuna }}">
+        </div>
+        <div>
+          <label>Buscar (documento o cliente)</label>
+          <input type="text" name="q" class="form-control" placeholder="N° doc o nombre" value="{{ hist_filtros.q }}">
+        </div>
+        <div class="dh-filters-actions">
+          <button type="submit" class="btn btn-ilus fw-bold" style="min-height:44px;">
+            <i class="bi bi-funnel-fill me-1"></i>Filtrar
+          </button>
+          <a href="{{ url_for('tr_dashboard_hoy') }}" class="btn btn-outline-secondary" style="min-height:44px;">
+            <i class="bi bi-x-lg me-1"></i>Limpiar
+          </a>
+        </div>
+      </form>
+    </div>
+
+    {# ── Tabla de compromisos ── #}
+    <div class="dh-subhead">
+      <h3><i class="bi bi-list-ul"></i>Compromisos de despacho</h3>
+      <div class="htot">{{ hist_total }} resultado{{ 's' if hist_total != 1 else '' }}</div>
+    </div>
+
+    {% if compromisos %}
+    <div class="trx-table-wrap">
+      <div class="dh-scroll">
+        <table class="trx-table">
+          <thead>
+            <tr>
+              <th>Documento</th>
+              <th>Cliente</th>
+              <th>Comuna</th>
+              <th>Courier</th>
+              <th>Estado</th>
+              <th>Entrega</th>
+              <th>Fecha emisión</th>
+              <th>Entregado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in compromisos %}
+            <tr class="{% if c.estado_entrega == 'Entregado' %}trx-row-ok{% elif c.estado_entrega in ('Problema', 'Entrega fallida', 'Devolución') %}trx-row-dang{% elif c.estado_entrega == 'En ruta' %}trx-row-info{% endif %}">
+              <td style="font-weight:700;color:var(--trx-black)">{{ c.tido }} {{ c.nudo_display }}</td>
+              <td>{{ c.cliente_nombre or '—' }}</td>
+              <td style="color:var(--trx-muted);font-size:.78rem">{{ c.comuna or '—' }}</td>
+              <td>{{ c.courier or '—' }}</td>
+              <td>
+                <span class="dh-badge-estado bg-{{ estado_colors.get(c.estado, 'secondary') }}">
+                  {{ c.estado or '—' }}
+                </span>
+              </td>
+              <td>
+                {% if c.estado_entrega == 'Entregado' %}
+                  <span class="dh-badge-entrega ok"><i class="bi bi-check-lg"></i> Entregado</span>
+                {% elif c.estado_entrega in ('Problema', 'Entrega fallida', 'Devolución') %}
+                  <span class="dh-badge-entrega bad"><i class="bi bi-x-lg"></i> {{ c.estado_entrega }}</span>
+                {% elif c.estado_entrega == 'En ruta' %}
+                  <span class="dh-badge-entrega ruta"><i class="bi bi-truck"></i> En ruta</span>
+                {% elif c.estado_entrega %}
+                  <span class="dh-badge-entrega">{{ c.estado_entrega }}</span>
+                {% else %}
+                  <span class="dh-badge-entrega">Sin manifiesto</span>
+                {% endif %}
+              </td>
+              <td>{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision else '—' }}</td>
+              <td>{{ c.delivered_at | chile_fmt if c.delivered_at else '—' }}</td>
+              <td>
+                {# el flex va en un div, NO en el <td>: display:flex sobre una
+                   celda la saca del layout de tabla y rompe el borde de la fila #}
+                <div class="dh-row-actions">
+                  <a href="{{ url_for('transporte_index', q=c.nudo) }}" target="_blank" rel="noopener" title="Ver en el Monitor de Transporte">
+                    <i class="bi bi-display"></i>Monitor
+                  </a>
+                  {% if c.public_token %}
+                  <a href="{{ url_for('tr_public_tracking', token=c.public_token) }}" target="_blank" rel="noopener" title="Tracking público del cliente">
+                    <i class="bi bi-geo-alt"></i>Tracking
+                  </a>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% if hist_total_pages > 1 %}
+    <div class="dh-pager">
+      {% set base_args = hist_filtros.copy() %}
+      {% if hist_page > 1 %}
+      <a href="{{ url_for('tr_dashboard_hoy', page=hist_page-1, **base_args) }}"><i class="bi bi-chevron-left"></i></a>
+      {% endif %}
+      <span class="cur">Página {{ hist_page }} de {{ hist_total_pages }}</span>
+      {% if hist_page < hist_total_pages %}
+      <a href="{{ url_for('tr_dashboard_hoy', page=hist_page+1, **base_args) }}"><i class="bi bi-chevron-right"></i></a>
+      {% endif %}
+    </div>
     {% endif %}
-    <span class="cur">Página {{ hist_page }} de {{ hist_total_pages }}</span>
-    {% if hist_page < hist_total_pages %}
-    <a href="{{ url_for('tr_dashboard_hoy', page=hist_page+1, **base_args) }}"><i class="bi bi-chevron-right"></i></a>
+    {% else %}
+    <div class="trx-table-wrap">
+      <div class="trx-empty">
+        <div class="trx-empty-ico"><i class="bi bi-funnel"></i></div>
+        <div class="trx-empty-t">No hay compromisos que coincidan con estos filtros</div>
+        <div class="trx-empty-d">
+          Ningún despacho del periodo elegido cumple con los filtros aplicados.
+          Prueba ampliar el rango de fechas (botón «Todo»), revisar la comuna o el
+          courier escrito, o limpiar los filtros para ver el historial completo.
+        </div>
+        <a href="{{ url_for('tr_dashboard_hoy', periodo='todo') }}" class="trx-btn-primary">
+          <i class="bi bi-arrow-counterclockwise"></i>Limpiar filtros y ver todo
+        </a>
+      </div>
+    </div>
     {% endif %}
+
   </div>
-  {% endif %}
-  {% else %}
-  <div class="dh-empty">
-    <i class="bi bi-inbox"></i>
-    <div>No hay compromisos que coincidan con estos filtros.</div>
-  </div>
-  {% endif %}
-</div>
+</section>
 
 <script>
 // Auto-refresh cada 30s — SOLO si no hay filtros de historial activos ni

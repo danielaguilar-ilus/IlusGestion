@@ -1,31 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Facturas Proveedor — ILUS Transporte{% endblock %}
 
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <style>
-.fp-table-wrap{ background:#fff; border:1px solid #e8e8e8; border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03); }
-.fp-table{ width:100%; border-collapse:collapse; font-size:.86rem; }
-.fp-table thead th{
-  background:#0a0a0a; color:#fff; font-size:.68rem; font-weight:700;
-  text-transform:uppercase; letter-spacing:.4px; padding:.7rem .9rem; text-align:left;
-}
-.fp-table tbody td{ padding:.75rem .9rem; border-top:1px solid #f0f0f0; vertical-align:middle; }
-.fp-table tbody tr{ cursor:pointer; transition:background .12s; }
-.fp-table tbody tr:hover{ background:#fafafa; }
-.fp-badge{
-  font-size:.68rem; font-weight:700; padding:.2rem .55rem; border-radius:20px;
-  display:inline-flex; align-items:center; gap:.25rem;
-}
-.fp-badge-ok{ background:#dcfce7; color:#16a34a; }
-.fp-badge-warn{ background:#fee2e2; color:#dc2626; }
-.fp-badge-muted{ background:#f3f4f6; color:#6b7280; }
-.fp-empty{ text-align:center; padding:3rem 1rem; color:#9ca3af; }
-.fp-empty i{ font-size:2.2rem; display:block; margin-bottom:.5rem; color:#d1d5db; }
+/* Cabecera/bordes/zebra/chips vienen del DS (.trx-table-wrap, .trx-table,
+   .trx-chip, .trx-empty). Acá quedan SÓLO los detalles propios de esta
+   página que el DS no cubre: la fila clickeable y el layout móvil en
+   tarjetas con data-label, que sigue enganchado a .fp-table.            */
+.fp-table tbody tr{ cursor:pointer; }
 @media (max-width: 700px){
   .fp-table thead{ display:none; }
   .fp-table, .fp-table tbody, .fp-table tr, .fp-table td{ display:block; width:100%; }
-  .fp-table tbody tr{ border:1px solid #f0f0f0; border-radius:12px; margin-bottom:.6rem; padding:.4rem 0; }
-  .fp-table tbody td{ border-top:none; padding:.35rem .9rem; }
+  .fp-table tbody tr{
+    background:#fff;
+    border:1.5px solid var(--trx-g2, #e5e7eb); border-radius:12px;
+    margin-bottom:.6rem; padding:.4rem 0;
+  }
+  /* En móvil la tabla se apila en tarjetas: los números vuelven a la
+     izquierda para que queden bajo su etiqueta (data-label).           */
+  .fp-table tbody td{ border-top:none; border-bottom:none; padding:.35rem .9rem; text-align:left; }
   .fp-table tbody td[data-label]::before{
     content: attr(data-label); display:block; font-size:.62rem; font-weight:700;
     color:#9ca3af; text-transform:uppercase; letter-spacing:.4px; margin-bottom:.1rem;
@@ -34,31 +31,42 @@
 </style>
 <div class="container-fluid py-3 px-3 px-md-4">
 
-  <div class="mod-hero">
-    <div>
-      <h4><i class="bi bi-receipt-cutoff me-2"></i>Facturas Proveedor</h4>
-      <div class="mod-sub">Conciliación financiera: costo real del courier vs. lo cobrado al cliente (ZZ Envío)</div>
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('transporte_index') }}"
+         title="Volver a Transporte" aria-label="Volver a Transporte">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="trx-hero-ico"><i class="bi bi-receipt-cutoff"></i></div>
+      <div>
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span><span>Facturas proveedor</span>
+        </div>
+        <h1>Facturas Proveedor</h1>
+        <div class="trx-hero-sub">Conciliación financiera: costo real del courier vs. lo cobrado al cliente (ZZ Envío)</div>
+      </div>
     </div>
-    <div class="d-flex gap-2 flex-wrap">
-      <button class="btn btn-ilus btn-sm fw-bold" onclick="fpAbrirNueva()">
-        <i class="bi bi-plus-lg me-1"></i>Nueva factura
+    <div class="trx-hero-actions">
+      <button class="trx-btn-primary" onclick="fpAbrirNueva()">
+        <i class="bi bi-plus-lg"></i>Nueva factura
       </button>
     </div>
   </div>
 
-  <div class="fp-table-wrap mt-3">
+  <div class="trx-table-wrap">
     {% if facturas %}
     <div style="overflow-x:auto">
-      <table class="fp-table">
+      <table class="fp-table trx-table">
         <thead>
           <tr>
             <th>Courier</th>
             <th>N° Factura</th>
             <th>Fecha</th>
-            <th>Monto total</th>
-            <th>Documentos</th>
-            <th>Asignado</th>
-            <th>Margen</th>
+            <th class="trx-num">Monto total</th>
+            <th class="trx-ctr">Documentos</th>
+            <th class="trx-num">Asignado</th>
+            <th class="trx-num">Margen</th>
           </tr>
         </thead>
         <tbody>
@@ -67,15 +75,15 @@
             <td data-label="Courier"><strong>{{ f.courier }}</strong></td>
             <td data-label="N° Factura">{{ f.numero_factura }}</td>
             <td data-label="Fecha">{{ f.fecha | chile_fmt('%d/%m/%Y') if f.fecha else '—' }}</td>
-            <td data-label="Monto total">${{ '{:,.0f}'.format(f.monto_total or 0) }}</td>
-            <td data-label="Documentos">
-              <span class="fp-badge {{ 'fp-badge-ok' if f.n_docs else 'fp-badge-muted' }}">
+            <td data-label="Monto total" class="trx-num">${{ '{:,.0f}'.format(f.monto_total or 0) }}</td>
+            <td data-label="Documentos" class="trx-ctr">
+              <span class="trx-chip {{ 'trx-chip-ok' if f.n_docs else '' }}">
                 <i class="bi bi-file-earmark-text"></i>{{ f.n_docs or 0 }}
               </span>
             </td>
-            <td data-label="Asignado">${{ '{:,.0f}'.format(f.total_asignado or 0) }}</td>
-            <td data-label="Margen">
-              <span class="fp-badge {{ 'fp-badge-ok' if (f.total_margen or 0) >= 0 else 'fp-badge-warn' }}">
+            <td data-label="Asignado" class="trx-num">${{ '{:,.0f}'.format(f.total_asignado or 0) }}</td>
+            <td data-label="Margen" class="trx-num">
+              <span class="trx-chip {{ 'trx-chip-ok' if (f.total_margen or 0) >= 0 else 'trx-chip-dang' }}">
                 {{ '+' if (f.total_margen or 0) >= 0 else '' }}${{ '{:,.0f}'.format(f.total_margen or 0) }}
               </span>
             </td>
@@ -85,12 +93,12 @@
       </table>
     </div>
     {% else %}
-    <div class="fp-empty">
-      <i class="bi bi-receipt"></i>
-      <div class="fw-bold mb-1">Aún no hay facturas de proveedor registradas</div>
-      <div class="mb-3">Registra la primera factura que te emitió un courier para empezar a conciliar costos.</div>
-      <button class="btn btn-ilus btn-sm fw-bold" onclick="fpAbrirNueva()">
-        <i class="bi bi-plus-lg me-1"></i>Nueva factura
+    <div class="trx-empty">
+      <div class="trx-empty-ico"><i class="bi bi-receipt"></i></div>
+      <div class="trx-empty-t">Aún no hay facturas de proveedor registradas</div>
+      <div class="trx-empty-d">Registra la primera factura que te emitió un courier para empezar a conciliar costos.</div>
+      <button class="trx-btn-primary" onclick="fpAbrirNueva()">
+        <i class="bi bi-plus-lg"></i>Nueva factura
       </button>
     </div>
     {% endif %}

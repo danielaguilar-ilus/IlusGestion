@@ -1,0 +1,1060 @@
+/* ==================================================================
+   transporte_monitor.css - Monitor de Transporte (ILUS)
+   Extraido TAL CUAL desde templates/transporte/index.html, donde vivia
+   en 8 bloques <style> inline (~41 KB que el navegador re-descargaba en
+   cada clic porque el HTML se sirve con cache-control: no-store).
+   Aqui se cachea por dias. El ORDEN de los bloques es el original:
+   importa por cascada. No reformatear ni reordenar.
+   ================================================================== */
+
+/* -- bloque 1/8 . lineas 5-10 del template original -- */
+/* ── Hardening: cualquier .modal-backdrop sin .modal.show es huérfano.
+   Tener un selector defensivo evita que el bug del "overlay oscuro
+   persistente" lo arruine todo si el listener de Bootstrap falla. ── */
+body:not(.modal-open) .modal-backdrop { display:none !important; }
+
+/* -- bloque 2/8 . lineas 492-535 del template original -- */
+/* ── Toggle Tabla / Kanban (modo de vista del monitor) ── */
+.tr-viewmode {
+  display:inline-flex; gap:4px; margin-left:auto;
+  padding:4px; background:#f1f5f9; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius-sm);
+}
+.tr-viewmode-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  min-height:44px; padding:6px 14px;     /* touch ≥44px (Apple HIG) */
+  border:none; background:transparent; cursor:pointer;
+  color:var(--tr-text-muted); font-size:.82rem; font-weight:600;
+  border-radius:6px; transition:background .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.tr-viewmode-btn i { font-size:1rem; }
+.tr-viewmode-btn:hover { color:var(--tr-text); }
+.tr-viewmode-btn.active {
+  background:#fff; color:var(--ilus-red, #dc2626);
+  box-shadow:var(--tr-shadow-sm);
+}
+@media (max-width:600px){
+  .tr-viewmode { width:100%; margin-left:0; margin-top:8px; }
+  .tr-viewmode-btn { flex:1; justify-content:center; }
+}
+/* Ícono info con desglose de stock ERP en el modal de vista de documento —
+   mismo patrón que templates/cubicador/asignar.html (2026-07-25/26). */
+.stock-info-ic{
+  color:#9ca3af; font-size:.82rem; cursor:help; margin-left:2px;
+  transition:color .15s;
+}
+.stock-info-ic:hover{ color:var(--ilus-red); }
+/* Botón papelera "quitar de manifiesto" — mismo patrón que .btn-cube-del en
+   templates/cubicador/asignar.html (2026-07-26, modal Ítems en manifiestos). */
+.btn-cube-del{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:34px; min-height:34px; padding:6px;
+  border:1px solid #fecaca; border-radius:9px;
+  background:#fff; color:var(--ilus-red);
+  cursor:pointer; transition:background .12s, transform .12s, border-color .12s;
+  font-size:.95rem; line-height:1;
+}
+.btn-cube-del:hover{ background:#fee2e2; border-color:#fca5a5; }
+.btn-cube-del:active{ transform:scale(.92); }
+
+/* -- bloque 3/8 . lineas 537-917 del template original -- */
+/* ════════════════════════════════════════════════════════════════
+   MONITOR DE TRANSPORTE — diseño premium ILUS (rojo · negro · blanco)
+   Toda la paleta y tokens están aquí. No usa Bootstrap btn classes
+   en componentes propios (.tr-*) para evitar conflictos.
+   ════════════════════════════════════════════════════════════════ */
+:root {
+  --tr-radius:        12px;
+  --tr-radius-sm:     8px;
+  --tr-radius-lg:     16px;
+  --tr-border:        #e6e8eb;
+  --tr-border-strong: #d6d9de;
+  --tr-text:          #0f172a;
+  --tr-text-muted:    #64748b;
+  --tr-text-soft:     #94a3b8;
+  --tr-bg:            #ffffff;
+  --tr-bg-soft:       #f8fafc;
+  --tr-bg-hover:      #fef2f2;
+  --tr-shadow-sm:     0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+  --tr-shadow-md:     0 4px 6px rgba(15,23,42,.05), 0 2px 4px rgba(15,23,42,.04);
+  --tr-shadow-lg:     0 10px 25px rgba(15,23,42,.08), 0 4px 10px rgba(15,23,42,.04);
+}
+
+/* ── HERO ── compacto, fondo blanco, accent rojo a la izquierda */
+.tr-hero {
+  display:flex; align-items:center; justify-content:space-between;
+  gap:16px; flex-wrap:wrap;
+  padding:14px 18px; margin-bottom:16px;
+  background:#fff; border:1px solid var(--tr-border);
+  border-left:4px solid var(--ilus-red);
+  border-radius:var(--tr-radius); box-shadow:var(--tr-shadow-sm);
+}
+.tr-hero-left { display:flex; align-items:center; gap:14px; min-width:0; }
+.tr-hero-icon {
+  width:44px; height:44px; flex-shrink:0;
+  background:linear-gradient(135deg, #dc2626, #991b1b);
+  color:#fff; border-radius:11px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.35rem; box-shadow:0 4px 10px rgba(220,38,38,.28);
+}
+.tr-hero-title {
+  font-size:1.25rem; font-weight:800; color:var(--tr-text);
+  margin:0; line-height:1.15; letter-spacing:-.01em;
+}
+.tr-hero-sub {
+  font-size:.78rem; color:var(--tr-text-muted);
+  margin-top:2px; line-height:1.3;
+}
+.tr-sync-status {
+  font-weight:600; color:#16a34a;
+  display:inline-flex; align-items:center; gap:5px;
+}
+.tr-sync-status::before {
+  content:''; width:6px; height:6px; border-radius:50%;
+  background:#16a34a; box-shadow:0 0 0 3px rgba(22,163,74,.18);
+  animation:trPulseDot 2s infinite;
+}
+.tr-sync-status.tr-sync-stale { color:#f59e0b; }
+.tr-sync-status.tr-sync-stale::before {
+  background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.18);
+}
+@keyframes trPulseDot {
+  0%, 100% { transform:scale(1); opacity:1; }
+  50%      { transform:scale(1.3); opacity:.7; }
+}
+.tr-hero-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+
+/* ── WIDGET de auto-sync en vivo ──
+   Pequeño "panel de control" del cron. Pulse-dot indica estado SQL Server,
+   las dos líneas de texto muestran último/próximo sync, el botón dispara
+   sync manual. Se refresca cada 30s desde JS. */
+.tr-sync-widget {
+  display:flex; align-items:center; gap:10px;
+  padding:8px 12px;
+  background:linear-gradient(135deg, #0f172a, #1e293b);
+  color:#e2e8f0; border-radius:11px;
+  border:1px solid #1e293b;
+  box-shadow:0 2px 6px rgba(15,23,42,.18);
+  flex-wrap:wrap;
+}
+.tr-sync-pulse {
+  width:11px; height:11px; min-width:11px; flex-shrink:0;
+  border-radius:50%; background:#94a3b8; border:none; padding:0;
+  position:relative; cursor:help;
+  transition:background .25s ease, box-shadow .25s ease;
+}
+.tr-sync-pulse::after {
+  content:''; position:absolute; inset:-3px; border-radius:50%;
+  border:1.5px solid currentColor; opacity:0;
+  animation:trPulseSyncRing 2.4s ease infinite;
+}
+.tr-sync-pulse[data-status="ok"]        { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.2); }
+.tr-sync-pulse[data-status="ok"]::after { color:#22c55e; opacity:1; }
+.tr-sync-pulse[data-status="degradado"]        { background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.2); }
+.tr-sync-pulse[data-status="degradado"]::after { color:#f59e0b; opacity:1; }
+.tr-sync-pulse[data-status="down"]        { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.2); }
+.tr-sync-pulse[data-status="down"]::after { color:#ef4444; opacity:1; }
+.tr-sync-pulse[data-status="loading"]   { background:#64748b; }
+@keyframes trPulseSyncRing {
+  0%   { transform:scale(.9); opacity:.85; }
+  100% { transform:scale(1.6); opacity:0; }
+}
+.tr-sync-info { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.tr-sync-line { display:flex; gap:5px; align-items:baseline; font-size:.72rem; line-height:1.25; }
+.tr-sync-key {
+  color:#94a3b8; font-weight:600; text-transform:uppercase;
+  letter-spacing:.5px; font-size:.62rem;
+}
+.tr-sync-val {
+  color:#f8fafc; font-weight:700; font-feature-settings:"tnum";
+  white-space:nowrap;
+}
+.tr-sync-now {
+  display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  padding:6px 10px; min-height:32px;
+  background:rgba(220,38,38,.18); color:#fecaca;
+  border:1px solid rgba(220,38,38,.4); border-radius:7px;
+  font-size:.76rem; font-weight:700; cursor:pointer;
+  transition:all .14s ease; white-space:nowrap;
+}
+.tr-sync-now:hover {
+  background:var(--ilus-red); color:#fff; border-color:var(--ilus-red);
+  transform:translateY(-1px); box-shadow:0 4px 10px rgba(220,38,38,.35);
+}
+.tr-sync-now:disabled { opacity:.55; cursor:wait; transform:none !important; }
+.tr-sync-now i { font-size:.85rem; }
+
+/* ── Importar forzado (superadmin) ── */
+.tr-forced-import {
+  display:flex; align-items:center; gap:12px;
+  padding:11px 14px; margin-bottom:14px;
+  background:#fff; border:1px solid #fecaca;
+  border-left:4px solid var(--ilus-red);
+  border-radius:var(--tr-radius); box-shadow:var(--tr-shadow-sm);
+  flex-wrap:wrap;
+}
+.tr-forced-import-left { display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 240px; }
+.tr-forced-import-icon {
+  width:34px; height:34px; flex-shrink:0; border-radius:8px;
+  background:#fef2f2; color:var(--ilus-red);
+  display:flex; align-items:center; justify-content:center; font-size:1rem;
+}
+.tr-forced-import-title { font-weight:700; color:var(--tr-text); font-size:.86rem; line-height:1.2; }
+.tr-forced-import-sub { font-size:.72rem; color:var(--tr-text-muted); margin-top:2px; }
+.tr-forced-import-form { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.tr-forced-import-input {
+  padding:7px 10px; min-height:36px;
+  border:1px solid var(--tr-border); border-radius:8px;
+  font-size:.82rem; color:var(--tr-text); background:#fff;
+  font-family:inherit;
+}
+.tr-forced-import-input:focus {
+  outline:none; border-color:var(--ilus-red);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+.tr-forced-import-input-num {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace; min-width:160px;
+}
+
+@media (max-width:980px) {
+  .tr-sync-widget { width:100%; order:3; }
+}
+@media (max-width:640px) {
+  .tr-hero { padding:12px 14px; gap:10px; }
+  .tr-hero-icon { width:38px; height:38px; font-size:1.1rem; }
+  .tr-hero-title { font-size:1.05rem; }
+  .tr-hero-sub { font-size:.72rem; }
+  .tr-hero-actions { width:100%; }
+  .tr-hero-actions .tr-btn { flex:1 1 auto; }
+  .tr-hero-actions .tr-btn-primary { flex-basis:100%; }
+  .tr-sync-widget { padding:8px 10px; gap:8px; }
+  .tr-sync-now span { display:none; }
+  .tr-sync-now { padding:6px 9px; min-width:32px; }
+  .tr-forced-import { padding:10px 12px; }
+  .tr-forced-import-form { width:100%; }
+  .tr-forced-import-form select,
+  .tr-forced-import-form input { flex:1 1 110px; }
+  .tr-forced-import-form .tr-btn { flex:1 1 100%; }
+}
+
+/* ── BOTONES TR ── sistema propio, no Bootstrap */
+.tr-btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  padding:8px 12px; min-height:38px;
+  font-size:.82rem; font-weight:600;
+  border:1px solid transparent; border-radius:9px;
+  background:#fff; color:var(--tr-text);
+  cursor:pointer; transition:all .14s ease;
+  text-decoration:none; line-height:1; white-space:nowrap;
+}
+.tr-btn i { font-size:.95rem; line-height:1; }
+.tr-btn:hover { transform:translateY(-1px); box-shadow:var(--tr-shadow-md); }
+.tr-btn:active { transform:translateY(0); box-shadow:var(--tr-shadow-sm); }
+.tr-btn:disabled { opacity:.55; cursor:not-allowed; transform:none !important; }
+.tr-btn-sm { padding:6px 11px; min-height:32px; font-size:.78rem; border-radius:7px; }
+
+.tr-btn-primary {
+  background:linear-gradient(180deg, #ef4444, #dc2626);
+  color:#fff; border-color:#b91c1c;
+  box-shadow:0 1px 2px rgba(220,38,38,.3);
+}
+.tr-btn-primary:hover { background:linear-gradient(180deg, #f87171, #dc2626); }
+.tr-btn-ghost {
+  background:#fff; color:var(--tr-text); border-color:var(--tr-border);
+}
+.tr-btn-ghost:hover { background:#f8fafc; border-color:var(--tr-border-strong); color:var(--ilus-red); }
+.tr-btn-dark {
+  background:linear-gradient(180deg, #1f2937, #0f172a);
+  color:#fff; border-color:#0f172a;
+}
+.tr-btn-dark:hover { background:linear-gradient(180deg, #374151, #1f2937); color:#fff; }
+.tr-btn-ghost-danger {
+  background:#fff; color:#dc2626; border-color:#fecaca;
+  width:38px; padding:8px; min-width:38px;
+}
+.tr-btn-ghost-danger:hover { background:#fef2f2; }
+
+@media (max-width:640px) {
+  .tr-btn span { display:none; }
+  .tr-btn { padding:8px; min-width:38px; }
+  .tr-btn-sm span { display:inline; }
+  .tr-btn-sm { padding:6px 11px; }
+}
+
+/* ── KPIs ── */
+.tr-kpis {
+  display:grid; grid-template-columns:repeat(4, 1fr);
+  gap:10px; margin-bottom:16px;
+}
+/* Variante de 5 columnas (resumen inteligente con Atrasados + Preventa) */
+.tr-kpis-5 { grid-template-columns:repeat(5, 1fr); }
+@media (max-width:1100px) { .tr-kpis-5 { grid-template-columns:repeat(3, 1fr); } }
+@media (max-width:900px) {
+  .tr-kpis { grid-template-columns:repeat(2, 1fr); }
+  .tr-kpis-5 { grid-template-columns:repeat(2, 1fr); }
+}
+.tr-kpi {
+  display:flex; align-items:center; gap:12px;
+  padding:14px 16px;
+  background:#fff; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); box-shadow:var(--tr-shadow-sm);
+  cursor:pointer; transition:transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+  position:relative; overflow:hidden;
+  min-height:72px;
+}
+.tr-kpi::before {
+  content:''; position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:currentColor; opacity:.95;
+}
+.tr-kpi:hover { transform:translateY(-2px); box-shadow:var(--tr-shadow-md); }
+.tr-kpi:focus-visible { outline:2px solid var(--ilus-red); outline-offset:2px; }
+.tr-kpi-icon {
+  flex-shrink:0; width:42px; height:42px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.2rem; background:currentColor;
+}
+.tr-kpi-icon i { color:#fff; }
+.tr-kpi-body { min-width:0; flex:1; color:var(--tr-text); }
+.tr-kpi-num {
+  font-size:1.7rem; font-weight:800; line-height:1.1;
+  font-feature-settings:"tnum";
+  letter-spacing:-.02em;
+}
+.tr-kpi-label {
+  font-size:.7rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--tr-text-muted);
+  margin-top:2px;
+}
+.tr-kpi-red    { color:#dc2626; }
+.tr-kpi-blue   { color:#3b82f6; }
+.tr-kpi-green  { color:#16a34a; }
+.tr-kpi-amber  { color:#f59e0b; }
+.tr-kpi-violet { color:#7c3aed; }
+
+/* ── FILTROS ── */
+.tr-filters {
+  background:#fff; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); padding:12px 14px;
+  margin-bottom:12px; box-shadow:var(--tr-shadow-sm);
+}
+.tr-filters-row {
+  display:grid; gap:8px;
+  grid-template-columns: minmax(180px, 2fr) 1fr 1fr 130px 130px auto;
+  align-items:center;
+}
+@media (max-width:980px) {
+  .tr-filters-row { grid-template-columns:1fr 1fr; }
+  .tr-filter-search { grid-column:1 / -1; }
+  .tr-filter-actions { grid-column:1 / -1; }
+}
+.tr-filter-search { position:relative; }
+.tr-filter-search input {
+  width:100%; padding:9px 12px 9px 36px;
+  border:1px solid var(--tr-border); border-radius:8px;
+  font-size:.86rem; background:#fff; color:var(--tr-text);
+  transition:border-color .14s, box-shadow .14s;
+}
+.tr-filter-search input:focus {
+  outline:none; border-color:var(--ilus-red);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+.tr-filter-icon {
+  position:absolute; left:11px; top:50%; transform:translateY(-50%);
+  color:var(--tr-text-soft); font-size:.95rem; pointer-events:none;
+}
+.tr-filter-select, .tr-filter-date {
+  padding:9px 10px; border:1px solid var(--tr-border); border-radius:8px;
+  font-size:.84rem; background:#fff; color:var(--tr-text);
+  font-family:inherit;
+}
+.tr-filter-select:focus, .tr-filter-date:focus {
+  outline:none; border-color:var(--ilus-red);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
+.tr-filter-actions { display:flex; gap:6px; justify-content:flex-end; }
+.tr-filter-quick {
+  display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  margin-top:10px; padding-top:10px; border-top:1px dashed var(--tr-border);
+}
+.tr-filter-quick-label {
+  font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--tr-text-muted);
+}
+.tr-filter-quick-chip {
+  padding:4px 10px; border-radius:99px;
+  border:1px solid var(--tr-border); background:#fff;
+  font-size:.74rem; font-weight:600; color:var(--tr-text-muted);
+  text-decoration:none; transition:all .14s ease;
+}
+.tr-filter-quick-chip:hover {
+  background:var(--ilus-red); color:#fff; border-color:var(--ilus-red);
+}
+
+/* ── SEGMENTED CONTROL — Vista (Pendientes/En camino/Entregados/Todos) ── */
+.tr-segment {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  margin-bottom:12px;
+}
+.tr-segment-label {
+  font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--tr-text-muted);
+}
+.tr-segment-group {
+  display:inline-flex; padding:4px; gap:2px;
+  background:#f1f5f9; border:1px solid var(--tr-border);
+  border-radius:11px; box-shadow:var(--tr-shadow-sm) inset;
+}
+.tr-segment-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:7px 14px; min-height:36px;
+  background:transparent; border:none; border-radius:8px;
+  font-size:.83rem; font-weight:600; color:var(--tr-text-muted);
+  cursor:pointer; transition:all .14s ease; line-height:1;
+}
+.tr-segment-btn:hover { color:var(--tr-text); }
+.tr-segment-btn.active {
+  background:#fff; color:var(--tr-text);
+  box-shadow:0 1px 3px rgba(15,23,42,.1), 0 1px 2px rgba(15,23,42,.06);
+  font-weight:700;
+}
+.tr-segment-btn i { font-size:.9rem; }
+.tr-segment-badge {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:22px; padding:2px 7px; border-radius:99px;
+  font-size:.66rem; font-weight:800; color:#fff;
+  font-feature-settings:"tnum";
+}
+.tr-segment-badge-red   { background:#dc2626; }
+.tr-segment-badge-blue  { background:#3b82f6; }
+.tr-segment-badge-green { background:#16a34a; }
+.tr-segment-badge-gray  { background:#64748b; }
+@media (max-width:640px) {
+  .tr-segment-group { width:100%; overflow-x:auto; }
+  .tr-segment-btn span { font-size:.78rem; }
+}
+
+/* ── COBERTURA — barra mejorada ── */
+.cobertura-cell{font-family:ui-monospace, "SF Mono", Consolas, monospace; font-size:.74rem; font-weight:700}
+.cobertura-bar{height:5px; background:#f1f5f9; border-radius:99px; overflow:hidden; margin-top:3px}
+.cobertura-fill{height:100%; background:linear-gradient(90deg, #fbbf24, #16a34a); border-radius:99px; transition:width .3s ease}
+
+/* -- bloque 4/8 . lineas 994-1227 del template original -- */
+/* ── TABLE TR — premium dashboard look ── */
+.tr-table-card {
+  background:#fff; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); margin-bottom:16px;
+  box-shadow:var(--tr-shadow-sm); overflow:hidden;
+}
+.tr-table { font-size:.85rem; color:var(--tr-text); }
+.tr-table thead th {
+  background:#f8fafc; color:var(--tr-text-muted);
+  font-size:.7rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:.6px;
+  padding:11px 12px; text-align:left;
+  border-bottom:1px solid var(--tr-border);
+  position:sticky; top:0; z-index:1; white-space:nowrap;
+}
+.tr-table thead th.text-center { text-align:center; }
+.tr-table thead th.text-end    { text-align:right;  }
+.tr-th-drag {
+  width:38px !important; padding:0 !important;
+  text-align:center !important; color:var(--tr-text-soft);
+}
+.tr-table tbody tr {
+  border-left:3px solid transparent;
+  transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.tr-table tbody tr:not(:last-child) td { border-bottom:1px solid #f1f5f9; }
+.tr-table tbody td {
+  padding:14px 12px; vertical-align:middle;
+  font-size:.85rem;
+}
+.tr-table tbody tr:hover {
+  background:var(--tr-bg-hover);
+}
+.tr-table tbody tr.tr-row-pendiente { border-left-color:#fbbf24; }
+.tr-table tbody tr.tr-row-parcial   { border-left-color:#3b82f6; }
+.tr-table tbody tr.tr-row-entregado { border-left-color:#16a34a; }
+.tr-table tbody tr.tr-row-pendiente:hover { border-left-color:#dc2626; /* urgencia */ }
+.tr-table tbody tr.tr-row-parcial:hover   { border-left-color:#1d4ed8; }
+.tr-table tbody tr.tr-row-entregado:hover { border-left-color:#15803d; }
+
+/* Celdas truncadas con tooltip (dirección, observaciones) */
+.tr-cell-truncate {
+  max-width:200px; min-width:120px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-size:.78rem; color:var(--tr-text-muted);
+}
+.tr-cell-truncate-soft { color:var(--tr-text-soft); font-style:italic; }
+
+/* Chip ZZ envío (chip pequeño) */
+.tr-zz-chip {
+  display:inline-block; padding:2px 7px;
+  background:#fef2f2; color:#991b1b; border:1px solid #fecaca;
+  border-radius:99px; font-family:ui-monospace, monospace;
+  font-size:.66rem; font-weight:700; letter-spacing:.3px;
+  margin:1px;
+}
+.tr-zz-chips { display:inline-flex; flex-wrap:wrap; gap:2px; max-width:140px; }
+
+/* Documento (TIDO + NUDO) */
+.tr-doc-num {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace;
+  font-size:.92rem; font-weight:700; color:var(--tr-text);
+  letter-spacing:-.01em;
+}
+.tr-doc-tido {
+  display:inline-block; padding:2px 7px;
+  background:#f1f5f9; border-radius:5px;
+  font-size:.66rem; font-weight:800;
+  color:var(--tr-text-muted); margin-right:6px;
+  letter-spacing:.4px;
+}
+/* Cliente block */
+.tr-cliente-name {
+  font-weight:700; color:var(--tr-text); font-size:.88rem;
+  line-height:1.25;
+}
+.tr-cliente-rut {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace;
+  font-size:.72rem; color:var(--tr-text-muted); margin-top:2px;
+}
+/* Fecha */
+.tr-fecha {
+  font-size:.82rem; color:var(--tr-text); white-space:nowrap;
+  font-feature-settings:"tnum";
+}
+.tr-fecha-day  { font-weight:700; }
+.tr-fecha-rel  { display:block; font-size:.68rem; color:var(--tr-text-muted); margin-top:1px; }
+/* Estado pill */
+.tr-estado-pill {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 11px; border-radius:99px;
+  font-size:.72rem; font-weight:700;
+  white-space:nowrap; border:1px solid transparent;
+}
+.tr-estado-pill::before {
+  content:''; width:6px; height:6px; border-radius:50%;
+  background:currentColor; flex-shrink:0;
+}
+.tr-estado-warning { background:#fffbeb; color:#92400e; border-color:#fde68a; }
+.tr-estado-primary { background:#eff6ff; color:#1e3a8a; border-color:#bfdbfe; }
+.tr-estado-success { background:#f0fdf4; color:#166534; border-color:#bbf7d0; }
+.tr-estado-danger  { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+.tr-estado-info    { background:#ecfeff; color:#155e75; border-color:#a5f3fc; }
+.tr-estado-secondary { background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
+/* Guía */
+.tr-guia-pill {
+  display:inline-block; padding:3px 9px;
+  background:#dcfce7; color:#166534; border:1px solid #86efac;
+  border-radius:6px; font-family:ui-monospace, monospace;
+  font-size:.74rem; font-weight:700;
+}
+/* Costo */
+.tr-costo {
+  font-family:ui-monospace, "SF Mono", Consolas, monospace;
+  font-weight:700; color:var(--tr-text); font-size:.9rem;
+  white-space:nowrap; font-feature-settings:"tnum";
+}
+/* Tipo badge (despacho/retiro/instalación/mantención/garantía) */
+.tr-tipo-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 9px; border-radius:6px;
+  font-size:.7rem; font-weight:700;
+  border:1px solid;
+}
+.tr-tipo-despacho    { background:#f1f5f9; color:#0f172a; border-color:#cbd5e1; }
+.tr-tipo-retiro      { background:#ecfeff; color:#155e75; border-color:#a5f3fc; }
+.tr-tipo-instalacion { background:#fef3c7; color:#92400e; border-color:#fde68a; }
+.tr-tipo-mantencion  { background:#f3e8ff; color:#6b21a8; border-color:#d8b4fe; }
+.tr-tipo-garantia    { background:#dcfce7; color:#166534; border-color:#86efac; }
+/* Acciones */
+.tr-actions-cell { white-space:nowrap; }
+.tr-action {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:34px; height:34px; min-width:34px; padding:0;
+  background:#fff; border:1px solid var(--tr-border); border-radius:8px;
+  color:var(--tr-text-muted); cursor:pointer;
+  transition:all .12s ease; font-size:.88rem;
+  margin-left:4px;
+}
+.tr-action:first-child { margin-left:0; }
+.tr-action:hover {
+  background:var(--ilus-red); color:#fff;
+  border-color:var(--ilus-red); transform:translateY(-1px);
+}
+.tr-action-primary {
+  background:var(--ilus-red); color:#fff; border-color:#b91c1c;
+  width:auto; min-width:34px; padding:0 11px; gap:5px;
+  font-size:.78rem; font-weight:700;
+}
+.tr-action-primary:hover { background:#b91c1c; color:#fff; }
+/* Loading row */
+.tr-td-loading {
+  padding:42px 12px !important;
+  text-align:center; color:var(--tr-text-muted);
+}
+.tr-td-loading .tr-spinner { display:inline-block; }
+.tr-spinner {
+  width:18px; height:18px; border:2.5px solid #fee2e2;
+  border-top-color:var(--ilus-red); border-radius:50%;
+  animation:trSpin .7s linear infinite; margin-right:8px;
+  vertical-align:middle;
+}
+@keyframes trSpin { to { transform:rotate(360deg); } }
+/* Empty state */
+.tr-empty {
+  padding:48px 18px; text-align:center;
+}
+.tr-empty-icon {
+  width:64px; height:64px; margin:0 auto 12px;
+  background:#fef2f2; color:var(--ilus-red);
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:1.8rem;
+}
+.tr-empty-title { font-size:1rem; font-weight:700; color:var(--tr-text); margin-bottom:4px; }
+.tr-empty-sub { font-size:.84rem; color:var(--tr-text-muted); max-width:380px; margin:0 auto 14px; }
+.tr-empty-cta {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:9px 16px; background:var(--ilus-red); color:#fff;
+  border:none; border-radius:9px; font-weight:700; font-size:.84rem;
+  cursor:pointer; transition:all .14s ease;
+}
+.tr-empty-cta:hover { background:#b91c1c; transform:translateY(-1px); box-shadow:var(--tr-shadow-md); }
+/* Footer */
+.tr-table-footer {
+  display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;
+  gap:8px; padding:10px 14px;
+  background:#f8fafc; border-top:1px solid var(--tr-border);
+  font-size:.76rem; color:var(--tr-text-muted);
+}
+.tr-table-hint { display:inline-flex; align-items:center; gap:4px; }
+.tr-dot-sep { color:var(--tr-text-soft); }
+
+/* ── TIPOS TABS — fusionadas con la tabla (no Bootstrap nav-tabs) ── */
+.tr-tabs {
+  display:flex; gap:2px; flex-wrap:wrap;
+  background:#fff;
+  border:1px solid var(--tr-border); border-bottom:none;
+  border-radius:var(--tr-radius) var(--tr-radius) 0 0;
+  padding:6px 6px 0;
+  margin-bottom:-1px; /* solapa con la tabla */
+  position:relative; z-index:1;
+}
+.tr-tab {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:9px 14px; background:transparent; border:none;
+  border-radius:8px 8px 0 0; cursor:pointer;
+  font-size:.83rem; font-weight:600; color:var(--tr-text-muted);
+  transition:all .12s ease; line-height:1;
+  border-bottom:3px solid transparent;
+}
+.tr-tab i { font-size:.95rem; }
+.tr-tab:hover { color:var(--tr-text); background:#f8fafc; }
+.tr-tab.active {
+  color:var(--ilus-red); font-weight:700;
+  background:#fff;
+  border-bottom-color:var(--ilus-red);
+}
+.tr-tab-count {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:20px; padding:1px 6px; border-radius:99px;
+  font-size:.66rem; font-weight:700;
+  background:#f1f5f9; color:var(--tr-text-muted);
+  font-feature-settings:"tnum";
+}
+.tr-tab.active .tr-tab-count { background:var(--ilus-red); color:#fff; }
+@media (max-width:640px) {
+  .tr-tabs { overflow-x:auto; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; }
+  .tr-tab span { font-size:.78rem; }
+}
+
+/* Cuando se solapa con tabla, ajustar bordes */
+.tr-tabs + .tr-table-card { border-top-left-radius:0; border-top-right-radius:0; }
+
+/* -- bloque 5/8 . lineas 1279-1426 del template original -- */
+/* ── TABLERO KANBAN — paleta ILUS (rojo · negro · verde éxito) ── */
+.tr-kanban-board {
+  display:flex; gap:16px; align-items:flex-start;
+  overflow-x:auto; padding-bottom:8px; margin-bottom:8px;
+  -webkit-overflow-scrolling:touch;
+}
+.tr-kcol {
+  flex:1 1 0; min-width:280px;
+  background:#f8fafc; border:1px solid var(--tr-border);
+  border-radius:var(--tr-radius); overflow:hidden;
+  transition:outline-color .12s ease, background-color .12s ease;
+}
+.tr-kcol[data-group="pendientes"]  { border-top:4px solid #dc2626; }
+.tr-kcol[data-group="encamino"]    { border-top:4px solid #0a0a0a; }
+.tr-kcol[data-group="entregados"]  { border-top:4px solid #16a34a; }
+.tr-kcol-hdr {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:11px 14px; background:#fff; border-bottom:1px solid var(--tr-border);
+}
+.tr-kcol-title {
+  font-size:.78rem; font-weight:800; text-transform:uppercase;
+  letter-spacing:.04em; display:inline-flex; align-items:center; gap:6px;
+}
+.tr-kcol[data-group="pendientes"] .tr-kcol-title  { color:#dc2626; }
+.tr-kcol[data-group="encamino"]   .tr-kcol-title  { color:#0a0a0a; }
+.tr-kcol[data-group="entregados"] .tr-kcol-title  { color:#16a34a; }
+.tr-kcol-count {
+  min-width:24px; text-align:center; color:#fff; font-size:.74rem;
+  font-weight:700; padding:3px 9px; border-radius:99px;
+}
+.tr-kcol[data-group="pendientes"] .tr-kcol-count  { background:#dc2626; }
+.tr-kcol[data-group="encamino"]   .tr-kcol-count  { background:#0a0a0a; }
+.tr-kcol[data-group="entregados"] .tr-kcol-count  { background:#16a34a; }
+.tr-kcol-body { padding:10px; min-height:140px; }
+.tr-kempty {
+  opacity:.55; text-align:center; padding:22px 8px;
+  color:var(--tr-text-soft); font-size:.82rem;
+}
+
+/* Tarjeta Kanban */
+.tr-kcard {
+  background:#fff; border:1px solid var(--tr-border);
+  border-left:4px solid var(--tr-border);
+  border-radius:var(--tr-radius-sm); padding:12px;
+  margin-bottom:10px; box-shadow:var(--tr-shadow-sm);
+  cursor:grab; user-select:none;
+  transition:transform .16s ease, box-shadow .16s ease, opacity .16s ease;
+}
+.tr-kcard:last-child { margin-bottom:0; }
+.tr-kcard:hover { transform:translateY(-2px); box-shadow:var(--tr-shadow-md); }
+.tr-kcard:active { cursor:grabbing; }
+.tr-kcard.is-dragging { opacity:.45; transform:scale(.97); }
+.tr-kcard.tr-row-pendiente { border-left-color:#dc2626; }
+.tr-kcard.tr-row-parcial   { border-left-color:#0a0a0a; }
+.tr-kcard.tr-row-entregado { border-left-color:#16a34a; }
+.tr-kcard-top {
+  display:flex; justify-content:space-between; align-items:flex-start;
+  gap:8px; margin-bottom:6px;
+}
+.tr-kcard-doc { display:flex; align-items:baseline; gap:5px; flex-wrap:wrap; }
+.tr-kcard-cliente {
+  font-weight:700; font-size:.9rem; color:var(--tr-text);
+  line-height:1.3; margin-bottom:4px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.tr-kcard-meta {
+  display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center;
+  font-size:.74rem; color:var(--tr-text-muted); margin-bottom:8px;
+}
+.tr-kcard-meta i { color:var(--tr-text-soft); }
+.tr-kcard-costo { font-weight:700; color:var(--ilus-red, #dc2626); }
+.tr-kcard-badges { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+.tr-kcard-manif {
+  display:inline-flex; align-items:center; gap:3px;
+  font-size:.66rem; font-weight:700; padding:2px 7px; border-radius:99px;
+  background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe;
+}
+.tr-kcard-agenda {
+  display:inline-flex; align-items:center; gap:3px;
+  color:#155e75; font-weight:600;
+}
+.tr-kcard-agenda i { color:#155e75 !important; }
+
+/* ════════════════════════════════════════════════════════════════
+   BADGES DE GESTIÓN compartidos — tabla, cards mobile y Kanban.
+   "En manifiesto" (azul), "PREVENTA" (ámbar), atraso (color por días),
+   agenda de retiro. Mismo look en las 3 vistas para coherencia.
+   ════════════════════════════════════════════════════════════════ */
+/* Stack vertical en la celda Estado de la tabla */
+.tr-estado-stack { display:inline-flex; flex-direction:column; gap:4px; align-items:flex-start; }
+.tr-estado-stack > * { white-space:nowrap; }
+
+.tr-manif-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:700; padding:2px 8px; border-radius:99px;
+  background:#eef2ff; color:#3730a3; border:1px solid #c7d2fe;
+}
+.tr-manif-badge i { font-size:.7rem; }
+
+.tr-preventa-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:99px;
+  background:#fff8e1; color:#92400e; border:1px solid #fde68a;
+  letter-spacing:.3px;
+}
+.tr-preventa-badge i { font-size:.7rem; color:#f59e0b; }
+
+.tr-atraso-chip {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:99px;
+  border:1px solid currentColor; font-feature-settings:"tnum";
+}
+.tr-atraso-chip i { font-size:.7rem; }
+
+.tr-agenda-chip {
+  display:inline-flex; align-items:center; gap:4px;
+  margin-top:5px; font-size:.66rem; font-weight:700; padding:2px 8px; border-radius:99px;
+  background:#ecfeff; color:#155e75; border:1px solid #a5f3fc;
+}
+.tr-agenda-chip i { font-size:.72rem; }
+.tr-agenda-chip-todo { background:#fff8e1; color:#92400e; border-color:#fde68a; }
+
+/* Fila de badges de la card mobile */
+.tr-mcard-badges {
+  display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px;
+}
+.tr-mcard-badges .tr-agenda-chip { margin-top:0; }
+
+/* Columna destino bajo el drag: highlight verde suave */
+.tr-kcol.drop-ok {
+  outline:2px solid #16a34a; outline-offset:-2px;
+  background:#f0fdf4;
+}
+.tr-kcol.drop-ok .tr-kcol-hdr { background:#dcfce7; }
+
+.tr-kanban-hint {
+  font-size:.76rem; color:var(--tr-text-muted);
+  display:flex; align-items:center; gap:6px; margin-bottom:16px;
+}
+.tr-kanban-hint i { color:var(--tr-text-soft); }
+
+/* Móvil: scroll horizontal del tablero, columnas algo más angostas */
+@media (max-width:768px){
+  .tr-kanban-board { gap:12px; }
+  .tr-kcol { min-width:252px; flex:0 0 252px; }
+}
+
+/* -- bloque 6/8 . lineas 1428-1460 del template original -- */
+/* ── MOBILE CARDS ── */
+.tr-mcards-wrap { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+.tr-mcard {
+  background:#fff; border:1px solid var(--tr-border);
+  border-left:4px solid var(--tr-border);
+  border-radius:var(--tr-radius); padding:14px;
+  box-shadow:var(--tr-shadow-sm); cursor:pointer;
+  transition:transform .14s ease, box-shadow .14s ease;
+}
+.tr-mcard:hover { transform:translateY(-1px); box-shadow:var(--tr-shadow-md); }
+.tr-mcard.tr-row-pendiente { border-left-color:#fbbf24; }
+.tr-mcard.tr-row-parcial   { border-left-color:#3b82f6; }
+.tr-mcard.tr-row-entregado { border-left-color:#16a34a; }
+.tr-mcard-top {
+  display:flex; justify-content:space-between; align-items:flex-start;
+  gap:8px; margin-bottom:8px;
+}
+.tr-mcard-cliente {
+  font-weight:700; font-size:.95rem; color:var(--tr-text);
+  line-height:1.3; margin-bottom:6px;
+}
+.tr-mcard-meta {
+  display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+  font-size:.78rem; color:var(--tr-text-muted); margin-bottom:10px;
+}
+.tr-mcard-meta i { font-size:.85rem; margin-right:3px; }
+.tr-mcard-costo {
+  margin-left:auto; font-weight:700; color:var(--ilus-red);
+  font-family:ui-monospace, monospace; font-size:.85rem;
+}
+.tr-mcard-actions { display:flex; gap:8px; }
+
+/* -- bloque 7/8 . lineas 1476-1539 del template original -- */
+/* ── FAB Reopen Panel Manifiesto ── */
+.tr-fab-reopen {
+  display:none;
+  position:fixed; bottom:24px; right:24px; z-index:9000;
+  min-width:56px;
+  align-items:center; gap:9px;
+  padding:14px 22px; min-height:56px;
+  background:linear-gradient(135deg, #ef4444, #b91c1c);
+  color:#fff; border:none; border-radius:99px;
+  font-weight:700; font-size:.88rem; cursor:pointer;
+  box-shadow:
+    0 10px 30px rgba(220,38,38,.45),
+    0 4px 12px rgba(15,23,42,.18),
+    inset 0 1px 0 rgba(255,255,255,.2);
+  transition:all .18s cubic-bezier(.4,0,.2,1);
+}
+.tr-fab-reopen:hover {
+  transform:translateY(-3px) scale(1.03);
+  box-shadow:
+    0 14px 36px rgba(220,38,38,.55),
+    0 6px 16px rgba(15,23,42,.22),
+    inset 0 1px 0 rgba(255,255,255,.25);
+}
+.tr-fab-reopen:active { transform:translateY(-1px) scale(1.0); }
+.tr-fab-reopen i { font-size:1.15rem; line-height:1; }
+.tr-fab-reopen .tr-fab-label { line-height:1; letter-spacing:.2px; }
+.tr-fab-badge {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:24px; height:24px; padding:0 8px;
+  background:#fff; color:var(--ilus-red);
+  border-radius:99px; font-size:.74rem; font-weight:800;
+  margin-left:4px; font-feature-settings:"tnum";
+  box-shadow:0 2px 6px rgba(0,0,0,.18);
+}
+/* Pulse cuando tiene items en cola */
+.tr-fab-reopen.tr-has-items {
+  animation:trFabPulse 2.4s infinite;
+}
+@keyframes trFabPulse {
+  0%, 100% { box-shadow:
+    0 10px 30px rgba(220,38,38,.45),
+    0 4px 12px rgba(15,23,42,.18),
+    inset 0 1px 0 rgba(255,255,255,.2),
+    0 0 0 0 rgba(220,38,38,.6); }
+  50% { box-shadow:
+    0 10px 30px rgba(220,38,38,.45),
+    0 4px 12px rgba(15,23,42,.18),
+    inset 0 1px 0 rgba(255,255,255,.2),
+    0 0 0 14px rgba(220,38,38,0); }
+}
+@media (max-width:640px) {
+  .tr-fab-reopen {
+    bottom:16px; right:16px; padding:12px 16px;
+    font-size:.82rem; min-height:50px;
+  }
+  .tr-fab-reopen .tr-fab-label { display:none; }
+  .tr-fab-reopen i { font-size:1.3rem; }
+  .tr-fab-reopen .tr-fab-badge {
+    position:absolute; top:-4px; right:-4px;
+    margin-left:0; min-width:22px; height:22px;
+  }
+}
+
+/* -- bloque 8/8 . lineas 1690-1831 del template original -- */
+/* ── Drawer panel manifiesto ──
+   Empieza CERRADO siempre (desktop + mobile). Solo se abre cuando el
+   usuario hace click en el FAB o arrastra un documento. NO empuja el
+   layout — flota sobre la UI con overlay oscuro detrás.
+   Usa transform: translateX para hide determinista (no depende de
+   inline styles). visibility:hidden cuando cerrado para que tampoco
+   capture eventos accidentales mientras está fuera de pantalla. */
+.dp-drawer {
+  position:fixed; top:0; right:0;
+  width:400px; max-width:100vw; height:100vh;
+  background:#0f0f0f; color:#fff;
+  box-shadow:-6px 0 32px rgba(0,0,0,.6);
+  border-left:3px solid var(--ilus-red);
+  z-index:9999;
+  display:flex; flex-direction:column;
+  overflow-y:auto;
+  transform:translateX(100%);
+  visibility:hidden;
+  transition:transform .25s cubic-bezier(.4,0,.2,1), visibility 0s linear .25s;
+  will-change:transform;
+}
+.dp-drawer.dp-open {
+  transform:translateX(0);
+  visibility:visible;
+  transition:transform .25s cubic-bezier(.4,0,.2,1), visibility 0s linear 0s;
+}
+@media (max-width:767.98px) {
+  .dp-drawer { width:100vw; max-width:100vw; }
+}
+
+/* ── Overlay (desktop + mobile) ── */
+.dp-overlay {
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.5);
+  z-index:9998;
+  opacity:0; visibility:hidden;
+  transition:opacity .22s ease, visibility 0s linear .22s;
+}
+.dp-overlay.dp-open {
+  opacity:1; visibility:visible;
+  transition:opacity .22s ease, visibility 0s linear 0s;
+}
+
+/* ── Botón cerrar del drawer (touch-friendly 44x44) ── */
+.dp-close-btn {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:44px; height:44px; min-width:44px;
+  background:rgba(255,255,255,.06);
+  color:#fff; border:1px solid rgba(255,255,255,.18);
+  border-radius:10px; cursor:pointer;
+  transition:background .15s, transform .1s;
+  font-size:1.1rem; line-height:1;
+}
+.dp-close-btn:hover { background:rgba(220,38,38,.85); border-color:var(--ilus-red); }
+.dp-close-btn:active { transform:scale(.94); }
+
+/* ── Zona de drop activa ── */
+.dp-drag-over { background:rgba(204,0,0,.14)!important;border-color:var(--ilus-red)!important; }
+
+/* ── Zonas de manifiestos ── */
+.dp-manifest-zone {
+  border:1.5px solid #222;border-radius:8px;padding:10px 12px;margin-bottom:6px;
+  transition:background .15s,border-color .15s;cursor:pointer;
+}
+.dp-manifest-zone:hover { background:rgba(0,123,255,.09);border-color:#0d6efd; }
+.dp-manifest-zone.dp-drag-over { background:rgba(0,123,255,.15);border-color:#0d6efd; }
+
+/* ── Ítem de cola ── */
+.dp-queue-item {
+  display:flex;align-items:flex-start;justify-content:space-between;
+  background:#1c1c1c;border:1px solid #252525;border-radius:7px;
+  padding:7px 10px;margin-bottom:5px;font-size:.78rem;
+  animation:dpSlideIn .18s ease;
+}
+@keyframes dpSlideIn {
+  from { opacity:0;transform:translateX(12px); }
+  to   { opacity:1;transform:translateX(0); }
+}
+.dp-queue-item.dp-removing {
+  animation:dpSlideOut .18s ease forwards;
+}
+@keyframes dpSlideOut {
+  to { opacity:0;transform:translateX(20px);max-height:0;margin:0;padding:0; }
+}
+
+/* ── Fila de prevale ── */
+.dp-prevale-row {
+  display:flex;align-items:center;justify-content:space-between;
+  padding:4px 0;border-bottom:1px solid #152015;font-size:.76rem;
+}
+.dp-prevale-row:last-child { border-bottom:none; }
+/* Legacy: #monitorTabs ya está oculto (display:none) pero mantengo
+   las reglas para compat por si algún flujo lo usa programáticamente. */
+#monitorTabs .nav-link {
+  color:#666; border:none; border-bottom:2px solid transparent;
+  padding:.5rem .85rem; font-size:.82rem; transition:color .12s;
+}
+#monitorTabs .nav-link.active {
+  color:var(--ilus-red); font-weight:700;
+}
+/* ── Filas del monitor — hover handled by .tr-table tbody tr:hover ── */
+.tr-monitor-row { transition:background .12s; }
+
+/* Handle de drag */
+.dp-drag-handle {
+  width:38px;
+  padding:0 !important;
+  text-align:center;
+  background:transparent;
+  transition:background .1s;
+  border-right:1px solid #f1f5f9;
+}
+.dp-drag-handle:hover {
+  background:#fef2f2;
+  cursor:grab !important;
+}
+.dp-drag-handle:hover i { color:var(--ilus-red) !important; }
+.dp-drag-handle:active { cursor:grabbing !important; }
+
+/* Fila siendo arrastrada */
+.dp-row-dragging { opacity:.3; background:rgba(220,38,38,.06)!important;
+                   outline:2px dashed var(--ilus-red); cursor:grabbing!important; }
+
+/* Fila ya en cola de manifiesto */
+.dp-in-queue { background:rgba(220,38,38,.06)!important;
+               border-left-color:var(--ilus-red) !important;
+               position:relative; }
+.dp-in-queue .dp-drag-handle::after {
+  content:'\F26E'; font-family:'bootstrap-icons';
+  color:var(--ilus-red); font-size:.75rem; display:block;
+}
+
+/* Tabla — durante drag activo */
+body.dp-dragging-active #monitorTbody .tr-monitor-row { cursor:copy; }
+body.dp-dragging-active { cursor:grabbing; }
+/* Zonas de drop se iluminan */
+body.dp-dragging-active .dp-manifest-zone { border-color:#0d6efd!important;
+  background:rgba(0,123,255,.06)!important; cursor:copy; }
+body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!important;
+  background:rgba(204,0,0,.08)!important; cursor:copy; }

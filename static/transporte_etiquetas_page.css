@@ -1,0 +1,1105 @@
+/* =====================================================================
+   Etiquetas de transporte - estilos de pagina.
+
+   ORIGEN: bloque <style> inline de templates/transporte/etiquetas.html
+   (movimiento literal 2026-07-28, sin refactor: mismas reglas, mismo orden).
+
+   POR QUE: la pagina se sirve con cache-control: no-store, asi que estos
+   ~25KB de CSS se re-descargaban en CADA carga. Como archivo estatico el
+   navegador lo cachea por dias (cache-busting por hash de contenido via
+   @app.url_defaults -- NUNCA agregar ?v= a mano).
+
+   OJO 1: las reglas condicionales de PDF-mode (dependen de un if de Jinja)
+   siguen INLINE en el template; no se pueden mover aca.
+   OJO 2: en el render PDF (Playwright usa page.set_content, baseURI =
+   about:blank) este archivo NO se puede bajar por URL. El template lo
+   embebe con static_inline('transporte_etiquetas_page.css'). Si renombras
+   este archivo, actualiza AMBOS usos del template.
+   ===================================================================== */
+
+:root {
+  --ilus-red:   #dc2626;
+  --ilus-black: #0a0a0a;
+  --ilus-white: #ffffff;
+  --ilus-gray:  #6b7280;
+  --label-w: 100mm;
+  --label-h: 150mm;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@page {
+  size: var(--label-w) var(--label-h);
+  margin: 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #e5e7eb;
+  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ilus-black);
+}
+.is-embedded .toolbar { display: none; }
+.is-embedded .selector-panel { margin-top: 8px; }
+.is-embedded .sheet { padding-top: 10px; }
+
+/* ── Barra de acciones (solo pantalla, NUNCA impresa) ── */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--ilus-black);
+  color: var(--ilus-white);
+}
+.toolbar .tb-title {
+  font-weight: 800;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar .tb-title .badge {
+  background: var(--ilus-red);
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.toolbar .tb-actions { display: flex; gap: 8px; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+}
+.btn-print { background: var(--ilus-red); color: #fff; }
+.btn-print:hover { background: #b91c1c; }
+.btn-back { background: #374151; color: #fff; }
+.btn-back:hover { background: #1f2937; }
+
+.empty {
+  max-width: 520px;
+  margin: 60px auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 28px;
+  text-align: center;
+  color: var(--ilus-gray);
+}
+.empty i { font-size: 38px; color: var(--ilus-red); }
+
+/* ── Hoja de etiquetas ── */
+.sheet {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+/* ── La ETIQUETA — premium ILUS ── */
+.etiqueta {
+  width: var(--label-w);
+  height: var(--label-h);
+  background: var(--ilus-white);
+  border: 1.6mm solid var(--ilus-black);
+  border-radius: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  box-shadow: 0 4px 18px rgba(0,0,0,.18);
+}
+
+/* En impresión: una etiqueta por página, sin sombras de pantalla */
+@media print {
+  html, body { background: #fff; }
+  .toolbar, .selector-panel, .et-overlay { display: none !important; }
+  .sheet {
+    display: block;
+    width: 100mm;
+    padding: 0;
+    gap: 0;
+  }
+  body.is-embedded .sheet { padding: 0; }
+  .et-wrap {
+    width: 99.5mm;
+    height: 149mm;
+    margin: 0 auto;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    page-break-after: always;
+    break-after: page;
+    overflow: hidden;
+  }
+  .et-wrap:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  .etiqueta {
+    width: 100%;
+    height: 100%;
+    box-shadow: none;
+    border-radius: 0;
+    page-break-after: auto;
+    break-after: auto;
+  }
+  /* Excluir de la impresión las etiquetas que el usuario desmarcó */
+  .et-wrap.is-off {
+    display: none !important;
+  }
+}
+
+/* HEADER ILUS — logos (SPORTS HEALTH SOLUTIONS + ILUS) + datos del
+   remitente (estilo factura formal). Rediseño 2026-07-25: antes solo se
+   mostraba el logo ILUS; Daniel pidió mostrar ambas marcas lado a lado
+   separadas por una línea vertical, igual que en los documentos formales. */
+.lbl-head {
+  display: flex;
+  flex-direction: column;
+  padding: 1.4mm 0 1.2mm;
+  background: var(--ilus-white);
+  border-bottom: .7mm solid var(--ilus-black);
+  gap: 0;
+  flex-shrink: 0;
+}
+.lbl-head .brand-logos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) .55mm minmax(0, 1fr);
+  align-items: center;
+  /* El divisor queda al 50% y cada logo centrado en una mitad equivalente. */
+  width: 100%;
+  min-height: 13mm;
+  gap: 0;
+}
+.lbl-head .brand-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 13mm;
+  padding: 0 3mm;
+}
+.lbl-head .brand-logo-shs img {
+  max-width: 36mm;
+  max-height: 12mm;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+.lbl-head .brand-logo-ilus img {
+  max-width: 35mm;
+  max-height: 11.5mm;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+.lbl-head .brand-divider {
+  width: .55mm;
+  height: 13mm;
+  background: var(--ilus-black);
+  justify-self: center;
+}
+/* Fallback texto si algún logo no está disponible */
+.lbl-head .brand-text-shs {
+  font-size: 2.6mm;
+  font-weight: 950;
+  line-height: 1.05;
+  text-align: center;
+  background: var(--ilus-black);
+  color: #fff;
+  padding: 1mm 2mm;
+  letter-spacing: .2mm;
+}
+.lbl-head .brand-text {
+  font-size: 4.4mm;
+  font-weight: 950;
+  letter-spacing: .3mm;
+  line-height: 1;
+  color: var(--ilus-black);
+}
+.lbl-head .brand-text .red {
+  color: var(--ilus-red);
+}
+/* brand-info (RUT/giro/dirección/teléfono del remitente) se removió por
+   completo del header (2026-07-25, réplica exacta de referencia) — no
+   queda CSS muerto asociado a propósito. */
+
+/* Franja de 3 casillas: CARRIER/TRANSPORTE · FECHA/HORA · ORDEN/DOCUMENTO N°
+   Rediseño 2026-07-25 (réplica exacta de referencia de Daniel): reemplaza
+   la banda anterior "Courier/N° Courier/Fecha" (casilla del medio vacía).
+   Cada casilla lleva ícono + label chico + valor debajo. */
+.lbl-courier {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  height: 12.5mm;
+  gap: 0;
+  border-bottom: .5mm solid var(--ilus-black);
+  background: var(--ilus-white);
+  flex-shrink: 0;
+}
+.lbl-courier .cr-cell {
+  border-right: .35mm solid var(--ilus-black);
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 1.6mm 1.8mm;
+  gap: 1.5mm;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.lbl-courier .cr-cell:last-child {
+  border-right: 0;
+}
+.lbl-courier .cr-cell.is-compact {
+  padding-left: 1mm;
+  padding-right: 1mm;
+  gap: .8mm;
+}
+.lbl-courier .cr-cell.is-compact .cr-icon {
+  width: 5.5mm;
+  height: 5.5mm;
+  flex-basis: 5.5mm;
+  font-size: 3.2mm;
+}
+.lbl-courier .cr-cell.is-compact .cr-label {
+  font-size: 1.4mm;
+  letter-spacing: .1mm;
+}
+.lbl-courier .cr-cell.is-tight {
+  padding-left: .7mm;
+  padding-right: .7mm;
+  gap: .6mm;
+}
+.lbl-courier .cr-cell.is-tight .cr-icon {
+  width: 4.5mm;
+  height: 4.5mm;
+  flex-basis: 4.5mm;
+  font-size: 2.8mm;
+}
+.lbl-courier .cr-cell.is-tight .cr-label {
+  font-size: 1.2mm;
+}
+.lbl-courier .cr-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 7mm;
+  height: 7mm;
+  flex: 0 0 7mm;
+  border-radius: 1.2mm;
+  font-size: 4mm;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  line-height: 1;
+}
+.lbl-courier .cr-content {
+  min-width: 0;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+.lbl-courier .cr-label {
+  font-size: 1.7mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .2mm;
+  color: var(--ilus-gray);
+}
+.lbl-courier .cr-value {
+  font-size: 3mm;
+  font-weight: 850;
+  color: var(--ilus-black);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+/* Bloque centrado ORDEN DE DESPACHO — foco visual principal de la etiqueta.
+   Número GIGANTE, sin barcode acá (el barcode se movió a la sección final,
+   ver .lbl-scan más abajo). */
+.lbl-doc {
+  border-bottom: .5mm solid #000;
+  padding: 2.4mm 2mm 2.8mm;
+  text-align: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.lbl-doc .doc-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2mm;
+}
+.lbl-doc .doc-title-row .dash {
+  flex: 1 1 auto;
+  max-width: 8mm;
+  height: .3mm;
+  background: var(--ilus-black);
+}
+.lbl-doc .doc-title {
+  font-size: 2.8mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .4mm;
+  color: var(--ilus-black);
+  white-space: nowrap;
+}
+.lbl-doc .doc-number {
+  /* Réplica de referencia: número ENORME, ocupa casi todo el ancho */
+  font-size: 15mm;
+  font-weight: 950;
+  line-height: .95;
+  letter-spacing: .1mm;
+  color: var(--ilus-black);
+  white-space: nowrap;
+  overflow: hidden;
+  margin-top: 1mm;
+}
+.lbl-doc .doc-type {
+  font-size: 2.4mm;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--ilus-gray);
+  white-space: nowrap;
+  overflow: hidden;
+  margin-top: .3mm;
+}
+
+/* Sección final: CÓDIGO DE RETIRO / CONTROL TRANSPORTISTA — barcode +
+   número monospace debajo. Antes el barcode iba pegado al número de
+   orden; se mueve acá como sección propia antes del footer. */
+.lbl-scan {
+  border-bottom: .5mm solid #000;
+  padding: .8mm 1.2mm .9mm;
+  text-align: center;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--ilus-white);
+  z-index: 1;
+  overflow: hidden;
+}
+.lbl-scan .scan-title {
+  font-size: 1.6mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .3mm;
+  color: var(--ilus-gray);
+  margin-bottom: .25mm;
+}
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 8.5mm;
+  padding: 0 1mm;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.barcode {
+  width: 96%;
+  height: 8.5mm;
+  max-height: 8.5mm;
+}
+.lbl-scan .scan-number {
+  font-family: 'Courier New', monospace;
+  font-size: 2.5mm;
+  font-weight: 800;
+  letter-spacing: .3mm;
+  color: var(--ilus-black);
+  white-space: nowrap;
+  overflow: hidden;
+  margin-top: .2mm;
+}
+
+/* Destinatario y bultos arriba; direccion y comuna a todo el ancho abajo. */
+.lbl-dest {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(31mm, .8fr);
+  grid-template-rows: 27mm minmax(25mm, 1fr);
+  border-bottom: .5mm solid #000;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.dest-info {
+  grid-column: 1;
+  grid-row: 1;
+  padding: 1.5mm 2.5mm 1mm;
+  border-right: .4mm solid #000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: .8mm;
+  min-height: 0;
+}
+.dest-info .dest-label {
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+  font-size: 3.4mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .3mm;
+  width: fit-content;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  border-radius: 1.2mm;
+  padding: 1.2mm 2.2mm;
+}
+.dest-info .dest-label svg {
+  width: 4.5mm;
+  height: 4.5mm;
+}
+.dest-info.is-compact {
+  padding: .8mm 2mm .5mm;
+  gap: .25mm;
+}
+.dest-info.is-compact .dest-label {
+  gap: 1mm;
+  padding: .7mm 1.5mm;
+  font-size: 2.8mm;
+}
+.dest-info.is-compact .dest-label svg {
+  width: 3.8mm;
+  height: 3.8mm;
+}
+.dest-info.is-compact .dest-line {
+  grid-template-columns: 5mm minmax(0, 1fr);
+  gap: 1mm;
+  padding: .3mm 0 .45mm;
+}
+.dest-info.is-compact .dest-line .dest-icon {
+  width: 5mm;
+  height: 5mm;
+  font-size: 3mm;
+}
+.dest-info.is-compact .dest-row .k {
+  font-size: 2mm;
+}
+.dest-info.is-tight .dest-label {
+  gap: .8mm;
+  padding: .45mm 1.2mm;
+  font-size: 2.5mm;
+}
+.dest-info.is-tight .dest-label svg {
+  width: 3.2mm;
+  height: 3.2mm;
+}
+.dest-info.is-tight .dest-line {
+  grid-template-columns: 4.5mm minmax(0, 1fr);
+  gap: .7mm;
+  padding: .15mm 0 .25mm;
+}
+.dest-info.is-tight .dest-line .dest-icon {
+  width: 4.5mm;
+  height: 4.5mm;
+  font-size: 2.7mm;
+}
+.dest-row .k {
+  font-size: 2.4mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--ilus-gray);
+  display: block;
+}
+.dest-row {
+  min-width: 0;
+  overflow: hidden;
+}
+.dest-info > .dest-row,
+.dest-info > .dest-line {
+  flex: 0 0 auto;
+}
+.dest-line {
+  display: grid;
+  grid-template-columns: 6mm minmax(0, 1fr);
+  align-items: center;
+  gap: 1.4mm;
+  padding: .7mm 0 1mm;
+  border-bottom: .3mm solid var(--ilus-black);
+}
+.dest-line:last-child { border-bottom: 0; }
+.dest-line .dest-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 6mm;
+  height: 6mm;
+  border-radius: 1mm;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  font-size: 3.5mm;
+}
+.dest-row .v {
+  /* FIX Daniel 2026-07-26: "se ve desproporcionada, algunos datos más
+     pequeños que otros" -- se sube la base de 3.4mm a 4mm, aprovechando el
+     espacio que dejó libre el QR quitado, para que todo el bloque
+     Destinatario se sienta parejo y grande, no apretado. */
+  font-size: 4mm;
+  font-weight: 850;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+}
+.dest-route {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-height: 0;
+  padding: 1mm 2.5mm 1.3mm;
+  border-top: .4mm solid var(--ilus-black);
+  overflow: hidden;
+  display: grid;
+  align-content: start;
+}
+.dest-route .dest-line {
+  grid-template-columns: 7mm minmax(0, 1fr);
+  align-items: start;
+  gap: 1.5mm;
+  padding: 1mm 0 1.2mm;
+}
+.dest-route .dest-icon {
+  width: 7mm;
+  height: 7mm;
+  font-size: 4mm;
+}
+.dest-row .v.direccion {
+  display: block;
+  font-size: 4.7mm;
+  font-weight: 950;
+  line-height: 1.06;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.dest-row .v.big {
+  font-size: 6.2mm;
+  font-weight: 950;
+}
+/* FIX Daniel: "que destaque también la comuna" -- antes iba igual que
+   fono/dirección; el chofer la necesita a simple vista para ordenar rutas. */
+.dest-row .v.comuna {
+  font-size: 5.5mm;
+  font-weight: 950;
+  line-height: 1.05;
+  color: var(--ilus-black);
+  display: block;
+}
+.dest-row .v.region {
+  font-size: 3mm;
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--ilus-gray);
+  display: block;
+  text-transform: uppercase;
+  margin-top: .3mm;
+}
+.dest-route.is-compact {
+  padding: .6mm 1.8mm .7mm;
+}
+.dest-route.is-compact .dest-line {
+  grid-template-columns: 5.8mm minmax(0, 1fr);
+  gap: 1mm;
+  padding: .45mm 0 .55mm;
+}
+.dest-route.is-compact .dest-icon {
+  width: 5.8mm;
+  height: 5.8mm;
+  font-size: 3.3mm;
+}
+.dest-route.is-tight {
+  padding-top: .3mm;
+  padding-bottom: .35mm;
+}
+.dest-route.is-tight .dest-line {
+  grid-template-columns: 5mm minmax(0, 1fr);
+  gap: .8mm;
+  padding: .2mm 0 .3mm;
+}
+.dest-route.is-tight .dest-icon {
+  width: 5mm;
+  height: 5mm;
+  font-size: 2.9mm;
+}
+
+/* Caja BULTOS X de N, ubicada en la fila superior del destino. */
+.bultos-box {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+  padding: 2mm 1mm 1.6mm;
+  background: #fff;
+  gap: 1.4mm;
+}
+.bultos-box .b-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5mm;
+  font-size: 3.4mm;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .4mm;
+  width: fit-content;
+  color: var(--ilus-white);
+  background: var(--ilus-black);
+  border-radius: 1.2mm;
+  padding: 1.2mm 3mm;
+}
+.bultos-box .b-title svg {
+  width: 4.5mm;
+  height: 4.5mm;
+}
+.bultos-box .b-main {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: baseline;
+  justify-content: center;
+  gap: 1mm;
+  align-content: center;
+  flex: 1 1 auto;
+  margin-top: 0;
+  padding-bottom: 0;
+  width: 96%;
+  overflow: hidden;
+}
+.bultos-box .b-x {
+  /* Grande para lectura a distancia, con margen para cantidades de dos dígitos. */
+  font-size: 13mm;
+  font-weight: 950;
+  line-height: .9;
+  color: var(--ilus-black);
+}
+.bultos-box .b-de {
+  font-size: 4mm;
+  font-weight: 800;
+  color: var(--ilus-gray);
+}
+.bultos-box .b-n {
+  font-size: 13mm;
+  font-weight: 950;
+  line-height: .9;
+  color: var(--ilus-black);
+}
+/* El QR no ocupa esta caja. Bultos queda compacto en la fila superior para
+   reservar toda la franja inferior a dirección, comuna y región. */
+
+/* FIX 2026-07-25 (Daniel, captura real): el bloque "Status de salida"
+   (sello/firma) sumaba 16mm mínimos fijos que no entraban en el alto real
+   de la etiqueta, empujando y solapando el texto de Comuna con este bloque.
+   Daniel además mostró una referencia sin esta caja y pidió "tal cual como
+   está allí" -- se quita por completo (Regla #4.2: removido a pedido
+   explícito, no a discreción propia). El bloque .lbl-status/.st-* y su HTML
+   correspondiente en el <article> se eliminaron.
+
+   Footer de íconos de cuidado */
+.lbl-foot {
+  /* FIX Daniel 2026-07-26: "que no sea tan negro para no dañar los
+     cabezales de la impresora" -- un bloque 100% negro de esquina a
+     esquina gasta más el cabezal térmico que texto/iconos sobre blanco.
+     El fondo pasa a blanco; el negro queda solo en el borde superior que
+     separa el footer del resto de la etiqueta y en el texto. */
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: var(--ilus-white);
+  color: var(--ilus-black);
+  border-top: .6mm solid var(--ilus-black);
+  flex-shrink: 0;
+}
+.foot-icon {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5mm;
+  padding: 1.5mm 1mm;
+  text-align: center;
+}
+.foot-icon + .foot-icon { border-left: .35mm solid var(--ilus-black); }
+.foot-icon .handling-symbol {
+  width: 9mm;
+  height: 9mm;
+  flex: 0 0 9mm;
+  color: var(--ilus-black);
+}
+.foot-icon span {
+  font-size: 2.6mm;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  line-height: 1.08;
+  color: var(--ilus-black);
+}
+
+/* ═══ SELECTOR ULTRAPOTENTE (solo pantalla) ═══ */
+.selector-panel {
+  max-width: 900px;
+  margin: 14px auto 4px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  font-family: Arial, Helvetica, sans-serif;
+  box-shadow: 0 2px 10px rgba(0,0,0,.04);
+}
+.sp-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.sp-title {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 900; font-size: 14px; color: #0a0a0a;
+}
+.sp-title i { color: #dc2626; }
+.sp-counter {
+  font-size: 12px; color: #6b7280; font-weight: 700;
+}
+.sp-counter strong { color: #dc2626; font-size: 13px; }
+
+.sp-quick {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.sp-chip {
+  border: 1.5px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.sp-chip:hover { background: #f3f4f6; border-color: #9ca3af; }
+.sp-chip.is-active { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
+.sp-chip.red { color: #dc2626; border-color: #fca5a5; }
+.sp-chip.red:hover { background: #fee2e2; }
+
+.sp-rango {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-rango label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: .25px;
+}
+.sp-rango .hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.sp-rango input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  color: #0a0a0a;
+}
+.sp-rango input:focus {
+  outline: 0;
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.12);
+}
+.sp-rango button {
+  height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #0a0a0a;
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sp-rango button:hover { background: #dc2626; }
+
+/* ── Bultos por factura ── */
+.sp-bultos {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-bultos-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 900;
+  color: #0a0a0a;
+  flex-wrap: wrap;
+}
+.sp-bultos-head i { color: #dc2626; font-size: 16px; }
+.sp-bultos-hint {
+  font-weight: 500;
+  font-size: 11px;
+  color: #6b7280;
+  margin-left: 4px;
+}
+/* Estado "bloqueado": courier no es Felca/Milling (ej. FedEx, que tiene su
+   propio proceso de re-emisión y no debe tocarse desde acá). */
+.sp-bultos-locked .sp-bultos-head i { color: #9ca3af; }
+.sp-bultos-locked .sp-bultos-head { color: #6b7280; }
+.sp-bultos-locked .sp-bultos-hint { color: #6b7280; }
+.sp-bultos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.bf-card {
+  background: #f9fafb;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color .15s, background .15s;
+}
+.bf-card.is-dirty {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+.bf-card.is-saving { opacity: .7; pointer-events: none; }
+.bf-card.is-locked {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+}
+.bf-card.is-locked .bf-step,
+.bf-card.is-locked .bf-input {
+  color: #9ca3af;
+  background: #e5e7eb;
+  cursor: not-allowed;
+}
+.bf-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #166534;
+  background: #dcfce7;
+  font-size: 10px;
+  font-weight: 800;
+}
+.bf-card.is-locked .bf-state {
+  color: #6b7280;
+  background: #e5e7eb;
+}
+.bf-lock-reason {
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.bf-doc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #0a0a0a;
+}
+.bf-doc i { color: #dc2626; }
+.bf-tipo {
+  background: #e5e7eb;
+  color: #374151;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.bf-cliente {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bf-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.bf-step {
+  width: 28px;
+  height: 32px;
+  border: 1.5px solid #d1d5db;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 900;
+  color: #0a0a0a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.bf-step:hover { background: #f3f4f6; border-color: #6b7280; }
+.bf-input {
+  width: 64px;
+  height: 32px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 900;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  color: #0a0a0a;
+  font-family: inherit;
+  /* Hide spin buttons */
+  -moz-appearance: textfield;
+}
+.bf-input::-webkit-outer-spin-button,
+.bf-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.bf-input:focus {
+  outline: 0;
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220,38,38,.12);
+}
+.bf-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 700;
+}
+.bf-save {
+  background: #dc2626;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.bf-save:hover { background: #b91c1c; }
+
+.sp-downloads {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+.sp-dl {
+  flex: 1;
+  min-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.sp-dl.primary { background: #dc2626; color: #fff; }
+.sp-dl.primary:hover { background: #b91c1c; }
+.sp-dl.secondary { background: #0a0a0a; color: #fff; }
+.sp-dl.secondary:hover { background: #374151; }
+.sp-dl.outline { background: #fff; color: #0a0a0a; border: 1.5px solid #0a0a0a; }
+.sp-dl.outline:hover { background: #f3f4f6; }
+.sp-dl i { font-size: 16px; }
+.sp-dl.is-busy {
+  opacity: .6; pointer-events: none;
+}
+
+/* Wrap de etiqueta + checkbox flotante (solo pantalla) */
+.et-wrap {
+  position: relative;
+}
+.et-overlay {
+  position: absolute;
+  top: 10px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(10,10,10,.92);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 10;
+  box-shadow: 0 4px 14px rgba(0,0,0,.3);
+}
+.et-overlay input[type=checkbox] {
+  width: 18px; height: 18px;
+  accent-color: #dc2626;
+  cursor: pointer;
+}
+.et-overlay label {
+  cursor: pointer;
+  user-select: none;
+}
+.et-wrap.is-off .etiqueta {
+  opacity: .25;
+  filter: grayscale(1);
+}
+.et-wrap.is-off .et-overlay {
+  background: rgba(107,114,128,.92);
+}
+
+/* Mobile: stack downloads */
+@media (max-width: 720px) {
+  .sp-rango { grid-template-columns: 1fr; }
+  .sp-rango button { width: 100%; }
+}

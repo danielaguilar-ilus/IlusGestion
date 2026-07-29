@@ -1,69 +1,91 @@
 {% extends "base.html" %}
 {% block title %}Buscar despacho — ILUS{% endblock %}
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
 {% block content %}
 
-<div class="page-header">
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+<div class="trx-hero">
+  <div class="trx-hero-main">
+    <a href="{{ url_for('transporte_index') }}" class="trx-back" title="Volver a Transporte">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="trx-hero-ico"><i class="bi bi-search"></i></div>
     <div>
-      <h4><i class="bi bi-search me-2"></i>Buscar despacho</h4>
-      <div class="sub">Estado, chofer, GPS y prueba de entrega de cualquier factura. Para responder a vendedores y clientes.</div>
+      <div class="trx-crumb">
+        <a href="{{ url_for('transporte_index') }}">Transporte</a>
+        <span class="sep">›</span>
+        <span>Buscar despacho</span>
+      </div>
+      <h1>Buscar despacho</h1>
+      <div class="trx-hero-sub">Estado, chofer, GPS y prueba de entrega de cualquier factura. Para responder a vendedores y clientes.</div>
     </div>
-    <a href="{{ url_for('tr_monitor_live') }}" class="btn btn-sm btn-outline-light">
+  </div>
+  <div class="trx-hero-actions">
+    <a href="{{ url_for('tr_monitor_live') }}" class="btn btn-outline-dark">
       <i class="bi bi-broadcast me-1"></i>Monitor en vivo
     </a>
   </div>
 </div>
 
 <style>
+/* Los componentes propios de esta pantalla (buscador + panel de detalle) no
+   existen en el DS, así que se quedan acá — pero ahora pintados con los
+   tokens de ilus_transporte.css: bordes de 1.5px var(--trx-g2) (los de 1px
+   sobre blanco no se percibían), radios/sombras/grises del sistema. */
 .bi-wrap{ display:grid; grid-template-columns:1fr 1.4fr; gap:16px; }
 @media(max-width:1100px){ .bi-wrap{ grid-template-columns:1fr; } }
-.bi-search-card{ background:#fff; border:1px solid #e5e7eb; border-radius:13px; padding:1.2rem 1.3rem; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.bi-search-card{ background:#fff; border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-md); padding:1.2rem 1.3rem; box-shadow:var(--trx-sh-sm); }
 .bi-search-row{ display:flex; gap:.5rem; }
-.bi-input{ flex:1; padding:.85rem 1rem; font-size:1rem; border:1.5px solid #d1d5db; border-radius:11px; min-height:50px; }
-.bi-input:focus{ outline:none; border-color:#dc2626; box-shadow:0 0 0 3px rgba(220,38,38,.12); }
-.bi-btn{ background:#dc2626; color:#fff; border:none; padding:0 1.4rem; border-radius:11px; font-weight:700; min-height:50px; cursor:pointer; }
-.bi-hint{ margin-top:.5rem; font-size:.78rem; color:#6b7280; }
+.bi-input{ flex:1; padding:.85rem 1rem; font-size:1rem; border:1.5px solid var(--trx-border-h); border-radius:var(--trx-r-sm); min-height:50px; }
+.bi-input:focus{ outline:none; border-color:var(--trx-red); box-shadow:var(--trx-ring); }
+.bi-btn{ background:linear-gradient(150deg,var(--trx-red),var(--trx-red-dk)); color:#fff; border:none; padding:0 1.4rem; border-radius:var(--trx-r-sm); font-weight:700; min-height:50px; cursor:pointer; }
+.bi-hint{ margin-top:.5rem; font-size:.78rem; color:var(--trx-muted); }
 .bi-results{ margin-top:1rem; max-height:60vh; overflow-y:auto; }
-.bi-result{ padding:.75rem .9rem; border:1px solid #e5e7eb; border-radius:10px; margin-bottom:.5rem; cursor:pointer; transition:background .12s, border-color .15s; }
-.bi-result:hover{ background:#fef2f2; border-color:#fecaca; }
-.bi-result-doc{ font-family:monospace; font-weight:800; font-size:.95rem; color:#0f172a; }
-.bi-result-cli{ font-size:.86rem; color:#374151; margin-top:.15rem; }
-.bi-result-meta{ font-size:.74rem; color:#6b7280; margin-top:.15rem; }
+.bi-result{ padding:.75rem .9rem; border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-sm); margin-bottom:.5rem; cursor:pointer; transition:background .12s, border-color .15s; }
+.bi-result:hover{ background:var(--trx-danger-bg); border-color:var(--trx-danger-bd); }
+.bi-result-doc{ font-family:monospace; font-weight:800; font-size:.95rem; color:var(--trx-ink); }
+.bi-result-cli{ font-size:.86rem; color:var(--trx-ink-3); margin-top:.15rem; }
+.bi-result-meta{ font-size:.74rem; color:var(--trx-muted); margin-top:.15rem; }
 
-.bi-detail{ background:#fff; border:1px solid #e5e7eb; border-radius:13px; padding:0; box-shadow:0 1px 3px rgba(0,0,0,.04); overflow:hidden; }
-.bi-det-hdr{ background:#0f172a; color:#fff; padding:1rem 1.2rem; }
+.bi-detail{ background:#fff; border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-md); padding:0; box-shadow:var(--trx-sh-sm); overflow:hidden; }
+.bi-det-hdr{ background:var(--trx-black); color:#fff; padding:1rem 1.2rem; }
 .bi-det-doc{ font-family:monospace; font-weight:800; font-size:1.1rem; }
 .bi-det-cli{ font-size:.92rem; color:#cbd5e1; margin-top:.15rem; }
 .bi-det-body{ padding:1.1rem 1.2rem; }
 .bi-det-section{ margin-bottom:1.3rem; }
-.bi-det-h{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; margin-bottom:.5rem; display:flex; align-items:center; gap:.4rem; }
-.bi-det-h i{ color:#dc2626; }
-.bi-kv{ display:flex; justify-content:space-between; padding:.3rem 0; font-size:.88rem; border-bottom:1px solid #f3f4f6; }
+.bi-det-h{ font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--trx-muted); margin-bottom:.5rem; display:flex; align-items:center; gap:.4rem; }
+.bi-det-h i{ color:var(--trx-red); }
+/* Separador de fila clave/valor: 1.5px del DS. Antes era 1px #f3f4f6 y
+   literalmente no se veía (Daniel: "no se percibe"). */
+.bi-kv{ display:flex; justify-content:space-between; padding:.4rem 0; font-size:.88rem; border-bottom:1.5px solid var(--trx-g2); gap:1rem; }
 .bi-kv:last-child{ border-bottom:none; }
-.bi-kv-k{ color:#6b7280; font-weight:600; font-size:.78rem; }
-.bi-kv-v{ color:#0f172a; font-weight:600; text-align:right; }
+.bi-kv-k{ color:var(--trx-muted); font-weight:600; font-size:.78rem; }
+.bi-kv-v{ color:var(--trx-ink); font-weight:600; text-align:right; }
 .bi-estado-badge{ font-weight:700; padding:.3rem .65rem; border-radius:20px; font-size:.78rem; }
-.b-prep{ background:#f3f4f6; color:#6b7280; } .b-trans{ background:#dbeafe; color:#1e40af; }
+.b-prep{ background:var(--trx-g1); color:var(--trx-muted); } .b-trans{ background:var(--trx-info-bg); color:#1e40af; }
 .b-ruta{ background:#e0e7ff; color:#4338ca; } .b-entreg{ background:#dcfce7; color:#15803d; }
-.b-fallida{ background:#fee2e2; color:#dc2626; }
+.b-fallida{ background:var(--trx-danger-bg); color:var(--trx-danger); }
 .bi-tl{ position:relative; padding-left:1.3rem; }
-.bi-tl::before{ content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem; width:2px; background:#e5e7eb; }
+.bi-tl::before{ content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem; width:2px; background:var(--trx-g2); }
 .bi-tl-row{ position:relative; padding:.35rem 0 .65rem .3rem; }
-.bi-tl-row::before{ content:""; position:absolute; left:-1.07rem; top:.55rem; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid #cbd5e1; }
+.bi-tl-row::before{ content:""; position:absolute; left:-1.07rem; top:.55rem; width:12px; height:12px; border-radius:50%; background:#fff; border:2px solid var(--trx-border-h); }
 .bi-tl-est{ font-weight:700; font-size:.88rem; }
-.bi-tl-ts{ font-size:.72rem; color:#6b7280; margin-top:.1rem; }
-.bi-tl-com{ font-size:.8rem; color:#374151; margin-top:.15rem; }
+.bi-tl-ts{ font-size:.72rem; color:var(--trx-muted); margin-top:.1rem; }
+.bi-tl-com{ font-size:.8rem; color:var(--trx-ink-3); margin-top:.15rem; }
 .bi-tl-fnt{ display:inline-block; font-size:.66rem; font-weight:700; text-transform:uppercase; padding:.1rem .45rem; border-radius:10px; margin-left:.4rem; }
 .bi-fnt-chofer{ background:#e0e7ff; color:#4338ca; } .bi-fnt-fedex{ background:#fff3e0; color:#b45309; }
-.bi-fnt-manual{ background:#f3f4f6; color:#6b7280; } .bi-fnt-sistema{ background:#dcfce7; color:#15803d; }
+.bi-fnt-manual{ background:var(--trx-g1); color:var(--trx-muted); } .bi-fnt-sistema{ background:#dcfce7; color:#15803d; }
 .bi-fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:.4rem; }
-.bi-fotos img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; cursor:zoom-in; border:1px solid #e5e7eb; }
-.bi-firma{ padding:.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:10px; text-align:center; margin-top:.4rem; }
+.bi-fotos img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px; cursor:zoom-in; border:1.5px solid var(--trx-g2); }
+.bi-firma{ padding:.5rem; background:#fff; border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-sm); text-align:center; margin-top:.4rem; }
 .bi-firma img{ max-width:220px; max-height:70px; }
-.bi-driver-card{ background:linear-gradient(135deg,#fff,#fef2f2); border:1px solid #fecaca; border-radius:10px; padding:.8rem; }
-.bi-no-detail{ padding:3rem 1rem; text-align:center; color:#6b7280; }
+.bi-driver-card{ background:linear-gradient(135deg,#fff,var(--trx-danger-bg)); border:1.5px solid var(--trx-danger-bd); border-radius:var(--trx-r-sm); padding:.8rem; }
+/* .bi-no-detail se conserva: sigue siendo el contenedor de los mensajes que
+   inyecta el JS y de cualquier ruta antigua que lo use. */
+.bi-no-detail{ padding:3rem 1rem; text-align:center; color:var(--trx-muted); }
 .bi-no-detail i{ font-size:3rem; opacity:.4; display:block; margin-bottom:.8rem; }
-.bi-gps-link{ font-size:.74rem; color:#dc2626; text-decoration:none; font-weight:700; }
+.bi-gps-link{ font-size:.74rem; color:var(--trx-red); text-decoration:none; font-weight:700; }
 </style>
 
 <div class="bi-wrap">
@@ -89,10 +111,10 @@
         {% endfor %}
       </div>
       {% elif q %}
-      <div class="bi-no-detail mt-3">
-        <i class="bi bi-search"></i>
-        <div><strong>Sin resultados para «{{ q }}»</strong></div>
-        <div class="small mt-1">Verifica el número o intenta con el RUT o nombre.</div>
+      <div class="trx-empty">
+        <div class="trx-empty-ico"><i class="bi bi-search"></i></div>
+        <div class="trx-empty-t">Sin resultados para «{{ q }}»</div>
+        <div class="trx-empty-d">Verifica el número o intenta con el RUT o nombre.</div>
       </div>
       {% endif %}
     </div>
@@ -100,10 +122,10 @@
 
   <div id="detailPanel">
     <div class="bi-detail">
-      <div class="bi-no-detail">
-        <i class="bi bi-binoculars"></i>
-        <div><strong>Selecciona un despacho</strong></div>
-        <div class="small mt-1">Busca por factura, RUT o nombre y haz clic para ver el seguimiento completo.</div>
+      <div class="trx-empty">
+        <div class="trx-empty-ico"><i class="bi bi-binoculars"></i></div>
+        <div class="trx-empty-t">Selecciona un despacho</div>
+        <div class="trx-empty-d">Busca por factura, RUT o nombre y haz clic para ver el seguimiento completo.</div>
       </div>
     </div>
   </div>
@@ -114,16 +136,26 @@
 document.addEventListener('DOMContentLoaded', function(){ cargarDetalle({{ resultados[0].id }}); });
 {% endif %}
 
+// Estados transitorios del panel, con el mismo formato de estado vacío del
+// DS (.trx-empty): icono + qué pasó + qué hacer.
+function _panelEstado(icono, titulo, detalle){
+  return '<div class="bi-detail"><div class="trx-empty">'
+       + '<div class="trx-empty-ico"><i class="bi ' + icono + '"></i></div>'
+       + '<div class="trx-empty-t">' + titulo + '</div>'
+       + '<div class="trx-empty-d">' + detalle + '</div>'
+       + '</div></div>';
+}
+
 async function cargarDetalle(cid){
   const panel = document.getElementById('detailPanel');
-  panel.innerHTML = '<div class="bi-detail"><div class="bi-no-detail"><i class="bi bi-hourglass-split"></i><div>Cargando…</div></div></div>';
+  panel.innerHTML = _panelEstado('bi-hourglass-split', 'Cargando…', 'Buscando el seguimiento completo del despacho.');
   try {
     const r = await fetch('/transporte/api/buscar/' + cid);
     const d = await r.json();
-    if (!d.ok || !d.detalle) { panel.innerHTML = '<div class="bi-detail"><div class="bi-no-detail"><i class="bi bi-x-circle"></i><div>No se pudo cargar</div></div></div>'; return; }
+    if (!d.ok || !d.detalle) { panel.innerHTML = _panelEstado('bi-x-circle', 'No se pudo cargar', 'El despacho ya no existe o no tiene seguimiento. Vuelve a buscarlo o elige otro resultado.'); return; }
     panel.innerHTML = _renderDetalle(d.detalle);
   } catch(e) {
-    panel.innerHTML = '<div class="bi-detail"><div class="bi-no-detail"><i class="bi bi-wifi-off"></i><div>Error de conexión</div></div></div>';
+    panel.innerHTML = _panelEstado('bi-wifi-off', 'Error de conexión', 'No se pudo contactar al servidor. Revisa tu conexión y vuelve a hacer clic en el despacho.');
   }
 }
 
@@ -220,7 +252,7 @@ function _renderDetalle(d){
     });
     html += '</div>';
   } else {
-    html += '<div style="color:#9ca3af;font-size:.85rem">Sin eventos registrados aún.</div>';
+    html += '<div class="trx-empty-d" style="margin:0;text-align:left">Sin eventos registrados aún. Se irán sumando a medida que el chofer o el courier actualicen el despacho.</div>';
   }
   html += '</div>';
 

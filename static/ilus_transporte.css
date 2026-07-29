@@ -1,0 +1,372 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   ILUS · Design System de TRANSPORTE           (Daniel 2026-07-28)
+   -----------------------------------------------------------------------
+   Portado del formulario público /soporte (templates/tickets/soporte_publico.html),
+   que Daniel definió como el estándar de calidad visual del proyecto.
+
+   POR QUÉ EXISTE ESTE ARCHIVO
+   El módulo de transporte acumuló 7 sistemas de encabezado distintos y 3
+   juegos de tokens en paralelo (los globales de style.css, los --tr-* del
+   Monitor y los --ilus- / --r- / --shadow- de /soporte). Por eso "no se
+   siente uno solo". Este archivo es la fuente de verdad única.
+
+   CÓMO SE USA
+   Se carga SOLO en las páginas de transporte, vía {% block head_extra %}:
+     <link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+   NO se agrega a base.html: eso cambiaría el look de Retiros, Mantenciones y
+   Tickets sin haberlo pedido (REGLA #4.2 — no tocar lo que ya funciona).
+
+   CONVENCIÓN
+   Todo componente lleva prefijo .trx- para no chocar con las clases
+   existentes (.mfd-, .man-, .tr-, .mn-, .mod-hero, .page-header). Las páginas
+   se migran de a una; mientras tanto ambos sistemas conviven sin romperse.
+
+   NO usar ?v= en la URL: el proyecto ya tiene cache-busting automático por
+   hash de contenido (@app.url_defaults desde 2026-07-19).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Marca ── */
+  --trx-red:      #dc2626;
+  --trx-red-dk:   #991b1b;
+  --trx-black:    #0a0a0a;
+
+  /* ── Grises (los 5 de /soporte + los que usa de facto) ── */
+  --trx-g1: #f3f4f6;   /* fondos suaves, badges neutros            */
+  --trx-g2: #e5e7eb;   /* BORDE ESTÁNDAR — siempre 1.5px, no 1px   */
+  --trx-g3: #9ca3af;   /* iconos apagados, placeholders            */
+  --trx-ink:      #15171a;  /* texto base                          */
+  --trx-ink-2:    #1f2937;  /* labels                              */
+  --trx-ink-3:    #374151;  /* texto de ayuda fuerte               */
+  --trx-muted:    #6b7280;  /* hint de tarjeta                     */
+  --trx-muted-2:  #94a3b8;  /* hint de campo, contadores           */
+  --trx-border-h: #d1d5db;  /* borde en hover                      */
+
+  /* ── Semánticos ── */
+  --trx-ok:       #16a34a;  --trx-ok-bg:   #f0fdf4;  --trx-ok-bd: #bbf7d0;
+  --trx-warn:     #f59e0b;  --trx-warn-bg: #fff8e1;  --trx-warn-bd:#fcd34d;
+  --trx-danger:   #dc2626;  --trx-danger-bg:#fef2f2; --trx-danger-bd:#fecaca;
+  --trx-info:     #3b82f6;  --trx-info-bg: #dbeafe;
+
+  /* ── Foco ── */
+  --trx-ring: 0 0 0 4px rgba(220, 38, 38, .14);
+
+  /* ── Elevación: 3 niveles, NO más ── */
+  --trx-sh-sm: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+  --trx-sh-md: 0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
+  --trx-sh-lg: 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+
+  /* ── Radios: 3 niveles ── */
+  --trx-r-sm: 10px;
+  --trx-r-md: 14px;
+  --trx-r-lg: 18px;
+
+  /* ── Easing ── */
+  --trx-ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --trx-ease-out:    cubic-bezier(.22, 1, .36, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   1. HERO / encabezado de página  —  reemplaza los 7 sistemas actuales
+   Anatomía: [volver] [icono] Título + bajada  ·············  [acciones]
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-hero {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+  background: #fff;
+  border: 1.5px solid var(--trx-g2);
+  border-left: 4px solid var(--trx-red);
+  border-radius: var(--trx-r-md);
+  padding: 18px 22px;
+  margin-bottom: 16px;
+  box-shadow: var(--trx-sh-sm);
+}
+.trx-hero-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+/* Icono de la página: cuadrado redondeado con degradado rojo.
+   Mismo tratamiento que el numerito de paso de /soporte (el highlight
+   interior blanco es lo que le da el aspecto de "botón físico"). */
+.trx-hero-ico {
+  width: 44px; height: 44px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  background: linear-gradient(150deg, var(--trx-red), var(--trx-red-dk));
+  color: #fff; font-size: 1.25rem;
+  box-shadow: 0 6px 14px -4px rgba(220,38,38,.5),
+              0 1px 0 rgba(255,255,255,.25) inset;
+}
+.trx-hero h1 {
+  font-size: 1.25rem; font-weight: 900; margin: 0;
+  color: var(--trx-black); letter-spacing: -.01em; line-height: 1.2;
+}
+/* Bajada: SIEMPRE presente. Regla de /soporte — nunca un título solo. */
+.trx-hero-sub {
+  font-size: .82rem; color: var(--trx-muted);
+  margin-top: 3px; line-height: 1.5;
+}
+.trx-hero-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+
+/* ── Botón "volver" — el patrón que faltaba en 9 de 25 páginas ── */
+.trx-back {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; flex-shrink: 0;
+  border-radius: var(--trx-r-sm);
+  background: #fff; border: 1.5px solid var(--trx-g2);
+  color: var(--trx-black); font-size: 1.05rem;
+  text-decoration: none;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.trx-back:hover {
+  background: var(--trx-black); color: #fff; border-color: var(--trx-black);
+}
+.trx-back:focus-visible { outline: none; box-shadow: var(--trx-ring); }
+
+/* ── Breadcrumb (patrón que ya existía bien en courier_ficha) ── */
+.trx-crumb {
+  font-size: .76rem; color: var(--trx-muted-2);
+  margin-bottom: 6px; display: flex; align-items: center;
+  gap: 6px; flex-wrap: wrap;
+}
+.trx-crumb a { color: var(--trx-muted); text-decoration: none; font-weight: 600; }
+.trx-crumb a:hover { color: var(--trx-red); }
+.trx-crumb .sep { opacity: .45; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   2. TARJETA de sección  (equivalente a .sp-card de /soporte)
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-card {
+  position: relative; overflow: hidden;
+  background: #fff;
+  border: 1.5px solid var(--trx-g2);
+  border-radius: var(--trx-r-md);
+  box-shadow: var(--trx-sh-sm);
+  margin-bottom: 16px;
+  transition: box-shadow .25s var(--trx-ease-out), border-color .2s;
+}
+.trx-card:hover { box-shadow: var(--trx-sh-md); border-color: var(--trx-border-h); }
+.trx-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .75rem; flex-wrap: wrap;
+  padding: 14px 18px;
+  border-bottom: 1.5px solid var(--trx-g2);
+}
+.trx-card-title {
+  font-size: .95rem; font-weight: 800; color: var(--trx-black);
+  margin: 0; display: flex; align-items: center; gap: 8px;
+}
+.trx-card-title i { color: var(--trx-red); }
+.trx-card-hint { font-size: .78rem; color: var(--trx-muted); font-weight: 400; }
+.trx-card-body { padding: 18px; }
+
+/* Numerito de paso, para flujos por etapas (Cubicador, OT masivo) */
+.trx-step-n {
+  width: 32px; height: 32px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--trx-r-sm);
+  background: linear-gradient(150deg, var(--trx-red), var(--trx-red-dk));
+  color: #fff; font-size: .92rem; font-weight: 900;
+  box-shadow: 0 6px 14px -4px rgba(220,38,38,.5),
+              0 1px 0 rgba(255,255,255,.25) inset;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   3. TABLA unificada
+   Daniel: "está en blanco, como muy delgado, no se percibe".
+   Causa real: las páginas nuevas abandonaron .ilus-table (cabecera negra)
+   y la reescribieron a gris sobre transparente. Acá se restituye el
+   contraste con la cabecera negra + bordes de 1.5px de /soporte.
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-table-wrap {
+  border: 1.5px solid var(--trx-g2);
+  border-radius: var(--trx-r-md);
+  overflow: hidden;          /* recorta las esquinas de la cabecera */
+  background: #fff;
+}
+.trx-table { width: 100%; margin: 0; border-collapse: collapse; }
+
+.trx-table thead th {
+  background: var(--trx-black);
+  color: #fff;
+  font-size: .72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  padding: 11px 12px;
+  border: none; white-space: nowrap;
+  position: sticky; top: 0; z-index: 2;
+}
+.trx-table tbody td {
+  padding: 11px 12px;
+  border-bottom: 1.5px solid var(--trx-g2);   /* 1.5px: SÍ se percibe */
+  vertical-align: middle;
+  font-size: .84rem; color: var(--trx-ink);
+}
+.trx-table tbody tr:last-child td { border-bottom: none; }
+/* Zebra suave: da estructura sin ensuciar. Ninguna tabla del módulo la tenía. */
+.trx-table tbody tr:nth-child(even) { background: #fcfcfd; }
+.trx-table tbody tr:hover { background: var(--trx-danger-bg); }
+
+.trx-table tfoot td {
+  background: var(--trx-g1);
+  font-weight: 800; font-size: .84rem;
+  padding: 11px 12px;
+  border-top: 2px solid var(--trx-g2);
+}
+/* Alineación consistente: los números SIEMPRE a la derecha, tabulares. */
+.trx-num { text-align: right; font-variant-numeric: tabular-nums; }
+.trx-ctr { text-align: center; }
+
+/* Acento de estado en el borde izquierdo de la fila (mecanismo que el
+   Monitor ya usaba bien y que conviene generalizar). */
+.trx-row-ok    td:first-child { box-shadow: inset 3px 0 0 var(--trx-ok); }
+.trx-row-warn  td:first-child { box-shadow: inset 3px 0 0 var(--trx-warn); }
+.trx-row-dang  td:first-child { box-shadow: inset 3px 0 0 var(--trx-danger); }
+.trx-row-info  td:first-child { box-shadow: inset 3px 0 0 var(--trx-info); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   4. ESTADO VACÍO
+   Regla de /soporte: icono + QUÉ pasó + QUÉ hacer. Nunca una línea sola.
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-empty { text-align: center; padding: 44px 22px; }
+.trx-empty-ico {
+  width: 62px; height: 62px; margin: 0 auto 14px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--trx-g1); color: var(--trx-g3);
+  font-size: 1.7rem;
+}
+.trx-empty-t {
+  font-size: 1rem; font-weight: 800; color: var(--trx-ink-2);
+  margin-bottom: 5px;
+}
+.trx-empty-d {
+  font-size: .84rem; color: var(--trx-muted);
+  max-width: 420px; margin: 0 auto 16px; line-height: 1.55;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   5. CHIPS / badges
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 50px;
+  font-size: .72rem; font-weight: 700; line-height: 1.3;
+  background: var(--trx-g1); color: var(--trx-ink-3);
+  border: 1px solid var(--trx-g2);
+  white-space: nowrap;
+}
+.trx-chip-ok   { background: var(--trx-ok-bg);     color: #14532d; border-color: var(--trx-ok-bd); }
+.trx-chip-warn { background: var(--trx-warn-bg);   color: #92400e; border-color: var(--trx-warn-bd); }
+.trx-chip-dang { background: var(--trx-danger-bg); color: #991b1b; border-color: var(--trx-danger-bd); }
+.trx-chip-info { background: var(--trx-info-bg);   color: #1e40af; border-color: #bfdbfe; }
+.trx-chip-dark { background: var(--trx-black);     color: #fff;    border-color: var(--trx-black); }
+
+/* ── Identidad del transportista (Daniel: "diferenciar los manifiestos,
+   uno es para transporte y otro es interno"). El logo del courier ya
+   existe en transport_couriers.logo_url. ── */
+.trx-courier { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.trx-courier-logo {
+  width: 24px; height: 24px; flex-shrink: 0;
+  border-radius: 6px; object-fit: contain;
+  background: #fff; border: 1px solid var(--trx-g2);
+}
+.trx-courier-fallback {
+  width: 24px; height: 24px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; font-size: .7rem; font-weight: 900;
+  background: var(--trx-g1); color: var(--trx-muted);
+  border: 1px solid var(--trx-g2);
+}
+.trx-courier-name {
+  font-weight: 700; font-size: .84rem; color: var(--trx-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Externo = neutro · Interno (flota propia ILUS) = rojo de marca */
+.trx-chip-externo { background: var(--trx-g1);        color: var(--trx-ink-3); border-color: var(--trx-g2); }
+.trx-chip-interno { background: var(--trx-danger-bg); color: #991b1b;          border-color: var(--trx-danger-bd); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   6. KPI / métrica
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-kpis {
+  display: grid; gap: 12px; margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.trx-kpi {
+  background: #fff;
+  border: 1.5px solid var(--trx-g2);
+  border-radius: var(--trx-r-md);
+  padding: 14px 16px;
+  box-shadow: var(--trx-sh-sm);
+  transition: box-shadow .2s var(--trx-ease-out), border-color .2s;
+}
+.trx-kpi:hover { box-shadow: var(--trx-sh-md); border-color: var(--trx-border-h); }
+.trx-kpi-k {
+  font-size: .7rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .4px; color: var(--trx-muted-2);
+  display: flex; align-items: center; gap: 5px; margin-bottom: 6px;
+}
+.trx-kpi-v {
+  font-size: 1.55rem; font-weight: 900; color: var(--trx-black);
+  line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+.trx-kpi-d { font-size: .74rem; color: var(--trx-muted); margin-top: 3px; }
+.trx-kpi-ok   { border-left: 4px solid var(--trx-ok); }
+.trx-kpi-warn { border-left: 4px solid var(--trx-warn); }
+.trx-kpi-dang { border-left: 4px solid var(--trx-danger); }
+.trx-kpi-red  { border-left: 4px solid var(--trx-red); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   7. Botón primario (CTA) — una sola acción primaria por pantalla
+   ═══════════════════════════════════════════════════════════════════ */
+.trx-btn-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 44px; padding: 11px 20px;
+  border: none; border-radius: var(--trx-r-sm);
+  background: linear-gradient(150deg, var(--trx-red), var(--trx-red-dk));
+  color: #fff; font-size: .9rem; font-weight: 800;
+  cursor: pointer; text-decoration: none;
+  box-shadow: 0 10px 26px -8px rgba(220,38,38,.5),
+              0 1px 0 rgba(255,255,255,.2) inset;
+  transition: transform .15s var(--trx-ease-out), box-shadow .15s;
+}
+.trx-btn-primary:hover {
+  color: #fff; transform: translateY(-1px);
+  box-shadow: 0 14px 32px -8px rgba(220,38,38,.55),
+              0 1px 0 rgba(255,255,255,.2) inset;
+}
+.trx-btn-primary:active { transform: scale(.98); }
+.trx-btn-primary:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   8. Mobile — 44px de target táctil, 16px en inputs (anti-zoom iOS)
+   ═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  .trx-hero { padding: 14px 16px; }
+  .trx-hero h1 { font-size: 1.08rem; }
+  .trx-hero-ico { width: 38px; height: 38px; font-size: 1.05rem; }
+  .trx-hero-actions { width: 100%; }
+  .trx-hero-actions > * { flex: 1 1 auto; }
+  .trx-kpis { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 9px; }
+  .trx-kpi-v { font-size: 1.3rem; }
+  .trx-card-body { padding: 14px; }
+  .trx-table tbody td,
+  .trx-table thead th { padding: 9px 10px; }
+  .trx-btn-primary,
+  .trx-back { min-height: 44px; }
+  .trx-hero input, .trx-hero select,
+  .trx-card input, .trx-card select, .trx-card textarea { font-size: 16px; }
+}
+
+/* Respeta a quien pidió menos movimiento (accesibilidad, igual que /soporte) */
+@media (prefers-reduced-motion: reduce) {
+  .trx-card, .trx-kpi, .trx-btn-primary, .trx-back { transition: none; }
+  .trx-btn-primary:hover { transform: none; }
+}
+
+/* Impresión: sin sombras ni colores de fondo que gasten tóner */
+@media print {
+  .trx-hero-actions, .trx-back { display: none !important; }
+  .trx-card, .trx-hero, .trx-kpi, .trx-table-wrap {
+    box-shadow: none !important; border: 1px solid #ccc !important;
+  }
+  .trx-table thead th { background: #000 !important; -webkit-print-color-adjust: exact; }
+}

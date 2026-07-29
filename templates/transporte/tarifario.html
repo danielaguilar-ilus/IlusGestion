@@ -1,37 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Tarifario de Couriers — ILUS Transporte{% endblock %}
 
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <style>
+/* El encabezado y los badges de esta página se migraron al DS de
+   transporte (.trx-hero / .trx-chip / .trx-empty en ilus_transporte.css).
+   Acá quedan sólo la tarjeta por courier y el modal de historial.       */
 .tf-wrap{ max-width:1180px; margin:0 auto; padding:1.25rem 1rem 3rem; }
-.tf-head{
-  background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);
-  border-radius:16px; padding:1.5rem 1.5rem; margin-bottom:1.25rem;
-  color:#fff; position:relative; overflow:hidden;
-}
-.tf-head::after{
-  content:""; position:absolute; top:-40%; right:-8%; width:220px; height:220px;
-  background:radial-gradient(circle,rgba(220,38,38,.35) 0%,rgba(220,38,38,0) 70%);
-}
-.tf-head h1{ font-size:1.35rem; font-weight:800; margin:0 0 .3rem; letter-spacing:-.01px; }
-.tf-head p{ margin:0; color:#c9c9c9; font-size:.86rem; max-width:60ch; }
 
 .tf-card{
-  background:#fff; border:1px solid #e8e8e8; border-radius:14px;
-  overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.03); margin-bottom:1rem;
+  background:#fff; border:1.5px solid var(--trx-g2, #e5e7eb); border-radius:14px;
+  overflow:hidden; box-shadow:var(--trx-sh-sm, 0 1px 2px rgba(0,0,0,.03)); margin-bottom:1rem;
+  transition:box-shadow .25s, border-color .2s;
 }
+.tf-card:hover{ box-shadow:var(--trx-sh-md, 0 4px 8px -2px rgba(15,23,42,.08)); border-color:var(--trx-border-h, #d1d5db); }
 .tf-card-head{
   display:flex; align-items:center; justify-content:space-between; gap:.75rem;
-  padding:1rem 1.15rem; border-bottom:1px solid #f0f0f0; flex-wrap:wrap;
+  padding:1rem 1.15rem; border-bottom:1.5px solid var(--trx-g2, #e5e7eb); flex-wrap:wrap;
 }
 .tf-name{ font-weight:800; font-size:1rem; color:#0a0a0a; }
-.tf-badge{
-  font-size:.66rem; font-weight:700; padding:.22rem .6rem; border-radius:20px;
-  letter-spacing:.2px; white-space:nowrap;
-}
-.tf-badge-db{ background:#dcfce7; color:#166534; }
-.tf-badge-file{ background:#fff8e1; color:#92400e; }
-.tf-badge-none{ background:#f3f4f6; color:#6b7280; }
 
 .tf-card-body{ padding:.9rem 1.15rem 1.05rem; }
 .tf-meta{ display:flex; flex-wrap:wrap; gap:1.4rem; margin-bottom:.85rem; }
@@ -55,7 +46,9 @@
 .tf-btn-ghost:hover{ background:#e5e7eb; }
 .tf-btn[disabled]{ opacity:.5; cursor:not-allowed; }
 
-.tf-loading, .tf-empty{ text-align:center; padding:2.5rem 1rem; color:#9ca3af; font-size:.9rem; }
+/* Mensajes cortos DENTRO del modal de historial. Los estados vacíos /
+   de carga de la página usan .trx-empty del DS. */
+.tf-empty{ text-align:center; padding:2.5rem 1rem; color:#9ca3af; font-size:.9rem; }
 
 /* Modal propio (sin Bootstrap): historial de versiones */
 .tf-modal-overlay{
@@ -88,14 +81,44 @@
 </style>
 
 <div class="tf-wrap">
-  <div class="tf-head">
-    <h1>Tarifario de Couriers</h1>
-    <p>Sube el Excel corregido para actualizar una tarifa sin depender de un deploy, o descarga el
-       tarifario vigente para editarlo offline. Cada subida reemplaza la tarifa activa, pero la
-       versión anterior queda guardada — nunca se pierde sin poder deshacerla.</p>
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('transporte_index') }}"
+         title="Volver a Transporte" aria-label="Volver a Transporte">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="trx-hero-ico"><i class="bi bi-currency-dollar"></i></div>
+      <div>
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_couriers') }}">Couriers</a>
+          <span class="sep">›</span><span>Tarifario</span>
+        </div>
+        <h1>Tarifario de Couriers</h1>
+        <div class="trx-hero-sub">
+          Sube el Excel corregido para actualizar una tarifa sin depender de un deploy, o descarga el
+          tarifario vigente para editarlo offline. Cada subida reemplaza la tarifa activa, pero la
+          versión anterior queda guardada — nunca se pierde sin poder deshacerla.
+        </div>
+      </div>
+    </div>
   </div>
 
-  <div id="tfLista" class="tf-loading">Cargando tarifario…</div>
+  {# Estado de carga: el JS reemplaza el contenido de #tfLista al responder #}
+  <div id="tfLista">
+    <div class="tf-card">
+      <div class="trx-empty">
+        <div class="trx-empty-ico">
+          <span class="spinner-border text-danger" role="status" aria-hidden="true"></span>
+        </div>
+        <div class="trx-empty-t">Cargando tarifario…</div>
+        <div class="trx-empty-d">
+          Estamos buscando el tarifario vigente de cada courier y sus versiones respaldadas.
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Modal historial -->
@@ -128,10 +151,12 @@
     return pad(d.getDate())+"/"+pad(d.getMonth()+1)+"/"+d.getFullYear()+" "+pad(d.getHours())+":"+pad(d.getMinutes());
   }
 
+  /* Chips del DS de transporte (.trx-chip): mismos colores que antes,
+     ahora tomados de ilus_transporte.css en vez de duplicarlos acá. */
   function badgeInfo(fuente){
-    if (fuente === "base_de_datos") return {cls:"tf-badge-db", label:"Editado desde admin"};
-    if (fuente === "archivo_local") return {cls:"tf-badge-file", label:"Archivo del repo"};
-    return {cls:"tf-badge-none", label:"Sin tarifario"};
+    if (fuente === "base_de_datos") return {cls:"trx-chip-ok",   label:"Editado desde admin"};
+    if (fuente === "archivo_local") return {cls:"trx-chip-warn", label:"Archivo del repo"};
+    return {cls:"", label:"Sin tarifario"};
   }
 
   function urlSubir(slug){ return "/transporte/tarifario/api/" + slug + "/subir"; }
@@ -143,7 +168,14 @@
   function render(couriers){
     var cont = document.getElementById("tfLista");
     if (!couriers || !couriers.length){
-      cont.innerHTML = '<div class="tf-empty">No hay couriers configurados.</div>';
+      cont.innerHTML = '<div class="tf-card"><div class="trx-empty">'
+        + '<div class="trx-empty-ico"><i class="bi bi-inboxes"></i></div>'
+        + '<div class="trx-empty-t">No hay couriers configurados</div>'
+        + '<div class="trx-empty-d">El tarifario se arma a partir de los couriers registrados. '
+        +   'Crea primero el courier y vuelve acá para subir o descargar su Excel de tarifas.</div>'
+        + '<a class="trx-btn-primary" href="{{ url_for('tr_couriers') }}">'
+        +   '<i class="bi bi-building"></i>Ir a Couriers</a>'
+        + '</div></div>';
       return;
     }
     var html = "";
@@ -152,7 +184,7 @@
       html += '<div class="tf-card" data-slug="'+c.slug+'">'
         + '<div class="tf-card-head">'
         +   '<span class="tf-name">'+c.nombre+'</span>'
-        +   '<span class="tf-badge '+b.cls+'">'+b.label+'</span>'
+        +   '<span class="trx-chip '+b.cls+'">'+b.label+'</span>'
         + '</div>'
         + '<div class="tf-card-body">'
         +   '<div class="tf-meta">'
@@ -162,13 +194,13 @@
         +     '<div class="tf-meta-item"><div class="tf-meta-label">Última actualización</div><div class="tf-meta-val">'+fmtFecha(c.actualizado_en)+'</div></div>'
         +   '</div>'
         +   '<div class="tf-actions">'
-        +     '<button type="button" class="tf-btn tf-btn-ghost" data-accion="descargar" data-slug="'+c.slug+'">⬇ Descargar Excel</button>'
-        +     '<button type="button" class="tf-btn tf-btn-primary" data-accion="subir" data-slug="'+c.slug+'">⬆ Subir Excel/CSV</button>'
+        +     '<button type="button" class="tf-btn tf-btn-ghost" data-accion="descargar" data-slug="'+c.slug+'"><i class="bi bi-file-earmark-excel"></i>Descargar Excel</button>'
+        +     '<button type="button" class="tf-btn tf-btn-primary" data-accion="subir" data-slug="'+c.slug+'"><i class="bi bi-cloud-arrow-up"></i>Subir Excel/CSV</button>'
         +     (c.fuente === "archivo_local"
-                ? '<button type="button" class="tf-btn tf-btn-dark" data-accion="sembrar" data-slug="'+c.slug+'">Migrar a base de datos</button>'
+                ? '<button type="button" class="tf-btn tf-btn-dark" data-accion="sembrar" data-slug="'+c.slug+'"><i class="bi bi-database-add"></i>Migrar a base de datos</button>'
                 : '')
         +     (c.fuente === "base_de_datos"
-                ? '<button type="button" class="tf-btn tf-btn-ghost" data-accion="historial" data-slug="'+c.slug+'">Historial</button>'
+                ? '<button type="button" class="tf-btn tf-btn-ghost" data-accion="historial" data-slug="'+c.slug+'"><i class="bi bi-clock-history"></i>Historial</button>'
                 : '')
         +   '</div>'
         + '</div>'
@@ -183,14 +215,26 @@
       .then(function(data){
         if (!data.ok){
           document.getElementById("tfLista").innerHTML =
-            '<div class="tf-empty">'+(data.error || 'No se pudo cargar el tarifario.')+'</div>';
+            '<div class="tf-card"><div class="trx-empty">'
+            + '<div class="trx-empty-ico"><i class="bi bi-exclamation-triangle"></i></div>'
+            + '<div class="trx-empty-t">No se pudo cargar el tarifario</div>'
+            + '<div class="trx-empty-d">'+(data.error || 'El servidor respondió con un error. Intenta nuevamente en unos segundos.')+'</div>'
+            + '<button type="button" class="trx-btn-primary" onclick="location.reload()">'
+            +   '<i class="bi bi-arrow-clockwise"></i>Reintentar</button>'
+            + '</div></div>';
           return;
         }
         render(data.couriers);
       })
       .catch(function(){
         document.getElementById("tfLista").innerHTML =
-          '<div class="tf-empty">No se pudo conectar con el servidor. Intenta recargar la página.</div>';
+          '<div class="tf-card"><div class="trx-empty">'
+          + '<div class="trx-empty-ico"><i class="bi bi-wifi-off"></i></div>'
+          + '<div class="trx-empty-t">Sin conexión con el servidor</div>'
+          + '<div class="trx-empty-d">No pudimos traer el tarifario. Revisa tu conexión y vuelve a intentarlo.</div>'
+          + '<button type="button" class="trx-btn-primary" onclick="location.reload()">'
+          +   '<i class="bi bi-arrow-clockwise"></i>Reintentar</button>'
+          + '</div></div>';
       });
   }
 

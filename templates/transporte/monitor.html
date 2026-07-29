@@ -1,28 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Monitor en vivo — ILUS{% endblock %}
+{% block head_extra %}
+{# Design System compartido de TRANSPORTE (encabezado, estados vacios, tablas). #}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
 {% block content %}
 
-<div class="page-header">
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+{# Encabezado unificado .trx-hero (antes .page-header oscuro, uno de los 7
+   sistemas de encabezado del modulo). Se conservan TODOS los controles:
+   pildora EN VIVO (#liveDot), filtro por transporte (#filtroCourier),
+   marca de ultima actualizacion (#lastUpdate) y el link a Buscar despacho. #}
+<div class="trx-hero">
+  <div class="trx-hero-main">
+    {# La pagina no tenia forma de volver al modulo. #}
+    <a href="{{ url_for('transporte_index') }}" class="trx-back"
+       title="Volver a Transporte" aria-label="Volver a Transporte">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="trx-hero-ico"><i class="bi bi-broadcast"></i></div>
     <div>
-      <h4><i class="bi bi-broadcast me-2"></i>Monitor en vivo
+      <div class="trx-crumb">
+        <a href="{{ url_for('transporte_index') }}">Transporte</a>
+        <span class="sep">›</span>
+        <span>Monitor en vivo</span>
+      </div>
+      <h1>Monitor en vivo
         <span class="badge bg-danger ms-2" id="liveDot" style="animation:pulse 2s infinite">EN VIVO</span>
-      </h4>
-      <div class="sub">Posición en tiempo real de cada chofer. Actualiza cada 10s.</div>
+      </h1>
+      <div class="trx-hero-sub">Posición en tiempo real de cada chofer. Actualiza cada 10s.</div>
     </div>
-    <div class="d-flex gap-2 align-items-center flex-wrap">
-      <select id="filtroCourier" class="form-select form-select-sm" style="max-width:200px"
-              onchange="_refresh()">
-        <option value="">Todos los transportes</option>
-        {% for c in couriers_filtro %}
-        <option value="{{ c.nombre|e }}">{{ c.nombre }}</option>
-        {% endfor %}
-      </select>
-      <span class="badge bg-secondary-subtle text-secondary-emphasis" id="lastUpdate">—</span>
-      <a href="{{ url_for('tr_buscar_interno') }}" class="btn btn-sm btn-outline-light">
-        <i class="bi bi-search me-1"></i>Buscar despacho
-      </a>
-    </div>
+  </div>
+  <div class="trx-hero-actions">
+    <select id="filtroCourier" class="form-select form-select-sm" style="max-width:200px"
+            onchange="_refresh()">
+      <option value="">Todos los transportes</option>
+      {% for c in couriers_filtro %}
+      <option value="{{ c.nombre|e }}">{{ c.nombre }}</option>
+      {% endfor %}
+    </select>
+    <span class="badge bg-secondary-subtle text-secondary-emphasis" id="lastUpdate">—</span>
+    {# btn-outline-light era blanco sobre el header oscuro; sobre el hero
+       claro se cambia a outline-dark para que siga siendo legible. #}
+    <a href="{{ url_for('tr_buscar_interno') }}" class="btn btn-sm btn-outline-dark">
+      <i class="bi bi-search me-1"></i>Buscar despacho
+    </a>
   </div>
 </div>
 
@@ -30,10 +51,12 @@
 @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.5 } }
 .mn-wrap{ display:grid; grid-template-columns:1fr 380px; gap:16px; }
 @media(max-width:1100px){ .mn-wrap{ grid-template-columns:1fr; } }
-.mn-map-card{ background:#fff; border:1px solid #e5e7eb; border-radius:13px; overflow:hidden; height:75vh; min-height:480px; position:relative; }
+/* Bordes de 1.5px y radios del DS (var --trx-*): con 1px las tarjetas se
+   perdían contra el fondo blanco — la misma queja de Daniel sobre las tablas. */
+.mn-map-card{ background:#fff; border:1.5px solid var(--trx-g2); border-radius:var(--trx-r-md); overflow:hidden; height:75vh; min-height:480px; position:relative; }
 #monMap{ width:100%; height:100%; }
 .mn-side{ display:flex; flex-direction:column; gap:.6rem; max-height:75vh; overflow-y:auto; padding-right:.3rem; }
-.mn-driver{ background:#fff; border:1px solid #e5e7eb; border-left:4px solid #16a34a; border-radius:11px; padding:.85rem 1rem; cursor:pointer;
+.mn-driver{ background:#fff; border:1.5px solid var(--trx-g2); border-left:4px solid #16a34a; border-radius:var(--trx-r-sm); padding:.85rem 1rem; cursor:pointer;
   transition:transform .12s, box-shadow .15s, border-left-color .2s; position:relative; }
 .mn-driver:hover{ transform:translateY(-1px); box-shadow:0 6px 16px -8px rgba(0,0,0,.1); }
 .mn-driver.stale{ border-left-color:#f59e0b; opacity:.85; }
@@ -73,10 +96,16 @@
     <div id="monMap"></div>
   </div>
   <div class="mn-side" id="driverList">
-    <div class="mn-empty" id="emptyState">
-      <i class="bi bi-broadcast"></i>
-      <div><strong>Esperando choferes…</strong></div>
-      <div class="small mt-1">Cuando un chofer abra la app, aparecerá acá con su ubicación.</div>
+    {# Estado vacio del DS. Se usa solo .trx-empty (sin .mn-empty) porque la
+       regla vieja ".mn-empty i{font-size:3rem}" deformaba el icono del DS;
+       la regla sigue en el <style> de abajo, no se borro nada. #}
+    <div class="trx-empty" id="emptyState">
+      <div class="trx-empty-ico"><i class="bi bi-broadcast"></i></div>
+      <div class="trx-empty-t">Esperando choferes…</div>
+      <div class="trx-empty-d">
+        Cuando un chofer abra la app, aparecerá acá con su ubicación, su avance
+        de entregas y hace cuánto envió su última señal.
+      </div>
     </div>
   </div>
 </div>
@@ -133,7 +162,18 @@ function _render(drivers){
   list.querySelectorAll('.mn-driver').forEach(n => n.remove());
   // Cards
   if (!drivers.length){
-    list.innerHTML = '<div class="mn-empty"><i class="bi bi-broadcast"></i><div><strong>Esperando choferes…</strong></div></div>';
+    // Misma estructura que el estado vacío del HTML (.trx-empty con título Y
+    // explicación): antes el re-render perdía la segunda línea y el usuario se
+    // quedaba sin saber qué hacer. Lleva id="emptyState" para que el próximo
+    // render lo retire igual que al inicial (si no, quedaba colgado arriba de
+    // los choferes cuando volvían a aparecer).
+    list.innerHTML =
+      '<div class="trx-empty" id="emptyState">'+
+        '<div class="trx-empty-ico"><i class="bi bi-broadcast"></i></div>'+
+        '<div class="trx-empty-t">Esperando choferes…</div>'+
+        '<div class="trx-empty-d">Cuando un chofer abra la app, aparecerá acá con su ubicación, '+
+          'su avance de entregas y hace cuánto envió su última señal.</div>'+
+      '</div>';
   } else {
     // Orden: sospechosos primero
     drivers.sort((a,b) => (b.sospechoso?1:0) - (a.sospechoso?1:0));
