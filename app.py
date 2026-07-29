@@ -23825,7 +23825,7 @@ def tr_manifiesto_detalle(mid):
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
-                ORDER BY mi.orden, mi.id
+                ORDER BY (ultima_act_at IS NULL), ultima_act_at DESC, mi.orden, mi.id
             """, (mid,))
 
         items = _fetch_items()
@@ -23863,7 +23863,7 @@ def tr_manifiesto_detalle(mid):
             for pl in (mysql_fetchall(
                 f"""SELECT commitment_id, koprct, nokopr, cantidad, cant_despachada, saldo
                     FROM transport_commitment_lines
-                    WHERE commitment_id IN ({_ph})
+                    WHERE commitment_id IN ({_ph}) AND koprct NOT LIKE 'ZZ%%'
                     ORDER BY id""", tuple(comm_ids)) or []):
                 prod_por_comm.setdefault(pl["commitment_id"], []).append(pl)
         # Enriquecer cada item con margen y sus productos
