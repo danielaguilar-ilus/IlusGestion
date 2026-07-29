@@ -1257,13 +1257,12 @@ def _lc_cotizacion_pdf_bytes(cid):
     if not _pw_pdf:
         raise RuntimeError("pdf_engine_unavailable")
 
-    _get_brand_cfg = _h("_get_brand_cfg")
-    _support_email = "servicio.tecnico@ilusfitness.com"
-    if _get_brand_cfg:
-        try:
-            _support_email = _get_brand_cfg().get("support_email") or _support_email
-        except Exception:
-            pass
+    # Footer fijo (Daniel 2026-07-29, viendo el PDF de transporte en vivo):
+    # "ILUS Fitness" (no "ILUS Sport & Health") y contacto@sphs.cl siempre —
+    # ya no depende de la config de marca dinámica, calcado del footer que
+    # ya se dejó igual en tickets_module.py para la cotización de servicio
+    # técnico.
+    _support_email = "contacto@sphs.cl"
 
     _footer_numero = _html_mod.escape(numero_mostrar)
     _valida_str = ctx_pdf["cot"].get("valida_hasta") or ""
@@ -1273,15 +1272,16 @@ def _lc_cotizacion_pdf_bytes(cid):
         '<div style="width:100%;font-size:7px;font-family:Arial,Helvetica,sans-serif;'
         'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
         'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
-        f'<span><b style="color:#0a0a0a">ILUS Sport &amp; Health</b> · www.ilusfitness.com · '
+        f'<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
         f'{_html_mod.escape(_support_email)}</span>'
         f'<span>Cotización <b style="color:#0a0a0a">{_footer_numero}</b>{_footer_vigencia} · '
         'Página <span class="pageNumber"></span> de <span class="totalPages"></span></span>'
         '</div>'
     )
     _logo_b64_val = ctx_pdf.get("logo_b64")
+    # Logo ILUS +30% (Daniel 2026-07-29): 17.6mm->22.9mm, 67.2mm->87.4mm.
     _header_ilus = (
-        f'<img src="data:image/png;base64,{_logo_b64_val}" style="height:17.6mm;max-width:67.2mm;object-fit:contain;">'
+        f'<img src="data:image/png;base64,{_logo_b64_val}" style="height:22.9mm;max-width:87.4mm;object-fit:contain;">'
         if _logo_b64_val else
         '<span style="font-weight:900;font-size:25.6px;color:#ffffff;letter-spacing:.02em;">'
         '<span style="color:#dc2626;">&#9650;</span> ILUS<span style="color:#dc2626;">.</span></span>'
