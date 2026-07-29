@@ -352,14 +352,7 @@
   let resumenPreview = {}; // resumen del /preview
   let lastFile = null;     // último archivo subido (para re-analizar tras fix)
 
-  // ── Util: leer cookie CSRF si existe (Flask-WTF no la usa acá, pero
-  // por consistencia con otros endpoints) ──
-  function _csrf() {
-    const m = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
-  }
-
-  // ── Estado labels (para la UI). NO se ven los códigos crudos. ─────
+// ── Estado labels (para la UI). NO se ven los códigos crudos. ─────
   const STATUS_INFO = {
     'ok_nuevo':      { label:'Listo',         color:'success', icon:'bi-check-circle-fill' },
     'ok_re_envio':   { label:'Re-envío',      color:'primary', icon:'bi-arrow-repeat' },
@@ -463,9 +456,20 @@
     fd.append('archivo', file);
     let resp, data;
     try {
+      // FIX 2026-07-29 (Daniel, en vivo: "Unexpected token '<'... is not
+      // valid JSON" al arrastrar el Excel): esta página fijaba a mano un
+      // header X-CSRF-Token leyendo una cookie 'csrf_token' que NUNCA
+      // existió (el token vive en la sesión de Flask, no en una cookie
+      // legible) — mandaba SIEMPRE un token vacío, y al venir ya puesto
+      // en headers, el wrapper global de base.html (que sí inyecta el
+      // token correcto) no lo pisaba. CSRF fallaba siempre; como esta
+      // ruta no matchea la heurística is_ajax (multipart, sin
+      // X-Requested-With), el backend respondía con un 302 redirect en
+      // vez de JSON — el navegador seguía la redirección a una URL
+      // POST-only por GET y caía en la página HTML de error. Quitar el
+      // header manual deja que el wrapper global inyecte el token real.
       resp = await fetch('{{ url_for("tr_ot_masivo_preview") }}', {
         method:'POST', body:fd, credentials:'same-origin',
-        headers: { 'X-CSRF-Token': _csrf() },
       });
       data = await resp.json();
     } catch (e) {
@@ -621,7 +625,6 @@
         method:'POST', credentials:'same-origin',
         headers:{
           'Content-Type':'application/json',
-          'X-CSRF-Token': _csrf(),
         },
         body: JSON.stringify({
           filas: filasPreview,
@@ -806,7 +809,7 @@
   async function _mfmAgregarItem(mid) {
     const resp = await fetch(`/transporte/manifiestos/${mid}/items`, {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type':'application/json', 'X-CSRF-Token': _csrf() },
+      headers: { 'Content-Type':'application/json' },
       body: JSON.stringify({ commitment_id: mfmCommitmentId }),
     });
     const data = await resp.json().catch(() => ({}));
@@ -822,7 +825,7 @@
       if (!ok) return false;
       const resp2 = await fetch(`/transporte/manifiestos/${mid}/items`, {
         method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type':'application/json', 'X-CSRF-Token': _csrf() },
+        headers: { 'Content-Type':'application/json' },
         body: JSON.stringify({ commitment_id: mfmCommitmentId, confirm_dup: true }),
       });
       const data2 = await resp2.json().catch(() => ({}));
@@ -867,7 +870,7 @@
         fd.set('courier', courier); fd.set('fecha', fecha); fd.set('notas', mfmNotas.value || '');
         const rC = await fetch('{{ url_for("tr_crear_manifiesto") }}', {
           method:'POST', credentials:'same-origin',
-          headers:{ 'Content-Type':'application/x-www-form-urlencoded', 'X-CSRF-Token': _csrf() },
+          headers:{ 'Content-Type':'application/x-www-form-urlencoded' },
           body: fd.toString(),
         });
         const dC = await rC.json().catch(() => ({}));
