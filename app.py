@@ -27931,17 +27931,24 @@ def _fedex_track_poll_loop():
             total_polled = total_changed = 0
             msg = "sin items"
             try:
-                for _ in range(MAX_BATCHES_POR_CICLO):
-                    res = _fedex_poll_batch(limit=30, dry=False)
-                    if not res.get("ok"):
-                        print(f"[fedex-autopoll] batch error: {res.get('error')}", flush=True)
-                        break
-                    p = res.get("polled", 0)
-                    total_polled  += p
-                    total_changed += res.get("changed", 0)
-                    if p == 0:
-                        break          # ya no quedan items que pollear
-                    _time.sleep(3)     # respeta rate-limit FedEx entre batches
+                # FIX 2026-07-29 (hallado en chequeo de salud: "[fedex-autopoll]
+                # loop error: Working outside of application context" cada
+                # ciclo): _fedex_poll_batch usa mysql_fetchall()/get_db(), que
+                # exige contexto Flask -- sin este `with`, cada ciclo fallaba
+                # en silencio y el estado FedEx nunca se actualizaba solo.
+                # Mismo patron que _simpliroute_poll_loop (fix 2026-07-28).
+                with app.app_context():
+                    for _ in range(MAX_BATCHES_POR_CICLO):
+                        res = _fedex_poll_batch(limit=30, dry=False)
+                        if not res.get("ok"):
+                            print(f"[fedex-autopoll] batch error: {res.get('error')}", flush=True)
+                            break
+                        p = res.get("polled", 0)
+                        total_polled  += p
+                        total_changed += res.get("changed", 0)
+                        if p == 0:
+                            break          # ya no quedan items que pollear
+                        _time.sleep(3)     # respeta rate-limit FedEx entre batches
                 if total_polled:
                     msg = f"polled={total_polled} changed={total_changed}"
                     print(f"[fedex-autopoll] ciclo OK · {msg}", flush=True)
