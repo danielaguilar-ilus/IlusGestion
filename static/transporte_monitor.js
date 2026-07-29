@@ -828,6 +828,29 @@ function renderVista(d) {
       : 'Este pedido no tiene un correo de cliente registrado';
   })();
 
+  // FIX 2026-07-28 (Daniel, viendo el modal en vivo: "acá veo editar campos
+  // y todavía cuando entro a ver los productos, me da para editar los
+  // campos" en un pedido que ya figura Entregado). Mismo criterio ya
+  // aplicado a los botones de la fila de la tabla: si el estado es
+  // terminal, "Asignar a manifiesto" y "Editar campos" quedan bloqueados
+  // acá también -- las otras acciones (cotizar, reenviar correo, actualizar
+  // estado, ver trazabilidad) siguen activas porque son de solo consulta o
+  // no cambian el documento.
+  (function() {
+    var _term = (c.estado === 'Entregado' || c.estado === 'Devolución');
+    var _motivo = 'Bloqueado: este documento ya está entregado';
+    var btnManif = document.getElementById('btnVistaManifiesto');
+    var btnEditar = document.getElementById('btnVistaEditar');
+    if (btnManif) {
+      btnManif.disabled = _term;
+      btnManif.title = _term ? _motivo : 'Agregar este documento al panel de manifiesto';
+    }
+    if (btnEditar) {
+      btnEditar.disabled = _term;
+      btnEditar.title = _term ? _motivo : 'Editar estado, costo, notas del documento';
+    }
+  })();
+
   // Campos separados: dirección, teléfono, correo
   if (c.direccion) {
     document.getElementById('vistaDir').textContent = c.direccion;
