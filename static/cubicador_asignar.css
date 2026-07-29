@@ -384,6 +384,15 @@
 .pill-saldo.no{ background:#fee2e2; color:#991b1b; }
 .pill-saldo.nd{ background:#f3f4f6; color:#9ca3af; }
 .pill-saldo i{ font-size:.7rem; }
+/* Alerta límite físico FedEx (68kg/bulto) — no bloqueante, ver
+   FEDEX_MAX_KG_POR_BULTO en cubicador_asignar.js (pedido Daniel 2026-07-29) */
+.fedex-limit-ico{ color:#dc2626; font-size:.8rem; margin-left:3px; cursor:help; }
+.fedex-limit-banner{
+  background:#fee2e2; border:1.5px solid #dc2626; border-radius:8px;
+  padding:9px 12px; margin-top:10px; font-size:.78rem; color:#7f1d1d;
+}
+.fedex-limit-banner-hdr{ display:flex; align-items:center; gap:6px; font-weight:800; }
+.fedex-limit-banner ul{ margin:6px 0 0 22px; padding:0; }
 /* Ícono info con el desglose de stock (físico/comprometido/devengado) del
    producto en el ERP — tooltip Bootstrap, ver _stockTooltip() (2026-07-25) */
 .stock-info-ic{

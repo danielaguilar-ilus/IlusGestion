@@ -19,6 +19,12 @@ let _precioFedex  = null;   // legacy — el cotizador unificado lo deja en _cot
 let _zonaActual   = null;   // '1'..'6' — sólo informativo para el badge de zona
 let _preciosManuales = {};  // legacy — ya no se usa (cotización viene del backend)
 
+// Límite físico de FedEx: NO acepta bultos de más de 68kg cada uno — un
+// pedido con algún bulto sobre ese peso no puede despacharse automático por
+// FedEx (API/manifiesto), Alison debe gestionarlo manual con otro courier.
+// Alerta VISUAL, no bloqueante (pedido Daniel 2026-07-29, previo a directorio).
+const FEDEX_MAX_KG_POR_BULTO = 68;
+
 // ════════════════════════════════════════════════════════════
 //  FORMATO NUMÉRICO CHILENO
 // ════════════════════════════════════════════════════════════
@@ -857,6 +863,68 @@ function _saldoBadge(l){
   return '<span class="pill-saldo no"><i class="bi bi-x-circle-fill"></i>sin saldo</span>' + stockTip;
 }
 
+// ════════════════════════════════════════════════════════════
+//  ALERTA LÍMITE FÍSICO FEDEX (68kg por bulto) — no bloqueante
+// ════════════════════════════════════════════════════════════
+// IMPORTANTE sobre el dato disponible: la ficha técnica NO guarda el peso
+// de cada bulto individual — guarda, por línea/SKU, el peso real TOTAL de
+// UNA unidad del producto (l.peso_kg_u) y en cuántos bultos se reparte esa
+// unidad (l.total_bultos). Cuando total_bultos===1 este valor ES el peso
+// real exacto de ese bulto. Cuando total_bultos>1 lo que se puede calcular
+// es un PROMEDIO (peso_kg_u / total_bultos) — es la mejor aproximación
+// disponible con los datos reales que existen hoy (no hay desglose de
+// bulto-por-bulto en el modelo), pero no está garantizado que cada bulto de
+// esa unidad pese exactamente igual si vienen en cajas de tamaños distintos.
+function _pesoPromedioBultoLinea(l){
+  if(!l || !l.tiene_bultos) return null;
+  const n  = parseInt(l.total_bultos) || 0;
+  const kg = parseFloat(l.peso_kg_u) || 0;
+  if(n <= 0) return null;
+  return kg / n;
+}
+
+// Líneas del documento cuyo peso real (por bulto) supera el límite físico
+// de FedEx. Devuelve [] si no hay datos de cubicaje o ninguna excede.
+function _lineasExcedenFedex(){
+  if(!_docData || !Array.isArray(_docData.lineas)) return [];
+  const out = [];
+  _docData.lineas.forEach(function(l){
+    const pesoBulto = _pesoPromedioBultoLinea(l);
+    if(pesoBulto != null && pesoBulto > FEDEX_MAX_KG_POR_BULTO){
+      out.push({
+        sku:         l.sku,
+        nombre:      l.descripcion_erp || l.nombre_app || l.sku || '—',
+        pesoBulto:   pesoBulto,
+        totalBultos: parseInt(l.total_bultos) || 0,
+      });
+    }
+  });
+  return out;
+}
+
+// Pinta (o esconde) el banner de alerta sobre la tabla de cubicaje.
+function _renderFedexAlertBanner(overweightLines){
+  const el = document.getElementById('fedexAlertBanner');
+  if(!el) return;
+  if(!overweightLines || !overweightLines.length){
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const detalle = overweightLines.map(x => `<li><b>${escHtml(x.sku||'')}</b> ${escHtml(x.nombre||'')}`
+    + ` — ≈${fCl(x.pesoBulto)} kg/bulto (${x.totalBultos} bulto${x.totalBultos===1?'':'s'})</li>`).join('');
+  el.style.display = '';
+  el.innerHTML = `
+    <div class="fedex-limit-banner">
+      <div class="fedex-limit-banner-hdr">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <span>${overweightLines.length} producto${overweightLines.length===1?'':'s'} supera${overweightLines.length===1?'':'n'}
+          el límite de FedEx (${FEDEX_MAX_KG_POR_BULTO} kg por bulto) — asignar manualmente con otro courier.</span>
+      </div>
+      <ul>${detalle}</ul>
+    </div>`;
+}
+
 function renderCubaje(){
   if(!_docData || !Array.isArray(_docData.lineas)) return;
   const lineas = _docData.lineas;
@@ -865,6 +933,7 @@ function renderCubaje(){
 
   // ── Recalcular totales desde las líneas actuales (en memoria)
   let tQty=0, tKg=0, tPv=0, tVol=0, tPred=0, tBult=0;
+  const overweightFedex = [];   // líneas que superan FEDEX_MAX_KG_POR_BULTO
 
   let rows = '';
   lineas.forEach((l, idx) => {
@@ -875,9 +944,20 @@ function renderCubaje(){
       : l.peso_kg_u >= l.peso_vol_u
         ? '<span class="pill-kg">REAL</span>'
         : '<span class="pill-pv">VOL</span>';
+    const pesoBultoLinea = _pesoPromedioBultoLinea(l);
+    const excedeFedex    = pesoBultoLinea != null && pesoBultoLinea > FEDEX_MAX_KG_POR_BULTO;
+    if(excedeFedex){
+      overweightFedex.push({
+        sku: l.sku, nombre: l.descripcion_erp || l.nombre_app || l.sku || '—',
+        pesoBulto: pesoBultoLinea, totalBultos: parseInt(l.total_bultos) || 0,
+      });
+    }
     const bultosCell = sf
       ? '<span style="color:#2a2a2a">—</span>'
-      : `<span class="bultos-badge">${l.total_bultos}</span>`;
+      : `<span class="bultos-badge">${l.total_bultos}</span>`
+        + (excedeFedex
+            ? ` <span class="fedex-limit-ico" title="Peso real ≈${fCl(pesoBultoLinea)} kg por bulto — supera el límite de FedEx (${FEDEX_MAX_KG_POR_BULTO}kg). No apto para despacho automático por FedEx, asignar manual con otro courier."><i class="bi bi-exclamation-triangle-fill"></i></span>`
+            : '');
 
     // Acumular totales (líneas s/f aportan 0 peso/vol)
     tQty  += qty;
@@ -971,6 +1051,9 @@ function renderCubaje(){
 
   // Mantener sincronizados los campos del resumen / bultos editable
   setText('res-bultos', tot.total_bultos ?? '—');
+
+  // Alerta límite físico FedEx (68kg/bulto) — no bloqueante, solo aviso.
+  _renderFedexAlertBanner(overweightFedex);
 }
 
 // Daniel (2026-07-25): "necesito poder acceder a las etiquetas y rellenarlo
@@ -1339,6 +1422,25 @@ function renderCouriers(opts){
 
   // Header: recomendado + ZZ envío comparativa
   let head = '';
+  // Alerta límite físico FedEx (68kg/bulto) — no bloqueante. Se muestra acá
+  // (además del banner sobre la tabla de cubicaje) porque es justo en este
+  // panel donde Alison elige el courier — pedido Daniel 2026-07-29.
+  const _fedexOverweight = _lineasExcedenFedex();
+  if(_fedexOverweight.length){
+    const detalleFedex = _fedexOverweight
+      .map(x => `${escHtml(x.sku||'')} (≈${fCl(x.pesoBulto)} kg/bulto)`)
+      .join(', ');
+    head += `
+      <div style="background:#fee2e2;border:1.5px solid #dc2626;border-radius:9px;
+                  padding:8px 12px;margin-bottom:10px;font-size:.78rem;color:#7f1d1d;
+                  display:flex;align-items:flex-start;gap:8px">
+        <span style="font-size:1.1rem;line-height:1">⚠️</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:800">Supera límite de FedEx (${FEDEX_MAX_KG_POR_BULTO} kg por bulto)</div>
+          <div style="font-size:.72rem;margin-top:2px">${detalleFedex} — asignar manualmente con otro courier, FedEx automático no acepta este bulto.</div>
+        </div>
+      </div>`;
+  }
   // Aviso persistente (Daniel 2026-06-16): estas cotizaciones se calcularon
   // con peso/bultos ingresados A MANO (el documento no traía ficha técnica),
   // no con datos verificados del ERP/ficha del producto. Transparencia para
@@ -1441,12 +1543,25 @@ function renderCouriers(opts){
           : `<div style="font-size:.62rem;color:#9ca3af;margin-top:1px;font-weight:500" title="Costo ILUS (Excel)">costo ${fClp(c.desglose.precio_costo)}</div>`)
       : '';
 
+    // ── Chip límite físico FedEx (68kg/bulto) — solo en la fila de FedEx.
+    const esFedex = (c.courier_nombre||'').toLowerCase().includes('fedex');
+    const chipFedexLimit = (esFedex && _fedexOverweight.length)
+      ? `<span title="${escHtml('Bulto(s) sobre 68kg: ' + _fedexOverweight.map(x => (x.sku||'')+' ≈'+x.pesoBulto.toFixed(1)+'kg').join(', '))}"
+              style="background:#fee2e2;color:#7f1d1d;padding:1px 6px;border-radius:50px;
+                     font-size:.6rem;font-weight:800;margin-left:4px;cursor:help">⚠ &gt;68kg: manual</span>`
+      : '';
+    const chipFedexOk = (esFedex && !_fedexOverweight.length && _docData && Array.isArray(_docData.lineas) && _docData.lineas.length)
+      ? `<span title="Ningún bulto de este pedido supera 68kg"
+              style="color:#16a34a;font-size:.62rem;font-weight:700;margin-left:4px">
+              <i class="bi bi-check-circle-fill"></i> Apto FedEx auto</span>`
+      : '';
+
     html += `
     <div class="courier-item${sel?' selected':''}" onclick='setCourier(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
       <div class="courier-radio"></div>
       <div class="courier-logo">${_logoFor(c)}</div>
       <div class="courier-info">
-        <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}</div>
+        <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}${chipFedexLimit}${chipFedexOk}</div>
         <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
         <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
       </div>

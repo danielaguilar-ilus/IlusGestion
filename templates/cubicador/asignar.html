@@ -322,6 +322,11 @@
           <div style="font-size:.62rem;color:#660000;margin-top:2px">kg total</div>
         </div>
       </div>
+
+      {# Alerta límite físico FedEx (68kg/bulto) — no bloqueante, solo aviso.
+         Pedido Daniel 2026-07-29. Poblada por _renderFedexAlertBanner() en
+         static/cubicador_asignar.js. #}
+      <div id="fedexAlertBanner" style="display:none"></div>
     </div>
 
     {# ── Observaciones y Notas de entrega ── #}
