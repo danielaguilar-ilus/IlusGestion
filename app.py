@@ -20331,16 +20331,24 @@ def tr_compromisos_json():
     where.append("tido <> 'GDV'")
     # MODELO DE GESTIÓN 2026-06-13 (Daniel) — 3 estados mutuamente excluyentes
     # que particionan TODO el universo de documentos:
-    #   en_gestion  = está en un manifiesto (en preparación)            → EN_MANIF
-    #   pendiente   = tiene saldo Y NO está en manifiesto               → hay que atacar
-    #   entregado   = sin saldo  Y NO está en manifiesto                → cerrado
-    # Nota: el predicado de manifiesto manda — un doc en manifiesto es
-    # "en_gestion" aunque su tiene_saldo sea 0 o 1.
-    _EN_MANIF      = "id IN (SELECT commitment_id FROM transport_manifest_items)"
+    #   en_gestion  = está en un manifiesto CON algún item aún no entregado → EN_MANIF_ACTIVO
+    #   pendiente   = tiene saldo Y NO está en ningún manifiesto            → hay que atacar
+    #   entregado   = sin saldo Y NO está en manifiesto, O ya entregado     → cerrado
+    #                 (todos sus items de manifiesto en estado terminal)
+    # FIX 2026-07-29 (Daniel, demo directorio: "los entregados figuran en
+    # gestión, no veo nada entregado"): antes, "en_gestion" se definía solo
+    # por "¿está en un manifiesto?", sin mirar estado_entrega. Como la noche
+    # anterior se bloqueó poder QUITAR del manifiesto un item ya entregado
+    # (para no perder su evidencia), esos documentos quedaban "en_gestion"
+    # para siempre aunque ya estuvieran 100% entregados. Ahora "en_gestion"
+    # exige que el manifiesto tenga al menos un item en estado NO terminal.
+    _EN_MANIF        = "id IN (SELECT commitment_id FROM transport_manifest_items)"
+    _EN_MANIF_ACTIVO = ("id IN (SELECT commitment_id FROM transport_manifest_items "
+                        "WHERE estado_entrega NOT IN ('Entregado','Devolución'))")
     _NOT_EN_MANIF  = "id NOT IN (SELECT commitment_id FROM transport_manifest_items)"
     _SQL_PENDIENTE = f"(tiene_saldo=1 AND {_NOT_EN_MANIF})"
-    _SQL_ENGESTION = f"({_EN_MANIF})"
-    _SQL_ENTREGADO = f"(tiene_saldo=0 AND {_NOT_EN_MANIF})"
+    _SQL_ENGESTION = f"({_EN_MANIF_ACTIVO})"
+    _SQL_ENTREGADO = f"((tiene_saldo=0 AND {_NOT_EN_MANIF}) OR ({_EN_MANIF} AND NOT ({_EN_MANIF_ACTIVO})))"
     # Filtro por vista (categoría del flujo)
     if vista == "pendientes":
         where.append(_SQL_PENDIENTE)
@@ -20385,6 +20393,7 @@ def tr_compromisos_json():
     )
     rows = mysql_fetchall(
         "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto, "
+        "(" + _EN_MANIF_ACTIVO + ") AS en_manifiesto_activo, "
         + _COURIER_SUB + " AS courier_manifiesto "
         "FROM transport_commitments WHERE 1=1" + where_sql +
         " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
@@ -20396,12 +20405,17 @@ def tr_compromisos_json():
         # el monitor pueda mostrarlos sin re-consultar el ERP.
         # Las columnas pueden no existir todavía en BDs viejas — usar .get()
         # con default, ya que DictCursor de pymysql devuelve dicts reales.
-        en_manif    = int(r.get("en_manifiesto") or 0)
-        tiene_saldo = int(r.get("tiene_saldo") or 0)
-        # ── GESTIÓN 2026-06-13: 3 estados que particionan el universo ──
-        #   en_gestion (en manifiesto) manda sobre saldo.
-        if en_manif:
+        en_manif        = int(r.get("en_manifiesto") or 0)
+        en_manif_activo = int(r.get("en_manifiesto_activo") or 0)
+        tiene_saldo     = int(r.get("tiene_saldo") or 0)
+        # ── GESTIÓN 2026-06-13/29: 3 estados que particionan el universo ──
+        #   en_gestion  = en manifiesto CON algo aun no entregado.
+        #   entregado   = en manifiesto pero TODO ya entregado, o sin saldo
+        #                 y fuera de manifiesto.
+        if en_manif_activo:
             gestion = "en_gestion"
+        elif en_manif:
+            gestion = "entregado"
         elif tiene_saldo == 1:
             gestion = "pendiente"
         else:
