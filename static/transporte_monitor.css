@@ -707,9 +707,13 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
 .tr-kcol[data-group="encamino"]   .tr-kcol-count  { background:#0a0a0a; }
 .tr-kcol[data-group="entregados"] .tr-kcol-count  { background:#16a34a; }
 .tr-kcol-body { padding:10px; min-height:140px; }
+/* 2026-07-28: antes era opacity:.55 + padding propio, lo que dejaba el
+   estado vacío "pelado" (Daniel: "sin icono ni explicación") y además
+   deslavaba el ícono/título nuevos de .trx-empty que ahora vive adentro
+   (ver templates/transporte/index.html). El padding/tipografía quedan
+   en el .trx-empty interno; acá solo el layout base. */
 .tr-kempty {
-  opacity:.55; text-align:center; padding:22px 8px;
-  color:var(--tr-text-soft); font-size:.82rem;
+  text-align:center;
 }
 
 /* Tarjeta Kanban */

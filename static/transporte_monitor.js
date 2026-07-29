@@ -1292,7 +1292,9 @@ function _kanbanCardHtml(c) {
 
   return '<div class="tr-kcard ' + rowFlow + '" draggable="true" ' +
             'data-id="' + c.id + '" data-estado="' + attr(c.estado||'') + '" ' +
-            'data-group="' + _gestionBucket(c) + '" tabindex="0" role="button" ' +
+            'data-group="' + _gestionBucket(c) + '" ' +
+            'data-en-manifiesto="' + (c.en_manifiesto ? '1' : '0') + '" ' +
+            'tabindex="0" role="button" ' +
             'title="Ver detalle de ' + attr((c.tido||'') + ' ' + (c.nudo||'')) + '">' +
     '<div class="tr-kcard-top">' +
       '<div class="tr-kcard-doc">' +
@@ -1316,6 +1318,29 @@ function _kanbanCardHtml(c) {
   '</div>';
 }
 
+// 2026-07-28: estado vacío del Kanban migrado a .trx-empty (icono + título +
+// explicación breve de qué significa la columna), reemplazando el viejo
+// "Sin documentos" pelado. El MISMO markup vive hardcodeado en
+// templates/transporte/index.html (primer paint, antes de que corra JS);
+// esta función es la que reconstruye la columna cuando queda en 0 tras un
+// reload o un drag&drop — si no coincidieran, el estado lindo se vería un
+// instante y luego "revertiría" al viejo en cuanto el usuario interactuara.
+var _K_EMPTY_CONF = {
+  pendientes: { t:'Sin pendientes',   d:'Documentos con saldo y sin manifiesto aparecerán aquí.' },
+  encamino:   { t:'Nada en gestión',  d:'Los documentos agregados a un manifiesto aparecerán aquí.' },
+  entregados: { t:'Sin entregados',   d:'Aún no hay documentos completamente despachados.' },
+};
+function _kanbanEmptyHtml(g) {
+  var conf = _K_EMPTY_CONF[g] || { t:'Sin documentos', d:'' };
+  return '<div class="tr-kempty js-kempty">' +
+    '<div class="trx-empty" style="padding:18px 8px">' +
+      '<div class="trx-empty-ico" style="width:40px;height:40px;font-size:1.05rem;margin-bottom:8px"><i class="bi bi-inbox"></i></div>' +
+      '<div class="trx-empty-t" style="font-size:.85rem;margin-bottom:3px">' + esc(conf.t) + '</div>' +
+      '<div class="trx-empty-d" style="font-size:.74rem;margin:0">' + esc(conf.d) + '</div>' +
+    '</div>' +
+  '</div>';
+}
+
 // Renderiza las 3 columnas del Kanban desde _monitorData.
 function renderKanban() {
   var board = document.getElementById('kanbanBoard');
@@ -1335,7 +1360,7 @@ function renderKanban() {
     if (count) count.textContent = grupos[g].length;
     if (!body) return;
     if (!grupos[g].length) {
-      body.innerHTML = '<div class="tr-kempty js-kempty"><i class="bi bi-inbox"></i> Sin documentos</div>';
+      body.innerHTML = _kanbanEmptyHtml(g);
     } else {
       body.innerHTML = grupos[g].map(_kanbanCardHtml).join('');
     }
@@ -1361,7 +1386,7 @@ function renderKanban() {
     if (count) count.textContent = n;
     var ph = body ? body.querySelector('.js-kempty') : null;
     if (body && !ph && n === 0) {
-      body.innerHTML = '<div class="tr-kempty js-kempty"><i class="bi bi-inbox"></i> Sin documentos</div>';
+      body.innerHTML = _kanbanEmptyHtml(g);
     } else if (ph) {
       ph.style.display = n > 0 ? 'none' : '';
     }
@@ -1465,6 +1490,18 @@ function renderKanban() {
   board.addEventListener('dragstart', function(e){
     var card = e.target.closest('.tr-kcard');
     if (!card) return;
+    // FIX 2026-07-28 (Daniel, hallazgo H12: "el Kanban promete sacar de
+    // gestión y no lo hace"): arrastrar una tarjeta que ya está en un
+    // manifiesto solo cambiaba estado_entrega vía PUT /compromisos/<id> --
+    // el documento seguía en el manifiesto, así que en el próximo refresh
+    // volvía solo a "En gestión", confundiendo al operador. Se bloquea el
+    // arrastre hacia afuera (misma decisión ya tomada para la tabla, ver
+    // initDragRows / tr.dataset.enManifiesto más abajo en este archivo).
+    if (card.dataset.enManifiesto === '1') {
+      e.preventDefault();
+      ilusToast('Este documento ya está en un manifiesto — quítalo desde la ficha del manifiesto para poder recolocarlo.', { type: 'warning' });
+      return;
+    }
     dragCard = card; dragging = true;
     card.classList.add('is-dragging');
     e.dataTransfer.effectAllowed = 'move';
@@ -1764,12 +1801,25 @@ function cargarMonitor() {
                 '</div>' +
               '</td>' +
 
-              /* ── Courier asignado (2026-07-27) ── */
-              '<td class="text-center">' +
-                (c.courier
-                  ? '<span class="tr-guia-pill" title="Courier asignado en el manifiesto">' + esc(c.courier) + '</span>'
-                  : '<span style="color:var(--tr-text-soft)">—</span>') +
-              '</td>' +
+              /* ── Courier asignado (2026-07-27) — migrado a .trx-courier
+                 (2026-07-28): antes era texto plano en un pill; ahora va
+                 con iniciales en un cuadrito + nombre, igual que la ficha
+                 de couriers. Esta consulta (Monitor) no trae logo_url del
+                 courier, así que se usa SIEMPRE el fallback de iniciales
+                 — nunca se inventa un logo que no está disponible acá. ── */
+              (function() {
+                if (!c.courier) {
+                  return '<td class="text-center"><span style="color:var(--tr-text-soft)">—</span></td>';
+                }
+                var _ini = (c.courier.trim().split(/\s+/).slice(0,2)
+                  .map(function(p){ return p.charAt(0) || ''; }).join('').toUpperCase()) || '?';
+                return '<td class="text-center">' +
+                  '<div class="trx-courier" title="Courier asignado en el manifiesto">' +
+                    '<span class="trx-courier-fallback">' + esc(_ini) + '</span>' +
+                    '<span class="trx-courier-name">' + esc(c.courier) + '</span>' +
+                  '</div>' +
+                '</td>';
+              })() +
 
               /* ── Guía de despacho (NUDGIA del ERP) ── */
               '<td class="text-center">' +

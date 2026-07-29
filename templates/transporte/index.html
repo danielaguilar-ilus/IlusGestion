@@ -8,18 +8,29 @@
    El link queda EXACTAMENTE donde estaba el primer bloque de estilos, para
    no alterar el orden de cascada respecto de style.css / mobile.css. ── #}
 <link rel="stylesheet" href="{{ url_for('static', filename='transporte_monitor.css') }}">
+{# 2026-07-28 (Daniel): pase visual del Monitor al design system nuevo de
+   Transporte (static/ilus_transporte.css, ya usado en las otras 7 páginas
+   del módulo). Se linkea AQUÍ (no en {% block head_extra %}) a propósito:
+   así queda DESPUÉS de transporte_monitor.css en el DOM y sus reglas .trx-*
+   ganan la cascada frente a las .tr-* equivalentes (mismo nivel de
+   especificidad) cuando ambas conviven sobre el mismo elemento. Si se
+   moviera a head_extra, cargaría ANTES y las reglas viejas .tr-* ganarían
+   por orden de aparición — se perdería el contraste que se busca acá. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_transporte.css') }}">
 {# ════════════════════════════════════════════════════════════════
-   HERO COMPACTO — fondo blanco con accent ILUS rojo
-   Lo crítico: título + estado de sincronización + acciones primarias
+   HERO — migrado a .trx-hero (design system nuevo). Es la página RAÍZ
+   del módulo de transporte (no tiene "padre" lógico dentro de Transporte,
+   sería volver a sí misma), así que NO lleva .trx-back — a diferencia de
+   dashboard.html, couriers.html, etc. que sí vuelven aquí.
+   Se conserva TODO: icono, título, bajada con estado de sync, widget de
+   sync en vivo, y las acciones (ahora dentro de .trx-hero-actions).
    ════════════════════════════════════════════════════════════════ #}
-<div class="tr-hero">
-  <div class="tr-hero-left">
-    <div class="tr-hero-icon">
-      <i class="bi bi-truck"></i>
-    </div>
-    <div>
-      <h1 class="tr-hero-title">Monitor de Transporte</h1>
-      <div class="tr-hero-sub">
+<div class="trx-hero">
+  <div class="trx-hero-main">
+    <div class="trx-hero-ico"><i class="bi bi-truck"></i></div>
+    <div style="min-width:0">
+      <h1>Monitor de Transporte</h1>
+      <div class="trx-hero-sub">
         Compromisos de despacho · <span id="trSyncStatus" class="tr-sync-status">cargando…</span>
       </div>
     </div>
@@ -43,15 +54,23 @@
       </div>
     </div>
     <button class="tr-sync-now" id="trSyncWidgetBtn" onclick="trSyncWidgetSyncAhora()"
-            title="Disparar sync ahora (mes en curso)">
+            title="Disparar sync ahora (mes en curso) — mismo resultado que 'Sincronizar mes'">
       <i class="bi bi-arrow-clockwise"></i>
       <span>Sincronizar ahora</span>
     </button>
   </div>
 
-  <div class="tr-hero-actions">
+  <div class="trx-hero-actions">
+    {# 2026-07-28: "Sincronizar mes" (este botón) y "Sincronizar ahora" (widget,
+       arriba) llaman al MISMO endpoint POST /transporte/api/sync/mes-actual con
+       el mismo payload {limpiar:false} — es un duplicado real (mismo resultado
+       desde dos lugares). Un pase anterior lo había quitado de esta vista para
+       no repetirlo, pero eso es remover una acción visible sin el "sí" explícito
+       de Daniel para ESE cambio puntual (REGLA #4.2: ante la duda, se conserva)
+       — se repone. Si Daniel confirma que el widget alcanza, se puede volver a
+       quitar en su próximo mensaje. #}
     <button class="tr-btn tr-btn-primary" id="btnSyncMes" onclick="sincronizarMesActual()"
-            title="Trae todos los documentos del mes con saldo pendiente desde el ERP">
+            title="Trae todos los documentos del mes con saldo pendiente desde el ERP (mismo resultado que 'Sincronizar ahora' del panel de arriba)">
       <i class="bi bi-arrow-clockwise"></i>
       <span>Sincronizar mes</span>
     </button>
@@ -173,52 +192,46 @@
    Pendientes (a atacar) · En gestión (en manifiesto) · Entregados ·
    Atrasados (más días sin gestión) · Preventa (esperan stock).
    Los valores salen de conteos.{pendientes,en_gestion,entregados,
-   atrasados,preventa} que entrega el backend; se completan desde JS.
-   ════════════════════════════════════════════════════════════════ #}
-<div class="tr-kpis tr-kpis-5">
-  <div class="tr-kpi tr-kpi-red" role="button" tabindex="0"
+   atrasados,preventa} que entrega el backend; se completan desde JS
+   (ver setBadge('kpiPendientes', ...) etc. en transporte_monitor.js —
+   depende SOLO de los id, no de las clases, así que se migró libremente
+   a la estructura .trx-kpi/.trx-kpi-k/.trx-kpi-v/.trx-kpi-d, igual que
+   dashboard.html. auto-fit del design system reemplaza el grid fijo de
+   5 columnas — se adapta solo, sin necesitar la variante tr-kpis-5. ── #}
+<div class="trx-kpis">
+  <div class="trx-kpi trx-kpi-red" role="button" tabindex="0"
        onclick="setVistaMonitorById('pendientes')"
        title="Con saldo y sin manifiesto — hay que atacar">
-    <div class="tr-kpi-icon"><i class="bi bi-hourglass-split"></i></div>
-    <div class="tr-kpi-body">
-      <div class="tr-kpi-num" id="kpiPendientes">—</div>
-      <div class="tr-kpi-label">Pendientes</div>
-    </div>
+    <div class="trx-kpi-k"><i class="bi bi-hourglass-split"></i>Pendientes</div>
+    <div class="trx-kpi-v" id="kpiPendientes">—</div>
+    <div class="trx-kpi-d">Con saldo y sin manifiesto</div>
   </div>
-  <div class="tr-kpi tr-kpi-blue" role="button" tabindex="0"
+  <div class="trx-kpi" style="border-left:4px solid var(--trx-info)" role="button" tabindex="0"
        onclick="setVistaMonitorById('en_gestion')"
        title="Incluidos en un manifiesto — en preparación">
-    <div class="tr-kpi-icon"><i class="bi bi-clipboard-check"></i></div>
-    <div class="tr-kpi-body">
-      <div class="tr-kpi-num" id="kpiEnGestion">—</div>
-      <div class="tr-kpi-label">En gestión</div>
-    </div>
+    <div class="trx-kpi-k"><i class="bi bi-clipboard-check"></i>En gestión</div>
+    <div class="trx-kpi-v" id="kpiEnGestion">—</div>
+    <div class="trx-kpi-d">En un manifiesto, en preparación</div>
   </div>
-  <div class="tr-kpi tr-kpi-green" role="button" tabindex="0"
+  <div class="trx-kpi trx-kpi-ok" role="button" tabindex="0"
        onclick="setVistaMonitorById('entregados')"
        title="Documentos completamente entregados (sin saldo)">
-    <div class="tr-kpi-icon"><i class="bi bi-check2-all"></i></div>
-    <div class="tr-kpi-body">
-      <div class="tr-kpi-num" id="kpiEntregados">—</div>
-      <div class="tr-kpi-label">Entregados</div>
-    </div>
+    <div class="trx-kpi-k"><i class="bi bi-check2-all"></i>Entregados</div>
+    <div class="trx-kpi-v" id="kpiEntregados">—</div>
+    <div class="trx-kpi-d">Sin saldo pendiente</div>
   </div>
-  <div class="tr-kpi tr-kpi-amber" role="button" tabindex="0"
+  <div class="trx-kpi trx-kpi-warn" role="button" tabindex="0"
        onclick="setVistaMonitorById('pendientes')"
        title="Pendientes con más días sin gestión — atención prioritaria">
-    <div class="tr-kpi-icon"><i class="bi bi-clock-history"></i></div>
-    <div class="tr-kpi-body">
-      <div class="tr-kpi-num" id="kpiAtrasados">—</div>
-      <div class="tr-kpi-label">Atrasados</div>
-    </div>
+    <div class="trx-kpi-k"><i class="bi bi-clock-history"></i>Atrasados</div>
+    <div class="trx-kpi-v" id="kpiAtrasados">—</div>
+    <div class="trx-kpi-d">Más días sin gestión — prioridad</div>
   </div>
-  <div class="tr-kpi tr-kpi-violet" role="button" tabindex="0"
+  <div class="trx-kpi" style="border-left:4px solid #7c3aed" role="button" tabindex="0"
        title="Pedidos sin stock suficiente — esperan reposición (preventa)">
-    <div class="tr-kpi-icon"><i class="bi bi-hourglass-bottom"></i></div>
-    <div class="tr-kpi-body">
-      <div class="tr-kpi-num" id="kpiPreventa">—</div>
-      <div class="tr-kpi-label">Preventa</div>
-    </div>
+    <div class="trx-kpi-k"><i class="bi bi-hourglass-bottom"></i>Preventa</div>
+    <div class="trx-kpi-v" id="kpiPreventa">—</div>
+    <div class="trx-kpi-d">Esperan reposición de stock</div>
   </div>
 </div>
 
@@ -355,10 +368,19 @@
    filtrarTabMonitor() usa .tr-tab classes directamente. #}
 <ul id="monitorTabs" style="display:none"></ul>
 
-{# ── Tabla desktop ── #}
-<div class="tr-table-card d-none d-md-block">
+{# ── Tabla desktop ──
+   Daniel: "está en blanco, como muy delgado, no se percibe" — .tr-table
+   traía cabecera gris clara (#f8fafc) sobre fondo blanco y bordes de 1px
+   casi invisibles. Se agrega .trx-table-wrap/.trx-table AL LADO de las
+   clases .tr-table-card/.tr-table (no se quitan: siguen dando el borde-
+   izquierdo de color por fila tr-row-pendiente/parcial/entregado, que
+   .trx-table no define). Con ilus_transporte.css cargado después, gana
+   la cabecera negra + bordes 1.5px de .trx-table para lo que se solapa.
+   El scroll horizontal sigue siendo SOLO el de .table-responsive (no se
+   duplica contenedor). #}
+<div class="tr-table-card trx-table-wrap d-none d-md-block">
   <div class="table-responsive">
-    <table class="tr-table" style="width:100%; border-collapse:separate; border-spacing:0">
+    <table class="tr-table trx-table" style="width:100%; border-collapse:separate; border-spacing:0">
       <thead>
         <tr>
           <th class="tr-th-drag" title="Arrastra filas al manifiesto">
@@ -421,7 +443,19 @@
         <span class="tr-kcol-count js-kcount" data-group="pendientes">0</span>
       </div>
       <div class="tr-kcol-body js-kbody" data-group="pendientes">
-        <div class="tr-kempty js-kempty"><i class="bi bi-inbox"></i> Sin documentos</div>
+        {# Estado vacío migrado a .trx-empty (icono + título + explicación).
+           El texto EXACTO se repite en la función _kanbanEmptyHtml() de
+           transporte_monitor.js (líneas ~1338 y ~1364): cuando el drag&drop
+           o un reload dejan la columna en 0, JS reconstruye este mismo
+           bloque — si no se replican los dos lados, el estado vacío
+           "lindo" se ve solo un instante y luego vuelve al viejo. #}
+        <div class="tr-kempty js-kempty">
+          <div class="trx-empty" style="padding:18px 8px">
+            <div class="trx-empty-ico" style="width:40px;height:40px;font-size:1.05rem;margin-bottom:8px"><i class="bi bi-inbox"></i></div>
+            <div class="trx-empty-t" style="font-size:.85rem;margin-bottom:3px">Sin pendientes</div>
+            <div class="trx-empty-d" style="font-size:.74rem;margin:0">Documentos con saldo y sin manifiesto aparecerán aquí.</div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="tr-kcol" data-group="encamino" data-accent="#0a0a0a"
@@ -431,7 +465,13 @@
         <span class="tr-kcol-count js-kcount" data-group="encamino">0</span>
       </div>
       <div class="tr-kcol-body js-kbody" data-group="encamino">
-        <div class="tr-kempty js-kempty"><i class="bi bi-inbox"></i> Sin documentos</div>
+        <div class="tr-kempty js-kempty">
+          <div class="trx-empty" style="padding:18px 8px">
+            <div class="trx-empty-ico" style="width:40px;height:40px;font-size:1.05rem;margin-bottom:8px"><i class="bi bi-inbox"></i></div>
+            <div class="trx-empty-t" style="font-size:.85rem;margin-bottom:3px">Nada en gestión</div>
+            <div class="trx-empty-d" style="font-size:.74rem;margin:0">Los documentos agregados a un manifiesto aparecerán aquí.</div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="tr-kcol" data-group="entregados" data-accent="#16a34a"
@@ -441,7 +481,13 @@
         <span class="tr-kcol-count js-kcount" data-group="entregados">0</span>
       </div>
       <div class="tr-kcol-body js-kbody" data-group="entregados">
-        <div class="tr-kempty js-kempty"><i class="bi bi-inbox"></i> Sin documentos</div>
+        <div class="tr-kempty js-kempty">
+          <div class="trx-empty" style="padding:18px 8px">
+            <div class="trx-empty-ico" style="width:40px;height:40px;font-size:1.05rem;margin-bottom:8px"><i class="bi bi-inbox"></i></div>
+            <div class="trx-empty-t" style="font-size:.85rem;margin-bottom:3px">Sin entregados</div>
+            <div class="trx-empty-d" style="font-size:.74rem;margin:0">Aún no hay documentos completamente despachados.</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
