@@ -577,11 +577,17 @@ function _edFillFicha(data) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  TRACKING DETALLADO — modal premium con timeline FedEx
+//  TRACKING FEDEX CONSOLIDADO — modal premium (rediseño 2026-07-29)
+//  Fusiona el tracking original (stepper, ficha, scans FedEx, historial
+//  ILUS) con la antigua "Prueba de entrega" (productos, evidencia
+//  firma/fotos/receptor/GPS, chofer, KPIs de tiempo). Disponible en
+//  CUALQUIER estado del pedido (Daniel: "necesito hacerle seguimiento a
+//  algo que ahora está en ruta... ahorramos ahí un botón").
 // ══════════════════════════════════════════════════════════════════════
 var _trkModal = null;
 window._trkItemId = null;
 var _trkData = null;
+var _trkLoadToken = 0;   // evita que un fetch viejo pise al Refrescar
 
 var TRK_STEPS = [
   { label: 'En preparación',          icon: 'bi-clipboard-check' },
@@ -593,6 +599,7 @@ var TRK_STEPS = [
 async function abrirTrackingDetalle(itemId, force) {
   if (!itemId) return;
   window._trkItemId = itemId;
+  var token = ++_trkLoadToken;
   if (!_trkModal) _trkModal = new bootstrap.Modal(document.getElementById('trackingModal'));
   // Estado de carga
   document.getElementById('trkStateLabel').textContent = 'Consultando FedEx…';
@@ -603,20 +610,48 @@ async function abrirTrackingDetalle(itemId, force) {
   document.getElementById('trkFicha').innerHTML = '';
   document.getElementById('trkTabFedex').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando movimientos…</div>';
   document.getElementById('trkTabIlus').innerHTML = '';
+  // Reset de KPIs del hero + secciones consolidadas
+  var kCard = document.getElementById('trkKpiTiempoCard');
+  kCard.classList.remove('sr-kpi-ok', 'sr-kpi-run');
+  document.getElementById('trkKpiTiempoLabel').textContent = 'Tiempo';
+  document.getElementById('trkKpiTiempo').textContent = '…';
+  document.getElementById('trkKpiTiempoHint').textContent = '';
+  document.getElementById('trkKpiBultos').textContent = '—';
+  document.getElementById('trkKpiComuna').textContent = '—';
+  document.getElementById('trkKpiAct').textContent = '—';
+  document.getElementById('trkSecProductos').style.display = 'none';
+  document.getElementById('trkProductos').innerHTML = '';
+  document.getElementById('trkSecChofer').style.display = 'none';
+  document.getElementById('trkChofer').innerHTML = '';
+  document.getElementById('trkEvidencia').innerHTML =
+    '<div class="text-muted" style="font-size:.85rem"><i class="bi bi-hourglass-split me-1"></i>Cargando…</div>';
   _trkModal.show();
   try {
-    var r = await fetch('/transporte/api/items/' + itemId + '/tracking-detalle');
+    var r = await fetch('/transporte/api/items/' + itemId + '/tracking-detalle',
+                        { cache: force ? 'reload' : 'default' });
     var d = await r.json();
+    if (token !== _trkLoadToken) return;
     if (!d.ok) {
       document.getElementById('trkStateLabel').textContent = 'Error';
       document.getElementById('trkTabFedex').innerHTML = '<div class="trk-empty">' + (d.error || 'No se pudo cargar') + '</div>';
+      _trkEvidenciaVacia();
       return;
     }
     _trkData = d;
     _trkRender(d);
+    // 2ª carga (best-effort): productos+foto, evidencia, tiempos y chofer
+    // desde el MISMO JSON que alimenta el modal SimpliRoute y el tracking
+    // interno (/transporte/api/buscar/<cid> → _tr_buscar_detalle).
+    if (d.commitment_id) {
+      await _trkCargarDetalleExtra(d.commitment_id, token, !!force);
+    } else {
+      _trkEvidenciaVacia();
+    }
   } catch(e) {
+    if (token !== _trkLoadToken) return;
     document.getElementById('trkStateLabel').textContent = 'Error de conexión';
     document.getElementById('trkTabFedex').innerHTML = '<div class="trk-empty">No se pudo conectar.</div>';
+    _trkEvidenciaVacia();
   }
 }
 
@@ -638,7 +673,19 @@ function _trkRender(d) {
   document.getElementById('trkSub').textContent = sub.join(' · ');
   document.getElementById('trkTn').textContent = d.tracking ? '#' + d.tracking : '';
   var fxLink = document.getElementById('trkFedexLink');
-  if (fxLink) fxLink.href = d.tracking ? 'https://www.fedex.com/fedextrack/?trknbr=' + d.tracking : '#';
+  if (fxLink) {
+    fxLink.href = d.tracking ? 'https://www.fedex.com/fedextrack/?trknbr=' + d.tracking : '#';
+    // Sin OT FedEx aún no hay página que ver en FedEx.com — se oculta.
+    fxLink.style.display = d.tracking ? '' : 'none';
+  }
+
+  // KPIs del hero que salen de este primer fetch (el KPI de tiempo llega
+  // después, con _trkCargarDetalleExtra). Última actualización: el evento
+  // ILUS más reciente (vienen DESC) o, si no hay, el último poll FedEx.
+  document.getElementById('trkKpiBultos').textContent = d.bultos || '—';
+  document.getElementById('trkKpiComuna').textContent = d.comuna || '—';
+  var _ultAct = (d.eventos && d.eventos.length && d.eventos[0].ts) || d.ultimo_poll || '';
+  if (_ultAct) document.getElementById('trkKpiAct').textContent = _ultAct;
 
   // Stepper
   var cur = d.estado_step || 1;
@@ -709,11 +756,149 @@ function _trkFchip(k, v, cls) {
 }
 
 function trkSwitchTab(which) {
-  document.querySelectorAll('.trk-tab').forEach(function(t){
+  // Scope al modal FedEx: el modal SimpliRoute también usa .trk-tab (con
+  // data-srtab) y no hay que apagarle su tab activo desde acá.
+  document.querySelectorAll('#trackingModal .trk-tab').forEach(function(t){
     t.classList.toggle('is-active', t.dataset.tab === which);
   });
   document.getElementById('trkTabFedex').style.display = (which === 'fedex' ? 'block' : 'none');
   document.getElementById('trkTabIlus').style.display = (which === 'ilus' ? 'block' : 'none');
+}
+
+// Mensaje estándar cuando el pedido todavía no tiene firma/foto (en ruta,
+// en preparación, etc.) — pedido explícito: mostrarlo sin romper nada.
+function _trkEvidenciaVacia() {
+  document.getElementById('trkEvidencia').innerHTML =
+    '<div class="text-muted" style="font-size:.85rem"><i class="bi bi-hourglass me-1"></i>' +
+    'Aún sin evidencia de entrega. La firma, fotos y receptor aparecerán acá ' +
+    'apenas el courier complete la entrega.</div>';
+}
+
+// ── 2ª carga del modal FedEx consolidado (2026-07-29): productos con foto,
+// evidencia de entrega, KPIs de tiempo y chofer. Reusa el MISMO endpoint y
+// los MISMOS patrones visuales (.sr-prod, .sr-recibio, .pe-firma/.pe-fotos,
+// _ilusLightbox, _ilusMapModal) que el modal SimpliRoute — no duplica CSS. ──
+async function _trkCargarDetalleExtra(commitmentId, token, force) {
+  try {
+    var r = await fetch('/transporte/api/buscar/' + commitmentId,
+                        { cache: force ? 'reload' : 'default' });
+    var d = await r.json();
+    if (token !== _trkLoadToken) return;
+    if (!d || !d.ok) { _trkEvidenciaVacia(); return; }
+    var det = d.detalle || {};
+
+    // ── KPI de tiempo (mismo criterio que SimpliRoute y que la columna
+    // "Actualización" de la tabla: entregado→total, si no→días corriendo) ──
+    var t = det.tiempos || {};
+    var kCard = document.getElementById('trkKpiTiempoCard');
+    var kLab  = document.getElementById('trkKpiTiempoLabel');
+    var kVal  = document.getElementById('trkKpiTiempo');
+    var kHint = document.getElementById('trkKpiTiempoHint');
+    kCard.classList.remove('sr-kpi-ok', 'sr-kpi-run');
+    if (t.dias_entrega != null) {
+      kLab.textContent  = 'Tiempo de entrega';
+      kVal.textContent  = _srFmtDias(t.dias_entrega);
+      kHint.textContent = t.entregado_at ? ('entregado ' + t.entregado_at) : '';
+      kCard.classList.add('sr-kpi-ok');
+    } else if (t.dias_en_courier != null) {
+      kLab.textContent  = 'En manos del courier';
+      kVal.textContent  = _srFmtDias(t.dias_en_courier);
+      kHint.textContent = t.en_courier_at ? ('desde ' + t.en_courier_at) : '';
+      kCard.classList.add('sr-kpi-run');
+    } else {
+      kLab.textContent  = 'Tiempo';
+      kVal.textContent  = '—';
+      kHint.textContent = 'aún sin retiro del courier';
+    }
+    if (t.ultima_act_at) document.getElementById('trkKpiAct').textContent = t.ultima_act_at;
+
+    // ── Productos del pedido (con foto → _ilusLightbox, nunca pestañas) ──
+    var lineas = det.lineas || [];
+    if (lineas.length) {
+      window._trkProdFotos = lineas.map(function(l){ return l.fotos || []; });
+      var pHtml = lineas.map(function(l, i) {
+        var thumb = (l.fotos && l.fotos.length)
+          ? '<img class="sr-prod-thumb" src="' + _trkEsc(l.fotos[0]) + '" alt="' + _trkEsc(l.nombre) + '" loading="lazy" ' +
+            'onclick="_ilusLightbox(window._trkProdFotos[' + i + '], 0, \'' + _trkEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
+          : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
+        var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
+        return '<div class="sr-prod">' + thumb +
+          '<div class="sr-prod-info"><div class="sr-prod-name">' + _trkEsc(l.nombre || l.sku) + '</div>' +
+          '<div class="sr-prod-sku">' + _trkEsc(l.sku) + '</div></div>' +
+          '<div class="sr-prod-qty">' + chips + '</div></div>';
+      }).join('');
+      document.getElementById('trkProductos').innerHTML = pHtml;
+      document.getElementById('trkProdCount').textContent = String(lineas.length);
+      document.getElementById('trkSecProductos').style.display = '';
+    }
+
+    // ── Evidencia de entrega: receptor + firma + fotos + GPS ──
+    var p = det.proof;
+    if (p && (p.firma_url || (p.fotos && p.fotos.length) || p.receptor_nombre)) {
+      var html = '';
+      if (p.receptor_nombre || p.entregado_at) {
+        html += '<div class="sr-recibio">' +
+          '<i class="bi bi-person-check-fill"></i><div>' +
+          (p.receptor_nombre
+            ? '<div class="sr-recibio-n">Recibió: ' + _trkEsc(p.receptor_nombre) +
+              (p.receptor_relacion ? ' <span class="sr-recibio-rel">(' + _trkEsc(p.receptor_relacion) + ')</span>' : '') + '</div>'
+            : '') +
+          (p.entregado_at ? '<div class="sr-recibio-ts"><i class="bi bi-clock me-1"></i>' + _trkEsc(p.entregado_at) + '</div>' : '') +
+          '</div></div>';
+      }
+      if (p.firma_url) {
+        html += '<div class="pe-firma"><img src="' + _trkEsc(p.firma_url) + '" alt="Firma" onclick="_ilusLightbox(this.src, 0, \'Firma\')"></div>';
+      }
+      if (p.fotos && p.fotos.length) {
+        window._trkFotosEvidencia = p.fotos;   // array completo para navegar en el lightbox
+        html += '<div class="pe-fotos mt-2">';
+        p.fotos.forEach(function(f, i){
+          html += '<img src="' + _trkEsc(f) + '" alt="Foto de entrega" loading="lazy" onclick="_ilusLightbox(window._trkFotosEvidencia, ' + i + ', \'Foto de entrega\')">';
+        });
+        html += '</div>';
+      }
+      if (p.lat && p.lng) {
+        html += '<button type="button" class="sr-map-btn mt-2" ' +
+          'onclick="_ilusMapModal(' + Number(p.lat) + ',' + Number(p.lng) + ', \'Punto de entrega\')">' +
+          '<i class="bi bi-geo-alt-fill me-1"></i>Ver punto de entrega en el mapa</button>';
+      }
+      document.getElementById('trkEvidencia').innerHTML = html;
+    } else {
+      _trkEvidenciaVacia();
+    }
+
+    // ── Chofer + GPS (si el manifiesto tiene chofer asignado) ──
+    var ch = det.chofer;
+    if (ch && ch.nombre) {
+      var ping = det.last_ping;
+      var ini = (ch.nombre || '?').trim().charAt(0).toUpperCase();
+      var cHtml = '<div class="sr-driver-row">' +
+        '<div class="sr-driver-avatar">' + _trkEsc(ini) + '</div>' +
+        '<div class="sr-driver-info"><div class="sr-driver-n">' + _trkEsc(ch.nombre) + '</div>' +
+        '<div class="sr-driver-meta">' +
+        (ch.courier ? '<span><i class="bi bi-truck me-1"></i>' + _trkEsc(ch.courier) + '</span>' : '') +
+        (ch.patente ? '<span><i class="bi bi-credit-card-2-front me-1"></i>' + _trkEsc(ch.patente) + '</span>' : '') +
+        (ch.telefono ? '<span><i class="bi bi-telephone me-1"></i>' + _trkEsc(ch.telefono) + '</span>' : '') +
+        '</div></div>';
+      if (ping && ping.lat && ping.lng) {
+        var age = '';
+        if (ping.age_s != null) {
+          var mins = Math.round(Number(ping.age_s) / 60);
+          age = mins < 1 ? 'ahora mismo' : (mins < 60 ? 'hace ' + mins + ' min' : 'hace ' + Math.round(mins / 60) + ' h');
+        }
+        cHtml += '<button type="button" class="sr-map-btn" ' +
+          'onclick="_ilusMapModal(' + Number(ping.lat) + ',' + Number(ping.lng) + ', \'Chofer: ' +
+          _trkEsc(ch.nombre).replace(/'/g, '') + '\')">' +
+          '<i class="bi bi-geo-alt-fill me-1"></i>Ver en el mapa' +
+          (age ? ' <span class="sr-map-age">· GPS ' + age + '</span>' : '') + '</button>';
+      }
+      cHtml += '</div>';
+      document.getElementById('trkChofer').innerHTML = cHtml;
+      document.getElementById('trkSecChofer').style.display = '';
+    }
+  } catch (e) {
+    if (token === _trkLoadToken) _trkEvidenciaVacia();
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1098,7 +1283,7 @@ async function _srCargarDetalle(data, token, force) {
         html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma" onclick="_ilusLightbox(this.src, 0, \'Firma\')"></div>';
       }
       if (p.fotos && p.fotos.length) {
-        window._peFotosActuales = p.fotos;   // mismo patron que _peRenderDetalle: array completo para navegar
+        window._peFotosActuales = p.fotos;   // array completo para navegar en el lightbox
         html += '<div class="pe-fotos mt-2">';
         p.fotos.forEach(function(f, i){
           html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" loading="lazy" onclick="_ilusLightbox(window._peFotosActuales, ' + i + ', \'Foto de entrega\')">';
@@ -2571,7 +2756,6 @@ async function actualizarEtiquetasFedex() {
 // modal con iframe a la misma URL /transporte/manifiestos/<id>/firma.
 // ═══════════════════════════════════════════════════════════════════
 var _manifiestoFirmaModal = null;
-var _pruebaEntregaModal = null;
 
 // Una sola superficie para factura y manifiesto: cualquier ajuste visual
 // hecho en etiquetas.html llega al modal sin mantener una segunda version.
@@ -2589,66 +2773,18 @@ function abrirEtiquetasManifiestoModal(trigger) {
   );
 }
 
-// FIX 2026-07-27 (Daniel: "quiero ver la firma, la foto, la entrega, todo
-// bien bonito... no fue lo que pedí" -- la versión anterior embebía la
-// página COMPLETA de /transporte/buscar, con sidebar y buscador, dentro de
-// un iframe). Ahora es un modal propio: llama al MISMO JSON que ya usa esa
-// página (/transporte/api/buscar/<commitment_id>) y renderiza solo el
-// detalle -- sin duplicar esa lógica de backend.
-async function abrirPruebaEntrega(commitmentId) {
-  if (!_pruebaEntregaModal) {
-    _pruebaEntregaModal = new bootstrap.Modal(document.getElementById('pruebaEntregaModal'));
-  }
-  var body = document.getElementById('pruebaEntregaBody');
-  body.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-hourglass-split"></i> Cargando…</div>';
-  _pruebaEntregaModal.show();
-  try {
-    var r = await fetch('/transporte/api/buscar/' + commitmentId);
-    var d = await r.json();
-    if (!d.ok) {
-      body.innerHTML = '<div class="text-center text-muted py-4">No se pudo cargar el detalle.</div>';
-      return;
-    }
-    body.innerHTML = _peRenderDetalle(d.detalle);
+// 2026-07-29: abrirPruebaEntrega() y _peRenderDetalle() se RETIRARON —
+// todo su contenido (cliente/destino, despacho, productos, chofer+GPS,
+// evidencia de entrega y ruta FedEx en vivo) quedó fusionado dentro del
+// modal FedEx consolidado #trackingModal (abrirTrackingDetalle +
+// _trkCargarDetalleExtra, más arriba). Verificado: no había otros callers.
+// Las clases CSS .pe-* siguen vivas (las usa también el modal SimpliRoute).
 
-    // Ruta FedEx en vivo (2026-07-29, Daniel: "sacar toda la información
-    // posible de FedEx... podemos tener la ruta"). Best-effort, aparte del
-    // fetch principal — usa el mismo endpoint que ya alimenta el modal de
-    // tracking FedEx (/tracking-detalle), que trae scans con CIUDAD por
-    // evento (_fedex_parse_scans en app.py) — más rico que el timeline
-    // genérico de arriba, que no tiene ciudad.
-    var mi = d.detalle && d.detalle.manifest_item;
-    if (mi && mi.item_id && mi.tracking_number) {
-      try {
-        var r2 = await fetch('/transporte/api/items/' + mi.item_id + '/tracking-detalle');
-        var d2 = await r2.json();
-        if (d2 && d2.ok && d2.fedex_scans && d2.fedex_scans.length) {
-          var rutaHtml = '<div class="pe-sec"><div class="pe-h"><i class="bi bi-signpost-2-fill" style="color:#4d148c"></i>Ruta FedEx (en vivo)'
-            + (d2.eta ? ' <span class="small text-muted">· ETA ' + _peEsc(d2.eta) + '</span>' : '') + '</div>';
-          rutaHtml += '<div class="pe-tl">';
-          d2.fedex_scans.forEach(function(sc){
-            rutaHtml += '<div class="pe-tl-row"><div class="pe-tl-est">' + _peEsc(sc.descripcion || '—') + '</div>'
-              + '<div class="pe-tl-ts">' + _peEsc(sc.fecha_txt || '') + (sc.ubicacion ? ' · ' + _peEsc(sc.ubicacion) : '') + '</div></div>';
-          });
-          rutaHtml += '</div></div>';
-          // Se inserta justo antes de "Historial completo" (siempre la
-          // última sección que pinta _peRenderDetalle).
-          var secs = body.querySelectorAll('.pe-sec');
-          var historial = secs[secs.length - 1];
-          if (historial) historial.insertAdjacentHTML('beforebegin', rutaHtml);
-          else body.insertAdjacentHTML('beforeend', rutaHtml);
-        }
-      } catch (e2) { /* ruta FedEx es complementaria, no bloquea el resto */ }
-    }
-  } catch (e) {
-    body.innerHTML = '<div class="text-center text-muted py-4">Error de conexión.</div>';
-  }
-}
-
-// Mismo renderizado que _renderDetalle() de templates/transporte/
-// buscar_interno.html (calcado, no se reimplementa el JSON del backend,
-// solo la vista) -- estado, cliente/destino, chofer+GPS, prueba de entrega
-// (receptor/hora/GPS/firma/fotos) e historial completo.
+// Chip de cumplimiento (despachado/pedido, con estado completo/parcial/
+// pendiente + saldo) — compartido por el modal SimpliRoute y el modal
+// FedEx consolidado, para que "cuánto salió vs. cuánto se pidió" se vea
+// igual en los tres couriers (Daniel: "estoy despachando cincuenta y son
+// cien... todo eso lo quiero ver inteligentemente").
 function _ilusQtyFillChips(cantidad, despachada, saldo) {
   var qty = Number(cantidad) || 0;
   var desp = Number(despachada) || 0;
@@ -2661,127 +2797,6 @@ function _ilusQtyFillChips(cantidad, despachada, saldo) {
   if (sal > 0) {
     html += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + sal + '</span>';
   }
-  return html;
-}
-
-function _peEsc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
-  });
-}
-function _peBadgeClass(e) {
-  return ({'En preparación':'pe-b-prep','Entregado a transporte':'pe-b-trans','En ruta':'pe-b-ruta',
-           'Entregado':'pe-b-entreg','Problema':'pe-b-fallida','Entrega fallida':'pe-b-fallida',
-           'Devolución':'pe-b-fallida'}[e] || 'pe-b-prep');
-}
-function _peAgeTxt(s) {
-  if (s < 60) return 'ahora';
-  if (s < 3600) return 'hace ' + Math.round(s / 60) + ' min';
-  return 'hace ' + Math.round(s / 3600) + 'h';
-}
-function _peRenderDetalle(d) {
-  var c = d.commitment, mi = d.manifest_item, ch = d.chofer, lp = d.last_ping, p = d.proof;
-  var est = mi ? mi.estado_entrega : (c.estado || 'En preparación');
-  var html = '<div class="pe-hdr d-flex justify-content-between align-items-start gap-2">';
-  html += '<div><div class="pe-doc">' + _peEsc(c.tido) + ' ' + _peEsc(c.nudo) + '</div>';
-  html += '<div class="pe-cli">' + _peEsc(c.cliente_nombre || '—') + '</div></div>';
-  html += '<span class="pe-badge ' + _peBadgeClass(est) + '">' + _peEsc(est) + '</span></div>';
-
-  html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-person"></i>Cliente / Destino</div>';
-  html += '<div class="pe-kv"><span class="pe-kv-k">RUT</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(c.cliente_rut || '—') + '</span></div>';
-  html += '<div class="pe-kv"><span class="pe-kv-k">Dirección</span><span class="pe-kv-v">' + _peEsc(c.direccion || '—') + '</span></div>';
-  html += '<div class="pe-kv"><span class="pe-kv-k">Comuna</span><span class="pe-kv-v">' + _peEsc(c.comuna || '—') + '</span></div>';
-  if (c.telefono) html += '<div class="pe-kv"><span class="pe-kv-k">Teléfono</span><span class="pe-kv-v">' + _peEsc(c.telefono) + '</span></div>';
-  html += '</div>';
-
-  if (mi) {
-    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-truck"></i>Despacho</div>';
-    if (mi.correlativo) html += '<div class="pe-kv"><span class="pe-kv-k">Manifiesto</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(mi.correlativo) + '</span></div>';
-    if (mi.courier) html += '<div class="pe-kv"><span class="pe-kv-k">Transporte</span><span class="pe-kv-v">' + _peEsc(mi.courier) + '</span></div>';
-    if (mi.tracking_number) html += '<div class="pe-kv"><span class="pe-kv-k">N° tracking</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(mi.tracking_number) + '</span></div>';
-    if (d.tiempos) {
-      var t = d.tiempos;
-      if (t.dias_entrega != null) html += '<div class="pe-kv"><span class="pe-kv-k">Tiempo de entrega</span><span class="pe-kv-v" style="color:#16a34a;font-weight:700">' + t.dias_entrega + ' día(s)</span></div>';
-      else if (t.dias_en_courier != null) html += '<div class="pe-kv"><span class="pe-kv-k">En manos del courier</span><span class="pe-kv-v" style="color:#2563eb;font-weight:700">' + t.dias_en_courier + ' día(s)</span></div>';
-    }
-    html += '</div>';
-  }
-
-  // Productos del pedido (2026-07-29, Daniel: "obviamente los productos,
-  // como habíamos quedado" — reusa d.lineas, ya viene de _tr_buscar_detalle
-  // igual que en el modal de SimpliRoute, con foto por SKU si hay). Reusa
-  // las clases .sr-prod* para consistencia visual entre ambos modales.
-  if (d.lineas && d.lineas.length) {
-    window._peProdFotos = d.lineas.map(function(l){ return l.fotos || []; });
-    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido'
-          + ' <span class="small text-muted">(' + d.lineas.length + ')</span></div>';
-    d.lineas.forEach(function(l, i){
-      var thumb = (l.fotos && l.fotos.length)
-        ? '<img class="sr-prod-thumb" src="' + _peEsc(l.fotos[0]) + '" alt="' + _peEsc(l.nombre || '') + '" loading="lazy" '
-          + 'onclick="_ilusLightbox(window._peProdFotos[' + i + '], 0, \'' + _peEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
-        : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
-      html += '<div class="sr-prod">' + thumb
-        + '<div class="sr-prod-info"><div class="sr-prod-name">' + _peEsc(l.nombre || l.sku || '—') + '</div>'
-        + '<div class="sr-prod-sku">' + _peEsc(l.sku || '') + '</div></div>'
-        + '<div class="sr-prod-qty">' + _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo) + '</div>'
-        + '</div>';
-    });
-    html += '</div>';
-  }
-
-  if (ch) {
-    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-person-badge"></i>Chofer asignado</div>';
-    html += '<div class="pe-driver">';
-    html += '<div style="font-weight:800">' + _peEsc(ch.nombre) + '</div>';
-    html += '<div style="font-size:.78rem;color:#6b7280">' + _peEsc(ch.courier || '') + (ch.patente ? ' · ' + _peEsc(ch.patente) : '') + (ch.telefono ? ' · ' + _peEsc(ch.telefono) : '') + '</div>';
-    if (lp) {
-      html += '<div style="margin-top:.5rem;font-size:.8rem"><i class="bi bi-geo-alt-fill" style="color:#dc2626"></i> '
-            + '<button type="button" class="pe-gps-btn" onclick="_ilusMapModal(' + lp.lat + ',' + lp.lng + ',\'Última posición del chofer\')">Ver en mapa</button> · ' + _peAgeTxt(lp.age_s)
-            + (lp.speed_kmh != null ? ' · ' + Math.round(lp.speed_kmh) + ' km/h' : '') + '</div>';
-    } else {
-      html += '<div style="margin-top:.5rem;font-size:.78rem;color:#9ca3af">Sin pings recientes</div>';
-    }
-    html += '</div></div>';
-  }
-
-  if (p) {
-    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-shield-check"></i>Prueba de entrega</div>';
-    html += '<div class="pe-kv"><span class="pe-kv-k">Receptor</span><span class="pe-kv-v">' + _peEsc(p.receptor_nombre || '—') + (p.receptor_relacion ? ' · ' + _peEsc(p.receptor_relacion) : '') + '</span></div>';
-    if (p.receptor_rut) html += '<div class="pe-kv"><span class="pe-kv-k">RUT receptor</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(p.receptor_rut) + '</span></div>';
-    if (p.entregado_at) html += '<div class="pe-kv"><span class="pe-kv-k">Hora entrega</span><span class="pe-kv-v">' + _peEsc(p.entregado_at) + '</span></div>';
-    if (p.lat && p.lng) html += '<div class="pe-kv"><span class="pe-kv-k">GPS entrega</span><span class="pe-kv-v"><button type="button" class="pe-gps-btn" onclick="_ilusMapModal(' + p.lat + ',' + p.lng + ',\'Punto de entrega\')">Ver punto</button></span></div>';
-    if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma" onclick="_ilusLightbox(this.src, \'Firma\')"></div>';
-    if (p.fotos && p.fotos.length) {
-      // FIX 2026-07-29: array completo en una var global para poder pasar
-      // entre las fotos desde el lightbox (antes cada <img> abria SU sola
-      // foto sin poder avanzar a la siguiente).
-      window._peFotosActuales = p.fotos;
-      html += '<div class="pe-fotos mt-2">';
-      p.fotos.forEach(function(f, i){ html += '<img src="' + f + '" alt="Foto de entrega" onclick="_ilusLightbox(window._peFotosActuales, ' + i + ', \'Foto de entrega\')">'; });
-      html += '</div>';
-    }
-    html += '</div>';
-  } else {
-    html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-shield-check"></i>Prueba de entrega</div>'
-          + '<div style="color:#9ca3af;font-size:.85rem">Sin evidencia registrada todavía (el transportista no ha subido foto/firma para esta entrega).</div></div>';
-  }
-
-  html += '<div class="pe-sec"><div class="pe-h"><i class="bi bi-clock-history"></i>Historial completo</div>';
-  if (d.eventos && d.eventos.length) {
-    html += '<div class="pe-tl">';
-    d.eventos.forEach(function(e){
-      var fc = ({chofer:'pe-fnt-chofer', fedex:'pe-fnt-fedex', aftership:'pe-fnt-fedex', manual:'pe-fnt-manual', sistema:'pe-fnt-sistema'}[e.fuente] || 'pe-fnt-manual');
-      html += '<div class="pe-tl-row"><div class="pe-tl-est">' + _peEsc(e.estado) + '<span class="pe-tl-fnt ' + fc + '">' + _peEsc(e.fuente) + '</span></div>';
-      html += '<div class="pe-tl-ts">' + _peEsc(e.ts) + (e.usuario ? ' · ' + _peEsc(e.usuario) : '') + '</div>';
-      if (e.comentario) html += '<div class="pe-tl-com">' + _peEsc(e.comentario) + '</div>';
-      if (e.lat && e.lng) html += '<div class="pe-tl-com" style="font-size:.74rem"><button type="button" class="pe-gps-btn" onclick="_ilusMapModal(' + e.lat + ',' + e.lng + ',\'Ubicación del evento\')">📍 Ver lugar del evento</button></div>';
-      html += '</div>';
-    });
-    html += '</div>';
-  } else {
-    html += '<div style="color:#9ca3af;font-size:.85rem">Sin eventos registrados aún.</div>';
-  }
-  html += '</div>';
   return html;
 }
 
