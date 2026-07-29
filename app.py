@@ -27685,7 +27685,8 @@ def tr_item_tracking_detalle(item_id):
     timeline de eventos ILUS y — best-effort — los scans en vivo de FedEx.
     """
     row = mysql_fetchone("""
-        SELECT mi.id, mi.estado_entrega, mi.master_tracking_number, mi.ship_bultos,
+        SELECT mi.id, mi.estado_entrega, mi.master_tracking_number, mi.tracking_number,
+               mi.ship_bultos,
                mi.ship_created_at, mi.last_carrier_status, mi.last_carrier_poll_at,
                mi.commitment_id, tm.courier, tm.correlativo,
                c.tido, c.nudo, c.cliente_nombre, c.comuna, c.region,
@@ -27733,8 +27734,13 @@ def tr_item_tracking_detalle(item_id):
         })
 
     # Scans en vivo de FedEx (best-effort; no rompe si la API falla).
+    # FIX 2026-07-29 (Daniel, en vivo: OT cargada por Excel masivo --
+    # tracking_number-- no mostraba ruta FedEx ni tiempos porque acá solo
+    # se miraba master_tracking_number. Mismo criterio ya usado en
+    # tr_refrescar_tracking_item: "Lee master_tracking_number (preferido)
+    # o tracking_number").
     fedex_scans, eta, fedex_label = [], "", ""
-    tn = row.get("master_tracking_number") or ""
+    tn = row.get("master_tracking_number") or row.get("tracking_number") or ""
     if tn and FEDEX_TRACK_CLIENT_ID and FEDEX_TRACK_CLIENT_SECRET:
         try:
             res = _fedex_track_lookup([tn])

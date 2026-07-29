@@ -623,17 +623,23 @@
             {% endif %}
           </td>
           {% if es_fedex %}
+          {# FIX 2026-07-29 (Daniel, en vivo: cargó OTs por Excel masivo
+             --tracking_number-- y la columna decía "Sin OT" porque solo
+             miraba master_tracking_number, el campo que llena el flujo
+             automático de Ship-API. Mismo patrón ya usado en el candado
+             de edición/borrado: COALESCE de ambos campos. #}
+          {% set _ot_num = item.get('master_tracking_number') or item.get('tracking_number') %}
           <td onclick="event.stopPropagation()" style="min-width:165px">
-            {% if item.get('master_tracking_number') %}
+            {% if _ot_num %}
             <div class="d-flex align-items-center gap-2">
-              <a href="https://www.fedex.com/fedextrack/?trknbr={{ item.master_tracking_number }}"
+              <a href="https://www.fedex.com/fedextrack/?trknbr={{ _ot_num }}"
                  target="_blank" class="font-monospace text-decoration-none"
                  style="font-size:.95rem;font-weight:900;color:#4d148c;letter-spacing:.4px;line-height:1.1"
                  title="Ver seguimiento en FedEx.com">
-                {{ item.master_tracking_number }}
+                {{ _ot_num }}
               </a>
               <button class="btn btn-sm btn-link p-0 text-secondary" style="line-height:1"
-                      title="Copiar número de OT" onclick="copiarOT('{{ item.master_tracking_number }}', this)">
+                      title="Copiar número de OT" onclick="copiarOT('{{ _ot_num }}', this)">
                 <i class="bi bi-clipboard fs-6"></i>
               </button>
             </div>
@@ -688,6 +694,13 @@
                     onclick="window.open('/transporte/api/items/{{ item.id }}/etiqueta-fedex', '_blank')">
               <i class="bi bi-file-earmark-arrow-down"></i>
             </button>
+            {% endif %}
+            {% if es_fedex and _ot_num %}
+            {# FIX 2026-07-29: este botón antes vivía adentro del bloque de
+               arriba (gateado solo a master_tracking_number) -- una OT
+               cargada por Excel masivo (tracking_number) nunca podía
+               refrescar su estado desde acá, aunque el backend
+               (tr_refrescar_tracking_item) ya soportaba ambos campos. #}
             <button class="btn btn-sm btn-outline-info mfd-act-btn" title="Refrescar estado FedEx (consulta Track API ahora)"
                     onclick="refrescarTrackingItem({{ item.id }}, this)">
               <i class="bi bi-arrow-clockwise"></i>
@@ -731,13 +744,13 @@
             </button>
             {% endif %}
             {% if es_fedex %}
-              {% if not item.get('master_tracking_number') %}
+              {% if not _ot_num %}
               <button class="btn btn-sm mfd-act-btn" title="Crear OT FedEx automáticamente (Ship API)"
                       style="background:#4d148c;color:#fff;border:none"
                       onclick="crearOTFedexItem({{ item.id }})">
                 <i class="bi bi-magic"></i>
               </button>
-              {% else %}
+              {% elif item.get('master_tracking_number') %}
                 {% set cw = item.get('cancel_window') %}
                 {% if item.get('ship_label_outdated') and not item.get('ship_cancelled_at') %}
                   {% if cw and cw.expired %}
@@ -1013,14 +1026,14 @@
         {{ estado_badge(item.estado_entrega, item.id, editable=puede_editar_estado) }}
       </div>
 
-      {% if es_fedex and item.get('master_tracking_number') %}
+      {% if es_fedex and (item.get('master_tracking_number') or item.get('tracking_number')) %}
       <div class="mt-2 d-flex align-items-center gap-2" style="font-size:.78rem">
         <span class="text-muted fw-semibold"><i class="bi bi-upc-scan me-1"></i>OT FedEx:</span>
-        <a href="https://www.fedex.com/fedextrack/?trknbr={{ item.master_tracking_number }}"
+        <a href="https://www.fedex.com/fedextrack/?trknbr={{ item.get('master_tracking_number') or item.get('tracking_number') }}"
            target="_blank" class="font-monospace text-decoration-none"
-           style="font-weight:800;color:#4d148c">{{ item.master_tracking_number }}</a>
+           style="font-weight:800;color:#4d148c">{{ item.get('master_tracking_number') or item.get('tracking_number') }}</a>
         <button class="btn btn-sm btn-link p-0 text-secondary" style="line-height:1"
-                title="Copiar OT" onclick="copiarOT('{{ item.master_tracking_number }}', this)">
+                title="Copiar OT" onclick="copiarOT('{{ item.get('master_tracking_number') or item.get('tracking_number') }}', this)">
           <i class="bi bi-clipboard"></i>
         </button>
       </div>

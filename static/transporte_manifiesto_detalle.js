@@ -807,6 +807,17 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
       kVal.textContent  = _srFmtDias(t.dias_en_courier);
       kHint.textContent = t.en_courier_at ? ('desde ' + t.en_courier_at) : '';
       kCard.classList.add('sr-kpi-run');
+    } else if (t.entregado_at) {
+      // 2026-07-29 (Daniel, en vivo: OT cargada por Excel masivo que FedEx
+      // ya reportaba "Entregado" desde el primer refresco -- nunca hubo un
+      // evento intermedio "Entregado a transporte" que marcara el inicio,
+      // así que no hay 2 puntos para calcular una duración. Antes esto
+      // decía "aún sin retiro del courier", que contradecía el estado
+      // "Entregado" mostrado justo al lado -- confuso.
+      kLab.textContent  = 'Entregado';
+      kVal.textContent  = '✓';
+      kHint.textContent = t.entregado_at + ' · sin tiempo de tránsito registrado';
+      kCard.classList.add('sr-kpi-ok');
     } else {
       kLab.textContent  = 'Tiempo';
       kVal.textContent  = '—';
@@ -1262,6 +1273,17 @@ async function _srCargarDetalle(data, token, force) {
       kVal.textContent  = _srFmtDias(t.dias_en_courier);
       kHint.textContent = t.en_courier_at ? ('desde ' + t.en_courier_at) : '';
       kCard.classList.add('sr-kpi-run');
+    } else if (t.entregado_at) {
+      // 2026-07-29 (Daniel, en vivo: OT cargada por Excel masivo que FedEx
+      // ya reportaba "Entregado" desde el primer refresco -- nunca hubo un
+      // evento intermedio "Entregado a transporte" que marcara el inicio,
+      // así que no hay 2 puntos para calcular una duración. Antes esto
+      // decía "aún sin retiro del courier", que contradecía el estado
+      // "Entregado" mostrado justo al lado -- confuso.
+      kLab.textContent  = 'Entregado';
+      kVal.textContent  = '✓';
+      kHint.textContent = t.entregado_at + ' · sin tiempo de tránsito registrado';
+      kCard.classList.add('sr-kpi-ok');
     } else {
       kLab.textContent  = 'Tiempo';
       kVal.textContent  = '—';
