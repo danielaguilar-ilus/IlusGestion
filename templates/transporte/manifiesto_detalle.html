@@ -350,9 +350,23 @@
    ÁRBOL manifiesto → facturas → productos
    ════════════════════════════════════════════════════════════════════ #}
 <div class="ilus-card mb-3">
-  <div class="ilus-card-header d-flex justify-content-between align-items-center">
+  <div class="ilus-card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
     <span><i class="bi bi-diagram-3 me-1"></i>Facturas del manifiesto</span>
-    <span class="small text-muted no-print">Haz clic en una factura para ver sus productos</span>
+    <div class="d-flex align-items-center gap-2">
+      <span class="small text-muted no-print d-none d-md-inline">Haz clic en una factura para ver sus productos</span>
+      {# FIX 2026-07-29 (hallazgo H14, Daniel confirmo "si" a agregarlo):
+         antes solo se podia agregar una factura desde el Monitor o el
+         Cubicador -- desde ACA (la ficha) solo se podia quitar. Reusa el
+         mismo endpoint unificado /transporte/api/manifiestos/asignar que
+         ya corrigio el boton "Crear manifiesto" del panel esta noche
+         (valida duplicados entre manifiestos, guard de actividad,
+         recalcula totales). #}
+      <button type="button" class="btn btn-sm btn-outline-dark no-print"
+              onclick="abrirAgregarFactura()"
+              title="Buscar un documento pendiente y agregarlo a este manifiesto">
+        <i class="bi bi-plus-circle me-1"></i>Agregar factura
+      </button>
+    </div>
   </div>
 
   {# ─────────── Desktop ─────────── #}
@@ -963,6 +977,37 @@
   <a href="{{ url_for('tr_manifiestos') }}" class="mfd-volver">
     <i class="bi bi-arrow-left me-1"></i>Volver a manifiestos
   </a>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal "Agregar factura" (hallazgo H14 -- ver boton en el header de la
+   tabla de facturas, mas arriba). Busca documentos PENDIENTES (con saldo,
+   sin manifiesto) por numero/cliente/comuna y los agrega a ESTE
+   manifiesto reusando /transporte/api/manifiestos/asignar.
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="agregarFacturaModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width:640px">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Agregar factura al manifiesto</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group mb-3">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input type="text" class="form-control" id="agBuscarInput"
+                 placeholder="N° documento, cliente o comuna..."
+                 onkeydown="if(event.key==='Enter'){event.preventDefault(); agBuscar();}">
+          <button class="btn btn-outline-dark" type="button" onclick="agBuscar()">Buscar</button>
+        </div>
+        <div id="agResultados" style="min-height:80px">
+          <div class="text-muted small text-center py-3">
+            <i class="bi bi-search me-1"></i>Busca por número de documento, cliente o comuna.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 {# ════════════════════════════════════════════════════════════════════
