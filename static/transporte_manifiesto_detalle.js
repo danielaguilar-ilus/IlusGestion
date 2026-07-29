@@ -790,16 +790,124 @@ async function _srCargarTrazabilidad(data, token, force) {
 // Lightbox simple para fotos/firmas de evidencia (Daniel 2026-07-28: "que la
 // abriera en un modal" en vez de abrir una pestaña nueva del navegador).
 // Reutilizado por la evidencia de SimpliRoute y por "Prueba de entrega".
-function _ilusLightbox(src, alt) {
+// FIX 2026-07-29 (Daniel, en vivo viendo "Prueba de entrega": "quiero que
+// las imágenes tengan un menú potente... zoom, pasar entre imágenes,
+// voltear, algo profesional"). Reemplaza el lightbox de una sola imagen
+// por uno con navegación (flechas/teclado), zoom (botones/rueda/doble
+// click) y rotar. Backward-compatible: si se llama con un solo string
+// (como antes), se envuelve en un array de 1 elemento.
+function _ilusLightbox(images, startIdx, altBase) {
+  if (typeof images === 'string') images = [images];
+  images = (images || []).filter(Boolean);
+  if (!images.length) return;
+  var idx = Math.max(0, Math.min(startIdx || 0, images.length - 1));
+  var zoom = 1, rot = 0;
+  var multi = images.length > 1;
+
   var ov = document.createElement('div');
   ov.className = 'ilus-lightbox-ov';
-  ov.innerHTML = '<img src="' + _srEsc(src) + '" alt="' + _srEsc(alt || 'Evidencia') + '">'
-    + '<button type="button" class="ilus-lightbox-close" aria-label="Cerrar">&times;</button>';
-  var cerrar = function () { ov.remove(); document.removeEventListener('keydown', onEsc); };
-  var onEsc = function (e) { if (e.key === 'Escape') cerrar(); };
-  ov.addEventListener('click', function (e) { if (e.target === ov || e.target.classList.contains('ilus-lightbox-close')) cerrar(); });
-  document.addEventListener('keydown', onEsc);
+  ov.innerHTML =
+    '<button type="button" class="ilus-lightbox-close" aria-label="Cerrar">&times;</button>' +
+    (multi ? '<button type="button" class="ilus-lb-nav ilus-lb-prev" aria-label="Anterior"><i class="bi bi-chevron-left"></i></button>' : '') +
+    (multi ? '<button type="button" class="ilus-lb-nav ilus-lb-next" aria-label="Siguiente"><i class="bi bi-chevron-right"></i></button>' : '') +
+    (multi ? '<div class="ilus-lb-counter"></div>' : '') +
+    '<div class="ilus-lb-stage"><img class="ilus-lb-img" src="" alt=""></div>' +
+    '<div class="ilus-lb-toolbar">' +
+      '<button type="button" class="ilus-lb-tool" data-act="zoom-out" title="Alejar"><i class="bi bi-zoom-out"></i></button>' +
+      '<span class="ilus-lb-zoom-pct">100%</span>' +
+      '<button type="button" class="ilus-lb-tool" data-act="zoom-in" title="Acercar"><i class="bi bi-zoom-in"></i></button>' +
+      '<button type="button" class="ilus-lb-tool" data-act="rotate" title="Girar 90°"><i class="bi bi-arrow-clockwise"></i></button>' +
+      '<button type="button" class="ilus-lb-tool" data-act="reset" title="Restablecer"><i class="bi bi-aspect-ratio"></i></button>' +
+    '</div>';
+
+  var img     = ov.querySelector('.ilus-lb-img');
+  var counter = ov.querySelector('.ilus-lb-counter');
+  var zoomPct = ov.querySelector('.ilus-lb-zoom-pct');
+
+  function applyTransform() {
+    img.style.transform = 'scale(' + zoom + ') rotate(' + rot + 'deg)';
+    zoomPct.textContent = Math.round(zoom * 100) + '%';
+  }
+  function render() {
+    img.src = images[idx];
+    img.alt = (altBase || 'Evidencia') + (multi ? ' ' + (idx + 1) : '');
+    zoom = 1; rot = 0; applyTransform();
+    if (counter) counter.textContent = (idx + 1) + ' / ' + images.length;
+  }
+  function go(delta) { idx = (idx + delta + images.length) % images.length; render(); }
+  function cerrar() { ov.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(e) {
+    if (e.key === 'Escape') cerrar();
+    else if (multi && e.key === 'ArrowLeft')  go(-1);
+    else if (multi && e.key === 'ArrowRight') go(1);
+    else if (e.key === '+') { zoom = Math.min(zoom * 1.25, 5);   applyTransform(); }
+    else if (e.key === '-') { zoom = Math.max(zoom / 1.25, .3); applyTransform(); }
+  }
+
+  ov.addEventListener('click', function (e) {
+    if (e.target === ov || e.target.classList.contains('ilus-lightbox-close')) { cerrar(); return; }
+    var nav = e.target.closest('.ilus-lb-nav');
+    if (nav) { go(nav.classList.contains('ilus-lb-prev') ? -1 : 1); return; }
+    var tool = e.target.closest('.ilus-lb-tool');
+    if (tool) {
+      var act = tool.dataset.act;
+      if (act === 'zoom-in')       zoom = Math.min(zoom * 1.25, 5);
+      else if (act === 'zoom-out') zoom = Math.max(zoom / 1.25, .3);
+      else if (act === 'rotate')   rot  = (rot + 90) % 360;
+      else if (act === 'reset')    { zoom = 1; rot = 0; }
+      applyTransform();
+    }
+  });
+  img.addEventListener('dblclick', function () { zoom = (zoom === 1) ? 2 : 1; applyTransform(); });
+  ov.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    zoom = Math.max(.3, Math.min(5, zoom * (e.deltaY < 0 ? 1.1 : .9)));
+    applyTransform();
+  }, { passive: false });
+
+  document.addEventListener('keydown', onKey);
+  render();
   (document.querySelector('.modal.show') || document.body).appendChild(ov);
+}
+
+// FIX 2026-07-29 (Daniel: "cuando vea el mapa, lo mismo... no me gusta que
+// abra otras pestañas... que esto quede concentrado en un modal"). Antes,
+// el GPS del chofer/entrega/eventos abría Google Maps en target="_blank".
+// Ahora se embebe (iframe sin API key, formato /maps?...&output=embed) en
+// un modal propio, apilado sobre el modal de "Prueba de entrega" (mismo
+// patrón de z-index:1090 que ya usa #trazaModal sobre #vistaModal).
+var _ilusMapModalInst = null;
+function _ilusMapModal(lat, lng, label) {
+  if (!document.getElementById('ilusMapModal')) {
+    var wrap = document.createElement('div');
+    wrap.className = 'modal fade';
+    wrap.id = 'ilusMapModal';
+    wrap.tabIndex = -1;
+    wrap.style.zIndex = '1090';
+    wrap.innerHTML =
+      '<div class="modal-dialog modal-lg modal-dialog-centered">' +
+        '<div class="modal-content" style="border-radius:14px;overflow:hidden">' +
+          '<div class="modal-header" style="background:#0a0a0a;color:#fff;border:none;padding:12px 18px">' +
+            '<h6 class="modal-title mb-0" id="ilusMapModalTitle"></h6>' +
+            '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>' +
+          '</div>' +
+          '<div class="modal-body p-0"><iframe id="ilusMapModalFrame" style="width:100%;height:60vh;border:0" loading="lazy"></iframe></div>' +
+          '<div class="modal-footer" style="padding:10px 18px">' +
+            '<a id="ilusMapModalOpenExt" href="#" target="_blank" rel="noopener" class="btn btn-sm btn-outline-dark">Abrir en Google Maps</a>' +
+            '<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(wrap);
+  }
+  document.getElementById('ilusMapModalTitle').innerHTML =
+    '<i class="bi bi-geo-alt-fill me-2" style="color:#dc2626"></i>' + _srEsc(label || 'Ubicación');
+  document.getElementById('ilusMapModalFrame').src =
+    'https://www.google.com/maps?q=' + lat + ',' + lng + '&output=embed';
+  document.getElementById('ilusMapModalOpenExt').href =
+    'https://www.google.com/maps?q=' + lat + ',' + lng;
+  if (!_ilusMapModalInst) _ilusMapModalInst = new bootstrap.Modal(document.getElementById('ilusMapModal'));
+  _ilusMapModalInst.show();
 }
 
 async function _srCargarEvidencia(data, token, force) {
@@ -818,9 +926,10 @@ async function _srCargarEvidencia(data, token, force) {
         html += '<div class="pe-firma"><img src="' + _srEsc(p.firma_url) + '" alt="Firma" onclick="_ilusLightbox(this.src, \'Firma\')"></div>';
       }
       if (p.fotos && p.fotos.length) {
+        window._peFotosActuales = p.fotos;   // mismo patron que _peRenderDetalle: array completo para navegar
         html += '<div class="pe-fotos mt-2">';
-        p.fotos.forEach(function(f){
-          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" onclick="_ilusLightbox(this.src, \'Foto de entrega\')">';
+        p.fotos.forEach(function(f, i){
+          html += '<img src="' + _srEsc(f) + '" alt="Foto de entrega" onclick="_ilusLightbox(window._peFotosActuales, ' + i + ', \'Foto de entrega\')">';
         });
         html += '</div>';
       }
@@ -2059,7 +2168,7 @@ function _peRenderDetalle(d) {
     html += '<div style="font-size:.78rem;color:#6b7280">' + _peEsc(ch.courier || '') + (ch.patente ? ' · ' + _peEsc(ch.patente) : '') + (ch.telefono ? ' · ' + _peEsc(ch.telefono) : '') + '</div>';
     if (lp) {
       html += '<div style="margin-top:.5rem;font-size:.8rem"><i class="bi bi-geo-alt-fill" style="color:#dc2626"></i> '
-            + '<a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + lp.lat + ',' + lp.lng + '">Ver en mapa</a> · ' + _peAgeTxt(lp.age_s)
+            + '<button type="button" class="pe-gps-btn" onclick="_ilusMapModal(' + lp.lat + ',' + lp.lng + ',\'Última posición del chofer\')">Ver en mapa</button> · ' + _peAgeTxt(lp.age_s)
             + (lp.speed_kmh != null ? ' · ' + Math.round(lp.speed_kmh) + ' km/h' : '') + '</div>';
     } else {
       html += '<div style="margin-top:.5rem;font-size:.78rem;color:#9ca3af">Sin pings recientes</div>';
@@ -2072,11 +2181,15 @@ function _peRenderDetalle(d) {
     html += '<div class="pe-kv"><span class="pe-kv-k">Receptor</span><span class="pe-kv-v">' + _peEsc(p.receptor_nombre || '—') + (p.receptor_relacion ? ' · ' + _peEsc(p.receptor_relacion) : '') + '</span></div>';
     if (p.receptor_rut) html += '<div class="pe-kv"><span class="pe-kv-k">RUT receptor</span><span class="pe-kv-v" style="font-family:monospace">' + _peEsc(p.receptor_rut) + '</span></div>';
     if (p.entregado_at) html += '<div class="pe-kv"><span class="pe-kv-k">Hora entrega</span><span class="pe-kv-v">' + _peEsc(p.entregado_at) + '</span></div>';
-    if (p.lat && p.lng) html += '<div class="pe-kv"><span class="pe-kv-k">GPS entrega</span><span class="pe-kv-v"><a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + p.lat + ',' + p.lng + '">Ver punto</a></span></div>';
+    if (p.lat && p.lng) html += '<div class="pe-kv"><span class="pe-kv-k">GPS entrega</span><span class="pe-kv-v"><button type="button" class="pe-gps-btn" onclick="_ilusMapModal(' + p.lat + ',' + p.lng + ',\'Punto de entrega\')">Ver punto</button></span></div>';
     if (p.firma_url) html += '<div class="pe-firma"><img src="' + p.firma_url + '" alt="Firma" onclick="_ilusLightbox(this.src, \'Firma\')"></div>';
     if (p.fotos && p.fotos.length) {
+      // FIX 2026-07-29: array completo en una var global para poder pasar
+      // entre las fotos desde el lightbox (antes cada <img> abria SU sola
+      // foto sin poder avanzar a la siguiente).
+      window._peFotosActuales = p.fotos;
       html += '<div class="pe-fotos mt-2">';
-      p.fotos.forEach(function(f){ html += '<img src="' + f + '" alt="Foto de entrega" onclick="_ilusLightbox(this.src, \'Foto de entrega\')">'; });
+      p.fotos.forEach(function(f, i){ html += '<img src="' + f + '" alt="Foto de entrega" onclick="_ilusLightbox(window._peFotosActuales, ' + i + ', \'Foto de entrega\')">'; });
       html += '</div>';
     }
     html += '</div>';
@@ -2093,7 +2206,7 @@ function _peRenderDetalle(d) {
       html += '<div class="pe-tl-row"><div class="pe-tl-est">' + _peEsc(e.estado) + '<span class="pe-tl-fnt ' + fc + '">' + _peEsc(e.fuente) + '</span></div>';
       html += '<div class="pe-tl-ts">' + _peEsc(e.ts) + (e.usuario ? ' · ' + _peEsc(e.usuario) : '') + '</div>';
       if (e.comentario) html += '<div class="pe-tl-com">' + _peEsc(e.comentario) + '</div>';
-      if (e.lat && e.lng) html += '<div class="pe-tl-com" style="font-size:.74rem"><a class="pe-gps" target="_blank" href="https://www.google.com/maps?q=' + e.lat + ',' + e.lng + '">📍 Ver lugar del evento</a></div>';
+      if (e.lat && e.lng) html += '<div class="pe-tl-com" style="font-size:.74rem"><button type="button" class="pe-gps-btn" onclick="_ilusMapModal(' + e.lat + ',' + e.lng + ',\'Ubicación del evento\')">📍 Ver lugar del evento</button></div>';
       html += '</div>';
     });
     html += '</div>';

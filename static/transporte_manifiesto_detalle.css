@@ -350,6 +350,11 @@
 .pe-kv-v{ color:#0f172a; font-weight:600; text-align:right; }
 .pe-driver{ background:linear-gradient(135deg,#fff,#fef2f2); border:1px solid #fecaca; border-radius:10px; padding:.8rem; }
 .pe-gps{ font-size:.74rem; color:#dc2626; text-decoration:none; font-weight:700; }
+/* FIX 2026-07-29: boton (antes <a target="_blank">) que abre _ilusMapModal
+   en vez de una pestaña nueva -- mismo look que .pe-gps, sin estilos
+   nativos de <button>. */
+.pe-gps-btn{ font-size:.74rem; color:#dc2626; text-decoration:none; font-weight:700; background:none; border:none; padding:0; cursor:pointer; }
+.pe-gps-btn:hover{ text-decoration:underline; }
 .pe-firma{ padding:.5rem; background:#fff; border:1px solid #e5e7eb; border-radius:10px; text-align:center; margin-top:.4rem; }
 .pe-firma img{ max-width:220px; max-height:70px; cursor:zoom-in; }
 .pe-fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:.4rem; }
@@ -360,17 +365,59 @@
 .ilus-lightbox-ov{
   position:fixed; inset:0; z-index:2000; background:rgba(10,10,10,.92);
   display:flex; align-items:center; justify-content:center; padding:2rem;
-  cursor:zoom-out;
-}
-.ilus-lightbox-ov img{
-  max-width:min(92vw,900px); max-height:88vh; object-fit:contain;
-  border-radius:8px; box-shadow:0 20px 60px rgba(0,0,0,.5);
 }
 .ilus-lightbox-close{
   position:absolute; top:1rem; right:1.2rem; background:none; border:none;
-  color:#fff; font-size:2.2rem; line-height:1; cursor:pointer; opacity:.85;
+  color:#fff; font-size:2.2rem; line-height:1; cursor:pointer; opacity:.85; z-index:2;
 }
 .ilus-lightbox-close:hover{ opacity:1; }
+
+/* FIX 2026-07-29 (Daniel: "menu potente... zoom, pasar entre imagenes,
+   voltear"): visor con navegacion + zoom + rotar, arriba del lightbox
+   simple original (fondo/close conservados tal cual). */
+.ilus-lb-stage{
+  width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.ilus-lb-img{
+  max-width:min(88vw,900px); max-height:80vh; object-fit:contain;
+  border-radius:8px; box-shadow:0 20px 60px rgba(0,0,0,.5);
+  transform-origin:center center; transition:transform .15s ease;
+  cursor:zoom-in; user-select:none;
+}
+.ilus-lb-nav{
+  position:absolute; top:50%; transform:translateY(-50%);
+  background:rgba(255,255,255,.12); border:none; color:#fff;
+  width:46px; height:46px; border-radius:50%; font-size:1.3rem; cursor:pointer;
+  z-index:2; display:flex; align-items:center; justify-content:center;
+  transition:background .15s;
+}
+.ilus-lb-nav:hover{ background:rgba(255,255,255,.28); }
+.ilus-lb-prev{ left:.8rem; }
+.ilus-lb-next{ right:.8rem; }
+.ilus-lb-counter{
+  position:absolute; top:1.1rem; left:50%; transform:translateX(-50%);
+  color:#fff; font-size:.8rem; font-weight:700;
+  background:rgba(255,255,255,.14); padding:.3rem .8rem; border-radius:999px; z-index:2;
+}
+.ilus-lb-toolbar{
+  position:absolute; bottom:1.2rem; left:50%; transform:translateX(-50%);
+  display:flex; align-items:center; gap:.35rem;
+  background:rgba(255,255,255,.12); backdrop-filter:blur(6px);
+  padding:.4rem .55rem; border-radius:999px; z-index:2;
+}
+.ilus-lb-tool{
+  background:none; border:none; color:#fff; font-size:1.05rem;
+  width:34px; height:34px; border-radius:50%; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; transition:background .15s;
+}
+.ilus-lb-tool:hover{ background:rgba(255,255,255,.25); }
+.ilus-lb-zoom-pct{ color:#fff; font-size:.72rem; font-weight:700; min-width:36px; text-align:center; }
+@media (max-width:576px){
+  .ilus-lb-nav{ width:38px; height:38px; font-size:1.1rem; }
+  .ilus-lb-toolbar{ gap:.15rem; padding:.3rem .4rem; }
+  .ilus-lb-tool{ width:30px; height:30px; font-size:.92rem; }
+}
 .pe-tl{ position:relative; padding-left:1.3rem; }
 .pe-tl::before{ content:""; position:absolute; left:.45rem; top:.4rem; bottom:.4rem; width:2px; background:#e5e7eb; }
 .pe-tl-row{ position:relative; padding:.35rem 0 .65rem .3rem; }
