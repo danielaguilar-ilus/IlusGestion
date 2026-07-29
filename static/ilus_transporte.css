@@ -112,6 +112,30 @@
 }
 .trx-hero-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 
+/* FIX 2026-07-29 (Daniel, en vivo: "se está perdiendo los botones, si no
+   lo selecciono no veo un botón" — Manifiesto de firma / Descargar
+   manifiesto en manifiesto_detalle.html, y lo mismo en buscar_interno,
+   dashboard y monitor.html): estos botones usan la clase de Bootstrap
+   .btn-outline-dark (transparente + texto oscuro), pensada para vivir
+   sobre el fondo BLANCO que .trx-hero/.mfd-hero-actions tenían antes de
+   hoy. Al pasar el header a negro (pedido de Daniel, ver fix arriba en
+   .trx-hero) quedaron invisibles: texto oscuro y borde oscuro sobre
+   fondo oscuro. Se sobreescribe SOLO dentro de estas dos zonas (NO se
+   toca .btn-outline-dark global — Etiquetas/Retiros/Mantenciones lo
+   siguen usando bien sobre SUS fondos blancos). */
+.trx-hero-actions .btn-outline-dark,
+.mfd-hero-actions .btn-outline-dark {
+  color: #fff; border-color: rgba(255,255,255,.4);
+  background: rgba(255,255,255,.07);
+}
+.trx-hero-actions .btn-outline-dark:hover,
+.mfd-hero-actions .btn-outline-dark:hover {
+  background: var(--trx-red); border-color: var(--trx-red); color: #fff;
+}
+/* .mfd-btn-labels ya es negro sólido — con el hero también negro se
+   fundía sin borde visible; se le agrega un borde sutil claro. */
+.mfd-hero-actions .mfd-btn-labels { border: 1px solid rgba(255,255,255,.22); }
+
 /* ── Botón "volver" — el patrón que faltaba en 9 de 25 páginas ── */
 .trx-back {
   display: inline-flex; align-items: center; justify-content: center;
