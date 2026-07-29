@@ -25353,6 +25353,7 @@ def tr_quitar_item(mid, item_id):
     # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
     info = mysql_fetchone(
         "SELECT mi.commitment_id, mi.simpliroute_visit_id, mi.master_tracking_number, "
+        "       mi.estado_entrega, "
         "       c.tido, c.nudo, c.cliente_nombre, "
         "       COALESCE(c.costo_zz, 0) AS costo_zz, COALESCE(c.n_bultos, 1) AS n_bultos "
         "FROM transport_manifest_items mi "
@@ -25360,6 +25361,21 @@ def tr_quitar_item(mid, item_id):
         "WHERE mi.id=%s AND mi.manifest_id=%s",
         (item_id, mid)
     )
+
+    # FIX 2026-07-28 (Daniel: "eso es muy grave"). No se puede "des-entregar" un
+    # pedido: si ya llegó a un estado terminal, quitarlo del manifiesto dejaría al
+    # cliente viendo un pedido en preparación que en realidad ya recibió.
+    # La evidencia (firma/fotos/timeline) ya no se pierde — ver
+    # _ensure_transport_evidencia_perdurable() — pero igual no tiene sentido
+    # operativo sacar del manifiesto algo que el courier ya entregó.
+    _estado_actual = (info or {}).get("estado_entrega") or ""
+    if _estado_actual in ESTADOS_ENTREGA_TERMINALES:
+        return jsonify({
+            "ok": False,
+            "error": f"Este documento ya está en estado «{_estado_actual}» y no se "
+                     f"puede quitar del manifiesto. Su entrega ya quedó registrada "
+                     f"con evidencia; sacarlo dejaría al cliente con información falsa.",
+        }), 409
     # FIX 2026-07-27 (Daniel: "bloquea la edición también" -- una vez que la
     # factura ya está en gestión con el courier -- OT FedEx o visita
     # SimpliRoute creada -- ya no se puede quitar del manifiesto ni editar.
@@ -25401,6 +25417,26 @@ def tr_quitar_item(mid, item_id):
                 print(f"[simpliroute] excepción al borrar visita {_visit_id_borrado} "
                       f"(item {item_id}): {e}", flush=True)
 
+    # ── Auditoría ANTES de borrar (REGLA #5: "audit log en TODA acción
+    #    destructiva; antes de borrar, no después"). Estaba después del DELETE:
+    #    si el proceso se caía entremedio, el borrado quedaba sin rastro.
+    #    Trazabilidad legible: "FCV 10599 · Cipax Limitada · flete $559.478 · 114 bultos"
+    if info:
+        doc = f"{info.get('tido') or ''} {info.get('nudo') or ''}".strip()
+        cli = info.get("cliente_nombre") or "—"
+        flete = int(info.get("costo_zz") or 0)
+        nb = info.get("n_bultos") or 1
+        detalle = (f"{doc} · {cli} · flete ${flete:,}".replace(",", ".")
+                   + f" · {nb} bulto/s")
+        if _estado_actual:
+            detalle += f" · estado al quitar: {_estado_actual}"
+    else:
+        detalle = f"item_id={item_id}"
+    if _visit_id_borrado:
+        detalle += (f" · visita SimpliRoute {_visit_id_borrado} "
+                    f"{'borrada' if _simpliroute_borrado_ok else 'NO se pudo borrar (revisar manual)'}")
+    _tr_log("manifest", mid, "factura quitada", detalle)
+
     conn = get_db()
     with conn.cursor() as cur:
         cur.execute(
@@ -25415,21 +25451,6 @@ def tr_quitar_item(mid, item_id):
             "SELECT total_items, costo_total FROM transport_manifests WHERE id=%s", (mid,))
         _tot = cur.fetchone() or {}
     conn.commit()
-
-    # Trazabilidad legible: "FCV 10599 · Cipax Limitada · flete $559.478 · 114 bultos"
-    if info:
-        doc = f"{info.get('tido') or ''} {info.get('nudo') or ''}".strip()
-        cli = info.get("cliente_nombre") or "—"
-        flete = int(info.get("costo_zz") or 0)
-        nb = info.get("n_bultos") or 1
-        detalle = (f"{doc} · {cli} · flete ${flete:,}".replace(",", ".")
-                   + f" · {nb} bulto/s")
-    else:
-        detalle = f"item_id={item_id}"
-    if _visit_id_borrado:
-        detalle += (f" · visita SimpliRoute {_visit_id_borrado} "
-                    f"{'borrada' if _simpliroute_borrado_ok else 'NO se pudo borrar (revisar manual)'}")
-    _tr_log("manifest", mid, "factura quitada", detalle)
     resp = {
         "ok": True,
         "total_items": (_tot.get("total_items") if _tot else None),
@@ -75018,6 +75039,103 @@ def _ensure_transport_couriers_formato_export():
     return True
 
 
+def _ensure_transport_evidencia_perdurable():
+    """La evidencia de entrega SOBREVIVE a que la factura se quite del manifiesto.
+
+    BUG REAL (Daniel 2026-07-28: "eso es muy grave"). `transport_tracking_events`
+    y `transport_delivery_proof` colgaban de `transport_manifest_items` con
+    FOREIGN KEY ... ON DELETE CASCADE. Como `tr_quitar_item` hace un DELETE real
+    de la fila del item, quitar una factura de un manifiesto BORRABA:
+      · el timeline completo que ve el cliente en /t/<token>, y
+      · la firma, las fotos y el GPS de una entrega YA REALIZADA.
+    Después de eso el cliente veía "En preparación" en un pedido que ya le
+    habían entregado, mientras el Monitor seguía mostrando otra cosa.
+    Contradice además la REGLA #5 (audit log en toda acción destructiva).
+
+    POR QUÉ ESTE FIX Y NO UN SOFT-DELETE
+    El soft-delete clásico obligaría a agregar `deleted_at IS NULL` a las ~166
+    consultas que tocan transport_manifest_items (un olvido = datos fantasma), y
+    chocaría con el UNIQUE KEY uq_item (manifest_id, commitment_id) al re-agregar
+    un documento que se quitó antes.
+    La causa real es otra: la evidencia estaba colgada de la MEMBRESÍA temporal
+    de un documento en un manifiesto, cuando en realidad pertenece al DOCUMENTO.
+    Ambas tablas ya guardan `commitment_id` — ese es el ancla perdurable.
+    Entonces: manifest_item_id pasa a NULL-able con ON DELETE SET NULL. La
+    factura puede entrar y salir de manifiestos las veces que sea; su historial
+    de entrega queda intacto para siempre, anclado al documento.
+
+    Idempotente: detecta el estado actual antes de cada paso (REGLA #9).
+    """
+    TABLAS = ("transport_tracking_events", "transport_delivery_proof")
+
+    for tabla in TABLAS:
+        # ── 1) Backfill del ancla: ninguna fila puede quedar sin commitment_id,
+        #       porque al soltar el FK ese sería su único vínculo con el documento.
+        try:
+            mysql_execute(f"""
+                UPDATE {tabla} e
+                  JOIN transport_manifest_items mi ON mi.id = e.manifest_item_id
+                   SET e.commitment_id = mi.commitment_id
+                 WHERE e.commitment_id IS NULL
+            """)
+        except Exception as e:
+            print(f"[tr_evidencia] backfill de commitment_id en {tabla}: {e}", flush=True)
+
+        # ── 2) ¿Ya está migrada? Si manifest_item_id admite NULL, ya pasamos por acá.
+        try:
+            col = mysql_fetchone("""
+                SELECT IS_NULLABLE FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s
+                   AND COLUMN_NAME='manifest_item_id'
+            """, (tabla,))
+            if col and (col.get("IS_NULLABLE") or "").upper() == "YES":
+                continue   # ya migrada, nada que hacer
+        except Exception as e:
+            print(f"[tr_evidencia] no se pudo inspeccionar {tabla}: {e}", flush=True)
+            continue
+
+        # ── 3) Soltar el FK viejo (nombre autogenerado por MySQL, hay que buscarlo)
+        try:
+            fks = mysql_fetchall("""
+                SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+                 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s
+                   AND COLUMN_NAME='manifest_item_id'
+                   AND REFERENCED_TABLE_NAME='transport_manifest_items'
+            """, (tabla,)) or []
+            for fk in fks:
+                nombre = fk.get("CONSTRAINT_NAME")
+                if nombre:
+                    mysql_execute(f"ALTER TABLE {tabla} DROP FOREIGN KEY `{nombre}`")
+                    print(f"[tr_evidencia] {tabla}: FK {nombre} soltada", flush=True)
+        except Exception as e:
+            print(f"[tr_evidencia] {tabla}: no se pudo soltar la FK: {e}", flush=True)
+            continue   # sin soltar la FK, el MODIFY de abajo fallaría igual
+
+        # ── 4) La columna pasa a admitir NULL
+        try:
+            mysql_execute(
+                f"ALTER TABLE {tabla} MODIFY COLUMN manifest_item_id INT NULL")
+        except Exception as e:
+            print(f"[tr_evidencia] {tabla}: MODIFY falló: {e}", flush=True)
+            continue
+
+        # ── 5) FK nueva: al borrar el item, la evidencia se DESVINCULA (no se borra)
+        try:
+            mysql_execute(f"""
+                ALTER TABLE {tabla}
+                  ADD CONSTRAINT fk_{tabla}_item
+                  FOREIGN KEY (manifest_item_id)
+                  REFERENCES transport_manifest_items(id) ON DELETE SET NULL
+            """)
+            print(f"[tr_evidencia] {tabla}: evidencia ahora es perdurable "
+                  f"(ON DELETE SET NULL)", flush=True)
+        except Exception as e:
+            # Peor caso aceptable: queda sin FK. La evidencia igual sobrevive,
+            # que es lo que importa; el ancla real es commitment_id.
+            print(f"[tr_evidencia] {tabla}: no se pudo recrear la FK "
+                  f"(la evidencia igual sobrevive): {e}", flush=True)
+
+
 def _ensure_transport_tracking_tables():
     """Garantiza las tablas y columnas del tracking público + prueba de entrega
     (FASE 1 del roadmap) AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
@@ -75039,7 +75157,10 @@ def _ensure_transport_tracking_tables():
     mysql_execute("""
         CREATE TABLE IF NOT EXISTS transport_tracking_events (
             id               INT AUTO_INCREMENT PRIMARY KEY,
-            manifest_item_id INT NOT NULL,
+            -- NULL-able a propósito: si la factura se quita del manifiesto, el
+            -- evento se DESVINCULA pero NO se borra. El ancla perdurable es
+            -- commitment_id. Ver _ensure_transport_evidencia_perdurable().
+            manifest_item_id INT NULL,
             commitment_id    INT NULL,
             estado           VARCHAR(60) NOT NULL,
             fuente           VARCHAR(20) NOT NULL DEFAULT 'manual'
@@ -75054,7 +75175,7 @@ def _ensure_transport_tracking_tables():
             INDEX idx_te_comm   (commitment_id, ts_utc),
             INDEX idx_te_estado (estado),
             FOREIGN KEY (manifest_item_id)
-                REFERENCES transport_manifest_items(id) ON DELETE CASCADE
+                REFERENCES transport_manifest_items(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
@@ -75062,7 +75183,9 @@ def _ensure_transport_tracking_tables():
     mysql_execute("""
         CREATE TABLE IF NOT EXISTS transport_delivery_proof (
             id                 INT AUTO_INCREMENT PRIMARY KEY,
-            manifest_item_id   INT NOT NULL,
+            -- NULL-able: la firma/fotos sobreviven a que la factura salga del
+            -- manifiesto. Ver _ensure_transport_evidencia_perdurable().
+            manifest_item_id   INT NULL,
             commitment_id      INT NULL,
             receptor_nombre    VARCHAR(180) NOT NULL,
             receptor_rut       VARCHAR(30) NULL,
@@ -75078,7 +75201,7 @@ def _ensure_transport_tracking_tables():
             UNIQUE KEY uq_dp_item (manifest_item_id),
             INDEX idx_dp_comm     (commitment_id),
             FOREIGN KEY (manifest_item_id)
-                REFERENCES transport_manifest_items(id) ON DELETE CASCADE
+                REFERENCES transport_manifest_items(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
@@ -75105,6 +75228,9 @@ def _ensure_transport_tracking_tables():
                 print(f"[tr_tracking] columna agregada: {col}", flush=True)
             except Exception as _e_add:
                 print(f"[tr_tracking] no se pudo agregar {col}: {_e_add}", flush=True)
+    # 3.5) EVIDENCIA PERDURABLE — ver _ensure_transport_evidencia_perdurable()
+    _ensure_transport_evidencia_perdurable()
+
     # 4) Índice UNIQUE en public_token (idempotente con try/except)
     try:
         mysql_execute(
