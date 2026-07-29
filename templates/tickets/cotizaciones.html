@@ -2456,11 +2456,18 @@ async function cotUfChipRefrescar(){
   }
 }
 // Al cargar la página, refrescar el chip con el valor VIVO (el render del
-// servidor puede venir de un worker con cache de hasta 1h). GET liviano,
-// no fuerza fetch a mindicador si el cache del server está fresco.
+// servidor puede venir de un worker con cache de hasta 1h). GET liviano —
+// el backend (_uf_valor_actual, app.py) ya invalida solo el cache cuando
+// cambia el día calendario chileno, así que esto SIEMPRE muestra la UF de
+// HOY, nunca la de ayer (2026-07-29, Daniel: "déjala infalible... que se
+// actualice cada vez que se entre al módulo").
 (function(){
+  const ico = document.getElementById('cotUfChipIco');
+  if (ico) ico.style.animation = 'spin .8s linear infinite';
   fetch('/api/uf-actual').then(function(r){ return r.json(); })
-    .then(_cotUfChipPintar).catch(function(){});
+    .then(function(d){ _cotUfChipPintar(d); })
+    .catch(function(){})
+    .finally(function(){ if (ico) ico.style.animation = ''; });
 })();
 
 // Filtro client-side (número/empresa/RUT + estado). Barato para LIMIT 100.

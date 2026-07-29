@@ -65267,8 +65267,18 @@ def _uf_valor_actual():
                 "manual": True, "set_by": ov.get("by")}
 
     now = time.time()
-    # 2) Cache de proceso (1h)
-    if _UF_CACHE["uf"] is not None and (now - _UF_CACHE["ts"]) < _UF_CACHE_TTL:
+    # 2) Cache de proceso (1h) — FIX 2026-07-29 (Daniel: "déjala infalible"):
+    # antes solo miraba antigüedad (< 1h), así que alguien que entrara justo
+    # pasada la medianoche con un cache de, digamos, 40 min podía ver la UF
+    # de AYER durante los primeros 20 min del día siguiente, en silencio.
+    # Ahora el cache también se invalida si cambió el DÍA CALENDARIO chileno
+    # desde que se guardó — la UF nunca queda "atrasada de fecha" aunque el
+    # TTL de 1h todavía no haya vencido.
+    _cache_dia_valido = (
+        _UF_CACHE["uf"] is not None
+        and datetime.fromtimestamp(_UF_CACHE["ts"], _TZ_CL).date() == _now_chile().date()
+    )
+    if _cache_dia_valido and (now - _UF_CACHE["ts"]) < _UF_CACHE_TTL:
         return {"uf": _UF_CACHE["uf"], "fecha": _UF_CACHE["fecha"], "ok": True, "cached": True}
     # 3) Fetch a la API
     try:
