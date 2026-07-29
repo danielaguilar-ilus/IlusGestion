@@ -23847,6 +23847,8 @@ def tr_manifiestos():
         "estado":  request.args.get("estado", "").strip(),
         "q":       request.args.get("q", "").strip(),
         "vista":   (request.args.get("vista", "activos") or "activos").strip().lower(),
+        "desde":   request.args.get("desde", "").strip(),
+        "hasta":   request.args.get("hasta", "").strip(),
     }
     if filtros["vista"] not in ("activos", "entregados"):
         filtros["vista"] = "activos"
@@ -23854,6 +23856,24 @@ def tr_manifiestos():
         page = max(1, int(request.args.get("page", "1")))
     except Exception:
         page = 1
+
+    # Filtro de fecha (2026-07-29, Daniel: "necesito filtrar por tiempo...
+    # cuando visite los entregados, porque ahí se va a acumular todo").
+    # Solo la pestaña "Entregados" acumula historial indefinido -- "Activos"
+    # ya se acota sola (deja de aparecer ahí en cuanto se entrega el 100%).
+    # Si el usuario no pidió un rango explícito y está en "Entregados", el
+    # default es el mes calendario actual (evita cargar años de historial
+    # de una sola vez); puede ampliarlo o limpiarlo desde la UI. Se aplica
+    # SOLO a la query final (where_vista), no al where_sql_base que usan los
+    # conteos de AMBAS pestañas -- si no, entrar por "Entregados" con el
+    # default puesto también recortaría por error el numerito de "Activos".
+    _hoy = datetime.now().date()
+    _default_desde = _hoy.replace(day=1).isoformat()
+    if filtros["vista"] == "entregados" and not filtros["desde"] and not filtros["hasta"]:
+        filtros["desde"] = _default_desde
+        filtros["fecha_default_aplicado"] = True
+    else:
+        filtros["fecha_default_aplicado"] = False
 
     # Los eliminados (soft-delete, 2026-07-25) nunca aparecen en el listado
     # normal — solo quedan en la BD para poder auditar/restaurar a mano.
@@ -23866,6 +23886,11 @@ def tr_manifiestos():
         q_like = f"%{filtros['q']}%"
         where.append("(correlativo LIKE %s OR courier LIKE %s OR notas LIKE %s)")
         params.extend([q_like, q_like, q_like])
+    where_fecha, params_fecha = [], []
+    if filtros["desde"]:
+        where_fecha.append("fecha >= %s"); params_fecha.append(filtros["desde"])
+    if filtros["hasta"]:
+        where_fecha.append("fecha <= %s"); params_fecha.append(filtros["hasta"])
 
     # PESTAÑAS "Activos" / "Entregados" (2026-07-29, Daniel — demo directorio):
     # un manifiesto pasa a "Entregados" solo cuando el 100% de sus items están
@@ -23878,9 +23903,10 @@ def tr_manifiestos():
     _SQL_ACTIVOS    = f"(NOT ({_TIENE_ITEMS}) OR ({_TIENE_NO_TERMINAL}))"
     _SQL_ENTREGADOS = f"({_TIENE_ITEMS} AND NOT ({_TIENE_NO_TERMINAL}))"
 
-    where_sql_base = " AND ".join(where)  # sin filtro de vista — para contar ambas pestañas
-    where_vista = where + [_SQL_ENTREGADOS if filtros["vista"] == "entregados" else _SQL_ACTIVOS]
+    where_sql_base = " AND ".join(where)  # sin filtro de vista NI de fecha — para contar ambas pestañas
+    where_vista = where + where_fecha + [_SQL_ENTREGADOS if filtros["vista"] == "entregados" else _SQL_ACTIVOS]
     where_sql = " AND ".join(where_vista)
+    params_vista = params + params_fecha
 
     # Conteo de cada pestaña (respeta courier/estado/q, no la vista elegida ni
     # la paginación) — para mostrar el numerito en cada tab, igual que el Monitor.
@@ -23904,7 +23930,7 @@ def tr_manifiestos():
         "       COALESCE(SUM(costo_total), 0) AS costo, "
         "       SUM(CASE WHEN estado='En preparación' THEN 1 ELSE 0 END) AS en_prep "
         "  FROM transport_manifests WHERE " + where_sql,
-        tuple(params)
+        tuple(params_vista)
     ) or {}
     total = int(kpi_row.get("total") or 0)
     kpis = {
@@ -23921,7 +23947,7 @@ def tr_manifiestos():
     manifiestos = mysql_fetchall(
         "SELECT * FROM transport_manifests WHERE " + where_sql +
         " ORDER BY fecha DESC, id DESC LIMIT %s OFFSET %s",
-        tuple(params) + (page_size, offset)
+        tuple(params_vista) + (page_size, offset)
     )
 
     # % de avance por manifiesto (2026-07-29, Daniel — demo directorio: "tiene

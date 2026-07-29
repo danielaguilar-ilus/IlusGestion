@@ -55,15 +55,16 @@
   <div class="tr-segment">
     <span class="tr-segment-label">Vista</span>
     <div class="tr-segment-group" role="tablist">
+      {% set _tab_qs = (('courier=' + filtros.courier + '&') if filtros.courier else '') ~ (('estado=' + filtros.estado + '&') if filtros.estado else '') ~ (('q=' + filtros.q + '&') if filtros.q else '') ~ (('desde=' + filtros.desde + '&') if (filtros.desde and not filtros.fecha_default_aplicado) else '') ~ (('hasta=' + filtros.hasta + '&') if filtros.hasta else '') %}
       <a role="tab" class="tr-segment-btn {{ 'active' if filtros.vista == 'activos' }}"
-         href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=activos"
+         href="?{{ _tab_qs }}vista=activos"
          title="Manifiestos con al menos un item aún sin entregar">
         <i class="bi bi-truck"></i>
         <span>Activos</span>
         <span class="tr-segment-badge tr-segment-badge-red">{{ tabs_count.activos }}</span>
       </a>
       <a role="tab" class="tr-segment-btn {{ 'active' if filtros.vista == 'entregados' }}"
-         href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados"
+         href="?{{ _tab_qs }}vista=entregados"
          title="Manifiestos 100% entregados (o en devolución), con toda su evidencia">
         <i class="bi bi-check2-all"></i>
         <span>Entregados</span>
@@ -94,10 +95,27 @@
       <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
       {% endfor %}
     </select>
-    <a href="{{ url_for('tr_manifiestos') }}" class="btn-limpiar">
+    {# Filtro de fecha (2026-07-29, Daniel: "necesito filtrar por tiempo...
+       cuando visite los entregados, porque ahí se va a acumular todo").
+       Solo tiene sentido acotar la pestaña "Entregados" -- "Activos" ya se
+       auto-limita solo (sale de ahí en cuanto se entrega el 100%). #}
+    <div class="man-filtro-fecha" title="Filtra por fecha del manifiesto">
+      <input type="date" name="desde" value="{{ filtros.desde }}"
+             onchange="document.getElementById('filtrosForm').submit()">
+      <span class="sep">–</span>
+      <input type="date" name="hasta" value="{{ filtros.hasta }}"
+             onchange="document.getElementById('filtrosForm').submit()">
+    </div>
+    <a href="{{ url_for('tr_manifiestos', vista=filtros.vista) }}" class="btn-limpiar">
       <i class="bi bi-arrow-counterclockwise"></i> Limpiar filtros
     </a>
   </form>
+  {% if filtros.vista == 'entregados' and filtros.fecha_default_aplicado %}
+  <div class="man-filtro-fecha-hint">
+    <i class="bi bi-info-circle me-1"></i>Mostrando solo el mes actual por defecto (evita cargar todo el historial acumulado).
+    <a href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados&desde=2000-01-01">Ver todo el historial</a>
+  </div>
+  {% endif %}
 
   {# ── KPIs ── #}
   <div class="man-kpis">
@@ -182,6 +200,23 @@
         }.get(m.estado, 'bi-circle-fill') %}
         {% set av = m.avance %}
         {% set _row_accent = 'trx-row-ok' if m.cien_pct else ('trx-row-warn' if av.pct > 0 else '') %}
+        {# 2026-07-29 (Daniel: "el manifiesto no debería estar en preparación
+           si tiene un 79%... colócalo más colorido según el % de avance"):
+           el pill de Estado reflejaba SOLO el campo manual de la BD, que casi
+           nunca se actualiza a mano mientras el courier va entregando -- por
+           eso un manifiesto con la mayoría ya entregada seguía diciendo "En
+           preparación". Se deriva un estado VISUAL del avance real cuando hay
+           items; "Cerrado" (cierre manual explícito) siempre gana. No se
+           toca m.estado en la BD -- solo lo que se muestra. #}
+        {% if m.estado == 'Cerrado' %}
+          {% set estado_visual_label, estado_visual_class, estado_visual_ico = m.estado, estado_class, estado_ico %}
+        {% elif av.total > 0 and av.pct >= 100 %}
+          {% set estado_visual_label, estado_visual_class, estado_visual_ico = 'Entregado completo', 'ok', 'bi-check2-all' %}
+        {% elif av.total > 0 and av.pct > 0 %}
+          {% set estado_visual_label, estado_visual_class, estado_visual_ico = ('En curso · ' ~ av.pct ~ '%'), 'curso', 'bi-truck' %}
+        {% else %}
+          {% set estado_visual_label, estado_visual_class, estado_visual_ico = m.estado, estado_class, estado_ico %}
+        {% endif %}
         <tr id="man-row-{{ m.id }}" class="{{ _row_accent }}">
           {% if is_superadmin %}
           <td data-label="" class="man-th-chk">
@@ -233,7 +268,7 @@
             {% endif %}
           </td>
           <td data-label="Estado">
-            <span class="estado-pill {{ estado_class }}"><i class="bi {{ estado_ico }}"></i>{{ m.estado }}</span>
+            <span class="estado-pill {{ estado_visual_class }}"><i class="bi {{ estado_visual_ico }}"></i>{{ estado_visual_label }}</span>
           </td>
           <td data-label="Notas" class="cell-notas">
             {% if m.notas %}{{ m.notas[:32] }}{{ '…' if m.notas|length > 32 }}{% else %}—{% endif %}
@@ -338,6 +373,8 @@
           ('courier=' + filtros.courier) if filtros.courier else '',
           ('estado=' + filtros.estado) if filtros.estado else '',
           ('q=' + filtros.q) if filtros.q else '',
+          ('desde=' + filtros.desde) if (filtros.desde and not filtros.fecha_default_aplicado) else '',
+          ('hasta=' + filtros.hasta) if filtros.hasta else '',
           ('vista=' + filtros.vista),
           ('page_size=' + (paginacion.page_size|string)),
         )|select|join('&') %}
