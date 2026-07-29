@@ -28649,9 +28649,20 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         visitas = data if isinstance(data, list) else []
         por_id = {str(v.get("id")): v for v in visitas if isinstance(v, dict) and v.get("id")}
         por_ref = {}
+        # 2026-07-29 (Daniel, caso BLV 22729): agrupa TODAS las visitas que
+        # comparten reference (no solo la primera) — necesario para el
+        # tie-breaker de abajo, que corta el ping-pong infinito cuando
+        # SimpliRoute tiene DOS visitas vivas con la misma reference
+        # (duplicado real en SimpliRoute, ej. Alison recreó la visita a mano
+        # sin cancelar la original). Antes esto alternaba entre ambos
+        # visit_id en cada ciclo del poller, spameando la trazabilidad con
+        # "Visita SimpliRoute reemplazada automaticamente" sin fin.
+        por_ref_todas = {}
         for v in visitas:
             if isinstance(v, dict) and (v.get("reference") or "").strip():
-                por_ref.setdefault(_sr_normalizar_reference((v.get("reference") or "").strip()), v)
+                _ref_k = _sr_normalizar_reference((v.get("reference") or "").strip())
+                por_ref.setdefault(_ref_k, v)
+                por_ref_todas.setdefault(_ref_k, []).append(v)
 
         # FIX 2026-07-28 (Daniel: caso BLV 22738): la visita de REEMPLAZO
         # puede quedar agendada para HOY aunque el manifiesto sea de otra
@@ -28694,6 +28705,17 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                     _visita_bare = por_ref.get(_nudo_solo)
                     if _visita_bare and str(_visita_bare.get("id")) != vid:
                         visita_ref = _visita_bare
+            # Tie-breaker anti ping-pong (2026-07-29): si el visit_id YA
+            # GUARDADO sigue estando entre las visitas vivas con esta misma
+            # reference, no lo cambiamos aunque por_ref haya resuelto OTRA
+            # (caso de dos visitas duplicadas con la misma reference en
+            # SimpliRoute — sin esto, cada ciclo del poller "corregía" hacia
+            # el que apareciera primero en la respuesta, y el próximo ciclo
+            # revertía, generando el ping-pong infinito).
+            _matches_ref = por_ref_todas.get(ref_it) or []
+            if vid and any(str(m.get("id")) == vid for m in _matches_ref):
+                visita_ref = None
+
             if visita_ref and str(visita_ref.get("id")) != vid:
                 nuevo_id = str(visita_ref.get("id") or "")
                 try:
