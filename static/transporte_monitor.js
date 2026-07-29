@@ -1767,30 +1767,16 @@ function cargarMonitor() {
                 return '<td><div class="tr-cell-truncate" title="' + esc(dir) + '">' + esc(dir) + '</div></td>';
               })() +
 
-              /* ── ZZ envío detectados ── */
-              (function() {
-                var skus = (c.zz_skus||'').trim();
-                if (!skus) return '<td class="text-center"><span style="color:var(--tr-text-soft); font-size:.72rem">—</span></td>';
-                var parts = skus.split(',').filter(function(s){ return s.trim(); });
-                // Mostrar máx 2 chips, contar el resto
-                var visibles = parts.slice(0,2).map(function(s) {
-                  // Mostrar solo el sufijo (ZZENVIO -> ENVIO) para que quepa
-                  var lbl = s.trim().replace(/^ZZ/, '');
-                  return '<span class="tr-zz-chip" title="' + esc(s.trim()) + '">' + esc(lbl) + '</span>';
-                }).join('');
-                var extra = parts.length > 2
-                  ? '<span class="tr-zz-chip" title="' + esc(parts.slice(2).join(', ')) + '" style="background:#f1f5f9;color:#475569;border-color:#cbd5e1">+' + (parts.length-2) + '</span>'
-                  : '';
-                return '<td class="text-center"><div class="tr-zz-chips">' + visibles + extra + '</div></td>';
-              })() +
-
-              /* ── Observaciones (truncada + tooltip) ── */
-              (function() {
-                var obs = (c.observaciones||'').trim();
-                if (!obs) return '<td><span class="tr-cell-truncate tr-cell-truncate-soft">—</span></td>';
-                return '<td><div class="tr-cell-truncate" title="' + esc(obs) + '">' + esc(obs) + '</div></td>';
-              })() +
-
+              /* FIX 2026-07-28 (Daniel, viendo la tabla en vivo): "tengo
+                 observaciones que casi no uso, y ZZ no sé qué es, en guía
+                 tampoco sé qué es, y cobertura no sé qué es, porque dice
+                 cero por ciento estando entregado". Se sacan las columnas
+                 ZZ / Observaciones / Guía / Cobertura de esta vista -- ZZ y
+                 Cobertura son datos financieros del ERP (líneas de servicio
+                 de envío / % ya facturado) que no reflejan si el courier
+                 entregó de verdad, y por eso confundían más que ayudaban.
+                 <th> correspondientes ya sacados de index.html; colspan del
+                 loading bajó de 15 a 11. */
               /* ── Estado (+ badges de gestión: En manifiesto · PREVENTA · atraso) ── */
               '<td>' +
                 '<div class="tr-estado-stack">' +
@@ -1820,23 +1806,6 @@ function cargarMonitor() {
                   '</div>' +
                 '</td>';
               })() +
-
-              /* ── Guía de despacho (NUDGIA del ERP) ── */
-              '<td class="text-center">' +
-                (c.guia_numero
-                  ? '<span class="tr-guia-pill" title="Guía de despacho asociada en el ERP">' + c.guia_numero + '</span>'
-                  : '<span style="color:var(--tr-text-soft)">—</span>') +
-              '</td>' +
-
-              /* ── Cobertura (% despachado) ── */
-              '<td class="text-center">' +
-                (c.cobertura_pct > 0
-                  ? '<div class="cobertura-cell" style="color:' +
-                      (c.cobertura_pct >= 100 ? '#166534' : (c.cobertura_pct >= 50 ? '#92400e' : '#991b1b')) +
-                      '">' + c.cobertura_pct.toFixed(0) + '%</div>' +
-                    '<div class="cobertura-bar"><div class="cobertura-fill" style="width:' + Math.min(c.cobertura_pct,100) + '%"></div></div>'
-                  : '<span style="color:var(--tr-text-soft); font-size:.75rem">0%</span>') +
-              '</td>' +
 
               /* ── Costo ── */
               '<td class="text-end">' + costoHtml + '</td>' +
