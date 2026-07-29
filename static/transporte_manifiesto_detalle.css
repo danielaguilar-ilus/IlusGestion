@@ -668,3 +668,15 @@
   .sr-map-btn{ margin-left:0; width:100%; }
   .sr-prod-qty{ flex-direction:column; align-items:flex-end; }
 }
+
+/* ═══ 2026-07-29: modal "Cargar Excel de OTs FedEx" (drag & drop) ═══ */
+.cef-drop{
+  border:2px dashed #d1d5db;border-radius:14px;padding:1.75rem 1rem;
+  text-align:center;background:#fff;cursor:pointer;
+  transition:border-color .15s, background .15s;
+}
+.cef-drop:hover{ border-color:var(--ilus-red); background:#fff5f5; }
+.cef-drop.dragover{ border-color:var(--ilus-red); background:#fee2e2; }
+.cef-drop-icon{ font-size:2.2rem; color:var(--ilus-red); display:block; }
+.cef-drop-text{ font-weight:600; color:var(--ilus-black); margin-top:.4rem; }
+.cef-drop-sub{ color:#6b7280; font-size:.82rem; margin-top:.2rem; }

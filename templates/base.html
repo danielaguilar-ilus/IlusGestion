@@ -629,10 +629,12 @@
       {# 'Monitor en vivo' y 'Buscar despacho' temporalmente fuera del sidebar
          (Daniel 2026-06-13). Las rutas siguen vivas para no romper enlaces;
          se mantienen accesibles desde la búsqueda global o links directos. #}
-      <a href="/transporte/ot-masivo"
-         class="sidebar-link{% if request.endpoint in ['tr_ot_masivo_ui'] %} active{% endif %}">
-        <i class="bi bi-file-earmark-arrow-up"></i><span>OT Masivo FedEx</span>
-      </a>
+      {# 'OT Masivo FedEx' sacado del sidebar (Daniel 2026-07-29, autorización
+         explícita: "borra este menú del estado lateral, llévalo a los
+         manifiestos"). La carga masiva vive ahora dentro de la ficha de cada
+         manifiesto FedEx (dropdown FedEx → "Cargar Excel de OTs"). La ruta
+         /transporte/ot-masivo y su backend siguen vivos (el nuevo modal los
+         reutiliza), solo se quita el link del menú. #}
       {% endif %}
     </div>
     {% endif %}

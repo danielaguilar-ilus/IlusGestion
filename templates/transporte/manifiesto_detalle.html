@@ -190,6 +190,16 @@
           <i class="bi bi-clipboard-check me-1"></i>Pegar TNs desde Excel
           <div class="small text-muted">Si ya creaste las OTs en el portal FedEx</div>
         </a></li>
+        {# 2026-07-29 (Daniel): reemplaza la página aparte /transporte/ot-masivo
+           (bug de CSRF ya corregido, pero además pidió sacarla del menú
+           lateral y traerla acá adentro). Mismo backend
+           (/transporte/ot-masivo/preview y /aplicar), match por N° de
+           factura — más robusto que "Pegar TNs" (que asume el mismo orden
+           de filas). #}
+        <li><a class="dropdown-item" href="#" onclick="abrirCargaExcelFedex(); return false">
+          <i class="bi bi-file-earmark-arrow-up me-1"></i>Cargar Excel de OTs
+          <div class="small text-muted">Arrastra o selecciona el archivo — matchea por N° de factura</div>
+        </a></li>
         <li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header"><i class="bi bi-printer me-1"></i>Impresión</h6></li>
         <li><a class="dropdown-item"
@@ -1503,6 +1513,76 @@ function mfdFiltrarTabla(){
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-sm btn-ilus fw-bold" id="otsMasivoGuardarBtn" onclick="guardarOTsMasivo()">
           <i class="bi bi-check-lg me-1"></i>Guardar OTs
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: carga masiva de OT FedEx por Excel — arrastrar/seleccionar
+   (2026-07-29, Daniel: "borra este menú del estado lateral, llévalo a
+   los manifiestos... un modal donde yo pueda llamar al documento, lo
+   pueda arrastrar... unas instrucciones con un formulario igual al que
+   mostraste"). Reemplaza el uso de la página /transporte/ot-masivo
+   (sigue existiendo el módulo/backend, solo se saca del sidebar).
+   Reusa /transporte/ot-masivo/preview y /aplicar — el bug real (CSRF
+   siempre inválido) ya se corrigió ahí mismo.
+   ════════════════════════════════════════════════════════════════════ #}
+{% if es_fedex %}
+<div class="modal fade" id="cargaExcelFedexModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2"></i>Cargar Excel de OTs FedEx</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="small text-muted mb-2">
+          Columnas esperadas: <strong>N° Factura</strong>, <strong>Tipo</strong> (opcional, ej. BLV/FCV),
+          <strong>N° Tracking FedEx</strong> y <strong>Observación</strong> (opcional). Matchea cada fila por
+          número de factura — no depende del orden.
+        </div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <a href="{{ url_for('tr_ot_masivo_plantilla') }}" class="btn btn-sm btn-outline-dark">
+            <i class="bi bi-file-earmark-excel me-1"></i>Descargar plantilla Excel
+          </a>
+        </div>
+
+        <div id="cefDropZone" class="cef-drop" tabindex="0" role="button"
+             aria-label="Arrastra el archivo aquí o haz click para seleccionar"
+             onclick="document.getElementById('cefFileInput').click()">
+          <i class="bi bi-cloud-upload cef-drop-icon"></i>
+          <div class="cef-drop-text">Arrastra tu Excel aquí o haz click para seleccionar</div>
+          <div class="cef-drop-sub">Formato: .xlsx · Tamaño máximo recomendado: 5 MB</div>
+          <input type="file" id="cefFileInput" accept=".xlsx" style="display:none" aria-hidden="true"
+                 onchange="if(this.files[0]) _cefHandleFile(this.files[0])">
+        </div>
+
+        <div id="cefFileStatus" class="mt-2" style="display:none">
+          <div class="d-flex align-items-center gap-2 small">
+            <i class="bi bi-file-earmark-spreadsheet" style="color:#16a34a"></i>
+            <strong id="cefFileName">—</strong>
+          </div>
+        </div>
+
+        <div id="cefResumen" class="mt-3"></div>
+        <div id="cefTablaWrap" style="display:none;max-height:38vh;overflow:auto" class="mt-2">
+          <table class="table table-sm">
+            <thead>
+              <tr><th>Fila</th><th>Factura</th><th>Tracking</th><th>Estado</th><th>Detalle</th></tr>
+            </thead>
+            <tbody id="cefTablaBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span id="cefStatus" class="me-auto small text-muted"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-ilus fw-bold" id="cefAplicarBtn"
+                onclick="_cefAplicar()" disabled>
+          <i class="bi bi-check-lg me-1"></i>Aplicar OTs
         </button>
       </div>
     </div>

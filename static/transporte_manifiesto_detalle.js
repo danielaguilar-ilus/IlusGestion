@@ -1615,6 +1615,171 @@ async function guardarOTsMasivo() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+//  CARGA MASIVA DE OT FedEx POR EXCEL — arrastrar/seleccionar (2026-07-29)
+//  Daniel: "borra este menú del estado lateral, llévalo a los manifiestos
+//  solamente de FedEx... un modal donde yo pueda llamar al documento, lo
+//  pueda arrastrar." Reusa el mismo backend que la página /transporte/
+//  ot-masivo (/preview + /aplicar, matchea por N° de factura — el bug
+//  real era CSRF, ya corregido ahí).
+// ══════════════════════════════════════════════════════════════════════
+var _cefModal = null;
+var _cefFilasPreview = [];
+
+var _CEF_STATUS_INFO = {
+  'ok_nuevo':      { label: 'Listo',            color: 'success', icon: 'bi-check-circle-fill' },
+  'ok_re_envio':   { label: 'Reemplaza OT',      color: 'warning', icon: 'bi-arrow-repeat' },
+  'ya_existe':     { label: 'Ya tiene esta OT',  color: 'secondary', icon: 'bi-dash-circle' },
+  'no_encontrada': { label: 'Factura no existe', color: 'danger', icon: 'bi-x-circle' },
+  'sin_manifiesto':{ label: 'Sin manifiesto',    color: 'danger', icon: 'bi-exclamation-triangle' },
+  'ot_duplicada':  { label: 'OT duplicada',      color: 'danger', icon: 'bi-exclamation-triangle' },
+  'invalido':      { label: 'Fila inválida',     color: 'danger', icon: 'bi-x-circle' },
+};
+
+function abrirCargaExcelFedex() {
+  if (!_cefModal) _cefModal = new bootstrap.Modal(document.getElementById('cargaExcelFedexModal'));
+  _cefFilasPreview = [];
+  document.getElementById('cefFileStatus').style.display = 'none';
+  document.getElementById('cefResumen').innerHTML = '';
+  document.getElementById('cefTablaWrap').style.display = 'none';
+  document.getElementById('cefTablaBody').innerHTML = '';
+  document.getElementById('cefStatus').textContent = '';
+  document.getElementById('cefAplicarBtn').disabled = true;
+  _cefWireDropZone();
+  _cefModal.show();
+}
+
+function _cefWireDropZone() {
+  var zone = document.getElementById('cefDropZone');
+  if (!zone || zone.dataset.wired) return;
+  zone.dataset.wired = '1';
+  ['dragenter', 'dragover'].forEach(function(ev) {
+    zone.addEventListener(ev, function(e) {
+      e.preventDefault(); e.stopPropagation();
+      zone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function(ev) {
+    zone.addEventListener(ev, function(e) {
+      e.preventDefault(); e.stopPropagation();
+      zone.classList.remove('dragover');
+    });
+  });
+  zone.addEventListener('drop', function(e) {
+    var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) _cefHandleFile(file);
+  });
+}
+
+async function _cefHandleFile(file) {
+  var name = (file.name || '').toLowerCase();
+  if (!name.endsWith('.xlsx')) {
+    await ilusAlert({
+      title: 'Formato no soportado',
+      message: 'Por ahora solo aceptamos archivos .xlsx (Excel moderno).',
+      type: 'warning',
+    });
+    return;
+  }
+  document.getElementById('cefFileName').textContent =
+    file.name + ' · ' + Math.round((file.size || 0) / 1024) + ' KB';
+  document.getElementById('cefFileStatus').style.display = '';
+  document.getElementById('cefStatus').textContent = 'Analizando archivo…';
+  document.getElementById('cefAplicarBtn').disabled = true;
+
+  var fd = new FormData();
+  fd.append('archivo', file);
+  var resp, data;
+  try {
+    resp = await fetch('/transporte/ot-masivo/preview', { method: 'POST', body: fd, credentials: 'same-origin' });
+    data = await resp.json();
+  } catch (e) {
+    document.getElementById('cefStatus').textContent = '';
+    await ilusAlert({
+      title: 'No se pudo procesar',
+      message: 'El servidor no respondió correctamente.',
+      sub: String(e).slice(0, 180),
+      type: 'error',
+    });
+    return;
+  }
+  if (!resp.ok || !data.ok) {
+    document.getElementById('cefStatus').textContent = '';
+    await ilusAlert({ title: 'Error analizando el archivo', message: data.error || ('HTTP ' + resp.status), type: 'error' });
+    return;
+  }
+
+  _cefFilasPreview = data.filas || [];
+  var r = data.resumen || {};
+  document.getElementById('cefResumen').innerHTML =
+    '<div class="d-flex flex-wrap gap-2">' +
+    '<span class="badge bg-success">' + (r.aplicables_directas || 0) + ' listas</span>' +
+    (r.aplicables_re_envio ? '<span class="badge bg-warning text-dark">' + r.aplicables_re_envio + ' reemplazan OT</span>' : '') +
+    (r.requieren_revision ? '<span class="badge bg-danger">' + r.requieren_revision + ' con problema</span>' : '') +
+    '<span class="badge bg-secondary">' + (r.total || 0) + ' filas totales</span>' +
+    '</div>';
+
+  var tbody = document.getElementById('cefTablaBody');
+  tbody.innerHTML = _cefFilasPreview.map(function(f) {
+    var info = _CEF_STATUS_INFO[f.status] || { label: f.status, color: 'secondary', icon: 'bi-question-circle' };
+    return '<tr><td>' + f.row + '</td>' +
+      '<td class="font-monospace">' + _srEsc((f.tido || '') + ' ' + (f.factura || '')) + '</td>' +
+      '<td class="font-monospace">' + _srEsc(f.ot || '') + '</td>' +
+      '<td><span class="badge bg-' + info.color + '"><i class="bi ' + info.icon + ' me-1"></i>' + info.label + '</span></td>' +
+      '<td class="small text-muted">' + _srEsc(f.msg || '') + '</td></tr>';
+  }).join('');
+  document.getElementById('cefTablaWrap').style.display = '';
+
+  document.getElementById('cefStatus').textContent = '';
+  var aplicables = (r.aplicables_directas || 0) + (r.aplicables_re_envio || 0);
+  document.getElementById('cefAplicarBtn').disabled = aplicables === 0;
+  if (window.ilusToast) ilusToast(aplicables ? ('✓ ' + aplicables + ' fila(s) lista(s) para aplicar') : 'Ninguna fila quedó lista para aplicar — revisa la tabla', { type: aplicables ? 'success' : 'warning' });
+}
+
+async function _cefAplicar() {
+  var aplicables = _cefFilasPreview.filter(function(f) { return f.status === 'ok_nuevo' || f.status === 'ok_re_envio'; });
+  if (!aplicables.length) return;
+  var hayReenvios = aplicables.some(function(f) { return f.status === 'ok_re_envio'; });
+  var confirmReenvio = false;
+  if (hayReenvios) {
+    confirmReenvio = await ilusConfirm({
+      title: 'Algunas filas reemplazan una OT existente',
+      message: 'Al menos una factura ya tenía un tracking distinto asignado. ¿Sobrescribirlo con el nuevo?',
+      sub: 'Si eliges "No", esas filas se omiten y el resto se aplica igual.',
+      okLabel: 'Sí, sobrescribir', cancelLabel: 'No, omitir esas',
+    });
+  }
+  var btn = document.getElementById('cefAplicarBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Aplicando…';
+  document.getElementById('cefStatus').textContent = 'Guardando y consultando FedEx…';
+  try {
+    var r = await fetch('/transporte/ot-masivo/aplicar', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filas: _cefFilasPreview, confirm_re_envio: confirmReenvio }),
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      document.getElementById('cefStatus').textContent = '';
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Aplicar OTs';
+      if (window.ilusToast) ilusToast(d.error || 'No se pudo aplicar', { type: 'error' });
+      return;
+    }
+    var msg = (d.aplicadas || 0) + ' OT(s) aplicada(s)';
+    if (d.omitidas) msg += ' · ' + d.omitidas + ' omitida(s)';
+    if (d.errores && d.errores.length) msg += ' · ' + d.errores.length + ' error(es)';
+    document.getElementById('cefStatus').textContent = msg;
+    if (window.ilusToast) ilusToast('✓ ' + msg, { type: 'success' });
+    setTimeout(function() { location.reload(); }, 1400);
+  } catch (e) {
+    document.getElementById('cefStatus').textContent = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Aplicar OTs';
+    if (window.ilusToast) ilusToast('Error de conexión al aplicar', { type: 'error' });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
 //  CREAR / CANCELAR OT FedEx por item (Ship API individual)
 // ══════════════════════════════════════════════════════════════════════
 
