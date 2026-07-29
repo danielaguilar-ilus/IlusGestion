@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}POD · {{ courier.nombre }} — ILUS Transporte{% endblock %}
 
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <style>
   :root {
@@ -349,22 +353,32 @@
 
 <div class="pod-wrap">
 
-  {# ── Breadcrumb ── #}
-  <nav aria-label="breadcrumb" class="mb-2">
-    <ol class="breadcrumb small">
-      <li class="breadcrumb-item"><a href="/transporte" class="text-muted text-decoration-none">Transporte</a></li>
-      <li class="breadcrumb-item"><a href="/transporte/couriers" class="text-muted text-decoration-none">Couriers</a></li>
-      <li class="breadcrumb-item"><a href="/transporte/couriers/{{ courier.id }}" class="text-muted text-decoration-none">{{ courier.nombre }}</a></li>
-      <li class="breadcrumb-item active fw-semibold">POD</li>
-    </ol>
-  </nav>
-
-  {# ── Header ── #}
-  <div class="pod-head">
-    <div>
-      <span class="pod-badge">POD · Prueba de Entrega</span>
-      <h1 class="mt-2">{{ courier.nombre }}</h1>
-      <div class="pod-sub">Configura qué evidencia exige el chofer al cerrar cada entrega.</div>
+  {# ── HEADER ESTANDARIZADO (DS transporte: .trx-hero) ──
+     Reemplaza .pod-head (negro ad-hoc) + el breadcrumb bootstrap separado
+     (el breadcrumb se conserva, migrado a .trx-crumb dentro del hero). #}
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('tr_courier_ficha', cid=courier.id) }}"
+         title="Volver a la ficha de {{ courier.nombre }}" aria-label="Volver a la ficha">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="trx-hero-ico"><i class="bi bi-shield-check"></i></div>
+      <div style="min-width:0;">
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_couriers') }}">Couriers</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_courier_ficha', cid=courier.id) }}">{{ courier.nombre }}</a>
+          <span class="sep">›</span>
+          <span>POD</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <h1>{{ courier.nombre }}</h1>
+          <span class="trx-chip trx-chip-dark">POD · Prueba de Entrega</span>
+        </div>
+        <div class="trx-hero-sub">Configura qué evidencia exige el chofer al cerrar cada entrega.</div>
+      </div>
     </div>
   </div>
 

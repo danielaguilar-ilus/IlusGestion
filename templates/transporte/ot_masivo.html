@@ -2,6 +2,7 @@
 {% block title %}Carga masiva de OT FedEx — Transporte ILUS{% endblock %}
 
 {% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
 <style>
   /* ── Paleta ILUS ───────────────────────────────────────────────── */
   :root{
@@ -187,18 +188,18 @@
 <div class="otm-wrap">
 
   {# ── Cabecera ────────────────────────────────────────────────── #}
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-    <div>
-      <h4 class="mb-0" style="font-weight:700;color:#0a0a0a">
-        <i class="bi bi-upload me-2" style="color:#dc2626"></i>Carga masiva de OT FedEx
-      </h4>
-      <div class="text-muted small">
-        Vincula múltiples nº de tracking a sus facturas correspondientes.
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('transporte_index') }}"
+         title="Volver al Monitor" aria-label="Volver al Monitor">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="trx-hero-ico"><i class="bi bi-upload"></i></div>
+      <div>
+        <h1>Carga masiva de OT FedEx</h1>
+        <div class="trx-hero-sub">Vincula múltiples nº de tracking a sus facturas correspondientes.</div>
       </div>
     </div>
-    <a href="{{ url_for('transporte_index') }}" class="otm-btn-secondary">
-      <i class="bi bi-arrow-left"></i>Monitor
-    </a>
   </div>
 
   {# ── PASO 1 — Descargar plantilla + subir archivo ─────────────── #}

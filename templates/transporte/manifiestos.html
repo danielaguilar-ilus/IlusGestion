@@ -15,16 +15,17 @@
 
 <div class="man-page">
 
-  {# ── Header ── #}
-  <div class="man-header">
-    <div class="left">
+  {# ── Header (DS transporte: .trx-hero, mismo patron que couriers.html /
+     dashboard.html / facturas_proveedor.html) ── #}
+  <div class="trx-hero">
+    <div class="trx-hero-main">
       {# Volver al modulo: la pagina no tenia salida y se llegaba a ella por
          el menu (habia que usar el boton del navegador). Patron .trx-back. #}
       <a href="{{ url_for('transporte_index') }}" class="trx-back"
-         style="margin-top:4px" title="Volver a Transporte" aria-label="Volver a Transporte">
+         title="Volver a Transporte" aria-label="Volver a Transporte">
         <i class="bi bi-arrow-left"></i>
       </a>
-      <div class="icon"><i class="bi bi-clipboard-check-fill"></i></div>
+      <div class="trx-hero-ico"><i class="bi bi-clipboard-check-fill"></i></div>
       <div>
         <div class="trx-crumb">
           <a href="{{ url_for('transporte_index') }}">Transporte</a>
@@ -32,10 +33,10 @@
           <span>Manifiestos</span>
         </div>
         <h1>Manifiestos de Despacho</h1>
-        <div class="sub">Registro de despachos agrupados por courier</div>
+        <div class="trx-hero-sub">Registro de despachos agrupados por courier</div>
       </div>
     </div>
-    <div class="actions">
+    <div class="trx-hero-actions">
       <a href="{{ url_for('transporte_index') }}" class="btn-monitor">
         <i class="bi bi-graph-up-arrow"></i> Monitor
       </a>

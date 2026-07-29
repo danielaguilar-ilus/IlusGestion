@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Factura {{ factura.numero_factura }} — ILUS Transporte{% endblock %}
 
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <style>
 .fpd-summary{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#f0f0f0;
@@ -33,19 +37,27 @@ input.fpd-input{ font-size:16px; }
 </style>
 <div class="container-fluid py-3 px-3 px-md-4">
 
-  <div class="mod-hero">
-    <div>
-      <h4><i class="bi bi-receipt-cutoff me-2"></i>{{ factura.courier }} · Factura {{ factura.numero_factura }}</h4>
-      <div class="mod-sub">
-        {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
-        · Monto total ${{ '{:,.0f}'.format(factura.monto_total or 0) }}
-        {% if factura.notas %} · {{ factura.notas }}{% endif %}
-      </div>
-    </div>
-    <div class="d-flex gap-2 flex-wrap">
-      <a href="{{ url_for('tr_facturas_proveedor') }}" class="btn btn-outline-light btn-sm fw-bold">
-        <i class="bi bi-arrow-left me-1"></i>Volver
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('tr_facturas_proveedor') }}"
+         title="Volver a Facturas Proveedor" aria-label="Volver a Facturas Proveedor">
+        <i class="bi bi-arrow-left"></i>
       </a>
+      <div class="trx-hero-ico"><i class="bi bi-receipt-cutoff"></i></div>
+      <div>
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_facturas_proveedor') }}">Facturas proveedor</a>
+          <span class="sep">›</span><span>{{ factura.numero_factura }}</span>
+        </div>
+        <h1>{{ factura.courier }} · Factura {{ factura.numero_factura }}</h1>
+        <div class="trx-hero-sub">
+          {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
+          · Monto total ${{ '{:,.0f}'.format(factura.monto_total or 0) }}
+          {% if factura.notas %} · {{ factura.notas }}{% endif %}
+        </div>
+      </div>
     </div>
   </div>
 

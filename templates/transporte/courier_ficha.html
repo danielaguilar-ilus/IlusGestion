@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ courier.nombre }} — ILUS Transporte{% endblock %}
 
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <style>
 /* ── Ficha-specific styles ── */
@@ -16,7 +20,7 @@
   transition: color .15s, border-color .15s;
 }
 .ficha-tabs .nav-link:hover  { color: #111; border-bottom-color: #ddd; }
-.ficha-tabs .nav-link.active { color: #CC0000; border-bottom-color: #CC0000; font-weight: 600; }
+.ficha-tabs .nav-link.active { color: var(--trx-red, #dc2626); border-bottom-color: var(--trx-red, #dc2626); font-weight: 600; }
 .ficha-tabs               { border-bottom: 1px solid #dee2e6; }
 
 .stat-card {
@@ -51,7 +55,7 @@
   transition: border-color .2s, background .2s;
   cursor: default;
 }
-.logo-upload-zone:hover { border-color: #CC0000; background: rgba(204,0,0,.03); }
+.logo-upload-zone:hover { border-color: var(--trx-red, #dc2626); background: rgba(220,38,38,.03); }
 
 .contrato-card {
   border: 1px solid #eee;
@@ -71,96 +75,90 @@
 
 <div class="container-fluid py-3 px-3 px-md-4">
 
-  {# ── BREADCRUMB ── #}
-  <nav aria-label="breadcrumb" class="mb-3">
-    <ol class="breadcrumb small">
-      <li class="breadcrumb-item"><a href="/transporte" class="text-muted text-decoration-none">Transporte</a></li>
-      <li class="breadcrumb-item"><a href="/transporte/couriers" class="text-muted text-decoration-none">Couriers</a></li>
-      <li class="breadcrumb-item active fw-semibold">{{ courier.nombre }}</li>
-    </ol>
-  </nav>
+  {# ── HEADER ESTANDARIZADO (DS transporte: .trx-hero) ──
+     Reemplaza la tarjeta negra ad-hoc + el breadcrumb bootstrap separado
+     (el breadcrumb se conserva, migrado a .trx-crumb dentro del hero). #}
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a class="trx-back" href="{{ url_for('tr_couriers') }}"
+         title="Volver a Couriers" aria-label="Volver a Couriers">
+        <i class="bi bi-arrow-left"></i>
+      </a>
 
-  {# ── HEADER CARD ── #}
-  <div class="rounded-3 mb-4 p-4" style="background:#111;color:#fff;">
-    <div class="row align-items-center g-3">
-
-      {# Logo #}
-      <div class="col-auto">
-        {% if courier.logo_url %}
-        <img src="{{ courier.logo_url }}" alt="{{ courier.nombre }}"
-             id="headerLogo"
-             style="width:80px;height:80px;object-fit:contain;background:#fff;border-radius:10px;padding:8px;">
-        {% else %}
-        <div id="headerLogo" class="d-flex align-items-center justify-content-center rounded-3"
-             style="width:80px;height:80px;background:#CC0000;font-size:1.8rem;font-weight:700;color:#fff;flex-shrink:0;">
-          {{ courier.nombre[:2]|upper }}
-        </div>
-        {% endif %}
+      {# Logo (conserva id="headerLogo": lo actualiza static/transporte_courier_ficha.js) #}
+      {% if courier.logo_url %}
+      <img src="{{ courier.logo_url }}" alt="{{ courier.nombre }}"
+           id="headerLogo"
+           style="width:80px;height:80px;object-fit:contain;background:#fff;border-radius:10px;padding:8px;border:1.5px solid var(--trx-g2,#e5e7eb);flex-shrink:0;">
+      {% else %}
+      <div id="headerLogo" class="d-flex align-items-center justify-content-center rounded-3"
+           style="width:80px;height:80px;background:var(--trx-red,#dc2626);font-size:1.8rem;font-weight:700;color:#fff;flex-shrink:0;">
+        {{ courier.nombre[:2]|upper }}
       </div>
+      {% endif %}
 
-      {# Name + badges #}
-      <div class="col">
-        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-          <h3 class="mb-0 fw-bold" style="color:#fff;">{{ courier.nombre }}</h3>
-          <span class="badge small tipo-badge-{{ courier.tipo or '' }}">{{ (courier.tipo or 'sin tipo')|capitalize }}</span>
-          <span class="badge small {% if courier.activo %}bg-success{% else %}bg-danger{% endif %}">
+      <div style="min-width:0;">
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_couriers') }}">Couriers</a>
+          <span class="sep">›</span>
+          <span>{{ courier.nombre }}</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          {# conserva id="courierNombreHeader": lo actualiza guardarFicha() en el JS al guardar #}
+          <h1 id="courierNombreHeader">{{ courier.nombre }}</h1>
+          {# Badges migrados de bootstrap por defecto (#0d6efd/#0dcaf0/#198754/#6f42c1) a .trx-chip — mismo texto/significado #}
+          <span class="trx-chip">{{ (courier.tipo or 'sin tipo')|capitalize }}</span>
+          <span class="trx-chip {% if courier.activo %}trx-chip-ok{% else %}trx-chip-dang{% endif %}">
             {% if courier.activo %}Activo{% else %}Inactivo{% endif %}
           </span>
         </div>
-        {% if courier.rut %}
-        <div style="color:#aaa;font-size:.85rem;"><i class="bi bi-card-text me-1"></i>{{ courier.rut }}</div>
-        {% endif %}
-        {% if courier.email or courier.telefono %}
-        <div style="color:#aaa;font-size:.85rem;" class="mt-1">
+        <div class="trx-hero-sub">
+          {% if courier.rut %}<span class="me-3"><i class="bi bi-card-text me-1"></i>{{ courier.rut }}</span>{% endif %}
           {% if courier.telefono %}<span class="me-3"><i class="bi bi-telephone me-1"></i>{{ courier.telefono }}</span>{% endif %}
           {% if courier.email %}<span><i class="bi bi-envelope me-1"></i>{{ courier.email }}</span>{% endif %}
+          {% if not courier.rut and not courier.telefono and not courier.email %}Gestión de tarifas, contratos y choferes de este courier.{% endif %}
         </div>
-        {% endif %}
 
-        {# Active toggle #}
+        {# Active toggle — conserva id="toggleActivo" + label[for] que usa cambiarActivo() en el JS #}
         <div class="mt-2">
           <div class="form-check form-switch d-inline-flex align-items-center gap-2">
             <input class="form-check-input" type="checkbox" id="toggleActivo"
                    {% if courier.activo %}checked{% endif %}
                    onchange="cambiarActivo(this.checked)"
                    style="cursor:pointer;">
-            <label class="form-check-label small" for="toggleActivo" style="color:#ccc;">
+            <label class="form-check-label small text-muted" for="toggleActivo">
               {% if courier.activo %}Courier activo{% else %}Courier inactivo{% endif %}
             </label>
           </div>
         </div>
       </div>
+    </div>
 
+    <div class="trx-hero-actions">
       {# Quick stats #}
-      <div class="col-auto d-none d-md-flex gap-3">
-        <div class="text-center px-3 py-2 rounded-2" style="background:rgba(255,255,255,.07);">
-          <div class="fw-bold fs-4" style="color:#CC0000;">{{ courier.total_comunas or 0 }}</div>
-          <div style="font-size:.7rem;color:#aaa;">COMUNAS</div>
+      <div class="d-none d-md-flex gap-3 me-1">
+        <div class="text-center px-3 py-2 rounded-2" style="background:var(--trx-g1,#f3f4f6);">
+          <div class="fw-bold fs-5" style="color:var(--trx-red,#dc2626);">{{ courier.total_comunas or 0 }}</div>
+          <div style="font-size:.68rem;color:var(--trx-muted,#6b7280);">COMUNAS</div>
         </div>
-        <div class="text-center px-3 py-2 rounded-2" style="background:rgba(255,255,255,.07);">
-          <div class="fw-bold fs-4" style="color:#fff;">{{ courier.total_contratos or 0 }}</div>
-          <div style="font-size:.7rem;color:#aaa;">CONTRATOS</div>
+        <div class="text-center px-3 py-2 rounded-2" style="background:var(--trx-g1,#f3f4f6);">
+          <div class="fw-bold fs-5">{{ courier.total_contratos or 0 }}</div>
+          <div style="font-size:.68rem;color:var(--trx-muted,#6b7280);">CONTRATOS</div>
         </div>
         {% if courier.peso_max_bulto %}
-        <div class="text-center px-3 py-2 rounded-2" style="background:rgba(255,255,255,.07);">
-          <div class="fw-bold fs-4" style="color:#fff;">{{ courier.peso_max_bulto|int }}</div>
-          <div style="font-size:.7rem;color:#aaa;">KG/BULTO</div>
+        <div class="text-center px-3 py-2 rounded-2" style="background:var(--trx-g1,#f3f4f6);">
+          <div class="fw-bold fs-5">{{ courier.peso_max_bulto|int }}</div>
+          <div style="font-size:.68rem;color:var(--trx-muted,#6b7280);">KG/BULTO</div>
         </div>
         {% endif %}
       </div>
-
-      {# Action buttons #}
-      <div class="col-auto d-flex gap-2">
-        <a href="/transporte/couriers" class="btn btn-sm btn-outline-light">
-          <i class="bi bi-arrow-left me-1"></i>Volver
-        </a>
-        {% if courier.website %}
-        <a href="{{ courier.website }}" target="_blank" class="btn btn-sm btn-outline-light">
-          <i class="bi bi-globe me-1"></i>Web
-        </a>
-        {% endif %}
-      </div>
-
+      {% if courier.website %}
+      <a href="{{ courier.website }}" target="_blank" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-globe me-1"></i>Web
+      </a>
+      {% endif %}
     </div>
   </div>
 
@@ -212,7 +210,7 @@
       <div class="row g-3 mb-4">
         <div class="col-6 col-md-3">
           <div class="stat-card">
-            <div class="stat-icon" style="background:#fff0f0;color:#CC0000;"><i class="bi bi-geo-alt"></i></div>
+            <div class="stat-icon" style="background:#fff0f0;color:var(--trx-red,#dc2626);"><i class="bi bi-geo-alt"></i></div>
             <div>
               <div class="stat-val">{{ courier.total_comunas or 0 }}</div>
               <div class="stat-lbl">Comunas</div>
@@ -527,7 +525,7 @@
         <div id="tarStats" class="text-muted small"></div>
         <div class="d-flex gap-2">
           <button class="btn btn-sm btn-outline-success" onclick="window.location='/transporte/couriers/export'">
-            <i class="bi bi-download me-1"></i>Exportar Excel
+            <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
           </button>
           <button class="btn btn-sm btn-outline-primary" onclick="abrirImportTarifas()">
             <i class="bi bi-upload me-1"></i>Importar Excel
@@ -800,7 +798,7 @@
         <div id="dropZoneTar"
              class="border border-secondary rounded text-center p-5"
              style="cursor:pointer;transition:border-color .2s;"
-             ondragover="event.preventDefault();this.style.borderColor='#CC0000'"
+             ondragover="event.preventDefault();this.style.borderColor='#dc2626'"
              ondragleave="this.style.borderColor=''"
              ondrop="onDropTar(event)">
           <i class="bi bi-file-earmark-excel display-4 text-success d-block mb-2"></i>

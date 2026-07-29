@@ -73,8 +73,9 @@ async function guardarFicha() {
   });
   if (r.ok) {
     showAlert('fichaAlert', '<i class="bi bi-check-circle me-2"></i>Cambios guardados correctamente.', 'success');
-    // Update header name
-    document.querySelector('h3.fw-bold').textContent = body.nombre;
+    // Update header name (id del <h1> del .trx-hero, ver courier_ficha.html)
+    const _hdrNombre = document.getElementById('courierNombreHeader');
+    if (_hdrNombre) _hdrNombre.textContent = body.nombre;
   } else {
     showAlert('fichaAlert', 'Error al guardar. Intenta de nuevo.', 'danger');
   }

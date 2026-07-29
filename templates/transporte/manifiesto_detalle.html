@@ -72,7 +72,7 @@
 {# ════════════════════════════════════════════════════════════════════
    HERO / cabecera
    ════════════════════════════════════════════════════════════════════ #}
-<div class="mfd-hero">
+<div class="mfd-hero trx-hero">
   <div class="mfd-hero-info">
     <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
       {# Botón volver arriba, junto al título (Daniel 2026-07-28: "hace falta
@@ -1547,6 +1547,13 @@
    El <link> queda en el MISMO punto del documento en que estaba el <style>
    para no alterar el orden de la cascada CSS. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='transporte_manifiesto_detalle.css') }}">
+
+{# Design System compartido de TRANSPORTE (.trx-hero, etc). Esta pagina NO
+   tenia block head_extra ni cargaba ilus_transporte.css todavia; se agrega
+   aca (DESPUES del link de arriba, a proposito) para que .trx-hero gane la
+   cascada sobre .mfd-hero en las propiedades que ambas definen (fondo,
+   borde, sombra), sin quitar ninguna regla de .mfd-hero. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_transporte.css') }}">
 
 {# ════════════════════════════════════════════════════════════════════
    Modal: cambiar estado de entrega (reemplaza el dropdown nativo)

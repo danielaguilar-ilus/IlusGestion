@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Cotizaciones de Transporte — ILUS{% endblock %}
+
+{% block head_extra %}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 
 {#
@@ -149,14 +154,27 @@
 }
 </style>
 
-<div class="trc-hero">
-  <div>
-    <h4><i class="bi bi-truck"></i>Cotizaciones de Transporte</h4>
-    <div class="sub">Flete cotizado con los couriers + margen y descuento — numeración CTR-</div>
+<div class="trx-hero">
+  <div class="trx-hero-main">
+    <a class="trx-back" href="{{ url_for('transporte_index') }}"
+       title="Volver a Transporte" aria-label="Volver a Transporte">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div class="trx-hero-ico"><i class="bi bi-truck"></i></div>
+    <div>
+      <div class="trx-crumb">
+        <a href="{{ url_for('transporte_index') }}">Transporte</a>
+        <span class="sep">›</span><span>Cotizaciones</span>
+      </div>
+      <h1>Cotizaciones de Transporte</h1>
+      <div class="trx-hero-sub">Flete cotizado con los couriers + margen y descuento — numeración CTR-</div>
+    </div>
   </div>
-  <button type="button" class="trc-btn-crear" id="btnTrcCrear" onclick="trcAbrirCrear()">
-    <i class="bi bi-plus-lg"></i>Crear Cotización
-  </button>
+  <div class="trx-hero-actions">
+    <button type="button" class="trx-btn-primary" id="btnTrcCrear" onclick="trcAbrirCrear()">
+      <i class="bi bi-plus-lg"></i>Crear Cotización
+    </button>
+  </div>
 </div>
 
 {% if cotizaciones %}
