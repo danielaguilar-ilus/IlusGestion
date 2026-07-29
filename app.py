@@ -380,6 +380,46 @@ def static_inline(filename):
     return Markup(texto)
 
 
+# ── bootstrap_icons_inline(): bootstrap-icons.css embebido para PDF ────────
+# static_inline() no basta acá: bootstrap-icons.css referencia su fuente
+# (.woff2/.woff) con url("./fonts/...") relativo. Bajo page.set_content()
+# (baseURI "about:blank") esa ruta tampoco resuelve, así que el ícono cae al
+# glyph .notdef -- un cuadrado negro sólido (bug real visto 2026-07-29 en
+# las etiquetas PDF: CARRIER/FECHA/ORDEN/DESTINATARIO/TELÉFONO/DIRECCIÓN
+# salían en negro). Fix: incrustar la fuente como data URI, mismo patrón que
+# _logo_ilus_black_data_url() para los logos.
+_BOOTSTRAP_ICONS_INLINE_CACHE = {"css": None}
+
+@app.template_global()
+def bootstrap_icons_inline():
+    if _BOOTSTRAP_ICONS_INLINE_CACHE["css"] is not None:
+        return Markup(_BOOTSTRAP_ICONS_INLINE_CACHE["css"])
+    css = ""
+    try:
+        base = os.path.realpath(app.static_folder)
+        css_path = os.path.realpath(os.path.join(base, "bootstrap-icons.css"))
+        with open(css_path, "r", encoding="utf-8") as fh:
+            css = fh.read()
+        for fname, mime in (("bootstrap-icons.woff2", "font/woff2"),
+                            ("bootstrap-icons.woff", "font/woff")):
+            fpath = os.path.realpath(os.path.join(base, "fonts", fname))
+            if os.path.commonpath([base, fpath]) != base or not os.path.isfile(fpath):
+                continue
+            with open(fpath, "rb") as fh:
+                b64 = base64.b64encode(fh.read()).decode("ascii")
+            data_uri = f"data:{mime};base64,{b64}"
+            # Reemplaza SOLO la url() de este archivo (con su query hash),
+            # sin tocar el resto del CSS.
+            css = re.sub(
+                r'url\("\./fonts/' + re.escape(fname) + r'(?:\?[^"]*)?"\)',
+                f'url("{data_uri}")', css)
+    except Exception as e:
+        print(f"[bootstrap_icons_inline] no se pudo incrustar: {type(e).__name__}: {e}", flush=True)
+        css = ""
+    _BOOTSTRAP_ICONS_INLINE_CACHE["css"] = css
+    return Markup(css)
+
+
 # ── /version: diagnóstico simple — qué commit está corriendo el servidor ──
 # Lee el hash del último commit del filesystem (puesto por el deploy).
 # Útil para diferenciar "no se aplicó el deploy" vs "cache del navegador".
@@ -23571,6 +23611,188 @@ def tr_commitment_logs(cid):
     return jsonify([dict(l) for l in logs])
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  TRAZABILIDAD POR PRODUCTO (Fase 1 — MVP, 2026-07-29)
+#  Daniel: "trazabilidad épica de producto" — filtrar por SKU y ver cuántas
+#  veces se ha despachado, con documentos/clientes/cantidades/estado/preventa.
+#  Plan completo diseñado por panel de especialistas; acá solo la Fase 1
+#  (responde la pregunta central, sin cambios de esquema grandes).
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/transporte/api/productos/buscar")
+@_tr_required
+def tr_productos_buscar():
+    """Typeahead de productos ERP por SKU o descripción, para el buscador de
+    /transporte/producto. Réplica del patrón de mant_productos_buscar()
+    (SELECT directo a MAEPR vía _random_sql_query, READ-ONLY — REGLA #4.1),
+    pero gateado por _tr_required en vez de _mant_required: esta página vive
+    en Transporte y no debe depender del permiso de Mantenciones.
+
+    Excluye SKUs ZZ (ZZENVIO/ZZRETIRO/etc. — no son productos trazables,
+    son líneas de servicio de flete). Devuelve [{sku, nombre}].
+    """
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    resultados = []
+    seen = set()
+    try:
+        q_like = f"%{q}%"
+        rows = _random_sql_query(
+            f"""SELECT TOP 25
+                       LTRIM(RTRIM(COALESCE(KOPR,   ''))) AS KOPR,
+                       LTRIM(RTRIM(COALESCE(NOKOPR, ''))) AS NOKOPR
+                  FROM {ERP_TABLE_PRODUCTS}
+                 WHERE (UPPER(LTRIM(RTRIM(KOPR)))   LIKE UPPER(%s)
+                        OR UPPER(LTRIM(RTRIM(NOKOPR))) LIKE UPPER(%s))
+                 ORDER BY KOPR""",
+            (q_like, q_like),
+            max_rows=25,
+        ) or []
+        for r in rows:
+            sku = (r.get("KOPR") or "").strip().upper()
+            nombre = (r.get("NOKOPR") or "").strip()
+            if not sku or sku in seen or sku.startswith("ZZ"):
+                continue
+            resultados.append({"sku": sku, "nombre": nombre})
+            seen.add(sku)
+    except Exception as ex:
+        print(f"[tr_productos_buscar] error: {ex}", flush=True)
+    return jsonify(resultados)
+
+
+@app.route("/transporte/producto")
+@_tr_required
+def tr_producto():
+    """Página de trazabilidad por producto: buscador de SKU + KPIs +
+    detalle histórico de documentos. Fase 1 (MVP) — cada fila del detalle
+    linkea al manifiesto (si existe) en vez de reabrir un modal por courier
+    acá mismo; eso queda para una fase futura.
+
+    ?sku=XXX (opcional): precarga la trazabilidad de ese SKU al abrir la
+    página (deep-link, ej. desde un link "ver trazabilidad" en otro módulo).
+    """
+    sku_inicial = (request.args.get("sku") or "").strip().upper()
+    return render_template("transporte/producto.html", sku_inicial=sku_inicial)
+
+
+@app.route("/transporte/api/producto/<path:sku>/trazabilidad")
+@_tr_required
+def tr_producto_trazabilidad(sku):
+    """KPIs + detalle histórico de despachos de UN SKU, para responder
+    'cuántas veces se ha despachado este producto' con todo el contexto
+    (documentos, clientes, cantidades pedidas/despachadas/saldo, estado de
+    entrega, preventa) — sin necesitar cambios de esquema (Fase 1 del plan).
+
+    GET ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD (ambos opcionales — sin filtro
+    de fecha si no vienen).
+
+    NOTA (caveat conocido, Fase 1): si un mismo documento fue reasignado a
+    más de un manifiesto a lo largo de su vida (transport_manifest_items no
+    tiene UNIQUE por commitment_id, solo por (manifest_id, commitment_id)),
+    el LEFT JOIN a manifest_items puede producir más de una fila por línea
+    y los SUM() del resumen podrían sobre-contar levemente ese caso — poco
+    frecuente en la operación real, pero vale la pena que Daniel lo sepa
+    antes de tomar decisiones con estos números. Se resuelve en una fase
+    futura (ej. quedarse solo con el item de manifiesto más reciente).
+    """
+    sku_u = (sku or "").strip().upper()
+    if not sku_u:
+        return jsonify({"ok": False, "error": "Falta el SKU"}), 400
+    if sku_u.startswith("ZZ"):
+        return jsonify({"ok": False, "error": "Ese código es una línea de servicio (ZZ), no un producto trazable"}), 400
+
+    desde = (request.args.get("desde") or "").strip()
+    hasta = (request.args.get("hasta") or "").strip()
+
+    where_fecha = ""
+    params_extra = []
+    if desde:
+        where_fecha += " AND tc.fecha_emision >= %s"
+        params_extra.append(desde)
+    if hasta:
+        where_fecha += " AND tc.fecha_emision <= %s"
+        params_extra.append(hasta)
+
+    resumen_row = mysql_fetchone(f"""
+        SELECT
+          COUNT(DISTINCT tcl.commitment_id)      AS n_documentos,
+          COUNT(DISTINCT tc.cliente_rut)         AS n_clientes,
+          SUM(tcl.cantidad)                      AS total_pedido,
+          SUM(tcl.cant_despachada)               AS total_despachado,
+          SUM(tcl.saldo)                         AS total_pendiente,
+          SUM(CASE WHEN tmi.estado_entrega='Entregado' THEN 1 ELSE 0 END) AS n_entregados,
+          SUM(CASE WHEN tc.preventa=1 OR tc.preventa_manual IN ('parcial','total') THEN 1 ELSE 0 END) AS n_con_preventa,
+          MIN(tc.fecha_emision) AS primera_vez, MAX(tc.fecha_emision) AS ultima_vez
+        FROM transport_commitment_lines tcl
+        JOIN transport_commitments tc ON tc.id = tcl.commitment_id
+        LEFT JOIN transport_manifest_items tmi ON tmi.commitment_id = tc.id
+        WHERE tcl.koprct = %s AND tcl.koprct NOT LIKE 'ZZ%%'
+        {where_fecha}
+    """, tuple([sku_u] + params_extra)) or {}
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else 0
+        except Exception:
+            return 0
+
+    resumen = {
+        "n_documentos":   int(resumen_row.get("n_documentos") or 0),
+        "n_clientes":     int(resumen_row.get("n_clientes") or 0),
+        "total_pedido":     _num(resumen_row.get("total_pedido")),
+        "total_despachado": _num(resumen_row.get("total_despachado")),
+        "total_pendiente":  _num(resumen_row.get("total_pendiente")),
+        "n_entregados":   int(resumen_row.get("n_entregados") or 0),
+        "n_con_preventa": int(resumen_row.get("n_con_preventa") or 0),
+        "primera_vez": resumen_row["primera_vez"].strftime("%d/%m/%Y") if resumen_row.get("primera_vez") else None,
+        "ultima_vez":  resumen_row["ultima_vez"].strftime("%d/%m/%Y") if resumen_row.get("ultima_vez") else None,
+    }
+
+    detalle_rows = mysql_fetchall(f"""
+        SELECT tc.id AS commitment_id, tc.fecha_emision, tc.cliente_nombre, tc.comuna, tc.estado,
+               tcl.cantidad, tcl.cant_despachada, tcl.saldo,
+               tmi.id AS item_id, tmi.estado_entrega, tmi.tracking_number, tm.courier, tm.correlativo, tm.id AS manifest_id
+        FROM transport_commitment_lines tcl
+        JOIN transport_commitments tc ON tc.id = tcl.commitment_id
+        LEFT JOIN transport_manifest_items tmi ON tmi.commitment_id = tc.id
+        LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
+        WHERE tcl.koprct = %s AND tcl.koprct NOT LIKE 'ZZ%%'
+        {where_fecha}
+        ORDER BY tc.fecha_emision DESC, tc.id DESC LIMIT 50
+    """, tuple([sku_u] + params_extra)) or []
+
+    documentos = []
+    for r in detalle_rows:
+        fe = r.get("fecha_emision")
+        documentos.append({
+            "commitment_id":  r.get("commitment_id"),
+            "fecha_emision":  fe.strftime("%d/%m/%Y") if fe else "",
+            "cliente_nombre": r.get("cliente_nombre") or "",
+            "comuna":         r.get("comuna") or "",
+            "estado_doc":     r.get("estado") or "",
+            "cantidad":       _num(r.get("cantidad")),
+            "cant_despachada": _num(r.get("cant_despachada")),
+            "saldo":          _num(r.get("saldo")),
+            "item_id":        r.get("item_id"),
+            "estado_entrega": r.get("estado_entrega") or "",
+            "tracking_number": r.get("tracking_number") or "",
+            "courier":        r.get("courier") or "",
+            "correlativo":    r.get("correlativo") or "",
+            "manifest_id":    r.get("manifest_id"),
+        })
+
+    stock_erp = get_erp_stock_by_skus([sku_u]).get(sku_u)
+
+    return jsonify({
+        "ok": True,
+        "sku": sku_u,
+        "resumen": resumen,
+        "documentos": documentos,
+        "stock_erp": stock_erp,
+    })
+
+
 # ── MANIFIESTOS ──────────────────────────────────────────────────
 
 @app.route("/transporte/manifiestos")
@@ -30853,6 +31075,46 @@ def _zz_saldo_get(tido, nudo):
     except Exception as e:
         print(f"[zz-saldo] lookup falló {tido}/{nudo}: {e}", flush=True)
         return None
+
+
+# ── TRAZABILIDAD POR PRODUCTO: índices de soporte (Fase 1, 2026-07-29) ──────
+# Daniel: "trazabilidad épica de producto" — filtrar por SKU y ver cuántas
+# veces se ha despachado, con documentos/clientes/cantidades/estado. La
+# query de /transporte/api/producto/<sku>/trazabilidad filtra
+# transport_commitment_lines por koprct y hace JOIN a transport_commitments
+# por fecha; estos índices evitan full-scan en ambas tablas. Idempotente
+# (ALTER envuelto en try/except) — mismo patrón que
+# _ensure_transport_commitments_geo_columns, para que corra SIEMPRE en boot
+# incluso con ILUS_SKIP_MIGRATIONS=1 (init_transporte_tables no corre en prod).
+def _ensure_transport_producto_indices():
+    """Índices de soporte para la trazabilidad por producto (Fase 1).
+
+    - transport_commitment_lines(koprct, commitment_id): la query de
+      trazabilidad SIEMPRE filtra por koprct=SKU y luego hace JOIN por
+      commitment_id — índice compuesto cubre el filtro + el join sin volver
+      a la tabla. (Ya existía idx_koprct simple; este agrega commitment_id
+      para que el join no necesite lookup adicional.)
+    - transport_commitments(fecha_emision, id): el ORDER BY fecha_emision
+      DESC, id DESC del detalle histórico usa este orden exacto.
+    - transport_manifest_items.commitment_id YA tiene índice implícito por
+      la FOREIGN KEY (InnoDB lo crea solo) — verificado, no se duplica acá.
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            for _mig in (
+                "ALTER TABLE transport_commitment_lines "
+                "ADD INDEX idx_koprct_comm (koprct, commitment_id)",
+                "ALTER TABLE transport_commitments "
+                "ADD INDEX idx_fecha_id (fecha_emision, id)",
+            ):
+                try:
+                    cur.execute(_mig)
+                except Exception:
+                    pass  # índice ya existe — esperado en cada boot posterior
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ── DIRECCIÓN GEORREFERENCIADA: lat/lng/place_id en transport_commitments ────
@@ -78512,6 +78774,13 @@ try:
     _ensure_transport_commitments_geo_columns()
 except Exception as _ensure_geo_err:
     print(f"[ILUS][WARN] columnas geo transport_commitments: {_ensure_geo_err}", flush=True)
+
+# Índices de trazabilidad por producto (2026-07-29, Daniel: "trazabilidad
+# épica de producto") — SIEMPRE, incluso skip-migrations.
+try:
+    _ensure_transport_producto_indices()
+except Exception as _ensure_prod_idx_err:
+    print(f"[ILUS][WARN] índices trazabilidad producto: {_ensure_prod_idx_err}", flush=True)
 
 # Poller SimpliRoute (2026-07-24) — se arranca ACÁ, al final del módulo, y no
 # junto a su definición: el loop usa _simpliroute_token_for_courier /

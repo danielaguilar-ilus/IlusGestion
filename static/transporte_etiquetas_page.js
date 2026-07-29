@@ -352,7 +352,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const u = new URL(BASE_PDF, location.origin);
     u.searchParams.set("b", sel);
     if (individual) u.searchParams.set("individual", "1");
-    // Forzar descarga (no inline) en modo individual; para PDF mostramos en tab
+    // Forzar descarga (no inline) en modo individual (ZIP); el PDF único se
+    // muestra en un modal propio (ver etqPdfAbrir) -- antes usaba window.open,
+    // que en Windows puede terminar entregándole el archivo al visor de PDF
+    // del sistema en vez de quedarse en Chrome (Daniel, 2026-07-29).
     if (individual) {
       const a = document.createElement("a");
       a.href = u.toString();
@@ -362,10 +365,61 @@ document.addEventListener("DOMContentLoaded", function () {
       a.click();
       a.remove();
     } else {
-      window.open(u.toString(), "_blank", "noopener");
+      etqPdfAbrir(u.toString(), "Etiquetas");
     }
     setTimeout(() => { if (btn) btn.classList.remove("is-busy"); }, 1500);
   }
+
+  // ── Visor de PDF en modal propio (sin Bootstrap: esta página es standalone
+  // y liviana a propósito). Trae el PDF con fetch() -> blob URL -> <iframe>,
+  // igual patrón que catvAbrir() en catálogo (evita que el Content-Type
+  // application/pdf navegue away o dispare el manejador de PDF del sistema
+  // operativo). Token + AbortController: si el usuario cierra o vuelve a
+  // pedir un PDF antes de que termine el fetch anterior, ese resultado tardío
+  // se descarta en vez de pisar lo que se está mostrando. ──
+  let _etqPdfBlobUrl = null, _etqPdfAbort = null, _etqPdfToken = 0;
+
+  window.etqPdfAbrir = function (url, nombre) {
+    if (_etqPdfAbort) { try { _etqPdfAbort.abort(); } catch (e) {} }
+    const myToken = ++_etqPdfToken;
+    _etqPdfAbort = new AbortController();
+    const overlay = document.getElementById("etqPdfOverlay");
+    const body = document.getElementById("etqPdfBody");
+    if (!overlay || !body) { window.open(url, "_blank", "noopener"); return; }
+    document.getElementById("etqPdfTitulo").textContent = nombre || "Etiquetas";
+    document.getElementById("etqPdfDescargar").href = url;
+    body.innerHTML = '<div class="etq-pdf-loading"><span class="spinner"></span>Cargando PDF…</div>';
+    overlay.classList.add("is-open");
+    fetch(url, { signal: _etqPdfAbort.signal })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+      .then(function (blob) {
+        if (myToken !== _etqPdfToken) return; // obsoleto: se cerró o se pidió otro PDF
+        if (_etqPdfBlobUrl) URL.revokeObjectURL(_etqPdfBlobUrl);
+        _etqPdfBlobUrl = URL.createObjectURL(blob);
+        body.innerHTML = '<iframe class="etq-pdf-frame" src="' + _etqPdfBlobUrl + '" title="' + (nombre || "Etiquetas") + '"></iframe>';
+      })
+      .catch(function () {
+        if (myToken !== _etqPdfToken) return;
+        body.innerHTML = '<div class="etq-pdf-error">No se pudo cargar la vista previa. Usa "Descargar".</div>';
+      });
+  };
+
+  window.etqPdfCerrar = function () {
+    if (_etqPdfAbort) { try { _etqPdfAbort.abort(); } catch (e) {} }
+    _etqPdfToken++;
+    const overlay = document.getElementById("etqPdfOverlay");
+    if (overlay) overlay.classList.remove("is-open");
+    if (_etqPdfBlobUrl) { URL.revokeObjectURL(_etqPdfBlobUrl); _etqPdfBlobUrl = null; }
+    const body = document.getElementById("etqPdfBody");
+    if (body) body.innerHTML = "";
+  };
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") {
+      const overlay = document.getElementById("etqPdfOverlay");
+      if (overlay && overlay.classList.contains("is-open")) window.etqPdfCerrar();
+    }
+  });
 
   // Wire-up
   document.querySelectorAll(".sp-chip").forEach(chip => {
