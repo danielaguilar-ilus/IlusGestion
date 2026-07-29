@@ -1840,14 +1840,22 @@ def register_tickets_routes(app, ctx):
             conn.commit()
             conn.close()
             # Siembra 2026-07-29: nombres dictados por Daniel en vivo (pedido
-            # de Alison). "Génesis" quedó sin apellido claro en el audio --
-            # se deja así a propósito, editable desde la pantalla de gestión.
-            for _n in ("Roberto Frazzoni", "Génesis", "Alessandro Maccarini",
+            # de Alison). "Génesis Jugador" quedó ambiguo en el primer audio
+            # (se sembró solo "Génesis") -- Daniel confirmó el apellido poco
+            # después; se corrige el registro ya sembrado en el UPDATE de abajo.
+            for _n in ("Roberto Frazzoni", "Génesis Jugador", "Alessandro Maccarini",
                        "Luis Gallardo", "Antonia Mujica", "Felipe Gómez", "José Gómez"):
                 try:
                     mysql_execute("INSERT IGNORE INTO cot_vendedores_externos (nombre) VALUES (%s)", (_n,))
                 except Exception as _e_seed:
                     print(f"[cot-vendedores] seed '{_n}' fallo: {_e_seed}", flush=True)
+            # Corrige el registro sembrado ANTES de confirmar el apellido
+            # (idempotente: no-op una vez ya renombrado o si nunca existió).
+            try:
+                mysql_execute(
+                    "UPDATE cot_vendedores_externos SET nombre='Génesis Jugador' WHERE nombre='Génesis'")
+            except Exception as _e_fix:
+                print(f"[cot-vendedores] fix nombre Genesis fallo: {_e_fix}", flush=True)
         except Exception as e:
             print(f"[cot-vendedores] no se pudo asegurar tabla: {e}", flush=True)
 

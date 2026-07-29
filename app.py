@@ -20373,8 +20373,15 @@ def tr_compromisos_json():
     # semanas emitido y seguir hoy mismo en preparación/en ruta. Filtrar por
     # fecha_emision lo escondía del todo si su emisión caía fuera del rango
     # elegido (ej. "último mes"), aunque siguiera activo en un manifiesto de
-    # HOY. El rango de fechas solo aplica a pendientes/entregados/todos.
-    if vista != "en_gestion":
+    # HOY. El rango de fechas solo aplica a pendientes/todos.
+    # FIX 2026-07-29 (Daniel, en vivo: "en entregados no hay nada... la
+    # boleta 22720 de Hans Roth está entregada, ¿dónde está?"): MISMO
+    # problema exacto, pero para "entregado" — también es un ESTADO actual
+    # (100% de sus items en manifiesto ya terminales, o sin saldo y fuera de
+    # manifiesto), no algo acotado por cuándo se emitió. Un manifiesto viejo
+    # (fuera del rango "último mes" por defecto) que ya se entregó completo
+    # desaparecía de la pestaña Entregados solo por su fecha de emisión.
+    if vista not in ("en_gestion", "entregados"):
         if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
         if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
 
@@ -20517,6 +20524,20 @@ def tr_compromisos_json():
         tuple(_eg_params)
     ) or {}
     conteos_row["en_gestion"] = _eg_row.get("en_gestion")
+    # FIX 2026-07-29 (Daniel, en vivo: "en entregados no hay nada"): mismo
+    # criterio que en_gestion arriba -- "entregado" tampoco se acota por
+    # fecha de emisión, se cuenta aparte sin base_where de fecha.
+    _ent_where, _ent_params = ["tido <> 'GDV'"], []
+    if clasif: _ent_where.append("clasificacion=%s"); _ent_params.append(clasif)
+    if q:
+        _ent_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; _ent_params += [qp,qp,qp,qp,qp]
+    _ent_row = mysql_fetchone(
+        "SELECT SUM(CASE WHEN " + _SQL_ENTREGADO + " THEN 1 ELSE 0 END) AS entregados "
+        "FROM transport_commitments WHERE " + " AND ".join(_ent_where),
+        tuple(_ent_params)
+    ) or {}
+    conteos_row["entregados"] = _ent_row.get("entregados")
 
     return jsonify({
         "ok": True,
