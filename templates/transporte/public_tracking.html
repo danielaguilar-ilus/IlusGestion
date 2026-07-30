@@ -417,24 +417,42 @@ a.kv:active{ background:#fafafa; }
 }
 .ft-btn:active{ transform:scale(.975); }
 .ft-btn.alt{ background:#fff; color:var(--ink); border-color:var(--line); }
-/* Firma de marca del footer -- compacta y estructurada, no un segundo
-   wordmark gigante repitiendo el header (Daniel 2026-07-27). */
+/* Firma de marca del footer (2026-07-29, Daniel: "el footer me gustaría
+   mejorarlo con el logo más grande... las redes sociales... abajo que
+   diga ILUS Fitness, página de seguimiento" -- estandarizado con el
+   footer de retiros/public_tracking.html para que ambas páginas se
+   sientan de la misma familia). */
 .ft-brand{ margin-top:1.7rem; }
 .ft-brand-line{
   height:1px; background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent);
-  margin-bottom:1.1rem;
+  margin-bottom:1.3rem;
 }
-.ft-brand-row{ display:flex; align-items:center; justify-content:center; gap:.6rem; }
-.ft-brand-ico{ height:22px; width:auto; opacity:.85; flex-shrink:0; }
+.ft-brand-row{ display:flex; align-items:center; justify-content:center; gap:.85rem; }
+.ft-brand-ico{ height:40px; width:auto; opacity:.92; flex-shrink:0; }
 .ft-brand-txt{ text-align:left; line-height:1.25; }
 .ft-brand-name{
   display:block; font-family:var(--display); font-weight:800;
-  font-size:.82rem; letter-spacing:.05em; text-transform:uppercase;
+  font-size:1.08rem; letter-spacing:.04em; text-transform:uppercase;
   color:var(--ink);
 }
 .ft-brand-tag{
-  display:block; margin-top:.05rem; font-size:.66rem;
+  display:block; margin-top:.1rem; font-size:.74rem;
   color:var(--gray); font-weight:600;
+}
+.ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:1.1rem; }
+.ft-social a{
+  width:38px; height:38px; border-radius:50%; display:grid; place-items:center;
+  background:#f4f4f6; border:1px solid var(--line); color:var(--ink);
+  font-size:1.02rem; text-decoration:none; transition:transform .15s ease, background .18s ease, color .18s ease;
+}
+.ft-social a:active{ transform:scale(.92); }
+.ft-social a.soc-ig:hover{ background:linear-gradient(45deg,#f58529,#dd2a7b 55%,#8134af); color:#fff; border-color:transparent; }
+.ft-social a.soc-wa:hover{ background:#25d366; color:#fff; border-color:#25d366; }
+.ft-social a.soc-mail:hover{ background:var(--red); color:#fff; border-color:var(--red); }
+.ft-social a.soc-web:hover{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.ft-copy{
+  margin-top:1rem; font-size:.7rem; letter-spacing:.06em;
+  color:var(--gray-2); font-weight:600;
 }
 
 /* Toast */
@@ -812,10 +830,17 @@ a.kv:active{ background:#fafafa; }
       <div class="ft-brand-row">
         <img src="{{ url_for('static', filename='logo_ilus_black.png') }}" alt="ILUS" class="ft-brand-ico">
         <div class="ft-brand-txt">
-          <span class="ft-brand-name">ILUS Sport &amp; Health</span>
+          <span class="ft-brand-name">ILUS Fitness</span>
           <span class="ft-brand-tag">Equipamiento y servicio técnico fitness</span>
         </div>
       </div>
+      <div class="ft-social" aria-label="Redes sociales">
+        <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
+        <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp" class="soc-wa"><i class="bi bi-whatsapp"></i></a>
+        <a href="mailto:servicio.tecnico@ilusfitness.com" aria-label="Email" class="soc-mail"><i class="bi bi-envelope"></i></a>
+        <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web" class="soc-web"><i class="bi bi-globe2"></i></a>
+      </div>
+      <div class="ft-copy">ILUS Fitness · Página de seguimiento</div>
     </div>
   </div>
 </main>
