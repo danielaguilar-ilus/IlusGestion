@@ -259,6 +259,17 @@ en UI debe pasar por el filtro `chile_fmt`**:
 
 El filtro usa `zoneinfo("America/Santiago")` que maneja DST automático.
 
+**Ninguna fecha se muestra jamás en inglés ni en formato ISO crudo**
+(2026-07-29T21:00:00-04:00) — siempre día/mes/año + hora Chile. Esto
+incluye fechas que vienen de APIs externas (FedEx Track API, SimpliRoute,
+etc.): sus timestamps ISO traen SU PROPIO offset (puede ser de un hub
+fuera de Chile, ej. Memphis) — hay que parsearlos con
+`datetime.fromisoformat()` (nunca cortar el string a mano con
+`partition('T')` o `.slice()`) y pasarlos por `chile_fmt_filter` antes de
+mandarlos al frontend. Ver `_fedex_iso_a_chile()` en `app.py` como
+patrón de referencia (bug real corregido 2026-07-29: las fechas de los
+scans FedEx salían en inglés/UTC crudo en el modal de seguimiento).
+
 ---
 
 ## 🆔 REGLA #7 — Formato RUT chileno

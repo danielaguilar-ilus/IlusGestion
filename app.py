@@ -23183,14 +23183,21 @@ def tr_detalle(cid):
         return jsonify({"error": "Documento no encontrado en ERP"}), 404
 
     # Separar líneas ZZ de líneas de producto
+    # FIX 2026-07-29 (Daniel, en vivo: "acá necesito los productos, se ve
+    # nada más los servicios"): el "elif saldo > 0" excluía POR COMPLETO
+    # cualquier producto real ya despachado (saldo=0) de este modal --
+    # si un documento venía totalmente consumido en el ERP, la tabla de
+    # productos quedaba vacía y solo se veía la sección de servicios (ZZ),
+    # que nunca tuvo ese filtro. Este modal es para VER qué trae el
+    # documento (no solo "qué falta") -- se muestran todos los productos
+    # reales, con saldo o sin él.
     ZZ_UP = {s.upper() for s in {"ZZENVIO","ZZINGREPUESTO","ZZSERVTEC","ZZRETIRO","ZZINSTALACION","ZZINGARREQUIP"}}
     lineas_prod = []
     lineas_zz   = []
     for l in lineas:
         if l.get("es_zz") or l["sku"].upper() in ZZ_UP:
             lineas_zz.append(l)
-        elif l.get("saldo", l["cantidad"]) > 0:
-            # Solo incluir líneas con saldo pendiente
+        else:
             lineas_prod.append(l)
 
     # Adjuntar fotos solo a líneas de producto.
@@ -23245,6 +23252,21 @@ def tr_detalle(cid):
         "WHERE tmi.commitment_id=%s ORDER BY tmi.id DESC LIMIT 1", (cid,)
     )
 
+    # Tracking del courier (2026-07-29, rediseño modal: "quiero un tracking
+    # arriba en el header") — mismo criterio que tr_compromiso_trazabilidad:
+    # master_tracking_number (multi-bulto FedEx) o tracking_number, del item
+    # de manifiesto MÁS RECIENTE.
+    _mi_track = mysql_fetchone(
+        "SELECT tmi.tracking_number, tmi.master_tracking_number, tm.courier "
+        "FROM transport_manifest_items tmi "
+        "LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
+        "WHERE tmi.commitment_id=%s ORDER BY tmi.id DESC LIMIT 1", (cid,)
+    ) or {}
+    _tracking_number = (_mi_track.get("master_tracking_number") or _mi_track.get("tracking_number") or "").strip()
+    _tracking_courier = (_mi_track.get("courier") or "").strip()
+    _tracking_url = (f"https://www.fedex.com/fedextrack/?trknbr={_tracking_number}"
+                      if _tracking_number else None)
+
     # Commune: prefer DB stored, then ERP header
     comuna = c["comuna"] or header.get("comuna") or ""
     if not comuna:
@@ -23275,6 +23297,13 @@ def tr_detalle(cid):
             "estado":        c["estado"] or "",
             "manifiesto_id":          (_man_row2 or {}).get("id"),
             "manifiesto_correlativo": (_man_row2 or {}).get("correlativo") or "",
+            # 2026-07-29: para condicionar "Asignar a manifiesto" (Daniel: "si
+            # ya está asignado a manifiesto, no tengo por qué asignarlo a
+            # menos que tenga un saldo") y para el header con tracking.
+            "tiene_saldo":       int(c.get("tiene_saldo") if c.get("tiene_saldo") is not None else 1),
+            "tracking_number":   _tracking_number or None,
+            "tracking_courier":  _tracking_courier or None,
+            "tracking_url":      _tracking_url,
         },
         "lineas": lineas_prod,
         "lineas_zz": lineas_zz,
@@ -23565,9 +23594,28 @@ def tr_compromiso_trazabilidad(cid):
                 except Exception as e:
                     print(f"[tr_compromiso_trazabilidad] consulta live SimpliRoute cid={cid}: {e}", flush=True)
 
+    # ── Trazabilidad enriquecida (2026-07-29, pedido de Daniel: "la
+    # trazabilidad la quiero ver... bien sea de FedEx, de ILUS o ambas")
+    # — reusa _tr_buscar_detalle (misma función del panel "Ver seguimiento y
+    # acciones" de SimpliRoute) para traer productos con foto, evidencia de
+    # entrega (firma/fotos/receptor/GPS), chofer y despachos, SIN duplicar
+    # esa lógica acá. Additivo: si falla, el resto de la respuesta ya
+    # armada arriba sigue funcionando igual que antes.
+    rico = None
+    try:
+        rico = _tr_buscar_detalle(cid)
+    except Exception as e:
+        print(f"[tr_compromiso_trazabilidad] detalle enriquecido falló (no crítico): {e}", flush=True)
+
     return jsonify({
         "ok": True, "eventos": eventos, "tracking_url": tracking_url,
         "item": item, "simpliroute_live": simpliroute_live,
+        "proof":      (rico or {}).get("proof"),
+        "lineas":     (rico or {}).get("lineas") or [],
+        "tiempos":    (rico or {}).get("tiempos"),
+        "despachos":  (rico or {}).get("despachos") or [],
+        "chofer":     (rico or {}).get("chofer"),
+        "last_ping":  (rico or {}).get("last_ping"),
     })
 
 

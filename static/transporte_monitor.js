@@ -709,9 +709,6 @@ function imQuitar(manifestId, itemId, btn) {
 function openVista(cid) {
   _cotizarCid = cid;
   _vistaLastCheckedIdx = null;
-  document.getElementById('vistaCotizador').style.display = 'none';
-  document.getElementById('btnCotizar').disabled = false;
-  document.getElementById('btnCotizar').innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
   // Resetear estado
   document.getElementById('vistaDocNum').textContent  = '…';
   document.getElementById('vistaFecha').textContent   = '';
@@ -726,6 +723,9 @@ function openVista(cid) {
   document.getElementById('vistaDirBlock').style.display   = 'none';
   document.getElementById('vistaTelBlock').style.display   = 'none';
   document.getElementById('vistaEmailBlock').style.display = 'none';
+  document.getElementById('vistaTelLlamar').style.display  = 'none';
+  document.getElementById('vistaTelWa').style.display      = 'none';
+  document.getElementById('vistaTrackingChip').style.display = 'none';
   document.getElementById('vistaFotoUpload').style.display = 'none';
   document.getElementById('vistaFotoGallery').innerHTML    = '';
   document.getElementById('vistaLoading').style.display  = 'none';
@@ -812,6 +812,20 @@ function renderVista(d) {
   document.getElementById('vistaClasif').textContent  =
     clasifMap2[c.clasificacion] || '📦 Despacho';
 
+  // Tracking del courier en el header (2026-07-29, Daniel: "quiero un
+  // tracking arriba en el header") — visible apenas se abre el modal.
+  (function() {
+    var chip = document.getElementById('vistaTrackingChip');
+    if (!chip) return;
+    if (c.tracking_number) {
+      var lbl = c.tracking_courier ? (c.tracking_courier + ' ') : '';
+      document.getElementById('vistaTrackingNum').textContent = lbl + c.tracking_number;
+      chip.style.display = '';
+    } else {
+      chip.style.display = 'none';
+    }
+  })();
+
   // Badge de estado actual + datos para el reenvío manual de correo (2026-07-26)
   _vistaCurrentEmail  = c.email  || null;
   _vistaCurrentEstado = c.estado || '';
@@ -836,14 +850,25 @@ function renderVista(d) {
   // acá también -- las otras acciones (cotizar, reenviar correo, actualizar
   // estado, ver trazabilidad) siguen activas porque son de solo consulta o
   // no cambian el documento.
+  //
+  // FIX 2026-07-29 (Daniel: "si ya está asignado a manifiesto, no tengo
+  // por qué asignarlo a menos que tenga un saldo") -- se suma un segundo
+  // motivo de bloqueo específico para "Asignar a manifiesto": documento YA
+  // con manifiesto asignado (c.manifiesto_id) Y sin saldo pendiente
+  // (c.tiene_saldo === 0). "Editar campos" NO se ve afectado por esta regla
+  // -- sigue bloqueado solo por estado terminal.
   (function() {
     var _term = (c.estado === 'Entregado' || c.estado === 'Devolución');
     var _motivo = 'Bloqueado: este documento ya está entregado';
+    var _sinSaldoAsignado = !!(c.manifiesto_id) && (c.tiene_saldo === 0);
+    var _motivoSaldo = 'Ya está asignado a ' + (c.manifiesto_correlativo || ('manifiesto #' + c.manifiesto_id))
+      + ' y no le queda saldo pendiente por despachar.';
     var btnManif = document.getElementById('btnVistaManifiesto');
     var btnEditar = document.getElementById('btnVistaEditar');
     if (btnManif) {
-      btnManif.disabled = _term;
-      btnManif.title = _term ? _motivo : 'Agregar este documento al panel de manifiesto';
+      btnManif.disabled = _term || _sinSaldoAsignado;
+      btnManif.title = _term ? _motivo
+        : (_sinSaldoAsignado ? _motivoSaldo : 'Agregar este documento al panel de manifiesto');
     }
     if (btnEditar) {
       btnEditar.disabled = _term;
@@ -874,6 +899,25 @@ function renderVista(d) {
   if (c.telefono) {
     document.getElementById('vistaTel').textContent = c.telefono;
     document.getElementById('vistaTelBlock').style.display = '';
+    // 2026-07-29 (Daniel: "que me pueda hacer atajos para yo hablarle al
+    // cliente o escribirle por WhatsApp") — tel: y wa.me. Chile: normaliza
+    // a E.164 sin símbolos para el link de WhatsApp (ej "+56 9 1234 5678" →
+    // "56912345678"); si el número viene sin código de país y tiene 9
+    // dígitos (celular chileno), se antepone "56".
+    var _telDigits = String(c.telefono).replace(/[^0-9]/g, '');
+    if (_telDigits.length === 9 && _telDigits[0] === '9') _telDigits = '56' + _telDigits;
+    var _btnLlamar = document.getElementById('vistaTelLlamar');
+    var _btnWa     = document.getElementById('vistaTelWa');
+    if (_btnLlamar) {
+      _btnLlamar.href = 'tel:+' + (_telDigits || String(c.telefono).replace(/[^0-9+]/g, ''));
+      _btnLlamar.style.display = '';
+    }
+    if (_btnWa && _telDigits) {
+      _btnWa.href = 'https://wa.me/' + _telDigits;
+      _btnWa.style.display = '';
+    } else if (_btnWa) {
+      _btnWa.style.display = 'none';
+    }
   }
   if (c.email) {
     document.getElementById('vistaEmail').textContent = c.email;
@@ -2811,72 +2855,15 @@ function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 // tabla, cards y Kanban lo reusen sin redefinirlo localmente.
 function attr(s){ return esc(s).replace(/"/g,'&quot;'); }
 
-// ── COTIZADOR ───────────────────────────────────────────────────
+// _cotizarCid: pese al nombre (histórico), ya NO tiene relación con el
+// cotizador -- es el commitment_id activo del modal de vista, usado por
+// vistaAsignarManifiesto/vistaEditar/reenviarNotificacionCliente/
+// actualizarEstadoPuntual/abrirTrazabilidad. El botón y la sección
+// "Cotizar envío" se retiraron del modal el 2026-07-29 (autorización
+// explícita de Daniel: "cotizar envío, sácalo, ya no lo necesitamos") junto
+// con cotizarActual()/closeCotizador()/fmtKg() -- confirmado por grep que no
+// se usaban en ningún otro lugar del proyecto antes de borrarlos.
 var _cotizarCid = null;
-
-function cotizarActual() {
-  if (!_cotizarCid) return;
-  var btn = document.getElementById('btnCotizar');
-  var sec = document.getElementById('vistaCotizador');
-  var rows = document.getElementById('vistaCotizadorRows');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculando…';
-  sec.style.display = '';
-  rows.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-danger"></div></div>';
-
-  fetch('/transporte/api/cotizar', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({commitment_id: _cotizarCid})
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(d) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
-    if (!d.ok) { rows.innerHTML='<div class="text-danger">Error al cotizar</div>'; return; }
-    if (!d.resultados || !d.resultados.length) {
-      rows.innerHTML='<div class="text-muted small">Sin couriers configurados con tarifas activas.</div>';
-      return;
-    }
-    var html = d.resultados.map(function(r, i) {
-      var isMejor = i===0 && r.costo !== null;
-      var fmtCLP = function(v){ return v!=null ? '$'+Math.round(v).toLocaleString('es-CL') : '—'; };
-      var advHtml = r.advertencias && r.advertencias.length
-        ? '<div class="mt-1">' + r.advertencias.map(function(a){
-            return '<span class="badge bg-warning text-dark me-1" style="font-size:.65rem">⚠ '+esc(a)+'</span>';
-          }).join('') + '</div>' : '';
-      return `
-        <div class="d-flex justify-content-between align-items-start py-2 border-bottom ${isMejor?'':''}">
-          <div>
-            <div class="fw-semibold" style="${isMejor?'color:var(--ilus-red)':''}">${esc(r.nombre)}</div>
-            <div class="text-muted" style="font-size:.72rem">
-              Real ${fmtKg(r.peso_real)} kg · Vol ${fmtKg(r.peso_vol)} kg · Pred <strong>${fmtKg(r.peso_pred)}</strong> kg
-            </div>
-            ${advHtml}
-          </div>
-          <div class="text-end ms-3">
-            <div class="fw-bold" style="${isMejor?'font-size:1.1rem;color:var(--ilus-red)':'font-size:.95rem'}">
-              ${r.costo!=null ? fmtCLP(r.costo) : '<span class="text-muted">Sin tarifa</span>'}
-            </div>
-            ${isMejor?'<div class="badge bg-success" style="font-size:.65rem">Más económico</div>':''}
-          </div>
-        </div>`;
-    }).join('');
-    rows.innerHTML = html;
-  })
-  .catch(function(e) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-calculator me-1"></i>Cotizar envío';
-    rows.innerHTML = '<div class="text-danger small">Error: ' + e + '</div>';
-  });
-}
-
-function fmtKg(v) {
-  return parseFloat(v||0).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1});
-}
-
-function closeCotizador() {
-  document.getElementById('vistaCotizador').style.display = 'none';
-}
 
 // ── Acciones del modal de vista ──────────────────────────────────
 // "Agregar a manifiesto" desde el modal: cierra el modal y agrega el doc
@@ -3009,6 +2996,12 @@ async function abrirTrazabilidad() {
   var tlEl = document.getElementById('trazaTimeline');
   tlEl.style.display = 'none';
   tlEl.innerHTML = '';
+  // Reset de las secciones enriquecidas (2026-07-29)
+  ['trazaRecibio','trazaEvidFotos','trazaDriverBlock','trazaProdBlock','trazaDespBlock']
+    .forEach(function(id){ var el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  document.getElementById('trazaEvidFotos').innerHTML = '';
+  document.getElementById('trazaProdRows').innerHTML = '';
+  document.getElementById('trazaDespRows').innerHTML = '';
 
   _trazaModal.show();
 
@@ -3048,6 +3041,89 @@ async function abrirTrazabilidad() {
       document.getElementById('trazaLinkBlock').style.display = '';
       document.getElementById('trazaLinkInput').value = d.tracking_url;
       document.getElementById('trazaLinkOpen').href = d.tracking_url;
+    }
+
+    // ── Evidencia de entrega: receptor + firma/fotos (2026-07-29) ──
+    if (d.proof) {
+      var pf = d.proof;
+      var recBlock = document.getElementById('trazaRecibio');
+      if (pf.receptor_nombre || pf.entregado_at) {
+        document.getElementById('trazaRecibioNombre').textContent =
+          pf.receptor_nombre ? ('Recibió: ' + pf.receptor_nombre) : 'Entrega confirmada';
+        document.getElementById('trazaRecibioRel').textContent = pf.receptor_relacion || '';
+        document.getElementById('trazaRecibioTs').textContent = pf.entregado_at || '';
+        recBlock.style.display = '';
+      }
+      var fotosWrap = document.getElementById('trazaEvidFotos');
+      var evidImgs = [];
+      if (pf.firma_url) evidImgs.push(pf.firma_url);
+      (pf.fotos || []).forEach(function(u){ evidImgs.push(u); });
+      if (evidImgs.length) {
+        fotosWrap.innerHTML = evidImgs.map(function(url) {
+          return '<img src="' + url + '" alt="Evidencia de entrega" ' +
+            'style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid #ddd" ' +
+            'onclick="verFoto(\'' + url + '\')" onerror="this.style.display=\'none\'">';
+        }).join('');
+        fotosWrap.style.display = '';
+      }
+    }
+
+    // ── Chofer + última posición (2026-07-29) ──
+    if (d.chofer) {
+      var ch = d.chofer;
+      var chBlock = document.getElementById('trazaDriverBlock');
+      var inicial = (ch.nombre || '?').trim().charAt(0).toUpperCase();
+      document.getElementById('trazaDriverAvatar').textContent = inicial || '?';
+      document.getElementById('trazaDriverNombre').textContent = ch.nombre || 'Chofer sin nombre';
+      var metaParts = [];
+      if (ch.courier) metaParts.push(ch.courier);
+      if (ch.patente) metaParts.push(ch.patente);
+      if (ch.telefono) metaParts.push(ch.telefono);
+      if (d.last_ping && d.last_ping.age_s != null) {
+        var mins = Math.round(d.last_ping.age_s / 60);
+        metaParts.push('GPS hace ' + (mins < 1 ? 'instantes' : mins + ' min'));
+      }
+      document.getElementById('trazaDriverMeta').textContent = metaParts.join(' · ');
+      chBlock.style.display = '';
+    }
+
+    // ── Productos con foto (2026-07-29) ──
+    var lineasProd = d.lineas || [];
+    if (lineasProd.length) {
+      var prodRows = document.getElementById('trazaProdRows');
+      prodRows.innerHTML = lineasProd.map(function(l) {
+        var thumb = (l.fotos && l.fotos[0])
+          ? '<img src="' + l.fotos[0] + '" alt="" class="sr-prod-thumb" onclick="verFoto(\'' + l.fotos[0] + '\')" onerror="this.style.display=\'none\'">'
+          : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
+        var saldoChip = (l.saldo > 0)
+          ? '<span class="sr-qty-chip saldo">Saldo ' + l.saldo + '</span>'
+          : '<span class="sr-qty-chip desp">Completo</span>';
+        return '<div class="sr-prod d-flex align-items-center gap-2 py-1">' + thumb +
+          '<div class="sr-prod-info flex-grow-1">' +
+          '<div class="sr-prod-name">' + esc(l.nombre || '') + '</div>' +
+          '<div class="sr-prod-sku">' + esc(l.sku || '') + '</div>' +
+          '</div>' +
+          '<div class="sr-prod-qty">' + saldoChip + '</div>' +
+          '</div>';
+      }).join('');
+      document.getElementById('trazaProdBlock').style.display = '';
+    }
+
+    // ── Despachos (si el documento se repartió en varios manifiestos) ──
+    var despachos = d.despachos || [];
+    if (despachos.length > 1) {
+      var despRows = document.getElementById('trazaDespRows');
+      despRows.innerHTML = despachos.map(function(x) {
+        var estBadge2 = ESTADO_COLORS[x.estado_entrega] ? 'text-bg-' + ESTADO_COLORS[x.estado_entrega] : 'text-bg-secondary';
+        return '<div class="sr-desp-row d-flex align-items-center gap-2' + (x.es_actual ? ' is-actual' : '') + '">' +
+          '<div>' +
+          '<div class="sr-desp-doc">' + esc(x.correlativo || ('#' + x.manifest_id)) + (x.es_actual ? ' <span class="sr-desp-tag">actual</span>' : '') + '</div>' +
+          '<div class="sr-desp-meta">' + esc(x.courier || '') + (x.fecha ? ' · ' + esc(x.fecha) : '') + '</div>' +
+          '</div>' +
+          '<span class="badge ' + estBadge2 + '" style="font-size:.68rem">' + esc(x.estado_entrega || '—') + '</span>' +
+          '</div>';
+      }).join('');
+      document.getElementById('trazaDespBlock').style.display = '';
     }
 
     var eventos = d.eventos || [];
