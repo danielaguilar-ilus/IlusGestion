@@ -5921,8 +5921,14 @@ def validate_bultos_form(form):
 #  PDF builder — Playwright (pixel-perfect al HTML preview)
 # ─────────────────────────────────────────────
 
+@_functools_mod.lru_cache(maxsize=1)
 def _logo_data_url():
-    """Logo PNG como data:image URL — se incrusta en el HTML standalone sin depender del servidor."""
+    """Logo PNG como data:image URL — se incrusta en el HTML standalone sin
+    depender del servidor. Cacheado (2026-07-30, Daniel: "descargar el
+    manifiesto está terriblemente lento") -- esta función leía el archivo
+    de disco y lo re-codificaba en base64 EN CADA llamada (varias por PDF
+    generado); el contenido nunca cambia en caliente, así que se cachea
+    una sola vez por proceso."""
     for fname in ("Logo.png", "logo.png", "LOGO.png"):
         path = os.path.join(BASE_DIR, "static", fname)
         if os.path.exists(path):
@@ -5935,6 +5941,7 @@ def _logo_data_url():
     return ""
 
 
+@_functools_mod.lru_cache(maxsize=1)
 def _logo_ilus_black_data_url():
     """Logo ILUS en NEGRO sobre transparente, para headers de fondo CLARO
     (ej. la etiqueta de despacho, que es blanca). `_logo_data_url()` de arriba
@@ -5954,6 +5961,7 @@ def _logo_ilus_black_data_url():
     return _logo_data_url()
 
 
+@_functools_mod.lru_cache(maxsize=1)
 def _logo_shs_data_url():
     """Logo 'SPORTS HEALTH SOLUTIONS' (razón social) en negro/transparente.
     Se muestra junto al logo ILUS en la etiqueta de despacho (Daniel
@@ -5971,6 +5979,7 @@ def _logo_shs_data_url():
     return ""
 
 
+@_functools_mod.lru_cache(maxsize=1)
 def _logo_shs_pdf_data_url():
     """Logo real SPORTS HEALTH SOLUTIONS ya pre-codificado en base64 en
     static/logo_shs_pdf.txt — mismo patrón que _lc_cotiz_logo_shs_b64() en
