@@ -579,7 +579,9 @@ a.kv:active{ background:#fafafa; }
    angosta de celular estirada con espacio vacío a los lados.
    ══════════════════════════════════════════════════════════════════════ */
 @media (min-width:960px){
-  :root{ --shell:1180px; }
+  :root{ --shell:1260px; }   /* 2026-07-30: "lo quiero grande, la parte del
+     tracking" -- de 1180 a 1260 para darle más ancho al hero sin apretar
+     la columna derecha. */
   body{ background:linear-gradient(180deg,#f4f4f6 0%,var(--paper) 340px); }
 
   .accent{ height:4px; }
@@ -602,15 +604,23 @@ a.kv:active{ background:#fafafa; }
      esquinas y sombra — ya no es la franja negra de borde a borde de
      celular. Todo su contenido interno no se toca (mismos elementos). */
   .hero{
-    flex:0 0 400px;
-    border-radius:24px;
-    padding:2.3rem 2.1rem 2.5rem;
+    flex:0 0 460px;
+    border-radius:26px;
+    padding:2.6rem 2.4rem 2.8rem;
     position:sticky; top:1.75rem;
     box-shadow:0 26px 54px -20px rgba(10,10,10,.42), inset 0 1px 0 rgba(255,255,255,.05);
   }
-  #tkStateLabel{ font-size:3.6rem; }   /* 2026-07-30: "lo quería gigante" --
-     de 3rem a 3.6rem, el hero pasó de 392px a 400px de ancho para darle
-     el espacio. */
+  /* 2026-07-30 (Daniel, insistiendo: "esto lo quiero grande la parte del
+     tracking") -- segunda vuelta de tamaño: hero de 400px a 460px, texto
+     de estado de 3.6rem a 4.4rem, ícono y stepper también más grandes. */
+  #tkStateLabel{ font-size:4.4rem; }
+  .estado-ico{ width:76px; height:76px; font-size:2.4rem; border-radius:20px; }
+  .doc{ font-size:1.1rem; padding:.4rem .95rem; }
+  .cli{ font-size:1.15rem; }
+  .prog-pct{ font-size:2.6rem; }
+  .step-dot{ width:60px; height:60px; font-size:1.85rem; }
+  .step{ width:76px; }
+  .step-label{ font-size:.68rem; }
 
   /* Panel derecho: el resumen de 3 tiles, el aviso de auto-actualización
      y las tarjetas quedan en una columna más ancha, con más aire. */
