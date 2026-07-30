@@ -1076,6 +1076,110 @@
            lo necesitamos"). El endpoint que llamaba sigue vivo por si
            se usa en otro lugar, solo se quitó el botón y esta sección. #}
 
+        {# ── Seguimiento y trazabilidad — INTEGRADO en el modal principal
+           (2026-07-29, pedido Daniel: "no cambio en modal... necesito ver los
+           estados acá, quién se lo llevó, cuánto me costó, todo, todo, todo,
+           todo" — eliminó el botón/mini-modal separado "Ver seguimiento y
+           trazabilidad"; ahora se carga solo al abrir el documento). Mismas
+           clases .sr-* de transporte_manifiesto_detalle.css, mismo JSON de
+           _tr_buscar_detalle() ya usado por tr_compromiso_trazabilidad --
+           no se duplica lógica, solo se elimina el clic extra. #}
+        <div class="border-top" style="background:#fafafa">
+          <div class="px-3 py-2" style="background:#f8f9fa;border-bottom:1px solid #e9ecef">
+            <span class="small fw-semibold text-muted">
+              <i class="bi bi-signpost-2 me-1"></i>Seguimiento y trazabilidad
+            </span>
+          </div>
+          <div class="p-3">
+
+            <div id="trazaCourierBlock" class="mb-3 p-2"
+                 style="display:none;background:#fff;border-radius:8px;border:1px solid #e9ecef">
+              <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                  <div class="small fw-semibold text-muted"><i class="bi bi-truck me-1"></i>Courier</div>
+                  <div id="trazaCourierNombre" class="fw-bold" style="font-size:.9rem">—</div>
+                </div>
+                <span id="trazaCourierEstado" class="badge" style="font-size:.72rem"></span>
+              </div>
+              <div id="trazaCourierTrackingRow" class="mt-2 pt-2" style="display:none;border-top:1px solid #e9ecef">
+                <div class="small fw-semibold text-muted mb-1">
+                  <i class="bi bi-upc-scan me-1"></i>N° de seguimiento del courier
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                  <span id="trazaCourierTN" class="font-monospace" style="font-size:.8rem"></span>
+                  <a id="trazaCourierTNLink" href="#" target="_blank" rel="noopener"
+                     class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.72rem;display:none">
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Rastrear en FedEx
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div id="trazaLinkBlock" style="display:none">
+              <div class="small fw-semibold text-muted mb-1">
+                <i class="bi bi-link-45deg me-1"></i>Link de seguimiento del cliente
+              </div>
+              <div class="d-flex gap-2 align-items-center mb-3">
+                <input type="text" id="trazaLinkInput" readonly
+                       class="form-control form-control-sm font-monospace" style="font-size:.75rem">
+                <button class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.75rem" onclick="copiarLinkTraza()">
+                  <i class="bi bi-clipboard"></i>
+                </button>
+                <a id="trazaLinkOpen" href="#" target="_blank" rel="noopener"
+                   class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.75rem">
+                  <i class="bi bi-box-arrow-up-right"></i>
+                </a>
+              </div>
+            </div>
+
+            <div id="trazaRecibio" class="sr-recibio" style="display:none">
+              <i class="bi bi-patch-check-fill"></i>
+              <div>
+                <div class="sr-recibio-n" id="trazaRecibioNombre"></div>
+                <div class="sr-recibio-rel" id="trazaRecibioRel"></div>
+                <div class="sr-recibio-ts" id="trazaRecibioTs"></div>
+              </div>
+            </div>
+            <div id="trazaEvidFotos" class="d-flex gap-2 flex-wrap mb-3" style="display:none"></div>
+
+            <div id="trazaDriverBlock" class="mb-3 p-2" style="display:none;background:#fff;border-radius:8px;border:1px solid #e9ecef">
+              <div class="sr-driver-row">
+                <div class="sr-driver-avatar" id="trazaDriverAvatar">?</div>
+                <div class="sr-driver-info">
+                  <div class="sr-driver-n" id="trazaDriverNombre">—</div>
+                  <div class="sr-driver-meta" id="trazaDriverMeta"></div>
+                </div>
+              </div>
+            </div>
+
+            <div id="trazaProdBlock" class="mb-3" style="display:none">
+              <div class="small fw-semibold text-muted mb-2">
+                <i class="bi bi-box-seam me-1"></i>Productos
+              </div>
+              <div id="trazaProdRows"></div>
+            </div>
+
+            <div id="trazaDespBlock" class="mb-3" style="display:none">
+              <div class="small fw-semibold text-muted mb-2">
+                <i class="bi bi-diagram-3 me-1"></i>Despachos de este documento
+              </div>
+              <div id="trazaDespRows" class="sr-desp-list"></div>
+            </div>
+
+            <div class="small fw-semibold text-muted mb-2">
+              <i class="bi bi-clock-history me-1"></i>Historial
+            </div>
+            <div id="trazaLoading" class="text-center py-4">
+              <div class="spinner-border spinner-border-sm text-danger"></div>
+            </div>
+            <div id="trazaEmpty" class="text-center text-muted small py-4" style="display:none">
+              Sin eventos registrados todavía.
+            </div>
+            <div id="trazaTimeline" style="display:none"></div>
+
+          </div>
+        </div>
+
       </div>
 
       {# Footer con acciones — jerarquía: primario asignar manifiesto (rojo),
@@ -1105,11 +1209,6 @@
             <i class="bi bi-arrow-repeat"></i>
             <span>Actualizar estado</span>
           </button>
-          <button class="tr-btn tr-btn-ghost" onclick="abrirTrazabilidad()" id="btnTrazabilidad"
-                  title="Ver el link de seguimiento del cliente y el historial completo">
-            <i class="bi bi-signpost-2"></i>
-            <span>Ver seguimiento y trazabilidad</span>
-          </button>
           {# FIX 2026-07-29 (Daniel: "identificar en que manifiesto esta y que
              las acciones me lleven ahi") — oculto por defecto; renderVista()
              lo muestra y le pone el href cuando el compromiso trae
@@ -1125,122 +1224,6 @@
         </button>
       </div>
 
-    </div>
-  </div>
-</div>
-
-{# Mini-modal "Ver seguimiento y trazabilidad" (2026-07-26): link público del
-   cliente + timeline interna combinada (transport_logs commitment+manifest_item).
-   z-index 1090 igual que editPesoModal para que se vea SOBRE vistaModal. #}
-<div class="modal fade" id="trazaModal" tabindex="-1" style="z-index:1090">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width:560px">
-    <div class="modal-content">
-      <div class="modal-header py-2" style="background:var(--ilus-black);color:#fff">
-        <h6 class="modal-title small mb-0">
-          <i class="bi bi-signpost-2 me-2"></i>Seguimiento y trazabilidad
-        </h6>
-        <button type="button" class="btn-close btn-close-white btn-sm ms-auto" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        {# Última milla: courier + estado actual + tracking nativo del courier
-           (2026-07-27, Daniel: "quién lo tiene, cómo va el avance, poder
-           acceder al tracking desde acá — Felca, Milling o FedEx"). #}
-        <div id="trazaCourierBlock" class="mb-3 p-2"
-             style="display:none;background:#f8f9fa;border-radius:8px">
-          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-            <div>
-              <div class="small fw-semibold text-muted"><i class="bi bi-truck me-1"></i>Courier</div>
-              <div id="trazaCourierNombre" class="fw-bold" style="font-size:.9rem">—</div>
-            </div>
-            <span id="trazaCourierEstado" class="badge" style="font-size:.72rem"></span>
-          </div>
-          <div id="trazaCourierTrackingRow" class="mt-2 pt-2" style="display:none;border-top:1px solid #e9ecef">
-            <div class="small fw-semibold text-muted mb-1">
-              <i class="bi bi-upc-scan me-1"></i>N° de seguimiento del courier
-            </div>
-            <div class="d-flex gap-2 align-items-center">
-              <span id="trazaCourierTN" class="font-monospace" style="font-size:.8rem"></span>
-              <a id="trazaCourierTNLink" href="#" target="_blank" rel="noopener"
-                 class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.72rem;display:none">
-                <i class="bi bi-box-arrow-up-right me-1"></i>Rastrear en FedEx
-              </a>
-            </div>
-          </div>
-        </div>
-
-        {# Link público del cliente #}
-        <div id="trazaLinkBlock" style="display:none">
-          <div class="small fw-semibold text-muted mb-1">
-            <i class="bi bi-link-45deg me-1"></i>Link de seguimiento del cliente
-          </div>
-          <div class="d-flex gap-2 align-items-center mb-3">
-            <input type="text" id="trazaLinkInput" readonly
-                   class="form-control form-control-sm font-monospace" style="font-size:.75rem">
-            <button class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.75rem" onclick="copiarLinkTraza()">
-              <i class="bi bi-clipboard"></i>
-            </button>
-            <a id="trazaLinkOpen" href="#" target="_blank" rel="noopener"
-               class="tr-btn tr-btn-ghost py-1 px-2" style="font-size:.75rem">
-              <i class="bi bi-box-arrow-up-right"></i>
-            </a>
-          </div>
-        </div>
-
-        {# 2026-07-29 (Daniel: "la trazabilidad la quiero ver... bien sea de
-           FedEx, de ILUS o ambas") — evidencia de entrega, chofer y
-           productos, reusando las clases .sr-* del modal de manifiesto
-           consolidado (transporte_manifiesto_detalle.css) para no inventar
-           un lenguaje visual paralelo. Poblado por abrirTrazabilidad() con
-           el mismo JSON que ya arma _tr_buscar_detalle() -- no se duplica
-           esa lógica en el frontend. #}
-        <div id="trazaRecibio" class="sr-recibio" style="display:none">
-          <i class="bi bi-patch-check-fill"></i>
-          <div>
-            <div class="sr-recibio-n" id="trazaRecibioNombre"></div>
-            <div class="sr-recibio-rel" id="trazaRecibioRel"></div>
-            <div class="sr-recibio-ts" id="trazaRecibioTs"></div>
-          </div>
-        </div>
-        <div id="trazaEvidFotos" class="d-flex gap-2 flex-wrap mb-3" style="display:none"></div>
-
-        <div id="trazaDriverBlock" class="mb-3 p-2" style="display:none;background:#f8f9fa;border-radius:8px">
-          <div class="sr-driver-row">
-            <div class="sr-driver-avatar" id="trazaDriverAvatar">?</div>
-            <div class="sr-driver-info">
-              <div class="sr-driver-n" id="trazaDriverNombre">—</div>
-              <div class="sr-driver-meta" id="trazaDriverMeta"></div>
-            </div>
-          </div>
-        </div>
-
-        <div id="trazaProdBlock" class="mb-3" style="display:none">
-          <div class="small fw-semibold text-muted mb-2">
-            <i class="bi bi-box-seam me-1"></i>Productos
-          </div>
-          <div id="trazaProdRows"></div>
-        </div>
-
-        <div id="trazaDespBlock" class="mb-3" style="display:none">
-          <div class="small fw-semibold text-muted mb-2">
-            <i class="bi bi-diagram-3 me-1"></i>Despachos de este documento
-          </div>
-          <div id="trazaDespRows" class="sr-desp-list"></div>
-        </div>
-
-        <div class="small fw-semibold text-muted mb-2">
-          <i class="bi bi-clock-history me-1"></i>Historial
-        </div>
-        <div id="trazaLoading" class="text-center py-4">
-          <div class="spinner-border spinner-border-sm text-danger"></div>
-        </div>
-        <div id="trazaEmpty" class="text-center text-muted small py-4" style="display:none">
-          Sin eventos registrados todavía.
-        </div>
-        <div id="trazaTimeline" style="display:none"></div>
-      </div>
-      <div class="modal-footer py-2">
-        <button type="button" class="tr-btn tr-btn-ghost" data-bs-dismiss="modal">Cerrar</button>
-      </div>
     </div>
   </div>
 </div>

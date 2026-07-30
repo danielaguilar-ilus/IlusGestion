@@ -190,7 +190,6 @@ async function limpiarYResync(){
 // ── Init ────────────────────────────────────────────────────────
 var _vistaModal = null;
 var _fotoModal  = null;
-var _trazaModal = null;
 var _vistaCurrentSku = null;   // SKU activo para upload de fotos
 var _vistaCurrentEmail   = null;  // correo del cliente del compromiso abierto (para reenvío manual)
 var _vistaCurrentEstado  = '';    // estado_entrega actual del compromiso abierto
@@ -201,7 +200,6 @@ var _trSyncTimer    = null;
 document.addEventListener('DOMContentLoaded', function() {
   _vistaModal = new bootstrap.Modal(document.getElementById('vistaModal'));
   _fotoModal  = new bootstrap.Modal(document.getElementById('fotoModal'));
-  _trazaModal = new bootstrap.Modal(document.getElementById('trazaModal'));
   setSync(30);   // Pre-fill rango sync: último mes
   cargarMonitor();
   // Panel manifiesto: empieza CERRADO en escritorio y mobile.
@@ -756,6 +754,11 @@ function openVista(cid) {
       }
       _vistaModal.show();
       renderVista(d);
+      // 2026-07-29 (Daniel: "no cambio en modal... necesito ver los estados
+      // acá, quién se lo llevó, cuánto me costó, todo, todo, todo, todo") --
+      // la trazabilidad ya NO requiere un clic aparte: se autocarga apenas
+      // se abre el documento, dentro del mismo modal.
+      cargarTrazabilidadInline(cid);
     })
     .catch(function(e) {
       clearTimeout(_to);
@@ -2858,7 +2861,7 @@ function attr(s){ return esc(s).replace(/"/g,'&quot;'); }
 // _cotizarCid: pese al nombre (histórico), ya NO tiene relación con el
 // cotizador -- es el commitment_id activo del modal de vista, usado por
 // vistaAsignarManifiesto/vistaEditar/reenviarNotificacionCliente/
-// actualizarEstadoPuntual/abrirTrazabilidad. El botón y la sección
+// actualizarEstadoPuntual/cargarTrazabilidadInline. El botón y la sección
 // "Cotizar envío" se retiraron del modal el 2026-07-29 (autorización
 // explícita de Daniel: "cotizar envío, sácalo, ya no lo necesitamos") junto
 // con cotizarActual()/closeCotizador()/fmtKg() -- confirmado por grep que no
@@ -2982,12 +2985,13 @@ async function actualizarEstadoPuntual() {
   }
 }
 
-// "Ver seguimiento y trazabilidad" desde el modal de vista (2026-07-26):
-// abre un mini-modal con el link público que ya recibe el cliente (/t/<token>)
-// y el historial combinado (transport_logs de commitment + manifest_item).
-async function abrirTrazabilidad() {
-  if (!_cotizarCid) return;
-  var cid = _cotizarCid;
+// Trazabilidad INTEGRADA en el modal de vista (2026-07-29, antes era un
+// mini-modal aparte "Ver seguimiento y trazabilidad" -- Daniel pidió que
+// dejara de ser un clic extra: se carga sola al abrir el documento, dentro
+// del mismo vistaModal). Trae el link público del cliente (/t/<token>) y el
+// historial combinado (transport_logs de commitment + manifest_item).
+async function cargarTrazabilidadInline(cid) {
+  if (!cid) return;
 
   document.getElementById('trazaCourierBlock').style.display = 'none';
   document.getElementById('trazaLinkBlock').style.display = 'none';
@@ -3002,8 +3006,6 @@ async function abrirTrazabilidad() {
   document.getElementById('trazaEvidFotos').innerHTML = '';
   document.getElementById('trazaProdRows').innerHTML = '';
   document.getElementById('trazaDespRows').innerHTML = '';
-
-  _trazaModal.show();
 
   try {
     var r = await fetch('/transporte/api/compromisos/' + cid + '/trazabilidad');
