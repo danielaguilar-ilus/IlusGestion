@@ -1890,7 +1890,12 @@
     const POLL_INTERVAL = 30000; // 30s
     const CURRENT_STATUS = "{{ req.status }}";
 
-    // ── 1) Animar stepper-fill al cargar ────────────────────────
+    // ── 1) "Recorrido" de entrada del stepper (2026-07-30, Daniel: "que
+    // cuando entres haga el recorrido de manera espectacular y lo deje
+    // justo donde está, con una transición") -- en vez de aparecer directo
+    // en el hito actual, recorre cada hito en secuencia hasta llegar al
+    // real, con la línea de avance creciendo en sincronía. Respeta
+    // prefers-reduced-motion (salta directo al estado final).
     function animateStepperFill() {
       const stepper = document.getElementById('stepperRoot');
       const fill    = document.getElementById('stepperFill');
@@ -1902,7 +1907,26 @@
       let pct = 0;
       if (idx === -1)      pct = 4;
       else                 pct = Math.min(Math.max(idx, 0), 4) * 20;
-      requestAnimationFrame(() => { fill.style.width = pct + '%'; });
+
+      const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const stepEls = Array.from(stepper.querySelectorAll('.step'));
+      if (reduceMotion || idx === -1 || !stepEls.length) {
+        requestAnimationFrame(() => { fill.style.width = pct + '%'; });
+        return;
+      }
+      const targets = stepEls.map((el) => el.classList.contains('done') ? 'done'
+        : (el.classList.contains('active') ? 'active' : ''));
+      stepEls.forEach((el) => el.classList.remove('done', 'active'));
+      fill.style.width = '0%';
+      const STEP_MS = 460;
+      stepEls.forEach((el, i) => {
+        setTimeout(() => {
+          if (targets[i]) el.classList.add(targets[i]);
+          const segPct = Math.min((i + 1) * 20, pct);
+          fill.style.width = segPct + '%';
+          if (i === stepEls.length - 1) fill.style.width = pct + '%';
+        }, 260 + i * STEP_MS);
+      });
     }
 
     // ── 2) Polling silencioso del estado ────────────────────────

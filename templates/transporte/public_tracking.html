@@ -404,6 +404,11 @@ a.kv:active{ background:#fafafa; }
 .tl-row.c-danger.is-last .tl-est i,
 .tl-row.c-warning.is-last .tl-est i{ color:var(--red); }
 .tl-ts{ font-size:.82rem; color:var(--gray); margin-top:.14rem; font-variant-numeric:tabular-nums; font-weight:500; }
+.tl-delta{
+  display:inline-block; margin-left:.4rem; padding:.05rem .45rem; border-radius:99px;
+  background:#f1f1f3; color:var(--gray); font-size:.7rem; font-weight:700;
+  letter-spacing:.02em; vertical-align:1px;
+}
 .tl-com{ font-size:.88rem; color:#3f3f46; margin-top:.28rem; line-height:1.42; }
 .tl-row.is-hidden{ display:none; }
 .tl-more{
@@ -838,7 +843,7 @@ a.kv:active{ background:#fafafa; }
         {% for e in data.eventos %}
         <div class="tl-row c-{{ e.color }} {% if loop.last %}is-last{% endif %}{% if total > 4 and loop.index <= total - 3 and not loop.last %} is-hidden tl-extra{% endif %}">
           <div class="tl-est"><i class="bi {{ e.icon }}"></i>{{ e.estado }}</div>
-          <div class="tl-ts">{{ e.ts | chile_fmt }}</div>
+          <div class="tl-ts">{{ e.ts | chile_fmt }}{% if e.delta_txt %} <span class="tl-delta">{{ e.delta_txt }}</span>{% endif %}</div>
           {% if e.comentario %}<div class="tl-com">{{ e.comentario }}</div>{% endif %}
         </div>
         {% endfor %}
@@ -922,11 +927,43 @@ a.kv:active{ background:#fafafa; }
   }
   function buzz(){ if (navigator.vibrate) { try { navigator.vibrate(12); } catch(e){} } }
 
-  // Barra de avance: anima desde 0 al entrar (se siente vivo)
+  // ── "Recorrido" de entrada (2026-07-30, Daniel: "que cuando entres haga
+  // el recorrido de manera espectacular y lo deje justo donde está, con
+  // una transición") -- en vez de aparecer directo en el paso actual, el
+  // stepper hace un replay: enciende paso por paso desde el principio hasta
+  // llegar al estado real, con la barra de avance creciendo en sincronía.
+  // Respeta prefers-reduced-motion (salta directo al estado final).
   const fill = document.getElementById('tkFill');
-  requestAnimationFrame(function(){
-    setTimeout(function(){ fill.style.width = (fill.dataset.pct || 0) + '%'; }, 180);
-  });
+  const _reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  (function stepperReplay(){
+    const stepEls = Array.from(document.querySelectorAll('.tk-step'));
+    const barEls  = Array.from(document.querySelectorAll('.tk-step-bar'));
+    if (!fill || !stepEls.length) return;
+    const finalPct = parseFloat(fill.dataset.pct || 0);
+    if (_reduceMotion) { fill.style.width = finalPct + '%'; return; }
+    // Estado objetivo ya viene renderizado por el server (clases done/active) --
+    // se captura y se limpia para poder "reproducirlo" en secuencia.
+    const targets = stepEls.map(function(el){
+      return el.classList.contains('done') ? 'done' : (el.classList.contains('active') ? 'active' : '');
+    });
+    stepEls.forEach(function(el){ el.classList.remove('done','active'); });
+    barEls.forEach(function(el){ el.classList.remove('done'); });
+    fill.style.width = '0%';
+    const n = stepEls.length;
+    const STEP_MS = 480;
+    stepEls.forEach(function(el, i){
+      setTimeout(function(){
+        if (targets[i]) el.classList.add(targets[i]);
+        if (barEls[i] && targets[i] === 'done') barEls[i].classList.add('done');
+        // La barra crece hasta el punto de este paso (fórmula igual a la del
+        // servidor: (paso-1)/(n-1)*100), salvo el último tramo que salta al
+        // % real (puede no ser exactamente 100/n si "Entregado" cae en n-1).
+        const segPct = (i / (n - 1)) * 100;
+        fill.style.width = Math.min(segPct, finalPct) + '%';
+        if (i === n - 1) fill.style.width = finalPct + '%';
+      }, 260 + i * STEP_MS);
+    });
+  })();
 
   // Copiar el número de documento
   document.getElementById('btnDoc').addEventListener('click', function(){

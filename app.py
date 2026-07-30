@@ -26660,6 +26660,35 @@ def _tracking_payload(token):
         else:
             _deduped.append(_ev)
     eventos = _deduped
+    # FIX 2026-07-30 (Daniel: "que se vea abajo la distancia de hora de un
+    # cambio a otro" en el timeline público) -- delta entre cada evento y el
+    # anterior, calculado en Python (los ts son datetime reales, restarlos en
+    # Jinja no es directo). Vacío en el primer evento (no hay "anterior").
+    _prev_ts = None
+    for _ev in eventos:
+        _ts = _ev.get("ts")
+        if _prev_ts is not None and _ts is not None:
+            try:
+                _secs = (_ts - _prev_ts).total_seconds()
+            except Exception:
+                _secs = None
+            if _secs is not None and _secs >= 0:
+                if _secs < 3600:
+                    _mins = max(1, int(_secs // 60))
+                    _ev["delta_txt"] = f"+{_mins} min"
+                elif _secs < 86400:
+                    _hrs = int(_secs // 3600)
+                    _mins = int((_secs % 3600) // 60)
+                    _ev["delta_txt"] = f"+{_hrs} h" + (f" {_mins} min" if _mins else "")
+                else:
+                    _dias = int(_secs // 86400)
+                    _hrs = int((_secs % 86400) // 3600)
+                    _ev["delta_txt"] = f"+{_dias} día" + ("s" if _dias != 1 else "") + (f" {_hrs} h" if _hrs else "")
+            else:
+                _ev["delta_txt"] = ""
+        else:
+            _ev["delta_txt"] = ""
+        _prev_ts = _ts if _ts is not None else _prev_ts
     # Prueba de entrega (si existe)
     proof = None
     if mi:
