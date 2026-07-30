@@ -691,7 +691,7 @@ class PDFEngineUnavailable(Exception):
     pass
 
 
-def _pw_pdf(html: str, *, width: str = None, height: str = None,
+def _pw_pdf_impl(html: str, *, width: str = None, height: str = None,
             page_format: str = None, margin: dict = None,
             wait_fn: str = None, wait_timeout: int = 5000,
             header_template: str = None, footer_template: str = None,
@@ -770,6 +770,84 @@ def _pw_pdf(html: str, *, width: str = None, height: str = None,
         return page.pdf(**pdf_kw)
     finally:
         page.close()
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  HILO DEDICADO DEL MOTOR DE PDF (2026-07-30, Daniel: "descargar el
+#  manifiesto está terriblemente lento... es un SaaS premium")
+#
+#  Antes _pw_pdf() usaba threading.local() -- CADA hilo de gunicorn que
+#  generaba un PDF lanzaba su PROPIO Chromium la primera vez (arranque en
+#  frío de varios segundos), porque Playwright sync API NO es thread-safe
+#  (ver comentario 2026-07-26 en _pw_local más arriba: "Cannot switch to
+#  a different thread" -- bug real ya visto en producción). Con
+#  `--workers 2 --threads 8` (Dockerfile) eso significa hasta 16
+#  arranques en frío posibles, sin importar que el contenedor lleve horas
+#  encendido (Cloud Run min-instances=1 no ayuda acá: el problema es
+#  POR HILO, no por contenedor).
+#
+#  Fix: UN solo hilo dedicado por proceso ("pw-pdf-worker") es el ÚNICO
+#  que toca Playwright/Chromium -- nunca cruza threads, así que sigue
+#  siendo seguro. Todos los demás hilos (los que atienden requests HTTP)
+#  encolan su HTML y esperan el resultado. De hasta 16 arranques en frío
+#  posibles a 2 (uno por worker de gunicorn), y ese arranque ocurre en el
+#  PRIMER PDF que le toca a cada proceso, no repetido por cada hilo.
+#  _pw_pdf() mantiene la MISMA firma/excepciones de siempre -- cero
+#  cambios en los ~15 call sites existentes (etiquetas, cotizaciones,
+#  manifiestos, OT, etc).
+# ══════════════════════════════════════════════════════════════════════
+import queue as _pw_queue_mod
+
+_pw_job_queue = _pw_queue_mod.Queue()
+_PW_WORKER = {"started": False, "lock": threading.Lock()}
+
+
+def _pw_worker_loop():
+    """Único hilo por proceso que habla con Playwright/Chromium. Procesa
+    los PDF de a uno (serializado dentro de este proceso) -- con 2
+    workers de gunicorn sigue habiendo hasta 2 PDF en paralelo a nivel
+    de app, suficiente para el volumen interno de ILUS."""
+    while True:
+        html, kwargs, result_box, done_event = _pw_job_queue.get()
+        try:
+            result_box["data"] = _pw_pdf_impl(html, **kwargs)
+        except Exception as e:
+            result_box["error"] = e
+        finally:
+            done_event.set()
+
+
+def _pw_worker_kick():
+    """Arranque perezoso e idempotente del hilo dedicado -- mismo patrón
+    que _email_queue_kick(). El flag global asegura que se cree UN solo
+    hilo por proceso, sin importar cuántos PDF concurrentes lo disparen."""
+    if _PW_WORKER["started"]:
+        return
+    with _PW_WORKER["lock"]:
+        if _PW_WORKER["started"]:
+            return
+        threading.Thread(target=_pw_worker_loop, daemon=True,
+                         name="pw-pdf-worker").start()
+        _PW_WORKER["started"] = True
+
+
+def _pw_pdf(html: str, **kwargs) -> bytes:
+    """API pública sin cambios (mismos args por keyword, mismas
+    excepciones) -- delega la generación real al hilo dedicado
+    _pw_worker_loop vía cola. Ver docstring de la sección arriba para
+    el porqué. action_timeout interno ya cubre el caso lento (default
+    45s); el timeout de acá es solo una red de seguridad extra por si
+    el hilo dedicado quedara colgado por completo."""
+    _pw_worker_kick()
+    result_box = {}
+    done_event = threading.Event()
+    _pw_job_queue.put((html, kwargs, result_box, done_event))
+    if not done_event.wait(timeout=90):
+        raise TimeoutError("Generación de PDF: el motor no respondió a tiempo.")
+    if "error" in result_box:
+        raise result_box["error"]
+    return result_box["data"]
+
 
 @app.template_filter('from_json')
 def from_json_filter(value):

@@ -339,6 +339,21 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
        onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='transparent'">
       <i class="bi bi-tags-fill me-1"></i>Clasificación
     </a>
+    {# 2026-07-30 (Daniel: "vendedores externos no debe vivir en el menú...
+       debe estar como una opción en los cotizadores, estoy tratando de
+       reducir el menú") -- se saca el link del sidebar (base.html) y se
+       deja acá, mismo lugar donde se elige "Ejecutivo o vendedor
+       solicitante". La ruta/página (tk_vendedores_externos_page) sigue
+       intacta, solo cambia desde dónde se llega. Mismo gate admin/
+       superadmin que tenía en el sidebar. #}
+    {% if permissions.admin or permissions.superadmin %}
+    <a href="{{ url_for('tk_vendedores_externos_page') }}" class="btn btn-lg"
+       style="border:1.5px solid rgba(255,255,255,.45);color:#fff;background:transparent;font-weight:700;border-radius:10px;"
+       title="Gestionar vendedores externos (sin cuenta ILUS) seleccionables como ejecutivo solicitante"
+       onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='transparent'">
+      <i class="bi bi-person-lines-fill me-1"></i>Vendedores externos
+    </a>
+    {% endif %}
     <button type="button" id="btnCotNuevaErp" class="btn btn-lg" style="background:#dc2626;color:#fff;font-weight:800;border-radius:10px;">
       <i class="bi bi-plus-lg me-1"></i>Crear Cotización
     </button>

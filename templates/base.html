@@ -517,15 +517,11 @@
        class="sidebar-link{% if request.endpoint in ['cotizaciones_hub_list','tk_cotizaciones_list'] %} active{% endif %}">
       <i class="bi bi-file-earmark-text"></i><span>Cotizaciones</span>
     </a>
-    {# 2026-07-29 (Daniel/Alison): gestionar vendedores sin cuenta ILUS que
-       igual deben salir en "Ejecutivo o vendedor solicitante" de
-       Cotizaciones -- gate admin/superadmin, mismo que el backend exige. #}
-    {% if permissions.admin or permissions.superadmin %}
-    <a href="{{ url_for('tk_vendedores_externos_page') }}"
-       class="sidebar-link{% if request.endpoint == 'tk_vendedores_externos_page' %} active{% endif %}">
-      <i class="bi bi-person-lines-fill"></i><span>Vendedores externos</span>
-    </a>
-    {% endif %}
+    {# 2026-07-30 (Daniel: "no debe vivir en el menú, estoy tratando de
+       reducir el menú... debe estar como una opción en los cotizadores")
+       -- el link se movió a templates/tickets/cotizaciones.html (junto a
+       "Clasificación"), mismo gate admin/superadmin. La ruta sigue
+       intacta, solo cambió desde dónde se llega. #}
     {% endif %}
     <a href="{{ url_for('mant_index') }}"
        class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
