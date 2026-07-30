@@ -221,7 +221,7 @@
     @keyframes emojiFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
     .step.done .circle::after{animation:badgePop .5s cubic-bezier(.34,1.56,.64,1) both}
     @keyframes badgePop{0%{transform:scale(0)}60%{transform:scale(1.28)}100%{transform:scale(1)}}
-    @media(prefers-reduced-motion:reduce){.step.active .circle,.step.active .emoji,.step.done .circle::after{animation:none}.stepper-fill{transition:width 0s}}
+    @media(prefers-reduced-motion:reduce){.step.active .circle,.step.active .emoji,.step.done .circle::after{animation:none}.stepper-fill{transition:width 0s}.hero-status .ico-wrap::before,.hero-status .ico-wrap::after{animation:none;display:none}}
     @media(max-width:600px){
       .stepper{grid-template-columns:1fr;gap:14px}
       .stepper::before,.stepper-fill{display:none}
@@ -241,8 +241,33 @@
       animation:fadeUp .6s cubic-bezier(.16,1,.3,1);
     }
     .hero-status .ico-wrap{
+      position:relative;
       width:64px;height:64px;border-radius:18px;display:grid;place-items:center;
       font-size:1.9rem;flex-shrink:0;
+    }
+    .hero-status .ico-wrap i{ position:relative; z-index:1; }
+    /* "Sonar" -- anillos que se expanden desde el ícono de estado mientras
+       el retiro sigue en curso (2026-07-29, Daniel: "que la luz vaya
+       acompañando, un parpadeo tipo sonar, algo bien atractivo"). Se apaga
+       en los estados finales (verde de cerrado/retirado, o rojo de
+       rechazado/fallido) -- el radar deja de buscar cuando ya no hay nada
+       pendiente. */
+    .hero-status.accent-blue .ico-wrap::before,
+    .hero-status.accent-amber .ico-wrap::before,
+    .hero-status.accent-purple .ico-wrap::before,
+    .hero-status.accent-blue .ico-wrap::after,
+    .hero-status.accent-amber .ico-wrap::after,
+    .hero-status.accent-purple .ico-wrap::after{
+      content:''; position:absolute; inset:0; border-radius:18px;
+      border:1.5px solid currentColor; opacity:0;
+      animation:sonarPingRetiro 2.6s cubic-bezier(.2,.65,.4,1) infinite;
+    }
+    .hero-status.accent-blue .ico-wrap::after,
+    .hero-status.accent-amber .ico-wrap::after,
+    .hero-status.accent-purple .ico-wrap::after{ animation-delay:1.3s; }
+    @keyframes sonarPingRetiro{
+      0%{ transform:scale(1); opacity:.6; }
+      100%{ transform:scale(1.85); opacity:0; }
     }
     .hero-status .title{font-size:1.05rem;font-weight:900;color:var(--ilus-black);margin:0 0 4px}
     .hero-status .msg{font-size:.92rem;color:var(--ilus-muted);margin:0;line-height:1.45}

@@ -144,13 +144,32 @@ body{
 .estado-wrap{ margin-top:1.5rem; }
 .estado-top{ display:flex; align-items:center; gap:.7rem; }
 .estado-ico{
+  position:relative;
   flex-shrink:0; width:54px; height:54px; border-radius:16px;
   display:grid; place-items:center; font-size:1.75rem;   /* el camión se veía
      como una silueta delgada e ilegible: más grande y con más peso */
   background:rgba(22,163,74,.2); border:1px solid rgba(22,163,74,.5);
   color:var(--green-lt);
 }
-.estado-ico i{ line-height:1; -webkit-text-stroke:.4px currentColor; }
+.estado-ico i{ line-height:1; -webkit-text-stroke:.4px currentColor; z-index:1; }
+/* "Sonar" -- anillos que se expanden y se desvanecen desde el ícono de
+   estado (2026-07-29, Daniel: "que la luz vaya acompañando, que haya un
+   parpadeo como un tipo sonar, algo bien atractivo"). Vive mientras el
+   pedido está activo (no terminal); en "Entregado" se detiene -- el radar
+   deja de buscar porque ya llegó. */
+.estado-ico::before,.estado-ico::after{
+  content:''; position:absolute; inset:0; border-radius:16px;
+  border:1.5px solid currentColor; opacity:0;
+  animation:sonarPing 2.6s cubic-bezier(.2,.65,.4,1) infinite;
+}
+.estado-ico::after{ animation-delay:1.3s; }
+#tkState.s-success .estado-ico::before,
+#tkState.s-success .estado-ico::after{ display:none; }  /* llegó: el radar se apaga */
+#tkState.s-danger .estado-ico::before, #tkState.s-danger .estado-ico::after{ border-color:var(--red-lt); }
+@keyframes sonarPing{
+  0%{ transform:scale(1); opacity:.65; }
+  100%{ transform:scale(1.9); opacity:0; }
+}
 /* "Entregado" es el único estado con un ícono SÓLIDO (Daniel: "el entregado
    arriba... debería ser verde" -- el verde clarito sobre fondo oscuro no se
    percibía a simple vista). Fondo verde macizo + check en blanco = lectura
