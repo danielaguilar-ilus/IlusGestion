@@ -1651,6 +1651,15 @@ def register_tickets_routes(app, ctx):
             mysql_execute("ALTER TABLE tk_cotizaciones ADD INDEX idx_cliente_id (cliente_id)")
         except Exception:
             pass  # ya existe -> ignorar (Regla #5, idempotente)
+        # 2026-07-30 (perf, mismo hallazgo que /transporte/manifiestos hoy:
+        # tk_cotizaciones_list filtra por eliminada=0 y ordena por
+        # created_at DESC sin ningún índice compuesto -> full scan +
+        # filesort creciendo con TODO el histórico de cotizaciones).
+        try:
+            mysql_execute(
+                "ALTER TABLE tk_cotizaciones ADD INDEX idx_elim_created (eliminada, created_at)")
+        except Exception:
+            pass  # ya existe -> ignorar (Regla #5, idempotente)
 
         # 2026-07-22 (Daniel probando el wizard en vivo: "venta de repuesto,
         # visita técnica, podemos cotizar cualquier cosa"): el selector de
@@ -2525,6 +2534,12 @@ def register_tickets_routes(app, ctx):
             _slugs_presentes = [it.get("clase_producto") for it in items if it.get("clase_producto")]
             _tarifas_map = _tarifas_batch_fn(_slugs_presentes, tipo_servicio) or {}
         subtotal_items = 0.0
+        # PERF 2026-07-30: antes esto hacía 1 UPDATE por ítem (N+1 writes --
+        # una cotización de 150-200 ítems = 150-200 roundtrips secuenciales
+        # a MySQL en cada recálculo). Se acumulan los valores y se aplican
+        # todos en un solo executemany al final del loop (mismo patrón ya
+        # usado en _tr_bulk_sync_erp_mysql, ver app.py).
+        _item_updates = []  # (precio_unitario, subtotal, total, item_id)
         for it in items:
             _clase = it.get("clase_producto")
             # 2026-07-22 (Daniel: "precio unitario editable a mano"): si la
@@ -2563,10 +2578,7 @@ def register_tickets_routes(app, ctx):
                     calc = _tk_cotiz_calcular_item(
                         _clase, tipo_servicio, it.get("cantidad"), it.get("descuento_pct"), cfg)
             if calc:
-                mysql_execute(
-                    "UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s "
-                    "WHERE id=%s",
-                    (calc["precio_unitario"], calc["subtotal"], calc["total"], it["id"]))
+                _item_updates.append((calc["precio_unitario"], calc["subtotal"], calc["total"], it["id"]))
                 subtotal_items += calc["total"]
             else:
                 # 2026-07-21 (revisión adversarial): si el ítem ya tenía un
@@ -2574,9 +2586,21 @@ def register_tickets_routes(app, ctx):
                 # tarifa borrada, o cambio de tipo_servicio), se resetea a
                 # $0 explícito -- nunca se deja un total "fantasma" que ya
                 # no suma al total de la cabecera.
-                mysql_execute(
-                    "UPDATE tk_cotizacion_items SET precio_unitario=0, subtotal=0, total=0 "
-                    "WHERE id=%s", (it["id"],))
+                _item_updates.append((0, 0, 0, it["id"]))
+
+        if _item_updates:
+            _upd_sql = ("UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s "
+                        "WHERE id=%s")
+            _get_db_fn = ctx.get("get_db")
+            if _get_db_fn:
+                _conn = _get_db_fn()
+                with _conn.cursor() as _cur:
+                    _cur.executemany(_upd_sql, _item_updates)
+                _conn.commit()
+            else:
+                # Defensivo (get_db no disponible en ctx): camino viejo de a uno.
+                for _pu, _sub, _tot, _iid in _item_updates:
+                    mysql_execute(_upd_sql, (_pu, _sub, _tot, _iid))
 
         # Totales de cabecera -- misma secuencia que Triple A
         # (calculateTotals): subtotal = ítems + ruta; descuento sobre el
@@ -3495,7 +3519,6 @@ def register_tickets_routes(app, ctx):
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
         cfg = _tk_cotiz_pricing_config()
-        _cat_tarifa = ctx.get("_cat_obtener_tarifa_clase")
         _clases_map_fn = ctx.get("_cat_clases_map")
         clases_map = {}
         if _clases_map_fn:
@@ -3504,10 +3527,21 @@ def register_tickets_routes(app, ctx):
             except Exception:
                 clases_map = {}
 
+        # Escalabilidad (2026-07-30, mismo patrón ya usado en
+        # _tk_cotiz_recalcular): UNA sola query batch para las tarifas de
+        # todas las clases presentes, en vez de 1 query por ítem (N+1) --
+        # esta página de detalle-cálculo podía hacer 100+ queries en
+        # cotizaciones grandes.
+        _tarifas_batch_fn = ctx.get("_cat_tarifas_clases_batch")
+        _tarifas_map = {}
+        if _tarifas_batch_fn:
+            _slugs_presentes = [it.get("clase_producto") for it in items_rows if it.get("clase_producto")]
+            _tarifas_map = _tarifas_batch_fn(_slugs_presentes, tipo_servicio) or {}
+
         items = []
         for it in items_rows:
             clase = it.get("clase_producto")
-            tarifa = _cat_tarifa(clase, tipo_servicio) if (_cat_tarifa and clase) else None
+            tarifa = _tarifas_map.get(clase) if clase else None
             if tarifa:
                 horas = tarifa["horas"]
                 tecnicos = tarifa["tecnicos"]
