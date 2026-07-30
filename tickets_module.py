@@ -2247,10 +2247,17 @@ def register_tickets_routes(app, ctx):
         el resto sigue heredando el base hasta que se defina el suyo.
         margen_pct/iva_pct se mantienen GLOBALES (mismo % en ambas tablas
         de Daniel) -- no hay pedido de separarlos por tipo todavía."""
+        # FIX 2026-07-30 (bug real en producción, /catalogo/api/clases/admin
+        # con el mismo patrón acá): pymysql aplica %-formatting a la query
+        # SIEMPRE, incluso sin params -- un "%" LITERAL de LIKE en el texto
+        # de la query rompe el execute ("not enough arguments for format
+        # string"). El patrón LIKE va como parámetro ligado (%s).
         rows = mysql_fetchall(
             "SELECT clave, valor FROM tk_settings "
             "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct','cotiz_iva_pct') "
-            "   OR clave LIKE 'cotiz\\_valor\\_hh\\_\\_%'") or []
+            "   OR clave LIKE %s",
+            ("cotiz\\_valor\\_hh\\_\\_%",)
+        ) or []
         cfg = {r["clave"]: r["valor"] for r in rows}
 
         def _f(clave, default):

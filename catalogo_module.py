@@ -858,10 +858,17 @@ def register_catalogo_routes(app, ctx):
         por cada tipo_servicio de _CAT_TIPOS_SERVICIO_TARIFA, heredando el
         base si ese tipo no tiene su propio cotiz_valor_hh__{tipo}).
         margen_pct sigue GLOBAL (mismo % en ambas tablas de Daniel)."""
+        # FIX 2026-07-30 (bug real en producción -- 500 en /catalogo/api/clases/admin,
+        # "TypeError: not enough arguments for format string"): pymysql aplica
+        # %-formatting a la query SIN params tambien, asi que un "%" LITERAL de
+        # LIKE escrito directo en el string rompe el execute. El patron LIKE va
+        # como parametro ligado (%s), nunca como texto crudo de la query.
         rows = mysql_fetchall(
             "SELECT clave, valor FROM tk_settings "
             "WHERE clave='cotiz_valor_hh' OR clave='cotiz_margen_pct' "
-            "   OR clave LIKE 'cotiz\\_valor\\_hh\\_\\_%'") or []
+            "   OR clave LIKE %s",
+            ("cotiz\\_valor\\_hh\\_\\_%",)
+        ) or []
         vals = {r["clave"]: r["valor"] for r in rows}
 
         def _f(clave, default):
