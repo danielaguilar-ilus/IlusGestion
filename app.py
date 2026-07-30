@@ -29351,21 +29351,38 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                              if isinstance(v, dict) and _sr_normalizar_reference((v.get("reference") or "").strip()) == ref_it
                              and str(v.get("id")) != vid),
                             None)
+                        # 2026-07-30 (Daniel: caso FCV 11137 / BLV 22721 / BLV
+                        # 22734 -- entregados de verdad en SimpliRoute pero
+                        # ILUS los mostraba "Entregado a transporte" por horas,
+                        # sin ningun error): antes solo se probaba HOY como
+                        # fecha de reemplazo. Si el despachador reprograma la
+                        # visita a OTRO dia dentro de la ventana de 7 dias que
+                        # ya usa la query de candidatos, ese caso quedaba
+                        # igual de atascado que el que este bloque intenta
+                        # arreglar. Se amplia la busqueda a los ultimos 7 dias
+                        # (mismo horizonte que la seleccion de candidatos).
                         if not visita_nueva:
-                            hoy_s = _dt_mod.date.today().isoformat()
-                            if hoy_s != fecha_s:
-                                r_hoy = _simpliroute_request(
-                                    "GET", f"{_src.EP_VISITS}?planned_date={hoy_s}",
+                            _dias_probados = {fecha_s}
+                            for _delta in range(0, 7):
+                                _fecha_probar = (_dt_mod.date.today() - _dt_mod.timedelta(days=_delta)).isoformat()
+                                if _fecha_probar in _dias_probados:
+                                    continue
+                                _dias_probados.add(_fecha_probar)
+                                r_otro = _simpliroute_request(
+                                    "GET", f"{_src.EP_VISITS}?planned_date={_fecha_probar}",
                                     token, timeout=45)
-                                if r_hoy.get("ok"):
-                                    visitas_hoy = r_hoy.get("data")
-                                    visitas_hoy = visitas_hoy if isinstance(visitas_hoy, list) else []
-                                    visita_nueva = next(
-                                        (v for v in visitas_hoy
-                                         if isinstance(v, dict)
-                                         and _sr_normalizar_reference((v.get("reference") or "").strip()) == ref_it
-                                         and str(v.get("id")) != vid),
-                                        None)
+                                if not r_otro.get("ok"):
+                                    continue
+                                visitas_otro = r_otro.get("data")
+                                visitas_otro = visitas_otro if isinstance(visitas_otro, list) else []
+                                visita_nueva = next(
+                                    (v for v in visitas_otro
+                                     if isinstance(v, dict)
+                                     and _sr_normalizar_reference((v.get("reference") or "").strip()) == ref_it
+                                     and str(v.get("id")) != vid),
+                                    None)
+                                if visita_nueva:
+                                    break
                     if visita_nueva:
                         nuevo_id = str(visita_nueva.get("id") or "")
                         try:
@@ -29387,10 +29404,33 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                             continue
                     else:
                         # Ahora sí: no existe / fue borrada / token sin acceso,
-                        # y tampoco hay una visita de reemplazo por reference.
+                        # y tampoco hay una visita de reemplazo por reference
+                        # en los ultimos 7 dias. 2026-07-30: ANTES esto se
+                        # abandonaba en silencio cuando r_uno.status era 404 --
+                        # el item quedaba atascado en "Entregado a transporte"
+                        # indefinidamente, sin ningun rastro en logs/errores/UI
+                        # (la trazabilidad "fallaba en silencio", ver caso real
+                        # Daniel 2026-07-30). Ahora SIEMPRE queda constancia:
+                        # se persiste en simpliroute_error (visible para quien
+                        # audite la BD) y en el log de auditoria del item, aun
+                        # cuando no se cuenta como "error" del ciclo (para no
+                        # cambiar el comportamiento de out['errores'] que ya
+                        # consumen otras partes del poller).
+                        _motivo_404 = (f"Visita SimpliRoute {vid} no encontrada (404) y sin "
+                                       f"reemplazo por reference={ref_it} en los ultimos 7 dias")
                         if r_uno.get("status") not in (404, 0):
                             out["errores"].append(
                                 f"{courier} visita {vid}: {r_uno.get('error')}")
+                        else:
+                            try:
+                                mysql_execute(
+                                    "UPDATE transport_manifest_items SET simpliroute_error=%s WHERE id=%s",
+                                    (_motivo_404[:500], it["item_id"]))
+                                _tr_log("manifest_item", it["item_id"],
+                                        "SimpliRoute: visita no resuelta",
+                                        _motivo_404)
+                            except Exception:
+                                pass
                         continue
             estado_ilus, comentario = _src.estado_ilus_from_visit(visita)
             registro = {"item_id": it["item_id"], "visit_id": vid,
