@@ -27844,7 +27844,8 @@ def tr_etiqueta_fedex(item_id):
     """
     r = mysql_fetchone(
         "SELECT ship_label_b64, ship_labels_json, ship_label_format, "
-        "       master_tracking_number, piece_trackings_json, ship_bultos "
+        "       master_tracking_number, piece_trackings_json, ship_bultos, "
+        "       ship_cancelled_at, commitment_id "
         "FROM transport_manifest_items WHERE id=%s",
         (item_id,)
     )
@@ -27854,7 +27855,33 @@ def tr_etiqueta_fedex(item_id):
     label_fmt = (r.get("ship_label_format") or "PDF").upper()
     master_tn = r.get("master_tracking_number") or "etiqueta"
     if not label_b64:
-        return jsonify({"error": "Este item no tiene etiqueta FedEx generada"}), 404
+        # FIX 2026-07-30 (hallazgo real en logs de producción: este botón
+        # ["Descargar etiqueta oficial FedEx", morado] se abre con
+        # window.open() directo sobre esta API -- al no haber etiqueta
+        # (típicamente porque la OT se canceló, que borra ship_label_b64,
+        # ver tr_reemitir_ot_fedex/tr_item_fedex_cancelar_ot) el usuario veía
+        # el JSON crudo de este error en una pestaña nueva, sin ningún
+        # contexto -- para alguien no técnico eso lee como "el botón no
+        # funciona". Su hermano, "Imprimir etiqueta cortada" (tr_item_
+        # etiqueta_fedex_print), ya maneja este caso con una página HTML
+        # amigable ("OT cancelada") -- se reusa el MISMO patrón acá.
+        motivo = "OT cancelada" if r.get("ship_cancelled_at") else "sin etiqueta FedEx"
+        doc = ""
+        try:
+            _c = mysql_fetchone(
+                "SELECT tido, nudo FROM transport_commitments WHERE id=%s",
+                (r.get("commitment_id"),))
+            if _c:
+                doc = f"{_c.get('tido') or ''}{_c.get('nudo') or ''}".strip()
+        except Exception:
+            pass
+        return render_template(
+            "transporte/etiquetas_fedex_print.html",
+            manifiesto=None, etiquetas=[],
+            omitidas=[{"doc": doc or f"#{item_id}", "motivo": motivo}],
+            titulo=f"Etiqueta FedEx · {doc or ('#' + str(item_id))}",
+            pdf_url=None,
+        ), 404
     import base64 as _b64
 
     original = (request.args.get("original") or "") in ("1", "true", "yes")
