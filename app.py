@@ -26880,15 +26880,27 @@ def _norm_rut(s):
     return "".join(c for c in str(s).upper() if c.isalnum())
 
 
-@app.route("/seguimiento", methods=["GET"])
+@app.route("/seguimiento-legado", methods=["GET"])
 def tr_public_seguimiento_form():
-    """Formulario público de seguimiento — sin login. El cliente entra acá
-    desde un link de marketing / WhatsApp / firma de email."""
+    """FIX 2026-07-30 (Daniel, en vivo: "no sé cómo acceder al seguimiento...
+    habíamos hablado de eso, que coloque BLV o FCV y el número"): esta ruta
+    y seguimiento_lookup_page() (más abajo) estaban AMBAS registradas en
+    "/seguimiento" -- una colisión real de rutas. Werkzeug resolvía siempre
+    a favor de la que se registra primero (esta, por orden de aparición en
+    el archivo), así que seguimiento_lookup_page() -- la versión con
+    doc_type (BLV/FCV) + RUT obligatorio, la que Daniel recordaba haber
+    pedido -- quedaba MUERTA, invisible en producción sin que nada lo
+    avisara. Se mueve esta versión (RUT opcional, más flexible pero menos
+    segura -- puede devolver el pedido más reciente que matchee el número
+    SIN verificar identidad) a una ruta aparte, sin enlazarla desde ningún
+    lado, en vez de borrarla (Regla #4.2) por si se necesita su matcheo
+    por tracking number más adelante.
+    """
     return render_template("transporte/public_seguimiento.html",
                            error=None, q="", rut="")
 
 
-@app.route("/seguimiento", methods=["POST"])
+@app.route("/seguimiento-legado", methods=["POST"])
 def tr_public_seguimiento_buscar():
     """Busca un envío por Nº de factura, tracking FedEx, o ambos.
     Si encuentra match → redirige a /t/<token> (la vista bonita ya existente).
@@ -26996,9 +27008,14 @@ def seguimiento_buscar():
                                         "doc_number": doc_number,
                                         "customer_rut": raw_rut}), 400
 
-    # Buscar el commitment con tolerancia: por nudo + matcheo de RUT.
-    where = ["nudo = %s"]
-    params = [doc_number]
+    # Buscar el commitment con tolerancia: por nudo, O por tracking del
+    # courier (2026-07-30: se sumó esta rama al consolidar acá la búsqueda
+    # que traía la ruta vieja de /seguimiento-legado, sin bajar la barra de
+    # seguridad -- el RUT sigue siendo obligatorio en ambos casos).
+    where = ["(nudo = %s OR id IN ("
+             "SELECT commitment_id FROM transport_manifest_items "
+             "WHERE tracking_number=%s OR master_tracking_number=%s))"]
+    params = [doc_number, doc_number, doc_number]
     if doc_type:
         where.append("tido = %s")
         params.append(doc_type)
