@@ -68,12 +68,18 @@ body{
    correos). El Logo.png cuadrado se veía diminuto porque su marca ocupa poca
    altura relativa — Daniel: "el logo está sobredimensionado muy pequeño,
    que vaya un 70% más grande". */
-.hd-lock{ display:flex; align-items:center; gap:.45rem; }
+/* 2026-07-30 (Daniel: "el hilos y el fitness no están alineados... no
+   importa que la r corra un poco más a la derecha, pero cuádralo") -- el
+   PNG del isotipo "ILUS" trae relleno transparente asimétrico (la marca
+   visual pesa hacia abajo dentro de su propio bounding box), así que
+   align-items:center centraba la CAJA de la imagen, no el trazo visible.
+   Alineado por la base (flex-end) en vez del centro matemático. */
+.hd-lock{ display:flex; align-items:flex-end; gap:.5rem; }
 .hd img{ height:44px; width:auto; max-width:44vw; display:block; }
 .hd-fit{
   font-family:var(--display); font-weight:800; font-size:1.75rem;
   letter-spacing:.02em; text-transform:uppercase; color:#fff;
-  line-height:1; white-space:nowrap;
+  line-height:1; white-space:nowrap; margin-bottom:.08rem;
 }
 .hd-txt{ line-height:1.12; min-width:0; }
 .hd-s{
@@ -302,6 +308,17 @@ body{
   100%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(220,38,38,0); }
 }
 @keyframes badgePop{ 0%{ transform:scale(0); } 60%{ transform:scale(1.28); } 100%{ transform:scale(1); } }
+/* 2026-07-30 (Daniel: "el entregado tiene que ser como un giro, algo bien
+   dinámico") -- el ÚLTIMO hito (Entregado) gira y aparece en grande al
+   completarse, en vez del mismo pop discreto de los pasos intermedios.
+   Mismo tratamiento que retiros/public_tracking.html (estandarizado). */
+@keyframes finalSpin{
+  0%{ transform:scale(.5) rotate(-45deg); }
+  55%{ transform:scale(1.18) rotate(385deg); }
+  78%{ transform:scale(.94) rotate(354deg); }
+  100%{ transform:scale(1) rotate(360deg); }
+}
+.step-dot.step-final-spin{ animation:finalSpin .95s cubic-bezier(.34,1.56,.64,1) both; }
 .step-label{
   margin-top:.5rem; font-size:.62rem; line-height:1.25;
   letter-spacing:.06em; text-transform:uppercase; font-weight:700;
@@ -485,26 +502,26 @@ a.kv:active{ background:#fafafa; }
 }
 .ft-btn:active{ transform:scale(.975); }
 .ft-btn.alt{ background:#fff; color:var(--ink); border-color:var(--line); }
-/* Firma de marca del footer (2026-07-29, Daniel: "el footer me gustaría
-   mejorarlo con el logo más grande... las redes sociales... abajo que
-   diga ILUS Fitness, página de seguimiento" -- estandarizado con el
-   footer de retiros/public_tracking.html para que ambas páginas se
-   sientan de la misma familia). */
-.ft-brand{ margin-top:1.7rem; }
+/* Firma de marca del footer (2026-07-30, Daniel: "no veo el footer de
+   ambos estandarizados, veo uno para cada uno... qué estamos
+   externalizando" -- el de transporte usaba un lockup HORIZONTAL
+   [ícono | nombre+rubro] mientras retiros usa una columna centrada
+   [logo / nombre / rubro / redes / copy]. Se pasa al MISMO stack
+   vertical centrado que retiros/public_tracking.html, mismo texto,
+   para que ambas páginas se sientan literalmente el mismo footer. */
+.ft-brand{ margin-top:1.7rem; text-align:center; }
 .ft-brand-line{
   height:1px; background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent);
   margin-bottom:1.3rem;
 }
-.ft-brand-row{ display:flex; align-items:center; justify-content:center; gap:.85rem; }
-.ft-brand-ico{ height:40px; width:auto; opacity:.92; flex-shrink:0; }
-.ft-brand-txt{ text-align:left; line-height:1.25; }
+.ft-brand-logo{ width:150px; margin-bottom:10px; opacity:.95; }
 .ft-brand-name{
   display:block; font-family:var(--display); font-weight:800;
-  font-size:1.08rem; letter-spacing:.04em; text-transform:uppercase;
+  font-size:1.05rem; letter-spacing:.03em; text-transform:none;
   color:var(--ink);
 }
 .ft-brand-tag{
-  display:block; margin-top:.1rem; font-size:.74rem;
+  display:block; margin-top:.15rem; font-size:.78rem;
   color:var(--gray); font-weight:600;
 }
 .ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:1.1rem; }
@@ -899,13 +916,12 @@ a.kv:active{ background:#fafafa; }
        con una línea divisoria fina, en vez de un segundo logo enorme. #}
     <div class="ft-brand">
       <div class="ft-brand-line"></div>
-      <div class="ft-brand-row">
-        <img src="{{ url_for('static', filename='logo_ilus_black.png') }}" alt="ILUS" class="ft-brand-ico">
-        <div class="ft-brand-txt">
-          <span class="ft-brand-name">ILUS Fitness</span>
-          <span class="ft-brand-tag">Equipamiento y servicio técnico fitness</span>
-        </div>
-      </div>
+      <picture>
+        <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
+        <img class="ft-brand-logo" src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+      </picture>
+      <span class="ft-brand-name">ILUS Sport &amp; Health</span>
+      <span class="ft-brand-tag">Equipamiento profesional para alto rendimiento</span>
       <div class="ft-social" aria-label="Redes sociales">
         <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
         <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp" class="soc-wa"><i class="bi bi-whatsapp"></i></a>
@@ -976,6 +992,12 @@ a.kv:active{ background:#fafafa; }
       setTimeout(function(){
         if (targets[i]) el.classList.add(targets[i]);
         if (barEls[i] && targets[i] === 'done') barEls[i].classList.add('done');
+        // 2026-07-30 (Daniel: "el entregado tiene que ser como un giro,
+        // algo bien dinámico") -- el ÚLTIMO hito gira al completarse.
+        if (i === n - 1 && targets[i] === 'done') {
+          var dot = el.querySelector('.step-dot');
+          if (dot) dot.classList.add('step-final-spin');
+        }
         // La barra crece hasta el punto de este paso (fórmula igual a la del
         // servidor: (paso-1)/(n-1)*100), salvo el último tramo que salta al
         // % real (puede no ser exactamente 100/n si "Entregado" cae en n-1).

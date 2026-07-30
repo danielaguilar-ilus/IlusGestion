@@ -235,22 +235,38 @@
     .step.done .label{color:#15803d}
     .step.done .sub{color:#15803d}
     /* ACTIVE: anillo rojo + halo pulsante */
-    .step.active .circle{border-color:#e60000;background:#fff5f5;transform:scale(1.06);animation:stepPulse 2s ease-in-out infinite}
-    .step.active .label{color:var(--ilus-red);font-size:.84rem}
-    .step.active .sub{color:var(--ilus-red);font-weight:700}
-    @keyframes stepPulse{0%,100%{box-shadow:0 0 0 5px #fff,0 0 0 8px rgba(230,0,0,.16)}50%{box-shadow:0 0 0 5px #fff,0 0 0 15px rgba(230,0,0,0)}}
+    {# 2026-07-30 (Daniel: "el retiro está en la propuesta y sigue en rojo,
+       la base tiene que ser verde") -- el paso EN CURSO no es un problema,
+       es avance normal, así que pulsa en VERDE (igual que el stepper de
+       transporte). El rojo queda reservado para cuando algo de verdad
+       salió mal (banner de cancelada, arriba). #}
+    .step.active .circle{border-color:#16a34a;background:#f0fdf4;transform:scale(1.06);animation:stepPulse 2s ease-in-out infinite}
+    .step.active .label{color:#15803d;font-size:.84rem}
+    .step.active .sub{color:#15803d;font-weight:700}
+    @keyframes stepPulse{0%,100%{box-shadow:0 0 0 5px #fff,0 0 0 8px rgba(22,163,74,.18)}50%{box-shadow:0 0 0 5px #fff,0 0 0 15px rgba(22,163,74,0)}}
     /* Toques premium: el ícono activo flota suave; el check de completado entra con un pop */
     .step.active .emoji{display:inline-block;animation:emojiFloat 2.6s ease-in-out infinite}
     @keyframes emojiFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+    /* 2026-07-30 (Daniel: "el entregado tiene que ser como un giro, algo
+       bien dinámico") -- el ÚLTIMO hito (Retirada) gira y aparece en grande
+       al completarse, en vez del mismo pop discreto de los pasos
+       intermedios. Se dispara una sola vez desde animateStepperFill(). */
+    @keyframes finalSpin{
+      0%{ transform:scale(.5) rotate(-45deg); }
+      55%{ transform:scale(1.18) rotate(385deg); }
+      78%{ transform:scale(.94) rotate(354deg); }
+      100%{ transform:scale(1) rotate(360deg); }
+    }
+    .circle.step-final-spin{ animation:finalSpin .95s cubic-bezier(.34,1.56,.64,1) both; }
     .step.done .circle::after{animation:badgePop .5s cubic-bezier(.34,1.56,.64,1) both}
     @keyframes badgePop{0%{transform:scale(0)}60%{transform:scale(1.28)}100%{transform:scale(1)}}
-    @media(prefers-reduced-motion:reduce){.step.active .circle,.step.active .emoji,.step.done .circle::after{animation:none}.stepper-fill{transition:width 0s}.hero-status .ico-wrap::before,.hero-status .ico-wrap::after{animation:none;display:none}}
+    @media(prefers-reduced-motion:reduce){.step.active .circle,.step.active .emoji,.step.done .circle::after,.circle.step-final-spin{animation:none}.stepper-fill{transition:width 0s}.hero-status .ico-wrap::before,.hero-status .ico-wrap::after{animation:none;display:none}}
     @media(max-width:600px){
       .stepper{grid-template-columns:1fr;gap:14px}
       .stepper::before,.stepper-fill{display:none}
       .step{display:grid;grid-template-columns:auto 1fr;gap:16px;text-align:left;align-items:center}
       .step .circle{width:62px;height:62px;font-size:1.85rem;margin:0;box-shadow:none}
-      .step.active .circle{box-shadow:0 0 0 4px rgba(230,0,0,.12)}
+      .step.active .circle{box-shadow:0 0 0 4px rgba(22,163,74,.12)}
       .step .label{font-size:.92rem}
       .step .sub{font-size:.78rem}
     }
@@ -1922,6 +1938,12 @@
       stepEls.forEach((el, i) => {
         setTimeout(() => {
           if (targets[i]) el.classList.add(targets[i]);
+          // 2026-07-30 (Daniel: "el entregado tiene que ser como un giro,
+          // algo bien dinámico") -- el ÚLTIMO hito gira al completarse.
+          if (i === stepEls.length - 1 && targets[i] === 'done') {
+            const circle = el.querySelector('.circle');
+            if (circle) circle.classList.add('step-final-spin');
+          }
           const segPct = Math.min((i + 1) * 20, pct);
           fill.style.width = segPct + '%';
           if (i === stepEls.length - 1) fill.style.width = pct + '%';
