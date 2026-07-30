@@ -1,0 +1,200 @@
+        .tpl-modulo-grid{
+          display:grid;
+          grid-template-columns:repeat(5, 1fr);
+          gap:10px;
+          margin-bottom:18px;
+        }
+        @media (max-width: 991.98px){
+          .tpl-modulo-grid{
+            grid-auto-flow:column;
+            grid-template-columns:auto;
+            grid-auto-columns:minmax(180px, 1fr);
+            overflow-x:auto;
+            scroll-snap-type:x mandatory;
+            padding-bottom:8px;
+            -webkit-overflow-scrolling:touch;
+          }
+          .tpl-modulo-card{scroll-snap-align:start}
+        }
+        .tpl-modulo-card{
+          background:#fff;
+          border:1.5px solid #e5e7eb;
+          border-radius:10px;
+          padding:14px 14px 12px;
+          cursor:pointer;
+          transition:all .15s ease;
+          position:relative;
+          min-height:44px;
+          display:flex;
+          flex-direction:column;
+          gap:4px;
+          text-align:left;
+        }
+        .tpl-modulo-card:hover{
+          border-color:#dc2626;
+          background:#fffafa;
+          transform:translateY(-1px);
+        }
+        .tpl-modulo-card.active{
+          border-color:#dc2626;
+          background:linear-gradient(180deg,#fff5f5 0,#fff 100%);
+          box-shadow:0 4px 12px rgba(220,38,38,.12);
+        }
+        .tpl-modulo-card.active::before{
+          content:"";
+          position:absolute;
+          top:-1.5px;left:-1.5px;right:-1.5px;
+          height:3px;
+          background:#dc2626;
+          border-radius:10px 10px 0 0;
+        }
+        .tpl-modulo-card .tmc-icon{
+          width:34px;height:34px;
+          border-radius:8px;
+          background:#fff5f5;
+          display:flex;align-items:center;justify-content:center;
+          color:#dc2626;font-size:1.05rem;
+          margin-bottom:4px;
+        }
+        .tpl-modulo-card.active .tmc-icon{
+          background:#dc2626;color:#fff;
+        }
+        .tpl-modulo-card .tmc-titulo{
+          font-size:.86rem;font-weight:700;color:#111;line-height:1.2;
+        }
+        .tpl-modulo-card .tmc-sub{
+          font-size:.7rem;color:#6b7280;line-height:1.3;
+        }
+        .tpl-modulo-card .tmc-count{
+          position:absolute;top:8px;right:10px;
+          background:#f3f4f6;color:#6b7280;
+          font-size:.65rem;font-weight:700;
+          padding:2px 7px;border-radius:50px;
+        }
+        .tpl-modulo-card.active .tmc-count{
+          background:#dc2626;color:#fff;
+        }
+        /* ── Indicador de canal bloqueado en cada card de módulo ── */
+        .tpl-modulo-card .tmc-warn{
+          position:absolute;top:8px;right:10px;
+          width:22px;height:22px;border-radius:50%;
+          background:#dc2626;color:#fff;
+          display:none;align-items:center;justify-content:center;
+          font-size:.72rem;font-weight:700;
+          box-shadow:0 2px 6px rgba(220,38,38,.35);
+          cursor:help;
+        }
+        .tpl-modulo-card.has-block .tmc-warn{display:flex}
+        .tpl-modulo-card.has-block .tmc-count{display:none}
+
+        /* ── KILL SWITCH (llave de paso por módulo) ── */
+        .ks-panel{
+          background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+          padding:16px 18px;margin-bottom:18px;box-shadow:0 2px 10px rgba(15,23,42,.04);
+        }
+        .ks-panel-header{
+          display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+          padding-bottom:12px;margin-bottom:12px;border-bottom:1px dashed #e5e7eb;
+        }
+        .ks-panel-header .ks-title{
+          font-size:.95rem;font-weight:800;color:#0a0a0a;display:flex;align-items:center;gap:8px;
+        }
+        .ks-panel-header .ks-title i{color:#dc2626;font-size:1.1rem}
+        .ks-panel-sub{font-size:.78rem;color:#6b7280;flex:1;min-width:160px}
+
+        /* Banner ámbar de advertencia (siempre visible cuando hay bloqueos) */
+        .ks-warning-banner{
+          background:#fef2f2;border:2px solid #dc2626;border-radius:10px;
+          padding:14px 18px;margin-bottom:16px;
+          display:none;align-items:flex-start;gap:14px;
+          box-shadow:0 4px 14px rgba(220,38,38,.18);
+        }
+        .ks-warning-banner.visible{display:flex}
+        .ks-warning-banner .ksw-icon{
+          flex-shrink:0;width:38px;height:38px;border-radius:50%;
+          background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;
+          font-size:1.2rem;
+        }
+        .ks-warning-banner .ksw-body{flex:1}
+        .ks-warning-banner .ksw-title{font-weight:800;color:#dc2626;font-size:.95rem;margin-bottom:3px}
+        .ks-warning-banner .ksw-msg{color:#7f1d1d;font-size:.82rem;line-height:1.5}
+
+        /* Tabla */
+        .ks-table{width:100%;border-collapse:collapse;font-size:.85rem}
+        .ks-table thead th{
+          background:#f9fafb;color:#374151;text-transform:uppercase;
+          font-size:.65rem;letter-spacing:.6px;font-weight:700;
+          padding:9px 10px;text-align:left;border-bottom:2px solid #e5e7eb;
+        }
+        .ks-table thead th.ks-th-canal{text-align:center;width:78px}
+        .ks-table tbody td{
+          padding:11px 10px;border-bottom:1px solid #f1f5f9;
+          vertical-align:middle;
+        }
+        .ks-table tbody tr:last-child td{border-bottom:none}
+        .ks-table tbody tr.has-block{background:#fffaf6}
+        .ks-table .ks-mod{font-weight:700;color:#111;display:flex;align-items:center;gap:8px}
+        .ks-table .ks-mod i{color:#dc2626;font-size:1rem}
+        .ks-table .ks-td-canal{text-align:center}
+        .ks-table .ks-motivo{font-size:.76rem;color:#6b7280;font-style:italic;max-width:260px}
+        .ks-table .ks-motivo .ks-motivo-tag{
+          display:inline-block;background:#fff3cd;color:#7c4d00;
+          border:1px solid #f3c97a;padding:2px 8px;border-radius:12px;
+          font-style:normal;font-size:.7rem;font-weight:600;
+          max-width:240px;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        }
+        .ks-table .ks-meta{font-size:.7rem;color:#9ca3af;line-height:1.3}
+        .ks-table .ks-actions{white-space:nowrap}
+        .ks-row-btn{
+          font-size:.7rem;font-weight:700;padding:4px 10px;border-radius:6px;
+          border:1.5px solid #d1d5db;background:#fff;color:#374151;cursor:pointer;
+          transition:.12s;margin-left:4px;
+        }
+        .ks-row-btn:hover{background:#fff5f5;border-color:#dc2626;color:#dc2626}
+        .ks-row-btn.ks-row-btn-libera{
+          border-color:#16a34a;color:#16a34a;
+        }
+        .ks-row-btn.ks-row-btn-libera:hover{background:#f0fdf4}
+
+        /* Toggle switch ILUS */
+        .ks-toggle{
+          position:relative;width:46px;height:26px;border-radius:13px;background:#cbd5e1;
+          transition:background .2s;cursor:pointer;display:inline-block;vertical-align:middle;
+          border:none;padding:0;
+        }
+        .ks-toggle::after{
+          content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;
+          border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);
+          transition:transform .2s;
+        }
+        .ks-toggle.blocked{background:#dc2626}
+        .ks-toggle.blocked::after{transform:translateX(20px)}
+        .ks-toggle:disabled{opacity:.5;cursor:not-allowed}
+        .ks-toggle:focus{outline:2px solid #fca5a5;outline-offset:2px}
+
+        /* Responsive: en mobile, ocultar columnas meta y actions secundarias */
+        @media (max-width: 768px){
+          .ks-table thead th.ks-th-motivo,
+          .ks-table tbody td.ks-td-motivo,
+          .ks-table thead th.ks-th-meta,
+          .ks-table tbody td.ks-td-meta{display:none}
+          .ks-table thead th.ks-th-canal{width:58px;font-size:.55rem}
+          .ks-row-btn{padding:3px 7px;font-size:.65rem}
+        }
+
+            .log-tab-table{font-size:.84rem}
+            .log-tab-table thead th{padding:11px 12px;font-size:.66rem;font-weight:800;
+              text-transform:uppercase;letter-spacing:.06em;color:#6b7280;
+              background:#f9fafb;border-bottom:2px solid #e5e7eb}
+            .log-tab-table tbody td{padding:10px 12px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+            .log-tab-table tbody tr:hover{background:#fafafa}
+            .log-date-cell{white-space:nowrap;font-family:monospace}
+            .log-date-cell .ldc-d{font-weight:700;color:#0f172a;font-size:.82rem;display:block}
+            .log-date-cell .ldc-h{color:#6b7280;font-size:.72rem}
+            .log-channel-pill{padding:3px 9px;border-radius:50px;font-size:.65rem;font-weight:700;display:inline-flex;align-items:center;gap:4px}
+            .log-channel-pill.email{background:#dbeafe;color:#1e40af}
+            .log-channel-pill.wa{background:#dcfce7;color:#166534}
+            .log-status-pill{padding:3px 10px;border-radius:50px;font-size:.66rem;font-weight:800;letter-spacing:.04em}
+            .log-status-pill.ok{background:#dcfce7;color:#166534}
+            .log-status-pill.fail{background:#fee2e2;color:#991b1b}

@@ -1,0 +1,1862 @@
+// Filtros combinados client-side del tab Historial
+function applyLogFilters(){
+  const txt = (document.getElementById('logFilterText')?.value || '').toLowerCase().trim();
+  const estado = document.getElementById('logFilterEstado')?.value || '';
+  const canal = document.getElementById('logFilterCanal')?.value || '';
+  const tbody = document.querySelector('#logHistorialTable tbody');
+  if (!tbody) return;
+  let visible = 0;
+  Array.from(tbody.querySelectorAll('tr')).forEach(tr => {
+    const dSearch = tr.dataset.search || '';
+    const dCanal = tr.dataset.canal || '';
+    const dEstado = tr.dataset.estado || '';
+    let show = true;
+    if (txt && !dSearch.includes(txt)) show = false;
+    if (estado && dEstado !== estado) show = false;
+    if (canal && dCanal !== canal) show = false;
+    tr.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+}
+// Auto-filtros desde el hash si vino redirigido desde /comunicaciones/log
+window.addEventListener('DOMContentLoaded', () => {
+  const hash = window.location.hash;
+  if (hash && hash.includes('?')){
+    const qs = new URLSearchParams(hash.split('?')[1]);
+    if (qs.get('estado')){
+      const sel = document.getElementById('logFilterEstado');
+      if (sel) {
+        const v = qs.get('estado');
+        sel.value = v === 'enviado' ? 'ok' : (v === 'fallido' ? 'error' : v);
+      }
+    }
+    applyLogFilters();
+    // Activar tab Historial si vino con #tabLog
+    if (hash.startsWith('#tabLog')){
+      const btn = document.querySelector('[data-bs-target="#tabLog"]');
+      if (btn) btn.click();
+    }
+  } else if (hash === '#tabLog'){
+    const btn = document.querySelector('[data-bs-target="#tabLog"]');
+    if (btn) btn.click();
+  }
+});
+
+/* ── modales ── */
+let _modalTestEmail;
+document.addEventListener('DOMContentLoaded', () => {
+  _modalTestEmail  = new bootstrap.Modal(document.getElementById('modalTestEmail'));
+  poblarPlantillasManual();
+  actualizarPreview();
+  cargarEstadoEmail();
+
+  document.getElementById('ccColor').addEventListener('input', function() {
+    document.getElementById('ccColorText').value = this.value;
+  });
+
+  document.getElementById('ccLogoFile').addEventListener('change', function() {
+    const f = this.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = e => { _logoBase64 = e.target.result; };
+    reader.readAsDataURL(f);
+  });
+});
+
+let _logoBase64 = (window.COMM_DATA && window.COMM_DATA.logoUrl) || '';
+
+/* ════════════════════════════════
+   SMTP
+════════════════════════════════ */
+// ─── Toast flotante ─────────────────────────────────────────────────
+function commToast(msg, type='success') {
+  let stack = document.getElementById('commToastStack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'commToastStack';
+    stack.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:420px';
+    document.body.appendChild(stack);
+  }
+  const t = document.createElement('div');
+  const colors = {
+    success: { bg:'#16a34a', icon:'check-circle-fill' },
+    error:   { bg:'#dc2626', icon:'exclamation-circle-fill' },
+    warning: { bg:'#d97706', icon:'exclamation-triangle-fill' },
+  };
+  const c = colors[type] || colors.success;
+  t.style.cssText = `background:${c.bg};color:#fff;padding:14px 20px;border-radius:10px;
+    box-shadow:0 8px 26px rgba(0,0,0,.25);font-weight:600;font-size:.88rem;
+    display:flex;align-items:center;gap:10px;
+    animation:commToastIn .25s cubic-bezier(.2,.8,.2,1);min-width:280px`;
+  t.innerHTML = `<i class="bi bi-${c.icon}" style="font-size:1.3rem;flex-shrink:0"></i><div>${msg}</div>`;
+  stack.appendChild(t);
+  setTimeout(() => {
+    t.style.transition = 'opacity .3s, transform .3s';
+    t.style.opacity = '0';
+    t.style.transform = 'translateX(20px)';
+    setTimeout(() => t.remove(), 300);
+  }, 3500);
+}
+// Animation keyframes (inyección única)
+if (!document.getElementById('commToastStyle')) {
+  const s = document.createElement('style'); s.id = 'commToastStyle';
+  s.textContent = '@keyframes commToastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}';
+  document.head.appendChild(s);
+}
+
+async function guardarSmtp() {
+  const msg = document.getElementById('smtpMsg');
+  const btn = event?.target?.closest('button') || document.querySelector('button[onclick="guardarSmtp()"]');
+  const originalBtn = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  }
+  msg.innerHTML = '';
+  const passInput = document.getElementById('smtpPass');
+  const body = {
+    host    : val('smtpHost'),
+    port    : parseInt(val('smtpPort')) || 587,
+    user    : val('smtpUser'),
+    pass    : passInput.value,
+    fromName: val('smtpFromName'),
+    fromAddr: val('smtpFromAddr'),
+    secure  : document.getElementById('smtpSecure').checked,
+  };
+  if (!body.user) {
+    if (btn) { btn.disabled = false; btn.innerHTML = originalBtn; }
+    commToast('Ingresa el email primero', 'error');
+    return;
+  }
+  if (!body.fromAddr) body.fromAddr = body.user;
+  try {
+    const r = await fetch('/comunicaciones/smtp/config', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (d.ok) {
+      if (d.smtp) {
+        document.getElementById('smtpHost').value = d.smtp.smtp_host || body.host;
+        document.getElementById('smtpPort').value = d.smtp.smtp_port || body.port;
+        document.getElementById('smtpUser').value = d.smtp.smtp_user || body.user;
+        document.getElementById('smtpFromName').value = d.smtp.from_name || body.fromName;
+        document.getElementById('smtpFromAddr').value = d.smtp.from_addr || body.fromAddr;
+        document.getElementById('smtpSecure').checked = !!d.smtp.secure;
+      }
+      passInput.value = '••••••••';
+      passInput.dataset.hasSecret = '1';
+      passInput.placeholder = 'Guardada en BD — déjala así';
+      actualizarPreview();
+      commToast('Configuración SMTP guardada correctamente en la base de datos', 'success');
+      if (d.warning) setTimeout(() => commToast(d.warning, 'warning'), 400);
+      // Botón con confirmación visible 2s
+      if (btn) {
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-success');
+        btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Guardado';
+        setTimeout(() => {
+          btn.classList.remove('btn-success');
+          btn.classList.add('btn-danger');
+          btn.innerHTML = originalBtn;
+          btn.disabled = false;
+        }, 2000);
+      }
+    } else {
+      commToast(d.error || 'No se pudo guardar', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = originalBtn; }
+    }
+  } catch (e) {
+    commToast('Error de conexión con el servidor', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = originalBtn; }
+  }
+}
+
+/* ════════════════════════════════
+   ESTADO SMTP (badge en cabecera)
+════════════════════════════════ */
+async function cargarEstadoEmail() {
+  try {
+    const r = await fetch('/comunicaciones/email/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    const badge = document.getElementById('emailMethodBadge');
+    if (badge) {
+      if (d.configured) {
+        badge.textContent = 'Configurado';
+        badge.className = 'badge bg-success ms-2';
+      } else {
+        badge.textContent = 'Sin configurar';
+        badge.className = 'badge bg-warning text-dark ms-2';
+      }
+    }
+  } catch(e) { /* silencioso */ }
+}
+
+function abrirTestEmail() {
+  document.getElementById('testEmailMsg').innerHTML = '';
+  _modalTestEmail.show();
+}
+
+async function probarSmtpConexion(btn) {
+  const msg = document.getElementById('smtpMsg');
+  const original = btn ? btn.innerHTML : '';
+  const passInput = document.getElementById('smtpPass');
+  const body = {
+    host    : val('smtpHost'),
+    port    : parseInt(val('smtpPort')) || 587,
+    user    : val('smtpUser'),
+    pass    : passInput.value,
+    fromName: val('smtpFromName'),
+    fromAddr: val('smtpFromAddr'),
+    secure  : document.getElementById('smtpSecure').checked,
+  };
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Probando';
+  }
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Validando host, puerto, cifrado y credenciales SMTP...';
+  try {
+    const r = await fetch('/comunicaciones/smtp/test', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    const suggestions = (d.suggestions || []).map(x => `<li>${esc(x)}</li>`).join('');
+    const checks = (d.checks || []).map(x => `<li>${esc(x)}</li>`).join('');
+    if (d.ok) {
+      msg.innerHTML = `
+        <div class="alert alert-success py-2 px-3 mb-0">
+          <div class="fw-bold"><i class="bi bi-check-circle me-1"></i>${esc(d.message || 'Conexion SMTP correcta')}</div>
+          ${checks ? `<ul class="mb-0 mt-1 ps-3">${checks}</ul>` : ''}
+        </div>`;
+    } else {
+      msg.innerHTML = `
+        <div class="alert alert-danger py-2 px-3 mb-0">
+          <div class="fw-bold"><i class="bi bi-x-circle me-1"></i>${esc(d.message || d.error || 'No se pudo validar SMTP')}</div>
+          ${d.detail ? `<div class="small mt-1">${esc(d.detail)}</div>` : ''}
+          ${suggestions ? `<div class="fw-semibold mt-2">Que revisar:</div><ul class="mb-0 ps-3">${suggestions}</ul>` : ''}
+        </div>`;
+    }
+  } catch(e) {
+    msg.innerHTML = '<div class="alert alert-danger py-2 px-3 mb-0"><i class="bi bi-x-circle me-1"></i>No se pudo ejecutar la prueba de conexion.</div>';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  }
+}
+
+async function enviarTestEmail() {
+  const to  = document.getElementById('testEmailTo').value.trim();
+  const msg = document.getElementById('testEmailMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
+  const r = await fetch('/comunicaciones/smtp/test', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado! Revisa tu bandeja.</span>'
+    : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+}
+
+/* ════════════════════════════════
+   CLIENTE / IDENTIDAD
+════════════════════════════════ */
+async function guardarCliente() {
+  const msg = document.getElementById('ccMsg');
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const body = {
+    company_name : val('ccCompany'),
+    reply_to     : val('ccReplyTo'),
+    support_email: val('ccSupport'),
+    support_phone: val('ccPhone'),
+    corp_color   : val('ccColorText') || val('ccColor'),
+    tracking_url : val('ccTracking'),
+    email_cc     : val('ccCC'),
+    email_bcc    : val('ccBCC'),
+    logo_url     : _logoBase64 || '',
+  };
+  const r = await fetch('/comunicaciones/cliente/config', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  msg.innerHTML = d.ok
+    ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado correctamente</span>'
+    : `<span class="text-danger">${esc(d.error||'Error')}</span>`;
+  if (d.ok) actualizarPreview();
+}
+
+/* ════════════════════════════════
+   PREVIEW EMAIL
+════════════════════════════════ */
+async function actualizarPreview() {
+  const frame = document.getElementById('emailPreview');
+  if (frame) {
+    frame.srcdoc = '<p style="padding:16px;color:#777;font-size:13px">Generando preview...</p>';
+    const sample = '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Hola <strong>{{nombre_cliente}}</strong>, este es un ejemplo del diseño que usarán las notificaciones automáticas.</p><table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #CC0000;border-radius:4px;padding:14px 18px;margin:18px 0"><tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Pedido:</strong>&nbsp; {{id_pedido}}</td></tr><tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Estado:</strong>&nbsp; En ruta</td></tr><tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr></table>';
+    try {
+      const r = await fetch('/comunicaciones/email/preview', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ title:'Vista previa de comunicación', html: sample })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        frame.srcdoc = d.html;
+        return;
+      }
+    } catch(e) {}
+  }
+  const color   = val('ccColorText') || val('ccColor') || '#CC0000';
+  const company = val('ccCompany')   || 'ILUS Fitness';
+  const logo    = _logoBase64 || '';
+  const logoBlock = logo
+    ? `<img src="${logo}" alt="${company}" style="height:40px;margin-bottom:12px;object-fit:contain"><br>`
+    : '';
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#0c0907;font-family:'Segoe UI',Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0c0907;padding:24px 0">
+<tr><td align="center">
+  <table width="520" cellpadding="0" cellspacing="0"
+         style="background:#1a0f05;border-radius:12px;overflow:hidden;max-width:520px">
+    <tr><td style="background:linear-gradient(135deg,${color}dd,${color}88,#1a0f05);padding:28px;text-align:center">
+      ${logoBlock}
+      <div style="font-size:26px;font-weight:900;color:#fff;letter-spacing:3px">${company}</div>
+      <div style="color:#fff;font-size:16px;font-weight:700;margin-top:14px">Vista previa del encabezado</div>
+    </td></tr>
+    <tr><td style="background:#fff;padding:24px 28px">
+      <p style="font-size:14px;color:#1a1a1a">Este es el cuerpo del correo. El contenido real variará según la plantilla.</p>
+    </td></tr>
+    <tr><td style="background:#1a0f05;padding:16px 28px;text-align:center;color:#555;font-size:11px">
+      ${company} — Sistema de Comunicaciones
+    </td></tr>
+  </table>
+</td></tr>
+</table></body></html>`;
+  document.getElementById('emailPreview').srcdoc = html;
+}
+
+/* ════════════════════════════════
+   ENVÍO MANUAL
+════════════════════════════════ */
+function seleccionarPlantilla() {
+  const tpl  = val('manTemplate');
+  const wrap = document.getElementById('manHtmlWrap');
+  wrap.style.display = '';
+  if (!tpl || tpl === 'prueba') return;
+  const saved = obtenerPlantilla(tpl, 'email');
+  document.getElementById('manSubject').value = saved.asunto || '';
+  document.getElementById('manHtml').value = saved.cuerpo || '';
+}
+
+function poblarPlantillasManual() {
+  /* Llena el select del Envío manual con TODAS las plantillas de TODOS los
+     módulos agrupadas por <optgroup>. Así Daniel puede mandar prueba de
+     cualquiera (transporte, retiros, mantenciones, comunicación interna)
+     sin tener que cambiar de tab primero.
+     2026-05-21: antes sólo cargaba TPL_ESTADOS (transporte) — quedaban
+     ocultas las plantillas nuevas (visita_proxima, factura_pendiente,
+     garantia_por_vencer, contrato_por_vencer, etc.). */
+  const select = document.getElementById('manTemplate');
+  if (!select || select.dataset.loaded === '1') return;
+
+  const grupos = [
+    { label:'Transporte',           lista:TPL_ESTADOS_TRANSPORTE },
+    { label:'Cotizaciones Transporte', lista:TPL_ESTADOS_COTIZACIONES_TRANSPORTE },
+    { label:'Retiros',              lista:TPL_ESTADOS_RETIROS },
+    { label:'Mantenciones',         lista:TPL_ESTADOS_MANTENCIONES },
+    { label:'Comunicación interna', lista:TPL_ESTADOS_COMUNICACION_INTERNA },
+    { label:'Tickets',              lista:TPL_ESTADOS_TICKETS },
+    { label:'Catálogo',             lista:TPL_ESTADOS_CATALOGO },
+  ];
+  grupos.forEach(g => {
+    if (!g.lista || !g.lista.length) return;
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    g.lista.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.key;
+      opt.textContent = e.label;
+      og.appendChild(opt);
+    });
+    select.appendChild(og);
+  });
+  select.dataset.loaded = '1';
+}
+
+function obtenerPlantilla(estado, canal) {
+  const dbVal = ((_tplData[estado] || {})[canal]) || null;
+  const defVal = ((TPL_DEFAULTS[estado] || {})[canal]) || {};
+  return (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+}
+
+async function enviarManual() {
+  const msg     = document.getElementById('manMsg');
+  const btn     = document.querySelector('button[onclick="enviarManual()"]');
+  const to      = val('manTo').trim();
+  const subject = val('manSubject').trim();
+  const tpl     = val('manTemplate');
+  let   html    = val('manHtml').trim();
+  if (!to || !subject) {
+    msg.innerHTML = '<span class="text-danger">Completa destinatario y asunto</span>';
+    return;
+  }
+  if (!tpl && !html) {
+    msg.innerHTML = '<span class="text-danger">Selecciona una plantilla o escribe HTML</span>';
+    return;
+  }
+  // Plantilla "prueba" usa el endpoint SMTP test (síncrono y rápido)
+  if (tpl === 'prueba') {
+    msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Enviando…';
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch('/comunicaciones/smtp/test', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({to})
+      });
+      const d = await r.json();
+      msg.innerHTML = d.ok
+        ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>¡Enviado correctamente!</span>'
+        : `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d.error||'Error')}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+  // Plantilla custom HTML → envío async + polling
+  await _enviarEmailAsync({to, subject, html, msgEl: msg, btnEl: btn});
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ENVÍO ASYNC + POLLING — usado por "Enviar ahora" y
+   "Enviar prueba" desde el modal de plantillas.
+   El backend devuelve un job_id inmediato; aquí hacemos polling
+   cada 2s al endpoint /api/comm/email-job/<id>/status hasta que
+   el job termine (sent | failed) o se cumpla el timeout de 60s.
+   ────────────────────────────────────────────────────────────── */
+async function _enviarEmailAsync({to, subject, html, msgEl, btnEl, maxWaitMs}) {
+  const max = maxWaitMs || 60000;
+  if (msgEl) msgEl.innerHTML =
+    '<div class="spinner-border spinner-border-sm text-danger me-1"></div>'
+    + '<span class="text-muted">Encolando envío…</span>';
+  if (btnEl) btnEl.disabled = true;
+
+  let pollTimer = null;
+  let cancelado = false;
+
+  const _finish = (htmlMsg) => {
+    if (msgEl) msgEl.innerHTML = htmlMsg;
+    if (btnEl) btnEl.disabled = false;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  };
+
+  try {
+    // 1) POST → encolamos en backend (responde <500ms)
+    const r0 = await fetch('/comunicaciones/email/enviar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({to, subject, html, wrap:true})
+    });
+    const d0 = await r0.json();
+    if (!d0.ok || !d0.job_id) {
+      _finish(`<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${esc(d0.error || 'No se pudo encolar el envío')}</span>`);
+      return;
+    }
+    const jobId = d0.job_id;
+    if (msgEl) msgEl.innerHTML =
+      '<div class="spinner-border spinner-border-sm text-danger me-1"></div>'
+      + `<span class="text-muted">Enviando… <span class="text-secondary small">(job #${jobId})</span></span>`;
+
+    // 2) Polling cada 2s
+    const t0 = Date.now();
+    pollTimer = setInterval(async () => {
+      if (cancelado) return;
+      const tEl = Date.now() - t0;
+      if (tEl > max) {
+        cancelado = true;
+        _finish('<span class="text-warning"><i class="bi bi-clock-history me-1"></i>'
+          + 'Tomando más tiempo de lo normal. Revisa el Log de envíos abajo.</span>');
+        if (typeof ilusAlert === 'function') {
+          try {
+            await ilusAlert({
+              title: 'Envío demorado',
+              message: 'El correo lleva más de 60 segundos procesando. '
+                     + 'Probablemente Gmail está bloqueando el envío o las credenciales SMTP están vencidas.',
+              sub: 'Revisa "Log de envíos" más abajo para ver el resultado final, '
+                 + 'o pulsa "Test conexión SMTP" para diagnosticar.',
+              type: 'warning',
+            });
+          } catch(_e) {}
+        }
+        return;
+      }
+      try {
+        const r = await fetch(`/api/comm/email-job/${jobId}/status`, {cache: 'no-store'});
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j.status === 'sent') {
+          cancelado = true;
+          const secs = ((j.elapsed_ms||0) / 1000).toFixed(1);
+          _finish(`<span class="text-success"><i class="bi bi-check-circle me-1"></i>`
+            + `Enviado en ${secs}s a <strong>${esc(j.to||to)}</strong></span>`);
+          if (typeof ilusToast === 'function') {
+            ilusToast(`✓ Email enviado (${secs}s)`, {type:'success'});
+          }
+          // Refresca el indicador de salud SMTP (acaba de funcionar)
+          if (typeof refreshSmtpHealthBadge === 'function') refreshSmtpHealthBadge();
+        } else if (j.status === 'failed') {
+          cancelado = true;
+          const err = j.error_msg || 'Error desconocido';
+          _finish(`<span class="text-danger"><i class="bi bi-x-circle me-1"></i>`
+            + `Falló: <span class="small">${esc(err.slice(0,180))}</span></span>`);
+          if (typeof ilusAlert === 'function') {
+            try {
+              await ilusAlert({
+                title: 'No se pudo enviar el correo',
+                message: err.slice(0, 400),
+                sub: 'Pulsa "Test conexión SMTP" arriba para ver si las credenciales están vivas.',
+                type: 'error',
+              });
+            } catch(_e) {}
+          }
+          if (typeof refreshSmtpHealthBadge === 'function') refreshSmtpHealthBadge();
+        }
+        // si está 'queued' o 'sending', seguimos esperando
+      } catch (_e) {/* network hiccup; el próximo tick retoma */}
+    }, 2000);
+  } catch (exc) {
+    _finish(`<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Error de red: ${esc(exc.message||exc)}</span>`);
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   PLANTILLAS POR ESTADO
+════════════════════════════════════════════════════ */
+// Estados disponibles por MÓDULO
+const TPL_ESTADOS_TRANSPORTE = [
+  { key:'programado',    label:'Pedido programado',        icon:'bi-box-seam',         grupo:'despacho',
+    color:'#28a745', desc:'Se envía cuando el pedido queda ingresado y programado' },
+  { key:'en_ruta',       label:'En ruta',                  icon:'bi-truck',             grupo:'despacho',
+    color:'#007bff', desc:'Se envía cuando el pedido sale de bodega hacia el courier' },
+  { key:'en_camino',     label:'En camino (próximo)',       icon:'bi-geo-alt',           grupo:'despacho',
+    color:'#17a2b8', desc:'Se envía cuando el pedido está en reparto, llegará hoy' },
+  { key:'entregado',     label:'Entregado',                 icon:'bi-check-circle',      grupo:'despacho',
+    color:'#20c997', desc:'Se envía cuando el pedido fue entregado exitosamente' },
+  { key:'fallido',       label:'Problema con la entrega',   icon:'bi-x-circle',          grupo:'despacho',
+    color:'#dc3545', desc:'Se envía cuando un supervisor marca "Problema" a mano (motivo obligatorio) o el courier reporta una excepción de entrega' },
+];
+
+const TPL_ESTADOS_COTIZACIONES_TRANSPORTE = [
+  { key:'cotizacion_envio', label:'Envío de cotización',    icon:'bi-file-earmark-text', grupo:'cotizacion_transporte',
+    color:'#dc2626', desc:'Se envía al cliente con la cotización de transporte adjunta en PDF' },
+];
+
+const TPL_ESTADOS_RETIROS = [
+  { key:'solicitud_recibida', label:'Solicitud recibida',     icon:'bi-send-check',     grupo:'retiro',
+    color:'#3b82f6', desc:'Confirma al cliente que recibimos su solicitud (al crearse)' },
+  { key:'propuesta_enviada',  label:'Propuesta enviada',      icon:'bi-envelope-paper', grupo:'retiro',
+    color:'#f59e0b', desc:'Cuando ILUS propone una nueva fecha al cliente' },
+  { key:'agenda_confirmada',  label:'Agenda confirmada',      icon:'bi-calendar-check', grupo:'retiro',
+    color:'#22c55e', desc:'Cuando ambas partes acuerdan la fecha de retiro' },
+  { key:'en_preparacion',     label:'En preparación',         icon:'bi-box-seam',       grupo:'retiro',
+    color:'#0ea5e9', desc:'Aviso 24h antes — bodega ya está preparando' },
+  { key:'retirada',           label:'Retirada / Completada',  icon:'bi-check-circle-fill',grupo:'retiro',
+    color:'#16a34a', desc:'Confirma al cliente que el retiro se completó' },
+  { key:'reagendada',         label:'Reagendada',             icon:'bi-arrow-repeat',   grupo:'retiro',
+    color:'#7c3aed', desc:'Cuando se reagenda y se propone nueva fecha' },
+  { key:'rechazada',          label:'Rechazada / Cancelada',  icon:'bi-x-circle',       grupo:'retiro',
+    color:'#dc2626', desc:'Cuando la solicitud queda anulada' },
+  // 2026-07-25 (auditoría Comunicaciones): estos 2 estados SÍ existen y se
+  // envían de verdad (ver pickups_module._build_retiro_email_templates /
+  // _KIND_TO_ESTADO) pero faltaban en esta lista -- Daniel nunca podía
+  // verlos ni editarlos desde /comunicaciones aunque el correo real ya
+  // usaba su contenido sembrado en BD.
+  { key:'informacion_incompleta', label:'Información incompleta', icon:'bi-exclamation-triangle', grupo:'retiro',
+    color:'#f59e0b', desc:'Cuando faltan datos de documento/contacto/persona autorizada para avanzar' },
+  { key:'recordatorio_24h',   label:'Recordatorio 24h antes', icon:'bi-alarm',          grupo:'retiro',
+    color:'#fb923c', desc:'Recordatorio automático el día antes de la fecha confirmada' },
+];
+
+const TPL_ESTADOS_MANTENCIONES = [
+  { key:'visita_agendada',      label:'Visita agendada',        icon:'bi-calendar-check',   grupo:'mantencion',
+    color:'#dc2626', desc:'Aviso al cliente cuando se agenda visita técnica' },
+  { key:'ot_asignada',          label:'OT asignada a técnico',  icon:'bi-person-check',     grupo:'mantencion',
+    color:'#f59e0b', desc:'Cuando se asigna una orden de trabajo a un técnico' },
+  { key:'recordatorio_visita',  label:'Recordatorio visita',    icon:'bi-bell',             grupo:'mantencion',
+    color:'#fb923c', desc:'Recordatorio 24h antes de la visita programada' },
+  { key:'ot_completada',        label:'OT completada',          icon:'bi-check-circle-fill',grupo:'mantencion',
+    color:'#16a34a', desc:'Cuando se completa la visita y se firma la OT' },
+  { key:'visita_proxima',       label:'Visita próxima',         icon:'bi-clock-history',    grupo:'mantencion',
+    color:'#0ea5e9', desc:'Aviso cuando la próxima visita programada está cerca' },
+  { key:'factura_pendiente',    label:'Factura pendiente',      icon:'bi-receipt',          grupo:'mantencion',
+    color:'#f43f5e', desc:'Recordatorio de factura sin pago' },
+  { key:'garantia_por_vencer',  label:'Garantía por vencer',    icon:'bi-shield-exclamation',grupo:'mantencion',
+    color:'#eab308', desc:'Aviso cuando la garantía del equipo se acerca al vencimiento' },
+  { key:'contrato_por_vencer',  label:'Contrato por vencer',    icon:'bi-file-earmark-text',grupo:'mantencion',
+    color:'#7c3aed', desc:'Aviso cuando el contrato de servicio se acerca al término' },
+  // 2026-07-25 (auditoría Comunicaciones): 'plan_propuesto' SÍ se envía de
+  // verdad (POST /mantenciones/api/clientes/<cid>/proponer-plan-email, ver
+  // _mant_plan_propuesto_seed en app.py) y ya tiene su propio
+  // _ensure_comm_template_plan_propuesto -- pero faltaba en esta lista, así
+  // que Daniel no podía verla ni editarla desde /comunicaciones.
+  { key:'plan_propuesto',      label:'Propuesta de plan anual', icon:'bi-calendar2-week', grupo:'mantencion',
+    color:'#0a0a0a', desc:'Propuesta de fechas de mantención del año enviada desde la ficha del cliente' },
+];
+
+const TPL_ESTADOS_COMUNICACION_INTERNA = [
+  { key:'usuario_nuevo',       label:'Crear usuario nuevo',     icon:'bi-person-plus',  grupo:'interna',
+    color:'#dc2626', desc:'Email + WhatsApp de bienvenida al crear cuenta nueva' },
+  { key:'cambio_clave',        label:'Cambio de contraseña',    icon:'bi-key',          grupo:'interna',
+    color:'#fd7e14', desc:'Solicitud para cambiar la contraseña del usuario (link de reset)' },
+  { key:'olvido_contrasena',   label:'Olvido de contraseña',    icon:'bi-shield-lock',  grupo:'interna',
+    color:'#6f42c1', desc:'Link de recuperación cuando el usuario olvidó su clave' },
+  { key:'inicio_sesion',       label:'Inicio de sesión',        icon:'bi-box-arrow-in-right', grupo:'interna',
+    color:'#0ea5e9', desc:'Aviso de seguridad cuando se inicia sesión en la cuenta' },
+  { key:'cambio_pass',         label:'Contraseña actualizada',  icon:'bi-shield-check', grupo:'interna',
+    color:'#16a34a', desc:'Confirmación al usuario de que su contraseña fue actualizada' },
+];
+
+// 2026-07-12 (Daniel): "falta la plantilla de ticket asignado... tienes que
+// asociar estas plantillas con lo que estamos enviando, algo completamente
+// editable en el front". Esta lista estaba desactualizada -- el backend
+// (_tickets_tpl_seed, app.py) ya sembraba en_curso/pendiente/ot_generada/
+// ot_en_curso/cancelado hace rato, pero nunca se agregaron aqui, asi que
+// Daniel jamas pudo verlas ni editarlas desde Comunicaciones. Se completa
+// el set 1:1 con el backend + se agrega 'asignacion' (nueva, va al
+// STAFF asignado, no al cliente).
+const TPL_ESTADOS_TICKETS = [
+  { key:'creacion',    label:'Ticket creado',           icon:'bi-ticket-detailed',   grupo:'tickets',
+    color:'#3b82f6', desc:'Confirma al cliente que su solicitud quedó registrada (al crearse)' },
+  { key:'respuesta',   label:'Respuesta al cliente',    icon:'bi-reply-fill',        grupo:'tickets',
+    color:'#dc2626', desc:'Usada cuando el equipo responde manualmente desde la ficha del ticket' },
+  { key:'asignacion',  label:'Ticket asignado',         icon:'bi-person-check-fill', grupo:'tickets',
+    color:'#3b82f6', desc:'Va al TÉCNICO/EJECUTIVO recién asignado (no al cliente) — variables: {{destinatario}}, {{numero_ticket}}, {{extracto}}' },
+  { key:'en_curso',    label:'Ticket en curso',         icon:'bi-play-circle-fill', grupo:'tickets',
+    color:'#3b82f6', desc:'Aviso cuando el ticket pasa a En Curso' },
+  { key:'pendiente',   label:'Ticket pendiente',        icon:'bi-hourglass-split', grupo:'tickets',
+    color:'#f59e0b', desc:'Aviso cuando el ticket queda Pendiente (falta información del cliente)' },
+  { key:'ot_generada', label:'OT generada',             icon:'bi-clipboard2-plus-fill', grupo:'tickets',
+    color:'#3b82f6', desc:'Aviso cuando se genera una Orden de Trabajo desde el ticket' },
+  { key:'ot_en_curso', label:'Técnico en terreno',      icon:'bi-geo-alt-fill',   grupo:'tickets',
+    color:'#0d9488', desc:'Aviso cuando el técnico inicia la OT en terreno' },
+  { key:'resuelto',    label:'Ticket resuelto',         icon:'bi-check-circle-fill', grupo:'tickets',
+    color:'#16a34a', desc:'Aviso cuando el ticket pasa a estado Resuelto' },
+  { key:'cerrado',     label:'Ticket cerrado',          icon:'bi-lock-fill',      grupo:'tickets',
+    color:'#6b7280', desc:'Aviso cuando el ticket pasa a estado Cerrado' },
+  { key:'cancelado',   label:'Ticket cancelado',        icon:'bi-x-circle-fill', grupo:'tickets',
+    color:'#dc2626', desc:'Aviso cuando el ticket se cancela' },
+  { key:'cotizacion_envio', label:'Envío de cotización', icon:'bi-file-earmark-pdf-fill', grupo:'tickets',
+    color:'#dc2626', desc:'Correo al enviar una cotización (adjunta el PDF) — variables: {{numero_cotizacion}}, {{empresa}}, {{total}}, {{valida_hasta}}, {{mensaje}}' },
+];
+
+const TPL_ESTADOS_CATALOGO = [
+  { key:'manual_envio', label:'Envío de manual', icon:'bi-file-earmark-pdf-fill', grupo:'catalogo',
+    color:'#dc2626', desc:'Correo al enviar el manual PDF de un producto (adjunta el PDF) — variables: {{sku}}, {{producto}}, {{manual_nombre}}, {{mensaje}}' },
+];
+
+const TPL_ESTADOS_GENERAL = [
+  { key:'comunicado',   label:'Comunicado',    icon:'bi-megaphone',   grupo:'general',
+    color:'#dc2626', desc:'Comunicado general a clientes (texto libre con el diseño ILUS)' },
+  { key:'aviso',        label:'Aviso',         icon:'bi-info-circle', grupo:'general',
+    color:'#f59e0b', desc:'Aviso puntual (mantención de sistema, cambios, novedades)' },
+  { key:'recordatorio', label:'Recordatorio',  icon:'bi-bell',        grupo:'general',
+    color:'#3b82f6', desc:'Recordatorio general (texto libre con el diseño ILUS)' },
+];
+
+// Devuelve los estados según el módulo seleccionado en la UI
+function getCurrentModulo(){
+  const sel = document.getElementById('tplModuloSelected');
+  return sel ? sel.value : 'transporte';
+}
+function getEstadosForModulo(){
+  const m = getCurrentModulo();
+  if (m === 'transporte_cotizaciones') return TPL_ESTADOS_COTIZACIONES_TRANSPORTE;
+  if (m === 'retiros')              return TPL_ESTADOS_RETIROS;
+  if (m === 'mantenciones')         return TPL_ESTADOS_MANTENCIONES;
+  if (m === 'comunicacion_interna') return TPL_ESTADOS_COMUNICACION_INTERNA;
+  if (m === 'tickets')              return TPL_ESTADOS_TICKETS;
+  if (m === 'catalogo')             return TPL_ESTADOS_CATALOGO;
+  if (m === 'general')              return TPL_ESTADOS_GENERAL;
+  return TPL_ESTADOS_TRANSPORTE;
+}
+
+// Selección de módulo desde las cards
+function seleccionarModulo(mod, cardEl){
+  const hidden = document.getElementById('tplModuloSelected');
+  if (hidden) hidden.value = mod;
+  // Actualiza visual de cards
+  document.querySelectorAll('.tpl-modulo-card').forEach(c => c.classList.remove('active'));
+  if (cardEl) cardEl.classList.add('active');
+  cargarPlantillas(true);
+}
+
+// Variable global compatibilidad — siempre apunta al módulo actual
+let TPL_ESTADOS = TPL_ESTADOS_TRANSPORTE;
+
+const TPL_VARS = {
+  despacho: [
+    { v:'{{nombre_cliente}}',    label:'Nombre cliente' },
+    { v:'{{id_pedido}}',         label:'ID Pedido' },
+    { v:'{{courier}}',           label:'Courier' },
+    { v:'{{numero_seguimiento}}',label:'N° Seguimiento' },
+    { v:'{{direccion_entrega}}', label:'Dirección entrega' },
+    { v:'{{fecha_entrega}}',     label:'Fecha estimada' },
+    { v:'{{costo_envio}}',       label:'Costo envío' },
+    { v:'{{motivo_falla}}',      label:'Motivo falla' },
+  ],
+  sistema: [
+    { v:'{{nombre_usuario}}', label:'Nombre usuario' },
+    { v:'{{email_usuario}}',  label:'Email usuario' },
+    { v:'{{fecha_hora}}',     label:'Fecha y hora' },
+    { v:'{{ip_acceso}}',      label:'IP de acceso' },
+  ],
+  retiro: [
+    { v:'{{code}}',             label:'Código retiro (RET-XXXX)' },
+    { v:'{{cliente}}',          label:'Razón social cliente' },
+    { v:'{{persona_retira}}',   label:'Persona autorizada' },
+    { v:'{{fecha_solicitada}}', label:'Fecha solicitada' },
+    { v:'{{fecha_propuesta}}',  label:'Fecha propuesta por ILUS' },
+    { v:'{{fecha_confirmada}}', label:'Fecha confirmada' },
+    { v:'{{horario}}',          label:'Horario (desde - hasta)' },
+    { v:'{{documento}}',        label:'Documento (factura/boleta)' },
+    { v:'{{n_bultos}}',         label:'Cantidad de bultos' },
+    { v:'{{kg}}',               label:'Peso (kg)' },
+    { v:'{{m3}}',               label:'Volumen (m³)' },
+    { v:'{{warehouse_name}}',   label:'Nombre bodega' },
+    { v:'{{warehouse_addr}}',   label:'Dirección bodega' },
+    { v:'{{link_seguimiento}}', label:'Link de seguimiento' },
+  ],
+  mantencion: [
+    { v:'{{ot}}',               label:'N° Orden trabajo' },
+    { v:'{{cliente}}',          label:'Razón social cliente' },
+    { v:'{{tecnico}}',          label:'Nombre del técnico' },
+    { v:'{{fecha}}',            label:'Fecha visita' },
+    { v:'{{horario}}',          label:'Horario' },
+    { v:'{{direccion}}',        label:'Dirección visita' },
+    { v:'{{tipo_mantencion}}',  label:'Tipo de mantención' },
+    { v:'{{maquina}}',          label:'Equipo / Máquina' },
+    { v:'{{link_ot}}',          label:'Link a la OT' },
+  ],
+  interna: [
+    { v:'{{nombre_usuario}}',   label:'Nombre del usuario' },
+    { v:'{{email_usuario}}',    label:'Email del usuario' },
+    { v:'{{rol}}',              label:'Rol asignado' },
+    { v:'{{link_acceso}}',      label:'Link para crear/cambiar clave' },
+    { v:'{{fecha_hora}}',       label:'Fecha y hora' },
+    { v:'{{ip_acceso}}',        label:'IP de acceso' },
+    { v:'{{creado_por}}',       label:'Quien creó la cuenta' },
+  ],
+  general: [
+    { v:'{{cliente}}',  label:'Nombre / razón social' },
+    { v:'{{titulo}}',   label:'Título del comunicado' },
+    { v:'{{mensaje}}',  label:'Mensaje (texto libre)' },
+  ],
+  tickets: [
+    { v:'{{cliente}}',       label:'Nombre de contacto / empresa' },
+    { v:'{{numero_ticket}}', label:'N° de ticket (TK-AAAA-NNNNN)' },
+    { v:'{{mensaje}}',       label:'Mensaje (solo en "Respuesta al cliente")' },
+    { v:'{{destinatario}}',  label:'Nombre del asignado (solo en "Ticket asignado")' },
+    { v:'{{extracto}}',      label:'Extracto del título (solo en "Ticket asignado")' },
+  ],
+};
+
+// ── Helper: construye el HTML completo del email con diseño oficial ILUS ──
+function _buildEmailHtml(titulo, cuerpo) {
+  // Logo: usa la imagen configurada (base64) o cae al CDN oficial
+  const logoSrc = _logoBase64 ||
+    'https://ilusfitness.com/cdn/shop/files/Logo_ILUS_Fitness_Blanco_equipamiento_para_gimnasios.png';
+  const comp = val('ccCompany') || (window.COMM_DATA && window.COMM_DATA.companyName) || 'ILUS Fitness';
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f2f4;font-family:Arial,Helvetica,sans-serif;color:#111827">
+
+<div style="max-width:600px;margin:24px auto;background:#ffffff;border-radius:12px;
+            overflow:hidden;border-top:4px solid #e30613;box-shadow:0 6px 20px rgba(15,23,42,.10)">
+
+  <!-- HEADER: negro + logo grande (maestro ILUS) -->
+  <div style="background:#050505;padding:30px 28px;text-align:center">
+    <a href="https://ilusfitness.com" target="_blank" style="display:inline-block"><img src="${logoSrc}" alt="${comp}"
+         style="width:306px;max-width:88%;height:auto;display:block;margin:0 auto;object-fit:contain"></a>
+  </div>
+
+  <!-- TÍTULO: banda oscura -->
+  <div style="background:#0a0a0a;color:#fff;text-align:center;padding:26px 32px">
+    <h1 style="margin:0;font-size:21px;line-height:1.3;font-weight:800">${titulo}</h1>
+  </div>
+
+  <!-- CONTENIDO -->
+  <div style="padding:32px 30px;font-size:14px;color:#111827;line-height:1.6">
+    ${cuerpo}
+  </div>
+
+  <!-- FOOTER: negro + botón de soporte (maestro ILUS) -->
+  <div style="background:#050505;padding:26px 32px;text-align:center">
+    <a href="https://ilusfitness.com/pages/soporte-tecnico"
+       style="display:inline-block;background:#e30613;color:#ffffff;text-decoration:none;
+              font-weight:700;font-size:13px;padding:11px 24px;border-radius:8px">
+      Crear ticket de soporte
+    </a>
+    <div style="margin-top:16px;font-size:11px;color:#6b7280">
+      ${comp} · Equipamiento profesional para alto rendimiento
+    </div>
+  </div>
+
+</div>
+</body></html>`;
+}
+
+// ── Plantillas por defecto — HTML inline para email, texto WA con formato ──
+const TPL_DEFAULTS = {
+
+  // ─── PEDIDO PROGRAMADO ───────────────────────────────────────────────────
+  programado: {
+    email: {
+      asunto: 'Tu pedido {{id_pedido}} ha sido programado — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu pedido ha sido <strong>programado exitosamente</strong> y está siendo preparado en nuestra bodega. Te notificaremos cuando salga a despacho.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #CC0000;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; <span style="color:#CC0000;font-weight:700">{{id_pedido}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entrega estimada:</strong>&nbsp; {{fecha_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Costo despacho:</strong>&nbsp; {{costo_envio}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Te enviaremos un nuevo aviso cuando tu pedido salga de bodega con el número de seguimiento.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '📦 *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido ha sido programado exitosamente ✅\n\n🔖 *N° Pedido:* {{id_pedido}}\n🚛 *Courier:* {{courier}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Dirección:* {{direccion_entrega}}\n💰 *Costo despacho:* {{costo_envio}}\n\nTe avisaremos cuando salga de bodega. ¡Gracias por elegirnos! 💪'
+    }
+  },
+
+  // ─── EN RUTA ─────────────────────────────────────────────────────────────
+  en_ruta: {
+    email: {
+      asunto: 'Tu pedido {{id_pedido}} está en ruta — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Buenas noticias! Tu pedido <strong>{{id_pedido}}</strong> ya salió de bodega y está en camino contigo a través de <strong>{{courier}}</strong>.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #007bff;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; <span style="color:#007bff;font-weight:700">{{numero_seguimiento}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entrega estimada:</strong>&nbsp; {{fecha_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Puedes rastrear tu envío usando el N° de seguimiento en el sitio web del courier.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🚚 *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido ya está *en ruta* 🟢\n\n🔖 *N° Pedido:* {{id_pedido}}\n🏢 *Courier:* {{courier}}\n🔍 *N° Seguimiento:* {{numero_seguimiento}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Destino:* {{direccion_entrega}}\n\nPuedes rastrear tu envío con el número de seguimiento. ¡Ya falta poco! 📦'
+    }
+  },
+
+  // ─── EN CAMINO (PRÓXIMO) ─────────────────────────────────────────────────
+  en_camino: {
+    email: {
+      asunto: '¡Tu pedido {{id_pedido}} llega HOY! — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Tu pedido <strong>{{id_pedido}}</strong> está en reparto y llegará <strong style="color:#CC0000">HOY</strong> a tu domicilio! Asegúrate de que alguien pueda recibirlo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #17a2b8;border-radius:4px;padding:14px 18px;margin:18px 0 16px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección de entrega:</strong>&nbsp; <strong>{{direccion_entrega}}</strong></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; {{numero_seguimiento}}</td></tr>\n</table>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">⚠️ <strong>Importante:</strong> Si no hay nadie para recibir el pedido, el courier podría reprogramar la entrega al día siguiente hábil.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛵 *ILUS Sport & Health*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* está *EN REPARTO* y llegará *HOY* 🎉\n\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\n⚠️ Asegúrate de que alguien pueda recibir el pedido. ¡Ya está llegando!'
+    }
+  },
+
+  // ─── ENTREGADO ───────────────────────────────────────────────────────────
+  entregado: {
+    email: {
+      asunto: '✅ Pedido {{id_pedido}} entregado con éxito — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Excelente! Tu pedido <strong>{{id_pedido}}</strong> ha sido <strong style="color:#20c997">entregado exitosamente</strong>. Esperamos que disfrutes tu equipamiento al máximo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #20c997;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entregado en:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; {{numero_seguimiento}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">¡Gracias por confiar en <strong>ILUS Sport &amp; Health</strong>! Estamos siempre disponibles si necesitas apoyo con tu equipo.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '✅ *ILUS Sport & Health*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* fue *entregado exitosamente* 🎊\n\n📍 *Entregado en:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\nGracias por confiar en ILUS Sport & Health. ¡Que disfrutes tu equipamiento! 💪🏋️'
+    }
+  },
+
+  // ─── FALLIDO / NO ENTREGADO ──────────────────────────────────────────────
+  fallido: {
+    email: {
+      asunto: '⚠️ Hubo un problema con la entrega de tu pedido {{id_pedido}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Te contamos que hubo un problema con la entrega de tu pedido <strong>{{id_pedido}}</strong> en el intento realizado.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff5f5;border-left:4px solid #dc3545;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">¿Qué pasó?:</strong>&nbsp; <span style="color:#dc3545;font-weight:600">{{motivo_falla}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección intentada:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">Nuestro equipo se pondrá en contacto contigo para resolverlo y coordinar una nueva fecha de entrega. Disculpa los inconvenientes ocasionados.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '⚠️ *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, hubo un problema con la entrega de tu pedido *{{id_pedido}}*.\n\n❌ *¿Qué pasó?:* {{motivo_falla}}\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n\nNos comunicaremos contigo para resolverlo y reagendar la entrega. Pedimos disculpas por el inconveniente. 🙏'
+    }
+  },
+
+  // ─── INICIO DE SESIÓN ────────────────────────────────────────────────────
+  inicio_sesion: {
+    email: {
+      asunto: '🔐 Nuevo inicio de sesión detectado — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Hemos detectado un nuevo inicio de sesión en tu cuenta del sistema de gestión ILUS.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6f42c1;border-radius:4px;padding:14px 18px;margin:18px 0 16px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de acceso:</strong>&nbsp; {{ip_acceso}}</td></tr>\n</table>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 Si reconoces esta actividad, puedes ignorar este mensaje. Si <strong>no fuiste tú</strong>, cambia tu contraseña de inmediato y contacta al administrador del sistema.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🔐 *ILUS — Alerta de seguridad*\n\nHola *{{nombre_usuario}}*, se detectó un inicio de sesión en tu cuenta.\n\n🕐 *Fecha:* {{fecha_hora}}\n🌐 *IP:* {{ip_acceso}}\n📧 *Cuenta:* {{email_usuario}}\n\nSi fuiste tú, ignora este mensaje.\nSi *no fuiste tú*, cambia tu contraseña de inmediato. 🚨'
+    }
+  },
+
+  // ─── CAMBIO DE CONTRASEÑA ────────────────────────────────────────────────
+  cambio_pass: {
+    email: {
+      asunto: '🔑 Tu contraseña fue actualizada — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">La contraseña de tu cuenta en el sistema de gestión ILUS fue <strong>actualizada exitosamente</strong>.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;border-radius:4px;padding:14px 18px;margin:18px 0 16px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>\n</table>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 Si realizaste este cambio, no es necesaria ninguna acción. Si <strong>no reconoces este cambio</strong>, contacta al administrador del sistema de inmediato.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, tu contraseña fue actualizada el *{{fecha_hora}}*.\n\n📧 *Cuenta:* {{email_usuario}}\n\nSi realizaste este cambio, no es necesaria ninguna acción.\nSi *no fuiste tú*, contacta al administrador de inmediato. 🚨'
+    }
+  },
+
+  // ─── VISITA PRÓXIMA ──────────────────────────────────────────────────────
+  visita_proxima: {
+    email: {
+      asunto: 'Visita técnica próxima · {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Te recordamos que tienes una <strong>visita técnica próxima</strong> agendada con nuestro equipo de mantenimiento.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #0ea5e9;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° OT:</strong>&nbsp; {{ot}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha:</strong>&nbsp; {{fecha}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Horario:</strong>&nbsp; {{horario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; {{tecnico}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Dirección:</strong>&nbsp; {{direccion}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Si necesitas reagendar la visita, responde a este correo o contáctanos por nuestros canales oficiales.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛠️ *ILUS Sport & Health*\n\nHola *{{cliente}}*, te recordamos tu visita técnica próxima:\n\n🔖 *OT:* {{ot}}\n📅 *Fecha:* {{fecha}}\n🕐 *Horario:* {{horario}}\n👤 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}\n\nSi necesitas reagendar, responde este mensaje.'
+    }
+  },
+
+  // ─── FACTURA PENDIENTE ───────────────────────────────────────────────────
+  factura_pendiente: {
+    email: {
+      asunto: 'Factura pendiente de pago — {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Te informamos que registras una <strong>factura pendiente de pago</strong> en nuestro sistema. Te invitamos a regularizar a la brevedad para mantener activos tus servicios.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff5f5;border-left:4px solid #f43f5e;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Documento:</strong>&nbsp; {{documento}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha vencimiento:</strong>&nbsp; <span style="color:#f43f5e;font-weight:700">{{fecha}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Razón social:</strong>&nbsp; {{razon_social}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">RUT:</strong>&nbsp; {{rut}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Si ya realizaste el pago, ignora este mensaje. Para cualquier consulta puedes responder este correo.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '💳 *ILUS Sport & Health*\n\nHola *{{cliente}}*, registras una factura pendiente de pago.\n\n📄 *Documento:* {{documento}}\n📅 *Vencimiento:* {{fecha}}\n🏢 *Razón social:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n\nSi ya pagaste, ignora este mensaje. Cualquier duda, escríbenos.'
+    }
+  },
+
+  // ─── GARANTÍA POR VENCER ─────────────────────────────────────────────────
+  garantia_por_vencer: {
+    email: {
+      asunto: 'Garantía de equipo por vencer — {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">La <strong>garantía de uno de tus equipos</strong> está por vencer. Te invitamos a revisar la información a continuación y considerar la renovación o un servicio de mantenimiento preventivo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#fffbeb;border-left:4px solid #eab308;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Vence:</strong>&nbsp; <span style="color:#eab308;font-weight:700">{{fecha}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Ubicación:</strong>&nbsp; {{direccion}}</td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Nuestro equipo comercial puede contactarte para ofrecerte alternativas de renovación o un plan de servicio técnico.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛡️ *ILUS Sport & Health*\n\nHola *{{cliente}}*, la garantía de tu equipo *{{maquina}}* está por vencer.\n\n📅 *Vencimiento:* {{fecha}}\n📍 *Ubicación:* {{direccion}}\n\nResponde este mensaje si deseas conocer opciones de renovación o un plan de mantenimiento.'
+    }
+  },
+
+  // ─── CONTRATO POR VENCER ─────────────────────────────────────────────────
+  contrato_por_vencer: {
+    email: {
+      asunto: 'Contrato de servicio por vencer — {{cliente}} — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu <strong>contrato de servicio</strong> con ILUS Sport &amp; Health está próximo a vencer. Te invitamos a coordinar la renovación para mantener la cobertura continua de tus equipos.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; {{razon_social}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">RUT:</strong>&nbsp; {{rut}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Vence:</strong>&nbsp; <span style="color:#7c3aed;font-weight:700">{{fecha}}</span></td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Nuestro equipo te contactará pronto para revisar las condiciones. Si prefieres adelantar la gestión, responde este correo.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '📄 *ILUS Sport & Health*\n\nHola *{{cliente}}*, tu contrato de servicio está próximo a vencer.\n\n🏢 *Cliente:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n📅 *Vence:* {{fecha}}\n\nNuestro equipo te contactará para coordinar la renovación.'
+    }
+  },
+
+  // ─── USUARIO NUEVO (BIENVENIDA) ──────────────────────────────────────────
+  usuario_nuevo: {
+    email: {
+      asunto: 'Bienvenido al sistema ILUS — Activa tu cuenta',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu cuenta en el sistema de gestión <strong>ILUS Sport &amp; Health</strong> fue creada por <strong>{{creado_por}}</strong>. Estás a un paso de empezar a usarla.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Usuario:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Rol asignado:</strong>&nbsp; <span style="color:#dc2626;font-weight:700">{{rol}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Creado por:</strong>&nbsp; {{creado_por}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Crear mi contraseña →</a>\n</div>\n<p style="margin:0;font-size:12px;color:#888;line-height:1.5">El enlace es válido por 24 horas. Si no creaste esta cuenta, ignora este mensaje o contacta al administrador.</p>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🎉 *ILUS Sport & Health*\n\nHola *{{nombre_usuario}}*, tu cuenta fue creada por *{{creado_por}}*.\n\n📧 *Usuario:* {{email_usuario}}\n🎯 *Rol:* {{rol}}\n\nActiva tu cuenta y crea tu contraseña aquí:\n{{link_acceso}}\n\nEnlace válido por 24 horas.'
+    }
+  },
+
+  // ─── CAMBIO DE CONTRASEÑA (SOLICITUD / RESET) ────────────────────────────
+  cambio_clave: {
+    email: {
+      asunto: 'Cambio seguro de contraseña — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Recibimos una solicitud para <strong>cambiar la contraseña</strong> de tu cuenta en el sistema de gestión ILUS. Si fuiste tú, haz click en el botón para establecer una nueva.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de origen:</strong>&nbsp; {{ip_acceso}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Cambiar contraseña →</a>\n</div>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 El enlace es válido por <strong>60 minutos</strong>. Si <strong>no solicitaste</strong> este cambio, ignora este mensaje — tu contraseña actual sigue siendo válida.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, recibimos una solicitud para cambiar tu contraseña.\n\n📧 *Cuenta:* {{email_usuario}}\n🕐 *Fecha:* {{fecha_hora}}\n🌐 *IP:* {{ip_acceso}}\n\nUsa este enlace (válido por 60 min):\n{{link_acceso}}\n\nSi *no fuiste tú*, ignora este mensaje.'
+    }
+  },
+
+  // ─── OLVIDO DE CONTRASEÑA (RECUPERACIÓN) ─────────────────────────────────
+  olvido_contrasena: {
+    email: {
+      asunto: 'Recupera el acceso a tu cuenta — ILUS',
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Indicaste que <strong>olvidaste tu contraseña</strong>. Para recuperar el acceso al sistema de gestión ILUS, haz click en el botón para crear una nueva.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6f42c1;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Solicitado el:</strong>&nbsp; {{fecha_hora}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">IP de origen:</strong>&nbsp; {{ip_acceso}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Recuperar mi contraseña →</a>\n</div>\n<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;font-size:13px;color:#664d03;margin-top:4px">🔒 El enlace es válido por <strong>60 minutos</strong>. Si <strong>no solicitaste</strong> recuperar tu contraseña, ignora este mensaje — tu contraseña actual no fue modificada.</div>'
+    },
+    whatsapp: {
+      asunto: '',
+      cuerpo: '🛡️ *ILUS — Recupera tu cuenta*\n\nHola *{{nombre_usuario}}*, indicaste que olvidaste tu contraseña.\n\n📧 *Cuenta:* {{email_usuario}}\n🕐 *Solicitado:* {{fecha_hora}}\n🌐 *IP:* {{ip_acceso}}\n\nRecupera tu acceso (válido por 60 min):\n{{link_acceso}}\n\nSi *no fuiste tú*, ignora este mensaje.'
+    }
+  },
+
+};
+
+let _tplData   = {};
+let _tplLoaded = false;
+let _tplEstado = null;
+let _tplCanal  = 'email';
+let _tplModeEdit = false;
+let _modalTplPreview, _modalTplPrueba;
+
+document.addEventListener('DOMContentLoaded', () => {
+  _modalTplPreview = new bootstrap.Modal(document.getElementById('modalTplPreview'));
+  _modalTplPrueba  = new bootstrap.Modal(document.getElementById('modalTplPrueba'));
+  const visual = document.getElementById('tplCuerpoVisual');
+  const htmlSrc = document.getElementById('tplCuerpoHtml');
+  if (visual && htmlSrc) {
+    visual.addEventListener('input', () => { htmlSrc.value = visual.innerHTML; });
+    htmlSrc.addEventListener('input', () => { visual.innerHTML = htmlSrc.value; });
+  }
+  cargarPlantillas();
+  // Cargar estado de la llave de paso al abrir la pestaña Plantillas
+  ksCargarEstado();
+  // Cargar el "correo que da la cara" (Reply-To de tickets)
+  tkCargarReplyTo();
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// TICKETS · Correo que da la cara (Reply-To de tickets) — editable en vivo
+// GET precarga el valor actual; PUT lo guarda en tk_settings (backend valida).
+// ══════════════════════════════════════════════════════════════════════
+async function tkCargarReplyTo() {
+  const input = document.getElementById('tkReplyToInput');
+  if (!input) return;
+  try {
+    const r = await fetch('/tickets/api/config/reply-to?t=' + Date.now(), { cache:'no-store' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      input.value = d.reply_to || '';
+    }
+  } catch (e) {
+    console.error('[tk] cargar reply-to', e);
+  }
+}
+
+async function tkGuardarReplyTo() {
+  const input = document.getElementById('tkReplyToInput');
+  const btn   = document.getElementById('tkReplyToSaveBtn');
+  if (!input) return;
+  const correo = (input.value || '').trim();
+  if (!correo) {
+    if (typeof ilusToast === 'function') ilusToast('Ingresa un correo antes de guardar.', { type:'warning' });
+    input.focus();
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/tickets/api/config/reply-to', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correo }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) {
+      throw new Error(d.error || 'No se pudo guardar');
+    }
+    input.value = d.reply_to || correo;
+    if (typeof ilusToast === 'function') {
+      ilusToast('✓ Correo que da la cara actualizado: ' + (d.reply_to || correo), { type:'success' });
+    }
+  } catch (e) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LLAVE DE PASO POR MÓDULO — UI handlers
+// ══════════════════════════════════════════════════════════════════════
+const KS_MODULOS_LABELS = {
+  transporte:           { label:'Transporte',           icon:'bi-truck' },
+  retiros:              { label:'Retiros',              icon:'bi-box-arrow-up' },
+  mantenciones:         { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
+  comunicacion_interna: { label:'Comunicación interna', icon:'bi-people' },
+  general:              { label:'General',              icon:'bi-folder' },
+  tickets:              { label:'Tickets',              icon:'bi-ticket-perforated' },
+  catalogo:             { label:'Catálogo',             icon:'bi-box-seam' },
+};
+const KS_CANAL_LABELS = {
+  email:    'Email',
+};
+
+let _ksData = null;
+
+async function ksCargarEstado(force=false) {
+  const tbody = document.getElementById('ksTableBody');
+  if (force && tbody) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
+      <div class="spinner-border spinner-border-sm text-danger me-1"></div>
+      Recargando…</td></tr>`;
+  }
+  try {
+    const r = await fetch('/api/comunicaciones/killswitch?t=' + Date.now(), { cache:'no-store' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        No se pudo cargar: ${esc(err.error || ('HTTP ' + r.status))}
+      </td></tr>`;
+      return;
+    }
+    _ksData = await r.json();
+    ksRenderTabla();
+    ksRenderBanner();
+    ksRenderCardIndicadores();
+  } catch (e) {
+    console.error('[ks] cargar estado', e);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">
+        Error de red al cargar el estado.</td></tr>`;
+    }
+  }
+}
+
+function ksRenderTabla() {
+  const tbody = document.getElementById('ksTableBody');
+  if (!tbody || !_ksData || !Array.isArray(_ksData.modulos)) return;
+
+  tbody.innerHTML = _ksData.modulos.map(m => {
+    const lbl     = KS_MODULOS_LABELS[m.modulo] || { label:m.label, icon:'bi-folder' };
+    const hasBlk  = m.email_bloqueado;
+    const motivoHtml = m.motivo
+      ? `<span class="ks-motivo-tag" title="${esc(m.motivo)}">${esc(m.motivo)}</span>`
+      : `<span class="text-muted">—</span>`;
+    const actHtml = m.actualizado_at
+      ? `<div>${esc(m.actualizado_at)}</div>
+         ${m.actualizado_por ? `<div class="ks-meta">por ${esc(m.actualizado_por)}</div>` : ''}`
+      : `<span class="text-muted ks-meta">—</span>`;
+    const cell = (canal, val) => `
+      <td class="ks-td-canal">
+        <button type="button"
+                class="ks-toggle${val ? ' blocked' : ''}"
+                aria-pressed="${val ? 'true' : 'false'}"
+                title="${val ? 'Bloqueado · click para abrir la llave' : 'Habilitado · click para cerrar la llave'}"
+                data-modulo="${esc(m.modulo)}"
+                data-canal="${canal}"
+                onclick="ksToggleClick(this)"></button>
+      </td>`;
+    // Botón único de acción rápida (igual que click en el toggle, pero más visible)
+    const btnTodos = hasBlk
+      ? `<button type="button" class="ks-row-btn ks-row-btn-libera"
+                 onclick="ksAccionMasiva('${esc(m.modulo)}', false)"
+                 title="Abrir la llave de email para ${esc(lbl.label)}">
+           <i class="bi bi-unlock-fill"></i> Liberar
+         </button>`
+      : `<button type="button" class="ks-row-btn"
+                 onclick="ksAccionMasiva('${esc(m.modulo)}', true)"
+                 title="Bloquear el email de ${esc(lbl.label)}">
+           <i class="bi bi-lock-fill"></i> Bloquear
+         </button>`;
+
+    return `
+      <tr class="${hasBlk ? 'has-block' : ''}" data-modulo="${esc(m.modulo)}">
+        <td>
+          <div class="ks-mod"><i class="bi ${lbl.icon}"></i>${esc(lbl.label)}</div>
+        </td>
+        ${cell('email', m.email_bloqueado)}
+        <td class="ks-td-motivo">${motivoHtml}</td>
+        <td class="ks-td-meta">${actHtml}</td>
+        <td class="text-end ks-actions">${btnTodos}</td>
+      </tr>`;
+  }).join('');
+}
+
+function ksRenderBanner() {
+  const banner = document.getElementById('ksWarningBanner');
+  const msg    = document.getElementById('ksWarningMsg');
+  if (!banner || !_ksData) return;
+  // Sólo email se considera para banner (WhatsApp/SMS retirados de la UI)
+  const bloqs = [];
+  _ksData.modulos.forEach(m => {
+    if (m.email_bloqueado) {
+      const lbl = (KS_MODULOS_LABELS[m.modulo] || {}).label || m.modulo;
+      bloqs.push(`<strong>${esc(lbl)}</strong>`);
+    }
+  });
+  if (bloqs.length) {
+    msg.innerHTML = `Los emails de estos módulos NO se están enviando: ${bloqs.join(' · ')}.
+                     Recuerda abrir la llave cuando termines las pruebas.`;
+    banner.classList.add('visible');
+  } else {
+    banner.classList.remove('visible');
+  }
+}
+
+function ksRenderCardIndicadores() {
+  if (!_ksData) return;
+  _ksData.modulos.forEach(m => {
+    const warn = document.getElementById('tmcWarn-' + m.modulo);
+    const card = document.querySelector(`.tpl-modulo-card[data-modulo="${m.modulo}"]`);
+    if (!warn || !card) return;
+    if (m.email_bloqueado) {
+      card.classList.add('has-block');
+      warn.setAttribute('title', 'Email bloqueado');
+    } else {
+      card.classList.remove('has-block');
+      warn.setAttribute('title', '');
+    }
+  });
+}
+
+async function ksToggleClick(btn) {
+  if (!btn || btn.disabled) return;
+  const modulo = btn.dataset.modulo;
+  const canal  = btn.dataset.canal;
+  const yaBloqueado = btn.classList.contains('blocked');
+  const cerrar = !yaBloqueado;
+
+  const lbl  = (KS_MODULOS_LABELS[modulo] || {}).label || modulo;
+  const cLbl = KS_CANAL_LABELS[canal] || canal;
+
+  // Confirmación distinta al bloquear vs abrir
+  let motivo = null;
+  if (cerrar) {
+    motivo = await ilusPrompt({
+      title: `Cerrar la llave de ${cLbl}`,
+      message: `¿Deseas bloquear los envíos de ${cLbl} del módulo ${lbl}?`,
+      placeholder: 'Motivo (opcional, ej: "pruebas hasta el viernes")',
+      required: false,
+      okLabel: 'Cerrar llave',
+    });
+    if (motivo === null) return; // canceló (null = canceló, '' = aceptó sin motivo)
+  } else {
+    const ok = await ilusConfirm({
+      title: `Abrir la llave de ${cLbl}`,
+      message: `¿Deseas habilitar de nuevo los envíos de ${cLbl} del módulo ${lbl}?`,
+      okLabel: 'Abrir llave',
+      cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    motivo = '';
+  }
+
+  // UI optimista
+  btn.disabled = true;
+  btn.classList.toggle('blocked');
+
+  try {
+    const r = await fetch('/api/comunicaciones/killswitch/' + encodeURIComponent(modulo), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal, bloqueado: cerrar, motivo: motivo || '' }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      throw new Error(d.error || 'No se pudo actualizar');
+    }
+    if (typeof ilusToast === 'function') {
+      ilusToast(
+        cerrar
+          ? `Llave de ${cLbl} cerrada para ${lbl}.`
+          : `Llave de ${cLbl} abierta para ${lbl}.`,
+        { type: cerrar ? 'warning' : 'success' }
+      );
+    }
+    // Recargar estado completo (para refrescar última actualización + banner)
+    await ksCargarEstado();
+  } catch (e) {
+    // Revertir UI
+    btn.classList.toggle('blocked');
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function ksAccionMasiva(modulo, bloquear) {
+  const lbl = (KS_MODULOS_LABELS[modulo] || {}).label || modulo;
+  let motivo = null;
+  if (bloquear) {
+    motivo = await ilusPrompt({
+      title: `Bloquear el módulo ${lbl}`,
+      message: 'Esto cerrará la llave de email de este módulo. Ningún email saldrá.',
+      placeholder: 'Motivo (opcional, ej: "pruebas hasta el viernes")',
+      required: false,
+      okLabel: 'Bloquear email',
+    });
+    if (motivo === null) return;
+  } else {
+    const ok = await ilusConfirm({
+      title: `Liberar el módulo ${lbl}`,
+      message: '¿Abrir la llave de email de este módulo?',
+      okLabel: 'Sí, liberar',
+      cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    motivo = '';
+  }
+  try {
+    const r = await fetch('/api/comunicaciones/killswitch/' + encodeURIComponent(modulo), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal: 'email', bloqueado: !!bloquear, motivo: motivo || '' }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo actualizar');
+    if (typeof ilusToast === 'function') {
+      ilusToast(
+        bloquear
+          ? `Módulo ${lbl}: llave de email cerrada.`
+          : `Módulo ${lbl}: llave de email abierta.`,
+        { type: bloquear ? 'warning' : 'success' }
+      );
+    }
+    await ksCargarEstado();
+  } catch (e) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('Error: ' + (e.message || e), { type:'error' });
+    }
+  }
+}
+
+function tplSetVisible(id, visible, displayValue='block') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (visible) {
+    el.hidden = false;
+    el.style.setProperty('display', displayValue, 'important');
+  } else {
+    el.hidden = true;
+    el.style.setProperty('display', 'none', 'important');
+  }
+}
+
+// Etiquetas legibles por módulo (mostradas en panel y help)
+const MODULO_LABELS = {
+  transporte:           { name:'Transporte',           help:'Plantillas que se envían al cliente por cada estado del despacho' },
+  transporte_cotizaciones: { name:'Cotizaciones Transporte', help:'Plantilla de correo al enviar una cotización de transporte y distribución' },
+  retiros:              { name:'Retiros',              help:'Plantillas que se envían al cliente en cada estado de su solicitud de retiro' },
+  mantenciones:         { name:'Mantenciones',         help:'Plantillas operacionales: OTs, visitas técnicas y notificaciones al cliente' },
+  comunicacion_interna: { name:'Comunicación interna', help:'Plantillas del ciclo de vida del usuario: bienvenida, claves y accesos' },
+  general:              { name:'General',              help:'Plantillas que no caen en ningún módulo específico' },
+  tickets:              { name:'Tickets',              help:'Plantillas del ciclo de vida del ticket: creación, respuesta, resolución y cierre' },
+};
+
+async function cargarPlantillas(force=false) {
+  // Refrescar TPL_ESTADOS según el módulo actual
+  const modulo = getCurrentModulo();
+  TPL_ESTADOS = getEstadosForModulo();
+
+  // Etiqueta visual del módulo actual
+  const lbl  = document.getElementById('tplModuloLabel');
+  const info = MODULO_LABELS[modulo] || MODULO_LABELS.transporte;
+  if (lbl) lbl.textContent = '— ' + info.name;
+  const help = document.getElementById('tplModuloHelp');
+  if (help) help.textContent = info.help;
+
+  // Ayuda específica de Tickets (flujo real del correo) — solo ese módulo
+  const tkHelp = document.getElementById('tkTplAyuda');
+  if (tkHelp) tkHelp.style.display = (modulo === 'tickets') ? '' : 'none';
+
+  if (force) {
+    _tplLoaded = false;
+    _tplData = {};
+    _tplEstado = null;  // resetear selección al cambiar módulo
+  }
+  try {
+    const r = await fetch('/comunicaciones/templates?modulo=' + modulo + '&t=' + Date.now(), { cache:'no-store' });
+    _tplData = r.ok ? await r.json() : {};
+  } catch(e) {
+    console.warn('No se pudo leer comm_templates; se usaran defaults locales', e);
+    _tplData = {};
+  }
+  _tplLoaded = true;
+  renderTplEstados();
+  if (!_tplEstado && TPL_ESTADOS.length) {
+    tplSeleccionar(TPL_ESTADOS[0].key);
+  } else if (_tplEstado && TPL_ESTADOS.find(e => e.key === _tplEstado)) {
+    tplMostrarVista();
+  } else {
+    // Módulo sin plantillas (ej: general) → mostrar placeholder
+    _tplEstado = null;
+    tplSetVisible('tplEditorWrap', false);
+    tplSetVisible('tplViewWrap', false);
+    tplSetVisible('tplEditorPlaceholder', true, 'flex');
+  }
+}
+
+// Etiquetas legibles e iconos por grupo de estados
+const GRUPO_LABELS = {
+  despacho:   { label:'Despacho',             icon:'bi-truck' },
+  sistema:    { label:'Sistema',              icon:'bi-gear' },
+  retiro:     { label:'Retiros',              icon:'bi-box-arrow-up' },
+  mantencion: { label:'Mantenciones',         icon:'bi-wrench-adjustable' },
+  interna:    { label:'Comunicación interna', icon:'bi-people' },
+  general:    { label:'General',              icon:'bi-megaphone' },
+  tickets:    { label:'Tickets',              icon:'bi-ticket-perforated' },
+  catalogo:   { label:'Catálogo',             icon:'bi-box-seam' },
+};
+
+function renderTplEstados() {
+  const list = document.getElementById('tplEstadoList');
+  if (!list) return;
+
+  // Caso especial: módulo "general" sin plantillas
+  if (!TPL_ESTADOS.length) {
+    list.innerHTML = `
+      <div style="padding:30px 18px;color:#999;font-size:.78rem;line-height:1.5;text-align:center">
+        <i class="bi bi-folder2-open" style="font-size:1.4rem;display:block;margin-bottom:8px;opacity:.4"></i>
+        Aún no hay plantillas en este módulo.
+        <div style="margin-top:6px;font-size:.7rem;color:#666">
+          Próximamente podrás crear plantillas personalizadas aquí.
+        </div>
+      </div>`;
+    return;
+  }
+
+  let html = '';
+  let lastGrupo = '';
+  TPL_ESTADOS.forEach(e => {
+    if (e.grupo !== lastGrupo) {
+      const meta = GRUPO_LABELS[e.grupo] || { label: e.grupo, icon: 'bi-folder' };
+      html += `<div style="padding:10px 16px 4px;color:#555;font-size:.58rem;font-weight:700;
+                           text-transform:uppercase;letter-spacing:1.2px">
+                 <i class="bi ${meta.icon} me-1"></i>${esc(meta.label)}</div>`;
+      lastGrupo = e.grupo;
+    }
+    const isActive = _tplEstado === e.key;
+    html += `<button onclick="tplSeleccionar('${e.key}')"
+               style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 18px;
+                      background:${isActive?'rgba(204,0,0,.18)':'transparent'};border:none;
+                      border-left:3px solid ${isActive?'var(--ilus-red)':'transparent'};
+                      color:${isActive?'#fff':'#aaa'};font-size:.84rem;font-weight:600;
+                      text-align:left;cursor:pointer;transition:.12s;min-height:44px">
+               <i class="bi ${e.icon}" style="font-size:.95rem;flex-shrink:0;color:${e.color}"></i>
+               ${esc(e.label)}
+             </button>`;
+  });
+  list.innerHTML = html;
+}
+
+function tplSeleccionar(key) {
+  _tplEstado   = key;
+  _tplCanal    = 'email';
+  _tplModeEdit = false;
+  renderTplEstados();
+  tplMostrarVista();
+}
+
+// ── VISTA (solo lectura) ───────────────────────────────
+function tplMostrarVista() {
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!meta) {
+    // Sin plantillas → mantén el placeholder
+    tplSetVisible('tplViewWrap', false);
+    tplSetVisible('tplEditorWrap', false);
+    tplSetVisible('tplEditorPlaceholder', true, 'flex');
+    return;
+  }
+  tplSetVisible('tplEditorPlaceholder', false);
+  tplSetVisible('tplEditorWrap', false);
+  tplSetVisible('tplViewWrap', true, 'block');
+
+  const grupoLabel = (GRUPO_LABELS[meta.grupo] || {}).label || meta.grupo;
+  document.getElementById('tvEstadoBadge').textContent = grupoLabel;
+  document.getElementById('tvEstadoTitulo').textContent = meta.label;
+  document.getElementById('tvMsg').innerHTML = '';
+
+  // Solo canal email (WhatsApp y SMS retirados de la UI)
+  _tplCanal = 'email';
+  document.getElementById('tvBtnPreview').style.display = '';
+
+  // Asunto
+  const asuntoWrap = document.getElementById('tvAsuntoWrap');
+  asuntoWrap.style.display = '';
+
+  // Cuerpo label / hint
+  document.getElementById('tvCuerpoLabel').textContent = 'Vista visual del email';
+  document.getElementById('tvCuerpoHint').textContent  = 'Así verá el cliente la comunicación';
+
+  // Valores — primero DB, si vacío usar defaults de fábrica
+  const dbVal   = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
+  const defVal  = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
+  const saved   = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+  document.getElementById('tvAsunto').textContent = saved.asunto || '';
+
+  // Email: muestra código fuente HTML
+  document.getElementById('tvCuerpo').style.display   = 'none';
+  document.getElementById('tvEmailPreview').style.display = '';
+  document.getElementById('tvEmailPreview').srcdoc = _buildEmailHtml(saved.asunto || meta.label, saved.cuerpo || '');
+
+  // Variables disponibles — con colores por grupo
+  const vars = TPL_VARS[meta.grupo] || [];
+  document.getElementById('tvVars').innerHTML = vars.map(v =>
+    `<span style="background:#fff8f5;border:1px solid #f0c0a0;border-radius:4px;padding:2px 9px;
+                  font-size:.72rem;font-family:monospace;color:#CC0000">
+       ${esc(v.v)}<span style="font-size:.65rem;color:#888;font-family:sans-serif;margin-left:4px">${esc(v.label)}</span>
+     </span>`
+  ).join('');
+}
+
+// ── ACTIVAR EDICIÓN ───────────────────────────────────
+function tplActivarEdicion() {
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!meta) return;
+  _tplCanal = 'email';
+  tplSetVisible('tplEditorPlaceholder', false);
+  tplSetVisible('tplViewWrap', false);
+  tplSetVisible('tplEditorWrap', true, 'block');
+
+  document.getElementById('tplEditorEstadoTitulo').textContent = meta.label;
+  document.getElementById('tplCanalBadge').textContent   = '📧 Email';
+  document.getElementById('tplMsg').innerHTML = '';
+
+  // Botones exclusivos del módulo Tickets (preview real + restaurar semilla
+  // del servidor). Los demás módulos siguen exactamente igual (Regla #4.2).
+  const esTickets = getCurrentModulo() === 'tickets';
+  const btnPrevTk = document.getElementById('tplBtnPreviewTk');
+  const btnRestTk = document.getElementById('tplBtnRestaurarTk');
+  if (btnPrevTk) btnPrevTk.style.display = esTickets ? '' : 'none';
+  if (btnRestTk) btnRestTk.style.display = esTickets ? '' : 'none';
+
+  // Variables clicables (con color ILUS)
+  const vars = TPL_VARS[meta.grupo] || [];
+  document.getElementById('tplVarsContainer').innerHTML = vars.map(v =>
+    `<button type="button" onclick="tplInsertarVar('${v.v}')"
+       style="background:#fff8f5;border:1px solid #f0c0a0;border-radius:4px;padding:3px 9px;
+              font-size:.73rem;font-family:monospace;color:#CC0000;cursor:pointer;
+              transition:background .1s" onmouseover="this.style.background='#ffe8dc'"
+       onmouseout="this.style.background='#fff8f5'">
+       ${esc(v.v)}<span style="font-size:.65rem;color:#888;font-family:sans-serif;margin-left:4px">${esc(v.label)}</span>
+     </button>`
+  ).join('');
+
+  // Asunto
+  document.getElementById('tplAsuntoWrap').style.display = '';
+  document.getElementById('tplCuerpoLabel').textContent  = 'Contenido visual del email';
+  document.getElementById('tplCuerpoHint').textContent   = 'Edita el mensaje visual; el HTML se actualiza por detrás.';
+
+  const dbVal2  = ((_tplData[_tplEstado] || {})[_tplCanal]) || null;
+  const defVal2 = ((TPL_DEFAULTS[_tplEstado] || {})[_tplCanal]) || {};
+  const saved2  = (dbVal2 && (dbVal2.asunto || dbVal2.cuerpo)) ? dbVal2 : defVal2;
+  document.getElementById('tplAsunto').value = saved2.asunto || '';
+  document.getElementById('tplVisualWrap').style.display = '';
+  document.getElementById('tplTextoWrap').style.display = 'none';
+  document.getElementById('tplCuerpoVisual').innerHTML = saved2.cuerpo || '';
+  document.getElementById('tplCuerpoHtml').value = saved2.cuerpo || '';
+}
+
+function tplCancelarEdicion() {
+  tplSetVisible('tplEditorWrap', false);
+  tplMostrarVista();
+}
+
+function tplInsertarVar(v) {
+  document.getElementById('tplCuerpoVisual').focus();
+  document.execCommand('insertText', false, v);
+  document.getElementById('tplCuerpoHtml').value = document.getElementById('tplCuerpoVisual').innerHTML;
+}
+
+async function tplGuardar() {
+  const msg = document.getElementById('tplMsg');
+  if (!_tplEstado) return;
+  msg.innerHTML = '<div class="spinner-border spinner-border-sm text-danger me-1"></div>Guardando…';
+  const body = {
+    modulo: getCurrentModulo(),
+    asunto: val('tplAsunto'),
+    cuerpo: document.getElementById('tplCuerpoVisual').innerHTML,
+  };
+  const r = await fetch(`/comunicaciones/templates/${_tplEstado}/email`, {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (d.ok) {
+    if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+    if (!_tplData[_tplEstado][_tplCanal]) _tplData[_tplEstado][_tplCanal] = {};
+    _tplData[_tplEstado][_tplCanal].asunto = body.asunto;
+    _tplData[_tplEstado][_tplCanal].cuerpo = body.cuerpo;
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Guardado</span>';
+    setTimeout(() => { tplCancelarEdicion(); }, 1200);
+  } else {
+    msg.innerHTML = `<span class="text-danger">${esc(d.error||'Error al guardar')}</span>`;
+  }
+}
+
+async function tplRestaurar() {
+  if (!_tplEstado) return;
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  // Tickets: la versión original vive en el SERVIDOR (semilla de app.py),
+  // no en TPL_DEFAULTS del front — antes este botón caía al aviso de
+  // "sin versión original"; ahora restaura de verdad vía endpoint dedicado.
+  if (getCurrentModulo() === 'tickets') {
+    const d = await _tkRestaurarPlantillaServidor(meta);
+    if (!d) return;
+    if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+    _tplData[_tplEstado]['email'] = { asunto: d.asunto || '', cuerpo: d.cuerpo || '' };
+    tplMostrarVista();
+    ilusToast('Plantilla restaurada a la versión original ILUS', { type:'success' });
+    return;
+  }
+  const def = (TPL_DEFAULTS[_tplEstado] || {})[_tplCanal] || {asunto:'', cuerpo:''};
+  // Guard anti-pérdida (2026-06-14): módulos sin default cliente-side (ej:
+  // General) no tienen una "versión original" cargada aquí. Restaurar mandaría
+  // un cuerpo vacío y borraría el contenido sin recuperación. Mejor abortar.
+  if (!String(def.asunto || '').trim() && !String(def.cuerpo || '').trim()) {
+    ilusToast('Esta plantilla no tiene una versión original para restaurar desde aquí. Edita el texto y guarda tus cambios.', { type: 'warning' });
+    return;
+  }
+  const ok = await ilusConfirm({
+    title: 'Restaurar plantilla',
+    message: `¿Restaurar la plantilla "${meta.label}" — ${_tplCanal} a su versión original?`,
+    sub: 'Tu versión editada se perderá.',
+    okLabel: 'Sí, restaurar', danger: true,
+  });
+  if (!ok) return;
+  const r   = await fetch(`/comunicaciones/templates/${_tplEstado}/${_tplCanal}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({...def, modulo: getCurrentModulo()})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+    _tplData[_tplEstado][_tplCanal] = { asunto: def.asunto, cuerpo: def.cuerpo };
+    tplMostrarVista();
+    document.getElementById('tvMsg').innerHTML =
+      '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Plantilla restaurada</span>';
+    setTimeout(() => document.getElementById('tvMsg').innerHTML = '', 3000);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// TICKETS · Editor "bien potente" (Daniel 2026-07-12):
+//  - Vista previa REAL: POST del borrador actual (sin guardar) al backend,
+//    que lo arma con el MISMO pipeline de un envío real (datos de muestra +
+//    invitación verde a responder + diseño maestro de marca ILUS).
+//  - Restaurar original: la semilla vive en el servidor (app.py), no en
+//    TPL_DEFAULTS del front.
+// ══════════════════════════════════════════════════════════════════════
+let _modalTkPreview = null;
+
+async function tkTplVistaPrevia(esRefresh = false) {
+  const asuntoEl = document.getElementById('tplAsunto');
+  const cuerpoEl = document.getElementById('tplCuerpoVisual');
+  if (!asuntoEl || !cuerpoEl) return;
+  try {
+    const r = await fetch('/tickets/api/config/preview-plantilla', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asunto: asuntoEl.value, cuerpo: cuerpoEl.innerHTML }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo generar la vista previa', { type:'error' });
+      return;
+    }
+    document.getElementById('tkPreviewAsunto').textContent = d.asunto || '';
+    document.getElementById('tkPreviewFrame').srcdoc = d.html || '';
+    if (esRefresh) {
+      ilusToast('Vista previa actualizada', { type:'success' });
+    } else {
+      _modalTkPreview = _modalTkPreview ||
+        new bootstrap.Modal(document.getElementById('modalTkPreview'));
+      _modalTkPreview.show();
+    }
+  } catch (e) {
+    console.error('[tk] vista previa plantilla', e);
+    ilusToast('No se pudo generar la vista previa (¿sin conexión?)', { type:'error' });
+  }
+}
+
+// Confirma + llama al endpoint de restaurar. Devuelve {asunto, cuerpo} o null.
+// Compartido por el botón del editor y el "Restaurar" del modo vista.
+async function _tkRestaurarPlantillaServidor(meta) {
+  const ok = await ilusConfirm({
+    title: 'Restaurar plantilla original',
+    message: `Se reemplazará la plantilla "${(meta && meta.label) || _tplEstado}" por la versión original de ILUS.`,
+    sub: 'Tus cambios actuales se perderán.',
+    okLabel: 'Restaurar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return null;
+  try {
+    const r = await fetch('/tickets/api/config/restaurar-plantilla', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado: _tplEstado }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo restaurar la plantilla', { type:'error' });
+      return null;
+    }
+    return d;
+  } catch (e) {
+    console.error('[tk] restaurar plantilla', e);
+    ilusToast('No se pudo restaurar la plantilla (¿sin conexión?)', { type:'error' });
+    return null;
+  }
+}
+
+async function tkTplRestaurarOriginal() {
+  if (!_tplEstado) return;
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  const d = await _tkRestaurarPlantillaServidor(meta);
+  if (!d) return;
+  // Refrescar el editor EN VIVO, sin recargar la página
+  document.getElementById('tplAsunto').value = d.asunto || '';
+  document.getElementById('tplCuerpoVisual').innerHTML = d.cuerpo || '';
+  document.getElementById('tplCuerpoHtml').value = d.cuerpo || '';
+  if (!_tplData[_tplEstado]) _tplData[_tplEstado] = {};
+  _tplData[_tplEstado]['email'] = { asunto: d.asunto || '', cuerpo: d.cuerpo || '' };
+  ilusToast('Plantilla restaurada a la versión original ILUS', { type:'success' });
+}
+
+async function tplRestaurarTodo() {
+  const ok = await ilusConfirm({
+    title: 'Restaurar TODAS las plantillas',
+    message: 'Esto reemplazará todas las plantillas guardadas por la base oficial ILUS.',
+    sub: 'Acción irreversible — todas tus ediciones se perderán.',
+    okLabel: 'Sí, restaurar todo', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch('/comunicaciones/templates/restaurar-todo', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'}
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudieron restaurar las plantillas', { type:'error' });
+    return;
+  }
+  _tplLoaded = false;
+  _tplData = {};
+  await cargarPlantillas();
+  if (_tplEstado) tplMostrarVista();
+  if (typeof ilusToast === 'function') {
+    ilusToast('Plantillas ILUS restauradas correctamente', { type:'success' });
+  }
+}
+
+function tplVistaPreviaModal() {
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+  if (!meta || _tplCanal !== 'email') return;
+
+  // Usa la versión DB si existe, si no el default
+  const dbVal  = ((_tplData[_tplEstado] || {})['email']) || null;
+  const defVal = ((TPL_DEFAULTS[_tplEstado] || {})['email']) || {};
+  const saved  = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+  const cuerpo = saved.cuerpo || '';
+  const asunto = saved.asunto || meta.label;
+
+  document.getElementById('previewTitle').textContent = asunto;
+
+  // Construye el HTML completo con el wrapper ILUS y lo pone en el iframe
+  const frame = document.getElementById('tplPreviewFrame');
+  frame.srcdoc = _buildEmailHtml(asunto, cuerpo);
+  _modalTplPreview.show();
+}
+
+function tplEnviarPrueba() {
+  if (!_tplEstado) return;
+  document.getElementById('tplPruebaEmailWrap').style.display = '';
+  document.getElementById('tplPruebaMsg').innerHTML = '';
+  _modalTplPrueba.show();
+}
+
+async function tplEnviarPruebaConfirm() {
+  const msg  = document.getElementById('tplPruebaMsg');
+  const meta = TPL_ESTADOS.find(e => e.key === _tplEstado);
+
+  // Usa DB si existe, si no el default de fábrica
+  const dbVal  = ((_tplData[_tplEstado] || {})['email']) || null;
+  const defVal = ((TPL_DEFAULTS[_tplEstado] || {})['email']) || {};
+  const saved  = (dbVal && (dbVal.asunto || dbVal.cuerpo)) ? dbVal : defVal;
+
+  const to = document.getElementById('tplPruebaEmail').value.trim();
+  if (!to) { msg.innerHTML = '<span class="text-danger">Ingresa el email destinatario</span>'; return; }
+
+  // Botón submit del modal (para deshabilitarlo durante el envío)
+  const btn = document.querySelector('button[onclick="tplEnviarPruebaConfirm()"]');
+
+  // Envuelve el fragmento HTML del cuerpo en el diseño completo ILUS
+  const asunto  = saved.asunto || meta.label;
+  const htmlFull = _buildEmailHtml(asunto, saved.cuerpo || '');
+
+  // Envío async con polling (no bloquea la UI esperando minutos)
+  await _enviarEmailAsync({
+    to, subject: asunto, html: htmlFull, msgEl: msg, btnEl: btn
+  });
+}
+
+/* ── helpers ── */
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function val(id){ return (document.getElementById(id)||{}).value||''; }
+function togglePass(id, btn) {
+  const inp = document.getElementById(id);
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.querySelector('i').className = 'bi bi-eye' + (show ? '-slash' : '');
+}
+
+/* ──────────────────────────────────────────────────────────────
+   SMTP HEALTH BADGE — indicador en el header del módulo
+   Ping rápido (4s) sin enviar email. Verde si OK, ámbar si lento,
+   rojo si rechazado. Auto-refresca al cargar la página.
+   ────────────────────────────────────────────────────────────── */
+let _smtpLastPing = 0;     // timestamp última verificación OK
+let _smtpPingInflight = false;
+
+async function refreshSmtpHealthBadge() {
+  if (_smtpPingInflight) return;
+  _smtpPingInflight = true;
+  const dot   = document.getElementById('smtpHealthDot');
+  const label = document.getElementById('smtpHealthLabel');
+  if (!dot || !label) { _smtpPingInflight = false; return; }
+  label.textContent = 'SMTP: chequeando…';
+  dot.style.background = '#9ca3af';     // gris
+  try {
+    const r = await fetch('/api/comm/smtp-ping', {cache:'no-store'});
+    const d = await r.json();
+    const secs = ((d.elapsed_ms||0)/1000).toFixed(1);
+    if (d.ok) {
+      dot.style.background = '#16a34a';   // verde
+      label.textContent = `SMTP OK (${secs}s)`;
+      _smtpLastPing = Date.now();
+    } else {
+      dot.style.background = '#dc2626';   // rojo
+      label.textContent = `SMTP error (${secs}s)`;
+    }
+  } catch (_e) {
+    if (dot)   dot.style.background = '#f59e0b';  // ámbar
+    if (label) label.textContent = 'SMTP: sin respuesta';
+  } finally {
+    _smtpPingInflight = false;
+  }
+}
+
+/* "Test conexión SMTP" — click manual desde el badge */
+async function testSmtpHealth(btnEl) {
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const r = await fetch('/api/comm/smtp-ping', {cache:'no-store'});
+    const d = await r.json();
+    const secs = ((d.elapsed_ms||0)/1000).toFixed(1);
+    const dot   = document.getElementById('smtpHealthDot');
+    const label = document.getElementById('smtpHealthLabel');
+    if (d.ok) {
+      if (dot)   dot.style.background = '#16a34a';
+      if (label) label.textContent = `SMTP OK (${secs}s)`;
+      _smtpLastPing = Date.now();
+      if (typeof ilusToast === 'function') {
+        ilusToast(`✓ SMTP OK en ${secs}s`, {type:'success'});
+      }
+    } else {
+      if (dot)   dot.style.background = '#dc2626';
+      if (label) label.textContent = `SMTP error (${secs}s)`;
+      if (typeof ilusAlert === 'function') {
+        await ilusAlert({
+          title: 'SMTP no respondió correctamente',
+          message: d.message || 'Error desconocido',
+          sub: d.detail ? `Detalle: ${d.detail}` : `Fuente config: ${d.source||'?'} (${secs}s)`,
+          subHtml: false,
+          type: 'error',
+        });
+      }
+    }
+  } catch (exc) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('No se pudo conectar con el servidor — ' + (exc.message||exc), {type:'error'});
+    }
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+// Auto-arranca el chequeo de salud al cargar
+document.addEventListener('DOMContentLoaded', () => {
+  // Pequeño retraso para no competir con el render inicial
+  setTimeout(refreshSmtpHealthBadge, 600);
+});
+

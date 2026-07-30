@@ -1,0 +1,1420 @@
+/* ── Tokens "2027" (mismo lenguaje visual portado de retiros/soporte_publico) ── */
+:root{
+  --ilus-red:#dc2626; --ilus-red-dk:#991b1b;
+  --ilus-green:#16a34a; --ilus-green-bg:#dcfce7;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.05), 0 1px 1px rgba(15,23,42,.04);
+  --shadow-md:0 4px 14px rgba(15,23,42,.07), 0 1px 3px rgba(15,23,42,.05);
+  --shadow-lg:0 12px 30px rgba(15,23,42,.10), 0 2px 6px rgba(15,23,42,.06);
+  --r-sm:10px; --r-md:14px; --r-lg:18px;
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  /* Portados EXACTOS de templates/retiros/public_request.html (:root, líneas
+     20-36) para que el agendador del modal "Generar OT" hable el mismo
+     idioma de movimiento/foco que el slot-picker de retiros. */
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ring:0 0 0 4px rgba(220,38,38,.16);
+}
+.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:16px;}
+.tk-hero .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+{# 2026-07-13 (Daniel, URGENTE): "el header no va con el diseño... colocale
+   el numero del ticket, sobre todo el nombre y el ticket grande" -- numero
+   y nombre del cliente pasan a ser el elemento dominante del hero, igual
+   que .page-header (h4 1.35rem) lo es en el resto de la app, pero mas
+   grande aca porque Daniel pidio explicitamente "grande" para ambos. #}
+.tk-num{background:#fef3c7;color:#92400e;padding:7px 14px;border-radius:8px;
+  font-family:'JetBrains Mono',monospace;font-size:1.15rem;font-weight:900;letter-spacing:.02em;}
+.tk-hero h4{margin:0;font-weight:900;font-size:1.5rem;line-height:1.15;}
+.tk-hero-datos{display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:6px;font-size:.82rem;color:rgba(255,255,255,.75);}
+.tk-hero-datos span{display:inline-flex;align-items:center;gap:5px;}
+.tk-hero-datos i{color:rgba(255,255,255,.5);}
+.tk-badge{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
+.bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
+.bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
+.bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
+.bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
+/* ── Fila secundaria del hero: prioridad / tipo / garantía / SLA / meta ── */
+.tk-hero-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;
+  padding-top:12px;border-top:1px solid rgba(255,255,255,.14);}
+.tk-hero-meta .tk-tipo{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.18);color:#e2e8f0;}
+.pr-urgente{background:#fee2e2;color:#991b1b;} .pr-alta{background:#fff8e1;color:#b45309;}
+.pr-media{background:#f3f4f6;color:#374151;} .pr-baja{background:#f3f4f6;color:#6b7280;}
+.tk-gar-badge{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:50px;
+  font-size:.6rem;font-weight:800;padding:3px 10px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+.tk-sla{padding:3px 10px;border-radius:50px;font-size:.64rem;font-weight:800;background:rgba(255,255,255,.12);color:#fff;white-space:nowrap;}
+.tk-sla.venc{background:#fee2e2;color:#991b1b;} .tk-sla.pronto{background:#fff8e1;color:#b45309;}
+/* 2026-07-14 (Daniel): SLA de respuesta VENCIDO (campos nuevos sla_vencido/
+   sla_horas del backend) -- badge rojo pulsante en el hero: discreto en
+   tamaño pero imposible de ignorar por el pulso. Distinto de #hSla (que es
+   la fecha limite manual del ticket): este mide horas desde la creacion
+   contra el umbral configurable tk_sla_horas. */
+.tk-sla-vencido{display:none;align-items:center;gap:5px;padding:3px 11px;border-radius:50px;
+  font-size:.64rem;font-weight:800;background:#dc2626;color:#fff;text-transform:uppercase;
+  letter-spacing:.04em;white-space:nowrap;box-shadow:0 0 0 0 rgba(220,38,38,.55);
+  animation:tkSlaPulse 1.8s ease-in-out infinite;}
+.tk-sla-vencido i{font-size:.78rem;}
+@keyframes tkSlaPulse{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.55);}
+  70%{box-shadow:0 0 0 9px rgba(220,38,38,0);}
+  100%{box-shadow:0 0 0 0 rgba(220,38,38,0);}
+}
+.tk-hero-sub{font-size:.74rem;color:rgba(255,255,255,.5);margin-left:auto;white-space:nowrap;}
+.tk-tabs{display:flex;gap:4px;border-bottom:2px solid #eaecf0;margin-bottom:16px;flex-wrap:wrap;}
+.tk-tab{padding:9px 16px;font-weight:700;font-size:.85rem;color:#6b7280;cursor:pointer;
+  border-bottom:3px solid transparent;margin-bottom:-2px;border-radius:8px 8px 0 0;transition:background .12s,color .12s;}
+.tk-tab:hover{background:#f3f4f6;color:#374151;}
+.tk-tab.active{color:#dc2626;border-bottom-color:#dc2626;background:#fef2f2;}
+.tk-tab .badge{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;padding:1px 6px;margin-left:4px;}
+.tk-pane{display:none;} .tk-pane.active{display:block;}
+.tk-card{background:#fff;border:1px solid #eaecf0;border-radius:var(--r-lg);padding:18px 20px;margin-bottom:14px;
+  box-shadow:var(--shadow-sm);transition:box-shadow .2s var(--ease-spring);}
+.tk-card:hover{box-shadow:var(--shadow-md);}
+.tk-card h6{font-weight:800;color:#0f172a;margin:0 0 12px;font-size:.82rem;text-transform:uppercase;letter-spacing:.08em;
+  display:flex;align-items:center;gap:7px;}
+.tk-card h6 i{color:#dc2626;font-size:.95rem;}
+/* Rediseño pestaña Información 2026-07-14 (Daniel: "que los tickets en
+   información también impacten") — mismo lenguaje 2027 del formulario
+   público /soporte: barra de acento lateral que aparece al hover, lift
+   sutil con spring, e icono de sección dentro de un squircle rojo tenue.
+   Scopeado a #pane-info para no tocar la pestaña Respuestas. */
+#pane-info .tk-card{position:relative;padding:20px 22px;
+  transition:box-shadow .25s var(--ease-spring),transform .25s var(--ease-spring),border-color .2s;}
+#pane-info .tk-card::before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:3px;
+  border-radius:3px;background:linear-gradient(180deg,#dc2626,#7f1d1d);opacity:0;transition:opacity .25s;}
+#pane-info .tk-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px);border-color:#e2e8f0;}
+#pane-info .tk-card:hover::before{opacity:1;}
+#pane-info .tk-card h6 i{width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;
+  justify-content:center;background:linear-gradient(135deg,#fef2f2,#fee2e2);color:#dc2626;font-size:.82rem;flex-shrink:0;}
+/* IDENTIFICACIÓN DEL CLIENTE — rediseño 2026-07-14 (Daniel: "está horrible
+   como se ve... necesito que sea amigable"): tarjeta premium con cabecera
+   (avatar circular con iniciales en degradado rojo→negro, nombre grande,
+   chips de RUT y tipo) y los datos en GRID de 2 columnas (1 en mobile),
+   cada campo como mini-tarjeta con icono + label uppercase pequeñito +
+   valor grande. El lápiz de edición inline se mantiene junto a cada valor
+   (mismos handlers de siempre — solo cambia la presentación). */
+.tk-id-head{display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:14px;
+  border-bottom:1px solid #f1f5f9;flex-wrap:wrap;}
+.tk-id-avatar{width:54px;height:54px;border-radius:50%;flex:0 0 54px;display:flex;align-items:center;
+  justify-content:center;font-weight:900;font-size:1.18rem;color:#fff;letter-spacing:.02em;user-select:none;
+  background:linear-gradient(135deg,#dc2626 0%,#7f1d1d 55%,#0a0a0a 100%);
+  box-shadow:0 4px 14px rgba(220,38,38,.30);}
+.tk-id-headtxt{flex:1;min-width:0;}
+.tk-id-headchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center;}
+.tk-id-chip{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 11px;
+  font-size:.7rem;font-weight:800;background:#f8fafc;border:1px solid #e5e7eb;color:#475569;
+  letter-spacing:.02em;white-space:nowrap;}
+.tk-id-chip i{color:#dc2626;font-size:.75rem;}
+.tk-dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;font-size:1rem;}
+.tk-id-item{background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-md);padding:10px 12px 8px;
+  min-width:0;transition:background .15s,border-color .15s,box-shadow .25s var(--ease-spring);}
+.tk-id-item:hover{background:#fff;border-color:#e5e7eb;box-shadow:var(--shadow-sm);}
+.tk-id-item-top{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+.tk-dl i{color:#dc2626;font-size:.8rem;opacity:.75;}
+.tk-dl dt{color:#94a3b8;font-weight:800;font-size:.62rem;text-transform:uppercase;letter-spacing:.07em;margin:0;}
+.tk-dl dd{margin:0;color:#0f172a;font-weight:800;font-size:1.02rem;letter-spacing:-.005em;
+  overflow-wrap:anywhere;display:flex;align-items:center;gap:6px;min-width:0;
+  padding:2px 0;border-radius:var(--r-sm);}
+.tk-dl dd .tk-dd-val{flex:1;min-width:0;overflow-wrap:anywhere;}
+.tk-dl dd a{color:#0f172a;text-decoration:none;border-bottom:1px dashed #cbd5e1;}
+.tk-dl dd a:hover{color:#dc2626;border-color:#dc2626;}
+.tk-edit-pencil{flex-shrink:0;color:#94a3b8;cursor:pointer;font-size:.86rem;opacity:.45;
+  width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;
+  background:transparent;transition:opacity .15s var(--ease-spring),color .15s,background .15s,transform .15s var(--ease-spring);}
+.tk-dl dd:hover .tk-edit-pencil,.tk-id-item:hover .tk-edit-pencil{opacity:1;}
+.tk-edit-pencil:hover{color:#fff;background:var(--ilus-red);transform:scale(1.08);}
+.tk-edit-pencil:active{transform:scale(.94);}
+.tk-dd-input{flex:1;min-width:0;font-size:1rem;}
+@media (max-width:640px){ .tk-dl{grid-template-columns:1fr;} }
+@media (max-width:520px){ .tk-dl{font-size:.95rem;}
+  .tk-id-item{padding:10px 12px;} .tk-dl dd{padding:4px 0;min-height:34px;}
+  .tk-id-avatar{width:46px;height:46px;flex-basis:46px;font-size:1rem;}
+  .tk-edit-pencil{opacity:.7;} }
+/* ── Problema — rediseño 2026-07-14: título con más presencia y la
+   descripción en un panel de lectura cómodo (line-height amplio, borde de
+   acento rojo) en vez de texto plano suelto. Mismos IDs #txtTitulo /
+   #txtDesc — el JS les sigue seteando textContent/display igual. ── */
+.tk-problema-titulo{font-size:1.14rem;font-weight:800;color:#0f172a;margin-bottom:10px;
+  letter-spacing:-.01em;line-height:1.3;}
+.tk-problema-desc{font-size:.98rem;color:#334155;white-space:pre-wrap;line-height:1.7;
+  background:#fafbfc;border:1px solid #f1f5f9;border-left:3px solid #dc2626;
+  border-radius:var(--r-sm);padding:12px 16px;overflow-wrap:anywhere;}
+/* ── Chips de metadata (Problema) ── */
+.tk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+.tk-chip{display:inline-flex;align-items:center;gap:5px;background:#f8fafc;border:1px solid #e5e7eb;
+  border-radius:50px;padding:4px 12px;font-size:.76rem;color:#475569;font-weight:600;
+  transition:border-color .15s,box-shadow .2s var(--ease-spring);}
+.tk-chip:hover{border-color:#cbd5e1;box-shadow:var(--shadow-sm);}
+.tk-chip i{color:#dc2626;opacity:.75;}
+.tk-chip b{color:#0f172a;font-weight:700;}
+/* ── Ubicación ── */
+.tk-ubi-main{display:flex;align-items:start;gap:9px;font-size:.92rem;font-weight:700;color:#0f172a;}
+.tk-ubi-main i{color:#dc2626;font-size:1.05rem;margin-top:2px;}
+.tk-ubi-sub{margin:6px 0 0 24px;font-size:.78rem;color:#6b7280;}
+.tk-map-link{display:inline-flex;align-items:center;gap:6px;background:#eff6ff;border:1px solid #bfdbfe;
+  color:#1d4ed8;border-radius:8px;padding:6px 11px;font-size:.78rem;font-weight:700;text-decoration:none;
+  margin:12px 0 0 24px;}
+.tk-map-link:hover{background:#dbeafe;}
+/* ── Equipos: tabla real (mismas clases que templates/mantenciones/ficha.html
+   para lenguaje visual identico — ver contrato "diseno_tabla") ── */
+.eq-table{width:100%;border-collapse:collapse;font-size:.81rem;}
+.eq-table thead th{
+  padding:10px 12px;text-align:left;
+  font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;
+  background:#fafbfc;border-bottom:2px solid var(--border);white-space:nowrap;
+}
+.eq-table tbody tr{border-bottom:1px solid #f3f4f6;transition:background .15s,box-shadow .2s var(--ease-spring);}
+.eq-table tbody tr:hover{background:#fcfcfd;box-shadow:inset 3px 0 0 #dc2626;}
+.eq-table tbody td{padding:12px;vertical-align:middle;}
+.eq-table tbody tr:last-child{border-bottom:none;}
+.eq-cell-icon{width:44px;height:44px;border-radius:var(--r-sm);
+              background:linear-gradient(135deg,#fef2f2,#f8fafc);border:1px solid #f1f5f9;
+              display:flex;align-items:center;justify-content:center;
+              font-size:1.4rem;line-height:1;flex-shrink:0;box-shadow:var(--shadow-sm);}
+.eq-name-main{font-weight:700;color:#0f172a;font-size:.86rem;}
+.eq-name-sub{font-size:.69rem;color:#9ca3af;margin-top:1px;}
+.eq-sku{font-family:'JetBrains Mono',monospace;background:#f1f5f9;border:1px solid #e5e7eb;
+  padding:2px 8px;border-radius:6px;font-size:.76rem;font-weight:700;color:#334155;white-space:nowrap;}
+.gar-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;
+          border-radius:50px;font-size:.65rem;font-weight:700;cursor:pointer;white-space:nowrap;border:none;}
+.gar-chip-ok{background:#dcfce7;color:#166534;}
+.gar-chip-warn{background:#fef9c3;color:#854d0e;}
+.gar-chip-vencida{background:#f3f4f6;color:#6b7280;}
+.gar-chip:hover{filter:brightness(.97);}
+/* Botón de acción por fila — redondo, consistente con el resto del sitio
+   (rediseño 2026-07-14; mismo onclick delEquipo de siempre). */
+.tk-eq-actionbtn{width:34px;height:34px;border:1px solid #eaecf0;border-radius:50%;
+  background:#fff;color:#dc2626;display:inline-flex;align-items:center;justify-content:center;
+  min-height:34px;box-shadow:var(--shadow-sm);
+  transition:background .15s,border-color .15s,transform .2s var(--ease-spring),box-shadow .2s;}
+.tk-eq-actionbtn:hover{background:#fee2e2;border-color:#fca5a5;transform:scale(1.08);box-shadow:var(--shadow-md);}
+.tk-eq-actionbtn:active{transform:scale(.94);}
+/* 2026-07-14 (Daniel): "que la tabla lleve informacion de que documento
+   viene" -- chip azul info bajo el nombre del equipo con el documento de
+   origen (tk_ticket_equipos.documento_garantia, ej. "Factura 10599"). Si el
+   equipo no viene de ningun documento, no se muestra nada (sin '—'). */
+.tk-eq-doc-chip{display:inline-flex;align-items:center;gap:4px;background:#eff6ff;border:1px solid #bfdbfe;
+  color:#1d4ed8;border-radius:50px;padding:1px 9px;font-size:.62rem;font-weight:800;white-space:nowrap;
+  margin-top:3px;max-width:220px;overflow:hidden;text-overflow:ellipsis;}
+.tk-eq-doc-chip i{font-size:.66rem;flex-shrink:0;}
+.tk-origen-badge{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:50px;
+  padding:2px 10px;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+.tk-visto-por{font-size:.72rem;color:#9ca3af;margin-top:10px;}
+.tk-visto-por b{color:#475569;font-weight:700;}
+/* ── Adjuntos: galería de miniaturas ── */
+.tk-adj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px;}
+.tk-adj-item{border:1px solid #eaecf0;border-radius:10px;overflow:hidden;background:#fafbfc;
+  text-decoration:none;color:#374151;display:flex;flex-direction:column;transition:box-shadow .15s,border-color .15s;}
+.tk-adj-item:hover{box-shadow:0 3px 12px rgba(0,0,0,.09);border-color:#dc2626;color:#dc2626;}
+.tk-adj-thumb{height:86px;display:flex;align-items:center;justify-content:center;background:#f1f5f9;
+  font-size:1.9rem;color:#94a3b8;overflow:hidden;}
+.tk-adj-thumb img{width:100%;height:100%;object-fit:cover;}
+.tk-adj-thumb .bi-file-earmark-pdf{color:#dc2626;} .tk-adj-thumb .bi-file-earmark-word{color:#3b82f6;}
+.tk-adj-thumb .bi-file-earmark-excel{color:#16a34a;} .tk-adj-thumb .bi-file-earmark-play{color:#f59e0b;}
+.tk-adj-name{font-size:.68rem;font-weight:700;padding:5px 7px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tk-adj-meta{font-size:.6rem;color:#9ca3af;padding:1px 7px 6px;}
+/* ── Documentos ERP ── */
+.tk-doc{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #eaecf0;
+  border-radius:9px;padding:9px 12px;margin-bottom:6px;font-size:.84rem;}
+.tk-doc:last-child{margin-bottom:0;}
+.tk-doc .doc-id{display:flex;align-items:center;gap:8px;font-weight:700;color:#0f172a;}
+.tk-doc .doc-id i{color:#dc2626;}
+.tk-doc .doc-meta{color:#6b7280;font-size:.78rem;}
+/* ── Estado vacío compacto (dentro de tarjetas) ── */
+.tk-empty-mini{background:#f9fafb;border:1px dashed #d1d5db;border-radius:10px;padding:20px 14px;text-align:center;color:#9ca3af;}
+.tk-empty-mini i{font-size:1.5rem;display:block;margin-bottom:6px;opacity:.6;}
+.tk-empty-mini span{font-size:.82rem;font-weight:600;}
+/* Chip de garantía por equipo (fila de la tabla Equipo(s)) — clic abre el
+   modal de edición. Verde éxito si tiene garantía vigente, gris neutro si no
+   (paleta Regla #2). */
+.tk-chip-gar{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:50px;
+  font-size:.68rem;font-weight:700;cursor:pointer;white-space:nowrap;border:none;line-height:1.4;}
+.tk-chip-gar.on{background:#dcfce7;color:#16a34a;}
+.tk-chip-gar.off{background:#f3f4f6;color:#6b7280;}
+.tk-chip-gar:hover{filter:brightness(.97);}
+#garCamposWrap{transition:opacity .15s;}
+.tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:34px;text-align:center;color:#9ca3af;}
+
+/* ── Respuestas (conversacion) ── */
+.rp-offline-bar{background:#7c2d12;color:#fff;padding:7px 14px;border-radius:9px;font-size:.8rem;
+  display:none;align-items:center;gap:8px;margin-bottom:10px;}
+.rp-offline-bar.show{display:flex;}
+/* CORRECCION 2026-07-12 (entendido al reves antes): Daniel SI quiere que
+   el hilo tenga su propio scroll contenido -- lo que NO quiere es que la
+   PAGINA/aplicacion completa scrollee. "La caja de texto debe estar
+   contenida... el scroll de la caja [el hilo] que se baje hasta abajo
+   para leer los mensajes... lo que no quiero que tenga scroll es la
+   aplicacion, no la caja."
+   CORRECCION 2026-07-12 (2): "insisto... no estoy hablando de la caja de
+   los mensajes del chat, estoy hablando de la caja de texto [el
+   composer]" -- el problema real era que al entrar a Respuestas habia
+   que bajar la PAGINA para alcanzar el composer (quedaba debajo del
+   pliegue). 460px fijo no se adapta al alto real de la ventana. Este
+   max-height es solo un FALLBACK antes de que corra el JS de abajo
+   (ajustarAltoHilo).
+   CORRECCION 2026-07-14 (Daniel): "con el scroll quiero consumirme todo el
+   header y que se vea el panel completo, aprovechar los espacios para
+   agrandar la caja de mensajes" -- ahora el hilo se dimensiona para llenar
+   la pantalla COMPLETA una vez que el hero se scrollea fuera de vista (la
+   pagina SI scrollea lo justo para consumir el header, de forma natural,
+   sin sticky). ajustarAltoHilo calcula ese alto "como si el hero ya no
+   estuviera" y al entrar a Respuestas se hace un scroll suave que consume
+   el hero de una. */
+.rp-thread{max-height:calc(100vh - 340px);min-height:240px;overflow-y:auto;padding:4px 2px;margin-bottom:14px;}
+.rp-msg{display:flex;margin-bottom:12px;}
+.rp-msg.out{justify-content:flex-end;}
+.rp-bubble{max-width:72%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.45;
+  overflow-wrap:anywhere;word-break:break-word;}
+.rp-msg.in .rp-bubble{background:#f1f5f9;color:#0f172a;border-bottom-left-radius:4px;}
+/* "out" (lo que TU envias) en negro ILUS en vez de rojo -- Daniel 2026-07-12
+   pidio opinion de UI: el rojo ya es el color de acento/CTA/peligro de toda
+   la app (botones, badges, "Responder al cliente"); usarlo TAMBIEN para
+   cada burbuja enviada satura la pantalla y se puede leer como alerta. El
+   negro es el otro color primario ILUS (Regla #2), se ve serio/profesional
+   y deja el rojo exclusivo para lo que necesita llamar la atencion. */
+.rp-msg.out .rp-bubble{background:linear-gradient(135deg,#1f2937,#0a0a0a);color:#fff;border-bottom-right-radius:4px;}
+.rp-msg.interno .rp-bubble{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-bottom-right-radius:4px;}
+/* 2026-07-14 (Daniel): "resaltarlo en blanco cuando es automatico" -- los
+   mensajes que manda el SISTEMA (sin usuario: respuestas automaticas,
+   notificaciones de estado que van como mensaje) se pintan en BLANCO para
+   distinguirlos de lo que escribio una persona del staff (negro ILUS). */
+.rp-msg.out.auto .rp-bubble{background:#fff;border:1px solid #e5e7eb;color:#0f172a;
+  box-shadow:0 1px 4px rgba(15,23,42,.08);}
+.rp-msg.out.auto .rp-meta{color:#6b7280;}
+.rp-msg.out.auto .rp-estado-ok{color:#16a34a;}
+.rp-auto-tag{display:inline-flex;align-items:center;gap:3px;background:#f3f4f6;color:#6b7280;
+  border:1px solid #e5e7eb;border-radius:50px;padding:1px 8px;font-size:.6rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.04em;}
+.rp-msg.evento{justify-content:center;}
+.rp-msg.evento .rp-bubble{background:transparent;color:#9ca3af;font-size:.74rem;padding:2px 8px;max-width:100%;text-align:center;}
+.rp-meta{font-size:.66rem;opacity:.85;margin-bottom:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.rp-msg.out .rp-meta{color:#9ca3af;} .rp-msg.in .rp-meta{color:#64748b;} .rp-msg.interno .rp-meta{color:#92400e;}
+/* client_message es texto plano escapado (no trae <br>/<p>) -- preserva
+   saltos de linea reales del correo (Daniel 2026-07-12: "no respeta los
+   saltos de pagina"). */
+.rp-content-plano{white-space:pre-wrap;}
+.rp-estado-ok{color:#bbf7d0;} .rp-msg.interno .rp-estado-ok,.rp-msg.in .rp-estado-ok{color:#16a34a;}
+.rp-estado-fail{color:#fca5a5;font-weight:700;}
+.rp-adj-chip{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.22);
+  border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:4px 10px;margin:5px 5px 0 0;
+  font-size:.74rem;font-weight:600;text-decoration:none;color:inherit;cursor:pointer;transition:transform .12s,box-shadow .12s;}
+.rp-adj-chip:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.18);}
+.rp-msg.in .rp-adj-chip,.rp-msg.interno .rp-adj-chip{background:#fff;color:#0f172a;border-color:#dc2626;}
+.rp-adj-chip img{width:20px;height:20px;object-fit:cover;border-radius:4px;}
+.rp-adj-chip i{color:#dc2626;font-size:.95rem;}
+.rp-msg:not(.in):not(.interno) .rp-adj-chip i{color:#fecaca;}
+/* Mensajes automaticos (blancos): chips como en los mensajes claros. */
+.rp-msg.out.auto .rp-adj-chip{background:#fff;color:#0f172a;border-color:#dc2626;}
+.rp-msg.out.auto .rp-adj-chip i{color:#dc2626;}
+/* 2026-07-14: con 2+ imagenes adjuntas los chips no deben desbordarse a
+   los lados del mensaje -- hacen wrap dentro del ancho del bubble. */
+.rp-adj-lista{display:flex;flex-wrap:wrap;align-items:center;max-width:100%;}
+.rp-adj-chip{max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word;}
+.rp-composer{border:1px solid #eaecf0;border-radius:13px;overflow:hidden;}
+.rp-btn-traducir{margin-top:6px;border:none;background:transparent;color:#3b82f6;font-size:.72rem;font-weight:700;
+  padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;}
+.rp-btn-traducir:hover{text-decoration:underline;}
+.rp-msg.in .rp-btn-traducir{color:#1d4ed8;}
+.rp-traduccion{margin-top:4px;padding:8px 10px;background:#fff;border:1px dashed #93c5fd;border-radius:8px;
+  font-size:.82rem;color:#1e3a5f;white-space:pre-wrap;}
+#rpBtnDictar.rp-dictando{color:#fff;background:#dc2626;border-color:#dc2626;animation:rpPulseMic 1.2s ease-in-out infinite;}
+@keyframes rpPulseMic{0%,100%{opacity:1;}50%{opacity:.55;}}
+/* 2026-07-14 (Daniel: "el mejor micrófono del planeta"): capa premium de
+   permisos del micrófono. Si el permiso está DENEGADO, el botón muestra un
+   puntito rojo de advertencia y al hacer clic se abre una guía visual paso
+   a paso (en vez de un toast seco). Si está en 'prompt', se deriva al
+   diálogo nativo del navegador sin fricción. */
+#rpBtnDictar{position:relative;}
+#rpBtnDictar.rp-mic-denegado::after{content:'';position:absolute;top:-4px;right:-4px;width:11px;height:11px;
+  border-radius:50%;background:#dc2626;border:2px solid #fff;box-shadow:0 0 0 2px rgba(220,38,38,.18);}
+.rp-mic-overlay{position:fixed;inset:0;z-index:99990;background:rgba(10,10,10,.45);backdrop-filter:blur(3px);
+  -webkit-backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:16px;
+  opacity:0;transition:opacity .2s ease;}
+.rp-mic-overlay.show{opacity:1;}
+.rp-mic-modal{background:#fff;border-radius:var(--r-lg);box-shadow:var(--shadow-lg);max-width:440px;width:100%;
+  padding:26px 26px 20px;transform:translateY(16px) scale(.96);transition:transform .28s var(--ease-spring);}
+.rp-mic-overlay.show .rp-mic-modal{transform:none;}
+.rp-mic-illus{display:flex;align-items:center;justify-content:center;gap:16px;margin:10px 0 18px;}
+.rp-mic-illus-icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:1.7rem;flex:0 0 56px;}
+.rp-mic-illus-icon.off{background:#fee2e2;color:#dc2626;}
+.rp-mic-illus-icon.on{background:#dcfce7;color:#16a34a;}
+.rp-mic-illus .bi-arrow-right{font-size:1.35rem;color:#94a3b8;}
+.rp-mic-step{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px;}
+.rp-mic-step-num{width:28px;height:28px;flex:0 0 28px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:.8rem;font-weight:800;color:#fff;
+  background:linear-gradient(135deg,#ef4444,#b91c1c);box-shadow:0 2px 6px rgba(220,38,38,.3);}
+.rp-mic-step-txt{font-size:.86rem;color:#334155;padding-top:4px;line-height:1.4;}
+.rp-mic-ok{display:none;align-items:center;gap:8px;margin:2px 0 10px;padding:9px 12px;border-radius:var(--r-sm);
+  background:#dcfce7;color:#166534;font-weight:700;font-size:.85rem;}
+.rp-mic-ok.show{display:flex;animation:rpMicOkIn .3s var(--ease-spring);}
+@keyframes rpMicOkIn{from{transform:scale(.92);opacity:0;}to{transform:none;opacity:1;}}
+/* 2026-07-14 (Daniel): los toggles "Responder al cliente / Comentario
+   interno" estaban "muy toscos" -- ahora son pills modernas (radios
+   generosos, transicion suave, sombra sutil) y el color del pill ACTIVO
+   queda ASOCIADO al color con que ese tipo de mensaje se pinta en el hilo:
+   cliente = negro ILUS (igual que .rp-msg.out), interno = ambar (igual que
+   .rp-msg.interno). Coherencia visual toggle ↔ mensaje. */
+.rp-mode-tabs{display:flex;gap:8px;background:#f9fafb;border-bottom:1px solid #eaecf0;padding:10px 12px;}
+.rp-mode-tab{flex:1;text-align:center;padding:9px 14px;font-size:.82rem;font-weight:800;color:#64748b;cursor:pointer;
+  border-radius:50px;border:1.5px solid #e5e7eb;background:#fff;letter-spacing:.02em;
+  transition:background .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s var(--ease-spring);}
+.rp-mode-tab:hover{color:#334155;border-color:#cbd5e1;box-shadow:0 2px 8px rgba(15,23,42,.08);transform:translateY(-1px);}
+.rp-mode-tab.active[data-mode="cliente"]{color:#fff;background:linear-gradient(135deg,#1f2937,#0a0a0a);
+  border-color:#0a0a0a;box-shadow:0 3px 12px rgba(10,10,10,.28);}
+.rp-mode-tab.active[data-mode="interno"]{color:#78350f;background:#fffbeb;
+  border-color:#fde68a;box-shadow:0 3px 12px rgba(245,158,11,.25);}
+/* Diferenciar visualmente De/Para/CC del editor de abajo (Daniel
+   2026-07-12: "esta todo muy blanco... el de, el para... la caja de
+   texto tambien esta muy blanco") -- antes #fcfcfd era casi identico al
+   blanco del editor; ahora un gris ILUS perceptible + los inputs con su
+   propio campo delimitado, para que se note "esto es un dato, no el
+   mensaje". */
+.rp-headers{padding:12px 14px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:11px;margin-bottom:12px;display:none;}
+.rp-headers.show{display:block;}
+.rp-headers .row-h{display:flex;align-items:center;gap:8px;font-size:.78rem;margin-bottom:6px;}
+.rp-headers .row-h label{color:#6b7280;font-weight:700;width:44px;flex-shrink:0;}
+.rp-headers .row-h input{border:1px solid #e5e7eb;background:#fff;border-radius:6px;padding:4px 8px;font-size:.82rem;flex:1;outline:none;}
+.rp-headers .row-h input:focus{border-color:#dc2626;}
+/* Chips de correo con validacion en vivo (2026-07-12, Daniel: "si el correo
+   esta bien formado que quede seleccionado y verificado, con punto y coma") */
+.email-chipbox{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex:1;
+  border:1px solid #e5e7eb;background:#fff;border-radius:6px;padding:3px 6px;min-height:30px;}
+.email-chipbox:focus-within{border-color:#dc2626;}
+.email-chip{display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;color:#166534;
+  border:1px solid #bbf7d0;border-radius:50px;padding:2px 6px 2px 10px;font-size:.76rem;font-weight:600;white-space:nowrap;}
+.email-chip.invalido{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
+.email-chip i.bi-check-circle-fill{color:#16a34a;font-size:.8rem;}
+.email-chip i.bi-exclamation-triangle-fill{color:#dc2626;font-size:.8rem;}
+.email-chip .x{cursor:pointer;opacity:.6;font-size:.7rem;padding:2px;}
+.email-chip .x:hover{opacity:1;}
+.email-chip-input{border:none;outline:none;flex:1;min-width:110px;font-size:.82rem;padding:3px 4px;}
+/* Daniel 2026-07-12: "ese logo feo... colocale un texto nomas" -- se
+   probo primero una pill negra con avatar circular y no gusto; se
+   simplifica a solo texto en rojo ILUS, sin fondo ni circulo. */
+.rp-de-badge{color:#dc2626;font-weight:700;font-size:.85rem;}
+.rp-editor-wrap .ql-toolbar{border:none;border-bottom:1px solid #eaecf0;background:#f3f4f6;}
+/* Editor compacto por defecto (Daniel 2026-07-12: "la caja de texto es
+   mas grande que el visualizador de mensajes" -- el hilo es el area
+   principal, el editor no necesita ser enorme para escribir una
+   respuesta normal). Es el UNICO scroll interno que queda en la pestaña
+   Respuestas (no el del hilo de arriba). El JS (ajustarAltoHilo) ajusta
+   esto en tiempo real; este valor es solo el fallback del primer paint. */
+/* 2026-07-14 (Daniel): la caja de escritura "mas amplia y agradable, con
+   mas altura minima" -- sube el piso a 180px (el JS ajusta en vivo). */
+.rp-editor-wrap .ql-container{border:none;font-size:.92rem;line-height:1.55;min-height:180px;max-height:280px;overflow-y:auto;}
+.rp-editor-wrap .ql-editor{padding:14px 16px;}
+.rp-toolbar-extra{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;
+  background:#fafafa;border-top:1px solid #eaecf0;flex-wrap:wrap;gap:8px;}
+.rp-adj-preview{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;}
+.rp-adj-preview .chip{display:flex;align-items:center;gap:5px;background:#f1f5f9;border-radius:7px;
+  padding:4px 8px;font-size:.74rem;}
+.rp-adj-preview .chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
+
+/* ── Plantillas: secciones "Mis plantillas" / "Del equipo" + acciones discretas ── */
+.rp-pl-header{font-size:.62rem;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:#94a3b8;padding-bottom:2px;}
+.rp-pl-row{display:flex;align-items:center;gap:4px;}
+.rp-pl-row .dropdown-item{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.rp-pl-dots{border:0;background:transparent;color:#cbd5e1;padding:4px 8px;
+  border-radius:6px;flex-shrink:0;line-height:1;}
+.rp-pl-dots:hover{background:#f1f5f9;color:#475569;}
+.rp-pl-acciones{display:flex;align-items:center;gap:6px;padding:4px 12px;}
+.rp-pl-acciones .btn{font-size:.72rem;padding:2px 10px;min-height:30px;}
+@media (hover:hover){ .rp-pl-row .rp-pl-dots{opacity:0;transition:opacity .15s;}
+  .rp-pl-row:hover .rp-pl-dots,.rp-pl-row:focus-within .rp-pl-dots{opacity:1;} }
+
+/* ── Stepper de estado (tracking visual de avance) ── */
+.tk-stepper-card{padding-bottom:14px;}
+.tk-stepper{display:flex;align-items:flex-start;}
+.tk-step{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;}
+.tk-step:not(:first-child)::before{content:'';position:absolute;top:19px;left:-50%;width:100%;height:3px;
+  background:#e5e7eb;z-index:0;}
+.tk-step.done:not(:first-child)::before,.tk-step.current:not(:first-child)::before{background:#16a34a;}
+.tk-step-circle{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:1.05rem;background:#f3f4f6;color:#9ca3af;position:relative;z-index:1;transition:background .15s,color .15s;}
+.tk-step-label{font-size:.72rem;font-weight:700;color:#9ca3af;margin-top:7px;}
+.tk-step.done .tk-step-circle{background:#dcfce7;color:#166534;}
+.tk-step.done .tk-step-label{color:#166534;}
+.tk-step.current .tk-step-circle{background:var(--ilus-red,#dc2626);color:#fff;box-shadow:0 0 0 5px rgba(220,38,38,.15);}
+.tk-step.current .tk-step-label{color:#dc2626;font-weight:800;}
+.tk-step-badge{position:absolute;top:-10px;background:#fff;border:1px solid #dc2626;color:#dc2626;
+  font-size:.56rem;font-weight:800;border-radius:50px;padding:1px 8px;white-space:nowrap;z-index:2;}
+.tk-pending-pill{background:#fff8e1;color:#b45309;border-radius:50px;padding:6px 14px;font-size:.78rem;
+  font-weight:800;display:inline-flex;align-items:center;gap:6px;margin-top:14px;}
+.tk-cancel-banner{background:#fee2e2;color:#991b1b;border-radius:10px;padding:12px 16px;font-weight:800;
+  display:flex;align-items:center;gap:10px;font-size:.92rem;}
+@media (max-width:520px){
+  .tk-stepper{flex-direction:column;gap:2px;}
+  .tk-step{flex-direction:row;justify-content:flex-start;text-align:left;gap:12px;padding:8px 0;
+    flex-wrap:wrap;}
+  .tk-step-label{margin-top:0;}
+  .tk-step:not(:first-child)::before{top:-6px;left:19px;width:3px;height:16px;}
+  .tk-step-badge{position:static;margin-left:6px;}
+  /* Label de sub-estado largo (ej. "Pendiente aprobación OT") junto al
+     círculo de 40px puede no caber en el ancho de la tarjeta -- que baje
+     de línea completa en vez de recortarse (sin flex-wrap arriba no había
+     dónde bajar). */
+  .tk-step-badge{flex-basis:100%;margin-left:0;margin-bottom:2px;white-space:normal;}
+}
+/* ── "¿Qué falta?" ── */
+.tk-qf-contador{font-size:.8rem;font-weight:700;color:#6b7280;margin-bottom:10px;}
+.tk-qf-item{display:flex;align-items:center;gap:9px;font-size:.85rem;padding:4px 0;}
+.tk-qf-item i{font-size:1.05rem;}
+.tk-qf-item.ok{color:#166534;} .tk-qf-item.ok i{color:#16a34a;}
+.tk-qf-item.falta{color:#78350f;} .tk-qf-item.falta i{color:#f59e0b;}
+/* ── Identificación del cliente: vista compacta ── */
+.tk-id-nombre{font-size:1.22rem;font-weight:900;color:#0f172a;margin-bottom:12px;letter-spacing:-.01em;
+  padding-bottom:10px;border-bottom:1px solid #f1f5f9;}
+/* 2026-07-14 (Daniel): "me quejo mucho de identificacion del cliente, lo veo
+   con muchos campos vacios" -- los campos SIN dato ya no ensucian la tarjeta:
+   quedan agrupados y colapsados tras un boton discreto "Ver campos vacios (N)".
+   Se pueden seguir editando con el lapiz al expandir (Regla #4.2: la
+   capacidad de editar campos vacios NO se elimina, solo se esconde por
+   defecto). */
+.tk-id-vacios-btn{display:none;align-items:center;gap:6px;margin-top:12px;border:1px dashed #d1d5db;
+  background:#fafbfc;color:#6b7280;border-radius:50px;padding:6px 14px;font-size:.74rem;font-weight:700;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s,box-shadow .2s var(--ease-spring);}
+.tk-id-vacios-btn:hover{background:#fff;color:#dc2626;border-color:#fca5a5;box-shadow:var(--shadow-sm);}
+.tk-id-vacios-btn i{font-size:.8rem;transition:transform .25s var(--ease-spring);}
+.tk-id-vacios-btn.abierto i{transform:rotate(180deg);}
+.tk-id-vacios-wrap{display:none;margin-top:12px;padding:12px 10px 6px;border:1px dashed #e5e7eb;
+  border-radius:var(--r-md);background:#fafbfc;}
+.tk-id-vacios-wrap.show{display:block;animation:tkIdVaciosIn .25s var(--ease-spring);}
+@keyframes tkIdVaciosIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+.tk-id-vacios-wrap .tk-dl dt{color:#94a3b8;}
+.tk-id-vacios-wrap .tk-dl i{color:#d1d5db;}
+.tk-id-vacios-wrap .tk-dl dd:hover{background:#fff;}
+/* ── Adjuntos: encabezado de grupo por fecha + lightbox ── */
+.tk-adj-grupo-titulo{font-size:.68rem;font-weight:800;color:#9ca3af;text-transform:uppercase;
+  letter-spacing:.06em;margin:14px 0 8px;}
+.tk-adj-grupo-titulo:first-child{margin-top:0;}
+.tk-lightbox{position:fixed;inset:0;background:rgba(10,10,10,.92);z-index:2000;
+  align-items:center;justify-content:center;padding:32px;}
+.tk-lightbox-panel{position:relative;display:flex;flex-direction:column;max-width:min(94vw,1100px);max-height:94vh;width:100%;}
+.tk-lightbox-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;}
+.tk-lightbox-nombre{color:#fff;font-size:.85rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+.tk-lightbox-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.tk-lightbox-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.14);color:#fff;
+  border-radius:8px;padding:6px 12px;font-size:.78rem;font-weight:700;text-decoration:none;white-space:nowrap;}
+.tk-lightbox-btn:hover{background:rgba(255,255,255,.26);color:#fff;}
+.tk-lightbox-body{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;}
+.tk-lightbox-body img{max-width:100%;max-height:78vh;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5);}
+.tk-lightbox-body iframe{width:100%;height:75vh;border:none;border-radius:8px;background:#fff;}
+.tk-lightbox-body video{max-width:100%;max-height:75vh;border-radius:8px;background:#000;}
+.tk-lightbox-fallback{background:#1a1a1a;border-radius:12px;padding:40px 50px;text-align:center;color:#e5e7eb;max-width:420px;}
+.tk-lightbox-fallback i{font-size:3rem;color:#dc2626;display:block;margin-bottom:14px;}
+.tk-lightbox-fallback .nombre{font-weight:700;margin-bottom:6px;word-break:break-word;}
+.tk-lightbox-fallback .msg{font-size:.82rem;color:#9ca3af;}
+.tk-lightbox-close{color:#fff;font-size:1.1rem;cursor:pointer;
+  width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:50%;
+  background:rgba(255,255,255,.14);flex-shrink:0;}
+.tk-lightbox-close:hover{background:rgba(255,255,255,.26);}
+/* ── Navegación prev/next del visor (varios adjuntos-imagen en el mismo contexto) ── */
+.tk-lightbox-nav{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;
+  justify-content:space-between;pointer-events:none;padding:0 10px;}
+.tk-lightbox-navbtn{pointer-events:auto;width:48px;height:48px;min-width:44px;min-height:44px;border-radius:50%;
+  background:rgba(10,10,10,.55);border:1.5px solid rgba(220,38,38,.55);color:#fff;font-size:1.35rem;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
+.tk-lightbox-navbtn:hover{background:rgba(220,38,38,.55);border-color:#dc2626;}
+.tk-lightbox-contador{color:#fff;font-size:.76rem;font-weight:700;background:rgba(255,255,255,.14);
+  border-radius:20px;padding:3px 12px;white-space:nowrap;}
+@media (max-width:520px){
+  .tk-lightbox-navbtn{width:44px;height:44px;font-size:1.15rem;}
+}
+/* ── Actividad del ticket (línea de tiempo de supervisión) ── */
+.tk-act-filtros{display:flex;gap:6px;flex-wrap:wrap;}
+.tk-act-chip{padding:4px 12px;border-radius:50px;font-size:.72rem;font-weight:700;cursor:pointer;
+  background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;user-select:none;
+  transition:background .12s,color .12s,border-color .12s;}
+.tk-act-chip:hover{border-color:#dc2626;color:#dc2626;}
+.tk-act-chip.active{background:#dc2626;color:#fff;border-color:#dc2626;}
+.tk-act-chip.active:hover{color:#fff;}
+/* 2026-07-14 (Daniel): "el historial de actividad quisiera mejorarlo hasta
+   el tracking, una cosa bastante desarrollada" -- rediseño estilo tracking
+   de encomienda: linea vertical continua con degradado, nodos circulares
+   mas grandes con icono por tipo de evento (colores paleta Regla #2: verde
+   completado, azul info, ambar aviso, rojo error), cuerpo de cada evento en
+   tarjeta sutil, y el evento MAS RECIENTE destacado con anillo pulsante.
+   Mismos eventos y textos de siempre -- solo cambia la presentacion. */
+.tk-act-item{position:relative;display:flex;gap:14px;padding-bottom:14px;}
+.tk-act-item::before{content:'';position:absolute;left:17px;top:40px;bottom:-4px;width:3px;border-radius:2px;
+  background:linear-gradient(180deg,#e2e8f0 0%,#f1f5f9 100%);}
+.tk-act-item:last-child{padding-bottom:0;}
+.tk-act-item:last-child::before{display:none;}
+.tk-act-nodo{width:36px;height:36px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:.92rem;position:relative;z-index:1;border:2.5px solid #fff;
+  box-shadow:0 0 0 1.5px #e2e8f0, var(--shadow-sm);margin-top:2px;}
+/* El primer evento visible = el mas reciente ("¿dónde va el paquete?"):
+   anillo pulsante del color del propio nodo. */
+.tk-act-item:first-child .tk-act-nodo::after{content:'';position:absolute;inset:-6px;border-radius:50%;
+  border:2px solid currentColor;opacity:0;animation:tkActPing 2.2s ease-out infinite;}
+@keyframes tkActPing{0%{transform:scale(.75);opacity:.5;}80%{transform:scale(1.12);opacity:0;}100%{opacity:0;}}
+.tk-act-body{flex:1;min-width:0;background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-sm);
+  padding:9px 13px;transition:background .15s,border-color .15s,box-shadow .2s var(--ease-spring);}
+.tk-act-item:hover .tk-act-body{background:#fff;border-color:#e5e7eb;box-shadow:var(--shadow-sm);}
+.tk-act-item:first-child .tk-act-body{background:#fff;border-color:#e5e7eb;box-shadow:var(--shadow-sm);}
+.tk-act-linea{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.tk-act-texto{font-size:.85rem;color:#374151;line-height:1.4;overflow-wrap:anywhere;}
+.tk-act-texto b{color:#0f172a;font-weight:700;}
+.tk-act-fecha{font-size:.7rem;color:#9ca3af;margin-left:auto;white-space:nowrap;font-weight:600;
+  font-variant-numeric:tabular-nums;}
+.tk-act-extracto{font-size:.78rem;color:#6b7280;margin-top:3px;overflow-wrap:anywhere;
+  padding-top:3px;border-top:1px dashed #f1f5f9;}
+@media (max-width:520px){
+  .tk-act-fecha{margin-left:0;flex-basis:100%;}
+}
+.tk-act-tag{display:inline-flex;align-items:center;gap:4px;border-radius:50px;padding:1px 8px;font-size:.6rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;vertical-align:middle;}
+.tk-act-tag.env-ok,.tk-act-tag.cliente{background:#dcfce7;color:#166534;}
+.tk-act-tag.env-fail{background:#fee2e2;color:#991b1b;}
+.tk-act-tag.interno{background:#fff8e1;color:#b45309;}
+
+/* ── Generar OT: tarjeta de estado en Acciones ── */
+.otw-ot-existente{display:flex;align-items:center;gap:12px;background:#f0fdf4;border:1px solid #bbf7d0;
+  border-radius:11px;padding:14px 16px;}
+.otw-ot-existente i.bi-clipboard2-check-fill{font-size:1.6rem;color:#16a34a;flex-shrink:0;}
+.otw-ot-existente .num{font-family:'JetBrains Mono',monospace;font-weight:800;color:#166534;font-size:.95rem;}
+.otw-ot-existente .lbl{font-size:.76rem;color:#166534;}
+.otw-ot-existente a{margin-left:auto;flex-shrink:0;}
+
+/* ── Calendario mensual embebido en el modal "Generar OT" (hoy: Paso 3,
+   columna A del agendador unificado) ──
+   Daniel: "algo 2026/2027, parecido al de retiros, bien estructurado...
+   para ver quien esta agendado, con que OT, panorama general del mes,
+   sin salir del modal". Mismo lenguaje 2027 ya establecido esta sesion
+   (tokens de sombra, radio y easing del :root, rojo ILUS). Grilla de 7
+   columnas; cada dia con OTs muestra un chip rojo con el conteo; click
+   selecciona el dia y lo dibuja en la linea de tiempo de la derecha.
+
+   ⚠ CUIDADO AL EDITAR ESTE COMENTARIO (bug real corregido 2026-07-15):
+   aqui se listaban los tokens con comodin (guion-guion-shadow-asterisco
+   seguido de barra). Ese asterisco+barra CIERRA el comentario CSS antes
+   de tiempo: el texto restante se volvia un selector invalido y el
+   navegador DESCARTABA la regla .tkcal-toolbar de aqui abajo -- la barra
+   de mes (‹ › + Hoy) se quedaba sin display:flex. Nunca escribas un
+   asterisco seguido de barra dentro de un comentario CSS. */
+.tkcal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.tkcal-navbtn{width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
+  color:#374151;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:background .15s,border-color .15s,transform .2s var(--ease-spring);}
+.tkcal-navbtn:hover{background:#fef2f2;border-color:#fca5a5;color:#dc2626;transform:scale(1.06);}
+.tkcal-titulo{flex:1;text-align:center;font-weight:800;font-size:.92rem;color:#0f172a;text-transform:capitalize;}
+.tkcal-hoy{border:1px solid #e5e7eb;background:#fff;color:#6b7280;border-radius:50px;padding:3px 12px;
+  font-size:.7rem;font-weight:700;flex-shrink:0;transition:background .15s,color .15s,border-color .15s;}
+.tkcal-hoy:hover{background:#fef2f2;color:#dc2626;border-color:#fca5a5;}
+.tkcal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;}
+.tkcal-dow span{text-align:center;font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;}
+.tkcal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.tkcal-day{position:relative;aspect-ratio:1/1;min-height:36px;border-radius:var(--r-sm);border:1px solid #f1f5f9;
+  background:#fafbfc;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  cursor:pointer;transition:background .15s,border-color .15s,box-shadow .2s var(--ease-spring),transform .15s var(--ease-spring);}
+.tkcal-day:hover{background:#fff;border-color:#cbd5e1;box-shadow:var(--shadow-sm);transform:translateY(-1px);}
+.tkcal-day.blank{visibility:hidden;pointer-events:none;}
+.tkcal-day .num{font-size:.76rem;font-weight:700;color:#334155;}
+.tkcal-day.finde{background:#f8fafc;}
+.tkcal-day.hoy{border-color:#dc2626;}
+.tkcal-day.hoy .num{color:#dc2626;font-weight:900;}
+.tkcal-day.sel{background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.sel .num{color:#991b1b;}
+.tkcal-day .cnt{position:absolute;top:2px;right:3px;background:#dc2626;color:#fff;font-size:.55rem;font-weight:800;
+  border-radius:50px;min-width:14px;height:14px;display:flex;align-items:center;justify-content:center;
+  padding:0 3px;line-height:1;box-shadow:0 1px 3px rgba(220,38,38,.4);}
+.tkcal-detalle{margin-top:12px;padding:12px 14px;background:#fafbfc;border:1px solid #f1f5f9;border-radius:var(--r-md);
+  animation:tkcalDetIn .2s var(--ease-spring);}
+@keyframes tkcalDetIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}
+.tkcal-detalle-titulo{font-size:.78rem;font-weight:800;color:#0f172a;margin-bottom:8px;text-transform:capitalize;}
+.tkcal-det-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;font-size:.78rem;
+  background:#fff;border:1px solid #f1f5f9;margin-bottom:5px;flex-wrap:wrap;}
+.tkcal-det-item:last-child{margin-bottom:0;}
+.tkcal-det-item .hora{font-family:'JetBrains Mono',monospace;font-weight:700;color:#dc2626;white-space:nowrap;flex-shrink:0;}
+.tkcal-det-item .who{font-weight:700;color:#0f172a;}
+.tkcal-det-item .num{font-family:'JetBrains Mono',monospace;color:#6b7280;font-size:.72rem;margin-left:auto;flex-shrink:0;}
+.tkcal-det-empty{font-size:.78rem;color:#9ca3af;text-align:center;padding:6px 0;}
+/* Alerta de choque de horario EN VIVO (no bloqueante, imposible de ignorar
+   por color/posición -- entre el campo de fecha y el de técnicos). */
+.tkcal-choque-alert{display:flex;align-items:flex-start;gap:9px;background:#fef2f2;border:1px solid #fecaca;
+  color:#991b1b;border-radius:var(--r-md);padding:10px 13px;font-size:.8rem;font-weight:600;margin-bottom:12px;
+  animation:tkcalDetIn .2s var(--ease-spring);}
+.tkcal-choque-alert i{font-size:1rem;flex-shrink:0;margin-top:1px;color:#dc2626;}
+@media (max-width:520px){
+  .tkcal-day{min-height:32px;}
+  .tkcal-day .num{font-size:.7rem;}
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   AGENDADOR UNIFICADO (Paso 3 "Agenda") — mini-calendario + línea de
+   tiempo del día, sincronizados.
+   Daniel: el "globito" (title= nativo) del día NO da la información; ahora
+   las OTs del día se dibujan como BLOQUES posicionados por hora real y la
+   OT que se está creando se dibuja EN VIVO como un bloque propio que se
+   desliza al editar el horario.
+   REGLA #4.2: no se quita NADA — #levFechaProg/#levHoraIni/#levHoraFin/
+   #levRangoDias/#levFechaFinWrap/#levCalWarnChoque/#levCalTitulo/
+   #levCalGrid conservan sus IDs y siguen siendo la fuente de verdad del
+   submit (tkotGenerar los lee tal cual). #levCalDetalle se conserva como
+   fallback oculto.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Panel "premium": mismos valores que .slot-picker de retiros (línea ~530). */
+.tksched{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;
+  background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+  border:1.5px solid #e5e7eb;border-radius:var(--r-md);padding:16px;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.03);margin-top:12px;}
+/* El modal es modal-lg/-xl: bajo 1200px la columna del calendario se achica. */
+@media (max-width:1199.98px){ .tksched{grid-template-columns:260px 1fr;gap:12px;} }
+@media (max-width:767.98px){ .tksched{grid-template-columns:1fr;gap:14px;padding:12px;} }
+.tksched-col{min-width:0;}
+
+/* Fila compacta de inputs (fuente de verdad del submit). */
+.tksched-inputs{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;}
+@media (max-width:575.98px){ .tksched-inputs{grid-template-columns:1fr;} }
+
+/* ── Mini-calendario: mejoras aditivas (hover premium + dots de técnico +
+      pintado de rango). Van DESPUÉS de las reglas originales para ganar por
+      orden con la misma especificidad — las originales no se tocan. ── */
+.tkcal-day{padding:2px 0;}
+.tkcal-day:hover{border-color:var(--ilus-red);background:#fff5f5;transform:translateY(-1px);
+  box-shadow:0 6px 12px -4px rgba(220,38,38,.2);}
+.tkcal-day .dots{display:flex;align-items:center;justify-content:center;gap:2px;
+  height:5px;margin-top:3px;pointer-events:none;}
+.tkcal-day .dots em{width:5px;height:5px;border-radius:50%;display:block;flex-shrink:0;}
+.tkcal-day .dots b{font-size:.5rem;font-weight:800;color:#9ca3af;line-height:1;}
+@media (min-width:768px){ .tkcal-day{min-height:44px;} }   /* Apple HIG táctil (REGLA #3) */
+@media (max-width:767.98px){ .tkcal-day{min-height:44px;aspect-ratio:auto;} }
+
+/* ── Fix legibilidad celda (feedback Daniel 2026-07-15: "días atravesados"):
+   número + badge pasan a UNA fila centrada (el badge deja de ser absolute
+   encima del número) y los dots se anclan al borde inferior de la celda,
+   así el número queda SIEMPRE a la misma altura tenga o no OTs el día. ── */
+.tkcal-day{flex-direction:row;align-items:center;justify-content:center;gap:3px;padding:0 2px;}
+.tkcal-day .num{line-height:1;}
+.tkcal-day .cnt{position:static;min-width:13px;height:13px;font-size:.52rem;padding:0 3px;
+  box-shadow:none;flex-shrink:0;}
+.tkcal-day .dots{position:absolute;left:0;right:0;bottom:3px;margin-top:0;justify-content:center;}
+.tkcal-day .dots b{font-size:.55rem;margin-left:1px;}
+
+/* Rango multi-día: "pill continuo". Los extremos mantienen jerarquía
+   inicio > fin (inicio sólido rojo, fin en el degradé .sel de siempre). */
+.tkcal-day.rango-in{background:#fef2f2;border-color:#fecaca;border-radius:0;}
+.tkcal-day.rango-in .num{color:#991b1b;}
+.tkcal-day.rango-ini{border-radius:var(--r-sm) 0 0 var(--r-sm);
+  background:linear-gradient(160deg,#ff2d2d 0%,#dc2626 55%,#b30000 100%);
+  border-color:#b30000;box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.rango-ini .num{color:#fff;font-weight:900;}
+.tkcal-day.rango-ini .cnt{background:#fff;color:#b30000;box-shadow:none;}
+.tkcal-day.rango-fin{border-radius:0 var(--r-sm) var(--r-sm) 0;
+  background:linear-gradient(135deg,#fef2f2,#fee2e2);border-color:#dc2626;
+  box-shadow:0 0 0 2px rgba(220,38,38,.14);}
+.tkcal-day.rango-fin .num{color:#991b1b;font-weight:900;}
+.tkcal-day.rango-ini.rango-fin{border-radius:var(--r-sm);}
+
+/* Chips de duración (2026-07-19) -- ver comentario junto al HTML arriba. */
+.lev-dur-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;}
+.lev-dur-lbl{font-size:.78rem;font-weight:600;color:#6b7280;}
+.lev-dur-chip{min-height:44px;min-width:44px;padding:0 12px;border-radius:999px;
+  border:1.5px solid #e5e7eb;background:#fff;font-size:.8rem;font-weight:700;
+  color:#374151;cursor:pointer;transition:background .15s,border-color .15s,color .15s;}
+.lev-dur-chip:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
+.lev-dur-chip.act{background:#dc2626;border-color:#dc2626;color:#fff;}
+.lev-dur-hasta{font-size:.75rem;font-weight:600;color:#6b7280;}
+.lev-dur-hasta b{color:#b91c1c;}
+/* Anillo del día que está mirando la línea de tiempo (puede no ser el
+   extremo del rango si se usan las flechas ‹ › del día). */
+.tkcal-day.vista::after{content:'';position:absolute;inset:-3px;border-radius:inherit;
+  border:2px solid rgba(220,38,38,.55);pointer-events:none;}
+.tkcal-leyenda{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:10px;
+  font-size:.63rem;font-weight:700;color:#9ca3af;}
+.tkcal-leyenda span{display:inline-flex;align-items:center;gap:5px;}
+.tkcal-leyenda i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
+
+/* ── Fix anti-desborde del mini-calendario (2026-07-19): 1fr equivale a
+   minmax(auto,1fr) — el min-content de la celda (num+badge en fila, fix
+   2026-07-15) hacía que la grilla midiera ~334px en una columna de 300px
+   (260px bajo 1200px) y las celdas del domingo se pintaran DEBAJO del
+   panel de la línea de tiempo. Dos capas: (a) la grilla queda FÍSICAMENTE
+   incapaz de desbordar; (b) el contenido se dimensiona para caber en el
+   peor caso (31 días de 2 dígitos, todos con badge). El fix de legibilidad
+   num+badge en fila SE CONSERVA tal cual. ── */
+
+/* (1) Columna A más ancha en desktop: 300→320px. La línea de tiempo
+   conserva ≥368px (modal-lg ~736px útiles − 32 padding − 16 gap − 320). */
+.tksched{grid-template-columns:320px 1fr;}
+/* Re-declarar las media queries: la base nueva está DESPUÉS de las
+   originales y les ganaría por orden en viewports angostos. */
+@media (max-width:1199.98px){ .tksched{grid-template-columns:260px 1fr;} }
+@media (max-width:767.98px){ .tksched{grid-template-columns:1fr;} }
+
+/* (2) Grilla incapaz de desbordar: minmax(0,1fr) permite encoger celdas
+   bajo su min-content; overflow:hidden convierte cualquier px residual en
+   recorte DENTRO de la propia celda, nunca invasión de la vecina.
+   .tkcal-dow acompaña el mismo template y gap para no desalinear columnas. */
+.tkcal-dow{grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;}
+.tkcal-grid{grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;min-width:0;}
+.tkcal-day{min-width:0;overflow:hidden;}
+
+/* (3) El anillo .vista se dibujaba en inset:-3px (fuera de la celda);
+   con overflow:hidden quedaría recortado e invisible. Se dibuja pegado
+   al borde interno — misma función, sigue existiendo (REGLA #4.2). */
+.tkcal-day.vista::after{inset:0;}
+
+/* (4) Compresión SOLO en el breakpoint angosto (col 260px). Bajo 768px la
+   columna es 1fr (celdas anchas) y rigen los tamaños originales. */
+@media (min-width:768px) and (max-width:1199.98px){
+  .tkcal-dow{gap:2px;}
+  .tkcal-grid{gap:2px;}
+  /* aspect-ratio:1/1 (regla base ~10009) peleaba con minmax(0,1fr): al haber
+     min-height:44px (táctil) el motor recalcula el ANCHO desde el alto para
+     mantener el cuadrado, ignorando el encogimiento del track (~35px) y
+     desbordando la grilla ~9px. Igual que ya hace el breakpoint móvil
+     (<768px, línea de arriba), se desactiva el aspect-ratio aquí: el ancho
+     sigue al track (minmax(0,1fr)) y el alto lo da min-height:44px — celda
+     rectangular, no cuadrada, sin desborde y sigue táctil (REGLA #3). */
+  .tkcal-day{gap:2px;padding:0 1px;aspect-ratio:auto;}
+  .tkcal-day .num{font-size:.7rem;}
+  .tkcal-day .cnt{min-width:12px;height:12px;font-size:.5rem;padding:0 2px;}
+}
+
+/* ── Header del día (arriba de la línea de tiempo) ── */
+.tkday-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+.tkday-fecha{font-weight:900;font-size:.95rem;color:#0f172a;text-transform:capitalize;}
+.tkday-cnt{background:#fee2e2;color:#991b1b;border-radius:50px;padding:2px 10px;
+  font-size:.66rem;font-weight:800;white-space:nowrap;}
+.tkday-chip-rango{background:#fff8e1;color:#b45309;border-radius:50px;padding:2px 10px;
+  font-size:.66rem;font-weight:800;white-space:nowrap;}
+.tkday-navd{display:inline-flex;gap:4px;}
+.tkday-navd button{width:24px;height:24px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;
+  color:#6b7280;display:inline-flex;align-items:center;justify-content:center;font-size:.62rem;
+  transition:background .15s,border-color .15s,color .15s;}
+.tkday-navd button:hover{background:#fef2f2;border-color:#fca5a5;color:#dc2626;}
+.tkday-navd button:disabled{opacity:.35;cursor:not-allowed;}
+.tkday-legend{margin-left:auto;display:flex;align-items:center;gap:10px;
+  font-size:.63rem;font-weight:700;color:#9ca3af;}
+.tkday-legend span{display:inline-flex;align-items:center;gap:5px;}
+.tkday-legend i.k{width:12px;height:12px;border-radius:4px;display:inline-block;flex-shrink:0;}
+.tkday-legend i.k.ag{background:#f8fafc;border:1px solid #cbd5e1;border-left:3px solid #475569;}
+.tkday-legend i.k.mine{background:rgba(220,38,38,.12);border:2px dashed var(--ilus-red);}
+@media (max-width:575.98px){ .tkday-legend{margin-left:0;width:100%;} }
+
+/* ── "Sugerir próximo horario libre" (propuesta Fable §4A, tipo Doctoralia):
+   chip en la cabecera del día + botón gemelo dentro del banner de choque
+   (mismo tkdaySugerirHueco()). Mismo lenguaje visual que .tkcal-hoy. ── */
+.tkday-sugerir-btn{border:1px solid #e5e7eb;background:#fff;color:#6b7280;border-radius:50px;
+  padding:3px 12px;font-size:.7rem;font-weight:700;display:inline-flex;align-items:center;gap:4px;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s;white-space:nowrap;}
+.tkday-sugerir-btn:hover{background:#fef2f2;color:#dc2626;border-color:#fca5a5;}
+.tkday-sugerir-btn:disabled{opacity:.55;cursor:wait;}
+@media (max-width:575.98px){ .tkday-sugerir-btn{width:100%;justify-content:center;order:1;} }
+
+/* ── §4C: indicador de día saturado — el badge de conteo del mini-calendario
+   escala de color según carga total del día (independiente de qué técnico).
+   Reglas base (.tkcal-day .cnt, línea ~614/686) quedan intactas como
+   fallback; estas clases ganan por especificidad/orden. ── */
+.tkcal-day .cnt.tkcal-carga-ambar{background:#f59e0b;box-shadow:0 1px 3px rgba(245,158,11,.4);}
+.tkcal-day .cnt.tkcal-carga-normal{background:#94a3b8;box-shadow:none;}
+
+/* ── §4B: mini-contador de carga del técnico en el chip del Paso 4 ── */
+.tkot-tec-carga{display:inline-flex;align-items:center;margin-left:6px;padding:1px 7px;
+  border-radius:50px;font-size:.66rem;font-weight:800;white-space:nowrap;}
+
+/* ── Lienzo de la línea de tiempo ──
+   Rango visible 08:00→20:00 (12h) · 48px por hora = 0.8px por minuto
+   ⇒ alto total 12*48 = 576px. El scroll es INTERNO y deliberado: el modal
+   (la página) no crece — el cuadro sí scrollea. */
+.tkday-scroll{position:relative;height:400px;overflow-y:auto;overflow-x:hidden;background:#fff;
+  border:1px solid #eef0f2;border-radius:var(--r-sm);scroll-behavior:smooth;overscroll-behavior:contain;}
+@media (max-width:767.98px){ .tkday-scroll{height:320px;} }
+.tkday-scroll.sin-dia{opacity:.6;}
+.tkday-inner{position:relative;height:576px;}
+.tkday-canvas{position:relative;height:576px;margin-left:48px;}
+.tkday-hline{position:absolute;left:0;right:0;height:0;border-top:1px solid #eef0f2;pointer-events:none;}
+.tkday-hline.half{border-top:1px dashed #f6f7f9;}
+.tkday-hlbl{position:absolute;left:0;width:48px;text-align:right;padding-right:8px;
+  font-family:'JetBrains Mono',monospace;font-size:.64rem;font-weight:600;color:#9ca3af;
+  font-variant-numeric:tabular-nums;pointer-events:none;line-height:1;}
+.tkday-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red);
+  z-index:6;pointer-events:none;}
+.tkday-now::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--ilus-red);
+  position:absolute;left:-4px;top:-5px;}
+
+/* ── Bloque de OT existente ── */
+.tkday-blk{position:absolute;border-radius:8px;padding:3px 8px;cursor:pointer;background:#fff;
+  border:1px solid;border-left-width:3px;box-shadow:var(--shadow-sm);overflow:hidden;z-index:2;
+  transition:transform .16s var(--ease-spring), box-shadow .16s var(--ease-out);
+  font-size:.72rem;line-height:1.25;user-select:none;min-width:0;color:#0f172a;text-align:left;}
+.tkday-blk:hover{transform:translateY(-1px);box-shadow:var(--shadow-md);z-index:4;}
+.tkday-blk:focus-visible{outline:none;box-shadow:var(--ring);}
+.tkday-blk .l1{display:flex;align-items:center;gap:6px;min-width:0;}
+.tkday-blk .hora{font-family:'JetBrains Mono',monospace;font-size:.66rem;font-weight:700;
+  font-variant-numeric:tabular-nums;white-space:nowrap;flex-shrink:0;}
+.tkday-blk .who{font-size:.74rem;font-weight:800;color:#0f172a;white-space:nowrap;
+  text-overflow:ellipsis;overflow:hidden;min-width:0;}
+.tkday-blk .otnum{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;
+  background:rgba(15,23,42,.06);border-radius:4px;padding:0 5px;display:inline-block;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tkday-blk.blk-sm{padding:2px 8px;}
+.tkday-blk.blk-xs{padding:1px 6px;line-height:1.1;font-size:.62rem;}
+.tkday-blk.blk-xs .who{font-size:.62rem;}
+/* Estado (campo `estado` del endpoint) */
+.tkday-blk.est-done{opacity:.55;}
+.tkday-blk.est-curso{border-left-style:double;border-left-width:4px;}
+/* Sin hora de término (o fin <= inicio) */
+.tkday-blk.sin-fin{border-right-style:dashed;border-right-width:2px;}
+/* Recorte fuera del rango 08:00–20:00 */
+.tkday-blk.clamp-top::before{content:'▲';font-size:.5rem;position:absolute;top:1px;right:4px;
+  color:inherit;opacity:.7;}
+.tkday-blk.clamp-bot::after{content:'▼';font-size:.5rem;position:absolute;bottom:1px;right:4px;
+  color:inherit;opacity:.7;}
+/* Bloque existente en conflicto con "Tu OT" */
+.tkday-blk.en-choque{box-shadow:0 0 0 2px #dc2626, var(--shadow-sm);}
+/* Colapsado "+N más" cuando el cluster tiene más de 4 columnas */
+.tkday-blk.blk-mas{background:#f3f4f6;border-color:#e5e7eb;border-left-color:#9ca3af;
+  color:#6b7280;font-weight:800;}
+.tkday-blk.blk-mas .who{color:#6b7280;}
+/* Táctil: en mobile el bloque más chico sube a 22px. (El diseño proponía
+   además un ::before con inset:-4px para ampliar el área de toque, pero el
+   bloque necesita overflow:hidden para el ellipsis del nombre — ese pseudo
+   quedaría recortado y no ampliaría nada; el ::before ya se usa para el
+   chevron ▲ de recorte. Se resuelve con min-height, que sí funciona.) */
+@media (max-width:767.98px){ .tkday-blk{min-height:22px;} }
+
+/* ── "Tu OT" (la que se está creando) — previsualización transparente +
+   punteada (Fable 2026-07-19, v3). Daniel: "me gustaba mas transparente y
+   punteada"; la versión sólida se veía "montada"/pegada sobre la línea de
+   tiempo como una calcomanía. Volvemos al overlay tipo fantasma: fondo
+   translúcido tenue + borde punteado, que lee como "previsualización" y no
+   como bloque pegado. Conserva la duración y el estado de técnico. ── */
+.tkday-blk.mine{left:0;width:100%;z-index:5;cursor:default;pointer-events:none;
+  color:#0f172a;border-radius:10px;overflow:visible;
+  background:rgba(220,38,38,.07);
+  border:2px dashed var(--ilus-red);
+  box-shadow:0 6px 16px -8px rgba(220,38,38,.28);
+  transition:top .18s var(--ease-out), height .18s var(--ease-out);}
+.tkday-blk.mine .mine-tag{position:absolute;top:-9px;left:8px;display:inline-flex;align-items:center;gap:3px;
+  background:var(--ilus-red);color:#fff;font-size:.55rem;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;border-radius:50px;padding:1px 8px;box-shadow:0 2px 4px rgba(0,0,0,.15);
+  white-space:nowrap;max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;}
+.tkday-blk.mine .mine-body{position:relative;overflow:hidden;height:100%;
+  display:flex;flex-direction:column;justify-content:center;gap:2px;padding:2px 10px;pointer-events:none;}
+/* Si el bloque arranca pegado a las 08:00 (top<12px) la píldora a top:-9px
+   quedaría recortada por el contenedor de scroll: se mete adentro. */
+.tkday-blk.mine.tag-dentro .mine-tag{top:2px;}
+.tkday-blk.mine .mine-wm{position:absolute;right:6px;bottom:-4px;font-size:2.3rem;line-height:1;
+  color:var(--ilus-red);opacity:.08;pointer-events:none;}
+.tkday-blk.mine .mine-dur{display:flex;align-items:center;gap:5px;font-size:.8rem;font-weight:800;
+  color:#b91c1c;font-variant-numeric:tabular-nums;}
+.tkday-blk.mine .mine-dur i{font-size:.72rem;opacity:.85;}
+.tkday-blk.mine .mine-tec{display:flex;align-items:center;gap:4px;font-size:.67rem;font-weight:700;
+  color:#7f1d1d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tkday-blk.mine .mine-tec.pendiente{color:#9a6a1f;}
+.tkday-blk.mine .mine-tec i{font-size:.66rem;flex-shrink:0;}
+.tkday-blk.mine.choque{border-style:dashed;border-color:#b91c1c;
+  background:repeating-linear-gradient(45deg,rgba(220,38,38,.10) 0 8px,rgba(220,38,38,.20) 8px 16px);
+  animation:tkChoquePulse 1.6s ease-in-out infinite;}
+@keyframes tkChoquePulse{0%,100%{box-shadow:0 0 0 3px rgba(220,38,38,.18)}50%{box-shadow:0 0 0 7px rgba(220,38,38,0)}}
+.tkday-blk.mine.choque .mine-tag{background:#b91c1c;}
+.tkday-blk.mine.choque .mine-tag::before{content:'⚠ ';}
+@media (prefers-reduced-motion:reduce){ .tkday-blk.mine.choque{animation:none;} }
+
+/* ── Estados vacíos (el lienzo con su rejilla NUNCA se oculta) ── */
+.tkday-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1;}
+.tkday-ghost > i{font-size:1.35rem;}
+.tkday-ghost .g1{font-size:.78rem;font-weight:700;color:#9ca3af;margin-top:4px;}
+.tkday-ghost .g2{font-size:.7rem;color:#c4c9d0;margin-top:2px;}
+.tkday-ghost .g-btn{pointer-events:auto;margin-top:8px;}
+
+/* ── Detalle de un bloque: overlay propio position:fixed (NO es un modal
+      Bootstrap anidado, así se evita por completo la pelea de backdrops /
+      z-index entre 1050/1055 y la restauración de .modal-open del padre). ── */
+.tkday-pop{position:fixed;inset:0;z-index:1090;display:flex;align-items:center;justify-content:center;
+  background:rgba(10,10,10,.45);padding:16px;animation:tkPopBd .16s var(--ease-out);}
+@keyframes tkPopBd{from{opacity:0}to{opacity:1}}
+.tkday-pop .pop-card{max-width:340px;width:calc(100vw - 32px);border-radius:var(--r-md);
+  box-shadow:var(--shadow-lg);background:#fff;overflow:hidden;max-height:82vh;
+  display:flex;flex-direction:column;animation:tkPopIn .16s var(--ease-out);}
+@keyframes tkPopIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+.tkday-pop .pop-head{background:linear-gradient(135deg,#0a0a0a,#1a1a1a);color:#fff;
+  padding:12px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tkday-pop .pop-head .num{font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:900;
+  color:#fff;font-variant-numeric:tabular-nums;}
+.tkday-pop .pop-head .btn-close{margin-left:auto;}
+.tkday-pop .pop-body{padding:14px 16px;overflow-y:auto;overscroll-behavior:contain;}
+.tkday-pop .pop-row{display:flex;gap:8px;font-size:.82rem;align-items:flex-start;padding:3px 0;}
+.tkday-pop .pop-row > i{color:#9ca3af;margin-top:3px;flex-shrink:0;}
+.tkday-pop .pop-row .v{color:#0f172a;font-weight:700;min-width:0;overflow-wrap:anywhere;}
+.tkday-pop .pop-row .v.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
+.tkday-pop .pop-grp + .pop-grp{border-top:1px dashed #f1f5f9;margin-top:8px;padding-top:8px;}
+.tkday-pop .pop-foot{padding:10px 14px;border-top:1px solid #f1f5f9;
+  display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
+@media (max-width:767.98px){ .tkday-pop .pop-card{max-height:88vh;} }
+
+/* ── "Agenda tipo clínica" §2 — barra de acciones del popover de UNA OT
+   (Reprogramar / Reasignar / Cancelar). El gate REAL sigue siendo el
+   backend (@_ot_can_metadata en PUT /mantenciones/api/visitas/<vid>) —
+   ocultar el botón aquí solo evita mostrarle a un técnico una acción que
+   de todos modos le sería rechazada. ── */
+.tkday-pop .pop-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+  padding:10px 14px;border-top:1px solid #f1f5f9;}
+@media (max-width:400px){
+  .tkday-pop .pop-actions{grid-template-columns:1fr;}
+  .tkday-pop .pop-actions .btn{min-height:44px;}
+}
+
+/* ── Mini-formularios inline (Reprogramar §2.2 / Reasignar §2.3): viven
+   DENTRO del mismo popover — nunca abren el wizard de 7 pasos en modo
+   edición (decisión de arquitectura §2.0: reusan el PUT ya existente). ── */
+.tkday-pop .pop-inline{padding:12px 14px;border-top:1px dashed #f1f5f9;
+  background:#fafbfc;animation:tkcalDetIn .16s var(--ease-out);}
+.tkday-pop .pop-inline .row-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
+.tkday-pop .pop-inline label{font-size:.68rem;font-weight:700;color:#6b7280;
+  margin-bottom:2px;display:block;}
+.tkday-pop .pop-inline .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px;}
+.tkday-pop .pop-inline .tkcal-choque-alert{margin:0 0 8px;}
+@media (max-width:400px){
+  .tkday-pop .pop-inline .row-fields{grid-template-columns:1fr;}
+}
+
+/* ── §1.1 "clic para crear": el lienzo vacío es agendable con un clic/tap.
+   Los .tkday-blk (bloques reales) ya ponen cursor:pointer encima, que gana
+   por especificidad de elemento sobre este cursor del contenedor. ── */
+#levDayCanvas{cursor:copy;}
+
+/* Feedback visual del clic directo en la línea de tiempo (sin toast, pedido
+   explícito): pulso breve de box-shadow rojo sobre "Tu OT" para confirmar
+   dónde quedó fijado el horario. */
+@keyframes tkdayFlash{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.6);}
+  55%{box-shadow:0 0 0 9px rgba(220,38,38,0);}
+  100%{box-shadow:0 8px 18px -6px rgba(220,38,38,.35);}
+}
+#levDayMine.flash{animation:tkdayFlash .6s var(--ease-out);}
+@media (prefers-reduced-motion:reduce){ #levDayMine.flash{animation:none;} }
+
+/* ── OT cancelada (§2.4): aditivo — se sigue viendo con su historial,
+   nunca se oculta (REGLA #4.2). ── */
+.tkday-blk.est-cancel{opacity:.35;}
+.tkday-blk.est-cancel .who{text-decoration:line-through;}
+
+/* ── Modal "Generar OT" — MISMO lenguaje visual que #modalLevSelector de
+   Mantenciones (templates/mantenciones/ficha.html + static/mant_ficha.js).
+   Daniel rechazó el wizard genérico anterior (.otw-*); este bloque replica
+   las tarjetas .lev-step-card tal cual, no un wizard de pasos con "Siguiente". ── */
+.lev-step-card {
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  margin-bottom: 14px;
+  overflow: hidden;
+  transition: border-color .2s, box-shadow .2s;
+}
+.lev-step-card:hover { border-color: #cbd5e1; }
+.lev-step-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #fff, #fafafa);
+  border-bottom: 1px solid #f1f5f9;
+}
+.lev-step-num {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #dc2626, #991b1b);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .82rem; font-weight: 700;
+  flex-shrink: 0;
+}
+.lev-step-title { font-weight: 700; font-size: .92rem; color: #0f172a; }
+.lev-step-sub   { font-size: .73rem; color: #94a3b8; margin-left: auto; }
+.lev-step-body  { padding: 14px; }
+.lev-table-eq tr { cursor: pointer; }
+.lev-table-eq tr:hover { background: #f8fafc; }
+.lev-table-eq tr.row-selected { background: #fef2f2 !important; }
+
+/* ── Modalidad del levantamiento (2 tarjetas clicables) ── */
+.lev-modo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+@media (max-width:576px){.lev-modo-grid{grid-template-columns:1fr}}
+.lev-modo-card{position:relative;border:2px solid #e5e7eb;border-radius:14px;background:#fff;
+  padding:14px 14px 12px;cursor:pointer;transition:all .15s;user-select:none}
+.lev-modo-card:hover{border-color:#cbd5e1;transform:translateY(-1px)}
+.lev-modo-card.on{border-color:#dc2626;background:linear-gradient(180deg,#fff 0%,#fef2f2 100%);
+  box-shadow:0 8px 22px rgba(220,38,38,.18)}
+.lev-modo-card .chk{position:absolute;top:10px;right:12px;width:22px;height:22px;border-radius:50%;
+  border:2px solid #d1d5db;display:flex;align-items:center;justify-content:center;
+  font-size:.72rem;color:#fff;background:#fff}
+.lev-modo-card.on .chk{border-color:#dc2626;background:#dc2626}
+.lev-modo-card .ico{font-size:1.25rem;line-height:1}
+.lev-modo-card .tit{font-weight:800;font-size:.9rem;color:#0f172a;margin-top:6px}
+.lev-modo-card .sub{font-size:.74rem;color:#6b7280;margin-top:3px;line-height:1.45}
+.lev-modo-card .tag{display:inline-block;margin-top:7px;font-size:.62rem;font-weight:800;
+  letter-spacing:.4px;border-radius:6px;padding:2px 8px}
+
+/* ── Acceso y logística — toggles Sí/No estilo segmented ── */
+.lev-yn-group { display:inline-flex; border-radius:8px; overflow:hidden; border:1px solid #d1d5db; background:#fff; }
+.lev-yn-btn {
+  border:0; background:transparent; padding:.45rem .9rem;
+  font-size:.82rem; font-weight:600; cursor:pointer; color:#475569;
+  min-height:44px; min-width:64px;
+  transition: background .15s, color .15s;
+}
+.lev-yn-btn + .lev-yn-btn { border-left:1px solid #e5e7eb; }
+.lev-yn-btn:hover { background:#f8fafc; }
+.lev-yn-btn.active.yes { background:#dcfce7; color:#15803d; }
+.lev-yn-btn.active.no  { background:#fee2e2; color:#b91c1c; }
+
+/* ── Adjuntos preliminares ── */
+.lev-adj-zone {
+  border:2px dashed #cbd5e1; border-radius:10px;
+  padding:18px 14px; text-align:center; cursor:pointer;
+  background:#fafafa; transition: border-color .2s, background .2s;
+}
+.lev-adj-zone:hover { border-color:#dc2626; background:#fef2f2; }
+.lev-adj-zone.dragover { border-color:#dc2626; background:#fee2e2; }
+.lev-adj-item {
+  display:flex; align-items:center; gap:.6rem;
+  padding:.55rem .7rem; border-radius:8px;
+  background:#fff; border:1px solid #e5e7eb;
+  margin-top:.4rem;
+}
+.lev-adj-item .lev-adj-thumb {
+  width:36px; height:36px; border-radius:6px;
+  background:#f3f4f6; display:flex; align-items:center; justify-content:center;
+  color:#6b7280; flex-shrink:0;
+}
+.lev-adj-item .lev-adj-info { flex:1; min-width:0; }
+.lev-adj-item .lev-adj-name {
+  font-size:.82rem; font-weight:600; color:#0f172a;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.lev-adj-item .lev-adj-meta { font-size:.7rem; color:#6b7280; }
+.lev-adj-rm {
+  border:0; background:transparent; color:#dc2626;
+  padding:.25rem .45rem; border-radius:6px; cursor:pointer;
+  min-height:36px; min-width:36px;
+}
+.lev-adj-rm:hover { background:#fee2e2; }
+.lev-adj-pill-input{
+  display:inline-flex;align-items:center;gap:.4rem;
+  padding:8px 14px;border:1.5px solid #cbd5e1;background:#fff;
+  border-radius:9999px;font-size:.78rem;font-weight:600;color:#475569;
+  cursor:pointer;transition:all .12s;min-height:44px;
+  user-select:none;
+}
+.lev-adj-pill-input:hover{filter:brightness(.97);transform:translateY(-1px);
+  box-shadow:0 3px 8px rgba(0,0,0,.08)}
+.lev-adj-pill-input:active{transform:scale(.97)}
+.lev-adj-pill-input i{font-size:.95rem}
+
+/* ── Equipos del ticket sin ficha de cliente: preseleccionados y bloqueados ── */
+.lev-eq-forzado{opacity:.85;cursor:not-allowed !important}
+.lev-eq-forzado input[type=checkbox]{cursor:not-allowed}
+
+@media (max-width: 575.98px){
+  .lev-yn-btn { min-width:70px; }
+  .lev-step-sub { display:none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MOBILE — Ficha de ticket (auditoría mobile 2026-07-12)
+   Solo aditivo dentro de @media: nada de esto toca escritorio, y no se
+   quita ni oculta ninguna funcionalidad existente (Regla #4.2).
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width:768px){
+  .tk-eq-actionbtn{width:44px;height:44px;min-height:44px;min-width:44px;}
+  /* Composer Quill: en escritorio mide 240-520px (Daniel 2026-07-12, ver
+     nota más arriba), pero en un teléfono eso solo -- sumado al hero +
+     tabs + rp-mode-tabs + headers De/Para/CC -- ya ocupa casi toda la
+     pantalla y tapa el botón Enviar y el hilo. El scroll interno del
+     propio editor (ya existente) sigue siendo el ÚNICO scroll interno de
+     la pestaña Respuestas -- NO se le vuelve a poner scroll a .rp-thread
+     (pedido explícito de Daniel, no se revierte).
+     2026-07-15: esta regla es solo el FALLBACK del primer paint (antes de
+     que corra ajustarAltoHilo, que escribe estilos inline y por lo tanto
+     gana sobre esto). El JS ya distingue mobile (EDITOR_DEFAULT=110,
+     EDITOR_MIN=70) para darle al hilo todo el espacio recuperado -- estos
+     valores se bajaron de 140/300 a 110/160 para alinearse con ese criterio
+     y que no haya un salto visible entre el primer paint y el ajuste (antes
+     el fallback pintaba un editor de hasta 300px). No borrar: si el JS
+     fallara, este es el único que evita un editor gigante en el teléfono. */
+  .rp-editor-wrap .ql-container{ min-height:110px; max-height:160px; }
+
+  /* "Creado <fecha> · <correo>" con margin-left:auto y nowrap se desborda
+     del hero cuando created_by es un correo largo, en vez de bajar de
+     línea dentro del flex-wrap ya existente de .tk-hero-meta. */
+  .tk-hero-sub{ margin-left:0; white-space:normal; overflow-wrap:anywhere;
+    flex-basis:100%; text-align:left; margin-top:4px; }
+
+  /* Problema / Notas internas usan pre-wrap (respeta saltos de línea) pero
+     no rompen un token largo sin espacios (URL, serie, código de error)
+     que podría desbordar la tarjeta y generar scroll horizontal de página. */
+  #txtDesc, #txtNotas, #txtTitulo{ overflow-wrap:anywhere; word-break:break-word; }
+
+  /* Tabs de navegación (.tk-tab) y de modo del composer (.rp-mode-tab) no
+     usan .btn, así que no reciben el min-height:44px global de mobile.css
+     -- son zonas de tap muy frecuentes (Información/Respuestas/Acciones,
+     Responder al cliente/Comentario interno). */
+  .tk-tab, .rp-mode-tab{ min-height:44px; display:flex; align-items:center; justify-content:center; }
+
+  /* Chip de garantía (.tk-chip-gar): es un <span> inline por diseño (ya
+     tiene display:inline-flex en su regla base, línea ~107) pero es
+     clicable (abre el modal de garantía) y no llegaba a 44px de alto
+     táctil en mobile -- se le da altura mínima sin volverlo bloque. */
+  .tk-chip-gar{ min-height:44px; display:inline-flex; align-items:center; }
+
+  /* Botón "×" para quitar un adjunto ya subido: solo un carácter sin
+     padding, área de tap real de pocos píxeles. */
+  .rp-adj-preview .chip .x{ display:inline-flex; align-items:center; justify-content:center;
+    min-width:24px; min-height:24px; padding:2px; margin-left:2px; }
+
+  /* Toolbar de Quill (negrita/cursiva/listas/link/limpiar): tamaño default
+     de la librería, muy juntos en una pantalla de 375px. */
+  .rp-editor-wrap .ql-toolbar .ql-formats{ margin-right:10px; }
+  .rp-editor-wrap .ql-toolbar button{ width:32px; height:32px; padding:5px; }
+
+  /* Botón Guardar de "Estado y gestión": queda solo en su propia fila
+     cuando los 3 selects no caben -- que sea una acción clara de cierre
+     de formulario en vez de quedar alineado a la izquierda. */
+  #btnGuardar{ width:100%; justify-content:center; margin-top:4px; }
+
+  /* Visor universal de adjuntos: padding fijo de 32px resta espacio útil
+     a la imagen/PDF/video, y el botón de cerrar (único control para salir
+     de la vista fullscreen) queda bajo el mínimo táctil recomendado. */
+  .tk-lightbox{ padding:14px; }
+  .tk-lightbox-close{ width:40px; height:40px; }
+}
+@media (max-width:768px), (hover:none){
+  /* Lápiz de edición inline de Identificación del Cliente: solo aparecía
+     en :hover, y el override táctil existente (más abajo) era a 520px --
+     el breakpoint "mobile" del proyecto es 768px, y además cualquier
+     dispositivo sin hover real (aunque el viewport sea >768px, ej.
+     tablets/phablets) tampoco lo dispara. Aditivo: no reemplaza la regla
+     de 520px existente, solo la extiende. */
+  .tk-edit-pencil{ opacity:1; }
+}
+@media (max-width:430px){
+  /* Teléfonos chicos: el composer aún más compacto. Igual que la regla de
+     768px, esto es FALLBACK del primer paint -- ajustarAltoHilo (inline)
+     manda apenas corre. Se deja como red de seguridad (Regla #4.2). */
+  .rp-editor-wrap .ql-container{ min-height:100px; max-height:150px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   REDISEÑO #pane-info EN 2 COLUMNAS (2026-07-15, Daniel: "el estado de
+   gestión, la identificación del cliente, los equipos, el documento está
+   arriba, debería estar en una columna... dale un enfoque de diseñador
+   de proyecto... que se parezca mucho a la parte de retiros").
+   Layout inspirado en el ratio/colapso de .hero-grid de
+   templates/retiros/public_request.html (columna ancha + columna angosta,
+   1 sola columna en mobile con la lateral debajo), aplicado a nivel de
+   página: COLUMNA PRINCIPAL (identificación + problema + garantía +
+   equipos + adjuntos + notas + actividad) y COLUMNA LATERAL (estado y
+   gestión con badge grande, resumen de fechas/origen, documentos ERP,
+   "¿qué falta?"). Ningún id ni handler existente cambió de comportamiento
+   — solo cambia DÓNDE vive cada tarjeta en el DOM; el render sigue
+   siendo el mismo (Regla #4.2: cero funcionalidad eliminada). ── */
+.tk-info-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,336px);
+  gap:20px;align-items:start;margin-top:14px;}
+.tk-info-main{min-width:0;}
+.tk-info-side{min-width:0;display:flex;flex-direction:column;}
+.tk-info-side .tk-card{margin-bottom:14px;}
+.tk-info-side .tk-card:last-child{margin-bottom:0;}
+@media (min-width:992px){ .tk-info-side{position:sticky;top:16px;} }
+@media (max-width:991px){ .tk-info-grid{grid-template-columns:1fr;gap:16px;} }
+/* Estado y gestión — tarjeta prioritaria de la columna lateral: badge de
+   estado GRANDE (mismos colores semánticos bs-* ya usados en el hero:
+   verde=resuelto, ámbar=en curso, azul=abierto, gris=cerrado, rojo=cancelado)
+   en vez de un chip perdido entre selects. */
+.tk-estado-card{background:linear-gradient(180deg,#fff 0%,#fafbfc 100%);}
+.tk-badge-grande{display:inline-flex;align-items:center;gap:8px;padding:9px 18px;
+  border-radius:12px;font-size:.98rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.03em;margin-bottom:14px;transition:transform .2s var(--ease-spring);}
+.tk-badge-grande:hover{transform:translateY(-1px) scale(1.015);}
+.tk-badge-grande i{font-size:.85rem;}
+.tk-estado-card .tk-fields-col{display:flex;flex-direction:column;gap:12px;}
+.tk-estado-card select{width:100%;}
+.tk-estado-card #btnGuardar{width:100%;justify-content:center;margin-top:2px;}
+/* Resumen — metadata rápida (fecha de ingreso, origen) que antes vivía
+   suelta en la cabecera de Identificación del Cliente. */
+.tk-resumen-row{display:flex;align-items:center;gap:9px;font-size:.83rem;color:#475569;
+  padding:8px 2px;border-bottom:1px dashed #f1f5f9;}
+.tk-resumen-row:last-child{border-bottom:none;}
+.tk-resumen-row i{color:#dc2626;font-size:.85rem;width:18px;text-align:center;flex-shrink:0;}
+/* Documentos ERP en la columna lateral (antes vivía "arriba" de la tabla
+   de Equipo(s), fuera de lugar — Daniel: "el documento está arriba"). */
+.tk-docs-side .tk-doc{font-size:.8rem;}
+/* ── Orden de trabajo: acceso destacado de la columna lateral (2026-07-15,
+   Daniel: "no veo el formulario dentro del ticket" + "que venga a innovar y
+   agregar valor el poder generar una orden de trabajo en casi cualquier
+   parte de servicio técnico"). El botón original sigue viviendo en la barra
+   de Equipo(s) (Regla #4.2: no se quita nada) — esto es un SEGUNDO acceso,
+   primero en la lateral e imposible de no ver. Es la única tarjeta con borde
+   rojo de la columna: la acción más importante del ticket se lee sola. ── */
+.tk-ot-card{border-color:#fecaca;background:linear-gradient(180deg,#fff 0%,#fef7f7 100%);}
+.tk-ot-side-hint{font-size:.78rem;color:#64748b;line-height:1.45;margin-bottom:12px;}
+.tk-ot-side-btn{background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;min-height:44px;
+  box-shadow:0 4px 14px rgba(220,38,38,.28);
+  transition:transform .2s var(--ease-spring),box-shadow .2s var(--ease-spring),filter .2s;}
+.tk-ot-side-btn:hover{color:#fff;transform:translateY(-1px);filter:brightness(1.06);
+  box-shadow:0 7px 20px rgba(220,38,38,.34);}
+.tk-ot-side-btn:active{transform:translateY(0) scale(.99);}
+.tk-ot-side-btn:focus-visible{outline:none;box-shadow:var(--ring),0 4px 14px rgba(220,38,38,.28);}
+/* Estado "ya tiene OT": mismo criterio semántico verde=hecho del resto de la
+   app; el número de OT es lo que se lee primero. */
+.tk-ot-side-ok{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:10px 12px;
+  border-radius:var(--r-md);background:var(--ilus-green-bg);color:#166534;}
+.tk-ot-side-ok > i{font-size:1.2rem;flex-shrink:0;}
+.tk-ot-side-txt{min-width:0;}
+.tk-ot-side-num{font-weight:900;font-size:.92rem;line-height:1.2;overflow-wrap:anywhere;}
+.tk-ot-side-sub{font-size:.68rem;font-weight:700;opacity:.75;margin-top:2px;
+  text-transform:uppercase;letter-spacing:.04em;}
+
+/* ══ 2026-07-19 (Fable) — Conversación v2 "alto impacto": escenario centrado,
+   avatares, agrupación, separadores de fecha, adjuntos premium, micro-motion.
+   REGLA #4.2: cero funcionalidad quitada — solo re-vestido + Copiar (aditivo).
+   NOTAS: (1) el orden del hilo es COALESCE(message_date,created_at), la fecha
+   mostrada es created_at → los separadores pueden repetirse si un correo entra
+   tarde: es correcto, no "consolidar". (2) el margin -14px de :focus-within en
+   .rp-headers está acoplado al padding 4px 14px del contenedor. (3) los
+   min-height de escritorio (36/38px) se restauran a 44px en el media móvil
+   de este mismo bloque — mobile.css NO alcanza a ganarle a este inline. ══ */
+
+/* 2.1 — Escenario + separadores + agrupación */
+.rp-thread{background:linear-gradient(180deg,#f8f9fa 0%,#f4f5f7 100%);
+  border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;}
+/* Sin contenedor centrado por mensaje (Daniel 2026-07-20: "quítale el
+   contenedor a la caja de mensajes" -- la v1 de esta linea metía cada fila
+   en una caja de 860px centrada, lo que dejaba margenes iguales a ambos
+   lados y opacaba la justificacion izquierda/derecha. Ahora la fila ocupa
+   TODO el ancho del hilo y justify-content (linea 271: .out=flex-end,
+   .in=flex-start por defecto) empuja la burbuja al borde real. */
+.rp-msg{margin-bottom:10px;display:flex;gap:8px;align-items:flex-end;}
+.rp-fecha-sep{position:sticky;top:-8px;z-index:3;display:flex;justify-content:center;
+  padding:6px 0 10px;pointer-events:none;}
+/* SIN backdrop-filter: costo de scroll en hilos largos + bug Safari sticky */
+.rp-fecha-sep span{background:rgba(255,255,255,.95);border:1px solid #e5e7eb;
+  border-radius:50px;padding:3px 14px;font-size:.68rem;font-weight:800;
+  letter-spacing:.05em;text-transform:uppercase;color:#64748b;
+  box-shadow:0 1px 4px rgba(15,23,42,.06);}
+.rp-msg.rp-agrupado{margin-top:-6px;}
+.rp-msg.rp-agrupado .rp-avatar{visibility:hidden;}
+.rp-msg.rp-agrupado.out .rp-bubble{border-top-right-radius:6px;}
+.rp-msg.rp-agrupado.in  .rp-bubble{border-top-left-radius:6px;}
+/* Sin opacity extra: .rp-meta ya trae opacity:.85 (línea 296) y apilarla
+   rompía AA sobre la burbuja negra. Solo tamaño. */
+.rp-meta-mini{font-size:.64rem;}
+
+/* 2.2 — Avatares */
+.rp-avatar{width:30px;height:30px;flex:0 0 30px;border-radius:50%;display:flex;
+  align-items:center;justify-content:center;font-size:.68rem;font-weight:800;
+  letter-spacing:.02em;user-select:none;}
+.rp-msg.in .rp-avatar{background:#e2e8f0;color:#475569;}
+.rp-msg.out .rp-avatar{background:linear-gradient(135deg,#1f2937,#0a0a0a);color:#fff;
+  box-shadow:0 0 0 2px #fff,0 0 0 3.5px #dc2626;}
+.rp-msg.out.auto .rp-avatar{background:#fff;border:1.5px solid #e5e7eb;color:#6b7280;
+  box-shadow:none;}
+.rp-msg.interno .rp-avatar{background:#fffbeb;border:1.5px solid #fde68a;color:#92400e;
+  box-shadow:none;}
+.rp-msg.out .rp-avatar{order:2;}
+.rp-meta .rp-who{font-weight:800;font-size:.72rem;opacity:1;}
+.rp-msg.in .rp-meta .rp-who{color:#0f172a;}
+.rp-msg.out .rp-meta .rp-who{color:#e5e7eb;}
+/* (D2: solo .rp-msg.out tiene justify-content:flex-end -- interno queda a la
+   izquierda, es el comportamiento existente y correcto, no "corregir"). */
+
+/* 2.3 — Adjuntos premium (mismas clases/atributos data-* del chip original,
+   solo el interior cambia -- ver JS de renderThread) */
+.rp-adj-chip.es-img{flex-direction:column;align-items:stretch;padding:4px;gap:4px;
+  background:#fff;border:1px solid #e5e7eb;border-radius:10px;width:118px;}
+.rp-adj-chip.es-img img{width:110px;height:82px;object-fit:cover;border-radius:7px;}
+.rp-adj-chip.es-img .rp-adj-nom{font-size:.64rem;font-weight:600;color:#475569;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
+.rp-adj-chip.es-doc{background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+  padding:7px 12px 7px 8px;gap:8px;color:#0f172a;}
+.rp-adj-tile{width:34px;height:34px;flex:0 0 34px;border-radius:8px;background:#fef2f2;
+  display:flex;align-items:center;justify-content:center;}
+.rp-adj-tile i{color:#dc2626;font-size:1.05rem;}
+.rp-adj-col{display:flex;flex-direction:column;min-width:0;}
+.rp-adj-col .rp-adj-nom{font-size:.74rem;font-weight:700;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:180px;}
+.rp-adj-col .rp-adj-peso{font-size:.62rem;color:#6b7280;font-weight:600;} /* AA 4.8:1 */
+.rp-adj-lista{gap:6px;margin-top:6px;}
+
+/* 2.4 — Burbujas + acciones (Traducir NUNCA invisible; Copiar sí hover-reveal) */
+.rp-bubble{border-radius:18px;box-shadow:0 1px 2px rgba(15,23,42,.05);}
+.rp-msg.out .rp-bubble{background:linear-gradient(150deg,#252f3f 0%,#0a0a0a 78%);
+  border-bottom-right-radius:5px;
+  box-shadow:0 2px 10px rgba(10,10,10,.22),inset 0 1px 0 rgba(255,255,255,.07);}
+.rp-msg.in .rp-bubble{background:#fff;color:#0f172a;border:1px solid #e8eaee;
+  border-left:3px solid #cbd5e1;border-bottom-left-radius:5px;}
+.rp-estado-ok{color:#86efac;display:inline-flex;align-items:center;gap:3px;}
+.rp-msg.in .rp-estado-ok,.rp-msg.interno .rp-estado-ok{color:#16a34a;}
+/* (.rp-msg.out.auto .rp-estado-ok verde de línea 290 gana por especificidad: OK) */
+.rp-btn-traducir,.rp-btn-copiar{min-height:30px;}
+.rp-btn-copiar{margin-top:6px;margin-left:10px;border:none;background:transparent;
+  color:#64748b;font-size:.72rem;font-weight:700;cursor:pointer;
+  display:inline-flex;align-items:center;gap:4px;}
+.rp-btn-copiar:hover{color:#0f172a;text-decoration:underline;}
+.rp-msg.out .rp-btn-copiar{color:#9ca3af;}
+.rp-msg.out .rp-btn-copiar:hover{color:#e5e7eb;}
+@media (hover:hover){
+  /* REGLA #4.2: Traducir es función EXISTENTE → atenuada, jamás invisible. */
+  .rp-btn-traducir{opacity:.55;transition:opacity .15s ease;}
+  /* Copiar es NUEVO (aditivo) → hover-reveal completo permitido. */
+  .rp-btn-copiar{opacity:0;transition:opacity .15s ease;}
+  .rp-bubble:hover .rp-btn-traducir,.rp-btn-traducir:focus-visible{opacity:1;}
+  .rp-bubble:hover .rp-btn-copiar,.rp-btn-copiar:focus-visible{opacity:1;}
+}
+
+/* 2.5 — Cabecera + compositor: se moderniza manteniendo la distinción "esto es
+   un dato, no el mensaje" (ficha.html ~373-378, pedido explícito Daniel
+   2026-07-12) -- fondo gris tenue y hairline en el chipbox, NO blanco pleno. */
+.rp-headers{background:#f8f9fa;border:1px solid #eef0f3;border-radius:12px;padding:4px 14px;}
+.rp-headers .row-h{margin-bottom:0;padding:7px 0;border-bottom:1px solid #eceef1;}
+.rp-headers .row-h:last-child{border-bottom:none;}
+.rp-headers .row-h label{font-size:.64rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.07em;color:#6b7280;width:44px;}
+.email-chipbox{border:1px solid #e5e7eb;background:#fff;border-radius:8px;padding:3px 6px;}
+.email-chipbox:focus-within{border-color:#dc2626;box-shadow:none;}
+/* inset shadow, no border-left: cero salto de layout al enfocar (F2) */
+.rp-headers .row-h:focus-within{background:#fff;margin:0 -14px;padding-left:14px;
+  padding-right:14px;box-shadow:inset 2px 0 0 #dc2626;}
+.rp-composer{border-radius:14px;transition:border-color .18s,box-shadow .18s;}
+.rp-composer:focus-within{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.08);}
+.rp-mode-tabs{background:#f1f3f5;padding:6px;gap:6px;border-bottom:none;}
+.rp-mode-tab{border:none;background:transparent;box-shadow:none;border-radius:9px;}
+.rp-mode-tab:hover{transform:none;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.08);}
+.rp-toolbar-extra{padding:10px 12px;background:#fbfbfc;}
+.rp-toolbar-extra .btn-outline-secondary{border-color:#e5e7eb;color:#475569;
+  min-height:36px;min-width:36px;border-radius:9px;}
+.rp-toolbar-extra .btn-outline-secondary:hover{background:#f3f4f6;color:#0f172a;
+  border-color:#cbd5e1;}
+#rpBtnEnviar{min-height:38px;padding:6px 22px;border-radius:10px;font-weight:800;
+  box-shadow:0 2px 8px rgba(220,38,38,.28);}
+
+/* 2.6 — Micro-motion (326: #rpBtnDictar.rp-dictando conserva su fondo rojo +
+   rpPulseMic -- esta animación nueva es SOLO para el anillo del mensaje/mic,
+   no reemplaza esa regla existente) */
+@keyframes rpMsgIn{from{opacity:0;transform:translateY(8px) scale(.98);}
+  to{opacity:1;transform:none;}}
+.rp-msg.rp-nuevo{animation:rpMsgIn .35s cubic-bezier(.2,.9,.3,1) both;}
+#rpBtnDictar.rp-dictando{animation:rpMicRing 1.4s ease-in-out infinite;}
+@keyframes rpMicRing{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45);}
+  50%{box-shadow:0 0 0 7px rgba(220,38,38,0);}}
+@media (prefers-reduced-motion:reduce){
+  .rp-msg.rp-nuevo{animation:none;}
+  #rpBtnDictar.rp-dictando{animation:none;opacity:.85;}
+  .rp-mode-tab,.rp-adj-chip,.rp-composer{transition:none;}
+}
+
+/* 2.7 — Móvil (media query propio, al final; incluye fix F1) */
+@media (max-width:768px){
+  .rp-thread{padding:10px;border-radius:12px;}
+  .rp-avatar{display:none;}
+  .rp-msg{gap:0;}
+  .rp-bubble{max-width:88%;}
+  .rp-adj-chip.es-img{width:96px;} .rp-adj-chip.es-img img{width:88px;height:66px;}
+  .rp-btn-traducir,.rp-btn-copiar{opacity:1;padding:12px 8px;margin:-6px 0 -4px;min-height:44px;}
+  .rp-fecha-sep{top:-10px;}
+  /* REGLA #3: restaurar los 44px que las reglas de escritorio de ESTE bloque
+     (36/38px, con más especificidad que mobile.css) le quitarían al táctil. */
+  .rp-toolbar-extra .btn-outline-secondary{min-height:44px;min-width:44px;}
+  #rpBtnEnviar{min-height:44px;}
+}

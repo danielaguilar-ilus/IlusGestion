@@ -1,0 +1,372 @@
+/* ══════════════ Catálogo de Productos — mismo patrón visual "Triple A"
+   que templates/tickets/list.html (tabla sticky ordenable, footer con
+   paginación, modales Bootstrap). Prefijo cat- para no chocar con las
+   clases tk- de Tickets si algún día conviven en el mismo bundle.
+   2026-07-12: el hero usa .page-header (clase global de style.css,
+   mismo estandar que Técnicos/Plantillas/etc) en vez de un .cat-hero
+   local propio. ══ */
+
+.cat-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.cat-f-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;width:100%;}
+.cat-f{display:flex;flex-direction:column;gap:2px;flex:1 1 160px;min-width:140px;max-width:260px;}
+.cat-f>label{font-size:.6rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;
+  margin:0 0 0 2px;white-space:nowrap;}
+.cat-f .form-control,.cat-f .form-select{max-width:100%;width:100%;}
+.cat-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;
+  margin-top:10px;padding-top:10px;border-top:1px dashed #eaecf0;}
+.cat-toolbar .spacer{flex:1 1 auto;}
+.cat-archivados{display:flex;align-items:center;gap:6px;font-size:.72rem;color:#9ca3af;font-weight:600;}
+@media(max-width:640px){
+  .cat-f{flex:1 1 100%;max-width:100%;}
+  .cat-toolbar .btn{flex:1 1 auto;}
+}
+
+/* ── Tabla (idéntica mecánica a tk-table: sticky, ordenable, fila clicable) ── */
+table.cat-table thead th.cat-th-sort{cursor:pointer;user-select:none;transition:background .12s,color .12s;}
+table.cat-table thead th.cat-th-sort:hover{background:#1c1c1c;color:#fff;}
+table.cat-table thead th.cat-th-sort i{font-size:.7rem;opacity:.5;margin-left:3px;}
+table.cat-table thead th.cat-th-sort.on{color:#f87171;}
+table.cat-table thead th.cat-th-sort.on i{opacity:1;color:#f87171;}
+.cat-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
+.cat-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.88rem;cursor:pointer;
+  padding:0;transition:background .12s;}
+.cat-act.ver{color:#3b82f6;} .cat-act.ver:hover{background:#dbeafe;}
+.cat-act.del{color:#dc2626;} .cat-act.del:hover{background:#fee2e2;}
+.cat-foot{background:#fff;border:1px solid #eaecf0;border-radius:11px;margin-top:8px;
+  padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  font-size:.78rem;color:#6b7280;}
+.cat-foot-info b{color:#0f172a;}
+.cat-foot-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.cat-foot-ctrl .lbl-pp{display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:700;color:#9ca3af;
+  text-transform:uppercase;letter-spacing:.04em;margin:0;}
+.cat-foot-ctrl select{border:1px solid #e5e7eb;border-radius:7px;padding:3px 6px;font-size:.78rem;
+  color:#374151;background:#fff;}
+.cat-pg-btn{border:1px solid #e5e7eb;background:#fff;border-radius:8px;width:30px;height:30px;min-height:30px;
+  display:inline-flex;align-items:center;justify-content:center;color:#374151;cursor:pointer;
+  padding:0;transition:all .12s;}
+.cat-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626;}
+.cat-pg-btn:disabled{opacity:.35;cursor:default;}
+.cat-pg-num{font-weight:800;color:#0f172a;font-size:.78rem;min-width:52px;text-align:center;white-space:nowrap;}
+
+/* 2026-07-14: mismo fix que templates/tickets/list.html (.tk-table-wrap) --
+   antes usaba overflow-x:auto + overflow-y:clip (scroll de la PAGINA, con el
+   thead sticky despejando el topbar fijo mobile via top:90px). Eso convertia
+   a .cat-table-wrap en scroll container del sticky (por el overflow-x:auto)
+   pero SIN scroll vertical propio -- entonces top:90px en mobile empujaba el
+   thead 90px hacia ADENTRO del wrap, tapando la primera fila del tbody en
+   vez de despejar la página. Se cambia a overflow:auto + max-height (scroll
+   INTERNO real de la tabla) y se elimina top:90px mobile: top:0 (regla base)
+   ya es correcto en todos los tamaños porque el sticky ahora se ancla contra
+   el scroll del propio wrap, no contra la página. */
+.cat-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+  overflow:auto;max-height:calc(100vh - 300px);box-shadow:0 1px 3px rgba(0,0,0,.04);}
+table.cat-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.83rem;min-width:900px;}
+/* 2026-07-23 (Daniel, insiste: "quiero ver una tabla con el diseño...
+   estandarizado que tenemos en la página"): el thead vivía en gris claro
+   (#f8f9fb) -- el mismo patrón "Triple A" viejo que ya se reemplazó en
+   Cotizaciones y Usuarios y roles por el header negro. Se actualiza acá
+   también para que el Catálogo deje de ser la excepción. */
+table.cat-table thead th{position:sticky;top:0;z-index:2;background:#0a0a0a;color:#fff;font-size:.68rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:12px 14px;
+  border-bottom:1px solid #0a0a0a;white-space:nowrap;}
+table.cat-table tbody tr{cursor:pointer;transition:background .1s;}
+table.cat-table tbody tr:hover{background:#fafbfc;}
+table.cat-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}
+table.cat-table td{padding:8px 14px;vertical-align:middle;}
+table.cat-table tbody tr.archivado{opacity:.55;}
+.cat-thumb{width:40px;height:40px;border-radius:8px;object-fit:cover;background:#f3f4f6;border:1px solid #eaecf0;}
+.cat-thumb-ph{width:40px;height:40px;border-radius:8px;background:#f3f4f6;border:1px solid #eaecf0;
+  display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:1.05rem;}
+.cat-sku{font-family:'JetBrains Mono',monospace;font-size:.76rem;font-weight:800;color:#0f172a;}
+.cat-nombre{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;}
+.cat-badge-fotos{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.7rem;font-weight:800;white-space:nowrap;}
+.cat-badge-fotos.full{background:#dcfce7;color:#166534;}
+.cat-manual-ic{font-size:1.05rem;}
+.cat-manual-ic.on{color:#dc2626;}
+.cat-manual-ic.off{color:#cbd5e1;}
+.cat-badge-reg{padding:3px 10px;border-radius:50px;font-size:.68rem;font-weight:800;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:4px;}
+/* 2026-07-24 (Daniel, voz: "la tabla de etiquetas... más colorida...
+   replicarle en el catálogo... ponle un poco de color pero no mucho"):
+   el badge de Estado pasa de pastel a solido, tomando los MISMOS colores
+   ya probados en produccion para el Estado de Etiquetas (.badge-confirmado
+   / .badge-pendiente en static/style.css) -- una sola columna, el resto
+   de la tabla (Fotos, Clase) se queda en su pastel actual a proposito,
+   para no pasarse. */
+.cat-badge-reg.si{background:#1a7a1a;color:#fff;}
+.cat-badge-reg.no{background:#b35a00;color:#fff;}
+.cat-act.wiz{color:#dc2626;}
+.cat-act.wiz:hover{background:#fee2e2;}
+.cat-badge-clase{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.68rem;font-weight:800;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
+.catf-badge-clase{background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:50px;font-size:.7rem;font-weight:800;vertical-align:middle;margin-left:8px;}
+
+/* ── Visor de PDF en modal (manuales) ── */
+.catv-frame{width:100%;height:70vh;border:none;border-radius:0 0 10px 10px;background:#525659;}
+@media(max-width:768px){.catv-frame{height:60vh;}}
+.catv-manual-item .ver{color:#3b82f6;}
+.catv-manual-item .ver:hover{background:#dbeafe;}
+
+/* ── Wizard "Registrar producto" (mismo lenguaje visual del stepper de
+   Tickets: circulo rojo=actual, verde=completado; ver templates/tickets/ficha.html) ── */
+.catw-stepper{display:flex;align-items:flex-start;justify-content:space-between;gap:4px;margin-bottom:22px;}
+.catw-step{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;position:relative;}
+.catw-step:not(:last-child)::after{content:'';position:absolute;top:20px;left:56%;width:88%;height:2px;background:#e5e7eb;z-index:0;}
+.catw-step.done:not(:last-child)::after{background:#16a34a;}
+.catw-step-circle{width:40px;height:40px;border-radius:50%;background:#f3f4f6;color:#9ca3af;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.95rem;z-index:1;
+  border:2px solid #e5e7eb;transition:all .18s;}
+.catw-step.current .catw-step-circle{background:#dc2626;color:#fff;border-color:#dc2626;
+  box-shadow:0 0 0 5px rgba(220,38,38,.15);}
+.catw-step.done .catw-step-circle{background:#dcfce7;color:#166534;border-color:#16a34a;}
+.catw-step-label{font-size:.66rem;font-weight:800;color:#6b7280;text-align:center;max-width:88px;text-transform:uppercase;letter-spacing:.03em;}
+.catw-step.current .catw-step-label{color:#dc2626;}
+@media(max-width:560px){.catw-step-label{max-width:60px;font-size:.58rem;}}
+.catw-panel{display:none;}
+.catw-panel.active{display:block;}
+.catw-piola-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+.catw-piola-row .lbl{font-size:.78rem;font-weight:700;color:#374151;min-width:80px;}
+.catw-manual-item{display:flex;align-items:center;gap:10px;border:1px solid #eaecf0;border-radius:10px;
+  padding:8px 12px;margin-bottom:6px;background:#fafbfc;}
+.catw-manual-item .ic{color:#dc2626;font-size:1.2rem;}
+.catw-manual-item .nm{flex:1;font-size:.82rem;font-weight:600;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
+.empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
+
+/* ── Barra de refresco no disruptivo (2026-07-23) ── */
+.cat-refresco-bar{height:3px;margin:0 0 5px;border-radius:3px;overflow:hidden;position:relative;background:transparent;}
+.cat-refresco-bar.on{background:#fee2e2;}
+.cat-refresco-bar .inner{display:none;position:absolute;top:0;left:0;height:100%;width:38%;
+  background:#dc2626;border-radius:3px;animation:catRefrescoSlide 1.1s ease-in-out infinite;}
+.cat-refresco-bar.on .inner{display:block;}
+@keyframes catRefrescoSlide{0%{left:-38%;}100%{left:100%;}}
+#catBtnActualizar:disabled i{animation:catGiro .8s linear infinite;}
+@keyframes catGiro{to{transform:rotate(360deg);}}
+
+/* ── Selección múltiple + borrado masivo (2026-07-24, solo superadmin) ── */
+.cat-th-chk{width:36px;text-align:center;}
+table.cat-table tbody tr.seleccionada{background:#fee2e2;}
+table.cat-table tbody tr.seleccionada:hover{background:#fecaca;}
+.cat-barra-sel{display:flex;align-items:center;gap:10px;background:#0a0a0a;color:#fff;
+  border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:.82rem;font-weight:700;
+  flex-wrap:wrap;}
+.cat-barra-sel .cnt{background:#dc2626;border-radius:50px;padding:2px 10px;font-size:.76rem;}
+.cat-barra-sel .spacer{flex:1;}
+@media(max-width:768px){
+  .cat-barra-sel .btn{min-height:44px;}
+  .cat-th-chk input,.cat-chk-fila{width:20px;height:20px;}
+}
+
+/* ── Modal Nuevo Producto ── */
+.catn-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
+
+/* ── Modal Ficha de producto ── */
+.catf-datos{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-bottom:6px;}
+.catf-datos .full{grid-column:1/-1;}
+@media(max-width:560px){.catf-datos{grid-template-columns:1fr;}}
+.catf-campo{position:relative;}
+.catf-campo label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:2px;}
+.catf-campo .val{font-size:.9rem;color:#0f172a;font-weight:600;min-height:1.4em;padding-right:22px;cursor:text;
+  border-bottom:1px dashed transparent;}
+.catf-campo:hover .val{border-bottom-color:#e5e7eb;}
+.catf-campo .lapiz{position:absolute;right:0;top:0;font-size:.72rem;color:#9ca3af;opacity:0;transition:opacity .12s;cursor:pointer;}
+.catf-campo:hover .lapiz{opacity:1;}
+@media(max-width:768px),(hover:none){.catf-campo .lapiz{opacity:1;}}
+.catf-campo input,.catf-campo textarea{font-size:.9rem;}
+/* 2026-07-24 (Daniel: "el SKU y el nombre... eso no se edita, se deja
+   bloqueado"): sin lápiz, sin hover-affordance de "esto se puede tocar"
+   -- candado junto al label explica por qué (viene del ERP). */
+.catf-campo-lock .val{cursor:default;padding-right:0;}
+.catf-campo-lock:hover .val{border-bottom-color:transparent;}
+.catf-campo-lock label .bi-lock-fill{font-size:.62rem;color:#c3c8cf;margin-left:3px;}
+.catf-section{margin-top:18px;}
+.catf-section h6{font-weight:800;color:#0f172a;font-size:.85rem;margin-bottom:10px;display:flex;align-items:center;gap:8px;justify-content:space-between;}
+.catf-fotos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px;}
+
+/* ── Ficha: 3 etapas tipo "capítulo" (1 Características · 2 Piolas · 3
+   Manuales — 2026-07-24, Daniel: "segmentada para saber que son 3 etapas
+   distintas"). La banda negra es sticky DENTRO de su card: se queda
+   arriba mientras scrolleas esa etapa y la empuja la siguiente al llegar. ── */
+.catf-etapas{display:flex;flex-direction:column;gap:16px;margin-top:14px;}
+.catf-etapa{border:1px solid #e5e7eb;border-radius:12px;background:#fff;
+  box-shadow:0 1px 2px rgba(10,10,10,.04);}
+/* OJO: NUNCA overflow:hidden en .catf-etapa (mata el sticky de la banda);
+   las esquinas se redondean en la banda misma. */
+.catf-etapa-header{position:sticky;top:-1px;z-index:5;display:flex;align-items:center;gap:10px;
+  background:#0a0a0a;color:#fff;padding:9px 12px;border-radius:11px 11px 0 0;}
+.catf-etapa-num{width:28px;height:28px;border-radius:50%;background:#dc2626;color:#fff;
+  font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.catf-etapa-tit{display:flex;flex-direction:column;min-width:0;line-height:1.15;}
+.catf-etapa-tit .t{font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+  color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.catf-etapa-tit .s{font-size:.66rem;font-weight:600;color:rgba(255,255,255,.55);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.catf-etapa-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.catf-etapa-tools .btn-outline-secondary{color:#fff;border-color:rgba(255,255,255,.35);}
+.catf-etapa-tools .btn-outline-secondary:hover{background:rgba(255,255,255,.14);color:#fff;
+  border-color:rgba(255,255,255,.55);}
+.catf-etapa-body{padding:14px;}
+.catf-etapa-body .catf-section{border-top:1px dashed #eef0f3;padding-top:14px;}
+.catf-etapa-body > .catf-section:first-child,.catf-etapa-body > .catf-datos:first-child{border-top:none;padding-top:0;margin-top:0;}
+@media(max-width:768px){
+  .catf-etapa-body{padding:12px;}
+  .catf-etapa-tools .btn{min-height:44px;display:inline-flex;align-items:center;}
+}
+/* Auditoría: metadata secundaria, NO es una etapa (Daniel: "eliminarlo
+   solamente para el superadministrador") — queda discreta al final. */
+.catf-section-meta{margin-top:18px;padding-top:10px;border-top:1px dashed #e5e7eb;}
+.catf-section-meta h6{font-size:.7rem;color:#9ca3af;margin-bottom:4px;}
+.catf-foto{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid #eaecf0;background:#f8f9fb;}
+.catf-foto img{width:100%;height:100%;object-fit:cover;cursor:pointer;display:block;}
+.catf-foto .x{position:absolute;top:3px;right:3px;background:rgba(10,10,10,.65);color:#fff;border:none;
+  width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:.8rem;cursor:pointer;}
+.catf-foto-add{aspect-ratio:1;border:2px dashed #d1d5db;border-radius:10px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;cursor:pointer;color:#9ca3af;transition:all .12s;background:#fff;}
+.catf-foto-add:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+.catf-foto-add i{font-size:1.2rem;}
+.catf-foto-add span{font-size:.62rem;font-weight:700;text-align:center;}
+.catf-manual-box{border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;display:flex;align-items:center;
+  gap:12px;flex-wrap:wrap;background:#fafbfc;}
+.catf-manual-box .ic{font-size:1.6rem;color:#dc2626;flex-shrink:0;}
+.catf-manual-box .info{flex:1;min-width:150px;}
+.catf-manual-box .info .nm{font-weight:700;font-size:.85rem;color:#0f172a;}
+.catf-manual-box .info .sz{font-size:.72rem;color:#9ca3af;}
+.catf-drop{border:2px dashed #d1d5db;border-radius:10px;padding:18px 14px;text-align:center;cursor:pointer;
+  transition:all .12s;background:#fff;}
+.catf-drop:hover{border-color:#dc2626;background:#fef2f2;}
+.catf-drop i{font-size:1.3rem;color:#9ca3af;display:block;margin-bottom:4px;}
+.catf-drop .t1{font-weight:700;font-size:.8rem;color:#374151;}
+.catf-drop .t2{font-size:.7rem;color:#9ca3af;margin-top:2px;}
+
+/* ── Piolas (cables de máquinas) — acordeón con 2 fotos por piola
+   (2026-07-23: reemplaza la tabla vieja de 1 sola foto + medida_cm, ver
+   CLAUDE.md tarea "acordeón piolas"). ── */
+.catp-badge{background:#f3f4f6;color:#374151;padding:3px 9px;border-radius:50px;font-size:.7rem;font-weight:800;white-space:nowrap;}
+.catp-badge.full{background:#fee2e2;color:#991b1b;}
+.catp-empty{padding:16px;text-align:center;color:#9ca3af;font-size:.82rem;}
+
+/* Fila-item del acordeón */
+.catp-acc-item{border:1px solid #eaecf0;border-radius:10px;margin-bottom:8px;overflow:hidden;background:#fff;}
+.catp-acc-item:last-child{margin-bottom:0;}
+.catp-acc-header{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none;transition:background .12s;}
+.catp-acc-header:hover{background:#fafbfc;}
+.catp-acc-num{width:26px;height:26px;border-radius:50%;background:#0a0a0a;color:#fff;font-weight:800;font-size:.72rem;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.catp-acc-summary{flex:1;min-width:0;font-size:.85rem;font-weight:700;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.catp-acc-summary .desc{font-weight:500;color:#6b7280;}
+.catp-acc-legado-badge{background:#fff8e1;color:#92400e;padding:2px 8px;border-radius:50px;font-size:.64rem;font-weight:800;white-space:nowrap;margin-right:6px;}
+.catp-fbadge{background:#f3f4f6;color:#374151;padding:2px 8px;border-radius:50px;font-size:.66rem;font-weight:800;white-space:nowrap;flex-shrink:0;}
+.catp-fbadge.half{background:#fff8e1;color:#b45309;}
+.catp-fbadge.full{background:#dcfce7;color:#166534;}
+.catp-acc-chevron{color:#9ca3af;font-size:.8rem;transition:transform .15s;flex-shrink:0;}
+.catp-acc-chevron.open{transform:rotate(180deg);}
+.catp-acc-body{display:none;padding:14px 16px 16px;border-top:1px solid #f1f3f6;background:#fafbfc;}
+@keyframes catpBodyIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+.catp-acc-body.open{display:block;animation:catpBodyIn .18s ease;}
+
+/* ── Piolas: mini-galería en la cabecera colapsada (2026-07-24, Daniel:
+   "asociar la piola a la foto... algo entretenido, dinámico") — se VE qué
+   fotos tiene cada piola sin abrirla. Tap en miniatura = visor; tap en
+   fantasma = subir. Reemplaza a .catp-fbadge en la cabecera (esa clase
+   queda sin uso, no se borra — Regla #4.2). ── */
+.catp-acc-thumbs{display:flex;align-items:center;flex-shrink:0;position:relative;padding:2px 4px 2px 0;}
+.catp-acc-thumb{width:34px;height:34px;border-radius:8px;border:2px solid #fff;
+  box-shadow:0 0 0 1px #e5e7eb;overflow:hidden;background:#f8f9fb;padding:0;cursor:zoom-in;
+  transition:transform .15s ease,margin .15s ease;}
+.catp-acc-thumb + .catp-acc-thumb{margin-left:-12px;}
+.catp-acc-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.catp-acc-thumb.ghost{border:2px dashed #d1d5db;box-shadow:none;background:#fff;
+  display:inline-flex;align-items:center;justify-content:center;color:#c3c8cf;
+  font-size:.72rem;cursor:pointer;}
+.catp-acc-thumb.ghost.noclick{cursor:default;}
+@media(hover:hover){
+  .catp-acc-thumbs:hover .catp-acc-thumb + .catp-acc-thumb{margin-left:3px;}
+  .catp-acc-thumbs:hover .catp-acc-thumb{transform:scale(1.12);}
+  .catp-acc-thumb.ghost:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+}
+.catp-acc-thumbs .dot{position:absolute;right:-3px;top:-2px;width:12px;height:12px;
+  border-radius:50%;border:2px solid #fff;z-index:2;}
+.catp-acc-thumbs .dot.full{background:#16a34a;}
+.catp-acc-thumbs .dot.half{background:#f59e0b;}
+.catp-acc-item.is-open .catp-acc-thumbs{opacity:.4;filter:grayscale(.5);}
+.catp-acc-item.is-open .catp-acc-thumbs:hover{opacity:1;filter:none;}
+
+/* Campos en modo vista */
+.catp-acc-campos{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:14px;}
+.catp-acc-campo.full{grid-column:1/-1;}
+.catp-acc-campo label{font-size:.6rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:2px;}
+.catp-acc-campo .v{font-size:.85rem;color:#0f172a;font-weight:600;}
+.catp-acc-legado-note{background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 10px;
+  font-size:.78rem;margin-bottom:12px;display:flex;gap:6px;align-items:flex-start;}
+.catp-acc-legado-note i{margin-top:1px;flex-shrink:0;}
+
+/* Campos en modo edición */
+.catp-acc-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin-bottom:12px;}
+.catp-acc-edit-grid .fld.full{grid-column:1/-1;}
+.catp-acc-edit-grid label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:3px;}
+.catp-acc-actions,.catp-acc-edit-actions{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap;}
+
+/* Fotos: 2 slots cuadrados con ficha numerada + kebab de opciones
+   (mismo lenguaje visual que .catf-foto/.catf-foto-add del producto) */
+.catp-fotos-wrap{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
+.catp-foto-slot{position:relative;width:110px;height:110px;border-radius:10px;overflow:hidden;border:1px solid #eaecf0;background:#f8f9fb;flex-shrink:0;}
+.catp-foto-slot img{width:100%;height:100%;object-fit:cover;cursor:pointer;display:block;}
+.catp-foto-slot.empty{border:2px dashed #d1d5db;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;color:#9ca3af;cursor:pointer;transition:all .12s;}
+.catp-foto-slot.empty:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+.catp-foto-slot.empty.disabled{cursor:default;}
+.catp-foto-slot.empty.disabled:hover{border-color:#d1d5db;color:#9ca3af;background:#f8f9fb;}
+.catp-foto-slot.empty i{font-size:1.2rem;}
+.catp-foto-slot.empty span{font-size:.6rem;font-weight:700;text-align:center;padding:0 4px;}
+.catp-foto-slot-num{position:absolute;top:5px;left:5px;width:20px;height:20px;border-radius:50%;background:#0a0a0a;color:#fff;
+  font-size:.62rem;font-weight:800;display:flex;align-items:center;justify-content:center;z-index:1;}
+.catp-foto-kebab{position:absolute;top:4px;right:4px;width:26px;height:26px;border-radius:50%;border:none;
+  background:rgba(10,10,10,.55);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2;padding:0;}
+.catp-foto-kebab:hover{background:rgba(220,38,38,.85);}
+.catp-menu-disabled{opacity:.45;cursor:not-allowed !important;}
+.catp-menu-disabled:hover{background:transparent !important;color:inherit !important;}
+
+/* Fila para agregar una piola nueva */
+.catp-add-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:4px;padding:12px;
+  background:#fafbfc;border:1px dashed #d1d5db;border-radius:10px;}
+.catp-add-row .fld{display:flex;flex-direction:column;gap:2px;}
+.catp-add-row .fld label{font-size:.62rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em;}
+.catp-add-row .fld.diametro{width:110px;}
+.catp-add-row .fld.largo{width:110px;}
+.catp-add-row .fld.desc{flex:1 1 200px;}
+.catp-add-row .fld.obs{flex:1 1 200px;}
+@media(max-width:560px){
+  .catp-acc-campos,.catp-acc-edit-grid{grid-template-columns:1fr;}
+  .catp-add-row{flex-direction:column;align-items:stretch;}
+  .catp-add-row .fld.diametro,.catp-add-row .fld.largo{width:100%;}
+}
+@media(max-width:768px){
+  .catp-add-row input,.catp-add-row textarea,.catp-acc-edit-grid input{font-size:16px;}
+  .catp-acc-header{min-height:44px;}
+  .catp-acc-num{width:30px;height:30px;font-size:.78rem;}
+  .catp-acc-actions .btn,.catp-acc-edit-actions .btn{min-height:44px;}
+  .catp-foto-kebab{width:44px;height:44px;}
+  .catp-foto-slot-num{width:24px;height:24px;font-size:.7rem;}
+  .catp-acc-thumb{width:44px;height:44px;border-radius:9px;}
+  .catp-acc-thumb + .catp-acc-thumb{margin-left:-14px;}
+}
+.catp-hist-item{border-bottom:1px solid #f1f3f6;padding:10px 2px;font-size:.83rem;}
+.catp-hist-item:last-child{border-bottom:none;}
+.catp-hist-item .hd{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:3px;}
+.catp-hist-item .quien{font-weight:800;color:#0f172a;}
+.catp-hist-item .cuando{color:#9ca3af;font-size:.74rem;}
+.catp-hist-item .accion{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:50px;}
+.catp-hist-item .accion.crear{background:#dcfce7;color:#166534;}
+.catp-hist-item .accion.editar{background:#dbeafe;color:#1e40af;}
+.catp-hist-item .accion.eliminar{background:#fee2e2;color:#991b1b;}
+.catp-hist-item .detalle{color:#6b7280;font-size:.78rem;}
+
+/* ── Mobile: botones/inputs táctiles (Regla #3) ── */
+@media(max-width:768px){
+  .cat-act,.cat-pg-btn{width:38px;height:38px;min-height:38px;min-width:38px;}
+  .cat-acciones{gap:6px;}
+  table.cat-table thead th{padding:14px 14px;}
+  .catf-foto .x{width:28px;height:28px;}
+}

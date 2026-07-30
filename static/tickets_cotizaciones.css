@@ -1,0 +1,293 @@
+.tk-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
+  color:#fff;border-radius:14px;padding:18px 24px;margin-bottom:18px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,.14);}
+.tk-hero h4{margin:0;font-weight:900;letter-spacing:-.01em;}
+.tk-hero .sub{font-size:.86rem;color:#cfd3da;}
+.tk-soon{background:#f9fafb;border:1px dashed #d1d5db;border-radius:14px;padding:40px;text-align:center;color:#9ca3af;}
+.tk-row{background:#fff;border:1px solid #eaecf0;border-radius:10px;padding:12px 14px;margin-bottom:8px;
+  display:grid;grid-template-columns:auto 1fr auto auto auto auto auto;gap:12px;align-items:center;}
+.tk-row-total{font-family:'JetBrains Mono',monospace;font-size:.86rem;font-weight:800;color:#0a0a0a;
+  white-space:nowrap;font-variant-numeric:tabular-nums;}
+.tk-row-total.cero{color:#c1c5cc;font-weight:600;font-size:.74rem;font-style:italic;}
+.tk-row-ticket-link{font-size:.72rem;font-weight:700;color:#6b7280;white-space:nowrap;text-decoration:none;}
+.tk-row-ticket-link:hover{color:#dc2626;}
+.tk-row-btn-ticket{
+  border:none;border-radius:8px;background:#f3f4f6;color:#374151;font-weight:800;font-size:.72rem;
+  padding:8px 12px;white-space:nowrap;cursor:pointer;transition:.15s;min-height:36px;
+}
+.tk-row-btn-ticket:hover{background:#0a0a0a;color:#fff;}
+.tk-row-btn-ticket:active{transform:scale(.96);}
+.tk-row-btn-ticket:disabled{opacity:.5;cursor:not-allowed;}
+/* 2026-07-23 (auditoría, visible solo superadmin/admin -- gate en el
+   Jinja de abajo, mismo patrón que permissions.superadmin en list.html) */
+.tk-row-btn-audit{
+  border:none;border-radius:8px;background:#f3f4f6;color:#6b7280;font-size:.9rem;
+  width:36px;height:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.15s;flex:0 0 auto;
+}
+.tk-row-btn-audit:hover{background:#0a0a0a;color:#fff;}
+.tk-row-btn-audit:active{transform:scale(.96);}
+/* 2026-07-21 (Daniel: "ese valor lo vamos a expresar en UF, a la UF
+   actual"): equivalente en UF junto al Total, con instructivo en el
+   title (tooltip nativo -- funciona en desktop y con tap-hold en
+   mobile, sin depender de bootstrap.Tooltip que no está inicializado
+   globalmente en esta página). */
+.tk-row-uf{display:block;font-size:.66rem;font-weight:700;color:#9ca3af;
+  margin-top:1px;cursor:help;white-space:nowrap;}
+.tk-row-uf i{font-size:.6rem;margin-right:2px;}
+/* Botón "Ver cálculo" -- SOLO superadmin (Daniel fue explícito). Mismo
+   lenguaje visual que .tk-row-btn-audit para no inventar un patrón nuevo. */
+.tk-row-btn-calc{
+  border:none;border-radius:8px;background:#f3f4f6;color:#6b7280;font-size:.9rem;
+  width:36px;height:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.15s;flex:0 0 auto;text-decoration:none;
+}
+.tk-row-btn-calc:hover{background:#dc2626;color:#fff;}
+.tk-row-btn-calc:active{transform:scale(.96);}
+@media(max-width:640px){.tk-row{grid-template-columns:1fr;justify-items:start;}}
+.tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
+.tk-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;text-transform:uppercase;}
+.cb-draft{background:#f3f4f6;color:#6b7280;} .cb-sent{background:#dbeafe;color:#1e40af;}
+.cb-approved{background:#dcfce7;color:#166534;} .cb-rejected{background:#fee2e2;color:#991b1b;}
+.cb-expired{background:#fef3c7;color:#92400e;} .cb-vencida{background:#fef3c7;color:#92400e;}
+/* Cotizaciones v3 — filtros + acciones de fila */
+.cot-lista-filtros{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px;align-items:center;}
+.cot-row:hover{background:#fafafa;}
+.tk-row-btn-send,.tk-row-btn-ok,.tk-row-btn-no,.tk-row-btn-del{
+  border:none;background:transparent;width:34px;height:34px;border-radius:8px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;font-size:1.02rem;transition:all .12s;}
+.tk-row-btn-send{color:#1e40af;} .tk-row-btn-send:hover{background:#dbeafe;}
+.tk-row-btn-ok{color:#16a34a;} .tk-row-btn-ok:hover{background:#dcfce7;}
+.tk-row-btn-no{color:#b45309;} .tk-row-btn-no:hover{background:#fef3c7;}
+.tk-row-btn-del{color:#dc2626;} .tk-row-btn-del:hover{background:#fee2e2;}
+.tk-row-btn-send:active,.tk-row-btn-ok:active,.tk-row-btn-no:active,.tk-row-btn-del:active{transform:scale(.94);}
+/* Modal enviar — chips de destinatarios */
+.cot-chip{display:inline-flex;align-items:center;gap:6px;background:#eef2ff;color:#3730a3;border-radius:50px;
+  padding:5px 8px 5px 12px;font-size:.8rem;font-weight:600;margin:3px;}
+.cot-chip small{color:#6366f1;font-weight:700;text-transform:uppercase;font-size:.6rem;}
+.cot-chip button{border:none;background:transparent;color:#6366f1;cursor:pointer;font-size:.9rem;line-height:1;
+  display:inline-flex;padding:0 2px;}
+.cot-chip button:hover{color:#dc2626;}
+.cot-hist-item{display:flex;gap:10px;padding:8px 4px;border-bottom:1px solid #f3f4f6;font-size:.82rem;}
+.cot-hist-item:last-child{border-bottom:none;}
+.cot-hist-ico{width:26px;height:26px;border-radius:7px;background:#f3f4f6;color:#374151;display:inline-flex;
+  align-items:center;justify-content:center;flex-shrink:0;}
+.cot-hist-body b{color:#0a0a0a;} .cot-hist-body small{color:#9ca3af;display:block;font-family:ui-monospace,monospace;}
+
+/* ══════════ Panel de clasificación inline (Blueprint Cotizaciones Fase 1) ══════════ */
+.cot-clasif-backdrop{
+  position:fixed;inset:0;z-index:1090;background:rgba(10,10,10,.55);
+  backdrop-filter:blur(6px) saturate(1.2);-webkit-backdrop-filter:blur(6px) saturate(1.2);
+  display:none;align-items:flex-end;justify-content:center;padding:0;
+  animation:cotFadeIn .25s cubic-bezier(.4,0,.2,1);
+}
+@media(min-width:768px){.cot-clasif-backdrop{align-items:center;padding:20px;}}
+@keyframes cotFadeIn{from{opacity:0}to{opacity:1}}
+.cot-clasif-panel{
+  width:100%;max-width:640px;max-height:88vh;max-height:88dvh;overflow-y:auto;
+  background:rgba(255,255,255,.98);backdrop-filter:blur(20px) saturate(1.5);
+  border-radius:20px 20px 0 0;box-shadow:0 -20px 60px -12px rgba(0,0,0,.35);
+  animation:cotSlideUp .4s cubic-bezier(.34,1.56,.64,1);
+}
+@media(min-width:768px){.cot-clasif-panel{border-radius:16px;box-shadow:0 24px 70px -16px rgba(0,0,0,.4);}}
+@keyframes cotSlideUp{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
+.cot-clasif-head{
+  padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:#0a0a0a;border-radius:16px 16px 0 0;
+}
+@media(max-width:767px){.cot-clasif-head{border-radius:0;}}
+.cot-clasif-head h5{margin:0;font-weight:900;color:#fff;display:flex;align-items:center;gap:8px;font-size:1.05rem;}
+.cot-clasif-head h5 i{color:#dc2626;}
+.cot-clasif-close{
+  width:34px;height:34px;border:none;border-radius:9px;background:rgba(255,255,255,.1);color:#fff;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;
+}
+.cot-clasif-close:hover{background:#dc2626;color:#fff;}
+.cot-clasif-sub{padding:10px 20px 4px;font-size:.82rem;color:#6b7280;line-height:1.4;}
+.cot-clasif-empty{padding:24px 20px;text-align:center;color:#9ca3af;font-size:.85rem;}
+#cotClasifLista{padding:10px 20px 4px;display:flex;flex-direction:column;gap:8px;}
+.cot-clasif-row{
+  display:grid;grid-template-columns:1fr auto;grid-template-areas:"info info" "select btn";
+  gap:8px 10px;align-items:center;background:#f9fafb;border:1px solid #eef0f3;border-radius:12px;
+  padding:12px;
+}
+@media(min-width:640px){
+  .cot-clasif-row{grid-template-columns:1fr 170px auto auto;grid-template-areas:"info select btn ok";}
+}
+.cot-clasif-info{grid-area:info;min-width:0;}
+.cot-clasif-sku{font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;color:#dc2626;}
+.cot-clasif-nombre{font-size:.84rem;color:#111827;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cot-clasif-select{
+  grid-area:select;min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:9px;
+  padding:0 10px;background:#fff;width:100%;
+}
+.cot-clasif-btn{
+  grid-area:btn;min-height:44px;padding:0 16px;border:none;border-radius:9px;
+  background:#0a0a0a;color:#fff;font-weight:800;font-size:.8rem;cursor:pointer;transition:.15s;white-space:nowrap;
+}
+.cot-clasif-btn:hover{background:#dc2626;}
+.cot-clasif-btn:active{transform:scale(.96);}
+.cot-clasif-btn:disabled{opacity:.5;cursor:not-allowed;}
+.cot-clasif-ok{grid-area:ok;color:#16a34a;font-size:1.3rem;display:flex;align-items:center;justify-content:center;}
+.cot-clasif-foot{padding:14px 20px 20px;display:flex;justify-content:flex-end;border-top:1px solid #eaecf0;margin-top:6px;}
+
+/* ══ Wizard "Crear Cotización" estilo Triple A (2026-07-22) ══ */
+.cot-wiz-tabs{display:flex;gap:2px;padding:0 20px;border-bottom:1px solid #eaecf0;}
+.cot-wiz-tab{border:none;background:transparent;padding:12px 16px;font-size:.84rem;font-weight:700;
+  color:#9ca3af;cursor:pointer;border-bottom:2.5px solid transparent;display:flex;align-items:center;gap:7px;}
+.cot-wiz-tab.on{color:#dc2626;border-bottom-color:#dc2626;}
+.cot-wiz-campos{padding:14px 20px 2px;display:grid;grid-template-columns:1fr 1fr;gap:9px 14px;}
+@media(max-width:640px){.cot-wiz-campos{grid-template-columns:1fr;}}
+.cot-wiz-campo textarea.form-control{min-height:auto;padding-top:6px;padding-bottom:6px;}
+.cot-wiz-campo.invalido input,.cot-wiz-campo.invalido select{border-color:#dc2626;background:#fef2f2;}
+.cot-wiz-campo-err{font-size:.66rem;color:#dc2626;font-weight:700;margin-top:2px;display:none;}
+.cot-wiz-campo.invalido .cot-wiz-campo-err{display:block;}
+/* 2026-07-24 (Daniel: validación visual VERDE de Email/Teléfono, no solo
+   roja). Solo los campos que traen el div .cot-wiz-campo-ok lo usan. */
+.cot-wiz-campo.valido input{border-color:#16a34a;background:#f0fdf4;}
+.cot-wiz-campo-ok{font-size:.66rem;color:#16a34a;font-weight:700;margin-top:2px;display:none;}
+.cot-wiz-campo.valido .cot-wiz-campo-ok{display:block;}
+.cot-wiz-campo{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.cot-wiz-campo.full{grid-column:1/-1;}
+.cot-wiz-campo>label{font-size:.68rem;font-weight:800;color:#374151;margin:0;}
+.cot-wiz-campo .form-control,.cot-wiz-campo .form-select{font-size:16px;min-height:42px;}
+.cot-wiz-campo textarea.form-control{min-height:auto;}
+.cot-wiz-hint{font-size:.68rem;color:#9ca3af;margin-top:2px;}
+.cot-wiz-dropdown{position:absolute;top:100%;left:0;right:0;z-index:20;background:#fff;
+  border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 12px 32px -8px rgba(0,0,0,.18);
+  max-height:260px;overflow-y:auto;margin-top:4px;}
+.cot-wiz-dd-item{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;border:none;
+  background:#fff;padding:9px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6;}
+.cot-wiz-dd-item:hover{background:#fef2f2;}
+.cot-wiz-dd-item strong{font-size:.82rem;color:#0a0a0a;}
+.cot-wiz-dd-item span{font-size:.7rem;color:#6b7280;font-family:'JetBrains Mono',monospace;}
+.cot-wiz-dd-item em{font-size:.64rem;color:#16a34a;font-style:normal;font-weight:800;}
+.cot-wiz-dd-vacio{padding:10px 12px 4px;font-size:.78rem;color:#9ca3af;text-align:center;}
+.cot-wiz-dd-crear{display:block;width:calc(100% - 16px);margin:6px 8px 8px;padding:9px 12px;
+  border:1.5px dashed #dc2626;border-radius:9px;background:#fef2f2;color:#dc2626;font-weight:700;
+  font-size:.8rem;cursor:pointer;text-align:center;}
+.cot-wiz-dd-crear:hover{background:#fee2e2;}
+.cot-wiz-auto{font-weight:400;color:#9ca3af;text-transform:none;letter-spacing:0;font-size:.9em;}
+.cot-wiz-pills{display:flex;gap:6px;}
+.cot-wiz-pill{flex:1;border:1.5px solid #e5e7eb;background:#fff;border-radius:9px;min-height:42px;
+  font-size:.8rem;font-weight:800;color:#6b7280;cursor:pointer;transition:.13s;}
+.cot-wiz-pill.on{border-color:#dc2626;background:#fef2f2;color:#dc2626;}
+
+/* Tipo de servicio con iconos -- mismo lenguaje visual que .nt-tipo-pill
+   del modal "Nuevo Ticket" (Daniel 2026-07-22: "más dinámico... con
+   monitos... más colorido"). */
+.cot-wiz-tiposerv{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;}
+@media(max-width:760px){.cot-wiz-tiposerv{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:420px){.cot-wiz-tiposerv{grid-template-columns:repeat(2,1fr);}}
+.cot-wiz-ts-pill{border:1.5px solid #e5e7eb;border-radius:10px;padding:9px 5px;text-align:center;cursor:pointer;
+  font-size:.68rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:58px;line-height:1.15;}
+.cot-wiz-ts-pill i{font-size:1.15rem;color:var(--tc,#94a3b8);}
+.cot-wiz-ts-pill:hover{border-color:var(--tc,#dc2626);color:var(--tc,#dc2626);}
+.cot-wiz-ts-pill.on{border-color:var(--tc,#dc2626);background:var(--tbg,#fef2f2);color:var(--tc,#dc2626);
+  box-shadow:inset 0 0 0 1px var(--tc,#dc2626);font-weight:800;}
+.cot-wiz-ts-hint{grid-column:1/-1;font-size:.66rem;color:#9ca3af;margin-top:1px;}
+/* 2026-07-24 (Daniel, origen ficha bloquea Instalación): mismo lenguaje
+   visual que :disabled en otros botones del wizard -- gris + candado
+   implícito vía cursor, sin inventar un ícono nuevo. */
+.cot-wiz-ts-pill.disabled{opacity:.45;cursor:not-allowed;pointer-events:none;filter:grayscale(.4);}
+.cot-wiz-vacio td{text-align:center;color:#9ca3af;font-size:.8rem;padding:26px 10px !important;font-style:italic;}
+.cot-wiz-quitar{border:none;background:transparent;color:#c1c5cc;width:30px;height:30px;border-radius:7px;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;}
+.cot-wiz-quitar:hover{background:#fee2e2;color:#dc2626;}
+.cot-wiz-resumen{margin:8px 0 4px;margin-left:auto;max-width:320px;background:#f9fafb;
+  border:1px solid #eef0f3;border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:5px;}
+.cot-wiz-resumen>div{display:flex;justify-content:space-between;align-items:center;font-size:.78rem;color:#6b7280;}
+.cot-wiz-resumen>div b{font-family:'JetBrains Mono',monospace;color:#111827;font-variant-numeric:tabular-nums;}
+.cot-wiz-res-total{border-top:2px solid #e5e7eb;padding-top:7px;margin-top:3px;}
+.cot-wiz-res-total span{font-weight:900;color:#0a0a0a;font-size:.86rem !important;}
+.cot-wiz-res-total b{font-size:1.02rem;color:#dc2626 !important;}
+/* 2026-07-21 (Daniel: instructivo del equivalente en UF, "para que
+   también a esa formulación se le agregue el peaje del producto, todo
+   eso en los costos de traslado" -- el Total YA incluye costo_ruta). */
+.cot-wiz-res-uf{display:flex;justify-content:flex-end;align-items:center;gap:5px;font-size:.72rem;color:#9ca3af;margin-top:-1px;}
+.cot-wiz-res-uf b{font-weight:800;color:#6b7280;font-family:'JetBrains Mono',monospace;}
+.cot-wiz-res-uf i{cursor:help;font-size:.8rem;color:#9ca3af;}
+.tk-row-btn-pdf{color:#dc2626;font-size:1.15rem;text-decoration:none;display:inline-flex;
+  align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;transition:.13s;}
+.tk-row-btn-pdf:hover{background:#fee2e2;color:#b91c1c;}
+
+/* 2026-07-24 (Daniel: "un solo modal con scroll, sin pestañas ni
+   Siguiente" -- ya no hay un scroll propio para la tabla, el único
+   scroll vertical vive en .cot-clasif-panel). */
+.cot-rev-tabla-wrap{padding:10px 0;overflow-x:auto;}
+table.cot-rev-tabla{width:100%;border-collapse:collapse;min-width:620px;}
+table.cot-rev-tabla th{font-size:.64rem;text-transform:uppercase;letter-spacing:.04em;color:#9ca3af;
+  padding:6px 8px;text-align:left;border-bottom:2px solid #f3f4f6;white-space:nowrap;position:sticky;top:0;background:#fff;}
+table.cot-rev-tabla td{padding:6px 8px;border-bottom:1px solid #f3f4f6;vertical-align:middle;}
+table.cot-rev-tabla tr:last-child td{border-bottom:none;}
+.cot-rev-sku{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:#6b7280;white-space:nowrap;}
+.cot-rev-nombre{font-size:.82rem;color:#111827;font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cot-rev-cant{width:56px;min-height:36px;font-size:.82rem;border:1px solid #d1d5db;border-radius:7px;padding:4px 6px;text-align:center;}
+.cot-rev-select{min-height:36px;font-size:.8rem;border:1px solid #d1d5db;border-radius:7px;padding:2px 6px;background:#fff;max-width:190px;}
+.cot-rev-select.sin-clasificar{border-color:#f59e0b;background:#fff8e1;}
+.cot-rev-precio{font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.cot-rev-precio.cero{color:#c1c5cc;font-weight:500;font-style:italic;}
+
+/* ══ Paso 1 en secciones numeradas — réplica del lenguaje visual del modal
+   "Generar OT" de Mantenciones (.lev-step-card/.lev-step-header en
+   templates/mantenciones/ficha.html), duplicado acá con prefijo propio
+   (Daniel 2026-07-23: "que se sienta como Generar OT"). Los ids de los
+   inputs NO cambian -- esto es solo reestructuración visual/jerárquica. */
+.cot-wiz-step-card{border-radius:12px;border:1px solid #e5e7eb;background:#fff;
+  margin:14px 20px 0;transition:border-color .2s,box-shadow .2s;}
+.cot-wiz-step-card:first-child{margin-top:14px;}
+.cot-wiz-step-card:hover{border-color:#cbd5e1;}
+.cot-wiz-step-header{display:flex;align-items:center;gap:10px;padding:11px 14px;
+  background:linear-gradient(135deg,#fff,#fafafa);border-bottom:1px solid #f1f5f9;flex-wrap:wrap;
+  border-radius:11px 11px 0 0;}
+.cot-wiz-step-num{width:26px;height:26px;border-radius:50%;
+  background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;flex-shrink:0;}
+.cot-wiz-step-title{font-weight:800;font-size:.9rem;color:#0f172a;}
+.cot-wiz-step-sub{font-size:.72rem;color:#9ca3af;margin-left:4px;}
+.cot-wiz-step-body{padding:14px;}
+.cot-wiz-step-body .cot-wiz-campos{padding:0;}
+.cot-wiz-step-toggle-btn{margin-left:auto;border:1.5px solid #e5e7eb;background:#fff;color:#374151;
+  font-size:.72rem;font-weight:700;border-radius:9px;padding:6px 12px;min-height:34px;cursor:pointer;transition:.13s;}
+.cot-wiz-step-toggle-btn:hover{border-color:#dc2626;color:#dc2626;}
+.cot-wiz-step-toggle-btn:active{transform:scale(.96);}
+/* Sección 1 — origen de la cotización */
+.cot-wiz-origen-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+.cot-wiz-origen-row .cot-wiz-campo{flex:1 1 260px;min-width:0;}
+.cot-wiz-origen-btn{flex:0 0 auto;border:1.5px solid #0a0a0a;background:#0a0a0a;color:#fff;font-weight:800;
+  font-size:.8rem;border-radius:9px;padding:0 16px;min-height:42px;white-space:nowrap;cursor:pointer;transition:.13s;
+  display:inline-flex;align-items:center;gap:6px;}
+.cot-wiz-origen-btn:hover{background:#dc2626;border-color:#dc2626;}
+.cot-wiz-origen-btn:active{transform:scale(.96);}
+@media(max-width:640px){.cot-wiz-origen-row{flex-direction:column;align-items:stretch;}
+  .cot-wiz-origen-btn{width:100%;justify-content:center;}}
+.cot-wiz-origen-hint{font-size:.72rem;color:#6b7280;margin-top:8px;line-height:1.4;}
+/* Sección 2 — franja de plan/contrato vigente (informativo, NO afecta precio) */
+.cot-wiz-plan-banner{display:none;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #bbf7d0;
+  color:#166534;border-radius:10px;padding:9px 12px;font-size:.78rem;margin-bottom:12px;line-height:1.4;}
+.cot-wiz-plan-banner i{font-size:1rem;flex-shrink:0;}
+/* Sección 3 — contacto colapsable */
+.cot-wiz-step-header-contacto{cursor:default;}
+
+/* ══ Paso 2 — "Traer equipos de la ficha" (sub-panel inline, Daniel
+   2026-07-23: solo visible cuando origen='ficha' y hay equipos activos) ══ */
+.cot-wiz-eqficha-box{border:1.5px solid #bbf7d0;background:#f0fdf4;border-radius:12px;overflow:hidden;}
+.cot-wiz-eqficha-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;
+  font-size:.78rem;font-weight:800;color:#166534;border-bottom:1px solid #bbf7d0;}
+.cot-wiz-eqficha-close{border:none;background:transparent;color:#166534;width:26px;height:26px;border-radius:7px;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+.cot-wiz-eqficha-close:hover{background:#dcfce7;}
+.cot-wiz-eqficha-list{max-height:180px;overflow-y:auto;padding:6px 12px;display:flex;flex-direction:column;gap:2px;}
+.cot-wiz-eqficha-item{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#14532d;padding:6px 4px;
+  cursor:pointer;border-radius:6px;}
+.cot-wiz-eqficha-item:hover{background:#dcfce7;}
+.cot-wiz-eqficha-item input{width:18px;height:18px;accent-color:#16a34a;flex-shrink:0;}
+.cot-wiz-eqficha-item small{color:#4d7c0f;font-family:'JetBrains Mono',monospace;}
+.cot-wiz-eqficha-foot{padding:8px 12px 12px;}
+/* Giro del ícono del chip UF mientras refresca (no existe un keyframe
+   'spin' global en el proyecto -- se declara acá). */
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+#cotUfChip:disabled{opacity:.7;cursor:wait;}

@@ -1,0 +1,311 @@
+.tk-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
+.tk-kpi{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;}
+.tk-kpi .num{font-size:1.5rem;font-weight:900;line-height:1;}
+.tk-kpi .lbl{font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.tk-kpi.t .num{color:#0f172a;} .tk-kpi.a .num{color:#1d4ed8;}
+.tk-kpi.u .num{color:#dc2626;} .tk-kpi.v .num{color:#b91c1c;}
+.tk-filtros{background:#fff;border:1px solid #eaecf0;border-radius:11px;padding:10px 12px;margin-bottom:12px;
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.tk-filtros .form-control,.tk-filtros .form-select{max-width:210px;}
+/* ── Fila de filtros help-desk (referencia Triple A que a Daniel le gusto):
+   cada filtro con su mini-label arriba, fila envolvente, apilado en mobile. ── */
+.tk-f-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;width:100%;}
+.tk-f{display:flex;flex-direction:column;gap:2px;flex:1 1 128px;min-width:118px;max-width:220px;}
+.tk-f>label{font-size:.6rem;font-weight:800;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;
+  margin:0 0 0 2px;white-space:nowrap;}
+.tk-f .form-control,.tk-f .form-select{max-width:100%;width:100%;}
+.tk-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;
+  margin-top:10px;padding-top:10px;border-top:1px dashed #eaecf0;}
+.tk-toolbar .spacer{flex:1 1 auto;}
+.tk-btn-hoy{border:1px solid #e5e7eb;background:#fff;color:#374151;font-weight:700;}
+.tk-btn-hoy:hover{border-color:#dc2626;color:#dc2626;}
+.tk-btn-hoy.on,.tk-btn-hoy.on:hover{background:#dc2626;border-color:#dc2626;color:#fff;}
+.tk-btn-rep{border:1px solid #16a34a;background:#fff;color:#16a34a;font-weight:700;}
+.tk-btn-rep:hover{background:#f0fdf4;border-color:#15803d;color:#15803d;}
+@media(max-width:640px){
+  .tk-f{flex:1 1 100%;max-width:100%;}
+  .tk-toolbar .btn{flex:1 1 auto;}
+}
+/* ── Encabezados ordenables ── */
+table.tk-table thead th.tk-th-sort{cursor:pointer;user-select:none;transition:background .12s,color .12s;}
+table.tk-table thead th.tk-th-sort:hover{background:#1f2937;color:#fff;}
+table.tk-table thead th.tk-th-sort i{font-size:.7rem;opacity:.55;margin-left:3px;}
+table.tk-table thead th.tk-th-sort.on{color:#fca5a5;}
+table.tk-table thead th.tk-th-sort.on i{opacity:1;color:#fca5a5;}
+/* ── Columna Acciones ── */
+.tk-acciones{display:flex;gap:3px;align-items:center;white-space:nowrap;}
+.tk-act{border:none;background:transparent;width:30px;height:30px;min-height:30px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:.88rem;cursor:pointer;
+  padding:0;transition:background .12s;}
+.tk-act.ver{color:#3b82f6;} .tk-act.ver:hover{background:#dbeafe;}
+.tk-act.cerrar{color:#16a34a;} .tk-act.cerrar:hover{background:#dcfce7;}
+.tk-act.del{color:#dc2626;} .tk-act.del:hover{background:#fee2e2;}
+/* ── Footer de paginacion ── */
+.tk-foot{background:#fff;border:1px solid #eaecf0;border-radius:11px;margin-top:8px;
+  padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  font-size:.78rem;color:#6b7280;}
+.tk-foot-info b{color:#0f172a;}
+.tk-foot-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tk-foot-ctrl .lbl-pp{display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:700;color:#9ca3af;
+  text-transform:uppercase;letter-spacing:.04em;margin:0;}
+.tk-foot-ctrl select{border:1px solid #e5e7eb;border-radius:7px;padding:3px 6px;font-size:.78rem;
+  color:#374151;background:#fff;}
+.tk-pg-btn{border:1px solid #e5e7eb;background:#fff;border-radius:8px;width:30px;height:30px;min-height:30px;
+  display:inline-flex;align-items:center;justify-content:center;color:#374151;cursor:pointer;
+  padding:0;transition:all .12s;}
+.tk-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626;}
+.tk-pg-btn:disabled{opacity:.35;cursor:default;}
+.tk-pg-num{font-weight:800;color:#0f172a;font-size:.78rem;min-width:52px;text-align:center;white-space:nowrap;}
+/* ── Bandeja de tickets: TABLA (Daniel, feedback 2026-07-11: "necesito
+   que sea una TABLA... bien elegante que me contenga cincuenta tickets"
+   -- reemplaza el layout anterior de tarjetas/cards, que fue descartado). ── */
+.tk-table-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+  /* Daniel 2026-07-13: "que quepa dentro de la pantalla y no necesite scroll
+     de pagina, que le de scroll a la tabla" -- antes usaba overflow-y:clip
+     a proposito para que el scroll fuera de la PAGINA (con el thead sticky
+     contra ella). Ahora el wrapper mismo es el contenedor de scroll: el
+     thead sticky se recalcula automaticamente contra ESTE scroll en vez
+     del de la pagina (position:sticky funciona igual contra cualquier
+     ancestro con overflow scrolleable, no solo la pagina). */
+  overflow:auto;max-height:calc(100vh - 300px);
+  box-shadow:0 1px 3px rgba(0,0,0,.04);}
+table.tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:.9rem;min-width:1040px;}
+table.tk-table thead th{position:sticky;top:0;z-index:2;background:#0a0a0a;color:#fff;font-size:.7rem;
+  font-weight:800;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:11px 14px;
+  border-bottom:2px solid #dc2626;white-space:nowrap;}
+table.tk-table thead th:first-child{border-left:3px solid transparent;}
+/* 2026-07-13 (Daniel, URGENTE): "la columna queda mas baja, tapandome el
+   ultimo/primer ticket" -- esta regla de mobile quedo de un diseño ANTERIOR
+   (cuando la pagina completa scrolleaba y el thead sticky necesitaba
+   despejar el topbar fijo mobile, top:90px). Desde el refactor de HOY
+   (.tk-table-wrap con su propio overflow:auto, ver comentario arriba en
+   .tk-table-wrap), el thead ya se pega contra el scroll INTERNO del wrap,
+   no contra la pagina -- top:90px en mobile lo pegaba 90px hacia ADENTRO
+   del wrap (tapando la primera fila) en vez de quedar al ras. Se elimina:
+   top:0 (regla base, sin media query) es correcto en todos los tamaños. */
+table.tk-table tbody tr{cursor:pointer;transition:background .1s;}
+table.tk-table tbody tr:hover{background:#fafbfc;}
+table.tk-table tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6;}
+table.tk-table td{padding:10px 14px;vertical-align:middle;}
+table.tk-table td:first-child{border-left:3px solid transparent;}
+table.tk-table tbody tr.prio-urgente td:first-child{border-left-color:#dc2626;}
+table.tk-table tbody tr.prio-alta td:first-child{border-left-color:#f59e0b;}
+table.tk-table tbody tr.prio-media td:first-child{border-left-color:#6b7280;}
+table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
+.tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
+.tkc-num{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.tkc-cliente{font-weight:800;font-size:.87rem;color:#0f172a;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:240px;}
+.tkc-titulo{font-size:.75rem;color:#9ca3af;margin-top:2px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:240px;}
+.tkc-tipo{display:flex;align-items:center;gap:7px;white-space:nowrap;}
+.tkc-tipo .ic{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:.72rem;flex-shrink:0;}
+.tkc-tipo .lbl{font-size:.76rem;color:#374151;font-weight:600;}
+.tkc-asignado{font-size:.8rem;color:#374151;}
+.tkc-asignado.none{color:#9ca3af;font-style:italic;}
+.tkc-fecha{font-size:.78rem;color:#374151;white-space:nowrap;}
+.tkc-fecha .hora{font-size:.68rem;color:#9ca3af;display:block;}
+.tk-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;}
+.bs-open{background:#dbeafe;color:#1e40af;} .bs-in_progress{background:#fef3c7;color:#92400e;}
+.bs-pending{background:#e0e7ff;color:#3730a3;} .bs-resolved{background:#dcfce7;color:#166534;}
+.bs-closed{background:#f3f4f6;color:#6b7280;} .bs-cancelado{background:#fee2e2;color:#991b1b;}
+.bs-ot_pending_approval,.bs-ot_generated,.bs-ot_in_progress{background:#ede9fe;color:#5b21b6;}
+.tk-unread{background:#dc2626;color:#fff;border-radius:50px;font-size:.6rem;font-weight:800;padding:2px 7px;white-space:nowrap;}
+.tk-unread-banner{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;
+  padding:10px 14px;margin:0 0 12px;font-size:.85rem;font-weight:700;display:flex;align-items:center;gap:8px;}
+.tk-unread-banner i{font-size:1.05rem;}
+/* ── Mini-stepper de avance (columna "Avance"): 4 puntos + linea, mismo
+   espiritu/paleta que el stepper grande de ficha.html (verde=completado,
+   rojo ILUS=actual, gris=pendiente) pero compacto para caber en una celda. ── */
+.tk-mini-wrap{display:flex;align-items:center;gap:8px;}
+.tk-mini-stepper{display:flex;align-items:center;}
+.tk-mini-dot{width:9px;height:9px;border-radius:50%;background:#e5e7eb;flex-shrink:0;}
+.tk-mini-dot.done{background:#16a34a;}
+.tk-mini-dot.current{background:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.18);}
+.tk-mini-line{width:13px;height:2px;background:#e5e7eb;flex-shrink:0;}
+.tk-mini-line.done{background:#16a34a;}
+.tk-mini-extra{font-size:.62rem;font-weight:800;padding:2px 6px;border-radius:50px;white-space:nowrap;
+  display:inline-flex;align-items:center;}
+.tk-mini-extra.pending{background:#fff8e1;color:#b45309;}
+.tk-mini-extra.cancel{background:#fee2e2;color:#991b1b;}
+/* ── Origen (WEB / Interno) ── */
+.tk-origen-pill{display:inline-flex;align-items:center;gap:5px;font-size:.64rem;font-weight:800;padding:3px 9px;
+  border-radius:50px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;}
+.tk-origen-pill.web{background:#dbeafe;color:#1e40af;}
+.tk-origen-pill.backoffice{background:#f3f4f6;color:#374151;}
+.tk-origen-pill.otro{background:#f9fafb;color:#6b7280;border:1px solid #e5e7eb;}
+.empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;padding:50px 30px;text-align:center;}
+.empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px;}
+
+/* ── Modal Nuevo Ticket ── */
+.nt-card{background:#fafafa;border:1px solid #eaecf0;border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+.nt-card h6{font-weight:800;color:#0f172a;margin:0 0 4px;font-size:.85rem;display:flex;align-items:center;gap:8px;}
+.nt-card h6 .n{background:#dc2626;color:#fff;width:20px;height:20px;border-radius:50%;display:inline-flex;
+  align-items:center;justify-content:center;font-size:.7rem;font-weight:800;}
+.nt-card .hint{font-size:.74rem;color:#94a3b8;margin:0 0 10px 28px;}
+.nt-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;}
+.nt-grid .full{grid-column:1/-1;}
+.nt-field{position:relative;}
+.nt-field label{font-size:.72rem;font-weight:700;color:#475569;margin-bottom:3px;display:block;}
+/* Grid de columnas FIJAS (no auto-fit) para que la ultima fila nunca quede
+   con celdas gigantes desproporcionadas -- feedback Daniel 2026-07-11. */
+.nt-tipos{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+@media(max-width:760px){.nt-tipos{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:480px){.nt-tipos{grid-template-columns:repeat(2,1fr);}}
+.nt-tipo-pill{border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 6px;text-align:center;cursor:pointer;
+  font-size:.72rem;font-weight:700;color:#475569;background:#fff;transition:all .12s;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:62px;line-height:1.15;}
+.nt-tipo-pill i{font-size:1.05rem;color:var(--tc,#94a3b8);}
+.nt-tipo-pill:hover{border-color:var(--tc,#dc2626);color:var(--tc,#dc2626);}
+.nt-tipo-pill:focus-visible{outline:2px solid var(--tc,#dc2626);outline-offset:2px;}
+.nt-tipo-pill.sel{border-color:var(--tc,#dc2626);background:var(--tbg,#fef2f2);color:var(--tc,#dc2626);
+  box-shadow:inset 0 0 0 1px var(--tc,#dc2626);font-weight:800;}
+.nt-tipos-sub{grid-column:1/-1;font-size:.68rem;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:#94a3b8;display:flex;align-items:center;gap:6px;
+  margin:2px 0 -2px;}
+.nt-tipos-sub.interno{margin-top:12px;padding-top:12px;border-top:1.5px dashed #e2e8f0;
+  color:#475569;}
+.nt-tipos-sub.interno i{color:#0a0a0a;}
+.nt-tipos-sub .nt-sub-hint{font-weight:600;letter-spacing:0;text-transform:none;
+  color:#94a3b8;margin-left:2px;}
+.nt-tipo-pill.interno-pill{background:linear-gradient(180deg,#fff,#f8fafc);
+  border-style:dashed;}
+.nt-tipo-pill.interno-pill.sel{border-style:solid;}
+.nt-tipo-pill .nt-pill-tag{font-size:.52rem;font-weight:800;letter-spacing:.06em;
+  background:#0a0a0a;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;
+  flex-shrink:0;}
+.nt-gar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;
+  background:#fff;border:1px dashed #e5e7eb;border-radius:10px;padding:9px 13px;}
+.nt-gar .lbl{font-size:.8rem;font-weight:700;color:#475569;}
+.nt-gar-opts{display:flex;gap:7px;}
+.nt-gar-pill{border:1.5px solid #e5e7eb;border-radius:50px;padding:5px 15px;cursor:pointer;
+  font-size:.78rem;font-weight:700;color:#6b7280;background:#fff;transition:all .12s;min-height:32px;}
+.nt-gar-pill:hover{border-color:#dc2626;color:#dc2626;}
+.nt-gar-pill.sel{border-color:#dc2626;background:#dc2626;color:#fff;}
+.nt-gar-pill:focus-visible{outline:2px solid #dc2626;outline-offset:2px;}
+.tk-gar-badge{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:50px;
+  font-size:.6rem;font-weight:800;padding:2px 8px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+.nt-ac{position:absolute;z-index:1060;left:0;right:0;top:100%;background:#fff;border:1px solid #e5e7eb;
+  border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);max-height:220px;overflow:auto;margin-top:3px;display:none;}
+.nt-ac.open{display:block;}
+.nt-ac-item{padding:8px 11px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:.83rem;}
+.nt-ac-item:hover,.nt-ac-item.hi{background:#fef2f2;}
+.nt-ac-item .rut{color:#dc2626;font-weight:800;font-family:'JetBrains Mono',monospace;font-size:.76rem;}
+.nt-ac-badge-cli{display:inline-flex;align-items:center;gap:3px;background:#dcfce7;color:#166534;
+  font-size:.64rem;font-weight:700;padding:1px 8px;border-radius:50px;margin-left:6px;white-space:nowrap;}
+.nt-ac-empty{padding:16px 10px;color:#94a3b8;font-size:.78rem;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:5px;}
+.nt-ac-empty i{font-size:1.25rem;opacity:.5;}
+.nt-ac-empty.err{color:#b91c1c;}
+.nt-ac-empty.err i{opacity:.85;color:#dc2626;}
+.nt-chip{display:inline-flex;align-items:center;gap:8px;background:#f0fdf4;border:1px solid #86efac;color:#166534;
+  border-radius:9px;padding:7px 11px;font-size:.83rem;font-weight:700;}
+.nt-chip .x{cursor:pointer;color:#9ca3af;font-weight:900;}
+.nt-eqrow{display:flex;justify-content:space-between;align-items:center;border:1px solid #eaecf0;border-radius:8px;
+  padding:7px 11px;margin-bottom:5px;font-size:.83rem;background:#fff;}
+.nt-eqrow .sku{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#6b7280;}
+/* Observación por equipo (Daniel 2026-07-11: "no puede ser la misma [observacion]
+   por las cinco [maquinas]") -- una fila = un equipo, cada uno con su propia nota. */
+.nt-eq-item{margin-bottom:8px;}
+.nt-eq-item .nt-eqrow{margin-bottom:4px;}
+.nt-eq-notas{font-size:.76rem;padding:5px 9px;}
+.nt-eq-count{display:none;align-items:center;gap:6px;font-size:.72rem;font-weight:800;color:#475569;
+  background:#f3f4f6;border-radius:50px;padding:4px 11px;margin:8px 0 6px;width:fit-content;}
+.nt-eq-count i{color:#dc2626;}
+.nt-eq-count.show{display:inline-flex;}
+/* Lista con scroll interno (no empuja el modal completo) al crecer -- Daniel
+   pidio "dinamismo" para 1 a 50+ equipos (feedback 2026-07-11). */
+.nt-lista-eq{max-height:230px;overflow-y:auto;padding-right:3px;}
+.nt-vfeed{font-size:.7rem;margin-top:3px;display:none;}
+.nt-vfeed.ok{color:#16a34a;display:block;} .nt-vfeed.err{color:#dc2626;display:block;}
+.nt-counter{font-size:.7rem;color:#94a3b8;text-align:right;}
+@media(max-width:640px){.nt-grid{grid-template-columns:1fr;}}
+
+/* ── Buscador ERP (cliente / equipo) ── */
+.nt-search{position:relative;}
+.nt-search i.bi-search{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:.85rem;pointer-events:none;}
+.nt-search input{padding-left:32px;}
+.nt-search.has-tag input{padding-right:64px;}
+.nt-search-tag{position:absolute;right:7px;top:50%;transform:translateY(-50%);background:#dcfce7;color:#166534;
+  font-size:.64rem;font-weight:800;padding:3px 8px;border-radius:50px;display:none;align-items:center;gap:3px;white-space:nowrap;}
+.nt-search.has-tag .nt-search-tag{display:inline-flex;}
+
+/* ── Campos obligatorios + estados de validación ── */
+.nt-field.req>label::after{content:' *';color:#dc2626;font-weight:900;}
+.nt-field.err input,.nt-field.err select,.nt-field.err textarea{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.08);}
+.nt-field.ok input,.nt-field.ok select,.nt-field.ok textarea{border-color:#86efac;}
+.nt-err-msg{font-size:.7rem;color:#dc2626;margin-top:3px;display:none;}
+.nt-err-msg.show{display:block;}
+#fTipoWrap.err .nt-tipos{box-shadow:0 0 0 3px rgba(220,38,38,.15);border-radius:10px;}
+
+/* ── Adjuntos (Nuevo Ticket, tarjeta 5) ── */
+.nt-drop{border:2px dashed #d1d5db;border-radius:12px;padding:22px 14px;text-align:center;cursor:pointer;
+  transition:all .12s;background:#fff;}
+.nt-drop:hover,.nt-drop.drag{border-color:#dc2626;background:#fef2f2;}
+.nt-drop i{font-size:1.4rem;color:#9ca3af;display:block;margin-bottom:6px;}
+.nt-drop .t1{font-weight:700;font-size:.82rem;color:#374151;}
+.nt-drop .t2{font-size:.72rem;color:#9ca3af;margin-top:3px;}
+.nt-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.nt-file-chip{display:flex;align-items:center;gap:6px;background:#f1f5f9;border-radius:8px;padding:6px 10px;
+  font-size:.76rem;max-width:190px;}
+.nt-file-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.nt-file-chip .sz{color:#94a3b8;font-size:.68rem;white-space:nowrap;}
+.nt-file-chip .x{cursor:pointer;color:#94a3b8;font-weight:900;flex-shrink:0;margin-left:2px;}
+.nt-file-chip.up-ok{background:#dcfce7;}
+.nt-file-chip.up-ok i{color:#16a34a;}
+.nt-file-chip.up-err{background:#fee2e2;}
+.nt-file-chip.up-err i{color:#dc2626;}
+.nt-file-chip.up-going i{color:#dc2626;animation:nt-spin 1s linear infinite;}
+@keyframes nt-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@media(max-width:480px){.nt-file-chip{max-width:140px;}}
+
+/* ══════════════════════════════════════════════════════════════════
+   AUDITORÍA MOBILE 2026-07 — fixes acotados a mobile (breakpoints ya
+   usados en static/mobile.css: 768px principal, 480px teléfonos chicos).
+   Ningún cambio aquí toca comportamiento de escritorio. ══════════════ */
+@media(max-width:768px){
+  /* Hallazgo 1 (alta): el grupo de botones del hero (Importar CSV Triple A /
+     Purgar tickets / Desde documento ERP / Nuevo Ticket) no envolvía entre sí
+     -- desbordaba el hero. .tk-hero ya tiene flex-wrap pero solo entre sus
+     DOS hijos directos (título+sub y el grupo de botones). */
+  .page-header .d-flex.gap-2{flex-wrap:wrap;width:100%;}
+  .page-header .d-flex.gap-2 .btn{flex:1 1 auto;justify-content:center;}
+
+  /* Hallazgo 2 (alta): .tk-act (Ver/Cerrar/Eliminar) y .tk-pg-btn (prev/next)
+     no llevan clase .btn -- quedan en 30px, bajo el mínimo táctil. Se replica
+     el mismo tamaño de 38px que ya usa el proyecto para icon-only en tablas
+     (.btn-xs.btn-icon-only/.btn-sm.btn-icon-only en mobile.css). */
+  .tk-act,.tk-pg-btn{width:38px;height:38px;min-height:38px;min-width:38px;}
+  .tk-acciones{gap:6px;}
+
+  /* Hallazgo 3 (media): toggle "¿Aplica garantía?" -- control crítico (afecta
+     si el servicio se cobra) con tap target de solo 32px. */
+  .nt-gar-pill{min-height:44px;padding:10px 16px;}
+
+  /* Hallazgo 4 (media): botón "quitar equipo" (.p-0 de Bootstrap deja ~20px de
+     ancho de toque) y la "x" de quitar adjunto (span sin padding, ~10-14px). */
+  .nt-eqrow .btn-link.p-0{padding:8px 12px !important;}
+  .nt-file-chip .x{display:inline-flex;align-items:center;justify-content:center;
+    width:26px;height:26px;font-size:1.05rem;}
+
+  /* Hallazgo 7 (baja): encabezados ordenables (thead th, clickeables vía
+     tkSortClick) con altura ~35px, bajo el mínimo táctil recomendado. */
+  table.tk-table thead th{padding:14px 14px;}
+
+  /* Hallazgo 9 (baja): dropdown de autocomplete de Equipo (#ntAcEq) puede
+     quedar tapado por el teclado virtual en un modal largo -- se acota su alto. */
+  .nt-ac{max-height:160px;}
+}
+
+@media(max-width:480px){
+  /* Hallazgo 8 (baja): "Reporte tickets" / "Reporte SLA" (textos largos)
+     podían competir de forma dispareja por el ancho junto a Hoy/Refrescar/
+     Limpiar filtros -- se agrupan en pares de 2 columnas parejas. */
+  .tk-toolbar .btn{flex:1 1 calc(50% - 8px);}
+
+  /* Hallazgo 10 (baja): badges de Estado/Origen/no-leídos en ~9.6-10.2px,
+     bajo el mínimo de 12px recomendado para texto legible. */
+  .tk-badge,.tk-origen-pill,.tk-unread{font-size:.7rem;}
+}
