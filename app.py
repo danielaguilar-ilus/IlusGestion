@@ -24287,7 +24287,16 @@ def tr_manifiesto_detalle(mid):
         # ── AUTO-SANE: items viejos sin datos financieros completos ──
         # costo_courier viejo se guardaba en costo_zz; zz_envio (lo cobrado) se
         # recupera del ERP por la vía SQL estable. Una sola vez por item.
+        # 2026-07-30: el heal de zz_envio llama al ERP (SQL con fallback REST,
+        # hasta 12s de timeout por variante de nudo) UNA VEZ POR ITEM sin
+        # datos — en un manifiesto con muchos items viejos sin sanar esto
+        # bloqueaba la carga de la página varios segundos/minutos seguidos
+        # (causa raíz probable de "manifiestos lento" reportado por Daniel).
+        # Se acota a los primeros _MAX_HEAL_ZZ_PER_LOAD items por carga: el
+        # resto se sana solo, de a poco, en las siguientes visitas a la ficha.
+        _MAX_HEAL_ZZ_PER_LOAD = 5
         _healed = False
+        _heals_zz_hechos = 0
         for it in items:
             cid = it["commitment_id"]
             if (not it.get("costo_courier")) and float(it.get("costo_zz") or 0) > 0:
@@ -24300,9 +24309,12 @@ def tr_manifiesto_detalle(mid):
                 except Exception as e_h1:
                     print(f"[manif heal costo] {e_h1}", flush=True)
             if (not it.get("zz_envio")) and it.get("tido") and it.get("nudo"):
+                if _heals_zz_hechos >= _MAX_HEAL_ZZ_PER_LOAD:
+                    continue
                 try:
                     _tr_fetch_from_erp(it["tido"], str(it["nudo"]))  # repuebla zz_envio/peso/vol
                     _healed = True
+                    _heals_zz_hechos += 1
                 except Exception as e_h2:
                     print(f"[manif heal zz_envio] {e_h2}", flush=True)
         if _healed:
