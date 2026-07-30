@@ -1148,9 +1148,16 @@ def register_tickets_routes(app, ctx):
         # Daniel: todo lo que puede cambiar de precio, editable desde la UI)
         # -- INSERT IGNORE no pisa un valor que ya se haya editado.
         for _clave, _valor in (
-            ("cotiz_valor_hh", "20000"),   # $/HH (columna I1 del Excel)
-            ("cotiz_margen_pct", "40"),    # % margen sobre costo de mano de obra (G1=0.4)
+            ("cotiz_valor_hh", "20000"),   # $/HH (columna I1 del Excel) -- default/fallback (mantención)
+            ("cotiz_margen_pct", "40"),    # % margen sobre costo de mano de obra (G1=0.4), GLOBAL (mismo % en instalación)
             ("cotiz_iva_pct", "19"),       # % IVA Chile
+            # 2026-07-30 (Daniel, tabla "Tarifa instalación" dictada en vivo):
+            # instalación cobra la HH a $26.000, distinto de mantención
+            # ($20.000). cotiz_valor_hh__{tipo_servicio} sobreescribe el
+            # valor base SOLO para ese tipo; los tipos sin override propio
+            # (visita_tecnica/venta_repuesto/otro) siguen usando el base
+            # hasta que Daniel los defina. Ver _tk_cotiz_pricing_config.
+            ("cotiz_valor_hh__instalacion", "26000"),
         ):
             try:
                 mysql_execute(
@@ -2232,9 +2239,18 @@ def register_tickets_routes(app, ctx):
         return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
     def _tk_cotiz_pricing_config():
+        """valor_hh 2026-07-30 (Daniel: instalación $26.000 vs mantención
+        $20.000, tarifas DISTINTAS por tipo_servicio) pasa de un float único
+        a un dict {tipo_servicio: valor_hh}. cotiz_valor_hh sigue siendo el
+        valor BASE/fallback (histórico, usado hoy por mantención); un tipo
+        con su propio cotiz_valor_hh__{tipo} en tk_settings lo sobreescribe,
+        el resto sigue heredando el base hasta que se defina el suyo.
+        margen_pct/iva_pct se mantienen GLOBALES (mismo % en ambas tablas
+        de Daniel) -- no hay pedido de separarlos por tipo todavía."""
         rows = mysql_fetchall(
             "SELECT clave, valor FROM tk_settings "
-            "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct','cotiz_iva_pct')") or []
+            "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct','cotiz_iva_pct') "
+            "   OR clave LIKE 'cotiz\\_valor\\_hh\\_\\_%'") or []
         cfg = {r["clave"]: r["valor"] for r in rows}
 
         def _f(clave, default):
@@ -2242,8 +2258,10 @@ def register_tickets_routes(app, ctx):
                 return float(cfg.get(clave))
             except (TypeError, ValueError):
                 return default
+        _base = _f("cotiz_valor_hh", 20000.0)
+        _valor_hh_por_tipo = {t: _f(f"cotiz_valor_hh__{t}", _base) for t in _TK_COTIZ_TIPOS_SERVICIO}
         return {
-            "valor_hh": _f("cotiz_valor_hh", 20000.0),
+            "valor_hh": _valor_hh_por_tipo,
             "margen_pct": _f("cotiz_margen_pct", 40.0),
             "iva_pct": _f("cotiz_iva_pct", 19.0),
         }
@@ -2342,7 +2360,11 @@ def register_tickets_routes(app, ctx):
             precio_unitario = _tk_money_round(_fijo)
         else:
             hh = tarifa["horas"] * tarifa["tecnicos"]
-            costo = hh * cfg["valor_hh"]
+            # 2026-07-30: valor_hh ahora es un dict por tipo_servicio (ver
+            # _tk_cotiz_pricing_config) -- este ítem usa el de SU tipo.
+            _valor_hh_tipo = cfg["valor_hh"].get(tipo_servicio, 20000.0) \
+                if isinstance(cfg.get("valor_hh"), dict) else cfg["valor_hh"]
+            costo = hh * _valor_hh_tipo
             precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
             # Precio piso (2026-07-28, Daniel: "un mínimo... tres mil
             # quinientos pesos"): si el cálculo automático queda por debajo
@@ -3483,7 +3505,12 @@ def register_tickets_routes(app, ctx):
                 horas = tarifa["horas"]
                 tecnicos = tarifa["tecnicos"]
                 hh = horas * tecnicos
-                costo_mo = hh * cfg["valor_hh"]
+                # 2026-07-30: valor_hh es un dict por tipo_servicio (esta
+                # cotización completa comparte un único tipo_servicio, ver
+                # `tipo_servicio` arriba en esta función).
+                _valor_hh_tipo = cfg["valor_hh"].get(tipo_servicio, 20000.0) \
+                    if isinstance(cfg.get("valor_hh"), dict) else cfg["valor_hh"]
+                costo_mo = hh * _valor_hh_tipo
             else:
                 horas = tecnicos = hh = costo_mo = None
             items.append({

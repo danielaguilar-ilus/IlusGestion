@@ -29,6 +29,20 @@
 .clc-act{border:none;background:transparent;color:#9ca3af;cursor:pointer;font-size:.9rem;padding:4px 6px;
   border-radius:6px}
 .clc-act:hover{background:#f3f4f6;color:#0a0a0a}
+/* FIX 2026-07-30 (Daniel: "no se sabe que es hora y que es tecnico...
+   sácaselo a los demás, el piso es cantidad por precio nada más") -- cada
+   campo lleva un mini-label ARRIBA en vez de solo un placeholder, y las
+   categorías se dividen en 2 modelos claros: por horas (Hora/Técnicos) o
+   por precio unitario fijo (una categoría como "Pisos" no necesita horas
+   ni técnicos ni un piso mínimo aparte). */
+.clc-campo-mini{display:inline-flex;flex-direction:column;gap:2px;margin-right:8px}
+.clc-campo-mini label{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#9ca3af}
+.clc-modelo-badge{font-size:.6rem;font-weight:800;padding:2px 8px;border-radius:50px;white-space:nowrap;
+  border:none;cursor:pointer;text-transform:uppercase;letter-spacing:.03em}
+.clc-modelo-badge.horas{background:#dbeafe;color:#1e40af}
+.clc-modelo-badge.fijo{background:#fef3c7;color:#92400e}
+.clc-modelo-badge:hover{filter:brightness(.95)}
+.clc-fijo-unico{width:110px}
 .clc-precio-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;
   display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px;}
 .clc-precio-campo{display:flex;flex-direction:column;gap:4px;min-width:180px;}
@@ -99,16 +113,19 @@
   <button type="button" class="clc-uf-btn" onclick="clcUfToggleEdit()">Cancelar</button>
 </div>
 
-{# Valores GLOBALES del motor de precio (Daniel 2026-07-23). #}
+{# Valor hora técnica: 2026-07-30 (Daniel: instalación $26.000, mantención
+   $20.000 — valores DISTINTOS) pasa a ser POR tipo de servicio; cambia el
+   valor mostrado/editado según la pestaña de servicio seleccionada abajo.
+   Margen (%) sigue GLOBAL — Daniel usa el mismo 40% en ambas tablas. #}
 <div class="clc-precio-wrap">
   <div class="clc-precio-campo">
-    <label>Valor hora técnica</label>
+    <label>Valor hora técnica — <span id="clcValorHhServLbl"></span></label>
     <div class="input-group input-group-sm">
       <span class="input-group-text">$</span>
       <input type="number" min="1" step="1" class="form-control" id="clcValorHh"
              onchange="clcGuardarPrecio()">
     </div>
-    <div class="clc-precio-hint">Base del costo de mano de obra (HH × este valor).</div>
+    <div class="clc-precio-hint">Base del costo de mano de obra (HH × este valor) — propio de este tipo de servicio.</div>
   </div>
   <div class="clc-precio-campo">
     <label>Margen (%)</label>
@@ -117,7 +134,7 @@
              onchange="clcGuardarPrecio()">
       <span class="input-group-text">%</span>
     </div>
-    <div class="clc-precio-hint">Se aplica sobre el costo de mano de obra para el precio unitario.</div>
+    <div class="clc-precio-hint">Se aplica sobre el costo de mano de obra — GLOBAL (mismo % en todos los servicios).</div>
   </div>
 </div>
 
@@ -143,7 +160,9 @@
 let _clcClases = [];
 let _clcTipos = [];
 let _clcServ = 'mantencion';
-let _clcCfg = {valor_hh: 20000, margen_pct: 40};
+// FIX 2026-07-30 (Daniel: instalación $26.000, mantención $20.000 — valores
+// DISTINTOS): valor_hh_por_tipo reemplaza el valor_hh único de antes.
+let _clcCfg = {valor_hh_base: 20000, valor_hh_por_tipo: {}, margen_pct: 40};
 
 function escH(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtCLP(n){ return '$' + (Math.round(n||0)).toLocaleString('es-CL'); }
@@ -157,10 +176,10 @@ async function clcCargar(){
   if(!_clcTipos.find(t => t.key === _clcServ)) _clcServ = _clcTipos[0].key;
   if(d.ok && d.config_precio){
     _clcCfg = d.config_precio;
-    document.getElementById('clcValorHh').value = d.config_precio.valor_hh;
-    document.getElementById('clcMargenPct').value = d.config_precio.margen_pct;
+    document.getElementById('clcMargenPct').value = _clcCfg.margen_pct;
   }
   clcRenderServs();
+  clcSyncValorHhInput();
   clcRender();
 }
 
@@ -171,9 +190,10 @@ function clcRenderServs(){
   ).join('');
   const lbl = (_clcTipos.find(t => t.key===_clcServ)||{}).label || '';
   document.getElementById('clcColServ').textContent = lbl + ' — Hora · Técnicos · HH · Precio unit.';
+  document.getElementById('clcValorHhServLbl').textContent = lbl;
   const hints = {
     mantencion: 'Tarifa base de mantención (verificada contra el Excel real de Daniel).',
-    instalacion: 'Instalación: define horas/técnicos cuando tengas la tabla. Sin datos = $0.',
+    instalacion: 'Instalación: tarifa propia (Hora/Técnicos y valor HH distintos de Mantención).',
     visita_tecnica: 'Visita técnica: tarifa propia, independiente de mantención.',
     venta_repuesto: 'Venta de repuesto: se trabajará más adelante. Sin datos = $0.',
     otro: 'Otros servicios sin tarifa fija.'
@@ -181,30 +201,52 @@ function clcRenderServs(){
   document.getElementById('clcServHint').textContent = hints[_clcServ] || '';
 }
 
-function clcSelServ(key){ _clcServ = key; clcRenderServs(); clcRender(); }
+function clcSelServ(key){ _clcServ = key; clcRenderServs(); clcSyncValorHhInput(); clcRender(); }
+
+// Refleja en el input "Valor hora técnica" el valor propio del tipo de
+// servicio actualmente seleccionado (cada tipo puede tener el suyo).
+function clcSyncValorHhInput(){
+  const porTipo = _clcCfg.valor_hh_por_tipo || {};
+  const v = (porTipo[_clcServ] != null) ? porTipo[_clcServ] : (_clcCfg.valor_hh_base || 20000);
+  document.getElementById('clcValorHh').value = v;
+}
 
 function clcPrecioUnit(hh){
   if(hh==null) return null;
-  const vh = parseFloat(_clcCfg.valor_hh)||0, mg = parseFloat(_clcCfg.margen_pct)||0;
+  const porTipo = _clcCfg.valor_hh_por_tipo || {};
+  const vh = parseFloat(porTipo[_clcServ] != null ? porTipo[_clcServ] : _clcCfg.valor_hh_base) || 0;
+  const mg = parseFloat(_clcCfg.margen_pct)||0;
   return Math.round(hh * vh * (1 + mg/100));
 }
 
 function clcInputsTarifa(c){
   const tipo = _clcServ;
+  // FIX 2026-07-30 (Daniel, en vivo: "no se sabe que es hora y que es
+  // tecnico... sácaselo a los demás, porque lo único que va a actuar
+  // diferente es el piso [categoría de precio fijo]... el piso es cantidad
+  // por precio nada más"). Antes TODA categoría mostraba a la vez
+  // horas/técnicos/piso/fijo, deshabilitando lo que no aplicaba pero sin
+  // ocultarlo -- confuso. Ahora cada categoría declara su modelo_precio
+  // ('horas' o 'fijo') y SOLO se muestran los campos de ESE modelo.
+  if(c.modelo_precio === 'fijo'){
+    const fijo = c[tipo+'_fijo'];
+    return ''
+      + '<div class="clc-campo-mini"><label>Precio unitario ($)</label>'
+      +   '<input type="number" step="1" min="0" class="clc-num clc-fijo-unico" value="'+(fijo==null?'':fijo)+'" '
+      +     'placeholder="ej: 3500" data-id="'+c.id+'" data-campo="fijo" onchange="clcGuardarFijo(this)"></div>'
+      + (fijo==null ? '<span class="clc-sinDatos">sin definir</span>' : ' <span class="clc-precio-lbl">× cantidad</span>');
+  }
   // Copiar de Mantención (2026-07-28, Daniel: "que la instalación y la
   // visita repitiera los mismos valores... y me diera la oportunidad de
-  // editarla"): si este tipo AÚN no tiene horas/técnicos/piso propios
-  // (NULL — nunca se guardó nada acá), se muestran los valores de
-  // Mantención como punto de partida editable. Es solo un valor visual de
-  // arranque: mientras el operador no cambie nada, no se guarda ninguna
-  // fila nueva para este tipo; apenas edita y confirma, queda como un
-  // valor PROPIO de este tipo (deja de copiar a Mantención).
+  // editarla"): si este tipo AÚN no tiene horas/técnicos propios (NULL —
+  // nunca se guardó nada acá), se muestran los valores de Mantención como
+  // punto de partida editable. Mientras el operador no cambie nada, no se
+  // guarda ninguna fila nueva para este tipo; apenas edita y confirma,
+  // queda como un valor PROPIO de este tipo (deja de copiar a Mantención).
   const esCopiaDeMantencion = (tipo !== 'mantencion'
     && c[tipo+'_horas'] == null && c[tipo+'_tecnicos'] == null);
   const horas = esCopiaDeMantencion ? c['mantencion_horas'] : c[tipo+'_horas'];
   const tecnicos = esCopiaDeMantencion ? c['mantencion_tecnicos'] : c[tipo+'_tecnicos'];
-  const piso = (tipo !== 'mantencion' && c[tipo+'_piso'] == null && c['mantencion_piso'] != null)
-    ? c['mantencion_piso'] : c[tipo+'_piso'];
   const hh = (horas!=null && tecnicos!=null) ? horas*tecnicos : null;
   const pu = clcPrecioUnit(hh);
   const hhTxt = (hh==null) ? '<span class="clc-sinDatos">sin definir</span>'
@@ -213,32 +255,35 @@ function clcInputsTarifa(c){
   const copiaHint = esCopiaDeMantencion
     ? '<div class="clc-copia-hint" title="Valores de Mantención — edítalos para fijar los propios de este tipo">'
       + '<i class="bi bi-arrow-90deg-left"></i> copiado de Mantención</div>' : '';
-  // Precio fijo (2026-07-28, Daniel — categoría "Pisos"): algunas categorías
-  // se cobran a un precio unitario FIJO en pesos, no por horas×técnicos
-  // ("pisos = cantidad de pisos × precio unitario"). Con precio_fijo
-  // definido, horas/técnicos/piso quedan deshabilitados (no aplican) y el
-  // precio mostrado es directamente el fijo, no el calculado.
-  const fijo = c[tipo+'_fijo'];
-  const tieneFijo = fijo != null;
-  const dis = tieneFijo ? 'disabled title="No aplica — esta categoría usa precio fijo"' : '';
   return ''
     + copiaHint
-    + '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '+dis+' '
-    +   'placeholder="hr" data-id="'+c.id+'" data-campo="horas" onchange="clcGuardarTarifa(this)">'
-    + ' <input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '+dis+' '
-    +   'placeholder="téc" data-id="'+c.id+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)">'
-    + (tieneFijo ? '' : (' <span class="clc-hh">'+hhTxt+'</span>' + puTxt))
-    + '<div class="clc-piso-row">'
-    +   '<label>Precio piso ($)</label>'
-    +   '<input type="number" step="1" min="0" class="clc-num clc-num-piso" value="'+(piso==null?'':piso)+'" '+dis+' '
-    +     'placeholder="sin piso" data-id="'+c.id+'" data-campo="piso" onchange="clcGuardarPiso(this)">'
-    + '</div>'
-    + '<div class="clc-piso-row">'
-    +   '<label title="Precio unitario fijo — reemplaza el cálculo por horas×técnicos. Cantidad × este precio.">'
-    +     'Precio unitario fijo ($)</label>'
-    +   '<input type="number" step="1" min="0" class="clc-num clc-num-piso" value="'+(fijo==null?'':fijo)+'" '
-    +     'placeholder="ej: 3500" data-id="'+c.id+'" data-campo="fijo" onchange="clcGuardarFijo(this)">'
-    + '</div>';
+    + '<div class="clc-campo-mini"><label>Hora</label>'
+    +   '<input type="number" step="0.1" min="0" class="clc-num" value="'+(horas==null?'':horas)+'" '
+    +     'data-id="'+c.id+'" data-campo="horas" onchange="clcGuardarTarifa(this)"></div>'
+    + '<div class="clc-campo-mini"><label>Técnicos</label>'
+    +   '<input type="number" step="1" min="0" class="clc-num" value="'+(tecnicos==null?'':tecnicos)+'" '
+    +     'data-id="'+c.id+'" data-campo="tecnicos" onchange="clcGuardarTarifa(this)"></div>'
+    + ' <span class="clc-hh">'+hhTxt+'</span>' + puTxt;
+}
+
+async function clcToggleModelo(id, modeloActual){
+  const nuevo = modeloActual === 'fijo' ? 'horas' : 'fijo';
+  const msg = nuevo === 'fijo'
+    ? 'Pasa a cobrarse por un precio unitario fijo (cantidad × precio) — sin horas ni técnicos.'
+    : 'Pasa a cobrarse por horas trabajadas (Hora × Técnicos × valor HH) — se pierde el precio fijo cargado.';
+  const ok = await ilusConfirm({
+    title: 'Cambiar modelo de precio', message: msg,
+    okLabel: 'Cambiar', cancelLabel: 'Cancelar',
+  });
+  if(!ok) return;
+  const r = await fetch('/catalogo/api/clases/'+id, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({modelo_precio: nuevo})
+  });
+  const d = await r.json();
+  if(!d.ok){ ilusToast(d.error || 'No se pudo cambiar', {type:'error'}); return; }
+  ilusToast('✓ Modelo actualizado', {type:'success'});
+  clcCargar();
 }
 
 function clcRender(){
@@ -249,7 +294,12 @@ function clcRender(){
   }
   body.innerHTML = _clcClases.map(c => (
     '<tr class="'+(c.activo? '':'inactiva')+'">'
-    + '<td><div class="clc-nombre">'+escH(c.nombre)+'</div><div class="clc-slug">'+escH(c.slug)+'</div></td>'
+    + '<td><div class="clc-nombre">'+escH(c.nombre)+' '
+    +   '<button type="button" class="clc-modelo-badge '+c.modelo_precio+'" '
+    +     'title="Click para cambiar el modelo de precio" '
+    +     'onclick="clcToggleModelo('+c.id+',\''+c.modelo_precio+'\')">'
+    +     (c.modelo_precio==='fijo' ? 'Precio fijo' : 'Por horas') + '</button>'
+    + '</div><div class="clc-slug">'+escH(c.slug)+'</div></td>'
     + '<td>'+clcInputsTarifa(c)+'</td>'
     + '<td><span class="clc-badge '+(c.activo?'on':'off')+'">'+(c.activo?'Activa':'Inactiva')+'</span></td>'
     + '<td>'
@@ -268,15 +318,19 @@ async function clcGuardarPrecio(){
   if(isNaN(valorHh) || valorHh <= 0){ ilusToast('El valor de la hora técnica debe ser mayor a 0', {type:'warning'}); return; }
   if(isNaN(margenPct) || margenPct < 0){ ilusToast('El porcentaje de margen no puede ser negativo', {type:'warning'}); return; }
   try{
+    // FIX 2026-07-30: valor_hh se guarda PARA el tipo de servicio
+    // actualmente seleccionado (_clcServ) -- instalación y mantención ya
+    // no comparten el mismo valor. margen_pct sigue global (sin tipo).
     const r = await fetch('/catalogo/api/config-precio', {
       method:'PATCH', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({valor_hh: valorHh, margen_pct: margenPct})
+      body: JSON.stringify({valor_hh: valorHh, tipo_servicio: _clcServ, margen_pct: margenPct})
     });
     const d = await r.json();
     if(!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
     _clcCfg = d.config_precio || _clcCfg;
     clcRender();  // refresca la columna "Precio unit."
-    ilusToast('✓ Guardado — se aplica a las próximas cotizaciones', {type:'success'});
+    ilusToast('✓ Guardado — se aplica a las próximas cotizaciones de '+
+      (_clcTipos.find(t=>t.key===_clcServ)||{}).label, {type:'success'});
   }catch(e){
     ilusToast('Error de conexión al guardar', {type:'error'});
   }
@@ -508,13 +562,27 @@ async function clcNueva(){
     required: true,
   });
   if(!nombre) return;
+  // FIX 2026-07-30 (Daniel: "dame la opción de que vaya agregando...
+  // identifiquemos si es un piso o algo parecido"): al crear, se pregunta
+  // el modelo de precio -- por horas trabajadas (la mayoría) o por un
+  // precio unitario fijo (ej. "Pisos": cantidad × precio, sin horas).
+  const modelo = await ilusActionSheet({
+    title: '¿Cómo se cobra "' + nombre.trim() + '"?',
+    message: 'Elige el modelo de precio para esta categoría (editable después).',
+    options: [
+      {label: 'Por horas trabajadas (Hora × Técnicos × valor HH)', icon: 'bi-stopwatch', value: 'horas'},
+      {label: 'Precio unitario fijo (cantidad × precio, ej: "Pisos")', icon: 'bi-cash-coin', value: 'fijo'},
+    ],
+  });
+  if(!modelo) return;   // canceló -- no crea nada a medias
   const r = await fetch('/catalogo/api/clases', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({nombre: nombre.trim()})
+    body: JSON.stringify({nombre: nombre.trim(), modelo_precio: modelo})
   });
   const d = await r.json();
   if(!d.ok){ ilusToast(d.error || 'No se pudo crear la categoría', {type:'error'}); return; }
-  ilusToast('✓ Categoría creada — completa sus horas por servicio', {type:'success'});
+  ilusToast('✓ Categoría creada — completa su ' +
+    (modelo==='fijo' ? 'precio unitario' : 'tarifa') + ' por servicio', {type:'success'});
   clcCargar();
 }
 

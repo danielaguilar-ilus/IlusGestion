@@ -215,6 +215,31 @@ def register_catalogo_routes(app, ctx):
         "rack_avanzado": "rack_avanzados",
     }
 
+    # 2026-07-30 (Daniel, tabla "Tarifa instalación" dictada en vivo): mismo
+    # patrón que CAT_CLASES_SEED_MANTENCION — semilla de arranque, solo se
+    # inserta si esta clase+tipo_servicio='instalacion' AÚN no tiene tarifa
+    # propia (nunca pisa una edición posterior desde /catalogo/clases).
+    # VALOR_HH de instalación es DISTINTO al de mantención ($26.000 vs
+    # $20.000) — ver cotiz_valor_hh__instalacion en tk_settings.
+    CAT_TARIFAS_SEED_INSTALACION = [
+        # (slug, horas, cantidad_tecnicos)
+        ("selectorizador_pesos",      1.5, 2),
+        ("selectorizador_pesos_4est", 4.6, 2),
+        ("bicicleta",                 0.6, 1),
+        ("trotadora",                 1.4, 3),
+        ("bancos_plano_ajustable",    0.8, 1),
+        ("bancos_olimpicos",          1.1, 1),
+        ("rack_accesorios",           0.6, 1),
+        ("rack_basico",               0.9, 2),
+        ("rack_intermedio",           1.4, 3),
+        ("rack_avanzados",            2.2, 3),
+        ("rack_pro",                  2.8, 2),
+        ("dual_cable_lite",           1.7, 2),
+        ("dual_cable_cross",          2.0, 3),
+        ("dual_pulley_drax",          1.9, 2),
+        ("booty_builder_p",           0.9, 2),
+    ]
+
     # Bodega de sincronizacion ERP (Regla #4.1: SOLO LECTURA, via
     # _random_sql_query — mismo patron que _buscar_catalogo_bodega en
     # tickets_module.py, con env var propia para no acoplar ambos modulos).
@@ -326,6 +351,22 @@ def register_catalogo_routes(app, ctx):
                   KEY idx_cat_clase_activo (activo, orden)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # 2026-07-30 (Daniel, en vivo viendo /catalogo/clases: "no se sabe
+            # que es hora y que es tecnico... sácaselo a los demás, porque lo
+            # único que va a actuar diferente es el piso [categoría con
+            # precio unitario fijo, ej. "Pisos"]... el piso es cantidad por
+            # precio nada más"). Antes TODA categoría mostraba a la vez
+            # horas/técnicos Y precio-piso Y precio-fijo, sin distinguir cuál
+            # aplica. Este flag, elegido al crear la categoría (o editable
+            # después), decide qué bloque de campos se muestra en la UI:
+            # 'horas' = horas×técnicos×valor_hh (el cálculo normal); 'fijo' =
+            # precio unitario fijo × cantidad, sin horas/técnicos.
+            try:
+                mysql_execute(
+                    "ALTER TABLE cat_clases_producto ADD COLUMN modelo_precio "
+                    "ENUM('horas','fijo') NOT NULL DEFAULT 'horas' AFTER nombre")
+            except Exception:
+                pass  # columna ya existe
             mysql_execute("""
                 CREATE TABLE IF NOT EXISTS cat_clase_producto_tarifas (
                   id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -492,6 +533,46 @@ def register_catalogo_routes(app, ctx):
             print("[ensure_catalogo] categorías de producto sembradas", flush=True)
         except Exception as _e_seed:
             print(f"[ILUS][WARN] seed cat_clases_producto: {_e_seed}", flush=True)
+
+        # Semilla de tarifa de INSTALACIÓN (Daniel, 2026-07-30, dictada en
+        # vivo) — mismo patrón idempotente: solo inserta si esta clase+
+        # tipo_servicio='instalacion' aún no tiene horas/técnicos propios.
+        # VALOR_HH de instalación ($26.000, distinto al de mantención) se
+        # siembra aparte como tk_settings.cotiz_valor_hh__instalacion, ver
+        # tickets_module.py _tk_cotiz_pricing_config.
+        try:
+            for slug, horas, tecnicos in CAT_TARIFAS_SEED_INSTALACION:
+                fila = mysql_fetchone(
+                    "SELECT id FROM cat_clases_producto WHERE slug=%s", (slug,))
+                if not fila:
+                    continue  # la clase se siembra arriba (CAT_CLASES_SEED_MANTENCION)
+                _tiene_tarifa = mysql_fetchone(
+                    "SELECT id FROM cat_clase_producto_tarifas "
+                    "WHERE clase_id=%s AND tipo_servicio='instalacion'", (fila["id"],))
+                if not _tiene_tarifa:
+                    mysql_execute(
+                        "INSERT INTO cat_clase_producto_tarifas "
+                        "(clase_id, tipo_servicio, horas, tecnicos, updated_by) "
+                        "VALUES (%s,'instalacion',%s,%s,'sistema')",
+                        (fila["id"], horas, tecnicos))
+            print("[ensure_catalogo] tarifas de instalación sembradas", flush=True)
+        except Exception as _e_seed_inst:
+            print(f"[ILUS][WARN] seed tarifas instalacion: {_e_seed_inst}", flush=True)
+
+        # Backfill de modelo_precio (2026-07-30): cualquier categoría que YA
+        # tenga un precio_fijo cargado en algún tipo_servicio (ej. "Pisos")
+        # se marca 'fijo' automáticamente -- así la UI simplificada (ver
+        # /catalogo/clases) no le esconde el campo que ya venía usando.
+        # Idempotente: WHERE modelo_precio='horas' evita re-tocar una
+        # categoría que Daniel ya haya vuelto a 'horas' a mano después.
+        try:
+            mysql_execute(
+                "UPDATE cat_clases_producto SET modelo_precio='fijo' "
+                "WHERE modelo_precio='horas' AND id IN ("
+                "  SELECT clase_id FROM cat_clase_producto_tarifas "
+                "  WHERE precio_fijo IS NOT NULL)")
+        except Exception as _e_backfill:
+            print(f"[ILUS][WARN] backfill modelo_precio: {_e_backfill}", flush=True)
 
         # Migración clase_producto: ENUM fijo -> VARCHAR editable (Daniel
         # 2026-07-21). Idempotente vía information_schema.COLUMNS.DATA_TYPE
@@ -732,7 +813,7 @@ def register_catalogo_routes(app, ctx):
         """Listado completo (activas + inactivas) con horas/técnicos por
         tipo_servicio, para /catalogo/clases (solo superadmin)."""
         rows = mysql_fetchall(
-            "SELECT id, slug, nombre, orden, activo FROM cat_clases_producto "
+            "SELECT id, slug, nombre, modelo_precio, orden, activo FROM cat_clases_producto "
             "ORDER BY activo DESC, orden, nombre") or []
         tarifas = mysql_fetchall(
             "SELECT clase_id, tipo_servicio, horas, tecnicos, precio_piso, precio_fijo "
@@ -771,19 +852,29 @@ def register_catalogo_routes(app, ctx):
     # tk_settings es una tabla clave/valor genérica ya usada cruzada entre
     # módulos (ver reply_to en app.py), no hace falta wiring especial.
     def _cat_config_precio_leer():
+        """FIX 2026-07-30 (Daniel: instalación $26.000 vs mantención $20.000
+        -- valor_hh DISTINTO por tipo_servicio): devuelve valor_hh_base (el
+        histórico cotiz_valor_hh, fallback) + valor_hh_por_tipo (un valor
+        por cada tipo_servicio de _CAT_TIPOS_SERVICIO_TARIFA, heredando el
+        base si ese tipo no tiene su propio cotiz_valor_hh__{tipo}).
+        margen_pct sigue GLOBAL (mismo % en ambas tablas de Daniel)."""
         rows = mysql_fetchall(
             "SELECT clave, valor FROM tk_settings "
-            "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct')") or []
+            "WHERE clave='cotiz_valor_hh' OR clave='cotiz_margen_pct' "
+            "   OR clave LIKE 'cotiz\\_valor\\_hh\\_\\_%'") or []
         vals = {r["clave"]: r["valor"] for r in rows}
-        try:
-            valor_hh = float(vals.get("cotiz_valor_hh", 20000))
-        except (TypeError, ValueError):
-            valor_hh = 20000.0
-        try:
-            margen_pct = float(vals.get("cotiz_margen_pct", 40))
-        except (TypeError, ValueError):
-            margen_pct = 40.0
-        return {"valor_hh": valor_hh, "margen_pct": margen_pct}
+
+        def _f(clave, default):
+            try:
+                return float(vals.get(clave, default))
+            except (TypeError, ValueError):
+                return default
+        valor_hh_base = _f("cotiz_valor_hh", 20000.0)
+        margen_pct = _f("cotiz_margen_pct", 40.0)
+        valor_hh_por_tipo = {t: _f(f"cotiz_valor_hh__{t}", valor_hh_base)
+                             for t in _CAT_TIPOS_SERVICIO_TARIFA}
+        return {"valor_hh_base": valor_hh_base, "valor_hh_por_tipo": valor_hh_por_tipo,
+                "margen_pct": margen_pct}
 
     @app.route("/catalogo/api/config-precio", methods=["PATCH"])
     @_catalogo_admin_required
@@ -798,7 +889,14 @@ def register_catalogo_routes(app, ctx):
                 return jsonify({"ok": False, "error": "Valor de la hora técnica inválido"}), 400
             if v <= 0:
                 return jsonify({"ok": False, "error": "El valor de la hora técnica debe ser mayor a 0"}), 400
-            updates.append(("cotiz_valor_hh", str(v)))
+            # 2026-07-30: valor_hh ahora es POR tipo_servicio -- sin
+            # tipo_servicio en el body, se actualiza el valor BASE (fallback
+            # de los tipos sin override propio), igual que antes de esta fecha.
+            _tipo = (d.get("tipo_servicio") or "").strip().lower()
+            if _tipo and _tipo not in _CAT_TIPOS_SERVICIO_TARIFA:
+                return jsonify({"ok": False, "error": "tipo_servicio inválido"}), 400
+            _clave = f"cotiz_valor_hh__{_tipo}" if _tipo else "cotiz_valor_hh"
+            updates.append((_clave, str(v)))
         if "margen_pct" in d:
             try:
                 v = float(d.get("margen_pct"))
@@ -883,7 +981,12 @@ def register_catalogo_routes(app, ctx):
     def cat_api_clases_create():
         """Crear categoría nueva (Daniel: "si sale un producto nuevo lo
         podemos crear"). Sin tarifas iniciales -- se cargan aparte por
-        tipo_servicio desde /catalogo/clases."""
+        tipo_servicio desde /catalogo/clases.
+
+        modelo_precio (2026-07-30, Daniel: "identifiquemos si es un piso o
+        algo parecido... dame la opción de que vaya agregando"): se elige AL
+        CREAR si esta categoría se cobra por horas×técnicos ('horas', default)
+        o por precio unitario fijo ('fijo', ej. "Pisos"). Editable después."""
         d = request.get_json(silent=True) or {}
         nombre = (d.get("nombre") or "").strip()[:120]
         if not nombre:
@@ -891,13 +994,16 @@ def register_catalogo_routes(app, ctx):
         slug = _cat_slugify(nombre)
         if not slug:
             return jsonify({"ok": False, "error": "Nombre inválido"}), 400
+        modelo_precio = (d.get("modelo_precio") or "horas").strip().lower()
+        if modelo_precio not in ("horas", "fijo"):
+            modelo_precio = "horas"
         user = current_username() or "sistema"
         try:
             _max = mysql_fetchone("SELECT COALESCE(MAX(orden),0) AS m FROM cat_clases_producto") or {}
             orden = int(_max.get("m") or 0) + 10
             mysql_execute(
-                "INSERT INTO cat_clases_producto (slug, nombre, orden, created_by, updated_by) "
-                "VALUES (%s,%s,%s,%s,%s)", (slug, nombre, orden, user, user))
+                "INSERT INTO cat_clases_producto (slug, nombre, modelo_precio, orden, created_by, updated_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s)", (slug, nombre, modelo_precio, orden, user, user))
         except Exception as _e:
             msg = str(_e)
             if "Duplicate entry" in msg or "uq_cat_clase_slug" in msg:
@@ -932,6 +1038,11 @@ def register_catalogo_routes(app, ctx):
             except Exception:
                 return jsonify({"ok": False, "error": "orden inválido"}), 400
             sets.append("orden=%s"); params.append(params_orden)
+        if "modelo_precio" in d:
+            _mp = (d.get("modelo_precio") or "").strip().lower()
+            if _mp not in ("horas", "fijo"):
+                return jsonify({"ok": False, "error": "modelo_precio inválido"}), 400
+            sets.append("modelo_precio=%s"); params.append(_mp)
         if not sets:
             return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
         sets.append("updated_by=%s")
