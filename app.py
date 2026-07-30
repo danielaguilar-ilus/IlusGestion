@@ -76594,6 +76594,25 @@ def _ensure_transport_tracking_tables():
         )
     except Exception:
         pass
+    # FIX 2026-07-30 (Alison: "/transporte/manifiestos está muy lenta" --
+    # auditoría confirmó 2 tablas sin índice de soporte para las 3 queries
+    # de esa ruta, cada una con full table scan repetido). transport_
+    # manifests solo tenía idx_eliminado (baja selectividad, casi todo NULL);
+    # transport_manifest_items no tenía NINGÚN índice sobre estado_entrega,
+    # que se filtra ~4-5 veces por carga de página (tabs, KPIs, listado).
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_manifests ADD INDEX idx_elim_fecha (eliminado, fecha)"
+        )
+    except Exception:
+        pass
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_manifest_items "
+            "ADD INDEX idx_tmi_manifest_estado (manifest_id, estado_entrega)"
+        )
+    except Exception:
+        pass
 
     # 6) Tabla de retiros FedEx (pickups). Una fila por solicitud de retiro
     #    en bodega. Un manifiesto puede tener varios pickups (días distintos).
