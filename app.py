@@ -33704,6 +33704,7 @@ def tr_cubicador_enviar_manifiesto():
     # 2d) Persistir cubicaje declarado (peso real/vol/volumen/predominante + bultos).
     #     Datos que el operador VE en el cubicador → quedan declarados en el
     #     commitment y corren aguas abajo (manifiesto, etiquetas, KPIs). No fatal.
+    _fedex_desfasada = False
     try:
         _pr = float(data.get("peso_real") or 0)
         _pv = float(data.get("peso_vol") or 0)
@@ -33715,14 +33716,40 @@ def tr_cubicador_enviar_manifiesto():
         if _pv > 0: _sets.append("peso_vol=%s");          _vals.append(_pv)
         if _vm > 0: _sets.append("volumen_m3=%s");        _vals.append(_vm)
         if _pp > 0: _sets.append("peso_predominante=%s"); _vals.append(_pp)
+        _nb_nuevo = None
         if _nb not in (None, ""):
-            _sets.append("n_bultos=%s"); _vals.append(max(1, int(float(_nb))))
+            _nb_nuevo = max(1, int(float(_nb)))
+            _sets.append("n_bultos=%s"); _vals.append(_nb_nuevo)
         if _sets:
             _vals.append(comm_id)
             mysql_execute(
                 f"UPDATE transport_commitments SET {', '.join(_sets)} WHERE id=%s",
                 tuple(_vals)
             )
+        # FIX 2026-07-30 (Daniel/Alison, caso real FCV 11148 en MAN-2026-0008):
+        # re-cubicar un documento para corregir los bultos actualizaba
+        # transport_commitments.n_bultos, pero NUNCA avisaba si ya existía una
+        # OT FedEx activa con OTRO conteo de bultos — a diferencia del editor
+        # de "bultos y medidas" de la ficha del manifiesto (línea ~23172), que
+        # sí llama a _tr_fedex_mark_stale. Resultado: la etiqueta FedEx vieja
+        # (con el bulto incorrecto) seguía siendo la única activa, sin que
+        # apareciera nunca el botón "Re-emitir OT". Se compara contra
+        # ship_bultos (lo que FedEx REALMENTE tiene) en vez del n_bultos
+        # anterior, para detectar el desfase incluso si esta es la 2ª vez que
+        # se re-cubica el mismo documento con el mismo valor corregido.
+        if _nb_nuevo is not None:
+            try:
+                _ot_activa = mysql_fetchone(
+                    "SELECT ship_bultos FROM transport_manifest_items "
+                    "WHERE commitment_id=%s AND master_tracking_number IS NOT NULL "
+                    "  AND master_tracking_number<>'' AND ship_cancelled_at IS NULL "
+                    "ORDER BY id DESC LIMIT 1", (comm_id,))
+                if _ot_activa and _ot_activa.get("ship_bultos") is not None:
+                    _n_desfasadas = _tr_fedex_mark_stale(
+                        comm_id, int(_ot_activa["ship_bultos"]), _nb_nuevo)
+                    _fedex_desfasada = _n_desfasadas > 0
+            except Exception as e_stale:
+                print(f"[cub_enviar_manif] check fedex desfasada falló: {e_stale}", flush=True)
     except Exception as e_cub:
         print(f"[cub_enviar_manif] no se pudo guardar cubicaje: {e_cub}", flush=True)
 
@@ -33939,6 +33966,7 @@ def tr_cubicador_enviar_manifiesto():
         "commitment_id": comm_id,
         "added": added,
         "duplicate": not added,
+        "fedex_desfasada": _fedex_desfasada,
     })
 
 

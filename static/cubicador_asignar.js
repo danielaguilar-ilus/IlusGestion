@@ -2610,6 +2610,21 @@ async function enviarAManifiesto(){
         { type: d.duplicate ? 'warning' : 'success' }
       );
     }
+    // FIX 2026-07-30 (Daniel/Alison, caso real FCV 11148): si el documento ya
+    // tenía una OT FedEx activa con OTRO conteo de bultos, el backend acaba
+    // de marcar esa etiqueta como desfasada. Aviso explícito con OK (no un
+    // toast que se pierde solo) -- si no se le dice, Alison nunca se entera
+    // de que la OT vieja sigue con el bulto incorrecto y hay que re-emitirla.
+    if (d.fedex_desfasada && window.ilusAlert) {
+      await ilusAlert({
+        title: 'Etiqueta FedEx desfasada',
+        message: `Los bultos de este documento cambiaron y ya existía una OT FedEx activa con el conteo ANTERIOR. `
+          + `Esa etiqueta sigue siendo la única válida hasta que la re-emitas.`,
+        sub: `Ve al manifiesto ${d.correlativo || ('#'+d.manifest_id)} y usa el botón "Re-emitir OT" (⟳) en esta factura -- `
+          + `cancela la OT vieja en FedEx y crea una nueva con los bultos correctos. Solo funciona hasta las 16:00 hora Chile del mismo día.`,
+        type: 'warning',
+      });
+    }
     // Limpiar el cubicador para ingresar la siguiente factura SIN recargar
     _resetCubicadorParaSiguiente({
       manifest_id:   d.manifest_id,
