@@ -715,7 +715,7 @@ function _trkRender(d) {
     + _trkFchip('Cobrado', _fmtMoney(t.cobrado), 'ok')
     + _trkFchip('Costo', _fmtMoney(t.costo))
     + _trkFchip('Margen', _fmtMoney(t.margen), (t.margen||0) < 0 ? 'bad' : 'ok');
-  if (d.eta) fichaHtml += _trkFchip('ETA FedEx', d.eta.replace('T',' ').slice(0,16));
+  if (d.eta) fichaHtml += _trkFchip('ETA FedEx', d.eta);
   document.getElementById('trkFicha').innerHTML = fichaHtml;
 
   // Timeline FedEx scans

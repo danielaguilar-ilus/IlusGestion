@@ -17475,6 +17475,26 @@ def _fedex_pickup_cancel(*, pickup_confirmation_code: str, scheduled_date: str,
     return {"ok": True, "raw": data}
 
 
+def _fedex_iso_a_chile(raw_iso, fmt="%d/%m/%Y %H:%M"):
+    """Convierte un datetime ISO8601 de FedEx (ej '2026-06-13T11:31:00-04:00',
+    con su propio offset -- puede venir de un hub en otro país/zona) a hora
+    de Santiago, formato día/mes/año (Daniel, 2026-07-29: "las fechas salen
+    en inglés... quiero día, mes, año, y la hora la quiero de Santiago").
+
+    fromisoformat() respeta el offset embebido en el string (a diferencia del
+    partition('T') que se usaba antes, que solo cortaba el texto crudo sin
+    interpretar zona horaria) -- luego chile_fmt_filter lo convierte con
+    zoneinfo, igual que el resto de la app (Regla #6).
+    """
+    if not raw_iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw_iso)
+        return chile_fmt_filter(dt, fmt)
+    except Exception:
+        return raw_iso.replace("T", " ")[:16]
+
+
 def _fedex_track_lookup(tracking_numbers):
     """Consulta el Track API para 1 a N tracking numbers.
 
@@ -27700,10 +27720,12 @@ def _fedex_parse_scans(scans):
         if not isinstance(sc, dict):
             continue
         raw_dt = (sc.get("date") or "")  # ej '2026-06-13T11:31:00-04:00'
-        fecha, hora = "", ""
-        if "T" in raw_dt:
-            fecha, _, resto = raw_dt.partition("T")
-            hora = resto[:5]
+        # FIX 2026-07-29 (Daniel: "las fechas salen en inglés... quiero
+        # día, mes, año, y la hora de Santiago"): antes se cortaba el texto
+        # crudo del ISO sin interpretar la zona horaria embebida (que puede
+        # ser de un hub fuera de Chile). _fedex_iso_a_chile() la parsea de
+        # verdad y convierte a hora Santiago.
+        fecha_txt = _fedex_iso_a_chile(raw_dt)
         loc = sc.get("scanLocation") or {}
         ciudad = (loc.get("city") or "").strip()
         pais   = (loc.get("countryCode") or "").strip()
@@ -27711,8 +27733,7 @@ def _fedex_parse_scans(scans):
         desc = (sc.get("eventDescription") or sc.get("derivedStatus")
                 or sc.get("exceptionDescription") or "").strip()
         out.append({
-            "fecha": fecha, "hora": hora,
-            "fecha_txt": (f"{fecha} {hora}").strip(),
+            "fecha_txt": fecha_txt,
             "descripcion": desc,
             "ubicacion": ubic,
             "tipo": sc.get("eventType") or "",
@@ -27823,7 +27844,11 @@ def tr_item_tracking_detalle(item_id):
         "estado_step":   meta.get("step", 1),
         "bultos":        int(row.get("ship_bultos") or row.get("n_bultos") or 1),
         "ship_created_at": str(row.get("ship_created_at") or "")[:19],
-        "ultimo_poll":   str(row.get("last_carrier_poll_at") or "")[:19],
+        # FIX 2026-07-29 (Daniel: "las fechas salen en inglés... quiero la
+        # hora de Santiago"): last_carrier_poll_at es UTC naive (MySQL) -- se
+        # convierte con el mismo chile_fmt_filter que usa el resto de la app
+        # (Regla #6), en vez de truncar el string crudo.
+        "ultimo_poll":   chile_fmt_filter(row.get("last_carrier_poll_at"), "%d/%m/%Y %H:%M") if row.get("last_carrier_poll_at") else "",
         "pesos": {
             "real": round(real, 2), "vol": round(vol, 2),
             "predominante": round(pred, 2),
@@ -27835,7 +27860,7 @@ def tr_item_tracking_detalle(item_id):
             "margen": cobrado - costo,
             "valor_bruto": float(row.get("valor_bruto") or 0),
         },
-        "eta":           eta,
+        "eta":           _fedex_iso_a_chile(eta),
         "fedex_label":   fedex_label,
         "eventos":       eventos,
         "fedex_scans":   fedex_scans,
