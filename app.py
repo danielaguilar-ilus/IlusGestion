@@ -23924,20 +23924,37 @@ def tr_manifiestos():
     # KPIs globales (respetan los filtros incl. vista, NO la paginación)
     # OJO: la key NO puede llamarse "items" — en Jinja {{ kpis.items }} resuelve
     # al método dict.items() en vez del valor. Por eso usamos "bultos".
+    # 2026-07-29 (Daniel: "en la parte de manifiestos afuera el costo total
+    # le agregues la ganancia o pérdida y el porcentaje"): el cobrado (ZZ
+    # envío) no vive en transport_manifests -- hay que sumarlo desde
+    # transport_commitments vía transport_manifest_items, acotado a los
+    # MISMOS manifiestos que ya filtró where_sql (subquery, misma lista de
+    # params repetida una vez).
     kpi_row = mysql_fetchone(
         "SELECT COUNT(*) AS total, "
         "       COALESCE(SUM(total_items), 0) AS bultos, "
         "       COALESCE(SUM(costo_total), 0) AS costo, "
-        "       SUM(CASE WHEN estado='En preparación' THEN 1 ELSE 0 END) AS en_prep "
+        "       SUM(CASE WHEN estado='En preparación' THEN 1 ELSE 0 END) AS en_prep, "
+        "       (SELECT COALESCE(SUM(c.zz_envio), 0) "
+        "          FROM transport_manifest_items mi "
+        "          JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "         WHERE mi.manifest_id IN (SELECT id FROM transport_manifests WHERE " + where_sql + ")"
+        "       ) AS cobrado "
         "  FROM transport_manifests WHERE " + where_sql,
-        tuple(params_vista)
+        tuple(params_vista) + tuple(params_vista)
     ) or {}
     total = int(kpi_row.get("total") or 0)
+    _kpi_cobrado = float(kpi_row.get("cobrado") or 0)
+    _kpi_costo = float(kpi_row.get("costo") or 0)
+    _kpi_margen = _kpi_cobrado - _kpi_costo
     kpis = {
-        "total":    total,
-        "bultos":   int(kpi_row.get("bultos") or 0),
-        "costo":    float(kpi_row.get("costo") or 0),
-        "en_prep":  int(kpi_row.get("en_prep") or 0),
+        "total":       total,
+        "bultos":      int(kpi_row.get("bultos") or 0),
+        "costo":       _kpi_costo,
+        "en_prep":     int(kpi_row.get("en_prep") or 0),
+        "cobrado":     _kpi_cobrado,
+        "margen":      _kpi_margen,
+        "margen_pct":  round(_kpi_margen / _kpi_cobrado * 100, 1) if _kpi_cobrado > 0 else None,
     }
     total_pages = max(1, (total + page_size - 1) // page_size)
     if page > total_pages:

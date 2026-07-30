@@ -143,6 +143,24 @@
         <div class="kpi-sub">Costo de fletes</div>
       </div>
     </div>
+    {# 2026-07-29 (Daniel: "agrégale la ganancia o pérdida y el porcentaje"):
+       cobrado (ZZ envío) - costo courier, con el mismo criterio de pérdida
+       que ya usa el detalle del manifiesto (margen<0 → rojo). #}
+    <div class="kpi">
+      <div class="kpi-icon {{ 'red' if kpis.margen < 0 else 'green' }}">
+        <i class="bi {{ 'bi-graph-down-arrow' if kpis.margen < 0 else 'bi-graph-up-arrow' }}"></i>
+      </div>
+      <div class="kpi-info">
+        <div class="kpi-label">{{ 'Pérdida total' if kpis.margen < 0 else 'Margen total' }}</div>
+        <div class="kpi-value" style="{{ 'color:#dc2626' if kpis.margen < 0 }}">
+          ${{ "{:,.0f}".format(kpis.margen).replace(",", ".") }}
+        </div>
+        <div class="kpi-sub">
+          {% if kpis.margen_pct is not none %}{{ "%.1f"|format(kpis.margen_pct) }}% sobre lo cobrado
+          {% else %}Sin cobros registrados en el periodo{% endif %}
+        </div>
+      </div>
+    </div>
     <div class="kpi">
       <div class="kpi-icon amber"><i class="bi bi-clock-history"></i></div>
       <div class="kpi-info">
