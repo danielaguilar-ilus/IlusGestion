@@ -681,7 +681,30 @@ body {
   max-height: 0;
   transition: max-height .24s ease;
 }
-.sg-items.sg-open { max-height: 500px; }
+.sg-items.sg-open { max-height: 900px; }
+
+/* ── Sub-grupo anidado (2026-07-29, Daniel: "el menú de Transporte y
+   Servicio Técnico está muy largo") — un segundo nivel de acordeón DENTRO
+   de un .sg-items, para agrupar los ítems menos usados ("Configuración"
+   en Transporte, "Taller" en Servicio Técnico) sin agregarlos como más
+   links planos. Es independiente del acordeón principal (.sg-toggle):
+   no cierra los demás grupos al abrirse, solo expande/colapsa su propio
+   contenido -- por eso usa su propia clase y su propio JS, ver base.html. ── */
+.sg-subtoggle {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 18px 8px 30px; background: none; border: none;
+  border-left: 3px solid transparent; color: #9a9a9a;
+  font-size: .78rem; font-weight: 600; cursor: pointer; text-align: left;
+  transition: color .14s, background .14s, border-color .14s;
+}
+.sg-subtoggle i.sg-subico { font-size: .85rem; opacity: .8; flex-shrink: 0; color: inherit; }
+.sg-subtoggle:hover { color: #fff; background: rgba(255,255,255,.05); }
+.sg-subtoggle.sg-open { color: #e2e8f0; }
+.sg-subtoggle .sg-chevron { margin-left: auto; font-size: .62rem !important; opacity: .55 !important; transition: transform .2s; }
+.sg-subtoggle.sg-open .sg-chevron { transform: rotate(90deg); opacity: 1 !important; }
+.sg-subitems { overflow: hidden; max-height: 0; transition: max-height .22s ease; }
+.sg-subitems.sg-open { max-height: 400px; }
+.sg-subitems .sidebar-link { padding-left: 30px; font-size: .82rem; }
 
 /* — Footer usuario — */
 .sidebar-footer {

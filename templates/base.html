@@ -535,25 +535,38 @@
        class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
       <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
     </a>
-    {% if current_user and current_user.role != 'tecnico' %}
-    <a href="{{ url_for('mant_plantillas_page') }}"
-       class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
-      <i class="bi bi-list-check"></i><span>Plantillas</span>
-    </a>
-    <a href="{{ url_for('mant_proveedores_repuesto_page') }}"
-       class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
-      <i class="bi bi-truck"></i><span>Proveedores</span>
-    </a>
-    <a href="{{ url_for('repuestos_hub_list') }}"
-       class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
-      <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
-    </a>
-    {% endif %}
-    {% if not is_tecnico %}
-    <a href="{{ url_for('mant_tecnicos_externos_index') }}"
-       class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
-      <i class="bi bi-person-badge"></i><span>Técnicos</span>
-    </a>
+    {# ── Taller (2026-07-29, Daniel: "Servicio Técnico está muy largo, se
+       tiene que contraer") — agrupa lo de apoyo al taller (plantillas de
+       checklist, proveedores/repuestos, técnicos) detrás de un segundo
+       acordeón, igual patrón que "Configuración" en Transporte. Nada se
+       elimina (Regla #4.2), solo se reordena. #}
+    {% if (current_user and current_user.role != 'tecnico') or not is_tecnico %}
+    <button class="sg-subtoggle" data-sgsub="st-taller">
+      <i class="bi bi-tools sg-subico"></i><span>Taller</span>
+      <i class="bi bi-chevron-right sg-chevron"></i>
+    </button>
+    <div class="sg-subitems" id="sgsub-st-taller">
+      {% if current_user and current_user.role != 'tecnico' %}
+      <a href="{{ url_for('mant_plantillas_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
+        <i class="bi bi-list-check"></i><span>Plantillas</span>
+      </a>
+      <a href="{{ url_for('mant_proveedores_repuesto_page') }}"
+         class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
+        <i class="bi bi-truck"></i><span>Proveedores</span>
+      </a>
+      <a href="{{ url_for('repuestos_hub_list') }}"
+         class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
+        <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
+      </a>
+      {% endif %}
+      {% if not is_tecnico %}
+      <a href="{{ url_for('mant_tecnicos_externos_index') }}"
+         class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
+        <i class="bi bi-person-badge"></i><span>Técnicos</span>
+      </a>
+      {% endif %}
+    </div>
     {% endif %}
     {% endif %}
 
@@ -614,22 +627,39 @@
          class="sidebar-link{% if request.endpoint in ['tr_manifiestos','tr_manifiesto_detalle'] %} active{% endif %}">
         <i class="bi bi-clipboard-check"></i><span>Manifiestos</span>
       </a>
-      <a href="{{ url_for('tr_couriers') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
-        <i class="bi bi-building"></i><span>Couriers</span>
-      </a>
-      <a href="{{ url_for('tr_choferes') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
-        <i class="bi bi-person-badge"></i><span>Choferes</span>
-      </a>
-      <a href="{{ url_for('tr_facturas_proveedor') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_facturas_proveedor','tr_factura_proveedor_detalle'] %} active{% endif %}">
-        <i class="bi bi-receipt-cutoff"></i><span>Facturas Proveedor</span>
-      </a>
-      <a href="{{ url_for('tr_producto') }}"
-         class="sidebar-link{% if request.endpoint in ['tr_producto'] %} active{% endif %}">
-        <i class="bi bi-box-seam"></i><span>Producto</span>
-      </a>
+      {# ── Configuración (2026-07-29, Daniel: "el menú de Transporte está
+         muy largo... crea una parte que se llame Configuración y ahí
+         despliega couriers, choferes, facturas, producto y el formulario
+         público") — agrupa lo menos usado a diario (catálogos de apoyo)
+         detrás de un segundo acordeón, sin sacar ningún link (Regla #4.2),
+         solo reordenándolos. Acordeón anidado independiente del principal
+         (ver sg-subtoggle en base.html/style.css). #}
+      <button class="sg-subtoggle" data-sgsub="tr-config">
+        <i class="bi bi-gear sg-subico"></i><span>Configuración</span>
+        <i class="bi bi-chevron-right sg-chevron"></i>
+      </button>
+      <div class="sg-subitems" id="sgsub-tr-config">
+        <a href="{{ url_for('tr_couriers') }}"
+           class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
+          <i class="bi bi-building"></i><span>Couriers</span>
+        </a>
+        <a href="{{ url_for('tr_choferes') }}"
+           class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
+          <i class="bi bi-person-badge"></i><span>Choferes</span>
+        </a>
+        <a href="{{ url_for('tr_facturas_proveedor') }}"
+           class="sidebar-link{% if request.endpoint in ['tr_facturas_proveedor','tr_factura_proveedor_detalle'] %} active{% endif %}">
+          <i class="bi bi-receipt-cutoff"></i><span>Facturas Proveedor</span>
+        </a>
+        <a href="{{ url_for('tr_producto') }}"
+           class="sidebar-link{% if request.endpoint in ['tr_producto'] %} active{% endif %}">
+          <i class="bi bi-box-seam"></i><span>Producto</span>
+        </a>
+        <a href="{{ url_for('seguimiento_lookup_page') }}" target="_blank"
+           class="sidebar-link">
+          <i class="bi bi-box-arrow-up-right"></i><span>Form. público</span>
+        </a>
+      </div>
       {# 'Monitor en vivo' y 'Buscar despacho' temporalmente fuera del sidebar
          (Daniel 2026-06-13). Las rutas siguen vivas para no romper enlaces;
          se mantienen accesibles desde la búsqueda global o links directos. #}
@@ -868,6 +898,39 @@ document.addEventListener('DOMContentLoaded', function(){
       var saved = localStorage.getItem('ilus_sg_open');
       if (saved) openGroup(saved);
     } catch(e) {}
+  })();
+
+  // ── Sub-grupos anidados (2026-07-29): "Configuración" en Transporte,
+  // "Taller" en Servicio Técnico. Independiente del acordeón principal de
+  // arriba -- no cierra los demás grupos, solo su propio contenido.
+  (function () {
+    var subtoggles = document.querySelectorAll('.sg-subtoggle');
+    if (!subtoggles.length) return;
+    subtoggles.forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var key = this.dataset.sgsub;
+        var box = document.getElementById('sgsub-' + key);
+        if (!box) return;
+        var open = !this.classList.contains('sg-open');
+        this.classList.toggle('sg-open', open);
+        box.classList.toggle('sg-open', open);
+        try { localStorage.setItem('ilus_sgsub_' + key, open ? '1' : ''); } catch(e2) {}
+      });
+    });
+    // Auto-abrir si contiene el link activo, si no restaurar del localStorage
+    subtoggles.forEach(function (btn) {
+      var key = btn.dataset.sgsub;
+      var box = document.getElementById('sgsub-' + key);
+      if (!box) return;
+      var hasActive = box.querySelector('.sidebar-link.active');
+      var wasOpen = false;
+      try { wasOpen = localStorage.getItem('ilus_sgsub_' + key) === '1'; } catch(e3) {}
+      if (hasActive || wasOpen) {
+        btn.classList.add('sg-open');
+        box.classList.add('sg-open');
+      }
+    });
   })();
 })();
 });  /* end DOMContentLoaded */
