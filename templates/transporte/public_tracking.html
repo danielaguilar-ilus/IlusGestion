@@ -122,6 +122,22 @@ body{
 .hero.is-bad::after{
   background:radial-gradient(circle, rgba(220,38,38,.34) 0%, transparent 62%);
 }
+/* "Mesh" ambiental 2027 (2026-07-29, Daniel: "que se vea con tecnologías...
+   sorpréndeme"), mismo tratamiento que retiros/public_tracking.html para
+   que ambas páginas se sientan de la misma familia visual. Barrido de luz
+   muy lento y sutil, puramente decorativo. */
+.hero-mesh{
+  position:absolute; inset:-40%; pointer-events:none; mix-blend-mode:screen;
+  background:conic-gradient(from 0deg at 70% 30%,
+    rgba(22,163,74,.14), transparent 22%, transparent 55%, rgba(22,163,74,.09), transparent 85%);
+  animation:meshDrift 22s linear infinite;
+}
+.hero.is-bad .hero-mesh{
+  background:conic-gradient(from 0deg at 70% 30%,
+    rgba(220,38,38,.14), transparent 22%, transparent 55%, rgba(220,38,38,.09), transparent 85%);
+}
+@keyframes meshDrift{ to{ transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce){ .hero-mesh{ animation:none; } }
 .hero > *{ position:relative; z-index:1; }
 
 .doc{
@@ -310,11 +326,21 @@ body{
 .wrap{ padding:1.05rem 1.1rem 2.2rem; }
 
 .card{
+  position:relative;
   background:#fff; border:1px solid var(--line); border-radius:16px;
   margin-bottom:.85rem; overflow:hidden;
   box-shadow:0 1px 2px rgba(0,0,0,.045);
   animation:rise .55s cubic-bezier(.2,.7,.3,1) backwards;
 }
+/* filete superior en gradiente (2026-07-29) -- mismo lenguaje visual del
+   progress-card de retiros, para que ambas páginas se sientan hermanas. */
+.card:not(.proof):not(.live-card)::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:3px; z-index:1;
+  background:linear-gradient(90deg,var(--red),#f97316 45%,var(--red));
+  background-size:200% 100%; animation:sheenSlide 6s ease-in-out infinite;
+}
+@keyframes sheenSlide{ 0%,100%{ background-position:0% 0 } 50%{ background-position:100% 0 } }
+@media (prefers-reduced-motion:reduce){ .card::before{ animation:none } }
 .card:nth-of-type(1){ animation-delay:.28s } .card:nth-of-type(2){ animation-delay:.34s }
 .card:nth-of-type(3){ animation-delay:.4s }  .card:nth-of-type(4){ animation-delay:.46s }
 @keyframes rise{ from{ opacity:0; transform:translateY(16px) } to{ opacity:1; transform:none } }
@@ -536,11 +562,11 @@ a.kv:active{ background:#fafafa; }
      esquinas y sombra — ya no es la franja negra de borde a borde de
      celular. Todo su contenido interno no se toca (mismos elementos). */
   .hero{
-    flex:0 0 392px;
-    border-radius:22px;
-    padding:2rem 1.85rem 2.2rem;
+    flex:0 0 400px;
+    border-radius:24px;
+    padding:2.3rem 2.1rem 2.5rem;
     position:sticky; top:1.75rem;
-    box-shadow:0 24px 48px -20px rgba(10,10,10,.38);
+    box-shadow:0 26px 54px -20px rgba(10,10,10,.42), inset 0 1px 0 rgba(255,255,255,.05);
   }
   #tkStateLabel{ font-size:3rem; }
 
@@ -628,6 +654,7 @@ a.kv:active{ background:#fafafa; }
    (invisibles para el layout, cero cambio de comportamiento). #}
 <div class="dash-row">
 <section class="hero{% if entregado %} is-ok{% elif terminal_danger %} is-bad{% endif %}" id="tkHero">
+  <div class="hero-mesh" aria-hidden="true"></div>
   <button class="doc" id="btnDoc" type="button" title="Copiar número de documento">
     <i class="bi bi-receipt"></i>{{ data.doc }}
   </button>

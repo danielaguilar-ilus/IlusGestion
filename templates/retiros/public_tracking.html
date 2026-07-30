@@ -102,11 +102,11 @@
     .track-hero{
       position:relative;overflow:hidden;
       background:linear-gradient(135deg,#0a0a0a 0%,#1f1f1f 70%,#0a0a0a 100%);
-      color:#fff;border-radius:18px;
-      padding:30px 32px;margin-top:22px;
-      display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;
-      box-shadow:0 18px 38px rgba(0,0,0,.18);
-      border:1px solid #1f1f1f;
+      color:#fff;border-radius:22px;
+      padding:38px 40px;margin-top:26px;
+      display:grid;grid-template-columns:1fr auto;gap:28px;align-items:center;
+      box-shadow:0 26px 52px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.06);
+      border:1px solid #232323;
     }
     .track-hero::before{
       content:'';position:absolute;inset:0;
@@ -114,7 +114,20 @@
                  radial-gradient(600px 180px at 100% 100%, rgba(220,38,38,.10), transparent 60%);
       pointer-events:none;
     }
+    /* ── "Mesh" ambiental 2027 (Daniel: "que se vea con tecnologías...
+       sorpréndeme") — un barrido de luz muy lento y sutil detrás del texto,
+       como el ambient glow de dashboards premium. Puramente decorativo,
+       opacidad baja para no competir con el contenido. ── */
+    .track-hero::after{
+      content:'';position:absolute;inset:-40%;
+      background:conic-gradient(from 0deg at 30% 40%,
+        rgba(220,38,38,.16), transparent 22%, transparent 55%, rgba(220,38,38,.10), transparent 85%);
+      animation:meshDrift 22s linear infinite;
+      pointer-events:none;mix-blend-mode:screen;
+    }
+    @keyframes meshDrift{ to{ transform:rotate(360deg); } }
     .track-hero > *{position:relative;z-index:1}
+    @media(prefers-reduced-motion:reduce){ .track-hero::after{ animation:none; } }
     .track-hero .eyebrow{
       font-size:.66rem;text-transform:uppercase;letter-spacing:.18em;
       color:#9ca3af;font-weight:800;margin-bottom:6px;
@@ -129,9 +142,9 @@
 
     .status-pill-big{
       display:inline-flex;align-items:center;gap:8px;
-      padding:10px 18px;border-radius:50px;
+      padding:11px 20px;border-radius:50px;
       font-weight:800;font-size:.84rem;letter-spacing:.04em;
-      box-shadow:0 8px 18px rgba(0,0,0,.30);
+      box-shadow:0 8px 18px rgba(0,0,0,.30), 0 0 0 6px rgba(255,255,255,.05);
       text-transform:uppercase;
     }
     .status-pill-big .ico{font-size:1.05rem}
@@ -175,16 +188,26 @@
 
     /* ─── PROGRESO ANIMADO (estado en pasos) ────────────────────── */
     .progress-card{
+      position:relative;overflow:hidden;
       background:rgba(255,255,255,.94);
       backdrop-filter:blur(16px) saturate(1.4);
       -webkit-backdrop-filter:blur(16px) saturate(1.4);
-      border:1px solid var(--ilus-border);border-radius:20px;
-      padding:28px 26px 22px;margin-top:18px;
+      border:1px solid var(--ilus-border);border-radius:22px;
+      padding:34px 32px 28px;margin-top:20px;
       box-shadow:var(--shadow-soft-3);
     }
+    /* filete superior en gradiente — el mismo acento en todas las tarjetas
+       "premium" de la página (2026-07-29, "digno de Fable"). */
+    .progress-card::before{
+      content:'';position:absolute;top:0;left:0;right:0;height:3px;
+      background:linear-gradient(90deg,var(--ilus-red),#f97316 45%,var(--ilus-red));
+      background-size:200% 100%;animation:sheenSlide 6s ease-in-out infinite;
+    }
+    @keyframes sheenSlide{0%,100%{background-position:0% 0}50%{background-position:100% 0}}
+    @media(prefers-reduced-motion:reduce){.progress-card::before{animation:none}}
     .progress-card h6{
-      font-weight:900;font-size:.74rem;text-transform:uppercase;letter-spacing:.12em;
-      color:var(--ilus-muted);margin:0 0 20px;display:flex;align-items:center;gap:8px;
+      font-weight:900;font-size:.76rem;text-transform:uppercase;letter-spacing:.12em;
+      color:var(--ilus-muted);margin:0 0 26px;display:flex;align-items:center;gap:8px;
     }
     .progress-card h6 i{color:var(--ilus-red);font-size:1rem}
 
@@ -234,9 +257,9 @@
 
     /* ─── HERO STATUS contextual (banner según estado) ──────────── */
     .hero-status{
-      background:#fff;border-radius:14px;border:1px solid var(--ilus-border);
-      padding:22px 26px;margin-top:18px;
-      display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center;
+      background:#fff;border-radius:18px;border:1px solid var(--ilus-border);
+      padding:26px 30px;margin-top:20px;
+      display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center;
       box-shadow:0 4px 14px rgba(15,23,42,.05);
       animation:fadeUp .6s cubic-bezier(.16,1,.3,1);
     }
