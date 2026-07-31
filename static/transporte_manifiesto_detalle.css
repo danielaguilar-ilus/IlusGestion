@@ -279,9 +279,14 @@
 }
 .trk-modal { border:0; border-radius:18px; overflow:hidden; }
 .trk-hero {
+  /* 2026-07-31 (Daniel: "el modal, la parte de información está muy
+     chiquitita... agrandar el modal, achicar un poco el header para poder
+     leer, pero tiene que quedar espectacular") -- el modal pasó a modal-xl
+     (más ancho, más aire para el contenido) y el header baja un poco su
+     padding vertical para no acaparar toda la altura visible. */
   position:relative;
   background:linear-gradient(140deg,#4d148c 0%,#2b0a52 55%,#0a0a0a 100%);
-  color:#fff; padding:30px 28px 22px;
+  color:#fff; padding:22px 30px 18px;
   transition:background .3s ease;
 }
 /* 2026-07-31 (propuesta especialista UX, tras hallazgo del especialista
