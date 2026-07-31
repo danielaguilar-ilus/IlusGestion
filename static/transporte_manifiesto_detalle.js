@@ -709,7 +709,15 @@ function _trkRender(d) {
     var n = i + 1;
     var cls = '';
     if (n < cur) cls = 'done';
-    else if (n === cur) cls = danger ? 'danger' : 'active';
+    else if (n === cur) {
+      // 2026-07-31 (Daniel, en vivo: "el entregado siempre el avance tiene
+      // que ser en verde... está en blanco"): el último paso (Entregado) es
+      // un estado TERMINAL, no "en curso" -- .active pinta blanco con pulso
+      // (correcto para "En ruta", que sí sigue en curso), pero en el ÚLTIMO
+      // paso ese pulso blanco se lee como que falta algo, cuando ya terminó.
+      var esUltimo = (n === TRK_STEPS.length);
+      cls = danger ? 'danger' : (esUltimo ? 'done' : 'active');
+    }
     stepsHtml += '<div class="trk-step ' + cls + '">'
       + (i < TRK_STEPS.length - 1 ? '<div class="trk-step-line"></div>' : '')
       + '<div class="trk-step-dot"><i class="bi ' + s.icon + '"></i></div>'
@@ -836,6 +844,13 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
       kHint.textContent = 'aún sin retiro del courier';
     }
     if (t.ultima_act_at) document.getElementById('trkKpiAct').textContent = t.ultima_act_at;
+
+    // ── Indicadores del documento (mismos que el modal SimpliRoute — ver
+    // _srRenderIndicadores) — pérdida financiera, fill rate, SLA de
+    // despacho, saldo ZZ envío. 2026-07-31, Daniel: "el interno tiene que
+    // llevarnos a todo".
+    window._trkLastDetalle = det;
+    _srRenderIndicadores('trk', { id: commitmentId }, det);
 
     // ── Productos del pedido (con foto → _ilusLightbox, nunca pestañas) ──
     var lineas = det.lineas || [];
@@ -1258,9 +1273,13 @@ function _srFmtCLP(v) {
 // para poder re-renderizar sin re-fetch cuando el usuario aprieta
 // "Actualizar stock" (ver srActualizarStock). 100% datos ya cargados en
 // `det` (o en window._srStockErp para la parte de stock en vivo).
-function _srRenderIndicadores(data, det) {
-  var secI = document.getElementById('srSecIndicadores');
-  var wrap = document.getElementById('srIndicadores');
+// `prefix` es 'sr' (modal SimpliRoute) o 'trk' (modal FedEx) -- mismos
+// datos (_tr_buscar_detalle), misma UI, dos modales distintos que aún no
+// están consolidados (ver tarea pendiente "Consolidar tracking sin modal
+// anidado").
+function _srRenderIndicadores(prefix, data, det) {
+  var secI = document.getElementById(prefix + 'SecIndicadores');
+  var wrap = document.getElementById(prefix + 'Indicadores');
   if (!secI || !wrap) return;
   var cards = [];
 
@@ -1381,7 +1400,7 @@ async function _srCargarDetalle(data, token, force) {
     // IIFE) para poder re-renderizar sin re-fetch cuando el usuario aprieta
     // "Actualizar stock" (ver srActualizarStock).
     window._srLastDetalle = det;
-    _srRenderIndicadores(data, det);
+    _srRenderIndicadores('sr', data, det);
 
     // ── Productos del pedido (con foto → _ilusLightbox, sin pestañas) ──
     var lineas = det.lineas || [];
@@ -1548,13 +1567,15 @@ async function srActualizarEstado() {
   await actualizarEstadoItemGenerico(data.id, btn);
 }
 
-async function srActualizarStock(data) {
+async function srActualizarStock(prefix, data) {
   // 2026-07-31 (Daniel: "actualizar solamente eso [devengado/comprometido],
   // porque los demás datos... no van a depender del ERP") — único punto del
   // modal que consulta el ERP en vivo, y solo cuando el usuario lo pide.
+  // `prefix` es 'sr' (SimpliRoute) o 'trk' (FedEx) — mismo endpoint, mismo
+  // render, dos modales.
   data = data || {};
   if (!data.id) return;
-  var btn = document.getElementById('srBtnStockRefresh');
+  var btn = document.getElementById(prefix + 'BtnStockRefresh');
   var orig = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Consultando ERP…'; }
   try {
@@ -1567,7 +1588,8 @@ async function srActualizarStock(data) {
     }
     window._srStockErp = { commitmentId: data.id, stock: d.stock };
     // Re-renderiza el bloque de indicadores reusando el ultimo detalle cargado.
-    if (window._srLastDetalle) _srRenderIndicadores(data, window._srLastDetalle);
+    var lastDet = prefix === 'trk' ? window._trkLastDetalle : window._srLastDetalle;
+    if (lastDet) _srRenderIndicadores(prefix, data, lastDet);
     ilusToast('✓ Stock actualizado desde el ERP', { type: 'success' });
   } catch (e) {
     ilusToast('No se pudo conectar con el servidor', { type: 'error' });

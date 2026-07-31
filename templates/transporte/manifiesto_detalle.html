@@ -1403,6 +1403,15 @@ function mfdFiltrarTabla(){
         </div>
       </div>
       <div class="modal-body trk-body sr-body">
+        {# ── Indicadores del documento (2026-07-31, Daniel: "el interno
+           tiene que llevarnos a todo") — mismos indicadores del modal
+           SimpliRoute (ver srSecIndicadores), reusando _srRenderIndicadores
+           con prefix='trk'. ── #}
+        <div class="sr-sec" id="trkSecIndicadores" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Indicadores del documento</div>
+          <div id="trkIndicadores" class="sr-indic-grid"></div>
+        </div>
+
         {# ── Carga y tarifa (ficha pesos/tarifa/bultos del modal original) ── #}
         <div class="sr-sec">
           <div class="sr-sec-h"><i class="bi bi-box2-fill"></i>Carga y tarifa</div>
@@ -1412,7 +1421,14 @@ function mfdFiltrarTabla(){
         {# ── Productos del pedido (con foto → _ilusLightbox) ── #}
         <div class="sr-sec" id="trkSecProductos" style="display:none">
           <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
-            <span class="sr-sec-count" id="trkProdCount"></span></div>
+            <span class="sr-sec-count" id="trkProdCount"></span>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="trkBtnStockRefresh"
+                    style="font-size:.72rem;padding:1px 8px"
+                    onclick="srActualizarStock('trk', {id: window._trkData && window._trkData.commitment_id})"
+                    title="Consultar en vivo el stock físico/comprometido/devengado en el ERP">
+              <i class="bi bi-arrow-clockwise"></i> Actualizar stock
+            </button>
+          </div>
           <div id="trkProductos"></div>
         </div>
 
@@ -1548,7 +1564,7 @@ function mfdFiltrarTabla(){
               <span class="sr-sec-count" id="srProdCount"></span>
               <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="srBtnStockRefresh"
                       style="font-size:.72rem;padding:1px 8px"
-                      onclick="srActualizarStock(window._srItemData)"
+                      onclick="srActualizarStock('sr', window._srItemData)"
                       title="Consultar en vivo el stock físico/comprometido/devengado en el ERP">
                 <i class="bi bi-arrow-clockwise"></i> Actualizar stock
               </button>

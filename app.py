@@ -30787,16 +30787,18 @@ def _tr_buscar_detalle(commitment_id):
     c = mysql_fetchone("""
         SELECT id, tido, nudo, cliente_nombre, cliente_rut, comuna, direccion,
                telefono, email, region, delivered_at, public_token, estado,
-               COALESCE(zz_envio, 0) AS zz_envio, tiene_saldo, fecha_emision
+               COALESCE(zz_envio, 0) AS zz_envio, COALESCE(costo_courier, 0) AS costo_courier,
+               tiene_saldo, fecha_emision
         FROM transport_commitments WHERE id=%s
     """, (commitment_id,))
     if not c:
         return None
-    # Último manifest_item (el envío actual)
+    # Último manifest_item (el envío actual). costo_courier vive en
+    # transport_commitments (no en transport_manifest_items) -- ver `c` arriba.
     mi = mysql_fetchone("""
         SELECT mi.id AS item_id, mi.manifest_id, mi.estado_entrega,
                mi.tracking_number, mi.last_carrier_poll_at, mi.last_carrier_status,
-               mi.last_carrier_source, COALESCE(mi.costo_courier, 0) AS costo_courier,
+               mi.last_carrier_source,
                tm.correlativo, tm.courier
         FROM transport_manifest_items mi
         LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
@@ -30961,19 +30963,15 @@ def _tr_buscar_detalle(commitment_id):
     except Exception as _e_zzl:
         print(f"[_tr_buscar_detalle] zz_envio_linea falló (no crítico): {_e_zzl}", flush=True)
 
-    # ── Financiero: cuánto se cobró (zz_envio del documento) vs. cuánto
-    # costó el courier. 2026-07-31, Daniel: "siempre indicando cuánto perdió
-    # la FACTURA EN TOTAL" — énfasis en total: si el documento se despachó
-    # dividido en varios envíos (ver despachos_out), se suma el costo de
-    # TODOS los items de manifiesto de este commitment, no solo el más
-    # reciente (que es lo único que trae `mi`). Mismo cálculo base que ya
-    # existe en tr_manifiesto_detalle (margen_clp/es_perdida) a nivel de UN
-    # despacho; acá se agrega a nivel de FACTURA completa.
+    # ── Financiero: cuánto se cobró (zz_envio) vs. cuánto costó el courier
+    # (costo_courier) — AMBOS son columnas de transport_commitments (un valor
+    # por DOCUMENTO, no por despacho individual; ver mismo criterio en
+    # tr_manifiesto_detalle margen_clp/es_perdida y en _apply_carrier_status).
+    # No hace falta sumar entre despachos: costo_courier ya representa el
+    # total del documento aunque se haya repartido en varios manifest_items.
     financiero = None
     try:
-        _costo_total = float((mysql_fetchone(
-            "SELECT COALESCE(SUM(costo_courier),0) AS t FROM transport_manifest_items "
-            "WHERE commitment_id=%s", (commitment_id,)) or {}).get("t") or 0)
+        _costo_total = float(c.get("costo_courier") or 0)
         _cobrado = float(c.get("zz_envio") or 0)
         if _cobrado > 0 or _costo_total > 0:
             financiero = {

@@ -241,6 +241,23 @@
 .ed-chip-pred .ed-chip-k { color:#dc2626; }
 
 /* ═══ Modal de tracking premium ═══ */
+/* 2026-07-31 (Daniel: "con transición al abrir, dinámico") — Bootstrap ya
+   trae un fade básico; esto lo reemplaza por una entrada más premium
+   (escala + fade) y hace que el hero se revele con un stagger sutil en vez
+   de aparecer todo de golpe. Se aplica a #trackingModal y #simpliRouteModal
+   (ambos ya tienen la clase .modal.fade de Bootstrap). */
+#trackingModal .modal-dialog, #simpliRouteModal .modal-dialog {
+  transform:scale(.96) translateY(10px); transition:transform .28s cubic-bezier(.2,.8,.2,1);
+}
+#trackingModal.show .modal-dialog, #simpliRouteModal.show .modal-dialog { transform:scale(1) translateY(0); }
+.trk-hero-top, .trk-state, .trk-sub, .sr-kpis {
+  animation:trkHeroIn .38s ease both;
+}
+.trk-hero-top { animation-delay:.02s; }
+.trk-state    { animation-delay:.07s; }
+.trk-sub      { animation-delay:.11s; }
+.sr-kpis      { animation-delay:.15s; }
+@keyframes trkHeroIn { from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:translateY(0); } }
 .trk-modal { border:0; border-radius:18px; overflow:hidden; }
 .trk-hero {
   position:relative;
