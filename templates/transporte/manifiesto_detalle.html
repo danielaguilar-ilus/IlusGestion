@@ -514,11 +514,22 @@
            visita SimpliRoute (simpliroute_visit_id) creada. #}
         {% set _en_gestion_courier = (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) %}
         {% set nprod = item.productos|length %}
+        {# 2026-07-31 (Daniel: "eliminemos el botón de seguimiento y hagamos
+           una mezcla: cuando presionemos la factura, que nos diga en qué
+           estado está... los productos... el stock") -- el clic en la fila
+           ahora abre el modal completo directamente (antes solo expandía
+           productos inline; esa vista sigue existiendo DENTRO del modal). #}
         <tr id="row-{{ item.id }}"
             class="mfd-frow {{ 'mfd-nosaldo' if not item.tiene_saldo }} {{ 'mfd-perdida-row' if item.es_perdida }}"
             data-estado="{{ item.estado_entrega or 'En preparación' }}"
             data-buscar="{{ ((item.tido or '') ~ ' ' ~ (item.nudo or '') ~ ' ' ~ (item.cliente_nombre or '') ~ ' ' ~ (item.comuna or ''))|lower }}"
-            onclick="toggleProductos({{ item.id }})">
+            style="cursor:pointer"
+            title="Ver detalle completo"
+            {% if es_fedex %}
+            onclick="abrirTrackingDetalle({{ item.id }})"
+            {% else %}
+            onclick='abrirSimpliRouteModal({{ item_json }})'
+            {% endif %}>
           <td class="text-center">
             <i class="bi bi-chevron-right mfd-chevron" id="chev-{{ item.id }}"></i>
           </td>
@@ -577,6 +588,18 @@
                 <b>{{ z.cantidad }}×</b> {{ z.label }}
               </span>
               {% endfor %}
+            </div>
+            {% endif %}
+            {# 2026-07-31 (Daniel: "tener la diferenciación de en esa factura
+               lo envié con cuántos manifiestos") -- solo aparece si el
+               documento se repartió en más de un despacho, para no meter
+               ruido en el caso normal (1 documento = 1 despacho). #}
+            {% if item.n_despachos and item.n_despachos > 1 %}
+            <div class="mt-1">
+              <span class="badge mfd-badge-multidesp"
+                    title="Este documento se despachó en {{ item.n_despachos }} manifiestos distintos -- haz clic en la factura para ver el detalle">
+                <i class="bi bi-diagram-3-fill me-1"></i>{{ item.n_despachos }} despachos
+              </span>
             </div>
             {% endif %}
           </td>
@@ -720,16 +743,11 @@
               <i class="bi bi-arrow-clockwise"></i>
             </button>
             {% endif %}
-            {% if es_fedex %}
-            {# Sin gate de OT ni de estado (2026-07-29): el modal consolidado
-               degrada bien — sin OT muestra el historial ILUS, y la sección
-               de evidencia dice "aún sin evidencia" hasta que exista. #}
-            <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento, ruta FedEx y prueba de entrega (foto, firma, GPS)"
-                    style="background:#0a0a0a;color:#fff;border:none"
-                    onclick="abrirTrackingDetalle({{ item.id }})">
-              <i class="bi bi-geo-alt-fill"></i>
-            </button>
-            {% endif %}
+            {# 2026-07-31 (Daniel: "eliminemos el botón de seguimiento...
+               cuando presionemos la factura" que se confirma explícitamente):
+               el botón negro "Ver seguimiento" se retira de esta celda -- el
+               clic en la FILA ya abre el mismo modal (ver onclick del <tr>
+               arriba). Queda igual accesible, un clic más simple. #}
             <button class="btn btn-sm btn-outline-secondary mfd-act-btn"
                     {% if _en_gestion_courier %}
                     disabled title="Bloqueado: esta factura ya está en gestión con el courier (OT/visita creada). No se puede editar."
@@ -742,19 +760,6 @@
             <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Copiar link de seguimiento del cliente"
                     onclick="mostrarLinkCliente({{ item.id }})">
               <i class="bi bi-link-45deg"></i>
-            </button>
-            {# FIX 2026-07-27 (pedido Daniel): consolida "actualizar estado" +
-               "ver trazabilidad" en UN solo modal premium con acciones reales
-               (cancelar / reprogramar / reenviar la visita de SimpliRoute),
-               mismo nivel de pulido que el modal de tracking de FedEx.
-               Reusa los endpoints genéricos ya construidos — no se duplica
-               lógica de courier. #}
-            <button type="button"
-                    class="btn btn-sm mfd-act-btn js-open-simpliroute-actions"
-                    title="Ver seguimiento y acciones"
-                    style="background:#0a0a0a;color:#fff;border:none"
-                    data-sr-item='{{ item_json }}'>
-              <i class="bi bi-geo-alt-fill"></i>
             </button>
             {% endif %}
             {% if es_fedex %}
@@ -956,13 +961,9 @@
             <i class="bi bi-tags"></i>
           </button>
           {% endif %}
-          {% if es_fedex %}
-          <button class="btn btn-sm mfd-act-btn" title="Ver seguimiento, ruta FedEx y prueba de entrega"
-                  style="background:#0a0a0a;color:#fff;border:none"
-                  onclick="abrirTrackingDetalle({{ item.id }})">
-            <i class="bi bi-geo-alt-fill"></i>
-          </button>
-          {% endif %}
+          {# 2026-07-31: botón negro "Ver seguimiento" retirado -- el clic
+             en la tarjeta ya abre el mismo modal (mismo criterio que la
+             fila de escritorio). #}
           <button class="btn btn-sm btn-outline-secondary mfd-act-btn"
                   {% if _en_gestion_courier %}
                   disabled title="Bloqueado: ya está en gestión con el courier"
@@ -975,13 +976,6 @@
           <button class="btn btn-sm btn-outline-primary mfd-act-btn" title="Link de seguimiento del cliente"
                   onclick="mostrarLinkCliente({{ item.id }})">
             <i class="bi bi-link-45deg"></i>
-          </button>
-          <button type="button"
-                  class="btn btn-sm mfd-act-btn js-open-simpliroute-actions"
-                  title="Ver seguimiento y acciones"
-                  style="background:#0a0a0a;color:#fff;border:none"
-                  data-sr-item='{{ item_json }}'>
-            <i class="bi bi-geo-alt-fill"></i>
           </button>
           {% endif %}
           <button class="btn btn-sm btn-outline-danger mfd-act-btn"
@@ -1020,6 +1014,15 @@
           <b>{{ z.cantidad }}×</b> {{ z.label }}
         </span>
         {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if item.n_despachos and item.n_despachos > 1 %}
+      <div class="mt-2">
+        <span class="badge mfd-badge-multidesp"
+              title="Este documento se despachó en {{ item.n_despachos }} manifiestos distintos -- haz clic en la factura para ver el detalle">
+          <i class="bi bi-diagram-3-fill me-1"></i>{{ item.n_despachos }} despachos
+        </span>
       </div>
       {% endif %}
 
@@ -1424,11 +1427,16 @@ function mfdFiltrarTabla(){
         <div class="sr-sec" id="trkSecProductos" style="display:none">
           <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
             <span class="sr-sec-count" id="trkProdCount"></span>
+            {# 2026-07-31 (Daniel: "que se mande un sondeo... 3 veces al día")
+               -- chip de frescura: el stock ya viene de la caché (sondeo
+               automático), este botón consulta el ERP en vivo Y refresca
+               la caché para todos. #}
+            <span class="sr-stock-fresh" id="trkStockFresh" style="display:none"></span>
             <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="trkBtnStockRefresh"
                     style="font-size:.72rem;padding:1px 8px"
                     onclick="srActualizarStock('trk', {id: window._trkData && window._trkData.commitment_id})"
-                    title="Consultar en vivo el stock físico/comprometido/devengado en el ERP">
-              <i class="bi bi-arrow-clockwise"></i> Actualizar stock
+                    title="Consultar el ERP en vivo ahora mismo (además de esperar el próximo sondeo automático)">
+              <i class="bi bi-arrow-clockwise"></i> Actualizar ahora
             </button>
           </div>
           <div id="trkProductos"></div>
@@ -1571,11 +1579,12 @@ function mfdFiltrarTabla(){
           <div class="sr-sec" id="srSecProductos" style="display:none">
             <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
               <span class="sr-sec-count" id="srProdCount"></span>
+              <span class="sr-stock-fresh" id="srStockFresh" style="display:none"></span>
               <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="srBtnStockRefresh"
                       style="font-size:.72rem;padding:1px 8px"
                       onclick="srActualizarStock('sr', window._srItemData)"
-                      title="Consultar en vivo el stock físico/comprometido/devengado en el ERP">
-                <i class="bi bi-arrow-clockwise"></i> Actualizar stock
+                      title="Consultar el ERP en vivo ahora mismo (además de esperar el próximo sondeo automático)">
+                <i class="bi bi-arrow-clockwise"></i> Actualizar ahora
               </button>
             </div>
             <div id="srProductos"></div>

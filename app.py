@@ -24317,7 +24317,9 @@ def tr_manifiesto_detalle(mid):
                            AND e.estado = 'Entregado a transporte') AS en_courier_at,
                        (SELECT MAX(e.ts_utc) FROM transport_tracking_events e
                          WHERE e.commitment_id = mi.commitment_id
-                           AND e.estado = 'Entregado') AS entregado_evt_at
+                           AND e.estado = 'Entregado') AS entregado_evt_at,
+                       (SELECT COUNT(*) FROM transport_manifest_items mi2
+                         WHERE mi2.commitment_id = mi.commitment_id) AS n_despachos
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
@@ -30877,6 +30879,7 @@ def _tr_buscar_detalle(commitment_id):
     # ERP (a diferencia de tr_detalle que llama _cubicador_fetch). Additivo:
     # buscar_interno.html ignora las claves nuevas sin romperse.
     lineas_out = []
+    _stock_mas_viejo = None
     try:
         # FIX 2026-07-29 (Daniel, en vivo: "los productos que está trayendo
         # es el ZZ envío... yo quiero traer todo, menos los servicios"):
@@ -30906,8 +30909,27 @@ def _tr_buscar_detalle(commitment_id):
                         _fotos_por_sku[_fr["sku"]].append(_photo_src(_fr["filename"]))
             except Exception as _e_fsku:
                 print(f"[_tr_buscar_detalle] fotos por SKU fallaron (no crítico): {_e_fsku}", flush=True)
+        # 2026-07-31 (Daniel: "que se mande un sondeo... para actualizarse")
+        # -- stock LOCAL desde transport_stock_cache (llenada por el cron
+        # /transporte/cron/stock-snapshot 3x/día + el botón manual). Nunca
+        # ERP en vivo acá: eso quedó solo para el botón "Actualizar ahora".
+        _stock_por_sku = {}
+        _stock_mas_viejo = None
+        if _skus:
+            try:
+                _ph_stk = ",".join(["%s"] * len(_skus))
+                for _sr in (mysql_fetchall(
+                    f"""SELECT sku, fisico, devengado, comprometido, disponible, updated_at
+                        FROM transport_stock_cache WHERE sku IN ({_ph_stk})""",
+                    tuple(_skus)) or []):
+                    _stock_por_sku[_sr["sku"]] = _sr
+                    if _sr.get("updated_at") and (not _stock_mas_viejo or _sr["updated_at"] < _stock_mas_viejo):
+                        _stock_mas_viejo = _sr["updated_at"]
+            except Exception as _e_stk:
+                print(f"[_tr_buscar_detalle] stock cache falló (no crítico): {_e_stk}", flush=True)
         for _l in _lin_rows:
             _sku = (_l.get("koprct") or "").strip()
+            _stk = _stock_por_sku.get(_sku.upper())
             lineas_out.append({
                 "sku":        _sku,
                 "nombre":     (_l.get("nokopr") or "").strip(),
@@ -30915,6 +30937,7 @@ def _tr_buscar_detalle(commitment_id):
                 "despachada": float(_l.get("cant_despachada") or 0),
                 "saldo":      float(_l.get("saldo") or 0),
                 "fotos":      _fotos_por_sku.get(_sku.upper(), []),
+                "stock_disponible": float(_stk["disponible"]) if _stk else None,
             })
     except Exception as _e_lin:
         print(f"[_tr_buscar_detalle] lineas fallaron (no crítico): {_e_lin}", flush=True)
@@ -31083,6 +31106,7 @@ def _tr_buscar_detalle(commitment_id):
         "sla_despacho": sla_despacho,
         "tiempos": tiempos,
         "despachos": despachos_out,
+        "stock_actualizado_at": chile_fmt_filter(_stock_mas_viejo) if _stock_mas_viejo else None,
     }
 
 
@@ -31104,7 +31128,107 @@ def tr_compromiso_stock_erp(commitment_id):
     if not _skus:
         return jsonify({"ok": True, "stock": {}})
     stock = get_erp_stock_by_skus(_skus)
+    # 2026-07-31 (Daniel: "que se mande un sondeo... y aparte el botón
+    # manual"): el botón manual también escribe a la caché -- todos se
+    # benefician del refresco, no solo quien lo apretó.
+    _stock_cache_upsert(stock)
     return jsonify({"ok": True, "stock": stock})
+
+
+def _ensure_transport_stock_cache_table():
+    """Caché de stock por SKU (2026-07-31, Daniel: sondeo automático 3x/día
+    para no depender del ERP en vivo en cada apertura del modal). Idempotente.
+    """
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS transport_stock_cache (
+                    sku          VARCHAR(64) PRIMARY KEY,
+                    nombre       VARCHAR(255) DEFAULT NULL,
+                    fisico       DECIMAL(12,2) DEFAULT 0,
+                    devengado    DECIMAL(12,2) DEFAULT 0,
+                    comprometido DECIMAL(12,2) DEFAULT 0,
+                    disponible   DECIMAL(12,2) DEFAULT 0,
+                    updated_at   DATETIME DEFAULT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[stock-cache] no se pudo asegurar transport_stock_cache: {e}", flush=True)
+
+
+def _stock_cache_upsert(stock_por_sku):
+    """UPSERT de {sku: {nombre,fisico,devengado,comprometido,disponible}}
+    en transport_stock_cache, con updated_at=NOW() (UTC, se muestra en Chile
+    al leer -- mismo criterio que el resto de la app)."""
+    if not stock_por_sku:
+        return
+    try:
+        _ensure_transport_stock_cache_table()
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.executemany("""
+                INSERT INTO transport_stock_cache
+                    (sku, nombre, fisico, devengado, comprometido, disponible, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, UTC_TIMESTAMP())
+                ON DUPLICATE KEY UPDATE
+                    nombre=VALUES(nombre), fisico=VALUES(fisico),
+                    devengado=VALUES(devengado), comprometido=VALUES(comprometido),
+                    disponible=VALUES(disponible), updated_at=VALUES(updated_at)
+            """, [(sku, v.get("nombre"), v.get("fisico"), v.get("devengado"),
+                   v.get("comprometido"), v.get("disponible"))
+                  for sku, v in stock_por_sku.items()])
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[stock-cache] upsert falló: {e}", flush=True)
+
+
+@app.route("/transporte/cron/stock-snapshot", methods=["GET", "POST"])
+def tr_cron_stock_snapshot():
+    """Sondeo automático de stock (2026-07-31, Daniel: "que se mande un
+    sondeo para actualizarse en las mañanas, mediodía y tardes").
+
+    Junta los SKUs de PRODUCTO (sin ZZ) de documentos con saldo pendiente o
+    en gestión activa, consulta el ERP en lotes (get_erp_stock_by_skus) y
+    actualiza transport_stock_cache. Pensado para Cloud Scheduler 3x/día
+    (08:00, 13:00, 17:30 hora Chile) -- mismo patrón de token que los demás
+    crons (FEDEX_CRON_TOKEN / ILUS_CRON_TOKEN).
+    """
+    tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
+    if not _fedex_cron_token_required(tok):
+        return jsonify({"error": "forbidden"}), 403
+
+    _ensure_transport_stock_cache_table()
+    rows = mysql_fetchall("""
+        SELECT DISTINCT l.koprct AS sku
+        FROM transport_commitment_lines l
+        JOIN transport_commitments c ON c.id = l.commitment_id
+        WHERE l.koprct NOT LIKE 'ZZ%%'
+          AND (
+                c.tiene_saldo = 1
+             OR c.id IN (
+                  SELECT commitment_id FROM transport_manifest_items
+                  WHERE estado_entrega NOT IN ('Entregado', 'Devolución')
+                )
+          )
+    """) or []
+    skus = [r["sku"] for r in rows if r.get("sku")]
+    if not skus:
+        return jsonify({"ok": True, "skus": 0, "actualizados": 0})
+
+    actualizados = 0
+    for i in range(0, len(skus), 200):
+        lote = skus[i:i + 200]
+        try:
+            stock = get_erp_stock_by_skus(lote)
+            _stock_cache_upsert(stock)
+            actualizados += len(stock)
+        except Exception as e:
+            print(f"[stock-snapshot] lote {i//200+1} falló: {e}", flush=True)
+    return jsonify({"ok": True, "skus": len(skus), "actualizados": actualizados})
 
 
 # ── FACTURAS DE PROVEEDOR: conciliación financiera con couriers ──────────

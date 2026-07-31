@@ -882,6 +882,14 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
             'onclick="_ilusLightbox(window._trkProdFotos[' + i + '], 0, \'' + _trkEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
           : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
         var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
+        // 2026-07-31 (Daniel: "los productos también tienen que tener
+        // estados... eso ayuda a la toma de decisiones") -- stock local
+        // desde transport_stock_cache (sondeo automático + botón manual).
+        if (l.stock_disponible != null) {
+          chips += '<span class="sr-stock-chip' + (l.stock_disponible <= 0 ? ' sr-stock-chip-sin' : '') + '" ' +
+            'title="Disponible en el ERP (última actualización del sondeo)">' +
+            '<i class="bi bi-box-seam"></i> ' + l.stock_disponible + '</span>';
+        }
         return '<div class="sr-prod">' + thumb +
           '<div class="sr-prod-info"><div class="sr-prod-name">' + _trkEsc(l.nombre || l.sku) + '</div>' +
           '<div class="sr-prod-sku">' + _trkEsc(l.sku) + '</div></div>' +
@@ -890,6 +898,7 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
       document.getElementById('trkProductos').innerHTML = pHtml;
       document.getElementById('trkProdCount').textContent = String(lineas.length);
       document.getElementById('trkSecProductos').style.display = '';
+      _srMostrarFrescura('trk', det);
     }
 
     // ── Otros despachos de este documento (si la factura se repartió en
@@ -1338,6 +1347,19 @@ function _srFmtCLP(v) {
 // datos (_tr_buscar_detalle), misma UI, dos modales distintos que aún no
 // están consolidados (ver tarea pendiente "Consolidar tracking sin modal
 // anidado").
+// 2026-07-31 (Daniel: "que se mande un sondeo... para actualizarse") --
+// chip de frescura del stock (sondeo automático 3x/día + botón manual).
+function _srMostrarFrescura(prefix, det) {
+  var el = document.getElementById(prefix + 'StockFresh');
+  if (!el) return;
+  if (det.stock_actualizado_at) {
+    el.innerHTML = '<i class="bi bi-clock-history"></i> Stock al ' + _srEsc(det.stock_actualizado_at);
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 function _srRenderIndicadores(prefix, data, det) {
   var secI = document.getElementById(prefix + 'SecIndicadores');
   var wrap = document.getElementById(prefix + 'Indicadores');
@@ -1474,6 +1496,14 @@ async function _srCargarDetalle(data, token, force) {
             'onclick="_ilusLightbox(window._srProdFotos[' + i + '], 0, \'' + _srEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
           : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
         var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
+        // 2026-07-31 (Daniel: "los productos también tienen que tener
+        // estados... eso ayuda a la toma de decisiones") -- stock local
+        // desde transport_stock_cache (sondeo automático + botón manual).
+        if (l.stock_disponible != null) {
+          chips += '<span class="sr-stock-chip' + (l.stock_disponible <= 0 ? ' sr-stock-chip-sin' : '') + '" ' +
+            'title="Disponible en el ERP (última actualización del sondeo)">' +
+            '<i class="bi bi-box-seam"></i> ' + l.stock_disponible + '</span>';
+        }
         return '<div class="sr-prod">' + thumb +
           '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
           '<div class="sr-prod-sku">' + _srEsc(l.sku) + '</div></div>' +
@@ -1482,6 +1512,7 @@ async function _srCargarDetalle(data, token, force) {
       document.getElementById('srProductos').innerHTML = pHtml;
       document.getElementById('srProdCount').textContent = String(lineas.length);
       secP.style.display = '';
+      _srMostrarFrescura('sr', det);
     }
 
     // ── Otros despachos de este documento (si la factura se repartió en
