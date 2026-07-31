@@ -1249,6 +1249,79 @@ function _srFmtDias(d) {
   return out;
 }
 
+function _srFmtCLP(v) {
+  return '$' + Math.round(v || 0).toLocaleString('es-CL');
+}
+
+// ── Indicadores del documento (2026-07-31, Daniel: pérdida financiera,
+// fill rate, SLA de despacho, saldo ZZ envío) — función nombrada (no IIFE)
+// para poder re-renderizar sin re-fetch cuando el usuario aprieta
+// "Actualizar stock" (ver srActualizarStock). 100% datos ya cargados en
+// `det` (o en window._srStockErp para la parte de stock en vivo).
+function _srRenderIndicadores(data, det) {
+  var secI = document.getElementById('srSecIndicadores');
+  var wrap = document.getElementById('srIndicadores');
+  if (!secI || !wrap) return;
+  var cards = [];
+
+  if (det.financiero) {
+    var f = det.financiero;
+    var cls = f.es_perdida ? 'sr-indic-danger' : (f.sin_precio ? 'sr-indic-warn' : 'sr-indic-ok');
+    var val = f.sin_precio ? 'Sin precio' : _srFmtCLP(f.margen_clp);
+    var hint = f.sin_precio ? 'Este envío no tiene cobro registrado'
+      : (f.es_perdida ? 'Pérdida: cobrado ' + _srFmtCLP(f.cobrado) + ' · costo ' + _srFmtCLP(f.costo)
+                      : 'Cobrado ' + _srFmtCLP(f.cobrado) + ' · costo ' + _srFmtCLP(f.costo));
+    cards.push('<div class="sr-indic-card ' + cls + '"><div class="sr-indic-k">Margen de la factura</div>' +
+      '<div class="sr-indic-v">' + val + '</div><div class="sr-indic-hint">' + _srEsc(hint) + '</div></div>');
+  }
+
+  if (det.fill_rate) {
+    var fr = det.fill_rate;
+    var frCls = fr.pct >= 100 ? 'sr-indic-ok' : (fr.pct < 50 ? 'sr-indic-danger' : '');
+    cards.push('<div class="sr-indic-card ' + frCls + '"><div class="sr-indic-k">Fill rate</div>' +
+      '<div class="sr-indic-v">' + fr.pct + '%</div>' +
+      '<div class="sr-indic-bar"><span style="width:' + fr.pct + '%"></span></div>' +
+      '<div class="sr-indic-hint">' + fr.despachada_total + ' de ' + fr.cantidad_total + ' unidades despachadas</div></div>');
+  }
+
+  if (det.sla_despacho) {
+    var s = det.sla_despacho;
+    var sNeg = s.dias < 0;
+    var sCls = sNeg ? 'sr-indic-warn' : (s.dias <= 2 ? 'sr-indic-ok' : (s.dias > 5 ? 'sr-indic-danger' : ''));
+    var sHint = 'Emisión ' + _srEsc(s.fecha_emision) + ' → entregado a transporte';
+    if (sNeg) sHint = '⚠ fecha de emisión posterior al despacho — revisar el dato en el ERP';
+    cards.push('<div class="sr-indic-card ' + sCls + '"><div class="sr-indic-k">SLA de despacho</div>' +
+      '<div class="sr-indic-v">' + _srFmtDias(Math.abs(s.dias)) + '</div>' +
+      '<div class="sr-indic-hint">' + sHint + '</div></div>');
+  }
+
+  if (det.zz_envio_linea) {
+    var z = det.zz_envio_linea;
+    var zCls = z.cerrado ? 'sr-indic-ok' : 'sr-indic-warn';
+    cards.push('<div class="sr-indic-card ' + zCls + '"><div class="sr-indic-k">Saldo ZZ envío' +
+      (z.lineas > 1 ? ' (' + z.lineas + ' líneas)' : '') + '</div>' +
+      '<div class="sr-indic-v">' + (z.cerrado ? 'Cerrado' : z.saldo + ' pendiente') + '</div>' +
+      '<div class="sr-indic-hint">' + z.despachada + ' de ' + z.cantidad + ' facturado</div></div>');
+  }
+
+  // Stock en vivo (solo si el usuario ya apretó "Actualizar stock")
+  if (window._srStockErp && window._srStockErp.commitmentId === data.id) {
+    Object.values(window._srStockErp.stock || {}).forEach(function(st) {
+      cards.push('<div class="sr-indic-card"><div class="sr-indic-k">Stock ' + _srEsc(st.sku) + '</div>' +
+        '<div class="sr-indic-v">' + st.disponible + '</div>' +
+        '<div class="sr-indic-hint">Físico ' + st.fisico + ' · comprometido ' + st.comprometido +
+        ' · devengado ' + st.devengado + '</div></div>');
+    });
+  }
+
+  if (cards.length) {
+    wrap.innerHTML = cards.join('');
+    secI.style.display = '';
+  } else {
+    secI.style.display = 'none';
+  }
+}
+
 // ── Detalle consolidado (rediseño 2026-07-29): un solo GET a
 // /transporte/api/buscar/<cid> alimenta KPIs de tiempo, productos con foto,
 // evidencia de entrega (firma+fotos+receptor) y chofer con GPS. Antes esta
@@ -1302,6 +1375,13 @@ async function _srCargarDetalle(data, token, force) {
       kHint.textContent = 'aún sin retiro del courier';
     }
     if (t.ultima_act_at) document.getElementById('srKpiAct').textContent = t.ultima_act_at;
+
+    // ── Indicadores del documento (2026-07-31, Daniel: pérdida financiera,
+    // fill rate, SLA de despacho, saldo ZZ envío) ── función nombrada (no
+    // IIFE) para poder re-renderizar sin re-fetch cuando el usuario aprieta
+    // "Actualizar stock" (ver srActualizarStock).
+    window._srLastDetalle = det;
+    _srRenderIndicadores(data, det);
 
     // ── Productos del pedido (con foto → _ilusLightbox, sin pestañas) ──
     var lineas = det.lineas || [];
@@ -1466,6 +1546,34 @@ async function srActualizarEstado() {
   if (!data.id) return;
   var btn = document.getElementById('srBtnActualizar');
   await actualizarEstadoItemGenerico(data.id, btn);
+}
+
+async function srActualizarStock(data) {
+  // 2026-07-31 (Daniel: "actualizar solamente eso [devengado/comprometido],
+  // porque los demás datos... no van a depender del ERP") — único punto del
+  // modal que consulta el ERP en vivo, y solo cuando el usuario lo pide.
+  data = data || {};
+  if (!data.id) return;
+  var btn = document.getElementById('srBtnStockRefresh');
+  var orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Consultando ERP…'; }
+  try {
+    var r = await fetch('/transporte/api/compromisos/' + data.id + '/stock-erp');
+    var d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo consultar el stock', { type: 'error' }); return; }
+    if (!Object.keys(d.stock || {}).length) {
+      ilusToast('El ERP no devolvió stock para los productos de este documento', { type: 'warning' });
+      return;
+    }
+    window._srStockErp = { commitmentId: data.id, stock: d.stock };
+    // Re-renderiza el bloque de indicadores reusando el ultimo detalle cargado.
+    if (window._srLastDetalle) _srRenderIndicadores(data, window._srLastDetalle);
+    ilusToast('✓ Stock actualizado desde el ERP', { type: 'success' });
+  } catch (e) {
+    ilusToast('No se pudo conectar con el servidor', { type: 'error' });
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
 }
 
 function srAbrirEditar() {

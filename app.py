@@ -30786,7 +30786,8 @@ def _tr_buscar_detalle(commitment_id):
     prueba de entrega, FedEx) para el tracking interno."""
     c = mysql_fetchone("""
         SELECT id, tido, nudo, cliente_nombre, cliente_rut, comuna, direccion,
-               telefono, email, region, delivered_at, public_token, estado
+               telefono, email, region, delivered_at, public_token, estado,
+               COALESCE(zz_envio, 0) AS zz_envio, tiene_saldo, fecha_emision
         FROM transport_commitments WHERE id=%s
     """, (commitment_id,))
     if not c:
@@ -30795,7 +30796,7 @@ def _tr_buscar_detalle(commitment_id):
     mi = mysql_fetchone("""
         SELECT mi.id AS item_id, mi.manifest_id, mi.estado_entrega,
                mi.tracking_number, mi.last_carrier_poll_at, mi.last_carrier_status,
-               mi.last_carrier_source,
+               mi.last_carrier_source, COALESCE(mi.costo_courier, 0) AS costo_courier,
                tm.correlativo, tm.courier
         FROM transport_manifest_items mi
         LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id
@@ -30916,6 +30917,75 @@ def _tr_buscar_detalle(commitment_id):
     except Exception as _e_lin:
         print(f"[_tr_buscar_detalle] lineas fallaron (no crítico): {_e_lin}", flush=True)
 
+    # ── Fill rate (2026-07-31, Daniel: "cuanto hay de stock... cuanto se
+    # despacho") — % de lo pedido que efectivamente salio, sobre las lineas
+    # de PRODUCTO (sin servicios ZZ). Local, sin ERP: mismos datos que
+    # lineas_out. Solo se calcula si hay lineas con cantidad > 0.
+    fill_rate = None
+    try:
+        _cant_tot = sum(l["cantidad"] for l in lineas_out)
+        _desp_tot = sum(l["despachada"] for l in lineas_out)
+        if _cant_tot > 0:
+            fill_rate = {
+                "pct": round(min(_desp_tot / _cant_tot, 1.0) * 100, 1),
+                "cantidad_total": round(_cant_tot, 2),
+                "despachada_total": round(_desp_tot, 2),
+            }
+    except Exception as _e_fr:
+        print(f"[_tr_buscar_detalle] fill_rate falló (no crítico): {_e_fr}", flush=True)
+
+    # ── Estado de la línea ZZENVIO (2026-07-31, Daniel: "salvaguardar el
+    # saldo del producto correspondiente al ZZ envío, si es declarado") —
+    # local (transport_commitment_lines), sin ERP. saldo=0 → el servicio de
+    # envío quedó cerrado en el ERP; saldo>0 → sigue abierto/pendiente.
+    # Se SUMAN todas las líneas ZZENVIO del documento (puede haber más de
+    # una — ver zz_conteo/_tr_zz_conteo_por_tipo): el saldo relevante es el
+    # TOTAL pendiente, no el de una sola línea elegida al azar.
+    zz_envio_linea = None
+    try:
+        _zzls = mysql_fetchall("""
+            SELECT cantidad, cant_despachada, saldo FROM transport_commitment_lines
+            WHERE commitment_id=%s AND koprct='ZZENVIO'
+        """, (commitment_id,)) or []
+        if _zzls:
+            _zz_cant = sum(float(z.get("cantidad") or 0) for z in _zzls)
+            _zz_desp = sum(float(z.get("cant_despachada") or 0) for z in _zzls)
+            _zz_saldo = sum(float(z.get("saldo") or 0) for z in _zzls)
+            zz_envio_linea = {
+                "lineas": len(_zzls),
+                "cantidad": round(_zz_cant, 2),
+                "despachada": round(_zz_desp, 2),
+                "saldo": round(_zz_saldo, 2),
+                "cerrado": _zz_saldo <= 0,
+            }
+    except Exception as _e_zzl:
+        print(f"[_tr_buscar_detalle] zz_envio_linea falló (no crítico): {_e_zzl}", flush=True)
+
+    # ── Financiero: cuánto se cobró (zz_envio del documento) vs. cuánto
+    # costó el courier. 2026-07-31, Daniel: "siempre indicando cuánto perdió
+    # la FACTURA EN TOTAL" — énfasis en total: si el documento se despachó
+    # dividido en varios envíos (ver despachos_out), se suma el costo de
+    # TODOS los items de manifiesto de este commitment, no solo el más
+    # reciente (que es lo único que trae `mi`). Mismo cálculo base que ya
+    # existe en tr_manifiesto_detalle (margen_clp/es_perdida) a nivel de UN
+    # despacho; acá se agrega a nivel de FACTURA completa.
+    financiero = None
+    try:
+        _costo_total = float((mysql_fetchone(
+            "SELECT COALESCE(SUM(costo_courier),0) AS t FROM transport_manifest_items "
+            "WHERE commitment_id=%s", (commitment_id,)) or {}).get("t") or 0)
+        _cobrado = float(c.get("zz_envio") or 0)
+        if _cobrado > 0 or _costo_total > 0:
+            financiero = {
+                "cobrado": round(_cobrado),
+                "costo": round(_costo_total),
+                "margen_clp": round(_cobrado - _costo_total),
+                "sin_precio": _cobrado <= 0,
+                "es_perdida": (_cobrado > 0 and _costo_total > _cobrado),
+            }
+    except Exception as _e_fin:
+        print(f"[_tr_buscar_detalle] financiero falló (no crítico): {_e_fin}", flush=True)
+
     # ── KPIs de tiempo (2026-07-29, Daniel: "algo que te diga 'ya, mira,
     # estuvo tantos días'"). MISMO criterio que _fetch_items en
     # tr_manifiesto_detalle: el reloj arranca en el PRIMER evento 'Entregado
@@ -30946,6 +31016,25 @@ def _tr_buscar_detalle(commitment_id):
             tiempos["ultima_act_at"] = chile_fmt_filter(max(_ts_all))
     except Exception as _e_tmp:
         print(f"[_tr_buscar_detalle] tiempos fallaron (no crítico): {_e_tmp}", flush=True)
+        _en_courier_ts = None
+
+    # ── SLA de despacho (2026-07-31, Daniel: "fecha de emisión de factura,
+    # fecha de despacho real, esa sería la fecha de partida") — mide cuánto
+    # tardó ILUS en sacar el pedido desde que se emitió la factura hasta que
+    # se le entregó al courier ('Entregado a transporte'). Deliberadamente
+    # NO se llama "OTIF": OTIF compara contra una fecha PROMETIDA de entrega
+    # al cliente final, dato que hoy no existe en el sistema. Esto es un SLA
+    # de despacho interno (emisión → entrega al courier), con datos que sí
+    # existen ya.
+    sla_despacho = None
+    try:
+        _fem = c.get("fecha_emision")
+        if _fem and _en_courier_ts:
+            _fem_dt = datetime.combine(_fem, datetime.min.time())
+            dias = round((_en_courier_ts - _fem_dt).total_seconds() / 86400, 1)
+            sla_despacho = {"dias": dias, "fecha_emision": chile_fmt_filter(_fem_dt, "%d/%m/%Y")}
+    except Exception as _e_sla:
+        print(f"[_tr_buscar_detalle] sla_despacho falló (no crítico): {_e_sla}", flush=True)
 
     mi_out = None
     if mi:
@@ -30967,6 +31056,11 @@ def _tr_buscar_detalle(commitment_id):
     # last_carrier_poll_at / entregado_at arriba.
     if c_out.get("delivered_at"):
         c_out["delivered_at"] = chile_fmt_filter(c_out["delivered_at"], "%Y-%m-%d %H:%M:%S")
+    # fecha_emision es un date puro (sin hora) -- formatear explícito en vez
+    # de dejar que el serializador JSON lo intente (mismo motivo que los
+    # fixes SEV-8b de arriba: mejor explícito que confiar en el default).
+    if c_out.get("fecha_emision"):
+        c_out["fecha_emision"] = c_out["fecha_emision"].strftime("%d/%m/%Y")
     return {
         "commitment": c_out,
         "manifest_item": mi_out,
@@ -30985,9 +31079,34 @@ def _tr_buscar_detalle(commitment_id):
         } for e in eventos],
         "proof": proof,
         "lineas": lineas_out,
+        "fill_rate": fill_rate,
+        "zz_envio_linea": zz_envio_linea,
+        "financiero": financiero,
+        "sla_despacho": sla_despacho,
         "tiempos": tiempos,
         "despachos": despachos_out,
     }
+
+
+@app.route("/transporte/api/compromisos/<int:commitment_id>/stock-erp")
+@_tr_required
+def tr_compromiso_stock_erp(commitment_id):
+    """Stock (físico/comprometido/devengado) EN VIVO desde el ERP, por SKU.
+
+    2026-07-31 (Daniel): "actualizar solamente eso [devengado/comprometido],
+    porque los demás datos tienen que estar fijos... no van a depender del
+    ERP" — a diferencia del resto de _tr_buscar_detalle (100% local), este
+    endpoint SÍ llama al ERP, pero solo cuando el usuario aprieta el botón
+    "Actualizar stock" en el modal (nunca automático al abrir), para no
+    reintroducir la dependencia del ERP que causaba la lentitud.
+    """
+    _skus = [r["koprct"] for r in (mysql_fetchall(
+        "SELECT DISTINCT koprct FROM transport_commitment_lines "
+        "WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%'", (commitment_id,)) or [])]
+    if not _skus:
+        return jsonify({"ok": True, "stock": {}})
+    stock = get_erp_stock_by_skus(_skus)
+    return jsonify({"ok": True, "stock": stock})
 
 
 # ── FACTURAS DE PROVEEDOR: conciliación financiera con couriers ──────────

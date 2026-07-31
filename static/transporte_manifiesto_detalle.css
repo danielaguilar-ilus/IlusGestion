@@ -567,6 +567,38 @@
   padding:.08rem .5rem; font-size:.64rem; font-weight:800;
 }
 
+/* Indicadores del documento (2026-07-31): pérdida financiera, fill rate,
+   SLA de despacho, saldo ZZ envío. Fade-in suave al llegar el dato (pedido
+   de Daniel: "dinámico e informativo, con transición"). */
+.sr-indic-grid{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:.6rem;
+}
+.sr-indic-card{
+  background:#f8fafc; border:1px solid #eef0f2; border-radius:10px;
+  padding:.65rem .8rem; opacity:0; transform:translateY(4px);
+  animation:srIndicIn .35s ease forwards;
+}
+@keyframes srIndicIn{ to{ opacity:1; transform:translateY(0); } }
+.sr-indic-k{
+  font-size:.62rem; text-transform:uppercase; letter-spacing:.6px;
+  color:#8892a0; font-weight:800; margin-bottom:.25rem;
+}
+.sr-indic-v{ font-size:1rem; font-weight:900; color:#111827; line-height:1.2; }
+.sr-indic-hint{ font-size:.68rem; color:#9099a6; margin-top:.15rem; }
+.sr-indic-card.sr-indic-danger{ background:#fef2f2; border-color:#fecaca; }
+.sr-indic-card.sr-indic-danger .sr-indic-v{ color:#dc2626; }
+.sr-indic-card.sr-indic-ok .sr-indic-v{ color:#16a34a; }
+.sr-indic-card.sr-indic-warn{ background:#fff8e1; border-color:#fde68a; }
+.sr-indic-card.sr-indic-warn .sr-indic-v{ color:#b45309; }
+.sr-indic-bar{
+  height:6px; background:#e5e7eb; border-radius:99px; overflow:hidden; margin-top:.4rem;
+}
+.sr-indic-bar > span{
+  display:block; height:100%; background:var(--ilus-red); border-radius:99px;
+  transition:width .4s ease;
+}
+
 /* Historial: contenido, con su propio scroll (pedido explícito de Daniel) */
 .sr-timeline-scroll{ max-height:250px; overflow-y:auto; padding-right:6px; }
 .sr-more-btn{
