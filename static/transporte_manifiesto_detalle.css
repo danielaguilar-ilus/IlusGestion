@@ -882,6 +882,24 @@
 .sr-prod-info{ min-width:0; }
 .sr-prod-name{ font-size:.84rem; font-weight:700; color:#0a0a0a; line-height:1.25; }
 .sr-prod-sku{ font-family:ui-monospace,Consolas,monospace; font-size:.7rem; color:#6b7280; }
+/* ── FASE 2 (2026-07-31, Daniel: "los productos también tienen que tener
+   estados, SLA... eso ayuda a la toma de decisiones") — estado por producto,
+   con badge (heredado del despacho por defecto) + select para marcar la
+   excepción. ── */
+.sr-prod-estado-row{ margin-top:.3rem; display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+.sr-prod-estado-badge{
+  display:inline-flex; align-items:center; gap:.25rem;
+  font-size:.66rem; font-weight:800; border-radius:999px;
+  padding:.15rem .5rem; border:1px solid; white-space:nowrap;
+}
+.sr-prod-estado-heredado{ font-size:.62rem; color:#9ca3af; font-style:italic; }
+.sr-prod-estado-select{
+  font-size:.68rem; font-weight:600; color:#374151; background:#fff;
+  border:1px solid #e5e7eb; border-radius:6px; padding:.1rem .35rem;
+  cursor:pointer; max-width:150px;
+}
+.sr-prod-estado-select:hover{ border-color:var(--ilus-red); }
+.sr-prod-estado-select:disabled{ opacity:.5; cursor:wait; }
 .sr-prod-qty{ margin-left:auto; display:flex; gap:.3rem; flex-wrap:wrap; justify-content:flex-end; flex-shrink:0; }
 .sr-qty-chip{
   font-size:.7rem; font-weight:800; background:var(--ilus-black); color:#fff;

@@ -21087,6 +21087,11 @@ def tr_lineas_pendientes_enviar_manifiesto():
                     "VALUES (%s,%s)", (mid, cid)
                 )
                 agregados += 1
+                # FASE 2 (2026-07-31): snapshot de productos de este despacho
+                # recién creado, para poder trackear estado/SLA por SKU.
+                _new_iid = cur.lastrowid
+                if _new_iid:
+                    _tr_populate_item_lines(cur, _new_iid, cid)
             _tr_recalc_totales_manifiesto(cur, mid)
         conn.commit()
         _tr_log("manifest", mid, "envío masivo de pendientes",
@@ -26316,6 +26321,18 @@ def tr_agregar_item(mid):
             "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
             "VALUES (%s,%s)", (mid, cid)
         )
+        # FASE 2 (2026-07-31): snapshot de productos de este despacho para
+        # poder trackear estado/SLA por SKU. SELECT explícito (no lastrowid)
+        # porque este INSERT IGNORE puede no-opear si el documento ya estaba
+        # en este mismo manifiesto -- _tr_populate_item_lines es idempotente
+        # de todas formas (UNIQUE KEY), así que da igual si ya existían.
+        cur.execute(
+            "SELECT id FROM transport_manifest_items WHERE manifest_id=%s AND commitment_id=%s",
+            (mid, cid)
+        )
+        _item_row = cur.fetchone()
+        if _item_row:
+            _tr_populate_item_lines(cur, _item_row["id"], cid)
         _tr_recalc_totales_manifiesto(cur, mid)
     conn.commit()
     # Trazabilidad legible: documento + cliente (no solo el id).
@@ -30969,6 +30986,31 @@ def _tr_buscar_detalle(commitment_id):
     except Exception as _e_lin:
         print(f"[_tr_buscar_detalle] lineas fallaron (no crítico): {_e_lin}", flush=True)
 
+    # ── FASE 2 (2026-07-31, Daniel: "los productos también tienen que tener
+    # estados, SLA, para poder hacer seguimiento... eso ayuda a la toma de
+    # decisiones") — estado_linea explícito por SKU del despacho ACTUAL
+    # (mi.item_id). Si no hay fila en transport_item_lines o estado_linea es
+    # NULL, la línea HEREDA el estado del despacho (mi.estado_entrega) — la
+    # herencia es automática acá, no un valor que se escribe. ──
+    try:
+        if mi and lineas_out:
+            _til_rows = mysql_fetchall("""
+                SELECT id, koprct, estado_linea, sla_dias
+                FROM transport_item_lines WHERE manifest_item_id=%s
+            """, (mi["item_id"],)) or []
+            _til_por_sku = {(t.get("koprct") or "").strip().upper(): t for t in _til_rows}
+            _estado_despacho = mi.get("estado_entrega") or "En preparación"
+            for _lo in lineas_out:
+                _t = _til_por_sku.get(_lo["sku"].upper())
+                _explicito = bool(_t and _t.get("estado_linea"))
+                _lo["line_id"] = _t.get("id") if _t else None
+                _lo["estado_linea"] = _t.get("estado_linea") if _t else None
+                _lo["estado_efectivo"] = (_t.get("estado_linea") if _explicito else _estado_despacho)
+                _lo["es_explicito"] = _explicito
+                _lo["sla_dias"] = float(_t["sla_dias"]) if (_t and _t.get("sla_dias") is not None) else None
+    except Exception as _e_til:
+        print(f"[_tr_buscar_detalle] estado por línea falló (no crítico): {_e_til}", flush=True)
+
     # ── Fill rate (2026-07-31, Daniel: "cuanto hay de stock... cuanto se
     # despacho") — % de lo pedido que efectivamente salio, sobre las lineas
     # de PRODUCTO (sin servicios ZZ). Local, sin ERP: mismos datos que
@@ -31135,6 +31177,77 @@ def _tr_buscar_detalle(commitment_id):
         "despachos": despachos_out,
         "stock_actualizado_at": chile_fmt_filter(_stock_mas_viejo) if _stock_mas_viejo else None,
     }
+
+
+@app.route("/transporte/api/item-lines/<int:line_id>/estado", methods=["POST"])
+@_tr_required
+def tr_item_line_estado(line_id):
+    """Marca (o limpia) el estado de UN producto dentro de un despacho.
+
+    FASE 2 (2026-07-31, Daniel: "los productos también tienen que tener
+    estados... eso ayuda a la toma de decisiones"). Por defecto un producto
+    HEREDA el estado del despacho completo (estado_linea=NULL) -- este
+    endpoint es solo para marcar la EXCEPCIÓN (ej: este producto en
+    particular llegó dañado, o quedó en preventa aunque el resto del
+    despacho ya se entregó). Body: {"estado": "Problema"|null, "comentario": ""}
+    estado=null → vuelve a heredar (borra la marca explícita).
+    """
+    body = request.get_json(silent=True) or {}
+    estado = body.get("estado")
+    comentario = (body.get("comentario") or "").strip()[:500]
+    if estado is not None and estado not in LINEA_ESTADOS_VALIDOS:
+        return jsonify({"ok": False, "error": f"Estado inválido: {estado!r}"}), 400
+
+    row = mysql_fetchone(
+        "SELECT id, manifest_item_id, commitment_id, koprct, nokopr, estado_linea "
+        "FROM transport_item_lines WHERE id=%s", (line_id,)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "línea no encontrada"}), 404
+
+    mysql_execute(
+        "UPDATE transport_item_lines SET estado_linea=%s WHERE id=%s",
+        (estado, line_id)
+    )
+    _accion = f"estado de producto → {estado}" if estado else "producto vuelve a heredar el estado del despacho"
+    _tr_log("manifest_item_line", line_id, _accion,
+            f"{row.get('koprct')} — {row.get('nokopr') or ''}".strip(" —"))
+    try:
+        mysql_execute(
+            "INSERT INTO transport_tracking_events "
+            "(manifest_item_id, commitment_id, item_line_id, estado, fuente, usuario, comentario) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (row.get("manifest_item_id"), row.get("commitment_id"), line_id,
+             estado or "Hereda despacho", "manual", current_username(),
+             comentario or f"SKU {row.get('koprct')}")
+        )
+    except Exception as _e_ev:
+        print(f"[tr_item_line_estado] no se pudo registrar evento: {_e_ev}", flush=True)
+    return jsonify({"ok": True, "line_id": line_id, "estado_linea": estado})
+
+
+@app.route("/transporte/api/item-lines/<int:line_id>/historial")
+@_tr_required
+def tr_item_line_historial(line_id):
+    """Historial de estados de UN producto específico (trazabilidad por SKU,
+    Daniel: "eso se tiene que guardar para consultar... trazabilidad y registro")."""
+    row = mysql_fetchone(
+        "SELECT koprct, nokopr FROM transport_item_lines WHERE id=%s", (line_id,))
+    if not row:
+        return jsonify({"ok": False, "error": "línea no encontrada"}), 404
+    eventos = mysql_fetchall("""
+        SELECT estado, fuente, ts_utc, comentario, usuario
+        FROM transport_tracking_events
+        WHERE item_line_id=%s ORDER BY ts_utc DESC, id DESC
+    """, (line_id,)) or []
+    return jsonify({"ok": True, "sku": row.get("koprct"), "nombre": row.get("nokopr"),
+                    "eventos": [{
+                        "estado": e.get("estado") or "",
+                        "fuente": e.get("fuente") or "",
+                        "ts": chile_fmt_filter(e.get("ts_utc"), "%d/%m/%Y %H:%M:%S") if e.get("ts_utc") else "",
+                        "comentario": e.get("comentario") or "",
+                        "usuario": e.get("usuario") or "",
+                    } for e in eventos]})
 
 
 @app.route("/transporte/api/compromisos/<int:commitment_id>/stock-erp")
@@ -76982,6 +77095,128 @@ def _ensure_transport_evidencia_perdurable():
                   f"(la evidencia igual sobrevive): {e}", flush=True)
 
 
+
+# ── FASE 2 (2026-07-31, Daniel: "los productos también tienen que tener
+#    estados, SLA, para poder hacer seguimiento... eso se tiene que guardar
+#    para consultar, para tener trazabilidad y registro, eso ayuda a la toma
+#    de decisiones") — estado y SLA por PRODUCTO dentro de un despacho, no
+#    solo a nivel de documento completo.
+#
+#    DISEÑO (Fable, confirmado por Daniel "implementa el MVP completo"):
+#    - transport_item_lines: 1 fila por (despacho, SKU) — snapshot de qué
+#      productos van en ESE despacho específico (copiado de
+#      transport_commitment_lines al crear el manifest_item).
+#    - estado_linea NULL por defecto = HEREDA el estado del despacho padre
+#      (manifest_item.estado_entrega). Si el despacho completo pasa a
+#      "Entregado", todas sus líneas se leen como entregadas SIN escribir
+#      nada — la herencia es automática al consultar, no un hook al cambiar
+#      el estado del despacho. Solo se escribe estado_linea cuando un
+#      producto DIVERGE del resto (ej: llegó dañado, quedó en backorder).
+#    - El historial de esos cambios reusa transport_tracking_events (mismo
+#      auditoría que ya existe), con item_line_id nullable nuevo.
+# ──────────────────────────────────────────────────────────────────────────
+LINEA_ESTADOS_VALIDOS = {"Entregado", "Problema", "Pendiente", "Preventa", "Devolución"}
+LINEA_ESTADO_META = {
+    "Entregado":  {"color": "#16a34a", "icon": "bi-check-circle-fill", "label": "Entregado"},
+    "Problema":   {"color": "#dc2626", "icon": "bi-exclamation-triangle-fill", "label": "Problema"},
+    "Pendiente":  {"color": "#f59e0b", "icon": "bi-hourglass-split", "label": "Pendiente"},
+    "Preventa":   {"color": "#8b5cf6", "icon": "bi-clock-history", "label": "Preventa"},
+    "Devolución": {"color": "#f97316", "icon": "bi-arrow-counterclockwise", "label": "Devolución"},
+}
+
+
+def _ensure_transport_item_lines_table():
+    """Garantiza transport_item_lines + la columna item_line_id en
+    transport_tracking_events, AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
+    Idempotente (CREATE TABLE IF NOT EXISTS + ALTER si falta la columna)."""
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_item_lines (
+            id               INT AUTO_INCREMENT PRIMARY KEY,
+            -- NULL-able a propósito, mismo criterio que transport_tracking_events:
+            -- si la factura sale del manifiesto, el estado por producto
+            -- sobrevive (perdurable), anclado a commitment_id.
+            manifest_item_id INT NULL,
+            commitment_id    INT NOT NULL,
+            koprct           VARCHAR(30) NOT NULL,
+            nokopr           VARCHAR(300) NULL,
+            cantidad         DECIMAL(12,3) DEFAULT 0,
+            estado_linea     VARCHAR(60) NULL
+                              COMMENT 'NULL = hereda el estado del despacho padre',
+            sla_dias         DECIMAL(6,2) NULL
+                              COMMENT 'Override de SLA para este producto; NULL = usa el SLA general',
+            created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_til_item_sku (manifest_item_id, koprct),
+            INDEX idx_til_comm (commitment_id),
+            INDEX idx_til_estado (estado_linea),
+            FOREIGN KEY (manifest_item_id)
+                REFERENCES transport_manifest_items(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+    try:
+        col = mysql_fetchone("""
+            SELECT 1 FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_tracking_events'
+               AND COLUMN_NAME='item_line_id'
+        """)
+        if not col:
+            mysql_execute(
+                "ALTER TABLE transport_tracking_events "
+                "ADD COLUMN item_line_id INT NULL "
+                "COMMENT 'Si el evento es de UN producto específico (no todo el despacho)'"
+            )
+            mysql_execute(
+                "ALTER TABLE transport_tracking_events ADD INDEX idx_te_line (item_line_id)"
+            )
+            print("[tr_item_lines] columna item_line_id agregada a transport_tracking_events", flush=True)
+    except Exception as _e_col:
+        print(f"[tr_item_lines] no se pudo agregar item_line_id: {_e_col}", flush=True)
+
+    # ── BACKFILL (2026-07-31): despachos que YA existían antes de esta
+    # feature no tienen fila en transport_item_lines (solo se pobla al
+    # AGREGAR un documento nuevo a un manifiesto, ver _tr_populate_item_lines).
+    # Sin esto, el select de estado por producto no aparecería para NINGÚN
+    # despacho creado antes de hoy. INSERT IGNORE + UNIQUE KEY → idempotente,
+    # segura de correr en cada boot.
+    try:
+        mysql_execute("""
+            INSERT IGNORE INTO transport_item_lines
+                (manifest_item_id, commitment_id, koprct, nokopr, cantidad)
+            SELECT mi.id, cl.commitment_id, cl.koprct, cl.nokopr, cl.cantidad
+            FROM transport_manifest_items mi
+            JOIN transport_commitment_lines cl ON cl.commitment_id = mi.commitment_id
+            WHERE cl.koprct NOT LIKE 'ZZ%%'
+        """)
+    except Exception as _e_bf:
+        print(f"[tr_item_lines] backfill de despachos existentes falló (no crítico): {_e_bf}", flush=True)
+
+
+def _tr_populate_item_lines(cur, manifest_item_id, commitment_id):
+    """Copia las líneas del documento (transport_commitment_lines, sin
+    servicios ZZ) hacia transport_item_lines para el despacho recién creado
+    -- snapshot de qué productos van en ESE despacho. Idempotente (INSERT
+    IGNORE + UNIQUE KEY uq_til_item_sku). Usa el MISMO cursor/transacción del
+    caller -- nunca abre una conexión aparte."""
+    try:
+        cur.execute(
+            "SELECT koprct, nokopr, cantidad FROM transport_commitment_lines "
+            "WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%'",
+            (commitment_id,)
+        )
+        lineas = cur.fetchall() or []
+        for l in lineas:
+            cur.execute(
+                "INSERT IGNORE INTO transport_item_lines "
+                "(manifest_item_id, commitment_id, koprct, nokopr, cantidad) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (manifest_item_id, commitment_id, l.get("koprct"),
+                 l.get("nokopr"), l.get("cantidad") or 0)
+            )
+    except Exception as e:
+        print(f"[tr_item_lines] no se pudieron poblar líneas del item "
+              f"{manifest_item_id}: {e}", flush=True)
+
+
 def _ensure_transport_tracking_tables():
     """Garantiza las tablas y columnas del tracking público + prueba de entrega
     (FASE 1 del roadmap) AUNQUE ILUS_SKIP_MIGRATIONS esté activo.
@@ -79406,6 +79641,14 @@ try:
         _ensure_transport_tracking_tables()
 except Exception as _trk_err:
     print(f"[ILUS][WARN] _ensure_transport_tracking_tables: {_trk_err}", flush=True)
+
+# FASE 2 PRODUCTO: garantizar transport_item_lines + columna item_line_id en
+# transport_tracking_events SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_transport_item_lines_table()
+except Exception as _til_err:
+    print(f"[ILUS][WARN] _ensure_transport_item_lines_table: {_til_err}", flush=True)
 
 # FASE 2 CHOFER: tabla de choferes (login RUT+PIN) + asignación manifiesto↔chofer
 # + columnas de captura (qr_code, captured_*) en transport_labels.

@@ -898,25 +898,7 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
     var lineas = det.lineas || [];
     if (lineas.length) {
       window._trkProdFotos = lineas.map(function(l){ return l.fotos || []; });
-      var pHtml = lineas.map(function(l, i) {
-        var thumb = (l.fotos && l.fotos.length)
-          ? '<img class="sr-prod-thumb" src="' + _trkEsc(l.fotos[0]) + '" alt="' + _trkEsc(l.nombre) + '" loading="lazy" ' +
-            'onclick="_ilusLightbox(window._trkProdFotos[' + i + '], 0, \'' + _trkEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
-          : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
-        var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
-        // 2026-07-31 (Daniel: "los productos también tienen que tener
-        // estados... eso ayuda a la toma de decisiones") -- stock local
-        // desde transport_stock_cache (sondeo automático + botón manual).
-        if (l.stock_disponible != null) {
-          chips += '<span class="sr-stock-chip' + (l.stock_disponible <= 0 ? ' sr-stock-chip-sin' : '') + '" ' +
-            'title="Disponible en el ERP (última actualización del sondeo)">' +
-            '<i class="bi bi-box-seam"></i> ' + l.stock_disponible + '</span>';
-        }
-        return '<div class="sr-prod">' + thumb +
-          '<div class="sr-prod-info"><div class="sr-prod-name">' + _trkEsc(l.nombre || l.sku) + '</div>' +
-          '<div class="sr-prod-sku">' + _trkEsc(l.sku) + '</div></div>' +
-          '<div class="sr-prod-qty">' + chips + '</div></div>';
-      }).join('');
+      var pHtml = lineas.map(function(l, i) { return _ilusProductoHtml(l, i, 'trk', commitmentId); }).join('');
       document.getElementById('trkProductos').innerHTML = pHtml;
       document.getElementById('trkProdCount').textContent = String(lineas.length);
       document.getElementById('trkSecProductos').style.display = '';
@@ -1526,25 +1508,7 @@ async function _srCargarDetalle(data, token, force) {
     var secP = document.getElementById('srSecProductos');
     if (lineas.length) {
       window._srProdFotos = lineas.map(function(l){ return l.fotos || []; });
-      var pHtml = lineas.map(function(l, i) {
-        var thumb = (l.fotos && l.fotos.length)
-          ? '<img class="sr-prod-thumb" src="' + _srEsc(l.fotos[0]) + '" alt="' + _srEsc(l.nombre) + '" loading="lazy" ' +
-            'onclick="_ilusLightbox(window._srProdFotos[' + i + '], 0, \'' + _srEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
-          : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
-        var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
-        // 2026-07-31 (Daniel: "los productos también tienen que tener
-        // estados... eso ayuda a la toma de decisiones") -- stock local
-        // desde transport_stock_cache (sondeo automático + botón manual).
-        if (l.stock_disponible != null) {
-          chips += '<span class="sr-stock-chip' + (l.stock_disponible <= 0 ? ' sr-stock-chip-sin' : '') + '" ' +
-            'title="Disponible en el ERP (última actualización del sondeo)">' +
-            '<i class="bi bi-box-seam"></i> ' + l.stock_disponible + '</span>';
-        }
-        return '<div class="sr-prod">' + thumb +
-          '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
-          '<div class="sr-prod-sku">' + _srEsc(l.sku) + '</div></div>' +
-          '<div class="sr-prod-qty">' + chips + '</div></div>';
-      }).join('');
+      var pHtml = lineas.map(function(l, i) { return _ilusProductoHtml(l, i, 'sr', data.id); }).join('');
       document.getElementById('srProductos').innerHTML = pHtml;
       document.getElementById('srProdCount').textContent = String(lineas.length);
       secP.style.display = '';
@@ -3142,6 +3106,106 @@ function _ilusQtyFillChips(cantidad, despachada, saldo) {
     html += '<span class="sr-qty-chip saldo" title="Saldo pendiente en el ERP">saldo ' + sal + '</span>';
   }
   return html;
+}
+
+// ── FASE 2 (2026-07-31, Daniel: "los productos también tienen que tener
+// estados, SLA, para poder hacer seguimiento... eso ayuda a la toma de
+// decisiones") — estado por PRODUCTO dentro de un despacho, compartido por
+// el modal FedEx y el modal SimpliRoute. Por defecto un producto HEREDA el
+// estado del despacho completo (badge dice "(heredado)"); el select permite
+// marcar la EXCEPCIÓN cuando un producto en particular diverge del resto. ──
+var _LINEA_ESTADO_UI = {
+  'Entregado':              { color: '#16a34a', icon: 'bi-check-circle-fill' },
+  'Problema':               { color: '#dc2626', icon: 'bi-exclamation-triangle-fill' },
+  'Pendiente':              { color: '#f59e0b', icon: 'bi-hourglass-split' },
+  'Preventa':               { color: '#8b5cf6', icon: 'bi-clock-history' },
+  'Devolución':             { color: '#f97316', icon: 'bi-arrow-counterclockwise' },
+  'En preparación':         { color: '#94a3b8', icon: 'bi-box-seam' },
+  'Entregado a transporte': { color: '#3b82f6', icon: 'bi-truck-flatbed' },
+  'En ruta':                { color: '#2563eb', icon: 'bi-truck' },
+  'Entrega fallida':        { color: '#dc2626', icon: 'bi-x-octagon-fill' },
+};
+var _LINEA_ESTADOS_OPCIONES = ['', 'Entregado', 'Problema', 'Pendiente', 'Preventa', 'Devolución'];
+var _LINEA_ESTADO_LABEL = {
+  '': 'Heredar del despacho', 'Entregado': 'Entregado', 'Problema': 'Problema',
+  'Pendiente': 'Pendiente', 'Preventa': 'Preventa', 'Devolución': 'Devolución',
+};
+
+function _ilusProductoHtml(l, i, prefix, cid) {
+  var thumb = (l.fotos && l.fotos.length)
+    ? '<img class="sr-prod-thumb" src="' + _srEsc(l.fotos[0]) + '" alt="' + _srEsc(l.nombre) + '" loading="lazy" ' +
+      'onclick="_ilusLightbox(window.' + (prefix === 'trk' ? '_trkProdFotos' : '_srProdFotos') + '[' + i + '], 0, \'' +
+      _srEsc((l.sku || 'Producto')).replace(/'/g, '') + '\')">'
+    : '<div class="sr-prod-thumb-ph"><i class="bi bi-image"></i></div>';
+  var chips = _ilusQtyFillChips(l.cantidad, l.despachada, l.saldo);
+  if (l.stock_disponible != null) {
+    chips += '<span class="sr-stock-chip' + (l.stock_disponible <= 0 ? ' sr-stock-chip-sin' : '') + '" ' +
+      'title="Disponible en el ERP (última actualización del sondeo)">' +
+      '<i class="bi bi-box-seam"></i> ' + l.stock_disponible + '</span>';
+  }
+  var est = l.estado_efectivo || 'En preparación';
+  var ui = _LINEA_ESTADO_UI[est] || { color: '#94a3b8', icon: 'bi-circle' };
+  var badge = '<span class="sr-prod-estado-badge" style="color:' + ui.color + ';border-color:' + ui.color +
+    '44;background:' + ui.color + '14"><i class="bi ' + ui.icon + '"></i> ' + _srEsc(est) + '</span>' +
+    (l.es_explicito ? '' : ' <span class="sr-prod-estado-heredado">(heredado)</span>');
+  var select = '';
+  if (l.line_id != null) {
+    select = '<select class="sr-prod-estado-select" data-line-id="' + l.line_id + '" data-cid="' + cid +
+      '" data-prefix="' + prefix + '" onclick="event.stopPropagation()" onchange="srCambiarEstadoLinea(this)" ' +
+      'title="Marcar el estado de ESTE producto (excepción al despacho completo)">';
+    _LINEA_ESTADOS_OPCIONES.forEach(function(o) {
+      select += '<option value="' + o + '"' + (o === (l.estado_linea || '') ? ' selected' : '') + '>' +
+        _LINEA_ESTADO_LABEL[o] + '</option>';
+    });
+    select += '</select>';
+  }
+  return '<div class="sr-prod">' + thumb +
+    '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
+    '<div class="sr-prod-sku">' + _srEsc(l.sku) + '</div>' +
+    '<div class="sr-prod-estado-row">' + badge + select + '</div></div>' +
+    '<div class="sr-prod-qty">' + chips + '</div></div>';
+}
+
+// Cambio de estado de UN producto (select en _ilusProductoHtml). No hace
+// falta ilusConfirm acá -- es un select, no una acción destructiva, y queda
+// registrado en el historial de la línea (auditable, reversible con "Heredar
+// del despacho"). Repinta SOLO la sección de productos con datos frescos,
+// sin recargar todo el modal.
+async function srCambiarEstadoLinea(selectEl) {
+  var lineId = selectEl.dataset.lineId;
+  var cid = selectEl.dataset.cid;
+  var prefix = selectEl.dataset.prefix;
+  var estado = selectEl.value || null;
+  selectEl.disabled = true;
+  try {
+    var r = await fetch('/transporte/api/item-lines/' + lineId + '/estado', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado: estado })
+    });
+    var d = await r.json();
+    if (!d.ok) {
+      ilusToast(d.error || 'No se pudo actualizar el producto', { type: 'error' });
+      selectEl.disabled = false;
+      return;
+    }
+    ilusToast(estado ? ('Producto marcado: ' + estado)
+                      : 'Producto vuelve a heredar el estado del despacho', { type: 'success' });
+    var r2 = await fetch('/transporte/api/buscar/' + cid);
+    var d2 = await r2.json();
+    if (d2 && d2.ok) {
+      var lineas = (d2.detalle && d2.detalle.lineas) || [];
+      var cont = document.getElementById(prefix === 'trk' ? 'trkProductos' : 'srProductos');
+      if (cont) {
+        if (prefix === 'trk') window._trkProdFotos = lineas.map(function(l){ return l.fotos || []; });
+        else window._srProdFotos = lineas.map(function(l){ return l.fotos || []; });
+        cont.innerHTML = lineas.map(function(l, i) { return _ilusProductoHtml(l, i, prefix, cid); }).join('');
+      }
+    }
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  } finally {
+    selectEl.disabled = false;
+  }
 }
 
 // Lista "Otros despachos de este documento" (2026-07-29, Daniel: "si yo
