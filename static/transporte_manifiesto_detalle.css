@@ -308,22 +308,35 @@
   font-family:'Courier New',monospace; font-size:1.05rem; font-weight:900;
   letter-spacing:1px; margin-top:8px; color:#fff;
 }
-/* Stepper */
+/* Stepper — 2026-07-31 (Daniel: "me gusta el fondo negro... con colores,
+   latente, dinámico" -- quería el mismo lenguaje del stepper de retiros
+   público: círculos claros con EMOJI a color en vez de íconos planos
+   monocromos. Ver .step/.circle/.emoji en retiros_public_tracking.css,
+   mismo patrón adaptado a un hero oscuro en vez de página blanca. */
 .trk-steps { display:flex; align-items:flex-start; gap:0; margin-top:18px; }
-.trk-step { flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; position:relative; }
+.trk-step { flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; position:relative; }
 .trk-step-dot {
-  width:34px; height:34px; border-radius:50%;
+  position:relative; width:46px; height:46px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  background:rgba(255,255,255,.15); border:2px solid rgba(255,255,255,.3);
-  font-size:1rem; color:rgba(255,255,255,.6); z-index:2;
+  background:#f6f8fb; border:3px solid #e5e7eb;
+  font-size:1.5rem; line-height:1; z-index:2;
+  transition:transform .3s cubic-bezier(.16,1,.3,1), border-color .3s, background .3s;
 }
-.trk-step.done .trk-step-dot { background:#16a34a; border-color:#16a34a; color:#fff; }
-.trk-step.active .trk-step-dot { background:#fff; border-color:#fff; color:#4d148c; box-shadow:0 0 0 5px rgba(255,255,255,.22); animation:trkPulse 1.6s infinite; }
-.trk-step.danger .trk-step-dot { background:#dc2626; border-color:#dc2626; color:#fff; }
-@keyframes trkPulse { 0%,100%{box-shadow:0 0 0 5px rgba(255,255,255,.22)} 50%{box-shadow:0 0 0 9px rgba(255,255,255,.08)} }
+.trk-step:not(.done):not(.active) .trk-step-dot { filter:grayscale(.6); opacity:.6; }
+.trk-step.done .trk-step-dot, .trk-step.active .trk-step-dot { background:#f0fdf4; border-color:#16a34a; }
+.trk-step.active .trk-step-dot { transform:scale(1.08); animation:trkStepPulse 2s ease-in-out infinite; }
+.trk-step.done .trk-step-dot::after {
+  content:'✓'; position:absolute; right:-3px; bottom:-3px; width:18px; height:18px;
+  border-radius:50%; background:#16a34a; color:#fff; font-size:.62rem; font-weight:900;
+  display:flex; align-items:center; justify-content:center; border:2px solid #0a0a0a;
+  font-family:Arial,sans-serif; animation:trkBadgePop .4s cubic-bezier(.34,1.56,.64,1) both;
+}
+.trk-step.danger .trk-step-dot { background:#fef2f2; border-color:#dc2626; }
+@keyframes trkStepPulse { 0%,100%{ box-shadow:0 0 0 0 rgba(22,163,74,.35); } 50%{ box-shadow:0 0 0 7px rgba(22,163,74,0); } }
+@keyframes trkBadgePop { 0%{ transform:scale(0); } 60%{ transform:scale(1.3); } 100%{ transform:scale(1); } }
 .trk-step-label { font-size:.6rem; font-weight:700; text-align:center; opacity:.7; line-height:1.15; max-width:62px; }
 .trk-step.done .trk-step-label, .trk-step.active .trk-step-label { opacity:1; }
-.trk-step-line { position:absolute; top:16px; left:50%; width:100%; height:3px; background:rgba(255,255,255,.2); z-index:1; }
+.trk-step-line { position:absolute; top:23px; left:50%; width:100%; height:3px; background:rgba(255,255,255,.2); z-index:1; }
 .trk-step.done .trk-step-line { background:#16a34a; }
 
 .trk-body { padding:18px 20px; }
@@ -364,7 +377,12 @@
 .trk-ev-meta .loc { color:#4d148c; font-weight:700; }
 .trk-empty { text-align:center; color:#9ca3af; font-size:.85rem; padding:24px 10px; }
 .trk-foot { justify-content:space-between; }
-@media (max-width:576px){ .trk-step-label{ font-size:.52rem; } .trk-state{ font-size:1.7rem; } .trk-state i{ font-size:1.6rem; } }
+@media (max-width:576px){
+  .trk-step-label{ font-size:.52rem; }
+  .trk-state{ font-size:1.7rem; } .trk-state i{ font-size:1.6rem; }
+  .trk-step-dot{ width:36px; height:36px; font-size:1.15rem; }
+  .trk-step-line{ top:18px; }
+}
 
 /* ── SimpliRoute modal ("Ver seguimiento y acciones") — mismo lenguaje
    visual que .trk-*, pero con la paleta ILUS negro/rojo en vez del

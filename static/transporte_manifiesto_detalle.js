@@ -592,11 +592,15 @@ var _trkLoadToken = 0;   // evita que un fetch viejo pise al Refrescar
 // 2026-07-31: "Retirado" en vez de "Entregado a transporte" -- más corto
 // (cabe mejor en los 62px del label del paso) y menos parecido a
 // "Entregado" (paso 4), que es el que de verdad importa distinguir.
+// 2026-07-31 (Daniel: "me gusta el fondo negro... con colores, latente,
+// dinámico" -- pidió que se vea como el stepper de retiros, que ya usa
+// emoji a color en vez de íconos planos. Mismo patrón (ver PICKUP_JOURNEY
+// en pickups_module.py y .step/.circle/.emoji en retiros_public_tracking.css).
 var TRK_STEPS = [
-  { label: 'En preparación',  icon: 'bi-clipboard-check' },
-  { label: 'Retirado',        icon: 'bi-truck-flatbed' },
-  { label: 'En ruta',         icon: 'bi-truck' },
-  { label: 'Entregado',       icon: 'bi-check-circle-fill' },
+  { label: 'En preparación',  icon: 'bi-clipboard-check', emoji: '📦' },
+  { label: 'Retirado',        icon: 'bi-truck-flatbed',   emoji: '📤' },
+  { label: 'En ruta',         icon: 'bi-truck',            emoji: '🚚' },
+  { label: 'Entregado',       icon: 'bi-check-circle-fill', emoji: '✅' },
 ];
 
 async function abrirTrackingDetalle(itemId, force) {
@@ -736,7 +740,7 @@ function _trkRender(d) {
     }
     stepsHtml += '<div class="trk-step ' + cls + '">'
       + (i < TRK_STEPS.length - 1 ? '<div class="trk-step-line"></div>' : '')
-      + '<div class="trk-step-dot"><i class="bi ' + s.icon + '"></i></div>'
+      + '<div class="trk-step-dot"><span class="emoji">' + s.emoji + '</span></div>'
       + '<div class="trk-step-label">' + s.label + '</div></div>';
   });
   document.getElementById('trkSteps').innerHTML = stepsHtml;
