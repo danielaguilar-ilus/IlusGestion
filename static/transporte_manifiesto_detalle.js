@@ -1287,6 +1287,18 @@ var _SR_ESTADO_UI = {
   'Devolución':              { ico: 'bi-arrow-counterclockwise',  color: '#fca5a5', label: 'Devolución',            bg: 'trk-hero-falla' },
 };
 var _SR_HERO_BG_CLASSES = 'trk-hero-transito trk-hero-ruta trk-hero-entregado trk-hero-falla';
+// 2026-07-31 (Daniel: "los logos de FedEx, Felca y Milling... agrégalos a su
+// lista de courier y que salgan en los modales"): mapeo courier -> logo en
+// /static (archivos que entregó Daniel esta mañana). Match por substring
+// case-insensitive porque el nombre viene con variantes ("Transporte Felca",
+// "FELCA", "Milling Logística", etc.).
+function _srCourierLogo(courier) {
+  var c = String(courier || '').toLowerCase();
+  if (c.indexOf('felca') !== -1)   return '/static/courier_felca.png';
+  if (c.indexOf('milling') !== -1) return '/static/courier_milling.png';
+  if (c.indexOf('fedex') !== -1)   return '/static/courier_fedex.png';
+  return '';
+}
 // 2026-07-31 (Daniel: "no entiendo por qué Felca no tiene el seguimiento
 // del tracking... esto tiene que ser estandarizado"): el modal SimpliRoute
 // no tenía el mismo stepper de 4 pasos que el modal FedEx. A diferencia de
@@ -1632,7 +1644,17 @@ async function abrirSimpliRouteModal(data, force) {
     (data.cliente || '') + (data.comuna ? ' · ' + data.comuna : '');
   var courierChip = document.getElementById('srCourier');
   if (data.courier) {
-    courierChip.textContent = data.courier;
+    // 2026-07-31 (Daniel: "los logos de FedEx, Felca y Milling... que salgan
+    // en los modales, arriba, quién se lo llevó") -- chip con el LOGO real
+    // del courier (static/courier_*.png) en vez de solo texto. Si el courier
+    // no tiene logo conocido, cae a texto como antes.
+    var _logo = _srCourierLogo(data.courier);
+    if (_logo) {
+      courierChip.innerHTML = '<img class="sr-courier-logo-img" src="' + _logo + '" alt="' +
+        _srEsc(data.courier) + '" title="' + _srEsc(data.courier) + '">';
+    } else {
+      courierChip.textContent = data.courier;
+    }
     courierChip.style.display = '';
   } else {
     courierChip.style.display = 'none';

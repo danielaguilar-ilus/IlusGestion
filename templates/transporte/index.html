@@ -1085,6 +1085,28 @@
            lo necesitamos"). El endpoint que llamaba sigue vivo por si
            se usa en otro lugar, solo se quitó el botón y esta sección. #}
 
+        {# 2026-07-31 (Daniel, Opción 2 de la unificación Monitor/manifiesto):
+           este vistaModal ahora solo se abre para documentos que TODAVÍA no
+           tienen un despacho/manifest_item asignado (los que sí lo tienen
+           van directo al modal premium de tracking — ver openVista() en
+           transporte_monitor.js). Aviso explícito en vez de una sección de
+           trazabilidad vacía sin contexto. Oculto por defecto; renderVista()
+           lo muestra solo si el compromiso NO trae manifiesto_id. #}
+        <div id="vistaPendienteBanner" class="mx-3 mt-3" style="display:none">
+          <div style="background:#fff8e1;border:1px solid #fde68a;border-radius:10px;
+                      padding:12px 14px;display:flex;align-items:center;gap:10px">
+            <i class="bi bi-hourglass-split" style="color:#f59e0b;font-size:1.2rem;flex-shrink:0"></i>
+            <div>
+              <div class="fw-semibold" style="font-size:.85rem;color:#78350f">Aún no despachado</div>
+              <div style="font-size:.78rem;color:#92672f">
+                Este documento todavía no tiene un manifiesto asignado — en espera de manifiesto.
+                Al agregarlo a uno (botón "Asignar a manifiesto" abajo) vas a poder ver aquí el
+                seguimiento completo del envío.
+              </div>
+            </div>
+          </div>
+        </div>
+
         {# ── Seguimiento y trazabilidad — INTEGRADO en el modal principal
            (2026-07-29, pedido Daniel: "no cambio en modal... necesito ver los
            estados acá, quién se lo llevó, cuánto me costó, todo, todo, todo,
@@ -1385,6 +1407,15 @@
   </div>
 </div>
 
+{# ════════════════════════════════════════════════════════════════════
+   Modales #trackingModal (FedEx) y #simpliRouteModal (Felca/Milling) —
+   2026-07-31, pedido de Daniel: unificar el "Ver" del Monitor con la
+   ficha del manifiesto. Documento que YA tiene un despacho/manifest_item
+   abre EXACTAMENTE este mismo modal (ver openVista en transporte_monitor.js),
+   mismo partial que usa transporte/manifiesto_detalle.html — no una copia.
+   ════════════════════════════════════════════════════════════════════ #}
+{% include 'transporte/_tracking_modals.html' %}
+
 {% endblock %}
 
 {% block scripts %}
@@ -1397,4 +1428,16 @@
 window.MON = { manifiestos: {{ manifiestos|tojson }}, estados: {{ estados|tojson }}, couriers: {{ couriers|tojson }} };
 </script>
 <script defer src="{{ url_for('static', filename='transporte_monitor.js') }}"></script>
+{# 2026-07-31: static/transporte_manifiesto_detalle.js trae abrirTrackingDetalle()
+   y abrirSimpliRouteModal() -- se reusan tal cual desde el Monitor (ver openVista
+   en transporte_monitor.js). Ese archivo lee window.MFD.mid/.correlativo/.fechaLbl/
+   .sinOt en el TOP-LEVEL del script (variables MID/SIN_OT), pero solo las usa
+   dentro de acciones propias de la FICHA de un manifiesto concreto (ej. "subir a
+   SimpliRoute", "imprimir etiquetas FedEx del manifiesto") -- el Monitor nunca
+   dispara esas acciones, así que un stub vacío es seguro: solo evita el
+   ReferenceError al cargar el script en esta página. #}
+<script>
+window.MFD = { mid: null, correlativo: '', fechaLbl: '', sinOt: false };
+</script>
+<script defer src="{{ url_for('static', filename='transporte_manifiesto_detalle.js') }}"></script>
 {% endblock %}

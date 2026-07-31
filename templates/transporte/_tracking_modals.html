@@ -1,0 +1,380 @@
+{# ════════════════════════════════════════════════════════════════════
+   PARTIAL COMPARTIDO — Modales de seguimiento (2026-07-31)
+
+   Extraído de transporte/manifiesto_detalle.html para poder reusarlo
+   TAL CUAL (mismo componente, no una copia) desde el Monitor
+   (transporte/index.html) — pedido de Daniel: cuando un documento del
+   Monitor YA tiene un despacho/manifest_item asignado, su fila debe
+   abrir EXACTAMENTE este mismo modal (abrirTrackingDetalle /
+   abrirSimpliRouteModal), no una re-implementación.
+
+   No contiene variables Jinja — es HTML puro + ids que el JS de
+   static/transporte_manifiesto_detalle.js llena por fetch. Cualquier
+   página que lo incluya debe cargar, en este orden:
+     1. static/ilus_transporte.css + static/transporte_manifiesto_detalle.css
+     2. window.MFD = {...} (aunque sea con valores dummy si la página no
+        es una ficha de manifiesto — MFD.mid solo lo usan acciones propias
+        de esa ficha, ej. "subir a SimpliRoute", que el Monitor no dispara)
+     3. static/transporte_manifiesto_detalle.js (defer)
+
+   NO modificar el contenido/lógica de estos 2 modales aquí sin also
+   revisar manifiesto_detalle.html — es el MISMO archivo para ambas
+   páginas.
+   ════════════════════════════════════════════════════════════════════ #}
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: SEGUIMIENTO FEDEX CONSOLIDADO (rediseño premium 2026-07-29)
+
+   Fusiona los 2 modales viejos de FedEx en UNO (pedido de Daniel: "el
+   modal solamente aparece con la entrega... necesito hacerle seguimiento
+   a algo que ahora está en ruta... ahorramos ahí un botón"):
+   - el antiguo #trackingModal (stepper + ficha pesos/tarifa + scans FedEx
+     + historial ILUS), y
+   - el antiguo #pruebaEntregaModal (evidencia: receptor, firma, fotos,
+     GPS de entrega — antes solo visible en estado "Entregado").
+
+   Mismo lenguaje visual premium que #simpliRouteModal: hero degradado
+   oscuro + borde rojo ILUS (.sr-hero), KPIs translúcidos (.sr-kpis) y
+   tarjetas de sección (.sr-sec). El chip FedEx mantiene la identidad
+   del courier dentro del marco ILUS.
+
+   Datos (2 fetch, ver abrirTrackingDetalle en el JS):
+   1. /transporte/api/items/<id>/tracking-detalle → estado, stepper,
+      pesos, tarifa, scans FedEx en vivo, historial ILUS.
+   2. /transporte/api/buscar/<commitment_id> (_tr_buscar_detalle) →
+      productos+foto, evidencia de entrega, tiempos, chofer.
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="trackingModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content trk-modal">
+      <div class="trk-hero sr-hero" id="trkHero">
+        <button type="button" class="btn-close btn-close-white trk-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        <div class="trk-hero-top">
+          {# 2026-07-31 (Daniel: "los logos de FedEx, Felca y Milling... que
+             salgan en los modales, arriba, quién se lo llevó") -- logo real
+             oficial en vez del chip de texto. #}
+          <span class="sr-courier-chip"><img class="sr-courier-logo-img"
+            src="{{ url_for('static', filename='courier_fedex.png') }}" alt="FedEx" title="FedEx"></span>
+          <span class="trk-doc" id="trkDoc">—</span>
+        </div>
+        <div class="trk-state" id="trkState"><i class="bi bi-hourglass-split"></i> <span id="trkStateLabel">Cargando…</span></div>
+        <div class="trk-sub" id="trkSub">—</div>
+        <div class="trk-tn" id="trkTn"></div>
+        {# 2026-07-31 (Daniel: "colocar los tiempos debajo del modal, que
+           tenga su espacio... perfecto que diga entregado al cliente")
+           -- el tiempo de entrega/tránsito ya no comparte grid parejo con
+           bultos/destino/actualización, tiene su propia banda destacada. #}
+        <div class="sr-kpi-tiempo-band" id="trkKpiTiempoCard">
+          <span class="sr-kpi-tiempo-k" id="trkKpiTiempoLabel">Tiempo</span>
+          <span class="sr-kpi-tiempo-v" id="trkKpiTiempo">—</span>
+          <span class="sr-kpi-tiempo-hint" id="trkKpiTiempoHint"></span>
+        </div>
+        <div class="sr-kpis sr-kpis-3">
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Bultos</span>
+            <span class="sr-kpi-v" id="trkKpiBultos">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Destino</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="trkKpiComuna">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Última actualización</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="trkKpiAct">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-body trk-body sr-body">
+        {# ── Stepper de estados ILUS -- SACADO del hero oscuro 2026-07-31
+           (Daniel: "debe ser idéntico al tracking de retiro... con
+           colores, latente, dinámico" + screenshot de retiros_public_tracking
+           mostrando el stepper en su PROPIA tarjeta clara, con círculos
+           grandes y espacio de sobra, no comprimido en la cabecera). Mismo
+           patrón .progress-card/.stepper/.step de retiros, reusando la
+           tarjeta .sr-sec para mantener coherencia con el resto del modal.
+           Ahora cada hito también muestra fecha/hora (para ver la
+           velocidad del envío), calculada en JS desde el historial. #}
+        <div class="sr-sec sr-sec-stepper">
+          <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Avance del envío · paso a paso</div>
+          <div class="trk-steps" id="trkSteps"></div>
+        </div>
+
+        {# ── Indicadores del documento (2026-07-31, Daniel: "el interno
+           tiene que llevarnos a todo") — mismos indicadores del modal
+           SimpliRoute (ver srSecIndicadores), reusando _srRenderIndicadores
+           con prefix='trk'. ── #}
+        <div class="sr-sec" id="trkSecIndicadores" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Indicadores del documento</div>
+          <div id="trkIndicadores" class="sr-indic-grid"></div>
+        </div>
+
+        {# ── Carga y tarifa (ficha pesos/tarifa/bultos del modal original) ── #}
+        <div class="sr-sec">
+          <div class="sr-sec-h"><i class="bi bi-box2-fill"></i>Carga y tarifa</div>
+          <div class="trk-ficha" id="trkFicha"></div>
+        </div>
+
+        {# ── Productos del pedido (con foto → _ilusLightbox) ── #}
+        <div class="sr-sec" id="trkSecProductos" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
+            <span class="sr-sec-count" id="trkProdCount"></span>
+            {# 2026-07-31 (Daniel: "que se mande un sondeo... 3 veces al día")
+               -- chip de frescura: el stock ya viene de la caché (sondeo
+               automático), este botón consulta el ERP en vivo Y refresca
+               la caché para todos. #}
+            <span class="sr-stock-fresh" id="trkStockFresh" style="display:none"></span>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="trkBtnStockRefresh"
+                    style="font-size:.72rem;padding:1px 8px"
+                    onclick="srActualizarStock('trk', {id: window._trkData && window._trkData.commitment_id})"
+                    title="Consultar el ERP en vivo ahora mismo (además de esperar el próximo sondeo automático)">
+              <i class="bi bi-arrow-clockwise"></i> Actualizar ahora
+            </button>
+          </div>
+          <div id="trkProductos"></div>
+        </div>
+
+        {# ── Otros despachos de este documento — solo aparece si la
+           factura se repartió en más de un envío/manifiesto (Daniel,
+           2026-07-29: "si la mandé en cuatro partes, quiero ver esas
+           cuatro partes plasmadas allí"). ── #}
+        <div class="sr-sec" id="trkSecDespachos" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-diagram-3-fill"></i>Otros despachos de este documento
+            <span class="sr-sec-count" id="trkDespachosCount"></span></div>
+          <div id="trkDespachos"></div>
+        </div>
+
+        {# ── Prueba de entrega — SIEMPRE visible: si aún no hay evidencia
+           (pedido en ruta), lo dice sin romper nada. ── #}
+        <div class="sr-sec" id="trkSecEvidencia">
+          <div class="sr-sec-h"><i class="bi bi-patch-check-fill"></i>Prueba de entrega</div>
+          <div id="trkEvidencia"></div>
+        </div>
+
+        {# ── Chofer y ubicación (solo si el manifiesto tiene chofer) ── #}
+        <div class="sr-sec" id="trkSecChofer" style="display:none">
+          <div class="sr-sec-h"><i class="bi bi-person-badge-fill"></i>Chofer y ubicación</div>
+          <div id="trkChofer"></div>
+        </div>
+
+        {# ── Tabs: Ruta FedEx en vivo / Historial ILUS — con scroll propio ── #}
+        <div class="sr-sec">
+          <div class="trk-tabs">
+            <button class="trk-tab is-active" data-tab="fedex" onclick="trkSwitchTab('fedex')">
+              <i class="bi bi-broadcast me-1"></i>Ruta FedEx (en vivo)
+            </button>
+            <button class="trk-tab" data-tab="ilus" onclick="trkSwitchTab('ilus')">
+              <i class="bi bi-clock-history me-1"></i>Historial ILUS
+            </button>
+          </div>
+          <div id="trkTabFedex" class="trk-timeline sr-timeline-scroll"></div>
+          <div id="trkTabIlus" class="trk-timeline sr-timeline-scroll" style="display:none"></div>
+        </div>
+      </div>
+      <div class="modal-footer trk-foot">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="trkRefrescar" onclick="abrirTrackingDetalle(window._trkItemId, true)">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refrescar
+        </button>
+        <a class="btn btn-sm btn-dark" id="trkFedexLink" href="#" target="_blank">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Ver en FedEx.com
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════
+   Modal: SEGUIMIENTO Y ACCIONES — SimpliRoute (Felca/Milling)
+   Consolida "actualizar estado" + "trazabilidad" + acciones reales
+   (cancelar / reprogramar / reenviar / editar) en 1 modal premium,
+   mismo nivel de pulido que #trackingModal de FedEx (2026-07-27).
+
+   REDISEÑO 2026-07-29 (Daniel, en vivo): "el modal se ve muy simple...
+   algo potente, que te diga 'estuvo tantos días', pequeños KPIs, los
+   productos entregados, las fotos, el mapa — todo dentro del modal, y
+   el timeline contenido abajo con su propio scroll".
+   - Hero estilo #vistaModal del monitor (header oscuro + borde rojo ILUS
+     + tarjetas KPI translúcidas): tiempo de entrega / bultos / destino /
+     última actualización.
+   - Tab Timeline reorganizado en secciones: Productos del pedido (con
+     foto → _ilusLightbox), Evidencia de entrega (firma+fotos+receptor),
+     Chofer y ubicación (GPS → _ilusMapModal embebido), e Historial con
+     scroll propio (colapsado a los primeros eventos si es muy largo).
+   - Tab Acciones: MISMA lógica, solo re-vestido con las tarjetas .sr-sec.
+   Datos: /transporte/api/buscar/<cid> ahora también trae lineas (con
+   fotos por SKU) y tiempos (ver _tr_buscar_detalle en app.py).
+   ════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="simpliRouteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content trk-modal">
+      <div class="trk-hero sr-hero" id="srHero">
+        <button type="button" class="btn-close btn-close-white trk-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        <div class="trk-hero-top">
+          <span class="sr-brand"><i class="bi bi-signpost-2-fill me-1"></i>SimpliRoute</span>
+          <span class="sr-courier-chip" id="srCourier" style="display:none"></span>
+          <span class="trk-doc" id="srDoc">—</span>
+        </div>
+        <div class="trk-state" id="srState"><i class="bi bi-hourglass-split" id="srStateIcon"></i> <span id="srStateLabel">Cargando…</span></div>
+        <div class="trk-sub" id="srSub">—</div>
+        <div class="sr-live-chip" id="srLiveChip" style="display:none"></div>
+        {# 2026-07-31 (Daniel: "colocar los tiempos debajo del modal, que
+           tenga su espacio") -- misma banda destacada que el modal FedEx. #}
+        <div class="sr-kpi-tiempo-band" id="srKpiTiempoCard">
+          <span class="sr-kpi-tiempo-k" id="srKpiTiempoLabel">Tiempo</span>
+          <span class="sr-kpi-tiempo-v" id="srKpiTiempo">—</span>
+          <span class="sr-kpi-tiempo-hint" id="srKpiTiempoHint"></span>
+        </div>
+        <div class="sr-kpis sr-kpis-3">
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Bultos</span>
+            <span class="sr-kpi-v" id="srKpiBultos">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Destino</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="srKpiComuna">—</span>
+          </div>
+          <div class="sr-kpi">
+            <span class="sr-kpi-k">Última actualización</span>
+            <span class="sr-kpi-v sr-kpi-v-sm" id="srKpiAct">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-body trk-body sr-body">
+        {# ── Stepper de estados ILUS -- SACADO del hero oscuro 2026-07-31
+           (Daniel: "no entiendo por qué Felca no tiene el seguimiento del
+           tracking... esto tiene que ser estandarizado" + "debe ser
+           idéntico al tracking de retiro... con colores, latente,
+           dinámico"). Mismo #trkSteps/TRK_STEPS que el modal FedEx, ahora
+           en su propia tarjeta clara con espacio de sobra en vez de
+           comprimido en la cabecera, con fecha/hora por hito. ── #}
+        <div class="sr-sec sr-sec-stepper">
+          <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Avance del envío · paso a paso</div>
+          <div class="trk-steps" id="srSteps"></div>
+        </div>
+
+        {# Tabs: Timeline / Acciones #}
+        <div class="trk-tabs">
+          <button class="trk-tab is-active" data-srtab="timeline" onclick="srSwitchTab('timeline')">
+            <i class="bi bi-clock-history me-1"></i>Timeline y trazabilidad
+          </button>
+          <button class="trk-tab" data-srtab="acciones" onclick="srSwitchTab('acciones')">
+            <i class="bi bi-tools me-1"></i>Acciones
+          </button>
+        </div>
+
+        <div id="srTabTimeline">
+          {# ── Indicadores del documento (2026-07-31, Daniel: "que el modal
+             informe cuánto perdió la factura, el fill rate, el SLA de
+             despacho, el saldo del ZZ envío") — 100% datos locales, sin
+             ERP, salvo el botón "Actualizar stock" que sí consulta en vivo
+             (comprometido/devengado) solo cuando el usuario lo pide. ── #}
+          <div class="sr-sec" id="srSecIndicadores" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Indicadores del documento</div>
+            <div id="srIndicadores" class="sr-indic-grid"></div>
+          </div>
+
+          {# ── Productos del pedido (líneas del documento + foto por SKU) ── #}
+          <div class="sr-sec" id="srSecProductos" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-box-seam-fill"></i>Productos del pedido
+              <span class="sr-sec-count" id="srProdCount"></span>
+              <span class="sr-stock-fresh" id="srStockFresh" style="display:none"></span>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="srBtnStockRefresh"
+                      style="font-size:.72rem;padding:1px 8px"
+                      onclick="srActualizarStock('sr', window._srItemData)"
+                      title="Consultar el ERP en vivo ahora mismo (además de esperar el próximo sondeo automático)">
+                <i class="bi bi-arrow-clockwise"></i> Actualizar ahora
+              </button>
+            </div>
+            <div id="srProductos"></div>
+          </div>
+
+          {# ── Otros despachos de este documento — BUG REAL encontrado en vivo
+             2026-07-31 (Daniel: "el seguimiento de Felca no funciona, al darle
+             clic no está funcionando"): este bloque NO EXISTÍA en el modal
+             SimpliRoute (solo en el de FedEx), pero el JS de reset en
+             abrirSimpliRouteModal SÍ intentaba tocar su .style -- eso hacía
+             que TODO el modal reventara con un TypeError antes de llegar a
+             _srAccionesModal.show(), o sea el modal NUNCA se abría para
+             ningún pedido de Felca/Milling. Mismo bloque que ya existe en el
+             modal FedEx (ver trkSecDespachos). ── #}
+          <div class="sr-sec" id="srSecDespachos" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-diagram-3-fill"></i>Otros despachos de este documento
+              <span class="sr-sec-count" id="srDespachosCount"></span></div>
+            <div id="srDespachos"></div>
+          </div>
+
+          {# ── Evidencia de entrega (firma + fotos + receptor) ──
+             FIX 2026-07-27 (Daniel: "falta ver las imágenes que ofrece
+             SimpliRoute en el modal"): SimpliRoute ya entrega firma/fotos
+             al completar la visita (transport_delivery_proof vía
+             _sr_ingest_pod). Reusa .pe-firma/.pe-fotos, sin duplicar CSS. #}
+          <div class="sr-sec" id="srSecEvidencia" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-patch-check-fill"></i>Evidencia de entrega</div>
+            <div id="srEvidencia"></div>
+          </div>
+
+          {# ── Chofer y GPS — mapa embebido con _ilusMapModal, sin pestañas ── #}
+          <div class="sr-sec" id="srSecChofer" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-person-badge-fill"></i>Chofer y ubicación</div>
+            <div id="srChofer"></div>
+          </div>
+
+          {# ── Historial contenido con scroll propio (pedido explícito de
+             Daniel: "el estado contenido abajito con un scroll aparte") ── #}
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-clock-history"></i>Historial y trazabilidad
+              <span class="sr-sec-count" id="srEvCount"></span></div>
+            <div id="srTimeline" class="trk-timeline sr-timeline-scroll"></div>
+          </div>
+
+          {# Link público de seguimiento del cliente — chip con botón copiar #}
+          <div id="srLinkBox" class="sr-link-chip" style="display:none"></div>
+        </div>
+
+        <div id="srTabAcciones" style="display:none">
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-lightning-charge-fill"></i>Estado y edición</div>
+            <div class="sr-acc-row">
+              <button type="button" class="btn btn-outline-info sr-acc-btn" id="srBtnActualizar" onclick="srActualizarEstado()">
+                <i class="bi bi-arrow-clockwise me-1"></i>Actualizar estado
+              </button>
+              <button type="button" class="btn btn-outline-secondary sr-acc-btn" id="srBtnEditar" onclick="srAbrirEditar()">
+                <i class="bi bi-pencil-square me-1"></i>Editar contacto/bultos
+              </button>
+            </div>
+            <div class="alert alert-secondary py-2 px-3 mt-2 mb-0" id="srEditLock" hidden>
+              <i class="bi bi-lock-fill me-1"></i>
+              <span id="srEditLockText">Edición bloqueada por el estado del pedido.</span>
+            </div>
+          </div>
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-calendar-event-fill"></i>Reprogramar visita</div>
+            <div class="d-flex gap-2 flex-wrap">
+              <input type="date" class="form-control form-control-sm sr-fecha-input" id="srFechaInput" style="max-width:180px">
+              <button type="button" class="btn btn-dark sr-acc-btn" style="flex:0 1 auto" id="srBtnReprogramar" onclick="srReprogramar()">
+                <i class="bi bi-calendar-check me-1"></i>Reprogramar
+              </button>
+            </div>
+            <div class="small text-muted mt-1">Se intenta actualizar directamente en SimpliRoute. Si la API la rechaza, te avisamos para hacerlo manual en el portal.</div>
+          </div>
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-signpost-2-fill"></i>Gestión de la visita</div>
+            <div class="sr-acc-row">
+              <button type="button" class="btn btn-outline-danger sr-acc-btn" id="srBtnCancelar" onclick="srCancelarVisita()">
+                <i class="bi bi-x-octagon me-1"></i>Cancelar visita
+              </button>
+              <button type="button" class="btn btn-ilus sr-acc-btn" id="srBtnReenviar" onclick="srReenviarVisita()">
+                <i class="bi bi-send-fill me-1"></i>Reenviar a SimpliRoute
+              </button>
+            </div>
+          </div>
+          <div id="srAccMsg" class="small mt-2"></div>
+        </div>
+      </div>
+      <div class="modal-footer trk-foot">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="abrirSimpliRouteModal(window._srItemData, true)">
+          <i class="bi bi-arrow-clockwise me-1"></i>Refrescar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

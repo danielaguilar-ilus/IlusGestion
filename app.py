@@ -23379,14 +23379,31 @@ def tr_detalle(cid):
     # arriba en el header") — mismo criterio que tr_compromiso_trazabilidad:
     # master_tracking_number (multi-bulto FedEx) o tracking_number, del item
     # de manifiesto MÁS RECIENTE.
+    # FIX 2026-07-31 (Daniel: unificar el "Ver" del Monitor con el modal de
+    # tracking de la ficha del manifiesto) — se agrega tmi.id: es el mismo
+    # "item_id" que abrirTrackingDetalle()/abrirSimpliRouteModal() necesitan
+    # para abrir EXACTAMENTE ese modal desde el Monitor, sin una query aparte
+    # (mismo join/criterio que ya se usaba solo para el courier).
     _mi_track = mysql_fetchone(
-        "SELECT tmi.tracking_number, tmi.master_tracking_number, tm.courier "
+        "SELECT tmi.id AS item_id, tmi.tracking_number, tmi.master_tracking_number, "
+        "       tmi.simpliroute_visit_id, tm.courier "
         "FROM transport_manifest_items tmi "
         "LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id "
         "WHERE tmi.commitment_id=%s ORDER BY tmi.id DESC LIMIT 1", (cid,)
     ) or {}
     _tracking_number = (_mi_track.get("master_tracking_number") or _mi_track.get("tracking_number") or "").strip()
     _tracking_courier = (_mi_track.get("courier") or "").strip()
+    _tracking_item_id = _mi_track.get("item_id")
+    # Mismo criterio que item_json.edicion_bloqueada en manifiesto_detalle.html
+    # (2026-07-27, Daniel: "bloquea la edición también" una vez que la factura
+    # ya está en gestión con el courier) — se replica acá para que el modal
+    # SimpliRoute abierto desde el Monitor bloquee "Editar contacto/bultos"
+    # exactamente igual que abierto desde la ficha del manifiesto.
+    _tracking_en_gestion = bool(
+        _mi_track.get("master_tracking_number")
+        or _mi_track.get("tracking_number")
+        or _mi_track.get("simpliroute_visit_id")
+    )
     _tracking_url = (f"https://www.fedex.com/fedextrack/?trknbr={_tracking_number}"
                       if _tracking_number else None)
 
@@ -23427,6 +23444,16 @@ def tr_detalle(cid):
             "tracking_number":   _tracking_number or None,
             "tracking_courier":  _tracking_courier or None,
             "tracking_url":      _tracking_url,
+            # FIX 2026-07-31: id del item de manifiesto MÁS RECIENTE (mismo
+            # criterio que manifiesto_id/tracking_courier) — el Monitor lo usa
+            # para abrir el modal correcto (abrirTrackingDetalle si es FedEx,
+            # abrirSimpliRouteModal si no) cuando el documento ya tiene despacho.
+            "item_id":           _tracking_item_id,
+            "edicion_bloqueada": _tracking_en_gestion,
+            "edicion_motivo": (
+                "Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada)."
+                if _tracking_en_gestion else ""
+            ),
         },
         "lineas": lineas_prod,
         "lineas_zz": lineas_zz,

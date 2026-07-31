@@ -752,12 +752,46 @@ function openVista(cid) {
                document.getElementById('vistaError').style.display = ''; _vistaModal.show(); }
         return;
       }
+
+      // FIX 2026-07-31 (Daniel: unificar el "Ver" del Monitor con la ficha del
+      // manifiesto — "que sea EXACTAMENTE el mismo modal, no una copia") — si
+      // el documento ya tiene un despacho/manifest_item asignado (aunque esté
+      // en un estado terminal), se abre el mismo modal premium que usa
+      // manifiesto_detalle.html (abrirTrackingDetalle para FedEx,
+      // abrirSimpliRouteModal para Felca/Milling/SimpliRoute), en vez del
+      // vistaModal viejo de este Monitor. Solo si falta el item_id (dato
+      // inconsistente/legado) se cae de vuelta al vistaModal como respaldo,
+      // para nunca dejar un clic sin respuesta.
+      var comp = d.compromiso || {};
+      if (comp.manifiesto_id && comp.item_id) {
+        var _courierL = (comp.tracking_courier || '').toLowerCase();
+        if (_courierL.indexOf('fedex') !== -1) {
+          abrirTrackingDetalle(comp.item_id);
+        } else {
+          abrirSimpliRouteModal({
+            id:                comp.id,
+            item_id:           comp.item_id,
+            doc:               ((comp.tido || '') + ' ' + (comp.nudo || '')).trim(),
+            cliente:           comp.cliente || '',
+            comuna:            comp.comuna || '',
+            courier:           comp.tracking_courier || '',
+            estado:            comp.estado || '',
+            edicion_bloqueada: !!comp.edicion_bloqueada,
+            edicion_motivo:    comp.edicion_motivo || '',
+          });
+        }
+        return;
+      }
+
+      // Opción 2 (Daniel): documento "pendiente" -- todavía SIN despacho ni
+      // manifiesto asignado (o, en el caso defensivo de arriba, con datos
+      // inconsistentes). Se mantiene el vistaModal (mismo hero oscuro +
+      // tarjetas claras, mismos datos de documento/cliente/productos de
+      // tr_detalle) -- ver el aviso "Aún no despachado" en renderVista().
+      // La trazabilidad se sigue autocargando igual que antes (puede haber
+      // logs a nivel de documento, ej. ediciones, aunque no haya manifiesto).
       _vistaModal.show();
       renderVista(d);
-      // 2026-07-29 (Daniel: "no cambio en modal... necesito ver los estados
-      // acá, quién se lo llevó, cuánto me costó, todo, todo, todo, todo") --
-      // la trazabilidad ya NO requiere un clic aparte: se autocarga apenas
-      // se abre el documento, dentro del mismo modal.
       cargarTrazabilidadInline(cid);
     })
     .catch(function(e) {
@@ -913,6 +947,17 @@ function renderVista(d) {
     } else {
       btnIrManif.style.display = 'none';
     }
+  })();
+
+  // FIX 2026-07-31 (Daniel, Opción 2 de la unificación Monitor/manifiesto):
+  // este vistaModal, desde ahora, solo se abre para documentos que TODAVÍA no
+  // tienen manifest_item (los que sí tienen van directo a abrirTrackingDetalle
+  // / abrirSimpliRouteModal — ver openVista). Se avisa con claridad en vez de
+  // dejarlo implícito en una sección de trazabilidad vacía.
+  (function() {
+    var banner = document.getElementById('vistaPendienteBanner');
+    if (!banner) return;
+    banner.style.display = c.manifiesto_id ? 'none' : '';
   })();
 
   // Campos separados: dirección, teléfono, correo

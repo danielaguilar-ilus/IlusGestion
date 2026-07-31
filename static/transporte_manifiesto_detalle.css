@@ -34,6 +34,15 @@
 .mfd-back-btn:hover{ background:var(--ilus-red); color:#fff; border-color:var(--ilus-red); }
 .mfd-hero-sub{ color:#cbd5e1; font-size:.85rem; display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; }
 .mfd-hero-sub .mfd-dot{ opacity:.5; }
+/* Logo real del courier en el header del manifiesto (2026-07-31, Daniel:
+   "en los manifiestos que tenga el logo, sería genial") -- pastilla blanca
+   chica junto al nombre, mismo tratamiento que el chip del modal. */
+.mfd-courier-logo{
+  display:inline-flex; align-items:center; background:#fff; border-radius:999px;
+  padding:2px 8px; margin-right:6px; vertical-align:middle;
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+}
+.mfd-courier-logo img{ height:20px; width:auto; display:block; }
 .mfd-hero-notas{ margin-top:.5rem; font-size:.82rem; color:#e2e8f0; background:rgba(255,255,255,.08); padding:.3rem .6rem; border-radius:8px; display:inline-block; }
 .mfd-hero-actions{ display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
 
@@ -294,6 +303,19 @@
    el fondo del hero ahora reacciona al estado, no solo el ícono/texto --
    refuerza la distinción sin depender solo de leer el label. Overlay sutil
    sobre el degradado base, no lo reemplaza. */
+/* "Mesh" ambiental 2026-07-31 (Daniel: "el header no sé qué ponerle, que
+   se vea más entretenido") — el mismo barrido de luz lento del hero de
+   retiros que a Daniel le encantó: un conic-gradient girando muy despacio
+   detrás del contenido, puramente decorativo, opacidad baja. */
+.trk-hero::before {
+  content:''; position:absolute; inset:-40%;
+  background:conic-gradient(from 0deg at 30% 40%,
+    rgba(220,38,38,.15), transparent 22%, transparent 55%, rgba(255,255,255,.07), transparent 85%);
+  animation:trkMeshDrift 22s linear infinite;
+  pointer-events:none; mix-blend-mode:screen; z-index:0;
+}
+@keyframes trkMeshDrift { to{ transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce){ .trk-hero::before{ animation:none; display:none; } }
 .trk-hero-transito::after, .trk-hero-ruta::after, .trk-hero-entregado::after, .trk-hero-falla::after {
   content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
 }
@@ -319,43 +341,132 @@
   font-family:'Courier New',monospace; font-size:1.05rem; font-weight:900;
   letter-spacing:1px; margin-top:8px; color:#fff;
 }
-/* Stepper — 2026-07-31 (Daniel, en vivo con screenshot de retiros: "debe
-   ser idéntico a ese tracking... con colores, latente, dinámico"): SACADO
-   del hero oscuro hacia su PROPIA tarjeta clara (.sr-sec-stepper), círculos
-   grandes con espacio de sobra en vez de comprimidos en la cabecera --
-   mismo patrón .step/.circle/.emoji de retiros_public_tracking.css, ahora
-   sobre fondo blanco en vez de negro. Cada hito agrega fecha/hora del
-   historial (JS) para que se vea la velocidad del envío. */
-.sr-sec-stepper { overflow-x:auto; }
-.trk-steps { display:flex; align-items:flex-start; gap:0; margin-top:4px; }
+/* ════════════════════════════════════════════════════════════════════
+   Stepper "LEYENDA" — 2026-07-31, Daniel (Fable design):
+   "ponle fondo negro... el entregado con felicitaciones, con dinamismo...
+   que la línea vaya corriendo hasta donde tenga que llegar... algo que
+   ese tracking sea una leyenda, es lo que yo quiero vender."
+
+   - Tarjeta NEGRA (identidad ILUS #0a0a0a) con filete rojo animado.
+   - Círculos claros con emoji a color flotando sobre el negro (máximo
+     contraste, mismo lenguaje del stepper de retiros).
+   - La línea verde SE ANIMA corriendo de izquierda a derecha, hito por
+     hito, y cada círculo "aterriza" con un pop cuando la línea le llega
+     (delays escalonados nth-child).
+   - El hito final ENTREGADO celebra: giro con rebote + 🎉🎊 + halo verde.
+   Todo CSS puro (cero JS extra), respeta prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════════════ */
+/* .sr-sec.sr-sec-stepper (doble clase) para ganarle a .sr-sec (fondo
+   blanco), que se define MÁS ABAJO en este archivo y con una sola clase
+   empataría en especificidad y pisaría el negro. */
+.sr-sec.sr-sec-stepper {
+  overflow-x:auto; position:relative;
+  background:linear-gradient(150deg,#0a0a0a 0%,#151515 55%,#0a0a0a 100%);
+  border:1px solid #232323;
+  box-shadow:0 14px 30px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.05);
+}
+/* filete superior rojo→naranja que respira (mismo acento "premium" que la
+   progress-card de retiros, adaptado a la tarjeta negra) */
+.sr-sec-stepper::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:3px;
+  background:linear-gradient(90deg,var(--ilus-red,#dc2626),#f97316 45%,var(--ilus-red,#dc2626));
+  background-size:200% 100%; animation:trkSheen 6s ease-in-out infinite;
+}
+@keyframes trkSheen { 0%,100%{ background-position:0% 0; } 50%{ background-position:100% 0; } }
+.sr-sec-stepper .sr-sec-h { color:#94a3b8; }
+.sr-sec-stepper .sr-sec-h i { color:var(--ilus-red,#dc2626); }
+.trk-steps { display:flex; align-items:flex-start; gap:0; margin-top:8px; padding-bottom:4px; }
 .trk-step { flex:1; display:flex; flex-direction:column; align-items:center; gap:8px; position:relative; min-width:78px; }
 .trk-step-dot {
-  /* 78px, igual al stepper de retiros (80px) -- antes 62px, comprimido
-     dentro del hero oscuro. */
   position:relative; width:78px; height:78px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  background:#f6f8fb; border:3.5px solid #e5e7eb; box-shadow:0 0 0 6px #fff;
+  background:#f6f8fb; border:3.5px solid #3a3a3a; box-shadow:0 0 0 6px #101010;
   font-size:2.3rem; line-height:1; z-index:2;
   transition:transform .3s cubic-bezier(.16,1,.3,1), border-color .3s, background .3s;
 }
-.trk-step:not(.done):not(.active) .trk-step-dot { filter:grayscale(.6); opacity:.6; }
+/* PENDIENTE: círculo fantasma sobre el negro, emoji atenuado */
+.trk-step:not(.done):not(.active):not(.danger) .trk-step-dot {
+  background:#181818; border-color:#2c2c2c; filter:grayscale(.7); opacity:.65;
+}
 .trk-step.done .trk-step-dot, .trk-step.active .trk-step-dot { background:#f0fdf4; border-color:#16a34a; }
-.trk-step.active .trk-step-dot { transform:scale(1.06); animation:trkStepPulse 2s ease-in-out infinite; }
+/* La línea "corre" y cada círculo alcanzado aterriza con pop, en secuencia:
+   dot1 (0s) → línea1 (.3s) → dot2 (.55s) → línea2 (.85s) → dot3 (1.1s) →
+   línea3 (1.4s) → dot4/celebración (1.65s). */
+.trk-step.done .trk-step-dot { animation:trkDotIn .5s cubic-bezier(.34,1.56,.64,1) both; }
+.trk-step:nth-child(1).done .trk-step-dot { animation-delay:0s; }
+.trk-step:nth-child(2).done .trk-step-dot { animation-delay:.55s; }
+.trk-step:nth-child(3).done .trk-step-dot { animation-delay:1.1s; }
+.trk-step:nth-child(4).done .trk-step-dot { animation-delay:1.65s; }
+@keyframes trkDotIn { 0%{ transform:scale(.35); opacity:0; } 70%{ transform:scale(1.12); opacity:1; } 100%{ transform:scale(1); opacity:1; } }
+/* ACTIVO (en curso): entra con pop cuando la línea le llega y luego late */
+.trk-step.active .trk-step-dot {
+  animation:trkDotIn .5s cubic-bezier(.34,1.56,.64,1) both, trkStepPulse 2s ease-in-out .6s infinite;
+}
+.trk-step:nth-child(2).active .trk-step-dot { animation-delay:.55s, 1.15s; }
+.trk-step:nth-child(3).active .trk-step-dot { animation-delay:1.1s, 1.7s; }
+.trk-step:nth-child(4).active .trk-step-dot { animation-delay:1.65s, 2.25s; }
+/* Badge ✓ aparece justo después del pop de su círculo */
 .trk-step.done .trk-step-dot::after {
   content:'✓'; position:absolute; right:-2px; bottom:-2px; width:23px; height:23px;
   border-radius:50%; background:#16a34a; color:#fff; font-size:.76rem; font-weight:900;
-  display:flex; align-items:center; justify-content:center; border:3px solid #fff;
+  display:flex; align-items:center; justify-content:center; border:3px solid #101010;
   font-family:Arial,sans-serif; animation:trkBadgePop .4s cubic-bezier(.34,1.56,.64,1) both;
 }
-.trk-step.danger .trk-step-dot { background:#fef2f2; border-color:#dc2626; }
-@keyframes trkStepPulse { 0%,100%{ box-shadow:0 0 0 5px #fff, 0 0 0 8px rgba(22,163,74,.35); } 50%{ box-shadow:0 0 0 5px #fff, 0 0 0 15px rgba(22,163,74,0); } }
+.trk-step:nth-child(1).done .trk-step-dot::after { animation-delay:.35s; }
+.trk-step:nth-child(2).done .trk-step-dot::after { animation-delay:.9s; }
+.trk-step:nth-child(3).done .trk-step-dot::after { animation-delay:1.45s; }
+.trk-step:nth-child(4).done .trk-step-dot::after { animation-delay:2.35s; }
+.trk-step.danger .trk-step-dot { background:#2a1214; border-color:#dc2626; animation:trkDotIn .5s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes trkStepPulse { 0%,100%{ box-shadow:0 0 0 6px #101010, 0 0 0 9px rgba(34,197,94,.4); } 50%{ box-shadow:0 0 0 6px #101010, 0 0 0 18px rgba(34,197,94,0); } }
 @keyframes trkBadgePop { 0%{ transform:scale(0); } 60%{ transform:scale(1.3); } 100%{ transform:scale(1); } }
-.trk-step-label { font-size:.78rem; font-weight:800; text-align:center; color:#9ca3af; line-height:1.2; max-width:96px; text-transform:uppercase; letter-spacing:.02em; transition:color .3s; }
-.trk-step.done .trk-step-label, .trk-step.active .trk-step-label { color:#15803d; }
-.trk-step-sub { font-size:.68rem; color:#9ca3af; text-align:center; line-height:1.3; max-width:100px; font-weight:600; transition:color .3s; }
-.trk-step.done .trk-step-sub, .trk-step.active .trk-step-sub { color:#15803d; font-weight:700; }
-.trk-step-line { position:absolute; top:39px; left:50%; width:100%; height:4px; background:#e9ebee; border-radius:50px; z-index:1; }
-.trk-step.done .trk-step-line { background:#16a34a; }
+/* ── ENTREGADO = FIESTA: giro con rebote (mismo finalSpin de retiros),
+   halo verde permanente y 🎉🎊 que brotan al llegar la línea. ── */
+.trk-step:nth-child(4).done .trk-step-dot {
+  animation:trkFinalSpin 1s cubic-bezier(.34,1.56,.64,1) 1.65s both;
+  box-shadow:0 0 0 6px #101010, 0 0 36px rgba(34,197,94,.5);
+}
+@keyframes trkFinalSpin {
+  0%{ transform:scale(.4) rotate(-45deg); opacity:0; }
+  55%{ transform:scale(1.18) rotate(385deg); opacity:1; }
+  78%{ transform:scale(.94) rotate(354deg); }
+  100%{ transform:scale(1) rotate(360deg); }
+}
+.trk-step:nth-child(4).done::before {
+  content:'🎉'; position:absolute; top:-12px; left:8%; font-size:1.5rem; z-index:3;
+  animation:trkConfetti .9s cubic-bezier(.34,1.56,.64,1) 2.3s both;
+}
+@keyframes trkConfetti {
+  0%{ opacity:0; transform:translateY(14px) scale(.3) rotate(-30deg); }
+  60%{ opacity:1; transform:translateY(-8px) scale(1.3) rotate(12deg); }
+  100%{ opacity:1; transform:translateY(-4px) scale(1) rotate(0deg); }
+}
+/* segundo brote al otro lado, con un pelito de retraso */
+.trk-step:nth-child(4).done::after {
+  content:'🎊'; position:absolute; top:-8px; right:6%; font-size:1.35rem; z-index:3;
+  animation:trkConfetti .9s cubic-bezier(.34,1.56,.64,1) 2.5s both;
+}
+/* Labels sobre negro */
+.trk-step-label { font-size:.78rem; font-weight:800; text-align:center; color:#6b7280; line-height:1.2; max-width:96px; text-transform:uppercase; letter-spacing:.02em; transition:color .3s; }
+.trk-step.done .trk-step-label, .trk-step.active .trk-step-label { color:#4ade80; }
+.trk-step.danger .trk-step-label { color:#f87171; }
+.trk-step-sub { font-size:.68rem; color:#64748b; text-align:center; line-height:1.3; max-width:100px; font-weight:600; transition:color .3s; }
+.trk-step.done .trk-step-sub, .trk-step.active .trk-step-sub { color:#86efac; font-weight:700; }
+/* Línea: base oscura; el tramo verde CORRE de izquierda a derecha */
+.trk-step-line { position:absolute; top:39px; left:50%; width:100%; height:4px; background:#262626; border-radius:50px; z-index:1; }
+.trk-step.done .trk-step-line {
+  background:#16a34a; box-shadow:0 0 10px rgba(34,197,94,.45);
+  transform-origin:left center; animation:trkLineRun .45s ease-out both;
+}
+.trk-step:nth-child(1).done .trk-step-line { animation-delay:.3s; }
+.trk-step:nth-child(2).done .trk-step-line { animation-delay:.85s; }
+.trk-step:nth-child(3).done .trk-step-line { animation-delay:1.4s; }
+@keyframes trkLineRun { 0%{ transform:scaleX(0); } 100%{ transform:scaleX(1); } }
+@media (prefers-reduced-motion:reduce){
+  .trk-step-dot, .trk-step.done .trk-step-dot, .trk-step.active .trk-step-dot,
+  .trk-step:nth-child(4).done .trk-step-dot, .trk-step.done .trk-step-dot::after,
+  .trk-step.done .trk-step-line, .trk-step:nth-child(4).done::before,
+  .trk-step:nth-child(4).done .trk-step-sub::before, .sr-sec-stepper::before { animation:none; }
+}
 
 .trk-body { padding:18px 20px; }
 .trk-ficha { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
@@ -399,7 +510,7 @@
   .trk-step-label{ font-size:.62rem; }
   .trk-step-sub{ font-size:.58rem; }
   .trk-state{ font-size:1.7rem; } .trk-state i{ font-size:1.6rem; }
-  .trk-step-dot{ width:52px; height:52px; font-size:1.6rem; box-shadow:0 0 0 4px #fff; }
+  .trk-step-dot{ width:52px; height:52px; font-size:1.6rem; box-shadow:0 0 0 4px #101010; }
   .trk-step{ min-width:56px; gap:5px; }
   .trk-step-line{ top:26px; }
 }
@@ -606,6 +717,31 @@
   background:rgba(255,255,255,.12); color:#e2e8f0; font-weight:800;
   font-size:11px; text-transform:uppercase; letter-spacing:.6px;
   border-radius:999px; padding:3px 10px;
+}
+/* ── Logo real del courier en el hero (2026-07-31, Daniel: "los logos de
+   FedEx, Felca y Milling... que salgan en los modales, arriba, quién se lo
+   llevó" + "que los logos se mantengan con dinamismo") -- pastilla blanca
+   para que el logo respire sobre el hero oscuro, con un flotado suave. ── */
+.sr-courier-chip:has(.sr-courier-logo-img){
+  background:#fff; padding:4px 12px; display:inline-flex; align-items:center;
+  box-shadow:0 4px 14px rgba(0,0,0,.35);
+  animation:trkLogoFloat 3.2s ease-in-out infinite;
+}
+.sr-courier-logo-img{ height:26px; width:auto; display:block; }
+@keyframes trkLogoFloat {
+  0%,100%{ transform:translateY(0); }
+  50%{ transform:translateY(-3px); }
+}
+/* "que palpite el verde de donde está el estado": cuando el pedido está
+   Entregado, el resplandor verde del hero respira en vez de quedarse
+   estático, y el ícono del estado late suave. */
+.trk-hero-entregado::after{ animation:trkGlowBreath 3s ease-in-out infinite; }
+@keyframes trkGlowBreath { 0%,100%{ opacity:1; } 50%{ opacity:.45; } }
+.trk-hero-entregado .trk-state i{ animation:trkStateBeat 2.2s ease-in-out .5s infinite; }
+@keyframes trkStateBeat { 0%,100%{ transform:scale(1); } 12%{ transform:scale(1.12); } 24%{ transform:scale(1); } }
+@media (prefers-reduced-motion:reduce){
+  .sr-courier-chip:has(.sr-courier-logo-img), .trk-hero-entregado::after,
+  .trk-hero-entregado .trk-state i { animation:none; }
 }
 .sr-live-chip{
   display:inline-flex; align-items:center; gap:.3rem; margin-top:8px;
