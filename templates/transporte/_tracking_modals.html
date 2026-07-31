@@ -169,6 +169,13 @@
           <div id="trkTabFedex" class="trk-timeline sr-timeline-scroll"></div>
           <div id="trkTabIlus" class="trk-timeline sr-timeline-scroll" style="display:none"></div>
         </div>
+
+        {# ── Link público de seguimiento del cliente — 2026-07-31 (Daniel:
+           "ambos modales deben tener similitudes"): existía solo en el modal
+           SimpliRoute (srLinkBox). El token público vive en el DOCUMENTO
+           (transport_commitments.public_token), no en el courier, así que
+           aplica igual a FedEx. ── #}
+        <div id="trkLinkBox" class="sr-link-chip" style="display:none"></div>
       </div>
       <div class="modal-footer trk-foot">
         <button type="button" class="btn btn-sm btn-outline-secondary" id="trkRefrescar" onclick="abrirTrackingDetalle(window._trkItemId, true)">
@@ -270,6 +277,17 @@
           <div class="sr-sec" id="srSecIndicadores" style="display:none">
             <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Indicadores del documento</div>
             <div id="srIndicadores" class="sr-indic-grid"></div>
+          </div>
+
+          {# ── Carga y tarifa — 2026-07-31 (Daniel: "ambos modales, si bien
+             son diferentes, deben tener similitudes"): esta ficha existía
+             SOLO en el modal FedEx. Los pesos/bultos/tarifa son datos del
+             documento, no del courier, así que corresponden a los dos.
+             Se llena desde det.commitment (mismas columnas que usa el modal
+             FedEx), sin consultar nada nuevo. ── #}
+          <div class="sr-sec" id="srSecFicha" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-box2-fill"></i>Carga y tarifa</div>
+            <div class="trk-ficha" id="srFicha"></div>
           </div>
 
           {# ── Productos del pedido (líneas del documento + foto por SKU) ── #}

@@ -30827,6 +30827,46 @@ def tr_buscar_interno_api(commitment_id):
     return jsonify({"ok": True, "detalle": d})
 
 
+def _tr_parse_productos_json(raw):
+    """Convierte transport_commitments.productos_json a la MISMA forma que
+    devuelve transport_commitment_lines (koprct/nokopr/cantidad/
+    cant_despachada/saldo), excluyendo los servicios ZZ.
+
+    Existe porque los productos REALES de un documento viven en
+    productos_json (los escribe el cubicador), NO en
+    transport_commitment_lines -- esa tabla solo termina guardando las
+    líneas ZZ (flete). Ver el comentario extenso en _tr_buscar_detalle.
+    Lo usan _tr_buscar_detalle (modales de tracking) y
+    _tr_populate_item_lines (Fase 2), y las reglas de parseo tienen que
+    quedar en UN solo lugar para que no se desincronicen.
+    """
+    if not raw:
+        return []
+    out = []
+    try:
+        for p in (json.loads(raw) or []):
+            if not isinstance(p, dict):
+                continue
+            sku = str(p.get("koprct") or "").strip()
+            if not sku or sku.upper().startswith("ZZ"):
+                continue
+            cant = float(p.get("cantidad") or 0)
+            saldo = p.get("saldo")
+            saldo = float(saldo) if saldo is not None else 0.0
+            out.append({
+                "koprct": sku,
+                "nokopr": str(p.get("nokopr") or ""),
+                "cantidad": cant,
+                # productos_json no guarda cant_despachada: se deriva
+                # (pedido - saldo), igual que el chip de cumplimiento.
+                "cant_despachada": max(cant - saldo, 0),
+                "saldo": saldo,
+            })
+    except Exception as e:
+        print(f"[_tr_parse_productos_json] JSON ilegible (no crítico): {e}", flush=True)
+    return out
+
+
 def _tr_buscar_detalle(commitment_id):
     """Construye el dict de detalle completo (estado, chofer, GPS, eventos,
     prueba de entrega, FedEx) para el tracking interno."""
@@ -30834,7 +30874,10 @@ def _tr_buscar_detalle(commitment_id):
         SELECT id, tido, nudo, cliente_nombre, cliente_rut, comuna, direccion,
                telefono, email, region, delivered_at, public_token, estado,
                COALESCE(zz_envio, 0) AS zz_envio, COALESCE(costo_courier, 0) AS costo_courier,
-               tiene_saldo, fecha_emision
+               tiene_saldo, fecha_emision, productos_json,
+               COALESCE(peso_real, 0) AS peso_real, COALESCE(peso_vol, 0) AS peso_vol,
+               COALESCE(peso_predominante, 0) AS peso_predominante,
+               COALESCE(volumen_m3, 0) AS volumen_m3, COALESCE(n_bultos, 1) AS n_bultos
         FROM transport_commitments WHERE id=%s
     """, (commitment_id,))
     if not c:
@@ -30932,11 +30975,26 @@ def _tr_buscar_detalle(commitment_id):
         # proyecto (ver sku.upper().startswith("ZZ") en _cubicador_fetch y
         # otros). Sin este filtro, el "producto" que se mostraba en el
         # modal era literalmente el flete, no la mercadería real.
-        _lin_rows = mysql_fetchall("""
-            SELECT koprct, nokopr, cantidad, cant_despachada, saldo
-            FROM transport_commitment_lines
-            WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%' ORDER BY id
-        """, (commitment_id,)) or []
+        # FIX 2026-07-31 (Daniel, en vivo: "a este le faltan los productos...
+        # quiero saber toda la historia de la factura"): esta consulta miraba
+        # SOLO transport_commitment_lines, que en la práctica guarda
+        # únicamente las líneas ZZ (flete) -- ver el INSERT de
+        # _tr_fetch_from_erp, que itera zz_lines y descarta los productos.
+        # Con el filtro "NOT LIKE 'ZZ%'" el resultado era SIEMPRE vacío, así
+        # que la sección "Productos del pedido" nunca mostró nada en
+        # producción (verificado contra 40+ documentos reales).
+        # Los productos REALES viven en transport_commitments.productos_json
+        # (los escribe el cubicador) -- que es justo la fuente que ya prefiere
+        # tr_manifiesto_detalle para el árbol de "Facturas del manifiesto",
+        # por eso ahí sí se veían. Se replica ese MISMO criterio acá:
+        # productos_json primero, commitment_lines como respaldo.
+        _lin_rows = _tr_parse_productos_json(c.get("productos_json"))
+        if not _lin_rows:
+            _lin_rows = mysql_fetchall("""
+                SELECT koprct, nokopr, cantidad, cant_despachada, saldo
+                FROM transport_commitment_lines
+                WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%' ORDER BY id
+            """, (commitment_id,)) or []
         _skus = list({(l.get("koprct") or "").strip().upper()
                       for l in _lin_rows if (l.get("koprct") or "").strip()})
         _fotos_por_sku = {}
@@ -30998,6 +31056,25 @@ def _tr_buscar_detalle(commitment_id):
                 SELECT id, koprct, estado_linea, sla_dias
                 FROM transport_item_lines WHERE manifest_item_id=%s
             """, (mi["item_id"],)) or []
+            # Backfill perezoso (2026-07-31): los despachos creados ANTES de la
+            # Fase 2 -- o cuyos productos no estaban disponibles al momento de
+            # crearlos -- no tienen filas en transport_item_lines. Se poblan la
+            # primera vez que se abre su modal, con los productos que ya
+            # tenemos acá. Es idempotente (INSERT IGNORE + UNIQUE KEY) y solo
+            # corre cuando faltan, así que no penaliza las aperturas normales.
+            if not _til_rows:
+                try:
+                    _conn_til = get_db()
+                    with _conn_til.cursor() as _cur_til:
+                        _tr_populate_item_lines(_cur_til, mi["item_id"], commitment_id)
+                    _conn_til.commit()
+                    _til_rows = mysql_fetchall("""
+                        SELECT id, koprct, estado_linea, sla_dias
+                        FROM transport_item_lines WHERE manifest_item_id=%s
+                    """, (mi["item_id"],)) or []
+                except Exception as _e_lazy:
+                    print(f"[_tr_buscar_detalle] backfill perezoso de item_lines falló "
+                          f"(no crítico): {_e_lazy}", flush=True)
             _til_por_sku = {(t.get("koprct") or "").strip().upper(): t for t in _til_rows}
             _estado_despacho = mi.get("estado_entrega") or "En preparación"
             for _lo in lineas_out:
@@ -77198,12 +77275,23 @@ def _tr_populate_item_lines(cur, manifest_item_id, commitment_id):
     IGNORE + UNIQUE KEY uq_til_item_sku). Usa el MISMO cursor/transacción del
     caller -- nunca abre una conexión aparte."""
     try:
+        # FIX 2026-07-31: la fuente REAL de productos es
+        # transport_commitments.productos_json (ver _tr_parse_productos_json);
+        # transport_commitment_lines solo guarda las líneas ZZ en la práctica,
+        # así que leerla sola dejaba la Fase 2 sin ninguna línea que trackear.
         cur.execute(
-            "SELECT koprct, nokopr, cantidad FROM transport_commitment_lines "
-            "WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%'",
+            "SELECT productos_json FROM transport_commitments WHERE id=%s",
             (commitment_id,)
         )
-        lineas = cur.fetchall() or []
+        _row_pj = cur.fetchone() or {}
+        lineas = _tr_parse_productos_json(_row_pj.get("productos_json"))
+        if not lineas:
+            cur.execute(
+                "SELECT koprct, nokopr, cantidad FROM transport_commitment_lines "
+                "WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%'",
+                (commitment_id,)
+            )
+            lineas = cur.fetchall() or []
         for l in lineas:
             cur.execute(
                 "INSERT IGNORE INTO transport_item_lines "

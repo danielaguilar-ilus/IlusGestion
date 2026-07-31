@@ -832,10 +832,8 @@ function trkSwitchTab(which) {
 // Mensaje estándar cuando el pedido todavía no tiene firma/foto (en ruta,
 // en preparación, etc.) — pedido explícito: mostrarlo sin romper nada.
 function _trkEvidenciaVacia() {
-  document.getElementById('trkEvidencia').innerHTML =
-    '<div class="text-muted" style="font-size:.85rem"><i class="bi bi-hourglass me-1"></i>' +
-    'Aún sin evidencia de entrega. La firma, fotos y receptor aparecerán acá ' +
-    'apenas el courier complete la entrega.</div>';
+  // Texto compartido con el modal SimpliRoute — ver _ilusEvidenciaVaciaHtml.
+  document.getElementById('trkEvidencia').innerHTML = _ilusEvidenciaVaciaHtml();
 }
 
 // ── 2ª carga del modal FedEx consolidado (2026-07-29): productos con foto,
@@ -893,6 +891,10 @@ async function _trkCargarDetalleExtra(commitmentId, token, force) {
     // llevarnos a todo".
     window._trkLastDetalle = det;
     _srRenderIndicadores('trk', { id: commitmentId }, det);
+    // Paridad con el modal SimpliRoute (2026-07-31): link público del cliente.
+    // La ficha de carga/tarifa NO se re-renderiza acá -- el modal FedEx ya la
+    // arma en _trkRender con datos más ricos (incluye la ETA de FedEx).
+    _srRenderLinkPublico('trk', det);
 
     // ── Productos del pedido (con foto → _ilusLightbox, nunca pestañas) ──
     var lineas = det.lineas || [];
@@ -1502,6 +1504,10 @@ async function _srCargarDetalle(data, token, force) {
     // "Actualizar stock" (ver srActualizarStock).
     window._srLastDetalle = det;
     _srRenderIndicadores('sr', data, det);
+    // Paridad con el modal FedEx (2026-07-31): ficha de carga/tarifa.
+    // (el link público de este modal lo arma srActualizarEstado con la
+    //  tracking_url propia de SimpliRoute -- ver srLinkBox)
+    _srRenderFicha('sr', det);
 
     // ── Productos del pedido (con foto → _ilusLightbox, sin pestañas) ──
     var lineas = det.lineas || [];
@@ -1558,6 +1564,13 @@ async function _srCargarDetalle(data, token, force) {
           '<i class="bi bi-geo-alt-fill me-1"></i>Ver punto de entrega en el mapa</button>';
       }
       document.getElementById('srEvidencia').innerHTML = html;
+      secE.style.display = '';
+    } else {
+      // Paridad con el modal FedEx (2026-07-31): antes esta sección quedaba
+      // ESCONDIDA cuando aún no había firma/fotos, y el operador no sabía si
+      // faltaba el dato o si el modal estaba fallando. Ahora dice lo mismo
+      // que el modal FedEx, con el mismo texto.
+      document.getElementById('srEvidencia').innerHTML = _ilusEvidenciaVaciaHtml();
       secE.style.display = '';
     }
 
@@ -3158,6 +3171,11 @@ function _ilusProductoHtml(l, i, prefix, cid) {
         _LINEA_ESTADO_LABEL[o] + '</option>';
     });
     select += '</select>';
+    // Daniel 2026-07-31: "necesito la historia de los productos en todos los
+    // modales" -- acceso directo al historial de ESE producto.
+    select += '<button type="button" class="sr-prod-hist-btn" title="Ver la historia de este producto" ' +
+      'onclick="event.stopPropagation();srVerHistorialLinea(' + l.line_id + ')">' +
+      '<i class="bi bi-clock-history"></i></button>';
   }
   return '<div class="sr-prod">' + thumb +
     '<div class="sr-prod-info"><div class="sr-prod-name">' + _srEsc(l.nombre || l.sku) + '</div>' +
@@ -3206,6 +3224,94 @@ async function srCambiarEstadoLinea(selectEl) {
   } finally {
     selectEl.disabled = false;
   }
+}
+
+// Historia de UN producto (Daniel 2026-07-31: "necesito la historia de los
+// productos en todos los modales... quiero saber toda la historia de la
+// factura"). Abre el historial de esa línea -- quién la marcó, cuándo y con
+// qué comentario -- reusando el modal genérico de lightbox/info del proyecto.
+async function srVerHistorialLinea(lineId) {
+  try {
+    var r = await fetch('/transporte/api/item-lines/' + lineId + '/historial');
+    var d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo cargar el historial', { type: 'error' }); return; }
+    var filas = (d.eventos || []).map(function(e) {
+      var ui = _LINEA_ESTADO_UI[e.estado] || { color: '#94a3b8', icon: 'bi-circle' };
+      return '<div class="trk-ev"><div class="trk-ev-desc">' +
+        '<i class="bi ' + ui.icon + ' me-1" style="color:' + ui.color + '"></i>' + _srEsc(e.estado) + '</div>' +
+        (e.comentario ? '<div class="trk-ev-meta"><span>' + _srEsc(e.comentario) + '</span></div>' : '') +
+        '<div class="trk-ev-meta"><span><i class="bi bi-clock me-1"></i>' + _srEsc(e.ts) + '</span>' +
+        (e.usuario ? '<span><i class="bi bi-person me-1"></i>' + _srEsc(e.usuario) + '</span>' : '') +
+        '<span><i class="bi bi-gear me-1"></i>' + _srEsc(e.fuente) + '</span></div></div>';
+    }).join('');
+    if (!filas) {
+      filas = '<div class="trk-empty">Este producto todavía no tiene movimientos propios.<br>' +
+              '<small>Sigue el estado del despacho completo.</small></div>';
+    }
+    await ilusAlert({
+      title: 'Historial · ' + (d.sku || ''),
+      message: d.nombre || '',
+      sub: '<div class="trk-timeline sr-timeline-scroll" style="text-align:left;margin-top:10px">' + filas + '</div>',
+      subHtml: true,
+      type: 'info',
+    });
+  } catch(e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+// ── Paridad entre los 2 modales (Daniel 2026-07-31: "ambos modales, si bien
+// son diferentes, deben tener similitudes"). Estas 3 piezas existían en uno
+// solo y ahora las comparten: ficha de carga/tarifa, link público del
+// cliente y el mensaje de "aún sin evidencia". ──
+
+// Ficha de pesos/bultos/tarifa a partir de det.commitment (datos del
+// DOCUMENTO, no del courier). El modal FedEx arma la suya con datos más
+// ricos del endpoint de tracking (incluye ETA FedEx); esta es la versión
+// que sirve para cualquier courier.
+function _srRenderFicha(prefix, det) {
+  var sec = document.getElementById(prefix === 'trk' ? 'trkSecFicha' : 'srSecFicha');
+  var cont = document.getElementById(prefix === 'trk' ? 'trkFicha' : 'srFicha');
+  if (!sec || !cont) return;
+  var c = (det && det.commitment) || {};
+  var real = Number(c.peso_real || 0), vol = Number(c.peso_vol || 0);
+  var pred = Number(c.peso_predominante || 0) || Math.max(real, vol);
+  var cobrado = Number(c.zz_envio || 0), costo = Number(c.costo_courier || 0);
+  if (!real && !vol && !pred && !cobrado && !costo) { sec.style.display = 'none'; return; }
+  var html = _trkFchip('Peso real', _fmtKg(real))
+           + _trkFchip('Peso vol.', _fmtKg(vol))
+           + _trkFchip('★ Predominante', _fmtKg(pred), 'pred')
+           + _trkFchip('Bultos', String(c.n_bultos || 1))
+           + _trkFchip('Cobrado', _fmtMoney(cobrado), 'ok')
+           + _trkFchip('Costo', _fmtMoney(costo))
+           + _trkFchip('Margen', _fmtMoney(cobrado - costo), (cobrado - costo) < 0 ? 'bad' : 'ok');
+  cont.innerHTML = html;
+  sec.style.display = '';
+}
+
+// Chip con el link público de seguimiento del cliente. SimpliRoute ya lo
+// recibía armado (d.tracking_url); acá se arma desde el public_token del
+// documento, que existe para CUALQUIER courier.
+function _srRenderLinkPublico(prefix, det) {
+  var box = document.getElementById(prefix === 'trk' ? 'trkLinkBox' : 'srLinkBox');
+  if (!box) return;
+  var token = det && det.commitment && det.commitment.public_token;
+  if (!token) { box.style.display = 'none'; return; }
+  var url = window.location.origin + '/t/' + token;
+  box.style.display = '';
+  box.innerHTML = '<i class="bi bi-link-45deg sr-link-ico"></i>' +
+    '<span class="sr-link-url">' + _srEsc(url) + '</span>' +
+    '<button type="button" class="sr-copy-btn" data-url="' + _srEsc(url) + '" onclick="srCopiarLink(this)">' +
+      '<i class="bi bi-clipboard me-1"></i>Copiar</button>';
+}
+
+// Mensaje único de "todavía no hay evidencia" (antes solo el modal FedEx lo
+// mostraba; SimpliRoute simplemente escondía la sección y el operador no
+// sabía si faltaba el dato o si el modal estaba roto).
+function _ilusEvidenciaVaciaHtml() {
+  return '<div class="text-muted" style="font-size:.85rem"><i class="bi bi-hourglass me-1"></i>' +
+    'Aún sin evidencia de entrega. La firma, fotos y receptor aparecerán acá ' +
+    'apenas el courier complete la entrega.</div>';
 }
 
 // Lista "Otros despachos de este documento" (2026-07-29, Daniel: "si yo

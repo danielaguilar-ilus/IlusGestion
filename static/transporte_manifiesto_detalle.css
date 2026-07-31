@@ -900,6 +900,14 @@
 }
 .sr-prod-estado-select:hover{ border-color:var(--ilus-red); }
 .sr-prod-estado-select:disabled{ opacity:.5; cursor:wait; }
+/* Botón "historia de este producto" (Daniel: "necesito la historia de los
+   productos en todos los modales"). */
+.sr-prod-hist-btn{
+  border:1px solid #e5e7eb; background:#fff; color:#6b7280;
+  border-radius:6px; padding:.1rem .4rem; font-size:.72rem; cursor:pointer;
+  line-height:1.4; transition:all .12s;
+}
+.sr-prod-hist-btn:hover{ border-color:var(--ilus-red); color:var(--ilus-red); background:#fff5f5; }
 .sr-prod-qty{ margin-left:auto; display:flex; gap:.3rem; flex-wrap:wrap; justify-content:flex-end; flex-shrink:0; }
 .sr-qty-chip{
   font-size:.7rem; font-weight:800; background:var(--ilus-black); color:#fff;
