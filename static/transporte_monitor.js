@@ -815,6 +815,27 @@ function renderVista(d) {
   document.getElementById('vistaClasif').textContent  =
     clasifMap2[c.clasificacion] || '📦 Despacho';
 
+  // 2026-07-31 (Daniel: reconocer cuando el documento trae mas de un
+  // envio/instalacion/retiro, ej. una factura dividida en varios despachos).
+  // d.zz_conteo = [{tipo, label, cantidad}, ...] solo con los tipos presentes.
+  (function() {
+    var wrap = document.getElementById('vistaZzConteo');
+    var block = document.getElementById('vistaZzConteoBlock');
+    if (!wrap || !block) return;
+    var conteo = d.zz_conteo || [];
+    if (!conteo.length) { block.style.display = 'none'; wrap.innerHTML = ''; return; }
+    block.style.display = '';
+    wrap.innerHTML = conteo.map(function(z) {
+      var multi = z.cantidad > 1;
+      return '<span style="display:inline-flex;align-items:center;gap:4px;'
+        + 'background:' + (multi ? 'rgba(220,38,38,.18)' : 'rgba(255,255,255,.08)') + ';'
+        + 'border:1px solid ' + (multi ? 'rgba(220,38,38,.4)' : 'rgba(255,255,255,.15)') + ';'
+        + 'border-radius:20px;padding:3px 10px;font-size:.78rem;'
+        + 'color:' + (multi ? '#ff8a8a' : '#ddd') + '">'
+        + (multi ? ('<b>' + z.cantidad + '×</b> ') : '') + esc(z.label) + '</span>';
+    }).join('');
+  })();
+
   // Tracking del courier en el header (2026-07-29, Daniel: "quiero un
   // tracking arriba en el header") — visible apenas se abre el modal.
   (function() {

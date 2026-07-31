@@ -18744,6 +18744,42 @@ def api_asignar_cotizar_couriers():
 
 ZZ_SKUS = {'ZZenvio', 'ZZINGREPUESTO', 'ZZSERVTEC', 'ZZRetiro', 'ZZINSTALACION', 'ZZINGARREQUIP'}
 
+# 2026-07-31 (Daniel: reconocer cuando un documento trae MAS DE UN envio,
+# instalacion o retiro -- ej. una factura se despacha dividida en varios
+# pedidos). Nombre corto para mostrar en badges del Monitor/manifiesto.
+ZZ_TIPO_LABEL = {
+    'ZZENVIO':        'Envío',
+    'ZZRETIRO':       'Retiro',
+    'ZZINSTALACION':  'Instalación',
+    'ZZSERVTEC':      'Servicio técnico',
+    'ZZINGREPUESTO':  'Ingreso repuesto',
+    'ZZINGARREQUIP':  'Ingreso a garantía',
+}
+
+
+def _tr_zz_conteo_por_tipo(lineas_zz):
+    """Cuenta cuántas líneas ZZ de cada tipo trae un documento.
+
+    Recibe la lista de líneas ZZ (dicts con 'sku', ya sea de
+    transport_commitment_lines o de _cubicador_fetch) y devuelve
+    [{"tipo": "ZZENVIO", "label": "Envío", "cantidad": 2}, ...] — solo
+    los tipos presentes (cantidad > 0), en un orden estable para la UI.
+    """
+    conteo = {}
+    for l in (lineas_zz or []):
+        sku = ((l.get("sku") or l.get("koprct") or "") if isinstance(l, dict) else "").strip().upper()
+        if not sku:
+            continue
+        conteo[sku] = conteo.get(sku, 0) + 1
+    orden = ['ZZENVIO', 'ZZINSTALACION', 'ZZRETIRO', 'ZZSERVTEC', 'ZZINGREPUESTO', 'ZZINGARREQUIP']
+    out = [{"tipo": t, "label": ZZ_TIPO_LABEL.get(t, t), "cantidad": conteo[t]}
+           for t in orden if conteo.get(t)]
+    # Cualquier código ZZ no contemplado en `orden` (poco probable) igual se muestra.
+    for t, n in conteo.items():
+        if t not in orden:
+            out.append({"tipo": t, "label": ZZ_TIPO_LABEL.get(t, t), "cantidad": n})
+    return out
+
 ESTADOS_COMPROMISO = [
     # Estados auto-gestionados por el sync con Random (no tocar manualmente,
     # los recalcula _tr_bulk_sync_erp_mysql según cobertura y NUDGIA):
@@ -23394,6 +23430,12 @@ def tr_detalle(cid):
         },
         "lineas": lineas_prod,
         "lineas_zz": lineas_zz,
+        # 2026-07-31 (Daniel: reconocer cuando hay MAS DE UN envio/instalacion/
+        # retiro en el mismo documento -- ej. una factura dividida en varios
+        # despachos). Cuenta ocurrencias por tipo de linea ZZ; el frontend lo
+        # muestra como badges "2x Envio · 1x Instalacion" en vez de solo listar
+        # que "tiene envio" (zz_skus ya lo hacia, pero sin el conteo).
+        "zz_conteo": _tr_zz_conteo_por_tipo(lineas_zz),
         "totales": {
             "kg":   tot_kg,
             "pv":   tot_pv,
@@ -24332,6 +24374,19 @@ def tr_manifiesto_detalle(mid):
                     WHERE commitment_id IN ({_ph}) AND koprct NOT LIKE 'ZZ%%'
                     ORDER BY id""", tuple(comm_ids)) or []):
                 prod_por_comm.setdefault(pl["commitment_id"], []).append(pl)
+        # 2026-07-31 (Daniel: reconocer cuando una factura trae MAS DE UN
+        # envio/instalacion/retiro): mismo patron batch que prod_por_comm,
+        # pero con las lineas ZZ (koprct SI empieza con 'ZZ') en vez de
+        # excluirlas. transport_commitment_lines ya guarda 1 fila por linea
+        # ZZ real del documento (ver _tr_fetch_from_erp) -- sin esto habria
+        # que re-consultar el ERP para saber la cantidad.
+        zz_por_comm = {}
+        if comm_ids:
+            for zl in (mysql_fetchall(
+                f"""SELECT commitment_id, koprct FROM transport_commitment_lines
+                    WHERE commitment_id IN ({_ph}) AND koprct LIKE 'ZZ%%'""",
+                tuple(comm_ids)) or []):
+                zz_por_comm.setdefault(zl["commitment_id"], []).append(zl)
         # Enriquecer cada item con margen y sus productos
         for it in items:
             cobrado = float(it.get("zz_envio") or 0)
@@ -24340,6 +24395,7 @@ def tr_manifiesto_detalle(mid):
             it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
             it["sin_precio"] = (cobrado <= 0)
             it["es_perdida"] = (cobrado > 0 and costo > cobrado)
+            it["zz_conteo"] = _tr_zz_conteo_por_tipo(zz_por_comm.get(it["commitment_id"], []))
             # Productos: preferir los declarados desde el cubicador (productos_json,
             # productos REALES); si no hay, caer a commitment_lines (líneas ZZ).
             _prods = []

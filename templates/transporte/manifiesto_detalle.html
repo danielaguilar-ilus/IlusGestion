@@ -565,6 +565,20 @@
               {% if item.motivo_envio %}<div class="small text-muted mt-1" style="max-width:230px"><i class="bi bi-chat-left-text me-1"></i>{{ item.motivo_envio }}</div>{% endif %}
             </div>
             {% endif %}
+            {# 2026-07-31 (Daniel: reconocer cuando la factura trae MAS DE UN
+               envio/instalacion/retiro -- solo se resalta cuando hay >1 de
+               algun tipo, para no agregar ruido visual al caso normal). #}
+            {% set _zz_multi = item.zz_conteo|selectattr('cantidad', 'gt', 1)|list if item.zz_conteo else [] %}
+            {% if _zz_multi %}
+            <div class="mt-1 d-flex flex-wrap gap-1">
+              {% for z in _zz_multi %}
+              <span class="badge" style="background:#fee2e2;color:#dc2626;border:1px solid #fecaca"
+                    title="Este documento trae {{ z.cantidad }} líneas de {{ z.label }}">
+                <b>{{ z.cantidad }}×</b> {{ z.label }}
+              </span>
+              {% endfor %}
+            </div>
+            {% endif %}
           </td>
           <td class="text-center">
             <span class="mfd-bultos-chip">{{ item.n_bultos or 1 }}</span>
@@ -994,6 +1008,18 @@
           <i class="bi bi-exclamation-triangle-fill me-1"></i>SIN PRECIO{% if item.autorizado_por %} — autorizado por {{ item.autorizado_por }}{% endif %}
         </span>
         {% if item.motivo_envio %}<div class="small text-muted mt-1"><i class="bi bi-chat-left-text me-1"></i>{{ item.motivo_envio }}</div>{% endif %}
+      </div>
+      {% endif %}
+
+      {% set _zz_multi_m = item.zz_conteo|selectattr('cantidad', 'gt', 1)|list if item.zz_conteo else [] %}
+      {% if _zz_multi_m %}
+      <div class="mt-2 d-flex flex-wrap gap-1">
+        {% for z in _zz_multi_m %}
+        <span class="badge" style="background:#fee2e2;color:#dc2626;border:1px solid #fecaca"
+              title="Este documento trae {{ z.cantidad }} líneas de {{ z.label }}">
+          <b>{{ z.cantidad }}×</b> {{ z.label }}
+        </span>
+        {% endfor %}
       </div>
       {% endif %}
 

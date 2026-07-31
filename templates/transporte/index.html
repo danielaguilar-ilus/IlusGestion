@@ -946,6 +946,15 @@
               <div class="fw-semibold text-white" style="font-size:.88rem" id="vistaClasif">—</div>
             </div>
           </div>
+          {# 2026-07-31 (Daniel: reconocer cuando el documento trae mas de un
+             envio/instalacion/retiro) -- badges "2x Envio · 1x Instalacion".
+             Oculto por default; solo se muestra si zz_conteo trae algo. #}
+          <div class="col-12" id="vistaZzConteoBlock" style="display:none">
+            <div style="background:rgba(255,255,255,.07);border-radius:8px;padding:10px 14px">
+              <div class="small" style="color:#888;font-size:.68rem;text-transform:uppercase;letter-spacing:1px">Servicios del documento</div>
+              <div id="vistaZzConteo" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+            </div>
+          </div>
 
           {# Fila 2: dirección, teléfono, correo — aparecen solo si existen #}
           <div class="col-12 col-sm-5" id="vistaDirBlock" style="display:none">
