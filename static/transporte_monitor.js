@@ -1941,15 +1941,27 @@ function cargarMonitor() {
               /* ── Courier asignado (2026-07-27) — migrado a .trx-courier
                  (2026-07-28): antes era texto plano en un pill; ahora va
                  con iniciales en un cuadrito + nombre, igual que la ficha
-                 de couriers. Esta consulta (Monitor) no trae logo_url del
-                 courier, así que se usa SIEMPRE el fallback de iniciales
-                 — nunca se inventa un logo que no está disponible acá. ── */
+                 de couriers.
+                 FIX 2026-07-31 (Daniel: "¿qué pasó con los logos... en la
+                 lista de los courier de la tabla?") -- esta consulta no
+                 trae logo_url, pero para los 3 couriers reales de ILUS
+                 (FedEx/Felca/Milling) el logo es siempre el mismo archivo
+                 estático, así que se matchea por NOMBRE (mismo criterio
+                 que _srCourierLogo en transporte_manifiesto_detalle.js).
+                 Cualquier courier no reconocido sigue con el fallback de
+                 iniciales -- nunca se inventa un logo que no existe. ── */
               (function() {
                 if (!c.courier) {
                   return '<td class="text-center"><span style="color:var(--tr-text-soft)">—</span></td>';
                 }
-                var _ini = (c.courier.trim().split(/\s+/).slice(0,2)
-                  .map(function(p){ return p.charAt(0) || ''; }).join('').toUpperCase()) || '?';
+                var _cl = c.courier.toLowerCase();
+                var _logo = _cl.indexOf('felca') !== -1 ? '/static/courier_felca.png'
+                  : _cl.indexOf('milling') !== -1 ? '/static/courier_milling.png'
+                  : _cl.indexOf('fedex') !== -1 ? '/static/courier_fedex.png' : '';
+                var _iniHtml = _logo
+                  ? '<img class="trx-courier-logo" src="' + _logo + '" alt="' + esc(c.courier) + '">'
+                  : '<span class="trx-courier-fallback">' + esc((c.courier.trim().split(/\s+/).slice(0,2)
+                      .map(function(p){ return p.charAt(0) || ''; }).join('').toUpperCase()) || '?') + '</span>';
                 // FIX 2026-07-29 (Daniel: "quiero identificar en que manifiesto
                 // esta"): si el compromiso viene con manifiesto_id, se agrega
                 // el correlativo como link directo a esa ficha (stopPropagation
@@ -1962,7 +1974,7 @@ function cargarMonitor() {
                   : '';
                 return '<td class="text-center">' +
                   '<div class="trx-courier" title="Courier asignado en el manifiesto">' +
-                    '<span class="trx-courier-fallback">' + esc(_ini) + '</span>' +
+                    _iniHtml +
                     '<div class="trx-courier-info">' +
                       '<span class="trx-courier-name">' + esc(c.courier) + '</span>' +
                       _manLink +

@@ -245,15 +245,26 @@
           <td data-label="Fecha" class="cell-fecha">
             {{ m.fecha | fecha_es }}
           </td>
-          {# Identidad del transportista: cuadrito con las iniciales + nombre.
-             transport_manifests guarda el courier como texto (no trae logo_url),
-             asi que aca va siempre el fallback de iniciales del DS. #}
+          {# Identidad del transportista: logo real si lo reconocemos (mismo
+             mapeo que el modal de tracking, 2026-07-31, Daniel: "¿qué pasó
+             con los logos... en la lista de los courier de la tabla?");
+             transport_manifests guarda el courier solo como texto, así que
+             el match es por nombre, con fallback de iniciales si no calza
+             con ninguno de los 3 couriers conocidos. #}
           {% set _c_nom = (m.courier or '')|trim %}
           {% set _c_pal = _c_nom.split() %}
           {% set _c_ini = ((_c_pal[0][0] if _c_pal else '?') ~ (_c_pal[1][0] if _c_pal|length > 1 else ''))|upper %}
+          {% set _c_lc = _c_nom|lower %}
+          {% set _c_logo = 'courier_felca.png' if 'felca' in _c_lc
+             else ('courier_milling.png' if 'milling' in _c_lc
+             else ('courier_fedex.png' if 'fedex' in _c_lc else '')) %}
           <td data-label="Courier" class="cell-courier">
             <span class="trx-courier">
+              {% if _c_logo %}
+              <img class="trx-courier-logo" src="{{ url_for('static', filename=_c_logo) }}" alt="{{ _c_nom }}">
+              {% else %}
               <span class="trx-courier-fallback">{{ _c_ini }}</span>
+              {% endif %}
               <span class="trx-courier-name">{{ _c_nom or '—' }}</span>
             </span>
           </td>
