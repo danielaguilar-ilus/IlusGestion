@@ -673,7 +673,19 @@ function _trkRender(d) {
   if (d.comuna) sub.push(d.comuna);
   if (d.region) sub.push(d.region);
   document.getElementById('trkSub').textContent = sub.join(' · ');
-  document.getElementById('trkTn').textContent = d.tracking ? '#' + d.tracking : '';
+  // 2026-07-31 (Daniel: "resaltar el numero de OT... para copiar tambien
+  // asi tipo FedEx"): boton de copiar junto al numero, mismo patron ya
+  // usado en srCopiarLink (SimpliRoute) -- reusado tal cual, el dataset
+  // acepta cualquier texto, no solo URLs.
+  var trkTnEl = document.getElementById('trkTn');
+  if (d.tracking) {
+    trkTnEl.innerHTML = '#' + _trkEsc(d.tracking) +
+      ' <button type="button" class="sr-copy-btn" data-url="' + _trkEsc(d.tracking) + '" ' +
+      'onclick="event.stopPropagation();srCopiarLink(this)" title="Copiar número de seguimiento">' +
+      '<i class="bi bi-clipboard"></i></button>';
+  } else {
+    trkTnEl.textContent = '';
+  }
   var fxLink = document.getElementById('trkFedexLink');
   if (fxLink) {
     fxLink.href = d.tracking ? 'https://www.fedex.com/fedextrack/?trknbr=' + d.tracking : '#';
