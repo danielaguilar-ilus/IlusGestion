@@ -1572,6 +1572,21 @@ function mfdFiltrarTabla(){
             <div id="srProductos"></div>
           </div>
 
+          {# ── Otros despachos de este documento — BUG REAL encontrado en vivo
+             2026-07-31 (Daniel: "el seguimiento de Felca no funciona, al darle
+             clic no está funcionando"): este bloque NO EXISTÍA en el modal
+             SimpliRoute (solo en el de FedEx), pero el JS de reset en
+             abrirSimpliRouteModal SÍ intentaba tocar su .style -- eso hacía
+             que TODO el modal reventara con un TypeError antes de llegar a
+             _srAccionesModal.show(), o sea el modal NUNCA se abría para
+             ningún pedido de Felca/Milling. Mismo bloque que ya existe en el
+             modal FedEx (ver trkSecDespachos). ── #}
+          <div class="sr-sec" id="srSecDespachos" style="display:none">
+            <div class="sr-sec-h"><i class="bi bi-diagram-3-fill"></i>Otros despachos de este documento
+              <span class="sr-sec-count" id="srDespachosCount"></span></div>
+            <div id="srDespachos"></div>
+          </div>
+
           {# ── Evidencia de entrega (firma + fotos + receptor) ──
              FIX 2026-07-27 (Daniel: "falta ver las imágenes que ofrece
              SimpliRoute en el modal"): SimpliRoute ya entrega firma/fotos

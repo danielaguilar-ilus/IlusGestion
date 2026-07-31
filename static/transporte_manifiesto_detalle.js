@@ -1567,8 +1567,13 @@ async function abrirSimpliRouteModal(data, force) {
   document.getElementById('srTimeline').innerHTML = '<div class="trk-empty"><i class="bi bi-hourglass-split"></i> Cargando trazabilidad…</div>';
   document.getElementById('srEvCount').textContent = '';
   document.getElementById('srLinkBox').style.display = 'none';
-  ['srSecProductos', 'srSecDespachos', 'srSecEvidencia', 'srSecChofer'].forEach(function(id){
-    document.getElementById(id).style.display = 'none';
+  // 2026-07-31: defensivo con optional chaining -- un id que no exista en el
+  // DOM (como pasaba con srSecDespachos, ver comentario en el template) ya
+  // NO puede volver a tirar todo abrirSimpliRouteModal con un TypeError no
+  // capturado (eso dejaba el modal sin abrir NUNCA para Felca/Milling).
+  ['srSecProductos', 'srSecDespachos', 'srSecEvidencia', 'srSecChofer', 'srSecIndicadores'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
   });
   document.getElementById('srProductos').innerHTML = '';
   document.getElementById('srDespachos').innerHTML = '';
