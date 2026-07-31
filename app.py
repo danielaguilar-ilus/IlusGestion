@@ -19802,6 +19802,16 @@ def _tr_fetch_from_erp(tido, nudo):
             # ningún llamado extra al ERP. Antes esta función solo
             # persistía las líneas ZZ y productos_json quedaba con el
             # snapshot viejo del cubicador para siempre.
+            #
+            # FIX 2026-07-31 (verificación en vivo): la primera versión de
+            # este fix calculaba saldo = CAPRCO1 - CAPRAD1 (2 términos) y
+            # seguía mostrando saldo=1 para un documento que en el ERP ya
+            # tenía saldo=0. La fórmula OFICIAL de Random (diccionario
+            # MAEDDO, ya usada en _cubicador_fetch, línea ~15564) resta
+            # ADEMÁS CAPREX1 (guía externa) y CAPRNC1 (nota de crédito), y
+            # fuerza 0 si ESLIDO marca la línea como cerrada/despachada. Sin
+            # esos 2 términos, una línea despachada por guía externa seguía
+            # apareciendo con saldo pendiente.
             try:
                 _prods_fresh = []
                 for _l in raw_lineas:
@@ -19810,11 +19820,17 @@ def _tr_fetch_from_erp(tido, nudo):
                         continue
                     _cant_l = float(_l.get("CAPRCO1") or 0)
                     _cantd_l = float(_l.get("CAPRAD1") or 0)
+                    _cantex_l = float(_l.get("CAPREX1") or 0)
+                    _cantnc_l = float(_l.get("CAPRNC1") or 0)
+                    _saldo_l = max(_cant_l - _cantd_l - _cantex_l - _cantnc_l, 0)
+                    _eslido_l = (_l.get("ESLIDO") or "").strip().upper()
+                    if _eslido_l in ("C", "T", "TOTAL", "CERRADO", "DESPACHADO"):
+                        _saldo_l = 0
                     _prods_fresh.append({
                         "koprct": _sku_l[:40],
                         "nokopr": (_l.get("NOKOPR") or "").strip()[:300],
                         "cantidad": _cant_l,
-                        "saldo": round(_cant_l - _cantd_l, 3),
+                        "saldo": round(_saldo_l, 3),
                     })
                 if _prods_fresh:
                     cur.execute(
