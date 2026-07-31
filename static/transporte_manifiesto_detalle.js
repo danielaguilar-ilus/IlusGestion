@@ -600,7 +600,11 @@ var TRK_STEPS = [
   { label: 'En preparación',  icon: 'bi-clipboard-check', emoji: '📦' },
   { label: 'Retirado',        icon: 'bi-truck-flatbed',   emoji: '📤' },
   { label: 'En ruta',         icon: 'bi-truck',            emoji: '🚚' },
-  { label: 'Entregado',       icon: 'bi-check-circle-fill', emoji: '✅' },
+  // 2026-07-31 (Daniel, con screenshot del paso RETIRADA de retiros: "el
+  // entregado lo quería así, elimina el check y coloca el confeti") -- el
+  // emoji del círculo final es el confeti mismo, que ya entra girando con
+  // trkFinalSpin. El ✓ chico de la esquina se mantiene (igual que retiros).
+  { label: 'Entregado',       icon: 'bi-check-circle-fill', emoji: '🎉' },
 ];
 
 // 2026-07-31 (Daniel: "ojalá podamos contar con la fecha de cada

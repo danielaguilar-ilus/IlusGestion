@@ -415,14 +415,25 @@
 .trk-step:nth-child(1).done .trk-step-dot::after { animation-delay:.35s; }
 .trk-step:nth-child(2).done .trk-step-dot::after { animation-delay:.9s; }
 .trk-step:nth-child(3).done .trk-step-dot::after { animation-delay:1.45s; }
-.trk-step:nth-child(4).done .trk-step-dot::after { animation-delay:2.35s; }
+/* FIX 2026-07-31 (Daniel, con screenshot del paso final de retiros:
+   "el entregado lo quería así, debes eliminar el check y colocar el
+   confeti dinámico") -- en el último hito el propio EMOJI ya es el
+   confeti (🎉, ver TRK_STEPS en el JS) y gira con rebote al llegar
+   (trkFinalSpin); el badge ✓ de la esquina sobra/se ve desordenado
+   encima del confeti, así que se oculta solo en este paso. Los brotes
+   sueltos de confeti que quedaban flotando fuera del círculo también se
+   quitan -- el confeti ya vive DENTRO del círculo, girando. */
+.trk-step:nth-child(4).done .trk-step-dot::after { display:none; }
 .trk-step.danger .trk-step-dot { background:#2a1214; border-color:#dc2626; animation:trkDotIn .5s cubic-bezier(.34,1.56,.64,1) both; }
 @keyframes trkStepPulse { 0%,100%{ box-shadow:0 0 0 6px #101010, 0 0 0 9px rgba(34,197,94,.4); } 50%{ box-shadow:0 0 0 6px #101010, 0 0 0 18px rgba(34,197,94,0); } }
 @keyframes trkBadgePop { 0%{ transform:scale(0); } 60%{ transform:scale(1.3); } 100%{ transform:scale(1); } }
-/* ── ENTREGADO = FIESTA: giro con rebote (mismo finalSpin de retiros),
-   halo verde permanente y 🎉🎊 que brotan al llegar la línea. ── */
+/* ── ENTREGADO = FIESTA: el círculo entra con giro + rebote (mismo
+   finalSpin de retiros) y queda con un halo verde permanente. El emoji
+   🎉 adentro sigue "vivo": gira despacito sin parar, para que la fiesta
+   nunca se sienta estática. ── */
 .trk-step:nth-child(4).done .trk-step-dot {
-  animation:trkFinalSpin 1s cubic-bezier(.34,1.56,.64,1) 1.65s both;
+  animation:trkFinalSpin 1s cubic-bezier(.34,1.56,.64,1) 1.65s both,
+            trkConfettiWiggle 2.4s ease-in-out 2.65s infinite;
   box-shadow:0 0 0 6px #101010, 0 0 36px rgba(34,197,94,.5);
 }
 @keyframes trkFinalSpin {
@@ -431,26 +442,12 @@
   78%{ transform:scale(.94) rotate(354deg); }
   100%{ transform:scale(1) rotate(360deg); }
 }
-.trk-step:nth-child(4).done::before {
-  /* FIX 2026-07-31 (Daniel: "los logos están desordenados") -- el confeti
-     quedaba flotando lejos del círculo porque left/right eran relativos a
-     la COLUMNA completa del paso (flex:1, ancha), no al círculo centrado.
-     Ahora se ancla al centro (left:50% + margen fijo) pegado al círculo. */
-  content:'🎉'; position:absolute; top:-10px; left:50%; margin-left:-52px;
-  font-size:1.5rem; z-index:3;
-  animation:trkConfetti .9s cubic-bezier(.34,1.56,.64,1) 2.3s both;
-}
-@keyframes trkConfetti {
-  0%{ opacity:0; transform:translateY(14px) scale(.3) rotate(-30deg); }
-  60%{ opacity:1; transform:translateY(-8px) scale(1.3) rotate(12deg); }
-  100%{ opacity:1; transform:translateY(-4px) scale(1) rotate(0deg); }
-}
-/* segundo brote al otro lado, con un pelito de retraso -- también anclado
-   al círculo (left:50% + margen), no al borde de la columna. */
-.trk-step:nth-child(4).done::after {
-  content:'🎊'; position:absolute; top:-6px; left:50%; margin-left:34px; right:auto;
-  font-size:1.35rem; z-index:3;
-  animation:trkConfetti .9s cubic-bezier(.34,1.56,.64,1) 2.5s both;
+/* leve balanceo continuo del emoji-confeti dentro del círculo -- el
+   "dinamismo" que pidió Daniel, sin volver a girar 360° cada vez */
+@keyframes trkConfettiWiggle {
+  0%,100%{ transform:scale(1) rotate(0deg); }
+  25%{ transform:scale(1.06) rotate(-6deg); }
+  75%{ transform:scale(1.06) rotate(6deg); }
 }
 /* Labels sobre negro */
 .trk-step-label { font-size:.78rem; font-weight:800; text-align:center; color:#6b7280; line-height:1.2; max-width:96px; text-transform:uppercase; letter-spacing:.02em; transition:color .3s; }
@@ -471,8 +468,7 @@
 @media (prefers-reduced-motion:reduce){
   .trk-step-dot, .trk-step.done .trk-step-dot, .trk-step.active .trk-step-dot,
   .trk-step:nth-child(4).done .trk-step-dot, .trk-step.done .trk-step-dot::after,
-  .trk-step.done .trk-step-line, .trk-step:nth-child(4).done::before,
-  .trk-step:nth-child(4).done .trk-step-sub::before, .sr-sec-stepper::before { animation:none; }
+  .trk-step.done .trk-step-line, .sr-sec-stepper::before { animation:none; }
 }
 
 .trk-body { padding:18px 20px; }
