@@ -19728,7 +19728,18 @@ def _tr_fetch_from_erp(tido, nudo):
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,%s)
                 ON DUPLICATE KEY UPDATE
                   fecha_emision=VALUES(fecha_emision), fecha_entrega=VALUES(fecha_entrega),
-                  cliente_nombre=VALUES(cliente_nombre), cliente_rut=VALUES(cliente_rut),
+                  -- FIX 2026-07-31 (Daniel, en vivo: la 22719 pasó a mostrar
+                  -- "Cliente no informado por ERP" después de refrescar el
+                  -- saldo -- esta función ahora corre mucho más seguido, cron
+                  -- horario + botón manual, no solo import puntual): mismo
+                  -- bug que ya se corrigió para comuna/direccion/telefono/
+                  -- email el 2026-07-27 (ver comentario arriba), pero
+                  -- cliente_nombre/cliente_rut quedaron afuera de ese fix.
+                  -- El ERP a veces no devuelve NOKOEN para un documento ya
+                  -- despachado/facturado -- sin este resguardo, cada refresco
+                  -- podía borrar en silencio un nombre de cliente correcto.
+                  cliente_nombre=IF(VALUES(cliente_nombre) IS NULL OR VALUES(cliente_nombre)='', cliente_nombre, VALUES(cliente_nombre)),
+                  cliente_rut=IF(VALUES(cliente_rut) IS NULL OR VALUES(cliente_rut)='', cliente_rut, VALUES(cliente_rut)),
                   comuna=IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
                   direccion=IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
                   telefono=IF(direccion_editada_manual=1, telefono, IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono))),
