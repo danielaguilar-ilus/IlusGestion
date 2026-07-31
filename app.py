@@ -19738,7 +19738,7 @@ def _tr_fetch_from_erp(tido, nudo):
                   -- El ERP a veces no devuelve NOKOEN para un documento ya
                   -- despachado/facturado -- sin este resguardo, cada refresco
                   -- podía borrar en silencio un nombre de cliente correcto.
-                  cliente_nombre=IF(VALUES(cliente_nombre) IS NULL OR VALUES(cliente_nombre)='', cliente_nombre, VALUES(cliente_nombre)),
+                  cliente_nombre=IF(VALUES(cliente_nombre) IS NULL OR VALUES(cliente_nombre) IN ('', %s), cliente_nombre, VALUES(cliente_nombre)),
                   cliente_rut=IF(VALUES(cliente_rut) IS NULL OR VALUES(cliente_rut)='', cliente_rut, VALUES(cliente_rut)),
                   comuna=IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
                   direccion=IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
@@ -19756,7 +19756,8 @@ def _tr_fetch_from_erp(tido, nudo):
                 direccion, telefono, email,
                 valor_neto, valor_bruto,
                 costo_zz, tiene_saldo, guia_numero, clasificacion,
-                current_username(), current_username()
+                current_username(), current_username(),
+                ERP_NO_CLIENT,
             ))
             comm_id = cur.lastrowid or mysql_fetchone(
                 "SELECT id FROM transport_commitments WHERE tido=%s AND nudo=%s",
@@ -23111,6 +23112,16 @@ def tr_update_compromiso(cid):
         campos["notas"] = data["notas"]
     if "fecha_agenda" in data:
         campos["fecha_agenda"] = data["fecha_agenda"] or None
+    # 2026-07-31 (Daniel, en vivo: "Cliente no informado por ERP" reemplazó a
+    # "Karina Navarro" tras refrescar el saldo -- ver el fix de
+    # _tr_fetch_from_erp en la misma fecha) -- nombre del cliente editable a
+    # mano en cualquier momento. A propósito FUERA de _operational_edit_fields
+    # (no participa del candado "gestión con courier"): es un campo de
+    # display puro, no afecta etiqueta/ruta/logística del courier.
+    if "cliente_nombre" in data:
+        campos["cliente_nombre"] = (str(data["cliente_nombre"] or "").strip() or None)
+        if campos["cliente_nombre"]:
+            campos["cliente_nombre"] = campos["cliente_nombre"][:200]
     # ── Datos de contacto y carga masiva (editables desde el modal del manifiesto) ──
     for _campo, _maxlen in (("telefono", 50), ("email", 150),
                             ("direccion", 300), ("comuna", 100),
