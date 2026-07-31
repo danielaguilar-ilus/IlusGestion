@@ -1702,6 +1702,24 @@ async function srActualizarStock(prefix, data) {
     var r = await fetch('/transporte/api/compromisos/' + data.id + '/stock-erp');
     var d = await r.json();
     if (!d.ok) { ilusToast(d.error || 'No se pudo consultar el stock', { type: 'error' }); return; }
+    // 2026-07-31 (Daniel, comparando el ERP con el modal en vivo: "esto no
+    // se ha actualizado... necesito que el stock se vaya actualizando"):
+    // este botón AHORA también refresca el saldo por producto del
+    // documento en el backend (ver tr_compromiso_stock_erp) -- se
+    // recargan los productos con datos frescos, no solo los indicadores.
+    var r2 = await fetch('/transporte/api/buscar/' + data.id);
+    var d2 = await r2.json();
+    if (d2 && d2.ok) {
+      var lineas = (d2.detalle && d2.detalle.lineas) || [];
+      var cont = document.getElementById(prefix === 'trk' ? 'trkProductos' : 'srProductos');
+      if (cont && lineas.length) {
+        if (prefix === 'trk') window._trkProdFotos = lineas.map(function(l){ return l.fotos || []; });
+        else window._srProdFotos = lineas.map(function(l){ return l.fotos || []; });
+        cont.innerHTML = lineas.map(function(l, i) { return _ilusProductoHtml(l, i, prefix, data.id); }).join('');
+      }
+      if (prefix === 'trk') window._trkLastDetalle = d2.detalle;
+      else window._srLastDetalle = d2.detalle;
+    }
     if (!Object.keys(d.stock || {}).length) {
       ilusToast('El ERP no devolvió stock para los productos de este documento', { type: 'warning' });
       return;
@@ -1710,7 +1728,7 @@ async function srActualizarStock(prefix, data) {
     // Re-renderiza el bloque de indicadores reusando el ultimo detalle cargado.
     var lastDet = prefix === 'trk' ? window._trkLastDetalle : window._srLastDetalle;
     if (lastDet) _srRenderIndicadores(prefix, data, lastDet);
-    ilusToast('✓ Stock actualizado desde el ERP', { type: 'success' });
+    ilusToast('✓ Stock y saldo actualizados desde el ERP', { type: 'success' });
   } catch (e) {
     ilusToast('No se pudo conectar con el servidor', { type: 'error' });
   } finally {

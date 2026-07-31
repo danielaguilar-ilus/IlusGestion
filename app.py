@@ -19792,6 +19792,37 @@ def _tr_fetch_from_erp(tido, nudo):
                       (l.get("NOKOPR") or "").strip(),
                       cant, cantd, cant - cantd,
                       (l.get("BOSULIDO") or "").strip()))
+
+            # ── Productos REALES (saldo vivo) — 2026-07-31 (Daniel, con
+            # captura del ERP y del modal lado a lado: "cuando actualizo...
+            # me dice que tengo 4 productos con saldo, pero el ERP dice que
+            # no tiene saldo... esto no se ha actualizado"). raw_lineas YA
+            # trae el saldo ACTUAL de cada producto (no solo el de las ZZ),
+            # así que se refresca productos_json con la misma pasada, sin
+            # ningún llamado extra al ERP. Antes esta función solo
+            # persistía las líneas ZZ y productos_json quedaba con el
+            # snapshot viejo del cubicador para siempre.
+            try:
+                _prods_fresh = []
+                for _l in raw_lineas:
+                    _sku_l = (_l.get("KOPRCT") or "").strip()
+                    if not _sku_l or _sku_l.upper() in {s.upper() for s in ZZ_SKUS}:
+                        continue
+                    _cant_l = float(_l.get("CAPRCO1") or 0)
+                    _cantd_l = float(_l.get("CAPRAD1") or 0)
+                    _prods_fresh.append({
+                        "koprct": _sku_l[:40],
+                        "nokopr": (_l.get("NOKOPR") or "").strip()[:300],
+                        "cantidad": _cant_l,
+                        "saldo": round(_cant_l - _cantd_l, 3),
+                    })
+                if _prods_fresh:
+                    cur.execute(
+                        "UPDATE transport_commitments SET productos_json=%s WHERE id=%s",
+                        (json.dumps(_prods_fresh, ensure_ascii=False), comm_id)
+                    )
+            except Exception as _e_pjr:
+                print(f"[tr_fetch] no se pudo refrescar productos_json de {comm_id}: {_e_pjr}", flush=True)
         conn.commit()
     except Exception:
         try: conn.rollback()
@@ -31339,9 +31370,37 @@ def tr_compromiso_stock_erp(commitment_id):
     "Actualizar stock" en el modal (nunca automático al abrir), para no
     reintroducir la dependencia del ERP que causaba la lentitud.
     """
-    _skus = [r["koprct"] for r in (mysql_fetchall(
-        "SELECT DISTINCT koprct FROM transport_commitment_lines "
-        "WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%'", (commitment_id,)) or [])]
+    # FIX 2026-07-31 (Daniel, comparando el ERP con el modal en vivo: "el
+    # ERP dice que no tiene saldo... esto no se ha actualizado" -- ver el
+    # cron horario tr_cron_refrescar_saldo_productos para el refresco
+    # pasivo): el botón manual YA llamaba al ERP para el stock de bodega;
+    # de paso también refresca el SALDO por producto de ESTE documento
+    # (productos_json), que es justo lo que el usuario está mirando cuando
+    # aprieta "Actualizar ahora". Best-effort -- si falla, el stock de
+    # bodega igual se actualiza normalmente.
+    _doc = mysql_fetchone(
+        "SELECT tido, nudo FROM transport_commitments WHERE id=%s", (commitment_id,))
+    if _doc:
+        try:
+            _tr_fetch_from_erp(_doc["tido"], str(_doc["nudo"]))
+        except Exception as _e_refresh:
+            print(f"[stock-erp] no se pudo refrescar saldo del doc {commitment_id}: "
+                  f"{_e_refresh}", flush=True)
+
+    # FIX 2026-07-31: mismo bug que _tr_buscar_detalle -- transport_commitment_lines
+    # solo guarda líneas ZZ en la práctica, así que "NOT LIKE 'ZZ%'" daba SIEMPRE
+    # 0 filas y el botón mostraba "El ERP no devolvió stock" para CUALQUIER
+    # documento. Los SKUs reales viven en productos_json (recién refrescado
+    # arriba), con transport_commitment_lines como respaldo.
+    _prods_doc = _tr_parse_productos_json(
+        (mysql_fetchone("SELECT productos_json FROM transport_commitments WHERE id=%s",
+                         (commitment_id,)) or {}).get("productos_json"))
+    if _prods_doc:
+        _skus = list({p["koprct"].strip().upper() for p in _prods_doc if p.get("koprct")})
+    else:
+        _skus = [r["koprct"] for r in (mysql_fetchall(
+            "SELECT DISTINCT koprct FROM transport_commitment_lines "
+            "WHERE commitment_id=%s AND koprct NOT LIKE 'ZZ%%'", (commitment_id,)) or [])]
     if not _skus:
         return jsonify({"ok": True, "stock": {}})
     stock = get_erp_stock_by_skus(_skus)
@@ -31419,20 +31478,39 @@ def tr_cron_stock_snapshot():
         return jsonify({"error": "forbidden"}), 403
 
     _ensure_transport_stock_cache_table()
-    rows = mysql_fetchall("""
-        SELECT DISTINCT l.koprct AS sku
-        FROM transport_commitment_lines l
-        JOIN transport_commitments c ON c.id = l.commitment_id
-        WHERE l.koprct NOT LIKE 'ZZ%%'
-          AND (
-                c.tiene_saldo = 1
-             OR c.id IN (
-                  SELECT commitment_id FROM transport_manifest_items
-                  WHERE estado_entrega NOT IN ('Entregado', 'Devolución')
-                )
-          )
+    # FIX 2026-07-31: mismo bug de _tr_buscar_detalle -- transport_commitment_lines
+    # solo guarda líneas ZZ en la práctica, así que "NOT LIKE 'ZZ%'" daba
+    # SIEMPRE 0 filas y este cron nunca alimentó transport_stock_cache con
+    # SKUs reales. Los SKUs viven en productos_json; se parsean en Python
+    # con el mismo helper que usa _tr_buscar_detalle, con
+    # transport_commitment_lines como respaldo para documentos legacy que
+    # aún no pasaron por _tr_fetch_from_erp.
+    docs = mysql_fetchall("""
+        SELECT c.id, c.productos_json
+        FROM transport_commitments c
+        WHERE c.tiene_saldo = 1
+           OR c.id IN (
+                SELECT commitment_id FROM transport_manifest_items
+                WHERE estado_entrega NOT IN ('Entregado', 'Devolución')
+              )
     """) or []
-    skus = [r["sku"] for r in rows if r.get("sku")]
+    sku_set = set()
+    _sin_prods_json = []
+    for d in docs:
+        _prods = _tr_parse_productos_json(d.get("productos_json"))
+        if _prods:
+            sku_set.update(p["koprct"].strip().upper() for p in _prods if p.get("koprct"))
+        else:
+            _sin_prods_json.append(d["id"])
+    if _sin_prods_json:
+        _ph = ",".join(["%s"] * len(_sin_prods_json))
+        for r in (mysql_fetchall(
+            f"SELECT DISTINCT koprct AS sku FROM transport_commitment_lines "
+            f"WHERE commitment_id IN ({_ph}) AND koprct NOT LIKE 'ZZ%%'",
+            tuple(_sin_prods_json)) or []):
+            if r.get("sku"):
+                sku_set.add(r["sku"].strip().upper())
+    skus = list(sku_set)
     if not skus:
         return jsonify({"ok": True, "skus": 0, "actualizados": 0})
 
@@ -31446,6 +31524,49 @@ def tr_cron_stock_snapshot():
         except Exception as e:
             print(f"[stock-snapshot] lote {i//200+1} falló: {e}", flush=True)
     return jsonify({"ok": True, "skus": len(skus), "actualizados": actualizados})
+
+
+@app.route("/transporte/cron/refrescar-saldo-productos", methods=["GET", "POST"])
+def tr_cron_refrescar_saldo_productos():
+    """Sondeo automático del SALDO por producto de documentos EN CURSO
+    (2026-07-31, Daniel, comparando el ERP con el modal en vivo: "cuando
+    actualizo la 22719 me dice que tengo 4 productos con saldo, pero en el
+    ERP no tiene saldo... necesito que el stock se vaya actualizando...
+    cuando abras el modal, ya se actualizó, ya no tiene saldo -- tiene que
+    funcionar como relojito").
+
+    A diferencia de tr_cron_stock_snapshot (stock GLOBAL por SKU, un solo
+    query batch), acá el saldo es POR DOCUMENTO -- requiere 1 consulta al
+    ERP por documento (_tr_fetch_from_erp, que ya trae y persiste el saldo
+    fresco en productos_json como efecto de refrescar el resto del doc).
+    Por eso el alcance se acota a documentos con un despacho ACTIVO (no
+    terminal) -- el mismo universo chico de "En gestión" del Monitor, no
+    los ~370 pendientes -- para no golpear el ERP cada hora con cientos de
+    consultas. Pensado para Cloud Scheduler cada 1 hora.
+    """
+    tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
+    if not _fedex_cron_token_required(tok):
+        return jsonify({"error": "forbidden"}), 403
+
+    docs = mysql_fetchall("""
+        SELECT DISTINCT c.id, c.tido, c.nudo
+        FROM transport_commitments c
+        JOIN transport_manifest_items mi ON mi.commitment_id = c.id
+        WHERE mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
+    """) or []
+
+    actualizados, fallidos = 0, 0
+    for d in docs:
+        try:
+            comm_id, err = _tr_fetch_from_erp(d["tido"], str(d["nudo"]))
+            if comm_id:
+                actualizados += 1
+            else:
+                fallidos += 1
+        except Exception as e:
+            fallidos += 1
+            print(f"[refrescar-saldo] {d['tido']} {d['nudo']} falló: {e}", flush=True)
+    return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados, "fallidos": fallidos})
 
 
 # ── FACTURAS DE PROVEEDOR: conciliación financiera con couriers ──────────
