@@ -589,11 +589,14 @@ window._trkItemId = null;
 var _trkData = null;
 var _trkLoadToken = 0;   // evita que un fetch viejo pise al Refrescar
 
+// 2026-07-31: "Retirado" en vez de "Entregado a transporte" -- más corto
+// (cabe mejor en los 62px del label del paso) y menos parecido a
+// "Entregado" (paso 4), que es el que de verdad importa distinguir.
 var TRK_STEPS = [
-  { label: 'En preparación',          icon: 'bi-clipboard-check' },
-  { label: 'Entregado a transporte',  icon: 'bi-truck-flatbed' },
-  { label: 'En ruta',                 icon: 'bi-truck' },
-  { label: 'Entregado',               icon: 'bi-check-circle-fill' },
+  { label: 'En preparación',  icon: 'bi-clipboard-check' },
+  { label: 'Retirado',        icon: 'bi-truck-flatbed' },
+  { label: 'En ruta',         icon: 'bi-truck' },
+  { label: 'Entregado',       icon: 'bi-check-circle-fill' },
 ];
 
 async function abrirTrackingDetalle(itemId, force) {
@@ -665,9 +668,22 @@ function _trkEsc(s) {
 
 function _trkRender(d) {
   document.getElementById('trkDoc').textContent = d.doc || '';
-  document.getElementById('trkStateLabel').textContent = d.estado || '—';
+  // 2026-07-31: mismo mapeo de label+fondo que el modal SimpliRoute (ver
+  // _srAplicarEstadoHero) -- "Entregado a transporte" vs "Entregado" se
+  // confundían a simple vista. El ícono sigue viniendo del servidor
+  // (d.estado_icon, ya afinado para FedEx) -- solo se homologa el TEXTO y
+  // el fondo reactivo del hero.
+  var _uiFx = _SR_ESTADO_UI[d.estado] || { label: d.estado, bg: '' };
+  document.getElementById('trkStateLabel').textContent = _uiFx.label || d.estado || '—';
+  var trkStateEl = document.getElementById('trkState');
+  if (trkStateEl) trkStateEl.classList.toggle('trk-state-pop', d.estado === 'Entregado');
   var stIcon = document.querySelector('#trkState i');
   if (stIcon) stIcon.className = 'bi ' + (d.estado_icon || 'bi-circle');
+  var trkHeroEl = document.getElementById('trkHero');
+  if (trkHeroEl) {
+    _SR_HERO_BG_CLASSES.split(' ').forEach(function(c){ trkHeroEl.classList.remove(c); });
+    if (_uiFx.bg) trkHeroEl.classList.add(_uiFx.bg);
+  }
   var sub = [];
   if (d.cliente) sub.push(d.cliente);
   if (d.comuna) sub.push(d.comuna);
@@ -1224,23 +1240,35 @@ function _ilusMapModal(lat, lng, label) {
   _ilusMapModalInst.show();
 }
 
-// ── Hero: icono + color según estado (rediseño 2026-07-29) ──
+// ── Hero: icono + color + LABEL según estado (rediseño 2026-07-29,
+// ajustado 2026-07-31 tras propuesta del especialista last-mile: los dos
+// estados "Entregado a transporte" y "Entregado" se confundían a simple
+// vista -- el label mostrado ahora los distingue sin ambigüedad. El VALOR
+// guardado en BD/lógica de negocio (estado_entrega) NO cambia, solo el
+// texto que se le muestra al usuario en el modal.) ──
 var _SR_ESTADO_UI = {
-  'En preparación':          { ico: 'bi-box-seam',                color: '#cbd5e1' },
-  'Entregado a transporte':  { ico: 'bi-box-arrow-right',         color: '#fbbf24' },
-  'En ruta':                 { ico: 'bi-truck',                   color: '#93c5fd' },
-  'Entregado':               { ico: 'bi-check-circle-fill',       color: '#4ade80' },
-  'Entrega fallida':         { ico: 'bi-x-octagon-fill',          color: '#f87171' },
-  'Problema':                { ico: 'bi-exclamation-triangle-fill', color: '#f87171' },
-  'Devolución':              { ico: 'bi-arrow-counterclockwise',  color: '#fca5a5' },
+  'En preparación':          { ico: 'bi-box-seam',                color: '#cbd5e1', label: 'En preparación',        bg: '' },
+  'Entregado a transporte':  { ico: 'bi-box-arrow-right',         color: '#fbbf24', label: 'Retirado por el courier', bg: 'trk-hero-transito' },
+  'En ruta':                 { ico: 'bi-truck',                   color: '#93c5fd', label: 'En ruta',               bg: 'trk-hero-ruta' },
+  'Entregado':               { ico: 'bi-check-circle-fill',       color: '#4ade80', label: 'Entregado al cliente',  bg: 'trk-hero-entregado' },
+  'Entrega fallida':         { ico: 'bi-x-octagon-fill',          color: '#f87171', label: 'Entrega fallida',       bg: 'trk-hero-falla' },
+  'Problema':                { ico: 'bi-exclamation-triangle-fill', color: '#f87171', label: 'Problema',            bg: 'trk-hero-falla' },
+  'Devolución':              { ico: 'bi-arrow-counterclockwise',  color: '#fca5a5', label: 'Devolución',            bg: 'trk-hero-falla' },
 };
+var _SR_HERO_BG_CLASSES = 'trk-hero-transito trk-hero-ruta trk-hero-entregado trk-hero-falla';
 function _srAplicarEstadoHero(estado) {
-  var ui = _SR_ESTADO_UI[estado] || { ico: 'bi-geo-alt-fill', color: '#e2e8f0' };
+  var ui = _SR_ESTADO_UI[estado] || { ico: 'bi-geo-alt-fill', color: '#e2e8f0', label: estado, bg: '' };
   var icoEl = document.getElementById('srStateIcon');
   var stEl  = document.getElementById('srState');
+  var heroEl = document.getElementById('srHero');
   if (icoEl) icoEl.className = 'bi ' + ui.ico;
   if (stEl)  stEl.style.color = ui.color;
-  document.getElementById('srStateLabel').textContent = estado || '—';
+  if (heroEl) {
+    _SR_HERO_BG_CLASSES.split(' ').forEach(function(c){ heroEl.classList.remove(c); });
+    if (ui.bg) heroEl.classList.add(ui.bg);
+  }
+  document.getElementById('srStateLabel').textContent = ui.label || estado || '—';
+  if (stEl) stEl.classList.toggle('trk-state-pop', estado === 'Entregado');
 }
 
 // Formato humano de días: 0.4 d → "9 h", 1.0 → "1 día", 2.5 → "2,5 días"

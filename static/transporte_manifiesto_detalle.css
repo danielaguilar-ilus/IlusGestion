@@ -258,23 +258,52 @@
 .trk-sub      { animation-delay:.11s; }
 .sr-kpis      { animation-delay:.15s; }
 @keyframes trkHeroIn { from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:translateY(0); } }
+/* 2026-07-31 (hallazgo del especialista UX: estos dos modales no tenían
+   regla fullscreen en mobile, a diferencia del resto de la app -- REGLA #3
+   del proyecto exige modales fullscreen en mobile.css, pero estos dos usan
+   Bootstrap .modal-lg sin override). */
+@media (max-width:576px){
+  #trackingModal .modal-dialog, #simpliRouteModal .modal-dialog {
+    margin:0; max-width:100%; height:100dvh; transform:none !important;
+  }
+  #trackingModal .trk-modal, #simpliRouteModal .trk-modal {
+    border-radius:0; height:100dvh; display:flex; flex-direction:column;
+  }
+  #trackingModal .trk-body, #simpliRouteModal .trk-body { flex:1 1 auto; overflow-y:auto; }
+}
 .trk-modal { border:0; border-radius:18px; overflow:hidden; }
 .trk-hero {
   position:relative;
   background:linear-gradient(140deg,#4d148c 0%,#2b0a52 55%,#0a0a0a 100%);
-  color:#fff; padding:22px 24px 16px;
+  color:#fff; padding:30px 28px 22px;
+  transition:background .3s ease;
 }
-.trk-close { position:absolute; top:14px; right:16px; }
+/* 2026-07-31 (propuesta especialista UX, tras hallazgo del especialista
+   last-mile de que "Entregado a transporte" vs "Entregado" se confundían):
+   el fondo del hero ahora reacciona al estado, no solo el ícono/texto --
+   refuerza la distinción sin depender solo de leer el label. Overlay sutil
+   sobre el degradado base, no lo reemplaza. */
+.trk-hero-transito::after, .trk-hero-ruta::after, .trk-hero-entregado::after, .trk-hero-falla::after {
+  content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+}
+.trk-hero-transito::after { background:radial-gradient(circle at 85% 0%, rgba(251,191,36,.22), transparent 60%); }
+.trk-hero-ruta::after      { background:radial-gradient(circle at 85% 0%, rgba(147,197,253,.22), transparent 60%); }
+.trk-hero-entregado::after { background:radial-gradient(circle at 85% 0%, rgba(22,163,74,.30), transparent 60%); }
+.trk-hero-falla::after     { background:radial-gradient(circle at 85% 0%, rgba(220,38,38,.28), transparent 60%); }
+.trk-hero > * { position:relative; z-index:1; }
+.trk-close { position:absolute; top:14px; right:16px; z-index:2; }
 .trk-hero-top { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
 .trk-fx { background:#fff; color:#4d148c; font-weight:900; font-size:13px; border-radius:5px; padding:2px 8px; }
 .trk-fx span { color:#ff6600; }
 .trk-doc { font-family:'Courier New',monospace; font-weight:800; font-size:15px; letter-spacing:.5px; opacity:.95; }
 .trk-state {
-  display:inline-flex; align-items:center; gap:8px;
-  font-size:1.45rem; font-weight:900; line-height:1.1; margin-bottom:4px;
+  display:inline-flex; align-items:center; gap:10px;
+  font-size:2.4rem; font-weight:900; line-height:1.05; margin-bottom:6px;
 }
-.trk-state i { font-size:1.5rem; }
-.trk-sub { font-size:.82rem; opacity:.82; font-weight:600; }
+.trk-state i { font-size:2.3rem; }
+.trk-state.trk-state-pop i { animation:trkStatePop .42s cubic-bezier(.34,1.56,.64,1); }
+@keyframes trkStatePop { 0%{ transform:scale(.5); } 65%{ transform:scale(1.08); } 100%{ transform:scale(1); } }
+.trk-sub { font-size:.85rem; opacity:.82; font-weight:600; }
 .trk-tn {
   font-family:'Courier New',monospace; font-size:1.05rem; font-weight:900;
   letter-spacing:1px; margin-top:8px; color:#fff;
@@ -335,7 +364,7 @@
 .trk-ev-meta .loc { color:#4d148c; font-weight:700; }
 .trk-empty { text-align:center; color:#9ca3af; font-size:.85rem; padding:24px 10px; }
 .trk-foot { justify-content:space-between; }
-@media (max-width:576px){ .trk-step-label{ font-size:.52rem; } .trk-state{ font-size:1.2rem; } }
+@media (max-width:576px){ .trk-step-label{ font-size:.52rem; } .trk-state{ font-size:1.7rem; } .trk-state i{ font-size:1.6rem; } }
 
 /* ── SimpliRoute modal ("Ver seguimiento y acciones") — mismo lenguaje
    visual que .trk-*, pero con la paleta ILUS negro/rojo en vez del
@@ -592,10 +621,19 @@
   gap:.6rem;
 }
 .sr-indic-card{
-  background:#f8fafc; border:1px solid #eef0f2; border-radius:10px;
+  background:#f8fafc; border:1px solid #eef0f2; border-left:3px solid #d1d5db; border-radius:10px;
   padding:.65rem .8rem; opacity:0; transform:translateY(4px);
-  animation:srIndicIn .35s ease forwards;
+  animation:srIndicIn .4s cubic-bezier(.16,1,.3,1) forwards;
 }
+/* 2026-07-31 (propuesta UX: hallazgo real -- el comentario decía "fade-in
+   escalonado" pero las 4 tarjetas entraban todas juntas, sin nth-child).
+   Delay real por posición, hasta la 6ª tarjeta (más que eso, ya no se nota). */
+.sr-indic-card:nth-child(1){ animation-delay:0s; }
+.sr-indic-card:nth-child(2){ animation-delay:.06s; }
+.sr-indic-card:nth-child(3){ animation-delay:.12s; }
+.sr-indic-card:nth-child(4){ animation-delay:.18s; }
+.sr-indic-card:nth-child(5){ animation-delay:.24s; }
+.sr-indic-card:nth-child(6){ animation-delay:.30s; }
 @keyframes srIndicIn{ to{ opacity:1; transform:translateY(0); } }
 .sr-indic-k{
   font-size:.62rem; text-transform:uppercase; letter-spacing:.6px;
@@ -603,10 +641,11 @@
 }
 .sr-indic-v{ font-size:1rem; font-weight:900; color:#111827; line-height:1.2; }
 .sr-indic-hint{ font-size:.68rem; color:#9099a6; margin-top:.15rem; }
-.sr-indic-card.sr-indic-danger{ background:#fef2f2; border-color:#fecaca; }
+.sr-indic-card.sr-indic-danger{ background:#fef2f2; border-color:#fecaca; border-left-color:#dc2626; }
 .sr-indic-card.sr-indic-danger .sr-indic-v{ color:#dc2626; }
+.sr-indic-card.sr-indic-ok{ border-left-color:#16a34a; }
 .sr-indic-card.sr-indic-ok .sr-indic-v{ color:#16a34a; }
-.sr-indic-card.sr-indic-warn{ background:#fff8e1; border-color:#fde68a; }
+.sr-indic-card.sr-indic-warn{ background:#fff8e1; border-color:#fde68a; border-left-color:#f59e0b; }
 .sr-indic-card.sr-indic-warn .sr-indic-v{ color:#b45309; }
 .sr-indic-bar{
   height:6px; background:#e5e7eb; border-radius:99px; overflow:hidden; margin-top:.4rem;
