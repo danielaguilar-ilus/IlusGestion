@@ -1260,6 +1260,34 @@ var _SR_ESTADO_UI = {
   'Devolución':              { ico: 'bi-arrow-counterclockwise',  color: '#fca5a5', label: 'Devolución',            bg: 'trk-hero-falla' },
 };
 var _SR_HERO_BG_CLASSES = 'trk-hero-transito trk-hero-ruta trk-hero-entregado trk-hero-falla';
+// 2026-07-31 (Daniel: "no entiendo por qué Felca no tiene el seguimiento
+// del tracking... esto tiene que ser estandarizado"): el modal SimpliRoute
+// no tenía el mismo stepper de 4 pasos que el modal FedEx. A diferencia de
+// FedEx (que trae estado_step calculado por el servidor desde
+// ESTADOS_ENTREGA_META), acá solo se tiene el string del estado -- se
+// mapea localmente al mismo índice de paso.
+var _SR_ESTADO_STEP = {
+  'En preparación': 1, 'Entregado a transporte': 2, 'En ruta': 3,
+  'Entregado': 4, 'Entrega fallida': 3, 'Problema': 3, 'Devolución': 3,
+};
+function _srRenderSteps(containerId, estado) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  var cur = _SR_ESTADO_STEP[estado] || 1;
+  var danger = (estado === 'Entrega fallida' || estado === 'Problema' || estado === 'Devolución');
+  var html = '';
+  TRK_STEPS.forEach(function(s, i) {
+    var n = i + 1;
+    var cls = '';
+    if (n < cur) cls = 'done';
+    else if (n === cur) cls = danger ? 'danger' : (n === TRK_STEPS.length ? 'done' : 'active');
+    html += '<div class="trk-step ' + cls + '">'
+      + (i < TRK_STEPS.length - 1 ? '<div class="trk-step-line"></div>' : '')
+      + '<div class="trk-step-dot"><span class="emoji">' + s.emoji + '</span></div>'
+      + '<div class="trk-step-label">' + s.label + '</div></div>';
+  });
+  el.innerHTML = html;
+}
 function _srAplicarEstadoHero(estado) {
   var ui = _SR_ESTADO_UI[estado] || { ico: 'bi-geo-alt-fill', color: '#e2e8f0', label: estado, bg: '' };
   var icoEl = document.getElementById('srStateIcon');
@@ -1273,6 +1301,7 @@ function _srAplicarEstadoHero(estado) {
   }
   document.getElementById('srStateLabel').textContent = ui.label || estado || '—';
   if (stEl) stEl.classList.toggle('trk-state-pop', estado === 'Entregado');
+  _srRenderSteps('srSteps', estado);
 }
 
 // Formato humano de días: 0.4 d → "9 h", 1.0 → "1 día", 2.5 → "2,5 días"

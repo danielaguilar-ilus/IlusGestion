@@ -26928,15 +26928,15 @@ def _tracking_payload_json_safe(payload):
         return payload
     out = dict(payload)
     if out.get("entregado_at"):
-        out["entregado_at"] = chile_fmt_filter(out["entregado_at"], "%Y-%m-%d %H:%M:%S")
+        out["entregado_at"] = chile_fmt_filter(out["entregado_at"], "%d/%m/%Y %H:%M:%S")
     if out.get("proof"):
         proof = dict(out["proof"])
         if proof.get("entregado_at"):
-            proof["entregado_at"] = chile_fmt_filter(proof["entregado_at"], "%Y-%m-%d %H:%M:%S")
+            proof["entregado_at"] = chile_fmt_filter(proof["entregado_at"], "%d/%m/%Y %H:%M:%S")
         out["proof"] = proof
     if out.get("eventos"):
         out["eventos"] = [
-            {**ev, "ts": chile_fmt_filter(ev["ts"], "%Y-%m-%d %H:%M:%S") if ev.get("ts") else ev.get("ts")}
+            {**ev, "ts": chile_fmt_filter(ev["ts"], "%d/%m/%Y %H:%M:%S") if ev.get("ts") else ev.get("ts")}
             for ev in out["eventos"]
         ]
     return out
@@ -27474,7 +27474,7 @@ def tr_get_tracking_fedex(item_id):
         # (str(...)[:19]) sin pasar por chile_fmt -- se pintaba tal cual en
         # el modal de tracking (transporte_manifiesto_detalle.js) 4 horas
         # adelantado respecto a la hora de Santiago.
-        "last_poll":         (chile_fmt_filter(r.get("last_carrier_poll_at"), "%Y-%m-%d %H:%M:%S")
+        "last_poll":         (chile_fmt_filter(r.get("last_carrier_poll_at"), "%d/%m/%Y %H:%M:%S")
                                if r.get("last_carrier_poll_at") else ""),
         "last_status":       r.get("last_carrier_status") or "",
         "source":            r.get("last_carrier_source") or "",
@@ -28069,7 +28069,7 @@ def tr_item_tracking_detalle(item_id):
             "fuente":     e.get("fuente") or "manual",
             # FIX 2026-07-27: mismo bug de hora UTC cruda que en
             # _tracking_payload -- convertir a Chile antes de mostrar.
-            "ts":         chile_fmt_filter(e.get("ts_utc"), "%Y-%m-%d %H:%M:%S") if e.get("ts_utc") else "",
+            "ts":         chile_fmt_filter(e.get("ts_utc"), "%d/%m/%Y %H:%M:%S") if e.get("ts_utc") else "",
             "comentario": e.get("comentario") or "",
         })
 
@@ -30867,7 +30867,7 @@ def _tr_buscar_detalle(commitment_id):
             proof = {**dict(p), "fotos": fotos, "fotos_json": None,
                      # FIX 2026-07-27: entregado_at venía en UTC crudo (naive)
                      # -- .tojson lo serializaba sin convertir a Chile.
-                     "entregado_at": (chile_fmt_filter(p.get("entregado_at"), "%Y-%m-%d %H:%M:%S")
+                     "entregado_at": (chile_fmt_filter(p.get("entregado_at"), "%d/%m/%Y %H:%M:%S")
                                        if p.get("entregado_at") else None)}
     # ── Líneas de producto + fotos (2026-07-29, rediseño modal SimpliRoute
     # "Ver seguimiento y acciones", pedido de Daniel: "los productos que se
@@ -31045,7 +31045,7 @@ def _tr_buscar_detalle(commitment_id):
         # módulo (ver entregado_at / eventos[].ts arriba).
         if mi_out.get("last_carrier_poll_at"):
             mi_out["last_carrier_poll_at"] = chile_fmt_filter(
-                mi_out["last_carrier_poll_at"], "%Y-%m-%d %H:%M:%S"
+                mi_out["last_carrier_poll_at"], "%d/%m/%Y %H:%M:%S"
             )
     c_out = dict(c)
     # FIX 2026-07-28 (mismo bug SEV-8b, un campo que quedó sin corregir esa
@@ -31053,7 +31053,7 @@ def _tr_buscar_detalle(commitment_id):
     # de dict(c) -- jsonify() lo serializaba en inglés (RFC 1123) igual que
     # last_carrier_poll_at / entregado_at arriba.
     if c_out.get("delivered_at"):
-        c_out["delivered_at"] = chile_fmt_filter(c_out["delivered_at"], "%Y-%m-%d %H:%M:%S")
+        c_out["delivered_at"] = chile_fmt_filter(c_out["delivered_at"], "%d/%m/%Y %H:%M:%S")
     # fecha_emision es un date puro (sin hora) -- formatear explícito en vez
     # de dejar que el serializador JSON lo intente (mismo motivo que los
     # fixes SEV-8b de arriba: mejor explícito que confiar en el default).
@@ -31069,7 +31069,7 @@ def _tr_buscar_detalle(commitment_id):
             "fuente":     e.get("fuente") or "",
             # FIX 2026-07-27: mismo bug de hora UTC cruda del resto del
             # módulo -- convertir a Chile antes de mandarlo al frontend.
-            "ts":         chile_fmt_filter(e.get("ts_utc"), "%Y-%m-%d %H:%M:%S") if e.get("ts_utc") else "",
+            "ts":         chile_fmt_filter(e.get("ts_utc"), "%d/%m/%Y %H:%M:%S") if e.get("ts_utc") else "",
             "comentario": e.get("comentario") or "",
             "usuario":    e.get("usuario") or "",
             "lat":        float(e["lat"]) if e.get("lat") else None,
@@ -34891,7 +34891,7 @@ def tr_courier_api_data(cid):
     # el resto de los fixes de esta noche (chile_fmt_filter antes de jsonify).
     for _campo in ("created_at", "updated_at"):
         if courier_out.get(_campo):
-            courier_out[_campo] = chile_fmt_filter(courier_out[_campo], "%Y-%m-%d %H:%M:%S")
+            courier_out[_campo] = chile_fmt_filter(courier_out[_campo], "%d/%m/%Y %H:%M:%S")
     return jsonify(courier_out)
 
 

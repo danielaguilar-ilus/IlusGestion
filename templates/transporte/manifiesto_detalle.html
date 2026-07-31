@@ -1380,14 +1380,16 @@ function mfdFiltrarTabla(){
         <div class="trk-tn" id="trkTn"></div>
         {# Stepper de estados ILUS #}
         <div class="trk-steps" id="trkSteps"></div>
-        {# KPIs translúcidos — mismo criterio que el modal SimpliRoute:
-           tiempo de entrega / bultos / destino / última actualización #}
-        <div class="sr-kpis">
-          <div class="sr-kpi" id="trkKpiTiempoCard">
-            <span class="sr-kpi-k" id="trkKpiTiempoLabel">Tiempo</span>
-            <span class="sr-kpi-v" id="trkKpiTiempo">—</span>
-            <span class="sr-kpi-hint" id="trkKpiTiempoHint"></span>
-          </div>
+        {# 2026-07-31 (Daniel: "colocar los tiempos debajo del modal, que
+           tenga su espacio... perfecto que diga entregado al cliente")
+           -- el tiempo de entrega/tránsito ya no comparte grid parejo con
+           bultos/destino/actualización, tiene su propia banda destacada. #}
+        <div class="sr-kpi-tiempo-band" id="trkKpiTiempoCard">
+          <span class="sr-kpi-tiempo-k" id="trkKpiTiempoLabel">Tiempo</span>
+          <span class="sr-kpi-tiempo-v" id="trkKpiTiempo">—</span>
+          <span class="sr-kpi-tiempo-hint" id="trkKpiTiempoHint"></span>
+        </div>
+        <div class="sr-kpis sr-kpis-3">
           <div class="sr-kpi">
             <span class="sr-kpi-k">Bultos</span>
             <span class="sr-kpi-v" id="trkKpiBultos">—</span>
@@ -1515,13 +1517,20 @@ function mfdFiltrarTabla(){
         <div class="trk-state" id="srState"><i class="bi bi-hourglass-split" id="srStateIcon"></i> <span id="srStateLabel">Cargando…</span></div>
         <div class="trk-sub" id="srSub">—</div>
         <div class="sr-live-chip" id="srLiveChip" style="display:none"></div>
-        {# KPIs translúcidos — mismo lenguaje visual que #vistaModal del monitor #}
-        <div class="sr-kpis">
-          <div class="sr-kpi" id="srKpiTiempoCard">
-            <span class="sr-kpi-k" id="srKpiTiempoLabel">Tiempo</span>
-            <span class="sr-kpi-v" id="srKpiTiempo">—</span>
-            <span class="sr-kpi-hint" id="srKpiTiempoHint"></span>
-          </div>
+        {# Stepper de estados ILUS -- 2026-07-31 (Daniel: "no entiendo por qué
+           Felca no tiene el seguimiento del tracking... esto tiene que ser
+           estandarizado"): el modal SimpliRoute no tenía el mismo stepper
+           visual que el modal FedEx. Mismo #trkSteps, mismo TRK_STEPS/emoji,
+           poblado por _srAplicarEstadoHero. #}
+        <div class="trk-steps" id="srSteps"></div>
+        {# 2026-07-31 (Daniel: "colocar los tiempos debajo del modal, que
+           tenga su espacio") -- misma banda destacada que el modal FedEx. #}
+        <div class="sr-kpi-tiempo-band" id="srKpiTiempoCard">
+          <span class="sr-kpi-tiempo-k" id="srKpiTiempoLabel">Tiempo</span>
+          <span class="sr-kpi-tiempo-v" id="srKpiTiempo">—</span>
+          <span class="sr-kpi-tiempo-hint" id="srKpiTiempoHint"></span>
+        </div>
+        <div class="sr-kpis sr-kpis-3">
           <div class="sr-kpi">
             <span class="sr-kpi-k">Bultos</span>
             <span class="sr-kpi-v" id="srKpiBultos">—</span>
