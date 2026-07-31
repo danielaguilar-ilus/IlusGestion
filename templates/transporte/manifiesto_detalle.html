@@ -1381,8 +1381,6 @@ function mfdFiltrarTabla(){
         <div class="trk-state" id="trkState"><i class="bi bi-hourglass-split"></i> <span id="trkStateLabel">Cargando…</span></div>
         <div class="trk-sub" id="trkSub">—</div>
         <div class="trk-tn" id="trkTn"></div>
-        {# Stepper de estados ILUS #}
-        <div class="trk-steps" id="trkSteps"></div>
         {# 2026-07-31 (Daniel: "colocar los tiempos debajo del modal, que
            tenga su espacio... perfecto que diga entregado al cliente")
            -- el tiempo de entrega/tránsito ya no comparte grid parejo con
@@ -1408,6 +1406,20 @@ function mfdFiltrarTabla(){
         </div>
       </div>
       <div class="modal-body trk-body sr-body">
+        {# ── Stepper de estados ILUS -- SACADO del hero oscuro 2026-07-31
+           (Daniel: "debe ser idéntico al tracking de retiro... con
+           colores, latente, dinámico" + screenshot de retiros_public_tracking
+           mostrando el stepper en su PROPIA tarjeta clara, con círculos
+           grandes y espacio de sobra, no comprimido en la cabecera). Mismo
+           patrón .progress-card/.stepper/.step de retiros, reusando la
+           tarjeta .sr-sec para mantener coherencia con el resto del modal.
+           Ahora cada hito también muestra fecha/hora (para ver la
+           velocidad del envío), calculada en JS desde el historial. #}
+        <div class="sr-sec sr-sec-stepper">
+          <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Avance del envío · paso a paso</div>
+          <div class="trk-steps" id="trkSteps"></div>
+        </div>
+
         {# ── Indicadores del documento (2026-07-31, Daniel: "el interno
            tiene que llevarnos a todo") — mismos indicadores del modal
            SimpliRoute (ver srSecIndicadores), reusando _srRenderIndicadores
@@ -1525,12 +1537,6 @@ function mfdFiltrarTabla(){
         <div class="trk-state" id="srState"><i class="bi bi-hourglass-split" id="srStateIcon"></i> <span id="srStateLabel">Cargando…</span></div>
         <div class="trk-sub" id="srSub">—</div>
         <div class="sr-live-chip" id="srLiveChip" style="display:none"></div>
-        {# Stepper de estados ILUS -- 2026-07-31 (Daniel: "no entiendo por qué
-           Felca no tiene el seguimiento del tracking... esto tiene que ser
-           estandarizado"): el modal SimpliRoute no tenía el mismo stepper
-           visual que el modal FedEx. Mismo #trkSteps, mismo TRK_STEPS/emoji,
-           poblado por _srAplicarEstadoHero. #}
-        <div class="trk-steps" id="srSteps"></div>
         {# 2026-07-31 (Daniel: "colocar los tiempos debajo del modal, que
            tenga su espacio") -- misma banda destacada que el modal FedEx. #}
         <div class="sr-kpi-tiempo-band" id="srKpiTiempoCard">
@@ -1554,6 +1560,18 @@ function mfdFiltrarTabla(){
         </div>
       </div>
       <div class="modal-body trk-body sr-body">
+        {# ── Stepper de estados ILUS -- SACADO del hero oscuro 2026-07-31
+           (Daniel: "no entiendo por qué Felca no tiene el seguimiento del
+           tracking... esto tiene que ser estandarizado" + "debe ser
+           idéntico al tracking de retiro... con colores, latente,
+           dinámico"). Mismo #trkSteps/TRK_STEPS que el modal FedEx, ahora
+           en su propia tarjeta clara con espacio de sobra en vez de
+           comprimido en la cabecera, con fecha/hora por hito. ── #}
+        <div class="sr-sec sr-sec-stepper">
+          <div class="sr-sec-h"><i class="bi bi-graph-up-arrow"></i>Avance del envío · paso a paso</div>
+          <div class="trk-steps" id="srSteps"></div>
+        </div>
+
         {# Tabs: Timeline / Acciones #}
         <div class="trk-tabs">
           <button class="trk-tab is-active" data-srtab="timeline" onclick="srSwitchTab('timeline')">

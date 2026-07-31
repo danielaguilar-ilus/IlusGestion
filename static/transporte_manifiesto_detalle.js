@@ -603,6 +603,22 @@ var TRK_STEPS = [
   { label: 'Entregado',       icon: 'bi-check-circle-fill', emoji: '✅' },
 ];
 
+// 2026-07-31 (Daniel: "ojalá podamos contar con la fecha de cada
+// movimiento abajo y hora para ver la velocidad que se mueve el pedido")
+// -- busca en el historial (eventos, orden DESC = más nuevo primero) el
+// evento MÁS ANTIGUO que ya alcanzó al menos este paso -- esa fecha es
+// "cuándo llegó a este hito". Usa _SR_ESTADO_STEP (definido más abajo)
+// como mapeo estado->paso, el mismo que ya usa el modal SimpliRoute.
+function _trkStepFecha(eventos, stepNum) {
+  if (!eventos || !eventos.length) return '';
+  for (var i = eventos.length - 1; i >= 0; i--) {
+    var e = eventos[i];
+    var st = (typeof _SR_ESTADO_STEP !== 'undefined' && _SR_ESTADO_STEP[e.estado]) || 0;
+    if (st >= stepNum && e.ts) return e.ts;
+  }
+  return '';
+}
+
 async function abrirTrackingDetalle(itemId, force) {
   if (!itemId) return;
   window._trkItemId = itemId;
@@ -738,10 +754,12 @@ function _trkRender(d) {
       var esUltimo = (n === TRK_STEPS.length);
       cls = danger ? 'danger' : (esUltimo ? 'done' : 'active');
     }
+    var fecha = (cls === 'done' || cls === 'active' || cls === 'danger') ? _trkStepFecha(d.eventos, n) : '';
     stepsHtml += '<div class="trk-step ' + cls + '">'
       + (i < TRK_STEPS.length - 1 ? '<div class="trk-step-line"></div>' : '')
       + '<div class="trk-step-dot"><span class="emoji">' + s.emoji + '</span></div>'
-      + '<div class="trk-step-label">' + s.label + '</div></div>';
+      + '<div class="trk-step-label">' + s.label + '</div>'
+      + '<div class="trk-step-sub">' + (fecha ? _trkEsc(fecha) : (cls ? '' : 'Pendiente')) + '</div></div>';
   });
   document.getElementById('trkSteps').innerHTML = stepsHtml;
 
@@ -1279,7 +1297,7 @@ var _SR_ESTADO_STEP = {
   'En preparación': 1, 'Entregado a transporte': 2, 'En ruta': 3,
   'Entregado': 4, 'Entrega fallida': 3, 'Problema': 3, 'Devolución': 3,
 };
-function _srRenderSteps(containerId, estado) {
+function _srRenderSteps(containerId, estado, eventos) {
   var el = document.getElementById(containerId);
   if (!el) return;
   var cur = _SR_ESTADO_STEP[estado] || 1;
@@ -1290,14 +1308,16 @@ function _srRenderSteps(containerId, estado) {
     var cls = '';
     if (n < cur) cls = 'done';
     else if (n === cur) cls = danger ? 'danger' : (n === TRK_STEPS.length ? 'done' : 'active');
+    var fecha = (cls === 'done' || cls === 'active' || cls === 'danger') ? _trkStepFecha(eventos, n) : '';
     html += '<div class="trk-step ' + cls + '">'
       + (i < TRK_STEPS.length - 1 ? '<div class="trk-step-line"></div>' : '')
       + '<div class="trk-step-dot"><span class="emoji">' + s.emoji + '</span></div>'
-      + '<div class="trk-step-label">' + s.label + '</div></div>';
+      + '<div class="trk-step-label">' + s.label + '</div>'
+      + '<div class="trk-step-sub">' + (fecha ? _srEsc(fecha) : (cls ? '' : 'Pendiente')) + '</div></div>';
   });
   el.innerHTML = html;
 }
-function _srAplicarEstadoHero(estado) {
+function _srAplicarEstadoHero(estado, eventos) {
   var ui = _SR_ESTADO_UI[estado] || { ico: 'bi-geo-alt-fill', color: '#e2e8f0', label: estado, bg: '' };
   var icoEl = document.getElementById('srStateIcon');
   var stEl  = document.getElementById('srState');
@@ -1310,7 +1330,7 @@ function _srAplicarEstadoHero(estado) {
   }
   document.getElementById('srStateLabel').textContent = ui.label || estado || '—';
   if (stEl) stEl.classList.toggle('trk-state-pop', estado === 'Entregado');
-  _srRenderSteps('srSteps', estado);
+  _srRenderSteps('srSteps', estado, eventos);
 }
 
 // Formato humano de días: 0.4 d → "9 h", 1.0 → "1 día", 2.5 → "2,5 días"
@@ -1441,7 +1461,7 @@ async function _srCargarDetalle(data, token, force) {
 
     // ── Estado del hero: preferir el estado fresco del item ──
     var estadoFresco = (det.manifest_item && det.manifest_item.estado_entrega) || data.estado || '';
-    if (estadoFresco) _srAplicarEstadoHero(estadoFresco);
+    if (estadoFresco) _srAplicarEstadoHero(estadoFresco, det.eventos);
 
     // ── KPI de tiempo ("ya, mira, estuvo tantos días") ──
     var t = det.tiempos || {};
