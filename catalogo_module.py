@@ -2661,24 +2661,31 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "Catálogo ERP no disponible"}), 503
         q_like = f"%{q.upper()[:60]}%"
         try:
+            # FIX 2026-07-31 (Daniel: "no solo se llame a la bodega 02...
+            # necesito cotizar en instalación, no encuentra nada") -- antes
+            # exigía EXISTS en MAEST con KOBO=bodega 02, así que un SKU que
+            # solo tiene stock en OTRA bodega (o que es un servicio de
+            # instalación sin stock físico) nunca aparecía. Ahora busca en
+            # TODO el catálogo de productos (MAEPR) por SKU/nombre, sin
+            # exigir bodega -- el stock de bodega 02 se sigue mostrando
+            # (LEFT JOIN) cuando existe, informativo, ya no como filtro.
             rows = _random_sql_query(
                 """
                 SELECT DISTINCT TOP 30
                        LTRIM(RTRIM(pr.KOPR))   AS sku,
                        LTRIM(RTRIM(pr.NOKOPR)) AS nombre,
-                       pr.STFI1                AS stock
+                       (SELECT TOP 1 st.STFI1 FROM MAEST st
+                          WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
+                            AND LTRIM(RTRIM(st.KOBO))=%s) AS stock
                   FROM MAEPR pr
-                 WHERE EXISTS (SELECT 1 FROM MAEST st
-                                WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
-                                  AND LTRIM(RTRIM(st.KOBO))=%s)
-                   AND (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                 WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
                    AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
                  ORDER BY nombre
                 """,
                 (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%"), max_rows=30,
             ) or []
         except Exception as _e:
-            print(f"[cat_api_erp_bodega_buscar] error ERP (bodega={CAT_BODEGA_SYNC}): {_e}", flush=True)
+            print(f"[cat_api_erp_bodega_buscar] error ERP: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo buscar en el ERP"}), 502
 
         def _stock_num(v):
