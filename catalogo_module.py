@@ -2216,35 +2216,32 @@ def register_catalogo_routes(app, ctx):
         # deban tener ficha de piolas/manual en el Catalogo).
         limit = max(1, min(5000, limit))
         try:
+            # FIX 2026-07-31 (mismo bug que cat_api_erp_bodega_buscar, Daniel:
+            # "me pasa lo mismo con el catálogo de productos") -- ya no exige
+            # EXISTS en MAEST con KOBO=bodega 02, busca en todo MAEPR.
             if q:
                 q_like = f"%{str(q).upper()[:60]}%"
                 sql = f"""
                     SELECT DISTINCT TOP {limit}
                            LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
                       FROM MAEPR pr
-                     WHERE EXISTS (SELECT 1 FROM MAEST st
-                                    WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
-                                      AND LTRIM(RTRIM(st.KOBO))=%s)
-                       AND (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
+                     WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s)
                        AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
                      ORDER BY sku
                 """
-                params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%")
+                params = (q_like, q_like, "ZZ%")
             else:
                 sql = f"""
                     SELECT DISTINCT TOP {limit}
                            LTRIM(RTRIM(pr.KOPR)) AS sku, LTRIM(RTRIM(pr.NOKOPR)) AS nombre
                       FROM MAEPR pr
-                     WHERE EXISTS (SELECT 1 FROM MAEST st
-                                    WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR))
-                                      AND LTRIM(RTRIM(st.KOBO))=%s)
-                       AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
+                     WHERE UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s
                      ORDER BY sku
                 """
-                params = (CAT_BODEGA_SYNC, "ZZ%")
+                params = ("ZZ%",)
             rows = _random_sql_query(sql, params, max_rows=limit) or []
         except Exception as _e:
-            print(f"[_cat_sync_erp_nuevos] error ERP (bodega={CAT_BODEGA_SYNC}): {_e}", flush=True)
+            print(f"[_cat_sync_erp_nuevos] error ERP: {_e}", flush=True)
             return 0, []
 
         erp_pairs = [((r.get("sku") or "").strip(), (r.get("nombre") or "").strip())

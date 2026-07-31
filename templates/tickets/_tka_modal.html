@@ -580,7 +580,7 @@
       <i class="bi bi-calculator"></i><span>Cotización interna</span>
     </button>
     <button type="button" class="tka-tab" role="tab" id="tkaTabBodega" onclick="tkaSetTab('bodega')" style="display:none">
-      <i class="bi bi-boxes"></i><span>Bodega 02</span>
+      <i class="bi bi-boxes"></i><span>Productos</span>
     </button>
     {# 2026-07-25 (Daniel, feedback Cotizaciones -- "no quiero la lista,
        quiero el modal"): 2 pestañas nuevas, OCULTAS por defecto igual que
@@ -1907,7 +1907,7 @@ function _tkaRenderBodegaSeleccion(){
     return;
   }
   cont.style.display = '';
-  cont.innerHTML = `<div class="tka-bodega-sel-label"><i class="bi bi-check2-square"></i>Seleccionados de Bodega 02 (${sel.length})</div>
+  cont.innerHTML = `<div class="tka-bodega-sel-label"><i class="bi bi-check2-square"></i>Productos seleccionados (${sel.length})</div>
     <div class="tka-bodega-sel-chips">${sel.map(it => `<span class="tka-bodega-sel-chip">${_tkaEsc(it.nombre)}
         <button type="button" data-sku="${_tkaEsc(it.sku)}" onclick="_tkaQuitarBodegaSel(this.dataset.sku)" title="Quitar de la selección"><i class="bi bi-x-lg"></i></button>
       </span>`).join('')}</div>`;
