@@ -29103,8 +29103,10 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     for c in cands:
         por_courier.setdefault((c.get("courier") or "").strip(), []).append(c)
 
-    fechas = [_dt.date.today().isoformat(),
-              (_dt.date.today() - _dt.timedelta(days=1)).isoformat()]
+    # 2026-07-31: misma fecha Chile (no UTC) que el fix de _simpliroute_poll_batch,
+    # mismo motivo (near-medianoche UTC ya rodo al dia siguiente en Chile).
+    _hoy_cl = _now_chile().date()
+    fechas = [_hoy_cl.isoformat(), (_hoy_cl - _dt.timedelta(days=1)).isoformat()]
 
     for courier, items in por_courier.items():
         token = _simpliroute_token_for_courier(courier)
@@ -29227,6 +29229,25 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         data = r.get("data")
         visitas = data if isinstance(data, list) else []
         por_id = {str(v.get("id")): v for v in visitas if isinstance(v, dict) and v.get("id")}
+
+        def _sr_rank(v):
+            # 2026-07-31 (Daniel, caso FCV 11137 / BLV 22721 / BLV 22734):
+            # SimpliRoute puede tener DOS visitas vivas con la misma
+            # reference -- la que subio la API de ILUS (queda "pending"
+            # para siempre, abandonada) y otra que el despachador
+            # gestiono de verdad (con checkout). Antes, `por_ref.setdefault`
+            # se quedaba con la que apareciera PRIMERO en la respuesta
+            # (normalmente la vieja pending), y la real, ya entregada,
+            # nunca se consideraba -- el item quedaba atascado sin avisar.
+            # Ahora se prioriza SIEMPRE la visita mas avanzada (terminal >
+            # pending), sin importar el orden en que llego.
+            st = (v.get("status") or "").lower()
+            if st in (_src.SR_STATUS_COMPLETED, _src.SR_STATUS_FAILED, _src.SR_STATUS_PARTIAL):
+                return 2
+            if v.get("checkout_time"):
+                return 2
+            return 1 if st == _src.SR_STATUS_PENDING else 0
+
         por_ref = {}
         # 2026-07-29 (Daniel, caso BLV 22729): agrupa TODAS las visitas que
         # comparten reference (no solo la primera) — necesario para el
@@ -29240,7 +29261,9 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         for v in visitas:
             if isinstance(v, dict) and (v.get("reference") or "").strip():
                 _ref_k = _sr_normalizar_reference((v.get("reference") or "").strip())
-                por_ref.setdefault(_ref_k, v)
+                _actual = por_ref.get(_ref_k)
+                if _actual is None or _sr_rank(v) > _sr_rank(_actual):
+                    por_ref[_ref_k] = v
                 por_ref_todas.setdefault(_ref_k, []).append(v)
 
         # FIX 2026-07-28 (Daniel: caso BLV 22738): la visita de REEMPLAZO
@@ -29248,7 +29271,14 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         # fecha (fecha_s) -- si no se trae también el listado de hoy, la
         # búsqueda por reference nunca la encuentra y el poller solo ve la
         # visita vieja (que sigue "viva" en su fecha original, atascada).
-        hoy_s = _dt_mod.date.today().isoformat()
+        # 2026-07-31 (Daniel, caso FCV 11137 / BLV 22721 / BLV 22734): usar
+        # _now_chile() y NO date.today() -- este ultimo toma la fecha del
+        # SERVIDOR (UTC), y entre ~20:00-23:59 hora Chile el reloj UTC ya
+        # rodo al dia siguiente. La visita real (entregada "hoy" en Chile)
+        # quedaba en la fecha de AYER en UTC y el fetch de "hoy" nunca la
+        # encontraba -- mismo bug de fondo que SEV-8d (KPIs), ver
+        # _hoy_chile_rango_utc().
+        hoy_s = _now_chile().date().isoformat()
         if hoy_s != fecha_s:
             r_hoy_grupo = _simpliroute_request(
                 "GET", f"{_src.EP_VISITS}?planned_date={hoy_s}", token, timeout=45)
@@ -29256,7 +29286,15 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                 data_hoy = r_hoy_grupo.get("data")
                 for v in (data_hoy if isinstance(data_hoy, list) else []):
                     if isinstance(v, dict) and (v.get("reference") or "").strip():
-                        por_ref.setdefault(_sr_normalizar_reference((v.get("reference") or "").strip()), v)
+                        _ref_k = _sr_normalizar_reference((v.get("reference") or "").strip())
+                        _actual = por_ref.get(_ref_k)
+                        if _actual is None or _sr_rank(v) > _sr_rank(_actual):
+                            por_ref[_ref_k] = v
+                        # 2026-07-31: tambien se agrega a por_ref_todas -- si no,
+                        # el tie-breaker anti ping-pong de abajo no sabe que esta
+                        # visita de HOY tambien "compite" por la misma reference
+                        # y podria bloquear el cambio hacia ella.
+                        por_ref_todas.setdefault(_ref_k, []).append(v)
 
         for it in items:
             vid = str(it.get("simpliroute_visit_id") or "")
@@ -29291,9 +29329,20 @@ def _simpliroute_poll_batch(limit=400, dry=False):
             # SimpliRoute — sin esto, cada ciclo del poller "corregía" hacia
             # el que apareciera primero en la respuesta, y el próximo ciclo
             # revertía, generando el ping-pong infinito).
+            # EXCEPCION 2026-07-31 (caso FCV 11137 / BLV 22721 / BLV 22734):
+            # el tie-breaker de arriba, tal cual, tambien bloqueaba el cambio
+            # cuando la visita GUARDADA es un duplicado abandonado ("pending"
+            # para siempre) y la real (con checkout, ya entregada) aparecio
+            # despues -- el item quedaba "Entregado a transporte" para
+            # siempre aunque SimpliRoute ya mostrara la entrega. Se permite
+            # el cambio igual cuando la visita_ref candidata esta MAS
+            # avanzada (rank mayor) que la guardada -- solo se bloquea el
+            # ping-pong entre visitas de rango IGUAL.
             _matches_ref = por_ref_todas.get(ref_it) or []
-            if vid and any(str(m.get("id")) == vid for m in _matches_ref):
-                visita_ref = None
+            _vid_actual = next((m for m in _matches_ref if str(m.get("id")) == vid), None)
+            if vid and _vid_actual is not None:
+                if not visita_ref or _sr_rank(visita_ref) <= _sr_rank(_vid_actual):
+                    visita_ref = None
 
             if visita_ref and str(visita_ref.get("id")) != vid:
                 nuevo_id = str(visita_ref.get("id") or "")
@@ -29364,7 +29413,7 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                         if not visita_nueva:
                             _dias_probados = {fecha_s}
                             for _delta in range(0, 7):
-                                _fecha_probar = (_dt_mod.date.today() - _dt_mod.timedelta(days=_delta)).isoformat()
+                                _fecha_probar = (_now_chile().date() - _dt_mod.timedelta(days=_delta)).isoformat()
                                 if _fecha_probar in _dias_probados:
                                     continue
                                 _dias_probados.add(_fecha_probar)
