@@ -21246,7 +21246,17 @@ def tr_compromisos_json():
         + _MANIFIESTO_COD_SUB + " AS manifiesto_correlativo, "
         + _ESTADO_ENTREGA_SUB + " AS estado_entrega_item "
         "FROM transport_commitments WHERE 1=1" + where_sql +
-        " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
+        # FIX 2026-08-01 (Daniel, en vivo: "no veo ordenado el monitor"):
+        # con Pendientes ya sin filtro de fecha (904 documentos reales, ver
+        # fix de arriba), un ORDER BY DESC + LIMIT 500 se quedaba con los
+        # 500 MÁS RECIENTES y cortaba justo los más VIEJOS -- los que llevan
+        # 60+ días esperando, que son los que más urgen. Para "pendientes"
+        # el orden útil es el inverso: más antiguo primero, así el LIMIT
+        # corta lo menos urgente (lo recién emitido) en vez de lo más
+        # urgente. Las demás vistas (entregados/en_gestion/todos) siguen
+        # mostrando lo más reciente primero, que es lo que tiene sentido ahí.
+        (" ORDER BY fecha_emision ASC" if _vista_es_pendiente else " ORDER BY fecha_emision DESC")
+        + " LIMIT 500", tuple(params)
     )
 
     result = []
@@ -25085,14 +25095,21 @@ def tr_manifiestos():
     # cuando visite los entregados, porque ahí se va a acumular todo").
     # Solo la pestaña "Entregados" acumula historial indefinido -- "Activos"
     # ya se acota sola (deja de aparecer ahí en cuanto se entrega el 100%).
-    # Si el usuario no pidió un rango explícito y está en "Entregados", el
-    # default es el mes calendario actual (evita cargar años de historial
-    # de una sola vez); puede ampliarlo o limpiarlo desde la UI. Se aplica
-    # SOLO a la query final (where_vista), no al where_sql_base que usan los
-    # conteos de AMBAS pestañas -- si no, entrar por "Entregados" con el
-    # default puesto también recortaría por error el numerito de "Activos".
+    # Si el usuario no pidió un rango explícito y está en "Entregados", hay
+    # un default (evita cargar años de historial de una sola vez); puede
+    # ampliarlo o limpiarlo desde la UI. Se aplica SOLO a la query final
+    # (where_vista), no al where_sql_base que usan los conteos de AMBAS
+    # pestañas -- si no, entrar por "Entregados" con el default puesto
+    # también recortaría por error el numerito de "Activos".
+    # FIX 2026-08-01 (Daniel, en vivo, varias veces la misma alarma): el
+    # default era "mes CALENDARIO actual" (`_hoy.replace(day=1)`) -- el día 1
+    # de cada mes ese rango equivale a "solo hoy" y la pestaña se ve vacía
+    # de golpe, aunque haya entregas de ayer mismo. Cambia a ventana MÓVIL de
+    # 30 días (mismo patrón que ya usa tr_compromisos_json más arriba en este
+    # archivo) -- nunca colapsa a "prácticamente nada" por el simple hecho de
+    # cambiar el mes en el calendario.
     _hoy = datetime.now().date()
-    _default_desde = _hoy.replace(day=1).isoformat()
+    _default_desde = (_hoy - timedelta(days=30)).isoformat()
 
     # Rango resuelto para "Entregados" -- SIEMPRE (sin importar la vista
     # activa): el explícito que haya pasado el usuario, si no el default de

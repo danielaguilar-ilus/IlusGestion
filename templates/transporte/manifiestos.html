@@ -112,7 +112,7 @@
   </form>
   {% if filtros.vista == 'entregados' and filtros.fecha_default_aplicado %}
   <div class="man-filtro-fecha-hint">
-    <i class="bi bi-info-circle me-1"></i>Mostrando solo el mes actual por defecto (evita cargar todo el historial acumulado).
+    <i class="bi bi-info-circle me-1"></i>Mostrando solo los últimos 30 días por defecto (evita cargar todo el historial acumulado).
     <a href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados&desde=2000-01-01">Ver todo el historial</a>
   </div>
   {% endif %}
@@ -376,10 +376,10 @@
          puntual (vista=entregados + default de fecha aplicado) tiene su
          propio mensaje, sin ambigüedad. #}
       <div class="trx-empty-ico"><i class="bi bi-calendar-check"></i></div>
-      <div class="trx-empty-t">No hay entregas completadas este mes</div>
+      <div class="trx-empty-t">No hay entregas completadas en los últimos 30 días</div>
       <div class="trx-empty-d">
-        Esto solo muestra el mes calendario actual. Tus entregas de meses
-        anteriores siguen guardadas — no se borró nada.
+        Esto solo muestra los últimos 30 días. Tus entregas más antiguas
+        siguen guardadas — no se borró nada.
       </div>
       <a href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados&desde=2000-01-01"
          class="trx-btn-primary">
