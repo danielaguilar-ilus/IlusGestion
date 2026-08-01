@@ -20242,8 +20242,14 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
         ON DUPLICATE KEY UPDATE
           fecha_emision =VALUES(fecha_emision),
           fecha_entrega =VALUES(fecha_entrega),
-          cliente_nombre=VALUES(cliente_nombre),
-          cliente_rut   =VALUES(cliente_rut),
+          -- FIX 2026-07-31: mismo blindaje que ya tenían comuna/direccion/
+          -- telefono/email (y que se le puso al sync individual en
+          -- _tr_fetch_from_erp). Si el ERP no devuelve nombre/RUT en ESTA
+          -- corrida, se conserva el que ya estaba: nunca se pisa un dato
+          -- bueno con vacío. Este sync corre por cron sobre TODA la ventana,
+          -- así que un pisado acá borra a escala, no en un documento suelto.
+          cliente_nombre=IF(VALUES(cliente_nombre) IS NULL OR VALUES(cliente_nombre)='', cliente_nombre, VALUES(cliente_nombre)),
+          cliente_rut   =IF(VALUES(cliente_rut) IS NULL OR VALUES(cliente_rut)='', cliente_rut, VALUES(cliente_rut)),
           comuna        =IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
           direccion     =IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
           telefono      =IF(direccion_editada_manual=1, telefono, IF(VALUES(telefono) IS NULL OR VALUES(telefono)='', telefono, VALUES(telefono))),
@@ -20255,7 +20261,14 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
           costo_envio   =VALUES(costo_envio),
           tiene_saldo   =VALUES(tiene_saldo),
-          guia_numero   =VALUES(guia_numero),
+          -- FIX 2026-07-31 (pérdida de datos activa, detectada por los tests
+          -- de caracterización de Fase 0): la consulta a SQL Server NO trae
+          -- el número de guía — selecciona el literal '' AS NUDGIA — así que
+          -- VALUES(guia_numero) es SIEMPRE NULL. Sin esta guarda, cada corrida
+          -- del cron borraba la guía de todos los documentos de la ventana,
+          -- incluyendo las que había poblado el sync individual o una persona.
+          -- Con el IF: si la corrida no trae guía, se conserva la que estaba.
+          guia_numero   =IF(VALUES(guia_numero) IS NULL OR VALUES(guia_numero)='', guia_numero, VALUES(guia_numero)),
           clasificacion =VALUES(clasificacion),
           estado        =CASE
                            WHEN estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')

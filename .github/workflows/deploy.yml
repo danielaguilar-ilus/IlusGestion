@@ -106,6 +106,7 @@ jobs:
             tests/test_trafico_correlativo_cotizaciones.py \
             tests/test_transport_label_address.py \
             tests/test_transport_productos_json_saldo.py \
+            tests/test_transport_caracterizacion.py \
           ; do
             echo "::group::$f"
             if ! python3 "$f"; then
