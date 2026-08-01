@@ -19746,7 +19746,12 @@ def _tr_fetch_from_erp(tido, nudo):
                   email=IF(direccion_editada_manual=1, email, IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email))),
                   valor_neto=VALUES(valor_neto), valor_bruto=VALUES(valor_bruto),
                   costo_zz=CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
-                  tiene_saldo=VALUES(tiene_saldo), guia_numero=VALUES(guia_numero),
+                  tiene_saldo=VALUES(tiene_saldo),
+                  -- FIX 2026-07-31: misma guarda que el sync masivo. Acá el
+                  -- número de guía SÍ puede venir real (del REST), así que si
+                  -- llega se actualiza; pero si esta corrida no lo trae, se
+                  -- conserva el que estaba en vez de borrarlo.
+                  guia_numero=IF(VALUES(guia_numero) IS NULL OR VALUES(guia_numero)='', guia_numero, VALUES(guia_numero)),
                   clasificacion=VALUES(clasificacion), erp_synced_at=NOW(),
                   updated_by=VALUES(updated_by)
             """, (
@@ -28810,7 +28815,7 @@ def _fedex_poll_batch(limit=25, dry=False):
 
     limit = min(int(limit or 25), 30)
     rows = mysql_fetchall("""
-        SELECT id, tracking_number
+        SELECT id, tracking_number, piece_trackings_json
         FROM transport_manifest_items
         WHERE tracking_number IS NOT NULL AND tracking_number <> ''
           AND estado_entrega NOT IN ('Entregado', 'Devolución')
@@ -28828,30 +28833,100 @@ def _fedex_poll_batch(limit=25, dry=False):
                 "items": [{"id": r["id"], "tn": r["tracking_number"]} for r in rows],
                 "msg": "dry-run"}
 
-    by_tn = {r["tracking_number"]: r["id"] for r in rows}
-    tns = list(by_tn.keys())
+    # ── Piezas por item ──────────────────────────────────────────────────
+    # FIX 2026-07-31 (multi-bulto): cuando FedEx CL no soporta MPS real,
+    # _fedex_create_individual_pieces crea N envíos independientes y guarda
+    # TODOS los tracking numbers en piece_trackings_json, pero la columna
+    # tracking_number se queda solo con el PRIMERO. Este poller consultaba
+    # únicamente esa columna, así que marcaba el despacho como "Entregado" en
+    # cuanto llegaba el bulto 1, con los otros todavía en tránsito. Y como
+    # "Entregado" es terminal, ningún poll posterior podía corregirlo.
+    #
+    # Ahora se consultan TODAS las piezas y el estado se decide agregando:
+    # "Entregado" solo si están entregadas todas.
+    item_pieces = {}          # item_id -> [tn, ...] (todas las piezas)
+    for r in rows:
+        tns_item = []
+        _pt_raw = r.get("piece_trackings_json")
+        if _pt_raw:
+            try:
+                tns_item = [str(t).strip() for t in (json.loads(_pt_raw) or []) if str(t).strip()]
+            except Exception:
+                tns_item = []
+        # Filas viejas (piece_trackings_json NULL) y mono-bulto: la columna basta.
+        if not tns_item:
+            tns_item = [r["tracking_number"]]
+        item_pieces[r["id"]] = tns_item
+
+    uniq_tns = list(dict.fromkeys(tn for _tns in item_pieces.values() for tn in _tns))
+
+    # Chunking explícito de 30: es el tope de la Track API. _fedex_track_lookup
+    # ya trunca a 30 pero en SILENCIO — con multi-bulto es fácil pasarse (30
+    # items x 3 bultos = 90 TNs) y perder piezas sin enterarse.
+    tn_status = {}
     try:
-        results = _fedex_track_lookup(tns)
+        for _i in range(0, len(uniq_tns), 30):
+            for _res in _fedex_track_lookup(uniq_tns[_i:_i + 30]):
+                tn_status[_res.get("tracking_number")] = _res
     except Exception as _e_fx:
         return {"ok": False,
                 "error": f"FedEx Track API falló: {str(_e_fx)[:200]}",
                 "polled": 0, "changed": 0, "items": []}
 
+    # Si ninguna pieza está entregada aún, el estado agregado es el del bulto
+    # más "atrasado" según esta prioridad. 'Problema' queda fuera a propósito:
+    # es manual-only (solo un supervisor lo pone), nunca sale de un poller.
+    # 'Devolución' también queda fuera: es terminal, y un bulto devuelto no
+    # debe cerrar el despacho entero sin que lo mire una persona.
+    _PRIORIDAD_NO_TERMINAL = ["Entrega fallida", "En ruta",
+                              "Entregado a transporte", "En preparación"]
+
     changed_count = 0
     items_log = []
-    for r in results:
-        tn = r.get("tracking_number")
-        item_id = by_tn.get(tn)
-        if not item_id:
-            continue
-        comentario = r.get("last_event") or r.get("status_label") or ""
+    n_multibulto = 0
+    for item_id, tns_item in item_pieces.items():
+        piezas = [tn_status.get(t) for t in tns_item]
+        conocidas = [p for p in piezas if p]
+        if not conocidas:
+            continue   # FedEx no reportó nada de este envío; se reintenta luego
+
+        n_total = len(tns_item)
+        n_entregadas = sum(1 for p in piezas if p and p.get("estado_ilus") == "Entregado")
+
+        if n_total <= 1:
+            # Mono-bulto (la mayoría): comportamiento IDÉNTICO al de siempre.
+            r = conocidas[0]
+            estado_final = r["estado_ilus"]
+            comentario = r.get("last_event") or r.get("status_label") or ""
+        else:
+            n_multibulto += 1
+            if n_entregadas == n_total:
+                estado_final = "Entregado"
+                comentario = f"Los {n_total} bultos fueron entregados"
+            else:
+                _pendientes = [p for p in piezas
+                               if not (p and p.get("estado_ilus") == "Entregado")]
+                estado_final = "En ruta"
+                for _cand in _PRIORIDAD_NO_TERMINAL:
+                    if any(p and p.get("estado_ilus") == _cand for p in _pendientes):
+                        estado_final = _cand
+                        break
+                comentario = (f"{n_entregadas} de {n_total} bultos entregados "
+                              f"— a la espera del resto")
+
         apply_res = _tr_apply_carrier_status(
-            item_id, r["estado_ilus"], fuente='fedex',
+            item_id, estado_final, fuente='fedex',
             payload={"fedex": {
-                "status_code":  r.get("status_code"),
-                "status_label": r.get("status_label"),
-                "eta":          r.get("eta"),
-                "scans":        (r.get("scans") or [])[:5],
+                "n_bultos":     n_total,
+                "n_entregados": n_entregadas,
+                "pieces": [
+                    {"tracking_number": _t,
+                     "status_code":  (_p or {}).get("status_code"),
+                     "status_label": (_p or {}).get("status_label"),
+                     "eta":          (_p or {}).get("eta"),
+                     "scans":        ((_p or {}).get("scans") or [])[:5]}
+                    for _t, _p in zip(tns_item, piezas)
+                ],
             }},
             comentario=comentario or None,
             # 2026-06-14 (Daniel, 2ª decisión): el poller automático AHORA SÍ
@@ -28865,15 +28940,20 @@ def _fedex_poll_batch(limit=25, dry=False):
         if apply_res.get("changed"):
             changed_count += 1
         items_log.append({
-            "id":       item_id,
-            "tn":       tn,
-            "changed":  apply_res.get("changed", False),
-            "estado":   apply_res.get("nuevo"),
-            "anterior": apply_res.get("anterior"),
-            "fedex":    r.get("status_label"),
+            "id":           item_id,
+            "tn":           tns_item[0],
+            "n_bultos":     n_total,
+            "n_entregados": n_entregadas,
+            "changed":      apply_res.get("changed", False),
+            "estado":       apply_res.get("nuevo"),
+            "anterior":     apply_res.get("anterior"),
         })
-    return {"ok": True, "polled": len(results),
-            "changed": changed_count, "items": items_log}
+    # "polled" cuenta ITEMS procesados (no tracking numbers): el loop daemon
+    # corta con `if polled == 0: break`, así que tiene que seguir reflejando
+    # "cuánto trabajo había", no cuántas piezas se consultaron.
+    return {"ok": True, "polled": len(rows), "changed": changed_count,
+            "items": items_log, "multibulto": n_multibulto,
+            "tns_consultados": len(uniq_tns)}
 
 
 @app.route("/transporte/cron/fedex-track-poll", methods=["GET", "POST"])
@@ -31576,11 +31656,31 @@ def tr_cron_refrescar_saldo_productos():
     if not _fedex_cron_token_required(tok):
         return jsonify({"error": "forbidden"}), 403
 
+    # Alcance: despacho ACTIVO **y** que todavía tenga saldo pendiente.
+    #
+    # El filtro de saldo lo pidió Daniel explícitamente (2026-07-31): "que sea
+    # una vez, si ya no tiene saldo no quiero llamarlo por siempre". Sin él, un
+    # documento que ya quedó en saldo 0 se seguía consultando cada hora hasta
+    # que alguien lo marcara entregado — puro desgaste contra el ERP sin que el
+    # dato pueda cambiar.
+    #
+    # Cómo se apaga solo: _tr_fetch_from_erp refresca `tiene_saldo` en el mismo
+    # UPSERT. Entonces la corrida que descubre que ya no hay saldo es la ÚLTIMA
+    # que consulta ese documento; a la hora siguiente ya no entra en esta lista.
+    # Y si el saldo reapareciera en el ERP (una guía anulada, por ejemplo), el
+    # sync masivo vuelve a poner tiene_saldo=1 y el documento se re-incorpora
+    # solo. No hace falta intervención manual en ninguno de los dos sentidos.
+    #
+    # LIMIT como techo duro: pase lo que pase, una corrida nunca dispara más de
+    # 300 consultas al ERP.
     docs = mysql_fetchall("""
         SELECT DISTINCT c.id, c.tido, c.nudo
         FROM transport_commitments c
         JOIN transport_manifest_items mi ON mi.commitment_id = c.id
         WHERE mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
+          AND c.tiene_saldo = 1
+        ORDER BY c.id
+        LIMIT 300
     """) or []
 
     actualizados, fallidos = 0, 0

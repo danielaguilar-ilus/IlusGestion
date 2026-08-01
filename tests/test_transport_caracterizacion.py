@@ -323,6 +323,74 @@ class TestBulkSyncErp(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 3.b · Sync individual (_tr_fetch_from_erp) — mismas guardas
+# ═════════════════════════════════════════════════════════════════════════════
+class TestSyncIndividual(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sql = _norm(_cuerpo_funcion("_tr_fetch_from_erp")).replace(" ", "")
+
+    def test_no_pisa_guia_nombre_ni_rut_con_vacio(self):
+        """El sync individual comparte los tres campos frágiles con el masivo.
+        Acá el dato SÍ puede venir real (vía REST), así que la guarda no impide
+        actualizarlo: solo impide que una corrida sin dato borre el que había.
+
+        `cliente_nombre` además contempla el centinela ERP_NO_CLIENT, que no es
+        cadena vacía y por eso se colaba por la primera versión de la guarda
+        (bug real: se perdió el nombre de un cliente en producción).
+        """
+        self.assertIn(
+            "guia_numero=IF(VALUES(guia_numero)ISNULLORVALUES(guia_numero)='',guia_numero,VALUES(guia_numero))",
+            self.sql,
+            "El sync individual volvió a pisar guia_numero sin guarda.",
+        )
+        self.assertIn(
+            "cliente_rut=IF(VALUES(cliente_rut)ISNULLORVALUES(cliente_rut)='',cliente_rut,VALUES(cliente_rut))",
+            self.sql,
+            "El sync individual volvió a pisar cliente_rut sin guarda.",
+        )
+        self.assertIn("cliente_nombre=IF(", self.sql,
+                      "El sync individual volvió a pisar cliente_nombre sin guarda.")
+
+
+class TestCronRefrescoSaldo(unittest.TestCase):
+    """El cron horario de saldo es el único proceso que consulta el ERP
+    documento por documento. Su alcance define cuánto lo golpeamos."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_cron_refrescar_saldo_productos")
+
+    def test_deja_de_consultar_documentos_que_ya_no_tienen_saldo(self):
+        """Pedido explícito de Daniel (2026-07-31): "que sea una vez, si ya no
+        tiene saldo no quiero llamarlo por siempre".
+
+        Sin este filtro, un documento con saldo 0 se volvía a consultar cada
+        hora indefinidamente, sin que el dato pudiera cambiar.
+        """
+        self.assertIn(
+            "c.tiene_saldo = 1", self.fuente,
+            "El cron perdió el filtro de saldo: volvió a consultar para siempre "
+            "documentos que ya no tienen nada pendiente.",
+        )
+
+    def test_sigue_acotado_a_despachos_no_terminales(self):
+        """El otro límite de alcance: nunca consulta despachos ya cerrados."""
+        self.assertIn("estado_entrega NOT IN", self.fuente)
+        for terminal in ("Entregado", "Entrega fallida", "Devolución"):
+            self.assertIn(terminal, self.fuente)
+
+    def test_tiene_techo_duro_de_consultas_por_corrida(self):
+        """Aunque los filtros fallen, una corrida no puede disparar consultas
+        ilimitadas contra el ERP."""
+        self.assertRegex(
+            _norm(self.fuente), r"LIMIT \d+",
+            "El cron perdió su LIMIT: una corrida podría golpear el ERP sin techo.",
+        )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # BLOQUE 4 · Idempotencia de los resync
 # ═════════════════════════════════════════════════════════════════════════════
 class TestIdempotenciaResync(unittest.TestCase):
@@ -518,31 +586,26 @@ class TestSimpliRouteParcial(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestFedexMultiBulto(unittest.TestCase):
 
-    def test_GAP_el_poller_solo_mira_el_tracking_del_primer_bulto(self):
-        """[GAP CRÍTICO] Cuando FedEx CL no soporta MPS real, ILUS crea N
-        envíos independientes (uno por bulto) y guarda todos los tracking
-        numbers en `piece_trackings_json`. Pero:
+    def test_el_poller_consulta_TODAS_las_piezas_no_solo_la_primera(self):
+        """REGRESIÓN (arreglado 2026-07-31).
 
-          · `transport_manifest_items.tracking_number` guarda SOLO el primero;
-          · `_fedex_poll_batch` consulta únicamente esa columna;
-          · `piece_trackings_json` no se lee jamás en el flujo de polling.
+        Antes: `_fedex_poll_batch` consultaba solo la columna
+        `tracking_number`, que en multi-bulto guarda únicamente el TN del
+        PRIMER bulto. El despacho se marcaba Entregado en cuanto llegaba ese
+        bulto, con los otros N-1 todavía en tránsito — y como Entregado es
+        terminal, ningún poll posterior podía corregirlo.
 
-        Resultado: el despacho se marca **Entregado en cuanto llega el primer
-        bulto**, aunque los otros N-1 sigan en tránsito. Y como 'Entregado' es
-        terminal, el poller ya no vuelve a moverlo.
-
-        CUANDO SE ARREGLE: el poller debe consultar los N trackings y exigir
-        que todos estén entregados (o modelar entrega parcial de bultos).
+        Ahora: lee `piece_trackings_json` y agrega el estado de todas las
+        piezas. El comportamiento fino (cuándo marca Entregado, qué pasa con
+        un bulto fallido o devuelto, el chunking de 30) se prueba de verdad,
+        ejecutando la función con stubs, en tests/test_fedex_multibulto_poll.py.
+        Este de acá solo evita que alguien vuelva a la query de una sola pieza.
         """
         poller = _cuerpo_funcion("_fedex_poll_batch")
         self.assertIn(
-            "tracking_number", poller,
-            "Cambió la forma en que el poller elige qué consultar.",
-        )
-        self.assertNotIn(
             "piece_trackings_json", poller,
-            "_fedex_poll_batch ahora SÍ lee piece_trackings_json: puede que el "
-            "gap de multi-bulto esté arreglado. Actualizar este test.",
+            "El poller volvió a mirar solo `tracking_number`: puede marcar "
+            "Entregado un despacho al que todavía le faltan bultos.",
         )
 
     def test_master_tracking_es_el_del_primer_bulto_en_el_fallback(self):
