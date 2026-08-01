@@ -253,7 +253,11 @@
     </div>
     <select name="estado" class="tr-filter-select" title="Filtrar por estado">
       <option value="">Todos los estados</option>
-      {% for e in estados %}<option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      {# 2026-08-01: filtra por el estado LOGÍSTICO (lo que muestra la columna
+         Estado), no por el estado crudo del ERP — ver estados_logisticos en
+         transporte_index(). No confundir con `estados` (ESTADOS_COMPROMISO),
+         que sigue vivo para el panel de edición del estado del ERP. #}
+      {% for e in estados_logisticos %}<option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>{% endfor %}
     </select>
     <select name="clasificacion" class="tr-filter-select" title="Tipo de operación">
       <option value="">Despacho y retiro</option>
