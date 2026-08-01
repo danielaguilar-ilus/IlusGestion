@@ -930,6 +930,11 @@
   white-space:nowrap; display:inline-flex; align-items:center; gap:.25rem;
 }
 .sr-stock-chip-sin{ background:#fee2e2; color:#b91c1c; border-color:#fecaca; }
+/* 2026-08-01: chip de guía "sin despacho todavía" — NEUTRO, no rojo. No es
+   una alerta (los productos pendientes son la mayoría en un despacho
+   recién iniciado), es solo informativo: distinto semánticamente de
+   "sin stock" (que sí es un problema real). */
+.sr-stock-chip-neutro{ background:#f1f5f9; color:#64748b; border-color:#e2e8f0; }
 .sr-stock-fresh{
   font-size:.68rem; color:#8892a0; font-weight:600; margin-left:.5rem;
   display:inline-flex; align-items:center; gap:.25rem; white-space:nowrap;

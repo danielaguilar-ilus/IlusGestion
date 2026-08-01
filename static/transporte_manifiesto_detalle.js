@@ -3174,6 +3174,32 @@ function _ilusProductoHtml(l, i, prefix, cid) {
       'title="Disponible en el ERP (última actualización del sondeo)">' +
       '<i class="bi bi-box-seam"></i> ' + l.stock_disponible + '</span>';
   }
+  // Guía de despacho real (2026-08-01, Daniel: "todos los modales deben
+  // tener las tablas de los productos... de qué sirve informar por un lado
+  // sí y por otro no" / "debe ser bien informativo ese modal e identificar
+  // que salió con qué guía... es como una parte del centro de mando").
+  // `l.guias` lo arma _tr_buscar_detalle cruzando transport_guias por SKU
+  // (backend ya poblado, esto solo faltaba consumirlo). Viene ordenado por
+  // fecha_guia DESC -- guias[0] es la más reciente. Muestra número + fecha
+  // juntos (no solo el número suelto) para que de un vistazo se sepa QUÉ
+  // salió y CUÁNDO. "—" neutro (no rojo, no es una alerta) cuando el
+  // producto todavía no tiene guía registrada en el ERP.
+  if (l.guias && l.guias.length) {
+    var _gMasReciente = l.guias[0];
+    var _gNudo  = _gMasReciente.guia_nudo || '—';
+    var _gFecha = _gMasReciente.fecha_guia ? (' · ' + _gMasReciente.fecha_guia) : '';
+    var _gTitulo = 'Guía de despacho ' + _gNudo +
+      (_gMasReciente.fecha_guia ? (', ' + _gMasReciente.fecha_guia) : '') +
+      (_gMasReciente.codigo_transportista ? (' · ' + _gMasReciente.codigo_transportista) : '') +
+      (l.guias.length > 1 ? (' (+' + (l.guias.length - 1) + ' guía' + (l.guias.length > 2 ? 's' : '') + ' más)') : '');
+    chips += '<span class="sr-stock-chip" title="' + _srEsc(_gTitulo) + '">' +
+      '<i class="bi bi-file-earmark-text"></i> ' + _srEsc(_gNudo) + _srEsc(_gFecha) +
+      (l.guias.length > 1 ? ' <span style="opacity:.75">+' + (l.guias.length - 1) + '</span>' : '') +
+      '</span>';
+  } else {
+    chips += '<span class="sr-stock-chip sr-stock-chip-neutro" title="Sin guía de despacho todavía — el producto no ha salido">' +
+      '<i class="bi bi-file-earmark-text"></i> Sin guía</span>';
+  }
   var est = l.estado_efectivo || 'En preparación';
   var ui = _LINEA_ESTADO_UI[est] || { color: '#94a3b8', icon: 'bi-circle' };
   var badge = '<span class="sr-prod-estado-badge" style="color:' + ui.color + ';border-color:' + ui.color +
