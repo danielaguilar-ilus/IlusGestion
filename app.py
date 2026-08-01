@@ -20253,7 +20253,18 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           -- corrida, se conserva el que ya estaba: nunca se pisa un dato
           -- bueno con vacío. Este sync corre por cron sobre TODA la ventana,
           -- así que un pisado acá borra a escala, no en un documento suelto.
-          cliente_nombre=IF(VALUES(cliente_nombre) IS NULL OR VALUES(cliente_nombre)='', cliente_nombre, VALUES(cliente_nombre)),
+          -- FIX 2026-08-01 (revisión adversarial): la guarda de NULL/'' no
+          -- bastaba — cuando esta pasada no resuelve nombre, el código de
+          -- arriba asigna el centinela ERP_NO_CLIENT ("Cliente no informado
+          -- por ERP"), que NO es vacío y por lo tanto PISABA un nombre bueno
+          -- ya guardado. Es el mismo bug que ya se arregló en el sync
+          -- individual; acá el literal va inline (no %s) porque este UPSERT
+          -- corre con executemany y un placeholder extra en el ON DUPLICATE
+          -- desalinearía las tuplas por fila. Es una constante del código,
+          -- no input de usuario.
+          cliente_nombre=IF(VALUES(cliente_nombre) IS NULL
+                            OR VALUES(cliente_nombre) IN ('', 'Cliente no informado por ERP'),
+                            cliente_nombre, VALUES(cliente_nombre)),
           cliente_rut   =IF(VALUES(cliente_rut) IS NULL OR VALUES(cliente_rut)='', cliente_rut, VALUES(cliente_rut)),
           comuna        =IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
           direccion     =IF(direccion_editada_manual=1, direccion, IF(VALUES(direccion) IS NULL OR VALUES(direccion)='', direccion, VALUES(direccion))),
@@ -20911,8 +20922,15 @@ def tr_compromisos_json():
             estado_logistico = _estado_item
         elif en_manif:
             estado_logistico = "En preparación"
-        else:
+        elif tiene_saldo == 1:
             estado_logistico = "Por despachar"
+        else:
+            # Sin manifiesto y SIN saldo: la partición de gestión (más abajo)
+            # lo clasifica bajo la pestaña Entregados. Mostrarle "Por
+            # despachar" ahí sería contradecir la pestaña en la que aparece
+            # (hallazgo de revisión adversarial 2026-08-01). Se conserva el
+            # estado del ERP, que para este caso es el único dato que hay.
+            estado_logistico = r["estado"] or "Despachado"
 
         result.append({
             "id":           r["id"],
@@ -29003,6 +29021,16 @@ def _fedex_poll_batch(limit=25, dry=False):
         # Filas viejas (piece_trackings_json NULL) y mono-bulto: la columna basta.
         if not tns_item:
             tns_item = [r["tracking_number"]]
+        # FIX 2026-08-01: si el tracking_number vigente NO está en la lista de
+        # piezas, el JSON quedó OBSOLETO y hay que ignorarlo. Pasa de verdad:
+        # "Asignar OT" (tr_set_tracking_fedex) y la carga masiva de OTs por
+        # Excel (tr_trackings_masivo) reescriben SOLO la columna, sin tocar
+        # piece_trackings_json. Sin esta comprobación el poller se quedaba
+        # consultando los TN viejos/cancelados para siempre y nunca veía el
+        # nuevo — regresión introducida al empezar a priorizar el JSON.
+        _tn_col = (r.get("tracking_number") or "").strip()
+        if _tn_col and _tn_col not in tns_item:
+            tns_item = [_tn_col]
         item_pieces[r["id"]] = tns_item
 
     uniq_tns = list(dict.fromkeys(tn for _tns in item_pieces.values() for tn in _tns))
@@ -29053,13 +29081,60 @@ def _fedex_poll_batch(limit=25, dry=False):
             else:
                 _pendientes = [p for p in piezas
                                if not (p and p.get("estado_ilus") == "Entregado")]
-                estado_final = "En ruta"
-                for _cand in _PRIORIDAD_NO_TERMINAL:
-                    if any(p and p.get("estado_ilus") == _cand for p in _pendientes):
-                        estado_final = _cand
-                        break
-                comentario = (f"{n_entregadas} de {n_total} bultos entregados "
-                              f"— a la espera del resto")
+                _est_pend = [p.get("estado_ilus") for p in _pendientes if p]
+                _n_devueltas = _est_pend.count("Devolución")
+
+                # FIX 2026-08-01: sin esta rama, un envío que FedEx está
+                # DEVOLVIENDO entero (códigos CA/RS) caía en el fallback y se
+                # reportaba como "En ruta" — el cliente recibía "tu pedido va
+                # en camino" mientras el paquete volvía a origen. Y como no
+                # había ningún bulto entregado, tampoco entraba en la alerta
+                # de parciales: quedaba invisible para todos.
+                # OJO (Fable, revisión de lógica 2026-08-01): exigir que TODAS
+                # las piezas estén reportadas (len(conocidas) == n_total) es lo
+                # que impide cerrar en "Devolución" — estado TERMINAL, ningún
+                # poller lo corrige después — cuando FedEx todavía no indexó
+                # uno de los bultos. Con una pieza desconocida no hay certeza
+                # de devolución total: se espera al próximo poll.
+                if (n_entregadas == 0 and _est_pend
+                        and len(conocidas) == n_total
+                        and _n_devueltas == len(_est_pend)):
+                    estado_final = "Devolución"
+                    comentario = (f"El courier está devolviendo "
+                                  f"{'el envío completo' if n_total > 1 else 'el envío'} "
+                                  f"({n_total} bultos)")
+                else:
+                    # Gana el estado más urgente entre los bultos que faltan.
+                    # Si ninguno calza con la lista, NO se asume "En ruta"
+                    # (sería inventar): se usa el estado real de la primera
+                    # pieza pendiente conocida.
+                    estado_final = None
+                    for _cand in _PRIORIDAD_NO_TERMINAL:
+                        if _cand in _est_pend:
+                            estado_final = _cand
+                            break
+                    if estado_final is None:
+                        if _n_devueltas:
+                            # Parte entregada, parte devuelta y nada más en
+                            # movimiento. No es "En ruta" (no se mueve nada) ni
+                            # "Devolución" (sí llegó parte). 'Entrega fallida'
+                            # es el estado honesto disponible: algo no se pudo
+                            # entregar. Y no es terminal, así que el despacho
+                            # sigue gestionable. ('Problema' queda descartado:
+                            # es manual-only, nunca sale de un poller.)
+                            estado_final = "Entrega fallida"
+                        else:
+                            estado_final = next(
+                                (e for e in _est_pend
+                                 if e and e not in ("Entregado", "Devolución")),
+                                "En ruta")
+                    if _n_devueltas:
+                        # No es "esperar": esos bultos ya no van a llegar.
+                        comentario = (f"{n_entregadas} de {n_total} bultos entregados · "
+                                      f"{_n_devueltas} en devolución — requiere revisión")
+                    else:
+                        comentario = (f"{n_entregadas} de {n_total} bultos entregados "
+                                      f"— a la espera del resto")
 
         # Persistir el conteo de bultos para que sea CONSULTABLE (alerta de
         # "envío estancado"). `parcial_desde` marca cuándo quedó a medias:
@@ -29067,23 +29142,35 @@ def _fedex_poll_batch(limit=25, dry=False):
         # los polls siguientes — si no, cada consulta reiniciaría el contador
         # de días y el envío nunca se vería como estancado. Se limpia solo
         # cuando deja de estar parcial (llegaron todos, o todavía ninguno).
+        # Solo multi-bulto: un envío de un bulto no puede quedar "a medias", y
+        # escribirle bultos_total=1 en cada corrida eran ~25-30 UPDATE inútiles
+        # cada 15 minutos sobre la mayoría de la tabla.
         try:
-            _es_parcial = (n_total > 1 and 0 < n_entregadas < n_total)
-            if _es_parcial:
-                mysql_execute(
-                    "UPDATE transport_manifest_items "
-                    "SET bultos_total=%s, bultos_entregados=%s, "
-                    "    parcial_desde=COALESCE(parcial_desde, NOW()) "
-                    "WHERE id=%s",
-                    (n_total, n_entregadas, item_id)
-                )
-            else:
-                mysql_execute(
-                    "UPDATE transport_manifest_items "
-                    "SET bultos_total=%s, bultos_entregados=%s, parcial_desde=NULL "
-                    "WHERE id=%s",
-                    (n_total, n_entregadas, item_id)
-                )
+            if n_total > 1:
+                # Parcial = algo llegó pero no todo, O algo se devolvió mientras
+                # el resto sigue pendiente. El segundo caso importa: sin él, un
+                # envío con bultos devueltos y ninguno entregado no entraba en
+                # la alerta y quedaba invisible.
+                _n_dev = sum(1 for p in piezas
+                             if p and p.get("estado_ilus") == "Devolución")
+                _es_parcial = (n_entregadas < n_total
+                               and (n_entregadas > 0 or _n_dev > 0)
+                               and estado_final != "Devolución")
+                if _es_parcial:
+                    mysql_execute(
+                        "UPDATE transport_manifest_items "
+                        "SET bultos_total=%s, bultos_entregados=%s, "
+                        "    parcial_desde=COALESCE(parcial_desde, NOW()) "
+                        "WHERE id=%s",
+                        (n_total, n_entregadas, item_id)
+                    )
+                else:
+                    mysql_execute(
+                        "UPDATE transport_manifest_items "
+                        "SET bultos_total=%s, bultos_entregados=%s, parcial_desde=NULL "
+                        "WHERE id=%s",
+                        (n_total, n_entregadas, item_id)
+                    )
         except Exception as _e_bult:
             print(f"[fedex_poll] no se pudo guardar el conteo de bultos "
                   f"del item {item_id}: {_e_bult}", flush=True)
@@ -31838,12 +31925,21 @@ def tr_cron_refrescar_saldo_productos():
     # que alguien lo marcara entregado — puro desgaste contra el ERP sin que el
     # dato pueda cambiar.
     #
-    # Cómo se apaga solo: _tr_fetch_from_erp refresca `tiene_saldo` en el mismo
-    # UPSERT. Entonces la corrida que descubre que ya no hay saldo es la ÚLTIMA
-    # que consulta ese documento; a la hora siguiente ya no entra en esta lista.
-    # Y si el saldo reapareciera en el ERP (una guía anulada, por ejemplo), el
-    # sync masivo vuelve a poner tiene_saldo=1 y el documento se re-incorpora
-    # solo. No hace falta intervención manual en ninguno de los dos sentidos.
+    # Cómo se apaga (CORREGIDO 2026-08-01, revisión adversarial — la versión
+    # anterior de este comentario atribuía el mecanismo a la función
+    # equivocada): quien apaga el flag es el SYNC MASIVO (_tr_bulk_sync_erp_
+    # mysql, corre 3x/día a las 09/12/16), que escribe tiene_saldo=0 cuando
+    # saldo_zz<=0. _tr_fetch_from_erp — lo que llama este cron — NO lo apaga
+    # nunca: fuerza tiene_saldo=1 siempre (decisión de Daniel 12/06/2026, las
+    # líneas ZZ son servicios). O sea: este cron deja de consultar un
+    # documento cuando el bulk sync lo alcanza, no por acción propia. Peor
+    # aún: cualquier llamada a _tr_fetch_from_erp (abrir el detalle, reenviar
+    # a manifiesto) lo re-enciende hasta el próximo ciclo del bulk sync. El
+    # requisito de Daniel ("si ya no tiene saldo, no llamarlo por siempre") se
+    # cumple de forma CÍCLICA (ventana máx ~17h), no instantánea. Si algún
+    # día se necesita apagado inmediato, hay que tocar el bulk sync o dejar
+    # de forzar tiene_saldo=1 — no "simplificar" esto asumiendo que
+    # _tr_fetch_from_erp ya lo maneja.
     #
     # LIMIT como techo duro: pase lo que pase, una corrida nunca dispara más de
     # 300 consultas al ERP.
@@ -77931,6 +78027,29 @@ def _ensure_transport_tracking_tables():
         mysql_execute(
             "ALTER TABLE transport_manifest_items "
             "ADD INDEX idx_tmi_manifest_estado (manifest_id, estado_entrega)"
+        )
+    except Exception:
+        pass
+    # FIX 2026-08-01 (revisión adversarial): las 4 subqueries correlacionadas
+    # de la grilla del Monitor (courier / manifiesto / estado por compromiso)
+    # filtran por commitment_id, pero NINGÚN índice lo tenía como columna
+    # líder (el UNIQUE es (manifest_id, commitment_id), inútil para esto por
+    # la regla del prefijo izquierdo). Con 500 filas eran hasta 2000 escaneos
+    # completos de la tabla POR CARGA del Monitor.
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_manifest_items "
+            "ADD INDEX idx_tmi_commitment (commitment_id, id)"
+        )
+    except Exception:
+        pass
+    # Índice de la alerta de envíos estancados (WHERE parcial_desde IS NOT
+    # NULL + estado no terminal): sin él, cada carga del banner escaneaba la
+    # tabla entera.
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_manifest_items "
+            "ADD INDEX idx_tmi_parcial (parcial_desde, estado_entrega)"
         )
     except Exception:
         pass

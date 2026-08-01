@@ -181,7 +181,7 @@ class TestZZSkusDuplicada(unittest.TestCase):
         que mientras existan las tres, digan lo mismo.
         """
         conjuntos = []
-        for nodo in ast.walk(ast.parse(_fuente_app())):
+        for nodo in ast.walk(_arbol_app()):
             if not isinstance(nodo, ast.Assign):
                 continue
             for destino in nodo.targets:
@@ -253,13 +253,22 @@ class TestBulkSyncErp(unittest.TestCase):
         cron recorre toda la ventana, no un documento suelto.
         """
         sin_espacios = self.sql.replace(" ", "")
-        for campo in ("cliente_nombre", "cliente_rut"):
-            self.assertIn(
-                f"{campo}=IF(VALUES({campo})ISNULLORVALUES({campo})='',{campo},VALUES({campo}))",
-                sin_espacios,
-                f"El sync masivo perdió la guarda de {campo}: puede volver a "
-                "pisar un dato bueno con vacío en toda la ventana.",
-            )
+        # cliente_rut: guarda simple (no existe centinela para RUT).
+        self.assertIn(
+            "cliente_rut=IF(VALUES(cliente_rut)ISNULLORVALUES(cliente_rut)='',cliente_rut,VALUES(cliente_rut))",
+            sin_espacios,
+            "El sync masivo perdió la guarda de cliente_rut.",
+        )
+        # cliente_nombre: la guarda DEBE contemplar además el centinela
+        # "Cliente no informado por ERP" — el bulk sync lo asigna cuando esta
+        # pasada no resuelve nombre, y NO es vacío, así que la guarda simple
+        # lo dejaba pasar y pisaba nombres buenos (revisión adversarial
+        # 2026-08-01; mismo bug que ya había mordido al sync individual).
+        self.assertIn("clientenoinformadoporerp",
+                      sin_espacios.lower(),
+                      "La guarda de cliente_nombre del sync masivo perdió el "
+                      "centinela: vuelve a poder pisar nombres buenos con "
+                      "'Cliente no informado por ERP'.")
 
     def test_GAP_NUDGIA_viene_hardcodeada_vacia_del_SQL(self):
         """[GAP CRÍTICO] La consulta a SQL Server no trae el número de guía:

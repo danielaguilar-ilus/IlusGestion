@@ -50,12 +50,13 @@ def _nodo_poll_batch():
     return _NODO
 
 
-def _cargar_poll_batch(rows, tn_status, aplicados):
+def _cargar_poll_batch(rows, tn_status, aplicados, escrituras=None):
     """Extrae _fedex_poll_batch de app.py con las dependencias stubbeadas.
 
     rows       : lo que devolvería la query de candidatos
     tn_status  : {tracking_number: dict que devolvería la Track API}
     aplicados  : lista donde se registran las llamadas a _tr_apply_carrier_status
+    escrituras : lista opcional donde se registran los UPDATE (mysql_execute)
     """
     nodo = _nodo_poll_batch()
     consultas = []
@@ -70,8 +71,17 @@ def _cargar_poll_batch(rows, tn_status, aplicados):
                           "comentario": comentario, "payload": payload})
         return {"changed": True, "nuevo": estado, "anterior": "En ruta"}
 
+    _escrituras = escrituras if escrituras is not None else []
+
+    def _exec(sql, params=None):
+        # Sin este stub, el UPDATE de bultos lanzaba NameError y el try/except
+        # del código lo tragaba: los tests pasaban sin probar la persistencia.
+        _escrituras.append({"sql": " ".join(str(sql).split()), "params": params})
+        return 1
+
     ns = {
         "mysql_fetchall": lambda *a, **k: rows,
+        "mysql_execute": _exec,
         "_fedex_track_lookup": _track_lookup,
         "_tr_apply_carrier_status": _apply,
         "json": json,
@@ -146,7 +156,11 @@ class TestMultiBulto(unittest.TestCase):
     def test_un_bulto_devuelto_no_cierra_el_despacho_entero(self):
         """'Devolución' es terminal. Un solo bulto devuelto NO debe cerrar el
         despacho completo sin que lo mire una persona: queda en un estado no
-        terminal para que siga siendo visible y gestionable."""
+        terminal para que siga siendo visible y gestionable.
+
+        El comentario NO puede decir "a la espera del resto": ese bulto ya no
+        va a llegar, hay que revisarlo.
+        """
         rows = [{"id": 13, "tracking_number": "TN1",
                  "piece_trackings_json": json.dumps(["TN1", "TN2"])}]
         tn_status = {
@@ -158,6 +172,154 @@ class TestMultiBulto(unittest.TestCase):
         poll(limit=25)
 
         self.assertNotIn(aplicados[0]["estado"], ("Entregado", "Devolución"))
+        self.assertIn("devolución", aplicados[0]["comentario"].lower())
+        self.assertNotIn("a la espera", aplicados[0]["comentario"].lower())
+
+    def test_envio_devuelto_COMPLETO_no_se_reporta_como_En_ruta(self):
+        """BUG REAL encontrado en revisión adversarial (2026-08-01).
+
+        FedEx devuelve el envío ENTERO (códigos CA/RS → 'Devolución') y ningún
+        bulto llegó. Antes: ninguna pieza calzaba con la lista de prioridad, el
+        fallback dejaba "En ruta" y el cliente recibía "tu pedido va en camino"
+        mientras el paquete volvía a origen. Peor todavía: al no haber ningún
+        bulto entregado tampoco se marcaba parcial, así que la alerta nunca lo
+        veía — invisible para el cliente Y para el negocio.
+
+        Ahora se reporta como lo que es: Devolución.
+        """
+        rows = [{"id": 15, "tracking_number": "TN1",
+                 "piece_trackings_json": json.dumps(["TN1", "TN2", "TN3"])}]
+        tn_status = {t: _pieza(t, "Devolución") for t in ("TN1", "TN2", "TN3")}
+        aplicados = []
+        poll, _ = _cargar_poll_batch(rows, tn_status, aplicados)
+        poll(limit=25)
+
+        self.assertEqual(
+            aplicados[0]["estado"], "Devolución",
+            "Un envío que el courier devuelve entero no puede reportarse como "
+            "otra cosa — menos como 'En ruta'.",
+        )
+        self.assertNotEqual(aplicados[0]["estado"], "En ruta")
+
+    def test_devolucion_NO_se_cierra_con_bultos_sin_reportar(self):
+        """BUG encontrado por Fable (revisión de lógica 2026-08-01).
+
+        2 de 3 bultos reportan 'Devolución' y el tercero FedEx aún no lo
+        indexa (None). Antes: como las piezas desconocidas se excluían del
+        conteo, "todas las conocidas devueltas" bastaba para cerrar en
+        'Devolución' — que es TERMINAL: si el bulto desconocido después se
+        entregaba, nadie lo veía nunca más.
+
+        Ahora: sin certeza de las N piezas, no se cierra en terminal.
+        """
+        rows = [{"id": 17, "tracking_number": "TN1",
+                 "piece_trackings_json": json.dumps(["TN1", "TN2", "TN3"])}]
+        tn_status = {
+            "TN1": _pieza("TN1", "Devolución"),
+            "TN2": _pieza("TN2", "Devolución"),
+            # TN3 ausente: FedEx no lo reportó en este poll
+        }
+        aplicados = []
+        poll, _ = _cargar_poll_batch(rows, tn_status, aplicados)
+        poll(limit=25)
+
+        self.assertNotEqual(
+            aplicados[0]["estado"], "Devolución",
+            "Se cerró en estado terminal con un bulto sin reportar.",
+        )
+
+    def test_devolucion_total_con_TODAS_reportadas_si_cierra(self):
+        """El caso legítimo sigue funcionando: las 3 piezas confirmadas en
+        Devolución → Devolución."""
+        rows = [{"id": 18, "tracking_number": "TN1",
+                 "piece_trackings_json": json.dumps(["TN1", "TN2", "TN3"])}]
+        tn_status = {t: _pieza(t, "Devolución") for t in ("TN1", "TN2", "TN3")}
+        aplicados = []
+        poll, _ = _cargar_poll_batch(rows, tn_status, aplicados)
+        poll(limit=25)
+        self.assertEqual(aplicados[0]["estado"], "Devolución")
+
+    def test_nunca_inventa_En_ruta_si_ninguna_pieza_va_en_ruta(self):
+        """Parte entregada, parte devuelta, nada en movimiento. Decir "En ruta"
+        es mentir: no se mueve nada. Se reporta 'Entrega fallida' — algo no se
+        pudo entregar — que además no es terminal, así que sigue gestionable."""
+        rows = [{"id": 16, "tracking_number": "TN1",
+                 "piece_trackings_json": json.dumps(["TN1", "TN2"])}]
+        tn_status = {
+            "TN1": _pieza("TN1", "Entregado"),
+            "TN2": _pieza("TN2", "Devolución"),
+        }
+        aplicados = []
+        poll, _ = _cargar_poll_batch(rows, tn_status, aplicados)
+        poll(limit=25)
+        self.assertNotEqual(
+            aplicados[0]["estado"], "En ruta",
+            "Ninguna pieza está en ruta: reportarlo así es inventar.",
+        )
+        self.assertEqual(aplicados[0]["estado"], "Entrega fallida")
+
+
+class TestPersistenciaDeBultos(unittest.TestCase):
+    """El conteo persistido es lo que alimenta la alerta de envíos estancados.
+    Si no se escribe (o se escribe de más), la alerta miente."""
+
+    def _correr(self, rows, tn_status):
+        escrituras, aplicados = [], []
+        poll, _ = _cargar_poll_batch(rows, tn_status, aplicados, escrituras)
+        poll(limit=25)
+        return escrituras, aplicados
+
+    def test_mono_bulto_NO_genera_escrituras_de_bultos(self):
+        """Eran ~25-30 UPDATE inútiles cada 15 minutos sobre la mayoría de la
+        tabla: un envío de un bulto no puede quedar a medias."""
+        esc, _ = self._correr(
+            [{"id": 50, "tracking_number": "TA", "piece_trackings_json": json.dumps(["TA"])}],
+            {"TA": _pieza("TA", "En ruta")})
+        self.assertEqual([e for e in esc if "bultos_total" in e["sql"]], [],
+                         "Mono-bulto volvió a escribir el conteo de bultos.")
+
+    def test_parcial_marca_la_fecha_sin_pisarla(self):
+        esc, _ = self._correr(
+            [{"id": 51, "tracking_number": "TA",
+              "piece_trackings_json": json.dumps(["TA", "TB", "TC"])}],
+            {"TA": _pieza("TA", "Entregado"), "TB": _pieza("TB", "En ruta"),
+             "TC": _pieza("TC", "En ruta")})
+        ups = [e for e in esc if "bultos_total" in e["sql"]]
+        self.assertEqual(len(ups), 1)
+        self.assertIn("COALESCE(parcial_desde, NOW())", ups[0]["sql"])
+        self.assertEqual(ups[0]["params"], (3, 1, 51))
+
+    def test_todo_entregado_limpia_el_parcial(self):
+        esc, _ = self._correr(
+            [{"id": 52, "tracking_number": "TA",
+              "piece_trackings_json": json.dumps(["TA", "TB"])}],
+            {"TA": _pieza("TA", "Entregado"), "TB": _pieza("TB", "Entregado")})
+        ups = [e for e in esc if "bultos_total" in e["sql"]]
+        self.assertEqual(len(ups), 1)
+        self.assertIn("parcial_desde=NULL", ups[0]["sql"])
+
+    def test_bulto_devuelto_con_otro_pendiente_SI_entra_en_la_alerta(self):
+        """Sin esto, un envío con bultos devueltos y ninguno entregado no se
+        marcaba parcial y quedaba invisible para la alerta."""
+        esc, _ = self._correr(
+            [{"id": 53, "tracking_number": "TA",
+              "piece_trackings_json": json.dumps(["TA", "TB"])}],
+            {"TA": _pieza("TA", "Devolución"), "TB": _pieza("TB", "En ruta")})
+        ups = [e for e in esc if "bultos_total" in e["sql"]]
+        self.assertEqual(len(ups), 1)
+        self.assertIn("COALESCE(parcial_desde, NOW())", ups[0]["sql"])
+
+    def test_envio_devuelto_completo_NO_se_marca_parcial(self):
+        """Su estado ya dice 'Devolución': no es un parcial que haya que
+        perseguir, y ensuciaría la alerta."""
+        esc, apl = self._correr(
+            [{"id": 54, "tracking_number": "TA",
+              "piece_trackings_json": json.dumps(["TA", "TB"])}],
+            {"TA": _pieza("TA", "Devolución"), "TB": _pieza("TB", "Devolución")})
+        self.assertEqual(apl[0]["estado"], "Devolución")
+        ups = [e for e in esc if "bultos_total" in e["sql"]]
+        self.assertEqual(len(ups), 1)
+        self.assertIn("parcial_desde=NULL", ups[0]["sql"])
 
     def test_el_payload_guarda_el_detalle_de_cada_bulto(self):
         """Para poder auditar después qué bulto iba dónde."""
@@ -207,6 +369,49 @@ class TestMonoBultoNoSeRompe(unittest.TestCase):
         res = poll(limit=25)
         self.assertTrue(res["ok"])
         self.assertEqual(aplicados[0]["estado"], "En ruta")
+
+    def test_tracking_reasignado_a_mano_gana_sobre_un_json_viejo(self):
+        """REGRESIÓN encontrada en revisión adversarial (2026-08-01).
+
+        "Asignar OT" y la carga masiva de OTs por Excel reescriben SOLO la
+        columna `tracking_number`, sin tocar `piece_trackings_json`. Cuando el
+        poller empezó a priorizar el JSON, se quedó consultando los TN viejos
+        (cancelados o reemplazados) para siempre, sin ver nunca el nuevo.
+
+        Regla: si el tracking vigente no está en la lista de piezas, el JSON
+        quedó obsoleto y manda la columna.
+        """
+        rows = [{"id": 24, "tracking_number": "TN_NUEVO",
+                 "piece_trackings_json": json.dumps(["TN_VIEJO_1", "TN_VIEJO_2"])}]
+        tn_status = {
+            "TN_NUEVO":    _pieza("TN_NUEVO", "Entregado"),
+            "TN_VIEJO_1":  _pieza("TN_VIEJO_1", "En ruta"),
+            "TN_VIEJO_2":  _pieza("TN_VIEJO_2", "En ruta"),
+        }
+        aplicados = []
+        poll, consultas = _cargar_poll_batch(rows, tn_status, aplicados)
+        poll(limit=25)
+
+        planos = [t for c in consultas for t in c]
+        self.assertIn("TN_NUEVO", planos,
+                      "El poller ni siquiera consultó el tracking vigente.")
+        self.assertEqual(
+            aplicados[0]["estado"], "Entregado",
+            "El poller siguió el JSON viejo en vez del tracking reasignado.",
+        )
+
+    def test_si_el_tracking_de_la_columna_esta_en_el_json_se_respeta_el_json(self):
+        """El caso normal de multi-bulto: la columna guarda el primer bulto y
+        está dentro del JSON, así que el JSON manda (son todas las piezas)."""
+        rows = [{"id": 25, "tracking_number": "TN1",
+                 "piece_trackings_json": json.dumps(["TN1", "TN2"])}]
+        tn_status = {"TN1": _pieza("TN1", "Entregado"),
+                     "TN2": _pieza("TN2", "En ruta")}
+        aplicados = []
+        poll, _ = _cargar_poll_batch(rows, tn_status, aplicados)
+        poll(limit=25)
+        self.assertEqual(aplicados[0]["payload"]["fedex"]["n_bultos"], 2)
+        self.assertNotEqual(aplicados[0]["estado"], "Entregado")
 
     def test_si_fedex_no_reporta_nada_no_se_toca_el_item(self):
         """Mejor no hacer nada que inventar un estado."""

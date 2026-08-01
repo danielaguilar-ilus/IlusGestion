@@ -222,6 +222,11 @@ document.addEventListener('DOMContentLoaded', function() {
   _fotoModal  = new bootstrap.Modal(document.getElementById('fotoModal'));
   setSync(30);   // Pre-fill rango sync: último mes
   cargarMonitor();
+  // FIX 2026-08-01 (revisión adversarial): sin esta llamada, el banner de
+  // alertas solo se pedía al backend al hacer clic en una pestaña de vista —
+  // al abrir la página en frío no aparecía nunca, que es justo cuando más
+  // importa ("cosas trabadas que nadie va a destrabar solo").
+  renderAlertas();
   // Panel manifiesto: empieza CERRADO en escritorio y mobile.
   // Daniel pidió: solo aparece cuando el usuario lo activa (botón flotante)
   // o cuando arrastra un documento. Esto evita que estorbe el listado.
@@ -908,7 +913,7 @@ function renderVista(d) {
   _vistaCurrentEmail  = c.email  || null;
   _vistaCurrentEstado = c.estado || '';
   _vistaCurrentCliente = c.cliente || '';
-  renderEstadoBadge(c.estado);
+  renderEstadoBadge(c.estado_logistico || c.estado);
 
   // Habilitar/deshabilitar el botón de reenvío según si el pedido tiene correo
   (function() {
@@ -1433,7 +1438,7 @@ function _kanbanCardHtml(c) {
     warning:'tr-estado-warning', primary:'tr-estado-primary',
     success:'tr-estado-success', danger:'tr-estado-danger',
     info:'tr-estado-info', secondary:'tr-estado-secondary',
-  }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
+  }[ESTADO_COLORS[c.estado_logistico || c.estado]] || 'tr-estado-secondary');
 
   // Costo del ENVÍO (fallback a costo_zz para filas viejas)
   var _costoVal = c.costo_envio || c.costo_zz;
@@ -1477,7 +1482,7 @@ function _kanbanCardHtml(c) {
         '<span class="tr-doc-tido">' + esc(c.tido||'') + '</span>' +
         '<span class="tr-doc-num">' + esc(c.nudo||'') + '</span>' +
       '</div>' +
-      '<span class="tr-estado-pill ' + pillClass + '">' + esc(c.estado||'—') + '</span>' +
+      '<span class="tr-estado-pill ' + pillClass + '">' + esc((c.estado_logistico||c.estado)||'—') + '</span>' +
     '</div>' +
     '<div class="tr-kcard-cliente">' + esc(c.cliente||'—') + '</div>' +
     '<div class="tr-kcard-meta">' +
@@ -2155,7 +2160,7 @@ function cargarMonitor() {
               warning:'tr-estado-warning', primary:'tr-estado-primary',
               success:'tr-estado-success', danger:'tr-estado-danger',
               info:'tr-estado-info', secondary:'tr-estado-secondary',
-            }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
+            }[ESTADO_COLORS[c.estado_logistico || c.estado]] || 'tr-estado-secondary');
             var _costoVal = c.costo_envio || c.costo_zz;
             var costo = _costoVal
               ? '$' + Math.round(_costoVal).toLocaleString('es-CL')
@@ -2179,7 +2184,7 @@ function cargarMonitor() {
                   '<span class="tr-doc-tido">' + esc(c.tido) + '</span>' +
                   '<span class="tr-doc-num">' + esc(c.nudo) + '</span>' +
                 '</div>' +
-                '<span class="tr-estado-pill ' + pillClass + '">' + esc(c.estado||'') + '</span>' +
+                '<span class="tr-estado-pill ' + pillClass + '">' + esc((c.estado_logistico||c.estado)||'') + '</span>' +
               '</div>' +
               '<div class="tr-mcard-cliente">' + esc(c.cliente||'—') + '</div>' +
               '<div class="tr-mcard-meta">' +
