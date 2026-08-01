@@ -32332,7 +32332,14 @@ def tr_cron_refrescar_saldo_productos():
           OR
           (mi.estado_entrega IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
            AND NOT EXISTS (SELECT 1 FROM transport_guias g WHERE g.commitment_id = c.id)
-           AND c.fecha_emision >= DATE_SUB(NOW(), INTERVAL 60 DAY))
+           -- fecha_emision IS NULL cuenta como "sí, revisar": en SQL, NULL >= algo
+           -- es NULL (ni true ni false), así que sin este OR un commitment con
+           -- fecha_emision vacía queda excluido SIEMPRE por este filtro -- el
+           -- caso real de BLV 22727/commitment 141767, que además tiene fecha
+           -- vacía (síntoma del mismo bug de commitments duplicados que ya
+           -- afectó a BLV 22719). Mejor revisar de más que dejar un NULL fuera
+           -- para siempre sin haberlo intentado ni una vez.
+           AND (c.fecha_emision IS NULL OR c.fecha_emision >= DATE_SUB(NOW(), INTERVAL 60 DAY)))
         ORDER BY c.id
         LIMIT 300
     """) or []

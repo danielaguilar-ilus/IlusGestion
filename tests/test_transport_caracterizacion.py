@@ -424,6 +424,19 @@ class TestCronRefrescoSaldo(unittest.TestCase):
         feature) — un costo creciente sin techo contra el ERP."""
         self.assertIn("DATE_SUB(NOW(), INTERVAL 60 DAY)", _norm(self.fuente))
 
+    def test_el_limite_de_tiempo_no_excluye_fecha_emision_nula(self):
+        """REGRESIÓN real (2026-08-01, caso BLV 22727/commitment 141767): en
+        SQL, `NULL >= DATE_SUB(...)` es NULL (ni true ni false) — sin el OR
+        que trata NULL como "sí, revisar", un commitment con fecha_emision
+        vacía (síntoma del mismo bug de commitments duplicados que afectó a
+        BLV 22719) quedaba excluido del catch-up PARA SIEMPRE, exactamente el
+        caso que este catch-up existe para arreglar."""
+        self.assertIn(
+            "c.fecha_emision IS NULL OR c.fecha_emision >= DATE_SUB", _norm(self.fuente),
+            "El filtro de 60 días volvió a excluir fecha_emision NULL — un "
+            "commitment con fecha vacía nunca entraría al catch-up.",
+        )
+
     def test_el_catchup_no_llama_al_refresco_completo_del_commitment(self):
         """Un documento terminal no necesita refrescar saldo/cliente/dirección
         (ya no importan en un pedido cerrado) — el catch-up debe llamar
