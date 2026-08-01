@@ -18840,6 +18840,32 @@ ESTADOS_ENTREGA_VALIDOS = ESTADOS_ENTREGA + ESTADOS_ENTREGA_COURIER
 # persona puede corregirlos a mano desde la ficha.
 ESTADOS_ENTREGA_TERMINALES = ('Entregado', 'Devolución')
 
+# Estados LOGÍSTICOS del Monitor (2026-08-01, Daniel: el dropdown "Todos los
+# estados" seguía lleno de ESTADOS_COMPROMISO —el estado crudo del ERP— pero
+# la columna Estado ya muestra `estado_logistico` desde el fix anterior de hoy.
+# Filtrar por "Despachado" podía devolver filas que en pantalla decían "Por
+# despachar": el filtro y la columna hablaban de cosas distintas.
+#
+# Este es el set REAL que puede tomar `estado_logistico` (ver el bloque que lo
+# calcula en tr_compromisos_json):
+#   - "Por despachar"          → fallback cuando no hay manifiesto y hay saldo.
+#   - ESTADOS_ENTREGA_VALIDOS  → lo que puede traer el item de manifiesto MÁS
+#     RECIENTE (estado_entrega_item): lo que un humano elige a mano
+#     (ESTADOS_ENTREGA) + lo que reporta un courier automático antes de que un
+#     humano lo revise ('Entrega fallida', ver ESTADOS_ENTREGA_COURIER). "En
+#     preparación" también sale como fallback propio cuando el item aún no
+#     tiene estado_entrega.
+#   - ESTADOS_COMPROMISO       → fallback final cuando el documento NO está en
+#     ningún manifiesto y NO tiene saldo: se muestra el estado crudo del ERP
+#     tal cual (r["estado"]), que puede ser cualquiera de estos valores (p.ej.
+#     un estado manual como 'Problema' o 'Indemnización' no pasa por
+#     manifiesto ni depende del saldo).
+# dict.fromkeys() dedupea preservando el orden de primera aparición (p.ej.
+# "En preparación"/"Problema"/"Devolución" aparecen en más de un grupo).
+ESTADOS_LOGISTICOS_MONITOR = list(dict.fromkeys(
+    ["Por despachar"] + ESTADOS_ENTREGA_VALIDOS + ESTADOS_COMPROMISO
+))
+
 # Fuentes automáticas (APIs de courier). Se distinguen de las humanas
 # ('manual', 'chofer', 'sistema') para decidir si pueden pisar un estado final.
 FUENTES_AUTOMATICAS = ('fedex', 'simpliroute')
@@ -20788,7 +20814,13 @@ def tr_compromisos_json():
         # default (compat con clientes que no mandan vista): lo que hay que gestionar
         where.append(_SQL_PENDIENTE)
 
-    if estado: where.append("estado=%s"); params.append(estado)
+    # FIX 2026-08-01 (Daniel): el filtro por `estado` de este endpoint ya NO
+    # se aplica en SQL contra la columna cruda del ERP — la columna visible
+    # en el Monitor es `estado_logistico` (calculado en Python más abajo, no
+    # es columna de la tabla), así que filtrar acá por "estado=%s" comparaba
+    # el valor elegido en el dropdown contra un dato distinto al que se ve en
+    # pantalla. El filtro real se aplica sobre `result` después de calcular
+    # estado_logistico para cada fila (ver más abajo, antes de los conteos).
     if clasif: where.append("clasificacion=%s"); params.append(clasif)
     if q:
         where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
@@ -20964,6 +20996,15 @@ def tr_compromisos_json():
             "preventa":     int(r.get("preventa") or 0),
             "fecha_agenda": r["fecha_agenda"].strftime("%d/%m/%Y") if r.get("fecha_agenda") else "",
         })
+
+    # FIX 2026-08-01 (Daniel): filtro por estado LOGÍSTICO, aplicado en Python
+    # sobre la lista ya armada (estado_logistico no es columna SQL). Mismo
+    # patrón que el resto del endpoint: ya viene acotado a LIMIT 500 antes de
+    # este punto, así que un documento que calce con el filtro pero haya
+    # quedado fuera de esos 500 (orden fecha_emision DESC) no aparecerá — es
+    # la misma limitación que ya tenían `q`/`vista`/etc., no una nueva.
+    if estado:
+        result = [c for c in result if c["estado_logistico"] == estado]
 
     # Conteos por categoría — independientes del filtro `vista` aplicado.
     # Permite al frontend mostrar badge "Pendientes: 12" sin segunda llamada.
@@ -23194,6 +23235,15 @@ def transporte_index():
         compromisos=compromisos,
         filtros=filtros,
         estados=ESTADOS_COMPROMISO,
+        # NUEVO 2026-08-01: valores LOGÍSTICOS para el dropdown "Todos los
+        # estados" del Monitor — la columna Estado ya muestra estado_logistico
+        # (no el `estado` crudo del ERP), así que el filtro debe ofrecer y
+        # comparar contra ese mismo vocabulario. `estados` (ESTADOS_COMPROMISO)
+        # se deja intacto: lo sigue usando el panel de edición del estado
+        # crudo del ERP (MON.estados en transporte_monitor.js / PATCH
+        # /transporte/api/compromisos/<id>), que es una feature aparte y no
+        # hay que tocar.
+        estados_logisticos=ESTADOS_LOGISTICOS_MONITOR,
         estado_colors=ESTADO_COLORS,
         couriers=COURIERS,
         manifiestos=manifiestos,
@@ -77974,6 +78024,22 @@ def _ensure_transport_tracking_tables():
         "bultos_total":       "INT NULL COMMENT 'Nº de bultos que el courier debe entregar (piezas con tracking)'",
         "bultos_entregados":  "INT NULL COMMENT 'Nº de bultos ya entregados según el courier'",
         "parcial_desde":      "DATETIME NULL COMMENT 'Cuándo quedó parcialmente entregado (algunos bultos sí, otros no). NULL = no está parcial. Base del cálculo de días estancado.'",
+        # FASE 1 del modelo de dos ramos (2026-08-01): una factura con
+        # ZZENVIO + ZZINSTALACION debe generar DOS transport_manifest_items
+        # independientes (uno de despacho, uno de instalación), cada uno con
+        # su propio courier/manifiesto/estado. Hoy `_clasif_from_skus()`
+        # colapsa ambos en un solo valor por FACTURA (ver el GAP documentado
+        # en tests/test_transport_caracterizacion.py::TestClasificacionZZ);
+        # `ramo` es el primer paso para que la clasificación viva a nivel de
+        # ITEM en vez de a nivel de documento. Este paso SOLO agrega la
+        # columna + backfill: todavía no cambia qué ramo se asigna al crear
+        # un item nuevo (sigue siendo NULL hasta que el backfill lo alcance).
+        # Mismo set de valores que transport_commitments.clasificacion (ENUM
+        # arriba en init_transporte_tables) para no inventar un vocabulario
+        # nuevo.
+        "ramo": "ENUM('despacho','retiro','instalacion','mantencion','garantia') "
+                "NULL COMMENT 'Ramo logístico de este item (despacho/instalación/etc). "
+                "NULL hasta el backfill o hasta que el alta lo setee explícito.'",
     }
     try:
         existing_it = {
@@ -77996,6 +78062,23 @@ def _ensure_transport_tracking_tables():
             except Exception as _e_add_it:
                 print(f"[tr_tracking] no se pudo agregar item.{col}: {_e_add_it}",
                       flush=True)
+    # 5.5) BACKFILL ramo (FASE 1 del modelo de dos ramos, 2026-08-01): los
+    # transport_manifest_items que ya existían antes de esta columna no
+    # tienen `ramo`. Lo poblamos copiando la clasificación del commitment
+    # asociado -- es el mejor dato disponible hoy (1 clasificación por
+    # documento). Solo toca filas con ramo IS NULL, así que correr esto en
+    # cada boot es inofensivo (no pisa un ramo que alguien ya haya fijado a
+    # mano en una fase futura).
+    try:
+        mysql_execute("""
+            UPDATE transport_manifest_items mi
+            JOIN transport_commitments c ON c.id = mi.commitment_id
+            SET mi.ramo = c.clasificacion
+            WHERE mi.ramo IS NULL
+        """)
+        print("[tr_tracking] backfill ramo aplicado", flush=True)
+    except Exception as _e_ramo:
+        print(f"[tr_tracking] backfill ramo: {_e_ramo}", flush=True)
     # Nota: el ENUM estado_entrega (incl. 'Problema') ya se amplía en
     # _ensure_transport_columns() (~línea 71995) — no se repite acá.
     try:

@@ -759,5 +759,104 @@ class TestFacturaEnDosManifiestos(unittest.TestCase):
         )
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 9 · Columna `ramo` en transport_manifest_items (Fase 1: modelo de dos
+# ramos, primer paso -- solo modelo de datos, sin cambiar comportamiento)
+# ═════════════════════════════════════════════════════════════════════════════
+class TestRamoManifestItems(unittest.TestCase):
+    """Primer paso hacia el modelo de dos ramos independientes (ver
+    TestClasificacionZZ.test_GAP_envio_mas_instalacion_pierde_el_envio, arriba):
+    una columna `ramo` en transport_manifest_items + backfill desde
+    transport_commitments.clasificacion. Este paso NO cambia todavía qué ramo
+    recibe un item nuevo al crearse (sigue quedando NULL) -- eso es trabajo de
+    una fase posterior."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_ensure_transport_tracking_tables")
+        cls.sql = _norm(cls.fuente)
+
+    def test_agrega_la_columna_ramo_con_el_mismo_vocabulario_que_clasificacion(self):
+        """`ramo` tiene que hablar el mismo vocabulario que
+        transport_commitments.clasificacion (despacho/retiro/instalacion/
+        mantencion/garantia), para que el backfill -- y cualquier alta futura
+        por item -- no inventen strings nuevos."""
+        self.assertIn(
+            '"ramo"', self.fuente,
+            "Desapareció la entrada 'ramo' del dict item_cols de "
+            "_ensure_transport_tracking_tables.",
+        )
+        self.assertIn(
+            "ENUM('despacho','retiro','instalacion','mantencion','garantia')",
+            self.sql,
+            "El ENUM de `ramo` dejó de coincidir con el de "
+            "transport_commitments.clasificacion.",
+        )
+
+    def test_ramo_es_nullable(self):
+        """NULL a propósito: los items existentes no tienen ramo hasta el
+        backfill, y el alta de items nuevos todavía no lo setea (paso
+        pendiente, ver comentario en el dict item_cols)."""
+        self.assertRegex(
+            self.sql,
+            # [\s"]* en vez de \s+: el DDL es una concatenación de strings de
+            # Python en el código fuente ("...) " "NULL...") — _cuerpo_funcion
+            # devuelve el texto TAL CUAL está escrito, comillas de
+            # concatenación incluidas, no el valor ya evaluado. En tiempo de
+            # ejecución Python las concatena y el DDL real queda correcto.
+            r"ENUM\('despacho','retiro','instalacion','mantencion','garantia'\)[\s\"]*NULL",
+            "`ramo` dejó de ser NULLABLE.",
+        )
+
+    def test_agrega_la_columna_via_alter_idempotente_igual_que_el_resto_del_dict(self):
+        """Mismo patrón que tracking_number/bultos_total/etc: ALTER TABLE ADD
+        COLUMN solo si information_schema dice que no existe todavía."""
+        self.assertIn(
+            "ALTER TABLE transport_manifest_items ADD COLUMN {col} {ddl}",
+            self.fuente,
+            "El agregado de columnas de transport_manifest_items dejó de "
+            "pasar por el loop idempotente compartido -- revisar si `ramo` "
+            "sigue entrando por ahí.",
+        )
+
+    def test_backfill_solo_toca_filas_sin_ramo(self):
+        """El UPDATE...JOIN de backfill tiene que ser idempotente: si ya
+        corrió antes (o alguien fijó `ramo` a mano en una fase futura), no lo
+        debe pisar."""
+        self.assertIn(
+            "WHERE mi.ramo IS NULL", self.sql,
+            "El backfill de ramo perdió el filtro WHERE ramo IS NULL: podría "
+            "pisar un ramo ya asignado.",
+        )
+
+    def test_backfill_copia_la_clasificacion_del_commitment_asociado(self):
+        """Fuente del backfill: transport_commitments.clasificacion vía JOIN
+        por commitment_id -- es el único dato de clasificación que existe hoy
+        (uno por documento, no por item)."""
+        self.assertRegex(
+            self.sql,
+            r"UPDATE transport_manifest_items mi"
+            r"\s+JOIN transport_commitments c ON c\.id\s*=\s*mi\.commitment_id"
+            r"\s+SET mi\.ramo\s*=\s*c\.clasificacion",
+            "Cambió la forma del backfill de ramo (join o columna origen).",
+        )
+
+    def test_backfill_corre_despues_del_alter_que_agrega_la_columna(self):
+        """Si el backfill corriera ANTES del ALTER TABLE, reventaría en una
+        base de datos que recién agrega `ramo` (columna todavía no existe)."""
+        idx_alter = self.fuente.index("ALTER TABLE transport_manifest_items ADD COLUMN {col} {ddl}")
+        idx_backfill = self.fuente.index("backfill ramo aplicado")
+        self.assertLess(
+            idx_alter, idx_backfill,
+            "El backfill de ramo quedó antes del ALTER TABLE que agrega la "
+            "columna: en un boot limpio reventaría con 'Unknown column ramo'.",
+        )
+
+    def test_backfill_esta_envuelto_en_su_propio_try_except(self):
+        """Mismo estilo que el resto de la función (ej. backfill tiene_saldo=1
+        más abajo): un fallo del backfill no debe tumbar el resto del boot."""
+        self.assertIn("except Exception as _e_ramo:", self.fuente)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
