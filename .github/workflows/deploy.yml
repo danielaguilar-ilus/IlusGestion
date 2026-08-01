@@ -67,6 +67,44 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # --- GATE: tests de regresion ANTES de tocar produccion (Fase 0, plan
+      # de mejora integral de Transporte, 2026-07-31) --------------------
+      # Corre solo los tests AUTOCONTENIDOS (sin Flask/MySQL/ERP -- extraen
+      # la funcion via AST o son modulos puros), asi el gate es rapido y no
+      # depende de credenciales. Si un test falla, el deploy NO se ejecuta.
+      #
+      # tests/test_transport_manifest_ui.py queda EXCLUIDO a proposito: ya
+      # fallaba ANTES de esta sesion (filtro Jinja 'dias_fmt' no registrado
+      # en el Environment de prueba + una aserción de CSS que se movio a un
+      # archivo externo en un refactor anterior) -- no es una regresion de
+      # hoy, pero bloquear TODO deploy por un test viejo y roto no es lo
+      # correcto. Queda pendiente arreglarlo aparte (no en este PR).
+      - name: Tests de regresión (gate previo al deploy)
+        run: |
+          set -e
+          FAILED=0
+          for f in \
+            tests/test_contrato_parser.py \
+            tests/test_fedex_parse.py \
+            tests/test_simpliroute_payload.py \
+            tests/test_trafico_buscar_cliente_query.py \
+            tests/test_trafico_correlativo_cotizaciones.py \
+            tests/test_transport_label_address.py \
+            tests/test_transport_productos_json_saldo.py \
+          ; do
+            echo "::group::$f"
+            if ! python3 "$f"; then
+              echo "::error::$f FALLÓ"
+              FAILED=1
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Uno o más tests fallaron — deploy bloqueado."
+            exit 1
+          fi
+          echo "Todos los tests de regresión pasaron."
+
       # --- AUTENTICAR a Google Cloud usando el secret encriptado ---
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
