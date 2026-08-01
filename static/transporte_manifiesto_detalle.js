@@ -1013,6 +1013,17 @@ function _srEsc(s) {
   });
 }
 
+// 2026-08-01 (Daniel: "quítale todos los ceros a la izquierda de la
+// guía"): el ERP guarda el número con padding fijo tipo NUDO ("0000032257"),
+// nadie lo necesita así para leerlo. Se muestra solo el número real; si
+// quedara vacío tras quitar los ceros (caso "0000000000"), se muestra "0"
+// en vez de una celda en blanco.
+function _fmtGuiaSinCeros(nudo) {
+  if (!nudo) return '—';
+  var s = String(nudo).replace(/^0+/, '');
+  return s || '0';
+}
+
 function srSwitchTab(which) {
   document.querySelectorAll('#simpliRouteModal .trk-tab').forEach(function(t){
     t.classList.toggle('is-active', t.dataset.srtab === which);
@@ -2742,7 +2753,12 @@ async function ejecutarCrearPickup() {
 
 var ESTADOS_META = {
   'En preparación':         { bg:'#6b7280', icon:'bi-clipboard-check' },
-  'Entregado a transporte': { bg:'#06b6d4', icon:'bi-truck-flatbed' },
+  // 2026-08-01 (Daniel: "el carrito de retirado por el courier está sin
+  // la silueta trasera" -- bi-truck-flatbed tiene trazos finos que se
+  // pierden en el tamaño real del hero/badge y dan la impresión de un
+  // ícono roto, aunque a tamaño grande se ve completo. bi-truck es más
+  // simple/sólido y ya se usa sin problemas para "En ruta").
+  'Entregado a transporte': { bg:'#06b6d4', icon:'bi-truck' },
   'En ruta':                { bg:'#3b82f6', icon:'bi-truck' },
   'Entregado':              { bg:'#16a34a', icon:'bi-check-circle-fill' },
   'Problema':               { bg:'#dc2626', icon:'bi-x-octagon-fill' },
@@ -3152,7 +3168,9 @@ var _LINEA_ESTADO_UI = {
   'Preventa':               { color: '#8b5cf6', icon: 'bi-clock-history' },
   'Devolución':             { color: '#f97316', icon: 'bi-arrow-counterclockwise' },
   'En preparación':         { color: '#94a3b8', icon: 'bi-box-seam' },
-  'Entregado a transporte': { color: '#3b82f6', icon: 'bi-truck-flatbed' },
+  // 2026-08-01: mismo fix que ESTADOS_META (bi-truck-flatbed se ve cortado
+  // al tamaño real de este badge).
+  'Entregado a transporte': { color: '#3b82f6', icon: 'bi-truck' },
   'En ruta':                { color: '#2563eb', icon: 'bi-truck' },
   'Entrega fallida':        { color: '#dc2626', icon: 'bi-x-octagon-fill' },
 };
@@ -3186,15 +3204,25 @@ function _ilusProductoHtml(l, i, prefix, cid) {
   // producto todavía no tiene guía registrada en el ERP.
   if (l.guias && l.guias.length) {
     var _gMasReciente = l.guias[0];
-    var _gNudo  = _gMasReciente.guia_nudo || '—';
+    // 2026-08-01 (Daniel: "por favor quítale todos los ceros a la
+    // izquierda de la guía") -- el ERP guarda el número con padding fijo
+    // ("0000032257"); nadie lo necesita así para leerlo.
+    var _gNudo  = _fmtGuiaSinCeros(_gMasReciente.guia_nudo);
     var _gFecha = _gMasReciente.fecha_guia ? (' · ' + _gMasReciente.fecha_guia) : '';
+    // 2026-08-01 (Daniel: "no entiendo por qué dice más un documento, más
+    // una guía más" -- el "+1" suelto en el texto visible no se entendía
+    // sin leer el tooltip): ahora dice explícito "+1 guía más" en el
+    // propio texto, no solo un número sin contexto.
+    var _gMasTexto = l.guias.length > 1
+      ? (' +' + (l.guias.length - 1) + ' guía' + (l.guias.length > 2 ? 's' : '') + ' más')
+      : '';
     var _gTitulo = 'Guía de despacho ' + _gNudo +
       (_gMasReciente.fecha_guia ? (', ' + _gMasReciente.fecha_guia) : '') +
       (_gMasReciente.codigo_transportista ? (' · ' + _gMasReciente.codigo_transportista) : '') +
-      (l.guias.length > 1 ? (' (+' + (l.guias.length - 1) + ' guía' + (l.guias.length > 2 ? 's' : '') + ' más)') : '');
+      (l.guias.length > 1 ? (' (' + l.guias.length + ' guías en total -- este producto se redespachó)') : '');
     chips += '<span class="sr-stock-chip" title="' + _srEsc(_gTitulo) + '">' +
       '<i class="bi bi-file-earmark-text"></i> ' + _srEsc(_gNudo) + _srEsc(_gFecha) +
-      (l.guias.length > 1 ? ' <span style="opacity:.75">+' + (l.guias.length - 1) + '</span>' : '') +
+      (_gMasTexto ? '<span style="opacity:.75">' + _srEsc(_gMasTexto) + '</span>' : '') +
       '</span>';
   } else {
     chips += '<span class="sr-stock-chip sr-stock-chip-neutro" title="Sin guía de despacho todavía — el producto no ha salido">' +

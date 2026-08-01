@@ -272,6 +272,43 @@
   table.totales tr.total-final td:first-child { border-radius: 4px 0 0 4px; }
   table.totales tr.total-final td:last-child  { border-radius: 0 4px 4px 0; }
 
+  /* ───── Datos para transferencia (2026-08-01, Daniel: "para que no
+     pregunten dónde depositar, sino que depositen ahí ya") ─────
+     Ícono SVG vectorial en vez de emoji: los emojis dependen de fuentes del
+     sistema -- en el contenedor de Cloud Run donde corre Playwright podrían
+     no tener una fuente de emoji instalada y mostrarse como un cuadrado
+     vacío. Un SVG inline se ve igual siempre. */
+  .pago-strip {
+    display: flex; align-items: center; gap: 3.5mm;
+    background: linear-gradient(90deg, var(--ilus-black) 0%, #1c1c1c 100%);
+    border-left: 3px solid var(--ilus-red);
+    border-radius: 3px;
+    padding: 2.8mm 4.5mm;
+    margin: 0 0 5mm;
+    page-break-inside: avoid;
+  }
+  .pago-strip .pago-icon-wrap {
+    flex-shrink: 0; width: 7mm; height: 7mm;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--ilus-red); border-radius: 50%;
+  }
+  .pago-strip .pago-icon-wrap svg { width: 4mm; height: 4mm; color: #fff; }
+  .pago-strip .pago-txt { flex: 1; min-width: 0; }
+  .pago-strip .pago-title {
+    color: var(--ilus-red);
+    font-weight: 800; font-size: 7.2pt; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 1mm;
+  }
+  .pago-strip .pago-datos {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: .8mm 5mm;
+    color: #f3f4f6; font-size: 8.3pt; line-height: 1.35;
+  }
+  .pago-strip .pago-datos .pago-empresa {
+    font-weight: 800; letter-spacing: .01em; color: #fff;
+    text-transform: uppercase;
+  }
+  .pago-strip .pago-datos .pago-item b { color: #fff; font-weight: 700; }
+
   /* ───── Despacho (info operativa -- se conserva, Regla #4.2) ───── */
   .despacho-wrap { margin-bottom: 5mm; page-break-inside: avoid; }
   table.despacho { width: 100%; border-collapse: collapse; font-size: 8pt; }
@@ -505,6 +542,27 @@
         <td class="t-val">{{ clp(cot.total) }}</td>
       </tr>
     </table>
+  </div>
+
+  {# ════════════ DATOS DE TRANSFERENCIA (2026-08-01) ════════════ #}
+  <div class="pago-strip">
+    <div class="pago-icon-wrap">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 10L12 4L21 10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M5 10V19M9.5 10V19M14.5 10V19M19 10V19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M3 19H21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="pago-txt">
+      <div class="pago-title">Datos para transferencia</div>
+      <div class="pago-datos">
+        <span class="pago-empresa">Sport and Health Solution SpA</span>
+        <span class="pago-item"><b>Banco:</b> BCI</span>
+        <span class="pago-item"><b>Cta. Cte.:</b> 27445585</span>
+        <span class="pago-item"><b>RUT:</b> 76.996.964-0</span>
+        <span class="pago-item"><b>Correo:</b> contacto@sphs.cl</span>
+      </div>
+    </div>
   </div>
 
   {# ════════════ DESPACHO (info operativa existente -- se conserva) ════════════ #}

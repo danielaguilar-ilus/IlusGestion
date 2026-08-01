@@ -1066,8 +1066,12 @@ function renderVista(d) {
     // de productos del modal) -- l.guia_numero lo arma tr_detalle cruzando
     // transport_guias por SKU (la más reciente si hubo re-despacho). "—" si
     // el producto todavía no tiene guía registrada en el ERP.
+    // _fmtGuiaSinCeros (definida en transporte_manifiesto_detalle.js, mismo
+    // window global -- ambos scripts se cargan juntos en index.html) quita
+    // los ceros a la izquierda del NUDO del ERP (Daniel 2026-08-01: "quítale
+    // todos los ceros a la izquierda de la guía").
     var guiaHtml = '<td class="text-center">' +
-      (l.guia_numero ? '<span class="font-monospace" style="font-size:.72rem">' + esc(l.guia_numero) + '</span>'
+      (l.guia_numero ? '<span class="font-monospace" style="font-size:.72rem">' + esc(_fmtGuiaSinCeros(l.guia_numero)) + '</span>'
                       : '<span class="text-muted">—</span>') +
       '</td>';
 

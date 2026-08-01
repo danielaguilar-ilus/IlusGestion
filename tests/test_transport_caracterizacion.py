@@ -169,6 +169,96 @@ class TestClasificacionZZ(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 1.b · _clasifs_from_skus_multi — Fase 1 PR-B, detecta TODOS los ramos
+# ═════════════════════════════════════════════════════════════════════════════
+class TestClasificacionZZMulti(unittest.TestCase):
+    """La pieza que resuelve el GAP de arriba (test_GAP_envio_mas_instalacion_
+    pierde_el_envio): a diferencia de _clasif_from_skus (single, con
+    prioridad), esta devuelve TODOS los ramos presentes. En esta pieza (PR-B
+    paso 1) todavía NADIE la usa para escribir -- eso es el paso siguiente
+    (los 4 write-sites). Acá solo se prueba la función en sí."""
+
+    @classmethod
+    def setUpClass(cls):
+        # _clasifs_from_skus_multi usa la constante de módulo _ORDEN_RAMOS --
+        # se extrae su valor REAL del código fuente (no se hardcodea un
+        # duplicado en el test, que podría desincronizarse si alguien cambia
+        # el orden en app.py sin tocar el test).
+        _orden_ramos = None
+        for nodo in ast.walk(_arbol_app()):
+            if isinstance(nodo, ast.Assign):
+                for destino in nodo.targets:
+                    if isinstance(destino, ast.Name) and destino.id == "_ORDEN_RAMOS":
+                        _orden_ramos = ast.literal_eval(nodo.value)
+        if _orden_ramos is None:
+            raise AssertionError("No se encontró _ORDEN_RAMOS en app.py")
+        cls.multi = staticmethod(
+            _extraer_funcion("_clasifs_from_skus_multi", extras={"_ORDEN_RAMOS": _orden_ramos}))
+
+    def test_solo_zzenvio_da_un_solo_ramo(self):
+        self.assertEqual(self.multi(["ZZENVIO"]), ["despacho"])
+
+    def test_envio_mas_instalacion_da_AMBOS_ramos(self):
+        """El caso central: a diferencia de la versión single (que colapsa a
+        'instalacion' solo), acá deben aparecer los DOS."""
+        self.assertEqual(self.multi(["ZZENVIO", "ZZINSTALACION"]), ["despacho", "instalacion"])
+
+    def test_orden_es_siempre_despacho_primero_no_depende_del_input(self):
+        self.assertEqual(self.multi(["ZZINSTALACION", "ZZENVIO"]), ["despacho", "instalacion"])
+
+    def test_sin_skus_cae_a_despacho_por_defecto(self):
+        self.assertEqual(self.multi([]), ["despacho"])
+        self.assertEqual(self.multi([None, "", "  "]), ["despacho"])
+
+    def test_no_duplica_ramos_si_hay_varias_lineas_del_mismo_tipo(self):
+        self.assertEqual(self.multi(["ZZINSTALACION", "ZZINSTALACION"]), ["instalacion"])
+
+    def test_es_case_insensitive(self):
+        self.assertEqual(self.multi(["zzenvio", "zzinstalacion"]), ["despacho", "instalacion"])
+
+    def test_retiro_mas_envio_da_AMBOS_a_diferencia_de_la_version_single(self):
+        """Asimetría intencional respecto a _clasif_from_skus (que usa all()
+        para retiro y por eso ZZRETIRO+ZZENVIO colapsa a solo 'despacho'):
+        en la versión multi, cualquier ramo con una línea ZZ real presente se
+        refleja -- mismo criterio ya aplicado a despacho+instalación."""
+        self.assertEqual(self.multi(["ZZRETIRO", "ZZENVIO"]), ["despacho", "retiro"])
+
+    def test_tres_ramos_a_la_vez(self):
+        self.assertEqual(
+            self.multi(["ZZENVIO", "ZZINSTALACION", "ZZSERVTEC"]),
+            ["despacho", "instalacion", "mantencion"],
+        )
+
+    def test_mantencion_agrupa_los_tres_skus_tecnicos(self):
+        for sku in ("ZZSERVTEC", "ZZINGREPUESTO", "ZZINGARREQUIP"):
+            with self.subTest(sku=sku):
+                self.assertEqual(self.multi([sku]), ["mantencion"])
+
+
+class TestRamosDeCommitment(unittest.TestCase):
+    """_tr_ramos_de_commitment lee zz_skus YA PERSISTIDO (sin volver a tocar
+    el ERP) y lo pasa por _clasifs_from_skus_multi. Se prueba solo la
+    ESTRUCTURA (no se puede ejecutar sin MySQL real) -- que lea la columna
+    correcta y delegue en la función multi, no reimplemente el mapeo."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _norm(_cuerpo_funcion("_tr_ramos_de_commitment"))
+
+    def test_lee_zz_skus_de_transport_commitments(self):
+        self.assertIn("SELECT zz_skus FROM transport_commitments WHERE id=%s", self.fuente)
+
+    def test_delega_en_la_funcion_multi_no_reimplementa_el_mapeo(self):
+        self.assertIn("_clasifs_from_skus_multi(skus)", self.fuente,
+                      "Dejó de delegar en _clasifs_from_skus_multi -- si "
+                      "reimplementa el mapeo acá, las dos copias del "
+                      "criterio SKU→ramo pueden desincronizarse.")
+
+    def test_parsea_la_lista_compacta_separada_por_comas(self):
+        self.assertIn('.split(",")', self.fuente)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # BLOQUE 2 · Constante ZZ_SKUS duplicada en 3 lugares
 # ═════════════════════════════════════════════════════════════════════════════
 class TestZZSkusDuplicada(unittest.TestCase):

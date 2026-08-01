@@ -19653,6 +19653,59 @@ def _clasif_from_skus(skus):
     return "despacho"
 
 
+# Orden determinístico de ramos (no depende del orden de aparición de los
+# SKUs en el documento) — despacho primero por ser el más común. Compartido
+# entre _clasifs_from_skus_multi y cualquier código que necesite ordenar
+# ramos de forma consistente (ej. la grilla del Monitor en PR-B).
+_ORDEN_RAMOS = {"despacho": 0, "instalacion": 1, "mantencion": 2, "retiro": 3, "garantia": 4}
+
+
+def _clasifs_from_skus_multi(skus):
+    """Fase 1, PR-B (2026-08-01) — decisión de Daniel (2026-07-31): una
+    factura con ZZENVIO+ZZINSTALACION debe generar DOS asignaciones
+    independientes, no una. `_clasif_from_skus` (arriba) NO se toca: sigue
+    siendo la fuente de transport_commitments.clasificacion (1 valor por
+    documento, para no romper nada que ya dependa de esa columna histórica).
+
+    Esta función es la que usan los 4 write-sites de PR-B para decidir
+    CUÁNTOS manifest_items crear: devuelve TODOS los ramos presentes en vez
+    de colapsar a uno con prioridad.
+
+    Devuelve una lista ORDENADA (ver _ORDEN_RAMOS) y sin duplicados, ej.
+    ["despacho","instalacion"]. Nunca vacía: sin SKUs ZZ reconocidos, cae a
+    ["despacho"] — mismo default que _clasif_from_skus.
+    """
+    skus = [s.strip().upper() for s in skus if s]
+    ramos = set()
+    for sku in skus:
+        if sku == "ZZRETIRO":
+            ramos.add("retiro")
+        elif sku == "ZZINSTALACION":
+            ramos.add("instalacion")
+        elif sku in ("ZZSERVTEC", "ZZINGREPUESTO", "ZZINGARREQUIP"):
+            ramos.add("mantencion")
+        elif sku.startswith("ZZ"):
+            # ZZENVIO y cualquier otro SKU ZZ no reconocido específicamente
+            # -- mismo fallback que _clasif_from_skus.
+            ramos.add("despacho")
+    if not ramos:
+        ramos.add("despacho")
+    return sorted(ramos, key=lambda r: _ORDEN_RAMOS.get(r, 99))
+
+
+def _tr_ramos_de_commitment(commitment_id):
+    """Ramos presentes en un commitment YA guardado, leyendo su columna
+    `zz_skus` persistida (VARCHAR compacto tipo "ZZENVIO,ZZRETIRO", ya
+    poblada por el sync — ver app.py:2652-2659) -- NO vuelve a tocar el ERP.
+    Usada por los 4 write-sites de PR-B para decidir cuántas asignaciones
+    crear al mandar un documento a un manifiesto."""
+    row = mysql_fetchone(
+        "SELECT zz_skus FROM transport_commitments WHERE id=%s", (commitment_id,))
+    zz_skus_raw = (row.get("zz_skus") if row else "") or ""
+    skus = [s.strip() for s in zz_skus_raw.split(",") if s.strip()]
+    return _clasifs_from_skus_multi(skus)
+
+
 def _ensure_transport_guias_table():
     """Tabla NUEVA (2026-08-01): guías de despacho REALES (TIDO='GDV') que
     cubrieron las líneas de un documento (factura/boleta), una fila por
