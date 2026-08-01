@@ -58,26 +58,46 @@ async function sincronizarHoy(){
 }
 
 // ════════════════════════════════════════════════════════════
-//  LIMPIAR MONITOR — admin only. Borra TODOS los registros.
+//  LIMPIAR MONITOR — superadmin only. Borra TODOS los registros.
 //  Útil para validar que el sync diario empieza limpio.
+//
+//  FIX 2026-07-31 (Fase 0, plan de mejora integral de Transporte):
+//  antes llamaba a /transporte/api/limpiar-monitor (solo permiso
+//  admin/superadmin, SIN texto de confirmación) -- ese endpoint legacy
+//  se retiró de app.py. Ahora usa /limpiar-todo, que exige escribir
+//  "LIMPIAR" exacto (vía ilusPrompt, no un prompt() nativo) además de
+//  superadmin -- un solo click accidental ya no puede borrar todo el
+//  monitor.
 // ════════════════════════════════════════════════════════════
 async function limpiarMonitor(){
-  const ok = (typeof ilusConfirm === 'function')
-    ? await ilusConfirm({
-        title: 'Limpiar TODO el monitor',
-        message: '¿Eliminar TODOS los registros del monitor de transporte?',
-        sub: 'No se borra nada del ERP. El próximo sync repuebla automáticamente con los documentos del día.',
-        okLabel: 'Sí, limpiar todo',
-        cancelLabel: 'Cancelar',
-        type: 'danger',
-      })
-    : confirm('¿Borrar TODOS los registros del monitor? (no afecta al ERP)');
-  if (!ok) return;
+  if (typeof ilusPrompt !== 'function') {
+    ilusToast('No se pudo abrir el diálogo de confirmación.', {type:'error'});
+    return;
+  }
+  const texto = await ilusPrompt({
+    title: 'Limpiar TODO el monitor',
+    message: 'Esto elimina TODOS los registros del monitor de transporte (no afecta al ERP; el próximo sync repuebla con los documentos del día).',
+    sub: 'Escribe <strong>LIMPIAR</strong> para confirmar.',
+    subHtml: true,
+    placeholder: 'LIMPIAR',
+    okLabel: 'Confirmar',
+    cancelLabel: 'Cancelar',
+    required: true,
+  });
+  if (!texto) return;
+  if (texto.trim().toUpperCase() !== 'LIMPIAR') {
+    ilusToast('Escribe exactamente "LIMPIAR" para confirmar. No se borró nada.', {type:'warning'});
+    return;
+  }
   const btn = document.getElementById('btnLimpiarMon');
   const txt = btn ? btn.innerHTML : '';
   if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Limpiando…'; }
   try {
-    const r = await fetch('/transporte/api/limpiar-monitor', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const r = await fetch('/transporte/api/limpiar-todo', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text: 'LIMPIAR'}),
+    });
     const d = await r.json();
     if (!d.ok){
       if (typeof ilusToast === 'function') ilusToast('Error: ' + (d.error||'desconocido'), {type:'error'});

@@ -21164,45 +21164,22 @@ def tr_lineas_pendientes_enviar_manifiesto():
         conn.close()
 
 
-@app.route("/transporte/api/limpiar-monitor", methods=["POST"])
-@_tr_required
-def tr_limpiar_monitor():
-    """Borra TODOS los registros del monitor (transport_commitments).
-    Requiere superadmin o admin para evitar borrados accidentales.
-    El próximo sync vuelve a poblar con los datos al día desde el ERP.
-    """
-    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
-        return jsonify({"ok": False, "error": "Solo admin/superadmin puede limpiar el monitor."}), 403
-
-    conn = get_mysql()
-    try:
-        with conn.cursor() as cur:
-            # Contar antes para el log
-            cur.execute("SELECT COUNT(*) AS n FROM transport_commitments")
-            n_antes = (cur.fetchone() or {}).get("n", 0)
-            # Borrar líneas primero (FK), después items de manifiestos vinculados, después el header.
-            # Las líneas y manifest_items tienen ON DELETE CASCADE, así que con un solo DELETE basta.
-            cur.execute("DELETE FROM transport_commitments")
-        conn.commit()
-        try:
-            _tr_log("commitment", 0, "limpieza_total",
-                    f"Monitor limpiado por {current_username()}: {n_antes} registros eliminados")
-        except Exception:
-            pass
-        return jsonify({
-            "ok": True,
-            "eliminados": int(n_antes or 0),
-            "mensaje": f"Monitor limpio. Se eliminaron {n_antes} registros. Sincroniza HOY para repoblar.",
-        })
-    finally:
-        conn.close()
+# 2026-07-31 (Fase 0, plan de mejora integral de Transporte — Daniel
+# confirmó explícitamente retirarlo): el endpoint legacy
+# /transporte/api/limpiar-monitor (borrado total con solo permiso
+# admin/superadmin, SIN texto de confirmación) se retiró. El único
+# caller real (static/transporte_monitor.js) ahora usa /limpiar-todo
+# (abajo), que exige superadmin + escribir "LIMPIAR" exacto. La ruta
+# vieja ya NO existe (404) — no se dejó un alias silencioso a propósito,
+# para que cualquier otro caller olvidado se note de inmediato en vez de
+# borrar todo sin pedir confirmación.
 
 
 # ═══════════════════════════════════════════════════════════════════════
 #  LIMPIAR-TODO (superadmin) — versión con confirm_text obligatorio
 #  Daniel pidió un endpoint paralelo que exija texto exacto "LIMPIAR"
-#  para evitar accidentes de teclado. Se mantiene `limpiar-monitor` arriba
-#  por compatibilidad con el botón legacy.
+#  para evitar accidentes de teclado. Es el ÚNICO camino para el borrado
+#  total desde 2026-07-31 (el legacy `limpiar-monitor` se retiró).
 # ═══════════════════════════════════════════════════════════════════════
 @app.route("/transporte/api/limpiar-todo", methods=["POST"])
 @_tr_required

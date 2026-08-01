@@ -79,6 +79,18 @@ jobs:
       # archivo externo en un refactor anterior) -- no es una regresion de
       # hoy, pero bloquear TODO deploy por un test viejo y roto no es lo
       # correcto. Queda pendiente arreglarlo aparte (no en este PR).
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias mínimas para los tests
+        # SOLO lo que los tests realmente importan (Pillow, para el helper de
+        # PDF multi-página de test_fedex_parse.py) -- NO requirements.txt
+        # completo (playwright/tesseract la harían lenta y frágil solo para
+        # correr tests unitarios que no los necesitan).
+        run: pip install --quiet "Pillow>=10.0.0"
+
       - name: Tests de regresión (gate previo al deploy)
         run: |
           set -e
