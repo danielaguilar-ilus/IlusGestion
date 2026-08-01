@@ -21560,6 +21560,19 @@ def tr_lineas_pendientes_enviar_manifiesto():
         if _bloqueo:
             return _bloqueo
 
+        # PR-A (Fase 1, Paso 2 -- 2026-08-01): setear `ramo` explícito en el
+        # INSERT en vez de depender del backfill de boot. Sigue siendo 1 item
+        # por documento (la función multi que detecta AMBOS ramos llega en
+        # PR-B) -- esto solo deja de dejar `ramo` en NULL para items nuevos,
+        # precondición dura para poder endurecer el UNIQUE KEY después.
+        _ramos_cids = {
+            r["id"]: (r.get("clasificacion") or "despacho")
+            for r in (mysql_fetchall(
+                "SELECT id, clasificacion FROM transport_commitments WHERE id IN ("
+                + ",".join(["%s"] * len(cids)) + ")", tuple(cids)
+            ) or [])
+        }
+
         agregados, ya_estaban = 0, 0
         with conn.cursor() as cur:
             for cid in cids:
@@ -21571,8 +21584,8 @@ def tr_lineas_pendientes_enviar_manifiesto():
                     ya_estaban += 1
                     continue
                 cur.execute(
-                    "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
-                    "VALUES (%s,%s)", (mid, cid)
+                    "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id,ramo) "
+                    "VALUES (%s,%s,%s)", (mid, cid, _ramos_cids.get(cid, "despacho"))
                 )
                 agregados += 1
                 # FASE 2 (2026-07-31): snapshot de productos de este despacho
@@ -26826,10 +26839,15 @@ def tr_agregar_item(mid):
     # agregado. Mismo patrón correcto que ya usa tr_quitar_item al lado:
     # no cerrar acá, dejar que teardown_appcontext lo haga.
     conn = get_db()
+    # PR-A (Fase 1, Paso 2 -- 2026-08-01): ramo explícito, mismo criterio que
+    # el resto de los write-sites (ver tr_asignar_a_manifiesto).
+    _ramo_row = mysql_fetchone(
+        "SELECT clasificacion FROM transport_commitments WHERE id=%s", (cid,))
+    _ramo = (_ramo_row.get("clasificacion") if _ramo_row else None) or "despacho"
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id) "
-            "VALUES (%s,%s)", (mid, cid)
+            "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id,ramo) "
+            "VALUES (%s,%s,%s)", (mid, cid, _ramo)
         )
         # FASE 2 (2026-07-31): snapshot de productos de este despacho para
         # poder trackear estado/SLA por SKU. SELECT explícito (no lastrowid)
@@ -32248,6 +32266,13 @@ def tr_cron_refrescar_saldo_productos():
     terminal) -- el mismo universo chico de "En gestión" del Monitor, no
     los ~370 pendientes -- para no golpear el ERP cada hora con cientos de
     consultas. Pensado para Cloud Scheduler cada 1 hora.
+
+    SEGUNDO ALCANCE, agregado 2026-08-01 (Daniel, caso real BLV 22727): un
+    documento que llega a estado terminal ANTES de que este cron alcance a
+    sincronizar su guía quedaba excluido para siempre -- la guía nunca se
+    capturaba aunque el ERP sí la tuviera. La condición de "dejar de tocarlo"
+    ahora exige AMBAS cosas -- terminal Y con guía -- no solo terminal. Ver el
+    comentario junto a la query para el detalle completo.
     """
     tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
     if not _fedex_cron_token_required(tok):
@@ -32279,38 +32304,68 @@ def tr_cron_refrescar_saldo_productos():
     #
     # LIMIT como techo duro: pase lo que pase, una corrida nunca dispara más de
     # 300 consultas al ERP.
+    #
+    # SEGUNDO CASO (2026-08-01, Daniel: caso real BLV 22727 — se entregó con
+    # guía real en el ERP, pero la ficha decía "Sin guía" para siempre. "Se
+    # deja de cumplir cuando se cumplen las DOS condiciones... si uno de esos
+    # dos procesos mata al otro, queda siempre incompleto"): un documento que
+    # llega a estado terminal ANTES de que este cron alcance a sincronizar su
+    # guía queda excluido para siempre por el filtro de arriba (`NOT IN
+    # (Entregado...)`) — la guía nunca se captura, aunque el ERP sí la tenga.
+    #
+    # La guía es un dato HISTÓRICO PERMANENTE (a diferencia del saldo, que
+    # deja de importar apenas se entrega): sigue valiendo la pena capturarla
+    # después de la entrega. Se agrega un segundo grupo de candidatos —
+    # terminal, SIN ninguna guía sincronizada todavía — acotado a los últimos
+    # 60 días para no barrer TODO el historial para siempre (un documento de
+    # hace meses que nunca tuvo guía, probablemente nunca la va a tener). Deja
+    # de aparecer en este segundo grupo recién cuando AMBAS condiciones se
+    # cumplen: terminal Y con guía — el corte real que pidió Daniel.
     docs = mysql_fetchall("""
-        SELECT DISTINCT c.id, c.tido, c.nudo
+        SELECT DISTINCT c.id, c.tido, c.nudo,
+               (mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')) AS activo
         FROM transport_commitments c
         JOIN transport_manifest_items mi ON mi.commitment_id = c.id
-        WHERE mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
-          AND c.tiene_saldo = 1
+        WHERE
+          (mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
+           AND c.tiene_saldo = 1)
+          OR
+          (mi.estado_entrega IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
+           AND NOT EXISTS (SELECT 1 FROM transport_guias g WHERE g.commitment_id = c.id)
+           AND c.fecha_emision >= DATE_SUB(NOW(), INTERVAL 60 DAY))
         ORDER BY c.id
         LIMIT 300
     """) or []
 
-    actualizados, fallidos = 0, 0
+    actualizados, fallidos, guias_catchup = 0, 0, 0
     for d in docs:
         try:
-            comm_id, err = _tr_fetch_from_erp(d["tido"], str(d["nudo"]))
-            if comm_id:
-                actualizados += 1
-                # Guías de despacho (2026-08-01): misma cadencia horaria que
-                # el saldo -- se sincronizan justo después, con el mismo
-                # comm_id ya resuelto. try/except propio: un fallo acá NUNCA
-                # debe contar como fallo del refresco de saldo (que es lo que
-                # este cron reporta) -- _tr_fetch_guias_from_erp ya no
-                # debería lanzar (todo envuelto adentro), pero se blinda igual.
-                try:
-                    _tr_fetch_guias_from_erp(comm_id, d["tido"], str(d["nudo"]))
-                except Exception as e_g:
-                    print(f"[refrescar-saldo][guias] {d['tido']} {d['nudo']} falló: {e_g}", flush=True)
+            if d.get("activo"):
+                # Caso de siempre: despacho activo, refresca saldo + guía.
+                comm_id, err = _tr_fetch_from_erp(d["tido"], str(d["nudo"]))
+                if comm_id:
+                    actualizados += 1
+                    # try/except propio: un fallo de guía acá NUNCA debe
+                    # contar como fallo del refresco de saldo (que es lo que
+                    # este cron reporta principalmente).
+                    try:
+                        _tr_fetch_guias_from_erp(comm_id, d["tido"], str(d["nudo"]))
+                    except Exception as e_g:
+                        print(f"[refrescar-saldo][guias] {d['tido']} {d['nudo']} falló: {e_g}", flush=True)
+                else:
+                    fallidos += 1
             else:
-                fallidos += 1
+                # Catch-up: documento YA terminal, solo le falta la guía. No
+                # hace falta refrescar todo el commitment (saldo/cliente/
+                # dirección ya no importan en un pedido cerrado) — solo la
+                # guía, con el commitment_id que ya tenemos de la query.
+                _tr_fetch_guias_from_erp(d["id"], d["tido"], str(d["nudo"]))
+                guias_catchup += 1
         except Exception as e:
             fallidos += 1
             print(f"[refrescar-saldo] {d['tido']} {d['nudo']} falló: {e}", flush=True)
-    return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados, "fallidos": fallidos})
+    return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados,
+                    "guias_catchup": guias_catchup, "fallidos": fallidos})
 
 
 # ── FACTURAS DE PROVEEDOR: conciliación financiera con couriers ──────────
@@ -34916,6 +34971,17 @@ def tr_asignar_a_manifiesto():
                 ],
             }), 409
 
+    # PR-A (Fase 1, Paso 2 -- 2026-08-01): ramo explícito en el INSERT, mismo
+    # criterio que los otros 3 write-sites. Batch para no hacer N queries en
+    # el arrastre múltiple.
+    _ramos_por_cid = {
+        r["id"]: (r.get("clasificacion") or "despacho")
+        for r in (mysql_fetchall(
+            "SELECT id, clasificacion FROM transport_commitments WHERE id IN ("
+            + ",".join(["%s"] * len(commitment_ids)) + ")", tuple(commitment_ids)
+        ) or [])
+    }
+
     conn = get_db()
     with conn.cursor() as cur:
         # crear manifiesto nuevo si no se indicó uno — mismo generador
@@ -34957,8 +35023,8 @@ def tr_asignar_a_manifiesto():
             try:
                 cur.execute(
                     """INSERT IGNORE INTO transport_manifest_items
-                       (manifest_id, commitment_id) VALUES (%s,%s)""",
-                    (mid, cid),
+                       (manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)""",
+                    (mid, cid, _ramos_por_cid.get(cid, "despacho")),
                 )
                 if cur.rowcount:
                     added += 1
@@ -35424,10 +35490,15 @@ def tr_cubicador_enviar_manifiesto():
                 correlativo = row["correlativo"]
 
             # 4) Adjuntar item (idempotente por UNIQUE)
+            # PR-A (Fase 1, Paso 2 -- 2026-08-01): ramo explícito, mismo
+            # criterio que los otros 3 write-sites.
+            _ramo_row_cub = mysql_fetchone(
+                "SELECT clasificacion FROM transport_commitments WHERE id=%s", (comm_id,))
+            _ramo_cub = (_ramo_row_cub.get("clasificacion") if _ramo_row_cub else None) or "despacho"
             cur.execute(
                 "INSERT IGNORE INTO transport_manifest_items "
-                "(manifest_id, commitment_id) VALUES (%s,%s)",
-                (mid, comm_id)
+                "(manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)",
+                (mid, comm_id, _ramo_cub)
             )
             added = bool(cur.rowcount)
             _new_item_id = cur.lastrowid if added else None
@@ -78375,6 +78446,55 @@ def _ensure_transport_tracking_tables():
         print("[tr_tracking] backfill ramo aplicado", flush=True)
     except Exception as _e_ramo:
         print(f"[tr_tracking] backfill ramo: {_e_ramo}", flush=True)
+
+    # 5.6) ENDURECER uq_item a (manifest_id, commitment_id, ramo) -- Fase 1,
+    # Paso 2 (2026-08-01). Hoy es (manifest_id, commitment_id): si un
+    # documento necesita 2 manifest_items (uno por ramo) en el MISMO
+    # manifiesto, el segundo INSERT sería un no-op silencioso.
+    #
+    # ORDEN OBLIGATORIO (no invertir -- MySQL permite múltiples NULL en una
+    # columna de índice único, así que si el ALTER corriera con filas
+    # ramo=NULL, el unique key quedaría "puesto" pero sin proteger nada):
+    #   A) confirmar que NO queden filas con ramo NULL (el backfill de arriba
+    #      ya debería haberlas cerrado, pero se verifica en vez de asumir)
+    #   B) recién ahí, MODIFY a NOT NULL
+    #   C) recién ahí, reemplazar el índice
+    # Si el COUNT(*) no da 0 todavía (ej. primer boot tras agregar la
+    # columna, antes de que el backfill corra), se salta esta vez y se
+    # reintenta en el próximo boot -- nunca hace el MODIFY/ALTER a ciegas.
+    try:
+        _pendientes_ramo = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM transport_manifest_items WHERE ramo IS NULL")
+        if (_pendientes_ramo or {}).get("n", 1) == 0:
+            mysql_execute("""
+                ALTER TABLE transport_manifest_items
+                MODIFY COLUMN ramo ENUM('despacho','retiro','instalacion','mantencion','garantia')
+                NOT NULL DEFAULT 'despacho'
+            """)
+            # DROP+ADD, no MODIFY: no se puede renombrar un índice único
+            # existente con un solo ALTER portable — se borra y se recrea.
+            # Ambos pasos en su propio try/except: si uq_item ya fue
+            # reemplazado en un boot anterior, el DROP falla (no existe más
+            # con ese nombre) y no debe abortar el ADD.
+            try:
+                mysql_execute("ALTER TABLE transport_manifest_items DROP INDEX uq_item")
+            except Exception:
+                pass
+            try:
+                mysql_execute(
+                    "ALTER TABLE transport_manifest_items "
+                    "ADD UNIQUE KEY uq_item (manifest_id, commitment_id, ramo)")
+                print("[tr_tracking] uq_item endurecido a (manifest_id, commitment_id, ramo)", flush=True)
+            except Exception as _e_uq:
+                # Ya existe con esa forma (boot repetido) — no es un error real.
+                print(f"[tr_tracking] uq_item ya estaba endurecido o no se pudo recrear: {_e_uq}", flush=True)
+        else:
+            print(f"[tr_tracking] uq_item: quedan {_pendientes_ramo.get('n')} filas con ramo "
+                  f"NULL, se reintenta en el próximo boot", flush=True)
+    except Exception as _e_hardening:
+        print(f"[tr_tracking] endurecimiento de uq_item falló (no crítico, reintenta "
+              f"en el próximo boot): {_e_hardening}", flush=True)
+
     # Nota: el ENUM estado_entrega (incl. 'Problema') ya se amplía en
     # _ensure_transport_columns() (~línea 71995) — no se repite acá.
     try:

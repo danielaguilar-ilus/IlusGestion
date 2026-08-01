@@ -398,6 +398,62 @@ class TestCronRefrescoSaldo(unittest.TestCase):
             "El cron perdió su LIMIT: una corrida podría golpear el ERP sin techo.",
         )
 
+    def test_catchup_de_guia_en_documentos_terminales_sin_guia(self):
+        """REGRESIÓN real (2026-08-01, caso BLV 22727): un documento que llega
+        a estado terminal ANTES de que este cron alcance a sincronizar su guía
+        quedaba excluido PARA SIEMPRE por el filtro de "no terminal" — la guía
+        nunca se capturaba aunque el ERP sí la tuviera.
+
+        Daniel: "se deja de cumplir cuando se cumplen las DOS condiciones...
+        si uno de esos dos procesos mata al otro, queda siempre incompleto".
+        El corte real: dejar de tocar un documento exige terminal Y con guía,
+        no solo terminal.
+        """
+        self.assertIn(
+            "NOT EXISTS (SELECT 1 FROM transport_guias g WHERE g.commitment_id = c.id)",
+            _norm(self.fuente),
+            "Desapareció el catch-up de guía para documentos terminales — "
+            "volvería el bug de BLV 22727 (guía real en el ERP, nunca "
+            "capturada porque el documento ya estaba Entregado).",
+        )
+
+    def test_el_catchup_de_guia_esta_acotado_en_el_tiempo(self):
+        """Sin un límite temporal, cada corrida barrería TODO el historial de
+        documentos terminales sin guía para siempre (muchos de ellos
+        legítimamente sin guía — boletas antiguas, documentos previos a esta
+        feature) — un costo creciente sin techo contra el ERP."""
+        self.assertIn("DATE_SUB(NOW(), INTERVAL 60 DAY)", _norm(self.fuente))
+
+    def test_el_catchup_no_llama_al_refresco_completo_del_commitment(self):
+        """Un documento terminal no necesita refrescar saldo/cliente/dirección
+        (ya no importan en un pedido cerrado) — el catch-up debe llamar
+        directo a _tr_fetch_guias_from_erp con el id ya conocido, sin pasar
+        por _tr_fetch_from_erp (que hace mucho más trabajo del necesario)."""
+        self.assertIn(
+            '_tr_fetch_guias_from_erp(d["id"], d["tido"], str(d["nudo"]))', self.fuente,
+            "Desapareció la llamada directa de catch-up (con el id ya "
+            "conocido de la query) — revisar si el catch-up sigue existiendo.",
+        )
+        # El fragmento entre el `else:` del catch-up y el `except` que cierra
+        # el for no debe llamar a _tr_fetch_from_erp — esa es la rama pesada
+        # (saldo/cliente/dirección), innecesaria para un documento ya cerrado.
+        idx_else = self.fuente.index("# Catch-up: documento YA terminal")
+        idx_except = self.fuente.index("except Exception as e:", idx_else)
+        fragmento_catchup = self.fuente[idx_else:idx_except]
+        self.assertNotIn(
+            "_tr_fetch_from_erp(", fragmento_catchup,
+            "El catch-up de guía dejó de ser la rama liviana — ahora también "
+            "llama a _tr_fetch_from_erp, el refresco completo innecesario "
+            "para un documento ya terminal.",
+        )
+
+    def test_sigue_acotado_a_despachos_no_terminales_para_el_saldo(self):
+        """El alcance de SALDO (distinto del catch-up de guía) sigue exigiendo
+        no-terminal + tiene_saldo, tal como se pidió el 2026-07-31."""
+        self.assertIn("estado_entrega NOT IN", self.fuente)
+        for terminal in ("Entregado", "Entrega fallida", "Devolución"):
+            self.assertIn(terminal, self.fuente)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # BLOQUE 4 · Idempotencia de los resync
@@ -1176,6 +1232,136 @@ class TestPreventaAutomaticaPorProducto(unittest.TestCase):
         """stock_disponible None (el sondeo de stock no alcanzó a este SKU)
         no debe interpretarse como 'sin stock' — sería un falso positivo."""
         self.assertIn('_lo.get("stock_disponible") is not None', self.norm)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 11 · Fase 1 Paso 2 (PR-A) — los 4 write-sites setean `ramo` explícito
+# ═════════════════════════════════════════════════════════════════════════════
+class TestPRA_RamoExplicitoEnLosCuatroWriteSites(unittest.TestCase):
+    """El backfill de boot (Paso 1) solo alcanza filas ya existentes. Los 4
+    lugares que crean transport_manifest_items deben dejar de depender de él
+    para items NUEVOS — es la precondición dura para poder endurecer el
+    UNIQUE KEY (ver TestUqItemEndurecido más abajo): si un solo write-site
+    siguiera dejando `ramo` en NULL, el endurecimiento nunca podría confirmar
+    "cero filas NULL" de forma estable."""
+
+    FUNCIONES = [
+        "tr_lineas_pendientes_enviar_manifiesto",
+        "tr_agregar_item",
+        "tr_asignar_a_manifiesto",
+        "tr_cubicador_enviar_manifiesto",
+    ]
+
+    def test_los_cuatro_sitios_incluyen_ramo_en_el_insert(self):
+        for nombre in self.FUNCIONES:
+            cuerpo = _norm(_cuerpo_funcion(nombre))
+            with self.subTest(funcion=nombre):
+                self.assertIn(
+                    "INSERT IGNORE INTO transport_manifest_items", cuerpo,
+                    f"{nombre} ya no hace el INSERT esperado — revisar si cambió de función.",
+                )
+                self.assertRegex(
+                    cuerpo,
+                    # [\s"]* en vez de \s*: el SQL es una concatenación de
+                    # strings de Python ("...items " "(manifest_id..."), y
+                    # _cuerpo_funcion devuelve el código FUENTE tal cual está
+                    # escrito -- comillas de concatenación incluidas.
+                    r'INSERT IGNORE INTO transport_manifest_items[\s"]*\([^)]*\bramo\b[^)]*\)',
+                    f"{nombre} volvió a insertar sin `ramo` explícito — los items nuevos "
+                    "quedarían NULL otra vez, rompiendo la precondición del endurecimiento "
+                    "del UNIQUE KEY.",
+                )
+
+    def test_los_cuatro_sitios_resuelven_ramo_desde_clasificacion_del_commitment(self):
+        """El valor viene de transport_commitments.clasificacion (el único dato
+        de clasificación que existe hoy, 1 por documento) — PR-A todavía NO usa
+        la función multi (eso es PR-B, items nuevos siguen siendo 1 por
+        documento en este paso)."""
+        for nombre in self.FUNCIONES:
+            cuerpo = _norm(_cuerpo_funcion(nombre))
+            with self.subTest(funcion=nombre):
+                self.assertIn("clasificacion", cuerpo,
+                             f"{nombre} ya no lee clasificacion para derivar ramo.")
+
+    def test_ningun_sitio_deja_ramo_sin_fallback(self):
+        """Si `clasificacion` viniera NULL/vacío por algún motivo, ninguno de
+        los 4 sitios debe insertar ramo=NULL — todos tienen que caer a
+        'despacho' como default seguro."""
+        for nombre in self.FUNCIONES:
+            cuerpo = _cuerpo_funcion(nombre)
+            with self.subTest(funcion=nombre):
+                self.assertIn('"despacho"', cuerpo,
+                             f"{nombre} perdió el fallback a 'despacho'.")
+
+
+class TestUqItemEndurecido(unittest.TestCase):
+    """El UNIQUE KEY (manifest_id, commitment_id) impide que un documento
+    tenga 2 manifest_items (uno por ramo) en el MISMO manifiesto — el segundo
+    INSERT sería un no-op silencioso. Se endurece a (manifest_id,
+    commitment_id, ramo), pero SOLO tras confirmar cero filas ramo=NULL,
+    porque MySQL permite múltiples NULL en una columna de índice único: si el
+    ALTER corriera antes, el índice quedaría "puesto" sin proteger nada."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_ensure_transport_tracking_tables")
+        cls.norm = _norm(cls.fuente)
+
+    def test_verifica_cero_null_antes_de_endurecer_no_lo_asume(self):
+        self.assertIn(
+            "SELECT COUNT(*) AS n FROM transport_manifest_items WHERE ramo IS NULL",
+            self.norm,
+            "Desapareció la verificación explícita — el endurecimiento no "
+            "puede asumir que el backfill ya corrió, tiene que confirmarlo.",
+        )
+
+    def test_el_modify_not_null_ocurre_solo_si_el_count_dio_cero(self):
+        self.assertRegex(
+            self.norm,
+            r'if \(_pendientes_ramo or \{\}\)\.get\("n", 1\) == 0: mysql_execute\("""\s*'
+            r'ALTER TABLE transport_manifest_items\s*MODIFY COLUMN ramo',
+            "El MODIFY COLUMN a NOT NULL ya no está condicionado al COUNT()==0 — "
+            "podría ejecutarse con filas NULL todavía presentes.",
+        )
+
+    def test_el_orden_es_modify_not_null_antes_que_el_indice(self):
+        """Invertir el orden (índice antes que NOT NULL) no rompe nada
+        técnicamente, pero el objetivo es documentar la secuencia esperada:
+        si algún día alguien reordena esto sin querer, este test lo marca."""
+        idx_modify = self.fuente.index("MODIFY COLUMN ramo")
+        idx_drop_index = self.fuente.index("DROP INDEX uq_item")
+        self.assertLess(
+            idx_modify, idx_drop_index,
+            "El MODIFY COLUMN (NOT NULL) debe ir ANTES del DROP/ADD INDEX en el código.",
+        )
+
+    def test_reemplaza_el_indice_via_drop_mas_add_no_modify(self):
+        """No se puede renombrar/redefinir un UNIQUE KEY existente con un solo
+        ALTER portable — tiene que ser DROP seguido de ADD."""
+        self.assertIn("ALTER TABLE transport_manifest_items DROP INDEX uq_item", self.norm)
+        self.assertIn(
+            "ADD UNIQUE KEY uq_item (manifest_id, commitment_id, ramo)", self.norm,
+        )
+
+    def test_el_drop_del_indice_esta_en_su_propio_try_except(self):
+        """Si uq_item ya fue reemplazado en un boot anterior, el DROP falla
+        (el índice viejo ya no existe con ese nombre) — eso NO debe abortar
+        el ADD que le sigue. Verificado por estructura: debe haber un
+        try/except envolviendo el DROP, separado del que envuelve el ADD."""
+        # Extrae el fragmento entre "DROP INDEX uq_item" y "ADD UNIQUE KEY uq_item"
+        idx_drop = self.fuente.index("DROP INDEX uq_item")
+        idx_add = self.fuente.index("ADD UNIQUE KEY uq_item")
+        fragmento_entre = self.fuente[idx_drop:idx_add]
+        self.assertIn(
+            "except Exception:", fragmento_entre,
+            "El DROP INDEX ya no tiene su propio except — un boot donde el "
+            "índice ya fue reemplazado antes abortaría el ADD que le sigue.",
+        )
+
+    def test_si_quedan_filas_null_no_ejecuta_ningun_alter(self):
+        """El caso "todavía no": ninguna sentencia ALTER debe correr si el
+        COUNT() no dio cero — solo se loguea y se reintenta en el próximo boot."""
+        self.assertIn("se reintenta en el próximo boot", self.fuente)
 
 
 if __name__ == "__main__":
