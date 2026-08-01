@@ -21005,6 +21005,60 @@ def tr_alertas_json():
             "items":     items,
         })
 
+    # ── guia_sin_gestion ─────────────────────────────────────────────────
+    # 2026-08-01 (Daniel: "llamado de atención por alguna factura que tenga
+    # guía pero no tenga gestión de despacho"). El ERP confirma con una guía
+    # real (TIDO='GDV', ver transport_guias) que el documento YA SALIÓ
+    # físicamente -- pero si nunca se asignó a un manifiesto en ILUS
+    # (transport_manifest_items), no hay courier, evidencia de entrega ni
+    # seguimiento registrado para el cliente. Es la contracara del bug de
+    # documentos duplicados: acá no hay dos filas, hay UNA fila con
+    # evidencia de salida real que el Monitor nunca gestionó.
+    _guia_sin_gestion_rows = mysql_fetchall("""
+        SELECT g.commitment_id, c.tido, c.nudo, c.cliente_nombre, c.comuna,
+               g.guia_nudo, g.fecha_guia, g.codigo_transportista
+        FROM transport_guias g
+        JOIN transport_commitments c ON c.id = g.commitment_id
+        WHERE g.commitment_id NOT IN (SELECT commitment_id FROM transport_manifest_items)
+        ORDER BY g.fecha_guia DESC
+        LIMIT 1000
+    """) or []
+    _por_commitment_guia = {}
+    for r in _guia_sin_gestion_rows:
+        cid = r["commitment_id"]
+        if cid not in _por_commitment_guia:
+            _por_commitment_guia[cid] = {
+                "commitment_id":     cid,
+                "documento":         f"{r['tido']} {r['nudo']}",
+                "cliente":           r.get("cliente_nombre") or "—",
+                "comuna":            r.get("comuna") or "—",
+                "guia_mas_reciente": r.get("guia_nudo"),
+                "fecha_guia":        chile_fmt_filter(r.get("fecha_guia"), "%d/%m/%Y")
+                                     if r.get("fecha_guia") else None,
+                "courier":           r.get("codigo_transportista") or "—",
+                "n_guias":           0,
+            }
+        _por_commitment_guia[cid]["n_guias"] += 1
+    for _it_g in _por_commitment_guia.values():
+        _it_g["resumen"] = (
+            f"Guía {_it_g['guia_mas_reciente']}" +
+            (f" · {_it_g['fecha_guia']}" if _it_g["fecha_guia"] else "") +
+            (f" (+{_it_g['n_guias'] - 1} más)" if _it_g["n_guias"] > 1 else "")
+        )
+    items_guia = list(_por_commitment_guia.values())[:200]
+    if items_guia:
+        alertas.append({
+            "codigo":    "guia_sin_gestion",
+            "severidad": "danger",
+            "titulo":    (f"{len(items_guia)} factura{'s' if len(items_guia) != 1 else ''} "
+                          f"con guía pero sin gestión de despacho"),
+            "detalle":   ("El ERP confirma que ya salieron con guía real, pero nunca se "
+                          "asignaron a un manifiesto acá -- no hay courier, evidencia ni "
+                          "seguimiento registrado para el cliente."),
+            "n":         len(items_guia),
+            "items":     items_guia,
+        })
+
     return jsonify({"ok": True, "alertas": alertas,
                     "total": sum(a["n"] for a in alertas), "dias": dias})
 
@@ -21083,8 +21137,10 @@ def tr_compromisos_json():
     _SQL_ENGESTION = f"({_EN_MANIF_ACTIVO})"
     _SQL_ENTREGADO = f"((tiene_saldo=0 AND {_NOT_EN_MANIF}) OR ({_EN_MANIF} AND NOT ({_EN_MANIF_ACTIVO})))"
     # Filtro por vista (categoría del flujo)
+    _vista_es_pendiente = False
     if vista == "pendientes":
         where.append(_SQL_PENDIENTE)
+        _vista_es_pendiente = True
     elif vista in ("en_gestion", "parciales"):   # compat: 'parciales' → en_gestion
         where.append(_SQL_ENGESTION)
     elif vista == "entregados":
@@ -21094,6 +21150,7 @@ def tr_compromisos_json():
     else:
         # default (compat con clientes que no mandan vista): lo que hay que gestionar
         where.append(_SQL_PENDIENTE)
+        _vista_es_pendiente = True
 
     # FIX 2026-08-01 (Daniel): el filtro por `estado` de este endpoint ya NO
     # se aplica en SQL contra la columna cruda del ERP — la columna visible
@@ -21120,7 +21177,15 @@ def tr_compromisos_json():
     # manifiesto), no algo acotado por cuándo se emitió. Un manifiesto viejo
     # (fuera del rango "último mes" por defecto) que ya se entregó completo
     # desaparecía de la pestaña Entregados solo por su fecha de emisión.
-    if vista not in ("en_gestion", "entregados"):
+    # FIX 2026-08-01 (Daniel: "si le perdemos rastro a una factura, es
+    # posible que nunca se despache" -- hallazgo de auditoría, Fable):
+    # MISMO problema exacto para "pendiente" -- también es un ESTADO
+    # (tiene saldo Y nadie lo gestionó todavía), no algo que dependa de
+    # cuándo se emitió. Un documento pendiente de hace 31+ días (fuera del
+    # rango "último mes" por defecto) desaparecía DEL TODO de la pestaña
+    # Pendientes Y de su contador -- exactamente el caso "factura que nunca
+    # se despacha porque nadie la vuelve a ver" que Daniel señaló.
+    if vista not in ("en_gestion", "entregados") and not _vista_es_pendiente:
         if fecha_desde: where.append("fecha_emision >= %s"); params.append(fecha_desde)
         if fecha_hasta: where.append("fecha_emision <= %s"); params.append(fecha_hasta)
 
@@ -21344,6 +21409,31 @@ def tr_compromisos_json():
         tuple(_ent_params)
     ) or {}
     conteos_row["entregados"] = _ent_row.get("entregados")
+    # FIX 2026-08-01 (Daniel: "si le perdemos rastro a una factura, es
+    # posible que nunca se despache"): MISMO criterio que en_gestion/
+    # entregados arriba -- "pendiente" (y sus derivados preventa/atrasados)
+    # tampoco se acotan por fecha de emisión, se cuentan aparte sin
+    # base_where de fecha. Antes el badge "Pendientes" del Monitor podía
+    # mostrar un número más chico que la realidad -- un documento pendiente
+    # con más de `periodo` de antigüedad ni se contaba ni se listaba, así
+    # que dejaba de pedir atención para siempre salvo que alguien ampliara
+    # el rango de fechas a mano.
+    _pend_where, _pend_params = ["tido <> 'GDV'"], []
+    if clasif: _pend_where.append("clasificacion=%s"); _pend_params.append(clasif)
+    if q:
+        _pend_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; _pend_params += [qp,qp,qp,qp,qp]
+    _pend_row = mysql_fetchone(
+        "SELECT SUM(CASE WHEN " + _SQL_PENDIENTE + " THEN 1 ELSE 0 END) AS pendientes,"
+        "  SUM(CASE WHEN preventa=1 THEN 1 ELSE 0 END) AS preventa,"
+        "  SUM(CASE WHEN " + _SQL_PENDIENTE + " AND fecha_emision IS NOT NULL"
+        "            AND DATEDIFF(CURDATE(), fecha_emision) > 3 THEN 1 ELSE 0 END) AS atrasados "
+        "FROM transport_commitments WHERE " + " AND ".join(_pend_where),
+        tuple(_pend_params)
+    ) or {}
+    conteos_row["pendientes"] = _pend_row.get("pendientes")
+    conteos_row["preventa"] = _pend_row.get("preventa")
+    conteos_row["atrasados"] = _pend_row.get("atrasados")
 
     return jsonify({
         "ok": True,
@@ -22223,6 +22313,196 @@ def tr_diagnostico_duplicados():
         "grupos_duplicados": len(duplicados),
         "filas_afectadas": sum(len(d["filas"]) for d in duplicados),
         "duplicados": duplicados,
+    })
+
+
+def _tr_fusionar_un_grupo(cur, winner_id, loser_id):
+    """Fusiona loser_id -> winner_id. Corre en el cursor/transacción del
+    caller (NO hace commit -- eso lo decide quien la llama).
+
+    2026-08-01 (Daniel: "borrémoslo, a menos que no esté en un manifiesto...
+    tiene que predominar una sola base de datos y también tener
+    trazabilidad, estructura, escalabilidad"). NO es un DELETE directo: hay
+    4 tablas que anclan datos a commitment_id SIN un FOREIGN KEY real hacia
+    transport_commitments (transport_tracking_events, transport_delivery_proof,
+    transport_item_lines, transport_factura_proveedor_items) -- si se borra
+    el perdedor sin repuntarlas primero, esos datos (evidencia de entrega,
+    firma, fotos, conciliación financiera con el courier) quedan huérfanos
+    en silencio, señalando a un id que ya no existe. transport_guias SÍ
+    tiene FK con CASCADE -- sin repuntarla, se pierde junto con la fila.
+
+    Lanza ValueError (con mensaje claro) si detecta algo que hace insegura
+    la fusión automática -- nunca fuerza un caso ambiguo.
+    """
+    # 1) El perdedor NUNCA puede tener manifest_items -- si los tuviera, la
+    #    FK (RESTRICT) haría fallar el DELETE de todas formas, pero se
+    #    valida antes para dar un mensaje claro en vez de un error de MySQL.
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM transport_manifest_items WHERE commitment_id=%s",
+        (loser_id,))
+    if cur.fetchone()["n"] > 0:
+        raise ValueError(f"id={loser_id} tiene manifest_items -- no puede ser el perdedor")
+
+    # 2) Conflicto financiero: si AMBOS tienen una factura de proveedor
+    #    conciliada (transport_factura_proveedor_items, UNIQUE por
+    #    commitment_id), no se puede repuntar sin decidir cuál prevalece --
+    #    se detiene y se deja para revisión manual en vez de adivinar.
+    cur.execute(
+        "SELECT commitment_id FROM transport_factura_proveedor_items "
+        "WHERE commitment_id IN (%s,%s)", (winner_id, loser_id))
+    _con_factura = {r["commitment_id"] for r in cur.fetchall()}
+    if winner_id in _con_factura and loser_id in _con_factura:
+        raise ValueError(
+            f"tanto id={winner_id} como id={loser_id} tienen factura de "
+            f"proveedor conciliada -- requiere revisión manual, no se fusiona"
+        )
+
+    # 3) Repuntar las 4 tablas SIN FK real hacia transport_commitments.
+    repuntado = {}
+    for tabla in ("transport_tracking_events", "transport_delivery_proof",
+                  "transport_item_lines", "transport_factura_proveedor_items"):
+        cur.execute(
+            f"UPDATE {tabla} SET commitment_id=%s WHERE commitment_id=%s",
+            (winner_id, loser_id))
+        if cur.rowcount:
+            repuntado[tabla] = cur.rowcount
+
+    # 4) transport_guias SÍ tiene FK CASCADE -- repuntar para no perderla
+    #    quiere el DELETE de abajo.
+    cur.execute(
+        "UPDATE transport_guias SET commitment_id=%s WHERE commitment_id=%s",
+        (winner_id, loser_id))
+    if cur.rowcount:
+        repuntado["transport_guias"] = cur.rowcount
+
+    # 5) Fusionar campos de CONTACTO/REFERENCIA no-nulos del perdedor hacia
+    #    el ganador -- SOLO rellena huecos, nunca pisa un valor que el
+    #    ganador ya tenga (REGLA #5, "no perder datos"). Deliberadamente NO
+    #    toca campos de estado/clasificación/financieros -- esos ya reflejan
+    #    la lógica de la app en el ganador tal cual está.
+    cur.execute("SELECT * FROM transport_commitments WHERE id=%s", (loser_id,))
+    loser_row = cur.fetchone()
+    cur.execute("SELECT * FROM transport_commitments WHERE id=%s", (winner_id,))
+    winner_row = cur.fetchone()
+    CAMPOS_FUSIONABLES = ("telefono", "email", "direccion", "comuna", "region",
+                           "cod_postal", "notas", "cliente_rut", "guia_numero",
+                           "direccion_lat", "direccion_lng", "direccion_place_id")
+    sets, vals, campos_llenados = [], [], []
+    for campo in CAMPOS_FUSIONABLES:
+        if campo not in winner_row:
+            continue
+        _w = winner_row.get(campo)
+        _l = loser_row.get(campo)
+        _w_vacio = _w is None or (isinstance(_w, str) and not _w.strip())
+        _l_tiene = _l is not None and not (isinstance(_l, str) and not _l.strip())
+        if _w_vacio and _l_tiene:
+            sets.append(f"{campo}=%s")
+            vals.append(_l)
+            campos_llenados.append(campo)
+    if sets:
+        vals.append(winner_id)
+        cur.execute(
+            f"UPDATE transport_commitments SET {', '.join(sets)} WHERE id=%s",
+            tuple(vals))
+
+    # 6) Auditoría ANTES de borrar (REGLA #5) -- snapshot completo del
+    #    perdedor por si algún día hay que reconstruir manualmente.
+    _tr_log(
+        "commitment_merge", winner_id, "fusion_duplicado",
+        f"Fusionado {loser_row.get('tido')} {loser_row.get('nudo')} "
+        f"(id={loser_id}) -> id={winner_id}. Campos rellenados: "
+        f"{campos_llenados or 'ninguno'}. Repuntado: {repuntado or 'nada'}. "
+        f"Snapshot perdedor: {json.dumps(loser_row, default=str, ensure_ascii=False)}"
+    )
+
+    # 7) Borrar el perdedor -- transport_commitment_lines cae en CASCADE
+    #    (son solo cache de líneas re-derivadas del ERP, no evidencia).
+    cur.execute("DELETE FROM transport_commitments WHERE id=%s", (loser_id,))
+
+    return {"repuntado": repuntado, "campos_llenados": campos_llenados}
+
+
+@app.route("/transporte/api/diagnostico/duplicados/fusionar", methods=["POST"])
+@login_required
+def tr_diagnostico_duplicados_fusionar():
+    """Ejecuta la fusión real de los grupos duplicados detectados por
+    /transporte/api/diagnostico/duplicados (2026-08-01, Daniel: "borrémoslo,
+    a menos que no esté en un manifiesto").
+
+    Reusa EXACTAMENTE el mismo criterio de agrupación/desempate que el
+    diagnóstico de solo lectura -- nunca fuerza un grupo donde el perdedor
+    tenga manifest_items o haya conflicto financiero (ver
+    _tr_fusionar_un_grupo). Cada grupo es su propia transacción: si uno
+    falla, los demás igual se procesan.
+
+    Permiso: admin/superadmin. Body opcional {"grupos": ["BLV22727", ...]}
+    para limitar a grupos puntuales (formato tido+nudo_grupo, como los
+    devuelve el diagnóstico) -- sin body, procesa TODOS los detectados.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+
+    import re as _re_fus
+    data = request.get_json(silent=True) or {}
+    _solo_grupos = set(data.get("grupos") or [])
+
+    rows = mysql_fetchall("""
+        SELECT c.id, c.tido, c.nudo, c.erp_synced_at, c.fecha_emision,
+               EXISTS(SELECT 1 FROM transport_manifest_items mi
+                      WHERE mi.commitment_id = c.id) AS en_manifiesto
+        FROM transport_commitments c
+        ORDER BY c.tido, c.nudo
+    """) or []
+
+    def _clave_canonica(tido, nudo):
+        s = str(nudo or "").strip()
+        m = _re_fus.match(r"^([A-Za-z]*)0*(\d+)$", s)
+        if m:
+            return (tido, m.group(1).upper(), int(m.group(2)))
+        return (tido, s.upper(), None)
+
+    grupos = {}
+    for r in rows:
+        grupos.setdefault(_clave_canonica(r["tido"], r["nudo"]), []).append(r)
+
+    fusionados, saltados, errores = [], [], []
+    conn = get_db()
+    for clave, filas in grupos.items():
+        if len(filas) < 2:
+            continue
+        etiqueta = f"{clave[0]}{clave[1]}{clave[2]}" if clave[2] is not None else f"{clave[0]}{clave[1]}"
+        if _solo_grupos and etiqueta not in _solo_grupos:
+            continue
+        filas_ordenadas = sorted(
+            filas,
+            key=lambda r: (bool(r["en_manifiesto"]), r["erp_synced_at"] or r["fecha_emision"] or ""),
+            reverse=True,
+        )
+        winner, resto = filas_ordenadas[0], filas_ordenadas[1:]
+        for loser in resto:
+            try:
+                with conn.cursor() as cur:
+                    detalle = _tr_fusionar_un_grupo(cur, winner["id"], loser["id"])
+                conn.commit()
+                fusionados.append({
+                    "grupo": etiqueta, "winner": winner["id"], "loser": loser["id"],
+                    **detalle,
+                })
+            except Exception as e:
+                conn.rollback()
+                (errores if not isinstance(e, ValueError) else saltados).append({
+                    "grupo": etiqueta, "winner": winner["id"], "loser": loser["id"],
+                    "motivo": str(e),
+                })
+
+    return jsonify({
+        "ok": True,
+        "fusionados": len(fusionados),
+        "saltados": len(saltados),
+        "errores": len(errores),
+        "detalle_fusionados": fusionados,
+        "detalle_saltados": saltados,
+        "detalle_errores": errores,
     })
 
 
@@ -78825,17 +79105,21 @@ def _ensure_transport_tracking_tables():
     except Exception as _e_pk:
         print(f"[tr_tracking] no se pudo crear transp_fedex_pickups: {_e_pk}", flush=True)
 
-    # 7) Backfill tiene_saldo=1 (Daniel 12/06/2026 — las líneas ZZ son
-    # servicios contables sin inventario; "sin saldo" no debe disparar
-    # alerta para casos antiguos). Una sola vez.
-    try:
-        mysql_execute(
-            "UPDATE transport_commitments SET tiene_saldo=1 "
-            "WHERE tiene_saldo=0"
-        )
-        print("[tr_tracking] backfill tiene_saldo=1 aplicado", flush=True)
-    except Exception as _e_bs:
-        print(f"[tr_tracking] backfill tiene_saldo: {_e_bs}", flush=True)
+    # 7) [RETIRADO 2026-08-01] Backfill tiene_saldo=1 (Daniel 12/06/2026 —
+    # las líneas ZZ son servicios contables sin inventario; "sin saldo" no
+    # debía disparar alerta para casos antiguos). Se pensó "una sola vez"
+    # pero esta función corre en CADA arranque (ver el registro de boot al
+    # final del archivo) sin ningún guard de "ya corrió" -- hallazgo real de
+    # auditoría (Fable, 2026-08-01): cada deploy/cold start revertía TODOS
+    # los tiene_saldo=0 legítimos (documentos con saldo real consumido según
+    # el sync del ERP, `_SQL_ENTREGADO`) de vuelta a 1, haciéndolos
+    # reaparecer como "Pendiente" hasta el próximo sync -- contradice
+    # exactamente la regla de Daniel de que la factura solo se mueve cuando
+    # el saldo real lo confirma. El backfill histórico de 2026-06-12 tuvo
+    # ~7 semanas corriendo en cada boot para aplicarse a cualquier fila
+    # vieja que lo necesitara; a esta altura ya cumplió su propósito una y
+    # otra vez. Se retira en vez de agregarle un guard, porque no hay nada
+    # legítimo que siga necesitando -- solo seguía peleando contra el sync.
 
 
 def _ensure_transporte_labels_table():

@@ -367,6 +367,24 @@
       <a href="{{ url_for('tr_manifiestos') }}" class="trx-btn-primary">
         <i class="bi bi-arrow-counterclockwise"></i> Limpiar filtros
       </a>
+      {% elif filtros.vista == 'entregados' and filtros.fecha_default_aplicado %}
+      {# 2026-08-01 (Daniel, en vivo, más de una vez: "no aparecen los
+         manifiestos entregados... no dañemos producción, hay datos reales"
+         -- el caso "0 resultados por el filtro de mes actual" usaba el
+         MISMO ícono/texto genérico que "nunca hubo nada", y eso se lee
+         como pérdida de datos en vez de "achicá el filtro". Este caso
+         puntual (vista=entregados + default de fecha aplicado) tiene su
+         propio mensaje, sin ambigüedad. #}
+      <div class="trx-empty-ico"><i class="bi bi-calendar-check"></i></div>
+      <div class="trx-empty-t">No hay entregas completadas este mes</div>
+      <div class="trx-empty-d">
+        Esto solo muestra el mes calendario actual. Tus entregas de meses
+        anteriores siguen guardadas — no se borró nada.
+      </div>
+      <a href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados&desde=2000-01-01"
+         class="trx-btn-primary">
+        <i class="bi bi-clock-history"></i> Ver todo el historial
+      </a>
       {% else %}
       <div class="trx-empty-ico"><i class="bi bi-clipboard-x"></i></div>
       <div class="trx-empty-t">Todavía no hay manifiestos</div>

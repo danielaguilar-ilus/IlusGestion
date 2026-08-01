@@ -1467,5 +1467,120 @@ class TestUqItemEndurecido(unittest.TestCase):
         self.assertIn("se reintenta en el próximo boot", self.fuente)
 
 
+class TestFusionDuplicados(unittest.TestCase):
+    """2026-08-01 (Daniel: "borrémoslo, a menos que no esté en un
+    manifiesto"): _tr_fusionar_un_grupo nunca debe borrar una fila que
+    tenga manifest_items reales, nunca debe perder evidencia/financiero
+    huérfano, y nunca debe pisar un dato que el ganador ya tenga."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_tr_fusionar_un_grupo")
+        cls.norm = _norm(cls.fuente)
+
+    def test_rechaza_perdedor_con_manifest_items(self):
+        self.assertRegex(
+            self.norm,
+            r'SELECT COUNT\(\*\)[\s"]*AS n FROM transport_manifest_items[\s"]*WHERE commitment_id=%s',
+            "Falta la verificación de que el perdedor no tenga manifest_items "
+            "antes de intentar fusionarlo.",
+        )
+        self.assertIn('raise ValueError(f"id={loser_id} tiene manifest_items', self.fuente)
+
+    def test_verificacion_de_manifest_items_ocurre_antes_del_delete(self):
+        idx_check = self.fuente.index("manifest_items WHERE commitment_id=%s")
+        idx_delete = self.fuente.index("DELETE FROM transport_commitments")
+        self.assertLess(
+            idx_check, idx_delete,
+            "La verificación de manifest_items debe ocurrir ANTES del DELETE, "
+            "no después — si no, el DELETE podría correr sobre una fila insegura.",
+        )
+
+    def test_detecta_conflicto_financiero_de_ambos_lados(self):
+        self.assertIn("transport_factura_proveedor_items", self.fuente)
+        self.assertIn("requiere revisión manual", self.norm)
+
+    def test_repunta_las_cuatro_tablas_sin_fk_real_antes_de_borrar(self):
+        """transport_tracking_events, transport_delivery_proof,
+        transport_item_lines y transport_factura_proveedor_items NO tienen
+        FOREIGN KEY hacia transport_commitments -- si no se repuntan antes
+        del DELETE, quedan huérfanas en silencio (id apuntando a nada)."""
+        idx_delete = self.fuente.index("DELETE FROM transport_commitments")
+        antes_del_delete = self.fuente[:idx_delete]
+        for tabla in ("transport_tracking_events", "transport_delivery_proof",
+                      "transport_item_lines", "transport_factura_proveedor_items"):
+            self.assertIn(
+                tabla, antes_del_delete,
+                f"{tabla} no se repunta antes del DELETE -- quedaría huérfana.",
+            )
+
+    def test_repunta_guias_antes_de_borrar_pese_a_tener_cascade(self):
+        """transport_guias SÍ tiene ON DELETE CASCADE -- sin repuntarla
+        explícitamente, el DELETE la borraría junto con el perdedor en vez
+        de conservarla en el ganador."""
+        idx_delete = self.fuente.index("DELETE FROM transport_commitments")
+        self.assertIn("transport_guias", self.fuente[:idx_delete])
+
+    def test_fusion_de_campos_solo_llena_huecos_del_ganador(self):
+        """No debe existir ningún UPDATE que pise un campo del ganador
+        incondicionalmente -- el fill-if-empty se arma dinámicamente
+        (sets/vals) solo para campos donde el ganador viene vacío."""
+        self.assertIn("_w_vacio and _l_tiene", self.norm)
+        self.assertIn("campos_llenados", self.fuente)
+
+    def test_no_toca_campos_de_estado_clasificacion_o_financieros(self):
+        """La fusión de campos es deliberadamente una whitelist chica --
+        nunca debe incluir columnas de estado/dinero que reflejen lógica
+        de la app, esas deben venir tal cual del ganador."""
+        idx_whitelist = self.fuente.index("CAMPOS_FUSIONABLES = (")
+        idx_fin = self.fuente.index(")", idx_whitelist)
+        whitelist_src = self.fuente[idx_whitelist:idx_fin]
+        for campo_prohibido in ("estado", "clasificacion", "tiene_saldo",
+                                 "valor_neto", "valor_bruto", "costo_zz"):
+            self.assertNotIn(
+                f'"{campo_prohibido}"', whitelist_src,
+                f"'{campo_prohibido}' no debe estar en la whitelist de fusión "
+                f"-- es un campo de estado/dinero que debe venir del ganador tal cual.",
+            )
+
+    def test_audit_log_ocurre_antes_del_delete(self):
+        """REGLA #5: audit log en TODA acción destructiva, ANTES de borrar."""
+        idx_log = self.fuente.index('_tr_log(\n        "commitment_merge"')
+        idx_delete = self.fuente.index("DELETE FROM transport_commitments")
+        self.assertLess(idx_log, idx_delete,
+                         "El _tr_log de auditoría debe ir antes del DELETE, no después.")
+
+    def test_snapshot_del_perdedor_va_en_el_log(self):
+        """Si algún día hay que reconstruir manualmente un merge, el log
+        debe traer el snapshot completo de la fila borrada, no solo su id."""
+        self.assertIn("Snapshot perdedor:", self.fuente)
+        self.assertIn("json.dumps(loser_row", self.fuente)
+
+
+class TestFusionarEndpointUsaMismoDesempateQueElDiagnostico(unittest.TestCase):
+    """El endpoint de fusión (POST) y el de diagnóstico (GET, solo lectura)
+    deben agrupar y desempatar EXACTAMENTE igual -- si divergen, el reporte
+    que ve Daniel ("esta fila ganaría") ya no predice qué hace la fusión real."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.diag = _cuerpo_funcion("tr_diagnostico_duplicados")
+        cls.fusion = _cuerpo_funcion("tr_diagnostico_duplicados_fusionar")
+
+    def test_ambos_admin_o_superadmin(self):
+        for fuente in (self.diag, self.fusion):
+            self.assertIn('g.permissions.get("superadmin") or g.permissions.get("admin")', fuente)
+
+    def test_mismo_regex_de_normalizacion_del_nudo(self):
+        patron = r'\^\(\[A-Za-z\]\*\)0\*\(\\d\+\)\$'
+        self.assertRegex(self.diag, patron)
+        self.assertRegex(self.fusion, patron)
+
+    def test_mismo_criterio_de_desempate(self):
+        criterio = 'key=lambda r: (bool(r["en_manifiesto"]), r["erp_synced_at"] or r["fecha_emision"] or ""),\n            reverse=True,'
+        self.assertIn(_norm(criterio), _norm(self.diag))
+        self.assertIn(_norm(criterio), _norm(self.fusion))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
