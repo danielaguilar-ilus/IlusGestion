@@ -2600,7 +2600,9 @@ async function enviarAManifiesto(){
     });
     const d = await r.json();
     _mfFinishProgress();
-    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    // PR-B (2026-08-01): preferir `msg` (mensaje legible, ej. el candado de
+    // ramos por documento con 2+ ramos) sobre `error` (código corto).
+    if (!r.ok || d.error) throw new Error(d.msg || d.error || ('HTTP ' + r.status));
     cerrarModalManifiesto();
     if (window.ilusToast) {
       ilusToast(

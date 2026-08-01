@@ -1476,7 +1476,12 @@ function _kanbanCardHtml(c) {
     garantia:    { cls:'tr-tipo-garantia',    icon:'bi-shield-check',      label:'Garantía' },
     despacho:    { cls:'tr-tipo-despacho',    icon:'bi-box-arrow-right',   label:'Despacho' },
   };
-  var tipo = clasifMap[c.clasificacion] || clasifMap.despacho;
+  // PR-B (2026-08-01): `c.ramo` es el ramo de ESTA fila puntual (una
+  // factura con despacho+instalación ahora puede llegar como 2 filas, cada
+  // una con su propio ramo). Preferirlo sobre `c.clasificacion` (el valor
+  // único por DOCUMENTO, que sigue existiendo) -- para documentos de un
+  // solo ramo son el mismo valor, así que no cambia nada visible ahí.
+  var tipo = clasifMap[c.ramo || c.clasificacion] || clasifMap.despacho;
 
   // Badge "En manifiesto" (reusa el helper compartido — coherente con tabla/cards).
   var manifBadge = _enManifiestoBadge(c);
@@ -1484,7 +1489,7 @@ function _kanbanCardHtml(c) {
   var preventaBadge = _preventaBadge(c);
   var atrasoHtml    = _diasAtrasoHtml(c);
   // Fecha de agenda (retiros): se muestra como pista de la acción "agendar".
-  var agendaHtml = (c.clasificacion === 'retiro' && c.fecha_agenda)
+  var agendaHtml = ((c.ramo || c.clasificacion) === 'retiro' && c.fecha_agenda)
     ? '<span class="tr-kcard-agenda" title="Retiro agendado"><i class="bi bi-calendar-check"></i> ' + esc(c.fecha_agenda) + '</span>'
     : '';
 
@@ -1963,12 +1968,16 @@ function cargarMonitor() {
               garantia:    { cls:'tr-tipo-garantia',    icon:'bi-shield-check',       label:'Garantía' },
               despacho:    { cls:'tr-tipo-despacho',    icon:'bi-box-arrow-right',    label:'Despacho' },
             };
-            var tipo = clasifMap[c.clasificacion] || clasifMap.despacho;
+            // PR-B (2026-08-01): `c.ramo` (ramo de ESTA fila) sobre
+            // `c.clasificacion` (único por documento) -- ver mismo criterio
+            // en _kanbanCardHtml. Idéntico resultado para documentos de 1
+            // solo ramo.
+            var tipo = clasifMap[c.ramo || c.clasificacion] || clasifMap.despacho;
             var clasificHtml = '<span class="tr-tipo-badge ' + tipo.cls + '">' +
               '<i class="bi ' + tipo.icon + '"></i>' + tipo.label + '</span>';
             // Para RETIROS: mostrar la fecha de agenda (acción "agendar") si existe,
             // o una pista "Por agendar" si no. Para despachos no aplica.
-            if (c.clasificacion === 'retiro') {
+            if ((c.ramo || c.clasificacion) === 'retiro') {
               clasificHtml += c.fecha_agenda
                 ? '<div class="tr-agenda-chip" title="Retiro agendado"><i class="bi bi-calendar-check"></i> ' + esc(c.fecha_agenda) + '</div>'
                 : '<div class="tr-agenda-chip tr-agenda-chip-todo" title="Falta agendar el retiro"><i class="bi bi-calendar-plus"></i> Por agendar</div>';
@@ -1987,8 +1996,14 @@ function cargarMonitor() {
             var cli    = (c.cliente||'').replace(/"/g,'&quot;');
             var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\'");
             var cliEsc = (c.cliente||'').replace(/'/g,"\\'");
+            // PR-B: data-clasif ahora usa el ramo DE ESTA fila (ver arriba) --
+            // así las pestañas Despacho/Instalación/etc. y sus contadores
+            // (_actualizarContadoresTabs, calculados desde estas mismas
+            // filas del DOM) separan correctamente las 2 filas de un mismo
+            // documento con 2 ramos, en vez de mostrar ambas bajo la misma
+            // pestaña por heredar la clasificación única del documento.
             return '<tr class="tr-monitor-row ' + rowFlowClass + '" data-id="' + c.id + '" ' +
-              'data-clasif="' + (c.clasificacion||'despacho') + '" ' +
+              'data-clasif="' + (c.ramo || c.clasificacion || 'despacho') + '" ' +
               'data-en-manifiesto="' + (c.en_manifiesto ? '1' : '0') + '" ' +
               'data-label="' + lbl + '" data-cliente="' + cli + '">' +
 
@@ -2450,7 +2465,9 @@ function agregarAManifiestoConAviso(mid, commitmentId, confirmDup) {
       return;
     }
     if (res.d && res.d.ok === false) {
-      ilusToast(res.d.error || 'No se pudo agregar al manifiesto', {type:'error'});
+      // PR-B: preferir `msg` (mensaje legible armado en el backend, ej. el
+      // candado de ramos) sobre `error` (código corto tipo "ramo_conflicto").
+      ilusToast(res.d.msg || res.d.error || 'No se pudo agregar al manifiesto', {type:'error'});
     }
     setTimeout(function(){ location.reload(); }, 600);
   })
@@ -3043,7 +3060,8 @@ async function _asignarAPI(cids, mid) {
       // Recargar manifiestos tras breve pausa
       setTimeout(function(){ cargarDragPanel(true); }, 900);
     } else {
-      if (msg) msg.innerHTML = '<span style="color:#f66"><i class="bi bi-x-circle me-1"></i>' + esc(d.error||'Error desconocido') + '</span>';
+      // PR-B: mismo criterio, preferir `msg` sobre `error`.
+      if (msg) msg.innerHTML = '<span style="color:#f66"><i class="bi bi-x-circle me-1"></i>' + esc(d.msg||d.error||'Error desconocido') + '</span>';
       if (document.getElementById('dpBtnCrear')) document.getElementById('dpBtnCrear').disabled = false;
     }
   } catch(err) {
@@ -3700,7 +3718,8 @@ function _lpEnviarRequest(body, btn) {
     }
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar seleccionados';
-    if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudo enviar', {type:'error'});
+    // PR-B: mismo criterio, preferir `msg` sobre `error`.
+    if (typeof ilusToast === 'function') ilusToast(d.msg || d.error || 'No se pudo enviar', {type:'error'});
   }).catch(function() {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-send me-1"></i>Enviar seleccionados';
