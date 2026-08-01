@@ -1649,7 +1649,11 @@ function renderKanban() {
       });
       var d = {};
       try { d = await r.json(); } catch(_){}
-      if (!r.ok || !d.ok) throw new Error('HTTP ' + r.status);
+      // 2026-08-01 (SEV-5): antes se descartaba d.error y se mostraba
+      // siempre el mismo "No se pudo actualizar" -- con el candado nuevo
+      // de tr_update_compromiso (documento en manifiesto activo), el
+      // usuario necesita el motivo real, no un mensaje genérico.
+      if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
 
       // Sincronizar la cache local para que un re-render no revierta el cambio.
       // Actualizamos también 'gestion' (que es lo que ahora usa _gestionBucket)
@@ -1680,7 +1684,7 @@ function renderKanban() {
         pill.className = 'tr-estado-pill ' + pc2;
         pill.textContent = snap.estado || '—';
       }
-      ilusToast('No se pudo actualizar', { type: 'error' });
+      ilusToast(err.message || 'No se pudo actualizar', { type: 'error' });
       console.error('[kanban monitor]', err);
     }
   }

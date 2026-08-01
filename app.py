@@ -19804,6 +19804,9 @@ def _tr_fetch_from_erp(tido, nudo):
                         "fecha_entrega":  rh.get("FEER"),
                         "guia_numero":    (rh.get("NUDO_GIA") or rh.get("NUDGIA") or "").strip() or None,
                         "lineas_raw":     data[0].get("maeddo") or [],
+                        # 2026-08-01 (root cause de los "documentos duplicados"
+                        # BLV 22719/22727/22728): guardar el NUDO exacto (nv)
+                        "erp_nudo":       nv,
                     }
                     break
             except Exception as e:
@@ -19903,6 +19906,20 @@ def _tr_fetch_from_erp(tido, nudo):
     # completado a mano (tr_update_compromiso). Ahora el ERP solo pisa el
     # dato cuando trae algo NO vacío; si el ERP no tiene el dato, se conserva
     # lo que ya había en transport_commitments (editado a mano o no).
+    # 2026-08-01 (causa raíz real de los "documentos duplicados" vistos 3
+    # veces -- BLV 22719/22727/22728: misma fila fantasma+real): este
+    # `nudo` es el argumento crudo tal como llegó (tecleado a mano, o del
+    # cron, o de un Excel) -- puede o no traer el padding de ceros que usa
+    # el ERP. `doc["erp_nudo"]` es el NUDO EXACTO que hizo match en el ERP
+    # (ver _cubicador_fetch_doc_via_sql / la rama REST arriba), siempre en
+    # el mismo formato canónico sin importar cómo se haya pedido. La unique
+    # key (tido,nudo) de transport_commitments compara el string tal cual
+    # -- si acá se persiste el crudo en vez del canónico, dos llamadas para
+    # el MISMO documento con distinto formato de entrada (ej. "22727" vs
+    # "0000022727") crean dos filas que la unique key nunca reconoce como
+    # duplicadas.
+    nudo_canonico = str(doc.get("erp_nudo") or nudo).strip()
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -19941,7 +19958,7 @@ def _tr_fetch_from_erp(tido, nudo):
                   clasificacion=VALUES(clasificacion), erp_synced_at=NOW(),
                   updated_by=VALUES(updated_by)
             """, (
-                tido, str(nudo), endo, fecha_em, fecha_ent,
+                tido, nudo_canonico, endo, fecha_em, fecha_ent,
                 cliente_nombre, endo,
                 comuna,
                 direccion, telefono, email,
@@ -19952,7 +19969,7 @@ def _tr_fetch_from_erp(tido, nudo):
             ))
             comm_id = cur.lastrowid or mysql_fetchone(
                 "SELECT id FROM transport_commitments WHERE tido=%s AND nudo=%s",
-                (tido, str(nudo))
+                (tido, nudo_canonico)
             )["id"]
 
             # zz_envio = lo que SPHS COBRÓ por el despacho (= suma PPPRNE de líneas ZZ).
@@ -20728,7 +20745,13 @@ def _tr_import_from_excel(file_bytes, filename):
                            erp_synced_at,created_by,updated_by)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,NOW(),'excel','excel')
                         ON DUPLICATE KEY UPDATE
-                          fecha_emision =VALUES(fecha_emision),
+                          -- 2026-08-01: mismo resguardo que ya usan comuna/
+                          -- direccion en este mismo UPSERT -- si la celda de
+                          -- fecha del Excel no matcheó ningún formato conocido
+                          -- (fecha_em queda None, ver parseo arriba), no había
+                          -- guarda: podía borrar una fecha_emision buena que
+                          -- ya tenía la fila (ej. puesta por el sync del ERP).
+                          fecha_emision =IF(VALUES(fecha_emision) IS NULL, fecha_emision, VALUES(fecha_emision)),
                           cliente_nombre=VALUES(cliente_nombre),
                           cliente_rut   =VALUES(cliente_rut),
                           comuna        =IF(direccion_editada_manual=1, comuna, IF(VALUES(comuna) IS NULL OR VALUES(comuna)='', comuna, VALUES(comuna))),
@@ -22123,6 +22146,84 @@ def tr_sync_diagnostico():
         "primer_error": fallidos[0]["detalle"] if fallidos else None,
     }
     return jsonify(result)
+
+
+@app.route("/transporte/api/diagnostico/duplicados", methods=["GET"])
+@login_required
+def tr_diagnostico_duplicados():
+    """DIAGNÓSTICO DE SOLO LECTURA (2026-08-01) — reporta documentos
+    duplicados en transport_commitments (mismo tido+nudo real, guardado con
+    distinto formato de string -- ej "22727" vs "0000022727" -- así que la
+    UNIQUE KEY (tido,nudo) nunca los reconoce como el mismo documento).
+
+    Root cause y casos reales (BLV 22719/22727/22728) documentados en la
+    auditoría del 2026-08-01. Este endpoint NO modifica nada — solo agrupa
+    con el mismo criterio de normalización que usa _nudo_variants (prefijo
+    alfa + parte numérica como entero, ignora el padding de ceros) y
+    muestra qué filas caerían en el mismo grupo. La fusión real de datos
+    (decidir cuál fila gana, reapuntar FKs, borrar la perdedora) es un paso
+    aparte que necesita OK explícito de Daniel -- este endpoint es
+    justamente para dar ese reporte antes de decidir.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+
+    import re as _re_dup
+    rows = mysql_fetchall("""
+        SELECT c.id, c.tido, c.nudo, c.cliente_nombre, c.fecha_emision,
+               c.tiene_saldo, c.erp_synced_at,
+               EXISTS(SELECT 1 FROM transport_manifest_items mi
+                      WHERE mi.commitment_id = c.id) AS en_manifiesto
+        FROM transport_commitments c
+        ORDER BY c.tido, c.nudo
+    """) or []
+
+    def _clave_canonica(tido, nudo):
+        s = str(nudo or "").strip()
+        m = _re_dup.match(r"^([A-Za-z]*)0*(\d+)$", s)
+        if m:
+            return (tido, m.group(1).upper(), int(m.group(2)))
+        return (tido, s.upper(), None)  # sin parte numérica reconocible: no se agrupa por adivinanza
+
+    grupos = {}
+    for r in rows:
+        clave = _clave_canonica(r["tido"], r["nudo"])
+        grupos.setdefault(clave, []).append(r)
+
+    duplicados = []
+    for clave, filas in grupos.items():
+        if len(filas) < 2:
+            continue
+        # Criterio propuesto de desempate (a confirmar con Daniel antes de
+        # fusionar de verdad): la fila con manifiesto real gana; si hay
+        # empate, la sincronizada más recientemente.
+        filas_ordenadas = sorted(
+            filas,
+            key=lambda r: (bool(r["en_manifiesto"]), r["erp_synced_at"] or r["fecha_emision"] or ""),
+            reverse=True,
+        )
+        duplicados.append({
+            "tido": clave[0],
+            "grupo": f"{clave[1]}{clave[2]}" if clave[2] is not None else clave[1],
+            "filas": [{
+                "id": r["id"],
+                "nudo_guardado": r["nudo"],
+                "cliente_nombre": r["cliente_nombre"],
+                "fecha_emision": r["fecha_emision"].isoformat() if r["fecha_emision"] else None,
+                "en_manifiesto": bool(r["en_manifiesto"]),
+                "tiene_saldo": bool(r["tiene_saldo"]),
+                "ganaria_la_fusion": r["id"] == filas_ordenadas[0]["id"],
+            } for r in filas],
+        })
+    duplicados.sort(key=lambda d: d["tido"] + d["grupo"])
+
+    return jsonify({
+        "ok": True,
+        "total_commitments": len(rows),
+        "grupos_duplicados": len(duplicados),
+        "filas_afectadas": sum(len(d["filas"]) for d in duplicados),
+        "duplicados": duplicados,
+    })
 
 
 @app.route("/transporte/api/sync/mes-actual", methods=["POST"])
@@ -23579,6 +23680,35 @@ def tr_update_compromiso(cid):
     _labels_manifest_id = None
     _labels_courier = ""
     if "estado" in data and data["estado"] in ESTADOS_COMPROMISO:
+        # BLOQUEO (2026-08-01, SEV-5 -- Daniel: "necesito que los estados de
+        # entrega funcionen de manera infalible"): si el compromiso YA está
+        # en un manifiesto activo, el "estado" que se ve de verdad en
+        # Monitor/ficha/tracking del cliente sale de
+        # transport_manifest_items.estado_entrega (ver `gestion`/
+        # `estado_logistico` en tr_compromisos_json, mismo criterio
+        # _EN_MANIF_ACTIVO), NO de transport_commitments.estado. Escribir
+        # acá para un item en esa situación (ej. arrastrando una tarjeta en
+        # el Kanban) daba un "éxito" que la UI ignora por completo, sin
+        # dejar rastro en transport_tracking_events ni exigir admin/
+        # superadmin como sí exige el camino real (tr_estado_entrega). En
+        # vez de fingir que guardó, se rechaza con un mensaje claro que
+        # apunta al lugar correcto.
+        _en_manif_activo = mysql_fetchone(
+            "SELECT 1 FROM transport_manifest_items "
+            "WHERE commitment_id=%s AND estado_entrega NOT IN ('Entregado','Devolución') "
+            "LIMIT 1",
+            (cid,),
+        )
+        if _en_manif_activo:
+            return jsonify({
+                "ok": False,
+                "error": (
+                    "El estado de entrega de este documento ya se maneja desde "
+                    "el manifiesto (tiene un despacho activo asignado). Cambia "
+                    "el estado desde la ficha del manifiesto, no desde acá."
+                ),
+                "bloqueado_por": "en_manifiesto_activo",
+            }), 409
         campos["estado"] = data["estado"]
     if "costo_zz" in data:
         try: campos["costo_zz"] = float(data["costo_zz"])
@@ -32449,6 +32579,28 @@ def tr_cron_refrescar_saldo_productos():
             print(f"[refrescar-saldo] {d['tido']} {d['nudo']} falló: {e}", flush=True)
     return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados,
                     "guias_catchup": guias_catchup, "fallidos": fallidos})
+
+
+@app.route("/transporte/cron/sync-mes-actual", methods=["GET", "POST"])
+def tr_cron_sync_mes_actual():
+    """Respaldo de Cloud Scheduler para el sync de documentos NUEVOS del mes
+    actual (2026-08-01, Daniel: "necesito que toda la evidencia y los flujos
+    y los estados de entrega funcionen de manera automática e infalible").
+
+    Este es el ÚNICO de los 5 jobs de sincronización de Transporte que hasta
+    ahora corría SOLO por hilo interno (_transporte_scheduler_loop, 09:00/
+    12:00/16:00 hora Chile) sin respaldo externo -- a diferencia de FedEx,
+    SimpliRoute y el stock-snapshot, que ya tienen doble capa (hilo + Cloud
+    Scheduler). Si un redeploy cae justo encima de uno de esos 3 horarios,
+    el hilo se reinicia y calcula el SIGUIENTE slot como próximo, saltándose
+    por completo el de ese momento sin aviso ni reintento. Mismo patrón de
+    token que los demás crons (X-Cron-Token / ?token=).
+    """
+    tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
+    if not _fedex_cron_token_required(tok):
+        return jsonify({"error": "forbidden"}), 403
+    res = _tr_sync_mes_actual_bg(modo="resync")
+    return jsonify(res), (200 if res.get("ok") else 500)
 
 
 # ── FACTURAS DE PROVEEDOR: conciliación financiera con couriers ──────────
