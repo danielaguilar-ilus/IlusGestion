@@ -711,31 +711,149 @@ class TestMarcarEntregado(unittest.TestCase):
         self.assertIn("ESTADOS_ENTREGA_TERMINALES", fuente)
         self.assertIn("FUENTES_AUTOMATICAS", fuente)
 
-    def test_GAP_hay_UPDATEs_de_estado_entrega_fuera_de_la_funcion_central(self):
-        """[GAP] Varios caminos (endpoint manual de estado, POD manual, app del
-        chofer) escriben `estado_entrega` con un UPDATE directo en vez de pasar
-        por `_tr_apply_carrier_status`. Se saltan la guarda de continuidad y el
-        chequeo de "cambió realmente".
+    def test_GAP_arreglado_ya_no_hay_UPDATEs_de_estado_entrega_fuera_de_la_funcion_central(self):
+        """[GAP RESUELTO 2026-08-01] Antes, 5 caminos (endpoint manual de
+        estado, POD manual de escritorio, escaneo QR / "Navegar" / POD del
+        chofer) escribían `estado_entrega` con un UPDATE directo en vez de
+        pasar por `_tr_apply_carrier_status` — se saltaban la guarda de
+        continuidad y el chequeo de "cambió realmente" (registrado como
+        SEV-7). Los 5 se migraron a `_tr_apply_carrier_status()`:
+          - tr_estado_entrega
+          - tr_registrar_entrega
+          - chofer_captura_scan
+          - chofer_parada_iniciar
+          - chofer_entrega_submit
+        (ver TestMigracionCincoSitiosAEstadoCentral más abajo, que verifica
+        cada uno). Ahora el ÚNICO `SET estado_entrega=` literal que debe
+        quedar en todo app.py es el de dentro de _tr_apply_carrier_status.
 
-        Es el pendiente ya registrado como SEV-7. Este test fija cuántos son
-        hoy, para que no aparezcan MÁS sin que nadie se entere.
-
-        CUANDO SE ARREGLE: bajar el número esperado, o pasar a exigir 0.
+        Si este test vuelve a fallar porque el número subió, alguien agregó
+        un UPDATE manual nuevo en vez de usar _tr_apply_carrier_status —
+        revertir y usar el choke-point.
         """
         fuente = _fuente_app()
         # UPDATEs literales sobre estado_entrega en el fuente completo.
         ocurrencias = re.findall(r"SET\s+estado_entrega\s*=", fuente)
-        self.assertGreaterEqual(
-            len(ocurrencias), 2,
-            "Ya no hay UPDATEs directos de estado_entrega — si se centralizaron "
-            "todos, actualizar este test.",
+        self.assertEqual(
+            len(ocurrencias), 1,
+            f"Se esperaba UN solo UPDATE literal de estado_entrega (dentro de "
+            f"_tr_apply_carrier_status), se encontraron {len(ocurrencias)}. "
+            "Todo estado nuevo debería pasar por _tr_apply_carrier_status.",
         )
-        self.assertLessEqual(
-            len(ocurrencias), 8,
-            f"Aparecieron más UPDATEs directos de estado_entrega ({len(ocurrencias)}) "
-            "de los que había cuando se escribió este test (SEV-7). Todo estado "
-            "nuevo debería pasar por _tr_apply_carrier_status.",
+        # Y ese único UPDATE vive efectivamente dentro del choke-point.
+        central = _cuerpo_funcion("_tr_apply_carrier_status")
+        self.assertEqual(
+            len(re.findall(r"SET\s+estado_entrega\s*=", central)), 1,
+            "El UPDATE de estado_entrega que sobrevive ya no está dentro de "
+            "_tr_apply_carrier_status — investigar dónde quedó.",
         )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 5.b · Migración de los 5 sitios manuales a _tr_apply_carrier_status
+# (2026-08-01) — resuelve el GAP de BLOQUE 5.
+# ═════════════════════════════════════════════════════════════════════════════
+class TestMigracionCincoSitiosAEstadoCentral(unittest.TestCase):
+    """Los 5 sitios que actualizaban `estado_entrega` con su propio patrón
+    manual (UPDATE + _tr_log + _tr_event) ahora delegan en
+    `_tr_apply_carrier_status()`, el choke-point único descrito en su propio
+    docstring. Mismo resultado observable (mismo estado final, mismo
+    fuente/comentario/notify_cliente, mismas guardas de negocio que cada sitio
+    ya tenía) — solo cambia que la lógica de estado_entrega+log+event dejó de
+    estar duplicada 5 veces."""
+
+    SITIOS = [
+        "tr_estado_entrega",
+        "tr_registrar_entrega",
+        "chofer_captura_scan",
+        "chofer_parada_iniciar",
+        "chofer_entrega_submit",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuentes = {n: _cuerpo_funcion(n) for n in cls.SITIOS}
+        cls.norm = {n: _norm(f) for n, f in cls.fuentes.items()}
+
+    def test_ninguno_arma_ya_su_propio_UPDATE_de_estado_entrega(self):
+        for nombre, fuente in self.fuentes.items():
+            self.assertNotIn(
+                "SET estado_entrega", _norm(fuente),
+                f"{nombre} todavía arma su propio UPDATE de estado_entrega; "
+                "debería delegar en _tr_apply_carrier_status.",
+            )
+
+    def test_los_5_llaman_a_la_funcion_central(self):
+        for nombre, fuente in self.fuentes.items():
+            self.assertIn(
+                "_tr_apply_carrier_status(", fuente,
+                f"{nombre} no llama a _tr_apply_carrier_status.",
+            )
+
+    def test_tr_estado_entrega_usa_fuente_manual_y_sigue_validando_el_manifiesto(self):
+        n = self.norm["tr_estado_entrega"]
+        self.assertIn("fuente='manual'", n)
+        # Guarda agregada en la migración: el viejo UPDATE llevaba
+        # "AND manifest_id=%s"; _tr_apply_carrier_status solo filtra por id,
+        # así que el chequeo de scope se hace ahora ANTES de llamarlo.
+        self.assertIn("AND manifest_id=%s", n)
+
+    def test_tr_registrar_entrega_usa_fuente_manual_estado_entregado_y_gps(self):
+        n = self.norm["tr_registrar_entrega"]
+        self.assertIn("fuente='manual'", n)
+        self.assertIn("'Entregado'", n)
+        self.assertIn("lat=lat", n)
+        self.assertIn("lng=lng", n)
+
+    def test_chofer_captura_scan_usa_fuente_chofer_y_mantiene_guarda_de_no_retroceso(self):
+        n = self.norm["chofer_captura_scan"]
+        self.assertIn("fuente='chofer'", n)
+        self.assertIn("'Entregado a transporte'", n)
+        # La guarda pre-existente (no pisar En ruta/Entregado) se mantiene
+        # delante de la llamada centralizada — _tr_apply_carrier_status NO
+        # la reemplaza porque 'chofer' está exenta de su propia guarda
+        # anti-retroceso (esa solo aplica a FUENTES_AUTOMATICAS).
+        self.assertIn("not in ('En ruta', 'Entregado')", n)
+
+    def test_chofer_parada_iniciar_usa_fuente_chofer_estado_en_ruta_y_early_return(self):
+        n = self.norm["chofer_parada_iniciar"]
+        self.assertIn("fuente='chofer'", n)
+        self.assertIn("'En ruta'", n)
+        # El early-return idempotente pre-existente se mantiene: si ya está
+        # En ruta/Entregado/Devolución, no debe ni llamar a la función central.
+        self.assertIn('"ya_estaba": True', n)
+
+    def test_chofer_entrega_submit_usa_fuente_chofer_estado_entregado_y_gps(self):
+        n = self.norm["chofer_entrega_submit"]
+        self.assertIn("fuente='chofer'", n)
+        self.assertIn("'Entregado'", n)
+        self.assertIn("lat=lat", n)
+        self.assertIn("lng=lng", n)
+
+    def test_ninguno_desactiva_notify_cliente(self):
+        """Los 5 sitios notificaban al cliente por default (ninguna llamada
+        vieja a _tr_event pasaba notify_cliente=False). La migración debe
+        preservar ese default (True) en los 5 — si alguno empieza a pasar
+        notify_cliente=False, es un cambio de comportamiento de negocio no
+        pedido."""
+        for nombre, fuente in self.fuentes.items():
+            self.assertNotIn(
+                "notify_cliente=False", _norm(fuente),
+                f"{nombre} pasa notify_cliente=False — antes de la migración "
+                "notificaba al cliente por default (True) vía _tr_event().",
+            )
+
+    def test_funcion_central_soporta_lat_lng_para_no_perder_el_gps_del_chofer(self):
+        """tr_registrar_entrega y chofer_entrega_submit le pasaban lat/lng
+        directo a _tr_event() (GPS de dónde se firmó la entrega).
+        _tr_apply_carrier_status no tenía esos parámetros — se extendió con
+        lat=None, lng=None (default compatible con los otros 13 callers
+        preexistentes, que no los usan) para poder migrar estos 2 sitios sin
+        perder el dato."""
+        central = _norm(_cuerpo_funcion("_tr_apply_carrier_status"))
+        self.assertIn("lat=None, lng=None", central)
+        self.assertIn("lat=lat, lng=lng", central,
+                       "_tr_apply_carrier_status ya no reenvía lat/lng a _tr_event().")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

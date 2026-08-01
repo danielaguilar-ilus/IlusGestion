@@ -17735,8 +17735,9 @@ def _fedex_track_lookup(tracking_numbers):
 
 def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
                              tracking_number=None, payload=None,
-                             comentario=None, notify_cliente=True):
-    """Aplica el estado venido del courier al item.
+                             comentario=None, notify_cliente=True,
+                             lat=None, lng=None):
+    """Aplica el estado venido del courier (o de un humano) al item.
 
     Si el estado cambió respecto al actual del item:
       - UPDATE estado_entrega del item
@@ -17747,6 +17748,13 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
 
     notify_cliente=False → actualiza el estado pero NO manda correo al cliente
     (lo usa el poller automático; el refresco manual mantiene True).
+
+    lat/lng (2026-08-01, migración de los 5 sitios que hacían su propio
+    UPDATE+_tr_log+_tr_event manual a este choke-point): coordenadas GPS
+    opcionales de dónde se originó el cambio — ej. el chofer marcando
+    "Entregado" desde el celular en la puerta del cliente. Se pasan tal cual a
+    _tr_event(), que ya las soportaba y las guarda en
+    transport_tracking_events; este helper no las exponía todavía.
 
     Returns: dict {changed: bool, estado_actual: str, comentario: str}
     """
@@ -17832,6 +17840,7 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
         _tr_log("manifest_item", item_id, f"estado por {fuente}", estado_ilus)
         _tr_event(item_id, estado_ilus, fuente=fuente,
                   comentario=comentario,
+                  lat=lat, lng=lng,
                   payload_json=payload,
                   commitment_id=cur_item["commitment_id"],
                   notify_cliente=notify_cliente)
@@ -27509,9 +27518,9 @@ def tr_estado_entrega(mid, item_id):
     # se exigía para items con tracking FedEx; los demás couriers quedaban
     # abiertos a cualquier usuario con permiso 'transporte', lo cual ya no
     # aplica). Los procesos automáticos (poller FedEx, chofer, sistema) NO
-    # pasan por este endpoint — llaman directo a `_tr_event()` con
-    # fuente='fedex'/'chofer'/'sistema', así que no quedan bloqueados por esta
-    # guarda.
+    # pasan por este endpoint — actualizan estado_entrega vía
+    # `_tr_apply_carrier_status()` con fuente='fedex'/'chofer'/'sistema', así
+    # que no quedan bloqueados por esta guarda.
     _u = getattr(g, "user", None) or {}
     if (_u.get("role") or "") not in ("admin", "superadmin"):
         return jsonify({
@@ -27531,25 +27540,27 @@ def tr_estado_entrega(mid, item_id):
             "ok": False,
             "error": "Para marcar 'Problema' debes indicar el motivo (obligatorio) — se incluye en el correo al cliente.",
         }), 400
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE transport_manifest_items SET estado_entrega=%s WHERE id=%s AND manifest_id=%s",
-            (estado, item_id, mid)
-        )
-        # Cuando se marca Entregado, cacheamos delivered_at en el commitment para
-        # queries rápidas (KPIs / OTIF / tracking público sin recorrer eventos).
-        if estado == 'Entregado':
-            cur.execute(
-                "UPDATE transport_commitments tc "
-                "JOIN transport_manifest_items tmi ON tmi.commitment_id = tc.id "
-                "SET tc.delivered_at = COALESCE(tc.delivered_at, NOW()) "
-                "WHERE tmi.id=%s",
-                (item_id,)
-            )
-    conn.commit()
-    _tr_log("manifest_item", item_id, "estado_entrega", estado)
-    _tr_event(item_id, estado, fuente='manual', comentario=comentario)
+
+    # Verifica que el item exista DENTRO de este manifiesto — el UPDATE
+    # manual que reemplazamos abajo llevaba el mismo WHERE id=... AND
+    # manifest_id=...; sin este chequeo previo, _tr_apply_carrier_status()
+    # (que solo filtra por id) aceptaría un item_id válido de OTRO
+    # manifiesto pasado por error/URL manipulada.
+    if not mysql_fetchone(
+        "SELECT id FROM transport_manifest_items WHERE id=%s AND manifest_id=%s",
+        (item_id, mid)
+    ):
+        return jsonify({"ok": False, "error": "item no encontrado en este manifiesto"}), 404
+
+    # 2026-08-01: migrado al choke-point único (antes hacía su propio
+    # UPDATE + _tr_log + _tr_event). Mismo resultado observable: fuente=
+    # 'manual' está exenta de la guarda anti-retroceso de
+    # _tr_apply_carrier_status (esa guarda solo aplica a FUENTES_AUTOMATICAS
+    # = fedex/simpliroute), así que un admin sigue pudiendo reabrir un
+    # estado terminal (ej. 'Problema' desde 'Entregado') igual que antes.
+    # notify_cliente queda en su default (True), igual que la llamada
+    # anterior a _tr_event().
+    _tr_apply_carrier_status(item_id, estado, fuente='manual', comentario=comentario)
     return jsonify({"ok": True})
 
 
@@ -27662,25 +27673,17 @@ def tr_registrar_entrega(mid, item_id):
             firma_url, json.dumps(fotos_urls, ensure_ascii=False),
             lat, lng, accuracy, current_username(), notas
         ))
-        # Cambiar estado a Entregado
-        cur.execute(
-            "UPDATE transport_manifest_items SET estado_entrega='Entregado' "
-            "WHERE id=%s AND manifest_id=%s",
-            (item_id, mid)
-        )
-        # Cachear delivered_at en el commitment
-        cur.execute(
-            "UPDATE transport_commitments SET delivered_at = COALESCE(delivered_at, NOW()) "
-            "WHERE id=%s",
-            (commitment_id,)
-        )
     conn.commit()
 
-    _tr_log("manifest_item", item_id, "entrega registrada",
-            f"receptor={receptor} fotos={len(fotos_urls)}")
-    _tr_event(item_id, 'Entregado', fuente='manual',
-              comentario=f"Recibido por: {receptor}",
-              lat=lat, lng=lng, commitment_id=commitment_id)
+    # 2026-08-01: migrado al choke-point único (antes hacía su propio UPDATE
+    # de estado_entrega + UPDATE de delivered_at + _tr_log + _tr_event). El
+    # estado siempre pasa a 'Entregado' → _tr_apply_carrier_status() ya
+    # cachea delivered_at en el commitment con el mismo COALESCE de antes, no
+    # hace falta repetirlo acá. lat/lng se preservan (antes solo llegaban a
+    # _tr_event(), que _tr_apply_carrier_status() ahora también acepta).
+    _tr_apply_carrier_status(item_id, 'Entregado', fuente='manual',
+                             comentario=f"Recibido por: {receptor}",
+                             lat=lat, lng=lng)
     return jsonify({"ok": True, "fotos": len(fotos_urls),
                     "firma": bool(firma_url)})
 
@@ -31227,15 +31230,17 @@ def chofer_captura_scan(mid):
             "SELECT tido, nudo FROM transport_commitments WHERE id=%s", (cid,)
         ) or {}
         doc = f"{cinfo.get('tido') or ''} {cinfo.get('nudo') or ''}".strip()
+        # 2026-08-01: migrado al choke-point único (antes hacía su propio
+        # UPDATE + _tr_event, sin _tr_log). El "not in" de abajo NO es
+        # redundante con la guarda anti-retroceso de _tr_apply_carrier_status
+        # (esa solo bloquea fuentes AUTOMÁTICAS=fedex/simpliroute; 'chofer'
+        # está exenta) — sigue haciendo falta acá para no pisar 'En ruta' o
+        # 'Entregado' con 'Entregado a transporte' si el chofer escanea un
+        # bulto rezagado después de haber avanzado la parada.
         if item and item.get("estado_entrega") != 'Entregado a transporte' \
                 and item.get("estado_entrega") not in ('En ruta', 'Entregado'):
-            mysql_execute(
-                "UPDATE transport_manifest_items SET estado_entrega='Entregado a transporte' "
-                "WHERE id=%s", (item["id"],)
-            )
-            _tr_event(item["id"], 'Entregado a transporte', fuente='chofer',
-                      comentario=f"Bultos capturados por {drv['nombre']}",
-                      commitment_id=cid)
+            _tr_apply_carrier_status(item["id"], 'Entregado a transporte', fuente='chofer',
+                                     comentario=f"Bultos capturados por {drv['nombre']}")
     # Progreso global del manifiesto
     gprog = mysql_fetchone("""
         SELECT COUNT(*) AS total,
@@ -31368,14 +31373,12 @@ def chofer_parada_iniciar(mid, commitment_id):
     estado_actual = item.get("estado_entrega") or ""
     if estado_actual in ('En ruta', 'Entregado', 'Devolución'):
         return jsonify({"ok": True, "ya_estaba": True, "estado": estado_actual})
-    mysql_execute(
-        "UPDATE transport_manifest_items SET estado_entrega='En ruta' WHERE id=%s",
-        (item["id"],))
-    _tr_log("manifest_item", item["id"], "en ruta (chofer navegó)",
-            drv["nombre"])
-    _tr_event(item["id"], 'En ruta', fuente='chofer',
-              comentario=f"{drv['nombre']} salió hacia esta parada",
-              commitment_id=commitment_id)
+    # 2026-08-01: migrado al choke-point único (antes hacía su propio
+    # UPDATE + _tr_log + _tr_event). El "if" de arriba ya cubre la
+    # idempotencia (no llega hasta acá si ya estaba En ruta/Entregado/
+    # Devolución), así que se mantiene tal cual delante de la llamada.
+    _tr_apply_carrier_status(item["id"], 'En ruta', fuente='chofer',
+                             comentario=f"{drv['nombre']} salió hacia esta parada")
     return jsonify({"ok": True, "ya_estaba": False, "estado": "En ruta"})
 
 
@@ -31522,21 +31525,18 @@ def chofer_entrega_submit(mid, commitment_id):
         """, (item_id, commitment_id, receptor, receptor_rut, relacion,
               firma_url, json.dumps(fotos_urls, ensure_ascii=False),
               lat, lng, accuracy, f"chofer:{drv['nombre']}", notas))
-        cur.execute(
-            "UPDATE transport_manifest_items SET estado_entrega='Entregado' WHERE id=%s",
-            (item_id,))
-        cur.execute(
-            "UPDATE transport_commitments SET delivered_at=COALESCE(delivered_at,NOW()) WHERE id=%s",
-            (commitment_id,))
     conn.commit()
 
     coment = f"Recibido por: {receptor}"
     if not geocerca_ok and dist_m is not None:
         coment += f" (a {int(dist_m)} m del destino)"
-    _tr_log("manifest_item", item_id, "entrega por chofer",
-            f"{drv['nombre']} · receptor={receptor} fotos={len(fotos_urls)}")
-    _tr_event(item_id, 'Entregado', fuente='chofer', comentario=coment,
-              lat=lat, lng=lng, commitment_id=commitment_id)
+    # 2026-08-01: migrado al choke-point único (antes hacía su propio UPDATE
+    # de estado_entrega + UPDATE de delivered_at + _tr_log + _tr_event).
+    # _tr_apply_carrier_status() ya cachea delivered_at con el mismo COALESCE
+    # de antes cuando el estado pasa a 'Entregado', así que no hace falta
+    # repetirlo acá. lat/lng se preservan igual que antes.
+    _tr_apply_carrier_status(item_id, 'Entregado', fuente='chofer', comentario=coment,
+                             lat=lat, lng=lng)
 
     # ¿Quedan paradas pendientes? Si no, el manifiesto se puede cerrar.
     pend = mysql_fetchone("""
