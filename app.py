@@ -13445,6 +13445,78 @@ def erp_ping_raw():
     })
 
 
+@app.route("/api/erp/peek-guias", methods=["GET"])
+@login_required
+def erp_engine_peek_guias():
+    """DIAGNÓSTICO TEMPORAL (2026-08-01) — confirma contra el ERP real la
+    hipótesis de cómo se modela la guía de despacho, antes de construir la
+    feature de guías por línea.
+
+    En Random, la guía NO es un campo de la factura: es un documento propio
+    (TIDO='GDV'). Según el diccionario de campos que envió Random (tabla
+    MAEDDO), cada LÍNEA de la guía trae TIDOPA/NUDOPA/ENDOPA (el documento de
+    origen) y NULIDOPA (el número de línea exacta de la factura que cubre).
+    Eso es justo lo que hace falta para asociar guías a nivel de línea, no
+    solo de documento (una factura puede salir en más de una guía si el
+    despacho fue parcial).
+
+    Uso (admin/superadmin):
+        /api/erp/peek-guias?tido=BLV&nudo=22719
+
+    Puramente de lectura, vía _random_sql_query (mismo canal blindado que
+    usa el resto de Transporte — whitelist SELECT, params, autocommit off).
+    Se retira una vez confirmado el modelo real.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+
+    tido = (request.args.get("tido") or "").strip().upper()
+    nudo = (request.args.get("nudo") or "").strip()
+    if not tido or not nudo:
+        return jsonify({"error": "Faltan tido y/o nudo. Ej: ?tido=BLV&nudo=22719"}), 400
+
+    # ENDOPA (entidad del doc de origen) no la tenemos a mano desde el
+    # querystring -- se busca primero el ENDO real de la factura consultando
+    # su propio encabezado, para no adivinar ni dejar el filtro incompleto.
+    header = _random_sql_one(
+        "SELECT TIDO, NUDO, ENDO FROM MAEEDO WHERE TIDO=%s AND NUDO=%s",
+        (tido, nudo.zfill(10)),
+    )
+    if not header:
+        return jsonify({"ok": False, "error": f"No se encontró {tido} {nudo} en MAEEDO",
+                        "tido": tido, "nudo": nudo}), 404
+
+    endo = header.get("ENDO")
+    rows = _random_sql_query(
+        """
+        SELECT d.TIDO AS guia_tido, d.NUDO AS guia_nudo, d.ENDO AS guia_endo,
+               d.NULIDO AS guia_linea,
+               d.TIDOPA AS origen_tido, d.NUDOPA AS origen_nudo,
+               d.ENDOPA AS origen_endo, d.NULIDOPA AS origen_linea,
+               d.KOPRCT AS sku, d.NOKOPR AS producto,
+               d.CAPRCO1 AS cantidad, d.FEEMLI AS fecha_linea,
+               e.FEEMDO AS fecha_guia, e.ESDO AS estado_guia,
+               e.KOTRPCVH AS codigo_transportista
+        FROM MAEDDO d
+        LEFT JOIN MAEEDO e
+          ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO
+        WHERE d.TIDOPA = %s AND d.NUDOPA = %s AND d.ENDOPA = %s
+        ORDER BY d.NUDO, d.NULIDO
+        """,
+        (tido, nudo.zfill(10), endo),
+    )
+
+    return jsonify({
+        "ok": rows is not None,
+        "documento_origen": {"tido": tido, "nudo": nudo, "endo": endo},
+        "n_lineas_guia_encontradas": len(rows or []),
+        "guias_distintas": sorted({(r["guia_tido"], r["guia_nudo"]) for r in (rows or [])}) if rows else [],
+        "lineas": rows or [],
+        "nota": "Si n_lineas_guia_encontradas > 0, el modelo TIDOPA/NUDOPA/"
+                "ENDOPA/NULIDOPA se confirma contra datos reales de este ERP.",
+    })
+
+
 @app.route("/api/erp/peek", methods=["GET"])
 @login_required
 def erp_engine_peek():
