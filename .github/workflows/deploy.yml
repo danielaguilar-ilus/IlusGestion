@@ -85,11 +85,14 @@ jobs:
           python-version: '3.12'
 
       - name: Instalar dependencias mínimas para los tests
-        # SOLO lo que los tests realmente importan (Pillow, para el helper de
-        # PDF multi-página de test_fedex_parse.py) -- NO requirements.txt
+        # SOLO lo que los tests realmente importan -- NO requirements.txt
         # completo (playwright/tesseract la harían lenta y frágil solo para
         # correr tests unitarios que no los necesitan).
-        run: pip install --quiet "Pillow>=10.0.0"
+        # Pillow: helper de PDF multi-página de test_fedex_parse.py.
+        # pypdf/pypdfium2: fedex_labels.pdf_count_pages/pdf_split_pages_b64
+        # (sin esto el split de PDF multipágina falla silenciosamente y
+        # test_caso3_pdf_multipagina reporta 1 etiqueta en vez de 3).
+        run: pip install --quiet "Pillow>=10.0.0" "pypdf>=4.0.0" "pypdfium2>=4.30.0"
 
       - name: Tests de regresión (gate previo al deploy)
         run: |
