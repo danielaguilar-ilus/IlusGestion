@@ -19653,6 +19653,41 @@ def _clasif_from_skus(skus):
     return "despacho"
 
 
+def _ensure_transport_guias_table():
+    """Tabla NUEVA (2026-08-01): guías de despacho REALES (TIDO='GDV') que
+    cubrieron las líneas de un documento (factura/boleta), una fila por
+    LÍNEA de guía -- no por guía completa, porque una guía puede cubrir
+    varios SKUs y un documento puede haber salido en más de una guía si el
+    despacho fue parcial/re-despachado.
+
+    Confirmado contra el ERP real 2026-08-01 (ver /api/erp/peek-guias): la
+    guía no es un campo de la factura, es un documento propio; cada línea de
+    MAEDDO trae TIDOPA/NUDOPA/ENDOPA/NULIDOPA apuntando al documento de
+    origen que cubrió. Se crea SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1
+    (mismo motivo que _ensure_transport_tracking_tables: init_transporte_tables
+    no corre en prod). Idempotente: CREATE TABLE IF NOT EXISTS."""
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS transport_guias (
+            id                    INT AUTO_INCREMENT PRIMARY KEY,
+            commitment_id         INT NOT NULL,
+            guia_tido             VARCHAR(10) NOT NULL,
+            guia_nudo             VARCHAR(20) NOT NULL,
+            guia_linea            INT NOT NULL,
+            sku                   VARCHAR(60) NOT NULL,
+            producto              VARCHAR(300) NULL,
+            cantidad              DECIMAL(12,2) NOT NULL DEFAULT 0,
+            fecha_guia            DATETIME NULL,
+            estado_guia           VARCHAR(60) NULL,
+            codigo_transportista  VARCHAR(60) NULL,
+            sincronizado_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_tg_commitment (commitment_id),
+            INDEX idx_tg_commitment_sku (commitment_id, sku),
+            FOREIGN KEY (commitment_id)
+                REFERENCES transport_commitments(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
 def _tr_fetch_from_erp(tido, nudo):
     """
     Obtiene un documento del ERP vía API y lo guarda/actualiza en transport_commitments.
@@ -19962,6 +19997,104 @@ def _tr_fetch_from_erp(tido, nudo):
     # Importante: NO cerrar conn aquí (es del pool). teardown_appcontext lo hace.
 
     return comm_id, None
+
+
+def _tr_fetch_guias_from_erp(commitment_id, tido, nudo):
+    """Sincroniza las guías de despacho REALES (TIDO='GDV') que cubrieron las
+    líneas de un documento (factura/boleta) en transport_guias.
+
+    Confirmado contra el ERP real 2026-08-01 (ver diagnóstico
+    /api/erp/peek-guias, mismo query, ya probado con BLV 22719): la guía NO
+    es un campo de la factura -- es un documento propio. Cada línea de
+    MAEDDO trae TIDOPA/NUDOPA/ENDOPA (el documento de origen) y NULIDOPA (el
+    número de línea exacto que cubrió), así que se puede asociar la guía a
+    nivel de LÍNEA/SKU, no solo de documento.
+
+    Vía _random_sql_query -- ÚNICO canal permitido al ERP (whitelist SELECT,
+    parametrizado, autocommit off). 100% lectura.
+
+    Guarda: DELETE + INSERT de todas las filas del commitment (mismo patrón
+    que las líneas ZZ en _tr_fetch_from_erp) -- así queda siempre sincronizado
+    con lo último que dice el ERP, sin duplicados aunque se llame N veces.
+
+    Si encontró al menos una guía, también actualiza
+    transport_commitments.guia_numero con el NUDO de la guía MÁS RECIENTE
+    (por fecha_guia descendente) -- con la MISMA guarda anti-pisado que usa
+    _tr_fetch_from_erp para ese campo (IIF vacío/NULL -> conserva el que
+    había). Acá es un UPDATE directo, no un UPSERT, así que la guarda va en
+    el propio SET con IF().
+
+    Envuelta en try/except: un fallo del ERP (o del pool no configurado) NO
+    debe poder tumbar al caller (cron horario o el detalle del modal).
+    Devuelve el número de líneas de guía sincronizadas (0 si no hay o falló).
+    """
+    try:
+        header = _random_sql_one(
+            "SELECT TIDO, NUDO, ENDO FROM MAEEDO WHERE TIDO=%s AND NUDO=%s",
+            (tido, str(nudo).zfill(10)),
+        )
+        if not header:
+            return 0
+        endo = header.get("ENDO")
+        rows = _random_sql_query(
+            """
+            SELECT d.TIDO AS guia_tido, d.NUDO AS guia_nudo, d.ENDO AS guia_endo,
+                   d.NULIDO AS guia_linea,
+                   d.TIDOPA AS origen_tido, d.NUDOPA AS origen_nudo,
+                   d.ENDOPA AS origen_endo, d.NULIDOPA AS origen_linea,
+                   d.KOPRCT AS sku, d.NOKOPR AS producto,
+                   d.CAPRCO1 AS cantidad, d.FEEMLI AS fecha_linea,
+                   e.FEEMDO AS fecha_guia, e.ESDO AS estado_guia,
+                   e.KOTRPCVH AS codigo_transportista
+            FROM MAEDDO d
+            LEFT JOIN MAEEDO e
+              ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO
+            WHERE d.TIDOPA = %s AND d.NUDOPA = %s AND d.ENDOPA = %s
+            ORDER BY d.NUDO, d.NULIDO
+            """,
+            (tido, str(nudo).zfill(10), endo),
+        )
+        if not rows:
+            return 0
+
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM transport_guias WHERE commitment_id=%s", (commitment_id,))
+            for r in rows:
+                cur.execute("""
+                    INSERT INTO transport_guias
+                      (commitment_id, guia_tido, guia_nudo, guia_linea, sku, producto,
+                       cantidad, fecha_guia, estado_guia, codigo_transportista, sincronizado_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                """, (
+                    commitment_id,
+                    (r.get("guia_tido") or "").strip()[:10],
+                    (r.get("guia_nudo") or "").strip()[:20],
+                    r.get("guia_linea"),
+                    (r.get("sku") or "").strip()[:60],
+                    (r.get("producto") or "").strip()[:300] or None,
+                    float(r.get("cantidad") or 0),
+                    r.get("fecha_guia"),
+                    (r.get("estado_guia") or "").strip()[:60] or None,
+                    (r.get("codigo_transportista") or "").strip()[:60] or None,
+                ))
+
+            # Guía MÁS RECIENTE (por fecha_guia descendente) -> guia_numero
+            # del commitment. Guarda anti-pisado: si esta pasada no trae un
+            # número de guía, NO se pisa el que ya había.
+            _con_fecha = [r for r in rows if r.get("fecha_guia")]
+            _mas_reciente = max(_con_fecha, key=lambda r: r["fecha_guia"]) if _con_fecha else rows[0]
+            _guia_num = (_mas_reciente.get("guia_nudo") or "").strip()
+            cur.execute("""
+                UPDATE transport_commitments
+                SET guia_numero = IF(%s IS NULL OR %s = '', guia_numero, %s)
+                WHERE id=%s
+            """, (_guia_num, _guia_num, _guia_num, commitment_id))
+        conn.commit()
+        return len(rows)
+    except Exception as e:
+        print(f"[_tr_fetch_guias_from_erp] {tido}/{nudo} falló (no crítico): {e}", flush=True)
+        return 0
 
 
 # ── SYNC MASIVO ERP → TRANSPORTE ────────────────────────────────
@@ -23709,6 +23842,32 @@ def tr_detalle(cid):
         print(f"[tr_detalle] desglose de stock falló: {_e_stock}", flush=True)
         for _l in lineas_prod:
             _l.setdefault("stock", None)
+
+    # Guías de despacho reales por SKU (2026-08-01, Daniel: columna "Guía"
+    # en la tabla de productos del modal) -- local, sin ERP: lee lo que el
+    # cron horario / _tr_fetch_guias_from_erp ya dejó sincronizado en
+    # transport_guias. Un producto puede no tener guía todavía (no hay
+    # despacho registrado) o tener más de una si se re-despachó -- se
+    # expone la MÁS RECIENTE (por fecha_guia descendente) como un string
+    # plano, mismo criterio que el guia_numero que se guarda en
+    # transport_commitments. No crítico: si falla, la columna queda en "—".
+    try:
+        _guia_rows = mysql_fetchall("""
+            SELECT sku, guia_nudo, fecha_guia FROM transport_guias
+            WHERE commitment_id=%s ORDER BY fecha_guia DESC, id DESC
+        """, (cid,)) or []
+        _guia_por_sku = {}
+        for _gr in _guia_rows:
+            _sk = (_gr.get("sku") or "").strip().upper()
+            # La primera fila que aparece por SKU es la más reciente (ya
+            # viene ORDER BY fecha_guia DESC arriba) -- no pisar con una vieja.
+            _guia_por_sku.setdefault(_sk, (_gr.get("guia_nudo") or "").strip() or None)
+        for _l in lineas_prod:
+            _l["guia_numero"] = _guia_por_sku.get((_l.get("sku") or "").strip().upper())
+    except Exception as _e_guia:
+        print(f"[tr_detalle] guías por SKU fallaron (no crítico): {_e_guia}", flush=True)
+        for _l in lineas_prod:
+            _l.setdefault("guia_numero", None)
 
     # Totales solo de líneas con saldo
     tot_kg   = round(sum(l["peso_kg_tot"]  for l in lineas_prod), 3)
@@ -31566,6 +31725,40 @@ def _tr_buscar_detalle(commitment_id):
     except Exception as _e_lin:
         print(f"[_tr_buscar_detalle] lineas fallaron (no crítico): {_e_lin}", flush=True)
 
+    # ── Guías de despacho reales por SKU (2026-08-01) — cruza transport_guias
+    # (sincronizada por _tr_fetch_guias_from_erp, cron horario) con las líneas
+    # de producto ya armadas arriba, para trazabilidad completa en el modal de
+    # tracking: con qué guía(s) salió cada producto. Un producto puede no
+    # tener guía todavía (sin despacho registrado en el ERP) o tener más de
+    # una si el despacho fue parcial/re-despachado — se agrupan por SKU.
+    # Additivo: solo agrega la clave `guias` a cada línea de lineas_out, no
+    # toca nada existente (buscar_interno.html ignora claves nuevas).
+    try:
+        if lineas_out:
+            _guia_rows2 = mysql_fetchall("""
+                SELECT sku, guia_tido, guia_nudo, guia_linea, cantidad,
+                       fecha_guia, estado_guia, codigo_transportista
+                FROM transport_guias WHERE commitment_id=%s
+                ORDER BY fecha_guia DESC, guia_nudo DESC, guia_linea ASC
+            """, (commitment_id,)) or []
+            _guias_por_sku2 = {}
+            for _gr2 in _guia_rows2:
+                _sk2 = (_gr2.get("sku") or "").strip().upper()
+                _guias_por_sku2.setdefault(_sk2, []).append({
+                    "guia_tido":            _gr2.get("guia_tido"),
+                    "guia_nudo":            _gr2.get("guia_nudo"),
+                    "guia_linea":           _gr2.get("guia_linea"),
+                    "cantidad":             float(_gr2.get("cantidad") or 0),
+                    "fecha_guia":           (chile_fmt_filter(_gr2["fecha_guia"], "%d/%m/%Y")
+                                              if _gr2.get("fecha_guia") else None),
+                    "estado_guia":          _gr2.get("estado_guia"),
+                    "codigo_transportista": _gr2.get("codigo_transportista"),
+                })
+            for _lo2 in lineas_out:
+                _lo2["guias"] = _guias_por_sku2.get((_lo2["sku"] or "").upper(), [])
+    except Exception as _e_gui2:
+        print(f"[_tr_buscar_detalle] guías por SKU fallaron (no crítico): {_e_gui2}", flush=True)
+
     # ── FASE 2 (2026-07-31, Daniel: "los productos también tienen que tener
     # estados, SLA, para poder hacer seguimiento... eso ayuda a la toma de
     # decisiones") — estado_linea explícito por SKU del despacho ACTUAL
@@ -32081,6 +32274,16 @@ def tr_cron_refrescar_saldo_productos():
             comm_id, err = _tr_fetch_from_erp(d["tido"], str(d["nudo"]))
             if comm_id:
                 actualizados += 1
+                # Guías de despacho (2026-08-01): misma cadencia horaria que
+                # el saldo -- se sincronizan justo después, con el mismo
+                # comm_id ya resuelto. try/except propio: un fallo acá NUNCA
+                # debe contar como fallo del refresco de saldo (que es lo que
+                # este cron reporta) -- _tr_fetch_guias_from_erp ya no
+                # debería lanzar (todo envuelto adentro), pero se blinda igual.
+                try:
+                    _tr_fetch_guias_from_erp(comm_id, d["tido"], str(d["nudo"]))
+                except Exception as e_g:
+                    print(f"[refrescar-saldo][guias] {d['tido']} {d['nudo']} falló: {e_g}", flush=True)
             else:
                 fallidos += 1
         except Exception as e:
@@ -80434,6 +80637,16 @@ try:
         _ensure_transport_tracking_tables()
 except Exception as _trk_err:
     print(f"[ILUS][WARN] _ensure_transport_tracking_tables: {_trk_err}", flush=True)
+
+# GUÍAS DE DESPACHO (2026-08-01): garantizar transport_guias SIEMPRE, incluso
+# con ILUS_SKIP_MIGRATIONS=1. CREATE TABLE IF NOT EXISTS es idempotente. Sin
+# esto, _tr_fetch_guias_from_erp (cron horario + detalle del modal) revienta
+# con "Table doesn't exist" en Cloud Run.
+try:
+    with app.app_context():
+        _ensure_transport_guias_table()
+except Exception as _tg_err:
+    print(f"[ILUS][WARN] _ensure_transport_guias_table: {_tg_err}", flush=True)
 
 # FASE 2 PRODUCTO: garantizar transport_item_lines + columna item_line_id en
 # transport_tracking_events SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

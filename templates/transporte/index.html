@@ -1036,6 +1036,11 @@
                   <th>Descripción</th>
                   <th class="text-center">Cant.</th>
                   <th class="text-center">Saldo</th>
+                  {# 2026-08-01 (Daniel): número de guía de despacho real del
+                     ERP (TIDO='GDV') que cubrió esta línea/SKU -- poblado por
+                     _tr_fetch_guias_from_erp (cron horario). "—" si el
+                     producto todavía no tiene guía registrada. #}
+                  <th class="text-center">Guía</th>
                   <th class="text-end">Kg/u</th>
                   <th class="text-end">PV/u</th>
                   <th class="text-end">Pred/u</th>

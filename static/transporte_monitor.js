@@ -1062,6 +1062,15 @@ function renderVista(d) {
       (saldo > 0 ? '<span class="fw-bold" style="color:var(--ilus-red)">' + saldo + '</span>'
                  : '<span class="text-muted">0</span>') + stockTip + '</td>';
 
+    // Guía de despacho real (2026-08-01, Daniel: columna "Guía" en la tabla
+    // de productos del modal) -- l.guia_numero lo arma tr_detalle cruzando
+    // transport_guias por SKU (la más reciente si hubo re-despacho). "—" si
+    // el producto todavía no tiene guía registrada en el ERP.
+    var guiaHtml = '<td class="text-center">' +
+      (l.guia_numero ? '<span class="font-monospace" style="font-size:.72rem">' + esc(l.guia_numero) + '</span>'
+                      : '<span class="text-muted">—</span>') +
+      '</td>';
+
     // Botón editar medidas (solo si no tiene bultos)
     var editBtn = '';
     if (!l.tiene_bultos) {
@@ -1087,6 +1096,7 @@ function renderVista(d) {
       '</td>' +
       '<td class="text-center fw-bold">' + (l.cantidad||0) + '</td>' +
       saldoHtml +
+      guiaHtml +
       '<td class="text-end ' + kgClass + '">' + fmt3(l.peso_kg_u)  + '</td>' +
       '<td class="text-end ' + pvClass + '">' + fmt3(l.peso_vol_u) + '</td>' +
       '<td class="text-end">'  + fmt3(l.pred_u)     + '</td>' +
@@ -1108,7 +1118,10 @@ function renderVista(d) {
   var tfoot = document.getElementById('vistaTfoot');
   tfoot.innerHTML =
     '<tr>' +
-    '<td colspan="6" class="ps-3" style="font-size:.78rem;color:#666">TOTALES</td>' +
+    // colspan=7 (antes 6): incluye la columna Guía agregada 2026-08-01 entre
+    // Saldo y Kg/u -- si no se corre el colspan, los totales de Kg/PV/Pred
+    // quedan desplazados una columna a la izquierda.
+    '<td colspan="7" class="ps-3" style="font-size:.78rem;color:#666">TOTALES</td>' +
     '<td class="text-end ' + (esTotKg  ? 'fw-bold' : 'text-muted') + '">' + fmt3(tot.kg)   + '</td>' +
     '<td class="text-end ' + (!esTotKg ? 'fw-bold' : 'text-muted') + '">' + fmt3(tot.pv)   + '</td>' +
     '<td class="text-end"></td>' +

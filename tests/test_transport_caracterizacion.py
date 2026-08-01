@@ -858,5 +858,279 @@ class TestRamoManifestItems(unittest.TestCase):
         self.assertIn("except Exception as _e_ramo:", self.fuente)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 7 · Guías de despacho reales (transport_guias) — 2026-08-01
+# ═════════════════════════════════════════════════════════════════════════════
+# Confirmado contra el ERP real (BLV 22719 → GDV 0000032281): la guía no es
+# un campo de la factura, es un documento propio (TIDO='GDV'); cada línea de
+# MAEDDO trae TIDOPA/NUDOPA/ENDOPA/NULIDOPA apuntando al documento de origen.
+# Ver /api/erp/peek-guias para el diagnóstico que validó el modelo.
+
+class TestGuiasTablaIdempotente(unittest.TestCase):
+    """`_ensure_transport_guias_table` tiene que seguir EXACTAMENTE el mismo
+    patrón que el resto de las tablas `_ensure_*` de transporte: CREATE TABLE
+    IF NOT EXISTS, corre siempre en boot aunque ILUS_SKIP_MIGRATIONS=1."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_ensure_transport_guias_table")
+        cls.sql = _norm(cls.fuente)
+
+    def test_create_table_if_not_exists(self):
+        self.assertIn("CREATE TABLE IF NOT EXISTS transport_guias", self.sql)
+
+    def test_tiene_las_columnas_pedidas(self):
+        for col in ("commitment_id", "guia_tido", "guia_nudo", "guia_linea",
+                    "sku", "producto", "cantidad", "fecha_guia", "estado_guia",
+                    "codigo_transportista", "sincronizado_at"):
+            self.assertIn(col, self.sql, f"Falta la columna {col!r} en transport_guias.")
+
+    def test_tiene_indice_por_commitment_id(self):
+        self.assertIn("INDEX idx_tg_commitment (commitment_id)", self.sql)
+
+    def test_tiene_foreign_key_a_commitments(self):
+        self.assertIn(
+            "FOREIGN KEY (commitment_id) REFERENCES transport_commitments(id) ON DELETE CASCADE",
+            self.sql,
+        )
+
+    def test_usa_mysql_execute_no_conexion_manual(self):
+        """Mismo estilo simple que _ensure_transport_tracking_tables (un solo
+        CREATE, sin necesitar cursor/commit manual)."""
+        self.assertIn("mysql_execute(", self.fuente)
+
+    def test_se_registra_en_el_boot_siempre_incluso_con_skip_migrations(self):
+        """El CREATE TABLE por sí solo no sirve si nadie lo llama en boot --
+        mismo gotcha documentado para el resto de las tablas nuevas de
+        transporte (init_transporte_tables NO corre en prod).
+
+        `_ensure_transport_guias_table()` aparece como substring literal de
+        su propia línea `def _ensure_transport_guias_table():` (todo lo que
+        sigue a "def " coincide) -- por eso NO basta con buscar el nombre una
+        vez: tiene que aparecer una SEGUNDA vez, la llamada real de boot."""
+        ocurrencias = _fuente_app().count("_ensure_transport_guias_table()")
+        self.assertGreaterEqual(
+            ocurrencias, 2,
+            "_ensure_transport_guias_table() solo aparece 1 vez en app.py (su "
+            "propia definición) -- falta la llamada de boot que la registra "
+            "SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. La tabla nunca se "
+            "crearía en producción.",
+        )
+        self.assertIn(
+            "with app.app_context():\n        _ensure_transport_guias_table()",
+            _fuente_app(),
+            "La llamada de boot a _ensure_transport_guias_table() no sigue el "
+            "mismo patrón app_context() que el resto de las tablas nuevas.",
+        )
+
+
+class TestGuiasFetchDesdeErp(unittest.TestCase):
+    """`_tr_fetch_guias_from_erp` es el único punto que escribe en
+    transport_guias. Tiene que usar el canal blindado read-only, resincronizar
+    sin duplicar, y nunca poder tumbar al caller (cron horario / modal)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_tr_fetch_guias_from_erp")
+        cls.sql = _norm(cls.fuente)
+        cls.sql_sin_espacios = cls.sql.replace(" ", "")
+
+    def test_usa_el_canal_blindado_random_sql(self):
+        """Nunca pymssql/otro cliente directo -- SIEMPRE _random_sql_query /
+        _random_sql_one (whitelist SELECT, parametrizado, autocommit off)."""
+        self.assertIn("_random_sql_one(", self.fuente)
+        self.assertIn("_random_sql_query(", self.fuente)
+        self.assertNotIn("pymssql", self.fuente)
+
+    def test_resuelve_el_endo_antes_de_consultar_las_guias(self):
+        """Mismo patrón ya confirmado en /api/erp/peek-guias: el ENDO de la
+        factura no viene en el querystring/caller -- hay que resolverlo
+        primero contra MAEEDO."""
+        self.assertIn(
+            "SELECT TIDO, NUDO, ENDO FROM MAEEDO WHERE TIDO=%s AND NUDO=%s", self.sql,
+        )
+
+    def test_la_query_de_guias_es_la_ya_confirmada_contra_el_erp_real(self):
+        """Copia textual de la query probada en /api/erp/peek-guias contra
+        BLV 22719 (devolvió GDV 0000032281). No se rediseña."""
+        self.assertIn("FROM MAEDDO d", self.sql)
+        self.assertIn(
+            "LEFT JOIN MAEEDO e ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO",
+            self.sql,
+        )
+        self.assertIn(
+            "WHERE d.TIDOPA = %s AND d.NUDOPA = %s AND d.ENDOPA = %s", self.sql,
+        )
+        self.assertIn("ORDER BY d.NUDO, d.NULIDO", self.sql)
+
+    def test_delete_mas_insert_no_deja_duplicados(self):
+        """Resincronizar el mismo documento N veces debe dejar N=1 filas por
+        línea de guía, no acumularlas -- mismo patrón que las líneas ZZ en
+        _tr_fetch_from_erp (DELETE previo al INSERT, misma transacción)."""
+        self.assertIn(
+            "DELETE FROM transport_guias WHERE commitment_id=%s", self.sql,
+            "Desapareció el DELETE previo al INSERT: el resync podría "
+            "duplicar filas de transport_guias.",
+        )
+        self.assertIn("INSERT INTO transport_guias", self.sql)
+        # El DELETE tiene que ejecutarse ANTES del loop de INSERTs, no después.
+        idx_delete = self.fuente.index("DELETE FROM transport_guias")
+        idx_insert = self.fuente.index("INSERT INTO transport_guias")
+        self.assertLess(idx_delete, idx_insert,
+                         "El DELETE de transport_guias quedó después del INSERT.")
+
+    def test_guarda_anti_pisado_de_guia_numero(self):
+        """Pedido explícito del plan: actualizar transport_commitments.
+        guia_numero con la guía MÁS RECIENTE, pero sin poder pisar un valor
+        bueno con vacío si esta pasada no trae guía -- mismo criterio que la
+        guarda de guia_numero en _tr_fetch_from_erp/_tr_bulk_sync_erp_mysql,
+        adaptado a UPDATE directo (esta función no hace UPSERT)."""
+        self.assertIn(
+            "guia_numero=IF(%sISNULLOR%s='',guia_numero,%s)",
+            self.sql_sin_espacios,
+            "La guarda anti-pisado de guia_numero desapareció o cambió de forma: "
+            "una corrida sin guía nueva podría borrar la guía que ya había.",
+        )
+        self.assertIn("UPDATE transport_commitments", self.sql)
+
+    def test_elige_la_guia_mas_reciente_por_fecha_guia_descendente(self):
+        self.assertIn('key=lambda r: r["fecha_guia"]', self.fuente)
+        self.assertIn("max(", self.fuente)
+
+    def test_nunca_propaga_una_excepcion_al_caller(self):
+        """100% lectura + escritura local no crítica: un fallo del ERP o del
+        pool no configurado no debe poder tumbar al cron horario ni al modal
+        que arma el detalle del compromiso."""
+        self.assertIn("except Exception as e:", self.fuente)
+        self.assertIn("return 0", self.fuente)
+        self.assertNotIn("raise", self.fuente)
+
+    def test_no_hace_falta_pool_configurado_para_no_reventar(self):
+        """Si _random_sql_one devuelve None (ERP no configurado / sin header),
+        la función corta ahí sin intentar nada más."""
+        self.assertIn("if not header:", self.fuente)
+        self.assertIn("if not rows:", self.fuente)
+
+
+class TestGuiasEnganchadoAlCron(unittest.TestCase):
+    """El cron horario de saldo (tr_cron_refrescar_saldo_productos) es el
+    enganche pedido: las guías se sincronizan con la misma cadencia que el
+    saldo, documento por documento, sin alterar su alcance/techo existente."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_cron_refrescar_saldo_productos")
+
+    def test_llama_a_fetch_guias_dentro_del_mismo_loop(self):
+        self.assertIn("_tr_fetch_guias_from_erp(", self.fuente)
+
+    def test_la_llamada_a_guias_ocurre_solo_si_el_saldo_se_actualizo(self):
+        """Tiene que colgar del mismo comm_id ya resuelto por
+        _tr_fetch_from_erp -- no una consulta nueva/independiente."""
+        idx_saldo = self.fuente.index('comm_id, err = _tr_fetch_from_erp(')
+        idx_guias = self.fuente.index("_tr_fetch_guias_from_erp(")
+        self.assertLess(
+            idx_saldo, idx_guias,
+            "La llamada a guías quedó antes de resolver comm_id vía "
+            "_tr_fetch_from_erp: comm_id no existiría todavía.",
+        )
+        self.assertIn("_tr_fetch_guias_from_erp(comm_id,", self.fuente)
+
+    def test_un_fallo_de_guias_no_cuenta_como_fallo_de_saldo(self):
+        """El cron reporta actualizados/fallidos sobre el refresco de SALDO
+        -- un problema sincronizando guías no debe inflar `fallidos` ni
+        opacar si el saldo sí se actualizó bien. Se verifica por posición:
+        un `try:` justo antes de la llamada y un `except ... as e_g:` propio
+        justo después -- distinto del `except Exception as e:` del loop
+        general (ese es el que cuenta fallidos del saldo)."""
+        llamada = '_tr_fetch_guias_from_erp(comm_id, d["tido"], str(d["nudo"]))'
+        self.assertIn(llamada, self.fuente)
+        idx_llamada = self.fuente.index(llamada)
+        antes = self.fuente[:idx_llamada]
+        despues = self.fuente[idx_llamada + len(llamada):]
+        self.assertIn("try:", antes[-40:],
+                       "No hay un try: propio justo antes de la llamada a guías.")
+        self.assertIn("except Exception as e_g:", despues[:60],
+                       "No hay un except propio (as e_g) justo después de la "
+                       "llamada a guías -- podría estar cayendo en el except "
+                       "general del loop y contando como fallo de saldo.")
+
+    def test_no_toco_el_alcance_ni_el_techo_existentes_del_cron(self):
+        """No debía cambiar el resto de la lógica del cron: mismo filtro de
+        saldo, mismos estados terminales excluidos, mismo LIMIT."""
+        self.assertIn("c.tiene_saldo = 1", self.fuente)
+        self.assertIn("estado_entrega NOT IN", self.fuente)
+        self.assertRegex(_norm(self.fuente), r"LIMIT \d+")
+
+
+class TestGuiasEnElModalDeVista(unittest.TestCase):
+    """`tr_detalle` (endpoint /transporte/api/compromisos/<cid>/detalle) es la
+    fuente real de la tabla de productos del modal "Vista previa"
+    (vistaTabla/vistaTbody en templates/transporte/index.html +
+    static/transporte_monitor.js) -- NO _tr_buscar_detalle, que alimenta el
+    modal de tracking (documentos ya con manifiesto). Ahí es donde Daniel
+    pidió la columna "Guía" visible."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_detalle")
+
+    def test_cruza_transport_guias_por_sku_para_cada_linea_de_producto(self):
+        self.assertIn("FROM transport_guias", self.fuente)
+        self.assertIn("WHERE commitment_id=%s", _norm(self.fuente))
+        self.assertIn('_l["guia_numero"]', self.fuente)
+
+    def test_usa_la_guia_mas_reciente_por_fecha_guia_descendente(self):
+        self.assertIn("ORDER BY fecha_guia DESC", self.fuente)
+
+    def test_no_es_critico_si_falla(self):
+        """El cruce de guías es puramente informativo -- si falla, el modal
+        debe seguir funcionando (guia_numero queda en None → "—" en la UI),
+        nunca tumbar el detalle completo del documento."""
+        self.assertIn("except Exception as _e_guia:", self.fuente)
+
+
+class TestGuiasColumnaSoloEnModalNoEnGrillaPrincipal(unittest.TestCase):
+    """Corrección explícita de alcance de Daniel: la columna "Guía" va SOLO
+    en la tabla de productos del modal (vistaTabla), nunca como columna nueva
+    en la grilla principal del Monitor (la lista de documentos con
+    Documento/Fecha/Cliente/Estado/Courier/etc) -- un documento puede tener
+    varias guías (multi-despacho parcial), así que una sola columna ahí
+    sería confusa."""
+
+    def test_la_columna_guia_esta_en_vistatabla(self):
+        ruta = os.path.join(RAIZ, "templates", "transporte", "index.html")
+        with open(ruta, encoding="utf-8") as fh:
+            html = fh.read()
+        idx_vistatabla = html.index('id="vistaTabla"')
+        idx_th_guia = html.index('<th class="text-center">Guía</th>')
+        # La grilla principal del Monitor se define ANTES que el modal de
+        # vista previa en este template -- si el <th> de Guía apareciera
+        # antes de vistaTabla, sería la señal de que se coló en la grilla
+        # principal en vez de quedar dentro del modal.
+        self.assertGreater(
+            idx_th_guia, idx_vistatabla,
+            "El <th> de Guía aparece ANTES de #vistaTabla -- revisar que no "
+            "se haya agregado a la grilla principal del Monitor por error.",
+        )
+
+    def test_la_grilla_principal_no_tiene_columna_guia(self):
+        """La grilla principal del Monitor vive en un <table> distinto de
+        vistaTabla (fuera del modal). Verificamos que ese bloque específico
+        no contenga la columna nueva."""
+        ruta = os.path.join(RAIZ, "templates", "transporte", "index.html")
+        with open(ruta, encoding="utf-8") as fh:
+            html = fh.read()
+        idx_vistatabla = html.index('id="vistaTabla"')
+        grilla_principal = html[:idx_vistatabla]
+        self.assertNotIn(
+            '<th class="text-center">Guía</th>', grilla_principal,
+            "Apareció una columna 'Guía' antes del modal vistaTabla -- "
+            "Daniel pidió explícitamente que la grilla principal del "
+            "Monitor NO tenga esa columna (multi-despacho parcial la haría "
+            "confusa ahí).",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
