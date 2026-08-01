@@ -34,7 +34,7 @@ Configurar en Railway → Settings → Variables:
     SMTP_FROM_NAME, SMTP_FROM_ADDR, SMTP_REPLY_TO
 
   Branding genérico (overrides opcionales — defaults sensatos):
-    ILUS_BRAND_NAME         (ej: "ILUS Sport & Health")
+    ILUS_BRAND_NAME         (ej: "ILUS Fitness")
     ILUS_BRAND_FROM_NAME    (ej: "ILUS")           — visible en "De:"
     ILUS_BRAND_FROM_EMAIL   (ej: no-reply@ilusfitness.com)
     ILUS_BRAND_REPLY_TO     (ej: servicio.tecnico@ilusfitness.com)
@@ -184,7 +184,7 @@ COMM_CANALES_ACTIVOS = _env("COMM_CANALES_ACTIVOS", "email")
 #     ILUS_BRAND_SUPPORT_URL  — URL del portal de soporte (footer)
 # ─────────────────────────────────────────────
 BRAND_CONFIG = {
-    "name":         _env('ILUS_BRAND_NAME',        'ILUS Sport & Health'),
+    "name":         _env('ILUS_BRAND_NAME',        'ILUS Fitness'),
     "from_name":    _env('ILUS_BRAND_FROM_NAME',   'ILUS'),
     "from_email":   _env('ILUS_BRAND_FROM_EMAIL',  'no-reply@ilusfitness.com'),
     "reply_to":     _env('ILUS_BRAND_REPLY_TO',    'soportetec@sphs.cl'),

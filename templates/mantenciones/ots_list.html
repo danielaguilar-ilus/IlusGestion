@@ -1359,7 +1359,7 @@ function otWhatsApp(el){
     const nombre = (el.dataset.nombre || '').trim();
     const ot = el.dataset.ot || 'la visita';
     const msg = 'Hola' + (nombre ? ' ' + nombre : '') +
-      ', le escribe el técnico de ILUS Sport & Health por la ' + ot +
+      ', le escribe el técnico de ILUS Fitness por la ' + ot +
       '. Quedo atento(a) para coordinar la visita.';
     window.open('https://wa.me/' + dig + '?text=' + encodeURIComponent(msg), '_blank');
   } catch (e) { console.warn('otWhatsApp:', e); }

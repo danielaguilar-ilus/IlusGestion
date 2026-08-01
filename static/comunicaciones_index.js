@@ -819,7 +819,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '📦 *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido ha sido programado exitosamente ✅\n\n🔖 *N° Pedido:* {{id_pedido}}\n🚛 *Courier:* {{courier}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Dirección:* {{direccion_entrega}}\n💰 *Costo despacho:* {{costo_envio}}\n\nTe avisaremos cuando salga de bodega. ¡Gracias por elegirnos! 💪'
+      cuerpo: '📦 *ILUS Fitness*\n\nHola *{{nombre_cliente}}*, tu pedido ha sido programado exitosamente ✅\n\n🔖 *N° Pedido:* {{id_pedido}}\n🚛 *Courier:* {{courier}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Dirección:* {{direccion_entrega}}\n💰 *Costo despacho:* {{costo_envio}}\n\nTe avisaremos cuando salga de bodega. ¡Gracias por elegirnos! 💪'
     }
   },
 
@@ -831,7 +831,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '🚚 *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido ya está *en ruta* 🟢\n\n🔖 *N° Pedido:* {{id_pedido}}\n🏢 *Courier:* {{courier}}\n🔍 *N° Seguimiento:* {{numero_seguimiento}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Destino:* {{direccion_entrega}}\n\nPuedes rastrear tu envío con el número de seguimiento. ¡Ya falta poco! 📦'
+      cuerpo: '🚚 *ILUS Fitness*\n\nHola *{{nombre_cliente}}*, tu pedido ya está *en ruta* 🟢\n\n🔖 *N° Pedido:* {{id_pedido}}\n🏢 *Courier:* {{courier}}\n🔍 *N° Seguimiento:* {{numero_seguimiento}}\n📅 *Entrega estimada:* {{fecha_entrega}}\n📍 *Destino:* {{direccion_entrega}}\n\nPuedes rastrear tu envío con el número de seguimiento. ¡Ya falta poco! 📦'
     }
   },
 
@@ -843,7 +843,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '🛵 *ILUS Sport & Health*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* está *EN REPARTO* y llegará *HOY* 🎉\n\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\n⚠️ Asegúrate de que alguien pueda recibir el pedido. ¡Ya está llegando!'
+      cuerpo: '🛵 *ILUS Fitness*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* está *EN REPARTO* y llegará *HOY* 🎉\n\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\n⚠️ Asegúrate de que alguien pueda recibir el pedido. ¡Ya está llegando!'
     }
   },
 
@@ -851,11 +851,11 @@ const TPL_DEFAULTS = {
   entregado: {
     email: {
       asunto: '✅ Pedido {{id_pedido}} entregado con éxito — ILUS',
-      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Excelente! Tu pedido <strong>{{id_pedido}}</strong> ha sido <strong style="color:#20c997">entregado exitosamente</strong>. Esperamos que disfrutes tu equipamiento al máximo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #20c997;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entregado en:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; {{numero_seguimiento}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">¡Gracias por confiar en <strong>ILUS Sport &amp; Health</strong>! Estamos siempre disponibles si necesitas apoyo con tu equipo.</p>'
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">¡Excelente! Tu pedido <strong>{{id_pedido}}</strong> ha sido <strong style="color:#20c997">entregado exitosamente</strong>. Esperamos que disfrutes tu equipamiento al máximo.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #20c997;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Pedido:</strong>&nbsp; {{id_pedido}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Entregado en:</strong>&nbsp; {{direccion_entrega}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Courier:</strong>&nbsp; {{courier}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">N° Seguimiento:</strong>&nbsp; {{numero_seguimiento}}</td></tr>\n</table>\n<p style="margin:0;font-size:14px;color:#444;line-height:1.65">¡Gracias por confiar en <strong>ILUS Fitness</strong>! Estamos siempre disponibles si necesitas apoyo con tu equipo.</p>'
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '✅ *ILUS Sport & Health*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* fue *entregado exitosamente* 🎊\n\n📍 *Entregado en:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\nGracias por confiar en ILUS Sport & Health. ¡Que disfrutes tu equipamiento! 💪🏋️'
+      cuerpo: '✅ *ILUS Fitness*\n\n¡Hola *{{nombre_cliente}}*! Tu pedido *{{id_pedido}}* fue *entregado exitosamente* 🎊\n\n📍 *Entregado en:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n🔍 *Seguimiento:* {{numero_seguimiento}}\n\nGracias por confiar en ILUS Fitness. ¡Que disfrutes tu equipamiento! 💪🏋️'
     }
   },
 
@@ -867,7 +867,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '⚠️ *ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, hubo un problema con la entrega de tu pedido *{{id_pedido}}*.\n\n❌ *¿Qué pasó?:* {{motivo_falla}}\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n\nNos comunicaremos contigo para resolverlo y reagendar la entrega. Pedimos disculpas por el inconveniente. 🙏'
+      cuerpo: '⚠️ *ILUS Fitness*\n\nHola *{{nombre_cliente}}*, hubo un problema con la entrega de tu pedido *{{id_pedido}}*.\n\n❌ *¿Qué pasó?:* {{motivo_falla}}\n📍 *Dirección:* {{direccion_entrega}}\n🚛 *Courier:* {{courier}}\n\nNos comunicaremos contigo para resolverlo y reagendar la entrega. Pedimos disculpas por el inconveniente. 🙏'
     }
   },
 
@@ -903,7 +903,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '🛠️ *ILUS Sport & Health*\n\nHola *{{cliente}}*, te recordamos tu visita técnica próxima:\n\n🔖 *OT:* {{ot}}\n📅 *Fecha:* {{fecha}}\n🕐 *Horario:* {{horario}}\n👤 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}\n\nSi necesitas reagendar, responde este mensaje.'
+      cuerpo: '🛠️ *ILUS Fitness*\n\nHola *{{cliente}}*, te recordamos tu visita técnica próxima:\n\n🔖 *OT:* {{ot}}\n📅 *Fecha:* {{fecha}}\n🕐 *Horario:* {{horario}}\n👤 *Técnico:* {{tecnico}}\n📍 *Dirección:* {{direccion}}\n\nSi necesitas reagendar, responde este mensaje.'
     }
   },
 
@@ -915,7 +915,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '💳 *ILUS Sport & Health*\n\nHola *{{cliente}}*, registras una factura pendiente de pago.\n\n📄 *Documento:* {{documento}}\n📅 *Vencimiento:* {{fecha}}\n🏢 *Razón social:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n\nSi ya pagaste, ignora este mensaje. Cualquier duda, escríbenos.'
+      cuerpo: '💳 *ILUS Fitness*\n\nHola *{{cliente}}*, registras una factura pendiente de pago.\n\n📄 *Documento:* {{documento}}\n📅 *Vencimiento:* {{fecha}}\n🏢 *Razón social:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n\nSi ya pagaste, ignora este mensaje. Cualquier duda, escríbenos.'
     }
   },
 
@@ -927,7 +927,7 @@ const TPL_DEFAULTS = {
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '🛡️ *ILUS Sport & Health*\n\nHola *{{cliente}}*, la garantía de tu equipo *{{maquina}}* está por vencer.\n\n📅 *Vencimiento:* {{fecha}}\n📍 *Ubicación:* {{direccion}}\n\nResponde este mensaje si deseas conocer opciones de renovación o un plan de mantenimiento.'
+      cuerpo: '🛡️ *ILUS Fitness*\n\nHola *{{cliente}}*, la garantía de tu equipo *{{maquina}}* está por vencer.\n\n📅 *Vencimiento:* {{fecha}}\n📍 *Ubicación:* {{direccion}}\n\nResponde este mensaje si deseas conocer opciones de renovación o un plan de mantenimiento.'
     }
   },
 
@@ -935,11 +935,11 @@ const TPL_DEFAULTS = {
   contrato_por_vencer: {
     email: {
       asunto: 'Contrato de servicio por vencer — {{cliente}} — ILUS',
-      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu <strong>contrato de servicio</strong> con ILUS Sport &amp; Health está próximo a vencer. Te invitamos a coordinar la renovación para mantener la cobertura continua de tus equipos.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; {{razon_social}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">RUT:</strong>&nbsp; {{rut}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Vence:</strong>&nbsp; <span style="color:#7c3aed;font-weight:700">{{fecha}}</span></td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Nuestro equipo te contactará pronto para revisar las condiciones. Si prefieres adelantar la gestión, responde este correo.</p>'
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{cliente}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu <strong>contrato de servicio</strong> con ILUS Fitness está próximo a vencer. Te invitamos a coordinar la renovación para mantener la cobertura continua de tus equipos.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:4px;padding:14px 18px;margin:18px 0 24px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; {{razon_social}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">RUT:</strong>&nbsp; {{rut}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Vence:</strong>&nbsp; <span style="color:#7c3aed;font-weight:700">{{fecha}}</span></td></tr>\n</table>\n<p style="margin:0;font-size:13px;color:#888;line-height:1.5">Nuestro equipo te contactará pronto para revisar las condiciones. Si prefieres adelantar la gestión, responde este correo.</p>'
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '📄 *ILUS Sport & Health*\n\nHola *{{cliente}}*, tu contrato de servicio está próximo a vencer.\n\n🏢 *Cliente:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n📅 *Vence:* {{fecha}}\n\nNuestro equipo te contactará para coordinar la renovación.'
+      cuerpo: '📄 *ILUS Fitness*\n\nHola *{{cliente}}*, tu contrato de servicio está próximo a vencer.\n\n🏢 *Cliente:* {{razon_social}}\n🆔 *RUT:* {{rut}}\n📅 *Vence:* {{fecha}}\n\nNuestro equipo te contactará para coordinar la renovación.'
     }
   },
 
@@ -947,11 +947,11 @@ const TPL_DEFAULTS = {
   usuario_nuevo: {
     email: {
       asunto: 'Bienvenido al sistema ILUS — Activa tu cuenta',
-      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu cuenta en el sistema de gestión <strong>ILUS Sport &amp; Health</strong> fue creada por <strong>{{creado_por}}</strong>. Estás a un paso de empezar a usarla.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Usuario:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Rol asignado:</strong>&nbsp; <span style="color:#dc2626;font-weight:700">{{rol}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Creado por:</strong>&nbsp; {{creado_por}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Crear mi contraseña →</a>\n</div>\n<p style="margin:0;font-size:12px;color:#888;line-height:1.5">El enlace es válido por 24 horas. Si no creaste esta cuenta, ignora este mensaje o contacta al administrador.</p>'
+      cuerpo: '<p style="margin:0 0 16px;font-size:15px;color:#CC0000;font-weight:700">Hola, {{nombre_usuario}}</p>\n<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">Tu cuenta en el sistema de gestión <strong>ILUS Fitness</strong> fue creada por <strong>{{creado_por}}</strong>. Estás a un paso de empezar a usarla.</p>\n<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;border-radius:4px;padding:14px 18px;margin:18px 0 20px">\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Usuario:</strong>&nbsp; {{email_usuario}}</td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Rol asignado:</strong>&nbsp; <span style="color:#dc2626;font-weight:700">{{rol}}</span></td></tr>\n  <tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Creado por:</strong>&nbsp; {{creado_por}}</td></tr>\n</table>\n<div style="text-align:center;margin:24px 0 20px">\n  <a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Crear mi contraseña →</a>\n</div>\n<p style="margin:0;font-size:12px;color:#888;line-height:1.5">El enlace es válido por 24 horas. Si no creaste esta cuenta, ignora este mensaje o contacta al administrador.</p>'
     },
     whatsapp: {
       asunto: '',
-      cuerpo: '🎉 *ILUS Sport & Health*\n\nHola *{{nombre_usuario}}*, tu cuenta fue creada por *{{creado_por}}*.\n\n📧 *Usuario:* {{email_usuario}}\n🎯 *Rol:* {{rol}}\n\nActiva tu cuenta y crea tu contraseña aquí:\n{{link_acceso}}\n\nEnlace válido por 24 horas.'
+      cuerpo: '🎉 *ILUS Fitness*\n\nHola *{{nombre_usuario}}*, tu cuenta fue creada por *{{creado_por}}*.\n\n📧 *Usuario:* {{email_usuario}}\n🎯 *Rol:* {{rol}}\n\nActiva tu cuenta y crea tu contraseña aquí:\n{{link_acceso}}\n\nEnlace válido por 24 horas.'
     }
   },
 

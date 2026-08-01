@@ -3735,7 +3735,7 @@ def register_pickup_routes(app, ctx):
 
         # ── Encabezado rojo grande
         ws.merge_cells("A1:B1")
-        c = ws.cell(1, 1, "ILUS Sport & Health")
+        c = ws.cell(1, 1, "ILUS Fitness")
         c.font = title_font
         c.fill = red_fill
         c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
@@ -3893,7 +3893,7 @@ def register_pickup_routes(app, ctx):
             now_cl = datetime.now(_ZI("America/Santiago")).strftime("%d-%m-%Y %H:%M")
         except Exception:
             now_cl = datetime.now().strftime("%d-%m-%Y %H:%M")
-        cc = ws.cell(r, 1, f"Documento generado el {now_cl} · ILUS Sport & Health · sistema interno de retiros")
+        cc = ws.cell(r, 1, f"Documento generado el {now_cl} · ILUS Fitness · sistema interno de retiros")
         cc.font = small_gray
         cc.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[r].height = 20

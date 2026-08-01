@@ -44,7 +44,7 @@
    ════════════════════════════════════════════════════════════════════ #}
 {% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cotización {{ cot.numero }} — ILUS Sport &amp; Health</title>
+<title>Cotización {{ cot.numero }} — ILUS Fitness</title>
 <style>
   :root {
     --ilus-red:   #dc2626;
@@ -604,7 +604,7 @@
      de verdad (mismo motivo que el header de arriba). #}
   {% if modo_visor %}
   <div class="visor-foot no-print">
-    <span><b>ILUS Sport &amp; Health</b> · www.ilusfitness.com ·
+    <span><b>ILUS Fitness</b> · www.ilusfitness.com ·
       {{ footer_email or 'contacto@sphs.cl' }}</span>
     <span>Cotización <b>{{ cot.numero }}</b>{% if cot.valida_hasta %} · válida hasta el {{ cot.valida_hasta }}{% endif %}</span>
   </div>

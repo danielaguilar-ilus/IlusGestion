@@ -316,7 +316,7 @@ Todas son **opcionales** — si no se setean, hay defaults sensatos:
 
 | Variable                  | Default                                  | Para qué sirve                          |
 |---------------------------|------------------------------------------|------------------------------------------|
-| `ILUS_BRAND_NAME`         | `ILUS Sport & Health`                    | Nombre legal completo (footer email)     |
+| `ILUS_BRAND_NAME`         | `ILUS Fitness`                           | Nombre legal completo (footer email)     |
 | `ILUS_BRAND_FROM_NAME`    | `ILUS`                                   | Visible en cabecera "De:" del email      |
 | `ILUS_BRAND_FROM_EMAIL`   | `no-reply@ilusfitness.com`               | Dirección remitente (no-reply genérico)  |
 | `ILUS_BRAND_REPLY_TO`     | `servicio.tecnico@ilusfitness.com`       | Buzón donde caen respuestas reales       |
@@ -328,7 +328,7 @@ Todas son **opcionales** — si no se setean, hay defaults sensatos:
 
 - **Email:** `De: ILUS <no-reply@ilusfitness.com>` · `Reply-To: servicio.tecnico@ilusfitness.com`
   Asunto: `ILUS · Cambio seguro de contraseña`
-- **WhatsApp/SMS:** comienza con `🔧 ILUS · {tema}` y termina con `— ILUS Sport & Health`
+- **WhatsApp/SMS:** comienza con `🔧 ILUS · {tema}` y termina con `— ILUS Fitness`
 
 ### Helpers
 

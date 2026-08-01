@@ -45,7 +45,7 @@ try:
 except ImportError:
     # Compat: si por alguna razón config.py es antiguo, default sensato
     BRAND_CONFIG = {
-        "name":          "ILUS Sport & Health",
+        "name":          "ILUS Fitness",
         "from_name":     "ILUS",
         "from_email":    "no-reply@ilusfitness.com",
         "reply_to":      "soportetec@sphs.cl",
@@ -8041,7 +8041,7 @@ def _get_brand_cfg() -> dict:
     """
     import os as _os_b
     return {
-        "name":          (_os_b.environ.get("ILUS_BRAND_NAME")       or BRAND_CONFIG.get("name")       or "ILUS Sport & Health").strip(),
+        "name":          (_os_b.environ.get("ILUS_BRAND_NAME")       or BRAND_CONFIG.get("name")       or "ILUS Fitness").strip(),
         "from_name":     (_os_b.environ.get("ILUS_BRAND_FROM_NAME")  or BRAND_CONFIG.get("from_name")  or "ILUS").strip(),
         "from_email":    (_os_b.environ.get("ILUS_BRAND_FROM_EMAIL") or BRAND_CONFIG.get("from_email") or "no-reply@ilusfitness.com").strip(),
         "reply_to":      (_os_b.environ.get("ILUS_BRAND_REPLY_TO")   or BRAND_CONFIG.get("reply_to")   or "soportetec@sphs.cl").strip(),
@@ -16583,7 +16583,7 @@ tfoot td{{border:none;padding:7px 5px}}
   </div>
 </div>
 
-<div class="foot">ILUS Sport &amp; Health · Sistema de Gestión de Productos</div>
+<div class="foot">ILUS Fitness · Sistema de Gestión de Productos</div>
 </body></html>"""
 
     from io import BytesIO as _BytesIO
@@ -17581,7 +17581,7 @@ def _fedex_pickup_create(
         body["pickupNotificationDetail"] = {
             "emailDetails": [{"address": notify_email, "locale": "es_CL"}],
             "format":       "HTML",
-            "userMessage":  "Retiro solicitado desde ILUS Sport & Health",
+            "userMessage":  "Retiro solicitado desde ILUS Fitness",
         }
     try:
         resp = _req.post(FEDEX_PICKUP_CREATE_URL, json=body,
@@ -24674,6 +24674,21 @@ def tr_manifiestos():
     # default puesto también recortaría por error el numerito de "Activos".
     _hoy = datetime.now().date()
     _default_desde = _hoy.replace(day=1).isoformat()
+
+    # Rango resuelto para "Entregados" -- SIEMPRE (sin importar la vista
+    # activa): el explícito que haya pasado el usuario, si no el default de
+    # "mes actual". Fix bug real 2026-08-01 (Daniel: "el badge dice 2 pero
+    # la lista no muestra nada"): el badge de la pestaña se calculaba SIN
+    # filtro de fecha (para no arrastrar el default al badge de "Activos"),
+    # mientras la LISTA sí aplicaba el default de mes actual al entrar a
+    # "Entregados" sin filtro propio -- justo hoy, que es el día 1° del
+    # mes, ese default equivale a "solo hoy" y la lista queda vacía aunque
+    # el badge diga 2. Se resuelve UNA sola vez y se usa tanto para armar
+    # la lista (cuando vista==entregados) como para el número del badge
+    # (sin importar la vista activa) -- nunca más se desincronizan.
+    _entregados_desde = filtros["desde"] or _default_desde
+    _entregados_hasta = filtros["hasta"] or None
+
     if filtros["vista"] == "entregados" and not filtros["desde"] and not filtros["hasta"]:
         filtros["desde"] = _default_desde
         filtros["fecha_default_aplicado"] = True
@@ -24715,11 +24730,19 @@ def tr_manifiestos():
 
     # Conteo de cada pestaña (respeta courier/estado/q, no la vista elegida ni
     # la paginación) — para mostrar el numerito en cada tab, igual que el Monitor.
+    # El de "entregados" SÍ lleva el rango de fecha resuelto arriba (mismo que
+    # usaría la lista si entraras a esa pestaña ahora) -- "activos" nunca lleva
+    # filtro de fecha, por diseño (se autoacota solo, ver comentario arriba).
+    where_fecha_entregados, params_fecha_entregados = ["fecha >= %s"], [_entregados_desde]
+    if _entregados_hasta:
+        where_fecha_entregados.append("fecha <= %s")
+        params_fecha_entregados.append(_entregados_hasta)
+    _sql_entregados_con_fecha = _SQL_ENTREGADOS + " AND " + " AND ".join(where_fecha_entregados)
     tabs_row = mysql_fetchone(
         "SELECT SUM(CASE WHEN " + _SQL_ACTIVOS + " THEN 1 ELSE 0 END) AS activos, "
-        "       SUM(CASE WHEN " + _SQL_ENTREGADOS + " THEN 1 ELSE 0 END) AS entregados "
+        "       SUM(CASE WHEN " + _sql_entregados_con_fecha + " THEN 1 ELSE 0 END) AS entregados "
         "  FROM transport_manifests WHERE " + where_sql_base,
-        tuple(params)
+        tuple(params_fecha_entregados) + tuple(params)
     ) or {}
     tabs_count = {
         "activos":    int(tabs_row.get("activos") or 0),
@@ -38078,7 +38101,7 @@ def init_comunicaciones_tables():
                     smtp_port   INT DEFAULT 587,
                     smtp_user   VARCHAR(200),
                     smtp_pass   VARCHAR(500),
-                    from_name   VARCHAR(200) DEFAULT 'ILUS Sport & Health',
+                    from_name   VARCHAR(200) DEFAULT 'ILUS Fitness',
                     from_addr   VARCHAR(200),
                     secure      TINYINT(1) DEFAULT 0,
                     updated_by  VARCHAR(190),
@@ -38088,7 +38111,7 @@ def init_comunicaciones_tables():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS comm_client_config (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
-                    company_name    VARCHAR(200) DEFAULT 'ILUS Sport & Health',
+                    company_name    VARCHAR(200) DEFAULT 'ILUS Fitness',
                     reply_to        VARCHAR(200),
                     support_email   VARCHAR(200),
                     support_phone   VARCHAR(50),
@@ -38386,7 +38409,7 @@ def init_comunicaciones_tables():
                  '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
                  '</table>'
                  '<p style="margin:0;font-size:13px;color:#444;line-height:1.6">'
-                 'Gracias por confiar en ILUS Sport & Health para el cuidado de tus equipos. '
+                 'Gracias por confiar en ILUS Fitness para el cuidado de tus equipos. '
                  'Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.</p>'),
                 ('ot_completada', 'whatsapp',
                  '',
@@ -38420,7 +38443,7 @@ def init_comunicaciones_tables():
                  'Tu cuenta ILUS está lista — Crea tu contraseña',
                  '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
                  '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
-                 '<strong>{{creado_por}}</strong> creó una cuenta para ti en el sistema ILUS Sport & Health.</p>'
+                 '<strong>{{creado_por}}</strong> creó una cuenta para ti en el sistema ILUS Fitness.</p>'
                  '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
                  'border-radius:4px;padding:14px 18px;margin:18px 0">'
                  '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
@@ -38434,7 +38457,7 @@ def init_comunicaciones_tables():
                  'Este enlace vence en 7 días y solo puede usarse una vez.</p>'),
                 ('usuario_nuevo', 'whatsapp',
                  '',
-                 '🎉 *ILUS Sport & Health*\n\nHola *{{nombre_usuario}}*, *{{creado_por}}* creó tu cuenta de acceso.\n\n'
+                 '🎉 *ILUS Fitness*\n\nHola *{{nombre_usuario}}*, *{{creado_por}}* creó tu cuenta de acceso.\n\n'
                  '📧 *Cuenta:* {{email_usuario}}\n👤 *Rol:* {{rol}}\n\n'
                  '🔐 Crea tu contraseña aquí: {{link_acceso}}\n\n'
                  '_Enlace válido por 7 días, un solo uso._'),
@@ -38622,7 +38645,7 @@ def _comm_template_defaults():
             ),
             "whatsapp": (
                 "",
-                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* fue programado correctamente.\n\nCourier: {{courier}}\nEntrega estimada: {{fecha_entrega}}\nDireccion: {{direccion_entrega}}\nCosto despacho: {{costo_envio}}\n\nTe avisaremos cuando salga de bodega.",
+                "*ILUS Fitness*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* fue programado correctamente.\n\nCourier: {{courier}}\nEntrega estimada: {{fecha_entrega}}\nDireccion: {{direccion_entrega}}\nCosto despacho: {{costo_envio}}\n\nTe avisaremos cuando salga de bodega.",
             ),
         },
         "en_ruta": {
@@ -38643,7 +38666,7 @@ def _comm_template_defaults():
             ),
             "whatsapp": (
                 "",
-                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* ya esta en ruta.\n\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\nEntrega estimada: {{fecha_entrega}}\nDestino: {{direccion_entrega}}",
+                "*ILUS Fitness*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* ya esta en ruta.\n\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\nEntrega estimada: {{fecha_entrega}}\nDestino: {{direccion_entrega}}",
             ),
         },
         "en_camino": {
@@ -38663,7 +38686,7 @@ def _comm_template_defaults():
             ),
             "whatsapp": (
                 "",
-                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* esta en reparto y llegara hoy.\n\nDireccion: {{direccion_entrega}}\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\n\nAsegurate de que alguien pueda recibirlo.",
+                "*ILUS Fitness*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* esta en reparto y llegara hoy.\n\nDireccion: {{direccion_entrega}}\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\n\nAsegurate de que alguien pueda recibirlo.",
             ),
         },
         "entregado": {
@@ -38677,13 +38700,13 @@ def _comm_template_defaults():
                         ("Courier", "{{courier}}"),
                         ("Nro. seguimiento", "{{numero_seguimiento}}"),
                     ],
-                    "Gracias por confiar en ILUS Sport & Health. Estamos disponibles si necesitas apoyo con tu equipo.",
+                    "Gracias por confiar en ILUS Fitness. Estamos disponibles si necesitas apoyo con tu equipo.",
                     "#20c997",
                 ),
             ),
             "whatsapp": (
                 "",
-                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* fue entregado exitosamente.\n\nEntregado en: {{direccion_entrega}}\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\n\nGracias por confiar en ILUS.",
+                "*ILUS Fitness*\n\nHola *{{nombre_cliente}}*, tu pedido *{{id_pedido}}* fue entregado exitosamente.\n\nEntregado en: {{direccion_entrega}}\nCourier: {{courier}}\nSeguimiento: {{numero_seguimiento}}\n\nGracias por confiar en ILUS.",
             ),
         },
         "fallido": {
@@ -38703,7 +38726,7 @@ def _comm_template_defaults():
             ),
             "whatsapp": (
                 "",
-                "*ILUS Sport & Health*\n\nHola *{{nombre_cliente}}*, no pudimos entregar tu pedido *{{id_pedido}}*.\n\nMotivo: {{motivo_falla}}\nDireccion: {{direccion_entrega}}\nCourier: {{courier}}\n\nNos comunicaremos contigo para reagendar la entrega.",
+                "*ILUS Fitness*\n\nHola *{{nombre_cliente}}*, no pudimos entregar tu pedido *{{id_pedido}}*.\n\nMotivo: {{motivo_falla}}\nDireccion: {{direccion_entrega}}\nCourier: {{courier}}\n\nNos comunicaremos contigo para reagendar la entrega.",
             ),
         },
         "inicio_sesion": {
@@ -38798,7 +38821,7 @@ def _get_smtp_cfg():
                 "smtp_port": int(row["smtp_port"] or 587),
                 "smtp_user": row["smtp_user"],
                 "smtp_pass": row["smtp_pass"] or "",
-                "from_name": row["from_name"] or "ILUS Sport & Health",
+                "from_name": row["from_name"] or "ILUS Fitness",
                 "from_addr": row["from_addr"] or row["smtp_user"],
                 "secure":    bool(row.get("secure")),
                 "_source":   "db",
@@ -38818,7 +38841,7 @@ def _get_smtp_cfg():
             "smtp_port": int(os.environ.get("SMTP_PORT", "587")),
             "smtp_user": env_user,
             "smtp_pass": env_pass,
-            "from_name": os.environ.get("SMTP_FROM_NAME", "ILUS Sport & Health").strip(),
+            "from_name": os.environ.get("SMTP_FROM_NAME", "ILUS Fitness").strip(),
             "from_addr": os.environ.get("SMTP_FROM_ADDR", env_user).strip(),
             "secure":    os.environ.get("SMTP_SECURE", "").lower() in ("1","true","yes"),
             "_source":   "env",
@@ -38882,7 +38905,7 @@ def _get_client_cfg():
             return data
     except Exception:
         pass
-    fallback = {"company_name": "ILUS Sport & Health", "corp_color": "#CC0000"}
+    fallback = {"company_name": "ILUS Fitness", "corp_color": "#CC0000"}
     with _client_cfg_lock:
         _client_cfg_cache["data"] = fallback
         _client_cfg_cache["ts"] = now
@@ -39113,7 +39136,7 @@ def _smtp_cfg_from_request(data=None):
         "smtp_port": port,
         "smtp_user": (data.get("user") or prev.get("smtp_user") or "").strip(),
         "smtp_pass": smtp_pass,
-        "from_name": (data.get("fromName") or prev.get("from_name") or "ILUS Sport & Health").strip(),
+        "from_name": (data.get("fromName") or prev.get("from_name") or "ILUS Fitness").strip(),
         "from_addr": (data.get("fromAddr") or prev.get("from_addr") or data.get("user") or prev.get("smtp_user") or "").strip(),
         "secure": secure,
     }
@@ -39440,7 +39463,7 @@ def _send_whatsapp(account_sid, auth_token, from_num, to_num, body, *, modulo: s
 
 # ── Templates de email ────────────────────────────────────────
 
-def _email_wrapper(inner, company="ILUS Sport & Health"):
+def _email_wrapper(inner, company="ILUS Fitness"):
     return f"""<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Comunicacion - {company}</title>
@@ -39553,7 +39576,7 @@ def _email_btn(text, url, corp_color="#CC0000"):
 </table>"""
 
 
-def tpl_email_prueba(sender_name, company="ILUS Sport & Health", corp_color="#CC0000"):
+def tpl_email_prueba(sender_name, company="ILUS Fitness", corp_color="#CC0000"):
     header = _email_header_ilus("✅ Conexión SMTP verificada", "Prueba de correo", corp_color)
     body   = _email_body_section(f"""
       <p style="font-size:15px;color:#1a1a1a;margin:0 0 16px">
@@ -39574,7 +39597,7 @@ def tpl_email_estado_pedido(data):
     """Template: actualización de estado a cliente."""
     cc    = _get_client_cfg()
     color = cc.get("corp_color", "#CC0000")
-    co    = cc.get("company_name", "ILUS Sport & Health")
+    co    = cc.get("company_name", "ILUS Fitness")
     logo  = cc.get("logo_url", "")
     estado_badge = {
         "En preparación": "🔵", "En ruta": "🚚", "Entregado": "✅",
@@ -40302,7 +40325,7 @@ def comm_client_save():
                  email_bcc=VALUES(email_bcc),
                  updated_by=VALUES(updated_by)""",
             (
-                (d.get("company_name") or "ILUS Sport & Health").strip(),
+                (d.get("company_name") or "ILUS Fitness").strip(),
                 (d.get("reply_to") or "").strip(),
                 (d.get("support_email") or "").strip(),
                 (d.get("support_phone") or "").strip(),
@@ -52489,7 +52512,7 @@ def mant_tecnico_externo_invitar(eid):
         <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f3f4f6;padding:30px 16px;">
           <div style="max-width:580px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.06);">
             <div style="background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);padding:30px 28px;color:#fff;border-left:6px solid #dc2626;">
-              <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#fca5a5;font-weight:700">ILUS Sport &amp; Health</div>
+              <div style="font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#fca5a5;font-weight:700">ILUS Fitness</div>
               <h1 style="margin:6px 0 0;font-size:1.5rem;color:#fff;font-weight:800">Te invitamos a colaborar con nosotros</h1>
             </div>
             <div style="padding:30px 28px;color:#1f2937;font-size:.95rem;line-height:1.6">
@@ -52512,7 +52535,7 @@ def mant_tecnico_externo_invitar(eid):
               </p>
             </div>
             <div style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:.78rem;text-align:center">
-              ILUS Sport &amp; Health · Mantenciones · 2026
+              ILUS Fitness · Mantenciones · 2026
             </div>
           </div>
         </div>
@@ -68928,7 +68951,7 @@ def _reporte_informe_pdf_bytes(rep, cliente):
         except Exception:
             return str(v)
     brand = {
-        "name":  "ILUS Sport & Health",
+        "name":  "ILUS Fitness",
         "legal": "Sport and Health Solutions SPA",
         "rut":   ILUS_RUT,
         "web":   "www.ilusfitness.com",
@@ -80143,7 +80166,7 @@ def _tickets_tpl_seed():
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu ticket "
             "<strong>{{numero_ticket}}</strong> ha sido cerrado. Gracias por confiar en "
-            "ILUS Sport &amp; Health.</div></div>"),
+            "ILUS Fitness.</div></div>"),
         # Estados extra del lifecycle (aditivo 2026-07-12, ver diseño
         # lifecycle_estados_extra). No se crean plantillas para
         # 'ot_pending_approval' (aprobación interna, el cliente no tiene
@@ -80396,7 +80419,7 @@ def _mantenciones_tpl_seed():
             '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Equipo:</strong>&nbsp; {{maquina}}</td></tr>'
             '</table>'
             '<p style="margin:0;font-size:13px;color:#444;line-height:1.6">'
-            'Gracias por confiar en ILUS Sport & Health para el cuidado de tus equipos. '
+            'Gracias por confiar en ILUS Fitness para el cuidado de tus equipos. '
             'Si tienes alguna observación, responde este correo y te contactaremos a la brevedad.</p>'),
     }
 
@@ -80447,7 +80470,7 @@ def _comunicacion_interna_tpl_seed():
             'Tu cuenta ILUS está lista — Crea tu contraseña',
             '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
             '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
-            '<strong>{{creado_por}}</strong> creó una cuenta para ti en el sistema ILUS Sport & Health.</p>'
+            '<strong>{{creado_por}}</strong> creó una cuenta para ti en el sistema ILUS Fitness.</p>'
             '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #dc2626;'
             'border-radius:4px;padding:14px 18px;margin:18px 0">'
             '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
@@ -82291,7 +82314,7 @@ def mant_plan_mejora(cid):
     # ── 11. System prompt + user prompt ───────────────────────────────────
     system_prompt = (
         "Eres un asesor senior de gestión de servicios técnicos de equipos fitness para "
-        "ILUS Sport & Health (Chile). Tu trabajo es analizar el portafolio operativo y "
+        "ILUS Fitness (Chile). Tu trabajo es analizar el portafolio operativo y "
         "comercial de un cliente y producir un plan accionable.\n\n"
         "REGLAS DURAS:\n"
         "1. RESPONDE ÚNICAMENTE con JSON válido. Sin texto antes o después. Sin ```json fences.\n"
@@ -82318,7 +82341,7 @@ def mant_plan_mejora(cid):
         "hay patrón de fallas, salud_financiera baja si hay >$1M pendiente de facturar, etc."
     )
 
-    user_prompt = f"""ANÁLISIS DE CLIENTE — ILUS Sport & Health
+    user_prompt = f"""ANÁLISIS DE CLIENTE — ILUS Fitness
 
 FECHA HOY: {hoy.isoformat()}
 

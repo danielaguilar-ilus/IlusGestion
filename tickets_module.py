@@ -3392,7 +3392,7 @@ def register_tickets_routes(app, ctx):
             '<div style="width:100%;font-size:7px;font-family:Arial,Helvetica,sans-serif;'
             'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
             'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
-            f'<span><b style="color:#0a0a0a">ILUS Sport &amp; Health</b> · www.ilusfitness.com · '
+            f'<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
             f'contacto@sphs.cl</span>'
             f'<span>Cotización <b style="color:#0a0a0a">{_footer_numero}</b>{_footer_vigencia} · '
             'Página <span class="pageNumber"></span> de <span class="totalPages"></span></span>'
@@ -5483,7 +5483,7 @@ def register_tickets_routes(app, ctx):
             "<div style=\"border-left:4px solid #6b7280;background:#f9fafb;border-radius:0 10px 10px 0;"
             "padding:18px 20px;margin:0 0 6px\">"
             "<div style=\"font-size:16px;color:#111827;line-height:1.6\">Tu solicitud ha sido cerrada. "
-            "Gracias por confiar en ILUS Sport &amp; Health.</div></div>"),
+            "Gracias por confiar en ILUS Fitness.</div></div>"),
         # Estados extra del lifecycle (aditivo 2026-07-12). Fallback hardcoded
         # por si _render_comm_template no encuentra la fila sembrada aun --
         # el texto real editable vive en _tickets_tpl_seed() (app.py).
@@ -6417,7 +6417,7 @@ def register_tickets_routes(app, ctx):
             desc += f" Ticket: {link}"
             lines = [
                 "BEGIN:VCALENDAR", "VERSION:2.0",
-                "PRODID:-//ILUS Sport & Health//Tickets//ES",
+                "PRODID:-//ILUS Fitness//Tickets//ES",
                 "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
                 "BEGIN:VEVENT",
                 f"UID:ot-{numero}@ilusfitness.com",
