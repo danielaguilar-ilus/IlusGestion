@@ -20733,12 +20733,24 @@ def tr_compromisos_json():
         " WHERE tmi.commitment_id = transport_commitments.id "
         " ORDER BY tmi.id DESC LIMIT 1)"
     )
+    # Estado REAL de entrega del despacho (2026-08-01, Daniel: "¿por qué dicen
+    # Despachado esas facturas?" sobre documentos emitidos HOY, sin courier y
+    # sin manifiesto). Ver el bloque de `estado_logistico` más abajo para la
+    # explicación completa. Mismo criterio de "item más reciente" que las tres
+    # subqueries de arriba, para que courier / manifiesto / estado siempre
+    # hablen del MISMO item y no de tres distintos.
+    _ESTADO_ENTREGA_SUB = (
+        "(SELECT tmi.estado_entrega FROM transport_manifest_items tmi "
+        " WHERE tmi.commitment_id = transport_commitments.id "
+        " ORDER BY tmi.id DESC LIMIT 1)"
+    )
     rows = mysql_fetchall(
         "SELECT *, (" + _EN_MANIF + ") AS en_manifiesto, "
         "(" + _EN_MANIF_ACTIVO + ") AS en_manifiesto_activo, "
         + _COURIER_SUB + " AS courier_manifiesto, "
         + _MANIFIESTO_ID_SUB + " AS manifiesto_id, "
-        + _MANIFIESTO_COD_SUB + " AS manifiesto_correlativo "
+        + _MANIFIESTO_COD_SUB + " AS manifiesto_correlativo, "
+        + _ESTADO_ENTREGA_SUB + " AS estado_entrega_item "
         "FROM transport_commitments WHERE 1=1" + where_sql +
         " ORDER BY fecha_emision DESC LIMIT 500", tuple(params)
     )
@@ -20772,6 +20784,40 @@ def tr_compromisos_json():
                 dias_atraso = max(0, (hoy - r["fecha_emision"]).days)
             except Exception:
                 dias_atraso = 0
+        # ── ESTADO LOGÍSTICO (2026-08-01, Daniel: "¿por qué dicen Despachado
+        # esas facturas?" — sobre documentos emitidos HOY, sin courier y sin
+        # manifiesto, o sea que nadie despachó todavía) ────────────────────
+        #
+        # La columna `estado` de transport_commitments NO es un estado
+        # logístico: la escribe el sync masivo a partir del saldo de la línea
+        # ZZ, que es el SERVICIO de flete. Cuando en el ERP se cierra esa
+        # línea, el saldo llega a 0 y se escribía "Despachado" — aunque la
+        # mercadería no se hubiera movido.
+        #
+        # El propio código ya sabía que ese saldo no significa despacho: ver
+        # el comentario de Daniel (12/06/2026) en _tr_fetch_from_erp, que por
+        # eso fuerza tiene_saldo=1 ("las líneas ZZ son SERVICIOS y no
+        # productos físicos... el servicio se consumió contablemente, no hay
+        # despacho físico que rebajar"). Y hay un FIX de 2026-07-25 en el sync
+        # masivo por lo mismo: antes escribía "Entregado" y se corrigió a
+        # "Despachado" — pero seguía siendo un estado contable con nombre
+        # logístico.
+        #
+        # Acá se deriva el estado de la REALIDAD: si el despacho está en un
+        # manifiesto, manda el estado de entrega de ese manifiesto; si no está
+        # en ninguno, nadie lo ha tomado todavía → "Por despachar".
+        #
+        # El estado del ERP NO se borra ni se pisa: se sigue enviando en
+        # `estado` (lo usan el Kanban y los filtros) y además en `estado_erp`,
+        # con nombre honesto, para poder mostrarlo como dato secundario.
+        _estado_item = (r.get("estado_entrega_item") or "").strip()
+        if en_manif and _estado_item:
+            estado_logistico = _estado_item
+        elif en_manif:
+            estado_logistico = "En preparación"
+        else:
+            estado_logistico = "Por despachar"
+
         result.append({
             "id":           r["id"],
             "tido":         r["tido"],
@@ -20784,6 +20830,11 @@ def tr_compromisos_json():
             "observaciones": r.get("observaciones") or r.get("notas") or "",
             "zz_skus":      r.get("zz_skus") or "",
             "estado":       r["estado"] or "Pendiente",
+            # Lo que se muestra en la columna ESTADO del Monitor: la realidad
+            # logística. `estado_erp` queda disponible como dato secundario
+            # (es el saldo de la línea de flete, no un estado de despacho).
+            "estado_logistico": estado_logistico,
+            "estado_erp":       r["estado"] or "Pendiente",
             "costo_zz":     float(r["costo_zz"] or 0),
             "costo_envio":  float(r.get("costo_envio") or 0),
             "clasificacion":r["clasificacion"] or "despacho",

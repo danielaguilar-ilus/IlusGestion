@@ -439,6 +439,40 @@ class TestIdempotenciaResync(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 # BLOQUE 5 · Marcar "Entregado" — dónde se valida y dónde no
 # ═════════════════════════════════════════════════════════════════════════════
+class TestEstadoLogisticoVsEstadoErp(unittest.TestCase):
+    """El Monitor mostraba "Despachado" en facturas emitidas el mismo día, sin
+    courier y sin manifiesto — porque `estado` lo escribe el sync desde el saldo
+    de la línea ZZ (el SERVICIO de flete), no desde la realidad logística."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_compromisos_json")
+
+    def test_la_grilla_expone_un_estado_logistico_derivado_de_la_realidad(self):
+        self.assertIn('"estado_logistico"', self.fuente,
+                      "Desapareció estado_logistico: el Monitor vuelve a mostrar "
+                      "el estado contable del ERP como si fuera logístico.")
+        self.assertIn("Por despachar", self.fuente,
+                      "Desapareció el estado 'Por despachar' (= no está en "
+                      "ningún manifiesto, nadie lo tomó todavía).")
+
+    def test_el_estado_del_erp_no_se_pierde_solo_se_renombra(self):
+        """No se borra información: el estado del ERP sigue viajando en
+        `estado` (lo usan el Kanban y los filtros) y además en `estado_erp`
+        con nombre honesto, para mostrarlo como dato secundario."""
+        self.assertIn('"estado_erp"', self.fuente)
+        self.assertIn('"estado":', self.fuente)
+
+    def test_el_estado_logistico_sale_del_item_de_manifiesto_mas_reciente(self):
+        """Mismo criterio que courier/manifiesto_id: si no, la grilla mostraría
+        el courier de un despacho y el estado de otro."""
+        self.assertIn("estado_entrega_item", self.fuente)
+        self.assertRegex(
+            _norm(self.fuente),
+            r"SELECT tmi\.estado_entrega FROM transport_manifest_items tmi.*ORDER BY tmi\.id DESC LIMIT 1",
+        )
+
+
 class TestMarcarEntregado(unittest.TestCase):
 
     def test_GAP_kanban_permite_Entregado_con_saldo_pendiente(self):

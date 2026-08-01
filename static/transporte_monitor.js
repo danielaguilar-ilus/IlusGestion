@@ -1276,7 +1276,11 @@ var ESTADO_COLORS = {
   'Logística inversa':'secondary','Indemnización revisada':'warning',
   'Indemnización rechazada':'danger','Regalo':'info','Reentrega':'warning',
   'En preparación':'secondary','Entregado a transporte':'info',
-  'En ruta':'primary','Devolución':'warning'
+  'En ruta':'primary','Devolución':'warning',
+  // Estados LOGÍSTICOS (2026-08-01). "Por despachar" = no está en ningún
+  // manifiesto todavía: nadie lo tomó. Es lo que antes se mostraba como
+  // "Despachado" cuando el ERP cerraba la línea de flete.
+  'Por despachar':'warning','Entrega fallida':'danger'
 };
 
 // Vista actual de GESTIÓN (pendientes/en_gestion/entregados/todos)
@@ -1853,7 +1857,7 @@ function cargarMonitor() {
               danger:  'tr-estado-danger',
               info:    'tr-estado-info',
               secondary: 'tr-estado-secondary',
-            }[ESTADO_COLORS[c.estado]] || 'tr-estado-secondary');
+            }[ESTADO_COLORS[c.estado_logistico || c.estado]] || 'tr-estado-secondary');
 
             // Costo del ENVÍO (VANELI de la línea ZZENVIO). Fallback a costo_zz
             // para filas viejas aún no re-sincronizadas con el campo nuevo.
@@ -1951,7 +1955,15 @@ function cargarMonitor() {
               /* ── Estado (+ badges de gestión: En manifiesto · PREVENTA · atraso) ── */
               '<td>' +
                 '<div class="tr-estado-stack">' +
-                  '<span class="tr-estado-pill ' + pillClass + '">' + esc(c.estado||'—') + '</span>' +
+                  /* 2026-08-01 (Daniel: "¿por qué dicen Despachado esas
+                     facturas?"): se muestra el estado LOGÍSTICO real — dónde
+                     está el despacho de verdad — y no `estado`, que lo escribe
+                     el sync desde el saldo de la línea de flete del ERP y por
+                     eso decía "Despachado" sin que nada se hubiera movido.
+                     El del ERP sigue visible en el tooltip, con su nombre. */
+                  '<span class="tr-estado-pill ' + pillClass + '" title="' +
+                     attr('Estado en el ERP: ' + (c.estado_erp || c.estado || '—')) + '">' +
+                     esc(c.estado_logistico || c.estado || '—') + '</span>' +
                   _enManifiestoBadge(c) +
                   _preventaBadge(c) +
                   _diasAtrasoHtml(c) +
