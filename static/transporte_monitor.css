@@ -1062,3 +1062,39 @@ body.dp-dragging-active .dp-manifest-zone { border-color:#0d6efd!important;
   background:rgba(0,123,255,.06)!important; cursor:copy; }
 body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!important;
   background:rgba(204,0,0,.08)!important; cursor:copy; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   ALERTAS OPERATIVAS (2026-08-01)
+   Solo se renderiza cuando hay algo trabado — el contenedor arranca
+   oculto y renderAlertas() lo muestra. Cuando todo está bien, no ocupa
+   ni un pixel: una alerta permanente en 0 se vuelve invisible al ojo.
+   ───────────────────────────────────────────────────────────────────── */
+.tr-alertas { margin: 0 0 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.tr-alerta {
+  border: 1px solid; border-radius: 10px;
+  padding: 12px 14px; font-size: .9rem;
+  border-left-width: 4px;   /* barra de color: se lee de reojo */
+}
+.tr-alerta-warning { background:#fffbeb; border-color:#fde68a; color:#78350f; }
+.tr-alerta-danger  { background:#fef2f2; border-color:#fecaca; color:#7f1d1d; }
+
+.tr-alerta-head { display:flex; align-items:center; gap:8px;
+  font-size:.95rem; margin-bottom:2px; }
+.tr-alerta-head i { font-size:1.05rem; flex-shrink:0; }
+.tr-alerta-sub { opacity:.85; margin-bottom:8px; line-height:1.35; }
+
+.tr-alerta-list { list-style:none; margin:0; padding:0;
+  display:flex; flex-direction:column; gap:5px; }
+.tr-alerta-list li { line-height:1.35; }
+.tr-alerta-doc { font-family:ui-monospace,'SFMono-Regular',Menlo,monospace;
+  font-weight:700; color:inherit; text-decoration:underline;
+  text-underline-offset:2px; }
+.tr-alerta-doc:hover { opacity:.75; color:inherit; }
+.tr-alerta-mas { opacity:.7; font-style:italic; }
+
+/* Mobile (REGLA #3): el texto largo tiene que poder respirar */
+@media (max-width: 640px) {
+  .tr-alerta { padding:10px 12px; font-size:.85rem; }
+  .tr-alerta-list li { word-break:break-word; }
+}

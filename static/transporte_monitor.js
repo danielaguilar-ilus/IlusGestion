@@ -1307,6 +1307,7 @@ function setVistaMonitor(btn, vista){
     if (target) target.classList.add('active');
   }
   cargarMonitor();
+  renderAlertas();
 }
 
 // Sincronizar estado UI inicial al cargar (porque la vista viene de localStorage)
@@ -1738,6 +1739,68 @@ function renderKanban() {
 document.addEventListener('DOMContentLoaded', function(){
   setMonitorViewMode(_monitorViewMode);
 });
+
+/* ── ALERTAS OPERATIVAS (2026-08-01) ─────────────────────────────────────
+   Avisa de cosas trabadas que nadie va a destrabar solo. Hoy: envíos
+   multi-bulto con una parte entregada y el resto sin avanzar — desde que el
+   poller exige que lleguen TODOS los bultos para marcar Entregado, esos
+   despachos ya no se cierran solos.
+   Se mantiene DELIBERADAMENTE fuera de cargarMonitor(): si el endpoint de
+   alertas falla o tarda, la grilla tiene que cargar igual. */
+function renderAlertas() {
+  var cont = document.getElementById('trAlertas');
+  if (!cont) return;
+
+  fetch('/transporte/api/alertas')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (!d || !d.ok || !d.alertas || !d.alertas.length) {
+        cont.style.display = 'none';
+        cont.innerHTML = '';
+        return;
+      }
+      cont.innerHTML = d.alertas.map(function(a) {
+        // Hasta 5 en el detalle; el resto se cuenta, no se lista (una alerta
+        // de 40 líneas deja de leerse).
+        var visibles = (a.items || []).slice(0, 5);
+        var resto    = (a.items || []).length - visibles.length;
+
+        var filas = visibles.map(function(it) {
+          var link = it.manifiesto_id
+            ? '/transporte/manifiestos/' + encodeURIComponent(it.manifiesto_id)
+            : null;
+          var doc = link
+            ? '<a href="' + attr(link) + '" class="tr-alerta-doc">' + esc(it.documento) + '</a>'
+            : '<span class="tr-alerta-doc">' + esc(it.documento) + '</span>';
+          return '<li>' + doc +
+                 ' · <strong>' + esc(it.resumen) + '</strong>' +
+                 ' · ' + esc(it.cliente) +
+                 (it.courier && it.courier !== '—' ? ' · ' + esc(it.courier) : '') +
+                 '</li>';
+        }).join('');
+
+        return '<div class="tr-alerta tr-alerta-' + attr(a.severidad || 'warning') + '">' +
+                 '<div class="tr-alerta-head">' +
+                   '<i class="bi bi-exclamation-triangle-fill"></i>' +
+                   '<strong>' + esc(a.titulo) + '</strong>' +
+                 '</div>' +
+                 '<div class="tr-alerta-sub">' + esc(a.detalle || '') + '</div>' +
+                 '<ul class="tr-alerta-list">' + filas +
+                   (resto > 0
+                     ? '<li class="tr-alerta-mas">y ' + resto + ' más</li>'
+                     : '') +
+                 '</ul>' +
+               '</div>';
+      }).join('');
+      cont.style.display = '';
+    })
+    .catch(function(e) {
+      // Silencioso a propósito: una alerta que no carga no puede romper el
+      // Monitor ni llenar la pantalla de errores.
+      console.warn('[alertas] no se pudieron cargar:', e);
+      cont.style.display = 'none';
+    });
+}
 
 function cargarMonitor() {
   // Leer parámetros del formulario de filtros + agregar la vista actual

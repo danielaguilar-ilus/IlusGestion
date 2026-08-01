@@ -20595,6 +20595,102 @@ def tr_sync():
     })
 
 
+@app.route("/transporte/api/alertas")
+@_tr_required
+def tr_alertas_json():
+    """Alertas operativas del Monitor: cosas que se quedaron trabadas y que
+    NADIE va a destrabar solo.
+
+    Nace 2026-08-01 con una sola alerta, pero está pensada como el lugar único
+    donde van a vivir las demás (guía sin gestión, gestión sin guía, salida sin
+    guía, guía con saldo…). Por eso devuelve una LISTA de alertas con forma
+    homogénea: {codigo, severidad, titulo, detalle, n, items[]}.
+
+    ── envio_multibulto_estancado ──────────────────────────────────────────
+    Desde el fix de multi-bulto (2026-08-01), un despacho solo se marca
+    Entregado cuando llegan TODOS sus bultos. El efecto buscado es no dar por
+    entregado lo que no llegó; el efecto colateral es que si a un envío se le
+    pierde un bulto, ya no se cierra solo: queda esperando para siempre.
+
+    Esta alerta es la válvula: lista los envíos que llevan `dias` o más con
+    algunos bultos entregados y otros no, para que una persona los reclame al
+    courier o los cierre a mano. Sin esto, quedan invisibles en el limbo.
+
+    Query params:
+      - dias (default 2): antigüedad mínima del parcial para alertar.
+    """
+    try:
+        dias = max(0, int(request.args.get("dias") or 2))
+    except (TypeError, ValueError):
+        dias = 2
+
+    # Solo despachos NO terminales: si alguien ya lo cerró a mano, deja de ser
+    # un problema abierto y no tiene sentido seguir avisando.
+    estancados = mysql_fetchall("""
+        SELECT mi.id            AS item_id,
+               mi.bultos_total,
+               mi.bultos_entregados,
+               mi.parcial_desde,
+               mi.tracking_number,
+               DATEDIFF(NOW(), mi.parcial_desde) AS dias_estancado,
+               c.id   AS commitment_id, c.tido, c.nudo,
+               c.cliente_nombre, c.comuna,
+               m.id   AS manifiesto_id, m.correlativo AS manifiesto, m.courier
+          FROM transport_manifest_items mi
+          JOIN transport_commitments c ON c.id = mi.commitment_id
+          JOIN transport_manifests   m ON m.id = mi.manifest_id
+         WHERE mi.parcial_desde IS NOT NULL
+           AND mi.estado_entrega NOT IN ('Entregado', 'Devolución')
+           AND DATEDIFF(NOW(), mi.parcial_desde) >= %s
+         ORDER BY mi.parcial_desde ASC
+         LIMIT 200
+    """, (dias,)) or []
+
+    items = []
+    for r in estancados:
+        _tot  = int(r.get("bultos_total") or 0)
+        _ent  = int(r.get("bultos_entregados") or 0)
+        _dias = int(r.get("dias_estancado") or 0)
+        items.append({
+            "item_id":       r["item_id"],
+            "commitment_id": r["commitment_id"],
+            "documento":     f"{r['tido']} {r['nudo']}",
+            "cliente":       r.get("cliente_nombre") or "—",
+            "comuna":        r.get("comuna") or "—",
+            "courier":       r.get("courier") or "—",
+            "manifiesto":    r.get("manifiesto") or "",
+            "manifiesto_id": r.get("manifiesto_id"),
+            "tracking":      r.get("tracking_number") or "",
+            "bultos_total":       _tot,
+            "bultos_entregados":  _ent,
+            "bultos_pendientes":  max(_tot - _ent, 0),
+            "dias_estancado":     _dias,
+            # Hora Chile (REGLA #6): nunca ISO crudo ni UTC en la UI.
+            "parcial_desde": chile_fmt_filter(r.get("parcial_desde"), "%d/%m/%Y %H:%M"),
+            "resumen": f"{_ent} de {_tot} bultos entregados hace {_dias} día"
+                       + ("s" if _dias != 1 else ""),
+        })
+
+    alertas = []
+    if items:
+        # Rojo a partir de una semana: a esa altura ya no es demora, es un
+        # bulto perdido. Mismo criterio de umbrales que el chip de atraso.
+        _peor = max(i["dias_estancado"] for i in items)
+        alertas.append({
+            "codigo":    "envio_multibulto_estancado",
+            "severidad": "danger" if _peor >= 7 else "warning",
+            "titulo":    (f"{len(items)} envío{'s' if len(items) != 1 else ''} "
+                          f"con bultos sin llegar"),
+            "detalle":   ("El courier entregó parte de los bultos y el resto no "
+                          "avanza. Hay que reclamarlos o cerrar el despacho a mano."),
+            "n":         len(items),
+            "items":     items,
+        })
+
+    return jsonify({"ok": True, "alertas": alertas,
+                    "total": sum(a["n"] for a in alertas), "dias": dias})
+
+
 @app.route("/transporte/api/compromisos")
 @_tr_required
 def tr_compromisos_json():
@@ -28964,6 +29060,33 @@ def _fedex_poll_batch(limit=25, dry=False):
                         break
                 comentario = (f"{n_entregadas} de {n_total} bultos entregados "
                               f"— a la espera del resto")
+
+        # Persistir el conteo de bultos para que sea CONSULTABLE (alerta de
+        # "envío estancado"). `parcial_desde` marca cuándo quedó a medias:
+        # se setea la primera vez que se detecta el parcial y NO se pisa en
+        # los polls siguientes — si no, cada consulta reiniciaría el contador
+        # de días y el envío nunca se vería como estancado. Se limpia solo
+        # cuando deja de estar parcial (llegaron todos, o todavía ninguno).
+        try:
+            _es_parcial = (n_total > 1 and 0 < n_entregadas < n_total)
+            if _es_parcial:
+                mysql_execute(
+                    "UPDATE transport_manifest_items "
+                    "SET bultos_total=%s, bultos_entregados=%s, "
+                    "    parcial_desde=COALESCE(parcial_desde, NOW()) "
+                    "WHERE id=%s",
+                    (n_total, n_entregadas, item_id)
+                )
+            else:
+                mysql_execute(
+                    "UPDATE transport_manifest_items "
+                    "SET bultos_total=%s, bultos_entregados=%s, parcial_desde=NULL "
+                    "WHERE id=%s",
+                    (n_total, n_entregadas, item_id)
+                )
+        except Exception as _e_bult:
+            print(f"[fedex_poll] no se pudo guardar el conteo de bultos "
+                  f"del item {item_id}: {_e_bult}", flush=True)
 
         apply_res = _tr_apply_carrier_status(
             item_id, estado_final, fuente='fedex',
@@ -77747,6 +77870,14 @@ def _ensure_transport_tracking_tables():
         "simpliroute_tracking_id": "VARCHAR(60) NULL COMMENT 'tracking_id de SimpliRoute (link de seguimiento)'",
         "simpliroute_synced_at":   "DATETIME NULL COMMENT 'Cuándo se subió la visita a SimpliRoute'",
         "simpliroute_error":       "TEXT NULL COMMENT 'Último error al subir a SimpliRoute (debug)'",
+        # Multi-bulto (2026-08-01): desde que el poller exige que lleguen TODOS
+        # los bultos para marcar Entregado, un envío al que se le pierde un
+        # bulto ya no se cierra solo — queda esperando indefinidamente. Estas
+        # 3 columnas lo hacen CONSULTABLE (antes el conteo solo vivía dentro
+        # del JSON de un evento, imposible de filtrar con un WHERE).
+        "bultos_total":       "INT NULL COMMENT 'Nº de bultos que el courier debe entregar (piezas con tracking)'",
+        "bultos_entregados":  "INT NULL COMMENT 'Nº de bultos ya entregados según el courier'",
+        "parcial_desde":      "DATETIME NULL COMMENT 'Cuándo quedó parcialmente entregado (algunos bultos sí, otros no). NULL = no está parcial. Base del cálculo de días estancado.'",
     }
     try:
         existing_it = {

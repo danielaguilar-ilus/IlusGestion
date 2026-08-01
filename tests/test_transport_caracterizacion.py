@@ -473,6 +473,40 @@ class TestEstadoLogisticoVsEstadoErp(unittest.TestCase):
         )
 
 
+class TestAlertaEnviosEstancados(unittest.TestCase):
+    """Válvula de escape del fix de multi-bulto: si a un envío se le pierde un
+    bulto, ya no se cierra solo. Esta alerta evita que quede invisible."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_alertas_json")
+
+    def test_solo_alerta_de_despachos_todavia_abiertos(self):
+        """Si alguien ya lo cerró a mano, dejó de ser un problema: no tiene
+        sentido seguir avisando."""
+        self.assertIn("estado_entrega NOT IN", self.fuente)
+        self.assertIn("parcial_desde IS NOT NULL", self.fuente)
+
+    def test_respeta_un_umbral_de_dias(self):
+        """Un envío que quedó parcial hace 20 minutos no es un problema — el
+        otro bulto puede estar por llegar. La alerta es para lo que se estancó."""
+        self.assertIn("DATEDIFF(NOW(), mi.parcial_desde) >= %s", self.fuente)
+
+    def test_las_fechas_salen_en_hora_chile(self):
+        """REGLA #6: nunca ISO crudo ni UTC en la UI."""
+        self.assertIn("chile_fmt_filter", self.fuente)
+
+    def test_devuelve_una_lista_extensible_de_alertas(self):
+        """Pensado para que las alertas de conciliación del plan entren acá
+        mismo, con la misma forma, en vez de inventar otro endpoint."""
+        self.assertIn('"alertas"', self.fuente)
+        self.assertIn('"codigo"', self.fuente)
+        self.assertIn('"severidad"', self.fuente)
+
+    def test_tiene_techo_de_resultados(self):
+        self.assertRegex(_norm(self.fuente), r"LIMIT \d+")
+
+
 class TestMarcarEntregado(unittest.TestCase):
 
     def test_GAP_kanban_permite_Entregado_con_saldo_pendiente(self):
@@ -641,6 +675,31 @@ class TestFedexMultiBulto(unittest.TestCase):
             "El poller volvió a mirar solo `tracking_number`: puede marcar "
             "Entregado un despacho al que todavía le faltan bultos.",
         )
+
+    def test_el_conteo_de_bultos_se_persiste_para_poder_alertar(self):
+        """Antes el conteo "2 de 3" solo vivía dentro del JSON de un evento —
+        imposible de filtrar con un WHERE. Ahora se guarda en columnas, que es
+        lo que hace posible la alerta de envío estancado."""
+        poller = _cuerpo_funcion("_fedex_poll_batch")
+        for col in ("bultos_total", "bultos_entregados", "parcial_desde"):
+            self.assertIn(col, poller,
+                          f"El poller dejó de mantener {col}: la alerta de "
+                          "envíos estancados se queda sin datos.")
+
+    def test_parcial_desde_no_se_pisa_en_cada_poll(self):
+        """CLAVE: `parcial_desde` marca cuándo quedó a medias. Si cada poll lo
+        reescribiera con NOW(), el contador de días volvería a cero cada 15
+        minutos y NINGÚN envío llegaría nunca al umbral de la alerta.
+        Por eso se usa COALESCE: se escribe solo la primera vez."""
+        poller = _norm(_cuerpo_funcion("_fedex_poll_batch"))
+        self.assertIn("parcial_desde=COALESCE(parcial_desde, NOW())", poller,
+                      "parcial_desde dejó de usar COALESCE: el contador de días "
+                      "se reinicia en cada poll y la alerta nunca se dispara.")
+
+    def test_parcial_desde_se_limpia_cuando_deja_de_estar_parcial(self):
+        """Si llegan todos los bultos (o todavía ninguno), el envío ya no está
+        parcial y tiene que salir de la alerta."""
+        self.assertIn("parcial_desde=NULL", _norm(_cuerpo_funcion("_fedex_poll_batch")))
 
     def test_master_tracking_es_el_del_primer_bulto_en_el_fallback(self):
         """Deja fijado de dónde sale el 'master' cuando son N envíos sueltos:

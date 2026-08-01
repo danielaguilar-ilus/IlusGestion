@@ -290,6 +290,16 @@
    El backend resuelve esto con ?vista=pendientes|en_gestion|entregados|todos
    y devuelve conteos.pendientes/en_gestion/entregados/total.
    ───────────────────────────────────────────────────────────── #}
+{# ─────────────────────────────────────────────────────────────
+   ALERTAS OPERATIVAS (2026-08-01) — solo aparece si hay algo trabado.
+   Hoy: envíos multi-bulto a los que el courier entregó una parte y el resto
+   no avanza. Desde que el poller exige que lleguen TODOS los bultos para
+   marcar Entregado, esos envíos ya no se cierran solos: alguien tiene que
+   reclamarlos o cerrarlos a mano. Sin este aviso quedan invisibles.
+   Contenedor vacío por defecto; lo llena renderAlertas() en transporte_monitor.js.
+   ───────────────────────────────────────────────────────────── #}
+<div id="trAlertas" class="tr-alertas" style="display:none"></div>
+
 <div class="tr-segment">
   <span class="tr-segment-label">Gestión</span>
   <div class="tr-segment-group" role="tablist">
