@@ -1132,5 +1132,51 @@ class TestGuiasColumnaSoloEnModalNoEnGrillaPrincipal(unittest.TestCase):
         )
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 10 · Preventa automática por producto, derivada del stock real
+# ═════════════════════════════════════════════════════════════════════════════
+class TestPreventaAutomaticaPorProducto(unittest.TestCase):
+    """Daniel, 2026-08-01: "que se vaya actualizando... como relojito" —
+    cuando el ERP no tiene stock de un producto, el badge de estado debe decir
+    'Preventa' SOLO, sin que nadie lo marque a mano. Es derivado en cada
+    lectura (no un valor que se escribe): apenas vuelve a haber stock, deja de
+    verse 'Preventa' sin que nadie tenga que revertir nada."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_tr_buscar_detalle")
+        cls.norm = _norm(cls.fuente)
+
+    def test_la_regla_de_auto_preventa_existe(self):
+        self.assertIn('_lo["estado_efectivo"] = "Preventa"', self.fuente)
+        self.assertIn("es_auto_preventa", self.fuente)
+
+    def test_nunca_gana_sobre_un_estado_puesto_a_mano(self):
+        """Un estado_linea explícito (alguien lo marcó en el selector) tiene
+        que seguir ganando siempre — la auto-preventa solo llena el vacío
+        cuando NADIE lo tocó."""
+        self.assertRegex(
+            self.norm,
+            r'if _explicito: _lo\["estado_efectivo"\] = _t\.get\("estado_linea"\)',
+            "El orden cambió: un estado puesto a mano debe evaluarse ANTES "
+            "que la auto-preventa, nunca después.",
+        )
+
+    def test_no_aplica_si_el_despacho_ya_es_terminal(self):
+        """No tiene sentido decir 'Preventa' de un producto que ya se
+        entregó o devolvió solo porque el stock GLOBAL bajó después."""
+        self.assertIn("_estado_despacho not in ESTADOS_ENTREGA_TERMINALES", self.norm)
+
+    def test_no_aplica_si_esta_linea_ya_no_tiene_saldo_pendiente(self):
+        """Si esta línea puntual del documento ya se despachó completa, el
+        stock global en 0 no la vuelve 'Preventa' retroactivamente."""
+        self.assertIn('_lo.get("saldo", 0) > 0', self.norm)
+
+    def test_no_aplica_si_no_hay_dato_de_stock(self):
+        """stock_disponible None (el sondeo de stock no alcanzó a este SKU)
+        no debe interpretarse como 'sin stock' — sería un falso positivo."""
+        self.assertIn('_lo.get("stock_disponible") is not None', self.norm)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

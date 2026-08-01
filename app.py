@@ -31797,7 +31797,28 @@ def _tr_buscar_detalle(commitment_id):
                 _explicito = bool(_t and _t.get("estado_linea"))
                 _lo["line_id"] = _t.get("id") if _t else None
                 _lo["estado_linea"] = _t.get("estado_linea") if _t else None
-                _lo["estado_efectivo"] = (_t.get("estado_linea") if _explicito else _estado_despacho)
+                _lo["es_auto_preventa"] = False
+                if _explicito:
+                    _lo["estado_efectivo"] = _t.get("estado_linea")
+                elif (
+                    # PREVENTA AUTOMÁTICA (2026-08-01, Daniel: "que se vaya
+                    # actualizando... como relojito"): derivada del stock real
+                    # en CADA lectura, no un valor que se escribe -- así que
+                    # apenas vuelve a haber stock, el producto deja de verse
+                    # "Preventa" solo, sin que nadie tenga que revertir nada.
+                    # Nunca gana sobre un estado_linea puesto a mano (arriba)
+                    # ni sobre un despacho ya terminal (no tiene sentido decir
+                    # "Preventa" de algo que ya se entregó/devolvió), ni si
+                    # esta línea puntual ya no tiene saldo pendiente.
+                    _lo.get("stock_disponible") is not None
+                    and _lo["stock_disponible"] <= 0
+                    and _lo.get("saldo", 0) > 0
+                    and _estado_despacho not in ESTADOS_ENTREGA_TERMINALES
+                ):
+                    _lo["estado_efectivo"] = "Preventa"
+                    _lo["es_auto_preventa"] = True
+                else:
+                    _lo["estado_efectivo"] = _estado_despacho
                 _lo["es_explicito"] = _explicito
                 _lo["sla_dias"] = float(_t["sla_dias"]) if (_t and _t.get("sla_dias") is not None) else None
     except Exception as _e_til:

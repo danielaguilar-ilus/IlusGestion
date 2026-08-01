@@ -3204,7 +3204,10 @@ function _ilusProductoHtml(l, i, prefix, cid) {
   var ui = _LINEA_ESTADO_UI[est] || { color: '#94a3b8', icon: 'bi-circle' };
   var badge = '<span class="sr-prod-estado-badge" style="color:' + ui.color + ';border-color:' + ui.color +
     '44;background:' + ui.color + '14"><i class="bi ' + ui.icon + '"></i> ' + _srEsc(est) + '</span>' +
-    (l.es_explicito ? '' : ' <span class="sr-prod-estado-heredado">(heredado)</span>');
+    (l.es_explicito ? '' :
+      l.es_auto_preventa
+        ? ' <span class="sr-prod-estado-heredado" title="El ERP no tiene stock disponible de este producto ahora mismo — se actualiza solo cuando vuelva a haber">(sin stock)</span>'
+        : ' <span class="sr-prod-estado-heredado">(heredado)</span>');
   var select = '';
   if (l.line_id != null) {
     select = '<select class="sr-prod-estado-select" data-line-id="' + l.line_id + '" data-cid="' + cid +
