@@ -20588,7 +20588,20 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             -- FÍSICO, no de las líneas ZZ (servicios de flete/instalación).
             --
             -- El bug: saldo_zz (más abajo) agrega SOLO líneas ZZ -- el WHERE
-            -- de esa subconsulta filtra por IN ({zz_in}) antes de sumar nada.
+            -- de esa subconsulta filtra por la lista de SKUs ZZ antes de
+            -- sumar nada.
+            --
+            -- AVISO: en los comentarios de este SQL NO se puede escribir ni
+            -- una variable entre llaves (la f-string la interpola también
+            -- dentro de un comentario) ni un marcador de parámetro literal.
+            -- pymssql cuenta TODOS los marcadores del string, incluidos los
+            -- que están detrás de un guion doble, y si sobra aunque sea uno
+            -- la query entera revienta con "more placeholders in sql than
+            -- params available" y devuelve None -- fallo TOTAL y silencioso.
+            -- Pasó de verdad: el sync masivo quedó roto entre el 2026-08-01
+            -- y el 2026-08-02 (fallaba en 0,2s con "No se pudo conectar al
+            -- ERP" y el Monitor nunca actualizaba). Lo cubre el test
+            -- test_los_placeholders_del_sql_calzan_exactamente_con_los_params.
             -- Cuando el ERP cierra contablemente la línea de servicio, ese
             -- saldo llega a 0 y el documento caía en la pestaña Entregados con
             -- la mercadería todavía en bodega. FCV 0000011152: BA005 con

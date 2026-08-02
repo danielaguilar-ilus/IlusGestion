@@ -377,6 +377,69 @@ class TestBulkSyncErp(unittest.TestCase):
         cls.fuente = _cuerpo_funcion("_tr_bulk_sync_erp_mysql")
         cls.sql = _norm(cls.fuente)
 
+    def test_los_placeholders_del_sql_calzan_exactamente_con_los_params(self):
+        """REGRESIÓN REAL (2026-08-01 → 02, el sync quedó ROTO ~12 horas).
+
+        La consulta del sync es una f-string. Alguien (yo) escribió la
+        variable `zz_in` entre llaves DENTRO DE UN COMENTARIO del SQL para
+        explicar el filtro. Python la interpoló igual -- los comentarios no
+        son especiales en una f-string -- y esa variable vale
+        "%s,%s,%s,%s,%s,%s". pymssql cuenta TODOS los %s del string, también
+        los que están dentro de un `--`, así que la query entera reventó con
+        "more placeholders in sql than params available" y _random_sql_query
+        devolvió None. Síntoma para el operador: el sync fallaba entero en
+        0,2s con "No se pudo conectar al ERP (SQL Server)" y el Monitor
+        nunca actualizaba sus números. Un fallo TOTAL y silencioso.
+
+        Este test reconstruye el SQL como lo arma la función (mismas
+        sustituciones) y verifica que la cantidad de %s calce EXACTAMENTE
+        con la cantidad de params que se pasan. Si alguien agrega un %s sin
+        su parámetro -- o mete una llave interpolable en un comentario --
+        falla acá y no en producción.
+        """
+        import ast as _ast
+        arbol = _arbol_app()
+        fn = None
+        for nodo in _ast.walk(arbol):
+            if isinstance(nodo, _ast.FunctionDef) and nodo.name == "_tr_bulk_sync_erp_mysql":
+                fn = nodo
+        self.assertIsNotNone(fn, "No se encontró _tr_bulk_sync_erp_mysql")
+
+        # La f-string del SQL: se reconstruye reemplazando cada campo
+        # interpolado por su valor real conocido.
+        zz_n, tido_n = 6, 2          # len(ZZ_SKUS) y len(("BLV","FCV"))
+        sql_txt = None
+        for nodo in _ast.walk(fn):
+            if isinstance(nodo, _ast.JoinedStr):
+                partes = []
+                for v in nodo.values:
+                    if isinstance(v, _ast.Constant):
+                        partes.append(str(v.value))
+                    elif isinstance(v, _ast.FormattedValue):
+                        nombre = getattr(v.value, "id", "")
+                        if nombre == "zz_in":
+                            partes.append(",".join(["%s"] * zz_n))
+                        elif nombre == "tido_in":
+                            partes.append(",".join(["%s"] * tido_n))
+                        else:
+                            partes.append("")   # otro campo: no aporta %s
+                candidato = "".join(partes)
+                if "SELECT" in candidato and "MAEEDO" in candidato:
+                    sql_txt = candidato
+        self.assertIsNotNone(sql_txt, "No se encontró la f-string del SQL del sync")
+
+        n_placeholders = sql_txt.count("%s")
+        # params = zz_list (STUFF) + zz_list (WHERE agregación) + tidos + 2 fechas
+        n_params_esperados = zz_n + zz_n + tido_n + 2
+        self.assertEqual(
+            n_placeholders, n_params_esperados,
+            f"El SQL del sync masivo tiene {n_placeholders} marcadores %s pero se "
+            f"le pasan {n_params_esperados} parámetros. Si agregaste un %s, agrega "
+            f"su parámetro; si escribiste una variable entre llaves dentro de un "
+            f"COMENTARIO del SQL, sácala -- la f-string la interpola igual y "
+            f"rompe la query entera (bug real del 2026-08-01).",
+        )
+
     def test_el_sync_masivo_nunca_reemplaza_una_guia_conocida_por_vacio(self):
         """REGRESIÓN (arreglado 2026-07-31, encontrado por estos mismos tests).
 
