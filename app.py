@@ -21769,6 +21769,21 @@ def tr_compromisos_json():
             tuple(_rm_params)
         ) or {}
         conteos_ramo[_rm] = int(_rm_row.get("n") or 0)
+    # "Todos" (pestaña de ramo) -- MISMO criterio sin fecha que los 5 de
+    # arriba (solo tido<>GDV + q), para que el badge de "Todos" no quede
+    # por debajo de un ramo individual solo por estar filtrado por fecha
+    # mientras los ramos no lo están (bug real visto en vivo 2026-08-01:
+    # "Todos" mostraba 330 con el rango de fechas por defecto mientras
+    # "Despacho" solo, sin fecha, mostraba 1279).
+    _todos_where, _todos_params = ["tido <> 'GDV'"], []
+    if q:
+        _todos_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; _todos_params += [qp,qp,qp,qp,qp]
+    _todos_row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM transport_commitments WHERE " + " AND ".join(_todos_where),
+        tuple(_todos_params)
+    ) or {}
+    conteos_ramo["total"] = int(_todos_row.get("n") or 0)
 
     return jsonify({
         "ok": True,

@@ -1969,7 +1969,11 @@ function cargarMonitor() {
         setBadge('cntInstalacion', cr.instalacion || 0);
         setBadge('cntMantencion',  cr.mantencion  || 0);
         setBadge('cntGarantia',    cr.garantia    || 0);
-        setBadge('cntTodos',       d.conteos.total || 0);
+        // "Todos" usa cr.total (mismo criterio SIN fecha que los 5 ramos de
+        // arriba) -- NO d.conteos.total, que SÍ respeta el rango de fechas y
+        // por eso podía verse más chico que un ramo individual (bug real
+        // visto en vivo: Todos=330 con fecha, Despacho=1279 sin fecha).
+        setBadge('cntTodos', cr.total || 0);
       }
       // Marcar timestamp de sync para el indicador en el header
       _trLastSync = Date.now();
