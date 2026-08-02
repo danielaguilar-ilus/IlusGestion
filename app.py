@@ -20250,6 +20250,68 @@ def _tr_fetch_from_erp(tido, nudo):
     return comm_id, None
 
 
+def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
+    """Marca como 'Problema' los commitments con guía real capturada
+    (transport_guias) pero SIN ningún manifest_item -- mismo criterio que la
+    alerta 'guia_sin_gestion' (/transporte/api/alertas). Daniel (2026-08-01):
+    "en Problema dejaría ese tipo... para que Alison se encargue de
+    marcarlas como despachadas" -- así quedan visibles y accionables bajo el
+    filtro Problema del Monitor en vez de invisibles en un banner de solo
+    lectura.
+
+    Si se pasa commitment_ids, se acota a esos (uso: hook automático justo
+    después de sincronizar una guía nueva, ver _tr_fetch_guias_from_erp).
+    Sin argumento, corre sobre TODO el universo actual (uso: backfill único
+    de los que ya estaban en este estado antes de que existiera este hook).
+
+    No pisa un estado ya avanzado: solo actúa si el estado actual sigue
+    siendo uno "de sync" (mismo set que el guard del UPSERT masivo, ver
+    _tr_bulk_sync_erp_mysql). updated_by se marca 'alerta_guia_sin_gestion'
+    (NO 'sync') a propósito: ese mismo guard exige updated_by='sync' para
+    pisar el estado en la próxima corrida del sync masivo -- con otro valor,
+    el Problema marcado acá queda protegido y no se revierte solo.
+    """
+    where_extra = ""
+    params = []
+    if commitment_ids:
+        commitment_ids = list(commitment_ids)
+        if not commitment_ids:
+            return 0
+        ph = ",".join(["%s"] * len(commitment_ids))
+        where_extra = f" AND c.id IN ({ph})"
+        params = list(commitment_ids)
+
+    rows = mysql_fetchall(f"""
+        SELECT DISTINCT c.id
+        FROM transport_commitments c
+        JOIN transport_guias g ON g.commitment_id = c.id
+        WHERE c.id NOT IN (SELECT commitment_id FROM transport_manifest_items)
+          AND c.estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')
+          {where_extra}
+    """, tuple(params)) or []
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return 0
+
+    conn = get_db()
+    ph = ",".join(["%s"] * len(ids))
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            UPDATE transport_commitments
+            SET estado='Problema', updated_by='alerta_guia_sin_gestion'
+            WHERE id IN ({ph})
+        """, tuple(ids))
+    conn.commit()
+    for cid in ids:
+        try:
+            _tr_log("commitment", cid, "marcado_problema_auto",
+                    "Guía real capturada sin manifiesto asignado -- marcado "
+                    "Problema automáticamente para revisión.")
+        except Exception:
+            pass
+    return len(ids)
+
+
 def _tr_fetch_guias_from_erp(commitment_id, tido, nudo):
     """Sincroniza las guías de despacho REALES (TIDO='GDV') que cubrieron las
     líneas de un documento (factura/boleta) en transport_guias.
@@ -20342,6 +20404,17 @@ def _tr_fetch_guias_from_erp(commitment_id, tido, nudo):
                 WHERE id=%s
             """, (_guia_num, _guia_num, _guia_num, commitment_id))
         conn.commit()
+
+        # Hook automático (2026-08-01, Daniel): esta guía recién sincronizada
+        # puede ser justo el caso "guía real sin manifiesto" -- si lo es, se
+        # marca Problema de una vez para que quede accionable en el Monitor.
+        # No crítico: un fallo acá no debe tumbar la sincronización de guías.
+        try:
+            _tr_marcar_guia_sin_gestion_como_problema([commitment_id])
+        except Exception as _e_marcar:
+            print(f"[_tr_fetch_guias_from_erp] marcado Problema automático falló "
+                  f"(no crítico): {_e_marcar}", flush=True)
+
         return len(rows)
     except Exception as e:
         print(f"[_tr_fetch_guias_from_erp] {tido}/{nudo} falló (no crítico): {e}", flush=True)
@@ -21242,6 +21315,64 @@ def tr_alertas_json():
 
     return jsonify({"ok": True, "alertas": alertas,
                     "total": sum(a["n"] for a in alertas), "dias": dias})
+
+
+@app.route("/transporte/api/alertas/guia-sin-gestion/marcar-problema", methods=["POST"])
+@login_required
+def tr_alertas_guia_sin_gestion_marcar_problema():
+    """Backfill único (2026-08-01, Daniel: "en Problema dejaría ese tipo...
+    para que Alison se encargue"): marca como Problema TODOS los commitments
+    que ya calzaban con la alerta 'guia_sin_gestion' ANTES de que existiera
+    el hook automático en _tr_fetch_guias_from_erp (que cubre los casos
+    NUEVOS de acá en adelante, pero no retroactivamente).
+
+    Permiso: admin/superadmin. No requiere body -- corre sobre todo el
+    universo actual. Ver _tr_marcar_guia_sin_gestion_como_problema para el
+    criterio exacto y la guarda contra pisar un estado ya avanzado.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+    n = _tr_marcar_guia_sin_gestion_como_problema()
+    return jsonify({"ok": True, "marcados": n})
+
+
+@app.route("/transporte/api/diagnostico/saldo-sin-guia")
+@login_required
+def tr_diagnostico_saldo_sin_guia():
+    """READ-ONLY (2026-08-01, Daniel, caso real FCV 0000011152): documentos
+    donde tiene_saldo=0 (el sync masivo los trata como "cerrados", caen en
+    la pestaña Entregados) pero NO existe ninguna guía real capturada en
+    transport_guias -- exactamente el hueco que encontró Daniel: el saldo de
+    la línea ZZ (envío/instalación) puede llegar a 0 por el cierre contable
+    del ERP sin que eso implique que salió una guía física. Distinto de la
+    alerta 'guia_sin_gestion' (esa exige que SÍ haya guía real) -- este es
+    el caso SIN ningún rastro de guía en absoluto.
+
+    Uso: medir el alcance antes de decidir si se corrige la raíz (el cálculo
+    de tiene_saldo_flag en _tr_bulk_sync_erp_mysql). No escribe nada.
+    """
+    rows = mysql_fetchall("""
+        SELECT c.id, c.tido, c.nudo, c.cliente_nombre, c.comuna, c.zz_skus,
+               c.clasificacion, c.fecha_emision, c.estado
+        FROM transport_commitments c
+        WHERE c.tiene_saldo = 0
+          AND c.id NOT IN (SELECT commitment_id FROM transport_manifest_items)
+          AND c.id NOT IN (SELECT commitment_id FROM transport_guias)
+        ORDER BY c.fecha_emision DESC
+        LIMIT 500
+    """) or []
+    items = [{
+        "commitment_id": r["id"],
+        "documento":     f"{r['tido']} {r['nudo']}",
+        "cliente":       r.get("cliente_nombre") or "—",
+        "comuna":        r.get("comuna") or "—",
+        "zz_skus":       r.get("zz_skus") or "",
+        "clasificacion": r.get("clasificacion") or "",
+        "fecha_emision": r["fecha_emision"].strftime("%d/%m/%Y") if r.get("fecha_emision") else None,
+        "estado":        r.get("estado") or "",
+    } for r in rows]
+    return jsonify({"ok": True, "n": len(items), "items": items,
+                     "nota": "LIMIT 500 -- si n==500 el universo real puede ser mayor."})
 
 
 @app.route("/transporte/api/compromisos")
