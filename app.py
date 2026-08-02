@@ -21682,6 +21682,36 @@ def tr_compromisos_json():
     # el valor elegido en el dropdown contra un dato distinto al que se ve en
     # pantalla. El filtro real se aplica sobre `result` después de calcular
     # estado_logistico para cada fila (ver más abajo, antes de los conteos).
+    #
+    # FIX 2026-08-02 (Daniel, en vivo: "aún sigo viendo y no está en
+    # problema"): ese filtro-en-Python corre DESPUÉS del LIMIT 500, así que
+    # solo podía encontrar coincidencias dentro de las primeras 500 filas del
+    # ORDER BY. Caso real medido: los documentos marcados 'Problema' son
+    # ANTIGUOS -- con vista=pendientes (ORDER BY fecha ASC, más viejos
+    # primero) aparecían 2, pero con vista=todos (ORDER BY DESC, más nuevos
+    # primero) aparecían 0. El mismo filtro daba resultados distintos según
+    # la pestaña: inservible para la cola de Alison.
+    #
+    # Solución: acotar TAMBIÉN en SQL con un SUPERCONJUNTO seguro, para que
+    # las filas candidatas entren dentro del LIMIT. estado_logistico se deriva
+    # de exactamente 2 columnas -- el estado_entrega del manifest_item más
+    # reciente, o el `estado` del propio commitment -- más dos literales
+    # ("En preparación" / "Por despachar") que NO salen de ninguna columna.
+    # Por eso el pre-filtro solo aplica cuando el estado buscado NO es uno de
+    # esos dos literales; en esos casos se deja pasar todo y manda el filtro
+    # de Python, como antes. El filtro exacto sigue siendo el de Python: esto
+    # solo garantiza que los candidatos no se pierdan por el LIMIT.
+    #
+    # (La subconsulta va literal acá y no vía _ESTADO_ENTREGA_SUB porque esa
+    # constante se define más abajo, junto al resto del SELECT -- usarla acá
+    # sería un NameError. Es el MISMO SQL: si se toca una, tocar la otra.)
+    if estado and estado not in ("En preparación", "Por despachar"):
+        where.append(
+            "(estado = %s OR (SELECT tmi2.estado_entrega "
+            "                   FROM transport_manifest_items tmi2 "
+            "                  WHERE tmi2.commitment_id = transport_commitments.id "
+            "                  ORDER BY tmi2.id DESC LIMIT 1) = %s)")
+        params.extend([estado, estado])
     # FIX 2026-08-01 (Daniel, restructuración por ramo): antes filtraba solo
     # por la columna colapsada `clasificacion` -- un documento con
     # zz_skus='ZZENVIO,ZZINSTALACION' (clasificacion='instalacion', gana
@@ -22172,6 +22202,32 @@ def tr_compromisos_json():
     ) or {}
     conteos_ramo["total"] = int(_todos_row.get("n") or 0)
 
+    # Conteo de PROBLEMA (2026-08-02, Daniel: "aún sigo viendo y no está en
+    # problema" -- el botón no tenía badge, así que no había forma de saber si
+    # la cola tenía algo o el filtro estaba fallando). Mismo criterio que el
+    # resto de los conteos: SQL agregado sobre el universo real, sin fecha y
+    # sin el techo de 500, respetando `q` y el ramo activo.
+    # Cubre los dos orígenes de 'Problema' que ve el operador: el estado del
+    # propio documento (lo que marca _tr_marcar_guia_sin_gestion_como_problema
+    # o una persona) y el estado_entrega del item de manifiesto más reciente
+    # (lo que reporta el courier) -- mismos dos que alimentan estado_logistico.
+    _prob_where, _prob_params = ["tido <> 'GDV'"], []
+    _rs, _rp = _tr_ramo_where(clasif)
+    if _rs: _prob_where.append(_rs); _prob_params.extend(_rp)
+    if q:
+        _prob_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+        qp = f"%{q}%"; _prob_params += [qp,qp,qp,qp,qp]
+    _prob_where.append(
+        "(estado = 'Problema' OR (SELECT tmi3.estado_entrega "
+        "                           FROM transport_manifest_items tmi3 "
+        "                          WHERE tmi3.commitment_id = transport_commitments.id "
+        "                          ORDER BY tmi3.id DESC LIMIT 1) = 'Problema')")
+    _prob_row = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM transport_commitments WHERE " + " AND ".join(_prob_where),
+        tuple(_prob_params)
+    ) or {}
+    conteos_row["problema"] = int(_prob_row.get("n") or 0)
+
     return jsonify({
         "ok": True,
         "compromisos": result,
@@ -22189,6 +22245,7 @@ def tr_compromisos_json():
             "entregados": int(conteos_row.get("entregados") or 0),
             "preventa":   int(conteos_row.get("preventa") or 0),
             "atrasados":  int(conteos_row.get("atrasados") or 0),
+            "problema":   int(conteos_row.get("problema") or 0),
             "total":      int(conteos_row.get("total") or 0),
         },
         "conteos_ramo": conteos_ramo,

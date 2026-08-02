@@ -408,6 +408,11 @@
             title="Mostrar solo documentos con 'Problema' reportado">
       <i class="bi bi-exclamation-triangle"></i>
       <span>Problema</span>
+      {# Badge agregado 2026-08-02 (Daniel: "aún sigo viendo y no está en
+         problema") -- sin contador no había forma de distinguir "la cola
+         está vacía" de "el filtro no funciona". Lo llena cargarMonitor()
+         desde conteos.problema (SQL agregado, sin el techo de 500). #}
+      <span class="tr-segment-badge" style="background:#fee2e2;color:#dc2626" id="vbProblema">0</span>
     </button>
   </div>
 

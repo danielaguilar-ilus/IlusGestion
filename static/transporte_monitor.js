@@ -2146,7 +2146,21 @@ function cargarMonitor() {
   // recargar la página (mismo patrón que _vistaActual con 'vista').
   if (_ramoActual) params.set('clasificacion', _ramoActual);
   else params.delete('clasificacion');
-  if (_soloProblemaActivo) params.set('estado', 'Problema');
+  if (_soloProblemaActivo) {
+    params.set('estado', 'Problema');
+    // FIX 2026-08-02 (Daniel: "aún sigo viendo y no está en problema"):
+    // "Problema" es una COLA de trabajo, no un sub-filtro de la pestaña de
+    // estado activa. Cruzarlo con la vista escondía casi todo: un documento
+    // con guía real y sin manifiesto queda con saldo 0 -> cae en la partición
+    // "entregado", así que estando en la pestaña Pendiente el operador veía 2
+    // de 20. Al activar el toggle se ignora la pestaña y se muestra la cola
+    // completa; al desactivarlo se vuelve a la vista que tenía.
+    params.set('vista', 'todos');
+    // Sin filtro de fecha: un problema de hace 2 meses sigue siendo un
+    // problema. Mismo criterio que ya usan los badges de conteo.
+    params.set('fecha_desde', '');
+    params.set('fecha_hasta', '');
+  }
   // Paginación (REGLA #4.3). El backend clampa `page` si quedó fuera de rango.
   params.set('page', String(_pagActual));
   params.set('per_page', String(_perPage));
@@ -2186,6 +2200,7 @@ function cargarMonitor() {
                        : (d.conteos.parciales  || 0);
         setBadge('vbPendientes', d.conteos.pendientes || 0);
         setBadge('vbPreventa',   d.conteos.preventa   || 0);
+        setBadge('vbProblema',   d.conteos.problema   || 0);
         setBadge('vbEnGestion',  cEnGestion);
         setBadge('vbEntregados', d.conteos.entregados || 0);
         setBadge('vbTodos',      d.conteos.total      || 0);
