@@ -21374,6 +21374,14 @@ def tr_alertas_json():
         FROM transport_guias g
         JOIN transport_commitments c ON c.id = g.commitment_id
         WHERE g.commitment_id NOT IN (SELECT commitment_id FROM transport_manifest_items)
+          -- FIX 2026-08-02 (Daniel: "se sigue viendo los benditos problemas"):
+          -- una vez que el documento YA está marcado 'Problema' pasó a la cola
+          -- de trabajo del Monitor (filtro Problema, con su badge). Seguir
+          -- listándolo acá lo muestra DOS veces y da la sensación de que
+          -- marcarlo no sirvió de nada. La alerta queda para lo que todavía
+          -- NO entró a la cola; el pendiente real (asignarlo a un manifiesto)
+          -- se sigue viendo en el filtro Problema hasta que se resuelva.
+          AND c.estado <> 'Problema'
         ORDER BY g.fecha_guia DESC
         LIMIT 1000
     """) or []
@@ -21389,6 +21397,12 @@ def tr_alertas_json():
                 "guia_mas_reciente": r.get("guia_nudo"),
                 "fecha_guia":        chile_fmt_filter(r.get("fecha_guia"), "%d/%m/%Y")
                                      if r.get("fecha_guia") else None,
+                # FIX 2026-08-02 (Daniel): KOTRPCVH de la guía NO es el courier
+                # del despacho -- viene del WMS (CHECK), que es un sistema
+                # distinto del ERP (Random). Se renombra el campo para que la
+                # UI no lo pinte como si fuera el transportista. Se conserva
+                # `courier` por compatibilidad con cualquier consumidor viejo.
+                "wms":               r.get("codigo_transportista") or "—",
                 "courier":           r.get("codigo_transportista") or "—",
                 "n_guias":           0,
             }
@@ -21406,9 +21420,10 @@ def tr_alertas_json():
             "severidad": "danger",
             "titulo":    (f"{len(items_guia)} factura{'s' if len(items_guia) != 1 else ''} "
                           f"con guía pero sin gestión de despacho"),
-            "detalle":   ("El ERP confirma que ya salieron con guía real, pero nunca se "
-                          "asignaron a un manifiesto acá -- no hay courier, evidencia ni "
-                          "seguimiento registrado para el cliente."),
+            "detalle":   ("Salieron con guía de despacho real, pero nunca se asignaron a "
+                          "un manifiesto acá -- no hay courier, evidencia ni seguimiento "
+                          "registrado para el cliente. Al marcarlas Problema salen de "
+                          "este aviso y quedan en la cola del filtro Problema."),
             "n":         len(items_guia),
             "items":     items_guia,
         })

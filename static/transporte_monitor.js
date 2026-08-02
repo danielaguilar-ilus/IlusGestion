@@ -1855,7 +1855,13 @@ function renderAlertas() {
           return '<li>' + doc +
                  ' · <strong>' + esc(it.resumen) + '</strong>' +
                  ' · ' + esc(it.cliente) +
-                 (it.courier && it.courier !== '—' ? ' · ' + esc(it.courier) : '') +
+                 // FIX 2026-08-02 (Daniel: "¿cuándo te dije yo que el ERP
+                 // CHECK? Ese es el WMS. Random y Check son dos sistemas
+                 // diferentes: Random es ERP, Check es WMS"). Este campo es
+                 // KOTRPCVH de la guía -- NO es el courier del despacho, y
+                 // mostrarlo suelto al final de la línea lo hacía parecer uno.
+                 // Se etiqueta explícitamente como el sistema de origen.
+                 (it.wms && it.wms !== '—' ? ' · <span class="text-muted">WMS ' + esc(it.wms) + '</span>' : '') +
                  '</li>';
         }).join('');
 
