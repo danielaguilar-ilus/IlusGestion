@@ -569,13 +569,19 @@ class TestBulkSyncErp(unittest.TestCase):
             "Volvió a decidir el estado con saldo_zz (líneas de servicio). "
             "Ese es exactamente el bug de FCV 0000011152.",
         )
-        # El SQL tiene que calcular el flag sobre líneas NO-ZZ.
+        # El SQL tiene que calcular el flag sobre líneas NO-ZZ. Desde la
+        # optimización del 2026-08-02 eso vive en la agregación `fis` (una
+        # sola pasada por MAEDDO) en vez de un EXISTS correlacionado -- lo que
+        # importa es que siga excluyendo las líneas ZZ.
         self.assertIn("AS tiene_saldo_fisico", self.sql)
         self.assertRegex(
             _norm(self.sql),
-            r"FROM MAEDDO dsf.{0,400}?<> 'ZZ'",
-            "El EXISTS de tiene_saldo_fisico dejó de excluir las líneas ZZ.",
+            r"FROM MAEDDO d3.{0,300}?WHERE LEFT\(UPPER\(LTRIM\(RTRIM\(d3\.KOPRCT\)\)\), 2\) <> 'ZZ'",
+            "La agregación `fis` dejó de excluir las líneas ZZ: el saldo que "
+            "decide pendiente/entregado volvería a contaminarse con servicios.",
         )
+        self.assertIn("AS hay_saldo_fisico", self.sql,
+                      "`fis` dejó de calcular hay_saldo_fisico.")
 
     def test_documento_sin_lineas_fisicas_se_conserva_pendiente(self):
         """RED DE SEGURIDAD (Daniel 2026-08-01: "puede dejar a un cliente sin
@@ -587,11 +593,23 @@ class TestBulkSyncErp(unittest.TestCase):
         Ante la duda se conserva: un falso pendiente cuesta una revisión, un
         falso entregado cuesta un cliente sin su pedido.
         """
+        # La red de seguridad cambió de FORMA el 2026-08-02 (optimización: las
+        # 4 subconsultas correlacionadas pasaron a una sola agregación `fis`),
+        # pero el EFECTO debe ser el mismo: un documento sin ninguna línea de
+        # producto no aparece en `fis`, el LEFT JOIN lo deja en NULL, y ese
+        # NULL tiene que seguir contando como "conservar pendiente".
         self.assertRegex(
             _norm(self.sql),
-            r"OR NOT EXISTS \(.{0,300}?FROM MAEDDO dnf.{0,200}?<> 'ZZ'",
+            r"OR fis\.IDMAEEDO IS NULL.{0,80}?THEN 1 ELSE 0 END AS tiene_saldo_fisico",
             "El bulk sync perdió la red de seguridad para documentos sin "
-            "líneas de producto físico (puro servicio).",
+            "líneas de producto físico (puro servicio): sin ella caen a "
+            "'Despachado' y desaparecen de Pendientes con el trabajo sin hacer.",
+        )
+        # Y `fis` tiene que ser LEFT JOIN -- con un INNER, los documentos sin
+        # líneas de producto no llegarían nunca a evaluarse.
+        self.assertRegex(
+            _norm(self.sql), r"LEFT JOIN \(.{0,1500}?\) fis ON fis\.IDMAEEDO = h\.IDMAEEDO",
+            "La agregación `fis` dejó de ser LEFT JOIN.",
         )
         # El sync individual tiene que tener la MISMA red de seguridad.
         # (regex, no assertIn: entre el `if` y la asignación hay un comentario

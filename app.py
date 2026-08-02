@@ -20603,112 +20603,30 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             zz.valor_envio,
             zz.valor_retiro,
             zz.zz_skus,
-            -- PREVENTA 2026-06-13: 1 si alguna línea de PRODUCTO real (KOPRCT
-            -- que NO empieza con 'ZZ') pide más unidades de las que hay en
-            -- stock físico (MAEPR.STFI1). EXISTS correlacionado por documento;
-            -- el LEFT/COALESCE evita falsos negativos cuando el SKU no está en
-            -- MAEPR (producto sin ficha → stock 0 → si pide >0 cuenta preventa).
-            -- Read-only: solo SELECT, sin tokens prohibidos.
-            -- FIX 2026-08-01 (Daniel, informe oficial "compromisos no
-            -- despachados"): antes comparaba dp.CAPRCO1 (cantidad TOTAL de la
-            -- línea) contra el stock. Eso marcaba preventa a documentos cuyo
-            -- producto YA se despachó completo -- la cantidad total sigue
-            -- siendo alta aunque no quede nada por sacar. La regla real de
-            -- Daniel es "que tenga saldo positivo y no tenga stock", así que
-            -- se compara el SALDO (lo que falta despachar), no el total.
-            -- Medido contra el informe del ERP: 85 preventa reportadas vs 30
-            -- reales entre las facturas/boletas efectivamente pendientes.
-            CASE WHEN EXISTS (
-                SELECT 1
-                  FROM MAEDDO dp
-                  LEFT JOIN MAEPR pr
-                         ON LTRIM(RTRIM(pr.KOPR)) = LTRIM(RTRIM(dp.KOPRCT))
-                 WHERE dp.IDMAEEDO = h.IDMAEEDO
-                   AND LEFT(UPPER(LTRIM(RTRIM(dp.KOPRCT))), 2) <> 'ZZ'
-                   AND dp.CAPRCO1 - COALESCE(dp.CAPRAD1, 0)
-                                  - COALESCE(dp.CAPREX1, 0)
-                                  - COALESCE(dp.CAPRNC1, 0) > 0
-                   AND dp.CAPRCO1 - COALESCE(dp.CAPRAD1, 0)
-                                  - COALESCE(dp.CAPREX1, 0)
-                                  - COALESCE(dp.CAPRNC1, 0) > COALESCE(pr.STFI1, 0)
-            ) THEN 1 ELSE 0 END AS preventa_flag,
-            -- ── SALDO FÍSICO 2026-08-01 (Daniel, caso real FCV 0000011152 +
-            -- informe oficial del ERP "compromisos no despachados") ─────────
-            -- LA REGLA: "lo único que elimina el saldo es la guía". El saldo
-            -- que decide pendiente/entregado tiene que salir del PRODUCTO
-            -- FÍSICO, no de las líneas ZZ (servicios de flete/instalación).
-            --
-            -- El bug: saldo_zz (más abajo) agrega SOLO líneas ZZ -- el WHERE
-            -- de esa subconsulta filtra por la lista de SKUs ZZ antes de
-            -- sumar nada.
-            --
-            -- AVISO: en los comentarios de este SQL NO se puede escribir ni
-            -- una variable entre llaves (la f-string la interpola también
-            -- dentro de un comentario) ni un marcador de parámetro literal.
-            -- pymssql cuenta TODOS los marcadores del string, incluidos los
-            -- que están detrás de un guion doble, y si sobra aunque sea uno
-            -- la query entera revienta con "more placeholders in sql than
-            -- params available" y devuelve None -- fallo TOTAL y silencioso.
-            -- Pasó de verdad: el sync masivo quedó roto entre el 2026-08-01
-            -- y el 2026-08-02 (fallaba en 0,2s con "No se pudo conectar al
-            -- ERP" y el Monitor nunca actualizaba). Lo cubre el test
-            -- test_los_placeholders_del_sql_calzan_exactamente_con_los_params.
-            -- Cuando el ERP cierra contablemente la línea de servicio, ese
-            -- saldo llega a 0 y el documento caía en la pestaña Entregados con
-            -- la mercadería todavía en bodega. FCV 0000011152: BA005 con
-            -- saldo=1 (nunca salió) pero ZZENVIO/ZZINSTALACION en 0 -> figuraba
-            -- "Despachado". El propio informe del ERP la lista como pendiente.
-            --
-            -- Fórmula completa de Random (misma que _cubicador_fetch, ver
-            -- app.py:15639): CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1, con el
-            -- clamp por ESLIDO (línea cerrada en el ERP -> saldo 0 aunque los
-            -- números no cuadren). EXISTS correlacionado igual que
-            -- preventa_flag de arriba -- mismo costo, patrón ya probado.
-            --
-            -- RED DE SEGURIDAD (Daniel 2026-08-01: "puede pasar a llevar algún
-            -- compromiso de un cliente y dejarlo sin despacho... riesgo
-            -- reputacional"): el segundo NOT EXISTS mantiene en 1 los
-            -- documentos que NO tienen ninguna línea de producto físico --
-            -- típicamente puro servicio (solo ZZINSTALACION/ZZSERVTEC, sin
-            -- mercadería). Sin él, EXISTS daría 0 y esos documentos caerían a
-            -- "Despachado" desapareciendo de Pendientes, cuando en realidad
-            -- alguien todavía tiene que ir a instalar. Ante la duda se
-            -- conserva visible: un falso pendiente cuesta una revisión, un
-            -- falso entregado cuesta un cliente sin su pedido.
-            CASE WHEN EXISTS (
-                SELECT 1
-                  FROM MAEDDO dsf
-                 WHERE dsf.IDMAEEDO = h.IDMAEEDO
-                   AND LEFT(UPPER(LTRIM(RTRIM(dsf.KOPRCT))), 2) <> 'ZZ'
-                   AND UPPER(LTRIM(RTRIM(COALESCE(dsf.ESLIDO, '')))) NOT IN
-                       ('C', 'T', 'TOTAL', 'CERRADO', 'DESPACHADO')
-                   AND dsf.CAPRCO1 - COALESCE(dsf.CAPRAD1, 0)
-                                   - COALESCE(dsf.CAPREX1, 0)
-                                   - COALESCE(dsf.CAPRNC1, 0) > 0
-            ) OR NOT EXISTS (
-                SELECT 1
-                  FROM MAEDDO dnf
-                 WHERE dnf.IDMAEEDO = h.IDMAEEDO
-                   AND LEFT(UPPER(LTRIM(RTRIM(dnf.KOPRCT))), 2) <> 'ZZ'
-            ) THEN 1 ELSE 0 END AS tiene_saldo_fisico,
-            -- ── BODEGA DE ORIGEN 2026-08-02 (Daniel, FCV 0000011149: "esa
-            -- factura la sacaron no de la bodega dos, que es la principal,
-            -- sino de la bodega doce, que es del gimnasio") ─────────────────
-            -- Lista compacta de las bodegas DISTINTAS desde las que salen las
-            -- líneas de producto físico del documento (BOSULIDO en MAEDDO,
-            -- el mismo campo que ya se guarda por línea en
-            -- transport_commitment_lines). Ej: "2" o "2,12".
-            -- Se excluyen las líneas ZZ: un servicio no sale de una bodega.
-            -- Sin parámetros nuevos a propósito (todo literal): agregar un
-            -- marcador acá desalinearía la tupla de params y reventaría la
-            -- query entera -- ver el aviso de más arriba.
-            STUFF((SELECT ',' + y.b FROM (
-                      SELECT DISTINCT LTRIM(RTRIM(db.BOSULIDO)) AS b
-                        FROM MAEDDO db
-                       WHERE db.IDMAEEDO = h.IDMAEEDO
-                         AND LEFT(UPPER(LTRIM(RTRIM(db.KOPRCT))), 2) <> 'ZZ'
-                         AND LTRIM(RTRIM(COALESCE(db.BOSULIDO, ''))) <> ''
-                  ) y ORDER BY y.b FOR XML PATH('')), 1, 1, '') AS bodegas
+            -- ── LÍNEAS DE PRODUCTO FÍSICO: los 3 datos salen de UNA sola
+            -- agregación (`fis`, ver el LEFT JOIN más abajo), no de 4
+            -- subconsultas correlacionadas ─────────────────────────────────
+            -- PERF 2026-08-02: preventa_flag, tiene_saldo_fisico y bodegas
+            -- estaban cada uno como EXISTS/STUFF correlacionado por documento.
+            -- Sumado a que el JOIN de ZZ pasó a LEFT (para dejar entrar las
+            -- huérfanas), el motor evaluaba 4 subconsultas sobre MAEDDO por
+            -- CADA documento del rango -> el sync empezó a morir con
+            -- "Adaptive Server connection timed out" incluso en ventanas de 3
+            -- días. Ahora se leen de `fis`, que recorre MAEDDO una sola vez y
+            -- agrupa por documento (mismo patrón que la agregación `zz`).
+            CASE WHEN COALESCE(fis.hay_preventa, 0) = 1 THEN 1 ELSE 0 END AS preventa_flag,
+            -- tiene_saldo_fisico: 1 si hay producto pendiente O si el documento
+            -- NO tiene ninguna línea de producto (puro servicio). Esa segunda
+            -- mitad es la RED DE SEGURIDAD que pidió Daniel (2026-08-01: "puede
+            -- dejar a un cliente sin despacho... riesgo reputacional"): sin
+            -- ella un documento de pura instalación caería a "Despachado" y
+            -- desaparecería de Pendientes con el trabajo todavía sin hacer.
+            CASE WHEN COALESCE(fis.hay_saldo_fisico, 0) = 1
+                   OR fis.IDMAEEDO IS NULL
+                 THEN 1 ELSE 0 END AS tiene_saldo_fisico,
+            -- Bodegas de origen del producto físico (Daniel, FCV 0000011149:
+            -- "la sacaron de la bodega doce, que es del gimnasio").
+            fis.bodegas AS bodegas
         FROM MAEEDO h
         -- PERF 2026-06-13: UNA sola agregación de MAEDDO por documento (GROUP BY)
         -- en vez de 4 subqueries correlacionadas + EXISTS. El JOIN (no LEFT) ya
@@ -20751,6 +20669,46 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
         -- ya las lee con `or 0` / `or ""`, así que caen a 0 y a
         -- clasificacion='despacho', que es el default correcto para estos.
         ) zz ON zz.IDMAEEDO = h.IDMAEEDO
+        -- ── AGREGACIÓN DE LÍNEAS DE PRODUCTO FÍSICO (`fis`) ────────────────
+        -- Una sola pasada por MAEDDO (no-ZZ) agrupada por documento, que
+        -- resuelve de golpe los 3 datos que antes eran subconsultas
+        -- correlacionadas (ver el comentario de PERF en el SELECT):
+        --   hay_saldo_fisico -> ¿queda algo por despachar? (fórmula completa
+        --                       de Random + clamp por ESLIDO)
+        --   hay_preventa     -> ¿alguna línea pendiente pide más de lo que hay
+        --                       en stock? (MAEPR.STFI1; sin ficha = stock 0)
+        --   bodegas          -> lista de bodegas distintas de origen
+        -- Si un documento no tiene NINGUNA línea de producto, no aparece acá:
+        -- el LEFT JOIN deja fis.IDMAEEDO en NULL y el SELECT lo interpreta
+        -- como "puro servicio" (red de seguridad).
+        LEFT JOIN (
+            SELECT d3.IDMAEEDO,
+                MAX(CASE WHEN UPPER(LTRIM(RTRIM(COALESCE(d3.ESLIDO, '')))) NOT IN
+                              ('C', 'T', 'TOTAL', 'CERRADO', 'DESPACHADO')
+                          AND d3.CAPRCO1 - COALESCE(d3.CAPRAD1, 0)
+                                         - COALESCE(d3.CAPREX1, 0)
+                                         - COALESCE(d3.CAPRNC1, 0) > 0
+                         THEN 1 ELSE 0 END) AS hay_saldo_fisico,
+                MAX(CASE WHEN d3.CAPRCO1 - COALESCE(d3.CAPRAD1, 0)
+                                         - COALESCE(d3.CAPREX1, 0)
+                                         - COALESCE(d3.CAPRNC1, 0) > 0
+                          AND d3.CAPRCO1 - COALESCE(d3.CAPRAD1, 0)
+                                         - COALESCE(d3.CAPREX1, 0)
+                                         - COALESCE(d3.CAPRNC1, 0) > COALESCE(pr3.STFI1, 0)
+                         THEN 1 ELSE 0 END) AS hay_preventa,
+                STUFF((SELECT ',' + y.b FROM (
+                          SELECT DISTINCT LTRIM(RTRIM(db.BOSULIDO)) AS b
+                            FROM MAEDDO db
+                           WHERE db.IDMAEEDO = d3.IDMAEEDO
+                             AND LEFT(UPPER(LTRIM(RTRIM(db.KOPRCT))), 2) <> 'ZZ'
+                             AND LTRIM(RTRIM(COALESCE(db.BOSULIDO, ''))) <> ''
+                      ) y ORDER BY y.b FOR XML PATH('')), 1, 1, '') AS bodegas
+            FROM MAEDDO d3
+            LEFT JOIN MAEPR pr3
+                   ON LTRIM(RTRIM(pr3.KOPR)) = LTRIM(RTRIM(d3.KOPRCT))
+            WHERE LEFT(UPPER(LTRIM(RTRIM(d3.KOPRCT))), 2) <> 'ZZ'
+            GROUP BY d3.IDMAEEDO
+        ) fis ON fis.IDMAEEDO = h.IDMAEEDO
         LEFT JOIN MAEEDOOB o ON o.IDMAEEDO = h.IDMAEEDO
         -- (marcador huérfanas: el JOIN de arriba pasó a LEFT JOIN)
         -- Entidad/cliente. CLAVE 2026-06-13: el ENDO del documento es el KOEN
@@ -20794,20 +20752,9 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           -- El segundo caso está acotado a producto pendiente a propósito: sin
           -- ese filtro entraría CUALQUIER documento del ERP (servicios puros,
           -- documentos ya cerrados) y el Monitor se inundaría de ruido.
-          AND (
-                zz.IDMAEEDO IS NOT NULL
-             OR EXISTS (
-                    SELECT 1
-                      FROM MAEDDO dh
-                     WHERE dh.IDMAEEDO = h.IDMAEEDO
-                       AND LEFT(UPPER(LTRIM(RTRIM(dh.KOPRCT))), 2) <> 'ZZ'
-                       AND UPPER(LTRIM(RTRIM(COALESCE(dh.ESLIDO, '')))) NOT IN
-                           ('C', 'T', 'TOTAL', 'CERRADO', 'DESPACHADO')
-                       AND dh.CAPRCO1 - COALESCE(dh.CAPRAD1, 0)
-                                      - COALESCE(dh.CAPREX1, 0)
-                                      - COALESCE(dh.CAPRNC1, 0) > 0
-                )
-          )
+          -- (huérfanas) Se lee de la agregación `fis` en vez de repetir otro
+          -- EXISTS correlacionado -- ver el comentario de PERF en el SELECT.
+          AND (zz.IDMAEEDO IS NOT NULL OR COALESCE(fis.hay_saldo_fisico, 0) = 1)
         ORDER BY h.FEEMDO DESC
     """
 
