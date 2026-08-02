@@ -21475,6 +21475,109 @@ def tr_diagnostico_saldo_sin_guia():
                      "nota": "LIMIT 500 -- si n==500 el universo real puede ser mayor."})
 
 
+@app.route("/transporte/api/diagnostico/huerfanas")
+@login_required
+def tr_diagnostico_huerfanas():
+    """READ-ONLY (2026-08-01, Daniel): facturas/boletas con PRODUCTO FÍSICO
+    pendiente que NO tienen ninguna línea de servicio ZZ -- las "huérfanas".
+
+    El caso que describió Daniel: un cliente compra 3 veces y el despacho se
+    cobra en UNA sola factura. Las otras dos quedan sin línea ZZ. Como el
+    sync masivo entra por `JOIN (... WHERE KOPRCT IN (zz_in))` -- un INNER
+    JOIN sobre líneas ZZ (ver _tr_bulk_sync_erp_mysql) -- esos documentos
+    NUNCA llegan al Monitor: producto vendido, sin despachar, y el sistema
+    ni siquiera sabe que existen. Es el hueco con más riesgo reputacional:
+    nadie se entera hasta que el cliente reclama.
+
+    Este endpoint SOLO MIDE (no escribe, no cambia el filtro del sync). Vía
+    _random_sql_query -- canal único permitido al ERP, SELECT parametrizado.
+
+    Querystring: ?dias=N (default 120) para acotar la ventana de emisión.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+    try:
+        dias = max(1, min(int(request.args.get("dias", 120)), 730))
+    except (TypeError, ValueError):
+        dias = 120
+
+    zz_list = [s.upper() for s in ZZ_SKUS]
+    zz_in = ",".join(["%s"] * len(zz_list))
+    sql = f"""
+        SELECT TOP 500
+               LTRIM(RTRIM(h.TIDO)) AS TIDO,
+               LTRIM(RTRIM(h.NUDO)) AS NUDO,
+               h.FEEMDO,
+               LTRIM(RTRIM(COALESCE(en.NOKOEN, en.NOKOENAMP, ''))) AS cliente
+        FROM MAEEDO h
+        LEFT JOIN (
+            SELECT k, NOKOEN, NOKOENAMP FROM (
+                SELECT LTRIM(RTRIM(KOEN)) AS k, NOKOEN, NOKOENAMP,
+                       ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(KOEN)) ORDER BY SUEN) AS rn
+                FROM MAEEN WHERE LTRIM(RTRIM(KOEN)) <> ''
+            ) z WHERE z.rn = 1
+        ) en ON en.k = LTRIM(RTRIM(h.ENDO))
+        WHERE LTRIM(RTRIM(h.TIDO)) IN ('FCV', 'BLV')
+          AND h.FEEMDO >= DATEADD(day, -%s, GETDATE())
+          AND (h.ESDO IS NULL OR LTRIM(RTRIM(h.ESDO)) <> 'NULO')
+          AND EXISTS (
+              SELECT 1 FROM MAEDDO d
+               WHERE d.IDMAEEDO = h.IDMAEEDO
+                 AND LEFT(UPPER(LTRIM(RTRIM(d.KOPRCT))), 2) <> 'ZZ'
+                 AND UPPER(LTRIM(RTRIM(COALESCE(d.ESLIDO, '')))) NOT IN
+                     ('C', 'T', 'TOTAL', 'CERRADO', 'DESPACHADO')
+                 AND d.CAPRCO1 - COALESCE(d.CAPRAD1, 0)
+                               - COALESCE(d.CAPREX1, 0)
+                               - COALESCE(d.CAPRNC1, 0) > 0
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM MAEDDO zl
+               WHERE zl.IDMAEEDO = h.IDMAEEDO
+                 AND UPPER(LTRIM(RTRIM(zl.KOPRCT))) IN ({zz_in})
+          )
+        ORDER BY h.FEEMDO DESC
+    """
+    try:
+        rows = _random_sql_query(sql, tuple([dias] + zz_list), max_rows=500)
+    except PermissionError as pe:
+        return jsonify({"ok": False, "error": f"Bloqueado por seguridad SQL: {pe}"}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"ERP no disponible: {exc}"}), 503
+    rows = rows or []
+
+    # ¿Cuáles de esas ya existen en el Monitor? (deberían ser 0 -- si alguna
+    # aparece, entró por importación manual o por el sync individual.)
+    en_ilus = set()
+    if rows:
+        _pairs = [(r.get("TIDO"), (r.get("NUDO") or "").strip()) for r in rows]
+        _ph = ",".join(["(%s,%s)"] * len(_pairs))
+        _flat = [x for p in _pairs for x in p]
+        try:
+            _ex = mysql_fetchall(
+                f"SELECT tido, nudo FROM transport_commitments WHERE (tido, nudo) IN ({_ph})",
+                tuple(_flat)) or []
+            en_ilus = {(e["tido"], (e["nudo"] or "").strip()) for e in _ex}
+        except Exception:
+            pass
+
+    items = [{
+        "documento":     f"{r.get('TIDO')} {(r.get('NUDO') or '').strip()}",
+        "cliente":       (r.get("cliente") or "").strip() or "—",
+        "fecha_emision": chile_fmt_filter(r.get("FEEMDO"), "%d/%m/%Y") if r.get("FEEMDO") else None,
+        "ya_en_monitor": (r.get("TIDO"), (r.get("NUDO") or "").strip()) in en_ilus,
+    } for r in rows]
+    _invisibles = [i for i in items if not i["ya_en_monitor"]]
+    return jsonify({
+        "ok": True,
+        "dias": dias,
+        "n_total": len(items),
+        "n_invisibles": len(_invisibles),
+        "items": items,
+        "nota": ("TOP 500. 'invisibles' = con producto pendiente, sin línea ZZ y "
+                 "sin fila en el Monitor: hoy nadie las ve."),
+    })
+
+
 @app.route("/transporte/api/compromisos")
 @_tr_required
 def tr_compromisos_json():
