@@ -22061,7 +22061,13 @@ def tr_compromisos_json():
         # Bodegas de origen del documento (ver campos "bodegas"/"bodega_alerta"
         # más abajo). Se normalizan a string sin espacios para comparar contra
         # TR_BODEGA_PRINCIPAL sin sorpresas de tipo ni de padding.
-        _bodegas_doc = [b.strip() for b in (r.get("bodegas") or "").split(",") if b.strip()]
+        # FIX 2026-08-02 (visto al cargar el histórico): el ERP devuelve la
+        # bodega con ceros a la izquierda ("02"), y comparar "02" != "2" daba
+        # advertencia en TODAS las filas, incluida la bodega principal. Se
+        # normaliza quitando ceros a ambos lados antes de comparar.
+        _bodegas_doc = [b.strip().lstrip("0") or "0"
+                        for b in (r.get("bodegas") or "").split(",") if b.strip()]
+        _bod_principal = TR_BODEGA_PRINCIPAL.lstrip("0") or "0"
 
         fila_base = {
             "id":           r["id"],
@@ -22081,7 +22087,7 @@ def tr_compromisos_json():
             # la principal -- si salió mercadería de otra bodega hay que
             # mirarlo, aunque parte haya salido de la principal.
             "bodegas":      r.get("bodegas") or "",
-            "bodega_alerta": bool(_bodegas_doc and any(b != TR_BODEGA_PRINCIPAL for b in _bodegas_doc)),
+            "bodega_alerta": bool(_bodegas_doc and any(b != _bod_principal for b in _bodegas_doc)),
             "estado":       r["estado"] or "Pendiente",
             # Lo que se muestra en la columna ESTADO del Monitor: la realidad
             # logística. `estado_erp` queda disponible como dato secundario
