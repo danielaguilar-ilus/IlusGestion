@@ -417,6 +417,13 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
   box-shadow:0 1px 3px rgba(15,23,42,.1), 0 1px 2px rgba(15,23,42,.06);
   font-weight:700;
 }
+/* Toggle "Problema" (2026-08-01): no es parte del grupo de gestión
+   mutuamente excluyente -- se resalta en rojo/peligro cuando está activo,
+   distinto del resaltado neutro (blanco) de los demás segment-btn. */
+.tr-segment-btn-toggle.active {
+  background:#fee2e2; color:var(--ilus-red,#dc2626);
+  box-shadow:none;
+}
 .tr-segment-btn i { font-size:.9rem; }
 .tr-segment-badge {
   display:inline-flex; align-items:center; justify-content:center;

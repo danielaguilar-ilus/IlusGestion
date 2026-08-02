@@ -267,6 +267,66 @@ class TestRamosDeCommitment(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 1.b · _tr_ramo_where (Monitor por ramo, 2026-08-01)
+# ═════════════════════════════════════════════════════════════════════════════
+class TestTrRamoWhere(unittest.TestCase):
+    """_tr_ramo_where arma el fragmento SQL parametrizado que filtra el
+    Monitor por ramo SIN depender solo de `clasificacion` (columna colapsada
+    a 1 valor) -- agrega un OR contra zz_skus para que un documento con
+    zz_skus='ZZENVIO,ZZINSTALACION' aparezca tanto en Despacho como en
+    Instalación. Se prueba EJECUTANDO la función real (es pura: str in,
+    (str,list) out) contra un fake mysql_fetchall/fetchone -- no hace falta
+    MySQL real porque no toca la BD, solo arma el fragmento SQL."""
+
+    @classmethod
+    def setUpClass(cls):
+        _ramo_skus = None
+        for nodo in ast.walk(_arbol_app()):
+            if isinstance(nodo, ast.Assign):
+                for destino in nodo.targets:
+                    if isinstance(destino, ast.Name) and destino.id == "_RAMO_SKUS":
+                        _ramo_skus = ast.literal_eval(nodo.value)
+        if _ramo_skus is None:
+            raise AssertionError("No se encontró _RAMO_SKUS en app.py")
+        cls.fn = staticmethod(_extraer_funcion("_tr_ramo_where", extras={"_RAMO_SKUS": _ramo_skus}))
+
+    def test_ramo_vacio_no_filtra(self):
+        self.assertEqual(self.fn(""), (None, []))
+        self.assertEqual(self.fn(None), (None, []))
+
+    def test_despacho_agrega_or_contra_zzenvio(self):
+        sql, params = self.fn("despacho")
+        self.assertIn("clasificacion=%s", sql)
+        self.assertIn("zz_skus LIKE %s", sql)
+        self.assertIn(" OR ", sql)
+        self.assertEqual(params, ["despacho", "%ZZENVIO%"])
+
+    def test_instalacion_agrega_or_contra_zzinstalacion(self):
+        sql, params = self.fn("instalacion")
+        self.assertEqual(params, ["instalacion", "%ZZINSTALACION%"])
+
+    def test_retiro_agrega_or_contra_zzretiro(self):
+        sql, params = self.fn("retiro")
+        self.assertEqual(params, ["retiro", "%ZZRETIRO%"])
+
+    def test_mantencion_agrega_or_contra_los_tres_skus(self):
+        sql, params = self.fn("mantencion")
+        self.assertEqual(params, ["mantencion", "%ZZSERVTEC%", "%ZZINGREPUESTO%", "%ZZINGARREQUIP%"])
+        # clasificacion=%s OR (3 LIKE unidos por 2 " OR ") = 3 " OR " en total.
+        self.assertEqual(sql.count(" OR "), 3)
+
+    def test_garantia_sin_sku_asociado_usa_solo_columna_directa(self):
+        """garantia se asigna manual, no se deriva de ningún SKU -- no debe
+        agregar ningún OR contra zz_skus (evita falsos positivos)."""
+        sql, params = self.fn("garantia")
+        self.assertEqual((sql, params), ("clasificacion=%s", ["garantia"]))
+
+    def test_mayusculas_y_espacios_no_rompen_el_match(self):
+        sql, params = self.fn("  INSTALACION  ")
+        self.assertEqual(params, ["instalacion", "%ZZINSTALACION%"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # BLOQUE 2 · Constante ZZ_SKUS duplicada en 3 lugares
 # ═════════════════════════════════════════════════════════════════════════════
 class TestZZSkusDuplicada(unittest.TestCase):

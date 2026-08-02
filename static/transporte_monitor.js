@@ -1338,10 +1338,44 @@ function setVistaMonitor(btn, vista){
   renderAlertas();
 }
 
-// Sincronizar estado UI inicial al cargar (porque la vista viene de localStorage)
+// Ramo (tipo de servicio) actual — Despacho/Instalación/Retiro/Mantención/
+// Garantía, o '' = Todos. 2026-08-01, Daniel: restructuración del Monitor
+// con el ramo como eje principal de navegación (antes solo filtraba client-
+// side las filas ya cargadas; ahora es un parámetro real al backend, igual
+// que _vistaActual, y usa el mismo criterio multi-ramo que el resto de PR-B
+// -- ver _tr_ramo_where en app.py -- así un documento con despacho+
+// instalación aparece en AMBAS pestañas, no solo en la de mayor prioridad).
+// Al cargar la página, prioriza lo que venga en la URL (?clasificacion=,
+// por si se llegó desde el <select> viejo de filtros o un link directo)
+// sobre lo guardado en localStorage.
+var _ramoActual = (function(){
+  try {
+    var porUrl = new URLSearchParams(window.location.search).get('clasificacion');
+    if (porUrl != null) return porUrl;
+    return localStorage.getItem('tr_ramo_actual') || '';
+  } catch(e){ return ''; }
+})();
+
+function setRamoMonitor(btn, ramo){
+  _ramoActual = ramo || '';
+  try { localStorage.setItem('tr_ramo_actual', _ramoActual); } catch(e){}
+  document.querySelectorAll('.tr-tab').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  else {
+    var target = document.querySelector('.tr-tab[data-clasif="' + _ramoActual + '"]');
+    if (target) target.classList.add('active');
+  }
+  cargarMonitor();
+}
+
+// Sincronizar estado UI inicial al cargar (porque la vista/ramo vienen de
+// localStorage o de la URL).
 document.addEventListener('DOMContentLoaded', function(){
   document.querySelectorAll('.tr-segment-btn, .btn-vista').forEach(function(b){
     b.classList.toggle('active', b.dataset.vista === _vistaActual);
+  });
+  document.querySelectorAll('.tr-tab').forEach(function(b){
+    b.classList.toggle('active', (b.dataset.clasif || '') === _ramoActual);
   });
 });
 
@@ -1839,10 +1873,30 @@ function renderAlertas() {
     });
 }
 
+// Toggle "solo Problema" (2026-08-01) -- independiente del segmento de
+// gestión (pendiente/en_gestion/entregado son mutuamente excluyentes,
+// Problema no lo es: un ítem "en_gestion" puede tener un problema
+// reportado). Reutiliza el filtro `estado` que ya soporta el backend
+// (aplicado sobre estado_logistico, ver tr_compromisos_json) -- si el
+// operador tenía otro estado elegido en el <select> de arriba, este
+// toggle lo reemplaza mientras esté activo.
+var _soloProblemaActivo = false;
+function toggleSoloProblema(btn){
+  _soloProblemaActivo = !_soloProblemaActivo;
+  if (btn) btn.classList.toggle('active', _soloProblemaActivo);
+  cargarMonitor();
+}
+
 function cargarMonitor() {
   // Leer parámetros del formulario de filtros + agregar la vista actual
   var params = new URLSearchParams(window.location.search);
   params.set('vista', _vistaActual);
+  // Ramo (2026-08-01): _ramoActual manda por sobre lo que traiga la URL --
+  // así un clic en las pestañas Despacho/Instalación/etc. no necesita
+  // recargar la página (mismo patrón que _vistaActual con 'vista').
+  if (_ramoActual) params.set('clasificacion', _ramoActual);
+  else params.delete('clasificacion');
+  if (_soloProblemaActivo) params.set('estado', 'Problema');
   var url = '/transporte/api/compromisos?' + params.toString();
 
   fetch(url)
@@ -1867,6 +1921,7 @@ function cargarMonitor() {
         var cEnGestion = (d.conteos.en_gestion != null) ? d.conteos.en_gestion
                        : (d.conteos.parciales  || 0);
         setBadge('vbPendientes', d.conteos.pendientes || 0);
+        setBadge('vbPreventa',   d.conteos.preventa   || 0);
         setBadge('vbEnGestion',  cEnGestion);
         setBadge('vbEntregados', d.conteos.entregados || 0);
         setBadge('vbTodos',      d.conteos.total      || 0);
@@ -1901,6 +1956,20 @@ function cargarMonitor() {
           try { (_monitorData || []).forEach(function(c){ if (c.preventa) preventa++; }); } catch(e){}
         }
         setBadge('kpiPreventa', preventa || 0);
+
+        // Badges de las pestañas de RAMO (2026-08-01) -- vienen del backend
+        // (conteos_ramo), NO de contar filas del DOM: así reflejan el total
+        // real de cada ramo (incluye documentos multi-ramo en AMBOS conteos,
+        // y no se acotan a los 500 resultados que trae la tabla). Reemplaza
+        // a _actualizarContadoresTabs(), que contaba desde el DOM y por eso
+        // no podía ver más allá de lo ya renderizado.
+        var cr = d.conteos_ramo || {};
+        setBadge('cntDespacho',    cr.despacho    || 0);
+        setBadge('cntRetiro',      cr.retiro      || 0);
+        setBadge('cntInstalacion', cr.instalacion || 0);
+        setBadge('cntMantencion',  cr.mantencion  || 0);
+        setBadge('cntGarantia',    cr.garantia    || 0);
+        setBadge('cntTodos',       d.conteos.total || 0);
       }
       // Marcar timestamp de sync para el indicador en el header
       _trLastSync = Date.now();
@@ -2002,14 +2071,18 @@ function cargarMonitor() {
             var cli    = (c.cliente||'').replace(/"/g,'&quot;');
             var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\'");
             var cliEsc = (c.cliente||'').replace(/'/g,"\\'");
-            // PR-B: data-clasif ahora usa el ramo DE ESTA fila (ver arriba) --
-            // así las pestañas Despacho/Instalación/etc. y sus contadores
-            // (_actualizarContadoresTabs, calculados desde estas mismas
-            // filas del DOM) separan correctamente las 2 filas de un mismo
-            // documento con 2 ramos, en vez de mostrar ambas bajo la misma
-            // pestaña por heredar la clasificación única del documento.
+            // PR-B: data-clasif usa el ramo DE ESTA fila (post-manifiesto,
+            // 1 fila por ramo real -- ver arriba). data-clasifs (plural) trae
+            // TODOS los ramos del documento (2026-08-01, restructuración por
+            // ramo): antes de tener manifiesto, un documento con
+            // despacho+instalación solo colgaba de UN ramo (el de mayor
+            // prioridad) y el otro quedaba invisible en cualquier filtro
+            // client-side. El filtrado real por ramo ahora lo hace el
+            // backend (?clasificacion=), data-clasifs solo queda como dato
+            // auxiliar para estilos/depuración.
             return '<tr class="tr-monitor-row ' + rowFlowClass + '" data-id="' + c.id + '" ' +
               'data-clasif="' + (c.ramo || c.clasificacion || 'despacho') + '" ' +
+              'data-clasifs="' + ((c.ramos && c.ramos.length) ? c.ramos.join(',') : (c.ramo || c.clasificacion || 'despacho')) + '" ' +
               'data-en-manifiesto="' + (c.en_manifiesto ? '1' : '0') + '" ' +
               'data-label="' + lbl + '" data-cliente="' + cli + '">' +
 
@@ -2266,15 +2339,15 @@ function cargarMonitor() {
       }
       // Habilitar drag & drop en las filas
       initDragRows();
-      // Actualizar contadores de pestañas
-      _actualizarContadoresTabs();
-      // Re-aplicar filtro de pestaña activa
-      if (_tabClasif) {
-        var rows = document.querySelectorAll('#monitorTbody tr[data-clasif]');
-        rows.forEach(function(tr) {
-          tr.style.display = tr.dataset.clasif === _tabClasif ? '' : 'none';
-        });
-      }
+      // NOTA 2026-08-01: ya NO se re-filtra por _tabClasif ni se recalculan
+      // contadores desde el DOM acá -- el ramo ahora es un filtro real del
+      // backend (?clasificacion=, ver setRamoMonitor/_ramoActual), así que
+      // lo que llega en `d.compromisos` YA es exactamente lo que corresponde
+      // mostrar. Re-filtrar client-side con el criterio viejo (comparación
+      // exacta contra data-clasif, 1 solo valor) escondía de nuevo filas de
+      // documentos multi-ramo que el backend SÍ había incluido correctamente
+      // (ver _tr_ramo_where en app.py). Los badges de ramo se pintan arriba
+      // desde d.conteos_ramo (server-side, no cuenta filas del DOM).
       // Re-renderizar el tablero Kanban con la MISMA data (vista extra).
       renderKanban();
     })
@@ -2486,37 +2559,12 @@ function closePanel() {
   currentId = null;
 }
 
-// ── PESTAÑAS MONITOR ──────────────────────────────────────────────
-var _tabClasif = '';  // '' = todos
-
-function filtrarTabMonitor(btn, clasif) {
-  _tabClasif = clasif;
-  // Limpiar active de la nueva clase .tr-tab y de los legacy nav-link por si acaso
-  document.querySelectorAll('.tr-tab, #monitorTabs button').forEach(function(b){ b.classList.remove('active'); });
-  if (btn) btn.classList.add('active');
-  var rows = document.querySelectorAll('#monitorTbody tr[data-clasif]');
-  var visible = 0;
-  rows.forEach(function(tr) {
-    var match = !clasif || tr.dataset.clasif === clasif;
-    tr.style.display = match ? '' : 'none';
-    if (match) visible++;
-  });
-  document.getElementById('monitorCount').textContent = visible;
-}
-
-function _actualizarContadoresTabs() {
-  var cnt = {despacho:0,retiro:0,instalacion:0,mantencion:0,garantia:0,total:0};
-  document.querySelectorAll('#monitorTbody tr[data-clasif]').forEach(function(tr) {
-    var c = tr.dataset.clasif || 'despacho';
-    cnt[c] = (cnt[c]||0)+1; cnt.total++;
-  });
-  ['despacho','retiro','instalacion','mantencion','garantia'].forEach(function(k) {
-    var el = document.getElementById('cnt'+k.charAt(0).toUpperCase()+k.slice(1));
-    if (el) el.textContent = cnt[k]||0;
-  });
-  var el = document.getElementById('cntTodos');
-  if (el) el.textContent = cnt.total;
-}
+// ── PESTAÑAS DE RAMO ──────────────────────────────────────────────
+// 2026-08-01: el filtrado client-side (filtrarTabMonitor/_tabClasif) y el
+// conteo por DOM (_actualizarContadoresTabs) se retiraron -- el ramo ahora
+// es un filtro real del backend (ver setRamoMonitor/_ramoActual arriba,
+// junto a setVistaMonitor) y los badges vienen de d.conteos_ramo, no de
+// contar filas ya renderizadas. Ver el comentario en cargarMonitor().
 
 // ── DRAG & DROP — Asignar a manifiesto ──────────────────────────
 var _dragCid   = null;   // commitment_id siendo arrastrado (arrastre activo)

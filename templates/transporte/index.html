@@ -234,6 +234,7 @@
     <div class="trx-kpi-d">Más días sin gestión — prioridad</div>
   </div>
   <div class="trx-kpi" style="border-left:4px solid #7c3aed" role="button" tabindex="0"
+       onclick="setVistaMonitorById('preventa')"
        title="Pedidos sin stock suficiente — esperan reposición (preventa)">
     <div class="trx-kpi-k"><i class="bi bi-hourglass-bottom"></i>Preventa</div>
     <div class="trx-kpi-v" id="kpiPreventa">—</div>
@@ -287,12 +288,16 @@
 </form>
 
 {# ─────────────────────────────────────────────────────────────
-   Pestañas de GESTIÓN (modelo de 3 estados) — segmented control
-   Pendientes → con saldo y SIN manifiesto (a atacar)
-   En gestión → en un manifiesto (en preparación)
-   Entregados → sin saldo · Todos
-   El backend resuelve esto con ?vista=pendientes|en_gestion|entregados|todos
-   y devuelve conteos.pendientes/en_gestion/entregados/total.
+   RESTRUCTURACIÓN 2026-08-01 (Daniel, con diagrama en vivo): el eje
+   PRINCIPAL de navegación ahora es el RAMO -- Despacho/Retiro/Instalación/
+   Mantención/Garantía -- y dentro de cada ramo se ve el estado de gestión
+   (Pendiente/Preventa/En gestión/Entregado/Todos). Antes era al revés
+   (gestión arriba, ramo como pestaña secundaria solo client-side) y un
+   documento con 2 ramos (ej. despacho+instalación) podía desaparecer de
+   la pestaña de uno de ellos -- ver _tr_ramo_where en app.py.
+   El backend resuelve ambos ejes con ?vista=...&clasificacion=... y
+   devuelve conteos (por estado) + conteos_ramo (por ramo, sea cual sea
+   el estado actual).
    ───────────────────────────────────────────────────────────── #}
 {# ─────────────────────────────────────────────────────────────
    ALERTAS OPERATIVAS (2026-08-01) — solo aparece si hay algo trabado.
@@ -304,15 +309,68 @@
    ───────────────────────────────────────────────────────────── #}
 <div id="trAlertas" class="tr-alertas" style="display:none"></div>
 
+{# ── Eje PRINCIPAL: ramo (tipo de servicio) ──────────────────────────
+   Server-side de verdad (setRamoMonitor → cargarMonitor con
+   ?clasificacion=), no un filtro client-side de filas ya cargadas -- así
+   un documento con 2+ ramos aparece en TODAS las pestañas que le
+   corresponden, no solo en la de mayor prioridad. Badges desde
+   d.conteos_ramo (cuentan el universo completo, no solo lo renderizado). #}
+<div class="tr-tabs">
+  <button class="tr-tab active" data-clasif="" onclick="setRamoMonitor(this,'')">
+    <i class="bi bi-grid-3x3-gap"></i><span>Todos</span>
+    <span class="tr-tab-count" id="cntTodos">…</span>
+  </button>
+  <button class="tr-tab" data-clasif="despacho" onclick="setRamoMonitor(this,'despacho')">
+    <i class="bi bi-box-arrow-right"></i><span>Despacho</span>
+    <span class="tr-tab-count" id="cntDespacho">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="instalacion" onclick="setRamoMonitor(this,'instalacion')">
+    <i class="bi bi-tools"></i><span>Instalación</span>
+    <span class="tr-tab-count" id="cntInstalacion">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="retiro" onclick="setRamoMonitor(this,'retiro')">
+    <i class="bi bi-arrow-return-left"></i><span>Retiro</span>
+    <span class="tr-tab-count" id="cntRetiro">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="mantencion" onclick="setRamoMonitor(this,'mantencion')">
+    <i class="bi bi-wrench-adjustable"></i><span>Mantención</span>
+    <span class="tr-tab-count" id="cntMantencion">0</span>
+  </button>
+  <button class="tr-tab" data-clasif="garantia" onclick="setRamoMonitor(this,'garantia')">
+    <i class="bi bi-shield-check"></i><span>Garantía</span>
+    <span class="tr-tab-count" id="cntGarantia">0</span>
+  </button>
+</div>
+{# Mantengo el #monitorTabs vacío fuera del DOM por compat con JS que pueda
+   estar buscándolo. #}
+<ul id="monitorTabs" style="display:none"></ul>
+
+{# ── Eje SECUNDARIO: estado de gestión, dentro del ramo elegido arriba ──
+   Pendiente → con saldo y SIN manifiesto (a atacar)
+   Preventa  → sin stock suficiente (2026-08-01: antes solo era un número
+               informativo en el KPI, sin filtro clicable -- "todavía no veo
+               un filtro que me indique las preventas")
+   En gestión → en un manifiesto (en preparación)
+   Entregado  → sin saldo, o manifiesto 100% cerrado · Todos
+   El backend resuelve esto con ?vista=pendientes|preventa|en_gestion|
+   entregados|todos (siempre combinado con el ?clasificacion= del ramo
+   activo) y devuelve conteos.{pendientes,preventa,en_gestion,entregados}. #}
 <div class="tr-segment">
-  <span class="tr-segment-label">Gestión</span>
+  <span class="tr-segment-label">Estado</span>
   <div class="tr-segment-group" role="tablist">
     <button type="button" class="tr-segment-btn active" data-vista="pendientes"
             onclick="setVistaMonitor(this,'pendientes')" role="tab"
             title="Con saldo y sin manifiesto — hay que atacar">
       <i class="bi bi-hourglass-split"></i>
-      <span>Pendientes</span>
+      <span>Pendiente</span>
       <span class="tr-segment-badge tr-segment-badge-red" id="vbPendientes">0</span>
+    </button>
+    <button type="button" class="tr-segment-btn" data-vista="preventa"
+            onclick="setVistaMonitor(this,'preventa')" role="tab"
+            title="Sin stock suficiente — esperan reposición">
+      <i class="bi bi-hourglass-bottom"></i>
+      <span>Preventa</span>
+      <span class="tr-segment-badge" style="background:#ede9fe;color:#7c3aed" id="vbPreventa">0</span>
     </button>
     <button type="button" class="tr-segment-btn" data-vista="en_gestion"
             onclick="setVistaMonitor(this,'en_gestion')" role="tab"
@@ -324,7 +382,7 @@
     <button type="button" class="tr-segment-btn" data-vista="entregados"
             onclick="setVistaMonitor(this,'entregados')" role="tab">
       <i class="bi bi-check2-all"></i>
-      <span>Entregados</span>
+      <span>Entregado</span>
       <span class="tr-segment-badge tr-segment-badge-green" id="vbEntregados">0</span>
     </button>
     <button type="button" class="tr-segment-btn" data-vista="todos"
@@ -332,6 +390,18 @@
       <i class="bi bi-list-ul"></i>
       <span>Todos</span>
       <span class="tr-segment-badge tr-segment-badge-gray" id="vbTodos">0</span>
+    </button>
+    {# Acceso rápido a "Problema" (2026-08-01, Daniel: "también hay que ver
+       si hay algo con problema"). Distinto de los botones de arriba: no es
+       una gestión (pendiente/en_gestion/entregado son mutuamente
+       excluyentes y particionan el universo), es el estado LOGÍSTICO
+       puntual de un ítem -- se puede combinar con cualquiera de ellos, por
+       eso es un toggle aparte, no un 6º botón del mismo grupo. #}
+    <button type="button" class="tr-segment-btn tr-segment-btn-toggle" id="btnSoloProblema"
+            onclick="toggleSoloProblema(this)"
+            title="Mostrar solo documentos con 'Problema' reportado">
+      <i class="bi bi-exclamation-triangle"></i>
+      <span>Problema</span>
     </button>
   </div>
 
@@ -351,42 +421,6 @@
     </button>
   </div>
 </div>
-
-{# CSS movido a static/transporte_monitor.css — ver el link del inicio del bloque content. #}
-
-{# CSS movido a static/transporte_monitor.css — ver el link del inicio del bloque content. #}
-
-{# ── Pestañas de clasificación (Despachos/Retiros/Instalación/Mantención/Garantía) ── #}
-<div class="tr-tabs">
-  <button class="tr-tab active" data-clasif="" onclick="filtrarTabMonitor(this,'')">
-    <i class="bi bi-grid-3x3-gap"></i><span>Todos</span>
-    <span class="tr-tab-count" id="cntTodos">…</span>
-  </button>
-  <button class="tr-tab" data-clasif="despacho" onclick="filtrarTabMonitor(this,'despacho')">
-    <i class="bi bi-box-arrow-right"></i><span>Despachos</span>
-    <span class="tr-tab-count" id="cntDespacho">0</span>
-  </button>
-  <button class="tr-tab" data-clasif="retiro" onclick="filtrarTabMonitor(this,'retiro')">
-    <i class="bi bi-arrow-return-left"></i><span>Retiros</span>
-    <span class="tr-tab-count" id="cntRetiro">0</span>
-  </button>
-  <button class="tr-tab" data-clasif="instalacion" onclick="filtrarTabMonitor(this,'instalacion')">
-    <i class="bi bi-tools"></i><span>Instalación</span>
-    <span class="tr-tab-count" id="cntInstalacion">0</span>
-  </button>
-  <button class="tr-tab" data-clasif="mantencion" onclick="filtrarTabMonitor(this,'mantencion')">
-    <i class="bi bi-wrench-adjustable"></i><span>Mantención</span>
-    <span class="tr-tab-count" id="cntMantencion">0</span>
-  </button>
-  <button class="tr-tab" data-clasif="garantia" onclick="filtrarTabMonitor(this,'garantia')">
-    <i class="bi bi-shield-check"></i><span>Garantía</span>
-    <span class="tr-tab-count" id="cntGarantia">0</span>
-  </button>
-</div>
-{# Mantengo el #monitorTabs vacío fuera del DOM para compat con JS que pueda
-   estar buscándolo, pero el visual ahora es .tr-tabs. La función
-   filtrarTabMonitor() usa .tr-tab classes directamente. #}
-<ul id="monitorTabs" style="display:none"></ul>
 
 {# ── Tabla desktop ──
    Daniel: "está en blanco, como muy delgado, no se percibe" — .tr-table

@@ -19727,6 +19727,38 @@ def _tr_ramo_label(ramo):
     return _RAMO_LABELS.get(ramo, ramo or "despacho")
 
 
+# SKUs que identifican cada ramo -- mismo mapeo que _clasifs_from_skus_multi,
+# pero expresado como fragmento SQL parametrizado (Monitor, 2026-08-01,
+# Daniel: reestructuración por ramo). Se usa para NO depender solo de
+# transport_commitments.clasificacion (columna de 1 solo valor, colapsada por
+# prioridad -- ver _clasif_from_skus) al filtrar por ramo: un documento con
+# zz_skus='ZZENVIO,ZZINSTALACION' tiene clasificacion='instalacion' (gana
+# prioridad) y quedaría invisible en el filtro de Despacho si solo se mirara
+# esa columna. Acá se agrega un OR contra zz_skus para que aparezca en AMBOS.
+_RAMO_SKUS = {
+    "despacho":    ["ZZENVIO"],
+    "instalacion": ["ZZINSTALACION"],
+    "retiro":      ["ZZRETIRO"],
+    "mantencion":  ["ZZSERVTEC", "ZZINGREPUESTO", "ZZINGARREQUIP"],
+}
+
+
+def _tr_ramo_where(ramo):
+    """(fragmento_sql, params) para "este documento incluye el ramo X" --
+    parametrizado (REGLA #4: nunca f-string con input del usuario). Devuelve
+    (None, []) si `ramo` viene vacío (sin filtro)."""
+    ramo = (ramo or "").strip().lower()
+    if not ramo:
+        return None, []
+    skus = _RAMO_SKUS.get(ramo)
+    if not skus:
+        # "garantia" u otro ramo sin SKU asociado (se asigna manual, no por
+        # SKU) -- solo la columna directa.
+        return "clasificacion=%s", [ramo]
+    like_sql = " OR ".join(["zz_skus LIKE %s"] * len(skus))
+    return f"(clasificacion=%s OR {like_sql})", [ramo] + [f"%{s}%" for s in skus]
+
+
 def _tr_items_existentes_de_commitment(cid):
     """Todos los transport_manifest_items YA existentes de un commitment, en
     CUALQUIER manifiesto -- insumo de _tr_plan_ramo_manifest_item. 1 query,
@@ -21285,11 +21317,19 @@ def tr_compromisos_json():
     _SQL_PENDIENTE = f"(tiene_saldo=1 AND {_NOT_EN_MANIF})"
     _SQL_ENGESTION = f"({_EN_MANIF_ACTIVO})"
     _SQL_ENTREGADO = f"((tiene_saldo=0 AND {_NOT_EN_MANIF}) OR ({_EN_MANIF} AND NOT ({_EN_MANIF_ACTIVO})))"
+    # Preventa (2026-08-01, Daniel: "todavía no veo un filtro que me indique
+    # las preventas") -- mismo predicado que ya usaban los conteos
+    # (`preventa=1`, ver más abajo), ahora también disponible como vista
+    # clicable, no solo como número informativo.
+    _SQL_PREVENTA  = "(preventa=1)"
     # Filtro por vista (categoría del flujo)
     _vista_es_pendiente = False
     if vista == "pendientes":
         where.append(_SQL_PENDIENTE)
         _vista_es_pendiente = True
+    elif vista == "preventa":
+        where.append(_SQL_PREVENTA)
+        _vista_es_pendiente = True   # mismo trato de fecha/orden que pendientes
     elif vista in ("en_gestion", "parciales"):   # compat: 'parciales' → en_gestion
         where.append(_SQL_ENGESTION)
     elif vista == "entregados":
@@ -21308,7 +21348,13 @@ def tr_compromisos_json():
     # el valor elegido en el dropdown contra un dato distinto al que se ve en
     # pantalla. El filtro real se aplica sobre `result` después de calcular
     # estado_logistico para cada fila (ver más abajo, antes de los conteos).
-    if clasif: where.append("clasificacion=%s"); params.append(clasif)
+    # FIX 2026-08-01 (Daniel, restructuración por ramo): antes filtraba solo
+    # por la columna colapsada `clasificacion` -- un documento con
+    # zz_skus='ZZENVIO,ZZINSTALACION' (clasificacion='instalacion', gana
+    # prioridad) desaparecía del filtro "Despacho". _tr_ramo_where agrega el
+    # OR contra zz_skus para que aparezca en TODOS sus ramos reales.
+    _ramo_sql, _ramo_params = _tr_ramo_where(clasif)
+    if _ramo_sql: where.append(_ramo_sql); params.extend(_ramo_params)
     if q:
         where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; params += [qp,qp,qp,qp,qp]
@@ -21519,6 +21565,17 @@ def tr_compromisos_json():
             # estado del ERP, que para este caso es el único dato que hay.
             estado_logistico = r["estado"] or "Despachado"
 
+        # Ramos MÚLTIPLES del documento completo (2026-08-01, Daniel:
+        # restructuración por ramo del Monitor) -- usa el mismo criterio que
+        # _clasifs_from_skus_multi (fuente única, ver app.py ~19672), NO la
+        # columna `clasificacion` colapsada a 1 valor. Así una fila
+        # PRE-manifiesto con zz_skus='ZZENVIO,ZZINSTALACION' se puede filtrar
+        # tanto por "Despacho" como por "Instalación" en el frontend, sin
+        # esperar a que se le asigne manifiesto (ver expansión PR-B abajo,
+        # que solo aplica post-manifiesto).
+        _ramos_doc = _clasifs_from_skus_multi(
+            [s for s in (r.get("zz_skus") or "").split(",") if s.strip()])
+
         fila_base = {
             "id":           r["id"],
             "tido":         r["tido"],
@@ -21543,6 +21600,10 @@ def tr_compromisos_json():
             # documento sin manifest_items todavía, cae al mismo valor que
             # `clasificacion` (mejor dato disponible antes de asignar).
             "ramo":         r["clasificacion"] or "despacho",
+            # TODOS los ramos del documento completo (lista, no colapsada) --
+            # ver comentario arriba. Una fila expandida post-manifiesto (2+
+            # items reales) se corrige más abajo a su propio ramo único.
+            "ramos":        _ramos_doc,
             "guia_numero":  r.get("guia_numero") or "",
             "cobertura_pct":float(r.get("cobertura_pct") or 0),
             "tiene_saldo":  tiene_saldo,
@@ -21563,12 +21624,14 @@ def tr_compromisos_json():
             # subqueries "más reciente" de arriba) -- solo se le agrega ramo.
             if _items_r:
                 fila_base["ramo"] = _items_r[0].get("ramo") or fila_base["ramo"]
+                fila_base["ramos"] = [fila_base["ramo"]]
             result.append(fila_base)
         else:
             # Multi-ramo con 2+ manifest_items reales: 1 fila por item.
             for _idx, _it in enumerate(_items_r):
                 _fila = dict(fila_base)
                 _fila["ramo"] = _it.get("ramo") or fila_base["ramo"]
+                _fila["ramos"] = [_fila["ramo"]]
                 if _idx == 0:
                     # El más reciente ya coincide con fila_base (mismo
                     # criterio ORDER BY id DESC LIMIT 1 de las subqueries) --
@@ -21599,7 +21662,8 @@ def tr_compromisos_json():
     # Conteos por categoría — independientes del filtro `vista` aplicado.
     # Permite al frontend mostrar badge "Pendientes: 12" sin segunda llamada.
     base_where, base_params = ["tido <> 'GDV'"], []   # conteos también ocultan guías
-    if clasif: base_where.append("clasificacion=%s"); base_params.append(clasif)
+    _ramo_sql, _ramo_params = _tr_ramo_where(clasif)
+    if _ramo_sql: base_where.append(_ramo_sql); base_params.extend(_ramo_params)
     if q:
         base_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; base_params += [qp,qp,qp,qp,qp]
@@ -21629,7 +21693,8 @@ def tr_compromisos_json():
     # base_where de fecha, para que un pedido activo hoy no desaparezca solo
     # porque se emitió fuera del rango de fechas elegido.
     _eg_where, _eg_params = ["tido <> 'GDV'"], []
-    if clasif: _eg_where.append("clasificacion=%s"); _eg_params.append(clasif)
+    _ramo_sql, _ramo_params = _tr_ramo_where(clasif)
+    if _ramo_sql: _eg_where.append(_ramo_sql); _eg_params.extend(_ramo_params)
     if q:
         _eg_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; _eg_params += [qp,qp,qp,qp,qp]
@@ -21643,7 +21708,8 @@ def tr_compromisos_json():
     # criterio que en_gestion arriba -- "entregado" tampoco se acota por
     # fecha de emisión, se cuenta aparte sin base_where de fecha.
     _ent_where, _ent_params = ["tido <> 'GDV'"], []
-    if clasif: _ent_where.append("clasificacion=%s"); _ent_params.append(clasif)
+    _ramo_sql, _ramo_params = _tr_ramo_where(clasif)
+    if _ramo_sql: _ent_where.append(_ramo_sql); _ent_params.extend(_ramo_params)
     if q:
         _ent_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; _ent_params += [qp,qp,qp,qp,qp]
@@ -21663,7 +21729,8 @@ def tr_compromisos_json():
     # que dejaba de pedir atención para siempre salvo que alguien ampliara
     # el rango de fechas a mano.
     _pend_where, _pend_params = ["tido <> 'GDV'"], []
-    if clasif: _pend_where.append("clasificacion=%s"); _pend_params.append(clasif)
+    _ramo_sql, _ramo_params = _tr_ramo_where(clasif)
+    if _ramo_sql: _pend_where.append(_ramo_sql); _pend_params.extend(_ramo_params)
     if q:
         _pend_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; _pend_params += [qp,qp,qp,qp,qp]
@@ -21679,6 +21746,30 @@ def tr_compromisos_json():
     conteos_row["preventa"] = _pend_row.get("preventa")
     conteos_row["atrasados"] = _pend_row.get("atrasados")
 
+    # Conteos POR RAMO (2026-08-01, Daniel: restructuración del Monitor con
+    # el ramo -- Despacho/Instalación/Retiro/Mantención/Garantía -- como eje
+    # principal): total de documentos que incluyen cada ramo, para los
+    # badges de esas pestañas. Mismo criterio "sin fecha" que
+    # en_gestion/entregados/pendientes arriba (un documento viejo de un
+    # ramo no debe desaparecer del conteo de ese ramo solo por su
+    # antigüedad) -- respeta `q` (búsqueda de texto), NO respeta `clasif`
+    # (es justamente el conteo de CADA ramo posible, no del ya elegido).
+    # Un documento con 2+ ramos (ej. despacho+instalación) suma en AMBOS
+    # conteos -- no particionan como pendiente/en_gestion/entregado.
+    conteos_ramo = {}
+    for _rm in _RAMO_LABELS:
+        _rm_where, _rm_params = ["tido <> 'GDV'"], []
+        _rm_sql, _rm_sql_params = _tr_ramo_where(_rm)
+        _rm_where.append(_rm_sql); _rm_params.extend(_rm_sql_params)
+        if q:
+            _rm_where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
+            qp = f"%{q}%"; _rm_params += [qp,qp,qp,qp,qp]
+        _rm_row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM transport_commitments WHERE " + " AND ".join(_rm_where),
+            tuple(_rm_params)
+        ) or {}
+        conteos_ramo[_rm] = int(_rm_row.get("n") or 0)
+
     return jsonify({
         "ok": True,
         "compromisos": result,
@@ -21691,6 +21782,7 @@ def tr_compromisos_json():
             "atrasados":  int(conteos_row.get("atrasados") or 0),
             "total":      int(conteos_row.get("total") or 0),
         },
+        "conteos_ramo": conteos_ramo,
         "vista": vista or "default",
     })
 
