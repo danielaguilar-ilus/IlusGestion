@@ -17,6 +17,32 @@ document.addEventListener('DOMContentLoaded', function() {
   _actualizarFechaPreview();
 });
 
+// ── REGLA #4.3 punto 4 (Daniel 2026-08-01): "al limpiar un filtro, la tabla
+// se recarga". Los <select> y las fechas ya hacen submit al cambiar
+// (onchange en el template), pero el buscador de texto NO tenía handler: solo
+// reaccionaba a Enter. Vaciar la caja de búsqueda y quedarse mirando dejaba la
+// tabla con el resultado anterior — el mismo síntoma que Daniel reportó en el
+// Monitor. Se auto-envía SOLO al quedar vacío (no en cada tecla: acá el
+// filtrado es server-side con recarga completa de página, y recargar mientras
+// se escribe sería peor que el problema). Escribir sigue necesitando Enter o
+// el botón, como siempre.
+document.addEventListener('DOMContentLoaded', function() {
+  var form = document.getElementById('filtrosForm');
+  if (!form) return;
+  var q = form.querySelector('[name="q"]');
+  if (!q) return;
+  var _tenia = (q.value || '').trim() !== '';
+  q.addEventListener('input', function() {
+    var vacio = (q.value || '').trim() === '';
+    if (vacio && _tenia) {
+      _tenia = false;
+      form.submit();       // vuelve sin filtro (y `page` se pierde → página 1)
+    } else if (!vacio) {
+      _tenia = true;
+    }
+  });
+});
+
 // El <input type="date"> nativo muestra el formato del idioma del navegador/SO
 // (a veces en inglés, mm/dd/aaaa) — no se puede forzar desde el HTML. Daniel
 // 2026-07-22: mostrar SIEMPRE una vista en español (día/mes/año) debajo, sin

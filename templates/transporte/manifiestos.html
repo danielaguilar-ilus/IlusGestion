@@ -55,7 +55,9 @@
   <div class="tr-segment">
     <span class="tr-segment-label">Vista</span>
     <div class="tr-segment-group" role="tablist">
-      {% set _tab_qs = (('courier=' + filtros.courier + '&') if filtros.courier else '') ~ (('estado=' + filtros.estado + '&') if filtros.estado else '') ~ (('q=' + filtros.q + '&') if filtros.q else '') ~ (('desde=' + filtros.desde + '&') if (filtros.desde and not filtros.fecha_default_aplicado) else '') ~ (('hasta=' + filtros.hasta + '&') if filtros.hasta else '') %}
+      {# Mismo motivo que en el paginador de abajo: `estado` trae espacios/acentos
+         y `q` es texto libre — sin |urlencode el link de la pestaña se parte. #}
+      {% set _tab_qs = (('courier=' + filtros.courier|urlencode + '&') if filtros.courier else '') ~ (('estado=' + filtros.estado|urlencode + '&') if filtros.estado else '') ~ (('q=' + filtros.q|urlencode + '&') if filtros.q else '') ~ (('desde=' + filtros.desde|urlencode + '&') if (filtros.desde and not filtros.fecha_default_aplicado) else '') ~ (('hasta=' + filtros.hasta|urlencode + '&') if filtros.hasta else '') %}
       <a role="tab" class="tr-segment-btn {{ 'active' if filtros.vista == 'activos' }}"
          href="?{{ _tab_qs }}vista=activos"
          title="Manifiestos con al menos un item aún sin entregar">
@@ -113,7 +115,7 @@
   {% if filtros.vista == 'entregados' and filtros.fecha_default_aplicado %}
   <div class="man-filtro-fecha-hint">
     <i class="bi bi-info-circle me-1"></i>Mostrando solo los últimos 30 días por defecto (evita cargar todo el historial acumulado).
-    <a href="?{{ ('courier=' + filtros.courier + '&') if filtros.courier }}{{ ('estado=' + filtros.estado + '&') if filtros.estado }}{{ ('q=' + filtros.q + '&') if filtros.q }}vista=entregados&desde=2000-01-01">Ver todo el historial</a>
+    <a href="?{{ ('courier=' + filtros.courier|urlencode + '&') if filtros.courier }}{{ ('estado=' + filtros.estado|urlencode + '&') if filtros.estado }}{{ ('q=' + filtros.q|urlencode + '&') if filtros.q }}vista=entregados&desde=2000-01-01">Ver todo el historial</a>
   </div>
   {% endif %}
 
@@ -402,10 +404,12 @@
 
     {% if paginacion.total > 0 %}
     <div class="man-tabla-foot">
+      {# REGLA #4.3 (Daniel 2026-08-01): mismo pie de tabla que Etiquetas —
+         "Mostrando A–B de N" con el guion, no "A a B ... resultados". #}
       <div class="left">
-        Mostrando {{ ((paginacion.page - 1) * paginacion.page_size) + 1 }} a
-        {{ [paginacion.page * paginacion.page_size, paginacion.total]|min }}
-        de {{ paginacion.total }} resultados
+        Mostrando
+        <strong>{{ ((paginacion.page - 1) * paginacion.page_size) + 1 }}–{{ [paginacion.page * paginacion.page_size, paginacion.total]|min }}</strong>
+        de <strong>{{ paginacion.total }}</strong>
       </div>
       <div class="right">
         <select class="page-size-select"
@@ -416,24 +420,33 @@
           </option>
           {% endfor %}
         </select>
+        {# FIX 2026-08-01: los valores van URL-encoded. `estado` trae espacios y
+           acentos ("En preparación") y `q` es texto libre del operador (puede
+           traer &, # o espacios) — sin encodear, esos links de paginación se
+           partían y se perdía el filtro al cambiar de página. #}
         {% set base_qs = (
-          ('courier=' + filtros.courier) if filtros.courier else '',
-          ('estado=' + filtros.estado) if filtros.estado else '',
-          ('q=' + filtros.q) if filtros.q else '',
-          ('desde=' + filtros.desde) if (filtros.desde and not filtros.fecha_default_aplicado) else '',
-          ('hasta=' + filtros.hasta) if filtros.hasta else '',
-          ('vista=' + filtros.vista),
+          ('courier=' + filtros.courier|urlencode) if filtros.courier else '',
+          ('estado=' + filtros.estado|urlencode) if filtros.estado else '',
+          ('q=' + filtros.q|urlencode) if filtros.q else '',
+          ('desde=' + filtros.desde|urlencode) if (filtros.desde and not filtros.fecha_default_aplicado) else '',
+          ('hasta=' + filtros.hasta|urlencode) if filtros.hasta else '',
+          ('vista=' + filtros.vista|urlencode),
           ('page_size=' + (paginacion.page_size|string)),
         )|select|join('&') %}
         {% set sep = '&' if base_qs else '' %}
         <div class="pager">
           {% if paginacion.has_prev %}
           <a href="?{{ base_qs }}{{ sep }}page={{ paginacion.page - 1 }}" aria-label="Anterior">
-            <i class="bi bi-chevron-left"></i>
+            <i class="bi bi-chevron-left"></i><span class="pager-lbl">Anterior</span>
           </a>
           {% else %}
-          <span class="disabled"><i class="bi bi-chevron-left"></i></span>
+          <span class="disabled"><i class="bi bi-chevron-left"></i><span class="pager-lbl">Anterior</span></span>
           {% endif %}
+
+          {# Indicador "Pagina X de Y" del patrón de Etiquetas. Los números de
+             página de al lado NO se quitan (REGLA #4.2): siguen permitiendo
+             saltar directo a una página concreta. #}
+          <span class="pager-cur-lbl">Pagina {{ paginacion.page }} de {{ paginacion.total_pages }}</span>
 
           {% set window_start = [1, paginacion.page - 2]|max %}
           {% set window_end = [paginacion.total_pages, paginacion.page + 2]|min %}
@@ -457,11 +470,11 @@
           {% endif %}
 
           {% if paginacion.has_next %}
-          <a href="?{{ base_qs }}{{ sep }}page={{ paginacion.page + 1 }}" aria-label="Siguiente">
-            <i class="bi bi-chevron-right"></i>
+          <a href="?{{ base_qs }}{{ sep }}page={{ paginacion.page + 1 }}" aria-label="Siguiente" class="pager-next">
+            <span class="pager-lbl">Siguiente</span><i class="bi bi-chevron-right"></i>
           </a>
           {% else %}
-          <span class="disabled"><i class="bi bi-chevron-right"></i></span>
+          <span class="disabled"><span class="pager-lbl">Siguiente</span><i class="bi bi-chevron-right"></i></span>
           {% endif %}
         </div>
       </div>

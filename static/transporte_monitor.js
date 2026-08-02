@@ -1334,6 +1334,7 @@ function setVistaMonitor(btn, vista){
     var target = document.querySelector('.tr-segment-btn[data-vista="' + _vistaActual + '"]');
     if (target) target.classList.add('active');
   }
+  _trResetPagina();   // cambiar de vista siempre vuelve a la página 1
   cargarMonitor();
   renderAlertas();
 }
@@ -1365,6 +1366,14 @@ function setRamoMonitor(btn, ramo){
     var target = document.querySelector('.tr-tab[data-clasif="' + _ramoActual + '"]');
     if (target) target.classList.add('active');
   }
+  // Mantener el <select name="clasificacion"> del formulario de filtros en
+  // sincronía: es el MISMO parámetro que estas pestañas (?clasificacion=).
+  var _selCl = document.querySelector('form.tr-filters [name="clasificacion"]');
+  if (_selCl) {
+    var _ok = [].slice.call(_selCl.options).some(function(o){ return o.value === _ramoActual; });
+    _selCl.value = _ok ? _ramoActual : '';
+  }
+  _trResetPagina();   // cambiar de ramo siempre vuelve a la página 1
   cargarMonitor();
 }
 
@@ -1884,12 +1893,253 @@ var _soloProblemaActivo = false;
 function toggleSoloProblema(btn){
   _soloProblemaActivo = !_soloProblemaActivo;
   if (btn) btn.classList.toggle('active', _soloProblemaActivo);
+  _trResetPagina();   // cambiar de filtro siempre vuelve a la página 1
   cargarMonitor();
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  PAGINACIÓN DEL MONITOR (REGLA #4.3 — Daniel 2026-08-01: "hagámosla igual
+//  que las etiquetas... contenida en la página, no necesitamos darle scroll")
+//
+//  Mismo pie de tabla que Etiquetas (templates/_partials/pagination.html):
+//  "Mostrando A–B de N" · selector "N por pagina" · Anterior / Pagina X de Y /
+//  Siguiente. El backend (tr_compromisos_json) pagina sobre la lista YA
+//  filtrada por estado_logistico y YA expandida por ramo, así que estos
+//  números son FILAS reales de la grilla, no documentos del SQL.
+// ════════════════════════════════════════════════════════════════════════
+var _TR_PER_PAGE_OPTS = [50, 100, 200, 500];
+var _pagActual = 1;
+var _perPage = (function(){
+  try {
+    var v = parseInt(localStorage.getItem('tr_per_page'), 10);
+    return (_TR_PER_PAGE_OPTS.indexOf(v) >= 0) ? v : 100;
+  } catch(e) { return 100; }
+})();
+var _pagTotalPaginas = 1;
+var _pagTotalFilas   = 0;
+
+// Vuelve a la página 1. OBLIGATORIO al cambiar CUALQUIER filtro: si no, el
+// operador que estaba en la página 7 y filtra algo que ahora tiene 2 páginas
+// se queda mirando una tabla vacía sin entender por qué.
+function _trResetPagina() { _pagActual = 1; }
+
+function trPaginaAnterior() {
+  if (_pagActual <= 1) return;
+  _pagActual--;
+  cargarMonitor();
+}
+
+function trPaginaSiguiente() {
+  if (_pagActual >= _pagTotalPaginas) return;
+  _pagActual++;
+  cargarMonitor();
+}
+
+function trCambiarPerPage(v) {
+  var n = parseInt(v, 10);
+  _perPage = (_TR_PER_PAGE_OPTS.indexOf(n) >= 0) ? n : 100;
+  try { localStorage.setItem('tr_per_page', String(_perPage)); } catch(e){}
+  _trResetPagina();   // cambiar el tamaño de página siempre vuelve a la 1
+  cargarMonitor();
+}
+
+// Pinta el pie de tabla en los dos contenedores (desktop y mobile). Se llama
+// SIEMPRE tras cargar, incluso con 0 filas: el selector de tamaño tiene que
+// seguir accesible para poder volver a un tamaño manejable.
+function _trRenderPaginador() {
+  var desde = _pagTotalFilas ? ((_pagActual - 1) * _perPage) + 1 : 0;
+  var hasta = Math.min(_pagActual * _perPage, _pagTotalFilas);
+  var opts = _TR_PER_PAGE_OPTS.map(function(n){
+    return '<option value="' + n + '"' + (n === _perPage ? ' selected' : '') +
+           '>' + n + ' por pagina</option>';
+  }).join('');
+  var html =
+    '<div class="tr-pag">' +
+      '<div class="tr-pag-info">' +
+        (_pagTotalFilas
+          ? 'Mostrando <strong>' + desde + '–' + hasta + '</strong> de <strong>' + _pagTotalFilas + '</strong>'
+          : 'Sin resultados') +
+      '</div>' +
+      '<div class="tr-pag-ctrls">' +
+        '<select class="tr-pag-size" title="Filas por pagina" ' +
+                'onchange="trCambiarPerPage(this.value)">' + opts + '</select>' +
+        '<button type="button" class="tr-pag-btn" onclick="trPaginaAnterior()"' +
+          (_pagActual <= 1 ? ' disabled' : '') + '>' +
+          '<i class="bi bi-chevron-left"></i><span>Anterior</span></button>' +
+        '<span class="tr-pag-cur">Pagina ' + _pagActual + ' de ' + _pagTotalPaginas + '</span>' +
+        '<button type="button" class="tr-pag-btn tr-pag-btn-next" onclick="trPaginaSiguiente()"' +
+          (_pagActual >= _pagTotalPaginas ? ' disabled' : '') + '>' +
+          '<span>Siguiente</span><i class="bi bi-chevron-right"></i></button>' +
+      '</div>' +
+    '</div>';
+  ['trPaginador', 'trPaginadorMobile'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  FILTROS EN VIVO — FIX del bug reportado por Daniel (2026-08-01):
+//  "cuando filtras algo y sacas el filtro, no se limpia la tabla".
+//
+//  CAUSA REAL (encontrada leyendo el código, no supuesta): cargarMonitor()
+//  armaba sus parámetros ÚNICAMENTE desde `window.location.search`. La URL
+//  solo cambia al hacer SUBMIT del <form method="get"> de filtros, o sea con
+//  una recarga completa. TODO el resto del Monitor (pestañas de ramo,
+//  segmento de gestión, toggle "solo Problema", recarga post-sync,
+//  post-importar, post-agregar-a-manifiesto y ahora el paginador) llama a
+//  cargarMonitor() por AJAX SIN tocar la URL. Consecuencia: el operador
+//  vaciaba el buscador o ponía un <select> en "Todos" y la URL seguía
+//  llevando el filtro viejo, así que la siguiente consulta pedía otra vez
+//  EXACTAMENTE el mismo filtro — la tabla se quedaba con el resultado
+//  anterior aunque el control en pantalla ya estuviera vacío.
+//
+//  AGRAVANTE encontrado en el mismo camino: _ramoActual cae a
+//  localStorage.tr_ramo_actual cuando la URL no trae ?clasificacion=. El
+//  botón "Limpiar filtros" navegaba a /transporte/ SIN query — o sea que
+//  limpiaba la URL pero el ramo guardado se volvía a aplicar solo: se
+//  limpiaban los controles y la tabla seguía filtrada.
+//
+//  FIX: la fuente de verdad de los filtros pasa a ser el FORMULARIO VIVO.
+//  Un control vacío BORRA su parámetro (ya no se hereda de la URL) y todos
+//  los controles re-consultan al cambiar, también al quedar vacíos.
+// ════════════════════════════════════════════════════════════════════════
+function _trFormFiltros() {
+  return document.querySelector('form.tr-filters');
+}
+
+// Aplica sobre `params` lo que dicen los controles del formulario AHORA.
+// Clave del fix: un control vacío borra su parámetro en vez de dejar pasar
+// el valor viejo que venía en la URL.
+function _trAplicarFiltrosDelForm(params) {
+  var form = _trFormFiltros();
+  if (!form) return params;   // sin formulario: comportamiento de antes
+  ['q', 'estado', 'clasificacion'].forEach(function(k){
+    var el = form.querySelector('[name="' + k + '"]');
+    if (!el) return;
+    var v = (el.value || '').trim();
+    if (v) params.set(k, v);
+    else   params.delete(k);
+  });
+  // Las FECHAS son distintas: en el backend "parámetro ausente" NO es lo mismo
+  // que "parámetro vacío" — ausente aplica el default de últimos 30 días,
+  // vacío significa sin filtro de fecha (ver tr_compromisos_json). Se manda
+  // siempre explícito para que lo que se ve en pantalla (inputs vacíos) sea
+  // exactamente lo que hace el backend (sin filtrar por fecha).
+  ['fecha_desde', 'fecha_hasta'].forEach(function(k){
+    var el = form.querySelector('[name="' + k + '"]');
+    if (el) params.set(k, (el.value || '').trim());
+  });
+  // `periodo` (chips "Último mes / 3 meses / Este año / Todo") ya viene
+  // RESUELTO dentro de los inputs de fecha: el backend calcula fecha_desde/
+  // fecha_hasta a partir de él y los renderiza en el formulario. Si se dejara
+  // en los params, el backend le daría prioridad y las fechas del formulario
+  // no harían nada (el operador movería una fecha y no pasaría nada).
+  params.delete('periodo');
+  return params;
+}
+
+// Handlers en vivo. Se disparan SIEMPRE que cambia un control — también
+// cuando queda vacío, que era justo el caso roto.
+document.addEventListener('DOMContentLoaded', function(){
+  var form = _trFormFiltros();
+  if (!form) return;
+
+  // El <select> de clasificación comparte parámetro con las pestañas de ramo
+  // (ambos son ?clasificacion=): se sincronizan para que los dos ejes digan
+  // lo mismo. setRamoMonitor ya resetea la página y recarga.
+  var selClasif = form.querySelector('[name="clasificacion"]');
+  if (selClasif) {
+    var _tieneOpt = [].slice.call(selClasif.options).some(function(o){
+      return o.value === _ramoActual;
+    });
+    if (_tieneOpt) selClasif.value = _ramoActual;
+    selClasif.addEventListener('change', function(){
+      setRamoMonitor(null, selClasif.value);
+    });
+  }
+
+  var selEstado = form.querySelector('[name="estado"]');
+  if (selEstado) {
+    selEstado.addEventListener('change', function(){
+      // Si el toggle "solo Problema" estaba activo, elegir un estado a mano lo
+      // desactiva: si no, el toggle pisaría la elección (params.set('estado',
+      // 'Problema') va después) y parecería que el <select> no hace nada.
+      if (_soloProblemaActivo) {
+        _soloProblemaActivo = false;
+        var bp = document.getElementById('btnSoloProblema');
+        if (bp) bp.classList.remove('active');
+      }
+      _trResetPagina();
+      cargarMonitor();
+    });
+  }
+
+  ['fecha_desde', 'fecha_hasta'].forEach(function(k){
+    var el = form.querySelector('[name="' + k + '"]');
+    if (el) el.addEventListener('change', function(){
+      _trResetPagina();
+      cargarMonitor();
+    });
+  });
+
+  // Buscador: debounce para no disparar una consulta por tecla, pero SIN
+  // condicionar a que haya texto — borrar todo tiene que recargar igual (ese
+  // es literalmente el bug reportado).
+  var inpQ = form.querySelector('[name="q"]');
+  if (inpQ) {
+    var _tq = null;
+    inpQ.addEventListener('input', function(){
+      clearTimeout(_tq);
+      _tq = setTimeout(function(){ _trResetPagina(); cargarMonitor(); }, 350);
+    });
+    inpQ.addEventListener('keydown', function(e){
+      // Enter ya no necesita recargar la página entera: filtramos en vivo.
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(_tq);
+        _trResetPagina();
+        cargarMonitor();
+      }
+    });
+  }
+
+  // "Limpiar filtros" (la X). Sigue siendo un <a href> real (funciona sin JS),
+  // pero con JS limpia de verdad: controles + ramo guardado + toggle + URL,
+  // y re-consulta sin recargar.
+  var btnLimpiar = form.querySelector('.tr-filters-limpiar');
+  if (btnLimpiar) {
+    btnLimpiar.addEventListener('click', function(e){
+      e.preventDefault();
+      ['q', 'estado', 'clasificacion', 'fecha_desde', 'fecha_hasta'].forEach(function(k){
+        var el = form.querySelector('[name="' + k + '"]');
+        if (el) el.value = '';
+      });
+      _soloProblemaActivo = false;
+      var bp = document.getElementById('btnSoloProblema');
+      if (bp) bp.classList.remove('active');
+      // El ramo guardado en localStorage era el que resucitaba el filtro
+      // después de "limpiar" — ver el comentario del bloque de arriba.
+      _ramoActual = '';
+      try { localStorage.removeItem('tr_ramo_actual'); } catch(e2){}
+      document.querySelectorAll('.tr-tab').forEach(function(b){
+        b.classList.toggle('active', (b.dataset.clasif || '') === '');
+      });
+      // Dejar la URL sin los filtros viejos: si no, un F5 los resucita.
+      try { history.replaceState(null, '', window.location.pathname); } catch(e3){}
+      _trResetPagina();
+      cargarMonitor();
+    });
+  }
+});
 
 function cargarMonitor() {
   // Leer parámetros del formulario de filtros + agregar la vista actual
   var params = new URLSearchParams(window.location.search);
+  // FIX 2026-08-01 (bug "sacas el filtro y no se limpia la tabla"): los
+  // filtros los manda el FORMULARIO VIVO, no la URL — ver el bloque de
+  // comentarios de arriba con la causa real.
+  _trAplicarFiltrosDelForm(params);
   params.set('vista', _vistaActual);
   // Ramo (2026-08-01): _ramoActual manda por sobre lo que traiga la URL --
   // así un clic en las pestañas Despacho/Instalación/etc. no necesita
@@ -1897,6 +2147,9 @@ function cargarMonitor() {
   if (_ramoActual) params.set('clasificacion', _ramoActual);
   else params.delete('clasificacion');
   if (_soloProblemaActivo) params.set('estado', 'Problema');
+  // Paginación (REGLA #4.3). El backend clampa `page` si quedó fuera de rango.
+  params.set('page', String(_pagActual));
+  params.set('per_page', String(_perPage));
   var url = '/transporte/api/compromisos?' + params.toString();
 
   fetch(url)
@@ -1905,10 +2158,21 @@ function cargarMonitor() {
       if (!d.ok) return;
       _monitorData = d.compromisos || [];
       // Exponer la MISMA data al tablero Kanban (sin 2ª llamada al backend).
+      // OJO: desde la paginación, el Kanban ve la PÁGINA actual, no las 500
+      // filas de antes — es la contrapartida esperada de paginar de verdad
+      // (el operador cambia de página y el Kanban lo sigue).
       window._monitorCompromisos = _monitorData;
-      // Actualizar contador
+      // Estado de paginación devuelto por el backend (es la autoridad: puede
+      // haber clampeado la página si el filtro dejó menos páginas).
+      _pagTotalFilas   = (d.total != null) ? d.total : _monitorData.length;
+      _pagActual       = d.page || 1;
+      _pagTotalPaginas = d.total_paginas || 1;
+      if (d.per_page) _perPage = d.per_page;
+      _trRenderPaginador();
+      // Contador del pie: total de filas del filtro (no solo las de la página;
+      // el desglose "Mostrando A–B" lo da el paginador de al lado).
       var countEl = document.getElementById('monitorCount');
-      if (countEl) countEl.textContent = d.total;
+      if (countEl) countEl.textContent = _pagTotalFilas;
 
       // Actualizar badges de cada tab de vista con los conteos del backend
       if (d.conteos) {

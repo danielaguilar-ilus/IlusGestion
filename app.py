@@ -22001,6 +22001,51 @@ def tr_compromisos_json():
     if estado:
         result = [c for c in result if c["estado_logistico"] == estado]
 
+    # ── PAGINACIÓN (REGLA #4.3, Daniel 2026-08-01: "hagámosla igual que las
+    # etiquetas... contenida en la página, no necesitamos darle scroll") ──────
+    #
+    # POR QUÉ SE PAGINA EN PYTHON Y NO CON LIMIT/OFFSET EN EL SQL:
+    # el número de filas que ve el operador NO es el número de filas del SELECT
+    # de arriba. Entre medio pasan dos cosas que el SQL no puede saber:
+    #   1. el filtro por `estado_logistico` (justo acá arriba) — es un valor
+    #      derivado en Python, no una columna de transport_commitments;
+    #   2. la expansión PR-B por ramo — un documento con 2+ manifest_items se
+    #      convierte en 2+ filas.
+    # Un LIMIT/OFFSET en el SQL paginaría DOCUMENTOS y devolvería un total de
+    # DOCUMENTOS, mientras la grilla muestra FILAS: las páginas saldrían
+    # descuadradas (páginas de tamaño variable, "Mostrando 1–100 de N" mintiendo).
+    # Por eso se pagina sobre `result`, que ya es exactamente lo que se pinta.
+    #
+    # LIMITACIÓN CONOCIDA (documentada a propósito, no escondida): el
+    # `LIMIT 500` del SELECT de arriba sigue siendo el TECHO de seguridad. Si un
+    # filtro llega a tener más de 500 documentos, el paginador cuenta y pagina
+    # sobre esos 500 primeros (según el ORDER BY de la vista: los más antiguos
+    # en pendientes/preventa, los más recientes en el resto) — no sobre el
+    # universo completo. Es la misma limitación que ya tenían `q`/`vista`/
+    # `estado` antes de este cambio; la paginación no la agrava, pero tampoco la
+    # resuelve. Los BADGES de conteo (`conteos`/`conteos_ramo`) sí cuentan el
+    # universo real vía SQL agregado, así que un total de badge mayor a
+    # `total` acá es esperable cuando se toca el techo.
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page", "100"))
+    except (TypeError, ValueError):
+        per_page = 100
+    if per_page not in (50, 100, 200, 500):
+        per_page = 100
+    total_filas   = len(result)
+    total_paginas = max(1, (total_filas + per_page - 1) // per_page)
+    # Clamp defensivo: si el operador venía en la página 7 y cambió un filtro
+    # que dejó 2 páginas, mostramos la última existente en vez de una tabla
+    # vacía sin explicación (el frontend además resetea a 1 al filtrar).
+    if page > total_paginas:
+        page = total_paginas
+    _pag_offset = (page - 1) * per_page
+    result = result[_pag_offset:_pag_offset + per_page]
+
     # Conteos por categoría — independientes del filtro `vista` aplicado.
     # Permite al frontend mostrar badge "Pendientes: 12" sin segunda llamada.
     base_where, base_params = ["tido <> 'GDV'"], []   # conteos también ocultan guías
@@ -22130,7 +22175,14 @@ def tr_compromisos_json():
     return jsonify({
         "ok": True,
         "compromisos": result,
-        "total": len(result),
+        # OJO: `total` ahora es el total de filas del universo FILTRADO (dentro
+        # del techo de 500), no las filas de esta página — es lo que necesita el
+        # pie "Mostrando 1–100 de N". Las filas de la página son
+        # len(compromisos). Antes de la paginación ambos coincidían.
+        "total": total_filas,
+        "page": page,
+        "per_page": per_page,
+        "total_paginas": total_paginas,
         "conteos": {
             "pendientes": int(conteos_row.get("pendientes") or 0),
             "en_gestion": int(conteos_row.get("en_gestion") or 0),

@@ -2124,5 +2124,132 @@ class TestFusionarEndpointUsaMismoDesempateQueElDiagnostico(unittest.TestCase):
         self.assertIn(_norm(criterio), _norm(self.fusion))
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 12 · Paginación del Monitor (REGLA #4.3, 2026-08-01)
+# ═════════════════════════════════════════════════════════════════════════════
+class TestCompromisosJsonPaginacion(unittest.TestCase):
+    """Daniel 2026-08-01: "hagámosla igual que las etiquetas... contenida en la
+    página, no necesitamos darle scroll. Deja eso como regla en el proyecto."
+    (REGLA #4.3 de CLAUDE.md). tr_compromisos_json necesita MySQL real, así que
+    se prueba ESTRUCTURALMENTE, igual que el resto del archivo."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_compromisos_json")
+        cls.norm = _norm(cls.fuente)
+
+    def test_acepta_page_y_per_page_con_parseo_defensivo(self):
+        """Mismo patrón try/except que el resto del archivo: un ?page=abc no
+        puede tumbar el Monitor con un 500."""
+        self.assertIn('request.args.get("page", "1")', self.fuente)
+        self.assertIn('request.args.get("per_page", "100")', self.fuente)
+        self.assertIn("except (TypeError, ValueError)", self.fuente)
+
+    def test_solo_admite_tamanos_de_pagina_conocidos(self):
+        """Clamp defensivo: sin esto, un ?per_page=999999 devuelve todo y la
+        paginación deja de proteger nada."""
+        self.assertIn("if per_page not in (50, 100, 200, 500):", self.fuente)
+
+    def test_pagina_sobre_result_no_con_limit_offset_en_el_sql(self):
+        """LA decisión de diseño de este cambio. El nº de filas que ve el
+        operador NO es el nº de filas del SELECT: entre medio se filtra por
+        `estado_logistico` (valor derivado en Python) y se expande por ramo
+        (PR-B, 1 fila por manifest_item). Un LIMIT/OFFSET en el SQL paginaría
+        DOCUMENTOS mientras la grilla muestra FILAS -> páginas de tamaño
+        variable y un "Mostrando 1-100 de N" mentiroso."""
+        self.assertIn("total_filas   = len(result)", self.fuente)
+        self.assertRegex(
+            self.norm,
+            r"result = result\[_pag_offset:_pag_offset \+ per_page\]",
+            "Desapareció el corte de página sobre `result` — si se migró a "
+            "LIMIT/OFFSET en el SQL, revisar que el total siga contando FILAS "
+            "(post-filtro y post-expansión), no documentos.",
+        )
+
+    def test_clampa_la_pagina_fuera_de_rango_en_vez_de_devolver_vacio(self):
+        """Si el operador estaba en la página 7 y un filtro deja 2 páginas, se
+        muestra la última existente — no una tabla vacía sin explicación."""
+        self.assertIn("if page > total_paginas:", self.fuente)
+
+    def test_la_respuesta_trae_lo_que_necesita_el_pie_de_tabla(self):
+        """El pie de Etiquetas necesita: total, página actual, tamaño y total de
+        páginas. Sin los 4 no se puede pintar "Mostrando A-B de N / Pagina X de Y"."""
+        for clave in ('"total": total_filas', '"page": page',
+                      '"per_page": per_page', '"total_paginas": total_paginas'):
+            self.assertIn(clave, self.fuente, f"Falta {clave} en la respuesta JSON.")
+
+    def test_el_techo_de_500_sigue_ahi_y_documentado(self):
+        """LIMITACIÓN CONOCIDA declarada a propósito: el LIMIT del SELECT sigue
+        siendo el techo, así que con >500 documentos en un filtro el paginador
+        cuenta sobre esos 500. Si alguien sube o quita ese techo, que sea a
+        propósito y actualizando este test."""
+        self.assertRegex(self.norm, r"LIMIT 500")
+        self.assertIn("LIMITACIÓN CONOCIDA", self.fuente,
+                      "Se borró la nota de la limitación del techo de 500 — "
+                      "esa limitación NO puede quedar sin documentar.")
+
+    def test_los_conteos_no_se_calculan_sobre_la_pagina(self):
+        """Los badges cuentan el universo real vía SQL agregado. Si se hubieran
+        derivado de `result`, después de paginar contarían solo la página
+        visible y los números del Monitor se volverían basura."""
+        idx_conteos = self.fuente.index('"conteos": {')
+        idx_fin = self.fuente.index("})", idx_conteos)
+        self.assertNotIn("result", self.fuente[idx_conteos:idx_fin])
+        self.assertNotIn("per_page", self.fuente[idx_conteos:idx_fin])
+
+
+class TestMonitorFiltrosEnVivo(unittest.TestCase):
+    """Bug reportado por Daniel 2026-08-01: "cuando filtras algo y sacas el
+    filtro, no se limpia la tabla". CAUSA REAL: cargarMonitor() armaba sus
+    parámetros solo desde window.location.search, que únicamente cambia al
+    hacer submit del formulario (recarga completa) — todas las recargas AJAX
+    del Monitor volvían a pedir el filtro viejo aunque el control en pantalla
+    ya estuviera vacío. Agravante: _ramoActual caía a localStorage cuando la
+    URL no traía ?clasificacion=, así que "Limpiar filtros" (que navegaba a
+    /transporte/ sin query) resucitaba el ramo guardado."""
+
+    @classmethod
+    def setUpClass(cls):
+        ruta = os.path.join(RAIZ, "static", "transporte_monitor.js")
+        with open(ruta, encoding="utf-8") as fh:
+            cls.js = fh.read()
+
+    def test_los_filtros_se_leen_del_formulario_vivo_no_solo_de_la_url(self):
+        self.assertIn("function _trAplicarFiltrosDelForm(params)", self.js)
+        self.assertIn("_trAplicarFiltrosDelForm(params);", self.js,
+                      "cargarMonitor() dejó de aplicar los filtros del formulario "
+                      "— vuelve el bug de 'saco el filtro y la tabla no cambia'.")
+
+    def test_un_control_vacio_borra_su_parametro(self):
+        """El corazón del fix: vacío = params.delete(k), no 'dejar pasar el
+        valor viejo de la URL'."""
+        self.assertRegex(self.js, r"if \(v\) params\.set\(k, v\);\s*\n\s*else\s+params\.delete\(k\);")
+
+    def test_las_fechas_se_mandan_explicitas_aunque_esten_vacias(self):
+        """En el backend "ausente" != "vacío": ausente aplica el default de 30
+        días, vacío significa sin filtro de fecha. Si las fechas vacías se
+        borraran del querystring, limpiar el filtro de fecha aplicaría un rango
+        de 30 días invisible para el operador."""
+        self.assertIn("params.set(k, (el.value || '').trim());", self.js)
+
+    def test_limpiar_filtros_tambien_limpia_el_ramo_guardado(self):
+        """El agravante: sin esto, "Limpiar filtros" limpia la URL pero
+        localStorage.tr_ramo_actual vuelve a aplicar el ramo."""
+        self.assertIn("localStorage.removeItem('tr_ramo_actual')", self.js)
+        self.assertIn("tr-filters-limpiar", self.js)
+
+    def test_cambiar_cualquier_filtro_vuelve_a_la_pagina_1(self):
+        """Si no, el operador que estaba en la página 7 filtra algo con 2
+        páginas y ve una tabla vacía sin entender por qué."""
+        self.assertIn("function _trResetPagina()", self.js)
+        # vista, ramo y el toggle "solo Problema" son los 3 ejes de filtro que
+        # recargan por AJAX sin pasar por el formulario.
+        self.assertGreaterEqual(self.js.count("_trResetPagina();"), 3)
+
+    def test_el_paginador_manda_page_y_per_page_al_backend(self):
+        self.assertIn("params.set('page', String(_pagActual));", self.js)
+        self.assertIn("params.set('per_page', String(_perPage));", self.js)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

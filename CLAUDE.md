@@ -260,9 +260,18 @@ tabla nueva o existente del proyecto debe seguirlo:
 ### Dónde aplica hoy (deuda conocida)
 
 - ✅ Etiquetas / Productos — es la referencia.
-- ⚠️ **Monitor de Transporte** (`/transporte/`) — hoy `LIMIT 500` sin
-  paginador. Pendiente.
-- ⚠️ **Manifiestos** (`/transporte/manifiestos`) — mismo caso. Pendiente.
+- ✅ **Monitor de Transporte** (`/transporte/`) — paginado 2026-08-01.
+  Se pagina en Python sobre la lista final (`tr_compromisos_json`), NO con
+  `LIMIT/OFFSET` en el SQL: entre la query y la grilla hay un filtro por
+  `estado_logistico` (valor derivado en Python) y la expansión por ramo
+  (1 fila por `transport_manifest_item`), así que filas ≠ documentos.
+  ⚠️ El `LIMIT 500` sigue siendo el techo: con más de 500 documentos en un
+  filtro, el paginador cuenta sobre esos 500. Limitación conocida, no
+  resuelta.
+- ✅ **Manifiestos** (`/transporte/manifiestos`) — ya paginaba server-side;
+  2026-08-01 se le alineó el pie de tabla al patrón (Mostrando A–B de N,
+  Anterior / Pagina X de Y / Siguiente) y se URL-encodearon los filtros de
+  los links de paginación (`estado` trae acentos, `q` es texto libre).
 - Cualquier tabla nueva: nace con el patrón, no se agrega después.
 
 ---

@@ -273,7 +273,13 @@
       <button type="submit" class="tr-btn tr-btn-primary tr-btn-sm">
         <i class="bi bi-funnel"></i><span>Filtrar</span>
       </button>
-      <a href="{{ url_for('transporte_index') }}" class="tr-btn tr-btn-ghost tr-btn-sm" title="Limpiar filtros">
+      {# La clase .tr-filters-limpiar la engancha transporte_monitor.js para
+         limpiar DE VERDAD (controles + ramo guardado en localStorage + toggle
+         "solo Problema" + URL) y re-consultar sin recargar. Sigue siendo un
+         <a href> real: sin JS, el comportamiento viejo (navegar a /transporte/)
+         se mantiene. Ver el bloque "FILTROS EN VIVO" del JS. #}
+      <a href="{{ url_for('transporte_index') }}"
+         class="tr-btn tr-btn-ghost tr-btn-sm tr-filters-limpiar" title="Limpiar filtros">
         <i class="bi bi-x-lg"></i>
       </a>
     </div>
@@ -461,13 +467,19 @@
     </table>
   </div>
   <div class="tr-table-footer">
-    <span><strong id="monitorCount">…</strong> documento(s) visible(s)</span>
+    {# Desde la paginación (REGLA #4.3) este número es el TOTAL de filas del
+       filtro actual, no las de la página — el desglose "Mostrando A–B de N"
+       lo da el paginador de abajo. #}
+    <span><strong id="monitorCount">…</strong> fila(s) en el filtro actual</span>
     <span class="tr-table-hint">
       <i class="bi bi-mouse2"></i>Clic en una fila abre el detalle
       <span class="tr-dot-sep">·</span>
       <i class="bi bi-grip-vertical"></i>arrastra para crear manifiesto
     </span>
   </div>
+  {# ── Paginador (REGLA #4.3 — mismo pie que Etiquetas) ──
+     Lo pinta _trRenderPaginador() en transporte_monitor.js tras cada carga. #}
+  <div id="trPaginador" class="tr-pag-bar"></div>
 </div>
 
 {# CSS movido a static/transporte_monitor.css — ver el link del inicio del bloque content. #}
@@ -476,6 +488,9 @@
 <div id="monitorCards" class="d-md-none tr-mcards-wrap">
   <div class="text-center py-4"><div class="tr-spinner"></div></div>
 </div>
+{# Paginador mobile — mismo HTML que el de escritorio (REGLA #3: en móvil las
+   cards fluyen, pero el paginador se mantiene). #}
+<div id="trPaginadorMobile" class="tr-pag-bar d-md-none"></div>
 
 {# ── Tablero KANBAN arrastrable (vista EXTRA, oculto por defecto) ──────
    3 columnas: Pendientes · En Camino · Entregados. Las tarjetas se

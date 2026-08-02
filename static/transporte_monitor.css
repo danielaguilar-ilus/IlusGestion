@@ -638,6 +638,58 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
 .tr-table-hint { display:inline-flex; align-items:center; gap:4px; }
 .tr-dot-sep { color:var(--tr-text-soft); }
 
+/* ── PAGINADOR (REGLA #4.3 — mismo pie de tabla que Etiquetas) ──────────
+   Estructura idéntica a templates/_partials/pagination.html: contador a la
+   izquierda ("Mostrando A–B de N"), controles a la derecha (selector de
+   tamaño + Anterior / Pagina X de Y / Siguiente). Acá va en claro (la tabla
+   del Monitor es clara) en vez del oscuro de Etiquetas, que vive dentro de
+   un card negro. Lo pinta _trRenderPaginador() en transporte_monitor.js. */
+.tr-pag-bar {
+  background:#fff;
+  border:1px solid var(--tr-border); border-top:none;
+  border-radius:0 0 var(--tr-radius) var(--tr-radius);
+}
+.tr-pag {
+  display:flex; justify-content:space-between; align-items:center;
+  flex-wrap:wrap; gap:10px; padding:9px 14px;
+}
+.tr-pag-info { font-size:.78rem; color:var(--tr-text-muted); }
+.tr-pag-info strong { color:var(--tr-text); font-weight:700; }
+.tr-pag-ctrls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.tr-pag-size {
+  min-height:44px;                       /* touch ≥44px (REGLA #3, Apple HIG) */
+  padding:4px 8px; font-size:.78rem; font-weight:600;
+  color:var(--tr-text); background:#fff;
+  border:1px solid var(--tr-border); border-radius:7px; cursor:pointer;
+}
+.tr-pag-btn {
+  display:inline-flex; align-items:center; gap:5px;
+  min-height:44px; padding:6px 12px;     /* touch ≥44px */
+  font-size:.78rem; font-weight:700; cursor:pointer;
+  color:var(--tr-text); background:#fff;
+  border:1px solid var(--tr-border); border-radius:7px;
+  transition:background .14s ease, border-color .14s ease, color .14s ease;
+}
+.tr-pag-btn:hover:not([disabled]) { background:#f8fafc; border-color:#cbd5e1; }
+.tr-pag-btn[disabled] { opacity:.4; cursor:not-allowed; }
+.tr-pag-btn-next:not([disabled]) {
+  background:var(--ilus-red, #dc2626); border-color:var(--ilus-red, #dc2626); color:#fff;
+}
+.tr-pag-btn-next:hover:not([disabled]) { background:#b91c1c; border-color:#b91c1c; }
+.tr-pag-cur {
+  padding:6px 10px; border-radius:7px;
+  background:var(--ilus-red, #dc2626); color:#fff;
+  font-size:.78rem; font-weight:700; white-space:nowrap;
+}
+@media (max-width:600px){
+  /* Mobile: contador arriba, controles abajo ocupando el ancho — los botones
+     no se aprietan ni caen bajo el mínimo táctil. */
+  .tr-pag { flex-direction:column; align-items:stretch; }
+  .tr-pag-ctrls { justify-content:space-between; }
+  .tr-pag-size { flex:1 1 100%; }
+  .tr-pag-btn { flex:1; justify-content:center; }
+}
+
 /* ── TIPOS TABS — fusionadas con la tabla (no Bootstrap nav-tabs) ── */
 .tr-tabs {
   display:flex; gap:2px; flex-wrap:wrap;

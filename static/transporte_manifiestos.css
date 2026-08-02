@@ -297,6 +297,29 @@
 .pager span.cur{ background:var(--ilus-black); color:#fff; border-color:var(--ilus-black); }
 .pager span.disabled{ color:#d1d5db; cursor:default; }
 
+/* REGLA #4.3 — mismo pie de tabla que Etiquetas: "Anterior"/"Siguiente" con
+   texto (no solo el chevron) y el indicador "Pagina X de Y" en rojo ILUS.
+   Los numeros de pagina de al lado se conservan (REGLA #4.2): siguen
+   permitiendo el salto directo a una pagina concreta. */
+.pager .pager-lbl{ margin:0 3px; }
+.pager a .pager-lbl, .pager span.disabled .pager-lbl{ font-size:12.5px; }
+.pager a.pager-next{
+  background:var(--ilus-red); border-color:var(--ilus-red); color:#fff;
+}
+.pager a.pager-next:hover{ background:#b91c1c; border-color:#b91c1c; color:#fff; }
+.pager .pager-cur-lbl{
+  height:34px; padding:0 11px;
+  display:inline-flex; align-items:center; white-space:nowrap;
+  background:var(--ilus-red); color:#fff;
+  border:1.5px solid var(--ilus-red); border-radius:9px;
+  font-size:12.5px; font-weight:800;
+}
+@media (max-width: 640px){
+  /* En pantallas chicas el texto sobra: quedan los chevrones (>=34px de alto,
+     ya tactiles) + "Pagina X de Y", que es lo que orienta de verdad. */
+  .pager .pager-lbl{ display:none; }
+}
+
 /* ── Menú contextual flotante ── */
 .menu-dropdown{
   position:absolute; min-width:180px;
