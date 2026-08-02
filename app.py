@@ -24630,8 +24630,14 @@ def tr_detalle(cid):
     pred_tipo = "kg" if tot_kg >= tot_pv else "pv"
 
     # ZZenvio cost
+    # FIX 2026-08-01 (Daniel, en vivo: "necesito el precio neto" en la
+    # sección de servicios): esto sumaba "pred_u", que para líneas ZZ
+    # (servicios sin ficha de bultos) siempre es 0 -- pred_u es peso
+    # predicho (max(peso_kg_u, peso_vol_u)), no precio. El precio neto
+    # real de la línea ya se captura como "vaneli" (VANELI del ERP,
+    # valor línea) más abajo en el mismo loop -- solo faltaba usarlo acá.
     costo_zz_envio = sum(
-        float(l.get("pred_u") or 0) for l in lineas_zz
+        float(l.get("vaneli") or 0) for l in lineas_zz
         if l["sku"].upper() == "ZZENVIO"
     )
 

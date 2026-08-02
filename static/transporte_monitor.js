@@ -1149,8 +1149,14 @@ function renderVista(d) {
     } else {
       zzCosto.textContent = '';
     }
+    // FIX 2026-08-01 (Daniel, en vivo: "necesito el precio neto"): antes
+    // usaba z.pred_u (peso predicho, siempre 0 para servicios sin ficha de
+    // bultos) -- el precio neto real de la línea es z.vaneli (VANELI del
+    // ERP, valor línea). Si el mismo SKU se repite (ej. 2 líneas de
+    // instalación), cada línea es su propia fila con su propio precio --
+    // no se agrupan ni se pisan entre sí.
     zzRows.innerHTML = lineas_zz.map(function(z) {
-      var valNeto = (z.pred_u || 0) * (z.cantidad || 1);
+      var valNeto = z.vaneli || 0;
       var valFmt  = valNeto > 0
         ? '<span class="fw-bold" style="color:var(--ilus-red)">$' + Math.round(valNeto).toLocaleString('es-CL') + '</span>'
         : '<span class="text-muted">' + (z.cantidad||0) + ' u</span>';
