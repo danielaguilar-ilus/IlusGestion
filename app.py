@@ -20276,13 +20276,30 @@ def _tr_fetch_from_erp(tido, nudo):
 
 
 def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
-    """Marca como 'Problema' los commitments con guía real capturada
-    (transport_guias) pero SIN ningún manifest_item -- mismo criterio que la
-    alerta 'guia_sin_gestion' (/transporte/api/alertas). Daniel (2026-08-01):
-    "en Problema dejaría ese tipo... para que Alison se encargue de
-    marcarlas como despachadas" -- así quedan visibles y accionables bajo el
-    filtro Problema del Monitor en vez de invisibles en un banner de solo
-    lectura.
+    """Marca como 'Problema' todo documento que SALIÓ sin pasar por el Monitor.
+
+    REGLA (Daniel, 2026-08-02, sobre FCV 0000011149 -- despachada durante el
+    desarrollo de esta plataforma, con transportes Felca, sin guía capturada y
+    sin manifiesto): "se supone que si no tiene saldo, debería estar en
+    problema, pues". Y sobre el objetivo de fondo: "con esto obligamos a usar
+    el sistema sí o sí para los despachos, porque tiene cobertura de todo, de
+    absolutamente todo".
+
+    Un documento califica cuando NO tiene gestión en ILUS (ningún
+    manifest_item) Y ADEMÁS se cumple cualquiera de estas dos:
+
+      a) tiene GUÍA real capturada (transport_guias) -- el ERP confirma que
+         salió físicamente; o
+      b) NO tiene SALDO (tiene_saldo=0) -- el ERP lo dio por despachado,
+         aunque acá nunca se haya capturado la guía.
+
+    El caso (b) es el que agregó Daniel y el que cierra el hueco: sin él, un
+    documento despachado fuera del sistema caía en la pestaña "Entregado" y
+    se daba por resuelto, cuando en realidad nadie lo gestionó -- sin courier,
+    sin evidencia y sin seguimiento para el cliente. Marcarlo Problema NO
+    afirma quién lo despachó (Daniel: "no quiero marcarlo como Felca, sino
+    evidenciar que no se gestionó"): solo deja constancia de que salió sin
+    trazabilidad, para que alguien lo regularice.
 
     Si se pasa commitment_ids, se acota a esos (uso: hook automático justo
     después de sincronizar una guía nueva, ver _tr_fetch_guias_from_erp).
@@ -20315,8 +20332,11 @@ def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
     rows = mysql_fetchall(f"""
         SELECT DISTINCT c.id
         FROM transport_commitments c
-        JOIN transport_guias g ON g.commitment_id = c.id
         WHERE c.id NOT IN (SELECT commitment_id FROM transport_manifest_items)
+          AND (
+                EXISTS (SELECT 1 FROM transport_guias g WHERE g.commitment_id = c.id)
+             OR c.tiene_saldo = 0
+          )
           AND c.estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')
           AND (c.updated_by = 'sync' OR c.updated_by IS NULL OR c.updated_by = '')
           {where_extra}
@@ -33738,14 +33758,27 @@ def tr_cron_refrescar_saldo_productos():
     # cumplen: terminal Y con guía — el corte real que pidió Daniel.
     docs = mysql_fetchall("""
         SELECT DISTINCT c.id, c.tido, c.nudo,
-               (mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')) AS activo
+               (mi.id IS NOT NULL
+                AND mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')) AS activo
         FROM transport_commitments c
-        JOIN transport_manifest_items mi ON mi.commitment_id = c.id
+        -- FIX 2026-08-02 (Daniel, caso FCV 0000011149: "no me está
+        -- identificando las guías"). Este JOIN era INNER, así que el cron
+        -- SOLO le buscaba guía a documentos que YA estaban en un manifiesto.
+        -- Círculo cerrado: un documento que salió SIN gestión nunca entraba
+        -- acá, por lo tanto nunca se le capturaba la guía, por lo tanto la
+        -- alerta de "guía sin gestión" nunca podía detectarlo y su ficha
+        -- mostraba "—" en la columna Guía para siempre. Con LEFT JOIN + la
+        -- tercera rama del WHERE, ahora también se les busca la guía a los
+        -- documentos sin manifiesto -- que son justamente los que hay que
+        -- pillar.
+        LEFT JOIN transport_manifest_items mi ON mi.commitment_id = c.id
         WHERE
-          (mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
+          (mi.id IS NOT NULL
+           AND mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
            AND c.tiene_saldo = 1)
           OR
-          (mi.estado_entrega IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
+          (mi.id IS NOT NULL
+           AND mi.estado_entrega IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')
            AND NOT EXISTS (SELECT 1 FROM transport_guias g WHERE g.commitment_id = c.id)
            -- fecha_emision IS NULL cuenta como "sí, revisar": en SQL, NULL >= algo
            -- es NULL (ni true ni false), así que sin este OR un commitment con
@@ -33754,6 +33787,16 @@ def tr_cron_refrescar_saldo_productos():
            -- vacía (síntoma del mismo bug de commitments duplicados que ya
            -- afectó a BLV 22719). Mejor revisar de más que dejar un NULL fuera
            -- para siempre sin haberlo intentado ni una vez.
+           AND (c.fecha_emision IS NULL OR c.fecha_emision >= DATE_SUB(NOW(), INTERVAL 60 DAY)))
+          OR
+          -- TERCERA RAMA (2026-08-02): SIN manifiesto y SIN guía capturada.
+          -- Son los que salieron por fuera del sistema. Capturarles la guía es
+          -- lo que permite saber CON QUÉ documento salieron y evidenciarlo,
+          -- en vez de mostrar "—" eternamente. Acotado a 60 días por el mismo
+          -- criterio de la rama anterior (un documento viejo que nunca tuvo
+          -- guía probablemente nunca la va a tener) y para no barrer historia.
+          (mi.id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM transport_guias g2 WHERE g2.commitment_id = c.id)
            AND (c.fecha_emision IS NULL OR c.fecha_emision >= DATE_SUB(NOW(), INTERVAL 60 DAY)))
         ORDER BY c.id
         LIMIT 300
