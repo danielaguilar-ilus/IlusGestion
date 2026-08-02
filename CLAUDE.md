@@ -232,6 +232,41 @@ una herramienta en uso y la confianza.
 
 ---
 
+## 📊 REGLA #4.3 — TODA tabla se pagina como Etiquetas (contenida en pantalla, sin scroll)
+
+**Pedido explícito de Daniel (2026-08-01): "hagámosla igual que las
+etiquetas… contenida en la página, no necesitamos darle scroll. Deja eso
+como regla en el proyecto. Toda tabla debe manejarse bajo esta
+estructura."**
+
+El patrón de referencia es la tabla de **Etiquetas** (`/`, productos). Toda
+tabla nueva o existente del proyecto debe seguirlo:
+
+### Qué exige el patrón
+
+1. **Paginación real, no scroll infinito ni `LIMIT` mudo.** Pie de tabla
+   con: `Mostrando 1–100 de 1362`, selector **N por página**, botones
+   **Anterior / Página X de Y / Siguiente**.
+2. **El contenido cabe en la pantalla.** La página NO scrollea para
+   recorrer la tabla — se cambia de página. (Ojo con la REGLA #3 mobile:
+   en móvil las cards sí fluyen, pero el paginador se mantiene.)
+3. **El selector de tamaño de página es del usuario**, no fijo por código.
+   Etiquetas usa 100 por defecto.
+4. **Al limpiar un filtro, la tabla se recarga.** Bug real reportado por
+   Daniel el 2026-08-01: quitaba el filtro y la tabla se quedaba con el
+   resultado anterior. Cualquier control que filtre debe re-consultar (o
+   re-renderizar) al volver a su estado vacío — no solo al aplicarse.
+
+### Dónde aplica hoy (deuda conocida)
+
+- ✅ Etiquetas / Productos — es la referencia.
+- ⚠️ **Monitor de Transporte** (`/transporte/`) — hoy `LIMIT 500` sin
+  paginador. Pendiente.
+- ⚠️ **Manifiestos** (`/transporte/manifiestos`) — mismo caso. Pendiente.
+- Cualquier tabla nueva: nace con el patrón, no se agrega después.
+
+---
+
 ## 🗄 REGLA #5 — Base de datos
 
 - **Antes de SELECT de columnas nuevas, verificar el `CREATE TABLE`**
