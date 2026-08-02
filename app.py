@@ -20633,7 +20633,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
         -- restringe a documentos con líneas ZZ. El costo sale de VANELI (valor
         -- neto de la línea) — más exacto que PPPRNE (precio unitario) — y se
         -- aísla el monto del ENVÍO (ZZENVIO) y del RETIRO (ZZRETIRO).
-        JOIN (
+        LEFT JOIN (
             SELECT d.IDMAEEDO,
                 SUM(d.CAPRCO1) AS cant_total_zz,
                 SUM(COALESCE(d.CAPRAD1, 0)) AS cant_despachada_zz,
@@ -20654,8 +20654,23 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             FROM MAEDDO d
             WHERE UPPER(LTRIM(RTRIM(d.KOPRCT))) IN ({zz_in})
             GROUP BY d.IDMAEEDO
+        -- ── FACTURAS HUÉRFANAS 2026-08-02 (Daniel: "si hay tres facturas de
+        -- un cliente y pagó el despacho de las tres en una, pueden quedar dos
+        -- huérfanas... tiene que existir la posibilidad de enviarlas a
+        -- despacho") ──────────────────────────────────────────────────────
+        -- Este JOIN era INNER: exigía línea ZZ para que el documento entrara
+        -- siquiera al Monitor. Una factura cuyo flete se cobró en una factura
+        -- HERMANA no tiene línea ZZ propia y por lo tanto NUNCA aparecía:
+        -- producto vendido, sin despachar, invisible hasta que el cliente
+        -- reclama. Medido en producción el 2026-08-02: 103 documentos así.
+        -- Ahora es LEFT JOIN y el WHERE de abajo deja entrar también a los
+        -- que tengan PRODUCTO FÍSICO PENDIENTE aunque no traigan ZZ.
+        -- Ojo: con LEFT JOIN las columnas zz.* llegan NULL -- el código Python
+        -- ya las lee con `or 0` / `or ""`, así que caen a 0 y a
+        -- clasificacion='despacho', que es el default correcto para estos.
         ) zz ON zz.IDMAEEDO = h.IDMAEEDO
         LEFT JOIN MAEEDOOB o ON o.IDMAEEDO = h.IDMAEEDO
+        -- (marcador huérfanas: el JOIN de arriba pasó a LEFT JOIN)
         -- Entidad/cliente. CLAVE 2026-06-13: el ENDO del documento es el KOEN
         -- (código de entidad), NO el RUT. El join viejo por RTEN fallaba cuando
         -- RTEN traía DV ('19090568-3') o el código difería del RUT → la grilla
@@ -20686,6 +20701,31 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           AND h.FEEMDO >= %s
           AND h.FEEMDO <= %s
           AND (h.ESDO IS NULL OR LTRIM(RTRIM(h.ESDO)) <> 'NULO')
+          -- Puerta de entrada al Monitor (ver "FACTURAS HUÉRFANAS" arriba).
+          -- Antes la daba el INNER JOIN con las líneas ZZ. Ahora entra el
+          -- documento si cumple CUALQUIERA de las dos:
+          --   1. tiene línea ZZ (el criterio de siempre), o
+          --   2. tiene PRODUCTO FÍSICO PENDIENTE aunque no traiga ZZ -- la
+          --      factura huérfana cuyo flete se cobró en otra del mismo
+          --      cliente. Es mercadería vendida sin despachar: pertenece al
+          --      Monitor tanto como cualquier otra.
+          -- El segundo caso está acotado a producto pendiente a propósito: sin
+          -- ese filtro entraría CUALQUIER documento del ERP (servicios puros,
+          -- documentos ya cerrados) y el Monitor se inundaría de ruido.
+          AND (
+                zz.IDMAEEDO IS NOT NULL
+             OR EXISTS (
+                    SELECT 1
+                      FROM MAEDDO dh
+                     WHERE dh.IDMAEEDO = h.IDMAEEDO
+                       AND LEFT(UPPER(LTRIM(RTRIM(dh.KOPRCT))), 2) <> 'ZZ'
+                       AND UPPER(LTRIM(RTRIM(COALESCE(dh.ESLIDO, '')))) NOT IN
+                           ('C', 'T', 'TOTAL', 'CERRADO', 'DESPACHADO')
+                       AND dh.CAPRCO1 - COALESCE(dh.CAPRAD1, 0)
+                                      - COALESCE(dh.CAPREX1, 0)
+                                      - COALESCE(dh.CAPRNC1, 0) > 0
+                )
+          )
         ORDER BY h.FEEMDO DESC
     """
 
