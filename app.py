@@ -19715,6 +19715,146 @@ def _tr_ramos_de_commitment(commitment_id):
     return _clasifs_from_skus_multi(skus)
 
 
+# Etiqueta legible por ramo -- para armar mensajes de error/aviso sin repetir
+# el mismo mapeo en cada write-site (PR-B, 2026-08-01).
+_RAMO_LABELS = {
+    "despacho": "despacho", "instalacion": "instalación", "retiro": "retiro",
+    "mantencion": "mantención", "garantia": "garantía",
+}
+
+
+def _tr_ramo_label(ramo):
+    return _RAMO_LABELS.get(ramo, ramo or "despacho")
+
+
+def _tr_items_existentes_de_commitment(cid):
+    """Todos los transport_manifest_items YA existentes de un commitment, en
+    CUALQUIER manifiesto -- insumo de _tr_plan_ramo_manifest_item. 1 query,
+    usada por los write-sites que procesan UN documento a la vez."""
+    return mysql_fetchall(
+        "SELECT id, manifest_id, ramo FROM transport_manifest_items WHERE commitment_id=%s",
+        (cid,)
+    ) or []
+
+
+def _tr_items_existentes_batch(cids):
+    """Versión batch de _tr_items_existentes_de_commitment: 1 sola query para
+    N documentos en vez de N -- usada por los write-sites que procesan lotes
+    (envío masivo de líneas pendientes, panel de arrastre). Devuelve
+    {commitment_id: [items...]}, con una entrada (posiblemente vacía) por
+    cada cid pedido."""
+    cids = [c for c in cids if c is not None]
+    out = {cid: [] for cid in cids}
+    if not cids:
+        return out
+    ph = ",".join(["%s"] * len(cids))
+    rows = mysql_fetchall(
+        f"SELECT id, manifest_id, commitment_id, ramo FROM transport_manifest_items "
+        f"WHERE commitment_id IN ({ph})", tuple(cids)
+    ) or []
+    for r in rows:
+        out.setdefault(r["commitment_id"], []).append(r)
+    return out
+
+
+def _tr_plan_ramo_manifest_item(ramos_doc, items_existentes, mid, ramo_solicitado=None):
+    """Decide qué acción tomar al intentar asignar un documento (commitment) a
+    un manifiesto, en el modelo de dos-o-más ramos (Fase 1, PR-B, 2026-08-01).
+
+    CORRECCIÓN 2026-08-01 (Daniel, en vivo -- "me equivoqué, de hecho
+    despachamos e instalamos [juntos]"): la decisión original del
+    2026-07-31 ("dos ramos del mismo documento NO pueden ir al mismo
+    manifiesto") era incorrecta -- en la operación real, despacho +
+    instalación normalmente van en el MISMO viaje/manifiesto (mismo
+    courier/técnico). Se retira ese candado (ver "conflicto_candado" más
+    abajo, ya no se genera) -- ambos ramos pueden convivir en el mismo
+    manifiesto sin fricción. Lo que SÍ se conserva del diseño original: cada
+    ramo sigue siendo su propio transport_manifest_item (para poder marcar
+    "instalación completa" sin que eso implique "despacho completo" si algún
+    día se hacen en momentos distintos), y "conflicto_multi_ramo" (abajo)
+    sigue existiendo para el caso realmente ambiguo: un write-site sin
+    granularidad de línea no puede adivinar cuál de 2+ ramos pendientes
+    quiere el operador si no se lo dicen explícito.
+
+    Función PURA (sin acceso a MySQL) para que sea testeable con datos de
+    prueba simples -- los 4 write-sites son wrappers finos que arman estos
+    argumentos desde MySQL y ejecutan la decisión que esta función devuelve.
+
+    Args:
+      ramos_doc: lista de ramos del documento, ej. ["despacho","instalacion"]
+                 (viene de _tr_ramos_de_commitment -- nunca vacía).
+      items_existentes: lista de dicts {"ramo":str, "manifest_id":int, ...} --
+                 TODOS los transport_manifest_items que YA existen para este
+                 commitment, en cualquier manifiesto (no solo `mid`).
+      mid: manifest_id destino de ESTA operación.
+      ramo_solicitado: si el caller YA sabe qué ramo quiere asignar (ej.
+                 lineas-pendientes, que conoce el SKU de la línea
+                 seleccionada), se lo indica explícito y evita la ambigüedad
+                 de "2+ ramos pendientes, ¿cuál?". None = el caller no
+                 distingue (comportamiento de los write-sites que operan a
+                 nivel de documento completo, sin granularidad de línea).
+
+    Devuelve un dict con "accion" en:
+      "insertar"            {"accion","ramo"} -- sin conflicto, crear el item
+                             (incluye el caso de agregar un segundo ramo al
+                             mismo manifiesto que ya tiene el primero -- eso
+                             ya no es un conflicto).
+      "ya_estaba"           {"accion","ramo"} -- ese ramo ya está en `mid`,
+                             nada que hacer (igual que INSERT IGNORE hoy).
+      "duplicado"           {"accion","ramo","otro_manifest_id"} -- ese ramo
+                             ya está en OTRO manifiesto. Comportamiento LEGACY
+                             preexistente (confirm_dup) -- el caller decide.
+      "conflicto_multi_ramo" {"accion","pendientes"} -- 2+ ramos del
+                             documento no tienen NINGÚN item todavía y el
+                             caller no especificó cuál quiere -- ambiguo.
+    """
+    if not ramos_doc:
+        ramos_doc = ["despacho"]
+    existentes_por_ramo = {}
+    for it in items_existentes:
+        r = it.get("ramo")
+        if r and r not in existentes_por_ramo:
+            existentes_por_ramo[r] = it
+
+    if ramo_solicitado and ramo_solicitado not in ramos_doc:
+        # Defensivo: no debería pasar (ramo_solicitado se deriva de las
+        # mismas líneas ZZ del documento), pero si pasa por alguna
+        # inconsistencia de datos, no se inventa nada -- se trata como si no
+        # se hubiera especificado.
+        ramo_solicitado = None
+
+    if ramo_solicitado:
+        target = ramo_solicitado
+    else:
+        pendientes = [r for r in ramos_doc if r not in existentes_por_ramo]
+        if len(pendientes) >= 2:
+            return {"accion": "conflicto_multi_ramo", "pendientes": pendientes}
+        target = pendientes[0] if pendientes else ramos_doc[0]
+
+    existente_target = existentes_por_ramo.get(target)
+    if existente_target is None:
+        return {"accion": "insertar", "ramo": target}
+    if existente_target.get("manifest_id") == mid:
+        return {"accion": "ya_estaba", "ramo": target}
+    return {"accion": "duplicado", "ramo": target,
+            "otro_manifest_id": existente_target.get("manifest_id")}
+
+
+def _tr_resp_conflicto_multi_ramo(plan, doc_label=None):
+    """Payload 409 uniforme para 'conflicto_multi_ramo' (2+ ramos sin asignar
+    y sin forma de distinguir cuál quiere el caller)."""
+    labels = [_tr_ramo_label(r) for r in plan["pendientes"]]
+    pref = f"El documento {doc_label} " if doc_label else "Este documento "
+    return {
+        "ok": False,
+        "error": "ramo_ambiguo",
+        "msg": (f"{pref}tiene {len(labels)} ramos sin asignar ({', '.join(labels)}) y no "
+                "pueden ir todos al mismo manifiesto. Usa \"Líneas pendientes\" para asignar "
+                "cada ramo por separado, a su propio manifiesto."),
+        "ramos_pendientes": plan["pendientes"],
+    }
+
+
 def _ensure_transport_guias_table():
     """Tabla NUEVA (2026-08-01): guías de despacho REALES (TIDO='GDV') que
     cubrieron las líneas de un documento (factura/boleta), una fila por
@@ -21259,6 +21399,56 @@ def tr_compromisos_json():
         + " LIMIT 500", tuple(params)
     )
 
+    # ── PR-B (Fase 1, 2026-08-01): 1 fila por RAMO cuando el documento ya
+    # tiene manifest_items reales -- antes, un documento con 2 ramos
+    # asignados a manifiestos DISTINTOS (ej. despacho a Felca, instalación a
+    # FedEx) se mostraba en UNA sola fila con los datos del item MÁS
+    # RECIENTE (ORDER BY tmi.id DESC LIMIT 1, ver las 4 subqueries de
+    # arriba) -- el otro ramo quedaba invisible en la grilla aunque tuviera
+    # su propio manifest_item real. Acá se hace 1 query batch adicional (no
+    # se toca el WHERE ni las subqueries de arriba) y, si un commitment tiene
+    # N>1 items, se expande su fila en N -- cada una con SU PROPIO
+    # ramo/courier/manifiesto/estado.
+    #
+    # DECISIÓN DE DISEÑO (documentada acá y en el resumen del PR): esta
+    # expansión es SOLO de visualización. El WHERE-clause de arriba
+    # (pendiente/en_gestion/entregado) y los `conteos` más abajo siguen
+    # siendo por DOCUMENTO, sin tocar -- son consultas SQL agregadas ya
+    # endurecidas por varios FIX reales documentados en los comentarios de
+    # arriba (ver historial 2026-07-27 a 2026-08-01), y reescribirlas para
+    # que sean "por ramo" es un cambio de alcance mayor, fuera de esta fase.
+    # Consecuencia aceptada: si un documento con 2 ramos tiene AMBOS
+    # asignados y uno queda 100% entregado mientras el otro sigue activo, la
+    # fila del ramo YA entregado puede seguir listada bajo vista=en_gestion
+    # (la condición SQL es "el documento tiene algún item activo", no "este
+    # item puntual") -- su propio badge de estado SÍ es correcto (dice
+    # "Entregado"), solo el TAB en el que aparece puede no coincidir con SU
+    # estado individual. Se acepta: mantiene visible el pedido completo
+    # mientras cualquier parte siga activa, en vez de esconder un ramo ya
+    # resuelto. Por el mismo motivo, `conteos` (que cuenta DOCUMENTOS, no
+    # filas) puede no calzar exactamente con `len(result)` cuando hay
+    # documentos multi-ramo con 2+ items -- discrepancia menor y esperada,
+    # documentos de un solo ramo (la inmensa mayoría) no la tienen.
+    #
+    # Si un documento tiene ramos pero NINGUNO fue asignado todavía a un
+    # manifiesto, sigue mostrándose como hoy: 1 sola fila, sin datos de
+    # manifiesto (no hay nada que expandir).
+    _ids_con_manifiesto = [r["id"] for r in rows if int(r.get("en_manifiesto") or 0)]
+    _items_por_commitment = {}
+    if _ids_con_manifiesto:
+        _ph_ids = ",".join(["%s"] * len(_ids_con_manifiesto))
+        _item_rows_pr_b = mysql_fetchall(
+            "SELECT mi.commitment_id, mi.ramo, mi.estado_entrega, mi.manifest_id, "
+            "       tm.courier, tm.correlativo "
+            "FROM transport_manifest_items mi "
+            "JOIN transport_manifests tm ON tm.id = mi.manifest_id "
+            "WHERE mi.commitment_id IN (" + _ph_ids + ") "
+            "ORDER BY mi.commitment_id, mi.id DESC",
+            tuple(_ids_con_manifiesto)
+        ) or []
+        for _it in _item_rows_pr_b:
+            _items_por_commitment.setdefault(_it["commitment_id"], []).append(_it)
+
     result = []
     for r in rows:
         # NUEVO 2026-05-19: incluir direccion/observaciones/zz_skus para que
@@ -21329,7 +21519,7 @@ def tr_compromisos_json():
             # estado del ERP, que para este caso es el único dato que hay.
             estado_logistico = r["estado"] or "Despachado"
 
-        result.append({
+        fila_base = {
             "id":           r["id"],
             "tido":         r["tido"],
             "nudo":         r["nudo"],
@@ -21349,6 +21539,10 @@ def tr_compromisos_json():
             "costo_zz":     float(r["costo_zz"] or 0),
             "costo_envio":  float(r.get("costo_envio") or 0),
             "clasificacion":r["clasificacion"] or "despacho",
+            # PR-B: ramo de ESTA fila (ver expansión más abajo). Para un
+            # documento sin manifest_items todavía, cae al mismo valor que
+            # `clasificacion` (mejor dato disponible antes de asignar).
+            "ramo":         r["clasificacion"] or "despacho",
             "guia_numero":  r.get("guia_numero") or "",
             "cobertura_pct":float(r.get("cobertura_pct") or 0),
             "tiene_saldo":  tiene_saldo,
@@ -21360,7 +21554,38 @@ def tr_compromisos_json():
             "dias_atraso":  int(dias_atraso),
             "preventa":     int(r.get("preventa") or 0),
             "fecha_agenda": r["fecha_agenda"].strftime("%d/%m/%Y") if r.get("fecha_agenda") else "",
-        })
+        }
+
+        _items_r = _items_por_commitment.get(r["id"]) or []
+        if len(_items_r) <= 1:
+            # Caso de HOY, sin cambios: 0 items (pendiente, nada que
+            # expandir) o 1 item (ya coincide con lo que traen las 4
+            # subqueries "más reciente" de arriba) -- solo se le agrega ramo.
+            if _items_r:
+                fila_base["ramo"] = _items_r[0].get("ramo") or fila_base["ramo"]
+            result.append(fila_base)
+        else:
+            # Multi-ramo con 2+ manifest_items reales: 1 fila por item.
+            for _idx, _it in enumerate(_items_r):
+                _fila = dict(fila_base)
+                _fila["ramo"] = _it.get("ramo") or fila_base["ramo"]
+                if _idx == 0:
+                    # El más reciente ya coincide con fila_base (mismo
+                    # criterio ORDER BY id DESC LIMIT 1 de las subqueries) --
+                    # no hace falta recalcular courier/manifiesto/estado.
+                    result.append(_fila)
+                    continue
+                _fila["courier"] = _it.get("courier") or ""
+                _fila["manifiesto_id"] = _it.get("manifest_id")
+                _fila["manifiesto_correlativo"] = _it.get("correlativo") or ""
+                _estado_item_n = (_it.get("estado_entrega") or "").strip()
+                _en_activo_n = _estado_item_n not in ("Entregado", "Devolución")
+                _fila["gestion"] = "en_gestion" if _en_activo_n else "entregado"
+                _fila["estado_logistico"] = _estado_item_n or "En preparación"
+                # dias_atraso solo aplica a gestion=pendiente (ver arriba) --
+                # una fila con item real nunca es pendiente, siempre 0.
+                _fila["dias_atraso"] = 0
+                result.append(_fila)
 
     # FIX 2026-08-01 (Daniel): filtro por estado LOGÍSTICO, aplicado en Python
     # sobre la lista ya armada (estado_logistico no es columna SQL). Mismo
@@ -21700,6 +21925,36 @@ def tr_lineas_pendientes_enviar_manifiesto():
     if not cids:
         return jsonify({"ok": False, "error": "Ningún documento quedó habilitado para enviar"}), 400
 
+    # ── PR-B (Fase 1, 2026-08-01), granularidad de LÍNEA ──────────────────
+    # Esta es la ÚNICA de las 4 write-sites con visibilidad de qué SKU
+    # concreto se seleccionó por línea (l.koprct, ej. "ZZENVIO" vs
+    # "ZZINSTALACION") -- eso permite resolver SIN ambigüedad qué ramo(s)
+    # corresponden a CADA documento en ESTA operación, incluso el primer
+    # ramo de un documento nuevo con 2+ ramos (algo que los otros 3
+    # write-sites, sin esa granularidad, no pueden resolver solos -- ver
+    # _tr_plan_ramo_manifest_item). _clasif_from_skus([sku]) (la función
+    # SINGULAR, sin tocarla) da exactamente el ramo de UN sku cuando se le
+    # pasa una lista de un solo elemento -- se reusa así en vez de
+    # reimplementar el mapeo sku→ramo.
+    #
+    # CORRECCIÓN 2026-08-01 (Daniel, en vivo -- "despachamos e instalamos
+    # [juntos]"): si el operador selecciona líneas de MÁS de un ramo del
+    # MISMO documento para el mismo envío (ej. la línea ZZENVIO y la línea
+    # ZZINSTALACION de la misma factura), eso YA NO se rechaza -- es
+    # exactamente el caso común (despacho + instalación van al mismo
+    # manifiesto, mismo viaje). Cada ramo seleccionado se resuelve por
+    # separado y genera su propio transport_manifest_item.
+    _lineas_por_cid = {}
+    for r in lineas_sel:
+        if r["commitment_id"] in permitidas_cids:
+            _lineas_por_cid.setdefault(r["commitment_id"], []).append(r)
+
+    _ramos_solicitados_por_cid = {}
+    for cid in cids:
+        _skus_cid = [r["sku"] for r in _lineas_por_cid.get(cid, []) if r.get("sku")]
+        _ramos_pedido = sorted({_clasif_from_skus([s]) for s in _skus_cid}) if _skus_cid else ["despacho"]
+        _ramos_solicitados_por_cid[cid] = _ramos_pedido
+
     mid = data.get("manifest_id")
     corr = None
     conn = get_db()
@@ -21745,32 +22000,36 @@ def tr_lineas_pendientes_enviar_manifiesto():
         if _bloqueo:
             return _bloqueo
 
-        # PR-A (Fase 1, Paso 2 -- 2026-08-01): setear `ramo` explícito en el
-        # INSERT en vez de depender del backfill de boot. Sigue siendo 1 item
-        # por documento (la función multi que detecta AMBOS ramos llega en
-        # PR-B) -- esto solo deja de dejar `ramo` en NULL para items nuevos,
-        # precondición dura para poder endurecer el UNIQUE KEY después.
-        _ramos_cids = {
-            r["id"]: (r.get("clasificacion") or "despacho")
-            for r in (mysql_fetchall(
-                "SELECT id, clasificacion FROM transport_commitments WHERE id IN ("
-                + ",".join(["%s"] * len(cids)) + ")", tuple(cids)
-            ) or [])
-        }
+        # PR-B: un documento puede pedir 2+ ramos en este mismo envío (ver
+        # _ramos_solicitados_por_cid arriba) -- se arma un plan POR (cid,
+        # ramo), no uno por documento, para que cada ramo termine en su
+        # propio transport_manifest_item. `ramo_solicitado` siempre viene
+        # explícito acá (nunca None), así que ningún plan de este write-site
+        # puede caer en "conflicto_multi_ramo" -- esa rama es exclusiva de
+        # los otros 3 write-sites, sin granularidad de línea.
+        _items_batch = _tr_items_existentes_batch(cids)
+        _planes = []
+        for cid in cids:
+            for _ramo_sol in (_ramos_solicitados_por_cid.get(cid) or ["despacho"]):
+                _planes.append((cid, _tr_plan_ramo_manifest_item(
+                    _tr_ramos_de_commitment(cid), _items_batch.get(cid, []),
+                    mid, _ramo_sol)))
 
         agregados, ya_estaban = 0, 0
         with conn.cursor() as cur:
-            for cid in cids:
-                cur.execute(
-                    "SELECT 1 AS x FROM transport_manifest_items WHERE manifest_id=%s AND commitment_id=%s",
-                    (mid, cid)
-                )
-                if cur.fetchone():
+            for cid, _plan in _planes:
+                if _plan["accion"] == "ya_estaba":
                     ya_estaban += 1
                     continue
+                # "insertar" y "duplicado" (mismo ramo ya en OTRO manifiesto)
+                # proceden igual acá: este endpoint nunca tuvo aviso de
+                # duplicado cruzado entre manifiestos (a diferencia de
+                # tr_agregar_item/tr_asignar_a_manifiesto) -- se preserva ese
+                # comportamiento preexistente, no es una regresión nueva.
+                ramo_final = _plan["ramo"]
                 cur.execute(
                     "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id,ramo) "
-                    "VALUES (%s,%s,%s)", (mid, cid, _ramos_cids.get(cid, "despacho"))
+                    "VALUES (%s,%s,%s)", (mid, cid, ramo_final)
                 )
                 agregados += 1
                 # FASE 2 (2026-07-31): snapshot de productos de este despacho
@@ -27315,30 +27574,48 @@ def tr_agregar_item(mid):
     # frontend re-envía con confirm_dup=1 si el operador decide seguir
     # igual (ej: se dividió el despacho a propósito). No bloquea duro.
     _confirm_dup = bool(_body.get("confirm_dup"))
-    _otros = mysql_fetchall(
-        "SELECT m.id, m.correlativo, m.estado, m.fecha "
-        "FROM transport_manifest_items mi "
-        "JOIN transport_manifests m ON m.id = mi.manifest_id "
-        "WHERE mi.commitment_id=%s AND mi.manifest_id != %s",
-        (cid, mid)
-    ) or []
-    if _otros and not _confirm_dup:
-        _doc_info = mysql_fetchone(
-            "SELECT tido, nudo FROM transport_commitments WHERE id=%s", (cid,))
-        _doc_lbl = (f"{_doc_info.get('tido') or ''} {_doc_info.get('nudo') or ''}".strip()
-                    if _doc_info else f"commitment_id={cid}")
+    # PR-B (Fase 1, 2026-08-01): `ramo` opcional en el body -- permite a un
+    # caller que YA sabe qué ramo quiere (ej. una ficha futura con selector
+    # de ramo) desambiguar un documento con 2+ ramos sin pasar por
+    # lineas-pendientes. Si no se manda, se resuelve automático (ver
+    # _tr_plan_ramo_manifest_item): funciona igual que siempre para
+    # documentos de 1 solo ramo (la inmensa mayoría).
+    _ramo_solicitado = (_body.get("ramo") or "").strip().lower() or None
+
+    _doc_info = mysql_fetchone(
+        "SELECT tido, nudo FROM transport_commitments WHERE id=%s", (cid,))
+    _doc_lbl = (f"{_doc_info.get('tido') or ''} {_doc_info.get('nudo') or ''}".strip()
+                if _doc_info else f"commitment_id={cid}")
+
+    _ramos_doc = _tr_ramos_de_commitment(cid)
+    _items_existentes = _tr_items_existentes_de_commitment(cid)
+    _plan = _tr_plan_ramo_manifest_item(_ramos_doc, _items_existentes, mid, _ramo_solicitado)
+
+    if _plan["accion"] == "conflicto_multi_ramo":
+        return jsonify(_tr_resp_conflicto_multi_ramo(_plan, _doc_lbl)), 409
+
+    # 2026-07-26 (pedido Daniel): "debería reconocer que la 22703 está hasta
+    # en varios manifiestos... siempre tiene que avisar si hay duplicidad".
+    # PR-B: este chequeo ahora es POR RAMO (antes era "cualquier otro
+    # manifiesto, sin importar ramo" -- eso bloqueaba con un mensaje confuso
+    # el flujo NUEVO y legítimo de completar el segundo ramo de un documento
+    # en un manifiesto distinto). El frontend re-envía con confirm_dup=1 si
+    # el operador decide seguir igual (ej: se dividió el despacho a propósito).
+    if _plan["accion"] == "duplicado" and not _confirm_dup:
         return jsonify({
             "ok": False,
             "error": "duplicado",
-            "msg": f"El documento {_doc_lbl} ya está en {len(_otros)} otro"
-                   f"{'s' if len(_otros) != 1 else ''} manifiesto"
-                   f"{'s' if len(_otros) != 1 else ''}.",
-            "duplicados": [
-                {"manifest_id": o["id"], "correlativo": o["correlativo"],
-                 "estado": o["estado"], "fecha": str(o["fecha"]) if o.get("fecha") else None}
-                for o in _otros
-            ],
+            "msg": f"El documento {_doc_lbl} ({_tr_ramo_label(_plan['ramo'])}) ya está "
+                   "en otro manifiesto.",
+            "duplicados": [{"manifest_id": _plan["otro_manifest_id"], "ramo": _plan["ramo"]}],
         }), 409
+
+    # Defensivo: _plan["ramo"] nunca debería venir vacío (_tr_ramos_de_commitment
+    # jamás devuelve una lista vacía), pero el fallback a "despacho" se
+    # mantiene igual que en el resto de los write-sites -- ningún item nuevo
+    # debe poder quedar con ramo=NULL/vacío.
+    _ramo = _plan["ramo"] or "despacho"
+    _era_duplicado = _plan["accion"] == "duplicado"
     # FIX 2026-07-28 (levantamiento "llamado de manifiesto", H3): este
     # `conn.close()` cerraba la conexión SCOPED AL REQUEST (get_db() cachea
     # en g._db, y teardown_appcontext ya la cierra sola al final) y DESPUÉS
@@ -27351,11 +27628,6 @@ def tr_agregar_item(mid):
     # agregado. Mismo patrón correcto que ya usa tr_quitar_item al lado:
     # no cerrar acá, dejar que teardown_appcontext lo haga.
     conn = get_db()
-    # PR-A (Fase 1, Paso 2 -- 2026-08-01): ramo explícito, mismo criterio que
-    # el resto de los write-sites (ver tr_asignar_a_manifiesto).
-    _ramo_row = mysql_fetchone(
-        "SELECT clasificacion FROM transport_commitments WHERE id=%s", (cid,))
-    _ramo = (_ramo_row.get("clasificacion") if _ramo_row else None) or "despacho"
     with conn.cursor() as cur:
         cur.execute(
             "INSERT IGNORE INTO transport_manifest_items (manifest_id,commitment_id,ramo) "
@@ -27367,8 +27639,8 @@ def tr_agregar_item(mid):
         # en este mismo manifiesto -- _tr_populate_item_lines es idempotente
         # de todas formas (UNIQUE KEY), así que da igual si ya existían.
         cur.execute(
-            "SELECT id FROM transport_manifest_items WHERE manifest_id=%s AND commitment_id=%s",
-            (mid, cid)
+            "SELECT id FROM transport_manifest_items WHERE manifest_id=%s AND commitment_id=%s AND ramo=%s",
+            (mid, cid, _ramo)
         )
         _item_row = cur.fetchone()
         if _item_row:
@@ -27380,15 +27652,23 @@ def tr_agregar_item(mid):
         "SELECT tido, nudo, cliente_nombre FROM transport_commitments WHERE id=%s", (cid,))
     if _info:
         _doc = f"{_info.get('tido') or ''} {_info.get('nudo') or ''}".strip()
-        _detalle = f"{_doc} · {_info.get('cliente_nombre') or '—'}"
+        _detalle = f"{_doc} ({_tr_ramo_label(_ramo)}) · {_info.get('cliente_nombre') or '—'}"
     else:
-        _detalle = f"commitment_id={cid}"
+        _detalle = f"commitment_id={cid} ({_tr_ramo_label(_ramo)})"
     _tr_log("manifest", mid, "factura agregada", _detalle)
-    if _otros:
+    if _era_duplicado:
         _tr_log("manifest", mid, "aviso",
-                 f"factura agregada aunque ya estaba en otro(s) manifiesto(s): "
-                 f"{', '.join(o['correlativo'] or str(o['id']) for o in _otros)}")
-    resp = {"ok": True}
+                 f"factura agregada ({_tr_ramo_label(_ramo)}) aunque ya estaba en otro "
+                 f"manifiesto (#{_plan['otro_manifest_id']}) con el mismo ramo")
+    resp = {"ok": True, "ramo": _ramo}
+    # Info para el frontend: si el documento tiene MÁS ramos sin asignar
+    # todavía (ej. se acaba de agregar despacho pero instalación sigue
+    # pendiente), avisar -- no bloquea, solo informa (ver "Líneas pendientes"
+    # para completar el resto).
+    _ramos_restantes = [r for r in _ramos_doc
+                         if r != _ramo and r not in {it.get("ramo") for it in _items_existentes}]
+    if _ramos_restantes:
+        resp["ramos_pendientes_otros"] = _ramos_restantes
     if _aviso:
         resp["aviso"] = _aviso
     return jsonify(resp)
@@ -35457,6 +35737,17 @@ def tr_asignar_a_manifiesto():
     data         = request.get_json(silent=True) or {}
     commitment_ids = data.get("commitment_ids", [])
     mid          = data.get("manifest_id")     # None → crear nuevo
+    # PR-B (2026-08-01): normalizar a int temprano -- antes `mid` solo se
+    # usaba en SQL parametrizado (MySQL coerciona string/int igual), pero
+    # ahora también se compara en Python puro contra
+    # transport_manifest_items.manifest_id (int) dentro de
+    # _tr_plan_ramo_manifest_item -- si el frontend mandara "5" (string) en
+    # vez de 5, esa comparación fallaría en silencio y el candado de ramos
+    # nunca dispararía.
+    try:
+        mid = int(mid) if mid not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "manifest_id inválido"}), 400
     confirm_dup  = bool(data.get("confirm_dup"))
 
     if not commitment_ids:
@@ -35471,48 +35762,70 @@ def tr_asignar_a_manifiesto():
         if _bloqueo:
             return _bloqueo
 
-    # H6: avisar si alguno de los documentos ya está en OTRO manifiesto —
-    # una sola consulta batch, no N consultas (esto puede venir en lote
-    # desde el arrastre múltiple del panel).
-    if not confirm_dup:
-        _ph = ",".join(["%s"] * len(commitment_ids))
-        _params = list(commitment_ids) + ([mid] if mid else [])
-        _otros_rows = mysql_fetchall(
-            "SELECT mi.commitment_id, m.id, m.correlativo, m.estado, m.fecha, "
-            "       c.tido, c.nudo "
-            "FROM transport_manifest_items mi "
-            "JOIN transport_manifests m ON m.id = mi.manifest_id "
-            "JOIN transport_commitments c ON c.id = mi.commitment_id "
-            f"WHERE mi.commitment_id IN ({_ph})"
-            + (" AND mi.manifest_id != %s" if mid else ""),
-            tuple(_params)
+    # PR-B (Fase 1, 2026-08-01): "duplicado" es ramo-aware. Antes (H6) se
+    # avisaba "ya está en otro manifiesto" para CUALQUIER otro ramo del
+    # mismo documento -- eso bloqueaba (con un mensaje que ni mencionaba
+    # ramo) el flujo NUEVO y legítimo de asignar cada ramo a su propio
+    # manifiesto. Ahora se distingue:
+    #   - mismo ramo ya en OTRO manifiesto  = "duplicado" legacy (preexistente,
+    #     confirm_dup lo saltea, igual que siempre).
+    #   - 2+ ramos sin asignar y sin forma de saber cuál se quiere = ambiguo
+    #     (este endpoint no tiene granularidad de línea -- ver
+    #     "Líneas pendientes" para ese caso).
+    # Nota (corrección 2026-08-01, Daniel en vivo): un ramo DISTINTO del
+    # mismo documento en ESTE manifiesto destino ya NO es un conflicto --
+    # despacho+instalación normalmente van en el mismo viaje.
+    try:
+        _cids_int = sorted({int(x) for x in commitment_ids})
+    except (TypeError, ValueError):
+        return jsonify({"error": "commitment_ids inválido"}), 400
+
+    _items_batch = _tr_items_existentes_batch(_cids_int)
+    _planes = {cid: _tr_plan_ramo_manifest_item(_tr_ramos_de_commitment(cid), _items_batch.get(cid, []), mid)
+               for cid in _cids_int}
+
+    _conflictos_bloqueantes = [(cid, p) for cid, p in _planes.items()
+                                if p["accion"] == "conflicto_multi_ramo"]
+    if _conflictos_bloqueantes:
+        _doc_rows = mysql_fetchall(
+            "SELECT id, tido, nudo FROM transport_commitments WHERE id IN (" +
+            ",".join(["%s"] * len(_conflictos_bloqueantes)) + ")",
+            tuple(cid for cid, _ in _conflictos_bloqueantes)
         ) or []
-        if _otros_rows:
+        _doc_by_id = {r["id"]: f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip() for r in _doc_rows}
+        _detalle = [
+            {"commitment_id": cid, "doc": _doc_by_id.get(cid, ""), **_tr_resp_conflicto_multi_ramo(p)}
+            for cid, p in _conflictos_bloqueantes
+        ]
+        return jsonify({
+            "ok": False,
+            "error": "ramo_conflicto",
+            "msg": f"{len(_conflictos_bloqueantes)} documento(s) tienen un conflicto de ramo -- "
+                   "revisa el detalle de cada uno.",
+            "conflictos": _detalle,
+        }), 409
+
+    if not confirm_dup:
+        _duplicados = [(cid, p) for cid, p in _planes.items() if p["accion"] == "duplicado"]
+        if _duplicados:
+            _doc_rows = mysql_fetchall(
+                "SELECT id, tido, nudo FROM transport_commitments WHERE id IN (" +
+                ",".join(["%s"] * len(_duplicados)) + ")",
+                tuple(cid for cid, _ in _duplicados)
+            ) or []
+            _doc_by_id = {r["id"]: r for r in _doc_rows}
             return jsonify({
                 "ok": False,
                 "error": "duplicado",
-                "msg": f"{len(set(r['commitment_id'] for r in _otros_rows))} documento(s) "
-                       f"ya están en otro manifiesto.",
+                "msg": f"{len(_duplicados)} documento(s) ya están en otro manifiesto (mismo ramo).",
                 "duplicados": [
-                    {"commitment_id": r["commitment_id"],
-                     "doc": f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
-                     "manifest_id": r["id"], "correlativo": r["correlativo"],
-                     "estado": r["estado"],
-                     "fecha": str(r["fecha"]) if r.get("fecha") else None}
-                    for r in _otros_rows
+                    {"commitment_id": cid,
+                     "doc": f"{(_doc_by_id.get(cid) or {}).get('tido','')} "
+                            f"{(_doc_by_id.get(cid) or {}).get('nudo','')}".strip(),
+                     "ramo": p["ramo"], "manifest_id": p["otro_manifest_id"]}
+                    for cid, p in _duplicados
                 ],
             }), 409
-
-    # PR-A (Fase 1, Paso 2 -- 2026-08-01): ramo explícito en el INSERT, mismo
-    # criterio que los otros 3 write-sites. Batch para no hacer N queries en
-    # el arrastre múltiple.
-    _ramos_por_cid = {
-        r["id"]: (r.get("clasificacion") or "despacho")
-        for r in (mysql_fetchall(
-            "SELECT id, clasificacion FROM transport_commitments WHERE id IN ("
-            + ",".join(["%s"] * len(commitment_ids)) + ")", tuple(commitment_ids)
-        ) or [])
-    }
 
     conn = get_db()
     with conn.cursor() as cur:
@@ -35551,12 +35864,17 @@ def tr_asignar_a_manifiesto():
 
         added, dupes = 0, 0
         nuevos_items = []  # (manifest_item_id, commitment_id) recién asignados
-        for cid in commitment_ids:
+        # PR-B: usa el ramo que ya decidió _tr_plan_ramo_manifest_item arriba
+        # (precalculado ANTES de crear/tocar el manifiesto -- no se
+        # recalcula acá para no divergir del pre-chequeo que ya descartó
+        # conflictos ambiguos) -- por eso alcanza con `.get("ramo")`.
+        for cid in _cids_int:
+            ramo_final = _planes.get(cid, {}).get("ramo") or "despacho"
             try:
                 cur.execute(
                     """INSERT IGNORE INTO transport_manifest_items
                        (manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)""",
-                    (mid, cid, _ramos_por_cid.get(cid, "despacho")),
+                    (mid, cid, ramo_final),
                 )
                 if cur.rowcount:
                     added += 1
@@ -36022,11 +36340,22 @@ def tr_cubicador_enviar_manifiesto():
                 correlativo = row["correlativo"]
 
             # 4) Adjuntar item (idempotente por UNIQUE)
-            # PR-A (Fase 1, Paso 2 -- 2026-08-01): ramo explícito, mismo
-            # criterio que los otros 3 write-sites.
-            _ramo_row_cub = mysql_fetchone(
-                "SELECT clasificacion FROM transport_commitments WHERE id=%s", (comm_id,))
-            _ramo_cub = (_ramo_row_cub.get("clasificacion") if _ramo_row_cub else None) or "despacho"
+            # PR-B (Fase 1, 2026-08-01): ramo resuelto vía _tr_ramos_de_commitment
+            # `ramo` en el body es opcional -- mismo mecanismo de
+            # desambiguación que tr_agregar_item, por si el cubicador algún
+            # día expone un selector de ramo (hoy no lo hace: documentos de
+            # 2+ ramos sin asignar todavía se rechazan acá igual que en los
+            # otros write-sites de documento completo, con el mismo mensaje
+            # que apunta a "Líneas pendientes").
+            _ramo_solicitado_cub = (data.get("ramo") or "").strip().lower() or None
+            _ramos_doc_cub = _tr_ramos_de_commitment(comm_id)
+            _items_cub = _tr_items_existentes_de_commitment(comm_id)
+            _plan_cub = _tr_plan_ramo_manifest_item(_ramos_doc_cub, _items_cub, mid, _ramo_solicitado_cub)
+            if _plan_cub["accion"] == "conflicto_multi_ramo":
+                conn.rollback()
+                _doc_lbl_cub = f"{tido} {nudo}".strip()
+                return jsonify(_tr_resp_conflicto_multi_ramo(_plan_cub, _doc_lbl_cub)), 409
+            _ramo_cub = _plan_cub.get("ramo") or "despacho"
             cur.execute(
                 "INSERT IGNORE INTO transport_manifest_items "
                 "(manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)",
@@ -36076,6 +36405,7 @@ def tr_cubicador_enviar_manifiesto():
         "commitment_id": comm_id,
         "added": added,
         "duplicate": not added,
+        "ramo": _ramo_cub,
         "fedex_desfasada": _fedex_desfasada,
     })
 

@@ -148,16 +148,24 @@ class TestClasificacionZZ(unittest.TestCase):
         self.assertEqual(self.clasif(["zzinstalacion"]), "instalacion")
         self.assertEqual(self.clasif(["  ZZreTiro  "]), "retiro")
 
-    def test_GAP_envio_mas_instalacion_pierde_el_envio(self):
-        """[GAP] Una factura con ZZENVIO **y** ZZINSTALACION queda clasificada
-        SOLO como 'instalacion'. La señal de que también hay que despachar se
-        pierde: no existe forma de que un documento pertenezca a los dos ramos.
+    def test_envio_mas_instalacion_sigue_colapsando_a_un_solo_valor_por_diseno(self):
+        """RESUELTO en PR-B (2026-08-01) a nivel de SISTEMA -- pero
+        `_clasif_from_skus` en sí NO se tocó a propósito (instrucción
+        explícita: sigue siendo la fuente de
+        transport_commitments.clasificacion, un valor legacy por documento
+        que otros lugares del código todavía leen).
 
-        Esto es exactamente lo que el plan de dos ramos (Despacho / Instalación)
-        tiene que resolver en Fase 1.
-
-        CUANDO SE ARREGLE: este test va a fallar. Reemplazarlo por uno que
-        verifique que el documento aparece en AMBOS ramos — no borrarlo.
+        Antes esto vivía acá como test_GAP_envio_mas_instalacion_pierde_el_envio:
+        documentaba que la señal de "también hay que despachar" se perdía
+        del todo, sin ningún mecanismo que la recuperara. Eso YA NO es
+        cierto a nivel de sistema -- ver TestClasificacionZZMulti
+        (_clasifs_from_skus_multi, que SÍ devuelve los dos ramos) y
+        TestPlanRamoManifestItem / TestWriteSitesRamoMultiple más abajo (los
+        4 write-sites que crean transport_manifest_items con ramo real,
+        usando esa función multi, no esta). Este test se deja para fijar que
+        _clasif_from_skus, puntualmente, sigue colapsando -- si algún día se
+        la hace multi-valor, hay que revisar todo lo que lee `clasificacion`
+        como single-value antes de tocarla.
         """
         self.assertEqual(self.clasif(["ZZENVIO", "ZZINSTALACION"]), "instalacion")
 
@@ -1456,21 +1464,134 @@ class TestPreventaAutomaticaPorProducto(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BLOQUE 11 · Fase 1 Paso 2 (PR-A) — los 4 write-sites setean `ramo` explícito
+# BLOQUE 11 · Fase 1 Paso 3 (PR-B, 2026-08-01) — motor de decisión compartido
 # ═════════════════════════════════════════════════════════════════════════════
-class TestPRA_RamoExplicitoEnLosCuatroWriteSites(unittest.TestCase):
-    """El backfill de boot (Paso 1) solo alcanza filas ya existentes. Los 4
-    lugares que crean transport_manifest_items deben dejar de depender de él
-    para items NUEVOS — es la precondición dura para poder endurecer el
-    UNIQUE KEY (ver TestUqItemEndurecido más abajo): si un solo write-site
-    siguiera dejando `ramo` en NULL, el endurecimiento nunca podría confirmar
-    "cero filas NULL" de forma estable."""
+class TestPlanRamoManifestItem(unittest.TestCase):
+    """_tr_plan_ramo_manifest_item es el corazón de PR-B: función PURA (sin
+    MySQL) que decide, para un documento con N ramos, si corresponde
+    insertar/no-opear/rechazar un manifest_item en un manifiesto destino.
+    Los 4 write-sites son wrappers finos alrededor de esta decisión -- se
+    prueba EXHAUSTIVAMENTE acá porque es mucho más barato que probar cada
+    write-site por separado, y porque es la pieza que implementa la decisión
+    de Daniel (2026-07-31): dos ramos del MISMO documento no pueden ir al
+    MISMO manifiesto."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plan = staticmethod(_extraer_funcion("_tr_plan_ramo_manifest_item"))
+
+    def test_documento_de_un_solo_ramo_fresco_inserta(self):
+        """Caso de HOY, la inmensa mayoría: 1 ramo, nada asignado todavía."""
+        r = self.plan(["despacho"], [], mid=5)
+        self.assertEqual(r, {"accion": "insertar", "ramo": "despacho"})
+
+    def test_documento_de_un_solo_ramo_ya_en_el_mismo_manifiesto_no_opera(self):
+        items = [{"ramo": "despacho", "manifest_id": 5}]
+        r = self.plan(["despacho"], items, mid=5)
+        self.assertEqual(r, {"accion": "ya_estaba", "ramo": "despacho"})
+
+    def test_documento_de_un_solo_ramo_en_otro_manifiesto_es_duplicado_legacy(self):
+        """Mismo comportamiento preexistente (confirm_dup) que ya cubría
+        TestFacturaEnDosManifiestos -- se preserva intacto para 1 ramo."""
+        items = [{"ramo": "despacho", "manifest_id": 6}]
+        r = self.plan(["despacho"], items, mid=5)
+        self.assertEqual(r, {"accion": "duplicado", "ramo": "despacho", "otro_manifest_id": 6})
+
+    def test_multi_ramo_fresco_sin_desambiguar_es_ambiguo(self):
+        """El caso central que el modelo de dos ramos tiene que resolver: SIN
+        una forma de saber cuál ramo se quiere (ramo_solicitado=None), 2+
+        ramos pendientes no se pueden asignar solos -- es exactamente la
+        situación que hoy (antes de PR-B) colapsaba en silencio a un solo
+        ramo, perdiendo el otro."""
+        r = self.plan(["despacho", "instalacion"], [], mid=5)
+        self.assertEqual(r, {"accion": "conflicto_multi_ramo", "pendientes": ["despacho", "instalacion"]})
+
+    def test_multi_ramo_con_ramo_solicitado_explicito_resuelve_sin_ambiguedad(self):
+        """Cuando el caller SÍ sabe qué ramo quiere (ej. lineas-pendientes,
+        que lo deriva del SKU de la línea seleccionada), no hay ambigüedad
+        aunque el documento tenga 2+ ramos -- esto es lo que permite que el
+        PRIMER ramo de un documento multi-ramo se pueda asignar."""
+        r = self.plan(["despacho", "instalacion"], [], mid=5, ramo_solicitado="despacho")
+        self.assertEqual(r, {"accion": "insertar", "ramo": "despacho"})
+
+    def test_completar_el_segundo_ramo_en_otro_manifiesto_no_tiene_conflicto(self):
+        """El flujo NUEVO que cierra el gap real: despacho ya fue asignado
+        (a OTRO manifiesto, en una operación previa) -- ahora se completa
+        instalación, sin especificar ramo (ej. desde tr_agregar_item en la
+        ficha), y el único ramo pendiente se resuelve solo."""
+        items = [{"ramo": "despacho", "manifest_id": 6}]
+        r = self.plan(["despacho", "instalacion"], items, mid=5)
+        self.assertEqual(r, {"accion": "insertar", "ramo": "instalacion"})
+
+    def test_segundo_ramo_en_el_mismo_manifiesto_ya_no_es_conflicto(self):
+        """CORRECCIÓN 2026-08-01 (Daniel, en vivo -- "despachamos e instalamos
+        [juntos]"): la decisión original del 2026-07-31 (bloquear 2 ramos del
+        mismo documento en el mismo manifiesto) era incorrecta -- despacho +
+        instalación normalmente van en el MISMO viaje. Agregar el segundo
+        ramo al manifiesto que ya tiene el primero debe insertar sin más."""
+        items = [{"ramo": "despacho", "manifest_id": 5}]
+        r = self.plan(["despacho", "instalacion"], items, mid=5)
+        self.assertEqual(r, {"accion": "insertar", "ramo": "instalacion"})
+
+    def test_segundo_ramo_con_ramo_solicitado_explicito_tambien_inserta(self):
+        items = [{"ramo": "despacho", "manifest_id": 5}]
+        r = self.plan(["despacho", "instalacion"], items, mid=5, ramo_solicitado="instalacion")
+        self.assertEqual(r, {"accion": "insertar", "ramo": "instalacion"})
+
+    def test_ramo_solicitado_invalido_para_el_documento_se_ignora_no_se_inventa(self):
+        """Defensivo: si ramo_solicitado no está entre los ramos reales del
+        documento (no debería pasar en la práctica), se trata como si no se
+        hubiera mandado -- nunca se inventa un ramo que el documento no tiene."""
+        r = self.plan(["despacho"], [], mid=5, ramo_solicitado="instalacion")
+        self.assertEqual(r, {"accion": "insertar", "ramo": "despacho"})
+
+    def test_documento_completamente_resuelto_usa_el_primer_ramo_como_referencia(self):
+        """Si TODOS los ramos ya tienen item en algún lado (documento 100%
+        resuelto) y se llama sin ramo_solicitado, no hay nada pendiente que
+        insertar -- se usa el primer ramo como referencia para el chequeo de
+        duplicado/ya_estaba (mismo criterio legacy de siempre para 1 ramo)."""
+        items = [{"ramo": "despacho", "manifest_id": 6}, {"ramo": "instalacion", "manifest_id": 7}]
+        r = self.plan(["despacho", "instalacion"], items, mid=8)
+        self.assertEqual(r, {"accion": "duplicado", "ramo": "despacho", "otro_manifest_id": 6})
+
+    def test_lista_de_ramos_vacia_cae_a_despacho_por_defecto(self):
+        """Defensivo: _tr_ramos_de_commitment nunca debería devolver [], pero
+        si pasara, no debe reventar -- cae al mismo default que el resto del
+        sistema."""
+        r = self.plan([], [], mid=5)
+        self.assertEqual(r, {"accion": "insertar", "ramo": "despacho"})
+
+    def test_tres_ramos_solo_uno_pendiente_no_es_ambiguo(self):
+        items = [{"ramo": "despacho", "manifest_id": 1}, {"ramo": "retiro", "manifest_id": 2}]
+        r = self.plan(["despacho", "retiro", "instalacion"], items, mid=3)
+        self.assertEqual(r, {"accion": "insertar", "ramo": "instalacion"})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 11.b · Fase 1 (PR-A -> PR-B, 2026-08-01) — los 4 write-sites usan el
+# modelo de ramos múltiples en vez de la `clasificacion` singular
+# ═════════════════════════════════════════════════════════════════════════════
+class TestWriteSitesRamoMultiple(unittest.TestCase):
+    """PR-A (paso anterior) dejaba los 4 write-sites leyendo
+    transport_commitments.clasificacion (1 valor por documento) para setear
+    `ramo` -- funcional, pero es exactamente lo que perdía el segundo ramo de
+    un documento (ver TestClasificacionZZ). PR-B los migra a
+    _tr_ramos_de_commitment + _tr_plan_ramo_manifest_item (BLOQUE 11 arriba),
+    que sí puede crear más de un manifest_item por documento, cada uno con su
+    propio ramo, respetando el candado de Daniel."""
 
     FUNCIONES = [
         "tr_lineas_pendientes_enviar_manifiesto",
         "tr_agregar_item",
         "tr_asignar_a_manifiesto",
         "tr_cubicador_enviar_manifiesto",
+    ]
+    # tr_lineas_pendientes_enviar_manifiesto SIEMPRE resuelve un
+    # ramo_solicitado explícito (granularidad de línea, ver su propio bloque
+    # más abajo) -- por diseño nunca llega a la rama ambigua del planner, así
+    # que es el único de los 4 que no referencia "conflicto_multi_ramo".
+    FUNCIONES_CON_CONFLICTO_MULTI_RAMO = [
+        "tr_agregar_item", "tr_asignar_a_manifiesto", "tr_cubicador_enviar_manifiesto",
     ]
 
     def test_los_cuatro_sitios_incluyen_ramo_en_el_insert(self):
@@ -1493,26 +1614,217 @@ class TestPRA_RamoExplicitoEnLosCuatroWriteSites(unittest.TestCase):
                     "del UNIQUE KEY.",
                 )
 
-    def test_los_cuatro_sitios_resuelven_ramo_desde_clasificacion_del_commitment(self):
-        """El valor viene de transport_commitments.clasificacion (el único dato
-        de clasificación que existe hoy, 1 por documento) — PR-A todavía NO usa
-        la función multi (eso es PR-B, items nuevos siguen siendo 1 por
-        documento en este paso)."""
+    def test_los_cuatro_sitios_usan_el_motor_compartido_de_ramos_multiples(self):
+        """PR-B: ya no leen `clasificacion` (singular) para decidir el ramo
+        del INSERT -- delegan en _tr_ramos_de_commitment (lista completa de
+        ramos del documento) + _tr_plan_ramo_manifest_item (la decisión)."""
+        for nombre in self.FUNCIONES:
+            cuerpo = _cuerpo_funcion(nombre)
+            with self.subTest(funcion=nombre):
+                self.assertIn("_tr_ramos_de_commitment(", cuerpo,
+                             f"{nombre} ya no resuelve los ramos del documento vía "
+                             "_tr_ramos_de_commitment.")
+                self.assertIn("_tr_plan_ramo_manifest_item(", cuerpo,
+                             f"{nombre} ya no usa el motor de decisión compartido "
+                             "_tr_plan_ramo_manifest_item.")
+
+    def test_ningun_sitio_maneja_ya_el_candado_retirado(self):
+        """CORRECCIÓN 2026-08-01: el candado 'conflicto_candado' (bloquear 2
+        ramos del mismo documento en el mismo manifiesto) se retiró -- ya no
+        debe quedar código muerto referenciándolo en ninguno de los 4
+        write-sites."""
         for nombre in self.FUNCIONES:
             cuerpo = _norm(_cuerpo_funcion(nombre))
             with self.subTest(funcion=nombre):
-                self.assertIn("clasificacion", cuerpo,
-                             f"{nombre} ya no lee clasificacion para derivar ramo.")
+                self.assertNotIn("conflicto_candado", cuerpo,
+                             f"{nombre} todavía referencia 'conflicto_candado' -- "
+                             "código muerto del candado retirado, limpiar.")
+
+    def test_tres_sitios_manejan_ambiguedad_multi_ramo_con_409(self):
+        """Los 3 write-sites SIN granularidad de línea (documento completo)
+        deben rechazar con 409 cuando un documento tiene 2+ ramos sin asignar
+        y no hay forma de saber cuál se quiere -- ver la excepción documentada
+        de tr_lineas_pendientes_enviar_manifiesto en FUNCIONES_CON_CONFLICTO_MULTI_RAMO."""
+        for nombre in self.FUNCIONES_CON_CONFLICTO_MULTI_RAMO:
+            cuerpo = _norm(_cuerpo_funcion(nombre))
+            with self.subTest(funcion=nombre):
+                self.assertIn("conflicto_multi_ramo", cuerpo,
+                             f"{nombre} ya no maneja el resultado 'conflicto_multi_ramo' del planner.")
+                self.assertRegex(
+                    cuerpo,
+                    r'conflicto_multi_ramo.{0,400}?\), 409',
+                    f"{nombre} maneja 'conflicto_multi_ramo' pero no devuelve 409.",
+                )
 
     def test_ningun_sitio_deja_ramo_sin_fallback(self):
-        """Si `clasificacion` viniera NULL/vacío por algún motivo, ninguno de
-        los 4 sitios debe insertar ramo=NULL — todos tienen que caer a
-        'despacho' como default seguro."""
+        """Si el ramo resuelto viniera vacío por algún motivo, ninguno de los
+        4 sitios debe insertar ramo=NULL — todos tienen que caer a
+        'despacho' como default seguro (defensa en profundidad, aunque
+        _tr_ramos_de_commitment / _tr_plan_ramo_manifest_item ya garantizan
+        que esto no debería ocurrir en la práctica)."""
         for nombre in self.FUNCIONES:
             cuerpo = _cuerpo_funcion(nombre)
             with self.subTest(funcion=nombre):
                 self.assertIn('"despacho"', cuerpo,
                              f"{nombre} perdió el fallback a 'despacho'.")
+
+    def test_tr_lineas_pendientes_resuelve_ramo_por_linea_no_por_documento_completo(self):
+        """La pieza que distingue a este write-site de los otros 3: puede
+        derivar el ramo EXACTO de la línea seleccionada (vía el SKU real,
+        ej. 'ZZENVIO' vs 'ZZINSTALACION') en vez de mirar el documento
+        completo -- eso es lo que le permite resolver el PRIMER ramo de un
+        documento fresco con 2+ ramos, algo que los otros 3 write-sites (sin
+        esa granularidad) no pueden hacer solos."""
+        cuerpo = _cuerpo_funcion("tr_lineas_pendientes_enviar_manifiesto")
+        self.assertIn("_clasif_from_skus([s])", cuerpo,
+                     "Dejó de derivar el ramo por línea con _clasif_from_skus([sku]) -- "
+                     "revisar si todavía puede resolver el primer ramo de un documento "
+                     "multi-ramo fresco.")
+        self.assertIn("_ramos_solicitados_por_cid", _norm(cuerpo))
+
+    def test_tr_lineas_pendientes_acepta_dos_ramos_del_mismo_documento_en_el_mismo_pedido(self):
+        """CORRECCIÓN 2026-08-01: si el operador selecciona líneas de 2 ramos
+        distintos de la MISMA factura para el MISMO envío (ej. la línea
+        ZZENVIO y la línea ZZINSTALACION), eso ya NO se rechaza -- en la
+        operación real, despacho e instalación normalmente van juntos.
+        _ramos_solicitados_por_cid guarda la LISTA completa (no un único
+        ramo) y el código arma un plan+insert por cada (cid, ramo)."""
+        cuerpo = _norm(_cuerpo_funcion("tr_lineas_pendientes_enviar_manifiesto"))
+        self.assertIn("_ramos_solicitados_por_cid", cuerpo,
+                     "Dejó de acumular la lista de ramos solicitados por documento.")
+        self.assertNotIn("_conflictos_mismo_pedido", cuerpo,
+                     "El bloqueo _conflictos_mismo_pedido (candado retirado) sigue presente.")
+
+    def test_tr_agregar_item_y_tr_asignar_siguen_preservando_confirm_dup(self):
+        """El mecanismo LEGACY preexistente (confirm_dup) para el caso
+        distinto -- mismo ramo en OTRO manifiesto -- sigue siendo una
+        decisión legítima del operador (ej. redespacho parcial), no un error."""
+        for nombre in ("tr_agregar_item", "tr_asignar_a_manifiesto"):
+            cuerpo = _cuerpo_funcion(nombre)
+            with self.subTest(funcion=nombre):
+                self.assertIn("confirm_dup", cuerpo,
+                             f"{nombre} perdió el escape confirm_dup para duplicados legítimos.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 11.c · Mensajes de conflicto de ramo (PR-B, 2026-08-01)
+# ═════════════════════════════════════════════════════════════════════════════
+class TestRespuestasConflictoRamo(unittest.TestCase):
+    """_tr_resp_conflicto_multi_ramo arma el payload 409 legible que ven los
+    write-sites -- se prueba ejecutando la función real (es pura: dict in,
+    dict out). _tr_resp_conflicto_candado se ELIMINÓ en la corrección
+    2026-08-01 (el candado que bloqueaba 2 ramos en el mismo manifiesto ya
+    no existe)."""
+
+    @classmethod
+    def setUpClass(cls):
+        _ramo_labels = None
+        for nodo in ast.walk(_arbol_app()):
+            if isinstance(nodo, ast.Assign):
+                for destino in nodo.targets:
+                    if isinstance(destino, ast.Name) and destino.id == "_RAMO_LABELS":
+                        _ramo_labels = ast.literal_eval(nodo.value)
+        if _ramo_labels is None:
+            raise AssertionError("No se encontró _RAMO_LABELS en app.py")
+        _label_fn = _extraer_funcion("_tr_ramo_label", extras={"_RAMO_LABELS": _ramo_labels})
+        cls.multi = staticmethod(
+            _extraer_funcion("_tr_resp_conflicto_multi_ramo", extras={"_tr_ramo_label": _label_fn}))
+
+    def test_conflicto_multi_ramo_lista_todos_los_pendientes(self):
+        plan = {"accion": "conflicto_multi_ramo", "pendientes": ["despacho", "instalacion"]}
+        r = self.multi(plan, "BLV 999")
+        self.assertEqual(r["error"], "ramo_ambiguo")
+        self.assertIn("despacho", r["msg"])
+        self.assertIn("instalación", r["msg"])
+        self.assertIn("Líneas pendientes", r["msg"])
+        self.assertEqual(r["ramos_pendientes"], ["despacho", "instalacion"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE 11.d · Grilla del Monitor: 1 fila por ramo con manifest_item real
+# (PR-B, 2026-08-01)
+# ═════════════════════════════════════════════════════════════════════════════
+class TestCompromisosJsonExpansionPorRamo(unittest.TestCase):
+    """tr_compromisos_json necesita MySQL real para ejecutarse -- se prueba
+    ESTRUCTURALMENTE (mismo patrón que el resto del archivo para funciones
+    con acceso a BD): que arme el fetch batch de items reales y expanda la
+    fila cuando corresponde, sin tocar el WHERE de pendiente/en_gestion/
+    entregado ni los `conteos` (decisión de diseño documentada en el propio
+    código -- ver comentario en tr_compromisos_json)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_compromisos_json")
+        cls.norm = _norm(cls.fuente)
+
+    def test_hace_un_fetch_batch_de_items_reales_por_ramo(self):
+        self.assertIn("_items_por_commitment", self.fuente,
+                     "Desapareció el fetch batch de items reales -- sin esto no hay "
+                     "forma de expandir en N filas.")
+        self.assertRegex(
+            self.norm,
+            r"SELECT mi\.commitment_id, mi\.ramo, mi\.estado_entrega, mi\.manifest_id,"
+            r"[\s\"]*tm\.courier, tm\.correlativo",
+            "Cambió la forma del fetch batch de manifest_items -- revisar que siga "
+            "trayendo ramo/estado/manifest_id/courier/correlativo.",
+        )
+
+    def test_el_fetch_batch_ordena_por_id_desc_igual_que_las_subqueries_de_arriba(self):
+        """Mismo criterio "más reciente primero" que _COURIER_SUB/_MANIFIESTO_ID_SUB/
+        etc (ORDER BY tmi.id DESC LIMIT 1) -- así el item[0] de cada commitment
+        coincide exactamente con lo que la fila base YA trae, y no hace falta
+        recalcularlo para el caso de 1 item (la inmensa mayoría)."""
+        self.assertIn("ORDER BY mi.commitment_id, mi.id DESC", self.norm)
+
+    def test_documento_sin_items_sigue_siendo_una_sola_fila(self):
+        """Caso de HOY sin cambios: 0 manifest_items -> 1 fila, sin expandir."""
+        self.assertIn("if len(_items_r) <= 1:", self.fuente)
+
+    def test_cada_fila_expandida_tiene_su_propio_ramo(self):
+        self.assertRegex(self.norm, r'_fila\["ramo"\]\s*=\s*_it\.get\("ramo"\)')
+
+    def test_filas_expandidas_mas_alla_de_la_primera_recalculan_courier_manifiesto_y_estado(self):
+        """El item[0] ya coincide con la fila base (mismo "más reciente") --
+        solo las filas 2+ necesitan pisar courier/manifiesto/estado con SU
+        PROPIO item, no el del item más reciente del documento completo."""
+        for campo in ('_fila["courier"]', '_fila["manifiesto_id"]',
+                      '_fila["manifiesto_correlativo"]', '_fila["gestion"]',
+                      '_fila["estado_logistico"]'):
+            self.assertIn(campo, self.fuente,
+                         f"Falta recalcular {campo} para las filas expandidas 2+.")
+
+    def test_dias_atraso_de_una_fila_con_item_real_siempre_es_cero(self):
+        """gestion=pendiente (el único caso con dias_atraso>0) nunca aplica a
+        una fila con manifest_item real -- en_manif=1 siempre cae a
+        en_gestion o entregado."""
+        self.assertIn('_fila["dias_atraso"] = 0', self.fuente)
+
+    def test_no_toca_el_where_de_pendiente_en_gestion_entregado(self):
+        """Decisión de diseño documentada: la partición pendiente/en_gestion/
+        entregado sigue siendo por DOCUMENTO -- reescribirla a nivel de ramo
+        es un cambio de alcance mayor, fuera de esta fase. Este test fija que
+        las 3 macros SQL siguen ahí, sin que la expansión las haya tocado."""
+        for macro in ("_SQL_PENDIENTE", "_SQL_ENGESTION", "_SQL_ENTREGADO"):
+            self.assertIn(macro, self.fuente)
+
+    def test_conteos_siguen_siendo_consultas_agregadas_directas_sobre_transport_commitments(self):
+        """Mismo criterio: `conteos` no se computó a partir de `result` (que
+        sí puede tener más filas que documentos) -- sigue habiendo varias
+        queries SQL independientes de COUNT/SUM sobre transport_commitments
+        (conteos_row/_eg_row/_ent_row/_pend_row), exactamente como antes de
+        PR-B, y ninguna de las claves de `conteos` se deriva de `len(result)`
+        ni de iterar `result`."""
+        # Al menos las 4 queries agregadas preexistentes (conteos_row +
+        # en_gestion + entregados + pendientes) siguen apuntando directo a
+        # la tabla, no a la lista `result` ya armada en Python.
+        self.assertGreaterEqual(self.norm.count("FROM transport_commitments WHERE"), 4)
+        idx_conteos = self.fuente.index('"conteos": {')
+        idx_fin = self.fuente.index("})", idx_conteos)
+        bloque_conteos = self.fuente[idx_conteos:idx_fin]
+        self.assertNotIn("result", bloque_conteos,
+                         "El armado de `conteos` en la respuesta empezó a referenciar "
+                         "`result` -- eso significaría que se migró a contar filas "
+                         "expandidas en vez de documentos (cambio de diseño no documentado).")
 
 
 class TestUqItemEndurecido(unittest.TestCase):
