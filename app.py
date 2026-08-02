@@ -19953,7 +19953,7 @@ def _ensure_transport_guias_table():
     """)
 
 
-def _tr_fetch_from_erp(tido, nudo):
+def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
     """
     Obtiene un documento del ERP vía API y lo guarda/actualiza en transport_commitments.
     Usa la misma lógica de _cubicador_fetch pero orientada a transporte.
@@ -20302,6 +20302,21 @@ def _tr_fetch_from_erp(tido, nudo):
         except Exception: pass
         raise
     # Importante: NO cerrar conn aquí (es del pool). teardown_appcontext lo hace.
+
+    # GUÍA REAL del ERP (2026-08-02, Daniel sobre FCV 0000011149: "no me está
+    # identificando las guías"). Hasta ahora la captura de guías corría SOLO
+    # desde el cron horario, así que un documento traído por cualquier otra
+    # vía -- abrir su ficha, "Importar forzado", mandarlo a un manifiesto --
+    # se quedaba con la columna Guía en "—" aunque el ERP sí la tuviera.
+    # Verificado en el caso real: /api/erp/peek-guias devolvía GDV 0000032330
+    # para la 11149 mientras la ficha mostraba "—".
+    # Se llama con capturar_guia=False desde el cron, que ya la invoca aparte
+    # y si no duplicaría una consulta al ERP por documento.
+    if capturar_guia:
+        try:
+            _tr_fetch_guias_from_erp(comm_id, tido, nudo_canonico)
+        except Exception as _e_g:
+            print(f"[tr_fetch] guía de {tido}/{nudo_canonico} falló (no crítico): {_e_g}", flush=True)
 
     return comm_id, None
 
@@ -33827,7 +33842,7 @@ def tr_cron_refrescar_saldo_productos():
         try:
             if d.get("activo"):
                 # Caso de siempre: despacho activo, refresca saldo + guía.
-                comm_id, err = _tr_fetch_from_erp(d["tido"], str(d["nudo"]))
+                comm_id, err = _tr_fetch_from_erp(d["tido"], str(d["nudo"]), capturar_guia=False)
                 if comm_id:
                     actualizados += 1
                     # try/except propio: un fallo de guía acá NUNCA debe
