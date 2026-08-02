@@ -20017,9 +20017,34 @@ def _tr_fetch_from_erp(tido, nudo):
     # Cuando se "cierra" la línea en el ERP, CAPRAD1 == CAPRCO1 y saldo=0,
     # pero eso NO significa que el documento esté agotado: el servicio se
     # consumió contablemente, no hay despacho físico que rebajar.
-    # Por eso forzamos tiene_saldo=1: ILUS siempre puede usar el doc para
-    # despacho físico mientras el ERP no lo cancele.
-    tiene_saldo = 1
+    #
+    # FIX 2026-08-01 (Daniel, informe oficial "compromisos no despachados"):
+    # el diagnóstico de arriba sigue siendo correcto -- saldo_total (líneas ZZ)
+    # NO sirve para decidir esto. Pero la conclusión de forzar tiene_saldo=1
+    # SIEMPRE era el otro extremo: dejaba a TODO documento como pendiente para
+    # siempre, aunque su mercadería ya hubiera salido con guía. Por eso el
+    # Monitor mostraba 927 pendientes cuando el ERP reporta 166 reales.
+    # Ahora se mide lo que corresponde: el saldo de las líneas de PRODUCTO
+    # FÍSICO, con la fórmula completa de Random y el clamp por ESLIDO -- misma
+    # regla que el sync masivo (ver tiene_saldo_fisico en su SQL) y que
+    # _cubicador_fetch. Los dos caminos ya no se contradicen.
+    _fis_lines = [l for l in raw_lineas
+                  if not (l.get("KOPRCT") or "").strip().upper().startswith("ZZ")]
+
+    def _saldo_fisico_linea(l):
+        _es = (l.get("ESLIDO") or "").strip().upper()
+        if _es in ("C", "T", "TOTAL", "CERRADO", "DESPACHADO"):
+            return 0.0
+        return (float(l.get("CAPRCO1") or 0) - float(l.get("CAPRAD1") or 0)
+                - float(l.get("CAPREX1") or 0) - float(l.get("CAPRNC1") or 0))
+
+    if not _fis_lines:
+        # Documento 100% servicio (o el ERP no devolvió el detalle de líneas):
+        # se conserva el comportamiento histórico -- 1 = gestionable. Mejor
+        # dejarlo visible en Pendientes que esconderlo por falta de datos.
+        tiene_saldo = 1
+    else:
+        tiene_saldo = 1 if any(_saldo_fisico_linea(l) > 0 for l in _fis_lines) else 0
 
     # ── Datos del header (campos friendly, ya enriquecidos por el motor/SQL) ──
     # NORMALIZACIÓN: pasar TODO por _erp_clean para no persistir placeholders
@@ -20264,12 +20289,18 @@ def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
     Sin argumento, corre sobre TODO el universo actual (uso: backfill único
     de los que ya estaban en este estado antes de que existiera este hook).
 
-    No pisa un estado ya avanzado: solo actúa si el estado actual sigue
-    siendo uno "de sync" (mismo set que el guard del UPSERT masivo, ver
-    _tr_bulk_sync_erp_mysql). updated_by se marca 'alerta_guia_sin_gestion'
-    (NO 'sync') a propósito: ese mismo guard exige updated_by='sync' para
-    pisar el estado en la próxima corrida del sync masivo -- con otro valor,
-    el Problema marcado acá queda protegido y no se revierte solo.
+    No pisa una decisión humana. El guard replica el del UPSERT masivo
+    (_tr_bulk_sync_erp_mysql): estado dentro del set "de sync" **Y**
+    updated_by='sync'. Esto último es esencial y no cosmético: sin ese
+    segundo término, cuando Alison marcara 'Despachado' a mano (que es
+    justamente lo que se le está pidiendo hacer con esta cola) la corrida
+    siguiente lo devolvería a 'Problema' -- un tira y afloja infinito entre
+    operador y sistema. Con el guard, apenas una persona toca el documento
+    queda fuera del alcance de esta función para siempre.
+
+    updated_by se marca 'alerta_guia_sin_gestion' (NO 'sync') a propósito:
+    el guard del sync masivo exige updated_by='sync' para pisar el estado,
+    así que el Problema marcado acá tampoco se revierte solo.
     """
     where_extra = ""
     params = []
@@ -20287,6 +20318,7 @@ def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
         JOIN transport_guias g ON g.commitment_id = c.id
         WHERE c.id NOT IN (SELECT commitment_id FROM transport_manifest_items)
           AND c.estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')
+          AND (c.updated_by = 'sync' OR c.updated_by IS NULL OR c.updated_by = '')
           {where_extra}
     """, tuple(params)) or []
     ids = [r["id"] for r in rows]
@@ -20405,16 +20437,16 @@ def _tr_fetch_guias_from_erp(commitment_id, tido, nudo):
             """, (_guia_num, _guia_num, _guia_num, commitment_id))
         conn.commit()
 
-        # Hook automático (2026-08-01, Daniel): esta guía recién sincronizada
-        # puede ser justo el caso "guía real sin manifiesto" -- si lo es, se
-        # marca Problema de una vez para que quede accionable en el Monitor.
-        # No crítico: un fallo acá no debe tumbar la sincronización de guías.
-        try:
-            _tr_marcar_guia_sin_gestion_como_problema([commitment_id])
-        except Exception as _e_marcar:
-            print(f"[_tr_fetch_guias_from_erp] marcado Problema automático falló "
-                  f"(no crítico): {_e_marcar}", flush=True)
-
+        # NOTA 2026-08-01: acá había un hook que llamaba a
+        # _tr_marcar_guia_sin_gestion_como_problema([commitment_id]). Era
+        # CÓDIGO MUERTO y se retiró: esta función se llama únicamente desde
+        # tr_cron_refrescar_saldo_productos, cuya query hace INNER JOIN contra
+        # transport_manifest_items -- o sea, todo commitment_id que llega acá
+        # YA tiene manifiesto, mientras que la función de marcado exige
+        # exactamente lo contrario (NOT IN manifest_items). Los dos predicados
+        # son mutuamente excluyentes: el SELECT devolvía 0 filas siempre.
+        # El marcado ahora corre una vez por corrida al final del cron, sin
+        # argumentos, sobre todo el universo -- ver tr_cron_refrescar_saldo_productos.
         return len(rows)
     except Exception as e:
         print(f"[_tr_fetch_guias_from_erp] {tido}/{nudo} falló (no crítico): {e}", flush=True)
@@ -20526,6 +20558,15 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             -- el LEFT/COALESCE evita falsos negativos cuando el SKU no está en
             -- MAEPR (producto sin ficha → stock 0 → si pide >0 cuenta preventa).
             -- Read-only: solo SELECT, sin tokens prohibidos.
+            -- FIX 2026-08-01 (Daniel, informe oficial "compromisos no
+            -- despachados"): antes comparaba dp.CAPRCO1 (cantidad TOTAL de la
+            -- línea) contra el stock. Eso marcaba preventa a documentos cuyo
+            -- producto YA se despachó completo -- la cantidad total sigue
+            -- siendo alta aunque no quede nada por sacar. La regla real de
+            -- Daniel es "que tenga saldo positivo y no tenga stock", así que
+            -- se compara el SALDO (lo que falta despachar), no el total.
+            -- Medido contra el informe del ERP: 85 preventa reportadas vs 30
+            -- reales entre las facturas/boletas efectivamente pendientes.
             CASE WHEN EXISTS (
                 SELECT 1
                   FROM MAEDDO dp
@@ -20533,8 +20574,59 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
                          ON LTRIM(RTRIM(pr.KOPR)) = LTRIM(RTRIM(dp.KOPRCT))
                  WHERE dp.IDMAEEDO = h.IDMAEEDO
                    AND LEFT(UPPER(LTRIM(RTRIM(dp.KOPRCT))), 2) <> 'ZZ'
-                   AND dp.CAPRCO1 > COALESCE(pr.STFI1, 0)
-            ) THEN 1 ELSE 0 END AS preventa_flag
+                   AND dp.CAPRCO1 - COALESCE(dp.CAPRAD1, 0)
+                                  - COALESCE(dp.CAPREX1, 0)
+                                  - COALESCE(dp.CAPRNC1, 0) > 0
+                   AND dp.CAPRCO1 - COALESCE(dp.CAPRAD1, 0)
+                                  - COALESCE(dp.CAPREX1, 0)
+                                  - COALESCE(dp.CAPRNC1, 0) > COALESCE(pr.STFI1, 0)
+            ) THEN 1 ELSE 0 END AS preventa_flag,
+            -- ── SALDO FÍSICO 2026-08-01 (Daniel, caso real FCV 0000011152 +
+            -- informe oficial del ERP "compromisos no despachados") ─────────
+            -- LA REGLA: "lo único que elimina el saldo es la guía". El saldo
+            -- que decide pendiente/entregado tiene que salir del PRODUCTO
+            -- FÍSICO, no de las líneas ZZ (servicios de flete/instalación).
+            --
+            -- El bug: saldo_zz (más abajo) agrega SOLO líneas ZZ -- el WHERE
+            -- de esa subconsulta filtra por IN ({zz_in}) antes de sumar nada.
+            -- Cuando el ERP cierra contablemente la línea de servicio, ese
+            -- saldo llega a 0 y el documento caía en la pestaña Entregados con
+            -- la mercadería todavía en bodega. FCV 0000011152: BA005 con
+            -- saldo=1 (nunca salió) pero ZZENVIO/ZZINSTALACION en 0 -> figuraba
+            -- "Despachado". El propio informe del ERP la lista como pendiente.
+            --
+            -- Fórmula completa de Random (misma que _cubicador_fetch, ver
+            -- app.py:15639): CAPRCO1 - CAPRAD1 - CAPREX1 - CAPRNC1, con el
+            -- clamp por ESLIDO (línea cerrada en el ERP -> saldo 0 aunque los
+            -- números no cuadren). EXISTS correlacionado igual que
+            -- preventa_flag de arriba -- mismo costo, patrón ya probado.
+            --
+            -- RED DE SEGURIDAD (Daniel 2026-08-01: "puede pasar a llevar algún
+            -- compromiso de un cliente y dejarlo sin despacho... riesgo
+            -- reputacional"): el segundo NOT EXISTS mantiene en 1 los
+            -- documentos que NO tienen ninguna línea de producto físico --
+            -- típicamente puro servicio (solo ZZINSTALACION/ZZSERVTEC, sin
+            -- mercadería). Sin él, EXISTS daría 0 y esos documentos caerían a
+            -- "Despachado" desapareciendo de Pendientes, cuando en realidad
+            -- alguien todavía tiene que ir a instalar. Ante la duda se
+            -- conserva visible: un falso pendiente cuesta una revisión, un
+            -- falso entregado cuesta un cliente sin su pedido.
+            CASE WHEN EXISTS (
+                SELECT 1
+                  FROM MAEDDO dsf
+                 WHERE dsf.IDMAEEDO = h.IDMAEEDO
+                   AND LEFT(UPPER(LTRIM(RTRIM(dsf.KOPRCT))), 2) <> 'ZZ'
+                   AND UPPER(LTRIM(RTRIM(COALESCE(dsf.ESLIDO, '')))) NOT IN
+                       ('C', 'T', 'TOTAL', 'CERRADO', 'DESPACHADO')
+                   AND dsf.CAPRCO1 - COALESCE(dsf.CAPRAD1, 0)
+                                   - COALESCE(dsf.CAPREX1, 0)
+                                   - COALESCE(dsf.CAPRNC1, 0) > 0
+            ) OR NOT EXISTS (
+                SELECT 1
+                  FROM MAEDDO dnf
+                 WHERE dnf.IDMAEEDO = h.IDMAEEDO
+                   AND LEFT(UPPER(LTRIM(RTRIM(dnf.KOPRCT))), 2) <> 'ZZ'
+            ) THEN 1 ELSE 0 END AS tiene_saldo_fisico
         FROM MAEEDO h
         -- PERF 2026-06-13: UNA sola agregación de MAEDDO por documento (GROUP BY)
         -- en vez de 4 subqueries correlacionadas + EXISTS. El JOIN (no LEFT) ya
@@ -20708,7 +20800,15 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
             #                             confirmada. Ver FIX 2026-07-25 arriba: antes
             #                             esto escribía 'Entregado' por error, mezclando
             #                             saldo financiero con confirmación de entrega.)
-            if saldo_zz <= 0:
+            # FIX 2026-08-01 (Daniel): el saldo que decide pendiente/entregado
+            # sale del PRODUCTO FÍSICO (tiene_saldo_fisico, ver el EXISTS en el
+            # SQL de arriba), NO de saldo_zz. saldo_zz mide solo las líneas de
+            # servicio (flete/instalación), que el ERP cierra contablemente
+            # apenas se factura -- con la mercadería todavía en bodega. Se
+            # conserva saldo_zz porque cobertura_pct y los campos *_zz siguen
+            # reportando el avance del servicio, que es otro dato válido.
+            _saldo_fisico = int(row.get("tiene_saldo_fisico") or 0)
+            if not _saldo_fisico:
                 estado_auto = "Despachado"
                 tiene_saldo_flag = 0
             elif guia:
@@ -21686,6 +21786,14 @@ def tr_compromisos_json():
             estado_logistico = _estado_item
         elif en_manif:
             estado_logistico = "En preparación"
+        elif (r.get("estado") or "").strip() == "Problema":
+            # FIX 2026-08-01: 'Problema' es una marca deliberada (la pone
+            # _tr_marcar_guia_sin_gestion_como_problema o una persona) y tiene
+            # que sobrevivir hasta la columna Estado -- si no, el filtro
+            # "Problema" del Monitor nunca devuelve estos documentos y la cola
+            # de Alison queda invisible. Sin esta rama, un documento marcado
+            # Problema pero con tiene_saldo=1 se mostraba "Por despachar".
+            estado_logistico = "Problema"
         elif tiene_saldo == 1:
             estado_logistico = "Por despachar"
         else:
@@ -33398,8 +33506,25 @@ def tr_cron_refrescar_saldo_productos():
         except Exception as e:
             fallidos += 1
             print(f"[refrescar-saldo] {d['tido']} {d['nudo']} falló: {e}", flush=True)
+
+    # Marcado automático de "guía real sin gestión de despacho" -> Problema
+    # (2026-08-01, Daniel: "en Problema dejaría ese tipo... para que Alison se
+    # encargue de marcarlas como despachadas"). Corre UNA vez por corrida y
+    # sobre TODO el universo -- no por documento dentro del loop de arriba:
+    # los documentos de ese loop tienen manifiesto por definición (INNER JOIN
+    # con transport_manifest_items en la query), y esta función busca
+    # justamente los que NO lo tienen. Ver el comentario en
+    # _tr_fetch_guias_from_erp donde estaba el hook muerto.
+    # No crítico: un fallo acá no debe hacer fallar el refresco de saldo.
+    marcados_problema = 0
+    try:
+        marcados_problema = _tr_marcar_guia_sin_gestion_como_problema()
+    except Exception as e_mp:
+        print(f"[refrescar-saldo][problema] marcado automático falló: {e_mp}", flush=True)
+
     return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados,
-                    "guias_catchup": guias_catchup, "fallidos": fallidos})
+                    "guias_catchup": guias_catchup, "fallidos": fallidos,
+                    "marcados_problema": marcados_problema})
 
 
 @app.route("/transporte/cron/sync-mes-actual", methods=["GET", "POST"])

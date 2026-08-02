@@ -469,8 +469,8 @@ class TestBulkSyncErp(unittest.TestCase):
             r"estado\s*=CASE WHEN estado IN \([^)]*\) AND updated_by='sync' THEN VALUES\(estado\) ELSE estado END",
         )
 
-    def test_saldo_cero_es_Despachado_no_Entregado(self):
-        """Regresión histórica (FIX 2026-07-25): saldo ZZ == 0 significa
+    def test_sin_saldo_es_Despachado_no_Entregado(self):
+        """Regresión histórica (FIX 2026-07-25): "sin saldo" significa
         'facturado/cubierto en el ERP', NO 'entregado físicamente'. Alguna vez
         este código escribió 'Entregado' y mezcló plata con logística.
 
@@ -478,7 +478,7 @@ class TestBulkSyncErp(unittest.TestCase):
         """
         self.assertRegex(
             _norm(self.fuente),
-            r"if saldo_zz <= 0: estado_auto = \"Despachado\"",
+            r"if not _saldo_fisico: estado_auto = \"Despachado\"",
         )
         # Y que el bulk sync NO escriba 'Entregado' como estado automático.
         estados_auto = re.findall(r'estado_auto\s*=\s*"([^"]+)"', self.fuente)
@@ -486,6 +486,58 @@ class TestBulkSyncErp(unittest.TestCase):
             "Entregado", estados_auto,
             "El bulk sync volvió a derivar 'Entregado' desde el saldo del ERP. "
             "Eso confunde saldo financiero con entrega física (bug de 2026-07-25).",
+        )
+
+    def test_el_saldo_que_decide_sale_del_producto_fisico_no_del_ZZ(self):
+        """FIX 2026-08-01 (Daniel, caso real FCV 0000011152 + informe oficial
+        del ERP): el flag tiene_saldo -- que decide la pestaña Pendientes vs
+        Entregados -- debe salir del saldo del PRODUCTO FÍSICO, no de
+        saldo_zz (líneas de servicio, que el ERP cierra contablemente apenas
+        se factura, con la mercadería todavía en bodega).
+
+        "Esto es una página logística: los servicios no mueven las facturas,
+        los productos sí" -- Daniel.
+        """
+        cuerpo = _norm(self.fuente)
+        self.assertIn("_saldo_fisico = int(row.get(\"tiene_saldo_fisico\") or 0)", cuerpo,
+                      "El bulk sync dejó de leer tiene_saldo_fisico del SQL.")
+        self.assertNotRegex(
+            cuerpo, r"if saldo_zz <= 0: estado_auto",
+            "Volvió a decidir el estado con saldo_zz (líneas de servicio). "
+            "Ese es exactamente el bug de FCV 0000011152.",
+        )
+        # El SQL tiene que calcular el flag sobre líneas NO-ZZ.
+        self.assertIn("AS tiene_saldo_fisico", self.sql)
+        self.assertRegex(
+            _norm(self.sql),
+            r"FROM MAEDDO dsf.{0,400}?<> 'ZZ'",
+            "El EXISTS de tiene_saldo_fisico dejó de excluir las líneas ZZ.",
+        )
+
+    def test_documento_sin_lineas_fisicas_se_conserva_pendiente(self):
+        """RED DE SEGURIDAD (Daniel 2026-08-01: "puede dejar a un cliente sin
+        despacho... riesgo reputacional"). Un documento de PURO servicio (sin
+        ninguna línea de producto) no tiene saldo físico que medir -- si se
+        dejara caer a 0 desaparecería de Pendientes aunque alguien todavía
+        tenga que ir a instalar. Debe conservarse visible.
+
+        Ante la duda se conserva: un falso pendiente cuesta una revisión, un
+        falso entregado cuesta un cliente sin su pedido.
+        """
+        self.assertRegex(
+            _norm(self.sql),
+            r"OR NOT EXISTS \(.{0,300}?FROM MAEDDO dnf.{0,200}?<> 'ZZ'",
+            "El bulk sync perdió la red de seguridad para documentos sin "
+            "líneas de producto físico (puro servicio).",
+        )
+        # El sync individual tiene que tener la MISMA red de seguridad.
+        # (regex, no assertIn: entre el `if` y la asignación hay un comentario
+        # explicativo que _norm conserva.)
+        cuerpo_ind = _norm(_cuerpo_funcion("_tr_fetch_from_erp"))
+        self.assertRegex(
+            cuerpo_ind, r"if not _fis_lines:.{0,300}?tiene_saldo = 1",
+            "El sync individual perdió el fallback a pendiente "
+            "cuando el documento no trae líneas de producto.",
         )
 
 
