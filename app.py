@@ -19758,6 +19758,14 @@ def _tr_nudo_display(nudo):
 # zz_skus='ZZENVIO,ZZINSTALACION' tiene clasificacion='instalacion' (gana
 # prioridad) y quedaría invisible en el filtro de Despacho si solo se mirara
 # esa columna. Acá se agrega un OR contra zz_skus para que aparezca en AMBOS.
+# Bodega PRINCIPAL de despacho (2026-08-02, Daniel: "la bodega dos, que es la
+# principal... la bodega doce, que es del gimnasio"). Cualquier documento cuyo
+# producto salga de otra bodega se marca con advertencia en la fila del
+# Monitor. Configurable por entorno para no tener que tocar código si la
+# empresa cambia de bodega principal.
+TR_BODEGA_PRINCIPAL = os.environ.get("ILUS_TR_BODEGA_PRINCIPAL", "2").strip()
+
+
 _RAMO_SKUS = {
     "despacho":    ["ZZENVIO"],
     "instalacion": ["ZZINSTALACION"],
@@ -20682,7 +20690,25 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
                   FROM MAEDDO dnf
                  WHERE dnf.IDMAEEDO = h.IDMAEEDO
                    AND LEFT(UPPER(LTRIM(RTRIM(dnf.KOPRCT))), 2) <> 'ZZ'
-            ) THEN 1 ELSE 0 END AS tiene_saldo_fisico
+            ) THEN 1 ELSE 0 END AS tiene_saldo_fisico,
+            -- ── BODEGA DE ORIGEN 2026-08-02 (Daniel, FCV 0000011149: "esa
+            -- factura la sacaron no de la bodega dos, que es la principal,
+            -- sino de la bodega doce, que es del gimnasio") ─────────────────
+            -- Lista compacta de las bodegas DISTINTAS desde las que salen las
+            -- líneas de producto físico del documento (BOSULIDO en MAEDDO,
+            -- el mismo campo que ya se guarda por línea en
+            -- transport_commitment_lines). Ej: "2" o "2,12".
+            -- Se excluyen las líneas ZZ: un servicio no sale de una bodega.
+            -- Sin parámetros nuevos a propósito (todo literal): agregar un
+            -- marcador acá desalinearía la tupla de params y reventaría la
+            -- query entera -- ver el aviso de más arriba.
+            STUFF((SELECT ',' + y.b FROM (
+                      SELECT DISTINCT LTRIM(RTRIM(db.BOSULIDO)) AS b
+                        FROM MAEDDO db
+                       WHERE db.IDMAEEDO = h.IDMAEEDO
+                         AND LEFT(UPPER(LTRIM(RTRIM(db.KOPRCT))), 2) <> 'ZZ'
+                         AND LTRIM(RTRIM(COALESCE(db.BOSULIDO, ''))) <> ''
+                  ) y ORDER BY y.b FOR XML PATH('')), 1, 1, '') AS bodegas
         FROM MAEEDO h
         -- PERF 2026-06-13: UNA sola agregación de MAEDDO por documento (GROUP BY)
         -- en vez de 4 subqueries correlacionadas + EXISTS. El JOIN (no LEFT) ya
@@ -20940,6 +20966,7 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
                 nombre, endo, comuna, dir_, tel, mail,
                 obdo[:2000] if obdo else None,
                 zz_present[:120] if zz_present else None,
+                (row.get("bodegas") or "")[:120] or None,
                 vneto, vbruto, costo_zz, costo_envio,
                 tiene_saldo_flag, guia, clasif, estado_auto,
                 cobertura_pct, cant_total, cant_despachada,
@@ -20988,13 +21015,13 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           (tido,nudo,endo,fecha_emision,fecha_entrega,
            cliente_nombre,cliente_rut,
            comuna,direccion,telefono,email,
-           observaciones,zz_skus,
+           observaciones,zz_skus,bodegas,
            valor_neto,valor_bruto,costo_zz,costo_envio,
            tiene_saldo,guia_numero,clasificacion,estado,
            cobertura_pct,cant_total_zz,cant_despachada_zz,
            preventa,
            erp_synced_at,created_by,updated_by)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
           fecha_emision =VALUES(fecha_emision),
           fecha_entrega =VALUES(fecha_entrega),
@@ -21023,6 +21050,10 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
           email         =IF(direccion_editada_manual=1, email, IF(VALUES(email) IS NULL OR VALUES(email)='', email, VALUES(email))),
           observaciones =VALUES(observaciones),
           zz_skus       =VALUES(zz_skus),
+          -- Misma guarda que guia_numero/cliente_nombre: si esta corrida no
+          -- trae bodegas (documento sin líneas de producto, o el ERP no las
+          -- devolvió), se conserva lo que ya había en vez de borrarlo.
+          bodegas       =IF(VALUES(bodegas) IS NULL OR VALUES(bodegas)='', bodegas, VALUES(bodegas)),
           valor_neto    =VALUES(valor_neto),
           valor_bruto   =VALUES(valor_bruto),
           costo_zz      =CASE WHEN costo_zz=0 THEN VALUES(costo_zz) ELSE costo_zz END,
@@ -22062,6 +22093,11 @@ def tr_compromisos_json():
         _ramos_doc = _clasifs_from_skus_multi(
             [s for s in (r.get("zz_skus") or "").split(",") if s.strip()])
 
+        # Bodegas de origen del documento (ver campos "bodegas"/"bodega_alerta"
+        # más abajo). Se normalizan a string sin espacios para comparar contra
+        # TR_BODEGA_PRINCIPAL sin sorpresas de tipo ni de padding.
+        _bodegas_doc = [b.strip() for b in (r.get("bodegas") or "").split(",") if b.strip()]
+
         fila_base = {
             "id":           r["id"],
             "tido":         r["tido"],
@@ -22073,6 +22109,14 @@ def tr_compromisos_json():
             "direccion":    r.get("direccion") or "",
             "observaciones": r.get("observaciones") or r.get("notas") or "",
             "zz_skus":      r.get("zz_skus") or "",
+            # Bodegas de origen + bandera de advertencia (2026-08-02, Daniel:
+            # "que la bodega distinta a la principal marque advertencia en la
+            # fila"). La principal es la 2; la 12 es la del gimnasio. Se
+            # marca en cuanto CUALQUIERA de las bodegas del documento no sea
+            # la principal -- si salió mercadería de otra bodega hay que
+            # mirarlo, aunque parte haya salido de la principal.
+            "bodegas":      r.get("bodegas") or "",
+            "bodega_alerta": bool(_bodegas_doc and any(b != TR_BODEGA_PRINCIPAL for b in _bodegas_doc)),
             "estado":       r["estado"] or "Pendiente",
             # Lo que se muestra en la columna ESTADO del Monitor: la realidad
             # logística. `estado_erp` queda disponible como dato secundario
@@ -79458,6 +79502,13 @@ def _ensure_transporte_columns():
         "cant_despachada_zz": "DECIMAL(12,3) DEFAULT 0",
         "observaciones":      "TEXT NULL",
         "zz_skus":            "VARCHAR(120) NULL",
+        # Bodegas de origen de las lineas de PRODUCTO FISICO (2026-08-02,
+        # Daniel, caso FCV 0000011149: "esa factura la sacaron no de la bodega
+        # dos, que es la principal, sino de la bodega doce, que es del
+        # gimnasio... que la bodega distinta a la principal marque advertencia
+        # en la fila"). Lista compacta separada por comas, ej "2" o "2,12".
+        # Se llena en el sync masivo desde MAEDDO.BOSULIDO.
+        "bodegas":            "VARCHAR(120) NULL",
         # Finanzas/margen (visión Daniel 2026-05-25): control de ganancia/pérdida.
         "zz_envio":           "DECIMAL(12,2) DEFAULT 0",  # lo que cobró SPHS por el despacho (ERP)
         "costo_courier":      "DECIMAL(12,2) DEFAULT 0",  # lo que SPHS paga al courier (cotizado)

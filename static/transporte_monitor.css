@@ -843,6 +843,18 @@ body:not(.modal-open) .modal-backdrop { display:none !important; }
 }
 .tr-preventa-badge i { font-size:.7rem; color:#f59e0b; }
 
+/* Advertencia de BODEGA distinta a la principal (2026-08-02, Daniel: "que la
+   bodega distinta a la principal marque advertencia en la fila"). Morado para
+   NO confundirlo con preventa (ámbar) ni con atraso/problema (rojo): no es un
+   bloqueo ni un retraso, es "ojo, esto salió de otra bodega". */
+.tr-bodega-badge {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:99px;
+  background:#ede9fe; color:#5b21b6; border:1px solid #ddd6fe;
+  letter-spacing:.3px;
+}
+.tr-bodega-badge i { font-size:.7rem; color:#7c3aed; }
+
 .tr-atraso-chip {
   display:inline-flex; align-items:center; gap:4px;
   font-size:.66rem; font-weight:800; padding:2px 8px; border-radius:99px;

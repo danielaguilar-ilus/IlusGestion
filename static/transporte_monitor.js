@@ -1476,6 +1476,20 @@ function _preventaBadge(c) {
     '<i class="bi bi-hourglass-split"></i>PREVENTA</span>';
 }
 
+// Advertencia de BODEGA distinta a la principal (2026-08-02, Daniel, caso
+// FCV 0000011149: "esa factura la sacaron no de la bodega dos, que es la
+// principal, sino de la bodega doce, que es del gimnasio... que la bodega
+// distinta a la principal marque advertencia en la fila").
+// El backend ya decide la bandera (bodega_alerta) contra TR_BODEGA_PRINCIPAL
+// -- acá solo se pinta, para que el criterio viva en un solo lugar.
+function _bodegaBadge(c) {
+  if (!c || !c.bodega_alerta) return '';
+  var bods = (c.bodegas || '').split(',').filter(Boolean).join(', ');
+  return '<span class="tr-bodega-badge" title="Salió de una bodega distinta a la principal' +
+    (bods ? ' (bodega ' + bods + ')' : '') + ' — verificar antes de despachar">' +
+    '<i class="bi bi-box-seam"></i>BOD ' + (bods || '?') + '</span>';
+}
+
 // Badge "En manifiesto / En gestión" (cuando el doc ya está en un manifiesto).
 function _enManifiestoBadge(c) {
   if (!c || !c.en_manifiesto) return '';
@@ -2455,6 +2469,7 @@ function cargarMonitor() {
                      esc(c.estado_logistico || c.estado || '—') + '</span>' +
                   _enManifiestoBadge(c) +
                   _preventaBadge(c) +
+                  _bodegaBadge(c) +
                   _diasAtrasoHtml(c) +
                 '</div>' +
               '</td>' +
@@ -2593,7 +2608,7 @@ function cargarMonitor() {
             var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\u0027");
             var cliEsc = (c.cliente||'').replace(/'/g,"\\u0027");
             // Badges de gestión (mismos helpers que tabla/Kanban) + agenda de retiro.
-            var mcardBadges = _enManifiestoBadge(c) + _preventaBadge(c) + _diasAtrasoHtml(c);
+            var mcardBadges = _enManifiestoBadge(c) + _preventaBadge(c) + _bodegaBadge(c) + _diasAtrasoHtml(c);
             var mcardAgenda = (c.clasificacion === 'retiro')
               ? (c.fecha_agenda
                   ? '<span class="tr-agenda-chip" title="Retiro agendado"><i class="bi bi-calendar-check"></i> ' + esc(c.fecha_agenda) + '</span>'
