@@ -20676,7 +20676,10 @@ def _tr_bulk_sync_erp_mysql(fecha_desde, fecha_hasta, tidos_override=None):
         --   hay_saldo_fisico -> ¿queda algo por despachar? (fórmula completa
         --                       de Random + clamp por ESLIDO)
         --   hay_preventa     -> ¿alguna línea pendiente pide más de lo que hay
-        --                       en stock? (MAEPR.STFI1; sin ficha = stock 0)
+        --                       en stock? (MAEPR.STFI1, sin ficha = stock 0)
+        -- OJO: ni un punto y coma en estos comentarios -- la capa 2 de
+        -- seguridad de _random_sql_query rechaza la query entera si aparece
+        -- uno, aunque esté dentro de un comentario (REGLA #4.1). Pasó acá.
         --   bodegas          -> lista de bodegas distintas de origen
         -- Si un documento no tiene NINGUNA línea de producto, no aparece acá:
         -- el LEFT JOIN deja fis.IDMAEEDO en NULL y el SELECT lo interpreta

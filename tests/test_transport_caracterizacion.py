@@ -428,6 +428,20 @@ class TestBulkSyncErp(unittest.TestCase):
                     sql_txt = candidato
         self.assertIsNotNone(sql_txt, "No se encontró la f-string del SQL del sync")
 
+        # CAPA 2 DE SEGURIDAD (REGLA #4.1): _random_sql_query rechaza la query
+        # entera si aparece un token prohibido -- y NO distingue si está
+        # dentro de un comentario. Pasó de verdad el 2026-08-02: un punto y
+        # coma en un comentario explicativo tumbó el sync completo con
+        # "token prohibido en query: ';'". Se verifican acá los dos que uno
+        # escribe sin pensar al comentar.
+        for _tok in (";", "/*", "*/"):
+            self.assertNotIn(
+                _tok, sql_txt,
+                f"El SQL del sync contiene el token prohibido {_tok!r}. "
+                "_random_sql_query lo rechaza aunque esté dentro de un "
+                "comentario, y el sync falla ENTERO (bug real 2026-08-02).",
+            )
+
         n_placeholders = sql_txt.count("%s")
         # params = zz_list (STUFF) + zz_list (WHERE agregación) + tidos + 2 fechas
         n_params_esperados = zz_n + zz_n + tido_n + 2
