@@ -19727,6 +19727,29 @@ def _tr_ramo_label(ramo):
     return _RAMO_LABELS.get(ramo, ramo or "despacho")
 
 
+def _tr_nudo_display(nudo):
+    """Número de documento SIN ceros a la izquierda, solo para MOSTRAR.
+
+    Daniel 2026-08-02: "quería también eliminar lo que son todos los ceros a
+    la izquierda de la factura, boleta, guía, notas de venta, todo".
+    '0000011149' -> '11149'.
+
+    ⚠️ NUNCA usar el resultado para buscar, comparar ni construir claves: el
+    nudo real conserva el padding del ERP y es parte de la clave única
+    (tido, nudo) de transport_commitments -- perder el padding fue
+    exactamente la causa raíz de los commitments duplicados (BLV 22719/
+    22727/22728, ver nudo_canonico en _tr_fetch_from_erp).
+
+    Las notas de venta traen prefijo de letras ('VD00010223'): se conserva el
+    prefijo y solo se recortan los ceros del bloque de dígitos.
+    """
+    s = str(nudo if nudo is not None else "").strip()
+    if not s:
+        return ""
+    import re as _re_nd
+    return _re_nd.sub(r"^([^0-9]*)0+(\d)", r"\1\2", s)
+
+
 # SKUs que identifican cada ramo -- mismo mapeo que _clasifs_from_skus_multi,
 # pero expresado como fragmento SQL parametrizado (Monitor, 2026-08-01,
 # Daniel: reestructuración por ramo). Se usa para NO depender solo de
@@ -21464,10 +21487,13 @@ def tr_alertas_json():
         if cid not in _por_commitment_guia:
             _por_commitment_guia[cid] = {
                 "commitment_id":     cid,
-                "documento":         f"{r['tido']} {r['nudo']}",
+                # Sin ceros a la izquierda (Daniel 2026-08-02). Solo
+                # presentación: el nudo real conserva el padding del ERP
+                # porque es parte de la clave única tido+nudo.
+                "documento":         f"{r['tido']} {_tr_nudo_display(r['nudo'])}",
                 "cliente":           r.get("cliente_nombre") or "—",
                 "comuna":            r.get("comuna") or "—",
-                "guia_mas_reciente": r.get("guia_nudo"),
+                "guia_mas_reciente": _tr_nudo_display(r.get("guia_nudo")),
                 "fecha_guia":        chile_fmt_filter(r.get("fecha_guia"), "%d/%m/%Y")
                                      if r.get("fecha_guia") else None,
                 # FIX 2026-08-02 (Daniel): KOTRPCVH de la guía NO es el courier

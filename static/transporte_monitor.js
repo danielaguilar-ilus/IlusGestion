@@ -239,6 +239,23 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // ── Helpers de UI nuevos ────────────────────────────────────────
+// ── Número de documento SIN ceros a la izquierda ────────────────────────
+// Daniel 2026-08-02: "quería también eliminar lo que son todos los ceros a
+// la izquierda de la factura, boleta, guía, notas de venta, todo".
+// "0000011149" -> "11149". Es SOLO presentación: el valor real se sigue
+// guardando y consultando con el padding del ERP (es parte de la clave
+// única tido+nudo, ver nudo_canonico en _tr_fetch_from_erp) -- por eso
+// nunca hay que usar esto para construir búsquedas ni URLs.
+// Las notas de venta son el caso especial que menciona Daniel: su número
+// trae prefijo de letras ("VD00010223", "WEB-123"). El regex conserva
+// cualquier prefijo no numérico y solo recorta los ceros del bloque de
+// dígitos, así que "VD00010223" -> "VD10223" y no se rompe nada.
+function trNudo(n) {
+  var s = String(n == null ? '' : n).trim();
+  if (!s) return '';
+  return s.replace(/^([^0-9]*)0+(\d)/, '$1$2');
+}
+
 // Formatea una fecha del backend (ISO o dd/mm/yyyy) a "30 abr 2026"
 // con relación humana ("hoy", "ayer", "hace 3d") como subtexto.
 function trFormatFecha(s) {
@@ -595,7 +612,7 @@ function runExcel() {
     if (d.preview && d.preview.length) {
       previewHtml = '<div class="mt-2 small"><strong>Muestra:</strong> ' +
         d.preview.map(function(p){
-          return p.tido + ' ' + p.nudo + ' — ' + p.cliente;
+          return p.tido + ' ' + trNudo(p.nudo) + ' — ' + p.cliente;
         }).join(', ') + (d.importados > 5 ? '…' : '') + '</div>';
     }
     var errsHtml = d.errores && d.errores.length ?
@@ -796,7 +813,7 @@ function openVista(cid) {
           abrirSimpliRouteModal({
             id:                comp.id,
             item_id:           comp.item_id,
-            doc:               ((comp.tido || '') + ' ' + (comp.nudo || '')).trim(),
+            doc:               ((comp.tido || '') + ' ' + trNudo(comp.nudo || '')).trim(),
             cliente:           comp.cliente || '',
             comuna:            comp.comuna || '',
             courier:           comp.tracking_courier || '',
@@ -860,7 +877,7 @@ function renderVista(d) {
   var tot = d.totales || {};
 
   // Encabezado
-  document.getElementById('vistaDocNum').textContent = c.tido + ' ' + c.nudo;
+  document.getElementById('vistaDocNum').textContent = c.tido + ' ' + trNudo(c.nudo);
   document.getElementById('vistaFecha').textContent  = c.fecha_emision || '';
   document.getElementById('vistaCliente').textContent = c.cliente || '—';
   document.getElementById('vistaRut').textContent     = c.rut    || '';
@@ -1547,11 +1564,11 @@ function _kanbanCardHtml(c) {
             'data-group="' + _gestionBucket(c) + '" ' +
             'data-en-manifiesto="' + (c.en_manifiesto ? '1' : '0') + '" ' +
             'tabindex="0" role="button" ' +
-            'title="Ver detalle de ' + attr((c.tido||'') + ' ' + (c.nudo||'')) + '">' +
+            'title="Ver detalle de ' + attr((c.tido||'') + ' ' + trNudo(c.nudo||'')) + '">' +
     '<div class="tr-kcard-top">' +
       '<div class="tr-kcard-doc">' +
         '<span class="tr-doc-tido">' + esc(c.tido||'') + '</span>' +
-        '<span class="tr-doc-num">' + esc(c.nudo||'') + '</span>' +
+        '<span class="tr-doc-num">' + esc(trNudo(c.nudo||'')) + '</span>' +
       '</div>' +
       '<span class="tr-estado-pill ' + pillClass + '">' + esc((c.estado_logistico||c.estado)||'—') + '</span>' +
     '</div>' +
@@ -2356,7 +2373,7 @@ function cargarMonitor() {
             // Fecha formateada bonito
             var fechaHtml = c.fecha ? trFormatFecha(c.fecha) : '<span style="color:var(--tr-text-soft)">—</span>';
 
-            var lbl    = (c.tido+' '+c.nudo).replace(/"/g,'&quot;');
+            var lbl    = (c.tido+' '+trNudo(c.nudo)).replace(/"/g,'&quot;');
             var cli    = (c.cliente||'').replace(/"/g,'&quot;');
             var lblEsc = (c.tido+' '+c.nudo).replace(/'/g,"\\'");
             var cliEsc = (c.cliente||'').replace(/'/g,"\\'");
@@ -2390,7 +2407,7 @@ function cargarMonitor() {
               /* ── Documento — TIDO + NUDO ── */
               '<td onclick="openVista(' + c.id + ')" style="cursor:pointer">' +
                 '<span class="tr-doc-tido">' + (c.tido||'') + '</span>' +
-                '<span class="tr-doc-num">' + (c.nudo||'') + '</span>' +
+                '<span class="tr-doc-num">' + trNudo(c.nudo||'') + '</span>' +
               '</td>' +
 
               /* ── Fecha ── */
@@ -2586,7 +2603,7 @@ function cargarMonitor() {
               '<div class="tr-mcard-top">' +
                 '<div>' +
                   '<span class="tr-doc-tido">' + esc(c.tido) + '</span>' +
-                  '<span class="tr-doc-num">' + esc(c.nudo) + '</span>' +
+                  '<span class="tr-doc-num">' + esc(trNudo(c.nudo)) + '</span>' +
                 '</div>' +
                 '<span class="tr-estado-pill ' + pillClass + '">' + esc((c.estado_logistico||c.estado)||'') + '</span>' +
               '</div>' +
