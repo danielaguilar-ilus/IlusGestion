@@ -39,7 +39,7 @@ except Exception:
     _Fernet = None
     _FernetInvalidToken = Exception
 
-from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY, GCS_BUCKET, GCS_ENABLED
+from config import MAX_BULTOS, MYSQL_CONFIG, ERP_CONFIG, EMAIL_CONFIG, CLOUDINARY_CONFIG, GOOGLE_MAPS_API_KEY, GCS_BUCKET, GCS_ENABLED, CHECKWMS_CONFIG
 try:
     from config import BRAND_CONFIG
 except ImportError:
@@ -51492,6 +51492,63 @@ def cotizaciones_hub_list():
         "clientes_hub/cotizaciones.html",
         cotizaciones=unificado, filtro_q=filtro_q,
     )
+
+
+def _checkwms_get(path: str, params: dict) -> dict | None:
+    """GET de solo lectura contra CheckWMS (sistema de bodega externo).
+
+    La API es inconsistente con el nombre de sus headers de auth entre
+    endpoints (usu_uid_usu/ins_uid_ins en unos, uidUsuMe/uidInsMe en
+    otros) -- se mandan ambas variantes para no depender de cuál usa cada
+    endpoint. Sin credenciales configuradas (CHECKWMS_UID_INS/UID_ERP)
+    devuelve None de inmediato (fail-soft, el módulo Incidencias sigue
+    funcionando 100% manual sin esto)."""
+    if not (CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp")):
+        return None
+    import requests as _req
+    try:
+        resp = _req.get(
+            CHECKWMS_CONFIG["base_url"].rstrip("/") + path,
+            params=params,
+            headers={
+                "usu_uid_usu": CHECKWMS_CONFIG["uid_erp"],
+                "ins_uid_ins": CHECKWMS_CONFIG["uid_ins"],
+                "uidUsuMe":    CHECKWMS_CONFIG["uid_erp"],
+                "uidInsMe":    CHECKWMS_CONFIG["uid_ins"],
+                "Accept":      "application/json",
+            },
+            timeout=12,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as _e:
+        print(f"[checkwms] error consultando {path}: {_e}", flush=True)
+        return None
+
+
+@app.route("/mantenciones/api/incidencias/buscar-ua", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_buscar_ua():
+    """Autocompleta SKU/descripción del modal de Incidencias buscando el
+    código UA en CheckWMS (2026-08-03, Daniel: integración real vía API)."""
+    codigo = (request.args.get("codigo") or "").strip()
+    if not codigo:
+        return jsonify({"ok": False, "error": "Falta el código UA."}), 400
+    data = _checkwms_get("/api/ext/GetStockTrazabilidad", {"codUa": codigo})
+    if data is None:
+        return jsonify({"ok": False, "error": "CheckWMS no disponible o no configurado."}), 502
+    rows = ((data or {}).get("body") or {}).get("response") or []
+    if not rows:
+        return jsonify({"ok": True, "found": False})
+    r = rows[0]
+    return jsonify({
+        "ok": True, "found": True,
+        "sku": r.get("codigo"), "descripcion": r.get("descripcion"),
+        "ot": r.get("ot"), "estado": r.get("estado"), "bodega": r.get("bodega"),
+        "cliente": r.get("entidad"), "fecha": r.get("fechaFin") or r.get("feInicioOT"),
+        "items_relacionados": len(rows),
+    })
 
 
 @app.route("/mantenciones/incidencias")

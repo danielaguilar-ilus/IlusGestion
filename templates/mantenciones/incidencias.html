@@ -102,7 +102,17 @@
                queda listo para poblarse desde una API externa cuando Daniel
                comparta las credenciales -- sin migración adicional. #}
             <label class="form-label">N° UA <span class="text-muted" style="font-weight:400;font-size:.78rem">(Unidad de Armado)</span></label>
-            <textarea class="form-control" id="incRecomendacion" rows="2" placeholder="Ej: UA1007933"></textarea>
+            {# 2026-08-03 (Daniel: conexión real a CheckWMS con credenciales
+               que compartió): botón "Buscar" trae SKU/Descripción/OT desde
+               la API y autocompleta. Sigue siendo editable a mano -- si
+               CheckWMS no responde (sin credenciales, caído, código no
+               encontrado) el campo se comporta exactamente igual que antes. #}
+            <div class="input-group">
+              <textarea class="form-control" id="incRecomendacion" rows="2" placeholder="Ej: UA1007933"></textarea>
+              <button class="btn btn-ilus-outline" id="incBtnBuscarUa" type="button" title="Buscar este código UA en CheckWMS">
+                <i class="bi bi-search"></i> Buscar</button>
+            </div>
+            <div id="incUaResultado" class="form-text"></div>
           </div>
         </div>
       </div>
@@ -268,6 +278,7 @@
     document.getElementById('incEstado').value = 'abierta';
     document.getElementById('incReqRepuesto').value = '';
     document.getElementById('incStockRepuesto').value = '';
+    document.getElementById('incUaResultado').textContent = '';
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = 'none';
   }
@@ -293,6 +304,22 @@
     if(btnDel) btnDel.style.display = '';
     incModal().show();
   }
+
+  document.getElementById('incBtnBuscarUa').addEventListener('click', function(){
+    var codigo = document.getElementById('incRecomendacion').value.trim();
+    var res = document.getElementById('incUaResultado');
+    if(!codigo){ ilusToast('Escribe primero el código UA', {type:'warning'}); return; }
+    res.textContent = 'Buscando en CheckWMS…';
+    fetch('/mantenciones/api/incidencias/buscar-ua?codigo='+encodeURIComponent(codigo))
+      .then(function(r){return r.json();}).then(function(data){
+        if(!data.ok){ res.innerHTML = '<span class="text-danger">'+(data.error||'No se pudo consultar CheckWMS.')+'</span>'; return; }
+        if(!data.found){ res.innerHTML = '<span class="text-warning">No se encontró ese código UA en CheckWMS.</span>'; return; }
+        if(data.sku) document.getElementById('incSku').value = data.sku;
+        if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
+        res.innerHTML = '<span class="text-success">✓ Encontrado — OT '+(data.ot||'—')+' · '+(data.estado||'—')
+          +' · Bodega '+(data.bodega||'—')+(data.cliente ? (' · '+data.cliente) : '')+'</span>';
+      }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
+  });
 
   document.getElementById('incBtnNueva').addEventListener('click', function(){
     limpiarModal();

@@ -113,6 +113,18 @@ ERP_CONFIG = {
 MAX_BULTOS = 27
 
 # ─────────────────────────────────────────────
+#  CheckWMS (2026-08-03) — sistema de bodega externo (checkapi-integracion-
+#  prod-checkwms.azurewebsites.net). Se usa SOLO para leer trazabilidad de
+#  stock por código UA (Unidad de Armado) y autocompletar el módulo de
+#  Incidencias (Servicio Técnico). Solo lectura (GET), sin escritura.
+# ─────────────────────────────────────────────
+CHECKWMS_CONFIG = {
+    'base_url': _env('CHECKWMS_API_BASE', 'https://checkapi-integracion-prod-checkwms.azurewebsites.net'),
+    'uid_ins':  _env('CHECKWMS_UID_INS'),
+    'uid_erp':  _env('CHECKWMS_UID_ERP'),
+}
+
+# ─────────────────────────────────────────────
 #  IA — Anthropic Claude (opcional)
 # ─────────────────────────────────────────────
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY", "")

@@ -154,6 +154,10 @@ jobs:
           # Sin el, esos endpoints solo aceptan llamadas desde localhost — y
           # Cloud Scheduler llama desde fuera, asi que quedarian en 403.
           ILUS_CRON_TOKEN:               ${{ secrets.ILUS_CRON_TOKEN }}
+          # CheckWMS (2026-08-03) — API de bodega externa, solo lectura, para
+          # autocompletar codigos UA en Incidencias (Servicio Tecnico).
+          CHECKWMS_UID_INS:               ${{ secrets.CHECKWMS_UID_INS }}
+          CHECKWMS_UID_ERP:               ${{ secrets.CHECKWMS_UID_ERP }}
         run: |
           # Heredoc: el contenido NO aparece en los logs de Actions
           cat > /tmp/env.yaml <<'EOF_ENV_YAML'
@@ -163,7 +167,7 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|CHECKWMS_UID_INS|CHECKWMS_UID_ERP):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
@@ -186,6 +190,9 @@ jobs:
           append_env SIMPLIROUTE_API_TOKEN_RAFA    "$SIMPLIROUTE_API_TOKEN_RAFA"
           echo "Cron (Cloud Scheduler 24/7):"
           append_env ILUS_CRON_TOKEN               "$ILUS_CRON_TOKEN"
+          echo "Credenciales CheckWMS:"
+          append_env CHECKWMS_UID_INS              "$CHECKWMS_UID_INS"
+          append_env CHECKWMS_UID_ERP              "$CHECKWMS_UID_ERP"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
