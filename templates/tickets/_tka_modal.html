@@ -331,6 +331,18 @@
   }
   .tka-line .ln-qty .ln-qty-saldo{color:#16a34a;font-size:.84rem}
   .tka-line .ln-qty .ln-qty-saldo-zero{color:#9ca3af;font-size:.78rem;text-decoration:line-through}
+  /* FIX 2026-08-03 (Daniel, SKU 1121100984 -- "porque no me avisa que la
+     984 no tiene stock en la bod 02, siempre esa"): "saldo" es cuánto
+     falta por despachar de ESTE documento (ERP), no si hay stock físico
+     para cumplirlo. Antes esta pantalla nunca mostraba el stock -- el
+     aviso solo aparecía DESPUÉS, ya con el producto agregado a la
+     cotización. Ahora se avisa acá mismo, al elegir la línea, sin
+     bloquear la selección (eso lo sigue decidiendo el saldo del
+     documento). */
+  .tka-line .ln-stock-warn{
+    color:#b91c1c;font-size:.68rem;font-weight:800;margin-top:1px;
+    display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
+  }
   .tka-line .ln-qty-input{
     border:1.5px solid var(--tka-gray-2);border-radius:8px;padding:6px 8px;
     font-size:16px;font-weight:700;text-align:center;
@@ -1232,6 +1244,24 @@ function _tkaSaldoLinea(l){
   return Math.max(0, qty - desp);
 }
 
+// FIX 2026-08-03 (Daniel, SKU 1121100984 -- "porque no me avisa que la 984
+// no tiene stock en la bod 02, siempre esa"): /api/erp/documento YA trae
+// `l.stock` (get_erp_stock_by_skus, físico acotado a la bodega principal --
+// ver app.py) desde el 2026-07-26, pero este modal nunca lo mostraba: solo
+// pintaba el "saldo" del documento (cuánto falta por despachar de ESA
+// factura/cotización), un dato distinto de si hay stock físico para
+// cumplirlo. No bloquea la selección -- eso lo sigue decidiendo el saldo,
+// que es un concepto separado y válido -- solo avisa.
+function _tkaStockBadge(l){
+  const st = l && l.stock;
+  if (!st || st.hay_stock !== false) return '';
+  const f = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
+  const tip = 'Físico bodega 02: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido)
+    + ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
+  return '<span class="ln-stock-warn" title="' + _tkaEsc(tip) + '">'
+    + '<i class="bi bi-exclamation-triangle-fill"></i>Sin stock bod. 02</span>';
+}
+
 // ──────────────────────────────────────────────────────────────
 // TAB "POR DOCUMENTO"
 // ──────────────────────────────────────────────────────────────
@@ -1346,6 +1376,7 @@ function tkaRenderDocLineas(lineas, fetchMs){
       <div class="ln-qty">
         <span>${qty} u.</span>
         <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+        ${_tkaStockBadge(l)}
       </div>
       <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_tkaEsc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="tkaCambiarQtyDoc(this)">
     </div>`;
@@ -1633,6 +1664,7 @@ async function tkaToggleDocCli(idx){
         <div class="ln-qty">
           <span>${qty} u.</span>
           <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+          ${_tkaStockBadge(l)}
         </div>
         <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_tkaEsc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="tkaCambiarQtyCli(this)">
       </div>`;
