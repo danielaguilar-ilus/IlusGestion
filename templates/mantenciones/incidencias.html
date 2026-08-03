@@ -160,10 +160,17 @@
 <script>
 (function(){
   var incPage = 1, incSize = 100, incQ = '', incEstado = '';
-  var incModalEl = document.getElementById('incModal');
-  var incModal = new bootstrap.Modal(incModalEl);
+  // FIX 2026-08-03 (Daniel: "no funciona ese boton"): bootstrap.bundle.js
+  // se carga con `defer` en base.html -- si este <script> inline (que NO
+  // es defer) corre `new bootstrap.Modal(...)` al parsear la página,
+  // `bootstrap` todavía no existe y toda la IIFE muere en silencio (nada
+  // de esto se ejecuta, ni los listeners de los botones). Se usa
+  // getOrCreateInstance() de forma perezosa, recién al click, cuando
+  // bootstrap ya está garantizado (defer corre antes de cualquier evento
+  // de usuario).
+  function incModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incModal')); }
   {% if permissions.superadmin %}
-  var incImportModal = new bootstrap.Modal(document.getElementById('incImportModal'));
+  function incImportModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incImportModal')); }
   {% endif %}
 
   function fmtFecha(s){
@@ -261,13 +268,13 @@
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = '';
-    incModal.show();
+    incModal().show();
   }
 
   document.getElementById('incBtnNueva').addEventListener('click', function(){
     limpiarModal();
     document.getElementById('incModalTitulo').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia';
-    incModal.show();
+    incModal().show();
   });
 
   document.getElementById('incBtnGuardar').addEventListener('click', function(){
@@ -296,7 +303,7 @@
       body: JSON.stringify(payload),
     }).then(function(r){return r.json();}).then(function(data){
       if(!data.ok){ ilusToast(data.error || 'No se pudo guardar', {type:'error'}); return; }
-      incModal.hide();
+      incModal().hide();
       ilusToast('✓ Incidencia guardada', {type:'success'});
       cargar();
     }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
@@ -318,7 +325,7 @@
         method: 'DELETE', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''},
       }).then(function(r){return r.json();}).then(function(data){
         if(!data.ok){ ilusToast(data.error || 'No se pudo eliminar', {type:'error'}); return; }
-        incModal.hide();
+        incModal().hide();
         ilusToast('Incidencia eliminada', {type:'success'});
         cargar();
       });
@@ -343,7 +350,7 @@
   document.getElementById('incBtnImportar').addEventListener('click', function(){
     document.getElementById('incImportFile').value = '';
     document.getElementById('incImportResultado').innerHTML = '';
-    incImportModal.show();
+    incImportModal().show();
   });
   document.getElementById('incBtnImportarGo').addEventListener('click', function(){
     var f = document.getElementById('incImportFile').files[0];

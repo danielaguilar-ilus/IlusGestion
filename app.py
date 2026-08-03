@@ -43464,6 +43464,87 @@ def _ot_can_approve(view_func):
     return wrapped
 
 
+# Migración única (2026-08-03, Daniel): las 72 filas de la tabla
+# "Incidencias" del Clever Cloud viejo (bexkaglyixctbjojgg24, DSN=SPHS
+# desde Excel/VBA), leídas directo (solo lectura) para poder dar de baja
+# esa instancia externa. Ver seed en init_mantenciones_tables() -- se
+# inserta solo si mant_incidencias está vacía (idempotente).
+_INC_LEGACY_SEED = [
+    ('TWMA305-140', 'Lat Pull Down / High Pulley Draxfit Negra 140 KG', 1, 'falta acrilico derecho lado selector de pesos', 'no', 'acrilico frontal', 'no_hay', None, None, 'UA1007933'),
+    ('TWMA303-140', 'Low Cable Row Draxfit Tapiz Negro 140 KG', 1, 'Falta acrilico y embellecedor', 'si', '1 acrilico 8 enbellecedores y 8 prisioneros', 'no_hay', None, None, 'UA1007934'),
+    ('TWMA303-140', 'Low Cable Row Draxfit Tapiz Negro 140 KG', 1, 'Falta acrilico y embellecedor', 'si', '1 acrilico 6 enbellesedores y 6 pernos prisioneros', 'no_hay', None, None, 'UA1007932'),
+    ('TWMA402', 'Dual Pulley Draxfit 140 KG', 1, 'faltan piesas  acrilicos , pernos  ,enbellecedores , logo', 'si', '2 acrilicos latrerales largos, 4 acrilicos pequeños ,36 pernos pricioneros ,36 enbellecedores ,4 logos drax', 'no_hay', 'hay algunos repuestos pero no los suficientes, acrilicos no hay', None, 'UA1007936'),
+    ('1021100825', 'Eliptica ILUS E1', 1, 'Falta pantalla y motor de inclinacion  se saco por una garantia a (ELYSIUM OSORNO)', 'si', 'Pantalla y motor de inclinacion', 'no_hay', 'pantalla ,motor de inclinacion en espera', None, 'UA1008453'),
+    ('1050100906', 'ILUS Elliptical Climber', 1, 'llego con tapa plastica izquierda rota de istalacion con trasportes', 'si', 'tapa plastica izquierda', 'no_hay', None, None, 'UA1008202'),
+    ('1124100323', 'ILUS Smith / Half Rack', 1, 'falta freno lado izquierdo', 'si', 'frenoi izquierdo', 'no_hay', 'no tenemos en bodega', None, 'UA1007857'),
+    ('1210100955', 'ILUS HD Modular Rack Connector (for B and C)', 1, 'debolucion por no saber armar  en el trascurso de la devolucion sufrio algunos rayons y perdida de pernos los cuales ya fueron renplasados  , pintados', 'no', 'no ya que se eremplasaron  y reparamos en su momento', None, 'liquidacion', None, 'UA1009064'),
+    ('1124100954', 'ILUS Heavy Duty Modular Half Rack', 1, 'devolucion por mal armado en trascurso de devolucion perdio pernos ,rayones los cuales ya fueron remplasados y pintados', 'no', None, None, 'liquidacion', None, 'UA1009066'),
+    ('1122100776', 'ILUS Performance Rubber Lifting Platform', 2, 'le faltan  fierros largeros  se le sacaron por una garantia', 'si', 'los fierros', None, None, None, 'UA'),
+    ('1121100976', 'ILUS Optimal Dual Cable Ratio 3:1', 1, 'maquina lista en optimas condiciones', 'no', 'no nesesita', None, 'lista nueva', None, 'UA1009322'),
+    ('1121100592', 'Banco Ajustable ILUS Kairos Evolve', 1, 'banco listo para venta', 'no', 'no nesesita', 'no_hay', 'producto como nuevo', None, 'UA1008254'),
+    ('1121100685', 'Polea ILUS Kairos', 1, 'faltan piesas de la pole 2 POLEA LE FALTA PIESA METALICA DE ALFRENTE Y PLASTICO ESQUINERO', 'no', '*piola  seguro de goma topes  2 brasos aagarre de  piola 2 pernos de anclaje  stikert agarre de metal  braso derecho dañado', 'no_hay', 'avian dos poleas en incidencia  de las dos isimos 1', None, 'UA1007858'),
+    ('SS6000B', 'Bicicleta ILUS IC1', 1, 'falta disco', 'no', 'si', None, None, None, 'UA1007860'),
+    ('1120100100', 'Rack Mancuernas Vinilo Ilus 2-10KG', 1, 'faltan gomas donde reposan las mancuernas', 'si', 'gomas donde reposan las mancuernas al menos 10', 'no_hay', None, None, 'UA1007860'),
+    ('1120100270', 'Rack Comercial 3 pisos de mancuernas ILUS', 1, 'falta bulto 2 y kitde pernos', 'si', 'tapiz y kidt de pernos', 'no_hay', None, None, 'UA1009141'),
+    ('1121100679', 'ILUS Hack Squat Pro', 1, 'se le sacaron los portadisco, kit de pernos, unión central y seguros', 'no', 'no', 'no_hay', None, None, 'UA1010333'),
+    ('DSC6', 'Stair Climber DSC6, LED Console', 1, 'La escaladora le faltan los piñon es donde pasan las cadelas los cuales se doblaron tenemos repuestos  peldaños pasadores  pero no podremos instalar hasta tener piñones nuevos', 'si', 'piñones de cadenas', 'no_hay', None, None, 'UA1007937'),
+    ('1129100551', 'Banco Multi-Ajuste ILUS Pro Negro', 1, 'Falta tapiz plano', 'si', 'tapiz', 'no_hay', None, None, 'UA1008984'),
+    ('RF-ME2MM', 'Motion Edition Flooring (95% EPDM) 2 MM', 17, 'La  mayoria estaban cortados ya se vendieron', 'no', 'no', None, None, None, 'Se sugirio para merma y  se lograron vender a un menor precio'),
+    ('1129100553', 'Banco Ajustable ILUS Delta Rojo', 1, 'banco le faltan 2 pines', 'si', 'pines', None, None, None, None),
+    ('1129100525', 'ILUS Glute Thruster', 1, 'goma cuadrada dañada  y reforsar placa cuadrada', 'si', 'goma cuadrada', None, None, None, 'UA1007858'),
+    ('RT-015', 'Piso Interlock Negro/Gris 15 mm', 2, 'pisos cortados sirven poara algun rataso', 'no', 'no  NESESITA', None, None, None, 'UA1007922'),
+    ('1222100252', 'Plataforma de Levantamiento ILUS', 6, 'Plataforma no tiene los largeros y a una de eyas se les saco las gomas para  cubrir una  garantia', 'si', 'Largueros y 2 set de gomas', None, None, None, 'UA1007877'),
+    ('1228100619', 'ILUS EVA Mat', 6, 'Ilus eva mat esta  arrecogidos producto del sol', 'no', 'NO', None, None, None, 'UA1007865'),
+    ('1120100728', 'Par Mancuernas Cromadas ILUS 9 KG', 1, 'Mancuerna rodada no apreta  se intento reparar  sin resultado', 'no', 'No merma', None, None, None, 'NO'),
+    ('1240100965', 'Mochila Expandible ILUS 26/38 lts black', 1, 'mochila se ocupa para enpacar herramientas  cuando nos bamos de biaje', 'no', 'NO', None, 'USO SSTT', None, 'UA1007924'),
+    ('1120100727', 'Par Mancuernas Cromadas ILUS 8 KG', 2, 'Mancuerna con rosca rodada se intento reparar sin exito', 'no', 'NO', None, None, None, 'NO'),
+    ('1120100723', 'Par Mancuernas Cromadas ILUS 4 KG', 2, 'MANCUERNA EN BUEN ESTADO SOLO QUE EL SEDT ESTA INCOMPLETO', 'no', None, None, None, None, 'UA1007868'),
+    ('1120100725', 'Par Mancuernas Cromadas ILUS 6 KG', 1, 'MANCUERNA EN BUEN ESTADO', 'no', None, None, None, None, 'UA1007874'),
+    ('1120100722', 'Par Mancuernas Cromadas ILUS 3 KG', 2, 'MANCUERNAS EN BUEN ESTADO', 'no', None, None, None, None, 'UA100768'),
+    ('1120100721', 'Par Mancuernas Cromadas ILUS 2 KG', 2, 'MANCUERNAS EN BUEN ESTADO LISTAS PARA SU VENTA', 'no', None, None, None, None, 'UA1007868'),
+    ('1120100351', 'Par Mancuernas Ajustables ILUS 20 kg', 1, 'el engratanaje esta trabajo  no sirve', 'no', 'no', None, None, None, 'sin informacion'),
+    ('1120100314', 'Par Mancuernas Ajustables ILUS 36 kg', 4, 'el engranaje esta trabado  no se puede reparar', 'no', 'no', None, None, None, 'sin informacion'),
+    ('1121100584', 'ILUS Kairos Evolve Dual Pulley', 1, 'faltan 2 piesas traseraras que conectan ambas torres , faltan tapas fontales ,16 pernos , faltan espigas , pesos, una polea', 'si', 'TAPAS, PERNOS, ESPIGA, PESOS , POLEA', None, None, None, 'UA1009327'),
+    ('1224100716', 'Rack para Mancuernas Cromadas ILUS', 1, 'falta una mancuerna DE 1KG, 5KG,  Y UNA DE 6KG, y UNA de 9KG  se le saco para cubrir garantia', 'si', 'MANCUERNAS', 'no_hay', None, None, 'UA1007868'),
+    ('1120100874', 'Set ILUS Premium Chrome Dumbell 2,5 a 25 KG', 1, 'Faltan pernos y gomas  al rack', 'si', 'Stps pernos', None, None, None, 'UA1007863'),
+    ('1129100745', 'Banco Plano ILUS Pro Negro', 1, 'Le falta  tapis y piesas que conectan asiento y las patas con ruedas', 'si', 'Tapiz   piesa  conector  con la patas delanteras con rueditas', 'no_hay', None, None, 'UA1007865'),
+    ('11201100300', 'ILUS Versa Half Rack - Side to Side Wall Ball Stor', 1, 'sin soporte de barras , se entrego a cliente bajo ticket 11853 SUMIIT CENTER', 'si', 'Soporte de barras', 'no_hay', None, None, 'replicar la pieza'),
+    ('1251100915', 'REZET FlowPro Compression\xa0Boots', 1, 'producto   en buen estado', 'no', 'NO', None, 'liquidacion', None, 'UA1011144'),
+    ('NRED25X', 'Draxfit NRED25X Treadmill', 1, 'motor de inclinación y sinfin', None, None, None, None, None, None),
+    ('1124100768', 'ILUS Smith Machine', 1, 'falta el freno', 'si', None, 'no_hay', None, None, None),
+    ('1124100346', 'ILUS Commercial Half Rack Deluxe', 0, 'este rack esta incompleta se le sacaron pieza para armar otro Rack', 'si', 'Porta disco 6 grandes,6 chicos,la base,las uniones inferiores y superiores.porta barra,soporte para barra,las gomas, barra superior.6 piezas cromadas inferiores.2 continuation de uniones superiores.kit de pernos.', None, 'El rack le la falta casi todas las piezas', None, 'UA1007876'),
+    ('1124100346', 'ILUS Commercial Half Rack Deluxe', 2, 'este rack esta incompleta se le sacaron pieza para armar otro Rack', 'si', 'Porta disco 6 grandes,6 chicos,la base,las uniones inferiores y superiores.porta barra,soporte para barra,las gomas, barra superior.6 piezas cromadas inferiores.2 continuation de uniones superiores.kit de pernos.', None, 'El rack le la falta casi todas las piezas', None, 'UA1007876'),
+    ('TWMA331', 'Dual Long Pull / Lat Pull Draxfit', 1, 'A la maquina  le falta uno de sus acrilicos parte frontal selectora de pesos', 'si', 'acrilico', None, None, None, 'UA1011373'),
+    ('1124100615', 'ILUS 8 Wall Balls Vertical Rack', 1, 'le falta las base y el kit de pernos', 'si', 'base +kit de pernos', None, None, None, 'UA1007865'),
+    ('1129100883', 'ILUS Glute Thruster V2 (Hip Thruster Machine)', 4, 'A los 4 productos le falta la piesa donde reposa la placa plana  + 1 par de ruedas', 'si', 'placa plana donde  reposa tapis,par de ruedas', None, None, None, 'UA1007864'),
+    ('IT-008A', 'Piso Interlock EPDM Negro/Gris 8 mm', 7, 'ya que no se incontraban en un perfecto estado fueron donados a bomberos', 'no', None, None, None, None, 'UA1009328'),
+    ('FZAKB061S0100', 'ILUS Kettlebell 4 kg', 2, 'las kettlebell 4 kg tienen golpes  la pintura se descarcaro', 'no', 'no nesesita', None, None, None, 'UA1011737'),
+    ('G624-03', 'Freemotion Dual Cable Cross Negra', 1, 'para cubrir una garantia se le saco   el braso izquierno', 'si', 'braso izquierdo', None, None, None, 'UA1011723'),
+    ('1121100682', 'ILUS Half Rack Pro', 1, 'se le saco  una de sus torres laterales para cubrir garantia y quedaron de ambas de un mismo sentido', 'si', 'torre lateral', None, None, None, 'UA1008398'),
+    ('1129100896', 'ILUS Kairos Evolve Preacher Curl Bench', 1, 'se le sacaron plasticos donde reposan las barras para cubrir garantia', 'no', 'los repuestos ya fuereron solicitados', 'no_hay', None, None, 'UA1011943'),
+    ('1121100912', 'ILUS Optimal Multi Gym', 1, 'se le saco respaldar para cubrir  a un cliente el respaldar + pads redondo', 'si', 'tapis', 'no_hay', None, None, 'UA1011955'),
+    ('1042100560', 'Set 5 Vallas ILUS 45 cm', 2, 'se le iso u n cambio al cliente las ballas estan dobladas se pasaron a merma', 'no', None, None, None, None, 'UA1011914'),
+    ('TPT-12', 'Tarro Pegamento U Lock Turf 12,5 kg', 7, 'tarros en bodega incidencia almasenaje', 'no', 'no', None, 'no', None, 'UA1006507'),
+    ('ES809', 'Hip Adduction/Abduction Freemotion', 1, 'se le saco tapis para cubir garantia', 'no', 'los 4 tapis  se le sacaron', None, None, None, 'UA1012178'),
+    ('1113100215', 'ILUS Safety Squat Bar', 1, 'safety  en indencia 15-11-22  safety proveedor evia sin ambos pad y sin tapa lateral de la barra', 'si', 'si tapa de la barra< y ambos pads', None, None, None, '1113100215'),
+    ('1015101000', 'ILUS Belt Transmission Air Bike Pro', 1, 'dentro en incidencia por que un perno llego liso   es desir sin hilo se nesesita una herramienta prara hacer el hilo', 'si', 'no se nesesita herramienta  para extraer perno', None, None, None, 'UA1012272'),
+    ('1124100819', 'Rack Comercial de 3 Niveles ILUS', 1, 'la parte superior del rack  de los reposa mancuerna  esta invertido', 'no', None, None, None, None, 'UA1012265'),
+    ('1211100739', 'ILUS Swiss Ball Pro 65 cm', 1, 'no se encuentra en la bodega', None, None, None, None, None, 'N/A'),
+    ('ZZINGREPUESTO', 'Venta de Repuestos', -1, 'N/A', None, 'N/A', None, 'N/A', None, 'N/A'),
+    ('TWMA102', 'Leg Extension Draxfit Tapiz Negro 100 KG', 1, 'le falta el acrilico', 'si', 'acrilico', None, None, None, 'UA1012769'),
+    ('1027100905', 'Trotadora ILUS', 1, 'le falta  tiene problemas en los comandos  y en el cable de alimentacion y pantalla', 'si', None, None, None, None, 'UA1012439'),
+    ('FMTM08264E30', 'Freemotion T8 Treadmill HD', 2, 'Una de las trotadoras se le partio el brazo de apoyo del brazo idraulico i presentaba fallas con el tactil     la otra  esta apunto', 'si', 'apoyo de  brazo idraulico', 'no_hay', None, None, 'UA1013219'),
+    ('1015100996', 'Bicicleta ILUS MTB-316M', 1, 'la biciclata presenta problemas  en la pantalla  cuando  se pedalea no se mantiene encendida y la sensacion del pedal es nui poesado en la minimq resistencia', 'si', 'pantalla', None, None, None, 'N/A'),
+    ('005509BC', 'Keiser M3i STUDIO PLUS Bike', 1, 'La bicicleta presenta problemas con la recistencia  y la comunicacion cuando se cambia la recistencia en la pantallla no obedece', 'no', 'N/A', None, 'se le an echo barias pruebas pero no reaciona', None, 'UA:1012965'),
+    ('1121100901600', 'Glute Squat- Glute Builder', 1, 'se le saco los  buje largo  por garantia    se le pidio a probeedor', 'si', 'buje largo', None, 'en espera de repuesto', None, 'UA1013213'),
+    ('1210100957', 'ILUS HD Modular Rack Weight Stack Attachment (C)', 1, 'se le sacaron acesorios  por garantia ya que al cliente no le llegaron en  la maquina', 'si', 'asesorios', None, None, None, 'UA:1012529'),
+    ('1050100999', 'ILUS Air Ski Erg Machine', 1, 'tiene la pantalla mala  y en espera de rodamientos internos', 'si', 'pantalla y rodamientos', None, None, None, 'UA:1013428'),
+    ('1121100951', 'IB3 ILUS GHD', 1, 'se mando a retapisar', 'no', 'no', None, None, None, 'UA:1012498'),
+    ('1242101044', 'ILUS Gym Timer', 1, 'El temporisador se encuentra en buen estado se comparo y no tiene ninguna diferencia con uno nuevo', 'no', 'no', None, None, None, 'UA:1013429'),
+    ('1124100878', 'ILUS Revo Half Rack Black', 1, 'Se le saco piesa donde esta el logotipo de ilus  por garantia', 'si', 'piessa cromada donde lleva el logptipo', None, None, None, None),
+]
+
+
 def init_mantenciones_tables():
     conn = get_mysql()
     try:
@@ -43627,6 +43708,22 @@ def init_mantenciones_tables():
                     INDEX idx_estado (estado)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+
+            # Seed único (2026-08-03, Daniel: "súbelas tú, no quiero subirlas
+            # yo, además no funciona ese botón") — las 72 filas exportadas
+            # directo (solo lectura) del Clever Cloud viejo (DSN=SPHS).
+            # Guardado por COUNT(*)=0 -- idempotente, no duplica en cada
+            # redeploy ni si Daniel ya cargó datos nuevos a mano.
+            cur.execute("SELECT COUNT(*) AS n FROM mant_incidencias")
+            if cur.fetchone()["n"] == 0:
+                cur.executemany(
+                    """INSERT INTO mant_incidencias
+                       (sku, descripcion, cantidad, motivo, req_repuesto,
+                        descripcion_repuesto, stock_repuesto, observacion,
+                        fecha_resolucion, recomendacion, created_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'migracion:clevercloud-legacy')""",
+                    _INC_LEGACY_SEED,
+                )
 
             # ── Log de actividad ────────────────────────────────────
             cur.execute("""
