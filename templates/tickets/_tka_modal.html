@@ -305,6 +305,12 @@
   .tka-line.is-zero{opacity:.6;background:#fafafa}
   .tka-line.is-zero .tka-chk{opacity:.65}
   .tka-line.is-zero:hover{opacity:1;background:#fff8e1}
+  /* FIX 2026-08-03: mismo tratamiento visual que .is-zero (atenuado, no
+     pre-marcado) pero con acento rojo -- para distinguir a simple vista
+     "sin saldo del documento" (ámbar) de "sin stock en bodega 02" (rojo). */
+  .tka-line.is-no-stock{opacity:.7;background:#fef2f2}
+  .tka-line.is-no-stock .tka-chk{opacity:.65}
+  .tka-line.is-no-stock:hover{opacity:1;background:#fee2e2}
   .tka-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
   .tka-line-tag-zero{
     display:inline-flex;align-items:center;gap:3px;
@@ -1359,13 +1365,20 @@ function tkaRenderDocLineas(lineas, fetchMs){
     const qty = parseFloat(l.cantidad) || 0;
     const saldo = _tkaSaldoLinea(l);
     const isZero = saldo <= 0;
+    // FIX 2026-08-03 (Daniel: "lo ideal es que se bloquee también el
+    // producto, que le saques el check, ya que no tiene stock. Así
+    // funcionaba la parte de Retiros"): mismo criterio que ya aplica para
+    // "sin saldo" -- no viene pre-marcado. No se DESHABILITA el checkbox
+    // (igual que "sin saldo": el operador puede marcarlo a mano si de
+    // verdad va a trasladar mercadería desde otra bodega).
+    const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
     const lineKey = `DOC|${sku}|${i}`;
     const initialMax = isZero ? qty : saldo;
     const initialQty = isZero ? 0 : saldo;
-    const preChecked = !isZero;
-    html += `<div class="tka-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" style="animation:tkaDocIn .35s var(--tka-ease-spring) ${i*30}ms both">
+    const preChecked = !isZero && !sinStockBod;
+    html += `<div class="tka-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" style="animation:tkaDocIn .35s var(--tka-ease-spring) ${i*30}ms both">
       <label class="tka-chk ${preChecked?'is-checked':''}" data-sku="${_tkaEsc(sku)}" data-saldo="${saldo}">
-        <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="tkaToggleLineaDoc(this)">
+        <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" data-sin-stock="${sinStockBod?1:0}" onchange="tkaToggleLineaDoc(this)">
         <span class="tka-chk-mark">✓</span>
       </label>
       <div class="ln-sku">${_tkaEsc(sku) || '—'}</div>
@@ -1394,7 +1407,11 @@ function tkaToggleAllDoc(checked){
   inputs.forEach(inp => {
     if (inp.disabled) return;
     const isZero = inp.dataset.isZero === '1';
-    if (checked && isZero) return;
+    // FIX 2026-08-03: "Seleccionar todas las líneas con saldo" tampoco debe
+    // marcar por encima una línea sin stock en bodega 02 -- mismo criterio
+    // que ya aplica para "sin saldo".
+    const sinStockBod = inp.dataset.sinStock === '1';
+    if (checked && (isZero || sinStockBod)) return;
     if (inp.checked === checked) return;
     inp.checked = checked;
     tkaToggleLineaDoc(inp, /*silent=*/true);
@@ -1650,8 +1667,11 @@ async function tkaToggleDocCli(idx){
       const lineKey = `CLI|${idx}|${sku}|${j}`;
       const initialMax = isZero ? qty : saldo;
       const initialQty = isZero ? 0 : saldo;
-      const preChecked = !isZero;
-      html += `<div class="tka-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}">
+      // Ver comentario equivalente en la pestaña "por documento" (mismo
+      // criterio, mismo motivo: Daniel, "así funcionaba la parte de Retiros").
+      const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
+      const preChecked = !isZero && !sinStockBod;
+      html += `<div class="tka-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}">
         <label class="tka-chk ${preChecked?'is-checked':''}">
           <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-doc-tido="${_tkaEsc(doc.tido_display)}" data-doc-nudo="${_tkaEsc(doc.nudo_display)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="tkaToggleLineaCli(this)">
           <span class="tka-chk-mark">✓</span>
