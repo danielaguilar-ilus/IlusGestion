@@ -93,8 +93,16 @@
             <textarea class="form-control" id="incObservacion" rows="2"></textarea>
           </div>
           <div class="col-12">
-            <label class="form-label">Recomendación</label>
-            <textarea class="form-control" id="incRecomendacion" rows="2"></textarea>
+            {# 2026-08-03 (Daniel): en la planilla legado este campo casi
+               siempre traía un código UA (Unidad de Armado, mismo concepto
+               que "ua" en mant_repuestos), no una recomendación en texto
+               libre -- se relabela para reflejar lo que realmente contiene.
+               Sigue siendo texto libre (columna `recomendacion`, sin cambio
+               de esquema) para no perder los pocos casos con nota real, y
+               queda listo para poblarse desde una API externa cuando Daniel
+               comparta las credenciales -- sin migración adicional. #}
+            <label class="form-label">N° UA <span class="text-muted" style="font-weight:400;font-size:.78rem">(Unidad de Armado)</span></label>
+            <textarea class="form-control" id="incRecomendacion" rows="2" placeholder="Ej: UA1007933"></textarea>
           </div>
         </div>
       </div>
