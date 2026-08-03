@@ -1124,6 +1124,13 @@ except Exception as _e:
 
 UPLOAD_FOLDER   = UPLOADS_BASE
 ERP_TABLE_PRODUCTS = ERP_CONFIG.get("table_products", "MAEPR")
+# Bodega PRINCIPAL para stock físico disponible (2026-08-03, Daniel, caso real
+# SKU 1121100984: "hay 2 equipos pero estan en la bodega 05 y 06... deja solo
+# que el stock que valga sea el de la bod 02"). Ver get_erp_stock_by_sku(s).
+# Mismo valor y patrón (MAEST.KOBO) que ya usan catalogo_module.CAT_BODEGA_SYNC
+# y tickets_module.BODEGA_SOPORTE -- variable propia porque get_erp_stock_by_sku
+# vive en app.py y la usan Cotizaciones/Cubicador/Monitor/Retiros por igual.
+ERP_STOCK_BODEGA_PRINCIPAL = os.environ.get("ILUS_ERP_STOCK_BODEGA_PRINCIPAL", "02").strip()
 ALLOWED_EXT     = {"png", "jpg", "jpeg", "webp", "gif"}
 MAX_PHOTOS      = 2
 
@@ -5782,20 +5789,44 @@ def get_erp_product_by_sku(sku):
 
 
 def get_erp_stock_by_sku(sku):
-    """Stock GLOBAL de un producto en el ERP Random (READ-ONLY, MAEPR).
-    Daniel 2026-06-17 ('saber si hay/no hay stock'). Usa el MISMO camino blindado
-    (_random_sql_one → solo SELECT, autocommit OFF) que ya usa el flag de preventa
-    del Monitor de Transporte. NUNCA escribe al ERP (REGLA #4.1). Devuelve dict o
-    None si el SKU no existe en MAEPR.
+    """Stock de un producto en el ERP Random, físico acotado a la bodega
+    PRINCIPAL (READ-ONLY, MAEPR + MAEST). Daniel 2026-06-17 ('saber si hay/no
+    hay stock'). Usa el MISMO camino blindado (_random_sql_one → solo SELECT,
+    autocommit OFF) que ya usa el flag de preventa del Monitor de Transporte.
+    NUNCA escribe al ERP (REGLA #4.1). Devuelve dict o None si el SKU no
+    existe en MAEPR.
+
+    FIX 2026-08-03 (Daniel, caso real SKU 1121100984 "ILUS Optimal Dual Hip
+    Abductor/Adductor"): el badge de Cotizaciones mostraba "2 físico" -- pero
+    esas 2 unidades estaban en las bodegas 05 y 06, no en la 02 (principal de
+    despacho). "fisico" venía de STFI1 en MAEPR, que es el TOTAL en todas las
+    bodegas -- un número que parece disponible pero no lo está, porque no se
+    puede despachar desde acá sin antes trasladar la mercadería. Ahora
+    "fisico" sale de MAEST filtrado por KOBO=ERP_STOCK_BODEGA_PRINCIPAL (0 si
+    no hay fila para esa bodega) -- exactamente el mismo patrón ya usado en
+    catalogo_module.cat_api_erp_bodega_buscar.
+
+    OJO -- esto NO es lo mismo que el bug ya corregido el 2026-07-31 en
+    catalogo_module (Daniel: "no solo se llame a la bodega 02... necesito
+    cotizar en instalación, no encuentra nada"): ahí el problema era filtrar
+    qué PRODUCTOS APARECEN en una búsqueda por bodega (un SKU sin stock en 02
+    desaparecía de los resultados). Acá no hay búsqueda ni WHERE por bodega:
+    el SKU ya viene elegido, y solo se acota el NÚMERO de stock que se
+    muestra/usa para decidir "hay stock". No hay riesgo de esconder productos.
+
+    devengado/comprometido (STDV1/STOCNV1) siguen siendo GLOBALES -- no hay
+    evidencia de que el ERP los desglose por bodega en MAEST, y no hace
+    falta: con fisico=0 en la bodega principal, disponible = 0 - comprometido
+    siempre da <= 0, así que "hay_stock" queda correcto igual.
 
     Semántica de campos (2026-07-23, confirmada contra el diccionario oficial
     Random -- antes "comprometido" leía STDV1 por error, ver memoria
     blueprint_piolas_manuales_comunicaciones / conversación con Daniel sobre
     STFI1/STDV1/STOCNV1):
-      fisico       = STFI1    (stock físico -- lo que hay ahora en bodega)
-      devengado    = STDV1    (compras en camino, aún no llegan)
-      comprometido = STOCNV1  (ya vendido/reservado, pendiente de despachar)
-      disponible   = STFI1 - STOCNV1  (lo que realmente queda para vender;
+      fisico       = STFI1 de MAEST, bodega principal (lo que hay AHÍ ahora)
+      devengado    = STDV1    (compras en camino, aún no llegan) -- global
+      comprometido = STOCNV1  (ya vendido/reservado, pendiente de despachar) -- global
+      disponible   = fisico - STOCNV1  (lo que realmente queda para vender;
                      el devengado NO cuenta como disponible hasta que llega)
     """
     sku_u = (sku or "").strip().upper()
@@ -5804,14 +5835,16 @@ def get_erp_stock_by_sku(sku):
     try:
         r = _random_sql_one(
             f"""SELECT TOP 1
-                       LTRIM(RTRIM(KOPR))   AS sku,
-                       LTRIM(RTRIM(NOKOPR)) AS nombre,
-                       STFI1                AS fisico,
-                       STDV1                AS devengado,
-                       STOCNV1              AS comprometido
-                  FROM {ERP_TABLE_PRODUCTS}
-                 WHERE UPPER(LTRIM(RTRIM(KOPR))) = %s""",
-            (sku_u,),
+                       LTRIM(RTRIM(pr.KOPR))   AS sku,
+                       LTRIM(RTRIM(pr.NOKOPR)) AS nombre,
+                       COALESCE((SELECT TOP 1 st.STFI1 FROM MAEST st
+                                  WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR))
+                                    AND LTRIM(RTRIM(st.KOBO)) = %s), 0) AS fisico,
+                       pr.STDV1                AS devengado,
+                       pr.STOCNV1              AS comprometido
+                  FROM {ERP_TABLE_PRODUCTS} pr
+                 WHERE UPPER(LTRIM(RTRIM(pr.KOPR))) = %s""",
+            (ERP_STOCK_BODEGA_PRINCIPAL, sku_u),
         )
         if not r:
             return None
@@ -5844,6 +5877,11 @@ def get_erp_stock_by_skus(skus):
     de N consultas. Evita N round-trips a SQL Server por documento (regla de
     performance <500ms). READ-ONLY, mismo camino blindado _random_sql_query.
 
+    FIX 2026-08-03: "fisico" acotado a la bodega principal (ver
+    get_erp_stock_by_sku para el caso real y el porqué) -- ESTA es la
+    función que realmente alimenta el badge de Cotizaciones/Cubicador
+    ("2 físico" del SKU 1121100984 que reportó Daniel).
+
     Devuelve dict {SKU: {sku,nombre,fisico,devengado,comprometido,disponible,
     hay_stock}} — solo incluye los SKUs que existen en MAEPR.
     """
@@ -5853,14 +5891,16 @@ def get_erp_stock_by_skus(skus):
     try:
         placeholders = ",".join(["%s"] * len(skus_u))
         rows = _random_sql_query(
-            f"""SELECT LTRIM(RTRIM(KOPR))   AS sku,
-                       LTRIM(RTRIM(NOKOPR)) AS nombre,
-                       STFI1                AS fisico,
-                       STDV1                AS devengado,
-                       STOCNV1              AS comprometido
-                  FROM {ERP_TABLE_PRODUCTS}
-                 WHERE UPPER(LTRIM(RTRIM(KOPR))) IN ({placeholders})""",
-            tuple(skus_u),
+            f"""SELECT LTRIM(RTRIM(pr.KOPR))   AS sku,
+                       LTRIM(RTRIM(pr.NOKOPR)) AS nombre,
+                       COALESCE((SELECT TOP 1 st.STFI1 FROM MAEST st
+                                  WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR))
+                                    AND LTRIM(RTRIM(st.KOBO)) = %s), 0) AS fisico,
+                       pr.STDV1                AS devengado,
+                       pr.STOCNV1              AS comprometido
+                  FROM {ERP_TABLE_PRODUCTS} pr
+                 WHERE UPPER(LTRIM(RTRIM(pr.KOPR))) IN ({placeholders})""",
+            tuple([ERP_STOCK_BODEGA_PRINCIPAL] + skus_u),
             max_rows=len(skus_u) + 10,
         ) or []
 

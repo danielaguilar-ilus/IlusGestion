@@ -175,6 +175,11 @@
       '  font-size:.85rem;font-weight:600;color:#6b7280;cursor:pointer;',
       '  border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap;',
       '  min-height:44px;display:inline-flex;align-items:center;gap:6px;',
+      // FIX 2026-08-03: .cubtab-btn ahora también se usa en un <a> real
+      // (el tab "Cotizador" navega directo a la tabla en vez de cambiar de
+      // pestaña local) -- sin esto se veía subrayado y azul, distinto a
+      // los demás botones de la barra.
+      '  text-decoration:none;',
       '  transition:color .15s,border-color .15s;}',
       '.cubtab-btn:hover{color:#374151;}',
       '.cubtab-btn:focus-visible{box-shadow:inset 0 0 0 2px rgba(220,38,38,.35);border-radius:6px;}',

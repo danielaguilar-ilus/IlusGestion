@@ -10,8 +10,10 @@
         <form>). Este fragmento tiene inputs propios pero NO usa <form>
         justamente para poder convivir con los formularios del Cubicador
         (excelExportForm / pdfExportForm) sin anidar formularios.
-     2. Va como panel hermano del wrapper de la pestaña "Cubicaje"
-        (id="cubtab-cotizador" según la convención de la barra de pestañas).
+     2. FIX 2026-08-03: vive dentro de #cubtab-cubicador (plegado, al final,
+        fuera de #cubicadorForm) -- la pestaña "Cotizador" de la barra ya no
+        es un panel local, es un link directo a la tabla real de
+        Cotizaciones (Daniel: "deberia darme la tabla de una").
      3. El botón "Traer desde el ERP" usa el modal multidocumento. Para que
         funcione, index.html debe incluir UNA vez, al final del bloque de
         contenido:  {% include "tickets/_tka_modal.html" %}

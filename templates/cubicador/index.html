@@ -42,15 +42,21 @@
    Los estilos los inyecta ese mismo archivo, por eso acá no hay <style>. #}
 <div class="cubtabs-wrap">
   <div class="cubtabs">
-    {# 2026-07-25 (pedido Daniel): "coloca el Cotizador de primero" — el
-       Cotizador es el que más usa hoy, así que pasa a ser la pestaña activa
-       por defecto. El Cubicador clásico (calculadora de cubicaje, con
-       identidad propia y su propio link en el sidebar /cubicador) NO se
-       renombra ni se borra — Regla #4.2 — solo pasa a ser la 2ª pestaña. #}
-    <button type="button" class="cubtab-btn active" data-tab="cotizador">
+    {# FIX 2026-08-03 (Daniel: "cuando presionamos la pestaña de cotizacion
+       esta demas volver a presionar cotizar, deberia darme la tabla de una").
+       Antes "Cotizador" era una PESTAÑA local que solo mostraba una tarjeta
+       promocional con un botón "Ir a Cotizaciones" -- un clic de más para
+       llegar a la tabla real. Ahora es un LINK directo a esa tabla (sin
+       data-tab: cubicador_tabs.js la ignora por completo, es solo un <a>).
+       La herramienta "Cotización rápida de flete" que vivía en esa pestaña
+       NO se borró (Regla #4.2): se movió a la pestaña Cubicador, ver más
+       abajo junto al cierre de #cubtab-cubicador. El Cubicador clásico pasa
+       a ser la pestaña activa por defecto (ya no hay pestaña "Cotizador"
+       local a la cual apuntar). #}
+    <a href="{{ url_for('lc_cotizaciones_lista') }}" class="cubtab-btn">
       <i class="bi bi-cash-coin"></i>Cotizador
-    </button>
-    <button type="button" class="cubtab-btn" data-tab="cubicador">
+    </a>
+    <button type="button" class="cubtab-btn active" data-tab="cubicador">
       <i class="bi bi-calculator"></i>Cubicador
     </button>
     <button type="button" class="cubtab-btn" data-tab="packing">
@@ -62,7 +68,7 @@
   </div>
 </div>
 
-<div id="cubtab-cubicador" class="cubtab-pane">
+<div id="cubtab-cubicador" class="cubtab-pane active">
 
 {# ── Formulario multi-documento ── #}
 <div class="ilus-card mb-3">
@@ -967,78 +973,32 @@
   </div>
 </div>
 
+{# ══════════════════════════════════════════════════════════════════
+   "Cotización rápida de flete" (2026-07-25, originalmente vivía en su
+   propia pestaña "Cotizador" -- ver historial). FIX 2026-08-03 (Daniel:
+   "esta demas volver a presionar cotizar, deberia darme la tabla de una"):
+   la pestaña "Cotizador" de la barra de arriba ahora es un LINK directo a
+   la tabla real de Cotizaciones (logistica_cotizaciones.py, numeración
+   CTR-, templates/transporte/cotizaciones.html) -- sin escala intermedia.
+   Esta herramienta AD-HOC (sin guardar, comparación rápida de couriers)
+   NO se borra (Regla #4.2): se reubica acá, en la pestaña Cubicador,
+   fuera de #cubicadorForm (requisito de _tab_cotizador.html), plegada
+   igual que antes. ══════════════════════════════════════════════════ #}
+<style>
+.cotgo-legacy{margin-top:16px;}
+.cotgo-legacy summary{cursor:pointer;font-size:.8rem;font-weight:700;color:#6b7280;
+  padding:8px 2px;list-style:none;display:flex;align-items:center;gap:6px;user-select:none;}
+.cotgo-legacy summary::-webkit-details-marker{display:none;}
+.cotgo-legacy summary i{transition:transform .15s;}
+.cotgo-legacy[open] summary i{transform:rotate(90deg);}
+.cotgo-legacy summary:hover{color:#374151;}
+</style>
+<details class="cotgo-legacy">
+  <summary><i class="bi bi-chevron-right"></i>Cotización rápida de flete (sin guardar — solo para consulta interna)</summary>
+  {% include "cubicador/_tab_cotizador.html" %}
+</details>
+
 </div>{# /#cubtab-cubicador — fin del Cubicador original, intacto #}
-
-<div id="cubtab-cotizador" class="cubtab-pane active">
-
-  {# ══════════════════════════════════════════════════════════════════
-     PESTAÑA "COTIZADOR" (2026-07-25, corrección de alcance) — Daniel pidió
-     "cuando le dé a Cotizador quiero ver una tabla [de cotizaciones
-     guardadas], y cuando le dé a crear nuevo me salga un modal", con las
-     mismas acciones que /tickets/cotizaciones (PDF, enviar, aprobar,
-     cancelar, eliminar, calculadora, historial) y el modal de varios pasos
-     con "Agregar de Bodega".
-
-     Eso YA EXISTE, completo y en producción: el módulo "Cotizaciones de
-     Transporte y Distribución" (logistica_cotizaciones.py, numeración
-     CTR-, tabla `transport_cotizaciones`) con su lista
-     (templates/transporte/cotizaciones.html) y su modal de varios pasos
-     (templates/transporte/_modal_cotizacion_logistica.html) — reusan el
-     MISMO mecanismo de medidas/etiquetas del Cubicador (cub-row +
-     static/cubicador_tabs.js) y ya tienen los 7 iconos de acción, historial
-     y PDF que pidió Daniel.
-
-     Por eso esta pestaña NO reconstruye una segunda tabla+modal propia
-     (sería duplicar ~4.000 líneas ya hechas) — lleva derecho a esa lista.
-     El Cotizador AD-HOC anterior (sin guardar, comparación rápida de
-     couriers) NO se borra (Regla #4.2): queda disponible abajo, plegado.
-     ══════════════════════════════════════════════════════════════════ #}
-  <style>
-  .cotgo-card{
-    background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);
-    color:#fff;border-radius:16px;padding:22px 24px;margin-bottom:16px;
-    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
-    box-shadow:0 8px 26px -10px rgba(0,0,0,.5);
-  }
-  .cotgo-card h5{margin:0 0 4px;font-weight:900;letter-spacing:-.01em;font-size:1.15rem;
-    display:flex;align-items:center;gap:8px;}
-  .cotgo-card h5 i{color:#dc2626;}
-  .cotgo-card p{margin:0;font-size:.84rem;color:#c9cdd4;line-height:1.5;max-width:52ch;}
-  .cotgo-btn{background:#dc2626;color:#fff;font-weight:800;border:none;border-radius:10px;
-    padding:0 20px;min-height:46px;display:inline-flex;align-items:center;gap:8px;
-    text-decoration:none;transition:.15s;flex:0 0 auto;}
-  .cotgo-btn:hover{background:#b91c1c;color:#fff;}
-  .cotgo-btn:active{transform:scale(.97);}
-  .cotgo-legacy{margin-top:6px;}
-  .cotgo-legacy summary{cursor:pointer;font-size:.8rem;font-weight:700;color:#6b7280;
-    padding:8px 2px;list-style:none;display:flex;align-items:center;gap:6px;user-select:none;}
-  .cotgo-legacy summary::-webkit-details-marker{display:none;}
-  .cotgo-legacy summary i{transition:transform .15s;}
-  .cotgo-legacy[open] summary i{transform:rotate(90deg);}
-  .cotgo-legacy summary:hover{color:#374151;}
-  @media(max-width:640px){
-    .cotgo-card{padding:18px 18px;}
-    .cotgo-btn{width:100%;justify-content:center;}
-  }
-  </style>
-
-  <div class="cotgo-card">
-    <div>
-      <h5><i class="bi bi-cash-coin"></i>Cotizaciones de Transporte y Distribución</h5>
-      <p>Tabla de cotizaciones guardadas con PDF, envío por correo, aprobación, historial
-         y calculadora de tarifa — crea, cotiza el flete con todos los couriers y guarda
-         el documento para el cliente.</p>
-    </div>
-    <a class="cotgo-btn" href="{{ url_for('lc_cotizaciones_lista') }}">
-      <i class="bi bi-box-arrow-up-right"></i>Ir a Cotizaciones
-    </a>
-  </div>
-
-  <details class="cotgo-legacy">
-    <summary><i class="bi bi-chevron-right"></i>Cotización rápida de flete (sin guardar — solo para consulta interna)</summary>
-    {% include "cubicador/_tab_cotizador.html" %}
-  </details>
-</div>
 
 <div id="cubtab-packing" class="cubtab-pane">
   {% include "cubicador/_tab_packing.html" %}
