@@ -139,21 +139,36 @@
 {% endif %}
 
 <style>
+/* FIX 2026-08-03 (Daniel: "la tabla se ve horrorosa"): la primera versión
+   ponía texto sin `color` explícito sobre un fondo casi negro (#0f0f0f) --
+   heredaba el gris tenue de body y quedaba prácticamente ilegible. Se
+   alinea al patrón real de Etiquetas/Catálogo (REGLA #4.3): tabla en
+   blanco, header negro sólido, texto oscuro de alto contraste, filas con
+   borde claro y hover sutil -- no un tema oscuro a medias. */
 .inc-filtros{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:12px 0}
 .inc-filtros #incFQ{max-width:340px}
 .inc-filtros #incFEstado{max-width:180px}
-.inc-tabla{width:100%;border-collapse:collapse;font-size:.85rem}
-.inc-tabla thead th{background:#161616;color:#fff;padding:8px 10px;text-align:left;font-weight:700;font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
-.inc-tabla tbody td{padding:8px 10px;border-bottom:1px solid #2d2d2d}
-.inc-tabla tbody tr{cursor:pointer;transition:background .12s}
-.inc-tabla tbody tr:hover{background:rgba(220,38,38,.07)}
-.inc-wrap{background:#0f0f0f;border:1px solid #2d2d2d;border-radius:10px;overflow:hidden}
-.inc-badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.72rem;font-weight:700}
+.inc-wrap{background:#fff;border:1px solid #eaecf0;border-radius:12px;overflow:hidden;
+  box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.inc-tabla{width:100%;border-collapse:separate;border-spacing:0;font-size:.86rem;min-width:900px}
+.inc-tabla thead th{background:#0a0a0a;color:#fff;padding:12px 14px;text-align:left;
+  font-weight:700;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+.inc-tabla tbody td{padding:11px 14px;vertical-align:middle;color:#1f2430}
+.inc-tabla tbody tr:not(:last-child) td{border-bottom:1px solid #f1f3f6}
+.inc-tabla tbody tr{cursor:pointer;transition:background .1s}
+.inc-tabla tbody tr:hover{background:#fef2f2}
+.inc-tabla tbody td:nth-child(2){color:#0f172a;font-weight:600}
+.inc-tabla tbody td:nth-child(4){color:#4b5563}
+.inc-badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:.72rem;font-weight:700;white-space:nowrap}
 .inc-badge-abierta{background:#fff8e1;color:#b45309}
 .inc-badge-resuelta{background:#dcfce7;color:#16a34a}
-.inc-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-top:1px solid #2d2d2d;background:#161616}
-.inc-foot-info{font-size:.78rem;color:#bbb}
-.inc-pg-btn{background:#1a1a1a;border:1px solid #2d2d2d;color:#fff;border-radius:6px;padding:4px 10px;font-size:.78rem}
+.inc-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;
+  padding:12px 14px;border-top:1px solid #eaecf0;background:#fafbfc}
+.inc-foot-info{font-size:.78rem;color:#6b7280}
+.inc-foot-info b{color:#0f172a}
+.inc-pg-btn{background:#fff;border:1px solid #e5e7eb;color:#1f2430;border-radius:8px;
+  padding:5px 12px;font-size:.78rem;transition:border-color .12s,color .12s}
+.inc-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626}
 .inc-pg-btn:disabled{opacity:.4;cursor:not-allowed}
 </style>
 
