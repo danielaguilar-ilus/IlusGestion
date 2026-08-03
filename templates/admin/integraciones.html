@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Integraciones — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-plug me-2"></i>Integraciones</h4>
+    <div class="sub">Registro de las APIs externas que usa ILUS — qué son, para qué sirven y dónde vive cada credencial</div>
+  </div>
+  <a href="{{ url_for('comm_index') }}" class="btn btn-ilus-outline">
+    <i class="bi bi-chat-dots me-1"></i>Ver Comunicaciones (email/WhatsApp)</a>
+</div>
+
+<div class="alert alert-secondary" style="font-size:.85rem;border-radius:10px">
+  <i class="bi bi-shield-lock me-1"></i>
+  Esta página solo muestra <strong>si</strong> cada integración está configurada, nunca el valor de la credencial.
+  Todas las credenciales viven como secretos en GitHub → se inyectan en <code>env.yaml</code> al desplegar → llegan
+  a Cloud Run como variables de entorno. Ninguna vive en el código del repositorio.
+</div>
+
+<div class="int-grid">
+  {% for i in integraciones %}
+  <div class="int-card">
+    <div class="int-card-head">
+      <span class="int-nombre">{{ i.nombre }}</span>
+      {% if i.configurado %}
+        <span class="int-badge int-badge-ok"><i class="bi bi-check-circle-fill"></i> Configurada</span>
+      {% else %}
+        <span class="int-badge int-badge-off"><i class="bi bi-x-circle-fill"></i> No configurada</span>
+      {% endif %}
+    </div>
+    <div class="int-proposito">{{ i.proposito }}</div>
+    <div class="int-meta">
+      <div><span class="int-meta-label">Base URL</span><code>{{ i.base_url }}</code></div>
+      {% if i.env_vars %}
+      <div><span class="int-meta-label">Variables de entorno</span>
+        {% for v in i.env_vars %}<code class="int-envvar">{{ v }}</code>{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<style>
+.int-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:14px}
+.int-card{background:#0f0f0f;border:1px solid #2d2d2d;border-radius:12px;padding:16px}
+.int-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.int-nombre{font-weight:700;color:#fff;font-size:.95rem}
+.int-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:20px;font-size:.72rem;font-weight:700;white-space:nowrap}
+.int-badge-ok{background:#dcfce7;color:#16a34a}
+.int-badge-off{background:#fee2e2;color:#dc2626}
+.int-proposito{color:#bbb;font-size:.82rem;line-height:1.4;margin-bottom:10px}
+.int-meta{font-size:.75rem;color:#888;display:flex;flex-direction:column;gap:4px}
+.int-meta-label{display:block;text-transform:uppercase;letter-spacing:.03em;font-size:.65rem;color:#666;margin-bottom:2px}
+.int-meta code{background:#1a1a1a;border:1px solid #2d2d2d;border-radius:5px;padding:1px 6px;color:#f87171;font-size:.72rem;margin-right:4px;display:inline-block;margin-top:2px}
+.int-envvar{color:#60a5fa !important}
+</style>
+{% endblock %}

@@ -10991,6 +10991,74 @@ def export_excel():
 
 
 # ─────────────────────────────────────────────
+#  Integraciones (2026-08-03, Daniel: "repositorio de APIs" -- memoria
+#  centralizada de qué APIs externas usa ILUS, para qué, y dónde viven
+#  sus credenciales. Solo lectura, solo booleano configurado/no -- NUNCA
+#  expone valores de secretos (Regla #4). Todas las credenciales reales
+#  viven en GitHub Secrets -> env.yaml -> Cloud Run (nunca en el código).
+# ─────────────────────────────────────────────
+
+def _integraciones_estado():
+    return [
+        {
+            "clave": "erp_random", "nombre": "ERP Random (SQL Server)",
+            "proposito": "Fuente de verdad de productos/stock/documentos. READ-ONLY absoluto (Regla #4.1).",
+            "configurado": bool(ERP_CONFIG.get("host") and ERP_CONFIG.get("user")),
+            "env_vars": ["ERP_MYSQL_HOST", "ERP_MYSQL_USER", "ERP_MYSQL_PASSWORD", "ERP_MYSQL_DATABASE"],
+            "base_url": ERP_CONFIG.get("host") or "—",
+        },
+        {
+            "clave": "fedex", "nombre": "FedEx Rate API",
+            "proposito": "Cotización de tarifas de despacho (Transporte / Costo de ruta).",
+            "configurado": bool(FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT),
+            "env_vars": ["FEDEX_RATE_CLIENT_ID", "FEDEX_RATE_CLIENT_SECRET", "FEDEX_ACCOUNT"],
+            "base_url": "apis.fedex.com",
+        },
+        {
+            "clave": "simpliroute", "nombre": "SimpliRoute (Milling + Felca)",
+            "proposito": "Seguimiento de rutas de despacho por courier (Monitor de Transporte).",
+            "configurado": bool(os.environ.get("SIMPLIROUTE_API_TOKEN_MILLING") and os.environ.get("SIMPLIROUTE_API_TOKEN_RAFA")),
+            "env_vars": ["SIMPLIROUTE_API_TOKEN_MILLING", "SIMPLIROUTE_API_TOKEN_RAFA"],
+            "base_url": "api.simpliroute.com",
+        },
+        {
+            "clave": "checkwms", "nombre": "CheckWMS",
+            "proposito": "Trazabilidad de bodega por código UA (Unidad de Armado) -- autocompleta Incidencias.",
+            "configurado": bool(CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp")),
+            "env_vars": ["CHECKWMS_UID_INS", "CHECKWMS_UID_ERP"],
+            "base_url": CHECKWMS_CONFIG.get("base_url") or "—",
+        },
+        {
+            "clave": "uf", "nombre": "UF (mindicador.cl)",
+            "proposito": "Valor de la UF del día para Cotizaciones. API pública, sin credenciales.",
+            "configurado": True,
+            "env_vars": [],
+            "base_url": "mindicador.cl",
+        },
+        {
+            "clave": "google_maps", "nombre": "Google Maps Platform",
+            "proposito": "Autocompletar direcciones (Places API) en formularios con dirección.",
+            "configurado": bool(GOOGLE_MAPS_API_KEY),
+            "env_vars": ["GOOGLE_MAPS_API_KEY"],
+            "base_url": "maps.googleapis.com",
+        },
+        {
+            "clave": "gcs_cloudinary", "nombre": "Almacenamiento de fotos (GCS / Cloudinary)",
+            "proposito": "Fotos de productos, equipos, evidencia. GCS es el storage activo por default.",
+            "configurado": bool(GCS_ENABLED and GCS_BUCKET) or bool(CLOUDINARY_CONFIG.get("cloud_name")),
+            "env_vars": ["GCS_BUCKET", "ILUS_STORAGE_GCS", "CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET"],
+            "base_url": GCS_BUCKET if GCS_ENABLED else (CLOUDINARY_CONFIG.get("cloud_name") or "—"),
+        },
+    ]
+
+
+@app.route("/admin/integraciones")
+@require_permission("superadmin")
+def admin_integraciones():
+    return render_template("admin/integraciones.html", integraciones=_integraciones_estado())
+
+
+# ─────────────────────────────────────────────
 #  Usuarios (solo admin)
 # ─────────────────────────────────────────────
 
