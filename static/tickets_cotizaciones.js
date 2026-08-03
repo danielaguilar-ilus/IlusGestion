@@ -1162,7 +1162,15 @@ function cotWizRecalcLocal(){
 function cotWizPrecioManual(i, v){
   if (!_WIZ || !_WIZ.items[i]) return;
   const it = _WIZ.items[i];
-  const n = (v === '' || v == null) ? null : Math.max(parseInt(v, 10) || 0, 0);
+  // FIX 2026-08-03 (Daniel: "1 piso vale 3500... 100x3500=350.000" no daba):
+  // el input es type="number", así que si se escribe "3.500" (punto como
+  // separador de miles, formato chileno) el navegador lo guarda como el
+  // string "3.500" -- un decimal válido = 3.5 -- y parseInt("3.500",10)
+  // trunca a 3. Se limpia cualquier caracter no-numérico ANTES de parsear
+  // (los precios CLP de este wizard siempre son pesos enteros, sin
+  // decimales, así que no hay ambigüedad con quitar el punto).
+  const vLimpio = (v == null) ? '' : String(v).replace(/\D/g, '');
+  const n = (vLimpio === '') ? null : Math.max(parseInt(vLimpio, 10) || 0, 0);
   const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
   it.precio_manual = (n === null || (auto != null && n === auto)) ? null : n;
   cotWizRecalcLocal();
