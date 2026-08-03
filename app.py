@@ -51594,12 +51594,58 @@ def _checkwms_get(path: str, params: dict) -> dict | None:
         return None
 
 
+def _checkwms_respaldo_erp(doc_ref: str, fecha_wms: str) -> dict:
+    """Cruza un movimiento de CheckWMS contra el ERP Random (2026-08-03,
+    Daniel: "identificar qué salió primero" -- detectar salidas de bodega
+    sin documento de respaldo, o con documento declarado DESPUÉS de que
+    el producto ya salió físicamente).
+
+    `doc_ref` viene tal cual lo entrega CheckWMS, ej. "FCV-0000011155"
+    (tido="FCV", nudo="0000011155") -- el propio WMS ya indica a qué
+    documento del ERP corresponde el movimiento, no hace falta adivinar.
+    SOLO LECTURA vía erp_engine.fetch_document (Regla #4.1). Nunca lanza:
+    ante cualquier error del ERP, devuelve alerta=None (no bloquea la
+    búsqueda de UA por esto)."""
+    if not doc_ref or "-" not in doc_ref:
+        return {"doc_ref": doc_ref, "encontrado": None, "alerta": None}
+    tido, nudo = doc_ref.split("-", 1)
+    tido, nudo = tido.strip(), nudo.strip()
+    try:
+        doc = erp_engine.get_client().fetch_document(tido, nudo)
+    except Exception as _e:
+        print(f"[checkwms_respaldo_erp] error ERP doc {doc_ref}: {_e}", flush=True)
+        return {"doc_ref": doc_ref, "encontrado": None, "alerta": None}
+
+    if not doc:
+        return {"doc_ref": doc_ref, "encontrado": False,
+                "alerta": f"El movimiento referencia el documento {doc_ref}, pero NO existe en el ERP Random."}
+
+    fecha_erp = str(doc.get("fecha") or "")[:10]
+    alerta = None
+    if fecha_erp and fecha_wms:
+        try:
+            f_erp = datetime.strptime(fecha_erp, "%Y-%m-%d").date()
+            f_wms = datetime.fromisoformat(fecha_wms[:19]).date()
+            if f_wms < f_erp:
+                alerta = (f"Salió de bodega el {f_wms.strftime('%d/%m/%Y')} pero el documento "
+                          f"{doc_ref} en Random es del {f_erp.strftime('%d/%m/%Y')} -- "
+                          "salió antes de estar declarado.")
+        except (TypeError, ValueError):
+            pass
+    return {
+        "doc_ref": doc_ref, "encontrado": True, "fecha_erp": fecha_erp,
+        "cliente_erp": doc.get("cliente_nombre"), "alerta": alerta,
+    }
+
+
 @app.route("/mantenciones/api/incidencias/buscar-ua", methods=["GET"])
 @_mant_required
 @_no_tecnico
 def mant_api_incidencias_buscar_ua():
     """Autocompleta SKU/descripción del modal de Incidencias buscando el
-    código UA en CheckWMS (2026-08-03, Daniel: integración real vía API)."""
+    código UA en CheckWMS (2026-08-03, Daniel: integración real vía API),
+    y cruza el documento contra el ERP Random para detectar salidas de
+    bodega sin respaldo o declaradas tarde."""
     codigo = (request.args.get("codigo") or "").strip()
     if not codigo:
         return jsonify({"ok": False, "error": "Falta el código UA."}), 400
@@ -51610,12 +51656,15 @@ def mant_api_incidencias_buscar_ua():
     if not rows:
         return jsonify({"ok": True, "found": False})
     r = rows[0]
+    fecha_wms = r.get("fechaFin") or r.get("feInicioOT")
+    respaldo = _checkwms_respaldo_erp(r.get("doc") or "", fecha_wms)
     return jsonify({
         "ok": True, "found": True,
         "sku": r.get("codigo"), "descripcion": r.get("descripcion"),
         "ot": r.get("ot"), "estado": r.get("estado"), "bodega": r.get("bodega"),
-        "cliente": r.get("entidad"), "fecha": r.get("fechaFin") or r.get("feInicioOT"),
+        "cliente": r.get("entidad"), "fecha": fecha_wms,
         "items_relacionados": len(rows),
+        "respaldo_erp": respaldo,
     })
 
 

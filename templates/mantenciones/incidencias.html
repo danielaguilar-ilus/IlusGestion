@@ -316,8 +316,17 @@
         if(!data.found){ res.innerHTML = '<span class="text-warning">No se encontró ese código UA en CheckWMS.</span>'; return; }
         if(data.sku) document.getElementById('incSku').value = data.sku;
         if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
-        res.innerHTML = '<span class="text-success">✓ Encontrado — OT '+(data.ot||'—')+' · '+(data.estado||'—')
+        var html = '<span class="text-success">✓ Encontrado — OT '+(data.ot||'—')+' · '+(data.estado||'—')
           +' · Bodega '+(data.bodega||'—')+(data.cliente ? (' · '+data.cliente) : '')+'</span>';
+        // 2026-08-03 (Daniel: "identificar qué salió primero" -- cruce
+        // contra ERP Random usando el documento que ya trae CheckWMS).
+        var resp = data.respaldo_erp;
+        if(resp && resp.alerta){
+          html += '<br><span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+resp.alerta+'</span>';
+        } else if(resp && resp.encontrado === true){
+          html += '<br><span class="text-muted">Respaldado por '+resp.doc_ref+' en Random ('+(resp.fecha_erp||'—')+').</span>';
+        }
+        res.innerHTML = html;
       }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
   });
 
