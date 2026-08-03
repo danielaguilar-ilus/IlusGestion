@@ -2273,15 +2273,30 @@ class TestCompromisosJsonPaginacion(unittest.TestCase):
                       '"per_page": per_page', '"total_paginas": total_paginas'):
             self.assertIn(clave, self.fuente, f"Falta {clave} en la respuesta JSON.")
 
-    def test_el_techo_de_500_sigue_ahi_y_documentado(self):
+    def test_el_techo_sigue_ahi_y_documentado(self):
         """LIMITACIÓN CONOCIDA declarada a propósito: el LIMIT del SELECT sigue
-        siendo el techo, así que con >500 documentos en un filtro el paginador
-        cuenta sobre esos 500. Si alguien sube o quita ese techo, que sea a
-        propósito y actualizando este test."""
-        self.assertRegex(self.norm, r"LIMIT 500")
+        siendo un techo, así que con más documentos que el techo en un filtro
+        el paginador cuenta sobre esos primeros, no sobre el universo. 2026-08-03
+        (Daniel: la cola de pendientes ya supera los 500): el techo de las
+        vistas 'pendiente' (incluye preventa/sin_guia) se subió vía
+        TR_MONITOR_LIMIT_PENDIENTE, configurable por entorno -- ya no es el
+        literal "500" fijo, así que este test verifica las CONSTANTES, no un
+        número mágico en el SQL."""
+        self.assertIn("TR_MONITOR_LIMIT_PENDIENTE if _vista_es_pendiente else TR_MONITOR_LIMIT",
+                      self.norm)
         self.assertIn("LIMITACIÓN CONOCIDA", self.fuente,
-                      "Se borró la nota de la limitación del techo de 500 — "
+                      "Se borró la nota de la limitación del techo — "
                       "esa limitación NO puede quedar sin documentar.")
+
+    def test_las_constantes_del_techo_son_configurables_por_entorno(self):
+        """Mismo patrón que TR_BODEGA_PRINCIPAL/TR_FECHA_NACIMIENTO: env var
+        con default sensato, no un literal hardcodeado sin forma de subirlo
+        sin tocar código."""
+        fuente_modulo = _fuente_app()
+        self.assertIn('TR_MONITOR_LIMIT           = int(os.environ.get("ILUS_TR_MONITOR_LIMIT", "500"))',
+                      fuente_modulo)
+        self.assertIn('TR_MONITOR_LIMIT_PENDIENTE = int(os.environ.get("ILUS_TR_MONITOR_LIMIT_PENDIENTE", "2000"))',
+                      fuente_modulo)
 
     def test_los_conteos_no_se_calculan_sobre_la_pagina(self):
         """Los badges cuentan el universo real vía SQL agregado. Si se hubieran
@@ -2344,6 +2359,239 @@ class TestMonitorFiltrosEnVivo(unittest.TestCase):
     def test_el_paginador_manda_page_y_per_page_al_backend(self):
         self.assertIn("params.set('page', String(_pagActual));", self.js)
         self.assertIn("params.set('per_page', String(_perPage));", self.js)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BLOQUE · Fecha de nacimiento del Monitor (2026-08-03)
+#
+# Daniel, al ver los 8.441 documentos históricos marcados 'Problema' de golpe
+# tras la carga del ERP: "eso es aberrante". La causa real: la rama
+# "OR tiene_saldo=0" de _tr_marcar_guia_sin_gestion_como_problema no tenía
+# ningún corte de fecha, así que un documento entregado en 2024 -- antes de
+# que esta plataforma existiera -- calificaba por definición. Corte elegido:
+# lunes 27 de julio de 2026 (no el 1 de agosto que Daniel nombró primero, para
+# que su propio caso de ejemplo -- factura Salas, despachada el 29-30/07 fuera
+# del sistema -- quedara cubierto).
+#
+# El riesgo que Daniel nombró explícitamente por su nombre: un corte mal
+# puesto que ESCONDA un despacho real pendiente es PEOR que ver 8.441
+# problemas ("riesgo reputacional a la marca"). Por eso el test más importante
+# de este bloque es el que prueba que la cola de PENDIENTES nunca mira la
+# fecha de nacimiento -- solo la marca de Problema la mira.
+# ═════════════════════════════════════════════════════════════════════════════
+class TestFechaNacimientoDelMarcado(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("_tr_where_guia_sin_gestion_marcable")
+        cls.norm = _norm(cls.fuente)
+        cls.fuente_marcado = _cuerpo_funcion("_tr_marcar_guia_sin_gestion_como_problema")
+
+    def test_el_corte_de_fecha_existe(self):
+        self.assertIn("fecha_emision >= %s", self.norm)
+
+    def test_el_corte_sale_de_una_variable_de_entorno_configurable(self):
+        fuente_modulo = _fuente_app()
+        self.assertIn(
+            'TR_FECHA_NACIMIENTO = os.environ.get("ILUS_TR_FECHA_NACIMIENTO", "2026-07-27").strip()',
+            fuente_modulo,
+        )
+
+    def test_el_corte_es_parametrizado_no_fstring(self):
+        """REGLA #4: nunca f-string con el valor. La fecha no puede aparecer
+        como literal dentro del SQL -- tiene que viajar en los params."""
+        self.assertNotIn("2026-07-27", self.norm)
+        self.assertIn("TR_FECHA_NACIMIENTO", self.fuente)
+
+    def test_el_corte_no_usa_or_is_null(self):
+        """Un NULL nunca se marca Problema -- es el lado seguro: no marcar
+        Problema NO saca ningún documento de la cola de pendientes (ver
+        test_la_cola_de_pendientes_no_tiene_corte_de_fecha)."""
+        self.assertNotRegex(self.norm, r"fecha_emision\s+IS\s+NULL")
+
+    def test_alerta_y_marcado_comparten_el_mismo_predicado(self):
+        """Antes la alerta y el botón de marcado tenían DOS criterios
+        distintos -- Daniel lo reportó 5 veces ("sigo viendo... no lo dejas
+        en Problema"). Ahora comparten _tr_where_guia_sin_gestion_marcable."""
+        fuente_alertas = _cuerpo_funcion("tr_alertas_json")
+        self.assertIn("_tr_where_guia_sin_gestion_marcable", fuente_alertas)
+        self.assertIn("_tr_where_guia_sin_gestion_marcable(", self.fuente_marcado)
+
+    def test_la_cola_de_pendientes_no_tiene_corte_de_fecha(self):
+        """EL TEST MÁS IMPORTANTE DE ESTE BLOQUE. _SQL_PENDIENTE (y por lo
+        tanto sin_guia, que es un subconjunto) no debe mirar `estado` ni
+        `fecha_emision` -- si un documento tiene saldo y no está en
+        manifiesto, tiene que aparecer en Pendientes SIN IMPORTAR cuándo se
+        emitió ni si la automatización lo marcó o no Problema. Por
+        construcción, el corte de nacimiento no puede esconder un despacho
+        real."""
+        fuente = _cuerpo_funcion("tr_compromisos_json")
+        idx = fuente.index("_SQL_PENDIENTE =")
+        linea = fuente[idx: fuente.index("\n", idx)]
+        self.assertNotIn("estado", linea)
+        self.assertNotIn("fecha_emision", linea)
+        # Y la guarda que exime a las vistas 'pendiente' del filtro de fecha
+        # elegido en el formulario sigue ahí.
+        self.assertIn("_vista_es_pendiente", fuente)
+
+
+class TestVistaSinGuia(unittest.TestCase):
+    """Prioridad #1 que fijó Daniel el 2026-08-03: "lo primero que hay que
+    hacer es identificar los compromisos no despachados... que tenga saldo y
+    no tenga guía". Antes no existía ningún filtro que respondiera
+    exactamente esa pregunta -- lo más cercano, `vista=pendientes`, no exige
+    ausencia de guía."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_compromisos_json")
+        cls.norm = _norm(cls.fuente)
+
+    def test_existe_el_predicado_sin_guia(self):
+        self.assertIn("_SQL_SIN_GUIA", self.fuente)
+        idx = self.fuente.index("_SQL_SIN_GUIA =")
+        bloque = self.fuente[idx: idx + 300]
+        self.assertIn("tiene_saldo=1", bloque)
+        self.assertIn("transport_guias", bloque)
+
+    def test_la_vista_hereda_el_trato_de_pendiente(self):
+        """Mismo ORDER BY (más antiguo primero) y mismo techo alto que
+        pendientes -- es un subconjunto, tiene que comportarse igual."""
+        idx = self.fuente.index('vista == "sin_guia"')
+        bloque = self.fuente[idx: idx + 200]
+        self.assertIn("_vista_es_pendiente = True", bloque)
+
+    def test_el_badge_de_sin_guia_se_cuenta_sin_filtro_de_fecha(self):
+        """Mismo criterio que pendientes/preventa/atrasados: se cuenta en el
+        query que ya corre sin acotar por fecha_emision."""
+        idx = self.fuente.index('conteos_row["sin_guia"]')
+        self.assertNotEqual(idx, -1)
+
+
+class TestPorDespToaSobreProblemaConSaldo(unittest.TestCase):
+    """FIX 2026-08-03: antes un documento con tiene_saldo=1 marcado 'Problema'
+    desaparecía del filtro "Por despachar" -- exactamente el hueco que Daniel
+    teme ("puede dejar un compromiso sin despacho... riesgo reputacional").
+    Ahora "Por despachar" gana cuando hay saldo, y la marca de Problema se
+    expone aparte para que el documento aparezca en AMBOS filtros."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_compromisos_json")
+        cls.norm = _norm(cls.fuente)
+
+    def test_tiene_saldo_gana_antes_que_la_marca_de_problema(self):
+        idx_saldo = self.norm.index('elif tiene_saldo == 1: estado_logistico = "Por despachar"')
+        idx_problema = self.norm.index('elif _sin_gestion:')
+        self.assertLess(idx_saldo, idx_problema,
+                        "'Por despachar' tiene que evaluarse ANTES que la "
+                        "marca de Problema, si no un documento con saldo "
+                        "desaparece del filtro que más urge.")
+
+    def test_existe_el_campo_sin_gestion_en_la_fila(self):
+        self.assertIn('"sin_gestion":', self.fuente)
+
+    def test_el_filtro_problema_tambien_encuentra_los_con_saldo(self):
+        idx = self.fuente.index('if estado == "Problema":')
+        bloque = self.fuente[idx: idx + 600]
+        self.assertIn('c.get("sin_gestion")', bloque)
+
+
+class TestAlertaGuiaSinGestionAlineada(unittest.TestCase):
+    """Daniel lo reportó 5 veces: "sigo viendo... no lo dejas en Problema".
+    Causa real: la alerta y el botón de marcado usaban criterios distintos,
+    así que apretar el botón podía reportar éxito con 0 marcados y la alerta
+    seguía mostrando las mismas facturas para siempre."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_alertas_json")
+
+    def test_la_alerta_expone_accion_para_el_frontend(self):
+        self.assertIn('"accion":', self.fuente)
+        self.assertIn("/transporte/api/alertas/guia-sin-gestion/marcar-problema",
+                      self.fuente)
+
+    def test_existe_una_segunda_alerta_para_los_no_marcables(self):
+        """REGLA #4.2: lo que el corte de fecha deja fuera no desaparece en
+        silencio -- se reclasifica, no se esconde."""
+        self.assertIn("guia_sin_gestion_manual", self.fuente)
+
+    def test_el_boton_esta_cableado_en_el_frontend(self):
+        """Antes el endpoint existía en el backend pero NINGÚN template lo
+        llamaba -- el botón no existía de verdad. La URL viaja en el JSON de
+        la alerta (a.accion.url), NO hardcodeada en el JS -- por diseño, para
+        que el backend siga siendo la única fuente de verdad de qué endpoint
+        resuelve cada alerta."""
+        ruta = os.path.join(RAIZ, "static", "transporte_monitor.js")
+        with open(ruta, encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn("function trAlertaAccion(btn, url)", js)
+        self.assertIn("a.accion", js)
+        self.assertIn("trAlertaAccion(this, ", js)
+
+    def test_el_endpoint_de_marcado_usa_el_permiso_del_modulo_no_admin_suelto(self):
+        """FIX 2026-08-03: el endpoint exigía admin/superadmin mientras el
+        resto del módulo (y quien realmente opera este botón, Alison) usa el
+        permiso 'transporte' vía @_tr_required. Si Alison no es admin, antes
+        de este fix el botón le devolvía 403 en silencio."""
+        fuente_endpoint = _cuerpo_funcion("tr_alertas_guia_sin_gestion_marcar_problema")
+        self.assertNotIn('g.permissions.get("superadmin")', fuente_endpoint)
+        self.assertNotIn('g.permissions.get("admin")', fuente_endpoint)
+
+
+class TestRevertirProblemaHistorico(unittest.TestCase):
+    """Limpieza de los 8.441 Problema que dejó la carga del histórico
+    (2026-08-02) ANTES de que existiera el corte de nacimiento. Debe deshacer
+    SOLO la automatización, nunca una decisión humana."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fuente = _cuerpo_funcion("tr_revertir_problema_historico")
+        cls.norm = _norm(cls.fuente)
+
+    def test_solo_toca_updated_by_alerta_guia_sin_gestion(self):
+        self.assertIn("c.updated_by = 'alerta_guia_sin_gestion'", self.norm)
+
+    def test_no_toca_documentos_desde_la_fecha_de_nacimiento(self):
+        self.assertIn("c.fecha_emision IS NULL OR c.fecha_emision < %s", self.norm)
+        self.assertIn("TR_FECHA_NACIMIENTO", self.fuente)
+
+    def test_devuelve_updated_by_a_sync(self):
+        """Si quedara en 'alerta_guia_sin_gestion', el CASE del sync masivo
+        (que exige updated_by='sync' para volver a tocar la fila) dejaría el
+        documento congelado para siempre con otro nombre."""
+        self.assertIn("updated_by='sync'", self.norm)
+
+    def test_los_tres_estados_replican_la_regla_del_sync(self):
+        for estado in ("Despachado", "Despachado parcial", "Pendiente"):
+            self.assertIn(f'"{estado}"', self.fuente)
+
+    def test_audita_en_transport_logs(self):
+        self.assertIn("transport_logs", self.fuente)
+        self.assertIn("revertido_problema_historico", self.fuente)
+
+    def test_mide_el_conteo_de_pendientes_antes_y_despues(self):
+        """Invariante de seguridad: la reversión no toca tiene_saldo ni
+        transport_manifest_items, así que el universo de "no despachados"
+        tiene que ser idéntico antes y después. Si cambia, algo se rompió."""
+        self.assertIn("pendientes_antes", self.fuente)
+        self.assertIn("pendientes_despues", self.fuente)
+
+    def test_exige_admin_o_superadmin(self):
+        self.assertIn('g.permissions.get("superadmin")', self.fuente)
+        self.assertIn('g.permissions.get("admin")', self.fuente)
+
+    def test_soporta_dry_run_sin_escribir(self):
+        self.assertIn('request.args.get("dry")', self.fuente)
+
+    def test_es_idempotente_por_construccion(self):
+        """Una segunda corrida no debe encontrar candidatos: el WHERE exige
+        updated_by='alerta_guia_sin_gestion', y esta misma función lo deja en
+        'sync' -- no hay forma de que un documento ya revertido vuelva a
+        calzar."""
+        idx_where = self.norm.index("WHERE c.estado = 'Problema'")
+        bloque_where = self.norm[idx_where: idx_where + 200]
+        self.assertIn("updated_by = 'alerta_guia_sin_gestion'", bloque_where)
 
 
 if __name__ == "__main__":

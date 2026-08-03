@@ -19765,6 +19765,29 @@ def _tr_nudo_display(nudo):
 # empresa cambia de bodega principal.
 TR_BODEGA_PRINCIPAL = os.environ.get("ILUS_TR_BODEGA_PRINCIPAL", "2").strip()
 
+# Fecha de NACIMIENTO operativo del Monitor (2026-08-03, Daniel: al cargar el
+# histórico del ERP -8.441 documentos quedaron marcados 'Problema' de golpe --
+# "eso es aberrante". Son documentos entregados ANTES de que esta plataforma
+# existiera; la regla de "salió sin gestión -> Problema" (ver
+# _tr_marcar_guia_sin_gestion_como_problema) solo debe aplicar de acá en
+# adelante). Daniel eligió el lunes 27 de julio de 2026 -- no el 1 de agosto
+# que nombró primero -- para que su propio caso de ejemplo (factura Salas,
+# despachada el 29-30/07 fuera del sistema) quede cubierto. Configurable por
+# entorno para no tener que tocar código si se recalibra.
+TR_FECHA_NACIMIENTO = os.environ.get("ILUS_TR_FECHA_NACIMIENTO", "2026-07-27").strip()
+
+# Techo de seguridad del SELECT de tr_compromisos_json (2026-08-03). Es una
+# LIMITACIÓN CONOCIDA, documentada a propósito (ver comentario junto al
+# ORDER BY/LIMIT real): con más documentos que el techo dentro de un filtro,
+# el paginador cuenta y pagina solo sobre esos primeros, no sobre el universo
+# completo. Las vistas "pendiente" (incluye preventa y sin_guia, ver
+# _vista_es_pendiente) reciben un techo más alto: con la carga histórica del
+# 2026-08-02 la cola de pendientes reales ya supera los 500 (904 medidos
+# antes de esa carga). Configurable por entorno, mismo patrón que
+# TR_BODEGA_PRINCIPAL/TR_FECHA_NACIMIENTO.
+TR_MONITOR_LIMIT           = int(os.environ.get("ILUS_TR_MONITOR_LIMIT", "500"))
+TR_MONITOR_LIMIT_PENDIENTE = int(os.environ.get("ILUS_TR_MONITOR_LIMIT_PENDIENTE", "2000"))
+
 
 _RAMO_SKUS = {
     "despacho":    ["ZZENVIO"],
@@ -20321,6 +20344,33 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
     return comm_id, None
 
 
+def _tr_where_guia_sin_gestion_marcable(alias="c"):
+    """Predicado ÚNICO de "salió sin gestión y el sistema puede marcarlo".
+
+    Lo comparten la ALERTA (tr_alertas_json, 'guia_sin_gestion') y el MARCADO
+    (_tr_marcar_guia_sin_gestion_como_problema). Antes cada uno tenía su propio
+    criterio y divergían: la alerta mostraba documentos que el botón de
+    "marcar Problema" no podía tocar (por el guard de updated_by), así que
+    apretar el botón reportaba éxito con 0 marcados y la alerta seguía igual
+    -- Daniel lo reportó 5 veces ("los cinco... sigo viendo").
+
+    Incluye el corte de FECHA DE NACIMIENTO (2026-08-03, Daniel: "eso es
+    aberrante" sobre los 8.441 Problema que dejó la carga del histórico):
+    ">= TR_FECHA_NACIMIENTO", SIN "OR IS NULL". Un NULL nunca se marca -- es
+    el lado seguro porque no marcar Problema NO saca ningún documento de la
+    cola de pendientes (ver _SQL_PENDIENTE, que no mira `estado`).
+
+    Devuelve (fragmento_sql, params) -- parametrizado, nunca f-string con el
+    valor de la fecha (REGLA #4).
+    """
+    return (
+        f" {alias}.id NOT IN (SELECT commitment_id FROM transport_manifest_items)"
+        f" AND {alias}.estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')"
+        f" AND ({alias}.updated_by = 'sync' OR {alias}.updated_by IS NULL OR {alias}.updated_by = '')"
+        f" AND {alias}.fecha_emision >= %s"
+    ), [TR_FECHA_NACIMIENTO]
+
+
 def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
     """Marca como 'Problema' todo documento que SALIÓ sin pasar por el Monitor.
 
@@ -20365,26 +20415,24 @@ def _tr_marcar_guia_sin_gestion_como_problema(commitment_ids=None):
     el guard del sync masivo exige updated_by='sync' para pisar el estado,
     así que el Problema marcado acá tampoco se revierte solo.
     """
+    where_marcable, params = _tr_where_guia_sin_gestion_marcable("c")
     where_extra = ""
-    params = []
     if commitment_ids:
         commitment_ids = list(commitment_ids)
         if not commitment_ids:
             return 0
         ph = ",".join(["%s"] * len(commitment_ids))
         where_extra = f" AND c.id IN ({ph})"
-        params = list(commitment_ids)
+        params = params + list(commitment_ids)
 
     rows = mysql_fetchall(f"""
         SELECT DISTINCT c.id
         FROM transport_commitments c
-        WHERE c.id NOT IN (SELECT commitment_id FROM transport_manifest_items)
-          AND (
+        WHERE (
                 EXISTS (SELECT 1 FROM transport_guias g WHERE g.commitment_id = c.id)
              OR c.tiene_saldo = 0
           )
-          AND c.estado IN ('Pendiente','Despachado parcial','Entregado','Despachado','En proceso')
-          AND (c.updated_by = 'sync' OR c.updated_by IS NULL OR c.updated_by = '')
+          AND {where_marcable}
           {where_extra}
     """, tuple(params)) or []
     ids = [r["id"] for r in rows]
@@ -21460,23 +21508,26 @@ def tr_alertas_json():
     # seguimiento registrado para el cliente. Es la contracara del bug de
     # documentos duplicados: acá no hay dos filas, hay UNA fila con
     # evidencia de salida real que el Monitor nunca gestionó.
-    _guia_sin_gestion_rows = mysql_fetchall("""
+    # FIX 2026-08-03 (Daniel, 5ª vez reportado: "sigo viendo... no lo dejas en
+    # Problema"): la alerta y el botón "marcar Problema" usaban DOS criterios
+    # distintos -- la alerta solo pedía "sin manifiesto y no ya-Problema", el
+    # marcado exigía además el estado dentro de un set y updated_by='sync'.
+    # Un documento que la alerta mostraba pero que el marcado no podía tocar
+    # (por ejemplo, si alguna vez lo editó una persona) quedaba visible PARA
+    # SIEMPRE: el botón reportaba éxito con 0 marcados y la alerta no se
+    # vaciaba nunca. Ahora comparten el mismo predicado
+    # (_tr_where_guia_sin_gestion_marcable) -- todo lo que se muestra acá, el
+    # botón lo puede marcar.
+    _where_marcable, _params_marcable = _tr_where_guia_sin_gestion_marcable("c")
+    _guia_sin_gestion_rows = mysql_fetchall(f"""
         SELECT g.commitment_id, c.tido, c.nudo, c.cliente_nombre, c.comuna,
                g.guia_nudo, g.fecha_guia, g.codigo_transportista
         FROM transport_guias g
         JOIN transport_commitments c ON c.id = g.commitment_id
-        WHERE g.commitment_id NOT IN (SELECT commitment_id FROM transport_manifest_items)
-          -- FIX 2026-08-02 (Daniel: "se sigue viendo los benditos problemas"):
-          -- una vez que el documento YA está marcado 'Problema' pasó a la cola
-          -- de trabajo del Monitor (filtro Problema, con su badge). Seguir
-          -- listándolo acá lo muestra DOS veces y da la sensación de que
-          -- marcarlo no sirvió de nada. La alerta queda para lo que todavía
-          -- NO entró a la cola; el pendiente real (asignarlo a un manifiesto)
-          -- se sigue viendo en el filtro Problema hasta que se resuelva.
-          AND c.estado <> 'Problema'
+        WHERE {_where_marcable}
         ORDER BY g.fecha_guia DESC
         LIMIT 1000
-    """) or []
+    """, tuple(_params_marcable)) or []
     _por_commitment_guia = {}
     for r in _guia_sin_gestion_rows:
         cid = r["commitment_id"]
@@ -21521,6 +21572,39 @@ def tr_alertas_json():
                           "este aviso y quedan en la cola del filtro Problema."),
             "n":         len(items_guia),
             "items":     items_guia,
+            # 2026-08-03: antes este botón existía en el backend pero el
+            # frontend nunca lo llamaba (grep "guia-sin-gestion" en todo el
+            # repo daba UNA sola línea). Con "accion" el frontend puede
+            # pintar el botón real.
+            "accion": {
+                "label": "Marcar todas como Problema",
+                "url":   "/transporte/api/alertas/guia-sin-gestion/marcar-problema",
+            },
+        })
+
+    # Lo que quedó fuera del predicado "marcable" (anterior a la fecha de
+    # nacimiento, o ya tocado por una persona) NO desaparece en silencio
+    # (REGLA #4.2): se reclasifica en una segunda alerta, sin botón, para que
+    # quede claro que requiere una decisión manual y no es que "no pasó nada".
+    _no_marcables_row = mysql_fetchall("""
+        SELECT COUNT(DISTINCT g.commitment_id) AS n
+        FROM transport_guias g
+        JOIN transport_commitments c ON c.id = g.commitment_id
+        WHERE g.commitment_id NOT IN (SELECT commitment_id FROM transport_manifest_items)
+          AND c.estado <> 'Problema'
+    """) or [{}]
+    _n_no_marcables = max((_no_marcables_row[0].get("n") or 0) - len(items_guia), 0)
+    if _n_no_marcables:
+        alertas.append({
+            "codigo":    "guia_sin_gestion_manual",
+            "severidad": "warning",
+            "titulo":    (f"{_n_no_marcables} factura{'s' if _n_no_marcables != 1 else ''} "
+                          f"con guía sin gestión, requieren decisión manual"),
+            "detalle":   ("Ya fueron editadas por una persona o quedaron de antes de la "
+                          "fecha de nacimiento del Monitor -- el sistema no las marca "
+                          "Problema automáticamente. Revisar caso a caso."),
+            "n":         _n_no_marcables,
+            "items":     [],
         })
 
     return jsonify({"ok": True, "alertas": alertas,
@@ -21528,7 +21612,7 @@ def tr_alertas_json():
 
 
 @app.route("/transporte/api/alertas/guia-sin-gestion/marcar-problema", methods=["POST"])
-@login_required
+@_tr_required
 def tr_alertas_guia_sin_gestion_marcar_problema():
     """Backfill único (2026-08-01, Daniel: "en Problema dejaría ese tipo...
     para que Alison se encargue"): marca como Problema TODOS los commitments
@@ -21536,14 +21620,143 @@ def tr_alertas_guia_sin_gestion_marcar_problema():
     el hook automático en _tr_fetch_guias_from_erp (que cubre los casos
     NUEVOS de acá en adelante, pero no retroactivamente).
 
-    Permiso: admin/superadmin. No requiere body -- corre sobre todo el
-    universo actual. Ver _tr_marcar_guia_sin_gestion_como_problema para el
-    criterio exacto y la guarda contra pisar un estado ya avanzado.
+    Permiso: FIX 2026-08-03 -- antes exigía admin/superadmin, pero quien
+    tiene que operar este botón es Alison (permiso 'transporte'), no
+    necesariamente admin. Se alinea con el resto del módulo (@_tr_required,
+    mismo criterio que /transporte/api/sync, /transporte/api/compromisos,
+    etc.) -- si Alison no es admin, antes de este fix el botón le devolvía
+    403 en silencio.
+
+    No requiere body -- corre sobre todo el universo actual (acotado por la
+    fecha de nacimiento, ver _tr_where_guia_sin_gestion_marcable). Ver
+    _tr_marcar_guia_sin_gestion_como_problema para el criterio exacto y la
+    guarda contra pisar un estado ya avanzado.
     """
-    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
-        return jsonify({"error": "Solo admin/superadmin"}), 403
     n = _tr_marcar_guia_sin_gestion_como_problema()
     return jsonify({"ok": True, "marcados": n})
+
+
+@app.route("/transporte/api/mantenimiento/revertir-problema-historico", methods=["POST"])
+@_tr_required
+def tr_revertir_problema_historico():
+    """Deshace el marcado AUTOMÁTICO de 'Problema' anterior a la fecha de
+    nacimiento del Monitor (2026-08-03, Daniel sobre los 8.441 que dejó la
+    carga del histórico del 2026-08-02: "eso es aberrante"). Son documentos
+    entregados ANTES de que esta plataforma existiera -- la regla de "salió
+    sin gestión -> Problema" nunca debió aplicarles.
+
+    SOLO toca commitments con updated_by='alerta_guia_sin_gestion' (la marca
+    de la automatización, ver _tr_marcar_guia_sin_gestion_como_problema) Y
+    fecha_emision anterior a TR_FECHA_NACIMIENTO. Una decisión HUMANA
+    (updated_by = usuario) o del manifiesto NUNCA se toca -- REGLA #4.2, no
+    se pisa una decisión ya tomada por una persona.
+
+    El estado no se puede "restaurar" (nunca se guardó el valor previo): se
+    RECALCULA con la misma regla que usa el sync masivo
+    (_tr_bulk_sync_erp_mysql, ver el CASE ahí): sin saldo -> Despachado; con
+    saldo y con guía -> Despachado parcial; con saldo y sin guía -> Pendiente.
+
+    updated_by vuelve a 'sync' a propósito -- si quedara en
+    'alerta_guia_sin_gestion', el CASE del sync masivo (que exige
+    updated_by='sync' para volver a tocar la fila) la dejaría congelada para
+    siempre con otro nombre.
+
+    Query param dry=1: NO escribe nada, solo devuelve los conteos (para que
+    Daniel revise el desglose antes de ejecutar en vivo). Solo
+    admin/superadmin -- reescribe miles de filas de una vez.
+
+    Idempotente: una segunda corrida no encuentra candidatos (ya quedaron en
+    updated_by='sync').
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"ok": False, "error": "Solo admin/superadmin"}), 403
+
+    dry = request.args.get("dry") == "1"
+
+    # Invariante de seguridad: la reversión NO toca `tiene_saldo` ni
+    # transport_manifest_items, así que el universo de "compromisos no
+    # despachados" (saldo=1, sin manifiesto) tiene que ser IDÉNTICO antes y
+    # después. Si cambia, algo se rompió y queda en el log del servidor.
+    _inv_sql = ("SELECT COUNT(*) AS n FROM transport_commitments "
+                "WHERE tido <> 'GDV' AND tiene_saldo=1 "
+                "AND id NOT IN (SELECT commitment_id FROM transport_manifest_items)")
+    _pend_antes = (mysql_fetchone(_inv_sql) or {}).get("n") or 0
+
+    candidatos = mysql_fetchall("""
+        SELECT c.id, c.tiene_saldo,
+               EXISTS (SELECT 1 FROM transport_guias g
+                        WHERE g.commitment_id = c.id) AS tiene_guia
+        FROM transport_commitments c
+        WHERE c.estado = 'Problema'
+          AND c.updated_by = 'alerta_guia_sin_gestion'
+          AND (c.fecha_emision IS NULL OR c.fecha_emision < %s)
+    """, (TR_FECHA_NACIMIENTO,)) or []
+
+    por_estado = {"Despachado": [], "Despachado parcial": [], "Pendiente": []}
+    for c in candidatos:
+        if int(c["tiene_saldo"] or 0) == 0:
+            nuevo = "Despachado"
+        elif c["tiene_guia"]:
+            nuevo = "Despachado parcial"
+        else:
+            nuevo = "Pendiente"
+        por_estado[nuevo].append(c["id"])
+
+    resumen = {k: len(v) for k, v in por_estado.items()}
+    total = sum(resumen.values())
+
+    if dry or not total:
+        return jsonify({
+            "ok": True, "dry": True, "revertidos": 0,
+            "por_estado": resumen,
+            "pendientes_antes": _pend_antes, "pendientes_despues": _pend_antes,
+        })
+
+    conn = get_db()
+    with conn.cursor() as cur:
+        for nuevo_estado, ids in por_estado.items():
+            if not ids:
+                continue
+            ph = ",".join(["%s"] * len(ids))
+            cur.execute(
+                f"UPDATE transport_commitments SET estado=%s, updated_by='sync' "
+                f"WHERE id IN ({ph})",
+                tuple([nuevo_estado] + ids)
+            )
+        # Auditoría en bloque (REGLA #5: log ANTES de que se pierda el
+        # rastro) -- _tr_log hace un commit por llamada; con miles de filas
+        # una llamada por fila sería inaceptable, así que va en una sola
+        # sentencia sobre la misma tabla que usa _tr_log.
+        _detalle = (f"Problema automático anterior a {TR_FECHA_NACIMIENTO} "
+                    f"revertido (regla de nacimiento del Monitor, 2026-08-03).")
+        _filas_log = [
+            ("commitment", cid, "revertido_problema_historico",
+             _detalle + f" Nuevo estado: {nuevo_estado}.", current_username())
+            for nuevo_estado, ids in por_estado.items() for cid in ids
+        ]
+        if _filas_log:
+            cur.executemany(
+                "INSERT INTO transport_logs (entity_type,entity_id,accion,detalle,usuario) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                _filas_log
+            )
+    conn.commit()
+
+    _pend_despues = (mysql_fetchone(_inv_sql) or {}).get("n") or 0
+    if _pend_despues != _pend_antes:
+        print(f"[revertir-problema][ALERTA] pendientes cambió de {_pend_antes} "
+              f"a {_pend_despues} -- la reversión NO debía tocar tiene_saldo "
+              f"ni manifest_items.", flush=True)
+
+    _tr_log("sistema", 0, "revertir_problema_historico_resumen",
+             f"{total} commitments revertidos: {resumen}. "
+             f"Pendientes antes={_pend_antes} después={_pend_despues}.")
+
+    return jsonify({
+        "ok": True, "dry": False, "revertidos": total,
+        "por_estado": resumen,
+        "pendientes_antes": _pend_antes, "pendientes_despues": _pend_despues,
+    })
 
 
 @app.route("/transporte/api/diagnostico/saldo-sin-guia")
@@ -21766,11 +21979,27 @@ def tr_compromisos_json():
     # (`preventa=1`, ver más abajo), ahora también disponible como vista
     # clicable, no solo como número informativo.
     _SQL_PREVENTA  = "(preventa=1)"
+    # Compromisos NO DESPACHADOS (2026-08-03, Daniel: "lo primero que hay que
+    # hacer es identificar los compromisos no despachados... que tenga saldo
+    # y no tenga guía" -- prioridad #1 del Monitor, por encima de las
+    # divisiones por ramo/gestión). Subconjunto de `pendientes`: TODO
+    # pendiente tiene saldo, pero no todo pendiente carece de guía todavía.
+    # CAVEAT que hay que dejar visible en el código: `transport_guias` solo
+    # se puebla para los últimos 60 días (ver el catch-up del cron,
+    # tr_cron_refrescar_saldo_productos). Para un documento más viejo que eso,
+    # "sin guía" significa "sin guía CAPTURADA", no necesariamente "no salió
+    # nunca" -- por eso esta vista se agrega AL LADO de `pendientes`, nunca en
+    # su reemplazo.
+    _SQL_SIN_GUIA = (f"(tiene_saldo=1 AND {_NOT_EN_MANIF} "
+                     f"AND id NOT IN (SELECT commitment_id FROM transport_guias))")
     # Filtro por vista (categoría del flujo)
     _vista_es_pendiente = False
     if vista == "pendientes":
         where.append(_SQL_PENDIENTE)
         _vista_es_pendiente = True
+    elif vista == "sin_guia":
+        where.append(_SQL_SIN_GUIA)
+        _vista_es_pendiente = True   # mismo trato de fecha/orden que pendientes
     elif vista == "preventa":
         where.append(_SQL_PREVENTA)
         _vista_es_pendiente = True   # mismo trato de fecha/orden que pendientes
@@ -21916,7 +22145,8 @@ def tr_compromisos_json():
         # urgente. Las demás vistas (entregados/en_gestion/todos) siguen
         # mostrando lo más reciente primero, que es lo que tiene sentido ahí.
         (" ORDER BY fecha_emision ASC" if _vista_es_pendiente else " ORDER BY fecha_emision DESC")
-        + " LIMIT 500", tuple(params)
+        + f" LIMIT {TR_MONITOR_LIMIT_PENDIENTE if _vista_es_pendiente else TR_MONITOR_LIMIT}",
+        tuple(params)
     )
 
     # ── PR-B (Fase 1, 2026-08-01): 1 fila por RAMO cuando el documento ya
@@ -22025,20 +22255,33 @@ def tr_compromisos_json():
         # `estado` (lo usan el Kanban y los filtros) y además en `estado_erp`,
         # con nombre honesto, para poder mostrarlo como dato secundario.
         _estado_item = (r.get("estado_entrega_item") or "").strip()
+        # FIX 2026-08-03 (Daniel: "se supone que si tiene saldo, debería estar
+        # en problema, PERO..." -- la prioridad #1 del Monitor es identificar
+        # los compromisos NO DESPACHADOS): un documento con tiene_saldo=1
+        # TODAVÍA hay que despacharlo, esté o no marcado Problema. Antes la
+        # rama Problema ganaba primero (FIX 2026-08-01) y el documento
+        # desaparecía del filtro "Por despachar" -- exactamente el hueco que
+        # Daniel teme ("puede dejar un compromiso sin despacho... riesgo
+        # reputacional"). Ahora "Por despachar" gana sobre "Problema" cuando
+        # hay saldo, y la marca de Problema se expone aparte (`sin_gestion`)
+        # para que el documento aparezca en AMBOS filtros: hay que despacharlo
+        # Y hay que explicar por qué salió sin gestión.
+        _sin_gestion = (r.get("estado") or "").strip() == "Problema"
         if en_manif and _estado_item:
             estado_logistico = _estado_item
         elif en_manif:
             estado_logistico = "En preparación"
-        elif (r.get("estado") or "").strip() == "Problema":
+        elif tiene_saldo == 1:
+            estado_logistico = "Por despachar"
+        elif _sin_gestion:
             # FIX 2026-08-01: 'Problema' es una marca deliberada (la pone
             # _tr_marcar_guia_sin_gestion_como_problema o una persona) y tiene
             # que sobrevivir hasta la columna Estado -- si no, el filtro
             # "Problema" del Monitor nunca devuelve estos documentos y la cola
-            # de Alison queda invisible. Sin esta rama, un documento marcado
-            # Problema pero con tiene_saldo=1 se mostraba "Por despachar".
+            # de Alison queda invisible. Esta rama solo se alcanza cuando
+            # tiene_saldo=0 (arriba gana "Por despachar"): sin saldo Y con la
+            # marca de Problema.
             estado_logistico = "Problema"
-        elif tiene_saldo == 1:
-            estado_logistico = "Por despachar"
         else:
             # Sin manifiesto y SIN saldo: la partición de gestión (más abajo)
             # lo clasifica bajo la pestaña Entregados. Mostrarle "Por
@@ -22094,6 +22337,12 @@ def tr_compromisos_json():
             # (es el saldo de la línea de flete, no un estado de despacho).
             "estado_logistico": estado_logistico,
             "estado_erp":       r["estado"] or "Pendiente",
+            # 2026-08-03: true cuando el documento tiene la marca de Problema
+            # AUNQUE "estado_logistico" haya quedado en "Por despachar" por
+            # tener saldo (ver el swap de orden arriba). Es lo que permite que
+            # el filtro Problema siga encontrando este documento sin esconder
+            # el hecho de que también hay que despacharlo.
+            "sin_gestion":      _sin_gestion,
             "costo_zz":     float(r["costo_zz"] or 0),
             "costo_envio":  float(r.get("costo_envio") or 0),
             "clasificacion":r["clasificacion"] or "despacho",
@@ -22157,7 +22406,15 @@ def tr_compromisos_json():
     # este punto, así que un documento que calce con el filtro pero haya
     # quedado fuera de esos 500 (orden fecha_emision DESC) no aparecerá — es
     # la misma limitación que ya tenían `q`/`vista`/etc., no una nueva.
-    if estado:
+    if estado == "Problema":
+        # 2026-08-03: un documento con saldo aparece como "Por despachar" en
+        # estado_logistico (ver swap de orden arriba) pero SIGUE debiendo
+        # aparecer acá si tiene la marca `sin_gestion` -- si no, el filtro
+        # Problema pierde exactamente los casos más urgentes (los que además
+        # de no gestionarse, todavía tienen saldo pendiente).
+        result = [c for c in result
+                  if c["estado_logistico"] == "Problema" or c.get("sin_gestion")]
+    elif estado:
         result = [c for c in result if c["estado_logistico"] == estado]
 
     # ── PAGINACIÓN (REGLA #4.3, Daniel 2026-08-01: "hagámosla igual que las
@@ -22284,13 +22541,18 @@ def tr_compromisos_json():
         "SELECT SUM(CASE WHEN " + _SQL_PENDIENTE + " THEN 1 ELSE 0 END) AS pendientes,"
         "  SUM(CASE WHEN preventa=1 THEN 1 ELSE 0 END) AS preventa,"
         "  SUM(CASE WHEN " + _SQL_PENDIENTE + " AND fecha_emision IS NOT NULL"
-        "            AND DATEDIFF(CURDATE(), fecha_emision) > 3 THEN 1 ELSE 0 END) AS atrasados "
+        "            AND DATEDIFF(CURDATE(), fecha_emision) > 3 THEN 1 ELSE 0 END) AS atrasados,"
+        "  SUM(CASE WHEN " + _SQL_SIN_GUIA + " THEN 1 ELSE 0 END) AS sin_guia "
         "FROM transport_commitments WHERE " + " AND ".join(_pend_where),
         tuple(_pend_params)
     ) or {}
     conteos_row["pendientes"] = _pend_row.get("pendientes")
     conteos_row["preventa"] = _pend_row.get("preventa")
     conteos_row["atrasados"] = _pend_row.get("atrasados")
+    # 2026-08-03: badge de la vista "Sin guía" (prioridad #1 de Daniel:
+    # "identificar los compromisos no despachados"). Mismo query que
+    # pendientes/preventa/atrasados -- ya corre sin filtro de fecha.
+    conteos_row["sin_guia"] = _pend_row.get("sin_guia")
 
     # Conteos POR RAMO (2026-08-01, Daniel: restructuración del Monitor con
     # el ramo -- Despacho/Instalación/Retiro/Mantención/Garantía -- como eje
@@ -22375,6 +22637,7 @@ def tr_compromisos_json():
             "preventa":   int(conteos_row.get("preventa") or 0),
             "atrasados":  int(conteos_row.get("atrasados") or 0),
             "problema":   int(conteos_row.get("problema") or 0),
+            "sin_guia":   int(conteos_row.get("sin_guia") or 0),
             "total":      int(conteos_row.get("total") or 0),
         },
         "conteos_ramo": conteos_ramo,

@@ -1164,8 +1164,13 @@ body.dp-dragging-active #dragDropZoneNuevo { border-color:var(--ilus-red)!import
 .tr-alerta-doc:hover { opacity:.75; color:inherit; }
 .tr-alerta-mas { opacity:.7; font-style:italic; }
 
+/* 2026-08-03: botón de acción de una alerta (ver "accion" del backend,
+   hoy solo 'guia_sin_gestion' -> "Marcar todas como Problema"). */
+.tr-alerta-acciones { margin-top:10px; }
+
 /* Mobile (REGLA #3): el texto largo tiene que poder respirar */
 @media (max-width: 640px) {
   .tr-alerta { padding:10px 12px; font-size:.85rem; }
   .tr-alerta-list li { word-break:break-word; }
+  .tr-alerta-acciones .btn { width:100%; min-height:44px; }
 }

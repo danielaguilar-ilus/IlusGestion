@@ -371,6 +371,17 @@
       <span>Pendiente</span>
       <span class="tr-segment-badge tr-segment-badge-red" id="vbPendientes">0</span>
     </button>
+    {# 2026-08-03 (Daniel: "lo primero que hay que hacer es identificar los
+       compromisos no despachados... que tenga saldo y no tenga guía" --
+       prioridad #1 del Monitor). Subconjunto de Pendiente, por eso va justo
+       al lado: TODO lo que aparece acá también cuenta en Pendiente. #}
+    <button type="button" class="tr-segment-btn" data-vista="sin_guia"
+            onclick="setVistaMonitor(this,'sin_guia')" role="tab"
+            title="Con saldo y SIN guía del ERP — no salió nada todavía; la cola de trabajo real">
+      <i class="bi bi-truck"></i>
+      <span>Sin guía</span>
+      <span class="tr-segment-badge tr-segment-badge-red" id="vbSinGuia">0</span>
+    </button>
     <button type="button" class="tr-segment-btn" data-vista="preventa"
             onclick="setVistaMonitor(this,'preventa')" role="tab"
             title="Sin stock suficiente — esperan reposición">

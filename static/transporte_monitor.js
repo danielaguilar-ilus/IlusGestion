@@ -1896,6 +1896,18 @@ function renderAlertas() {
                  '</li>';
         }).join('');
 
+        // 2026-08-03: el backend expone "accion" (código de alerta
+        // guia_sin_gestion) cuando existe un botón real que puede resolverla
+        // -- antes el endpoint existía pero ningún template lo llamaba.
+        var accionHtml = a.accion
+          ? '<div class="tr-alerta-acciones">' +
+              '<button type="button" class="btn btn-sm btn-outline-danger" ' +
+                'onclick="trAlertaAccion(this, \'' + attr(a.accion.url) + '\')">' +
+                esc(a.accion.label) +
+              '</button>' +
+            '</div>'
+          : '';
+
         return '<div class="tr-alerta tr-alerta-' + attr(a.severidad || 'warning') + '">' +
                  '<div class="tr-alerta-head">' +
                    '<i class="bi bi-exclamation-triangle-fill"></i>' +
@@ -1907,6 +1919,7 @@ function renderAlertas() {
                      ? '<li class="tr-alerta-mas">y ' + resto + ' más</li>'
                      : '') +
                  '</ul>' +
+                 accionHtml +
                '</div>';
       }).join('');
       cont.style.display = '';
@@ -1917,6 +1930,46 @@ function renderAlertas() {
       console.warn('[alertas] no se pudieron cargar:', e);
       cont.style.display = 'none';
     });
+}
+
+// Botón de acción de una alerta (2026-08-03). Hoy solo lo usa
+// 'guia_sin_gestion' ("Marcar todas como Problema"), pero es genérico: el
+// backend decide si una alerta trae "accion" o no.
+async function trAlertaAccion(btn, url){
+  const ok = (typeof ilusConfirm === 'function')
+    ? await ilusConfirm({
+        title: 'Marcar como Problema',
+        message: 'Van a quedar en la cola del filtro Problema para que se revisen manualmente (courier, evidencia, seguimiento al cliente).',
+        sub: 'No revierte solo: una vez marcado Problema, hay que resolverlo a mano.',
+        okLabel: 'Sí, marcar', cancelLabel: 'Cancelar',
+        danger: true,
+      })
+    : confirm('¿Marcar todas como Problema?');
+  if (!ok) return;
+  const txt = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Marcando…';
+  try {
+    const r = await fetch(url, { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) {
+      if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudo marcar', {type:'error'});
+      return;
+    }
+    if (typeof ilusToast === 'function') {
+      ilusToast(d.marcados > 0 ? ('✓ ' + d.marcados + ' marcada(s) como Problema') : 'No había ninguna para marcar', {type: d.marcados > 0 ? 'success' : 'info'});
+    }
+    // Se recargan alertas Y grilla: el backend ya escribió el estado nuevo,
+    // así que sin esto la alerta seguiría mostrando el número viejo aunque
+    // el marcado haya funcionado.
+    renderAlertas();
+    if (typeof cargarMonitor === 'function') cargarMonitor();
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = txt;
+  }
 }
 
 // Toggle "solo Problema" (2026-08-01) -- independiente del segmento de
@@ -2236,6 +2289,7 @@ function cargarMonitor() {
         var cEnGestion = (d.conteos.en_gestion != null) ? d.conteos.en_gestion
                        : (d.conteos.parciales  || 0);
         setBadge('vbPendientes', d.conteos.pendientes || 0);
+        setBadge('vbSinGuia',    d.conteos.sin_guia   || 0);
         setBadge('vbPreventa',   d.conteos.preventa   || 0);
         setBadge('vbProblema',   d.conteos.problema   || 0);
         setBadge('vbEnGestion',  cEnGestion);
