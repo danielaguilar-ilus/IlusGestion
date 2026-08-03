@@ -527,6 +527,13 @@
        class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
       <i class="bi bi-speedometer2"></i><span>Dashboard</span>
     </a>
+    {# 2026-08-03 (Daniel): migra la tabla "Incidencias" que hoy vive en un
+       Clever Cloud aparte (Excel/VBA vía DSN=SPHS) para poder dar de baja
+       esa instancia externa. #}
+    <a href="{{ url_for('mant_incidencias_page') }}"
+       class="sidebar-link{% if request.endpoint == 'mant_incidencias_page' %} active{% endif %}">
+      <i class="bi bi-exclamation-triangle"></i><span>Incidencias</span>
+    </a>
     <a href="{{ url_for('mant_ots_list') }}"
        class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
       <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>

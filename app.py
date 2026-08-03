@@ -43557,6 +43557,37 @@ def init_mantenciones_tables():
                     INDEX idx_estado  (estado)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # ── Incidencias de servicio técnico (2026-08-03, Daniel: migrar
+            #    la tabla que hoy vive en un Clever Cloud aparte, accedida
+            #    desde Excel/VBA vía DSN "SPHS" — se trae acá para poder dar
+            #    de baja esa instancia externa). Mismo set de campos que la
+            #    planilla original (Codigo→id, SKU, Descripcion, Cantidad,
+            #    Motivo, Req_Repuesto, Descripcion_Repuesto, Stock_Repuesto,
+            #    Observacion, Fecha_Resolucion, Recomendacion). #}
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_incidencias (
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    sku                   VARCHAR(100),
+                    descripcion           VARCHAR(400),
+                    cantidad              INT DEFAULT 0,
+                    motivo                VARCHAR(200),
+                    req_repuesto          ENUM('si','no'),
+                    descripcion_repuesto  VARCHAR(300),
+                    stock_repuesto        ENUM('hay','no_hay'),
+                    observacion           TEXT,
+                    fecha_resolucion      DATE,
+                    recomendacion         TEXT,
+                    estado                ENUM('abierta','resuelta') DEFAULT 'abierta',
+                    created_by            VARCHAR(190),
+                    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_by            VARCHAR(190),
+                    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                                          ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_sku    (sku),
+                    INDEX idx_estado (estado)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # ── Log de actividad ────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS mant_logs (
@@ -51324,6 +51355,258 @@ def cotizaciones_hub_list():
         "clientes_hub/cotizaciones.html",
         cotizaciones=unificado, filtro_q=filtro_q,
     )
+
+
+@app.route("/mantenciones/incidencias")
+@_mant_required
+@_no_tecnico
+def mant_incidencias_page():
+    """Incidencias de servicio técnico (2026-08-03, Daniel): trae acá la
+    tabla que hoy vive en un Clever Cloud aparte (Excel/VBA vía DSN=SPHS),
+    para poder dar de baja esa instancia externa. Paginada server-side
+    (REGLA #4.3, patrón Etiquetas)."""
+    return render_template("mantenciones/incidencias.html")
+
+
+def _mant_incidencia_row(r):
+    r = dict(r)
+    for k in ("created_at", "updated_at"):
+        if r.get(k):
+            r[k] = r[k].strftime("%Y-%m-%d %H:%M:%S")
+    if r.get("fecha_resolucion"):
+        r["fecha_resolucion"] = r["fecha_resolucion"].strftime("%Y-%m-%d")
+    return r
+
+
+@app.route("/mantenciones/api/incidencias", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_list():
+    q = (request.args.get("q") or "").strip()
+    estado = (request.args.get("estado") or "").strip()
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "100"))
+    except (TypeError, ValueError):
+        page_size = 100
+    if page_size not in (50, 100, 200, 500):
+        page_size = 100
+
+    where = []
+    params = []
+    if q:
+        where.append("(sku LIKE %s OR descripcion LIKE %s OR motivo LIKE %s)")
+        like = f"%{q}%"
+        params += [like, like, like]
+    if estado in ("abierta", "resuelta"):
+        where.append("estado = %s")
+        params.append(estado)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS n FROM mant_incidencias {where_sql}", params)
+        total = (cur.fetchone() or {"n": 0})["n"]
+        offset = (page - 1) * page_size
+        cur.execute(
+            f"""SELECT * FROM mant_incidencias {where_sql}
+                ORDER BY estado ASC, created_at DESC
+                LIMIT %s OFFSET %s""",
+            params + [page_size, offset],
+        )
+        rows = [_mant_incidencia_row(r) for r in cur.fetchall()]
+    total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
+    return jsonify({
+        "ok": True, "rows": rows, "total": total,
+        "page": page, "page_size": page_size, "total_pages": total_pages,
+    })
+
+
+@app.route("/mantenciones/api/incidencias", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_crear():
+    data = request.get_json(silent=True) or {}
+    sku = (data.get("sku") or "").strip()
+    descripcion = (data.get("descripcion") or "").strip()
+    if not descripcion:
+        return jsonify({"ok": False, "error": "La descripción es obligatoria."}), 400
+    try:
+        cantidad = int(data.get("cantidad") or 0)
+    except (TypeError, ValueError):
+        cantidad = 0
+    req_repuesto = data.get("req_repuesto") or None
+    if req_repuesto not in ("si", "no", None):
+        req_repuesto = None
+    stock_repuesto = data.get("stock_repuesto") or None
+    if stock_repuesto not in ("hay", "no_hay", None):
+        stock_repuesto = None
+    fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            """INSERT INTO mant_incidencias
+               (sku, descripcion, cantidad, motivo, req_repuesto,
+                descripcion_repuesto, stock_repuesto, observacion,
+                fecha_resolucion, recomendacion, created_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (sku or None, descripcion, cantidad,
+             (data.get("motivo") or "").strip() or None,
+             req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
+             stock_repuesto, (data.get("observacion") or "").strip() or None,
+             fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
+             (current_user.username if current_user else None)),
+        )
+        db.commit()
+        new_id = cur.lastrowid
+    return jsonify({"ok": True, "id": new_id})
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_editar(iid):
+    data = request.get_json(silent=True) or {}
+    descripcion = (data.get("descripcion") or "").strip()
+    if not descripcion:
+        return jsonify({"ok": False, "error": "La descripción es obligatoria."}), 400
+    try:
+        cantidad = int(data.get("cantidad") or 0)
+    except (TypeError, ValueError):
+        cantidad = 0
+    req_repuesto = data.get("req_repuesto") or None
+    if req_repuesto not in ("si", "no", None):
+        req_repuesto = None
+    stock_repuesto = data.get("stock_repuesto") or None
+    if stock_repuesto not in ("hay", "no_hay", None):
+        stock_repuesto = None
+    estado = data.get("estado") or "abierta"
+    if estado not in ("abierta", "resuelta"):
+        estado = "abierta"
+    fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute(
+            """UPDATE mant_incidencias SET
+                 sku=%s, descripcion=%s, cantidad=%s, motivo=%s,
+                 req_repuesto=%s, descripcion_repuesto=%s, stock_repuesto=%s,
+                 observacion=%s, fecha_resolucion=%s, recomendacion=%s,
+                 estado=%s, updated_by=%s
+               WHERE id=%s""",
+            ((data.get("sku") or "").strip() or None, descripcion, cantidad,
+             (data.get("motivo") or "").strip() or None,
+             req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
+             stock_repuesto, (data.get("observacion") or "").strip() or None,
+             fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
+             estado, (current_user.username if current_user else None), iid),
+        )
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_borrar(iid):
+    perms = g.get("permissions") or {}
+    if not (perms.get("admin") or perms.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede eliminar incidencias."}), 403
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM mant_incidencias WHERE id=%s", (iid,))
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/incidencias/importar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_importar():
+    """Importa el CSV exportado desde la planilla Excel/VBA vieja
+    (columnas: SKU, Descripcion, Cantidad, Motivo, Req_Repuesto,
+    Descripcion_Repuesto, Stock_Repuesto, Observacion, Fecha_Resolucion,
+    Recomendacion) — migración única para poder dar de baja el Clever
+    Cloud externo. Solo superadmin: escribe datos históricos masivos."""
+    perms = g.get("permissions") or {}
+    if not perms.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede importar."}), 403
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"ok": False, "error": "Falta el archivo CSV."}), 400
+    try:
+        decoded = f.read().decode("utf-8-sig", errors="replace")
+    except Exception:
+        return jsonify({"ok": False, "error": "No se pudo leer el archivo."}), 400
+
+    import csv as _csv_mod
+    import io as _io_mod
+    sample = decoded[:2048]
+    delim = ";" if sample.count(";") > sample.count(",") else ","
+    reader = _csv_mod.DictReader(_io_mod.StringIO(decoded), delimiter=delim)
+
+    def _norm(key):
+        return (key or "").strip().lower().replace(" ", "_")
+
+    def _pick(row, *names):
+        for n in names:
+            for k in row:
+                if _norm(k) == n:
+                    v = (row[k] or "").strip()
+                    return v if v else None
+        return None
+
+    def _opt(v, valid_map):
+        if not v:
+            return None
+        return valid_map.get(v.strip().lower())
+
+    req_map = {"si": "si", "sí": "si", "no": "no"}
+    stock_map = {"hay": "hay", "no hay": "no_hay", "no_hay": "no_hay"}
+
+    insertados = 0
+    errores = []
+    db = get_db()
+    with db.cursor() as cur:
+        for i, row in enumerate(reader, start=2):
+            descripcion = _pick(row, "descripcion")
+            if not descripcion:
+                errores.append(f"Fila {i}: sin Descripcion, se omite.")
+                continue
+            try:
+                cantidad = int(float(_pick(row, "cantidad") or 0))
+            except (TypeError, ValueError):
+                cantidad = 0
+            fecha = _pick(row, "fecha_resolucion")
+            fecha_sql = None
+            if fecha:
+                for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+                    try:
+                        fecha_sql = datetime.strptime(fecha, fmt).strftime("%Y-%m-%d")
+                        break
+                    except ValueError:
+                        continue
+            cur.execute(
+                """INSERT INTO mant_incidencias
+                   (sku, descripcion, cantidad, motivo, req_repuesto,
+                    descripcion_repuesto, stock_repuesto, observacion,
+                    fecha_resolucion, recomendacion, created_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (_pick(row, "sku"), descripcion, cantidad, _pick(row, "motivo"),
+                 _opt(_pick(row, "req_repuesto"), req_map),
+                 _pick(row, "descripcion_repuesto"),
+                 _opt(_pick(row, "stock_repuesto"), stock_map),
+                 _pick(row, "observacion"), fecha_sql,
+                 _pick(row, "recomendacion"),
+                 f"import:{current_user.username if current_user else '?'}"),
+            )
+            insertados += 1
+        db.commit()
+    return jsonify({"ok": True, "insertados": insertados, "errores": errores[:20]})
 
 
 @app.route("/repuestos")

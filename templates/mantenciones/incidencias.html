@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+{% block title %}Incidencias — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-exclamation-triangle me-2"></i>Incidencias</h4>
+    <div class="sub">Sobrantes/faltantes de máquinas al recibir del ERP — registro manual del taller</div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if permissions.superadmin %}
+    <button class="btn btn-ilus-outline" id="incBtnImportar" type="button"
+            title="Migrar el CSV exportado de la planilla Excel/VBA antigua">
+      <i class="bi bi-upload me-1"></i>Importar CSV</button>
+    {% endif %}
+    <button class="btn btn-ilus" id="incBtnNueva" type="button">
+      <i class="bi bi-plus-lg me-1"></i>Nueva incidencia</button>
+  </div>
+</div>
+
+<div class="inc-filtros">
+  <input type="text" id="incFQ" class="form-control form-control-sm" placeholder="Buscar por SKU, descripción o motivo…">
+  <select id="incFEstado" class="form-select form-select-sm">
+    <option value="">Todos los estados</option>
+    <option value="abierta">Abiertas</option>
+    <option value="resuelta">Resueltas</option>
+  </select>
+  <button class="btn btn-sm btn-ilus-outline" id="incBtnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
+</div>
+
+<div id="incLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
+
+{# ── Modal alta/edición (>5 campos → Bootstrap modal, REGLA #8) ── #}
+<div class="modal fade" id="incModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="incId">
+        <div class="row g-2">
+          <div class="col-md-4">
+            <label class="form-label">SKU</label>
+            <input type="text" class="form-control" id="incSku">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label">Descripción <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="incDescripcion" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Cantidad</label>
+            <input type="number" class="form-control" id="incCantidad" value="0">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">Motivo</label>
+            <input type="text" class="form-control" id="incMotivo" placeholder="Ej: faltante en despacho ERP">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Estado</label>
+            <select class="form-select" id="incEstado">
+              <option value="abierta">Abierta</option>
+              <option value="resuelta">Resuelta</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">¿Requiere repuesto?</label>
+            <select class="form-select" id="incReqRepuesto">
+              <option value="">—</option>
+              <option value="si">Sí</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Stock del repuesto</label>
+            <select class="form-select" id="incStockRepuesto">
+              <option value="">—</option>
+              <option value="hay">Hay</option>
+              <option value="no_hay">No hay</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Fecha de resolución</label>
+            <input type="date" class="form-control" id="incFechaResolucion">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Descripción del repuesto</label>
+            <input type="text" class="form-control" id="incDescripcionRepuesto">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Observación</label>
+            <textarea class="form-control" id="incObservacion" rows="2"></textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Recomendación</label>
+            <textarea class="form-control" id="incRecomendacion" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        {% if permissions.admin or permissions.superadmin %}
+        <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
+          <i class="bi bi-trash me-1"></i>Eliminar</button>
+        {% endif %}
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-ilus" id="incBtnGuardar">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if permissions.superadmin %}
+<div class="modal fade" id="incImportModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Importar CSV de Incidencias</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="font-size:.85rem">
+          Sube el CSV exportado desde la planilla Excel antigua (columnas:
+          SKU, Descripcion, Cantidad, Motivo, Req_Repuesto, Descripcion_Repuesto,
+          Stock_Repuesto, Observacion, Fecha_Resolucion, Recomendacion). Los
+          registros se agregan a los ya existentes, no reemplaza nada.
+        </p>
+        <input type="file" class="form-control" id="incImportFile" accept=".csv">
+        <div id="incImportResultado" class="mt-2" style="font-size:.85rem"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-ilus" id="incBtnImportarGo">
+          <i class="bi bi-upload me-1"></i>Importar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<style>
+.inc-filtros{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:12px 0}
+.inc-filtros #incFQ{max-width:340px}
+.inc-filtros #incFEstado{max-width:180px}
+.inc-tabla{width:100%;border-collapse:collapse;font-size:.85rem}
+.inc-tabla thead th{background:#161616;color:#fff;padding:8px 10px;text-align:left;font-weight:700;font-size:.75rem;text-transform:uppercase;letter-spacing:.03em}
+.inc-tabla tbody td{padding:8px 10px;border-bottom:1px solid #2d2d2d}
+.inc-tabla tbody tr{cursor:pointer;transition:background .12s}
+.inc-tabla tbody tr:hover{background:rgba(220,38,38,.07)}
+.inc-wrap{background:#0f0f0f;border:1px solid #2d2d2d;border-radius:10px;overflow:hidden}
+.inc-badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.72rem;font-weight:700}
+.inc-badge-abierta{background:#fff8e1;color:#b45309}
+.inc-badge-resuelta{background:#dcfce7;color:#16a34a}
+.inc-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-top:1px solid #2d2d2d;background:#161616}
+.inc-foot-info{font-size:.78rem;color:#bbb}
+.inc-pg-btn{background:#1a1a1a;border:1px solid #2d2d2d;color:#fff;border-radius:6px;padding:4px 10px;font-size:.78rem}
+.inc-pg-btn:disabled{opacity:.4;cursor:not-allowed}
+</style>
+
+<script>
+(function(){
+  var incPage = 1, incSize = 100, incQ = '', incEstado = '';
+  var incModalEl = document.getElementById('incModal');
+  var incModal = new bootstrap.Modal(incModalEl);
+  {% if permissions.superadmin %}
+  var incImportModal = new bootstrap.Modal(document.getElementById('incImportModal'));
+  {% endif %}
+
+  function fmtFecha(s){
+    if(!s) return '—';
+    return s.split(' ')[0].split('-').reverse().join('/');
+  }
+
+  function render(data){
+    var rows = data.rows || [];
+    var box = document.getElementById('incLista');
+    if(!rows.length){
+      box.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i>No hay incidencias registradas.</div>';
+      return;
+    }
+    var html = '<div class="inc-wrap"><table class="inc-tabla"><thead><tr>'
+      + '<th>SKU</th><th>Descripción</th><th>Cant.</th><th>Motivo</th>'
+      + '<th>Repuesto</th><th>Estado</th><th>Fecha resolución</th></tr></thead><tbody>';
+    rows.forEach(function(r){
+      html += '<tr data-id="'+r.id+'">'
+        + '<td>'+(r.sku||'—')+'</td>'
+        + '<td>'+(r.descripcion||'')+'</td>'
+        + '<td>'+(r.cantidad||0)+'</td>'
+        + '<td>'+(r.motivo||'—')+'</td>'
+        + '<td>'+(r.req_repuesto==='si' ? ('Sí'+(r.stock_repuesto?(' · '+(r.stock_repuesto==='hay'?'Hay':'No hay')):'')) : (r.req_repuesto==='no'?'No':'—'))+'</td>'
+        + '<td><span class="inc-badge inc-badge-'+r.estado+'">'+(r.estado==='resuelta'?'Resuelta':'Abierta')+'</span></td>'
+        + '<td>'+fmtFecha(r.fecha_resolucion)+'</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+
+    var desde = ((data.page-1)*data.page_size)+1, hasta = Math.min(data.page*data.page_size, data.total);
+    html += '<div class="inc-foot">'
+      + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b></div>'
+      + '<div class="d-flex align-items-center gap-2">'
+      + '<select class="form-select form-select-sm" id="incSizeSel" style="width:auto">'
+      + [50,100,200,500].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
+      + '</select>'
+      + '<button class="inc-pg-btn" id="incPrev" '+(data.page<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i> Anterior</button>'
+      + '<span class="inc-badge" style="background:var(--ilus-red,#dc2626);color:#fff">Página '+data.page+' de '+data.total_pages+'</span>'
+      + '<button class="inc-pg-btn" id="incNext" '+(data.page>=data.total_pages?'disabled':'')+'>Siguiente <i class="bi bi-chevron-right"></i></button>'
+      + '</div></div></div>';
+
+    box.innerHTML = html;
+
+    box.querySelectorAll('tbody tr').forEach(function(tr){
+      tr.addEventListener('click', function(){ abrirEdicion(tr.dataset.id, rows); });
+    });
+    document.getElementById('incPrev').onclick = function(){ if(incPage>1){incPage--; cargar();} };
+    document.getElementById('incNext').onclick = function(){ incPage++; cargar(); };
+    document.getElementById('incSizeSel').onchange = function(){ incSize = parseInt(this.value,10); incPage = 1; cargar(); };
+  }
+
+  function cargar(){
+    var box = document.getElementById('incLista');
+    box.innerHTML = '<div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div>';
+    var url = '/mantenciones/api/incidencias?page='+incPage+'&page_size='+incSize
+      + '&q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
+    fetch(url).then(function(r){return r.json();}).then(function(data){
+      if(!data.ok){ box.innerHTML = '<div class="empty-state text-danger">'+(data.error||'Error al cargar.')+'</div>'; return; }
+      render(data);
+    }).catch(function(){
+      box.innerHTML = '<div class="empty-state text-danger">No se pudo conectar con el servidor.</div>';
+    });
+  }
+
+  function limpiarModal(){
+    ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
+     'incObservacion','incRecomendacion','incFechaResolucion'].forEach(function(id){
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('incCantidad').value = 0;
+    document.getElementById('incEstado').value = 'abierta';
+    document.getElementById('incReqRepuesto').value = '';
+    document.getElementById('incStockRepuesto').value = '';
+    var btnDel = document.getElementById('incBtnEliminar');
+    if(btnDel) btnDel.style.display = 'none';
+  }
+
+  function abrirEdicion(id, rows){
+    var r = rows.find(function(x){ return String(x.id)===String(id); });
+    if(!r) return;
+    limpiarModal();
+    document.getElementById('incModalTitulo').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Editar incidencia';
+    document.getElementById('incId').value = r.id;
+    document.getElementById('incSku').value = r.sku || '';
+    document.getElementById('incDescripcion').value = r.descripcion || '';
+    document.getElementById('incCantidad').value = r.cantidad || 0;
+    document.getElementById('incMotivo').value = r.motivo || '';
+    document.getElementById('incEstado').value = r.estado || 'abierta';
+    document.getElementById('incReqRepuesto').value = r.req_repuesto || '';
+    document.getElementById('incStockRepuesto').value = r.stock_repuesto || '';
+    document.getElementById('incDescripcionRepuesto').value = r.descripcion_repuesto || '';
+    document.getElementById('incObservacion').value = r.observacion || '';
+    document.getElementById('incRecomendacion').value = r.recomendacion || '';
+    document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
+    var btnDel = document.getElementById('incBtnEliminar');
+    if(btnDel) btnDel.style.display = '';
+    incModal.show();
+  }
+
+  document.getElementById('incBtnNueva').addEventListener('click', function(){
+    limpiarModal();
+    document.getElementById('incModalTitulo').innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia';
+    incModal.show();
+  });
+
+  document.getElementById('incBtnGuardar').addEventListener('click', function(){
+    var id = document.getElementById('incId').value;
+    var payload = {
+      sku: document.getElementById('incSku').value,
+      descripcion: document.getElementById('incDescripcion').value,
+      cantidad: document.getElementById('incCantidad').value,
+      motivo: document.getElementById('incMotivo').value,
+      estado: document.getElementById('incEstado').value,
+      req_repuesto: document.getElementById('incReqRepuesto').value,
+      stock_repuesto: document.getElementById('incStockRepuesto').value,
+      descripcion_repuesto: document.getElementById('incDescripcionRepuesto').value,
+      observacion: document.getElementById('incObservacion').value,
+      recomendacion: document.getElementById('incRecomendacion').value,
+      fecha_resolucion: document.getElementById('incFechaResolucion').value,
+    };
+    if(!payload.descripcion.trim()){
+      ilusToast('La descripción es obligatoria', {type:'warning'});
+      return;
+    }
+    var url = id ? ('/mantenciones/api/incidencias/'+id) : '/mantenciones/api/incidencias';
+    fetch(url, {
+      method: id ? 'PUT' : 'POST',
+      headers: {'Content-Type':'application/json', 'X-CSRFToken': window.CSRF_TOKEN || ''},
+      body: JSON.stringify(payload),
+    }).then(function(r){return r.json();}).then(function(data){
+      if(!data.ok){ ilusToast(data.error || 'No se pudo guardar', {type:'error'}); return; }
+      incModal.hide();
+      ilusToast('✓ Incidencia guardada', {type:'success'});
+      cargar();
+    }).catch(function(){ ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
+  });
+
+  var btnEliminar = document.getElementById('incBtnEliminar');
+  if(btnEliminar){
+    btnEliminar.addEventListener('click', async function(){
+      var id = document.getElementById('incId').value;
+      if(!id) return;
+      var ok = await ilusConfirm({
+        title: 'Eliminar incidencia',
+        message: '¿Quitar este registro permanentemente?',
+        sub: 'Esta acción no se puede deshacer.',
+        okLabel: 'Eliminar', cancelLabel: 'Cancelar', danger: true,
+      });
+      if(!ok) return;
+      fetch('/mantenciones/api/incidencias/'+id, {
+        method: 'DELETE', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''},
+      }).then(function(r){return r.json();}).then(function(data){
+        if(!data.ok){ ilusToast(data.error || 'No se pudo eliminar', {type:'error'}); return; }
+        incModal.hide();
+        ilusToast('Incidencia eliminada', {type:'success'});
+        cargar();
+      });
+    });
+  }
+
+  document.getElementById('incFQ').addEventListener('input', function(){
+    clearTimeout(window.__incDebounce);
+    var v = this.value;
+    window.__incDebounce = setTimeout(function(){ incQ = v; incPage = 1; cargar(); }, 350);
+  });
+  document.getElementById('incFEstado').addEventListener('change', function(){
+    incEstado = this.value; incPage = 1; cargar();
+  });
+  document.getElementById('incBtnLimpiar').addEventListener('click', function(){
+    document.getElementById('incFQ').value = '';
+    document.getElementById('incFEstado').value = '';
+    incQ = ''; incEstado = ''; incPage = 1; cargar();
+  });
+
+  {% if permissions.superadmin %}
+  document.getElementById('incBtnImportar').addEventListener('click', function(){
+    document.getElementById('incImportFile').value = '';
+    document.getElementById('incImportResultado').innerHTML = '';
+    incImportModal.show();
+  });
+  document.getElementById('incBtnImportarGo').addEventListener('click', function(){
+    var f = document.getElementById('incImportFile').files[0];
+    if(!f){ ilusToast('Selecciona un archivo CSV', {type:'warning'}); return; }
+    var fd = new FormData();
+    fd.append('file', f);
+    var res = document.getElementById('incImportResultado');
+    res.innerHTML = 'Importando…';
+    fetch('/mantenciones/api/incidencias/importar', {
+      method: 'POST', headers: {'X-CSRFToken': window.CSRF_TOKEN || ''}, body: fd,
+    }).then(function(r){return r.json();}).then(function(data){
+      if(!data.ok){ res.innerHTML = '<span class="text-danger">'+(data.error||'Error al importar')+'</span>'; return; }
+      var msg = '<span class="text-success">✓ '+data.insertados+' registros importados.</span>';
+      if(data.errores && data.errores.length){
+        msg += '<br><span class="text-warning">'+data.errores.join('<br>')+'</span>';
+      }
+      res.innerHTML = msg;
+      cargar();
+    }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
+  });
+  {% endif %}
+
+  cargar();
+})();
+</script>
+{% endblock %}
