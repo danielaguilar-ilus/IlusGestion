@@ -133,6 +133,15 @@
           <i class="bi bi-eraser me-2" style="color:#dc2626"></i>Limpiar pendientes + resync
         </button></li>
         <li><hr class="dropdown-divider"></li>
+        {# 2026-08-03 (Daniel: "eso es aberrante" sobre los 8.441 'Problema'
+           que dejó la carga del histórico del ERP -- acción de UNA SOLA VEZ
+           para revertir SOLO lo que marcó la automatización antes de la
+           fecha de nacimiento del Monitor, nunca una decisión humana). #}
+        <li><button class="dropdown-item" id="btnRevertirProblemaHistorico"
+                    onclick="revertirProblemaHistorico()">
+          <i class="bi bi-arrow-counterclockwise me-2" style="color:#dc2626"></i>Revertir Problema histórico
+        </button></li>
+        <li><hr class="dropdown-divider"></li>
         <li><button class="dropdown-item text-danger" id="btnLimpiarMon" onclick="limpiarMonitor()">
           <i class="bi bi-trash3 me-2"></i>Limpiar todo el monitor
         </button></li>

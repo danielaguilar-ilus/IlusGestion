@@ -159,6 +159,79 @@ async function sincronizarMesActual(){
 }
 
 // ════════════════════════════════════════════════════════════
+//  REVERTIR PROBLEMA HISTÓRICO — solo admin/superadmin (2026-08-03)
+//  Acción de UNA SOLA VEZ: deshace el marcado automático de 'Problema'
+//  anterior a la fecha de nacimiento del Monitor (los 8.441 que dejó la
+//  carga del histórico del ERP). Primero pide el conteo con ?dry=1 para
+//  que Daniel vea el desglose ANTES de escribir nada.
+// ════════════════════════════════════════════════════════════
+async function revertirProblemaHistorico(){
+  const URL_REVERTIR = '/transporte/api/mantenimiento/revertir-problema-historico';
+  const btn = document.getElementById('btnRevertirProblemaHistorico');
+  const txt = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculando…'; }
+  let dry;
+  try {
+    const r = await fetch(URL_REVERTIR + '?dry=1', { method: 'POST' });
+    dry = await r.json();
+    if (!dry.ok) {
+      if (typeof ilusToast === 'function') ilusToast(dry.error || 'No se pudo calcular', {type:'error'});
+      return;
+    }
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+    return;
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+  }
+
+  const pe = dry.por_estado || {};
+  const total = (pe['Despachado']||0) + (pe['Despachado parcial']||0) + (pe['Pendiente']||0);
+  if (!total) {
+    if (typeof ilusToast === 'function') ilusToast('No hay nada que revertir — ya está limpio.', {type:'info'});
+    return;
+  }
+
+  const ok = (typeof ilusConfirm === 'function')
+    ? await ilusConfirm({
+        title: 'Revertir Problema histórico',
+        message: total + ' documento(s) marcados Problema por la automatización, de antes de la fecha de nacimiento del Monitor, van a volver a su estado real.',
+        sub: 'Despachado: ' + (pe['Despachado']||0) +
+             ' · Despachado parcial: ' + (pe['Despachado parcial']||0) +
+             ' · Pendiente: ' + (pe['Pendiente']||0) +
+             '. NO toca ningún documento que haya editado una persona. Es seguro repetir esta acción.',
+        okLabel: 'Sí, revertir', cancelLabel: 'Cancelar',
+        danger: true,
+      })
+    : confirm('¿Revertir ' + total + ' Problema histórico?');
+  if (!ok) return;
+
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Revirtiendo…'; }
+  try {
+    const r = await fetch(URL_REVERTIR, { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) {
+      if (typeof ilusToast === 'function') ilusToast(d.error || 'No se pudo revertir', {type:'error'});
+      return;
+    }
+    if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: 'Reversión OK',
+        message: d.revertidos + ' documento(s) revertidos.',
+        sub: 'Pendientes antes: ' + d.pendientes_antes + ' · Pendientes después: ' + d.pendientes_despues +
+             (d.pendientes_antes === d.pendientes_despues ? ' (coinciden, todo en orden).' : ' — ¡OJO, no coinciden!'),
+        type: 'success',
+      });
+    }
+    location.reload();
+  } catch(e) {
+    if (typeof ilusToast === 'function') ilusToast('Error de red: '+e.message, {type:'error'});
+  } finally {
+    if (btn){ btn.disabled = false; btn.innerHTML = txt; }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 //  LIMPIAR PENDIENTES + RESYNC — solo admin
 //  Borra pendientes del mes SIN manifiesto y vuelve a traer
 //  desde ERP. No toca lo que ya está en manifiesto.
