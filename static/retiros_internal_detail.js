@@ -2047,6 +2047,11 @@ function rbaRenderDocLineas(lineas, fetchMs){
     const qty = parseFloat(l.cantidad) || 0;
     const saldo = _rbaSaldoLinea(l);
     const isZero = saldo <= 0;
+    // FIX 2026-08-03: no pre-marcar tampoco las que no tienen stock en la
+    // bodega 02 -- mismo criterio que ya aplica para "sin saldo". No se
+    // deshabilita el checkbox: el operador puede marcarla a mano si de
+    // verdad va a retirar de otra bodega.
+    const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
     const lineKey = `DOC|${sku}|${i}`;
     // Daniel 2026-05-24: PRE-MARCAR las líneas con saldo automáticamente
     // + permitir marcar manualmente las sin saldo (con aviso amable).
@@ -2054,10 +2059,10 @@ function rbaRenderDocLineas(lineas, fetchMs){
     // en el toggle handler si el saldo es cero.
     const initialMax = isZero ? qty : saldo;   // permitir cantidad histórica si no hay saldo
     const initialQty = isZero ? 0 : saldo;     // por default no llevarse nada de las sin saldo
-    const preChecked = !isZero;                // marcadas: solo las con saldo
-    html += `<div class="rba-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
+    const preChecked = !isZero && !sinStockBod; // marcadas: solo las con saldo Y con stock en bod. 02
+    html += `<div class="rba-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
       <label class="rba-chk ${preChecked?'is-checked':''}" data-sku="${_esc(sku)}" data-saldo="${saldo}">
-        <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="rbaToggleLineaDoc(this)">
+        <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" data-sin-stock="${sinStockBod?1:0}" onchange="rbaToggleLineaDoc(this)">
         <span class="rba-chk-mark">✓</span>
       </label>
       <div class="ln-sku">${_esc(sku) || '—'}</div>
@@ -2068,6 +2073,7 @@ function rbaRenderDocLineas(lineas, fetchMs){
       <div class="ln-qty">
         <span>${qty} u.</span>
         <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+        ${_rbaStockBadge(l)}
       </div>
       <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_esc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="rbaCambiarQtyDoc(this)">
     </div>`;
@@ -2101,6 +2107,23 @@ function _rbaSaldoLinea(l){
   return Math.max(0, qty - desp);
 }
 
+// FIX 2026-08-03 (Daniel: "el stock principal es el de la bodega 02" +
+// "dale una vuelta al módulo de retiros por esa parte" -- espejo exacto de
+// _tkaStockBadge en tickets/_tka_modal.html). /api/erp/documento YA trae
+// `l.stock` (get_erp_stock_by_skus, físico acotado a la bodega principal --
+// ver app.py) -- acá nunca se mostraba. "saldo" es cuánto falta por
+// despachar de ESE documento, no si hay stock físico para retirarlo. No
+// bloquea la selección -- eso lo sigue decidiendo el saldo -- solo avisa.
+function _rbaStockBadge(l){
+  const st = l && l.stock;
+  if (!st || st.hay_stock !== false) return '';
+  const f = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
+  const tip = 'Físico bodega 02: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido)
+    + ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
+  return '<span class="ln-stock-warn" title="' + _esc(tip) + '">'
+    + '<i class="bi bi-exclamation-triangle-fill"></i>Sin stock bod. 02</span>';
+}
+
 function rbaToggleAllDoc(checked){
   // FIX Daniel 2026-05-24: el label dice "Seleccionar todas las líneas con
   // saldo" → debemos respetarlo. Antes marcaba TODAS (incluso las sin saldo)
@@ -2112,7 +2135,10 @@ function rbaToggleAllDoc(checked){
   inputs.forEach(inp => {
     if (inp.disabled) return;
     const isZero = inp.dataset.isZero === '1';
-    if (checked && isZero) return;   // ← no marcar las sin saldo al usar "todas"
+    // FIX 2026-08-03: tampoco marcar por encima una línea sin stock en
+    // bodega 02 al usar "seleccionar todas" -- mismo criterio que "sin saldo".
+    const sinStockBod = inp.dataset.sinStock === '1';
+    if (checked && (isZero || sinStockBod)) return;   // ← no marcar las sin saldo/sin stock al usar "todas"
     if (inp.checked === checked) return;  // ya está como queremos
     inp.checked = checked;
     rbaToggleLineaDoc(inp, /*silent=*/true);  // silent: este es un cambio masivo, no manual
@@ -2372,14 +2398,17 @@ async function rbaToggleDocCli(idx){
       const saldo = _rbaSaldoLinea(l);
       const isZero = saldo <= 0;
       const lineKey = `CLI|${idx}|${sku}|${j}`;
+      // Ver comentario equivalente en rbaRenderDocLineas (mismo criterio,
+      // mismo motivo: Daniel, "dale una vuelta al módulo de retiros").
+      const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
       // Daniel 2026-05-24: pre-marcar las que tienen saldo, permitir
       // marcar las sin saldo (con aviso amable).
       const initialMax = isZero ? qty : saldo;
       const initialQty = isZero ? 0 : saldo;
-      const preChecked = !isZero;
-      html += `<div class="rba-line ${isZero?'is-zero':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}">
+      const preChecked = !isZero && !sinStockBod;
+      html += `<div class="rba-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}">
         <label class="rba-chk ${preChecked?'is-checked':''}">
-          <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-doc-tido="${_esc(doc.tido_display)}" data-doc-nudo="${_esc(doc.nudo_display)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="rbaToggleLineaCli(this)">
+          <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-doc-tido="${_esc(doc.tido_display)}" data-doc-nudo="${_esc(doc.nudo_display)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" data-sin-stock="${sinStockBod?1:0}" onchange="rbaToggleLineaCli(this)">
           <span class="rba-chk-mark">✓</span>
         </label>
         <div class="ln-sku">${_esc(sku) || '—'}</div>
@@ -2390,6 +2419,7 @@ async function rbaToggleDocCli(idx){
         <div class="ln-qty">
           <span>${qty} u.</span>
           <span class="${isZero?'ln-qty-saldo-zero':'ln-qty-saldo'}">${isZero?'sin saldo':`saldo ${saldo}`}</span>
+          ${_rbaStockBadge(l)}
         </div>
         <input class="ln-qty-input" type="number" min="0" max="${initialMax}" value="${initialQty}" data-line-key="${_esc(lineKey)}" data-max-saldo="${saldo}" data-max-doc="${qty}" onchange="rbaCambiarQtyCli(this)">
       </div>`;

@@ -1379,6 +1379,18 @@
   .rba-line.is-zero{opacity:.6;background:#fafafa}
   .rba-line.is-zero .rba-chk{opacity:.65}
   .rba-line.is-zero:hover{opacity:1;background:#fef3c7}
+  /* FIX 2026-08-03 (Daniel: "el stock principal es el de la bodega 02" +
+     "dale una vuelta al módulo de retiros por esa parte" -- mismo aviso
+     que ya se agregó en Cotizaciones/Tickets, tickets/_tka_modal.html).
+     Rojo para distinguir a simple vista "sin saldo del documento" (ámbar,
+     .is-zero) de "sin stock físico en bodega 02" (rojo, .is-no-stock). */
+  .rba-line.is-no-stock{opacity:.7;background:#fef2f2}
+  .rba-line.is-no-stock .rba-chk{opacity:.65}
+  .rba-line.is-no-stock:hover{opacity:1;background:#fee2e2}
+  .rba-line .ln-stock-warn{
+    color:#b91c1c;font-size:.68rem;font-weight:800;margin-top:1px;
+    display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
+  }
   .rba-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
   .rba-line-tag-zero{
     display:inline-flex;align-items:center;gap:3px;
