@@ -324,8 +324,20 @@
             + (data.desde ? (' (datos desde '+data.desde.split('-').reverse().join('/')+')') : '')+'.</span>';
           return;
         }
-        if(data.sku) document.getElementById('incSku').value = data.sku;
-        if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
+        // 2026-08-03 (Daniel: "que informe la ubicación y que si coincide
+        // con el producto"): ANTES de sobrescribir, comparar el SKU que la
+        // incidencia ya tenía contra el que el WMS dice que hay en esa UA.
+        // Si no calzan, es un error de registro -- se avisa y NO se pisa
+        // el dato del usuario en silencio.
+        var skuInput = document.getElementById('incSku');
+        var skuPrevio = (skuInput.value || '').trim().toUpperCase();
+        var skuWms    = (data.sku || '').trim().toUpperCase();
+        var descalce  = (skuPrevio && skuWms && skuPrevio !== skuWms);
+
+        if(!descalce){
+          if(data.sku) skuInput.value = data.sku;
+          if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
+        }
         // Ubicación actual (GetReporteStock) primero -- es lo que el
         // usuario ve en la pantalla "Reporte Stock" del WMS.
         var html = '<span class="text-success">✓ '+(data.en_stock ? 'En stock' : 'Sin stock actual')
@@ -334,6 +346,14 @@
           + (data.stock_fisico != null ? (' · físico '+data.stock_fisico) : '')
           + (data.disponible != null ? (' · disp. '+data.disponible) : '')
           + '</span>';
+        if(data.sku){
+          html += '<br><span class="'+(descalce ? 'text-danger' : 'text-muted')+'">'
+            + (descalce ? '<i class="bi bi-x-octagon-fill me-1"></i>NO COINCIDE: ' : 'Producto en la UA: ')
+            + '<code>'+data.sku+'</code> '+(data.descripcion||'')
+            + (descalce ? (' — pero esta incidencia dice <code>'+skuPrevio+'</code>. '
+                + 'Revisa el número de UA o corrige el SKU; no toqué tus datos.') : ' ✓')
+            + '</span>';
+        }
         if(data.ot){
           html += '<br><span class="text-muted">Último movimiento: OT '+data.ot+' · '+(data.estado||'—')
             + (data.tipo_ot ? (' · '+data.tipo_ot) : '')
