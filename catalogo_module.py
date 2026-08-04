@@ -1553,12 +1553,24 @@ def register_catalogo_routes(app, ctx):
         # INSERT choca por duplicado, en vez de fallar a la primera.
         _insertado = False
         _last_err = None
+        # FIX 2026-08-03: el INSERT usaba una subconsulta sobre la MISMA tabla
+        # para calcular `orden`, y MySQL lo rechaza SIEMPRE con el error 1093
+        # ("You can't specify target table 'cat_producto_fotos' for update in
+        # FROM clause") -- no era la carrera de orden que se creía en 2026-07-27,
+        # fallaba en el primer intento y en los 5. Verificado contra los logs de
+        # Cloud Run al reproducir el mismo patrón en Incidencias. Ahora el orden
+        # se calcula con un SELECT aparte y se inserta como literal; el reintento
+        # sí cubre la carrera real contra UNIQUE(producto_id, orden).
         for _intento in range(5):
             try:
+                _fila = mysql_fetchone(
+                    "SELECT COALESCE(MAX(orden),0)+1 AS prox FROM cat_producto_fotos "
+                    " WHERE producto_id=%s", (pid,)) or {}
+                _orden = int(_fila.get("prox") or 1) + _intento
                 mysql_execute(
                     "INSERT INTO cat_producto_fotos (producto_id, gcs_key, orden) "
-                    "VALUES (%s,%s, (SELECT COALESCE(MAX(orden),0)+1 FROM cat_producto_fotos WHERE producto_id=%s))",
-                    (pid, key, pid))
+                    "VALUES (%s,%s,%s)",
+                    (pid, key, _orden))
                 _insertado = True
                 break
             except Exception as _e:

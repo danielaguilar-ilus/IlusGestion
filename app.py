@@ -52147,11 +52147,13 @@ def mant_api_incidencias_list():
     except (TypeError, ValueError):
         page = 1
     try:
-        page_size = int(request.args.get("page_size", "100"))
+        page_size = int(request.args.get("page_size", "10"))
     except (TypeError, ValueError):
-        page_size = 100
-    if page_size not in (50, 100, 200, 500):
-        page_size = 100
+        page_size = 10
+    # Daniel 2026-08-03: "todas las tablas de diez en diez, y si necesitan
+    # más que lo cambien, pero que no le den scroll" (REGLA #4.3).
+    if page_size not in (10, 25, 50, 100, 200):
+        page_size = 10
 
     where = []
     params = []
@@ -52445,15 +52447,23 @@ def mant_api_incidencia_foto_subir(iid):
     key = res.get("public_id")
     if not key:
         return jsonify({"ok": False, "error": "Subida sin resultado válido."}), 500
-    # Reintento por si dos subidas calculan el mismo `orden` (mismo bug ya
-    # visto en el Catálogo con archivos lentos / doble clic).
-    for _ in range(5):
+    # El `orden` se calcula con un SELECT APARTE y se inserta como literal.
+    # NO se puede usar una subconsulta sobre la MISMA tabla dentro del
+    # INSERT: MySQL lo rechaza con el error 1093 ("You can't specify target
+    # table ... for update in FROM clause") -- verificado en producción
+    # 2026-08-03 contra los logs de Cloud Run. El reintento cubre la carrera
+    # de dos subidas simultáneas chocando contra UNIQUE(incidencia_id, orden).
+    _last = None
+    for _intento in range(5):
         try:
+            _fila = mysql_fetchone(
+                "SELECT COALESCE(MAX(orden),0)+1 AS prox FROM mant_incidencia_fotos "
+                " WHERE incidencia_id=%s", (iid,)) or {}
+            _orden = int(_fila.get("prox") or 1) + _intento
             mysql_execute(
                 "INSERT INTO mant_incidencia_fotos (incidencia_id, gcs_key, orden, created_by) "
-                "VALUES (%s,%s,(SELECT COALESCE(MAX(orden),0)+1 FROM mant_incidencia_fotos "
-                "               WHERE incidencia_id=%s),%s)",
-                (iid, key, iid, current_username()))
+                "VALUES (%s,%s,%s,%s)",
+                (iid, key, _orden, current_username()))
             break
         except Exception as _e:
             _last = _e

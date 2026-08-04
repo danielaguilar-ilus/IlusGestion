@@ -443,6 +443,17 @@
 .inc-kpi.k-mot .inc-kpi-n{color:#8b5cf6} .inc-kpi.k-mot.sel{border-color:#8b5cf6}
 .inc-kpi.k-reg .inc-kpi-n{color:#3b82f6} .inc-kpi.k-reg.sel{border-color:#3b82f6}
 .inc-kpi.k-fue .inc-kpi-n{color:#6b7280} .inc-kpi.k-fue.sel{border-color:#6b7280}
+.inc-kpi.k-tod .inc-kpi-n{color:#0f172a} .inc-kpi.k-tod.sel{border-color:#0f172a}
+/* Tabla de pendientes (REGLA #4.3: paginada, sin scroll) */
+.inc-conc .inc-tabla td{vertical-align:middle}
+.inc-conc .inc-tabla td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;width:86px}
+.inc-conc .inc-tabla td.v-bd {color:#1d4ed8}
+.inc-conc .inc-tabla td.v-erp{color:#b91c1c}
+.inc-conc .inc-tabla td.v-wms{color:#c2410c}
+.inc-conc .inc-tabla tr.act{cursor:pointer}
+.inc-conc .inc-tabla tr.g-error td:first-child{box-shadow:inset 3px 0 0 #dc2626}
+.inc-conc .inc-tabla tr.g-warn  td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
+.inc-conc .inc-tabla tr.g-info  td:first-child{box-shadow:inset 3px 0 0 #9aa3ae}
 .inc-h{display:flex;gap:11px;align-items:flex-start;padding:11px 16px;border-bottom:1px solid #f1f3f5;
   transition:background .12s}
 .inc-h:hover{background:#fafbfc}
@@ -468,7 +479,7 @@
 
 <script>
 (function(){
-  var incPage = 1, incSize = 100, incQ = '', incEstado = '';
+  var incPage = 1, incSize = 10, incQ = '', incEstado = '';
   // FIX 2026-08-03 (Daniel: "no funciona ese boton"): bootstrap.bundle.js
   // se carga con `defer` en base.html -- si este <script> inline (que NO
   // es defer) corre `new bootstrap.Modal(...)` al parsear la página,
@@ -515,7 +526,7 @@
       + '<div class="inc-foot-info">Mostrando <b>'+desde+'–'+hasta+'</b> de <b>'+data.total+'</b></div>'
       + '<div class="d-flex align-items-center gap-2">'
       + '<select class="form-select form-select-sm" id="incSizeSel" style="width:auto">'
-      + [50,100,200,500].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
+      + [10,25,50,100,200].map(function(sz){return '<option value="'+sz+'"'+(sz===incSize?' selected':'')+'>'+sz+' por página</option>';}).join('')
       + '</select>'
       + '<button class="inc-pg-btn" id="incPrev" '+(data.page<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i> Anterior</button>'
       + '<span class="inc-badge" style="background:var(--ilus-red,#dc2626);color:#fff">Página '+data.page+' de '+data.total_pages+'</span>'
@@ -859,7 +870,7 @@
   // errores y gestionar lo que deba; el stock solo se arregla haciendo la
   // gestión". Por eso cada hallazgo con incidencia asociada es clicable y
   // abre esa incidencia para corregirla en el acto.
-  var incConcData = null, incConcFiltro = '';
+  var incConcData = null, incConcFiltro = '', incConcPage = 1, incConcSize = 10;
 
   var INC_TIPOS = {
     dif_erp:        {ico:'bi-exclamation-octagon-fill', t:'Diferencia con el ERP'},
@@ -883,57 +894,88 @@
       + ' &nbsp;·&nbsp; <b>'+(f.incidencias ? f.incidencias.abiertas : 0)+'</b> incidencias abiertas'
       + ' &nbsp;·&nbsp; datos cacheados 1 h';
 
+    // Tarjetas-filtro con los nombres que usa Daniel (2026-08-03):
+    // "pendiente Random, pendiente motivo, pendiente CheckWMS".
     var kpis = [
-      ['dif_erp','k-erp','Dif. con ERP'], ['no_en_erp','k-erp','No en ERP'],
-      ['dif_wms','k-wms','Dif. con WMS'], ['sin_motivo','k-mot','Sin motivo'],
-      ['falta_registrar','k-reg','Sin registrar'], ['fuera_de_bodega','k-fue','Salió'],
+      ['',                'k-tod', 'Todos',            (d.total || 0)],
+      ['dif_erp',         'k-erp', 'Pendiente Random',  (r.dif_erp || 0) + (r.no_en_erp || 0)],
+      ['dif_wms',         'k-wms', 'Pendiente CheckWMS',(r.dif_wms || 0)],
+      ['sin_motivo',      'k-mot', 'Pendiente motivo',  (r.sin_motivo || 0)],
+      ['falta_registrar', 'k-reg', 'Falta en nuestra BD',(r.falta_registrar || 0)],
+      ['fuera_de_bodega', 'k-fue', 'Salió de bodega',   (r.fuera_de_bodega || 0)],
     ];
     $('incConcKpis').innerHTML = kpis.map(function(k){
       return '<div class="inc-kpi '+k[1]+(incConcFiltro===k[0]?' sel':'')+'" data-t="'+k[0]+'">'
-           + '<div class="inc-kpi-n">'+(r[k[0]]||0)+'</div><div class="inc-kpi-t">'+k[2]+'</div></div>';
+           + '<div class="inc-kpi-n">'+k[3]+'</div><div class="inc-kpi-t">'+k[2]+'</div></div>';
     }).join('');
     $('incConcKpis').querySelectorAll('.inc-kpi').forEach(function(el){
       el.onclick = function(){
-        incConcFiltro = (incConcFiltro === el.dataset.t) ? '' : el.dataset.t;
+        incConcFiltro = el.dataset.t;
+        incConcPage = 1;
         incConcPintar();
       };
     });
 
+    // "Pendiente Random" agrupa las dos formas de faltar en el ERP.
     var lista = (d.hallazgos || []).filter(function(h){
-      return !incConcFiltro || h.tipo === incConcFiltro;
+      if(!incConcFiltro) return true;
+      if(incConcFiltro === 'dif_erp') return h.tipo === 'dif_erp' || h.tipo === 'no_en_erp';
+      return h.tipo === incConcFiltro;
     });
     if(!lista.length){
       $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
         + '<i class="bi bi-check-circle" style="color:#16a34a"></i>'
-        + (incConcFiltro ? 'Sin hallazgos de este tipo.' : 'Todo cuadra entre los tres sistemas.')
+        + (incConcFiltro ? 'Sin pendientes de este tipo.' : 'Todo cuadra entre los tres sistemas.')
         + '</div>';
       return;
     }
-    $('incConcLista').innerHTML = lista.map(function(h){
+
+    // TABLA paginada de 10 en 10, sin scroll (REGLA #4.3, patrón Etiquetas).
+    // Daniel: "una lista que se despliegue no me gustó mucho... todas las
+    // tablas de diez en diez, y que no le den scroll".
+    var total = lista.length;
+    var pages = Math.max(1, Math.ceil(total / incConcSize));
+    if(incConcPage > pages) incConcPage = pages;
+    var desde = (incConcPage - 1) * incConcSize;
+    var pagina = lista.slice(desde, desde + incConcSize);
+
+    var html = '<div class="inc-wrap"><table class="inc-tabla"><thead><tr>'
+      + '<th style="width:34px"></th><th>Pendiente</th><th>SKU</th><th>Producto</th>'
+      + '<th class="num">Nuestra BD</th><th class="num">ERP</th><th class="num">WMS</th>'
+      + '<th>Qué hacer</th></tr></thead><tbody>';
+    pagina.forEach(function(h){
       var m = INC_TIPOS[h.tipo] || {ico:'bi-question-circle', t:h.tipo};
-      var tieneIds = h.ids && h.ids.length;
-      var cmp = '';
-      if(h.nuestra_bd != null || h.erp != null || h.wms != null){
-        cmp = '<div class="inc-h-cmp">'
-          + (h.nuestra_bd != null ? '<span class="inc-cmp inc-cmp-bd">Nuestra BD: '+h.nuestra_bd+'</span>' : '')
-          + (h.erp != null ? '<span class="inc-cmp inc-cmp-erp">ERP: '+h.erp+'</span>' : '')
-          + (h.wms != null ? '<span class="inc-cmp inc-cmp-wms">WMS: '+h.wms+'</span>' : '')
-          + '</div>';
-      }
-      return '<div class="inc-h g-'+h.gravedad+(tieneIds?' act':'')+'"'
-           + (tieneIds ? ' data-id="'+h.ids[0]+'"' : '')+'>'
-        + '<div class="inc-h-ico"><i class="bi '+m.ico+'"></i></div>'
-        + '<div class="inc-h-b">'
-        +   '<div class="inc-h-t">'+m.t+' · <code>'+(h.sku||h.ua||'—')+'</code>'
-        +     (h.descripcion ? ' <span class="text-muted" style="font-weight:400">'+h.descripcion+'</span>' : '')
-        +   '</div>'
-        +   '<div class="inc-h-d">'+h.detalle+(tieneIds?' <b>Clic para gestionar.</b>':'')+'</div>'
-        +   cmp
-        + '</div></div>';
-    }).join('');
-    $('incConcLista').querySelectorAll('.inc-h.act').forEach(function(el){
+      var act = (h.ids && h.ids.length);
+      html += '<tr class="g-'+h.gravedad+(act?' act':'')+'"'+(act?' data-id="'+h.ids[0]+'"':'')+'>'
+        + '<td><span class="inc-h-ico"><i class="bi '+m.ico+'"></i></span></td>'
+        + '<td><b>'+m.t+'</b></td>'
+        + '<td><code>'+(h.sku||h.ua||'—')+'</code></td>'
+        + '<td>'+(h.descripcion||'—')+'</td>'
+        + '<td class="num'+(h.nuestra_bd!=null?' v-bd':'')+'">'+(h.nuestra_bd!=null?h.nuestra_bd:'—')+'</td>'
+        + '<td class="num'+(h.erp!=null?' v-erp':'')+'">'+(h.erp!=null?h.erp:'—')+'</td>'
+        + '<td class="num'+(h.wms!=null?' v-wms':'')+'">'+(h.wms!=null?h.wms:'—')+'</td>'
+        + '<td class="inc-h-d">'+h.detalle+(act?' <b>Clic para gestionar.</b>':'')+'</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>'
+      + '<div class="inc-foot">'
+      +   '<div class="inc-foot-info">Mostrando <b>'+(desde+1)+'–'+(desde+pagina.length)+'</b> de <b>'+total+'</b></div>'
+      +   '<div class="d-flex align-items-center gap-2">'
+      +     '<select class="form-select form-select-sm" id="incConcSize" style="width:auto">'
+      +       [10,25,50,100].map(function(s){return '<option value="'+s+'"'+(s===incConcSize?' selected':'')+'>'+s+' por página</option>';}).join('')
+      +     '</select>'
+      +     '<button class="inc-pg-btn" id="incConcPrev" '+(incConcPage<=1?'disabled':'')+'><i class="bi bi-chevron-left"></i> Anterior</button>'
+      +     '<span class="inc-badge" style="background:var(--ilus-red,#dc2626);color:#fff">Página '+incConcPage+' de '+pages+'</span>'
+      +     '<button class="inc-pg-btn" id="incConcNext" '+(incConcPage>=pages?'disabled':'')+'>Siguiente <i class="bi bi-chevron-right"></i></button>'
+      +   '</div></div></div>';
+    $('incConcLista').innerHTML = html;
+
+    $('incConcLista').querySelectorAll('tr.act').forEach(function(el){
       el.onclick = function(){ incAbrirPorId(el.dataset.id); };
     });
+    $('incConcPrev').onclick = function(){ if(incConcPage>1){ incConcPage--; incConcPintar(); } };
+    $('incConcNext').onclick = function(){ if(incConcPage<pages){ incConcPage++; incConcPintar(); } };
+    $('incConcSize').onchange = function(){ incConcSize = parseInt(this.value,10); incConcPage = 1; incConcPintar(); };
   }
 
   // Abre una incidencia por id aunque no esté en la página actual.
