@@ -13,9 +13,32 @@
             title="Migrar el CSV exportado de la planilla Excel/VBA antigua">
       <i class="bi bi-upload me-1"></i>Importar CSV</button>
     {% endif %}
+    <button class="btn btn-ilus-outline" id="incBtnConciliar" type="button"
+            title="Comparar nuestra base contra el ERP Random y CheckWMS">
+      <i class="bi bi-shield-check me-1"></i>Revisar diferencias</button>
     <button class="btn btn-ilus" id="incBtnNueva" type="button">
       <i class="bi bi-plus-lg me-1"></i>Nueva incidencia</button>
   </div>
+</div>
+
+{# ── Panel de conciliación (2026-08-03, Daniel: "quiero consultar errores
+   y gestionar lo que deba; el stock solo se arregla haciendo la gestión").
+   Prioridad: nuestra BD vs ERP Random primero, luego vs CheckWMS, después
+   los sin motivo. ── #}
+<div id="incConciliacion" class="inc-conc" hidden>
+  <div class="inc-conc-head">
+    <div>
+      <b><i class="bi bi-shield-check me-1"></i>Diferencias entre sistemas</b>
+      <div class="inc-conc-sub" id="incConcFuentes">Consultando ERP Random y CheckWMS…</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-ilus-outline" id="incConcRefrescar" type="button">
+        <i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
+      <button class="btn btn-sm btn-secondary" id="incConcCerrar" type="button">Cerrar</button>
+    </div>
+  </div>
+  <div class="inc-conc-kpis" id="incConcKpis"></div>
+  <div id="incConcLista"></div>
 </div>
 
 <div class="inc-filtros">
@@ -326,6 +349,41 @@
   box-shadow:0 0 0 .18rem rgba(22,163,74,.16)}
 .inc-campo.ok .input-group .form-control{border-color:#16a34a}
 .inc-campo.ok .inc-motivo{border-color:#16a34a;background:#f6fefa}
+/* ══ Panel de conciliación ══ */
+.inc-conc{background:#fff;border:1px solid #eaecf0;border-radius:12px;margin:12px 0;overflow:hidden;
+  box-shadow:0 2px 10px rgba(0,0,0,.05)}
+.inc-conc-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  padding:13px 16px;background:#fafbfc;border-bottom:1px solid #eaecf0}
+.inc-conc-head b{font-size:.95rem;color:#0f172a}
+.inc-conc-sub{font-size:.76rem;color:#6b7280;margin-top:2px}
+.inc-conc-kpis{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #f1f3f5}
+.inc-kpi{border:1px solid #e5e7eb;border-radius:10px;padding:7px 13px;min-width:112px;background:#fff;
+  cursor:pointer;transition:border-color .13s,transform .13s}
+.inc-kpi:hover{transform:translateY(-1px)}
+.inc-kpi.sel{border-width:2px}
+.inc-kpi-n{font-size:1.25rem;font-weight:800;line-height:1}
+.inc-kpi-t{font-size:.68rem;color:#6b7280;text-transform:uppercase;letter-spacing:.03em;margin-top:3px}
+.inc-kpi.k-erp .inc-kpi-n{color:#dc2626} .inc-kpi.k-erp.sel{border-color:#dc2626}
+.inc-kpi.k-wms .inc-kpi-n{color:#f97316} .inc-kpi.k-wms.sel{border-color:#f97316}
+.inc-kpi.k-mot .inc-kpi-n{color:#8b5cf6} .inc-kpi.k-mot.sel{border-color:#8b5cf6}
+.inc-kpi.k-reg .inc-kpi-n{color:#3b82f6} .inc-kpi.k-reg.sel{border-color:#3b82f6}
+.inc-kpi.k-fue .inc-kpi-n{color:#6b7280} .inc-kpi.k-fue.sel{border-color:#6b7280}
+.inc-h{display:flex;gap:11px;align-items:flex-start;padding:11px 16px;border-bottom:1px solid #f1f3f5;
+  transition:background .12s}
+.inc-h:hover{background:#fafbfc}
+.inc-h.act{cursor:pointer}
+.inc-h-ico{width:30px;height:30px;flex:0 0 30px;border-radius:8px;display:grid;place-items:center;font-size:.9rem}
+.inc-h-b{flex:1;min-width:0}
+.inc-h-t{font-size:.85rem;color:#0f172a;font-weight:600}
+.inc-h-d{font-size:.78rem;color:#5b6472;margin-top:2px}
+.inc-h-cmp{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.inc-cmp{border-radius:7px;padding:2px 9px;font-size:.72rem;font-weight:700;border:1px solid}
+.inc-cmp-bd {background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+.inc-cmp-erp{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.inc-cmp-wms{background:#fff7ed;border-color:#fed7aa;color:#c2410c}
+.g-error .inc-h-ico{background:#fee2e2;color:#dc2626}
+.g-warn  .inc-h-ico{background:#fff7ed;color:#f97316}
+.g-info  .inc-h-ico{background:#f3f4f6;color:#6b7280}
 @media (max-width:640px){
   .inc-step-t small{display:none}
   .inc-step{min-width:74px;padding:0 4px 12px}
@@ -548,6 +606,119 @@
       t.focus();
     });
   });
+
+  // ══════════ Conciliación: nuestra BD vs ERP Random vs CheckWMS ══════════
+  // Daniel (2026-08-03): "prioridad a comparar nuestra BD es contra el ERP
+  // y luego el WMS, y después alertar si no hay motivos... quiero consultar
+  // errores y gestionar lo que deba; el stock solo se arregla haciendo la
+  // gestión". Por eso cada hallazgo con incidencia asociada es clicable y
+  // abre esa incidencia para corregirla en el acto.
+  var incConcData = null, incConcFiltro = '';
+
+  var INC_TIPOS = {
+    dif_erp:        {ico:'bi-exclamation-octagon-fill', t:'Diferencia con el ERP'},
+    no_en_erp:      {ico:'bi-database-x',               t:'No existe en el ERP'},
+    dif_wms:        {ico:'bi-box-arrow-in-down',        t:'Diferencia con el WMS'},
+    sin_motivo:     {ico:'bi-chat-left-dots',           t:'Sin motivo declarado'},
+    falta_registrar:{ico:'bi-plus-square-dotted',       t:'Falta registrar'},
+    fuera_de_bodega:{ico:'bi-box-arrow-up-right',       t:'Salió de la bodega'},
+  };
+
+  function incConcPintar(){
+    var d = incConcData;
+    if(!d) return;
+    var f = d.fuentes || {}, r = d.resumen || {};
+    $('incConcFuentes').innerHTML =
+        (f.erp && f.erp.ok ? '<span class="text-success">✓ ERP Random ('+f.erp.skus+' SKU en bodega '+f.erp.bodega+')</span>'
+                           : '<span class="text-danger">✗ ERP Random no respondió</span>')
+      + ' &nbsp;·&nbsp; '
+      + (f.wms && f.wms.ok ? '<span class="text-success">✓ CheckWMS ('+f.wms.uas+' UA en '+f.wms.bodega+')</span>'
+                           : '<span class="text-danger">✗ CheckWMS no respondió</span>')
+      + ' &nbsp;·&nbsp; <b>'+(f.incidencias ? f.incidencias.abiertas : 0)+'</b> incidencias abiertas'
+      + ' &nbsp;·&nbsp; datos cacheados 1 h';
+
+    var kpis = [
+      ['dif_erp','k-erp','Dif. con ERP'], ['no_en_erp','k-erp','No en ERP'],
+      ['dif_wms','k-wms','Dif. con WMS'], ['sin_motivo','k-mot','Sin motivo'],
+      ['falta_registrar','k-reg','Sin registrar'], ['fuera_de_bodega','k-fue','Salió'],
+    ];
+    $('incConcKpis').innerHTML = kpis.map(function(k){
+      return '<div class="inc-kpi '+k[1]+(incConcFiltro===k[0]?' sel':'')+'" data-t="'+k[0]+'">'
+           + '<div class="inc-kpi-n">'+(r[k[0]]||0)+'</div><div class="inc-kpi-t">'+k[2]+'</div></div>';
+    }).join('');
+    $('incConcKpis').querySelectorAll('.inc-kpi').forEach(function(el){
+      el.onclick = function(){
+        incConcFiltro = (incConcFiltro === el.dataset.t) ? '' : el.dataset.t;
+        incConcPintar();
+      };
+    });
+
+    var lista = (d.hallazgos || []).filter(function(h){
+      return !incConcFiltro || h.tipo === incConcFiltro;
+    });
+    if(!lista.length){
+      $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
+        + '<i class="bi bi-check-circle" style="color:#16a34a"></i>'
+        + (incConcFiltro ? 'Sin hallazgos de este tipo.' : 'Todo cuadra entre los tres sistemas.')
+        + '</div>';
+      return;
+    }
+    $('incConcLista').innerHTML = lista.map(function(h){
+      var m = INC_TIPOS[h.tipo] || {ico:'bi-question-circle', t:h.tipo};
+      var tieneIds = h.ids && h.ids.length;
+      var cmp = '';
+      if(h.nuestra_bd != null || h.erp != null || h.wms != null){
+        cmp = '<div class="inc-h-cmp">'
+          + (h.nuestra_bd != null ? '<span class="inc-cmp inc-cmp-bd">Nuestra BD: '+h.nuestra_bd+'</span>' : '')
+          + (h.erp != null ? '<span class="inc-cmp inc-cmp-erp">ERP: '+h.erp+'</span>' : '')
+          + (h.wms != null ? '<span class="inc-cmp inc-cmp-wms">WMS: '+h.wms+'</span>' : '')
+          + '</div>';
+      }
+      return '<div class="inc-h g-'+h.gravedad+(tieneIds?' act':'')+'"'
+           + (tieneIds ? ' data-id="'+h.ids[0]+'"' : '')+'>'
+        + '<div class="inc-h-ico"><i class="bi '+m.ico+'"></i></div>'
+        + '<div class="inc-h-b">'
+        +   '<div class="inc-h-t">'+m.t+' · <code>'+(h.sku||h.ua||'—')+'</code>'
+        +     (h.descripcion ? ' <span class="text-muted" style="font-weight:400">'+h.descripcion+'</span>' : '')
+        +   '</div>'
+        +   '<div class="inc-h-d">'+h.detalle+(tieneIds?' <b>Clic para gestionar.</b>':'')+'</div>'
+        +   cmp
+        + '</div></div>';
+    }).join('');
+    $('incConcLista').querySelectorAll('.inc-h.act').forEach(function(el){
+      el.onclick = function(){ incAbrirPorId(el.dataset.id); };
+    });
+  }
+
+  // Abre una incidencia por id aunque no esté en la página actual.
+  function incAbrirPorId(id){
+    fetch('/mantenciones/api/incidencias?page=1&page_size=500')
+      .then(function(r){return r.json();}).then(function(d){
+        if(d && d.ok) abrirEdicion(id, d.rows || []);
+      });
+  }
+
+  function incConcCargar(){
+    $('incConciliacion').hidden = false;
+    $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
+      + '<i class="bi bi-hourglass-split"></i>Comparando con el ERP y el WMS…</div>';
+    fetch('/mantenciones/api/incidencias/conciliacion')
+      .then(function(r){return r.json();}).then(function(d){
+        if(!d.ok){
+          $('incConcLista').innerHTML = '<div class="empty-state text-danger" style="padding:26px">'
+            + (d.error || 'No se pudo comparar.')+'</div>';
+          return;
+        }
+        incConcData = d; incConcPintar();
+      }).catch(function(){
+        $('incConcLista').innerHTML = '<div class="empty-state text-danger" style="padding:26px">'
+          + 'No se pudo conectar con el servidor.</div>';
+      });
+  }
+
+  $('incBtnConciliar').addEventListener('click', incConcCargar);
+  $('incConcRefrescar').addEventListener('click', function(){ incConcData=null; incConcCargar(); });
+  $('incConcCerrar').addEventListener('click', function(){ $('incConciliacion').hidden = true; });
 
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',

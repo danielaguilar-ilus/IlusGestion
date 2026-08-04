@@ -51603,7 +51603,7 @@ def _checkwms_get(path: str, params: dict, timeout: int = 60) -> dict | None:
 # responder con filtro vs 15-35 s sin filtro). Se trae todo una vez y se
 # filtra en Python. ~10.400 filas / 5,4 MB, TTL 10 min.
 _CHECKWMS_TRAZA = {"ts": 0, "rows": None, "lock": threading.Lock()}
-_CHECKWMS_TRAZA_TTL = 600
+_CHECKWMS_TRAZA_TTL = 3600   # 1 hora (Daniel 2026-08-03)
 
 
 def _checkwms_trazabilidad_rows(forzar: bool = False) -> list | None:
@@ -51632,7 +51632,7 @@ def _checkwms_trazabilidad_rows(forzar: bool = False) -> list | None:
 # movimientos desde jun-2026, por eso UA1008453 aparecía en el WMS pero no
 # en la app (bug reportado por Daniel 2026-08-03).
 _CHECKWMS_STOCK = {"ts": 0, "rows": None, "lock": threading.Lock()}
-_CHECKWMS_STOCK_TTL = 600
+_CHECKWMS_STOCK_TTL = 3600   # 1 hora (Daniel 2026-08-03)
 
 
 def _checkwms_stock_rows(forzar: bool = False) -> list | None:
@@ -51707,6 +51707,35 @@ def _checkwms_respaldo_erp(doc_ref: str, fecha_wms: str) -> dict:
         "doc_ref": doc_ref, "encontrado": True, "fecha_erp": fecha_erp,
         "cliente_erp": doc.get("cliente_nombre"), "alerta": alerta,
     }
+
+
+def _inc_presencia_erp(sku: str) -> dict:
+    """¿Existe este SKU en el ERP Random, y tiene stock en bodega 13?
+
+    Daniel (2026-08-03): "el que manda es el ERP... necesito saber si falta
+    en alguno de los sistemas". Solo lectura (Regla #4.1). Nunca lanza:
+    si el ERP no responde devuelve existe=None (desconocido, no "falta")."""
+    sku = (sku or "").strip()
+    if not sku:
+        return {"existe": None, "stock_b13": None}
+    try:
+        row = _random_sql_one(
+            "SELECT TOP 1 LTRIM(RTRIM(pr.KOPR)) AS sku, "
+            "  (SELECT SUM(st.STFI1) FROM MAEST st "
+            "     WHERE LTRIM(RTRIM(st.KOPR))=LTRIM(RTRIM(pr.KOPR)) "
+            "       AND LTRIM(RTRIM(st.KOBO))=%s) AS stock_b13 "
+            "  FROM MAEPR pr WHERE LTRIM(RTRIM(pr.KOPR))=%s",
+            (INC_BODEGA_ERP, sku))
+    except Exception as _e:
+        print(f"[_inc_presencia_erp] ERP no disponible: {_e}", flush=True)
+        return {"existe": None, "stock_b13": None}
+    if not row:
+        return {"existe": False, "stock_b13": None}
+    try:
+        st = float(row.get("stock_b13")) if row.get("stock_b13") is not None else None
+    except (TypeError, ValueError):
+        st = None
+    return {"existe": True, "stock_b13": st}
 
 
 def _inc_clasificacion_sku(sku: str) -> dict:
@@ -51839,7 +51868,214 @@ def mant_api_incidencias_buscar_ua():
         "skus_en_ua": skus,
         "respaldo_erp": respaldo,
         "clasificacion": clasif,
+        # Presencia en AMBOS sistemas (Daniel 2026-08-03: "verificar si está
+        # en ambos sistemas o al menos en uno... y que se acompañe todo el
+        # rato de si falta en uno de los sistemas").
+        "presencia": {
+            "wms": bool(stock_rows),
+            "wms_bodega": base.get("bodega"),
+            "erp": _inc_presencia_erp(sku_base),
+        },
         "duplicado": duplicado,
+    })
+
+
+INC_BODEGA_WMS = "BODEGA 13"   # ver memoria checkwms_integracion_ua
+INC_BODEGA_ERP = "13"          # MAEST.KOBO -- misma bodega en Random
+
+
+@app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_conciliacion():
+    """Conciliación Bodega 13 ↔ Incidencias ↔ ERP Random.
+
+    Reproduce lo que hacían las macros VBA que Daniel usaba en Excel
+    (`Cargar_ListView1_FaltantesEnMySQL` y `Cargar_ListView2_
+    ComparacionAvanzada`), pero contra las fuentes vivas:
+
+      1. En Bodega 13 del WMS y SIN incidencia registrada  -> "falta registrar"
+      2. Incidencia cuya UA ya no está en Bodega 13        -> "salió de bodega"
+      3. Incidencia cuyo SKU no existe en el ERP           -> "no existe en ERP"
+      4. Diferencia de cantidad por SKU (WMS vs suma incidencias)
+
+    Daniel (2026-08-03): "el que manda es el ERP, entonces necesito saber
+    si falta en alguno de los sistemas" -- por eso cada hallazgo dice
+    exactamente EN QUÉ sistema está y en cuál no. Nunca bloquea: si una
+    fuente no responde, se informa y se concilia con las que sí."""
+    # ── Fuente 1: stock actual del WMS, solo Bodega 13 ──
+    stock = _checkwms_stock_rows() or []
+    wms_b13 = [r for r in stock
+               if (r.get("bodega") or "").strip().upper() == INC_BODEGA_WMS]
+    wms_ok = bool(stock)
+
+    wms_por_ua, wms_por_sku = {}, {}
+    for r in wms_b13:
+        ua = (r.get("ua") or "").strip().upper()
+        sku = (r.get("codigo") or "").strip()
+        if ua:
+            wms_por_ua[ua] = r
+        if sku:
+            try:
+                q = float(r.get("stFisico") or 0)
+            except (TypeError, ValueError):
+                q = 0
+            e = wms_por_sku.setdefault(sku, {"cant": 0, "desc": r.get("descripcion"), "uas": []})
+            e["cant"] += q
+            if ua:
+                e["uas"].append(ua)
+
+    # ── Fuente 2: incidencias registradas ──
+    try:
+        incs = mysql_fetchall(
+            "SELECT id, sku, descripcion, cantidad, motivo, estado, recomendacion "
+            "  FROM mant_incidencias WHERE estado='abierta'") or []
+    except Exception as _e:
+        print(f"[conciliacion] error MySQL: {_e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
+
+    inc_por_ua, inc_por_sku = {}, {}
+    for i in incs:
+        ua = _checkwms_norm_ua(i.get("recomendacion") or "")
+        if ua:
+            inc_por_ua.setdefault(ua, []).append(i)
+        sku = (i.get("sku") or "").strip()
+        if sku:
+            e = inc_por_sku.setdefault(sku, {"cant": 0, "ids": []})
+            e["cant"] += int(i.get("cantidad") or 0)
+            e["ids"].append(i["id"])
+
+    # ── Fuente 3: ERP Random, MAEST bodega 13 (solo lectura, Regla #4.1) ──
+    erp_por_sku, erp_ok = {}, False
+    try:
+        filas = _random_sql_query(
+            "SELECT LTRIM(RTRIM(KOPR)) AS sku, SUM(STFI1) AS cant "
+            "  FROM MAEST WHERE LTRIM(RTRIM(KOBO))=%s GROUP BY LTRIM(RTRIM(KOPR))",
+            (INC_BODEGA_ERP,), max_rows=5000) or []
+        for f in filas:
+            try:
+                erp_por_sku[(f.get("sku") or "").strip()] = float(f.get("cant") or 0)
+            except (TypeError, ValueError):
+                pass
+        erp_ok = True
+    except Exception as _e:
+        print(f"[conciliacion] ERP no disponible: {_e}", flush=True)
+
+    # ══ Hallazgos, en el ORDEN DE PRIORIDAD que pidió Daniel (2026-08-03):
+    #    "prioridad a comparar nuestra BD es contra el ERP y luego el WMS,
+    #     y después alertar si no hay motivos".
+    #    CheckWMS y Random son bases DISTINTAS: cada diferencia se reporta
+    #    por separado para poder gestionarla contra la fuente correcta.
+    hallazgos = []
+    skus_todos = set(inc_por_sku) | set(erp_por_sku) | set(wms_por_sku)
+
+    # ── P1) NUESTRA BD vs ERP RANDOM (el ERP manda) ──
+    if erp_ok:
+        for sku in sorted(skus_todos):
+            reg = inc_por_sku.get(sku, {}).get("cant", 0)
+            erp = erp_por_sku.get(sku)
+            if erp is None:
+                if reg:   # lo tenemos declarado y el ERP no lo conoce
+                    hallazgos.append({
+                        "tipo": "no_en_erp", "gravedad": "error", "orden": 1,
+                        "sku": sku,
+                        "descripcion": (wms_por_sku.get(sku) or {}).get("desc"),
+                        "ids": inc_por_sku.get(sku, {}).get("ids", []),
+                        "nuestra_bd": reg, "erp": None,
+                        "detalle": (f"Tenemos {reg:g} unidad(es) declarada(s), pero el SKU "
+                                    f"no tiene stock en la bodega {INC_BODEGA_ERP} del ERP Random."),
+                    })
+                continue
+            if abs(erp - reg) > 0.001:
+                hallazgos.append({
+                    "tipo": "dif_erp", "gravedad": "error", "orden": 0,
+                    "sku": sku,
+                    "descripcion": (wms_por_sku.get(sku) or {}).get("desc"),
+                    "nuestra_bd": reg, "erp": erp, "wms": (wms_por_sku.get(sku) or {}).get("cant"),
+                    "delta": reg - erp,
+                    "ids": inc_por_sku.get(sku, {}).get("ids", []),
+                    "detalle": (f"ERP Random dice {erp:g} y nosotros tenemos {reg:g} "
+                                f"declarada(s). Diferencia de {abs(reg - erp):g}."),
+                })
+
+    # ── P2) NUESTRA BD vs CheckWMS (otra base) ──
+    if wms_ok:
+        for sku in sorted(skus_todos):
+            reg = inc_por_sku.get(sku, {}).get("cant", 0)
+            w = wms_por_sku.get(sku)
+            if w is None:
+                continue
+            if abs(w["cant"] - reg) > 0.001:
+                hallazgos.append({
+                    "tipo": "dif_wms", "gravedad": "warn", "orden": 2,
+                    "sku": sku, "descripcion": w["desc"],
+                    "nuestra_bd": reg, "wms": w["cant"],
+                    "erp": erp_por_sku.get(sku) if erp_ok else None,
+                    "delta": reg - w["cant"],
+                    "ids": inc_por_sku.get(sku, {}).get("ids", []),
+                    "detalle": (f"CheckWMS (Bodega {INC_BODEGA_WMS.split()[-1]}) dice {w['cant']:g} "
+                                f"y nosotros tenemos {reg:g} declarada(s)."),
+                })
+
+    # ── P3) SIN MOTIVO — lo esencial para poder gestionar ──
+    for i in incs:
+        if len((i.get("motivo") or "").strip()) < 10:
+            hallazgos.append({
+                "tipo": "sin_motivo", "gravedad": "warn", "orden": 3,
+                "sku": i.get("sku"), "descripcion": i.get("descripcion"),
+                "ua": _checkwms_norm_ua(i.get("recomendacion") or "") or None,
+                "ids": [i["id"]],
+                "detalle": ("Sin motivo declarado — no se puede gestionar sin saber qué pasó."
+                            if not (i.get("motivo") or "").strip()
+                            else "El motivo es demasiado breve para entender la falla."),
+            })
+
+    # ── P4) En bodega pero sin incidencia registrada ──
+    if wms_ok:
+        for ua, r in wms_por_ua.items():
+            if ua not in inc_por_ua:
+                hallazgos.append({
+                    "tipo": "falta_registrar", "gravedad": "warn", "orden": 4,
+                    "ua": ua, "sku": r.get("codigo"), "descripcion": r.get("descripcion"),
+                    "ubicacion": r.get("ubicacion"),
+                    "detalle": f"Está en {INC_BODEGA_WMS} del WMS pero no tiene incidencia registrada.",
+                })
+
+    # ── P5) UA que ya salió de la bodega de incidencias ──
+    if wms_ok:
+        for ua, lista in inc_por_ua.items():
+            if ua not in wms_por_ua:
+                otra = next((s for s in stock if (s.get("ua") or "").strip().upper() == ua), None)
+                hallazgos.append({
+                    "tipo": "fuera_de_bodega", "gravedad": "info", "orden": 5,
+                    "ua": ua, "sku": lista[0].get("sku"),
+                    "descripcion": lista[0].get("descripcion"),
+                    "ids": [x["id"] for x in lista],
+                    "detalle": (f"Ya no está en {INC_BODEGA_WMS} — ahora aparece en "
+                                f"{otra.get('bodega')} ({otra.get('ubicacion')}). ¿Se resolvió?"
+                                if otra else
+                                "No aparece en el stock actual del WMS en ninguna bodega."),
+                })
+
+    hallazgos.sort(key=lambda h: (h.get("orden", 9), -abs(h.get("delta") or 0), h.get("sku") or ""))
+
+    return jsonify({
+        "ok": True,
+        "fuentes": {
+            "wms": {"ok": wms_ok, "uas": len(wms_por_ua), "bodega": INC_BODEGA_WMS},
+            "erp": {"ok": erp_ok, "skus": len(erp_por_sku), "bodega": INC_BODEGA_ERP},
+            "incidencias": {"ok": True, "abiertas": len(incs)},
+        },
+        "total": len(hallazgos),
+        "resumen": {
+            "dif_erp":        sum(1 for h in hallazgos if h["tipo"] == "dif_erp"),
+            "no_en_erp":      sum(1 for h in hallazgos if h["tipo"] == "no_en_erp"),
+            "dif_wms":        sum(1 for h in hallazgos if h["tipo"] == "dif_wms"),
+            "sin_motivo":     sum(1 for h in hallazgos if h["tipo"] == "sin_motivo"),
+            "falta_registrar": sum(1 for h in hallazgos if h["tipo"] == "falta_registrar"),
+            "fuera_de_bodega": sum(1 for h in hallazgos if h["tipo"] == "fuera_de_bodega"),
+        },
+        "hallazgos": hallazgos[:300],
     })
 
 
