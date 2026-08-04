@@ -51625,6 +51625,34 @@ def _checkwms_trazabilidad_rows(forzar: bool = False) -> list | None:
         return rows
 
 
+# Cache del REPORTE DE STOCK (GetReporteStock). Es el endpoint que usa la
+# pantalla "Reporte Stock" del WMS: stock ACTUAL por bodega/ubicación, ~2,1 MB
+# en ~4 s (mucho más rápido y liviano que GetStockTrazabilidad). Es la fuente
+# correcta para "¿dónde está esta UA hoy?" -- trazabilidad solo tiene
+# movimientos desde jun-2026, por eso UA1008453 aparecía en el WMS pero no
+# en la app (bug reportado por Daniel 2026-08-03).
+_CHECKWMS_STOCK = {"ts": 0, "rows": None, "lock": threading.Lock()}
+_CHECKWMS_STOCK_TTL = 600
+
+
+def _checkwms_stock_rows(forzar: bool = False) -> list | None:
+    """Filas de GetReporteStock (stock actual), cacheadas 10 min."""
+    now = time.time()
+    if (not forzar and _CHECKWMS_STOCK["rows"] is not None
+            and (now - _CHECKWMS_STOCK["ts"]) < _CHECKWMS_STOCK_TTL):
+        return _CHECKWMS_STOCK["rows"]
+    with _CHECKWMS_STOCK["lock"]:
+        if (not forzar and _CHECKWMS_STOCK["rows"] is not None
+                and (time.time() - _CHECKWMS_STOCK["ts"]) < _CHECKWMS_STOCK_TTL):
+            return _CHECKWMS_STOCK["rows"]
+        data = _checkwms_get("/api/ext/GetReporteStock", {}, timeout=45)
+        if data is None:
+            return _CHECKWMS_STOCK["rows"]
+        rows = ((data or {}).get("body") or {}).get("response") or []
+        _CHECKWMS_STOCK.update({"ts": time.time(), "rows": rows})
+        return rows
+
+
 def _checkwms_norm_ua(codigo: str) -> str:
     """Normaliza lo que el usuario escribe al formato real del WMS.
     La planilla legacy guardaba 'UA:1012965', 'UA1012965' o sólo el
@@ -51693,42 +51721,56 @@ def mant_api_incidencias_buscar_ua():
     if not codigo:
         return jsonify({"ok": False, "error": "Falta el código UA."}), 400
 
-    todas = _checkwms_trazabilidad_rows()
-    if todas is None:
-        return jsonify({"ok": False,
-                        "error": "CheckWMS no respondió. Reintenta en un minuto."}), 502
+    def _ua(r):
+        return (r.get("ua") or "").strip().upper()
 
-    rows = [r for r in todas if (r.get("ua") or "").strip().upper() == codigo]
-    if not rows:
-        # Fecha más antigua disponible: explica los "no encontrado" de UA
-        # viejas sin que Daniel tenga que adivinar.
-        fechas = sorted(f for f in ((r.get("feInicioOT") or "") for r in todas) if f)
-        desde = fechas[0][:10] if fechas else None
+    # 1) STOCK ACTUAL (GetReporteStock) -- fuente principal: es lo que
+    #    muestra la pantalla "Reporte Stock" del WMS y cubre TODA la
+    #    existencia, no solo movimientos recientes.
+    stock_todas = _checkwms_stock_rows() or []
+    stock_rows = [r for r in stock_todas if _ua(r) == codigo]
+
+    # 2) MOVIMIENTOS (GetStockTrazabilidad) -- complementario: de dónde
+    #    vino, con qué OT/documento. Solo desde jun-2026.
+    traza_todas = _checkwms_trazabilidad_rows() or []
+    traza_rows = [r for r in traza_todas if _ua(r) == codigo]
+
+    if not stock_rows and not traza_rows:
+        if not stock_todas and not traza_todas:
+            return jsonify({"ok": False,
+                            "error": "CheckWMS no respondió. Reintenta en un minuto."}), 502
         return jsonify({"ok": True, "found": False,
                         "codigo_normalizado": codigo,
-                        "desde": desde, "total_uas": len({(r.get("ua") or "") for r in todas})})
+                        "total_uas": len({_ua(r) for r in stock_todas} | {_ua(r) for r in traza_todas})})
 
-    r = rows[0]
-    fecha_wms = r.get("fechaFin") or r.get("feInicioOT")
-    respaldo = _checkwms_respaldo_erp(r.get("doc") or "", fecha_wms)
+    base = stock_rows[0] if stock_rows else traza_rows[0]
+    mov = traza_rows[0] if traza_rows else {}
+    fecha_wms = mov.get("fechaFin") or mov.get("feInicioOT")
+    respaldo = _checkwms_respaldo_erp(mov.get("doc") or "", fecha_wms) if mov else None
+
     # Una UA puede agrupar VARIOS SKU distintos (un pallet, una OT con
     # varias líneas). Daniel: "si la UA >1 deberán desglosar en las UA
     # necesarias" -- se devuelve el desglose para que la UI avise.
-    skus = []
-    vistos = set()
-    for x in rows:
+    skus, vistos = [], set()
+    for x in (stock_rows or traza_rows):
         k = (x.get("codigo") or "").strip()
         if k and k not in vistos:
             vistos.add(k)
             skus.append({"sku": k, "descripcion": x.get("descripcion"),
-                         "sol": x.get("sol"), "ejec": x.get("ejec")})
+                         "sol": x.get("stFisico") if stock_rows else x.get("sol"),
+                         "ejec": x.get("disponible") if stock_rows else x.get("ejec")})
+
     return jsonify({
         "ok": True, "found": True,
-        "sku": r.get("codigo"), "descripcion": r.get("descripcion"),
-        "ot": r.get("ot"), "estado": r.get("estado"), "bodega": r.get("bodega"),
-        "cliente": r.get("entidad"), "fecha": fecha_wms,
-        "tipo_ot": r.get("tipoOT"),
-        "items_relacionados": len(rows),
+        "sku": base.get("codigo"), "descripcion": base.get("descripcion"),
+        "bodega": base.get("bodega"), "ubicacion": base.get("ubicacion"),
+        "familia": base.get("familia"),
+        "stock_fisico": base.get("stFisico"), "disponible": base.get("disponible"),
+        "en_stock": bool(stock_rows),
+        "ot": mov.get("ot"), "estado": mov.get("estado"),
+        "cliente": mov.get("entidad"), "fecha": fecha_wms,
+        "tipo_ot": mov.get("tipoOT"),
+        "items_relacionados": len(stock_rows or traza_rows),
         "skus_en_ua": skus,
         "respaldo_erp": respaldo,
     })

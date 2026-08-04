@@ -114,8 +114,8 @@
             </div>
             <div class="form-text">
               Formato: <code>UA</code> + número (ej. <code>UA1012965</code>). Puedes escribir solo
-              el número y se completa solo. CheckWMS guarda movimientos desde
-              <strong>junio 2026</strong> — códigos más antiguos no aparecerán.
+              el número y se completa solo. Busca en el <strong>stock actual</strong> del WMS
+              (todas las bodegas) y en el historial de movimientos.
             </div>
             <div id="incUaResultado" class="form-text"></div>
           </div>
@@ -326,8 +326,19 @@
         }
         if(data.sku) document.getElementById('incSku').value = data.sku;
         if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
-        var html = '<span class="text-success">✓ Encontrado — OT '+(data.ot||'—')+' · '+(data.estado||'—')
-          +' · Bodega '+(data.bodega||'—')+(data.cliente ? (' · '+data.cliente) : '')+'</span>';
+        // Ubicación actual (GetReporteStock) primero -- es lo que el
+        // usuario ve en la pantalla "Reporte Stock" del WMS.
+        var html = '<span class="text-success">✓ '+(data.en_stock ? 'En stock' : 'Sin stock actual')
+          + ' — ' + (data.bodega||'—')
+          + (data.ubicacion ? (' · ubic. '+data.ubicacion) : '')
+          + (data.stock_fisico != null ? (' · físico '+data.stock_fisico) : '')
+          + (data.disponible != null ? (' · disp. '+data.disponible) : '')
+          + '</span>';
+        if(data.ot){
+          html += '<br><span class="text-muted">Último movimiento: OT '+data.ot+' · '+(data.estado||'—')
+            + (data.tipo_ot ? (' · '+data.tipo_ot) : '')
+            + (data.cliente ? (' · '+data.cliente) : '')+'</span>';
+        }
         // 2026-08-03 (Daniel: "identificar qué salió primero" -- cruce
         // contra ERP Random usando el documento que ya trae CheckWMS).
         var resp = data.respaldo_erp;
