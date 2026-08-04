@@ -51709,6 +51709,44 @@ def _checkwms_respaldo_erp(doc_ref: str, fecha_wms: str) -> dict:
     }
 
 
+def _inc_clasificacion_sku(sku: str) -> dict:
+    """Clasificación de un SKU REUSANDO las tablas del Catálogo (Daniel
+    2026-08-03: "nosotros tenemos la clasificación de productos... las
+    tablas se deben reusar"). NO se crea taxonomía nueva.
+
+    cat_productos.clase_producto -> cat_clases_producto.slug, y de ahí
+    `modelo_precio`, que es exactamente la distinción que Daniel necesita:
+
+      · 'horas' -> EQUIPO (rack, banco, selector de pesos, bici, trotadora):
+        la incidencia NO debería repetirse en el mismo SKU salvo que sean
+        dos fallas distintas.
+      · 'fijo'  -> REPETIBLE (piso, accesorio): cantidad × precio; el mismo
+        defecto en 500 unidades es normal y NO es una duplicación.
+
+    Sin clasificar -> repetible=None (la UI no afirma nada y pide
+    clasificar el producto en el Catálogo)."""
+    sku = (sku or "").strip()
+    if not sku:
+        return {"clase": None, "clase_nombre": None, "repetible": None}
+    try:
+        row = mysql_fetchone(
+            "SELECT p.clase_producto AS slug, c.nombre, c.modelo_precio "
+            "  FROM cat_productos p "
+            "  LEFT JOIN cat_clases_producto c ON c.slug = p.clase_producto "
+            " WHERE p.sku = %s LIMIT 1", (sku,))
+    except Exception as _e:
+        print(f"[_inc_clasificacion_sku] {_e}", flush=True)
+        return {"clase": None, "clase_nombre": None, "repetible": None}
+    if not row or not row.get("slug"):
+        return {"clase": None, "clase_nombre": None, "repetible": None}
+    modelo = (row.get("modelo_precio") or "").strip().lower()
+    return {
+        "clase": row.get("slug"),
+        "clase_nombre": row.get("nombre") or row.get("slug"),
+        "repetible": (modelo == "fijo") if modelo else None,
+    }
+
+
 @app.route("/mantenciones/api/incidencias/buscar-ua", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -51760,6 +51798,33 @@ def mant_api_incidencias_buscar_ua():
                          "sol": x.get("stFisico") if stock_rows else x.get("sol"),
                          "ejec": x.get("disponible") if stock_rows else x.get("ejec")})
 
+    # Clasificación + chequeo de duplicado (Daniel 2026-08-03: un equipo no
+    # debería repetir incidencia; un piso/accesorio sí). Reusa el Catálogo.
+    sku_base = (base.get("codigo") or "").strip()
+    clasif = _inc_clasificacion_sku(sku_base)
+    duplicado = None
+    if sku_base and clasif.get("repetible") is False:
+        excluir = request.args.get("excluir_id")
+        try:
+            excluir = int(excluir) if excluir else None
+        except (TypeError, ValueError):
+            excluir = None
+        try:
+            previas = mysql_fetchall(
+                "SELECT id, motivo, estado, created_at FROM mant_incidencias "
+                " WHERE sku=%s AND (%s IS NULL OR id<>%s) "
+                " ORDER BY created_at DESC LIMIT 5",
+                (sku_base, excluir, excluir)) or []
+        except Exception as _e:
+            print(f"[buscar-ua duplicado] {_e}", flush=True)
+            previas = []
+        if previas:
+            duplicado = {
+                "n": len(previas),
+                "previas": [{"id": p["id"], "motivo": p.get("motivo"),
+                             "estado": p.get("estado")} for p in previas],
+            }
+
     return jsonify({
         "ok": True, "found": True,
         "sku": base.get("codigo"), "descripcion": base.get("descripcion"),
@@ -51773,6 +51838,8 @@ def mant_api_incidencias_buscar_ua():
         "items_relacionados": len(stock_rows or traza_rows),
         "skus_en_ua": skus,
         "respaldo_erp": respaldo,
+        "clasificacion": clasif,
+        "duplicado": duplicado,
     })
 
 

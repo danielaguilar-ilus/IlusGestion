@@ -315,7 +315,9 @@
     var res = document.getElementById('incUaResultado');
     if(!codigo){ ilusToast('Escribe primero el código UA', {type:'warning'}); return; }
     res.textContent = 'Buscando en CheckWMS… (puede tardar hasta 30s la primera vez)';
-    fetch('/mantenciones/api/incidencias/buscar-ua?codigo='+encodeURIComponent(codigo))
+    var _incId = document.getElementById('incId').value;
+    fetch('/mantenciones/api/incidencias/buscar-ua?codigo='+encodeURIComponent(codigo)
+          + (_incId ? ('&excluir_id='+encodeURIComponent(_incId)) : ''))
       .then(function(r){return r.json();}).then(function(data){
         if(!data.ok){ res.innerHTML = '<span class="text-danger">'+(data.error||'No se pudo consultar CheckWMS.')+'</span>'; return; }
         if(!data.found){
@@ -358,6 +360,33 @@
           html += '<br><span class="text-muted">Último movimiento: OT '+data.ot+' · '+(data.estado||'—')
             + (data.tipo_ot ? (' · '+data.tipo_ot) : '')
             + (data.cliente ? (' · '+data.cliente) : '')+'</span>';
+        }
+        // 2026-08-03 (Daniel: "tenemos la clasificación de productos, las
+        // tablas se deben reusar"). Viene del Catálogo:
+        // cat_productos.clase_producto -> cat_clases_producto.modelo_precio.
+        // 'fijo' = piso/accesorio (repetible), 'horas' = equipo (único).
+        var cl = data.clasificacion || {};
+        if(cl.clase_nombre){
+          html += '<br><span class="text-muted"><i class="bi bi-tags me-1"></i>'
+            + cl.clase_nombre
+            + (cl.repetible === true  ? ' · <b>repetible</b> (piso/accesorio: la misma falla puede darse en muchas unidades)' : '')
+            + (cl.repetible === false ? ' · <b>equipo único</b> (no debería repetir incidencia)' : '')
+            + '</span>';
+        } else if(data.sku){
+          html += '<br><span class="text-warning"><i class="bi bi-question-circle me-1"></i>'
+            + 'Producto sin clasificar en el Catálogo — clasifícalo para activar el control de duplicados.</span>';
+        }
+        // Duplicado: solo se advierte en EQUIPOS (repetible=false).
+        var dup = data.duplicado;
+        if(dup && dup.n){
+          html += '<br><span class="text-danger"><i class="bi bi-exclamation-octagon-fill me-1"></i>'
+            + 'Ya hay <b>'+dup.n+'</b> incidencia'+(dup.n===1?'':'s')+' registrada'+(dup.n===1?'':'s')
+            + ' para este equipo. Si es la misma falla, no la dupliques:</span>'
+            + '<ul style="margin:4px 0 0 18px;font-size:.78rem">'
+            + dup.previas.map(function(p){
+                return '<li>#'+p.id+' — '+(p.motivo||'(sin motivo)')+' <span class="text-muted">['+(p.estado||'—')+']</span></li>';
+              }).join('')
+            + '</ul>';
         }
         // 2026-08-03 (Daniel: "identificar qué salió primero" -- cruce
         // contra ERP Random usando el documento que ya trae CheckWMS).
