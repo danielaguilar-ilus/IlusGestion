@@ -52020,7 +52020,19 @@ def mant_api_incidencias_conciliacion():
     #    CheckWMS y Random son bases DISTINTAS: cada diferencia se reporta
     #    por separado para poder gestionarla contra la fuente correcta.
     hallazgos = []
-    skus_todos = set(inc_por_sku) | set(erp_por_sku) | set(wms_por_sku)
+
+    # Los SKU que empiezan con ZZ son SERVICIOS (ZZENVIO, ZZRETIRO,
+    # ZZINSTALACION, ZZTRASLADO...), no productos físicos: en el ERP
+    # arrastran saldos negativos por su naturaleza contable y nunca están
+    # en una bodega. Compararlos como stock genera puro ruido -- mismo
+    # criterio que ya rige en Transporte ("los servicios no mueven, los
+    # productos sí"). Verificado en producción 2026-08-04: 4 de los 45
+    # hallazgos eran exactamente esto.
+    def _es_servicio(sku):
+        return (sku or "").strip().upper().startswith("ZZ")
+
+    skus_todos = {s for s in (set(inc_por_sku) | set(erp_por_sku) | set(wms_por_sku))
+                  if not _es_servicio(s)}
 
     # ── P1) NUESTRA BD vs ERP RANDOM (el ERP manda) ──
     if erp_ok:
@@ -52072,6 +52084,8 @@ def mant_api_incidencias_conciliacion():
 
     # ── P3) SIN MOTIVO — lo esencial para poder gestionar ──
     for i in incs:
+        if _es_servicio(i.get("sku")):
+            continue   # los ZZ son servicios: no llevan motivo de falla
         if len((i.get("motivo") or "").strip()) < 10:
             hallazgos.append({
                 "tipo": "sin_motivo", "gravedad": "warn", "orden": 3,
