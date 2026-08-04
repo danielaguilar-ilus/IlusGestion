@@ -83,6 +83,10 @@
           <span class="inc-step-n"><i class="bi bi-wrench-adjustable"></i></span>
           <span class="inc-step-t">Detalle<small>opcional</small></span>
         </div>
+        <div class="inc-step" data-step="5">
+          <span class="inc-step-n"><i class="bi bi-camera"></i></span>
+          <span class="inc-step-t">Evidencia<small>fotos y cuadre</small></span>
+        </div>
       </div>
       <div class="inc-progress"><div class="inc-progress-bar" id="incProgressBar"></div></div>
 
@@ -207,6 +211,33 @@
                         placeholder="Notas internas, seguimiento con proveedor, etc."></textarea>
             </div>
           </div>
+        </section>
+
+        {# ══ PASO 5 — Evidencia: fotos + cuadre de stock + bitácora ══
+           Daniel (2026-08-03): "ojalá le puedas meter una foto del producto,
+           o al menos 3"; "el sistema debe cuadrar el stock en todos los
+           sistemas"; "trazable y escalable". Y el principio que fijó:
+           "nosotros no tocamos sistemas, solo evidenciamos, y de manera
+           automática se autogestiona con el proceso completo" -- por eso
+           acá NO hay ningún botón que escriba en ERP ni en WMS. #}
+        <section class="inc-pane" data-pane="5" hidden>
+          <div class="inc-pane-head inc-c5">
+            <i class="bi bi-camera"></i>
+            <div><b>Evidencia y cuadre de stock</b>
+              <small>Comprueba que las tres fuentes digan lo mismo y deja la foto de respaldo.</small></div>
+          </div>
+
+          <div id="incCuadre" class="inc-cuadre"></div>
+
+          <div class="inc-fotos-head">
+            <b>Fotos de la incidencia</b>
+            <span class="text-muted" id="incFotosCount">0 de 3</span>
+          </div>
+          <div class="inc-fotos" id="incFotos"></div>
+          <input type="file" id="incFotoInput" accept="image/*" capture="environment" hidden>
+          <div class="form-text">Hasta 3 fotos del daño o faltante. Se comprimen antes de subir.</div>
+
+          <div class="inc-bitacora" id="incBitacora"></div>
           <div class="inc-resumen" id="incResumen"></div>
         </section>
       </div>
@@ -301,6 +332,8 @@
 .inc-step.done .inc-step-n{background:#16a34a;color:#fff}
 .inc-step-t{display:flex;flex-direction:column;line-height:1.15;font-size:.83rem;font-weight:700;color:#0f172a}
 .inc-step-t small{font-weight:500;font-size:.68rem;color:#6b7280}
+.inc-steps.libre .inc-step{cursor:pointer}
+.inc-steps.libre .inc-step:hover{opacity:1}
 .inc-progress{height:3px;background:#eef0f3}
 .inc-progress-bar{height:100%;width:25%;background:linear-gradient(90deg,#dc2626,#f97316);
   transition:width .35s cubic-bezier(.4,0,.2,1)}
@@ -315,6 +348,48 @@
 .inc-c2{background:#f5f3ff;border-left:4px solid #8b5cf6} .inc-c2 i{color:#8b5cf6}
 .inc-c3{background:#fff7ed;border-left:4px solid #f97316} .inc-c3 i{color:#f97316}
 .inc-c4{background:#f0fdf4;border-left:4px solid #16a34a} .inc-c4 i{color:#16a34a}
+.inc-c5{background:#f8fafc;border-left:4px solid #0f172a} .inc-c5 i{color:#0f172a}
+
+/* ══ Paso 5: cuadre de stock + fotos + bitácora ══ */
+.inc-cuadre{margin-bottom:18px}
+.inc-cuadre-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.inc-src{border:1px solid #e5e7eb;border-radius:11px;padding:11px 13px;background:#fff;text-align:center}
+.inc-src-t{font-size:.66rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;font-weight:700}
+.inc-src-n{font-size:1.55rem;font-weight:800;line-height:1.15;margin-top:2px;color:#0f172a}
+.inc-src-s{font-size:.68rem;margin-top:1px}
+.inc-src.ok{border-color:#16a34a;background:#f6fefa}   .inc-src.ok .inc-src-s{color:#16a34a}
+.inc-src.dif{border-color:#dc2626;background:#fffafa}  .inc-src.dif .inc-src-s{color:#dc2626}
+.inc-src.nd{opacity:.6}                                 .inc-src.nd .inc-src-s{color:#9aa3ae}
+.inc-vered{margin-top:9px;padding:9px 13px;border-radius:10px;font-size:.82rem;font-weight:600}
+.inc-vered.v-ok  {background:#dcfce7;color:#15803d}
+.inc-vered.v-dif {background:#fee2e2;color:#b91c1c}
+.inc-vered.v-nd  {background:#f3f4f6;color:#6b7280}
+.inc-vered small{display:block;font-weight:400;margin-top:2px;opacity:.9}
+
+.inc-fotos-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+.inc-fotos-head b{font-size:.88rem;color:#0f172a}
+.inc-fotos-head span{font-size:.74rem}
+.inc-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:9px}
+.inc-foto{position:relative;aspect-ratio:1;border-radius:11px;overflow:hidden;border:1px solid #e5e7eb;background:#f3f4f6}
+.inc-foto img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.inc-foto-x{position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:50%;border:0;
+  background:rgba(15,23,42,.72);color:#fff;font-size:.8rem;display:grid;place-items:center;cursor:pointer}
+.inc-foto-x:hover{background:#dc2626}
+.inc-foto-cat{border-style:dashed}
+.inc-foto-tag{position:absolute;left:0;right:0;bottom:0;background:rgba(15,23,42,.72);color:#fff;
+  font-size:.62rem;text-align:center;padding:2px 0;letter-spacing:.03em}
+.inc-foto-add{aspect-ratio:1;border:2px dashed #d7dbe0;border-radius:11px;background:#fafbfc;color:#6b7280;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;
+  font-size:.74rem;transition:border-color .13s,color .13s;min-height:44px}
+.inc-foto-add:hover{border-color:#dc2626;color:#dc2626}
+.inc-foto-add i{font-size:1.4rem}
+
+.inc-bitacora{margin-top:18px}
+.inc-bit-t{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;font-weight:700;margin-bottom:6px}
+.inc-bit-i{display:flex;gap:8px;font-size:.76rem;padding:5px 0;border-bottom:1px solid #f1f3f5;color:#5b6472}
+.inc-bit-i b{color:#0f172a;font-weight:600}
+.inc-bit-f{color:#9aa3ae;white-space:nowrap;font-size:.72rem}
+@media (max-width:640px){ .inc-cuadre-grid{grid-template-columns:1fr;gap:7px} }
 
 .inc-motivo{font-size:1rem;line-height:1.5;border:2px solid #f2c8a8;background:#fffdfa}
 .inc-motivo:focus{border-color:#f97316;box-shadow:0 0 0 .18rem rgba(249,115,22,.16);background:#fff}
@@ -474,7 +549,7 @@
   // Reglas de negocio pedidas: la UA es OBLIGATORIA para guardar; SKU,
   // nombre y cantidad se validan; el MOTIVO es el campo protagonista
   // (mínimo 10 caracteres); el resto es opcional.
-  var incPaso = 1, INC_PASOS = 4;
+  var incPaso = 1, INC_PASOS = 5;
 
   function $(id){ return document.getElementById(id); }
   function marcarError(el){
@@ -520,8 +595,12 @@
     $('incProgressBar').style.width = Math.round(incPaso / INC_PASOS * 100) + '%';
     $('incBtnAtras').style.display     = incPaso > 1 ? '' : 'none';
     $('incBtnSiguiente').style.display = incPaso < INC_PASOS ? '' : 'none';
-    $('incBtnGuardar').style.display   = incPaso === INC_PASOS ? '' : 'none';
-    if(incPaso === INC_PASOS) pintarResumen();
+    // Al EDITAR, Guardar está siempre disponible: no hay que recorrer el
+    // wizard entero para corregir un dato (Daniel: "que no sea tan tedioso").
+    $('incBtnGuardar').style.display   = (incPaso === INC_PASOS || $('incId').value) ? '' : 'none';
+    // El paso 5 es evidencia, no dato obligatorio: se puede guardar antes.
+    $('incSteps').classList.toggle('libre', !!$('incId').value);
+    if(incPaso === INC_PASOS){ pintarResumen(); incCargarEvidencia(); }
   }
 
   function irAPaso(n){
@@ -563,6 +642,169 @@
     return true;
   }
 
+  // ══════════ PASO 5 — Evidencia: cuadre + fotos + bitácora ══════════
+  // Principio que fijó Daniel: "nosotros no tocamos sistemas, solo
+  // evidenciamos, y de manera automática se autogestiona con el proceso
+  // completo". Por eso este paso NUNCA escribe en ERP ni WMS: muestra las
+  // tres cifras y, cuando el proceso real se completa, cuadran solas.
+  var incFichaCache = null;
+
+  function incNum(v){ return (v === null || v === undefined) ? '—' : (Math.round(v*100)/100); }
+
+  function incPintarCuadre(c){
+    if(!c){ $('incCuadre').innerHTML = ''; return; }
+    function celda(t, val, cuadra){
+      var cls = (val === null || val === undefined) ? 'nd' : (cuadra === false ? 'dif' : (cuadra === true ? 'ok' : ''));
+      var sub = (val === null || val === undefined) ? 'sin dato'
+              : (cuadra === false ? 'no cuadra' : (cuadra === true ? 'cuadra' : ''));
+      return '<div class="inc-src '+cls+'"><div class="inc-src-t">'+t+'</div>'
+           + '<div class="inc-src-n">'+incNum(val)+'</div>'
+           + '<div class="inc-src-s">'+sub+'</div></div>';
+    }
+    var v = c.veredicto, vc = 'v-nd', vt = 'Sin datos suficientes para comparar.', vs = '';
+    if(v === 'cuadra'){
+      vc = 'v-ok'; vt = 'Todo cuadra entre los sistemas.';
+      vs = 'No hay nada que gestionar por cantidad.';
+    } else if(v === 'dif_erp'){
+      vc = 'v-dif'; vt = 'La cantidad no coincide con el ERP.';
+      vs = 'El ERP manda: revisa si falta declarar o si el proceso aún no se completó. No se corrige el ERP desde aquí.';
+    } else if(v === 'dif_wms'){
+      vc = 'v-dif'; vt = 'La cantidad no coincide con el WMS.';
+      vs = 'Puede ser un movimiento físico aún no reflejado. Se resuelve solo cuando el proceso termina.';
+    }
+    $('incCuadre').innerHTML =
+        '<div class="inc-cuadre-grid">'
+      +   celda('Nuestra BD', c.nuestra_bd, true)
+      +   celda('ERP Random', c.erp, c.cuadra_erp)
+      +   celda('CheckWMS',  c.wms, c.cuadra_wms)
+      + '</div>'
+      + '<div class="inc-vered '+vc+'">'+vt+(vs ? '<small>'+vs+'</small>' : '')+'</div>';
+  }
+
+  function incPintarFotos(f){
+    var cont = $('incFotos'), n = (f.fotos || []).length, max = f.max_fotos || 3;
+    $('incFotosCount').textContent = n + ' de ' + max;
+    var html = (f.fotos || []).map(function(x){
+      return '<div class="inc-foto"><img src="'+x.url+'" alt="Evidencia" loading="lazy" '
+           + 'onclick="window.open(\''+x.url+'\',\'_blank\')">'
+           + '<button type="button" class="inc-foto-x" data-fid="'+x.id+'" title="Quitar foto">'
+           + '<i class="bi bi-x-lg"></i></button></div>';
+    }).join('');
+    // Foto del catálogo del SKU: contexto gratis, no ocupa cupo.
+    if(f.foto_catalogo){
+      html += '<div class="inc-foto inc-foto-cat"><img src="'+f.foto_catalogo+'" alt="Producto" loading="lazy" '
+            + 'onclick="window.open(\''+f.foto_catalogo+'\',\'_blank\')">'
+            + '<span class="inc-foto-tag">Foto del catálogo</span></div>';
+    }
+    if(n < max){
+      html += '<div class="inc-foto-add" id="incFotoAdd"><i class="bi bi-camera"></i>Agregar foto</div>';
+    }
+    cont.innerHTML = html;
+    cont.querySelectorAll('.inc-foto-x').forEach(function(b){
+      b.onclick = function(ev){ ev.stopPropagation(); incBorrarFoto(b.dataset.fid); };
+    });
+    var add = document.getElementById('incFotoAdd');
+    if(add) add.onclick = function(){ $('incFotoInput').click(); };
+  }
+
+  function incPintarBitacora(log){
+    if(!log || !log.length){ $('incBitacora').innerHTML = ''; return; }
+    $('incBitacora').innerHTML = '<div class="inc-bit-t">Bitácora</div>'
+      + log.slice(0, 12).map(function(l){
+          var q = l.campo ? (' · <b>'+l.campo+'</b>') : '';
+          var d = (l.valor_antes || l.valor_despues)
+                ? (' ' + (l.valor_antes ? ('«'+String(l.valor_antes).slice(0,40)+'»') : '')
+                       + (l.valor_despues ? (' → «'+String(l.valor_despues).slice(0,40)+'»') : ''))
+                : '';
+          return '<div class="inc-bit-i"><span class="inc-bit-f">'
+               + (l.created_at||'').slice(0,16).split(' ').join(' · ')+'</span>'
+               + '<span><b>'+(l.usuario||'sistema')+'</b> '+l.accion+q+d+'</span></div>';
+        }).join('');
+  }
+
+  function incCargarEvidencia(){
+    var id = $('incId').value;
+    if(!id){
+      // Incidencia nueva: aún no hay id, así que no hay fotos ni bitácora.
+      $('incCuadre').innerHTML = '<div class="inc-vered v-nd">El cuadre y las fotos se habilitan al guardar la incidencia.'
+        + '<small>Primero guarda; luego vuelve a abrirla para adjuntar evidencia.</small></div>';
+      $('incFotos').innerHTML = ''; $('incFotosCount').textContent = '0 de 3';
+      $('incBitacora').innerHTML = '';
+      return;
+    }
+    $('incCuadre').innerHTML = '<div class="inc-vered v-nd">Consultando ERP y WMS…</div>';
+    fetch('/mantenciones/api/incidencias/'+id+'/ficha')
+      .then(function(r){return r.json();}).then(function(f){
+        if(!f.ok) return;
+        incFichaCache = f;
+        incPintarCuadre(f.cuadre);
+        incPintarFotos(f);
+        incPintarBitacora(f.log);
+      }).catch(function(){
+        $('incCuadre').innerHTML = '<div class="inc-vered v-nd">No se pudo consultar el cuadre.</div>';
+      });
+  }
+
+  // Compresión en el navegador antes de subir (mismo criterio que
+  // Etiquetas: 6 MB -> ~300 KB). Evita subidas lentas desde el celular
+  // del taller y mantiene la app liviana.
+  function incComprimir(file){
+    return new Promise(function(resolve){
+      if(!/^image\//.test(file.type) || file.size < 400*1024) return resolve(file);
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function(){
+        var MAX = 1600, w = img.width, h = img.height;
+        if(w > MAX || h > MAX){ var k = Math.min(MAX/w, MAX/h); w = Math.round(w*k); h = Math.round(h*k); }
+        var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        cv.toBlob(function(b){
+          resolve(b ? new File([b], (file.name||'foto').replace(/\.\w+$/, '') + '.jpg',
+                                {type:'image/jpeg'}) : file);
+        }, 'image/jpeg', 0.82);
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+
+  $('incFotoInput').addEventListener('change', function(){
+    var file = this.files && this.files[0];
+    this.value = '';
+    if(!file) return;
+    var id = $('incId').value;
+    if(!id){ ilusToast('Guarda la incidencia antes de adjuntar fotos', {type:'warning'}); return; }
+    ilusToast('Subiendo foto…', {type:'info'});
+    incComprimir(file).then(function(f){
+      var fd = new FormData(); fd.append('file', f);
+      return fetch('/mantenciones/api/incidencias/'+id+'/fotos', {
+        method:'POST', headers:{'X-CSRFToken': window.CSRF_TOKEN || ''}, body: fd,
+      });
+    }).then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){ ilusToast(d.error || 'No se pudo subir la foto', {type:'error'}); return; }
+      ilusToast('✓ Foto agregada', {type:'success'});
+      incCargarEvidencia();
+    }).catch(function(){ ilusToast('No se pudo subir la foto', {type:'error'}); });
+  });
+
+  function incBorrarFoto(fid){
+    var id = $('incId').value;
+    if(!id || !fid) return;
+    ilusConfirm({
+      title:'Quitar foto', message:'¿Eliminar esta foto de la incidencia?',
+      okLabel:'Quitar', cancelLabel:'Cancelar', danger:true,
+    }).then(function(ok){
+      if(!ok) return;
+      fetch('/mantenciones/api/incidencias/'+id+'/fotos/'+fid, {
+        method:'DELETE', headers:{'X-CSRFToken': window.CSRF_TOKEN || ''},
+      }).then(function(r){return r.json();}).then(function(d){
+        if(!d.ok){ ilusToast(d.error || 'No se pudo quitar', {type:'error'}); return; }
+        ilusToast('Foto quitada', {type:'success'});
+        incCargarEvidencia();
+      });
+    });
+  }
+
   function pintarResumen(){
     var req = $('incReqRepuesto').value;
     $('incResumen').innerHTML =
@@ -583,12 +825,16 @@
     if(validarPaso(incPaso)) irAPaso(incPaso + 1);
   });
   $('incBtnAtras').addEventListener('click', function(){ irAPaso(incPaso - 1); });
-  // Clic directo en un paso ya recorrido (nunca saltar hacia adelante
-  // sin validar -- eso rompería la garantía de datos completos).
+  // Navegación por el stepper. Al CREAR solo se puede volver atrás (para
+  // no saltarse validaciones). Al EDITAR se puede ir a cualquier paso:
+  // los datos ya existen y son válidos, y Daniel (2026-08-03) pidió que
+  // editar "no sea tan tedioso... que sea para validar la información" --
+  // obligar a recorrer 5 pasos para tocar un campo es exactamente eso.
   document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
     s.addEventListener('click', function(){
       var n = parseInt(s.dataset.step, 10);
-      if(n < incPaso) irAPaso(n);
+      var editando = !!$('incId').value;
+      if(n < incPaso || editando) irAPaso(n);
     });
   });
 

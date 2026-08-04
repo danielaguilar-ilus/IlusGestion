@@ -43777,6 +43777,42 @@ def init_mantenciones_tables():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
+            # Fotos de la incidencia (2026-08-03, Daniel: "ojalá le puedas
+            # meter una foto del producto, o al menos 3"). Evidencia del
+            # daño/faltante REAL, distinta de la foto de catálogo del SKU
+            # (esa se muestra automáticamente reusando cat_producto_fotos).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_incidencia_fotos (
+                    id             INT AUTO_INCREMENT PRIMARY KEY,
+                    incidencia_id  INT NOT NULL,
+                    gcs_key        VARCHAR(500) NOT NULL,
+                    orden          INT NOT NULL DEFAULT 1,
+                    created_by     VARCHAR(190),
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_inc_foto_orden (incidencia_id, orden),
+                    KEY idx_inc_foto (incidencia_id),
+                    CONSTRAINT fk_incfoto_inc FOREIGN KEY (incidencia_id)
+                       REFERENCES mant_incidencias(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # Trazabilidad (2026-08-03, Daniel: "trazable y escalable").
+            # Append-only: quién cambió qué y cuándo, incluido el cuadre de
+            # stock contra el ERP. No se actualiza ni se borra nunca.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_incidencia_log (
+                    id             INT AUTO_INCREMENT PRIMARY KEY,
+                    incidencia_id  INT NOT NULL,
+                    accion         VARCHAR(60) NOT NULL,
+                    campo          VARCHAR(60),
+                    valor_antes    TEXT,
+                    valor_despues  TEXT,
+                    usuario        VARCHAR(190),
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    KEY idx_inclog (incidencia_id, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
             # Seed único (2026-08-03, Daniel: "súbelas tú, no quiero subirlas
             # yo, además no funciona ese botón") — las 72 filas exportadas
             # directo (solo lectura) del Clever Cloud viejo (DSN=SPHS).
@@ -52185,6 +52221,7 @@ def mant_api_incidencias_crear():
         )
         db.commit()
         new_id = cur.lastrowid
+    _inc_log(new_id, "creada", "sku", None, sku or "(sin SKU)")
     return jsonify({"ok": True, "id": new_id})
 
 
@@ -52210,6 +52247,22 @@ def mant_api_incidencias_editar(iid):
     if estado not in ("abierta", "resuelta"):
         estado = "abierta"
     fecha_resolucion = (data.get("fecha_resolucion") or "").strip() or None
+    nuevos = {
+        "sku": (data.get("sku") or "").strip() or None,
+        "descripcion": descripcion,
+        "cantidad": cantidad,
+        "motivo": (data.get("motivo") or "").strip() or None,
+        "req_repuesto": req_repuesto,
+        "descripcion_repuesto": (data.get("descripcion_repuesto") or "").strip() or None,
+        "stock_repuesto": stock_repuesto,
+        "observacion": (data.get("observacion") or "").strip() or None,
+        "fecha_resolucion": fecha_resolucion,
+        "recomendacion": (data.get("recomendacion") or "").strip() or None,
+        "estado": estado,
+    }
+    # Snapshot previo para la bitácora (Daniel: "trazable"). Solo se
+    # registran los campos que REALMENTE cambiaron.
+    antes = mysql_fetchone("SELECT * FROM mant_incidencias WHERE id=%s", (iid,)) or {}
 
     db = get_db()
     with db.cursor() as cur:
@@ -52220,14 +52273,19 @@ def mant_api_incidencias_editar(iid):
                  observacion=%s, fecha_resolucion=%s, recomendacion=%s,
                  estado=%s, updated_by=%s
                WHERE id=%s""",
-            ((data.get("sku") or "").strip() or None, descripcion, cantidad,
-             (data.get("motivo") or "").strip() or None,
-             req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
-             stock_repuesto, (data.get("observacion") or "").strip() or None,
-             fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
-             estado, current_username(), iid),
+            (nuevos["sku"], nuevos["descripcion"], nuevos["cantidad"], nuevos["motivo"],
+             nuevos["req_repuesto"], nuevos["descripcion_repuesto"], nuevos["stock_repuesto"],
+             nuevos["observacion"], nuevos["fecha_resolucion"], nuevos["recomendacion"],
+             nuevos["estado"], current_username(), iid),
         )
         db.commit()
+
+    for campo, nuevo in nuevos.items():
+        viejo = antes.get(campo)
+        if campo == "fecha_resolucion" and viejo:
+            viejo = viejo.strftime("%Y-%m-%d")
+        if str(viejo or "") != str(nuevo or ""):
+            _inc_log(iid, "editada", campo, viejo, nuevo)
     return jsonify({"ok": True})
 
 
@@ -52242,6 +52300,185 @@ def mant_api_incidencias_borrar(iid):
     with db.cursor() as cur:
         cur.execute("DELETE FROM mant_incidencias WHERE id=%s", (iid,))
         db.commit()
+    return jsonify({"ok": True})
+
+
+INC_MAX_FOTOS = 3   # Daniel 2026-08-03: "o al menos 3"
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>/ficha", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencia_ficha(iid):
+    """Todo lo necesario para VALIDAR una incidencia de un vistazo
+    (Daniel 2026-08-03: "que sea para validar la información... que un
+    humano en simples pasos pueda identificar cómo actuar y verificar").
+
+    Devuelve el registro + fotos de evidencia + foto de catálogo del SKU
+    (reusa cat_producto_fotos) + cuadre de stock en los 3 sistemas +
+    bitácora. NO escribe en ERP ni WMS: solo evidencia (Daniel: "nosotros
+    no tocamos sistemas, solo evidenciamos")."""
+    inc = mysql_fetchone("SELECT * FROM mant_incidencias WHERE id=%s", (iid,))
+    if not inc:
+        return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
+    inc = _mant_incidencia_row(inc)
+    sku = (inc.get("sku") or "").strip()
+
+    fotos = mysql_fetchall(
+        "SELECT id, gcs_key, orden FROM mant_incidencia_fotos "
+        " WHERE incidencia_id=%s ORDER BY orden", (iid,)) or []
+
+    # Foto del catálogo por SKU -- cero esfuerzo para el usuario.
+    foto_catalogo = None
+    if sku:
+        fc = mysql_fetchone(
+            "SELECT f.gcs_key FROM cat_producto_fotos f "
+            "  JOIN cat_productos p ON p.id = f.producto_id "
+            " WHERE p.sku=%s ORDER BY f.orden LIMIT 1", (sku,))
+        if fc:
+            foto_catalogo = "/f/" + fc["gcs_key"]
+
+    log = mysql_fetchall(
+        "SELECT accion, campo, valor_antes, valor_despues, usuario, created_at "
+        "  FROM mant_incidencia_log WHERE incidencia_id=%s "
+        " ORDER BY created_at DESC LIMIT 40", (iid,)) or []
+    for l in log:
+        if l.get("created_at"):
+            l["created_at"] = l["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+
+    return jsonify({
+        "ok": True,
+        "incidencia": inc,
+        "fotos": [{"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"]} for f in fotos],
+        "foto_catalogo": foto_catalogo,
+        "max_fotos": INC_MAX_FOTOS,
+        "cuadre": _inc_cuadre_stock(sku, int(inc.get("cantidad") or 0)),
+        "clasificacion": _inc_clasificacion_sku(sku),
+        "log": log,
+    })
+
+
+def _inc_cuadre_stock(sku: str, cantidad_declarada: int) -> dict:
+    """Cuadre del SKU en los TRES sistemas. Daniel: "el sistema debe ser
+    inteligente y detectar no solo SKU sino cuadrar el stock en todos los
+    sistemas". Solo lectura: evidencia la diferencia, no la corrige en
+    ninguna fuente externa. Cuando el proceso real se completa, las
+    fuentes coinciden y el veredicto pasa a "cuadra" por sí solo."""
+    sku = (sku or "").strip()
+    out = {"sku": sku, "nuestra_bd": cantidad_declarada,
+           "erp": None, "wms": None, "wms_bodega": None,
+           "cuadra_erp": None, "cuadra_wms": None, "veredicto": "sin_datos"}
+    if not sku:
+        return out
+
+    erp = _inc_presencia_erp(sku)
+    if erp.get("existe") and erp.get("stock_b13") is not None:
+        out["erp"] = erp["stock_b13"]
+        out["cuadra_erp"] = abs(erp["stock_b13"] - cantidad_declarada) < 0.001
+    elif erp.get("existe") is False:
+        out["erp"] = 0
+        out["cuadra_erp"] = (cantidad_declarada == 0)
+
+    filas = _checkwms_stock_rows() or []
+    b13 = [r for r in filas
+           if (r.get("bodega") or "").strip().upper() == INC_BODEGA_WMS
+           and (r.get("codigo") or "").strip() == sku]
+    if filas:
+        total = 0.0
+        for r in b13:
+            try:
+                total += float(r.get("stFisico") or 0)
+            except (TypeError, ValueError):
+                pass
+        out["wms"] = total
+        out["wms_bodega"] = INC_BODEGA_WMS
+        out["cuadra_wms"] = abs(total - cantidad_declarada) < 0.001
+
+    if out["cuadra_erp"] is None and out["cuadra_wms"] is None:
+        out["veredicto"] = "sin_datos"
+    elif out["cuadra_erp"] is False:
+        out["veredicto"] = "dif_erp"
+    elif out["cuadra_wms"] is False:
+        out["veredicto"] = "dif_wms"
+    else:
+        out["veredicto"] = "cuadra"
+    return out
+
+
+def _inc_log(iid, accion, campo=None, antes=None, despues=None):
+    """Bitácora append-only (Daniel: "trazable y escalable"). Nunca rompe
+    la operación principal: si el log falla, la acción igual se completa."""
+    try:
+        mysql_execute(
+            "INSERT INTO mant_incidencia_log "
+            "(incidencia_id, accion, campo, valor_antes, valor_despues, usuario) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (iid, accion, campo,
+             (str(antes)[:2000] if antes is not None else None),
+             (str(despues)[:2000] if despues is not None else None),
+             current_username()))
+    except Exception as _e:
+        print(f"[_inc_log] {_e}", flush=True)
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>/fotos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencia_foto_subir(iid):
+    """Sube una foto de evidencia (máx 3). Mismo patrón que el Catálogo."""
+    if not mysql_fetchone("SELECT id FROM mant_incidencias WHERE id=%s", (iid,)):
+        return jsonify({"ok": False, "error": "Incidencia no encontrada."}), 404
+    f = request.files.get("file") or request.files.get("archivo")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "No llegó ningún archivo."}), 400
+    n = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_incidencia_fotos WHERE incidencia_id=%s",
+        (iid,)) or {}).get("n") or 0)
+    if n >= INC_MAX_FOTOS:
+        return jsonify({"ok": False,
+                        "error": f"Máximo {INC_MAX_FOTOS} fotos por incidencia."}), 400
+    try:
+        res = _uploader_upload(f, folder="incidencias", resource_type="image")
+    except Exception as _e:
+        print(f"[inc_foto_subir] iid={iid}: {_e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir la foto."}), 500
+    key = res.get("public_id")
+    if not key:
+        return jsonify({"ok": False, "error": "Subida sin resultado válido."}), 500
+    # Reintento por si dos subidas calculan el mismo `orden` (mismo bug ya
+    # visto en el Catálogo con archivos lentos / doble clic).
+    for _ in range(5):
+        try:
+            mysql_execute(
+                "INSERT INTO mant_incidencia_fotos (incidencia_id, gcs_key, orden, created_by) "
+                "VALUES (%s,%s,(SELECT COALESCE(MAX(orden),0)+1 FROM mant_incidencia_fotos "
+                "               WHERE incidencia_id=%s),%s)",
+                (iid, key, iid, current_username()))
+            break
+        except Exception as _e:
+            _last = _e
+    else:
+        print(f"[inc_foto_subir] no se pudo registrar iid={iid}: {_last}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar la foto."}), 500
+    _inc_log(iid, "foto_agregada", "fotos", None, key)
+    return jsonify({"ok": True, "url": "/f/" + key})
+
+
+@app.route("/mantenciones/api/incidencias/<int:iid>/fotos/<int:fid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencia_foto_borrar(iid, fid):
+    foto = mysql_fetchone(
+        "SELECT gcs_key FROM mant_incidencia_fotos WHERE id=%s AND incidencia_id=%s",
+        (fid, iid))
+    if not foto:
+        return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
+    mysql_execute("DELETE FROM mant_incidencia_fotos WHERE id=%s", (fid,))
+    try:
+        _uploader_destroy(foto["gcs_key"])
+    except Exception:
+        pass   # el registro ya se borró; el huérfano en GCS no bloquea
+    _inc_log(iid, "foto_eliminada", "fotos", foto["gcs_key"], None)
     return jsonify({"ok": True})
 
 
