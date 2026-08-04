@@ -43818,6 +43818,17 @@ def init_mantenciones_tables():
             # directo (solo lectura) del Clever Cloud viejo (DSN=SPHS).
             # Guardado por COUNT(*)=0 -- idempotente, no duplica en cada
             # redeploy ni si Daniel ya cargó datos nuevos a mano.
+            # CANDADO (2026-08-03): sin él, dos workers de Gunicorn que
+            # arrancan a la vez ven ambos la tabla vacía y ambos insertan
+            # las 72 filas -> 144 duplicadas. Pasó de verdad en producción.
+            # GET_LOCK es un lock consultivo de MySQL, compartido entre
+            # procesos; el segundo worker espera, ve COUNT>0 y no inserta.
+            _lock_ok = False
+            try:
+                cur.execute("SELECT GET_LOCK('ilus_inc_seed', 15) AS l")
+                _lock_ok = bool((cur.fetchone() or {}).get("l"))
+            except Exception:
+                _lock_ok = False
             cur.execute("SELECT COUNT(*) AS n FROM mant_incidencias")
             if cur.fetchone()["n"] == 0:
                 cur.executemany(
@@ -43828,6 +43839,12 @@ def init_mantenciones_tables():
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'migracion:clevercloud-legacy')""",
                     _INC_LEGACY_SEED,
                 )
+            if _lock_ok:
+                try:
+                    cur.execute("SELECT RELEASE_LOCK('ilus_inc_seed')")
+                    cur.fetchone()
+                except Exception:
+                    pass
 
             # ── Log de actividad ────────────────────────────────────
             cur.execute("""
@@ -52303,6 +52320,71 @@ def mant_api_incidencias_borrar(iid):
         cur.execute("DELETE FROM mant_incidencias WHERE id=%s", (iid,))
         db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/incidencias/deduplicar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_api_incidencias_deduplicar():
+    """Limpia duplicados EXACTOS creados por el seed de migración.
+
+    Contexto (2026-08-03): el seed inicial no tenía candado, dos workers de
+    Gunicorn arrancaron a la vez, ambos vieron la tabla vacía y ambos
+    insertaron las 72 filas -> 144. El candado ya está puesto
+    (GET_LOCK en init_mantenciones_tables); esto limpia lo que quedó.
+
+    MUY conservador a propósito:
+      · Solo toca filas con created_by='migracion:clevercloud-legacy'.
+      · Solo agrupa por contenido IDÉNTICO (sku+descripcion+cantidad+
+        motivo+recomendacion). Dos incidencias legítimas del mismo SKU con
+        UA distinta NO se tocan.
+      · Conserva SIEMPRE el id más bajo de cada grupo.
+      · Sin `confirmar=1` es una vista previa: no borra nada.
+    """
+    perms = g.get("permissions") or {}
+    if not perms.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin."}), 403
+    data = request.get_json(silent=True) or {}
+    confirmar = bool(data.get("confirmar"))
+    ORIGEN = "migracion:clevercloud-legacy"
+
+    filas = mysql_fetchall(
+        "SELECT id, sku, descripcion, cantidad, motivo, recomendacion "
+        "  FROM mant_incidencias WHERE created_by=%s ORDER BY id", (ORIGEN,)) or []
+    grupos = {}
+    for f in filas:
+        clave = "|".join([str(f.get(c) or "") for c in
+                          ("sku", "descripcion", "cantidad", "motivo", "recomendacion")])
+        grupos.setdefault(clave, []).append(f["id"])
+
+    a_borrar = []
+    for ids in grupos.values():
+        if len(ids) > 1:
+            a_borrar.extend(sorted(ids)[1:])   # conserva el más bajo
+
+    if not confirmar:
+        return jsonify({"ok": True, "preview": True,
+                        "total_migradas": len(filas), "unicas": len(grupos),
+                        "a_borrar": len(a_borrar), "ids": a_borrar[:50]})
+
+    if not a_borrar:
+        return jsonify({"ok": True, "borradas": 0, "restantes": len(filas)})
+
+    # Solo borra las que NO tengan evidencia adjunta (nunca se pierde trabajo).
+    con_foto = {r["incidencia_id"] for r in (mysql_fetchall(
+        "SELECT DISTINCT incidencia_id FROM mant_incidencia_fotos") or [])}
+    a_borrar = [i for i in a_borrar if i not in con_foto]
+
+    db = get_db()
+    with db.cursor() as cur:
+        for chunk_start in range(0, len(a_borrar), 200):
+            chunk = a_borrar[chunk_start:chunk_start + 200]
+            ph = ",".join(["%s"] * len(chunk))
+            cur.execute(f"DELETE FROM mant_incidencias WHERE id IN ({ph})", chunk)
+        db.commit()
+    restantes = (mysql_fetchone("SELECT COUNT(*) AS n FROM mant_incidencias") or {}).get("n")
+    print(f"[incidencias] deduplicar: {len(a_borrar)} borradas por {current_username()}", flush=True)
+    return jsonify({"ok": True, "borradas": len(a_borrar), "restantes": restantes})
 
 
 INC_MAX_FOTOS = 3   # Daniel 2026-08-03: "o al menos 3"
