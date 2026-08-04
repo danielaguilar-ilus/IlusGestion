@@ -101,7 +101,7 @@
                de esquema) para no perder los pocos casos con nota real, y
                queda listo para poblarse desde una API externa cuando Daniel
                comparta las credenciales -- sin migración adicional. #}
-            <label class="form-label">N° UA <span class="text-muted" style="font-weight:400;font-size:.78rem">(Unidad de Armado)</span></label>
+            <label class="form-label">N° UA <span class="text-muted" style="font-weight:400;font-size:.78rem">(Unidad de Almacenamiento — CheckWMS)</span></label>
             {# 2026-08-03 (Daniel: conexión real a CheckWMS con credenciales
                que compartió): botón "Buscar" trae SKU/Descripción/OT desde
                la API y autocompleta. Sigue siendo editable a mano -- si
@@ -111,6 +111,11 @@
               <textarea class="form-control" id="incRecomendacion" rows="2" placeholder="Ej: UA1007933"></textarea>
               <button class="btn btn-ilus-outline" id="incBtnBuscarUa" type="button" title="Buscar este código UA en CheckWMS">
                 <i class="bi bi-search"></i> Buscar</button>
+            </div>
+            <div class="form-text">
+              Formato: <code>UA</code> + número (ej. <code>UA1012965</code>). Puedes escribir solo
+              el número y se completa solo. CheckWMS guarda movimientos desde
+              <strong>junio 2026</strong> — códigos más antiguos no aparecerán.
             </div>
             <div id="incUaResultado" class="form-text"></div>
           </div>
@@ -309,11 +314,16 @@
     var codigo = document.getElementById('incRecomendacion').value.trim();
     var res = document.getElementById('incUaResultado');
     if(!codigo){ ilusToast('Escribe primero el código UA', {type:'warning'}); return; }
-    res.textContent = 'Buscando en CheckWMS…';
+    res.textContent = 'Buscando en CheckWMS… (puede tardar hasta 30s la primera vez)';
     fetch('/mantenciones/api/incidencias/buscar-ua?codigo='+encodeURIComponent(codigo))
       .then(function(r){return r.json();}).then(function(data){
         if(!data.ok){ res.innerHTML = '<span class="text-danger">'+(data.error||'No se pudo consultar CheckWMS.')+'</span>'; return; }
-        if(!data.found){ res.innerHTML = '<span class="text-warning">No se encontró ese código UA en CheckWMS.</span>'; return; }
+        if(!data.found){
+          res.innerHTML = '<span class="text-warning">No se encontró <b>'+(data.codigo_normalizado||codigo)+'</b> '
+            + 'entre las '+(data.total_uas||'—')+' UA de CheckWMS'
+            + (data.desde ? (' (datos desde '+data.desde.split('-').reverse().join('/')+')') : '')+'.</span>';
+          return;
+        }
         if(data.sku) document.getElementById('incSku').value = data.sku;
         if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
         var html = '<span class="text-success">✓ Encontrado — OT '+(data.ot||'—')+' · '+(data.estado||'—')
@@ -325,6 +335,21 @@
           html += '<br><span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+resp.alerta+'</span>';
         } else if(resp && resp.encontrado === true){
           html += '<br><span class="text-muted">Respaldado por '+resp.doc_ref+' en Random ('+(resp.fecha_erp||'—')+').</span>';
+        }
+        // Daniel 2026-08-03: "si la UA >1 deberán desglosar en las UA
+        // necesarias" -- una misma UA puede agrupar varios SKU (pallet /
+        // OT multi-línea). Se avisa para que no se registre una sola
+        // incidencia cubriendo productos distintos.
+        var skus = data.skus_en_ua || [];
+        if(skus.length > 1){
+          html += '<br><span class="text-warning"><i class="bi bi-diagram-3 me-1"></i>'
+            + 'Esta UA agrupa <b>'+skus.length+' productos distintos</b> — registra una incidencia por producto:</span>'
+            + '<ul style="margin:4px 0 0 18px;font-size:.78rem">'
+            + skus.map(function(s){
+                return '<li><code>'+(s.sku||'—')+'</code> — '+(s.descripcion||'')
+                  + ' <span class="text-muted">(solicitado '+(s.sol!=null?s.sol:'—')+' / ejecutado '+(s.ejec!=null?s.ejec:'—')+')</span></li>';
+              }).join('')
+            + '</ul>';
         }
         res.innerHTML = html;
       }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });

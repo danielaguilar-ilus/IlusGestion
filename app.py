@@ -51562,7 +51562,7 @@ def cotizaciones_hub_list():
     )
 
 
-def _checkwms_get(path: str, params: dict) -> dict | None:
+def _checkwms_get(path: str, params: dict, timeout: int = 60) -> dict | None:
     """GET de solo lectura contra CheckWMS (sistema de bodega externo).
 
     La API es inconsistente con el nombre de sus headers de auth entre
@@ -51570,7 +51570,11 @@ def _checkwms_get(path: str, params: dict) -> dict | None:
     otros) -- se mandan ambas variantes para no depender de cuál usa cada
     endpoint. Sin credenciales configuradas (CHECKWMS_UID_INS/UID_ERP)
     devuelve None de inmediato (fail-soft, el módulo Incidencias sigue
-    funcionando 100% manual sin esto)."""
+    funcionando 100% manual sin esto).
+
+    timeout alto a propósito: GetStockTrazabilidad devuelve ~5,4 MB y
+    tarda 15-35 s (medido 2026-08-03). Con 12 s NUNCA alcanzaba a
+    responder -- ese era el bug de "CheckWMS no disponible"."""
     if not (CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp")):
         return None
     import requests as _req
@@ -51585,13 +51589,52 @@ def _checkwms_get(path: str, params: dict) -> dict | None:
                 "uidInsMe":    CHECKWMS_CONFIG["uid_ins"],
                 "Accept":      "application/json",
             },
-            timeout=12,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()
     except Exception as _e:
         print(f"[checkwms] error consultando {path}: {_e}", flush=True)
         return None
+
+
+# Cache del dump completo de trazabilidad. Necesario porque el parámetro
+# `codUa` de la API CUELGA la conexión (verificado 2026-08-03: 60 s sin
+# responder con filtro vs 15-35 s sin filtro). Se trae todo una vez y se
+# filtra en Python. ~10.400 filas / 5,4 MB, TTL 10 min.
+_CHECKWMS_TRAZA = {"ts": 0, "rows": None, "lock": threading.Lock()}
+_CHECKWMS_TRAZA_TTL = 600
+
+
+def _checkwms_trazabilidad_rows(forzar: bool = False) -> list | None:
+    """Filas de GetStockTrazabilidad, cacheadas. None si no se pudo traer."""
+    now = time.time()
+    if (not forzar and _CHECKWMS_TRAZA["rows"] is not None
+            and (now - _CHECKWMS_TRAZA["ts"]) < _CHECKWMS_TRAZA_TTL):
+        return _CHECKWMS_TRAZA["rows"]
+    with _CHECKWMS_TRAZA["lock"]:
+        # Doble chequeo: otro hilo pudo refrescar mientras esperábamos.
+        if (not forzar and _CHECKWMS_TRAZA["rows"] is not None
+                and (time.time() - _CHECKWMS_TRAZA["ts"]) < _CHECKWMS_TRAZA_TTL):
+            return _CHECKWMS_TRAZA["rows"]
+        data = _checkwms_get("/api/ext/GetStockTrazabilidad", {})
+        if data is None:
+            return _CHECKWMS_TRAZA["rows"]   # sirve lo viejo si existe
+        rows = ((data or {}).get("body") or {}).get("response") or []
+        _CHECKWMS_TRAZA.update({"ts": time.time(), "rows": rows})
+        return rows
+
+
+def _checkwms_norm_ua(codigo: str) -> str:
+    """Normaliza lo que el usuario escribe al formato real del WMS.
+    La planilla legacy guardaba 'UA:1012965', 'UA1012965' o sólo el
+    número -- todas deben llegar a 'UA1012965'."""
+    s = (codigo or "").strip().upper().replace(" ", "").replace(":", "")
+    if not s:
+        return ""
+    if s.startswith("UAPCKM") or s.startswith("UA"):
+        return s
+    return "UA" + s if s.isdigit() else s
 
 
 def _checkwms_respaldo_erp(doc_ref: str, fecha_wms: str) -> dict:
@@ -51646,24 +51689,47 @@ def mant_api_incidencias_buscar_ua():
     código UA en CheckWMS (2026-08-03, Daniel: integración real vía API),
     y cruza el documento contra el ERP Random para detectar salidas de
     bodega sin respaldo o declaradas tarde."""
-    codigo = (request.args.get("codigo") or "").strip()
+    codigo = _checkwms_norm_ua(request.args.get("codigo") or "")
     if not codigo:
         return jsonify({"ok": False, "error": "Falta el código UA."}), 400
-    data = _checkwms_get("/api/ext/GetStockTrazabilidad", {"codUa": codigo})
-    if data is None:
-        return jsonify({"ok": False, "error": "CheckWMS no disponible o no configurado."}), 502
-    rows = ((data or {}).get("body") or {}).get("response") or []
+
+    todas = _checkwms_trazabilidad_rows()
+    if todas is None:
+        return jsonify({"ok": False,
+                        "error": "CheckWMS no respondió. Reintenta en un minuto."}), 502
+
+    rows = [r for r in todas if (r.get("ua") or "").strip().upper() == codigo]
     if not rows:
-        return jsonify({"ok": True, "found": False})
+        # Fecha más antigua disponible: explica los "no encontrado" de UA
+        # viejas sin que Daniel tenga que adivinar.
+        fechas = sorted(f for f in ((r.get("feInicioOT") or "") for r in todas) if f)
+        desde = fechas[0][:10] if fechas else None
+        return jsonify({"ok": True, "found": False,
+                        "codigo_normalizado": codigo,
+                        "desde": desde, "total_uas": len({(r.get("ua") or "") for r in todas})})
+
     r = rows[0]
     fecha_wms = r.get("fechaFin") or r.get("feInicioOT")
     respaldo = _checkwms_respaldo_erp(r.get("doc") or "", fecha_wms)
+    # Una UA puede agrupar VARIOS SKU distintos (un pallet, una OT con
+    # varias líneas). Daniel: "si la UA >1 deberán desglosar en las UA
+    # necesarias" -- se devuelve el desglose para que la UI avise.
+    skus = []
+    vistos = set()
+    for x in rows:
+        k = (x.get("codigo") or "").strip()
+        if k and k not in vistos:
+            vistos.add(k)
+            skus.append({"sku": k, "descripcion": x.get("descripcion"),
+                         "sol": x.get("sol"), "ejec": x.get("ejec")})
     return jsonify({
         "ok": True, "found": True,
         "sku": r.get("codigo"), "descripcion": r.get("descripcion"),
         "ot": r.get("ot"), "estado": r.get("estado"), "bodega": r.get("bodega"),
         "cliente": r.get("entidad"), "fecha": fecha_wms,
+        "tipo_ot": r.get("tipoOT"),
         "items_relacionados": len(rows),
+        "skus_en_ua": skus,
         "respaldo_erp": respaldo,
     })
 
