@@ -51945,7 +51945,7 @@ def mant_api_incidencias_crear():
              req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
              stock_repuesto, (data.get("observacion") or "").strip() or None,
              fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
-             (current_user.username if current_user else None)),
+             current_username()),
         )
         db.commit()
         new_id = cur.lastrowid
@@ -51989,7 +51989,7 @@ def mant_api_incidencias_editar(iid):
              req_repuesto, (data.get("descripcion_repuesto") or "").strip() or None,
              stock_repuesto, (data.get("observacion") or "").strip() or None,
              fecha_resolucion, (data.get("recomendacion") or "").strip() or None,
-             estado, (current_user.username if current_user else None), iid),
+             estado, current_username(), iid),
         )
         db.commit()
     return jsonify({"ok": True})
@@ -52088,7 +52088,7 @@ def mant_api_incidencias_importar():
                  _opt(_pick(row, "stock_repuesto"), stock_map),
                  _pick(row, "observacion"), fecha_sql,
                  _pick(row, "recomendacion"),
-                 f"import:{current_user.username if current_user else '?'}"),
+                 f"import:{current_username() or '?'}"),
             )
             insertados += 1
         db.commit()
