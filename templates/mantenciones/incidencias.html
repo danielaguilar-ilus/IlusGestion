@@ -73,15 +73,17 @@
             <div><b>¿En qué unidad de almacenamiento está?</b>
               <small>Búscala y traemos el producto automáticamente desde el WMS.</small></div>
           </div>
-          <label class="form-label">N° UA <span class="text-danger">*</span></label>
-          <div class="input-group input-group-lg">
-            <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
-            <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
-              <i class="bi bi-search me-1"></i>Buscar</button>
-          </div>
-          <div class="form-text">
-            Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
-            del WMS y en el historial de movimientos.
+          <div class="inc-campo" data-campo="incRecomendacion">
+            <label class="form-label">N° UA <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+            <div class="input-group input-group-lg">
+              <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
+              <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
+                <i class="bi bi-search me-1"></i>Buscar</button>
+            </div>
+            <div class="form-text">
+              Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
+              del WMS y en el historial de movimientos.
+            </div>
           </div>
           <div id="incUaResultado" class="inc-resultado"></div>
         </section>
@@ -94,16 +96,16 @@
               <small>Verifica lo que trajo el WMS y ajusta la cantidad afectada.</small></div>
           </div>
           <div class="row g-3">
-            <div class="col-md-5">
-              <label class="form-label">SKU <span class="text-danger">*</span></label>
+            <div class="col-md-5 inc-campo" data-campo="incSku">
+              <label class="form-label">SKU <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
               <input type="text" class="form-control" id="incSku" placeholder="Ej: TWMA305-140">
             </div>
-            <div class="col-md-7">
-              <label class="form-label">Nombre del producto <span class="text-danger">*</span></label>
+            <div class="col-md-7 inc-campo" data-campo="incDescripcion">
+              <label class="form-label">Nombre del producto <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
               <input type="text" class="form-control" id="incDescripcion" required>
             </div>
-            <div class="col-md-4">
-              <label class="form-label">Cantidad afectada <span class="text-danger">*</span></label>
+            <div class="col-md-4 inc-campo" data-campo="incCantidad">
+              <label class="form-label">Cantidad afectada <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
               <input type="number" class="form-control form-control-lg" id="incCantidad" min="1" value="1">
               <div class="form-text">Debe ser 1 o más.</div>
             </div>
@@ -124,12 +126,14 @@
             <div><b>¿Qué pasó exactamente?</b>
               <small>Es el campo más importante: explica la falla o el faltante con claridad.</small></div>
           </div>
-          <label class="form-label">Motivo <span class="text-danger">*</span></label>
-          <textarea class="form-control inc-motivo" id="incMotivo" rows="4"
-                    placeholder="Ej: falta acrílico derecho del lado selector de pesos"></textarea>
-          <div class="d-flex justify-content-between align-items-center mt-1">
-            <div class="form-text mb-0">Mínimo 10 caracteres. Sé concreto: qué pieza, qué lado, qué falla.</div>
-            <span class="inc-contador" id="incMotivoCount">0</span>
+          <div class="inc-campo" data-campo="incMotivo">
+            <label class="form-label">Motivo <span class="text-danger">*</span><i class="bi bi-check-circle-fill inc-tick"></i></label>
+            <textarea class="form-control inc-motivo" id="incMotivo" rows="9"
+                      placeholder="Ej: falta acrílico derecho del lado selector de pesos&#10;&#10;Describe con detalle: qué pieza falta o falló, de qué lado, en qué condición llegó, y cualquier dato que ayude al técnico."></textarea>
+            <div class="d-flex justify-content-between align-items-center mt-1">
+              <div class="form-text mb-0">Mínimo 10 caracteres. Sé concreto: qué pieza, qué lado, qué falla.</div>
+              <span class="inc-contador" id="incMotivoCount">0</span>
+            </div>
           </div>
           <div class="inc-chips" id="incMotivoChips">
             <span class="inc-chip-lbl">Rápidos:</span>
@@ -306,6 +310,22 @@
 .inc-resumen b{color:#0f172a}
 .inc-footer{gap:8px}
 .form-control.is-invalid,.form-select.is-invalid{border-color:#dc2626;box-shadow:0 0 0 .16rem rgba(220,38,38,.14)}
+
+/* Validación en verde campo por campo (Daniel 2026-08-03: "lo que quería
+   en verde era cada sección, como SKU, descripción y cantidad"). El campo
+   se marca solo al quedar válido -- confirmación visual inmediata. */
+.inc-campo{position:relative}
+.inc-campo .form-label{transition:color .18s}
+.inc-campo.ok .form-label{color:#16a34a}
+.inc-campo.ok .form-label .inc-tick{opacity:1;transform:scale(1)}
+.inc-tick{display:inline-block;margin-left:5px;color:#16a34a;opacity:0;transform:scale(.6);
+  transition:opacity .18s,transform .18s}
+.inc-campo.ok .form-control,.inc-campo.ok .form-select{
+  border-color:#16a34a;background:#f6fefa}
+.inc-campo.ok .form-control:focus,.inc-campo.ok .form-select:focus{
+  box-shadow:0 0 0 .18rem rgba(22,163,74,.16)}
+.inc-campo.ok .input-group .form-control{border-color:#16a34a}
+.inc-campo.ok .inc-motivo{border-color:#16a34a;background:#f6fefa}
 @media (max-width:640px){
   .inc-step-t small{display:none}
   .inc-step{min-width:74px;padding:0 4px 12px}
@@ -404,6 +424,31 @@
     el.focus();
     setTimeout(function(){ el.classList.remove('is-invalid'); }, 2600);
   }
+
+  // Verde por campo (Daniel 2026-08-03). Cada campo obligatorio se marca
+  // apenas queda válido, sin esperar a "Siguiente".
+  var INC_REGLAS = {
+    incRecomendacion: function(v){ return v.trim().length > 0; },
+    incSku:           function(v){ return v.trim().length > 0; },
+    incDescripcion:   function(v){ return v.trim().length > 0; },
+    incCantidad:      function(v){ var n = parseInt(v, 10); return !!n && n >= 1; },
+    incMotivo:        function(v){ return v.trim().length >= 10; },
+  };
+
+  function refrescarVerde(id){
+    var el = document.getElementById(id);
+    if(!el) return;
+    var cont = el.closest('.inc-campo');
+    if(!cont) return;
+    cont.classList.toggle('ok', !!INC_REGLAS[id](el.value || ''));
+  }
+
+  function refrescarVerdeTodos(){ Object.keys(INC_REGLAS).forEach(refrescarVerde); }
+
+  Object.keys(INC_REGLAS).forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.addEventListener('input', function(){ refrescarVerde(id); });
+  });
 
   function pintarPasos(){
     document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
@@ -518,6 +563,7 @@
     $('incMotivoCount').classList.remove('ok');
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = 'none';
+    refrescarVerdeTodos();
     irAPaso(1);
   }
 
@@ -539,6 +585,7 @@
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
     document.getElementById('incMotivo').dispatchEvent(new Event('input'));
+    refrescarVerdeTodos();
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = '';
     irAPaso(1);
@@ -574,6 +621,7 @@
         if(!descalce){
           if(data.sku) skuInput.value = data.sku;
           if(data.descripcion) document.getElementById('incDescripcion').value = data.descripcion;
+          refrescarVerdeTodos();
         }
         // Ubicación actual (GetReporteStock) primero -- es lo que el
         // usuario ve en la pantalla "Reporte Stock" del WMS.
