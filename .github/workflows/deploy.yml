@@ -158,6 +158,12 @@ jobs:
           # autocompletar codigos UA en Incidencias (Servicio Tecnico).
           CHECKWMS_UID_INS:               ${{ secrets.CHECKWMS_UID_INS }}
           CHECKWMS_UID_ERP:               ${{ secrets.CHECKWMS_UID_ERP }}
+          # Shipit (2026-08-04) — agregador de couriers, pedido del area para
+          # unificar en la plataforma. Autenticacion por 2 headers:
+          # X-Shipit-Email + X-Shipit-Access-Token. Aun sin integracion en
+          # codigo — los secrets quedan listos para cuando se construya.
+          SHIPIT_API_TOKEN:               ${{ secrets.SHIPIT_API_TOKEN }}
+          SHIPIT_API_EMAIL:               ${{ secrets.SHIPIT_API_EMAIL }}
         run: |
           # Heredoc: el contenido NO aparece en los logs de Actions
           cat > /tmp/env.yaml <<'EOF_ENV_YAML'
@@ -167,7 +173,7 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|CHECKWMS_UID_INS|CHECKWMS_UID_ERP):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
@@ -193,6 +199,9 @@ jobs:
           echo "Credenciales CheckWMS:"
           append_env CHECKWMS_UID_INS              "$CHECKWMS_UID_INS"
           append_env CHECKWMS_UID_ERP              "$CHECKWMS_UID_ERP"
+          echo "Credenciales Shipit:"
+          append_env SHIPIT_API_TOKEN              "$SHIPIT_API_TOKEN"
+          append_env SHIPIT_API_EMAIL              "$SHIPIT_API_EMAIL"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
