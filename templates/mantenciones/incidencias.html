@@ -38,96 +38,164 @@
         <h5 class="modal-title" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2"></i>Nueva incidencia</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
-        <input type="hidden" id="incId">
-        <div class="row g-2">
-          <div class="col-md-4">
-            <label class="form-label">SKU</label>
-            <input type="text" class="form-control" id="incSku">
-          </div>
-          <div class="col-md-8">
-            <label class="form-label">Descripción <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="incDescripcion" required>
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Cantidad</label>
-            <input type="number" class="form-control" id="incCantidad" value="0">
-          </div>
-          <div class="col-md-5">
-            <label class="form-label">Motivo</label>
-            <input type="text" class="form-control" id="incMotivo" placeholder="Ej: faltante en despacho ERP">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">Estado</label>
-            <select class="form-select" id="incEstado">
-              <option value="abierta">Abierta</option>
-              <option value="resuelta">Resuelta</option>
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">¿Requiere repuesto?</label>
-            <select class="form-select" id="incReqRepuesto">
-              <option value="">—</option>
-              <option value="si">Sí</option>
-              <option value="no">No</option>
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">Stock del repuesto</label>
-            <select class="form-select" id="incStockRepuesto">
-              <option value="">—</option>
-              <option value="hay">Hay</option>
-              <option value="no_hay">No hay</option>
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">Fecha de resolución</label>
-            <input type="date" class="form-control" id="incFechaResolucion">
-          </div>
-          <div class="col-12">
-            <label class="form-label">Descripción del repuesto</label>
-            <input type="text" class="form-control" id="incDescripcionRepuesto">
-          </div>
-          <div class="col-12">
-            <label class="form-label">Observación</label>
-            <textarea class="form-control" id="incObservacion" rows="2"></textarea>
-          </div>
-          <div class="col-12">
-            {# 2026-08-03 (Daniel): en la planilla legado este campo casi
-               siempre traía un código UA (Unidad de Armado, mismo concepto
-               que "ua" en mant_repuestos), no una recomendación en texto
-               libre -- se relabela para reflejar lo que realmente contiene.
-               Sigue siendo texto libre (columna `recomendacion`, sin cambio
-               de esquema) para no perder los pocos casos con nota real, y
-               queda listo para poblarse desde una API externa cuando Daniel
-               comparta las credenciales -- sin migración adicional. #}
-            <label class="form-label">N° UA <span class="text-muted" style="font-weight:400;font-size:.78rem">(Unidad de Almacenamiento — CheckWMS)</span></label>
-            {# 2026-08-03 (Daniel: conexión real a CheckWMS con credenciales
-               que compartió): botón "Buscar" trae SKU/Descripción/OT desde
-               la API y autocompleta. Sigue siendo editable a mano -- si
-               CheckWMS no responde (sin credenciales, caído, código no
-               encontrado) el campo se comporta exactamente igual que antes. #}
-            <div class="input-group">
-              <textarea class="form-control" id="incRecomendacion" rows="2" placeholder="Ej: UA1007933"></textarea>
-              <button class="btn btn-ilus-outline" id="incBtnBuscarUa" type="button" title="Buscar este código UA en CheckWMS">
-                <i class="bi bi-search"></i> Buscar</button>
-            </div>
-            <div class="form-text">
-              Formato: <code>UA</code> + número (ej. <code>UA1012965</code>). Puedes escribir solo
-              el número y se completa solo. Busca en el <strong>stock actual</strong> del WMS
-              (todas las bodegas) y en el historial de movimientos.
-            </div>
-            <div id="incUaResultado" class="form-text"></div>
-          </div>
+      {# ── Stepper (2026-08-03, Daniel: "algo bien dinámico, bonito,
+         colorido, que sea un paso a paso, como siempre hemos venido
+         trabajando"). Orden deliberado: la UA va PRIMERO porque es
+         obligatoria para guardar y porque autocompleta el producto,
+         evitando tipeo manual y errores. #}
+      <div class="inc-steps" id="incSteps">
+        <div class="inc-step" data-step="1">
+          <span class="inc-step-n"><i class="bi bi-upc-scan"></i></span>
+          <span class="inc-step-t">Unidad<small>de almacenamiento</small></span>
+        </div>
+        <div class="inc-step" data-step="2">
+          <span class="inc-step-n"><i class="bi bi-box-seam"></i></span>
+          <span class="inc-step-t">Producto<small>SKU y cantidad</small></span>
+        </div>
+        <div class="inc-step" data-step="3">
+          <span class="inc-step-n"><i class="bi bi-chat-left-quote"></i></span>
+          <span class="inc-step-t">Motivo<small>qué pasó</small></span>
+        </div>
+        <div class="inc-step" data-step="4">
+          <span class="inc-step-n"><i class="bi bi-wrench-adjustable"></i></span>
+          <span class="inc-step-t">Detalle<small>opcional</small></span>
         </div>
       </div>
-      <div class="modal-footer">
+      <div class="inc-progress"><div class="inc-progress-bar" id="incProgressBar"></div></div>
+
+      <div class="modal-body">
+        <input type="hidden" id="incId">
+
+        {# ══ PASO 1 — UA (obligatoria) ══ #}
+        <section class="inc-pane" data-pane="1">
+          <div class="inc-pane-head inc-c1">
+            <i class="bi bi-upc-scan"></i>
+            <div><b>¿En qué unidad de almacenamiento está?</b>
+              <small>Búscala y traemos el producto automáticamente desde el WMS.</small></div>
+          </div>
+          <label class="form-label">N° UA <span class="text-danger">*</span></label>
+          <div class="input-group input-group-lg">
+            <input type="text" class="form-control" id="incRecomendacion" placeholder="Ej: UA1007933" autocomplete="off">
+            <button class="btn btn-ilus" id="incBtnBuscarUa" type="button" title="Buscar en CheckWMS">
+              <i class="bi bi-search me-1"></i>Buscar</button>
+          </div>
+          <div class="form-text">
+            Escribe solo el número y se completa solo. Busca en el <strong>stock actual</strong>
+            del WMS y en el historial de movimientos.
+          </div>
+          <div id="incUaResultado" class="inc-resultado"></div>
+        </section>
+
+        {# ══ PASO 2 — Producto ══ #}
+        <section class="inc-pane" data-pane="2" hidden>
+          <div class="inc-pane-head inc-c2">
+            <i class="bi bi-box-seam"></i>
+            <div><b>¿Qué producto es y cuántas unidades?</b>
+              <small>Verifica lo que trajo el WMS y ajusta la cantidad afectada.</small></div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="form-label">SKU <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="incSku" placeholder="Ej: TWMA305-140">
+            </div>
+            <div class="col-md-7">
+              <label class="form-label">Nombre del producto <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="incDescripcion" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Cantidad afectada <span class="text-danger">*</span></label>
+              <input type="number" class="form-control form-control-lg" id="incCantidad" min="1" value="1">
+              <div class="form-text">Debe ser 1 o más.</div>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label">Estado</label>
+              <select class="form-select" id="incEstado">
+                <option value="abierta">Abierta — pendiente de resolver</option>
+                <option value="resuelta">Resuelta</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {# ══ PASO 3 — Motivo (el protagonista) ══ #}
+        <section class="inc-pane" data-pane="3" hidden>
+          <div class="inc-pane-head inc-c3">
+            <i class="bi bi-chat-left-quote"></i>
+            <div><b>¿Qué pasó exactamente?</b>
+              <small>Es el campo más importante: explica la falla o el faltante con claridad.</small></div>
+          </div>
+          <label class="form-label">Motivo <span class="text-danger">*</span></label>
+          <textarea class="form-control inc-motivo" id="incMotivo" rows="4"
+                    placeholder="Ej: falta acrílico derecho del lado selector de pesos"></textarea>
+          <div class="d-flex justify-content-between align-items-center mt-1">
+            <div class="form-text mb-0">Mínimo 10 caracteres. Sé concreto: qué pieza, qué lado, qué falla.</div>
+            <span class="inc-contador" id="incMotivoCount">0</span>
+          </div>
+          <div class="inc-chips" id="incMotivoChips">
+            <span class="inc-chip-lbl">Rápidos:</span>
+            <button type="button" class="inc-chip">Falta pieza</button>
+            <button type="button" class="inc-chip">Llegó dañado del proveedor</button>
+            <button type="button" class="inc-chip">Se sacó para cubrir garantía</button>
+            <button type="button" class="inc-chip">Devolución de cliente</button>
+            <button type="button" class="inc-chip">Faltante en despacho</button>
+          </div>
+        </section>
+
+        {# ══ PASO 4 — Detalle opcional ══ #}
+        <section class="inc-pane" data-pane="4" hidden>
+          <div class="inc-pane-head inc-c4">
+            <i class="bi bi-wrench-adjustable"></i>
+            <div><b>Detalle del repuesto y notas</b>
+              <small>Todo esto es opcional — completa lo que sepas.</small></div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">¿Requiere repuesto?</label>
+              <select class="form-select" id="incReqRepuesto">
+                <option value="">— Sin definir</option>
+                <option value="si">Sí</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Stock del repuesto</label>
+              <select class="form-select" id="incStockRepuesto">
+                <option value="">— Sin definir</option>
+                <option value="hay">Hay</option>
+                <option value="no_hay">No hay</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Fecha de resolución</label>
+              <input type="date" class="form-control" id="incFechaResolucion">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Descripción del repuesto</label>
+              <input type="text" class="form-control" id="incDescripcionRepuesto"
+                     placeholder="Ej: 1 acrílico frontal + 8 embellecedores">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Observación</label>
+              <textarea class="form-control" id="incObservacion" rows="3"
+                        placeholder="Notas internas, seguimiento con proveedor, etc."></textarea>
+            </div>
+          </div>
+          <div class="inc-resumen" id="incResumen"></div>
+        </section>
+      </div>
+
+      <div class="modal-footer inc-footer">
         {% if permissions.admin or permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar</button>
         {% endif %}
+        <button type="button" class="btn btn-secondary" id="incBtnAtras" style="display:none">
+          <i class="bi bi-chevron-left me-1"></i>Atrás</button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-ilus" id="incBtnGuardar">Guardar</button>
+        <button type="button" class="btn btn-ilus" id="incBtnSiguiente">
+          Siguiente<i class="bi bi-chevron-right ms-1"></i></button>
+        <button type="button" class="btn btn-ilus" id="incBtnGuardar" style="display:none">
+          <i class="bi bi-check2-circle me-1"></i>Guardar incidencia</button>
       </div>
     </div>
   </div>
@@ -193,6 +261,56 @@
   padding:5px 12px;font-size:.78rem;transition:border-color .12s,color .12s}
 .inc-pg-btn:hover:not(:disabled){border-color:#dc2626;color:#dc2626}
 .inc-pg-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ══ Wizard paso a paso (2026-08-03) ══ */
+.inc-steps{display:flex;gap:0;padding:14px 18px 0;background:#fafbfc;border-bottom:0;overflow-x:auto}
+.inc-step{flex:1;display:flex;align-items:center;gap:9px;padding:0 10px 12px;position:relative;
+  opacity:.45;transition:opacity .2s;min-width:132px}
+.inc-step.on,.inc-step.done{opacity:1}
+.inc-step-n{width:34px;height:34px;flex:0 0 34px;border-radius:50%;display:grid;place-items:center;
+  background:#eef0f3;color:#9aa3ae;font-size:1rem;transition:background .25s,color .25s,transform .25s}
+.inc-step.on  .inc-step-n{background:var(--ilus-red,#dc2626);color:#fff;transform:scale(1.12);
+  box-shadow:0 0 0 5px rgba(220,38,38,.14)}
+.inc-step.done .inc-step-n{background:#16a34a;color:#fff}
+.inc-step-t{display:flex;flex-direction:column;line-height:1.15;font-size:.83rem;font-weight:700;color:#0f172a}
+.inc-step-t small{font-weight:500;font-size:.68rem;color:#6b7280}
+.inc-progress{height:3px;background:#eef0f3}
+.inc-progress-bar{height:100%;width:25%;background:linear-gradient(90deg,#dc2626,#f97316);
+  transition:width .35s cubic-bezier(.4,0,.2,1)}
+
+.inc-pane{animation:incFade .28s ease}
+@keyframes incFade{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.inc-pane-head{display:flex;gap:12px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-bottom:18px}
+.inc-pane-head i{font-size:1.4rem;line-height:1}
+.inc-pane-head b{display:block;font-size:.95rem;color:#0f172a}
+.inc-pane-head small{color:#5b6472;font-size:.79rem}
+.inc-c1{background:#eff6ff;border-left:4px solid #3b82f6} .inc-c1 i{color:#3b82f6}
+.inc-c2{background:#f5f3ff;border-left:4px solid #8b5cf6} .inc-c2 i{color:#8b5cf6}
+.inc-c3{background:#fff7ed;border-left:4px solid #f97316} .inc-c3 i{color:#f97316}
+.inc-c4{background:#f0fdf4;border-left:4px solid #16a34a} .inc-c4 i{color:#16a34a}
+
+.inc-motivo{font-size:1rem;line-height:1.5;border:2px solid #f2c8a8;background:#fffdfa}
+.inc-motivo:focus{border-color:#f97316;box-shadow:0 0 0 .18rem rgba(249,115,22,.16);background:#fff}
+.inc-contador{font-size:.72rem;font-weight:700;color:#9aa3ae}
+.inc-contador.ok{color:#16a34a}
+.inc-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:11px}
+.inc-chip-lbl{font-size:.72rem;color:#6b7280;font-weight:600}
+.inc-chip{background:#fff;border:1px solid #e5e7eb;border-radius:20px;padding:4px 12px;
+  font-size:.75rem;color:#374151;transition:all .13s}
+.inc-chip:hover{border-color:#f97316;color:#f97316;background:#fff7ed}
+
+.inc-resultado{margin-top:11px;font-size:.82rem;line-height:1.55}
+.inc-resultado:not(:empty){padding:11px 13px;border-radius:10px;background:#f8fafc;border:1px solid #eaecf0}
+.inc-resumen{margin-top:18px;padding:13px 15px;border-radius:11px;background:#fafbfc;
+  border:1px dashed #d7dbe0;font-size:.82rem;line-height:1.7}
+.inc-resumen b{color:#0f172a}
+.inc-footer{gap:8px}
+.form-control.is-invalid,.form-select.is-invalid{border-color:#dc2626;box-shadow:0 0 0 .16rem rgba(220,38,38,.14)}
+@media (max-width:640px){
+  .inc-step-t small{display:none}
+  .inc-step{min-width:74px;padding:0 4px 12px}
+  .inc-step-t{font-size:.72rem}
+}
 </style>
 
 <script>
@@ -274,18 +392,133 @@
     });
   }
 
+  // ══════════ Wizard paso a paso (2026-08-03, Daniel) ══════════
+  // Reglas de negocio pedidas: la UA es OBLIGATORIA para guardar; SKU,
+  // nombre y cantidad se validan; el MOTIVO es el campo protagonista
+  // (mínimo 10 caracteres); el resto es opcional.
+  var incPaso = 1, INC_PASOS = 4;
+
+  function $(id){ return document.getElementById(id); }
+  function marcarError(el){
+    el.classList.add('is-invalid');
+    el.focus();
+    setTimeout(function(){ el.classList.remove('is-invalid'); }, 2600);
+  }
+
+  function pintarPasos(){
+    document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
+      var n = parseInt(s.dataset.step, 10);
+      s.classList.toggle('on',   n === incPaso);
+      s.classList.toggle('done', n <  incPaso);
+    });
+    document.querySelectorAll('.inc-pane').forEach(function(p){
+      p.hidden = (parseInt(p.dataset.pane, 10) !== incPaso);
+    });
+    $('incProgressBar').style.width = Math.round(incPaso / INC_PASOS * 100) + '%';
+    $('incBtnAtras').style.display     = incPaso > 1 ? '' : 'none';
+    $('incBtnSiguiente').style.display = incPaso < INC_PASOS ? '' : 'none';
+    $('incBtnGuardar').style.display   = incPaso === INC_PASOS ? '' : 'none';
+    if(incPaso === INC_PASOS) pintarResumen();
+  }
+
+  function irAPaso(n){
+    incPaso = Math.max(1, Math.min(INC_PASOS, n));
+    pintarPasos();
+  }
+
+  // Valida el paso actual. Devuelve true si se puede avanzar.
+  function validarPaso(n){
+    if(n === 1){
+      var ua = $('incRecomendacion');
+      if(!ua.value.trim()){
+        marcarError(ua);
+        ilusToast('La Unidad de Almacenamiento es obligatoria', {type:'warning'});
+        return false;
+      }
+    }
+    if(n === 2){
+      var sku = $('incSku'), desc = $('incDescripcion'), cant = $('incCantidad');
+      if(!sku.value.trim()){
+        marcarError(sku); ilusToast('Indica el SKU del producto', {type:'warning'}); return false;
+      }
+      if(!desc.value.trim()){
+        marcarError(desc); ilusToast('Indica el nombre del producto', {type:'warning'}); return false;
+      }
+      var n_ = parseInt(cant.value, 10);
+      if(!n_ || n_ < 1){
+        marcarError(cant); ilusToast('La cantidad debe ser 1 o más', {type:'warning'}); return false;
+      }
+    }
+    if(n === 3){
+      var mot = $('incMotivo');
+      if(mot.value.trim().length < 10){
+        marcarError(mot);
+        ilusToast('Describe el motivo con al menos 10 caracteres', {type:'warning'});
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function pintarResumen(){
+    var req = $('incReqRepuesto').value;
+    $('incResumen').innerHTML =
+        '<b>Resumen</b><br>'
+      + '<i class="bi bi-upc-scan me-1 text-primary"></i>' + ($('incRecomendacion').value.trim() || '—')
+      + ' &nbsp;·&nbsp; <i class="bi bi-box-seam me-1" style="color:#8b5cf6"></i>'
+      + ($('incSku').value.trim() || '—') + ' — ' + ($('incDescripcion').value.trim() || '—')
+      + ' &nbsp;·&nbsp; <b>' + ($('incCantidad').value || 0) + '</b> unidad(es)<br>'
+      + '<i class="bi bi-chat-left-quote me-1" style="color:#f97316"></i>'
+      + ($('incMotivo').value.trim() || '—')
+      + (req ? ('<br><i class="bi bi-wrench-adjustable me-1 text-success"></i>Repuesto: '
+               + (req === 'si' ? 'Sí' : 'No')
+               + ($('incStockRepuesto').value
+                  ? (' · ' + ($('incStockRepuesto').value === 'hay' ? 'Hay stock' : 'Sin stock')) : '')) : '');
+  }
+
+  $('incBtnSiguiente').addEventListener('click', function(){
+    if(validarPaso(incPaso)) irAPaso(incPaso + 1);
+  });
+  $('incBtnAtras').addEventListener('click', function(){ irAPaso(incPaso - 1); });
+  // Clic directo en un paso ya recorrido (nunca saltar hacia adelante
+  // sin validar -- eso rompería la garantía de datos completos).
+  document.querySelectorAll('#incSteps .inc-step').forEach(function(s){
+    s.addEventListener('click', function(){
+      var n = parseInt(s.dataset.step, 10);
+      if(n < incPaso) irAPaso(n);
+    });
+  });
+
+  // Contador vivo del motivo + chips de motivos frecuentes.
+  $('incMotivo').addEventListener('input', function(){
+    var n = this.value.trim().length, c = $('incMotivoCount');
+    c.textContent = n;
+    c.classList.toggle('ok', n >= 10);
+  });
+  document.querySelectorAll('#incMotivoChips .inc-chip').forEach(function(b){
+    b.addEventListener('click', function(){
+      var t = $('incMotivo');
+      t.value = (t.value.trim() ? t.value.trim() + ' — ' : '') + b.textContent;
+      t.dispatchEvent(new Event('input'));
+      t.focus();
+    });
+  });
+
   function limpiarModal(){
     ['incId','incSku','incDescripcion','incMotivo','incDescripcionRepuesto',
      'incObservacion','incRecomendacion','incFechaResolucion'].forEach(function(id){
       document.getElementById(id).value = '';
     });
-    document.getElementById('incCantidad').value = 0;
+    document.getElementById('incCantidad').value = 1;
     document.getElementById('incEstado').value = 'abierta';
     document.getElementById('incReqRepuesto').value = '';
     document.getElementById('incStockRepuesto').value = '';
-    document.getElementById('incUaResultado').textContent = '';
+    document.getElementById('incUaResultado').innerHTML = '';
+    $('incMotivoCount').textContent = '0';
+    $('incMotivoCount').classList.remove('ok');
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = 'none';
+    irAPaso(1);
   }
 
   function abrirEdicion(id, rows){
@@ -305,8 +538,10 @@
     document.getElementById('incObservacion').value = r.observacion || '';
     document.getElementById('incRecomendacion').value = r.recomendacion || '';
     document.getElementById('incFechaResolucion').value = r.fecha_resolucion || '';
+    document.getElementById('incMotivo').dispatchEvent(new Event('input'));
     var btnDel = document.getElementById('incBtnEliminar');
     if(btnDel) btnDel.style.display = '';
+    irAPaso(1);
     incModal().show();
   }
 
@@ -412,6 +647,11 @@
             + '</ul>';
         }
         res.innerHTML = html;
+        // Si el WMS resolvió el producto sin conflicto, avanzar solo al
+        // paso 2 -- el usuario ya tiene lo que necesitaba de este paso.
+        if(!descalce && data.sku){
+          setTimeout(function(){ if(incPaso === 1) irAPaso(2); }, 900);
+        }
       }).catch(function(){ res.innerHTML = '<span class="text-danger">No se pudo conectar con el servidor.</span>'; });
   });
 
@@ -436,9 +676,11 @@
       recomendacion: document.getElementById('incRecomendacion').value,
       fecha_resolucion: document.getElementById('incFechaResolucion').value,
     };
-    if(!payload.descripcion.trim()){
-      ilusToast('La descripción es obligatoria', {type:'warning'});
-      return;
+    // Revalidar TODOS los pasos antes de guardar: alguien pudo volver
+    // atrás y vaciar un campo ya validado. Si algo falla, se salta al
+    // paso culpable en vez de mostrar un error genérico.
+    for(var p = 1; p <= INC_PASOS; p++){
+      if(!validarPaso(p)){ irAPaso(p); validarPaso(p); return; }
     }
     var url = id ? ('/mantenciones/api/incidencias/'+id) : '/mantenciones/api/incidencias';
     fetch(url, {
