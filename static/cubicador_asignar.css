@@ -546,6 +546,11 @@
 .courier-list{ display:flex; flex-direction:column; gap:8px; }
 .courier-item{
   display:flex; align-items:center; gap:10px;
+  /* flex-wrap (2026-08-05): habilita que un courier agregue una franja de
+     ancho completo debajo de la fila (hoy solo Shipit, con su desglose de
+     operadores — ver .courier-ops). Sin wrap, ese bloque se metía como una
+     4ta columna y aplastaba el nombre y el precio. */
+  flex-wrap:wrap;
   padding:11px 14px; border-radius:9px;
   border:1.5px solid var(--c-border);
   cursor:pointer; transition:all .15s;
@@ -571,6 +576,44 @@
 .courier-price.loading{ color:#9ca3af; animation:pulse 1s infinite; }
 .courier-etd{ font-size:.64rem; color:var(--c-sub); text-align:right; }
 
+/* ── Desglose de operadores de Shipit ──────────────────────────────
+   Shipit se muestra como UN solo courier (pedido de Daniel: "como un solo
+   courier, no mezclado con Chilexpress/Starken por dentro"), pero por
+   dentro compara varios operadores reales y hay que "evidenciar dentro de
+   su universo cuánto vale cada servicio". Esta franja ocupa el ancho
+   completo DEBAJO de la fila del courier — dentro de .courier-info el
+   panel lateral solo deja ~70px y cada operador se partía en 3 líneas.
+   Nombre / plazo / precio quedan en columnas, con el más barato en verde.
+   Genérico a propósito: si Daniel activa más couriers dentro de su cuenta
+   Shipit, entran acá sin tocar nada. */
+.courier-ops{
+  flex:0 0 100%; width:100%;
+  margin-top:9px; padding-top:8px;
+  border-top:1px dashed var(--c-border);
+  cursor:default;
+}
+.courier-ops-head{
+  font-size:.6rem; font-weight:800; letter-spacing:.4px;
+  text-transform:uppercase; color:var(--c-sub);
+  margin-bottom:4px; display:flex; align-items:center; gap:4px;
+}
+.courier-ops-row{
+  display:flex; align-items:baseline; gap:8px;
+  padding:3px 7px; border-radius:5px;
+  font-size:.71rem; color:#6b7280;
+}
+.courier-ops-row .op-name{
+  flex:1; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.courier-ops-row .op-eta{ font-size:.62rem; opacity:.7; white-space:nowrap; }
+.courier-ops-row .op-price{
+  font-weight:700; white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.courier-ops-row.is-best{ background:#dcfce7; color:#166534; font-weight:700; }
+.courier-ops-row.is-best .op-price{ color:#166534; }
+
 /* ── MÓVIL: reflow del courier a tarjeta de 2 filas ──────────────
    En desktop el courier es flex horizontal (nombre izq / precio der).
    En móvil eso obligaba a leer "de punta a punta" con el nombre pegado
@@ -583,7 +626,8 @@
     grid-template-columns:auto auto 1fr;
     grid-template-areas:
       "radio logo info"
-      "price price price";
+      "price price price"
+      "ops   ops  ops";
     align-items:center;
     column-gap:10px; row-gap:0;
     padding:12px 13px;
@@ -610,6 +654,10 @@
     text-align:left; font-size:1.3rem; order:1;
   }
   .courier-pricebox > div:not(.courier-price){ order:2; align-self:center; }
+  .courier-item > .courier-ops{ grid-area:ops; }
+  /* En móvil hay ancho de sobra: se puede leer el nombre completo. */
+  .courier-ops-row{ font-size:.78rem; padding:4px 8px; }
+  .courier-ops-row .op-eta{ font-size:.68rem; }
 }
 .btn-detalle{
   background:#f3f4f6; border:none; color:#6b7280; border-radius:5px;

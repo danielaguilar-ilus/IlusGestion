@@ -18894,17 +18894,24 @@ def api_asignar_cotizar_couriers():
         disponibles.sort(key=lambda f: f["precio"])
         mas_barato = disponibles[0]
 
+        # Shipit devuelve los nombres en minúscula y con guion bajo
+        # ("chilexpress", "fazt_nd", "bluexpress"). Se muestran tal cual
+        # quedaron en pantalla ("Fazt_Nd" — Daniel, 2026-08-05), así que se
+        # limpian antes de salir: guion bajo → espacio y capitalización.
+        def _op_nombre(raw):
+            return (raw or "—").replace("_", " ").title()
+
         operadores = [
             {
-                "operador": (f["courier"] or "—").title(),
-                "operador_display": f"{(f['courier'] or '—').title()} (vía Shipit)",
+                "operador": _op_nombre(f["courier"]),
+                "operador_display": f"{_op_nombre(f['courier'])} (vía Shipit)",
                 "servicio": f["servicio"], "precio": f["precio"], "dias": f["dias"],
                 "es_mas_barato": (f is mas_barato),
             }
             for f in disponibles
         ]
 
-        formula = (f"Shipit API: {mas_barato['courier'].title()} "
+        formula = (f"Shipit API: {_op_nombre(mas_barato['courier'])} "
                    f"{mas_barato['servicio']} = "
                    f"${int(mas_barato['precio']):,}".replace(",", "."))
 

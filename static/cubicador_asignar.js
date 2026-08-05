@@ -1230,21 +1230,32 @@ function _logoFor(c){
 // 2026-08-04 (Shipit): Shipit es UNA sola ficha de courier en la lista (no
 // una por Chilexpress/Starken/etc. — Daniel: "como un solo courier, no
 // mezclado... por dentro"), pero cada operador que devolvió la API se
-// muestra acá, rotulado "(vía Shipit)", para "evidenciar dentro de su
-// universo cuánto vale cada servicio". Vacío si el courier no es Shipit o
-// solo trajo un operador (nada que desglosar).
+// muestra acá para "evidenciar dentro de su universo cuánto vale cada
+// servicio". Vacío si el courier no es Shipit.
+//
+// 2026-08-05 (Daniel, viendo la ficha real: "me gustaría que se viera más
+// atractiva"): antes eran píldoras dentro de .courier-info, que en el panel
+// lateral mide ~70px de ancho — cada píldora se partía en 3 líneas y la
+// tarjeta de Shipit quedaba cuatro veces más alta que las demás. Ahora es
+// una franja de ANCHO COMPLETO debajo de la fila, con los operadores
+// alineados en columnas (nombre / plazo / precio) y el más barato
+// destacado. El "vía Shipit" va una sola vez en el encabezado en lugar de
+// repetirse en cada fila: se entiende igual y no compite con el dato.
 function _shipitDesgloseHtml(c){
   const ops = c.operadores_shipit;
-  if(!Array.isArray(ops) || ops.length < 2) return '';
-  return `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px" onclick="event.stopPropagation()">
+  if(!Array.isArray(ops) || !ops.length) return '';
+  return `<div class="courier-ops" onclick="event.stopPropagation()">
+    <div class="courier-ops-head">
+      <i class="bi bi-diagram-3-fill"></i>
+      ${ops.length} ${ops.length === 1 ? 'operador' : 'operadores'} vía Shipit
+    </div>
     ${ops.map(op => `
-      <span title="${escHtml(op.servicio||'')}"
-            style="background:${op.es_mas_barato?'#dcfce7':'#f3f4f6'};
-                   color:${op.es_mas_barato?'#166534':'#6b7280'};
-                   padding:1px 7px;border-radius:50px;font-size:.64rem;
-                   font-weight:${op.es_mas_barato?'700':'500'}">
-        ${escHtml(op.operador_display||op.operador||'—')} · ${fClp(op.precio)}
-      </span>`).join('')}
+      <div class="courier-ops-row${op.es_mas_barato ? ' is-best' : ''}"
+           title="${escHtml((op.operador_display || op.operador || '') + (op.servicio ? ' — ' + op.servicio : ''))}">
+        <span class="op-name">${escHtml(op.operador || '—')}</span>
+        <span class="op-eta">${op.dias ? escHtml(op.dias + (op.dias === 1 ? ' día' : ' días')) : ''}</span>
+        <span class="op-price">${fClp(op.precio)}</span>
+      </div>`).join('')}
   </div>`;
 }
 
@@ -1604,13 +1615,13 @@ function renderCouriers(opts){
         <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}${chipFedexLimit}${chipFedexOk}</div>
         <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
         <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
-        ${_shipitDesgloseHtml(c)}
       </div>
       <div class="courier-pricebox">
         <div class="courier-price" style="${vistaEsCosto?'color:#475569':''}" title="${c.desglose ? 'Costo $'+Math.round(c.desglose.precio_costo).toLocaleString('es-CL')+' + margen '+(c.desglose.margen_pct||0).toFixed(0)+'% + IVA '+(c.desglose.iva_pct||0).toFixed(0)+'%' : 'Precio cliente'}">${fClp(precioVisible)}</div>
         ${subLineaPrecio}
         ${badgeProfit}
       </div>
+      ${_shipitDesgloseHtml(c)}
     </div>`;
   }
 
