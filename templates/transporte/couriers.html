@@ -239,6 +239,21 @@
               <i class="bi bi-file-earmark-spreadsheet me-2" style="color:var(--trx-green,#16a34a)"></i>Comparar tarifas (Excel)
             </button>
           </li>
+          <li>
+            <button class="dropdown-item" type="button" onclick="descargarDiagnosticoDirecciones()"
+                    title="Qué direcciones va a rechazar Shipit por no tener número, para corregirlas antes">
+              <i class="bi bi-signpost-split me-2" style="color:var(--trx-warning,#f59e0b)"></i>Revisar direcciones para Shipit (Excel)
+            </button>
+          </li>
+          {% if g.permissions and g.permissions.get('superadmin') %}
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <button class="dropdown-item" type="button" onclick="unirCouriersDuplicados()"
+                    title="Detecta dos fichas de la misma empresa (ej. Melling y Milling) y une sus tarifas">
+              <i class="bi bi-union me-2" style="color:var(--trx-red,#dc2626)"></i>Unir couriers duplicados
+            </button>
+          </li>
+          {% endif %}
         </ul>
       </div>
       {# Form invisible para upload de tarifas multi-hoja #}
@@ -779,23 +794,21 @@ async function cargarLogos() {
   } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
 }
 
-/* ── Comparar tarifas entre couriers (2026-08-05) ─────────────────────
-   Cotiza la MISMA comuna y el MISMO peso en todos los couriers para poder
-   responder con datos "¿cuál me sale más barato?". Shipit se consulta en
-   vivo contra su API, así que puede tardar: se avisa antes de empezar. */
-let _tarCompEnCurso = false;
-async function descargarTarifarioComparado() {
-  // Guard de reentrada: cada click dispara decenas de cotizaciones en vivo
-  // contra Shipit. Dos clicks seguidos duplicaban el trabajo del servidor
-  // sin que el usuario se diera cuenta de que ya estaba corriendo.
-  if (_tarCompEnCurso) {
-    ilusToast('Ya se está generando el Excel, espera un momento', { type: 'warning' });
+/* ── Descargas de Excel del módulo (2026-08-05) ───────────────────────
+   Helper compartido: pide el archivo, muestra el error REAL que devuelve el
+   backend (no un "algo salió mal") y evita que dos clicks disparen el mismo
+   trabajo pesado dos veces. Agregar una descarga nueva es una línea. */
+const _excelEnCurso = new Set();
+
+async function _descargarExcel(url, nombreArchivo, mensajeEspera) {
+  if (_excelEnCurso.has(url)) {
+    ilusToast('Ya se está generando ese Excel, espera un momento', { type: 'warning' });
     return;
   }
-  _tarCompEnCurso = true;
-  ilusToast('Cotizando en todos los couriers… puede tardar un minuto', { type: 'info' });
+  _excelEnCurso.add(url);
+  ilusToast(mensajeEspera, { type: 'info' });
   try {
-    const r = await fetch('/transporte/couriers/tarifario-comparado.xlsx');
+    const r = await fetch(url);
     if (!r.ok) {
       let msg = 'HTTP ' + r.status;
       try { msg = (await r.json()).error || msg; } catch (_) {}
@@ -804,14 +817,105 @@ async function descargarTarifarioComparado() {
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'ILUS_Tarifas_Comparadas.xlsx';
+    a.download = nombreArchivo;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     ilusToast('✓ Excel descargado', { type: 'success' });
   } catch (e) {
     ilusToast('No se pudo generar el Excel: ' + e.message, { type: 'error' });
   } finally {
-    _tarCompEnCurso = false;
+    _excelEnCurso.delete(url);
+  }
+}
+
+/* Compara la MISMA comuna y el MISMO peso en todos los couriers. Shipit se
+   consulta en vivo contra su API, así que puede tardar. */
+function descargarTarifarioComparado() {
+  return _descargarExcel(
+    '/transporte/couriers/tarifario-comparado.xlsx',
+    'ILUS_Tarifas_Comparadas.xlsx',
+    'Cotizando en todos los couriers… puede tardar un minuto');
+}
+
+/* Qué direcciones del historial va a rechazar Shipit por no tener número.
+   Read-only: no modifica nada, solo revisa y arma la lista para corregir. */
+function descargarDiagnosticoDirecciones() {
+  return _descargarExcel(
+    '/transporte/couriers/diagnostico-direcciones.xlsx',
+    'ILUS_Direcciones_Shipit.xlsx',
+    'Revisando las direcciones del historial…');
+}
+
+/* ── Unir dos fichas de la misma empresa (2026-08-05) ──────────────────
+   Caso que lo motivó: "Melling" y "Milling" son el mismo transportista, con
+   las tarifas partidas entre las dos fichas. Primero se MUESTRA qué va a
+   pasar (el backend simula sin tocar nada) y recién con el OK se ejecuta. */
+async function unirCouriersDuplicados() {
+  ilusToast('Buscando fichas duplicadas…', { type: 'info' });
+  let d;
+  try {
+    const r = await fetch('/transporte/couriers/fusionar');
+    d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  } catch (e) {
+    ilusToast('No se pudo revisar: ' + e.message, { type: 'error' });
+    return;
+  }
+
+  if (!d.duplicados) {
+    await ilusAlert({
+      title: 'No hay duplicados',
+      message: 'Cada empresa de transporte tiene una sola ficha.',
+      type: 'success',
+    });
+    return;
+  }
+
+  const resumen = d.propuestas.map(p => {
+    const s = p.simulacion || {};
+    return `<div style="margin-bottom:10px;padding:10px;background:#f9fafb;border-radius:6px">
+      <div style="font-weight:700;color:#0a0a0a">
+        «${esc(p.se_absorbe.nombre)}» se une a «${esc(p.sobrevive.nombre)}»
+      </div>
+      <div style="font-size:.82rem;color:#6b7280;margin-top:4px">
+        Sobrevive <strong>${esc(p.sobrevive.nombre)}</strong> con ${p.sobrevive.comunas} comunas.<br>
+        Se suman <strong>${s.comunas_movidas || 0}</strong> comunas nuevas ·
+        <strong>${s.comunas_reemplazadas || 0}</strong> pasan a la lista más amplia ·
+        <strong>${s.comunas_descartadas || 0}</strong> se descartan por ser iguales o más cortas.
+      </div>
+    </div>`;
+  }).join('');
+
+  const ok = await ilusConfirm({
+    title: 'Unir fichas duplicadas',
+    message: 'Estas fichas son la misma empresa. Al unirlas se conserva siempre la lista de precios más amplia:',
+    sub: resumen + '<div style="font-size:.78rem;color:#92400e;background:#fff8e1;'
+       + 'border:1px solid #ffc107;border-radius:6px;padding:8px 10px">'
+       + 'La ficha absorbida queda <strong>desactivada</strong>, no se borra: '
+       + 'los manifiestos antiguos la nombran y deben seguir siendo legibles.</div>',
+    subHtml: true,
+    okLabel: 'Unir', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+
+  let hechas = 0;
+  for (const p of d.propuestas) {
+    try {
+      const r = await fetch('/transporte/couriers/fusionar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destino_id: p.sobrevive.id, origen_id: p.se_absorbe.id }),
+      });
+      const res = await r.json();
+      if (!r.ok || !res.ok) throw new Error(res.error || ('HTTP ' + r.status));
+      hechas++;
+    } catch (e) {
+      ilusToast(`Falló al unir «${p.se_absorbe.nombre}»: ${e.message}`, { type: 'error' });
+    }
+  }
+  if (hechas) {
+    ilusToast(`✓ ${hechas} ficha(s) unidas`, { type: 'success' });
+    setTimeout(() => location.reload(), 900);
   }
 }
 

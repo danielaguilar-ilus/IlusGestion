@@ -837,6 +837,11 @@
   window.CFICHA = {
     courierId: {{ courier.id }},
     contratos: {{ contratos | tojson }},
+    // Shipit cotiza EN VIVO contra su API: nunca va a tener tabla de tarifas
+    // cargada. Sin esta marca, la pestaña Tarifas decía "Importa un Excel",
+    // que para este courier es una instrucción imposible de cumplir
+    // (Daniel, 2026-08-05: "no me sale la lista de precios de Shipit").
+    cotizaEnVivo: {{ 'true' if 'shipit' in (courier.nombre or '')|lower else 'false' }},
   };
 </script>
 <script defer src="{{ url_for('static', filename='transporte_courier_ficha.js') }}"></script>

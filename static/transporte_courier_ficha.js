@@ -309,13 +309,30 @@ function renderTarifas(d) {
 
   if (!d.rows.length) {
     head.innerHTML = '';
-    body.innerHTML = `<tr><td colspan="8" class="text-center py-5 text-muted">
-      <i class="bi bi-map display-5 d-block mb-2 opacity-25"></i>
-      <div class="fw-semibold mb-1">Sin tarifas</div>
-      <div class="small">Importa un Excel de tarifas para ver los precios por comuna.</div>
-    </td></tr>`;
+    // Shipit es un agregador: su precio depende del operador que responda en
+    // el momento, así que NO hay Excel que importar. Decirle a Daniel que
+    // importe uno lo mandaba a buscar algo que no existe.
+    body.innerHTML = CFICHA.cotizaEnVivo
+      ? `<tr><td colspan="8" class="text-center py-5">
+          <i class="bi bi-broadcast display-5 d-block mb-2" style="color:#dc2626;opacity:.5"></i>
+          <div class="fw-semibold mb-1">Este courier cotiza en vivo</div>
+          <div class="small text-muted" style="max-width:520px;margin:0 auto">
+            Shipit no trabaja con una tabla de precios fija: compara varios
+            operadores (Chilexpress, Starken, Bluexpress y otros) y el precio
+            depende de cuál responda más barato en ese momento.
+            <br><br>
+            Usa la <strong>calculadora de precio</strong> de arriba para ver
+            cuánto cuesta una comuna y un peso concretos, con el detalle de
+            cada operador.
+          </div>
+        </td></tr>`
+      : `<tr><td colspan="8" class="text-center py-5 text-muted">
+          <i class="bi bi-map display-5 d-block mb-2 opacity-25"></i>
+          <div class="fw-semibold mb-1">Sin tarifas</div>
+          <div class="small">Importa un Excel de tarifas para ver los precios por comuna.</div>
+        </td></tr>`;
     pg.innerHTML = '';
-    stats.textContent = '0 comunas';
+    stats.textContent = CFICHA.cotizaEnVivo ? 'Cotiza en vivo' : '0 comunas';
     return;
   }
 
@@ -396,11 +413,25 @@ async function calcularPrecio() {
   const d = await r.json();
   if (d.ok) {
     const fmt = n => Math.round(n).toLocaleString('es-CL');
+    // Shipit responde EN VIVO y con varios operadores: se muestran todos para
+    // que se vea de dónde sale el precio (2026-08-05).
+    const desglose = (d.en_vivo && Array.isArray(d.operadores) && d.operadores.length)
+      ? `<div class="mt-2 pt-2" style="border-top:1px dashed #28a745">
+           <div class="small text-muted mb-1">Operadores disponibles vía Shipit:</div>
+           ${d.operadores.map((op, i) => `
+             <div class="d-flex justify-content-between small ${i === 0 ? 'fw-bold text-success' : 'text-muted'}">
+               <span>${esc(op.operador)}${op.dias ? ` · ${op.dias} día${op.dias === 1 ? '' : 's'}` : ''}</span>
+               <span>$${fmt(op.precio)}</span>
+             </div>`).join('')}
+         </div>`
+      : '';
     el.innerHTML = `
       <div class="p-2 rounded" style="background:#d4edda;border:1px solid #28a745;">
         <div class="fw-bold text-success fs-5">$${fmt(d.precio)}</div>
         <div class="text-muted small">${peso} kg → ${esc(d.comuna_matched || comuna)}</div>
+        ${d.en_vivo ? '<span class="badge bg-primary" style="font-size:.6rem">Cotizado en vivo</span>' : ''}
         ${d.partial_match ? `<small class="text-muted">Coincidencia parcial</small>` : ''}
+        ${desglose}
       </div>`;
   } else {
     el.innerHTML = `<small class="text-danger">${esc(d.error)}</small>`;

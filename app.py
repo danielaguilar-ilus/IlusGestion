@@ -38830,9 +38830,16 @@ def transporte_couriers_import():
         return jsonify({"ok": False, "error": f"No se pudo leer el Excel: {exc}"}), 400
 
     # Map sheet names to courier names
+    # 'milling' apuntaba a 'Transportes Melling' (con E), que es como quedó
+    # escrito el nombre la primera vez. Cada importación de Excel recreaba esa
+    # ficha mal escrita y terminamos con DOS couriers para la misma empresa,
+    # con las tarifas partidas entre ambos (Daniel, 2026-08-05: "tengo dos
+    # transportes que son el mismo... que predomine Transportes Milling").
+    # Corregido acá para que no vuelva a nacer el duplicado; las dos fichas ya
+    # existentes se unen con /transporte/couriers/fusionar.
     SHEET_MAP = {
         'felca':   'Transporte Felca',
-        'milling': 'Transportes Melling',
+        'milling': 'Transportes Milling',
         'clickex': 'Clickex',
     }
 
@@ -39064,6 +39071,306 @@ def transporte_couriers_export():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         as_attachment=True,
         download_name='ILUS_Tarifas_Couriers.xlsx'
+    )
+
+
+def _tr_brackets_con_precio(precios_json_raw):
+    """Cuántos tramos de peso con precio real tiene una fila de tarifa.
+
+    Es la medida de "qué tan amplia" es una tarifa: una comuna con 20 tramos
+    cargados vale más que la misma comuna con 3. Se usa para decidir cuál fila
+    sobrevive al fusionar dos couriers duplicados.
+    """
+    if not precios_json_raw:
+        return 0
+    try:
+        precios = json.loads(precios_json_raw)
+    except Exception:
+        return 0
+    if not isinstance(precios, dict):
+        return 0
+    return sum(1 for v in precios.values() if v not in (None, "", 0))
+
+
+def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False):
+    """Fusiona dos fichas de courier que en realidad son la misma empresa.
+
+    Caso que lo motivó (Daniel, 2026-08-05): "tengo dos transportes que son el
+    mismo, Melling y Milling son el mismo. Deja la lista de precios más amplia
+    y que predomine Transportes Milling."
+
+    Qué hace:
+      · Las comunas que solo tiene el ORIGEN se mueven al DESTINO.
+      · Las comunas que están en LOS DOS: gana la que tenga más tramos de peso
+        con precio cargado ("la lista más amplia"). Si empatan, se conserva la
+        del destino y la del origen se descarta.
+      · El origen se DESACTIVA (activo=0), NO se borra: los manifiestos
+        históricos referencian al courier por NOMBRE, así que borrar la fila
+        dejaría documentos viejos apuntando a algo que ya no existe.
+
+    Con ejecutar=False no toca NADA: solo devuelve el informe de lo que haría.
+    Eso permite mirar el resultado antes de decidir. Nunca lanza.
+    """
+    informe = {"ok": False, "ejecutado": False, "destino": None, "origen": None,
+               "comunas_movidas": 0, "comunas_reemplazadas": 0,
+               "comunas_descartadas": 0, "detalle": [], "error": None}
+    try:
+        d = mysql_fetchone("SELECT id, nombre, activo FROM transport_couriers WHERE id=%s", (id_destino,))
+        o = mysql_fetchone("SELECT id, nombre, activo FROM transport_couriers WHERE id=%s", (id_origen,))
+        if not d or not o:
+            informe["error"] = "Alguno de los dos couriers no existe."
+            return informe
+        if int(id_destino) == int(id_origen):
+            informe["error"] = "Son el mismo courier."
+            return informe
+        informe["destino"] = {"id": d["id"], "nombre": d["nombre"]}
+        informe["origen"] = {"id": o["id"], "nombre": o["nombre"]}
+
+        com_o = mysql_fetchall(
+            "SELECT id, comuna, precios_json FROM transport_courier_comunas WHERE courier_id=%s",
+            (id_origen,)) or []
+        com_d = mysql_fetchall(
+            "SELECT id, comuna, precios_json FROM transport_courier_comunas WHERE courier_id=%s",
+            (id_destino,)) or []
+        por_comuna_d = {(r["comuna"] or "").strip().lower(): r for r in com_d}
+
+        # Se decide TODO primero y se escribe después, en UNA transacción.
+        # mysql_execute hace commit por sentencia: si la fusión se cortara a
+        # la mitad quedarían tarifas borradas sin su reemplazo, y no hay forma
+        # de recuperarlas. Acá o pasa todo o no pasa nada.
+        plan = []   # (accion, id_fila_origen, id_fila_destino, precios_json)
+        for r in com_o:
+            clave = (r["comuna"] or "").strip().lower()
+            gemela = por_comuna_d.get(clave)
+            n_o = _tr_brackets_con_precio(r.get("precios_json"))
+            if not gemela:
+                informe["comunas_movidas"] += 1
+                informe["detalle"].append(
+                    {"comuna": r["comuna"], "accion": "se mueve", "tramos": n_o})
+                plan.append(("mover", r["id"], None, None))
+                continue
+            n_d = _tr_brackets_con_precio(gemela.get("precios_json"))
+            if n_o > n_d:
+                informe["comunas_reemplazadas"] += 1
+                informe["detalle"].append(
+                    {"comuna": r["comuna"], "accion": "reemplaza a la del destino",
+                     "tramos": n_o, "tramos_destino": n_d})
+                # NO se borra la fila del destino: se le copia la lista más
+                # amplia y se descarta la del origen. Así la fila que sobrevive
+                # conserva su id y su historial.
+                plan.append(("ampliar", r["id"], gemela["id"], r.get("precios_json")))
+            else:
+                informe["comunas_descartadas"] += 1
+                informe["detalle"].append(
+                    {"comuna": r["comuna"], "accion": "se descarta (el destino es igual o más amplio)",
+                     "tramos": n_o, "tramos_destino": n_d})
+                plan.append(("descartar", r["id"], None, None))
+
+        if ejecutar:
+            conn = get_db()
+            try:
+                with conn.cursor() as cur:
+                    for accion, id_o, id_d, precios in plan:
+                        if accion == "mover":
+                            cur.execute("UPDATE transport_courier_comunas SET courier_id=%s "
+                                        "WHERE id=%s", (id_destino, id_o))
+                        elif accion == "ampliar":
+                            cur.execute("UPDATE transport_courier_comunas SET precios_json=%s "
+                                        "WHERE id=%s", (precios, id_d))
+                            cur.execute("DELETE FROM transport_courier_comunas WHERE id=%s", (id_o,))
+                        else:
+                            cur.execute("DELETE FROM transport_courier_comunas WHERE id=%s", (id_o,))
+                    cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (id_origen,))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            _invalidate_couriers_cache()
+            informe["ejecutado"] = True
+            _audit("courier_fusion", target_type="courier", target_id=id_destino,
+                   details={"absorbido": o["nombre"], "sobrevive": d["nombre"],
+                            "movidas": informe["comunas_movidas"],
+                            "reemplazadas": informe["comunas_reemplazadas"],
+                            "descartadas": informe["comunas_descartadas"]})
+        informe["ok"] = True
+        return informe
+    except Exception as e:
+        print(f"[fusion-courier] error: {e}", flush=True)
+        informe["error"] = "No se pudo completar la fusión."
+        return informe
+
+
+@app.route("/transporte/couriers/fusionar", methods=["GET", "POST"])
+@_tr_required
+def tr_couriers_fusionar():
+    """Fusiona dos fichas de courier duplicadas (misma empresa, dos filas).
+
+    GET  -> detecta duplicados por nombre normalizado y muestra qué haría,
+            SIN tocar nada. Es la vista que hay que mirar antes de decidir.
+    POST -> ejecuta la fusión indicada (destino_id, origen_id). Solo superadmin.
+
+    Los duplicados se detectan con el MISMO criterio que ya usa el motor de
+    tarifas para cotizar (transporte_tarifas.slug_para_courier): si dos fichas
+    resuelven al mismo slug, para el sistema ya son el mismo courier -- solo
+    que la lista los muestra dos veces y las tarifas quedan partidas.
+    """
+    couriers = mysql_fetchall(
+        "SELECT id, nombre, activo FROM transport_couriers ORDER BY id") or []
+    grupos = {}
+    for c in couriers:
+        slug = _ttar.slug_para_courier(c["nombre"] or "")
+        if not slug:
+            continue
+        grupos.setdefault(slug, []).append(c)
+    duplicados = {s: cs for s, cs in grupos.items() if len(cs) > 1}
+
+    if request.method == "GET":
+        # Para cada grupo duplicado se propone quién sobrevive: el que ya está
+        # activo y, entre ellos, el que tenga más comunas cargadas.
+        propuestas = []
+        for slug, cs in duplicados.items():
+            enriquecidos = []
+            for c in cs:
+                n = (mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM transport_courier_comunas WHERE courier_id=%s",
+                    (c["id"],)) or {}).get("n", 0)
+                enriquecidos.append(dict(c, comunas=n))
+            enriquecidos.sort(key=lambda x: (int(x.get("activo") or 0), x["comunas"]), reverse=True)
+            destino = enriquecidos[0]
+            for origen in enriquecidos[1:]:
+                propuestas.append({
+                    "slug": slug,
+                    "sobrevive": destino,
+                    "se_absorbe": origen,
+                    "simulacion": _tr_fusionar_couriers(destino["id"], origen["id"], ejecutar=False),
+                })
+        return jsonify({"ok": True, "duplicados": len(propuestas), "propuestas": propuestas})
+
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede fusionar couriers."}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        destino_id = int(data.get("destino_id"))
+        origen_id = int(data.get("origen_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Faltan destino_id / origen_id."}), 400
+    r = _tr_fusionar_couriers(destino_id, origen_id, ejecutar=True)
+    return jsonify(r), (200 if r.get("ok") else 400)
+
+
+@app.route("/transporte/couriers/diagnostico-direcciones.xlsx", methods=["GET"])
+@_tr_required
+def tr_diagnostico_direcciones_xlsx():
+    """Excel con las direcciones que Shipit va a rechazar, para corregirlas ANTES.
+
+    Shipit exige calle y número SEPARADOS. En ILUS la dirección es un solo
+    texto libre, así que hay que partirla (shipit_client.split_street_number).
+    Este diagnóstico corre esa función sobre el historial real y responde la
+    única pregunta que importa antes de la primera carga masiva: ¿cuántas
+    direcciones no se pueden separar con certeza?
+
+    Es READ-ONLY: no modifica ni una fila. Devuelve una hoja "Resumen" con los
+    porcentajes y una hoja "Para corregir" con el detalle, lista para repartir.
+
+    Se hace en Excel y no en pantalla a propósito: el resultado no es para
+    mirar, es para que alguien vaya corrigiendo direcciones una por una.
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+    import shipit_client as _shc
+
+    try:
+        limite = max(1, min(int(request.args.get("limite") or 5000), 20000))
+    except ValueError:
+        limite = 5000
+
+    filas = mysql_fetchall(
+        "SELECT tido, nudo, cliente_nombre, comuna, direccion "
+        "FROM transport_commitments "
+        "WHERE direccion IS NOT NULL AND TRIM(direccion) <> '' "
+        "ORDER BY id DESC LIMIT %s",
+        (limite,)
+    ) or []
+    if not filas:
+        return jsonify({"error": "No hay direcciones cargadas todavía."}), 404
+
+    ok, con_aviso, bloqueadas = [], [], []
+    for f in filas:
+        calle, numero, problemas = _shc.split_street_number(f.get("direccion"))
+        registro = dict(f, calle=calle, numero=numero,
+                        problema=" · ".join(problemas) if problemas else "")
+        if not problemas:
+            ok.append(registro)
+        elif numero:                      # se resolvió, pero conviene revisar
+            con_aviso.append(registro)
+        else:                             # sin número: Shipit lo rechaza
+            bloqueadas.append(registro)
+
+    total = len(filas)
+    wb = openpyxl.Workbook()
+    RED = PatternFill("solid", fgColor="CC0000")
+    BLANCO = Font(color="FFFFFF", bold=True)
+
+    ws = wb.active
+    ws.title = "Resumen"
+    ws.cell(1, 1, "¿Cuántas direcciones puede procesar Shipit?").font = Font(bold=True, size=14)
+    ws.cell(2, 1, f"Generado el {chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')} · "
+                  f"{total} direcciones revisadas (las más recientes)")
+    ws.cell(3, 1, "Shipit exige calle y número por separado. Las direcciones bloqueadas "
+                  "hay que corregirlas antes de despachar por Shipit.")
+    fila_res = [
+        ("Se separan sin problema", len(ok), "Listas para Shipit"),
+        ("Se separan, pero conviene revisar", len(con_aviso),
+         "El texto venía sin puntuación clara; el número elegido puede no ser el correcto"),
+        ("BLOQUEADAS: sin número reconocible", len(bloqueadas),
+         "Shipit las va a rechazar. Hay que completarlas a mano"),
+    ]
+    for ci, h in enumerate(["Situación", "Direcciones", "%", "Qué significa"], 1):
+        c = ws.cell(5, ci, h)
+        c.font, c.fill = BLANCO, RED
+        c.alignment = Alignment(horizontal="center")
+    for ri, (etiqueta, n, detalle) in enumerate(fila_res, 6):
+        ws.cell(ri, 1, etiqueta)
+        ws.cell(ri, 2, n)
+        ws.cell(ri, 3, (n / total) if total else 0).number_format = "0.0%"
+        ws.cell(ri, 4, detalle)
+    for ci, w in enumerate([36, 14, 10, 70], 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    ws2 = wb.create_sheet("Para corregir")
+    encabezados = ["Documento", "Cliente", "Comuna", "Dirección actual",
+                   "Calle detectada", "N°", "Qué pasa"]
+    for ci, h in enumerate(encabezados, 1):
+        c = ws2.cell(1, ci, h)
+        c.font, c.fill = BLANCO, RED
+        c.alignment = Alignment(horizontal="center")
+    # Primero las bloqueadas (las urgentes), después las que solo avisan.
+    for ri, r in enumerate(bloqueadas + con_aviso, 2):
+        vals = [
+            f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
+            r.get("cliente_nombre") or "", r.get("comuna") or "",
+            r.get("direccion") or "", r.get("calle") or "",
+            r.get("numero") or "", r.get("problema") or "",
+        ]
+        for ci, v in enumerate(vals, 1):
+            ws2.cell(ri, ci, _xlsx_cell(v))
+    ws2.freeze_panes = "A2"
+    for ci, w in enumerate([16, 28, 18, 42, 32, 8, 80], 1):
+        ws2.column_dimensions[get_column_letter(ci)].width = w
+    if not (bloqueadas or con_aviso):
+        ws2.cell(2, 1, "Ninguna dirección quedó bloqueada. Todo listo para Shipit.")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"ILUS_Direcciones_Shipit_{datetime.now():%Y%m%d}.xlsx",
     )
 
 
@@ -39308,6 +39615,53 @@ def transporte_couriers_lookup():
 
     if not all([courier_id, comuna, peso]):
         return jsonify({"ok": False, "error": "Faltan parámetros: courier_id, comuna, peso"}), 400
+
+    # ── Shipit no tiene tabla de tarifas: cotiza EN VIVO ──────────────────
+    # Daniel, 2026-08-05: "no me sale la lista de precios de Shipit". Y no va
+    # a salir nunca por esta vía: Shipit es un agregador, su precio depende
+    # del operador que responda en el momento, así que no hay Excel que
+    # importar. Antes esta calculadora devolvía "No se encontró tarifa", que
+    # hacía parecer que faltaba cargar algo. Ahora consulta la API real y
+    # devuelve el precio del operador más barato, con su nombre.
+    _c = mysql_fetchone("SELECT nombre FROM transport_couriers WHERE id=%s", (courier_id,))
+    if _c and "shipit" in (_c["nombre"] or "").lower():
+        import shipit_client as _shc
+        problemas = _shc.verificar_restricciones(1, peso)
+        if problemas:
+            return jsonify({"ok": False, "error": " · ".join(problemas)}), 200
+        origen_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+        destino_id, _ = _shipit_commune_id(comuna)
+        if not origen_id:
+            return jsonify({"ok": False, "error": "Falta sincronizar las comunas de Shipit "
+                                                  "(Diagnóstico > Shipit)."}), 200
+        if not destino_id:
+            return jsonify({"ok": False, "error": f"Shipit no tiene cobertura para «{comuna}»."}), 200
+        payload, errores = _shc.build_rate_payload(
+            length=30, width=30, height=30, weight=peso,
+            origin_id=origen_id, destiny_id=destino_id)
+        if errores:
+            return jsonify({"ok": False, "error": "; ".join(errores)}), 200
+        r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=12)
+        if not r.get("ok"):
+            return jsonify({"ok": False, "error": r.get("error") or "Shipit no respondió."}), 200
+        disp = [x for x in _shc.parse_rates_response(r.get("data"))
+                if x.get("disponible") and x.get("precio")]
+        if not disp:
+            return jsonify({"ok": False, "error": f"Ningún operador de Shipit cubre «{comuna}» "
+                                                  f"con {peso} kg."}), 200
+        disp.sort(key=lambda x: x["precio"])
+        mejor = disp[0]
+        return jsonify({
+            "ok": True, "precio": mejor["precio"], "comuna_matched": comuna,
+            "partial_match": False,
+            "operador": (mejor["courier"] or "").replace("_", " ").title(),
+            "en_vivo": True,
+            "operadores": [
+                {"operador": (x["courier"] or "").replace("_", " ").title(),
+                 "precio": x["precio"], "dias": x["dias"]}
+                for x in disp
+            ],
+        })
 
     price = _courier_tarifa_lookup(courier_id, comuna, peso)
     if price is None:
