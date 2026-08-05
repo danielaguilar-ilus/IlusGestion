@@ -27107,15 +27107,30 @@ def tr_manifiesto_detalle(mid):
         _heals_zz_hechos = 0
         for it in items:
             cid = it["commitment_id"]
-            if (not it.get("costo_courier")) and float(it.get("costo_zz") or 0) > 0:
-                try:
-                    mysql_execute(
-                        "UPDATE transport_commitments SET costo_courier=%s "
-                        "WHERE id=%s AND COALESCE(costo_courier,0)=0",
-                        (float(it["costo_zz"]), cid))
-                    _healed = True
-                except Exception as e_h1:
-                    print(f"[manif heal costo] {e_h1}", flush=True)
+            # ── DESACTIVADO 2026-08-05 — INVENTABA EL MARGEN ──────────────
+            # Acá había un "auto-sane" que, si el documento no tenía costo
+            # de courier registrado, le copiaba costo_zz -- es decir, LO QUE
+            # SE LE COBRÓ AL CLIENTE -- como si fuera lo que cobra el
+            # transportista. Más abajo el margen se calcula cobrado − costo:
+            # al ser el mismo número, daba SIEMPRE $0 / 0,0%, y se mostraba
+            # como un cálculo real, no como "sin dato".
+            #
+            # Peor: ese costo inventado QUEDABA ESCRITO en la base, así que
+            # "Recotizar courier" comparaba después contra un número falso y
+            # devolvía una diferencia igual de falsa.
+            #
+            # Le pasa a todo documento que entra al manifiesto sin pasar por
+            # el Cubicador (arrastrado desde el Monitor, botón de asignar,
+            # botón flotante) -- que es el camino habitual.
+            #
+            # Daniel, 2026-08-05: "las finanzas deben estar muy bien siempre,
+            # todo cuadradito". Un dato que no tenemos tiene que verse como
+            # que no lo tenemos: la vista ya distingue costo 0 de costo
+            # ausente y muestra "sin registrar" en vez de un margen falso.
+            #
+            # NO se borra el bloque: queda documentado para que nadie lo
+            # reponga pensando que "faltaba completar el dato".
+            pass
             if (not it.get("zz_envio")) and it.get("tido") and it.get("nudo"):
                 if _heals_zz_hechos >= _MAX_HEAL_ZZ_PER_LOAD:
                     continue
