@@ -68784,6 +68784,45 @@ def _rut_analisis_comparacion(rut_cliente, rut_factura):
     return {"match": False, "nivel": nivel, "detalle": detalle.strip()}
 
 
+def _erp_doc_lookup(tido, nudo):
+    """Busca un documento del ERP con la MISMA política que el Cubicador:
+    SQL Server primero (blindado read-only), REST de Random como respaldo.
+
+    BUG REAL (Aaron, 2026-08-05, OT-2026-00042): al asociar la FCV 11171 la
+    app decía "No se pudo consultar el ERP. Reintenta" y Aaron reintentó 5
+    veces. La factura EXISTE (MAEEDO.ENDO = 75072700-K, el RUT de Marbella);
+    lo que estaba caído era la REST de Random: `https://lab.random.cl/ilus`
+    devuelve un 404 de nginx en TODAS sus rutas, incluida la raíz, con y sin
+    token. El motor lo traducía a ConnectionError y la OT quedaba bloqueada.
+    El resto del sistema (Cubicador, Transporte) ya iba por SQL desde mayo
+    (`ILUS_ERP_PREFER_SQL`, default 1) y por eso no se notó.
+
+    Devuelve (doc|None, fuente|None, hubo_respuesta_limpia:bool, error|None)
+    para que el caller distinga "no existe" de "el ERP no responde" — no es
+    lo mismo para quien está esperando cerrar una OT.
+
+    REGLA #4.1: ambos caminos son SOLO LECTURA.
+    """
+    prefer_sql = (os.environ.get("ILUS_ERP_PREFER_SQL", "1").strip().lower()
+                  in ("1", "true", "yes", "on"))
+    orden = ("sql", "rest") if prefer_sql else ("rest", "sql")
+    respondio = False
+    ultimo_error = None
+    for via in orden:
+        try:
+            if via == "sql":
+                doc = _cubicador_fetch_doc_via_sql(tido, nudo)
+            else:
+                doc = erp_engine.get_client().fetch_document(tido, nudo)
+            respondio = True          # el canal contestó (con o sin documento)
+        except Exception as e:
+            ultimo_error = f"{via}: {e}"
+            doc = None
+        if doc:
+            return doc, via, True, None
+    return None, None, respondio, ultimo_error
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/asociar-factura", methods=["POST"])
 @_mant_required
 @_no_tecnico
@@ -68814,14 +68853,24 @@ def mant_ot_asociar_factura(vid):
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
 
-    # Consulta al ERP — SOLO lectura (fetch_document, REGLA #4.1)
-    try:
-        doc = erp_engine.get_client().fetch_document(tipo, numero)
-    except Exception as e:
-        print(f"[asociar-factura] vid={vid} ERP error: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo consultar el ERP en este momento. Reintenta."}), 502
+    # Consulta al ERP — SOLO lectura, SQL Server primero (REGLA #4.1).
+    doc, _fuente, _respondio, _erp_err = _erp_doc_lookup(tipo, numero)
     if not doc:
-        return jsonify({"ok": False, "error": f"No se encontró la {tipo} N° {numero} en el ERP."}), 404
+        print(f"[asociar-factura] vid={vid} {tipo} {numero} sin documento "
+              f"(respondio={_respondio} err={_erp_err})", flush=True)
+        if not _respondio:
+            # Ningún canal contestó: es el ERP, no el número que tipeó el usuario.
+            return jsonify({
+                "ok": False,
+                "error": "El ERP de Random no está respondiendo en este momento. "
+                         "No es el número de la factura — vuelve a intentar en unos "
+                         "minutos o avisa a soporte.",
+            }), 502
+        return jsonify({
+            "ok": False,
+            "error": f"No encontramos la {tipo} N° {numero} en el ERP. "
+                     f"Revisa el número (o el tipo de documento) e inténtalo de nuevo.",
+        }), 404
 
     rut_fact = (doc.get("cliente_rut") or "").strip()
     analisis = _rut_analisis_comparacion(v.get("cli_rut"), rut_fact)
@@ -80281,13 +80330,21 @@ def mant_erp_doc_info():
     numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
     if not numero:
         return jsonify({"ok": False, "error": "Indica el número del documento."}), 400
-    try:
-        doc = erp_engine.get_client().fetch_document(tipo, numero)
-    except Exception as e:
-        print(f"[erp_doc_info] {tipo} {numero}: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."}), 502
+    # SQL Server primero, REST de Random como respaldo (ver _erp_doc_lookup).
+    doc, _fuente, _respondio, _erp_err = _erp_doc_lookup(tipo, numero)
     if not doc:
-        return jsonify({"ok": False, "error": f"No se encontró {tipo} N° {numero} en el ERP."}), 404
+        print(f"[erp_doc_info] {tipo} {numero} sin documento "
+              f"(respondio={_respondio} err={_erp_err})", flush=True)
+        if not _respondio:
+            return jsonify({
+                "ok": False,
+                "error": "El ERP de Random no está respondiendo en este momento. "
+                         "Vuelve a intentar en unos minutos.",
+            }), 502
+        return jsonify({
+            "ok": False,
+            "error": f"No encontramos {tipo} N° {numero} en el ERP. Revisa el número.",
+        }), 404
     analisis = None
     try:
         lid = int(d.get("lid") or 0)
