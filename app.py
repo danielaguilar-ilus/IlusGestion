@@ -18808,6 +18808,29 @@ def api_asignar_cotizar_couriers():
     # restricciones de Shipit (>1 bulto, >15kg), con mensajes ESPECÍFICOS
     # por regla (shipit_client.verificar_restricciones) — nunca un texto
     # genérico ("no vayas a mandar algo genérico, algo específico").
+    # 2026-08-05 (bug real, encontrado en logs de producción tras el primer
+    # deploy: "[shipit] error leyendo shipit_comunas: Working outside of
+    # application context"): _shipit_commune_id() lee MySQL vía g._db, que
+    # exige contexto de aplicación Flask. _cotizar_uno corre dentro del
+    # ThreadPoolExecutor del punto 3 más abajo, y un hilo worker NO hereda
+    # ese contexto -- por eso Shipit SIEMPRE fallaba en "falta homologar
+    # comuna de origen" en producción, silenciosamente, mientras el resto de
+    # couriers sobrevivía porque transporte_tarifas.py tiene fallback a
+    # archivo local ante el mismo error. Se resuelven ambos commune_id ACÁ,
+    # en el hilo del request (con contexto vivo), antes de entrar al pool, y
+    # se capturan por closure -- dentro del hilo solo queda la llamada HTTP
+    # (_shipit_request), que no toca Flask ni MySQL.
+    _shipit_es_activo = any(
+        'shipit' in _ttar._strip(c['nombre'] or '').lower() for c in couriers
+    )
+    _shipit_origin_id = _shipit_destiny_id = None
+    if _shipit_es_activo:
+        try:
+            _shipit_origin_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+            _shipit_destiny_id, _ = _shipit_commune_id(comuna)
+        except Exception as _e_shipit_comuna:
+            print(f"[shipit] error resolviendo comunas: {_e_shipit_comuna}", flush=True)
+
     def _shipit_cotizacion_dict(cid, nombre, logo):
         import shipit_client as _shc
 
@@ -18838,13 +18861,12 @@ def api_asignar_cotizar_couriers():
             return _dict_error(" · ".join(problemas), fuente="restriccion_shipit",
                                 advertencias=problemas)
 
-        origin_id, _origin_disp = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+        origin_id, destiny_id = _shipit_origin_id, _shipit_destiny_id
         if not origin_id:
             return _dict_error(
                 "Shipit: falta homologar la comuna de origen (bodega) — "
                 "sincroniza comunas desde Diagnóstico > Shipit.")
 
-        destiny_id, _destiny_disp = _shipit_commune_id(comuna)
         if not destiny_id:
             return _no_cobertura_dict(cid, nombre, logo)
 
@@ -36229,6 +36251,8 @@ def _ensure_shipit_comunas_table():
         conn.commit()
     except Exception as e:
         print(f"[shipit] no se pudo crear shipit_comunas: {e}", flush=True)
+    finally:
+        conn.close()
 
 
 def _ensure_shipit_courier():
@@ -36262,6 +36286,8 @@ def _ensure_shipit_courier():
         conn.commit()
     except Exception as e:
         print(f"[shipit] no se pudo sembrar la ficha del courier: {e}", flush=True)
+    finally:
+        conn.close()
 
 
 def _shipit_sync_comunas():

@@ -1207,6 +1207,7 @@ const _COURIER_LOGOS = {
   'transportes melling':  '<b style="color:#6b7280;font-size:.78rem">Trans. Milling</b>',
   'envíame':              '<b style="color:#16a34a;font-size:.86rem">Envíame</b>',
   'enviame':              '<b style="color:#16a34a;font-size:.86rem">Envíame</b>',
+  'shipit':               '<b style="color:#dc2626;font-size:.86rem">Shipit</b>',
 };
 
 // FIX 2026-07-27 (Daniel, captura real): el nombre grande de la tarjeta
@@ -1536,6 +1537,7 @@ function renderCouriers(opts){
     // 'regla' ni leer c.es_regla_comercial/c.regla_pct: ninguno de los dos
     // llega en el payload desde 2026-07-25.
     const fuente = c.fuente === 'api' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API</span>' :
+                   c.fuente === 'api_shipit' ? '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">API Shipit</span>' :
                    c.fuente === 'tabla_fallback' ? '<span style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla (API caída)</span>' :
                    c.fuente === 'estimado' ? '<span title="Precio ESTIMADO: no hay tarifa cargada para esta comuna/tramo y el valor es una proyección. Confírmalo con el courier antes de despachar." style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:800;letter-spacing:.3px">ESTIMADO</span>' :
                    '<span style="background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:50px;font-size:.6rem;font-weight:700">Tabla</span>';
@@ -1613,14 +1615,27 @@ function renderCouriers(opts){
   }
 
   // Render sin cobertura (colapsable)
+  // 2026-08-05 (Daniel: "que inmediatamente le haga una alerta... algo
+  // específico, no genérico"): antes el <summary> solo decía "Sin cobertura:
+  // N couriers" sin nombrarlos -- un courier que SI se cotizó pero quedó
+  // bloqueado por una restricción (ej. Shipit: >15kg o >1 bulto) quedaba
+  // enterrado detrás de un texto gris genérico, indistinguible de "no hay
+  // servicio en esta comuna". Ahora se nombran los couriers, y el bloque se
+  // abre solo por defecto cuando el motivo es un problema real (restricción
+  // de negocio, error técnico, timeout) en vez de simple falta de cobertura
+  // geográfica -- que sigue plegado, porque ese caso SI es ruido esperado
+  // (la mayoría de couriers no cubre cada comuna).
   if(sinCob.length){
+    const _nombresSinCob = sinCob.map(c => escHtml(_courierDisplay(c.courier_nombre))).join(', ');
+    const _motivosUrgentes = ['restriccion_shipit', 'error', 'timeout'];
+    const _abrirPorDefecto = sinCob.some(c => _motivosUrgentes.includes(c.fuente));
     html += `
-      <details style="margin-top:6px">
+      <details style="margin-top:6px" ${_abrirPorDefecto ? 'open' : ''}>
         <summary style="cursor:pointer;color:#9ca3af;font-size:.74rem;padding:7px 10px;
                         background:#f9fafb;border-radius:6px;list-style:none;display:flex;
                         align-items:center;justify-content:space-between">
-          <span><i class="bi bi-x-circle me-1"></i>Sin cobertura: ${sinCob.length} courier${sinCob.length>1?'s':''}</span>
-          <span style="font-size:.66rem;opacity:.6">click para expandir</span>
+          <span><i class="bi bi-x-circle me-1"></i>Sin cobertura: ${_nombresSinCob}</span>
+          <span style="font-size:.66rem;opacity:.6">${_abrirPorDefecto ? '' : 'click para expandir'}</span>
         </summary>
         <div style="margin-top:6px;display:flex;flex-direction:column;gap:5px">
           ${sinCob.map(c => `
@@ -1741,11 +1756,13 @@ function abrirAuditoriaCourier(auditId, cotizacion){
   // Validación / fuente
   const fuenteLabel = {
     'api': 'API en vivo (FedEx)',
+    'api_shipit': 'API en vivo (Shipit)',
     'tabla': 'Tabla de tarifas',
     'tabla_fallback': 'Tabla (API caída)',
     'validado_excel': 'Validado contra Excel',
     'manual': 'Edición manual',
     'no_cobertura': 'Sin cobertura',
+    'restriccion_shipit': 'No aplica por restricción de Shipit',
     'error': 'Error',
   }[cotizacion.fuente] || cotizacion.fuente || '—';
   const validadoChip = trace.validado
