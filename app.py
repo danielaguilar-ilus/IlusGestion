@@ -46524,7 +46524,10 @@ def init_mantenciones_tables():
                     titulo          VARCHAR(300) NOT NULL,
                     descripcion     TEXT,
                     tipo            ENUM('inspeccion','cambio','reparacion','limpieza',
-                                          'levantamiento','instalacion','garantia','otro')
+                                          'levantamiento','instalacion','garantia','otro',
+                                          'preventiva','correctiva','visita_tecnica',
+                                          'cambio_equipo','desinstalacion','capacitacion',
+                                          'repuesto','revision_interna','visita_correctiva')
                                     DEFAULT 'otro',
                     maquina_id      INT NULL
                                     COMMENT 'FK opcional a la máquina afectada',
@@ -79297,6 +79300,171 @@ def mant_lev_crear_o_listar(cid):
     return jsonify(payload), status
 
 
+# ═══════════════════════════════════════════════════════════════════
+# TIPO DE TAREA DE OT — el ENUM de `mant_visita_tareas.tipo` es MÁS
+# ESTRECHO que el de tipos de OT (`mant_visitas.tipo`).
+#
+# BUG REAL (reportado por Daniel 2026-08-05): al generar una OT
+# preventiva / correctiva / visita técnica, CADA insert de tarea de
+# plantilla moría con
+#     (1265, "Data truncated for column 'tipo' at row 1")
+# porque 'preventiva' no existe en el ENUM de la tarea. Consecuencia:
+# la OT quedaba con CERO tareas de checklist y la red de seguridad
+# metía una tarea "📷 Documentar" por equipo → TODA OT se veía como
+# un levantamiento de ficha. Confirmado en los logs de Cloud Run para
+# las OT 216 (Marbella), 217 (La Dehesa), 218 (RIVAFIT) y 219 (Brave).
+#
+# Se arregla en dos capas, para que funcione aunque el ALTER no pueda
+# correr (permisos, base de solo lectura, réplica):
+#   1) _ensure_visita_tareas_tipo_enum() amplía el ENUM al arrancar,
+#      incluso con ILUS_SKIP_MIGRATIONS=1.
+#   2) _tarea_tipo_seguro() lee UNA vez qué valores acepta la columna
+#      y traduce el que no esté — el checklist se crea igual.
+# ═══════════════════════════════════════════════════════════════════
+_TAREA_TIPO_VALORES = None   # cache del set de valores válidos del ENUM
+
+# Equivalencias tipo de OT → tipo de tarea para bases sin el ENUM
+# ampliado. Nunca se pierde la tarea: en el peor caso queda 'otro'.
+_TAREA_TIPO_EQUIVALENTE = {
+    'preventiva':        'limpieza',
+    'correctiva':        'reparacion',
+    'visita_correctiva': 'reparacion',
+    'visita_tecnica':    'inspeccion',
+    'revision_interna':  'inspeccion',
+    'cambio_equipo':     'cambio',
+    'repuesto':          'cambio',
+    'desinstalacion':    'otro',
+    'capacitacion':      'otro',
+}
+
+
+def _tarea_tipo_valores():
+    """Valores que HOY acepta mant_visita_tareas.tipo (1 query, cacheada)."""
+    global _TAREA_TIPO_VALORES
+    if _TAREA_TIPO_VALORES is not None:
+        return _TAREA_TIPO_VALORES
+    vals = set()
+    try:
+        col = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_tareas' "
+            "  AND COLUMN_NAME='tipo' LIMIT 1"
+        ) or {}
+        ct = col.get("COLUMN_TYPE") or ""
+        if isinstance(ct, (bytes, bytearray)):
+            ct = ct.decode("utf-8", "replace")
+        ct = str(ct).strip()
+        if ct.lower().startswith("enum(") and ct.endswith(")"):
+            vals = {v.strip().strip("'") for v in ct[5:-1].split(",")}
+            vals = {v for v in vals if v}
+    except Exception as e:
+        print(f"[tarea_tipo] no se pudo leer el ENUM: {e}", flush=True)
+    if not vals:
+        # Base histórica mínima — nunca dejar el set vacío (haría que todo
+        # cayera a 'otro' y perderíamos el matiz por tipo de OT).
+        vals = {'inspeccion', 'cambio', 'reparacion', 'limpieza',
+                'levantamiento', 'instalacion', 'garantia', 'otro'}
+    _TAREA_TIPO_VALORES = vals
+    return vals
+
+
+def _tarea_tipo_seguro(tipo_ot):
+    """Traduce el tipo de OT a un valor que mant_visita_tareas.tipo acepte."""
+    t = (tipo_ot or "").strip().lower()
+    validos = _tarea_tipo_valores()
+    if t in validos:
+        return t
+    equiv = _TAREA_TIPO_EQUIVALENTE.get(t)
+    if equiv and equiv in validos:
+        return equiv
+    return 'otro' if 'otro' in validos else 'levantamiento'
+
+
+# Etiqueta humana del tipo de OT — se usa en el título de la tarea de
+# respaldo cuando el tipo NO tiene checklist propio. Antes decía siempre
+# "📷 Documentar", que es el lenguaje del levantamiento de ficha y hacía
+# ver toda OT como un levantamiento.
+_TIPO_OT_LABEL = {
+    'levantamiento':     'Levantamiento',
+    'instalacion':       'Instalación',
+    'preventiva':        'Mantención preventiva',
+    'correctiva':        'Mantención correctiva',
+    'visita_tecnica':    'Visita técnica',
+    'inspeccion':        'Inspección',
+    'garantia':          'Garantía',
+    'cambio_equipo':     'Cambio de equipo',
+    'desinstalacion':    'Desinstalación',
+    'capacitacion':      'Capacitación',
+    'repuesto':          'Repuesto',
+    'revision_interna':  'Revisión interna',
+    'visita_correctiva': 'Visita correctiva',
+}
+
+
+# Nombre "de convención" de la plantilla estándar de cada tipo de OT. Si
+# existe una con ese nombre exacto, manda. Si no, se busca por tipo_visita.
+_PLANTILLA_ESTANDAR_NOMBRE = {
+    'levantamiento':  'Levantamiento fotográfico estándar',
+    'instalacion':    'Instalación estándar',
+    'preventiva':     'Mantención preventiva estándar',
+    'correctiva':     'Mantención correctiva estándar',
+    'visita_tecnica': 'Visita técnica estándar',
+    'inspeccion':     'Inspección estándar',
+    'garantia':       'Garantía estándar',
+}
+
+
+def _plantilla_estandar_para_tipo(tipo_ot):
+    """ID de la plantilla de checklist que corresponde a un tipo de OT, o None.
+
+    Reglas (en orden):
+      1. Plantilla con el nombre de convención del tipo.
+      2. La mejor plantilla con ese `tipo_visita`: primero las de sistema,
+         luego la que tenga MÁS ítems, luego la más antigua.
+    En ambos casos se EXIGE que tenga ítems: una plantilla vacía deja al
+    técnico con una OT sin nada que hacer (caso real Vitacura 161/162/163),
+    y antes se elegía simplemente la de menor id — por eso toda preventiva
+    caía en "Mantención preventiva trotadora" en vez del checklist completo.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return None
+    nombre = _PLANTILLA_ESTANDAR_NOMBRE.get(tipo_ot)
+    if nombre:
+        row = mysql_fetchone(
+            "SELECT p.id FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.nombre=%s AND COALESCE(p.activa,1)=1 "
+            " GROUP BY p.id LIMIT 1",
+            (nombre,)
+        )
+        if row:
+            return int(row["id"])
+    row = mysql_fetchone(
+        "SELECT p.id, COUNT(i.id) AS n_items FROM mant_tarea_plantillas p "
+        "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+        " WHERE p.tipo_visita=%s AND COALESCE(p.activa,1)=1 "
+        " GROUP BY p.id "
+        " ORDER BY COALESCE(p.es_sistema,0) DESC, n_items DESC, p.id "
+        " LIMIT 1",
+        (tipo_ot,)
+    )
+    return int(row["id"]) if row else None
+
+
+def _tarea_respaldo_texto(tipo_ot, nombre_equipo):
+    """(titulo, descripcion) de la tarea de respaldo por equipo."""
+    nombre_equipo = (nombre_equipo or 'equipo')[:240]
+    if (tipo_ot or '') == 'levantamiento':
+        return (f"📷 Documentar: {nombre_equipo}",
+                "Capturar fotos generales del equipo + N° serie + placa + "
+                "datos técnicos.")
+    label = _TIPO_OT_LABEL.get(tipo_ot or '', 'Servicio')
+    return (f"🔧 {label}: {nombre_equipo}",
+            f"{label} del equipo. Registrar trabajo realizado, estado final "
+            f"y fotos de respaldo.")
+
+
 def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     """Nucleo compartido de creacion de Levantamiento/OT (mant_levantamientos +
     mant_levantamiento_items + OT espejo en mant_visitas + multi-tecnico +
@@ -79427,6 +79595,11 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
     if tipo_ot not in tipos_ok:
         tipo_ot = "levantamiento"
+    # `mant_visita_tareas.tipo` tiene su propio ENUM, más estrecho que
+    # `tipos_ok`. Sin esta traducción, cada INSERT de tarea de una OT
+    # preventiva/correctiva/visita técnica moría con el error 1265 y la
+    # OT terminaba sin checklist (ver _tarea_tipo_seguro).
+    tarea_tipo = _tarea_tipo_seguro(tipo_ot)
 
     # ─── Flag opcional: ¿aplica garantía? ──────────────────────────
     # Garantía no es un tipo (cubre múltiples tipos), es una modalidad
@@ -79694,33 +79867,14 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 # Esta validación es defensiva — si no hay match de plantilla
                 # estándar y plantillas_por_equipo está vacío, queda esta
                 # tarea para que el técnico tenga AL MENOS qué hacer.
+                # MISMA función que decide en el paso 1 (más abajo): antes eran
+                # dos consultas distintas y podían discrepar — el pre-chequeo
+                # daba "sí hay plantilla" y luego el paso 1 no aplicaba nada.
                 _tiene_plantillas = bool(plantillas_por_equipo)
                 if not _tiene_plantillas:
-                    # Chequear si hay plantilla estándar para el tipo
                     try:
-                        _nombre_test = {
-                            'levantamiento':  'Levantamiento fotográfico estándar',
-                            'instalacion':    'Instalación estándar',
-                            'preventiva':     'Mantención preventiva estándar',
-                            'correctiva':     'Mantención correctiva estándar',
-                            'visita_tecnica': 'Visita técnica estándar',
-                            'inspeccion':     'Inspección estándar',
-                            'garantia':       'Garantía estándar',
-                        }.get(tipo_ot)
-                        if _nombre_test:
-                            _check_p = mysql_fetchone(
-                                "SELECT id FROM mant_tarea_plantillas "
-                                "WHERE nombre=%s AND COALESCE(activa,1)=1 LIMIT 1",
-                                (_nombre_test,)
-                            )
-                            if _check_p: _tiene_plantillas = True
-                        if not _tiene_plantillas:
-                            _check_p2 = mysql_fetchone(
-                                "SELECT id FROM mant_tarea_plantillas "
-                                "WHERE tipo_visita=%s AND COALESCE(activa,1)=1 LIMIT 1",
-                                (tipo_ot,)
-                            )
-                            if _check_p2: _tiene_plantillas = True
+                        _tiene_plantillas = bool(
+                            _plantilla_estandar_para_tipo(tipo_ot))
                     except Exception:
                         pass
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
@@ -79732,16 +79886,16 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 # por simulacion de trafico 2026-07-13).
                 if not _tiene_plantillas:
                     for idx, m in enumerate([mm for mm in maquinas if mm.get("id")], 1):
+                        _t_res, _d_res = _tarea_respaldo_texto(tipo_ot, m.get("nombre"))
                         cur.execute(
                             "INSERT INTO mant_visita_tareas "
                             "(visita_id, orden, titulo, descripcion, maquina_id, "
                             " tipo, tipo_respuesta, obligatoria, requiere_foto, "
                             " estado_trabajo, created_by) "
-                            "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,'pendiente',%s)",
-                            (visita_id, idx,
-                             f"📷 Documentar: {(m.get('nombre') or 'equipo')[:240]}",
-                             "Capturar fotos generales del equipo + N° serie + placa + datos técnicos.",
-                             m.get("id"), current_username() or 'sistema')
+                            "VALUES (%s,%s,%s,%s,%s,%s,'foto',1,1,'pendiente',%s)",
+                            (visita_id, idx, _t_res, _d_res,
+                             m.get("id"), tarea_tipo,
+                             current_username() or 'sistema')
                         )
 
                 # ─── Ticket -> OT: vinculo bidireccional ATOMICO ───────
@@ -79844,15 +79998,22 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                             cur2.execute(
                                 "INSERT INTO mant_visita_tareas "
                                 "(visita_id, orden, titulo, descripcion, tipo, "
-                                " maquina_id, plantilla_id, tipo_respuesta, obligatoria, "
+                                " maquina_id, plantilla_id, tipo_respuesta, target_field, "
+                                " obligatoria, "
                                 " requiere_foto, unidad, rango_min, rango_max, "
                                 " opciones_lista_json, estado_trabajo, created_by) "
                                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                                "        %s,%s,%s,%s,'pendiente',%s)",
+                                "        %s,%s,%s,%s,%s,'pendiente',%s)",
                                 (visita_id, next_orden, titulo_full,
-                                 it.get("descripcion"), tipo_ot, mq_id,
+                                 it.get("descripcion"), tarea_tipo, mq_id,
                                  plantilla_id,  # FK origen
-                                 it["tipo_respuesta"],
+                                 it.get("tipo_respuesta") or "check",
+                                 # target_field: mapeo respuesta → campo de la
+                                 # ficha del equipo. Sin esto, el checklist
+                                 # aplicado AL CREAR la OT no alimentaba la
+                                 # ficha (sí lo hacía el aplicar-plantilla
+                                 # posterior, que sí lo copiaba).
+                                 it.get("target_field"),
                                  it.get("obligatoria") or 0,
                                  it.get("requiere_foto") or 0,
                                  it.get("unidad"), it.get("rango_min"),
@@ -79876,36 +80037,16 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
         if visita_id and equipo_ids and not plantillas_por_equipo:
             try:
-                # Mapeo tipo_ot → nombre de plantilla estándar (convención del proyecto)
-                plantilla_estandar_por_tipo = {
-                    'levantamiento':  'Levantamiento fotográfico estándar',
-                    'instalacion':    'Instalación estándar',
-                    'preventiva':     'Mantención preventiva estándar',
-                    'correctiva':     'Mantención correctiva estándar',
-                    'visita_tecnica': 'Visita técnica estándar',
-                    'inspeccion':     'Inspección estándar',
-                    'garantia':       'Garantía estándar',
-                }
-                nombre_plant = plantilla_estandar_por_tipo.get(tipo_ot)
-                plant_id = None
-                if nombre_plant:
-                    plant = mysql_fetchone(
-                        "SELECT id FROM mant_tarea_plantillas "
-                        "WHERE nombre=%s AND COALESCE(activa,1)=1 LIMIT 1",
-                        (nombre_plant,)
-                    )
-                    if plant: plant_id = plant["id"]
-                # Fallback: buscar por tipo_visita
-                if not plant_id:
-                    plant = mysql_fetchone(
-                        "SELECT id FROM mant_tarea_plantillas "
-                        "WHERE tipo_visita=%s AND COALESCE(activa,1)=1 "
-                        "ORDER BY id LIMIT 1",
-                        (tipo_ot,)
-                    )
-                    if plant: plant_id = plant["id"]
+                plant_id = _plantilla_estandar_para_tipo(tipo_ot)
                 if plant_id:
-                    _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
+                    _n_std = _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
+                    print(f"[lev_crear] plantilla estándar {plant_id} aplicada a "
+                          f"{len(equipo_ids)} equipo(s) → {_n_std} tarea(s) "
+                          f"(tipo '{tipo_ot}')", flush=True)
+                else:
+                    print(f"[lev_crear] sin plantilla estándar para el tipo "
+                          f"'{tipo_ot}' — se usará la tarea de respaldo por equipo",
+                          flush=True)
             except Exception as e_pl:
                 print(f"[lev_crear] aplicar plantilla estándar falló: {e_pl}", flush=True)
 
@@ -79952,10 +80093,11 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                                 "(visita_id, orden, titulo, descripcion, maquina_id, "
                                 " tipo, tipo_respuesta, obligatoria, requiere_foto, "
                                 " estado_trabajo, created_by) "
-                                "VALUES (%s,%s,%s,%s,NULL,'otro','foto',1,1,'pendiente',%s)",
+                                "VALUES (%s,%s,%s,%s,NULL,%s,'foto',1,1,'pendiente',%s)",
                                 (visita_id, _orden_tk, _titulo_tk[:300],
                                  "Equipo declarado en el ticket, sin ficha previa en "
                                  "Mantenciones (cliente/equipo nuevo).",
+                                 tarea_tipo,
                                  current_username() or 'sistema')
                             )
                             items_plantilla += 1
@@ -79999,23 +80141,23 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                     try:
                         with _conn_fb.cursor() as _cur_fb:
                             for _idx, _m in enumerate(_maqs, 1):
+                                _t_fb, _d_fb = _tarea_respaldo_texto(
+                                    tipo_ot, _m.get("nombre"))
                                 _cur_fb.execute(
                                     "INSERT INTO mant_visita_tareas "
                                     "(visita_id, orden, titulo, descripcion, maquina_id, "
                                     " tipo, tipo_respuesta, obligatoria, requiere_foto, "
                                     " estado_trabajo, created_by) "
-                                    "VALUES (%s,%s,%s,%s,%s,'levantamiento','foto',1,1,"
+                                    "VALUES (%s,%s,%s,%s,%s,%s,'foto',1,1,"
                                     "        'pendiente',%s)",
-                                    (visita_id, _idx,
-                                     f"📷 Documentar: {(_m.get('nombre') or 'equipo')[:240]}",
-                                     "Capturar fotos generales del equipo + N° serie + placa "
-                                     "+ datos técnicos.",
-                                     _m["id"], current_username() or 'sistema')
+                                    (visita_id, _idx, _t_fb, _d_fb,
+                                     _m["id"], tarea_tipo,
+                                     current_username() or 'sistema')
                                 )
                                 items_plantilla += 1
                         _conn_fb.commit()
                         print(f"[lev_crear] fallback aplicado vid={visita_id} "
-                              f"({len(_maqs)} tarea(s) 📷 Documentar) — plantilla del "
+                              f"({len(_maqs)} tarea(s) de respaldo) — plantilla del "
                               f"tipo '{tipo_ot}' sin items.", flush=True)
                     finally:
                         _conn_fb.close()
@@ -84427,6 +84569,57 @@ def _ensure_email_log_estado_bloqueado():
         return False
 
 
+def _ensure_visita_tareas_tipo_enum():
+    """Garantiza que mant_visita_tareas.tipo acepte TODOS los tipos de OT,
+    AUNQUE ILUS_SKIP_MIGRATIONS=1.
+
+    El ENUM original solo tenía los tipos "de tarea" clásicos
+    ('inspeccion','cambio','reparacion','limpieza','levantamiento',
+     'instalacion','garantia','otro'), pero al crear una OT se guarda ahí el
+    tipo de la OT. Con MySQL en modo estricto, una OT 'preventiva' /
+    'correctiva' / 'visita_tecnica' hacía fallar CADA insert de tarea con
+    (1265, "Data truncated for column 'tipo'"), la OT quedaba sin checklist
+    y caía en la tarea de respaldo → toda OT parecía un levantamiento de
+    ficha (reportado por Daniel el 2026-08-05; visible en los logs de las
+    OT 216/217/218/219). 1 SELECT barato a information_schema en cold-start;
+    ALTER solo si falta algún valor."""
+    global _TAREA_TIPO_VALORES
+    _requeridos = ('preventiva', 'correctiva', 'visita_tecnica',
+                   'cambio_equipo', 'desinstalacion', 'capacitacion',
+                   'repuesto', 'revision_interna', 'visita_correctiva')
+    try:
+        col = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_tareas' "
+            "  AND COLUMN_NAME='tipo' LIMIT 1"
+        )
+        if not col:
+            return False  # tabla aún no existe — el CREATE actual ya trae todo
+        tipo = col.get("COLUMN_TYPE") or ""
+        if isinstance(tipo, (bytes, bytearray)):
+            tipo = tipo.decode("utf-8", "replace")
+        tipo = str(tipo).lower()
+        faltan = [v for v in _requeridos if f"'{v}'" not in tipo]
+        if not faltan:
+            return False  # ya está ampliado
+        mysql_execute(
+            "ALTER TABLE mant_visita_tareas MODIFY COLUMN tipo "
+            "ENUM('inspeccion','cambio','reparacion','limpieza',"
+            "     'levantamiento','instalacion','garantia','otro',"
+            "     'preventiva','correctiva','visita_tecnica',"
+            "     'cambio_equipo','desinstalacion','capacitacion',"
+            "     'repuesto','revision_interna','visita_correctiva') "
+            "DEFAULT 'otro'"
+        )
+        _TAREA_TIPO_VALORES = None  # invalidar cache: la columna cambió
+        print(f"[ensure_visita_tareas] tipo ENUM ampliado con: {faltan}", flush=True)
+        return True
+    except Exception as e:
+        # No es fatal: _tarea_tipo_seguro() traduce igual y el checklist se crea.
+        print(f"[ensure_visita_tareas] no se pudo ampliar ENUM tipo: {e}", flush=True)
+        return False
+
+
 def _ensure_comm_template_plan_propuesto():
     """Siembra idempotente de la plantilla 'plan_propuesto' (propuesta de plan
     anual de mantención por email) AUNQUE ILUS_SKIP_MIGRATIONS=1.
@@ -85527,6 +85720,17 @@ try:
         _ensure_email_log_estado_bloqueado()
 except Exception as _ensure_elog_err:
     print(f"[ILUS][WARN] _ensure_email_log_estado_bloqueado: {_ensure_elog_err}", flush=True)
+
+# CRÍTICO: mant_visita_tareas.tipo debe aceptar los tipos de OT
+# ('preventiva','correctiva','visita_tecnica'…) SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1. Sin esto, cada tarea de checklist de una OT que no
+# fuera levantamiento/instalación/garantía moría con el error 1265 y la OT
+# quedaba sin plantilla, mostrándose como un levantamiento de ficha.
+try:
+    with app.app_context():
+        _ensure_visita_tareas_tipo_enum()
+except Exception as _ensure_vtt_err:
+    print(f"[ILUS][WARN] _ensure_visita_tareas_tipo_enum: {_ensure_vtt_err}", flush=True)
 
 # Plantilla editable 'plan_propuesto' (mantenciones/email) SIEMPRE sembrada
 # (incluso skip-migrations) — la usa /mantenciones/api/clientes/<cid>/proponer-plan-email.

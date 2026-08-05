@@ -1098,12 +1098,67 @@ const _OT_TIPO_DESCRIPCIONES = {
   'correctiva':    'Mantención correctiva: reparación de falla específica reportada por el cliente.',
   'inspeccion':     'Inspección: revisión visual + funcional sin intervención, para diagnóstico o auditoría.',
 };
+// Nombre "de convención" de la plantilla estándar por tipo de OT. Debe
+// coincidir con _PLANTILLA_ESTANDAR_NOMBRE de app.py — este bloque solo
+// MUESTRA lo que el backend va a aplicar, no decide nada.
+const _PLANTILLA_ESTANDAR_NOMBRE = {
+  levantamiento:  'Levantamiento fotográfico estándar',
+  instalacion:    'Instalación estándar',
+  preventiva:     'Mantención preventiva estándar',
+  correctiva:     'Mantención correctiva estándar',
+  visita_tecnica: 'Visita técnica estándar',
+  inspeccion:     'Inspección estándar',
+  garantia:       'Garantía estándar',
+};
+
+// Misma regla que el backend: nombre de convención → si no, la mejor del
+// tipo (primero las de sistema, luego la de más ítems). Siempre con ítems.
+function plantillaEstandarParaTipo(tipo){
+  const todas = (_LEV_PLANTILLAS.all || [])
+    .filter(p => p.activa !== false && (p.items_count || 0) > 0);
+  const nom = _PLANTILLA_ESTANDAR_NOMBRE[tipo];
+  if (nom){
+    const exacta = todas.find(p => p.nombre === nom);
+    if (exacta) return exacta;
+  }
+  const cand = todas.filter(p => p.tipo_visita === tipo);
+  cand.sort((a, b) =>
+    (Number(!!b.es_sistema) - Number(!!a.es_sistema)) ||
+    ((b.items_count || 0) - (a.items_count || 0)) ||
+    ((a.id || 0) - (b.id || 0)));
+  return cand[0] || null;
+}
+
+// Muestra QUÉ checklist va a quedar asociado a la OT. Antes esto era
+// invisible: si el tipo no tenía plantilla, la OT nacía sin checklist y
+// nadie se enteraba hasta que el técnico abría la OT en terreno.
+function pintarPlantillaDelTipo(tipo){
+  const box = document.getElementById('otPlantillaInfo');
+  if (!box) return;
+  if (!_LEV_PLANTILLAS.cargadas){ box.innerHTML = ''; box.removeAttribute('style'); return; }
+  const p = plantillaEstandarParaTipo(tipo);
+  if (p){
+    box.className = 'small mt-2 px-2 py-1 rounded';
+    box.style.cssText = 'font-size:.78rem;background:#dcfce7;color:#166534;border:1px solid #86efac';
+    box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Checklist asociado: ' +
+      `<strong>${escHtml(p.nombre)}</strong> · ${p.items_count} tarea(s) por equipo`;
+  } else {
+    box.className = 'small mt-2 px-2 py-1 rounded';
+    box.style.cssText = 'font-size:.78rem;background:#fff8e1;color:#92400e;border:1px solid #fcd34d';
+    box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>' +
+      'No hay checklist estándar para este tipo. Cada equipo llevará una tarea de ' +
+      'registro con foto — puedes asignar una plantilla equipo por equipo en el paso ' +
+      '<strong>Equipos</strong>.';
+  }
+}
+
 function onTipoOtChange(){
   const tipo = document.getElementById('otTipo')?.value;
   const desc = document.getElementById('otTipoDescripcion');
   if (desc && tipo){
     desc.innerHTML = '<i class="bi bi-info-circle me-1"></i>' + (_OT_TIPO_DESCRIPCIONES[tipo] || '');
   }
+  pintarPlantillaDelTipo(tipo);
   // Garantía aplica a TODOS los tipos excepto levantamiento (es flag opcional)
   const garWrap = document.getElementById('otGarantiaWrap');
   if (garWrap){

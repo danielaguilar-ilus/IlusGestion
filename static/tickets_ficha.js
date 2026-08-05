@@ -4111,10 +4111,62 @@ const _TKOT_TIPO_DESC = {
   correctiva:     'Mantención correctiva: reparación de falla específica reportada por el cliente.',
   inspeccion:     'Inspección: revisión visual + funcional sin intervención, para diagnóstico o auditoría.',
 };
+// Nombre "de convención" de la plantilla estándar por tipo de OT. Espejo de
+// _PLANTILLA_ESTANDAR_NOMBRE en app.py — aquí solo se MUESTRA qué checklist
+// va a aplicar el backend.
+const _TKOT_PLANTILLA_NOMBRE = {
+  levantamiento:  'Levantamiento fotográfico estándar',
+  instalacion:    'Instalación estándar',
+  preventiva:     'Mantención preventiva estándar',
+  correctiva:     'Mantención correctiva estándar',
+  visita_tecnica: 'Visita técnica estándar',
+  inspeccion:     'Inspección estándar',
+  garantia:       'Garantía estándar',
+};
+
+function tkotPlantillaParaTipo(tipo){
+  const todas = ((_TKOT.plantillas && _TKOT.plantillas.all) || [])
+    .filter(p => p.activa !== false && (p.items_count || 0) > 0);
+  const nom = _TKOT_PLANTILLA_NOMBRE[tipo];
+  if(nom){
+    const exacta = todas.find(p => p.nombre === nom);
+    if(exacta) return exacta;
+  }
+  const cand = todas.filter(p => p.tipo_visita === tipo);
+  cand.sort((a, b) =>
+    (Number(!!b.es_sistema) - Number(!!a.es_sistema)) ||
+    ((b.items_count || 0) - (a.items_count || 0)) ||
+    ((a.id || 0) - (b.id || 0)));
+  return cand[0] || null;
+}
+
+function tkotPintarPlantilla(tipo){
+  const box = document.getElementById('otPlantillaInfo');
+  if(!box) return;
+  if(!(_TKOT.plantillas && _TKOT.plantillas.cargadas)){
+    box.innerHTML = ''; box.removeAttribute('style'); return;
+  }
+  const p = tkotPlantillaParaTipo(tipo);
+  if(p){
+    box.style.cssText = 'font-size:.78rem;background:#dcfce7;color:#166534;border:1px solid #86efac';
+    box.className = 'small mt-2 px-2 py-1 rounded';
+    box.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Checklist asociado: ' +
+      '<strong>' + esc(p.nombre) + '</strong> · ' + p.items_count + ' tarea(s) por equipo';
+  } else {
+    box.style.cssText = 'font-size:.78rem;background:#fff8e1;color:#92400e;border:1px solid #fcd34d';
+    box.className = 'small mt-2 px-2 py-1 rounded';
+    box.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>' +
+      'No hay checklist estándar para este tipo. Cada equipo llevará una tarea de ' +
+      'registro con foto — puedes asignar una plantilla equipo por equipo en el paso ' +
+      '<strong>Equipos</strong>.';
+  }
+}
+
 function tkotTipoChange(){
   const tipo = document.getElementById('otTipo')?.value;
   const desc = document.getElementById('otTipoDescripcion');
   if(desc && tipo) desc.innerHTML = '<i class="bi bi-info-circle me-1"></i>' + (_TKOT_TIPO_DESC[tipo] || '');
+  tkotPintarPlantilla(tipo);
 
   const garWrap = document.getElementById('otGarantiaWrap');
   if(garWrap){
