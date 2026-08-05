@@ -514,7 +514,7 @@
           'costo': (item.costo_courier or 0)|float,
           'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
           'estado': item.estado_entrega or '',
-          'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim,
+          'doc': ((item.tido or '') ~ ' ' ~ (item.nudo | nudo_fmt)) | trim,
           'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) else 0),
           'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('tracking_number') or item.get('simpliroute_visit_id')) else '')
         } | tojson %}
@@ -545,7 +545,7 @@
             <i class="bi bi-chevron-right mfd-chevron" id="chev-{{ item.id }}"></i>
           </td>
           <td class="font-monospace fw-bold">
-            <div>{{ item.tido }} {{ item.nudo }}</div>
+            <div>{{ item.tido }} {{ item.nudo | nudo_fmt }}</div>
             <div class="mt-1 d-flex flex-wrap gap-1">
               {% if item.clasificacion == 'retiro' %}
               <span class="badge bg-info-subtle text-info-emphasis mfd-mini-badge"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>
@@ -942,7 +942,7 @@
       'costo': (item.costo_courier or 0)|float,
       'ship_bultos': (item.ship_bultos or item.n_bultos or 1)|int,
       'estado': item.estado_entrega or '',
-      'doc': ((item.tido or '') ~ ' ' ~ (item.nudo or '')) | trim,
+      'doc': ((item.tido or '') ~ ' ' ~ (item.nudo | nudo_fmt)) | trim,
       'edicion_bloqueada': (1 if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else 0),
       'edicion_motivo': ('Edición bloqueada: la factura ya está en gestión con el courier (OT/visita creada).' if (item.get('master_tracking_number') or item.get('simpliroute_visit_id')) else '')
     } | tojson %}
@@ -951,7 +951,7 @@
     <div class="mfd-mcard {{ 'mfd-mcard-nosaldo' if not item.tiene_saldo }} {{ 'mfd-mcard-perdida' if item.es_perdida }}" id="card-{{ item.id }}">
       <div class="d-flex justify-content-between align-items-start mb-2">
         <div>
-          <div class="font-monospace fw-bold" style="font-size:.92rem">{{ item.tido }} {{ item.nudo }}</div>
+          <div class="font-monospace fw-bold" style="font-size:.92rem">{{ item.tido }} {{ item.nudo | nudo_fmt }}</div>
           <div class="d-flex flex-wrap gap-1 mt-1">
             {% if item.clasificacion == 'retiro' %}
             <span class="badge bg-info-subtle text-info-emphasis mfd-mini-badge"><i class="bi bi-arrow-return-left me-1"></i>Retiro</span>

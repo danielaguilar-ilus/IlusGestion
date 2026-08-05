@@ -72,7 +72,7 @@ tr.loss td{background:#fef2f2}.tag{font-size:9px;font-weight:800;color:#991b1b}
       <tbody>
       {% for it in items %}
         <tr>
-          <td>{{ it.tido }} {{ it.nudo }}</td>
+          <td>{{ it.tido }} {{ it.nudo | nudo_fmt }}</td>
           <td>{{ it.cliente_nombre or '—' }}</td>
           <td>{{ it.direccion or '—' }}</td>
           <td>{{ it.comuna or '—' }}</td>

@@ -103,7 +103,7 @@ input.fpd-input{ font-size:16px; }
         <tbody id="fpdItemsBody">
           {% for it in items %}
           <tr id="fpdRow{{ it.commitment_id }}">
-            <td>{{ it.tido }}{{ it.nudo }}</td>
+            <td>{{ it.tido }} {{ it.nudo | nudo_fmt }}</td>
             <td>{{ it.cliente_nombre or '—' }}<br><small class="text-muted">{{ it.comuna or '' }}</small></td>
             <td>${{ '{:,.0f}'.format(it.costo_zz or 0) }}</td>
             <td>${{ '{:,.0f}'.format(it.costo_real or 0) }}</td>

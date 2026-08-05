@@ -957,6 +957,26 @@ def rut_fmt_filter(value):
     return _formato_rut_chile(value)
 
 
+@app.template_filter('nudo_fmt')
+def nudo_fmt_filter(value):
+    """Filtro Jinja: {{ item.nudo | nudo_fmt }} → '22886' (no '0000022886').
+
+    El ERP rellena el correlativo con ceros a la izquierda hasta 10 dígitos.
+    Es un detalle de SU formato interno: nadie en la empresa dice "la boleta
+    cero cero cero cero cero dos dos ocho ocho seis".
+
+    Existe como FILTRO y no como arreglo puntual porque el número de
+    documento se pinta en más de veinte lugares distintos (monitor, modales,
+    manifiestos, correos, dashboard, buscador, seguimiento público). Se
+    arreglaron cinco a mano el 2026-08-05 y Daniel siguió viendo ceros en
+    otras pantallas: ir uno por uno no escala y siempre queda alguno.
+
+    Conserva el original si al quitar los ceros no queda nada.
+    """
+    s = str(value or "").strip()
+    return s.lstrip("0") or s
+
+
 @app.template_filter('dias_fmt')
 def dias_fmt_filter(value):
     """Filtro Jinja: {{ item.dias_entrega | dias_fmt }} → '1 día 7 h'.
@@ -29603,7 +29623,12 @@ def _tracking_payload(token):
     # simpliroute_client.py campo "reference") identifica el pedido SIEMPRE,
     # y evita pisarse entre tipos de documento con el mismo correlativo (una
     # factura 22703 y una boleta 22703 son cosas distintas).
-    _doc_id = f"{c.get('tido') or ''}-{c.get('nudo') or ''}".strip("-")
+    # Los ceros de relleno del ERP se quitan: esta pantalla la ve el CLIENTE
+    # FINAL, y "BLV-0000022886" no es un número que nadie reconozca ni pueda
+    # dictar por teléfono (Daniel, 2026-08-05: "la boleta está llena de
+    # ceros"). El guion como separador se conserva a propósito, por lo que
+    # explica el comentario de arriba.
+    _doc_id = f"{c.get('tido') or ''}-{nudo_fmt_filter(c.get('nudo'))}".strip("-")
     return {
         "ok": True,
         "doc":           _doc_id,

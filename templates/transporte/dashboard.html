@@ -220,7 +220,7 @@
               {% endif %}
               <div class="dh-entrega-body">
                 <div class="dh-entrega-cli">{{ u.cliente_nombre or '—' }}</div>
-                <div class="dh-entrega-meta">{{ u.tido }} {{ u.nudo }}{% if u.comuna %} · {{ u.comuna }}{% endif %}{% if u.receptor_nombre %} · recibió {{ u.receptor_nombre.split()[0] }}{% endif %}</div>
+                <div class="dh-entrega-meta">{{ u.tido }} {{ u.nudo | nudo_fmt }}{% if u.comuna %} · {{ u.comuna }}{% endif %}{% if u.receptor_nombre %} · recibió {{ u.receptor_nombre.split()[0] }}{% endif %}</div>
               </div>
               <div class="dh-entrega-time">{{ u.entregado_at | chile_fmt('%H:%M') }}</div>
             </a>

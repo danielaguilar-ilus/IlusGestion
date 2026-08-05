@@ -104,7 +104,7 @@
         <div class="bi-hint mb-2">{{ resultados|length }} resultado{{ 's' if resultados|length != 1 }}{% if resultados|length > 1 %} — haz clic para ver detalle{% endif %}:</div>
         {% for r in resultados %}
         <div class="bi-result" onclick="cargarDetalle({{ r.id }})">
-          <div class="bi-result-doc">{{ r.tido }} {{ r.nudo }}</div>
+          <div class="bi-result-doc">{{ r.tido }} {{ r.nudo | nudo_fmt }}</div>
           <div class="bi-result-cli">{{ r.cliente_nombre or '—' }}</div>
           <div class="bi-result-meta">{{ r.cliente_rut | rut_fmt }}{% if r.comuna %} · {{ r.comuna }}{% endif %}{% if r.delivered_at %} · ✓ Entregado {{ r.delivered_at | chile_fmt }}{% endif %}</div>
         </div>
