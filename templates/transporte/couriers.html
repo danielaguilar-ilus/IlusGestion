@@ -783,7 +783,16 @@ async function cargarLogos() {
    Cotiza la MISMA comuna y el MISMO peso en todos los couriers para poder
    responder con datos "¿cuál me sale más barato?". Shipit se consulta en
    vivo contra su API, así que puede tardar: se avisa antes de empezar. */
+let _tarCompEnCurso = false;
 async function descargarTarifarioComparado() {
+  // Guard de reentrada: cada click dispara decenas de cotizaciones en vivo
+  // contra Shipit. Dos clicks seguidos duplicaban el trabajo del servidor
+  // sin que el usuario se diera cuenta de que ya estaba corriendo.
+  if (_tarCompEnCurso) {
+    ilusToast('Ya se está generando el Excel, espera un momento', { type: 'warning' });
+    return;
+  }
+  _tarCompEnCurso = true;
   ilusToast('Cotizando en todos los couriers… puede tardar un minuto', { type: 'info' });
   try {
     const r = await fetch('/transporte/couriers/tarifario-comparado.xlsx');
@@ -801,6 +810,8 @@ async function descargarTarifarioComparado() {
     ilusToast('✓ Excel descargado', { type: 'success' });
   } catch (e) {
     ilusToast('No se pudo generar el Excel: ' + e.message, { type: 'error' });
+  } finally {
+    _tarCompEnCurso = false;
   }
 }
 
@@ -837,7 +848,7 @@ async function _crLogoElegido(inp) {
   try {
     const fd = new FormData();
     fd.append('logo', file);
-    const r = await fetch(`/transporte/couriers/${cid}/logo`, { method: 'POST', body: fd });
+    const r = await fetch(`/transporte/couriers/${cid}/logo/archivo`, { method: 'POST', body: fd });
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
 

@@ -38547,10 +38547,18 @@ def tr_couriers_seed_logos():
     return jsonify({"ok": True, "actualizados": actualizados})
 
 
-@app.route("/transporte/couriers/<int:cid>/logo", methods=["POST"])
+@app.route("/transporte/couriers/<int:cid>/logo/archivo", methods=["POST"])
 @_tr_required
 def tr_courier_subir_logo(cid):
     """Sube el logo de un courier desde la ficha/tarjeta y lo deja en logo_url.
+
+    ⚠ La URL termina en /logo/archivo, NO en /logo: esa última ya está tomada
+    por tr_courier_logo() (más abajo), que guarda una URL escrita a mano y la
+    usa la pestaña "Logos" de la ficha del courier. Al registrarse primero,
+    esta función tapaba a la otra -- Flask no avisa porque los nombres de
+    función difieren -- y los tres botones "Guardar" de esa pestaña
+    respondían 400 (mandan JSON, acá se espera multipart). Bug real
+    introducido y detectado el mismo día (2026-08-05).
 
     Existe porque el seed automático (tr_couriers_seed_logos) solo cubre a los
     couriers con presencia en un CDN público. Los transportistas chilenos
@@ -38914,6 +38922,34 @@ def transporte_couriers_import():
         conn.close()
 
 
+_XLSX_ILEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xlsx_cell(v):
+    """Deja un valor listo para escribirlo en una celda de Excel.
+
+    Dos cosas, ambas por bugs reales:
+
+    1. openpyxl lanza IllegalCharacterError si el texto trae caracteres de
+       control. Llegan desde el ERP en notas, direcciones y observaciones.
+       (Ya existía una versión de esto, pero ANIDADA dentro de otra función:
+       transporte_couriers_export la llamaba desde fuera de su alcance y
+       reventaba con NameError, o sea que "Exportar tarifas" estaba roto.
+       Esta versión vive a nivel de módulo para que cualquiera la use.)
+
+    2. Excel interpreta como FÓRMULA cualquier celda que empiece con = + - @
+       (o tab/retorno). Un nombre de comuna o de cliente que empiece así se
+       ejecutaría al abrir el archivo. Se le antepone un apóstrofo, que Excel
+       usa justamente para forzar "esto es texto" y no se ve en la celda.
+    """
+    if not isinstance(v, str):
+        return v
+    v = _XLSX_ILEGAL.sub("", v)
+    if v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + v
+    return v
+
+
 @app.route("/transporte/couriers/export", methods=["GET"])
 @_tr_required
 def transporte_couriers_export():
@@ -38975,7 +39011,7 @@ def transporte_couriers_export():
             ] + [precios.get(k,'') for k in all_keys]
 
             for ci, v in enumerate(row_vals, 1):
-                ws.cell(ri, ci, _xc(v))
+                ws.cell(ri, ci, _xlsx_cell(v))
 
     if not wb.sheetnames:
         ws = wb.create_sheet("Sin datos")
@@ -39037,6 +39073,13 @@ def tr_tarifario_comparado_xlsx():
         limite = max(1, min(int(request.args.get("limite") or 40), 120))
     except ValueError:
         limite = 40
+    # El costo real es comunas × pesos, no cada factor por separado: con
+    # limite=120 y 6 pesos daban 720 llamadas a Shipit, muy por encima de los
+    # 90 s de gunicorn (Dockerfile) -- el árbitro mata el worker y se lleva
+    # sus 8 hilos, o sea la mitad de la capacidad de la instancia. Se acota
+    # el PRODUCTO a 200 cotizaciones.
+    MAX_COTIZACIONES = 200
+    limite = min(limite, max(1, MAX_COTIZACIONES // len(pesos)))
 
     # ── Comunas por volumen real de ILUS ─────────────────────────────
     filas_comuna = mysql_fetchall(
@@ -39078,15 +39121,25 @@ def tr_tarifario_comparado_xlsx():
         and not _shc.verificar_restricciones(1, p)
     ]
 
+    # Tope de tiempo global: aunque el producto esté acotado, la API de Shipit
+    # ha respondido hasta en 14 s. Pasado el deadline las cotizaciones que
+    # falten salen como "Sin cobertura" y el Excel se entrega igual, en vez de
+    # que gunicorn mate el worker a los 90 s.
+    import time as _t_dl
+    _deadline = _t_dl.monotonic() + 60
+
     def _cotizar_shipit(par):
         comuna, peso = par
+        if _t_dl.monotonic() > _deadline:
+            return par, None
         payload, errores = _shc.build_rate_payload(
             length=30, width=30, height=30, weight=peso,
             origin_id=origen_id, destiny_id=destino_ids[comuna],
         )
         if errores:
             return par, None
-        r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=20)
+        # 8 s, igual que la pantalla interactiva del comparador.
+        r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=8)
         if not r.get("ok"):
             return par, None
         disp = [x for x in _shc.parse_rates_response(r.get("data"))
@@ -39160,7 +39213,7 @@ def tr_tarifario_comparado_xlsx():
                     + [f"{mejor_nombre} ({mejor_valor:,})".replace(",", ".") if mejor_valor else "",
                        delta])
             for ci, v in enumerate(vals, 1):
-                c = ws.cell(ri, ci, v if v is not None else "")
+                c = ws.cell(ri, ci, _xlsx_cell(v) if v is not None else "")
                 if isinstance(v, (int, float)) and ci not in (2,):
                     c.number_format = '$#,##0'
             if mejor_nombre == "Shipit":
@@ -39177,6 +39230,14 @@ def tr_tarifario_comparado_xlsx():
                   f"{len(filas_comuna)} comunas con más envíos · origen: bodega Quilicura")
     ws.cell(3, 1, "Precios netos de cada courier para la misma comuna y el mismo peso. "
                   "Shipit se cotiza en vivo contra su API; el resto sale de las tablas negociadas.")
+    # Este archivo nació para compartirse por correo, y pone las tarifas de
+    # todos los couriers en la MISMA fila. Comparando columnas se puede
+    # reconstruir la política de precios de ILUS, que es información
+    # reservada. El aviso es el piso; si además hay que restringir columnas
+    # según quién descarga, eso lo decide Daniel (es política comercial, no
+    # una decisión técnica).
+    _av = ws.cell(4, 1, "USO INTERNO ILUS — NO COMPARTIR CON COURIERS NI CON CLIENTES")
+    _av.font = Font(bold=True, color="CC0000")
     for ci, h in enumerate(["Peso", "Comunas donde Shipit es el más barato", "Comunas comparables", "% "], 1):
         c = ws.cell(5, ci, h)
         c.font, c.fill = BLANCO, RED

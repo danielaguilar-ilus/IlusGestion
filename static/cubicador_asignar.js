@@ -1221,7 +1221,12 @@ function _courierDisplay(nombre){
   return /^transportes?\s+melling$/i.test(n) ? 'Transportes Milling' : n;
 }
 function _logoFor(c){
-  if(c.logo_url) return `<img src="${c.logo_url}" alt="" style="max-height:22px;max-width:90px;object-fit:contain">`;
+  // escHtml en logo_url (2026-08-05): era el único campo de esta función sin
+  // escapar, y se inyecta por innerHTML. logo_url es un texto libre que se
+  // edita desde la ficha del courier, así que un valor como
+  // x" onerror="…  ejecutaba script en el comparador para cualquiera que
+  // abriera la pantalla. Ahora las comillas quedan neutralizadas.
+  if(c.logo_url) return `<img src="${escHtml(c.logo_url)}" alt="" style="max-height:22px;max-width:90px;object-fit:contain">`;
   const key = (c.courier_nombre||'').trim().toLowerCase();
   if(_COURIER_LOGOS[key]) return _COURIER_LOGOS[key];
   return `<b style="color:#374151;font-size:.82rem">${escHtml(_courierDisplay(c.courier_nombre)||'—')}</b>`;
