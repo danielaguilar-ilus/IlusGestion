@@ -9179,6 +9179,49 @@ def register_tickets_routes(app, ctx):
         pwd = (os.environ.get("SMTP_PASS") or os.environ.get("SMTP_PASSWORD") or "").strip()
         return user, pwd
 
+    def _tk_imap_host():
+        """Servidor de ENTRADA, derivado del de SALIDA que se ve en pantalla.
+
+        Daniel, 2026-08-05: "yo cambio el correo, le pongo la clave y chao...
+        déjalo dinámico por el front". Antes esto estaba clavado a
+        "imap.gmail.com": si algún día se cambia el proveedor en
+        /comunicaciones, el ENVÍO se movería y la RECEPCIÓN se quedaría
+        apuntando a Gmail — el mismo tipo de desincronización que ya nos costó
+        12 días de tickets perdidos, pero al revés.
+
+        Casi todos los proveedores usan el mismo dominio cambiando el prefijo
+        (smtp.gmail.com/imap.gmail.com, smtp.office365.com/outlook.office365.com,
+        smtp.zoho.com/imap.zoho.com). Se traduce el prefijo y listo. Si el host
+        no calza con ningún patrón conocido, se antepone "imap." al dominio,
+        que es la convención estándar. Sin config SMTP, Gmail como antes.
+        """
+        host = ""
+        _cfg_fn = ctx.get("_get_smtp_cfg")
+        if callable(_cfg_fn):
+            try:
+                host = ((_cfg_fn() or {}).get("smtp_host") or "").strip().lower()
+            except Exception:
+                host = ""
+        host = host or (os.environ.get("SMTP_HOST") or "").strip().lower()
+        if not host:
+            return "imap.gmail.com"
+        # Office 365: el buzon NO es "imap.office365.com".
+        if "office365" in host or "outlook" in host:
+            return "outlook.office365.com"
+        if host.startswith("smtp."):
+            return "imap." + host[len("smtp."):]
+        if host.startswith("mail."):
+            return host          # mail.dominio.cl suele servir ambos
+        if host.startswith("imap."):
+            return host
+        return "imap." + host
+
+    # Se publica en app.py (ctx ES su globals()) para que el boton "Probar
+    # recepcion" de /comunicaciones pruebe EXACTAMENTE el mismo host que usa
+    # el lector real. Si se copiara la logica alla, las dos podrian
+    # separarse y el test diria OK mientras la recepcion falla.
+    ctx["_tk_imap_host"] = _tk_imap_host
+
     def _tk_extraer_cuerpo_mail(msg):
         """Texto del mensaje del cliente, SIN la cola citada del hilo.
         Prefiere text/plain; si solo hay HTML, quita etiquetas (el hilo
@@ -9249,7 +9292,7 @@ def register_tickets_routes(app, ctx):
         d = datetime.now(timezone.utc) - timedelta(days=max(1, int(dias)))
         desde_imap = f"{d.day:02d}-{_MES[d.month - 1]}-{d.year}"
         try:
-            M = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+            M = imaplib.IMAP4_SSL(_tk_imap_host(), 993)
             M.login(user, pwd)
             M.select("INBOX", readonly=True)  # readonly: JAMAS tocar el buzon
         except Exception as _e:

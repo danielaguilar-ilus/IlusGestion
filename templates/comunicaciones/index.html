@@ -156,6 +156,17 @@
                   <button class="btn btn-outline-secondary btn-sm" onclick="probarSmtpConexion(this)">
                     <i class="bi bi-plug me-1"></i>Probar conexión SMTP
                   </button>
+                  {# Prueba de ENTRADA. Existe porque hasta el 2026-08-05 solo
+                     se podia probar el envio: la recepcion de tickets estuvo
+                     caida 12 dias sin que ningun indicador lo mostrara. #}
+                  <button class="btn btn-outline-secondary btn-sm" onclick="probarImapConexion(this)">
+                    <i class="bi bi-inbox-fill me-1"></i>Probar recepción (tickets)
+                  </button>
+                </div>
+                <div class="form-text mt-2">
+                  <i class="bi bi-info-circle me-1"></i>Este mismo correo y contraseña
+                  son los que usan los <strong>tickets</strong> para leer las respuestas
+                  de los clientes. Si lo cambias aquí, cambia en los dos lados.
                 </div>
                 <div id="smtpMsg" class="small mt-2"></div>
               </div>{# /panel-smtp #}

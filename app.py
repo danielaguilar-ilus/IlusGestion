@@ -20536,6 +20536,35 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
     clasificacion = _clasif_from_skus(skus_upper)
     costo_zz = sum(float(l.get("PPPRNE") or 0) for l in zz_lines)
 
+    # ── SOLO EL FLETE ────────────────────────────────────────────────────
+    # Daniel, 2026-08-05: "en una factura con envío $30.000 e instalación
+    # $50.000, la pantalla muestra ZZ Envío $80.000... las finanzas deben
+    # estar muy bien siempre, todo cuadradito".
+    #
+    # costo_zz (arriba) suma TODAS las líneas de servicio: envío, instalación,
+    # retiro, servicio técnico, ingresos. Eso está bien para lo que es —el
+    # total de servicios del documento— pero se venía guardando tal cual en
+    # zz_envio, que el manifiesto muestra como "ZZ Envío" y usa como el
+    # COBRADO del margen del flete (margen = zz_envio − costo_courier).
+    #
+    # El resultado: en una factura con instalación, el flete parecía cobrado
+    # a $80.000 cuando se cobraron $30.000. El error NUNCA va en contra: los
+    # servicios se suman, así que el margen del despacho siempre se ve más
+    # rentable de lo que es. Se decide con qué courier despachar mirando ese
+    # número.
+    #
+    # zz_envio_solo suma únicamente la(s) línea(s) de envío. Se separa además
+    # "no hay línea de envío" de "hay línea de envío en $0": la primera es un
+    # despacho sin cobro (legítimo, no tiene margen que calcular) y la segunda
+    # es un dato a revisar. Sin esa distinción, ambas se ven como $0 y la
+    # pantalla marcaría "Pérdida total" en despachos de garantía o cortesía.
+    _ES_ENVIO = "ZZENVIO"
+    zz_envio_solo = sum(
+        float(l.get("PPPRNE") or 0) for l in zz_lines
+        if (l.get("KOPRCT") or "").strip().upper() == _ES_ENVIO
+    )
+    tiene_linea_envio = any(s == _ES_ENVIO for s in skus_upper)
+
     # NOTA: get_db() devuelve conexión del pool via g. NO llamar conn.close()
     # al final — teardown_appcontext la cierra. Cerrar aquí deja g._db
     # apuntando a una conexión cerrada.
@@ -20615,13 +20644,23 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
                 (tido, nudo_canonico)
             )["id"]
 
-            # zz_envio = lo que SPHS COBRÓ por el despacho (= suma PPPRNE de líneas ZZ).
-            # Se preserva aparte de costo_zz (que el flujo de manifiesto sobrescribe
-            # con el costo del courier). Permite el match cobrado-vs-costo en el manifiesto.
+            # zz_envio = lo que SPHS COBRÓ POR EL FLETE. Se preserva aparte de
+            # costo_zz (que el flujo de manifiesto sobrescribe con el costo del
+            # courier) y permite el match cobrado-vs-costo en el manifiesto.
+            #
+            # FIX 2026-08-05: acá se guardaba costo_zz, o sea la suma de TODAS
+            # las líneas de servicio. En una factura con instalación, el flete
+            # aparecía cobrado por envío + instalación y el margen del despacho
+            # se veía inflado. Ahora se guarda solo la línea de envío.
+            #
+            # Documentos SIN línea de envío (solo instalación, o garantía) se
+            # dejan en NULL, no en 0: NULL significa "no se cobró flete" y la
+            # vista no le calcula margen. Un 0 se leería como "se cobró cero"
+            # y marcaría pérdida total sobre un despacho que nunca tuvo cobro.
             try:
                 cur.execute(
                     "UPDATE transport_commitments SET zz_envio=%s WHERE id=%s",
-                    (costo_zz, comm_id)
+                    (zz_envio_solo if tiene_linea_envio else None, comm_id)
                 )
             except Exception:
                 pass  # columna garantizada por _ensure_transporte_columns; no fatal
@@ -27066,6 +27105,12 @@ def tr_manifiesto_detalle(mid):
                        COALESCE(c.n_bultos, 1) AS n_bultos,
                        c.valor_bruto, c.costo_zz, c.clasificacion,
                        COALESCE(c.zz_envio, 0)          AS zz_envio,
+                       -- Sin COALESCE a proposito: NULL significa "este
+                       -- documento no cobra flete" y hay que poder
+                       -- distinguirlo de "cobra $0". Ver zz_envio_solo en
+                       -- _tr_fetch_from_erp.
+                       c.zz_envio                       AS zz_envio_raw,
+                       c.zz_skus,
                        COALESCE(c.costo_courier, 0)     AS costo_courier,
                        c.autorizado_por, c.motivo_envio,
                        COALESCE(c.es_garantia, 0)       AS es_garantia,
@@ -27131,7 +27176,15 @@ def tr_manifiesto_detalle(mid):
             # NO se borra el bloque: queda documentado para que nadie lo
             # reponga pensando que "faltaba completar el dato".
             pass
-            if (not it.get("zz_envio")) and it.get("tido") and it.get("nudo"):
+            # 2026-08-05: no reintentar contra el ERP los documentos que YA se
+            # sincronizaron y simplemente no cobran flete (zz_skus tiene datos
+            # pero ninguna línea ZZENVIO). Sin este filtro, cada carga de la
+            # ficha gastaría llamadas al ERP intentando "completar" un dato que
+            # no existe, y nunca dejaría de intentarlo.
+            _skus_doc = (it.get("zz_skus") or "").upper()
+            _ya_sabemos_que_no_cobra = bool(_skus_doc) and "ZZENVIO" not in _skus_doc
+            if (not it.get("zz_envio")) and not _ya_sabemos_que_no_cobra \
+                    and it.get("tido") and it.get("nudo"):
                 if _heals_zz_hechos >= _MAX_HEAL_ZZ_PER_LOAD:
                     continue
                 try:
@@ -27172,10 +27225,33 @@ def tr_manifiesto_detalle(mid):
         for it in items:
             cobrado = float(it.get("zz_envio") or 0)
             costo   = float(it.get("costo_courier") or 0)
-            it["margen_clp"] = round(cobrado - costo)
-            it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
+            # ── Tres situaciones distintas que antes se veían todas igual ──
+            # Daniel, 2026-08-05: "las finanzas deben estar muy bien siempre,
+            # todo cuadradito". Un $0 en pantalla puede significar tres cosas
+            # muy diferentes y mostrarlas como la misma lleva a decisiones
+            # equivocadas sobre con qué courier despachar:
+            #
+            #   1. Cobra flete y lo sabemos      → margen real, se calcula.
+            #   2. NO cobra flete (garantía,     → no hay margen que calcular;
+            #      cortesía, solo instalación)      antes salía "Pérdida total".
+            #   3. Cobra flete pero no tenemos   → "sin dato", NUNCA un número
+            #      el monto sincronizado            inventado.
+            _skus = (it.get("zz_skus") or "").upper()
+            it["sin_cobro_envio"] = bool(_skus) and "ZZENVIO" not in _skus
+            it["cobro_sin_dato"]  = (not it["sin_cobro_envio"]) and cobrado <= 0
+            # El costo del courier también se distingue: 0 registrado no es lo
+            # mismo que nunca registrado (ver el auto-sane desactivado arriba).
+            it["costo_sin_dato"]  = (it.get("costo_courier") is None) or costo <= 0
+
+            _hay_margen = (cobrado > 0 and not it["costo_sin_dato"])
+            it["margen_clp"] = round(cobrado - costo) if _hay_margen else None
+            it["margen_pct"] = (round((cobrado - costo) / cobrado * 100, 1)
+                                if _hay_margen else None)
             it["sin_precio"] = (cobrado <= 0)
-            it["es_perdida"] = (cobrado > 0 and costo > cobrado)
+            # Pérdida SOLO cuando los dos números son reales. Antes bastaba con
+            # que el cobrado fuera > 0: como el costo se inventaba copiando el
+            # cobrado, filas legítimas aparecían marcadas en rojo.
+            it["es_perdida"] = _hay_margen and costo > cobrado
             it["zz_conteo"] = _tr_zz_conteo_por_tipo(zz_por_comm.get(it["commitment_id"], []))
             # Productos: preferir los declarados desde el cubicador (productos_json,
             # productos REALES); si no hay, caer a commitment_lines (líneas ZZ).
@@ -35747,19 +35823,29 @@ def _tr_manifiesto_items_admin(mid):
     commitment_ids = [it["commitment_id"] for it in items]
     ph = ",".join(["%s"] * len(commitment_ids))
     zz_rows = mysql_fetchall(
-        f"SELECT id, COALESCE(zz_envio, 0) AS zz_envio "
+        f"SELECT id, COALESCE(zz_envio, 0) AS zz_envio, zz_skus "
         f"FROM transport_commitments WHERE id IN ({ph})",
         tuple(commitment_ids)) or []
     zz_por_commitment = {r["id"]: float(r.get("zz_envio") or 0) for r in zz_rows}
+    skus_por_commitment = {r["id"]: (r.get("zz_skus") or "").upper() for r in zz_rows}
 
     for it in items:
         cobrado = zz_por_commitment.get(it["commitment_id"], 0.0)
         costo = float(it.get("costo_courier") or 0)
         it["zz_envio"] = cobrado
-        it["margen_clp"] = round(cobrado - costo)
-        it["margen_pct"] = round((cobrado - costo) / cobrado * 100, 1) if cobrado > 0 else None
+        # 2026-08-05: mismas tres situaciones que la vista interna (ver
+        # tr_manifiesto_detalle). Esta versión se MANDA POR CORREO al
+        # responsable del despacho, así que con más razón no puede llevar un
+        # margen calculado sobre un costo que nadie registró.
+        _skus = skus_por_commitment.get(it["commitment_id"], "")
+        it["sin_cobro_envio"] = bool(_skus) and "ZZENVIO" not in _skus
+        it["costo_sin_dato"]  = (it.get("costo_courier") is None) or costo <= 0
+        _hay_margen = (cobrado > 0 and not it["costo_sin_dato"])
+        it["margen_clp"] = round(cobrado - costo) if _hay_margen else None
+        it["margen_pct"] = (round((cobrado - costo) / cobrado * 100, 1)
+                            if _hay_margen else None)
         it["sin_precio"] = (cobrado <= 0)
-        it["es_perdida"] = (cobrado > 0 and costo > cobrado)
+        it["es_perdida"] = _hay_margen and costo > cobrado
     return items
 
 
@@ -43756,6 +43842,122 @@ def comm_smtp_ping():
             "elapsed_ms": int((_t.time()-t0)*1000),
             "source": cfg.get("_source", ""),
         }), 200
+
+
+@app.route("/api/comm/imap-ping", methods=["GET"])
+@_require_superadmin
+def comm_imap_ping():
+    """Healthcheck de RECEPCIÓN — el gemelo de /api/comm/smtp-ping.
+
+    Daniel, 2026-08-05: "si está caído algo de los tickets, repáralo... yo
+    cambio el correo, le pongo la clave y chao".
+
+    POR QUÉ EXISTE: la pantalla probaba el ENVÍO pero nunca la RECEPCIÓN. Por
+    eso los correos de clientes dejaron de entrar el 24-jul-2026 y nadie se
+    enteró hasta el 5-ago — 12 días. Los correos SALÍAN perfecto, así que
+    todos los indicadores se veían verdes. Un canal que solo se prueba en una
+    dirección es un canal que se cae en silencio.
+
+    Usa la MISMA config que edita el operador en pantalla y el MISMO host que
+    usa el lector real (_tk_imap_host, publicado por tickets_module), así que
+    lo que dice este botón es lo que va a pasar de verdad.
+
+    NO toca el buzón: login + SELECT readonly + logout. Ni marca leído ni
+    mueve nada — es la casilla de trabajo real de Daniel.
+    """
+    import time as _t
+    import imaplib as _imap
+    import socket as _sock
+
+    t0 = _t.time()
+
+    def _resp(payload, cfg_src=""):
+        payload.setdefault("elapsed_ms", int((_t.time() - t0) * 1000))
+        payload.setdefault("source", cfg_src)
+        return jsonify(payload), 200
+
+    try:
+        cfg = _get_smtp_cfg()
+    except Exception as exc:
+        return _resp({"ok": False,
+                      "message": f"No se pudo leer la configuración: {exc}"})
+
+    user = (cfg.get("smtp_user") or "").strip()
+    passwd = (cfg.get("smtp_pass") or "").strip()
+    src = cfg.get("_source", "")
+
+    if not (user and passwd):
+        return _resp({
+            "ok": False,
+            "message": "Falta el correo o la contraseña en esta pantalla.",
+            "detail": "Complétalos arriba y guarda la configuración.",
+        }, src)
+
+    _host_fn = globals().get("_tk_imap_host")
+    try:
+        host = _host_fn() if callable(_host_fn) else "imap.gmail.com"
+    except Exception:
+        host = "imap.gmail.com"
+
+    M = None
+    try:
+        M = _imap.IMAP4_SSL(host, 993)
+        M.login(user, passwd)
+        M.select("INBOX", readonly=True)   # readonly: JAMAS tocar el buzon
+        return _resp({
+            "ok": True,
+            "message": "Recepción OK",
+            "detail": f"Sesión abierta en {host} como {user}. "
+                      f"Las respuestas de clientes con TK- en el asunto "
+                      f"entran como mensaje del ticket.",
+            "host": host, "user": user,
+        }, src)
+    except _imap.IMAP4.error as exc:
+        txt = str(exc)
+        # Gmail responde lo MISMO ("Invalid credentials") si la clave esta
+        # mala Y si el IMAP esta apagado en la cuenta. Como el envio ya
+        # funciona con esta misma clave, se puede desambiguar: si SMTP
+        # autentica bien, la clave es correcta y lo apagado es el IMAP.
+        pista = ("La contraseña puede estar vencida, o Gmail tiene el "
+                 "acceso IMAP desactivado en esta cuenta.")
+        if "AUTHENTICATIONFAILED" in txt.upper():
+            pista = (
+                "Como el envío SÍ funciona con esta misma clave, lo más "
+                "probable es que Gmail tenga DESACTIVADO el acceso IMAP: "
+                "Gmail → Ver toda la configuración → Reenvío y correo "
+                "POP/IMAP → Habilitar IMAP → Guardar cambios. "
+                "Si el envío tampoco funciona, entonces es la contraseña: "
+                "genera una nueva Contraseña de aplicación y pégala arriba."
+            )
+        return _resp({
+            "ok": False,
+            "message": "El buzón rechazó la conexión de entrada.",
+            "detail": pista,
+            "raw": txt[:200],
+            "host": host,
+        }, src)
+    except (_sock.timeout, TimeoutError):
+        return _resp({
+            "ok": False,
+            "message": f"Sin respuesta de {host} (timeout).",
+            "detail": "Reintenta en un minuto; si persiste, avísame.",
+            "host": host,
+        }, src)
+    except Exception as exc:
+        return _resp({
+            "ok": False,
+            "message": f"No se pudo conectar a {host}.",
+            "detail": str(exc)[:180],
+            "host": host,
+        }, src)
+    finally:
+        # Cerrar siempre: Gmail limita las sesiones IMAP simultaneas y una
+        # sesion colgada por cada click terminaria bloqueando al lector real.
+        if M is not None:
+            try:
+                M.logout()
+            except Exception:
+                pass
 
 
 @app.route("/comunicaciones/email/preview", methods=["POST"])

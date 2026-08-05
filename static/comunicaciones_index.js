@@ -1854,6 +1854,43 @@ async function testSmtpHealth(btnEl) {
   }
 }
 
+// ── Prueba de RECEPCIÓN (IMAP) — el gemelo de testSmtpHealth ────────────
+// Daniel, 2026-08-05: los tickets leen ESTE mismo correo y clave. Hasta hoy
+// la pantalla solo probaba el envío, así que la recepción se cayó 12 días en
+// silencio (los correos salían bien y todo se veía verde).
+async function probarImapConexion(btnEl) {
+  const _txt = btnEl ? btnEl.innerHTML : '';
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Probando…';
+  }
+  try {
+    const r = await fetch('/api/comm/imap-ping', {cache:'no-store'});
+    const d = await r.json();
+    const secs = ((d.elapsed_ms||0)/1000).toFixed(1);
+    if (d.ok) {
+      if (typeof ilusToast === 'function') {
+        ilusToast(`✓ Recepción OK en ${secs}s — los tickets pueden leer el buzón`,
+                  {type:'success'});
+      }
+    } else if (typeof ilusAlert === 'function') {
+      await ilusAlert({
+        title: d.message || 'No se pudo leer el buzón',
+        message: d.detail || 'Revisa el correo y la contraseña de arriba.',
+        sub: d.raw ? `Respuesta del servidor: ${d.raw}` : '',
+        type: 'error',
+      });
+    }
+  } catch (exc) {
+    if (typeof ilusToast === 'function') {
+      ilusToast('No se pudo conectar con el servidor — ' + (exc.message||exc),
+                {type:'error'});
+    }
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = _txt; }
+  }
+}
+
 // Auto-arranca el chequeo de salud al cargar
 document.addEventListener('DOMContentLoaded', () => {
   // Pequeño retraso para no competir con el render inicial

@@ -71,8 +71,20 @@
 {# ── Totales financieros del manifiesto ── #}
 {% set tot_cobrado = items|sum(attribute='zz_envio') %}
 {% set tot_costo   = items|sum(attribute='costo_courier') %}
-{% set tot_margen  = (tot_cobrado or 0) - (tot_costo or 0) %}
-{% set tot_pct     = ((tot_margen / tot_cobrado) * 100) if tot_cobrado and tot_cobrado > 0 else None %}
+{# ── El MARGEN se calcula SOLO sobre los documentos comparables ───────────
+   2026-08-05 — Daniel: "las finanzas deben estar muy bien siempre, todo
+   cuadradito". El margen total restaba el costo total al cobrado total, pero
+   incluía en el cobrado documentos cuyo costo de courier nunca se registró.
+   Cada uno de esos sumaba su cobro completo al margen: el manifiesto se veía
+   más rentable mientras MENOS datos tuviéramos. Ahora los documentos
+   incompletos se excluyen del cálculo y se informan aparte, para que el
+   número que se ve sea un margen real y no un promedio de datos faltantes. #}
+{% set _comparables = items|rejectattr('margen_clp', 'none')|list %}
+{% set tot_cobrado_cmp = _comparables|sum(attribute='zz_envio') %}
+{% set tot_costo_cmp   = _comparables|sum(attribute='costo_courier') %}
+{% set tot_margen  = (tot_cobrado_cmp or 0) - (tot_costo_cmp or 0) %}
+{% set tot_pct     = ((tot_margen / tot_cobrado_cmp) * 100) if tot_cobrado_cmp and tot_cobrado_cmp > 0 else None %}
+{% set n_incompletos = items|length - _comparables|length %}
 {% set tot_bultos  = items|sum(attribute='n_bultos') %}
 {% set n_perdida   = items|selectattr('es_perdida')|list|length %}
 {% set n_sinprecio = items|selectattr('sin_precio')|list|length %}
@@ -292,8 +304,14 @@
     </div>
     <div class="mfd-fin-value">{{ money(tot_margen) }}</div>
     <div class="mfd-fin-hint">
-      {% if tot_pct is not none %}{{ "%.1f"|format(tot_pct) }}% global{% else %}Sin base de cobro{% endif %}
+      {% if tot_pct is not none %}{{ "%.1f"|format(tot_pct) }}% sobre {{ _comparables|length }} de {{ items|length }} documentos{% else %}Sin datos completos para calcular{% endif %}
     </div>
+    {% if n_incompletos %}
+    <div class="mfd-fin-hint" style="color:#f59e0b"
+         title="Estos documentos no entran al margen porque les falta el cobro del envío o el costo del courier. Se excluyen a propósito: incluirlos mostraría un margen mejor del real.">
+      <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ n_incompletos }} sin datos completos (no suman)
+    </div>
+    {% endif %}
   </div>
   <div class="mfd-fin-card {{ 'mfd-fin-perdida' if (n_perdida or n_sinprecio) else 'mfd-fin-meta' }}">
     <div class="mfd-fin-label"><i class="bi bi-clipboard-pulse me-1"></i>Salud de cotización</div>
@@ -617,19 +635,29 @@
           <td class="text-center">
             <span class="mfd-bultos-chip">{{ item.n_bultos or 1 }}</span>
           </td>
+          {# 2026-08-05 — las tres situaciones se muestran distinto. Antes las
+             tres se veían como "$0" o como un margen calculado, y sobre ese
+             número se decide con qué courier despachar. Ver sin_cobro_envio /
+             cobro_sin_dato / costo_sin_dato en app.py. #}
           <td class="text-end">
             {% if item.zz_envio and item.zz_envio > 0 %}
             <span class="mfd-cobrado">{{ money(item.zz_envio) }}</span>
-            {% else %}<span class="text-muted">—</span>{% endif %}
+            {% elif item.sin_cobro_envio %}
+            <span class="text-muted small" title="Este documento no trae línea de envío: no se le cobró flete al cliente (garantía, cortesía, o solo instalación).">Sin cobro</span>
+            {% else %}
+            <span class="text-muted" title="Falta sincronizar el monto del envío desde el ERP.">—</span>
+            {% endif %}
           </td>
           <td class="text-end">
             {% if item.costo_courier and item.costo_courier > 0 %}
             <span class="mfd-costo">{{ money(item.costo_courier) }}</span>
-            {% else %}<span class="text-muted">—</span>{% endif %}
+            {% else %}<span class="text-muted" title="Todavía no se registra cuánto cobra el courier por este despacho.">—</span>{% endif %}
           </td>
           <td class="text-end">
-            {% if item.sin_precio %}
-            <span class="text-muted">—</span>
+            {% if item.sin_cobro_envio %}
+            <span class="text-muted small" title="Sin cobro de flete: no hay margen que calcular.">n/a</span>
+            {% elif item.margen_clp is none %}
+            <span class="text-muted" title="{% if item.cobro_sin_dato %}Falta el monto cobrado.{% else %}Falta el costo del courier.{% endif %} No se muestra un margen que no podemos calcular.">—</span>
             {% else %}
             <span class="fw-bold {{ 'mfd-perdida-text' if item.es_perdida else 'mfd-cobrado' }}">{{ money(item.margen_clp) }}</span>
             {% if item.margen_pct is not none %}
@@ -1045,7 +1073,8 @@
         </div>
         <div class="mfd-mfin-cell">
           <span class="mfd-mfin-k">ZZ Envío</span>
-          <span class="mfd-mfin-v">{% if item.zz_envio and item.zz_envio > 0 %}<span class="mfd-cobrado">{{ money(item.zz_envio) }}</span>{% else %}—{% endif %}</span>
+          {# Mismas tres situaciones que en la tabla de escritorio (2026-08-05). #}
+          <span class="mfd-mfin-v">{% if item.zz_envio and item.zz_envio > 0 %}<span class="mfd-cobrado">{{ money(item.zz_envio) }}</span>{% elif item.sin_cobro_envio %}<span class="text-muted small">Sin cobro</span>{% else %}—{% endif %}</span>
         </div>
         <div class="mfd-mfin-cell">
           <span class="mfd-mfin-k">Costo</span>
@@ -1054,7 +1083,9 @@
         <div class="mfd-mfin-cell">
           <span class="mfd-mfin-k">Margen</span>
           <span class="mfd-mfin-v">
-            {% if item.sin_precio %}—{% else %}
+            {% if item.sin_cobro_envio %}<span class="text-muted small">n/a</span>
+            {% elif item.margen_clp is none %}—
+            {% else %}
             <span class="fw-bold {{ 'mfd-perdida-text' if item.es_perdida else 'mfd-cobrado' }}">{{ money(item.margen_clp) }}</span>
             {% if item.margen_pct is not none %}<span class="mfd-pct-chip {{ 'mfd-pct-neg' if item.es_perdida else ('mfd-pct-ok' if item.margen_pct >= 25 else 'mfd-pct-low') }}">{{ "%.1f"|format(item.margen_pct) }}%</span>{% endif %}
             {% endif %}
