@@ -23167,7 +23167,7 @@ def tr_lineas_pendientes_enviar_manifiesto():
             bloqueadas.append({
                 "linea_id": r["linea_id"], "commitment_id": r["commitment_id"],
                 "sku": r.get("sku") or "", "nombre": r.get("nombre") or "",
-                "doc": f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
+                "doc": _doc_label(r.get('tido'), r.get('nudo')),
                 "cliente": r.get("cliente_nombre") or "—",
                 "disponible": disponible,
             })
@@ -24218,8 +24218,35 @@ def _transporte_scheduler_loop():
                       f"(errs={len(res.get('errores') or [])})", flush=True)
             except Exception as e:
                 print(f"[transp-cron] sync falló: {e}", flush=True)
+
+            # ── Saldo y guía POR PRODUCTO ────────────────────────────────
+            # FIX 2026-08-05 (Daniel, con capturas: un producto figuraba
+            # "0/1 pendiente · Sin guía"; apretó "Actualizar ahora" y apareció
+            # una guía del día ANTERIOR. Conclusión suya: "la automatización
+            # de cada hora no está funcionando").
+            #
+            # Tenía razón, y el motivo es que NO EXISTÍA. El sync de arriba
+            # actualiza el documento; el saldo y la guía POR PRODUCTO viven en
+            # /transporte/cron/refrescar-saldo-productos, un endpoint escrito
+            # "para Cloud Scheduler cada 1 hora"... que nunca se agendó: Cloud
+            # Scheduler ni siquiera está habilitado en el proyecto (0 jobs).
+            # O sea que ese dato solo se refrescaba cuando alguien apretaba el
+            # botón a mano, y mientras tanto el Monitor mostraba pendientes que
+            # ya estaban despachados.
+            #
+            # Se engancha acá, al mismo hilo que ya funciona y que ya resuelve
+            # el lock entre workers, en vez de depender de infraestructura
+            # nueva. Va DESPUÉS del sync del documento a propósito: primero se
+            # actualiza el documento, después el detalle de sus productos.
             finally:
                 _tr_marcar_lock_completado(slot_str)
+
+            for _nombre_cron, _view in (("saldo-productos", tr_cron_refrescar_saldo_productos),
+                                        ("stock-snapshot",  tr_cron_stock_snapshot)):
+                # _tr_correr_cron_interno nunca lanza: si un sondeo falla, el
+                # ciclo sigue. Lo importante (el sync del documento) ya pasó.
+                _r = _tr_correr_cron_interno(_nombre_cron, _view)
+                print(f"[transp-cron] {_nombre_cron}: {_r}", flush=True)
         except Exception as e:
             print(f"[transp-cron] loop error: {e}", flush=True)
             _time.sleep(300)  # esperar 5 min ante error inesperado
@@ -26272,7 +26299,7 @@ def tr_compromiso_trazabilidad(cid):
         item = {
             "item_id":      mi.get("item_id"),
             "estado":       mi.get("estado_entrega") or "",
-            "doc":          f"{mi.get('tido') or ''} {mi.get('nudo') or ''}".strip(),
+            "doc":          _doc_label(mi.get('tido'), mi.get('nudo')),
             "cliente":      mi.get("cliente_nombre") or "",
             "courier":      mi.get("courier") or "",
             "visit_id":     mi.get("simpliroute_visit_id") or "",
@@ -27080,7 +27107,7 @@ def tr_manifiesto_detalle(mid):
                 if not it.get("tiene_ot"):
                     sin_ot.append({
                         "item_id": it["id"],
-                        "doc": f"{it.get('tido') or ''} {it.get('nudo') or ''}".strip(),
+                        "doc": _doc_label(it.get('tido'), it.get('nudo')),
                         "cliente": it.get("cliente_nombre") or "",
                     })
 
@@ -28825,7 +28852,7 @@ def tr_manifiestos_items_todos():
             "courier":        r["courier"],
             "estado_entrega": r.get("estado_entrega"),
             "commitment_id":  r["commitment_id"],
-            "doc":            f"{r.get('tido') or ''} {r.get('nudo') or ''}".strip(),
+            "doc":            _doc_label(r.get('tido'), r.get('nudo')),
             "cliente":        r.get("cliente_nombre") or "—",
             "comuna":         r.get("comuna") or "",
             "n_bultos":       r.get("n_bultos") or 1,
@@ -29292,7 +29319,7 @@ def tr_get_link_cliente(item_id):
         "ok": True,
         "url": url,
         "token": tok,
-        "doc": f"{item.get('tido') or ''} {item.get('nudo') or ''}".strip(),
+        "doc": _doc_label(item.get('tido'), item.get('nudo')),
         "cliente": item.get("cliente_nombre") or "",
     })
 
@@ -31312,6 +31339,40 @@ def tr_pickup_fedex_cancelar(pickup_id):
     return jsonify({"ok": True, "cancelled": True})
 
 
+import threading as _th_cron
+_CRON_INTERNO = _th_cron.local()
+
+
+def _tr_correr_cron_interno(nombre, view_fn):
+    """Ejecuta un endpoint de cron desde un hilo del propio proceso.
+
+    Por qué existe (2026-08-05): los endpoints /transporte/cron/* estaban
+    escritos para que Cloud Scheduler los llamara por HTTP, pero Cloud
+    Scheduler NUNCA se configuró en el proyecto — no hay un solo job. O sea
+    que existían y no los llamaba nadie: el saldo y la guía por producto solo
+    se refrescaban si alguien apretaba "Actualizar ahora" a mano.
+
+    En vez de duplicar su lógica (que es larga y ya está probada), se los
+    invoca tal cual dentro de un contexto de request falso. Se marca el hilo
+    como interno para saltar el chequeo de token, y la marca se limpia
+    SIEMPRE en el finally.
+
+    Devuelve el JSON del endpoint como dict, o {"error": ...}. Nunca lanza.
+    """
+    try:
+        _CRON_INTERNO.autorizado = True
+        with app.test_request_context(f"/cron-interno/{nombre}"):
+            resp = view_fn()
+        # Los endpoints devuelven jsonify(...) o (jsonify(...), status)
+        if isinstance(resp, tuple):
+            resp = resp[0]
+        return resp.get_json(silent=True) if hasattr(resp, "get_json") else {"ok": True}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    finally:
+        _CRON_INTERNO.autorizado = False
+
+
 def _fedex_cron_token_required(token_received):
     """Permite proteger el cron con ILUS_CRON_TOKEN (token único de los crons
     de ILUS) o el histórico FEDEX_CRON_TOKEN. Si no se setea ninguno, solo
@@ -31321,6 +31382,14 @@ def _fedex_cron_token_required(token_received):
     configurado con ese token único para TODOS los crons (SimpliRoute y FedEx)
     y este endpoint respondía 403 al job de FedEx. Se acepta cualquiera de los
     dos: quien tenga FEDEX_CRON_TOKEN puesto sigue funcionando igual."""
+    # Llamada INTERNA desde el scheduler del propio proceso (no entró por la
+    # red): se autoriza sin token. La marca es un flag de hilo que solo pone
+    # _tr_correr_cron_interno y siempre se limpia en su finally, así que no
+    # hay forma de que una petición HTTP real lo herede. (2026-08-05: el
+    # sondeo de saldo/guía por producto pasó a colgar del hilo transp-cron
+    # porque Cloud Scheduler nunca se configuró y nadie llamaba al endpoint.)
+    if getattr(_CRON_INTERNO, "autorizado", False):
+        return True
     esperados = [t for t in ((os.environ.get("ILUS_CRON_TOKEN") or "").strip(),
                              (os.environ.get("FEDEX_CRON_TOKEN") or "").strip()) if t]
     if esperados:
@@ -39274,6 +39343,25 @@ def tr_tarifario_de_un_courier_xlsx(cid):
         as_attachment=True,
         download_name=f"ILUS_Tarifario_{_slug}_{datetime.now():%Y%m%d}.xlsx",
     )
+
+
+def _doc_label(tido, nudo):
+    """Número de documento como lo escribe una persona: "FCV 11212".
+
+    El ERP guarda el correlativo con ceros a la izquierda hasta 10 dígitos
+    ("0000011212"), que es un detalle de su formato interno y no algo que
+    nadie diga en voz alta. En el modal de seguimiento salía crudo y Daniel
+    lo pidió limpio (2026-08-05: "la factura tiene cualquier cero, sería
+    ideal que no tuviera").
+
+    Se conserva el valor original si al quitar los ceros no queda nada (un
+    documento "0000000000"): es preferible mostrar algo raro a mostrar vacío.
+    Misma regla que ya usaba 'nudo_display' en el detalle del compromiso.
+    """
+    _t = str(tido or "").strip()
+    _n = str(nudo or "").strip()
+    _n = _n.lstrip("0") or _n
+    return f"{_t} {_n}".strip()
 
 
 def _tr_brackets_con_precio(precios_json_raw):
