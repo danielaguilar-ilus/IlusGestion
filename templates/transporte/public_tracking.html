@@ -75,9 +75,10 @@ body{
    align-items:center centraba la CAJA de la imagen, no el trazo visible.
    Alineado por la base (flex-end) en vez del centro matemático. */
 .hd-lock{ display:flex; align-items:flex-end; gap:.5rem; }
-.hd img{ height:44px; width:auto; max-width:44vw; display:block; }
+.hd img{ height:70px; width:auto; max-width:52vw; display:block; }  /* +60%: el archivo del logo
+   trae mucho aire alrededor, así que a igual altura se ve más chico de lo que mide (Daniel 2026-08-05) */
 .hd-fit{
-  font-family:var(--display); font-weight:800; font-size:1.75rem;
+  font-family:var(--display); font-weight:800; font-size:2.5rem;
   letter-spacing:.02em; text-transform:uppercase; color:#fff;
   line-height:1; white-space:nowrap; margin-bottom:.08rem;
 }
@@ -345,6 +346,10 @@ body{
 .tile:nth-child(1){ animation-delay:.08s } .tile:nth-child(2){ animation-delay:.15s }
 .tile:nth-child(3){ animation-delay:.22s }
 .tile-ic{ font-size:.92rem; color:var(--red); line-height:1; }
+/* Logo real del transportista. object-fit:contain para que ninguna marca
+   se deforme: los logos vienen en proporciones muy distintas. */
+.tile-logo{ height:26px; display:flex; align-items:center; justify-content:center; }
+.tile-logo img{ max-height:100%; max-width:100%; object-fit:contain; }
 .tile-n{
   font-family:var(--display); font-weight:900; font-size:1.85rem;
   line-height:1.02; margin-top:.2rem; letter-spacing:-.01em;
@@ -512,19 +517,25 @@ a.kv:active{ background:#fafafa; }
 .ft-brand{ margin-top:1.7rem; text-align:center; }
 .ft-brand-line{
   height:1px; background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent);
-  margin-bottom:1.3rem;
+  margin-bottom:.9rem;
 }
-.ft-brand-logo{ width:150px; margin-bottom:10px; opacity:.95; }
+/* .ft-brand-logo quedó sin uso: se sacó el logo suelto del footer
+   (Daniel 2026-08-05). Se conserva la regla vacía fuera para no dejar
+   CSS muerto. */
+.ft-sign{ display:flex; align-items:center; justify-content:center;
+          gap:.5rem; flex-wrap:wrap; }
+.ft-sign > i{ color:var(--red); font-size:.9rem; }
+.ft-sep{ color:var(--line); font-weight:400; }
 .ft-brand-name{
-  display:block; font-family:var(--display); font-weight:800;
+  display:inline; font-family:var(--display); font-weight:800;
   font-size:1.05rem; letter-spacing:.03em; text-transform:none;
   color:var(--ink);
 }
 .ft-brand-tag{
-  display:block; margin-top:.15rem; font-size:.78rem;
+  display:inline; margin-top:0; font-size:.78rem;
   color:var(--gray); font-weight:600;
 }
-.ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:1.1rem; }
+.ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:.7rem; }
 .ft-social a{
   width:38px; height:38px; border-radius:50%; display:grid; place-items:center;
   background:#f4f4f6; border:1px solid var(--line); color:var(--ink);
@@ -776,9 +787,20 @@ a.kv:active{ background:#fafafa; }
     <div class="tile-n">{{ data.bultos or 1 }}</div>
     <div class="tile-k">{% if (data.bultos or 1) == 1 %}Bulto{% else %}Bultos{% endif %}</div>
   </div>
+  {# Logo real del transportista (2026-08-05, Daniel: "los logos con
+     imágenes, tenemos las imágenes en los couriers, aprovechémosla").
+     Si el courier no tiene logo cargado, cae al nombre en texto — que es
+     el comportamiento que había antes, así que nunca queda vacío. #}
   <div class="tile">
+    {% if data.courier_logo %}
+    <div class="tile-logo">
+      <img src="{{ data.courier_logo }}" alt="{{ data.courier }}"
+           loading="lazy" decoding="async">
+    </div>
+    {% else %}
     <div class="tile-ic"><i class="bi bi-truck"></i></div>
     <div class="tile-n sm">{{ data.courier or 'ILUS' }}</div>
+    {% endif %}
     <div class="tile-k">Transporte</div>
   </div>
   <div class="tile">
@@ -924,21 +946,27 @@ a.kv:active{ background:#fafafa; }
        gigante repetía lo mismo que ya se lee arriba en el header. Se
        reemplaza por una firma de marca compacta -- casco + nombre + rubro,
        con una línea divisoria fina, en vez de un segundo logo enorme. #}
+    {# FOOTER (2026-08-05, Daniel: "el footer no me gustó, descarta esa
+       imagen de ILUS horrorosa que no tiene ni color, y estandarízalo").
+       Fuera el logo suelto —se veía apagado sobre fondo claro y competía
+       con el logo del header, que es el que manda—. Queda una sola línea
+       compacta: candado + marca + promesa, con las redes al lado. Además
+       ocupa mucho menos alto, que es lo que permite que la página entre
+       sin scroll. #}
     <div class="ft-brand">
       <div class="ft-brand-line"></div>
-      <picture>
-        <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
-        <img class="ft-brand-logo" src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
-      </picture>
-      <span class="ft-brand-name">ILUS Fitness</span>
-      <span class="ft-brand-tag">Equipamiento profesional para alto rendimiento</span>
+      <div class="ft-sign">
+        <i class="bi bi-shield-lock-fill" aria-hidden="true"></i>
+        <span class="ft-brand-name">ILUS Fitness</span>
+        <span class="ft-sep" aria-hidden="true">|</span>
+        <span class="ft-brand-tag">Seguimiento seguro y confiable</span>
+      </div>
       <div class="ft-social" aria-label="Redes sociales">
         <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
         <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp" class="soc-wa"><i class="bi bi-whatsapp"></i></a>
         <a href="mailto:servicio.tecnico@ilusfitness.com" aria-label="Email" class="soc-mail"><i class="bi bi-envelope"></i></a>
         <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web" class="soc-web"><i class="bi bi-globe2"></i></a>
       </div>
-      <div class="ft-copy">ILUS Fitness · Página de seguimiento</div>
     </div>
   </div>
 </main>

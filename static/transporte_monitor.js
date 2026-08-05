@@ -2177,7 +2177,12 @@ function _trFormFiltros() {
 function _trAplicarFiltrosDelForm(params) {
   var form = _trFormFiltros();
   if (!form) return params;   // sin formulario: comportamiento de antes
-  ['q', 'estado', 'clasificacion'].forEach(function(k){
+  // 'courier' agregado 2026-08-05 junto con el filtro nuevo del Monitor.
+  // Esta lista es EXPLÍCITA, no recorre el formulario entero: si se suma un
+  // control al HTML y no se agrega acá, el desplegable se ve pero no filtra
+  // nada. Es exactamente el tipo de desajuste silencioso que dejó los
+  // filtros "sin funcionar" para los usuarios.
+  ['q', 'estado', 'clasificacion', 'courier'].forEach(function(k){
     var el = form.querySelector('[name="' + k + '"]');
     if (!el) return;
     var v = (el.value || '').trim();

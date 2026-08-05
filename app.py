@@ -13390,6 +13390,43 @@ def _invalidate_couriers_cache():
     _COURIERS_CACHE["data"] = None
 
 
+def _nombres_couriers_activos():
+    """Nombres de los couriers ACTIVOS, tal como están guardados en su ficha.
+
+    DECISIÓN DE DANIEL (2026-08-05, textual): "dejemos que esa información
+    venga de la tarjeta del courier, no nos pongamos a inventar. Tengamos la
+    opción de habilitar y deshabilitar, porque ahora yo quiero trabajar con
+    Clickex, Transportes Milling, FedEx, Shipit. Lo demás deshabílitalos
+    mientras voy haciendo negociaciones."
+
+    QUÉ ARREGLA: existía una lista fija en el código (la constante COURIERS)
+    que alimentaba los desplegables de filtro, EN PARALELO a la tabla
+    transport_couriers que es donde se guardan de verdad. Las dos se
+    desincronizaron: la lista decía "Transportes Felca" (con S) y la tabla
+    "Transporte Felca" (sin S). Como el filtro de Manifiestos compara exacto
+    (WHERE courier=%s), elegir Felca devolvía CERO resultados aunque hubiera
+    manifiestos suyos. Shipit tampoco aparecía, porque se sembró en la tabla
+    y nadie lo agregó a la lista fija.
+
+    Con una sola fuente de verdad eso no puede volver a pasar: el filtro
+    ofrece exactamente los nombres que existen, y desactivar un courier en su
+    ficha lo saca de los desplegables sin tocar código ni perder su historia.
+
+    Si la consulta fallara, cae a la constante COURIERS para no dejar los
+    desplegables vacíos (degradar, nunca romper).
+    """
+    try:
+        filas = _get_couriers_cached()      # ya filtra activo=1 y cachea 5 min
+        nombres = [ (f.get("nombre") or "").strip() for f in filas ]
+        nombres = [ n for n in nombres if n ]
+        if nombres:
+            return nombres
+    except Exception as e:
+        print(f"[couriers] no se pudo leer la lista activa, uso el respaldo: {e}",
+              flush=True)
+    return list(COURIERS)
+
+
 # ── Endpoint DEBUG: muestra el RAW del ERP para diagnosticar campos ──
 @app.route("/api/erp/documento-raw", methods=["GET", "POST"])
 @login_required
@@ -22292,6 +22329,7 @@ def tr_compromisos_json():
     estado = request.args.get("estado","")
     clasif = request.args.get("clasificacion","")
     q      = request.args.get("q","").strip()
+    courier = request.args.get("courier","").strip()
     vista  = (request.args.get("vista","") or "").strip().lower()
 
     where, params = [], []
@@ -22407,6 +22445,23 @@ def tr_compromisos_json():
     if q:
         where.append("(cliente_nombre LIKE %s OR nudo LIKE %s OR tido LIKE %s OR comuna LIKE %s OR guia_numero LIKE %s)")
         qp = f"%{q}%"; params += [qp,qp,qp,qp,qp]
+    # FILTRO DE COURIER (2026-08-05, pedido de Daniel: "verlos de Felca y ver
+    # todos"). El courier no vive en transport_commitments: vive en el
+    # MANIFIESTO al que pertenece el documento, así que se filtra por
+    # existencia de un item suyo en un manifiesto de ese courier.
+    #
+    # La comparación es TOLERANTE (LIKE), no exacta, a propósito: el mismo
+    # transportista está guardado con variantes ("Transporte Felca" /
+    # "Transportes Felca"), y comparar exacto es justo lo que hacía devolver
+    # cero resultados en el filtro de Manifiestos. Acá no repetimos ese error
+    # aunque los nombres ya vengan de la ficha del courier.
+    if courier:
+        where.append(
+            "EXISTS (SELECT 1 FROM transport_manifest_items mi2 "
+            "          JOIN transport_manifests m2 ON m2.id = mi2.manifest_id "
+            "         WHERE mi2.commitment_id = transport_commitments.id "
+            "           AND m2.courier LIKE %s)")
+        params.append(f"%{courier}%")
     # FIX 2026-07-27 (Daniel, captura real MAN-2026-0011/VD 6371): "En
     # gestión" es un ESTADO (¿está en un manifiesto activo ahora?), no algo
     # que dependa de cuándo se emitió el documento — un pedido puede llevar
@@ -25490,6 +25545,7 @@ def transporte_index():
     filtros = {
         "estado":        request.args.get("estado", ""),
         "clasificacion": request.args.get("clasificacion", ""),
+        "courier":       request.args.get("courier", "").strip(),
         "q":             request.args.get("q", "").strip(),
         "fecha_desde":   fecha_desde,
         "fecha_hasta":   fecha_hasta,
@@ -25551,7 +25607,7 @@ def transporte_index():
         # hay que tocar.
         estados_logisticos=ESTADOS_LOGISTICOS_MONITOR,
         estado_colors=ESTADO_COLORS,
-        couriers=COURIERS,
+        couriers=_nombres_couriers_activos(),
         manifiestos=manifiestos,
     )
 
@@ -26910,7 +26966,7 @@ def tr_manifiestos():
         "transporte/manifiestos.html",
         manifiestos=manifiestos,
         filtros=filtros,
-        couriers=COURIERS,
+        couriers=_nombres_couriers_activos(),
         estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
         kpis=kpis,
         tabs_count=tabs_count,
@@ -27195,7 +27251,7 @@ def tr_manifiesto_detalle(mid):
             logs=logs,
             estados_entrega=ESTADOS_ENTREGA,
             estados_manifest=["En preparación", "En curso", "Cerrado", "Entregado completo"],
-            couriers=COURIERS,
+            couriers=_nombres_couriers_activos(),
             es_fedex=es_fedex,
             sin_ot=sin_ot,
         )
@@ -29479,6 +29535,33 @@ def _mask_address(direccion, comuna):
     return f"{base}, {comuna}".strip(", ").strip()
 
 
+def _tr_logo_de_courier(nombre):
+    """URL del logo de un courier a partir de su nombre. '' si no hay.
+
+    El nombre del courier está guardado con variantes en distintas tablas
+    ("Transporte Felca" vs "Transportes Felca" — el mismo desajuste que hace
+    fallar el filtro de Manifiestos), así que el match NO puede ser exacto:
+    se compara sin distinguir mayúsculas y por contención en ambos sentidos.
+
+    Nunca lanza: si algo falla, devuelve '' y la vista muestra el nombre en
+    texto, como antes.
+    """
+    n = (nombre or "").strip().lower()
+    if not n:
+        return ""
+    try:
+        filas = mysql_fetchall(
+            "SELECT nombre, logo_url FROM transport_couriers "
+            "WHERE logo_url IS NOT NULL AND logo_url <> ''") or []
+    except Exception:
+        return ""
+    for f in filas:
+        c = (f.get("nombre") or "").strip().lower()
+        if c and (c == n or c in n or n in c):
+            return f.get("logo_url") or ""
+    return ""
+
+
 def _tracking_payload(token):
     """Construye el payload completo del tracking público.
     Devuelve dict o None si el token no existe."""
@@ -29636,6 +29719,14 @@ def _tracking_payload(token):
         "destino":       _mask_address(c.get("direccion"), c.get("comuna")),
         "region":        c.get("region") or "",
         "courier":       (mi or {}).get("courier") or "",
+        # Logo del transportista para la página del cliente (2026-08-05,
+        # Daniel: "los logos con imágenes, tenemos las imágenes en los
+        # couriers, así que aprovechémosla"). Antes se mostraba el nombre
+        # como texto plano. Match tolerante a variantes del nombre porque el
+        # mismo courier está guardado de más de una forma ("Transporte
+        # Felca" / "Transportes Felca") -- el mismo problema que rompe el
+        # filtro de Manifiestos. Si no hay logo, la vista cae al texto.
+        "courier_logo":  _tr_logo_de_courier((mi or {}).get("courier")),
         "manifiesto":    (mi or {}).get("correlativo") or "",
         "estado":        estado_actual,
         "estado_color":  meta_actual.get("color", "secondary"),
@@ -33482,7 +33573,7 @@ def tr_dashboard_hoy():
                            hist_total_pages=hist_total_pages,
                            hist_filtros=hist_filtros,
                            estados=ESTADOS_COMPROMISO,
-                           couriers=COURIERS,
+                           couriers=_nombres_couriers_activos(),
                            estado_colors=ESTADO_COLORS)
 
 

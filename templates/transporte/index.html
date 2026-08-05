@@ -267,7 +267,38 @@
          Estado), no por el estado crudo del ERP — ver estados_logisticos en
          transporte_index(). No confundir con `estados` (ESTADOS_COMPROMISO),
          que sigue vivo para el panel de edición del estado del ERP. #}
-      {% for e in estados_logisticos %}<option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      {# 2026-08-05 (Daniel: "hay muchos filtros que están ahí como demás,
+         por ejemplo logística inversa"): eran ~22 estados en una sola lista
+         plana, mezclando los de uso diario con los administrativos raros.
+         NO se borra ninguno -- todos son asignables y filtran bien (Regla
+         #4.2) -- se AGRUPAN para que los de todos los días queden arriba y
+         separados. La lista de "día a día" está acá y no en Python a
+         propósito: es una decisión de presentación, no de datos. #}
+      {% set _dia_a_dia = ['Por despachar', 'En preparación', 'Entregado a transporte',
+                           'En ruta', 'Entregado', 'Problema', 'Entrega fallida',
+                           'Devolución', 'Pendiente', 'Despachado', 'Preventa'] %}
+      <optgroup label="Del día a día">
+        {% for e in estados_logisticos if e in _dia_a_dia %}
+        <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </optgroup>
+      <optgroup label="Administrativos">
+        {% for e in estados_logisticos if e not in _dia_a_dia %}
+        <option value="{{ e }}" {% if filtros.estado==e %}selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </optgroup>
+    </select>
+
+    {# FILTRO DE COURIER (2026-08-05, pedido de Daniel: "verlos de Felca y ver
+       todos"). No existía en el Monitor -- no estaba roto, nunca se construyó.
+       Los nombres salen de la ficha del courier vía _nombres_couriers_activos(),
+       así que ofrece exactamente lo que está guardado y respeta el interruptor
+       activo/inactivo de cada tarjeta. #}
+    <select name="courier" class="tr-filter-select" title="Filtrar por transportista">
+      <option value="">Todos los couriers</option>
+      {% for c in couriers %}
+      <option value="{{ c }}" {% if filtros.courier==c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
     </select>
     <select name="clasificacion" class="tr-filter-select" title="Tipo de operación">
       <option value="">Despacho y retiro</option>
