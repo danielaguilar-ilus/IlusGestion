@@ -9144,6 +9144,37 @@ def register_tickets_routes(app, ctx):
         r"Get\s+Outlook\s+for\s+(iOS|Android).*$)", re.I)
 
     def _tk_imap_creds():
+        """Credenciales para leer el buzón por IMAP.
+
+        FIX 2026-08-05 (falla silenciosa de 12 días, detectada en los logs de
+        producción: "[tk_mail] no se pudo conectar a IMAP: AUTHENTICATIONFAILED
+        Invalid credentials", ininterrumpida desde el 24-jul-2026).
+
+        Causa: esto leía SOLO las variables de entorno, mientras que el ENVÍO
+        de correos usa _get_smtp_cfg(), que da prioridad a la fila guardada en
+        la BD (lo que se edita en /comunicaciones). Cuando se rotó la clave de
+        aplicación de Gmail se actualizó en la pantalla, pero la variable de
+        entorno de Cloud Run quedó con la vieja. Resultado: los correos
+        SEGUÍAN SALIENDO con normalidad y nadie notó que hacía 12 días que no
+        entraba ninguno — los correos de clientes al buzón de soporte dejaron
+        de convertirse en tickets, en silencio.
+
+        Ahora usa la MISMA fuente que el envío, con el mismo orden de
+        prioridad. Un solo lugar donde actualizar la clave; se acabó la
+        posibilidad de que enviar y recibir queden desincronizados.
+        Si _get_smtp_cfg no estuviera disponible, cae a las env vars como antes.
+        """
+        _cfg_fn = ctx.get("_get_smtp_cfg")
+        if callable(_cfg_fn):
+            try:
+                cfg = _cfg_fn() or {}
+                user = (cfg.get("smtp_user") or "").strip()
+                pwd = (cfg.get("smtp_pass") or "").strip()
+                if user and pwd:
+                    return user, pwd
+            except Exception as _e_cfg:
+                print(f"[tk_mail] no se pudo leer la config SMTP compartida: {_e_cfg}",
+                      flush=True)
         user = (os.environ.get("SMTP_USER") or "").strip()
         pwd = (os.environ.get("SMTP_PASS") or os.environ.get("SMTP_PASSWORD") or "").strip()
         return user, pwd
