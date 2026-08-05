@@ -8547,6 +8547,24 @@ def _send_password_access_email(
         "fecha_hora": _now_chile().strftime("%d/%m/%Y %H:%M"),
         "ip_acceso": _ip_acceso,
     })
+    # ── GUARDA: un correo de acción SIN el enlace no sirve para nada ──────
+    # Bug real reportado por Daniel (2026-08-05): pedía "olvidé mi contraseña",
+    # el correo llegaba, pero "no manda ningún botón, solamente dice que
+    # alguien actualizó la contraseña". Causa: la plantilla guardada en la BD
+    # no traía {{link_acceso}}, así que el usuario recibía un aviso sin forma
+    # de actuar y quedaba encerrado fuera del sistema.
+    #
+    # Esta función SIEMPRE manda un correo con un token de un solo uso: si el
+    # cuerpo renderizado no contiene ese enlace, la plantilla está mal (le
+    # borraron el botón, o quedó sembrada una versión de "aviso" en lugar de
+    # una de "acción"). En ese caso se descarta y se cae al texto hardcodeado
+    # de abajo, que sí lleva botón. Degradar es correcto acá; mandar un correo
+    # sin salida, no.
+    if _db and action_url and action_url not in (_db[1] or ""):
+        print(f"[ILUS][EMAIL] plantilla '{_tpl_estado}' no incluye el enlace de "
+              f"acción; se usa el texto por defecto para no dejar al usuario "
+              f"sin botón.", flush=True)
+        _db = None
     if _db:
         _asunto, _cuerpo = _db
         sent = _send_ilus_email(to_addr, _brand_subject(_asunto),
@@ -8694,9 +8712,20 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
 
     email_purpose:
       - 'invite' (default): cuenta nueva → email "Crea tu contraseña" (mode=setup, 24h)
-      - 'change': cambio solicitado por admin → email "Cambio seguro de contraseña" (mode=reset, 60min)
+      - 'change': cambio solicitado por UN ADMIN → plantilla 'cambio_clave' (60min)
+      - 'forgot': el propio usuario apretó "Olvidé mi contraseña" → plantilla
+                  'olvido_contrasena' (60min)
                   Gmail los trata como mensajes distintos (subject distinto), evita threading
                   con la invitación previa y el usuario distingue claramente cada acción.
+
+    Por qué 'forgot' existe (bug reportado por Daniel, 2026-08-05): el flujo
+    self-service mandaba email_purpose='change', o sea la plantilla del
+    admin. En producción esa plantilla quedó sembrada con la variante de
+    AVISO ("Tu contraseña ILUS fue actualizada", sin botón ni enlace) en vez
+    de la de ACCIÓN. Resultado: el usuario pedía recuperar su clave y recibía
+    un correo diciéndole que su contraseña ya había sido cambiada, sin forma
+    de hacer nada. Las dos plantillas describen situaciones distintas y ahora
+    cada flujo usa la suya.
     """
     actor = g.user["nombre"] if getattr(g, "user", None) else "ILUS"
     login_url = _portal_login_url()
@@ -8704,15 +8733,16 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
 
     try:
         if mode == "token" and action_url:
-            if email_purpose == "change":
-                # Email de cambio de contraseña — subject y CTA distintos a los de invitación.
-                # FIX 2026-07-25: usa la plantilla 'cambio_clave' (admin-iniciado),
-                # NO 'olvido_contrasena' (self-service) -- ver docstring de
-                # _send_password_access_email. Antes 'cambio_clave' era huérfana.
+            if email_purpose in ("change", "forgot"):
+                # Cada flujo con su plantilla: 'cambio_clave' cuando lo inicia un
+                # admin, 'olvido_contrasena' cuando el usuario aprieta "Olvidé mi
+                # contraseña". Antes ambos usaban 'cambio_clave' y el self-service
+                # terminaba mandando el aviso equivocado (ver docstring).
                 result["email"] = _send_password_access_email(
                     username, nombre, action_url,
                     actor_name=actor, mode="reset", minutes=60,
-                    tpl_estado="cambio_clave",
+                    tpl_estado=("olvido_contrasena" if email_purpose == "forgot"
+                                else "cambio_clave"),
                 )
             else:
                 result["email"] = _send_invitation_email(username, nombre, action_url, actor)
@@ -8734,7 +8764,11 @@ def _notify_user_access(username: str, nombre: str, phone: str = "", *,
             if wa_cfg.get("account_sid") and wa_cfg.get("auth_token") and wa_cfg.get("from_number"):
                 marca = _get_marca()
                 firma = f"\n— {marca['name']}"
-                if mode == "token" and action_url and email_purpose == "change":
+                # 'forgot' entra acá igual que 'change': el texto sirve para
+                # ambos. Si quedara afuera caería en la rama de "Bienvenido /
+                # crea tu contraseña (7 días)", que es de cuenta nueva y da
+                # una vigencia equivocada.
+                if mode == "token" and action_url and email_purpose in ("change", "forgot"):
                     body = (
                         _brand_wa_prefix("Recupera tu contraseña")
                         + f"Hola {nombre}, recibimos una solicitud para cambiar tu contraseña.\n\n"
@@ -8856,7 +8890,10 @@ def forgot_password():
                                     snap_user, snap_nom, snap_phone,
                                     mode="token",
                                     action_url=snap_url,
-                                    email_purpose="change",
+                                    # 'forgot', no 'change': esto lo pidió el
+                                    # propio usuario desde la pantalla de login,
+                                    # no un admin (ver _notify_user_access).
+                                    email_purpose="forgot",
                                 )
                             except Exception as _exc:
                                 print(f"[ILUS][RESET][bg] fail: {_exc}", flush=True)
@@ -41085,24 +41122,42 @@ def init_comunicaciones_tables():
                  '🔐 Crea tu contraseña aquí: {{link_acceso}}\n\n'
                  '_Enlace válido por 7 días, un solo uso._'),
 
+                # ⚠ 'cambio_clave' es un correo de ACCIÓN, no un aviso: se manda
+                # CON un token de un solo uso para que el usuario defina su nueva
+                # clave. Esta siembra tenía la redacción de un aviso posterior
+                # ("tu contraseña fue actualizada"), sin botón ni {{link_acceso}},
+                # y contradecía la otra siembra de la misma plantilla en
+                # _comm_templates_interna_defaults(). Como ambas usan
+                # INSERT IGNORE, ganaba la que corriera primero: en producción
+                # quedó la variante sin botón y el usuario recibía un correo que
+                # le decía que su clave ya había cambiado, sin forma de actuar
+                # (reportado por Daniel, 2026-08-05). Se alinea con la otra
+                # siembra para que las dos digan lo mismo.
                 ('cambio_clave', 'email',
-                 'Tu contraseña ILUS fue actualizada',
+                 'Cambio seguro de contraseña — ILUS',
                  '<p style="margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700">Hola, {{nombre_usuario}}</p>'
                  '<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">'
-                 'La contraseña de tu cuenta ILUS fue <strong>actualizada exitosamente</strong>.</p>'
+                 'Recibimos una solicitud para <strong>cambiar la contraseña</strong> de tu cuenta ILUS. '
+                 'Si fuiste tú, usa el botón para establecer una nueva.</p>'
                  '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #fd7e14;'
                  'border-radius:4px;padding:14px 18px;margin:18px 0">'
                  '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cuenta:</strong>&nbsp; {{email_usuario}}</td></tr>'
                  '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Fecha y hora:</strong>&nbsp; {{fecha_hora}}</td></tr>'
                  '</table>'
+                 '<div style="text-align:center;margin:24px 0 20px">'
+                 '<a href="{{link_acceso}}" style="display:inline-block;background:#dc2626;color:#ffffff;font-weight:700;'
+                 'font-size:14px;text-decoration:none;padding:14px 32px;border-radius:6px;min-width:220px">Cambiar contraseña →</a>'
+                 '</div>'
                  '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:12px 16px;'
                  'font-size:13px;color:#664d03;margin-top:4px">'
-                 '🔒 Si <strong>no reconoces este cambio</strong>, contacta al administrador del sistema de inmediato.</div>'),
+                 '🔒 El enlace vence en <strong>60 minutos</strong> y solo puede usarse una vez. '
+                 'Si <strong>no solicitaste</strong> este cambio, ignora este mensaje — tu contraseña actual sigue siendo válida.</div>'),
                 ('cambio_clave', 'whatsapp',
                  '',
-                 '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, tu contraseña fue actualizada el *{{fecha_hora}}*.\n\n'
-                 '📧 *Cuenta:* {{email_usuario}}\n\nSi no realizaste este cambio, '
-                 'contacta al administrador de inmediato. 🚨'),
+                 '🔑 *ILUS — Cambio de contraseña*\n\nHola *{{nombre_usuario}}*, recibimos una solicitud para cambiar tu contraseña.\n\n'
+                 '📧 *Cuenta:* {{email_usuario}}\n\n🔑 Define tu nueva clave aquí: {{link_acceso}}\n\n'
+                 '_Enlace válido por 60 minutos, un solo uso._\n'
+                 'Si no fuiste tú, ignora este mensaje.'),
 
                 ('olvido_contrasena', 'email',
                  'Recupera tu acceso a ILUS',
@@ -84416,6 +84471,41 @@ def _ensure_comm_template_comunicacion_interna():
         if sembradas:
             print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de comunicacion_interna sembradas",
                   flush=True)
+
+        # ── REPARACIÓN de plantillas de acción sin enlace (2026-08-05) ──────
+        # El INSERT IGNORE de arriba respeta lo que ya existe, que es lo
+        # correcto para no pisar las ediciones de Daniel. Pero eso también
+        # significa que una fila MAL SEMBRADA se queda mal para siempre.
+        #
+        # Fue lo que pasó: 'cambio_clave' se sembró (por el otro camino, el de
+        # init_comunicaciones_tables) con la redacción de un AVISO posterior
+        # —"Tu contraseña ILUS fue actualizada"— sin botón ni {{link_acceso}},
+        # cuando en realidad es un correo de ACCIÓN que lleva un token. El
+        # usuario recibía un correo diciéndole que su clave ya había cambiado,
+        # sin forma de hacer nada (reportado por Daniel, 2026-08-05).
+        #
+        # Se repara SOLO si falta el enlace. Una plantilla que Daniel editó y
+        # que sí lo tiene NO se toca: la condición es "está rota", no "es
+        # distinta a la nuestra".
+        CON_ENLACE = ("usuario_nuevo", "cambio_clave", "olvido_contrasena")
+        reparadas = 0
+        for slug, (asunto, cuerpo) in _comunicacion_interna_tpl_seed().items():
+            if slug not in CON_ENLACE:
+                continue
+            fila = mysql_fetchone(
+                "SELECT id, cuerpo FROM comm_templates WHERE modulo='comunicacion_interna' "
+                "  AND estado=%s AND canal='email' LIMIT 1", (slug,))
+            if not fila or "{{link_acceso}}" in (fila.get("cuerpo") or ""):
+                continue
+            mysql_execute(
+                "UPDATE comm_templates SET asunto=%s, cuerpo=%s WHERE id=%s",
+                (asunto, cuerpo, fila["id"]))
+            reparadas += 1
+            print(f"[ensure_comm_tpl] '{slug}' no tenía el enlace de acción; "
+                  f"se restauró la versión con botón.", flush=True)
+        if reparadas:
+            print(f"[ensure_comm_tpl] {reparadas} plantilla(s) reparadas", flush=True)
+
         return sembradas
     except Exception as e:
         print(f"[ensure_comm_tpl] no se pudo sembrar comunicacion_interna: {e}", flush=True)
