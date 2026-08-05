@@ -24154,8 +24154,65 @@ def _tr_marcar_lock_completado(slot_str):
         print(f"[transp-cron] marcar completado: {e}", flush=True)
 
 
+def _tr_horas_sync_cfg():
+    """Horas del día (hora Chile) en que corre el sync de transporte.
+
+    Default 9/11/13/15/16 (Daniel, 2026-08-05, reemplaza el 9/12/16 anterior).
+    Ajustable sin deploy con ILUS_TR_SYNC_HORAS="9,11,13,15,16" (REGLA #4).
+    Nunca lanza: una env var mal escrita cae al default en vez de tumbar el hilo.
+    """
+    raw = (os.environ.get("ILUS_TR_SYNC_HORAS") or "").strip()
+    if not raw:
+        return [9, 11, 13, 15, 16]
+    try:
+        horas = sorted({int(h.strip()) for h in raw.split(",") if h.strip()})
+        horas = [h for h in horas if 0 <= h <= 23]
+        return horas or [9, 11, 13, 15, 16]
+    except ValueError:
+        print(f"[transp-cron] ILUS_TR_SYNC_HORAS inválido ({raw!r}), uso default", flush=True)
+        return [9, 11, 13, 15, 16]
+
+
+def _tr_proximo_slot_sync(ahora, horas_sync, solo_habiles):
+    """Próximo datetime (mismo tz que `ahora`) en que corresponde sincronizar.
+
+    Función PURA (sin reloj propio, sin I/O) para poder probarla con
+    unittest sin esperar horas reales -- se le pasa `ahora` como parámetro.
+
+    El caso que rompe si se hace "a mano" sumando un día: viernes después de
+    la última hora del día tiene que saltar a LUNES, no a sábado. Con
+    solo_habiles=True, sábado y domingo se saltan enteros (weekday() 5 y 6).
+    """
+    import datetime as _dt
+    if not horas_sync:
+        raise ValueError("horas_sync no puede estar vacío")
+    # Se ordena SIEMPRE, no se asume que el caller ya lo hizo: sin esto, una
+    # lista como [16, 9, 13] devolvía las 16:00 estando en las 12:00 -- el
+    # loop de abajo corta en la PRIMERA hora mayor a `ahora` en el orden de
+    # la lista, no en la más próxima cronológicamente. Detectado por
+    # tests/test_transporte_scheduler.py, no a mano.
+    horas_sync = sorted(set(horas_sync))
+    candidato = ahora
+    # Techo defensivo: seguro incluso si algún día se pidiera saltar más de
+    # una semana completa (ej. horas_sync mal configurado).
+    for _ in range(9):
+        if solo_habiles and candidato.weekday() >= 5:  # 5=sábado, 6=domingo
+            candidato = (candidato + _dt.timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0)
+            continue
+        for h in horas_sync:
+            slot = candidato.replace(hour=h, minute=0, second=0, microsecond=0)
+            if slot > ahora:
+                return slot
+        # Se acabaron las horas de hoy: probar desde las 00:00 del día siguiente.
+        candidato = (candidato + _dt.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+    raise RuntimeError("no se encontró próximo slot en 9 días -- revisar horas_sync")
+
+
 def _transporte_scheduler_loop():
-    """Hilo daemon: dispara sync mes-actual a 09/11/15/17 hora Chile.
+    """Hilo daemon: dispara sync mes-actual según _tr_horas_sync_cfg(),
+    solo días hábiles (lunes a viernes) por defecto, hora Chile.
 
     Estrategia anti-doble-ejecución con 2 workers Gunicorn:
       1. Cada worker corre su propio loop pero ambos hacen lock en
@@ -24171,30 +24228,26 @@ def _transporte_scheduler_loop():
     import time as _time
     from zoneinfo import ZoneInfo
 
-    # NUEVA CADENCIA (Daniel 2026-05-19): sync 3 veces al día (09/12/16)
-    # en vez de 4. Coincide con los turnos de bodega (mañana / postlunch / tarde).
-    HORAS_SYNC = [9, 12, 16]
+    # CADENCIA (Daniel 2026-08-05): 09/11/13/15/16, SOLO días hábiles.
+    # Antes eran 3 veces al día (09/12/16) todos los días. Textual: "así
+    # tenemos cubierto esas horas, en vez de tres en el día... extenderlo
+    # fuera de horario laboral o fines de semana es innecesario".
+    # Configurable por env para poder ajustar sin desplegar (REGLA #4).
+    HORAS_SYNC = _tr_horas_sync_cfg()
+    SOLO_HABILES = (os.environ.get("ILUS_TR_SYNC_SOLO_HABILES", "1").strip() != "0")
     TZ = ZoneInfo("America/Santiago")
     _ensure_transp_sync_lock_table()
     print(f"[transp-cron] arrancado en worker pid={os.getpid()} "
-          f"(horas: {HORAS_SYNC})", flush=True)
+          f"(horas: {HORAS_SYNC}, solo_habiles={SOLO_HABILES})", flush=True)
 
     while True:
         try:
             now_cl = _dt.datetime.now(TZ)
-
-            # ── Calcular próximo slot ──
-            proxima = None
-            for h in HORAS_SYNC:
-                candidato = now_cl.replace(hour=h, minute=0, second=0, microsecond=0)
-                if candidato > now_cl:
-                    proxima = candidato
-                    break
-            if proxima is None:
-                # Pasó la última (17:00). Esperar hasta 09:00 del día siguiente.
-                proxima = (now_cl + _dt.timedelta(days=1)).replace(
-                    hour=HORAS_SYNC[0], minute=0, second=0, microsecond=0
-                )
+            # Cálculo real en _tr_proximo_slot_sync (función pura, con sus
+            # propios tests): el caso que se rompe fácil "a mano" es viernes
+            # después de la última hora, que debe saltar a LUNES 09:00 y no a
+            # sábado.
+            proxima = _tr_proximo_slot_sync(now_cl, HORAS_SYNC, SOLO_HABILES)
 
             espera_seg = max(1.0, (proxima - now_cl).total_seconds())
             print(f"[transp-cron] próxima sync: {proxima.strftime('%Y-%m-%d %H:%M')} "
