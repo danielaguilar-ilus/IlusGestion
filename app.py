@@ -38513,6 +38513,11 @@ def tr_couriers_seed_logos():
         "clickex":     {"logo": f"{_BF}/clickex.cl/w/400/h/400",      "web": "https://clickex.cl/"},
         "enviame":     {"logo": f"{_BF}/enviame.io/w/400/h/400",      "web": "https://enviame.io/"},
         "envíame":     {"logo": f"{_BF}/enviame.io/w/400/h/400",      "web": "https://enviame.io/"},
+        # 2026-08-05: Shipit se sumó al comparador, así que también entra acá.
+        # Felca y Milling NO se pueden sembrar: son empresas chilenas chicas
+        # sin logo en ningún CDN público. Sus logos se cargan a mano desde la
+        # ficha del courier (POST /transporte/couriers/<id>/logo).
+        "shipit":      {"logo": f"{_BF}/shipit.cl/w/400/h/400",       "web": "https://shipit.cl/"},
     }
     actualizados = []
     rows = mysql_fetchall("SELECT id, nombre, logo_url, website FROM transport_couriers") or []
@@ -38540,6 +38545,52 @@ def tr_couriers_seed_logos():
                 print(f"[seed-logos] {r['nombre']}: {e}", flush=True)
     _invalidate_couriers_cache()
     return jsonify({"ok": True, "actualizados": actualizados})
+
+
+@app.route("/transporte/couriers/<int:cid>/logo", methods=["POST"])
+@_tr_required
+def tr_courier_subir_logo(cid):
+    """Sube el logo de un courier desde la ficha/tarjeta y lo deja en logo_url.
+
+    Existe porque el seed automático (tr_couriers_seed_logos) solo cubre a los
+    couriers con presencia en un CDN público. Los transportistas chilenos
+    chicos con los que trabaja ILUS -- Felca, Milling -- no están en ninguno:
+    su logo es un archivo que tiene Daniel. Antes la única vía era pegar una
+    URL a mano en el campo "Logo URL", lo que obligaba a hospedar la imagen
+    en otro lado primero.
+
+    Sube a GCS con el mismo helper que las fotos de producto (_cloud_upload →
+    /f/<key>), así que no depende de un CDN externo que pueda caerse ni de un
+    disco local (Cloud Run lo pierde en cada deploy).
+    """
+    file = request.files.get("logo") or request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "No se recibió ninguna imagen."}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"ok": False, "error": "Formato no permitido. Usa JPG, PNG o WEBP."}), 400
+
+    row = mysql_fetchone("SELECT id, nombre FROM transport_couriers WHERE id=%s", (cid,))
+    if not row:
+        return jsonify({"ok": False, "error": "El courier no existe."}), 404
+
+    try:
+        ts = int(datetime.now().timestamp())
+        url = _cloud_upload(file, public_id=f"courier{cid}_{ts}", folder="ilus/couriers")
+    except Exception as e:
+        print(f"[courier-logo] error subiendo logo de {row['nombre']}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir la imagen. Intenta de nuevo."}), 500
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE transport_couriers SET logo_url=%s WHERE id=%s", (url, cid))
+        conn.commit()
+    except Exception as e:
+        print(f"[courier-logo] error guardando logo_url de {row['nombre']}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "La imagen se subió pero no se pudo guardar."}), 500
+
+    _invalidate_couriers_cache()
+    return jsonify({"ok": True, "url": url, "courier": row["nombre"]})
 
 
 @app.route("/transporte/couriers/<int:cid>/api", methods=["GET"])

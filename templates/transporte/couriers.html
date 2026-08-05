@@ -82,6 +82,27 @@
   box-shadow:0 4px 12px rgba(0,0,0,.15);
   letter-spacing:.5px;
 }
+/* Botón para cargar el logo del courier (2026-08-05, pedido de Daniel:
+   "deja algo que se pueda subir desde el front en la parte de couriers").
+   Va como HERMANO del <a> que abre la ficha, no adentro: si estuviera
+   dentro, el click abriría la ficha en vez del selector de archivos.
+   Aparece al pasar el mouse por la tarjeta; en pantallas táctiles (donde
+   no existe el hover) queda siempre visible. */
+.cr-logo-btn{
+  position:absolute; top:12px; left:12px; z-index:3;
+  width:30px; height:30px; padding:0; border-radius:50%;
+  border:1px solid #e5e7eb; background:#fff; color:#6b7280;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:.8rem;
+  box-shadow:0 2px 6px rgba(0,0,0,.08);
+  opacity:0; transition:opacity .15s, color .15s, border-color .15s;
+}
+.cr-card:hover .cr-logo-btn{ opacity:1; }
+.cr-logo-btn:hover{ color:var(--trx-red,#dc2626); border-color:var(--trx-red,#dc2626); }
+.cr-logo-btn:focus-visible{ opacity:1; outline:2px solid var(--trx-red,#dc2626); outline-offset:2px; }
+.cr-logo-btn.is-busy{ opacity:1; pointer-events:none; }
+@media (hover:none){ .cr-logo-btn{ opacity:1; } }
+
 .cr-name{ font-size:1.05rem; font-weight:800; color:#0a0a0a; line-height:1.2; margin-bottom:.35rem; }
 .cr-tags{ display:flex; justify-content:center; gap:.35rem; flex-wrap:wrap; }
 .cr-tag{
@@ -244,6 +265,14 @@
         {% if not c.activo %}
         <span class="cr-inactive-badge">Inactivo</span>
         {% endif %}
+
+        {# Cargar/cambiar el logo. Fuera del <a> a propósito (ver CSS). #}
+        <button type="button" class="cr-logo-btn"
+                title="Cambiar el logo de {{ c.nombre }}"
+                aria-label="Cambiar el logo de {{ c.nombre }}"
+                onclick="crSubirLogo({{ c.id }})">
+          <i class="bi bi-camera-fill"></i>
+        </button>
 
         {# Toda la zona HERO+STATS+CONTACT abre la ficha al hacer click #}
         <a class="cr-card-link" href="/transporte/couriers/{{ c.id }}">
@@ -506,6 +535,11 @@
   </div>
 </div>
 
+{# Selector de archivo compartido por todas las tarjetas (ver crSubirLogo). #}
+<input type="file" id="crLogoInput" style="display:none"
+       accept="image/png,image/jpeg,image/jpg,image/webp"
+       onchange="_crLogoElegido(this)">
+
 {% endblock %}
 
 
@@ -737,6 +771,60 @@ async function cargarLogos() {
       ilusToast('No se pudieron cargar', { type: 'error' });
     }
   } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
+}
+
+/* ── Logo del courier: subir un archivo propio (2026-08-05) ───────────
+   "Cargar logos oficiales" (arriba) solo cubre a los couriers que están
+   en un CDN público. Felca y Milling no están en ninguno: su logo es un
+   archivo que tiene Daniel. Esto lo sube directo a GCS y actualiza la
+   tarjeta en el acto, sin recargar la página.
+   Un solo <input type=file> para toda la grilla: se reusa apuntando a la
+   tarjeta que disparó el click. */
+let _crLogoCid = null;
+
+function crSubirLogo(cid) {
+  _crLogoCid = cid;
+  const inp = document.getElementById('crLogoInput');
+  inp.value = '';   // permite volver a elegir el MISMO archivo
+  inp.click();
+}
+
+async function _crLogoElegido(inp) {
+  const file = inp.files && inp.files[0];
+  const cid  = _crLogoCid;
+  if (!file || !cid) return;
+
+  const btn = document.querySelector(`#cardWrap${cid} .cr-logo-btn`);
+  const restaurar = () => {
+    if (btn) { btn.classList.remove('is-busy'); btn.innerHTML = '<i class="bi bi-camera-fill"></i>'; }
+  };
+  if (btn) {
+    btn.classList.add('is-busy');
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" style="width:14px;height:14px"></span>';
+  }
+
+  try {
+    const fd = new FormData();
+    fd.append('logo', file);
+    const r = await fetch(`/transporte/couriers/${cid}/logo`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+
+    // Pintar el logo nuevo en el acto. Dos casos: la tarjeta ya tenía
+    // logo (<img>) o mostraba el placeholder con las iniciales.
+    const hero = document.querySelector(`#cardWrap${cid} .cr-hero`);
+    const img  = hero && hero.querySelector('.cr-logo-wrap img');
+    const ph   = hero && hero.querySelector('.cr-logo-ph');
+    if (img)      img.src = d.url + (d.url.includes('?') ? '&' : '?') + 't=' + Date.now();
+    else if (ph)  ph.outerHTML = `<div class="cr-logo-wrap"><img src="${d.url}" alt=""></div>`;
+
+    ilusToast(`✓ Logo de ${d.courier} actualizado`, { type: 'success' });
+  } catch (e) {
+    ilusToast('No se pudo subir el logo: ' + e.message, { type: 'error' });
+  } finally {
+    restaurar();
+    _crLogoCid = null;
+  }
 }
 
 async function eliminarCourier(id, nombre) {
