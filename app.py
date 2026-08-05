@@ -15236,7 +15236,16 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         nombre_largo = (header_row.get("EN_NOKOENAMP") or "").strip()
         nombre_corto = (header_row.get("EN_NOKOEN")    or "").strip()
         cliente_nombre   = _erpe.fix_yen_to_n(nombre_largo or nombre_corto).title()
-        cliente_rut      = en_rten or cliente_rut
+        # MAEEDO.ENDO trae el RUT **con** dígito verificador ("75072700-K");
+        # MAEEN.RTEN lo guarda **sin** DV ("75072700"). Antes se pisaba el
+        # completo con el incompleto y el RUT salía mutilado: el sello de
+        # cierre de OT leía "7.507.270-0" y exigía justificar que la factura
+        # era de otro contribuyente (Aaron, OT-2026-00042, 2026-08-05).
+        # Solo se conserva el de MAEEDO cuando el cuerpo es el mismo.
+        _endo_tiene_dv = bool(cliente_rut and "-" in cliente_rut
+                              and cliente_rut.split("-")[0].strip() == en_rten)
+        if not _endo_tiene_dv:
+            cliente_rut  = en_rten or cliente_rut
         cliente_email    = (header_row.get("EN_EMAIL") or "").strip()
         cliente_telefono = _erpe.normalize_phone_cl(
             header_row.get("EN_FOEN") or header_row.get("EN_FAEN") or ""
@@ -68754,6 +68763,15 @@ def _rut_analisis_comparacion(rut_cliente, rut_factura):
                 "detalle": "Falta el RUT del cliente o el de la factura para comparar."}
     ca, da = a[:-1], a[-1]
     cb, db = b[:-1], b[-1]
+    # El ERP a veces entrega el RUT SIN dígito verificador (MAEEN.RTEN guarda
+    # solo el cuerpo). Si el RUT que llegó es exactamente el CUERPO del otro,
+    # es el mismo contribuyente — no hay nada que justificar.
+    if b == ca or a == cb:
+        _completo, _sin_dv = (a, b) if b == ca else (b, a)
+        return {"match": True, "nivel": "sin_dv",
+                "detalle": (f"Mismo RUT ({_fmt(_completo)}). El ERP entregó "
+                            f"{_sin_dv} sin dígito verificador, por eso se ve "
+                            f"distinto — el cuerpo del RUT es idéntico.")}
     if ca == cb:
         if da == db:
             return {"match": True, "nivel": "igual",
