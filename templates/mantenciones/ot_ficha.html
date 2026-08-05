@@ -175,9 +175,21 @@
   background:rgba(220,38,38,.92);color:#fff;border:none;
   width:28px;height:28px;border-radius:50%;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  opacity:0;transition:opacity .15s;
+  opacity:.55;transition:opacity .15s;
 }
 .foto-card:hover .foto-delete-btn{opacity:1;}
+/* FIX 2026-08-05 (Daniel, caso OT-042 Marbella: "si el técnico se equivoca
+   de foto puede eliminarla y corregirla"). El botón estaba en opacity:0 y
+   solo aparecía con :hover -- en el celular del técnico en terreno NO existe
+   el hover, así que el botón era invisible y borrar era imposible. Ahora se
+   ve siempre (atenuado en escritorio, pleno al pasar el mouse) y en pantallas
+   táctiles queda a tamaño de dedo (44px, REGLA #3). */
+@media (hover:none), (max-width:640px){
+  .foto-delete-btn{
+    opacity:1;width:44px;height:44px;font-size:1.05rem;
+    top:4px;right:4px;box-shadow:0 2px 6px rgba(0,0,0,.28);
+  }
+}
 
 /* ── Técnicos ── */
 .tecnico-card{
@@ -1492,11 +1504,27 @@ async function eliminarFoto(fid){
   const ok = await ilusConfirm({
     title: 'Eliminar foto',
     message: '¿Eliminar esta foto?',
+    sub: 'Podrás subir la correcta enseguida.',
     okLabel: 'Eliminar',
+    cancelLabel: 'Cancelar',
     danger: true,
   });
   if (!ok) return;
-  await fetch(API_BASE + '/fotos/' + fid, {method:'DELETE'});
+  // FIX 2026-08-05: antes se ignoraba la respuesta. Si el borrado fallaba
+  // (403, OT ya firmada, red caída) la foto simplemente reaparecía y el
+  // técnico no sabía por qué. Ahora se informa siempre.
+  try {
+    const r = await fetch(API_BASE + '/fotos/' + fid, {method:'DELETE'});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false){
+      ilusToast(d.error || 'No se pudo eliminar la foto', {type:'error'});
+      return;
+    }
+    ilusToast('Foto eliminada — sube la correcta', {type:'success'});
+  } catch(e){
+    ilusToast('Sin conexión: no se pudo eliminar la foto', {type:'error'});
+    return;
+  }
   cargarFotos();
 }
 
