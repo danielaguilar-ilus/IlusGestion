@@ -306,7 +306,28 @@
                    onerror="this.parentNode.outerHTML='<div class=&quot;cr-logo-ph&quot;>{{ c.nombre[:2]|upper }}</div>'">
             </div>
             {% else %}
-            <div class="cr-logo-ph">{{ c.nombre[:2]|upper }}</div>
+            {# Sin logo cargado: en vez de seis cuadrados negros idénticos
+               (Daniel, 2026-08-05: "esas tarjetas están feas"), cada courier
+               recibe un color propio derivado de su nombre. Es determinista
+               —el mismo courier tiene siempre el mismo color— así que la
+               grilla se vuelve reconocible de un vistazo en vez de un muro
+               gris. Sigue siendo un placeholder: al subir el logo real, se
+               reemplaza. #}
+            {# El tono sale del id (× 47, que es coprimo con 360): da colores
+               bien repartidos, iguales siempre para el mismo courier y sin
+               depender de ningún filtro raro de Jinja. #}
+            {# Las iniciales saltan la palabra genérica: "Transporte Felca" y
+               "Transportes Milling" daban las dos "TR" y quedaban idénticas,
+               que es justo lo contrario de lo que sirve. Ahora dan FE y MI. #}
+            {% set _nom_ini = c.nombre.split()[1]
+                 if (c.nombre.lower().startswith('transport') and c.nombre.split()|length > 1)
+                 else c.nombre %}
+            <div class="cr-logo-ph"
+                 style="background:linear-gradient(135deg,
+                          hsl({{ (c.id * 47) % 360 }}deg 62% 34%) 0%,
+                          hsl({{ (c.id * 47 + 24) % 360 }}deg 58% 19%) 100%);
+                        color:#fff;font-size:1.15rem;letter-spacing:.5px"
+                 >{{ _nom_ini[:3]|upper }}</div>
             {% endif %}
             <div class="cr-name">{{ c.nombre }}</div>
             <div class="cr-tags">
@@ -326,6 +347,26 @@
           </div>
 
           {# STATS #}
+          {% if 'shipit' in (c.nombre or '')|lower %}
+          {# Shipit no tiene tabla: mostrar "0 comunas / 0 con tarifa" hacía
+             parecer que estaba roto o a medio configurar (Daniel lo leyó así,
+             2026-08-05). Cotiza en vivo contra su API, así que la tarjeta
+             dice eso en vez de tres ceros. #}
+          <div class="cr-stats" style="--cols: 2">
+            <div class="cr-stat">
+              <div class="cr-stat-num cr-num-ok" style="font-size:1.1rem;line-height:1.9">
+                <i class="bi bi-broadcast"></i>
+              </div>
+              <div class="cr-stat-lbl">Cotiza en vivo</div>
+            </div>
+            {% if c.peso_max_bulto %}
+            <div class="cr-stat">
+              <div class="cr-stat-num">{{ c.peso_max_bulto|int }}</div>
+              <div class="cr-stat-lbl">kg/bulto máx</div>
+            </div>
+            {% endif %}
+          </div>
+          {% else %}
           <div class="cr-stats" style="--cols: {{ _cols }}">
             <div class="cr-stat">
               <div class="cr-stat-num {% if not c.total_comunas %}cr-num-muted{% endif %}">{{ c.total_comunas or 0 }}</div>
@@ -342,6 +383,7 @@
             </div>
             {% endif %}
           </div>
+          {% endif %}
 
           {# CONTACTO (chips suaves) #}
           {% if c.rut or c.telefono or c.email %}
@@ -361,6 +403,14 @@
           <a class="cr-btn" href="/transporte/couriers/{{ c.id }}#tab-tarifas" title="Ver tarifas por comuna">
             <i class="bi bi-cash-coin"></i>Tarifas
           </a>
+          {# Tarifario de ESTE courier, en su propio archivo (Daniel 2026-08-05:
+             "deja la tarifa de cada uno, no todos juntos"). Para Shipit se
+             construye cotizando su API, porque no tiene tabla. #}
+          <button class="cr-btn" type="button"
+                  onclick="descargarTarifarioCourier({{ c.id }}, '{{ c.nombre|e }}')"
+                  title="Descargar el tarifario de {{ c.nombre|e }} en Excel">
+            <i class="bi bi-file-earmark-arrow-down"></i>Excel
+          </button>
           <a class="cr-btn" href="/transporte/couriers/{{ c.id }}/pod" title="Config. Prueba de Entrega">
             <i class="bi bi-shield-check"></i>POD
           </a>
@@ -699,9 +749,30 @@ async function editarCourier(id) {
                value="${esc(c.website||'')}">
       </div>
       <div class="col-12">
-        <label class="form-label small">Logo URL</label>
-        <input id="e_logo" class="form-control form-control-sm bg-dark text-light border-secondary"
-               value="${esc(c.logo_url||'')}">
+        <label class="form-label small">Logo</label>
+        <div class="d-flex align-items-center gap-2">
+          <div id="e_logo_prev" style="width:48px;height:48px;border-radius:10px;background:#fff;
+               border:1px solid #444;display:flex;align-items:center;justify-content:center;
+               flex-shrink:0;overflow:hidden">
+            ${c.logo_url
+              ? `<img src="${esc(c.logo_url)}" style="max-width:100%;max-height:100%;object-fit:contain">`
+              : `<span style="color:#dc2626;font-weight:800;font-size:.8rem">${esc((c.nombre||'?').slice(0,2).toUpperCase())}</span>`}
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-light" onclick="crSubirLogo(${c.id})">
+            <i class="bi bi-upload me-1"></i>Subir imagen
+          </button>
+          <span class="small text-muted">JPG, PNG o WEBP</span>
+        </div>
+        {# El campo de URL se conserva (Regla #4.2: no se quita nada que ya
+           funcione) pero pasa a segundo plano: subir el archivo es lo normal,
+           pegar una URL es el caso raro. Se llena solo al subir. #}
+        <input id="e_logo" type="hidden" value="${esc(c.logo_url||'')}">
+        <details class="mt-2">
+          <summary class="small text-muted" style="cursor:pointer">o pegar una URL</summary>
+          <input id="e_logo_url_manual" class="form-control form-control-sm bg-dark text-light border-secondary mt-1"
+                 placeholder="https://..." value="${esc(c.logo_url||'')}"
+                 oninput="document.getElementById('e_logo').value = this.value">
+        </details>
       </div>
       <div class="col-md-3">
         <label class="form-label small">Peso máx/bulto (kg)</label>
@@ -846,6 +917,19 @@ function descargarDiagnosticoDirecciones() {
     'Revisando las direcciones del historial…');
 }
 
+/* Tarifario de UN courier, en su propio archivo. Para Shipit el backend lo
+   construye cotizando su API en vivo (no tiene tabla que volcar), así que
+   puede tardar; para el resto es instantáneo. */
+function descargarTarifarioCourier(id, nombre) {
+  const limpio = String(nombre || 'courier').replace(/[^\w]+/g, '_');
+  return _descargarExcel(
+    `/transporte/couriers/${id}/tarifario.xlsx`,
+    `ILUS_Tarifario_${limpio}.xlsx`,
+    /shipit/i.test(nombre || '')
+      ? 'Cotizando la lista de precios de Shipit en vivo… puede tardar'
+      : `Armando el tarifario de ${nombre}…`);
+}
+
 /* ── Unir dos fichas de la misma empresa (2026-08-05) ──────────────────
    Caso que lo motivó: "Melling" y "Milling" son el mismo transportista, con
    las tarifas partidas entre las dos fichas. Primero se MUESTRA qué va a
@@ -963,6 +1047,15 @@ async function _crLogoElegido(inp) {
     const ph   = hero && hero.querySelector('.cr-logo-ph');
     if (img)      img.src = d.url + (d.url.includes('?') ? '&' : '?') + 't=' + Date.now();
     else if (ph)  ph.outerHTML = `<div class="cr-logo-wrap"><img src="${d.url}" alt=""></div>`;
+
+    // Si la subida se hizo desde el modal de edición, refrescar ahí también:
+    // la vista previa y el campo que se envía al guardar.
+    const prev = document.getElementById('e_logo_prev');
+    if (prev) prev.innerHTML = `<img src="${d.url}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+    const campo = document.getElementById('e_logo');
+    if (campo) campo.value = d.url;
+    const manual = document.getElementById('e_logo_url_manual');
+    if (manual) manual.value = d.url;
 
     ilusToast(`✓ Logo de ${d.courier} actualizado`, { type: 'success' });
   } catch (e) {

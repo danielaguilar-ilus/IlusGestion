@@ -39074,6 +39074,199 @@ def transporte_couriers_export():
     )
 
 
+@app.route("/transporte/couriers/<int:cid>/tarifario.xlsx", methods=["GET"])
+@_tr_required
+def tr_tarifario_de_un_courier_xlsx(cid):
+    """Tarifario de UN solo courier, en su propio archivo.
+
+    Daniel, 2026-08-05: "en la parte de los couriers deja la tarifa de cada
+    uno, no todos juntos". Además de ser lo que se necesita para trabajar con
+    un transportista puntual, resuelve el problema de confidencialidad del
+    Excel comparado: al no poner a FedEx en la misma planilla que Felca y
+    Milling, ya no se puede deducir la política de precios dividiendo
+    columnas. Este archivo SÍ se puede compartir con el courier al que
+    corresponde.
+
+    Dos casos:
+      · Couriers con tabla negociada → se vuelca su tabla tal cual.
+      · Shipit → no tiene tabla (es un agregador, cotiza en vivo), así que
+        se le CONSTRUYE la lista consultando su API para las comunas donde
+        ILUS más despacha, con varios pesos. Es la "lista de precios de
+        Shipit" que no existía por ningún lado.
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+
+    courier = mysql_fetchone(
+        "SELECT id, nombre FROM transport_couriers WHERE id=%s", (cid,))
+    if not courier:
+        return jsonify({"error": "Ese courier no existe."}), 404
+    nombre = courier["nombre"] or "Courier"
+    es_shipit = "shipit" in nombre.lower()
+
+    wb = openpyxl.Workbook()
+    RED = PatternFill("solid", fgColor="CC0000")
+    VERDE = PatternFill("solid", fgColor="DCFCE7")
+    BLANCO = Font(color="FFFFFF", bold=True)
+    ws = wb.active
+    ws.title = nombre[:31]
+
+    if es_shipit:
+        import concurrent.futures as _cf
+        import shipit_client as _shc
+        import time as _t_dl
+
+        try:
+            pesos = [float(p) for p in (request.args.get("pesos") or "1,3,5,10,15").split(",") if p.strip()]
+        except ValueError:
+            return jsonify({"error": "Parámetro 'pesos' inválido"}), 400
+        pesos = sorted({p for p in pesos if 0 < p <= _shc.MAX_PESO_KG})[:6]
+        if not pesos:
+            return jsonify({"error": f"Shipit solo acepta hasta {_shc.MAX_PESO_KG:g} kg por bulto."}), 400
+        try:
+            limite = max(1, min(int(request.args.get("limite") or 40), 120))
+        except ValueError:
+            limite = 40
+        limite = min(limite, max(1, 200 // len(pesos)))
+
+        comunas = mysql_fetchall(
+            "SELECT TRIM(comuna) AS comuna, COUNT(*) AS n FROM transport_commitments "
+            "WHERE comuna IS NOT NULL AND TRIM(comuna) <> '' "
+            "GROUP BY TRIM(comuna) ORDER BY n DESC LIMIT %s", (limite,)) or []
+        if not comunas:
+            return jsonify({"error": "No hay comunas con historial para cotizar."}), 404
+
+        # commune_id resueltos ANTES del pool: dentro de un hilo no hay
+        # contexto Flask y la lectura de MySQL falla (bug del 2026-08-05).
+        origen_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+        destinos = {}
+        for c in comunas:
+            try:
+                destinos[c["comuna"]], _ = _shipit_commune_id(c["comuna"])
+            except Exception:
+                destinos[c["comuna"]] = None
+
+        _deadline = _t_dl.monotonic() + 60
+        tareas = [(c["comuna"], p) for c in comunas for p in pesos
+                  if origen_id and destinos.get(c["comuna"])]
+
+        def _cotizar(par):
+            comuna, peso = par
+            if _t_dl.monotonic() > _deadline:
+                return par, None
+            payload, errores = _shc.build_rate_payload(
+                length=30, width=30, height=30, weight=peso,
+                origin_id=origen_id, destiny_id=destinos[comuna])
+            if errores:
+                return par, None
+            r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=8)
+            if not r.get("ok"):
+                return par, None
+            disp = [x for x in _shc.parse_rates_response(r.get("data"))
+                    if x.get("disponible") and x.get("precio")]
+            if not disp:
+                return par, None
+            disp.sort(key=lambda x: x["precio"])
+            return par, disp[0]
+
+        res = {}
+        if tareas:
+            with _cf.ThreadPoolExecutor(max_workers=8) as pool:
+                for par, val in pool.map(_cotizar, tareas):
+                    res[par] = val
+
+        ws.cell(1, 1, f"Lista de precios — {nombre}").font = Font(bold=True, size=14)
+        ws.cell(2, 1, f"Cotizado en vivo el {chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')} "
+                      f"· origen: bodega {_tr_sender_cfg().get('city') or 'Quilicura'} · 1 bulto")
+        ws.cell(3, 1, "Shipit compara varios operadores y cobra el más barato disponible. "
+                      "Estos precios son los vigentes al momento de generar el archivo.")
+        enc = ["Comuna", "Envíos ILUS"] + [f"{p:g} kg" for p in pesos] + ["Operador (peso menor)"]
+        for ci, h in enumerate(enc, 1):
+            c = ws.cell(5, ci, h)
+            c.font, c.fill = BLANCO, RED
+            c.alignment = Alignment(horizontal="center", wrap_text=True)
+        for ri, com in enumerate(comunas, 6):
+            ws.cell(ri, 1, _xlsx_cell(com["comuna"]))
+            ws.cell(ri, 2, com["n"])
+            operador = ""
+            for pi, p in enumerate(pesos):
+                fila = res.get((com["comuna"], p))
+                celda = ws.cell(ri, 3 + pi)
+                if fila:
+                    celda.value = round(fila["precio"])
+                    celda.number_format = '$#,##0'
+                    if not operador:
+                        operador = (fila["courier"] or "").replace("_", " ").title()
+                else:
+                    celda.value = "—"
+            ws.cell(ri, 3 + len(pesos), _xlsx_cell(operador))
+        ws.freeze_panes = "A6"
+        for ci in range(1, len(enc) + 1):
+            ws.column_dimensions[get_column_letter(ci)].width = 24 if ci in (1, len(enc)) else 13
+    else:
+        filas = mysql_fetchall(
+            "SELECT codigo, sucursal, comuna, zona, region, dias_transito, dias_entrega, precios_json "
+            "FROM transport_courier_comunas WHERE courier_id=%s ORDER BY region, comuna",
+            (cid,)) or []
+        ws.cell(1, 1, f"Tarifario — {nombre}").font = Font(bold=True, size=14)
+        ws.cell(2, 1, f"{len(filas)} comunas · generado el "
+                      f"{chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')}")
+        if not filas:
+            ws.cell(4, 1, "Este courier todavía no tiene tarifas cargadas. "
+                          "Impórtalas desde un Excel en su ficha.")
+        else:
+            tramos = []
+            for r in filas:
+                if r.get("precios_json"):
+                    try:
+                        for k in json.loads(r["precios_json"]):
+                            if k not in tramos:
+                                tramos.append(k)
+                    except Exception:
+                        pass
+            enc = ["Comuna", "Zona", "Región", "Días tránsito"] + [f"{k} kg" for k in tramos]
+            for ci, h in enumerate(enc, 1):
+                c = ws.cell(4, ci, h)
+                c.font, c.fill = BLANCO, RED
+                c.alignment = Alignment(horizontal="center", wrap_text=True)
+            for ri, r in enumerate(filas, 5):
+                precios = {}
+                if r.get("precios_json"):
+                    try:
+                        precios = json.loads(r["precios_json"])
+                    except Exception:
+                        pass
+                base = [r.get("comuna"), r.get("zona"), r.get("region"), r.get("dias_transito")]
+                for ci, v in enumerate(base, 1):
+                    ws.cell(ri, ci, _xlsx_cell(v if v is not None else ""))
+                for pi, k in enumerate(tramos):
+                    celda = ws.cell(ri, 5 + pi)
+                    v = precios.get(k)
+                    if v not in (None, ""):
+                        try:
+                            celda.value = float(v)
+                            celda.number_format = '$#,##0'
+                        except (TypeError, ValueError):
+                            celda.value = _xlsx_cell(v)
+            ws.freeze_panes = "A5"
+            for ci in range(1, len(enc) + 1):
+                ws.column_dimensions[get_column_letter(ci)].width = 22 if ci <= 3 else 12
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from flask import send_file
+    _slug = "".join(ch if ch.isalnum() else "_" for ch in nombre)[:40]
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"ILUS_Tarifario_{_slug}_{datetime.now():%Y%m%d}.xlsx",
+    )
+
+
 def _tr_brackets_con_precio(precios_json_raw):
     """Cuántos tramos de peso con precio real tiene una fila de tarifa.
 
