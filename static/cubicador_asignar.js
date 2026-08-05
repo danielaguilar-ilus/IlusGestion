@@ -1226,6 +1226,27 @@ function _logoFor(c){
   return `<b style="color:#374151;font-size:.82rem">${escHtml(_courierDisplay(c.courier_nombre)||'—')}</b>`;
 }
 
+// 2026-08-04 (Shipit): Shipit es UNA sola ficha de courier en la lista (no
+// una por Chilexpress/Starken/etc. — Daniel: "como un solo courier, no
+// mezclado... por dentro"), pero cada operador que devolvió la API se
+// muestra acá, rotulado "(vía Shipit)", para "evidenciar dentro de su
+// universo cuánto vale cada servicio". Vacío si el courier no es Shipit o
+// solo trajo un operador (nada que desglosar).
+function _shipitDesgloseHtml(c){
+  const ops = c.operadores_shipit;
+  if(!Array.isArray(ops) || ops.length < 2) return '';
+  return `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px" onclick="event.stopPropagation()">
+    ${ops.map(op => `
+      <span title="${escHtml(op.servicio||'')}"
+            style="background:${op.es_mas_barato?'#dcfce7':'#f3f4f6'};
+                   color:${op.es_mas_barato?'#166534':'#6b7280'};
+                   padding:1px 7px;border-radius:50px;font-size:.64rem;
+                   font-weight:${op.es_mas_barato?'700':'500'}">
+        ${escHtml(op.operador_display||op.operador||'—')} · ${fClp(op.precio)}
+      </span>`).join('')}
+  </div>`;
+}
+
 function actualizarTarifas(){
   // Debounce 200ms para evitar N llamadas en clicks rápidos
   clearTimeout(_cotDebounceTimer);
@@ -1265,6 +1286,7 @@ async function _actualizarCotizacionesReal(){
   const cacheKey = JSON.stringify({
     peso:   _docData.totales.peso_pred,
     pesokg: _docData.totales.peso_kg,
+    bultos: _docData.totales.total_bultos,
     comuna, resid,
     valor:  _docData.header.valor_neto,
   });
@@ -1287,6 +1309,11 @@ async function _actualizarCotizacionesReal(){
         comuna:         comuna,
         es_residencial: resid,
         valor_neto:     _docData.header.valor_neto || 0,
+        // 2026-08-04 (Shipit): pedido explícito de Daniel -- "que no exceda
+        // de un bulto" es la restricción que más le preocupa. Sin esto el
+        // backend no tenía forma de saber cuántos bultos tiene el envío y
+        // no podía aplicar la regla.
+        n_bultos:       _docData.totales.total_bultos || null,
         // Contexto del documento para audit trail
         tido:           _docData.header.tido || '',
         nudo:           _docData.header.nudo || '',
@@ -1575,6 +1602,7 @@ function renderCouriers(opts){
         <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}${chipFedexLimit}${chipFedexOk}</div>
         <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
         <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
+        ${_shipitDesgloseHtml(c)}
       </div>
       <div class="courier-pricebox">
         <div class="courier-price" style="${vistaEsCosto?'color:#475569':''}" title="${c.desglose ? 'Costo $'+Math.round(c.desglose.precio_costo).toLocaleString('es-CL')+' + margen '+(c.desglose.margen_pct||0).toFixed(0)+'% + IVA '+(c.desglose.iva_pct||0).toFixed(0)+'%' : 'Precio cliente'}">${fClp(precioVisible)}</div>

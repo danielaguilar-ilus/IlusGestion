@@ -18535,6 +18535,16 @@ def api_asignar_cotizar_couriers():
     peso_kg    = float(data.get("peso_kg") or 0)
     peso_pred  = float(data.get("peso_pred_kg") or peso_kg or 0)
     comuna     = (data.get("comuna") or "").strip()
+    # 2026-08-04 (Shipit): sin esto no hay forma de saber si el envío tiene
+    # más de 1 bulto -- la restricción que más le preocupa a Daniel. Si no
+    # llega (caller viejo, o cubicaje sin dato), se asume 1 -- el caso más
+    # común -- pero queda marcado en 'trace' para que quede claro que no se
+    # verificó el dato real (ver _shipit_cotizacion_dict).
+    try:
+        n_bultos_raw = data.get("n_bultos")
+        n_bultos = int(n_bultos_raw) if n_bultos_raw not in (None, "", 0) else None
+    except (TypeError, ValueError):
+        n_bultos = None
     # Defensa: si llega un CÓDIGO ERP de comuna (ej. "OSO"), resolverlo a
     # nombre ("Osorno") vía TABCM para que el match con transport_courier_comunas
     # funcione. Nombres normales (con espacio o >4 chars) pasan intactos.
@@ -18783,18 +18793,143 @@ def api_asignar_cotizar_couriers():
                       "comuna_db": None},
         }
 
+    # 2026-08-04 (Shipit): a diferencia del resto de couriers de esta
+    # función (tabla local en transporte_tarifas.py), Shipit es una API
+    # real — llama a POST /v/rates. Se muestra como UNA sola ficha de
+    # courier (Daniel: "como un solo courier, no mezclado con
+    # Chilexpress/Starken por dentro") con el precio más barato como
+    # 'precio' (para ordenar igual que el resto), pero conserva en
+    # 'operadores_shipit' el desglose de TODOS los operadores que Shipit
+    # devolvió, cada uno rotulado "(vía Shipit)" — pedido explícito:
+    # "me interesa siempre separar las cosas y evidenciar... cuánto vale
+    # cada servicio" + "contener todos ahi por si activo mas courriers".
+    #
+    # Bloquea ANTES de llamar a la API si el envío no cumple las
+    # restricciones de Shipit (>1 bulto, >15kg), con mensajes ESPECÍFICOS
+    # por regla (shipit_client.verificar_restricciones) — nunca un texto
+    # genérico ("no vayas a mandar algo genérico, algo específico").
+    def _shipit_cotizacion_dict(cid, nombre, logo):
+        import shipit_client as _shc
+
+        bultos_asumidos = n_bultos is None
+        n_efectivo = n_bultos if n_bultos is not None else 1
+        advertencias_base = []
+        if bultos_asumidos:
+            advertencias_base.append(
+                "No se recibió la cantidad real de bultos: se asumió 1 "
+                "(el caso más común) sin verificar el dato."
+            )
+
+        def _dict_error(mensaje, fuente="error", advertencias=None):
+            return {
+                "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                "tiene_cobertura": False, "fuente": fuente, "mensaje": mensaje,
+                "trace": {
+                    "bracket": None, "bracket_upper": None, "formula": mensaje,
+                    "fuente": fuente, "validado": False,
+                    "advertencias": (advertencias or []) + advertencias_base,
+                    "json_brackets_disponibles": [], "peso_usado": peso_fact,
+                    "comuna_db": None,
+                },
+            }
+
+        problemas = _shc.verificar_restricciones(n_efectivo, peso_fact)
+        if problemas:
+            return _dict_error(" · ".join(problemas), fuente="restriccion_shipit",
+                                advertencias=problemas)
+
+        origin_id, _origin_disp = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+        if not origin_id:
+            return _dict_error(
+                "Shipit: falta homologar la comuna de origen (bodega) — "
+                "sincroniza comunas desde Diagnóstico > Shipit.")
+
+        destiny_id, _destiny_disp = _shipit_commune_id(comuna)
+        if not destiny_id:
+            return _no_cobertura_dict(cid, nombre, logo)
+
+        # Dimensiones: ILUS no cubica largo/ancho/alto por bulto hoy (solo
+        # peso y bultos totales) — se usa la misma caja de referencia
+        # 30x30x30cm que ya usa /transporte/api/diagnostico/shipit, como
+        # aproximación documentada hasta que el cubicador registre
+        # dimensiones reales por bulto.
+        payload, errores = _shc.build_rate_payload(
+            length=30, width=30, height=30, weight=peso_fact,
+            origin_id=origin_id, destiny_id=destiny_id,
+        )
+        if errores:
+            return _dict_error("Shipit: " + "; ".join(errores))
+
+        r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=8)
+        if not r.get("ok"):
+            return _dict_error(f"Shipit: {r.get('error') or 'error al cotizar'}")
+
+        filas = _shc.parse_rates_response(r.get("data"))
+        disponibles = [f for f in filas if f.get("disponible") and f.get("precio")]
+        if not disponibles:
+            return _no_cobertura_dict(cid, nombre, logo)
+
+        disponibles.sort(key=lambda f: f["precio"])
+        mas_barato = disponibles[0]
+
+        operadores = [
+            {
+                "operador": (f["courier"] or "—").title(),
+                "operador_display": f"{(f['courier'] or '—').title()} (vía Shipit)",
+                "servicio": f["servicio"], "precio": f["precio"], "dias": f["dias"],
+                "es_mas_barato": (f is mas_barato),
+            }
+            for f in disponibles
+        ]
+
+        formula = (f"Shipit API: {mas_barato['courier'].title()} "
+                   f"{mas_barato['servicio']} = "
+                   f"${int(mas_barato['precio']):,}".replace(",", "."))
+
+        return {
+            "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+            "tiene_cobertura": True, "fuente": "api_shipit",
+            "precio": mas_barato["precio"], "moneda": "CLP",
+            "tiempo_transito": f"{mas_barato['dias']} día(s)" if mas_barato.get("dias") else "—",
+            "servicio": f"{mas_barato['courier'].title()} (vía Shipit)",
+            "subtotal": mas_barato["precio"], "desglose": None, "mensaje": None,
+            "operadores_shipit": operadores,
+            "trace": {
+                "bracket": "Shipit API", "bracket_upper": None, "formula": formula,
+                "fuente": "api_shipit", "validado": False,
+                "advertencias": advertencias_base,
+                "json_brackets_disponibles": [], "peso_usado": peso_fact,
+                "comuna_db": comuna,
+            },
+        }
+
     # 2) Función worker que cotiza UN courier — TODO con tabla del macro.
     #    FedEx usa la tabla "FedEx Directo" (Daniel: sin API por ahora).
-    #    Solo se muestran: FedEx, Felca, Milling, Clickex. Starken y Blue
-    #    Express tienen tabla real cargada (148 y 342 comunas) pero Daniel
-    #    pidió explícitamente dejarlos apagados (2026-07-25) — no destrabar
-    #    sin que lo pida de nuevo.
+    #    Solo se muestran: FedEx, Felca, Milling, Clickex, Shipit. Starken y
+    #    Blue Express tienen tabla real cargada (148 y 342 comunas) pero
+    #    Daniel pidió explícitamente dejarlos apagados (2026-07-25) — no
+    #    destrabar sin que lo pida de nuevo.
     def _cotizar_uno(c):
-        cid      = c['id']
-        nombre   = c['nombre'] or ''
-        is_fedex = ('fedex' in _ttar._strip(nombre).lower())
-        logo     = c.get('logo_url') or c.get('logo_square_url')
-        slug     = 'fedex_directo' if is_fedex else _ttar.slug_para_courier(nombre)
+        cid       = c['id']
+        nombre    = c['nombre'] or ''
+        is_fedex  = ('fedex' in _ttar._strip(nombre).lower())
+        is_shipit = ('shipit' in _ttar._strip(nombre).lower())
+        logo      = c.get('logo_url') or c.get('logo_square_url')
+
+        if is_shipit:
+            try:
+                d = _shipit_cotizacion_dict(cid, nombre, logo)
+            except Exception as ex_each:
+                print(f"[cotizar courier {nombre}] error: {ex_each}", flush=True)
+                d = {
+                    "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                    "tiene_cobertura": False, "fuente": "error",
+                    "mensaje": "Error al cotizar",
+                }
+            d["_slug"] = "shipit"
+            return d
+
+        slug = 'fedex_directo' if is_fedex else _ttar.slug_para_courier(nombre)
 
         if slug not in ('felca', 'milling', 'clickex', 'fedex_directo'):
             return None
