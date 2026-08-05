@@ -11022,6 +11022,14 @@ def _integraciones_estado():
             "base_url": "api.simpliroute.com",
         },
         {
+            "clave": "shipit", "nombre": "Shipit (agregador de couriers)",
+            "proposito": "Cotizar tarifa de despacho junto a FedEx/Felca/Milling/Clickex "
+                         "(pedido del área comercial, 2026-08-04). Aún solo Fase 1: cotizar.",
+            "configurado": bool(SHIPIT_API_TOKEN and SHIPIT_API_EMAIL),
+            "env_vars": ["SHIPIT_API_TOKEN", "SHIPIT_API_EMAIL"],
+            "base_url": "api.shipit.cl",
+        },
+        {
             "clave": "checkwms", "nombre": "CheckWMS",
             "proposito": "Trazabilidad de bodega por código UA (Unidad de Armado) -- autocompleta Incidencias.",
             "configurado": bool(CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp")),
@@ -36005,6 +36013,252 @@ def _simpliroute_request(method, path, token, *, payload=None, timeout=30):
                 "error": _src.extract_error_message(resp.status_code, body),
                 "raw": body}
     return {"ok": True, "status": resp.status_code, "data": body}
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  SHIPIT (2026-08-04) — agregador de couriers, pedido del área comercial
+#  vía Daniel: sumar Shipit ADEMÁS de FedEx/Felca/Milling/Clickex, nunca en
+#  reemplazo (Regla #4.2). Fase 1 del plan: solo cotizar tarifa (POST
+#  /v/rates). Ficha del courier: UNA sola entrada "Shipit" en
+#  transport_couriers (no una por Chilexpress/Starken/etc.) — pero cada
+#  cotización expone el desglose real de cuánto cobra cada operador por
+#  dentro (Daniel: "me interesa separar las cosas y evidenciar... cuánto
+#  vale cada servicio"), tal cual lo entrega la API (un precio por courier
+#  en el array 'prices').
+#
+#  Credenciales: GitHub Secrets → env.yaml → Cloud Run (Regla #4), ya
+#  inyectadas en deploy.yml. Auth por 2 headers, NO por la contraseña del
+#  panel (esa solo sirve para generar el token en Configuración → API).
+# ══════════════════════════════════════════════════════════════════════
+SHIPIT_API_TOKEN = os.environ.get("SHIPIT_API_TOKEN", "").strip()
+SHIPIT_API_EMAIL = os.environ.get("SHIPIT_API_EMAIL", "").strip()
+
+
+def _shipit_request(method, path, *, payload=None, timeout=20):
+    """Llamada HTTP a Shipit. NUNCA lanza: siempre devuelve dict con `ok`.
+
+    Mismo contrato defensivo que _simpliroute_request/_fedex_create_shipment
+    — el caller nunca tiene que envolver esto en try/except.
+    """
+    import requests as _req
+    import shipit_client as _shc
+
+    if not (SHIPIT_API_TOKEN and SHIPIT_API_EMAIL):
+        return {"ok": False, "status": 0,
+                "error": "Shipit no está configurado (falta SHIPIT_API_TOKEN/SHIPIT_API_EMAIL)."}
+    url = _shc.BASE_URL + path
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/vnd.shipit.v4",
+        "X-Shipit-Email": SHIPIT_API_EMAIL,
+        "X-Shipit-Access-Token": SHIPIT_API_TOKEN,
+    }
+    try:
+        resp = _req.request(method, url, headers=headers, json=payload, timeout=timeout)
+    except Exception as e:
+        return {"ok": False, "status": 0,
+                "error": f"No se pudo conectar con Shipit: {type(e).__name__}"}
+    try:
+        body = resp.json()
+    except Exception:
+        body = resp.text
+    if resp.status_code >= 400:
+        return {"ok": False, "status": resp.status_code,
+                "error": _shc.extract_error_message(resp.status_code, body),
+                "raw": body}
+    return {"ok": True, "status": resp.status_code, "data": body}
+
+
+def _ensure_shipit_comunas_table():
+    """Caché local de GET /v/communes -- tabla NUEVA, se crea SIEMPRE, incluso
+    con ILUS_SKIP_MIGRATIONS=1 (mismo gotcha que _ensure_transport_zz_saldo_table:
+    init_transporte_tables() no corre en producción).
+
+    Por qué existe: POST /v/rates exige origin_id/destiny_id NUMÉRICOS propios
+    de Shipit -- no los códigos de comuna del ERP. Cachear evita golpear
+    /v/communes (300+ filas) en cada cotización.
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS shipit_comunas (
+                    id            INT PRIMARY KEY,
+                    nombre        VARCHAR(120) NOT NULL,
+                    region_id     INT,
+                    is_available  TINYINT(1) DEFAULT 0,
+                    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_nombre (nombre)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    except Exception as e:
+        print(f"[shipit] no se pudo crear shipit_comunas: {e}", flush=True)
+
+
+def _ensure_shipit_courier():
+    """Siembra la ficha "Shipit" en transport_couriers + su tope de peso.
+
+    SIEMPRE corre en boot (mismo motivo que arriba: init_transporte_tables()
+    no corre en producción). Idempotente: no duplica la fila si ya existe, y
+    NO pisa peso_max_bulto/peso_max_guia si alguien ya los editó a mano
+    (columnas != 0) -- solo los fija la primera vez.
+
+    peso_max_bulto=15: límite operativo que Daniel confirmó usar 2026-08-04
+    (Centro de Ayuda Shipit, retiro con flota propia "héroe"), sin esperar
+    confirmación del ejecutivo -- acepta que equipos más pesados (ej. barras
+    de 20 kg) queden fuera de Shipit y se coticen por otro courier. Esta
+    columna es INFORMATIVA para la ficha; el bloqueo real de la cotización
+    lo hace shipit_client.verificar_restricciones().
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM transport_couriers WHERE LOWER(nombre)='shipit'")
+            if not cur.fetchone():
+                cur.execute(
+                    "INSERT INTO transport_couriers (nombre, tipo, activo) VALUES (%s, %s, 1)",
+                    ("Shipit", "nacional")
+                )
+            cur.execute(
+                "UPDATE transport_couriers SET peso_max_bulto=15, peso_max_guia=15 "
+                "WHERE LOWER(nombre)='shipit' AND peso_max_bulto=0 AND peso_max_guia=0"
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[shipit] no se pudo sembrar la ficha del courier: {e}", flush=True)
+
+
+def _shipit_sync_comunas():
+    """Trae GET /v/communes y guarda/actualiza shipit_comunas (UPSERT por id).
+
+    READ-ONLY sobre Shipit (GET). Nunca lanza -- devuelve
+    {ok, n, error}. Pensado para correr manual desde un endpoint de
+    diagnóstico admin (la lista de comunas cambia poco, no necesita cron).
+    """
+    import shipit_client as _shc
+    r = _shipit_request("GET", _shc.EP_COMMUNES)
+    if not r.get("ok"):
+        return {"ok": False, "n": 0, "error": r.get("error")}
+    data = r.get("data")
+    if not isinstance(data, list):
+        return {"ok": False, "n": 0,
+                "error": "Respuesta inesperada de Shipit (se esperaba una lista de comunas)."}
+    conn = get_mysql()
+    n = 0
+    try:
+        with conn.cursor() as cur:
+            for c in data:
+                if not isinstance(c, dict) or not c.get("id"):
+                    continue
+                cur.execute(
+                    "INSERT INTO shipit_comunas (id, nombre, region_id, is_available) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE nombre=VALUES(nombre), "
+                    "region_id=VALUES(region_id), is_available=VALUES(is_available)",
+                    (c.get("id"), (c.get("name") or "").strip(), c.get("region_id"),
+                     1 if c.get("is_available") else 0)
+                )
+                n += 1
+        conn.commit()
+    except Exception as e:
+        return {"ok": False, "n": n, "error": f"Error guardando comunas: {e}"}
+    return {"ok": True, "n": n, "error": None}
+
+
+def _shipit_commune_id(nombre_comuna):
+    """commune_id de Shipit para una comuna (del ERP o de la bodega ILUS).
+
+    Lee de la caché local shipit_comunas (poblada por _shipit_sync_comunas).
+    Devuelve (id, is_available) -- (None, False) si no hay caché o no hay
+    match. Nunca lanza.
+    """
+    import shipit_client as _shc
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, nombre, is_available FROM shipit_comunas "
+            "WHERE LOWER(nombre) LIKE %s",
+            (f"%{_shc.normalizar_comuna(nombre_comuna).lower()}%",)
+        ) or []
+    except Exception as e:
+        print(f"[shipit] error leyendo shipit_comunas: {e}", flush=True)
+        return None, False
+    # find_commune_id espera el shape crudo de /v/communes -- rows ya calza
+    # (id, name, is_available) salvo el nombre de la llave 'nombre' vs 'name'.
+    comunas = [{"id": r["id"], "name": r["nombre"], "is_available": bool(r["is_available"])}
+               for r in rows]
+    return _shc.find_commune_id(nombre_comuna, comunas)
+
+
+@app.route("/transporte/api/diagnostico/shipit", methods=["GET", "POST"])
+@login_required
+def tr_diagnostico_shipit():
+    """Diagnóstico admin de la integración Shipit (Fase 1: solo cotizar).
+
+    GET  -> estado de configuración + cuántas comunas hay cacheadas.
+    POST -> sincroniza comunas (?accion=sync_comunas) o cotiza de prueba
+            (?accion=cotizar con body {comuna, peso_kg, largo, ancho, alto}).
+    Mismo patrón que /transporte/api/diagnostico/simpliroute -- admin/superadmin.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+
+    import shipit_client as _shc
+
+    if request.method == "GET":
+        try:
+            n_comunas = (mysql_fetchone("SELECT COUNT(*) AS n FROM shipit_comunas") or {}).get("n", 0)
+        except Exception:
+            n_comunas = 0
+        origin_id, origin_disp = _shipit_commune_id("Quilicura")
+        return jsonify({
+            "ok": True,
+            "configurado": bool(SHIPIT_API_TOKEN and SHIPIT_API_EMAIL),
+            "comunas_cacheadas": n_comunas,
+            "origen_bodega": {"comuna": "Quilicura", "commune_id": origin_id, "disponible": origin_disp},
+            "restricciones": {"max_bultos": _shc.MAX_BULTOS, "max_peso_kg": _shc.MAX_PESO_KG},
+        })
+
+    accion = (request.args.get("accion") or "").strip()
+    if accion == "sync_comunas":
+        r = _shipit_sync_comunas()
+        return jsonify(r), (200 if r.get("ok") else 502)
+
+    if accion == "cotizar":
+        data = request.get_json(silent=True) or {}
+        comuna_destino = (data.get("comuna") or "").strip()
+        peso_kg = data.get("peso_kg")
+        n_bultos = data.get("n_bultos", 1)
+        if not comuna_destino:
+            return jsonify({"error": "Falta 'comuna'"}), 400
+
+        problemas = _shc.verificar_restricciones(n_bultos, peso_kg)
+        if problemas:
+            return jsonify({"ok": True, "cotizable": False, "restricciones": problemas, "prices": []})
+
+        origin_id, origin_disp = _shipit_commune_id("Quilicura")
+        destiny_id, destiny_disp = _shipit_commune_id(comuna_destino)
+        if not origin_id:
+            return jsonify({"ok": False, "error": "Comuna de origen (bodega Quilicura) sin homologar -- "
+                                                    "corre 'sync_comunas' primero."}), 409
+        if not destiny_id:
+            return jsonify({"ok": True, "cotizable": False,
+                            "restricciones": [f"Shipit no tiene cobertura para {comuna_destino}."], "prices": []})
+
+        payload, errores = _shc.build_rate_payload(
+            length=data.get("largo", 30), width=data.get("ancho", 30), height=data.get("alto", 30),
+            weight=peso_kg, origin_id=origin_id, destiny_id=destiny_id,
+        )
+        if errores:
+            return jsonify({"ok": False, "error": "; ".join(errores)}), 400
+
+        r = _shipit_request("POST", _shc.EP_RATES, payload=payload)
+        if not r.get("ok"):
+            return jsonify({"ok": False, "error": r.get("error")}), (r.get("status") or 502)
+        prices = _shc.parse_rates_response(r["data"])
+        return jsonify({"ok": True, "cotizable": True, "restricciones": [], "prices": prices})
+
+    return jsonify({"error": "accion inválida (sync_comunas | cotizar)"}), 400
 
 
 def _tr_manifiesto_items_simpliroute(mid):
@@ -84202,6 +84456,14 @@ try:
     _ensure_transport_producto_indices()
 except Exception as _ensure_prod_idx_err:
     print(f"[ILUS][WARN] índices trazabilidad producto: {_ensure_prod_idx_err}", flush=True)
+
+# Shipit (2026-08-04, pedido del área comercial vía Daniel) — tabla de
+# comunas + ficha del courier — SIEMPRE, incluso skip-migrations.
+try:
+    _ensure_shipit_comunas_table()
+    _ensure_shipit_courier()
+except Exception as _ensure_shipit_err:
+    print(f"[ILUS][WARN] siembra Shipit: {_ensure_shipit_err}", flush=True)
 
 # Poller SimpliRoute (2026-07-24) — se arranca ACÁ, al final del módulo, y no
 # junto a su definición: el loop usa _simpliroute_token_for_courier /
