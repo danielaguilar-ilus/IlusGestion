@@ -233,6 +233,12 @@
               <i class="bi bi-image me-2" style="color:var(--trx-info,#3b82f6)"></i>Cargar logos oficiales
             </button>
           </li>
+          <li>
+            <button class="dropdown-item" type="button" onclick="descargarTarifarioComparado()"
+                    title="Excel con lo que cobra cada courier por la misma comuna y el mismo peso">
+              <i class="bi bi-file-earmark-spreadsheet me-2" style="color:var(--trx-green,#16a34a)"></i>Comparar tarifas (Excel)
+            </button>
+          </li>
         </ul>
       </div>
       {# Form invisible para upload de tarifas multi-hoja #}
@@ -771,6 +777,31 @@ async function cargarLogos() {
       ilusToast('No se pudieron cargar', { type: 'error' });
     }
   } catch (e) { ilusToast('Error de conexión', { type: 'error' }); }
+}
+
+/* ── Comparar tarifas entre couriers (2026-08-05) ─────────────────────
+   Cotiza la MISMA comuna y el MISMO peso en todos los couriers para poder
+   responder con datos "¿cuál me sale más barato?". Shipit se consulta en
+   vivo contra su API, así que puede tardar: se avisa antes de empezar. */
+async function descargarTarifarioComparado() {
+  ilusToast('Cotizando en todos los couriers… puede tardar un minuto', { type: 'info' });
+  try {
+    const r = await fetch('/transporte/couriers/tarifario-comparado.xlsx');
+    if (!r.ok) {
+      let msg = 'HTTP ' + r.status;
+      try { msg = (await r.json()).error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ILUS_Tarifas_Comparadas.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    ilusToast('✓ Excel descargado', { type: 'success' });
+  } catch (e) {
+    ilusToast('No se pudo generar el Excel: ' + e.message, { type: 'error' });
+  }
 }
 
 /* ── Logo del courier: subir un archivo propio (2026-08-05) ───────────

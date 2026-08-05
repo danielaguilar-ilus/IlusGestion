@@ -38994,6 +38994,212 @@ def transporte_couriers_export():
     )
 
 
+@app.route("/transporte/couriers/tarifario-comparado.xlsx", methods=["GET"])
+@_tr_required
+def tr_tarifario_comparado_xlsx():
+    """Excel comparativo: cuánto cobra CADA courier por la misma comuna y peso.
+
+    Pedido de Daniel (2026-08-05): "compárteme la lista de precios en un excel
+    ... no veo muy atractivo los precios de Shipit, veo más barato Clickex".
+    Esto es lo que permite responderlo con datos y no con una impresión: se
+    cotiza la MISMA comuna y el MISMO peso en todos los couriers y se deja el
+    delta a la vista.
+
+    · Las comunas salen del historial REAL de ILUS (transport_commitments),
+      ordenadas por cantidad de envíos: no tiene sentido comparar 727 comunas
+      si el 90% del volumen se va en 40.
+    · Los precios de Clickex/Felca/Milling/FedEx salen de las tablas locales
+      (instantáneo). Solo Shipit se cotiza contra su API en vivo, así que el
+      tiempo total lo manda la cantidad de llamadas: comunas × pesos.
+    · Los pesos sobre el tope de Shipit no se consultan (se marcan como no
+      aplicables) para no gastar llamadas en algo que ya sabemos que rechaza.
+
+    Query params (todos opcionales):
+      pesos=1,3,5,10,15   hasta 6 pesos en kg
+      limite=40           cuántas comunas (máx 120)
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+    import concurrent.futures as _cf
+    import shipit_client as _shc
+
+    # ── Parámetros acotados ──────────────────────────────────────────
+    try:
+        pesos = [float(p) for p in (request.args.get("pesos") or "1,3,5,10,15").split(",") if p.strip()]
+    except ValueError:
+        return jsonify({"error": "Parámetro 'pesos' inválido"}), 400
+    pesos = sorted({p for p in pesos if p > 0})[:6]
+    if not pesos:
+        return jsonify({"error": "Indica al menos un peso"}), 400
+    try:
+        limite = max(1, min(int(request.args.get("limite") or 40), 120))
+    except ValueError:
+        limite = 40
+
+    # ── Comunas por volumen real de ILUS ─────────────────────────────
+    filas_comuna = mysql_fetchall(
+        "SELECT TRIM(comuna) AS comuna, COUNT(*) AS n "
+        "FROM transport_commitments "
+        "WHERE comuna IS NOT NULL AND TRIM(comuna) <> '' "
+        "GROUP BY TRIM(comuna) ORDER BY n DESC LIMIT %s",
+        (limite,)
+    ) or []
+    if not filas_comuna:
+        return jsonify({"error": "No hay comunas con historial de envíos todavía."}), 404
+
+    SLUGS = [("clickex", "Clickex"), ("felca", "Transporte Felca"),
+             ("milling", "Transportes Milling"), ("fedex_directo", "FedEx")]
+
+    # Precalentar la caché de tarifas ANTES de abrir hilos: _ttar._load lee
+    # MySQL y dentro de un hilo no hay contexto Flask (mismo bug que rompió
+    # Shipit en el comparador el 2026-08-05).
+    for slug, _ in SLUGS:
+        try:
+            _ttar.cotizar(slug, filas_comuna[0]["comuna"], 1, 0)
+        except Exception:
+            pass
+
+    # Los commune_id de Shipit también se resuelven acá, en el hilo del
+    # request, por el mismo motivo.
+    origen_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+    destino_ids = {}
+    for f in filas_comuna:
+        try:
+            destino_ids[f["comuna"]], _ = _shipit_commune_id(f["comuna"])
+        except Exception:
+            destino_ids[f["comuna"]] = None
+
+    # ── Cotizar Shipit en paralelo (solo lo que la API puede responder) ──
+    tareas = [
+        (f["comuna"], p) for f in filas_comuna for p in pesos
+        if destino_ids.get(f["comuna"]) and origen_id
+        and not _shc.verificar_restricciones(1, p)
+    ]
+
+    def _cotizar_shipit(par):
+        comuna, peso = par
+        payload, errores = _shc.build_rate_payload(
+            length=30, width=30, height=30, weight=peso,
+            origin_id=origen_id, destiny_id=destino_ids[comuna],
+        )
+        if errores:
+            return par, None
+        r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=20)
+        if not r.get("ok"):
+            return par, None
+        disp = [x for x in _shc.parse_rates_response(r.get("data"))
+                if x.get("disponible") and x.get("precio")]
+        if not disp:
+            return par, None
+        disp.sort(key=lambda x: x["precio"])
+        return par, disp[0]
+
+    shipit_res = {}
+    if tareas:
+        with _cf.ThreadPoolExecutor(max_workers=8) as pool:
+            for par, val in pool.map(_cotizar_shipit, tareas):
+                shipit_res[par] = val
+
+    # ── Armar el Excel ───────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    RED  = PatternFill("solid", fgColor="CC0000")
+    VERDE = PatternFill("solid", fgColor="DCFCE7")
+    BLANCO = Font(color="FFFFFF", bold=True)
+
+    resumen = []
+    for peso in pesos:
+        ws = wb.create_sheet(title=f"{peso:g} kg"[:31])
+        headers = (["Comuna", "Envíos ILUS", "Shipit", "Operador Shipit"]
+                   + [n for _, n in SLUGS] + ["Más barato", "Shipit vs. más barato"])
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(1, ci, h)
+            cell.font, cell.fill = BLANCO, RED
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+        gana_shipit = 0
+        comparables = 0
+        for ri, f in enumerate(filas_comuna, 2):
+            comuna = f["comuna"]
+            sh = shipit_res.get((comuna, peso))
+            precios = {}
+            for slug, nombre in SLUGS:
+                try:
+                    r = _ttar.cotizar(slug, comuna, peso, 0)
+                except Exception:
+                    r = None
+                # Solo el precio final: el resto del dict de transporte_tarifas
+                # trae detalle comercial interno que no sale de la app.
+                precios[nombre] = round(r["precio"]) if r else None
+
+            sh_precio = round(sh["precio"]) if sh else None
+            if sh_precio is None and not _shc.verificar_restricciones(1, peso):
+                sh_txt, sh_op = "Sin cobertura", ""
+            elif sh_precio is None:
+                sh_txt, sh_op = f"No aplica (>{_shc.MAX_PESO_KG:g} kg)", ""
+            else:
+                sh_txt, sh_op = sh_precio, (sh["courier"] or "").replace("_", " ").title()
+
+            candidatos = {n: v for n, v in precios.items() if v}
+            if sh_precio:
+                candidatos["Shipit"] = sh_precio
+            mejor_nombre = min(candidatos, key=candidatos.get) if candidatos else ""
+            mejor_valor = candidatos.get(mejor_nombre)
+            if sh_precio and mejor_valor:
+                comparables += 1
+                if mejor_nombre == "Shipit":
+                    gana_shipit += 1
+                delta = sh_precio - mejor_valor
+            else:
+                delta = ""
+
+            vals = ([comuna, f["n"], sh_txt, sh_op]
+                    + [precios[n] for _, n in SLUGS]
+                    + [f"{mejor_nombre} ({mejor_valor:,})".replace(",", ".") if mejor_valor else "",
+                       delta])
+            for ci, v in enumerate(vals, 1):
+                c = ws.cell(ri, ci, v if v is not None else "")
+                if isinstance(v, (int, float)) and ci not in (2,):
+                    c.number_format = '$#,##0'
+            if mejor_nombre == "Shipit":
+                ws.cell(ri, 3).fill = VERDE
+
+        ws.freeze_panes = "A2"
+        for ci in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(ci)].width = 22 if ci in (1, 4, 9, 10) else 14
+        resumen.append((peso, gana_shipit, comparables))
+
+    ws = wb.create_sheet(title="Resumen", index=0)
+    ws.cell(1, 1, "Comparación de tarifas por courier — ILUS").font = Font(bold=True, size=14)
+    ws.cell(2, 1, f"Generado el {chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')} · "
+                  f"{len(filas_comuna)} comunas con más envíos · origen: bodega Quilicura")
+    ws.cell(3, 1, "Precios netos de cada courier para la misma comuna y el mismo peso. "
+                  "Shipit se cotiza en vivo contra su API; el resto sale de las tablas negociadas.")
+    for ci, h in enumerate(["Peso", "Comunas donde Shipit es el más barato", "Comunas comparables", "% "], 1):
+        c = ws.cell(5, ci, h)
+        c.font, c.fill = BLANCO, RED
+    for ri, (peso, gana, total) in enumerate(resumen, 6):
+        ws.cell(ri, 1, f"{peso:g} kg")
+        ws.cell(ri, 2, gana)
+        ws.cell(ri, 3, total)
+        ws.cell(ri, 4, round(gana / total * 100) / 100 if total else 0).number_format = "0%"
+    for ci, w in enumerate([16, 38, 22, 10], 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"ILUS_Tarifas_Comparadas_{datetime.now():%Y%m%d}.xlsx",
+    )
+
+
 @app.route("/transporte/couriers/lookup", methods=["GET"])
 @_tr_required
 def transporte_couriers_lookup():
