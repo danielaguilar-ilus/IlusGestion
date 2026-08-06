@@ -840,8 +840,16 @@
 
 {# ════════ PANE TÉCNICOS ════════ #}
 <div class="ot-pane" id="ot-tecnicos">
+  {% set _puede_reasignar = permissions.admin or permissions.superadmin %}
   {% if visita.tecnico_principal %}
-  <h6 class="text-muted mb-3"><i class="bi bi-person-badge me-1"></i>Técnico principal</h6>
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h6 class="text-muted mb-0"><i class="bi bi-person-badge me-1"></i>Técnico principal</h6>
+    {% if _puede_reasignar %}
+    <button type="button" class="btn btn-sm btn-outline-dark" onclick="otAbrirReasignarTecnico()">
+      <i class="bi bi-person-gear me-1"></i>Reasignar
+    </button>
+    {% endif %}
+  </div>
   <div class="tecnico-card">
     <div class="tecnico-avatar">{{ visita.tecnico_principal[0]|upper }}</div>
     <div class="flex-grow-1">
@@ -850,6 +858,20 @@
         {% if visita.tecnico_tel %}<i class="bi bi-telephone me-1"></i>{{ visita.tecnico_tel | tel_chile_fmt }}{% endif %}
         {% if visita.tecnico_email %} · <i class="bi bi-envelope me-1"></i>{{ visita.tecnico_email }}{% endif %}
       </div>
+    </div>
+  </div>
+  {% endif %}
+  {% if _puede_reasignar %}
+  <div id="otReasignarBox" style="display:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-top:10px">
+    <div class="small fw-bold mb-2"><i class="bi bi-person-gear me-1" style="color:#dc2626"></i>Reasignar técnico de esta OT</div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <select id="otReasignarSelect" class="form-select form-select-sm" style="max-width:260px">
+        <option value="">Cargando técnicos…</option>
+      </select>
+      <button type="button" class="btn btn-sm btn-ilus" onclick="otConfirmarReasignarTecnico()">
+        <i class="bi bi-check2 me-1"></i>Guardar
+      </button>
+      <button type="button" class="btn btn-sm btn-light" onclick="otCerrarReasignarTecnico()">Cancelar</button>
     </div>
   </div>
   {% endif %}
@@ -884,7 +906,12 @@
   <div class="empty-state">
     <i class="bi bi-people"></i>
     <div class="fw-bold" style="font-size:1rem;color:#374151">Sin técnicos asignados</div>
-    <div class="small">Asigna técnicos desde la vista de cliente o el calendario.</div>
+    <div class="small">Asigna técnicos desde la vista de cliente, el calendario{% if _puede_reasignar %} o el botón de abajo{% endif %}.</div>
+    {% if _puede_reasignar %}
+    <button type="button" class="btn btn-sm btn-outline-dark mt-3" onclick="otAbrirReasignarTecnico()">
+      <i class="bi bi-person-gear me-1"></i>Asignar técnico
+    </button>
+    {% endif %}
   </div>
   {% endif %}
 </div>
@@ -1230,6 +1257,51 @@
 <script>
 const VID = {{ visita.id }};
 const API_BASE = '/mantenciones/api/visitas/' + VID;
+
+// ── Reasignar técnico (admin/superadmin) ──
+let _otTecnicosCache = null;
+async function otAbrirReasignarTecnico(){
+  const box = document.getElementById('otReasignarBox');
+  if (!box) return;
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+  if (!_otTecnicosCache){
+    try {
+      const r = await fetch('/mantenciones/api/tecnicos');
+      _otTecnicosCache = await r.json();
+    } catch (e) { _otTecnicosCache = []; }
+  }
+  const sel = document.getElementById('otReasignarSelect');
+  if (!sel) return;
+  const curUid = {{ (visita.tecnico_user_id or 'null') }};
+  const opts = ['<option value="">— Sin asignar —</option>'].concat(
+    (_otTecnicosCache || []).map(t =>
+      `<option value="${t.id}" ${String(t.id)===String(curUid)?'selected':''}>${(t.nombre || ('Téc ' + t.id)).replace(/</g,'&lt;')}</option>`)
+  ).join('');
+  sel.innerHTML = opts;
+}
+function otCerrarReasignarTecnico(){
+  const box = document.getElementById('otReasignarBox');
+  if (box) box.style.display = 'none';
+}
+function otConfirmarReasignarTecnico(){
+  const sel = document.getElementById('otReasignarSelect');
+  if (!sel) return;
+  const tid = sel.value;
+  fetch(API_BASE, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ tecnico_user_id: tid ? parseInt(tid, 10) : null }),
+  }).then(r => r.json().catch(() => ({})).then(d => ({r, d})))
+    .then(({r, d}) => {
+      if (r.ok && d.ok !== false){
+        ilusToast('Técnico reasignado', {type:'success'});
+        setTimeout(() => location.reload(), 600);
+      } else {
+        ilusToast(d.error || 'No se pudo reasignar el técnico', {type:'error'});
+      }
+    })
+    .catch(() => ilusToast('No se pudo reasignar el técnico', {type:'error'}));
+}
 
 // PERF 2026-05-22 — Helper Cloudinary transforms (mismo perfil que app.py).
 const _OT_CLOUD_PROFILES = {

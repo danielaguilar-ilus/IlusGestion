@@ -258,9 +258,31 @@
           {% if visita.hora_fin_fin %}–{{ visita.hora_fin_fin }}{% endif %}
         </div>
         {% endif %}
-        {% if visita.tecnico_principal %}
+        {% if visita.tecnico_principal or puede_metadata %}
         <div class="k">Técnico</div>
-        <div class="v">{{ visita.tecnico_principal }}</div>
+        <div class="v">
+          {{ visita.tecnico_principal or 'Sin asignar' }}
+          {% if puede_metadata %}
+          <button type="button" class="btn btn-sm btn-link p-0 ms-2" style="font-size:.75rem;text-decoration:none"
+                  onclick="otAbrirReasignarTecnico()">
+            <i class="bi bi-person-gear"></i> {{ 'Reasignar' if visita.tecnico_principal else 'Asignar' }}
+          </button>
+          {% endif %}
+        </div>
+        {% if puede_metadata %}
+        <div id="otReasignarBox" style="display:none;grid-column:1 / -1;background:#f9fafb;
+             border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-top:2px">
+          <div class="d-flex gap-2 flex-wrap align-items-center">
+            <select id="otReasignarSelect" class="form-select form-select-sm" style="max-width:240px">
+              <option value="">Cargando técnicos…</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-danger" onclick="otConfirmarReasignarTecnico()">
+              <i class="bi bi-check2 me-1"></i>Guardar
+            </button>
+            <button type="button" class="btn btn-sm btn-light" onclick="otCerrarReasignarTecnico()">Cancelar</button>
+          </div>
+        </div>
+        {% endif %}
         {% endif %}
         {% if visita.observaciones %}
         <div class="k">Observaciones</div>
@@ -2208,6 +2230,57 @@ const GEOF_PUEDE_EJECUTAR = {{ 'true' if puede_ejecutar else 'false' }};
     }
   };
 })();
+
+// ════════════════════════════════════════════════════════
+//  REASIGNAR TÉCNICO (2026-08-06 Daniel — OT sin opción de cambiar
+//  el técnico asignado tras creada).
+// ════════════════════════════════════════════════════════
+let _otTecnicosCache = null;
+window.otAbrirReasignarTecnico = async function(){
+  const box = document.getElementById('otReasignarBox');
+  if (!box) return;
+  box.style.display = 'block';
+  box.scrollIntoView({behavior: 'smooth', block: 'center'});
+  if (!_otTecnicosCache){
+    try {
+      const r = await fetch('/mantenciones/api/tecnicos');
+      _otTecnicosCache = await r.json();
+    } catch (e) { _otTecnicosCache = []; }
+  }
+  const sel = document.getElementById('otReasignarSelect');
+  if (!sel) return;
+  const curUid = {{ (visita.tecnico_user_id or 'null') }};
+  const opts = ['<option value="">— Sin asignar —</option>'].concat(
+    (_otTecnicosCache || []).map(t =>
+      `<option value="${t.id}" ${String(t.id) === String(curUid) ? 'selected' : ''}>${(t.nombre || ('Téc ' + t.id)).replace(/</g, '&lt;')}</option>`)
+  ).join('');
+  sel.innerHTML = opts;
+};
+window.otCerrarReasignarTecnico = function(){
+  const box = document.getElementById('otReasignarBox');
+  if (box) box.style.display = 'none';
+};
+window.otConfirmarReasignarTecnico = async function(){
+  const sel = document.getElementById('otReasignarSelect');
+  if (!sel) return;
+  const tid = sel.value;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tecnico_user_id: tid ? parseInt(tid, 10) : null}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ Técnico reasignado', {type: 'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo reasignar el técnico.', {type: 'error'});
+    }
+  } catch (e){
+    ilusToast('Error de conexión al reasignar el técnico.', {type: 'error'});
+  }
+};
 </script>
 {% endif %}
 
