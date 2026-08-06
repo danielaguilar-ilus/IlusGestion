@@ -587,10 +587,12 @@ a.kv:active{ background:#fafafa; }
   transition:transform .13s ease;
 }
 .act-btn:active{ transform:scale(.975); }
-.act-btn.wa{ background:#25d366; color:#fff; }
 .act-btn.mail{ background:var(--ink); color:#fff; }
 .act-btn.tk{ background:#fff; color:var(--ink); border:1px solid var(--line); }
-@media (min-width:520px){ .act-btns{ grid-template-columns:repeat(3,minmax(0,1fr)); } }
+/* 2026-08-05: eran 3 botones (WhatsApp/correo/ticket), quedaron 2 al sacar
+   el WhatsApp con número inventado -- 2 columnas parejas, no 3 con un
+   hueco vacío a la derecha. */
+@media (min-width:520px){ .act-btns{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .act-ref{
   margin:0 1rem .9rem; padding:.6rem .8rem; border-radius:11px;
   background:#f7f7f9; border:1px dashed var(--line);
@@ -773,7 +775,6 @@ a.kv:active{ background:#fafafa; }
 }
 .ft-social a:active{ transform:scale(.92); }
 .ft-social a.soc-ig:hover{ background:linear-gradient(45deg,#f58529,#dd2a7b 55%,#8134af); color:#fff; border-color:transparent; }
-.ft-social a.soc-wa:hover{ background:#25d366; color:#fff; border-color:#25d366; }
 .ft-social a.soc-mail:hover{ background:var(--red); color:#fff; border-color:var(--red); }
 .ft-social a.soc-web:hover{ background:var(--ink); color:#fff; border-color:var(--ink); }
 .ft-copy{
@@ -1010,7 +1011,7 @@ a.kv:active{ background:#fafafa; }
     grid-column:1 / -1; border-left:0; padding-left:0;
     border-top:1px solid #f1f1f3; padding-top:.65rem; margin-top:.15rem;
   }
-  .wrap.has-alert .act:nth-child(4) .act-btns{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .wrap.has-alert .act:nth-child(4) .act-btns{ grid-template-columns:repeat(2,minmax(0,1fr)); }
   .wrap.has-alert .act-btn{ min-height:44px; font-size:.88rem; }
 }
 
@@ -1324,11 +1325,13 @@ a.kv:active{ background:#fafafa; }
             Escríbenos y agendamos la entrega en el día y horario que te acomode.
             Ten a mano una dirección donde haya alguien para recibir.
           </div>
+          {# WhatsApp fuera (2026-08-05, Daniel: "sacalo, no conozco ese
+             número") -- el +56 9 8640 5100 no aparece en ninguna otra parte
+             del sistema; era un número puesto al pasar cuando se armó esta
+             página, no uno real de soporte. Quedan los dos canales
+             confirmados: correo (interno) y el formulario oficial de ILUS
+             (Daniel: "ese es el formulario de ILUS para levantar tickets"). #}
           <div class="act-btns">
-            <a class="act-btn wa" href="https://wa.me/56986405100?text={{ (wa_msg_ret if devolucion else wa_msg) | urlencode }}"
-               target="_blank" rel="noopener">
-              <i class="bi bi-whatsapp"></i> Coordinar por WhatsApp
-            </a>
             <a class="act-btn mail" href="mailto:soportetec@sphs.cl?subject={{ ('Reagendar entrega ' ~ data.doc) | urlencode }}&body={{ (wa_msg_ret if devolucion else wa_msg) | urlencode }}">
               <i class="bi bi-envelope"></i> Escribirnos
             </a>
@@ -1525,7 +1528,6 @@ a.kv:active{ background:#fafafa; }
       </div>
       <div class="ft-social" aria-label="Redes sociales">
         <a href="https://instagram.com/ilusfitness" target="_blank" rel="noopener" aria-label="Instagram" class="soc-ig"><i class="bi bi-instagram"></i></a>
-        <a href="https://wa.me/56986405100" target="_blank" rel="noopener" aria-label="WhatsApp" class="soc-wa"><i class="bi bi-whatsapp"></i></a>
         <a href="mailto:servicio.tecnico@ilusfitness.com" aria-label="Email" class="soc-mail"><i class="bi bi-envelope"></i></a>
         <a href="https://ilusfitness.com" target="_blank" rel="noopener" aria-label="Web" class="soc-web"><i class="bi bi-globe2"></i></a>
       </div>
