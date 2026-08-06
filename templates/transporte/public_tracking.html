@@ -170,7 +170,9 @@ body{
   letter-spacing:.13em; text-transform:uppercase;
   color:#fff; background:rgba(255,255,255,.09);
   border:1px solid rgba(255,255,255,.18);
-  padding:.34rem .8rem; border-radius:99px; cursor:pointer;
+  padding:.4rem .95rem; min-height:44px;   /* REGLA #3: es un botón (copia el
+     número de pedido), así que debe cumplir el área táctil de 44px */
+  border-radius:99px; cursor:pointer;
   transition:background .18s ease, transform .12s ease;
 }
 .doc:active{ transform:scale(.96); background:rgba(255,255,255,.18); }
@@ -964,7 +966,9 @@ a.kv:active{ background:#fafafa; }
   .ft-sign{ display:inline-flex; flex-wrap:nowrap; white-space:nowrap; }
   .ft-brand-tag{ font-size:.76rem; }
   .ft-social{ margin-top:0; }
-  .ft-social a{ width:34px; height:34px; font-size:.92rem; }
+  /* 44px también en escritorio: hay portátiles táctiles y el área de toque
+     no se negocia por 10px de ancho (REGLA #3). */
+  .ft-social a{ width:44px; height:44px; font-size:.95rem; }
 
   /* Las tarjetas ya no necesitan la entrada escalonada "en cascada" de
      celular (se ve rara en 2 columnas) -- una sola aparición pareja. */
@@ -1016,7 +1020,7 @@ a.kv:active{ background:#fafafa; }
   .hero-foot{ padding-top:.7rem; }
   /* El estado con alerta es el más denso de todos: acá se aprieta lo justo
      para que el plan de acción + la ayuda + la firma entren en 768px. */
-  .wrap.has-alert .panels{ min-height:96px; }
+  .wrap.has-alert .panels{ min-height:88px; }
   .wrap.has-alert .card-h{ padding:.58rem 1.2rem; font-size:.9rem; }
   .wrap.has-alert .act{ padding:.4rem 0; }
   .wrap.has-alert .act-t{ font-size:.9rem; }
@@ -1027,7 +1031,9 @@ a.kv:active{ background:#fafafa; }
   .wrap.has-alert .act-btns{ margin-top:.35rem; }
   .wrap.has-alert .act:nth-child(4){ padding-top:.5rem; margin-top:.05rem; }
   .footzone{ padding-top:.45rem; }
-  .wrap.has-alert .ft-btn{ min-height:42px; padding:.45rem .8rem; }
+  /* 44px SIEMPRE (REGLA #3): el alto se recupera achicando el relleno
+     lateral, nunca el área de toque. */
+  .wrap.has-alert .ft-btn{ min-height:44px; padding:.45rem .8rem; }
 }
 
 @media (prefers-reduced-motion:reduce){
