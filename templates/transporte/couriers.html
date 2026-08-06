@@ -7,6 +7,71 @@
 
 {% block content %}
 <style>
+/* ═══ PEGAR LOGO — overlay (Daniel 2026-08-05: "yo pego los logos") ═════
+   Paleta ILUS (REGLA #2) y toques táctiles de 44px (REGLA #3).          */
+.cr-paste-ov{
+  position:fixed; inset:0; z-index:1080;
+  background:rgba(10,10,10,.55); backdrop-filter:blur(3px);
+  display:flex; align-items:center; justify-content:center; padding:16px;
+  opacity:0; transition:opacity .18s ease;
+}
+.cr-paste-ov.is-open{ opacity:1; }
+.cr-paste-box{
+  background:#fff; border-radius:16px; width:min(460px,100%);
+  box-shadow:0 24px 60px rgba(0,0,0,.35);
+  transform:translateY(10px) scale(.98); transition:transform .18s ease;
+  overflow:hidden;
+}
+.cr-paste-ov.is-open .cr-paste-box{ transform:none; }
+.cr-paste-hd{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+  padding:16px 18px 12px; border-bottom:1px solid #f1f3f5;
+}
+.cr-paste-tit{ font-weight:800; font-size:1.02rem; color:#0a0a0a; letter-spacing:-.01em; }
+.cr-paste-sub{ font-size:.82rem; color:#6b7280; margin-top:2px; }
+.cr-paste-x{
+  background:none; border:none; color:#9ca3af; font-size:1rem; line-height:1;
+  min-width:44px; min-height:44px; border-radius:10px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  margin:-10px -8px 0 0; transition:background .15s, color .15s;
+}
+.cr-paste-x:hover{ background:#f3f4f6; color:#0a0a0a; }
+.cr-paste-zone{
+  position:relative; margin:16px 18px;
+  min-height:190px; border:2px dashed #d1d5db; border-radius:12px;
+  background:#fafafa; display:flex; align-items:center; justify-content:center;
+  transition:border-color .15s, background .15s;
+}
+.cr-paste-zone.is-over{ border-color:var(--trx-red,#dc2626); background:#fef2f2; }
+.cr-paste-msg{ text-align:center; padding:18px; }
+.cr-paste-ico{ font-size:1.9rem; color:#c4c8ce; display:block; margin-bottom:10px; }
+.cr-paste-k{ font-size:.92rem; font-weight:700; color:#374151; }
+.cr-paste-k kbd{
+  background:#0a0a0a; color:#fff; border-radius:5px; padding:2px 7px;
+  font-size:.78rem; font-family:inherit; font-weight:700;
+}
+.cr-paste-alt{ font-size:.8rem; color:#9ca3af; margin-top:7px; }
+/* La vista previa tapa el mensaje apenas hay imagen. */
+.cr-paste-prev{ position:absolute; inset:8px; display:none; }
+.cr-paste-prev img{ width:100%; height:100%; object-fit:contain; }
+.cr-paste-prev:not(:empty){ display:block; }
+.cr-paste-prev:not(:empty) ~ .cr-paste-msg{ display:none; }
+.cr-paste-load{
+  display:none; position:absolute; inset:0; border-radius:10px;
+  background:rgba(255,255,255,.88); align-items:center; justify-content:center;
+  font-size:.86rem; font-weight:600; color:#374151;
+}
+.cr-paste-zone.is-busy .cr-paste-load{ display:flex; }
+.cr-paste-ft{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:0 18px 16px;
+}
+.cr-paste-hint{ font-size:.76rem; color:#9ca3af; }
+@media (max-width:576px){
+  .cr-paste-box{ width:100%; }
+  .cr-paste-zone{ min-height:210px; }
+}
+
 /* ═══ TARJETA COURIER — diseño premium estilo Linear/Stripe ═══════════
    Colores y bordes alineados al DS de transporte (ilus_transporte.css):
    rojo de marca = var(--trx-red) #dc2626, borde estándar 1.5px.       */
@@ -611,6 +676,49 @@
        accept="image/png,image/jpeg,image/jpg,image/webp"
        onchange="_crLogoElegido(this)">
 
+{# ── PEGAR EL LOGO ──────────────────────────────────────────────────────
+   Daniel, 2026-08-05: "yo quiero pegar los logos... copiar la imagen y
+   pegarla ahí". Antes solo existía el selector de archivos, o sea había que
+   tener el logo guardado en el disco. Los tres caminos conviven: pegar
+   (Ctrl+V), arrastrar, o elegir el archivo.
+   La imagen se guarda en Google Cloud — pedido explícito de Daniel. #}
+<div id="crPasteOverlay" class="cr-paste-ov" style="display:none"
+     onclick="if(event.target===this) crCerrarPaste()">
+  <div class="cr-paste-box" role="dialog" aria-modal="true" aria-labelledby="crPasteTit">
+    <div class="cr-paste-hd">
+      <div>
+        <div id="crPasteTit" class="cr-paste-tit">Pegar logo</div>
+        <div id="crPasteSub" class="cr-paste-sub">Logo del courier</div>
+      </div>
+      <button type="button" class="cr-paste-x" onclick="crCerrarPaste()" aria-label="Cerrar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+
+    <div id="crPasteZone" class="cr-paste-zone"
+         ondragover="event.preventDefault(); this.classList.add('is-over')"
+         ondragleave="this.classList.remove('is-over')"
+         ondrop="_crPasteDrop(event)">
+      <div id="crPastePrev" class="cr-paste-prev"></div>
+      <div class="cr-paste-msg">
+        <i class="bi bi-clipboard-plus cr-paste-ico"></i>
+        <div class="cr-paste-k"><kbd>Ctrl</kbd> + <kbd>V</kbd> para pegar</div>
+        <div class="cr-paste-alt">o arrastra la imagen hasta acá</div>
+      </div>
+      <div class="cr-paste-load">
+        <span class="spinner-border spinner-border-sm me-2"></span>Subiendo a Google Cloud…
+      </div>
+    </div>
+
+    <div class="cr-paste-ft">
+      <span class="cr-paste-hint">PNG, JPG o WEBP</span>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="_crPasteArchivo()">
+        <i class="bi bi-folder2-open me-1"></i>Elegir archivo
+      </button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 
@@ -1012,8 +1120,83 @@ async function unirCouriersDuplicados() {
    tarjeta que disparó el click. */
 let _crLogoCid = null;
 
+/* ── PEGAR EL LOGO (Daniel, 2026-08-05) ──────────────────────────────────
+   "yo quiero pegar los logos... copiar la imagen y pegarla ahí".
+
+   Antes el único camino era el selector de archivos: había que tener el logo
+   COMO ARCHIVO en el disco. Copiar un logo de una web o de un correo obligaba
+   a guardarlo primero, buscar la carpeta y recién ahí elegirlo.
+
+   Ahora el botón de la cámara abre una zona donde se pega con Ctrl+V (o se
+   arrastra la imagen, o se elige el archivo, los tres caminos siguen). La
+   imagen va a Google Cloud, no a Cloudinary — pedido explícito de Daniel.
+
+   Se escucha 'paste' a nivel de documento y no del recuadro porque el foco
+   del navegador puede estar en cualquier parte cuando el usuario aprieta
+   Ctrl+V; escucharlo solo en el div obligaría a hacer clic adentro primero,
+   que es justo la fricción que se está sacando. El listener se agrega al
+   abrir y se quita al cerrar: fuera del modal, Ctrl+V no hace nada raro. */
 function crSubirLogo(cid) {
   _crLogoCid = cid;
+  const nombre = (document.querySelector(`#cardWrap${cid} .cr-nombre`) || {}).textContent || '';
+  const sub = document.getElementById('crPasteSub');
+  if (sub) sub.textContent = nombre.trim() ? `Logo de ${nombre.trim()}` : 'Logo del courier';
+  _crPasteReset();
+  document.addEventListener('paste', _crPasteHandler);
+  const ov = document.getElementById('crPasteOverlay');
+  if (ov) { ov.style.display = 'flex'; requestAnimationFrame(() => ov.classList.add('is-open')); }
+}
+
+function crCerrarPaste() {
+  document.removeEventListener('paste', _crPasteHandler);
+  const ov = document.getElementById('crPasteOverlay');
+  if (ov) {
+    ov.classList.remove('is-open');
+    setTimeout(() => { ov.style.display = 'none'; }, 180);
+  }
+  _crLogoCid = null;
+}
+
+function _crPasteReset() {
+  const z = document.getElementById('crPasteZone');
+  if (z) z.classList.remove('is-over', 'is-busy');
+  const p = document.getElementById('crPastePrev');
+  if (p) p.innerHTML = '';
+}
+
+/* Toma la primera imagen del portapapeles. Cuando se copia desde una página
+   web, el portapapeles trae ADEMÁS el HTML del <img>; por eso se filtra por
+   tipo image/* en vez de leer el primer item a secas. */
+function _crPasteHandler(ev) {
+  const items = (ev.clipboardData && ev.clipboardData.items) || [];
+  for (const it of items) {
+    if (it.type && it.type.indexOf('image/') === 0) {
+      const blob = it.getAsFile();
+      if (blob) {
+        ev.preventDefault();
+        _crEnviarLogo(blob);
+        return;
+      }
+    }
+  }
+  ilusToast('En el portapapeles no hay una imagen. Copia el logo y vuelve a pegar.',
+            { type: 'warning' });
+}
+
+function _crPasteDrop(ev) {
+  ev.preventDefault();
+  const z = document.getElementById('crPasteZone');
+  if (z) z.classList.remove('is-over');
+  const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (!f) return;
+  if (f.type.indexOf('image/') !== 0) {
+    ilusToast('Ese archivo no es una imagen.', { type: 'warning' });
+    return;
+  }
+  _crEnviarLogo(f);
+}
+
+function _crPasteArchivo() {
   const inp = document.getElementById('crLogoInput');
   inp.value = '';   // permite volver a elegir el MISMO archivo
   inp.click();
@@ -1021,8 +1204,27 @@ function crSubirLogo(cid) {
 
 async function _crLogoElegido(inp) {
   const file = inp.files && inp.files[0];
-  const cid  = _crLogoCid;
+  if (file) _crEnviarLogo(file);
+}
+
+async function _crEnviarLogo(file) {
+  const cid = _crLogoCid;
   if (!file || !cid) return;
+
+  // Una imagen pegada llega SIN nombre de archivo. El backend valida la
+  // extensión, así que se le pone una coherente con el tipo real del blob.
+  const ext = (file.type === 'image/png') ? 'png'
+            : (file.type === 'image/webp') ? 'webp' : 'jpg';
+  const nombreArchivo = file.name && file.name.indexOf('.') > -1
+                        ? file.name : `logo.${ext}`;
+
+  const zona = document.getElementById('crPasteZone');
+  const prev = document.getElementById('crPastePrev');
+  if (prev) {
+    try { prev.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="">`; }
+    catch (_e) { /* sin vista previa no es grave */ }
+  }
+  if (zona) zona.classList.add('is-busy');
 
   const btn = document.querySelector(`#cardWrap${cid} .cr-logo-btn`);
   const restaurar = () => {
@@ -1035,7 +1237,7 @@ async function _crLogoElegido(inp) {
 
   try {
     const fd = new FormData();
-    fd.append('logo', file);
+    fd.append('logo', file, nombreArchivo);
     const r = await fetch(`/transporte/couriers/${cid}/logo/archivo`, { method: 'POST', body: fd });
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
@@ -1058,11 +1260,14 @@ async function _crLogoElegido(inp) {
     if (manual) manual.value = d.url;
 
     ilusToast(`✓ Logo de ${d.courier} actualizado`, { type: 'success' });
+    crCerrarPaste();          // éxito: se cierra solo, no hay que confirmar nada
   } catch (e) {
+    // Al fallar NO se cierra: así se puede volver a pegar sin reabrir todo.
     ilusToast('No se pudo subir el logo: ' + e.message, { type: 'error' });
+    if (zona) zona.classList.remove('is-busy');
+    if (prev) prev.innerHTML = '';
   } finally {
     restaurar();
-    _crLogoCid = null;
   }
 }
 

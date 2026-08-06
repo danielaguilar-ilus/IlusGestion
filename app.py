@@ -38966,6 +38966,20 @@ def tr_courier_subir_logo(cid):
     if not row:
         return jsonify({"ok": False, "error": "El courier no existe."}), 404
 
+    # Daniel, 2026-08-05: "guardarla no Cloudinary, yo quiero que sea en Google
+    # Cloud. No trabajes más con Cloudinary".
+    # _cloud_upload() cae a Cloudinary cuando GCS no está listo. Acá se corta
+    # esa salida: si Google Cloud no responde, se avisa y no se sube a ningún
+    # lado — antes que dejar el logo en un servicio que Daniel pidió no usar.
+    if not _gcs_ready():
+        print("[courier-logo] GCS no disponible; NO se cae a Cloudinary "
+              "(instrucción de Daniel 2026-08-05).", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": "El almacenamiento de Google Cloud no está disponible en "
+                     "este momento. Vuelve a intentarlo en un minuto.",
+        }), 503
+
     try:
         ts = int(datetime.now().timestamp())
         url = _cloud_upload(file, public_id=f"courier{cid}_{ts}", folder="ilus/couriers")
