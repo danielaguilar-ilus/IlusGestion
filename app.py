@@ -86972,6 +86972,44 @@ def mant_maquina_horometro_post(mid):
     return jsonify({"ok": True, **_horometro_proyeccion(mid)})
 
 
+@app.route("/mantenciones/api/maquinas/<int:mid>/horometro/<int:lid>", methods=["DELETE"])
+@_mant_required
+def mant_maquina_horometro_delete(mid, lid):
+    """Borra UNA lectura de horómetro (typo del operario, prueba, etc.) y
+    recalcula la caché de mant_maquinas a partir de la lectura más reciente
+    que quede — o la deja en NULL si no queda ninguna. Solo admin/superadmin
+    (mismo criterio que el resto de correcciones sobre la ficha del equipo)."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo administrador o superadmin puede borrar una lectura."}), 403
+    row = mysql_fetchone(
+        "SELECT id, horas, fecha FROM mant_maquina_horometro WHERE id=%s AND maquina_id=%s",
+        (lid, mid)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Lectura no encontrada"}), 404
+    mysql_execute("DELETE FROM mant_maquina_horometro WHERE id=%s", (lid,))
+    ultima = mysql_fetchone(
+        "SELECT horas, fecha FROM mant_maquina_horometro WHERE maquina_id=%s "
+        " ORDER BY fecha DESC, id DESC LIMIT 1",
+        (mid,)
+    )
+    if ultima:
+        mysql_execute(
+            "UPDATE mant_maquinas SET horometro_actual=%s, horometro_actualizado_at=NOW() WHERE id=%s",
+            (ultima["horas"], mid)
+        )
+    else:
+        mysql_execute(
+            "UPDATE mant_maquinas SET horometro_actual=NULL, horometro_actualizado_at=NULL WHERE id=%s",
+            (mid,)
+        )
+    try:
+        _mant_log("maquina", mid, "horometro_borrado", f"{row['horas']} h del {row['fecha']}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, **_horometro_proyeccion(mid)})
+
+
 def _ensure_visita_tareas_tipo_enum():
     """Garantiza que mant_visita_tareas.tipo acepte TODOS los tipos de OT,
     AUNQUE ILUS_SKIP_MIGRATIONS=1.
