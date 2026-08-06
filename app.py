@@ -1336,6 +1336,118 @@ def _storage_upload_bytes(data, key, content_type):
     return "/f/" + key
 
 
+_IMG_CT_EXT = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+    "image/webp": ".webp", "image/gif": ".gif", "image/svg+xml": ".svg",
+}
+_DESCARGA_MAX_BYTES = 6 * 1024 * 1024      # 6 MB: un logo jamás pesa más
+
+
+def _url_remota_segura(url):
+    """Valida que la URL apunte a Internet pública. Devuelve (ok, motivo).
+
+    POR QUÉ EXISTE: bajar una URL que escribe el usuario significa que el
+    SERVIDOR hace la petición, no el navegador. Sin control, alguien podría
+    escribir una dirección interna y usar a ILUS de puente para leerla — se
+    llama SSRF. En Cloud Run el blanco clásico es 169.254.169.254, el servicio
+    de metadatos de Google: responde SIN credenciales a quien corra dentro de
+    la máquina y entrega tokens de acceso del proyecto.
+
+    Por eso no basta con mirar el texto de la URL: se resuelve el nombre a IP
+    y se revisan TODAS las que devuelva. Un dominio público puede apuntar a
+    127.0.0.1 a propósito.
+    """
+    import ipaddress as _ip
+    import socket as _sock
+    from urllib.parse import urlparse as _urlparse
+
+    try:
+        u = _urlparse(url)
+    except Exception:
+        return False, "La dirección no es válida."
+    if u.scheme not in ("http", "https"):
+        return False, "Solo se aceptan direcciones http o https."
+    if not u.hostname:
+        return False, "La dirección no tiene un servidor válido."
+
+    try:
+        infos = _sock.getaddrinfo(u.hostname, None)
+    except Exception:
+        return False, "No se pudo resolver el servidor de esa dirección."
+
+    for info in infos:
+        try:
+            ip = _ip.ip_address(info[4][0])
+        except Exception:
+            return False, "El servidor devolvió una dirección que no se pudo leer."
+        # is_global es False para privadas, loopback, link-local (incluye
+        # 169.254.169.254), multicast y reservadas. Una sola que falle basta.
+        if not ip.is_global:
+            return False, "Esa dirección apunta a la red interna, no a Internet."
+    return True, ""
+
+
+def _bajar_imagen_a_gcs(url, public_id, folder="ilus/couriers"):
+    """Baja una imagen de Internet y la deja guardada en Google Storage.
+
+    Daniel, 2026-08-05: "¿de qué manera se puede guardar el logo como imagen y
+    no como un link?" / "no se guardan las imágenes en Google Storage".
+
+    Guardar el link deja el logo en manos de un tercero: si esa web lo mueve,
+    lo renombra o simplemente se cae, el logo desaparece de TODAS las pantallas
+    de ILUS a la vez — comparador, manifiesto, seguimiento del cliente. Y en el
+    seguimiento público es el cliente final el que ve el hueco.
+
+    Devuelve la URL propia (/f/<key>) o lanza excepción con un motivo legible.
+    """
+    ok, motivo = _url_remota_segura(url)
+    if not ok:
+        raise ValueError(motivo)
+
+    import requests as _rq
+    # allow_redirects=False a propósito: un redirect podría llevar a una IP
+    # interna después de haber validado la original. Se siguen a mano,
+    # revalidando cada salto.
+    actual, vistos = url, set()
+    resp = None
+    for _ in range(4):
+        if actual in vistos:
+            raise ValueError("La dirección entra en un ciclo de redirecciones.")
+        vistos.add(actual)
+        ok, motivo = _url_remota_segura(actual)
+        if not ok:
+            raise ValueError(motivo)
+        resp = _rq.get(actual, timeout=8, stream=True, allow_redirects=False,
+                       headers={"User-Agent": "ILUS-Fitness/1.0"})
+        if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
+            actual = _rq.compat.urljoin(actual, resp.headers["Location"])
+            resp.close()
+            continue
+        break
+    if resp is None or resp.status_code != 200:
+        raise ValueError(f"El servidor respondió {resp.status_code if resp else 'sin datos'}.")
+
+    ct = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if not ct.startswith("image/"):
+        raise ValueError("Esa dirección no devuelve una imagen.")
+
+    # Se lee por trozos y se corta al pasar el tope: un Content-Length mentido
+    # no sirve de nada si igual se descarga el archivo entero.
+    datos, total = bytearray(), 0
+    for chunk in resp.iter_content(64 * 1024):
+        total += len(chunk)
+        if total > _DESCARGA_MAX_BYTES:
+            resp.close()
+            raise ValueError("La imagen pesa más de 6 MB.")
+        datos.extend(chunk)
+    resp.close()
+    if not datos:
+        raise ValueError("La imagen vino vacía.")
+
+    ext = _IMG_CT_EXT.get(ct, ".png")
+    return _storage_upload_bytes(bytes(datos), _gcs_key(folder, public_id, ext), ct)
+
+
 _RAW_CT_BY_EXT = {
     ".pdf": "application/pdf", ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -39096,13 +39208,44 @@ def tr_courier_contrato_delete(cid, kid):
 @app.route("/transporte/couriers/<int:cid>/logo", methods=["POST"])
 @_tr_required
 def tr_courier_logo(cid):
-    """Upload logo via URL. Accepts JSON {logo_url, logo_type}."""
+    """Guarda el logo a partir de una URL. Acepta JSON {logo_url, logo_type}.
+
+    2026-08-05 — Daniel: "¿de qué manera se puede guardar el logo como imagen
+    y no como un link?" / "no se guardan las imágenes en Google Storage".
+
+    ANTES: se guardaba el texto de la URL tal cual. El logo quedaba en manos de
+    un tercero: si esa web lo movía, lo renombraba o se caía, el logo
+    desaparecía de TODAS las pantallas de ILUS a la vez — comparador,
+    manifiesto y el seguimiento que ve el cliente final.
+
+    AHORA: la imagen se BAJA y se guarda en Google Storage, y se registra la
+    dirección propia (/f/…). El link externo se usa una sola vez, para traerla.
+
+    Si la descarga falla (la web bloquea, no es una imagen, pesa demasiado), se
+    guarda la URL como antes y se avisa en la respuesta. Es preferible un logo
+    dependiente de un tercero a no poder guardar nada — pero el operador se
+    entera de la diferencia en vez de creer que quedó en Google.
+    """
     d = request.get_json(silent=True) or {}
     logo_url  = (d.get("logo_url") or "").strip()
     logo_type = d.get("logo_type", "principal")
 
     col_map = {"principal": "logo_url", "square": "logo_square_url", "label": "logo_label_url"}
     col = col_map.get(logo_type, "logo_url")
+
+    aviso = ""
+    guardada_en_google = False
+    # Las que ya son nuestras (/f/…) no se vuelven a bajar: ya están en Google.
+    if logo_url and not logo_url.startswith("/f/"):
+        try:
+            ts = int(datetime.now().timestamp())
+            logo_url = _bajar_imagen_a_gcs(
+                logo_url, public_id=f"courier{cid}_{logo_type}_{ts}")
+            guardada_en_google = True
+        except Exception as e:
+            aviso = (f"El logo quedó apuntando a la web original porque no se "
+                     f"pudo copiar a Google: {e}")
+            print(f"[courier-logo] no se pudo bajar a GCS (cid={cid}): {e}", flush=True)
 
     conn = get_db()
     try:
@@ -39116,7 +39259,9 @@ def tr_courier_logo(cid):
                     pass
             cur.execute(f"UPDATE transport_couriers SET {col}=%s WHERE id=%s", (logo_url, cid))
         conn.commit()
-        return jsonify({"ok": True, "logo_url": logo_url})
+        _invalidate_couriers_cache()
+        return jsonify({"ok": True, "logo_url": logo_url,
+                        "en_google": guardada_en_google, "aviso": aviso})
     finally:
         conn.close()
 
