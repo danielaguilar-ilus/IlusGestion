@@ -200,6 +200,30 @@
 .cr-card:hover .cr-logo-btn{ opacity:1; }
 .cr-logo-btn:focus-visible{ opacity:1; outline:2px solid var(--trx-red,#dc2626); outline-offset:-2px; }
 .cr-logo-btn.is-busy{ opacity:1; }
+/* Botón "quitar logo" (2026-08-05, Daniel: "los logos no se pueden eliminar,
+   por favor"). Insignia chica en la esquina superior derecha del recuadro,
+   SIEMPRE visible cuando hay logo (a diferencia de "Pegar logo", que solo
+   aparece al pasar el mouse) -- si dependiera del hover, en el celular sería
+   invisible y quedaríamos en el mismo problema que se está resolviendo.
+   z-index por encima de .cr-logo-btn a propósito: ese botón cubre TODO el
+   recuadro (inset:0) y viene después en el DOM, así que sin el z-index se
+   robaría el clic sobre esta esquina. 22×22 visual pero con un área de toque
+   real de 44px vía ::after invisible (REGLA #3) -- el ícono no puede ocupar
+   44px sin taparle la esquina al logo. */
+.cr-logo-x{
+  position:absolute; top:3px; right:3px; z-index:2;
+  width:20px; height:20px; border-radius:50%; border:none; padding:0;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(10,10,10,.72); color:#fff; font-size:.62rem;
+  cursor:pointer; transition:background .15s, transform .12s;
+}
+.cr-logo-x::after{
+  content:''; position:absolute; inset:-12px;   /* infla el área de toque a 44px sin agrandar el ícono */
+}
+.cr-logo-x:hover{ background:var(--trx-red,#dc2626); }
+.cr-logo-x:active{ transform:scale(.9); }
+.cr-logo-x:focus-visible{ outline:2px solid var(--trx-red,#dc2626); outline-offset:1px; }
+
 /* En el celular no hay "pasar el mouse": si el botón siguiera oculto, cambiar
    el logo desde el teléfono sería imposible. Pero taparlo entero escondería
    el logo que Daniel acaba de subir — así que ahí el botón se vuelve

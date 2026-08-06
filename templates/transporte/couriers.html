@@ -303,6 +303,24 @@
               <img src="{{ c.logo_url }}" alt="Logo de {{ _nomtxt }}"
                    onerror="_crLogoRoto(this)">
             </div>
+            {# Daniel, 2026-08-05: "los logos no se pueden eliminar, por
+               favor" -- antes solo se podía REEMPLAZAR un logo (pegar uno
+               nuevo encima), no quitarlo si se subió el equivocado. Reusa el
+               mismo endpoint que ya guarda por URL (POST .../logo): mandarle
+               un logo_url vacío lo limpia -- no hace falta un endpoint nuevo.
+               Solo visible cuando SÍ hay un logo cargado.
+               VA FUERA de .cr-logo-wrap y a propósito: .cr-logo-btn ("Pegar
+               logo") cubre TODO el recuadro (inset:0) y viene después en el
+               HTML, así que si el × quedara dentro del wrap, ese botón lo
+               taparía y se robaría el clic. Como hermano posterior con
+               z-index más alto, el × se ve y se puede tocar incluso encima
+               del botón de pegar. #}
+            <button type="button" class="cr-logo-x"
+                    title="Quitar el logo de {{ _nomtxt }}"
+                    aria-label="Quitar el logo de {{ _nomtxt }}"
+                    onclick='event.stopPropagation(); crQuitarLogo({{ c.id }}, {{ _nomtxt|tojson }})'>
+              <i class="bi bi-x-lg" aria-hidden="true"></i>
+            </button>
             {% else %}
             {# Sin logo cargado: en vez de seis cuadrados negros idénticos
                (Daniel, 2026-08-05: "esas tarjetas están feas"), cada courier
@@ -1409,7 +1427,27 @@ async function _crEnviarLogo(file) {
     const ph   = caja && caja.querySelector('.cr-logo-ph');
     const url  = d.url + (d.url.includes('?') ? '&' : '?') + 't=' + Date.now();
     if (img)      img.src = url;
-    else if (ph)  ph.outerHTML = `<div class="cr-logo-wrap"><img src="${url}" alt=""></div>`;
+    else if (ph)  {
+      // Placeholder -> logo real: aparece el botón de quitar (antes no
+      // existía). Si no se agrega acá, el botón solo aparece tras recargar
+      // la página -- el mismo hueco que Daniel reportó ("los logos no se
+      // pueden eliminar").
+      const nombreCourier = ((document.querySelector(`#cardWrap${cid} .cr-nombre`) || {}).textContent || '').trim();
+      // esc() sobre el JSON: un nombre de courier con comilla (real, ej.
+      // "O'Higgins Cargo") rompería el atributo onclick si el JSON crudo se
+      // insertara tal cual -- mismo tipo de bug que ya se corrigió en otra
+      // parte de esta tarjeta. esc() escapa comillas dobles a &quot;, que el
+      // navegador decodifica de vuelta a " antes de ejecutar el JS.
+      // El botón × va FUERA de .cr-logo-wrap, como hermano -- si quedara
+      // adentro, el botón "Pegar logo" (que cubre todo el recuadro, viene
+      // después en el DOM) se lo taparía y robaría el clic. Mismo motivo
+      // que en la versión que arma el servidor (ver couriers.html arriba).
+      ph.outerHTML = `<div class="cr-logo-wrap"><img src="${url}" alt=""></div>`
+        + `<button type="button" class="cr-logo-x" title="Quitar el logo de ${esc(nombreCourier)}" `
+        + `aria-label="Quitar el logo de ${esc(nombreCourier)}" `
+        + `onclick="event.stopPropagation(); crQuitarLogo(${cid}, ${esc(JSON.stringify(nombreCourier))})">`
+        + `<i class="bi bi-x-lg" aria-hidden="true"></i></button>`;
+    }
 
     // Si la subida se hizo desde el modal de edición, refrescar ahí también:
     // la vista previa y el campo que se envía al guardar.
@@ -1430,6 +1468,51 @@ async function _crEnviarLogo(file) {
     if (prev) prev.innerHTML = '';
   } finally {
     restaurar();
+  }
+}
+
+/* Daniel, 2026-08-05: "los logos no se pueden eliminar, por favor". Reusa
+   POST /transporte/couriers/<id>/logo (el mismo que guarda por URL): un
+   logo_url vacío limpia la columna. No hace falta un endpoint de borrado
+   aparte -- ya existía la manera de vaciar el campo, solo faltaba el botón. */
+async function crQuitarLogo(cid, nombre) {
+  const ok = await ilusConfirm({
+    title: 'Quitar logo',
+    message: `¿Quitar el logo de «${nombre}»?`,
+    sub: 'La tarjeta vuelve a mostrar las iniciales. Puedes pegar uno nuevo cuando quieras.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+
+  try {
+    const r = await fetch(`/transporte/couriers/${cid}/logo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logo_url: '', logo_type: 'principal' }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+
+    // Logo -> placeholder con iniciales, igual que si nunca se hubiera
+    // subido uno. _crLogoRoto ya hace exactamente ese reemplazo -- se
+    // reusa en vez de duplicar el HTML del placeholder acá.
+    const caja = document.querySelector(`#cardWrap${cid} .cr-logo`);
+    const img  = caja && caja.querySelector('.cr-logo-wrap img');
+    if (img) _crLogoRoto(img);
+    const xBtn = caja && caja.querySelector('.cr-logo-x');
+    if (xBtn) xBtn.remove();
+
+    const prevEdit = document.getElementById('e_logo_prev');
+    if (prevEdit) prevEdit.innerHTML = '';
+    const campo = document.getElementById('e_logo');
+    if (campo) campo.value = '';
+    const manual = document.getElementById('e_logo_url_manual');
+    if (manual) manual.value = '';
+    if (_editarObj) _editarObj.logo_url = '';
+
+    ilusToast(`✓ Logo de ${nombre} quitado`, { type: 'success' });
+  } catch (e) {
+    ilusToast('No se pudo quitar el logo: ' + e.message, { type: 'error' });
   }
 }
 
