@@ -652,48 +652,238 @@
 
 
     {# ════════════════════════════════════
-       TAB: CHOFERES (roster para retiro de bodega, 2026-07-26)
-    ════════════════════════════════════ #}
+       TAB: CHOFERES (2026-08-06, reemplaza el menú admin "Choferes" del
+       sidebar -- pedido explícito de Daniel. Roster interno del courier con
+       foto, licencia (clase + vencimiento) y seguro de carga, además de lo
+       que ya existía (contacto + capacidad del camión para retiro de
+       bodega). Las 3 acciones del menú viejo -- asignar courier, resetear
+       PIN, activar/desactivar -- se conservan acá, en el menú "..." de cada
+       fila (reusan los mismos endpoints /transporte/choferes/<id>/...).
+
+       NO hay contrato por chofer acá (aclarado por Daniel el mismo día,
+       después de la primera versión): "el contrato de prestación de
+       servicio" es del COURIER, no de cada chofer -- ya vive en
+       transport_courier_contratos (pestaña "Contratos" de esta misma
+       ficha). Se enlaza con un banner en vez de duplicarlo por chofer.
+
+       ESCALA (Daniel: "si es un courier muy grande... ahí tenemos que
+       darle una propuesta"): con 30-50+ choferes, la tabla no puede
+       reventar la pantalla. Se optó por un scroll INTERNO acotado con
+       header pegajoso (.cr-choferes-scroll) en vez de paginación con
+       recarga -- los choferes de un courier ya vienen en una sola consulta
+       liviana y el filtro de clase necesita ver todas las filas a la vez
+       para no perder resultados entre páginas. #}
+    {% macro badge_venc(estado) -%}
+      {%- if estado == 'vencido' -%}
+        <span class="trx-chip trx-chip-dang cr-chip-venc"><i class="bi bi-exclamation-triangle-fill"></i>Vencido</span>
+      {%- elif estado == 'por_vencer' -%}
+        <span class="trx-chip trx-chip-warn cr-chip-venc"><i class="bi bi-clock-fill"></i>Por vencer</span>
+      {%- elif estado == 'vigente' -%}
+        <span class="trx-chip trx-chip-ok cr-chip-venc"><i class="bi bi-check-circle-fill"></i>Vigente</span>
+      {%- endif -%}
+    {%- endmacro %}
     <div class="tab-pane fade" id="tab-choferes" role="tabpanel">
-      <div class="d-flex align-items-center justify-content-between mb-3">
+      <style>
+        .cr-chip-venc { font-size:.66rem; padding:.15rem .5rem; white-space:nowrap; }
+        .cr-clase-pill {
+          display:inline-block; font-size:.68rem; font-weight:700; padding:.1rem .4rem;
+          border-radius:5px; background:var(--trx-g1,#f3f4f6); color:var(--trx-ink-2,#374151);
+          border:1px solid var(--trx-g2,#e5e7eb); margin:0 2px 2px 0;
+        }
+        .cr-clase-pill.cr-clase-chica { background:#f0fdf4; color:#14532d; border-color:#bbf7d0; }
+        .cr-filtro-chip {
+          border:1px solid var(--trx-g2,#e5e7eb); background:#fff; color:var(--trx-ink-2,#374151);
+          border-radius:999px; padding:.35rem .85rem; font-size:.78rem; font-weight:600;
+          min-height:44px; display:inline-flex; align-items:center; gap:.3rem; cursor:pointer;
+          transition:all .15s;
+        }
+        .cr-filtro-chip:hover { border-color:var(--trx-red,#dc2626); }
+        .cr-filtro-chip.active { background:var(--trx-red,#dc2626); color:#fff; border-color:var(--trx-red,#dc2626); }
+        #tablaChoferesBody tr.cr-row-inactivo { opacity:.55; }
+        .cr-doc-link { font-size:.75rem; }
+        .cr-avatar {
+          width:38px; height:38px; border-radius:50%; object-fit:cover; flex-shrink:0;
+          border:1.5px solid var(--trx-g2,#e5e7eb); background:var(--trx-g1,#f3f4f6);
+        }
+        .cr-avatar-fallback {
+          width:38px; height:38px; border-radius:50%; flex-shrink:0; display:flex;
+          align-items:center; justify-content:center; background:var(--trx-black,#0a0a0a);
+          color:#fff; font-weight:700; font-size:.85rem;
+        }
+        .cr-choferes-scroll { max-height:62vh; overflow-y:auto; border-radius:8px; border:1px solid #eee; }
+        .cr-choferes-scroll thead th {
+          position:sticky; top:0; z-index:2; background:#f8f9fa;
+          box-shadow:0 1px 0 #eee;
+        }
+      </style>
+
+      {# Contrato de PRESTACIÓN DE SERVICIO -- es del courier (empresa), no
+         de cada chofer. Vive en transport_courier_contratos (pestaña
+         Contratos); acá solo se enlaza para que no se pierda de vista
+         mientras se gestionan los choferes. #}
+      <div class="alert alert-secondary d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 py-2 px-3">
+        <div class="small">
+          <i class="bi bi-file-earmark-text me-1 text-muted"></i>
+          {% if contratos and contratos[0] %}
+          Contrato de prestación de servicio con <strong>{{ courier.nombre }}</strong>:
+          {{ contratos[0].nombre or 'Contrato' }}
+          {% if contratos[0].fecha_fin %} · vigente hasta {{ contratos[0].fecha_fin | chile_fmt('%d/%m/%Y') }}{% endif %}
+          {% if contratos[0].archivo_url %}
+          — <a href="{{ contratos[0].archivo_url }}" target="_blank" rel="noopener">ver documento</a>
+          {% endif %}
+          {% else %}
+          <span class="text-muted">{{ courier.nombre }} todavía no tiene contrato de prestación de servicio cargado.</span>
+          {% endif %}
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="tab" data-bs-target="#tab-contratos">
+          Ir a Contratos
+        </button>
+      </div>
+
+      <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
         <div>
           <div class="fw-semibold">Choferes del courier</div>
-          <div class="text-muted small">Se usan para autocompletar los datos al registrar quién retiró la mercadería de bodega.</div>
+          <div class="text-muted small">Foto, licencia, seguro de carga y capacidad del camión de cada chofer interno.</div>
         </div>
-        <button class="btn btn-danger btn-sm" onclick="agregarChoferCourier()">
+        <button class="btn btn-danger btn-sm" style="min-height:44px" onclick="abrirModalChofer()">
           <i class="bi bi-plus me-1"></i>Agregar chofer
         </button>
       </div>
-      <div class="table-responsive">
+
+      {# Filtro inteligente por clase de licencia (pedido explícito de Daniel:
+         "filtro inteligente que debería ser tipo A o B para camiones
+         pequeños"). Un chip = filtro activo; "Camión pequeño" es el atajo a
+         B/A4 (ver LICENCIA_CAMION_PEQUENO en app.py). #}
+      <div class="d-flex flex-wrap gap-2 mb-3" id="chFiltroClases">
+        <button type="button" class="cr-filtro-chip active" data-filtro="ALL" onclick="chFiltrarClase('ALL', this)">
+          <i class="bi bi-people-fill"></i>Todos{% if choferes %} ({{ choferes|length }}){% endif %}
+        </button>
+        <button type="button" class="cr-filtro-chip" data-filtro="CAMION_PEQUENO" onclick="chFiltrarClase('CAMION_PEQUENO', this)"
+                title="Licencia B o A4 -- aptas para camión pequeño (Ley de Tránsito N°18.290)">
+          <i class="bi bi-truck"></i>Camión pequeño (B / A4)
+        </button>
+        {% for clase, desc in licencia_clases_chile.items() %}
+        <button type="button" class="cr-filtro-chip" data-filtro="{{ clase }}" onclick="chFiltrarClase('{{ clase }}', this)" title="{{ desc }}">
+          {{ clase }}
+        </button>
+        {% endfor %}
+        <div class="form-check form-switch ms-auto d-flex align-items-center" style="min-height:44px">
+          <input class="form-check-input me-2" type="checkbox" id="chMostrarInactivos" onchange="chAplicarFiltro()">
+          <label class="form-check-label small text-muted" for="chMostrarInactivos">Mostrar inactivos</label>
+        </div>
+      </div>
+
+      <div class="table-responsive cr-choferes-scroll">
         <table class="table table-hover align-middle mb-0">
           <thead>
             <tr>
-              <th>Nombre</th>
-              <th>RUT</th>
-              <th>Teléfono</th>
-              <th>Patente</th>
-              <th>Capacidad camión</th>
+              <th>Chofer</th>
+              <th>Camión</th>
+              <th>Licencia</th>
+              <th>Seguro de carga</th>
+              <th>Estado</th>
               <th class="text-end">Acciones</th>
             </tr>
           </thead>
           <tbody id="tablaChoferesBody">
             {% for ch in choferes %}
-            <tr id="chofer-row-{{ ch.id }}">
-              <td class="fw-semibold">{{ ch.nombre }}</td>
-              <td>{{ ch.rut }}</td>
-              <td>{{ ch.telefono or '—' }}</td>
-              <td>{{ ch.patente or '—' }}</td>
-              <td class="small text-muted">
-                {% if ch.peso_max_kg %}{{ ch.peso_max_kg|int }} kg{% endif %}
-                {% if ch.peso_max_kg and ch.volumen_max_m3 %} · {% endif %}
-                {% if ch.volumen_max_m3 %}{{ ch.volumen_max_m3 }} m³{% endif %}
-                {% if not ch.peso_max_kg and not ch.volumen_max_m3 %}—{% endif %}
+            <tr id="chofer-row-{{ ch.id }}"
+                class="{{ 'cr-row-inactivo' if not ch.activo else '' }}"
+                data-clases="{{ (ch.licencia_clase or '')|replace('/', ',')|replace(' ', ',') }}"
+                data-activo="{{ '1' if ch.activo else '0' }}"
+                style="{{ 'display:none' if not ch.activo else '' }}">
+              <td>
+                <div class="d-flex align-items-center gap-2">
+                  {% if ch.foto_url %}
+                  <img class="cr-avatar" src="{{ ch.foto_url }}" alt="{{ ch.nombre }}">
+                  {% else %}
+                  <div class="cr-avatar-fallback">{{ (ch.nombre or '?')[:1]|upper }}</div>
+                  {% endif %}
+                  <div>
+                    <div class="fw-semibold">{{ ch.nombre }}</div>
+                    <div class="small text-muted">{{ ch.rut | rut_fmt if ch.rut else '—' }}</div>
+                    {% if ch.telefono %}<div class="small text-muted"><i class="bi bi-telephone me-1"></i>{{ ch.telefono }}</div>{% endif %}
+                  </div>
+                </div>
+              </td>
+              <td class="small">
+                <div>{{ ch.patente or '—' }}</div>
+                <div class="text-muted">
+                  {% if ch.peso_max_kg %}{{ ch.peso_max_kg|int }} kg{% endif %}
+                  {% if ch.peso_max_kg and ch.volumen_max_m3 %} · {% endif %}
+                  {% if ch.volumen_max_m3 %}{{ ch.volumen_max_m3 }} m³{% endif %}
+                  {% if not ch.peso_max_kg and not ch.volumen_max_m3 %}sin capacidad cargada{% endif %}
+                </div>
+              </td>
+              <td class="small">
+                {% if ch.licencia_clase %}
+                  {% for c in ch.licencia_clase.replace('/', ',').replace(' ', ',').split(',') %}
+                    {% set c = c.strip() %}
+                    {% if c %}<span class="cr-clase-pill {{ 'cr-clase-chica' if c in licencia_camion_pequeno else '' }}" title="{{ licencia_clases_chile.get(c, '') }}">{{ c }}</span>{% endif %}
+                  {% endfor %}
+                  <div class="mt-1">
+                    {% if ch.licencia_vencimiento %}<span class="text-muted">{{ ch.licencia_vencimiento | chile_fmt('%d/%m/%Y') }}</span> {% endif %}
+                    {{ badge_venc(ch.estado_licencia) }}
+                  </div>
+                {% else %}
+                  <span class="text-muted">Sin licencia cargada</span>
+                {% endif %}
+                {% if ch.licencia_doc_url %}
+                <div><a class="cr-doc-link" href="{{ ch.licencia_doc_url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-check me-1"></i>Ver documento</a></div>
+                {% endif %}
+              </td>
+              <td class="small">
+                {% if ch.seguro_carga_vigente %}
+                  <span class="trx-chip trx-chip-ok cr-chip-venc"><i class="bi bi-shield-check"></i>Vigente</span>
+                {% else %}
+                  <span class="trx-chip cr-chip-venc"><i class="bi bi-shield-x"></i>No vigente</span>
+                {% endif %}
+                <div class="mt-1">
+                  {% if ch.seguro_carga_vencimiento %}<span class="text-muted">{{ ch.seguro_carga_vencimiento | chile_fmt('%d/%m/%Y') }}</span> {% endif %}
+                  {{ badge_venc(ch.estado_seguro) }}
+                </div>
+                {% if ch.seguro_carga_doc_url %}
+                <div><a class="cr-doc-link" href="{{ ch.seguro_carga_doc_url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-check me-1"></i>Ver póliza</a></div>
+                {% endif %}
+              </td>
+              <td>
+                {% if ch.activo %}
+                <span class="trx-chip trx-chip-ok"><i class="bi bi-check-circle-fill"></i>Activo</span>
+                {% else %}
+                <span class="trx-chip"><i class="bi bi-pause-circle"></i>Inactivo</span>
+                {% endif %}
               </td>
               <td class="text-end">
-                <button class="btn btn-sm btn-outline-danger" style="min-height:44px"
-                        onclick="eliminarChoferCourier({{ ch.id }})">
-                  <i class="bi bi-trash"></i>
-                </button>
+                <div class="dropdown">
+                  <button class="btn btn-sm btn-outline-secondary" style="min-height:44px;min-width:44px" type="button"
+                          data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                    <i class="bi bi-three-dots-vertical"></i>
+                  </button>
+                  <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#" onclick="abrirModalChofer({{ ch.id }});return false;">
+                      <i class="bi bi-pencil me-2"></i>Editar / documentos</a></li>
+                    <li><a class="dropdown-item" href="#" onclick="resetearPinChofer({{ ch.id }}, {{ (ch.nombre or '')|tojson }});return false;">
+                      <i class="bi bi-key me-2"></i>Resetear PIN</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><h6 class="dropdown-header">Cambiar de transporte</h6></li>
+                    <li class="px-3 pb-2">
+                      <select class="form-select form-select-sm" onchange="if(this.value) cambiarCourierChofer({{ ch.id }}, this.value); this.selectedIndex=0;">
+                        <option value="">Elegir courier...</option>
+                        {% for co in couriers_todos %}
+                        {% if co.id != courier.id %}<option value="{{ co.id }}">{{ co.nombre }}</option>{% endif %}
+                        {% endfor %}
+                      </select>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    {% if ch.activo %}
+                    <li><a class="dropdown-item text-danger" href="#" onclick="eliminarChoferCourier({{ ch.id }});return false;">
+                      <i class="bi bi-pause-circle me-2"></i>Desactivar</a></li>
+                    {% else %}
+                    <li><a class="dropdown-item text-success" href="#" onclick="reactivarChoferCourier({{ ch.id }});return false;">
+                      <i class="bi bi-play-circle me-2"></i>Reactivar</a></li>
+                    {% endif %}
+                  </ul>
+                </div>
               </td>
             </tr>
             {% else %}
@@ -828,6 +1018,133 @@
   </div>
 </div>
 
+
+{# ══════════════════════════════════════════════
+   MODAL: CHOFER (crear/editar) — 2026-08-06
+   Foto de perfil, licencia (con filtro inteligente de clase) y seguro de
+   carga. La foto y los documentos solo se pueden subir con el chofer ya
+   guardado (mismo límite que el logo del courier: hace falta un id para
+   nombrar el archivo en GCS) -- por eso el aviso "guarda primero" cuando
+   ch_id está vacío.
+
+   NO hay contrato acá (versión anterior de este mismo día SÍ lo tenía):
+   Daniel aclaró que "el contrato de prestación de servicio" es del
+   COURIER, no de cada chofer -- se gestiona en la pestaña "Contratos" de
+   esta misma ficha (transport_courier_contratos), enlazada con un banner
+   arriba de la tabla de choferes.
+══════════════════════════════════════════════ #}
+<style>
+  .ch-foto-zone {
+    width:76px; height:76px; border-radius:50%; margin:0 auto;
+    border:2px dashed rgba(255,255,255,.25); display:flex; align-items:center;
+    justify-content:center; font-size:1.7rem; color:rgba(255,255,255,.5);
+    background:rgba(255,255,255,.04); cursor:pointer; overflow:hidden;
+    transition:border-color .15s;
+  }
+  .ch-foto-zone:hover, .ch-foto-zone:focus { border-color:var(--trx-red,#dc2626); outline:none; }
+  .ch-foto-zone.ch-foto-disabled { cursor:default; opacity:.5; }
+  .ch-foto-img { width:100%; height:100%; object-fit:cover; }
+</style>
+<div class="modal fade" id="modalChofer" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content bg-dark text-light border-0">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="choferModalTitulo">
+          <i class="bi bi-person-badge-fill me-2 text-danger"></i>Nuevo chofer
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ch_id" value="">
+
+        <div class="text-center mb-3">
+          <div id="ch_foto_wrap"></div>
+          <div class="small text-muted mt-1" style="font-size:.72rem">Foto de perfil — arrastra, pega (Ctrl+V) o elige un archivo</div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label small">Nombre completo *</label>
+            <input id="ch_nombre" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Ej: Juan Pérez Soto">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">RUT *</label>
+            <input id="ch_rut" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Ej: 12.345.678-9">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Teléfono</label>
+            <input id="ch_telefono" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="+56 9 ...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Patente del camión</label>
+            <input id="ch_patente" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Ej: ABCD12">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Capacidad máxima (kg)</label>
+            <input id="ch_peso_max" type="number" min="0" step="1" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Ej: 2000">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Capacidad máxima (m³)</label>
+            <input id="ch_vol_max" type="number" min="0" step="0.1" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Ej: 12">
+          </div>
+        </div>
+
+        <hr class="border-secondary my-3">
+
+        <div class="fw-semibold small mb-2"><i class="bi bi-card-heading me-1 text-danger"></i>Licencia de conducir</div>
+        <label class="form-label small d-block mb-1">Clase(s) — toca todas las que tenga cargadas en su licencia</label>
+        <div id="ch_clases_picker" class="d-flex flex-wrap gap-2 mb-3"></div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label small">Vencimiento de la licencia</label>
+            <input id="ch_licencia_venc" type="date" class="form-control form-control-sm bg-dark text-light border-secondary">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small d-block">Documento (foto o PDF)</label>
+            <div id="ch_licencia_doc_wrap"></div>
+          </div>
+        </div>
+
+        <hr class="border-secondary my-3">
+
+        <div class="fw-semibold small mb-2"><i class="bi bi-shield-check me-1 text-danger"></i>Seguro de carga</div>
+        <div class="row g-3 align-items-start">
+          <div class="col-md-4">
+            <div class="form-check form-switch mt-1">
+              <input class="form-check-input" type="checkbox" id="ch_seguro_vigente">
+              <label class="form-check-label small" for="ch_seguro_vigente">Seguro vigente</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small">Vencimiento</label>
+            <input id="ch_seguro_venc" type="date" class="form-control form-control-sm bg-dark text-light border-secondary">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small d-block">Póliza (foto o PDF)</label>
+            <div id="ch_seguro_doc_wrap"></div>
+          </div>
+        </div>
+
+        <div class="alert alert-secondary small py-2 px-3 mt-3 mb-0">
+          <i class="bi bi-info-circle me-1"></i>
+          El contrato de prestación de servicio es con la EMPRESA courier, no con cada chofer
+          — se gestiona en la pestaña <strong>Contratos</strong> de esta ficha.
+        </div>
+
+        <div id="chDocsHint" class="alert alert-secondary small mt-3 mb-0" style="display:none">
+          <i class="bi bi-info-circle me-1"></i>Guarda el chofer primero -- la foto y los documentos (licencia, póliza) se suben apenas quede creado.
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="chGuardarBtn" style="min-height:44px" onclick="guardarChofer()">
+          <i class="bi bi-save me-1"></i>Guardar chofer
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 
@@ -842,6 +1159,12 @@
     // que para este courier es una instrucción imposible de cumplir
     // (Daniel, 2026-08-05: "no me sale la lista de precios de Shipit").
     cotizaEnVivo: {{ 'true' if 'shipit' in (courier.nombre or '')|lower else 'false' }},
+    // Choferes (2026-08-06): copia JSON-safe (fechas ISO para <input
+    // type=date>) para prefill del modal de edición sin ir a buscarla de
+    // nuevo al backend -- ya viajó server-side con la ficha.
+    choferes: {{ choferes_json | tojson }},
+    licenciaClases: {{ licencia_clases_chile | tojson }},
+    licenciaCamionPequeno: {{ licencia_camion_pequeno | tojson }},
   };
 </script>
 <script defer src="{{ url_for('static', filename='transporte_courier_ficha.js') }}"></script>

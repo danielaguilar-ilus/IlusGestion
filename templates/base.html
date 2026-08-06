@@ -643,13 +643,15 @@
       </button>
       <div class="sg-subitems" id="sgsub-tr-config">
         <a href="{{ url_for('tr_couriers') }}"
-           class="sidebar-link{% if request.endpoint in ['tr_couriers'] %} active{% endif %}">
+           class="sidebar-link{% if request.endpoint in ['tr_couriers','tr_courier_ficha'] %} active{% endif %}">
           <i class="bi bi-building"></i><span>Couriers</span>
         </a>
-        <a href="{{ url_for('tr_choferes') }}"
-           class="sidebar-link{% if request.endpoint in ['tr_choferes'] %} active{% endif %}">
-          <i class="bi bi-person-badge"></i><span>Choferes</span>
-        </a>
+        {# 2026-08-06 (pedido explícito de Daniel): se saca "Choferes" del
+           menú -- la gestión de choferes ahora vive DENTRO de la ficha de
+           cada courier (pestaña "Choferes"), con licencia/seguro de carga/
+           contrato. El endpoint /transporte/choferes (tr_choferes) se deja
+           vivo sin link por si algo externo lo referencia; no se borró del
+           backend. #}
         <a href="{{ url_for('tr_facturas_proveedor') }}"
            class="sidebar-link{% if request.endpoint in ['tr_facturas_proveedor','tr_factura_proveedor_detalle'] %} active{% endif %}">
           <i class="bi bi-receipt-cutoff"></i><span>Facturas Proveedor</span>

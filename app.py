@@ -36029,6 +36029,80 @@ def tr_choferes_toggle(did):
 # #4.2 cubierta por pedido explícito previo de Daniel.
 
 
+# ── Choferes internos por courier: licencia, seguro de carga, foto ───────
+# (2026-08-06, pedido explícito de Daniel: "necesito que tengamos seguro de
+# carga, contrato, licencia de conducir con filtro inteligente... clase A o
+# B para camiones pequeños. Además los camiones que posee y su capacidad" +
+# "una fotito" del chofer, pedida el mismo día. El "contrato" que menciona
+# el primer pedido es el de PRESTACIÓN DE SERVICIO con la empresa courier
+# -- Daniel aclaró después que eso es a nivel de courier, no de chofer, y
+# ya vive en transport_courier_contratos (pestaña Contratos de la ficha).
+#
+# Clases de licencia de conducir de Chile — Ley de Tránsito N°18.290, según
+# ChileAtiende (chileatiende.gob.cl/fichas/20592-licencias-de-conducir y
+# /fichas/24034-licencia-de-conducir-profesional-clase-a, consultado
+# 2026-08-06). NO son categorías inventadas: son las 6 clases legales (A,B,
+# C,D,E,F) + las 5 subclases profesionales de la clase A.
+LICENCIA_CLASES_CHILE = {
+    "A1": "Taxis",
+    "A2": "Taxis, ambulancias, transporte de personas (10 a 17 pasajeros)",
+    "A3": "Taxis, transporte escolar, ambulancias, buses (sin límite de asientos)",
+    "A4": "Camiones SIMPLES de carga, peso bruto > 3.500 kg",
+    "A5": "Camiones simples o ARTICULADOS de carga, peso bruto > 3.500 kg",
+    "B":  "Vehículos particulares (autos, camionetas, furgones ≤ 3.500 kg)",
+    "C":  "Motocicletas y motonetas",
+    "D":  "Maquinaria automotriz (tractores, palas mecánicas)",
+    "E":  "Vehículos de tracción animal",
+    "F":  "Vehículos policiales, de bomberos o Fuerzas Armadas",
+}
+
+# "Apto para camión pequeño" (Daniel, 2026-08-05: "tipo A o B para camiones
+# pequeños"): clase B cubre vehículos particulares/utilitarios hasta 3.500 kg
+# (furgones, camionetas de carga) y A4 es la licencia profesional de carga
+# MÁS chica (camión simple, NO articulado, > 3.500 kg). A5 también habilita
+# camión simple pero además articulados de mayor tonelaje, así que se deja
+# fuera de este preset "pequeño" — el filtro general igual permite elegirla.
+LICENCIA_CAMION_PEQUENO = {"B", "A4"}
+
+
+def _tr_licencia_clases_normalizadas(raw):
+    """'B, A4' / 'b/a4' / 'B A4' → ['B','A4']. Ignora tokens que no son una
+    clase de licencia chilena real (typos) sin reventar. Un chofer puede
+    tener más de una clase en su misma licencia física."""
+    if not raw:
+        return []
+    partes = re.split(r"[,/\s]+", str(raw).strip().upper())
+    return [p for p in partes if p in LICENCIA_CLASES_CHILE]
+
+
+def _tr_licencia_apta_camion_pequeno(raw):
+    """True si el chofer tiene alguna clase apta para camión pequeño (B/A4)."""
+    return any(c in LICENCIA_CAMION_PEQUENO for c in _tr_licencia_clases_normalizadas(raw))
+
+
+def _tr_estado_vencimiento(fecha, dias_alerta=30):
+    """Clasifica cualquier fecha de vencimiento (hoy: licencia de conducir y
+    seguro de carga de un chofer) en 'vencido' / 'por_vencer' / 'vigente',
+    o None si no hay fecha cargada. Es genérica a propósito -- no asume de
+    qué documento es la fecha. dias_alerta=30 replica el umbral que ya usa
+    Transporte para "por vencer" en otras alertas (ver notif_contrato_por_
+    vencer, más arriba en este archivo). Fecha "hoy" en huso Chile (Regla
+    #6) — no UTC del servidor, para no correr el día cerca de medianoche."""
+    if not fecha:
+        return None
+    if isinstance(fecha, datetime):
+        fecha = fecha.date()
+    try:
+        dias = (fecha - _now_chile().date()).days
+    except Exception:
+        return None
+    if dias < 0:
+        return "vencido"
+    if dias <= dias_alerta:
+        return "por_vencer"
+    return "vigente"
+
+
 # ── Roster de choferes POR COURIER (2026-07-26, Daniel) ──────────────────
 # Reusa la MISMA tabla transport_drivers (ya tiene nombre/rut/telefono/
 # patente/courier_id/activo — ver _ensure_transport_drivers_table más
@@ -36038,7 +36112,9 @@ def tr_choferes_toggle(did):
 # login desde este flujo. Sirve para autocompletar nombre/RUT/teléfono/
 # patente al capturar un retiro (modal interno y link público del chofer).
 def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=None,
-                              peso_max_kg=None, volumen_max_m3=None):
+                              peso_max_kg=None, volumen_max_m3=None,
+                              licencia_clase=None, licencia_vencimiento=None,
+                              seguro_carga_vigente=None, seguro_carga_vencimiento=None):
     """Agrega (o reactiva) un chofer al roster de un courier. Si el RUT ya
     existe (UNIQUE KEY uq_driver_rut), actualiza sus datos y lo reactiva en
     vez de fallar — así el mismo chofer puede aparecer en el roster aunque
@@ -36047,25 +36123,43 @@ def _tr_courier_chofer_upsert(courier_id, nombre, rut, telefono=None, patente=No
     peso_max_kg/volumen_max_m3 (2026-07-27, Daniel: "comparativa con el
     camión, para restringir el manifiesto según su límite de peso/
     volumen"): capacidad del camión, guardada en el perfil del chofer
-    (patente = 1 camión fijo, confirmado con él) — None/0 = sin límite."""
+    (patente = 1 camión fijo, confirmado con él) — None/0 = sin límite.
+
+    licencia_*/seguro_carga_* (2026-08-06, Daniel: "que tengamos seguro de
+    carga... licencia de conducir con filtro inteligente"). Los documentos
+    (PDF/foto) se suben aparte, ver tr_courier_chofer_documento/tr_courier_
+    chofer_foto — acá solo va la metadata.
+
+    NO hay contrato acá: Daniel aclaró el mismo día (2026-08-06) que "el
+    contrato de prestación de servicio" es entre ILUS y la EMPRESA courier,
+    no con cada chofer — ese vive en transport_courier_contratos (pestaña
+    Contratos de la ficha), no se duplica por chofer."""
     rut_norm = normalizar_rut(rut) if rut else rut
     existente = mysql_fetchone(
         "SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
     if existente:
         mysql_execute(
             "UPDATE transport_drivers SET nombre=%s, courier_id=%s, telefono=%s, "
-            "patente=%s, peso_max_kg=%s, volumen_max_m3=%s, activo=1 WHERE id=%s",
+            "patente=%s, peso_max_kg=%s, volumen_max_m3=%s, activo=1, "
+            "licencia_clase=%s, licencia_vencimiento=%s, "
+            "seguro_carga_vigente=%s, seguro_carga_vencimiento=%s WHERE id=%s",
             (nombre, courier_id, telefono or None, patente or None,
-             peso_max_kg or None, volumen_max_m3 or None, existente["id"])
+             peso_max_kg or None, volumen_max_m3 or None,
+             licencia_clase or None, licencia_vencimiento or None,
+             1 if seguro_carga_vigente else 0, seguro_carga_vencimiento or None,
+             existente["id"])
         )
         return existente["id"]
     pin_auto = secrets.token_hex(4)  # nunca se expone; este roster no hace login
     mysql_execute(
         "INSERT INTO transport_drivers (nombre, rut, pin_hash, courier_id, telefono, patente, "
-        "peso_max_kg, volumen_max_m3, created_by) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        "peso_max_kg, volumen_max_m3, licencia_clase, licencia_vencimiento, "
+        "seguro_carga_vigente, seguro_carga_vencimiento, created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (nombre, rut_norm, generate_password_hash(pin_auto), courier_id,
          telefono or None, patente or None, peso_max_kg or None, volumen_max_m3 or None,
+         licencia_clase or None, licencia_vencimiento or None,
+         1 if seguro_carga_vigente else 0, seguro_carga_vencimiento or None,
          current_username() or "roster-courier")
     )
     row = mysql_fetchone("SELECT id FROM transport_drivers WHERE rut=%s", (rut_norm,))
@@ -36107,13 +36201,193 @@ def tr_courier_choferes_crear(cid):
         vol_max = None
     if not nombre or not rut:
         return jsonify({"ok": False, "error": "Nombre y RUT son obligatorios"}), 400
+    # Campos nuevos 2026-08-06 (opcionales): licencia, seguro de carga.
+    # NO hay contrato acá -- ver nota en _tr_courier_chofer_upsert: el
+    # contrato de prestación de servicio es del courier, no del chofer.
+    licencia_clase = (f.get("licencia_clase") or "").strip().upper() or None
+    licencia_venc  = (f.get("licencia_vencimiento") or "").strip() or None
+    seguro_vigente = bool(f.get("seguro_carga_vigente"))
+    seguro_venc    = (f.get("seguro_carga_vencimiento") or "").strip() or None
+    # licencia_clase es VARCHAR(10) -- alcanza para 1-2 clases combinadas
+    # (ej. "B,A4" = 5 caracteres) pero no para 3+ (ej. "A1,A2,A3,A4" = 11).
+    # Se valida acá en vez de dejar que MySQL trunque en silencio o reviente
+    # con "Data too long".
+    if licencia_clase and len(licencia_clase) > 10:
+        return jsonify({"ok": False,
+                         "error": "Demasiadas clases de licencia combinadas "
+                                  "(máx. 10 caracteres, ej. 'B,A4'). Elige menos clases."}), 400
     try:
-        chofer_id = _tr_courier_chofer_upsert(cid, nombre, rut, tel, patente, peso_max, vol_max)
+        chofer_id = _tr_courier_chofer_upsert(
+            cid, nombre, rut, tel, patente, peso_max, vol_max,
+            licencia_clase, licencia_venc, seguro_vigente, seguro_venc,
+        )
     except Exception as e:
         print(f"[tr_courier_choferes_crear] cid={cid}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo agregar el chofer."}), 500
     _tr_log("courier", cid, "chofer agregado al roster", f"nombre={nombre} rut={rut}")
     return jsonify({"ok": True, "id": chofer_id})
+
+
+@app.route("/transporte/couriers/<int:cid>/choferes/<int:chofer_id>", methods=["PUT"])
+@_tr_required
+def tr_courier_chofer_editar(cid, chofer_id):
+    """Edita el perfil completo de un chofer del roster (2026-08-06): datos
+    de contacto/camión + licencia/seguro de carga. Los documentos (archivo,
+    foto) se suben aparte por tr_courier_chofer_documento/tr_courier_chofer_
+    foto — acá solo metadata. Actualiza solo los campos presentes en el body
+    (parcial).
+
+    NO hay contrato de chofer acá (Daniel, 2026-08-06): el contrato de
+    prestación de servicio es del courier, vive en transport_courier_
+    contratos (pestaña Contratos de la ficha) -- no se duplica por chofer."""
+    existente = mysql_fetchone(
+        "SELECT id FROM transport_drivers WHERE id=%s AND courier_id=%s", (chofer_id, cid))
+    if not existente:
+        return jsonify({"ok": False, "error": "Chofer no encontrado en este courier"}), 404
+    f = request.get_json(silent=True) or {}
+
+    columnas = {
+        "nombre":    (f.get("nombre") or "").strip() or None,
+        "telefono":  (f.get("telefono") or "").strip() or None,
+        "patente":   (f.get("patente") or "").strip() or None,
+        "licencia_clase": (f.get("licencia_clase") or "").strip().upper() or None,
+        "licencia_vencimiento":     (f.get("licencia_vencimiento") or "").strip() or None,
+        "seguro_carga_vigente":     1 if f.get("seguro_carga_vigente") else 0,
+        "seguro_carga_vencimiento": (f.get("seguro_carga_vencimiento") or "").strip() or None,
+    }
+    if f.get("rut"):
+        columnas["rut"] = normalizar_rut(f["rut"])
+    try:
+        if f.get("peso_max_kg") not in (None, ""):
+            columnas["peso_max_kg"] = float(f["peso_max_kg"])
+        elif "peso_max_kg" in f:
+            columnas["peso_max_kg"] = None
+    except (TypeError, ValueError):
+        pass
+    try:
+        if f.get("volumen_max_m3") not in (None, ""):
+            columnas["volumen_max_m3"] = float(f["volumen_max_m3"])
+        elif "volumen_max_m3" in f:
+            columnas["volumen_max_m3"] = None
+    except (TypeError, ValueError):
+        pass
+
+    if not columnas.get("nombre"):
+        return jsonify({"ok": False, "error": "El nombre es obligatorio"}), 400
+    if columnas.get("licencia_clase") and len(columnas["licencia_clase"]) > 10:
+        return jsonify({"ok": False,
+                         "error": "Demasiadas clases de licencia combinadas "
+                                  "(máx. 10 caracteres, ej. 'B,A4'). Elige menos clases."}), 400
+
+    sets = ", ".join(f"{c}=%s" for c in columnas)
+    params = list(columnas.values()) + [chofer_id, cid]
+    try:
+        mysql_execute(
+            f"UPDATE transport_drivers SET {sets} WHERE id=%s AND courier_id=%s",
+            tuple(params)
+        )
+    except Exception as e:
+        if "Duplicate" in str(e):
+            return jsonify({"ok": False, "error": "Ya existe otro chofer con ese RUT"}), 409
+        print(f"[tr_courier_chofer_editar] cid={cid} chofer_id={chofer_id}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el chofer."}), 500
+    _tr_log("courier", cid, "chofer editado", f"chofer_id={chofer_id}")
+    return jsonify({"ok": True})
+
+
+# Mapea el "tipo" de documento que sube el operador a la columna real —
+# así el frontend manda un string corto (licencia/seguro) sin tener que
+# conocer los nombres de columna de la tabla. NO incluye "contrato": el
+# contrato de prestación de servicio es del courier (transport_courier_
+# contratos, pestaña Contratos), no un documento por chofer -- aclarado por
+# Daniel el mismo 2026-08-06, después de la primera versión de este archivo.
+_TR_CHOFER_DOC_COLUMNAS = {
+    "licencia": "licencia_doc_url",
+    "seguro":   "seguro_carga_doc_url",
+}
+_TR_CHOFER_DOC_EXT = {"pdf", "png", "jpg", "jpeg", "webp"}
+
+
+@app.route("/transporte/couriers/<int:cid>/choferes/<int:chofer_id>/documento", methods=["POST"])
+@_tr_required
+def tr_courier_chofer_documento(cid, chofer_id):
+    """Sube el documento (PDF o foto) de licencia o seguro de carga de un
+    chofer. Mismo patrón que el logo del courier (_cloud_upload_raw →
+    Google Cloud Storage; JAMÁS Cloudinary, ver Regla #13/2026-08-05).
+    Form-data: tipo=licencia|seguro, archivo=<file>."""
+    existente = mysql_fetchone(
+        "SELECT id FROM transport_drivers WHERE id=%s AND courier_id=%s", (chofer_id, cid))
+    if not existente:
+        return jsonify({"ok": False, "error": "Chofer no encontrado en este courier"}), 404
+    tipo = (request.form.get("tipo") or "").strip().lower()
+    columna = _TR_CHOFER_DOC_COLUMNAS.get(tipo)
+    if not columna:
+        return jsonify({"ok": False, "error": "Tipo de documento inválido"}), 400
+    file = request.files.get("archivo") or request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "No se recibió ningún archivo."}), 400
+    ext = (file.filename.rsplit(".", 1)[-1] or "").lower() if "." in file.filename else ""
+    if ext not in _TR_CHOFER_DOC_EXT:
+        return jsonify({"ok": False, "error": "Formato no permitido. Usa PDF, JPG, PNG o WEBP."}), 400
+    if not _gcs_ready():
+        return jsonify({"ok": False, "error": _STORAGE_OFF_MSG}), 503
+    try:
+        ts = int(datetime.now().timestamp())
+        res = _cloud_upload_raw(file, public_id=f"chofer{chofer_id}_{tipo}_{ts}",
+                                 folder="ilus/choferes")
+        url = res["url"]
+    except Exception as e:
+        print(f"[tr_courier_chofer_documento] chofer_id={chofer_id} tipo={tipo}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir el archivo. Intenta de nuevo."}), 500
+    try:
+        mysql_execute(
+            f"UPDATE transport_drivers SET {columna}=%s WHERE id=%s AND courier_id=%s",
+            (url, chofer_id, cid)
+        )
+    except Exception as e:
+        print(f"[tr_courier_chofer_documento] guardando url: {e}", flush=True)
+        return jsonify({"ok": False, "error": "El archivo se subió pero no se pudo guardar."}), 500
+    _tr_log("courier", cid, f"documento de chofer subido ({tipo})", f"chofer_id={chofer_id}")
+    return jsonify({"ok": True, "url": url, "campo": columna})
+
+
+@app.route("/transporte/couriers/<int:cid>/choferes/<int:chofer_id>/foto", methods=["POST"])
+@_tr_required
+def tr_courier_chofer_foto(cid, chofer_id):
+    """Sube la foto de perfil de un chofer (2026-08-06, pedido explícito de
+    Daniel: "una fotito" además de la licencia). Mismo patrón EXACTO que el
+    logo del courier (tr_courier_logo_archivo, más arriba): _cloud_upload
+    (imagen, se redimensiona antes de subir) → Google Cloud Storage, JAMÁS
+    Cloudinary. Se sube con pegar (Ctrl+V) / arrastrar / elegir archivo
+    desde el modal de edición del chofer -- mismos tres caminos que el logo.
+    Form-data: foto=<file> (o file=<file>)."""
+    existente = mysql_fetchone(
+        "SELECT id FROM transport_drivers WHERE id=%s AND courier_id=%s", (chofer_id, cid))
+    if not existente:
+        return jsonify({"ok": False, "error": "Chofer no encontrado en este courier"}), 404
+    file = request.files.get("foto") or request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "No se recibió ninguna imagen."}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"ok": False, "error": "Formato no permitido. Usa JPG, PNG o WEBP."}), 400
+    if not _gcs_ready():
+        return jsonify({"ok": False, "error": _STORAGE_OFF_MSG}), 503
+    try:
+        ts = int(datetime.now().timestamp())
+        url = _cloud_upload(file, public_id=f"chofer{chofer_id}_foto_{ts}", folder="ilus/choferes")
+    except Exception as e:
+        print(f"[tr_courier_chofer_foto] chofer_id={chofer_id}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir la foto. Intenta de nuevo."}), 500
+    try:
+        mysql_execute(
+            "UPDATE transport_drivers SET foto_url=%s WHERE id=%s AND courier_id=%s",
+            (url, chofer_id, cid)
+        )
+    except Exception as e:
+        print(f"[tr_courier_chofer_foto] guardando url: {e}", flush=True)
+        return jsonify({"ok": False, "error": "La foto se subió pero no se pudo guardar."}), 500
+    _tr_log("courier", cid, "foto de chofer subida", f"chofer_id={chofer_id}")
+    return jsonify({"ok": True, "url": url})
 
 
 @app.route("/transporte/couriers/<int:cid>/choferes/<int:chofer_id>", methods=["DELETE"])
@@ -39831,9 +40105,53 @@ def tr_courier_ficha(cid):
         "SELECT DISTINCT zona FROM transport_courier_comunas WHERE courier_id=%s AND zona!='' ORDER BY zona", (cid,)
     ) or []
 
+    # Choferes internos del courier (2026-08-06): antes solo activo=1 -- ahora
+    # se listan TODOS (activos e inactivos) porque la ficha necesita poder
+    # reactivar a un chofer desactivado (acción heredada del viejo menú admin
+    # "Choferes" que Daniel pidió sacar del sidebar). El selector de "chofer
+    # guardado" en captura de retiro (tr_courier_choferes_listar, GET
+    # /choferes) sigue filtrando activo=1 -- NO se tocó, sigue igual.
+    # NO trae contrato_doc_url/contrato_vencimiento -- Daniel aclaró
+    # (2026-08-06) que "el contrato de prestación de servicio" es del
+    # courier (transport_courier_contratos, variable `contratos` de acá
+    # abajo), no de cada chofer.
     choferes = mysql_fetchall(
-        "SELECT id, nombre, rut, telefono, patente, peso_max_kg, volumen_max_m3 "
-        "FROM transport_drivers WHERE courier_id=%s AND activo=1 ORDER BY nombre", (cid,)
+        "SELECT id, nombre, rut, telefono, patente, peso_max_kg, volumen_max_m3, activo, "
+        "       licencia_clase, licencia_vencimiento, licencia_doc_url, "
+        "       seguro_carga_vigente, seguro_carga_vencimiento, seguro_carga_doc_url, "
+        "       foto_url "
+        "FROM transport_drivers WHERE courier_id=%s ORDER BY activo DESC, nombre", (cid,)
+    ) or []
+    # Vencimientos → estado visual (ámbar "por vencer" / rojo "vencido", Regla
+    # #2) + copia JSON-safe para prefill del modal de edición (fechas en ISO
+    # para <input type=date> -- ese input nativo siempre se muestra en el
+    # locale del navegador del usuario, la Regla #6 no aplica a su atributo
+    # value crudo, solo a fechas mostradas como texto).
+    choferes_json = []
+    for ch in choferes:
+        ch["estado_licencia"] = _tr_estado_vencimiento(ch.get("licencia_vencimiento"))
+        ch["estado_seguro"] = _tr_estado_vencimiento(ch.get("seguro_carga_vencimiento"))
+        ch["licencia_apta_camion_pequeno"] = _tr_licencia_apta_camion_pequeno(ch.get("licencia_clase"))
+        choferes_json.append({
+            "id": ch["id"], "nombre": ch["nombre"] or "",
+            "rut": rut_fmt_filter(ch["rut"]) if ch.get("rut") else "",
+            "telefono": ch["telefono"] or "", "patente": ch["patente"] or "",
+            "peso_max_kg": float(ch["peso_max_kg"]) if ch.get("peso_max_kg") else None,
+            "volumen_max_m3": float(ch["volumen_max_m3"]) if ch.get("volumen_max_m3") else None,
+            "activo": bool(ch["activo"]),
+            "licencia_clase": ch.get("licencia_clase") or "",
+            "licencia_vencimiento": ch["licencia_vencimiento"].isoformat() if ch.get("licencia_vencimiento") else "",
+            "licencia_doc_url": ch.get("licencia_doc_url") or "",
+            "seguro_carga_vigente": bool(ch.get("seguro_carga_vigente")),
+            "seguro_carga_vencimiento": ch["seguro_carga_vencimiento"].isoformat() if ch.get("seguro_carga_vencimiento") else "",
+            "seguro_carga_doc_url": ch.get("seguro_carga_doc_url") or "",
+            "foto_url": ch.get("foto_url") or "",
+        })
+
+    # Couriers activos para la acción "Cambiar de transporte" (heredada del
+    # viejo menú admin) -- reusa tr_choferes_set_courier, que no cambió.
+    couriers_todos = mysql_fetchall(
+        "SELECT id, nombre FROM transport_couriers WHERE activo=1 ORDER BY nombre"
     ) or []
 
     return render_template("transporte/courier_ficha.html",
@@ -39843,6 +40161,10 @@ def tr_courier_ficha(cid):
         regions=[r['region'] for r in regions],
         zonas=[z['zona'] for z in zonas],
         choferes=choferes,
+        choferes_json=choferes_json,
+        couriers_todos=couriers_todos,
+        licencia_clases_chile=LICENCIA_CLASES_CHILE,
+        licencia_camion_pequeno=sorted(LICENCIA_CAMION_PEQUENO),
     )
 
 
@@ -85225,6 +85547,37 @@ def _ensure_transport_drivers_table():
         if "volumen_max_m3" not in existing:
             mysql_execute("ALTER TABLE transport_drivers ADD COLUMN volumen_max_m3 DECIMAL(10,3) NULL "
                           "COMMENT 'Capacidad máxima de carga del camión, en m³ (0/NULL = sin límite)'")
+        # FIX 2026-08-06 (Daniel: "necesito que tengamos seguro de carga,
+        # contrato, licencia de conducir con filtro inteligente... camiones
+        # que posee y su capacidad", + "una fotito" del chofer más tarde el
+        # mismo día): gestión potente de choferes internos dentro de la
+        # ficha del courier, reemplaza el menú "Choferes" del sidebar.
+        # Clases reales de licencia chilena en LICENCIA_CLASES_CHILE (más
+        # arriba en este archivo) — Ley de Tránsito N°18.290.
+        #
+        # OJO -- NO hay contrato_doc_url/contrato_vencimiento acá (versión
+        # anterior de este mismo día SÍ los tenía): Daniel aclaró que "el
+        # contrato de prestación de servicio" es entre ILUS y la EMPRESA
+        # courier, no con cada chofer -- ese contrato YA vive en
+        # transport_courier_contratos (pestaña Contratos de la ficha,
+        # construida por otro agente esa misma noche). Duplicarlo por
+        # chofer habría sido un concepto de negocio inventado.
+        _cols_licencia = {
+            "licencia_clase": "VARCHAR(10) NULL "
+                "COMMENT 'Clase(s) de licencia chilena, ej. B o A4 (ver LICENCIA_CLASES_CHILE)'",
+            "licencia_vencimiento": "DATE NULL COMMENT 'Vencimiento de la licencia de conducir'",
+            "licencia_doc_url": "VARCHAR(400) NULL COMMENT 'Foto/escaneo de la licencia (GCS)'",
+            "seguro_carga_vigente": "TINYINT(1) DEFAULT 0 COMMENT 'Seguro de carga vigente'",
+            "seguro_carga_vencimiento": "DATE NULL COMMENT 'Vencimiento del seguro de carga'",
+            "seguro_carga_doc_url": "VARCHAR(400) NULL COMMENT 'Póliza del seguro de carga (GCS)'",
+            "foto_url": "VARCHAR(400) NULL COMMENT 'Foto de perfil del chofer (GCS)'",
+        }
+        for _col, _ddl in _cols_licencia.items():
+            if _col not in existing:
+                try:
+                    mysql_execute(f"ALTER TABLE transport_drivers ADD COLUMN {_col} {_ddl}")
+                except Exception as _col_err:
+                    print(f"[ILUS][WARN] transport_drivers.{_col}: {_col_err}", flush=True)
     except Exception:
         pass
     # Config de PRUEBA DE ENTREGA por transporte (estilo DispatchTrack):

@@ -439,58 +439,260 @@ async function calcularPrecio() {
 }
 
 /* ════════════════════════
-   CHOFERES (roster del courier, 2026-07-26)
-   Usado para autocompletar la captura de retiro de bodega. Encadena
-   ilusPrompt (nombre → RUT → teléfono opcional → patente opcional) porque
-   son solo 4 campos cortos — no amerita un modal Bootstrap completo.
+   CHOFERES (roster del courier — 2026-08-06)
+   Gestión completa dentro de la ficha del courier (reemplaza el menú admin
+   "Choferes" del sidebar, pedido explícito de Daniel): foto, licencia con
+   clase + filtro inteligente, seguro de carga, además de lo que ya había
+   (contacto + capacidad del camión, usado por la captura de retiro).
+   Las 3 acciones del viejo menú admin (asignar courier / resetear PIN /
+   activar-desactivar) reusan LOS MISMOS endpoints de siempre
+   (/transporte/choferes/<id>/courier|pin|toggle) — no se duplicó lógica.
+
+   NO hay contrato de chofer acá: Daniel aclaró (mismo día) que "el
+   contrato de prestación de servicio" es del courier (empresa), no de cada
+   chofer -- vive en la pestaña Contratos de la ficha, enlazada con un
+   banner arriba de esta tabla en vez de duplicarse por chofer.
 ════════════════════════ */
-async function agregarChoferCourier() {
-  const nombre = await ilusPrompt({
-    title: 'Agregar chofer', message: 'Nombre completo del chofer:',
-    placeholder: 'Ej: Juan Pérez Soto', required: true,
-  });
-  if (!nombre) return;
-  const rut = await ilusPrompt({
-    title: 'Agregar chofer', message: 'RUT del chofer:',
-    placeholder: 'Ej: 12.345.678-9', required: true,
-  });
-  if (!rut) return;
-  const telefono = await ilusPrompt({
-    title: 'Agregar chofer', message: 'Teléfono (opcional):',
-    placeholder: 'Ej: +56 9 1234 5678', required: false,
-  });
-  const patente = await ilusPrompt({
-    title: 'Agregar chofer', message: 'Patente (opcional):',
-    placeholder: 'Ej: ABCD12', required: false,
-  });
-  // FIX 2026-07-27 (Daniel: "comparativa con el camión, para restringir el
-  // manifiesto según su límite de peso/volumen"): capacidad del camión,
-  // guardada en el perfil del chofer (patente = 1 camión fijo).
-  const pesoMax = await ilusPrompt({
-    title: 'Agregar chofer', message: 'Capacidad máxima de carga del camión, en KG (opcional):',
-    placeholder: 'Ej: 2000', required: false, inputType: 'number',
-    sub: 'Déjalo en blanco si no quieres restringir por peso.',
-  });
-  const volMax = await ilusPrompt({
-    title: 'Agregar chofer', message: 'Capacidad máxima de carga del camión, en M³ (opcional):',
-    placeholder: 'Ej: 12', required: false, inputType: 'number',
-    sub: 'Déjalo en blanco si no quieres restringir por volumen.',
-  });
+const CH_CLASES = (window.CFICHA && CFICHA.licenciaClases) || {};
+const CH_CAMION_PEQUENO = new Set((window.CFICHA && CFICHA.licenciaCamionPequeno) || []);
+let _chModal = null;
+let _chSelected = new Set();   // clases de licencia elegidas en el modal
+
+function _chFindPorId(id) {
+  return (CFICHA.choferes || []).find(c => String(c.id) === String(id));
+}
+
+function chRenderClasesPicker() {
+  const wrap = document.getElementById('ch_clases_picker');
+  wrap.innerHTML = Object.keys(CH_CLASES).map(clase => {
+    const activo = _chSelected.has(clase);
+    const chico = CH_CAMION_PEQUENO.has(clase);
+    return `<button type="button" class="btn btn-sm ${activo ? 'btn-danger' : (chico ? 'btn-outline-success' : 'btn-outline-secondary')}"
+              style="min-height:44px" title="${esc(CH_CLASES[clase])}"
+              onclick="chToggleClase('${clase}')">${clase}</button>`;
+  }).join('');
+}
+
+function chToggleClase(clase) {
+  if (_chSelected.has(clase)) _chSelected.delete(clase); else _chSelected.add(clase);
+  chRenderClasesPicker();
+}
+
+// Zona de subida de un documento: antes de guardar el chofer no hay id para
+// nombrar el archivo en GCS (mismo límite que el logo del courier), así que
+// se deshabilita con una nota hasta que exista el registro.
+function _chDocZonaHtml(tipo, urlActual) {
+  const id = document.getElementById('ch_id').value;
+  if (!id) {
+    return '<div class="small text-muted fst-italic">Se habilita al guardar</div>';
+  }
+  const verLink = urlActual
+    ? `<a href="${esc(urlActual)}" target="_blank" rel="noopener" class="small d-block mb-1"><i class="bi bi-eye me-1"></i>Ver actual</a>`
+    : '';
+  return `${verLink}<input type="file" class="form-control form-control-sm bg-dark text-light border-secondary"
+            accept=".pdf,.jpg,.jpeg,.png,.webp" onchange="subirDocumentoChofer('${tipo}', this)">`;
+}
+
+// Foto de perfil (2026-08-06, pedido de Daniel: "una fotito" del chofer).
+// Mismo patrón EXACTO que el logo del courier: pegar (Ctrl+V) / arrastrar /
+// elegir archivo, subida a GCS vía _cloud_upload (nunca Cloudinary). Igual
+// que los documentos, hace falta un id ya guardado para nombrar el archivo.
+function _chFotoZonaHtml(fotoUrl) {
+  const id = document.getElementById('ch_id').value;
+  if (!id) {
+    return '<div class="ch-foto-zone ch-foto-disabled"><i class="bi bi-person-fill"></i></div>'
+         + '<div class="small text-muted fst-italic mt-1">Se habilita al guardar</div>';
+  }
+  const contenido = fotoUrl
+    ? `<img class="ch-foto-img" src="${esc(fotoUrl)}" alt="">`
+    : '<i class="bi bi-person-fill"></i>';
+  return `<div class="ch-foto-zone" tabindex="0" title="Arrastra, pega (Ctrl+V) o haz click para elegir"
+            ondragover="event.preventDefault()" ondrop="chFotoDrop(event)" onpaste="chFotoPaste(event)"
+            onclick="document.getElementById('ch_foto_input').click()">${contenido}</div>
+          <input type="file" id="ch_foto_input" accept="image/*" style="display:none" onchange="chFotoInputChange(this)">`;
+}
+
+function chFotoDrop(e) {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) _chSubirFoto(f);
+}
+
+function chFotoPaste(e) {
+  const items = ((e.clipboardData || window.clipboardData) || {}).items || [];
+  for (const it of items) {
+    if (it.type && it.type.indexOf('image') > -1) {
+      const f = it.getAsFile();
+      if (f) { _chSubirFoto(f); break; }
+    }
+  }
+}
+
+function chFotoInputChange(inputEl) {
+  const f = inputEl.files[0];
+  if (f) _chSubirFoto(f);
+}
+
+async function _chSubirFoto(file) {
+  const id = document.getElementById('ch_id').value;
+  if (!id) return;
+  if (!file.type || file.type.indexOf('image') === -1) {
+    ilusToast('Ese archivo no es una imagen.', { type: 'warning' });
+    return;
+  }
+  const fd = new FormData();
+  fd.append('foto', file);
   try {
-    const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes`, {
-      method: 'POST',
+    const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes/${id}/foto`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast('✓ Foto actualizada', { type: 'success' });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'No se pudo subir la foto', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    ilusToast('Error de conexión subiendo la foto', { type: 'error' });
+  }
+}
+
+function abrirModalChofer(id) {
+  if (!_chModal) _chModal = new bootstrap.Modal(document.getElementById('modalChofer'));
+  const ch = id ? _chFindPorId(id) : null;
+
+  document.getElementById('ch_id').value = ch ? ch.id : '';
+  document.getElementById('choferModalTitulo').innerHTML = ch
+    ? '<i class="bi bi-person-badge-fill me-2 text-danger"></i>Editar chofer'
+    : '<i class="bi bi-person-badge-fill me-2 text-danger"></i>Nuevo chofer';
+  document.getElementById('ch_nombre').value = ch ? ch.nombre : '';
+  document.getElementById('ch_rut').value = ch ? ch.rut : '';
+  document.getElementById('ch_telefono').value = ch ? ch.telefono : '';
+  document.getElementById('ch_patente').value = ch ? ch.patente : '';
+  document.getElementById('ch_peso_max').value = ch && ch.peso_max_kg ? ch.peso_max_kg : '';
+  document.getElementById('ch_vol_max').value = ch && ch.volumen_max_m3 ? ch.volumen_max_m3 : '';
+  document.getElementById('ch_licencia_venc').value = ch ? ch.licencia_vencimiento : '';
+  document.getElementById('ch_seguro_vigente').checked = !!(ch && ch.seguro_carga_vigente);
+  document.getElementById('ch_seguro_venc').value = ch ? ch.seguro_carga_vencimiento : '';
+
+  _chSelected = new Set(ch && ch.licencia_clase
+    ? ch.licencia_clase.split(/[,/\s]+/).filter(c => CH_CLASES[c]) : []);
+  chRenderClasesPicker();
+
+  document.getElementById('ch_foto_wrap').innerHTML = _chFotoZonaHtml(ch && ch.foto_url);
+  document.getElementById('ch_licencia_doc_wrap').innerHTML = _chDocZonaHtml('licencia', ch && ch.licencia_doc_url);
+  document.getElementById('ch_seguro_doc_wrap').innerHTML = _chDocZonaHtml('seguro', ch && ch.seguro_carga_doc_url);
+  document.getElementById('chDocsHint').style.display = ch ? 'none' : '';
+
+  _chModal.show();
+}
+
+async function guardarChofer() {
+  const id = document.getElementById('ch_id').value;
+  const nombre = document.getElementById('ch_nombre').value.trim();
+  const rut = document.getElementById('ch_rut').value.trim();
+  if (!nombre || !rut) {
+    ilusToast('Nombre y RUT son obligatorios', { type: 'warning' });
+    return;
+  }
+  // licencia_clase es VARCHAR(10) en BD -- alcanza para 1-2 clases (ej.
+  // "B,A4" = 5 caracteres) pero no para 3+. Se avisa acá para no esperar
+  // el viaje al servidor (que igual valida lo mismo).
+  const claseStr = Array.from(_chSelected).join(',');
+  if (claseStr.length > 10) {
+    ilusToast('Demasiadas clases de licencia combinadas (máx. 10 caracteres, ej. "B,A4"). Elige menos clases.', { type: 'warning' });
+    return;
+  }
+  const payload = {
+    nombre, rut,
+    telefono: document.getElementById('ch_telefono').value.trim(),
+    patente: document.getElementById('ch_patente').value.trim(),
+    peso_max_kg: document.getElementById('ch_peso_max').value,
+    volumen_max_m3: document.getElementById('ch_vol_max').value,
+    licencia_clase: claseStr,
+    licencia_vencimiento: document.getElementById('ch_licencia_venc').value,
+    seguro_carga_vigente: document.getElementById('ch_seguro_vigente').checked,
+    seguro_carga_vencimiento: document.getElementById('ch_seguro_venc').value,
+  };
+  const btn = document.getElementById('chGuardarBtn');
+  btn.disabled = true;
+  try {
+    const url = id ? `/transporte/couriers/${COURIER_ID}/choferes/${id}` : `/transporte/couriers/${COURIER_ID}/choferes`;
+    const r = await fetch(url, {
+      method: id ? 'PUT' : 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        nombre, rut, telefono: telefono || '', patente: patente || '',
-        peso_max_kg: pesoMax || '', volumen_max_m3: volMax || '',
-      }),
+      body: JSON.stringify(payload),
     });
     const d = await r.json();
     if (d.ok) {
-      ilusToast('✓ Chofer agregado', { type: 'success' });
+      ilusToast(id ? '✓ Chofer actualizado' : '✓ Chofer agregado', { type: 'success' });
+      if (!id) {
+        ilusToast('Ahora puedes editarlo para subir licencia, póliza y contrato', { type: 'info' });
+      }
       location.reload();
     } else {
-      await ilusAlert({ title: 'No se pudo agregar', message: d.error || 'Error desconocido', type: 'error' });
+      await ilusAlert({ title: 'No se pudo guardar', message: d.error || 'Error desconocido', type: 'error' });
+      btn.disabled = false;
+    }
+  } catch (e) {
+    ilusToast('Error de conexión', { type: 'error' });
+    btn.disabled = false;
+  }
+}
+
+async function subirDocumentoChofer(tipo, inputEl) {
+  const id = document.getElementById('ch_id').value;
+  const file = inputEl.files[0];
+  if (!id || !file) return;
+  const fd = new FormData();
+  fd.append('tipo', tipo);
+  fd.append('archivo', file);
+  try {
+    const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes/${id}/documento`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast('✓ Documento subido', { type: 'success' });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'No se pudo subir', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    ilusToast('Error de conexión subiendo el documento', { type: 'error' });
+  }
+}
+
+// ── Acciones heredadas del viejo menú admin "Choferes" ──
+// Mismos endpoints de siempre (/transporte/choferes/<id>/...), solo cambia
+// DESDE DÓNDE se disparan: antes una tabla aparte, ahora el menú "..." de
+// cada fila en la ficha del courier.
+async function resetearPinChofer(id, nombre) {
+  const pin = await ilusPrompt({
+    title: 'Resetear PIN', message: 'Nuevo PIN para ' + nombre + ' (4 a 8 dígitos)',
+    placeholder: '1234', required: true,
+  });
+  if (!pin) return;
+  try {
+    const r = await fetch(`/transporte/choferes/${id}/pin`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ pin }),
+    });
+    const d = await r.json();
+    if (d.ok) ilusToast('✓ PIN actualizado', { type: 'success' });
+    else await ilusAlert({ title: 'No se pudo actualizar', message: d.error || 'Error desconocido', type: 'error' });
+  } catch (e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+async function cambiarCourierChofer(id, courierId) {
+  try {
+    const r = await fetch(`/transporte/choferes/${id}/courier`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ courier_id: courierId }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast('✓ Chofer movido de transporte', { type: 'success' });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'No se pudo mover', message: d.error || 'Error desconocido', type: 'error' });
     }
   } catch (e) {
     ilusToast('Error de conexión', { type: 'error' });
@@ -499,25 +701,63 @@ async function agregarChoferCourier() {
 
 async function eliminarChoferCourier(choferId) {
   const ok = await ilusConfirm({
-    title: 'Quitar chofer',
-    message: '¿Quitar este chofer del roster del courier?',
-    sub: 'No se borra su historial de retiros, solo deja de aparecer como sugerencia.',
-    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+    title: 'Desactivar chofer',
+    message: '¿Desactivar este chofer del roster del courier?',
+    sub: 'No se borra su historial de retiros ni sus documentos — deja de aparecer como sugerencia en captura de retiro y se puede reactivar cuando quieras.',
+    okLabel: 'Desactivar', cancelLabel: 'Cancelar', danger: true,
   });
   if (!ok) return;
   try {
     const r = await fetch(`/transporte/couriers/${COURIER_ID}/choferes/${choferId}`, { method: 'DELETE' });
     const d = await r.json();
     if (d.ok) {
-      const row = document.getElementById('chofer-row-' + choferId);
-      if (row) row.remove();
-      ilusToast('✓ Chofer quitado', { type: 'success' });
+      ilusToast('✓ Chofer desactivado', { type: 'success' });
+      location.reload();
     } else {
-      await ilusAlert({ title: 'No se pudo quitar', message: d.error || 'Error desconocido', type: 'error' });
+      await ilusAlert({ title: 'No se pudo desactivar', message: d.error || 'Error desconocido', type: 'error' });
     }
   } catch (e) {
     ilusToast('Error de conexión', { type: 'error' });
   }
+}
+
+async function reactivarChoferCourier(choferId) {
+  try {
+    const r = await fetch(`/transporte/choferes/${choferId}/toggle`, { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      ilusToast('✓ Chofer reactivado', { type: 'success' });
+      location.reload();
+    } else {
+      await ilusAlert({ title: 'No se pudo reactivar', message: d.error || 'Error desconocido', type: 'error' });
+    }
+  } catch (e) {
+    ilusToast('Error de conexión', { type: 'error' });
+  }
+}
+
+// ── Filtro inteligente por clase de licencia ──
+// "Camión pequeño" es el atajo a B/A4 (Daniel, 2026-08-05: "clase A o B
+// para camiones pequeños"); las demás clases se filtran una por una.
+function chFiltrarClase(filtro, btnEl) {
+  document.querySelectorAll('#chFiltroClases .cr-filtro-chip').forEach(b => b.classList.remove('active'));
+  btnEl.classList.add('active');
+  document.getElementById('tablaChoferesBody').dataset.filtro = filtro;
+  chAplicarFiltro();
+}
+
+function chAplicarFiltro() {
+  const filtro = document.getElementById('tablaChoferesBody').dataset.filtro || 'ALL';
+  const mostrarInactivos = document.getElementById('chMostrarInactivos').checked;
+  document.querySelectorAll('#tablaChoferesBody tr[data-clases]').forEach(tr => {
+    const clases = (tr.dataset.clases || '').split(',').filter(Boolean);
+    const activo = tr.dataset.activo === '1';
+    const pasaClase = filtro === 'ALL' ? true
+      : filtro === 'CAMION_PEQUENO' ? clases.some(c => CH_CAMION_PEQUENO.has(c))
+      : clases.includes(filtro);
+    const pasaActivo = activo || mostrarInactivos;
+    tr.style.display = (pasaClase && pasaActivo) ? '' : 'none';
+  });
 }
 
 /* ════════════════════════
