@@ -731,10 +731,20 @@ a.kv:active{ background:#fafafa; }
    [logo / nombre / rubro / redes / copy]. Se pasa al MISMO stack
    vertical centrado que retiros/public_tracking.html, mismo texto,
    para que ambas páginas se sientan literalmente el mismo footer. */
-.ft-brand{ margin-top:.9rem; text-align:center; }
+/* FOOTER NEGRO (2026-08-05, Daniel: viendo el footer claro en su celular —
+   "el footer, el que no me gustó mucho, tiene que ser negro, pero algo así
+   me gusta"). El resto de la página es clara a propósito (--paper, un
+   tablero tipo papel bajo el header oscuro) pero la firma de marca del pie
+   se pinta como el header: negro con acento rojo, para que abra y cierre la
+   página con la misma nota — es lo último que ve el cliente antes de salir. */
+.ft-brand{
+  margin-top:.9rem; text-align:center;
+  background:var(--ink); color:#fff;
+  padding:.9rem 1rem 1.1rem; border-radius:14px;
+}
 .ft-brand-line{
-  height:1px; background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent);
-  margin-bottom:.8rem;
+  height:2px; background:linear-gradient(90deg,transparent,var(--red) 18%,var(--red) 82%,transparent);
+  margin:-0.9rem -1rem .8rem;   /* la franja roja queda pegada al borde superior de la banda negra */
 }
 /* .ft-brand-logo quedó sin uso: se sacó el logo suelto del footer
    (Daniel 2026-08-05). Se conserva la regla vacía fuera para no dejar
@@ -742,20 +752,20 @@ a.kv:active{ background:#fafafa; }
 .ft-sign{ display:flex; align-items:center; justify-content:center;
           gap:.5rem; flex-wrap:wrap; }
 .ft-sign > i{ color:var(--red); font-size:.9rem; }
-.ft-sep{ color:var(--line); font-weight:400; }
+.ft-sep{ color:rgba(255,255,255,.28); font-weight:400; }
 .ft-brand-name{
   display:inline; font-family:var(--display); font-weight:800;
   font-size:1.05rem; letter-spacing:.03em; text-transform:none;
-  color:var(--ink);
+  color:#fff;
 }
 .ft-brand-tag{
   display:inline; margin-top:0; font-size:.78rem;
-  color:var(--gray); font-weight:600;
+  color:var(--gray-2); font-weight:600;
 }
 .ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:.6rem; }
 .ft-social a{
   width:44px; height:44px; border-radius:50%; display:grid; place-items:center;   /* REGLA #3: 44px táctil */
-  background:#f4f4f6; border:1px solid var(--line); color:var(--ink);
+  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:#fff;
   font-size:1.02rem; text-decoration:none; transition:transform .15s ease, background .18s ease, color .18s ease;
 }
 .ft-social a:active{ transform:scale(.92); }
