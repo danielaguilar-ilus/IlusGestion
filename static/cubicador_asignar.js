@@ -1232,6 +1232,9 @@ function _logoFor(c){
   return `<b style="color:#374151;font-size:.82rem">${escHtml(_courierDisplay(c.courier_nombre)||'—')}</b>`;
 }
 
+// ════════════════════════════════════════════════════════════
+//  SHIPIT — EL OPERADOR LO ELIGE LOGÍSTICA, NO EL PRECIO
+// ════════════════════════════════════════════════════════════
 // 2026-08-04 (Shipit): Shipit es UNA sola ficha de courier en la lista (no
 // una por Chilexpress/Starken/etc. — Daniel: "como un solo courier, no
 // mezclado... por dentro"), pero cada operador que devolvió la API se
@@ -1246,22 +1249,395 @@ function _logoFor(c){
 // alineados en columnas (nombre / plazo / precio) y el más barato
 // destacado. El "vía Shipit" va una sola vez en el encabezado en lugar de
 // repetirse en cada fila: se entiende igual y no compite con el dato.
+//
+// 2026-08-05 (b) — LA FRANJA AHORA ES SELECCIONABLE. Hasta hoy el backend
+// tomaba `disponibles[0]` (el más barato) y no había forma de cambiarlo.
+// Daniel, textual: "siento que me está obligando a escoger Global Tracking,
+// solamente porque es más barato". El más barato NO siempre es el correcto:
+// hay operadores más caros que llegan antes, cubren una comuna difícil o
+// tratan mejor la carga frágil. Esa decisión es de logística.
+// El más barato sigue PRESELECCIONADO (default razonable), pero se puede
+// cambiar, y lo elegido es lo que viaja al manifiesto.
+
+// Tope operativo de Shipit — espejo de shipit_client.MAX_BULTOS /
+// MAX_PESO_KG. La REGLA la aplica el backend (verificar_restricciones), acá
+// solo se EXPLICA en pantalla para que el bloqueo no aparezca de la nada.
+const SHIPIT_MAX_BULTOS  = 1;
+const SHIPIT_MAX_PESO_KG = 15;
+
+// Operador de Shipit elegido a mano. null = "el más barato" (default).
+// Vive FUERA de _cotizaciones A PROPÓSITO: esos objetos se guardan tal cual
+// dentro de _cotCache, y mutarlos dejaría la elección pegada a una
+// cotización cacheada — un cache hit posterior (misma comuna/peso) serviría
+// el precio del operador equivocado. Acá el precio efectivo se DERIVA en
+// cada render, nunca se escribe sobre la cotización.
+let _shipitOpSel       = null;   // clave normalizada del operador elegido
+let _shipitOpSelNombre = '';     // nombre legible, para los avisos
+
+function _esShipit(c){
+  if(!c) return false;
+  return c.fuente === 'api_shipit'
+      || /shipit/i.test(c.courier_nombre || '')
+      || Array.isArray(c.operadores_shipit);
+}
+function _shipitOpKey(op){
+  return String((op && (op.operador || op.operador_display)) || '')
+    .trim().toLowerCase();
+}
+// Orden estable: precio ascendente, desempate por nombre. Se usa TANTO para
+// pintar como para resolver el click (el click manda el índice de esta misma
+// lista, así no hay que meter texto del API dentro de un atributo onclick).
+function _shipitOpsOrdenados(c){
+  const ops = Array.isArray(c && c.operadores_shipit) ? c.operadores_shipit : [];
+  return ops.slice().sort((a, b) => {
+    const pa = Number(a && a.precio) || 0, pb = Number(b && b.precio) || 0;
+    if(pa !== pb) return pa - pb;
+    return _shipitOpKey(a).localeCompare(_shipitOpKey(b));
+  });
+}
+function _shipitOpMasBarato(c){
+  const ops = _shipitOpsOrdenados(c);
+  return ops.find(op => op.es_mas_barato) || ops[0] || null;
+}
+// El operador que HOY manda para esta cotización: el elegido a mano si sigue
+// disponible, si no el más barato.
+function _shipitOpActivo(c){
+  const ops = _shipitOpsOrdenados(c);
+  if(!ops.length) return null;
+  if(_shipitOpSel){
+    const hit = ops.find(op => _shipitOpKey(op) === _shipitOpSel);
+    if(hit) return hit;
+  }
+  return _shipitOpMasBarato(c);
+}
+// Precio base de una cotización YA considerando el operador elegido.
+// Para todo lo que no es Shipit devuelve c.precio, igual que siempre.
+function _precioEfectivo(c){
+  if(_esShipit(c)){
+    const op = _shipitOpActivo(c);
+    if(op && op.precio != null) return op.precio;
+  }
+  return c ? c.precio : null;
+}
+
 function _shipitDesgloseHtml(c){
-  const ops = c.operadores_shipit;
-  if(!Array.isArray(ops) || !ops.length) return '';
-  return `<div class="courier-ops" onclick="event.stopPropagation()">
+  const ops = _shipitOpsOrdenados(c);
+  if(!ops.length) return '';
+  const barato   = _shipitOpMasBarato(c);
+  const activo   = _shipitOpActivo(c);
+  const keyAct   = activo ? _shipitOpKey(activo) : '';
+  const pBarato  = barato ? (Number(barato.precio) || 0) : 0;
+  const cid      = parseInt(c.courier_id, 10) || 0;
+
+  const filas = ops.map((op, i) => {
+    const esSel    = (_shipitOpKey(op) === keyAct);
+    const esBarato = (barato && _shipitOpKey(op) === _shipitOpKey(barato));
+    const delta    = pBarato ? (Number(op.precio) || 0) - pBarato : 0;
+    // Plazo: si la API no lo informa se DICE que no lo informa, en vez de
+    // dejar el hueco en blanco — el plazo es justo uno de los motivos por
+    // los que Daniel elegiría un operador más caro.
+    const eta = op.dias
+      ? escHtml(op.dias + (op.dias === 1 ? ' día hábil' : ' días hábiles'))
+      : '<span class="op-eta-nd">plazo no informado</span>';
+    const chips = [];
+    if(esBarato) chips.push('<span class="op-chip op-chip-best">Más barato</span>');
+    if(delta > 0) chips.push(`<span class="op-chip op-chip-delta">+${escHtml(fClp(delta))}</span>`);
+    // Restricciones/nota por operador: hoy la API de Shipit no las manda,
+    // pero si mañana llegan (op.restricciones / op.nota) se pintan solas.
+    const restr = Array.isArray(op.restricciones) ? op.restricciones.filter(Boolean) : [];
+    if(op.nota) restr.push(String(op.nota));
+    const restrHtml = restr.length
+      ? `<div class="op-restr"><i class="bi bi-exclamation-triangle-fill"></i> ${escHtml(restr.join(' · '))}</div>`
+      : '';
+    const servicio = (op.servicio && String(op.servicio).trim()
+                      && String(op.servicio).trim().toLowerCase() !== String(op.operador || '').trim().toLowerCase())
+      ? `<span class="op-svc">${escHtml(op.servicio)}</span>` : '';
+    return `
+      <button type="button" role="radio" aria-checked="${esSel ? 'true' : 'false'}"
+              class="courier-ops-row${esSel ? ' is-sel' : ''}${esBarato ? ' is-best' : ''}"
+              onclick="event.stopPropagation();setShipitOperador(${cid},${i})"
+              title="${escHtml((op.operador_display || op.operador || '') + (op.servicio ? ' — ' + op.servicio : ''))}">
+        <span class="op-pick" aria-hidden="true"></span>
+        <span class="op-main">
+          <span class="op-name">${escHtml(op.operador || '—')}${servicio}</span>
+          ${restrHtml}
+        </span>
+        <span class="op-eta">${eta}</span>
+        <span class="op-price">${fClp(op.precio)}${chips.length ? `<span class="op-chips">${chips.join('')}</span>` : ''}</span>
+      </button>`;
+  }).join('');
+
+  // Encabezado: deja explícito que estos operadores SON de Shipit — pedido
+  // textual de Daniel ("que se entienda que ese Starken pertenece a Shipit").
+  return `<div class="courier-ops" onclick="event.stopPropagation()" role="radiogroup"
+               aria-label="Operador de Shipit">
     <div class="courier-ops-head">
       <i class="bi bi-diagram-3-fill"></i>
-      ${ops.length} ${ops.length === 1 ? 'operador' : 'operadores'} vía Shipit
+      Elige el operador · ${ops.length === 1 ? 'la única opción' : `las ${ops.length} son`} de Shipit
     </div>
-    ${ops.map(op => `
-      <div class="courier-ops-row${op.es_mas_barato ? ' is-best' : ''}"
-           title="${escHtml((op.operador_display || op.operador || '') + (op.servicio ? ' — ' + op.servicio : ''))}">
-        <span class="op-name">${escHtml(op.operador || '—')}</span>
-        <span class="op-eta">${op.dias ? escHtml(op.dias + (op.dias === 1 ? ' día' : ' días')) : ''}</span>
-        <span class="op-price">${fClp(op.precio)}</span>
-      </div>`).join('')}
+    <div class="courier-ops-note">
+      Shipit contrata al operador y ILUS le paga a <b>Shipit</b>, no al operador.
+      Viene marcado el más barato: cámbialo si te conviene otro plazo o cobertura.
+    </div>
+    ${filas}
+    <div class="courier-ops-foot">
+      <i class="bi bi-info-circle"></i>
+      Shipit acepta como máximo ${SHIPIT_MAX_BULTOS} bulto y ${SHIPIT_MAX_PESO_KG} kg por envío.
+    </div>
   </div>`;
+}
+
+// Elegir un operador = elegir Shipit. Si vuelve a marcar el más barato, se
+// limpia la elección manual (así el default "sigue al más barato en cada
+// recotización" se recupera solo, sin un botón extra de "quitar").
+function setShipitOperador(courierId, idx){
+  const c = (_cotizaciones || []).find(x => x && x.courier_id === courierId);
+  if(!c) return;
+  const ops = _shipitOpsOrdenados(c);
+  const op  = ops[idx];
+  if(!op) return;
+  const barato = _shipitOpMasBarato(c);
+  if(barato && _shipitOpKey(op) === _shipitOpKey(barato)){
+    _shipitOpSel = null; _shipitOpSelNombre = '';
+  } else {
+    _shipitOpSel = _shipitOpKey(op);
+    _shipitOpSelNombre = op.operador || '';
+  }
+  setCourier(c);   // re-renderiza y deja el precio elegido en _courierSel
+}
+
+// ════════════════════════════════════════════════════════════
+//  SHIPIT — CALLE Y NÚMERO POR SEPARADO
+// ════════════════════════════════════════════════════════════
+// Shipit exige `street` y `number` como campos SEPARADOS y obligatorios;
+// ILUS guarda la dirección como UN texto libre. Quien separa es
+// shipit_client.split_street_number() (Python, 17 tests): NO se reimplementa
+// acá. El front la CONSULTA por HTTP y muestra el resultado.
+//
+// Por qué importa tanto: "Los Aromos 145 depto 402" sin coma se resolvía como
+// número 402. Eso genera una guía VÁLIDA hacia la dirección EQUIVOCADA y nadie
+// se entera hasta que el cliente reclama. Por eso el separador BLOQUEA en vez
+// de adivinar, y por eso este bloque le pide a una persona que complete.
+
+let _shipitDirEstado   = null;   // {direccion, calle, numero, problemas[], bloqueada}
+let _shipitDirManual   = null;   // {direccion, calle, numero} corregido a mano
+const _shipitDirCache  = new Map();
+// null = todavía no se sabe · true = responde · false = no existe en este
+// deploy (backend sin el endpoint todavía) → se deja de preguntar y la
+// pantalla sigue funcionando exactamente como antes.
+let _shipitDirEndpointVivo = null;
+let _sdResolver = null;          // resolve() del modal en curso
+
+function _shipitDirTexto(){
+  return (document.getElementById('cli-dir')?.value || '').trim();
+}
+function _hayShipitConCobertura(){
+  return (_cotizaciones || []).some(c => _esShipit(c) && c.tiene_cobertura);
+}
+
+// Consulta el separador en el backend. NUNCA lanza y NUNCA bloquea por su
+// cuenta: si el endpoint no está (deploy anterior), devuelve null y todo el
+// flujo sigue igual que hoy.
+async function _shipitAnalizarDireccion(direccion){
+  const dir = (direccion || '').trim();
+  if(!dir || _shipitDirEndpointVivo === false) return null;
+  if(_shipitDirCache.has(dir)) return _shipitDirCache.get(dir);
+  try{
+    const r = await fetch('/transporte/api/shipit/direccion', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ direccion: dir }),
+    });
+    if(r.status === 404 || r.status === 405){
+      _shipitDirEndpointVivo = false;      // backend sin el endpoint: no insistir
+      return null;
+    }
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if(!r.ok || ct.indexOf('application/json') === -1) return null;
+    const d = await r.json();
+    if(!d || d.ok !== true) return null;
+    _shipitDirEndpointVivo = true;
+    const res = {
+      direccion: dir,
+      calle:     d.calle || '',
+      numero:    d.numero || '',
+      problemas: Array.isArray(d.problemas) ? d.problemas.filter(Boolean) : [],
+      // bloqueada = no se puede armar el par calle+número con confianza.
+      bloqueada: (d.bloqueada !== undefined)
+        ? !!d.bloqueada
+        : !(d.calle && d.numero),
+    };
+    _shipitDirCache.set(dir, res);
+    if(_shipitDirCache.size > 40) _shipitDirCache.delete(_shipitDirCache.keys().next().value);
+    return res;
+  } catch(e){
+    console.warn('[shipit-direccion]', e);
+    return null;                            // degradación silenciosa
+  }
+}
+
+// Corre después de cotizar, sin bloquear el render de precios. Cuando llega
+// la respuesta, repinta solo si el estado cambió (evita bucles de render).
+async function _shipitRevisarDireccionEnFondo(){
+  if(!_hayShipitConCobertura()){
+    if(_shipitDirEstado){ _shipitDirEstado = null; renderCouriers(); }
+    return;
+  }
+  const dir = _shipitDirTexto();
+  if(!dir){
+    if(_shipitDirEstado){ _shipitDirEstado = null; renderCouriers(); }
+    return;
+  }
+  const res = await _shipitAnalizarDireccion(dir);
+  const antes = _shipitDirEstado ? JSON.stringify(_shipitDirEstado) : '';
+  _shipitDirEstado = res;
+  if((res ? JSON.stringify(res) : '') !== antes) renderCouriers();
+}
+
+// Chip en la tarjeta de Shipit: adelanta el problema en el momento de
+// cotizar, para que no aparezca recién al apretar "Enviar al manifiesto".
+function _shipitDirChipHtml(){
+  const dir = _shipitDirTexto();
+  if(_shipitDirManual && _shipitDirManual.direccion === dir
+     && _shipitDirManual.calle && _shipitDirManual.numero){
+    return `<span title="${escHtml('Se enviará a Shipit: calle "' + _shipitDirManual.calle + '", número "' + _shipitDirManual.numero + '"')}"
+        style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:50px;
+               font-size:.6rem;font-weight:700;margin-left:4px;cursor:help;
+               white-space:nowrap;display:inline-block">
+        <i class="bi bi-check-circle-fill"></i> Dirección completada</span>`;
+  }
+  const est = _shipitDirEstado;
+  if(!est || est.direccion !== dir) return '';
+  if(est.bloqueada){
+    return `<span title="${escHtml(est.problemas.join(' | ') || 'No se pudo separar calle y número.')}"
+        style="background:#fee2e2;color:#7f1d1d;padding:1px 6px;border-radius:50px;
+               font-size:.6rem;font-weight:800;margin-left:4px;cursor:help;
+               white-space:nowrap;display:inline-block">
+        ⚠ Falta el número de la calle</span>`;
+  }
+  if(est.problemas.length){
+    return `<span title="${escHtml(est.problemas.join(' | '))}"
+        style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;
+               font-size:.6rem;font-weight:700;margin-left:4px;cursor:help;
+               white-space:nowrap;display:inline-block">
+        ⚠ Revisar el número (${escHtml(est.numero || '—')})</span>`;
+  }
+  return '';
+}
+
+// Puerta antes de asignar. Devuelve true si se puede seguir.
+async function _shipitAsegurarCalleNumero(){
+  const dir = _shipitDirTexto();
+  if(!dir) return true;                     // la dirección vacía ya la corta validarParaManifiesto
+  if(_shipitDirManual && _shipitDirManual.direccion === dir
+     && _shipitDirManual.calle && _shipitDirManual.numero) return true;
+
+  const res = await _shipitAnalizarDireccion(dir);
+  _shipitDirEstado = res;
+  if(!res) return true;                     // endpoint ausente → no bloquear
+  if(!res.bloqueada && !res.problemas.length){
+    // Se separó limpio: se guarda igual para que viaje al backend.
+    _shipitDirManual = { direccion: dir, calle: res.calle, numero: res.numero };
+    return true;
+  }
+  return await _abrirModalShipitDir(dir, res);
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────
+function _abrirModalShipitDir(direccion, res){
+  const modal = document.getElementById('modalShipitDir');
+  if(!modal){
+    // El template no tiene el modal (deploy desalineado): mejor avisar y
+    // dejar seguir que trabar el despacho por una pieza de UI faltante.
+    if(window.ilusToast){
+      ilusToast('Shipit necesita calle y número por separado — revisa la dirección antes de despachar.',
+                { type: 'warning', duration: 8000 });
+    }
+    return Promise.resolve(true);
+  }
+  const bloqueada = !!res.bloqueada;
+  document.getElementById('sdTitulo').textContent = bloqueada
+    ? 'Shipit no puede leer el número de esta dirección'
+    : 'Confirma el número de la calle para Shipit';
+  document.getElementById('sdDireccionOriginal').textContent = direccion;
+
+  // Motivo ESPECÍFICO: los mensajes vienen de split_street_number(), que ya
+  // explica cuál regla se incumplió (s/n, sin número, kilometraje, número sin
+  // calle, sobrante después del número). Nada de "dirección inválida".
+  const motivos = (res.problemas && res.problemas.length)
+    ? res.problemas
+    : ['No se pudo separar la calle del número con seguridad.'];
+  document.getElementById('sdMotivo').innerHTML = `
+    <div style="font-weight:800;display:flex;align-items:center;gap:6px">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      ${bloqueada ? 'Por qué está bloqueada' : 'Qué conviene revisar'}
+    </div>
+    <ul>${motivos.map(m => `<li>${escHtml(m)}</li>`).join('')}</ul>
+    <div style="margin-top:6px;font-size:.74rem">
+      Shipit exige la calle y el número en campos distintos. Si se manda un
+      número equivocado, la guía sale válida pero el paquete llega a otra
+      dirección — por eso se pide completarlo a mano.
+    </div>`;
+
+  document.getElementById('sdCalle').value  = res.calle || '';
+  document.getElementById('sdNumero').value = res.numero || '';
+  document.getElementById('sdAlert').style.display = 'none';
+  _sdActualizarPreview();
+  modal.style.display = 'flex';
+  setTimeout(() => {
+    const foco = (res.numero ? document.getElementById('sdNumero') : document.getElementById('sdCalle'));
+    if(foco){ foco.focus(); foco.select(); }
+  }, 120);
+
+  return new Promise(resolve => { _sdResolver = resolve; });
+}
+
+function _sdActualizarPreview(){
+  const calle  = (document.getElementById('sdCalle')?.value  || '').trim();
+  const numero = (document.getElementById('sdNumero')?.value || '').trim();
+  const box = document.getElementById('sdPreview');
+  if(!box) return;
+  box.innerHTML = (calle && numero)
+    ? `<i class="bi bi-truck me-1"></i>Shipit recibirá <code>calle: ${escHtml(calle)}</code>
+       <code>número: ${escHtml(numero)}</code>`
+    : '<i class="bi bi-pencil me-1"></i>Completa los dos campos para ver qué se le enviará a Shipit.';
+}
+
+function cerrarModalShipitDir(){
+  const modal = document.getElementById('modalShipitDir');
+  if(modal) modal.style.display = 'none';
+  const r = _sdResolver; _sdResolver = null;
+  if(r) r(false);                            // cancelar = no asignar
+}
+
+function confirmarModalShipitDir(){
+  const calle  = (document.getElementById('sdCalle')?.value  || '').trim();
+  const numero = (document.getElementById('sdNumero')?.value || '').trim();
+  const alertBox = document.getElementById('sdAlert');
+  const falta = [];
+  if(!calle)  falta.push('el nombre de la calle');
+  if(!numero) falta.push('el número');
+  if(falta.length){
+    alertBox.textContent = 'Falta ' + falta.join(' y ') + '. Shipit exige los dos campos.';
+    alertBox.style.display = '';
+    (calle ? document.getElementById('sdNumero') : document.getElementById('sdCalle'))?.focus();
+    return;
+  }
+  if(!/\d/.test(numero)){
+    alertBox.textContent = `"${numero}" no tiene ningún dígito. El número de la calle debe ser numérico (ej. 9770 o 145-B).`;
+    alertBox.style.display = '';
+    document.getElementById('sdNumero')?.focus();
+    return;
+  }
+  _shipitDirManual = { direccion: _shipitDirTexto(), calle, numero };
+  const modal = document.getElementById('modalShipitDir');
+  if(modal) modal.style.display = 'none';
+  const r = _sdResolver; _sdResolver = null;
+  if(window.ilusToast){
+    ilusToast(`Dirección lista para Shipit: ${calle} ${numero}`, { type: 'success' });
+  }
+  renderCouriers();                          // refresca el chip de la tarjeta
+  if(r) r(true);
 }
 
 function actualizarTarifas(){
@@ -1311,6 +1687,13 @@ async function _actualizarCotizacionesReal(){
   if(cached && (Date.now() - cached.ts) < _cotCacheTTL){
     _cotizaciones  = cached.cot;
     _recomendadoId = cached.rec;
+    // La elección de operador NO entra en la clave de cache A PROPÓSITO: la
+    // clave describe el ENVÍO (peso/comuna/bultos/valor), que es lo que
+    // determina la respuesta del API — meter la elección adentro multiplicaría
+    // entradas idénticas. Lo que sí hay que hacer es revalidar la elección
+    // contra la cotización que se acaba de servir, porque puede venir de otra
+    // combinación anterior y traer otra lista de operadores.
+    _resincronizarSeleccionCourier();
     renderCouriers();
     return;
   }
@@ -1350,7 +1733,76 @@ async function _actualizarCotizacionesReal(){
     _recomendadoId = null;
     if(window.ilusToast) ilusToast('Error al cotizar: '+e.message, {type:'error'});
   }
+  _resincronizarSeleccionCourier();
   renderCouriers();
+  // La revisión de la dirección para Shipit corre APARTE (no bloquea el
+  // render de precios) y vuelve a pintar sola cuando tiene el resultado.
+  _shipitRevisarDireccionEnFondo();
+}
+
+// ── Revalidar lo elegido contra la cotización recién llegada ──────────────
+// Se llama en CADA refresco de cotizaciones (fresco o desde cache). Cubre
+// tres agujeros reales:
+//   1. El operador de Shipit elegido puede no venir en la nueva cotización
+//      (cambió la comuna/el peso y ese operador ya no cubre). Antes quedaba
+//      elegido "de mentira" y se despachaba con otro.
+//   2. El courier elegido puede quedarse SIN cobertura tras recotizar.
+//      _courierSel seguía apuntando ahí y validarParaManifiesto lo dejaba
+//      pasar — se asignaba un courier que no tenía tarifa.
+//   3. El precio guardado en _courierSel quedaba CONGELADO del click
+//      anterior: al cambiar la comuna, el manifiesto recibía como
+//      costo_cotizado el precio viejo. Acá se re-sincroniza.
+function _resincronizarSeleccionCourier(){
+  const lista = _cotizaciones || [];
+
+  // 1) Operador de Shipit
+  if(_shipitOpSel){
+    const cSh = lista.find(_esShipit);
+    const sigue = !!(cSh && cSh.tiene_cobertura
+      && _shipitOpsOrdenados(cSh).some(op => _shipitOpKey(op) === _shipitOpSel));
+    if(!sigue){
+      const nombreViejo = _shipitOpSelNombre || _shipitOpSel;
+      _shipitOpSel = null; _shipitOpSelNombre = '';
+      const reemplazo = (cSh && cSh.tiene_cobertura) ? _shipitOpMasBarato(cSh) : null;
+      if(window.ilusToast){
+        ilusToast(
+          reemplazo
+            ? `${nombreViejo} ya no está disponible en Shipit para este envío. Quedó ${reemplazo.operador || 'el más barato'} (${fClp(reemplazo.precio)}) — cámbialo si necesitas otro.`
+            : `${nombreViejo} ya no está disponible: Shipit no puede cotizar este envío. Elige otro courier.`,
+          { type: 'warning', duration: 8000 }
+        );
+      }
+    }
+  }
+
+  // 2) y 3) Courier elegido
+  if(_courierSel && _courierSel.id){
+    const c = lista.find(x => x && x.courier_id === _courierSel.id);
+    if(!c || !c.tiene_cobertura){
+      const nom = _courierSel.nombre || 'El courier elegido';
+      const motivo = (c && c.mensaje) ? c.mensaje : 'ya no tiene tarifa para este envío';
+      _courierSel = null;
+      if(window.ilusToast){
+        ilusToast(`${nom}: ${motivo}. Se quitó la selección — elige otro courier antes de asignar.`,
+                  { type: 'warning', duration: 8000 });
+      }
+    } else {
+      // Re-sincroniza precio/plazo/operador sin re-renderizar (renderCouriers
+      // lo hace el llamador justo después).
+      const opAct = _esShipit(c) ? _shipitOpActivo(c) : null;
+      _courierSel.precio    = _precioEfectivo(c);
+      _courierSel.fuente    = c.fuente;
+      _courierSel.transito  = opAct
+        ? (opAct.dias ? (opAct.dias + (opAct.dias === 1 ? ' día hábil' : ' días hábiles')) : 'plazo no informado')
+        : c.tiempo_transito;
+      _courierSel.servicio  = opAct ? ((opAct.operador || '') + ' vía Shipit') : c.servicio;
+      _courierSel.operador          = opAct ? (opAct.operador || '') : '';
+      _courierSel.operador_servicio = opAct ? (opAct.servicio || '') : '';
+      _courierSel.operador_precio   = opAct ? (opAct.precio ?? null) : null;
+      _courierSel.operador_dias     = opAct ? (opAct.dias ?? null) : null;
+      _courierSel.operador_manual   = !!(opAct && _shipitOpSel);
+    }
+  }
 }
 
 // Cotiza con medidas ingresadas MANUALMENTE por el operador (Daniel
@@ -1512,6 +1964,15 @@ function renderCouriers(opts){
   if(_recomendadoId){
     const rec = conCob.find(c => c.courier_id === _recomendadoId);
     if(rec){
+      // Shipit: el precio y el plazo del recomendado son los del operador
+      // ELEGIDO (si Daniel cambió el operador, el banner tiene que decir lo
+      // mismo que la tarjeta — si no, quedan dos precios distintos en pantalla).
+      const _recOp = _esShipit(rec) ? _shipitOpActivo(rec) : null;
+      const _recPrecio = _precioEfectivo(rec);
+      const _recEtd = _recOp
+        ? (_recOp.dias ? (_recOp.dias + (_recOp.dias === 1 ? ' día hábil' : ' días hábiles')) : 'plazo no informado')
+        : (rec.tiempo_transito || '—');
+      const _recSub = _recOp ? ` · ${_recOp.operador || ''} vía Shipit` : '';
       head += `
         <div style="background:linear-gradient(90deg,#fffbeb 0%,#fff 100%);border:1.5px solid #f59e0b;
                     border-radius:9px;padding:8px 12px;margin-bottom:10px;font-size:.82rem;
@@ -1519,7 +1980,7 @@ function renderCouriers(opts){
           <span style="font-size:1.1rem">🏆</span>
           <div style="flex:1;min-width:0">
             <div style="font-weight:700;color:#92400e">Recomendado: ${escHtml(_courierDisplay(rec.courier_nombre))}</div>
-            <div style="font-size:.7rem;color:#9a6411">${fClp(rec.precio)} · ${escHtml(rec.tiempo_transito||'—')}</div>
+            <div style="font-size:.7rem;color:#9a6411">${fClp(_recPrecio)} · ${escHtml(_recEtd)}${escHtml(_recSub)}</div>
           </div>
         </div>`;
     }
@@ -1531,9 +1992,13 @@ function renderCouriers(opts){
     const sel = (_courierSel && _courierSel.id === c.courier_id);
     const isRec = (c.courier_id === _recomendadoId);
 
+    // Margen: contra el precio EFECTIVO. Si Daniel eligió un operador de
+    // Shipit más caro, el margen tiene que bajar en pantalla — es justo el
+    // dato con el que decide si ese operador se puede pagar.
+    const precioEfec = _precioEfectivo(c);
     let badgeProfit = '';
-    if(zzVal > 0 && c.precio){
-      const diff = zzVal - c.precio;
+    if(zzVal > 0 && precioEfec){
+      const diff = zzVal - precioEfec;
       const color = diff >= 0 ? '#16a34a' : '#dc2626';
       const icon  = diff >= 0 ? '▲' : '▼';
       const txt   = diff >= 0 ? `+${fClp(diff)}` : `${fClp(diff)}`;
@@ -1544,7 +2009,7 @@ function renderCouriers(opts){
     }
 
     const recIcon  = isRec ? ' <span title="Más económico" style="font-size:.75rem">🏆</span>' : '';
-    const profitIcon = (zzVal>0 && c.precio && (zzVal - c.precio) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
+    const profitIcon = (zzVal>0 && precioEfec && (zzVal - precioEfec) > 0) ? ' <span title="Margen positivo">💰</span>' : '';
     // 2026-07-25 (Daniel — confidencial, no revertir sin indicación suya):
     // Felca y Milling tienen una política comercial propia. El backend
     // (app.py) la reporta con fuente='tabla', IGUAL que una tarifa negociada
@@ -1612,14 +2077,50 @@ function renderCouriers(opts){
               <i class="bi bi-check-circle-fill"></i> Apto FedEx auto</span>`
       : '';
 
+    // ── Shipit: qué operador quedó y qué cuesta la decisión ─────────
+    // Si Daniel eligió un operador MÁS CARO que el más barato, se dice
+    // cuánto más cuesta. No es un reproche: es el dato que necesita para
+    // justificar la decisión (y el margen ya se recalculó arriba).
+    const _opAct = _esShipit(c) ? _shipitOpActivo(c) : null;
+    const _opBar = _esShipit(c) ? _shipitOpMasBarato(c) : null;
+    const _opDelta = (_opAct && _opBar) ? (Number(_opAct.precio)||0) - (Number(_opBar.precio)||0) : 0;
+    // white-space:nowrap en los chips: sin esto "⚠ Falta el número de la
+    // calle" se partía a la mitad entre dos líneas y quedaba media píldora
+    // colgando en el borde. Cada chip wrapea COMPLETO o no wrapea.
+    const chipOpSel = _opAct
+      ? `<span title="${escHtml('Operador elegido dentro de Shipit: ' + (_opAct.operador_display || _opAct.operador || ''))}"
+              style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:1px 6px;
+                     border-radius:50px;font-size:.6rem;font-weight:700;margin-left:4px;
+                     white-space:nowrap;display:inline-block">
+          ${escHtml(_opAct.operador || '—')}${_shipitOpSel ? ' · elegido' : ''}</span>`
+      : '';
+    const chipOpDelta = (_opDelta > 0)
+      ? `<span title="${escHtml('El más barato de Shipit es ' + (_opBar.operador||'') + '. Elegiste uno más caro.')}"
+              style="background:#fff8e1;color:#92400e;padding:1px 6px;border-radius:50px;
+                     font-size:.6rem;font-weight:700;margin-left:4px;cursor:help;
+                     white-space:nowrap;display:inline-block">
+          +${escHtml(fClp(_opDelta))} vs. ${escHtml(_opBar.operador||'el más barato')}</span>`
+      : '';
+    // Chip de dirección: Shipit exige calle y número SEPARADOS y la
+    // dirección de ILUS es un texto libre. Ver _shipitDirChipHtml().
+    const chipDir = _esShipit(c) ? _shipitDirChipHtml() : '';
+
+    // Plazo visible: en Shipit es el del operador elegido, no el del más barato.
+    const etdVisible = _opAct
+      ? (_opAct.dias ? (_opAct.dias + (_opAct.dias === 1 ? ' día hábil' : ' días hábiles')) : 'plazo no informado')
+      : (c.tiempo_transito || '—');
+    const svcVisible = _opAct
+      ? ((_opAct.operador || '—') + ' vía Shipit' + (_opAct.servicio ? ' · ' + _opAct.servicio : ''))
+      : (c.servicio || 'Standard');
+
     html += `
     <div class="courier-item${sel?' selected':''}" onclick='setCourier(${JSON.stringify(c).replace(/'/g, "&#39;")})'>
       <div class="courier-radio"></div>
       <div class="courier-logo">${_logoFor(c)}</div>
       <div class="courier-info">
-        <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}${chipFedexLimit}${chipFedexOk}</div>
-        <div class="courier-svc">${escHtml(c.servicio||'Standard')}</div>
-        <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(c.tiempo_transito||'—')} ${fuente} ${btnAudit}</div>
+        <div class="courier-name">${escHtml(_courierDisplay(c.courier_nombre))}${recIcon}${profitIcon}${chipValid}${chipWarn}${chipFedexLimit}${chipFedexOk}${chipOpSel}${chipOpDelta}${chipDir}</div>
+        <div class="courier-svc">${escHtml(svcVisible)}</div>
+        <div class="courier-etd" title="${escHtml(tipTooltip)}">${escHtml(etdVisible)} ${fuente} ${btnAudit}</div>
       </div>
       <div class="courier-pricebox">
         <div class="courier-price" style="${vistaEsCosto?'color:#475569':''}" title="${c.desglose ? 'Costo $'+Math.round(c.desglose.precio_costo).toLocaleString('es-CL')+' + margen '+(c.desglose.margen_pct||0).toFixed(0)+'% + IVA '+(c.desglose.iva_pct||0).toFixed(0)+'%' : 'Precio cliente'}">${fClp(precioVisible)}</div>
@@ -1678,13 +2179,32 @@ function setCourier(c){
     if(found) c = found;
     else return;
   }
+  // 2026-08-05: el objeto `c` puede venir serializado desde el onclick de la
+  // tarjeta (JSON.stringify), así que se re-busca el vivo de _cotizaciones
+  // para que _shipitOpActivo lea la MISMA lista de operadores que se pintó.
+  const vivo = (_cotizaciones || []).find(x => x && x.courier_id === c.courier_id) || c;
+  const opAct = _esShipit(vivo) ? _shipitOpActivo(vivo) : null;
   _courierSel = {
-    id:        c.courier_id,
-    nombre:    c.courier_nombre,
-    precio:    c.precio,
-    transito:  c.tiempo_transito,
-    fuente:    c.fuente,
-    servicio:  c.servicio,
+    id:        vivo.courier_id,
+    nombre:    vivo.courier_nombre,
+    // Precio EFECTIVO: en Shipit es el del operador elegido. Este valor es el
+    // que se manda como costo_cotizado al manifiesto (y de ahí sale el margen),
+    // así que mandar el del más barato cuando se eligió otro falsearía las
+    // finanzas del pedido.
+    precio:    _precioEfectivo(vivo),
+    transito:  opAct
+      ? (opAct.dias ? (opAct.dias + (opAct.dias === 1 ? ' día hábil' : ' días hábiles')) : 'plazo no informado')
+      : vivo.tiempo_transito,
+    fuente:    vivo.fuente,
+    servicio:  opAct ? ((opAct.operador || '') + ' vía Shipit') : vivo.servicio,
+    // Operador dentro del agregador (hoy solo Shipit). '' para el resto de
+    // couriers — el contrato con el backend es el mismo para todos.
+    operador:           opAct ? (opAct.operador || '') : '',
+    operador_servicio:  opAct ? (opAct.servicio || '') : '',
+    operador_precio:    opAct ? (opAct.precio ?? null) : null,
+    operador_dias:      opAct ? (opAct.dias ?? null) : null,
+    // true = lo eligió una persona; false = quedó el default (más barato).
+    operador_manual:    !!(opAct && _shipitOpSel),
   };
   renderCouriers();
 }
@@ -1972,7 +2492,10 @@ function _precioMostrar(c){
   if(_vistaPrecio === 'costo' && c.desglose && c.desglose.precio_costo != null){
     return c.desglose.precio_costo;
   }
-  return c.precio;
+  // Shipit: el precio que se muestra es el del operador ELEGIDO, no el más
+  // barato (ver _precioEfectivo). Shipit no trae desglose costo/venta, así
+  // que la rama de arriba nunca aplica a su tarjeta.
+  return _precioEfectivo(c);
 }
 
 function renderComparadorTop(conCob){
@@ -1987,7 +2510,10 @@ function renderComparadorTop(conCob){
   // - cheapest: el más barato (por precio venta)
   // - validated: el más barato con trace.validado === true
   // - fastest: en futuro podríamos rankear por tiempo, ahora solo "recomendado"
-  const sorted = [...conCob].sort((a,b) => (a.precio||0) - (b.precio||0));
+  // Ordena por el precio EFECTIVO (en Shipit, el del operador elegido) —
+  // si no, el "Más barato" del comparador podría mostrar a Shipit con el
+  // precio del operador que Daniel justamente descartó.
+  const sorted = [...conCob].sort((a,b) => (_precioEfectivo(a)||0) - (_precioEfectivo(b)||0));
   const cheapest  = sorted[0] || null;
   const validated = sorted.find(c => c.trace && c.trace.validado) || null;
   // El "validado distinto al más barato" — si coinciden no lo mostramos 2 veces
@@ -2437,6 +2963,15 @@ async function validarParaManifiesto(){
     });
     return false;
   }
+
+  // Shipit exige calle y número SEPARADOS: se conecta acá el separador
+  // (shipit_client.split_street_number vía backend). Si no se puede separar
+  // con confianza, se pide completarlo a mano ANTES de asignar — mandar un
+  // número adivinado genera una guía válida a la dirección equivocada.
+  if(_esShipit(_courierSel) || /shipit/i.test(_courierSel.nombre || '')){
+    const dirOk = await _shipitAsegurarCalleNumero();
+    if(!dirOk) return false;
+  }
   return true;
 }
 
@@ -2453,7 +2988,16 @@ async function abrirEnvioManifiesto(){
   const courierNom = _courierSel?.nombre || '—';
   const costo      = _courierSel?.precio || 0;
 
-  // Resumen del envío en el modal
+  // Resumen del envío en el modal. Si el courier es un agregador (Shipit),
+  // se nombra también el operador elegido: el manifiesto es de Shipit, pero
+  // quien mueve la carga es Starken/Chilexpress/etc. y eso hay que verlo
+  // antes de confirmar, no descubrirlo después.
+  const opNom = _courierSel?.operador || '';
+  const opLinea = opNom
+    ? `<div><b>Operador:</b> ${escHtml(opNom)} vía ${escHtml(courierNom)}
+         ${_courierSel?.operador_manual ? '<span style="color:#dc2626;font-weight:700">(elegido por ti)</span>'
+                                        : '<span style="color:#6b7280">(el más barato)</span>'}</div>`
+    : '';
   document.getElementById('mfResumen').innerHTML = `
     <div><b>Documento:</b> ${document.getElementById('docTipo').value} N° ${h.nudo || '—'}</div>
     <div><b>Cliente:</b> ${h.cliente_nombre || '—'}</div>
@@ -2461,6 +3005,7 @@ async function abrirEnvioManifiesto(){
     <div><b>Bultos:</b> ${document.getElementById('cli-bultos').value || _docData.totales?.total_bultos || 0}
          &nbsp;·&nbsp;
          <b>Courier:</b> ${courierNom}</div>
+    ${opLinea}
     <div><b>Costo cotizado:</b> ${costo ? '$' + Math.round(costo).toLocaleString('es-CL') : '—'}</div>
   `;
   // Inputs por defecto
@@ -2577,6 +3122,24 @@ async function enviarAManifiesto(){
     tido, nudo,
     courier: courierNom,
     costo_cotizado: costo,
+    // ── Operador dentro del agregador (hoy solo Shipit) ────────────────
+    // El manifiesto sigue siendo de "Shipit" (un manifiesto = un courier),
+    // pero ILUS necesita saber CON QUIÉN se despachó realmente: es lo que
+    // Daniel eligió y lo que hay que reclamar si el envío se atrasa.
+    // `courier_operador_manual` distingue la decisión humana del default.
+    courier_operador:          _courierSel?.operador || '',
+    courier_operador_servicio: _courierSel?.operador_servicio || '',
+    courier_operador_precio:   _courierSel?.operador_precio ?? null,
+    courier_operador_dias:     _courierSel?.operador_dias ?? null,
+    courier_operador_manual:   !!_courierSel?.operador_manual,
+    // ── Calle y número separados (los exige Shipit) ────────────────────
+    // Salen de shipit_client.split_street_number() o de la corrección manual
+    // del modal. Van APARTE: `direccion` sigue siendo el texto completo tal
+    // como el operador lo declaró, no se pisa.
+    shipit_calle:  (_shipitDirManual && _shipitDirManual.direccion === _gv('cli-dir'))
+                     ? _shipitDirManual.calle : '',
+    shipit_numero: (_shipitDirManual && _shipitDirManual.direccion === _gv('cli-dir'))
+                     ? _shipitDirManual.numero : '',
     notas_entrega: _gv('cli-notas'),
     // Cubicaje declarado → se persiste en el commitment (no se pierde aguas abajo)
     peso_real:         _t.peso_kg   || 0,
@@ -2752,6 +3315,13 @@ function _resetCubicadorParaSiguiente(info){
   // 1) Limpiar estado
   _docData = null;
   _courierSel = null;
+  // Shipit: la elección de operador y la corrección de dirección son de ESTA
+  // factura. Arrastrarlas a la siguiente mandaría el próximo pedido con el
+  // operador y la calle del anterior.
+  _shipitOpSel = null;
+  _shipitOpSelNombre = '';
+  _shipitDirEstado = null;
+  _shipitDirManual = null;
   // 2) Ocultar todas las cards de resultado
   ['cardDatos','cardCubaje','cardNotas','cardCouriers','cardAcciones','cardFlujo']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });

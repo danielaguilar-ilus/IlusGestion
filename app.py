@@ -18190,12 +18190,89 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
                   payload_json=payload,
                   commitment_id=cur_item["commitment_id"],
                   notify_cliente=notify_cliente)
+        # ── REDESPACHO AUTOMÁTICO (2026-08-05) ──────────────────────────────
+        # Daniel: "quiero agotar todas las instancias de manera automática...
+        # rápido, automático y trazable". Corre DESPUÉS de que el estado de
+        # falla ya quedó guardado y notificado (arriba) -- esto es lo que
+        # pasa a continuación, no un reemplazo de ese aviso. Nunca bloquea ni
+        # revierte el cambio de estado si algo sale mal acá.
+        if estado_ilus in ('Entrega fallida', 'Problema'):
+            try:
+                _tr_redespacho_automatico(item_id, cur_item["commitment_id"])
+            except Exception as _e_rd:
+                print(f"[redespacho] item={item_id}: {_e_rd}", flush=True)
     return {
         "changed":   changed,
         "anterior":  actual,
         "nuevo":     estado_ilus,
         "comentario": comentario or "",
     }
+
+
+def _tr_redespacho_automatico(item_id, commitment_id):
+    """Decide y ejecuta qué hacer ante una entrega fallida, courier por
+    courier. LA INTELIGENCIA vive en redespacho_automatico.py (módulo puro,
+    22 tests): no todos los couriers pueden reintentarse igual, y tratarlos
+    como si pudieran sería peor que no automatizar nada (ver el docstring de
+    ese módulo). Acá se hace el I/O que el módulo puro no puede hacer: leer
+    cuántos intentos ya hubo, llamar a la API real cuando corresponde, y
+    dejar todo trazable en transport_logs.
+
+    Daniel, 2026-08-05: "quiero agotar todas las instancias de manera
+    automática... rápido, automático y trazable... que me diga que se
+    generó una entrega tal día, de manera inmediata".
+    """
+    import redespacho_automatico as _ra
+    fila = mysql_fetchone(
+        "SELECT mi.id, tm.courier, c.redespacho_intentos "
+        "FROM transport_manifest_items mi "
+        "LEFT JOIN transport_manifests tm ON tm.id = mi.manifest_id "
+        "LEFT JOIN transport_commitments c ON c.id = mi.commitment_id "
+        "WHERE mi.id=%s", (item_id,))
+    if not fila:
+        return
+    courier = (fila.get("courier") or "").strip()
+    intentos = int(fila.get("redespacho_intentos") or 0)
+
+    decision = _ra.evaluar_reintento(
+        courier, intentos,
+        simpliroute_courier_integra_fn=_simpliroute_courier_integra)
+
+    if decision["accion"] == _ra.ACCION_CREAR_VISITA_SIMPLIROUTE:
+        # Se cuenta el INTENTO, no el éxito: si SimpliRoute rechaza la
+        # visita (datos incompletos, sin token), reintentar con los mismos
+        # datos rotos en el próximo fallo tampoco va a funcionar -- contarlo
+        # igual es lo que hace que el tope (MAX_REINTENTOS_AUTOMATICOS) se
+        # respete de verdad y esto no reintente para siempre.
+        try:
+            mysql_execute(
+                "UPDATE transport_commitments SET "
+                "redespacho_intentos=redespacho_intentos+1 WHERE id=%s",
+                (commitment_id,))
+        except Exception as _e_cnt:
+            print(f"[redespacho] no se pudo incrementar el contador "
+                  f"(item={item_id}): {_e_cnt}", flush=True)
+        fecha_str = _ra.proxima_fecha_habil(_now_chile()).strftime("%d/%m/%Y")
+        r = _tr_simpliroute_reenviar_item(
+            item_id, fuente_evento='sistema',
+            comentario_evento=_ra.mensaje_redespacho_cliente(
+                courier_nombre=courier, fecha_estimada_str=fecha_str,
+                accion=decision["accion"]))
+        _tr_log(
+            "manifest_item", item_id,
+            "redespacho automático" if r.get("ok") else "redespacho automático — falló",
+            f"{decision['motivo_operativo']} | resultado: "
+            + (f"visita {r.get('visit_id')}, nuevo intento estimado {fecha_str}"
+               if r.get("ok") else str(r.get("error"))))
+    else:
+        # FedEx / Shipit / Clickex / tope alcanzado / courier desconocido:
+        # NUNCA se inventa un envío nuevo (para FedEx en particular,
+        # duplicaría el envío y el cobro). Queda trazado para que un humano
+        # lo gestione -- el cliente ya recibió el aviso normal de
+        # "Problema"/"Entrega fallida" en el _tr_event de más arriba; esto es
+        # la nota INTERNA de por qué no se automatizó.
+        _tr_log("manifest_item", item_id, "redespacho — requiere gestión manual",
+                decision["motivo_operativo"])
 
 
 # Mapa comunas CL → código postal (expandible)
@@ -20661,7 +20738,33 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
 
     skus_upper = [(l.get("KOPRCT") or "").strip().upper() for l in zz_lines]
     clasificacion = _clasif_from_skus(skus_upper)
-    costo_zz = sum(float(l.get("PPPRNE") or 0) for l in zz_lines)
+
+    # ── VANELI, no PPPRNE ────────────────────────────────────────────────
+    # FIX 2026-08-05. Estos montos se calculaban con PPPRNE, que es el PRECIO
+    # UNITARIO de la línea. Lo que corresponde es VANELI, el VALOR NETO de la
+    # línea: son distintos apenas la cantidad no es 1 o la línea trae
+    # descuento. El propio código ya lo tenía escrito en el sync masivo
+    # ("El costo sale de VANELI (valor neto de la línea) — más exacto que
+    # PPPRNE (precio unitario)"), pero esta función se había quedado con el
+    # campo viejo.
+    #
+    # Además de ser el número correcto, alinea a los dos escritores: el sync
+    # masivo guarda costo_envio con VANELI y esta función guarda zz_envio. Con
+    # fórmulas distintas, el cron horario y la limpieza del histórico se
+    # pisaban mutuamente y el mismo documento oscilaba entre dos montos para
+    # siempre.
+    #
+    # PPPRNE queda de respaldo por si una vía de lectura no devuelve VANELI.
+    def _valor_linea(l):
+        v = l.get("VANELI")
+        if v in (None, ""):
+            v = l.get("PPPRNE")
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    costo_zz = sum(_valor_linea(l) for l in zz_lines)
 
     # ── SOLO EL FLETE ────────────────────────────────────────────────────
     # Daniel, 2026-08-05: "en una factura con envío $30.000 e instalación
@@ -20687,7 +20790,7 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
     # pantalla marcaría "Pérdida total" en despachos de garantía o cortesía.
     _ES_ENVIO = "ZZENVIO"
     zz_envio_solo = sum(
-        float(l.get("PPPRNE") or 0) for l in zz_lines
+        _valor_linea(l) for l in zz_lines
         if (l.get("KOPRCT") or "").strip().upper() == _ES_ENVIO
     )
     tiene_linea_envio = any(s == _ES_ENVIO for s in skus_upper)
@@ -20784,13 +20887,25 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
             # dejan en NULL, no en 0: NULL significa "no se cobró flete" y la
             # vista no le calcula margen. Un 0 se leería como "se cobró cero"
             # y marcaría pérdida total sobre un despacho que nunca tuvo cobro.
-            try:
-                cur.execute(
-                    "UPDATE transport_commitments SET zz_envio=%s WHERE id=%s",
-                    (zz_envio_solo if tiene_linea_envio else None, comm_id)
-                )
-            except Exception:
-                pass  # columna garantizada por _ensure_transporte_columns; no fatal
+            #
+            # GUARDA 2026-08-05: si el documento vino SIN NINGUNA línea, eso no
+            # es "un documento sin flete" — es una LECTURA FALLIDA. Un documento
+            # real del ERP siempre tiene al menos una línea, y
+            # _cubicador_fetch_doc_via_sql se traga los errores de la consulta a
+            # MAEDDO devolviendo el encabezado con lineas_raw vacío: un timeout
+            # pasajero alcanzaba para borrar el cobro. Sin esta guarda, el cron
+            # horario podía dejar en NULL el flete de facturas buenas.
+            if raw_lineas:
+                try:
+                    cur.execute(
+                        "UPDATE transport_commitments SET zz_envio=%s WHERE id=%s",
+                        (zz_envio_solo if tiene_linea_envio else None, comm_id)
+                    )
+                except Exception:
+                    pass  # columna garantizada por _ensure_transporte_columns; no fatal
+            else:
+                print(f"[tr_fetch] {tido}/{nudo_canonico} vino sin líneas — "
+                      f"no se toca zz_envio (lectura sospechosa)", flush=True)
 
             # Daniel 2026-07-27: si el documento no trae línea ZZ, dejar una
             # nota visible en vez de bloquear — puede ser garantía o un
@@ -20807,9 +20922,14 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
                 except Exception:
                     pass  # no fatal — la nota es informativa
 
-            # Líneas ZZ
-            cur.execute("DELETE FROM transport_commitment_lines WHERE commitment_id=%s", (comm_id,))
-            for l in zz_lines:
+            # Líneas ZZ. Misma guarda que zz_envio: si la lectura vino vacía
+            # (falla de la consulta al ERP, no un documento sin líneas), borrar
+            # y no reinsertar dejaría al documento sin la evidencia de sus
+            # servicios — que es justo lo que usan el manifiesto y la limpieza
+            # del histórico para saber si cobra flete.
+            if raw_lineas:
+                cur.execute("DELETE FROM transport_commitment_lines WHERE commitment_id=%s", (comm_id,))
+            for l in (zz_lines if raw_lineas else []):
                 cant  = float(l.get("CAPRCO1") or 0)
                 cantd = float(l.get("CAPRAD1")  or 0)
                 cur.execute("""
@@ -21889,6 +22009,639 @@ def tr_fix_comunas_codigo():
         "muestra":         cambiados[:20],
         "tabcm_size":      len(_TABCM_CACHE.get("by_kopa_koci_kocm") or {}),
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIMPIEZA DEL HISTÓRICO FINANCIERO (2026-08-05)
+#
+# El 2026-08-05 se corrigieron dos errores de plata, pero SOLO hacia adelante.
+# Lo ya escrito en transport_commitments sigue mal, y con esos números se
+# decide con qué courier despachar. Esto es el barrido que arregla lo viejo.
+#
+#   (a) zz_envio guardaba la suma de TODAS las líneas de servicio del
+#       documento (envío + instalación + retiro + servicio técnico), no solo
+#       el flete. El manifiesto lo muestra como "ZZ Envío" y lo usa como el
+#       COBRADO del margen. Caso real de Daniel: factura con envío $30.000 e
+#       instalación $50.000 mostraba "ZZ Envío $80.000". El error NUNCA va en
+#       contra: los servicios suman, así que el despacho siempre se ve MÁS
+#       rentable de lo que es. Arreglado en _tr_fetch_from_erp (zz_envio_solo).
+#
+#   (b) costo_courier tiene valores INVENTADOS: un "auto-sane" del detalle del
+#       manifiesto copiaba costo_zz (lo COBRADO al cliente) como si fuera lo
+#       que cobra el transportista, así el margen daba SIEMPRE $0 y quedaba
+#       GRABADO. Desactivado en el commit 34b94f9; las filas contaminadas
+#       siguen ahí y "Recotizar courier" compara contra ese número falso.
+#
+# REGLA #4.1: el ERP Random es READ-ONLY. Acá solo se ESCRIBE en tablas ILUS
+# (transport_commitments). Cuando hace falta el dato real del ERP se usa
+# _tr_fetch_from_erp, que lee por SELECT y escribe únicamente en MySQL ILUS.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ZZ_SKU_ENVIO = "ZZENVIO"
+
+
+def _tr_cents(v):
+    """Un monto en pesos → entero de centavos, o None.
+
+    Los montos vienen de MySQL como DECIMAL, que pymysql entrega como Decimal.
+    Comparar Decimal con float directamente puede dar falsos negativos por
+    representación binaria; pasar ambos a centavos enteros hace que la
+    comparación "este costo es idéntico a lo cobrado" sea exacta. Es la
+    comparación de la que depende TODA la detección de (b), así que no puede
+    quedar sujeta a redondeo.
+    """
+    if v is None:
+        return None
+    try:
+        return int(round(float(v) * 100))
+    except (TypeError, ValueError):
+        return None
+
+
+def _tr_finanzas_clp(v):
+    """12345 → '$12.345' (formato chileno) para los textos de la vista previa.
+
+    Local a propósito: en app.py hay varios `_clp` pero todos son funciones
+    ANIDADAS dentro de otras (no existen a nivel de módulo), así que llamarlas
+    desde acá sería un NameError en tiempo de ejecución.
+    """
+    try:
+        return "$" + f"{int(round(float(v or 0))):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _tr_skus_zz_de_fila(fila):
+    """SKUs de servicio (ZZ*) de un documento, uniendo las DOS fuentes locales.
+
+    Un mismo documento puede tener sus líneas ZZ registradas en dos lugares
+    distintos según por dónde entró al sistema, y ninguno de los dos es
+    completo por sí solo:
+
+      · `transport_commitments.zz_skus` — lista compacta ("ZZENVIO,ZZRETIRO")
+        que escribe el sync masivo (_tr_bulk_sync_erp_mysql).
+      · `transport_commitment_lines.koprct` — 1 fila por línea ZZ real, que
+        escribe _tr_fetch_from_erp (ficha, cubicador, manifiesto).
+
+    Se unen a propósito: si el documento entró por una sola de las dos vías,
+    la otra está vacía. Clasificar con la fuente equivocada haría creer que un
+    documento "no cobra flete" solo porque esa columna nunca se llenó — y ese
+    error borraría un cobro real.
+
+    NOTA: ninguna de las dos guarda el MONTO de cada línea (transport_
+    commitment_lines no tiene columna de precio). Por eso el desglose de un
+    documento mezclado NO se puede recalcular localmente y hay que volver a
+    leerlo del ERP. Acá solo se decide QUÉ pasa con cada documento.
+    """
+    skus = set()
+    for campo in ("zz_skus", "skus_lineas"):
+        for s in str(fila.get(campo) or "").split(","):
+            s = s.strip().upper()
+            if s.startswith("ZZ"):
+                skus.add(s)
+    return skus
+
+
+def _tr_clasificar_fila_financiera(fila):
+    """Decide qué corregir en UNA fila de transport_commitments. FUNCIÓN PURA.
+
+    No toca la base ni el ERP: recibe un dict con lo que ya se leyó y devuelve
+    la decisión. Está separada del endpoint justamente para poder probarla con
+    datos falsos (es plata: tiene que estar cubierta por tests).
+
+    DE DÓNDE SALE EL MONTO CORRECTO DEL FLETE
+    -----------------------------------------
+    De `transport_commitments.costo_envio`, que YA existe y ya lo tiene bien.
+    Esa columna se creó el 2026-06-13 para exactamente esto —su comentario en
+    la migración dice "Monto del envío: VANELI de la línea ZZENVIO"— y la
+    llena el sync masivo sumando en el ERP solo las líneas ZZENVIO. O sea que
+    el desglose que falta en zz_envio ya está guardado al lado, y la mayor
+    parte de la corrección NO necesita volver al ERP: se arregla comparando
+    dos columnas de la misma fila.
+
+    Cómo se sabe si `costo_envio` es confiable para un documento: `zz_skus` lo
+    escribe ÚNICAMENTE el sync masivo, en la misma pasada que `costo_envio`.
+    Si `zz_skus` tiene datos, el masivo pasó por ese documento y `costo_envio`
+    vale. Si está vacío, el documento solo lo tocó el sync individual (que no
+    escribe ninguna de las dos) y ahí sí hay que releer del ERP.
+
+    Acciones posibles para zz_envio (lo COBRADO por el flete):
+      · "sin_cambio"      — ya está bien, no se toca.
+      · "corregir_local"  — el monto correcto está en costo_envio y difiere del
+                            guardado. Se copia. Sin ERP, y converge: a la
+                            segunda corrida ya son iguales.
+      · "anular"          — el documento NO tiene línea de envío, así que lo
+                            que figura como ZZ Envío es en realidad otro
+                            servicio. Se deja en NULL (= "no cobra flete"),
+                            NUNCA en 0: un 0 se lee como "se cobró cero" y
+                            pinta pérdida total sobre un despacho de garantía.
+      · "resincronizar"   — hay que releer el monto del ERP porque el sync
+                            masivo nunca pasó por este documento y no hay dato
+                            local que sirva. Es el único caso que consulta el
+                            ERP, y se marca al hacerlo (finanzas_revisado_at)
+                            para que la próxima corrida no lo repita.
+      · "sin_clasificar"  — no hay ninguna línea ZZ registrada; sin saber si
+                            cobra flete no se toca nada.
+
+    Acciones posibles para costo_courier (lo que SPHS le PAGA al courier):
+      · "sin_cambio"  — no hay costo registrado, o parece cotizado de verdad.
+      · "limpiar"     — costo idéntico a lo cobrado Y idéntico al ZZ Envío: es
+                        la firma exacta del auto-sane que inventaba el margen
+                        (daba $0 / 0,0% siempre). Se deja en NULL.
+      · "dudoso"      — costo idéntico a costo_zz pero SIN la confirmación de
+                        zz_envio. Se REPORTA y no se limpia salvo que se pida
+                        expresamente. Ver la nota de abajo.
+
+    POR QUÉ "dudoso" existe y no se limpia solo
+    -------------------------------------------
+    El auto-sane hacía  costo_courier = costo_zz.
+    El cubicador legítimo hace  costo_zz = costo_courier = precio cotizado.
+    O sea que MIRANDO SOLO LOS VALORES los dos casos son idénticos: no se
+    puede distinguir un costo inventado de uno real solo porque coincidan.
+
+    Lo que sí distingue: en un documento contaminado costo_zz sigue siendo lo
+    que se le cobró al cliente, y eso quedó registrado aparte en zz_envio. Si
+    los TRES números coinciden, el "costo del courier" es literalmente lo que
+    se le cobró al cliente — un costo cotizado no tiene por qué coincidir al
+    peso con el precio de venta. Esa es la evidencia que exige "limpiar".
+
+    Cuando falta zz_envio para confirmarlo, la única señal que queda es que el
+    documento no traiga cubicaje declarado (el cubicador lo escribe junto con
+    el costo; el auto-sane no escribía nada más). Es una señal razonable pero
+    NO es prueba, y borrar un costo real es perder un dato que costó cotizar.
+    Por eso queda como "dudoso": se muestra, se cuenta, y se limpia solo si
+    Daniel lo pide explícitamente.
+    """
+    skus = _tr_skus_zz_de_fila(fila)
+    skus_masivo = _tr_skus_zz_de_fila({"zz_skus": fila.get("zz_skus")})
+    zz_cents = _tr_cents(fila.get("zz_envio"))
+    envio_cents = _tr_cents(fila.get("costo_envio"))
+    costo_zz_cents = _tr_cents(fila.get("costo_zz")) or 0
+    costo_cents = _tr_cents(fila.get("costo_courier"))
+    zz_nuevo = None
+
+    # ── (a) zz_envio ────────────────────────────────────────────────────────
+    #
+    # "¿Cobra flete?" se responde con las DOS fuentes unidas (`skus`), nunca
+    # con una sola. "¿Cuánto cobra?" se responde con `costo_envio`, que solo
+    # vale si el sync masivo pasó por el documento (`skus_masivo`).
+    #
+    # La distinción importa: si las dos fuentes se contradicen —el masivo no
+    # vio línea de envío pero el sync individual sí la registró— mirar solo el
+    # masivo llevaría a anular un cobro que existe. Ante la contradicción se
+    # le pregunta al ERP, que es el único que puede desempatar.
+    tiene_envio = _ZZ_SKU_ENVIO in skus
+    masivo_confirma_envio = _ZZ_SKU_ENVIO in skus_masivo
+
+    if not skus:
+        zz_accion = "sin_clasificar"
+        zz_motivo = ("No hay líneas de servicio registradas para este documento. "
+                     "Sin saber si cobra flete, no se toca nada.")
+    elif not tiene_envio:
+        otros = ", ".join(sorted(skus))
+        if zz_cents is None:
+            zz_accion = "sin_cambio"
+            zz_motivo = f"No cobra flete (solo {otros}) y ya figura sin cobro."
+        else:
+            zz_accion = "anular"
+            zz_motivo = (f"El documento no tiene línea de envío (solo {otros}): "
+                         f"lo que figura como ZZ Envío es otro servicio.")
+    elif masivo_confirma_envio:
+        # El sync masivo pasó por acá: costo_envio es el flete real del ERP
+        # (VANELI de la línea ZZENVIO). No hace falta el ERP.
+        if zz_cents is not None and zz_cents == (envio_cents or 0):
+            zz_accion = "sin_cambio"
+            zz_motivo = "El monto guardado ya es solo el flete."
+        elif not envio_cents:
+            # costo_envio en 0 con línea de envío presente es AMBIGUO y NO se
+            # puede usar para corregir: puede ser que el flete valga $0 de
+            # verdad, o que la fila sea anterior al 2026-06-13 (cuando se creó
+            # la columna) y nunca se haya vuelto a sincronizar — el ALTER
+            # rellenó las filas viejas con 0, no con NULL.
+            #
+            # Copiar ese 0 encima de un cobro real lo BORRARÍA. Un documento con
+            # $30.000 de flete legítimo quedaría en cero y el margen se vería
+            # como pérdida total. Ante la duda, se le pregunta al ERP.
+            if fila.get("finanzas_revisado_at"):
+                zz_accion = "sin_cambio"
+                zz_motivo = "Ya se releyó del ERP en una revisión anterior."
+            else:
+                zz_accion = "resincronizar"
+                zz_motivo = ("Cobra flete pero no hay monto de envío guardado "
+                             "(la fila es anterior a que se registrara ese dato): "
+                             "hay que leerlo del ERP.")
+        else:
+            zz_accion = "corregir_local"
+            zz_nuevo = float(fila.get("costo_envio") or 0)
+            otros = sorted(skus_masivo - {_ZZ_SKU_ENVIO})
+            zz_motivo = (
+                (f"Cobra flete y además {', '.join(otros)}: el monto guardado venía "
+                 f"con los otros servicios sumados. " if otros else
+                 "El monto guardado no coincide con el flete del documento. ")
+                + "Se corrige con el valor de la línea de envío que ya está guardado.")
+    elif fila.get("finanzas_revisado_at"):
+        # Ya se releyó del ERP en un barrido anterior. Sin esta guarda el
+        # documento volvería a la cola en cada corrida —su clasificación
+        # depende de los SKUs, que no cambian al releerlo— y el barrido
+        # releería siempre los mismos y nunca llegaría al resto.
+        zz_accion = "sin_cambio"
+        zz_motivo = "Ya se releyó del ERP en una revisión anterior."
+    else:
+        # Cobra flete, pero el sync masivo no lo confirma: o nunca pasó por el
+        # documento, o lo vio sin línea de envío mientras el sync individual sí
+        # la registró. En los dos casos falta el monto local confiable y el
+        # único que puede desempatar es el ERP.
+        zz_accion = "resincronizar"
+        zz_motivo = ("No hay un monto de flete local confiable para este "
+                     "documento: hay que leerlo del ERP.")
+
+    # ── (b) costo_courier ───────────────────────────────────────────────────
+    tiene_cubicaje = (float(fila.get("peso_predominante") or 0) > 0
+                      or bool(fila.get("tiene_productos_json")))
+    # Con qué montos "de lo cobrado al cliente" se puede confirmar que el costo
+    # del courier fue copiado. Se aceptan los DOS que tenemos:
+    #   · zz_envio  — el guardado, todavía sin corregir en esta pasada. Es el
+    #                 que delata al documento mezclado: ahí el costo falso vale
+    #                 lo mismo que la suma inflada (envío + instalación).
+    #   · costo_envio — el flete real. Delata al documento cuyo zz_envio nunca
+    #                 se escribió: sin este, el costo falso solo se detectaría
+    #                 en una SEGUNDA corrida, después de corregir el zz_envio, y
+    #                 la primera le habría dicho a Daniel que ya estaba todo
+    #                 listo mientras el número falso seguía ahí.
+    cobrado_refs = {c for c in (zz_cents, envio_cents) if c}
+    if costo_cents is None or costo_cents <= 0:
+        costo_accion = "sin_cambio"
+        costo_motivo = "No hay costo de courier registrado; ya se ve como sin dato."
+    elif tiene_cubicaje and costo_cents == costo_zz_cents:
+        # Traer cubicaje declarado (peso o productos) PRUEBA que el documento
+        # pasó por el cubicador, y el cubicador escribe el costo junto con el
+        # cubicaje. El auto-sane que inventaba el margen no escribía nada más
+        # que el costo. Así que acá el número es una cotización de verdad,
+        # aunque coincida con lo cobrado —que es lo normal en un despacho a
+        # costo, donde al cliente se le traspasa lo que cobra el courier—.
+        # Sin esta rama, esos despachos perdían una cotización real.
+        costo_accion = "sin_cambio"
+        costo_motivo = ("Coincide con lo cobrado, pero el documento pasó por el "
+                        "cubicador: es una cotización real (despacho a costo).")
+    elif costo_cents == costo_zz_cents and costo_cents in cobrado_refs:
+        costo_accion = "limpiar"
+        costo_motivo = ("El costo del courier es idéntico a lo que se le cobró al "
+                        "cliente: lo copió el proceso que inventaba el margen "
+                        "(daba $0 y 0,0% siempre).")
+    elif costo_cents == costo_zz_cents and not tiene_cubicaje:
+        costo_accion = "dudoso"
+        costo_motivo = ("El costo coincide con lo cobrado y el documento nunca pasó "
+                        "por el cubicador. Probablemente inventado, pero no hay con "
+                        "qué confirmarlo: se revisa a mano.")
+    else:
+        costo_accion = "sin_cambio"
+        costo_motivo = "El costo difiere de lo cobrado: parece una cotización real."
+
+    # NOTA de orden: las dos decisiones se toman sobre la MISMA lectura de la
+    # fila, antes de escribir nada. Importa porque la prueba de "costo
+    # inventado" se apoya en el zz_envio viejo (el inflado): si primero se
+    # corrigiera zz_envio y después se clasificara el costo, la coincidencia
+    # se rompería y el costo falso pasaría desapercibido. Por eso el barrido
+    # clasifica todo primero y recién entonces escribe.
+    return {
+        "zz_accion": zz_accion,
+        "zz_motivo": zz_motivo,
+        "zz_nuevo": zz_nuevo,
+        "costo_accion": costo_accion,
+        "costo_motivo": costo_motivo,
+    }
+
+
+def _tr_finanzas_documento_label(fila):
+    """'FCV 11149' — etiqueta legible del documento para la vista previa."""
+    tido = str(fila.get("tido") or "").strip()
+    nudo = str(fila.get("nudo") or "").strip()
+    return f"{tido} {nudo.lstrip('0') or nudo}".strip() or f"#{fila.get('id')}"
+
+
+# Techo de filas que revisa un barrido. La consulta ya está acotada a los
+# documentos con huella financiera (ver el WHERE), pero un tope explícito evita
+# que un día crezca sin aviso y la pantalla se quede colgada. Si se alcanza, la
+# respuesta lo dice y basta con volver a correrlo.
+_TR_FINANZAS_MAX_FILAS = 5000
+
+# Presupuesto de tiempo para la fase que consulta al ERP. Ver el comentario en
+# _tr_finanzas_auditar: protege de que la petición muera y se pierda el informe.
+_TR_FINANZAS_PRESUPUESTO_ERP_SEG = 45
+
+
+def _tr_finanzas_cargar_filas(limite=_TR_FINANZAS_MAX_FILAS, hasta_id=None):
+    """Documentos con huella financiera + sus SKUs de servicio, en 1 consulta.
+
+    Solo entran documentos donde la corrección puede aplicar:
+      · tienen un monto de ZZ Envío guardado distinto de cero, o
+      · tienen un costo de courier guardado, o
+      · están en algún manifiesto (son los que se están despachando de verdad;
+        acá viven los que "cobran flete pero nunca se sincronizaron").
+
+    El resto de transport_commitments no tiene nada que corregir y queda fuera
+    a propósito — recorrerlo entero sería lento y no cambiaría ni una fila.
+
+    OJO con el filtro de zz_envio: NO sirve preguntar "IS NOT NULL". La columna
+    se agregó con `DECIMAL(12,2) DEFAULT 0`, y un ADD COLUMN con default rellena
+    las filas que ya existían con 0, no con NULL; además ni el sync masivo ni el
+    UPSERT individual la incluyen en su lista de columnas. O sea que casi TODA
+    la tabla tiene 0 y "IS NOT NULL" seleccionaría todo: con el tope de filas,
+    el barrido se quedaría siempre en los documentos más viejos y nunca llegaría
+    a los recientes, que son justamente sobre los que se decide hoy. Por eso se
+    compara contra 0 y se recorre de más nuevo a más viejo.
+
+    `hasta_id` es el cursor para seguir hacia atrás. Corregir una fila NO la
+    saca del WHERE (un documento corregido sigue teniendo zz_envio distinto de
+    cero), así que sin cursor la ventana se quedaría clavada en las mismas N
+    filas más nuevas y los documentos más viejos serían inalcanzables por más
+    veces que se apriete el botón. Cada tanda devuelve el id más bajo que
+    revisó y la siguiente arranca por debajo.
+    """
+    tope = ("" if hasta_id is None else " AND c.id < %s")
+    params = ([] if hasta_id is None else [int(hasta_id)]) + [int(limite) + 1]
+    return mysql_fetchall(
+        f"""
+        SELECT c.id, c.tido, c.nudo,
+               c.zz_envio, c.costo_zz, c.costo_courier, c.zz_skus,
+               COALESCE(c.costo_envio, 0) AS costo_envio,
+               c.finanzas_revisado_at,
+               COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               (c.productos_json IS NOT NULL AND c.productos_json <> '')
+                    AS tiene_productos_json,
+               (SELECT GROUP_CONCAT(DISTINCT l.koprct)
+                  FROM transport_commitment_lines l
+                 WHERE l.commitment_id = c.id
+                   AND l.koprct LIKE 'ZZ%%')            AS skus_lineas
+          FROM transport_commitments c
+         WHERE (COALESCE(c.zz_envio, 0) <> 0
+             OR COALESCE(c.costo_courier, 0) > 0
+             OR EXISTS(SELECT 1 FROM transport_manifest_items mi2
+                        WHERE mi2.commitment_id = c.id)){tope}
+         ORDER BY c.id DESC
+         LIMIT %s
+        """,
+        tuple(params)
+    ) or []
+
+
+def _tr_finanzas_auditar(ejecutar=False, incluir_dudosos=False, limite_erp=25,
+                         hasta_id=None):
+    """Motor del barrido. Con ejecutar=False no escribe absolutamente nada.
+
+    Devuelve el mismo informe en los dos modos, para que la vista previa y el
+    resultado se lean igual.
+    """
+    filas = _tr_finanzas_cargar_filas(hasta_id=hasta_id)
+    truncado = len(filas) > _TR_FINANZAS_MAX_FILAS
+    if truncado:
+        filas = filas[:_TR_FINANZAS_MAX_FILAS]
+    # Cursor para la tanda siguiente: el id más bajo que se alcanzó a revisar.
+    # Se recorre de id descendente, así que la próxima arranca por debajo.
+    siguiente_id = filas[-1]["id"] if (truncado and filas) else None
+
+    zz_cuenta = {"corregir_local": 0, "anular": 0, "resincronizar": 0,
+                 "sin_cambio": 0, "sin_clasificar": 0}
+    costo_cuenta = {"limpiar": 0, "dudoso": 0, "sin_cambio": 0}
+    zz_ejemplos, costo_ejemplos = [], []
+    a_corregir, a_anular, a_limpiar, a_resync = [], [], [], []
+
+    for f in filas:
+        d = _tr_clasificar_fila_financiera(f)
+        zz_cuenta[d["zz_accion"]] = zz_cuenta.get(d["zz_accion"], 0) + 1
+        costo_cuenta[d["costo_accion"]] = costo_cuenta.get(d["costo_accion"], 0) + 1
+        etiqueta = _tr_finanzas_documento_label(f)
+
+        if d["zz_accion"] == "corregir_local":
+            a_corregir.append((f["id"], d["zz_nuevo"]))
+            if len(zz_ejemplos) < 15:
+                zz_ejemplos.append({
+                    "documento": etiqueta, "accion": "corregir",
+                    "actual": (float(f["zz_envio"]) if f.get("zz_envio") is not None else None),
+                    "quedaria": _tr_finanzas_clp(d["zz_nuevo"]),
+                    "motivo": d["zz_motivo"],
+                })
+        elif d["zz_accion"] == "anular":
+            a_anular.append(f["id"])
+            if len(zz_ejemplos) < 15:
+                zz_ejemplos.append({
+                    "documento": etiqueta, "accion": "anular",
+                    "actual": float(f.get("zz_envio") or 0),
+                    "quedaria": "Sin cobro de flete",
+                    "motivo": d["zz_motivo"],
+                })
+        elif d["zz_accion"] == "resincronizar":
+            a_resync.append((f["id"], f.get("tido"), f.get("nudo")))
+            if len(zz_ejemplos) < 15:
+                zz_ejemplos.append({
+                    "documento": etiqueta, "accion": "resincronizar",
+                    "actual": (float(f["zz_envio"]) if f.get("zz_envio") is not None else None),
+                    "quedaria": "Se relee el documento del ERP",
+                    "motivo": d["zz_motivo"],
+                })
+
+        if d["costo_accion"] == "limpiar" or (d["costo_accion"] == "dudoso" and incluir_dudosos):
+            a_limpiar.append((f["id"], f.get("costo_courier")))
+        if d["costo_accion"] in ("limpiar", "dudoso") and len(costo_ejemplos) < 15:
+            # "dudoso" NO se limpia salvo que se pida: la vista previa tiene
+            # que decir eso mismo, o la tabla contradice a la viñeta de arriba.
+            _se_limpia = (d["costo_accion"] == "limpiar") or incluir_dudosos
+            costo_ejemplos.append({
+                "documento": etiqueta, "accion": d["costo_accion"],
+                "actual": float(f.get("costo_courier") or 0),
+                "quedaria": ("Sin costo registrado" if _se_limpia
+                             else "Se deja como está — revisar a mano"),
+                "motivo": d["costo_motivo"],
+            })
+
+    informe = {
+        "ok": True,
+        "modo": "ejecutado" if ejecutar else "vista_previa",
+        "revisados": len(filas),
+        "truncado": truncado,
+        "siguiente_id": siguiente_id,
+        "zz_envio": dict(zz_cuenta, ejemplos=zz_ejemplos),
+        "costo_courier": dict(costo_cuenta, ejemplos=costo_ejemplos),
+        "incluir_dudosos": bool(incluir_dudosos),
+        "aplicado": None,
+    }
+    if not ejecutar:
+        # Cuántos se van a poder resincronizar en la primera pasada: el resto
+        # queda para las siguientes, y la pantalla lo dice sin sorpresas.
+        informe["resync_por_tanda"] = min(len(a_resync), max(0, int(limite_erp)))
+        return informe
+
+    # ── FASE 1: correcciones locales, TODO o NADA ───────────────────────────
+    # mysql_execute hace commit por sentencia: si el barrido se cortara a la
+    # mitad quedaría medio corregido y la segunda corrida ya no reconocería
+    # las filas a medias. Acá una sola transacción explícita con rollback.
+    # Todos los UPDATE llevan guarda en el WHERE (idempotencia): correr el
+    # barrido dos veces no vuelve a tocar lo ya corregido, y si otro proceso
+    # cambió el valor mientras tanto, esa fila simplemente no se toca.
+    #
+    # Los "anular" van por lotes de _LOTE filas en un solo IN(...) en vez de
+    # una sentencia por documento: son las que pueden venir de a miles, y miles
+    # de idas y vueltas dentro de una transacción abierta retienen locks el
+    # tiempo suficiente como para que la petición muera y el rollback tire
+    # todo el trabajo. Las otras dos listas son chicas y llevan un valor
+    # distinto por fila, así que van de a una.
+    _LOTE = 500
+    zz_corregidos = zz_anulados = costos_limpiados = 0
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            for cid, nuevo in a_corregir:
+                cur.execute(
+                    "UPDATE transport_commitments SET zz_envio=%s "
+                    "WHERE id=%s AND NOT (zz_envio <=> %s)", (nuevo, cid, nuevo))
+                zz_corregidos += cur.rowcount or 0
+            for i in range(0, len(a_anular), _LOTE):
+                lote = a_anular[i:i + _LOTE]
+                marcas = ",".join(["%s"] * len(lote))
+                cur.execute(
+                    f"UPDATE transport_commitments SET zz_envio=NULL "
+                    f"WHERE id IN ({marcas}) AND zz_envio IS NOT NULL", tuple(lote))
+                zz_anulados += cur.rowcount or 0
+            for cid, costo_visto in a_limpiar:
+                cur.execute(
+                    "UPDATE transport_commitments SET costo_courier=NULL "
+                    "WHERE id=%s AND costo_courier=%s", (cid, costo_visto))
+                costos_limpiados += cur.rowcount or 0
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    # ── FASE 2: resincronización contra el ERP (SELECT, nunca escritura) ────
+    # Fuera de la transacción a propósito: _tr_fetch_from_erp hace sus propios
+    # commits. Va por tandas porque cada documento es una consulta al ERP y
+    # una página que espera minutos es una página rota; el informe dice
+    # cuántos quedan para volver a apretar el botón.
+    #
+    # Además del tope por cantidad, hay un tope de TIEMPO. Un documento suele
+    # tardar ~300 ms, pero cuando el ERP no responde cada uno puede irse a 12 s
+    # entre reintentos de variante del número — 15 documentos así serían 3
+    # minutos y la petición muere sin devolver nada, perdiendo también el
+    # informe de la fase 1 que YA se guardó. Con el presupuesto, se corta a
+    # tiempo, se responde con lo hecho y el resto queda para la próxima tanda.
+    resync_ok = resync_error = 0
+    _t0 = time.monotonic()
+    for cid, tido, nudo in a_resync[:max(0, int(limite_erp))]:
+        if time.monotonic() - _t0 > _TR_FINANZAS_PRESUPUESTO_ERP_SEG:
+            print("[finanzas-barrido] presupuesto de tiempo agotado; el resto "
+                  "queda para la próxima tanda", flush=True)
+            break
+        try:
+            # capturar_guia=False: la captura de guía es OTRA consulta al ERP
+            # por documento y no tiene nada que ver con el flete. El cron ya la
+            # apaga por el mismo motivo. Con ella puesta, el presupuesto de
+            # tiempo alcanzaría para la mitad de los documentos.
+            comm_id_real, err = _tr_fetch_from_erp(tido, str(nudo), capturar_guia=False)
+            if err:
+                resync_error += 1
+                continue
+            resync_ok += 1
+            # Marca de "ya lo releí". Sin esto el documento vuelve a la cola en
+            # cada corrida: su clasificación depende de los SKUs, que no cambian
+            # al releerlo, así que el barrido releería siempre los mismos y
+            # nunca avanzaría al resto.
+            #
+            # Se marca el id que DEVOLVIÓ el fetch, no el que traía la fila: el
+            # UPSERT resuelve el documento por su número canónico, y si la fila
+            # barrida tenía el número guardado con otro formato (el caso de los
+            # "documentos duplicados" ya conocido), los datos del ERP aterrizan
+            # en OTRA fila. Marcar la original la daría por revisada sin haberla
+            # corregido nunca.
+            mysql_execute(
+                "UPDATE transport_commitments SET finanzas_revisado_at=NOW() WHERE id=%s",
+                (comm_id_real or cid,))
+        except Exception as e_rs:
+            resync_error += 1
+            # Sin params ni datos del cliente en el log (REGLA #4).
+            print(f"[finanzas-barrido] resync commitment {cid} falló: {e_rs}", flush=True)
+
+    informe["aplicado"] = {
+        "zz_corregidos": zz_corregidos,
+        "zz_anulados": zz_anulados,
+        "costos_limpiados": costos_limpiados,
+        "resincronizados": resync_ok,
+        "resync_fallidos": resync_error,
+        "pendientes_resync": max(0, len(a_resync) - resync_ok - resync_error),
+    }
+    try:
+        _tr_log("commitment", 0, "limpieza_financiera",
+                f"zz_envio corregidos={zz_corregidos} anulados={zz_anulados} "
+                f"costos_limpiados={costos_limpiados} "
+                f"resync_ok={resync_ok} resync_error={resync_error} "
+                f"dudosos_incluidos={1 if incluir_dudosos else 0}")
+    except Exception:
+        pass
+    return informe
+
+
+@app.route("/transporte/api/finanzas/limpieza-historica", methods=["GET", "POST"])
+@_tr_required
+def tr_finanzas_limpieza_historica():
+    """Barrido que corrige el histórico financiero ya escrito.
+
+    Los DOS métodos exigen el permiso `superadmin`: la vista previa muestra
+    márgenes y costos de courier documento por documento.
+
+    (El botón de la pantalla se dibuja con `is_superadmin`, que mira el ROL, y
+    esta guarda mira el PERMISO. No son exactamente lo mismo: un rol propio con
+    el permiso prendido podría llamar el endpoint sin ver el botón. Se deja así
+    a propósito —el permiso es el criterio correcto para autorizar— pero no hay
+    que leerlo como "el endpoint nunca es más permisivo que el botón".)
+
+    GET  → VISTA PREVIA. Cuenta las filas afectadas de cada tipo y muestra
+           ejemplos concretos (documento, valor actual, valor que quedaría).
+           NO escribe absolutamente nada.
+    POST → EJECUTA. Idempotente: correrlo dos veces no hace daño (los UPDATE
+           llevan guarda y la relectura del ERP reescribe el mismo valor).
+           Deja registro en transport_logs de cuántas filas tocó.
+
+    Parámetros opcionales (querystring en el GET, cuerpo JSON en el POST):
+      { "incluir_dudosos": false,   # limpiar también los costos sin confirmar
+        "limite_erp": 25,           # documentos a releer del ERP por tanda
+        "hasta_id": 12345 }         # cursor: seguir por debajo de ese id
+    """
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False,
+                        "error": "Solo un superadmin puede revisar o corregir "
+                                 "el histórico financiero."}), 403
+
+    def _cursor(valor):
+        try:
+            v = int(valor)
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    if request.method == "GET":
+        try:
+            return jsonify(_tr_finanzas_auditar(
+                ejecutar=False, hasta_id=_cursor(request.args.get("hasta_id"))))
+        except Exception as e:
+            print(f"[finanzas-barrido] vista previa falló: {e}", flush=True)
+            return jsonify({"ok": False,
+                            "error": "No se pudo revisar el histórico financiero."}), 500
+
+    body = request.get_json(silent=True) or {}
+    try:
+        limite_erp = max(0, min(200, int(body.get("limite_erp") or 25)))
+    except (TypeError, ValueError):
+        limite_erp = 25
+    try:
+        return jsonify(_tr_finanzas_auditar(
+            ejecutar=True,
+            incluir_dudosos=bool(body.get("incluir_dudosos")),
+            limite_erp=limite_erp,
+            hasta_id=_cursor(body.get("hasta_id")),
+        ))
+    except Exception as e:
+        print(f"[finanzas-barrido] ejecución falló: {e}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo corregir el histórico financiero."}), 500
 
 
 @app.route("/transporte/api/sync-hoy", methods=["POST"])
@@ -36941,6 +37694,52 @@ def tr_diagnostico_shipit():
     return jsonify({"error": "accion inválida (sync_comunas | cotizar)"}), 400
 
 
+@app.route("/transporte/api/shipit/direccion", methods=["POST"])
+@login_required
+def tr_shipit_direccion():
+    """Separa una dirección en calle + número para Shipit. READ-ONLY.
+
+    Shipit exige `street` y `number` en campos SEPARADOS; ILUS guarda la
+    dirección como un solo texto libre. La regla de separación vive en
+    shipit_client.split_street_number() (módulo puro, 17 tests) y NO se
+    duplica ni acá ni en el frontend: este endpoint es solo la ventanilla
+    para que la pantalla la consulte.
+
+    No toca la BD ni el ERP: transforma el texto que recibe y responde.
+
+    Body:  {"direccion": "Los Aromos 145 depto 402"}
+    Resp:  {"ok": true, "calle": "Los Aromos", "numero": "145",
+            "problemas": ["..."], "bloqueada": false}
+
+      · bloqueada=true  -> no se pudo armar el par calle+número con
+        confianza. La pantalla pide completarlo a mano ANTES de generar la
+        guía: un número adivinado produce una guía VÁLIDA hacia la dirección
+        EQUIVOCADA y nadie se entera hasta que el cliente reclama.
+      · bloqueada=false con `problemas` -> se pudo separar, pero conviene
+        que alguien confirme el número.
+
+    Mismos permisos que /api/asignar/cotizar-couriers: quien cotiza es quien
+    despacha.
+    """
+    if not (g.permissions.get("cubicador") or g.permissions.get("transporte")
+            or g.permissions.get("logistica_cotizaciones") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Sin permiso"}), 403
+    try:
+        import shipit_client as _shc
+        data = request.get_json(silent=True) or {}
+        direccion = (data.get("direccion") or "").strip()
+        if not direccion:
+            return jsonify({"ok": False, "error": "Falta 'direccion'"}), 400
+        r = _shc.clasificar_direccion(direccion)
+        r["ok"] = True
+        r["direccion"] = direccion[:300]
+        return jsonify(r)
+    except Exception as e:
+        print(f"[tr_shipit_direccion] CRASH: {e}", flush=True)
+        return jsonify({"ok": False, "error": "Error interno",
+                        "error_codigo": "INTERNAL_CRASH"}), 500
+
+
 def _tr_manifiesto_items_simpliroute(mid):
     """Items del manifiesto con lo que necesita SimpliRoute.
 
@@ -37292,17 +38091,17 @@ def tr_item_simpliroute_reprogramar(item_id):
     return jsonify({"ok": True, "visit_id": vid, "fecha": fecha})
 
 
-@app.route("/transporte/api/items/<int:item_id>/simpliroute/reenviar", methods=["POST"])
-@_tr_required
-def tr_item_simpliroute_reenviar(item_id):
-    """Reenvía UN item puntual a SimpliRoute como visita nueva.
+def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema', comentario_evento=None):
+    """Recrea la visita SimpliRoute de UN item. FUNCIÓN COMPARTIDA.
 
-    Útil cuando la visita se acaba de cancelar (endpoint de arriba) o cuando
-    la subida original del manifiesto falló y el item quedó con
-    simpliroute_error. Reutiliza build_visit_payload/_tr_manifiesto_items_
-    simpliroute y el mismo patrón de persistencia que
-    tr_manifiesto_subir_simpliroute, acotado a 1 item — no se reimplementa la
-    lógica de subida masiva.
+    Extraída 2026-08-05 de lo que antes era el cuerpo de la ruta
+    tr_item_simpliroute_reenviar: la usan tanto el botón manual como el
+    redespacho automático (ver _tr_redespacho_automatico), así que la lógica
+    de armar y mandar la visita vive UNA sola vez.
+
+    Devuelve dict {ok, error?, visit_id?, tracking_id?} — NUNCA un Response de
+    Flask, para poder llamarse desde código que no está atendiendo un request
+    HTTP (el poller de estados, por ejemplo).
     """
     import simpliroute_client as _src
     mi = mysql_fetchone("""
@@ -37312,44 +38111,40 @@ def tr_item_simpliroute_reenviar(item_id):
         WHERE mi.id=%s
     """, (item_id,))
     if not mi:
-        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+        return {"ok": False, "error": "Item no encontrado"}
     if (mi.get("simpliroute_visit_id") or "").strip():
-        return jsonify({"ok": False,
-                         "error": "Este pedido ya tiene una visita activa en "
-                                  "SimpliRoute. Cancélala primero si quieres "
-                                  "re-crearla."}), 400
+        return {"ok": False,
+                "error": "Este pedido ya tiene una visita activa en "
+                         "SimpliRoute. Cancélala primero si quieres re-crearla."}
 
     courier = (mi.get("courier") or "").strip()
     if not _simpliroute_courier_integra(courier):
-        return jsonify({"ok": False,
-                         "error": f"El courier «{courier}» no trabaja con SimpliRoute."}), 400
+        return {"ok": False, "error": f"El courier «{courier}» no trabaja con SimpliRoute."}
     token = _simpliroute_token_for_courier(courier)
     if not token:
-        return jsonify({"ok": False,
-                         "error": "Falta configurar el token de SimpliRoute de "
-                                  "este courier."}), 503
+        return {"ok": False,
+                "error": "Falta configurar el token de SimpliRoute de este courier."}
 
     _fecha = mi.get("fecha")
     planned_date = _fecha.isoformat() if hasattr(_fecha, "isoformat") else str(_fecha or "").strip()
     if not planned_date:
-        return jsonify({"ok": False, "error": "El manifiesto no tiene fecha de despacho."}), 400
+        return {"ok": False, "error": "El manifiesto no tiene fecha de despacho."}
 
     items = _tr_manifiesto_items_simpliroute(mi["manifest_id"])
     it = next((x for x in items if x.get("item_id") == item_id), None)
     if not it:
-        return jsonify({"ok": False,
-                         "error": "No se encontraron los datos de esta factura "
-                                  "para armar la visita."}), 400
+        return {"ok": False,
+                "error": "No se encontraron los datos de esta factura para armar la visita."}
 
     payload, errores = _src.build_visit_payload(it, planned_date=planned_date)
     if errores:
-        return jsonify({"ok": False, "error": "Datos incompletos: " + "; ".join(errores)}), 400
+        return {"ok": False, "error": "Datos incompletos: " + "; ".join(errores)}
 
     try:
         r = _simpliroute_request("POST", _src.EP_VISITS, token, payload=payload, timeout=30)
     except Exception as e:
         print(f"[simpliroute] excepción reenviando item {item_id}: {e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo conectar con SimpliRoute. Intenta de nuevo."}), 502
+        return {"ok": False, "error": "No se pudo conectar con SimpliRoute. Intenta de nuevo."}
 
     if not r.get("ok"):
         try:
@@ -37357,7 +38152,7 @@ def tr_item_simpliroute_reenviar(item_id):
                           (str(r.get("error") or "Error desconocido")[:500], item_id))
         except Exception:
             pass
-        return jsonify({"ok": False, "error": r.get("error") or "SimpliRoute rechazó la visita."}), 502
+        return {"ok": False, "error": r.get("error") or "SimpliRoute rechazó la visita."}
 
     visita = (_src.parse_visits_response(r.get("data")) or [{}])[0]
     mysql_execute(
@@ -37368,13 +38163,36 @@ def tr_item_simpliroute_reenviar(item_id):
     _tr_log("manifest_item", item_id, "reenviado a SimpliRoute",
             f"nueva visita {visita.get('id')}")
     try:
-        _tr_apply_carrier_status(item_id, 'Entregado a transporte', fuente='sistema',
-                                 comentario='Visita re-creada en SimpliRoute',
+        _tr_apply_carrier_status(item_id, 'Entregado a transporte', fuente=fuente_evento,
+                                 comentario=comentario_evento or 'Visita re-creada en SimpliRoute',
                                  notify_cliente=True)
     except Exception as _e:
         print(f"[tr_event sr_reenvio] item={item_id}: {_e}", flush=True)
 
-    return jsonify({"ok": True, "visit_id": visita.get("id"), "tracking_id": visita.get("tracking_id")})
+    return {"ok": True, "visit_id": visita.get("id"), "tracking_id": visita.get("tracking_id")}
+
+
+@app.route("/transporte/api/items/<int:item_id>/simpliroute/reenviar", methods=["POST"])
+@_tr_required
+def tr_item_simpliroute_reenviar(item_id):
+    """Reenvía UN item puntual a SimpliRoute como visita nueva (botón manual).
+
+    Útil cuando la visita se acaba de cancelar (endpoint de arriba) o cuando
+    la subida original del manifiesto falló y el item quedó con
+    simpliroute_error. La lógica real vive en _tr_simpliroute_reenviar_item
+    (compartida con el redespacho automático) — esta ruta solo traduce su
+    resultado a una respuesta HTTP.
+    """
+    r = _tr_simpliroute_reenviar_item(item_id, fuente_evento='sistema')
+    if not r.get("ok"):
+        status = 404 if r.get("error") == "Item no encontrado" else \
+                 400 if "ya tiene una visita" in (r.get("error") or "") else \
+                 400 if "no trabaja con SimpliRoute" in (r.get("error") or "") else \
+                 503 if "Falta configurar" in (r.get("error") or "") else \
+                 400 if "fecha de despacho" in (r.get("error") or "") else \
+                 400 if "Datos incompletos" in (r.get("error") or "") else 502
+        return jsonify(r), status
+    return jsonify(r)
 
 
 @app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])
@@ -38162,6 +38980,43 @@ def tr_cubicador_enviar_manifiesto():
         except Exception as e_auth:
             print(f"[cub_enviar_manif] no se pudo guardar autorización: {e_auth}", flush=True)
 
+    # 2c-bis) Operador REAL dentro del agregador + calle/número de Shipit
+    #     (2026-08-05). Shipit cotiza contra Starken / Chilexpress / Global
+    #     Tracking / Blue Express y hasta hoy ILUS se quedaba SIEMPRE con el
+    #     más barato (`disponibles[0]`). Daniel, textual: "siento que me está
+    #     obligando a escoger Global Tracking, solamente porque es más
+    #     barato". Ahora la pantalla deja elegir, y acá se guarda con quién se
+    #     despachó de verdad. El manifiesto sigue siendo de "Shipit" (un
+    #     manifiesto = un courier, decisión 2026-05-31): esto es el operador
+    #     de adentro, no otro courier.
+    #     `courier_operador_manual` distingue la decisión humana del default,
+    #     para poder medir después si elegir a mano mejora el cumplimiento.
+    #     `shipit_calle`/`shipit_numero` vienen de
+    #     shipit_client.split_street_number() o de la corrección a mano en
+    #     pantalla. `direccion` NO se pisa: sigue siendo el texto declarado.
+    #     No es fatal: si falla, el documento igual entra al manifiesto.
+    try:
+        _op        = (data.get("courier_operador") or "").strip()[:80]
+        _op_svc    = (data.get("courier_operador_servicio") or "").strip()[:80]
+        _op_manual = 1 if data.get("courier_operador_manual") else 0
+        _sh_calle  = (data.get("shipit_calle") or "").strip()[:200]
+        _sh_num    = (data.get("shipit_numero") or "").strip()[:20]
+        _os, _ov = [], []
+        if _op:
+            _os += ["courier_operador=%s", "courier_operador_servicio=%s",
+                    "courier_operador_manual=%s"]
+            _ov += [_op, _op_svc or None, _op_manual]
+        if _sh_calle and _sh_num:
+            _os += ["shipit_calle=%s", "shipit_numero=%s"]
+            _ov += [_sh_calle, _sh_num]
+        if _os:
+            _ov.append(comm_id)
+            mysql_execute(
+                f"UPDATE transport_commitments SET {', '.join(_os)} WHERE id=%s",
+                tuple(_ov))
+    except Exception as e_op:
+        print(f"[cub_enviar_manif] no se pudo guardar operador/dirección Shipit: {e_op}", flush=True)
+
     # 2d) Persistir cubicaje declarado (peso real/vol/volumen/predominante + bultos).
     #     Datos que el operador VE en el cubicador → quedan declarados en el
     #     commitment y corren aguas abajo (manifiesto, etiquetas, KPIs). No fatal.
@@ -38769,6 +39624,35 @@ def _audit_cotizacion(*, courier_id, courier_nombre, comuna, peso_kg, peso_pred_
 @app.route("/transporte/couriers")
 @_tr_required
 def tr_couriers():
+    # Mes en curso en hora Chile (REGLA #6): el conteo de despachos del mes
+    # tiene que cortar cuando cambia el mes ACÁ, no en UTC — si no, los
+    # despachos de las últimas horas del último día del mes caen en el
+    # siguiente.
+    _hoy_cl = _now_chile().date()
+    _mes_ini = _hoy_cl.replace(day=1)
+    _mes_fin = (_mes_ini + timedelta(days=32)).replace(day=1)
+
+    # Todo en UNA consulta: es la lista de couriers, no una ficha. Una
+    # consulta por tarjeta multiplicaría los viajes a la base por cada courier.
+    #
+    # · Los datos del contrato van como subconsultas correlacionadas (no como
+    #   JOIN): esta consulta ya agrupa por c.id para contar tarifas y comunas,
+    #   y sumar un JOIN a contratos multiplicaría las filas del GROUP BY además
+    #   de chocar con ONLY_FULL_GROUP_BY. Correlacionadas contra c.id son
+    #   válidas dentro del GROUP BY y baratas (courier_id está indexado por su
+    #   clave foránea), y los couriers son unas pocas decenas de filas.
+    #
+    # · total_contratos cuenta TODOS los documentos guardados (es lo que dice
+    #   la tarjeta: "N documentos guardados"). Los campos de vigencia salen
+    #   del contrato VIGENTE más reciente; si no hay ninguno vigente quedan en
+    #   NULL y la tarjeta muestra "Sin registrar" — que es la verdad, no un
+    #   dato inventado.
+    #
+    # · despachos_mes se cruza por NOMBRE porque transport_manifests guarda el
+    #   courier como texto, no con clave foránea. Se normaliza con LOWER+TRIM
+    #   para que "Milling " y "milling" sumen juntos. OJO: dos fichas
+    #   duplicadas de la misma empresa (el caso Melling/Milling) reparten sus
+    #   despachos entre ambas hasta que se fusionen.
     couriers = mysql_fetchall(
         """SELECT c.*,
            COUNT(DISTINCT t.id) AS total_tarifas,
@@ -38776,12 +39660,43 @@ def tr_couriers():
            COUNT(DISTINCT CASE
              WHEN cc.precios_json IS NOT NULL AND cc.precios_json <> ''
               AND cc.precios_json <> '{}' AND cc.precios_json <> '[]'
-             THEN cc.id END) AS comunas_con_precio
+             THEN cc.id END) AS comunas_con_precio,
+           (SELECT COUNT(*) FROM transport_courier_contratos k
+             WHERE k.courier_id = c.id)                    AS total_contratos,
+           (SELECT k.tipo FROM transport_courier_contratos k
+             WHERE k.courier_id = c.id AND k.vigente = 1
+             ORDER BY k.fecha_inicio DESC, k.created_at DESC, k.id DESC
+             LIMIT 1)                                      AS contrato_tipo,
+           (SELECT k.fecha_inicio FROM transport_courier_contratos k
+             WHERE k.courier_id = c.id AND k.vigente = 1
+             ORDER BY k.fecha_inicio DESC, k.created_at DESC, k.id DESC
+             LIMIT 1)                                      AS contrato_inicio,
+           (SELECT k.fecha_fin FROM transport_courier_contratos k
+             WHERE k.courier_id = c.id AND k.vigente = 1
+             ORDER BY k.fecha_inicio DESC, k.created_at DESC, k.id DESC
+             LIMIT 1)                                      AS contrato_fin,
+           (SELECT k.archivo_url FROM transport_courier_contratos k
+             WHERE k.courier_id = c.id AND k.vigente = 1
+             ORDER BY k.fecha_inicio DESC, k.created_at DESC, k.id DESC
+             LIMIT 1)                                      AS contrato_archivo_url,
+           (SELECT k.nombre FROM transport_courier_contratos k
+             WHERE k.courier_id = c.id AND k.vigente = 1
+             ORDER BY k.fecha_inicio DESC, k.created_at DESC, k.id DESC
+             LIMIT 1)                                      AS contrato_nombre,
+           COALESCE(MAX(dm.n), 0)                          AS despachos_mes
            FROM transport_couriers c
            LEFT JOIN transport_courier_tarifas t ON t.courier_id=c.id AND t.activo=1
            LEFT JOIN transport_courier_comunas cc ON cc.courier_id=c.id
+           LEFT JOIN (
+                SELECT LOWER(TRIM(m.courier)) AS courier_key, COUNT(*) AS n
+                  FROM transport_manifest_items mi
+                  JOIN transport_manifests m ON m.id = mi.manifest_id
+                 WHERE (m.eliminado IS NULL OR m.eliminado = 0)
+                   AND m.fecha >= %s AND m.fecha < %s
+                 GROUP BY LOWER(TRIM(m.courier))
+           ) dm ON dm.courier_key = LOWER(TRIM(c.nombre))
            GROUP BY c.id ORDER BY c.activo DESC, c.nombre""",
-        ()
+        (_mes_ini, _mes_fin)
     )
     return render_template("transporte/couriers.html", couriers=couriers)
 
@@ -38935,37 +39850,54 @@ def tr_courier_ficha(cid):
 @_tr_required
 def tr_courier_editar(cid):
     d = request.get_json(silent=True) or {}
+    campos = [
+        "nombre=%s", "nombre_fantasia=%s", "rut=%s", "giro=%s",
+        "contacto=%s", "contacto_cargo=%s", "telefono=%s", "email=%s",
+        "tipo=%s", "notas=%s", "activo=%s",
+        "peso_max_bulto=%s", "peso_max_guia=%s", "vol_max_bulto=%s", "factor_vol=%s",
+        "logo_url=%s", "website=%s", "direccion=%s",
+    ]
+    valores = [
+        d.get("nombre","").strip(),
+        (d.get("nombre_fantasia") or "").strip(),
+        d.get("rut","").strip(),
+        (d.get("giro") or "").strip(),
+        d.get("contacto","").strip(),
+        (d.get("contacto_cargo") or "").strip(),
+        d.get("telefono","").strip(),
+        d.get("email","").strip(),
+        d.get("tipo","nacional"),
+        d.get("notas","").strip(),
+        1 if d.get("activo", True) else 0,
+        float(d.get("peso_max_bulto") or 0),
+        float(d.get("peso_max_guia") or 0),
+        float(d.get("vol_max_bulto") or 0),
+        float(d.get("factor_vol") or 5000),
+        d.get("logo_url","").strip(),
+        (d.get("website") or "").strip(),
+        (d.get("direccion") or "").strip(),
+    ]
+
+    # responsable_ilus SOLO se toca si viene en el cuerpo. NO se puede meter en
+    # la lista fija de arriba: la pantalla arma el cuerpo con un set FIJO de
+    # campos (_crPayloadCourier en couriers.html), así que la acción de
+    # habilitar/deshabilitar y cualquier edición hecha antes de que el modal
+    # tenga el campo mandarían el cuerpo SIN esta clave. Con un %s fijo eso
+    # sería un NULL y borraría en silencio el responsable ya asignado, cada
+    # vez. Ausente = no se toca; presente y vacío = se limpia a propósito.
+    if "responsable_ilus" in d:
+        campos.append("responsable_ilus=%s")
+        valores.append((str(d.get("responsable_ilus") or "").strip()[:190]) or None)
+
+    valores.append(cid)
     conn = get_db()
     with conn.cursor() as cur:
+        # Los nombres de columna salen de esta lista literal del código, nunca
+        # del cuerpo de la petición; los VALORES siempre van parametrizados
+        # con %s (REGLA #4).
         cur.execute(
-            """UPDATE transport_couriers SET
-               nombre=%s, nombre_fantasia=%s, rut=%s, giro=%s,
-               contacto=%s, contacto_cargo=%s, telefono=%s, email=%s,
-               tipo=%s, notas=%s, activo=%s,
-               peso_max_bulto=%s, peso_max_guia=%s, vol_max_bulto=%s, factor_vol=%s,
-               logo_url=%s, website=%s, direccion=%s
-               WHERE id=%s""",
-            (
-                d.get("nombre","").strip(),
-                (d.get("nombre_fantasia") or "").strip(),
-                d.get("rut","").strip(),
-                (d.get("giro") or "").strip(),
-                d.get("contacto","").strip(),
-                (d.get("contacto_cargo") or "").strip(),
-                d.get("telefono","").strip(),
-                d.get("email","").strip(),
-                d.get("tipo","nacional"),
-                d.get("notas","").strip(),
-                1 if d.get("activo", True) else 0,
-                float(d.get("peso_max_bulto") or 0),
-                float(d.get("peso_max_guia") or 0),
-                float(d.get("vol_max_bulto") or 0),
-                float(d.get("factor_vol") or 5000),
-                d.get("logo_url","").strip(),
-                (d.get("website") or "").strip(),
-                (d.get("direccion") or "").strip(),
-                cid,
-            ),
+            "UPDATE transport_couriers SET " + ", ".join(campos) + " WHERE id=%s",
+            tuple(valores),
         )
     conn.commit()
     _invalidate_couriers_cache()
@@ -39820,7 +40752,24 @@ def _tr_brackets_con_precio(precios_json_raw):
     return sum(1 for v in precios.values() if v not in (None, "", 0))
 
 
-def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False):
+def _tr_columna_existe(tabla, columna):
+    """¿La tabla tiene esa columna? 1 SELECT barato a information_schema.
+
+    Se usa antes de tocar columnas que se agregaron por migración y que en
+    producción pueden no existir (ILUS_SKIP_MIGRATIONS=1). Preguntar primero
+    es más limpio que dejar reventar el UPDATE dentro de una transacción.
+    """
+    try:
+        return bool(mysql_fetchone(
+            "SELECT 1 AS y FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME=%s LIMIT 1",
+            (tabla, columna)))
+    except Exception:
+        return False
+
+
+def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False,
+                          renombrar_manifiestos=False):
     """Fusiona dos fichas de courier que en realidad son la misma empresa.
 
     Caso que lo motivó (Daniel, 2026-08-05): "tengo dos transportes que son el
@@ -39832,16 +40781,41 @@ def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False):
       · Las comunas que están en LOS DOS: gana la que tenga más tramos de peso
         con precio cargado ("la lista más amplia"). Si empatan, se conserva la
         del destino y la del origen se descarta.
+      · Las tarifas, los contratos y los choferes del ORIGEN también se mueven
+        al DESTINO (ver abajo).
       · El origen se DESACTIVA (activo=0), NO se borra: los manifiestos
         históricos referencian al courier por NOMBRE, así que borrar la fila
         dejaría documentos viejos apuntando a algo que ya no existe.
+
+    2026-08-05 — QUÉ LE FALTABA
+    ---------------------------
+    La versión anterior movía SOLO las comunas. Las tarifas, los contratos y
+    los choferes del origen se quedaban colgando de una ficha desactivada: no
+    se borraban, pero desaparecían de la vista, y la tarjeta del sobreviviente
+    seguía diciendo "Sin contrato" aunque el contrato estuviera cargado en la
+    ficha absorbida. Ahora se mueven en la MISMA transacción.
+
+    LOS MANIFIESTOS HISTÓRICOS
+    --------------------------
+    transport_manifests guarda el courier como TEXTO, no con clave foránea.
+    Fusionar las fichas no cambia esos textos: los manifiestos viejos siguen
+    diciendo «Melling». No quedan huérfanos (nunca apuntaron a un id), pero sí
+    quedan repartidos entre los dos nombres, así que los despachos del mes y
+    los filtros por courier los cuentan por separado.
+
+    Por eso `renombrar_manifiestos` existe y viene APAGADO por default:
+    reescribir el histórico es una decisión de Daniel, no del barrido. El
+    informe SIEMPRE dice cuántos manifiestos quedarían con el nombre viejo,
+    se renombren o no.
 
     Con ejecutar=False no toca NADA: solo devuelve el informe de lo que haría.
     Eso permite mirar el resultado antes de decidir. Nunca lanza.
     """
     informe = {"ok": False, "ejecutado": False, "destino": None, "origen": None,
                "comunas_movidas": 0, "comunas_reemplazadas": 0,
-               "comunas_descartadas": 0, "detalle": [], "error": None}
+               "comunas_descartadas": 0, "detalle": [], "error": None,
+               "tarifas_movidas": 0, "contratos_movidos": 0, "choferes_movidos": 0,
+               "manifiestos_nombre_viejo": 0, "manifiestos_renombrados": 0}
     try:
         d = mysql_fetchone("SELECT id, nombre, activo FROM transport_couriers WHERE id=%s", (id_destino,))
         o = mysql_fetchone("SELECT id, nombre, activo FROM transport_couriers WHERE id=%s", (id_origen,))
@@ -39894,6 +40868,34 @@ def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False):
                      "tramos": n_o, "tramos_destino": n_d})
                 plan.append(("descartar", r["id"], None, None))
 
+        # Lo demás que cuelga del origen y que ANTES se quedaba invisible en la
+        # ficha desactivada. Se cuenta siempre (la vista previa lo muestra) y
+        # se mueve al ejecutar.
+        def _cuenta(sql, params):
+            try:
+                return int((mysql_fetchone(sql, params) or {}).get("n") or 0)
+            except Exception:
+                return 0
+
+        informe["tarifas_movidas"] = _cuenta(
+            "SELECT COUNT(*) AS n FROM transport_courier_tarifas WHERE courier_id=%s",
+            (id_origen,))
+        informe["contratos_movidos"] = _cuenta(
+            "SELECT COUNT(*) AS n FROM transport_courier_contratos WHERE courier_id=%s",
+            (id_origen,))
+        # transport_drivers.courier_id se agregó por migración: puede no existir.
+        _hay_choferes = _tr_columna_existe("transport_drivers", "courier_id")
+        if _hay_choferes:
+            informe["choferes_movidos"] = _cuenta(
+                "SELECT COUNT(*) AS n FROM transport_drivers WHERE courier_id=%s",
+                (id_origen,))
+
+        # Manifiestos históricos que nombran al courier absorbido (texto, no FK).
+        informe["manifiestos_nombre_viejo"] = _cuenta(
+            "SELECT COUNT(*) AS n FROM transport_manifests "
+            "WHERE LOWER(TRIM(courier)) = LOWER(TRIM(%s))",
+            (o["nombre"] or "",))
+
         if ejecutar:
             conn = get_db()
             try:
@@ -39908,6 +40910,23 @@ def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False):
                             cur.execute("DELETE FROM transport_courier_comunas WHERE id=%s", (id_o,))
                         else:
                             cur.execute("DELETE FROM transport_courier_comunas WHERE id=%s", (id_o,))
+                    # Tarifas, contratos y choferes: se REASIGNAN, nunca se
+                    # borran (REGLA #4.2). Van en la MISMA transacción que las
+                    # comunas: o la ficha queda fusionada entera, o no se
+                    # fusiona nada. A medio camino sería peor que no empezar.
+                    cur.execute("UPDATE transport_courier_tarifas SET courier_id=%s "
+                                "WHERE courier_id=%s", (id_destino, id_origen))
+                    cur.execute("UPDATE transport_courier_contratos SET courier_id=%s "
+                                "WHERE courier_id=%s", (id_destino, id_origen))
+                    if _hay_choferes:
+                        cur.execute("UPDATE transport_drivers SET courier_id=%s "
+                                    "WHERE courier_id=%s", (id_destino, id_origen))
+                    if renombrar_manifiestos and (o["nombre"] or "").strip():
+                        cur.execute(
+                            "UPDATE transport_manifests SET courier=%s "
+                            "WHERE LOWER(TRIM(courier)) = LOWER(TRIM(%s))",
+                            (d["nombre"], o["nombre"]))
+                        informe["manifiestos_renombrados"] = cur.rowcount or 0
                     cur.execute("UPDATE transport_couriers SET activo=0 WHERE id=%s", (id_origen,))
                 conn.commit()
             except Exception:
@@ -39919,7 +40938,11 @@ def _tr_fusionar_couriers(id_destino, id_origen, ejecutar=False):
                    details={"absorbido": o["nombre"], "sobrevive": d["nombre"],
                             "movidas": informe["comunas_movidas"],
                             "reemplazadas": informe["comunas_reemplazadas"],
-                            "descartadas": informe["comunas_descartadas"]})
+                            "descartadas": informe["comunas_descartadas"],
+                            "tarifas": informe["tarifas_movidas"],
+                            "contratos": informe["contratos_movidos"],
+                            "choferes": informe["choferes_movidos"],
+                            "manifiestos_renombrados": informe["manifiestos_renombrados"]})
         informe["ok"] = True
         return informe
     except Exception as e:
@@ -39955,6 +40978,15 @@ def tr_couriers_fusionar():
     if request.method == "GET":
         # Para cada grupo duplicado se propone quién sobrevive: el que ya está
         # activo y, entre ellos, el que tenga más comunas cargadas.
+        #
+        # OJO — la propuesta es solo eso, una propuesta. Daniel pidió que
+        # predomine un nombre concreto ("que predomine Transportes Milling") y
+        # ese criterio no se puede deducir de los datos: puede perfectamente
+        # ganar el otro si tiene más comunas cargadas. Por eso cada propuesta
+        # viaja con `opciones`: las dos fichas con sus números, para que la
+        # pantalla pueda ofrecer invertir la dirección antes de confirmar. El
+        # POST ya acepta destino_id/origen_id explícitos, así que invertir es
+        # solo mandarlos al revés.
         propuestas = []
         for slug, cs in duplicados.items():
             enriquecidos = []
@@ -39962,7 +40994,17 @@ def tr_couriers_fusionar():
                 n = (mysql_fetchone(
                     "SELECT COUNT(*) AS n FROM transport_courier_comunas WHERE courier_id=%s",
                     (c["id"],)) or {}).get("n", 0)
-                enriquecidos.append(dict(c, comunas=n))
+                # Cuánta historia real carga cada nombre: los manifiestos
+                # guardan el courier como texto, así que este número dice qué
+                # nombre está usando de verdad la operación.
+                nm = (mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM transport_manifests "
+                    "WHERE LOWER(TRIM(courier)) = LOWER(TRIM(%s))",
+                    (c["nombre"] or "",)) or {}).get("n", 0)
+                nk = (mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM transport_courier_contratos WHERE courier_id=%s",
+                    (c["id"],)) or {}).get("n", 0)
+                enriquecidos.append(dict(c, comunas=n, manifiestos=nm, contratos=nk))
             enriquecidos.sort(key=lambda x: (int(x.get("activo") or 0), x["comunas"]), reverse=True)
             destino = enriquecidos[0]
             for origen in enriquecidos[1:]:
@@ -39970,6 +41012,7 @@ def tr_couriers_fusionar():
                     "slug": slug,
                     "sobrevive": destino,
                     "se_absorbe": origen,
+                    "opciones": enriquecidos,
                     "simulacion": _tr_fusionar_couriers(destino["id"], origen["id"], ejecutar=False),
                 })
         return jsonify({"ok": True, "duplicados": len(propuestas), "propuestas": propuestas})
@@ -39982,7 +41025,11 @@ def tr_couriers_fusionar():
         origen_id = int(data.get("origen_id"))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Faltan destino_id / origen_id."}), 400
-    r = _tr_fusionar_couriers(destino_id, origen_id, ejecutar=True)
+    # Reescribir el nombre del courier en los manifiestos históricos es opcional
+    # y viene apagado: es tocar el histórico, y esa decisión es de Daniel.
+    r = _tr_fusionar_couriers(
+        destino_id, origen_id, ejecutar=True,
+        renombrar_manifiestos=bool(data.get("renombrar_manifiestos")))
     return jsonify(r), (200 if r.get("ok") else 400)
 
 
@@ -44042,6 +45089,18 @@ def comm_imap_ping():
     def _resp(payload, cfg_src=""):
         payload.setdefault("elapsed_ms", int((_t.time() - t0) * 1000))
         payload.setdefault("source", cfg_src)
+        # 2026-08-05: el resultado de este boton alimenta el MISMO latido que
+        # muestra la bandeja de Tickets (tabla tk_mail_salud). Sin esto, el
+        # operador arregla la clave, ve "Recepcion OK" aca, y en Tickets la
+        # franja sigue en rojo hasta el proximo barrido: dos pantallas
+        # diciendo cosas distintas sobre el mismo canal. Nunca lanza.
+        try:
+            _reg = globals().get("_tk_salud_registrar")
+            if callable(_reg):
+                _reg(bool(payload.get("ok")),
+                     error=(payload.get("message") or "")[:250])
+        except Exception:
+            pass
         return jsonify(payload), 200
 
     try:
@@ -83269,6 +84328,11 @@ def _ensure_transporte_columns():
         # Finanzas/margen (visión Daniel 2026-05-25): control de ganancia/pérdida.
         "zz_envio":           "DECIMAL(12,2) DEFAULT 0",  # lo que cobró SPHS por el despacho (ERP)
         "costo_courier":      "DECIMAL(12,2) DEFAULT 0",  # lo que SPHS paga al courier (cotizado)
+        # Monto SOLO de la línea de envío (VANELI de ZZENVIO), lo llena el sync
+        # masivo. Existía únicamente en el bloque de migraciones, que en
+        # producción no corre (ILUS_SKIP_MIGRATIONS=1): se garantiza acá porque
+        # la limpieza del histórico financiero la lee para corregir zz_envio.
+        "costo_envio":        "DECIMAL(10,2) DEFAULT 0",
         "autorizado_por":     "VARCHAR(190) NULL",        # quién autoriza si va sin precio / a pérdida
         "motivo_envio":       "VARCHAR(500) NULL",        # motivo/observación obligatoria
         "es_garantia":        "TINYINT(1) DEFAULT 0",     # si el envío es por garantía
@@ -83278,6 +84342,30 @@ def _ensure_transporte_columns():
         "volumen_m3":         "DECIMAL(12,4) DEFAULT 0",  # volumen total en m³
         "peso_predominante":  "DECIMAL(12,3) DEFAULT 0",  # max(real,vol) por línea, sumado
         "productos_json":     "MEDIUMTEXT NULL",           # productos declarados del doc (árbol manifiesto)
+        # Operador REAL dentro de un agregador (2026-08-05, Shipit). El
+        # manifiesto es de "Shipit", pero quien mueve la carga es Starken /
+        # Chilexpress / Global Tracking: sin esto no hay a quién reclamarle si
+        # el envío se atrasa, ni con qué medir qué operador cumple.
+        # _manual = lo eligió una persona (vs. quedarse con el más barato).
+        "courier_operador":          "VARCHAR(80) NULL",
+        "courier_operador_servicio": "VARCHAR(80) NULL",
+        "courier_operador_manual":   "TINYINT(1) DEFAULT 0",
+        # Calle y número SEPARADOS: Shipit los exige así. `direccion` sigue
+        # guardando el texto completo tal como se declaró (no se pisa).
+        "shipit_calle":              "VARCHAR(200) NULL",
+        "shipit_numero":             "VARCHAR(20) NULL",
+        # Redespacho automático (2026-08-05, ver redespacho_automatico.py):
+        # cuántos reintentos AUTOMÁTICOS ya se hicieron para este documento
+        # tras una entrega fallida. Sin esto el motor no puede aplicar el
+        # tope (MAX_REINTENTOS_AUTOMATICOS) y reintentaría para siempre.
+        "redespacho_intentos":       "TINYINT UNSIGNED DEFAULT 0",
+        # Marca del barrido de limpieza financiera (2026-08-05): cuándo se
+        # releyó este documento del ERP para corregirle el ZZ Envío. Es lo que
+        # hace que el barrido AVANCE: sin la marca, un documento vuelve a la
+        # cola en cada corrida (su clasificación depende de los SKUs, que no
+        # cambian al releerlo) y siempre se releerían los mismos.
+        # Ver _tr_clasificar_fila_financiera / _tr_finanzas_auditar.
+        "finanzas_revisado_at": "DATETIME NULL",
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
@@ -83397,6 +84485,43 @@ def _ensure_transport_couriers_formato_export():
         except Exception:
             pass
     return True
+
+
+def _ensure_transport_couriers_responsable():
+    """Garantiza transport_couriers.responsable_ilus AUNQUE ILUS_SKIP_MIGRATIONS=1.
+
+    Quién de ILUS es la contraparte de ese courier (2026-08-05). La tarjeta de
+    /transporte/couriers la muestra como "Responsable ILUS" y se edita desde el
+    modal Editar de esa pantalla.
+
+    Va acá y NO en init_transporte_tables porque en producción las migraciones
+    están saltadas (cold-start rápido): una columna agregada solo en el bloque
+    gateado nunca llegaría a la base y la ficha caería con 'Unknown column'.
+    1 SELECT barato a information_schema + ALTER solo si falta.
+    """
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='transport_couriers'"
+            ) or [])
+        }
+    except Exception as e_sch:
+        print(f"[ensure_courier_resp] no se pudo leer schema: {e_sch}", flush=True)
+        return False
+    if "responsable_ilus" in existing:
+        return True
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_couriers ADD COLUMN responsable_ilus "
+            "VARCHAR(190) NULL COMMENT 'Persona de ILUS a cargo de la relación con este courier'"
+        )
+        print("[ensure_courier_resp] columna responsable_ilus agregada", flush=True)
+        return True
+    except Exception as e_add:
+        print(f"[ensure_courier_resp] no se pudo agregar la columna: {e_add}", flush=True)
+        return False
 
 
 def _ensure_transport_evidencia_perdurable():
@@ -86228,6 +87353,15 @@ try:
         _ensure_courier_comunas_updated_at()
 except Exception as _ccu_err:
     print(f"[ILUS][WARN] _ensure_courier_comunas_updated_at: {_ccu_err}", flush=True)
+
+# 2026-08-05: "Responsable ILUS" en la tarjeta del courier. La lista hace
+# SELECT c.* y el modal Editar la guarda, así que la columna tiene que existir
+# aunque las migraciones estén saltadas (ILUS_SKIP_MIGRATIONS=1 en producción).
+try:
+    with app.app_context():
+        _ensure_transport_couriers_responsable()
+except Exception as _cri_err:
+    print(f"[ILUS][WARN] _ensure_transport_couriers_responsable: {_cri_err}", flush=True)
 
 # CRÍTICO: garantizar tablas de Facturas Proveedor SIEMPRE, incluso con
 # ILUS_SKIP_MIGRATIONS=1 (init_transporte_tables no corre en prod). Sin esto

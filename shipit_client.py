@@ -304,6 +304,33 @@ def split_street_number(direccion):
     return calle, numero, problemas
 
 
+def clasificar_direccion(direccion):
+    """split_street_number() empaquetado para la pantalla. Nunca lanza.
+
+    Devuelve un dict listo para responder por JSON:
+        {"calle": str, "numero": str, "problemas": [str], "bloqueada": bool}
+
+    `bloqueada=True` significa: NO se puede armar el par calle+número con
+    confianza y hay que pedirle a una persona que lo complete antes de
+    generar la guía. `bloqueada=False` con `problemas` no vacío significa que
+    SÍ se pudo separar, pero conviene que alguien confirme el número (el caso
+    típico: la dirección venía sin coma y quedó texto suelto después del
+    número, como "Los Aromos 145 depto 402").
+
+    La distinción existe para que la UI no trate igual "falta el número"
+    (bloquea el despacho) que "revisa el número" (solo avisa). Vive acá y no
+    en app.py a propósito: es lógica pura, se prueba sin levantar Flask, y el
+    endpoint queda como una envoltura de 5 líneas.
+    """
+    calle, numero, problemas = split_street_number(direccion)
+    return {
+        "calle": calle,
+        "numero": numero,
+        "problemas": list(problemas or []),
+        "bloqueada": not (calle and numero),
+    }
+
+
 # ── Cotizar (POST /v/rates) ──────────────────────────────────────────────
 
 def build_rate_payload(*, length, width, height, weight, origin_id, destiny_id,

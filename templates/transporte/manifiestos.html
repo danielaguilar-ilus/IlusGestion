@@ -40,6 +40,16 @@
       <a href="{{ url_for('transporte_index') }}" class="btn-monitor">
         <i class="bi bi-graph-up-arrow"></i> Monitor
       </a>
+      {% if is_superadmin %}
+      {# Barrido del histórico financiero (2026-08-05). Reusa .btn-monitor: es
+         una acción de mantención, no compite con "Nuevo manifiesto". Siempre
+         abre la VISTA PREVIA primero — nunca escribe con un solo clic. #}
+      <button type="button" class="btn-monitor" id="btnAuditFin"
+              onclick="revisarHistoricoFinanciero()"
+              title="Revisa el ZZ Envío y el costo de courier ya guardados, y corrige los que están mal">
+        <i class="bi bi-cash-coin"></i> Revisar finanzas
+      </button>
+      {% endif %}
       <button class="btn-nuevo-man" data-bs-toggle="modal" data-bs-target="#newManModal">
         <i class="bi bi-plus-circle-fill"></i> Nuevo manifiesto
       </button>
@@ -538,4 +548,277 @@
 {% block scripts %}
 <script defer src="{{ url_for('static', filename='transporte_etiquetas_modal.js') }}"></script>
 <script defer src="{{ url_for('static', filename='transporte_manifiestos.js') }}"></script>
+
+{% if is_superadmin %}
+{# ── REVISAR FINANZAS: barrido del histórico financiero (2026-08-05) ──────
+   El 2026-08-05 se corrigieron dos errores de plata, pero solo hacia
+   adelante: el ZZ Envío guardado sumaba TODOS los servicios (envío +
+   instalación + retiro), y el costo de courier traía valores inventados por
+   un "auto-sane" que copiaba lo cobrado al cliente. Con esos dos números se
+   calcula el margen y se decide con qué courier despachar.
+
+   El flujo SIEMPRE es vista previa → confirmar → ejecutar. El botón nunca
+   escribe de un solo clic. Va inline y no en el .js compartido porque
+   depende de is_superadmin, que solo existe al renderizar la plantilla. ── #}
+<script>
+(function(){
+  var fClp = function(n){
+    if (n === null || n === undefined) return '—';
+    return '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
+  };
+  var esc = function(s){
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  };
+
+  // Las filas de ejemplo vienen del backend con datos de documentos reales:
+  // se escapan una por una antes de armar el HTML del modal (ilusConfirm
+  // recibe subHtml:true, así que acá NO puede colarse nada sin escapar).
+  function tablaEjemplos(ejemplos){
+    if (!ejemplos || !ejemplos.length) return '';
+    var filas = ejemplos.map(function(e){
+      var actual = (e.actual === null || e.actual === undefined)
+        ? '<span style="color:#9ca3af">sin dato</span>' : esc(fClp(e.actual));
+      // Los "dudosos" NO se tocan en esta pasada: se pintan en ámbar para que
+      // la fila no contradiga a la viñeta de arriba. En una pantalla de plata,
+      // ver "quedaría sin costo" sobre algo que no se va a tocar es peor que
+      // no mostrarlo.
+      var intacto = (e.accion === 'dudoso');
+      return '<tr>'
+        + '<td style="padding:4px 8px;font-weight:700;white-space:nowrap">' + esc(e.documento) + '</td>'
+        + '<td style="padding:4px 8px;text-align:right;white-space:nowrap">' + actual + '</td>'
+        + '<td style="padding:4px 8px;white-space:nowrap;color:'
+        + (intacto ? '#b45309' : '#16a34a') + '">' + esc(e.quedaria) + '</td>'
+        + '<td style="padding:4px 8px;color:#6b7280;font-size:11.5px">' + esc(e.motivo) + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<div style="max-height:190px;overflow:auto;margin:6px 0 12px;'
+      + 'border:1px solid #e5e7eb;border-radius:9px">'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<thead><tr style="background:#f9fafb;position:sticky;top:0">'
+      + '<th style="padding:5px 8px;text-align:left">Documento</th>'
+      + '<th style="padding:5px 8px;text-align:right">Ahora</th>'
+      + '<th style="padding:5px 8px;text-align:left">Quedaría</th>'
+      + '<th style="padding:5px 8px;text-align:left">Por qué</th>'
+      + '</tr></thead><tbody>' + filas + '</tbody></table></div>';
+  }
+
+  function bloque(titulo, items, ejemplos){
+    var visibles = items.filter(function(i){ return i.n > 0; });
+    if (!visibles.length) return '';
+    var lis = visibles.map(function(i){
+      return '<li style="margin:2px 0"><strong>' + i.n + '</strong> ' + esc(i.txt) + '</li>';
+    }).join('');
+    return '<div style="margin-bottom:10px">'
+      + '<div style="font-weight:800;color:#0a0a0a;margin-bottom:3px">' + esc(titulo) + '</div>'
+      + '<ul style="margin:0 0 4px 18px;padding:0;font-size:12.5px">' + lis + '</ul>'
+      + tablaEjemplos(ejemplos) + '</div>';
+  }
+
+  function resumen(d){
+    var zz = d.zz_envio || {}, co = d.costo_courier || {};
+    var html = '';
+    html += bloque('ZZ Envío — lo que se le cobró al cliente por el flete', [
+      { n: zz.corregir_local || 0,
+        txt: 'documentos con el monto inflado (traía sumada la instalación u otro servicio). Se corrigen con el valor del flete que ya está guardado, sin consultar el ERP.' },
+      { n: zz.anular || 0,
+        txt: 'documentos que NO cobran flete pero tienen un monto guardado (es otro servicio). Quedan como “sin cobro”, no en $0.' },
+      { n: zz.resincronizar || 0,
+        txt: 'documentos que hay que releer del ERP porque no tienen monto de flete guardado. Van por tandas.' },
+    ], zz.ejemplos);
+    html += bloque('Costo del courier — lo que ILUS le paga al transportista', [
+      { n: co.limpiar || 0,
+        txt: 'costos inventados (idénticos a lo cobrado, daban margen $0 siempre). Quedan como “sin registrar”.' },
+      { n: co.dudoso || 0,
+        txt: 'costos sospechosos SIN prueba: se muestran pero NO se tocan en esta pasada.' },
+    ], co.ejemplos);
+    if (!html) {
+      html = '<div style="color:#16a34a;font-weight:700">'
+           + 'No se encontró ningún dato financiero para corregir.</div>';
+    }
+    var pie = '<div style="margin-top:8px;font-size:11.5px;color:#6b7280">'
+      + 'Revisados ' + (d.revisados || 0) + ' documentos con movimiento financiero. '
+      + 'Sin cambios: ' + ((zz.sin_cambio || 0)) + ' en ZZ Envío, '
+      + ((co.sin_cambio || 0)) + ' en costo.'
+      + (d.truncado ? ' <strong>Se alcanzó el tope de revisión: vuelve a correrlo al terminar.</strong>' : '')
+      + '</div>';
+    return html + pie;
+  }
+
+  function hayAlgoQueHacer(d){
+    var zz = d.zz_envio || {}, co = d.costo_courier || {};
+    return (zz.corregir_local || 0) + (zz.anular || 0)
+         + (zz.resincronizar || 0) + (co.limpiar || 0) > 0;
+  }
+
+  // Cursor entre pulsaciones. Corregir una fila no la saca del conjunto que
+  // revisa el barrido (un documento corregido sigue teniendo monto), así que
+  // sin cursor la ventana se quedaría clavada en los mismos documentos más
+  // nuevos y los viejos no se alcanzarían nunca por más veces que se apriete.
+  // Cada tanda devuelve el id más bajo que revisó y la siguiente sigue por
+  // debajo; cuando ya no queda nada, vuelve a empezar desde arriba.
+  var _finCursor = null;
+
+  async function ejecutar(incluirDudosos){
+    var r = await fetch('/transporte/api/finanzas/limpieza-historica', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        incluir_dudosos: !!incluirDudosos,
+        limite_erp: 25,
+        hasta_id: _finCursor,
+      }),
+    });
+    return await r.json();
+  }
+
+  function informeFinal(d){
+    var a = d.aplicado || {};
+    var p = [];
+    if (a.zz_corregidos)    p.push(a.zz_corregidos + ' documentos quedaron con el flete real (antes traían otros servicios sumados)');
+    if (a.zz_anulados)      p.push(a.zz_anulados + ' documentos quedaron correctamente como “sin cobro de flete”');
+    if (a.costos_limpiados) p.push(a.costos_limpiados + ' costos inventados se borraron');
+    if (a.resincronizados)  p.push(a.resincronizados + ' documentos se releyeron del ERP');
+    if (a.resync_fallidos)  p.push(a.resync_fallidos + ' no se pudieron leer del ERP (se reintentan a la próxima)');
+    if (!p.length) p.push('No quedaba nada por corregir.');
+    var sub = '';
+    if (a.pendientes_resync) {
+      sub = 'Quedan ' + a.pendientes_resync + ' documentos por releer del ERP. '
+          + 'Se hacen por tandas para no dejar la pantalla colgada: vuelve a apretar '
+          + '“Revisar finanzas” hasta que no queden.';
+    }
+    return { lista: p, sub: sub, pendientes: a.pendientes_resync || 0 };
+  }
+
+  window.revisarHistoricoFinanciero = async function(){
+    var btn = document.getElementById('btnAuditFin');
+    var htmlOrig = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Revisando…'; }
+    var d;
+    try {
+      var r = await fetch('/transporte/api/finanzas/limpieza-historica'
+                          + (_finCursor ? ('?hasta_id=' + encodeURIComponent(_finCursor)) : ''));
+      d = await r.json();
+    } catch (e) {
+      ilusToast('Sin conexión', { type: 'error' });
+      if (btn) { btn.disabled = false; btn.innerHTML = htmlOrig; }
+      return;
+    }
+    if (btn) { btn.disabled = false; btn.innerHTML = htmlOrig; }
+    if (!d || !d.ok) {
+      ilusToast((d && d.error) || 'No se pudo revisar el histórico', { type: 'error' });
+      return;
+    }
+
+    if (!hayAlgoQueHacer(d)) {
+      // Si esta tanda venía de un cursor, todavía puede quedar historia más
+      // abajo: se avanza el cursor y se avisa, en vez de decir "todo cuadrado"
+      // sobre una porción.
+      var seguir = d.truncado && d.siguiente_id;
+      if (seguir) _finCursor = d.siguiente_id; else _finCursor = null;
+      await ilusAlert({
+        title: seguir ? 'Este tramo está cuadrado' : 'Las finanzas están cuadradas',
+        message: 'Revisé ' + (d.revisados || 0) + ' documentos con movimiento financiero'
+                 + (seguir ? ' y no hay nada que corregir en este tramo.'
+                           : ' y no hay nada que corregir.'),
+        sub: (seguir ? 'Quedan documentos más antiguos por revisar: vuelve a apretar “Revisar finanzas” para seguir con el tramo siguiente. '
+                     : '')
+             + ((d.costo_courier || {}).dudoso
+                ? (d.costo_courier.dudoso + ' costos quedan marcados como dudosos para revisión manual.')
+                : ''),
+        type: 'success',
+      });
+      return;
+    }
+
+    var ok = await ilusConfirm({
+      title: 'Corregir el histórico financiero',
+      message: 'Esto es lo que encontré mal en los datos ya guardados:',
+      sub: resumen(d),
+      subHtml: true,
+      okLabel: 'Corregir ahora', cancelLabel: 'Ahora no',
+      type: 'warning',
+    });
+    if (!ok) return;
+
+    ilusToast('Corrigiendo…', { type: 'info' });
+    var res;
+    try {
+      res = await ejecutar(false);
+    } catch (e) {
+      ilusToast('Sin conexión', { type: 'error' });
+      return;
+    }
+    if (!res || !res.ok) {
+      ilusToast((res && res.error) || 'No se pudo corregir', { type: 'error' });
+      return;
+    }
+
+    // El cursor se avanza AL FINAL, no acá: la pasada de los "dudosos" de más
+    // abajo tiene que correr sobre ESTE mismo tramo, no sobre el siguiente.
+    var proximoCursor = (res.truncado && res.siguiente_id) ? res.siguiente_id : null;
+
+    var inf = informeFinal(res);
+    await ilusAlert({
+      title: 'Histórico corregido',
+      message: 'Listo. Esto es lo que cambió:',
+      sub: '<ul style="margin:0 0 0 18px;padding:0">'
+         + inf.lista.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join('')
+         + '</ul>'
+         + (inf.sub ? '<div style="margin-top:8px;color:#b45309;font-weight:600">' + esc(inf.sub) + '</div>' : ''),
+      subHtml: true,
+      type: 'success',
+    });
+
+    // Los "dudosos" se preguntan aparte, y a propósito: un costo que coincide
+    // con lo cobrado PUEDE ser real (el cubicador guarda el mismo número en
+    // las dos columnas cuando cotiza). Sin el ZZ Envío para confirmarlo no hay
+    // prueba, así que borrarlos es una decisión de Daniel, no del barrido.
+    var dudosos = (res.costo_courier || {}).dudoso || 0;
+    if (dudosos > 0) {
+      var ok2 = await ilusConfirm({
+        title: 'Quedan ' + dudosos + ' costos sin confirmar',
+        message: '¿Los borro también?',
+        sub: 'Son costos idénticos a lo que se le cobró al cliente en documentos que '
+           + 'nunca pasaron por el cubicador. Lo más probable es que también los haya '
+           + 'inventado el mismo proceso, pero no hay con qué probarlo: si alguno era '
+           + 'una cotización real, se pierde y hay que volver a cotizarla. '
+           + 'Si prefieres, déjalos y revísalos documento por documento en el manifiesto.',
+        okLabel: 'Borrarlos igual', cancelLabel: 'Dejarlos como están',
+        danger: true,
+      });
+      if (ok2) {
+        try {
+          var res2 = await ejecutar(true);
+          if (res2 && res2.ok) {
+            ilusToast('✓ ' + ((res2.aplicado || {}).costos_limpiados || 0)
+                      + ' costos sin confirmar borrados', { type: 'success' });
+            // Esta segunda corrida hizo otra tanda contra el ERP: lo que queda
+            // pendiente ahora es lo que dice ELLA, no la primera respuesta.
+            inf.pendientes = (res2.aplicado || {}).pendientes_resync || 0;
+          } else {
+            ilusToast((res2 && res2.error) || 'No se pudieron borrar', { type: 'error' });
+          }
+        } catch (e) {
+          ilusToast('Sin conexión', { type: 'error' });
+        }
+      }
+    }
+
+    // Recién ahora se mueve el cursor: la pasada de dudosos ya terminó sobre
+    // este tramo.
+    _finCursor = proximoCursor;
+
+    if (inf.pendientes > 0 || _finCursor) {
+      var falta = [];
+      if (inf.pendientes > 0) falta.push(inf.pendientes + ' documentos por releer del ERP');
+      if (_finCursor) falta.push('un tramo más antiguo por revisar');
+      ilusToast('Quedan ' + falta.join(' y ') + ' — vuelve a apretar el botón',
+                { type: 'warning' });
+    }
+  };
+})();
+</script>
+{% endif %}
 {% endblock %}

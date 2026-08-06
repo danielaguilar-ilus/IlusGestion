@@ -69,6 +69,132 @@
 
 <link rel="stylesheet" href="{{ url_for('static', filename='cubicador_asignar.css') }}">
 
+{# ════════════════════════════════════════════════════════════════════
+   SHIPIT — franja de operadores SELECCIONABLE (2026-08-05)
+   Shipit es un agregador: por dentro cotiza Starken, Chilexpress, Blue
+   Express… Hasta hoy el backend imponía el más barato. Daniel, textual:
+   "siento que me está obligando a escoger Global Tracking, solamente
+   porque es más barato". Estas reglas convierten cada operador en una
+   opción clickeable (radio) sin sacar nada de lo que ya había.
+   Van acá y no en cubicador_asignar.css porque son propias de esta
+   pantalla y quedan junto al modal que las acompaña.
+   ════════════════════════════════════════════════════════════════════ #}
+<style>
+  .courier-ops-note{
+    font-size:.66rem; color:#6b7280; line-height:1.35;
+    margin:0 0 6px; padding:0 2px;
+  }
+  .courier-ops-note b{ color:#dc2626; }
+  /* La fila pasa de <div> a <button>: hay que neutralizar el look nativo. */
+  button.courier-ops-row{
+    width:100%; border:1.5px solid transparent; background:transparent;
+    text-align:left; font-family:inherit; cursor:pointer;
+    align-items:center; gap:8px; margin-bottom:3px;
+    transition:background .14s, border-color .14s;
+    /* Regla #3 mobile-first: objetivo táctil cómodo. */
+    min-height:38px;
+  }
+  button.courier-ops-row:hover{ background:#f3f4f6; }
+  button.courier-ops-row:focus-visible{
+    outline:none; border-color:#dc2626; box-shadow:0 0 0 3px rgba(220,38,38,.18);
+  }
+  /* Punto de selección tipo radio, mismo lenguaje que .courier-radio. */
+  .courier-ops-row .op-pick{
+    width:13px; height:13px; border-radius:50%; flex:0 0 13px;
+    border:2px solid #d1d5db; background:#fff; transition:all .14s;
+  }
+  .courier-ops-row.is-sel{
+    background:#fff5f5; border-color:#dc2626;
+    color:#0a0a0a; font-weight:700;
+  }
+  .courier-ops-row.is-sel .op-pick{
+    border-color:#dc2626; background:#dc2626;
+    box-shadow:0 0 0 3px rgba(220,38,38,.18);
+  }
+  .courier-ops-row.is-sel .op-price{ color:#dc2626; }
+  .courier-ops-row .op-main{ flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+  .courier-ops-row .op-svc{
+    font-size:.6rem; font-weight:600; color:#6b7280;
+    margin-left:5px; text-transform:uppercase; letter-spacing:.3px;
+  }
+  .courier-ops-row .op-eta-nd{ font-style:italic; opacity:.75; }
+  .courier-ops-row .op-restr{
+    font-size:.6rem; color:#92400e; display:flex; align-items:center; gap:3px;
+  }
+  .courier-ops-row .op-chips{ display:block; margin-top:1px; }
+  .op-chip{
+    display:inline-block; font-size:.55rem; font-weight:800;
+    padding:0 5px; border-radius:50px; letter-spacing:.2px;
+    text-transform:uppercase; margin-left:3px;
+  }
+  .op-chip-best{ background:#dcfce7; color:#166534; }
+  .op-chip-delta{ background:#fff8e1; color:#92400e; }
+  .courier-ops-foot{
+    font-size:.6rem; color:#9ca3af; margin-top:5px;
+    display:flex; align-items:center; gap:4px;
+  }
+  /* La franja "más barato" ya no pinta el fondo verde: ese color ahora
+     significa "seleccionado" y confundiría las dos cosas. Queda el chip. */
+  .courier-ops-row.is-best:not(.is-sel){ background:transparent; color:#6b7280; font-weight:400; }
+  .courier-ops-row.is-best:not(.is-sel) .op-price{ color:#166534; }
+
+  @media (max-width:600px){
+    /* En móvil el nombre no cabe en una columna que además pelea con el
+       plazo y el precio ("Global Trac…" se cortaba con espacio de sobra).
+       Se reordena a grilla: nombre arriba, plazo abajo, precio a la
+       derecha — el nombre completo se lee siempre. */
+    button.courier-ops-row{
+      display:grid; align-items:center;
+      grid-template-columns:auto 1fr auto;
+      grid-template-areas:"pick name price" "pick eta price";
+      column-gap:8px; row-gap:0;
+      min-height:44px; padding:7px 9px;
+    }
+    .courier-ops-row .op-pick{ grid-area:pick; align-self:center; }
+    .courier-ops-row .op-main{ grid-area:name; }
+    .courier-ops-row .op-eta{ grid-area:eta; text-align:left; }
+    .courier-ops-row .op-price{ grid-area:price; text-align:right; align-self:center; }
+    .courier-ops-row .op-name{ white-space:normal; }
+    .courier-ops-note{ font-size:.72rem; }
+    .courier-ops-row .op-svc{ font-size:.66rem; }
+    .courier-ops-row .op-restr{ font-size:.68rem; }
+    .op-chip{ font-size:.62rem; }
+    .courier-ops-foot{ font-size:.68rem; }
+  }
+
+  /* ── Modal "completa calle y número" (Shipit) ── */
+  .sd-dir-orig{
+    background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px;
+    padding:9px 12px; font-size:.82rem; color:#0a0a0a; word-break:break-word;
+  }
+  .sd-motivo{
+    background:#fef2f2; border:1.5px solid #dc2626; border-radius:8px;
+    padding:10px 12px; margin:12px 0; font-size:.82rem; color:#7f1d1d;
+  }
+  .sd-motivo ul{ margin:6px 0 0; padding-left:18px; }
+  .sd-motivo li{ margin-bottom:3px; }
+  .sd-grid{ display:grid; grid-template-columns:1fr 120px; gap:10px; }
+  .sd-preview{
+    background:#f0fdf4; border:1px solid #16a34a; border-radius:8px;
+    padding:9px 12px; margin-top:12px; font-size:.78rem; color:#166534;
+  }
+  .sd-preview code{ background:#dcfce7; padding:1px 5px; border-radius:4px; color:#166534; }
+  /* Sin contenido no se pinta la caja de color (evita una franja vacía si
+     el modal se abriera antes de llenarla). */
+  .sd-motivo:empty, .sd-preview:empty{ display:none; }
+  /* Regla #2: el CTA va en rojo ILUS, no en el azul por defecto de Bootstrap. */
+  #sdBtnOk{
+    background:#dc2626; border-color:#dc2626; color:#fff; font-weight:700;
+  }
+  #sdBtnOk:hover, #sdBtnOk:focus{ background:#b91c1c; border-color:#b91c1c; color:#fff; }
+  @media (max-width:600px){
+    .sd-grid{ grid-template-columns:1fr; }
+    /* Regla #3: 16px evita el auto-zoom de iOS al enfocar el input. */
+    #sdCalle, #sdNumero{ font-size:16px; min-height:44px; }
+    #sdBtnOk, .modal-mf-foot .btn{ min-height:44px; }
+  }
+</style>
+
 <div class="ac-wrap">
 
   {# ════ COLUMNA IZQUIERDA ════════════════════════════════════ #}
@@ -661,6 +787,76 @@
   </div>
 </div>
 
+
+{# ════════════════════════════════════════════════════════════
+   MODAL: COMPLETAR CALLE Y NÚMERO PARA SHIPIT
+   Shipit exige `street` y `number` como campos SEPARADOS. ILUS guarda la
+   dirección como UN solo texto libre, así que hay que partirla — lo hace
+   shipit_client.split_street_number(), que ante la duda NO adivina: es
+   preferible pedirle a una persona que complete la dirección a mandar un
+   paquete a la casa equivocada con una guía perfectamente válida.
+   Este modal es esa petición, y dice EXACTAMENTE qué falta y por qué
+   (Daniel: "no vayas a mandar algo genérico, algo específico").
+   Es un formulario de 2 campos con contexto, no una confirmación: por eso
+   va como modal propio y no como ilusPrompt (CLAUDE.md Regla #8).
+═════════════════════════════════════════════════════════════════ #}
+<div id="modalShipitDir" class="modal-mf" style="display:none">
+  <div class="modal-mf-backdrop" onclick="cerrarModalShipitDir()"></div>
+  <div class="modal-mf-box" style="width:min(560px,96vw)">
+    <div class="modal-mf-hdr">
+      <i class="bi bi-signpost-split-fill" style="color:#CC0000;font-size:1.2rem"></i>
+      <h3 id="sdTitulo">Shipit necesita la calle y el número por separado</h3>
+      <button class="modal-mf-x" onclick="cerrarModalShipitDir()" aria-label="Cerrar">&times;</button>
+    </div>
+
+    <div class="modal-mf-body">
+      <label class="mf-label">Dirección tal como está hoy</label>
+      <div class="sd-dir-orig" id="sdDireccionOriginal">—</div>
+
+      <div class="sd-motivo" id="sdMotivo"></div>
+
+      <div class="sd-grid">
+        <div>
+          <label class="mf-label" for="sdCalle">Calle <span style="color:#CC0000">*</span></label>
+          <input type="text" id="sdCalle" class="mf-input" autocomplete="off"
+                 placeholder="Ej: Av. Pdte. Eduardo Frei Montalva"
+                 oninput="_sdActualizarPreview()">
+        </div>
+        <div>
+          <label class="mf-label" for="sdNumero">Número <span style="color:#CC0000">*</span></label>
+          <input type="text" id="sdNumero" class="mf-input" autocomplete="off"
+                 placeholder="Ej: 9770" oninput="_sdActualizarPreview()"
+                 onkeydown="if(event.key==='Enter') confirmarModalShipitDir()">
+        </div>
+      </div>
+      <small style="color:#888;display:block;margin-top:6px">
+        El depto, la oficina, la bodega o la torre NO van acá — eso viaja aparte
+        en “Referencia de la dirección”. Acá va solo el número de la calle.
+      </small>
+
+      <div class="sd-preview" id="sdPreview"></div>
+
+      <div class="mf-alert" id="sdAlert" style="display:none"></div>
+
+      <div style="margin-top:12px;font-size:.74rem;color:#6b7280;
+                  border-top:1px dashed #e5e7eb;padding-top:10px">
+        <i class="bi bi-file-earmark-spreadsheet me-1"></i>
+        ¿Esto te está pasando seguido?
+        <a href="/transporte/couriers/diagnostico-direcciones.xlsx" target="_blank" rel="noopener"
+           style="color:#dc2626;font-weight:700;text-decoration:none">
+          Descarga el Excel de direcciones para corregir</a>
+        y arréglalas todas de una vez, antes de despachar.
+      </div>
+    </div>
+
+    <div class="modal-mf-foot">
+      <button class="btn btn-light" onclick="cerrarModalShipitDir()">Cancelar</button>
+      <button class="btn btn-primary" id="sdBtnOk" onclick="confirmarModalShipitDir()">
+        <i class="bi bi-check2 me-1"></i>Usar estos datos
+      </button>
+    </div>
+  </div>
+</div>
 
 {# Medidas por fila (Daniel 2026-07-25: "necesito poder acceder a las
    etiquetas [medidas] y rellenarlo [el SKU sin ficha], y que se actualice,

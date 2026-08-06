@@ -740,12 +740,15 @@ a.kv:active{ background:#fafafa; }
 .ft-brand{
   margin-top:.9rem; text-align:center;
   background:var(--ink); color:#fff;
-  padding:.9rem 1rem 1.1rem; border-radius:14px;
+  padding:1.7rem 1.4rem 1.9rem; border-radius:14px;
 }
 .ft-brand-line{
   height:2px; background:linear-gradient(90deg,transparent,var(--red) 18%,var(--red) 82%,transparent);
-  margin:-0.9rem -1rem .8rem;   /* la franja roja queda pegada al borde superior de la banda negra */
+  margin:-1.7rem -1.4rem 1.1rem;   /* la franja roja queda pegada al borde superior de la banda negra */
 }
+/* El "hero" de cierre: mismo logo del header, mucho más grande y con aire
+   alrededor -- la página abre y cierra con la misma marca. */
+.ft-hero-logo{ height:44px; margin-bottom:1rem; }
 /* .ft-brand-logo quedó sin uso: se sacó el logo suelto del footer
    (Daniel 2026-08-05). Se conserva la regla vacía fuera para no dejar
    CSS muerto. */
@@ -970,8 +973,16 @@ a.kv:active{ background:#fafafa; }
   .ft-q{ margin-bottom:0; font-size:.88rem; white-space:nowrap; }
   .ft-btns{ flex-direction:row; flex:1; justify-content:flex-start; }
   .ft-btn{ min-height:44px; padding:.55rem .9rem; font-size:.85rem; flex:0 1 auto; white-space:nowrap; }
-  .ft-brand{ flex:0 0 auto; margin-top:0; text-align:right; }
+  /* En escritorio la banda de marca comparte fila con "¿Necesitas ayuda?"
+     dentro de .footzone (una barra delgada, ver arriba) -- el "hero" grande
+     es un gesto de CIERRE DE PANTALLA que solo tiene sentido en el celular,
+     donde el cliente lee de arriba a abajo y esto es lo último que ve. Acá
+     se mantiene compacta como ya estaba: sin logo grande, sin franja roja
+     propia (la usa el header y ya alcanza en una vista de escritorio donde
+     todo es visible a la vez, no hay "cierre" que marcar). */
+  .ft-brand{ flex:0 0 auto; margin-top:0; text-align:right; padding:.5rem .9rem; border-radius:10px; }
   .ft-brand-line{ display:none; }        /* ya lo hace el borde de .footzone */
+  .ft-hero-logo{ display:none; }
   .ft-brand .ft-row{ display:flex; align-items:center; gap:.9rem; }
   .ft-sign{ display:inline-flex; flex-wrap:nowrap; white-space:nowrap; }
   .ft-brand-tag{ font-size:.76rem; }
@@ -1492,8 +1503,19 @@ a.kv:active{ background:#fafafa; }
      compacta: candado + marca + promesa, con las redes al lado. Además
      ocupa mucho menos alto, que es lo que permite que la página entre
      sin scroll. La firma NO va dentro de una pestaña: se ve siempre. #}
+  {# LOGO GRANDE DE VUELTA (2026-08-05, mismo día, viendo el footer YA
+     NEGRO): "se puede estirar el footer, así como está, me gusta... que
+     tenga un hero grande". La razón por la que esta vez SÍ funciona: el
+     logo de julio se sacó porque el footer era CLARO y el blanco se veía
+     apagado. Ahora el footer es negro -- el mismo PNG blanco del header se
+     ve nítido acá, no compite: cierra la página con la misma nota con la
+     que abre. Mismo archivo que el header (logo_ilus_fitness_blanco.png),
+     más grande, con más aire alrededor. #}
   <div class="ft-brand">
     <div class="ft-brand-line"></div>
+    <img class="ft-hero-logo" src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}"
+         alt="ILUS Fitness"
+         onerror="this.onerror=null;this.src='{{ url_for('static', filename='Logo.png') }}'">
     <div class="ft-row">
       <div class="ft-sign">
         <i class="bi bi-shield-lock-fill" aria-hidden="true"></i>
