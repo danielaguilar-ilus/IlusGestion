@@ -1386,7 +1386,32 @@
   .vtl-stat{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:9px 12px;}
   .vtl-stat .vs-num{font-size:1.5rem;font-weight:900;line-height:1;}
   .vtl-stat .vs-lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.4px;color:#9ca3af;font-weight:700;margin-top:3px;}
-  .vtl-track-wrap{position:relative;height:262px;margin:8px 6px 0;}
+  /* ── Zoom + navegación (Daniel 2026-08-06): con varias visitas en el mismo
+        mes las etiquetas se montaban y se podía escapar una. El track vive
+        dentro de un viewport con scroll horizontal y su ancho crece con el
+        zoom, así las visitas se van separando solas. ── */
+  .vtl-viewport{position:relative;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;
+                cursor:grab;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent;padding-bottom:4px;}
+  .vtl-viewport.dragging{cursor:grabbing;}
+  .vtl-viewport::-webkit-scrollbar{height:8px;}
+  .vtl-viewport::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:50px;}
+  .vtl-viewport::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.34);}
+  .vtl-viewport::-webkit-scrollbar-track{background:transparent;}
+  .vtl-zoombar{display:flex;align-items:center;gap:6px;margin:10px 6px 0;}
+  .vtl-zhint{margin-right:auto;font-size:.62rem;color:#6b7280;display:flex;align-items:center;gap:5px;}
+  .vtl-zbtn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#e5e7eb;
+            border-radius:8px;min-width:30px;height:30px;font-size:.8rem;font-weight:800;line-height:1;
+            display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:0 9px;cursor:pointer;
+            transition:background .15s,border-color .15s;}
+  .vtl-zbtn:hover:not(:disabled){background:rgba(220,38,38,.18);border-color:rgba(220,38,38,.5);}
+  .vtl-zbtn:disabled{opacity:.35;cursor:default;}
+  .vtl-zlbl{font-size:.66rem;font-weight:800;color:#9ca3af;min-width:46px;text-align:center;
+            font-variant-numeric:tabular-nums;}
+  /* Etiquetas de mes secundarias: solo aparecen cuando hay espacio (zoom). */
+  .vtl-track-wrap:not(.zoomed) .vtl-mlbl--sec{display:none;}
+  /* Sin transition en width: el zoom con rueda dispara muchos cambios
+     seguidos y la animación dejaba el ancho a medio camino. */
+  .vtl-track-wrap{position:relative;height:262px;margin:8px 6px 0;width:100%;}
   .vtl-axis{position:absolute;left:0;right:0;top:122px;height:3px;border-radius:2px;background:#2e2e34;}
   .vtl-axis-done{position:absolute;left:0;top:122px;height:3px;border-radius:2px;background:linear-gradient(90deg,#7f1d1d,#dc2626);}
   .vtl-hoy{position:absolute;top:16px;bottom:34px;width:0;border-left:2px dashed #dc2626;z-index:2;}

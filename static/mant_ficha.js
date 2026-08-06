@@ -9963,11 +9963,13 @@ function _vtlRender(bodyId, opts) {
   let _cur = new Date(yMin, 0, 1);
   for (let g = 0; g < 60 && _cur.getTime() <= winE; g++) {
     const m = _cur.getMonth();
-    if (m % stepM === 0) {
-      const xm = pY(_cur.getTime()).toFixed(2);
-      const lbl = m === 0 ? `<b style="color:#cbd5e1">${_MM[m]} '${String(_cur.getFullYear()).slice(2)}</b>` : _MM[m];
-      mesesHtml += `<div class="vtl-mgrid" style="left:${xm}%"></div><div class="vtl-mlbl" style="left:${xm}%">${lbl}</div>`;
-    }
+    const xm = pY(_cur.getTime()).toFixed(2);
+    const lbl = m === 0 ? `<b style="color:#cbd5e1">${_MM[m]} '${String(_cur.getFullYear()).slice(2)}</b>` : _MM[m];
+    // Se pintan TODOS los meses; los "secundarios" solo se ven al acercar
+    // (CSS .vtl-track-wrap.zoomed) — así el eje gana detalle con el zoom.
+    const sec = (m % stepM === 0) ? '' : ' vtl-mlbl--sec';
+    mesesHtml += `<div class="vtl-mgrid" style="left:${xm}%"></div>` +
+                 `<div class="vtl-mlbl${sec}" style="left:${xm}%">${lbl}</div>`;
     _cur = new Date(_cur.getFullYear(), m + 1, 1);
   }
 
@@ -9990,7 +9992,9 @@ function _vtlRender(bodyId, opts) {
     const estadoFull = chipTxt + (faltas.length ? (' · falta ' + faltas.join(', ')) : ((n.garantia && (n.clase === 'done' || n.clase === 'porcerrar')) ? ' · garantía (sin cobro)' : ''));
     const tip = _intelEsc((n.ot ? (n.ot + ' · ') : '') + (n.titulo || tipoLbl) + (n.tecnico ? (' · ' + n.tecnico) : '') + ' · ' + _vtlFmtFecha(n.fecha) + ' · ' + estadoFull);
     const dotClick = n.clase === 'overdue' ? ' onclick="if(window.abrirNuevaVisita)abrirNuevaVisita(\'preventiva\')"' : '';
-    return `<div class="vtl-node" style="left:${x}%" title="${tip}">
+    // data-x: la posición real en % la usa _vtlLayoutLabels() para repartir
+    // las etiquetas en carriles según el espacio DISPONIBLE (cambia con el zoom).
+    return `<div class="vtl-node" data-x="${x}" style="left:${x}%" title="${tip}">
       <div class="vtl-guide"></div>
       <div class="vtl-dot ${dotCls}"${dotClick}>${dotInner}</div>
       <div class="vtl-lbl" style="top:${_TIERS[i % 4]}px">
@@ -10016,13 +10020,23 @@ function _vtlRender(bodyId, opts) {
       <span class="vti vti-link" onclick="switchTab('finanzas');if(window.cargarFinanzas)cargarFinanzas()">ver finanzas <i class="bi bi-arrow-right"></i></span>
     </div>`;
   body.innerHTML = `${stats}
-    <div class="vtl-track-wrap">
-      ${mesesHtml}
-      <div class="vtl-axis"></div>
-      <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
-      <div class="vtl-hoy" style="left:${hoyPct}%"></div>
-      <div class="vtl-hoy-pill" style="left:${hoyPct}%">HOY</div>
-      ${nodesHtml}
+    <div class="vtl-zoombar">
+      <span class="vtl-zhint"><i class="bi bi-mouse2"></i>Rueda del mouse para acercar · arrastra para moverte</span>
+      <button class="vtl-zbtn" data-vtlz="out" title="Alejar">−</button>
+      <span class="vtl-zlbl">100%</span>
+      <button class="vtl-zbtn" data-vtlz="in" title="Acercar">+</button>
+      <button class="vtl-zbtn" data-vtlz="fit" title="Ver el año completo"><i class="bi bi-arrows-angle-contract"></i>Ajustar</button>
+      <button class="vtl-zbtn" data-vtlz="hoy" title="Centrar en hoy"><i class="bi bi-crosshair"></i>Hoy</button>
+    </div>
+    <div class="vtl-viewport">
+      <div class="vtl-track-wrap" data-hoy="${hoyPct}">
+        ${mesesHtml}
+        <div class="vtl-axis"></div>
+        <div class="vtl-axis-done" style="width:${hoyPct}%"></div>
+        <div class="vtl-hoy" style="left:${hoyPct}%"></div>
+        <div class="vtl-hoy-pill" style="left:${hoyPct}%">HOY</div>
+        ${nodesHtml}
+      </div>
     </div>
     <div class="vtl-leg">
       <span><span class="vtl-leg-dot" style="background:#22c55e"></span>Realizada</span>
@@ -10031,6 +10045,149 @@ function _vtlRender(bodyId, opts) {
       <span><span class="vtl-leg-dot" style="border:2px dashed #60a5fa"></span>Programada</span>
     </div>
     ${_interv}`;
+  _vtlBindZoom(body);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ZOOM Y NAVEGACIÓN DE LA LÍNEA DE TIEMPO (Daniel 2026-08-06)
+// "están muy montadas, se me puede escapar una": con varias visitas en el
+// mismo mes las etiquetas se pisaban. Ahora el eje se puede ACERCAR (rueda,
+// botones) y RECORRER (arrastrando), y las etiquetas se reparten en carriles
+// según el espacio real que hay — al acercar, bajan a menos carriles y quedan
+// alineadas. Es solo presentación: ningún dato cambia.
+// ════════════════════════════════════════════════════════════════════
+var _VTL_TIERS = [8, 188, 52, 144];   // carriles: arriba lejos/cerca, abajo lejos/cerca
+var _VTL_LBL_W = 104;                 // ancho de etiqueta (100px) + aire
+
+// Reparte las etiquetas en carriles evitando que se monten. Va en orden de
+// fecha y usa el PRIMER carril donde la anterior quede a más de una etiqueta
+// de distancia; si ninguno tiene espacio, elige el que tenga más aire.
+function _vtlLayoutLabels(wrap) {
+  if (!wrap) return;
+  const W = wrap.clientWidth || wrap.offsetWidth || 1;
+  const nodos = Array.prototype.slice.call(wrap.querySelectorAll('.vtl-node'));
+  nodos.sort((a, b) => parseFloat(a.dataset.x || 0) - parseFloat(b.dataset.x || 0));
+  const ultimo = _VTL_TIERS.map(() => -1e9);
+  nodos.forEach(nd => {
+    const xpx = (parseFloat(nd.dataset.x || 0) / 100) * W;
+    let elegido = 0, mejorHueco = -1e9;
+    for (let t = 0; t < _VTL_TIERS.length; t++) {
+      const hueco = xpx - ultimo[t];
+      if (hueco >= _VTL_LBL_W) { elegido = t; mejorHueco = hueco; break; }
+      if (hueco > mejorHueco) { mejorHueco = hueco; elegido = t; }
+    }
+    ultimo[elegido] = xpx;
+    const lbl = nd.querySelector('.vtl-lbl');
+    if (lbl) lbl.style.top = _VTL_TIERS[elegido] + 'px';
+  });
+}
+
+function _vtlBindZoom(root) {
+  const vp = root.querySelector('.vtl-viewport');
+  const wrap = root.querySelector('.vtl-track-wrap');
+  if (!vp || !wrap || vp.dataset.zoomInit === '1') return;
+  vp.dataset.zoomInit = '1';
+
+  // MAXZ 40: con 7 visitas en 11 días (caso real de Daniel) hacen falta
+  // ~20× para que cada etiqueta tenga sus 104px y bajen a un solo carril.
+  // Con 14× seguían apiladas — medido en banco de pruebas.
+  const MINZ = 1, MAXZ = 40, PASO = 1.25;
+  let z = 1;
+  // Ancho base = el del viewport. El track se dimensiona en PÍXELES
+  // (base × zoom): los porcentajes dentro de un contenedor con scroll dan
+  // anchos impredecibles — verificado en banco de pruebas, se quedaba pegado.
+  let baseW = vp.clientWidth || 1;
+  const lblZ = root.querySelector('.vtl-zlbl');
+  const btnIn = root.querySelector('[data-vtlz="in"]');
+  const btnOut = root.querySelector('[data-vtlz="out"]');
+
+  function pintarBotones() {
+    if (lblZ) lblZ.textContent = Math.round(z * 100) + '%';
+    if (btnIn) btnIn.disabled = (z >= MAXZ - 0.001);
+    if (btnOut) btnOut.disabled = (z <= MINZ + 0.001);
+    wrap.classList.toggle('zoomed', z >= 1.6);
+  }
+
+  function anchoTrack() { return wrap.clientWidth || baseW; }
+
+  // anclaX = píxel del viewport que debe quedar quieto (el que está bajo el
+  // cursor). Sin esto, acercar "salta" y se pierde la visita que mirabas.
+  function aplicar(nuevoZ, anclaX) {
+    nuevoZ = Math.min(MAXZ, Math.max(MINZ, nuevoZ));
+    if (Math.abs(nuevoZ - z) < 0.001) return;
+    const anchoPrev = anchoTrack();
+    const ax = (anclaX == null) ? (vp.clientWidth / 2) : anclaX;
+    const rel = (vp.scrollLeft + ax) / anchoPrev;
+    z = nuevoZ;
+    wrap.style.width = (z <= MINZ + 0.001) ? '' : (Math.round(baseW * z) + 'px');
+    // Síncrono a propósito: leer clientWidth fuerza el layout y deja el
+    // scroll y los carriles ya correctos. Con requestAnimationFrame esto no
+    // corría si la pestaña estaba en segundo plano — el eje se ensanchaba
+    // pero las etiquetas y el % se quedaban como estaban (visto en banco).
+    vp.scrollLeft = Math.max(0, rel * anchoTrack() - ax);
+    _vtlLayoutLabels(wrap);
+    pintarBotones();
+  }
+
+  function centrarEnHoy() {
+    const hoy = parseFloat(wrap.dataset.hoy || '50') / 100;
+    vp.scrollLeft = Math.max(0, hoy * anchoTrack() - vp.clientWidth / 2);
+  }
+
+  vp.addEventListener('wheel', e => {
+    const acercar = e.deltaY < 0;
+    // Al 100% y alejando, dejamos pasar la rueda para que la PÁGINA siga
+    // scrolleando normal — no secuestramos el gesto sin necesidad.
+    if (!acercar && z <= MINZ + 0.001) return;
+    e.preventDefault();
+    const r = vp.getBoundingClientRect();
+    aplicar(acercar ? z * PASO : z / PASO, e.clientX - r.left);
+  }, { passive: false });
+
+  // Arrastrar para recorrer. No se activa sobre un punto: ahí manda el clic.
+  let arrastrando = false, xIni = 0, scrollIni = 0, movido = 0;
+  vp.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    if (e.target.closest && e.target.closest('.vtl-dot')) return;
+    arrastrando = true; movido = 0;
+    xIni = e.clientX; scrollIni = vp.scrollLeft;
+    vp.classList.add('dragging');
+    try { vp.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  vp.addEventListener('pointermove', e => {
+    if (!arrastrando) return;
+    const d = e.clientX - xIni;
+    movido = Math.max(movido, Math.abs(d));
+    vp.scrollLeft = scrollIni - d;
+  });
+  const soltar = () => { arrastrando = false; vp.classList.remove('dragging'); };
+  vp.addEventListener('pointerup', soltar);
+  vp.addEventListener('pointercancel', soltar);
+  vp.addEventListener('pointerleave', soltar);
+
+  root.querySelectorAll('[data-vtlz]').forEach(b => {
+    b.addEventListener('click', () => {
+      const a = b.dataset.vtlz;
+      if (a === 'in') aplicar(z * PASO, null);
+      else if (a === 'out') aplicar(z / PASO, null);
+      else if (a === 'fit') { z = 1; wrap.style.width = ''; vp.scrollLeft = 0; _vtlLayoutLabels(wrap); pintarBotones(); }
+      else if (a === 'hoy') { if (z < 3) aplicar(3, null); setTimeout(centrarEnHoy, 60); }
+    });
+  });
+
+  // Reparto inicial + al cambiar el ancho de la ventana.
+  _vtlLayoutLabels(wrap);
+  pintarBotones();
+  let tRes = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(tRes);
+    tRes = setTimeout(() => {
+      // El ancho base sigue al viewport; si estaba acercado, se re-escala.
+      baseW = vp.clientWidth || baseW;
+      if (z > MINZ + 0.001) wrap.style.width = Math.round(baseW * z) + 'px';
+      _vtlLayoutLabels(wrap);
+    }, 160);
+  });
 }
 
 // Hidratar Centro de control + Línea de tiempo de visitas al cargar (deferido, no bloquea el paint).
