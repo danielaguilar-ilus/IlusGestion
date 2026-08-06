@@ -4176,10 +4176,12 @@ function tkotTipoChange(){
     } else garWrap.style.display = '';
   }
 
+  // MANDA EL DESPLEGABLE (Daniel 2026-08-06): al cambiar de tipo la modalidad
+  // se limpia SIEMPRE, no queda 'equipos' por debajo. Espejo de Mantenciones.
   const modoWrap = document.getElementById('otModoLevWrap');
   if(modoWrap){
-    if(tipo === 'levantamiento') modoWrap.style.display = '';
-    else { modoWrap.style.display = 'none'; tkotModoSet('equipos'); }
+    modoWrap.style.display = (tipo === 'levantamiento') ? '' : 'none';
+    tkotModoSet(null);
   }
 
   const tit = document.getElementById('levSelectTitulo');
@@ -4194,8 +4196,10 @@ function tkotTipoChange(){
   tkotAplicarForzadoInstalacion();
 }
 
+// null = sin elegir. La modalidad NO viene preseleccionada: manda el tipo de
+// OT del desplegable (ver tkotTipoChange).
 function tkotModoSet(modo){
-  _TKOT.modo = (modo === 'descubrimiento') ? 'descubrimiento' : 'equipos';
+  _TKOT.modo = (modo === 'descubrimiento' || modo === 'equipos') ? modo : null;
   const cEq = document.getElementById('levModoEquipos');
   const cDes = document.getElementById('levModoDescubrir');
   const hint = document.getElementById('levModoHint');
@@ -4500,7 +4504,8 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
 
   const tipoSel = document.getElementById('otTipo');
   if(tipoSel) tipoSel.value = 'levantamiento';
-  tkotModoSet('equipos');
+  // Sin preselección de modalidad: tkotTipoChange() la deja limpia y el
+  // usuario elige (Daniel 2026-08-06). Antes aquí se marcaba 'equipos'.
   tkotTipoChange();
 
   // 2026-07-19 (Daniel): la OT hereda el contexto del ticket -- si Notas

@@ -1172,14 +1172,14 @@ function onTipoOtChange(){
   }
   // Modalidad del levantamiento (Daniel 2026-06-23): selector visible SOLO
   // para tipo levantamiento. Al cambiar de tipo vuelve al modo clásico.
+  // MANDA EL DESPLEGABLE (Daniel 2026-08-06): al cambiar de tipo la modalidad
+  // del levantamiento se limpia SIEMPRE. Antes quedaba en 'equipos' por debajo
+  // aunque el bloque estuviera oculto, y volvía marcada al regresar a
+  // levantamiento — parecía que el modal ignoraba el tipo elegido.
   const modoWrap = document.getElementById('otModoLevWrap');
   if (modoWrap){
-    if (tipo === 'levantamiento'){
-      modoWrap.style.display = '';
-    } else {
-      modoWrap.style.display = 'none';
-      levModoSet('equipos');
-    }
+    modoWrap.style.display = (tipo === 'levantamiento') ? '' : 'none';
+    levModoSet(null);
   }
   // Sugerir título según tipo si está vacío o tiene un prefijo conocido
   const tit = document.getElementById('levSelectTitulo');
@@ -1199,9 +1199,12 @@ function onTipoOtChange(){
 
 // ── Modalidad del levantamiento: 'equipos' (clásico) | 'descubrimiento'
 //    (el técnico crea el inventario en terreno). Daniel 2026-06-23.
-window._LEV_MODO = 'equipos';
+// null = sin elegir. NO se preselecciona ninguna modalidad al abrir el modal:
+// el tipo de OT del desplegable es la fuente de verdad y esto es una opción
+// del levantamiento, no un estado que deba sobrevivir a cambiar de tipo.
+window._LEV_MODO = null;
 function levModoSet(modo){
-  window._LEV_MODO = (modo === 'descubrimiento') ? 'descubrimiento' : 'equipos';
+  window._LEV_MODO = (modo === 'descubrimiento' || modo === 'equipos') ? modo : null;
   const cEq  = document.getElementById('levModoEquipos');
   const cDes = document.getElementById('levModoDescubrir');
   const hint = document.getElementById('levModoHint');

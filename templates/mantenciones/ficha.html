@@ -5587,7 +5587,9 @@ window._TKOT_ROL_GESTION = {{ 'true' if puede_gestionar_visitas else 'false' }};
                 <i class="bi bi-signpost-split me-1" style="color:#dc2626"></i>Modalidad del levantamiento
               </div>
               <div class="lev-modo-grid">
-                <div class="lev-modo-card on" id="levModoEquipos" onclick="levModoSet('equipos')">
+                {# Sin `on` de fábrica: la modalidad NO viene preseleccionada.
+                   Manda el desplegable de arriba (Daniel 2026-08-06). #}
+                <div class="lev-modo-card" id="levModoEquipos" onclick="levModoSet('equipos')">
                   <div class="chk"><i class="bi bi-check-lg"></i></div>
                   <div class="ico">📋</div>
                   <div class="tit">Con equipos de la ficha</div>
