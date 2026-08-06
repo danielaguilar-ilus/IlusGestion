@@ -3,6 +3,92 @@
 {% block head_extra %}
 <link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='tickets_list.css') }}" rel="stylesheet">
+<style>
+/* ── Latido de recepción (franja permanente sobre los filtros) ────────── */
+.tkms{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:10px 14px;border-radius:12px;margin:0 0 12px;
+  border:1px solid #e5e7eb;background:#f9fafb;
+  font-size:.82rem;line-height:1.35;
+  transition:background .25s ease,border-color .25s ease;}
+.tkms-dot{width:11px;height:11px;border-radius:50%;background:#9ca3af;flex:0 0 auto;
+  box-shadow:0 0 0 0 rgba(0,0,0,0);}
+.tkms-txt{display:flex;flex-direction:column;min-width:0;flex:1 1 260px;}
+.tkms-titulo{font-weight:700;color:#0a0a0a;}
+.tkms-detalle{color:#4b5563;}
+.tkms-meta{color:#6b7280;font-size:.75rem;white-space:nowrap;}
+.tkms-cta{display:flex;gap:6px;flex-wrap:wrap;}
+.tkms-cta .btn{font-size:.74rem;padding:4px 10px;}
+.tkms[data-estado="ok"]{background:#f0fdf4;border-color:#bbf7d0;}
+.tkms[data-estado="ok"] .tkms-dot{background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.18);}
+.tkms[data-estado="alerta"]{background:#fff8e1;border-color:#fde68a;}
+.tkms[data-estado="alerta"] .tkms-dot{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2);}
+.tkms[data-estado="critico"]{background:#fee2e2;border-color:#fecaca;}
+.tkms[data-estado="critico"] .tkms-titulo{color:#991b1b;}
+.tkms[data-estado="critico"] .tkms-dot{background:#dc2626;animation:tkmsPulse 2.6s ease-in-out infinite;}
+@keyframes tkmsPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55);}
+  50%{box-shadow:0 0 0 8px rgba(220,38,38,0);} }
+@media (prefers-reduced-motion:reduce){
+  .tkms[data-estado="critico"] .tkms-dot{animation:none;box-shadow:0 0 0 3px rgba(220,38,38,.3);} }
+@media (max-width:575.98px){
+  .tkms{font-size:.78rem;padding:10px;}
+  .tkms-meta{white-space:normal;} }
+
+/* ── Modal recuperar correos ──────────────────────────────────────────── */
+.tkrec-explica{display:flex;gap:10px;align-items:flex-start;
+  background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;
+  padding:10px 12px;font-size:.82rem;color:#1e3a8a;margin-bottom:14px;}
+.tkrec-explica > i{font-size:1.05rem;flex:0 0 auto;margin-top:1px;}
+.tkrec-safe{display:inline-flex;align-items:center;gap:6px;margin-top:6px;
+  color:#166534;font-weight:600;}
+.tkrec-form{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;}
+.tkrec-f{display:flex;flex-direction:column;gap:4px;min-width:170px;flex:1 1 170px;}
+.tkrec-f label{font-size:.72rem;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.03em;}
+.tkrec-f small{font-size:.68rem;color:#6b7280;}
+.tkrec-f-btn{flex:0 0 auto;min-width:auto;}
+.tkrec-f-btn .btn{min-height:38px;}
+.tkrec-estado{border-radius:10px;padding:10px 12px;font-size:.82rem;margin-bottom:12px;}
+.tkrec-estado.info{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;}
+.tkrec-estado.error{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;}
+.tkrec-estado.ok{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;}
+.tkrec-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.tkrec-chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;
+  padding:5px 12px;font-size:.76rem;font-weight:700;border:1px solid transparent;}
+.tkrec-chip.nuevo{background:#f0fdf4;color:#166534;border-color:#bbf7d0;}
+.tkrec-chip.ya{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb;}
+.tkrec-chip.sin{background:#fff8e1;color:#92400e;border-color:#fde68a;}
+.tkrec-chip.prop{background:#eff6ff;color:#1e40af;border-color:#bfdbfe;}
+.tkrec-tabla-wrap{overflow-x:auto;border:1px solid #e5e7eb;border-radius:10px 10px 0 0;}
+.tkrec-tabla{width:100%;border-collapse:collapse;font-size:.78rem;min-width:720px;}
+.tkrec-tabla thead th{position:sticky;top:0;background:#0a0a0a;color:#fff;
+  text-align:left;padding:8px 10px;font-size:.7rem;text-transform:uppercase;
+  letter-spacing:.03em;white-space:nowrap;z-index:2;}
+.tkrec-tabla tbody td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:top;}
+.tkrec-tabla tbody tr:nth-child(even){background:#fafafa;}
+.tkrec-tabla .asunto{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tkrec-tabla .correo{color:#6b7280;font-size:.7rem;display:block;}
+.tkrec-b{display:inline-block;border-radius:999px;padding:2px 9px;font-size:.68rem;font-weight:800;white-space:nowrap;}
+.tkrec-b.nuevo{background:#dcfce7;color:#166534;}
+.tkrec-b.ya_ingerido{background:#f3f4f6;color:#4b5563;}
+.tkrec-b.sin_ticket{background:#fff8e1;color:#92400e;}
+.tkrec-b.propio{background:#dbeafe;color:#1e40af;}
+.tkrec-pag{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;
+  padding:8px 12px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px;background:#f9fafb;}
+.tkrec-pag-info{font-size:.74rem;color:#4b5563;display:flex;align-items:center;gap:6px;}
+.tkrec-pag-info i{color:#dc2626;}
+.tkrec-pag-ctrl{display:flex;align-items:center;gap:6px;}
+.tkrec-pag-ctrl .form-select{width:auto;font-size:.74rem;}
+.tkrec-pag-num{font-size:.74rem;color:#4b5563;white-space:nowrap;}
+.tkrec-footer{justify-content:space-between;gap:8px;flex-wrap:wrap;}
+.tkrec-footer-nota{font-size:.74rem;color:#6b7280;flex:1 1 200px;}
+@media (max-width:575.98px){
+  /* Anti auto-zoom iOS (REGLA #3): 16px en los inputs del modal. */
+  #tkRecModal input.form-control,#tkRecModal select.form-select{font-size:16px;}
+  .tkrec-f-btn{flex:1 1 100%;}
+  .tkrec-f-btn .btn{width:100%;}
+  .tkrec-footer .btn{flex:1 1 auto;min-height:44px;}
+  .tkrec-pag{justify-content:center;} }
+</style>
 {% endblock %}
 {% block content %}
 
@@ -24,6 +110,9 @@
       <i class="bi bi-trash3 me-1"></i>Purgar tickets</button>
     <button class="btn btn-sm btn-outline-light" id="btnZzInstalacion" title="Revisa documentos ERP nuevos con línea ZZINSTALACION y crea un ticket de instalación por cada uno (sin duplicar)">
       <i class="bi bi-search-heart me-1"></i>Revisar documentos nuevos (Instalación)</button>
+    <button class="btn btn-sm btn-outline-light" id="btnRecuperarMail"
+            title="Revisar el buzón de soporte hacia atrás y recuperar respuestas de clientes que no entraron como mensaje del ticket">
+      <i class="bi bi-envelope-arrow-down me-1"></i>Recuperar correos</button>
     {% endif %}
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
       <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
@@ -37,6 +126,31 @@
   <div class="tk-kpi a trx-kpi trx-kpi-red"><span class="num" id="kpiActivos">—</span><span class="lbl">Activos</span></div>
   <div class="tk-kpi u trx-kpi trx-kpi-warn"><span class="num" id="kpiUrgentes">—</span><span class="lbl">Urgentes</span></div>
   <div class="tk-kpi v trx-kpi trx-kpi-dang"><span class="num" id="kpiVencidos">—</span><span class="lbl">Vencidos (SLA)</span></div>
+</div>
+
+{# ══════════════════════════════════════════════════════════════════════
+   LATIDO DE LA RECEPCIÓN DE CORREOS
+   ══════════════════════════════════════════════════════════════════════
+   Entre el 24-jul y el 5-ago-2026 los correos de clientes dejaron de
+   convertirse en tickets. DOCE DÍAS. Nadie lo notó porque el ENVÍO seguía
+   funcionando perfecto: los correos salían, todos los indicadores estaban
+   verdes, y la única huella de la falla era una línea de log en Cloud Run
+   que nadie mira.
+
+   Por eso esta franja se muestra SIEMPRE, también (y sobre todo) cuando
+   está todo bien: un indicador que solo aparece cuando ya sospechas no
+   sirve de nada — nadie sospecha de un canal que se ve sano. Viéndolo
+   verde todos los días, el día que se pone rojo salta a la vista.
+   Datos: GET /tickets/api/mail/salud (tabla tk_mail_salud).
+   ══════════════════════════════════════════════════════════════════════ #}
+<div id="tkMailSalud" class="tkms" data-estado="cargando">
+  <span class="tkms-dot" aria-hidden="true"></span>
+  <div class="tkms-txt">
+    <strong class="tkms-titulo">Comprobando la recepción de correos…</strong>
+    <span class="tkms-detalle"></span>
+  </div>
+  <div class="tkms-meta" id="tkmsMeta"></div>
+  <div class="tkms-cta" id="tkmsCta"></div>
 </div>
 
 <div class="tk-filtros">
@@ -263,6 +377,110 @@
   </div>
 </div>
 
+{% if permissions.superadmin %}
+<!-- ══════════ MODAL: Recuperar correos atrasados ══════════
+     DOS PASOS A PROPÓSITO. Primero "Ver qué va a pasar" (no escribe nada),
+     después "Ingresar los que faltan". Son correos de clientes REALES: no
+     se dispara una ingesta masiva a ciegas.
+     La ingesta NO responde ni notifica a ningún cliente — solo escribe el
+     mensaje dentro del ticket y deja UNA campanita de resumen interna. -->
+<div class="modal fade" id="tkRecModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;">
+        <h5 class="modal-title"><i class="bi bi-envelope-arrow-down me-2"></i>Recuperar correos de clientes</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="tkrec-explica">
+          <i class="bi bi-info-circle-fill"></i>
+          <div>
+            Revisa el buzón de soporte hacia atrás y busca respuestas de clientes
+            con un número <strong>TK-</strong> en el asunto que todavía no estén
+            dentro de su ticket.
+            <br>
+            <span class="tkrec-safe"><i class="bi bi-shield-check"></i>
+              Solo lectura: nunca se marca como leído, ni se mueve, ni se borra
+              nada del buzón. Y no se le envía ningún correo al cliente.</span>
+          </div>
+        </div>
+
+        <div class="tkrec-form">
+          <div class="tkrec-f">
+            <label for="tkRecDias">Días hacia atrás</label>
+            <input type="number" id="tkRecDias" class="form-control form-control-sm"
+                   value="20" min="1" max="120" step="1">
+            <small>20 días cubre del 24-jul al 5-ago con margen.</small>
+          </div>
+          <div class="tkrec-f">
+            <label for="tkRecMax">Máximo de correos a revisar</label>
+            <select id="tkRecMax" class="form-select form-select-sm">
+              <option value="100">100</option>
+              <option value="200" selected>200</option>
+              <option value="400">400</option>
+            </select>
+            <small>Si el buzón trae más, se avisa y se revisan los más recientes.</small>
+          </div>
+          <div class="tkrec-f tkrec-f-btn">
+            <button class="btn btn-sm btn-ilus-outline" id="tkRecBtnPreview">
+              <i class="bi bi-eye me-1"></i>Ver qué va a pasar</button>
+          </div>
+        </div>
+
+        <div id="tkRecEstado" class="tkrec-estado" style="display:none"></div>
+
+        <div id="tkRecResultado" style="display:none">
+          <div class="tkrec-chips" id="tkRecChips"></div>
+          <div class="tkrec-tabla-wrap">
+            <table class="tkrec-tabla">
+              <thead>
+                <tr>
+                  <th style="width:150px">¿Qué pasa?</th>
+                  <th style="width:130px">Fecha</th>
+                  <th style="width:200px">De</th>
+                  <th>Asunto</th>
+                  <th style="width:140px">Ticket</th>
+                </tr>
+              </thead>
+              <tbody id="tkRecTbody"></tbody>
+            </table>
+          </div>
+          {# REGLA #4.3: toda tabla se pagina como Etiquetas — contenida en
+             pantalla, sin scroll de página. Pie con "Mostrando A–B de N",
+             selector de tamaño y Anterior/Siguiente. #}
+          <div class="tkrec-pag" id="tkRecPag">
+            <div class="tkrec-pag-info">
+              <i class="bi bi-collection"></i>
+              <span id="tkRecPagInfo">Sin resultados</span>
+            </div>
+            <div class="tkrec-pag-ctrl">
+              <select class="form-select form-select-sm" id="tkRecPagSize">
+                <option value="25">25 por página</option>
+                <option value="50" selected>50 por página</option>
+                <option value="100">100 por página</option>
+              </select>
+              <button class="btn btn-sm btn-outline-secondary" id="tkRecPagPrev">
+                <i class="bi bi-chevron-left"></i></button>
+              <span class="tkrec-pag-num" id="tkRecPagNum">Página 1 de 1</span>
+              <button class="btn btn-sm btn-outline-secondary" id="tkRecPagNext">
+                <i class="bi bi-chevron-right"></i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer tkrec-footer">
+        <span class="tkrec-footer-nota" id="tkRecFooterNota"></span>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-ilus" id="tkRecBtnIngestar" disabled>
+          <i class="bi bi-download me-1"></i>Ingresar los que faltan</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+
 <script>
 // Bootstrap: unicas variables Jinja que necesita tickets_list.js (ver
 // static/tickets_list.js, primeras lineas, para el detalle de cada campo).
@@ -276,6 +494,302 @@ window.TK_LIST_DATA = {
 };
 </script>
 <script defer src="{{ url_for('static', filename='tickets_list.js') }}"></script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   LATIDO DE RECEPCIÓN + RECUPERACIÓN DE CORREOS ATRASADOS
+   ══════════════════════════════════════════════════════════════════════
+   Vive en la plantilla (no en static/tickets_list.js) a propósito: es una
+   pieza autocontenida del canal de correo y así no se mezcla con la lógica
+   de la bandeja. Usa los helpers ilus* (REGLA #1: nada de alert/confirm).
+   El header X-CSRF-Token lo inyecta el wrapper global de base.html.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  var URL_SALUD = '/tickets/api/mail/salud';
+  var URL_REC   = '/tickets/api/mail/recuperar';
+
+  function esc(s){
+    return (s == null ? '' : String(s))
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  // Fetch tolerante: si el servidor devuelve HTML (login, 500 con página de
+  // error), no revienta con "Unexpected token <" — devuelve un objeto de
+  // error legible. Mismo patrón _fetchJsonSafe del resto del proyecto.
+  async function jsonSafe(url, opts){
+    try{
+      var r = await fetch(url, opts || {});
+      var txt = await r.text();
+      try{ return JSON.parse(txt); }
+      catch(e){
+        return { ok:false, error:'El servidor respondió algo inesperado (HTTP ' + r.status + ').' };
+      }
+    }catch(e){
+      return { ok:false, error:'Sin conexión con el servidor.' };
+    }
+  }
+
+  /* ── 1. LATIDO ──────────────────────────────────────────────────────
+     Se pinta SIEMPRE, incluso en verde. Ver el comentario del bloque
+     #tkMailSalud más arriba: la falla de 12 días no fue técnica, fue que
+     nadie podía verla. */
+  var box = document.getElementById('tkMailSalud');
+
+  function pintarSalud(d){
+    if(!box) return;
+    var estado = (d && d.ok && d.estado) ? d.estado : 'desconocido';
+    box.setAttribute('data-estado', estado);
+    var elT = box.querySelector('.tkms-titulo');
+    var elD = box.querySelector('.tkms-detalle');
+    var elM = document.getElementById('tkmsMeta');
+    var elC = document.getElementById('tkmsCta');
+    if(!d || !d.ok){
+      elT.textContent = 'No se pudo leer el estado de la recepción';
+      elD.textContent = (d && d.error) ? d.error : '';
+      elM.textContent = ''; elC.innerHTML = '';
+      return;
+    }
+    var ico = estado === 'ok' ? 'bi-envelope-check-fill'
+            : estado === 'critico' ? 'bi-exclamation-octagon-fill'
+            : estado === 'alerta' ? 'bi-exclamation-triangle-fill'
+            : 'bi-question-circle-fill';
+    elT.innerHTML = '<i class="bi ' + ico + ' me-1"></i>' + esc(d.titulo || '');
+    elD.textContent = [d.detalle, d.accion].filter(Boolean).join(' ');
+    var meta = [];
+    if(d.ultimo_correo) meta.push('Último correo de cliente: ' + d.ultimo_correo
+      + (d.ultimo_correo_ticket ? ' (' + d.ultimo_correo_ticket + ')' : ''));
+    else meta.push('Sin correos de clientes registrados');
+    if(d.ultimo_ok) meta.push('Buzón revisado: ' + d.ultimo_ok);
+    elM.innerHTML = meta.map(function(m){ return esc(m); }).join('<br>');
+    var cta = [];
+    if(estado === 'critico'){
+      cta.push('<a class="btn btn-sm btn-ilus" href="/comunicaciones/">'
+        + '<i class="bi bi-tools me-1"></i>Revisar configuración</a>');
+    }
+    if(d.puede_recuperar && estado !== 'ok'){
+      cta.push('<button type="button" class="btn btn-sm btn-ilus-outline" data-tkrec-open>'
+        + '<i class="bi bi-envelope-arrow-down me-1"></i>Recuperar correos</button>');
+    }
+    elC.innerHTML = cta.join('');
+  }
+
+  async function cargarSalud(){
+    pintarSalud(await jsonSafe(URL_SALUD));
+  }
+
+  if(box){
+    cargarSalud();
+    // Segunda lectura a los 6s: al cargar la bandeja se dispara un barrido
+    // del buzón en segundo plano, y su resultado llega un par de segundos
+    // después de este primer pintado. Sin esto, el latido mostraría el
+    // estado ANTERIOR hasta el refresco siguiente.
+    setTimeout(cargarSalud, 6000);
+    // Cada 90s. Barato (1 SELECT de 1 fila) y mantiene el latido vivo
+    // mientras alguien tiene la bandeja abierta todo el día.
+    setInterval(cargarSalud, 90000);
+  }
+
+  /* ── 2. RECUPERACIÓN (solo superadmin) ─────────────────────────────── */
+  var modalEl = document.getElementById('tkRecModal');
+  if(!modalEl) return;   // no superadmin: el modal no se renderiza
+
+  var bsModal = null;
+  function abrirModal(){
+    if(!bsModal) bsModal = new bootstrap.Modal(modalEl);
+    bsModal.show();
+  }
+  var btnAbrir = document.getElementById('btnRecuperarMail');
+  if(btnAbrir) btnAbrir.addEventListener('click', abrirModal);
+  document.addEventListener('click', function(ev){
+    var t = ev.target.closest ? ev.target.closest('[data-tkrec-open]') : null;
+    if(t) abrirModal();
+  });
+
+  var elDias   = document.getElementById('tkRecDias');
+  var elMax    = document.getElementById('tkRecMax');
+  var btnPrev  = document.getElementById('tkRecBtnPreview');
+  var btnIng   = document.getElementById('tkRecBtnIngestar');
+  var elEstado = document.getElementById('tkRecEstado');
+  var elRes    = document.getElementById('tkRecResultado');
+  var elChips  = document.getElementById('tkRecChips');
+  var elTbody  = document.getElementById('tkRecTbody');
+  var elNota   = document.getElementById('tkRecFooterNota');
+  var pagInfo  = document.getElementById('tkRecPagInfo');
+  var pagNum   = document.getElementById('tkRecPagNum');
+  var pagSize  = document.getElementById('tkRecPagSize');
+  var pagPrev  = document.getElementById('tkRecPagPrev');
+  var pagNext  = document.getElementById('tkRecPagNext');
+
+  var filas = [];
+  var page = 1;
+  var size = 50;
+
+  var ETIQUETA = {
+    nuevo:        'Se va a ingresar',
+    ya_ingerido:  'Ya está en el ticket',
+    sin_ticket:   'Ticket no existe',
+    propio:       'Enviado por nosotros'
+  };
+
+  function estadoMsg(clase, html){
+    elEstado.style.display = '';
+    elEstado.className = 'tkrec-estado ' + clase;
+    elEstado.innerHTML = html;
+  }
+
+  function renderPagina(){
+    var total = filas.length;
+    var paginas = Math.max(1, Math.ceil(total / size));
+    if(page > paginas) page = paginas;
+    if(page < 1) page = 1;
+    var ini = (page - 1) * size;
+    var trozo = filas.slice(ini, ini + size);
+    elTbody.innerHTML = trozo.map(function(f){
+      var et = ETIQUETA[f.estado] || f.estado;
+      return '<tr>'
+        + '<td><span class="tkrec-b ' + esc(f.estado) + '">' + esc(et) + '</span></td>'
+        + '<td>' + esc(f.fecha || '—') + '</td>'
+        + '<td>' + esc(f.de || '—') + '<span class="correo">' + esc(f.correo || '') + '</span></td>'
+        + '<td class="asunto" title="' + esc(f.asunto) + '">' + esc(f.asunto || '') + '</td>'
+        + '<td>' + (f.numero ? '<strong>' + esc(f.numero) + '</strong>' : '—')
+        + (f.nota ? '<div class="correo">' + esc(f.nota) + '</div>' : '') + '</td>'
+        + '</tr>';
+    }).join('');
+    pagInfo.textContent = total
+      ? ('Mostrando ' + (ini + 1) + '–' + (ini + trozo.length) + ' de ' + total)
+      : 'Sin resultados';
+    pagNum.textContent = 'Página ' + page + ' de ' + paginas;
+    pagPrev.disabled = (page <= 1);
+    pagNext.disabled = (page >= paginas);
+  }
+
+  pagSize.addEventListener('change', function(){
+    size = parseInt(pagSize.value, 10) || 50; page = 1; renderPagina();
+  });
+  pagPrev.addEventListener('click', function(){ page--; renderPagina(); });
+  pagNext.addEventListener('click', function(){ page++; renderPagina(); });
+
+  function contar(estado){
+    return filas.filter(function(f){ return f.estado === estado; }).length;
+  }
+
+  function pintarResultado(d, eraPreview){
+    filas = Array.isArray(d.detalle) ? d.detalle : [];
+    // Los que faltan primero: es lo que Daniel vino a ver.
+    var orden = { nuevo:0, sin_ticket:1, ya_ingerido:2, propio:3 };
+    filas.sort(function(a, b){
+      var da = (orden[a.estado] == null ? 9 : orden[a.estado]);
+      var db = (orden[b.estado] == null ? 9 : orden[b.estado]);
+      return da - db;
+    });
+    page = 1;
+    elRes.style.display = filas.length ? '' : 'none';
+    renderPagina();
+    var nuevos = contar('nuevo');
+    elChips.innerHTML = [
+      '<span class="tkrec-chip nuevo">' + nuevos + ' '
+        + (eraPreview ? 'por ingresar' : 'ingresados') + '</span>',
+      '<span class="tkrec-chip ya">' + contar('ya_ingerido') + ' ya estaban</span>',
+      '<span class="tkrec-chip sin">' + contar('sin_ticket') + ' sin ticket</span>',
+      '<span class="tkrec-chip prop">' + contar('propio') + ' nuestros</span>'
+    ].join('');
+
+    var avisos = [];
+    if(d.truncado){
+      avisos.push('El buzón trae ' + esc(d.truncado_total)
+        + ' correos con TK- en esa ventana y se revisaron los '
+        + esc(d.vistos) + ' más recientes. Sube el máximo o acorta los días '
+        + 'para alcanzar los más viejos.');
+    }
+    if(d.errores) avisos.push(esc(d.errores) + ' correo(s) dieron error al procesarse.');
+    if(d.parcial){
+      avisos.push('Se cortó por tiempo antes de terminar. Vuelve a ejecutarlo: '
+        + 'retoma donde quedó y no duplica nada.');
+    }
+
+    if(eraPreview){
+      btnIng.disabled = (nuevos === 0);
+      elNota.textContent = nuevos
+        ? ('Vista previa: no se escribió nada todavía. ' + nuevos
+           + ' correo(s) se ingresarían a sus tickets.')
+        : 'Vista previa: no hay correos pendientes de ingresar.';
+      estadoMsg(nuevos ? 'info' : 'ok',
+        '<i class="bi bi-eye me-1"></i>Vista previa de los últimos '
+        + esc(d.dias) + ' días — <strong>no se escribió nada</strong>. '
+        + (nuevos ? ('Faltan <strong>' + nuevos + '</strong> correo(s) por ingresar.')
+                  : 'Todos los correos del buzón ya están en sus tickets.')
+        + (avisos.length ? '<br><small>' + avisos.join(' ') + '</small>' : ''));
+    }else{
+      btnIng.disabled = true;
+      elNota.textContent = 'Listo. Vuelve a "Ver qué va a pasar" para confirmar que no quedó nada.';
+      estadoMsg('ok', '<i class="bi bi-check-circle-fill me-1"></i>'
+        + 'Se ingresaron <strong>' + nuevos + '</strong> correo(s) a sus tickets'
+        + (d.adjuntos ? (' y <strong>' + esc(d.adjuntos) + '</strong> adjunto(s)') : '')
+        + '. No se le envió ningún correo a los clientes.'
+        + (avisos.length ? '<br><small>' + avisos.join(' ') + '</small>' : ''));
+    }
+  }
+
+  async function correr(dryRun){
+    var boton = dryRun ? btnPrev : btnIng;
+    var htmlPrev = boton.innerHTML;
+    boton.disabled = true;
+    boton.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>'
+      + (dryRun ? 'Revisando el buzón…' : 'Ingresando…');
+    estadoMsg('info', '<i class="bi bi-hourglass-split me-1"></i>'
+      + 'Conectando al buzón de soporte… puede tardar unos segundos.');
+    var d = await jsonSafe(URL_REC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dias: parseInt(elDias.value, 10) || 20,
+        max_correos: parseInt(elMax.value, 10) || 200,
+        dry_run: !!dryRun
+      })
+    });
+    boton.innerHTML = htmlPrev;
+    boton.disabled = false;
+    if(!d || !d.ok){
+      elRes.style.display = 'none';
+      btnIng.disabled = true;
+      estadoMsg('error', '<i class="bi bi-x-octagon-fill me-1"></i>'
+        + esc((d && d.error) || 'No se pudo leer el buzón.')
+        + '<br><small>Si dice credenciales inválidas: revisa la clave en '
+        + 'Comunicaciones y que Gmail tenga el acceso IMAP activado en la cuenta.</small>');
+      ilusToast('No se pudo leer el buzón', { type:'error' });
+      cargarSalud();
+      return;
+    }
+    pintarResultado(d, !!dryRun);
+    if(!dryRun){
+      ilusToast('✓ ' + (d.ingresados || 0) + ' correo(s) recuperados', { type:'success' });
+      cargarSalud();
+      // `typeof` sobre el identificador pelado: no revienta aunque
+      // tickets_list.js no haya cargado todavía (ni aunque no exista window).
+      if(typeof cargarTickets === 'function'){ try{ cargarTickets(); }catch(e){} }
+    }
+  }
+
+  btnPrev.addEventListener('click', function(){ correr(true); });
+
+  btnIng.addEventListener('click', async function(){
+    var nuevos = contar('nuevo');
+    if(!nuevos){ ilusToast('No hay correos pendientes de ingresar', { type:'info' }); return; }
+    var ok = await ilusConfirm({
+      title: 'Ingresar ' + nuevos + ' correo(s)',
+      message: 'Se van a agregar ' + nuevos + ' respuestas de clientes dentro de sus tickets.',
+      sub: 'No se le envía ningún correo al cliente y el buzón no se modifica. '
+         + 'Los tickets cerrados que reciban un mensaje se reabren automáticamente.',
+      okLabel: 'Sí, ingresarlos', cancelLabel: 'Cancelar',
+      type: 'question'
+    });
+    if(!ok) return;
+    correr(false);
+  });
+})();
+</script>
 
 {% include "tickets/_tka_modal.html" %}
 {% endblock %}

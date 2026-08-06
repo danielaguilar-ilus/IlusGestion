@@ -1901,6 +1901,59 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[ILUS][WARN] seed tk_sla_horas: {_e}", flush=True)
 
+    def _ensure_tk_mail_salud():
+        """Latido de la RECEPCIÓN de correos (tabla tk_mail_salud, 1 sola fila).
+
+        POR QUÉ EXISTE — el incidente de los 12 días (24-jul → 5-ago-2026):
+        el lector IMAP quedó con credenciales inválidas y dejó de convertir
+        correos de clientes en tickets. Nadie se enteró porque el ENVÍO seguía
+        perfecto y la app no mostraba NADA sobre la recepción: la única huella
+        era una línea de log en Cloud Run que nadie mira. La falla no fue
+        técnica — fue que era INVISIBLE.
+
+        Esta tabla es la memoria del canal: guarda cuándo fue el último
+        intento, el último éxito, el último error textual, cuántos errores
+        seguidos van y cuándo entró el último correo de cliente de verdad.
+        Con eso la bandeja de Tickets puede mostrar un latido permanente (no
+        un indicador que solo se mira cuando ya se sospecha).
+
+        Idempotente y con try/except: producción corre con
+        ILUS_SKIP_MIGRATIONS=1, así que esto vive en un _ensure_* llamado
+        SIEMPRE en el arranque del módulo, nunca en un bloque gateado."""
+        try:
+            mysql_execute("""
+                CREATE TABLE IF NOT EXISTS tk_mail_salud (
+                  id                    TINYINT NOT NULL PRIMARY KEY,
+                  ultimo_intento_at     DATETIME NULL,
+                  ultimo_ok_at          DATETIME NULL,
+                  ultimo_error_at       DATETIME NULL,
+                  ultimo_error          VARCHAR(300) NULL,
+                  errores_consecutivos  INT NOT NULL DEFAULT 0,
+                  ultimo_correo_at      DATETIME NULL,
+                  ultimo_correo_ticket  VARCHAR(20) NULL,
+                  ultima_alerta_at      DATETIME NULL,
+                  updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            mysql_execute("INSERT IGNORE INTO tk_mail_salud (id) VALUES (1)")
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_mail_salud: {_e}", flush=True)
+        # Backfill del latido de TRÁFICO: si la tabla nace vacía pero ya hay
+        # correos ingeridos históricos, el banner diría "nunca entró un
+        # correo" y sonaría una alarma falsa el primer día. Se siembra con el
+        # máximo real de tk_mail_ingeridos (barato: PK + índice, 1 fila).
+        try:
+            row = mysql_fetchone(
+                "SELECT MAX(created_at) AS ult FROM tk_mail_ingeridos")
+            ult = (row or {}).get("ult")
+            if ult:
+                mysql_execute(
+                    "UPDATE tk_mail_salud SET ultimo_correo_at=%s "
+                    "WHERE id=1 AND ultimo_correo_at IS NULL", (ult,))
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_mail_salud (backfill): {_e}", flush=True)
+
     with app.app_context():
         try:
             _ensure_tickets_tables()
@@ -1920,6 +1973,7 @@ def register_tickets_routes(app, ctx):
             _ensure_tk_plantillas_columns()
             _ensure_tk_sla_regla()
             _ensure_cot_vendedores_externos()
+            _ensure_tk_mail_salud()
             print("[ILUS] Tablas tk_* garantizadas (Tickets central).", flush=True)
         except Exception as _e:
             print(f"[ILUS][WARN] _ensure_tickets_tables: {_e}", flush=True)
@@ -9256,21 +9310,344 @@ def register_tickets_routes(app, ctx):
                 plano = sin_tags
         if not plano:
             return ""
+        plano = plano.replace("\r\n", "\n")
         lineas = []
-        for ln in plano.replace("\r\n", "\n").split("\n"):
+        for ln in plano.split("\n"):
             if _TK_QUOTE_RE.match(ln):
                 break  # empezo la cola citada -> el resto no es del cliente
             if ln.lstrip().startswith(">"):
                 continue  # linea citada suelta
             lineas.append(ln.rstrip())
-        cuerpo = "\n".join(lineas).strip()
-        # colapsar saltos multiples
-        return re.sub(r"\n{3,}", "\n\n", cuerpo)
+        cuerpo = re.sub(r"\n{3,}", "\n\n", "\n".join(lineas).strip())
+        if cuerpo:
+            return cuerpo
+        # RED DE SEGURIDAD (2026-08-05, auditoría del canal de recepción):
+        # el recorte de la cola citada es heurístico. Si el cliente empieza su
+        # respuesta con una línea que _TK_QUOTE_RE considera "cita" (Outlook
+        # pone el bloque "De: … Enviado: …" ARRIBA cuando el cliente responde
+        # sin escribir encima; también pasa con "Enviado desde mi iPhone" como
+        # primera línea), el recorte se come el mensaje ENTERO y el ticket
+        # guardaba "(Mensaje sin texto)". Como el dedup por Message-ID marca
+        # ese correo como ingerido, el contenido real del cliente se perdía
+        # para siempre y en silencio.
+        # Preferimos texto de más (con la cita incluida y acotada) antes que
+        # perder lo que el cliente escribió.
+        crudo = re.sub(r"\n{3,}", "\n\n", plano.strip())
+        return crudo[:4000]
 
-    def _tk_leer_correo_entrante(dias=60, max_correos=50):
+    def _tk_clasificar_correo(subject, from_email, user_email):
+        """Decide qué se hace con un correo del buzón. Función PURA.
+
+        Devuelve (estado, numero_ticket):
+          'sin_numero' -> el asunto no trae un TK-AAAA-NNNNN nuestro
+                          (ej. "TK FRESHDESK", promociones con "TK-").
+          'propio'     -> lo mandamos nosotros, es un rebote o viene de un
+                          buzón no-reply: nunca se ingresa como mensaje de
+                          cliente (si no, el hilo se llenaría de eco).
+          'candidato'  -> es respuesta de un cliente a un ticket nuestro.
+
+        POR QUÉ ES UNA FUNCIÓN APARTE (2026-08-05): la VISTA PREVIA del
+        barrido de recuperación y el barrido REAL llaman a ESTA misma
+        función. Si cada uno tuviera su propia copia del criterio, la vista
+        previa podría prometer una cosa y la ingesta hacer otra — que es
+        exactamente el tipo de desincronización que ya nos costó 12 días de
+        tickets perdidos. Un solo criterio, un solo lugar."""
+        m = _TK_NUM_TICKET_RE.search(subject or "")
+        if not m:
+            return "sin_numero", None
+        numero = m.group(0).upper()
+        fe = (from_email or "").strip().lower()
+        propio = (
+            not fe
+            or fe == (user_email or "").strip().lower()
+            or "mailer-daemon" in fe
+            or "noreply" in fe
+            or "no-reply" in fe
+        )
+        return ("propio" if propio else "candidato"), numero
+
+    # ─────────────────────────────────────────────────────────────────
+    #  LATIDO DE LA RECEPCIÓN (tk_mail_salud)
+    #
+    #  Daniel, 2026-08-05: "nunca dejes nada pendiente". El pendiente más
+    #  caro de este módulo no era código: era que si la recepción se caía,
+    #  NADIE PODÍA VERLO. El envío seguía verde, la bandeja seguía cargando,
+    #  y los correos de clientes se perdían durante 12 días.
+    #
+    #  Regla de diseño: un indicador que solo se mira cuando ya sospechas no
+    #  sirve. Por eso el latido se muestra SIEMPRE en la bandeja de Tickets,
+    #  también cuando está todo bien — así el día que cambia de color se
+    #  nota, porque uno ya sabe cómo se ve cuando funciona.
+    # ─────────────────────────────────────────────────────────────────
+    # Días sin que entre NINGÚN correo de cliente antes de levantar la
+    # bandera ámbar. 7 días corridos cubre el fin de semana + un feriado
+    # (ILUS no opera sábado/domingo) sin gritar en falso.
+    _TK_MAIL_DIAS_SILENCIO = 7
+
+    # Errores seguidos antes de gritar (campana + un correo al operador).
+    # 1 error ya pinta el latido en rojo en pantalla; para INTERRUMPIR a
+    # alguien se esperan 3, así un corte de red de 10 segundos no genera
+    # ruido. Con el autopoll cada 8s, 3 errores son ~24 segundos.
+    _TK_MAIL_ALERTA_ERRORES = 3
+    # Un solo correo de alerta cada 12 horas, pase lo que pase.
+    _TK_MAIL_ALERTA_HORAS = 12
+
+    def _tk_salud_alertar(error):
+        """Avisa hacia AFUERA de la pantalla de tickets cuando la recepción
+        lleva varios intentos fallidos seguidos.
+
+        Dos canales, a propósito:
+          1. Campana interna (mant_notificaciones, broadcast) — se ve desde
+             CUALQUIER módulo de la app, no solo desde Tickets. Es idempotente
+             mientras esté sin leer, así que no se acumula.
+          2. Un correo al buzón del propio operador, como mucho 1 cada 12 h.
+
+        Sobre el correo — el caso que justifica que exista: hoy la clave de
+        salida y la de entrada son la MISMA, así que si la clave está mala no
+        sale nada y este correo tampoco. PERO si lo que está apagado es el
+        acceso IMAP de la cuenta de Gmail (la sospecha abierta al 5-ago-2026),
+        el envío sigue funcionando perfecto y este correo SÍ llega. Es
+        exactamente el escenario en que la pantalla no alcanza porque nadie
+        está mirando.
+
+        NUNCA va a un cliente: el destinatario es TK_ALERTA_MAIL_TO o, si no
+        está definida, la propia casilla de soporte. El asunto no lleva "TK-",
+        así que este correo jamás puede volver a entrar como mensaje de un
+        ticket. Se puede apagar con tk_settings.mail_alerta_off='1'."""
+        try:
+            fila = mysql_fetchone(
+                "SELECT errores_consecutivos, ultima_alerta_at "
+                "FROM tk_mail_salud WHERE id=1") or {}
+            errores = int(fila.get("errores_consecutivos") or 0)
+        except Exception:
+            return
+        if errores < _TK_MAIL_ALERTA_ERRORES:
+            return
+        detalle = (str(error) if error else "").strip()[:250]
+        # ── 1. Campana interna (idempotente mientras siga sin leer) ──
+        try:
+            _notif = ctx.get("_mant_notificar")
+            if _notif:
+                _notif(None, "otro",
+                       "La recepción de correos de Tickets está caída",
+                       cuerpo=("Los correos de clientes no se están "
+                               "convirtiendo en tickets. "
+                               + (detalle or "El buzón no responde.")),
+                       url_accion="/comunicaciones/", prioridad="urgente")
+        except Exception as _e:
+            print(f"[tk_mail_salud] no se pudo crear la campana: {_e}", flush=True)
+        # ── 2. Correo al operador (throttle duro de 12 h) ──
+        try:
+            apagado = mysql_fetchone(
+                "SELECT valor FROM tk_settings WHERE clave='mail_alerta_off'")
+            if apagado and (apagado.get("valor") or "").strip() == "1":
+                return
+        except Exception:
+            pass
+        if not _send_ilus_email:
+            return
+        # UPDATE condicional = candado: si dos workers detectan la caída a la
+        # vez, solo uno cambia la fila y solo ese manda el correo.
+        sql_lock = ("UPDATE tk_mail_salud SET ultima_alerta_at=UTC_TIMESTAMP() "
+                    "WHERE id=1 AND (ultima_alerta_at IS NULL OR "
+                    f"ultima_alerta_at < UTC_TIMESTAMP() - INTERVAL {_TK_MAIL_ALERTA_HORAS} HOUR)")
+        _rowcount = ctx.get("mysql_execute_returning_rowcount")
+        try:
+            if callable(_rowcount):
+                if int(_rowcount(sql_lock) or 0) < 1:
+                    return   # ya se avisó hace menos de 12 h
+            else:
+                if (fila.get("ultima_alerta_at") is not None
+                        and (datetime.now(timezone.utc).replace(tzinfo=None)
+                             - fila["ultima_alerta_at"]).total_seconds()
+                        < _TK_MAIL_ALERTA_HORAS * 3600):
+                    return
+                mysql_execute(sql_lock)
+        except Exception as _e:
+            print(f"[tk_mail_salud] no se pudo tomar el candado de alerta: {_e}",
+                  flush=True)
+            return
+        destino = (os.environ.get("TK_ALERTA_MAIL_TO") or "").strip() or _tk_reply_to()
+        cuerpo_html = (
+            "<p>Los correos de clientes <strong>no se están convirtiendo en "
+            "tickets</strong>.</p>"
+            f"<p>Lo que responde el buzón: <code>{_html_mod.escape(detalle or 'sin detalle')}"
+            "</code></p>"
+            "<p>Qué revisar, en este orden:</p><ol>"
+            "<li>La clave del correo en <strong>Comunicaciones</strong> "
+            "(botón «Probar recepción (tickets)»).</li>"
+            "<li>Que Gmail tenga el <strong>acceso IMAP activado</strong> en la "
+            "cuenta (Configuración → Reenvío y correo POP/IMAP).</li></ol>"
+            "<p>Los correos NO se pierden: siguen en el buzón. Cuando la "
+            "conexión vuelva, en Tickets → <strong>Recuperar correos</strong> "
+            "se rescatan los días que falten.</p>")
+        try:
+            if _ilus_email_master:
+                cuerpo_html = _ilus_email_master({
+                    "titulo": "Recepción de correos caída",
+                    "cuerpo_html": cuerpo_html,
+                })
+        except Exception:
+            pass
+        try:
+            _send_ilus_email(destino,
+                             "ILUS · La recepción de correos de Tickets está caída",
+                             cuerpo_html, modulo="tickets",
+                             evento="tk_mail_recepcion_caida", asincrono=True)
+        except Exception as _e:
+            print(f"[tk_mail_salud] no se pudo enviar la alerta: {_e}", flush=True)
+
+    def _tk_salud_registrar(ok, error=None, ultimo_correo_at=None, numero=None):
+        """Deja constancia del resultado de un barrido. Nunca lanza."""
+        try:
+            if ok:
+                mysql_execute(
+                    "UPDATE tk_mail_salud SET ultimo_intento_at=UTC_TIMESTAMP(), "
+                    "ultimo_ok_at=UTC_TIMESTAMP(), errores_consecutivos=0 "
+                    "WHERE id=1")
+            else:
+                mysql_execute(
+                    "UPDATE tk_mail_salud SET ultimo_intento_at=UTC_TIMESTAMP(), "
+                    "ultimo_error_at=UTC_TIMESTAMP(), ultimo_error=%s, "
+                    "errores_consecutivos=errores_consecutivos+1 WHERE id=1",
+                    ((str(error) if error else "")[:300],))
+            if ultimo_correo_at is not None:
+                # Solo avanza: un barrido de recuperación que ingiere correos
+                # VIEJOS no debe hacer retroceder el latido.
+                mysql_execute(
+                    "UPDATE tk_mail_salud SET ultimo_correo_at=%s, "
+                    "ultimo_correo_ticket=%s WHERE id=1 AND "
+                    "(ultimo_correo_at IS NULL OR ultimo_correo_at < %s)",
+                    (ultimo_correo_at, (numero or "")[:20] or None,
+                     ultimo_correo_at))
+        except Exception as _e:
+            # Sin datos personales en el log (Regla #4).
+            print(f"[tk_mail_salud] no se pudo registrar el latido: {_e}",
+                  flush=True)
+        if not ok:
+            try:
+                _tk_salud_alertar(error)
+            except Exception as _e:
+                print(f"[tk_mail_salud] alerta no enviada: {_e}", flush=True)
+
+    # Se publica en app.py (ctx ES su globals()) para que el boton "Probar
+    # recepcion (tickets)" de /comunicaciones alimente el MISMO latido que ve
+    # la bandeja. Si no, el operador arregla la clave, ve "Recepcion OK" en
+    # una pantalla y la franja roja en la otra: dos verdades sobre el mismo
+    # canal es como se pierde la confianza en el indicador.
+    ctx["_tk_salud_registrar"] = _tk_salud_registrar
+
+    def _tk_salud_evaluar(fila, ahora=None, dias_silencio=None):
+        """Traduce la fila de tk_mail_salud a un veredicto para la pantalla.
+        Función PURA (sin BD, sin red) — por eso es testeable de verdad.
+
+        Semáforo:
+          critico      el último intento FALLÓ. Los correos de clientes NO
+                       están entrando. Es el estado que tuvimos 12 días.
+          alerta       la conexión funciona, pero hace más de
+                       `dias_silencio` que no entra ningún correo. Puede ser
+                       normal (nadie escribió) o puede ser que el buzón esté
+                       recibiendo en otra carpeta / con otro asunto.
+          ok           conexión viva y tráfico reciente.
+          desconocido  todavía no se ha intentado ningún barrido en este
+                       despliegue (arranque en frío). No es una falla.
+        """
+        ahora = ahora or datetime.now(timezone.utc).replace(tzinfo=None)
+        dias_silencio = (_TK_MAIL_DIAS_SILENCIO if dias_silencio is None
+                         else dias_silencio)
+        fila = fila or {}
+        try:
+            errores = int(fila.get("errores_consecutivos") or 0)
+        except Exception:
+            errores = 0
+        ult_ok = fila.get("ultimo_ok_at")
+        ult_intento = fila.get("ultimo_intento_at")
+        ult_correo = fila.get("ultimo_correo_at")
+
+        def _horas(dt):
+            if not dt:
+                return None
+            try:
+                return max(0.0, (ahora - dt).total_seconds() / 3600.0)
+            except Exception:
+                return None
+
+        h_ok = _horas(ult_ok)
+        h_correo = _horas(ult_correo)
+        if errores > 0:
+            estado = "critico"
+            titulo = "La recepción de correos está caída"
+            detalle = (fila.get("ultimo_error") or "").strip() or \
+                "El buzón no respondió en el último intento."
+            accion = ("Los correos de clientes NO se están convirtiendo en "
+                      "tickets. Revisa la clave del correo en Comunicaciones "
+                      "y usa «Probar recepción (tickets)».")
+        elif not ult_intento:
+            estado = "desconocido"
+            titulo = "Recepción sin verificar todavía"
+            detalle = "Aún no se ha hecho ningún barrido del buzón."
+            accion = "Se verifica sola al abrir esta pantalla."
+        elif h_correo is None:
+            estado = "alerta"
+            titulo = "Conexión al buzón OK, sin correos registrados"
+            detalle = "Nunca se ha ingresado un correo de cliente."
+            accion = ("Si esperabas respuestas de clientes, usa «Recuperar "
+                      "correos» para revisar el buzón hacia atrás.")
+        elif h_correo > dias_silencio * 24:
+            estado = "alerta"
+            titulo = f"Hace {int(h_correo // 24)} días que no entra un correo"
+            detalle = ("La conexión al buzón funciona, pero ningún cliente "
+                       "respondió en ese tiempo.")
+            accion = ("Puede ser normal. Si te parece raro, usa «Recuperar "
+                      "correos» para revisar el buzón hacia atrás.")
+        else:
+            estado = "ok"
+            titulo = "Recepción de correos activa"
+            detalle = "Las respuestas de clientes están entrando a los tickets."
+            accion = ""
+        return {
+            "estado": estado,
+            "titulo": titulo,
+            "detalle": detalle,
+            "accion": accion,
+            "errores_consecutivos": errores,
+            "horas_desde_ok": None if h_ok is None else round(h_ok, 2),
+            "horas_desde_correo": None if h_correo is None else round(h_correo, 2),
+        }
+
+    def _tk_leer_correo_entrante(dias=60, max_correos=50, dry_run=False,
+                                 detalle=False, notificar="cada",
+                                 max_segundos=None):
         """Barrido del buzon de soporte: ubica respuestas por numero de
         ticket en el asunto y las ingresa como mensajes del cliente.
         Devuelve resumen dict. Nunca lanza (errores -> resumen).
+
+        dry_run=True  -> VISTA PREVIA: mira el buzón y clasifica, pero NO
+                         escribe absolutamente nada (ni mensaje, ni adjunto,
+                         ni marca de ingerido, ni notificación). Es lo que
+                         Daniel ve antes de recuperar un atraso: "cuántos
+                         correos hay, de quién, de qué ticket, cuáles ya
+                         están y cuáles no".
+        detalle=True  -> agrega resumen["detalle"], una fila por correo.
+        notificar     -> "cada"    una campanita por correo (comportamiento
+                                   de siempre, para el barrido automático);
+                         "resumen" una sola campanita al final (para el
+                                   barrido de recuperación: 12 días de
+                                   atraso no deben producir 40 avisos);
+                         "no"      ninguna.
+        max_segundos  -> presupuesto de reloj. Al agotarse corta limpio y
+                         devuelve resumen["parcial"]=True. Existe porque un
+                         barrido de recuperación con adjuntos pesados puede
+                         durar minutos y morir por timeout HTTP. Cortar es
+                         seguro: cada correo se marca ingerido apenas se
+                         guarda, así que volver a correr retoma donde quedó.
+
+        NINGUNA de estas rutas envía correo saliente. La ingesta escribe en
+        tk_mensajes/tk_adjuntos/tk_mail_ingeridos y crea avisos internos
+        (campana, tabla mant_notificaciones) — nada más. Un barrido de
+        recuperación sobre correos de clientes reales NO les responde ni les
+        avisa. Verificado siguiendo _tk_log, _tk_reabrir_si_cerrado y
+        _mant_notificar: los tres son solo BD.
 
         dias=60 (FIX auditoria 2026-07-18, antes 7): con una ventana de
         7 dias, si nadie abre la app por una semana (fin de semana largo,
@@ -9283,9 +9660,17 @@ def register_tickets_routes(app, ctx):
         ingresar (linea ~6150) y el INSERT es ademas IGNORE."""
         user, pwd = _tk_imap_creds()
         resumen = {"ok": True, "candidatos": 0, "ingresados": 0, "duplicados": 0,
-                   "sin_ticket": 0, "propios": 0, "adjuntos": 0, "errores": 0}
+                   "sin_ticket": 0, "propios": 0, "adjuntos": 0, "errores": 0,
+                   "vistos": 0, "dry_run": bool(dry_run), "dias": int(dias),
+                   "truncado": False, "parcial": False}
+        _t_fin = (time.monotonic() + float(max_segundos)) if max_segundos else None
+        filas = [] if detalle else None
+        if detalle:
+            resumen["detalle"] = filas
         if not (user and pwd):
-            return {"ok": False, "error": "Sin credenciales SMTP_USER/SMTP_PASS para IMAP"}
+            err = "Sin credenciales de correo configuradas (Comunicaciones)."
+            _tk_salud_registrar(False, error=err)
+            return {"ok": False, "error": err}
         # Fecha IMAP en ingles SIEMPRE (strftime %b depende del locale)
         _MES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -9297,58 +9682,46 @@ def register_tickets_routes(app, ctx):
             M.select("INBOX", readonly=True)  # readonly: JAMAS tocar el buzon
         except Exception as _e:
             print(f"[tk_mail] no se pudo conectar a IMAP: {_e}", flush=True)
+            _tk_salud_registrar(False, error=str(_e))
             return {"ok": False, "error": f"IMAP no disponible: {_e}"}
+        # Se conectó: el canal está vivo. Se registra ANTES de procesar para
+        # que un error puntual de UN correo no pinte de rojo todo el canal.
+        _tk_salud_registrar(True)
+        mas_reciente = {"at": None, "num": None}
+        ingeridos_detalle = []
         try:
             # Gmail tokeniza la busqueda (encuentra "TK-2026-..." aunque el
             # SUBJECT sea aproximado); el regex de abajo es el filtro REAL.
             typ, data = M.search(None, f'(SINCE {desde_imap} SUBJECT "TK-")')
-            ids = (data[0].split() if data and data[0] else [])[-max_correos:]
+            todos = (data[0].split() if data and data[0] else [])
+            ids = todos[-max_correos:]
+            resumen["vistos"] = len(ids)
+            resumen["truncado"] = len(todos) > len(ids)
+            if resumen["truncado"]:
+                # Los que se dejan fuera son los MÁS VIEJOS (ids[-max:]). En un
+                # barrido de recuperación eso es justo lo que se quiere
+                # rescatar, así que se avisa en vez de callarlo.
+                resumen["truncado_total"] = len(todos)
             for mid in ids:
+                if _t_fin is not None and time.monotonic() > _t_fin:
+                    resumen["parcial"] = True
+                    print("[tk_mail] barrido cortado por presupuesto de tiempo; "
+                          "reintentar retoma donde quedó", flush=True)
+                    break
                 try:
-                    typ, msgdata = M.fetch(mid, "(BODY.PEEK[])")
+                    # VISTA PREVIA: solo la cabecera. Basta para decidir (de
+                    # quién, qué asunto, qué ticket, si ya está) y evita
+                    # bajarse adjuntos de 20 MB de decenas de correos.
+                    typ, msgdata = M.fetch(
+                        mid, "(BODY.PEEK[HEADER])" if dry_run else "(BODY.PEEK[])")
                     raw = msgdata[0][1] if msgdata and msgdata[0] else None
                     if not raw:
                         continue
                     msg = _email_mod.message_from_bytes(raw)
                     subject = str(make_header(decode_header(msg.get("Subject", "") or "")))
-                    m = _TK_NUM_TICKET_RE.search(subject)
-                    if not m:
-                        continue  # "TK FRESHDESK" y similares: no son nuestros
-                    resumen["candidatos"] += 1
-                    numero = m.group(0).upper()
                     from_nombre, from_email = parseaddr(
                         str(make_header(decode_header(msg.get("From", "") or ""))))
                     from_email = (from_email or "").strip().lower()
-                    # No ingresar nuestros propios envios ni rebotes
-                    if (not from_email or from_email == user.lower()
-                            or "mailer-daemon" in from_email
-                            or "noreply" in from_email or "no-reply" in from_email):
-                        resumen["propios"] += 1
-                        continue
-                    ticket = mysql_fetchone(
-                        "SELECT id, numero_ticket, nombre_contacto, empresa, estado "
-                        "FROM tk_tickets WHERE numero_ticket=%s", (numero,))
-                    if not ticket:
-                        resumen["sin_ticket"] += 1
-                        continue
-                    message_id = (msg.get("Message-ID") or "").strip()[:255]
-                    if not message_id:
-                        # fallback estable para correos sin Message-ID
-                        import hashlib
-                        message_id = "sin-id-" + hashlib.sha1(raw).hexdigest()[:40]
-                    if mysql_fetchone(
-                            "SELECT message_id FROM tk_mail_ingeridos WHERE message_id=%s",
-                            (message_id,)):
-                        resumen["duplicados"] += 1
-                        continue
-                    cuerpo = _tk_extraer_cuerpo_mail(msg) or "(Mensaje sin texto)"
-                    remitente = (from_nombre or ticket.get("nombre_contacto")
-                                 or from_email or "Cliente")[:190]
-                    # Fecha REAL del correo (header Date), no la hora de
-                    # ingesta/barrido -- si el cliente responde y el staff
-                    # manda otro mensaje ANTES del siguiente barrido, sin
-                    # esto el mensaje del cliente queda despues en el hilo
-                    # (Daniel 2026-07-12: orden tipo WhatsApp).
                     msg_date = None
                     try:
                         _dt = parsedate_to_datetime(msg.get("Date", ""))
@@ -9357,53 +9730,172 @@ def register_tickets_routes(app, ctx):
                                         if _dt.tzinfo else _dt)
                     except Exception:
                         msg_date = None
+
+                    def _fila(estado, numero=None, nota=""):
+                        if filas is None:
+                            return
+                        filas.append({
+                            "estado": estado,
+                            "fecha": _fmt_dt(msg_date) or "",
+                            "de": (from_nombre or "").strip()[:120],
+                            "correo": from_email[:190],
+                            "asunto": subject[:200],
+                            "numero": numero or "",
+                            "nota": nota,
+                        })
+
+                    clase, numero = _tk_clasificar_correo(subject, from_email, user)
+                    if clase == "sin_numero":
+                        # "TK FRESHDESK" y similares: no son nuestros. No se
+                        # listan siquiera — no es correo de tickets.
+                        continue
+                    if clase == "propio":
+                        resumen["propios"] += 1
+                        _fila("propio", numero,
+                              "Enviado por nosotros o rebote: no se ingresa.")
+                        continue
+                    resumen["candidatos"] += 1
+                    ticket = mysql_fetchone(
+                        "SELECT id, numero_ticket, nombre_contacto, empresa, estado "
+                        "FROM tk_tickets WHERE numero_ticket=%s", (numero,))
+                    if not ticket:
+                        resumen["sin_ticket"] += 1
+                        _fila("sin_ticket", numero,
+                              f"No existe el ticket {numero} en el sistema.")
+                        continue
+                    message_id = (msg.get("Message-ID") or "").strip()[:255]
+                    if not message_id:
+                        # fallback estable para correos sin Message-ID.
+                        # En vista previa la cabecera sola daría OTRO hash que
+                        # el barrido real (que hashea el correo completo), y
+                        # la previa mentiría diciendo "nuevo". Se baja el
+                        # correo entero SOLO en este caso raro.
+                        import hashlib
+                        raw_hash = raw
+                        if dry_run:
+                            try:
+                                _t2, _md2 = M.fetch(mid, "(BODY.PEEK[])")
+                                raw_hash = (_md2[0][1] if _md2 and _md2[0] else raw) or raw
+                            except Exception:
+                                raw_hash = raw
+                        message_id = "sin-id-" + hashlib.sha1(raw_hash).hexdigest()[:40]
+                    if mysql_fetchone(
+                            "SELECT message_id FROM tk_mail_ingeridos WHERE message_id=%s",
+                            (message_id,)):
+                        resumen["duplicados"] += 1
+                        _fila("ya_ingerido", numero,
+                              "Ya está en el ticket: no se vuelve a ingresar.")
+                        continue
+                    if dry_run:
+                        resumen["ingresados"] += 1   # "se ingresarían"
+                        _fila("nuevo", numero,
+                              f"Falta en {numero}: se va a ingresar como "
+                              f"mensaje del cliente.")
+                        if msg_date and (mas_reciente["at"] is None
+                                         or msg_date > mas_reciente["at"]):
+                            mas_reciente["at"], mas_reciente["num"] = msg_date, numero
+                        continue
+                    cuerpo = _tk_extraer_cuerpo_mail(msg) or "(Mensaje sin texto)"
+                    remitente = (from_nombre or ticket.get("nombre_contacto")
+                                 or from_email or "Cliente")[:190]
+                    # ── Adjuntos: SE REVISAN ANTES de guardar el mensaje ──
+                    # Auditoría 2026-08-05: antes, un adjunto que no pasaba el
+                    # filtro (extensión no permitida, más de MAX_ADJUNTO_MB, o
+                    # el uploader no disponible) se descartaba con un `continue`
+                    # mudo. El correo quedaba marcado como ingerido y NADIE se
+                    # enteraba de que el cliente había mandado la foto de la
+                    # falla. Ahora lo que no se puede guardar queda ESCRITO en
+                    # el mensaje del ticket, para que el operador pueda ir a
+                    # buscarlo al correo.
+                    adjuntos_ok, adjuntos_omitidos = [], []
+                    for part in msg.walk():
+                        fn = part.get_filename()
+                        if not fn or part.get_content_maintype() == "multipart":
+                            continue
+                        try:
+                            fn_dec = str(make_header(decode_header(fn)))[:300]
+                        except Exception:
+                            fn_dec = str(fn)[:300]
+                        if not _uploader_upload:
+                            adjuntos_omitidos.append(
+                                f"{fn_dec} (almacenamiento no disponible)")
+                            continue
+                        ext = ("." + fn_dec.rsplit(".", 1)[-1].lower()) if "." in fn_dec else ""
+                        if ext not in _EXT_PERMITIDAS:
+                            adjuntos_omitidos.append(
+                                f"{fn_dec} (tipo de archivo no permitido)")
+                            continue
+                        try:
+                            contenido_adj = part.get_payload(decode=True) or b""
+                        except Exception:
+                            contenido_adj = b""
+                        if not contenido_adj:
+                            adjuntos_omitidos.append(f"{fn_dec} (archivo vacío)")
+                            continue
+                        if len(contenido_adj) > MAX_ADJUNTO_MB * 1024 * 1024:
+                            adjuntos_omitidos.append(
+                                f"{fn_dec} (supera {MAX_ADJUNTO_MB} MB)")
+                            continue
+                        adjuntos_ok.append((fn_dec, contenido_adj,
+                                            part.get_content_type()
+                                            or "application/octet-stream"))
+                    if adjuntos_omitidos:
+                        cuerpo = (cuerpo + "\n\n— El correo traía "
+                                  f"{len(adjuntos_omitidos)} archivo(s) que no se "
+                                  "pudieron guardar aquí: "
+                                  + "; ".join(adjuntos_omitidos[:10])
+                                  + ". Están en el correo original.")
+                    # msg_date (fecha REAL del correo, header Date) ya se
+                    # resolvio arriba, junto con el asunto y el remitente --
+                    # la usa tanto la vista previa como la ingesta. NO es la
+                    # hora del barrido: si el cliente responde y el staff
+                    # manda otro mensaje ANTES del siguiente barrido, sin
+                    # esto el mensaje del cliente queda despues en el hilo
+                    # (Daniel 2026-07-12: orden tipo WhatsApp).
                     msg_id_db = _tk_log(
                         ticket["id"], "client_message", cuerpo[:20000],
                         usuario=remitente, es_interno=False, message_date=msg_date,
                         metadata={"via": "email", "message_id": message_id,
                                   "from": from_email, "subject": subject[:300]})
-                    # Adjuntos del correo -> GCS -> tk_adjuntos (mismas
-                    # validaciones de extension/tamano que el resto)
-                    adj_ids = []
-                    if _uploader_upload:
-                        for part in msg.walk():
-                            fn = part.get_filename()
-                            if not fn or part.get_content_maintype() == "multipart":
-                                continue
-                            try:
-                                fn_dec = str(make_header(decode_header(fn)))[:300]
-                                ext = ("." + fn_dec.rsplit(".", 1)[-1].lower()) if "." in fn_dec else ""
-                                if ext not in _EXT_PERMITIDAS:
-                                    continue
-                                contenido_adj = part.get_payload(decode=True) or b""
-                                if not contenido_adj or len(contenido_adj) > MAX_ADJUNTO_MB * 1024 * 1024:
-                                    continue
-                                from werkzeug.datastructures import FileStorage
-                                ctype_adj = part.get_content_type() or "application/octet-stream"
-                                fs = FileStorage(stream=io.BytesIO(contenido_adj),
-                                                 filename=fn_dec, content_type=ctype_adj)
-                                rt = ("image" if ctype_adj.startswith("image")
-                                      else "video" if ctype_adj.startswith("video") else "raw")
-                                res = _uploader_upload(fs, folder="tickets", resource_type=rt)
-                                url = res.get("secure_url") or res.get("url")
-                                if not url:
-                                    continue
-                                mysql_execute(
-                                    "INSERT INTO tk_adjuntos "
-                                    "(ticket_id, mensaje_id, archivo_url, archivo_path, archivo_nombre, "
-                                    " mime_type, file_size_kb, origen, subido_por) "
-                                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'cliente',%s)",
-                                    (ticket["id"], msg_id_db, url[:500],
-                                     (res.get("public_id") or "")[:500] or None,
-                                     fn_dec, ctype_adj[:150],
-                                     max(1, len(contenido_adj) // 1024), from_email[:190]))
-                                resumen["adjuntos"] += 1
-                            except Exception as _ea:
-                                print(f"[tk_mail] adjunto no ingresado ({fn}): {_ea}", flush=True)
+                    # Marca de ingerido INMEDIATAMENTE despues de guardar el
+                    # mensaje y ANTES de subir adjuntos (2026-08-05): la subida
+                    # a GCS es la parte lenta y la unica que puede tardar
+                    # segundos por archivo. Si el proceso muere ahi (Cloud Run
+                    # bajando una instancia), con el orden anterior el correo
+                    # quedaba SIN marcar y el siguiente barrido lo volvia a
+                    # ingresar entero -> mensaje duplicado en el hilo del
+                    # cliente. Marcando antes, lo peor que pasa es perder un
+                    # adjunto (recuperable: el correo sigue en el buzon), no
+                    # duplicar la conversacion.
                     mysql_execute(
                         "INSERT IGNORE INTO tk_mail_ingeridos "
                         "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)",
                         (message_id, ticket["id"], from_email[:190], subject[:300]))
+                    # Adjuntos que SI pasaron el filtro -> GCS -> tk_adjuntos
+                    for fn_dec, contenido_adj, ctype_adj in adjuntos_ok:
+                        try:
+                            from werkzeug.datastructures import FileStorage
+                            fs = FileStorage(stream=io.BytesIO(contenido_adj),
+                                             filename=fn_dec, content_type=ctype_adj)
+                            rt = ("image" if ctype_adj.startswith("image")
+                                  else "video" if ctype_adj.startswith("video") else "raw")
+                            res = _uploader_upload(fs, folder="tickets", resource_type=rt)
+                            url = res.get("secure_url") or res.get("url")
+                            if not url:
+                                continue
+                            mysql_execute(
+                                "INSERT INTO tk_adjuntos "
+                                "(ticket_id, mensaje_id, archivo_url, archivo_path, archivo_nombre, "
+                                " mime_type, file_size_kb, origen, subido_por) "
+                                "VALUES (%s,%s,%s,%s,%s,%s,%s,'cliente',%s)",
+                                (ticket["id"], msg_id_db, url[:500],
+                                 (res.get("public_id") or "")[:500] or None,
+                                 fn_dec, ctype_adj[:150],
+                                 max(1, len(contenido_adj) // 1024), from_email[:190]))
+                            resumen["adjuntos"] += 1
+                        except Exception as _ea:
+                            print(f"[tk_mail] adjunto no ingresado ({fn_dec}): {_ea}",
+                                  flush=True)
                     # FIX 2026-07-18 (principio de continuidad de Daniel): el
                     # cliente respondio por correo a un ticket resolved/
                     # closed/cancelado -> reabrelo automaticamente (ver
@@ -9412,8 +9904,18 @@ def register_tickets_routes(app, ctx):
                     mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s",
                                   (ticket["id"],))
                     resumen["ingresados"] += 1
+                    ingeridos_detalle.append((numero, ticket["id"]))
+                    if msg_date and (mas_reciente["at"] is None
+                                     or msg_date > mas_reciente["at"]):
+                        mas_reciente["at"], mas_reciente["num"] = msg_date, numero
+                    _fila("nuevo", numero, f"Ingresado en {numero}.")
                     print(f"[tk_mail] respuesta de {from_email} ingresada en "
                           f"{numero} (msg {msg_id_db})", flush=True)
+                    if notificar != "cada":
+                        # Barrido de recuperación: 12 días de atraso no pueden
+                        # producir 40 campanitas. Se avisa una sola vez al
+                        # final (ver bloque después del loop).
+                        continue
                     # Aviso app-wide (campana de notificaciones, ya visible en
                     # TODA la app, no solo la bandeja de tickets) -- Daniel
                     # 2026-07-12: "estuvo como WhatsApp... metamos la
@@ -9446,6 +9948,28 @@ def register_tickets_routes(app, ctx):
                 M.logout()
             except Exception:
                 pass
+        if not dry_run:
+            # Latido de TRÁFICO: la fecha real del correo más nuevo que entró.
+            if mas_reciente["at"]:
+                _tk_salud_registrar(True, ultimo_correo_at=mas_reciente["at"],
+                                    numero=mas_reciente["num"])
+            # Una sola campanita para todo el barrido de recuperación.
+            if notificar == "resumen" and ingeridos_detalle:
+                try:
+                    _mant_notificar = ctx.get("_mant_notificar")
+                    if _mant_notificar:
+                        nums = ", ".join(sorted({n for n, _ in ingeridos_detalle})[:12])
+                        n = len(ingeridos_detalle)
+                        _mant_notificar(
+                            None, "otro",
+                            f"Recuperación de correos: {n} mensaje(s) ingresado(s)",
+                            cuerpo=(f"Se rescataron {n} correos de clientes de los "
+                                    f"últimos {int(dias)} días. Tickets: {nums}"
+                                    + ("…" if len({n2 for n2, _ in ingeridos_detalle}) > 12 else "")),
+                            url_accion="/tickets", prioridad="alta")
+                except Exception as _en:
+                    print(f"[tk_mail] no se pudo crear notif de resumen: {_en}",
+                          flush=True)
         return resumen
 
     # Endpoint para Cloud Scheduler (token) o disparo manual (admin logueado)
@@ -9556,11 +10080,24 @@ def register_tickets_routes(app, ctx):
     _TK_MAIL_POLL = {"ts": 0.0, "lock": threading.Lock()}
 
     def _tk_autopoll_correo():
-        user, pwd = _tk_imap_creds()
-        if not (user and pwd):
-            return
         ahora = time.monotonic()
         if ahora - _TK_MAIL_POLL["ts"] < _TK_AUTOPOLL_SEG:
+            return
+        user, pwd = _tk_imap_creds()
+        if not (user and pwd):
+            # 2026-08-05: antes esto era un `return` mudo. Sin credenciales la
+            # recepción está muerta y la app no mostraba absolutamente nada —
+            # el mismo silencio que costó 12 días. Ahora queda registrado en
+            # tk_mail_salud para que el latido de la bandeja lo pinte en rojo.
+            # La comprobación va DESPUÉS del throttle: como máximo 1 UPDATE
+            # cada _TK_AUTOPOLL_SEG por más gente que abra la pantalla.
+            _TK_MAIL_POLL["ts"] = ahora
+            try:
+                _tk_salud_registrar(
+                    False,
+                    error="Sin correo/clave configurados en Comunicaciones.")
+            except Exception:
+                pass
             return
         if not _TK_MAIL_POLL["lock"].acquire(blocking=False):
             return  # ya hay un barrido corriendo
@@ -9580,5 +10117,113 @@ def register_tickets_routes(app, ctx):
         threading.Thread(target=_correr, daemon=True).start()
 
     ctx["_tk_autopoll_correo"] = _tk_autopoll_correo  # visible para diagnostico
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  LATIDO DE RECEPCIÓN (endpoint) — lo pinta la bandeja de Tickets.
+    #
+    #  Lo ve CUALQUIERA que tenga acceso a Tickets, no solo el superadmin:
+    #  el que primero nota que "hace días que no responde nadie" es quien
+    #  atiende la bandeja todos los días, no quien administra el sistema.
+    # ═══════════════════════════════════════════════════════════════════
+    @app.route("/tickets/api/mail/salud", methods=["GET"])
+    @_tickets_required
+    def tk_api_mail_salud():
+        try:
+            fila = mysql_fetchone(
+                "SELECT ultimo_intento_at, ultimo_ok_at, ultimo_error_at, "
+                "       ultimo_error, errores_consecutivos, ultimo_correo_at, "
+                "       ultimo_correo_ticket "
+                "FROM tk_mail_salud WHERE id=1") or {}
+        except Exception as _e:
+            print(f"[tk_api_mail_salud] no se pudo leer el latido: {_e}", flush=True)
+            fila = {}
+        v = _tk_salud_evaluar(fila)
+        v.update({
+            "ok": True,
+            "ultimo_ok": _fmt_dt(fila.get("ultimo_ok_at")) or "",
+            "ultimo_error_at": _fmt_dt(fila.get("ultimo_error_at")) or "",
+            "ultimo_correo": _fmt_dt(fila.get("ultimo_correo_at")) or "",
+            "ultimo_correo_ticket": fila.get("ultimo_correo_ticket") or "",
+            "puede_recuperar": bool((g.get("permissions") or {}).get("superadmin")),
+        })
+        return jsonify(v)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  RECUPERACIÓN DE CORREOS ATRASADOS  (vista previa + ingesta)
+    #
+    #  Daniel, 2026-08-05: "los 12 días de correos de soporte sin revisar —
+    #  sí, por favor, démosle".
+    #
+    #  Entre el 24-jul y el 5-ago-2026 los correos de clientes dejaron de
+    #  convertirse en tickets. Los correos SIGUEN en el buzón (nunca se tocó
+    #  nada: el lector es readonly + BODY.PEEK), así que se pueden recuperar
+    #  ampliando la ventana de días del barrido.
+    #
+    #  DOS PASOS A PROPÓSITO:
+    #    1) dry_run=true  -> mira y cuenta. No escribe NADA.
+    #    2) dry_run=false -> ingresa solo los que faltan (el dedup por
+    #                        Message-ID hace el resto).
+    #  Daniel tiene que poder ver qué va a pasar antes de que pase: son
+    #  correos de clientes reales, no un ambiente de pruebas.
+    #
+    #  NO envía ningún correo saliente. Ni acuse de recibo al cliente, ni
+    #  aviso masivo. Solo escribe en la BD de ILUS y deja UNA campanita de
+    #  resumen (notificar="resumen").
+    # ═══════════════════════════════════════════════════════════════════
+    _TK_REC_DIAS_MAX = 120        # tope duro de la ventana
+    _TK_REC_MAX_CORREOS = 400     # tope duro de correos por pasada
+
+    @app.route("/tickets/api/mail/recuperar", methods=["POST"])
+    @_tickets_required
+    def tk_api_mail_recuperar():
+        perms = g.get("permissions") or {}
+        if not perms.get("superadmin"):
+            return jsonify({"ok": False,
+                            "error": "Solo superadministrador"}), 403
+        d = request.get_json(silent=True) or {}
+        try:
+            dias = int(d.get("dias") or 20)
+        except Exception:
+            dias = 20
+        dias = max(1, min(_TK_REC_DIAS_MAX, dias))
+        try:
+            max_correos = int(d.get("max_correos") or 200)
+        except Exception:
+            max_correos = 200
+        max_correos = max(1, min(_TK_REC_MAX_CORREOS, max_correos))
+        dry_run = bool(d.get("dry_run", True))   # por defecto, MIRAR
+
+        # Mismo lock que el autopoll y el cron: un solo login IMAP a la vez.
+        # Con blocking=False el barrido de recuperación fallaría seguido (el
+        # autopoll corre cada 8s), así que aquí se espera un poco.
+        if not _TK_MAIL_POLL["lock"].acquire(timeout=20):
+            return jsonify({"ok": False,
+                            "error": "Hay otro barrido del buzón en curso. "
+                                     "Espera unos segundos y reintenta."}), 409
+        try:
+            _TK_MAIL_POLL["ts"] = time.monotonic()
+            resumen = _tk_leer_correo_entrante(
+                dias=dias, max_correos=max_correos, dry_run=dry_run,
+                detalle=True, notificar="resumen",
+                # Presupuesto de reloj menor que el timeout de la request:
+                # antes de que Cloud Run corte, preferimos devolver un
+                # resultado parcial y decirlo. Reintentar es seguro (dedup).
+                max_segundos=(60 if dry_run else 150))
+        except Exception as _e:
+            print(f"[tk_api_mail_recuperar] CRASH: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "Error interno al leer el buzón.",
+                            "error_codigo": "INTERNAL_CRASH"}), 500
+        finally:
+            _TK_MAIL_POLL["lock"].release()
+
+        if not resumen.get("ok"):
+            return jsonify(resumen), 200   # error legible, el front lo muestra
+        try:
+            _audit("tk_mail_recuperar" + ("_preview" if dry_run else ""),
+                   target_type="tk_mail_ingeridos",
+                   target_id=f"dias={dias};n={resumen.get('ingresados')}")
+        except Exception:
+            pass
+        return jsonify(resumen)
 
     print("[ILUS] Modulo Tickets central registrado (/tickets).", flush=True)
