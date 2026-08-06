@@ -1323,7 +1323,15 @@
 {% set _puede_aprobar = puede_aprobar if puede_aprobar is defined else (permissions.superadmin or permissions.admin or _role in ('supervisor','supervisor_sstt')) %}
 {% set _es_superadmin = es_superadmin if es_superadmin is defined else (permissions.superadmin) %}
 
-<div class="tx-bottom">
+<div class="tx-bottom" id="txBottom">
+  {# Tirador: pliega la barra a una franja para revisar la ficha completa
+     (firmas, fotos) sin perder el acceso a las acciones. Recuerda la
+     preferencia por OT. Aaron 2026-08-06. #}
+  <button type="button" class="tx-bottom-grip" id="txBottomGrip"
+          onclick="txTogglePlegado()" title="Mostrar u ocultar las acciones">
+    <i class="bi bi-chevron-down"></i><span id="txGripTxt">Ocultar</span>
+  </button>
+  <div class="tx-bottom-body">
   {% if visita.estado == 'cerrada' %}
     {% if _es_superadmin %}
     {# OT cerrada — botón descargar PDF · 🔒 SOLO superadmin (brecha Aaron 2026-06-02):
@@ -1364,15 +1372,23 @@
        la bitácora (mant_logs: edicion_post_firma) para amparar al técnico.
        Al capturar la firma del cliente, la OT se sella. #}
     {% if puede_ejecutar %}
-      <div class="alert alert-warning py-2 small mb-2" style="border-radius:10px">
-        <i class="bi bi-pencil-square me-1"></i>
-        <b>Ventana de corrección:</b> el técnico ya firmó pero el cliente aún no.
-        Puedes corregir fotos, tareas y datos de equipos <b>antes</b> de capturar
-        la firma del cliente — al firmar el cliente, la OT se bloquea.
-        <span class="d-block mt-1" style="opacity:.85">
-          <i class="bi bi-shield-check me-1"></i>Todo cambio desde la firma del
-          técnico queda registrado con autor en la bitácora.
-        </span>
+      {# Nace PLEGADA (una línea) para no tapar la ficha; el texto completo
+         sigue disponible al tocarla. Aaron 2026-08-06. #}
+      <div class="tx-nota" id="txNotaCorr">
+        <button type="button" class="tx-nota-head" onclick="txToggleNota()">
+          <i class="bi bi-pencil-square"></i>
+          <span>Ventana de corrección abierta — aún puedes editar</span>
+          <i class="bi bi-chevron-down"></i>
+        </button>
+        <div class="tx-nota-body">
+          El técnico ya firmó pero el cliente aún no. Puedes corregir fotos,
+          tareas y datos de equipos <b>antes</b> de capturar la firma del
+          cliente — al firmar el cliente, la OT se bloquea.
+          <span class="d-block mt-1" style="opacity:.85">
+            <i class="bi bi-shield-check me-1"></i>Todo cambio desde la firma del
+            técnico queda registrado con autor en la bitácora.
+          </span>
+        </div>
       </div>
     {% endif %}
     {% if _es_superadmin %}
@@ -1385,20 +1401,28 @@
       </small>
     {% endif %}
     {% if puede_firmar_cliente %}
-      <button class="tx-btn-firmar" id="btnFirmarCliente" onclick="abrirModalFirmaCliente()"
-              style="background:linear-gradient(135deg,#2563eb,#1d4ed8)">
-        <i class="bi bi-person-badge"></i> Capturar firma del cliente
-      </button>
-      <small class="d-block text-center mt-1" style="color:#2563eb;font-size:.72rem;font-weight:600">
-        Cuando el cliente esté conforme, captura su firma para enviar a aprobación.
-      </small>
-      <button class="tx-btn-firmar mt-2" onclick="enviarFirmaRemota()"
-              style="background:linear-gradient(135deg,#0f766e,#115e59)">
-        <i class="bi bi-envelope-paper"></i> Enviar firma al cliente por correo
-      </button>
-      <small class="d-block text-center mt-1" style="color:#0d9488;font-size:.72rem;font-weight:600">
-        Si el cliente no está en sitio: le llega un link y firma a distancia; al firmar nos avisa a todos.
-      </small>
+      {# Lado a lado desde 560px: la barra pasa de ~200px a ~110px y deja ver
+         la sección de Firmas. En móvil siguen apilados. #}
+      <div class="tx-cta-grid">
+        <div>
+          <button class="tx-btn-firmar" id="btnFirmarCliente" onclick="abrirModalFirmaCliente()"
+                  style="background:linear-gradient(135deg,#2563eb,#1d4ed8)">
+            <i class="bi bi-person-badge"></i> Capturar firma del cliente
+          </button>
+          <small class="tx-cta-hint" style="color:#2563eb">
+            El cliente está conforme y firma aquí.
+          </small>
+        </div>
+        <div>
+          <button class="tx-btn-firmar" onclick="enviarFirmaRemota()"
+                  style="background:linear-gradient(135deg,#0f766e,#115e59)">
+            <i class="bi bi-envelope-paper"></i> Enviar firma por correo
+          </button>
+          <small class="tx-cta-hint" style="color:#0d9488">
+            No está en sitio: le llega un link y firma a distancia.
+          </small>
+        </div>
+      </div>
     {% else %}
       <button class="tx-btn-firmar" disabled>
         <i class="bi bi-clock-history"></i> Técnico firmó — esperando revisión y firma del cliente
@@ -1417,7 +1441,58 @@
       Verifica las tareas para habilitar la firma
     </small>
   {% endif %}
+  </div>{# /tx-bottom-body #}
 </div>
+
+{# ══════════════════════════════════════════════════════════════════════
+   La barra de acciones NO debe tapar la ficha (Aaron 2026-08-06: "no se
+   puede ver la firma ni las opciones de la firma por los botones de abajo·
+   siempre debe visualizarse toda la información").
+
+   Causa: .tx-wrap reservaba 110px fijos abajo, pero la barra crece según el
+   estado de la OT — en 'firmada_tecnico' llega a ~200px y tapaba Firmas.
+
+   Va INLINE a propósito, no en mantenciones_ot_ejecutar.js: ahí quedaría al
+   final de un archivo grande y un error anterior de nivel superior lo dejaba
+   sin ejecutar (comprobado en banco de pruebas). Esto es garantía de layout,
+   tiene que correr sí o sí.
+   ══════════════════════════════════════════════════════════════════════ #}
+<script>
+(function () {
+  var bar  = document.getElementById('txBottom');
+  var wrap = document.querySelector('.tx-wrap');
+  if (!bar || !wrap) return;
+
+  function sync() {
+    // +18px de aire para que la última tarjeta no quede pegada al borde.
+    wrap.style.paddingBottom = (Math.ceil(bar.getBoundingClientRect().height) + 18) + 'px';
+  }
+  window.txSyncBottomPad = sync;
+
+  var KEY = 'txBarPlegada_{{ visita.id }}';
+  window.txTogglePlegado = function () {
+    var plegada = bar.classList.toggle('plegada');
+    var t = document.getElementById('txGripTxt');
+    if (t) t.textContent = plegada ? 'Mostrar' : 'Ocultar';
+    try { localStorage.setItem(KEY, plegada ? '1' : '0'); } catch (e) {}
+    sync();
+  };
+
+  window.txToggleNota = function () {
+    var n = document.getElementById('txNotaCorr');
+    if (n) { n.classList.toggle('abierta'); sync(); }
+  };
+
+  try { if (localStorage.getItem(KEY) === '1') window.txTogglePlegado(); } catch (e) {}
+
+  sync();
+  if (window.ResizeObserver) { new ResizeObserver(sync).observe(bar); }
+  else { window.addEventListener('resize', sync); }
+  // Tras cargar tareas/fotos la barra puede cambiar de alto (el botón de
+  // firmar se habilita y cambia su texto de ayuda).
+  setTimeout(sync, 900); setTimeout(sync, 2500);
+})();
+</script>
 
 {# ═════════ MODAL: Saltar equipo (2026-05-21 Daniel) ═════════
    Pide razón (radios) + observación libre obligatoria (mín 5 chars).
