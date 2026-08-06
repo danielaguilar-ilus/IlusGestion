@@ -10,7 +10,11 @@ playwright>=1.50.0
 # py_recursion_remaining en TPythonState.cpp). Sin este pin el build de
 # Cloud Build buildpacks falla en clean install.
 greenlet>=3.1.2
-cloudinary>=1.36.0
+# Google Cloud Storage: ÚNICO almacenamiento de archivos de ILUS.
+# 2026-08-05 (Daniel): se retiró la librería `cloudinary`. La app ya no sube,
+# borra ni configura nada allá. Las imágenes históricas que siguen en
+# res.cloudinary.com se leen como links http normales (no necesitan librería)
+# y se migran desde /admin/storage/diagnostico-imagenes.
 google-cloud-storage>=2.14.0
 google-cloud-translate>=3.15.0
 google-cloud-speech>=2.26.0

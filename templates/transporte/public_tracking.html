@@ -15,6 +15,11 @@
 <link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}">
 <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
 
+{# Marca "hay JS" ANTES de pintar: el layout por pestañas de celular solo se
+   activa si el navegador puede cambiarlas. Sin JS, todos los paneles quedan
+   visibles apilados (nunca se esconde información que no se pueda abrir). #}
+<script>document.documentElement.className += ' has-js';</script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -36,12 +41,16 @@
   --green:#16a34a;
   --green-lt:#4ade80;
   --amber:#f59e0b;
+  --amber-lt:#fbbf24;
+  --amber-bg:#fff8e1;
   --display:'Barlow Condensed',system-ui,sans-serif;
   --body:'Barlow',system-ui,-apple-system,sans-serif;
   --shell:540px;
 }
 *,*::before,*::after{ box-sizing:border-box; margin:0; padding:0; }
-html{ -webkit-text-size-adjust:100%; }
+html{ -webkit-text-size-adjust:100%; scroll-behavior:smooth; }
+@media (prefers-reduced-motion:reduce){ html{ scroll-behavior:auto; } }
+[id]{ scroll-margin-top:5.5rem; }   /* el header es sticky en celular */
 body{
   font-family:var(--body);
   background:var(--paper);
@@ -55,12 +64,20 @@ body{
 /* Wrappers de layout de escritorio -- en celular son invisibles para el
    layout (sus hijos se comportan como si estuvieran directo en .shell,
    cero cambio de comportamiento respecto a antes). */
-.dash-row, .dash-col{ display:contents; }
+.dash, .dash-col, .footzone{ display:contents; }
+
+/* Caja con scroll PROPIO: la usa el historial y el detalle de destino en
+   escritorio. Daniel: "quitar el scroll" = la PÁGINA no scrollea; el cuadro
+   interno sí puede, y de hecho debe. */
+.scrollbox{ scrollbar-width:thin; scrollbar-color:#d4d4d8 transparent; }
+.scrollbox::-webkit-scrollbar{ width:6px; }
+.scrollbox::-webkit-scrollbar-track{ background:transparent; }
+.scrollbox::-webkit-scrollbar-thumb{ background:#d4d4d8; border-radius:99px; }
 
 /* ── HEADER ─────────────────────────────────────────────────── */
 .hd{
   background:var(--ink);
-  padding:calc(.85rem + env(safe-area-inset-top)) 1.1rem .85rem;
+  padding:calc(.7rem + env(safe-area-inset-top)) 1.1rem .7rem;
   display:flex; align-items:center; gap:.75rem;
   position:sticky; top:0; z-index:40;
 }
@@ -84,7 +101,7 @@ body{
 }
 .hd-txt{ line-height:1.12; min-width:0; }
 .hd-s{
-  margin-top:.2rem;
+  margin-top:.15rem;
   font-size:.63rem; letter-spacing:.2em; text-transform:uppercase;
   color:var(--gray-2); font-weight:700; white-space:nowrap;
 }
@@ -92,7 +109,7 @@ body{
   margin-left:auto; display:flex; gap:.4rem;
 }
 .icobtn{
-  width:40px; height:40px; border-radius:11px; border:1px solid rgba(255,255,255,.16);
+  width:44px; height:44px; border-radius:12px; border:1px solid rgba(255,255,255,.16);
   background:rgba(255,255,255,.07); color:#fff; font-size:1rem;
   display:grid; place-items:center; cursor:pointer;
   transition:transform .12s ease, background .18s ease;
@@ -104,7 +121,7 @@ body{
 .hero{
   background:var(--ink);
   color:#fff;
-  padding:1.6rem 1.1rem 3.4rem;   /* espacio extra abajo: el scoreboard monta encima */
+  padding:1.25rem 1.1rem 3.2rem;   /* espacio extra abajo: el scoreboard monta encima */
   position:relative; overflow:hidden;
 }
 .hero::before{      /* rejilla diagonal: textura industrial */
@@ -115,8 +132,8 @@ body{
 }
 /* Halo del estado. VERDE mientras el pedido avanza normalmente (Daniel: "el
    avance debe ser en verde, en ruta debe estar en verde, no en rojo, con
-   sombreado verde"). El rojo queda reservado para cuando algo salió mal —
-   así el color significa algo en vez de ser decoración. */
+   sombreado verde"). El rojo/ámbar queda reservado para cuando algo salió
+   mal — así el color significa algo en vez de ser decoración. */
 .hero::after{
   content:''; position:absolute; top:-40%; right:-25%;
   width:92vw; height:92vw; max-width:480px; max-height:480px;
@@ -159,12 +176,12 @@ body{
 .doc:active{ transform:scale(.96); background:rgba(255,255,255,.18); }
 .doc i{ font-size:.85rem; opacity:.75; }
 .cli{
-  margin-top:.6rem; font-size:1.02rem; color:#e4e4e7;
+  margin-top:.5rem; font-size:1.02rem; color:#e4e4e7;
   font-weight:600; line-height:1.32;
 }
 
 /* Estado — el dato estrella */
-.estado-wrap{ margin-top:1.5rem; }
+.estado-wrap{ margin-top:1.15rem; }
 .estado-top{ display:flex; align-items:center; gap:.7rem; }
 .estado-ico{
   position:relative;
@@ -205,7 +222,7 @@ body{
   box-shadow:0 0 0 4px rgba(22,163,74,.22), 0 8px 20px -6px rgba(22,163,74,.65);
 }
 #tkState.s-danger  .estado-ico{ background:rgba(220,38,38,.2);  border-color:rgba(220,38,38,.55); color:var(--red-lt); }
-#tkState.s-warning .estado-ico{ background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5); color:#fbbf24; }
+#tkState.s-warning .estado-ico{ background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.5); color:var(--amber-lt); }
 #tkState.s-secondary .estado-ico{ background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.18); color:#fff; }
 /* Chip "ENTREGADO" -- refuerzo adicional junto al kicker para que el verde
    se note incluso antes de leer el título grande. */
@@ -224,36 +241,68 @@ body{
 }
 #tkStateLabel{
   display:block; font-family:var(--display); font-weight:900;
-  font-size:clamp(2.7rem,14.5vw,3.9rem); line-height:.93;
+  font-size:clamp(2.35rem,12vw,3.4rem); line-height:.93;
   letter-spacing:-.012em; text-transform:uppercase; color:var(--green-lt);
   margin-top:.1rem;
 }
 #tkState.s-success #tkStateLabel{ color:var(--green-lt); }
 #tkState.s-danger  #tkStateLabel{ color:var(--red-lt); }
-#tkState.s-warning #tkStateLabel{ color:#fbbf24; }
+#tkState.s-warning #tkStateLabel{ color:var(--amber-lt); }
 #tkState.s-secondary #tkStateLabel{ color:#fff; }   /* "En preparación": aún no
    hay avance real que celebrar, va en blanco */
 #tkStateSub{
-  margin-top:.6rem; font-size:1rem; color:#d4d4d8;
-  line-height:1.45; font-weight:500;
+  margin-top:.5rem; font-size:.98rem; color:#d4d4d8;
+  line-height:1.42; font-weight:500;
 }
 
+/* ── ESTADO "REQUIERE ATENCIÓN" (entrega fallida / problema) ───
+   2026-08-05 (Daniel: "entrega fallida, y me figura en rojo... el tracking
+   no me indica nada, lo veo muy insípido"). El rojo de alarma SIN acción
+   asusta y no informa. Se pasa a ÁMBAR = "requiere coordinación, está en
+   curso" y el detalle se explica en la tarjeta de acción (.alert-card).
+   El ROJO puro queda para la devolución, que sí es un desenlace distinto. */
+.hero.is-warn::after{
+  background:radial-gradient(circle, rgba(245,158,11,.32) 0%, transparent 62%);
+}
+.hero.is-warn .hero-mesh{
+  background:conic-gradient(from 0deg at 70% 30%,
+    rgba(245,158,11,.15), transparent 22%, transparent 55%, rgba(245,158,11,.10), transparent 85%);
+}
+.hero.is-warn #tkState.estado-wrap #tkStateLabel{ color:var(--amber-lt); }
+.hero.is-warn #tkState.estado-wrap .estado-ico{
+  background:rgba(245,158,11,.18); border-color:rgba(245,158,11,.55); color:var(--amber-lt);
+}
+.hero.is-warn #tkState.estado-wrap .estado-ico::before,
+.hero.is-warn #tkState.estado-wrap .estado-ico::after{ border-color:var(--amber-lt); }
+/* Devolución: el ERP la marca 'warning' (ámbar), pero acá el desenlace del
+   pedido SÍ cambió, así que el hero va entero en rojo -- coherente con la
+   tarjeta de acción roja. Sin esto quedaba título ámbar sobre halo rojo. */
+.hero.is-bad #tkState.estado-wrap #tkStateLabel{ color:var(--red-lt); }
+.hero.is-bad #tkState.estado-wrap .estado-ico{
+  background:rgba(220,38,38,.2); border-color:rgba(220,38,38,.55); color:var(--red-lt);
+}
+.hero.is-bad #tkState.estado-wrap .estado-ico::before,
+.hero.is-bad #tkState.estado-wrap .estado-ico::after{ border-color:var(--red-lt); }
+
 /* Barra de avance con % grande */
-.prog{ margin-top:1.5rem; }
-.prog-top{ display:flex; align-items:baseline; justify-content:space-between; }
+.prog{ margin-top:1.1rem; }
+.prog-top{ display:flex; align-items:baseline; justify-content:space-between; gap:.6rem; }
 .prog-lb{
   font-size:.66rem; letter-spacing:.2em; text-transform:uppercase;
   color:var(--gray-2); font-weight:700;
 }
 .prog-pct{
-  font-family:var(--display); font-weight:900; font-size:2.15rem;
+  font-family:var(--display); font-weight:900; font-size:2.05rem;
   line-height:1; color:var(--green-lt); font-variant-numeric:tabular-nums;
+  white-space:nowrap;
 }
+.prog-pct.is-hold{ font-size:1.5rem; color:var(--amber-lt); letter-spacing:.02em; }
 .prog-track{
-  margin-top:.55rem; height:12px; border-radius:99px;
+  margin-top:.5rem; height:12px; border-radius:99px;
   background:rgba(255,255,255,.11); overflow:hidden;
 }
 .prog-fill{
+  position:relative; overflow:hidden;
   height:100%; border-radius:99px; width:0;
   background:linear-gradient(90deg,var(--green),#22c55e);
   transition:width 1.1s cubic-bezier(.2,.8,.25,1);
@@ -262,6 +311,19 @@ body{
 .prog-fill.is-ok{ background:linear-gradient(90deg,#15803d,#22c55e); box-shadow:0 0 18px rgba(22,163,74,.7); }
 .prog-fill.is-bad{ background:linear-gradient(90deg,#991b1b,var(--red)); box-shadow:0 0 16px rgba(220,38,38,.55); }
 .prog-pct.is-bad{ color:var(--red-lt); }
+/* "En pausa": la barra se raya y las rayas se desplazan despacio -- lee como
+   "detenido pero vivo", no como "terminado" (que es lo que comunicaba un
+   100% rojo lleno). */
+.prog-fill.is-warn{
+  background:linear-gradient(90deg,#b45309,var(--amber));
+  box-shadow:0 0 16px rgba(245,158,11,.5);
+}
+.prog-fill.is-warn::after{
+  content:''; position:absolute; inset:0;
+  background:repeating-linear-gradient(115deg, rgba(255,255,255,.24) 0 7px, transparent 7px 15px);
+  animation:holdSlide 1.3s linear infinite;
+}
+@keyframes holdSlide{ to{ transform:translateX(15px); } }
 
 /* Stepper -- (2026-07-30, Daniel: "esto no se ve igual, es en verde y
    blanco... quería el tracking gigante y animado como el de retiro") --
@@ -269,7 +331,7 @@ body{
    Ahora usa EMOJI de color (igual que el stepper de retiros/public_
    tracking.html que a Daniel le encanta) sobre círculos claros flotando
    en el hero oscuro -- mismo lenguaje visual entre ambas páginas. */
-.steps{ display:flex; align-items:flex-start; margin-top:1.5rem; }
+.steps{ display:flex; align-items:flex-start; margin-top:1.15rem; }
 .step{ flex:0 0 auto; width:68px; text-align:center; opacity:.4; transition:opacity .5s ease; }
 .step.done,.step.active{ opacity:1; }
 .step-dot{
@@ -300,6 +362,10 @@ body{
   background:#fef2f2; border-color:var(--red);
   box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(220,38,38,.7); animation:pulse-bad 2s infinite;
 }
+.steps.is-warn .step.active .step-dot{
+  background:var(--amber-bg); border-color:var(--amber);
+  box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(245,158,11,.7); animation:pulse-warn 2s infinite;
+}
 @keyframes pulse{
   70%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 14px rgba(22,163,74,0); }
   100%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(22,163,74,0); }
@@ -307,6 +373,10 @@ body{
 @keyframes pulse-bad{
   70%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 14px rgba(220,38,38,0); }
   100%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(220,38,38,0); }
+}
+@keyframes pulse-warn{
+  70%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 14px rgba(245,158,11,0); }
+  100%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(245,158,11,0); }
 }
 @keyframes badgePop{ 0%{ transform:scale(0); } 60%{ transform:scale(1.28); } 100%{ transform:scale(1); } }
 /* 2026-07-30 (Daniel: "el entregado tiene que ser como un giro, algo bien
@@ -321,7 +391,7 @@ body{
 }
 .step-dot.step-final-spin{ animation:finalSpin .95s cubic-bezier(.34,1.56,.64,1) both; }
 .step-label{
-  margin-top:.5rem; font-size:.62rem; line-height:1.25;
+  margin-top:.45rem; font-size:.62rem; line-height:1.25;
   letter-spacing:.06em; text-transform:uppercase; font-weight:700;
   color:var(--gray-2); min-height:2.1em;
 }
@@ -331,15 +401,61 @@ body{
   border-radius:2px; transition:background .5s ease;
 }
 .step-bar.done{ background:var(--green); }
+/* Tramo EN CURSO: la luz "viaja" por el tramo que falta -- es el latido que
+   pidió Daniel ("que palpite la imagen"), pero con significado: marca por
+   dónde va avanzando el pedido ahora mismo. */
+.step-bar.is-live{
+  background:linear-gradient(90deg, var(--green) 0%, rgba(22,163,74,.15) 45%, #3f3f46 100%);
+  background-size:220% 100%;
+  animation:barFlow 2.1s linear infinite;
+}
+@keyframes barFlow{ from{ background-position:100% 0; } to{ background-position:-20% 0; } }
+
+/* ── PRÓXIMO PASO ──────────────────────────────────────────────
+   2026-08-05 (Daniel: "el tracking no me indica nada"). Saber el estado no
+   basta: el cliente quiere saber QUÉ VIENE. Esta franja lo dice en una
+   línea, siempre, en todos los estados. */
+.nextup{
+  margin-top:1rem; display:flex; align-items:center; gap:.65rem;
+  padding:.65rem .8rem; border-radius:13px;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14);
+}
+.nextup-ic{
+  flex:0 0 auto; width:30px; height:30px; border-radius:9px;
+  display:grid; place-items:center; font-size:.95rem;
+  background:rgba(22,163,74,.18); color:var(--green-lt);
+  animation:breathe 2.8s ease-in-out infinite;
+}
+@keyframes breathe{ 0%,100%{ transform:scale(1); opacity:1 } 50%{ transform:scale(1.09); opacity:.82 } }
+.hero.is-warn .nextup-ic{ background:rgba(245,158,11,.2); color:var(--amber-lt); }
+.hero.is-bad  .nextup-ic{ background:rgba(220,38,38,.2);  color:var(--red-lt); }
+.hero.is-ok   .nextup-ic{ background:rgba(22,163,74,.28); color:#bbf7d0; animation:none; }
+.nextup-k{
+  font-size:.56rem; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--gray-2); font-weight:700;
+}
+.nextup-v{ font-size:.93rem; color:#f4f4f5; font-weight:600; line-height:1.3; }
+/* Cuando hay algo que resolver, esta franja es además el ATAJO al plan de
+   acción: en el teléfono el plan queda más abajo y el cliente preocupado no
+   tiene que buscarlo. */
+a.nextup{ text-decoration:none; position:relative; padding-right:2.1rem; }
+a.nextup::after{
+  content:'\F282'; font-family:'bootstrap-icons';
+  position:absolute; right:.7rem; top:50%; transform:translateY(-50%);
+  color:var(--amber-lt); font-size:1.1rem;
+  animation:nudge 1.9s ease-in-out infinite;
+}
+@keyframes nudge{ 0%,100%{ transform:translateY(-50%) } 50%{ transform:translateY(-15%) } }
+a.nextup:active{ background:rgba(255,255,255,.13); }
 
 /* ── SCOREBOARD (el resumen de un vistazo) ──────────────────── */
 .board{
   display:grid; grid-template-columns:repeat(3,1fr); gap:.55rem;
-  padding:0 1.1rem; margin-top:-2.5rem; position:relative; z-index:5;
+  padding:0 1.1rem; margin-top:-2.4rem; position:relative; z-index:5;
 }
 .tile{
   background:#fff; border:1px solid var(--line); border-radius:15px;
-  padding:.85rem .55rem .75rem; text-align:center;
+  padding:.8rem .55rem .7rem; text-align:center;
   box-shadow:0 8px 22px -12px rgba(0,0,0,.35);
   animation:rise .55s cubic-bezier(.2,.7,.3,1) backwards;
 }
@@ -348,33 +464,33 @@ body{
 .tile-ic{ font-size:.92rem; color:var(--red); line-height:1; }
 /* Logo real del transportista. object-fit:contain para que ninguna marca
    se deforme: los logos vienen en proporciones muy distintas. */
-.tile-logo{ height:26px; display:flex; align-items:center; justify-content:center; }
+.tile-logo{ height:30px; display:flex; align-items:center; justify-content:center; }
 .tile-logo img{ max-height:100%; max-width:100%; object-fit:contain; }
 .tile-n{
-  font-family:var(--display); font-weight:900; font-size:1.85rem;
+  font-family:var(--display); font-weight:900; font-size:1.8rem;
   line-height:1.02; margin-top:.2rem; letter-spacing:-.01em;
   font-variant-numeric:tabular-nums;
   overflow-wrap:anywhere;
 }
-.tile-n.sm{ font-size:1.12rem; line-height:1.18; padding-top:.16rem; }
+.tile-n.sm{ font-size:1.1rem; line-height:1.18; padding-top:.16rem; }
 .tile-k{
   margin-top:.25rem; font-size:.58rem; letter-spacing:.16em;
   text-transform:uppercase; color:var(--gray); font-weight:700;
 }
 
 /* ── CONTENIDO ──────────────────────────────────────────────── */
-.wrap{ padding:1.05rem 1.1rem 2.2rem; }
+.wrap{ padding:.95rem 1.1rem 1.6rem; }
 
 .card{
   position:relative;
   background:#fff; border:1px solid var(--line); border-radius:16px;
-  margin-bottom:.85rem; overflow:hidden;
+  margin-bottom:.8rem; overflow:hidden;
   box-shadow:0 1px 2px rgba(0,0,0,.045);
   animation:rise .55s cubic-bezier(.2,.7,.3,1) backwards;
 }
 /* filete superior en gradiente (2026-07-29) -- mismo lenguaje visual del
    progress-card de retiros, para que ambas páginas se sientan hermanas. */
-.card:not(.proof):not(.live-card)::before{
+.card:not(.proof):not(.live-card):not(.alert-card)::before{
   content:''; position:absolute; top:0; left:0; right:0; height:3px; z-index:1;
   background:linear-gradient(90deg,var(--red),#f97316 45%,var(--red));
   background-size:200% 100%; animation:sheenSlide 6s ease-in-out infinite;
@@ -387,7 +503,7 @@ body{
 
 .card-h{
   display:flex; align-items:center; gap:.55rem;
-  padding:.85rem 1rem; border-bottom:1px solid var(--line);
+  padding:.8rem 1rem; border-bottom:1px solid var(--line);
   font-family:var(--display); font-weight:800; font-size:.95rem;
   letter-spacing:.12em; text-transform:uppercase;
 }
@@ -395,7 +511,7 @@ body{
 .card-b{ padding:.25rem 1rem .8rem; }
 
 /* Filas clave/valor — el valor manda, la etiqueta acompaña */
-.kv{ padding:.72rem 0; border-bottom:1px solid #f1f1f3; }
+.kv{ padding:.68rem 0; border-bottom:1px solid #f1f1f3; }
 .kv:last-child{ border-bottom:0; }
 .kv-k{
   display:block; font-size:.62rem; color:var(--gray); font-weight:700;
@@ -408,7 +524,7 @@ body{
 .kv-v.mono{ font-family:ui-monospace,'SF Mono',Consolas,monospace; font-size:.95rem; letter-spacing:-.02em; }
 
 /* Fila que se puede tocar (abre mapa) */
-a.kv{ display:block; text-decoration:none; color:inherit; position:relative; padding-right:2rem; }
+a.kv{ display:block; text-decoration:none; color:inherit; position:relative; padding-right:2rem; min-height:44px; }
 a.kv::after{
   content:'\F285'; font-family:'bootstrap-icons'; position:absolute;
   right:.15rem; top:50%; transform:translateY(-50%);
@@ -416,9 +532,73 @@ a.kv::after{
 }
 a.kv:active{ background:#fafafa; }
 
+/* ══ TARJETA DE ACCIÓN "QUÉ PASÓ Y QUÉ SIGUE" ══════════════════
+   2026-08-05. Es la respuesta al pedido de Daniel: "necesito una propuesta
+   de qué vamos a hacer con el 16, dice no entregamos, ¿qué hacemos?".
+   Cuatro bloques numerados: qué pasó · dónde está tu pedido · qué hacemos
+   nosotros · qué puedes hacer tú. Sin esto el rojo solo asustaba. */
+.alert-card{
+  border-color:#fcd34d;
+  box-shadow:0 10px 30px -16px rgba(245,158,11,.75);
+}
+.alert-card::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:4px; z-index:1;
+  background:linear-gradient(90deg,var(--amber),#fb923c 45%,var(--amber));
+  background-size:200% 100%; animation:sheenSlide 4s ease-in-out infinite;
+}
+.alert-card .card-h{
+  background:linear-gradient(135deg,var(--amber-bg),#fde68a);
+  border-bottom-color:#fcd34d; color:#7c2d12;
+}
+.alert-card .card-h i{ color:#b45309; font-size:1.15rem; }
+.alert-card.is-ret{ border-color:#fecaca; box-shadow:0 10px 30px -16px rgba(220,38,38,.55); }
+.alert-card.is-ret::before{ background:linear-gradient(90deg,var(--red),#f97316 45%,var(--red)); background-size:200% 100%; }
+.alert-card.is-ret .card-h{ background:linear-gradient(135deg,#fee2e2,#fecaca); border-bottom-color:#fecaca; color:#7f1d1d; }
+.alert-card.is-ret .card-h i{ color:var(--red); }
+
+.acts{ list-style:none; padding:.35rem 1rem .5rem; }
+.act{ display:flex; gap:.7rem; padding:.65rem 0; border-bottom:1px dashed #ececf0; }
+.act:last-child{ border-bottom:0; }
+.act-n{
+  flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+  background:var(--amber); color:#fff; font-family:var(--display);
+  font-weight:900; font-size:.9rem; display:grid; place-items:center;
+  margin-top:.1rem; line-height:1;
+}
+.is-ret .act-n{ background:var(--red); }
+.act-c{ min-width:0; }
+.act-t{ font-weight:800; font-size:.95rem; line-height:1.3; }
+.act-d{ font-size:.89rem; color:#3f3f46; margin-top:.15rem; line-height:1.45; }
+.act-quote{
+  margin-top:.4rem; padding:.5rem .7rem;
+  background:var(--amber-bg); border-left:3px solid var(--amber);
+  border-radius:0 9px 9px 0; font-size:.87rem; color:#7c2d12;
+  font-weight:600; line-height:1.4; word-break:break-word;
+}
+.is-ret .act-quote{ background:#fee2e2; border-left-color:var(--red); color:#7f1d1d; }
+.act-when{ font-size:.75rem; color:var(--gray); font-weight:700; margin-top:.3rem; font-variant-numeric:tabular-nums; }
+.act-btns{ display:grid; gap:.5rem; margin-top:.6rem; }
+.act-btn{
+  display:flex; align-items:center; justify-content:center; gap:.5rem;
+  min-height:46px; padding:.7rem 1rem; border-radius:12px;
+  text-decoration:none; font-weight:800; font-size:.92rem;
+  transition:transform .13s ease;
+}
+.act-btn:active{ transform:scale(.975); }
+.act-btn.wa{ background:#25d366; color:#fff; }
+.act-btn.mail{ background:var(--ink); color:#fff; }
+.act-btn.tk{ background:#fff; color:var(--ink); border:1px solid var(--line); }
+@media (min-width:520px){ .act-btns{ grid-template-columns:repeat(3,minmax(0,1fr)); } }
+.act-ref{
+  margin:0 1rem .9rem; padding:.6rem .8rem; border-radius:11px;
+  background:#f7f7f9; border:1px dashed var(--line);
+  font-size:.82rem; color:var(--gray); font-weight:600; text-align:center;
+}
+.act-ref strong{ color:var(--ink); font-family:var(--display); font-size:1.02rem; letter-spacing:.06em; }
+
 /* Timeline */
-.tl{ padding:.95rem 1rem 1rem; }
-.tl-row{ position:relative; padding-left:1.85rem; padding-bottom:1.15rem; }
+.tl{ padding:.9rem 1rem 1rem; }
+.tl-row{ position:relative; padding-left:1.85rem; padding-bottom:1.1rem; }
 .tl-row:last-child{ padding-bottom:0; }
 .tl-row::before{
   content:''; position:absolute; left:6px; top:16px; bottom:-4px;
@@ -430,19 +610,19 @@ a.kv:active{ background:#fafafa; }
   width:14px; height:14px; border-radius:50%;
   background:#fff; border:3px solid var(--gray-2);
 }
-/* El último movimiento marca "vas bien" → verde. El rojo se reserva para
-   los estados que de verdad son un problema. */
+/* El último movimiento marca "vas bien" → verde. El rojo/ámbar se reserva
+   para los estados que de verdad son un problema. */
 .tl-row.is-last::after{
   border-color:var(--green); background:var(--green);
   box-shadow:0 0 0 5px rgba(22,163,74,.16);
 }
 .tl-row.c-danger.is-last::after,
-.tl-row.c-warning.is-last::after{ border-color:var(--red); background:var(--red); box-shadow:0 0 0 5px rgba(220,38,38,.14); }
+.tl-row.c-warning.is-last::after{ border-color:var(--amber); background:var(--amber); box-shadow:0 0 0 5px rgba(245,158,11,.18); }
 .tl-est{ font-weight:700; font-size:1.02rem; display:flex; align-items:center; gap:.45rem; line-height:1.3; }
 .tl-est i{ color:var(--gray); font-size:1rem; }
 .tl-row.is-last .tl-est i{ color:var(--green); }
 .tl-row.c-danger.is-last .tl-est i,
-.tl-row.c-warning.is-last .tl-est i{ color:var(--red); }
+.tl-row.c-warning.is-last .tl-est i{ color:#b45309; }
 .tl-ts{ font-size:.82rem; color:var(--gray); margin-top:.14rem; font-variant-numeric:tabular-nums; font-weight:500; }
 .tl-delta{
   display:inline-block; margin-left:.4rem; padding:.05rem .45rem; border-radius:99px;
@@ -458,22 +638,27 @@ a.kv:active{ background:#fafafa; }
   letter-spacing:.05em; text-transform:uppercase; cursor:pointer;
 }
 .tl-more:active{ background:#f1f1f3; }
+/* Sin movimientos todavía: no es un error, es un pedido recién nacido. */
+.tl-empty{ text-align:center; padding:1.1rem .5rem 1.3rem; }
+.tl-empty-ic{ font-size:2.2rem; line-height:1; }
+.tl-empty-t{ font-family:var(--display); font-weight:900; font-size:1.35rem; margin-top:.4rem; text-transform:uppercase; letter-spacing:.02em; }
+.tl-empty-d{ font-size:.9rem; color:var(--gray); margin-top:.25rem; line-height:1.45; }
 
 /* Prueba de entrega */
 .proof{ border-color:#a7f3c4; box-shadow:0 6px 20px -14px rgba(22,163,74,.6); }
 .proof .card-h{ background:linear-gradient(135deg,#f0fdf4,#dcfce7); border-bottom-color:#a7f3c4; color:#14532d; }
 .proof .card-h i{ color:var(--green); }
-.firma{ margin-top:.75rem; border:1px solid var(--line); border-radius:12px; padding:.65rem; background:#fafafa; }
+.firma{ margin-top:.7rem; border:1px solid var(--line); border-radius:12px; padding:.6rem; background:#fafafa; }
 .firma-k{ font-size:.58rem; letter-spacing:.16em; text-transform:uppercase; color:var(--gray); font-weight:700; margin-bottom:.35rem; }
-.firma img{ width:100%; max-height:130px; object-fit:contain; display:block; }
-.fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:.5rem; margin-top:.75rem; }
+.firma img{ width:100%; max-height:120px; object-fit:contain; display:block; }
+.fotos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:.5rem; margin-top:.7rem; }
 .fotos img{ width:100%; aspect-ratio:1; object-fit:cover; border-radius:11px; cursor:pointer; border:1px solid var(--line); transition:transform .14s ease; }
 .fotos img:active{ transform:scale(.95); }
 
 /* Live map */
 .live-card{ border-color:#a7f3c4; box-shadow:0 6px 20px -14px rgba(22,163,74,.6); }
 .live-head{
-  display:flex; align-items:center; gap:.55rem; padding:.9rem 1rem;
+  display:flex; align-items:center; gap:.55rem; padding:.85rem 1rem;
   background:linear-gradient(135deg,#fff,#f0fdf4); border-bottom:1px solid #dcfce7;
 }
 .live-head strong{ font-size:1rem; }
@@ -490,18 +675,48 @@ a.kv:active{ background:#fafafa; }
 /* Píldora "se actualiza solo" */
 .autobar{
   display:flex; align-items:center; justify-content:center; gap:.45rem;
-  padding:.7rem 1.1rem 0; font-size:.7rem; letter-spacing:.12em;
+  padding:.6rem 1.1rem 0; font-size:.7rem; letter-spacing:.12em;
   text-transform:uppercase; color:var(--gray); font-weight:700;
 }
 
-/* Footer */
-.ft{ text-align:center; padding:1.3rem 0 2rem; }
-.ft-q{ font-size:.95rem; color:#3f3f46; margin-bottom:.85rem; font-weight:600; }
+/* ── PESTAÑAS DE CELULAR ───────────────────────────────────────
+   2026-08-05 (Daniel: "no quiero darle scroll"). En un teléfono no cabe
+   TODO en una pantalla, pero sí lo esencial. El detalle profundo (destino,
+   historial, ayuda) deja de apilarse en una columna larga y se cambia con
+   una barra de pestañas: nada se elimina, se despliega. En escritorio la
+   barra desaparece y los tres paneles se ven a la vez. */
+.tabbar{
+  display:flex; gap:.35rem; margin-bottom:.7rem;
+  background:#e6e6ea; padding:.25rem; border-radius:14px;
+}
+.tab{
+  flex:1; min-height:44px; border-radius:11px; border:0; background:transparent;
+  font-family:var(--body); font-weight:800; font-size:.78rem;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--gray);
+  cursor:pointer; display:flex; align-items:center; justify-content:center; gap:.35rem;
+  transition:background .2s ease, color .2s ease, transform .12s ease;
+}
+.tab i{ font-size:.9rem; }
+.tab:active{ transform:scale(.97); }
+.tab.is-on{ background:var(--ink); color:#fff; box-shadow:0 4px 12px -6px rgba(0,0,0,.5); }
+.tab .tab-dot{
+  width:7px; height:7px; border-radius:50%; background:var(--amber);
+  box-shadow:0 0 7px 1px rgba(245,158,11,.85);
+}
+@media (max-width:959px){
+  .has-js .tkpanel{ display:none; }
+  .has-js .tkpanel.is-on{ display:block; animation:rise .34s cubic-bezier(.2,.7,.3,1) both; }
+}
+@media (min-width:960px){ .tabbar{ display:none; } }
+
+/* Footer / ayuda */
+.ft{ text-align:center; padding:.2rem 0 .6rem; }
+.ft-q{ font-size:.95rem; color:#3f3f46; margin-bottom:.75rem; font-weight:600; }
 .ft-btns{ display:flex; gap:.55rem; flex-direction:column; }
 .ft-btn{
   display:flex; align-items:center; justify-content:center; gap:.5rem;
-  padding:.85rem 1.15rem; border-radius:13px; text-decoration:none;
-  font-size:.95rem; font-weight:700; min-height:50px;
+  padding:.8rem 1.15rem; border-radius:13px; text-decoration:none;
+  font-size:.95rem; font-weight:700; min-height:48px;
   background:var(--ink); color:#fff; border:1px solid var(--ink);
   transition:transform .13s ease;
 }
@@ -514,10 +729,10 @@ a.kv:active{ background:#fafafa; }
    [logo / nombre / rubro / redes / copy]. Se pasa al MISMO stack
    vertical centrado que retiros/public_tracking.html, mismo texto,
    para que ambas páginas se sientan literalmente el mismo footer. */
-.ft-brand{ margin-top:1.7rem; text-align:center; }
+.ft-brand{ margin-top:.9rem; text-align:center; }
 .ft-brand-line{
   height:1px; background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent);
-  margin-bottom:.9rem;
+  margin-bottom:.8rem;
 }
 /* .ft-brand-logo quedó sin uso: se sacó el logo suelto del footer
    (Daniel 2026-08-05). Se conserva la regla vacía fuera para no dejar
@@ -535,9 +750,9 @@ a.kv:active{ background:#fafafa; }
   display:inline; margin-top:0; font-size:.78rem;
   color:var(--gray); font-weight:600;
 }
-.ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:.7rem; }
+.ft-social{ display:flex; align-items:center; justify-content:center; gap:.6rem; margin-top:.6rem; }
 .ft-social a{
-  width:38px; height:38px; border-radius:50%; display:grid; place-items:center;
+  width:44px; height:44px; border-radius:50%; display:grid; place-items:center;   /* REGLA #3: 44px táctil */
   background:#f4f4f6; border:1px solid var(--line); color:var(--ink);
   font-size:1.02rem; text-decoration:none; transition:transform .15s ease, background .18s ease, color .18s ease;
 }
@@ -547,7 +762,7 @@ a.kv:active{ background:#fafafa; }
 .ft-social a.soc-mail:hover{ background:var(--red); color:#fff; border-color:var(--red); }
 .ft-social a.soc-web:hover{ background:var(--ink); color:#fff; border-color:var(--ink); }
 .ft-copy{
-  margin-top:1rem; font-size:.7rem; letter-spacing:.06em;
+  margin-top:.8rem; font-size:.7rem; letter-spacing:.06em;
   color:var(--gray-2); font-weight:600;
 }
 
@@ -578,97 +793,241 @@ a.kv:active{ background:#fafafa; }
   background:rgba(255,255,255,.14); color:#fff; font-size:1.3rem; cursor:pointer;
 }
 
+/* ── CELULARES BAJOS (iPhone SE y similares) ──────────────────
+   Compacta lo justo para que estado + avance + próximo paso entren sin
+   scroll también ahí. No cambia nada en pantallas normales. */
+@media (max-height:730px) and (max-width:959px){
+  .hd{ padding:calc(.5rem + env(safe-area-inset-top)) 1.1rem .5rem; }
+  .hd img{ height:58px; } .hd-fit{ font-size:2.05rem; }
+  .hero{ padding:1rem 1.1rem 3rem; }
+  #tkStateLabel{ font-size:clamp(2rem,10.5vw,2.8rem); }
+  .estado-ico{ width:56px; height:56px; font-size:1.8rem; }
+  .estado-wrap{ margin-top:.9rem; }
+  .prog,.steps,.nextup{ margin-top:.85rem; }
+  .step-dot{ width:46px; height:46px; font-size:1.4rem; }
+  .step{ width:60px; }
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    ESCRITORIO (2026-07-27, Daniel: "que la responsiva considere de verdad
    pantallas grandes, no solo que técnicamente se adapte"). Hasta acá todo
    el CSS de arriba es la versión celular — se deja INTACTA (sigue siendo
    lo que ve la mayoría: el link llega por WhatsApp/correo y se abre en el
-   teléfono). Desde ~960px se reorganiza en un panel de estado FIJO a la
-   izquierda (el hero + avance + stepper, que es la información que
-   importa mientras se lee el resto) y el contenido (resumen, historial,
-   destino, footer) a la derecha, como un dashboard — no una columna
-   angosta de celular estirada con espacio vacío a los lados.
+   teléfono).
+
+   2026-08-05 (Daniel: "tírate el tracking en toda la pantalla, distribuye
+   la cuestión... no quiero darle scroll"): desde ~960px la página deja de
+   ser un documento que se scrollea y pasa a ser un TABLERO de alto fijo
+   (100dvh). Header arriba, panel de estado a la izquierda ocupando todo el
+   alto, y a la derecha el resumen + destino + historial + ayuda repartidos.
+   Lo único que puede scrollear es el interior de una tarjeta (el historial),
+   nunca la página.
    ══════════════════════════════════════════════════════════════════════ */
 @media (min-width:960px){
-  :root{ --shell:1260px; }   /* 2026-07-30: "lo quiero grande, la parte del
-     tracking" -- de 1180 a 1260 para darle más ancho al hero sin apretar
-     la columna derecha. */
-  body{ background:linear-gradient(180deg,#f4f4f6 0%,var(--paper) 340px); }
-
-  .accent{ height:4px; }
-
-  /* El "shell" deja de ser una columna: hd/accent siguen de ancho completo
-     arriba, y debajo un FLEX row (dash-row) con el hero a la izquierda y
-     el resto del contenido (dash-col) a la derecha.
-     FIX 2026-07-27 (Daniel: "hay un espacio vacío que no entiendo"): la
-     versión anterior usaba CSS Grid con hero/board compartiendo la misma
-     fila -- como hero es mucho más alto (sticky, con stepper y barra de
-     avance) y board son solo 3 tiles cortos, esa fila se estiraba a la
-     altura del hero y dejaba un hueco vacío bajo los tiles. Flexbox no
-     fuerza esa igualación de alturas entre hermanos "de distinta fila". */
-  .shell{ padding:1.75rem 1.5rem 0; }
-  .hd{ padding:1.1rem 1.5rem; }
-  .dash-row{ display:flex; align-items:flex-start; gap:1.75rem; }
-  .dash-col{ display:block; flex:1; min-width:0; }
-
-  /* Panel izquierdo: el hero se vuelve una tarjeta propia, pegajosa, con
-     esquinas y sombra — ya no es la franja negra de borde a borde de
-     celular. Todo su contenido interno no se toca (mismos elementos). */
-  .hero{
-    flex:0 0 460px;
-    border-radius:26px;
-    padding:2.6rem 2.4rem 2.8rem;
-    position:sticky; top:1.75rem;
-    box-shadow:0 26px 54px -20px rgba(10,10,10,.42), inset 0 1px 0 rgba(255,255,255,.05);
+  :root{ --shell:none; }
+  html, body{ height:100%; }
+  body{
+    overflow:hidden;               /* la PÁGINA no scrollea: es un tablero */
+    background:linear-gradient(180deg,#f4f4f6 0%,var(--paper) 340px);
   }
-  /* 2026-07-30 (Daniel, insistiendo: "esto lo quiero grande la parte del
-     tracking") -- segunda vuelta de tamaño: hero de 400px a 460px, texto
-     de estado de 3.6rem a 4.4rem, ícono y stepper también más grandes. */
-  #tkStateLabel{ font-size:4.4rem; }
-  .estado-ico{ width:76px; height:76px; font-size:2.4rem; border-radius:20px; }
-  .doc{ font-size:1.1rem; padding:.4rem .95rem; }
-  .cli{ font-size:1.15rem; }
-  .prog-pct{ font-size:2.6rem; }
-  .step-dot{ width:60px; height:60px; font-size:1.85rem; }
-  .step{ width:76px; }
-  .step-label{ font-size:.68rem; }
+  .shell{
+    max-width:none; height:100dvh; min-height:100dvh;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .hd{ flex:0 0 auto; padding:.85rem 1.75rem; position:static; }
+  .hd img{ height:70px; max-width:none; }
+  .accent{ flex:0 0 auto; height:4px; }
 
-  /* Panel derecho: el resumen de 3 tiles, el aviso de auto-actualización
-     y las tarjetas quedan en una columna más ancha, con más aire. */
+  /* Tablero: hero fijo a la izquierda + columna de contenido a la derecha. */
+  .dash{
+    flex:1 1 auto; min-height:0;
+    display:flex; align-items:stretch; gap:1.25rem;
+    width:100%; max-width:1560px; margin:0 auto;
+    padding:1.15rem 1.5rem 1.15rem;
+  }
+  /* La columna derecha es la ÚNICA válvula de escape: si un pedido trae
+     mucho contenido a la vez (tarjeta de alerta larga + muchas fotos de
+     entrega), scrollea ESTA CAJA, nunca la página, y nada queda recortado
+     e invisible -- que es lo que pasaba antes en portátiles de 768px. */
+  .dash-col{
+    display:flex; flex-direction:column; gap:.8rem;
+    flex:1 1 auto; min-width:0; min-height:0;
+    overflow-y:auto; overscroll-behavior:contain; padding-right:.25rem;
+    scrollbar-width:thin; scrollbar-color:#d4d4d8 transparent;
+  }
+  .dash-col::-webkit-scrollbar{ width:6px; }
+  .dash-col::-webkit-scrollbar-thumb{ background:#d4d4d8; border-radius:99px; }
+
+  /* Panel izquierdo: el hero se vuelve una tarjeta propia de alto completo,
+     con esquinas y sombra — ya no es la franja negra de borde a borde de
+     celular. Todo su contenido interno no se toca (mismos elementos).
+     El stepper se empuja al fondo (margin-top:auto) para que la información
+     quede REPARTIDA en el alto disponible, no amontonada arriba. */
+  .hero{
+    flex:0 0 clamp(390px,30vw,470px);
+    border-radius:26px;
+    padding:1.9rem 2rem 1.9rem;
+    display:flex; flex-direction:column; min-height:0; overflow-y:auto;
+    box-shadow:0 26px 54px -20px rgba(10,10,10,.42), inset 0 1px 0 rgba(255,255,255,.05);
+    scrollbar-width:thin; scrollbar-color:#3f3f46 transparent;
+  }
+  .hero::-webkit-scrollbar{ width:6px; }
+  .hero::-webkit-scrollbar-thumb{ background:#3f3f46; border-radius:99px; }
+  .hero-foot{ margin-top:auto; padding-top:1.1rem; }
+  /* 2026-07-30 (Daniel, insistiendo: "esto lo quiero grande la parte del
+     tracking") -- el estado sigue siendo el elemento más grande de la
+     pantalla, ahora acotado para que TODO el hero entre sin scroll. */
+  #tkStateLabel{ font-size:clamp(2.9rem,3.6vw,4rem); }
+  .estado-ico{ width:72px; height:72px; font-size:2.3rem; border-radius:20px; }
+  .doc{ font-size:1.05rem; padding:.38rem .9rem; }
+  .cli{ font-size:1.1rem; }
+  .prog-pct{ font-size:2.4rem; }
+  .prog-pct.is-hold{ font-size:1.75rem; }
+  .step-dot{ width:56px; height:56px; font-size:1.75rem; }
+  .step{ width:72px; }
+  .step-label{ font-size:.66rem; }
+  .nextup-v{ font-size:1rem; }
+
+  /* Panel derecho: el resumen de 3 tiles arriba, las tarjetas especiales
+     (alerta / mapa en vivo / prueba de entrega) a todo el ancho, y abajo
+     Destino + Historial lado a lado ocupando el alto que sobre. */
   .board{
+    flex:0 0 auto;
     margin-top:0; padding:0;
     grid-template-columns:repeat(3,minmax(0,1fr));
-    gap:.85rem;
+    gap:.8rem;
   }
-  .tile{ padding:1.1rem .75rem 1rem; }
-  .tile-n{ font-size:2.05rem; }
+  .tile{ padding:.95rem .75rem .85rem; }
+  .tile-n{ font-size:1.95rem; }
+  .tile-logo{ height:34px; }
 
-  .autobar{ justify-content:flex-start; padding:1rem 0 0; }
+  .autobar{ flex:0 0 auto; justify-content:flex-start; padding:0; }
 
-  .wrap{ padding:1.15rem 0 3rem; }
-
-  /* Con más ancho, Destino + Historial conviven lado a lado -- son las 2
-     tarjetas que más se leen juntas (dónde va y cómo va el avance). Prueba
-     de entrega y el mapa en vivo, al ser las más "evento especial", se
-     mantienen a todo el ancho arriba para que no pasen desapercibidas. */
   .wrap{
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:0 1rem;
+    flex:1 1 auto; min-height:0; padding:0;
+    display:flex; flex-direction:column; gap:.8rem;
   }
+  /* El mapa en vivo y la prueba de entrega pueden traer muchas fotos: se
+     acotan y scrollean dentro. La tarjeta de alerta NO se acota nunca --
+     es justo lo que el cliente preocupado necesita leer entero, botones
+     de acción incluidos. */
   .wrap > .live-card,
-  .wrap > .proof,
-  .wrap > .ft{ grid-column:1 / -1; }
-  .card-b{ padding:.35rem 1.2rem 1rem; }
-  .card-h{ padding:1rem 1.2rem; }
+  .wrap > .proof{ flex:0 0 auto; margin-bottom:0; max-height:46%; overflow-y:auto; }
+  .wrap > .alert-card{ flex:0 0 auto; margin-bottom:0; }
+  /* Con el ancho de escritorio, los 4 pasos de "qué pasó y qué sigue" se
+     reparten en 2 columnas en vez de una lista larga: mitad de alto, misma
+     información, y entra completa en pantalla. */
+  .alert-card .acts{
+    display:grid; grid-template-columns:1fr 1fr;
+    column-gap:1.5rem; padding:.35rem 1.2rem .55rem;
+  }
+  .alert-card .act{ border-bottom:0; }
+  .alert-card .act-ref{ margin:0 1.2rem 1rem; }
 
-  .ft{ margin-top:.4rem; padding:1.9rem 0 2.4rem; border-top:1px solid var(--line); }
-  .ft-btns{ flex-direction:row; justify-content:center; max-width:560px; margin:0 auto; }
-  .ft-btn{ flex:1; }
+  .panels{
+    flex:1 1 auto; min-height:190px;
+    display:grid; grid-template-columns:1fr 1fr; gap:.8rem;
+  }
+  /* Cuando hay alerta, el protagonista es el plan de acción: Destino e
+     Historial ceden alto (siguen completos, con scroll propio) y el resto
+     del tablero se compacta para que TODO el plan -- los 4 pasos, los 3
+     botones y el número de pedido -- entre sin scroll. */
+  .wrap.has-alert .panels{ min-height:116px; }
+  .wrap.has-alert .card-h{ padding:.72rem 1.2rem; }
+  .wrap.has-alert .act{ padding:.5rem 0; }
+  .wrap.has-alert .act-d{ font-size:.86rem; line-height:1.4; }
+  .wrap.has-alert .act-btn{ min-height:44px; padding:.55rem .85rem; font-size:.88rem; }
+  .wrap.has-alert .act-ref{ padding:.45rem .8rem; font-size:.78rem; margin-bottom:.7rem; }
+  .panels > .card{
+    margin-bottom:0; min-height:0;
+    display:flex; flex-direction:column;
+  }
+  .panels > .card > .card-h{ flex:0 0 auto; }
+  .panels > .card > .scrollbox{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+  .card-b{ padding:.35rem 1.2rem 1rem; }
+  .card-h{ padding:.9rem 1.2rem; }
+
+  /* Ayuda + firma de marca: UNA sola barra al pie del tablero (en celular
+     siguen apiladas). Junto con el separador, esto libera ~60px de alto,
+     que es lo que permite que el tablero entre entero en un portátil. */
+  .footzone{
+    flex:0 0 auto; display:flex; align-items:center; gap:1.25rem;
+    border-top:1px solid var(--line); padding-top:.7rem;
+  }
+  .ft{ flex:1 1 auto; padding:0; display:flex; align-items:center; gap:.75rem; text-align:left; min-width:0; }
+  .ft-q{ margin-bottom:0; font-size:.88rem; white-space:nowrap; }
+  .ft-btns{ flex-direction:row; flex:1; justify-content:flex-start; }
+  .ft-btn{ min-height:44px; padding:.55rem .9rem; font-size:.85rem; flex:0 1 auto; white-space:nowrap; }
+  .ft-brand{ flex:0 0 auto; margin-top:0; text-align:right; }
+  .ft-brand-line{ display:none; }        /* ya lo hace el borde de .footzone */
+  .ft-brand .ft-row{ display:flex; align-items:center; gap:.9rem; }
+  .ft-sign{ display:inline-flex; flex-wrap:nowrap; white-space:nowrap; }
+  .ft-brand-tag{ font-size:.76rem; }
+  .ft-social{ margin-top:0; }
+  .ft-social a{ width:34px; height:34px; font-size:.92rem; }
 
   /* Las tarjetas ya no necesitan la entrada escalonada "en cascada" de
      celular (se ve rara en 2 columnas) -- una sola aparición pareja. */
   .card{ animation-delay:.12s !important; }
+}
+
+/* Escritorio ANCHO: los 4 pasos de "qué pasó y qué sigue" pasan a UNA sola
+   fila -- se lee como un proceso de izquierda a derecha (1·2·3·4), ocupa la
+   mitad de alto y deja el plan completo a la vista sin scroll. Es el
+   "distribuye la cuestión" que pidió Daniel aplicado al peor escenario. */
+@media (min-width:1280px){
+  /* 1·2·3 en una fila (qué pasó · dónde está · qué hacemos) y el bloque de
+     acciones a todo el ancho abajo, con sus 3 botones en línea. */
+  .wrap.has-alert .acts{ grid-template-columns:repeat(3,minmax(0,1fr)); column-gap:1.1rem; }
+  .wrap.has-alert .act{ border-left:1px solid #f1f1f3; padding-left:.9rem; }
+  .wrap.has-alert .act:first-child{ border-left:0; padding-left:0; }
+  .wrap.has-alert .act:nth-child(4){
+    grid-column:1 / -1; border-left:0; padding-left:0;
+    border-top:1px solid #f1f1f3; padding-top:.65rem; margin-top:.15rem;
+  }
+  .wrap.has-alert .act:nth-child(4) .act-btns{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .wrap.has-alert .act-btn{ min-height:44px; font-size:.88rem; }
+}
+
+/* Escritorio ANGOSTO (960-1240px): la barra del pie no alcanza para la
+   promesa de marca junto a los botones de ayuda. Se oculta SOLO esa línea
+   secundaria -- sigue visible en celular y en pantallas más anchas. */
+@media (min-width:960px) and (max-width:1240px){
+  .ft-brand-tag, .ft-sep{ display:none; }
+  .ft-q{ font-size:.82rem; }
+}
+
+/* Escritorios BAJOS (portátiles 1366x768, monitores a 100% con barra de
+   tareas): comprime tipografías para que el tablero siga entrando entero. */
+@media (min-width:960px) and (max-height:820px){
+  .hd{ padding:.6rem 1.75rem; }
+  .hd img{ height:56px; } .hd-fit{ font-size:2rem; }
+  .dash{ padding:.85rem 1.5rem; gap:1rem; }
+  .hero{ padding:1.35rem 1.6rem; flex-basis:clamp(360px,28vw,420px); }
+  #tkStateLabel{ font-size:clamp(2.4rem,3vw,3.1rem); }
+  .estado-ico{ width:60px; height:60px; font-size:1.95rem; }
+  .estado-wrap{ margin-top:.9rem; }
+  .prog,.steps,.nextup{ margin-top:.85rem; }
+  .prog-pct{ font-size:1.95rem; }
+  .step-dot{ width:48px; height:48px; font-size:1.5rem; }
+  .step{ width:62px; }
+  .tile{ padding:.7rem .6rem .6rem; }
+  .tile-n{ font-size:1.6rem; }
+  .hero-foot{ padding-top:.7rem; }
+  /* El estado con alerta es el más denso de todos: acá se aprieta lo justo
+     para que el plan de acción + la ayuda + la firma entren en 768px. */
+  .wrap.has-alert .panels{ min-height:96px; }
+  .wrap.has-alert .card-h{ padding:.58rem 1.2rem; font-size:.9rem; }
+  .wrap.has-alert .act{ padding:.4rem 0; }
+  .wrap.has-alert .act-t{ font-size:.9rem; }
+  .wrap.has-alert .act-d{ font-size:.81rem; line-height:1.35; }
+  .wrap.has-alert .act-quote{ padding:.4rem .6rem; font-size:.81rem; }
+  .wrap.has-alert .act-ref{ padding:.32rem .7rem; font-size:.74rem; margin-bottom:.45rem; }
+  .wrap.has-alert .acts{ padding:.15rem 1.2rem .3rem; }
+  .wrap.has-alert .act-btns{ margin-top:.35rem; }
+  .wrap.has-alert .act:nth-child(4){ padding-top:.5rem; margin-top:.05rem; }
+  .footzone{ padding-top:.45rem; }
+  .wrap.has-alert .ft-btn{ min-height:42px; padding:.45rem .8rem; }
 }
 
 @media (prefers-reduced-motion:reduce){
@@ -679,9 +1038,40 @@ a.kv:active{ background:#fafafa; }
 <body>
 
 {% set cur = data.estado_step or 1 %}
-{% set terminal_danger = data.estado in ['Problema','Entrega fallida','Devolución'] %}
-{% set entregado = data.estado == 'Entregado' %}
-{% set pct = 100 if entregado else (((cur - 1) / 3 * 100) | round | int) %}
+{% set est = data.estado %}
+{% set entregado = est == 'Entregado' %}
+{# "Entrega fallida" y "Problema" NO son un final: son una entrega que
+   quedó pendiente de coordinar. Se tratan como AVISO (ámbar) con un plan
+   de acción. "Devolución" sí cambia el desenlace del pedido, va aparte. #}
+{% set fallida = est in ['Problema', 'Entrega fallida'] %}
+{% set devolucion = est == 'Devolución' %}
+{% set alerta = fallida or devolucion %}
+{% set terminal_danger = devolucion %}
+{# El % de avance: antes una entrega fallida mostraba 100% en rojo (el paso
+   del estado es 4), que se leía como "terminado y salió mal". Ahora la
+   barra queda en 75% y el número se reemplaza por "EN PAUSA". #}
+{% set pct = 100 if entregado else (75 if alerta else (((cur - 1) / 3 * 100) | round | int)) %}
+
+{# Motivo real del intento fallido: el backend ya deja pasar sin traducir el
+   comentario de los eventos 'Problema'/'Entrega fallida' (ver
+   _tracking_payload). Se toma el más reciente. #}
+{% set ns = namespace(motivo='', mts=None) %}
+{% if alerta and data.eventos %}
+  {% for e in data.eventos %}
+    {% if e.estado in ('Problema', 'Entrega fallida', 'Devolución') %}
+      {% set ns.motivo = (e.comentario or '') %}
+      {% set ns.mts = e.ts %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+
+{# Texto grande del estado, en idioma del cliente. El estado técnico se
+   sigue viendo completo en el Historial: acá no se pierde información,
+   se traduce. #}
+{% set titulo = 'Entrega pendiente' if fallida else ('En devolución' if devolucion else est) %}
+
+{% set wa_msg = 'Hola ILUS, escribo por mi pedido ' ~ data.doc ~ '. No se pudo completar la entrega y quiero coordinar una nueva.' %}
+{% set wa_msg_ret = 'Hola ILUS, escribo por mi pedido ' ~ data.doc ~ '. Tengo una consulta sobre la devolución.' %}
 
 <div class="shell">
 
@@ -708,15 +1098,10 @@ a.kv:active{ background:#fafafa; }
 </header>
 <div class="accent"></div>
 
-{# FIX 2026-07-27 (Daniel: "hay un espacio vacío que no entiendo"): en
-   escritorio, hero y el resto del contenido compartían fila de un mismo
-   CSS Grid -- como el hero (sticky, alto) y los tiles (cortos) quedaban en
-   la MISMA fila, esa fila se estiraba a la altura del hero y dejaba un
-   hueco vacío bajo los tiles. Se envuelven en un flex row (dash-row) en
-   vez de compartir grid -- en celular estos wrappers son "display:contents"
-   (invisibles para el layout, cero cambio de comportamiento). #}
-<div class="dash-row">
-<section class="hero{% if entregado %} is-ok{% elif terminal_danger %} is-bad{% endif %}" id="tkHero">
+{# En celular .dash / .dash-col son "display:contents" (invisibles para el
+   layout). En escritorio son las dos columnas del tablero. #}
+<div class="dash">
+<section class="hero{% if entregado %} is-ok{% elif fallida %} is-warn{% elif devolucion %} is-bad{% endif %}" id="tkHero">
   <div class="hero-mesh" aria-hidden="true"></div>
   <button class="doc" id="btnDoc" type="button" title="Copiar número de documento">
     <i class="bi bi-receipt"></i>{{ data.doc }}
@@ -725,19 +1110,19 @@ a.kv:active{ background:#fafafa; }
 
   <div id="tkState" class="estado-wrap s-{{ data.estado_color }}">
     <div class="estado-top">
-      <div class="estado-ico"><i class="bi {{ data.estado_icon }}"></i></div>
+      <div class="estado-ico"><i class="bi {% if fallida %}bi-exclamation-triangle-fill{% else %}{{ data.estado_icon }}{% endif %}"></i></div>
       <div style="min-width:0">
-        <div class="estado-kicker">Estado actual</div>
-        <span id="tkStateLabel">{{ data.estado }}</span>
+        <div class="estado-kicker">{% if alerta %}Requiere coordinación{% else %}Estado actual{% endif %}</div>
+        <span id="tkStateLabel">{{ titulo }}</span>
       </div>
     </div>
     <div id="tkStateSub">
-      {% if data.estado == 'Entregado' %}Tu pedido fue entregado.
-      {% elif data.estado == 'En ruta' %}Tu pedido va en camino al destino.
-      {% elif data.estado == 'Entregado a transporte' %}Tu pedido ya fue retirado por el transporte.
-      {% elif data.estado == 'En preparación' %}Estamos preparando tu pedido en bodega.
-      {% elif data.estado in ('Problema', 'Entrega fallida') %}Hubo un problema con la entrega. Nos pondremos en contacto contigo.
-      {% elif data.estado == 'Devolución' %}Tu pedido está en proceso de devolución.
+      {% if entregado %}Tu pedido fue entregado.
+      {% elif est == 'En ruta' %}Tu pedido va en camino al destino.
+      {% elif est == 'Entregado a transporte' %}Tu pedido ya fue retirado por el transporte.
+      {% elif est == 'En preparación' %}Estamos preparando tu pedido en bodega.
+      {% elif fallida %}No pudimos completar la entrega. Tu pedido está seguro con nosotros y ya estamos coordinando un nuevo intento.
+      {% elif devolucion %}Tu pedido va de regreso a nuestra bodega. Un ejecutivo de ILUS te contactará para resolverlo.
       {% endif %}
     </div>
   </div>
@@ -745,27 +1130,54 @@ a.kv:active{ background:#fafafa; }
   <div class="prog">
     <div class="prog-top">
       <span class="prog-lb">Avance del envío</span>
-      <span class="prog-pct{% if terminal_danger %} is-bad{% endif %}" id="tkPct">{{ pct }}%</span>
+      <span class="prog-pct{% if alerta %} is-hold{% endif %}{% if devolucion %} is-bad{% endif %}" id="tkPct">{% if alerta %}En pausa{% else %}{{ pct }}%{% endif %}</span>
     </div>
     <div class="prog-track">
-      <div class="prog-fill{% if entregado %} is-ok{% elif terminal_danger %} is-bad{% endif %}"
+      <div class="prog-fill{% if entregado %} is-ok{% elif fallida %} is-warn{% elif devolucion %} is-bad{% endif %}"
            id="tkFill" data-pct="{{ pct }}"></div>
     </div>
   </div>
 
-  <div class="steps{% if terminal_danger %} is-bad{% endif %}" id="tkSteps" aria-hidden="true">
+  {# ── QUÉ SIGUE ── el dato que Daniel echaba de menos: no solo dónde está,
+     sino qué va a pasar después. Está en TODOS los estados. Si hay algo que
+     resolver, además es el atajo al plan de acción de más abajo. #}
+  {% if alerta %}<a class="nextup" href="#planAccion">{% else %}<div class="nextup">{% endif %}
+    <div class="nextup-ic" aria-hidden="true">
+      <i class="bi {% if entregado %}bi-check-lg{% elif fallida %}bi-arrow-repeat{% elif devolucion %}bi-arrow-return-left{% else %}bi-arrow-right{% endif %}"></i>
+    </div>
+    <div style="min-width:0">
+      <div class="nextup-k">{% if entregado %}Listo{% else %}Qué sigue{% endif %}</div>
+      <div class="nextup-v" id="tkNext">
+        {% if entregado %}Pedido completado. Gracias por comprar en ILUS.
+        {% elif est == 'En ruta' %}Entrega en tu dirección{% if data.driver_live and data.driver_live.eta_min %} · aprox. {{ data.driver_live.eta_min }} min{% endif %}
+        {% elif est == 'Entregado a transporte' %}Sale a ruta hacia tu dirección
+        {% elif est == 'En preparación' %}Entrega al transportista
+        {% elif fallida %}Coordinamos un nuevo intento de entrega contigo
+        {% elif devolucion %}El pedido regresa a nuestra bodega
+        {% else %}Te avisamos apenas haya novedades
+        {% endif %}
+      </div>
+      {% if alerta %}<div class="nextup-k" style="margin-top:.2rem;color:var(--amber-lt)">Toca para ver qué hacer</div>{% endif %}
+    </div>
+  {% if alerta %}</a>{% else %}</div>{% endif %}
+
+  <div class="hero-foot">
+  <div class="steps{% if devolucion %} is-bad{% elif fallida %} is-warn{% endif %}" id="tkSteps" aria-hidden="true">
     {# 2026-07-30 (Daniel: "gigante y animado como el de retiro, colorido") --
        emoji de color en vez de glifos monocromos, mismo lenguaje visual que
-       el stepper de retiros/public_tracking.html. #}
-    {% set steps = [
-      ('Preparación','📦'),
-      ('Retirado','📤'),
-      ('En ruta','🚚'),
-      ('Entregado','✅'),
-    ] %}
+       el stepper de retiros/public_tracking.html.
+       2026-08-05: el ÚLTIMO hito cambia de nombre según el desenlace, para
+       que el recorrido cuente la verdad (un reintento no es una entrega). #}
+    {% if devolucion %}
+      {% set steps = [('Preparación','📦'),('Retirado','📤'),('En ruta','🚚'),('Devolución','↩️')] %}
+    {% elif fallida %}
+      {% set steps = [('Preparación','📦'),('Retirado','📤'),('En ruta','🚚'),('Nuevo intento','🔁')] %}
+    {% else %}
+      {% set steps = [('Preparación','📦'),('Retirado','📤'),('En ruta','🚚'),('Entregado','✅')] %}
+    {% endif %}
     {% for label, ic in steps %}
       {# Si ya se entregó, TODOS los pasos van en verde (done). Si no, el paso
-         actual queda rojo pulsando. Antes "Entregado" dejaba el último punto
+         actual queda pulsando. Antes "Entregado" dejaba el último punto
          rojo, que se leía como si algo siguiera pendiente. #}
       {% set n = loop.index %}
       <div class="step tk-step {% if n < cur or entregado %}done{% elif n == cur %}active{% endif %}">
@@ -773,9 +1185,10 @@ a.kv:active{ background:#fafafa; }
         <div class="step-label tk-step-label">{{ label }}</div>
       </div>
       {% if not loop.last %}
-      <div class="step-bar tk-step-bar {% if n < cur or entregado %}done{% endif %}"></div>
+      <div class="step-bar tk-step-bar {% if n < cur or entregado %}done{% elif n == cur and not alerta %}is-live{% endif %}"></div>
       {% endif %}
     {% endfor %}
+  </div>
   </div>
 </section>
 
@@ -827,7 +1240,83 @@ a.kv:active{ background:#fafafa; }
   <span class="live-dot"></span><span id="tkAuto">Se actualiza solo</span>
 </div>
 
-<main class="wrap">
+<main class="wrap{% if alerta %} has-alert{% endif %}">
+
+  {% if alerta %}
+  {# ══ QUÉ PASÓ Y QUÉ SIGUE ══════════════════════════════════════
+     2026-08-05. Reemplaza el "rojo insípido" que solo decía "Entrega
+     fallida". Cuatro bloques: qué pasó · dónde está tu pedido · qué
+     hacemos nosotros · qué puedes hacer tú (con botones reales). #}
+  <div class="card alert-card{% if devolucion %} is-ret{% endif %}" id="planAccion">
+    <div class="card-h">
+      <i class="bi {% if devolucion %}bi-arrow-return-left{% else %}bi-exclamation-triangle-fill{% endif %}"></i>
+      Qué pasó y qué sigue
+    </div>
+    <ul class="acts">
+      <li class="act">
+        <span class="act-n">1</span>
+        <div class="act-c">
+          <div class="act-t">{% if devolucion %}Tu pedido volvió a nosotros{% else %}No pudimos entregar en este intento{% endif %}</div>
+          <div class="act-d">
+            {% if devolucion %}El pedido inició el regreso a nuestra bodega. Todavía se puede reprogramar la entrega.
+            {% else %}El transportista llegó al destino pero no logró completar la entrega.
+            {% endif %}
+          </div>
+          {% if ns.motivo %}
+          <div class="act-quote"><i class="bi bi-chat-left-quote"></i> {{ ns.motivo }}</div>
+          {% endif %}
+          {% if ns.mts %}
+          <div class="act-when">Registrado el {{ ns.mts | chile_fmt }}</div>
+          {% endif %}
+        </div>
+      </li>
+      <li class="act">
+        <span class="act-n">2</span>
+        <div class="act-c">
+          <div class="act-t">Tu pedido está resguardado</div>
+          <div class="act-d">No se perdió ni se canceló. Queda en custodia{% if data.courier %} de {{ data.courier }}{% endif %} bajo responsabilidad de ILUS mientras coordinamos la próxima entrega.</div>
+        </div>
+      </li>
+      <li class="act">
+        <span class="act-n">3</span>
+        <div class="act-c">
+          <div class="act-t">Qué estamos haciendo</div>
+          <div class="act-d">
+            Nuestro equipo de logística ya tiene el caso.
+            {% if devolucion %}Te contactaremos para acordar una nueva entrega o resolver la devolución.
+            {% else %}Vamos a coordinar un nuevo intento de entrega y te contactaremos dentro del próximo día hábil.
+            {% endif %}
+          </div>
+        </div>
+      </li>
+      <li class="act">
+        <span class="act-n">4</span>
+        <div class="act-c">
+          <div class="act-t">Qué puedes hacer ahora</div>
+          <div class="act-d">
+            Escríbenos y agendamos la entrega en el día y horario que te acomode.
+            Ten a mano una dirección donde haya alguien para recibir.
+          </div>
+          <div class="act-btns">
+            <a class="act-btn wa" href="https://wa.me/56986405100?text={{ (wa_msg_ret if devolucion else wa_msg) | urlencode }}"
+               target="_blank" rel="noopener">
+              <i class="bi bi-whatsapp"></i> Coordinar por WhatsApp
+            </a>
+            <a class="act-btn mail" href="mailto:soportetec@sphs.cl?subject={{ ('Reagendar entrega ' ~ data.doc) | urlencode }}&body={{ (wa_msg_ret if devolucion else wa_msg) | urlencode }}">
+              <i class="bi bi-envelope"></i> Escribirnos
+            </a>
+            <a class="act-btn tk" href="https://ilusfitness.com/pages/soporte-tecnico" target="_blank" rel="noopener">
+              <i class="bi bi-life-preserver"></i> Crear ticket
+            </a>
+          </div>
+        </div>
+      </li>
+    </ul>
+    <div class="act-ref">
+      Menciona tu número de pedido: <strong>{{ data.doc }}</strong>
+    </div>
+  </div>
+  {% endif %}
 
   {% if data.driver_live %}
   <div class="card live-card">
@@ -884,54 +1373,86 @@ a.kv:active{ background:#fafafa; }
   </div>
   {% endif %}
 
-  <div class="card">
-    <div class="card-h"><i class="bi bi-geo-alt-fill"></i>Destino</div>
-    <div class="card-b">
-      {% if data.destino %}
-      <a class="kv" href="https://www.google.com/maps/search/?api=1&query={{ (data.destino ~ ', ' ~ (data.region or '') ~ ', Chile') | urlencode }}"
-         target="_blank" rel="noopener">
-        <span class="kv-k">Dirección de entrega</span>
-        <span class="kv-v">{{ data.destino }}</span>
-      </a>
-      {% else %}
-      <div class="kv"><span class="kv-k">Dirección de entrega</span><span class="kv-v">—</span></div>
-      {% endif %}
-      {% if data.region %}
-      <div class="kv"><span class="kv-k">Región</span><span class="kv-v">{{ data.region }}</span></div>
-      {% endif %}
-      {% if data.manifiesto %}
-      <div class="kv"><span class="kv-k">Hoja de ruta</span><span class="kv-v mono">{{ data.manifiesto }}</span></div>
-      {% endif %}
-    </div>
+  {# ── Pestañas (solo celular). En escritorio los 3 paneles se ven a la
+     vez y esta barra desaparece. #}
+  <div class="tabbar" role="tablist" aria-label="Detalle del pedido">
+    <button class="tab is-on" type="button" role="tab" aria-selected="true"
+            aria-controls="panel-destino" data-tab="destino">
+      <i class="bi bi-geo-alt-fill"></i>Destino
+    </button>
+    <button class="tab" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-historial" data-tab="historial">
+      <i class="bi bi-clock-history"></i>Historial
+    </button>
+    <button class="tab" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-ayuda" data-tab="ayuda">
+      <i class="bi bi-life-preserver"></i>Ayuda{% if alerta %}<span class="tab-dot" aria-hidden="true"></span>{% endif %}
+    </button>
   </div>
 
-  <div class="card">
-    <div class="card-h"><i class="bi bi-clock-history"></i>Historial</div>
-    <div class="tl" id="tkTimeline">
-      {% if data.eventos %}
-        {% set total = data.eventos | length %}
-        {% for e in data.eventos %}
-        <div class="tl-row c-{{ e.color }} {% if loop.last %}is-last{% endif %}{% if total > 4 and loop.index <= total - 3 and not loop.last %} is-hidden tl-extra{% endif %}">
-          <div class="tl-est"><i class="bi {{ e.icon }}"></i>{{ e.estado }}</div>
-          <div class="tl-ts">{{ e.ts | chile_fmt }}{% if e.delta_txt %} <span class="tl-delta">{{ e.delta_txt }}</span>{% endif %}</div>
-          {% if e.comentario %}<div class="tl-com">{{ e.comentario }}</div>{% endif %}
-        </div>
-        {% endfor %}
-        {% if total > 4 %}
-        <button class="tl-more" id="btnMore" type="button">
-          Ver los {{ total }} movimientos
-        </button>
+  <div class="panels">
+    <div class="card tkpanel is-on" id="panel-destino" role="tabpanel" data-panel="destino">
+      <div class="card-h"><i class="bi bi-geo-alt-fill"></i>Destino</div>
+      <div class="card-b scrollbox">
+        {% if data.destino %}
+        <a class="kv" href="https://www.google.com/maps/search/?api=1&query={{ (data.destino ~ ', ' ~ (data.region or '') ~ ', Chile') | urlencode }}"
+           target="_blank" rel="noopener">
+          <span class="kv-k">Dirección de entrega</span>
+          <span class="kv-v">{{ data.destino }}</span>
+        </a>
+        {% else %}
+        <div class="kv"><span class="kv-k">Dirección de entrega</span><span class="kv-v">—</span></div>
         {% endif %}
-      {% else %}
-        <div class="tl-row is-last">
-          <div class="tl-est"><i class="bi bi-clipboard-check"></i>Pedido registrado</div>
-          <div class="tl-ts">Te avisaremos apenas haya movimientos</div>
+        {% if data.region %}
+        <div class="kv"><span class="kv-k">Región</span><span class="kv-v">{{ data.region }}</span></div>
+        {% endif %}
+        <div class="kv">
+          <span class="kv-k">Transporte</span>
+          <span class="kv-v">{{ data.courier or 'ILUS Fitness' }}</span>
         </div>
-      {% endif %}
+        {% if data.manifiesto %}
+        <div class="kv"><span class="kv-k">Hoja de ruta</span><span class="kv-v mono">{{ data.manifiesto }}</span></div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card tkpanel" id="panel-historial" role="tabpanel" data-panel="historial">
+      <div class="card-h"><i class="bi bi-clock-history"></i>Historial</div>
+      <div class="tl scrollbox" id="tkTimeline">
+        {% if data.eventos %}
+          {% set total = data.eventos | length %}
+          {% for e in data.eventos %}
+          <div class="tl-row c-{{ e.color }} {% if loop.last %}is-last{% endif %}{% if total > 4 and loop.index <= total - 3 and not loop.last %} is-hidden tl-extra{% endif %}">
+            <div class="tl-est"><i class="bi {{ e.icon }}"></i>{{ e.estado }}</div>
+            <div class="tl-ts">{{ e.ts | chile_fmt }}{% if e.delta_txt %} <span class="tl-delta">{{ e.delta_txt }}</span>{% endif %}</div>
+            {% if e.comentario %}<div class="tl-com">{{ e.comentario }}</div>{% endif %}
+          </div>
+          {% endfor %}
+          {% if total > 4 %}
+          <button class="tl-more" id="btnMore" type="button">
+            Ver los {{ total }} movimientos
+          </button>
+          {% endif %}
+        {% else %}
+          {# Sin movimientos todavía: se explica, no se deja un vacío gris. #}
+          <div class="tl-empty">
+            <div class="tl-empty-ic">📦</div>
+            <div class="tl-empty-t">Pedido registrado</div>
+            <div class="tl-empty-d">
+              Todavía no hay movimientos que mostrar.<br>
+              Esta página se actualiza sola: te avisaremos apenas tu pedido avance.
+            </div>
+          </div>
+        {% endif %}
+      </div>
     </div>
   </div>
 
-  <div class="ft">
+  {# En escritorio .footzone junta "ayuda" y la firma de marca en UNA barra
+     al pie del tablero. En celular es "display:contents" (invisible para el
+     layout): la ayuda vive en su pestaña y la firma va siempre abajo. #}
+  <div class="footzone">
+  <div class="ft tkpanel" id="panel-ayuda" role="tabpanel" data-panel="ayuda">
     <div class="ft-q">¿Necesitas ayuda con tu pedido?</div>
     <div class="ft-btns">
       <a class="ft-btn" href="https://ilusfitness.com/pages/soporte-tecnico" target="_blank" rel="noopener">
@@ -941,20 +1462,23 @@ a.kv:active{ background:#fafafa; }
         <i class="bi bi-envelope"></i> Escríbenos
       </a>
     </div>
-    {# FIX 2026-07-27 (Daniel: "elimina el footer y coloca algo más bonito,
-       que no sea 'ILUS Fitness', algo más estructurado"): el wordmark
-       gigante repetía lo mismo que ya se lee arriba en el header. Se
-       reemplaza por una firma de marca compacta -- casco + nombre + rubro,
-       con una línea divisoria fina, en vez de un segundo logo enorme. #}
-    {# FOOTER (2026-08-05, Daniel: "el footer no me gustó, descarta esa
-       imagen de ILUS horrorosa que no tiene ni color, y estandarízalo").
-       Fuera el logo suelto —se veía apagado sobre fondo claro y competía
-       con el logo del header, que es el que manda—. Queda una sola línea
-       compacta: candado + marca + promesa, con las redes al lado. Además
-       ocupa mucho menos alto, que es lo que permite que la página entre
-       sin scroll. #}
-    <div class="ft-brand">
-      <div class="ft-brand-line"></div>
+  </div>
+
+  {# FIX 2026-07-27 (Daniel: "elimina el footer y coloca algo más bonito,
+     que no sea 'ILUS Fitness', algo más estructurado"): el wordmark
+     gigante repetía lo mismo que ya se lee arriba en el header. Se
+     reemplaza por una firma de marca compacta -- casco + nombre + rubro,
+     con una línea divisoria fina, en vez de un segundo logo enorme. #}
+  {# FOOTER (2026-08-05, Daniel: "el footer no me gustó, descarta esa
+     imagen de ILUS horrorosa que no tiene ni color, y estandarízalo").
+     Fuera el logo suelto —se veía apagado sobre fondo claro y competía
+     con el logo del header, que es el que manda—. Queda una sola línea
+     compacta: candado + marca + promesa, con las redes al lado. Además
+     ocupa mucho menos alto, que es lo que permite que la página entre
+     sin scroll. La firma NO va dentro de una pestaña: se ve siempre. #}
+  <div class="ft-brand">
+    <div class="ft-brand-line"></div>
+    <div class="ft-row">
       <div class="ft-sign">
         <i class="bi bi-shield-lock-fill" aria-hidden="true"></i>
         <span class="ft-brand-name">ILUS Fitness</span>
@@ -969,9 +1493,10 @@ a.kv:active{ background:#fafafa; }
       </div>
     </div>
   </div>
+  </div><!-- /footzone -->
 </main>
 </div><!-- /dash-col -->
-</div><!-- /dash-row -->
+</div><!-- /dash -->
 
 </div><!-- /shell -->
 
@@ -981,14 +1506,31 @@ a.kv:active{ background:#fafafa; }
 <script>
   const STATUS_URL = "{{ url_for('tr_public_tracking_status', token=token) }}";
   const DOC        = {{ data.doc | tojson }};
+  /* Título GRANDE del estado, en idioma del cliente (espejo de la variable
+     "titulo" de Jinja -- si cambia allá, cambiar acá). Sin esto, el polling
+     volvía a escribir "Entrega fallida" encima del título traducido. */
+  const STATE_TITLE = {
+    'Entrega fallida': 'Entrega pendiente',
+    'Problema':        'Entrega pendiente',
+    'Devolución':      'En devolución',
+  };
   const STATE_LABELS_SUB = {
     'En preparación':         'Estamos preparando tu pedido en bodega.',
     'Entregado a transporte': 'Tu pedido ya fue retirado por el transporte.',
     'En ruta':                'Tu pedido va en camino al destino.',
     'Entregado':              'Tu pedido fue entregado.',
-    'Entrega fallida':        'Hubo un problema con la entrega. Nos pondremos en contacto contigo.',
-    'Problema':               'Hubo un problema con la entrega. Nos pondremos en contacto contigo.',
-    'Devolución':             'Tu pedido está en proceso de devolución.',
+    'Entrega fallida':        'No pudimos completar la entrega. Tu pedido está seguro con nosotros y ya estamos coordinando un nuevo intento.',
+    'Problema':               'No pudimos completar la entrega. Tu pedido está seguro con nosotros y ya estamos coordinando un nuevo intento.',
+    'Devolución':             'Tu pedido va de regreso a nuestra bodega. Un ejecutivo de ILUS te contactará para resolverlo.',
+  };
+  const STATE_NEXT = {
+    'En preparación':         'Entrega al transportista',
+    'Entregado a transporte': 'Sale a ruta hacia tu dirección',
+    'En ruta':                'Entrega en tu dirección',
+    'Entregado':              'Pedido completado. Gracias por comprar en ILUS.',
+    'Entrega fallida':        'Coordinamos un nuevo intento de entrega contigo',
+    'Problema':               'Coordinamos un nuevo intento de entrega contigo',
+    'Devolución':             'El pedido regresa a nuestra bodega',
   };
   let lastEstado = {{ data.estado | tojson }};
 
@@ -1001,6 +1543,28 @@ a.kv:active{ background:#fafafa; }
     _toastT = setTimeout(function(){ el.classList.remove('on'); }, 2400);
   }
   function buzz(){ if (navigator.vibrate) { try { navigator.vibrate(12); } catch(e){} } }
+
+  /* ── Pestañas de celular ─────────────────────────────────────
+     Solo cambian qué panel se ve; en escritorio el CSS los muestra todos
+     y la barra está oculta, así que este código queda inerte. */
+  (function initTabs(){
+    const tabs = Array.from(document.querySelectorAll('.tab[data-tab]'));
+    if (!tabs.length) return;
+    tabs.forEach(function(btn){
+      btn.addEventListener('click', function(){
+        const key = btn.dataset.tab;
+        tabs.forEach(function(b){
+          const on = b === btn;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        document.querySelectorAll('.tkpanel').forEach(function(p){
+          p.classList.toggle('is-on', p.dataset.panel === key);
+        });
+        buzz();
+      });
+    });
+  })();
 
   // ── "Recorrido" de entrada (2026-07-30, Daniel: "que cuando entres haga
   // el recorrido de manera espectacular y lo deje justo donde está, con
@@ -1021,8 +1585,11 @@ a.kv:active{ background:#fafafa; }
     const targets = stepEls.map(function(el){
       return el.classList.contains('done') ? 'done' : (el.classList.contains('active') ? 'active' : '');
     });
+    // El tramo "en curso" (luz viajando) también se apaga y se reenciende
+    // al final del recorrido, para que no compita con la animación.
+    const liveBars = barEls.map(function(el){ return el.classList.contains('is-live'); });
     stepEls.forEach(function(el){ el.classList.remove('done','active'); });
-    barEls.forEach(function(el){ el.classList.remove('done'); });
+    barEls.forEach(function(el){ el.classList.remove('done','is-live'); });
     fill.style.width = '0%';
     const n = stepEls.length;
     const STEP_MS = 480;
@@ -1030,6 +1597,7 @@ a.kv:active{ background:#fafafa; }
       setTimeout(function(){
         if (targets[i]) el.classList.add(targets[i]);
         if (barEls[i] && targets[i] === 'done') barEls[i].classList.add('done');
+        if (barEls[i] && liveBars[i]) barEls[i].classList.add('is-live');
         // 2026-07-30 (Daniel: "el entregado tiene que ser como un giro,
         // algo bien dinámico") -- el ÚLTIMO hito gira al completarse.
         if (i === n - 1 && targets[i] === 'done') {
@@ -1098,20 +1666,29 @@ a.kv:active{ background:#fafafa; }
   /* ── Polling ─────────────────────────────────────────────── */
   function actualizarUI(data){
     if (!data || !data.ok) return;
+    const est   = data.estado || '';
+    const entregado  = est === 'Entregado';
+    const fallida    = est === 'Entrega fallida' || est === 'Problema';
+    const devolucion = est === 'Devolución';
+    const alerta     = fallida || devolucion;
+
     const stEl = document.getElementById('tkState');
     const stLb = document.getElementById('tkStateLabel');
     const stSb = document.getElementById('tkStateSub');
     if (stEl && data.estado_color) {
       stEl.className = 'estado-wrap s-' + data.estado_color;
       const ic = stEl.querySelector('.estado-ico i');
-      if (ic && data.estado_icon) ic.className = 'bi ' + data.estado_icon;
+      if (ic) ic.className = 'bi ' + (fallida ? 'bi-exclamation-triangle-fill' : (data.estado_icon || 'bi-circle'));
     }
-    if (stLb) stLb.textContent = data.estado || '';
-    if (stSb) stSb.textContent = STATE_LABELS_SUB[data.estado] || '';
+    const kick = stEl ? stEl.querySelector('.estado-kicker') : null;
+    if (kick) kick.textContent = alerta ? 'Requiere coordinación' : 'Estado actual';
+    if (stLb) stLb.textContent = STATE_TITLE[est] || est;
+    if (stSb) stSb.textContent = STATE_LABELS_SUB[est] || '';
+    const nx = document.getElementById('tkNext');
+    if (nx) nx.textContent = STATE_NEXT[est] || 'Te avisamos apenas haya novedades';
 
     const stepsRoot = document.getElementById('tkSteps');
     const cur = data.estado_step || 1;
-    const entregado = data.estado === 'Entregado';
     if (stepsRoot) {
       const stepDivs = stepsRoot.querySelectorAll('.tk-step');
       const bars     = stepsRoot.querySelectorAll('.tk-step-bar');
@@ -1121,28 +1698,42 @@ a.kv:active{ background:#fafafa; }
         if (n < cur || entregado) div.classList.add('done');
         else if (n === cur) div.classList.add('active');
       });
-      bars.forEach(function(b, idx){ b.classList.toggle('done', entregado || (idx + 1) < cur); });
+      bars.forEach(function(b, idx){
+        const n = idx + 1;
+        b.classList.toggle('done', entregado || n < cur);
+        b.classList.toggle('is-live', !entregado && !alerta && n === cur);
+      });
+      stepsRoot.classList.toggle('is-bad',  devolucion);
+      stepsRoot.classList.toggle('is-warn', fallida);
     }
 
-    // Avance %
-    const pct = entregado ? 100 : Math.round((cur - 1) / 3 * 100);
-    const malo  = data.estado === 'Entrega fallida' || data.estado === 'Problema' || data.estado === 'Devolución';
+    // Avance %: una entrega fallida NO es un 100% (mostrarlo así se leía
+    // como "terminado"). Queda en 75% con la etiqueta "En pausa".
+    const pct = entregado ? 100 : (alerta ? 75 : Math.round((cur - 1) / 3 * 100));
     const pctEl = document.getElementById('tkPct');
-    if (pctEl) { pctEl.textContent = pct + '%'; pctEl.classList.toggle('is-bad', malo); }
+    if (pctEl) {
+      pctEl.textContent = alerta ? 'En pausa' : (pct + '%');
+      pctEl.classList.toggle('is-hold', alerta);
+      pctEl.classList.toggle('is-bad', devolucion);
+    }
     if (fill) {
       fill.style.width = pct + '%';
       fill.classList.toggle('is-ok', entregado);
-      fill.classList.toggle('is-bad', malo);
+      fill.classList.toggle('is-warn', fallida);
+      fill.classList.toggle('is-bad', devolucion);
     }
     const hero = document.getElementById('tkHero');
-    hero.classList.toggle('is-ok', entregado);
-    hero.classList.toggle('is-bad', malo);
-    if (stepsRoot) stepsRoot.classList.toggle('is-bad', malo);
+    if (hero) {
+      hero.classList.toggle('is-ok', entregado);
+      hero.classList.toggle('is-warn', fallida);
+      hero.classList.toggle('is-bad', devolucion);
+    }
 
     // Si el estado cambió, recargar para traer timeline + prueba de entrega
-    if (data.estado && data.estado !== lastEstado) {
-      lastEstado = data.estado;
-      toast('Tu pedido cambió a: ' + data.estado);
+    // + la tarjeta "Qué pasó y qué sigue" (que se arma en el servidor).
+    if (est && est !== lastEstado) {
+      lastEstado = est;
+      toast('Tu pedido cambió a: ' + (STATE_TITLE[est] || est));
       buzz();
       setTimeout(function(){ location.reload(); }, 1400);
     }

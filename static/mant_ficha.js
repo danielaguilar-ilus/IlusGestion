@@ -6728,8 +6728,11 @@ async function subirContrato() {
       await ilusAlert({ title: 'Archivo demasiado grande', message: data.error, type: 'warning' });
       return;
     }
+    // El código 'CLOUDINARY_FAIL' es un identificador histórico que el backend
+    // sigue enviando (renombrarlo obligaría a cambiar backend y frontend a la
+    // vez). El almacenamiento real es Google Cloud desde 2026-08-05.
     if (data && data.error_codigo === 'CLOUDINARY_FAIL') {
-      ilusToast('Cloudinary no respondió. Por favor reinténtalo en unos segundos.', { type:'error' });
+      ilusToast('El almacenamiento no respondió. Por favor reinténtalo en unos segundos.', { type:'error' });
       return;
     }
     if (data && data.error_codigo === 'ALMACENAMIENTO_NO_DISPONIBLE') {

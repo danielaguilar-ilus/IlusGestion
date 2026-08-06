@@ -29,9 +29,13 @@ Configurar en Railway → Settings → Variables:
 
   Opcionales (servicios caen graceful si faltan):
     ANTHROPIC_API_KEY     = <sk-ant-...>
-    CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
     SMTP_FROM_NAME, SMTP_FROM_ADDR, SMTP_REPLY_TO
+
+  Almacenamiento de archivos (fotos, contratos, firmas):
+    GCS_BUCKET            = ilus-app-fotos   (Google Cloud Storage)
+    En Cloud Run la autenticación es por identidad del servicio (ADC),
+    NO hay claves en env vars.
 
   Branding genérico (overrides opcionales — defaults sensatos):
     ILUS_BRAND_NAME         (ej: "ILUS Fitness")
@@ -139,18 +143,20 @@ ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY", "")
 GOOGLE_MAPS_API_KEY = _env("GOOGLE_MAPS_API_KEY", "")
 
 # ─────────────────────────────────────────────
-#  Cloudinary (opcional — cae a filesystem si falta)
-# ─────────────────────────────────────────────
-CLOUDINARY_CONFIG = {
-    "cloud_name": _env('CLOUDINARY_CLOUD_NAME'),
-    "api_key":    _env('CLOUDINARY_API_KEY'),
-    "api_secret": _env('CLOUDINARY_API_SECRET'),
-}
-
-# ─────────────────────────────────────────────
-#  Google Cloud Storage (almacenamiento propio — reemplaza Cloudinary)
-#  En Cloud Run usa la identidad del servicio (ADC), sin claves en env.
-#  GCS_BUCKET: nombre del bucket. ILUS_STORAGE_GCS: kill-switch (1=GCS, 0=Cloudinary).
+#  Google Cloud Storage — ÚNICO almacenamiento de archivos de ILUS
+#
+#  2026-08-05 (Daniel): "necesito que saques a Cloudinary, que todo sea por
+#  storage de Google. El desarrollo tiene que estar centralizado allí."
+#  Cloudinary quedó fuera del código: ya no se sube, ni se borra, ni se
+#  configura desde acá. Las imágenes históricas que siguen viviendo en
+#  res.cloudinary.com se leen como cualquier link http normal (el navegador
+#  las carga solo) y se migran con /admin/storage/migrar-cloudinary-gcs.
+#
+#  En Cloud Run la autenticación es por identidad del servicio (ADC), sin
+#  claves en env.
+#  GCS_BUCKET: nombre del bucket.
+#  ILUS_STORAGE_GCS: kill-switch. En 0 la app NO guarda archivos nuevos
+#  (las subidas fallan con aviso claro) — ya no hay a dónde caer.
 # ─────────────────────────────────────────────
 GCS_BUCKET  = _env('GCS_BUCKET', 'ilus-app-fotos')
 GCS_ENABLED = _env('ILUS_STORAGE_GCS', '1').strip().lower() in ('1', 'true', 'on', 'yes', 'si', 'sí')
@@ -240,9 +246,7 @@ def _diagnose_env_status():
     ]
     optional = [
         ("ANTHROPIC_API_KEY",      ANTHROPIC_API_KEY),
-        ("CLOUDINARY_CLOUD_NAME",  CLOUDINARY_CONFIG['cloud_name']),
-        ("CLOUDINARY_API_KEY",     CLOUDINARY_CONFIG['api_key']),
-        ("CLOUDINARY_API_SECRET",  CLOUDINARY_CONFIG['api_secret']),
+        ("GCS_BUCKET",             GCS_BUCKET if GCS_ENABLED else ""),
         ("SMTP_USER",              EMAIL_CONFIG['smtp_user']),
         ("SMTP_PASSWORD",          EMAIL_CONFIG['smtp_pass']),
         ("GOOGLE_MAPS_API_KEY",    GOOGLE_MAPS_API_KEY),
