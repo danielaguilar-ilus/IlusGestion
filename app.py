@@ -67870,6 +67870,12 @@ _PLANT_TIPO_VISITA = (
 _TAREA_TARGET_FIELDS = (
     "serie", "marca", "modelo", "voltaje", "anio_fabricacion",
     "ubicacion_sala", "estado_capturado", "observaciones",
+    # "horometro" (2026-08-06, Daniel — grúas SPHS): NO pasa por
+    # _mirror_ot_equipo_a_levantamiento (eso es solo para OT de
+    # levantamiento). Se maneja aparte en el bridge de tarea_respuesta,
+    # que registra la lectura en mant_maquina_horometro. Ver
+    # _registrar_horometro().
+    "horometro",
 )
 
 
@@ -71279,7 +71285,16 @@ def mant_visita_tarea_respuesta(vid, tid):
                 elif tipo == "sino":         _raw = valor_norm.get("valor")
                 elif tipo == "verificacion": _raw = {"aprobado": "operativo", "alerta": "advertencia", "falla": "fuera_servicio"}.get(valor_norm.get("valor"))
                 if _raw not in (None, ""):
-                    _mirror_ot_equipo_a_levantamiento(vid, _mid_t, {_tgt: _raw})
+                    # "horometro" es un registro histórico (grúas SPHS), NO un
+                    # campo de la ficha de levantamiento — se guarda directo en
+                    # mant_maquina_horometro, no pasa por _mirror_ot_equipo_a_
+                    # levantamiento (que además crearía un levantamiento
+                    # fantasma para una OT que no es de ese tipo).
+                    if _tgt == "horometro":
+                        _registrar_horometro(_mid_t, _raw, visita_id=vid,
+                                              fuente="ot", autor=current_username())
+                    else:
+                        _mirror_ot_equipo_a_levantamiento(vid, _mid_t, {_tgt: _raw})
         except Exception as _e_bridge:
             print(f"[tarea_respuesta bridge target_field] vid={vid} tid={tid}: {_e_bridge}", flush=True)
         # Releer version actualizada para devolver al frontend
@@ -84383,6 +84398,17 @@ def mant_maquina_patch(mid):
             v = None
         sets.append("peso_kg=%s"); vals.append(v)
 
+    # Horómetro (2026-08-06, grúas SPHS): cada cuántas horas toca la pauta
+    # técnica de la marca. NULL = este equipo no se rastrea por horas.
+    if "horometro_pauta_horas" in d:
+        try:
+            v = int(d["horometro_pauta_horas"]) if d["horometro_pauta_horas"] not in (None, "") else None
+            if v is not None and v <= 0:
+                v = None
+        except (TypeError, ValueError):
+            v = None
+        sets.append("horometro_pauta_horas=%s"); vals.append(v)
+
     # Familia / categoría del equipo
     _familias_ok = ("cardio","selectorizado","carga_libre","racks_estructuras",
                     "bancos","accesorios","bicicletas","trotadoras","otros")
@@ -86738,6 +86764,214 @@ def _ensure_email_log_estado_bloqueado():
         return False
 
 
+# ═══════════════════════════════════════════════════════════════════
+# HORÓMETRO POR EQUIPO (2026-08-06, Daniel — grúas de SPHS/ILUS interno).
+#
+# Bitácora de responsabilidad del operario, NO la pauta técnica de la
+# marca: chequeo semanal (limpieza + declaración de horas + declaración
+# de anomalías) hecho por el propio operario/técnico. La pauta técnica
+# real (250 h, Toyota/Rher) la sigue haciendo un técnico autorizado de
+# la marca — esto no la reemplaza, solo dice si el equipo fue revisado
+# y si se reportó algo.
+#
+# `mant_maquina_horometro` guarda CADA lectura (histórico); mant_maquinas
+# guarda solo el último valor como caché para listar rápido. La lectura
+# se registra sola cuando el técnico responde el ítem de la plantilla que
+# tenga target_field='horometro' (ver bridge en tarea_respuesta) — no
+# hace falta un flujo aparte.
+# ═══════════════════════════════════════════════════════════════════
+
+def _ensure_mant_horometro_tables():
+    """CREATE TABLE + ALTERs del horómetro, SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1) — mismo patrón que el resto de _ensure_*."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_maquina_horometro (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                maquina_id    INT NOT NULL,
+                horas         DECIMAL(10,1) NOT NULL,
+                fecha         DATE NOT NULL COMMENT 'Fecha de la lectura (no de creación del registro)',
+                fuente        ENUM('manual','ot') DEFAULT 'manual',
+                visita_id     INT NULL COMMENT 'OT donde se declaró, si vino de una',
+                notas         VARCHAR(300) NULL,
+                created_by    VARCHAR(190),
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (maquina_id) REFERENCES mant_maquinas(id) ON DELETE CASCADE,
+                FOREIGN KEY (visita_id)  REFERENCES mant_visitas(id)  ON DELETE SET NULL,
+                INDEX idx_maquina_fecha (maquina_id, fecha DESC)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e_tbl:
+        print(f"[ensure_horometro] CREATE TABLE falló: {e_tbl}", flush=True)
+        return False
+    ok = True
+    for ddl in (
+        "ALTER TABLE mant_maquinas ADD COLUMN horometro_pauta_horas INT NULL "
+        "COMMENT 'Cada cuántas horas toca la pauta técnica de la marca (ej. 250). NULL = no aplica a este equipo'",
+        "ALTER TABLE mant_maquinas ADD COLUMN horometro_actual DECIMAL(10,1) NULL "
+        "COMMENT 'Caché de la última lectura — el histórico real vive en mant_maquina_horometro'",
+        "ALTER TABLE mant_maquinas ADD COLUMN horometro_actualizado_at DATETIME NULL",
+    ):
+        try:
+            mysql_execute(ddl)
+        except Exception as e_alt:
+            if "Duplicate column" not in str(e_alt):
+                print(f"[ensure_horometro] ALTER falló: {e_alt}", flush=True)
+                ok = False
+    return ok
+
+
+def _registrar_horometro(mid, horas, fecha=None, fuente="manual",
+                          visita_id=None, notas=None, autor=None):
+    """Inserta una lectura de horómetro y actualiza la caché en mant_maquinas.
+
+    Nunca lanza — quien llame (bridge de tarea_respuesta, endpoint manual)
+    decide qué hacer con el False. `horas` acepta lo que venga de una
+    respuesta de tarea (string, float, Decimal); se descarta silenciosamente
+    si no es un número >= 0 (protege contra un operario que anota "sin
+    horómetro" en el campo numérico).
+    """
+    try:
+        horas_f = round(float(horas), 1)
+    except (TypeError, ValueError):
+        print(f"[registrar_horometro] valor no numérico ignorado: {horas!r} (mid={mid})", flush=True)
+        return False
+    if horas_f < 0 or horas_f > 999999:
+        print(f"[registrar_horometro] fuera de rango ignorado: {horas_f} (mid={mid})", flush=True)
+        return False
+    fecha = fecha or _now_chile_str('%Y-%m-%d')
+    try:
+        mysql_execute(
+            "INSERT INTO mant_maquina_horometro "
+            "(maquina_id, horas, fecha, fuente, visita_id, notas, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (mid, horas_f, fecha, fuente, visita_id, (notas or None), (autor or current_username()))
+        )
+        # Caché: solo avanza si la lectura es más nueva o igual que la que
+        # ya teníamos — una OT vieja reprocesada no debe pisar una lectura
+        # más reciente.
+        mysql_execute(
+            "UPDATE mant_maquinas SET horometro_actual=%s, horometro_actualizado_at=NOW() "
+            " WHERE id=%s AND (horometro_actualizado_at IS NULL OR %s >= DATE(horometro_actualizado_at))",
+            (horas_f, mid, fecha)
+        )
+        return True
+    except Exception as e:
+        print(f"[registrar_horometro] falló mid={mid} horas={horas_f}: {e}", flush=True)
+        return False
+
+
+def _horometro_proyeccion(mid):
+    """Historial + proyección simple de la próxima pauta técnica.
+
+    Ritmo = (última lectura - primera lectura) / días transcurridos entre
+    ambas, usando hasta las últimas 10 lecturas para no dejar que un dato
+    viejo de hace un año distorsione el promedio reciente. Con menos de 2
+    lecturas no hay ritmo que calcular — se informa solo lo que hay.
+
+    NUNCA lanza: devuelve el dict con lo que pudo calcular; los campos que
+    no aplican quedan en None.
+    """
+    out = {
+        "horas_actual": None, "fecha_actual": None,
+        "pauta_horas": None, "horas_restantes": None,
+        "ritmo_horas_dia": None, "proxima_pauta_fecha_estimada": None,
+        "vencida": False, "lecturas": [],
+    }
+    try:
+        eq = mysql_fetchone(
+            "SELECT horometro_pauta_horas FROM mant_maquinas WHERE id=%s", (mid,)
+        ) or {}
+        out["pauta_horas"] = eq.get("horometro_pauta_horas")
+
+        rows = mysql_fetchall(
+            "SELECT horas, fecha, fuente, visita_id, notas, created_by, created_at "
+            "  FROM mant_maquina_horometro WHERE maquina_id=%s "
+            " ORDER BY fecha DESC, id DESC LIMIT 10",
+            (mid,)
+        ) or []
+        out["lecturas"] = [{
+            "horas": float(r["horas"]), "fecha": str(r["fecha"]),
+            "fuente": r.get("fuente"), "visita_id": r.get("visita_id"),
+            "notas": r.get("notas"), "created_by": r.get("created_by"),
+        } for r in rows]
+        if not rows:
+            return out
+
+        out["horas_actual"] = float(rows[0]["horas"])
+        out["fecha_actual"] = str(rows[0]["fecha"])
+
+        if len(rows) >= 2:
+            primera, ultima = rows[-1], rows[0]
+            dias = (ultima["fecha"] - primera["fecha"]).days
+            delta_h = float(ultima["horas"]) - float(primera["horas"])
+            if dias > 0 and delta_h > 0:
+                out["ritmo_horas_dia"] = round(delta_h / dias, 2)
+
+        if out["pauta_horas"]:
+            ph = float(out["pauta_horas"])
+            restantes = ph - (out["horas_actual"] % ph if out["horas_actual"] else 0)
+            # Si ya pasó un múltiplo exacto justo ahora, restantes da = ph;
+            # lo dejamos así (falta un ciclo completo) salvo que sea 0 real.
+            out["horas_restantes"] = round(restantes, 1)
+            out["vencida"] = out["horas_actual"] is not None and out["horas_actual"] >= ph and (out["horas_actual"] % ph) < (ph * 0.02)
+            if out["ritmo_horas_dia"]:
+                dias_restantes = restantes / out["ritmo_horas_dia"]
+                try:
+                    fecha_est = (datetime.strptime(out["fecha_actual"], "%Y-%m-%d")
+                                 + timedelta(days=round(dias_restantes)))
+                    out["proxima_pauta_fecha_estimada"] = fecha_est.strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[horometro_proyeccion] mid={mid}: {e}", flush=True)
+    return out
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/horometro", methods=["GET"])
+@_mant_required
+def mant_maquina_horometro_get(mid):
+    """Historial + proyección de próxima pauta técnica del equipo."""
+    eq = mysql_fetchone("SELECT id, cliente_id, nombre FROM mant_maquinas WHERE id=%s", (mid,))
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+    data = _horometro_proyeccion(mid)
+    return jsonify({"ok": True, "maquina": {"id": eq["id"], "nombre": eq.get("nombre")}, **data})
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/horometro", methods=["POST"])
+@_mant_required
+def mant_maquina_horometro_post(mid):
+    """Registra una lectura de horómetro manual (fuera de una OT).
+    Body: { horas: number, fecha?: 'YYYY-MM-DD', notas?: str }
+    Las lecturas dentro de una OT se registran solas vía el bridge de
+    target_field — este endpoint es para cargar el dato inicial o corregir.
+    """
+    eq = mysql_fetchone("SELECT id FROM mant_maquinas WHERE id=%s", (mid,))
+    if not eq:
+        return jsonify({"ok": False, "error": "Equipo no encontrado"}), 404
+    d = request.get_json(silent=True) or {}
+    horas = d.get("horas")
+    if horas in (None, ""):
+        return jsonify({"ok": False, "error": "Falta 'horas'"}), 400
+    fecha = (d.get("fecha") or "").strip()[:10] or None
+    if fecha:
+        try:
+            datetime.strptime(fecha, "%Y-%m-%d")
+        except ValueError:
+            return jsonify({"ok": False, "error": "Fecha inválida (usa YYYY-MM-DD)"}), 400
+    notas = (d.get("notas") or "").strip()[:300] or None
+    ok = _registrar_horometro(mid, horas, fecha=fecha, fuente="manual", notas=notas)
+    if not ok:
+        return jsonify({"ok": False, "error": "Horas inválidas"}), 400
+    try:
+        _mant_log("maquina", mid, "horometro_registrado",
+                  f"{horas} h" + (f" · {notas}" if notas else ""))
+    except Exception:
+        pass
+    return jsonify({"ok": True, **_horometro_proyeccion(mid)})
+
+
 def _ensure_visita_tareas_tipo_enum():
     """Garantiza que mant_visita_tareas.tipo acepte TODOS los tipos de OT,
     AUNQUE ILUS_SKIP_MIGRATIONS=1.
@@ -87909,6 +88143,14 @@ try:
         _ensure_visita_tareas_tipo_enum()
 except Exception as _ensure_vtt_err:
     print(f"[ILUS][WARN] _ensure_visita_tareas_tipo_enum: {_ensure_vtt_err}", flush=True)
+
+# Horómetro por equipo (grúas SPHS): tabla + columnas de caché, SIEMPRE
+# incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_horometro_tables()
+except Exception as _ensure_horo_err:
+    print(f"[ILUS][WARN] _ensure_mant_horometro_tables: {_ensure_horo_err}", flush=True)
 
 # Plantilla editable 'plan_propuesto' (mantenciones/email) SIEMPRE sembrada
 # (incluso skip-migrations) — la usa /mantenciones/api/clientes/<cid>/proponer-plan-email.
