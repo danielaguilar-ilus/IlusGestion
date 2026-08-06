@@ -86885,13 +86885,13 @@ def _horometro_proyeccion(mid):
         out["pauta_horas"] = eq.get("horometro_pauta_horas")
 
         rows = mysql_fetchall(
-            "SELECT horas, fecha, fuente, visita_id, notas, created_by, created_at "
+            "SELECT id, horas, fecha, fuente, visita_id, notas, created_by, created_at "
             "  FROM mant_maquina_horometro WHERE maquina_id=%s "
             " ORDER BY fecha DESC, id DESC LIMIT 10",
             (mid,)
         ) or []
         out["lecturas"] = [{
-            "horas": float(r["horas"]), "fecha": str(r["fecha"]),
+            "id": r["id"], "horas": float(r["horas"]), "fecha": str(r["fecha"]),
             "fuente": r.get("fuente"), "visita_id": r.get("visita_id"),
             "notas": r.get("notas"), "created_by": r.get("created_by"),
         } for r in rows]
