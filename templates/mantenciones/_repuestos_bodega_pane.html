@@ -167,6 +167,7 @@
                 {% for u in ubicaciones %}<option value="{{ u.id }}">{{ u.codigo }}{% if u.nombre %} — {{ u.nombre }}{% endif %}</option>{% endfor %}
               </select>
               <button type="button" class="btn btn-outline-secondary" onclick="rbNuevaUbicacion()" title="Nueva ubicación"><i class="bi bi-plus-lg"></i></button>
+              <button type="button" class="btn btn-outline-secondary" onclick="rbQuitarUbicacion()" title="Quitar la ubicación seleccionada de la lista"><i class="bi bi-trash"></i></button>
             </div>
           </div>
           <div class="col-md-6">
@@ -177,6 +178,7 @@
                 {% for m in marcas %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
               </select>
               <button type="button" class="btn btn-outline-secondary" onclick="rbNuevaMarca()" title="Nueva marca"><i class="bi bi-plus-lg"></i></button>
+              <button type="button" class="btn btn-outline-secondary" onclick="rbQuitarMarca()" title="Quitar la marca seleccionada de la lista"><i class="bi bi-trash"></i></button>
             </div>
           </div>
           <div class="col-md-6">
@@ -397,6 +399,52 @@ async function rbNuevaMarca(){
     ilusToast('Marca creada', {type:'success'});
   } else {
     ilusToast(d.error || 'No se pudo crear la marca', {type:'error'});
+  }
+}
+
+async function rbQuitarUbicacion(){
+  const sel = document.getElementById('rbUbicacion');
+  const id = sel.value;
+  if (!id){ ilusToast('Elige primero la ubicación que quieres quitar', {type:'warning'}); return; }
+  const texto = sel.options[sel.selectedIndex].text;
+  const ok = await ilusConfirm({
+    title: 'Quitar ubicación',
+    message: '¿Sacar "' + texto + '" de la lista?',
+    sub: 'Solo se puede si no hay repuestos guardados en ella.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/ubicaciones/' + id, {method:'DELETE'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    sel.remove(sel.selectedIndex);
+    sel.value = '';
+    ilusToast('Ubicación quitada', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo quitar la ubicación', {type:'error'});
+  }
+}
+
+async function rbQuitarMarca(){
+  const sel = document.getElementById('rbMarca');
+  const id = sel.value;
+  if (!id){ ilusToast('Elige primero la marca que quieres quitar', {type:'warning'}); return; }
+  const texto = sel.options[sel.selectedIndex].text;
+  const ok = await ilusConfirm({
+    title: 'Quitar marca',
+    message: '¿Sacar "' + texto + '" de la lista?',
+    sub: 'Solo se puede si no hay repuestos de esa marca.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/marcas/' + id, {method:'DELETE'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    sel.remove(sel.selectedIndex);
+    sel.value = '';
+    ilusToast('Marca quitada', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo quitar la marca', {type:'error'});
   }
 }
 

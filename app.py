@@ -81609,6 +81609,61 @@ def repstock_eliminar(rid):
     return jsonify({"ok": True})
 
 
+@app.route("/mantenciones/api/repuestos-stock/ubicaciones/<int:uid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def repstock_ubicacion_eliminar(uid):
+    """Desactiva una ubicación (soft-delete, Regla #5). Las ubicaciones se
+    crean a mano durante el levantamiento, así que un error de tipeo es
+    esperable — sin esto quedaría basura para siempre en el desplegable.
+
+    Si hay repuestos guardados en ella NO se desactiva: primero hay que
+    moverlos, o se perdería el dato de dónde están físicamente."""
+    ubi = mysql_fetchone(
+        "SELECT codigo FROM mant_repuestos_ubicaciones WHERE id=%s", (uid,))
+    if not ubi:
+        return jsonify({"ok": False, "error": "Ubicación no encontrada"}), 404
+    en_uso = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock "
+        " WHERE ubicacion_id=%s AND activo=1", (uid,)
+    ) or {}).get("n", 0)
+    if en_uso:
+        return jsonify({
+            "ok": False,
+            "error": f"No se puede quitar: hay {en_uso} repuesto(s) guardado(s) "
+                     f"en '{ubi.get('codigo')}'. Muévelos primero a otra ubicación.",
+        }), 400
+    mysql_execute(
+        "UPDATE mant_repuestos_ubicaciones SET activo=0 WHERE id=%s", (uid,))
+    _mant_log("repuesto_ubicacion", uid, "desactivar", ubi.get("codigo") or "")
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/repuestos-stock/marcas/<int:mid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def repstock_marca_eliminar(mid):
+    """Desactiva una marca (soft-delete). Mismo criterio que ubicaciones:
+    no se quita si hay repuestos usándola."""
+    marca = mysql_fetchone(
+        "SELECT nombre FROM mant_repuestos_marcas WHERE id=%s", (mid,))
+    if not marca:
+        return jsonify({"ok": False, "error": "Marca no encontrada"}), 404
+    en_uso = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock "
+        " WHERE marca_id=%s AND activo=1", (mid,)
+    ) or {}).get("n", 0)
+    if en_uso:
+        return jsonify({
+            "ok": False,
+            "error": f"No se puede quitar: hay {en_uso} repuesto(s) de la marca "
+                     f"'{marca.get('nombre')}'.",
+        }), 400
+    mysql_execute("UPDATE mant_repuestos_marcas SET activo=0 WHERE id=%s", (mid,))
+    _mant_log("repuesto_marca", mid, "desactivar", marca.get("nombre") or "")
+    return jsonify({"ok": True})
+
+
 @app.route("/mantenciones/api/repuestos-stock/ubicaciones", methods=["POST"])
 @_mant_required
 @_no_tecnico
