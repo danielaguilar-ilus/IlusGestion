@@ -1730,6 +1730,13 @@ async function srActualizarStock(prefix, data) {
       }
       if (prefix === 'trk') window._trkLastDetalle = d2.detalle;
       else window._srLastDetalle = d2.detalle;
+      // 2026-08-07 (Daniel, con captura: "actualicé a mano y aún dice stock
+      // a fecha antigua"): el backend SÍ refrescaba la caché y d2.detalle ya
+      // traía la hora nueva, pero el chip "Stock al ..." solo se pintaba al
+      // ABRIR el modal — este botón nunca lo volvía a pintar. El dato estaba
+      // bien; el letrero mentía, que para el operador es lo mismo que estar
+      // malo.
+      _srMostrarFrescura(prefix, d2.detalle);
     }
     if (!Object.keys(d.stock || {}).length) {
       ilusToast('El ERP no devolvió stock para los productos de este documento', { type: 'warning' });
