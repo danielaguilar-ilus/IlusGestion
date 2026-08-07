@@ -16295,8 +16295,23 @@ def _cubicador_export_payload(headers, lineas, docs):
                 "vol_tot": _cubicador_num(l.get("vol_tot")),
                 "doc_ref": str(l.get("doc_ref") or ""),
                 "_docs_origen": list(l.get("_docs_origen") or []),
+                "unidades_por_venta": int(_cubicador_num(l.get("unidades_por_venta"), 1) or 1),
+                "bultos_equivalentes": _cubicador_num(l.get("bultos_equivalentes"),
+                                                       _cubicador_num(l.get("cantidad"))),
+                "unidad_2": str(l.get("unidad_2") or ""),
             }
-            for l in (lineas or [])
+            # 2026-08-07 (Daniel): "en las cubicaciones deja limpio de ZZ, ya
+            # que son servicios no productos". Las líneas ZZ quedan FUERA del
+            # cubicaje (grilla, Excel y PDF) — no tienen peso ni volumen, solo
+            # ensuciaban. Su MONTO no se pierde: `zzenvio` de cada header se
+            # calculó arriba, ANTES de este filtro, justo para conservarlo.
+            #
+            # Además evita un falso positivo: el JS compara la cantidad de
+            # líneas del payload contra las filas visibles para avisar "hay
+            # filas eliminadas" antes de exportar el PDF. Si el payload
+            # siguiera trayendo las ZZ y la grilla no, esa advertencia
+            # saltaría SIEMPRE.
+            for l in (lineas or []) if not l.get("es_zz")
         ],
     }
 
@@ -16625,6 +16640,30 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
     if not cliente_nombre:
         cliente_nombre = f"Cliente s/nombre (RUT {cliente_rut})" if cliente_rut else "Cliente no informado"
 
+    # ── Cubicaje = SOLO productos físicos ────────────────────────────
+    # 2026-08-07 (Daniel): "en las cubicaciones deja limpio de ZZ, ya que son
+    # servicios no productos, sin embargo podemos conservar el valor de ZZ
+    # Envío". Las líneas ZZ no tienen peso, volumen ni bultos: aparecían como
+    # una fila "s/f" pidiendo cargar medidas de algo que no es carga, y su
+    # cantidad inflaba el total de UNIDADES como si fueran piezas.
+    #
+    # El MONTO del ZZ Envío no se pierde: se calcula ACÁ ARRIBA, antes del
+    # filtro, y se sigue mostrando en el bloque de montos del informe.
+    zz_envio_monto = sum(
+        float(l.get("vaneli") or 0)
+        for l in (lineas or [])
+        if (l.get("sku") or "").upper() == "ZZENVIO")
+    lineas = [l for l in (lineas or []) if not l.get("es_zz")]
+
+    # El monto viaja al bloque de RESUMEN GENERAL (antes solo existia como
+    # fila de la tabla, y al sacar las ZZ habria desaparecido del informe).
+    # Si el documento no cobra despacho, la fila no se dibuja.
+    _fila_zz_envio = ""
+    if zz_envio_monto:
+        _fila_zz_envio = (
+            '<div class="summary-row"><span>ZZ Envio (despacho):</span>'
+            f'<b>{_money(zz_envio_monto)}</b></div>')
+
     # ── SKUs únicos por documento (para columna del listado) ──
     skus_por_doc = {}
     for l in lineas:
@@ -16777,6 +16816,7 @@ tbody tr:nth-child(even){{background:#fafafa}}
         <div class="summary-row"><span>Total neto:</span><b>{_money(total_neto)}</b></div>
         <div class="summary-row"><span>IVA:</span><b>{_money(total_iva)}</b></div>
         <div class="summary-row"><span>Total bruto:</span><b class="danger">{_money(total_bruto)}</b></div>
+        {_fila_zz_envio}
         <div class="summary-row"><span>Total SKU:</span><b>{sku_count}</b></div>
       </div>
       <div class="card">
@@ -81241,6 +81281,389 @@ def mant_proveedores_repuesto_page():
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  BODEGA DE REPUESTOS — inventario físico real (2026-08-07, Daniel)
+#  Distinto de mant_repuestos (seguimiento comercial arriba). Ver
+#  comentario de cabecera de _ensure_repuestos_bodega_tables() en el
+#  bloque de migraciones para el porqué del diseño.
+# ══════════════════════════════════════════════════════════════════════
+
+def _repstock_fmt(r):
+    d = dict(r)
+    d["cantidad"] = float(d.get("cantidad") or 0)
+    d["costo_unitario"] = float(d.get("costo_unitario") or 0)
+    d["stock_minimo"] = float(d["stock_minimo"]) if d.get("stock_minimo") is not None else None
+    d["bajo_minimo"] = (d["stock_minimo"] is not None and d["cantidad"] <= d["stock_minimo"])
+    d["created_at"] = str(d.get("created_at"))[:16] if d.get("created_at") else ""
+    d["updated_at"] = str(d.get("updated_at"))[:16] if d.get("updated_at") else ""
+    return d
+
+
+@app.route("/repuestos/bodega")
+@_mant_required
+def repuestos_bodega_list():
+    """Bodega de repuestos: inventario físico real, paginado server-side
+    (Regla #4.3, igual que Etiquetas — sin arrastrar la deuda de /repuestos)."""
+    q = (request.args.get("q") or "").strip()
+    marca_id = request.args.get("marca_id") or ""
+    ubicacion_id = request.args.get("ubicacion_id") or ""
+    solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("size") or 100)
+    except (TypeError, ValueError):
+        page_size = 100
+    if page_size not in (100, 200, 500):
+        page_size = 100
+
+    where = ["r.activo=1"]
+    params = []
+    if q:
+        where.append("(r.sku LIKE %s OR r.descripcion LIKE %s OR r.codigo_fabricante LIKE %s)")
+        like = f"%{q}%"
+        params += [like, like, like]
+    if marca_id.isdigit():
+        where.append("r.marca_id=%s"); params.append(int(marca_id))
+    if ubicacion_id.isdigit():
+        where.append("r.ubicacion_id=%s"); params.append(int(ubicacion_id))
+    if solo_bajo_minimo:
+        where.append("r.stock_minimo IS NOT NULL AND r.cantidad <= r.stock_minimo")
+    where_sql = " AND ".join(where)
+
+    total = (mysql_fetchone(
+        f"SELECT COUNT(*) AS n FROM mant_repuestos_stock r WHERE {where_sql}", tuple(params)
+    ) or {}).get("n", 0)
+    total_pages = max(1, -(-total // page_size))
+    page = min(page, total_pages)
+    offset = (page - 1) * page_size
+
+    rows = mysql_fetchall(
+        f"SELECT r.*, m.nombre AS marca_nombre, "
+        f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre "
+        f"  FROM mant_repuestos_stock r "
+        f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
+        f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
+        f" WHERE {where_sql} ORDER BY r.sku ASC LIMIT %s OFFSET %s",
+        tuple(params) + (page_size, offset)
+    ) or []
+    repuestos = [_repstock_fmt(r) for r in rows]
+
+    modelos_por_repuesto = {}
+    ids = [r["id"] for r in repuestos]
+    if ids:
+        ph = ",".join(["%s"] * len(ids))
+        mrows = mysql_fetchall(
+            f"SELECT rm.repuesto_id, p.id AS producto_id, p.sku AS producto_sku, "
+            f"       p.nombre AS producto_nombre, p.clase_producto "
+            f"  FROM mant_repuestos_stock_modelos rm "
+            f"  JOIN cat_productos p ON p.id = rm.producto_id "
+            f" WHERE rm.repuesto_id IN ({ph}) ORDER BY p.nombre",
+            tuple(ids)
+        ) or []
+        for m in mrows:
+            modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(dict(m))
+
+    marcas = mysql_fetchall(
+        "SELECT id, nombre FROM mant_repuestos_marcas WHERE activo=1 ORDER BY nombre"
+    ) or []
+    ubicaciones = mysql_fetchall(
+        "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones WHERE activo=1 ORDER BY codigo"
+    ) or []
+
+    return render_template(
+        "mantenciones/repuestos_bodega.html",
+        repuestos=repuestos, products=repuestos, modelos_por_repuesto=modelos_por_repuesto,
+        marcas=marcas, ubicaciones=ubicaciones,
+        q=q, marca_id=marca_id, ubicacion_id=ubicacion_id, bajo_minimo=solo_bajo_minimo,
+        page=page, page_size=page_size, total=total, total_pages=total_pages,
+    )
+
+
+@app.route("/mantenciones/api/repuestos-stock", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_crear():
+    d = request.get_json(silent=True) or {}
+    sku = (d.get("sku") or "").strip()[:120]
+    descripcion = (d.get("descripcion") or "").strip()[:400]
+    if not sku or not descripcion:
+        return jsonify({"ok": False, "error": "SKU y descripción son obligatorios"}), 400
+    ya = mysql_fetchone("SELECT id FROM mant_repuestos_stock WHERE sku=%s", (sku,))
+    if ya:
+        return jsonify({"ok": False, "error": f"Ya existe un repuesto con el SKU '{sku}'"}), 400
+    try:
+        cantidad = float(d.get("cantidad") or 0)
+        costo_unitario = float(d.get("costo_unitario") or 0)
+        stock_minimo = d.get("stock_minimo")
+        stock_minimo = float(stock_minimo) if stock_minimo not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Cantidad/costo/stock mínimo deben ser números"}), 400
+    estado = (d.get("estado") or "nuevo").strip()
+    if estado not in ("nuevo", "usado", "reacondicionado"):
+        estado = "nuevo"
+    marca_id = d.get("marca_id") or None
+    ubicacion_id = d.get("ubicacion_id") or None
+    fields = {
+        "sku": sku, "descripcion": descripcion, "cantidad": cantidad,
+        "ubicacion_id": ubicacion_id, "marca_id": marca_id,
+        "costo_unitario": costo_unitario,
+        "codigo_fabricante": (d.get("codigo_fabricante") or "").strip()[:120] or None,
+        "stock_minimo": stock_minimo, "estado": estado,
+        "notas": (d.get("notas") or "").strip() or None,
+        "created_by": current_username(),
+    }
+    cols = list(fields.keys())
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO mant_repuestos_stock ({','.join(cols)}) "
+                f"VALUES ({','.join(['%s'] * len(cols))})",
+                tuple(fields[c] for c in cols)
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+        _mant_log("repuesto_stock", new_id, "crear", f"{sku} — {descripcion}")
+        return jsonify({"ok": True, "id": new_id})
+    except Exception as e:
+        conn.rollback()
+        print(f"[repstock_crear] ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear el repuesto."}), 400
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def repstock_editar(rid):
+    d = request.get_json(silent=True) or {}
+    if "sku" in d:
+        nuevo_sku = (d.get("sku") or "").strip()[:120]
+        if not nuevo_sku:
+            return jsonify({"ok": False, "error": "El SKU no puede quedar vacío"}), 400
+        dup = mysql_fetchone(
+            "SELECT id FROM mant_repuestos_stock WHERE sku=%s AND id<>%s", (nuevo_sku, rid)
+        )
+        if dup:
+            return jsonify({"ok": False, "error": f"Ya existe otro repuesto con el SKU '{nuevo_sku}'"}), 400
+        d["sku"] = nuevo_sku
+    if "descripcion" in d:
+        d["descripcion"] = (d.get("descripcion") or "").strip()[:400]
+        if not d["descripcion"]:
+            return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
+    if "estado" in d and d["estado"] not in ("nuevo", "usado", "reacondicionado"):
+        d["estado"] = "nuevo"
+    allowed = ["sku", "descripcion", "cantidad", "ubicacion_id", "marca_id",
+               "costo_unitario", "codigo_fabricante", "stock_minimo", "estado", "notas"]
+    sets, vals = [], []
+    for f in allowed:
+        if f in d:
+            v = d[f]
+            if f in ("cantidad", "costo_unitario", "stock_minimo"):
+                try:
+                    v = float(v) if v not in (None, "", "null") else None
+                except (TypeError, ValueError):
+                    return jsonify({"ok": False, "error": f"'{f}' debe ser numérico"}), 400
+            elif v in ("", "null"):
+                v = None
+            sets.append(f"{f}=%s"); vals.append(v)
+    if not sets:
+        return jsonify({"ok": False, "error": "Sin campos para actualizar"}), 400
+    sets.append("updated_by=%s"); vals.append(current_username())
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE mant_repuestos_stock SET {','.join(sets)} WHERE id=%s",
+                vals + [rid]
+            )
+        conn.commit()
+        _mant_log("repuesto_stock", rid, "editar")
+        return jsonify({"ok": True})
+    except Exception as e:
+        conn.rollback()
+        print(f"[repstock_editar] rid={rid} ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el repuesto."}), 400
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def repstock_eliminar(rid):
+    """Soft-delete (Regla #5) — nunca se borra físicamente desde acá."""
+    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    mysql_execute(
+        "UPDATE mant_repuestos_stock SET activo=0, updated_by=%s WHERE id=%s",
+        (current_username(), rid)
+    )
+    _mant_log("repuesto_stock", rid, "desactivar", rep.get("sku") or "")
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/repuestos-stock/ubicaciones", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_ubicacion_crear():
+    d = request.get_json(silent=True) or {}
+    codigo = (d.get("codigo") or "").strip()[:60]
+    if not codigo:
+        return jsonify({"ok": False, "error": "Código de ubicación obligatorio"}), 400
+    nombre = (d.get("nombre") or "").strip()[:200] or None
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_repuestos_ubicaciones (codigo, nombre) VALUES (%s,%s)",
+                (codigo, nombre)
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        if "Duplicate" in str(e):
+            return jsonify({"ok": False, "error": f"Ya existe la ubicación '{codigo}'"}), 400
+        print(f"[repstock_ubicacion_crear] ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear la ubicación."}), 400
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "id": new_id, "codigo": codigo, "nombre": nombre})
+
+
+@app.route("/mantenciones/api/repuestos-stock/marcas", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_marca_crear():
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:120]
+    if not nombre:
+        return jsonify({"ok": False, "error": "Nombre de marca obligatorio"}), 400
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO mant_repuestos_marcas (nombre) VALUES (%s)", (nombre,))
+            new_id = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        if "Duplicate" in str(e):
+            return jsonify({"ok": False, "error": f"Ya existe la marca '{nombre}'"}), 400
+        print(f"[repstock_marca_crear] ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear la marca."}), 400
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "id": new_id, "nombre": nombre})
+
+
+@app.route("/mantenciones/api/repuestos-stock/buscar-modelos", methods=["GET"])
+@_mant_required
+def repstock_buscar_modelos():
+    """Autocompletar modelos/SKU del catálogo (cat_productos) para asociar
+    compatibilidad — mismo catálogo que ya usa Cotizaciones/Servicio
+    Técnico, consultado directo (sin pasar por catalogo_module.py, mismo
+    patrón que mant_visita_repuestos.producto_id)."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"ok": True, "productos": []})
+    like = f"%{q}%"
+    rows = mysql_fetchall(
+        "SELECT id, sku, nombre, clase_producto FROM cat_productos "
+        " WHERE activo=1 AND (sku LIKE %s OR nombre LIKE %s) "
+        " ORDER BY nombre LIMIT 20",
+        (like, like)
+    ) or []
+    return jsonify({"ok": True, "productos": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_modelo_asociar(rid):
+    d = request.get_json(silent=True) or {}
+    try:
+        producto_id = int(d.get("producto_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "producto_id inválido"}), 400
+    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    prod = mysql_fetchone("SELECT sku, nombre FROM cat_productos WHERE id=%s", (producto_id,))
+    if not prod:
+        return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
+    mysql_execute(
+        "INSERT IGNORE INTO mant_repuestos_stock_modelos (repuesto_id, producto_id) VALUES (%s,%s)",
+        (rid, producto_id)
+    )
+    _mant_log("repuesto_stock", rid, "asociar_modelo",
+              f"{rep.get('sku') or ''} -> {prod.get('nombre') or prod.get('sku') or producto_id}")
+    return jsonify({"ok": True, "producto": dict(prod)})
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos/<int:producto_id>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def repstock_modelo_quitar(rid, producto_id):
+    mysql_execute(
+        "DELETE FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s AND producto_id=%s",
+        (rid, producto_id)
+    )
+    _mant_log("repuesto_stock", rid, "quitar_modelo", str(producto_id))
+    return jsonify({"ok": True})
+
+
+@app.route("/repuestos/bodega/etiquetas")
+@_mant_required
+def repstock_etiquetas():
+    """Imprime etiquetas de repuestos (SKU + descripción + ubicación +
+    barcode) — motor propio del módulo de repuestos, NO el de Catálogo/
+    Etiquetas (Daniel, 2026-08-07: "solo del módulo de repuestos, el
+    módulo de catálogo es otra cosa"). Reusa los mismos 2 formatos físicos
+    y el mismo pipeline Playwright que ya existe (_label_format/_pw_pdf)."""
+    ids_raw = (request.args.get("ids") or "").strip()
+    ids = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "Sin repuestos seleccionados"}), 400
+    fmt = request.args.get("fmt") or "100x150"
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT r.sku, r.descripcion, r.codigo_fabricante, "
+        f"       u.codigo AS ubicacion_codigo "
+        f"  FROM mant_repuestos_stock r "
+        f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
+        f" WHERE r.id IN ({ph}) ORDER BY r.sku",
+        tuple(ids)
+    ) or []
+    if not rows:
+        return jsonify({"ok": False, "error": "Repuestos no encontrados"}), 404
+    label_format = _label_format(fmt)
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    html = render_template(
+        "repuesto_label_standalone.html",
+        repuestos=[dict(r) for r in rows], fecha=fecha,
+        fmt=label_format["key"], label_format=label_format,
+    )
+    pdf_bytes = _pw_pdf(
+        html, width=label_format["w"], height=label_format["h"],
+        wait_fn=(
+            "() => {"
+            "  const codes = Array.from(document.querySelectorAll('.barcode'));"
+            "  return codes.length > 0 && codes.every(c => c.dataset.rendered === '1');"
+            "}"
+        ),
+    )
+    resp = make_response(pdf_bytes)
+    resp.headers["Content-Type"] = "application/pdf"
+    resp.headers["Content-Disposition"] = "inline; filename=etiquetas-repuestos.pdf"
+    return resp
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  FINANZAS DEL CLIENTE — agregados de ingresos/costos/margen
 # ══════════════════════════════════════════════════════════════════════
 
@@ -87434,6 +87857,125 @@ def _ensure_email_log_estado_bloqueado():
 
 
 # ═══════════════════════════════════════════════════════════════════
+# BODEGA DE REPUESTOS — inventario físico real (2026-08-07, Daniel).
+#
+# Esto es DISTINTO de `mant_repuestos` (seguimiento comercial: cotizado→
+# aprobado→instalado→facturado, ligado a cliente/ticket) y de
+# `mant_visita_repuestos` (qué se usó en una OT puntual). Ninguna de esas
+# dos tablas guarda un saldo físico — "cuántas unidades tengo hoy en el
+# estante". Esta sí.
+#
+# Levantamiento pedido por Daniel: carga 100% manual (por descubrimiento
+# en bodega, aún no existe en el ERP Random — se pedirá crear allá más
+# adelante, fuera del alcance de este código). SKU/descripción/cantidad/
+# ubicación (catálogo buscable)/costo/marca, y compatibilidad con hasta
+# varios modelos de equipo.
+#
+# Compatibilidad repuesto↔equipo: se enlaza a `cat_productos` (catálogo
+# de MODELOS/SKU, ya clasificado por clase_producto: trotadora, bicicleta,
+# etc.) y NO a `mant_maquinas` (equipo YA INSTALADO en un cliente — la
+# misma trotadora modelo X puede estar en 40 clientes; enlazar ahí
+# obligaría a repetir el vínculo 40 veces). Así "cuántos repuestos tengo
+# para trotadoras" es una agregación directa por clase_producto.
+#
+# `producto_id` es FK CONCEPTUAL a cat_productos (definida en
+# catalogo_module.py, módulo aparte) — mismo patrón ya usado en
+# mant_visita_repuestos.producto_id: sin CONSTRAINT real para no depender
+# del orden de arranque entre módulos.
+# ═══════════════════════════════════════════════════════════════════
+
+def _ensure_repuestos_bodega_tables():
+    """CREATE TABLE + seed idempotente de la bodega de repuestos, SIEMPRE
+    (incluso con ILUS_SKIP_MIGRATIONS=1) — mismo patrón que el resto de
+    _ensure_*."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_marcas (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                nombre      VARCHAR(120) NOT NULL,
+                activo      TINYINT(1) DEFAULT 1,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE INDEX uq_repmarca_nombre (nombre)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_marcas: {e}", flush=True)
+
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_ubicaciones (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                codigo      VARCHAR(60) NOT NULL COMMENT 'Ej: A-01-03 (estante-fila-casillero)',
+                nombre      VARCHAR(200) NULL COMMENT 'Descripción libre opcional',
+                activo      TINYINT(1) DEFAULT 1,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE INDEX uq_repubic_codigo (codigo)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_ubicaciones: {e}", flush=True)
+
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_stock (
+                id                  INT AUTO_INCREMENT PRIMARY KEY,
+                sku                 VARCHAR(120) NOT NULL COMMENT 'SKU interno ILUS, definido por Daniel — no depende del ERP',
+                descripcion         VARCHAR(400) NOT NULL,
+                cantidad            DECIMAL(10,2) NOT NULL DEFAULT 0,
+                ubicacion_id        INT NULL,
+                marca_id            INT NULL,
+                costo_unitario      DECIMAL(12,2) DEFAULT 0,
+                codigo_fabricante   VARCHAR(120) NULL COMMENT 'N° de parte / código OEM real del fabricante, si es distinto del SKU interno',
+                stock_minimo        DECIMAL(10,2) NULL COMMENT 'Punto de reposición — NULL = sin alerta configurada',
+                estado              ENUM('nuevo','usado','reacondicionado') DEFAULT 'nuevo',
+                notas               TEXT NULL,
+                foto_url            VARCHAR(500) NULL,
+                activo              TINYINT(1) DEFAULT 1,
+                created_by          VARCHAR(190),
+                created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_by          VARCHAR(190),
+                updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE INDEX uq_repstock_sku (sku),
+                INDEX idx_repstock_ubicacion (ubicacion_id),
+                INDEX idx_repstock_marca (marca_id),
+                INDEX idx_repstock_activo (activo),
+                CONSTRAINT fk_repstock_ubicacion FOREIGN KEY (ubicacion_id)
+                    REFERENCES mant_repuestos_ubicaciones(id) ON DELETE SET NULL,
+                CONSTRAINT fk_repstock_marca FOREIGN KEY (marca_id)
+                    REFERENCES mant_repuestos_marcas(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_stock: {e}", flush=True)
+
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_stock_modelos (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                repuesto_id  INT NOT NULL,
+                producto_id  INT NOT NULL COMMENT 'FK conceptual a cat_productos.id (módulo aparte, sin CONSTRAINT real)',
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE INDEX uq_repstockmod (repuesto_id, producto_id),
+                INDEX idx_repstockmod_producto (producto_id),
+                CONSTRAINT fk_repstockmod_repuesto FOREIGN KEY (repuesto_id)
+                    REFERENCES mant_repuestos_stock(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_stock_modelos: {e}", flush=True)
+
+    # Seed de marcas conocidas hoy (Daniel, 2026-08-07). Editable después
+    # desde la UI — esto solo evita arrancar con el desplegable vacío.
+    for _marca in ("Drax", "Freemotion", "Ilus"):
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_repuestos_marcas (nombre) VALUES (%s)", (_marca,)
+            )
+        except Exception as e:
+            print(f"[ensure_repuestos_stock] seed marca '{_marca}': {e}", flush=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # HORÓMETRO POR EQUIPO (2026-08-06, Daniel — grúas de SPHS/ILUS interno).
 #
 # Bitácora de responsabilidad del operario, NO la pauta técnica de la
@@ -88860,6 +89402,14 @@ try:
         _ensure_visita_tareas_tipo_enum()
 except Exception as _ensure_vtt_err:
     print(f"[ILUS][WARN] _ensure_visita_tareas_tipo_enum: {_ensure_vtt_err}", flush=True)
+
+# Bodega de repuestos (inventario físico real): tablas SIEMPRE, incluso
+# con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_repuestos_bodega_tables()
+except Exception as _ensure_repstock_err:
+    print(f"[ILUS][WARN] _ensure_repuestos_bodega_tables: {_ensure_repstock_err}", flush=True)
 
 # Horómetro por equipo (grúas SPHS): tabla + columnas de caché, SIEMPRE
 # incluso con ILUS_SKIP_MIGRATIONS=1.

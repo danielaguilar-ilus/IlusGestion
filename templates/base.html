@@ -562,6 +562,10 @@
          class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
         <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
       </a>
+      <a href="{{ url_for('repuestos_bodega_list') }}"
+         class="sidebar-link{% if request.endpoint == 'repuestos_bodega_list' %} active{% endif %}">
+        <i class="bi bi-box-seam"></i><span>Bodega de Repuestos</span>
+      </a>
       {% endif %}
       {% if not is_tecnico %}
       <a href="{{ url_for('mant_tecnicos_externos_index') }}"

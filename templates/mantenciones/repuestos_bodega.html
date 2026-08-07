@@ -1,0 +1,439 @@
+{% extends "base.html" %}
+{% block title %}Bodega de Repuestos — ILUS{% endblock %}
+{% block content %}
+<style>
+.rb-filtros{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+.rb-filtros input,.rb-filtros select{font-size:.82rem;padding:6px 10px;border-radius:8px;border:1px solid #d1d5db}
+.rb-table-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+.rb-table{width:100%;border-collapse:collapse;font-size:.84rem}
+.rb-table thead th{background:#0a0a0a;color:#fff;padding:10px 12px;text-align:left;font-weight:700;font-size:.74rem;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap}
+.rb-table tbody td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.rb-table tbody tr:hover{background:#fafafa}
+.rb-sku{font-family:ui-monospace,monospace;font-weight:700;color:#0a0a0a}
+.rb-chip{display:inline-block;background:#f3f4f6;color:#374151;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:50px;margin:1px 3px 1px 0;white-space:nowrap}
+.rb-chip-clase{background:#dbeafe;color:#1d4ed8}
+.rb-bajo-min{background:#fee2e2 !important}
+.rb-bajo-min-badge{background:#dc2626;color:#fff;font-size:.65rem;font-weight:800;padding:2px 8px;border-radius:50px;margin-left:6px}
+.rb-empty{padding:60px 20px;text-align:center;color:#9ca3af}
+.rb-actions-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+#modalRepStock .modal-header{background:#0a0a0a;color:#fff}
+#modalRepStock .btn-close{filter:invert(1)}
+.rb-modelo-chip{display:inline-flex;align-items:center;gap:6px;background:#f3f4f6;border-radius:50px;padding:3px 6px 3px 12px;font-size:.78rem;margin:2px 4px 2px 0}
+.rb-modelo-chip button{border:none;background:#e5e7eb;color:#374151;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;padding:0;font-size:.7rem;cursor:pointer}
+.rb-modelo-resultados{position:relative}
+.rb-modelo-resultados-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:20;display:none}
+.rb-modelo-resultado-item{padding:8px 12px;font-size:.82rem;cursor:pointer;border-bottom:1px solid #f3f4f6}
+.rb-modelo-resultado-item:hover{background:#fee2e2}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-box-seam me-2"></i>Bodega de Repuestos</h4>
+    <div class="sub">Inventario físico real — SKU, stock, ubicación, costo, marca y compatibilidad con modelos de equipo.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="/repuestos" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Seguimiento de repuestos</a>
+    <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()"><i class="bi bi-plus-lg me-1"></i>Nuevo repuesto</button>
+  </div>
+</div>
+
+<form method="get" class="rb-filtros">
+  <input type="text" name="q" value="{{ q }}" placeholder="Buscar por SKU, descripción o código fabricante..." style="min-width:280px">
+  <select name="marca_id">
+    <option value="">Todas las marcas</option>
+    {% for m in marcas %}<option value="{{ m.id }}" {% if marca_id|string == m.id|string %}selected{% endif %}>{{ m.nombre }}</option>{% endfor %}
+  </select>
+  <select name="ubicacion_id">
+    <option value="">Todas las ubicaciones</option>
+    {% for u in ubicaciones %}<option value="{{ u.id }}" {% if ubicacion_id|string == u.id|string %}selected{% endif %}>{{ u.codigo }}{% if u.nombre %} — {{ u.nombre }}{% endif %}</option>{% endfor %}
+  </select>
+  <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
+    <input type="checkbox" name="bajo_minimo" value="1" {% if bajo_minimo %}checked{% endif %}> Bajo stock mínimo
+  </label>
+  <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
+  <a href="/repuestos/bodega" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+</form>
+
+<div class="rb-actions-bar">
+  <div style="font-size:.82rem;color:#6b7280">
+    <input type="checkbox" id="rbSelAll" onclick="rbToggleAll(this)"> Seleccionar todo lo visible
+  </div>
+  <button type="button" class="btn btn-sm btn-outline-dark" id="rbBtnEtiquetas" disabled onclick="rbImprimirEtiquetas()">
+    <i class="bi bi-tag me-1"></i>Imprimir etiquetas de seleccionados
+  </button>
+</div>
+
+<div class="rb-table-wrap">
+{% if repuestos %}
+<div style="overflow-x:auto">
+<table class="rb-table">
+  <thead>
+    <tr>
+      <th></th>
+      <th>SKU</th>
+      <th>Descripción</th>
+      <th>Cantidad</th>
+      <th>Ubicación</th>
+      <th>Costo</th>
+      <th>Marca</th>
+      <th>Modelos compatibles</th>
+      <th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in repuestos %}
+    <tr class="{{ 'rb-bajo-min' if r.bajo_minimo else '' }}" data-id="{{ r.id }}">
+      <td><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
+      <td class="rb-sku">{{ r.sku }}</td>
+      <td>{{ r.descripcion }}
+        {% if r.bajo_minimo %}<span class="rb-bajo-min-badge">BAJO MÍNIMO</span>{% endif %}
+      </td>
+      <td>{{ r.cantidad|round(2) }}</td>
+      <td>{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td>{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td>
+        {% for mod in modelos_por_repuesto.get(r.id, []) %}
+          <span class="rb-chip rb-chip-clase">{{ mod.producto_nombre }}</span>
+        {% else %}
+          <span class="text-muted" style="font-size:.78rem">sin asociar</span>
+        {% endfor %}
+      </td>
+      <td class="text-nowrap">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }})' title="Editar"><i class="bi bi-pencil"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-dark" onclick="rbImprimirUno({{ r.id }})" title="Imprimir etiqueta"><i class="bi bi-tag"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')" title="Desactivar"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "_partials/pagination.html" %}
+{% else %}
+<div class="rb-empty">
+  <i class="bi bi-box-seam" style="font-size:2rem;display:block;margin-bottom:8px"></i>
+  {% if q or marca_id or ubicacion_id or bajo_minimo %}
+    Sin resultados para este filtro.
+  {% else %}
+    Aún no hay repuestos cargados — usa "Nuevo repuesto" para empezar el levantamiento.
+  {% endif %}
+</div>
+{% endif %}
+</div>
+
+{# ════════ Modal crear/editar ════════ #}
+<div class="modal fade" id="modalRepStock" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" id="rbModalTitulo"><i class="bi bi-box-seam me-2"></i>Nuevo repuesto</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rbId">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">SKU interno <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="rbSku" maxlength="120" placeholder="Ej: REP-0001">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small fw-semibold">Descripción <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="rbDescripcion" maxlength="400">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Cantidad</label>
+            <input type="number" class="form-control" id="rbCantidad" min="0" step="0.01" value="0">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Stock mínimo</label>
+            <input type="number" class="form-control" id="rbStockMinimo" min="0" step="0.01" placeholder="Opcional">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Costo unitario (CLP)</label>
+            <input type="number" class="form-control" id="rbCosto" min="0" step="1" placeholder="0">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small fw-semibold">Estado</label>
+            <select class="form-select" id="rbEstado">
+              <option value="nuevo">Nuevo</option>
+              <option value="usado">Usado</option>
+              <option value="reacondicionado">Reacondicionado</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Ubicación</label>
+            <div class="d-flex gap-1">
+              <select class="form-select" id="rbUbicacion">
+                <option value="">— Sin ubicación —</option>
+                {% for u in ubicaciones %}<option value="{{ u.id }}">{{ u.codigo }}{% if u.nombre %} — {{ u.nombre }}{% endif %}</option>{% endfor %}
+              </select>
+              <button type="button" class="btn btn-outline-secondary" onclick="rbNuevaUbicacion()" title="Nueva ubicación"><i class="bi bi-plus-lg"></i></button>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Marca</label>
+            <div class="d-flex gap-1">
+              <select class="form-select" id="rbMarca">
+                <option value="">— Sin marca —</option>
+                {% for m in marcas %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
+              </select>
+              <button type="button" class="btn btn-outline-secondary" onclick="rbNuevaMarca()" title="Nueva marca"><i class="bi bi-plus-lg"></i></button>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Código de fabricante / OEM</label>
+            <input type="text" class="form-control" id="rbCodigoFabricante" maxlength="120" placeholder="Opcional — si es distinto del SKU interno">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Notas</label>
+            <input type="text" class="form-control" id="rbNotas" maxlength="500">
+          </div>
+        </div>
+
+        <hr class="my-3">
+        <div id="rbModelosSection">
+          <label class="form-label small fw-semibold">Modelos de equipo compatibles</label>
+          <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
+          <div id="rbModelosContenido">
+            <div id="rbModelosChips" class="mb-2"></div>
+            <div class="rb-modelo-resultados">
+              <input type="text" class="form-control" id="rbModelosBuscar" placeholder="Buscar modelo por SKU o nombre (ej: trotadora)...">
+              <div class="rb-modelo-resultados-list" id="rbModelosResultadosList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" onclick="rbGuardar()"><i class="bi bi-check2 me-1"></i>Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let RB_MODAL = null;
+let RB_MODELOS_ACTUALES = [];
+
+document.addEventListener('DOMContentLoaded', function(){
+  RB_MODAL = new bootstrap.Modal(document.getElementById('modalRepStock'));
+  document.getElementById('rbModelosBuscar').addEventListener('input', rbBuscarModelosDebounced());
+  document.addEventListener('click', function(e){
+    if (!e.target.closest('.rb-modelo-resultados')) {
+      document.getElementById('rbModelosResultadosList').style.display = 'none';
+    }
+  });
+});
+
+function rbToggleAll(cb){
+  document.querySelectorAll('.rb-row-check').forEach(el => el.checked = cb.checked);
+  rbUpdateBtn();
+}
+function rbUpdateBtn(){
+  const n = document.querySelectorAll('.rb-row-check:checked').length;
+  const btn = document.getElementById('rbBtnEtiquetas');
+  btn.disabled = n === 0;
+  btn.innerHTML = '<i class="bi bi-tag me-1"></i>Imprimir etiquetas' + (n ? ' (' + n + ')' : ' de seleccionados');
+}
+
+function rbAbrirNuevo(){
+  document.getElementById('rbId').value = '';
+  document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-box-seam me-2"></i>Nuevo repuesto';
+  ['rbSku','rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('rbCantidad').value = 0;
+  document.getElementById('rbStockMinimo').value = '';
+  document.getElementById('rbCosto').value = '';
+  document.getElementById('rbEstado').value = 'nuevo';
+  document.getElementById('rbUbicacion').value = '';
+  document.getElementById('rbMarca').value = '';
+  RB_MODELOS_ACTUALES = [];
+  rbRenderModelosChips();
+  document.getElementById('rbModelosContenido').style.display = 'none';
+  document.getElementById('rbModelosSinGuardar').style.display = 'block';
+  RB_MODAL.show();
+}
+
+function rbAbrirEditar(r, modelos){
+  document.getElementById('rbId').value = r.id;
+  document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar ' + r.sku;
+  document.getElementById('rbSku').value = r.sku || '';
+  document.getElementById('rbDescripcion').value = r.descripcion || '';
+  document.getElementById('rbCantidad').value = r.cantidad || 0;
+  document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : '';
+  document.getElementById('rbCosto').value = r.costo_unitario || '';
+  document.getElementById('rbEstado').value = r.estado || 'nuevo';
+  document.getElementById('rbUbicacion').value = r.ubicacion_id || '';
+  document.getElementById('rbMarca').value = r.marca_id || '';
+  document.getElementById('rbCodigoFabricante').value = r.codigo_fabricante || '';
+  document.getElementById('rbNotas').value = r.notas || '';
+  RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre}));
+  rbRenderModelosChips();
+  document.getElementById('rbModelosContenido').style.display = 'block';
+  document.getElementById('rbModelosSinGuardar').style.display = 'none';
+  RB_MODAL.show();
+}
+
+async function rbGuardar(){
+  const id = document.getElementById('rbId').value;
+  const sku = document.getElementById('rbSku').value.trim();
+  const descripcion = document.getElementById('rbDescripcion').value.trim();
+  if (!sku || !descripcion){ ilusToast('SKU y descripción son obligatorios', {type:'warning'}); return; }
+  const body = {
+    sku: sku, descripcion: descripcion,
+    cantidad: document.getElementById('rbCantidad').value || 0,
+    stock_minimo: document.getElementById('rbStockMinimo').value || null,
+    costo_unitario: document.getElementById('rbCosto').value || 0,
+    estado: document.getElementById('rbEstado').value,
+    ubicacion_id: document.getElementById('rbUbicacion').value || null,
+    marca_id: document.getElementById('rbMarca').value || null,
+    codigo_fabricante: document.getElementById('rbCodigoFabricante').value.trim(),
+    notas: document.getElementById('rbNotas').value.trim(),
+  };
+  try{
+    const url = id ? ('/mantenciones/api/repuestos-stock/' + id) : '/mantenciones/api/repuestos-stock';
+    const method = id ? 'PUT' : 'POST';
+    const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok !== false){
+      ilusToast(id ? 'Repuesto actualizado' : 'Repuesto creado', {type:'success'});
+      if (!id && d.id){
+        // Recién creado: si quedaron modelos por asociar (no debería pasar, pero por si acaso), los guardamos.
+      }
+      setTimeout(() => location.reload(), 500);
+    } else {
+      ilusToast(d.error || 'No se pudo guardar', {type:'error'});
+    }
+  }catch(e){
+    ilusToast('Error de conexión al guardar', {type:'error'});
+  }
+}
+
+async function rbEliminar(id, sku){
+  const ok = await ilusConfirm({
+    title: 'Desactivar repuesto',
+    message: '¿Quitar "' + sku + '" de la bodega?',
+    sub: 'Queda desactivado, no se borra el historial.',
+    okLabel: 'Desactivar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/' + id, {method:'DELETE'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    ilusToast('Repuesto desactivado', {type:'success'});
+    setTimeout(() => location.reload(), 400);
+  } else {
+    ilusToast(d.error || 'No se pudo desactivar', {type:'error'});
+  }
+}
+
+function rbImprimirUno(id){
+  window.open('/repuestos/bodega/etiquetas?ids=' + id, '_blank');
+}
+function rbImprimirEtiquetas(){
+  const ids = [...document.querySelectorAll('.rb-row-check:checked')].map(el => el.value);
+  if (!ids.length) return;
+  window.open('/repuestos/bodega/etiquetas?ids=' + ids.join(','), '_blank');
+}
+
+async function rbNuevaUbicacion(){
+  const codigo = await ilusPrompt({title:'Nueva ubicación', message:'Código de la ubicación (ej: A-01-03)', required:true});
+  if (!codigo) return;
+  const nombre = await ilusPrompt({title:'Nueva ubicación', message:'Descripción (opcional)', required:false});
+  const r = await fetch('/mantenciones/api/repuestos-stock/ubicaciones', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codigo, nombre})});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    const sel = document.getElementById('rbUbicacion');
+    const opt = document.createElement('option');
+    opt.value = d.id; opt.textContent = d.codigo + (d.nombre ? ' — ' + d.nombre : '');
+    sel.appendChild(opt); sel.value = d.id;
+    ilusToast('Ubicación creada', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo crear la ubicación', {type:'error'});
+  }
+}
+
+async function rbNuevaMarca(){
+  const nombre = await ilusPrompt({title:'Nueva marca', message:'Nombre de la marca', required:true});
+  if (!nombre) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/marcas', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nombre})});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    const sel = document.getElementById('rbMarca');
+    const opt = document.createElement('option');
+    opt.value = d.id; opt.textContent = d.nombre;
+    sel.appendChild(opt); sel.value = d.id;
+    ilusToast('Marca creada', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo crear la marca', {type:'error'});
+  }
+}
+
+function rbRenderModelosChips(){
+  const cont = document.getElementById('rbModelosChips');
+  if (!RB_MODELOS_ACTUALES.length){
+    cont.innerHTML = '<span class="text-muted small">Sin modelos asociados todavía.</span>';
+    return;
+  }
+  cont.innerHTML = RB_MODELOS_ACTUALES.map(m =>
+    '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
+    '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
+  ).join('');
+}
+function escHtmlRb(s){ const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+let rbBuscarModelosTimer = null;
+function rbBuscarModelosDebounced(){
+  return function(){
+    clearTimeout(rbBuscarModelosTimer);
+    rbBuscarModelosTimer = setTimeout(rbBuscarModelos, 250);
+  };
+}
+async function rbBuscarModelos(){
+  const q = document.getElementById('rbModelosBuscar').value.trim();
+  const list = document.getElementById('rbModelosResultadosList');
+  if (q.length < 2){ list.style.display = 'none'; return; }
+  const r = await fetch('/mantenciones/api/repuestos-stock/buscar-modelos?q=' + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({productos:[]}));
+  const productos = (d.productos || []).filter(p => !RB_MODELOS_ACTUALES.some(m => m.producto_id === p.id));
+  if (!productos.length){
+    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
+  } else {
+    list.innerHTML = productos.map(p =>
+      '<div class="rb-modelo-resultado-item" onclick="rbAgregarModelo(' + p.id + ', ' + JSON.stringify(p.nombre) + ')">' +
+      '<strong>' + escHtmlRb(p.nombre) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(p.sku || '') + '</span></div>'
+    ).join('');
+  }
+  list.style.display = 'block';
+}
+async function rbAgregarModelo(producto_id, nombre){
+  const id = document.getElementById('rbId').value;
+  document.getElementById('rbModelosResultadosList').style.display = 'none';
+  document.getElementById('rbModelosBuscar').value = '';
+  if (!id){ ilusToast('Guarda el repuesto primero', {type:'warning'}); return; }
+  const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({producto_id})
+  });
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    RB_MODELOS_ACTUALES.push({producto_id, producto_nombre: nombre});
+    rbRenderModelosChips();
+    ilusToast('Modelo asociado', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo asociar', {type:'error'});
+  }
+}
+async function rbQuitarModelo(producto_id){
+  const id = document.getElementById('rbId').value;
+  if (!id) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos/' + producto_id, {method:'DELETE'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    RB_MODELOS_ACTUALES = RB_MODELOS_ACTUALES.filter(m => m.producto_id !== producto_id);
+    rbRenderModelosChips();
+  } else {
+    ilusToast(d.error || 'No se pudo quitar', {type:'error'});
+  }
+}
+</script>
+{% endblock %}

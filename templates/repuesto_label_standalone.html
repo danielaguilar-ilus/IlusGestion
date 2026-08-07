@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Etiquetas de repuestos</title>
+<style>
+@page { size: {{ label_format.w }} {{ label_format.h }}; margin: 0; }
+*, *::before, *::after { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvetica, sans-serif; }
+
+.rl-label {
+  width: {{ label_format.w }};
+  height: {{ label_format.h }};
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  border: .3mm solid #000;
+  color: #000;
+  page-break-after: always;
+  break-after: page;
+}
+.rl-label:last-child { page-break-after: auto; break-after: auto; }
+
+.rl-head {
+  background: #000; color: #fff;
+  padding: {{ '1.2mm 3mm' if label_format.key == '100x50' else '2mm 4mm' }};
+  font-weight: 900;
+  letter-spacing: .04em;
+  font-size: {{ '2.6mm' if label_format.key == '100x50' else '3.6mm' }};
+}
+.rl-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: {{ '1.5mm 3mm' if label_format.key == '100x50' else '3mm 4mm' }};
+  min-height: 0;
+}
+.rl-sku {
+  font-family: ui-monospace, "Courier New", monospace;
+  font-weight: 900;
+  font-size: {{ '5.5mm' if label_format.key == '100x50' else '9mm' }};
+  line-height: 1.05;
+  word-break: break-all;
+}
+.rl-desc {
+  font-size: {{ '2.6mm' if label_format.key == '100x50' else '4mm' }};
+  line-height: 1.15;
+  margin-top: {{ '.8mm' if label_format.key == '100x50' else '1.5mm' }};
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: {{ '2' if label_format.key == '100x50' else '3' }};
+  -webkit-box-orient: vertical;
+}
+.rl-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 2mm;
+  margin-top: {{ '.8mm' if label_format.key == '100x50' else '2mm' }};
+  font-size: {{ '2.1mm' if label_format.key == '100x50' else '3mm' }};
+  color: #333;
+}
+.rl-ubicacion {
+  font-weight: 800;
+  background: #f3f4f6;
+  border: .25mm solid #000;
+  border-radius: 1mm;
+  padding: .5mm 1.5mm;
+  white-space: nowrap;
+}
+.rl-barcode-wrap {
+  padding: {{ '0 3mm 1.5mm' if label_format.key == '100x50' else '0 4mm 3mm' }};
+}
+.rl-fecha {
+  font-size: {{ '1.8mm' if label_format.key == '100x50' else '2.4mm' }};
+  color: #666;
+  padding: 0 {{ '3mm' if label_format.key == '100x50' else '4mm' }} {{ '1mm' if label_format.key == '100x50' else '2mm' }};
+}
+</style>
+</head>
+<body>
+
+{% for r in repuestos %}
+<article class="rl-label">
+  <div class="rl-head">ILUS &middot; BODEGA DE REPUESTOS</div>
+  <div class="rl-body">
+    <div class="rl-sku">{{ r.sku }}</div>
+    <div class="rl-desc">{{ r.descripcion }}</div>
+    <div class="rl-meta">
+      {% if r.ubicacion_codigo %}<span class="rl-ubicacion">{{ r.ubicacion_codigo }}</span>{% else %}<span></span>{% endif %}
+      {% if r.codigo_fabricante %}<span>OEM: {{ r.codigo_fabricante }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="rl-barcode-wrap">
+    <svg class="barcode" data-code="{{ r.sku }}" style="width:100%"></svg>
+  </div>
+  <div class="rl-fecha">{{ fecha }}</div>
+</article>
+{% endfor %}
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const formatKey = "{{ label_format.key }}";
+  document.querySelectorAll(".barcode").forEach(function (barcode) {
+    const code = barcode.dataset.code || "";
+    const wrap = barcode.closest(".rl-barcode-wrap");
+    const wrapWidth = wrap ? wrap.clientWidth : 140;
+    const density = formatKey === "100x50" ? 11.5 : 9.4;
+    const maxWidth = formatKey === "100x50" ? 1.75 : 2.35;
+    const lineWidth = Math.max(0.7, Math.min(maxWidth, wrapWidth / Math.max(code.length * density, 1)));
+    const height = formatKey === "100x50" ? 22 : 40;
+    JsBarcode(barcode, code, {
+      format: "CODE128", displayValue: false,
+      lineColor: "#000", background: "#fff",
+      width: lineWidth, height: height, margin: 0
+    });
+    barcode.dataset.rendered = "1";
+  });
+});
+</script>
+</body>
+</html>
