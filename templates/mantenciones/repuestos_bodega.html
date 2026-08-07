@@ -77,6 +77,7 @@
       <th>Costo</th>
       <th>Marca</th>
       <th>Modelos compatibles</th>
+      <th>Asociado a</th>
       <th>Acciones</th>
     </tr>
   </thead>
@@ -98,6 +99,11 @@
         {% else %}
           <span class="text-muted" style="font-size:.78rem">sin asociar</span>
         {% endfor %}
+      </td>
+      <td>
+        {% if r.cliente_nombre %}<span class="rb-chip" style="background:#dcfce7;color:#166534">{{ r.cliente_nombre }}</span>{% endif %}
+        {% if r.ticket_numero %}<span class="rb-chip" style="background:#fef3c7;color:#92400e">{{ r.ticket_numero }}</span>{% endif %}
+        {% if not r.cliente_nombre and not r.ticket_numero %}<span class="text-muted" style="font-size:.78rem">—</span>{% endif %}
       </td>
       <td class="text-nowrap">
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }})' title="Editar"><i class="bi bi-pencil"></i></button>
@@ -192,6 +198,28 @@
         </div>
 
         <hr class="my-3">
+        <div class="row g-3 mb-1">
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Cliente asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
+            <input type="hidden" id="rbClienteId">
+            <div class="rb-modelo-resultados">
+              <input type="text" class="form-control" id="rbClienteBuscar" placeholder="Buscar cliente por nombre o RUT...">
+              <div class="rb-modelo-resultados-list" id="rbClienteResultadosList"></div>
+            </div>
+            <div id="rbClienteSeleccionado" class="mt-1"></div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Ticket asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
+            <input type="hidden" id="rbTicketId">
+            <div class="rb-modelo-resultados">
+              <input type="text" class="form-control" id="rbTicketBuscar" placeholder="Buscar ticket por número o cliente...">
+              <div class="rb-modelo-resultados-list" id="rbTicketResultadosList"></div>
+            </div>
+            <div id="rbTicketSeleccionado" class="mt-1"></div>
+          </div>
+        </div>
+
+        <hr class="my-3">
         <div id="rbModelosSection">
           <label class="form-label small fw-semibold">Modelos de equipo compatibles</label>
           <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
@@ -219,9 +247,14 @@ let RB_MODELOS_ACTUALES = [];
 document.addEventListener('DOMContentLoaded', function(){
   RB_MODAL = new bootstrap.Modal(document.getElementById('modalRepStock'));
   document.getElementById('rbModelosBuscar').addEventListener('input', rbBuscarModelosDebounced());
+  document.getElementById('rbClienteBuscar').addEventListener('input', rbBuscarClientesDebounced());
+  document.getElementById('rbTicketBuscar').addEventListener('input', rbBuscarTicketsDebounced());
   document.addEventListener('click', function(e){
     if (!e.target.closest('.rb-modelo-resultados')) {
-      document.getElementById('rbModelosResultadosList').style.display = 'none';
+      ['rbModelosResultadosList','rbClienteResultadosList','rbTicketResultadosList'].forEach(function(id){
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
     }
   });
 });
@@ -247,6 +280,8 @@ function rbAbrirNuevo(){
   document.getElementById('rbEstado').value = 'nuevo';
   document.getElementById('rbUbicacion').value = '';
   document.getElementById('rbMarca').value = '';
+  rbSetCliente(null, '');
+  rbSetTicket(null, '');
   RB_MODELOS_ACTUALES = [];
   rbRenderModelosChips();
   document.getElementById('rbModelosContenido').style.display = 'none';
@@ -267,6 +302,8 @@ function rbAbrirEditar(r, modelos){
   document.getElementById('rbMarca').value = r.marca_id || '';
   document.getElementById('rbCodigoFabricante').value = r.codigo_fabricante || '';
   document.getElementById('rbNotas').value = r.notas || '';
+  rbSetCliente(r.cliente_id || null, r.cliente_nombre || '');
+  rbSetTicket(r.ticket_id || null, r.ticket_numero || '');
   RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre}));
   rbRenderModelosChips();
   document.getElementById('rbModelosContenido').style.display = 'block';
@@ -289,6 +326,8 @@ async function rbGuardar(){
     marca_id: document.getElementById('rbMarca').value || null,
     codigo_fabricante: document.getElementById('rbCodigoFabricante').value.trim(),
     notas: document.getElementById('rbNotas').value.trim(),
+    cliente_id: document.getElementById('rbClienteId').value || null,
+    ticket_id: document.getElementById('rbTicketId').value || null,
   };
   try{
     const url = id ? ('/mantenciones/api/repuestos-stock/' + id) : '/mantenciones/api/repuestos-stock';
@@ -434,6 +473,72 @@ async function rbQuitarModelo(producto_id){
   } else {
     ilusToast(d.error || 'No se pudo quitar', {type:'error'});
   }
+}
+
+// ── Cliente / Ticket asociados (trazabilidad, Daniel 2026-08-07) ──
+function rbSetCliente(id, nombre){
+  document.getElementById('rbClienteId').value = id || '';
+  const cont = document.getElementById('rbClienteSeleccionado');
+  document.getElementById('rbClienteBuscar').value = '';
+  cont.innerHTML = id
+    ? '<span class="rb-modelo-chip">' + escHtmlRb(nombre) + '<button type="button" onclick="rbSetCliente(null,\'\')" title="Quitar">&times;</button></span>'
+    : '';
+}
+function rbSetTicket(id, numero){
+  document.getElementById('rbTicketId').value = id || '';
+  const cont = document.getElementById('rbTicketSeleccionado');
+  document.getElementById('rbTicketBuscar').value = '';
+  cont.innerHTML = id
+    ? '<span class="rb-modelo-chip">' + escHtmlRb(numero) + '<button type="button" onclick="rbSetTicket(null,\'\')" title="Quitar">&times;</button></span>'
+    : '';
+}
+
+let rbBuscarClientesTimer = null;
+function rbBuscarClientesDebounced(){
+  return function(){
+    clearTimeout(rbBuscarClientesTimer);
+    rbBuscarClientesTimer = setTimeout(rbBuscarClientes, 250);
+  };
+}
+async function rbBuscarClientes(){
+  const q = document.getElementById('rbClienteBuscar').value.trim();
+  const list = document.getElementById('rbClienteResultadosList');
+  if (q.length < 2){ list.style.display = 'none'; return; }
+  const r = await fetch('/mantenciones/api/repuestos-stock/buscar-clientes?q=' + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({clientes:[]}));
+  const clientes = d.clientes || [];
+  list.innerHTML = clientes.length
+    ? clientes.map(c =>
+        '<div class="rb-modelo-resultado-item" onclick=\'rbSetCliente(' + c.id + ', ' + JSON.stringify(c.razon_social) + ')\'>' +
+        '<strong>' + escHtmlRb(c.razon_social) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(c.rut || '') + '</span></div>'
+      ).join('')
+    : '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
+  list.style.display = 'block';
+}
+
+let rbBuscarTicketsTimer = null;
+function rbBuscarTicketsDebounced(){
+  return function(){
+    clearTimeout(rbBuscarTicketsTimer);
+    rbBuscarTicketsTimer = setTimeout(rbBuscarTickets, 250);
+  };
+}
+async function rbBuscarTickets(){
+  const q = document.getElementById('rbTicketBuscar').value.trim();
+  const list = document.getElementById('rbTicketResultadosList');
+  if (q.length < 2){ list.style.display = 'none'; return; }
+  const r = await fetch('/tickets/api/tickets?q=' + encodeURIComponent(q) + '&limit=10', {
+    headers: {'X-Requested-With':'XMLHttpRequest'}
+  });
+  const d = await r.json().catch(() => ({tickets:[]}));
+  const tickets = d.tickets || [];
+  list.innerHTML = tickets.length
+    ? tickets.map(t =>
+        '<div class="rb-modelo-resultado-item" onclick=\'rbSetTicket(' + t.id + ', ' + JSON.stringify(t.numero_ticket || ('#'+t.id)) + ')\'>' +
+        '<strong>' + escHtmlRb(t.numero_ticket || ('#'+t.id)) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(t.empresa || t.nombre_contacto || '') + '</span></div>'
+      ).join('')
+    : '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
+  list.style.display = 'block';
 }
 </script>
 {% endblock %}

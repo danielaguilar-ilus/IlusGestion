@@ -16,20 +16,58 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
   overflow: hidden;
   position: relative;
   background: #fff;
-  border: .3mm solid #000;
-  color: #000;
+  border: .3mm solid #0a0a0a;
+  color: #0a0a0a;
   page-break-after: always;
   break-after: page;
 }
 .rl-label:last-child { page-break-after: auto; break-after: auto; }
 
 .rl-head {
-  background: #000; color: #fff;
-  padding: {{ '1.2mm 3mm' if label_format.key == '100x50' else '2mm 4mm' }};
+  background: #0a0a0a;
+  display: flex;
+  align-items: center;
+  gap: {{ '1.5mm' if label_format.key == '100x50' else '2.5mm' }};
+  padding: {{ '1mm 3mm' if label_format.key == '100x50' else '2mm 4mm' }};
+  flex: 0 0 auto;
+}
+.rl-head img {
+  height: {{ '5mm' if label_format.key == '100x50' else '8mm' }};
+  display: block;
+  object-fit: contain;
+}
+.rl-head-txt {
+  color: #fff;
   font-weight: 900;
   letter-spacing: .04em;
-  font-size: {{ '2.6mm' if label_format.key == '100x50' else '3.6mm' }};
+  font-size: {{ '2mm' if label_format.key == '100x50' else '2.8mm' }};
+  line-height: 1.1;
+  border-left: .3mm solid #dc2626;
+  padding-left: {{ '1.5mm' if label_format.key == '100x50' else '2.5mm' }};
 }
+.rl-head-txt small {
+  display: block;
+  font-weight: 600;
+  color: #f3c9c9;
+  font-size: {{ '1.5mm' if label_format.key == '100x50' else '2mm' }};
+  letter-spacing: .06em;
+}
+
+.rl-marca {
+  background: #dc2626;
+  color: #fff;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  text-align: center;
+  padding: {{ '.8mm 2mm' if label_format.key == '100x50' else '1.3mm 3mm' }};
+  font-size: {{ '2.6mm' if label_format.key == '100x50' else '3.8mm' }};
+  flex: 0 0 auto;
+}
+.rl-marca.rl-marca-vacio {
+  background: #6b7280;
+}
+
 .rl-body {
   flex: 1;
   display: flex;
@@ -41,14 +79,14 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
 .rl-sku {
   font-family: ui-monospace, "Courier New", monospace;
   font-weight: 900;
-  font-size: {{ '5.5mm' if label_format.key == '100x50' else '9mm' }};
+  font-size: {{ '5mm' if label_format.key == '100x50' else '8mm' }};
   line-height: 1.05;
   word-break: break-all;
 }
 .rl-desc {
-  font-size: {{ '2.6mm' if label_format.key == '100x50' else '4mm' }};
+  font-size: {{ '2.4mm' if label_format.key == '100x50' else '3.6mm' }};
   line-height: 1.15;
-  margin-top: {{ '.8mm' if label_format.key == '100x50' else '1.5mm' }};
+  margin-top: {{ '.7mm' if label_format.key == '100x50' else '1.3mm' }};
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: {{ '2' if label_format.key == '100x50' else '3' }};
@@ -59,25 +97,27 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
   justify-content: space-between;
   align-items: flex-end;
   gap: 2mm;
-  margin-top: {{ '.8mm' if label_format.key == '100x50' else '2mm' }};
-  font-size: {{ '2.1mm' if label_format.key == '100x50' else '3mm' }};
+  margin-top: {{ '.7mm' if label_format.key == '100x50' else '1.8mm' }};
+  font-size: {{ '2mm' if label_format.key == '100x50' else '2.8mm' }};
   color: #333;
 }
 .rl-ubicacion {
   font-weight: 800;
   background: #f3f4f6;
-  border: .25mm solid #000;
+  border: .25mm solid #0a0a0a;
   border-radius: 1mm;
   padding: .5mm 1.5mm;
   white-space: nowrap;
 }
 .rl-barcode-wrap {
-  padding: {{ '0 3mm 1.5mm' if label_format.key == '100x50' else '0 4mm 3mm' }};
+  padding: {{ '0 3mm 1.3mm' if label_format.key == '100x50' else '0 4mm 2.5mm' }};
+  flex: 0 0 auto;
 }
 .rl-fecha {
-  font-size: {{ '1.8mm' if label_format.key == '100x50' else '2.4mm' }};
-  color: #666;
-  padding: 0 {{ '3mm' if label_format.key == '100x50' else '4mm' }} {{ '1mm' if label_format.key == '100x50' else '2mm' }};
+  font-size: {{ '1.7mm' if label_format.key == '100x50' else '2.2mm' }};
+  color: #888;
+  padding: 0 {{ '3mm' if label_format.key == '100x50' else '4mm' }} {{ '1mm' if label_format.key == '100x50' else '1.8mm' }};
+  flex: 0 0 auto;
 }
 </style>
 </head>
@@ -85,7 +125,11 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
 
 {% for r in repuestos %}
 <article class="rl-label">
-  <div class="rl-head">ILUS &middot; BODEGA DE REPUESTOS</div>
+  <div class="rl-head">
+    {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
+    <div class="rl-head-txt">BODEGA DE REPUESTOS<small>ILUS SPORT &amp; HEALTH</small></div>
+  </div>
+  <div class="rl-marca {{ 'rl-marca-vacio' if not r.marca_nombre else '' }}">{{ r.marca_nombre or 'SIN MARCA' }}</div>
   <div class="rl-body">
     <div class="rl-sku">{{ r.sku }}</div>
     <div class="rl-desc">{{ r.descripcion }}</div>
@@ -112,7 +156,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const density = formatKey === "100x50" ? 11.5 : 9.4;
     const maxWidth = formatKey === "100x50" ? 1.75 : 2.35;
     const lineWidth = Math.max(0.7, Math.min(maxWidth, wrapWidth / Math.max(code.length * density, 1)));
-    const height = formatKey === "100x50" ? 22 : 40;
+    const height = formatKey === "100x50" ? 20 : 36;
     JsBarcode(barcode, code, {
       format: "CODE128", displayValue: false,
       lineColor: "#000", background: "#fff",

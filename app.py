@@ -6131,6 +6131,17 @@ def next_codigo():
     return str(nxt).zfill(3)
 
 
+# Topes de cordura para las medidas de un bulto. NO son límites de la BD
+# (DECIMAL(12,2) aguanta mucho más): atajan el dedazo típico de tipear
+# milímetros donde van centímetros. Caso real 2026-08-07 (Alison): un bulto
+# de 2006 × 965 × 1574 cm dio un peso volumétrico de 761.733 kg y arrastró el
+# total del documento a ~165.000 kg. El modal del Cubicador ya los tenía
+# (cubicador_plus._MAX_CM/_MAX_KG); Etiquetas era el ÚNICO que no validaba
+# nada, así que el mismo dato entraba sin problema por esta puerta.
+MAX_BULTO_CM = 2000.0     # 20 metros
+MAX_BULTO_KG = 5000.0     # 5 toneladas por bulto
+
+
 def validate_bultos_form(form):
     """Devuelve lista de errores si los bultos no son válidos."""
     errors = []
@@ -6145,6 +6156,17 @@ def validate_bultos_form(form):
             has_any = True
             if not all(v > 0 for v in vals):
                 errors.append(f"Bulto {idx}: todos los valores (largo, ancho, alto, peso) deben ser mayores a 0.")
+                continue
+            fuera = [f"{nom}={val:g} cm" for nom, val in
+                     (("largo", largo), ("ancho", ancho), ("alto", alto))
+                     if val > MAX_BULTO_CM]
+            if peso > MAX_BULTO_KG:
+                fuera.append(f"peso={peso:g} kg")
+            if fuera:
+                errors.append(
+                    f"Bulto {idx}: medida fuera de rango — revisa las unidades "
+                    f"(centímetros y kilos): {'; '.join(fuera)}. "
+                    f"Máximo {MAX_BULTO_CM:g} cm y {MAX_BULTO_KG:g} kg por bulto.")
     if not has_any:
         errors.append("Debes agregar al menos un bulto con medidas y peso completos.")
     return errors
@@ -26515,15 +26537,36 @@ def tr_inline_bulto():
                 "alto":  data.get("alto"),  "peso":  data.get("peso"),
             }]
 
+    # Topes de cordura, mismos que el modal del Cubicador (cubicador_plus.py):
+    # atajan el dedazo típico de tipear milímetros donde van centímetros
+    # (2006 en vez de 200,6 → peso volumétrico de 761.733 kg, caso real de
+    # Alison el 2026-08-07). Este endpoint NO los tenía: aceptaba cualquier
+    # número y lo dejaba grabado en el catálogo compartido.
+    _MAX_CM_INLINE = 2000.0   # 20 metros
+    _MAX_KG_INLINE = 5000.0   # 5 toneladas por bulto
+
     bultos = []
+    fuera_rango = []
     for b in bultos_raw:
         l = float(b.get("largo") or 0)
         a = float(b.get("ancho") or 0)
         h = float(b.get("alto")  or 0)
         p = float(b.get("peso")  or 0)
-        if l and a and h and p:
-            bultos.append((l, a, h, p))
+        if not (l and a and h and p):
+            continue
+        _malos = [f"{n}={v:g} cm" for n, v in (("largo", l), ("ancho", a), ("alto", h))
+                  if v > _MAX_CM_INLINE]
+        if p > _MAX_KG_INLINE:
+            _malos.append(f"peso={p:g} kg")
+        if _malos:
+            fuera_rango.extend(_malos)
+            continue
+        bultos.append((l, a, h, p))
 
+    if fuera_rango:
+        return jsonify({"error": "Medidas fuera de rango — revisa las unidades "
+                                 "(centímetros y kilos): " + "; ".join(fuera_rango) +
+                                 f". Máximo {_MAX_CM_INLINE:g} cm y {_MAX_KG_INLINE:g} kg por bulto."}), 400
     if not bultos:
         return jsonify({"error": "Debes ingresar al menos un bulto con todos sus campos"}), 400
 
@@ -26536,10 +26579,40 @@ def tr_inline_bulto():
             if row:
                 pid = row["id"]
             else:
+                # ── CREAR FICHA: MISMAS REGLAS QUE ETIQUETAS ──────────────
+                # 2026-08-07 (vulnerabilidad detectada por Alison, caso BBV9.0):
+                # esta era la SEGUNDA puerta que escribía en app_products
+                # saltándose las validaciones de Etiquetas — creaba la ficha con
+                # el SKU de nombre, sin código de impresión y con estado
+                # 'activo', que no existe en Etiquetas. Mismo arreglo que en
+                # cubicador_plus.cubicador_plus_post_medidas_por_sku: si se
+                # corrige solo uno de los dos, el hueco sigue abierto.
+                if not nombre or nombre.upper() == sku:
+                    return jsonify({"error": "Falta el nombre del producto. En Etiquetas "
+                                             "el nombre es obligatorio y no puede ser el "
+                                             "mismo SKU."}), 400
+                try:
+                    if not get_erp_product_by_sku(sku):
+                        return jsonify({"error": f"El SKU {sku} no existe en el ERP. Solo se "
+                                                 f"pueden crear fichas de productos del ERP."}), 400
+                except Exception as _e_erp_inline:
+                    # ERP caído: no se bloquea la operación, queda en el log.
+                    print(f"[tr_inline_bulto] ERP no respondió al validar {sku}: "
+                          f"{_e_erp_inline} — se crea igual", flush=True)
+                _codigo_inline = ""
+                try:
+                    _codigo_inline = next_codigo() or ""
+                except Exception as _e_cod_inline:
+                    print(f"[tr_inline_bulto] no se pudo generar código para {sku}: "
+                          f"{_e_cod_inline}", flush=True)
+                if not _codigo_inline:
+                    return jsonify({"error": "No se pudo asignar el código de impresión. "
+                                             "Crea el producto desde Etiquetas."}), 500
                 cur.execute(
-                    f"INSERT INTO `{PRODUCTS_TABLE}` (sku, nombre, estado, created_by, updated_by) "
-                    f"VALUES (%s,%s,'activo',%s,%s)",
-                    (sku, nombre or sku, current_username(), current_username())
+                    f"INSERT INTO `{PRODUCTS_TABLE}` "
+                    f"(sku, nombre, estado, codigo, created_by, updated_by) "
+                    f"VALUES (%s,%s,'Pendiente',%s,%s,%s)",
+                    (sku, nombre, _codigo_inline, current_username(), current_username())
                 )
                 pid = cur.lastrowid
 
@@ -81341,10 +81414,13 @@ def repuestos_bodega_list():
 
     rows = mysql_fetchall(
         f"SELECT r.*, m.nombre AS marca_nombre, "
-        f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre "
+        f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre, "
+        f"       c.razon_social AS cliente_nombre, t.numero_ticket AS ticket_numero "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
+        f"  LEFT JOIN mant_clientes c ON c.id = r.cliente_id "
+        f"  LEFT JOIN tk_tickets t ON t.id = r.ticket_id "
         f" WHERE {where_sql} ORDER BY r.sku ASC LIMIT %s OFFSET %s",
         tuple(params) + (page_size, offset)
     ) or []
@@ -81405,12 +81481,15 @@ def repstock_crear():
         estado = "nuevo"
     marca_id = d.get("marca_id") or None
     ubicacion_id = d.get("ubicacion_id") or None
+    cliente_id = d.get("cliente_id") or None
+    ticket_id = d.get("ticket_id") or None
     fields = {
         "sku": sku, "descripcion": descripcion, "cantidad": cantidad,
         "ubicacion_id": ubicacion_id, "marca_id": marca_id,
         "costo_unitario": costo_unitario,
         "codigo_fabricante": (d.get("codigo_fabricante") or "").strip()[:120] or None,
         "stock_minimo": stock_minimo, "estado": estado,
+        "cliente_id": cliente_id, "ticket_id": ticket_id,
         "notas": (d.get("notas") or "").strip() or None,
         "created_by": current_username(),
     }
@@ -81457,7 +81536,8 @@ def repstock_editar(rid):
     if "estado" in d and d["estado"] not in ("nuevo", "usado", "reacondicionado"):
         d["estado"] = "nuevo"
     allowed = ["sku", "descripcion", "cantidad", "ubicacion_id", "marca_id",
-               "costo_unitario", "codigo_fabricante", "stock_minimo", "estado", "notas"]
+               "costo_unitario", "codigo_fabricante", "stock_minimo", "estado", "notas",
+               "cliente_id", "ticket_id"]
     sets, vals = [], []
     for f in allowed:
         if f in d:
@@ -81581,6 +81661,27 @@ def repstock_buscar_modelos():
     return jsonify({"ok": True, "productos": [dict(r) for r in rows]})
 
 
+@app.route("/mantenciones/api/repuestos-stock/buscar-clientes", methods=["GET"])
+@_mant_required
+def repstock_buscar_clientes():
+    """Autocompletar cliente para asociar un repuesto (trazabilidad,
+    2026-08-07 Daniel: "conectémoslo a los clientes"). Solo clientes
+    locales activos — consulta directa, sin ERP (no hace falta para
+    elegir a cuál de MIS clientes le reservo el repuesto)."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"ok": True, "clientes": []})
+    like = f"%{q}%"
+    rows = mysql_fetchall(
+        "SELECT id, razon_social, rut FROM mant_clientes "
+        " WHERE (razon_social LIKE %s OR rut LIKE %s) "
+        "   AND COALESCE(estado,'activo')='activo' "
+        " ORDER BY razon_social LIMIT 20",
+        (like, like)
+    ) or []
+    return jsonify({"ok": True, "clientes": [dict(r) for r in rows]})
+
+
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos", methods=["POST"])
 @_mant_required
 @_no_tecnico
@@ -81633,9 +81734,10 @@ def repstock_etiquetas():
     ph = ",".join(["%s"] * len(ids))
     rows = mysql_fetchall(
         f"SELECT r.sku, r.descripcion, r.codigo_fabricante, "
-        f"       u.codigo AS ubicacion_codigo "
+        f"       u.codigo AS ubicacion_codigo, m.nombre AS marca_nombre "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
+        f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
         f" WHERE r.id IN ({ph}) ORDER BY r.sku",
         tuple(ids)
     ) or []
@@ -81647,6 +81749,7 @@ def repstock_etiquetas():
         "repuesto_label_standalone.html",
         repuestos=[dict(r) for r in rows], fecha=fecha,
         fmt=label_format["key"], label_format=label_format,
+        logo_url=_logo_data_url(),
     )
     pdf_bytes = _pw_pdf(
         html, width=label_format["w"], height=label_format["h"],
@@ -87928,6 +88031,8 @@ def _ensure_repuestos_bodega_tables():
                 codigo_fabricante   VARCHAR(120) NULL COMMENT 'N° de parte / código OEM real del fabricante, si es distinto del SKU interno',
                 stock_minimo        DECIMAL(10,2) NULL COMMENT 'Punto de reposición — NULL = sin alerta configurada',
                 estado              ENUM('nuevo','usado','reacondicionado') DEFAULT 'nuevo',
+                cliente_id          INT NULL COMMENT 'FK conceptual a mant_clientes.id — repuesto reservado/asociado a un cliente puntual',
+                ticket_id           INT NULL COMMENT 'FK conceptual a tk_tickets.id — trazabilidad: para qué ticket salió/se reservó',
                 notas               TEXT NULL,
                 foto_url            VARCHAR(500) NULL,
                 activo              TINYINT(1) DEFAULT 1,
@@ -87939,6 +88044,8 @@ def _ensure_repuestos_bodega_tables():
                 INDEX idx_repstock_ubicacion (ubicacion_id),
                 INDEX idx_repstock_marca (marca_id),
                 INDEX idx_repstock_activo (activo),
+                INDEX idx_repstock_cliente (cliente_id),
+                INDEX idx_repstock_ticket (ticket_id),
                 CONSTRAINT fk_repstock_ubicacion FOREIGN KEY (ubicacion_id)
                     REFERENCES mant_repuestos_ubicaciones(id) ON DELETE SET NULL,
                 CONSTRAINT fk_repstock_marca FOREIGN KEY (marca_id)
@@ -87947,6 +88054,34 @@ def _ensure_repuestos_bodega_tables():
         """)
     except Exception as e:
         print(f"[ensure_repuestos_stock] mant_repuestos_stock: {e}", flush=True)
+
+    # 2026-08-07 (Daniel — trazabilidad): la tabla ya existía en producción
+    # sin estas 2 columnas cuando se agregó este requisito unas horas
+    # después del lanzamiento — ALTER idempotente vía information_schema,
+    # mismo patrón que el resto de _ensure_* (no vuelve a correr si ya
+    # están, no rompe el boot si fallan).
+    try:
+        _existing_repstock_cols = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_stock'"
+            ) or [])
+        }
+        if "cliente_id" not in _existing_repstock_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN cliente_id INT NULL "
+                "COMMENT 'FK conceptual a mant_clientes.id' AFTER estado, "
+                "ADD INDEX idx_repstock_cliente (cliente_id)"
+            )
+        if "ticket_id" not in _existing_repstock_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN ticket_id INT NULL "
+                "COMMENT 'FK conceptual a tk_tickets.id' AFTER cliente_id, "
+                "ADD INDEX idx_repstock_ticket (ticket_id)"
+            )
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] ALTER cliente_id/ticket_id: {e}", flush=True)
 
     try:
         mysql_execute("""
