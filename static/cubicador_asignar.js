@@ -469,8 +469,13 @@ table td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
       <td>${l.descripcion_erp||''}</td>
       <td style="text-align:right">${l.cantidad}</td>
       <td style="text-align:right">${l.bultos_tot||0}</td>
-      <td style="text-align:right">${(l.peso_kg_u*l.cantidad).toFixed(2)}</td>
-      <td style="text-align:right">${(l.peso_vol_u*l.cantidad).toFixed(2)}</td>
+      <!-- Se usan los totales que ya vienen calculados del backend, NO
+           peso_u * cantidad: los SKUs que se venden de a par (discos,
+           mancuernas) se facturan en piezas sueltas pero se empacan de a 2,
+           y recalcular acá se saltaba esa corrección mostrando el DOBLE
+           (2026-08-07, caso FCV 11225). Ver _cubicador_fetch en app.py. -->
+      <td style="text-align:right">${(l.peso_kg_tot||0).toFixed(2)}</td>
+      <td style="text-align:right">${(l.peso_vol_tot||0).toFixed(2)}</td>
       <td style="text-align:right;font-weight:700;color:#dc2626">${(l.pred_tot||0).toFixed(2)} kg</td>
     </tr>`).join('')}
   </tbody>
@@ -970,12 +975,17 @@ function renderCubaje(){
             ? ` <span class="fedex-limit-ico" title="Peso real ≈${fCl(pesoBultoLinea)} kg por bulto — supera el límite de FedEx (${FEDEX_MAX_KG_POR_BULTO}kg). No apto para despacho automático por FedEx, asignar manual con otro courier."><i class="bi bi-exclamation-triangle-fill"></i></span>`
             : '');
 
-    // Acumular totales (líneas s/f aportan 0 peso/vol)
+    // Acumular totales (líneas s/f aportan 0 peso/vol).
+    // Se usan los *_tot que YA vienen calculados del backend, no
+    // peso_u * qty: los productos que se venden de a par (discos,
+    // mancuernas) se facturan en piezas sueltas pero se empacan de a 2, y
+    // recalcular acá inflaba el total al doble aunque la fila mostrara el
+    // valor correcto (2026-08-07, caso FCV 11225). pred_tot ya se leía así.
     tQty  += qty;
-    tKg   += (parseFloat(l.peso_kg_u)  || 0) * qty;
-    tPv   += (parseFloat(l.peso_vol_u) || 0) * qty;
-    tVol  += (parseFloat(l.vol_u)      || 0) * qty;
-    tPred += (parseFloat(l.pred_tot)   || 0);
+    tKg   += (parseFloat(l.peso_kg_tot)  || 0);
+    tPv   += (parseFloat(l.peso_vol_tot) || 0);
+    tVol  += (parseFloat(l.vol_tot)      || 0);
+    tPred += (parseFloat(l.pred_tot)     || 0);
     tBult += (parseInt(l.bultos_tot)   || 0);
 
     // Datos para los botones de medidas/etiquetas (reusa el mismo mecanismo
@@ -987,7 +997,7 @@ function renderCubaje(){
     const _appIdAttr  = l.app_id != null ? l.app_id : '';
     const _bultosAttr = sf ? 0 : (parseInt(l.total_bultos) || 0);
 
-    rows += `<tr class="cub-row" data-sku="${_skuAttr}" data-app-id="${_appIdAttr}" data-qty="${parseInt(qty)}">
+    rows += `<tr class="cub-row" data-sku="${_skuAttr}" data-app-id="${_appIdAttr}" data-qty="${parseInt(qty)}" data-uxv="${l.unidades_por_venta || 1}">
       <td class="tc" data-label=""><input type="checkbox" class="cube-chk" data-idx="${idx}" onchange="actualizarBotonEliminarSeleccionados()"></td>
       <td class="mono" data-label="SKU" data-cell="sku">${l.sku}</td>
       <td class="cube-desc" data-label="Descripción" style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
@@ -1081,15 +1091,25 @@ document.addEventListener('cubicador:medidas-guardadas', function(ev){
   _docData.lineas.forEach(function(l){
     if(l.sku !== sku) return;
     const qty = parseFloat(l.cantidad) || 0;
+    /* Productos con unidad secundaria (discos, mancuernas): el ERP factura
+       piezas sueltas pero la ficha describe el PAR, así que los totales van
+       por EMPAQUES. Sin esto, guardar medidas dejaba el peso al doble en
+       pantalla aunque el backend lo calculara bien (2026-08-07, FCV 11225). */
+    const uxv   = Math.max(parseFloat(l.unidades_por_venta) || 1, 1);
+    const equiv = uxv > 1 ? (qty / uxv) : qty;
     l.tiene_bultos = t.n > 0;
     l.tiene_ficha  = true;
     l.total_bultos = t.n;
-    l.bultos_tot   = t.n * qty;
+    l.bultos_tot   = t.n * equiv;
     l.peso_kg_u    = t.kg;
     l.peso_vol_u   = t.pv;
     l.vol_u        = t.vol;
     l.pred_u       = t.pred;
-    l.pred_tot     = Math.round(t.pred * qty * 1000) / 1000;
+    l.bultos_equivalentes = equiv;
+    l.peso_kg_tot  = Math.round(t.kg  * equiv * 10000) / 10000;
+    l.peso_vol_tot = Math.round(t.pv  * equiv * 10000) / 10000;
+    l.vol_tot      = Math.round(t.vol * equiv * 100) / 100;
+    l.pred_tot     = Math.round(t.pred * equiv * 1000) / 1000;
     if(pid && !l.app_id) l.app_id = pid;
     huboCambio = true;
   });

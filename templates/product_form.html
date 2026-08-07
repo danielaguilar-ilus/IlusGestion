@@ -171,6 +171,19 @@
         <span id="bultoCountBadge" class="badge rounded-pill ms-1">0</span>
       </span>
       <div class="d-flex gap-2 align-items-center">
+        {# Piezas por empaque (2026-08-07, caso FCV 11225): los discos y
+           mancuernas se empacan de a par, pero el ERP factura piezas
+           sueltas. Sin esto el flete se cotizaba al doble. #}
+        <label class="d-flex align-items-center gap-2 mb-0 small fw-semibold"
+               title="Cuántas piezas físicas trae el empaque cuyo peso y medidas cargaste abajo. Deja 1 para máquinas y accesorios (lo normal). Pon 2 si la ficha describe un PAR (discos, mancuernas): el ERP factura piezas sueltas, así que el sistema divide la cantidad para no cobrar el flete al doble.">
+          <i class="bi bi-box-seam"></i>
+          <span class="d-none d-md-inline">Piezas por empaque</span>
+          <select name="unidades_por_venta" class="form-select form-select-sm" style="width:auto">
+            {% set uxv_cur = (fd.unidades_por_venta or (product.unidades_por_venta if product else 1)) | int or 1 %}
+            <option value="1" {% if uxv_cur == 1 %}selected{% endif %}>1 · unidad suelta</option>
+            <option value="2" {% if uxv_cur == 2 %}selected{% endif %}>2 · par (discos, mancuernas)</option>
+          </select>
+        </label>
         <span class="text-muted small fw-normal d-none d-md-inline">
           Peso Vol = L × An × Al / 4000
         </span>

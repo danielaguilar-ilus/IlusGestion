@@ -718,8 +718,14 @@ def _lc_generar_numero(cur):
 # ══════════════════════════════════════════════════════════════════════
 
 def _lc_bultos_unitarios_batch(app_ids):
-    """{app_id: {"peso_kg_u", "volumen_cm3_u", "total_bultos"}} para TODOS
-    los ids pedidos en UNA sola query (evita N+1 con documentos grandes)."""
+    """{app_id: {"peso_kg_u", "volumen_cm3_u", "total_bultos",
+    "unidades_por_venta"}} para TODOS los ids pedidos en UNA sola query
+    (evita N+1 con documentos grandes).
+
+    `unidades_por_venta` = piezas fisicas por empaque de la ficha. Es lo que
+    permite no cobrar el flete al doble en discos/mancuernas, que se facturan
+    en piezas sueltas pero se empacan de a par (2026-08-07, caso FCV 11225).
+    """
     mysql_fetchall = _h("mysql_fetchall")
     ids = sorted({int(x) for x in (app_ids or []) if x})
     if not ids or not callable(mysql_fetchall):
@@ -731,10 +737,28 @@ def _lc_bultos_unitarios_batch(app_ids):
     out = {}
     for r in rows:
         pid = r.get("product_id")
-        d = out.setdefault(pid, {"peso_kg_u": 0.0, "volumen_cm3_u": 0.0, "total_bultos": 0})
+        d = out.setdefault(pid, {"peso_kg_u": 0.0, "volumen_cm3_u": 0.0,
+                                  "total_bultos": 0, "unidades_por_venta": 1})
         d["peso_kg_u"] += _f(r.get("peso"))
         d["volumen_cm3_u"] += _f(r.get("largo")) * _f(r.get("ancho")) * _f(r.get("alto"))
         d["total_bultos"] += 1
+
+    # Piezas por empaque, en query aparte: app_bultos no la tiene y un JOIN
+    # multiplicaria las filas de bultos. Best-effort — si la columna aun no
+    # existe (deploy a medias), todo queda en 1, o sea el comportamiento
+    # anterior, en vez de reventar la cotizacion.
+    try:
+        rows_uxv = mysql_fetchall(
+            f"SELECT id, COALESCE(unidades_por_venta, 1) AS uxv FROM `app_products` "
+            f"WHERE id IN ({placeholders})", tuple(ids)) or []
+        for r in rows_uxv:
+            if r.get("id") in out:
+                try:
+                    out[r["id"]]["unidades_por_venta"] = max(int(r.get("uxv") or 1), 1)
+                except (TypeError, ValueError):
+                    pass
+    except Exception as e_uxv:
+        print(f"[logistica_cotizaciones] unidades_por_venta no disponible: {e_uxv}", flush=True)
     return out
 
 
@@ -786,8 +810,14 @@ def _lc_enriquecer_items_con_medidas(items_in):
 
         b = bultos_map.get(aid) if aid else None
         if b and cantidad > 0:
-            peso_kg = round(b["peso_kg_u"] * cantidad, 3)
-            volumen_cm3 = round(b["volumen_cm3_u"] * cantidad, 2)
+            # Empaques reales a mover. En discos/mancuernas la ficha describe
+            # un PAR y el ERP factura piezas sueltas: 4 discos = 2 empaques.
+            # Multiplicar por `cantidad` cobraba el flete al DOBLE
+            # (2026-08-07, caso FCV 11225). uxv=1 (todo lo demas) => equiv == cantidad.
+            _uxv = max(int(b.get("unidades_por_venta") or 1), 1)
+            equiv = (cantidad / _uxv) if _uxv > 1 else cantidad
+            peso_kg = round(b["peso_kg_u"] * equiv, 3)
+            volumen_cm3 = round(b["volumen_cm3_u"] * equiv, 2)
             total_bultos = int(b["total_bultos"])
             sin_medidas = False
         else:
@@ -1961,11 +1991,18 @@ def register_logistica_cotizaciones(app, ctx=None):
             recalc = (_lc_bultos_unitarios_batch([item["app_id"]]).get(item["app_id"])
                       if item.get("app_id") else None)
             if recalc:
+                # Mismo criterio que _lc_enriquecer_items_con_medidas: los
+                # productos de a par (discos, mancuernas) se cotizan por
+                # EMPAQUES, no por piezas facturadas. Sin esto, editar la
+                # cantidad de una linea ya guardada volvia a inflar el flete
+                # al doble (2026-08-07, caso FCV 11225).
+                _uxv = max(int(recalc.get("unidades_por_venta") or 1), 1)
+                _equiv = (nueva_cantidad / _uxv) if _uxv > 1 else nueva_cantidad
                 sets.extend(["cantidad=%s", "total_bultos=%s", "peso_kg=%s", "volumen_cm3=%s"])
                 params.extend([
                     nueva_cantidad, int(recalc["total_bultos"]),
-                    round(recalc["peso_kg_u"] * nueva_cantidad, 3),
-                    round(recalc["volumen_cm3_u"] * nueva_cantidad, 2),
+                    round(recalc["peso_kg_u"] * _equiv, 3),
+                    round(recalc["volumen_cm3_u"] * _equiv, 2),
                 ])
             else:
                 sets.append("cantidad=%s")

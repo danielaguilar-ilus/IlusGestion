@@ -5007,6 +5007,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/firmar-ot/",              # firma remota pública de OT (token HMAC)
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
+    "/transporte/webhook/",     # webhooks de couriers (auth por secreto propio)
     "/chofer",                  # app del chofer (sesión driver_id propia)
     "/soporte",                 # formulario publico de Tickets (sin sesion)
 )
@@ -10104,13 +10105,23 @@ def edit_product(pid):
             return render_template("product_form.html", errors=errors, product=product,
                                    bultos=bultos, fd=request.form, max_b=MAX_BULTOS, photos=photos)
 
+        # Piezas físicas por empaque de la ficha (2026-08-07, Daniel, caso
+        # FCV 11225). 1 = unidad suelta (todo lo normal). 2 = la ficha
+        # describe un PAR (discos, mancuernas): el ERP factura piezas
+        # sueltas, así que el cubicador divide la cantidad entre esto para
+        # no cobrar el flete al doble. Ver _cubicador_fetch.
+        try:
+            uxv = max(1, min(int(request.form.get("unidades_por_venta") or 1), 99))
+        except (TypeError, ValueError):
+            uxv = 1
+
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
                 f"""UPDATE `{PRODUCTS_TABLE}`
-                    SET sku=%s, nombre=%s, estado=%s, updated_by=%s
+                    SET sku=%s, nombre=%s, estado=%s, unidades_por_venta=%s, updated_by=%s
                     WHERE id=%s""",
-                (sku, nombre, estado, current_username(), pid),
+                (sku, nombre, estado, uxv, current_username(), pid),
             )
             cur.execute(f"DELETE FROM `{BULTOS_TABLE}` WHERE product_id=%s", (pid,))
             save_bultos_mysql(conn, pid, request.form)
@@ -15314,6 +15325,19 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
                 "       COALESCE(CAPRAD1, 0) AS CAPRAD1, "
                 "       COALESCE(CAPREX1, 0) AS CAPREX1, "
                 "       COALESCE(CAPRNC1, 0) AS CAPRNC1, "
+                # UNIDAD 2 del ERP (2026-08-07, Daniel, caso FCV 11225): Random
+                # maneja DOS unidades por producto. En discos y mancuernas la
+                # unidad 1 son las PIEZAS sueltas (4 discos) y la unidad 2 son
+                # los PARES (2). La ficha logistica del Catalogo tiene cargado
+                # el peso del PAR, asi que multiplicarlo por CAPRCO1 duplicaba
+                # el peso de todo despacho de esos productos. RLUDPR es la
+                # razon de transformacion (RLUD en MAEPR) = piezas por unidad 2.
+                # Diccionario oficial Random, seccion IV.16-IV.21.
+                "       COALESCE(CAPRCO2, 0) AS CAPRCO2, "
+                "       COALESCE(RLUDPR,  0) AS RLUDPR, "
+                "       LTRIM(RTRIM(COALESCE(UD01PR, ''))) AS UD01PR, "
+                "       LTRIM(RTRIM(COALESCE(UD02PR, ''))) AS UD02PR, "
+                "       COALESCE(UDTRPR,  0) AS UDTRPR, "
                 "       LTRIM(RTRIM(COALESCE(ESLIDO, ''))) AS ESLIDO, "
                 "       COALESCE(PPPRNE,  0) AS PPPRNE, "
                 "       COALESCE(VANELI,  0) AS VANELI, "
@@ -15849,11 +15873,12 @@ def _cubicador_fetch(tido, nudo, fast=False):
                 COALESCE(SUM(b.peso), 0)                               AS peso_total,
                 COALESCE(SUM(b.largo * b.ancho * b.alto), 0)           AS volumen_cm3,
                 ROUND(COALESCE(SUM(b.largo * b.ancho * b.alto) / 4000.0, 0), 4)
-                                                                       AS peso_vol
+                                                                       AS peso_vol,
+                GREATEST(COALESCE(p.unidades_por_venta, 1), 1)         AS unidades_por_venta
             FROM `{PRODUCTS_TABLE}` p
             LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
             WHERE UPPER(TRIM(p.sku)) IN ({ph})
-            GROUP BY p.id, p.nombre
+            GROUP BY p.id, p.nombre, p.unidades_por_venta
         """, tuple(skus_list)) or []
         for r in rows_sku:
             sku_data_map[r["sku_norm"]] = dict(r)
@@ -16001,6 +16026,62 @@ def _cubicador_fetch(tido, nudo, fast=False):
         vol_u      = float(app_data["volumen_cm3"]) if tiene_ficha else 0
         pred_u     = max(peso_kg_u, peso_vol_u)
 
+        # ── UNIDAD 2 DEL ERP: empaques de más de una pieza (par) ──────────
+        # BUG REAL (2026-08-07, Daniel, caso FCV 11225 — "estamos inflando los
+        # precios... el peso se está duplicando"): la ficha logística de estos
+        # SKUs tiene cargado el peso del PAR COMPLETO (ej. 10,5 kg = 2 discos
+        # de 5 kg + empaque) — el nombre del producto lo dice: "Par Discos
+        # Training Bumpers ILUS 5 kg". Pero el sistema multiplicaba ese peso
+        # por CAPRCO1, que son las PIEZAS SUELTAS (4 discos = 2 pares): daba
+        # 42 kg cuando el envío real pesa 21 kg. El DOBLE, en toda cotización
+        # de flete de discos y mancuernas.
+        #
+        # Random YA resuelve esto y nunca lo estábamos leyendo (Daniel:
+        # "el ERP tiene dos unidades, las primarias y las secundarias... en la
+        # primaria vemos la unidad y en la secundaria vemos pares; muda esa
+        # columna y se resuelve todo el problema de la cubicación"):
+        #   CAPRCO1 = cantidad en unidad 1 (piezas)   ← lo único que se leía
+        #   CAPRCO2 = cantidad en unidad 2 (pares)    ← la respuesta, ya en el ERP
+        #   RLUDPR  = razón de transformación (piezas por unidad 2)
+        # Diccionario oficial Random, sección IV.16-IV.21.
+        #
+        # `bultos_equivalentes` = empaques reales a mover. Solo se usa para
+        # peso/volumen/flete: la `cantidad` (CAPRCO1) se expone INTACTA —
+        # bodega necesita las 4 piezas para el picking y las cuentas cuadran
+        # contra la factura.
+        #
+        # Sin unidad 2 configurada (máquinas, accesorios sueltos: RLUDPR 0 o 1)
+        # el cálculo queda EXACTAMENTE como estaba.
+        qty_u2 = float(l.get("CAPRCO2") or 0)
+        try:
+            razon_erp = float(l.get("RLUDPR") or 0)
+        except (TypeError, ValueError):
+            razon_erp = 0.0
+
+        uxv = 1
+        origen_uxv = ""
+        if razon_erp > 1:
+            uxv = razon_erp
+            origen_uxv = "erp"
+        elif tiene_ficha:
+            # Respaldo manual del Catálogo, para un producto que de verdad se
+            # empaca de a par pero al que nadie le configuró la unidad 2 en
+            # Random. Es la excepción, no la vía normal.
+            try:
+                _uxv_manual = max(int(app_data.get("unidades_por_venta") or 1), 1)
+            except (TypeError, ValueError):
+                _uxv_manual = 1
+            if _uxv_manual > 1:
+                uxv = _uxv_manual
+                origen_uxv = "catalogo"
+
+        if uxv > 1:
+            # CAPRCO2 es el dato del propio ERP: se prefiere sobre dividir a
+            # mano (respeta redondeos y ventas mixtas que el ERP ya resolvió).
+            bultos_equivalentes = qty_u2 if qty_u2 > 0 else (qty / uxv)
+        else:
+            bultos_equivalentes = qty
+
         nombre_app = (app_data["nombre_app"] if tiene_ficha else "") or ""
         diferencia = tiene_ficha and nombre_app.strip().upper() != descripcion.upper()
 
@@ -16017,10 +16098,20 @@ def _cubicador_fetch(tido, nudo, fast=False):
             "peso_vol_u":       round(peso_vol_u, 4),
             "vol_u":            round(vol_u,      2),
             "pred_u":           round(pred_u,     4),
-            "peso_kg_tot":      round(peso_kg_u  * qty, 4),
-            "peso_vol_tot":     round(peso_vol_u * qty, 4),
-            "vol_tot":          round(vol_u      * qty, 2),
-            "pred_tot":         round(pred_u     * qty, 4),
+            # Los totales van por bultos_equivalentes (= qty salvo en SKUs
+            # que se venden de a par), NO por qty. Ver el bloque de arriba.
+            "peso_kg_tot":      round(peso_kg_u  * bultos_equivalentes, 4),
+            "peso_vol_tot":     round(peso_vol_u * bultos_equivalentes, 4),
+            "vol_tot":          round(vol_u      * bultos_equivalentes, 2),
+            "pred_tot":         round(pred_u     * bultos_equivalentes, 4),
+            "unidades_por_venta":   uxv,
+            "bultos_equivalentes":  round(bultos_equivalentes, 4),
+            # Trazabilidad: de dónde salió la conversión ('erp' = unidad 2 de
+            # Random, 'catalogo' = respaldo manual, '' = producto suelto).
+            "uxv_origen":           origen_uxv,
+            "cantidad_u2":          qty_u2,
+            "unidad_1":             (l.get("UD01PR") or "").strip(),
+            "unidad_2":             (l.get("UD02PR") or "").strip(),
             "diferencia":       diferencia,
             "cantidad_despachada": qty_desp,
             "saldo":               saldo_linea,
@@ -16559,6 +16650,21 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
     tot_pred = sum(l["pred_tot"]     for l in lineas)
     tot_bult = sum(l["total_bultos"] for l in lineas)
 
+    # Aviso explícito cuando el documento trae productos que se venden de a
+    # par (2026-08-07, pedido de Daniel: "recuerda indicar que algunos
+    # productos se verán como pares, como mancuernas, discos y algunos
+    # accesorios"). Sin esto, quien lee el reporte ve "4" al lado del peso de
+    # 2 empaques y parece un error de cálculo.
+    _nota_pares = ""
+    if any(float(l.get("unidades_por_venta") or 1) > 1 for l in lineas):
+        _nota_pares = (
+            " <b>Productos con unidad secundaria (pares):</b> discos, mancuernas "
+            "y algunos accesorios se facturan en unidades sueltas pero se "
+            "empacan y despachan de a par — asi los define el ERP en su unidad "
+            "2. La columna CANT muestra las unidades facturadas y, debajo, los "
+            "pares reales; el peso, el volumen y el flete se calculan sobre los "
+            "pares, que es lo que fisicamente se mueve.")
+
     docs_rows = ""
     for hdr in headers:
         doc_lbl = f"{hdr.get('tido','')} {hdr.get('nudo_display', hdr.get('nudo',''))}".strip()
@@ -16582,12 +16688,25 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
         pred_class = "red" if pred_type == "kg" else "green"
         # doc_ref ya viene calculado por _fetch_multi_docs (uno o varios docs origen)
         doc_ref = l.get("doc_ref") or ""
+        # SKUs que se venden de a par (2026-08-07, caso FCV 11225): se muestra
+        # la cantidad del ERP (piezas facturadas, lo que agarra bodega) y entre
+        # paréntesis los empaques reales, que son los que pagan flete. Sin esto
+        # el reporte dice "4" al lado de un peso de 2 pares y no cuadra a ojo.
+        _uxv = float(l.get("unidades_por_venta") or 1)
+        _cant_txt = str(int(l['cantidad']))
+        if _uxv > 1:
+            _eq = l.get("bultos_equivalentes") or 0
+            # Etiqueta de la unidad 2 tal como la define el ERP (UD02PR): no se
+            # asume "par" — un producto podría venir por caja o docena.
+            _u2 = (l.get("unidad_2") or "").strip()
+            _u2_txt = _u2 if _u2 else ("par" if _eq == 1 else "pares")
+            _cant_txt += f'<div class="small muted">({_eq:g} {_esc(_u2_txt)})</div>'
         rows_html += f"""
         <tr>
           <td class="mono">{_esc(l['sku'])}</td>
           <td>{_esc(l['descripcion_erp'])}</td>
           <td class="mono small">{_esc(doc_ref)}</td>
-          <td class="c">{int(l['cantidad'])}</td>
+          <td class="c">{_cant_txt}</td>
           <td class="c">{l['total_bultos'] if l['tiene_ficha'] else 's/f'}</td>
           <td class="r">{'-' if sf else fkg_filter(l['peso_kg_u'])}</td>
           <td class="r">{'-' if sf else fkg_filter(l['peso_vol_u'])}</td>
@@ -16701,7 +16820,7 @@ tbody tr:nth-child(even){{background:#fafafa}}
       </div>
       <div>
         <div class="section-title">Observaciones</div>
-        <div class="obs">Reporte generado automaticamente desde el Cubicador ILUS. Los pesos se calculan con la ficha logistica disponible para cada SKU.</div>
+        <div class="obs">Reporte generado automaticamente desde el Cubicador ILUS. Los pesos se calculan con la ficha logistica disponible para cada SKU.{_nota_pares}</div>
       </div>
     </div>
   </div>
@@ -17178,7 +17297,11 @@ def _fedex_track_get_token() -> str:
 
 
 # Mapping códigos de estado FedEx → ESTADOS_ENTREGA de ILUS.
-# Fuente: docs FedEx Track API REST v1 (statusCode).
+# Fuente: docs FedEx Track API REST v1 (latestStatusDetail.code / derivedCode).
+# NO es exhaustivo (FedEx documenta ~40 códigos cortos); son los que se han
+# visto en producción de ILUS. Cualquier código nuevo que aparezca queda
+# logueado por _fedex_estado_a_ilus en vez de fallar en silencio, para poder
+# ampliar esta tabla con casos reales.
 _FEDEX_STATUS_MAP = {
     # Pre-shipment
     "OC": 'Entregado a transporte', # Order Created — etiqueta creada, FedEx lo tiene en su sistema
@@ -17206,29 +17329,82 @@ _FEDEX_STATUS_MAP = {
 }
 
 
-def _fedex_estado_a_ilus(status_code: str, description: str = "") -> str:
-    """Traduce un statusCode de FedEx a uno de ESTADOS_ENTREGA de ILUS.
+def _fedex_estado_a_ilus(status_code: str, description: str = "",
+                          derived_code: str = "") -> str:
+    """Traduce el estado de FedEx (Track API) a uno de ESTADOS_ENTREGA de ILUS.
 
-    Si el código no está mapeado, intenta inferir por la descripción
-    (caso fallback). Default: 'En ruta' (más informativo que 'En preparación'
-    cuando el envío ya fue tomado por FedEx).
+    FIX 2026-08-07 (bug de locale). La llamada a la Track API manda a propósito
+    `X-locale: es_CL` para que `statusByLocale` venga en español y se le pueda
+    mostrar tal cual al cliente. El problema: el fallback de esta función
+    (cuando el código corto NO está en _FEDEX_STATUS_MAP) comparaba esa
+    descripción contra palabras en INGLÉS. Con el locale en español esas
+    comparaciones nunca hacían match, así que cualquier código de FedEx que
+    ILUS todavía no conociera caía SIEMPRE en el default 'En ruta' — en
+    silencio. Un rechazo o una excepción no catalogada se leía como "va en
+    camino" y el cliente recibía el correo equivocado.
+
+    Fuentes de verdad, en orden:
+      1. `status_code` (latestStatusDetail.code) — estable, no depende del locale.
+      2. `derived_code` (latestStatusDetail.derivedCode) — otro código corto,
+         también locale-independiente; se traía del payload pero nunca se
+         usaba para clasificar, solo para el texto mostrado.
+      3. Recién ahí, el texto libre — en español (lo que de verdad llega con
+         es_CL) y en inglés (compatibilidad).
+
+    ORDEN DE LAS COMPROBACIONES DE TEXTO (importante): los fallos se evalúan
+    ANTES que "entregado". Una descripción como "No entregado - destinatario
+    ausente" contiene la palabra "entregado": preguntando primero por ella, un
+    envío FALLIDO se marcaría como Entregado y le saldría al cliente el correo
+    de "tu pedido llegó". Es el error más caro de los dos, así que gana el fallo.
+
+    Si nada permite clasificar, se loguea el código desconocido antes de caer
+    al default (antes esto era 100% silencioso).
     """
     sc = (status_code or "").strip().upper()
     if sc in _FEDEX_STATUS_MAP:
         return _FEDEX_STATUS_MAP[sc]
+    dc = (derived_code or "").strip().upper()
+    if dc in _FEDEX_STATUS_MAP:
+        return _FEDEX_STATUS_MAP[dc]
+
     desc = (description or "").lower()
-    if "delivered" in desc:
-        return 'Entregado'
-    if "out for delivery" in desc or "on fedex vehicle" in desc:
-        return 'En ruta'
-    if "in transit" in desc or "departed" in desc or "arrived" in desc:
-        return 'En ruta'
-    if "picked up" in desc or "in fedex possession" in desc:
-        return 'Entregado a transporte'
-    if "exception" in desc or "delivery refused" in desc:
+
+    # ── 1) FALLOS PRIMERO (ver nota de orden en el docstring) ──
+    if ("excepción" in desc or "excepcion" in desc or "rechaz" in desc
+            or "no se pudo entregar" in desc or "no entregado" in desc
+            or "domicilio cerrado" in desc or "negocio cerrado" in desc
+            or "destinatario no disponible" in desc or "destinatario ausente" in desc
+            or "exception" in desc or "delivery refused" in desc
+            or "undeliverable" in desc or "not delivered" in desc):
         return 'Entrega fallida'
-    if "label created" in desc or "shipment information" in desc:
+
+    # ── 2) Entregado ──
+    if "entregado" in desc or "delivered" in desc:
+        return 'Entregado'
+
+    # ── 3) En ruta ──
+    if ("en tránsito" in desc or "en transito" in desc or "salió de" in desc
+            or "salio de" in desc or "llegó a" in desc or "llego a" in desc
+            or "en reparto" in desc or "en camino" in desc
+            or "vehículo de fedex" in desc or "vehiculo de fedex" in desc
+            or "in transit" in desc or "departed" in desc or "arrived" in desc
+            or "out for delivery" in desc or "on fedex vehicle" in desc):
+        return 'En ruta'
+
+    # ── 4) Ya lo tiene el transportista ──
+    if ("recolectado" in desc or "recogido" in desc
+            or "en posesión de fedex" in desc or "en posesion de fedex" in desc
+            or "etiqueta creada" in desc or "información de envío" in desc
+            or "informacion de envio" in desc
+            or "picked up" in desc or "in fedex possession" in desc
+            or "label created" in desc or "shipment information" in desc):
         return 'Entregado a transporte'
+
+    if sc or dc:
+        print(f"[fedex][estado] código FedEx sin mapear en _FEDEX_STATUS_MAP: "
+              f"code={sc!r} derivedCode={dc!r} desc={(description or '')[:100]!r} "
+              f"— usando default 'En ruta', revisar y ampliar el mapa",
+              flush=True)
     return 'En ruta'   # default seguro: si FedEx tiene algo, está moviéndose
 
 
@@ -18047,8 +18223,14 @@ def _fedex_track_lookup(tracking_numbers):
         r0 = results[0]
         st = r0.get("latestStatusDetail") or {}
         code = st.get("code") or ""
+        # FIX 2026-08-07 (bug de locale): derivedCode es OTRO código corto,
+        # también estable sin importar el locale pedido — antes solo se leía
+        # como último recurso para el TEXTO mostrado, nunca para clasificar.
+        # Ahora se pasa también a _fedex_estado_a_ilus como segunda fuente
+        # locale-independiente (ver el docstring de esa función).
+        derived_code = st.get("derivedCode") or ""
         label = (st.get("statusByLocale") or st.get("description")
-                 or st.get("derivedCode") or "")
+                 or derived_code or "")
         # ETA: estimatedDeliveryTimeWindow o dateAndTimes
         eta = ""
         dt_window = r0.get("estimatedDeliveryTimeWindow") or {}
@@ -18071,7 +18253,7 @@ def _fedex_track_lookup(tracking_numbers):
             "tracking_number": tn,
             "status_code":     code,
             "status_label":    label,
-            "estado_ilus":     _fedex_estado_a_ilus(code, label),
+            "estado_ilus":     _fedex_estado_a_ilus(code, label, derived_code),
             "eta":             eta,
             "last_event":      last_event,
             "scans":           scans,    # raw para guardar en payload_json
@@ -32538,6 +32720,47 @@ def _fedex_cron_token_required(token_received):
     return request.remote_addr in ("127.0.0.1", "::1", "localhost")
 
 
+def _cron_extract_token(header_name="X-Cron-Token"):
+    """Extrae el token de un endpoint de cron desde el request, priorizando
+    SIEMPRE el header sobre el query string.
+
+    2026-08-07 (hallazgo de seguridad): Cloud Run registra la URL COMPLETA
+    de cada request en sus logs de acceso de Cloud Logging -- incluido el
+    query string. Si Cloud Scheduler llama estos endpoints con `?token=...`
+    en vez de mandar el token por header, el token queda expuesto en texto
+    plano para cualquiera con acceso de lectura a esos logs.
+
+    El query string se mantiene como fallback de EMERGENCIA por
+    compatibilidad -- no se sabe desde el código si los jobs de Cloud
+    Scheduler ya están configurados con el header o todavía con `?token=`
+    (esa configuración vive en GCP, no en este repo) -- pero cada uso por
+    esa vía insegura queda logueado como advertencia para que se note en
+    Cloud Logging y se pueda confirmar si hace falta migrar el job.
+
+    Cloud Scheduler SÍ soporta headers HTTP custom en la configuración de
+    "HTTP target" de cada job. Una vez que se confirme que TODOS los jobs
+    mandan el token por header, se puede desactivar este fallback poniendo
+    la variable de entorno `CRON_ALLOW_QUERY_TOKEN=0` en Cloud Run -- sin
+    tocar código ni volver a desplegar.
+    """
+    header_tok = (request.headers.get(header_name) or "").strip()
+    if header_tok:
+        return header_tok
+    query_tok = (request.args.get("token") or "").strip()
+    if query_tok:
+        allow_query = (os.environ.get("CRON_ALLOW_QUERY_TOKEN") or "1").strip().lower() not in ("0", "false", "no")
+        if not allow_query:
+            print(f"[cron-token][BLOQUEADO] {request.path} mandó el token por "
+                  f"?token= con CRON_ALLOW_QUERY_TOKEN=0 -- rechazado. Debe "
+                  f"mandarse por header {header_name}.", flush=True)
+            return ""
+        print(f"[cron-token][INSEGURO] {request.path} recibió el token por "
+              f"query string (?token=) en vez del header {header_name} -- "
+              f"queda expuesto en los logs de acceso de Cloud Run. Migrar "
+              f"el job de Cloud Scheduler a mandarlo por header.", flush=True)
+    return query_tok
+
+
 def _fedex_poll_batch(limit=25, dry=False):
     """Lógica PURA de un ciclo de polling FedEx (sin HTTP/auth). La comparten
     el endpoint manual (tr_cron_fedex_poll) y el hilo daemon automático
@@ -32799,7 +33022,8 @@ def tr_cron_fedex_poll():
     estado terminal. Invocable manualmente o por Cloud Scheduler externo.
     (El polling automático interno corre en _fedex_track_poll_loop.)
 
-    Seguridad: protegido con FEDEX_CRON_TOKEN (header X-Cron-Token o query ?token=).
+    Seguridad: protegido con FEDEX_CRON_TOKEN (header X-Cron-Token; el query
+    ?token= es fallback de compatibilidad, ver _cron_extract_token).
     Si no se configura el token, solo acepta requests desde 127.0.0.1.
 
     Query params:
@@ -32808,8 +33032,7 @@ def tr_cron_fedex_poll():
 
     Returns: { ok, polled, changed, items, msg }
     """
-    tok = (request.headers.get("X-Cron-Token")
-           or request.args.get("token") or "").strip()
+    tok = _cron_extract_token()
     if not _fedex_cron_token_required(tok):
         return jsonify({"error": "forbidden"}), 403
 
@@ -33860,12 +34083,13 @@ def tr_cron_simpliroute_poll():
     (para garantizar 24/7 aunque Cloud Run escale a 0) o a mano.
 
     Seguridad: mismo token que el cron de FedEx (FEDEX_CRON_TOKEN) o
-    ILUS_CRON_TOKEN. Sin token configurado, solo acepta desde localhost.
+    ILUS_CRON_TOKEN, por header X-Cron-Token (el query ?token= es fallback
+    de compatibilidad, ver _cron_extract_token). Sin token configurado,
+    solo acepta desde localhost.
 
     Query: ?dry=1 (no escribe) · ?limit=N
     """
-    tok = (request.headers.get("X-Cron-Token")
-           or request.args.get("token") or "").strip()
+    tok = _cron_extract_token()
     esperado = ((os.environ.get("ILUS_CRON_TOKEN") or "").strip()
                 or (os.environ.get("FEDEX_CRON_TOKEN") or "").strip())
     if esperado:
@@ -33881,6 +34105,134 @@ def tr_cron_simpliroute_poll():
     dry = (request.args.get("dry") or "") in ("1", "true", "yes")
     res = _simpliroute_poll_batch(limit=limit, dry=dry)
     return jsonify(res), (200 if res.get("ok") else 502)
+
+
+@app.route("/transporte/webhook/simpliroute", methods=["POST"])
+def tr_webhook_simpliroute_recibir():
+    """Webhook de SimpliRoute (2026-08-07, Daniel: "vamos con el webhook").
+
+    SimpliRoute nos avisa apenas un chofer hace checkout de una visita
+    (evento 'visit_checkout_detailed'), en vez de esperar hasta 10 minutos
+    al próximo ciclo del poller programado.
+
+    IMPORTANTE — por qué este endpoint NO lee datos del payload para
+    escribir en la base: la doc pública de SimpliRoute no publica el
+    esquema exacto del payload (confirmado cruzando documentation.
+    simpliroute.com, el SDK de Node y el paquete de PyPI — ninguno lo trae
+    completo, ver _simpliroute_registrar_webhook). En vez de confiar campos
+    que no están garantizados, este endpoint usa el payload SOLO como aviso
+    de "algo cambió" y dispara el MISMO _simpliroute_poll_batch ya probado
+    en producción (con todos sus parches de reference/rank/rescate de 7
+    días, ver _sr_normalizar_reference), que vuelve a preguntarle a
+    SimpliRoute el estado real con nuestro propio token antes de tocar
+    cualquier fila. Si el payload viniera en un formato irreconocible, no
+    se pierde nada: el poller programado (cada ~10 min) lo agarra igual.
+
+    Seguridad: header X-ILUS-Webhook-Secret == SIMPLIROUTE_WEBHOOK_SECRET.
+    Sin ese secreto configurado, se rechaza TODO — a diferencia de los cron
+    jobs internos (que aceptan localhost sin token), este endpoint es
+    alcanzable desde internet, así que no hay un "modo sin token" seguro.
+
+    Responde 200 de inmediato (SimpliRoute reintenta 3 veces hasta 120s si
+    no recibe 200) y corre el poll en un hilo aparte para no bloquear la
+    respuesta.
+    """
+    secreto_esperado = (os.environ.get("SIMPLIROUTE_WEBHOOK_SECRET") or "").strip()
+    secreto_recibido = (request.headers.get("X-ILUS-Webhook-Secret") or "").strip()
+    if not secreto_esperado or secreto_recibido != secreto_esperado:
+        print(f"[sr-webhook] rechazado: secreto ausente o incorrecto (ip={request.remote_addr})",
+              flush=True)
+        return jsonify({"error": "forbidden"}), 403
+
+    body = request.get_json(silent=True) or {}
+    pista = body.get("reference") or body.get("name") or body.get("id") or "(sin pista identificable)"
+    # Log del payload crudo (truncado): con la doc incompleta, el primer
+    # evento real en vivo es la única forma de confirmar el esquema real.
+    print(f"[sr-webhook] evento recibido, pista={pista!r} payload={str(body)[:500]}", flush=True)
+
+    def _correr_en_hilo():
+        try:
+            with app.app_context():
+                if _sr_poll_acquire_lease(600):
+                    msg = "ciclo interrumpido (webhook)"
+                    try:
+                        res = _simpliroute_poll_batch()
+                        msg = (f"consultados={res.get('consultados', 0)} "
+                               f"actualizados={res.get('actualizados', 0)} "
+                               f"pod={res.get('pod', 0)} atascados={res.get('atascados', 0)}")
+                    finally:
+                        _sr_poll_release_lease(f"webhook: {msg}")
+                    print(f"[sr-webhook] {msg}", flush=True)
+                else:
+                    # Ya hay un ciclo en vuelo (programado u otro webhook) —
+                    # ese ciclo re-consulta las listas completas por fecha,
+                    # así que este evento igual queda cubierto, no se pierde.
+                    print("[sr-webhook] poll ya en curso, se omite (cubierto por el ciclo en vuelo)",
+                          flush=True)
+        except Exception as e:
+            print(f"[sr-webhook] error al procesar: {e}", flush=True)
+
+    import threading as _th
+    _th.Thread(target=_correr_en_hilo, daemon=True, name="sr-webhook-trigger").start()
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/admin/simpliroute-webhooks", methods=["GET", "POST"])
+def admin_simpliroute_webhooks():
+    """Panel técnico (JSON, no HTML) para dar de alta/revisar/baja el webhook
+    de SimpliRoute en la cuenta de CADA courier (Felca y Milling tienen
+    tokens/cuentas separadas — hay que registrar en cada una por separado).
+
+    Uso único de configuración, no operación diaria — por eso es JSON y no
+    tiene pantalla propia. Protegido por rol admin/superadmin (sesión).
+
+    GET  → lista lo que SimpliRoute tiene registrado hoy, por courier.
+    POST {"accion": "registrar"|"eliminar", "courier": "felca"|"milling"}
+         → devuelve la respuesta CRUDA de la API (ver comentario en
+           _simpliroute_registrar_webhook: el body exacto de alta no está
+           100% documentado, así que un 400 con el error de DRF es la forma
+           de corregir el nombre de campo en el próximo intento).
+    """
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "") not in ("admin", "superadmin"):
+        return jsonify({"ok": False, "error": "Solo admin"}), 403
+
+    secreto = (os.environ.get("SIMPLIROUTE_WEBHOOK_SECRET") or "").strip()
+    if not secreto:
+        return jsonify({"ok": False, "error": "Falta configurar SIMPLIROUTE_WEBHOOK_SECRET "
+                                                "(Railway/Cloud Run env vars)"}), 500
+
+    url_destino = url_for("tr_webhook_simpliroute_recibir", _external=True)
+
+    if request.method == "GET":
+        out = {}
+        for courier, env_var in SIMPLIROUTE_TOKENS_ENV.items():
+            tok = (os.environ.get(env_var) or "").strip()
+            if not tok:
+                out[courier] = {"token_configurado": False}
+                continue
+            out[courier] = {"token_configurado": True,
+                             "respuesta": _simpliroute_listar_webhooks(tok)}
+        return jsonify({"ok": True, "url_webhook": url_destino, "couriers": out})
+
+    body = request.get_json(silent=True) or {}
+    accion = (body.get("accion") or "").strip().lower()
+    courier = (body.get("courier") or "").strip().lower()
+    env_var = SIMPLIROUTE_TOKENS_ENV.get(courier)
+    if not env_var:
+        return jsonify({"ok": False, "error": f"courier desconocido: {courier!r} "
+                                                f"(usar uno de: {', '.join(SIMPLIROUTE_TOKENS_ENV)})"}), 400
+    tok = (os.environ.get(env_var) or "").strip()
+    if not tok:
+        return jsonify({"ok": False, "error": f"sin token de SimpliRoute configurado para {courier}"}), 400
+
+    if accion == "registrar":
+        r = _simpliroute_registrar_webhook(tok, url_destino, secreto)
+        return jsonify({"ok": r.get("ok", False), "respuesta": r}), (200 if r.get("ok") else 502)
+    if accion == "eliminar":
+        r = _simpliroute_eliminar_webhook(tok)
+        return jsonify({"ok": r.get("ok", False), "respuesta": r}), (200 if r.get("ok") else 502)
+    return jsonify({"ok": False, "error": "accion inválida (usar 'registrar' o 'eliminar')"}), 400
 
 
 @app.route("/transporte/api/items/<int:item_id>/refrescar-tracking", methods=["POST"])
@@ -35660,7 +36012,7 @@ def tr_cron_stock_snapshot():
     (08:00, 13:00, 17:30 hora Chile) -- mismo patrón de token que los demás
     crons (FEDEX_CRON_TOKEN / ILUS_CRON_TOKEN).
     """
-    tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
+    tok = _cron_extract_token()
     if not _fedex_cron_token_required(tok):
         return jsonify({"error": "forbidden"}), 403
 
@@ -35738,7 +36090,7 @@ def tr_cron_refrescar_saldo_productos():
     ahora exige AMBAS cosas -- terminal Y con guía -- no solo terminal. Ver el
     comentario junto a la query para el detalle completo.
     """
-    tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
+    tok = _cron_extract_token()
     if not _fedex_cron_token_required(tok):
         return jsonify({"error": "forbidden"}), 403
 
@@ -35932,9 +36284,10 @@ def tr_cron_sync_mes_actual():
     Scheduler). Si un redeploy cae justo encima de uno de esos 3 horarios,
     el hilo se reinicia y calcula el SIGUIENTE slot como próximo, saltándose
     por completo el de ese momento sin aviso ni reintento. Mismo patrón de
-    token que los demás crons (X-Cron-Token / ?token=).
+    token que los demás crons, por header X-Cron-Token (el query ?token=
+    es fallback de compatibilidad, ver _cron_extract_token).
     """
-    tok = (request.headers.get("X-Cron-Token") or request.args.get("token") or "").strip()
+    tok = _cron_extract_token()
     if not _fedex_cron_token_required(tok):
         return jsonify({"error": "forbidden"}), 403
     res = _tr_sync_mes_actual_bg(modo="resync")
@@ -37946,6 +38299,39 @@ def _simpliroute_request(method, path, token, *, payload=None, timeout=30):
                 "error": _src.extract_error_message(resp.status_code, body),
                 "raw": body}
     return {"ok": True, "status": resp.status_code, "data": body}
+
+
+# ── Webhooks de SimpliRoute (2026-08-07, Daniel: "vamos con el webhook") ──
+# Alta/baja/listado del webhook en la CUENTA de cada courier (Felca, Milling
+# tienen tokens/cuentas separadas -> hay que registrar en cada una).
+#
+# El endpoint POST /v1/addons/webhooks/ y el body del DELETE
+# ({"webhook": "<evento>"}) están confirmados contra documentation.simpliroute.com
+# (2026-08-07). El body EXACTO del POST de alta NO está publicado ahí -- se
+# prueba con los nombres de campo más consistentes con el resto de la API
+# (mismo campo "webhook" que usa el DELETE) y, si SimpliRoute lo rechaza,
+# devuelve el error de DRF con los nombres de campo reales: por eso
+# _simpliroute_registrar_webhook() devuelve la respuesta CRUDA de la API sin
+# interpretarla, para poder corregir en un intento si el primero falla en
+# vez de asumir éxito a ciegas.
+SIMPLIROUTE_WEBHOOK_EVENTO = "visit_checkout_detailed"
+
+
+def _simpliroute_listar_webhooks(token):
+    return _simpliroute_request("GET", "/v1/addons/webhooks/", token, timeout=20)
+
+
+def _simpliroute_registrar_webhook(token, url_destino, secreto, evento=SIMPLIROUTE_WEBHOOK_EVENTO):
+    payload = {
+        "webhook": evento,
+        "url": url_destino,
+        "headers": {"X-ILUS-Webhook-Secret": secreto},
+    }
+    return _simpliroute_request("POST", "/v1/addons/webhooks/", token, payload=payload, timeout=20)
+
+
+def _simpliroute_eliminar_webhook(token, evento=SIMPLIROUTE_WEBHOOK_EVENTO):
+    return _simpliroute_request("DELETE", "/v1/addons/webhooks/", token, payload={"webhook": evento}, timeout=20)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -74736,9 +75122,15 @@ def api_uf_refresh():
     Pensado para un Cloud Scheduler diario (opcional): un GET/POST diario a
     esta ruta mantiene la UF fresca aunque no haya tráfico. Protegido por un
     token si UF_CRON_TOKEN está seteado; sin token, requiere sesión admin.
-    Idempotente y seguro (solo LECTURA de la API externa + persiste en DB)."""
+    Idempotente y seguro (solo LECTURA de la API externa + persiste en DB).
+
+    Seguridad: el token se manda preferentemente por header X-UF-Token (el
+    query ?token= es fallback de compatibilidad, ver _cron_extract_token
+    -- mismo hallazgo 2026-08-07 que los crons de Transporte: Cloud Run
+    loguea la URL completa, así que ?token= queda expuesto en los logs de
+    acceso)."""
     token_env = (os.environ.get("UF_CRON_TOKEN") or "").strip()
-    token_in = (request.args.get("token") or request.headers.get("X-UF-Token") or "").strip()
+    token_in = _cron_extract_token("X-UF-Token")
     autorizado = False
     if token_env and token_in and token_in == token_env:
         autorizado = True
@@ -84994,6 +85386,46 @@ def _ensure_transporte_columns():
     return faltantes
 
 
+def _ensure_producto_unidades_por_venta():
+    """Garantiza app_products.unidades_por_venta AUNQUE ILUS_SKIP_MIGRATIONS=1.
+
+    PROBLEMA REAL (2026-08-07, Daniel, caso FCV 11225 — "estamos inflando los
+    precios... el peso se está duplicando"): hay SKUs que se venden y empacan
+    de a PAR (discos, mancuernas), y en el Catálogo se cargó el peso del PAR
+    COMPLETO como si fuera el peso de UNA unidad. El ERP factura en unidades
+    sueltas ("4 discos"), así que el cubicador calculaba
+    peso_del_par x 4 = 42 kg cuando el peso real de esos 4 discos es 21 kg.
+    El doble, en TODAS las cotizaciones de flete de esos productos.
+
+    `unidades_por_venta` = cuántas piezas físicas vienen en el empaque cuyo
+    peso/medidas están cargados en la ficha. 1 = ficha por unidad suelta (el
+    caso normal: máquinas, accesorios — no cambia nada). 2 = la ficha describe
+    un PAR (discos, mancuernas).
+
+    Solo afecta el CÁLCULO de peso/volumen del cubicador: la cantidad del ERP
+    NO se toca en ningún otro lado (bodega sigue viendo 4 piezas para el
+    picking, y las cuentas siguen cuadrando contra la factura).
+    """
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s",
+                (PRODUCTS_TABLE,)
+            ) or [])
+        }
+        if "unidades_por_venta" not in existing:
+            mysql_execute(
+                f"ALTER TABLE `{PRODUCTS_TABLE}` ADD COLUMN unidades_por_venta "
+                "TINYINT UNSIGNED NOT NULL DEFAULT 1 "
+                "COMMENT 'Piezas fisicas por empaque de la ficha. 1=unidad, 2=par (discos/mancuernas)'"
+            )
+            print("[ensure_prod_cols] columna agregada: unidades_por_venta", flush=True)
+    except Exception as e:
+        print(f"[ensure_prod_cols] no se pudo agregar unidades_por_venta: {e}", flush=True)
+
+
 def _ensure_courier_comunas_updated_at():
     """Garantiza transport_courier_comunas.updated_at AUNQUE ILUS_SKIP_MIGRATIONS=1.
 
@@ -88215,6 +88647,16 @@ try:
         _ensure_courier_comunas_updated_at()
 except Exception as _ccu_err:
     print(f"[ILUS][WARN] _ensure_courier_comunas_updated_at: {_ccu_err}", flush=True)
+
+# 2026-08-07 (Daniel, caso FCV 11225): SKUs que se venden de a PAR (discos,
+# mancuernas) tenían el peso del par cargado como si fuera de una unidad, y
+# el cubicador lo multiplicaba por la cantidad del ERP -> peso al DOBLE en
+# toda cotización de flete de esos productos. Ver _ensure_producto_unidades_por_venta.
+try:
+    with app.app_context():
+        _ensure_producto_unidades_por_venta()
+except Exception as _upv_err:
+    print(f"[ILUS][WARN] _ensure_producto_unidades_por_venta: {_upv_err}", flush=True)
 
 # 2026-08-05: "Responsable ILUS" en la tarjeta del courier. La lista hace
 # SELECT c.* y el modal Editar la guarda, así que la columna tiene que existir
