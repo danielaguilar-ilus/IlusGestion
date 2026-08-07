@@ -1,0 +1,55 @@
+{# Paginación de la pestaña Bodega (Regla #4.3). Propia y no el partial
+   global porque en /repuestos conviven DOS tablas: los parámetros van
+   con prefijo b* (bq/bpage/bsize) para no pisar los filtros de la
+   pestaña Seguimiento (q/estado/ticket/orden), que se preservan. #}
+{% set _b_first = ((bod_page - 1) * bod_page_size) + 1 if bod_total > 0 else 0 %}
+{% set _b_last  = (_b_first + (bod_repuestos|length) - 1) if bod_total > 0 else 0 %}
+{% set _b_keep = '&q=' ~ (filtro_q or '') ~ '&estado=' ~ (filtro_estado or '') ~ '&ticket=' ~ (filtro_ticket or '') ~ '&orden=' ~ (orden or '') %}
+{% set _b_filtros = '&bq=' ~ (bod_q or '') ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') %}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2"
+     style="border-top:1px solid #e5e7eb;background:#f9fafb;border-radius:0 0 12px 12px">
+
+  <div class="d-flex align-items-center gap-2" style="font-size:.78rem;color:#6b7280">
+    <i class="bi bi-box-seam" style="color:#dc2626"></i>
+    {% if bod_total > 0 %}
+      Mostrando <strong style="color:#0a0a0a">{{ _b_first }}–{{ _b_last }}</strong>
+      de <strong style="color:#0a0a0a">{{ bod_total }}</strong>
+    {% else %}
+      <span class="text-muted">Sin resultados</span>
+    {% endif %}
+  </div>
+
+  <div class="d-flex align-items-center gap-2">
+    <select class="form-select form-select-sm" style="width:auto;font-size:.78rem"
+            onchange="location.href='?bpage=1&bsize=' + this.value + '{{ _b_filtros }}{{ _b_keep }}#bodega'">
+      <option value="100" {% if bod_page_size == 100 %}selected{% endif %}>100 por pagina</option>
+      <option value="200" {% if bod_page_size == 200 %}selected{% endif %}>200 por pagina</option>
+      <option value="500" {% if bod_page_size == 500 %}selected{% endif %}>500 por pagina</option>
+    </select>
+
+    {% if bod_page > 1 %}
+      <a href="?bpage={{ bod_page - 1 }}&bsize={{ bod_page_size }}{{ _b_filtros }}{{ _b_keep }}#bodega"
+         class="btn btn-sm btn-outline-secondary fw-bold" style="font-size:.78rem">
+        <i class="bi bi-chevron-left"></i> Anterior</a>
+    {% else %}
+      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold"
+              style="font-size:.78rem;opacity:.4;cursor:not-allowed" disabled>
+        <i class="bi bi-chevron-left"></i> Anterior</button>
+    {% endif %}
+
+    <span class="badge" style="background:#dc2626;color:#fff;font-size:.78rem;padding:6px 10px;border-radius:6px;font-weight:700">
+      Pagina {{ bod_page }} de {{ bod_total_pages }}
+    </span>
+
+    {% if bod_page < bod_total_pages %}
+      <a href="?bpage={{ bod_page + 1 }}&bsize={{ bod_page_size }}{{ _b_filtros }}{{ _b_keep }}#bodega"
+         class="btn btn-sm btn-danger fw-bold" style="font-size:.78rem">
+        Siguiente <i class="bi bi-chevron-right"></i></a>
+    {% else %}
+      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold"
+              style="font-size:.78rem;opacity:.4;cursor:not-allowed" disabled>
+        Siguiente <i class="bi bi-chevron-right"></i></button>
+    {% endif %}
+  </div>
+</div>

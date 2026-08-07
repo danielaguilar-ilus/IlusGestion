@@ -56855,12 +56855,20 @@ def repuestos_hub_list():
         "WHERE estado='activo' ORDER BY razon_social LIMIT 500"
     ) or []
 
+    # 2026-08-07 (Daniel: "pero si lo quiero en repuestos!!!"): la Bodega
+    # (inventario físico) vive DENTRO de esta misma página como pestaña,
+    # no en una URL aparte. Se reusan los mismos helpers que ya alimentan
+    # /repuestos/bodega — esa ruta sigue existiendo (Regla #4.2, no se
+    # elimina nada) pero el acceso real es acá.
+    bodega_ctx = _repstock_contexto_bodega()
+
     return render_template(
         "clientes_hub/repuestos.html",
         repuestos=repuestos, estados=estados,
         filtro_estado=filtro_estado, filtro_q=filtro_q,
         filtro_ticket=filtro_ticket, orden=orden,
         clientes_select=clientes_select,
+        **bodega_ctx,
     )
 
 
@@ -81371,21 +81379,20 @@ def _repstock_fmt(r):
     return d
 
 
-@app.route("/repuestos/bodega")
-@_mant_required
-def repuestos_bodega_list():
-    """Bodega de repuestos: inventario físico real, paginado server-side
-    (Regla #4.3, igual que Etiquetas — sin arrastrar la deuda de /repuestos)."""
-    q = (request.args.get("q") or "").strip()
+def _repstock_contexto_bodega():
+    """Todo lo que la pestaña "Bodega" necesita para pintarse. Se llama
+    tanto desde /repuestos (donde vive de verdad, Daniel 2026-08-07) como
+    desde /repuestos/bodega (URL directa, se conserva)."""
+    q = (request.args.get("bq") or "").strip()
     marca_id = request.args.get("marca_id") or ""
     ubicacion_id = request.args.get("ubicacion_id") or ""
     solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
     try:
-        page = max(1, int(request.args.get("page") or 1))
+        page = max(1, int(request.args.get("bpage") or 1))
     except (TypeError, ValueError):
         page = 1
     try:
-        page_size = int(request.args.get("size") or 100)
+        page_size = int(request.args.get("bsize") or 100)
     except (TypeError, ValueError):
         page_size = 100
     if page_size not in (100, 200, 500):
@@ -81424,10 +81431,10 @@ def repuestos_bodega_list():
         f" WHERE {where_sql} ORDER BY r.sku ASC LIMIT %s OFFSET %s",
         tuple(params) + (page_size, offset)
     ) or []
-    repuestos = [_repstock_fmt(r) for r in rows]
+    bod_repuestos = [_repstock_fmt(r) for r in rows]
 
     modelos_por_repuesto = {}
-    ids = [r["id"] for r in repuestos]
+    ids = [r["id"] for r in bod_repuestos]
     if ids:
         ph = ",".join(["%s"] * len(ids))
         mrows = mysql_fetchall(
@@ -81441,19 +81448,34 @@ def repuestos_bodega_list():
         for m in mrows:
             modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(dict(m))
 
-    marcas = mysql_fetchall(
-        "SELECT id, nombre FROM mant_repuestos_marcas WHERE activo=1 ORDER BY nombre"
-    ) or []
-    ubicaciones = mysql_fetchall(
-        "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones WHERE activo=1 ORDER BY codigo"
-    ) or []
+    return {
+        "bod_repuestos": bod_repuestos,
+        "modelos_por_repuesto": modelos_por_repuesto,
+        "marcas": mysql_fetchall(
+            "SELECT id, nombre FROM mant_repuestos_marcas WHERE activo=1 ORDER BY nombre"
+        ) or [],
+        "ubicaciones": mysql_fetchall(
+            "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones WHERE activo=1 ORDER BY codigo"
+        ) or [],
+        "bod_q": q, "bod_marca_id": marca_id, "bod_ubicacion_id": ubicacion_id,
+        "bod_bajo_minimo": solo_bajo_minimo,
+        "bod_page": page, "bod_page_size": page_size,
+        "bod_total": total, "bod_total_pages": total_pages,
+    }
 
+
+@app.route("/repuestos/bodega")
+@_mant_required
+def repuestos_bodega_list():
+    """Bodega de repuestos como PÁGINA propia. Se conserva (Regla #4.2)
+    aunque el acceso real hoy es la pestaña "Bodega" dentro de /repuestos
+    (Daniel 2026-08-07). Reusa el MISMO helper y el mismo partial para que
+    no existan dos implementaciones que se desincronicen."""
+    ctx = _repstock_contexto_bodega()
     return render_template(
         "mantenciones/repuestos_bodega.html",
-        repuestos=repuestos, products=repuestos, modelos_por_repuesto=modelos_por_repuesto,
-        marcas=marcas, ubicaciones=ubicaciones,
-        q=q, marca_id=marca_id, ubicacion_id=ubicacion_id, bajo_minimo=solo_bajo_minimo,
-        page=page, page_size=page_size, total=total, total_pages=total_pages,
+        filtro_q="", filtro_estado="", filtro_ticket="", orden="",
+        **ctx,
     )
 
 

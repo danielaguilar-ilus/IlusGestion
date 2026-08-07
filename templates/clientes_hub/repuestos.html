@@ -82,11 +82,17 @@
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-gear-wide-connected me-2"></i>Repuestos</h4>
-    <div class="sub">Vista de todos los repuestos cotizados/instalados por cliente. Para agregar o
+    <div class="sub" id="repSubBodega">Inventario físico de la bodega — SKU, stock, ubicación, costo,
+      marca y compatibilidad con modelos de equipo.</div>
+    <div class="sub" id="repSubSeguimiento" style="display:none">Vista de todos los repuestos cotizados/instalados por cliente. Para agregar o
       editar un repuesto puntual, ábrelo desde la ficha del cliente (pestaña "Repuestos").
       Incluye la planilla real de seguimiento de Daniel (ubicación, motivo, N° OT, garantía).</div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="d-flex gap-2" id="repAccionesBodega">
+    <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo repuesto</button>
+  </div>
+  <div class="d-flex gap-2" id="repAccionesSeguimiento" style="display:none">
     <button class="btn btn-sm btn-ilus" id="btnRepBuscarErp" type="button"
             title="Busca un producto/documento en el ERP (por SKU, documento o RUT/nombre del cliente) y agrega el repuesto directamente a esta lista">
       <i class="bi bi-search me-1"></i>Buscar en ERP</button>
@@ -96,6 +102,28 @@
       <i class="bi bi-send-plus me-1"></i>Solicitar repuesto</button>
   </div>
 </div>
+
+{# ════════ Pestañas: Bodega (inventario) · Seguimiento (compras) ════════ #}
+<ul class="nav nav-tabs mb-3" id="repTabs">
+  <li class="nav-item">
+    <button class="nav-link active" type="button" onclick="repTab('bodega')" id="repTabBodega">
+      <i class="bi bi-box-seam me-1"></i>Bodega <span class="badge bg-secondary ms-1">{{ bod_total }}</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" type="button" onclick="repTab('seguimiento')" id="repTabSeguimiento">
+      <i class="bi bi-clipboard-check me-1"></i>Seguimiento <span class="badge bg-secondary ms-1">{{ repuestos|length }}</span>
+    </button>
+  </li>
+</ul>
+
+{# ════════ PANE BODEGA ════════ #}
+<div id="repPaneBodega">
+  {% include "mantenciones/_repuestos_bodega_pane.html" %}
+</div>
+
+{# ════════ PANE SEGUIMIENTO (lo que ya existía) ════════ #}
+<div id="repPaneSeguimiento" style="display:none">
 
 <form method="get" class="mb-3 d-flex flex-wrap gap-2 align-items-center rep-filters">
   <div class="input-group" style="max-width:300px">
@@ -214,6 +242,8 @@
   </table>
 </div>
 
+</div>{# /repPaneSeguimiento #}
+
 <!-- Modal "Asignar a ticket" + ficha rápida de proveedor -->
 <div class="repat-backdrop" id="repatBackdrop" onclick="repatClose()"></div>
 <div class="repat-modal" id="repatModal" role="dialog" aria-modal="true">
@@ -285,6 +315,32 @@
 </div>
 
 <script>
+// ══════════════ Pestañas Bodega / Seguimiento ══════════════
+function repTab(cual){
+  const esBodega = (cual === 'bodega');
+  document.getElementById('repPaneBodega').style.display = esBodega ? '' : 'none';
+  document.getElementById('repPaneSeguimiento').style.display = esBodega ? 'none' : '';
+  document.getElementById('repTabBodega').classList.toggle('active', esBodega);
+  document.getElementById('repTabSeguimiento').classList.toggle('active', !esBodega);
+  document.getElementById('repAccionesBodega').style.display = esBodega ? '' : 'none';
+  document.getElementById('repAccionesSeguimiento').style.display = esBodega ? 'none' : '';
+  document.getElementById('repSubBodega').style.display = esBodega ? '' : 'none';
+  document.getElementById('repSubSeguimiento').style.display = esBodega ? 'none' : '';
+  try { localStorage.setItem('repTabActiva', cual); } catch(e){}
+}
+document.addEventListener('DOMContentLoaded', function(){
+  // Si la URL trae filtros de Seguimiento, esa pestaña gana; si trae los
+  // de Bodega o #bodega, gana Bodega. Si no, la última que usaste.
+  const p = new URLSearchParams(location.search);
+  const tieneSeg = p.get('q') || p.get('estado') || p.get('ticket') || (p.get('orden') && p.get('orden') !== 'fecha_desc');
+  const tieneBod = p.get('bq') || p.get('marca_id') || p.get('ubicacion_id') || p.get('bajo_minimo') || p.get('bpage');
+  let elegida = 'bodega';
+  if (location.hash === '#bodega' || tieneBod) elegida = 'bodega';
+  else if (tieneSeg) elegida = 'seguimiento';
+  else { try { elegida = localStorage.getItem('repTabActiva') || 'bodega'; } catch(e){} }
+  repTab(elegida);
+});
+
 const _REPAT = { repuestoId: null, proveedorId: null, timer: null };
 
 // ══════════════ Estado de seguimiento (editable inline) ══════════════
