@@ -747,8 +747,15 @@ class TestCronRefrescoSaldo(unittest.TestCase):
         (ya no importan en un pedido cerrado) — el catch-up debe llamar
         directo a _tr_fetch_guias_from_erp con el id ya conocido, sin pasar
         por _tr_fetch_from_erp (que hace mucho más trabajo del necesario)."""
-        self.assertIn(
-            '_tr_fetch_guias_from_erp(d["id"], d["tido"], str(d["nudo"]))', self.fuente,
+        # 2026-08-07: comparación tolerante a espacios/saltos de línea — la
+        # llamada ahora viene envuelta en int(...) para CONTAR las guías
+        # encontradas (antes el cron contaba consultas, no hallazgos, y 281
+        # intentos fallidos idénticos por corrida se leían como trabajo
+        # hecho). La intención vigilada es la misma: catch-up directo con el
+        # id ya conocido de la query.
+        self.assertRegex(
+            _norm(self.fuente),
+            r'_tr_fetch_guias_from_erp\(\s*d\["id"\], d\["tido"\], str\(d\["nudo"\]\)\)',
             "Desapareció la llamada directa de catch-up (con el id ya "
             "conocido de la query) — revisar si el catch-up sigue existiendo.",
         )
@@ -1526,7 +1533,13 @@ class TestGuiasEnganchadoAlCron(unittest.TestCase):
             "La llamada a guías quedó antes de resolver comm_id vía "
             "_tr_fetch_from_erp: comm_id no existiría todavía.",
         )
-        self.assertIn("_tr_fetch_guias_from_erp(comm_id,", self.fuente)
+        # 2026-08-07: tolerante a saltos de línea — la llamada ahora viene
+        # envuelta en int(...) para contar guías ENCONTRADAS (no solo
+        # consultas). La intención vigilada no cambia: cuelga del comm_id
+        # ya resuelto.
+        import re as _re
+        self.assertRegex(_re.sub(r"\s+", " ", self.fuente),
+                         r"_tr_fetch_guias_from_erp\(\s*comm_id,")
 
     def test_un_fallo_de_guias_no_cuenta_como_fallo_de_saldo(self):
         """El cron reporta actualizados/fallidos sobre el refresco de SALDO
@@ -1535,14 +1548,18 @@ class TestGuiasEnganchadoAlCron(unittest.TestCase):
         un `try:` justo antes de la llamada y un `except ... as e_g:` propio
         justo después -- distinto del `except Exception as e:` del loop
         general (ese es el que cuenta fallidos del saldo)."""
-        llamada = '_tr_fetch_guias_from_erp(comm_id, d["tido"], str(d["nudo"]))'
-        self.assertIn(llamada, self.fuente)
-        idx_llamada = self.fuente.index(llamada)
-        antes = self.fuente[:idx_llamada]
-        despues = self.fuente[idx_llamada + len(llamada):]
-        self.assertIn("try:", antes[-40:],
+        # 2026-08-07: localización por regex, tolerante al envoltorio
+        # int(...) y a saltos de línea. La intención vigilada es la misma:
+        # try: propio inmediatamente antes, except-as-e_g propio
+        # inmediatamente después — nunca el except general del loop.
+        import re as _re
+        m = _re.search(r"_tr_fetch_guias_from_erp\(\s*comm_id,[^)]*\)", self.fuente)
+        self.assertIsNotNone(m, "Desapareció la llamada a guías con comm_id.")
+        antes = self.fuente[:m.start()]
+        despues = self.fuente[m.end():]
+        self.assertIn("try:", antes[-120:],
                        "No hay un try: propio justo antes de la llamada a guías.")
-        self.assertIn("except Exception as e_g:", despues[:60],
+        self.assertIn("except Exception as e_g:", despues[:160],
                        "No hay un except propio (as e_g) justo después de la "
                        "llamada a guías -- podría estar cayendo en el except "
                        "general del loop y contando como fallo de saldo.")

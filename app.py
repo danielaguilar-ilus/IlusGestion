@@ -33123,10 +33123,25 @@ def _sr_normalizar_reference(ref):
     que "BLV-22738" y "BLV-0000022738" son strings DISTINTOS que nunca
     calzaban en una comparación exacta, aunque se refieran al mismo despacho.
     Se normaliza quitando los ceros a la izquierda de la parte numérica final.
+
+    FIX 2026-08-07 (Daniel: caso BLV 22890/22877, "esto es lo que estamos
+    vendiendo, no puede fallar" — 30 envíos congelados 4 días, 9 de ellos ya
+    entregados en la calle). La versión anterior SOLO quitaba los ceros
+    cuando la reference traía guion: una reference sin guion —el "nudo
+    pelado", que es EXACTAMENTE el formato con que el courier carga sus
+    visitas por Excel ("Id de referencia" = 22890)— salía intacta. Así,
+    el fallback del nudo pelado buscaba "0000022890" (el nudo de la BD, que
+    viene del ERP con ceros) contra visitas indexadas como "22890": MISS
+    eterno. El parche del caso BLV 22738 que dependía de este fallback fue
+    código muerto desde el día que se escribió, salvo para nudos guardados
+    sin ceros (que fue justo ese caso — por eso pareció funcionar).
+    Confirmado contra la API real: ILUS sube "BLV-0000022890" (pending para
+    siempre) y Felca opera "22890" (completed) — dos universos de visitas
+    en la misma cuenta que esta función es la única encargada de unir.
     """
     ref = (ref or "").strip()
     if "-" not in ref:
-        return ref
+        return str(int(ref)) if ref.isdigit() else ref
     tido, nudo = ref.rsplit("-", 1)
     nudo = nudo.strip()
     if nudo.isdigit():
@@ -33189,6 +33204,14 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     for courier, items in por_courier.items():
         token = _simpliroute_token_for_courier(courier)
         if not token:
+            # 2026-08-07: antes era un `continue` MUDO — asimétrico con el
+            # poller principal, que sí registra el error. Como
+            # _simpliroute_courier_integra() acepta por NOMBRE aunque el
+            # token no exista, un courier sin token entraba a "revisados" y
+            # se saltaba sin dejar rastro: parecía revisado y no lo estaba.
+            out["errores"].append(
+                f"{courier}: integra SimpliRoute pero no tiene token configurado "
+                f"({len(items)} item(s) sin revisar)")
             continue
         por_ref = {}
         for it in items:
@@ -33374,8 +33397,54 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                         # y podria bloquear el cambio hacia ella.
                         por_ref_todas.setdefault(_ref_k, []).append(v)
 
+        # ── Índice de los últimos 7 días, PEREZOSO y por grupo ────────────
+        # FIX 2026-08-07 (Daniel: BLV 22890 entregado el 06-08 a las 15:29 y
+        # ILUS diciendo "Retirado" al día siguiente). El bucle de arriba solo
+        # consulta DOS fechas: la del manifiesto y HOY. Una entrega de AYER
+        # (o del viernes, mirada el lunes) no está en ninguna de las dos, así
+        # que la visita real entregada era invisible apenas rodaba la
+        # medianoche — el rescate de 7 días que ya existía más abajo solo
+        # corre cuando el visit_id guardado NO resuelve, y la visita fantasma
+        # de ILUS siempre resuelve (pending eterno), o sea nunca corría.
+        #
+        # Este índice se carga UNA vez por (courier, ciclo) y SOLO si algún
+        # item lo necesita (visita resuelta que sigue sin avanzar): 7
+        # peticiones por grupo en el peor caso, no 7 por item. Indexa por
+        # reference normalizada quedándose con la visita MÁS avanzada
+        # (_sr_rank mayor) de cada reference.
+        _idx7 = {"cargado": False, "por_ref": {}}
+
+        def _indice_7d():
+            if _idx7["cargado"]:
+                return _idx7["por_ref"]
+            _idx7["cargado"] = True
+            _ya = {fecha_s, hoy_s}
+            for _delta in range(0, 7):
+                _f = (_now_chile().date() - _dt_mod.timedelta(days=_delta)).isoformat()
+                if _f in _ya:
+                    continue
+                _ya.add(_f)
+                _r7 = _simpliroute_request(
+                    "GET", f"{_src.EP_VISITS}?planned_date={_f}", token, timeout=45)
+                if not _r7.get("ok"):
+                    continue
+                _d7 = _r7.get("data")
+                for _v in (_d7 if isinstance(_d7, list) else []):
+                    if isinstance(_v, dict) and (_v.get("reference") or "").strip():
+                        _k = _sr_normalizar_reference((_v.get("reference") or "").strip())
+                        _prev = _idx7["por_ref"].get(_k)
+                        if _prev is None or _sr_rank(_v) > _sr_rank(_prev):
+                            _idx7["por_ref"][_k] = _v
+            # Las dos fechas ya cargadas también compiten en el índice.
+            for _k, _v in por_ref.items():
+                _prev = _idx7["por_ref"].get(_k)
+                if _prev is None or _sr_rank(_v) > _sr_rank(_prev):
+                    _idx7["por_ref"][_k] = _v
+            return _idx7["por_ref"]
+
         for it in items:
             vid = str(it.get("simpliroute_visit_id") or "")
+            _vid_original = vid   # para saber después si hubo re-vinculación
             ref_it = f"{(it.get('tido') or '').strip()}-{(it.get('nudo') or '').strip()}".strip("-")
             ref_it = _sr_normalizar_reference(ref_it)
 
@@ -33424,21 +33493,30 @@ def _simpliroute_poll_batch(limit=400, dry=False):
 
             if visita_ref and str(visita_ref.get("id")) != vid:
                 nuevo_id = str(visita_ref.get("id") or "")
-                try:
-                    mysql_execute(
-                        "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
-                        "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() "
-                        "WHERE id=%s",
-                        (nuevo_id, visita_ref.get("tracking_id") or "", it["item_id"]))
-                    _tr_log("manifest_item", it["item_id"],
-                            "Visita SimpliRoute reemplazada automaticamente",
-                            f"visit_id viejo {vid} sigue vivo pero superado -> nuevo {nuevo_id} "
-                            f"(reference={ref_it})")
+                # 2026-08-07: el UPDATE va detrás de `dry` — antes no lo
+                # estaba, y no escribía en dry-run SOLO porque el match de
+                # arriba fallaba siempre (bug del normalizador). Con el
+                # normalizador arreglado, un dry-run sin esta guarda habría
+                # empezado a escribir en producción. En memoria el reemplazo
+                # se adopta igual, para que el dry reporte lo que HARÍA.
+                if not dry:
+                    try:
+                        mysql_execute(
+                            "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+                            "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() "
+                            "WHERE id=%s",
+                            (nuevo_id, visita_ref.get("tracking_id") or "", it["item_id"]))
+                        _tr_log("manifest_item", it["item_id"],
+                                "Visita SimpliRoute reemplazada automaticamente",
+                                f"visit_id viejo {vid} sigue vivo pero superado -> nuevo {nuevo_id} "
+                                f"(reference={ref_it})")
+                        vid = nuevo_id
+                    except Exception as e:
+                        out["errores"].append(
+                            f"item {it['item_id']}: encontrada visita nueva {nuevo_id} "
+                            f"pero no se pudo guardar ({e})")
+                else:
                     vid = nuevo_id
-                except Exception as e:
-                    out["errores"].append(
-                        f"item {it['item_id']}: encontrada visita nueva {nuevo_id} "
-                        f"pero no se pudo guardar ({e})")
 
             visita = por_id.get(vid)
             if not visita and visita_ref and str(visita_ref.get("id")) == vid:
@@ -33545,7 +33623,19 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                         # consumen otras partes del poller).
                         _motivo_404 = (f"Visita SimpliRoute {vid} no encontrada (404) y sin "
                                        f"reemplazo por reference={ref_it} en los ultimos 7 dias")
-                        if r_uno.get("status") not in (404, 0):
+                        # 2026-08-07: status 0 es lo que _simpliroute_request
+                        # devuelve ante TIMEOUT o fallo de RED — tratarlo como
+                        # 404 escribía en simpliroute_error el texto mentiroso
+                        # "no encontrada (404)" cuando en realidad nunca hubo
+                        # respuesta. Ahora la falla de red cuenta como error
+                        # del ciclo (visible en el log) y NO persiste un
+                        # diagnóstico falso sobre el item.
+                        if r_uno.get("status") == 0:
+                            out["errores"].append(
+                                f"{courier} visita {vid}: sin respuesta de SimpliRoute "
+                                f"(timeout/red) — {r_uno.get('error')}")
+                            continue
+                        if r_uno.get("status") != 404:
                             out["errores"].append(
                                 f"{courier} visita {vid}: {r_uno.get('error')}")
                         else:
@@ -33559,20 +33649,112 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                             except Exception:
                                 pass
                         continue
+            # ── RESCATE DE VISITA ESTANCADA (2026-08-07, caso BLV 22890) ──
+            # La visita resuelta EXISTE pero no avanza (pending). Hasta hoy
+            # ese caso era un punto muerto: estado_ilus_from_visit(pending)
+            # devuelve None, no se escribe nada, no se cuenta nada, y el
+            # rescate de 7 días de arriba nunca corría porque solo se dispara
+            # cuando la visita NO resuelve. Acá se consulta el índice de 7
+            # días buscando una visita MÁS AVANZADA con la misma reference
+            # (forma tido-nudo o nudo pelado). Estrictamente más avanzada
+            # (_sr_rank MAYOR, nunca igual): eso preserva el anti ping-pong
+            # del caso BLV 22729 y usa la misma excepción del caso FCV 11137.
+            if visita is not None and _sr_rank(visita) < 2:
+                _i7 = _indice_7d()
+                _mejor = None
+                for _clave in (ref_it,
+                               _sr_normalizar_reference((it.get("nudo") or "").strip())):
+                    if not _clave:
+                        continue
+                    _cand = _i7.get(_clave)
+                    if (_cand and str(_cand.get("id")) != str(visita.get("id"))
+                            and _sr_rank(_cand) > _sr_rank(visita)):
+                        if _mejor is None or _sr_rank(_cand) > _sr_rank(_mejor):
+                            _mejor = _cand
+                if _mejor is not None:
+                    nuevo_id = str(_mejor.get("id") or "")
+                    if not dry:
+                        try:
+                            mysql_execute(
+                                "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
+                                "simpliroute_tracking_id=%s, simpliroute_synced_at=NOW() "
+                                "WHERE id=%s",
+                                (nuevo_id, _mejor.get("tracking_id") or "", it["item_id"]))
+                            _tr_log("manifest_item", it["item_id"],
+                                    "Visita SimpliRoute reemplazada automaticamente",
+                                    f"visit_id {vid} seguia pending; en los ultimos 7 dias "
+                                    f"existe {nuevo_id} mas avanzada (reference={ref_it})")
+                            vid = nuevo_id
+                            visita = _mejor
+                        except Exception as e:
+                            out["errores"].append(
+                                f"item {it['item_id']}: visita estancada, encontrada "
+                                f"{nuevo_id} pero no se pudo guardar ({e})")
+                    else:
+                        vid = nuevo_id
+                        visita = _mejor
+
             estado_ilus, comentario = _src.estado_ilus_from_visit(visita)
             registro = {"item_id": it["item_id"], "visit_id": vid,
                         "sr_status": visita.get("status"),
                         "estado_ilus": estado_ilus, "comentario": comentario}
+
+            # Contador de atascados (2026-08-07): items cuya visita sigue sin
+            # avanzar con el manifiesto ya vencido hace más de un día. 30
+            # items estuvieron 4 días congelados y el log era indistinguible
+            # de "no hay nada que hacer" — este número es lo que corta eso.
+            try:
+                _f_mi = it.get("fecha")
+                _f_mi = _f_mi if hasattr(_f_mi, "toordinal") else None
+                if (_sr_rank(visita) < 2 and _f_mi
+                        and (_now_chile().date() - _f_mi).days >= 1):
+                    out["atascados"] = out.get("atascados", 0) + 1
+            except Exception:
+                pass
+
             if dry:
                 out["items"].append(registro)
                 continue
             if estado_ilus:
+                # 2026-08-07: dos razones para NO mandar correo al cliente,
+                # ambas de Daniel el mismo día:
+                #
+                # (1) RE-VINCULACIÓN ("te encargo que se actualicen los
+                #     despachos, espero que NO enviemos correos, ya está
+                #     cerrado el paso"): si el estado nuevo viene de haber
+                #     cambiado la visita seguida (el destrabe de las visitas
+                #     congeladas), el cliente ya vivió su entrega — un correo
+                #     ahora solo confunde. El estado igual se corrige y queda
+                #     trazado.
+                # (2) ALCANCE VIEJO: checkout hace más de 24 h — mismo
+                #     criterio aunque no haya habido re-vinculación.
+                #
+                # Un cambio fresco por el flujo normal (la MISMA visita
+                # avanzó hoy) sigue avisando como siempre.
+                _notify = True
+                if vid != _vid_original:
+                    _notify = False
+                    registro["notify_omitido"] = "alcance por re-vinculacion de visita"
+                else:
+                    try:
+                        _co = (visita.get("checkout_time") or "").strip()
+                        if _co:
+                            from datetime import datetime as _dt_ck, timezone as _tz_ck
+                            _co_dt = _dt_ck.fromisoformat(_co.replace("Z", "+00:00"))
+                            if _co_dt.tzinfo is None:
+                                _co_dt = _co_dt.replace(tzinfo=_tz_ck.utc)
+                            _edad_h = (_dt_ck.now(_tz_ck.utc) - _co_dt).total_seconds() / 3600.0
+                            if _edad_h > 24:
+                                _notify = False
+                                registro["notify_omitido"] = f"checkout hace {_edad_h:.0f} h"
+                    except Exception:
+                        pass
                 res = _tr_apply_carrier_status(
                     it["item_id"], estado_ilus,
                     fuente="simpliroute",
                     tracking_number=None,   # NO tocar: esa columna es de FedEx
                     comentario=comentario,
-                    notify_cliente=True,    # el cliente SÍ recibe el aviso
+                    notify_cliente=_notify,
                 )
                 if res.get("changed"):
                     out["actualizados"] += 1
@@ -33629,8 +33811,16 @@ def _simpliroute_poll_loop():
                     msg = (f"consultados={res.get('consultados', 0)} "
                            f"actualizados={res.get('actualizados', 0)} "
                            f"pod={res.get('pod', 0)} grupos={res.get('grupos', 0)}")
+                    # 2026-08-07: atascados SIEMPRE visible (aun en 0). 30
+                    # items pasaron 4 días congelados con un log idéntico a
+                    # "no hay nada que hacer" — este número es la alarma.
+                    msg += f" atascados={res.get('atascados', 0)}"
                     if res.get("errores"):
-                        msg += f" errores={len(res['errores'])}"
+                        # El CONTENIDO, no solo el conteo: "errores=3" no le
+                        # sirve a nadie a las 2 AM mirando logs.
+                        _errs = res["errores"]
+                        msg += (f" errores={len(_errs)} :: "
+                                + " | ".join(str(e)[:160] for e in _errs[:3]))
                     huer = res.get("huerfanos") or {}
                     if huer.get("revisados") or huer.get("vinculados"):
                         msg += (f" | huerfanos: revisados={huer.get('revisados', 0)} "
@@ -35637,11 +35827,29 @@ def tr_cron_refrescar_saldo_productos():
           (mi.id IS NULL
            AND NOT EXISTS (SELECT 1 FROM transport_guias g2 WHERE g2.commitment_id = c.id)
            AND (c.fecha_emision IS NULL OR c.fecha_emision >= DATE_SUB(NOW(), INTERVAL 60 DAY)))
-        ORDER BY c.id
+        -- ROTACIÓN (FIX 2026-08-07, Daniel con captura: la guía 32375 del
+        -- 03/08 existía en el ERP hacía DÍAS y solo apareció al apretar el
+        -- botón a mano). El ORDER BY c.id anterior congelaba la cola:
+        -- ~281 documentos viejos que nunca van a tener guía ocupaban las
+        -- primeras 300 posiciones PARA SIEMPRE (solo salen del conjunto
+        -- cuando aparece una guía... que nunca aparece), y los documentos
+        -- nuevos, con id más alto, jamás alcanzaban a entrar al LIMIT. El
+        -- log decía "guias_catchup=281" idéntico en cada corrida: parecía
+        -- trabajo hecho y eran los MISMOS 281 intentos fallidos cada vez.
+        -- Ahora: primero los despachos ACTIVOS (su propósito es refrescar
+        -- saldo en cada corrida, son pocos), después los que NUNCA se han
+        -- intentado, después el intento más antiguo — cada corrida avanza
+        -- por documentos distintos en vez de repetir los mismos.
+        ORDER BY activo DESC,
+                 (c.guia_intentada_at IS NULL) DESC,
+                 c.guia_intentada_at ASC,
+                 c.id DESC
         LIMIT 300
     """) or []
 
     actualizados, fallidos, guias_catchup = 0, 0, 0
+    guias_encontradas = 0
+    _ids_tanda = [d["id"] for d in docs if d.get("id")]
     for d in docs:
         try:
             if d.get("activo"):
@@ -35653,7 +35861,8 @@ def tr_cron_refrescar_saldo_productos():
                     # contar como fallo del refresco de saldo (que es lo que
                     # este cron reporta principalmente).
                     try:
-                        _tr_fetch_guias_from_erp(comm_id, d["tido"], str(d["nudo"]))
+                        guias_encontradas += int(_tr_fetch_guias_from_erp(
+                            comm_id, d["tido"], str(d["nudo"])) or 0)
                     except Exception as e_g:
                         print(f"[refrescar-saldo][guias] {d['tido']} {d['nudo']} falló: {e_g}", flush=True)
                 else:
@@ -35663,11 +35872,24 @@ def tr_cron_refrescar_saldo_productos():
                 # hace falta refrescar todo el commitment (saldo/cliente/
                 # dirección ya no importan en un pedido cerrado) — solo la
                 # guía, con el commitment_id que ya tenemos de la query.
-                _tr_fetch_guias_from_erp(d["id"], d["tido"], str(d["nudo"]))
+                guias_encontradas += int(_tr_fetch_guias_from_erp(
+                    d["id"], d["tido"], str(d["nudo"])) or 0)
                 guias_catchup += 1
         except Exception as e:
             fallidos += 1
             print(f"[refrescar-saldo] {d['tido']} {d['nudo']} falló: {e}", flush=True)
+        finally:
+            # Sello de "ya lo intenté" — es lo que hace girar la rotación del
+            # ORDER BY. Va en finally a propósito: un intento FALLIDO también
+            # cuenta como intento (si no, un documento que revienta se
+            # quedaría eternamente al frente de la cola, que es exactamente
+            # la enfermedad que se está curando).
+            try:
+                mysql_execute(
+                    "UPDATE transport_commitments SET guia_intentada_at=NOW() WHERE id=%s",
+                    (d["id"],))
+            except Exception:
+                pass
 
     # Marcado automático de "guía real sin gestión de despacho" -> Problema
     # (2026-08-01, Daniel: "en Problema dejaría ese tipo... para que Alison se
@@ -35684,8 +35906,16 @@ def tr_cron_refrescar_saldo_productos():
     except Exception as e_mp:
         print(f"[refrescar-saldo][problema] marcado automático falló: {e_mp}", flush=True)
 
+    # 2026-08-07: "guias_catchup" contaba CONSULTAS, no hallazgos — 281
+    # intentos fallidos idénticos por corrida se leían como trabajo hecho.
+    # Ahora se reporta también cuántas guías se ENCONTRARON de verdad, y el
+    # rango de ids de la tanda: si el min/max no se mueve entre corridas, la
+    # cola está congelada y se ve al instante en el log.
     return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados,
-                    "guias_catchup": guias_catchup, "fallidos": fallidos,
+                    "guias_catchup": guias_catchup,
+                    "guias_encontradas": guias_encontradas,
+                    "fallidos": fallidos,
+                    "tanda_ids": (f"{min(_ids_tanda)}-{max(_ids_tanda)}" if _ids_tanda else ""),
                     "marcados_problema": marcados_problema})
 
 
@@ -84707,6 +84937,13 @@ def _ensure_transporte_columns():
         # tras una entrega fallida. Sin esto el motor no puede aplicar el
         # tope (MAX_REINTENTOS_AUTOMATICOS) y reintentaría para siempre.
         "redespacho_intentos":       "TINYINT UNSIGNED DEFAULT 0",
+        # Rotación de la cola de captura de guías (2026-08-07): último
+        # intento de buscarle guía a este documento en el ERP. Es lo que
+        # gira la cola de tr_cron_refrescar_saldo_productos — sin esto, el
+        # ORDER BY c.id dejaba ~281 documentos sin-guía-posible tapando el
+        # LIMIT 300 para siempre y los nuevos nunca se consultaban (caso
+        # real: guía 32375 del 03/08 que solo apareció al apretar el botón).
+        "guia_intentada_at":         "DATETIME NULL",
         # Marca del barrido de limpieza financiera (2026-08-05): cuándo se
         # releyó este documento del ERP para corregirle el ZZ Envío. Es lo que
         # hace que el barrido AVANCE: sin la marca, un documento vuelve a la
