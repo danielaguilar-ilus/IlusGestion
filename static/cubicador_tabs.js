@@ -1001,12 +1001,20 @@
     rows.forEach(function (row) {
       try {
         var qty = num(row.dataset.qty) || 0;
+        /* Productos con unidad secundaria (discos, mancuernas): la ficha
+           describe el PAR y data-qty son las piezas facturadas, así que los
+           totales van por EMPAQUES. Sin esto, guardar medidas desde el
+           Cubicador dejaba el peso al doble en la fila aunque el backend lo
+           calculara bien (2026-08-07, caso FCV 11225). El template escribe
+           data-uxv con lo que trae el ERP (unidad 2 / RLUDPR). */
+        var uxv = Math.max(num(row.dataset.uxv) || 1, 1);
+        var equiv = uxv > 1 ? (qty / uxv) : qty;
         // data-* que consume el recalculo de totales (mismos nombres de siempre)
         row.dataset.bultos = String(t.n);
-        row.dataset.kgTot = String(Math.round(t.kg * qty * 10000) / 10000);
-        row.dataset.pvTot = String(Math.round(t.pv * qty * 10000) / 10000);
-        row.dataset.volTot = String(Math.round(t.vol * qty * 100) / 100);
-        row.dataset.predTot = String(Math.round(t.pred * qty * 10000) / 10000);
+        row.dataset.kgTot = String(Math.round(t.kg * equiv * 10000) / 10000);
+        row.dataset.pvTot = String(Math.round(t.pv * equiv * 10000) / 10000);
+        row.dataset.volTot = String(Math.round(t.vol * equiv * 100) / 100);
+        row.dataset.predTot = String(Math.round(t.pred * equiv * 10000) / 10000);
         if (pid && !row.dataset.appId) row.dataset.appId = String(pid);
 
         var esTr = row.tagName === 'TR';
@@ -1029,7 +1037,7 @@
             setNum('vol-u', 7, fm3(t.vol));
             setNum('pred-u', 8, '<span style="color:' + (kgMayor ? '#CC0000' : '#1a7a1a') + '">' + fkg(t.pred)
               + ' <sup style="font-size:.6rem">' + (kgMayor ? 'kg' : 'pv') + '</sup></span>');
-            setNum('pred-tot', 9, fkg(t.pred * qty));
+            setNum('pred-tot', 9, fkg(t.pred * equiv));
           } else {
             ['kg-u', 'pv-u', 'vol-u', 'pred-u', 'pred-tot'].forEach(function (nom, i) {
               setNum(nom, 5 + i, '<span class="text-muted">—</span>');
@@ -1055,7 +1063,7 @@
           var cells = $$('[data-cell]', row);
           var byName = {};
           cells.forEach(function (c) { byName[c.getAttribute('data-cell')] = c; });
-          var vals = [fkg(t.kg * qty), fkg(t.pv * qty), fm3(t.vol * qty), fkg(t.pred * qty)];
+          var vals = [fkg(t.kg * equiv), fkg(t.pv * equiv), fm3(t.vol * equiv), fkg(t.pred * equiv)];
           var names = ['kg-tot', 'pv-tot', 'vol-tot', 'pred-tot'];
           var fallback = $$('.row .col-3 .fw-bold', row);
           names.forEach(function (nm, i) {
@@ -1140,6 +1148,14 @@
         (obj.lineas || []).forEach(function (l) {
           if (String(l.sku || '') !== sku) return;
           var qty = num(l.cantidad);
+          /* Productos que se venden de a par (discos, mancuernas): el ERP
+             factura piezas sueltas pero la ficha describe el empaque de 2,
+             así que los totales van por EMPAQUES, no por piezas. Sin esto,
+             editar las medidas desde el Cubicador volvía a dejar el peso al
+             doble aunque el backend ya lo calculara bien (2026-08-07, caso
+             FCV 11225). El backend manda unidades_por_venta en cada línea. */
+          var uxv = Math.max(parseInt(l.unidades_por_venta, 10) || 1, 1);
+          var equiv = uxv > 1 ? (qty / uxv) : qty;
           l.total_bultos = t.n;
           l.tiene_bultos = t.n > 0;
           l.tiene_ficha = true;
@@ -1147,10 +1163,11 @@
           l.peso_vol_u = t.pv;
           l.vol_u = t.vol;
           l.pred_u = t.pred;
-          l.peso_kg_tot = Math.round(t.kg * qty * 10000) / 10000;
-          l.peso_vol_tot = Math.round(t.pv * qty * 10000) / 10000;
-          l.vol_tot = Math.round(t.vol * qty * 100) / 100;
-          l.pred_tot = Math.round(t.pred * qty * 10000) / 10000;
+          l.bultos_equivalentes = equiv;
+          l.peso_kg_tot = Math.round(t.kg * equiv * 10000) / 10000;
+          l.peso_vol_tot = Math.round(t.pv * equiv * 10000) / 10000;
+          l.vol_tot = Math.round(t.vol * equiv * 100) / 100;
+          l.pred_tot = Math.round(t.pred * equiv * 10000) / 10000;
         });
         return JSON.stringify(obj);
       };

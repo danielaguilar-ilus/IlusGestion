@@ -825,7 +825,7 @@ function _renderSeleccionLineas(lineas){
           <span style="color:#94a3b8;font-size:.74rem">/ ${ln.cantidad_doc}</span>
         </div>
       </div>
-      <div class="sel-prod-totals">
+      <div class="sel-prod-totals" data-uxv="${ln.unidades_por_venta || 1}">
         <div><i class="bi bi-box"></i> <span data-peso="${ln.peso_unit_kg}">0.0</span> kg</div>
         <div><i class="bi bi-bounding-box"></i> <span data-vol="${ln.vol_unit_m3}">0.000</span> m³</div>
       </div>
@@ -853,8 +853,13 @@ function _selProdRecalc(){
     const volSpan  = row.querySelector('[data-vol]');
     const pesoUnit = parseFloat(pesoSpan.dataset.peso || 0);
     const volUnit  = parseFloat(volSpan.dataset.vol || 0);
-    const pesoTot = incluida ? pesoUnit * qty : 0;
-    const volTot  = incluida ? volUnit * qty : 0;
+    /* Productos con unidad secundaria (discos, mancuernas): la ficha describe
+       el PAR y el ERP cuenta piezas sueltas, así que 4 piezas son 2 empaques.
+       Sin esto, el peso del retiro salía al doble (2026-08-07, caso FCV 11225). */
+    const uxv = Math.max(parseFloat(pesoSpan.closest('[data-uxv]')?.dataset.uxv) || 1, 1);
+    const equiv = uxv > 1 ? (qty / uxv) : qty;
+    const pesoTot = incluida ? pesoUnit * equiv : 0;
+    const volTot  = incluida ? volUnit * equiv : 0;
     pesoSpan.textContent = pesoTot.toFixed(1);
     volSpan.textContent  = volTot.toFixed(3);
     if (incluida){

@@ -233,6 +233,30 @@ def is_valid_email(email: str) -> bool:
     return bool(_PICKUP_EMAIL_RE.match(e))
 
 
+def _empaques_equivalentes(cantidad_piezas, linea_snapshot):
+    """Cuántos EMPAQUES reales representan `cantidad_piezas` de esta línea.
+
+    Los discos y mancuernas se empacan de a PAR y así están cargados en el
+    Catálogo (el peso de la ficha es el del par), pero el ERP factura piezas
+    sueltas. Multiplicar el peso de la ficha por las piezas duplicaba el peso
+    de todo retiro de esos productos — mismo bug que en el Cubicador
+    (2026-08-07, Daniel, caso FCV 11225).
+
+    `linea_snapshot` es la línea del erp_snapshot (viene de _cubicador_fetch).
+    Los snapshots guardados ANTES de este cambio no traen el campo: caen a 1,
+    o sea el comportamiento anterior, en vez de reventar.
+    """
+    try:
+        qty = float(cantidad_piezas or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    try:
+        uxv = max(int((linea_snapshot or {}).get("unidades_por_venta") or 1), 1)
+    except (TypeError, ValueError):
+        uxv = 1
+    return (qty / uxv) if uxv > 1 else qty
+
+
 def register_pickup_routes(app, ctx):
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
@@ -4814,13 +4838,16 @@ def register_pickup_routes(app, ctx):
             # 🆕 Daniel 2026-05-24: ver pickup_doc_agregar — la flag persiste
             # el aviso "ya rebajado en ERP" en la tabla externa de productos.
             marcada_sin_saldo = 1 if li.get("marcada_sin_saldo") else 0
+            # Empaques reales (= piezas salvo en productos de a par). Ver
+            # _empaques_equivalentes: sin esto el peso del retiro salía al doble.
+            _eq = _empaques_equivalentes(qty_sel, ln_snap)
             upsert_rows.append((
                 rid, doc_id, sku, descripcion,
                 cantidad_doc, qty_sel,
                 peso_unit, peso_vol_unit, vol_unit_m3,
-                peso_unit * qty_sel,
-                peso_vol_unit * qty_sel,
-                vol_unit_m3 * qty_sel,
+                peso_unit * _eq,
+                peso_vol_unit * _eq,
+                vol_unit_m3 * _eq,
                 incluida, nota,
                 marcada_sin_saldo,
             ))
@@ -5544,13 +5571,15 @@ def register_pickup_routes(app, ctx):
                 # ya entregada (saldo=0). Se guarda para mostrar badge en la
                 # tabla externa, pero NO bloquea la asociación.
                 marcada_sin_saldo = 1 if li.get("marcada_sin_saldo") else 0
+                # Empaques reales (= piezas salvo en productos de a par).
+                _eq = _empaques_equivalentes(qty_sel, ln_snap)
                 upsert_rows.append((
                     rid, sku, descripcion,
                     cantidad_doc, qty_sel,
                     peso_unit, peso_vol_unit, vol_unit_m3,
-                    peso_unit * qty_sel,
-                    peso_vol_unit * qty_sel,
-                    vol_unit_m3 * qty_sel,
+                    peso_unit * _eq,
+                    peso_vol_unit * _eq,
+                    vol_unit_m3 * _eq,
                     incluida, nota,
                     marcada_sin_saldo,
                 ))
@@ -5930,6 +5959,10 @@ def register_pickup_routes(app, ctx):
                 "peso_unit_kg":          peso_unit,
                 "peso_vol_unit_kg":      peso_vol_unit,
                 "vol_unit_m3":           vol_unit_m3,
+                # Piezas por empaque (discos/mancuernas = 2). Lo necesita el
+                # modal para no mostrar el peso al doble mientras el operador
+                # ajusta las cantidades (static/retiros_internal_detail.js).
+                "unidades_por_venta":    ln.get("unidades_por_venta") or 1,
                 "tiene_ficha":           bool(ln.get("tiene_ficha")),
                 "nota":                  nota,
             })
@@ -6034,6 +6067,19 @@ def register_pickup_routes(app, ctx):
             doc_numero = (doc.get("document_number") or "").strip()
             has_sel    = bool(doc.get("has_seleccion_lineas"))
 
+            # Snapshot del ERP indexado por SKU: es donde vive la unidad 2
+            # (piezas por empaque). Se lee una vez por documento y lo usan las
+            # DOS ramas de abajo (con y sin selección granular).
+            snap_lineas_doc = {}
+            try:
+                _snap_doc = _json_res.loads(doc.get("erp_snapshot") or "{}")
+                for _l in (_snap_doc.get("lineas") or []):
+                    _s = (_l.get("sku") or "").strip().upper()
+                    if _s:
+                        snap_lineas_doc[_s] = _l
+            except Exception:
+                snap_lineas_doc = {}
+
             if has_sel:
                 # Selección granular guardada — solo líneas incluidas=1
                 # 🆕 Daniel 2026-05-24: traemos marcada_sin_saldo para que
@@ -6070,8 +6116,15 @@ def register_pickup_routes(app, ctx):
                     qty       = float(r.get("cantidad_seleccionada") or 0)
                     peso_unit = float(r.get("peso_unit_kg") or 0)
                     vol_unit  = float(r.get("vol_unit_m3") or 0)
-                    peso_tot  = float(r.get("peso_total_kg") or (peso_unit * qty))
-                    vol_tot   = float(r.get("vol_total_m3") or (vol_unit * qty))
+                    # El total guardado ya viene por EMPAQUES (se calcula al
+                    # guardar la selección). El fallback solo entra si esa fila
+                    # quedó sin total; se corrige con el snapshot del documento
+                    # para no reintroducir el peso al doble en productos de a
+                    # par (2026-08-07, caso FCV 11225).
+                    _ln_snap = (snap_lineas_doc or {}).get((r.get("sku") or "").strip().upper()) or {}
+                    _eq = _empaques_equivalentes(qty, _ln_snap)
+                    peso_tot  = float(r.get("peso_total_kg") or (peso_unit * _eq))
+                    vol_tot   = float(r.get("vol_total_m3") or (vol_unit * _eq))
                     lineas_out.append({
                         "sku":               (r.get("sku") or "").strip(),
                         "descripcion":       (r.get("descripcion") or "").strip(),
@@ -6106,8 +6159,10 @@ def register_pickup_routes(app, ctx):
                     vol_unit_cm3 = float(ln.get("vol_u") or 0)
                     vol_unit_m3  = vol_unit_cm3 / 1_000_000.0 if vol_unit_cm3 else 0.0
                     desc = (ln.get("descripcion_erp") or ln.get("nombre_app") or "").strip()
-                    peso_tot = peso_unit * qty
-                    vol_tot  = vol_unit_m3 * qty
+                    # Empaques reales (= piezas salvo en productos de a par).
+                    _eq = _empaques_equivalentes(qty, ln)
+                    peso_tot = peso_unit * _eq
+                    vol_tot  = vol_unit_m3 * _eq
                     lineas_out.append({
                         "sku":               sku,
                         "descripcion":       desc,
@@ -6182,13 +6237,15 @@ def register_pickup_routes(app, ctx):
             incluida = 1 if li.get("incluida") and qty_sel > 0 else 0
             descripcion = (ln_snap.get("descripcion_erp") or ln_snap.get("nombre_app") or "").strip()[:300]
             nota = (li.get("nota") or "").strip()[:300] or None
+            # Empaques reales (= piezas salvo en productos de a par).
+            _eq = _empaques_equivalentes(qty_sel, ln_snap)
             upsert_rows.append((
                 rid, doc_id, sku, descripcion,
                 cantidad_doc, qty_sel,
                 peso_unit, peso_vol_unit, vol_unit_m3,
-                peso_unit * qty_sel,
-                peso_vol_unit * qty_sel,
-                vol_unit_m3 * qty_sel,
+                peso_unit * _eq,
+                peso_vol_unit * _eq,
+                vol_unit_m3 * _eq,
                 incluida, nota,
             ))
 

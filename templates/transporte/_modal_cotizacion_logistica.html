@@ -1099,7 +1099,19 @@ async function _lcAsignarDesdeDocumento(items, header){
         tido: tido, nudo: nudo, sku: it.sku || ln.sku || '', nombre: it.nombre || ln.nombre || ln.descripcion_erp || '',
         qty: (it.qty == null ? 1 : it.qty), koen: it.koen || null,
         appId: ln.app_id || null, tieneFicha: !!ln.tiene_ficha,
-        predTot: Number(ln.pred_tot) || 0, predU: Number(ln.pred_u) || 0, bultos: Number(ln.total_bultos) || 0,
+        /* predU se DERIVA de pred_tot/qty, no se toma de ln.pred_u: en los
+           productos con unidad secundaria (discos, mancuernas) pred_u es el
+           peso del PAR y qty son las piezas facturadas, así que multiplicarlos
+           daba el doble al cambiar la cantidad. pred_tot ya viene corregido del
+           backend, y dividirlo deja el peso efectivo POR PIEZA — que es lo que
+           lcCantidad necesita. Mismo patrón que ya se usa más abajo (~1835).
+           2026-08-07, caso FCV 11225. */
+        predTot: Number(ln.pred_tot) || 0,
+        predU: (function(){
+          var _pt = Number(ln.pred_tot) || 0, _q = (it.qty == null ? 1 : Number(it.qty)) || 0;
+          return _q > 0 ? (_pt / _q) : (Number(ln.pred_u) || 0);
+        })(),
+        bultos: Number(ln.total_bultos) || 0,
         stock: ln.stock || null,
       }));
     });

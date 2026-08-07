@@ -282,10 +282,17 @@ def _leer_bultos(pid):
     return out
 
 
-def _totales_bultos(bultos, cantidad=None):
-    """Totales unitarios (por 1 unidad del producto) y, si se pasa `cantidad`,
+def _totales_bultos(bultos, cantidad=None, unidades_por_venta=1):
+    """Totales unitarios (por 1 EMPAQUE del producto) y, si se pasa `cantidad`,
     los totales de la LINEA del documento — que es lo que muestra la tabla del
-    Cubicador en data-kg-tot / data-pv-tot / data-vol-tot / data-pred-tot."""
+    Cubicador en data-kg-tot / data-pv-tot / data-vol-tot / data-pred-tot.
+
+    `unidades_por_venta` = piezas fisicas por empaque de la ficha (2026-08-07,
+    Daniel, caso FCV 11225). 1 = unidad suelta (maquinas, accesorios: sin
+    cambio). 2 = par (discos, mancuernas): el ERP factura piezas sueltas, asi
+    que 4 discos son 2 empaques y el flete se cobra por 2, no por 4. Mismo
+    criterio que _cubicador_fetch en app.py — si estos dos divergen, el
+    Cubicador y su modal muestran pesos distintos para el mismo producto."""
     peso_kg = sum(_f(b.get("peso")) for b in bultos)
     vol_cm3 = sum(_f(b.get("largo")) * _f(b.get("ancho")) * _f(b.get("alto")) for b in bultos)
     peso_vol = vol_cm3 / _DIVISOR_VOLUMETRICO
@@ -305,15 +312,24 @@ def _totales_bultos(bultos, cantidad=None):
         "volumen_m3":   _r(vol_cm3 / 1_000_000.0, 6),
     }
 
+    try:
+        uxv = max(int(unidades_por_venta or 1), 1)
+    except (TypeError, ValueError):
+        uxv = 1
+    out["unidades_por_venta"] = uxv
+
     if cantidad is not None:
         qty = _f(cantidad, 0.0)
         if qty > 0:
+            # Empaques reales a mover (= qty salvo en productos de a par).
+            equiv = (qty / uxv) if uxv > 1 else qty
             out.update({
                 "cantidad":     qty,
-                "peso_kg_tot":  _r(peso_kg * qty, 4),
-                "peso_vol_tot": _r(peso_vol * qty, 4),
-                "vol_tot":      _r(vol_cm3 * qty, 2),
-                "pred_tot":     _r(pred * qty, 4),
+                "bultos_equivalentes": _r(equiv, 4),
+                "peso_kg_tot":  _r(peso_kg * equiv, 4),
+                "peso_vol_tot": _r(peso_vol * equiv, 4),
+                "vol_tot":      _r(vol_cm3 * equiv, 2),
+                "pred_tot":     _r(pred * equiv, 4),
             })
     return out
 
@@ -397,7 +413,8 @@ def _guardar_medidas(pid, payload):
     # Columnas verificadas contra CREATE TABLE app_products (app.py:2196):
     # id, sku, nombre, estado, codigo, erp_sync, created_by, updated_by, created_at, updated_at
     prod = mysql_fetchone(
-        f"SELECT id, sku, nombre FROM `{PRODUCTS_TABLE}` WHERE id=%s LIMIT 1", (pid,)
+        f"SELECT id, sku, nombre, COALESCE(unidades_por_venta, 1) AS unidades_por_venta "
+        f"FROM `{PRODUCTS_TABLE}` WHERE id=%s LIMIT 1", (pid,)
     )
     if not prod:
         return {"ok": False, "error": "El producto no existe en la base local.",
@@ -535,7 +552,8 @@ def _guardar_medidas(pid, payload):
         "descartados": descartados,
         "reduccion_aplicada": bool(actuales > nuevos),
     }
-    resp.update(_totales_bultos(bultos_final, payload.get("cantidad")))
+    resp.update(_totales_bultos(bultos_final, payload.get("cantidad"),
+                                 prod.get("unidades_por_venta") or 1))
 
     # Aviso legible para mostrar con ilusToast/ilusAlert (Regla #1: el front
     # NUNCA usa alert() nativo — este texto va dentro del helper ILUS).
@@ -910,8 +928,9 @@ def register_cubicador_plus(app, ctx=None):
         PRODUCTS_TABLE = _tabla("PRODUCTS_TABLE", "app_products")
 
         prod = mysql_fetchone(
-            f"SELECT id, sku, nombre, estado, codigo FROM `{PRODUCTS_TABLE}` "
-            f"WHERE id=%s LIMIT 1", (pid,)
+            f"SELECT id, sku, nombre, estado, codigo, "
+            f"       COALESCE(unidades_por_venta, 1) AS unidades_por_venta "
+            f"FROM `{PRODUCTS_TABLE}` WHERE id=%s LIMIT 1", (pid,)
         )
         if not prod:
             return jsonify({"ok": False, "error": "El producto no existe en la base local.",
@@ -929,7 +948,8 @@ def register_cubicador_plus(app, ctx=None):
             "bultos": bultos,
             "max_bultos": int(_h("MAX_BULTOS", 27) or 27),
         }
-        resp.update(_totales_bultos(bultos, cantidad))
+        resp.update(_totales_bultos(bultos, cantidad,
+                                     prod.get("unidades_por_venta") or 1))
         return jsonify(resp)
 
     # ──────────────────────────────────────────────────────────────

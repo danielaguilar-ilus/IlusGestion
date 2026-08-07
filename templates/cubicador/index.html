@@ -596,6 +596,9 @@
             data-vol-tot="{{ l.vol_tot }}"
             data-pred-tot="{{ l.pred_tot }}"
             data-qty="{{ l.cantidad }}"
+            {# unidad 2 del ERP (discos/mancuernas = 2): el JS lo usa para
+               que los totales vayan por EMPAQUES y no por piezas #}
+            data-uxv="{{ l.unidades_por_venta or 1 }}"
             data-bultos="{{ l.total_bultos }}">
           <td class="text-center no-print">
             <input type="checkbox" class="ilus-check cub-check" aria-label="Seleccionar {{ l.sku }}">
@@ -799,6 +802,7 @@
        data-vol-tot="{{ l.vol_tot }}"
        data-pred-tot="{{ l.pred_tot }}"
        data-qty="{{ l.cantidad }}"
+       data-uxv="{{ l.unidades_por_venta or 1 }}"
        data-bultos="{{ l.total_bultos }}">
     <div class="p-3">
       <div class="d-flex justify-content-between align-items-start mb-2">
