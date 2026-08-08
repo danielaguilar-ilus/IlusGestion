@@ -82923,11 +82923,18 @@ def repstock_exportar_excel():
     ws = wb.active
     ws.title = "Repuestos"
 
-    headers = [
-        "Foto", "SKU", "Descripción", "Código fabricante", "Cantidad", "Stock mínimo",
-        "Ubicación", "Marca", "Costo unitario", "Proveedor", "Modelos compatibles",
-        "Cliente asociado", "Ticket asociado", "Notas", "Creado por", "Fecha creación",
-    ]
+    # 2026-08-08 (Daniel: "un recuadro por la foto uno, la dos y la tres, y
+    # si no las tiene vacía nomás -- viene la columna vacía"): 3 columnas de
+    # foto en vez de 1 sola (mant_repuestos_stock_fotos permite hasta 3 por
+    # repuesto). Slot sin foto = celda en blanco, SIN texto "Sin foto" --
+    # corrección explícita de Daniel sobre el diseño anterior.
+    FOTO_COLS = 3
+    headers = (
+        ["Foto 1", "Foto 2", "Foto 3"] +
+        ["SKU", "Descripción", "Código fabricante", "Cantidad (un.)", "Stock mínimo (un.)",
+         "Ubicación", "Marca", "Costo unitario", "Proveedor", "Modelos compatibles",
+         "Cliente asociado", "Ticket asociado", "Notas", "Creado por", "Fecha creación"]
+    )
     NCOLS = len(headers)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
     tcell = ws.cell(row=1, column=1,
@@ -82971,17 +82978,24 @@ def repstock_exportar_excel():
             print(f"[repstock_exportar_excel] no se pudo cachear miniatura {tkey}: {e_up}", flush=True)
         return tdata
 
-    def _sin_foto_celda(r_idx, bg):
-        c = ws.cell(row=r_idx, column=1, value="Sin foto")
-        c.font = Font(size=8, italic=True, color="9CA3AF")
-        c.alignment = Alignment(horizontal="center", vertical="center")
+    def _foto_celda_vacia(r_idx, col, bg):
+        # 2026-08-08 (Daniel, corrigiendo el diseño anterior: "si no las
+        # tiene vacía nomás, viene la columna vacía"): SIN texto "Sin foto"
+        # -- solo borde+fondo parejo con el resto de la fila.
+        c = ws.cell(row=r_idx, column=col)
         c.border = border
         c.fill = PatternFill("solid", fgColor=bg)
 
     r_idx = 3
     for rep in rows:
-        cantidad = float(rep.get("cantidad") or 0)
-        stock_minimo = float(rep["stock_minimo"]) if rep.get("stock_minimo") is not None else None
+        # 2026-08-08 (Daniel: "esa cantidad... tiene que ser un uno nomás,
+        # es unidades" -- mismo pedido que en la tabla en pantalla, pero acá
+        # el valor debe seguir siendo NUMÉRICO (no texto "3 un.") para que
+        # sirva de verdad "para poder hacer búsqueda" en Excel -- sumar,
+        # filtrar, ordenar. La unidad va en el ENCABEZADO ("Cantidad (un.)"),
+        # no pegada al dato.
+        cantidad = round(float(rep.get("cantidad") or 0))
+        stock_minimo = round(float(rep["stock_minimo"])) if rep.get("stock_minimo") is not None else None
         bajo_minimo = stock_minimo is not None and cantidad <= stock_minimo
         costo_unitario = float(rep.get("costo_unitario") or 0)
         ubic = rep.get("ubicacion_codigo") or ""
@@ -82991,7 +83005,7 @@ def repstock_exportar_excel():
         creado_fmt = chile_fmt_filter(rep.get("created_at")) if rep.get("created_at") else ""
 
         vals = [
-            None,  # Foto -> imagen embebida, no texto
+            None, None, None,  # Foto 1/2/3 -> imagen embebida o celda vacía, no texto
             rep.get("sku") or "",
             rep.get("descripcion") or "",
             rep.get("codigo_fabricante") or "",
@@ -83009,32 +83023,40 @@ def repstock_exportar_excel():
             creado_fmt,
         ]
         bg = LGRAY if r_idx % 2 == 0 else "FFFFFF"
-        # Columna Foto: border+fill parejo con el resto de la fila aunque el
-        # valor (imagen o "Sin foto") se resuelva aparte, más abajo.
-        fcell = ws.cell(row=r_idx, column=1)
-        fcell.border = border
-        fcell.fill = PatternFill("solid", fgColor=bg)
+        # Columnas Foto 1/2/3: border+fill parejo con el resto de la fila
+        # aunque el valor (imagen o celda vacía) se resuelva aparte, abajo.
+        for fc in range(1, FOTO_COLS + 1):
+            fcell = ws.cell(row=r_idx, column=fc)
+            fcell.border = border
+            fcell.fill = PatternFill("solid", fgColor=bg)
         for ci, val in enumerate(vals, 1):
-            if ci == 1:
-                continue  # columna Foto se resuelve aparte (imagen o "Sin foto")
+            if ci <= FOTO_COLS:
+                continue  # columnas Foto se resuelven aparte (imagen o celda vacía)
             cell = ws.cell(row=r_idx, column=ci, value=val)
             cell.font = Font(size=9)
             cell.alignment = Alignment(
-                horizontal="center" if ci in (5, 6, 9) else "left",
-                vertical="center", wrap_text=(ci in (3, 11, 14)))
+                horizontal="center" if ci in (7, 8, 11) else "left",
+                vertical="center", wrap_text=(ci in (5, 13, 16)))
             cell.border = border
-            fill = REDL if (ci == 5 and bajo_minimo) else bg
+            fill = REDL if (ci == 7 and bajo_minimo) else bg
             cell.fill = PatternFill("solid", fgColor=fill)
-            if ci == 9 and val:
+            if ci in (7, 8) and val is not None:
+                cell.number_format = "0"
+            if ci == 11 and val:
                 cell.number_format = '"$"#,##0'
         ws.row_dimensions[r_idx].height = 50
 
-        # ── Foto embebida — try/except individual: UN repuesto con foto
-        # rota NUNCA debe tumbar la exportación completa de los demás. ──
+        # ── Fotos embebidas (hasta 3) — try/except individual por foto: UNA
+        # foto rota NUNCA debe tumbar la exportación completa de los demás
+        # repuestos NI de las otras fotos del mismo repuesto. ──
         fotos = fotos_por_repuesto.get(rep["id"], [])
-        if fotos:
+        for slot in range(FOTO_COLS):
+            col = slot + 1
+            if slot >= len(fotos):
+                _foto_celda_vacia(r_idx, col, bg)
+                continue
             try:
-                img_bytes = _foto_bytes(fotos[0])
+                img_bytes = _foto_bytes(fotos[slot])
                 if img_bytes:
                     img = XLImage(io.BytesIO(img_bytes))
                     max_box = 60
@@ -83042,18 +83064,16 @@ def repstock_exportar_excel():
                     scale = min(max_box / w, max_box / h) if w and h else 1
                     img.width = max(1, round(w * scale))
                     img.height = max(1, round(h * scale))
-                    ws.add_image(img, f"A{r_idx}")
+                    ws.add_image(img, f"{get_column_letter(col)}{r_idx}")
                 else:
-                    _sin_foto_celda(r_idx, bg)
+                    _foto_celda_vacia(r_idx, col, bg)
             except Exception as e_img:
-                print(f"[repstock_exportar_excel] foto rota repuesto id={rep.get('id')}: {e_img}", flush=True)
-                _sin_foto_celda(r_idx, bg)
-        else:
-            _sin_foto_celda(r_idx, bg)
+                print(f"[repstock_exportar_excel] foto rota repuesto id={rep.get('id')} slot={slot}: {e_img}", flush=True)
+                _foto_celda_vacia(r_idx, col, bg)
 
         r_idx += 1
 
-    widths = [10, 20, 40, 18, 10, 12, 16, 18, 14, 22, 30, 22, 14, 30, 16, 16]
+    widths = [10, 10, 10, 20, 40, 18, 14, 16, 16, 18, 14, 22, 30, 22, 14, 30, 16, 16]
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "B3"

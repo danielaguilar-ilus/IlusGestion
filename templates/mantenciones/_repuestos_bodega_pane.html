@@ -327,7 +327,14 @@
 {% if rfotos %}<img src="{{ rfotos[0].url }}?w=96" alt="" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-right:10px;vertical-align:middle">{% endif %}{{ r.descripcion }}
         {% if r.bajo_minimo %}<span class="rb-bajo-min-badge">BAJO MÍNIMO</span>{% endif %}
       </td>
-      <td>{{ r.cantidad|round(2) }}</td>
+      {# 2026-08-08 (Daniel: "esa cantidad... no sé por qué tiene uno punto
+         cero, eso tiene que ser un uno nomás, es unidades, hay que indicar
+         que la unidad de medida es unidad"): entero limpio + sufijo "un."
+         -- cantidad viene de MySQL como DECIMAL, _repstock_fmt() la castea
+         a float Python, y un float entero como 3.0 se imprime "3.0" tal
+         cual si no se trunca explícito. round() sin decimales + int()
+         asegura "3", nunca "3.0". #}
+      <td>{{ (r.cantidad|round)|int }} un.</td>
       <td>{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>{% if r.costo_unitario %}${{ '{:,.0f}'.format(r.costo_unitario).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
       <td>{% if r.marca_nombre %}{{ r.marca_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
@@ -930,6 +937,17 @@ async function rbGuardar(crearOtro){
   if (!descripcion){ ilusToast('La descripción es obligatoria', {type:'warning'}); document.getElementById('rbDescripcion').focus(); return; }
   if (cantidad === '' || Number(cantidad) < 0){ ilusToast('Indica la cantidad', {type:'warning'}); document.getElementById('rbCantidad').focus(); return; }
   if (stockMin === '' || Number(stockMin) < 0){ ilusToast('Indica el stock mínimo', {type:'warning'}); document.getElementById('rbStockMinimo').focus(); return; }
+  // 2026-08-08 (Daniel: "necesito que sea obligatorio el paso cuatro...
+  // para no tener que pasar dos veces... por último, dejar que sea una
+  // máquina"): al menos 1 modelo asociado (guardado O pendiente de
+  // guardar, cuenta igual) para poder guardar el repuesto. Antes el paso
+  // solo se pintaba verde si estaba completo, pero no bloqueaba nada.
+  if ((RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) === 0){
+    ilusToast('Asocia al menos 1 modelo de equipo compatible antes de guardar', {type:'warning'});
+    document.getElementById('rbModelosBuscar').focus();
+    document.getElementById('rbModelosBuscar').scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
   const body = {
     descripcion: descripcion,
     cantidad: cantidad,
