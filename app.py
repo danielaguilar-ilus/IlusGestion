@@ -81670,12 +81670,20 @@ def repstock_crear():
         return jsonify({"ok": False, "error": "Cantidad y stock mínimo no pueden ser negativos"}), 400
     marca_id = d.get("marca_id") or None
     marca_nombre = None
+    marca_proveedor_id = None
     if marca_id:
-        _m = mysql_fetchone("SELECT nombre FROM mant_repuestos_marcas WHERE id=%s", (marca_id,))
+        _m = mysql_fetchone(
+            "SELECT nombre, proveedor_id FROM mant_repuestos_marcas WHERE id=%s", (marca_id,))
         marca_nombre = (_m or {}).get("nombre")
+        marca_proveedor_id = (_m or {}).get("proveedor_id")
     ubicacion_id = d.get("ubicacion_id") or None
     cliente_id = d.get("cliente_id") or None
     ticket_id = d.get("ticket_id") or None
+    # Proveedor: si el caller no mandó uno explícito, se hereda el de la
+    # marca (Daniel 2026-08-08: "cuando yo llame a la marca, ya ahí
+    # tenemos que asociarlo"). Sigue siendo editable por repuesto -- el
+    # proveedor NO queda "atado" a la marca, solo se sugiere por defecto.
+    proveedor_id = d.get("proveedor_id") or marca_proveedor_id or None
     conn = get_mysql()
     try:
         # SKU atómico en la MISMA transacción del INSERT: si algo falla,
@@ -81684,6 +81692,7 @@ def repstock_crear():
         fields = {
             "sku": sku, "descripcion": descripcion, "cantidad": cantidad,
             "ubicacion_id": ubicacion_id, "marca_id": marca_id,
+            "proveedor_id": proveedor_id,
             "costo_unitario": costo_unitario,
             "codigo_fabricante": (d.get("codigo_fabricante") or "").strip()[:120] or None,
             "stock_minimo": stock_minimo,
@@ -81701,7 +81710,7 @@ def repstock_crear():
             new_id = cur.lastrowid
         conn.commit()
         _mant_log("repuesto_stock", new_id, "crear", f"{sku} — {descripcion}")
-        return jsonify({"ok": True, "id": new_id, "sku": sku})
+        return jsonify({"ok": True, "id": new_id, "sku": sku, "proveedor_id": proveedor_id})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)
@@ -81721,7 +81730,7 @@ def repstock_editar(rid):
         d["descripcion"] = (d.get("descripcion") or "").strip()[:400]
         if not d["descripcion"]:
             return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
-    allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id",
+    allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id", "proveedor_id",
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
                "cliente_id", "ticket_id"]
     sets, vals = [], []
@@ -82054,19 +82063,49 @@ def repstock_buscar_ubicaciones():
 @app.route("/mantenciones/api/repuestos-stock/buscar-marcas", methods=["GET"])
 @_mant_required
 def repstock_buscar_marcas():
-    """Typeahead de marcas (sincronizadas del ERP — MAEPR.MRPR)."""
+    """Typeahead de marcas (sincronizadas del ERP — MAEPR.MRPR). Incluye
+    el proveedor de referencia (contraparte) de cada marca, si tiene uno
+    asignado -- así el modal puede sugerirlo o pedir asignarlo."""
     _repstock_sync_marcas_erp()
     q = (request.args.get("q") or "").strip()
+    base = ("SELECT m.id, m.nombre, m.proveedor_id, "
+            "       p.nombre AS proveedor_nombre, p.contacto_nombre AS proveedor_contacto "
+            "  FROM mant_repuestos_marcas m "
+            "  LEFT JOIN mant_proveedores_repuesto p ON p.id = m.proveedor_id ")
     if q:
         like = f"%{q}%"
         rows = mysql_fetchall(
-            "SELECT id, nombre FROM mant_repuestos_marcas "
-            " WHERE activo=1 AND nombre LIKE %s ORDER BY nombre LIMIT 15", (like,)) or []
+            base + " WHERE m.activo=1 AND m.nombre LIKE %s ORDER BY m.nombre LIMIT 15", (like,)) or []
     else:
         rows = mysql_fetchall(
-            "SELECT id, nombre FROM mant_repuestos_marcas "
-            " WHERE activo=1 ORDER BY nombre LIMIT 15") or []
+            base + " WHERE m.activo=1 ORDER BY m.nombre LIMIT 15") or []
     return jsonify({"ok": True, "marcas": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/repuestos-stock/marcas/<int:mid>/proveedor", methods=["PUT"])
+@_mant_required
+def repstock_marca_asignar_proveedor(mid):
+    """Asigna/cambia el proveedor de REFERENCIA (contraparte habitual) de
+    una marca -- Daniel 2026-08-08: "si es Drax debe tener su
+    contraparte". Solo guarda la sugerencia por defecto; no ata el
+    proveedor a la marca de forma rígida (cada repuesto lo puede
+    cambiar)."""
+    d = request.get_json(silent=True) or {}
+    proveedor_id = d.get("proveedor_id") or None
+    marca = mysql_fetchone("SELECT nombre FROM mant_repuestos_marcas WHERE id=%s", (mid,))
+    if not marca:
+        return jsonify({"ok": False, "error": "Marca no encontrada"}), 404
+    if proveedor_id:
+        prov = mysql_fetchone("SELECT nombre FROM mant_proveedores_repuesto WHERE id=%s", (proveedor_id,))
+        if not prov:
+            return jsonify({"ok": False, "error": "Proveedor no encontrado"}), 404
+    mysql_execute(
+        "UPDATE mant_repuestos_marcas SET proveedor_id=%s WHERE id=%s",
+        (proveedor_id, mid)
+    )
+    _mant_log("repuesto_marca", mid, "asignar_proveedor",
+              f"{marca.get('nombre')} -> proveedor_id={proveedor_id or 'ninguno'}")
+    return jsonify({"ok": True})
 
 
 @app.route("/mantenciones/api/repuestos-stock/buscar-clientes", methods=["GET"])
@@ -88414,6 +88453,29 @@ def _ensure_repuestos_bodega_tables():
         """)
     except Exception as e:
         print(f"[ensure_repuestos_stock] mant_repuestos_marcas: {e}", flush=True)
+
+    # 2026-08-08 (Daniel): "si es Drax debe tener su contraparte, no ir
+    # atándolo a la marca" -- el proveedor NO es la marca (un proveedor
+    # puede traer varias marcas), pero cada marca sí puede tener un
+    # proveedor de REFERENCIA (contraparte habitual) que se sugiere solo
+    # al elegir la marca en el modal. ALTER idempotente, mismo patrón que
+    # mant_repuestos_stock.cliente_id/ticket_id/proveedor_id.
+    try:
+        _existing_marca_cols = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_marcas'"
+            ) or [])
+        }
+        if "proveedor_id" not in _existing_marca_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_marcas ADD COLUMN proveedor_id INT NULL "
+                "COMMENT 'Proveedor de referencia (contraparte) para esta marca -- FK conceptual a mant_proveedores_repuesto.id' AFTER activo, "
+                "ADD INDEX idx_repmarca_proveedor (proveedor_id)"
+            )
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] ALTER mant_repuestos_marcas.proveedor_id: {e}", flush=True)
 
     try:
         mysql_execute("""

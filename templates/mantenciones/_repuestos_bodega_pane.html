@@ -13,8 +13,10 @@
 .rb-bajo-min-badge{background:#dc2626;color:#fff;font-size:.65rem;font-weight:800;padding:2px 8px;border-radius:50px;margin-left:6px}
 .rb-empty{padding:60px 20px;text-align:center;color:#9ca3af}
 .rb-actions-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
-#modalRepStock .modal-header{background:#0a0a0a;color:#fff}
-#modalRepStock .btn-close{filter:invert(1)}
+#modalRepStock .modal-header,
+#modalRbProveedor .modal-header{background:#0a0a0a;color:#fff}
+#modalRepStock .btn-close,
+#modalRbProveedor .btn-close{filter:invert(1)}
 .rb-modelo-chip{display:inline-flex;align-items:center;gap:6px;background:#f3f4f6;border-radius:50px;padding:3px 6px 3px 12px;font-size:.78rem;margin:2px 4px 2px 0}
 .rb-modelo-chip button{border:none;background:#e5e7eb;color:#374151;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;padding:0;font-size:.7rem;cursor:pointer}
 .rb-modelo-resultados{position:relative}
@@ -86,7 +88,7 @@
       <td class="rb-sku">{{ r.sku }}</td>
       <td>
         {% set rfotos = fotos_por_repuesto.get(r.id, []) %}
-        {% if rfotos %}<img src="{{ rfotos[0].url }}" alt="" loading="lazy" onclick="window.open('{{ rfotos[0].url }}','_blank')" style="width:34px;height:34px;object-fit:cover;border-radius:6px;border:1px solid #e5e7eb;margin-right:8px;vertical-align:middle;cursor:zoom-in">{% endif %}{{ r.descripcion }}
+        {% if rfotos %}<img src="{{ rfotos[0].url }}" alt="" loading="lazy" onclick="window.open('{{ rfotos[0].url }}','_blank')" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-right:10px;vertical-align:middle;cursor:zoom-in">{% endif %}{{ r.descripcion }}
         {% if r.bajo_minimo %}<span class="rb-bajo-min-badge">BAJO MÍNIMO</span>{% endif %}
       </td>
       <td>{{ r.cantidad|round(2) }}</td>
@@ -194,6 +196,16 @@
             <label class="form-label small fw-semibold">Notas</label>
             <input type="text" class="form-control" id="rbNotas" maxlength="500" placeholder="Opcional">
           </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Proveedor <span class="text-muted fw-normal">(contraparte que gestiona este repuesto)</span></label>
+            <input type="hidden" id="rbProveedor">
+            <div class="rb-modelo-resultados">
+              <input type="text" class="form-control" id="rbProveedorBuscar" placeholder="Escribe para buscar o crear un proveedor..." autocomplete="off">
+              <div class="rb-modelo-resultados-list" id="rbProveedorResultadosList"></div>
+            </div>
+            <div id="rbProveedorSeleccionado" class="mt-1"></div>
+            <div id="rbProveedorSugerido" class="mt-1 small" style="display:none"></div>
+          </div>
         </div>
 
         <hr class="my-3">
@@ -250,10 +262,64 @@
   </div>
 </div>
 
+{# ════════ Modal "Nuevo proveedor" — datos de contacto completos ════════
+   Daniel 2026-08-08: "el tratamiento de los proveedores deberá ser
+   bastante delicado... tenemos que tener los datos, su correo, todo."
+   Más de 3 campos -> modal Bootstrap propio (Regla #8), no ilusPrompt. #}
+<div class="modal fade" id="modalRbProveedor" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-truck me-2"></i>Nuevo proveedor</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Nombre / Razón social <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="rbpNombre" maxlength="200" placeholder="Ej: Distribuidora Drax Chile">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Contacto (persona)</label>
+            <input type="text" class="form-control" id="rbpContacto" maxlength="150" placeholder="Nombre de la contraparte">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Canal preferido</label>
+            <select class="form-select" id="rbpCanal">
+              <option value="">Sin definir</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="wechat">WeChat</option>
+              <option value="telefono">Teléfono</option>
+              <option value="email">Correo</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Teléfono</label>
+            <input type="text" class="form-control" id="rbpTelefono" maxlength="50" placeholder="+56 9...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Correo</label>
+            <input type="email" class="form-control" id="rbpEmail" maxlength="150" placeholder="contacto@proveedor.com">
+          </div>
+          <div class="col-12">
+            <label class="form-label small fw-semibold">Notas</label>
+            <input type="text" class="form-control" id="rbpNotas" maxlength="500" placeholder="Opcional">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" onclick="rbProveedorGuardar()"><i class="bi bi-check2 me-1"></i>Crear proveedor</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 let RB_MODAL = null;
+let RB_PROVEEDOR_MODAL = null;
 let RB_MODELOS_ACTUALES = [];
 let RB_FOTOS_ACTUALES = [];
 let RB_DIRTY = false;          // hubo cambios → recargar la tabla al cerrar el modal
@@ -262,6 +328,7 @@ const RB_MAX_FOTOS = 3;
 document.addEventListener('DOMContentLoaded', function(){
   const modalEl = document.getElementById('modalRepStock');
   RB_MODAL = new bootstrap.Modal(modalEl);
+  RB_PROVEEDOR_MODAL = new bootstrap.Modal(document.getElementById('modalRbProveedor'));
   // La tabla se refresca UNA vez al cerrar (no en cada guardado) — así
   // "Guardar y crear otro" encadena repuestos sin perder el modal.
   modalEl.addEventListener('hidden.bs.modal', function(){
@@ -272,22 +339,26 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('rbTicketBuscar').addEventListener('input', rbBuscarTicketsDebounced());
   ['rbDescripcion','rbCantidad','rbStockMinimo'].forEach(id =>
     document.getElementById(id).addEventListener('input', rbActualizarChecklist));
-  // Marca y ubicación: buscar al tipear Y desplegar al hacer foco (cero tipeo)
+  // Marca, ubicación y proveedor: buscar al tipear Y desplegar al hacer foco (cero tipeo)
   const mIn = document.getElementById('rbMarcaBuscar');
   mIn.addEventListener('input', rbMarcaInputDebounced());
   mIn.addEventListener('focus', function(){ rbBuscarMarcas(); });
   const uIn = document.getElementById('rbUbicacionBuscar');
   uIn.addEventListener('input', rbUbicacionInputDebounced());
   uIn.addEventListener('focus', function(){ rbBuscarUbicaciones(); });
+  const pIn = document.getElementById('rbProveedorBuscar');
+  pIn.addEventListener('input', rbProveedorInputDebounced());
+  pIn.addEventListener('focus', function(){ rbBuscarProveedores(); });
   document.addEventListener('click', function(e){
     if (!e.target.closest('.rb-modelo-resultados')) {
       ['rbModelosResultadosList','rbClienteResultadosList','rbTicketResultadosList',
-       'rbMarcaResultadosList','rbUbicacionResultadosList'].forEach(function(id){
+       'rbMarcaResultadosList','rbUbicacionResultadosList','rbProveedorResultadosList'].forEach(function(id){
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
     }
   });
+  rbInicializarEscaner();
 });
 
 function rbToggleAll(cb){
@@ -316,6 +387,7 @@ function rbAbrirNuevo(mantenerContexto){
     document.getElementById('rbStockMinimo').value = 1;
     rbSetMarca(null, '');
     rbSetUbicacion(null, '');
+    rbSetProveedor(null, '');
   }
   rbSetCliente(null, '');
   rbSetTicket(null, '');
@@ -339,6 +411,7 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbCosto').value = r.costo_unitario || '';
   rbSetMarca(r.marca_id || null, r.marca_nombre || '');
   rbSetUbicacion(r.ubicacion_id || null, r.ubicacion_codigo || '');
+  rbSetProveedor(r.proveedor_id || null, r.proveedor_nombre || '', r.proveedor_contacto || '');
   document.getElementById('rbCodigoFabricante').value = r.codigo_fabricante || '';
   document.getElementById('rbNotas').value = r.notas || '';
   rbSetCliente(r.cliente_id || null, r.cliente_nombre || '');
@@ -367,6 +440,7 @@ async function rbGuardar(crearOtro){
     costo_unitario: document.getElementById('rbCosto').value || 0,
     ubicacion_id: document.getElementById('rbUbicacion').value || null,
     marca_id: document.getElementById('rbMarca').value || null,
+    proveedor_id: document.getElementById('rbProveedor').value || null,
     codigo_fabricante: document.getElementById('rbCodigoFabricante').value.trim(),
     notas: document.getElementById('rbNotas').value.trim(),
     cliente_id: document.getElementById('rbClienteId').value || null,
@@ -467,6 +541,22 @@ function rbPickMarca(i){
   const m = RB_MARCA_RESULTS[i];
   if (m) rbSetMarca(m.id, m.nombre);
   document.getElementById('rbMarcaResultadosList').style.display = 'none';
+  // Daniel 2026-08-08: "cuando yo llame a la marca, ya ahí tenemos que
+  // asociarlo [el proveedor], y si no hay nadie, debe pedirme gestionar
+  // eso". El proveedor NO queda atado a la marca (se puede cambiar por
+  // repuesto) — esto solo sugiere/avisa.
+  const sugerido = document.getElementById('rbProveedorSugerido');
+  if (!m){ sugerido.style.display = 'none'; return; }
+  if (document.getElementById('rbProveedor').value){ sugerido.style.display = 'none'; return; }
+  if (m.proveedor_id){
+    rbSetProveedor(m.proveedor_id, m.proveedor_nombre, m.proveedor_contacto);
+    sugerido.style.display = 'none';
+  } else {
+    sugerido.innerHTML = '<i class="bi bi-info-circle text-warning me-1"></i>"' + escHtmlRb(m.nombre) +
+      '" todavía no tiene un proveedor de contacto asignado. ' +
+      '<a href="#" onclick="rbAbrirNuevoProveedor(true); return false;">Asignar ahora</a>';
+    sugerido.style.display = 'block';
+  }
 }
 async function rbCrearMarcaRapida(){
   const nombre = document.getElementById('rbMarcaBuscar').value.trim();
@@ -510,6 +600,94 @@ function rbSetMarca(id, nombre){
       '<button type="button" onclick="rbSetMarca(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
   rbActualizarChecklist();
+}
+
+// ── Proveedor: typeahead sobre mant_proveedores_repuesto (Daniel
+// 2026-08-08 — "repertorio de proveedores", independiente de la marca).
+// Reusa el CRUD que ya existía para el módulo viejo de repuestos.
+let RB_PROVEEDOR_RESULTS = [];
+let rbProveedorTimer = null;
+function rbProveedorInputDebounced(){
+  return function(){ clearTimeout(rbProveedorTimer); rbProveedorTimer = setTimeout(rbBuscarProveedores, 200); };
+}
+async function rbBuscarProveedores(){
+  const q = document.getElementById('rbProveedorBuscar').value.trim();
+  const list = document.getElementById('rbProveedorResultadosList');
+  const r = await fetch('/mantenciones/api/proveedores-repuesto?q=' + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({proveedores:[]}));
+  RB_PROVEEDOR_RESULTS = d.proveedores || [];
+  let html = RB_PROVEEDOR_RESULTS.map((p, i) =>
+    '<div class="rb-modelo-resultado-item" onclick="rbPickProveedor(' + i + ')">' +
+    '<strong>' + escHtmlRb(p.nombre) + '</strong>' +
+    (p.contacto_nombre ? ' <span class="text-muted" style="font-size:.74rem">— ' + escHtmlRb(p.contacto_nombre) + '</span>' : '') +
+    '</div>'
+  ).join('');
+  const existe = RB_PROVEEDOR_RESULTS.some(p => p.nombre.toLowerCase() === q.toLowerCase());
+  if (!existe){
+    html += '<div class="rb-modelo-resultado-item" style="color:#dc2626;font-weight:600" onclick="rbAbrirNuevoProveedor()">' +
+            '<i class="bi bi-plus-circle me-1"></i>Nuevo proveedor' + (q ? ' "' + escHtmlRb(q) + '"' : '') + '</div>';
+  }
+  if (!html) html = '<div class="rb-modelo-resultado-item text-muted">Sin proveedores todavía</div>';
+  list.innerHTML = html;
+  list.style.display = 'block';
+}
+function rbPickProveedor(i){
+  const p = RB_PROVEEDOR_RESULTS[i];
+  if (p) rbSetProveedor(p.id, p.nombre, p.contacto_nombre);
+  document.getElementById('rbProveedorResultadosList').style.display = 'none';
+}
+function rbSetProveedor(id, nombre, contacto){
+  document.getElementById('rbProveedor').value = id || '';
+  document.getElementById('rbProveedorBuscar').value = '';
+  document.getElementById('rbProveedorSeleccionado').innerHTML = id
+    ? '<span class="rb-modelo-chip" style="background:#dcfce7"><i class="bi bi-truck me-1"></i>' + escHtmlRb(nombre) +
+      (contacto ? ' <span class="text-muted">(' + escHtmlRb(contacto) + ')</span>' : '') +
+      '<button type="button" onclick="rbSetProveedor(null,\'\')" title="Quitar">&times;</button></span>'
+    : '';
+  document.getElementById('rbProveedorSugerido').style.display = 'none';
+}
+// Modal rico de alta de proveedor (nombre + contacto + telefono/email/canal).
+// asignarAMarca=true: además de crear el proveedor, lo deja como
+// "contraparte de referencia" de la marca seleccionada en el modal.
+let RB_PROVEEDOR_ASIGNAR_MARCA = false;
+function rbAbrirNuevoProveedor(asignarAMarca){
+  RB_PROVEEDOR_ASIGNAR_MARCA = !!asignarAMarca;
+  document.getElementById('rbProveedorResultadosList').style.display = 'none';
+  const qActual = document.getElementById('rbProveedorBuscar').value.trim();
+  document.getElementById('rbpNombre').value = qActual;
+  ['rbpContacto','rbpTelefono','rbpEmail','rbpNotas'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('rbpCanal').value = '';
+  RB_PROVEEDOR_MODAL.show();
+  setTimeout(() => document.getElementById(qActual ? 'rbpContacto' : 'rbpNombre').focus(), 350);
+}
+async function rbProveedorGuardar(){
+  const nombre = document.getElementById('rbpNombre').value.trim();
+  if (!nombre){ ilusToast('El nombre del proveedor es obligatorio', {type:'warning'}); return; }
+  const body = {
+    nombre,
+    contacto_nombre: document.getElementById('rbpContacto').value.trim(),
+    telefono: document.getElementById('rbpTelefono').value.trim(),
+    email: document.getElementById('rbpEmail').value.trim(),
+    canal_preferido: document.getElementById('rbpCanal').value,
+    notas: document.getElementById('rbpNotas').value.trim(),
+  };
+  const r = await fetch('/mantenciones/api/proveedores-repuesto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (!(r.ok && d.ok !== false)){
+    ilusToast(d.error || 'No se pudo crear el proveedor', {type:'error'});
+    return;
+  }
+  rbSetProveedor(d.id, d.nombre || nombre, body.contacto_nombre);
+  RB_PROVEEDOR_MODAL.hide();
+  ilusToast('Proveedor creado', {type:'success'});
+  const marcaId = document.getElementById('rbMarca').value;
+  if (RB_PROVEEDOR_ASIGNAR_MARCA && marcaId){
+    const r2 = await fetch('/mantenciones/api/repuestos-stock/marcas/' + marcaId + '/proveedor', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({proveedor_id: d.id})
+    });
+    if (r2.ok) ilusToast('Quedó como contraparte de esta marca', {type:'success'});
+  }
+  RB_PROVEEDOR_ASIGNAR_MARCA = false;
 }
 
 // ── Ubicación: typeahead con crear-al-vuelo (foco = primeras 15, cero tipeo) ──
@@ -589,6 +767,75 @@ function rbSetUbicacion(id, texto){
   rbActualizarChecklist();
 }
 
+// ── Escáner de código de barras para Ubicación (Daniel 2026-08-08:
+// "la ubicación la podemos tomar como un código de barra... capturarla
+// por fotografía... que se busque en el computador como que haga
+// captura"). Usa la BarcodeDetector nativa del navegador (Chrome/
+// Android) — sin librería externa, sin subir nada a ningún servidor.
+// Si el navegador no la soporta (ej. Safari/Firefox), el botón de
+// cámara simplemente no aparece y queda SOLO la búsqueda por texto,
+// que nunca se toca (Daniel: "deja esas dos opciones").
+let RB_ESCANER_STREAM = null;
+function rbInicializarEscaner(){
+  const btn = document.getElementById('rbBtnEscanear');
+  if ('BarcodeDetector' in window) btn.style.display = '';
+}
+async function rbEscanearUbicacion(){
+  if (!('BarcodeDetector' in window)){
+    ilusToast('Este navegador no soporta escanear código de barras — usa la búsqueda por texto', {type:'warning'});
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.id = 'rbEscanerOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  overlay.innerHTML =
+    '<video id="rbEscanerVideo" autoplay playsinline muted style="max-width:100%;max-height:75vh;border-radius:8px"></video>' +
+    '<div class="text-white small mt-2">Apunta al código de barras de la ubicación...</div>' +
+    '<button type="button" class="btn btn-light mt-3" id="rbBtnCancelarEscaner" style="min-height:44px;padding:8px 24px">' +
+    '<i class="bi bi-x-lg me-1"></i>Cancelar</button>';
+  document.body.appendChild(overlay);
+  document.getElementById('rbBtnCancelarEscaner').onclick = rbCerrarEscaner;
+  try{
+    RB_ESCANER_STREAM = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}});
+  }catch(e){
+    ilusToast('No se pudo acceder a la cámara — revisa los permisos', {type:'error'});
+    rbCerrarEscaner();
+    return;
+  }
+  const video = document.getElementById('rbEscanerVideo');
+  video.srcObject = RB_ESCANER_STREAM;
+  const detector = new BarcodeDetector();
+  let activo = true;
+  overlay.dataset.activo = '1';
+  (async function loop(){
+    while (activo && document.getElementById('rbEscanerOverlay')){
+      try{
+        const codigos = await detector.detect(video);
+        if (codigos.length){
+          const valor = (codigos[0].rawValue || '').trim();
+          if (valor){
+            activo = false;
+            rbCerrarEscaner();
+            document.getElementById('rbUbicacionBuscar').value = valor;
+            await rbBuscarUbicaciones();
+            ilusToast('Código leído: ' + valor, {type:'success'});
+            return;
+          }
+        }
+      }catch(e){ /* frame sin código legible, sigue intentando */ }
+      await new Promise(res => setTimeout(res, 250));
+    }
+  })();
+}
+function rbCerrarEscaner(){
+  if (RB_ESCANER_STREAM){
+    RB_ESCANER_STREAM.getTracks().forEach(t => t.stop());
+    RB_ESCANER_STREAM = null;
+  }
+  const overlay = document.getElementById('rbEscanerOverlay');
+  if (overlay) overlay.remove();
+}
+
 // ── Checklist rojo/verde (Daniel 2026-08-07, la noche antes del
 // levantamiento físico: "ayúdame a que sea amigable e indícale con rojo
 // y verde si falta algo"). Obligatorios = bloquean Guardar; recomendados
@@ -604,6 +851,8 @@ const RB_CHECKLIST_CAMPOS = [
    ok: () => !!document.getElementById('rbMarca').value},
   {id: 'ubicacion', label: 'Ubicación', obligatorio: false,
    ok: () => !!document.getElementById('rbUbicacion').value},
+  {id: 'proveedor', label: 'Proveedor', obligatorio: false,
+   ok: () => !!document.getElementById('rbProveedor').value},
   {id: 'foto', label: 'Foto', obligatorio: false,
    ok: () => RB_FOTOS_ACTUALES.length > 0},
 ];
@@ -634,22 +883,27 @@ function rbRenderFotos(){
   const grid = document.getElementById('rbFotosGrid');
   // La 1a foto del array (orden=1 en el backend) es la "principal": la
   // que se ve como miniatura en la tabla (Daniel 2026-08-07).
+  // Daniel 2026-08-08: "la foto hazla también bien potente" — miniaturas
+  // grandes (antes 76px), con sombra, para que se vean de verdad al
+  // fotografiar el repuesto en terreno.
+  const RB_FOTO_PX = 148;
   let html = RB_FOTOS_ACTUALES.map((f, i) => {
     const esPrincipal = (i === 0);
     return '<div style="position:relative;display:inline-block">' +
-      '<img src="' + f.url + '" style="width:76px;height:76px;object-fit:cover;border-radius:10px;border:' + (esPrincipal ? '2px solid #dc2626' : '1px solid #e5e7eb') + ';cursor:zoom-in" onclick="window.open(\'' + f.url + '\',\'_blank\')">' +
+      '<img src="' + f.url + '" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';cursor:zoom-in" onclick="window.open(\'' + f.url + '\',\'_blank\')">' +
       (esPrincipal
-        ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-6px;left:2px;right:2px;background:#dc2626;color:#fff;font-size:.6rem;font-weight:800;text-align:center;border-radius:6px;padding:1px 0;letter-spacing:.02em"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
+        ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-8px;left:4px;right:4px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:800;text-align:center;border-radius:8px;padding:2px 0;letter-spacing:.02em;box-shadow:0 2px 6px rgba(220,38,38,.4)"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
         : '<button type="button" onclick="rbFotoMarcarPrincipal(' + f.id + ')" title="Marcar como foto principal" ' +
-          'style="position:absolute;bottom:-6px;left:-6px;width:22px;height:22px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#9ca3af;font-size:.72rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center"><i class="bi bi-star"></i></button>') +
+          'style="position:absolute;bottom:-8px;left:-8px;width:32px;height:32px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#9ca3af;font-size:1rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.15)"><i class="bi bi-star"></i></button>') +
       '<button type="button" onclick="rbFotoBorrar(' + f.id + ')" title="Borrar foto" ' +
-      'style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">&times;</button>' +
+      'style="position:absolute;top:-8px;right:-8px;width:28px;height:28px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.95rem;line-height:1;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.25)">&times;</button>' +
       '</div>';
   }).join('');
   if (RB_FOTOS_ACTUALES.length < RB_MAX_FOTOS){
-    html += '<label style="width:76px;height:76px;border:2px dashed #d1d5db;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;margin:0" title="Agregar foto">' +
-            '<i class="bi bi-camera" style="font-size:1.2rem"></i>' +
-            '<input type="file" accept="image/*" hidden onchange="rbFotoSubir(this)">' +
+    html += '<label style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;border:2px dashed #d1d5db;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;margin:0;flex-direction:column;gap:4px" title="Agregar foto">' +
+            '<i class="bi bi-camera" style="font-size:2rem"></i>' +
+            '<span class="small">Agregar</span>' +
+            '<input type="file" accept="image/*" capture="environment" hidden onchange="rbFotoSubir(this)">' +
             '</label>';
   }
   grid.innerHTML = html;
