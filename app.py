@@ -55773,9 +55773,15 @@ def clientes_hub_tipo_relacion(cid):
         return jsonify({"ok": False, "error": "Cliente no encontrado."}), 404
 
     try:
+        # FIX 2026-08-08 (Daniel: "necesito quién hizo la última... y ese
+        # siempre va a cambiar"): faltaba updated_by aquí. updated_at se
+        # refresca solo (ON UPDATE CURRENT_TIMESTAMP a nivel MySQL), pero
+        # el NOMBRE del último editor solo cambia si el código lo setea
+        # explícitamente -- sin esto, el header de la ficha podía mostrar
+        # una fecha de HOY con el nombre de un editor de semanas atrás.
         mysql_execute(
-            "UPDATE mant_clientes SET tipo_cliente=%s WHERE id=%s",
-            (nuevo, cid)
+            "UPDATE mant_clientes SET tipo_cliente=%s, updated_by=%s WHERE id=%s",
+            (nuevo, current_username(), cid)
         )
         u = getattr(g, "user", None) or {}
         mysql_execute(
@@ -77712,7 +77718,11 @@ def mant_intel_accion(cid):
                     return jsonify({"error": "Día inválido. Escribe un número entre 1 y 28."}), 400
                 valor = _num
             # `campo` está en whitelist de columnas literales; el valor va parametrizado.
-            mysql_execute(f"UPDATE mant_clientes SET {campo}=%s WHERE id=%s", (valor[:200], cid))
+            # FIX 2026-08-08 (Daniel: "necesito quién hizo la última... y ese
+            # siempre va a cambiar"): sumamos updated_by -- ver comentario
+            # gemelo en clientes_hub_tipo_relacion() más arriba.
+            mysql_execute(f"UPDATE mant_clientes SET {campo}=%s, updated_by=%s WHERE id=%s",
+                          (valor[:200], current_username(), cid))
         elif accion == "programar_ot":
             fecha = (d.get("fecha") or "").strip()[:10]
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", fecha or ""):
@@ -84838,10 +84848,12 @@ def mant_erp_doc_info():
     que el TÉCNICO asocie un equipo a su factura de origen desde terreno
     (Daniel 2026-06-23). Devuelve datos mínimos + análisis de RUT contra el
     cliente del levantamiento (informativo, no bloqueante).
-    body: {tipo: FCV|FCE|BLV|BLE|GDV, numero, lid?}"""
+    body: {tipo: FCV|FCE|BLV|BLE|GDV|NVV|NVI, numero, lid?}"""
     d = request.get_json(silent=True) or {}
     tipo = (d.get("tipo") or "FCV").strip().upper()[:5]
-    if tipo not in ("FCV", "FCE", "BLV", "BLE", "GDV"):
+    # 2026-08-08 (Daniel): agrega NVV/NVI -- notas de venta, mismos TIDOs
+    # ya usados en otros buscadores ERP (ver _RANDOM_TIDOS_VENTA).
+    if tipo not in ("FCV", "FCE", "BLV", "BLE", "GDV", "NVV", "NVI"):
         tipo = "FCV"
     numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
     if not numero:

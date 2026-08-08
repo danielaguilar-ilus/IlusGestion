@@ -59,14 +59,24 @@
         {% if cliente.contacto_tel %}<span><i class="bi bi-telephone me-1" style="color:#64748b"></i><a href="tel:{{ cliente.contacto_tel }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto_tel }}</a></span>{% endif %}
         {% if cliente.contacto_email %}<span><i class="bi bi-envelope me-1" style="color:#64748b"></i><a href="mailto:{{ cliente.contacto_email }}" style="color:#cbd5e1;text-decoration:none">{{ cliente.contacto_email }}</a></span>{% endif %}
       </div>
-      {# Auditoría #}
+      {# Auditoría — Daniel 2026-08-08: "necesito quién hizo la ÚLTIMA, el
+         último movimiento... ese siempre va a cambiar". ANTES comparábamos
+         nombres (updated_by != created_by) para decidir si mostrar "Actualizado
+         por": eso escondía el último movimiento cada vez que el último editor
+         coincidía con el creador original (ej. Juan crea, David edita, Juan
+         vuelve a editar → username igual al creador, la línea desaparecía
+         aunque SÍ hubo movimientos después de la creación). Comparamos
+         timestamps en vez de nombres: created_at/updated_at son manejados
+         por MySQL (ON UPDATE CURRENT_TIMESTAMP), así que son la señal
+         confiable de "¿se tocó después de crearse?". #}
+      {% set _tocado = cliente.updated_at and cliente.created_at and cliente.updated_at > cliente.created_at %}
       {% if cliente.created_by or cliente.get('updated_by') %}
       <div style="margin-top:8px;font-size:.66rem;color:#64748b;display:flex;flex-wrap:wrap;gap:0 18px">
         {% if cliente.created_by %}
-        <span><i class="bi bi-person-plus me-1" style="opacity:.6"></i>Cargado por <strong>{{ cliente.created_by }}</strong></span>
+        <span><i class="bi bi-person-plus me-1" style="opacity:.6"></i>Creado por <strong>{{ cliente.created_by }}</strong>{% if cliente.created_at %} el {{ cliente.created_at.strftime('%d/%m/%Y') }}{% endif %}</span>
         {% endif %}
-        {% if cliente.get('updated_by') and cliente.updated_by != cliente.created_by %}
-        <span><i class="bi bi-person-check me-1" style="opacity:.6"></i>Actualizado por <strong>{{ cliente.updated_by }}</strong>{% if cliente.updated_at %} el {{ cliente.updated_at.strftime('%d/%m/%Y') }}{% endif %}</span>
+        {% if cliente.get('updated_by') and _tocado %}
+        <span><i class="bi bi-person-check me-1" style="opacity:.6"></i>Última modificación por <strong>{{ cliente.updated_by }}</strong>{% if cliente.updated_at %} el {{ cliente.updated_at.strftime('%d/%m/%Y') }} a las {{ cliente.updated_at.strftime('%H:%M') }}{% endif %}</span>
         {% endif %}
       </div>
       {% endif %}
