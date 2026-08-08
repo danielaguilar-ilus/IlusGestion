@@ -386,10 +386,6 @@ class TestNingunCalculoSueltoEnTodoElProyecto(unittest.TestCase):
                          "por qué:\n  " + "\n  ".join(sospechosos))
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 class TestCubicajeSinLineasZZ(unittest.TestCase):
     """Las lineas ZZ (servicios) fuera del cubicaje, conservando el monto.
 
@@ -452,3 +448,71 @@ class TestCubicajeSinLineasZZ(unittest.TestCase):
         # Esta pantalla YA filtraba; el cambio la deja consistente con el
         # Cubicador. Si alguien quita este filtro, vuelven a divergir.
         self.assertIn('if l.get("es_zz"):', APP_SRC)
+
+
+class TestCubicajeSinLineaDeDescuento(unittest.TestCase):
+    """La línea de DESCUENTO (SKU 'DE') fuera del cubicaje, igual que ZZ.
+
+    Daniel, 2026-08-08, en respuesta directa a "¿el Cubicador debe filtrar
+    también las líneas de DESCUENTO, como ya hace Asignar y Cotizar?": "Si
+    también!".
+
+    'DESCUENTO VENTAS' no es un ítem físico: no se cubica ni se envía, y su
+    "cantidad" es el MONTO del descuento, no piezas — inflaba UNIDADES con un
+    número que no representa nada físico. "Asignar y Cotizar" ya lo filtraba
+    desde 2026-06-14; el Cubicador era el inconsistente, igual que pasaba con
+    ZZ antes de ese arreglo.
+
+    A diferencia de ZZ Envío, acá NO hay un monto que rescatar: el descuento
+    ya está reflejado en total_neto/total_bruto del header (vienen del ERP
+    aparte), así que sacar la línea no pierde ningún dato mostrado.
+    """
+
+    def _leer(self, ruta):
+        with open(ruta, encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+
+    def test_es_descuento_se_calcula_en_la_fuente(self):
+        i = APP_SRC.find("es_zz        = sku.startswith(\"ZZ\")")
+        self.assertGreater(i, 0, "se movió/renombró es_zz -- ajustar el ancla")
+        bloque = APP_SRC[i:i + 700]
+        self.assertIn('es_descuento = sku == "DE"', bloque)
+
+    def test_la_linea_expone_es_descuento_al_resto_del_sistema(self):
+        self.assertIn('"es_descuento":        es_descuento,', APP_SRC)
+
+    def test_la_grilla_excluye_la_linea_de_descuento(self):
+        html = self._leer("templates/cubicador/index.html")
+        self.assertIn("rejectattr('es_descuento')", html,
+                      "la grilla del Cubicador volvió a mostrar la línea de descuento")
+
+    def test_el_payload_de_exportacion_excluye_descuento(self):
+        i = APP_SRC.find("def _cubicador_export_payload")
+        self.assertGreater(i, 0)
+        bloque = APP_SRC[i:i + 5000]
+        self.assertIn('not l.get("es_descuento")', bloque,
+                      "el Excel/PDF volvería a traer el monto del descuento "
+                      "mezclado con piezas reales")
+
+    def test_el_pdf_excluye_descuento(self):
+        i = APP_SRC.find("def _cubicador_pdf_response_ilus")
+        self.assertGreater(i, 0)
+        bloque = APP_SRC[i:i + 12000]
+        self.assertIn('not l.get("es_descuento")', bloque)
+
+    def test_asignar_y_cotizar_sigue_filtrando_descuento(self):
+        # Esta pantalla YA filtraba (2026-06-14); el cambio la deja
+        # consistente con el Cubicador.
+        self.assertIn('if (l.get("sku") or "").strip().upper() == "DE":', APP_SRC)
+
+    def test_zz_y_descuento_no_se_confunden_entre_si(self):
+        # Guarda contra un copy-paste descuidado: cada bandera debe depender
+        # de SU propia condición, no heredar la del otro filtro.
+        i = APP_SRC.find("es_zz        = sku.startswith(\"ZZ\")")
+        bloque = APP_SRC[i:i + 400]
+        self.assertNotIn('es_descuento = sku.startswith("ZZ")', bloque)
+        self.assertNotIn('es_zz        = sku == "DE"', bloque)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

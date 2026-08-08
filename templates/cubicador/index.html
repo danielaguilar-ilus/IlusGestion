@@ -152,7 +152,7 @@
    `lineas_todas` conserva TODO — de ahí sale el monto del ZZ Envío que se
    muestra arriba, y no se pierde ningún dato del ERP. #}
 {% set lineas_todas = resultado.lineas %}
-{% set lineas  = resultado.lineas | rejectattr('es_zz') | list %}
+{% set lineas  = resultado.lineas | rejectattr('es_zz') | rejectattr('es_descuento') | list %}
 {% set rdocs   = resultado.docs %}
 {% set multi   = resultado.multi %}
 
