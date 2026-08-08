@@ -78,7 +78,9 @@
     <tr class="{{ 'rb-bajo-min' if r.bajo_minimo else '' }}" data-id="{{ r.id }}">
       <td><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
       <td class="rb-sku">{{ r.sku }}</td>
-      <td>{{ r.descripcion }}
+      <td>
+        {% set rfotos = fotos_por_repuesto.get(r.id, []) %}
+        {% if rfotos %}<img src="{{ rfotos[0].url }}" alt="" loading="lazy" onclick="window.open('{{ rfotos[0].url }}','_blank')" style="width:34px;height:34px;object-fit:cover;border-radius:6px;border:1px solid #e5e7eb;margin-right:8px;vertical-align:middle;cursor:zoom-in">{% endif %}{{ r.descripcion }}
         {% if r.bajo_minimo %}<span class="rb-bajo-min-badge">BAJO MÍNIMO</span>{% endif %}
       </td>
       <td>{{ r.cantidad|round(2) }}</td>
@@ -98,7 +100,7 @@
         {% if not r.cliente_nombre and not r.ticket_numero %}<span class="text-muted" style="font-size:.78rem">—</span>{% endif %}
       </td>
       <td class="text-nowrap">
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }})' title="Editar"><i class="bi bi-pencil"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})' title="Editar"><i class="bi bi-pencil"></i></button>
         <button type="button" class="btn btn-sm btn-outline-dark" onclick="rbImprimirUno({{ r.id }})" title="Imprimir etiqueta"><i class="bi bi-tag"></i></button>
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')" title="Desactivar"><i class="bi bi-trash"></i></button>
       </td>
@@ -132,54 +134,45 @@
         <input type="hidden" id="rbId">
         <div class="row g-3">
           <div class="col-md-4">
-            <label class="form-label small fw-semibold">SKU interno <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="rbSku" maxlength="120" placeholder="Ej: REP-0001">
+            <label class="form-label small fw-semibold">SKU <span class="text-muted fw-normal">(automático)</span></label>
+            <input type="text" class="form-control" id="rbSku" readonly tabindex="-1"
+                   style="background:#f3f4f6;font-family:ui-monospace,monospace;font-weight:700"
+                   placeholder="REP-MARCA-0001 al guardar">
           </div>
           <div class="col-md-8">
             <label class="form-label small fw-semibold">Descripción <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="rbDescripcion" maxlength="400">
+            <input type="text" class="form-control" id="rbDescripcion" maxlength="400"
+                   placeholder="Ej: Correa de transmisión trotadora 2540mm">
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-semibold">Cantidad</label>
-            <input type="number" class="form-control" id="rbCantidad" min="0" step="0.01" value="0">
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">Cantidad <span class="text-danger">*</span></label>
+            <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0">
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-semibold">Stock mínimo</label>
-            <input type="number" class="form-control" id="rbStockMinimo" min="0" step="0.01" placeholder="Opcional">
+          <div class="col-md-4">
+            <label class="form-label small fw-semibold">Stock mínimo <span class="text-danger">*</span></label>
+            <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
           </div>
-          <div class="col-md-3">
+          <div class="col-md-4">
             <label class="form-label small fw-semibold">Costo unitario (CLP)</label>
-            <input type="number" class="form-control" id="rbCosto" min="0" step="1" placeholder="0">
+            <input type="number" class="form-control" id="rbCosto" min="0" step="1" placeholder="Opcional">
           </div>
-          <div class="col-md-3">
-            <label class="form-label small fw-semibold">Estado</label>
-            <select class="form-select" id="rbEstado">
-              <option value="nuevo">Nuevo</option>
-              <option value="usado">Usado</option>
-              <option value="reacondicionado">Reacondicionado</option>
-            </select>
+          <div class="col-md-6">
+            <label class="form-label small fw-semibold">Marca <span class="text-muted fw-normal">(del ERP)</span></label>
+            <input type="hidden" id="rbMarca">
+            <div class="rb-modelo-resultados">
+              <input type="text" class="form-control" id="rbMarcaBuscar" placeholder="Escribe para buscar: Drax, Freemotion, Life..." autocomplete="off">
+              <div class="rb-modelo-resultados-list" id="rbMarcaResultadosList"></div>
+            </div>
+            <div id="rbMarcaSeleccionada" class="mt-1"></div>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-semibold">Ubicación</label>
-            <div class="d-flex gap-1">
-              <select class="form-select" id="rbUbicacion">
-                <option value="">— Sin ubicación —</option>
-                {% for u in ubicaciones %}<option value="{{ u.id }}">{{ u.codigo }}{% if u.nombre %} — {{ u.nombre }}{% endif %}</option>{% endfor %}
-              </select>
-              <button type="button" class="btn btn-outline-secondary" onclick="rbNuevaUbicacion()" title="Nueva ubicación"><i class="bi bi-plus-lg"></i></button>
-              <button type="button" class="btn btn-outline-secondary" onclick="rbQuitarUbicacion()" title="Quitar la ubicación seleccionada de la lista"><i class="bi bi-trash"></i></button>
+            <input type="hidden" id="rbUbicacion">
+            <div class="rb-modelo-resultados">
+              <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
+              <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
             </div>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Marca</label>
-            <div class="d-flex gap-1">
-              <select class="form-select" id="rbMarca">
-                <option value="">— Sin marca —</option>
-                {% for m in marcas %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
-              </select>
-              <button type="button" class="btn btn-outline-secondary" onclick="rbNuevaMarca()" title="Nueva marca"><i class="bi bi-plus-lg"></i></button>
-              <button type="button" class="btn btn-outline-secondary" onclick="rbQuitarMarca()" title="Quitar la marca seleccionada de la lista"><i class="bi bi-trash"></i></button>
-            </div>
+            <div id="rbUbicacionSeleccionada" class="mt-1"></div>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-semibold">Código de fabricante / OEM</label>
@@ -187,7 +180,16 @@
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-semibold">Notas</label>
-            <input type="text" class="form-control" id="rbNotas" maxlength="500">
+            <input type="text" class="form-control" id="rbNotas" maxlength="500" placeholder="Opcional">
+          </div>
+        </div>
+
+        <hr class="my-3">
+        <div id="rbFotosSection">
+          <label class="form-label small fw-semibold">Fotos <span class="text-muted fw-normal">(hasta 3)</span></label>
+          <div id="rbFotosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder subir fotos.</div>
+          <div id="rbFotosContenido">
+            <div class="d-flex gap-2 flex-wrap align-items-center" id="rbFotosGrid"></div>
           </div>
         </div>
 
@@ -227,25 +229,44 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-danger" onclick="rbGuardar()"><i class="bi bi-check2 me-1"></i>Guardar</button>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-outline-danger" id="rbBtnGuardarOtro" onclick="rbGuardar(true)"><i class="bi bi-plus-lg me-1"></i>Guardar y crear otro</button>
+        <button type="button" class="btn btn-danger" onclick="rbGuardar(false)"><i class="bi bi-check2 me-1"></i>Guardar</button>
       </div>
     </div>
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 let RB_MODAL = null;
 let RB_MODELOS_ACTUALES = [];
+let RB_FOTOS_ACTUALES = [];
+let RB_DIRTY = false;          // hubo cambios → recargar la tabla al cerrar el modal
+const RB_MAX_FOTOS = 3;
 
 document.addEventListener('DOMContentLoaded', function(){
-  RB_MODAL = new bootstrap.Modal(document.getElementById('modalRepStock'));
+  const modalEl = document.getElementById('modalRepStock');
+  RB_MODAL = new bootstrap.Modal(modalEl);
+  // La tabla se refresca UNA vez al cerrar (no en cada guardado) — así
+  // "Guardar y crear otro" encadena repuestos sin perder el modal.
+  modalEl.addEventListener('hidden.bs.modal', function(){
+    if (RB_DIRTY) location.reload();
+  });
   document.getElementById('rbModelosBuscar').addEventListener('input', rbBuscarModelosDebounced());
   document.getElementById('rbClienteBuscar').addEventListener('input', rbBuscarClientesDebounced());
   document.getElementById('rbTicketBuscar').addEventListener('input', rbBuscarTicketsDebounced());
+  // Marca y ubicación: buscar al tipear Y desplegar al hacer foco (cero tipeo)
+  const mIn = document.getElementById('rbMarcaBuscar');
+  mIn.addEventListener('input', rbMarcaInputDebounced());
+  mIn.addEventListener('focus', function(){ rbBuscarMarcas(); });
+  const uIn = document.getElementById('rbUbicacionBuscar');
+  uIn.addEventListener('input', rbUbicacionInputDebounced());
+  uIn.addEventListener('focus', function(){ rbBuscarUbicaciones(); });
   document.addEventListener('click', function(e){
     if (!e.target.closest('.rb-modelo-resultados')) {
-      ['rbModelosResultadosList','rbClienteResultadosList','rbTicketResultadosList'].forEach(function(id){
+      ['rbModelosResultadosList','rbClienteResultadosList','rbTicketResultadosList',
+       'rbMarcaResultadosList','rbUbicacionResultadosList'].forEach(function(id){
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
@@ -264,58 +285,70 @@ function rbUpdateBtn(){
   btn.innerHTML = '<i class="bi bi-tag me-1"></i>Imprimir etiquetas' + (n ? ' (' + n + ')' : ' de seleccionados');
 }
 
-function rbAbrirNuevo(){
+function rbAbrirNuevo(mantenerContexto){
+  // mantenerContexto=true (viene de "Guardar y crear otro"): conserva
+  // marca, ubicación y stock mínimo — cargar 20 piezas del mismo estante
+  // no debería obligar a reelegirlas 20 veces.
   document.getElementById('rbId').value = '';
   document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-box-seam me-2"></i>Nuevo repuesto';
-  ['rbSku','rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('rbCantidad').value = 0;
-  document.getElementById('rbStockMinimo').value = '';
+  document.getElementById('rbSku').value = '';
+  document.getElementById('rbSku').placeholder = 'REP-MARCA-0001 al guardar';
+  ['rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('rbCantidad').value = '';
   document.getElementById('rbCosto').value = '';
-  document.getElementById('rbEstado').value = 'nuevo';
-  document.getElementById('rbUbicacion').value = '';
-  document.getElementById('rbMarca').value = '';
+  if (!mantenerContexto){
+    document.getElementById('rbStockMinimo').value = 1;
+    rbSetMarca(null, '');
+    rbSetUbicacion(null, '');
+  }
   rbSetCliente(null, '');
   rbSetTicket(null, '');
   RB_MODELOS_ACTUALES = [];
   rbRenderModelosChips();
+  RB_FOTOS_ACTUALES = [];
+  rbRenderFotos();
   document.getElementById('rbModelosContenido').style.display = 'none';
   document.getElementById('rbModelosSinGuardar').style.display = 'block';
-  RB_MODAL.show();
+  if (!mantenerContexto) RB_MODAL.show();
+  setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
 
-function rbAbrirEditar(r, modelos){
+function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbId').value = r.id;
   document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar ' + r.sku;
   document.getElementById('rbSku').value = r.sku || '';
   document.getElementById('rbDescripcion').value = r.descripcion || '';
-  document.getElementById('rbCantidad').value = r.cantidad || 0;
-  document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : '';
+  document.getElementById('rbCantidad').value = r.cantidad != null ? r.cantidad : '';
+  document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : 1;
   document.getElementById('rbCosto').value = r.costo_unitario || '';
-  document.getElementById('rbEstado').value = r.estado || 'nuevo';
-  document.getElementById('rbUbicacion').value = r.ubicacion_id || '';
-  document.getElementById('rbMarca').value = r.marca_id || '';
+  rbSetMarca(r.marca_id || null, r.marca_nombre || '');
+  rbSetUbicacion(r.ubicacion_id || null, r.ubicacion_codigo || '');
   document.getElementById('rbCodigoFabricante').value = r.codigo_fabricante || '';
   document.getElementById('rbNotas').value = r.notas || '';
   rbSetCliente(r.cliente_id || null, r.cliente_nombre || '');
   rbSetTicket(r.ticket_id || null, r.ticket_numero || '');
   RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre}));
   rbRenderModelosChips();
+  RB_FOTOS_ACTUALES = (fotos || []).map(f => ({id: f.id, url: f.url}));
+  rbRenderFotos();
   document.getElementById('rbModelosContenido').style.display = 'block';
   document.getElementById('rbModelosSinGuardar').style.display = 'none';
   RB_MODAL.show();
 }
 
-async function rbGuardar(){
+async function rbGuardar(crearOtro){
   const id = document.getElementById('rbId').value;
-  const sku = document.getElementById('rbSku').value.trim();
   const descripcion = document.getElementById('rbDescripcion').value.trim();
-  if (!sku || !descripcion){ ilusToast('SKU y descripción son obligatorios', {type:'warning'}); return; }
+  const cantidad = document.getElementById('rbCantidad').value;
+  const stockMin = document.getElementById('rbStockMinimo').value;
+  if (!descripcion){ ilusToast('La descripción es obligatoria', {type:'warning'}); document.getElementById('rbDescripcion').focus(); return; }
+  if (cantidad === '' || Number(cantidad) < 0){ ilusToast('Indica la cantidad', {type:'warning'}); document.getElementById('rbCantidad').focus(); return; }
+  if (stockMin === '' || Number(stockMin) < 0){ ilusToast('Indica el stock mínimo', {type:'warning'}); document.getElementById('rbStockMinimo').focus(); return; }
   const body = {
-    sku: sku, descripcion: descripcion,
-    cantidad: document.getElementById('rbCantidad').value || 0,
-    stock_minimo: document.getElementById('rbStockMinimo').value || null,
+    descripcion: descripcion,
+    cantidad: cantidad,
+    stock_minimo: stockMin,
     costo_unitario: document.getElementById('rbCosto').value || 0,
-    estado: document.getElementById('rbEstado').value,
     ubicacion_id: document.getElementById('rbUbicacion').value || null,
     marca_id: document.getElementById('rbMarca').value || null,
     codigo_fabricante: document.getElementById('rbCodigoFabricante').value.trim(),
@@ -328,15 +361,29 @@ async function rbGuardar(){
     const method = id ? 'PUT' : 'POST';
     const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const d = await r.json().catch(() => ({}));
-    if (r.ok && d.ok !== false){
-      ilusToast(id ? 'Repuesto actualizado' : 'Repuesto creado', {type:'success'});
-      if (!id && d.id){
-        // Recién creado: si quedaron modelos por asociar (no debería pasar, pero por si acaso), los guardamos.
-      }
-      setTimeout(() => location.reload(), 500);
-    } else {
+    if (!(r.ok && d.ok !== false)){
       ilusToast(d.error || 'No se pudo guardar', {type:'error'});
+      return;
     }
+    RB_DIRTY = true;
+    if (id){
+      ilusToast('Repuesto actualizado', {type:'success'});
+      if (crearOtro){ rbAbrirNuevo(true); } else { RB_MODAL.hide(); }
+      return;
+    }
+    // Recién creado: el backend generó el SKU (REP-MARCA-0001)
+    ilusToast('✓ ' + (d.sku || 'Repuesto') + ' creado', {type:'success'});
+    if (crearOtro){
+      rbAbrirNuevo(true);   // mismo estante: conserva marca/ubicación/stock mínimo
+      return;
+    }
+    // Queda abierto en modo edición: ya se pueden subir fotos y asociar modelos
+    document.getElementById('rbId').value = d.id;
+    document.getElementById('rbSku').value = d.sku || '';
+    document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>' + (d.sku || 'Repuesto creado');
+    document.getElementById('rbModelosContenido').style.display = 'block';
+    document.getElementById('rbModelosSinGuardar').style.display = 'none';
+    rbRenderFotos();
   }catch(e){
     ilusToast('Error de conexión al guardar', {type:'error'});
   }
@@ -369,82 +416,236 @@ function rbImprimirEtiquetas(){
   window.open('/repuestos/bodega/etiquetas?ids=' + ids.join(','), '_blank');
 }
 
-async function rbNuevaUbicacion(){
-  const codigo = await ilusPrompt({title:'Nueva ubicación', message:'Código de la ubicación (ej: A-01-03)', required:true});
-  if (!codigo) return;
-  const nombre = await ilusPrompt({title:'Nueva ubicación', message:'Descripción (opcional)', required:false});
-  const r = await fetch('/mantenciones/api/repuestos-stock/ubicaciones', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codigo, nombre})});
-  const d = await r.json().catch(() => ({}));
-  if (r.ok && d.ok !== false){
-    const sel = document.getElementById('rbUbicacion');
-    const opt = document.createElement('option');
-    opt.value = d.id; opt.textContent = d.codigo + (d.nombre ? ' — ' + d.nombre : '');
-    sel.appendChild(opt); sel.value = d.id;
-    ilusToast('Ubicación creada', {type:'success'});
-  } else {
-    ilusToast(d.error || 'No se pudo crear la ubicación', {type:'error'});
-  }
+// ── Marca: typeahead conectado al ERP (MAEPR.MRPR vía sync backend) ──
+// Los resultados viven en arrays JS y las filas referencian por índice
+// (rbPickMarca(i)) — nombres con comillas no rompen el onclick.
+let RB_MARCA_RESULTS = [];
+let rbMarcaTimer = null;
+function rbMarcaInputDebounced(){
+  return function(){ clearTimeout(rbMarcaTimer); rbMarcaTimer = setTimeout(rbBuscarMarcas, 200); };
 }
-
-async function rbNuevaMarca(){
-  const nombre = await ilusPrompt({title:'Nueva marca', message:'Nombre de la marca', required:true});
+async function rbBuscarMarcas(){
+  const q = document.getElementById('rbMarcaBuscar').value.trim();
+  const list = document.getElementById('rbMarcaResultadosList');
+  const r = await fetch('/mantenciones/api/repuestos-stock/buscar-marcas?q=' + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({marcas:[]}));
+  RB_MARCA_RESULTS = d.marcas || [];
+  let html = RB_MARCA_RESULTS.map((m, i) =>
+    '<div class="rb-modelo-resultado-item d-flex justify-content-between align-items-center" onclick="rbPickMarca(' + i + ')">' +
+    '<strong>' + escHtmlRb(m.nombre) + '</strong>' +
+    '<i class="bi bi-trash text-muted" style="font-size:.72rem;padding:2px 4px" title="Quitar de la lista" onclick="rbCatBorrarMarca(event,' + i + ')"></i>' +
+    '</div>'
+  ).join('');
+  const existe = RB_MARCA_RESULTS.some(m => m.nombre.toLowerCase() === q.toLowerCase());
+  if (q.length >= 2 && !existe){
+    html += '<div class="rb-modelo-resultado-item" style="color:#dc2626;font-weight:600" onclick="rbCrearMarcaRapida()">' +
+            '<i class="bi bi-plus-circle me-1"></i>Crear marca "' + escHtmlRb(q) + '"</div>';
+  }
+  if (!html) html = '<div class="rb-modelo-resultado-item text-muted">Sin marcas — escribe para crear una</div>';
+  list.innerHTML = html;
+  list.style.display = 'block';
+}
+function rbPickMarca(i){
+  const m = RB_MARCA_RESULTS[i];
+  if (m) rbSetMarca(m.id, m.nombre);
+  document.getElementById('rbMarcaResultadosList').style.display = 'none';
+}
+async function rbCrearMarcaRapida(){
+  const nombre = document.getElementById('rbMarcaBuscar').value.trim();
+  document.getElementById('rbMarcaResultadosList').style.display = 'none';
   if (!nombre) return;
   const r = await fetch('/mantenciones/api/repuestos-stock/marcas', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nombre})});
   const d = await r.json().catch(() => ({}));
   if (r.ok && d.ok !== false){
-    const sel = document.getElementById('rbMarca');
-    const opt = document.createElement('option');
-    opt.value = d.id; opt.textContent = d.nombre;
-    sel.appendChild(opt); sel.value = d.id;
+    rbSetMarca(d.id, d.nombre || nombre);
     ilusToast('Marca creada', {type:'success'});
   } else {
     ilusToast(d.error || 'No se pudo crear la marca', {type:'error'});
   }
 }
-
-async function rbQuitarUbicacion(){
-  const sel = document.getElementById('rbUbicacion');
-  const id = sel.value;
-  if (!id){ ilusToast('Elige primero la ubicación que quieres quitar', {type:'warning'}); return; }
-  const texto = sel.options[sel.selectedIndex].text;
-  const ok = await ilusConfirm({
-    title: 'Quitar ubicación',
-    message: '¿Sacar "' + texto + '" de la lista?',
-    sub: 'Solo se puede si no hay repuestos guardados en ella.',
-    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
-  });
-  if (!ok) return;
-  const r = await fetch('/mantenciones/api/repuestos-stock/ubicaciones/' + id, {method:'DELETE'});
-  const d = await r.json().catch(() => ({}));
-  if (r.ok && d.ok !== false){
-    sel.remove(sel.selectedIndex);
-    sel.value = '';
-    ilusToast('Ubicación quitada', {type:'success'});
-  } else {
-    ilusToast(d.error || 'No se pudo quitar la ubicación', {type:'error'});
-  }
-}
-
-async function rbQuitarMarca(){
-  const sel = document.getElementById('rbMarca');
-  const id = sel.value;
-  if (!id){ ilusToast('Elige primero la marca que quieres quitar', {type:'warning'}); return; }
-  const texto = sel.options[sel.selectedIndex].text;
+async function rbCatBorrarMarca(ev, i){
+  ev.stopPropagation();
+  const m = RB_MARCA_RESULTS[i];
+  if (!m) return;
   const ok = await ilusConfirm({
     title: 'Quitar marca',
-    message: '¿Sacar "' + texto + '" de la lista?',
+    message: '¿Sacar "' + m.nombre + '" de la lista?',
     sub: 'Solo se puede si no hay repuestos de esa marca.',
     okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
   });
   if (!ok) return;
-  const r = await fetch('/mantenciones/api/repuestos-stock/marcas/' + id, {method:'DELETE'});
+  const r = await fetch('/mantenciones/api/repuestos-stock/marcas/' + m.id, {method:'DELETE'});
   const d = await r.json().catch(() => ({}));
   if (r.ok && d.ok !== false){
-    sel.remove(sel.selectedIndex);
-    sel.value = '';
     ilusToast('Marca quitada', {type:'success'});
+    if (document.getElementById('rbMarca').value == m.id) rbSetMarca(null, '');
+    rbBuscarMarcas();
   } else {
     ilusToast(d.error || 'No se pudo quitar la marca', {type:'error'});
+  }
+}
+function rbSetMarca(id, nombre){
+  document.getElementById('rbMarca').value = id || '';
+  document.getElementById('rbMarcaBuscar').value = '';
+  document.getElementById('rbMarcaSeleccionada').innerHTML = id
+    ? '<span class="rb-modelo-chip" style="background:#fee2e2"><i class="bi bi-tag me-1"></i>' + escHtmlRb(nombre) +
+      '<button type="button" onclick="rbSetMarca(null,\'\')" title="Quitar">&times;</button></span>'
+    : '';
+}
+
+// ── Ubicación: typeahead con crear-al-vuelo (foco = primeras 15, cero tipeo) ──
+let RB_UBIC_RESULTS = [];
+let rbUbicTimer = null;
+function rbUbicacionInputDebounced(){
+  return function(){ clearTimeout(rbUbicTimer); rbUbicTimer = setTimeout(rbBuscarUbicaciones, 200); };
+}
+async function rbBuscarUbicaciones(){
+  const q = document.getElementById('rbUbicacionBuscar').value.trim();
+  const list = document.getElementById('rbUbicacionResultadosList');
+  const r = await fetch('/mantenciones/api/repuestos-stock/buscar-ubicaciones?q=' + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({ubicaciones:[]}));
+  RB_UBIC_RESULTS = d.ubicaciones || [];
+  let html = RB_UBIC_RESULTS.map((u, i) =>
+    '<div class="rb-modelo-resultado-item d-flex justify-content-between align-items-center" onclick="rbPickUbicacion(' + i + ')">' +
+    '<span><strong>' + escHtmlRb(u.codigo) + '</strong>' +
+    (u.nombre ? ' <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(u.nombre) + '</span>' : '') + '</span>' +
+    '<i class="bi bi-trash text-muted" style="font-size:.72rem;padding:2px 4px" title="Quitar de la lista" onclick="rbCatBorrarUbicacion(event,' + i + ')"></i>' +
+    '</div>'
+  ).join('');
+  const existe = RB_UBIC_RESULTS.some(u => u.codigo.toLowerCase() === q.toLowerCase());
+  if (q.length >= 1 && !existe){
+    html += '<div class="rb-modelo-resultado-item" style="color:#dc2626;font-weight:600" onclick="rbCrearUbicacionRapida()">' +
+            '<i class="bi bi-plus-circle me-1"></i>Crear ubicación "' + escHtmlRb(q) + '"</div>';
+  }
+  if (!html) html = '<div class="rb-modelo-resultado-item text-muted">Sin ubicaciones — escribe el código para crear la primera</div>';
+  list.innerHTML = html;
+  list.style.display = 'block';
+}
+function rbPickUbicacion(i){
+  const u = RB_UBIC_RESULTS[i];
+  if (u) rbSetUbicacion(u.id, u.codigo + (u.nombre ? ' — ' + u.nombre : ''));
+  document.getElementById('rbUbicacionResultadosList').style.display = 'none';
+}
+async function rbCrearUbicacionRapida(){
+  const codigo = document.getElementById('rbUbicacionBuscar').value.trim();
+  document.getElementById('rbUbicacionResultadosList').style.display = 'none';
+  if (!codigo) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/ubicaciones', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codigo, nombre:''})});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    rbSetUbicacion(d.id, d.codigo || codigo);
+    ilusToast('Ubicación "' + (d.codigo || codigo) + '" creada', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo crear la ubicación', {type:'error'});
+  }
+}
+async function rbCatBorrarUbicacion(ev, i){
+  ev.stopPropagation();
+  const u = RB_UBIC_RESULTS[i];
+  if (!u) return;
+  const ok = await ilusConfirm({
+    title: 'Quitar ubicación',
+    message: '¿Sacar "' + u.codigo + '" de la lista?',
+    sub: 'Solo se puede si no hay repuestos guardados en ella.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/ubicaciones/' + u.id, {method:'DELETE'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    ilusToast('Ubicación quitada', {type:'success'});
+    if (document.getElementById('rbUbicacion').value == u.id) rbSetUbicacion(null, '');
+    rbBuscarUbicaciones();
+  } else {
+    ilusToast(d.error || 'No se pudo quitar la ubicación', {type:'error'});
+  }
+}
+function rbSetUbicacion(id, texto){
+  document.getElementById('rbUbicacion').value = id || '';
+  document.getElementById('rbUbicacionBuscar').value = '';
+  document.getElementById('rbUbicacionSeleccionada').innerHTML = id
+    ? '<span class="rb-modelo-chip" style="background:#dbeafe"><i class="bi bi-geo-alt me-1"></i>' + escHtmlRb(texto) +
+      '<button type="button" onclick="rbSetUbicacion(null,\'\')" title="Quitar">&times;</button></span>'
+    : '';
+}
+
+// ── Fotos del repuesto (máx 3, comprimidas en el navegador) ──
+function rbRenderFotos(){
+  const id = document.getElementById('rbId').value;
+  const sinGuardar = document.getElementById('rbFotosSinGuardar');
+  const contenido = document.getElementById('rbFotosContenido');
+  if (!id){
+    sinGuardar.style.display = 'block';
+    contenido.style.display = 'none';
+    return;
+  }
+  sinGuardar.style.display = 'none';
+  contenido.style.display = 'block';
+  const grid = document.getElementById('rbFotosGrid');
+  let html = RB_FOTOS_ACTUALES.map(f =>
+    '<div style="position:relative;display:inline-block">' +
+    '<img src="' + f.url + '" style="width:76px;height:76px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb;cursor:zoom-in" onclick="window.open(\'' + f.url + '\',\'_blank\')">' +
+    '<button type="button" onclick="rbFotoBorrar(' + f.id + ')" title="Borrar foto" ' +
+    'style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">&times;</button>' +
+    '</div>'
+  ).join('');
+  if (RB_FOTOS_ACTUALES.length < RB_MAX_FOTOS){
+    html += '<label style="width:76px;height:76px;border:2px dashed #d1d5db;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;margin:0" title="Agregar foto">' +
+            '<i class="bi bi-camera" style="font-size:1.2rem"></i>' +
+            '<input type="file" accept="image/*" hidden onchange="rbFotoSubir(this)">' +
+            '</label>';
+  }
+  grid.innerHTML = html;
+}
+async function rbFotoSubir(input){
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  const id = document.getElementById('rbId').value;
+  if (!id) return;
+  // compressForUpload devuelve {blob, name} (lado mayor 1600px, JPEG 0.85)
+  let blob = file, nombre = file.name || 'foto.jpg';
+  try{
+    if (window.ilusFotos && window.ilusFotos.compressForUpload){
+      const c = await window.ilusFotos.compressForUpload(file);
+      if (c && c.blob){ blob = c.blob; nombre = c.name || nombre; }
+    }
+  }catch(e){ /* sube el original */ }
+  const fd = new FormData();
+  fd.append('file', blob, nombre);
+  ilusToast('Subiendo foto...', {type:'info'});
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/fotos', {method:'POST', body: fd});
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok !== false){
+      RB_FOTOS_ACTUALES.push({id: d.id, url: d.url});
+      RB_DIRTY = true;
+      rbRenderFotos();
+      ilusToast('Foto guardada', {type:'success'});
+    } else {
+      ilusToast(d.error || 'No se pudo subir la foto', {type:'error'});
+    }
+  }catch(e){
+    ilusToast('Error de conexión al subir la foto', {type:'error'});
+  }
+}
+async function rbFotoBorrar(fid){
+  const id = document.getElementById('rbId').value;
+  if (!id) return;
+  const ok = await ilusConfirm({
+    title: 'Borrar foto',
+    message: '¿Eliminar esta foto del repuesto?',
+    okLabel: 'Borrar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/fotos/' + fid, {method:'DELETE'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    RB_FOTOS_ACTUALES = RB_FOTOS_ACTUALES.filter(f => f.id !== fid);
+    RB_DIRTY = true;
+    rbRenderFotos();
+  } else {
+    ilusToast(d.error || 'No se pudo borrar la foto', {type:'error'});
   }
 }
 

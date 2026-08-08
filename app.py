@@ -81379,10 +81379,89 @@ def _repstock_fmt(r):
     return d
 
 
+# Sync de marcas de repuesto desde el ERP Random (2026-08-07, Daniel:
+# "la marca debe venir del ERP" — campo I.14 del diccionario oficial:
+# MAEPR.MRPR = 'Código de Marca de producto'; catálogo en TABMR.NOKOMR).
+# OJO: NO reusar _marcas_catalogo() de Mantenciones — esa consulta TABFM
+# (SUPER FAMILIA) primero y corta con break, así que devuelve familias
+# etiquetadas como marcas. Acá se consulta la marca DE VERDAD.
+# Best-effort + cache por proceso: si el ERP no responde, el desplegable
+# sigue funcionando con lo ya sincronizado en mant_repuestos_marcas.
+_repstock_marcas_sync_ts = 0.0
+
+
+def _repstock_sync_marcas_erp():
+    global _repstock_marcas_sync_ts
+    if time.time() - _repstock_marcas_sync_ts < 3600:
+        return
+    try:
+        filas = []
+        for _sql in (
+            # 1º el catálogo formal de marcas (nombre legible NOKOMR)
+            "SELECT DISTINCT TOP 200 RTRIM(NOKOMR) AS m FROM TABMR WHERE NOKOMR IS NOT NULL",
+            # 2º fallback: marcas realmente usadas en el maestro de productos
+            "SELECT DISTINCT TOP 200 RTRIM(MRPR) AS m FROM MAEPR WHERE MRPR IS NOT NULL",
+        ):
+            try:
+                filas = _random_sql_query(_sql, max_rows=200) or []
+                if filas:
+                    break
+            except Exception:
+                continue
+        nuevas = 0
+        for f in filas:
+            nombre = (f.get("m") or "").strip()[:120]
+            if not nombre:
+                continue
+            try:
+                mysql_execute(
+                    "INSERT IGNORE INTO mant_repuestos_marcas (nombre) VALUES (%s)",
+                    (nombre,)
+                )
+                nuevas += 1
+            except Exception:
+                pass
+        _repstock_marcas_sync_ts = time.time()
+        if filas:
+            print(f"[repstock_marcas] sync ERP ok: {len(filas)} marcas", flush=True)
+    except Exception as e:
+        # Nunca romper la página por el ERP — se usa lo local.
+        _repstock_marcas_sync_ts = time.time() - 3000  # reintenta en ~10 min
+        print(f"[repstock_marcas] sync ERP falló: {e}", flush=True)
+
+
+def _repstock_sku_prefijo(marca_nombre):
+    """DRAX de 'Drax', FREE de 'Freemotion', LIFE de 'Life Fitness'...
+    Solo A-Z0-9, 4 caracteres, 'GEN' si no hay marca."""
+    limpio = "".join(c for c in (marca_nombre or "").upper() if c.isalnum())
+    return (limpio[:4] or "GEN")
+
+
+def _repstock_next_sku(marca_nombre, conn):
+    """SKU automático REP-<MARCA>-0001, numerado por marca. Atómico por el
+    row-lock de escritura del ON DUPLICATE KEY UPDATE (mismo patrón que
+    _next_ot_number_atomic — jamás SELECT MAX(), que bajo REPEATABLE READ
+    duplica números en concurrencia; bug real documentado en memoria).
+    Usa la MISMA conexión del INSERT del repuesto: si el caller hace
+    rollback, el número también se revierte."""
+    pref = _repstock_sku_prefijo(marca_nombre)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO mant_repstock_secuencia (prefijo, n) VALUES (%s, LAST_INSERT_ID(1)) "
+            "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)",
+            (pref,)
+        )
+        cur.execute("SELECT LAST_INSERT_ID() AS n")
+        row = cur.fetchone()
+        n = int(row["n"]) if row and row.get("n") else 1
+    return f"REP-{pref}-{n:04d}"
+
+
 def _repstock_contexto_bodega():
     """Todo lo que la pestaña "Bodega" necesita para pintarse. Se llama
     tanto desde /repuestos (donde vive de verdad, Daniel 2026-08-07) como
     desde /repuestos/bodega (URL directa, se conserva)."""
+    _repstock_sync_marcas_erp()  # marcas desde MAEPR.MRPR, best-effort + cache 1h
     q = (request.args.get("bq") or "").strip()
     marca_id = request.args.get("marca_id") or ""
     ubicacion_id = request.args.get("ubicacion_id") or ""
@@ -81434,6 +81513,7 @@ def _repstock_contexto_bodega():
     bod_repuestos = [_repstock_fmt(r) for r in rows]
 
     modelos_por_repuesto = {}
+    fotos_por_repuesto = {}
     ids = [r["id"] for r in bod_repuestos]
     if ids:
         ph = ",".join(["%s"] * len(ids))
@@ -81447,10 +81527,20 @@ def _repstock_contexto_bodega():
         ) or []
         for m in mrows:
             modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(dict(m))
+        frows = mysql_fetchall(
+            f"SELECT id, repuesto_id, gcs_key, orden FROM mant_repuestos_stock_fotos "
+            f" WHERE repuesto_id IN ({ph}) ORDER BY repuesto_id, orden",
+            tuple(ids)
+        ) or []
+        for f in frows:
+            fotos_por_repuesto.setdefault(f["repuesto_id"], []).append(
+                {"id": f["id"], "url": "/f/" + f["gcs_key"], "orden": f["orden"]}
+            )
 
     return {
         "bod_repuestos": bod_repuestos,
         "modelos_por_repuesto": modelos_por_repuesto,
+        "fotos_por_repuesto": fotos_por_repuesto,
         "marcas": mysql_fetchall(
             "SELECT id, nombre FROM mant_repuestos_marcas WHERE activo=1 ORDER BY nombre"
         ) or [],
@@ -81483,41 +81573,50 @@ def repuestos_bodega_list():
 @_mant_required
 @_no_tecnico
 def repstock_crear():
+    """Alta de repuesto. El SKU NO viene del cliente: se genera automático
+    (REP-<MARCA>-0001, bloqueado en la UI — Daniel 2026-08-07: "bloqueamos
+    el SKU y agrégame un SKU genérico conectado al repuesto y a la marca").
+    Obligatorios: descripción, cantidad y stock mínimo. Costo opcional."""
     d = request.get_json(silent=True) or {}
-    sku = (d.get("sku") or "").strip()[:120]
     descripcion = (d.get("descripcion") or "").strip()[:400]
-    if not sku or not descripcion:
-        return jsonify({"ok": False, "error": "SKU y descripción son obligatorios"}), 400
-    ya = mysql_fetchone("SELECT id FROM mant_repuestos_stock WHERE sku=%s", (sku,))
-    if ya:
-        return jsonify({"ok": False, "error": f"Ya existe un repuesto con el SKU '{sku}'"}), 400
+    if not descripcion:
+        return jsonify({"ok": False, "error": "La descripción es obligatoria"}), 400
+    if d.get("cantidad") in (None, "", "null"):
+        return jsonify({"ok": False, "error": "La cantidad es obligatoria"}), 400
+    if d.get("stock_minimo") in (None, "", "null"):
+        return jsonify({"ok": False, "error": "El stock mínimo es obligatorio"}), 400
     try:
-        cantidad = float(d.get("cantidad") or 0)
-        costo_unitario = float(d.get("costo_unitario") or 0)
-        stock_minimo = d.get("stock_minimo")
-        stock_minimo = float(stock_minimo) if stock_minimo not in (None, "", "null") else None
+        cantidad = float(d.get("cantidad"))
+        stock_minimo = float(d.get("stock_minimo"))
+        costo_unitario = float(d.get("costo_unitario")) if d.get("costo_unitario") not in (None, "", "null") else 0
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Cantidad/costo/stock mínimo deben ser números"}), 400
-    estado = (d.get("estado") or "nuevo").strip()
-    if estado not in ("nuevo", "usado", "reacondicionado"):
-        estado = "nuevo"
+        return jsonify({"ok": False, "error": "Cantidad/stock mínimo/costo deben ser números"}), 400
+    if cantidad < 0 or stock_minimo < 0:
+        return jsonify({"ok": False, "error": "Cantidad y stock mínimo no pueden ser negativos"}), 400
     marca_id = d.get("marca_id") or None
+    marca_nombre = None
+    if marca_id:
+        _m = mysql_fetchone("SELECT nombre FROM mant_repuestos_marcas WHERE id=%s", (marca_id,))
+        marca_nombre = (_m or {}).get("nombre")
     ubicacion_id = d.get("ubicacion_id") or None
     cliente_id = d.get("cliente_id") or None
     ticket_id = d.get("ticket_id") or None
-    fields = {
-        "sku": sku, "descripcion": descripcion, "cantidad": cantidad,
-        "ubicacion_id": ubicacion_id, "marca_id": marca_id,
-        "costo_unitario": costo_unitario,
-        "codigo_fabricante": (d.get("codigo_fabricante") or "").strip()[:120] or None,
-        "stock_minimo": stock_minimo, "estado": estado,
-        "cliente_id": cliente_id, "ticket_id": ticket_id,
-        "notas": (d.get("notas") or "").strip() or None,
-        "created_by": current_username(),
-    }
-    cols = list(fields.keys())
     conn = get_mysql()
     try:
+        # SKU atómico en la MISMA transacción del INSERT: si algo falla,
+        # el rollback también devuelve el correlativo (sin huecos).
+        sku = _repstock_next_sku(marca_nombre, conn)
+        fields = {
+            "sku": sku, "descripcion": descripcion, "cantidad": cantidad,
+            "ubicacion_id": ubicacion_id, "marca_id": marca_id,
+            "costo_unitario": costo_unitario,
+            "codigo_fabricante": (d.get("codigo_fabricante") or "").strip()[:120] or None,
+            "stock_minimo": stock_minimo,
+            "cliente_id": cliente_id, "ticket_id": ticket_id,
+            "notas": (d.get("notas") or "").strip() or None,
+            "created_by": current_username(),
+        }
+        cols = list(fields.keys())
         with conn.cursor() as cur:
             cur.execute(
                 f"INSERT INTO mant_repuestos_stock ({','.join(cols)}) "
@@ -81527,7 +81626,7 @@ def repstock_crear():
             new_id = cur.lastrowid
         conn.commit()
         _mant_log("repuesto_stock", new_id, "crear", f"{sku} — {descripcion}")
-        return jsonify({"ok": True, "id": new_id})
+        return jsonify({"ok": True, "id": new_id, "sku": sku})
     except Exception as e:
         conn.rollback()
         print(f"[repstock_crear] ERROR: {e}", flush=True)
@@ -81540,25 +81639,16 @@ def repstock_crear():
 @_mant_required
 @_no_tecnico
 def repstock_editar(rid):
+    # El SKU es autogenerado e inmutable (2026-08-07): si llega en el body
+    # se ignora en silencio — cambiarlo rompería etiquetas ya impresas.
     d = request.get_json(silent=True) or {}
-    if "sku" in d:
-        nuevo_sku = (d.get("sku") or "").strip()[:120]
-        if not nuevo_sku:
-            return jsonify({"ok": False, "error": "El SKU no puede quedar vacío"}), 400
-        dup = mysql_fetchone(
-            "SELECT id FROM mant_repuestos_stock WHERE sku=%s AND id<>%s", (nuevo_sku, rid)
-        )
-        if dup:
-            return jsonify({"ok": False, "error": f"Ya existe otro repuesto con el SKU '{nuevo_sku}'"}), 400
-        d["sku"] = nuevo_sku
+    d.pop("sku", None)
     if "descripcion" in d:
         d["descripcion"] = (d.get("descripcion") or "").strip()[:400]
         if not d["descripcion"]:
             return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
-    if "estado" in d and d["estado"] not in ("nuevo", "usado", "reacondicionado"):
-        d["estado"] = "nuevo"
-    allowed = ["sku", "descripcion", "cantidad", "ubicacion_id", "marca_id",
-               "costo_unitario", "codigo_fabricante", "stock_minimo", "estado", "notas",
+    allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id",
+               "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
                "cliente_id", "ticket_id"]
     sets, vals = [], []
     for f in allowed:
@@ -81736,6 +81826,131 @@ def repstock_buscar_modelos():
         (like, like)
     ) or []
     return jsonify({"ok": True, "productos": [dict(r) for r in rows]})
+
+
+REPSTOCK_MAX_FOTOS = 3
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_foto_subir(rid):
+    """Hasta 3 fotos por repuesto — clon del patrón de Incidencias
+    (tabla hija gcs_key+orden, _uploader_upload a GCS, cleanup del blob
+    si el INSERT falla)."""
+    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    f = request.files.get("file") or request.files.get("archivo")
+    if not f:
+        return jsonify({"ok": False, "error": "Falta el archivo"}), 400
+    _ext, _err = _validate_uploaded_image(f, label="foto del repuesto")
+    if _err:
+        return jsonify({"ok": False, "error": _err}), 400
+    n_actual = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock_fotos WHERE repuesto_id=%s", (rid,)
+    ) or {}).get("n", 0)
+    if n_actual >= REPSTOCK_MAX_FOTOS:
+        return jsonify({"ok": False, "error": f"Máximo {REPSTOCK_MAX_FOTOS} fotos por repuesto"}), 400
+    try:
+        res = _uploader_upload(
+            f, folder="repuestos",
+            public_id=f"rep_{rid}_{int(time.time()*1000)}",
+            resource_type="image",
+        )
+    except Exception as e:
+        print(f"[repstock_foto] upload rid={rid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir la foto."}), 500
+    key = res.get("public_id")
+    # orden: SELECT aparte + reintento (JAMÁS subconsulta a la misma tabla
+    # en el INSERT — MySQL 1093, bug real del catálogo 2026-08-03).
+    for _int in range(5):
+        try:
+            prox = (mysql_fetchone(
+                "SELECT COALESCE(MAX(orden),0)+1 AS p FROM mant_repuestos_stock_fotos "
+                "WHERE repuesto_id=%s", (rid,)
+            ) or {}).get("p", 1)
+            mysql_execute(
+                "INSERT INTO mant_repuestos_stock_fotos (repuesto_id, gcs_key, orden, created_by) "
+                "VALUES (%s,%s,%s,%s)",
+                (rid, key, prox, current_username())
+            )
+            fila = mysql_fetchone(
+                "SELECT id FROM mant_repuestos_stock_fotos "
+                "WHERE repuesto_id=%s AND gcs_key=%s", (rid, key))
+            _mant_log("repuesto_stock", rid, "foto_agregada", rep.get("sku") or "")
+            return jsonify({"ok": True, "id": (fila or {}).get("id"),
+                            "url": "/f/" + key, "orden": prox})
+        except Exception as e_ins:
+            if "Duplicate" in str(e_ins):
+                continue  # carrera por el UNIQUE(repuesto_id, orden) — reintenta
+            try:
+                _uploader_destroy(key)  # blob huérfano
+            except Exception:
+                pass
+            print(f"[repstock_foto] INSERT rid={rid}: {e_ins}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo guardar la foto."}), 500
+    try:
+        _uploader_destroy(key)
+    except Exception:
+        pass
+    return jsonify({"ok": False, "error": "No se pudo guardar la foto (reintentos agotados)."}), 500
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def repstock_foto_borrar(rid, fid):
+    foto = mysql_fetchone(
+        "SELECT gcs_key FROM mant_repuestos_stock_fotos WHERE id=%s AND repuesto_id=%s",
+        (fid, rid))
+    if not foto:
+        return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+    mysql_execute("DELETE FROM mant_repuestos_stock_fotos WHERE id=%s", (fid,))
+    try:
+        _uploader_destroy(foto["gcs_key"])
+    except Exception:
+        pass
+    _mant_log("repuesto_stock", rid, "foto_eliminada", "")
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/repuestos-stock/buscar-ubicaciones", methods=["GET"])
+@_mant_required
+def repstock_buscar_ubicaciones():
+    """Typeahead de ubicaciones (Daniel: "me gustaría buscarla, por si hay
+    muchas"). Sin q devuelve las primeras 15 (para abrir el desplegable
+    al hacer foco, cero tipeo)."""
+    q = (request.args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        rows = mysql_fetchall(
+            "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones "
+            " WHERE activo=1 AND (codigo LIKE %s OR nombre LIKE %s) "
+            " ORDER BY codigo LIMIT 15", (like, like)) or []
+    else:
+        rows = mysql_fetchall(
+            "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones "
+            " WHERE activo=1 ORDER BY codigo LIMIT 15") or []
+    return jsonify({"ok": True, "ubicaciones": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/repuestos-stock/buscar-marcas", methods=["GET"])
+@_mant_required
+def repstock_buscar_marcas():
+    """Typeahead de marcas (sincronizadas del ERP — MAEPR.MRPR)."""
+    _repstock_sync_marcas_erp()
+    q = (request.args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        rows = mysql_fetchall(
+            "SELECT id, nombre FROM mant_repuestos_marcas "
+            " WHERE activo=1 AND nombre LIKE %s ORDER BY nombre LIMIT 15", (like,)) or []
+    else:
+        rows = mysql_fetchall(
+            "SELECT id, nombre FROM mant_repuestos_marcas "
+            " WHERE activo=1 ORDER BY nombre LIMIT 15") or []
+    return jsonify({"ok": True, "marcas": [dict(r) for r in rows]})
 
 
 @app.route("/mantenciones/api/repuestos-stock/buscar-clientes", methods=["GET"])
@@ -88176,8 +88391,45 @@ def _ensure_repuestos_bodega_tables():
     except Exception as e:
         print(f"[ensure_repuestos_stock] mant_repuestos_stock_modelos: {e}", flush=True)
 
-    # Seed de marcas conocidas hoy (Daniel, 2026-08-07). Editable después
-    # desde la UI — esto solo evita arrancar con el desplegable vacío.
+    # Fotos del repuesto: hasta 3 por ítem, patrón clonado de
+    # mant_incidencia_fotos (tabla hija con gcs_key + orden — el patrón
+    # canónico del proyecto para galerías; columnas foto_url1/2/3 NO).
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repuestos_stock_fotos (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                repuesto_id  INT NOT NULL,
+                gcs_key      VARCHAR(500) NOT NULL,
+                orden        INT NOT NULL DEFAULT 1,
+                created_by   VARCHAR(190),
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_repstock_foto_orden (repuesto_id, orden),
+                KEY idx_repstock_foto (repuesto_id),
+                CONSTRAINT fk_repstockfoto_rep FOREIGN KEY (repuesto_id)
+                    REFERENCES mant_repuestos_stock(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repuestos_stock_fotos: {e}", flush=True)
+
+    # Secuencia del SKU automático (REP-<MARCA>-0001), numerada POR
+    # prefijo de marca. Mismo mecanismo atómico que mant_ot_secuencia
+    # (INSERT ... ON DUPLICATE KEY UPDATE n=LAST_INSERT_ID(n+1) — el
+    # row-lock de escritura ES el mutex; ver _next_ot_number_atomic).
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_repstock_secuencia (
+                prefijo  VARCHAR(12) NOT NULL PRIMARY KEY,
+                n        INT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] mant_repstock_secuencia: {e}", flush=True)
+
+    # Seed de marcas conocidas hoy (Daniel, 2026-08-07). La lista real se
+    # sincroniza desde el ERP Random (MAEPR.MRPR) en cada carga de la
+    # página — esto solo evita arrancar con el desplegable vacío si el
+    # ERP no responde en el primer boot.
     for _marca in ("Drax", "Freemotion", "Ilus"):
         try:
             mysql_execute(
