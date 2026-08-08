@@ -81898,7 +81898,14 @@ def repstock_buscar_modelos():
     """Autocompletar modelos/SKU del catálogo (cat_productos) para asociar
     compatibilidad — mismo catálogo que ya usa Cotizaciones/Servicio
     Técnico, consultado directo (sin pasar por catalogo_module.py, mismo
-    patrón que mant_visita_repuestos.producto_id)."""
+    patrón que mant_visita_repuestos.producto_id).
+
+    Daniel 2026-08-08: "tiene que ser a cinco máquinas del RP, tenga o no
+    tenga stock" -- esta query NUNCA filtró por stock (correcto, un
+    repuesto se asocia a un MODELO, no a inventario disponible), pero SÍ
+    hay que excluir las líneas ZZ (ZZ-ENVIO/ZZ-INSTALACION/ZZ-SERVICIO/
+    descuentos, etc.): son servicios/cargos del ERP, no máquinas físicas
+    ("los servicios no mueven las facturas, los productos sí")."""
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return jsonify({"ok": True, "productos": []})
@@ -81906,6 +81913,7 @@ def repstock_buscar_modelos():
     rows = mysql_fetchall(
         "SELECT id, sku, nombre, clase_producto FROM cat_productos "
         " WHERE activo=1 AND (sku LIKE %s OR nombre LIKE %s) "
+        "   AND (sku IS NULL OR sku NOT LIKE 'ZZ%%') "
         " ORDER BY nombre LIMIT 20",
         (like, like)
     ) or []
@@ -81913,7 +81921,7 @@ def repstock_buscar_modelos():
 
 
 REPSTOCK_MAX_FOTOS = 3
-REPSTOCK_MAX_MODELOS = 3   # Daniel 2026-08-07: "se puede asociar hasta tres máquinas"
+REPSTOCK_MAX_MODELOS = 5   # Daniel 2026-08-07: "hasta tres máquinas" -> 2026-08-08: "tiene que ser a cinco máquinas"
 
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos", methods=["POST"])

@@ -23,12 +23,57 @@
 .rb-modelo-resultados-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:20;display:none}
 .rb-modelo-resultado-item{padding:8px 12px;font-size:.82rem;cursor:pointer;border-bottom:1px solid #f3f4f6}
 .rb-modelo-resultado-item:hover{background:#fee2e2}
-.rb-checklist{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e5e7eb}
-.rb-check-pill{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;padding:4px 10px 4px 8px;border-radius:50px;white-space:nowrap;transition:background-color .15s,color .15s}
-.rb-check-ok{background:#dcfce7;color:#166534}
-.rb-check-falta{background:#fee2e2;color:#991b1b}
-.rb-check-pill i{font-size:.85rem}
-@media (max-width:576px){.rb-checklist{padding:8px 12px;gap:5px}.rb-check-pill{font-size:.68rem;padding:3px 8px 3px 7px}}
+/* ── Modal de repuesto: pasos numerados estilo Retiros (Daniel 2026-08-08:
+   "necesito que se comporte el modal... con tecnología del 2026, asociada
+   al diseño de retiro. Así que copia todo"). Mismo lenguaje visual que
+   static/retiros_public_request.css (step-circle numerado + check, borde
+   verde al completar) adaptado a este modal -- reemplaza el banner de
+   pastillas rojo/verde de arriba (Daniel: "sacar esas restricciones de
+   arriba... déjale solamente el color... que el perímetro del objeto sea
+   verde... y déjalo numerado"). #}
+.rb-step{
+  margin:0 0 18px;padding:22px 24px;background:#fff;
+  border:1.5px solid #e5e7eb;border-radius:14px;
+  box-shadow:0 1px 2px rgba(15,23,42,.05);position:relative;overflow:hidden;
+  transition:border-color .3s,background .3s,box-shadow .3s;
+}
+.rb-step::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,#dc2626,#a60000);
+  opacity:0;transform:scaleY(.4);transform-origin:top;
+  transition:opacity .3s,transform .35s cubic-bezier(.22,1,.36,1);
+}
+.rb-step:hover{border-color:#d1d5db}
+.rb-step:hover::before{opacity:.5;transform:scaleY(1)}
+.rb-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+.rb-step.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d);opacity:1;transform:scaleY(1)}
+.rb-step.is-optional{background:#fafafa;border-style:dashed;border-color:#d1d5db}
+.rb-step.is-optional::before{display:none}
+.rb-step-header{display:flex;align-items:flex-start;gap:13px;margin-bottom:16px}
+.rb-step-circle{
+  width:42px;height:42px;border-radius:12px;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.2rem;font-weight:800;flex-shrink:0;
+  background:linear-gradient(150deg,#dc2626 0%,#a60000 100%);
+  box-shadow:0 8px 18px -6px rgba(220,38,38,.5);
+  transition:all .35s cubic-bezier(.34,1.56,.64,1);position:relative;
+}
+.rb-step.is-complete .rb-step-circle{
+  background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+  box-shadow:0 8px 18px -6px rgba(22,163,74,.5);transform:scale(1.04);
+}
+.rb-step-circle .rb-step-check{display:none;font-size:1.1rem}
+.rb-step.is-complete .rb-step-circle .rb-step-num{display:none}
+.rb-step.is-complete .rb-step-circle .rb-step-check{display:block}
+.rb-step-titles{flex:1;min-width:0;padding-top:1px}
+.rb-step-titles h6{margin:0;font-size:1.05rem;font-weight:800;color:#0a0a0a;letter-spacing:-.01em}
+.rb-step-titles .rb-step-sub{margin:3px 0 0;font-size:.78rem;color:#6b7280;line-height:1.4}
+.rb-step.is-optional .rb-step-titles h6{color:#374151}
+.rb-req{color:#dc2626;font-weight:800}
+.rb-input-help{font-size:.72rem;color:#6b7280;margin-top:4px}
+.rb-input-error{font-size:.72rem;color:#dc2626;margin-top:4px;font-weight:700;display:none}
+.rb-input-ok{font-size:.72rem;color:#16a34a;margin-top:4px;font-weight:700;display:none}
+@media (max-width:576px){.rb-step{padding:16px 14px}.rb-step-circle{width:36px;height:36px;font-size:1.05rem;border-radius:10px}}
 </style>
 
 <form method="get" class="rb-filtros">
@@ -132,116 +177,119 @@
 
 {# ════════ Modal crear/editar ════════ #}
 <div class="modal fade" id="modalRepStock" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title fw-bold" id="rbModalTitulo"><i class="bi bi-box-seam me-2"></i>Nuevo repuesto</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div id="rbChecklist" class="rb-checklist"></div>
       <div class="modal-body">
         <input type="hidden" id="rbId">
-        <div class="row g-3">
-          <div class="col-md-4">
-            <label class="form-label small fw-semibold">SKU <span class="text-muted fw-normal">(automático)</span></label>
-            <input type="text" class="form-control" id="rbSku" readonly tabindex="-1"
-                   style="background:#f3f4f6;font-family:ui-monospace,monospace;font-weight:700"
-                   placeholder="REP-MARCA-0001 al guardar">
-          </div>
-          <div class="col-md-8">
-            <label class="form-label small fw-semibold">Descripción <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="rbDescripcion" maxlength="400"
-                   placeholder="Ej: Correa de transmisión trotadora 2540mm">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small fw-semibold">Cantidad <span class="text-danger">*</span></label>
-            <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small fw-semibold">Stock mínimo <span class="text-danger">*</span></label>
-            <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
-          </div>
-          <div class="col-md-4">
-            <label class="form-label small fw-semibold">Costo unitario (CLP)</label>
-            <input type="number" class="form-control" id="rbCosto" min="0" step="1" placeholder="Opcional">
-          </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Marca <span class="text-muted fw-normal">(del ERP)</span></label>
-            <input type="hidden" id="rbMarca">
-            <div class="rb-modelo-resultados">
-              <input type="text" class="form-control" id="rbMarcaBuscar" placeholder="Escribe para buscar: Drax, Freemotion, Life..." autocomplete="off">
-              <div class="rb-modelo-resultados-list" id="rbMarcaResultadosList"></div>
+
+        <section class="rb-step" id="rbStep1">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">1</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-titles">
+              <h6>¿Qué repuesto es?</h6>
+              <p class="rb-step-sub">El SKU se genera solo al guardar — cuéntanos qué es.</p>
             </div>
-            <div id="rbMarcaSeleccionada" class="mt-1"></div>
           </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Ubicación</label>
-            <input type="hidden" id="rbUbicacion">
-            <div class="d-flex gap-1">
-              <div class="rb-modelo-resultados flex-grow-1">
-                <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
-                <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">SKU <span class="text-muted fw-normal">(automático)</span></label>
+              <input type="text" class="form-control" id="rbSku" readonly tabindex="-1"
+                     style="background:#f3f4f6;font-family:ui-monospace,monospace;font-weight:700"
+                     placeholder="REP-MARCA-0001 al guardar">
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small fw-semibold">Descripción <span class="rb-req">*</span></label>
+              <input type="text" class="form-control" id="rbDescripcion" maxlength="400"
+                     placeholder="Ej: Correa de transmisión trotadora 2540mm">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Código de fabricante / OEM</label>
+              <input type="text" class="form-control" id="rbCodigoFabricante" maxlength="120" placeholder="Opcional — si es distinto del SKU interno">
+            </div>
+          </div>
+        </section>
+
+        <section class="rb-step" id="rbStep2">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">2</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-titles">
+              <h6>Stock y ubicación</h6>
+              <p class="rb-step-sub">Cuántas unidades hay y dónde están en la bodega.</p>
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Cantidad <span class="rb-req">*</span></label>
+              <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Stock mínimo <span class="rb-req">*</span></label>
+              <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Costo unitario (CLP)</label>
+              <input type="number" class="form-control" id="rbCosto" min="0" step="1" placeholder="Opcional">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Ubicación</label>
+              <input type="hidden" id="rbUbicacion">
+              <div class="d-flex gap-1">
+                <div class="rb-modelo-resultados flex-grow-1">
+                  <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
+                  <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
+                </div>
+                <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras">
+                  <i class="bi bi-upc-scan"></i>
+                </button>
               </div>
-              <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras">
-                <i class="bi bi-upc-scan"></i>
-              </button>
+              <div id="rbUbicacionSeleccionada" class="mt-1"></div>
             </div>
-            <div id="rbUbicacionSeleccionada" class="mt-1"></div>
           </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Código de fabricante / OEM</label>
-            <input type="text" class="form-control" id="rbCodigoFabricante" maxlength="120" placeholder="Opcional — si es distinto del SKU interno">
-          </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Notas</label>
-            <input type="text" class="form-control" id="rbNotas" maxlength="500" placeholder="Opcional">
-          </div>
-          <div class="col-12">
-            <label class="form-label small fw-semibold">Proveedor <span class="text-muted fw-normal">(contraparte que gestiona este repuesto)</span></label>
-            <input type="hidden" id="rbProveedor">
-            <div class="rb-modelo-resultados">
-              <input type="text" class="form-control" id="rbProveedorBuscar" placeholder="Escribe para buscar o crear un proveedor..." autocomplete="off">
-              <div class="rb-modelo-resultados-list" id="rbProveedorResultadosList"></div>
-            </div>
-            <div id="rbProveedorSeleccionado" class="mt-1"></div>
-            <div id="rbProveedorSugerido" class="mt-1 small" style="display:none"></div>
-          </div>
-        </div>
+        </section>
 
-        <hr class="my-3">
-        <div id="rbFotosSection">
-          <label class="form-label small fw-semibold">Fotos <span class="text-muted fw-normal">(hasta 3)</span></label>
-          <div id="rbFotosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder subir fotos.</div>
-          <div id="rbFotosContenido">
-            <div class="d-flex gap-2 flex-wrap align-items-center" id="rbFotosGrid"></div>
-          </div>
-        </div>
-
-        <hr class="my-3">
-        <div class="row g-3 mb-1">
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Cliente asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
-            <input type="hidden" id="rbClienteId">
-            <div class="rb-modelo-resultados">
-              <input type="text" class="form-control" id="rbClienteBuscar" placeholder="Buscar cliente por nombre o RUT...">
-              <div class="rb-modelo-resultados-list" id="rbClienteResultadosList"></div>
+        <section class="rb-step" id="rbStep3">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">3</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-titles">
+              <h6>Marca y proveedor <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Opcional</span></h6>
+              <p class="rb-step-sub">Si eliges una marca con proveedor de referencia, te lo sugerimos solo.</p>
             </div>
-            <div id="rbClienteSeleccionado" class="mt-1"></div>
           </div>
-          <div class="col-md-6">
-            <label class="form-label small fw-semibold">Ticket asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
-            <input type="hidden" id="rbTicketId">
-            <div class="rb-modelo-resultados">
-              <input type="text" class="form-control" id="rbTicketBuscar" placeholder="Buscar ticket por número o cliente...">
-              <div class="rb-modelo-resultados-list" id="rbTicketResultadosList"></div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Marca <span class="text-muted fw-normal">(del ERP)</span></label>
+              <input type="hidden" id="rbMarca">
+              <div class="rb-modelo-resultados">
+                <input type="text" class="form-control" id="rbMarcaBuscar" placeholder="Escribe para buscar: Drax, Freemotion, Life..." autocomplete="off">
+                <div class="rb-modelo-resultados-list" id="rbMarcaResultadosList"></div>
+              </div>
+              <div id="rbMarcaSeleccionada" class="mt-1"></div>
             </div>
-            <div id="rbTicketSeleccionado" class="mt-1"></div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Proveedor <span class="text-muted fw-normal">(contraparte)</span></label>
+              <input type="hidden" id="rbProveedor">
+              <div class="rb-modelo-resultados">
+                <input type="text" class="form-control" id="rbProveedorBuscar" placeholder="Escribe para buscar o crear un proveedor..." autocomplete="off">
+                <div class="rb-modelo-resultados-list" id="rbProveedorResultadosList"></div>
+              </div>
+              <div id="rbProveedorSeleccionado" class="mt-1"></div>
+              <div id="rbProveedorSugerido" class="mt-1 small" style="display:none"></div>
+            </div>
           </div>
-        </div>
+        </section>
 
-        <hr class="my-3">
-        <div id="rbModelosSection">
-          <label class="form-label small fw-semibold">Modelos de equipo compatibles <span class="text-muted fw-normal">(hasta 3)</span></label>
+        <section class="rb-step" id="rbStep4">
+          <div class="rb-step-header">
+            <div class="rb-step-circle"><span class="rb-step-num">4</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-titles">
+              <h6>Modelos de equipo compatibles <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Hasta 5</span></h6>
+              <p class="rb-step-sub">A qué máquinas les sirve este repuesto — tenga o no tenga stock hoy.</p>
+            </div>
+          </div>
           <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
           <div id="rbModelosContenido">
             <div id="rbModelosChips" class="mb-2"></div>
@@ -249,9 +297,50 @@
               <input type="text" class="form-control" id="rbModelosBuscar" placeholder="Buscar modelo por SKU o nombre (ej: trotadora)...">
               <div class="rb-modelo-resultados-list" id="rbModelosResultadosList"></div>
             </div>
-            <div id="rbModelosLimiteMsg" class="text-muted small" style="display:none">Máximo 3 modelos alcanzado — quita uno de arriba para cambiarlo.</div>
+            <div id="rbModelosLimiteMsg" class="text-muted small" style="display:none">Máximo 5 modelos alcanzado — quita uno de arriba para cambiarlo.</div>
           </div>
-        </div>
+        </section>
+
+        <section class="rb-step is-optional" id="rbStep5">
+          <div class="rb-step-header">
+            <div class="rb-step-circle" style="background:#6b7280;box-shadow:0 8px 18px -6px rgba(107,114,128,.35)"><span class="rb-step-num">5</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-titles">
+              <h6>Fotos y notas <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></h6>
+              <p class="rb-step-sub">Hasta 3 fotos, notas libres y trazabilidad a un cliente o ticket si corresponde.</p>
+            </div>
+          </div>
+          <div id="rbFotosSection">
+            <label class="form-label small fw-semibold">Fotos <span class="text-muted fw-normal">(hasta 3)</span></label>
+            <div id="rbFotosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder subir fotos.</div>
+            <div id="rbFotosContenido">
+              <div class="d-flex gap-2 flex-wrap align-items-center" id="rbFotosGrid"></div>
+            </div>
+          </div>
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Notas</label>
+              <input type="text" class="form-control" id="rbNotas" maxlength="500" placeholder="Opcional">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold">Cliente asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
+              <input type="hidden" id="rbClienteId">
+              <div class="rb-modelo-resultados">
+                <input type="text" class="form-control" id="rbClienteBuscar" placeholder="Nombre o RUT...">
+                <div class="rb-modelo-resultados-list" id="rbClienteResultadosList"></div>
+              </div>
+              <div id="rbClienteSeleccionado" class="mt-1"></div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-semibold">Ticket asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
+              <input type="hidden" id="rbTicketId">
+              <div class="rb-modelo-resultados">
+                <input type="text" class="form-control" id="rbTicketBuscar" placeholder="N° o cliente...">
+                <div class="rb-modelo-resultados-list" id="rbTicketResultadosList"></div>
+              </div>
+              <div id="rbTicketSeleccionado" class="mt-1"></div>
+            </div>
+          </div>
+        </section>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
@@ -294,12 +383,19 @@
             </select>
           </div>
           <div class="col-md-6">
-            <label class="form-label small fw-semibold">Teléfono</label>
-            <input type="text" class="form-control" id="rbpTelefono" maxlength="50" placeholder="+56 9...">
+            <label class="form-label small fw-semibold">Teléfono <span class="text-muted fw-normal">(internacional)</span></label>
+            <input type="tel" class="form-control" id="rbpTelefono" maxlength="30"
+                   placeholder="Ej: +86 138 0013 8000" autocomplete="tel"
+                   oninput="rbpLimpiarEstado('rbpTelefono')" onblur="rbpValidarTelefono()">
+            <div class="rb-input-error" id="rbpTelefono_err">Teléfono inválido — usa formato internacional (ej: +56 9 1234 5678)</div>
+            <div class="rb-input-ok" id="rbpTelefono_ok">✓ Teléfono válido</div>
           </div>
           <div class="col-md-6">
             <label class="form-label small fw-semibold">Correo</label>
-            <input type="email" class="form-control" id="rbpEmail" maxlength="150" placeholder="contacto@proveedor.com">
+            <input type="email" class="form-control" id="rbpEmail" maxlength="150" placeholder="contacto@proveedor.com"
+                   autocomplete="email" oninput="rbpLimpiarEstado('rbpEmail')" onblur="rbpValidarEmail()">
+            <div class="rb-input-error" id="rbpEmail_err">Email inválido — revisa el formato (ej: contacto@proveedor.com)</div>
+            <div class="rb-input-ok" id="rbpEmail_ok">✓ Email válido</div>
           </div>
           <div class="col-12">
             <label class="form-label small fw-semibold">Notas</label>
@@ -339,7 +435,7 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('rbClienteBuscar').addEventListener('input', rbBuscarClientesDebounced());
   document.getElementById('rbTicketBuscar').addEventListener('input', rbBuscarTicketsDebounced());
   ['rbDescripcion','rbCantidad','rbStockMinimo'].forEach(id =>
-    document.getElementById(id).addEventListener('input', rbActualizarChecklist));
+    document.getElementById(id).addEventListener('input', rbRefreshStepStates));
   // Marca, ubicación y proveedor: buscar al tipear Y desplegar al hacer foco (cero tipeo)
   const mIn = document.getElementById('rbMarcaBuscar');
   mIn.addEventListener('input', rbMarcaInputDebounced());
@@ -600,7 +696,7 @@ function rbSetMarca(id, nombre){
     ? '<span class="rb-modelo-chip" style="background:#fee2e2"><i class="bi bi-tag me-1"></i>' + escHtmlRb(nombre) +
       '<button type="button" onclick="rbSetMarca(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
-  rbActualizarChecklist();
+  rbRefreshStepStates();
 }
 
 // ── Proveedor: typeahead sobre mant_proveedores_repuesto (Daniel
@@ -646,6 +742,7 @@ function rbSetProveedor(id, nombre, contacto){
       '<button type="button" onclick="rbSetProveedor(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
   document.getElementById('rbProveedorSugerido').style.display = 'none';
+  rbRefreshStepStates();
 }
 // Modal rico de alta de proveedor (nombre + contacto + telefono/email/canal).
 // asignarAMarca=true: además de crear el proveedor, lo deja como
@@ -661,9 +758,51 @@ function rbAbrirNuevoProveedor(asignarAMarca){
   RB_PROVEEDOR_MODAL.show();
   setTimeout(() => document.getElementById(qActual ? 'rbpContacto' : 'rbpNombre').focus(), 350);
 }
+// Validación de correo y teléfono del proveedor (Daniel 2026-08-08: "el
+// correo, hazle una validación por correo, el número... un número
+// internacional" -- proveedores como Drax pueden ser extranjeros, así
+// que el teléfono NO se fuerza a +56 como en Retiros, solo formato
+// internacional genérico E.164-ish).
+function rbpLimpiarEstado(id){
+  const input = document.getElementById(id);
+  const err = document.getElementById(id + '_err');
+  const ok = document.getElementById(id + '_ok');
+  input.classList.remove('is-valid', 'is-invalid');
+  if (err) err.style.display = 'none';
+  if (ok) ok.style.display = 'none';
+}
+function rbpValidarEmail(){
+  const input = document.getElementById('rbpEmail');
+  const v = input.value.trim();
+  const err = document.getElementById('rbpEmail_err');
+  const ok = document.getElementById('rbpEmail_ok');
+  if (!v){ err.style.display = 'none'; ok.style.display = 'none'; input.classList.remove('is-valid','is-invalid'); return true; }
+  const valido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  err.style.display = valido ? 'none' : 'block';
+  ok.style.display = valido ? 'block' : 'none';
+  input.classList.toggle('is-invalid', !valido);
+  input.classList.toggle('is-valid', valido);
+  return valido;
+}
+function rbpValidarTelefono(){
+  const input = document.getElementById('rbpTelefono');
+  const v = input.value.trim();
+  const err = document.getElementById('rbpTelefono_err');
+  const ok = document.getElementById('rbpTelefono_ok');
+  if (!v){ err.style.display = 'none'; ok.style.display = 'none'; input.classList.remove('is-valid','is-invalid'); return true; }
+  const limpio = v.replace(/[\s\-().]/g, '');
+  const valido = /^\+?[1-9]\d{6,14}$/.test(limpio);
+  err.style.display = valido ? 'none' : 'block';
+  ok.style.display = valido ? 'block' : 'none';
+  input.classList.toggle('is-invalid', !valido);
+  input.classList.toggle('is-valid', valido);
+  return valido;
+}
 async function rbProveedorGuardar(){
   const nombre = document.getElementById('rbpNombre').value.trim();
   if (!nombre){ ilusToast('El nombre del proveedor es obligatorio', {type:'warning'}); return; }
+  if (!rbpValidarEmail()){ ilusToast('El correo del proveedor no es válido', {type:'warning'}); document.getElementById('rbpEmail').focus(); return; }
+  if (!rbpValidarTelefono()){ ilusToast('El teléfono del proveedor no es válido', {type:'warning'}); document.getElementById('rbpTelefono').focus(); return; }
   const body = {
     nombre,
     contacto_nombre: document.getElementById('rbpContacto').value.trim(),
@@ -765,7 +904,7 @@ function rbSetUbicacion(id, texto){
     ? '<span class="rb-modelo-chip" style="background:#dbeafe"><i class="bi bi-geo-alt me-1"></i>' + escHtmlRb(texto) +
       '<button type="button" onclick="rbSetUbicacion(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
-  rbActualizarChecklist();
+  rbRefreshStepStates();
 }
 
 // ── Escáner de código de barras para Ubicación (Daniel 2026-08-08:
@@ -892,36 +1031,30 @@ function rbCerrarEscaner(){
 // levantamiento físico: "ayúdame a que sea amigable e indícale con rojo
 // y verde si falta algo"). Obligatorios = bloquean Guardar; recomendados
 // solo avisan (no bloquean) para no generar ansiedad por algo opcional.
-const RB_CHECKLIST_CAMPOS = [
-  {id: 'descripcion', label: 'Descripción', obligatorio: true,
-   ok: () => document.getElementById('rbDescripcion').value.trim().length > 0},
-  {id: 'cantidad', label: 'Cantidad', obligatorio: true,
-   ok: () => document.getElementById('rbCantidad').value !== '' && Number(document.getElementById('rbCantidad').value) >= 0},
-  {id: 'stock_minimo', label: 'Stock mínimo', obligatorio: true,
-   ok: () => document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0},
-  {id: 'marca', label: 'Marca', obligatorio: false,
-   ok: () => !!document.getElementById('rbMarca').value},
-  {id: 'ubicacion', label: 'Ubicación', obligatorio: false,
-   ok: () => !!document.getElementById('rbUbicacion').value},
-  {id: 'proveedor', label: 'Proveedor', obligatorio: false,
-   ok: () => !!document.getElementById('rbProveedor').value},
-  {id: 'foto', label: 'Foto', obligatorio: false,
-   ok: () => RB_FOTOS_ACTUALES.length > 0},
-];
-function rbActualizarChecklist(){
-  const cont = document.getElementById('rbChecklist');
-  if (!cont) return;
-  cont.innerHTML = RB_CHECKLIST_CAMPOS.map(c => {
-    const ok = c.ok();
-    return '<span class="rb-check-pill ' + (ok ? 'rb-check-ok' : 'rb-check-falta') + '">' +
-      '<i class="bi bi-' + (ok ? 'check-circle-fill' : 'exclamation-circle-fill') + '"></i>' +
-      escHtmlRb(c.label) + '</span>';
-  }).join('');
+// Cada paso se pinta verde solo cuando SUS campos están completos —
+// reemplaza el banner de pastillas rojo/verde de arriba (Daniel
+// 2026-08-08: "sacar esas restricciones de arriba... déjale solamente
+// el color... que el perímetro del objeto sea verde... y déjalo
+// numerado" — mismo patrón que Retiros, ver CSS .rb-step.is-complete).
+// Paso 5 (fotos/notas) nunca se marca completo: es 100% opcional, igual
+// que el paso de comentarios en el formulario de Retiros.
+const RB_STEP_RULES = {
+  1: () => document.getElementById('rbDescripcion').value.trim().length > 0,
+  2: () => document.getElementById('rbCantidad').value !== '' && Number(document.getElementById('rbCantidad').value) >= 0 &&
+           document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0,
+  3: () => !!document.getElementById('rbMarca').value || !!document.getElementById('rbProveedor').value,
+  4: () => RB_MODELOS_ACTUALES.length > 0,
+};
+function rbRefreshStepStates(){
+  Object.keys(RB_STEP_RULES).forEach(function(n){
+    const sec = document.getElementById('rbStep' + n);
+    if (sec) sec.classList.toggle('is-complete', !!RB_STEP_RULES[n]());
+  });
 }
 
 // ── Fotos del repuesto (máx 3, comprimidas en el navegador) ──
 function rbRenderFotos(){
-  rbActualizarChecklist();   // RB_FOTOS_ACTUALES ya está actualizado por el caller
+  rbRefreshStepStates();   // RB_FOTOS_ACTUALES ya está actualizado por el caller
   const id = document.getElementById('rbId').value;
   const sinGuardar = document.getElementById('rbFotosSinGuardar');
   const contenido = document.getElementById('rbFotosContenido');
@@ -1068,10 +1201,11 @@ function rbRenderModelosChips(){
       ).join('')
     : '<span class="text-muted small">Sin modelos asociados todavía.</span>';
   // Al llegar al tope, se esconde el buscador (no tiene sentido buscar
-  // un 4to modelo que no se va a poder guardar) y se muestra el aviso.
+  // un modelo más que no se va a poder guardar) y se muestra el aviso.
   const alTope = RB_MODELOS_ACTUALES.length >= RB_MAX_MODELOS;
   document.getElementById('rbModelosBuscarWrap').style.display = alTope ? 'none' : '';
   document.getElementById('rbModelosLimiteMsg').style.display = alTope ? 'block' : 'none';
+  rbRefreshStepStates();
 }
 function escHtmlRb(s){ const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -1099,7 +1233,7 @@ async function rbBuscarModelos(){
   }
   list.style.display = 'block';
 }
-const RB_MAX_MODELOS = 3;   // Daniel: "se puede asociar hasta tres máquinas"
+const RB_MAX_MODELOS = 5;   // Daniel 2026-08-07: "hasta tres" -> 2026-08-08: "tiene que ser a cinco máquinas"
 async function rbAgregarModelo(producto_id, nombre){
   const id = document.getElementById('rbId').value;
   document.getElementById('rbModelosResultadosList').style.display = 'none';
