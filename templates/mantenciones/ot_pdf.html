@@ -758,6 +758,15 @@
           <span class="val">{{ (visita.tipo or 'instalacion')|replace('_',' ')|title }}</span>
         </div>
       </div>
+      {% if visita.documento_erp_tido and visita.documento_erp_nudo %}
+      <div class="ic-row">
+        <div class="ic-ico" style="background:#fee2e2;color:#991b1b">D</div>
+        <div class="ic-text">
+          <span class="lbl">Documento ERP</span>
+          <span class="val">{{ visita.documento_erp_tido }}-{{ visita.documento_erp_nudo }}</span>
+        </div>
+      </div>
+      {% endif %}
     </div>
 
     {# Col 2 – Fecha/Repuestos #}

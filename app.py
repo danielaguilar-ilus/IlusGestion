@@ -68151,6 +68151,17 @@ def mant_visita_update(vid):
             d["costo_proveedor"] = None
     if "proveedor_nombre" in d:
         d["proveedor_nombre"] = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
+    # Documento ERP asociado (NVI/NVV) — Daniel 2026-08-08: "al documento de
+    # la OT se le tiene que asociar... el administrativo... se puede asociar
+    # a una nota de venta, una NVI o NVV". Esta ruta ya está gateada por
+    # @_ot_can_metadata (solo admin/supervisor/ejecutivo/superadmin, NUNCA
+    # técnico — ver _puede_ot_accion), así que es el único lugar donde este
+    # campo se puede escribir: satisface "solo el administrativo" sin
+    # necesitar un chequeo de rol nuevo.
+    if "documento_erp_tido" in d:
+        d["documento_erp_tido"] = (str(d.get("documento_erp_tido") or "").strip()[:10]) or None
+    if "documento_erp_nudo" in d:
+        d["documento_erp_nudo"] = (str(d.get("documento_erp_nudo") or "").strip()[:20]) or None
     allowed = ["titulo","fecha_programada","fecha_fin","fecha_realizada","hora_inicio","hora_fin",
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
                "costo","contrato_id",
@@ -68159,7 +68170,9 @@ def mant_visita_update(vid):
                # Garantía transversal (mapeada desde garantia_aplica)
                "cubierto_por","estado_facturacion",
                # Finanzas (margen por servicio)
-               "costo_proveedor","proveedor_tipo","proveedor_nombre"]
+               "costo_proveedor","proveedor_tipo","proveedor_nombre",
+               # Documento ERP de origen (NVI/NVV), solo administrativo
+               "documento_erp_tido","documento_erp_nudo"]
     # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
     # reprogramar el término de una OT multi-día desde el mini-formulario
     # inline del popover (antes solo se podía fijar al CREAR la OT).
@@ -86879,6 +86892,46 @@ def _ensure_producto_unidades_por_venta():
         print(f"[ensure_prod_cols] no se pudo agregar unidades_por_venta: {e}", flush=True)
 
 
+def _ensure_mant_visitas_documento_erp():
+    """Garantiza mant_visitas.documento_erp_tido/documento_erp_nudo AUNQUE
+    ILUS_SKIP_MIGRATIONS=1 esté activo.
+
+    Daniel (2026-08-08): "al documento de la OT se le tiene que asociar...
+    el administrativo... se puede asociar a una nota de venta, una NVI o
+    NVV". Guarda el tipo+número de documento del ERP Random (NVI/NVV) que
+    dio origen a la OT o que un administrativo asoció después -- NUNCA se
+    escribe al ERP, solo se guarda la referencia (mismo espíritu que
+    cotizacion_tido/factura_tido, ya existentes en esta tabla, pero para el
+    documento de ORIGEN, no de facturación posterior).
+
+    Escrita SOLO desde mant_visita_update (PUT /mantenciones/api/visitas/<id>),
+    que ya está gateado por @_ot_can_metadata -- admin/supervisor/ejecutivo/
+    superadmin, NUNCA técnico. No se agrega ningún chequeo de rol nuevo:
+    ese endpoint YA es el único lugar donde estos dos campos se escriben."""
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas'"
+            ) or [])
+        }
+        if "documento_erp_tido" not in existing:
+            mysql_execute(
+                "ALTER TABLE mant_visitas ADD COLUMN documento_erp_tido VARCHAR(10) NULL "
+                "COMMENT 'Tipo de documento ERP de origen (NVI/NVV/etc)'"
+            )
+            print("[ensure_mant_visitas] columna agregada: documento_erp_tido", flush=True)
+        if "documento_erp_nudo" not in existing:
+            mysql_execute(
+                "ALTER TABLE mant_visitas ADD COLUMN documento_erp_nudo VARCHAR(20) NULL "
+                "COMMENT 'Numero de documento ERP de origen'"
+            )
+            print("[ensure_mant_visitas] columna agregada: documento_erp_nudo", flush=True)
+    except Exception as e:
+        print(f"[ensure_mant_visitas] no se pudo agregar documento_erp_tido/nudo: {e}", flush=True)
+
+
 def _ensure_courier_comunas_updated_at():
     """Garantiza transport_courier_comunas.updated_at AUNQUE ILUS_SKIP_MIGRATIONS=1.
 
@@ -90444,6 +90497,16 @@ try:
         _ensure_producto_unidades_por_venta()
 except Exception as _upv_err:
     print(f"[ILUS][WARN] _ensure_producto_unidades_por_venta: {_upv_err}", flush=True)
+
+# 2026-08-08 (Daniel): "al documento de la OT se le tiene que asociar...
+# el administrativo... a una nota de venta, NVI o NVV". Sin esta columna
+# mant_visita_update (ya gateado a solo admin/supervisor/ejecutivo) no
+# tiene dónde guardar el documento ERP asociado.
+try:
+    with app.app_context():
+        _ensure_mant_visitas_documento_erp()
+except Exception as _dve_err:
+    print(f"[ILUS][WARN] _ensure_mant_visitas_documento_erp: {_dve_err}", flush=True)
 
 # 2026-08-05: "Responsable ILUS" en la tarjeta del courier. La lista hace
 # SELECT c.* y el modal Editar la guarda, así que la columna tiene que existir
