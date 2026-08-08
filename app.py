@@ -81850,9 +81850,15 @@ def repuestos_bodega_list():
 @app.route("/mantenciones/api/repuestos-stock", methods=["POST"])
 @_mant_required
 def repstock_crear():
-    """Alta de repuesto. El SKU NO viene del cliente: se genera automático
+    """Alta de repuesto. El SKU NO se tipea a mano: o se genera automático
     (REP-<MARCA>-0001, bloqueado en la UI — Daniel 2026-08-07: "bloqueamos
-    el SKU y agrégame un SKU genérico conectado al repuesto y a la marca").
+    el SKU y agrégame un SKU genérico conectado al repuesto y a la marca"),
+    o se sustituye por el SKU real de la bodega 18 del ERP Random cuando el
+    repuesto se creó desde un resultado del sondeo (Daniel 2026-08-08:
+    "sustituir el SKU automático... para que sea el mismo código que en el
+    ERP, no hacer doble trabajo"). En ambos casos el SKU llega por una
+    ACCIÓN del sistema (auto-generar o elegir un resultado verificado),
+    nunca por texto libre del usuario -- no contradice el bloqueo del 07.
     Obligatorios: descripción, cantidad y stock mínimo. Costo opcional."""
     d = request.get_json(silent=True) or {}
     descripcion = (d.get("descripcion") or "").strip()[:400]
@@ -81886,11 +81892,24 @@ def repstock_crear():
     # tenemos que asociarlo"). Sigue siendo editable por repuesto -- el
     # proveedor NO queda "atado" a la marca, solo se sugiere por defecto.
     proveedor_id = d.get("proveedor_id") or marca_proveedor_id or None
+    # SKU real del ERP (bodega 18), si el repuesto se creó desde un
+    # resultado del sondeo -- reemplaza el auto-generado. Viene del propio
+    # sondeo (repstock_sondeo_erp), no de texto libre: se valida igual con
+    # el mismo whitelist de caracteres que usan los SKU internos.
+    sku_erp = (d.get("sku_erp") or "").strip()[:100]
+    if sku_erp and not re.match(r'^[A-Za-z0-9._\-\/]+$', sku_erp):
+        sku_erp = ""
     conn = get_mysql()
     try:
-        # SKU atómico en la MISMA transacción del INSERT: si algo falla,
-        # el rollback también devuelve el correlativo (sin huecos).
-        sku = _repstock_next_sku(marca_nombre, conn)
+        if sku_erp:
+            existente = mysql_fetchone("SELECT id FROM mant_repuestos_stock WHERE sku=%s", (sku_erp,))
+            if existente:
+                return jsonify({"ok": False, "error": f"Ya existe un repuesto con el SKU {sku_erp} (id {existente['id']})"}), 409
+            sku = sku_erp
+        else:
+            # SKU atómico en la MISMA transacción del INSERT: si algo falla,
+            # el rollback también devuelve el correlativo (sin huecos).
+            sku = _repstock_next_sku(marca_nombre, conn)
         fields = {
             "sku": sku, "descripcion": descripcion, "cantidad": cantidad,
             "ubicacion_id": ubicacion_id, "marca_id": marca_id,
@@ -82222,22 +82241,37 @@ def repstock_sondeo_modelos_erp():
     necesito que esté asociado a la bodega dieciocho, pero en modelo de
     equipos compatibles necesito que esté asociado la bodega cero dos...
     para que se puedan asociar esos repuestos hacia la bodega dos, que es
-    donde están los equipos". Y luego, viendo el resultado: "no deberías
-    filtrar el KOBO=02 no?" -- confirmado, es EXISTS sobre MAEST con KOBO=02
-    (misma bodega que ya usa Cotizaciones/Catálogo, ver CAT_BODEGA_SYNC).
+    donde están los equipos".
 
     Por qué esto NO reusa `repstock_buscar_modelos` (la búsqueda vieja de
     este mismo paso): esa consulta buscaba en `cat_productos`, el Catálogo
     LOCAL de ILUS -- una lista curada donde solo entran productos que un
     humano dio de alta a mano (no hay sync automático activo, ver
     catalogo_module.py:_cat_sync_erp_nuevos, hoy sin botón que lo dispare).
-    Por eso buscar "m3i" devolvía REPUESTOS del equipo ya cargados
-    ("Asiento para M3i", "Brazo de pedales M3i") en vez de la máquina M3i
-    misma: la máquina nunca había sido dada de alta en el Catálogo, pero
-    los repuestos sí. Este sondeo consulta el ERP en vivo (igual que
-    repstock_sondeo_erp para bodega 18), así que encuentra la máquina
-    exista o no todavía en el Catálogo -- ver repstock_modelo_asociar()
-    para cómo se resuelve/crea en cat_productos recién al asociarla.
+
+    FIX 2026-08-08 #2 (Daniel, con datos reales: "repara el paso 4... su
+    integracion es de la bodega 02" -- probando "m3i" seguía devolviendo
+    30 repuestos, nunca la máquina): la primera versión exigía
+    EXISTS(MAEST WHERE KOBO=02), pensando que bodega 02 = "donde están las
+    máquinas, no los repuestos". FALSO -- medido en vivo: bodega 02 tiene
+    AMBOS (la M3i completa Y sus ~30 repuestos, todos con movimiento de
+    stock ahí). El bug real es otro: los REPUESTOS se venden sueltos todo
+    el tiempo (siempre tienen fila en MAEST), pero una MÁQUINA COMPLETA
+    puede no tener NUNCA una fila de stock en bodega 02 (se entrega directo,
+    se trackea distinto) -- el EXISTS la excluía aunque existiera en el
+    catálogo. MISMO bug, MISMA causa, que ya se corrigió el 2026-07-31 en
+    `cat_api_erp_bodega_buscar` (Cotizaciones, "Agregar de Bodega 02"): ver
+    ese endpoint, comentario "no solo se llame a la bodega 02... busca en
+    TODO el catálogo, bodega 02 solo informativo". Se aplica el mismo
+    arreglo acá: sin EXISTS, bodega 02 vuelve LEFT/subquery informativo.
+
+    Con el EXISTS fuera, "m3i" traería de nuevo los 30 repuestos ANTES que
+    la máquina (si existe) porque el ORDER BY descripcion es alfabético y
+    "ASIENTO PARA M3i" < "TROTADORA M3i". Se ordena por LARGO de descripción
+    primero: un nombre de producto principal ("Trotadora M3i", ~13
+    caracteres) es casi siempre más corto que el de un repuesto específico
+    ("EMBELLECEDOR PLASTICO -TUBO AJUSTABLE MANUBRIO M3i", ~50) -- heurística
+    razonable sin inventar una taxonomía nueva sobre datos que no controlamos.
 
     REGLA #4.1: solo lectura. REGLA #4: error de ERP -> HTTP 200 con mensaje
     amable, nunca 500 con detalle interno."""
@@ -82257,12 +82291,9 @@ def repstock_sondeo_modelos_erp():
         "  FROM MAEPR pr "
         " WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s) "
         "   AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s "
-        "   AND EXISTS (SELECT 1 FROM MAEST st2 "
-        "                WHERE LTRIM(RTRIM(st2.KOPR)) = LTRIM(RTRIM(pr.KOPR)) "
-        "                  AND LTRIM(RTRIM(st2.KOBO)) = %s) "
-        " ORDER BY descripcion"
+        " ORDER BY LEN(LTRIM(RTRIM(pr.NOKOPR))), descripcion"
     )
-    params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%", CAT_BODEGA_SYNC)
+    params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%")
 
     try:
         filas = _random_sql_query(sql, params, max_rows=30)
@@ -89136,7 +89167,7 @@ def _ensure_repuestos_bodega_tables():
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_repuestos_stock (
                 id                  INT AUTO_INCREMENT PRIMARY KEY,
-                sku                 VARCHAR(120) NOT NULL COMMENT 'SKU interno ILUS, definido por Daniel — no depende del ERP',
+                sku                 VARCHAR(120) NOT NULL COMMENT 'SKU interno ILUS. Auto-generado (REP-MARCA-0001) o, si el repuesto nace de un resultado de la bodega 18 del ERP, el SKU real del ERP (2026-08-08) -- nunca texto libre del usuario',
                 descripcion         VARCHAR(400) NOT NULL,
                 cantidad            DECIMAL(10,2) NOT NULL DEFAULT 0,
                 ubicacion_id        INT NULL,
