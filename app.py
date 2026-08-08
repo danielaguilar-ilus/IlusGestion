@@ -82279,6 +82279,26 @@ def repstock_sondeo_modelos_erp():
     if len(q) < 2:
         return jsonify({"ok": True, "productos": []})
 
+    # DIAGNÓSTICO TEMPORAL 2026-08-08 (Daniel mostró la búsqueda nativa del
+    # ERP: la columna "Familia" separa máquina completa (1000_1001) de
+    # repuesto (4000_4300, "Media Holder M3i Lite Keiser (REPUESTO)")).
+    # Necesito el nombre REAL de esa columna en MAEPR antes de filtrar por
+    # ella -- ?q=__schema__ lista las columnas, solo lectura, superadmin.
+    # Quitar este bloque una vez identificada la columna correcta.
+    if q == "__schema__":
+        _u = getattr(g, "user", None) or {}
+        if (_u.get("role") or "").lower() != "superadmin":
+            return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+        try:
+            cols = _random_sql_query(
+                "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_NAME = 'MAEPR' ORDER BY ORDINAL_POSITION",
+                (), max_rows=200,
+            )
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)[:300]})
+        return jsonify({"ok": True, "columnas": [dict(c) for c in (cols or [])]})
+
     q_like = f"%{q.upper()[:60]}%"
 
     sql = (
