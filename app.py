@@ -11336,6 +11336,61 @@ def admin_integraciones():
     return render_template("admin/integraciones.html", integraciones=_integraciones_estado())
 
 
+@app.route("/admin/fichas-incompletas")
+@require_permission("superadmin")
+def admin_fichas_incompletas():
+    """Fichas de producto que NO cumplen las reglas de Etiquetas.
+
+    Nace del caso BBV9.0 (2026-08-07, lo detecto Alison): los modales de
+    Transporte escribian en app_products saltandose las validaciones de
+    Etiquetas, y creaban fichas sin nombre real, sin codigo de impresion y
+    con estado 'activo' (que no existe en Etiquetas). Esa puerta ya esta
+    cerrada; esta pagina sirve para encontrar las que alcanzaron a entrar
+    ANTES del arreglo.
+
+    SOLO LECTURA: lista y explica. No corrige ni borra nada — cada ficha se
+    revisa y arregla a mano desde Etiquetas, que es donde estan las reglas.
+    """
+    ESTADOS_VALIDOS = ("Pendiente", "Confirmado", "Impreso")
+    _ph = ",".join(["%s"] * len(ESTADOS_VALIDOS))
+    try:
+        filas = mysql_fetchall(f"""
+            SELECT p.id, p.sku, p.nombre, p.estado, p.codigo,
+                   p.created_by, p.created_at, p.updated_at,
+                   COUNT(b.id) AS n_bultos
+              FROM `{PRODUCTS_TABLE}` p
+              LEFT JOIN `{BULTOS_TABLE}` b ON b.product_id = p.id
+             WHERE COALESCE(NULLIF(TRIM(p.codigo), ''), '') = ''
+                OR p.estado NOT IN ({_ph})
+                OR UPPER(TRIM(p.nombre)) = UPPER(TRIM(p.sku))
+             GROUP BY p.id, p.sku, p.nombre, p.estado, p.codigo,
+                      p.created_by, p.created_at, p.updated_at
+             ORDER BY p.created_at DESC, p.id DESC
+             LIMIT 500
+        """, ESTADOS_VALIDOS) or []
+    except Exception as e:
+        print(f"[fichas-incompletas] query fallo: {e}", flush=True)
+        flash("No se pudo consultar el catalogo. Revisa el log del servidor.", "danger")
+        filas = []
+
+    # Un motivo legible por ficha — el operador tiene que entender QUE le
+    # falta sin leer codigo ni SQL.
+    for f in filas:
+        motivos = []
+        if not (f.get("codigo") or "").strip():
+            motivos.append("Sin codigo de impresion")
+        if (f.get("estado") or "") not in ESTADOS_VALIDOS:
+            motivos.append(f"Estado invalido ('{f.get('estado') or '—'}')")
+        if (f.get("nombre") or "").strip().upper() == (f.get("sku") or "").strip().upper():
+            motivos.append("El nombre es el mismo SKU")
+        if not int(f.get("n_bultos") or 0):
+            motivos.append("Sin bultos cargados")
+        f["motivos"] = motivos
+
+    return render_template("admin/fichas_incompletas.html",
+                           filas=filas, estados_validos=ESTADOS_VALIDOS)
+
+
 # ─────────────────────────────────────────────
 #  Usuarios (solo admin)
 # ─────────────────────────────────────────────

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Fichas incompletas — ILUS{% endblock %}
+{% block content %}
+
+<div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-clipboard-x me-2"></i>Fichas incompletas</h4>
+    <div class="sub">Productos del catálogo que no cumplen las reglas de Etiquetas</div>
+  </div>
+  <a href="{{ url_for('index') }}" class="btn btn-ilus-outline">
+    <i class="bi bi-tags me-1"></i>Ir a Etiquetas</a>
+</div>
+
+<div class="alert alert-secondary" style="font-size:.85rem;border-radius:10px">
+  <i class="bi bi-shield-lock me-1"></i>
+  Esta página <strong>solo mira</strong>: no corrige ni borra nada. Cada ficha se arregla a mano
+  desde Etiquetas, que es donde viven las reglas.
+</div>
+
+{% if filas %}
+<div class="alert" style="background:#fff8e1;border:1px solid #f59e0b;border-radius:10px;font-size:.87rem">
+  <div class="fw-bold mb-1">
+    <i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>
+    {{ filas|length }} ficha{{ 's' if filas|length != 1 else '' }} para revisar
+  </div>
+  Estas fichas entraron <strong>antes</strong> de que se cerraran las dos puertas de Transporte
+  que escribían en el catálogo saltándose las validaciones de Etiquetas (caso BBV9.0, agosto&nbsp;2026).
+  La puerta ya está cerrada: no pueden aparecer fichas nuevas así.
+</div>
+
+<div class="ilus-card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" style="font-size:.86rem">
+      <thead style="background:var(--ilus-black,#0a0a0a);color:#fff">
+        <tr>
+          <th>SKU</th>
+          <th>Nombre</th>
+          <th class="text-center">Código</th>
+          <th class="text-center">Estado</th>
+          <th class="text-center">Bultos</th>
+          <th>Qué le falta</th>
+          <th>Creada por</th>
+          <th class="text-end">Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in filas %}
+        <tr>
+          <td class="font-monospace fw-bold">{{ f.sku }}</td>
+          <td>{{ f.nombre or '—' }}</td>
+          <td class="text-center">
+            {% if f.codigo %}<span class="font-monospace">{{ f.codigo }}</span>
+            {% else %}<span class="badge" style="background:#fee2e2;color:#dc2626">falta</span>{% endif %}
+          </td>
+          <td class="text-center">
+            {% if f.estado in estados_validos %}
+              <span class="badge" style="background:#f3f4f6;color:#374151">{{ f.estado }}</span>
+            {% else %}
+              <span class="badge" style="background:#fee2e2;color:#dc2626">{{ f.estado or '—' }}</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            {% if f.n_bultos %}{{ f.n_bultos }}
+            {% else %}<span class="badge" style="background:#fee2e2;color:#dc2626">0</span>{% endif %}
+          </td>
+          <td>
+            {% for m in f.motivos %}
+            <div style="font-size:.8rem;color:#dc2626">
+              <i class="bi bi-dot"></i>{{ m }}
+            </div>
+            {% endfor %}
+          </td>
+          <td style="font-size:.78rem;color:#6b7280">
+            {{ f.created_by or '—' }}
+            {% if f.created_at %}<div>{{ f.created_at | chile_fmt }}</div>{% endif %}
+          </td>
+          <td class="text-end">
+            <a href="{{ url_for('edit_product', pid=f.id) }}"
+               class="btn btn-sm btn-ilus-outline">
+              <i class="bi bi-pencil me-1"></i>Revisar</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="text-muted mt-2" style="font-size:.78rem">
+  Se muestran hasta 500 fichas, las más recientes primero.
+</div>
+
+{% else %}
+<div class="ilus-card text-center py-5">
+  <div style="font-size:2.4rem;color:#16a34a"><i class="bi bi-check-circle-fill"></i></div>
+  <div class="fw-bold mt-2" style="font-size:1.05rem">Catálogo limpio</div>
+  <div class="text-muted mt-1" style="font-size:.88rem">
+    Todas las fichas tienen código de impresión, un estado válido, nombre propio y bultos cargados.
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
