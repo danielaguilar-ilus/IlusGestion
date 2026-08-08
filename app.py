@@ -16191,6 +16191,13 @@ def _cubicador_fetch(tido, nudo, fast=False):
         if eslido in ("C", "T", "TOTAL", "CERRADO", "DESPACHADO"):
             saldo_linea = 0
         es_zz        = sku.startswith("ZZ")
+        # 2026-06-14 (Daniel): línea de DESCUENTO (SKU 'DE' / "DESCUENTO
+        # VENTAS"). No es un ítem físico: no se cubica ni se envía, y su
+        # "cantidad" es el MONTO del descuento, no piezas — ensucia UNIDADES,
+        # bultos y predominante si se mezcla con productos reales. Mismo
+        # criterio que ya usaba "Asignar y Cotizar"; el Cubicador no lo tenía
+        # (2026-08-08, mismo pedido que sacó las líneas ZZ: "si también").
+        es_descuento = sku == "DE"
 
         if not sku:
             continue
@@ -16295,6 +16302,7 @@ def _cubicador_fetch(tido, nudo, fast=False):
             "cantidad_despachada": qty_desp,
             "saldo":               saldo_linea,
             "es_zz":               es_zz,
+            "es_descuento":        es_descuento,
             "vaneli":              float(l.get("VANELI") or 0),
         })
 
@@ -16490,7 +16498,11 @@ def _cubicador_export_payload(headers, lineas, docs):
             # filas eliminadas" antes de exportar el PDF. Si el payload
             # siguiera trayendo las ZZ y la grilla no, esa advertencia
             # saltaría SIEMPRE.
-            for l in (lineas or []) if not l.get("es_zz")
+            #
+            # 2026-08-08 (Daniel, mismo pedido: "si también"): la línea de
+            # DESCUENTO (SKU 'DE') sale por el mismo motivo — no es carga,
+            # su "cantidad" es el monto del descuento.
+            for l in (lineas or []) if not l.get("es_zz") and not l.get("es_descuento")
         ],
     }
 
@@ -16832,7 +16844,11 @@ def _cubicador_pdf_response_ilus(headers, lineas, docs):
         float(l.get("vaneli") or 0)
         for l in (lineas or [])
         if (l.get("sku") or "").upper() == "ZZENVIO")
-    lineas = [l for l in (lineas or []) if not l.get("es_zz")]
+    # 2026-08-08 (Daniel, mismo pedido: "si también"): línea de DESCUENTO
+    # (SKU 'DE') fuera del cubicaje — mismo motivo que ZZ, no hay monto que
+    # conservar (a diferencia del ZZ Envío, el descuento ya está reflejado
+    # en total_neto/total_bruto del header, que vienen del ERP aparte).
+    lineas = [l for l in (lineas or []) if not l.get("es_zz") and not l.get("es_descuento")]
 
     # El monto viaja al bloque de RESUMEN GENERAL (antes solo existia como
     # fila de la tabla, y al sacar las ZZ habria desaparecido del informe).
