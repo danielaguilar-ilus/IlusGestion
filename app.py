@@ -81741,6 +81741,12 @@ def _repstock_contexto_bodega():
     marca_id = request.args.get("marca_id") or ""
     ubicacion_id = request.args.get("ubicacion_id") or ""
     solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
+    # 2026-08-08 (Daniel: "quiero filtrar por lo que no tiene costo... es
+    # para atacar el caso de qué es lo que no está asociado, qué máquina no
+    # tiene modelo"): dos filtros nuevos para el levantamiento de bodega,
+    # mismo patrón que bajo_minimo (querystring persistente, WHERE dinámico).
+    solo_sin_costo = request.args.get("sin_costo") == "1"
+    solo_sin_modelo = request.args.get("sin_modelo") == "1"
     try:
         page = max(1, int(request.args.get("bpage") or 1))
     except (TypeError, ValueError):
@@ -81764,6 +81770,27 @@ def _repstock_contexto_bodega():
         where.append("r.ubicacion_id=%s"); params.append(int(ubicacion_id))
     if solo_bajo_minimo:
         where.append("r.stock_minimo IS NOT NULL AND r.cantidad <= r.stock_minimo")
+
+    # Conteos "cuántos hay bajo este filtro" para los badges de Sin costo /
+    # Sin modelo asociado — se calculan sobre el WHERE de arriba (búsqueda +
+    # marca + ubicación + bajo_minimo) SIN el propio filtro que describen,
+    # para que el número sea "cuántos aparecerían si lo marco ahora" y no
+    # se quede pegado en 0 cuando el filtro ya está activo.
+    where_base_sql = " AND ".join(where)
+    bod_count_sin_costo = (mysql_fetchone(
+        f"SELECT COUNT(*) AS n FROM mant_repuestos_stock r WHERE {where_base_sql} "
+        f"AND (r.costo_unitario IS NULL OR r.costo_unitario = 0)", tuple(params)
+    ) or {}).get("n", 0)
+    bod_count_sin_modelo = (mysql_fetchone(
+        f"SELECT COUNT(*) AS n FROM mant_repuestos_stock r WHERE {where_base_sql} "
+        f"AND NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)",
+        tuple(params)
+    ) or {}).get("n", 0)
+
+    if solo_sin_costo:
+        where.append("(r.costo_unitario IS NULL OR r.costo_unitario = 0)")
+    if solo_sin_modelo:
+        where.append("NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)")
     where_sql = " AND ".join(where)
 
     total = (mysql_fetchone(
@@ -81827,6 +81854,8 @@ def _repstock_contexto_bodega():
         ) or [],
         "bod_q": q, "bod_marca_id": marca_id, "bod_ubicacion_id": ubicacion_id,
         "bod_bajo_minimo": solo_bajo_minimo,
+        "bod_sin_costo": solo_sin_costo, "bod_sin_modelo": solo_sin_modelo,
+        "bod_count_sin_costo": bod_count_sin_costo, "bod_count_sin_modelo": bod_count_sin_modelo,
         "bod_page": page, "bod_page_size": page_size,
         "bod_total": total, "bod_total_pages": total_pages,
     }

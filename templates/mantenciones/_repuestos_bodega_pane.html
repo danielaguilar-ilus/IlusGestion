@@ -6,6 +6,36 @@
 .rb-table thead th{background:#0a0a0a;color:#fff;padding:10px 12px;text-align:left;font-weight:700;font-size:.74rem;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap}
 .rb-table tbody td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
 .rb-table tbody tr:hover{background:#fafafa}
+/* ── Regla #4.3 (CLAUDE.md): "toda tabla se pagina como Etiquetas...
+   contenida en pantalla, sin scroll de página". Daniel 2026-08-08: "que
+   contenga diez [ítems], no necesito darle scroll a la página, la tabla sí
+   puede scrollear adentro". Mismo patrón ya probado en la tabla de Equipos
+   del cliente (.mant-eq-fullview/.mant-eq-scroll en static/style.css):
+   max-height relativo al viewport en vez de un N° de filas fijo (esta
+   tabla tiene filas de alto variable — con/sin foto, chips de modelos que
+   envuelven), thead sticky, y el paginador vive FUERA de este contenedor
+   (ver _repuestos_bodega_pag.html, incluido después de cerrar este div)
+   para quedar siempre visible. Va DESPUÉS de las reglas base de .rb-table
+   arriba a propósito: misma especificidad, así que el orden en la hoja
+   decide quién gana (border-collapse:separate es requisito conocido para
+   que el thead sticky no "flote" separado del grid — ver comentario
+   idéntico en static/style.css junto a .ilus-table-fullview). En celular
+   no aplica: se deja scroll natural de la página, igual que .eti-fullpage. */
+.rb-table-scroll{overflow-x:auto}
+@media (min-width:768px){
+  .rb-table-scroll{
+    max-height:calc(100dvh - 430px);
+    min-height:420px;
+    overflow-y:auto;
+    scrollbar-width:thin;
+    scrollbar-color:#cbd5e1 transparent;
+  }
+  .rb-table-scroll::-webkit-scrollbar{width:10px;height:10px}
+  .rb-table-scroll::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
+  .rb-table-scroll::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+  .rb-table{border-collapse:separate;border-spacing:0}
+  .rb-table thead th{position:sticky;top:0;z-index:5;box-shadow:0 2px 4px rgba(0,0,0,.08)}
+}
 .rb-sku{font-family:ui-monospace,monospace;font-weight:700;color:#0a0a0a}
 .rb-chip{display:inline-block;background:#f3f4f6;color:#374151;font-size:.7rem;font-weight:600;padding:2px 9px;border-radius:50px;margin:1px 3px 1px 0;white-space:nowrap}
 .rb-chip-clase{background:#dbeafe;color:#1d4ed8}
@@ -17,6 +47,30 @@
 #modalRbProveedor .modal-header{background:#0a0a0a;color:#fff}
 #modalRepStock .btn-close,
 #modalRbProveedor .btn-close{filter:invert(1)}
+/* ── Avatar "tipo Facebook" con la foto principal, esquina inferior
+   izquierda del header -- SOLO en modo Editar (Daniel 2026-08-08: "que
+   pueda ver al tiro la foto del producto... cuando entro a revisar un
+   producto, veo la foto, sé cómo darle el nombre"). El contenedor
+   #rbFotoPrincipalAvatar es un hijo MÁS del header en flex-wrap:wrap con
+   flex-basis:100% -> siempre cae en su PROPIA fila, debajo del título y
+   el botón cerrar (nunca los tapa). Esa fila mide poco (34px) a propósito:
+   solo reserva la porción de arriba del círculo; el resto (30px) queda
+   colgando FUERA del header, sobre el body -- el efecto "avatar sobre
+   portada" que pidió Daniel. Ver .rb-body-has-avatar más abajo: el JS le
+   agrega esa clase al body para dejarle hueco al avatar y que no tape la
+   tarjeta del Paso 1. */
+#modalRepStock .modal-header{position:relative;flex-wrap:wrap}
+#rbFotoPrincipalAvatar{display:none;flex:0 0 100%;position:relative;height:34px}
+#rbFotoPrincipalAvatar.rb-show{display:block}
+#rbFotoPrincipalAvatar img{
+  position:absolute;left:16px;top:0;
+  width:64px;height:64px;border-radius:50%;
+  border:4px solid #fff;box-sizing:border-box;
+  box-shadow:0 3px 10px rgba(0,0,0,.35);
+  object-fit:cover;background:#f3f4f6;
+  z-index:2;
+}
+#modalRepStock .modal-body.rb-body-has-avatar{padding-top:40px}
 .rb-modelo-chip{display:inline-flex;align-items:center;gap:6px;background:#f3f4f6;border-radius:50px;padding:3px 6px 3px 12px;font-size:.78rem;margin:2px 4px 2px 0}
 .rb-modelo-chip button{border:none;background:#e5e7eb;color:#374151;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;padding:0;font-size:.7rem;cursor:pointer}
 .rb-modelo-resultados{position:relative}
@@ -149,6 +203,12 @@
   #modalRepStock .rb-modelo-chip button{width:28px;height:28px;line-height:28px;font-size:.95rem}
   #modalRepStock .modal-header .btn-close{width:44px;height:44px;background-size:16px 16px;padding:0;margin:0}
 
+  /* Avatar foto principal: más chico en celular (menos alto que ganarle
+     al teclado/scroll) — mismo criterio que el resto de este bloque. */
+  #rbFotoPrincipalAvatar{height:26px}
+  #rbFotoPrincipalAvatar img{width:48px;height:48px;left:12px}
+  #modalRepStock .modal-body.rb-body-has-avatar{padding-top:32px}
+
   /* Fotos: grid fluido (el tamaño va inline desde JS -> hacen falta !important).
      Da aire para que el x (top:-8px) y la etiqueta PRINCIPAL (bottom:-8px) no
      choquen con el borde ni con el label "Notas". */
@@ -184,6 +244,22 @@
   <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
     <input type="checkbox" name="bajo_minimo" value="1" {% if bod_bajo_minimo %}checked{% endif %}> Bajo stock mínimo
   </label>
+  {# 2026-08-08 (Daniel: "quiero filtrar por lo que no tiene costo... para
+     atacar el caso de qué es lo que no está asociado, qué máquina no tiene
+     modelo — ahí se tiene que hacer un levantamiento y empezar a asignar").
+     Mismo patrón que "Bajo stock mínimo": querystring persistente
+     (sin_costo/sin_modelo), sin JS — el checkbox solo se aplica al enviar
+     el form, y al desmarcarlo + Filtrar el GET ya no manda el parámetro,
+     así que la tabla se recarga completa (sin el bug histórico de filtros
+     que no se limpiaban). El badge muestra cuántos hay ANTES de marcarlo. #}
+  <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
+    <input type="checkbox" name="sin_costo" value="1" {% if bod_sin_costo %}checked{% endif %}> Sin costo
+    <span class="rb-chip" style="background:#fff8e1;color:#92400e">{{ bod_count_sin_costo }}</span>
+  </label>
+  <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
+    <input type="checkbox" name="sin_modelo" value="1" {% if bod_sin_modelo %}checked{% endif %}> Sin modelo asociado
+    <span class="rb-chip" style="background:#fee2e2;color:#991b1b">{{ bod_count_sin_modelo }}</span>
+  </label>
   <button type="submit" class="btn btn-sm btn-ilus">Filtrar</button>
   <a href="/repuestos" class="btn btn-sm btn-outline-secondary">Limpiar</a>
 </form>
@@ -199,7 +275,7 @@
 
 <div class="rb-table-wrap">
 {% if bod_repuestos %}
-<div style="overflow-x:auto">
+<div class="rb-table-scroll">
 <table class="rb-table">
   <thead>
     <tr>
@@ -258,7 +334,7 @@
 {% else %}
 <div class="rb-empty">
   <i class="bi bi-box-seam" style="font-size:2rem;display:block;margin-bottom:8px"></i>
-  {% if bod_q or bod_marca_id or bod_ubicacion_id or bod_bajo_minimo %}
+  {% if bod_q or bod_marca_id or bod_ubicacion_id or bod_bajo_minimo or bod_sin_costo or bod_sin_modelo %}
     Sin resultados para este filtro.
   {% else %}
     Aún no hay repuestos cargados — usa "Nuevo repuesto" para empezar el levantamiento.
@@ -274,6 +350,9 @@
       <div class="modal-header">
         <h5 class="modal-title fw-bold" id="rbModalTitulo"><i class="bi bi-box-seam me-2"></i>Nuevo repuesto</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        {# Avatar con la foto principal -- solo se muestra en modo Editar
+           cuando el repuesto ya tiene fotos (ver rbAbrirEditar/rbAbrirNuevo). #}
+        <div id="rbFotoPrincipalAvatar"><img id="rbFotoPrincipalAvatarImg" src="" alt="Foto principal del repuesto"></div>
       </div>
       <div class="modal-body">
         <input type="hidden" id="rbId">
@@ -766,6 +845,7 @@ function rbAbrirNuevo(mantenerContexto){
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
   RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
+  rbSetAvatarPrincipal(null);   // repuesto nuevo: nunca hay fotos todavia
   if (!mantenerContexto) RB_MODAL.show();
   setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
@@ -793,7 +873,31 @@ function rbAbrirEditar(r, modelos, fotos){
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
   RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
+  // Avatar "tipo Facebook" del header: la 1a foto del array es la principal
+  // (mismo criterio que la miniatura de la tabla y rbRenderFotos -- ver
+  // comentario en RB_FOTOS_ACTUALES más arriba en el archivo).
+  rbSetAvatarPrincipal((fotos && fotos.length) ? fotos[0].url : null);
   RB_MODAL.show();
+}
+
+// Muestra/oculta el avatar circular con la foto principal en la esquina
+// inferior izquierda del header del modal (Daniel 2026-08-08, ver CSS
+// #rbFotoPrincipalAvatar). url=null/'' -> sin fotos, se oculta sin dejar
+// hueco (el header y el body vuelven a su alto normal).
+function rbSetAvatarPrincipal(url){
+  const wrap = document.getElementById('rbFotoPrincipalAvatar');
+  const img = document.getElementById('rbFotoPrincipalAvatarImg');
+  const body = document.querySelector('#modalRepStock .modal-body');
+  if (!wrap || !img) return;
+  if (url){
+    img.src = url + '?w=160';
+    wrap.classList.add('rb-show');
+    if (body) body.classList.add('rb-body-has-avatar');
+  } else {
+    wrap.classList.remove('rb-show');
+    img.src = '';
+    if (body) body.classList.remove('rb-body-has-avatar');
+  }
 }
 
 async function rbGuardar(crearOtro){
