@@ -72963,6 +72963,21 @@ def _ot_pdf_context(vid, embed_images=False):
                 "SELECT * FROM mant_levantamiento_items "
                 " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
                 " ORDER BY id ASC", (_lev_id_pdf,)) or []
+            # FIX 2026-08-08: no imprimir la SERIE SUGERIDA como si fuera real.
+            # El modal de terreno propone una serie automatica (LEV<vid>-<n>,
+            # y el fallback interno LEV-<lev>-<item>) para que el tecnico la
+            # reemplace por la del equipo. Si no la reemplaza, queda la misma
+            # cadena repetida en muchos equipos: en la OT-56 son 15 de 18 con
+            # "LEV230-019". El informe la imprimia cruda (ot_pdf_levantamiento
+            # .html:346 y :420) y el cliente recibia 15 maquinas con el mismo
+            # "N de serie" -- un dato falso en un documento que el firma.
+            # Se deja en blanco SOLO para el documento (el dato original NO se
+            # toca en la BD) y el template ya cae a "--" con su `or`.
+            _re_serie_auto = re.compile(r"^LEV-?\d+-\d+$", re.I)
+            for _li in lev_items:
+                _s = str(_li.get("serie_snap") or "").strip()
+                if _s and _re_serie_auto.match(_s):
+                    _li["serie_snap"] = ""
             _lev_fotos = mysql_fetchall(
                 "SELECT item_id, cloudinary_url, tipo_foto, descripcion "
                 "  FROM mant_levantamiento_fotos "
