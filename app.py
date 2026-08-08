@@ -1158,6 +1158,13 @@ ERP_STOCK_BODEGA_PRINCIPAL = os.environ.get("ILUS_ERP_STOCK_BODEGA_PRINCIPAL", "
 # y no queremos redeployar por eso. Es MAEST.KOBO (CHAR(3) con espacios: se
 # compara SIEMPRE con LTRIM(RTRIM(...))), igual que INC_BODEGA_ERP="13".
 REPUESTOS_BODEGA_ERP = os.environ.get("ILUS_REPUESTOS_BODEGA_ERP", "18").strip()
+# Bodega de EQUIPOS reales (máquinas), NO de repuestos. Daniel 2026-08-08:
+# "en la descripción bodega 18, pero en modelo de equipos compatibles
+# bodega cero dos... para que se puedan asociar esos repuestos hacia la
+# bodega dos, que es donde están los equipos". MISMA env var que ya usa
+# catalogo_module.py (CAT_BODEGA_SYNC) a propósito: un solo valor controla
+# las dos búsquedas, si Random renumera la bodega no queda una desincronizada.
+CAT_BODEGA_SYNC = os.environ.get("CAT_BODEGA_SYNC", "02").strip()
 ALLOWED_EXT     = {"png", "jpg", "jpeg", "webp", "gif"}
 MAX_PHOTOS      = 2
 
@@ -82191,6 +82198,84 @@ def repstock_sondeo_erp():
     return jsonify({"ok": True, "productos": productos})
 
 
+@app.route("/mantenciones/api/repuestos-stock/sondeo-modelos-erp", methods=["GET"])
+@_mant_required
+def repstock_sondeo_modelos_erp():
+    """Sondeo de MODELOS DE EQUIPO (máquinas reales) en la BODEGA 02 del ERP
+    Random, para el Paso 4 "Modelos de equipo compatibles" del modal de
+    Repuestos en Stock.
+
+    Daniel (2026-08-08), corrigiendo el diseño inicial: "en la descripción
+    necesito que esté asociado a la bodega dieciocho, pero en modelo de
+    equipos compatibles necesito que esté asociado la bodega cero dos...
+    para que se puedan asociar esos repuestos hacia la bodega dos, que es
+    donde están los equipos". Y luego, viendo el resultado: "no deberías
+    filtrar el KOBO=02 no?" -- confirmado, es EXISTS sobre MAEST con KOBO=02
+    (misma bodega que ya usa Cotizaciones/Catálogo, ver CAT_BODEGA_SYNC).
+
+    Por qué esto NO reusa `repstock_buscar_modelos` (la búsqueda vieja de
+    este mismo paso): esa consulta buscaba en `cat_productos`, el Catálogo
+    LOCAL de ILUS -- una lista curada donde solo entran productos que un
+    humano dio de alta a mano (no hay sync automático activo, ver
+    catalogo_module.py:_cat_sync_erp_nuevos, hoy sin botón que lo dispare).
+    Por eso buscar "m3i" devolvía REPUESTOS del equipo ya cargados
+    ("Asiento para M3i", "Brazo de pedales M3i") en vez de la máquina M3i
+    misma: la máquina nunca había sido dada de alta en el Catálogo, pero
+    los repuestos sí. Este sondeo consulta el ERP en vivo (igual que
+    repstock_sondeo_erp para bodega 18), así que encuentra la máquina
+    exista o no todavía en el Catálogo -- ver repstock_modelo_asociar()
+    para cómo se resuelve/crea en cat_productos recién al asociarla.
+
+    REGLA #4.1: solo lectura. REGLA #4: error de ERP -> HTTP 200 con mensaje
+    amable, nunca 500 con detalle interno."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"ok": True, "productos": []})
+
+    q_like = f"%{q.upper()[:60]}%"
+
+    sql = (
+        "SELECT TOP 30 "
+        "       LTRIM(RTRIM(pr.KOPR))   AS sku, "
+        "       LTRIM(RTRIM(pr.NOKOPR)) AS descripcion, "
+        "       COALESCE((SELECT SUM(st.STFI1) FROM MAEST st "
+        "                  WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR)) "
+        "                    AND LTRIM(RTRIM(st.KOBO)) = %s), 0) AS cantidad "
+        "  FROM MAEPR pr "
+        " WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s) "
+        "   AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s "
+        "   AND EXISTS (SELECT 1 FROM MAEST st2 "
+        "                WHERE LTRIM(RTRIM(st2.KOPR)) = LTRIM(RTRIM(pr.KOPR)) "
+        "                  AND LTRIM(RTRIM(st2.KOBO)) = %s) "
+        " ORDER BY descripcion"
+    )
+    params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%", CAT_BODEGA_SYNC)
+
+    try:
+        filas = _random_sql_query(sql, params, max_rows=30)
+    except Exception as e:
+        print(f"[repstock_sondeo_modelos_erp] ERP Random falló (q={q[:40]!r}): {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."})
+
+    if filas is None:
+        print(f"[repstock_sondeo_modelos_erp] ERP Random no respondió (q={q[:40]!r})", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."})
+
+    def _num(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    productos = [{
+        "sku":         (f.get("sku") or "").strip(),
+        "descripcion": (f.get("descripcion") or "").strip(),
+        "cantidad":    _num(f.get("cantidad")),
+    } for f in filas]
+
+    return jsonify({"ok": True, "productos": productos})
+
+
 REPSTOCK_MAX_FOTOS = 3
 REPSTOCK_MAX_MODELOS = 5   # Daniel 2026-08-07: "hasta tres máquinas" -> 2026-08-08: "tiene que ser a cinco máquinas"
 
@@ -82496,15 +82581,43 @@ def repstock_buscar_clientes():
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos", methods=["POST"])
 @_mant_required
 def repstock_modelo_asociar(rid):
+    """Asocia un modelo de equipo al repuesto `rid`.
+
+    Acepta DOS formas en el body (Daniel 2026-08-08, sondeo bodega 02):
+      - {"producto_id": N}          -- ya existe en cat_productos (flujo viejo).
+      - {"sku": "...", "nombre": "..."} -- viene del sondeo ERP en vivo
+        (repstock_sondeo_modelos_erp) y puede NO existir todavía en el
+        Catálogo. Se resuelve/crea vía _cat_crear_o_reusar_producto_desde_erp
+        -- MISMA función que ya usan Cotizaciones y Tickets al agregar un
+        producto nuevo desde el ERP (idempotente por SKU, nunca duplica).
+        traer_foto=False: esto corre dentro del POST que Daniel está
+        esperando: la foto de e-commerce se resuelve en background, igual
+        que en Cotizaciones (Daniel: "colgaba el request... cargando y nada").
+    """
     d = request.get_json(silent=True) or {}
-    try:
-        producto_id = int(d.get("producto_id"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "producto_id inválido"}), 400
+    producto_id = None
+    if d.get("producto_id") not in (None, ""):
+        try:
+            producto_id = int(d.get("producto_id"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "producto_id inválido"}), 400
+    elif (d.get("sku") or "").strip():
+        try:
+            resuelto = _cat_crear_o_reusar_producto_desde_erp(
+                (d.get("sku") or "").strip(), (d.get("nombre") or "").strip(), traer_foto=False)
+        except Exception as e:
+            print(f"[repstock_modelo_asociar] resolver sku={d.get('sku')!r}: {e}", flush=True)
+            resuelto = None
+        if not resuelto or not resuelto.get("id"):
+            return jsonify({"ok": False, "error": (resuelto or {}).get("error") or "No se pudo registrar el modelo"}), 502
+        producto_id = resuelto["id"]
+    else:
+        return jsonify({"ok": False, "error": "Falta producto_id o sku"}), 400
+
     rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
     if not rep:
         return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
-    prod = mysql_fetchone("SELECT sku, nombre FROM cat_productos WHERE id=%s", (producto_id,))
+    prod = mysql_fetchone("SELECT id, sku, nombre FROM cat_productos WHERE id=%s", (producto_id,))
     if not prod:
         return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
     n_actual = (mysql_fetchone(

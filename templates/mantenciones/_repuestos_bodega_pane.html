@@ -770,7 +770,7 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbNotas').value = r.notas || '';
   rbSetCliente(r.cliente_id || null, r.cliente_nombre || '');
   rbSetTicket(r.ticket_id || null, r.ticket_numero || '');
-  RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre}));
+  RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre, sku: m.producto_sku}));
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = (fotos || []).map(f => ({id: f.id, url: f.url}));
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
@@ -1578,29 +1578,43 @@ function rbBuscarModelosDebounced(){
 // ubicación/proveedor (rbPickMarca/rbPickUbicacion/rbPickProveedor):
 // guardar los resultados en un array y pasar solo el índice.
 let RB_MODELOS_RESULTS = [];
+// 2026-08-08 (Daniel: "en modelo de equipos compatibles necesito que esté
+// asociado la bodega cero dos" -- corrigiendo el diseño inicial que buscaba
+// en cat_productos, el Catálogo LOCAL, y por eso "m3i" devolvía REPUESTOS
+// del equipo (Asiento/Brazo de pedales) en vez de la máquina M3i misma: esa
+// tabla es una lista curada a mano, no un espejo del ERP. Ahora se sondea
+// bodega 02 en VIVO, igual que la Descripción sondea bodega 18.
 async function rbBuscarModelos(){
   const q = document.getElementById('rbModelosBuscar').value.trim();
   const list = document.getElementById('rbModelosResultadosList');
   if (q.length < 2){ list.style.display = 'none'; return; }
-  const r = await fetch('/mantenciones/api/repuestos-stock/buscar-modelos?q=' + encodeURIComponent(q));
-  const d = await r.json().catch(() => ({productos:[]}));
-  RB_MODELOS_RESULTS = (d.productos || []).filter(p => !RB_MODELOS_ACTUALES.some(m => m.producto_id === p.id));
+  list.innerHTML = '<div class="rb-modelo-resultado-item text-muted"><i class="bi bi-hourglass-split me-1"></i>Buscando en bodega 02...</div>';
+  list.style.display = 'block';
+  const r = await fetch('/mantenciones/api/repuestos-stock/sondeo-modelos-erp?q=' + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({ok:false, productos:[]}));
+  if (d.ok === false){
+    list.innerHTML = '<div class="rb-modelo-resultado-item text-danger">' + escHtmlRb(d.error || 'No se pudo consultar el ERP') + '</div>';
+    return;
+  }
+  RB_MODELOS_RESULTS = (d.productos || []).filter(p =>
+    !RB_MODELOS_ACTUALES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()));
   if (!RB_MODELOS_RESULTS.length){
-    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
+    list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 02</div>';
   } else {
     list.innerHTML = RB_MODELOS_RESULTS.map((p, i) =>
       '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
-      '<strong>' + escHtmlRb(p.nombre) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(p.sku || '') + '</span></div>'
+      '<strong>' + escHtmlRb(p.descripcion) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(p.sku || '') +
+      (p.cantidad > 0 ? ' · ' + p.cantidad + ' en bodega' : '') + '</span></div>'
     ).join('');
   }
   list.style.display = 'block';
 }
 function rbPickModelo(i){
   const p = RB_MODELOS_RESULTS[i];
-  if (p) rbAgregarModelo(p.id, p.nombre);
+  if (p) rbAgregarModelo(p.sku, p.descripcion);
 }
 const RB_MAX_MODELOS = 5;   // Daniel 2026-08-07: "hasta tres" -> 2026-08-08: "tiene que ser a cinco máquinas"
-async function rbAgregarModelo(producto_id, nombre){
+async function rbAgregarModelo(sku, nombre){
   const id = document.getElementById('rbId').value;
   document.getElementById('rbModelosResultadosList').style.display = 'none';
   document.getElementById('rbModelosBuscar').value = '';
@@ -1609,12 +1623,16 @@ async function rbAgregarModelo(producto_id, nombre){
     ilusToast('Máximo ' + RB_MAX_MODELOS + ' modelos por repuesto', {type:'warning'});
     return;
   }
+  // El backend resuelve/crea el producto en el Catálogo si viene de un SKU
+  // nuevo (ver repstock_modelo_asociar) -- por eso se lee sku/nombre/id de
+  // LA RESPUESTA del servidor, nunca de lo que se mandó (puede haber
+  // cambiado, ej. el nombre real del Catálogo si el SKU ya existía).
   const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({producto_id})
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sku, nombre})
   });
   const d = await r.json().catch(() => ({}));
-  if (r.ok && d.ok !== false){
-    RB_MODELOS_ACTUALES.push({producto_id, producto_nombre: nombre});
+  if (r.ok && d.ok !== false && d.producto){
+    RB_MODELOS_ACTUALES.push({producto_id: d.producto.id, producto_nombre: d.producto.nombre, sku: d.producto.sku});
     rbRenderModelosChips();
     ilusToast('Modelo asociado', {type:'success'});
   } else {
