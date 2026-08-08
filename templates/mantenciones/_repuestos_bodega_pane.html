@@ -231,8 +231,9 @@
               <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
             </div>
             <div class="col-md-4">
-              <label class="form-label small fw-semibold">Costo unitario (CLP)</label>
-              <input type="number" class="form-control" id="rbCosto" min="0" step="1" placeholder="Opcional">
+              <label class="form-label small fw-semibold">Costo unitario</label>
+              <input type="text" class="form-control" id="rbCosto" inputmode="numeric" placeholder="$0"
+                     onfocus="rbCostoFoco(this)" onblur="rbCostoFormatear(this)">
             </div>
             <div class="col-12">
               <label class="form-label small fw-semibold">Ubicación</label>
@@ -469,6 +470,24 @@ function rbUpdateBtn(){
   btn.innerHTML = '<i class="bi bi-tag me-1"></i>Imprimir etiquetas' + (n ? ' (' + n + ')' : ' de seleccionados');
 }
 
+// Costo unitario: separador de miles + "$" chileno (Daniel 2026-08-08:
+// "no tiene separado de miles, no tiene el peso chileno"). Mismo
+// fmtCLP() que ya usan calendario.html/analytics.html/catalogo/clases.html.
+// Guarda el valor RAW (solo dígitos) en dataset.raw; rbGuardar() lee eso,
+// nunca el texto formateado con "$" y puntos.
+function rbCostoFoco(input){
+  input.value = input.dataset.raw || '';
+}
+function rbCostoFormatear(input){
+  const raw = input.value.replace(/[^\d]/g, '');
+  input.dataset.raw = raw;
+  input.value = raw ? '$' + Number(raw).toLocaleString('es-CL') : '';
+}
+function rbCostoRaw(){
+  const input = document.getElementById('rbCosto');
+  return input.dataset.raw || input.value.replace(/[^\d]/g, '') || '0';
+}
+
 function rbAbrirNuevo(mantenerContexto){
   // mantenerContexto=true (viene de "Guardar y crear otro"): conserva
   // marca, ubicación y stock mínimo — cargar 20 piezas del mismo estante
@@ -480,6 +499,7 @@ function rbAbrirNuevo(mantenerContexto){
   ['rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rbCantidad').value = '';
   document.getElementById('rbCosto').value = '';
+  document.getElementById('rbCosto').dataset.raw = '';
   if (!mantenerContexto){
     document.getElementById('rbStockMinimo').value = 1;
     rbSetMarca(null, '');
@@ -505,7 +525,8 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbDescripcion').value = r.descripcion || '';
   document.getElementById('rbCantidad').value = r.cantidad != null ? r.cantidad : '';
   document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : 1;
-  document.getElementById('rbCosto').value = r.costo_unitario || '';
+  document.getElementById('rbCosto').dataset.raw = r.costo_unitario ? String(Math.round(r.costo_unitario)) : '';
+  rbCostoFormatear(document.getElementById('rbCosto'));
   rbSetMarca(r.marca_id || null, r.marca_nombre || '');
   rbSetUbicacion(r.ubicacion_id || null, r.ubicacion_codigo || '');
   rbSetProveedor(r.proveedor_id || null, r.proveedor_nombre || '', r.proveedor_contacto || '');
@@ -534,7 +555,7 @@ async function rbGuardar(crearOtro){
     descripcion: descripcion,
     cantidad: cantidad,
     stock_minimo: stockMin,
-    costo_unitario: document.getElementById('rbCosto').value || 0,
+    costo_unitario: rbCostoRaw(),
     ubicacion_id: document.getElementById('rbUbicacion').value || null,
     marca_id: document.getElementById('rbMarca').value || null,
     proveedor_id: document.getElementById('rbProveedor').value || null,
@@ -1216,22 +1237,36 @@ function rbBuscarModelosDebounced(){
     rbBuscarModelosTimer = setTimeout(rbBuscarModelos, 250);
   };
 }
+// FIX (Daniel 2026-08-08: "estoy probando... y no me permite
+// seleccionar"): el onclick de este resultado usaba un atributo
+// DOBLE-comillado con JSON.stringify(p.nombre) adentro -- JSON.stringify
+// también envuelve en comillas dobles, así que para CUALQUIER nombre
+// el HTML quedaba roto (onclick="rbAgregarModelo(123, "Trotadora T5")"
+// el navegador corta el atributo en la primera comilla y el click no
+// hacía nada). Se cambia al mismo patrón por-índice que ya usan marca/
+// ubicación/proveedor (rbPickMarca/rbPickUbicacion/rbPickProveedor):
+// guardar los resultados en un array y pasar solo el índice.
+let RB_MODELOS_RESULTS = [];
 async function rbBuscarModelos(){
   const q = document.getElementById('rbModelosBuscar').value.trim();
   const list = document.getElementById('rbModelosResultadosList');
   if (q.length < 2){ list.style.display = 'none'; return; }
   const r = await fetch('/mantenciones/api/repuestos-stock/buscar-modelos?q=' + encodeURIComponent(q));
   const d = await r.json().catch(() => ({productos:[]}));
-  const productos = (d.productos || []).filter(p => !RB_MODELOS_ACTUALES.some(m => m.producto_id === p.id));
-  if (!productos.length){
+  RB_MODELOS_RESULTS = (d.productos || []).filter(p => !RB_MODELOS_ACTUALES.some(m => m.producto_id === p.id));
+  if (!RB_MODELOS_RESULTS.length){
     list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
   } else {
-    list.innerHTML = productos.map(p =>
-      '<div class="rb-modelo-resultado-item" onclick="rbAgregarModelo(' + p.id + ', ' + JSON.stringify(p.nombre) + ')">' +
+    list.innerHTML = RB_MODELOS_RESULTS.map((p, i) =>
+      '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
       '<strong>' + escHtmlRb(p.nombre) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(p.sku || '') + '</span></div>'
     ).join('');
   }
   list.style.display = 'block';
+}
+function rbPickModelo(i){
+  const p = RB_MODELOS_RESULTS[i];
+  if (p) rbAgregarModelo(p.id, p.nombre);
 }
 const RB_MAX_MODELOS = 5;   // Daniel 2026-08-07: "hasta tres" -> 2026-08-08: "tiene que ser a cinco máquinas"
 async function rbAgregarModelo(producto_id, nombre){
@@ -1293,20 +1328,28 @@ function rbBuscarClientesDebounced(){
     rbBuscarClientesTimer = setTimeout(rbBuscarClientes, 250);
   };
 }
+// Índice en vez de nombre embebido en el onclick -- mismo fix que
+// rbBuscarModelos: un cliente con apellido "O'Higgins" (frecuente en
+// Chile) rompía el atributo de comilla simple.
+let RB_CLIENTES_RESULTS = [];
 async function rbBuscarClientes(){
   const q = document.getElementById('rbClienteBuscar').value.trim();
   const list = document.getElementById('rbClienteResultadosList');
   if (q.length < 2){ list.style.display = 'none'; return; }
   const r = await fetch('/mantenciones/api/repuestos-stock/buscar-clientes?q=' + encodeURIComponent(q));
   const d = await r.json().catch(() => ({clientes:[]}));
-  const clientes = d.clientes || [];
-  list.innerHTML = clientes.length
-    ? clientes.map(c =>
-        '<div class="rb-modelo-resultado-item" onclick=\'rbSetCliente(' + c.id + ', ' + JSON.stringify(c.razon_social) + ')\'>' +
+  RB_CLIENTES_RESULTS = d.clientes || [];
+  list.innerHTML = RB_CLIENTES_RESULTS.length
+    ? RB_CLIENTES_RESULTS.map((c, i) =>
+        '<div class="rb-modelo-resultado-item" onclick="rbPickCliente(' + i + ')">' +
         '<strong>' + escHtmlRb(c.razon_social) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(c.rut || '') + '</span></div>'
       ).join('')
     : '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
   list.style.display = 'block';
+}
+function rbPickCliente(i){
+  const c = RB_CLIENTES_RESULTS[i];
+  if (c) rbSetCliente(c.id, c.razon_social);
 }
 
 let rbBuscarTicketsTimer = null;
@@ -1316,6 +1359,7 @@ function rbBuscarTicketsDebounced(){
     rbBuscarTicketsTimer = setTimeout(rbBuscarTickets, 250);
   };
 }
+let RB_TICKETS_RESULTS = [];
 async function rbBuscarTickets(){
   const q = document.getElementById('rbTicketBuscar').value.trim();
   const list = document.getElementById('rbTicketResultadosList');
@@ -1324,13 +1368,17 @@ async function rbBuscarTickets(){
     headers: {'X-Requested-With':'XMLHttpRequest'}
   });
   const d = await r.json().catch(() => ({tickets:[]}));
-  const tickets = d.tickets || [];
-  list.innerHTML = tickets.length
-    ? tickets.map(t =>
-        '<div class="rb-modelo-resultado-item" onclick=\'rbSetTicket(' + t.id + ', ' + JSON.stringify(t.numero_ticket || ('#'+t.id)) + ')\'>' +
+  RB_TICKETS_RESULTS = d.tickets || [];
+  list.innerHTML = RB_TICKETS_RESULTS.length
+    ? RB_TICKETS_RESULTS.map((t, i) =>
+        '<div class="rb-modelo-resultado-item" onclick="rbPickTicket(' + i + ')">' +
         '<strong>' + escHtmlRb(t.numero_ticket || ('#'+t.id)) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(t.empresa || t.nombre_contacto || '') + '</span></div>'
       ).join('')
     : '<div class="rb-modelo-resultado-item text-muted">Sin resultados</div>';
   list.style.display = 'block';
+}
+function rbPickTicket(i){
+  const t = RB_TICKETS_RESULTS[i];
+  if (t) rbSetTicket(t.id, t.numero_ticket || ('#'+t.id));
 }
 </script>
