@@ -433,6 +433,7 @@ let RB_MODAL = null;
 let RB_PROVEEDOR_MODAL = null;
 let RB_MODELOS_ACTUALES = [];
 let RB_FOTOS_ACTUALES = [];
+let RB_FOTOS_PENDIENTES = [];   // fotos elegidas ANTES de guardar (blob local, ver rbRenderFotos)
 let RB_DIRTY = false;          // hubo cambios → recargar la tabla al cerrar el modal
 const RB_MAX_FOTOS = 3;
 
@@ -524,6 +525,8 @@ function rbAbrirNuevo(mantenerContexto){
   RB_MODELOS_ACTUALES = [];
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = [];
+  RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
+  RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
   document.getElementById('rbModelosContenido').style.display = 'none';
   document.getElementById('rbModelosSinGuardar').style.display = 'block';
@@ -550,6 +553,8 @@ function rbAbrirEditar(r, modelos, fotos){
   RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre}));
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = (fotos || []).map(f => ({id: f.id, url: f.url}));
+  RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
+  RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
   document.getElementById('rbModelosContenido').style.display = 'block';
   document.getElementById('rbModelosSinGuardar').style.display = 'none';
@@ -593,6 +598,7 @@ async function rbGuardar(crearOtro){
       return;
     }
     // Recién creado: el backend generó el SKU (REP-MARCA-0001)
+    if (RB_FOTOS_PENDIENTES.length) await rbSubirFotosPendientes(d.id);
     ilusToast('✓ ' + (d.sku || 'Repuesto') + ' creado', {type:'success'});
     if (crearOtro){
       rbAbrirNuevo(true);   // mismo estante: conserva marca/ubicación/stock mínimo
@@ -1091,38 +1097,46 @@ function rbRefreshStepStates(){
 }
 
 // ── Fotos del repuesto (máx 3, comprimidas en el navegador) ──
+// La 1a foto del array (orden=1 en el backend, o índice 0 mientras es
+// borrador) es la "principal": la que se ve como miniatura en la tabla
+// (Daniel 2026-08-07). Miniaturas grandes (148px, antes 76) con sombra
+// (Daniel 2026-08-08: "la foto hazla también bien potente").
+const RB_FOTO_PX = 148;
+function _rbFotoTileHtml(f, esPrincipal, idAttr, verAttr, principalCall, borrarCall){
+  return '<div style="position:relative;display:inline-block">' +
+    '<img src="' + f.url + '" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';' + verAttr + '">' +
+    (esPrincipal
+      ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-8px;left:4px;right:4px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:800;text-align:center;border-radius:8px;padding:2px 0;letter-spacing:.02em;box-shadow:0 2px 6px rgba(220,38,38,.4)"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
+      : '<button type="button" onclick="' + principalCall + '" title="Marcar como foto principal" ' +
+        'style="position:absolute;bottom:-8px;left:-8px;width:32px;height:32px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#9ca3af;font-size:1rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.15)"><i class="bi bi-star"></i></button>') +
+    '<button type="button" onclick="' + borrarCall + '" title="Borrar foto" ' +
+    'style="position:absolute;top:-8px;right:-8px;width:28px;height:28px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.95rem;line-height:1;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.25)">&times;</button>' +
+    '</div>';
+}
 function rbRenderFotos(){
-  rbRefreshStepStates();   // RB_FOTOS_ACTUALES ya está actualizado por el caller
+  rbRefreshStepStates();
   const id = document.getElementById('rbId').value;
-  const sinGuardar = document.getElementById('rbFotosSinGuardar');
-  const contenido = document.getElementById('rbFotosContenido');
-  if (!id){
-    sinGuardar.style.display = 'block';
-    contenido.style.display = 'none';
-    return;
-  }
-  sinGuardar.style.display = 'none';
-  contenido.style.display = 'block';
+  // Daniel 2026-08-08: "las fotos se deben poder guardar desde un
+  // principio... acabo de subir un repuesto y no me deja" -- antes las
+  // fotos solo se podían subir DESPUÉS de guardar (necesitan el id como
+  // FK). Ahora, mientras no hay id, las fotos quedan "pendientes" en el
+  // navegador (blob local, nunca tocan el servidor) y se suben recién
+  // al guardar, en rbGuardar() -> rbSubirFotosPendientes().
+  document.getElementById('rbFotosSinGuardar').style.display = 'none';
+  document.getElementById('rbFotosContenido').style.display = 'block';
   const grid = document.getElementById('rbFotosGrid');
-  // La 1a foto del array (orden=1 en el backend) es la "principal": la
-  // que se ve como miniatura en la tabla (Daniel 2026-08-07).
-  // Daniel 2026-08-08: "la foto hazla también bien potente" — miniaturas
-  // grandes (antes 76px), con sombra, para que se vean de verdad al
-  // fotografiar el repuesto en terreno.
-  const RB_FOTO_PX = 148;
-  let html = RB_FOTOS_ACTUALES.map((f, i) => {
+  const items = id ? RB_FOTOS_ACTUALES : RB_FOTOS_PENDIENTES;
+  let html = items.map((f, i) => {
     const esPrincipal = (i === 0);
-    return '<div style="position:relative;display:inline-block">' +
-      '<img src="' + f.url + '" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';cursor:zoom-in" onclick="rbVerFoto(' + f.id + ')" title="Ver / editar (voltear, recortar, brillo)">' +
-      (esPrincipal
-        ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-8px;left:4px;right:4px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:800;text-align:center;border-radius:8px;padding:2px 0;letter-spacing:.02em;box-shadow:0 2px 6px rgba(220,38,38,.4)"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
-        : '<button type="button" onclick="rbFotoMarcarPrincipal(' + f.id + ')" title="Marcar como foto principal" ' +
-          'style="position:absolute;bottom:-8px;left:-8px;width:32px;height:32px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#9ca3af;font-size:1rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.15)"><i class="bi bi-star"></i></button>') +
-      '<button type="button" onclick="rbFotoBorrar(' + f.id + ')" title="Borrar foto" ' +
-      'style="position:absolute;top:-8px;right:-8px;width:28px;height:28px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.95rem;line-height:1;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.25)">&times;</button>' +
-      '</div>';
+    return id
+      ? _rbFotoTileHtml(f, esPrincipal, f.id,
+          'cursor:zoom-in" onclick="rbVerFoto(' + f.id + ')" title="Ver / editar (voltear, recortar, brillo)',
+          'rbFotoMarcarPrincipal(' + f.id + ')', 'rbFotoBorrar(' + f.id + ')')
+      : _rbFotoTileHtml(f, esPrincipal, f.tempId,
+          'cursor:default" title="Se podrá recortar/editar después de guardar',
+          'rbFotoPendienteMarcarPrincipal(\'' + f.tempId + '\')', 'rbFotoPendienteQuitar(\'' + f.tempId + '\')');
   }).join('');
-  if (RB_FOTOS_ACTUALES.length < RB_MAX_FOTOS){
+  if (items.length < RB_MAX_FOTOS){
     html += '<label style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;border:2px dashed #d1d5db;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;margin:0;flex-direction:column;gap:4px" title="Agregar foto">' +
             '<i class="bi bi-camera" style="font-size:2rem"></i>' +
             '<span class="small">Agregar</span>' +
@@ -1165,7 +1179,6 @@ async function rbFotoSubir(input){
   input.value = '';
   if (!file) return;
   const id = document.getElementById('rbId').value;
-  if (!id) return;
   // compressForUpload devuelve {blob, name} (lado mayor 1600px, JPEG 0.85)
   let blob = file, nombre = file.name || 'foto.jpg';
   try{
@@ -1174,6 +1187,17 @@ async function rbFotoSubir(input){
       if (c && c.blob){ blob = c.blob; nombre = c.name || nombre; }
     }
   }catch(e){ /* sube el original */ }
+  if (!id){
+    // Aún sin guardar: queda en memoria del navegador, se sube recién
+    // al hacer clic en Guardar (rbSubirFotosPendientes).
+    if (RB_FOTOS_PENDIENTES.length >= RB_MAX_FOTOS) return;
+    RB_FOTOS_PENDIENTES.push({
+      tempId: 'tmp' + Date.now() + Math.random().toString(36).slice(2),
+      blob, nombre, url: URL.createObjectURL(blob),
+    });
+    rbRenderFotos();
+    return;
+  }
   const fd = new FormData();
   fd.append('file', blob, nombre);
   ilusToast('Subiendo foto...', {type:'info'});
@@ -1190,6 +1214,41 @@ async function rbFotoSubir(input){
     }
   }catch(e){
     ilusToast('Error de conexión al subir la foto', {type:'error'});
+  }
+}
+function rbFotoPendienteQuitar(tempId){
+  const p = RB_FOTOS_PENDIENTES.find(f => f.tempId === tempId);
+  if (p) URL.revokeObjectURL(p.url);
+  RB_FOTOS_PENDIENTES = RB_FOTOS_PENDIENTES.filter(f => f.tempId !== tempId);
+  rbRenderFotos();
+}
+function rbFotoPendienteMarcarPrincipal(tempId){
+  const elegida = RB_FOTOS_PENDIENTES.find(f => f.tempId === tempId);
+  if (!elegida) return;
+  RB_FOTOS_PENDIENTES = [elegida, ...RB_FOTOS_PENDIENTES.filter(f => f.tempId !== tempId)];
+  rbRenderFotos();
+}
+// Sube las fotos elegidas antes de guardar, ya con el id real del
+// repuesto recién creado. Se llama desde rbGuardar() apenas llega el id.
+async function rbSubirFotosPendientes(id){
+  if (!RB_FOTOS_PENDIENTES.length) return;
+  const pendientes = RB_FOTOS_PENDIENTES;
+  RB_FOTOS_PENDIENTES = [];
+  for (const p of pendientes){
+    try{
+      const fd = new FormData();
+      fd.append('file', p.blob, p.nombre);
+      const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/fotos', {method:'POST', body: fd});
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok !== false){
+        RB_FOTOS_ACTUALES.push({id: d.id, url: d.url});
+      } else {
+        ilusToast((p.nombre || 'Una foto') + ' no se pudo guardar', {type:'warning'});
+      }
+    }catch(e){
+      ilusToast('Error de conexión subiendo una foto', {type:'warning'});
+    }
+    URL.revokeObjectURL(p.url);
   }
 }
 async function rbFotoBorrar(fid){
