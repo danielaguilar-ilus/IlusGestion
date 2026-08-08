@@ -76,6 +76,7 @@
       <option value="registro_productos">📋 Registro productos</option>
       <option value="operacional_interno">⚙ Operacional interno</option>
       <option value="rendiciones">💰 Rendiciones</option>
+      <option value="control_calidad">🔎 Control de calidad</option>
     </select>
     <select id="filterFamiliaActivo" class="form-select form-select-sm" style="max-width:180px"
             onchange="cargarPlantillas()" title="Tipo de activo al que aplica">
@@ -137,6 +138,40 @@
           <div class="col-6 col-md-3">
             <label class="form-label small fw-semibold">Tiempo estimado (min)</label>
             <input type="number" id="ePTiempo" class="form-control form-control-sm" min="0">
+          </div>
+          {# 2026-08-08 (Daniel: "tambien el tipo de trabajo"): estos 2 campos
+             existian en la BD y en los filtros de arriba, pero el editor NO los
+             exponia -> toda plantilla creada por UI quedaba en 'otro'/'todas' y
+             no se podia filtrar por tipo de trabajo. #}
+          <div class="col-12 col-md-6">
+            <label class="form-label small fw-semibold">Tipo de trabajo</label>
+            <select id="ePFamiliaChecklist" class="form-select form-select-sm">
+              <option value="otro">— Sin clasificar —</option>
+              <option value="instalacion">📦 Instalación</option>
+              <option value="preventiva">🔧 Mant. preventiva</option>
+              <option value="correctivo">🔨 Correctivo</option>
+              <option value="desinstalacion">📤 Desinstalación</option>
+              <option value="capacitacion">🎓 Capacitación</option>
+              <option value="registro_productos">📋 Registro productos</option>
+              <option value="operacional_interno">⚙ Operacional interno</option>
+              <option value="rendiciones">💰 Rendiciones</option>
+              <option value="control_calidad">🔎 Control de calidad</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label small fw-semibold">Aplica a máquinas</label>
+            <select id="ePFamiliaActivo" class="form-select form-select-sm">
+              <option value="todas">Aplica a todas</option>
+              <option value="cardio">Cardio</option>
+              <option value="selectorizado">Selectorizado</option>
+              <option value="carga_libre">Carga libre</option>
+              <option value="racks_estructuras">Racks y estructuras</option>
+              <option value="bancos">Bancos</option>
+              <option value="accesorios">Accesorios</option>
+              <option value="bicicletas">Bicicletas</option>
+              <option value="trotadoras">Trotadoras</option>
+              <option value="otros">Otros</option>
+            </select>
           </div>
           <div class="col-12">
             <label class="form-label small fw-semibold">Descripción</label>
@@ -281,6 +316,8 @@ function abrirEditor(pid){
   document.getElementById('ePDesc').value = '';
   document.getElementById('ePTipo').value = 'preventiva';
   document.getElementById('ePTiempo').value = '';
+  document.getElementById('ePFamiliaChecklist').value = 'otro';
+  document.getElementById('ePFamiliaActivo').value = 'todas';
   renderItems();
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
   _modal.show();
@@ -299,6 +336,8 @@ async function cargarDetalle(pid){
     document.getElementById('ePDesc').value = p.descripcion || '';
     document.getElementById('ePTipo').value = p.tipo_visita || 'preventiva';
     document.getElementById('ePTiempo').value = p.tiempo_estimado_min || '';
+    document.getElementById('ePFamiliaChecklist').value = p.familia_checklist || 'otro';
+    document.getElementById('ePFamiliaActivo').value = p.familia_activo || 'todas';
     _items = (d.items || []).map(it => ({...it}));
     renderItems();
   } catch(e){ alert('Error: '+e.message); }
@@ -476,6 +515,8 @@ async function guardarPlantilla(){
     descripcion: document.getElementById('ePDesc').value.trim(),
     tipo_visita: document.getElementById('ePTipo').value,
     tiempo_estimado_min: parseInt(document.getElementById('ePTiempo').value) || null,
+    familia_checklist: document.getElementById('ePFamiliaChecklist').value,
+    familia_activo: document.getElementById('ePFamiliaActivo').value,
     activa: true,
     items: _items.map((it, idx) => ({
       orden: idx + 1,

@@ -68672,6 +68672,28 @@ _PLANT_TIPO_VISITA = (
     "preventiva", "correctiva", "garantia", "levantamiento",
     "inspeccion", "instalacion", "otro",
 )
+# Familia de TRABAJO de la plantilla ("tipo de trabajo" para Daniel). Debe
+# coincidir con el ENUM de mant_tarea_plantillas.familia_checklist.
+_PLANT_FAMILIA_CHECKLIST = (
+    "instalacion", "preventiva", "correctivo", "desinstalacion",
+    "capacitacion", "registro_productos", "operacional_interno",
+    "rendiciones", "control_calidad", "otro",
+)
+# Familia de MÁQUINA a la que aplica la plantilla.
+_PLANT_FAMILIA_ACTIVO = (
+    "cardio", "selectorizado", "carga_libre", "racks_estructuras",
+    "bancos", "accesorios", "bicicletas", "trotadoras", "otros", "todas",
+)
+# Agrupación de las familias de trabajo en las 4 PESTAÑAS que pidió Daniel
+# (2026-08-08): "quiero segmentarlas por Instalación, Mantención, Visitas,
+# Control Interno". Es solo presentación — no cambia el ENUM ni los datos.
+_PLANT_SEGMENTOS = {
+    "instalacion":  ("Instalación",     ("instalacion", "desinstalacion")),
+    "mantencion":   ("Mantención",      ("preventiva", "correctivo")),
+    "visitas":      ("Visitas",         ("capacitacion", "registro_productos")),
+    "interno":      ("Control Interno", ("operacional_interno", "control_calidad",
+                                         "rendiciones", "otro")),
+}
 # Campos de la ficha del equipo (mant_maquinas) que una tarea de plantilla
 # de LEVANTAMIENTO puede alimentar. Al responder la tarea, su valor se replica
 # a mant_levantamiento_items y la proyección existente lo aplica a la ficha al
@@ -68862,6 +68884,16 @@ def mant_plantilla_crear():
     tiempo = d.get("tiempo_estimado_min")
     try: tiempo = int(tiempo) if tiempo not in (None, "") else None
     except Exception: tiempo = None
+    # Daniel 2026-08-08: la UI ya filtra por estas 2 familias pero el editor
+    # nunca las mandaba -> toda plantilla creada quedaba 'otro'/'todas' y no se
+    # podia segmentar por tipo de trabajo. Se validan contra la lista blanca
+    # para no depender del ENUM (un valor invalido se guardaria como '').
+    fam_chk = (d.get("familia_checklist") or "").strip().lower()
+    if fam_chk not in _PLANT_FAMILIA_CHECKLIST:
+        fam_chk = "otro"
+    fam_act = (d.get("familia_activo") or "").strip().lower()
+    if fam_act not in _PLANT_FAMILIA_ACTIVO:
+        fam_act = "todas"
 
     items_in = d.get("items") or []
     items_norm = []
@@ -68878,9 +68910,10 @@ def mant_plantilla_crear():
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO mant_tarea_plantillas "
-                "(nombre, descripcion, tipo_visita, tiempo_estimado_min, activa, es_sistema, created_by) "
-                "VALUES (%s,%s,%s,%s,1,0,%s)",
-                (nombre, desc, tv, tiempo, current_username())
+                "(nombre, descripcion, tipo_visita, tiempo_estimado_min, "
+                " familia_checklist, familia_activo, activa, es_sistema, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,1,0,%s)",
+                (nombre, desc, tv, tiempo, fam_chk, fam_act, current_username())
             )
             pid = cur.lastrowid
             for it in items_norm:
@@ -68923,6 +68956,12 @@ def mant_plantilla_actualizar(pid):
     try: tiempo = int(tiempo) if tiempo not in (None, "") else None
     except Exception: tiempo = None
     activa = 1 if d.get("activa", True) else 0
+    fam_chk = (d.get("familia_checklist") or "").strip().lower()
+    if fam_chk not in _PLANT_FAMILIA_CHECKLIST:
+        fam_chk = "otro"
+    fam_act = (d.get("familia_activo") or "").strip().lower()
+    if fam_act not in _PLANT_FAMILIA_ACTIVO:
+        fam_act = "todas"
 
     items_in = d.get("items") or []
     items_norm = []
@@ -68940,9 +68979,10 @@ def mant_plantilla_actualizar(pid):
             cur.execute(
                 "UPDATE mant_tarea_plantillas SET "
                 " nombre=%s, descripcion=%s, tipo_visita=%s, "
-                " tiempo_estimado_min=%s, activa=%s "
+                " tiempo_estimado_min=%s, activa=%s, "
+                " familia_checklist=%s, familia_activo=%s "
                 "WHERE id=%s",
-                (nombre, desc, tv, tiempo, activa, pid)
+                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, pid)
             )
             cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
             for it in items_norm:
@@ -87596,7 +87636,7 @@ def _ensure_plantillas_estandar_seed():
                                DEFAULT 'todas',
                 familia_checklist ENUM('instalacion','preventiva','correctivo','desinstalacion',
                                        'capacitacion','registro_productos','operacional_interno',
-                                       'rendiciones','otro') DEFAULT 'otro',
+                                       'rendiciones','control_calidad','otro') DEFAULT 'otro',
                 created_by    VARCHAR(190),
                 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -87613,7 +87653,18 @@ def _ensure_plantillas_estandar_seed():
             "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_checklist "
             "ENUM('instalacion','preventiva','correctivo','desinstalacion',"
             "     'capacitacion','registro_productos','operacional_interno',"
-            "     'rendiciones','otro') DEFAULT 'otro'",
+            "     'rendiciones','control_calidad','otro') DEFAULT 'otro'",
+            # 2026-08-08 (Daniel): nuevo tipo de trabajo "Control de calidad"
+            # (revision de productos por evento). La tabla YA existe en prod,
+            # asi que el ADD COLUMN de arriba falla silenciosamente y el ENUM
+            # se queda angosto -> este MODIFY es el que realmente lo amplia.
+            # Es el gotcha historico "ENUM angosto (1265)": sin esto, guardar
+            # familia_checklist='control_calidad' se convierte en '' y la
+            # plantilla queda sin tipo de trabajo.
+            "ALTER TABLE mant_tarea_plantillas MODIFY COLUMN familia_checklist "
+            "ENUM('instalacion','preventiva','correctivo','desinstalacion',"
+            "     'capacitacion','registro_productos','operacional_interno',"
+            "     'rendiciones','control_calidad','otro') DEFAULT 'otro'",
         ):
             try: mysql_execute(_alt)
             except Exception: pass
@@ -87727,9 +87778,86 @@ def _ensure_plantillas_estandar_seed():
              (7, "Foto de la instalación terminada", "", "foto", 1, 1, None, None, None, None),
              (8, "Hora de finalización", "", "fecha_hora", 0, 0, None, None, None, None),
          ]),
+        # ══════════════════════════════════════════════════════════════
+        # CONTROL INTERNO — Revisión de Calidad (Daniel, 2026-08-08)
+        # ══════════════════════════════════════════════════════════════
+        # Pedido textual: "en la Inspección quisiera indicar que esta es una
+        # revisión VISUAL de todos los componentes del equipo... un checklist
+        # que me arroje foto y revisión de todos los componentes", "la lista no
+        # debe tener más de 8 items para hacer el trabajo amigable y con
+        # responsabilidad", "deja una observación por cada equipo y al menos
+        # disponibilidad de 4 fotos por equipo", "el trabajo se hace interno en
+        # la bodega siempre".
+        #
+        # Caso real que lo motiva: NVI 552 "EVENTO FELIPE FIERRO" (Sport And
+        # Health Solutions) — 18 líneas entre selectorizado ILUS Optimal/Kairos,
+        # Gymleco 300, bancos, mancuernas+rack y accesorios, que vuelven del
+        # evento a bodega y hay que recepcionar equipo por equipo.
+        #
+        # Por qué 3 plantillas de 8 y no 1 de 24: el tope de 8 es del propio
+        # Daniel. La 1ª es la que SIEMPRE se aplica (registro por equipo: 4
+        # fotos + observación + responsabilidad). Las otras 2 son el detalle
+        # por sistema y se aplican solo si el equipo lo tiene (un banco no
+        # tiene stack ni poleas). Los ítems que no apliquen se marcan N/A.
+        ("Control de Calidad — Registro por equipo (bodega)", "inspeccion",
+         "SIEMPRE se aplica. Registro de recepción por equipo: 4 fotos, revisión "
+         "visual general, faltantes declarados, resultado y observación. Trabajo "
+         "interno en bodega — no requiere firma del cliente.",
+         "control_calidad", "todas",
+         [
+             (1, "Foto 1 — General del equipo", "Plano completo, equipo entero", "foto", 1, 1, None, None, None, None),
+             (2, "Foto 2 — Estructura y tapiz", "Bastidor, pintura, asiento y respaldo", "foto", 1, 1, None, None, None, None),
+             (3, "Foto 3 — Carga, cables y poleas", "Stack, cable de acero, poleas. N/A si no aplica.", "foto", 1, 1, None, None, None, None),
+             (4, "Foto 4 — Placa de serie o daño detectado", "Si hay daño, priorizar la foto del daño", "foto", 1, 1, None, None, None, None),
+             (5, "Revisión visual de componentes", "Estructura, soldaduras, pintura, tapiz, tornillería, niveladores, "
+                                                   "stack, cable, poleas, rodamientos, grips y accesorios", "verificacion", 1, 0, None, None, None, None),
+             (6, "¿Faltan piezas o accesorios?", "Si falta algo, detállalo en la observación. Queda como "
+                                                 "responsabilidad declarada ante jefatura.", "sino", 1, 0, None, None, None, None),
+             (7, "Resultado del control", "Define si el equipo se libera o se retiene", "lista", 1, 0, None, None, None,
+              '["Apto", "Apto con observaciones", "No apto - requiere reparaci\\u00f3n", "No apto - dar de baja"]'),
+             (8, "Observación del equipo", "Una observación por equipo. Detalla hallazgos, faltantes y "
+                                           "pendientes declarados.", "texto", 1, 0, None, None, None, None),
+         ]),
+        ("Control de Calidad — Detalle estructura y tapiz", "inspeccion",
+         "Complementaria. Detalle por componente de estructura, pintura y tapicería. "
+         "Aplicar cuando el registro base marcó observación o falla.",
+         "control_calidad", "todas",
+         [
+             (1, "Bastidor y soldaduras", "Sin fisuras, deformación ni golpes", "verificacion", 1, 1, None, None, None, None),
+             (2, "Pintura y recubrimiento", "Rayones, descascarado, óxido", "verificacion", 1, 1, None, None, None, None),
+             (3, "Tornillería completa y con apriete", "Sin pernos faltantes ni sueltos", "verificacion", 1, 0, None, None, None, None),
+             (4, "Niveladores / tacos de piso", "Presentes, firmes, sin pérdida de goma", "verificacion", 1, 0, None, None, None, None),
+             (5, "Tapiz: cortes, rasgados o manchas", "Asiento, respaldo y apoyos", "verificacion", 1, 1, None, None, None, None),
+             (6, "Espuma y fijación de asientos", "Sin hundimiento; anclajes firmes", "verificacion", 1, 0, None, None, None, None),
+             (7, "Seguridad: bordes, tapas y pictogramas", "Sin bordes cortantes; advertencias legibles", "verificacion", 1, 0, None, None, None, None),
+             (8, "Observación de estructura y tapiz", "", "texto", 0, 0, None, None, None, None),
+         ]),
+        ("Control de Calidad — Detalle carga, cables y movimiento", "inspeccion",
+         "Complementaria. Detalle de stack, cable de acero, poleas y articulaciones. "
+         "Solo para selectorizado y equipos con poleas.",
+         "control_calidad", "selectorizado",
+         [
+             (1, "Cable de acero: hebras rotas o deshilache", "CRÍTICO de seguridad. Recorrer todo el largo.", "verificacion", 1, 1, None, None, None, None),
+             (2, "Terminales y prensas del cable", "Sin deslizamiento ni deformación del casquillo", "verificacion", 1, 1, None, None, None, None),
+             (3, "Poleas: giro libre, sin trizaduras", "Sin ruido de rodamiento ni bamboleo", "verificacion", 1, 0, None, None, None, None),
+             (4, "Placas del stack completas y numeradas", "Contar placas contra la ficha del equipo", "verificacion", 1, 1, None, None, None, None),
+             (5, "Pin selector y topes de goma", "Pin presente con cordel; topes sin quiebre", "verificacion", 1, 0, None, None, None, None),
+             (6, "Rodamientos, bujes y pivotes", "Sin juego, sin ruido, sin trabas", "verificacion", 1, 0, None, None, None, None),
+             (7, "Rango de movimiento completo y simétrico", "Ambos lados en equipos duales", "sino", 1, 0, None, None, None, None),
+             (8, "Observación de carga y movimiento", "", "texto", 0, 0, None, None, None, None),
+         ]),
     ]
     creadas = []
-    for nombre, tipo_v, desc, items in _seeds:
+    for _seed_row in _seeds:
+        # Tupla de 4 (legacy) o de 6 (con familia de trabajo + familia de
+        # máquina). Daniel 2026-08-08 pidió segmentar las plantillas por tipo
+        # de trabajo, así que los seeds nuevos declaran su familia; los viejos
+        # siguen funcionando con el default de la columna.
+        if len(_seed_row) == 6:
+            nombre, tipo_v, desc, fam_chk, fam_act, items = _seed_row
+        else:
+            nombre, tipo_v, desc, items = _seed_row
+            fam_chk, fam_act = None, None
         try:
             ya = mysql_fetchone(
                 "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s LIMIT 1", (nombre,))
@@ -87744,9 +87872,10 @@ def _ensure_plantillas_estandar_seed():
                     # sin lanzar error — evita duplicados por condición de carrera.
                     cur.execute(
                         "INSERT IGNORE INTO mant_tarea_plantillas "
-                        "(nombre, descripcion, tipo_visita, activa, es_sistema, created_by) "
-                        "VALUES (%s,%s,%s,1,1,'seed')",
-                        (nombre, desc, tipo_v)
+                        "(nombre, descripcion, tipo_visita, familia_checklist, familia_activo, "
+                        " activa, es_sistema, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,1,1,'seed')",
+                        (nombre, desc, tipo_v, fam_chk or "otro", fam_act or "todas")
                     )
                     plant_id = cur.lastrowid
                     if not plant_id:
