@@ -54380,11 +54380,19 @@ def _erp_buscar_clientes(q, limit=20):
     except (TypeError, ValueError):
         top_n = 20
     try:
+        # FIX 2026-08-08: antes filtrabamos "AND TIEN IN ('C','A')" -- un RUT
+        # de PERSONA NATURAL puede tener otro TIEN y ese filtro lo excluia en
+        # silencio (el query corria bien, 0 filas, sin error visible). Mismo
+        # bug ya diagnosticado y corregido en tk_api_erp_buscar_cliente
+        # (tickets_module.py) -- aca replicamos el mismo patron: TIEN como
+        # criterio de ORDEN (empresas primero), nunca como filtro.
         rows = _random_sql_query(
             f"""
             SELECT DISTINCT TOP {top_n}
                    LTRIM(RTRIM(COALESCE(en.NOKOENAMP, en.NOKOEN, ''))) AS razon_social,
-                   LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut
+                   LTRIM(RTRIM(COALESCE(en.RTEN, '')))                 AS rut,
+                   CASE WHEN LTRIM(RTRIM(COALESCE(en.TIEN,''))) IN ('C','A')
+                        THEN 0 ELSE 1 END                               AS ord_tien
               FROM MAEEN en
              WHERE (
                    UPPER(LTRIM(RTRIM(COALESCE(en.NOKOEN,    '')))) LIKE %s
@@ -54392,8 +54400,7 @@ def _erp_buscar_clientes(q, limit=20):
                 OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
                 OR LTRIM(RTRIM(COALESCE(en.RTEN, '')))             LIKE %s
              )
-               AND LTRIM(RTRIM(COALESCE(en.TIEN, ''))) IN ('C','A')
-             ORDER BY razon_social
+             ORDER BY ord_tien, razon_social
             """,
             (q_like, q_like, q_like, q_cuerpo_like),
             max_rows=top_n,
@@ -76109,10 +76116,13 @@ def mant_buscar_erp_sql():
             modo = "nombre"
             q_like = f"%{q.upper()}%"
             # 3a) RUTs que coinciden con el nombre buscado
+            # FIX 2026-08-08: "AND TIEN IN ('C','A')" excluia en silencio a
+            # personas naturales (RUT con TIEN distinto). Mismo bug ya
+            # corregido en tk_api_erp_buscar_cliente -- se quita el filtro.
             ruts = _random_sql_query("""
                 SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut, LTRIM(RTRIM(NOKOEN)) AS razon
                 FROM MAEEN
-                WHERE UPPER(NOKOEN) LIKE %s AND TIEN IN ('C','A')
+                WHERE UPPER(NOKOEN) LIKE %s
             """, (q_like,)) or []
             if ruts:
                 # 3b) Construir IN(...) seguro (los valores vienen de MAEEN, no del usuario)

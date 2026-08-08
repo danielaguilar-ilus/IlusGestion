@@ -8158,12 +8158,14 @@ def register_tickets_routes(app, ctx):
             if not docs and not is_digits:
                 modo = "nombre"
                 q_like = f"%{q.upper()}%"
+                # FIX 2026-08-08: "AND TIEN IN ('C','A')" excluia en silencio
+                # a personas naturales -- mismo bug ya corregido en
+                # tk_api_erp_buscar_cliente, arriba en este mismo archivo.
                 ruts = _random_sql_query("""
                     SELECT TOP 20 LTRIM(RTRIM(RTEN)) AS rut,
                                   LTRIM(RTRIM(COALESCE(NOKOENAMP, NOKOEN, ''))) AS razon
                       FROM MAEEN
                      WHERE (UPPER(NOKOEN) LIKE %s OR UPPER(COALESCE(NOKOENAMP,'')) LIKE %s)
-                       AND TIEN IN ('C','A')
                 """, (q_like, q_like)) or []
                 if ruts:
                     rut_map = {r['rut']: r['razon'] for r in ruts if r.get('rut')}
