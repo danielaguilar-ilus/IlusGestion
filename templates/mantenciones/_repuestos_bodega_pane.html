@@ -240,7 +240,12 @@
   <input type="hidden" name="estado" value="{{ filtro_estado or '' }}">
   <input type="hidden" name="ticket" value="{{ filtro_ticket or '' }}">
   <input type="hidden" name="orden" value="{{ orden or '' }}">
-  <input type="text" name="bq" value="{{ bod_q }}" placeholder="Buscar por SKU, descripción o código fabricante..." style="min-width:280px">
+  <div class="d-flex gap-1" style="min-width:280px">
+    <input type="text" name="bq" id="rbBqInput" value="{{ bod_q }}" placeholder="Buscar por SKU, descripción o código fabricante..." style="flex:1;min-width:0">
+    <button type="button" class="btn btn-sm btn-outline-dark" id="rbBtnEscanearBusqueda" onclick="rbEscanearBusquedaPrincipal()" title="Buscar escaneando un código de barras" style="min-height:44px;padding:6px 10px">
+      <i class="bi bi-upc-scan"></i>
+    </button>
+  </div>
   <select name="marca_id">
     <option value="">Todas las marcas</option>
     {% for m in marcas %}<option value="{{ m.id }}" {% if bod_marca_id|string == m.id|string %}selected{% endif %}>{{ m.nombre }}</option>{% endfor %}
@@ -1448,6 +1453,69 @@ function rbCerrarEscaner(){
   }
   const overlay = document.getElementById('rbEscanerOverlay');
   if (overlay) overlay.remove();
+}
+
+// ── Escáner de código de barras para el buscador principal de la tabla
+// (Daniel 2026-08-08: "en la búsqueda igual me gustaría dejarle la misma
+// opción del código de barra"). Mismo motor ya cargado arriba para
+// Ubicación (rbDetectorReady/RB_DETECTOR_CLASS) -- aquí solo cambia el
+// input destino y la acción final: en vez de rellenar un campo del modal,
+// mete el código en "bq" y envía el form de filtros (GET), igual que si
+// el usuario hubiera tecleado el SKU y apretado "Filtrar".
+async function rbEscanearBusquedaPrincipal(){
+  const btn = document.getElementById('rbBtnEscanearBusqueda');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const ok = await rbDetectorReady();
+  btn.disabled = false;
+  btn.innerHTML = original;
+  if (!ok){
+    ilusToast('No se pudo activar el escáner (sin internet o navegador muy antiguo) — usa la búsqueda por texto', {type:'warning'});
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.id = 'rbEscanerOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:2000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  overlay.innerHTML =
+    '<video id="rbEscanerVideo" autoplay playsinline muted style="max-width:100%;max-height:75vh;border-radius:8px"></video>' +
+    '<div class="text-white small mt-2">Apunta al código de barras del repuesto...</div>' +
+    '<button type="button" class="btn btn-light mt-3" id="rbBtnCancelarEscaner" style="min-height:44px;padding:8px 24px">' +
+    '<i class="bi bi-x-lg me-1"></i>Cancelar</button>';
+  document.body.appendChild(overlay);
+  document.getElementById('rbBtnCancelarEscaner').onclick = rbCerrarEscaner;
+  try{
+    RB_ESCANER_STREAM = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720}}
+    });
+  }catch(e){
+    ilusToast('No se pudo acceder a la cámara — revisa los permisos', {type:'error'});
+    rbCerrarEscaner();
+    return;
+  }
+  const video = document.getElementById('rbEscanerVideo');
+  video.srcObject = RB_ESCANER_STREAM;
+  const detector = new RB_DETECTOR_CLASS({formats: ['code_128','code_39','ean_13','ean_8','upc_a','upc_e','itf']});
+  let activo = true;
+  (async function loop(){
+    while (activo && document.getElementById('rbEscanerOverlay')){
+      try{
+        const codigos = await detector.detect(video);
+        if (codigos.length){
+          const valor = (codigos[0].rawValue || '').trim();
+          if (valor){
+            activo = false;
+            rbCerrarEscaner();
+            const input = document.getElementById('rbBqInput');
+            input.value = valor;
+            input.form.submit();
+            return;
+          }
+        }
+      }catch(e){ /* frame sin código legible, sigue intentando */ }
+      await new Promise(res => setTimeout(res, 200));
+    }
+  })();
 }
 
 // ── Checklist rojo/verde (Daniel 2026-08-07, la noche antes del
