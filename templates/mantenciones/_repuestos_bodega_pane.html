@@ -34,11 +34,19 @@
 .rb-step{
   margin:0 0 18px;padding:22px 24px;background:#fff;
   border:1.5px solid #e5e7eb;border-radius:14px;
-  box-shadow:0 1px 2px rgba(15,23,42,.05);position:relative;overflow:hidden;
+  box-shadow:0 1px 2px rgba(15,23,42,.05);position:relative;
+  /* NO poner overflow:hidden aca. Lo tuvo el 2026-08-08 y recortaba TODOS
+     los desplegables de autocompletado (marca, proveedor, ubicacion,
+     modelos, cliente, ticket): un position:absolute se clipea por
+     CUALQUIER ancestro con overflow oculto, no solo por su contenedor de
+     posicionamiento. En celular dejaba el modal inusable. La barra roja
+     ::before respeta la esquina con su propio border-radius. */
+  overflow:visible;
   transition:border-color .3s,background .3s,box-shadow .3s;
 }
 .rb-step::before{
   content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  border-radius:14px 0 0 14px;
   background:linear-gradient(180deg,#dc2626,#a60000);
   opacity:0;transform:scaleY(.4);transform-origin:top;
   transition:opacity .3s,transform .35s cubic-bezier(.22,1,.36,1);
@@ -73,7 +81,60 @@
 .rb-input-help{font-size:.72rem;color:#6b7280;margin-top:4px}
 .rb-input-error{font-size:.72rem;color:#dc2626;margin-top:4px;font-weight:700;display:none}
 .rb-input-ok{font-size:.72rem;color:#16a34a;margin-top:4px;font-weight:700;display:none}
-@media (max-width:576px){.rb-step{padding:16px 14px}.rb-step-circle{width:36px;height:36px;font-size:1.05rem;border-radius:10px}}
+/* ── Celular (Daniel 2026-08-08: "que quede bien para hacer la OT desde el
+   celular" + "cuando lo bajo, abajo se ve horrible"). Todo acotado a
+   #modalRepStock / #rbFotosGrid a proposito: mobile.css es global y tocarlo
+   afectaria TODOS los modales de la app mientras Daniel esta levantando en
+   bodega. El arreglo global de mobile.css queda propuesto aparte. ── */
+@media (max-width:767.98px){
+  /* Densidad: recupera ~150px verticales sin quitar nada (Regla #4.2) */
+  .rb-step{padding:14px 12px;margin-bottom:12px;border-radius:12px}
+  .rb-step-header{gap:10px;margin-bottom:12px}
+  .rb-step-circle{width:36px;height:36px;font-size:1.05rem;border-radius:10px}
+  .rb-step-titles h6{font-size:.98rem}
+  .rb-step-titles .rb-step-sub{font-size:.75rem}
+
+  /* Un solo scroller y misma unidad de viewport: sin esto el diálogo (100dvh)
+     queda mas corto que su contenedor (100%=lvh en iOS) y al bajar el modal
+     SALTA mostrando una franja gris bajo el footer. */
+  #modalRepStock .modal-dialog-scrollable .modal-content{height:100% !important;max-height:100% !important}
+  #modalRepStock .modal-body{overscroll-behavior:contain}
+
+  /* Desplegables: acotados al alto util y sin que el teclado los tape */
+  #modalRepStock .rb-modelo-resultados-list{max-height:min(220px,34dvh)}
+  #modalRepStock .rb-modelo-resultados{scroll-margin-bottom:40dvh}
+
+  /* Footer: 3 botones apilados ocupaban ~200px (30% de la pantalla) y
+     column-reverse dejaba "Cerrar" bajo el pulgar. Ahora Guardar arriba y
+     ancho completo; los otros dos lado a lado. ~110px. */
+  #modalRepStock .modal-footer{
+    display:grid;grid-template-columns:1fr 1fr;gap:8px;
+    padding-bottom:max(.6rem,env(safe-area-inset-bottom,0px));
+  }
+  #modalRepStock .modal-footer > .btn{width:auto !important;min-height:46px;margin:0 !important}
+  #modalRepStock .modal-footer > .btn.btn-danger{grid-column:1 / -1;order:-1}
+
+  /* Touch targets 44px (Regla #3). El item del autocompletado medía 33px y es
+     LO QUE MAS SE TOCA en todo el flujo (marca/ubicacion/modelo/cliente). */
+  #modalRepStock .rb-modelo-resultado-item{min-height:44px;display:flex;align-items:center;padding:11px 14px;font-size:.9rem}
+  #modalRepStock .rb-modelo-chip{min-height:36px;padding:6px 8px 6px 14px;font-size:.85rem}
+  #modalRepStock .rb-modelo-chip button{width:28px;height:28px;line-height:28px;font-size:.95rem}
+  #modalRepStock .modal-header .btn-close{width:44px;height:44px;background-size:16px 16px;padding:0;margin:0}
+
+  /* Fotos: grid fluido (el tamaño va inline desde JS -> hacen falta !important).
+     Da aire para que el x (top:-8px) y la etiqueta PRINCIPAL (bottom:-8px) no
+     choquen con el borde ni con el label "Notas". */
+  #rbFotosGrid{display:grid !important;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:14px;padding:10px 10px 18px}
+  #rbFotosGrid > div,#rbFotosGrid > label{width:100% !important;aspect-ratio:1/1;height:auto !important}
+  #rbFotosGrid img{width:100% !important;height:100% !important}
+
+  /* Filtros de la tabla (fuera del modal, mismo archivo) */
+  .rb-filtros{flex-direction:column;align-items:stretch}
+  .rb-filtros > *{width:100%}
+  .rb-filtros input[name="bq"]{min-width:0 !important}
+  .rb-filtros input,.rb-filtros select{min-height:44px;padding:10px 12px}
+  #rbSelAll{width:22px;height:22px}
+}
 </style>
 
 <form method="get" class="rb-filtros">
