@@ -5346,17 +5346,18 @@ function levdRender(){
     //    ver y decir: ah ok, ya se liberó ese producto"). Verde = liberado.
     //    Rojo = le falta algo, y el tooltip dice qué. Sin texto extra en la
     //    tarjeta: la señal es el color.
+    // FIX 2026-08-08 (Daniel, caso EVA Mat): la versión anterior también
+    // exigía "serie real" (no la sugerida LEV<vid>-N) para poner verde.
+    // Mal criterio: hay equipos SIN serie de fábrica (mats, correas, bandas)
+    // — Daniel tenía las 4 fotos y todo declarado, y igual salía rojo por
+    // esto. Único criterio real de "liberado": tiene evidencia (foto). La
+    // serie sigue siendo editable y sugerida, pero no bloquea el semáforo.
     const _falta = [];
     if (((it.fotos||[]).length || it.n_fotos || 0) === 0) _falta.push('falta al menos 1 foto');
-    // Serie sugerida automática (LEV<vid>-<n>): significa que el técnico no
-    // puso la serie real de la máquina, y sale repetida en varios equipos.
-    const _serie = String(it.serie_snap||'').trim();
-    if (!_serie) _falta.push('falta el N° de serie');
-    else if (new RegExp('^LEV'+VID+'-\\d+$','i').test(_serie)) _falta.push('el N° de serie es el sugerido, no el real');
     const _semClass = _falta.length ? ' falta' : '';
     const _semTitle = _falta.length
       ? 'Falta: ' + _falta.join(' · ')
-      : 'Equipo liberado: con evidencia y serie real';
+      : 'Equipo liberado: con evidencia fotográfica';
 
     return `<div class="levd-card${_semClass}" title="${_escapeHtml(_semTitle)}">
       ${foto ? `<img src="${foto}" alt="">` : `<div style="width:52px;height:52px;border-radius:9px;background:#f3f4f6;display:flex;align-items:center;justify-content:center"><i class="bi bi-camera text-muted"></i></div>`}
