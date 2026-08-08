@@ -81829,6 +81829,7 @@ def repstock_buscar_modelos():
 
 
 REPSTOCK_MAX_FOTOS = 3
+REPSTOCK_MAX_MODELOS = 3   # Daniel 2026-08-07: "se puede asociar hasta tres máquinas"
 
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos", methods=["POST"])
@@ -82032,6 +82033,11 @@ def repstock_modelo_asociar(rid):
     prod = mysql_fetchone("SELECT sku, nombre FROM cat_productos WHERE id=%s", (producto_id,))
     if not prod:
         return jsonify({"ok": False, "error": "Modelo no encontrado en el catálogo"}), 404
+    n_actual = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s", (rid,)
+    ) or {}).get("n", 0)
+    if n_actual >= REPSTOCK_MAX_MODELOS:
+        return jsonify({"ok": False, "error": f"Máximo {REPSTOCK_MAX_MODELOS} modelos por repuesto"}), 400
     mysql_execute(
         "INSERT IGNORE INTO mant_repuestos_stock_modelos (repuesto_id, producto_id) VALUES (%s,%s)",
         (rid, producto_id)

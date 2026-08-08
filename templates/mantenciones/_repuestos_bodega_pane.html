@@ -224,14 +224,15 @@
 
         <hr class="my-3">
         <div id="rbModelosSection">
-          <label class="form-label small fw-semibold">Modelos de equipo compatibles</label>
+          <label class="form-label small fw-semibold">Modelos de equipo compatibles <span class="text-muted fw-normal">(hasta 3)</span></label>
           <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
           <div id="rbModelosContenido">
             <div id="rbModelosChips" class="mb-2"></div>
-            <div class="rb-modelo-resultados">
+            <div class="rb-modelo-resultados" id="rbModelosBuscarWrap">
               <input type="text" class="form-control" id="rbModelosBuscar" placeholder="Buscar modelo por SKU o nombre (ej: trotadora)...">
               <div class="rb-modelo-resultados-list" id="rbModelosResultadosList"></div>
             </div>
+            <div id="rbModelosLimiteMsg" class="text-muted small" style="display:none">Máximo 3 modelos alcanzado — quita uno de arriba para cambiarlo.</div>
           </div>
         </div>
       </div>
@@ -717,14 +718,17 @@ async function rbFotoMarcarPrincipal(fid){
 
 function rbRenderModelosChips(){
   const cont = document.getElementById('rbModelosChips');
-  if (!RB_MODELOS_ACTUALES.length){
-    cont.innerHTML = '<span class="text-muted small">Sin modelos asociados todavía.</span>';
-    return;
-  }
-  cont.innerHTML = RB_MODELOS_ACTUALES.map(m =>
-    '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
-    '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
-  ).join('');
+  cont.innerHTML = RB_MODELOS_ACTUALES.length
+    ? RB_MODELOS_ACTUALES.map(m =>
+        '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
+        '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
+      ).join('')
+    : '<span class="text-muted small">Sin modelos asociados todavía.</span>';
+  // Al llegar al tope, se esconde el buscador (no tiene sentido buscar
+  // un 4to modelo que no se va a poder guardar) y se muestra el aviso.
+  const alTope = RB_MODELOS_ACTUALES.length >= RB_MAX_MODELOS;
+  document.getElementById('rbModelosBuscarWrap').style.display = alTope ? 'none' : '';
+  document.getElementById('rbModelosLimiteMsg').style.display = alTope ? 'block' : 'none';
 }
 function escHtmlRb(s){ const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
@@ -752,11 +756,16 @@ async function rbBuscarModelos(){
   }
   list.style.display = 'block';
 }
+const RB_MAX_MODELOS = 3;   // Daniel: "se puede asociar hasta tres máquinas"
 async function rbAgregarModelo(producto_id, nombre){
   const id = document.getElementById('rbId').value;
   document.getElementById('rbModelosResultadosList').style.display = 'none';
   document.getElementById('rbModelosBuscar').value = '';
   if (!id){ ilusToast('Guarda el repuesto primero', {type:'warning'}); return; }
+  if (RB_MODELOS_ACTUALES.length >= RB_MAX_MODELOS){
+    ilusToast('Máximo ' + RB_MAX_MODELOS + ' modelos por repuesto', {type:'warning'});
+    return;
+  }
   const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos', {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({producto_id})
   });
