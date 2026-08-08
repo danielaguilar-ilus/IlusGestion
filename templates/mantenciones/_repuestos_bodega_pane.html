@@ -60,17 +60,24 @@
    agrega esa clase al body para dejarle hueco al avatar y que no tape la
    tarjeta del Paso 1. */
 #modalRepStock .modal-header{position:relative;flex-wrap:wrap}
-#rbFotoPrincipalAvatar{display:none;flex:0 0 100%;position:relative;height:34px}
+#rbFotoPrincipalAvatar{display:none;flex:0 0 100%;position:relative;height:46px}
 #rbFotoPrincipalAvatar.rb-show{display:block}
 #rbFotoPrincipalAvatar img{
   position:absolute;left:16px;top:0;
-  width:64px;height:64px;border-radius:50%;
-  border:4px solid #fff;box-sizing:border-box;
-  box-shadow:0 3px 10px rgba(0,0,0,.35);
+  width:88px;height:88px;border-radius:50%;
+  border:5px solid #fff;box-sizing:border-box;
+  /* 2026-08-08 (Daniel: "la imagen quedó bonita, me gustaría que fuera más
+     impactante"): más grande (64px -> 88px) + anillo rojo ILUS de marca
+     (--ilus-red #dc2626) por fuera del borde blanco + sombra más profunda.
+     El anillo se logra apilando dos box-shadow: el primero dibuja el
+     anillo (spread 3px, sin blur), el segundo es la sombra de caída. */
+  box-shadow:0 0 0 3px #dc2626, 0 8px 20px rgba(0,0,0,.45);
   object-fit:cover;background:#f3f4f6;
+  transition:transform .2s ease;
   z-index:2;
 }
-#modalRepStock .modal-body.rb-body-has-avatar{padding-top:40px}
+#rbFotoPrincipalAvatar img:hover{transform:scale(1.06)}
+#modalRepStock .modal-body.rb-body-has-avatar{padding-top:54px}
 .rb-modelo-chip{display:inline-flex;align-items:center;gap:6px;background:#f3f4f6;border-radius:50px;padding:3px 6px 3px 12px;font-size:.78rem;margin:2px 4px 2px 0}
 .rb-modelo-chip button{border:none;background:#e5e7eb;color:#374151;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;padding:0;font-size:.7rem;cursor:pointer}
 .rb-modelo-resultados{position:relative}
@@ -204,10 +211,11 @@
   #modalRepStock .modal-header .btn-close{width:44px;height:44px;background-size:16px 16px;padding:0;margin:0}
 
   /* Avatar foto principal: más chico en celular (menos alto que ganarle
-     al teclado/scroll) — mismo criterio que el resto de este bloque. */
-  #rbFotoPrincipalAvatar{height:26px}
-  #rbFotoPrincipalAvatar img{width:48px;height:48px;left:12px}
-  #modalRepStock .modal-body.rb-body-has-avatar{padding-top:32px}
+     al teclado/scroll) — mismo criterio que el resto de este bloque. Sigue
+     la misma proporción del ajuste "más impactante" de escritorio (64px). */
+  #rbFotoPrincipalAvatar{height:32px}
+  #rbFotoPrincipalAvatar img{width:64px;height:64px;left:12px;border-width:4px}
+  #modalRepStock .modal-body.rb-body-has-avatar{padding-top:40px}
 
   /* Fotos: grid fluido (el tamaño va inline desde JS -> hacen falta !important).
      Da aire para que el x (top:-8px) y la etiqueta PRINCIPAL (bottom:-8px) no
