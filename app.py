@@ -64870,6 +64870,35 @@ def mant_visita_firmar(vid):
 # Requiere: las 3 firmas (cliente, técnico, supervisor) presentes.
 # ══════════════════════════════════════════════════════════════════════
 
+def _ot_maquinas_excluidas_cierre(vid):
+    """Set de maquina_id que NO deben bloquear el cierre de una OT: equipos
+    marcados 'saltado' o 'falla_detectada' (ya quedaron documentados/con
+    incidencia registrada). ÚNICA fuente de verdad — FIX 2026-08-08 (Daniel,
+    caso OT-56: "todo está gestionado pero aún dice 18 tareas obligatorias"):
+    esta regla vivía copiada en 3 lugares (aquí, el gate de firmar-revision,
+    y el JS del frontend) y el gate de firmar-revision se quedó con una
+    copia vieja que solo excluía 'saltado' — un equipo marcado
+    'falla_detectada' (gestionado, con incidencia registrada) seguía
+    bloqueando la firma con sus tareas obligatorias "pendientes". Ahora
+    ambos endpoints llaman a esta única función.
+    """
+    excluir_maquinas = set()
+    try:
+        rows_excl = mysql_fetchall(
+            "SELECT maquina_id FROM mant_visita_equipos "
+            " WHERE visita_id=%s "
+            "   AND estado_revision IN ('saltado','falla_detectada')",
+            (vid,)
+        ) or []
+        for r in rows_excl:
+            if r.get("maquina_id"):
+                excluir_maquinas.add(int(r["maquina_id"]))
+    except Exception:
+        # Tabla nueva — si aún no se creó, no excluimos nada (comp. atrás).
+        excluir_maquinas = set()
+    return excluir_maquinas
+
+
 def _ot_validar_cierre(vid):
     """FASE 5 — Validación de cierre auditable de OT con 4 reglas que el
     usuario aprobó. Devuelve dict con resultado:
@@ -64911,22 +64940,7 @@ def _ot_validar_cierre(vid):
     # (con razón + observación). Las tareas de un equipo saltado NO
     # bloquean el cierre. Tampoco bloquean las del equipo marcado como
     # 'falla_detectada' (ya quedó registrada la incidencia).
-    # Equipos saltados/con falla por visita: set de maquina_id excluidos
-    # del check de "tareas completas".
-    excluir_maquinas = set()
-    try:
-        rows_excl = mysql_fetchall(
-            "SELECT maquina_id, estado_revision FROM mant_visita_equipos "
-            " WHERE visita_id=%s "
-            "   AND estado_revision IN ('saltado','falla_detectada')",
-            (vid,)
-        ) or []
-        for r in rows_excl:
-            if r.get("maquina_id"):
-                excluir_maquinas.add(int(r["maquina_id"]))
-    except Exception:
-        # Tabla nueva — si aún no se creó, no excluimos nada (comp. atrás).
-        excluir_maquinas = set()
+    excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
 
     # R1 — Checklist 100% completado (excluyendo tareas de equipos saltados/con falla)
     if excluir_maquinas:
@@ -69638,6 +69652,13 @@ def mant_ot_ejecutar(vid):
         _creator_username == (u.get("username") or "").strip().lower()
     )
     es_superadmin_flag = (_rol_familia(role_u) == "superadmin")
+    # 2026-08-08 (Daniel): "quitar ese boton al tecnico y solo al tecnico
+    # de agregar equipos si la OT para el debe ser cerrada" -- el JS oculta
+    # "Agregar equipo" SOLO al técnico cuando las tareas obligatorias ya
+    # están completas (listo para firmar), para que no reabra la OT
+    # agregando equipos justo cuando está por cerrarla. Otros roles
+    # (admin/supervisor/ejecutivo) conservan el botón siempre.
+    es_tecnico_flag = (_rol_familia(role_u) == "tecnico")
 
     # ════════════════════════════════════════════════════════════════
     # FIX 2026-05-22 22:00 (caso OT 2026-00004 Vitacura — Daniel):
@@ -70006,6 +70027,7 @@ def mant_ot_ejecutar(vid):
             "tiempo_tolerancia_min": int((_reglas_cargar() or {}).get("ot_tiempo_tolerancia_min") or 10),
         },
         es_superadmin=es_superadmin_flag,
+        es_tecnico=es_tecnico_flag,
         # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
         # "Configurar OT": solo aparece al creador/admin/supervisor y
         # cuando la OT no tiene equipos asociados (huérfana).
@@ -70868,9 +70890,18 @@ def mant_ot_firmar_revision(vid):
     try:
         # ── Gate de cierre (Fase 10) ──────────────────────────────────────
         # Una tarea obligatoria está CUBIERTA si se completó O si su equipo fue
-        # omitido con causal (estado_revision='saltado'). Así el técnico que SÍ
-        # justificó no queda bloqueado. Devolvemos QUÉ FALTA por equipo para que
-        # el frontend muestre el panel "No puedes cerrar todavía".
+        # omitido/gestionado (estado_revision='saltado' o 'falla_detectada').
+        # Así el técnico que SÍ justificó no queda bloqueado. Devolvemos QUÉ
+        # FALTA por equipo para que el frontend muestre el panel "No puedes
+        # cerrar todavía".
+        # FIX 2026-08-08 (Daniel, caso OT-56): este query tenía su PROPIA copia
+        # de la exclusión y solo excluía 'saltado' -- un equipo marcado
+        # 'falla_detectada' (gestionado, con incidencia registrada) seguía
+        # bloqueando la firma. Ahora usa _ot_maquinas_excluidas_cierre(),
+        # la misma fuente de verdad que _ot_validar_cierre() y el JS del
+        # frontend.
+        excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
+        _excl_ph = ",".join(["%s"] * len(excluir_maquinas)) if excluir_maquinas else None
         faltan_rows = mysql_fetchall(
             "SELECT t.maquina_id, "
             "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
@@ -70878,12 +70909,11 @@ def mant_ot_firmar_revision(vid):
             "  FROM mant_visita_tareas t "
             "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
             " WHERE t.visita_id=%s AND t.obligatoria=1 AND COALESCE(t.completada,0)=0 "
-            "   AND NOT EXISTS (SELECT 1 FROM mant_visita_equipos e "
-            "                    WHERE e.visita_id=t.visita_id AND e.maquina_id=t.maquina_id "
-            "                      AND e.estado_revision='saltado') "
+            + (f"   AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_excl_ph})) "
+               if excluir_maquinas else "") +
             " GROUP BY t.maquina_id, m.nombre "
             " ORDER BY nombre",
-            (vid,)
+            (vid, *excluir_maquinas) if excluir_maquinas else (vid,)
         ) or []
         if faltan_rows:
             faltantes = [f"{r['nombre']}: {int(r['n'])} tarea(s) obligatoria(s) sin cubrir"
@@ -73731,7 +73761,10 @@ def mant_visita_adjuntos_list(vid):
             f"/static/{d['archivo_path']}" if d.get("archivo_path") else ""
         )
         if d.get("created_at"):
-            d["created_at"] = str(d["created_at"])[:16]
+            # REGLA #6 (fix 2026-08-08): antes str(dt)[:16] entregaba el UTC
+            # crudo de MySQL en formato ISO. Va por chile_fmt_filter como
+            # todo datetime de UI.
+            d["created_at"] = chile_fmt_filter(d["created_at"])
         out.append(d)
     return jsonify({"ok": True, "adjuntos": out, "total": len(out)})
 
@@ -84832,8 +84865,13 @@ def mant_lev_detalle(lid):
         # 'modificado_at' (trazabilidad de edición 2026-07-06) también es
         # DATETIME — sin normalizar, jsonify() falla en cuanto un item tenga
         # esta columna poblada (justo el caso que acabamos de habilitar).
+        # FIX 2026-08-08 (Daniel: "la fecha está en formato gringo, y la hora
+        # no corresponde a la región de Santiago"): antes se hacía
+        # str(dt)[:16], que entrega el UTC crudo de MySQL en formato ISO
+        # ("2026-08-08 18:53"). REGLA #6: todo datetime de UI pasa por
+        # chile_fmt_filter -> "08/08/2026 14:53" en hora de Santiago.
         for k in ('created_at', 'updated_at', 'modificado_at'):
-            if it.get(k): it[k] = str(it[k])[:16]
+            if it.get(k): it[k] = chile_fmt_filter(it[k])
 
     lev = dict(lev)
     for k in ('fecha_inicio', 'fecha_cierre', 'created_at', 'updated_at'):
@@ -85085,6 +85123,18 @@ def mant_lev_item_update(iid):
     user = current_username() or "sistema"
 
     if request.method == "DELETE":
+        # 2026-08-08 (Daniel): "el técnico no tiene por qué borrar máquina".
+        # El botón de basura se oculta en la UI para el técnico, pero eso es
+        # cosmético: acá se bloquea de verdad. Editar SÍ puede (corregir lo
+        # que él mismo capturó); eliminar queda para admin/supervisor/
+        # ejecutivo/superadmin, que es quien audita el levantamiento.
+        if _rol_familia((getattr(g, "user", None) or {}).get("role")) == "tecnico":
+            return jsonify({
+                "ok": False,
+                "error": "No puedes eliminar equipos. Si capturaste uno por error, "
+                         "edítalo o avisa al supervisor para que lo quite.",
+                "error_codigo": "LEV_TECNICO_SIN_DELETE",
+            }), 403
         if not _editable:
             return jsonify({
                 "ok": False,

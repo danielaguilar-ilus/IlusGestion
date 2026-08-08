@@ -2732,12 +2732,12 @@ function _updateProgress(mid, pid){
 // 2026-05-21 (Daniel) — EXCLUYE tareas de equipos en estado_revision
 // 'saltado' o 'falla_detectada': esos equipos no deben bloquear el cierre.
 function _calcCtxGlobal(){
-  let total = 0, completas = 0, oblTot = 0, oblComp = 0;
+  let total = 0, completas = 0, oblTot = 0, oblComp = 0, nExcluidos = 0;
   Object.entries(PLANTILLAS_POR_MAQUINA).forEach(([midStr, pls]) => {
     const rev = (EQUIPOS_ESTADO_REVISION || {})[midStr] || {};
     const _excluir = (rev.estado_revision === 'saltado' ||
                       rev.estado_revision === 'falla_detectada');
-    if (_excluir) return;
+    if (_excluir){ nExcluidos++; return; }
     pls.forEach(p => {
       total += p.total;
       completas += p.completas;
@@ -2749,7 +2749,90 @@ function _calcCtxGlobal(){
       });
     });
   });
-  return { total, completas, oblTot, oblComp };
+  // nExcluidos: cuántos equipos quedaron fuera por estar gestionados
+  // (saltado / falla_detectada). Hace falta para distinguir "esta OT no
+  // tiene tareas" de "todas sus tareas están cubiertas porque el técnico
+  // gestionó todos los equipos" — dos situaciones que daban total=0 y que
+  // el botón de firmar trataba igual, dejándolo bloqueado para siempre.
+  return { total, completas, oblTot, oblComp, nExcluidos };
+}
+
+// 2026-08-08 (Daniel: "me gustaría que me indicara por equipo qué está
+// pendiente... no sé qué es lo que adeudo"). Mismo filtro de exclusión que
+// _calcCtxGlobal (equipos 'saltado'/'falla_detectada' no cuentan) para que
+// el desglose sea consistente con el contador de arriba.
+function _pendientesPorEquipo(){
+  const out = [];
+  Object.entries(PLANTILLAS_POR_MAQUINA || {}).forEach(([midStr, pls]) => {
+    const rev = (EQUIPOS_ESTADO_REVISION || {})[midStr] || {};
+    const _excluir = (rev.estado_revision === 'saltado' || rev.estado_revision === 'falla_detectada');
+    if (_excluir) return;
+
+    const eq = (EQUIPOS_IDX || {})[midStr];
+    // maquina_id 0/NULL = tareas HUERFANAS (no ligadas a ningun equipo). Caso
+    // real OT-2026-00056: 18 tareas obligatorias con el nombre del equipo solo
+    // en el titulo ("Inspeccion: <equipo>") y sin FK. Agrupar todas bajo
+    // "Equipo #0" no le sirve a nadie; en ese caso listamos por TITULO, que es
+    // donde realmente esta el nombre del equipo.
+    if (!eq){
+      (pls || []).forEach(p => (p.tareas || []).forEach(t => {
+        if (t.obligatoria && !t.completada){
+          const nom = String(t.titulo || 'Tarea sin titulo')
+            .replace(/^[^\wÀ-ɏ]+/, '')            // saca el emoji inicial
+            .replace(/^(Inspeccion|Inspección|Documentar)\s*:\s*/i, '');
+          out.push({ nombre: nom, pend: 1, huerfana: true });
+        }
+      }));
+      return;
+    }
+
+    let pend = 0;
+    (pls || []).forEach(p => (p.tareas || []).forEach(t => {
+      if (t.obligatoria && !t.completada) pend++;
+    }));
+    if (pend > 0) out.push({ nombre: eq.nombre || `Equipo #${midStr}`, pend, huerfana: false });
+  });
+  return out.sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+// Pinta el desglose por equipo bajo el botón Firmar, y oculta "Agregar
+// equipo"/"Duplicar último" SOLO al técnico una vez que las obligatorias
+// están listas (Daniel: "quitar ese botón al técnico... si la OT para él
+// debe ser cerrada" — evita que reabra la OT agregando equipos justo
+// cuando está por firmarla; otros roles conservan el botón siempre).
+function _actualizarPanelCierre(oblTot, oblComp){
+  const detalle = document.getElementById('btnFirmarDetalle');
+  if (detalle){
+    const pend = (oblComp < oblTot) ? _pendientesPorEquipo() : [];
+    if (pend.length){
+      detalle.style.display = '';
+      detalle.innerHTML = '<div class="small fw-semibold mb-1" style="color:#b45309">Pendiente por equipo:</div>' +
+        pend.map(p => `<div class="small" style="color:#78350f">· ${_escapeHtml(p.nombre)}${p.huerfana ? '' : `: ${p.pend} tarea${p.pend>1?'s':''} obligatoria${p.pend>1?'s':''}`}</div>`).join('');
+    } else {
+      detalle.style.display = 'none';
+      detalle.innerHTML = '';
+    }
+  }
+
+  if (typeof IS_TECNICO !== 'undefined' && IS_TECNICO){
+    // OJO (bug encontrado en la revisión adversarial 2026-08-08, antes de
+    // llegar a producción): la condición NO puede ser "oblTot === 0", porque
+    // en un LEVANTAMIENTO PURO de descubrimiento la OT nace con 0 tareas —
+    // le escondíamos al técnico el botón "Agregar equipo" justo cuando
+    // agregar equipos ES todo su trabajo, y el botón de firmar le exige
+    // al menos 1 equipo: deadlock en terreno, exactamente lo que hay que
+    // evitar. Solo se oculta cuando SÍ había obligatorias y ya están todas
+    // cubiertas, que es el caso que pidió Daniel.
+    const listoParaCerrar = (oblTot > 0) && (oblComp >= oblTot);
+    document.querySelectorAll('.levd-add, #levdDupBtn').forEach(el => {
+      if (!el) return;
+      // Respeta el estado propio del botón Duplicar (se muestra/oculta según
+      // haya un último equipo que duplicar) — solo lo forzamos a ocultarse,
+      // nunca a mostrarse si su propia lógica ya lo tenía oculto.
+      if (listoParaCerrar) el.style.display = 'none';
+      else if (el.classList.contains('levd-add')) el.style.display = '';
+    });
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -2781,6 +2864,11 @@ function actualizarLockFirmar(ctxOrTotal, completas){
   const lbl = document.getElementById('btnFirmarLabel');
   const hint = document.getElementById('btnFirmarHint');
   if (!btn || !lbl) return;
+
+  // Desglose por equipo + visibilidad de "Agregar equipo" para el técnico.
+  // Va acá arriba (antes de los returns tempranos) para que se recalcule
+  // en TODOS los casos, no solo en el camino feliz.
+  _actualizarPanelCierre(oblTot, oblComp);
 
   // CSS shared snippets para el hint inferior (siempre visible)
   const hintCounters =
@@ -2816,6 +2904,25 @@ function actualizarLockFirmar(ctxOrTotal, completas){
       if (hint){
         hint.innerHTML = 'Agrega al menos 1 equipo descubierto en terreno antes de firmar.';
         hint.style.color = '#94a3b8';
+      }
+      return;
+    }
+    // BUG REAL corregido 2026-08-08 (detectado en la auditoría del caso OT-56):
+    // si el técnico gestionó TODOS los equipos (saltado / falla detectada),
+    // _calcCtxGlobal deja total=0 y este branch le decía "Sin tareas
+    // asignadas" con el botón deshabilitado PARA SIEMPRE — aunque el backend
+    // sí lo dejaba firmar (su gate excluye las tareas de esos equipos). El
+    // técnico quedaba trabado en terreno habiendo hecho todo bien.
+    const _nExcl = ctx.nExcluidos | 0;
+    if (_nExcl > 0){
+      btn.disabled = false;
+      btn.dataset.locked = '0';
+      btn.innerHTML = '<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">Completar y firmar OT</span>';
+      btn.style.background = 'linear-gradient(135deg,#15803d,#16a34a)';
+      if (hint){
+        hint.innerHTML = `Gestionaste ${_nExcl} equipo${_nExcl>1?'s':''} (saltado o con falla). ` +
+                         'No queda nada pendiente: puedes firmar.';
+        hint.style.color = '#15803d';
       }
       return;
     }
@@ -3111,7 +3218,8 @@ function renderAdjuntoItem(a){
   };
   const url = a.url || a.cloudinary_url || (a.archivo_path ? '/' + a.archivo_path : '');
   const sizeMB = a.file_size_kb ? (a.file_size_kb / 1024).toFixed(1) + ' MB' : '—';
-  const fecha = a.created_at ? a.created_at.split('.')[0] : '';
+  // Ya viene formateada en hora Chile desde el backend (chile_fmt_filter).
+  const fecha = a.created_at || '';
   const nombre = a.archivo_nombre || ('Archivo #' + a.id);
   // Preview thumbnail para foto / video
   const isImg = (tipo === 'foto' && url);
@@ -5201,13 +5309,27 @@ function levdRender(){
     // sin excepción de rol.
     let acciones;
     if (LEV_EDITABLE){
+      // 2026-08-08 (Daniel): "el técnico no tiene por qué borrar máquina, así
+      // que hay que sacar el botón de la basura". Solo se oculta al TÉCNICO —
+      // admin/supervisor/ejecutivo/superadmin lo conservan (REGLA #4.2: no se
+      // elimina la feature, se condiciona por rol). El backend también lo
+      // bloquea (mant_lev_item_update, error_codigo LEV_TECNICO_SIN_DELETE):
+      // esconder el botón sin cerrar la API no sería seguridad real.
+      const _puedeBorrar = !(typeof IS_TECNICO !== 'undefined' && IS_TECNICO);
       acciones = `<button type="button" class="del" style="background:#eff6ff;color:#1d4ed8;margin-right:6px" onclick="levdEditar(${it.id})" title="Editar"><i class="bi bi-pencil-fill"></i></button>` +
-                 `<button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>`;
+                 (_puedeBorrar
+                   ? `<button type="button" class="del" onclick="levdEliminar(${it.id})" title="Eliminar"><i class="bi bi-trash"></i></button>`
+                   : '');
     } else {
       acciones = `<span style="color:#9ca3af;font-size:1.1rem" title="Congelado tras la firma del técnico — solo visualización"><i class="bi bi-lock-fill"></i></span>`;
     }
+    // 2026-08-08 (Daniel: "la fecha está en formato gringo, y la hora no
+    // corresponde a la región de Santiago"). El backend ya entrega
+    // modificado_at pasado por chile_fmt_filter ("08/08/2026 14:53", hora
+    // Chile). Antes acá se hacía .slice(0,16).replace('T',' ') sobre el UTC
+    // crudo — justo lo que la REGLA #6 prohíbe (cortar el ISO a mano).
     const editInfo = it.modificado_por
-      ? `<div class="mt" style="color:#b45309"><i class="bi bi-pencil-square me-1"></i>Editado por ${it.modificado_por}${it.modificado_at ? ' · ' + it.modificado_at.slice(0,16).replace('T',' ') : ''}</div>`
+      ? `<div class="mt" style="color:#b45309"><i class="bi bi-pencil-square me-1"></i>Editado por ${it.modificado_por}${it.modificado_at ? ' · ' + it.modificado_at : ''}</div>`
       : '';
     return `<div class="levd-card">
       ${foto ? `<img src="${foto}" alt="">` : `<div style="width:52px;height:52px;border-radius:9px;background:#f3f4f6;display:flex;align-items:center;justify-content:center"><i class="bi bi-camera text-muted"></i></div>`}
