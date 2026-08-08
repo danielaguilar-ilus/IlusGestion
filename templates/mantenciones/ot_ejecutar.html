@@ -1019,6 +1019,12 @@
         border-radius:50%;background:#dc2626;color:#fff;font-size:.75rem;line-height:1}
       .levd-foto-add{width:74px;height:74px;border:2px dashed #dc2626;border-radius:10px;
         background:#fff5f5;color:#dc2626;font-size:1.5rem;display:flex;align-items:center;justify-content:center}
+      /* 2026-08-08 (Daniel: "Heiser... no puede asignar fotos de la galería"):
+         segundo tile para elegir de la galería, al lado del de cámara -- MISMO
+         motivo que ya se corrigió en el modal de Repuestos: capture="environment"
+         solo en un input bloquea la galería por completo en mobile. */
+      .levd-foto-add-alt{width:74px;height:74px;border:2px dashed #9ca3af;border-radius:10px;
+        background:#f9fafb;color:#4b5563;font-size:1.3rem;display:flex;align-items:center;justify-content:center}
       .levd-sw{display:flex;align-items:center;justify-content:space-between;background:#f9fafb;
         border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-top:8px}
       .levd-sw .lbl{font-weight:700;font-size:.88rem;color:#0f172a}
@@ -1085,11 +1091,15 @@
               <span class="text-muted fw-normal" style="font-size:.72rem">— mínimo 1, puedes tomar varias</span>
             </label>
             <div class="levd-fotos" id="levdFotos">
-              <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInput').click()">
+              <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInput').click()" title="Tomar foto">
                 <i class="bi bi-camera"></i>
+              </button>
+              <button type="button" class="levd-foto-add-alt" onclick="document.getElementById('levdFotoInputGaleria').click()" title="Elegir de la galería">
+                <i class="bi bi-images"></i>
               </button>
             </div>
             <input type="file" id="levdFotoInput" accept="image/*" capture="environment" multiple style="display:none">
+            <input type="file" id="levdFotoInputGaleria" accept="image/*" multiple style="display:none">
 
             <label class="form-label fw-semibold small mb-1 mt-3">Nombre del equipo <span class="text-danger">*</span></label>
             <input type="text" id="levd_nombre" class="form-control" list="levdNombres"

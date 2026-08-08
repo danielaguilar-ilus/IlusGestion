@@ -5384,7 +5384,12 @@ function _levdComprimir(file){
 
 function _levdRenderFotos(){
   const wrap = _levdEl('levdFotos');
-  const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInput\').click()"><i class="bi bi-camera"></i></button>';
+  // 2026-08-08 (Daniel: "Heiser... no puede asignar fotos de la galería"):
+  // dos tiles -- cámara (capture=environment) y galería (sin capture) --
+  // este addBtn se reconstruye en cada render, así que el tile de galería
+  // tiene que ir acá también, no solo en el HTML estático inicial.
+  const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInput\').click()" title="Tomar foto"><i class="bi bi-camera"></i></button>' +
+    '<button type="button" class="levd-foto-add-alt" onclick="document.getElementById(\'levdFotoInputGaleria\').click()" title="Elegir de la galería"><i class="bi bi-images"></i></button>';
   // 2026-07-06: en modo edición, primero las fotos YA subidas (borrado real
   // vía DELETE al servidor), luego las nuevas pendientes (solo en memoria).
   const existentesHtml = _levdFotosExistentes.map((f, i) =>
@@ -5427,17 +5432,22 @@ function levdQuitarFoto(i){
   _levdRenderFotos();
 }
 
+async function _levdFotoInputChange(e){
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  for (const f of files){
+    const blob = await _levdComprimir(f);
+    _levdFotos.push({ blob, url: URL.createObjectURL(blob) });
+  }
+  _levdRenderFotos();
+}
 document.addEventListener('DOMContentLoaded', () => {
+  // 2026-08-08: dos inputs comparten el mismo handler -- cámara (capture)
+  // y galería (sin capture, `multiple` para elegir varias de una).
   const inp = _levdEl('levdFotoInput');
-  if (inp) inp.addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    for (const f of files){
-      const blob = await _levdComprimir(f);
-      _levdFotos.push({ blob, url: URL.createObjectURL(blob) });
-    }
-    _levdRenderFotos();
-  });
+  if (inp) inp.addEventListener('change', _levdFotoInputChange);
+  const inpGal = _levdEl('levdFotoInputGaleria');
+  if (inpGal) inpGal.addEventListener('change', _levdFotoInputChange);
   levdInit();
 });
 
