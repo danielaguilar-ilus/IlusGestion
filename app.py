@@ -81915,6 +81915,49 @@ def repstock_foto_borrar(rid, fid):
     return jsonify({"ok": True})
 
 
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>/principal", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_foto_principal(rid, fid):
+    """Marca una foto como principal (la que se ve como miniatura en la
+    tabla — Daniel 2026-08-07: "poder seleccionar cual de las 3 sera la
+    principal"). La "principal" es simplemente orden=1: la tabla y
+    _repstock_contexto_bodega ya ordenan por `orden` y usan rfotos[0].
+
+    Swap en 3 pasos con un valor "scratch" (-1, jamas usado por altas
+    reales que parten de 1) para no chocar contra el UNIQUE(repuesto_id,
+    orden) mientras se intercambian las posiciones."""
+    foto = mysql_fetchone(
+        "SELECT orden FROM mant_repuestos_stock_fotos WHERE id=%s AND repuesto_id=%s",
+        (fid, rid))
+    if not foto:
+        return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+    orden_actual = foto["orden"]
+    if orden_actual == 1:
+        return jsonify({"ok": True})  # ya es la principal
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_repuestos_stock_fotos SET orden=-1 "
+                "WHERE id=%s", (fid,))
+            cur.execute(
+                "UPDATE mant_repuestos_stock_fotos SET orden=%s "
+                "WHERE repuesto_id=%s AND orden=1", (orden_actual, rid))
+            cur.execute(
+                "UPDATE mant_repuestos_stock_fotos SET orden=1 "
+                "WHERE id=%s", (fid,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[repstock_foto_principal] rid={rid} fid={fid} ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo marcar como principal."}), 400
+    finally:
+        conn.close()
+    _mant_log("repuesto_stock", rid, "foto_principal", "")
+    return jsonify({"ok": True})
+
+
 @app.route("/mantenciones/api/repuestos-stock/buscar-ubicaciones", methods=["GET"])
 @_mant_required
 def repstock_buscar_ubicaciones():

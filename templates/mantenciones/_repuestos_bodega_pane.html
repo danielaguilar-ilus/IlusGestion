@@ -582,13 +582,20 @@ function rbRenderFotos(){
   sinGuardar.style.display = 'none';
   contenido.style.display = 'block';
   const grid = document.getElementById('rbFotosGrid');
-  let html = RB_FOTOS_ACTUALES.map(f =>
-    '<div style="position:relative;display:inline-block">' +
-    '<img src="' + f.url + '" style="width:76px;height:76px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb;cursor:zoom-in" onclick="window.open(\'' + f.url + '\',\'_blank\')">' +
-    '<button type="button" onclick="rbFotoBorrar(' + f.id + ')" title="Borrar foto" ' +
-    'style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">&times;</button>' +
-    '</div>'
-  ).join('');
+  // La 1a foto del array (orden=1 en el backend) es la "principal": la
+  // que se ve como miniatura en la tabla (Daniel 2026-08-07).
+  let html = RB_FOTOS_ACTUALES.map((f, i) => {
+    const esPrincipal = (i === 0);
+    return '<div style="position:relative;display:inline-block">' +
+      '<img src="' + f.url + '" style="width:76px;height:76px;object-fit:cover;border-radius:10px;border:' + (esPrincipal ? '2px solid #dc2626' : '1px solid #e5e7eb') + ';cursor:zoom-in" onclick="window.open(\'' + f.url + '\',\'_blank\')">' +
+      (esPrincipal
+        ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-6px;left:2px;right:2px;background:#dc2626;color:#fff;font-size:.6rem;font-weight:800;text-align:center;border-radius:6px;padding:1px 0;letter-spacing:.02em"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
+        : '<button type="button" onclick="rbFotoMarcarPrincipal(' + f.id + ')" title="Marcar como foto principal" ' +
+          'style="position:absolute;bottom:-6px;left:-6px;width:22px;height:22px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;color:#9ca3af;font-size:.72rem;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center"><i class="bi bi-star"></i></button>') +
+      '<button type="button" onclick="rbFotoBorrar(' + f.id + ')" title="Borrar foto" ' +
+      'style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">&times;</button>' +
+      '</div>';
+  }).join('');
   if (RB_FOTOS_ACTUALES.length < RB_MAX_FOTOS){
     html += '<label style="width:76px;height:76px;border:2px dashed #d1d5db;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;margin:0" title="Agregar foto">' +
             '<i class="bi bi-camera" style="font-size:1.2rem"></i>' +
@@ -646,6 +653,24 @@ async function rbFotoBorrar(fid){
     rbRenderFotos();
   } else {
     ilusToast(d.error || 'No se pudo borrar la foto', {type:'error'});
+  }
+}
+async function rbFotoMarcarPrincipal(fid){
+  const id = document.getElementById('rbId').value;
+  if (!id) return;
+  const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/fotos/' + fid + '/principal', {method:'POST'});
+  const d = await r.json().catch(() => ({}));
+  if (r.ok && d.ok !== false){
+    // Refleja el swap del backend: la elegida pasa al frente del array.
+    const elegida = RB_FOTOS_ACTUALES.find(f => f.id === fid);
+    if (elegida){
+      RB_FOTOS_ACTUALES = [elegida, ...RB_FOTOS_ACTUALES.filter(f => f.id !== fid)];
+    }
+    RB_DIRTY = true;
+    rbRenderFotos();
+    ilusToast('Foto principal actualizada', {type:'success'});
+  } else {
+    ilusToast(d.error || 'No se pudo marcar como principal', {type:'error'});
   }
 }
 
