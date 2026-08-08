@@ -64921,8 +64921,9 @@ def _ot_validar_cierre(vid):
             f"Falta foto en {len(tareas_sin_foto)} tarea(s): {', '.join(nombres)}{suf}"
         )
 
-    # R4 — Las 3 firmas
-    if not v.get("firma_cliente_url"):    razones.append("Falta firma del cliente.")
+    # R4 — Las 3 firmas (en trabajo interno no hay cliente que firme)
+    if not v.get("firma_cliente_url") and not _ot_es_interna(v):
+        razones.append("Falta firma del cliente.")
     if not v.get("firma_tecnico_url"):    razones.append("Falta firma del técnico.")
     if not v.get("firma_supervisor_url"): razones.append("Falta firma del supervisor.")
 
@@ -70697,6 +70698,35 @@ def _ot_firmante_cliente(vid):
         return {}
 
 
+def _ot_es_interna(v):
+    """True si la OT es un TRABAJO INTERNO de ILUS (no hay cliente que firme).
+
+    Daniel 2026-08-08: "para los trabajos internos yo le eliminaría la firma
+    del cliente... sería estúpido buscar la firma de un cliente en un trabajo
+    interno. Más inteligente sería que un trabajo interno sea bien revisado y
+    que ahí esté la firma del responsable." Y sobre el control de calidad por
+    evento: "el trabajo se hace interno en la bodega siempre".
+
+    NO se agrega columna nueva: la OT ya persiste los dos discriminadores.
+      - modalidad_cobro='interno'  -> operación interna ILUS (ya documentado
+        así en el propio ALTER que crea la columna).
+      - tipo='revision_interna'    -> tipo de OT interno.
+    OJO: NO usar proveedor_tipo='interno'. Ese campo es de finanzas y significa
+    "lo ejecutó un técnico propio" — una OT de cliente normal también lo tiene,
+    así que usarlo dejaría sin firma de cliente a casi todas las OT reales.
+
+    Esta función es la ÚNICA fuente de verdad: cualquier otro punto que
+    necesite la distinción debe llamarla, no reimplementar la condición.
+    """
+    if not v:
+        return False
+    try:
+        return ((v.get("modalidad_cobro") or "").strip().lower() == "interno"
+                or (v.get("tipo") or "").strip().lower() == "revision_interna")
+    except Exception:
+        return False
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
@@ -70765,13 +70795,23 @@ def mant_ot_firmar_revision(vid):
         if not nombre_tec:
             nombre_tec = (u.get("nombre") or u.get("username") or "Técnico")[:200]
 
+        # Trabajo INTERNO: no hay cliente que firme, así que la firma del
+        # técnico deja la OT lista para la revisión del administrativo
+        # (pendiente_aprobacion) en vez de dejarla esperando para siempre en
+        # 'firmada_tecnico'. Sin esto una OT interna era IMPOSIBLE de cerrar:
+        # los dos únicos puntos que escriben 'pendiente_aprobacion' son las
+        # dos firmas de cliente, y aprobar-cierre exige ese estado.
+        _v_int = mysql_fetchone(
+            "SELECT modalidad_cobro, tipo FROM mant_visitas WHERE id=%s", (vid,))
+        _es_int = _ot_es_interna(_v_int)
+        _estado_post_firma = "pendiente_aprobacion" if _es_int else "firmada_tecnico"
         mysql_execute(
             "UPDATE mant_visitas SET "
             "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, "
             "  firma_tecnico_nombre=%s, firma_tecnico_at=NOW(), "
-            "  estado='firmada_tecnico' "
+            "  estado=%s "
             " WHERE id=%s",
-            (firma_tec_url, uid, nombre_tec, vid)
+            (firma_tec_url, uid, nombre_tec, _estado_post_firma, vid)
         )
         # Marcar levantamiento como cerrado si la OT tenía uno (la captura de
         # datos del equipo ya terminó; las correcciones de la ventana editan
@@ -71539,12 +71579,28 @@ def mant_ot_aprobar_cierre(vid):
     except Exception:
         _gate_on = True
     _mod_cobro = (v.get("modalidad_cobro") or "").strip().lower()
-    if _gate_on and _mod_cobro not in ("garantia", "sin_costo") and not (v.get("factura_nudo") or "").strip():
+    # 'interno' se exime igual que garantia/sin_costo: un trabajo interno de
+    # ILUS no se factura a nadie, así que exigirle factura para firmar el
+    # cierre lo dejaba trabado (Daniel 2026-08-08).
+    if (_gate_on and not _ot_es_interna(v)
+            and _mod_cobro not in ("garantia", "sin_costo")
+            and not (v.get("factura_nudo") or "").strip()):
         return jsonify({
             "ok": False,
             "error_codigo": "SIN_FACTURA",
             "error": "Esta OT es cobrable y aún NO tiene factura asociada. "
                      "Asocia la factura (o marca la OT como garantía) antes de firmar el cierre.",
+        }), 400
+    # En trabajo INTERNO la firma del administrativo que revisa es la ÚNICA
+    # contraparte del técnico (no hay cliente). Daniel 2026-08-08: "que un
+    # trabajo interno sea bien revisado y que ahí esté la firma del
+    # responsable" -> acá deja de ser opcional. En OT de cliente se mantiene
+    # opcional, exactamente como estaba.
+    if _ot_es_interna(v) and not firma_sup:
+        return jsonify({
+            "ok": False,
+            "error": "Esta OT es un trabajo interno: se requiere la firma del "
+                     "administrativo/responsable que revisa para poder cerrarla.",
         }), 400
     try:
         u = getattr(g, "user", None) or {}
@@ -72506,7 +72562,9 @@ def _ot_pdf_context(vid, embed_images=False):
     estado = (visita.get("estado") or "").lower()
     if estado != "cerrada":
         razones.append(f"La OT debe estar en estado 'cerrada' (actual: {estado or '—'}).")
-    if not visita.get("firma_cliente_url"):
+    # En trabajo interno no existe firma de cliente — exigirla dejaba a la OT
+    # interna sin PDF para siempre (Daniel 2026-08-08).
+    if not visita.get("firma_cliente_url") and not _ot_es_interna(visita):
         razones.append("Falta firma del cliente.")
     if not visita.get("firma_tecnico_url"):
         razones.append("Falta firma del técnico.")
