@@ -82299,6 +82299,26 @@ def repstock_sondeo_modelos_erp():
             return jsonify({"ok": False, "error": str(e)[:300]})
         return jsonify({"ok": True, "columnas": [dict(c) for c in (cols or [])]})
 
+    if q == "__sample__":
+        # Encontrado en el schema: MAEPR.REPUESTO (char) -- nombre casi
+        # demasiado literal para ser casualidad. Confirmar su valor real
+        # contra 2 SKUs conocidos: la Keiser M3i completa (005502BBC) y el
+        # repuesto ya etiquetado "(REPUESTO)" en su propia descripción
+        # (555106, "Media Holder M3i Lite Keiser"). Solo lectura, superadmin.
+        _u = getattr(g, "user", None) or {}
+        if (_u.get("role") or "").lower() != "superadmin":
+            return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+        try:
+            filas = _random_sql_query(
+                "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(NOKOPR)) AS descripcion, "
+                "       REPUESTO AS repuesto_raw "
+                "  FROM MAEPR WHERE LTRIM(RTRIM(KOPR)) IN (%s, %s)",
+                ("005502BBC", "555106"), max_rows=10,
+            )
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)[:300]})
+        return jsonify({"ok": True, "filas": [dict(f) for f in (filas or [])]})
+
     q_like = f"%{q.upper()[:60]}%"
 
     sql = (
