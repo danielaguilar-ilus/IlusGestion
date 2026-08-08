@@ -14207,6 +14207,76 @@ def erp_diagnostico(tido, nudo):
     })
 
 
+@app.route("/api/erp/salidas-sku")
+@login_required
+def erp_salidas_sku():
+    """Diagnóstico de 'salidas' (despachos/ventas) de un SKU de Random en
+    los últimos 12 meses -- prueba real pedida por Daniel 2026-08-08 para
+    validar, ANTES de programarla, la fórmula de stock mínimo del módulo
+    de Repuestos (ver mant_repuestos_stock). SOLO LECTURA (Regla #4.1):
+    pasa por _random_sql_query (SELECT-only, params, autocommit off),
+    jamás escribe en Random.
+
+    Desglosa por TIPO DE DOCUMENTO en vez de sumar todo a ciegas: una
+    factura/boleta de venta y su guía de despacho pueden referirse al
+    MISMO movimiento físico (la guía trae TIDOPA/NUDOPA/ENDOPA apuntando
+    al documento de venta que la originó -- ver erp-diccionario-random),
+    así que sumar ambos tipos duplicaría las unidades. El desglose deja
+    ver eso a simple vista antes de decidir qué tipos contar.
+
+    Revisión adversarial 2026-08-08 (confirmado por 3 agentes independientes,
+    2 de seguridad/SQL sin hallazgos): CAPRCO1 es la cantidad PEDIDA en la
+    línea, no necesariamente la DESPACHADA -- para un documento de venta
+    con despacho parcial, CAPRCO1 puede ser mayor que lo que físicamente
+    salió de bodega (bug real ya documentado en este mismo archivo para
+    el cálculo de saldo, ~línea 21253). Por eso se agrega también
+    total_unidades_despachadas (CAPRAD1) por fila, para que se vea la
+    diferencia. OJO: CAPRAD1 es un acumulado A LA FECHA DE HOY, no está
+    acotado por el filtro de 365 días como el resto de la query -- para
+    documentos viejos ya cerrados ambos valores deberían coincidir, pero
+    para documentos recientes con despacho aún pendiente puede diferir."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+    sku = (request.args.get("sku") or "").strip().upper()
+    if not sku:
+        return jsonify({"ok": False, "error": "Falta el parámetro sku"}), 400
+    try:
+        filas = _random_sql_query(
+            "SELECT LTRIM(RTRIM(e.TIDO)) AS tido, "
+            "       COUNT(DISTINCT e.IDMAEEDO) AS n_documentos, "
+            "       COUNT(*) AS n_lineas, "
+            "       SUM(d.CAPRCO1) AS total_unidades_pedidas, "
+            "       SUM(d.CAPRAD1) AS total_unidades_despachadas, "
+            "       MIN(e.FEEMDO) AS primera_fecha, "
+            "       MAX(e.FEEMDO) AS ultima_fecha "
+            "  FROM MAEDDO d "
+            "  JOIN MAEEDO e ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO "
+            " WHERE UPPER(LTRIM(RTRIM(d.KOPRCT))) = %s "
+            "   AND e.FEEMDO >= DATEADD(day, -365, GETDATE()) "
+            "   AND (e.ESDO IS NULL OR LTRIM(RTRIM(e.ESDO)) <> 'NULO') "
+            " GROUP BY LTRIM(RTRIM(e.TIDO)) "
+            " ORDER BY total_unidades_pedidas DESC",
+            (sku,), max_rows=50,
+        )
+    except PermissionError as e:
+        return jsonify({"ok": False, "error": f"SQL rechazado por el validador: {e}"}), 400
+    except Exception as e:
+        print(f"[erp_salidas_sku] sku={sku} ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar Random."}), 502
+    if filas is None:
+        return jsonify({"ok": False, "error": "ERP Random no disponible."}), 502
+    return jsonify({
+        "ok": True, "sku": sku, "periodo": "últimos 365 días",
+        "desglose_por_tipo_documento": filas,
+        "nota": "1) Revisa si TIDO de venta (FCV/BLV/NVV) y TIDO de guía (GDV) "
+                "se solapan antes de sumar el total -- la guía suele ser el "
+                "despacho del mismo documento de venta, no un movimiento aparte. "
+                "2) En filas de venta, total_unidades_pedidas puede ser mayor que "
+                "total_unidades_despachadas si hubo despacho parcial -- para saber "
+                "lo que físicamente salió de bodega, usa despachadas.",
+    })
+
+
 # ═════════════════════════════════════════════════════════════════════
 # MOTOR UNIFICADO fetch_erp_document (Daniel 2026-05-27)
 # Una sola función para cubicador / asignar / transporte / retiros /
