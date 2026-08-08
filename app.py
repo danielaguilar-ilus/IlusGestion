@@ -81998,6 +81998,91 @@ def repstock_foto_borrar(rid, fid):
     return jsonify({"ok": True})
 
 
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>/delete", methods=["POST"])
+@_mant_required
+def repstock_foto_borrar_confirmada(rid, fid):
+    """Igual que el DELETE de arriba, pero con confirmación por SKU --
+    contrato que espera static/foto_editor.js (ilusFotos.view, 'visor
+    standalone'). Daniel 2026-08-08: 'las fotos se deben abrir en un
+    modal con opciones de edición, voltear, recortar' -- mismo visor ya
+    usado en Catálogo, no uno nuevo. Se agrega esta ruta en vez de
+    cambiar el DELETE existente (Regla #4.2): el botón chico de la
+    grilla sigue usando el DELETE simple con ilusConfirm."""
+    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    confirm = (request.form.get("confirm_sku") or "").strip().upper()
+    if confirm != (rep.get("sku") or "").upper():
+        return jsonify({"ok": False, "error": "Confirmación incorrecta. La foto NO fue eliminada."}), 400
+    foto = mysql_fetchone(
+        "SELECT gcs_key FROM mant_repuestos_stock_fotos WHERE id=%s AND repuesto_id=%s",
+        (fid, rid))
+    if not foto:
+        return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+    mysql_execute("DELETE FROM mant_repuestos_stock_fotos WHERE id=%s", (fid,))
+    try:
+        _uploader_destroy(foto["gcs_key"])
+    except Exception:
+        pass
+    _mant_log("repuesto_stock", rid, "foto_eliminada", "")
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>/replace", methods=["POST"])
+@_mant_required
+def repstock_foto_reemplazar(rid, fid):
+    """Guarda la versión EDITADA de una foto (rotar/voltear/recortar/
+    brillo/contraste, desde static/foto_editor.js). Sube como blob NUEVO
+    en GCS (key con timestamp distinto -> /f/ nunca sirve la versión
+    vieja) y recién después borra el anterior -- mismo patrón que
+    /products/<pid>/photos/<id>/replace, adaptado a _uploader_upload/
+    _uploader_destroy (GCS) en vez del storage de Catálogo."""
+    rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
+    if not rep:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado"}), 404
+    foto = mysql_fetchone(
+        "SELECT gcs_key, orden FROM mant_repuestos_stock_fotos WHERE id=%s AND repuesto_id=%s",
+        (fid, rid))
+    if not foto:
+        return jsonify({"ok": False, "error": "Foto no encontrada"}), 404
+    f = request.files.get("photo")
+    if not f:
+        return jsonify({"ok": False, "error": "No llegó la imagen editada."}), 400
+    _ext, _err = _validate_uploaded_image(f, label="foto editada del repuesto")
+    if _err:
+        return jsonify({"ok": False, "error": _err}), 400
+    try:
+        res = _uploader_upload(
+            f, folder="repuestos",
+            public_id=f"rep_{rid}_{int(time.time()*1000)}_e",
+            resource_type="image",
+        )
+    except Exception as e:
+        print(f"[repstock_foto_reemplazar] upload rid={rid} fid={fid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo subir la imagen editada."}), 500
+    new_key = res.get("public_id")
+    try:
+        mysql_execute(
+            "UPDATE mant_repuestos_stock_fotos SET gcs_key=%s WHERE id=%s AND repuesto_id=%s",
+            (new_key, fid, rid)
+        )
+    except Exception as e:
+        try:
+            _uploader_destroy(new_key)
+        except Exception:
+            pass
+        print(f"[repstock_foto_reemplazar] UPDATE rid={rid} fid={fid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo registrar la imagen editada."}), 500
+    old_key = foto.get("gcs_key")
+    if old_key and old_key != new_key:
+        try:
+            _uploader_destroy(old_key)
+        except Exception:
+            pass
+    _mant_log("repuesto_stock", rid, "foto_editada", "")
+    return jsonify({"ok": True, "url": "/f/" + new_key})
+
+
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>/principal", methods=["POST"])
 @_mant_required
 def repstock_foto_principal(rid, fid):

@@ -318,6 +318,7 @@
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
 const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
+const RB_CSRF = {{ csrf_token()|tojson }};
 let RB_MODAL = null;
 let RB_PROVEEDOR_MODAL = null;
 let RB_MODELOS_ACTUALES = [];
@@ -890,7 +891,7 @@ function rbRenderFotos(){
   let html = RB_FOTOS_ACTUALES.map((f, i) => {
     const esPrincipal = (i === 0);
     return '<div style="position:relative;display:inline-block">' +
-      '<img src="' + f.url + '" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';cursor:zoom-in" onclick="window.open(\'' + f.url + '\',\'_blank\')">' +
+      '<img src="' + f.url + '" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';cursor:zoom-in" onclick="rbVerFoto(' + f.id + ')" title="Ver / editar (voltear, recortar, brillo)">' +
       (esPrincipal
         ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-8px;left:4px;right:4px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:800;text-align:center;border-radius:8px;padding:2px 0;letter-spacing:.02em;box-shadow:0 2px 6px rgba(220,38,38,.4)"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
         : '<button type="button" onclick="rbFotoMarcarPrincipal(' + f.id + ')" title="Marcar como foto principal" ' +
@@ -907,6 +908,35 @@ function rbRenderFotos(){
             '</label>';
   }
   grid.innerHTML = html;
+}
+function rbVerFoto(fid){
+  const id = document.getElementById('rbId').value;
+  if (!id || !window.ilusFotos || !window.ilusFotos.view) return;
+  const foto = RB_FOTOS_ACTUALES.find(f => f.id === fid);
+  if (!foto) return;
+  window.ilusFotos.view({
+    key: 'rep' + id,
+    sku: document.getElementById('rbSku').value || '',
+    csrf: RB_CSRF,
+    canEdit: true,
+    canDelete: true,
+    urls: {
+      del: '/mantenciones/api/repuestos-stock/' + id + '/fotos/{id}/delete',
+      replace: '/mantenciones/api/repuestos-stock/' + id + '/fotos/{id}/replace',
+    },
+    photo: {id: foto.id, url: foto.url},
+    onReplaced: (pid, url) => {
+      const f = RB_FOTOS_ACTUALES.find(f => f.id === pid);
+      if (f) f.url = url;
+      RB_DIRTY = true;
+      rbRenderFotos();
+    },
+    onDeleted: (pid) => {
+      RB_FOTOS_ACTUALES = RB_FOTOS_ACTUALES.filter(f => f.id !== pid);
+      RB_DIRTY = true;
+      rbRenderFotos();
+    },
+  });
 }
 async function rbFotoSubir(input){
   const file = input.files && input.files[0];
