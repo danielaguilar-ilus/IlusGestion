@@ -540,6 +540,30 @@ def _guardar_medidas(pid, payload):
     except Exception:
         pass
 
+    # SINCRONIZAR CON LA TABLA COMPARTIDA DE ETIQUETAS (2026-08-07).
+    # Etiquetas hace esto en CADA alta y CADA edicion (`sync_erp_table`), y el
+    # modal de Transporte no lo hacia nunca: una ficha creada o medida desde
+    # aca quedaba invisible/desactualizada del lado de Etiquetas. Es la 5a de
+    # las reglas que este modal se saltaba (ver el bloque de creacion por SKU).
+    # Best-effort: si falla, las medidas YA quedaron guardadas — no se revierte
+    # nada, solo se avisa en el log.
+    try:
+        _sync = _h("sync_erp_table")
+        _get_full = _h("get_full")
+        if callable(_sync) and callable(_get_full):
+            _p_sync, _b_sync, _ = _get_full(pid)
+            if _p_sync:
+                _conn_sync = get_db()
+                _sync({"sku":    _p_sync.get("sku"),
+                       "nombre": _p_sync.get("nombre"),
+                       "estado": _p_sync.get("estado"),
+                       "codigo": _p_sync.get("codigo")},
+                      _b_sync, _conn_sync)
+                _conn_sync.commit()
+    except Exception as e_sync:
+        print(f"[cubicador_plus] sync a etiquetas fallo para pid={pid} "
+              f"(las medidas SI quedaron guardadas): {e_sync}", flush=True)
+
     bultos_final = _leer_bultos(pid)
     resp = {
         "ok": True,
@@ -1010,8 +1034,26 @@ def register_cubicador_plus(app, ctx=None):
             pid = prod["id"]
             creado = False
         else:
-            # Solo creamos si de verdad vienen medidas validas: asi un POST
-            # vacio nunca deja productos fantasma en el catalogo.
+            # ── CREAR FICHA: MISMAS REGLAS QUE ETIQUETAS ──────────────────
+            # VULNERABILIDAD REAL (2026-08-07, la detecto Alison gestionando
+            # etiquetas desde Transporte; Daniel: "el modal de transporte no
+            # obedece ninguna de las restricciones, reglas o procesos que le
+            # establecimos durante las etiquetas... termino creando una maquina
+            # que no tiene nombre, que no tiene codigo, que no tiene bultos").
+            #
+            # Este endpoint escribe en app_products, la MISMA tabla del modulo
+            # Etiquetas, pero entraba por una puerta lateral que se saltaba
+            # TODAS sus validaciones. El caso real (SKU BBV9.0) nacio:
+            #   · con el SKU de nombre (`or sku` como fallback silencioso),
+            #   · sin codigo de impresion (Etiquetas lo asigna, aca nunca),
+            #   · con estado 'activo', que NO existe en Etiquetas
+            #     (Pendiente / Confirmado / Impreso),
+            #   · sin sincronizar a la tabla compartida de etiquetas.
+            # Hubo que borrarla a mano de produccion.
+            #
+            # Ahora se reusan los MISMOS helpers de app.py que usa el
+            # formulario de Etiquetas -- no una copia de sus reglas, los
+            # helpers reales: si alla cambian las reglas, aca cambian solas.
             validos, _desc = _normalizar_bultos_entrantes(payload.get("bultos") or [])
             if not validos:
                 return jsonify({
@@ -1021,7 +1063,55 @@ def register_cubicador_plus(app, ctx=None):
                     "error_codigo": "SIN_BULTOS_VALIDOS",
                     "bultos_guardados": 0,
                 }), 400
-            nombre = (payload.get("nombre") or "").strip() or sku
+
+            # 1) NOMBRE OBLIGATORIO. Antes caia a `or sku` en silencio y por eso
+            #    la maquina quedo llamandose como su propio codigo.
+            nombre = (payload.get("nombre") or "").strip()
+            if not nombre or nombre.upper() == sku:
+                return jsonify({
+                    "ok": False,
+                    "error": "Falta el nombre del producto. En Etiquetas el nombre es "
+                             "obligatorio y no puede ser el mismo SKU: sin el, la ficha "
+                             "queda sin identificar en el catalogo.",
+                    "error_codigo": "SIN_NOMBRE",
+                }), 400
+
+            # 2) EL SKU DEBE EXISTIR EN EL ERP. Regla de seguridad de Etiquetas
+            #    (2026-05-26, Daniel): "solo se aceptan SKUs que existan en el
+            #    ERP... para que no se puedan inventar productos". Si el helper
+            #    no esta disponible o el ERP no responde, se DEJA PASAR (no se
+            #    bloquea la operacion por una caida del ERP) pero queda en el log.
+            _erp_lookup = _h("get_erp_product_by_sku")
+            if callable(_erp_lookup):
+                try:
+                    if not _erp_lookup(sku):
+                        return jsonify({
+                            "ok": False,
+                            "error": f"El SKU {sku} no existe en el ERP. Solo se pueden "
+                                     f"crear fichas de productos que esten en el ERP.",
+                            "error_codigo": "SKU_NO_EN_ERP",
+                        }), 400
+                except Exception as _e_erp:
+                    print(f"[cubicador_plus] ERP no respondio al validar {sku}: "
+                          f"{_e_erp} — se crea igual", flush=True)
+
+            # 3) CODIGO DE IMPRESION. Lo asigna el mismo generador de Etiquetas.
+            codigo = ""
+            _next_codigo = _h("next_codigo")
+            if callable(_next_codigo):
+                try:
+                    codigo = _next_codigo() or ""
+                except Exception as _e_cod:
+                    print(f"[cubicador_plus] no se pudo generar codigo para {sku}: "
+                          f"{_e_cod}", flush=True)
+            if not codigo:
+                return jsonify({
+                    "ok": False,
+                    "error": "No se pudo asignar el codigo de impresion. Crea el "
+                             "producto desde Etiquetas y vuelve a intentar.",
+                    "error_codigo": "SIN_CODIGO",
+                }), 500
+
             current_username = _h("current_username")
             try:
                 usuario = current_username() if callable(current_username) else None
@@ -1030,11 +1120,12 @@ def register_cubicador_plus(app, ctx=None):
             conn = get_db()
             try:
                 with conn.cursor() as cur:
+                    # 4) ESTADO VALIDO de Etiquetas ('Pendiente'), no 'activo'.
                     cur.execute(
                         f"INSERT INTO `{PRODUCTS_TABLE}` "
-                        f"(sku, nombre, estado, created_by, updated_by) "
-                        f"VALUES (%s,%s,'activo',%s,%s)",
-                        (sku, nombre, usuario, usuario),
+                        f"(sku, nombre, estado, codigo, created_by, updated_by) "
+                        f"VALUES (%s,%s,'Pendiente',%s,%s,%s)",
+                        (sku, nombre, codigo, usuario, usuario),
                     )
                     pid = cur.lastrowid
                 conn.commit()
