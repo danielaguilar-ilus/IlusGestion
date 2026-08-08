@@ -21,6 +21,12 @@
 .rb-modelo-resultados-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:20;display:none}
 .rb-modelo-resultado-item{padding:8px 12px;font-size:.82rem;cursor:pointer;border-bottom:1px solid #f3f4f6}
 .rb-modelo-resultado-item:hover{background:#fee2e2}
+.rb-checklist{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e5e7eb}
+.rb-check-pill{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;padding:4px 10px 4px 8px;border-radius:50px;white-space:nowrap;transition:background-color .15s,color .15s}
+.rb-check-ok{background:#dcfce7;color:#166534}
+.rb-check-falta{background:#fee2e2;color:#991b1b}
+.rb-check-pill i{font-size:.85rem}
+@media (max-width:576px){.rb-checklist{padding:8px 12px;gap:5px}.rb-check-pill{font-size:.68rem;padding:3px 8px 3px 7px}}
 </style>
 
 <form method="get" class="rb-filtros">
@@ -130,6 +136,7 @@
         <h5 class="modal-title fw-bold" id="rbModalTitulo"><i class="bi bi-box-seam me-2"></i>Nuevo repuesto</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
+      <div id="rbChecklist" class="rb-checklist"></div>
       <div class="modal-body">
         <input type="hidden" id="rbId">
         <div class="row g-3">
@@ -256,6 +263,8 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('rbModelosBuscar').addEventListener('input', rbBuscarModelosDebounced());
   document.getElementById('rbClienteBuscar').addEventListener('input', rbBuscarClientesDebounced());
   document.getElementById('rbTicketBuscar').addEventListener('input', rbBuscarTicketsDebounced());
+  ['rbDescripcion','rbCantidad','rbStockMinimo'].forEach(id =>
+    document.getElementById(id).addEventListener('input', rbActualizarChecklist));
   // Marca y ubicación: buscar al tipear Y desplegar al hacer foco (cero tipeo)
   const mIn = document.getElementById('rbMarcaBuscar');
   mIn.addEventListener('input', rbMarcaInputDebounced());
@@ -491,6 +500,7 @@ function rbSetMarca(id, nombre){
     ? '<span class="rb-modelo-chip" style="background:#fee2e2"><i class="bi bi-tag me-1"></i>' + escHtmlRb(nombre) +
       '<button type="button" onclick="rbSetMarca(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
+  rbActualizarChecklist();
 }
 
 // ── Ubicación: typeahead con crear-al-vuelo (foco = primeras 15, cero tipeo) ──
@@ -567,10 +577,41 @@ function rbSetUbicacion(id, texto){
     ? '<span class="rb-modelo-chip" style="background:#dbeafe"><i class="bi bi-geo-alt me-1"></i>' + escHtmlRb(texto) +
       '<button type="button" onclick="rbSetUbicacion(null,\'\')" title="Quitar">&times;</button></span>'
     : '';
+  rbActualizarChecklist();
+}
+
+// ── Checklist rojo/verde (Daniel 2026-08-07, la noche antes del
+// levantamiento físico: "ayúdame a que sea amigable e indícale con rojo
+// y verde si falta algo"). Obligatorios = bloquean Guardar; recomendados
+// solo avisan (no bloquean) para no generar ansiedad por algo opcional.
+const RB_CHECKLIST_CAMPOS = [
+  {id: 'descripcion', label: 'Descripción', obligatorio: true,
+   ok: () => document.getElementById('rbDescripcion').value.trim().length > 0},
+  {id: 'cantidad', label: 'Cantidad', obligatorio: true,
+   ok: () => document.getElementById('rbCantidad').value !== '' && Number(document.getElementById('rbCantidad').value) >= 0},
+  {id: 'stock_minimo', label: 'Stock mínimo', obligatorio: true,
+   ok: () => document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0},
+  {id: 'marca', label: 'Marca', obligatorio: false,
+   ok: () => !!document.getElementById('rbMarca').value},
+  {id: 'ubicacion', label: 'Ubicación', obligatorio: false,
+   ok: () => !!document.getElementById('rbUbicacion').value},
+  {id: 'foto', label: 'Foto', obligatorio: false,
+   ok: () => RB_FOTOS_ACTUALES.length > 0},
+];
+function rbActualizarChecklist(){
+  const cont = document.getElementById('rbChecklist');
+  if (!cont) return;
+  cont.innerHTML = RB_CHECKLIST_CAMPOS.map(c => {
+    const ok = c.ok();
+    return '<span class="rb-check-pill ' + (ok ? 'rb-check-ok' : 'rb-check-falta') + '">' +
+      '<i class="bi bi-' + (ok ? 'check-circle-fill' : 'exclamation-circle-fill') + '"></i>' +
+      escHtmlRb(c.label) + '</span>';
+  }).join('');
 }
 
 // ── Fotos del repuesto (máx 3, comprimidas en el navegador) ──
 function rbRenderFotos(){
+  rbActualizarChecklist();   // RB_FOTOS_ACTUALES ya está actualizado por el caller
   const id = document.getElementById('rbId').value;
   const sinGuardar = document.getElementById('rbFotosSinGuardar');
   const contenido = document.getElementById('rbFotosContenido');
