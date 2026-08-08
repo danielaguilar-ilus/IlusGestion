@@ -23,60 +23,81 @@
 .rb-modelo-resultados-list{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:20;display:none}
 .rb-modelo-resultado-item{padding:8px 12px;font-size:.82rem;cursor:pointer;border-bottom:1px solid #f3f4f6}
 .rb-modelo-resultado-item:hover{background:#fee2e2}
-/* ── Modal de repuesto: pasos numerados estilo Retiros (Daniel 2026-08-08:
-   "necesito que se comporte el modal... con tecnología del 2026, asociada
-   al diseño de retiro. Así que copia todo"). Mismo lenguaje visual que
-   static/retiros_public_request.css (step-circle numerado + check, borde
-   verde al completar) adaptado a este modal -- reemplaza el banner de
-   pastillas rojo/verde de arriba (Daniel: "sacar esas restricciones de
-   arriba... déjale solamente el color... que el perímetro del objeto sea
-   verde... y déjalo numerado"). #}
+/* Filas del sondeo al ERP (bodega 18): 2 lineas -- SKU mono + badge de
+   cantidad + costo arriba, descripcion abajo. */
+.rb-sondeo-item{display:block !important;padding:9px 12px}
+.rb-sondeo-line{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+.rb-sondeo-sku{font-family:ui-monospace,monospace;font-weight:800;color:#0a0a0a;font-size:.8rem;white-space:nowrap}
+.rb-sondeo-badge{font-size:.68rem;font-weight:800;padding:2px 9px;border-radius:50px;white-space:nowrap}
+.rb-sondeo-costo{font-size:.7rem;font-weight:800;color:#1d4ed8;background:#dbeafe;padding:2px 9px;border-radius:50px;white-space:nowrap;margin-left:auto}
+.rb-sondeo-desc{font-size:.78rem;color:#374151;margin-top:3px;line-height:1.35}
+/* ── Modal de repuesto: pasos numerados con el MISMO lenguaje visual del
+   modal "Generar Orden de Trabajo" (static/tickets_ficha.css, clases
+   .lev-step-*). Daniel 2026-08-08: "así quiero el modal de repuestos,
+   enumerado de verdad, así de bonito". Las definiciones se copian aquí
+   RENOMBRADAS con prefijo rb- para no colisionar con las lev-* de tickets.
+   Se conserva lo que ya funcionaba: la barra lateral ::before y el estado
+   verde de paso completo que pinta rbRefreshStepStates() con
+   RB_STEP_RULES (Daniel 2026-08-08: "que el perímetro del objeto sea
+   verde... y déjalo numerado"). ── */
 .rb-step{
-  margin:0 0 18px;padding:22px 24px;background:#fff;
-  border:1.5px solid #e5e7eb;border-radius:14px;
-  box-shadow:0 1px 2px rgba(15,23,42,.05);position:relative;
-  /* NO poner overflow:hidden aca. Lo tuvo el 2026-08-08 y recortaba TODOS
-     los desplegables de autocompletado (marca, proveedor, ubicacion,
-     modelos, cliente, ticket): un position:absolute se clipea por
-     CUALQUIER ancestro con overflow oculto, no solo por su contenedor de
-     posicionamiento. En celular dejaba el modal inusable. La barra roja
-     ::before respeta la esquina con su propio border-radius. */
+  margin:0 0 14px;background:#fff;
+  border:1px solid #e5e7eb;border-radius:12px;
+  position:relative;
+  /* NO poner overflow:hidden aca (aunque .lev-step-card sí lo trae). Lo
+     tuvo el 2026-08-08 y recortaba TODOS los desplegables de
+     autocompletado (marca, proveedor, ubicacion, modelos, cliente,
+     ticket, sondeo ERP): un position:absolute se clipea por CUALQUIER
+     ancestro con overflow oculto, no solo por su contenedor de
+     posicionamiento. En celular dejaba el modal inusable. Por eso la
+     barra ::before y el header traen su PROPIO border-radius. */
   overflow:visible;
-  transition:border-color .3s,background .3s,box-shadow .3s;
+  transition:border-color .2s,background .3s,box-shadow .2s;
 }
 .rb-step::before{
   content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
-  border-radius:14px 0 0 14px;
+  border-radius:12px 0 0 12px;
   background:linear-gradient(180deg,#dc2626,#a60000);
   opacity:0;transform:scaleY(.4);transform-origin:top;
   transition:opacity .3s,transform .35s cubic-bezier(.22,1,.36,1);
 }
-.rb-step:hover{border-color:#d1d5db}
+.rb-step:hover{border-color:#cbd5e1}
 .rb-step:hover::before{opacity:.5;transform:scaleY(1)}
 .rb-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
 .rb-step.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d);opacity:1;transform:scaleY(1)}
 .rb-step.is-optional{background:#fafafa;border-style:dashed;border-color:#d1d5db}
 .rb-step.is-optional::before{display:none}
-.rb-step-header{display:flex;align-items:flex-start;gap:13px;margin-bottom:16px}
+.rb-step-header{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 14px;
+  background:linear-gradient(135deg,#fff,#fafafa);
+  border-bottom:1px solid #f1f5f9;
+  border-radius:12px 12px 0 0;
+}
+.rb-step.is-complete .rb-step-header{background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border-bottom-color:#dcfce7}
+.rb-step.is-optional .rb-step-header{background:linear-gradient(135deg,#fafafa,#f4f4f5)}
 .rb-step-circle{
-  width:42px;height:42px;border-radius:12px;color:#fff;
+  width:26px;height:26px;border-radius:50%;
+  background:linear-gradient(135deg,#dc2626,#991b1b);
+  color:#fff;
   display:flex;align-items:center;justify-content:center;
-  font-size:1.2rem;font-weight:800;flex-shrink:0;
-  background:linear-gradient(150deg,#dc2626 0%,#a60000 100%);
-  box-shadow:0 8px 18px -6px rgba(220,38,38,.5);
-  transition:all .35s cubic-bezier(.34,1.56,.64,1);position:relative;
+  font-size:.82rem;font-weight:700;
+  flex-shrink:0;
+  transition:background .3s,transform .35s cubic-bezier(.34,1.56,.64,1);
 }
 .rb-step.is-complete .rb-step-circle{
-  background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
-  box-shadow:0 8px 18px -6px rgba(22,163,74,.5);transform:scale(1.04);
+  background:linear-gradient(135deg,#22c55e,#15803d);transform:scale(1.08);
 }
-.rb-step-circle .rb-step-check{display:none;font-size:1.1rem}
+.rb-step-circle .rb-step-check{display:none;font-size:.82rem;line-height:1}
 .rb-step.is-complete .rb-step-circle .rb-step-num{display:none}
 .rb-step.is-complete .rb-step-circle .rb-step-check{display:block}
-.rb-step-titles{flex:1;min-width:0;padding-top:1px}
-.rb-step-titles h6{margin:0;font-size:1.05rem;font-weight:800;color:#0a0a0a;letter-spacing:-.01em}
-.rb-step-titles .rb-step-sub{margin:3px 0 0;font-size:.78rem;color:#6b7280;line-height:1.4}
-.rb-step.is-optional .rb-step-titles h6{color:#374151}
+.rb-step-title{font-weight:700;font-size:.92rem;color:#0f172a;min-width:0}
+.rb-step.is-optional .rb-step-title{color:#374151}
+/* El texto de ayuda va a la DERECHA del header (margin-left:auto), igual
+   que .lev-step-sub del modal "Generar OT". */
+.rb-step-sub{font-size:.73rem;color:#94a3b8;margin-left:auto;text-align:right;flex-shrink:0;padding-left:10px}
+@media (max-width:575.98px){ .rb-step-sub{display:none} }
+.rb-step-body{padding:14px}
 .rb-req{color:#dc2626;font-weight:800}
 .rb-input-help{font-size:.72rem;color:#6b7280;margin-top:4px}
 .rb-input-error{font-size:.72rem;color:#dc2626;margin-top:4px;font-weight:700;display:none}
@@ -87,12 +108,16 @@
    afectaria TODOS los modales de la app mientras Daniel esta levantando en
    bodega. El arreglo global de mobile.css queda propuesto aparte. ── */
 @media (max-width:767.98px){
-  /* Densidad: recupera ~150px verticales sin quitar nada (Regla #4.2) */
-  .rb-step{padding:14px 12px;margin-bottom:12px;border-radius:12px}
-  .rb-step-header{gap:10px;margin-bottom:12px}
-  .rb-step-circle{width:36px;height:36px;font-size:1.05rem;border-radius:10px}
-  .rb-step-titles h6{font-size:.98rem}
-  .rb-step-titles .rb-step-sub{font-size:.75rem}
+  /* Densidad: recupera ~150px verticales sin quitar nada (Regla #4.2).
+     Actualizado 2026-08-08 al pasar a las tarjetas header/body estilo
+     "Generar OT" -- el padding ya no vive en .rb-step sino en sus dos
+     mitades. El texto de ayuda de la derecha se oculta bajo 576px (ver
+     .rb-step-sub arriba), igual que .lev-step-sub. */
+  .rb-step{margin-bottom:12px;border-radius:12px}
+  .rb-step-header{gap:9px;padding:9px 11px}
+  .rb-step-body{padding:12px 11px}
+  .rb-step-circle{width:25px;height:25px;font-size:.8rem}
+  .rb-step-title{font-size:.88rem}
 
   /* Un solo scroller y misma unidad de viewport: sin esto el diálogo (100dvh)
      queda mas corto que su contenedor (100%=lvh en iOS) y al bajar el modal
@@ -117,6 +142,9 @@
   /* Touch targets 44px (Regla #3). El item del autocompletado medía 33px y es
      LO QUE MAS SE TOCA en todo el flujo (marca/ubicacion/modelo/cliente). */
   #modalRepStock .rb-modelo-resultado-item{min-height:44px;display:flex;align-items:center;padding:11px 14px;font-size:.9rem}
+  /* El item del sondeo ERP son DOS lineas -> no puede volverse flex-row */
+  #modalRepStock .rb-sondeo-item{padding:10px 14px}
+  #modalRepStock .rb-sondeo-desc{font-size:.84rem}
   #modalRepStock .rb-modelo-chip{min-height:36px;padding:6px 8px 6px 14px;font-size:.85rem}
   #modalRepStock .rb-modelo-chip button{width:28px;height:28px;line-height:28px;font-size:.95rem}
   #modalRepStock .modal-header .btn-close{width:44px;height:44px;background-size:16px 16px;padding:0;margin:0}
@@ -250,26 +278,39 @@
         <section class="rb-step" id="rbStep1">
           <div class="rb-step-header">
             <div class="rb-step-circle"><span class="rb-step-num">1</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-titles">
-              <h6>¿Qué repuesto es?</h6>
-              <p class="rb-step-sub">El SKU se genera solo al guardar — cuéntanos qué es.</p>
-            </div>
+            <div class="rb-step-title">¿Qué repuesto es?</div>
+            <div class="rb-step-sub">Qué es y cómo se identifica</div>
           </div>
-          <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">SKU <span class="text-muted fw-normal">(automático)</span></label>
-              <input type="text" class="form-control" id="rbSku" readonly tabindex="-1"
-                     style="background:#f3f4f6;font-family:ui-monospace,monospace;font-weight:700"
-                     placeholder="REP-MARCA-0001 al guardar">
-            </div>
-            <div class="col-md-8">
-              <label class="form-label small fw-semibold">Descripción <span class="rb-req">*</span></label>
-              <input type="text" class="form-control" id="rbDescripcion" maxlength="400"
-                     placeholder="Ej: Correa de transmisión trotadora 2540mm">
-            </div>
-            <div class="col-12">
-              <label class="form-label small fw-semibold">Código de fabricante / OEM</label>
-              <input type="text" class="form-control" id="rbCodigoFabricante" maxlength="120" placeholder="Opcional — si es distinto del SKU interno">
+          <div class="rb-step-body">
+            <p class="rb-input-help mt-0 mb-2">El SKU se genera solo al guardar — cuéntanos qué es. Con el botón
+              <i class="bi bi-database-check"></i> revisas si ya existe en la <strong>bodega 18</strong> del ERP.</p>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">SKU <span class="text-muted fw-normal">(automático)</span></label>
+                <input type="text" class="form-control" id="rbSku" readonly tabindex="-1"
+                       style="background:#f3f4f6;font-family:ui-monospace,monospace;font-weight:700"
+                       placeholder="REP-MARCA-0001 al guardar">
+              </div>
+              <div class="col-md-8">
+                <label class="form-label small fw-semibold">Descripción <span class="rb-req">*</span></label>
+                {# Botón de sondeo al ERP Random (bodega 18) pegado a la descripción —
+                   mismo patrón d-flex+gap-1 que el botón de escanear de Ubicación. #}
+                <div class="d-flex gap-1">
+                  <div class="rb-modelo-resultados flex-grow-1">
+                    <input type="text" class="form-control" id="rbDescripcion" maxlength="400" autocomplete="off"
+                           placeholder="Ej: Correa de transmisión trotadora 2540mm">
+                    <div class="rb-modelo-resultados-list" id="rbSondeoResultadosList"></div>
+                  </div>
+                  <button type="button" class="btn btn-outline-dark" id="rbBtnSondeo" onclick="rbSondearErp()"
+                          title="Buscar este repuesto en la bodega 18 del ERP Random">
+                    <i class="bi bi-database-check"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Código de fabricante / OEM</label>
+                <input type="text" class="form-control" id="rbCodigoFabricante" maxlength="120" placeholder="Opcional — si es distinto del SKU interno">
+              </div>
             </div>
           </div>
         </section>
@@ -277,38 +318,39 @@
         <section class="rb-step" id="rbStep2">
           <div class="rb-step-header">
             <div class="rb-step-circle"><span class="rb-step-num">2</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-titles">
-              <h6>Stock y ubicación</h6>
-              <p class="rb-step-sub">Cuántas unidades hay y dónde están en la bodega.</p>
-            </div>
+            <div class="rb-step-title">Stock y ubicación</div>
+            <div class="rb-step-sub">Cuánto hay y dónde está</div>
           </div>
-          <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">Cantidad <span class="rb-req">*</span></label>
-              <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">Stock mínimo <span class="rb-req">*</span></label>
-              <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">Costo unitario</label>
-              <input type="text" class="form-control" id="rbCosto" inputmode="numeric" placeholder="$0"
-                     onfocus="rbCostoFoco(this)" onblur="rbCostoFormatear(this)">
-            </div>
-            <div class="col-12">
-              <label class="form-label small fw-semibold">Ubicación</label>
-              <input type="hidden" id="rbUbicacion">
-              <div class="d-flex gap-1">
-                <div class="rb-modelo-resultados flex-grow-1">
-                  <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
-                  <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
-                </div>
-                <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras">
-                  <i class="bi bi-upc-scan"></i>
-                </button>
+          <div class="rb-step-body">
+            <p class="rb-input-help mt-0 mb-2">Cuántas unidades hay y dónde están en la bodega — la ubicación se puede escanear.</p>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Cantidad <span class="rb-req">*</span></label>
+                <input type="number" class="form-control" id="rbCantidad" min="0" step="1" placeholder="0">
               </div>
-              <div id="rbUbicacionSeleccionada" class="mt-1"></div>
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Stock mínimo <span class="rb-req">*</span></label>
+                <input type="number" class="form-control" id="rbStockMinimo" min="0" step="1" value="1">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Costo unitario</label>
+                <input type="text" class="form-control" id="rbCosto" inputmode="numeric" placeholder="$0"
+                       onfocus="rbCostoFoco(this)" onblur="rbCostoFormatear(this)">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Ubicación</label>
+                <input type="hidden" id="rbUbicacion">
+                <div class="d-flex gap-1">
+                  <div class="rb-modelo-resultados flex-grow-1">
+                    <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
+                    <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
+                  </div>
+                  <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras">
+                    <i class="bi bi-upc-scan"></i>
+                  </button>
+                </div>
+                <div id="rbUbicacionSeleccionada" class="mt-1"></div>
+              </div>
             </div>
           </div>
         </section>
@@ -316,30 +358,31 @@
         <section class="rb-step" id="rbStep3">
           <div class="rb-step-header">
             <div class="rb-step-circle"><span class="rb-step-num">3</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-titles">
-              <h6>Marca y proveedor <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Opcional</span></h6>
-              <p class="rb-step-sub">Si eliges una marca con proveedor de referencia, te lo sugerimos solo.</p>
-            </div>
+            <div class="rb-step-title">Marca y proveedor <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Opcional</span></div>
+            <div class="rb-step-sub">Quién lo fabrica y a quién se le compra</div>
           </div>
-          <div class="row g-3">
-            <div class="col-md-6">
-              <label class="form-label small fw-semibold">Marca <span class="text-muted fw-normal">(del ERP)</span></label>
-              <input type="hidden" id="rbMarca">
-              <div class="rb-modelo-resultados">
-                <input type="text" class="form-control" id="rbMarcaBuscar" placeholder="Escribe para buscar: Drax, Freemotion, Life..." autocomplete="off">
-                <div class="rb-modelo-resultados-list" id="rbMarcaResultadosList"></div>
+          <div class="rb-step-body">
+            <p class="rb-input-help mt-0 mb-2">Si eliges una marca con proveedor de referencia, te lo sugerimos solo.</p>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">Marca <span class="text-muted fw-normal">(del ERP)</span></label>
+                <input type="hidden" id="rbMarca">
+                <div class="rb-modelo-resultados">
+                  <input type="text" class="form-control" id="rbMarcaBuscar" placeholder="Escribe para buscar: Drax, Freemotion, Life..." autocomplete="off">
+                  <div class="rb-modelo-resultados-list" id="rbMarcaResultadosList"></div>
+                </div>
+                <div id="rbMarcaSeleccionada" class="mt-1"></div>
               </div>
-              <div id="rbMarcaSeleccionada" class="mt-1"></div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label small fw-semibold">Proveedor <span class="text-muted fw-normal">(contraparte)</span></label>
-              <input type="hidden" id="rbProveedor">
-              <div class="rb-modelo-resultados">
-                <input type="text" class="form-control" id="rbProveedorBuscar" placeholder="Escribe para buscar o crear un proveedor..." autocomplete="off">
-                <div class="rb-modelo-resultados-list" id="rbProveedorResultadosList"></div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">Proveedor <span class="text-muted fw-normal">(contraparte)</span></label>
+                <input type="hidden" id="rbProveedor">
+                <div class="rb-modelo-resultados">
+                  <input type="text" class="form-control" id="rbProveedorBuscar" placeholder="Escribe para buscar o crear un proveedor..." autocomplete="off">
+                  <div class="rb-modelo-resultados-list" id="rbProveedorResultadosList"></div>
+                </div>
+                <div id="rbProveedorSeleccionado" class="mt-1"></div>
+                <div id="rbProveedorSugerido" class="mt-1 small" style="display:none"></div>
               </div>
-              <div id="rbProveedorSeleccionado" class="mt-1"></div>
-              <div id="rbProveedorSugerido" class="mt-1 small" style="display:none"></div>
             </div>
           </div>
         </section>
@@ -347,59 +390,61 @@
         <section class="rb-step" id="rbStep4">
           <div class="rb-step-header">
             <div class="rb-step-circle"><span class="rb-step-num">4</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-titles">
-              <h6>Modelos de equipo compatibles <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Hasta 5</span></h6>
-              <p class="rb-step-sub">A qué máquinas les sirve este repuesto — tenga o no tenga stock hoy.</p>
-            </div>
+            <div class="rb-step-title">Modelos de equipo compatibles <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Hasta 5</span></div>
+            <div class="rb-step-sub">A qué máquinas les sirve</div>
           </div>
-          <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
-          <div id="rbModelosContenido">
-            <div id="rbModelosChips" class="mb-2"></div>
-            <div class="rb-modelo-resultados" id="rbModelosBuscarWrap">
-              <input type="text" class="form-control" id="rbModelosBuscar" placeholder="Buscar modelo por SKU o nombre (ej: trotadora)...">
-              <div class="rb-modelo-resultados-list" id="rbModelosResultadosList"></div>
+          <div class="rb-step-body">
+            <p class="rb-input-help mt-0 mb-2">A qué máquinas les sirve este repuesto — tenga o no tenga stock hoy.</p>
+            <div id="rbModelosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder asociar modelos.</div>
+            <div id="rbModelosContenido">
+              <div id="rbModelosChips" class="mb-2"></div>
+              <div class="rb-modelo-resultados" id="rbModelosBuscarWrap">
+                <input type="text" class="form-control" id="rbModelosBuscar" placeholder="Buscar modelo por SKU o nombre (ej: trotadora)...">
+                <div class="rb-modelo-resultados-list" id="rbModelosResultadosList"></div>
+              </div>
+              <div id="rbModelosLimiteMsg" class="text-muted small" style="display:none">Máximo 5 modelos alcanzado — quita uno de arriba para cambiarlo.</div>
             </div>
-            <div id="rbModelosLimiteMsg" class="text-muted small" style="display:none">Máximo 5 modelos alcanzado — quita uno de arriba para cambiarlo.</div>
           </div>
         </section>
 
         <section class="rb-step is-optional" id="rbStep5">
           <div class="rb-step-header">
-            <div class="rb-step-circle" style="background:#6b7280;box-shadow:0 8px 18px -6px rgba(107,114,128,.35)"><span class="rb-step-num">5</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-titles">
-              <h6>Fotos y notas <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></h6>
-              <p class="rb-step-sub">Hasta 3 fotos, notas libres y trazabilidad a un cliente o ticket si corresponde.</p>
-            </div>
+            <div class="rb-step-circle" style="background:linear-gradient(135deg,#9ca3af,#6b7280)"><span class="rb-step-num">5</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="rb-step-title">Fotos y notas <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></div>
+            <div class="rb-step-sub">Evidencia y trazabilidad</div>
           </div>
-          <div id="rbFotosSection">
-            <label class="form-label small fw-semibold">Fotos <span class="text-muted fw-normal">(hasta 3)</span></label>
-            <div id="rbFotosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder subir fotos.</div>
-            <div id="rbFotosContenido">
-              <div class="d-flex gap-2 flex-wrap align-items-center" id="rbFotosGrid"></div>
-            </div>
-          </div>
-          <div class="row g-3 mt-1">
-            <div class="col-md-6">
-              <label class="form-label small fw-semibold">Notas</label>
-              <input type="text" class="form-control" id="rbNotas" maxlength="500" placeholder="Opcional">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label small fw-semibold">Cliente asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
-              <input type="hidden" id="rbClienteId">
-              <div class="rb-modelo-resultados">
-                <input type="text" class="form-control" id="rbClienteBuscar" placeholder="Nombre o RUT...">
-                <div class="rb-modelo-resultados-list" id="rbClienteResultadosList"></div>
+          <div class="rb-step-body">
+            <p class="rb-input-help mt-0 mb-2">Hasta 3 fotos, notas libres y trazabilidad a un cliente o ticket si corresponde.</p>
+            <div id="rbFotosSection">
+              <label class="form-label small fw-semibold">Fotos <span class="text-muted fw-normal">(hasta 3)</span></label>
+              <div id="rbFotosSinGuardar" class="text-muted small" style="display:none">Guarda el repuesto primero para poder subir fotos.</div>
+              <div id="rbFotosContenido">
+                <div class="d-flex gap-2 flex-wrap align-items-center" id="rbFotosGrid"></div>
               </div>
-              <div id="rbClienteSeleccionado" class="mt-1"></div>
             </div>
-            <div class="col-md-3">
-              <label class="form-label small fw-semibold">Ticket asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
-              <input type="hidden" id="rbTicketId">
-              <div class="rb-modelo-resultados">
-                <input type="text" class="form-control" id="rbTicketBuscar" placeholder="N° o cliente...">
-                <div class="rb-modelo-resultados-list" id="rbTicketResultadosList"></div>
+            <div class="row g-3 mt-1">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">Notas</label>
+                <input type="text" class="form-control" id="rbNotas" maxlength="500" placeholder="Opcional">
               </div>
-              <div id="rbTicketSeleccionado" class="mt-1"></div>
+              <div class="col-md-3">
+                <label class="form-label small fw-semibold">Cliente asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
+                <input type="hidden" id="rbClienteId">
+                <div class="rb-modelo-resultados">
+                  <input type="text" class="form-control" id="rbClienteBuscar" placeholder="Nombre o RUT...">
+                  <div class="rb-modelo-resultados-list" id="rbClienteResultadosList"></div>
+                </div>
+                <div id="rbClienteSeleccionado" class="mt-1"></div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small fw-semibold">Ticket asociado <span class="text-muted fw-normal">(trazabilidad)</span></label>
+                <input type="hidden" id="rbTicketId">
+                <div class="rb-modelo-resultados">
+                  <input type="text" class="form-control" id="rbTicketBuscar" placeholder="N° o cliente...">
+                  <div class="rb-modelo-resultados-list" id="rbTicketResultadosList"></div>
+                </div>
+                <div id="rbTicketSeleccionado" class="mt-1"></div>
+              </div>
             </div>
           </div>
         </section>
@@ -525,7 +570,8 @@ document.addEventListener('DOMContentLoaded', function(){
   document.addEventListener('click', function(e){
     if (!e.target.closest('.rb-modelo-resultados')) {
       ['rbModelosResultadosList','rbClienteResultadosList','rbTicketResultadosList',
-       'rbMarcaResultadosList','rbUbicacionResultadosList','rbProveedorResultadosList'].forEach(function(id){
+       'rbMarcaResultadosList','rbUbicacionResultadosList','rbProveedorResultadosList',
+       'rbSondeoResultadosList'].forEach(function(id){
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
@@ -562,6 +608,116 @@ function rbCostoRaw(){
   const input = document.getElementById('rbCosto');
   return input.dataset.raw || input.value.replace(/[^\d]/g, '') || '0';
 }
+// Deja el costo en el input usando el MECANISMO EXISTENTE (value crudo ->
+// rbCostoFormatear, que es quien escribe dataset.raw y el "$1.234"). Nunca
+// escribir el texto ya formateado a mano: rbGuardar() lee dataset.raw.
+function rbCostoSet(valor){
+  const input = document.getElementById('rbCosto');
+  input.value = (valor === null || valor === undefined || valor === '') ? '' : String(Math.round(Number(valor) || 0));
+  rbCostoFormatear(input);
+}
+
+// ══════════ Sondeo al ERP Random — bodega 18 (Daniel 2026-08-08:
+// "que se conecte a la bodega 18 de random y me indique si el repuesto se
+// encuentra... que me diga SKU, descripción y cantidad en un dropdown y yo
+// poder seleccionar"). El endpoint es SOLO LECTURA (Regla #4.1: el ERP
+// jamás se modifica desde ILUS) y responde 200 incluso al fallar, con
+// {ok:false, error:"..."} — por eso se revisa d.ok, no solo r.ok.
+//
+// Las filas referencian por ÍNDICE (rbPickSondeo(i)) sobre un array global,
+// igual que rbPickModelo/rbPickMarca. NO usar JSON.stringify dentro de un
+// atributo onclick: eso rompió el HTML el 2026-08-08 en los modelos (las
+// comillas dobles del JSON cortaban el atributo y el click no hacía nada).
+let RB_SONDEO_RESULTS = [];
+let RB_SONDEO_CARGANDO = false;   // evita 2 consultas si se pulsa 2 veces
+function rbCantidadFmt(n){
+  const v = Number(n) || 0;
+  return Number.isInteger(v)
+    ? v.toLocaleString('es-CL')
+    : v.toLocaleString('es-CL', {maximumFractionDigits: 2});
+}
+async function rbSondearErp(){
+  if (RB_SONDEO_CARGANDO) return;
+  const inputDesc = document.getElementById('rbDescripcion');
+  const q = inputDesc.value.trim();
+  const list = document.getElementById('rbSondeoResultadosList');
+  if (q.length < 2){
+    ilusToast('Escribe al menos 2 caracteres en la descripción para buscarlo en la bodega 18', {type:'warning'});
+    inputDesc.focus();
+    return;
+  }
+  const btn = document.getElementById('rbBtnSondeo');
+  const original = btn.innerHTML;
+  RB_SONDEO_CARGANDO = true;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try{
+    const r = await fetch('/mantenciones/api/repuestos-stock/sondeo-erp?q=' + encodeURIComponent(q));
+    const d = await r.json().catch(() => ({}));
+    if (!(r.ok && d.ok !== false)){
+      ilusToast(d.error || 'No se pudo consultar la bodega 18 del ERP', {type:'error'});
+      list.style.display = 'none';
+      return;
+    }
+    RB_SONDEO_RESULTS = d.productos || [];
+    if (!RB_SONDEO_RESULTS.length){
+      list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 18</div>';
+    } else {
+      list.innerHTML = RB_SONDEO_RESULTS.map(function(p, i){
+        const cant = Number(p.cantidad) || 0;
+        const hay  = cant > 0;
+        const badge = '<span class="rb-sondeo-badge" style="background:' + (hay ? '#dcfce7' : '#f3f4f6') +
+                      ';color:' + (hay ? '#166534' : '#6b7280') + '">' +
+                      rbCantidadFmt(cant) + (hay ? ' en bodega' : ' — sin stock') + '</span>';
+        const costo = Number(p.costo_promedio) || 0;
+        const costoHtml = costo > 0
+          ? '<span class="rb-sondeo-costo">$' + Math.round(costo).toLocaleString('es-CL') + '</span>'
+          : '';
+        return '<div class="rb-modelo-resultado-item rb-sondeo-item" onclick="rbPickSondeo(' + i + ')" title="Usar estos datos">' +
+               '<div class="rb-sondeo-line">' +
+                 '<span class="rb-sondeo-sku">' + escHtmlRb(p.sku || 's/SKU') + '</span>' +
+                 badge + costoHtml +
+               '</div>' +
+               '<div class="rb-sondeo-desc">' + escHtmlRb(p.descripcion || '') + '</div>' +
+               '</div>';
+      }).join('');
+    }
+    list.style.display = 'block';
+  }catch(e){
+    ilusToast('Error de conexión al consultar la bodega 18', {type:'error'});
+    list.style.display = 'none';
+  }finally{
+    RB_SONDEO_CARGANDO = false;
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+// Cierra el desplegable y bota los resultados viejos (al abrir/cambiar de
+// repuesto): sin esto un índice quedaría apuntando al repuesto anterior.
+function rbCerrarSondeo(){
+  RB_SONDEO_RESULTS = [];
+  const list = document.getElementById('rbSondeoResultadosList');
+  if (list){ list.innerHTML = ''; list.style.display = 'none'; }
+}
+function rbPickSondeo(i){
+  const p = RB_SONDEO_RESULTS[i];
+  document.getElementById('rbSondeoResultadosList').style.display = 'none';
+  if (!p) return;
+  // OJO: #rbSku es readonly y lo genera ILUS (REP-MARCA-0001) recién al
+  // guardar — el SKU del ERP NO puede pisarlo. Su destino natural es el
+  // campo "Código de fabricante / OEM".
+  if (p.descripcion) document.getElementById('rbDescripcion').value = p.descripcion;
+  if (p.sku) document.getElementById('rbCodigoFabricante').value = p.sku;
+  if (p.cantidad !== null && p.cantidad !== undefined && p.cantidad !== ''){
+    document.getElementById('rbCantidad').value = Number(p.cantidad) || 0;
+  }
+  const costo = Number(p.costo_promedio) || 0;
+  if (costo > 0) rbCostoSet(costo);
+  ilusToast('Traído de bodega 18 · el SKU del ERP (' + (p.sku || 's/SKU') +
+            ') quedó en "Código de fabricante / OEM" — el SKU interno lo genera ILUS al guardar',
+            {type:'success'});
+  rbRefreshStepStates();
+}
 
 function rbAbrirNuevo(mantenerContexto){
   // mantenerContexto=true (viene de "Guardar y crear otro"): conserva
@@ -573,8 +729,8 @@ function rbAbrirNuevo(mantenerContexto){
   document.getElementById('rbSku').placeholder = 'REP-MARCA-0001 al guardar';
   ['rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rbCantidad').value = '';
-  document.getElementById('rbCosto').value = '';
-  document.getElementById('rbCosto').dataset.raw = '';
+  rbCostoSet('');
+  rbCerrarSondeo();
   if (!mantenerContexto){
     document.getElementById('rbStockMinimo').value = 1;
     rbSetMarca(null, '');
@@ -602,8 +758,8 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbDescripcion').value = r.descripcion || '';
   document.getElementById('rbCantidad').value = r.cantidad != null ? r.cantidad : '';
   document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : 1;
-  document.getElementById('rbCosto').dataset.raw = r.costo_unitario ? String(Math.round(r.costo_unitario)) : '';
-  rbCostoFormatear(document.getElementById('rbCosto'));
+  rbCostoSet(r.costo_unitario || '');
+  rbCerrarSondeo();
   rbSetMarca(r.marca_id || null, r.marca_nombre || '');
   rbSetUbicacion(r.ubicacion_id || null, r.ubicacion_codigo || '');
   rbSetProveedor(r.proveedor_id || null, r.proveedor_nombre || '', r.proveedor_contacto || '');
@@ -1198,11 +1354,28 @@ function rbRenderFotos(){
           'rbFotoPendienteMarcarPrincipal(\'' + f.tempId + '\')', 'rbFotoPendienteQuitar(\'' + f.tempId + '\')');
   }).join('');
   if (items.length < RB_MAX_FOTOS){
-    html += '<label style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;border:2px dashed #d1d5db;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#9ca3af;margin:0;flex-direction:column;gap:4px" title="Agregar foto">' +
-            '<i class="bi bi-camera" style="font-size:2rem"></i>' +
-            '<span class="small">Agregar</span>' +
+    // Daniel 2026-08-08: "las fotos se puedan asignar tambien del telefono,
+    // porque si el tecnico lleva algo adelantado puede ir asignandole las
+    // fotos". OJO: NO poner capture="environment" aca. Ese atributo fuerza
+    // la camara en el celular y SALTA la galeria, o sea impedia justamente
+    // usar fotos ya tomadas antes. Sin capture, el celular ofrece las dos
+    // opciones (Camara / Fototeca / Archivos). `multiple` deja elegir varias
+    // de una pasada; rbFotoSubir recorta al cupo libre.
+    // Dos entradas separadas, igual que el gestor de fotos de ETIQUETAS
+    // (static/foto_editor.js -> uploadZoneMobile): "Tomar foto" abre la camara
+    // (capture) y "Desde galeria" NO lleva capture, para poder usar fotos que
+    // el tecnico ya traia tomadas. Un solo input con capture forzaba la camara
+    // y hacia imposible lo segundo.
+    html += '<div style="width:' + RB_FOTO_PX + 'px;min-height:' + RB_FOTO_PX + 'px;border:2px dashed #d1d5db;border-radius:14px;display:inline-flex;flex-direction:column;align-items:stretch;justify-content:center;gap:8px;padding:10px;margin:0">' +
+            '<label class="btn btn-dark btn-sm d-flex align-items-center justify-content-center gap-2" style="cursor:pointer;min-height:44px;margin:0" title="Tomar una foto ahora">' +
+            '<i class="bi bi-camera-fill"></i><span>Tomar foto</span>' +
             '<input type="file" accept="image/*" capture="environment" hidden onchange="rbFotoSubir(this)">' +
-            '</label>';
+            '</label>' +
+            '<label class="btn btn-outline-secondary btn-sm d-flex align-items-center justify-content-center gap-2" style="cursor:pointer;min-height:44px;margin:0" title="Elegir fotos ya tomadas">' +
+            '<i class="bi bi-images"></i><span>Galería</span>' +
+            '<input type="file" accept="image/*" multiple hidden onchange="rbFotoSubir(this)">' +
+            '</label>' +
+            '</div>';
   }
   grid.innerHTML = html;
 }
@@ -1235,9 +1408,24 @@ function rbVerFoto(fid){
     },
   });
 }
+// El boton "Galeria" es multiple: el tecnico puede elegir varias fotos de una
+// pasada. Se recorta al cupo libre y se procesan en orden.
 async function rbFotoSubir(input){
-  const file = input.files && input.files[0];
+  const files = Array.from(input.files || []);
   input.value = '';
+  if (!files.length) return;
+  const idAhora = document.getElementById('rbId').value;
+  const yaHay = (idAhora ? RB_FOTOS_ACTUALES : RB_FOTOS_PENDIENTES).length;
+  const cupo = RB_MAX_FOTOS - yaHay;
+  if (cupo <= 0){ ilusToast('Máximo ' + RB_MAX_FOTOS + ' fotos por repuesto', {type:'warning'}); return; }
+  if (files.length > cupo){
+    ilusToast('Solo caben ' + cupo + ' foto(s) más — se tomarán las primeras', {type:'warning'});
+  }
+  for (const f of files.slice(0, cupo)){
+    await _rbFotoSubirUna(f);
+  }
+}
+async function _rbFotoSubirUna(file){
   if (!file) return;
   const id = document.getElementById('rbId').value;
   // compressForUpload devuelve {blob, name} (lado mayor 1600px, JPEG 0.85)

@@ -4,6 +4,28 @@
 {% block content %}
 <style>
   .pl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:14px}
+  /* Estados vacios / mensajes: ocupan la fila completa de la grilla */
+  .pl-grid > .pl-full{grid-column:1 / -1}
+
+  /* ── Pestañas por familia de trabajo (REGLA #2 acento rojo, REGLA #3 mobile) ── */
+  .pl-tabs-wrap{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+                scrollbar-width:none;-ms-overflow-style:none}
+  .pl-tabs-wrap::-webkit-scrollbar{display:none}
+  .pl-tabs{display:flex;flex-wrap:nowrap;gap:4px;border-bottom:2px solid #e5e7eb;padding:0 2px;min-width:max-content}
+  .pl-tab{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 14px;
+          white-space:nowrap;background:transparent;border:0;border-bottom:3px solid transparent;
+          margin-bottom:-2px;border-radius:8px 8px 0 0;color:#6b7280;font-size:.85rem;font-weight:600;
+          cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+  .pl-tab:hover{color:#0a0a0a;background:#f9fafb}
+  .pl-tab:focus-visible{outline:2px solid #dc2626;outline-offset:-2px}
+  .pl-tab.active{color:#dc2626;border-bottom-color:#dc2626;background:#fff}
+  .pl-tab .pl-tab-count{background:#f3f4f6;color:#374151;border-radius:50px;padding:1px 8px;
+                        font-size:.7rem;font-weight:700;min-width:24px;text-align:center}
+  .pl-tab.active .pl-tab-count{background:#fee2e2;color:#dc2626}
+  @media (max-width:576px){
+    .pl-tab{padding:8px 10px;font-size:.8rem;gap:5px}
+    .pl-tab .pl-tab-ico{display:none}
+  }
   .pl-card{background:#fff;border:1px solid var(--border,#e5e7eb);border-radius:12px;padding:16px;
            transition:box-shadow .15s, transform .12s;cursor:pointer;position:relative}
   .pl-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.08);transform:translateY(-2px)}
@@ -100,8 +122,14 @@
   </div>
 </div>
 
+{# Pestañas por familia de trabajo. Filtran EN CLIENTE sobre _plantillas
+   (se combinan con los filtros de arriba: pestaña AND filtros). #}
+<div class="pl-tabs-wrap">
+  <div class="pl-tabs" id="plTabs" role="tablist" aria-label="Segmentar plantillas por tipo de trabajo"></div>
+</div>
+
 <div id="plantillasList" class="pl-grid">
-  <div class="text-muted text-center w-100 py-5">
+  <div class="pl-full text-muted text-center w-100 py-5">
     <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
   </div>
 </div>
@@ -245,6 +273,28 @@ const TIPOS_VISITA_LABEL = {
   instalacion:'Instalación', otro:'Otro'
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// SEGMENTACION POR PESTAÑAS (Daniel 2026-08-08: "segmentarlas por
+// Instalacion, Mantencion, Visitas, Control Interno").
+// UNICA FUENTE DE VERDAD del agrupamiento familia_checklist -> pestaña.
+// Si mañana se agrega una familia nueva, se agrega SOLO aca.
+// ═══════════════════════════════════════════════════════════════════
+const GRUPOS_PLANTILLA = [
+  {key:'todas',           label:'Todas',           icon:'bi-grid-3x3-gap-fill', familias:null},
+  {key:'instalacion',     label:'Instalación',     icon:'bi-box-seam',
+   familias:['instalacion','desinstalacion']},
+  {key:'mantencion',      label:'Mantención',      icon:'bi-wrench-adjustable',
+   familias:['preventiva','correctivo']},
+  {key:'visitas',         label:'Visitas',         icon:'bi-person-check',
+   familias:['capacitacion','registro_productos']},
+  {key:'control_interno', label:'Control Interno', icon:'bi-clipboard-check',
+   familias:['operacional_interno','control_calidad','rendiciones','otro']},
+];
+// Familia desconocida / vacia cae en Control Interno (ahi vive 'otro'),
+// asi ninguna plantilla queda invisible en las pestañas (REGLA #4.2).
+const GRUPO_FALLBACK = 'control_interno';
+let _tabActiva = 'todas';
+
 let _plantillas = [];
 let _editId = null;
 let _items = [];
@@ -275,36 +325,107 @@ async function cargarPlantillas(){
   if (famAct) params.set('familia_activo', famAct);
   if (soloAct) params.set('activa', '1');
   const cont = document.getElementById('plantillasList');
-  cont.innerHTML = '<div class="text-muted text-center w-100 py-5"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  cont.innerHTML = '<div class="pl-full text-muted text-center w-100 py-5"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
   try {
     const r = await fetch('/mantenciones/api/plantillas?' + params.toString());
     const d = await r.json();
-    if (!d.ok){ cont.innerHTML = '<div class="alert alert-danger">Error cargando plantillas</div>'; return; }
-    _plantillas = d.plantillas || [];
-    if (!_plantillas.length){
-      cont.innerHTML = `
-        <div class="text-center w-100 py-5">
-          <i class="bi bi-folder-x" style="font-size:2.5rem;color:#cbd5e1"></i>
-          <div class="fw-semibold mt-2 text-muted">No hay plantillas</div>
-          <div class="small text-muted">Crea la primera con "Nueva plantilla"</div>
-        </div>`;
+    if (!d.ok){
+      _plantillas = [];
+      renderTabs();
+      cont.innerHTML = '<div class="pl-full alert alert-danger">Error cargando plantillas</div>';
       return;
     }
-    cont.innerHTML = _plantillas.map(p => `
-      <div class="pl-card ${p.activa ? '' : 'inactive'}" onclick="abrirEditor(${p.id})">
-        ${p.es_sistema ? '<span class="badge-sys">SISTEMA</span>' : ''}
-        <div class="pl-name">${escHtml(p.nombre)}</div>
-        ${p.descripcion ? '<div class="pl-desc">'+escHtml(p.descripcion)+'</div>' : ''}
-        <div class="pl-meta">
-          <span class="badge-tipo">${escHtml(TIPOS_VISITA_LABEL[p.tipo_visita] || p.tipo_visita)}</span>
-          <span class="badge-items"><i class="bi bi-check2-circle me-1"></i>${p.items_count} item${p.items_count!==1?'s':''}</span>
-          ${p.tiempo_estimado_min ? '<span class="badge-tipo">⏱ '+p.tiempo_estimado_min+' min</span>' : ''}
-        </div>
-      </div>
-    `).join('');
+    _plantillas = d.plantillas || [];
+    renderTabs();
+    renderPlantillas();
   } catch(e){
-    cont.innerHTML = `<div class="alert alert-danger">Error de red: ${escHtml(e.message)}</div>`;
+    _plantillas = [];
+    renderTabs();
+    cont.innerHTML = `<div class="pl-full alert alert-danger">Error de red: ${escHtml(e.message)}</div>`;
   }
+}
+
+// ── Pestañas ────────────────────────────────────────────────────────
+function grupoDePlantilla(p){
+  const fam = String((p && p.familia_checklist) || 'otro').trim().toLowerCase();
+  const g = GRUPOS_PLANTILLA.find(x => x.familias && x.familias.indexOf(fam) !== -1);
+  return g ? g.key : GRUPO_FALLBACK;
+}
+
+function plantillasDeGrupo(key){
+  if (key === 'todas') return _plantillas;
+  return _plantillas.filter(p => grupoDePlantilla(p) === key);
+}
+
+function renderTabs(){
+  const cont = document.getElementById('plTabs');
+  if (!cont) return;
+  // Si la pestaña activa dejo de existir (defensivo), volver a "Todas"
+  if (!GRUPOS_PLANTILLA.some(g => g.key === _tabActiva)) _tabActiva = 'todas';
+  cont.innerHTML = GRUPOS_PLANTILLA.map(g => {
+    const n = plantillasDeGrupo(g.key).length;
+    const act = (_tabActiva === g.key);
+    return `
+      <button type="button" role="tab" id="plTab-${g.key}"
+              class="pl-tab${act ? ' active' : ''}"
+              aria-selected="${act ? 'true' : 'false'}"
+              aria-controls="plantillasList"
+              onclick="seleccionarTab('${g.key}')">
+        <i class="bi ${g.icon} pl-tab-ico"></i>
+        <span>${escHtml(g.label)}</span>
+        <span class="pl-tab-count">${n}</span>
+      </button>`;
+  }).join('');
+}
+
+function seleccionarTab(key){
+  _tabActiva = key;
+  renderTabs();
+  renderPlantillas();
+}
+
+// ── Grilla (pestaña AND filtros del servidor) ───────────────────────
+function renderPlantillas(){
+  const cont = document.getElementById('plantillasList');
+  if (!cont) return;
+  if (!_plantillas.length){
+    cont.innerHTML = `
+      <div class="pl-full text-center w-100 py-5">
+        <i class="bi bi-folder-x" style="font-size:2.5rem;color:#cbd5e1"></i>
+        <div class="fw-semibold mt-2 text-muted">No hay plantillas</div>
+        <div class="small text-muted">Crea la primera con "Nueva plantilla"</div>
+      </div>`;
+    return;
+  }
+  const grupo = GRUPOS_PLANTILLA.find(g => g.key === _tabActiva) || GRUPOS_PLANTILLA[0];
+  const lista = plantillasDeGrupo(_tabActiva);
+  if (!lista.length){
+    cont.innerHTML = `
+      <div class="pl-full text-center w-100 py-5">
+        <i class="bi ${grupo.icon}" style="font-size:2.5rem;color:#cbd5e1"></i>
+        <div class="fw-semibold mt-2 text-muted">Sin plantillas en «${escHtml(grupo.label)}»</div>
+        <div class="small text-muted">
+          Ninguna plantilla de este grupo coincide con los filtros actuales.
+          Prueba la pestaña <strong>Todas</strong> o limpia los filtros de arriba.
+        </div>
+        <button class="btn btn-sm btn-outline-secondary mt-3" onclick="seleccionarTab('todas')">
+          <i class="bi bi-grid-3x3-gap-fill me-1"></i>Ver todas
+        </button>
+      </div>`;
+    return;
+  }
+  cont.innerHTML = lista.map(p => `
+    <div class="pl-card ${p.activa ? '' : 'inactive'}" onclick="abrirEditor(${p.id})">
+      ${p.es_sistema ? '<span class="badge-sys">SISTEMA</span>' : ''}
+      <div class="pl-name">${escHtml(p.nombre)}</div>
+      ${p.descripcion ? '<div class="pl-desc">'+escHtml(p.descripcion)+'</div>' : ''}
+      <div class="pl-meta">
+        <span class="badge-tipo">${escHtml(TIPOS_VISITA_LABEL[p.tipo_visita] || p.tipo_visita)}</span>
+        <span class="badge-items"><i class="bi bi-check2-circle me-1"></i>${p.items_count} item${p.items_count!==1?'s':''}</span>
+        ${p.tiempo_estimado_min ? '<span class="badge-tipo">⏱ '+p.tiempo_estimado_min+' min</span>' : ''}
+      </div>
+    </div>
+  `).join('');
 }
 
 function abrirEditor(pid){
@@ -571,6 +692,9 @@ async function eliminarPlantilla(){
   } catch(e){ alert('Error: '+e.message); }
 }
 
-document.addEventListener('DOMContentLoaded', cargarPlantillas);
+document.addEventListener('DOMContentLoaded', () => {
+  renderTabs();       // pinta las pestañas de inmediato (contadores en 0) para que no salte el layout
+  cargarPlantillas(); // y luego las recalcula con los datos reales
+});
 </script>
 {% endblock %}

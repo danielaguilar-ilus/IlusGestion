@@ -1151,6 +1151,13 @@ ERP_TABLE_PRODUCTS = ERP_CONFIG.get("table_products", "MAEPR")
 # y tickets_module.BODEGA_SOPORTE -- variable propia porque get_erp_stock_by_sku
 # vive en app.py y la usan Cotizaciones/Cubicador/Monitor/Retiros por igual.
 ERP_STOCK_BODEGA_PRINCIPAL = os.environ.get("ILUS_ERP_STOCK_BODEGA_PRINCIPAL", "02").strip()
+# Bodega de REPUESTOS en el ERP Random (2026-08-08, Daniel: "que se conecte a
+# la bodega 18 de random y me indique si el repuesto se encuentra"). Se usa en
+# el sondeo del modal de Repuestos en Stock -- ver repstock_sondeo_erp().
+# Configurable por env var porque Random puede renumerar bodegas sin avisar,
+# y no queremos redeployar por eso. Es MAEST.KOBO (CHAR(3) con espacios: se
+# compara SIEMPRE con LTRIM(RTRIM(...))), igual que INC_BODEGA_ERP="13".
+REPUESTOS_BODEGA_ERP = os.environ.get("ILUS_REPUESTOS_BODEGA_ERP", "18").strip()
 ALLOWED_EXT     = {"png", "jpg", "jpeg", "webp", "gif"}
 MAX_PHOTOS      = 2
 
@@ -82020,6 +82027,95 @@ def repstock_buscar_modelos():
         (like, like)
     ) or []
     return jsonify({"ok": True, "productos": [dict(r) for r in rows]})
+
+
+@app.route("/mantenciones/api/repuestos-stock/sondeo-erp", methods=["GET"])
+@_mant_required
+def repstock_sondeo_erp():
+    """Sondeo de stock de repuestos en la BODEGA 18 del ERP Random.
+
+    Requerimiento de Daniel (2026-08-08): "que se conecte a la bodega 18 de
+    random y me indique si el repuesto se encuentra". Desde el modal de
+    Repuestos en Stock se escribe parte del nombre o del SKU y esto devuelve
+    SKU + descripción + código técnico + cantidad, para autocompletar la ficha
+    sin tipear a mano y sin tener que abrir Random.
+
+    Por qué SUM(STFI1) y NO "TOP 1":
+        La PK de MAEST incluye KOSU (sucursal), así que un mismo par
+        (KOPR, KOBO) PUEDE tener VARIAS filas -- una por sucursal. Tomar
+        TOP 1 devolvería el stock de una sola sucursal y mostraría de menos
+        (ej: "0 disponible" cuando en realidad hay 4). Se suma, igual que ya
+        hace la conciliación de Incidencias con la bodega 13 (INC_BODEGA_ERP).
+
+    Otras decisiones:
+      - KOBO es CHAR(3) y viene con espacios -> LTRIM(RTRIM(...)) = '18'.
+      - Se excluyen los SKU 'ZZ%' (ZZENVIO / ZZINSTALACION / ZZTRASLADO...):
+        son servicios contables del ERP, no repuestos físicos.
+      - EXISTS contra MAEST limita el resultado a productos que EFECTIVAMENTE
+        tienen registro en la bodega 18 (el sondeo es "¿está en la 18?", no
+        un buscador del maestro completo).
+      - PM (promedio ponderado) y PPUL01 (última compra) NO están verificados
+        contra datos reales; pueden venir en 0. Se entregan igual, informativos.
+
+    REGLA #4.1: solo lectura, vía _random_sql_query. REGLA #4: si el ERP falla
+    el detalle se loguea al backend y al cliente le llega un mensaje amable
+    con HTTP 200 (el front lo trata como "sin resultados", no como caída)."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"ok": True, "productos": []})
+
+    q_like = f"%{q.upper()[:60]}%"
+
+    sql = (
+        "SELECT TOP 30 "
+        "       LTRIM(RTRIM(pr.KOPR))   AS sku, "
+        "       LTRIM(RTRIM(pr.NOKOPR)) AS descripcion, "
+        "       LTRIM(RTRIM(COALESCE(pr.KOPRTE, ''))) AS codigo_tecnico, "
+        "       COALESCE((SELECT SUM(st.STFI1) FROM MAEST st "
+        "                  WHERE LTRIM(RTRIM(st.KOPR)) = LTRIM(RTRIM(pr.KOPR)) "
+        "                    AND LTRIM(RTRIM(st.KOBO)) = %s), 0) AS cantidad, "
+        "       COALESCE(pr.PM, 0)     AS costo_promedio, "
+        "       COALESCE(pr.PPUL01, 0) AS costo_ultima_compra "
+        "  FROM MAEPR pr "
+        " WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s) "
+        "   AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s "
+        "   AND EXISTS (SELECT 1 FROM MAEST st2 "
+        "                WHERE LTRIM(RTRIM(st2.KOPR)) = LTRIM(RTRIM(pr.KOPR)) "
+        "                  AND LTRIM(RTRIM(st2.KOBO)) = %s) "
+        " ORDER BY descripcion"
+    )
+    params = (REPUESTOS_BODEGA_ERP, q_like, q_like, "ZZ%", REPUESTOS_BODEGA_ERP)
+
+    try:
+        filas = _random_sql_query(sql, params, max_rows=30)
+    except Exception as e:
+        # REGLA #4: el detalle interno se queda en el backend.
+        print(f"[repstock_sondeo_erp] ERP Random falló (q={q[:40]!r}): {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."})
+
+    if filas is None:
+        # ERP sin configurar / pool agotado / conexión caída -> mismo contrato.
+        print(f"[repstock_sondeo_erp] ERP Random no respondió (q={q[:40]!r})", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo consultar el ERP. Reintenta."})
+
+    def _num(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    productos = []
+    for f in filas:
+        productos.append({
+            "sku":                 (f.get("sku") or "").strip(),
+            "descripcion":         (f.get("descripcion") or "").strip(),
+            "codigo_tecnico":      (f.get("codigo_tecnico") or "").strip(),
+            "cantidad":            _num(f.get("cantidad")),
+            "costo_promedio":      _num(f.get("costo_promedio")),
+            "costo_ultima_compra": _num(f.get("costo_ultima_compra")),
+        })
+
+    return jsonify({"ok": True, "productos": productos})
 
 
 REPSTOCK_MAX_FOTOS = 3
