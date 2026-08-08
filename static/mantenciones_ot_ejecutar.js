@@ -5429,8 +5429,11 @@ function levdAbrir(prefill, editId){
   }
 
   _levdModal.show();
+  if (typeof levdRefreshStepStates === 'function') levdRefreshStepStates();
   // Nunca abrir la cámara automáticamente al editar — solo al crear "de cero".
-  if (!prefill && !editId) setTimeout(() => { try { _levdEl('levdFotoInput').click(); } catch(_e){} }, 450);
+  // 2026-08-08: dispara el input sin capture (mismo que el botón único de fotos)
+  // para que el selector nativo ofrezca cámara + galería juntos.
+  if (!prefill && !editId) setTimeout(() => { try { _levdEl('levdFotoInputGaleria').click(); } catch(_e){} }, 450);
 }
 
 function levdDuplicar(){
@@ -5503,6 +5506,7 @@ async function levdDocVerificar(){
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-search"></i>';
+    if (typeof levdRefreshStepStates === 'function') levdRefreshStepStates();
   }
 }
 
@@ -5534,12 +5538,15 @@ function _levdComprimir(file){
 
 function _levdRenderFotos(){
   const wrap = _levdEl('levdFotos');
-  // 2026-08-08 (Daniel: "Heiser... no puede asignar fotos de la galería"):
-  // dos tiles -- cámara (capture=environment) y galería (sin capture) --
-  // este addBtn se reconstruye en cada render, así que el tile de galería
-  // tiene que ir acá también, no solo en el HTML estático inicial.
-  const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInput\').click()" title="Tomar foto"><i class="bi bi-camera"></i></button>' +
-    '<button type="button" class="levd-foto-add-alt" onclick="document.getElementById(\'levdFotoInputGaleria\').click()" title="Elegir de la galería"><i class="bi bi-images"></i></button>';
+  // 2026-08-08 (Daniel: "el botón de tomar foto y el de elegir de la galería
+  // debería estar resumido y no en dos objetos diferentes"): un solo tile.
+  // Dispara el input SIN capture (levdFotoInputGaleria) -- sin el atributo
+  // capture, el selector nativo del teléfono ya ofrece "Cámara" y
+  // "Galería" juntos, así que un solo botón cubre ambos casos sin
+  // reintroducir el bug de Heiser (capture=environment bloqueaba la
+  // galería en su Android). El input con capture (levdFotoInput) se deja
+  // en el DOM por si se necesita en el futuro, pero ya no tiene botón propio.
+  const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInputGaleria\').click()" title="Agregar foto"><i class="bi bi-camera-fill"></i></button>';
   // 2026-07-06: en modo edición, primero las fotos YA subidas (borrado real
   // vía DELETE al servidor), luego las nuevas pendientes (solo en memoria).
   const existentesHtml = _levdFotosExistentes.map((f, i) =>
@@ -5551,6 +5558,7 @@ function _levdRenderFotos(){
     `<button type="button" class="x" onclick="levdQuitarFoto(${i})">✕</button></div>`
   ).join('');
   wrap.innerHTML = existentesHtml + nuevasHtml + addBtn;
+  if (typeof levdRefreshStepStates === 'function') levdRefreshStepStates();
 }
 
 async function levdFotoEliminarExistente(i){
@@ -5598,8 +5606,49 @@ document.addEventListener('DOMContentLoaded', () => {
   if (inp) inp.addEventListener('change', _levdFotoInputChange);
   const inpGal = _levdEl('levdFotoInputGaleria');
   if (inpGal) inpGal.addEventListener('change', _levdFotoInputChange);
+  // Pasos verde/rojo: se recalculan al tipear/tocar los campos que deciden
+  // cada paso. El resto (fotos, doc verificado) ya llama a
+  // levdRefreshStepStates() desde sus propios handlers.
+  ['levd_nombre', 'levd_dano_txt'].forEach(id => {
+    const el = _levdEl(id);
+    if (el) el.addEventListener('input', levdRefreshStepStates);
+  });
+  const elOperativa = _levdEl('levd_operativa');
+  if (elOperativa) elOperativa.addEventListener('change', levdRefreshStepStates);
   levdInit();
 });
+
+// ── Pasos numerados verde/rojo (2026-08-08, Daniel: "atrevámonos a hacer un
+// cambio... que se vea más potente" — mismo lenguaje visual que .rb-step en
+// Repuestos). Cada regla espeja EXACTAMENTE la validación real de
+// levdGuardar() de abajo: un paso queda verde solo cuando levdGuardar() no
+// lo bloquearía. Los pasos opcionales (3/4/5) parten verdes y solo se ponen
+// rojos si el usuario los deja en un estado inválido a medio llenar.
+const LEVD_STEP_RULES = {
+  1: () => (_levdFotosExistentes.length + _levdFotos.length) > 0,
+  2: () => !!(_levdEl('levd_nombre') && _levdEl('levd_nombre').value.trim()),
+  3: () => {
+    const dano = _levdEl('levd_dano') && _levdEl('levd_dano').checked;
+    const danoTxt = _levdEl('levd_dano_txt') && _levdEl('levd_dano_txt').value.trim();
+    return !(dano && !danoTxt);
+  },
+  4: () => {
+    const num = (_levdEl('levd_doc_num') && _levdEl('levd_doc_num').value || '').replace(/\D/g, '');
+    if (!num) return true;
+    return !!(_levdDoc && _levdDoc.numero === num);
+  },
+  5: () => true,
+};
+
+function levdRefreshStepStates(){
+  for (const n of Object.keys(LEVD_STEP_RULES)){
+    const sec = document.getElementById('levdStep' + n);
+    if (!sec) continue;
+    let ok = false;
+    try { ok = !!LEVD_STEP_RULES[n](); } catch(_e){ ok = false; }
+    sec.classList.toggle('is-complete', ok);
+  }
+}
 
 async function levdGuardar(){
   const err = _levdEl('levdErr');
