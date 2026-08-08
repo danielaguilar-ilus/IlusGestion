@@ -2738,6 +2738,12 @@ function _calcCtxGlobal(){
     const _excluir = (rev.estado_revision === 'saltado' ||
                       rev.estado_revision === 'falla_detectada');
     if (_excluir){ nExcluidos++; return; }
+    // Tareas HUÉRFANAS (maquina_id NULL -> midStr '0', sin tarjeta de equipo)
+    // en una OT que captura fichas: el técnico no puede abrirlas ni subirles
+    // foto, así que no cuentan para el candado. MISMO criterio que el backend
+    // (_ot_validar_cierre R1/R3 y el gate de firma) para que el número de la
+    // pantalla y el del servidor nunca vuelvan a divergir.
+    if (!(EQUIPOS_IDX || {})[midStr] && (typeof ES_LEVANTAMIENTO !== 'undefined') && ES_LEVANTAMIENTO) return;
     pls.forEach(p => {
       total += p.total;
       completas += p.completas;
@@ -2801,13 +2807,18 @@ function _pendientesPorEquipo(){
 // debe ser cerrada" — evita que reabra la OT agregando equipos justo
 // cuando está por firmarla; otros roles conservan el botón siempre).
 function _actualizarPanelCierre(oblTot, oblComp){
+  // 2026-08-08 (Daniel): "esa lista igual no me gusta, prefiero algo mas
+  // sutil". Antes se listaban aquí uno por uno los equipos pendientes. Ahora
+  // la señal por equipo es el SEMÁFORO de la franja izquierda de su tarjeta
+  // (ver levdRender), y acá queda solo el resumen de una línea.
   const detalle = document.getElementById('btnFirmarDetalle');
   if (detalle){
     const pend = (oblComp < oblTot) ? _pendientesPorEquipo() : [];
     if (pend.length){
       detalle.style.display = '';
-      detalle.innerHTML = '<div class="small fw-semibold mb-1" style="color:#b45309">Pendiente por equipo:</div>' +
-        pend.map(p => `<div class="small" style="color:#78350f">· ${_escapeHtml(p.nombre)}${p.huerfana ? '' : `: ${p.pend} tarea${p.pend>1?'s':''} obligatoria${p.pend>1?'s':''}`}</div>`).join('');
+      detalle.innerHTML = '<div class="small" style="color:#b45309">' +
+        `<i class="bi bi-circle-fill me-1" style="font-size:.55rem;color:#dc2626"></i>` +
+        `${pend.length} equipo${pend.length>1?'s':''} con algo pendiente — míralos por la franja roja de su tarjeta.</div>`;
     } else {
       detalle.style.display = 'none';
       detalle.innerHTML = '';
@@ -5331,7 +5342,23 @@ function levdRender(){
     const editInfo = it.modificado_por
       ? `<div class="mt" style="color:#b45309"><i class="bi bi-pencil-square me-1"></i>Editado por ${it.modificado_por}${it.modificado_at ? ' · ' + it.modificado_at : ''}</div>`
       : '';
-    return `<div class="levd-card">
+    // ── Semáforo de la franja izquierda (Daniel 2026-08-08: "algo sutil de
+    //    ver y decir: ah ok, ya se liberó ese producto"). Verde = liberado.
+    //    Rojo = le falta algo, y el tooltip dice qué. Sin texto extra en la
+    //    tarjeta: la señal es el color.
+    const _falta = [];
+    if (((it.fotos||[]).length || it.n_fotos || 0) === 0) _falta.push('falta al menos 1 foto');
+    // Serie sugerida automática (LEV<vid>-<n>): significa que el técnico no
+    // puso la serie real de la máquina, y sale repetida en varios equipos.
+    const _serie = String(it.serie_snap||'').trim();
+    if (!_serie) _falta.push('falta el N° de serie');
+    else if (new RegExp('^LEV'+VID+'-\\d+$','i').test(_serie)) _falta.push('el N° de serie es el sugerido, no el real');
+    const _semClass = _falta.length ? ' falta' : '';
+    const _semTitle = _falta.length
+      ? 'Falta: ' + _falta.join(' · ')
+      : 'Equipo liberado: con evidencia y serie real';
+
+    return `<div class="levd-card${_semClass}" title="${_escapeHtml(_semTitle)}">
       ${foto ? `<img src="${foto}" alt="">` : `<div style="width:52px;height:52px;border-radius:9px;background:#f3f4f6;display:flex;align-items:center;justify-content:center"><i class="bi bi-camera text-muted"></i></div>`}
       <div class="inf">
         <div class="nm">${(it.nombre_snap||'Equipo')}

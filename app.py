@@ -64870,6 +64870,28 @@ def mant_visita_firmar(vid):
 # Requiere: las 3 firmas (cliente, técnico, supervisor) presentes.
 # ══════════════════════════════════════════════════════════════════════
 
+def _ot_es_levantamiento(v):
+    """True si la OT captura fichas de equipo (o sea: si tiene levantamiento).
+
+    ÚNICA fuente de verdad. Daniel 2026-08-08: "hay un arroz con mango con
+    esto de las OT con lo del levantamiento; cuando escojo algo diferente ahí
+    es donde falla... yo escogí Inspección, nunca escogí levantamiento".
+
+    Tenía razón: NO basta con mirar tipo=='levantamiento'. Una OT de
+    inspección / preventiva / instalación TAMBIÉN captura fichas, y el propio
+    _ensure_levantamiento_para_visita le crea un levantamiento por eso mismo.
+    Mirar solo el tipo dejaba a esas OT en tierra de nadie: se comportaban
+    como levantamiento para unas cosas y no para otras.
+    """
+    if not v:
+        return False
+    try:
+        return ((v.get("tipo") or "").strip().lower() == "levantamiento"
+                or bool(v.get("levantamiento_id")))
+    except Exception:
+        return False
+
+
 def _ot_maquinas_excluidas_cierre(vid):
     """Set de maquina_id que NO deben bloquear el cierre de una OT: equipos
     marcados 'saltado' o 'falla_detectada' (ya quedaron documentados/con
@@ -64930,10 +64952,7 @@ def _ot_validar_cierre(vid):
     # cliente con dropdown distinto a 'levantamiento'). En ambos casos el
     # foco es capturar datos del equipo (fotos, marca/modelo/serie), no
     # ejecutar un checklist clínico.
-    es_levantamiento = (
-        (v.get("tipo") or "").lower() == "levantamiento"
-        or bool(v.get("levantamiento_id"))
-    )
+    es_levantamiento = _ot_es_levantamiento(v)
 
     # ── 2026-05-21 (Daniel) — Trazabilidad por equipo ──────────────────
     # Si la OT es tipo 'levantamiento', el técnico puede SALTAR equipos
@@ -64943,20 +64962,36 @@ def _ot_validar_cierre(vid):
     excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
 
     # R1 — Checklist 100% completado (excluyendo tareas de equipos saltados/con falla)
+    #
+    # FIX 2026-08-08 (Daniel, caso OT-2026-00056 — "no entiendo por qué sigue
+    # bloqueada... necesito realizar las OT sin restricción"): además se
+    # excluyen las tareas HUÉRFANAS (maquina_id NULL) cuando la OT captura
+    # fichas por levantamiento. Motivo: al generar una OT desde un Ticket cuyos
+    # equipos aún no tienen ficha, se crea 1 tarea obligatoria con foto por
+    # equipo SIN maquina_id (app.py ~84752). Sin maquina_id no se dibuja
+    # tarjeta de equipo: el técnico NO PUEDE abrirla, ni subirle foto, ni
+    # marcarla. Exigir una tarea que es imposible de trabajar es un bloqueo
+    # por construcción — el técnico queda trabado en terreno haga lo que haga.
+    # El trabajo real de esas OT queda en el levantamiento (items + fotos), y
+    # el informe SÍ lo documenta (ver _ot_es_levantamiento en la selección de
+    # template del PDF). Las tareas NO se borran (REGLA #4.2): siguen
+    # existiendo y visibles, solo dejan de ser un candado infranqueable.
+    _huerf_sql = (" AND maquina_id IS NOT NULL " if es_levantamiento else "")
     if excluir_maquinas:
         _ph = ",".join(["%s"] * len(excluir_maquinas))
         chk_row = mysql_fetchone(
             "SELECT COUNT(*) AS total, "
             " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
             f"FROM mant_visita_tareas WHERE visita_id=%s "
-            f"  AND (maquina_id IS NULL OR maquina_id NOT IN ({_ph}))",
+            f"  AND (maquina_id IS NULL OR maquina_id NOT IN ({_ph}))"
+            + _huerf_sql,
             (vid, *list(excluir_maquinas))
         ) or {}
     else:
         chk_row = mysql_fetchone(
             "SELECT COUNT(*) AS total, "
             " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
-            "FROM mant_visita_tareas WHERE visita_id=%s",
+            "FROM mant_visita_tareas WHERE visita_id=%s" + _huerf_sql,
             (vid,)
         ) or {}
     total = int(chk_row.get("total") or 0)
@@ -65006,6 +65041,9 @@ def _ot_validar_cierre(vid):
             )
 
     # R3 — Foto obligatoria por tarea con requiere_foto=1 (excluyendo saltados)
+    # Mismo criterio de huérfanas que R1 (ver comentario largo allá): una tarea
+    # sin maquina_id no tiene tarjeta en pantalla, así que el técnico no tiene
+    # NINGUNA forma de subirle la foto. Exigírsela lo deja trabado sin salida.
     if excluir_maquinas:
         _ph = ",".join(["%s"] * len(excluir_maquinas))
         tareas_sin_foto = mysql_fetchall(
@@ -65014,6 +65052,7 @@ def _ot_validar_cierre(vid):
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
             f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
+            + _huerf_sql.replace("maquina_id", "t.maquina_id") +
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid, *list(excluir_maquinas))
@@ -65024,6 +65063,7 @@ def _ot_validar_cierre(vid):
             "FROM mant_visita_tareas t "
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             "WHERE t.visita_id=%s AND t.requiere_foto=1 "
+            + _huerf_sql.replace("maquina_id", "t.maquina_id") +
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid,)
@@ -70902,6 +70942,14 @@ def mant_ot_firmar_revision(vid):
         # frontend.
         excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
         _excl_ph = ",".join(["%s"] * len(excluir_maquinas)) if excluir_maquinas else None
+        # Mismo criterio de huérfanas que R1/R3 de _ot_validar_cierre: si la OT
+        # captura fichas por levantamiento, las tareas sin maquina_id NO son
+        # trabajables (no tienen tarjeta en pantalla) y por lo tanto no pueden
+        # bloquear la firma. Ver el comentario largo en _ot_validar_cierre.
+        _v_gate = mysql_fetchone(
+            "SELECT tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
+        _huerf_gate = (" AND t.maquina_id IS NOT NULL "
+                       if _ot_es_levantamiento(_v_gate) else "")
         faltan_rows = mysql_fetchall(
             "SELECT t.maquina_id, "
             "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
@@ -70910,7 +70958,8 @@ def mant_ot_firmar_revision(vid):
             "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
             " WHERE t.visita_id=%s AND t.obligatoria=1 AND COALESCE(t.completada,0)=0 "
             + (f"   AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_excl_ph})) "
-               if excluir_maquinas else "") +
+               if excluir_maquinas else "")
+            + _huerf_gate +
             " GROUP BY t.maquina_id, m.nombre "
             " ORDER BY nombre",
             (vid, *excluir_maquinas) if excluir_maquinas else (vid,)
@@ -73078,8 +73127,16 @@ def mant_visita_pdf(vid):
     # 2026-07-10 (Daniel — OT-2026-00032): los levantamientos usan su propio
     # informe formal (inventario + anexo fotográfico + firmas); el resto de
     # OTs conserva el template clásico sin cambios.
-    _es_informe_lev = bool((ctx["visita"].get("tipo") or "") == "levantamiento"
-                           and ctx.get("lev_items"))
+    # FIX 2026-08-08 (Daniel, caso OT-2026-00056): esta condicion miraba SOLO
+    # tipo=='levantamiento'. Una OT de INSPECCION (o preventiva/instalacion)
+    # tambien captura fichas y tambien tiene levantamiento_id -- ver
+    # _ensure_levantamiento_para_visita, que lo crea justamente para esos
+    # tipos. Resultado: el trabajo del tecnico (equipos + fotos, que SI se
+    # cargan en ctx['lev_items']) quedaba fuera del PDF y salia el
+    # "cascaron administrativo vacio" que ese mismo comentario dice haber
+    # arreglado. Ahora usa el MISMO criterio que el resto del sistema
+    # (_ot_validar_cierre, ES_LEVANTAMIENTO del front): tipo O levantamiento_id.
+    _es_informe_lev = bool(_ot_es_levantamiento(ctx["visita"]) and ctx.get("lev_items"))
     _tpl_pdf = ("mantenciones/ot_pdf_levantamiento.html" if _es_informe_lev
                 else "mantenciones/ot_pdf.html")
     html = render_template(_tpl_pdf, **ctx)
@@ -73163,8 +73220,11 @@ def mant_ot_pdf_render(vid):
         return redirect(url_for("mant_ot_ejecutar", vid=vid))
     # Contexto compartido con mant_visita_pdf (fuente única → no divergen)
     # 2026-07-10: misma selección de template que mant_visita_pdf.
+    # FIX 2026-08-08: mismo criterio que mant_visita_pdf (ver comentario allá).
+    # Antes miraba solo tipo=='levantamiento' y dejaba fuera del informe el
+    # trabajo de las OT de inspección/preventiva/instalación con levantamiento.
     _tpl_pdf = ("mantenciones/ot_pdf_levantamiento.html"
-                if (ctx["visita"].get("tipo") or "") == "levantamiento" and ctx.get("lev_items")
+                if _ot_es_levantamiento(ctx["visita"]) and ctx.get("lev_items")
                 else "mantenciones/ot_pdf.html")
     return render_template(_tpl_pdf, **ctx)
 

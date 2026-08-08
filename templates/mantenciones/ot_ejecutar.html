@@ -1019,9 +1019,17 @@
       .levd-head .cnt{background:#dc2626;color:#fff;border-radius:999px;
         font-size:.78rem;padding:2px 10px;font-weight:800}
       .levd-list{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+      /* 2026-08-08 (Daniel): "prefiero algo mas sutil, un color rojo en el
+         objeto para saber que falta y verde cuando este todo ok... como
+         semaforo de la parte izquierda del producto". La franja izquierda
+         era verde fija; ahora es el semaforo. Verde = ese equipo esta
+         liberado (tiene evidencia y serie real). Rojo = le falta algo, y
+         el tooltip dice qué. */
       .levd-card{display:flex;gap:10px;align-items:center;background:#fff;
         border:1px solid #e5e7eb;border-left:4px solid #16a34a;border-radius:12px;
-        padding:9px 10px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+        padding:9px 10px;box-shadow:0 1px 3px rgba(0,0,0,.05);
+        transition:border-left-color .2s ease}
+      .levd-card.falta{border-left-color:#dc2626}
       .levd-card img{width:52px;height:52px;object-fit:cover;border-radius:9px;background:#f3f4f6}
       .levd-card .inf{flex:1;min-width:0}
       .levd-card .nm{font-weight:700;font-size:.88rem;color:#0f172a;
