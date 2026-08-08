@@ -82279,46 +82279,24 @@ def repstock_sondeo_modelos_erp():
     if len(q) < 2:
         return jsonify({"ok": True, "productos": []})
 
-    # DIAGNÓSTICO TEMPORAL 2026-08-08 (Daniel mostró la búsqueda nativa del
-    # ERP: la columna "Familia" separa máquina completa (1000_1001) de
-    # repuesto (4000_4300, "Media Holder M3i Lite Keiser (REPUESTO)")).
-    # Necesito el nombre REAL de esa columna en MAEPR antes de filtrar por
-    # ella -- ?q=__schema__ lista las columnas, solo lectura, superadmin.
-    # Quitar este bloque una vez identificada la columna correcta.
-    if q == "__schema__":
-        _u = getattr(g, "user", None) or {}
-        if (_u.get("role") or "").lower() != "superadmin":
-            return jsonify({"ok": False, "error": "Solo superadmin"}), 403
-        try:
-            cols = _random_sql_query(
-                "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_NAME = 'MAEPR' ORDER BY ORDINAL_POSITION",
-                (), max_rows=200,
-            )
-        except Exception as e:
-            return jsonify({"ok": False, "error": str(e)[:300]})
-        return jsonify({"ok": True, "columnas": [dict(c) for c in (cols or [])]})
-
-    if q == "__sample__":
-        # Encontrado en el schema: MAEPR.REPUESTO (char) -- nombre casi
-        # demasiado literal para ser casualidad. Confirmar su valor real
-        # contra 2 SKUs conocidos: la Keiser M3i completa (005502BBC) y el
-        # repuesto ya etiquetado "(REPUESTO)" en su propia descripción
-        # (555106, "Media Holder M3i Lite Keiser"). Solo lectura, superadmin.
-        _u = getattr(g, "user", None) or {}
-        if (_u.get("role") or "").lower() != "superadmin":
-            return jsonify({"ok": False, "error": "Solo superadmin"}), 403
-        try:
-            filas = _random_sql_query(
-                "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(NOKOPR)) AS descripcion, "
-                "       REPUESTO AS repuesto_raw "
-                "  FROM MAEPR WHERE LTRIM(RTRIM(KOPR)) IN (%s, %s)",
-                ("005502BBC", "555106"), max_rows=10,
-            )
-        except Exception as e:
-            return jsonify({"ok": False, "error": str(e)[:300]})
-        return jsonify({"ok": True, "filas": [dict(f) for f in (filas or [])]})
-
+    # FIX 2026-08-08 #3 (definitivo, con evidencia real): se investigaron y
+    # descartaron 2 hipótesis antes de esta -- MAEPR no tiene columna de
+    # "Familia" (129 columnas revisadas, ninguna calza; lo que se ve en la
+    # búsqueda nativa del ERP sale de otra tabla no identificada) y
+    # MAEPR.REPUESTO viene vacío (" ") en los datos reales, no sirve.
+    #
+    # Señal real encontrada comparando los 2 casos confirmados:
+    #   - Keiser M3i Lite Indoor Bike (maquina completa): SKU 005502BBC --
+    #     NO contiene "m3i" en el código, solo en la descripción.
+    #   - Sus ~30 repuestos (Asiento, Brazo pedales, Cable...): TODOS los
+    #     SKU (RE02M3i062, 2M3I25, CB02M3i055...) SÍ contienen "m3i" --
+    #     el repuesto hereda el código del modelo padre, el equipo no.
+    # Mismo patrón para Trotadora ILUS (SKU 1027100905, tampoco contiene
+    # "trotadora"). Se ordena primero por esta señal (SKU sin el término
+    # buscado = más probable que sea el equipo, no su repuesto), y recién
+    # después por largo de descripción -- así las ~9 Keiser completas caen
+    # en el bloque 0 y entran holgado en el TOP 30, en vez de perderse
+    # entre los ~30 repuestos que agotaban el límite antes.
     q_like = f"%{q.upper()[:60]}%"
 
     sql = (
@@ -82331,9 +82309,10 @@ def repstock_sondeo_modelos_erp():
         "  FROM MAEPR pr "
         " WHERE (UPPER(pr.NOKOPR) LIKE %s OR UPPER(pr.KOPR) LIKE %s) "
         "   AND UPPER(LTRIM(RTRIM(pr.KOPR))) NOT LIKE %s "
-        " ORDER BY LEN(LTRIM(RTRIM(pr.NOKOPR))), descripcion"
+        " ORDER BY CASE WHEN UPPER(LTRIM(RTRIM(pr.KOPR))) LIKE %s THEN 1 ELSE 0 END, "
+        "          LEN(LTRIM(RTRIM(pr.NOKOPR))), descripcion"
     )
-    params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%")
+    params = (CAT_BODEGA_SYNC, q_like, q_like, "ZZ%", q_like)
 
     try:
         filas = _random_sql_query(sql, params, max_rows=30)

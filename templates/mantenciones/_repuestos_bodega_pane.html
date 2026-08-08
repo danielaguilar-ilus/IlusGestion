@@ -639,10 +639,10 @@ function rbCostoSet(valor){
 let RB_SONDEO_RESULTS = [];
 let RB_SONDEO_CARGANDO = false;   // evita 2 consultas si se pulsa 2 veces
 function rbCantidadFmt(n){
-  const v = Number(n) || 0;
-  return Number.isInteger(v)
-    ? v.toLocaleString('es-CL')
-    : v.toLocaleString('es-CL', {maximumFractionDigits: 2});
+  // 2026-08-08 (Daniel: "la cantidad es un número entero en formato de
+  // unidades"): son unidades físicas -- siempre entero, nunca decimales,
+  // aunque el ERP entregue un DECIMAL con ".00" de cola.
+  return Math.round(Number(n) || 0).toLocaleString('es-CL');
 }
 async function rbSondearErp(){
   if (RB_SONDEO_CARGANDO) return;
@@ -707,22 +707,34 @@ function rbCerrarSondeo(){
   const list = document.getElementById('rbSondeoResultadosList');
   if (list){ list.innerHTML = ''; list.style.display = 'none'; }
 }
+// 2026-08-08 (Daniel: "sustituya el SKU y el SKU automático... el código
+// de fabricante es otra cosa"): al elegir un resultado del sondeo, el SKU
+// REAL del ERP (bodega 18) sustituye al SKU auto-generado de ILUS -- ya no
+// se inventan dos identificadores para la misma pieza física. El código
+// técnico/OEM del ERP (KOPRTE) es lo que va en "Código de fabricante", que
+// es su campo correcto -- antes ahí caía por error el SKU del ERP.
+// RB_SKU_ERP_ELEGIDO viaja en el body de rbGuardar() -> repstock_crear()
+// lo usa en vez de generar REP-MARCA-0001 (ver backend, mismo motivo).
+let RB_SKU_ERP_ELEGIDO = null;
 function rbPickSondeo(i){
   const p = RB_SONDEO_RESULTS[i];
   document.getElementById('rbSondeoResultadosList').style.display = 'none';
   if (!p) return;
-  // OJO: #rbSku es readonly y lo genera ILUS (REP-MARCA-0001) recién al
-  // guardar — el SKU del ERP NO puede pisarlo. Su destino natural es el
-  // campo "Código de fabricante / OEM".
   if (p.descripcion) document.getElementById('rbDescripcion').value = p.descripcion;
-  if (p.sku) document.getElementById('rbCodigoFabricante').value = p.sku;
+  if (p.sku){
+    RB_SKU_ERP_ELEGIDO = p.sku;
+    const skuEl = document.getElementById('rbSku');
+    skuEl.value = p.sku;
+    skuEl.style.background = '#dcfce7';
+    skuEl.style.color = '#166534';
+  }
+  if (p.codigo_tecnico) document.getElementById('rbCodigoFabricante').value = p.codigo_tecnico;
   if (p.cantidad !== null && p.cantidad !== undefined && p.cantidad !== ''){
     document.getElementById('rbCantidad').value = Number(p.cantidad) || 0;
   }
   const costo = Number(p.costo_promedio) || 0;
   if (costo > 0) rbCostoSet(costo);
-  ilusToast('Traído de bodega 18 · el SKU del ERP (' + (p.sku || 's/SKU') +
-            ') quedó en "Código de fabricante / OEM" — el SKU interno lo genera ILUS al guardar',
+  ilusToast('Traído de bodega 18 · el SKU (' + (p.sku || 's/SKU') + ') reemplaza al auto-generado',
             {type:'success'});
   rbRefreshStepStates();
 }
@@ -804,6 +816,7 @@ async function rbGuardar(crearOtro){
     notas: document.getElementById('rbNotas').value.trim(),
     cliente_id: document.getElementById('rbClienteId').value || null,
     ticket_id: document.getElementById('rbTicketId').value || null,
+    sku_erp: id ? undefined : RB_SKU_ERP_ELEGIDO,   // solo aplica al crear, el backend lo ignora si viene en un PUT
   };
   try{
     const url = id ? ('/mantenciones/api/repuestos-stock/' + id) : '/mantenciones/api/repuestos-stock';
@@ -1615,7 +1628,7 @@ async function rbBuscarModelos(){
     list.innerHTML = RB_MODELOS_RESULTS.map((p, i) =>
       '<div class="rb-modelo-resultado-item" onclick="rbPickModelo(' + i + ')">' +
       '<strong>' + escHtmlRb(p.descripcion) + '</strong> <span class="text-muted" style="font-size:.74rem">' + escHtmlRb(p.sku || '') +
-      (p.cantidad > 0 ? ' · ' + p.cantidad + ' en bodega' : '') + '</span></div>'
+      (p.cantidad > 0 ? ' · ' + rbCantidadFmt(p.cantidad) + ' en bodega' : '') + '</span></div>'
     ).join('');
   }
   list.style.display = 'block';
