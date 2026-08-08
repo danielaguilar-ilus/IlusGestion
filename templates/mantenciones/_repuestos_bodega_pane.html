@@ -276,9 +276,23 @@
   <div style="font-size:.82rem;color:#6b7280">
     <input type="checkbox" id="rbSelAll" onclick="rbToggleAll(this)"> Seleccionar todo lo visible
   </div>
-  <button type="button" class="btn btn-sm btn-outline-dark" id="rbBtnEtiquetas" disabled onclick="rbImprimirEtiquetas()">
-    <i class="bi bi-tag me-1"></i>Imprimir etiquetas de seleccionados
-  </button>
+  <div class="d-flex gap-2">
+    {# Descarga el Excel respetando el filtro ACTUAL de la tabla (Daniel
+       2026-08-08: "un Excel bien coqueto donde se bajen hasta las imágenes
+       de cada producto... o lo integren a Random" -- export de solo
+       lectura de mant_repuestos_stock, se comparte manualmente si hace
+       falta). Mismo patrón de querystring que _repuestos_bodega_pag.html
+       (_b_filtros): bq/marca_id/ubicacion_id/bajo_minimo/sin_costo/
+       sin_modelo, para que "descargar" traiga lo mismo que se está viendo. #}
+    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') %}
+    <a class="btn btn-sm btn-outline-success" href="{{ url_for('repstock_exportar_excel') }}{{ rb_export_qs }}"
+       title="Descargar Excel con los repuestos del filtro actual (incluye fotos)">
+      <i class="bi bi-file-earmark-excel me-1"></i>Descargar Excel
+    </a>
+    <button type="button" class="btn btn-sm btn-outline-dark" id="rbBtnEtiquetas" disabled onclick="rbImprimirEtiquetas()">
+      <i class="bi bi-tag me-1"></i>Imprimir etiquetas de seleccionados
+    </button>
+  </div>
 </div>
 
 <div class="rb-table-wrap">

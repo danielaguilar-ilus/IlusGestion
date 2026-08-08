@@ -82785,6 +82785,296 @@ def repstock_etiquetas():
     return resp
 
 
+@app.route("/mantenciones/api/repuestos-stock/exportar-excel")
+@_mant_required
+def repstock_exportar_excel():
+    """Export Excel "bien coqueto" de la Bodega de Repuestos (Daniel
+    2026-08-08: "un Excel bien coqueto donde se bajen hasta las imágenes
+    de cada producto, y cada detalle para poder hacer búsqueda o entregar
+    para que lo modifique. O lo integren a Random" — el Excel se comparte
+    MANUALMENTE con Random si hace falta; ILUS jamás escribe al ERP, esto
+    es 100% lectura de mant_repuestos_stock, tabla propia de ILUS).
+
+    Respeta EXACTAMENTE el mismo WHERE dinámico que _repstock_contexto_bodega
+    (bq/marca_id/ubicacion_id/bajo_minimo/sin_costo/sin_modelo) — si Daniel
+    filtró "sin modelo asociado" y descarga, el Excel trae solo esos.
+
+    Mismo lenguaje visual que mant_clientes_reporte_xlsx (header negro
+    #0A0A0A + texto blanco, bordes grises finos, zebra, freeze_panes,
+    autofilter) — Regla #2 de CLAUDE.md. Una fila por repuesto con foto
+    embebida (miniatura cacheada de 160px, NUNCA el original de 1600px) en
+    la primera columna; una foto rota jamás debe tumbar la exportación
+    completa de los demás repuestos (try/except individual)."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from openpyxl.drawing.image import Image as XLImage
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(request.referrer or url_for("repuestos_bodega_list"))
+
+    # ── Mismos filtros y MISMO WHERE dinámico que _repstock_contexto_bodega
+    # (parametrizado con %s, nunca f-string con el valor del usuario) ──
+    q = (request.args.get("bq") or "").strip()
+    marca_id = request.args.get("marca_id") or ""
+    ubicacion_id = request.args.get("ubicacion_id") or ""
+    solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
+    solo_sin_costo = request.args.get("sin_costo") == "1"
+    solo_sin_modelo = request.args.get("sin_modelo") == "1"
+
+    where = ["r.activo=1"]
+    params = []
+    if q:
+        where.append("(r.sku LIKE %s OR r.descripcion LIKE %s OR r.codigo_fabricante LIKE %s)")
+        like = f"%{q}%"
+        params += [like, like, like]
+    if marca_id.isdigit():
+        where.append("r.marca_id=%s"); params.append(int(marca_id))
+    if ubicacion_id.isdigit():
+        where.append("r.ubicacion_id=%s"); params.append(int(ubicacion_id))
+    if solo_bajo_minimo:
+        where.append("r.stock_minimo IS NOT NULL AND r.cantidad <= r.stock_minimo")
+    if solo_sin_costo:
+        where.append("(r.costo_unitario IS NULL OR r.costo_unitario = 0)")
+    if solo_sin_modelo:
+        where.append("NOT EXISTS (SELECT 1 FROM mant_repuestos_stock_modelos rm WHERE rm.repuesto_id = r.id)")
+    where_sql = " AND ".join(where)
+
+    rows = mysql_fetchall(
+        f"SELECT r.*, m.nombre AS marca_nombre, "
+        f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre, "
+        f"       c.razon_social AS cliente_nombre, t.numero_ticket AS ticket_numero, "
+        f"       pv.nombre AS proveedor_nombre "
+        f"  FROM mant_repuestos_stock r "
+        f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
+        f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
+        f"  LEFT JOIN mant_clientes c ON c.id = r.cliente_id "
+        f"  LEFT JOIN tk_tickets t ON t.id = r.ticket_id "
+        f"  LEFT JOIN mant_proveedores_repuesto pv ON pv.id = r.proveedor_id "
+        f" WHERE {where_sql} ORDER BY r.sku ASC",
+        tuple(params)
+    ) or []
+    rows = [dict(r) for r in rows]
+
+    ids = [r["id"] for r in rows]
+    modelos_por_repuesto = {}
+    fotos_por_repuesto = {}
+    if ids:
+        ph = ",".join(["%s"] * len(ids))
+        mrows = mysql_fetchall(
+            f"SELECT rm.repuesto_id, p.nombre AS producto_nombre "
+            f"  FROM mant_repuestos_stock_modelos rm "
+            f"  JOIN cat_productos p ON p.id = rm.producto_id "
+            f" WHERE rm.repuesto_id IN ({ph}) ORDER BY p.nombre",
+            tuple(ids)
+        ) or []
+        for m in mrows:
+            modelos_por_repuesto.setdefault(m["repuesto_id"], []).append(m["producto_nombre"])
+        # Ordenadas por 'orden' -> la [0] de cada repuesto es la foto principal
+        # (mismo criterio que usa la tabla en pantalla, rfotos[0]).
+        frows = mysql_fetchall(
+            f"SELECT repuesto_id, gcs_key FROM mant_repuestos_stock_fotos "
+            f" WHERE repuesto_id IN ({ph}) ORDER BY repuesto_id, orden",
+            tuple(ids)
+        ) or []
+        for f in frows:
+            fotos_por_repuesto.setdefault(f["repuesto_id"], []).append(f["gcs_key"])
+
+    # ── Estilo: MISMO lenguaje visual que mant_clientes_reporte_xlsx ──
+    BLACK, LGRAY, REDL = "0A0A0A", "F5F5F5", "FEE2E2"
+    thin = Side(style="thin", color="E5E7EB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _hdr(cell, val):
+        cell.value = val
+        cell.font = Font(bold=True, color="FFFFFF", size=9)
+        cell.fill = PatternFill("solid", fgColor=BLACK)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+    try:
+        from zoneinfo import ZoneInfo
+        _now = datetime.now(ZoneInfo("America/Santiago"))
+    except Exception:
+        _now = datetime.now()
+    fecha_gen = _now.strftime("%d/%m/%Y %H:%M")
+
+    filtros_desc = []
+    if q:
+        filtros_desc.append(f'búsqueda "{q}"')
+    if marca_id.isdigit():
+        _m = mysql_fetchone("SELECT nombre FROM mant_repuestos_marcas WHERE id=%s", (int(marca_id),))
+        if _m:
+            filtros_desc.append(f"marca {_m['nombre']}")
+    if ubicacion_id.isdigit():
+        _u = mysql_fetchone("SELECT codigo FROM mant_repuestos_ubicaciones WHERE id=%s", (int(ubicacion_id),))
+        if _u:
+            filtros_desc.append(f"ubicación {_u['codigo']}")
+    if solo_bajo_minimo:
+        filtros_desc.append("bajo stock mínimo")
+    if solo_sin_costo:
+        filtros_desc.append("sin costo")
+    if solo_sin_modelo:
+        filtros_desc.append("sin modelo asociado")
+    alcance_txt = (" · ".join(filtros_desc)) if filtros_desc else "todos los repuestos activos"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Repuestos"
+
+    headers = [
+        "Foto", "SKU", "Descripción", "Código fabricante", "Cantidad", "Stock mínimo",
+        "Ubicación", "Marca", "Costo unitario", "Proveedor", "Modelos compatibles",
+        "Cliente asociado", "Ticket asociado", "Notas", "Creado por", "Fecha creación",
+    ]
+    NCOLS = len(headers)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
+    tcell = ws.cell(row=1, column=1,
+                    value=f"ILUS · Bodega de Repuestos  —  {alcance_txt}  —  {len(rows)} repuestos  —  generado {fecha_gen}")
+    tcell.font = Font(bold=True, size=13, color="FFFFFF")
+    tcell.fill = PatternFill("solid", fgColor=BLACK)
+    tcell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 26
+
+    for ci, h in enumerate(headers, 1):
+        _hdr(ws.cell(row=2, column=ci), h)
+    ws.row_dimensions[2].height = 30
+
+    bucket = _gcs_bucket()
+
+    def _foto_bytes(gcs_key):
+        """Bytes de una miniatura de 160px para embeber en el Excel — mismo
+        cache que /f/<key>?w=160 (ver _thumb_key/serve_archivo): si no está
+        generada, la genera y la cachea igual que esa ruta. NUNCA levanta
+        excepción hacia afuera: una foto rota no debe tumbar el resto."""
+        if not bucket or not gcs_key:
+            return None
+        tkey = _thumb_key(gcs_key, 160)
+        try:
+            return bucket.blob(tkey).download_as_bytes()
+        except Exception:
+            pass  # miniatura aún no cacheada -> generar abajo
+        try:
+            orig = bucket.blob(gcs_key).download_as_bytes()
+        except Exception as e_dl:
+            print(f"[repstock_exportar_excel] no se pudo bajar original {gcs_key}: {e_dl}", flush=True)
+            return None
+        try:
+            tdata, _ct = _img_resize_bytes(orig, max_dim=160, quality=78)
+        except Exception as e_rs:
+            print(f"[repstock_exportar_excel] no se pudo redimensionar {gcs_key}: {e_rs}", flush=True)
+            return None
+        try:
+            bucket.blob(tkey).upload_from_string(tdata, content_type="image/jpeg")
+        except Exception as e_up:
+            print(f"[repstock_exportar_excel] no se pudo cachear miniatura {tkey}: {e_up}", flush=True)
+        return tdata
+
+    def _sin_foto_celda(r_idx, bg):
+        c = ws.cell(row=r_idx, column=1, value="Sin foto")
+        c.font = Font(size=8, italic=True, color="9CA3AF")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = border
+        c.fill = PatternFill("solid", fgColor=bg)
+
+    r_idx = 3
+    for rep in rows:
+        cantidad = float(rep.get("cantidad") or 0)
+        stock_minimo = float(rep["stock_minimo"]) if rep.get("stock_minimo") is not None else None
+        bajo_minimo = stock_minimo is not None and cantidad <= stock_minimo
+        costo_unitario = float(rep.get("costo_unitario") or 0)
+        ubic = rep.get("ubicacion_codigo") or ""
+        if ubic and rep.get("ubicacion_nombre"):
+            ubic += " — " + rep["ubicacion_nombre"]
+        modelos_txt = ", ".join(modelos_por_repuesto.get(rep["id"], []))
+        creado_fmt = chile_fmt_filter(rep.get("created_at")) if rep.get("created_at") else ""
+
+        vals = [
+            None,  # Foto -> imagen embebida, no texto
+            rep.get("sku") or "",
+            rep.get("descripcion") or "",
+            rep.get("codigo_fabricante") or "",
+            cantidad,
+            stock_minimo,
+            ubic,
+            rep.get("marca_nombre") or "",
+            costo_unitario,
+            rep.get("proveedor_nombre") or "",
+            modelos_txt,
+            rep.get("cliente_nombre") or "",
+            rep.get("ticket_numero") or "",
+            rep.get("notas") or "",
+            rep.get("created_by") or "",
+            creado_fmt,
+        ]
+        bg = LGRAY if r_idx % 2 == 0 else "FFFFFF"
+        # Columna Foto: border+fill parejo con el resto de la fila aunque el
+        # valor (imagen o "Sin foto") se resuelva aparte, más abajo.
+        fcell = ws.cell(row=r_idx, column=1)
+        fcell.border = border
+        fcell.fill = PatternFill("solid", fgColor=bg)
+        for ci, val in enumerate(vals, 1):
+            if ci == 1:
+                continue  # columna Foto se resuelve aparte (imagen o "Sin foto")
+            cell = ws.cell(row=r_idx, column=ci, value=val)
+            cell.font = Font(size=9)
+            cell.alignment = Alignment(
+                horizontal="center" if ci in (5, 6, 9) else "left",
+                vertical="center", wrap_text=(ci in (3, 11, 14)))
+            cell.border = border
+            fill = REDL if (ci == 5 and bajo_minimo) else bg
+            cell.fill = PatternFill("solid", fgColor=fill)
+            if ci == 9 and val:
+                cell.number_format = '"$"#,##0'
+        ws.row_dimensions[r_idx].height = 50
+
+        # ── Foto embebida — try/except individual: UN repuesto con foto
+        # rota NUNCA debe tumbar la exportación completa de los demás. ──
+        fotos = fotos_por_repuesto.get(rep["id"], [])
+        if fotos:
+            try:
+                img_bytes = _foto_bytes(fotos[0])
+                if img_bytes:
+                    img = XLImage(io.BytesIO(img_bytes))
+                    max_box = 60
+                    w, h = (img.width or max_box), (img.height or max_box)
+                    scale = min(max_box / w, max_box / h) if w and h else 1
+                    img.width = max(1, round(w * scale))
+                    img.height = max(1, round(h * scale))
+                    ws.add_image(img, f"A{r_idx}")
+                else:
+                    _sin_foto_celda(r_idx, bg)
+            except Exception as e_img:
+                print(f"[repstock_exportar_excel] foto rota repuesto id={rep.get('id')}: {e_img}", flush=True)
+                _sin_foto_celda(r_idx, bg)
+        else:
+            _sin_foto_celda(r_idx, bg)
+
+        r_idx += 1
+
+    widths = [10, 20, 40, 18, 10, 12, 16, 18, 14, 22, 30, 22, 14, 30, 16, 16]
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.freeze_panes = "B3"
+    ws.auto_filter.ref = f"A2:{get_column_letter(NCOLS)}{max(2, r_idx - 1)}"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    _mant_log("repuesto_stock", 0, "exportar_excel",
+              f"{len(rows)} repuestos exportados a Excel ({alcance_txt})")
+
+    fname = f"Repuestos_ILUS_{_now.strftime('%Y-%m-%d')}.xlsx"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=fname,
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  FINANZAS DEL CLIENTE — agregados de ingresos/costos/margen
 # ══════════════════════════════════════════════════════════════════════
