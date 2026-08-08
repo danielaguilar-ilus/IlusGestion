@@ -56850,8 +56850,11 @@ def mant_api_incidencias_importar():
 
 @app.route("/repuestos")
 @_mant_required
-@_no_tecnico
 def repuestos_hub_list():
+    # 2026-08-08 (Daniel, levantamiento con Juan Pablo): los técnicos SÍ
+    # deben poder ver y cargar la Bodega de Repuestos -- es el trabajo de
+    # terreno que ellos mismos hacen. @_no_tecnico quitado a propósito
+    # (antes bloqueaba TODA la página para role='tecnico').
     """Repuestos (central) — 2026-07-12: ÚNICA vista NUEVA de este
     rediseño (Repuestos hoy solo vivía por-cliente, dentro de la pestaña
     'Repuestos' de la ficha). Lista repuestos de TODOS los clientes,
@@ -81571,12 +81574,15 @@ def _repstock_contexto_bodega():
     rows = mysql_fetchall(
         f"SELECT r.*, m.nombre AS marca_nombre, "
         f"       u.codigo AS ubicacion_codigo, u.nombre AS ubicacion_nombre, "
-        f"       c.razon_social AS cliente_nombre, t.numero_ticket AS ticket_numero "
+        f"       c.razon_social AS cliente_nombre, t.numero_ticket AS ticket_numero, "
+        f"       pv.nombre AS proveedor_nombre, pv.contacto_nombre AS proveedor_contacto, "
+        f"       pv.telefono AS proveedor_telefono, pv.email AS proveedor_email "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
         f"  LEFT JOIN mant_clientes c ON c.id = r.cliente_id "
         f"  LEFT JOIN tk_tickets t ON t.id = r.ticket_id "
+        f"  LEFT JOIN mant_proveedores_repuesto pv ON pv.id = r.proveedor_id "
         f" WHERE {where_sql} ORDER BY r.sku ASC LIMIT %s OFFSET %s",
         tuple(params) + (page_size, offset)
     ) or []
@@ -81641,7 +81647,6 @@ def repuestos_bodega_list():
 
 @app.route("/mantenciones/api/repuestos-stock", methods=["POST"])
 @_mant_required
-@_no_tecnico
 def repstock_crear():
     """Alta de repuesto. El SKU NO viene del cliente: se genera automático
     (REP-<MARCA>-0001, bloqueado en la UI — Daniel 2026-08-07: "bloqueamos
@@ -81707,7 +81712,6 @@ def repstock_crear():
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["PUT"])
 @_mant_required
-@_no_tecnico
 def repstock_editar(rid):
     # El SKU es autogenerado e inmutable (2026-08-07): si llega en el body
     # se ignora en silencio — cambiarlo rompería etiquetas ya impresas.
@@ -81755,7 +81759,6 @@ def repstock_editar(rid):
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["DELETE"])
 @_mant_required
-@_no_tecnico
 def repstock_eliminar(rid):
     """Soft-delete (Regla #5) — nunca se borra físicamente desde acá."""
     rep = mysql_fetchone("SELECT sku FROM mant_repuestos_stock WHERE id=%s", (rid,))
@@ -81804,7 +81807,11 @@ def repstock_ubicacion_eliminar(uid):
 @_no_tecnico
 def repstock_marca_eliminar(mid):
     """Desactiva una marca (soft-delete). Mismo criterio que ubicaciones:
-    no se quita si hay repuestos usándola."""
+    no se quita si hay repuestos usándola. Daniel 2026-08-08: solo
+    superadmin puede borrar marcas -- vienen sincronizadas del ERP, no
+    son un dato local cualquiera que cualquiera deba poder tocar."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede quitar marcas"}), 403
     marca = mysql_fetchone(
         "SELECT nombre FROM mant_repuestos_marcas WHERE id=%s", (mid,))
     if not marca:
@@ -81826,7 +81833,6 @@ def repstock_marca_eliminar(mid):
 
 @app.route("/mantenciones/api/repuestos-stock/ubicaciones", methods=["POST"])
 @_mant_required
-@_no_tecnico
 def repstock_ubicacion_crear():
     d = request.get_json(silent=True) or {}
     codigo = (d.get("codigo") or "").strip()[:60]
@@ -81855,7 +81861,6 @@ def repstock_ubicacion_crear():
 
 @app.route("/mantenciones/api/repuestos-stock/marcas", methods=["POST"])
 @_mant_required
-@_no_tecnico
 def repstock_marca_crear():
     d = request.get_json(silent=True) or {}
     nombre = (d.get("nombre") or "").strip()[:120]
@@ -81904,7 +81909,6 @@ REPSTOCK_MAX_MODELOS = 3   # Daniel 2026-08-07: "se puede asociar hasta tres má
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos", methods=["POST"])
 @_mant_required
-@_no_tecnico
 def repstock_foto_subir(rid):
     """Hasta 3 fotos por repuesto — clon del patrón de Incidencias
     (tabla hija gcs_key+orden, _uploader_upload a GCS, cleanup del blob
@@ -81970,7 +81974,6 @@ def repstock_foto_subir(rid):
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>", methods=["DELETE"])
 @_mant_required
-@_no_tecnico
 def repstock_foto_borrar(rid, fid):
     foto = mysql_fetchone(
         "SELECT gcs_key FROM mant_repuestos_stock_fotos WHERE id=%s AND repuesto_id=%s",
@@ -81988,7 +81991,6 @@ def repstock_foto_borrar(rid, fid):
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/fotos/<int:fid>/principal", methods=["POST"])
 @_mant_required
-@_no_tecnico
 def repstock_foto_principal(rid, fid):
     """Marca una foto como principal (la que se ve como miniatura en la
     tabla — Daniel 2026-08-07: "poder seleccionar cual de las 3 sera la
@@ -82090,7 +82092,6 @@ def repstock_buscar_clientes():
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos", methods=["POST"])
 @_mant_required
-@_no_tecnico
 def repstock_modelo_asociar(rid):
     d = request.get_json(silent=True) or {}
     try:
@@ -82119,7 +82120,6 @@ def repstock_modelo_asociar(rid):
 
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>/modelos/<int:producto_id>", methods=["DELETE"])
 @_mant_required
-@_no_tecnico
 def repstock_modelo_quitar(rid, producto_id):
     mysql_execute(
         "DELETE FROM mant_repuestos_stock_modelos WHERE repuesto_id=%s AND producto_id=%s",
@@ -88491,8 +88491,20 @@ def _ensure_repuestos_bodega_tables():
                 "COMMENT 'FK conceptual a tk_tickets.id' AFTER cliente_id, "
                 "ADD INDEX idx_repstock_ticket (ticket_id)"
             )
+        # 2026-08-08 (Daniel): "administrar los proveedores... si es Drax
+        # debe tener su contraparte, no ir atándolo a la marca" -- el
+        # proveedor es independiente de la marca (un proveedor puede
+        # traer varias marcas). Reusa mant_proveedores_repuesto, que ya
+        # existía para el módulo viejo de repuestos (mant_repuestos) con
+        # CRUD completo (/mantenciones/api/proveedores-repuesto).
+        if "proveedor_id" not in _existing_repstock_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN proveedor_id INT NULL "
+                "COMMENT 'FK conceptual a mant_proveedores_repuesto.id' AFTER marca_id, "
+                "ADD INDEX idx_repstock_proveedor (proveedor_id)"
+            )
     except Exception as e:
-        print(f"[ensure_repuestos_stock] ALTER cliente_id/ticket_id: {e}", flush=True)
+        print(f"[ensure_repuestos_stock] ALTER cliente_id/ticket_id/proveedor_id: {e}", flush=True)
 
     try:
         mysql_execute("""

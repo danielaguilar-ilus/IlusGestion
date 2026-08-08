@@ -542,8 +542,11 @@
        tiene que contraer") — agrupa lo de apoyo al taller (plantillas de
        checklist, proveedores/repuestos, técnicos) detrás de un segundo
        acordeón, igual patrón que "Configuración" en Transporte. Nada se
-       elimina (Regla #4.2), solo se reordena. #}
-    {% if (current_user and current_user.role != 'tecnico') or not is_tecnico %}
+       elimina (Regla #4.2), solo se reordena.
+       2026-08-08: el acordeón ya NO se esconde completo para técnicos --
+       adentro Repuestos/Bodega de Repuestos SÍ deben verse (levantamiento
+       de terreno); Plantillas/Proveedores siguen ocultos por su propio
+       "if" interno, sin cambios ahí. #}
     <button class="sg-subtoggle" data-sgsub="st-taller">
       <i class="bi bi-tools sg-subico"></i><span>Taller</span>
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -558,6 +561,11 @@
          class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
         <i class="bi bi-truck"></i><span>Proveedores</span>
       </a>
+      {% endif %}
+      {# 2026-08-08 (Daniel, levantamiento con Juan Pablo): Repuestos y
+         Bodega de Repuestos SÍ visibles para técnicos -- es el trabajo de
+         terreno que ellos hacen. Antes quedaban escondidos junto con
+         Plantillas/Proveedores (Regla #4.2: se abre solo lo pedido). #}
       <a href="{{ url_for('repuestos_hub_list') }}"
          class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
         <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
@@ -566,7 +574,6 @@
          class="sidebar-link{% if request.endpoint == 'repuestos_bodega_list' %} active{% endif %}">
         <i class="bi bi-box-seam"></i><span>Bodega de Repuestos</span>
       </a>
-      {% endif %}
       {% if not is_tecnico %}
       <a href="{{ url_for('mant_tecnicos_externos_index') }}"
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
@@ -574,7 +581,6 @@
       </a>
       {% endif %}
     </div>
-    {% endif %}
     {% endif %}
 
     {# ══ LOGÍSTICA ══ #}

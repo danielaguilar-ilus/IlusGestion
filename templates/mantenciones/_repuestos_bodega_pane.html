@@ -175,9 +175,14 @@
           <div class="col-md-6">
             <label class="form-label small fw-semibold">Ubicación</label>
             <input type="hidden" id="rbUbicacion">
-            <div class="rb-modelo-resultados">
-              <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
-              <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
+            <div class="d-flex gap-1">
+              <div class="rb-modelo-resultados flex-grow-1">
+                <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
+                <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
+              </div>
+              <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras" style="display:none">
+                <i class="bi bi-upc-scan"></i>
+              </button>
             </div>
             <div id="rbUbicacionSeleccionada" class="mt-1"></div>
           </div>
@@ -247,6 +252,7 @@
 
 <script src="{{ url_for('static', filename='foto_editor.js') }}"></script>
 <script>
+const RB_ES_SUPERADMIN = {{ 'true' if permissions.superadmin else 'false' }};
 let RB_MODAL = null;
 let RB_MODELOS_ACTUALES = [];
 let RB_FOTOS_ACTUALES = [];
@@ -443,7 +449,9 @@ async function rbBuscarMarcas(){
   let html = RB_MARCA_RESULTS.map((m, i) =>
     '<div class="rb-modelo-resultado-item d-flex justify-content-between align-items-center" onclick="rbPickMarca(' + i + ')">' +
     '<strong>' + escHtmlRb(m.nombre) + '</strong>' +
-    '<i class="bi bi-trash text-muted" style="font-size:.72rem;padding:2px 4px" title="Quitar de la lista" onclick="rbCatBorrarMarca(event,' + i + ')"></i>' +
+    (RB_ES_SUPERADMIN
+      ? '<i class="bi bi-trash text-muted" style="font-size:.72rem;padding:2px 4px" title="Quitar de la lista (solo superadmin)" onclick="rbCatBorrarMarca(event,' + i + ')"></i>'
+      : '') +
     '</div>'
   ).join('');
   const existe = RB_MARCA_RESULTS.some(m => m.nombre.toLowerCase() === q.toLowerCase());
