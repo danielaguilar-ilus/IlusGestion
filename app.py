@@ -81317,7 +81317,8 @@ def mant_proveedores_repuesto_list():
 def mant_proveedor_repuesto_update(pid):
     """Edita contacto/canal preferido de un proveedor de repuestos."""
     d = request.get_json(silent=True) or {}
-    allowed = ["contacto_nombre", "telefono", "email", "canal_preferido", "notas"]
+    allowed = ["contacto_nombre", "telefono", "email", "canal_preferido", "notas",
+               "contacto2_nombre", "contacto2_telefono", "contacto2_email"]
     sets, vals = [], []
     for f in allowed:
         if f in d:
@@ -81354,6 +81355,9 @@ def mant_proveedor_repuesto_crear():
         "email": (d.get("email") or "").strip()[:150] or None,
         "canal_preferido": canal,
         "notas": (d.get("notas") or "").strip() or None,
+        "contacto2_nombre": (d.get("contacto2_nombre") or "").strip()[:150] or None,
+        "contacto2_telefono": (d.get("contacto2_telefono") or "").strip()[:50] or None,
+        "contacto2_email": (d.get("contacto2_email") or "").strip()[:150] or None,
     }
     cols = [c for c in fields if fields[c] is not None]
     vals = [fields[c] for c in cols]
@@ -88167,6 +88171,28 @@ def _ensure_mant_intel_tables():
         """)
     except Exception as e:
         print(f"[ensure_intel] mant_proveedores_repuesto: {e}", flush=True)
+
+    # 2026-08-08 (Daniel): "proveedores quisiera tener un secundario" ->
+    # confirmado con Daniel: un SEGUNDO CONTACTO por proveedor (no un
+    # segundo proveedor) -- la misma empresa puede tener dos personas de
+    # contraparte. ALTER idempotente, mismo patrón que proveedor_id.
+    try:
+        _existing_prov_cols = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_proveedores_repuesto'"
+            ) or [])
+        }
+        if "contacto2_nombre" not in _existing_prov_cols:
+            mysql_execute(
+                "ALTER TABLE mant_proveedores_repuesto "
+                "ADD COLUMN contacto2_nombre VARCHAR(200) NULL COMMENT 'Contacto secundario/respaldo' AFTER email, "
+                "ADD COLUMN contacto2_telefono VARCHAR(50) NULL AFTER contacto2_nombre, "
+                "ADD COLUMN contacto2_email VARCHAR(200) NULL AFTER contacto2_telefono"
+            )
+    except Exception as e:
+        print(f"[ensure_intel] ALTER mant_proveedores_repuesto.contacto2_*: {e}", flush=True)
 
     # 2026-07-13 (Daniel): "puede ser una [máquina], pueden ser varias" —
     # relación muchos-a-muchos ADICIONAL a mant_repuestos.maquina_id (esa

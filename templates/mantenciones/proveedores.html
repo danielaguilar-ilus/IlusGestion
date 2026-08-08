@@ -75,10 +75,11 @@
       {% endif %}
     </span>
     {% endif %}
+    {% if p.contacto2_nombre %}<div class="prov-row"><i class="bi bi-person-lines-fill"></i>{{ p.contacto2_nombre }} <span class="text-muted" style="font-size:.72rem">(respaldo)</span></div>{% endif %}
     {% if p.notas %}<div class="prov-notas">{{ p.notas }}</div>{% endif %}
     <div class="mt-2">
       <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;padding:3px 10px"
-              onclick="event.stopPropagation(); provAbrirEditar({{ p.id }}, '{{ p.nombre|e }}', '{{ p.contacto_nombre or ''|e }}', '{{ p.telefono or ''|e }}', '{{ p.email or ''|e }}', '{{ p.canal_preferido or '' }}', '{{ (p.notas or '')|e }}')">
+              onclick="event.stopPropagation(); provAbrirEditar({{ p.id }}, '{{ p.nombre|e }}', '{{ p.contacto_nombre or ''|e }}', '{{ p.telefono or ''|e }}', '{{ p.email or ''|e }}', '{{ p.canal_preferido or '' }}', '{{ (p.notas or '')|e }}', '{{ p.contacto2_nombre or ''|e }}', '{{ p.contacto2_telefono or ''|e }}', '{{ p.contacto2_email or ''|e }}')">
         <i class="bi bi-pencil"></i> Editar</button>
     </div>
   </div>
@@ -129,6 +130,19 @@
             <option value="email">Email</option>
           </select>
         </div>
+        <hr>
+        <div class="mb-2">
+          <label class="form-label small fw-bold text-muted mb-1">Contacto secundario <span class="fw-normal">(respaldo — opcional)</span></label>
+          <input type="text" class="form-control mb-2" id="provContacto2Nombre" placeholder="Nombre" style="font-size:16px">
+          <div class="row g-2">
+            <div class="col-6">
+              <input type="tel" class="form-control" id="provContacto2Telefono" placeholder="Teléfono" style="font-size:16px">
+            </div>
+            <div class="col-6">
+              <input type="email" class="form-control" id="provContacto2Email" placeholder="Correo" style="font-size:16px">
+            </div>
+          </div>
+        </div>
         <div class="mb-1">
           <label class="form-label small fw-bold">Notas</label>
           <textarea class="form-control" id="provNotas" rows="3" style="font-size:16px"></textarea>
@@ -174,10 +188,13 @@ function provAbrirNuevo(){
   document.getElementById('provEmail').value = '';
   document.getElementById('provCanal').value = '';
   document.getElementById('provNotas').value = '';
+  document.getElementById('provContacto2Nombre').value = '';
+  document.getElementById('provContacto2Telefono').value = '';
+  document.getElementById('provContacto2Email').value = '';
   (_provModal || new bootstrap.Modal(document.getElementById('modalProveedor'))).show();
 }
 
-function provAbrirEditar(id, nombre, contacto, telefono, email, canal, notas){
+function provAbrirEditar(id, nombre, contacto, telefono, email, canal, notas, contacto2Nombre, contacto2Telefono, contacto2Email){
   document.getElementById('modalProveedorTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar proveedor';
   document.getElementById('provId').value = id;
   document.getElementById('provNombre').value = nombre || '';
@@ -186,6 +203,9 @@ function provAbrirEditar(id, nombre, contacto, telefono, email, canal, notas){
   document.getElementById('provEmail').value = email || '';
   document.getElementById('provCanal').value = canal || '';
   document.getElementById('provNotas').value = notas || '';
+  document.getElementById('provContacto2Nombre').value = contacto2Nombre || '';
+  document.getElementById('provContacto2Telefono').value = contacto2Telefono || '';
+  document.getElementById('provContacto2Email').value = contacto2Email || '';
   (_provModal || new bootstrap.Modal(document.getElementById('modalProveedor'))).show();
 }
 
@@ -200,6 +220,9 @@ async function provGuardar(){
     email: document.getElementById('provEmail').value.trim(),
     canal_preferido: document.getElementById('provCanal').value,
     notas: document.getElementById('provNotas').value.trim(),
+    contacto2_nombre: document.getElementById('provContacto2Nombre').value.trim(),
+    contacto2_telefono: document.getElementById('provContacto2Telefono').value.trim(),
+    contacto2_email: document.getElementById('provContacto2Email').value.trim(),
   };
   const url = id ? `/mantenciones/api/proveedores-repuesto/${id}` : '/mantenciones/api/proveedores-repuesto';
   const method = id ? 'PUT' : 'POST';

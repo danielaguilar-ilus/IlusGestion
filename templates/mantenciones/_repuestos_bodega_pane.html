@@ -128,12 +128,13 @@
   </thead>
   <tbody>
     {% for r in bod_repuestos %}
-    <tr class="{{ 'rb-bajo-min' if r.bajo_minimo else '' }}" data-id="{{ r.id }}">
-      <td><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
+    {% set rfotos = fotos_por_repuesto.get(r.id, []) %}
+    <tr class="{{ 'rb-bajo-min' if r.bajo_minimo else '' }}" data-id="{{ r.id }}" style="cursor:pointer"
+        onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})' title="Click para editar">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
       <td class="rb-sku">{{ r.sku }}</td>
       <td>
-        {% set rfotos = fotos_por_repuesto.get(r.id, []) %}
-        {% if rfotos %}<img src="{{ rfotos[0].url }}" alt="" loading="lazy" onclick="window.open('{{ rfotos[0].url }}','_blank')" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-right:10px;vertical-align:middle;cursor:zoom-in">{% endif %}{{ r.descripcion }}
+        {% if rfotos %}<img src="{{ rfotos[0].url }}" alt="" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-right:10px;vertical-align:middle">{% endif %}{{ r.descripcion }}
         {% if r.bajo_minimo %}<span class="rb-bajo-min-badge">BAJO MÍNIMO</span>{% endif %}
       </td>
       <td>{{ r.cantidad|round(2) }}</td>
@@ -152,8 +153,7 @@
         {% if r.ticket_numero %}<span class="rb-chip" style="background:#fef3c7;color:#92400e">{{ r.ticket_numero }}</span>{% endif %}
         {% if not r.cliente_nombre and not r.ticket_numero %}<span class="text-muted" style="font-size:.78rem">—</span>{% endif %}
       </td>
-      <td class="text-nowrap">
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})' title="Editar"><i class="bi bi-pencil"></i></button>
+      <td class="text-nowrap" onclick="event.stopPropagation()">
         <button type="button" class="btn btn-sm btn-outline-dark" onclick="rbImprimirUno({{ r.id }})" title="Imprimir etiqueta"><i class="bi bi-tag"></i></button>
         <button type="button" class="btn btn-sm btn-outline-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')" title="Desactivar"><i class="bi bi-trash"></i></button>
       </td>
@@ -397,6 +397,19 @@
                    autocomplete="email" oninput="rbpLimpiarEstado('rbpEmail')" onblur="rbpValidarEmail()">
             <div class="rb-input-error" id="rbpEmail_err">Email inválido — revisa el formato (ej: contacto@proveedor.com)</div>
             <div class="rb-input-ok" id="rbpEmail_ok">✓ Email válido</div>
+          </div>
+          <div class="col-12">
+            <hr class="my-1">
+            <label class="form-label small fw-semibold text-muted">Contacto secundario <span class="fw-normal">(respaldo — opcional)</span></label>
+          </div>
+          <div class="col-md-4">
+            <input type="text" class="form-control" id="rbpContacto2Nombre" maxlength="150" placeholder="Nombre">
+          </div>
+          <div class="col-md-4">
+            <input type="tel" class="form-control" id="rbpContacto2Telefono" maxlength="50" placeholder="Teléfono">
+          </div>
+          <div class="col-md-4">
+            <input type="email" class="form-control" id="rbpContacto2Email" maxlength="150" placeholder="Correo">
           </div>
           <div class="col-12">
             <label class="form-label small fw-semibold">Notas</label>
@@ -774,7 +787,8 @@ function rbAbrirNuevoProveedor(asignarAMarca){
   document.getElementById('rbProveedorResultadosList').style.display = 'none';
   const qActual = document.getElementById('rbProveedorBuscar').value.trim();
   document.getElementById('rbpNombre').value = qActual;
-  ['rbpContacto','rbpTelefono','rbpEmail','rbpNotas'].forEach(id => document.getElementById(id).value = '');
+  ['rbpContacto','rbpTelefono','rbpEmail','rbpNotas',
+   'rbpContacto2Nombre','rbpContacto2Telefono','rbpContacto2Email'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rbpCanal').value = '';
   RB_PROVEEDOR_MODAL.show();
   setTimeout(() => document.getElementById(qActual ? 'rbpContacto' : 'rbpNombre').focus(), 350);
@@ -831,6 +845,9 @@ async function rbProveedorGuardar(){
     email: document.getElementById('rbpEmail').value.trim(),
     canal_preferido: document.getElementById('rbpCanal').value,
     notas: document.getElementById('rbpNotas').value.trim(),
+    contacto2_nombre: document.getElementById('rbpContacto2Nombre').value.trim(),
+    contacto2_telefono: document.getElementById('rbpContacto2Telefono').value.trim(),
+    contacto2_email: document.getElementById('rbpContacto2Email').value.trim(),
   };
   const r = await fetch('/mantenciones/api/proveedores-repuesto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   const d = await r.json().catch(() => ({}));
