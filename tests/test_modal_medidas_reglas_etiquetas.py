@@ -186,3 +186,62 @@ class TestTopesDeMedidaEnLasTRESPuertas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestPaginaDeFichasIncompletas(unittest.TestCase):
+    """Diagnóstico de las fichas que alcanzaron a entrar ANTES del arreglo.
+
+    Daniel pidió una página, no una consulta suelta: "haz la página de
+    diagnóstico". Es SOLO LECTURA a propósito — lista y explica qué le falta
+    a cada ficha, pero no corrige ni borra: eso se hace a mano desde
+    Etiquetas, que es donde viven las reglas.
+    """
+
+    def test_la_ruta_existe_y_es_solo_superadmin(self):
+        fn = _fuente_funcion(APP_SRC, "admin_fichas_incompletas")
+        self.assertIn("admin_fichas_incompletas", APP_SRC)
+        i = APP_SRC.find("def admin_fichas_incompletas")
+        cabecera = APP_SRC[max(0, i - 300):i]
+        self.assertIn("superadmin", cabecera,
+                      "la página quedó abierta a cualquier rol")
+        self.assertIn("/admin/fichas-incompletas", cabecera)
+
+    def test_no_escribe_nada_en_la_base(self):
+        """Si algún día alguien le agrega un botón de 'corregir', que sea una
+        decisión consciente y no algo que se cuele — esta página existe para
+        MIRAR."""
+        fn = _fuente_funcion(APP_SRC, "admin_fichas_incompletas")
+        for peligro in ("UPDATE ", "DELETE ", "INSERT ", "mysql_execute"):
+            with self.subTest(peligro):
+                self.assertNotIn(peligro, fn,
+                                 f"la página de diagnóstico ejecuta {peligro.strip()}: "
+                                 f"dejó de ser solo lectura")
+
+    def test_detecta_las_cuatro_senales_del_caso_bbv9(self):
+        fn = _fuente_funcion(APP_SRC, "admin_fichas_incompletas")
+        # Las mismas cuatro cosas que le faltaban al equipo mal creado.
+        self.assertIn("codigo", fn)          # sin código de impresión
+        self.assertIn("estado", fn)          # estado inválido ('activo')
+        self.assertIn("nombre", fn)          # nombre == SKU
+        self.assertIn("n_bultos", fn)        # sin bultos
+        self.assertIn("motivos", fn,
+                      "no explica QUÉ le falta a cada ficha")
+
+    def test_los_estados_validos_son_los_de_etiquetas(self):
+        """Se mira la TUPLA de estados válidos, no el texto del archivo: el
+        comentario menciona 'activo' a propósito (es el valor que causó el
+        bug) y un grep suelto lo confundiría con código."""
+        fn = _fuente_funcion(APP_SRC, "admin_fichas_incompletas")
+        m = re.search(r"ESTADOS_VALIDOS\s*=\s*\(([^)]*)\)", fn, re.IGNORECASE)
+        self.assertIsNotNone(m, "no se encontró la tupla de estados válidos")
+        valores = {v.strip().strip("'\"").lower() for v in m.group(1).split(",") if v.strip()}
+        self.assertEqual({"pendiente", "confirmado", "impreso"}, valores)
+        self.assertNotIn("activo", valores,
+                         "'activo' se coló como estado válido: las fichas mal "
+                         "creadas dejarían de detectarse")
+
+    def test_esta_enlazada_en_el_menu(self):
+        with open("templates/base.html", encoding="utf-8", errors="ignore") as fh:
+            base = fh.read()
+        self.assertIn("admin_fichas_incompletas", base,
+                      "la página existe pero no hay cómo llegar a ella")

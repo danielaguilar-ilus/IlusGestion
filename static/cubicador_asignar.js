@@ -1696,10 +1696,27 @@ async function _actualizarCotizacionesReal(){
 
   const resid = document.getElementById('chkResid')?.checked || false;
 
+  // Bultos VIVOS del campo editable, igual criterio que la comuna de arriba.
+  // BUG REAL (2026-08-08, Daniel, caso FCV 11229): "la factura, cuando yo la
+  // llamo, tiene tres bultos... lo paso a uno, pero no lo actualiza". La
+  // cotizacion leia `_docData.totales.total_bultos` (el calculado del
+  // documento) e IGNORABA lo que el operador escribia en `cli-bultos`. Como
+  // Shipit no acepta mas de 1 bulto, bajarlo a 1 no servia de nada: el
+  // backend seguia recibiendo 3 y Shipit quedaba excluido para siempre.
+  //
+  // Ademas era una incoherencia de datos: al asignar a manifiesto SI se usa
+  // `cli-bultos` (~linea 3169), asi que se podia cotizar declarando 3 bultos
+  // y despachar declarando 1.
+  const _bultosLive = parseInt(
+    document.getElementById('cli-bultos')?.value || '', 10);
+  const bultosEfectivos = (Number.isFinite(_bultosLive) && _bultosLive > 0)
+    ? _bultosLive
+    : (_docData.totales.total_bultos || null);
+
   const cacheKey = JSON.stringify({
     peso:   _docData.totales.peso_pred,
     pesokg: _docData.totales.peso_kg,
-    bultos: _docData.totales.total_bultos,
+    bultos: bultosEfectivos,
     comuna, resid,
     valor:  _docData.header.valor_neto,
   });
@@ -1733,7 +1750,7 @@ async function _actualizarCotizacionesReal(){
         // de un bulto" es la restricción que más le preocupa. Sin esto el
         // backend no tenía forma de saber cuántos bultos tiene el envío y
         // no podía aplicar la regla.
-        n_bultos:       _docData.totales.total_bultos || null,
+        n_bultos:       bultosEfectivos,
         // Contexto del documento para audit trail
         tido:           _docData.header.tido || '',
         nudo:           _docData.header.nudo || '',
@@ -2902,6 +2919,34 @@ function _wireDireccionPlaces(){
   });
 }
 document.addEventListener('DOMContentLoaded', _wireDireccionPlaces);
+
+// ── Recotizar cuando cambian los datos que definen el envio ──────────────
+// 2026-08-08 (Daniel, caso FCV 11229): "si cambia el bulto, cambia la
+// direccion, o cambia la comuna, necesito que se recalcule y se integre en
+// la cotizacion de couriers".
+//
+// Antes habia que apretar "Actualizar" a mano y no era evidente: el operador
+// bajaba los bultos de 3 a 1 esperando que apareciera Shipit (que no acepta
+// mas de 1 bulto), veia los mismos precios de antes y concluia que Shipit
+// estaba roto. La comuna ya recotizaba sola al validarla con Google Places,
+// pero no al escribirla a mano.
+//
+// Se escucha 'change' (no 'input'): dispara al salir del campo o al usar las
+// flechas del number, no en cada tecla — asi no se lanza una peticion por
+// cada digito mientras se escribe "12".
+function _wireRecotizarEnCambio(){
+  ['cli-bultos', 'cli-comuna', 'cli-dir'].forEach(function(id){
+    const el = document.getElementById(id);
+    if (!el || el.dataset.recotizarWired) return;
+    el.dataset.recotizarWired = '1';
+    el.addEventListener('change', function(){
+      // Sin documento cargado no hay nada que cotizar.
+      if (typeof _docData === 'undefined' || !_docData) return;
+      if (typeof actualizarTarifas === 'function') actualizarTarifas();
+    });
+  });
+}
+document.addEventListener('DOMContentLoaded', _wireRecotizarEnCambio);
 
 async function validarParaManifiesto(){
   if(!_docData){
