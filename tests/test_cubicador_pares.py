@@ -388,3 +388,67 @@ class TestNingunCalculoSueltoEnTodoElProyecto(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestCubicajeSinLineasZZ(unittest.TestCase):
+    """Las lineas ZZ (servicios) fuera del cubicaje, conservando el monto.
+
+    Daniel, 2026-08-07: "en las cubicaciones deja limpio de ZZ, ya que son
+    servicios no productos, sin embargo podemos conservar el valor de ZZ Envio".
+
+    ZZENVIO / ZZINSTALACION / etc. son servicios facturados: no tienen peso,
+    volumen ni bultos. Aparecian como una fila "s/f - Cargar medidas" pidiendo
+    medidas de algo que no es carga, y su cantidad sumaba al total de UNIDADES
+    como si fueran piezas fisicas (18 en vez de 17 en la FCV 11225).
+
+    Lo que NO puede pasar: que al sacar la fila se pierda el MONTO del ZZ
+    Envio, que es lo que ILUS le cobro al cliente por el despacho y sostiene
+    todo el calculo de margen.
+    """
+
+    def _leer(self, ruta):
+        with open(ruta, encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+
+    def test_la_grilla_excluye_las_lineas_zz(self):
+        html = self._leer("templates/cubicador/index.html")
+        self.assertIn("rejectattr('es_zz')", html,
+                      "la grilla del Cubicador volvio a mostrar lineas de servicio")
+
+    def test_el_monto_del_zz_envio_se_lee_de_la_lista_completa(self):
+        """El bug mas facil de introducir acá: dejar el buscador de ZZENVIO
+        iterando la lista YA filtrada -> el monto queda en $0 para siempre."""
+        html = self._leer("templates/cubicador/index.html")
+        self.assertIn("lineas_todas", html)
+        i_ns = html.find("ns_zz = namespace")
+        self.assertGreater(i_ns, 0, "desaparecio el calculo del ZZ Envio")
+        bloque = html[i_ns:i_ns + 400]
+        self.assertIn("for l in lineas_todas", bloque,
+                      "el ZZ Envio se busca en la lista sin ZZ: siempre daria $0")
+
+    def test_el_payload_de_exportacion_excluye_zz_pero_guarda_el_monto(self):
+        src = APP_SRC
+        i = src.find("def _cubicador_export_payload")
+        self.assertGreater(i, 0)
+        bloque = src[i:i + 5000]
+        self.assertIn("if not l.get(\"es_zz\")", bloque,
+                      "el Excel/PDF volveria a traer las lineas de servicio")
+        # zzenvio por documento se calcula ANTES del filtro
+        self.assertLess(bloque.find("ZZENVIO"), bloque.find('if not l.get("es_zz")'),
+                        "el monto del ZZ Envio se calcula DESPUES del filtro -> quedaria en 0")
+
+    def test_el_pdf_excluye_zz_y_muestra_el_monto(self):
+        src = APP_SRC
+        i = src.find("def _cubicador_pdf_response_ilus")
+        self.assertGreater(i, 0)
+        bloque = src[i:i + 12000]
+        self.assertIn("zz_envio_monto", bloque)
+        self.assertIn("if not l.get(\"es_zz\")", bloque,
+                      "el PDF volvio a listar servicios como si fueran carga")
+        self.assertIn("_fila_zz_envio", bloque,
+                      "el monto del ZZ Envio no se muestra en el informe")
+
+    def test_asignar_y_cotizar_sigue_filtrando_zz(self):
+        # Esta pantalla YA filtraba; el cambio la deja consistente con el
+        # Cubicador. Si alguien quita este filtro, vuelven a divergir.
+        self.assertIn('if l.get("es_zz"):', APP_SRC)
