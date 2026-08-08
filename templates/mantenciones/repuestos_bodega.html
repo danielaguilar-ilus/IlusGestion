@@ -12,6 +12,9 @@
   </div>
   <div class="d-flex gap-2">
     <a href="/repuestos" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Ir a Repuestos</a>
+    {% if current_user.role != 'tecnico' %}
+    <a href="/mantenciones/proveedores" class="btn btn-sm btn-outline-secondary"><i class="bi bi-truck me-1"></i>Proveedores</a>
+    {% endif %}
     <button class="btn btn-sm btn-danger" type="button" onclick="rbAbrirNuevo()"><i class="bi bi-plus-lg me-1"></i>Nuevo repuesto</button>
   </div>
 </div>

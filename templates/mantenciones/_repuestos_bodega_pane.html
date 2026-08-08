@@ -182,7 +182,7 @@
                 <input type="text" class="form-control" id="rbUbicacionBuscar" placeholder="Escribe para buscar o crear: A-01-03..." autocomplete="off">
                 <div class="rb-modelo-resultados-list" id="rbUbicacionResultadosList"></div>
               </div>
-              <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras" style="display:none">
+              <button type="button" class="btn btn-outline-dark" id="rbBtnEscanear" onclick="rbEscanearUbicacion()" title="Escanear código de barras">
                 <i class="bi bi-upc-scan"></i>
               </button>
             </div>
@@ -770,20 +770,70 @@ function rbSetUbicacion(id, texto){
 
 // ── Escáner de código de barras para Ubicación (Daniel 2026-08-08:
 // "la ubicación la podemos tomar como un código de barra... capturarla
-// por fotografía... que se busque en el computador como que haga
-// captura"). Usa la BarcodeDetector nativa del navegador (Chrome/
-// Android) — sin librería externa, sin subir nada a ningún servidor.
-// Si el navegador no la soporta (ej. Safari/Firefox), el botón de
-// cámara simplemente no aparece y queda SOLO la búsqueda por texto,
-// que nunca se toca (Daniel: "deja esas dos opciones").
+// por fotografía"). Mismo motor de DOS capas que ya usa Etiquetas
+// (templates/index.html, Daniel 2026-08-08: "fíjate del código de
+// barras de las etiquetas"): BarcodeDetector NATIVO si el navegador lo
+// trae, y si no (confirmado: el Chrome de escritorio de Daniel NO lo
+// trae) cae al POLYFILL WASM (zxing-cpp) que cubre prácticamente
+// cualquier navegador. Antes el botón se ocultaba entero sin el
+// nativo — con el polyfill queda siempre visible; si ni así hay motor
+// disponible (sin internet), recién ahí avisa y sugiere la búsqueda
+// por texto, que nunca se toca (Daniel: "deja esas dos opciones").
 let RB_ESCANER_STREAM = null;
+let RB_DETECTOR_CLASS = null;
+let RB_POLY_PROMISE = null;
+function rbLoadDetectorPolyfill(){
+  if (window.BarcodeDetectionAPI) return Promise.resolve();
+  if (RB_POLY_PROMISE) return RB_POLY_PROMISE;
+  RB_POLY_PROMISE = new Promise((res, rej) => {
+    function inject(src, onFail){
+      const s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = res; s.onerror = onFail;
+      document.head.appendChild(s);
+    }
+    inject('https://cdn.jsdelivr.net/npm/barcode-detector@3/dist/iife/index.js', () => {
+      inject('https://unpkg.com/barcode-detector@3/dist/iife/index.js', rej);
+    });
+  });
+  return RB_POLY_PROMISE;
+}
+function rbDetectorReady(){
+  if (RB_DETECTOR_CLASS) return Promise.resolve(true);
+  const tryNative = ('BarcodeDetector' in window && !window.BarcodeDetectionAPI)
+    ? window.BarcodeDetector.getSupportedFormats()
+        .then(f => { if (f.indexOf('code_128') >= 0){ RB_DETECTOR_CLASS = window.BarcodeDetector; return true; } return false; })
+        .catch(() => false)
+    : Promise.resolve(false);
+  return tryNative.then(ok => {
+    if (ok) return true;
+    return rbLoadDetectorPolyfill().then(() => {
+      const C = (window.BarcodeDetectionAPI && window.BarcodeDetectionAPI.BarcodeDetector) || window.BarcodeDetector;
+      if (!C) return false;
+      RB_DETECTOR_CLASS = C;
+      return true;
+    }).catch(() => false);
+  });
+}
 function rbInicializarEscaner(){
-  const btn = document.getElementById('rbBtnEscanear');
-  if ('BarcodeDetector' in window) btn.style.display = '';
+  /* El botón ya viene visible en el HTML (ver arriba). Precarga el
+     polyfill en tiempo muerto si el nativo no está, igual que Etiquetas,
+     para que el primer escaneo real no espere la descarga. */
+  (window.requestIdleCallback || (f => setTimeout(f, 2500)))(() => {
+    if ('BarcodeDetector' in window) return;
+    rbLoadDetectorPolyfill().catch(() => {});
+  });
 }
 async function rbEscanearUbicacion(){
-  if (!('BarcodeDetector' in window)){
-    ilusToast('Este navegador no soporta escanear código de barras — usa la búsqueda por texto', {type:'warning'});
+  const btn = document.getElementById('rbBtnEscanear');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const ok = await rbDetectorReady();
+  btn.disabled = false;
+  btn.innerHTML = original;
+  if (!ok){
+    ilusToast('No se pudo activar el escáner (sin internet o navegador muy antiguo) — usa la búsqueda por texto', {type:'warning'});
     return;
   }
   const overlay = document.createElement('div');
@@ -797,7 +847,9 @@ async function rbEscanearUbicacion(){
   document.body.appendChild(overlay);
   document.getElementById('rbBtnCancelarEscaner').onclick = rbCerrarEscaner;
   try{
-    RB_ESCANER_STREAM = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}});
+    RB_ESCANER_STREAM = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720}}
+    });
   }catch(e){
     ilusToast('No se pudo acceder a la cámara — revisa los permisos', {type:'error'});
     rbCerrarEscaner();
@@ -805,9 +857,8 @@ async function rbEscanearUbicacion(){
   }
   const video = document.getElementById('rbEscanerVideo');
   video.srcObject = RB_ESCANER_STREAM;
-  const detector = new BarcodeDetector();
+  const detector = new RB_DETECTOR_CLASS({formats: ['code_128','code_39','ean_13','ean_8','upc_a','upc_e','itf']});
   let activo = true;
-  overlay.dataset.activo = '1';
   (async function loop(){
     while (activo && document.getElementById('rbEscanerOverlay')){
       try{
@@ -824,7 +875,7 @@ async function rbEscanearUbicacion(){
           }
         }
       }catch(e){ /* frame sin código legible, sigue intentando */ }
-      await new Promise(res => setTimeout(res, 250));
+      await new Promise(res => setTimeout(res, 200));
     }
   })();
 }

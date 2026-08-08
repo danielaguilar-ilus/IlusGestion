@@ -2,9 +2,9 @@
 {% block title %}Proveedores de repuestos — ILUS{% endblock %}
 {% block content %}
 <style>
-.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
 .prov-card{
-  background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px 20px;cursor:pointer;
+  background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:24px 26px;cursor:pointer;
   box-shadow:0 1px 3px rgba(15,23,42,.06);transition:.18s;position:relative;overflow:hidden;
 }
 .prov-card:hover{box-shadow:0 10px 28px -8px rgba(220,38,38,.28);border-color:#f3c9c9;transform:translateY(-2px)}
@@ -13,13 +13,13 @@
   background:linear-gradient(90deg,#dc2626,#f87171);opacity:0;transition:.18s;
 }
 .prov-card:hover::before{opacity:1}
-.prov-name{font-weight:800;font-size:1.05rem;color:#0a0a0a;margin-bottom:4px}
-.prov-contact{font-size:.82rem;color:#6b7280;margin-bottom:10px}
-.prov-row{font-size:.82rem;color:#374151;display:flex;align-items:center;gap:8px;margin-bottom:5px}
-.prov-row i{width:16px;color:#9ca3af}
+.prov-name{font-weight:800;font-size:1.28rem;color:#0a0a0a;margin-bottom:6px}
+.prov-contact{font-size:.95rem;color:#6b7280;margin-bottom:12px}
+.prov-row{font-size:.92rem;color:#374151;display:flex;align-items:center;gap:9px;margin-bottom:7px}
+.prov-row i{width:18px;color:#9ca3af;font-size:1rem}
 .prov-channel{
-  display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;
-  padding:4px 11px;border-radius:50px;color:#fff;margin-top:8px;
+  display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:800;
+  padding:5px 13px;border-radius:50px;color:#fff;margin-top:10px;
 }
 .prov-channel.whatsapp{background:#16a34a}
 .prov-channel.wechat{background:#07C160}
