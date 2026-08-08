@@ -1550,17 +1550,52 @@ def _uploader_destroy(public_id, **kwargs):
           f"no se puede borrar desde ILUS (queda huérfano allá).", flush=True)
 
 
+# Anchos de miniatura permitidos. Lista blanca a proposito: si se aceptara
+# cualquier ?w= del cliente, cada valor distinto generaria y almacenaria un
+# blob nuevo en GCS (un atacante podria llenar el bucket pidiendo w=1,2,3...).
+_THUMB_ANCHOS = (96, 160, 320)
+
+
+def _thumb_key(key, w):
+    """Key de la miniatura cacheada, derivada de la original. La original ya
+    se versiona con timestamp, asi que esta key tampoco cambia de contenido."""
+    base, _, ext = key.rpartition(".")
+    return f"{base or key}__t{w}.jpg"
+
+
 @app.route("/f/<path:key>")
 def serve_archivo(key):
     """Sirve un archivo desde Google Cloud Storage (fotos, contratos, firmas).
     Reemplaza las URLs públicas de Cloudinary. La app lee de GCS (el bucket NO
-    es público); las keys son no-adivinables → misma seguridad que antes."""
+    es público); las keys son no-adivinables → misma seguridad que antes.
+
+    ?w=<96|160|320> devuelve una MINIATURA cacheada en GCS.
+    Daniel 2026-08-08 ("hay que hacer esto escalable, que si agrego mil
+    productos con fotos siga igual de rapido"): la tabla de repuestos pedia la
+    foto ORIGINAL de 1600px (~156 KB) y la encogia a 48px por CSS. Medido en
+    produccion: 7 filas = 1.362 KB y hasta 4,4 s -> las miniaturas aparecian
+    como imagen ROTA mientras bajaban. A 1000 productos serian ~156 MB por
+    pagina. Con ?w=96 la misma foto pesa ~6 KB (26x menos).
+    La miniatura se genera UNA vez y queda guardada en GCS; las siguientes
+    visitas la sirven directo, sin volver a procesar."""
     import mimetypes
     import hashlib as _hl
+
+    # Ancho pedido (solo de la lista blanca; cualquier otro valor se ignora
+    # y se sirve el original, que es el comportamiento historico).
+    try:
+        _w = int(request.args.get("w") or 0)
+    except (TypeError, ValueError):
+        _w = 0
+    if _w not in _THUMB_ANCHOS:
+        _w = 0
+
     # ETag por key: las fotos se versionan con key nueva (timestamp), así que
     # el contenido de una key no cambia → revalidar con If-None-Match evita
     # descargar de GCS y re-enviar los bytes (304 en vez de 200 completo).
-    etag = '"' + _hl.md5(key.encode("utf-8")).hexdigest() + '"'
+    # El ancho entra en el ETag: si no, el navegador reusaria la miniatura
+    # para la foto grande y viceversa.
+    etag = '"' + _hl.md5((key + "|w" + str(_w)).encode("utf-8")).hexdigest() + '"'
     if etag in (request.headers.get("If-None-Match") or ""):
         resp = Response(status=304)
         resp.headers["ETag"] = etag
@@ -1569,6 +1604,44 @@ def serve_archivo(key):
     b = _gcs_bucket()
     if not b:
         return "Almacenamiento no disponible", 503
+
+    # ── Miniatura: servir de cache, o generarla y guardarla ──────────────
+    if _w:
+        tkey = _thumb_key(key, _w)
+        try:
+            tdata = b.blob(tkey).download_as_bytes()
+            resp = Response(tdata, mimetype="image/jpeg")
+            resp.headers["Cache-Control"] = "public, max-age=2592000"
+            resp.headers["Content-Disposition"] = "inline"
+            resp.headers["ETag"] = etag
+            resp.headers["X-Thumb"] = "hit"
+            return resp
+        except Exception:
+            pass  # no existe todavia -> se genera abajo
+        try:
+            orig = b.blob(key).download_as_bytes()
+        except Exception:
+            return "Archivo no encontrado", 404
+        try:
+            tdata, _tct = _img_resize_bytes(orig, max_dim=_w, quality=78)
+            # Guardar para las proximas visitas. Si falla el guardado (permisos,
+            # cuota), igual se sirve lo generado: nunca romper la vista por el
+            # cache.
+            try:
+                tb = b.blob(tkey)
+                tb.upload_from_string(tdata, content_type="image/jpeg")
+            except Exception as e_up:
+                print(f"[thumb] no se pudo cachear {tkey}: {e_up}", flush=True)
+            resp = Response(tdata, mimetype="image/jpeg")
+            resp.headers["Cache-Control"] = "public, max-age=2592000"
+            resp.headers["Content-Disposition"] = "inline"
+            resp.headers["ETag"] = etag
+            resp.headers["X-Thumb"] = "miss"
+            return resp
+        except Exception as e_th:
+            print(f"[thumb] fallo generando {tkey}: {e_th}", flush=True)
+            # Degradar al original en vez de romper la imagen.
+
     blob = b.blob(key)
     try:
         data = blob.download_as_bytes()

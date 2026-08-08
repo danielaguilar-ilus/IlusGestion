@@ -27,7 +27,7 @@
    cantidad + costo arriba, descripcion abajo. */
 .rb-sondeo-item{display:block !important;padding:9px 12px}
 .rb-sondeo-line{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
-.rb-sondeo-sku{font-family:ui-monospace,monospace;font-weight:800;color:#0a0a0a;font-size:.8rem;white-space:nowrap}
+.rb-sondeo-sku{font-family:ui-monospace,monospace;font-weight:800;color:#0a0a0a;font-size:.8rem;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .rb-sondeo-badge{font-size:.68rem;font-weight:800;padding:2px 9px;border-radius:50px;white-space:nowrap}
 .rb-sondeo-costo{font-size:.7rem;font-weight:800;color:#1d4ed8;background:#dbeafe;padding:2px 9px;border-radius:50px;white-space:nowrap;margin-left:auto}
 .rb-sondeo-desc{font-size:.78rem;color:#374151;margin-top:3px;line-height:1.35}
@@ -223,7 +223,10 @@
       <td onclick="event.stopPropagation()"><input type="checkbox" class="rb-row-check" value="{{ r.id }}" onchange="rbUpdateBtn()"></td>
       <td class="rb-sku">{{ r.sku }}</td>
       <td>
-        {% if rfotos %}<img src="{{ rfotos[0].url }}" alt="" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-right:10px;vertical-align:middle">{% endif %}{{ r.descripcion }}
+        {# ?w=96 -> miniatura cacheada en GCS (~6 KB) en vez de la foto original de
+   1600px (~156 KB). Medido: 7 filas pasaban de 1.362 KB / 4,4 s a algo
+   despreciable. Es lo que hace que esto aguante 1000 productos. #}
+{% if rfotos %}<img src="{{ rfotos[0].url }}?w=96" alt="" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;box-shadow:0 1px 4px rgba(0,0,0,.12);margin-right:10px;vertical-align:middle">{% endif %}{{ r.descripcion }}
         {% if r.bajo_minimo %}<span class="rb-bajo-min-badge">BAJO MÍNIMO</span>{% endif %}
       </td>
       <td>{{ r.cantidad|round(2) }}</td>
@@ -1321,7 +1324,10 @@ function rbRefreshStepStates(){
 const RB_FOTO_PX = 148;
 function _rbFotoTileHtml(f, esPrincipal, idAttr, verAttr, principalCall, borrarCall){
   return '<div style="position:relative;display:inline-block">' +
-    '<img src="' + f.url + '" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';' + verAttr + '">' +
+    // ?w=320 -> miniatura para el tile de 148px (nitida en pantallas retina)
+    // en vez de bajar la foto original de 1600px. Las pendientes (blob local)
+    // no llevan sufijo: ya son locales y no pasan por /f/.
+    '<img src="' + f.url + (f.tempId ? '' : '?w=320') + '" loading="lazy" decoding="async" style="width:' + RB_FOTO_PX + 'px;height:' + RB_FOTO_PX + 'px;object-fit:cover;border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.18);border:' + (esPrincipal ? '3px solid #dc2626' : '1px solid #e5e7eb') + ';' + verAttr + '">' +
     (esPrincipal
       ? '<span title="Foto principal: esta es la que se ve en la tabla" style="position:absolute;bottom:-8px;left:4px;right:4px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:800;text-align:center;border-radius:8px;padding:2px 0;letter-spacing:.02em;box-shadow:0 2px 6px rgba(220,38,38,.4)"><i class="bi bi-star-fill"></i> PRINCIPAL</span>'
       : '<button type="button" onclick="' + principalCall + '" title="Marcar como foto principal" ' +
