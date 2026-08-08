@@ -541,6 +541,11 @@ const RB_CSRF = {{ csrf_token()|tojson }};
 let RB_MODAL = null;
 let RB_PROVEEDOR_MODAL = null;
 let RB_MODELOS_ACTUALES = [];
+// 2026-08-08 (Daniel: "no me diga guarda el repuesto primero para poder
+// asociarle un modelo... quiero que esto quede de primera mano"): modelos
+// elegidos ANTES de guardar, mismo patrón que RB_FOTOS_PENDIENTES -- se
+// suben en bloque justo después de crear el repuesto (rbSubirModelosPendientes).
+let RB_MODELOS_PENDIENTES = [];
 let RB_FOTOS_ACTUALES = [];
 let RB_FOTOS_PENDIENTES = [];   // fotos elegidas ANTES de guardar (blob local, ver rbRenderFotos)
 let RB_DIRTY = false;          // hubo cambios → recargar la tabla al cerrar el modal
@@ -743,13 +748,12 @@ function rbAbrirNuevo(mantenerContexto){
   rbSetCliente(null, '');
   rbSetTicket(null, '');
   RB_MODELOS_ACTUALES = [];
+  RB_MODELOS_PENDIENTES = [];
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = [];
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
   RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
-  document.getElementById('rbModelosContenido').style.display = 'none';
-  document.getElementById('rbModelosSinGuardar').style.display = 'block';
   if (!mantenerContexto) RB_MODAL.show();
   setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
@@ -771,13 +775,12 @@ function rbAbrirEditar(r, modelos, fotos){
   rbSetCliente(r.cliente_id || null, r.cliente_nombre || '');
   rbSetTicket(r.ticket_id || null, r.ticket_numero || '');
   RB_MODELOS_ACTUALES = (modelos || []).map(m => ({producto_id: m.producto_id, producto_nombre: m.producto_nombre, sku: m.producto_sku}));
+  RB_MODELOS_PENDIENTES = [];
   rbRenderModelosChips();
   RB_FOTOS_ACTUALES = (fotos || []).map(f => ({id: f.id, url: f.url}));
   RB_FOTOS_PENDIENTES.forEach(f => URL.revokeObjectURL(f.url));
   RB_FOTOS_PENDIENTES = [];
   rbRenderFotos();
-  document.getElementById('rbModelosContenido').style.display = 'block';
-  document.getElementById('rbModelosSinGuardar').style.display = 'none';
   RB_MODAL.show();
 }
 
@@ -819,17 +822,16 @@ async function rbGuardar(crearOtro){
     }
     // Recién creado: el backend generó el SKU (REP-MARCA-0001)
     if (RB_FOTOS_PENDIENTES.length) await rbSubirFotosPendientes(d.id);
+    if (RB_MODELOS_PENDIENTES.length) await rbSubirModelosPendientes(d.id);
     ilusToast('✓ ' + (d.sku || 'Repuesto') + ' creado', {type:'success'});
     if (crearOtro){
       rbAbrirNuevo(true);   // mismo estante: conserva marca/ubicación/stock mínimo
       return;
     }
-    // Queda abierto en modo edición: ya se pueden subir fotos y asociar modelos
+    // Queda abierto en modo edición
     document.getElementById('rbId').value = d.id;
     document.getElementById('rbSku').value = d.sku || '';
     document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>' + (d.sku || 'Repuesto creado');
-    document.getElementById('rbModelosContenido').style.display = 'block';
-    document.getElementById('rbModelosSinGuardar').style.display = 'none';
     rbRenderFotos();
   }catch(e){
     ilusToast('Error de conexión al guardar', {type:'error'});
@@ -1307,7 +1309,7 @@ const RB_STEP_RULES = {
   2: () => document.getElementById('rbCantidad').value !== '' && Number(document.getElementById('rbCantidad').value) >= 0 &&
            document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0,
   3: () => !!document.getElementById('rbMarca').value || !!document.getElementById('rbProveedor').value,
-  4: () => RB_MODELOS_ACTUALES.length > 0,
+  4: () => (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0,
 };
 function rbRefreshStepStates(){
   Object.keys(RB_STEP_RULES).forEach(function(n){
@@ -1546,15 +1548,23 @@ async function rbFotoMarcarPrincipal(fid){
 
 function rbRenderModelosChips(){
   const cont = document.getElementById('rbModelosChips');
-  cont.innerHTML = RB_MODELOS_ACTUALES.length
-    ? RB_MODELOS_ACTUALES.map(m =>
-        '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
-        '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
-      ).join('')
-    : '<span class="text-muted small">Sin modelos asociados todavía.</span>';
+  const chipsGuardados = RB_MODELOS_ACTUALES.map(m =>
+    '<span class="rb-modelo-chip">' + escHtmlRb(m.producto_nombre) +
+    '<button type="button" onclick="rbQuitarModelo(' + m.producto_id + ')" title="Quitar">&times;</button></span>'
+  ).join('');
+  // Pendientes (repuesto sin guardar todavía): mismo chip, borde punteado +
+  // "(sin guardar)" para que quede claro que aún no está en el servidor.
+  const chipsPendientes = RB_MODELOS_PENDIENTES.map((m, i) =>
+    '<span class="rb-modelo-chip" style="border-style:dashed;opacity:.85">' + escHtmlRb(m.nombre) +
+    ' <span class="text-muted" style="font-size:.68rem">(sin guardar)</span>' +
+    '<button type="button" onclick="rbModeloPendienteQuitar(' + i + ')" title="Quitar">&times;</button></span>'
+  ).join('');
+  cont.innerHTML = (chipsGuardados + chipsPendientes) ||
+    '<span class="text-muted small">Sin modelos asociados todavía.</span>';
+  const total = RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length;
   // Al llegar al tope, se esconde el buscador (no tiene sentido buscar
   // un modelo más que no se va a poder guardar) y se muestra el aviso.
-  const alTope = RB_MODELOS_ACTUALES.length >= RB_MAX_MODELOS;
+  const alTope = total >= RB_MAX_MODELOS;
   document.getElementById('rbModelosBuscarWrap').style.display = alTope ? 'none' : '';
   document.getElementById('rbModelosLimiteMsg').style.display = alTope ? 'block' : 'none';
   rbRefreshStepStates();
@@ -1597,7 +1607,8 @@ async function rbBuscarModelos(){
     return;
   }
   RB_MODELOS_RESULTS = (d.productos || []).filter(p =>
-    !RB_MODELOS_ACTUALES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()));
+    !RB_MODELOS_ACTUALES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()) &&
+    !RB_MODELOS_PENDIENTES.some(m => (m.sku || '').toUpperCase() === (p.sku || '').toUpperCase()));
   if (!RB_MODELOS_RESULTS.length){
     list.innerHTML = '<div class="rb-modelo-resultado-item text-muted">Sin resultados en bodega 02</div>';
   } else {
@@ -1618,9 +1629,18 @@ async function rbAgregarModelo(sku, nombre){
   const id = document.getElementById('rbId').value;
   document.getElementById('rbModelosResultadosList').style.display = 'none';
   document.getElementById('rbModelosBuscar').value = '';
-  if (!id){ ilusToast('Guarda el repuesto primero', {type:'warning'}); return; }
-  if (RB_MODELOS_ACTUALES.length >= RB_MAX_MODELOS){
+  const total = RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length;
+  if (total >= RB_MAX_MODELOS){
     ilusToast('Máximo ' + RB_MAX_MODELOS + ' modelos por repuesto', {type:'warning'});
+    return;
+  }
+  // 2026-08-08 (Daniel: "no me diga guarda el repuesto primero... quiero
+  // que esto quede de primera mano"): sin id todavía -> se guarda solo en
+  // memoria (staging), igual que las fotos. Se asocia de verdad recién al
+  // crear el repuesto (rbSubirModelosPendientes, llamado desde rbGuardar).
+  if (!id){
+    RB_MODELOS_PENDIENTES.push({sku, nombre});
+    rbRenderModelosChips();
     return;
   }
   // El backend resuelve/crea el producto en el Catálogo si viene de un SKU
@@ -1638,6 +1658,31 @@ async function rbAgregarModelo(sku, nombre){
   } else {
     ilusToast(d.error || 'No se pudo asociar', {type:'error'});
   }
+}
+function rbModeloPendienteQuitar(i){
+  RB_MODELOS_PENDIENTES.splice(i, 1);
+  rbRenderModelosChips();
+}
+async function rbSubirModelosPendientes(id){
+  if (!RB_MODELOS_PENDIENTES.length) return;
+  const pendientes = RB_MODELOS_PENDIENTES;
+  RB_MODELOS_PENDIENTES = [];
+  for (const p of pendientes){
+    try{
+      const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/modelos', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sku: p.sku, nombre: p.nombre})
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok !== false && d.producto){
+        RB_MODELOS_ACTUALES.push({producto_id: d.producto.id, producto_nombre: d.producto.nombre, sku: d.producto.sku});
+      } else {
+        ilusToast((p.nombre || 'Un modelo') + ' no se pudo asociar', {type:'warning'});
+      }
+    }catch(e){
+      ilusToast('Error de conexión asociando un modelo', {type:'warning'});
+    }
+  }
+  rbRenderModelosChips();
 }
 async function rbQuitarModelo(producto_id){
   const id = document.getElementById('rbId').value;
