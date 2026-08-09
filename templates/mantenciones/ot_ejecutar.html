@@ -1099,6 +1099,18 @@
       .levd-sw .lbl{font-weight:700;font-size:.88rem;color:#0f172a}
       .levd-sw .form-check-input{width:2.6em;height:1.4em}
 
+      /* 2026-08-09 (Daniel): toggle "el equipo no está", SIEMPRE arriba de
+         todo -- control de calidad por documento (factura/NVI obliga a
+         tener todos los productos; alguno no volvió del evento). */
+      .levd-no-esta{background:#fff7ed;border:1.5px solid #fdba74;border-radius:12px;
+        padding:12px 14px;margin-bottom:14px;color:#9a3412;font-weight:700;font-size:.9rem}
+      .levd-no-esta small{color:#c2410c}
+      .levd-no-esta .form-check-input{width:2.6em;height:1.4em;flex-shrink:0;margin-left:10px}
+      .levd-no-esta .form-check-input:checked{background-color:#dc2626;border-color:#dc2626}
+      /* Pasos 2-5 se atenuan (no desaparecen, para no confundir) cuando el
+         equipo se marca "no está" -- ya no son obligatorios. */
+      .levd-step.levd-step-irrelevante{opacity:.4;pointer-events:none}
+
       /* ══════════════════════════════════════════════════════════════
          2026-08-08 (Daniel): "embellécelo... acuérdate del formato de los
          formularios de retiro enumerado, con la silueta izquierda en verde
@@ -1214,6 +1226,25 @@
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body pt-2">
+
+            {# 2026-08-09 (Daniel: "agrégale de primero si el equipo no está...
+               ahí ya se anula cualquier obligatoriedad de completar, porque
+               no existe. Solamente se declara que no está" -- caso real:
+               control de calidad por documento, donde una factura/NVI obliga
+               a tener todos los productos y alguno no volvió del evento).
+               SIEMPRE arriba de todo, antes de pedir foto o nombre. #}
+            <div class="levd-no-esta">
+              <label class="d-flex align-items-center justify-content-between w-100 m-0" style="cursor:pointer">
+                <span>
+                  <i class="bi bi-x-octagon-fill me-1"></i>Este equipo NO está
+                  <small class="d-block fw-normal" style="opacity:.85">No volvió del evento / no aparece en el control de calidad — anula fotos y nombre obligatorios</small>
+                </span>
+                <div class="form-check form-switch m-0">
+                  <input class="form-check-input" type="checkbox" id="levd_no_esta"
+                         onchange="levdToggleNoEsta(this.checked)">
+                </div>
+              </label>
+            </div>
 
             <section class="levd-step" id="levdStep1">
               <div class="levd-step-header">

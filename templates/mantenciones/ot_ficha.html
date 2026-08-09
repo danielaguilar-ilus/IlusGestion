@@ -840,7 +840,15 @@
 
 {# ════════ PANE TÉCNICOS ════════ #}
 <div class="ot-pane" id="ot-tecnicos">
-  {% set _puede_reasignar = permissions.admin or permissions.superadmin %}
+  {# 2026-08-09 (Daniel, bug real con captura): "la OT una vez cerrada me
+     permite reasignar, y eso no debería poder ser". Mismo criterio de
+     "OT sellada" que ya usa _puede_ot_accion en el backend (app.py) para
+     bloquear ejecutar/configurar/metadata -- el backend YA rechaza el PUT
+     en este caso; esto solo evita mostrar un botón que de todos modos
+     fallaría, salvo para superadmin (que sigue pudiendo, igual que en el
+     backend). #}
+  {% set _ot_sellada = visita.firma_cliente_url or visita.estado in ('pendiente_aprobacion','completada','cerrada') %}
+  {% set _puede_reasignar = (permissions.admin or permissions.superadmin) and (permissions.superadmin or not _ot_sellada) %}
   {% if visita.tecnico_principal %}
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h6 class="text-muted mb-0"><i class="bi bi-person-badge me-1"></i>Técnico principal</h6>

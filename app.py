@@ -47344,6 +47344,17 @@ def _puede_ot_accion(vid, accion, user=None):
     #    Si necesita corregir algo lo pide al admin."
     # 'editar' es alias semántico de 'metadata' (mismo permiso).
     if accion in ("metadata", "editar"):
+        # 🔒 FIX 2026-08-09 (Daniel — bug real reportado con captura: "la orden
+        # de trabajo todavía una vez cerrada me permite reasignar, y eso no
+        # debería poder ser"). Faltaba el mismo candado que ya protege
+        # 'ejecutar'/'configurar': con la OT sellada (cliente firmó, o
+        # pendiente_aprobacion/completada/cerrada), NADIE salvo superadmin
+        # puede tocar metadata — incluido reasignar técnico, que viaja por
+        # este mismo endpoint (PUT /mantenciones/api/visitas/<vid>).
+        if ot_sellada:
+            print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} "
+                  f"-> DENIED (OT sellada — solo superadmin edita)", flush=True)
+            return False
         # 2026-06-09 (Daniel) — REVISIÓN: los roles de GESTIÓN editan/reagendan
         # visitas (antes SOLO admin). El ejecutivo SSTT (Aaron) crea y gestiona
         # las OT, así que debe poder corregir la fecha/datos. Consistente con
@@ -52737,7 +52748,8 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
                 "SELECT * FROM mant_levantamiento_items "
                 " WHERE levantamiento_id=%s AND maquina_id IS NULL "
                 "   AND COALESCE(nombre_snap,'') <> '' "
-                "   AND COALESCE(es_borrador,0) = 0",
+                "   AND COALESCE(es_borrador,0) = 0 "
+                "   AND COALESCE(estado_capturado,'') <> 'no_encontrado'",
                 (lev_id,)
             ) or []
         except Exception as _e_col:
@@ -52755,7 +52767,8 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
             items = mysql_fetchall(
                 "SELECT * FROM mant_levantamiento_items "
                 " WHERE levantamiento_id=%s AND maquina_id IS NULL "
-                "   AND COALESCE(nombre_snap,'') <> ''",
+                "   AND COALESCE(nombre_snap,'') <> '' "
+                "   AND COALESCE(estado_capturado,'') <> 'no_encontrado'",
                 (lev_id,)
             ) or []
         if not items:
@@ -70089,7 +70102,8 @@ def mant_ot_ejecutar(vid):
                     "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
                     "WHERE levantamiento_id=%s AND maquina_id IS NULL "
                     "  AND COALESCE(nombre_snap,'') <> '' "
-                    "  AND COALESCE(es_borrador,0) = 0",
+                    "  AND COALESCE(es_borrador,0) = 0 "
+                    "  AND COALESCE(estado_capturado,'') <> 'no_encontrado'",
                     (visita["levantamiento_id"],)
                 )
             except Exception:
@@ -85251,7 +85265,10 @@ def mant_lev_item_crear(lid):
     # doble-tap) resuelva al MISMO row en vez de crear un duplicado.
     client_uid = (d.get("client_uid") or "").strip()[:40] or None
 
-    if not maquina_id and not nombre:
+    # 2026-08-09 (Daniel: "el equipo no está... se anula cualquier
+    # obligatoriedad de completar, porque no existe"): con este estado, el
+    # nombre no es exigible -- puede ser el primer campo que se autoguarda.
+    if not maquina_id and not nombre and (d.get("estado_capturado") != "no_encontrado"):
         return jsonify({"ok": False, "error": "Indica una máquina existente o un nombre nuevo"}), 400
 
     # Ad-hoc (equipo DESCUBIERTO en terreno): acepta sku/serie del payload
@@ -85578,7 +85595,13 @@ def mant_lev_item_update(iid):
             # pero el servidor no debe confiar solo en eso — un nombre_snap
             # vacío hace que el equipo se salte en silencio la materialización
             # a mant_maquinas al cerrar la OT (WHERE nombre_snap <> '').
-            if k == "nombre_snap" and v_new is None:
+            # 2026-08-09: excepción cuando el equipo se declaró "no está" —
+            # ahí el nombre nunca fue obligatorio (mira el estado que YA
+            # tiene guardado el item, no solo lo que viene en este payload,
+            # porque estado_capturado y nombre_snap suelen autoguardarse en
+            # PATCH separados).
+            _estado_efectivo = d.get("estado_capturado", item.get("estado_capturado"))
+            if k == "nombre_snap" and v_new is None and _estado_efectivo != "no_encontrado":
                 return jsonify({"ok": False, "error": "El nombre del equipo no puede quedar vacío."}), 400
             v_old = item.get(k)
             if str(v_old if v_old is not None else "") != str(v_new if v_new is not None else ""):
@@ -86029,7 +86052,8 @@ def mant_lev_rematerializar(lid):
         pendientes = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
             "WHERE levantamiento_id=%s AND maquina_id IS NULL "
-            "  AND COALESCE(nombre_snap,'') <> '' AND COALESCE(es_borrador,0) = 0",
+            "  AND COALESCE(nombre_snap,'') <> '' AND COALESCE(es_borrador,0) = 0 "
+            "  AND COALESCE(estado_capturado,'') <> 'no_encontrado'",
             (lid,)
         )
     except Exception:

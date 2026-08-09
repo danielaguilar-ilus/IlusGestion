@@ -5433,6 +5433,11 @@ function _levdNuevoUid(){
   return 'u' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
 
+function _levdNoEsta(){
+  const el = _levdEl('levd_no_esta');
+  return !!(el && el.checked);
+}
+
 function _levdSnapshotCampos(){
   const dano = _levdEl('levd_dano').checked;
   const operativa = _levdEl('levd_operativa').checked;
@@ -5443,11 +5448,29 @@ function _levdSnapshotCampos(){
     ubicacion: _levdEl('levd_ubicacion').value.trim(),
     observaciones: _levdEl('levd_obs').value.trim(),
     anomalias: dano ? _levdEl('levd_dano_txt').value.trim() : '',
-    estado_capturado: !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'),
+    // 2026-08-09 (Daniel: "si el equipo no está, se anula cualquier
+    // obligatoriedad... solamente se declara que no está"): estado
+    // dedicado, ya existía como valor válido de estado_capturado
+    // (reusado del flujo de "saltar equipo" existente).
+    estado_capturado: _levdNoEsta() ? 'no_encontrado'
+                      : !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'),
     doc_tido: _levdDoc ? _levdDoc.tido : '',
     doc_numero: _levdDoc ? _levdDoc.numero : '',
     doc_fecha: _levdDoc ? _levdDoc.fecha : '',
   };
+}
+
+// Toggle "el equipo no está" -- SIEMPRE el primer control del modal. Al
+// activarse, los pasos 1-5 quedan visualmente atenuados (ya no obligatorios,
+// ver levdRefreshStepStates) y el estado_capturado autoguardado pasa a
+// 'no_encontrado' de inmediato.
+function levdToggleNoEsta(checked){
+  ['levdStep1','levdStep2','levdStep3','levdStep4','levdStep5'].forEach(id => {
+    const sec = _levdEl(id);
+    if (sec) sec.classList.toggle('levd-step-irrelevante', checked);
+  });
+  if (_levdCtx) _levdMarcarSucio('estado_capturado');
+  levdRefreshStepStates();
 }
 
 // Mutex ÚNICO de creación compartido por TODOS los campos y fotos del
@@ -5609,6 +5632,11 @@ function levdAbrir(prefill, editId){
   _levdEl('levd_dano_txt').value = _danoInicial ? prefill.anomalias : '';
   _levdEl('levdDanoWrap').style.display = _danoInicial ? '' : 'none';
   _levdEl('levdErr').textContent = '';
+  // 2026-08-09: el toggle "no está" nace SIEMPRE apagado en un equipo nuevo;
+  // en edición, refleja lo que ya se guardó.
+  const _noEstaInicial = !!(editId && prefill && prefill.estado_capturado === 'no_encontrado');
+  _levdEl('levd_no_esta').checked = _noEstaInicial;
+  levdToggleNoEsta(_noEstaInicial);
 
   // 2026-07-06 (Daniel): título/ícono/botón cambian según modo crear/editar.
   const _tit = _levdEl('levdModalTitulo'), _ico = _levdEl('levdModalIco');
@@ -5933,11 +5961,14 @@ const LEVD_STEP_RULES = {
 };
 
 function levdRefreshStepStates(){
+  // "El equipo no está" anula CUALQUIER obligatoriedad (Daniel, textual) --
+  // todos los pasos se pintan verdes sin evaluar sus reglas individuales.
+  const noEsta = _levdNoEsta();
   for (const n of Object.keys(LEVD_STEP_RULES)){
     const sec = document.getElementById('levdStep' + n);
     if (!sec) continue;
-    let ok = false;
-    try { ok = !!LEVD_STEP_RULES[n](); } catch(_e){ ok = false; }
+    let ok = noEsta;
+    if (!ok){ try { ok = !!LEVD_STEP_RULES[n](); } catch(_e){ ok = false; } }
     sec.classList.toggle('is-complete', ok);
   }
 }
@@ -5953,29 +5984,37 @@ async function levdGuardar(){
   const editando = !!_levdEditId;
   const ctx = _levdCtx;
   if (!ctx){ err.textContent = 'Error interno — cierra y vuelve a abrir el equipo.'; return; }
+  const noEsta = _levdNoEsta();
   const nombre = _levdEl('levd_nombre').value.trim();
-  if (!nombre){ err.textContent = 'El nombre del equipo es obligatorio.'; _levdEl('levd_nombre').focus(); return; }
-  const fotosOk = _levdFotosExistentes.length + _levdFotos.filter(f => f.estado === 'ok').length;
-  if (fotosOk === 0){
-    const hayPendientes = _levdFotos.some(f => f.estado === 'subiendo');
-    err.textContent = hayPendientes ? 'Espera a que termine de subir la foto…' : 'Toma al menos 1 foto del equipo.';
-    return;
-  }
-  const fotosMalas = _levdFotos.filter(f => f.estado === 'error');
-  if (fotosMalas.length){
-    err.textContent = `${fotosMalas.length} foto(s) no se subieron. Tócalas para reintentar antes de guardar.`;
-    return;
-  }
   const dano = _levdEl('levd_dano').checked;
-  const danoTxt = _levdEl('levd_dano_txt').value.trim();
-  if (dano && !danoTxt){ err.textContent = 'Describe brevemente el daño.'; _levdEl('levd_dano_txt').focus(); return; }
+  // 2026-08-09 (Daniel, textual): "el equipo no está... ahí ya se anula
+  // cualquier obligatoriedad de completar, porque no existe. Solamente se
+  // declara que no está". CERO validaciones de nombre/foto/daño/factura
+  // cuando el toggle está activo.
+  if (!noEsta){
+    if (!nombre){ err.textContent = 'El nombre del equipo es obligatorio.'; _levdEl('levd_nombre').focus(); return; }
+    const fotosOk = _levdFotosExistentes.length + _levdFotos.filter(f => f.estado === 'ok').length;
+    if (fotosOk === 0){
+      const hayPendientes = _levdFotos.some(f => f.estado === 'subiendo');
+      err.textContent = hayPendientes ? 'Espera a que termine de subir la foto…' : 'Toma al menos 1 foto del equipo.';
+      return;
+    }
+    const fotosMalas = _levdFotos.filter(f => f.estado === 'error');
+    if (fotosMalas.length){
+      err.textContent = `${fotosMalas.length} foto(s) no se subieron. Tócalas para reintentar antes de guardar.`;
+      return;
+    }
+    const danoTxt = _levdEl('levd_dano_txt').value.trim();
+    if (dano && !danoTxt){ err.textContent = 'Describe brevemente el daño.'; _levdEl('levd_dano_txt').focus(); return; }
 
-  const _docNum = (_levdEl('levd_doc_num').value || '').replace(/\D/g, '');
-  if (_docNum && (!_levdDoc || _levdDoc.numero !== _docNum)){
-    _levdEl('levdDocWrap').style.display = '';
-    err.textContent = 'Verifica la factura con la lupa (o borra el número) antes de guardar.';
-    return;
+    const _docNum = (_levdEl('levd_doc_num').value || '').replace(/\D/g, '');
+    if (_docNum && (!_levdDoc || _levdDoc.numero !== _docNum)){
+      _levdEl('levdDocWrap').style.display = '';
+      err.textContent = 'Verifica la factura con la lupa (o borra el número) antes de guardar.';
+      return;
+    }
   }
+  const nombreLbl = nombre || '(equipo no encontrado)';
 
   const btn = _levdEl('levdGuardarBtn');
   const orig = btn.innerHTML;
@@ -6023,13 +6062,15 @@ async function levdGuardar(){
     }
 
     const operativa = _levdEl('levd_operativa').checked;
-    const estado_capturado = !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo');
-    const estLbl = estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
+    const estado_capturado = noEsta ? 'no_encontrado' : (!operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'));
+    const estLbl = estado_capturado === 'no_encontrado'  ? ' · 🚫 NO ENCONTRADO'
+                 : estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
                  : estado_capturado === 'advertencia'    ? ' · ⚠️ con DAÑO reportado'
                  : '';
+    const fotosOk = _levdFotosExistentes.length + _levdFotos.filter(f => f.estado === 'ok').length;
     if (editando){
       if (typeof ilusToast === 'function'){
-        ilusToast(`✓ ${nombre} actualizado${estLbl}`, { type: estLbl ? 'warning' : 'success' });
+        ilusToast(`✓ ${nombreLbl} actualizado${estLbl}`, { type: estLbl ? 'warning' : 'success' });
       }
       _levdEditId = null;
       await levdInit();          // refresca lista + contador
@@ -6045,7 +6086,8 @@ async function levdGuardar(){
       // (no se encontró bug de código; lo más probable es un toque accidental
       // en terreno). Esta confirmación le da una oportunidad inmediata de
       // notarlo y corregirlo (editar o eliminar) antes de seguir.
-      ilusToast(`✓ ${nombre} guardado (${fotosOk} foto${fotosOk === 1 ? '' : 's'})${estLbl}`,
+      const _fotosMsg = noEsta ? '' : ` (${fotosOk} foto${fotosOk === 1 ? '' : 's'})`;
+      ilusToast(`✓ ${nombreLbl} guardado${_fotosMsg}${estLbl}`,
                 { type: estLbl ? 'warning' : 'success' });
     }
     await levdInit();          // refresca lista + contador
