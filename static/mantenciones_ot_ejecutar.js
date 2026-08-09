@@ -2806,6 +2806,27 @@ function _pendientesPorEquipo(){
 // están listas (Daniel: "quitar ese botón al técnico... si la OT para él
 // debe ser cerrada" — evita que reabra la OT agregando equipos justo
 // cuando está por firmarla; otros roles conservan el botón siempre).
+// 2026-08-09 (Daniel: "un tracking espectacular y dinámico" en el header).
+// Reusa EXACTAMENTE los mismos oblTot/oblComp que ya calcula
+// _calcCtxGlobal() para el candado de "Firmar OT" -- nunca un cálculo
+// paralelo que se pueda desincronizar del número real. Sin obligatorias
+// (OT recién creada, o levantamiento puro sin checklist todavía), la
+// barra se queda oculta: un "0%" ahí no le dice nada útil a nadie.
+function _hdrSyncProgress(oblTot, oblComp){
+  const wrap = document.getElementById('hdrProgressWrap');
+  if (!wrap) return;
+  if (!oblTot){ wrap.style.display = 'none'; return; }
+  const pct = Math.max(0, Math.min(100, Math.round((oblComp / oblTot) * 100)));
+  wrap.style.display = '';
+  wrap.classList.toggle('is-completa', pct >= 100);
+  const fill = document.getElementById('hdrProgressFill');
+  const pctEl = document.getElementById('hdrProgressPct');
+  const lblEl = document.getElementById('hdrProgressLbl');
+  if (fill) fill.style.width = pct + '%';
+  if (pctEl) pctEl.textContent = pct + '%';
+  if (lblEl) lblEl.textContent = pct >= 100 ? 'Obligatorias completas' : `Avance · ${oblComp}/${oblTot}`;
+}
+
 function _actualizarPanelCierre(oblTot, oblComp){
   // 2026-08-08 (Daniel): "esa lista igual no me gusta, prefiero algo mas
   // sutil". Antes se listaban aquí uno por uno los equipos pendientes. Ahora
@@ -2880,6 +2901,7 @@ function actualizarLockFirmar(ctxOrTotal, completas){
   // Va acá arriba (antes de los returns tempranos) para que se recalcule
   // en TODOS los casos, no solo en el camino feliz.
   _actualizarPanelCierre(oblTot, oblComp);
+  _hdrSyncProgress(oblTot, oblComp);
 
   // CSS shared snippets para el hint inferior (siempre visible)
   const hintCounters =

@@ -72,6 +72,44 @@
   backdrop-filter:blur(8px);
   position:relative;z-index:1;
 }
+/* 2026-08-09 (Daniel: "un tracking espectacular y dinámico"): el badge de
+   estado palpita suavemente SOLO mientras la OT está activa en terreno
+   (en_curso/en_ejecucion) -- señal visual de "esto se está moviendo ahora",
+   se apaga sola en estados terminales para no distraer. */
+.tx-hdr .badge-est-vivo{animation:hdrBadgePulse 2.2s ease-in-out infinite}
+@keyframes hdrBadgePulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.35)}
+  50%{box-shadow:0 0 0 5px rgba(255,255,255,0)}
+}
+
+/* Barra de avance del header -- mismos números que el candado de "Firmar
+   OT" (oblComp/oblTot), nunca un cálculo paralelo. Shimmer sutil en la
+   franja de relleno mientras hay avance pendiente (<100%) para que se
+   sienta "viva" sin ser ruidosa; se vuelve sólida y estática al llegar
+   al 100% (la calma de "terminado", no más movimiento). */
+.tx-hdr-progress{margin-top:9px;position:relative;z-index:1}
+.tx-hdr-progress-top{display:flex;justify-content:space-between;align-items:baseline;
+  font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.6px;
+  opacity:.9;margin-bottom:4px}
+.tx-hdr-progress-top #hdrProgressPct{font-size:.78rem;font-variant-numeric:tabular-nums}
+.tx-hdr-progress-track{height:7px;border-radius:9999px;background:rgba(255,255,255,.16);
+  overflow:hidden;border:1px solid rgba(255,255,255,.12)}
+.tx-hdr-progress-fill{height:100%;border-radius:9999px;
+  background:linear-gradient(90deg,#fff 0%,#fecaca 55%,#fff 100%);
+  background-size:200% 100%;
+  transition:width .5s cubic-bezier(.22,1,.36,1);
+  animation:hdrProgressShimmer 2.4s linear infinite}
+.tx-hdr-progress.is-completa .tx-hdr-progress-fill{
+  background:#dcfce7;animation:none}
+.tx-hdr-progress.is-completa .tx-hdr-progress-top{color:#dcfce7}
+@keyframes hdrProgressShimmer{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+@media (prefers-reduced-motion: reduce){
+  .tx-hdr .badge-est-vivo,.tx-hdr-progress-fill{animation:none !important}
+}
+
 .tx-hdr .btn-ruta{
   display:inline-flex;align-items:center;gap:6px;
   background:rgba(255,255,255,.18);color:#fff;
