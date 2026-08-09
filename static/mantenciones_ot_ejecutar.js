@@ -2819,12 +2819,12 @@ function _hdrSyncProgress(oblTot, oblComp){
   const pct = Math.max(0, Math.min(100, Math.round((oblComp / oblTot) * 100)));
   wrap.style.display = '';
   wrap.classList.toggle('is-completa', pct >= 100);
-  const fill = document.getElementById('hdrProgressFill');
+  const ring = document.getElementById('hdrProgressRing');
   const pctEl = document.getElementById('hdrProgressPct');
   const lblEl = document.getElementById('hdrProgressLbl');
-  if (fill) fill.style.width = pct + '%';
+  if (ring) ring.style.setProperty('--pct', pct);
   if (pctEl) pctEl.textContent = pct + '%';
-  if (lblEl) lblEl.textContent = pct >= 100 ? 'Obligatorias completas' : `Avance · ${oblComp}/${oblTot}`;
+  if (lblEl) lblEl.textContent = pct >= 100 ? 'Completo' : 'Avance';
 }
 
 function _actualizarPanelCierre(oblTot, oblComp){
