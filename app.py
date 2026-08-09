@@ -73177,6 +73177,55 @@ def _ot_pdf_context(vid, embed_images=False):
                 if _f.get("cloudinary_url"):
                     _f["cloudinary_url"] = _img_a_data_uri(_f["cloudinary_url"], _cache)
 
+    # ── Título/subtítulo REALES del documento + KPIs reales de la OT normal
+    # + logo SPHS (Daniel 2026-08-08, queja textual): "la orden de trabajo
+    # todavía dice Informe de Levantamiento, y es una Orden de Trabajo";
+    # "necesito que las OT... no sea tan rígida decir siempre levantamiento,
+    # sino el tipo [real]"; de los KPIs de ot_pdf.html (versión sin
+    # levantamiento) dijo que se ve "seca" -- 2 de las 4 tarjetas
+    # (Checklist/Ubicación) eran texto FIJO "Completo"/"Validada" sin
+    # cálculo real detrás. Y pidió el logo SPHS junto al de ILUS en el
+    # header del PDF de la OT, igual que ya está en las cotizaciones.
+    #
+    # 1) Título/subtítulo: ot_pdf_levantamiento.html se usa TANTO para OT
+    #    tipo='levantamiento' (puro) COMO para Inspección/Preventiva/
+    #    Instalación/etc. que también capturan fichas (ver
+    #    _ot_es_levantamiento). Antes el template imprimía "INFORME DE
+    #    LEVANTAMIENTO" fijo sin mirar el tipo real de la visita. Se
+    #    calcula UNA sola vez aquí -- fuente compartida por
+    #    mant_visita_pdf/mant_ot_pdf_render -- para no duplicar la lógica
+    #    de selección en el template.
+    _tipo_real_pdf = (visita.get("tipo") or "").strip().lower()
+    if _tipo_real_pdf == "levantamiento":
+        pdf_titulo_doc = "INFORME DE LEVANTAMIENTO"
+        pdf_subtitulo_doc = "Levantamiento técnico de equipos"
+    else:
+        pdf_titulo_doc = "ORDEN DE TRABAJO"
+        pdf_subtitulo_doc = _TIPO_OT_LABEL.get(
+            _tipo_real_pdf,
+            _tipo_real_pdf.capitalize() if _tipo_real_pdf else "Servicio técnico"
+        )
+
+    # 2) KPIs reales de ot_pdf.html (OT normal, sin informe de
+    #    levantamiento): % de checklist REALMENTE completado (antes texto
+    #    fijo "Completo") y si la ubicación quedó REALMENTE validada por
+    #    GPS al iniciar la ejecución (antes texto fijo "Validada", sin
+    #    dato detrás). Usa columnas que YA existen
+    #    (mant_visita_tareas.completada, mant_visitas.exec_gps_lat/lng) --
+    #    no se inventan columnas nuevas (Regla #5).
+    chk_total = len(tareas)
+    chk_completadas = sum(1 for t in tareas if t.get("completada"))
+    chk_pct = round(chk_completadas * 100 / chk_total) if chk_total else None
+    ubic_validada = bool(
+        visita.get("exec_gps_lat") is not None and visita.get("exec_gps_lng") is not None
+    )
+
+    # 3) Logo SPHS junto al de ILUS en el header (mismo mecanismo que
+    #    cotizaciones/etiquetas -- _logo_shs_pdf_data_url(), PNG real
+    #    pre-codificado en static/logo_shs_pdf.txt). Devuelve '' si el
+    #    archivo no existe -- ambos templates ya tienen fallback.
+    logo_shs_url = _logo_shs_pdf_data_url()
+
     ctx = {
         "visita": visita,
         "firmante_cliente": _ot_firmante_cliente(vid),
@@ -73190,11 +73239,18 @@ def _ot_pdf_context(vid, embed_images=False):
         "eq_check_resumen": eq_check_resumen,
         "paginas_equipos": paginas_equipos,
         "logo_b64": logo_b64,
+        "logo_shs_url": logo_shs_url,
         "lev_items": lev_items,
         "lev_fotos_idx": lev_fotos_idx,
         "lev_stats": lev_stats,
         "base_url": base_url,
         "generated_at": _now_chile_str('%d/%m/%Y %H:%M'),
+        "pdf_titulo_doc": pdf_titulo_doc,
+        "pdf_subtitulo_doc": pdf_subtitulo_doc,
+        "chk_total": chk_total,
+        "chk_completadas": chk_completadas,
+        "chk_pct": chk_pct,
+        "ubic_validada": ubic_validada,
     }
     return ctx, "ok", []
 
