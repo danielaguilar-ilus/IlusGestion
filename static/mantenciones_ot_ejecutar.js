@@ -3017,6 +3017,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Pipeline tracking: actualizar "tiempo transcurrido" cada 60s
   actualizarPipelineTimes();
   setInterval(actualizarPipelineTimes, 60_000);
+  // "Recorrido" de entrada -- SOLO una vez al cargar, nunca en el refresco
+  // periódico de arriba (eso corromperia la animacion cada 60s).
+  pipelineRecorridoReplay();
 });
 
 // ════════════════════════════════════════════════════════════
@@ -3114,6 +3117,38 @@ function actualizarPipelineTimes(){
       if (lblEl) currLbl.textContent = lblEl.textContent.trim();
     }
   }
+}
+
+// 2026-08-08 (Daniel: "el tracking debe tener transición de recorrido...
+// algo bien espectacular... hay que empoderar y potenciar las OT" -- mismo
+// patrón que stepperReplay() en templates/transporte/public_tracking.html,
+// que a Daniel "le encanta"). En vez de aparecer directo en el estado real,
+// el pipeline se "reproduce" paso por paso desde cero hasta llegar al
+// estado actual -- el CSS (transition en .pipe-step::before, animation en
+// .pipe-circle) hace el resto solo con el toggle de clases done/current.
+function pipelineRecorridoReplay(){
+  const steps = Array.from(document.querySelectorAll('.pipe-step'));
+  if (!steps.length) return;
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) return;  // el estado ya viene correcto desde el servidor
+  const targets = steps.map(el => ({
+    done: el.classList.contains('done'),
+    current: el.classList.contains('current'),
+  }));
+  steps.forEach(el => el.classList.remove('done', 'current'));
+  const STEP_MS = 260;
+  steps.forEach((el, i) => {
+    setTimeout(() => {
+      if (targets[i].done) el.classList.add('done');
+      if (targets[i].current) el.classList.add('current');
+      // El último hito (Cerrada) gira al completarse, igual que "Entregado"
+      // en el stepper de Transporte.
+      if (i === steps.length - 1 && targets[i].done){
+        const circle = el.querySelector('.pipe-circle');
+        if (circle) circle.classList.add('pipe-final-spin');
+      }
+    }, 200 + i * STEP_MS);
+  });
 }
 
 // ════════════════════════════════════════════════════════

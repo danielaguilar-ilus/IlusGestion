@@ -266,12 +266,45 @@
 .pipe-step.current .pipe-circle{
   background:#dc2626;border-color:#dc2626;color:#fff;
   box-shadow:0 0 0 4px rgba(220,38,38,.15);
-  animation:pipePulse 2.2s ease-in-out infinite;
+  animation:pipePulseRing 2s infinite;
 }
-.pipe-step.done.current .pipe-circle{ background:#16a34a;border-color:#16a34a; }
-@keyframes pipePulse{
-  0%,100%{ opacity:1 }
-  50%    { opacity:.78 }
+.pipe-step.done.current .pipe-circle{
+  background:#16a34a;border-color:#16a34a;
+  animation:pipePulseRingGreen 2s infinite;
+}
+/* 2026-08-08 (Daniel: "estado palpitante, algo bien espectacular... hay que
+   empoderar y potenciar las OT" -- copiando el lenguaje del stepper de
+   Retiros/Transporte). Antes era un simple fundido de opacidad; ahora es un
+   anillo que se expande y se desvanece, igual que .step.active .step-dot en
+   templates/transporte/public_tracking.html. */
+@keyframes pipePulseRing{
+  70%{ box-shadow:0 0 0 4px rgba(220,38,38,.15),0 0 0 13px rgba(220,38,38,0); }
+  100%{ box-shadow:0 0 0 4px rgba(220,38,38,.15),0 0 0 0 rgba(220,38,38,0); }
+}
+@keyframes pipePulseRingGreen{
+  70%{ box-shadow:0 0 0 4px rgba(22,163,74,.15),0 0 0 13px rgba(22,163,74,0); }
+  100%{ box-shadow:0 0 0 4px rgba(22,163,74,.15),0 0 0 0 rgba(22,163,74,0); }
+}
+/* Insignia ✓ apareciendo con un pop -- se reproduce cada vez que el paso
+   entra a .done (incluido el "recorrido" de entrada, ver
+   pipelineRecorridoReplay() en mantenciones_ot_ejecutar.js). */
+.pipe-step.done .pipe-circle i{ animation:pipeCheckPop .4s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes pipeCheckPop{ 0%{ transform:scale(0); } 65%{ transform:scale(1.25); } 100%{ transform:scale(1); } }
+/* El ultimo hito (Cerrada) gira al completarse -- mismo "giro" que Daniel
+   pidio para Retiros/Transporte ("el entregado tiene que ser como un giro").
+   Clase agregada por JS solo durante el recorrido de entrada. */
+.pipe-circle.pipe-final-spin{ animation:pipeFinalSpin .9s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes pipeFinalSpin{
+  0%{ transform:scale(.55) rotate(-40deg); }
+  55%{ transform:scale(1.18) rotate(380deg); }
+  78%{ transform:scale(.94) rotate(352deg); }
+  100%{ transform:scale(1) rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce){
+  .pipe-step.current .pipe-circle,
+  .pipe-step.done.current .pipe-circle,
+  .pipe-step.done .pipe-circle i,
+  .pipe-circle.pipe-final-spin{ animation:none !important; }
 }
 .pipe-meta{margin-top:12px;min-width:0;width:100%;display:flex;flex-direction:column;gap:3px;align-items:center}
 .pipe-label{
