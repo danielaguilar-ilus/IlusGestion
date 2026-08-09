@@ -73027,6 +73027,18 @@ def _ot_pdf_context(vid, embed_images=False):
         d["url"] = _foto_para_pdf(url)
         fotos.append(d)
 
+    # ── LAS FIRMAS TAMBIÉN (detectado al verificar lo anterior en la
+    #    OT-2026-00042) ──
+    # firma_cliente_url / firma_tecnico_url / firma_supervisor_url también
+    # se guardan como "/f/<key>" y la plantilla las pinta con <img src>
+    # directo, así que sufrían EXACTAMENTE el mismo problema que las fotos:
+    # ruta relativa sin origen => firma en blanco en el PDF. Un informe de
+    # OT cerrada sin las firmas visibles no sirve como respaldo ante el
+    # cliente, así que se convierten por el mismo camino.
+    for _k_firma in ("firma_cliente_url", "firma_tecnico_url", "firma_supervisor_url"):
+        if visita.get(_k_firma):
+            visita[_k_firma] = _foto_para_pdf(visita[_k_firma])
+
     # ── Index fotos por equipo (primeras 3 por máquina) ──────────────
     eq_fotos_idx = {}
     for f in fotos:
