@@ -384,9 +384,19 @@
   display:flex;align-items:center;gap:6px}
 .tx-section-title i{color:#dc2626}
 
+/* 2026-08-08 (Daniel: "necesito estandarizar esto, que sea una sola orden de
+   trabajo... en el computador no necesito tenerlo con contenedor tan grande").
+   .tx-eq-grid envuelve el {% for eq in equipos %} (ot_ejecutar.html) en una
+   grilla responsiva -- 2+ columnas en pantallas anchas en vez de una fila
+   gigante estirada de borde a borde, y sola baja a 1 columna en celular
+   (auto-fill + minmax, sin media query aparte). .levd-list (equipos
+   DESCUBIERTOS en un levantamiento) usa la misma regla para que ambas vistas
+   de la OT se sientan como el mismo sistema, no dos apps distintas. */
+.tx-eq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+
 .tx-eq-card{
   background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;
-  margin-bottom:10px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px;
+  cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px;
   min-height:90px;
 }
 .tx-eq-card:hover{border-color:#dc2626;box-shadow:0 4px 14px rgba(220,38,38,.12);

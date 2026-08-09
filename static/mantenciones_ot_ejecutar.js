@@ -5292,6 +5292,11 @@ async function levdInit(){
     _levdItems = (d.items || []).filter(it => !it.maquina_id);
     // La serie sugerida sigue desde el total de items del levantamiento
     _levdSeq = (d.items || []).length + 1;
+    // 2026-08-08 (Daniel): la tarjeta "Levantamiento de descubrimiento" solo
+    // tiene sentido antes de descubrir el primer equipo -- una vez hay al
+    // menos 1, ocultarla (ya no es "sin equipos registrados").
+    const _emptyBanner = _levdEl('levdEmptyBanner');
+    if (_emptyBanner) _emptyBanner.style.display = _levdItems.length ? 'none' : '';
     levdRender();
     // Recalcular lock del botón firmar: en descubrimiento puro el conteo
     // de equipos descubiertos cambia el estado habilitado/bloqueado.

@@ -935,7 +935,15 @@
     {% if visita.levantamiento_id and visita.estado in ('creada','programada','asignada','en_curso','en_ejecucion','reagendada') %}
     {# Levantamiento PURO (descubrimiento): el vacío es NORMAL — el técnico
        captura los equipos en terreno con el botón grande de abajo. #}
-    <div class="tx-empty" style="border-color:#fecaca;background:#fff">
+    {# 2026-08-08 (Daniel: "algo ahí se ve como con un contenedor, no lo veo
+       necesario"): esta tarjeta explica el flujo SOLO la primera vez, antes
+       de que exista algún equipo descubierto. Antes se quedaba visible toda
+       la OT (aunque ya hubiera 18 equipos capturados) porque la condición
+       server-side solo miraba `equipos` (mant_maquinas), que en un
+       levantamiento puro sigue vacío hasta el cierre. levdInit() la oculta
+       en cuanto detecta al menos 1 item descubierto -- ver
+       static/mantenciones_ot_ejecutar.js. #}
+    <div class="tx-empty" id="levdEmptyBanner" style="border-color:#fecaca;background:#fff">
       <i class="bi bi-binoculars" style="color:#dc2626"></i>
       <div class="fw-bold" style="color:#0f172a">Levantamiento de descubrimiento</div>
       <div class="small mt-1" style="color:#374151">
@@ -1018,24 +1026,36 @@
         font-weight:800;font-size:.95rem;color:#0f172a;margin:0 2px 10px}
       .levd-head .cnt{background:#dc2626;color:#fff;border-radius:999px;
         font-size:.78rem;padding:2px 10px;font-weight:800}
-      .levd-list{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
-      /* 2026-08-08 (Daniel): "prefiero algo mas sutil, un color rojo en el
-         objeto para saber que falta y verde cuando este todo ok... como
-         semaforo de la parte izquierda del producto". La franja izquierda
-         era verde fija; ahora es el semaforo. Verde = ese equipo esta
-         liberado (tiene evidencia y serie real). Rojo = le falta algo, y
-         el tooltip dice qué. */
-      .levd-card{display:flex;gap:10px;align-items:center;background:#fff;
-        border:1px solid #e5e7eb;border-left:4px solid #16a34a;border-radius:12px;
-        padding:9px 10px;box-shadow:0 1px 3px rgba(0,0,0,.05);
-        transition:border-left-color .2s ease}
+      /* 2026-08-08 v2 (Daniel: "aquí tenemos diferentes órdenes de trabajo,
+         la visualizacion es diferente... necesito estandarizar esto, que sea
+         una sola orden de trabajo... me gusta mas la mirada de la OT de
+         Marbella" -- Marbella usa .tx-eq-card [static/mantenciones_ot_ejecutar.css],
+         la tarjeta rica con foto+badges+barra de progreso de una OT con
+         checklist normal. Antes .levd-card (equipos DESCUBIERTOS en un
+         levantamiento) era una fila mas angosta y distinta -- dos sistemas
+         de tarjeta para el mismo concepto. Se alinea .levd-card al mismo
+         tamaño de foto/tipografia/padding de .tx-eq-card para que las dos
+         vistas se sientan como LA MISMA app. Grid en vez de columna unica:
+         "en el computador no necesito tenerlo con contenedor tan grande...
+         se va a usar 90% responsivo" -- auto-fill hace 2+ columnas en
+         pantallas anchas (sin alargar cada tarjeta a todo el ancho) y baja
+         sola a 1 columna en celular, sin media query aparte. */
+      .levd-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+        gap:10px;margin-bottom:10px}
+      .levd-card{display:flex;gap:12px;align-items:center;background:#fff;
+        border:1.5px solid #e5e7eb;border-left:4px solid #16a34a;border-radius:12px;
+        padding:12px 14px;min-height:76px;box-shadow:0 1px 3px rgba(0,0,0,.05);
+        transition:border-left-color .2s ease,box-shadow .15s,transform .15s}
+      .levd-card:hover{box-shadow:0 4px 14px rgba(0,0,0,.08);transform:translateY(-1px)}
       .levd-card.falta{border-left-color:#dc2626}
-      .levd-card img{width:52px;height:52px;object-fit:cover;border-radius:9px;background:#f3f4f6}
+      .levd-card img{width:56px;height:56px;object-fit:cover;border-radius:10px;
+        background:#f3f4f6;border:1px solid #e5e7eb;box-shadow:0 2px 6px rgba(0,0,0,.08);
+        flex-shrink:0}
       .levd-card .inf{flex:1;min-width:0}
-      .levd-card .nm{font-weight:700;font-size:.88rem;color:#0f172a;
+      .levd-card .nm{font-weight:800;font-size:1rem;color:#0f172a;line-height:1.2;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .levd-card .mt{font-size:.72rem;color:#6b7280}
-      .levd-card .del{border:0;background:#fee2e2;color:#b91c1c;border-radius:9px;
+      .levd-card .mt{font-size:.74rem;color:#6b7280;margin-top:3px}
+      .levd-card .del{border:0;background:#fee2e2;color:#b91c1c;border-radius:10px;
         min-width:40px;min-height:40px;font-size:1rem}
       .levd-badge{display:inline-block;font-size:.62rem;font-weight:800;border-radius:6px;
         padding:1px 6px;margin-left:5px;vertical-align:1px}
@@ -1338,6 +1358,7 @@
     </div>
     {% endif %}
 
+    <div class="tx-eq-grid">
     {% for eq in equipos %}
     {# Las keys de stats_por_maquina se serializan como string para que JS las encuentre.
        En el template Jinja sí entiende ambas, pero para consistencia usamos string. #}
@@ -1428,6 +1449,7 @@
       <i class="bi bi-chevron-right eq-arrow"></i>
     </div>
     {% endfor %}
+    </div>
   </div>
 
   {# ════════════════════════════════════════════════════════
