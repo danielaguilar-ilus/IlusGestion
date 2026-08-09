@@ -947,9 +947,6 @@
   background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
   color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;
 }
-.firma-banner .fb-logo{
-  width:48px;height:48px;background:#fff center/contain no-repeat;border-radius:8px;flex-shrink:0;
-}
 .firma-banner h5{font-size:1.05rem;margin:0;font-weight:800;letter-spacing:-.01em}
 .firma-banner .fb-sub{font-size:.78rem;opacity:.85;margin-top:2px}
 
