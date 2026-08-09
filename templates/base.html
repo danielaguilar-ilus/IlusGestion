@@ -725,6 +725,12 @@
          class="sidebar-link{% if request.endpoint == 'admin_integraciones' %} active{% endif %}">
         <i class="bi bi-plug"></i><span>Integraciones</span>
       </a>
+      {# Fichas de producto que no cumplen las reglas de Etiquetas (caso
+         BBV9.0, ago-2026). Solo lectura: lista y explica, no corrige. #}
+      <a href="{{ url_for('admin_fichas_incompletas') }}"
+         class="sidebar-link{% if request.endpoint == 'admin_fichas_incompletas' %} active{% endif %}">
+        <i class="bi bi-clipboard-x"></i><span>Fichas incompletas</span>
+      </a>
       {% endif %}
 
       {# ── OCULTO (a pedido — disponible vía URL directa si se requiere) ──
