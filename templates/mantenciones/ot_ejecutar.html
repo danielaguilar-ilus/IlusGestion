@@ -1983,8 +1983,24 @@
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
             <i class="bi bi-person-check me-1 text-success"></i>Tu firma (técnico)
           </label>
+          {# 2026-08-09 (Daniel): "al momento de firmar, yo necesito que al
+             técnico no se le pueda cambiar el nombre... pero en realidad
+             debería ser por el usuario que se logeó en la app".
+             El nombre queda FIJO y sale de la sesión (current_user), no de
+             un campo escribible: una firma vale como respaldo solo si el
+             que firma es quien dice ser. Se manda igual al backend porque
+             el input existe (readonly), solo que nadie puede editarlo.
+             Se cae a visita.tecnico_principal por si no hubiera sesión. #}
           <input type="text" id="firmaTecNombre" class="form-control mb-2"
-                 placeholder="Tu nombre completo" value="{{ visita.tecnico_principal or '' }}">
+                 readonly
+                 style="background:#f1f5f9;cursor:not-allowed;font-weight:700"
+                 title="Firmas con tu usuario de la sesión — este nombre no se puede cambiar"
+                 value="{{ current_user.nombre if current_user else (visita.tecnico_principal or '') }}">
+          <div class="form-text mb-2" style="margin-top:-4px">
+            <i class="bi bi-shield-lock-fill text-success"></i>
+            Firmas como <strong>{{ current_user.nombre if current_user else 'usuario de la sesión' }}</strong>.
+            El nombre del técnico no se puede modificar.
+          </div>
           <div class="firma-canvas-wrap" id="wrap-canvasTec">
             <canvas id="canvasTec" width="800" height="240"></canvas>
             <div class="firma-placeholder">✍️ Firma aquí con el dedo o lápiz óptico</div>
@@ -2009,10 +2025,20 @@
           <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
             <i class="bi bi-person-badge me-1 text-primary"></i>Firma del cliente (quien recibe)
           </label>
+          {# 2026-08-09 (Daniel): el del cliente SÍ se puede cambiar --
+             "puede ser que el cliente original no esté, entonces tiene que
+             declarar allí la persona que está firmando y no firma encima
+             de otro nombre". Se precarga el contacto agendado como
+             sugerencia, pero es editable a propósito. #}
           <input type="text" id="firmaCliNombre" class="form-control mb-2"
                  placeholder="Nombre de quien recibe y firma"
                  data-sugerido="{{ visita.contacto_nombre or '' }}"
                  value="{{ visita.contacto_nombre or '' }}">
+          <div class="form-text mb-2" style="margin-top:-4px">
+            <i class="bi bi-pencil-square text-primary"></i>
+            Si quien recibe no es {{ visita.contacto_nombre or 'el contacto agendado' }},
+            <strong>corrige el nombre</strong>: debe firmar quien realmente está presente.
+          </div>
           <input type="text" id="firmaCliRut" class="form-control mb-2"
                  placeholder="RUT de quien firma (ej: 12.345.678-9)">
           <div class="row g-2 mb-1">
