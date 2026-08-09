@@ -742,6 +742,23 @@ def _pw_pdf_impl(html: str, *, width: str = None, height: str = None,
     page    = browser.new_page()
     try:
         page.set_content(html, wait_until="domcontentloaded", timeout=action_timeout)
+        # ── ESPERAR LAS IMÁGENES (Daniel 2026-08-09: "¿por qué no se
+        #    imprimen las fotos en las OT cuando generamos el PDF?") ──
+        # `domcontentloaded` dispara ANTES de que las <img> terminen de
+        # descargarse: page.pdf() fotografiaba la página con las fotos aún
+        # a medio bajar y salían en blanco. Esto espera a que cada imagen
+        # termine —o falle— antes de imprimir.
+        #
+        # Se resuelve TAMBIÉN en onerror a propósito: una foto rota no debe
+        # colgar la generación del PDF entero. Y va con timeout propio, así
+        # que en el peor caso se imprime igual que antes (nunca peor).
+        try:
+            page.wait_for_function(
+                "() => Array.from(document.images).every(i => i.complete)",
+                timeout=min(wait_timeout or 8000, 8000),
+            )
+        except Exception:
+            pass   # timeout: imprimimos con lo que haya cargado
         if wait_fn:
             try:
                 page.wait_for_function(wait_fn, timeout=wait_timeout)
@@ -72970,6 +72987,34 @@ def _ot_pdf_context(vid, embed_images=False):
         "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
         (vid,)
     ) or []
+    # ── FOTOS QUE SÍ SE IMPRIMEN (Daniel 2026-08-09: "¿por qué no se
+    #    imprimen las fotos en las OT cuando generamos el PDF?") ──
+    # El PDF se arma con page.set_content(), así que la página vive en
+    # `about:blank` y NO tiene origen: una ruta relativa ("/f/<key>",
+    # "/static/uploads/...") es IMPOSIBLE de resolver para Chromium y la
+    # foto salía en blanco SIEMPRE. El informe de levantamiento ya lo
+    # resolvía; el PDF normal de OT se quedó sin ese tratamiento.
+    #
+    # Se reusa _img_a_data_uri (mismo camino ya probado en producción):
+    # lee los bytes DIRECTO de GCS y los embebe. Es además el camino
+    # RÁPIDO — el docstring de ese helper documenta que la alternativa
+    # (URL absoluta + <base href>) obligaba a Chromium a bajar cada foto
+    # por la red pública de Cloud Run y con 40+ fotos llegaba a expirar.
+    # El cache evita releer la misma foto si aparece 2 veces en el layout.
+    _fotos_cache = {}
+    _base_pdf = (_public_base_url() or "").rstrip("/")
+
+    def _foto_para_pdf(u):
+        if not u:
+            return ""
+        if u.startswith(("data:", "http://", "https://")):
+            return u
+        if u.startswith("/f/"):
+            return _img_a_data_uri(u, _fotos_cache)   # GCS → bytes embebidos
+        # Resto de rutas relativas (filesystem legacy): al menos volverlas
+        # absolutas para que tengan alguna posibilidad de cargar.
+        return f"{_base_pdf}/{u.lstrip('/')}" if _base_pdf else u
+
     fotos = []
     for f in fotos_raw:
         d = dict(f)
@@ -72979,7 +73024,7 @@ def _ot_pdf_context(vid, embed_images=False):
         )
         if not url:
             continue
-        d["url"] = url
+        d["url"] = _foto_para_pdf(url)
         fotos.append(d)
 
     # ── Index fotos por equipo (primeras 3 por máquina) ──────────────
