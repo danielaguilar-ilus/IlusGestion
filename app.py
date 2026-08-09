@@ -65161,6 +65161,57 @@ def _ot_validar_cierre(vid):
     if not v.get("firma_tecnico_url"):    razones.append("Falta firma del técnico.")
     if not v.get("firma_supervisor_url"): razones.append("Falta firma del supervisor.")
 
+    # ── R5 — EVIDENCIA FOTOGRÁFICA MÍNIMA DE LA OT (Daniel 2026-08-09) ──
+    # "No quiero que el técnico cierre la OT sin fotos... veo OT sin fotos."
+    #
+    # R3 (arriba) solo mira tareas con requiere_foto=1: si la plantilla del
+    # checklist no marcó ninguna, R3 pasa con 0 fotos y la OT se cierra sin
+    # una sola evidencia. Esto pone un piso a nivel de OT COMPLETA.
+    #
+    # Se suman las DOS fuentes reales de fotos, porque según el tipo de OT el
+    # técnico carga en una u otra:
+    #   · mant_visita_fotos          → fotos del checklist / tareas
+    #   · mant_levantamiento_fotos   → fotos de los equipos capturados en terreno
+    # Sin sumar la segunda, toda OT de levantamiento quedaría bloqueada
+    # injustamente aunque el técnico haya fotografiado cada equipo.
+    n_fotos_ot = 0
+    try:
+        _min_fotos = int((_reglas_cargar() or {}).get("ot_min_fotos_cierre") or 0)
+    except Exception:
+        _min_fotos = 0
+    if _min_fotos > 0:
+        try:
+            # Se cuentan fotos ÚNICAS, no filas (Daniel 2026-08-09: "¿será
+            # posible que reconozca si suben la misma foto 4 veces?"). Con
+            # COUNT(DISTINCT foto_hash) cuatro copias de la misma imagen
+            # cuentan como 1 sola evidencia. COALESCE con el id hace que las
+            # filas SIN hash (fotos históricas, anteriores a esta migración)
+            # sigan contando como únicas: no se castiga trabajo ya hecho.
+            _f1 = mysql_fetchone(
+                "SELECT COUNT(DISTINCT COALESCE(foto_hash, CONCAT('id:', id))) AS n "
+                "  FROM mant_visita_fotos WHERE visita_id=%s", (vid,)
+            ) or {}
+            _f2 = mysql_fetchone(
+                "SELECT COUNT(DISTINCT COALESCE(lf.foto_hash, CONCAT('id:', lf.id))) AS n "
+                "  FROM mant_levantamiento_fotos lf "
+                "  JOIN mant_levantamientos lv ON lv.id = lf.levantamiento_id "
+                " WHERE lv.visita_id = %s OR lv.id = %s",
+                (vid, v.get("levantamiento_id") or 0)
+            ) or {}
+            n_fotos_ot = int(_f1.get("n") or 0) + int(_f2.get("n") or 0)
+            if n_fotos_ot < _min_fotos:
+                razones.append(
+                    f"Evidencia fotográfica insuficiente: la OT tiene {n_fotos_ot} foto(s) "
+                    f"distinta(s) y se exigen al menos {_min_fotos}. "
+                    "Sube fotos reales del trabajo antes de cerrar "
+                    "(repetir la misma imagen no cuenta)."
+                )
+        except Exception as _fot_e:
+            # FAIL-OPEN deliberado: si el conteo falla (tabla ausente en un
+            # entorno, timeout, etc.) NO dejamos al técnico trabado en terreno
+            # por un problema de infraestructura. Se registra y se sigue.
+            print(f"[_ot_validar_cierre][min_fotos] {_fot_e}", flush=True)
+
     return {
         "puede_cerrar": len(razones) == 0,
         "razones": razones,
@@ -65170,6 +65221,8 @@ def _ot_validar_cierre(vid):
         "tiene_diagnostico": bool((v.get("diagnostico") or "").strip()),
         "firmas_ok": all([v.get("firma_cliente_url"), v.get("firma_tecnico_url"), v.get("firma_supervisor_url")]),
         "equipos_excluidos": len(excluir_maquinas),
+        "fotos_ot": n_fotos_ot,
+        "min_fotos_ot": _min_fotos,
     }
 
 
@@ -73860,6 +73913,7 @@ def mant_visita_fotos_subir(vid):
 
     saved = 0
     errors = []
+    dups = []         # nombres de archivos cuya imagen YA existía en esta OT
     first_url = None  # devolvemos al frontend para mostrar inline
     user = current_username()
     # ¿Hay almacenamiento persistente (Google Cloud Storage)?
@@ -73880,6 +73934,20 @@ def mant_visita_fotos_subir(vid):
         cld_url = None
         archivo_path = None
         size_kb = 0
+        # Huella del contenido (Daniel 2026-08-09): se calcula ANTES de
+        # cualquier upload porque _foto_sha256 rebobina el stream; si se
+        # hiciera después, GCS ya lo habría consumido.
+        _hash = _foto_sha256(f.stream)
+        if _hash:
+            try:
+                _prev = mysql_fetchone(
+                    "SELECT id FROM mant_visita_fotos "
+                    " WHERE visita_id=%s AND foto_hash=%s LIMIT 1", (vid, _hash)
+                )
+                if _prev:
+                    dups.append(f.filename[:120])
+            except Exception as _dup_e:
+                print(f"[fotos_subir vid={vid}][dup_check] {_dup_e}", flush=True)
 
         # ── INTENTO 1: Google Cloud Storage (persistente) ────────────
         if cloud_ok:
@@ -73927,13 +73995,13 @@ def mant_visita_fotos_subir(vid):
             mysql_execute(
                 "INSERT INTO mant_visita_fotos "
                 "(visita_id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
-                " archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                " archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb, foto_hash) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     vid, tarea_id, maquina_id,
                     ap, cld_url,
                     f.filename[:300],
-                    tipo_foto, descripcion or None, user, size_kb
+                    tipo_foto, descripcion or None, user, size_kb, _hash
                 )
             )
             saved += 1
@@ -73969,6 +74037,10 @@ def mant_visita_fotos_subir(vid):
         "url": first_url,        # para que el frontend muestre inline
         "errors": errors[:3],
         "persistente": bool(first_url and first_url.startswith("https://")),
+        # Daniel 2026-08-09: la foto se guarda igual (repetir una toma puede
+        # ser legítimo), pero se avisa cuál ya existía y NO suma como
+        # evidencia nueva en el conteo de cierre.
+        "duplicadas": dups[:5],
     })
 
 
@@ -76944,6 +77016,16 @@ _REGLAS_DEFAULTS = {
     "ot_geofence_lev_activo":         ("0",   "bool", "terreno", "Exigir estar en el sitio (GPS) al guardar cada equipo del levantamiento", ""),
     "ot_geofence_lev_radio_m":        ("500", "int",  "terreno", "Radio permitido para guardar un equipo del levantamiento", "metros"),
     "ot_geofence_lev_accuracy_max_m": ("500", "int",  "terreno", "Precisión GPS mínima aceptable (descarta lecturas peores)", "metros"),
+
+    # ── EVIDENCIA FOTOGRÁFICA MÍNIMA (Daniel 2026-08-09: "no quiero que el
+    #    técnico cierre la OT sin fotos... veo OT sin fotos").
+    #    Hasta ahora solo se exigía foto en tareas marcadas requiere_foto=1;
+    #    si NINGUNA tarea traía esa marca, la OT cerraba con CERO evidencia.
+    #    Esta regla pone un piso a nivel de OT completa. Cuenta las 2 fuentes
+    #    reales de fotos (checklist + equipos del levantamiento), así que una
+    #    OT de levantamiento con fotos de equipos SÍ cumple aunque su
+    #    checklist no tenga fotos. Ponerla en 0 la desactiva sin deploy. ──
+    "ot_min_fotos_cierre": ("1", "int", "terreno", "Mínimo de fotos para poder cerrar una OT (0 = sin exigencia)", "fotos"),
 }
 _REGLAS_CACHE = None
 
@@ -85727,6 +85809,23 @@ def mant_lev_item_subir_foto(iid):
     if not _gcs_ready():
         return jsonify({"ok": False, "error": _STORAGE_OFF_MSG}), 503
 
+    # Huella del contenido ANTES de subir (Daniel 2026-08-09): permite
+    # detectar la misma foto repetida y no contarla como evidencia nueva.
+    # _foto_sha256 deja el stream rebobinado, así que el upload no se afecta.
+    _hash = _foto_sha256(f.stream)
+    _dup_de = None
+    if _hash:
+        try:
+            _prev = mysql_fetchone(
+                "SELECT id FROM mant_levantamiento_fotos "
+                " WHERE levantamiento_id=%s AND foto_hash=%s LIMIT 1",
+                (item["levantamiento_id"], _hash)
+            )
+            if _prev:
+                _dup_de = int(_prev["id"])
+        except Exception as _dup_e:
+            print(f"[lev_foto][dup_check] {_dup_e}", flush=True)
+
     try:
         f.stream.seek(0)
         public_id = f"lev_{item['levantamiento_id']}_item_{iid}_{int(time.time())}"
@@ -85742,11 +85841,11 @@ def mant_lev_item_subir_foto(iid):
             cur.execute(
                 "INSERT INTO mant_levantamiento_fotos "
                 "(item_id, levantamiento_id, maquina_id, cloudinary_url, "
-                " cloudinary_public_id, tipo_foto, descripcion, bytes, tomada_por) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                " cloudinary_public_id, tipo_foto, descripcion, bytes, tomada_por, foto_hash) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (iid, item["levantamiento_id"], item.get("maquina_id"),
                  res["url"], res["public_id"], tipo_foto, descripcion,
-                 res.get("size", 0), current_username() or 'tecnico')
+                 res.get("size", 0), current_username() or 'tecnico', _hash)
             )
             fid = cur.lastrowid
             # Actualizar contadores
@@ -85819,6 +85918,11 @@ def mant_lev_item_subir_foto(iid):
         "id": fid,
         "url": res["url"],
         "tipo_foto": tipo_foto,
+        # Daniel 2026-08-09: la foto SE GUARDA igual (puede ser legítimo
+        # repetir una toma), pero el frontend avisa que ya existía la misma
+        # imagen en esta OT y NO cuenta doble como evidencia al cerrar.
+        "duplicada": bool(_dup_de),
+        "duplicada_de": _dup_de,
     })
 
 
@@ -89278,6 +89382,65 @@ def _ensure_lev_items_edicion_cols():
     return faltantes
 
 
+def _foto_sha256(stream):
+    """Huella digital del CONTENIDO de una imagen (Daniel 2026-08-09:
+    "¿será posible que reconozca si suben la misma foto 4 veces?").
+
+    Dos archivos con el mismo contenido dan el mismo hash aunque tengan
+    distinto nombre, distinta fecha o se hayan subido en momentos
+    distintos -- que es exactamente como se intentaría inflar el conteo
+    de evidencia. Lee en bloques para no cargar la imagen entera en RAM
+    y deja el stream rebobinado para que el upload posterior lo lea
+    completo (si no, Cloudinary recibiría 0 bytes).
+    """
+    try:
+        stream.seek(0)
+        h = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(65536), b""):
+            h.update(chunk)
+        stream.seek(0)
+        return h.hexdigest()
+    except Exception as _e:
+        print(f"[_foto_sha256] {_e}", flush=True)
+        try:
+            stream.seek(0)
+        except Exception:
+            pass
+        return None
+
+
+def _ensure_fotos_hash_cols():
+    """Columna de huella digital en las 2 tablas de fotos de OT.
+
+    Se usa para (a) no contar 4 copias de la MISMA foto como 4 evidencias
+    distintas al validar el cierre, y (b) poder avisar cuál se repitió.
+    Las filas históricas quedan con hash NULL: se las trata como únicas
+    (no podemos saber si eran repetidas sin re-descargar cada imagen), así
+    que la regla nunca castiga retroactivamente trabajo ya hecho.
+    """
+    for tabla in ("mant_visita_fotos", "mant_levantamiento_fotos"):
+        try:
+            existe = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s "
+                "   AND COLUMN_NAME = 'foto_hash'",
+                (tabla,)
+            ) or {}
+            if int(existe.get("n") or 0) > 0:
+                continue
+            conn = get_mysql()
+            with conn.cursor() as cur:
+                cur.execute(f"ALTER TABLE {tabla} ADD COLUMN foto_hash VARCHAR(64) NULL")
+                try:
+                    cur.execute(f"CREATE INDEX idx_{tabla[:20]}_hash ON {tabla} (foto_hash)")
+                except Exception:
+                    pass  # índice duplicado / nombre ya usado: no es bloqueante
+            conn.commit()
+            print(f"[ensure_fotos_hash] foto_hash agregada en {tabla}", flush=True)
+        except Exception as e:
+            print(f"[ensure_fotos_hash] {tabla}: {e}", flush=True)
+
+
 def _ensure_lev_items_gps_cols():
     """Borrador + evidencia GPS por equipo capturado (Daniel 2026-08-08:
     geocerca de 500m al guardar cada equipo del modal de levantamiento).
@@ -91697,6 +91860,15 @@ try:
         _ensure_lev_borrador_backfill()
 except Exception as _ensure_lev_gps_err:
     print(f"[ILUS][WARN] _ensure_lev_items_gps_cols: {_ensure_lev_gps_err}", flush=True)
+
+# Huella digital de fotos (Daniel 2026-08-09 — evitar que 4 copias de la
+# misma foto cuenten como 4 evidencias). SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1: sin la columna, el INSERT de fotos falla.
+try:
+    with app.app_context():
+        _ensure_fotos_hash_cols()
+except Exception as _ensure_fotos_hash_err:
+    print(f"[ILUS][WARN] _ensure_fotos_hash_cols: {_ensure_fotos_hash_err}", flush=True)
 
 # CRÍTICO: repara OTs cerradas con equipos descubiertos huérfanos (bug de
 # app_context en _lev_promover_full_async, Daniel 2026-07-08 — caso real

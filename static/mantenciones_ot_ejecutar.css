@@ -980,8 +980,18 @@
   background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
   color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;
 }
+/* 2026-08-09 (Daniel: "el ILUS no se ve, se ve la cresta nada mas"):
+   antes esto metia Logo.webp -- el lockup ANCHO (casco + "ILUS.") -- en un
+   cuadrado de 48x48 con fondo blanco. Al ser una imagen apaisada dentro de
+   un contenedor cuadrado, el texto quedaba diminuto y solo se distinguia la
+   cresta del casco. Ahora usa el favicon (casco espartano, imagen YA
+   cuadrada) sobre el fondo oscuro del banner: la proporcion calza, no hay
+   deformacion y el casco se reconoce. El nombre ILUS no hace falta repetirlo
+   ahi -- ya esta en el titulo y en toda la app. */
 .firma-banner .fb-logo{
-  width:48px;height:48px;background:#fff center/contain no-repeat;border-radius:8px;flex-shrink:0;
+  width:44px;height:44px;flex-shrink:0;border-radius:10px;
+  background:rgba(255,255,255,.1) center/78% no-repeat;
+  border:1px solid rgba(255,255,255,.18);
 }
 .firma-banner h5{font-size:1.05rem;margin:0;font-weight:800;letter-spacing:-.01em}
 .firma-banner .fb-sub{font-size:.78rem;opacity:.85;margin-top:2px}
