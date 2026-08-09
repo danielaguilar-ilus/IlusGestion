@@ -5315,6 +5315,7 @@ let _levdSeq = 1;         // correlativo para la serie sugerida
 let _levdModal = null;
 let _levdDoc = null;      // factura ERP verificada {tido, numero, fecha}
 let _levdEditId = null;   // 2026-07-06: id del item en edición (null = modo crear)
+let _levdCtx = null;      // 2026-08-08: contexto de autoguardado del equipo actual (ver levdAbrir)
 
 function _levdEl(id){ return document.getElementById(id); }
 
