@@ -685,76 +685,6 @@
   line-height: 1.45;
 }
 
-.pdf-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0,0,0,.58);
-}
-
-.pdf-modal.is-open {
-  display: flex;
-}
-
-.pdf-dialog {
-  width: min(920px, 96vw);
-  height: min(780px, 92vh);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  overflow: hidden;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 28px 80px rgba(0,0,0,.35);
-}
-
-.pdf-head,
-.pdf-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid #e5e5e5;
-}
-
-.pdf-foot {
-  justify-content: flex-end;
-  border-top: 1px solid #e5e5e5;
-  border-bottom: 0;
-}
-
-.pdf-head h3 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 900;
-}
-
-.pdf-close {
-  border: 0;
-  background: transparent;
-  color: #777;
-  font-size: 1.6rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.pdf-frame-wrap {
-  min-height: 0;
-  padding: 16px;
-  background: #2a2a2a;
-}
-
-.pdf-frame {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  background: #2a2a2a;
-}
-
 @media (max-width: 1180px) {
   .print-shell {
     grid-template-columns: 1fr;
@@ -1010,22 +940,10 @@
   </aside>
 </div>
 
-<div class="pdf-modal no-print" id="pdfModal" aria-hidden="true">
-  <div class="pdf-dialog" role="dialog" aria-modal="true" aria-labelledby="pdfTitle">
-    <div class="pdf-head">
-      <h3 id="pdfTitle">Vista previa PDF</h3>
-      <button type="button" class="pdf-close js-close-pdf" aria-label="Cerrar">&times;</button>
-    </div>
-    <div class="pdf-frame-wrap">
-      <iframe class="pdf-frame" id="pdfFrame" title="Vista previa PDF"></iframe>
-    </div>
-    <div class="pdf-foot">
-      <a class="print-btn secondary" id="pdfOpen" target="_blank" rel="noopener">Abrir PDF</a>
-      <a class="print-btn" id="pdfDownload">Descargar PDF</a>
-      <button type="button" class="print-btn secondary js-close-pdf">Cerrar</button>
-    </div>
-  </div>
-</div>
+{# El modal de vista previa PDF (#pdfModal) ya NO vive acá -- se extrajo a
+   templates/_partials/pdf_modal.html e incluye una sola vez desde
+   base.html (que esta página extiende). Los triggers ".js-preview-pdf"
+   de más abajo se cablean solos vía static/pdf_modal.js. #}
 
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script>
@@ -1120,37 +1038,10 @@ document.addEventListener("DOMContentLoaded", function () {
     fitText(el, formatKey === "100x50" ? 9 : 18);
   });
 
-  const modal = document.getElementById("pdfModal");
-  const frame = document.getElementById("pdfFrame");
-  const openLink = document.getElementById("pdfOpen");
-  const downloadLink = document.getElementById("pdfDownload");
-
-  function openPdf(url) {
-    const src = url + (url.includes("?") ? "&" : "?") + "_ts=" + Date.now();
-    frame.src = src;
-    openLink.href = src;
-    downloadLink.href = url + (url.includes("?") ? "&" : "?") + "download=1";
-    modal.classList.add("is-open");
-    modal.setAttribute("aria-hidden", "false");
-  }
-
-  function closePdf() {
-    modal.classList.remove("is-open");
-    modal.setAttribute("aria-hidden", "true");
-    frame.src = "about:blank";
-  }
-
-  document.querySelectorAll(".js-preview-pdf").forEach((btn) => {
-    btn.addEventListener("click", () => openPdf(btn.dataset.pdfUrl));
-  });
-
-  document.querySelectorAll(".js-close-pdf").forEach((btn) => {
-    btn.addEventListener("click", closePdf);
-  });
-
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) closePdf();
-  });
+  // El modal de vista previa PDF (#pdfModal / openPdf / closePdf) ya NO
+  // se cablea acá -- es global, ver static/pdf_modal.js. Los botones
+  // ".js-preview-pdf[data-pdf-url]" de esta página se enganchan solos
+  // por delegación de eventos desde ese script.
 });
 </script>
 {% endblock %}

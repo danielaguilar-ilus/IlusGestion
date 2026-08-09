@@ -473,8 +473,13 @@ async function resetearOTs(){
       {% if o.estado == 'cerrada' %}
       {# Reporte PDF (Guardar como PDF desde el navegador) — solo OT cerradas y con
          las 3 firmas; el endpoint valida y redirige con flash si falta alguna. #}
+      {# 2026-08-08 (Daniel): el PDF se ve en un modal, no en pestaña nueva.
+         href se conserva (clic derecho / clic central -- REGLA #4.2); el
+         render HTML rápido va al iframe, el PDF real (Playwright) al
+         botón Descargar del modal -- mismo patrón que ot_ficha.html. #}
       <a href="{{ url_for('mant_ot_pdf_render', vid=o.id) }}" target="_blank"
-         class="btn btn-outline-dark btn-sm" title="Reporte PDF imprimible (OT cerrada)">
+         onclick="openPdf('{{ url_for('mant_ot_pdf_render', vid=o.id) }}', {downloadUrl: '{{ url_for('mant_visita_pdf', vid=o.id) }}', title: 'Orden de Trabajo'}); return false;"
+         class="btn btn-outline-dark btn-sm" title="Ver / descargar reporte PDF (OT cerrada)">
         <i class="bi bi-filetype-pdf"></i>
       </a>
       {% endif %}

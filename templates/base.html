@@ -807,6 +807,15 @@
 </div>
 
 {# ══════════════════════════════════════════════════════════
+   MODAL GLOBAL DE VISTA PREVIA DE PDF (pedido Daniel 2026-08-07)
+   Un solo componente para TODO el proyecto: cotizaciones de Servicio
+   Técnico/Transporte, PDF de OT (Mantenciones) y Etiquetas. Se incluye
+   acá UNA VEZ -- ningún template debe copiar este HTML de nuevo, solo
+   llamar openPdf(url) / openPdf(url, opts) (ver static/pdf_modal.js).
+══════════════════════════════════════════════════════════ #}
+{% include "_partials/pdf_modal.html" %}
+
+{# ══════════════════════════════════════════════════════════
    JS — Todos cargan con `defer`: el browser los descarga en
    paralelo al parsing del HTML y los ejecuta en orden, justo
    antes de DOMContentLoaded. Sin bloqueo del render.
@@ -821,6 +830,7 @@
 <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
 <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 <script defer src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
+<script defer src="{{ url_for('static', filename='pdf_modal.js') }}"></script>
 
 {# ══════════════════════════════════════════════════════════
    Google Maps Places API — carga LAZY (on-demand).

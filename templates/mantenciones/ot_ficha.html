@@ -389,11 +389,18 @@
           and visita.firma_cliente_url
           and visita.firma_tecnico_url
           and visita.firma_supervisor_url %}
+    {# 2026-08-08 (Daniel): el PDF se ve en un modal, no en pestaña nueva.
+       El href se conserva (clic derecho / clic central -- REGLA #4.2) y el
+       modal trae su propio botón "Abrir en pestaña nueva". El render HTML
+       rápido (mant_ot_pdf_render) va al iframe; el PDF real de Playwright
+       (mant_visita_pdf, mismo que usa ot_ejecutar.html) queda para el
+       botón Descargar. #}
     <a href="{{ url_for('mant_ot_pdf_render', vid=visita.id) }}"
        target="_blank"
+       onclick="openPdf('{{ url_for('mant_ot_pdf_render', vid=visita.id) }}', {downloadUrl: '{{ url_for('mant_visita_pdf', vid=visita.id) }}', title: 'Orden de Trabajo'}); return false;"
        class="ot-estado-badge"
        style="background:#dcfce7;color:#15803d;border:1px solid #86efac;text-decoration:none;font-weight:800;letter-spacing:.02em;display:inline-flex;align-items:center;gap:6px"
-       title="Descargar reporte PDF de la OT cerrada">
+       title="Ver / descargar reporte PDF de la OT cerrada">
       <i class="bi bi-filetype-pdf"></i>Descargar PDF
     </a>
     {% endif %}

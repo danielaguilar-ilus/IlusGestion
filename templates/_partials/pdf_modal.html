@@ -1,0 +1,282 @@
+{# ══════════════════════════════════════════════════════════════════════
+   PARTIAL · Modal global de vista previa de PDF (ILUS)
+   ══════════════════════════════════════════════════════════════════════
+   Pedido de Daniel (2026-08-07): "de todos los PDF, tanto de cotizacion
+   de logistica o transporte, como de servicio tecnico, deben verse por
+   un modal, no debe ser abrir una nueva pantalla, debe ser rapido...
+   debe tener un modal para poder tener opciones de gestionarla,
+   descargarla, imprimirla" + (esa noche) "si quieres y tarda, dejale
+   una barra de progreso esa de la de ILUS".
+
+   Un solo componente para TODO el proyecto (Etiquetas, cotizaciones de
+   Servicio Tecnico y Transporte, PDF de OT en Mantenciones). Se incluye
+   UNA VEZ acá y queda disponible en cualquier página que extienda
+   base.html -- ningún template debe volver a copiar este HTML.
+
+   Requiere: static/pdf_modal.js (incluido también desde base.html).
+
+   Uso (ver static/pdf_modal.js para la API completa):
+     onclick="openPdf('/ruta/rapida-o-pdf')"
+     onclick="openPdf('/ruta/rapida-html', {downloadUrl:'/ruta/pdf-real?descargar=1'})"
+     onclick="closePdf()"
+
+   Compat legacy (Etiquetas, print_labels.html): cualquier trigger con
+     class="js-preview-pdf" data-pdf-url="..."
+   se cablea solo via delegación de eventos en pdf_modal.js.
+   ══════════════════════════════════════════════════════════════════════ #}
+<style>
+/* Tokens propios de este componente -- OJO: el proyecto ya tiene DOS
+   variables "rojo ILUS" distintas dando vueltas (--ilus-red legacy
+   #CC0000 en style.css:root, --red #e40000 local a print_labels.html).
+   Como este modal ahora vive en base.html (global, cualquier página),
+   NO reutiliza ninguna de esas -- fija sus propios tokens con los
+   valores canónicos de REGLA #2 (CLAUDE.md: --ilus-red:#dc2626,
+   --ilus-black:#0a0a0a) para no heredar un rojo/negro distinto según
+   la página donde se abra. */
+.pdf-modal {
+  --pdfm-red: #dc2626;
+  --pdfm-black: #0a0a0a;
+}
+
+.pdf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .58);
+}
+
+.pdf-modal.is-open {
+  display: flex;
+}
+
+.pdf-dialog {
+  width: min(920px, 96vw);
+  height: min(780px, 92vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .35);
+}
+
+.pdf-head,
+.pdf-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.pdf-foot {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  border-top: 1px solid #e5e5e5;
+  border-bottom: 0;
+}
+
+.pdf-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 900;
+  color: #111;
+}
+
+.pdf-close {
+  border: 0;
+  background: transparent;
+  color: #777;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.pdf-frame-wrap {
+  position: relative;
+  min-height: 0;
+  padding: 16px;
+  background: #2a2a2a;
+}
+
+.pdf-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #2a2a2a;
+}
+
+/* Botones del footer -- self-contained, NO dependen de .print-btn (esa
+   clase vive solo en print_labels.html, atada a su propio var(--red)
+   local que no existe en el resto del sitio). REGLA #3: min-height 44px
+   (touch target Apple HIG). */
+.pdf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  font-weight: 800;
+  font-size: .88rem;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  color: #fff;
+  background: var(--pdfm-red);
+  border-color: var(--pdfm-red);
+}
+
+.pdf-btn:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #fff;
+}
+
+.pdf-btn-secondary {
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #1f2937;
+}
+
+.pdf-btn-secondary:hover {
+  background: #e5e7eb;
+  color: #111;
+}
+
+/* ── Overlay de carga con identidad ILUS mientras el iframe genera el
+   documento -- reemplaza la pantalla en blanco. Barra INDETERMINADA
+   (no hay forma real de saber el % de un PDF generándose server-side). */
+.pdf-loading {
+  position: absolute;
+  inset: 16px;
+  z-index: 5;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  border-radius: 4px;
+  background: linear-gradient(160deg, var(--pdfm-black) 0%, #1c1c1c 100%);
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+
+.pdf-loading.show {
+  display: flex;
+  opacity: 1;
+}
+
+.pdf-loading-mark {
+  font-size: 1.25rem;
+  font-weight: 900;
+  letter-spacing: .02em;
+  color: #fff;
+}
+
+.pdf-loading-mark .pdf-loading-tri,
+.pdf-loading-mark .pdf-loading-dot {
+  color: var(--pdfm-red);
+}
+
+.pdf-loading-bar {
+  width: 220px;
+  max-width: 70%;
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, .12);
+  overflow: hidden;
+  position: relative;
+}
+
+.pdf-loading-bar > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--pdfm-red), #ff7a7a, var(--pdfm-red));
+  box-shadow: 0 0 10px rgba(220, 38, 38, .65);
+  animation: pdfLoadingSlide 1.15s cubic-bezier(.5, 0, .5, 1) infinite;
+}
+
+@keyframes pdfLoadingSlide {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
+
+.pdf-loading-msg {
+  color: #d1d5db;
+  font-size: .82rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdf-loading-bar > i { animation-duration: 2.4s; }
+}
+
+/* ── Mobile (REGLA #3): fullscreen, safe-area, botones a lo ancho ── */
+@media (max-width: 768px) {
+  .pdf-modal {
+    padding: 0;
+  }
+  .pdf-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .pdf-head {
+    padding-top: max(14px, calc(env(safe-area-inset-top) + 8px));
+  }
+  .pdf-foot {
+    padding-bottom: max(14px, calc(env(safe-area-inset-bottom) + 8px));
+  }
+  .pdf-btn {
+    flex: 1 1 auto;
+  }
+}
+</style>
+
+<div class="pdf-modal no-print" id="pdfModal" aria-hidden="true">
+  <div class="pdf-dialog" role="dialog" aria-modal="true" aria-labelledby="pdfTitle">
+    <div class="pdf-head">
+      <h3 id="pdfTitle">Vista previa del documento</h3>
+      <button type="button" class="pdf-close js-close-pdf" aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="pdf-frame-wrap">
+      <iframe class="pdf-frame" id="pdfFrame" title="Vista previa del documento"></iframe>
+      <div class="pdf-loading" id="pdfLoading" aria-hidden="true">
+        <div class="pdf-loading-mark">
+          <span class="pdf-loading-tri">&#9650;</span>ILUS<span class="pdf-loading-dot">.</span>
+        </div>
+        <div class="pdf-loading-bar"><i></i></div>
+        <div class="pdf-loading-msg" id="pdfLoadingMsg">Generando documento&hellip;</div>
+      </div>
+    </div>
+    <div class="pdf-foot">
+      <a class="pdf-btn pdf-btn-secondary" id="pdfOpen" target="_blank" rel="noopener">
+        <i class="bi bi-box-arrow-up-right"></i> Abrir en pestaña nueva
+      </a>
+      <button type="button" class="pdf-btn pdf-btn-secondary" id="pdfPrint">
+        <i class="bi bi-printer"></i> Imprimir
+      </button>
+      <a class="pdf-btn" id="pdfDownload">
+        <i class="bi bi-download"></i> Descargar
+      </a>
+      <button type="button" class="pdf-btn pdf-btn-secondary js-close-pdf">Cerrar</button>
+    </div>
+  </div>
+</div>

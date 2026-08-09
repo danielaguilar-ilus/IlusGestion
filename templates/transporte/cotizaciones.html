@@ -249,7 +249,14 @@
                     onclick="trcAbrirEditar({{ c.id }})">
               <i class="bi bi-pencil-fill"></i>
             </button>
-            <a class="trc-row-btn trc-row-btn-pdf" href="/transporte/cotizaciones/{{ c.id }}/pdf" target="_blank" rel="noopener" title="Ver / descargar el PDF de la cotización">
+            {# 2026-08-08 (Daniel): el PDF se ve en un modal, no en pestaña nueva.
+               El href se conserva (clic derecho / clic central siguen abriendo en
+               pestaña nueva -- REGLA #4.2) y el modal también trae su propio botón
+               "Abrir en pestaña nueva". El "ver" (HTML instantáneo) va al iframe;
+               el "pdf" real (Playwright) queda para el botón Descargar. #}
+            <a class="trc-row-btn trc-row-btn-pdf" href="/transporte/cotizaciones/{{ c.id }}/pdf" target="_blank" rel="noopener"
+               onclick="openPdf('/transporte/cotizaciones/{{ c.id }}/ver', {downloadUrl: '/transporte/cotizaciones/{{ c.id }}/pdf?descargar=1', title: 'Cotización de Transporte'}); return false;"
+               title="Ver / descargar el PDF de la cotización">
               <i class="bi bi-file-earmark-pdf-fill"></i>
             </a>
             <button type="button" class="trc-row-btn trc-row-btn-send" title="Enviar por correo"
