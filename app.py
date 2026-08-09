@@ -46759,8 +46759,15 @@ def comm_killswitch_get():
             # en UTC (NOW(), Regla #6 CLAUDE.md); esto lo mandaba crudo sin
             # convertir a hora Chile, así que el front mostraba una hora que
             # parece "en el futuro" respecto al reloj real de Santiago.
+            #
+            # FIX 2026-08-09 (Daniel: "ultima actualizacion en fecha gringa
+            # arreglalo"): la conversión a hora Chile ya estaba bien, pero el
+            # formato de texto seguía en ISO/gringo (YYYY-MM-DD, ej.
+            # "2026-05-18 07:14:35") en vez de día/mes/año como exige la
+            # Regla #6 ("ninguna fecha se muestra jamás en inglés ni en
+            # formato ISO crudo"). El resto del proyecto usa dd/mm/yyyy.
             if at is not None:
-                at_iso = chile_fmt_filter(at, "%Y-%m-%d %H:%M:%S") if hasattr(at, "strftime") else str(at)
+                at_iso = chile_fmt_filter(at, "%d/%m/%Y %H:%M:%S") if hasattr(at, "strftime") else str(at)
         except Exception:
             at_iso = None
         modulos.append({
