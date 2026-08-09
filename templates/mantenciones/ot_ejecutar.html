@@ -1081,6 +1081,11 @@
       .levd-foto-th img{width:100%;height:100%;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb}
       .levd-foto-th .x{position:absolute;top:-7px;right:-7px;width:24px;height:24px;border:0;
         border-radius:50%;background:#dc2626;color:#fff;font-size:.75rem;line-height:1}
+      /* 2026-08-08 (autoguardado de fotos): overlay sobre la miniatura
+         mientras sube (spinner) o si falló (toca para reintentar). */
+      .levd-foto-ov{position:absolute;inset:0;border-radius:10px;display:flex;
+        align-items:center;justify-content:center;background:rgba(10,10,10,.45)}
+      .levd-foto-ov-err{background:rgba(220,38,38,.55);color:#fff;font-size:1.2rem;cursor:pointer}
       .levd-foto-add{width:74px;height:74px;border:2px dashed #dc2626;border-radius:10px;
         background:#fff5f5;color:#dc2626;font-size:1.5rem;display:flex;align-items:center;justify-content:center}
       /* 2026-08-08 (Daniel: "Heiser... no puede asignar fotos de la galería"):
@@ -1204,6 +1209,7 @@
             <h6 class="modal-title fw-bold">
               <i class="bi bi-camera-fill me-2" id="levdModalIco" style="color:#dc2626"></i><span id="levdModalTitulo">Nuevo equipo</span>
               <span class="badge bg-danger ms-1" id="levdModalSeq">#1</span>
+              <small id="levdAutosaveEstado" class="ms-2 fw-normal" style="font-size:.7rem;color:#9ca3af"></small>
             </h6>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
@@ -2339,6 +2345,10 @@ let TAREAS_LOCKS = {};
 // ════════════════════════════════════════════════════════════════
 const REGLAS_TERRENO = {{ (reglas_terreno or {}) | tojson }};
 const GEOF_PUEDE_EJECUTAR = {{ 'true' if puede_ejecutar else 'false' }};
+// Geocerca del MODAL de levantamiento (2026-08-08) -- cosmético, evita
+// pedirle GPS a gestión en el navegador. La exención real vive en
+// _lev_gate_finalizar (servidor), esto nunca es la autoridad.
+const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
 
 </script>
 

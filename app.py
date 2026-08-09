@@ -52732,12 +52732,32 @@ def _lev_materializar_equipos_nuevos(vid, usuario=None):
             return out
         lev_id = v["levantamiento_id"]
         cid = v["cliente_id"]
-        items = mysql_fetchall(
-            "SELECT * FROM mant_levantamiento_items "
-            " WHERE levantamiento_id=%s AND maquina_id IS NULL "
-            "   AND COALESCE(nombre_snap,'') <> ''",
-            (lev_id,)
-        ) or []
+        try:
+            items = mysql_fetchall(
+                "SELECT * FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND maquina_id IS NULL "
+                "   AND COALESCE(nombre_snap,'') <> '' "
+                "   AND COALESCE(es_borrador,0) = 0",
+                (lev_id,)
+            ) or []
+        except Exception as _e_col:
+            # Fallback SOLO si es_borrador aun no existe (ILUS_SKIP_MIGRATIONS=1
+            # y _ensure_lev_items_gps_cols no corrio todavia en este proceso).
+            # 2026-08-08 (Daniel, geocerca de levantamiento): un item que aun
+            # esta en borrador (sin GPS validado) NUNCA debe materializarse en
+            # la ficha del cliente -- mismo bug real que OT-2026-00031/00032,
+            # ahora con un candado explicito en el punto exacto donde se
+            # promueve, no solo en el punto donde se crea.
+            if "es_borrador" not in str(_e_col).lower() and "unknown column" not in str(_e_col).lower():
+                raise
+            print(f"[lev_materializar] vid={vid} columna es_borrador AUSENTE — "
+                  f"materializando SIN filtro de borrador", flush=True)
+            items = mysql_fetchall(
+                "SELECT * FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND maquina_id IS NULL "
+                "   AND COALESCE(nombre_snap,'') <> ''",
+                (lev_id,)
+            ) or []
         if not items:
             print(f"[lev_materializar] vid={vid} lev={lev_id} SKIP: 0 items pendientes",
                   flush=True)
@@ -64833,6 +64853,37 @@ def mant_visita_firmar(vid):
         # Solo técnico asignado + superadmin (acción 'ejecutar').
         if not _puede_ot_accion(vid, "ejecutar"):
             return jsonify({"ok": False, "error": "Solo el técnico asignado puede firmar como técnico."}), 403
+        # 2026-08-08 (Daniel, geocerca de levantamiento): "si el técnico firma
+        # ya se bloquea la OT" — la firma del técnico es el único candado de
+        # fecha/gestión que existe (nada de auto-extender fechas). Si quedan
+        # equipos a medio capturar (borrador), se avisa y se deja elegir:
+        # volver a terminarlos o firmar igual (quedan fuera de la ficha).
+        try:
+            _borr = mysql_fetchall(
+                "SELECT li.id, li.nombre_snap FROM mant_levantamiento_items li "
+                "  JOIN mant_levantamientos lv ON lv.id = li.levantamiento_id "
+                " WHERE ( lv.visita_id = %s "
+                "      OR lv.id = (SELECT levantamiento_id FROM mant_visitas WHERE id=%s) ) "
+                "   AND COALESCE(li.es_borrador,0) = 1 "
+                "   AND li.maquina_id IS NULL "
+                " LIMIT 20", (vid, vid)) or []
+        except Exception:
+            _borr = []  # columna es_borrador aun no existe (skip-migrations) -> no bloquea
+        if _borr and not d.get("confirmar_borradores"):
+            return jsonify({
+                "ok": False, "error_codigo": "LEV_BORRADORES_PENDIENTES",
+                "n": len(_borr),
+                "nombres": [(b.get("nombre_snap") or "(sin nombre)") for b in _borr],
+                "error": f"Tienes {len(_borr)} equipo(s) a medio capturar. Si firmas ahora, "
+                         f"no llegarán a la ficha del cliente.",
+            }), 409
+        if _borr:
+            try:
+                _mant_log("visita", vid, "firma_con_borradores",
+                          f"{current_username()} firmó con {len(_borr)} equipo(s) en "
+                          f"borrador — descartados de la ficha del cliente.")
+            except Exception:
+                pass
     elif tipo == "supervisor":
         # admin/superadmin + creador de la OT (acción 'firmar_creador').
         if not _puede_ot_accion(vid, "firmar_creador"):
@@ -70033,12 +70084,21 @@ def mant_ot_ejecutar(vid):
     lev_huerfanos_count = 0
     if visita.get("levantamiento_id"):
         try:
-            _row_huerf = mysql_fetchone(
-                "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
-                "WHERE levantamiento_id=%s AND maquina_id IS NULL "
-                "  AND COALESCE(nombre_snap,'') <> ''",
-                (visita["levantamiento_id"],)
-            )
+            try:
+                _row_huerf = mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
+                    "WHERE levantamiento_id=%s AND maquina_id IS NULL "
+                    "  AND COALESCE(nombre_snap,'') <> '' "
+                    "  AND COALESCE(es_borrador,0) = 0",
+                    (visita["levantamiento_id"],)
+                )
+            except Exception:
+                _row_huerf = mysql_fetchone(
+                    "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
+                    "WHERE levantamiento_id=%s AND maquina_id IS NULL "
+                    "  AND COALESCE(nombre_snap,'') <> ''",
+                    (visita["levantamiento_id"],)
+                )
             lev_huerfanos_count = (_row_huerf or {}).get("n") or 0
         except Exception as _e_lh:
             print(f"[ot_ejecutar] lev_huerfanos_count error: {_e_lh}", flush=True)
@@ -70081,7 +70141,17 @@ def mant_ot_ejecutar(vid):
             "geofence_radio_m": int((_reglas_cargar() or {}).get("ot_geofence_radio_m") or 200),
             "tiempo_activo": bool((_reglas_cargar() or {}).get("ot_tiempo_control_activo")),
             "tiempo_tolerancia_min": int((_reglas_cargar() or {}).get("ot_tiempo_tolerancia_min") or 10),
+            # 2026-08-08 (Daniel): geocerca de 500m al GUARDAR cada equipo del
+            # modal de levantamiento — distinta de geofence_activo de arriba
+            # (ese es el check-in general de la página).
+            "geofence_lev_activo": bool((_reglas_cargar() or {}).get("ot_geofence_lev_activo")),
+            "geofence_lev_radio_m": int((_reglas_cargar() or {}).get("ot_geofence_lev_radio_m") or 500),
+            "geofence_lev_accuracy_max_m": int((_reglas_cargar() or {}).get("ot_geofence_lev_accuracy_max_m") or 500),
         },
+        # Cosmético SOLO (oculta el pedido de GPS a gestión en el navegador) —
+        # la exención REAL la aplica _lev_gate_finalizar en el servidor.
+        geof_rol_exento=(_rol_familia((getattr(g, "user", None) or {}).get("role"))
+                         in ("admin", "supervisor", "ejecutivo", "superadmin")),
         es_superadmin=es_superadmin_flag,
         es_tecnico=es_tecnico_flag,
         # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
@@ -76797,6 +76867,13 @@ _REGLAS_DEFAULTS = {
     "ot_tiempo_control_activo":   ("0",     "bool",   "terreno",    "Control de duración: pedir justificación si difiere de lo estimado", ""),
     "ot_tiempo_tolerancia_min":   ("10",    "int",    "terreno",    "Tolerancia de diferencia de duración antes de exigir justificación", "min"),
     "ot_factura_gate_activo":     ("1",     "bool",   "politica",   "Exigir factura asociada para firmar el cierre de OT (salvo garantía/sin costo)", ""),
+    # ── GEOCERCA DE CAPTURA (Daniel 2026-08-08): distinta de ot_geofence_activo
+    #    (check-in general de la página). Esta exige GPS SOLO al presionar
+    #    "Guardar equipo" en el modal de levantamiento — nunca en el
+    #    autoguardado de texto/fotos. Nace apagada, igual que su hermana. ──
+    "ot_geofence_lev_activo":         ("0",   "bool", "terreno", "Exigir estar en el sitio (GPS) al guardar cada equipo del levantamiento", ""),
+    "ot_geofence_lev_radio_m":        ("500", "int",  "terreno", "Radio permitido para guardar un equipo del levantamiento", "metros"),
+    "ot_geofence_lev_accuracy_max_m": ("500", "int",  "terreno", "Precisión GPS mínima aceptable (descarta lecturas peores)", "metros"),
 }
 _REGLAS_CACHE = None
 
@@ -85026,6 +85103,122 @@ def mant_erp_doc_info():
     }, "analisis": analisis})
 
 
+def _ot_destino_coords(v):
+    """(lat,lng) del destino real de la OT para la geocerca, o (None,None)
+    si no hay ninguna coordenada guardada. (None,None) NO es un error:
+    significa que la geocerca es inaplicable para esa OT/cliente -> se deja
+    pasar (fail-open), nunca se bloquea al técnico por un dato faltante que
+    no eligió él."""
+    if v.get("direccion_lat") is not None and v.get("direccion_lng") is not None:
+        try:
+            return float(v["direccion_lat"]), float(v["direccion_lng"])
+        except (TypeError, ValueError):
+            pass
+    c = mysql_fetchone(
+        "SELECT direccion_lat, direccion_lng FROM mant_clientes WHERE id=%s",
+        (v.get("cliente_id"),)) or {}
+    if c.get("direccion_lat") is not None and c.get("direccion_lng") is not None:
+        try:
+            return float(c["direccion_lat"]), float(c["direccion_lng"])
+        except (TypeError, ValueError):
+            pass
+    return None, None
+
+
+def _lev_gate_finalizar(v, d):
+    """Geocerca del modal de levantamiento — SOLO se evalúa al finalizar un
+    equipo (payload con finalizar:true), nunca en el autoguardado de texto
+    ni de fotos (Daniel 2026-08-08: "la ubicación solo se pide al botón
+    final"). Devuelve (ok:bool, gps:dict con lo que hay que persistir,
+    error:(body,status)|None).
+
+    Fail-open explícito en 3 casos — cada uno deliberado, no un accidente:
+      - la regla ot_geofence_lev_activo está apagada (default)
+      - el rol es de gestión (admin/supervisor/ejecutivo/superadmin) —
+        mismo criterio que ya exime _lev_puede_accion en todo lo demás
+      - la OT/cliente no tiene coordenadas guardadas -> gps_dentro_rango
+        queda NULL y PASA (nunca comparar con `!= 1`, siempre aceptar NULL)
+    """
+    R = _reglas_cargar() or {}
+    activo = bool(R.get("ot_geofence_lev_activo"))
+    radio = max(50, int(R.get("ot_geofence_lev_radio_m") or 500))
+    accmax = max(30, int(R.get("ot_geofence_lev_accuracy_max_m") or 500))
+
+    rol = _rol_familia((getattr(g, "user", None) or {}).get("role"))
+    exento = rol in ("admin", "supervisor", "ejecutivo", "superadmin")
+
+    gps = {"gps_lat": None, "gps_lng": None, "gps_accuracy_m": None,
+           "gps_dist_m": None, "gps_dentro_rango": None,
+           "gps_origen": "sin_gps", "gps_captured_at": None}
+
+    lat, lng = d.get("gps_lat"), d.get("gps_lng")
+    acc = d.get("gps_accuracy_m")
+    dlat, dlng = _ot_destino_coords(v)
+
+    if lat is not None and lng is not None:
+        try:
+            gps["gps_lat"] = float(lat)
+            gps["gps_lng"] = float(lng)
+        except (TypeError, ValueError):
+            lat = lng = None
+    if lat is not None and lng is not None:
+        gps["gps_accuracy_m"] = int(acc) if acc not in (None, "") else None
+        gps["gps_captured_at"] = datetime.utcnow()
+        gps["gps_origen"] = "tecnico"
+        if dlat is not None and dlng is not None:
+            dist = _haversine_m(gps["gps_lat"], gps["gps_lng"], dlat, dlng)
+            if dist is not None:
+                gps["gps_dist_m"] = int(dist)
+                gps["gps_dentro_rango"] = 1 if dist <= radio else 0
+        else:
+            gps["gps_origen"] = "sin_destino"
+
+    if not activo:
+        return True, gps, None
+    if exento:
+        gps["gps_origen"] = "exento_gestion"
+        return True, gps, None
+
+    if lat is None or lng is None:
+        return False, gps, ({
+            "ok": False, "error_codigo": "GPS_REQUERIDO",
+            "error": "Necesitamos tu ubicación para cerrar este equipo. "
+                     "Activa el GPS y vuelve a tocar «Guardar equipo». "
+                     "Lo que escribiste y las fotos ya quedaron guardados.",
+        }, 400)
+
+    if gps["gps_accuracy_m"] is not None and gps["gps_accuracy_m"] > accmax:
+        return False, gps, ({
+            "ok": False, "error_codigo": "GPS_IMPRECISO",
+            "accuracy_m": gps["gps_accuracy_m"], "accuracy_max_m": accmax,
+            "error": f"La señal GPS está muy imprecisa (±{gps['gps_accuracy_m']} m). "
+                     f"Acércate a una ventana o sal un momento y reintenta.",
+        }, 400)
+
+    # Fail-open explícito: NULL (sin destino) siempre pasa. Nunca usar `!= 1`.
+    if gps["gps_dentro_rango"] is None:
+        try:
+            _mant_log("visita", v.get("id"), "geofence_sin_destino",
+                      "Equipo finalizado sin validar geocerca: la OT/cliente no tiene "
+                      "coordenadas cargadas.")
+        except Exception:
+            pass
+        return True, gps, None
+
+    if gps["gps_dentro_rango"] == 0:
+        dm = gps["gps_dist_m"] or 0
+        legible = f"{dm/1000:.1f} km" if dm >= 1000 else f"{dm} m"
+        return False, gps, ({
+            "ok": False, "error_codigo": "GPS_FUERA_RANGO",
+            "dist_m": dm, "radio_m": radio,
+            "error": f"Estás a ~{legible} del sitio (límite {radio} m). "
+                     f"Acércate y vuelve a tocar «Guardar equipo». "
+                     f"Tu trabajo quedó guardado, no se pierde nada.",
+        }, 403)
+
+    return True, gps, None
+
+
 @app.route("/mantenciones/api/levantamientos/<int:lid>/items", methods=["POST"])
 @_mant_required
 def mant_lev_item_crear(lid):
@@ -85042,10 +85235,21 @@ def mant_lev_item_crear(lid):
         return jsonify({"ok": False, "error": "Levantamiento no encontrado"}), 404
     if lev["estado"] == "cerrado":
         return jsonify({"ok": False, "error": "Levantamiento cerrado — no acepta más equipos"}), 400
+    # FIX seguridad (mismo IDOR ya cerrado en mant_lev_item_update, línea
+    # ~85315): antes solo @_mant_required dejaba a cualquier técnico crear
+    # equipos en el levantamiento de OTRA OT adivinando el lid.
+    if not _lev_puede_accion(lid, "ejecutar", lev_row=lev):
+        return _lev_403_response("ejecutar")
 
     d = request.get_json(silent=True) or {}
     maquina_id = d.get("maquina_id")
     nombre = (d.get("nombre") or "").strip()[:300]
+    # client_uid (Daniel 2026-08-08): generado en el navegador al abrir un
+    # equipo NUEVO, viaja en todos los POST/autoguardados de ese equipo
+    # mientras no exista iid todavía. Junto a la UNIQUE KEY
+    # uq_lev_item_uid, sirve para que un reintento de red (4G inestable,
+    # doble-tap) resuelva al MISMO row en vez de crear un duplicado.
+    client_uid = (d.get("client_uid") or "").strip()[:40] or None
 
     if not maquina_id and not nombre:
         return jsonify({"ok": False, "error": "Indica una máquina existente o un nombre nuevo"}), 400
@@ -85083,43 +85287,80 @@ def mant_lev_item_crear(lid):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
+            colision = False
             try:
-                cur.execute(
-                    "INSERT INTO mant_levantamiento_items "
-                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                    " estado_capturado, ubicacion, observaciones, anomalias, "
-                    " doc_origen, fecha_documento) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
-                     _est_cap,
-                     (d.get("ubicacion") or "").strip()[:200],
-                     (d.get("observaciones") or "").strip() or None,
-                     (d.get("anomalias") or "").strip() or None,
-                     _doc_origen, _doc_fecha)
-                )
-            except Exception as _e_full:
-                # Fallback SOLO si la columna doc_origen aún no existe
-                # (ILUS_SKIP_MIGRATIONS + _ensure no corrió todavía). Cualquier
-                # OTRO error (lock timeout, data-too-long, etc.) se re-lanza:
-                # no queremos descartar en silencio la factura que el técnico
-                # verificó ni enmascarar un fallo real como "sin documento".
-                _msg = str(_e_full).lower()
-                if not ("doc_origen" in _msg or "unknown column" in _msg or "1054" in _msg):
+                try:
+                    cur.execute(
+                        "INSERT INTO mant_levantamiento_items "
+                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                        " estado_capturado, ubicacion, observaciones, anomalias, "
+                        " doc_origen, fecha_documento, es_borrador, client_uid) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s)",
+                        (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
+                         _est_cap,
+                         (d.get("ubicacion") or "").strip()[:200],
+                         (d.get("observaciones") or "").strip() or None,
+                         (d.get("anomalias") or "").strip() or None,
+                         _doc_origen, _doc_fecha, client_uid)
+                    )
+                except Exception as _e_full:
+                    # Fallback SOLO si alguna columna (doc_origen o las nuevas
+                    # de es_borrador/client_uid, si _ensure_lev_items_gps_cols
+                    # aun no corrio con ILUS_SKIP_MIGRATIONS=1) no existe todavia.
+                    # Cualquier OTRO error (lock timeout, data-too-long, etc.)
+                    # se re-lanza: no queremos descartar en silencio la factura
+                    # que el técnico verificó ni enmascarar un fallo real.
+                    _msg = str(_e_full).lower()
+                    if not ("doc_origen" in _msg or "es_borrador" in _msg
+                            or "client_uid" in _msg or "unknown column" in _msg
+                            or "1054" in _msg):
+                        raise
+                    print(f"[lev_item_crear] columna(s) no disponibles ({_e_full}); "
+                          f"fallback minimo", flush=True)
+                    cur.execute(
+                        "INSERT INTO mant_levantamiento_items "
+                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                        " estado_capturado, ubicacion, observaciones, anomalias) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
+                         _est_cap,
+                         (d.get("ubicacion") or "").strip()[:200],
+                         (d.get("observaciones") or "").strip() or None,
+                         (d.get("anomalias") or "").strip() or None)
+                    )
+                iid = cur.lastrowid
+            except Exception as _e_ins:
+                # Carrera de creación (Daniel 2026-08-08): dos campos/fotos del
+                # MISMO equipo nuevo dispararon su propio POST casi a la vez.
+                # uq_lev_item_uid rechaza el 2º con Duplicate entry -- en vez
+                # de perderlo, se aplica su payload sobre el row que YA se
+                # creó (nunca un SELECT mudo que descarte el 2º dato).
+                _msg = str(_e_ins)
+                if not (client_uid and ("1062" in _msg or "Duplicate entry" in _msg)):
                     raise
-                print(f"[lev_item_crear] columna doc_origen no disponible ({_e_full}); "
-                      f"fallback sin factura", flush=True)
+                _existente = mysql_fetchone(
+                    "SELECT id FROM mant_levantamiento_items "
+                    "WHERE levantamiento_id=%s AND client_uid=%s",
+                    (lid, client_uid))
+                if not _existente:
+                    raise
+                iid = _existente["id"]
+                colision = True
+                _ubic = (d.get("ubicacion") or "").strip()[:200]
                 cur.execute(
-                    "INSERT INTO mant_levantamiento_items "
-                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                    " estado_capturado, ubicacion, observaciones, anomalias) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (lid, maquina_id, snap["nombre"], snap["sku"], snap["serie"],
-                     _est_cap,
-                     (d.get("ubicacion") or "").strip()[:200],
-                     (d.get("observaciones") or "").strip() or None,
-                     (d.get("anomalias") or "").strip() or None)
+                    "UPDATE mant_levantamiento_items SET "
+                    "  nombre_snap = CASE WHEN %s <> '' THEN %s ELSE nombre_snap END, "
+                    "  sku_snap    = CASE WHEN %s <> '' THEN %s ELSE sku_snap END, "
+                    "  serie_snap  = CASE WHEN %s <> '' THEN %s ELSE serie_snap END, "
+                    "  ubicacion   = CASE WHEN %s <> '' THEN %s ELSE ubicacion END, "
+                    "  observaciones = COALESCE(NULLIF(%s,''), observaciones), "
+                    "  anomalias     = COALESCE(NULLIF(%s,''), anomalias) "
+                    "WHERE id=%s",
+                    (snap["nombre"], snap["nombre"], snap["sku"], snap["sku"],
+                     snap["serie"], snap["serie"], _ubic, _ubic,
+                     (d.get("observaciones") or "").strip(),
+                     (d.get("anomalias") or "").strip(), iid)
                 )
-            iid = cur.lastrowid
             cur.execute(
                 "UPDATE mant_levantamientos SET total_equipos = "
                 "(SELECT COUNT(*) FROM mant_levantamiento_items WHERE levantamiento_id=%s) "
@@ -85159,7 +85400,7 @@ def mant_lev_item_crear(lid):
                          maquina_id, current_username() or 'sistema')
                     )
         conn.commit()
-        return jsonify({"ok": True, "id": iid})
+        return jsonify({"ok": True, "id": iid, "colision": colision})
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
@@ -85286,6 +85527,27 @@ def mant_lev_item_update(iid):
         d2.pop("doc_fecha", None)
     d = d2
 
+    # Geocerca de 500m (Daniel 2026-08-08): SOLO se evalúa en la transición
+    # borrador -> finalizado (payload con finalizar:true sobre un item que
+    # aún está en borrador). Un PATCH normal de autoguardado (sin
+    # finalizar, o sobre un item YA finalizado) recorre exactamente el
+    # camino de HOY, sin tocar GPS — "la ubicación solo se pide al botón
+    # final", nunca en cada campo que se autoguarda.
+    quiere_finalizar = bool(d.get("finalizar"))
+    ya_finalizado = int(item.get("es_borrador") if item.get("es_borrador") is not None else 0) == 0
+    aplica_gate = quiere_finalizar and not ya_finalizado
+    gps_set = {}
+    if aplica_gate:
+        _v_gate = mysql_fetchone(
+            "SELECT v.id, v.cliente_id, v.direccion_lat, v.direccion_lng "
+            "  FROM mant_visitas v WHERE v.levantamiento_id=%s LIMIT 1",
+            (item["levantamiento_id"],)) or {}
+        _ok_gate, gps_set, _err_gate = _lev_gate_finalizar(_v_gate, d)
+        if not _ok_gate:
+            _body, _code = _err_gate
+            return jsonify(_body), _code
+        gps_set["es_borrador"] = 0
+
     sets, vals, cambios = [], [], []
     estados_validos = ('operativo','advertencia','fuera_servicio','en_reparacion','dado_baja','no_encontrado')
     # Campos editables del item (incluye snap de identidad para el modo
@@ -85324,7 +85586,7 @@ def mant_lev_item_update(iid):
                                 f"'{v_new if v_new is not None else '—'}'")
             sets.append(f"{k}=%s")
             vals.append(v_new)
-    if not sets:
+    if not sets and not gps_set:
         return jsonify({"ok": True, "noop": True})
     # 2026-07-06 (revisión adversarial): modificado_por/modificado_at solo se
     # estampan si HUBO un cambio real — si no, un guardado sin tocar nada
@@ -85333,6 +85595,9 @@ def mant_lev_item_update(iid):
     if cambios:
         sets.append("modificado_por=%s"); vals.append(user)
         sets.append("modificado_at=NOW()")
+    for _gk, _gv in gps_set.items():
+        sets.append(f"{_gk}=%s")
+        vals.append(_gv)
     vals.append(iid)
     mysql_execute(f"UPDATE mant_levantamiento_items SET {', '.join(sets)} WHERE id=%s", tuple(vals))
     if cambios:
@@ -85341,7 +85606,18 @@ def mant_lev_item_update(iid):
                       f"{user} editó equipo descubierto: " + " · ".join(cambios))
         except Exception:
             pass
-    return jsonify({"ok": True, "modificado_por": user})
+    if aplica_gate:
+        try:
+            _mant_log("levantamiento_item", iid, "finalizado",
+                      f"{user} finalizó equipo (GPS origen={gps_set.get('gps_origen')}, "
+                      f"dist_m={gps_set.get('gps_dist_m')})")
+        except Exception:
+            pass
+    return jsonify({
+        "ok": True, "modificado_por": user,
+        "es_borrador": 0 if aplica_gate else int(item.get("es_borrador") or 0),
+        "gps_dist_m": gps_set.get("gps_dist_m"),
+    })
 
 
 @app.route("/mantenciones/api/levantamiento-items/<int:iid>/fotos", methods=["POST"])
@@ -85356,6 +85632,11 @@ def mant_lev_item_subir_foto(iid):
     )
     if not item:
         return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+    # FIX seguridad (mismo IDOR ya cerrado en mant_lev_item_update): antes
+    # solo @_mant_required dejaba a cualquier técnico subir una foto a un
+    # equipo de OTRA OT adivinando el iid.
+    if not _lev_puede_accion(item["levantamiento_id"], "ejecutar"):
+        return _lev_403_response("ejecutar")
 
     f = request.files.get("foto") or request.files.get("archivo")
     if not f or not f.filename:
@@ -85744,11 +86025,19 @@ def mant_lev_rematerializar(lid):
     if not _puede_ot_accion(vid, "aprobar", u):
         return jsonify({"ok": False, "error": "No tienes permiso para reparar esta OT."}), 403
 
-    pendientes = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
-        "WHERE levantamiento_id=%s AND maquina_id IS NULL AND COALESCE(nombre_snap,'') <> ''",
-        (lid,)
-    )
+    try:
+        pendientes = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
+            "WHERE levantamiento_id=%s AND maquina_id IS NULL "
+            "  AND COALESCE(nombre_snap,'') <> '' AND COALESCE(es_borrador,0) = 0",
+            (lid,)
+        )
+    except Exception:
+        pendientes = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
+            "WHERE levantamiento_id=%s AND maquina_id IS NULL AND COALESCE(nombre_snap,'') <> ''",
+            (lid,)
+        )
     if not pendientes or not pendientes.get("n"):
         return jsonify({"ok": True, "creados": 0, "errores": 0,
                          "mensaje": "No hay equipos pendientes de materializar — todo al día."})
@@ -88535,6 +88824,12 @@ def _ensure_reglas_terreno():
          "Tolerancia de diferencia de duración antes de exigir justificación", "min", 21),
         ("ot_factura_gate_activo", "1", "bool", "politica",
          "Exigir factura asociada para firmar el cierre de OT (salvo garantía/sin costo)", "", 30),
+        ("ot_geofence_lev_activo", "0", "bool", "terreno",
+         "Exigir estar en el sitio (GPS) al guardar cada equipo del levantamiento", "", 12),
+        ("ot_geofence_lev_radio_m", "500", "int", "terreno",
+         "Radio permitido para guardar un equipo del levantamiento", "metros", 13),
+        ("ot_geofence_lev_accuracy_max_m", "500", "int", "terreno",
+         "Precisión GPS mínima aceptable (descarta lecturas peores)", "metros", 14),
     ]
     n = 0
     for clave, valor, tipo, cat, label, unidad, orden in seeds:
@@ -88901,6 +89196,136 @@ def _ensure_lev_items_edicion_cols():
         except Exception as e_add:
             print(f"[ensure_lev_edicion] no se pudo agregar {col}: {e_add}", flush=True)
     return faltantes
+
+
+def _ensure_lev_items_gps_cols():
+    """Borrador + evidencia GPS por equipo capturado (Daniel 2026-08-08:
+    geocerca de 500m al guardar cada equipo del modal de levantamiento).
+
+    ⚠️ ORDEN DELIBERADO en es_borrador: se agrega con DEFAULT 0 y RECIÉN
+    DESPUÉS se cambia el default a 1. MySQL rellena las filas YA EXISTENTES
+    con el DEFAULT vigente al momento del ALTER — si naciera con DEFAULT 1,
+    todo equipo ya capturado en producción quedaría marcado como borrador
+    el día del deploy y no materializaría nunca (bloquearía firmar OTs
+    abiertas). Con este orden, lo histórico nace finalizado (fail-open) y
+    solo lo NUEVO (creado después de este ALTER) nace borrador.
+    """
+    needed = {
+        "es_borrador":      "TINYINT(1) NOT NULL DEFAULT 0",
+        "client_uid":       "VARCHAR(40) NULL",
+        "gps_lat":          "DECIMAL(10,7) NULL",
+        "gps_lng":          "DECIMAL(10,7) NULL",
+        "gps_accuracy_m":   "INT NULL",
+        "gps_dist_m":       "INT NULL",
+        "gps_dentro_rango": "TINYINT(1) NULL",
+        "gps_origen":       "VARCHAR(24) NULL",
+        "gps_captured_at":  "DATETIME NULL",
+    }
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamiento_items'"
+            ) or [])
+        }
+    except Exception:
+        return []
+    faltantes = [c for c in needed if c.lower() not in existing]
+    es_borrador_es_nueva = "es_borrador" in faltantes
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_levantamiento_items ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_lev_gps] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_lev_gps] no se pudo agregar {col}: {e_add}", flush=True)
+    if es_borrador_es_nueva:
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_levantamiento_items ALTER COLUMN es_borrador SET DEFAULT 1")
+            print("[ensure_lev_gps] es_borrador default -> 1 (solo afecta INSERTs nuevos)",
+                  flush=True)
+        except Exception as e_def:
+            print(f"[ensure_lev_gps] no se pudo cambiar default de es_borrador: {e_def}", flush=True)
+    try:
+        _idx = {
+            (r.get("INDEX_NAME") or "")
+            for r in (mysql_fetchall(
+                "SELECT INDEX_NAME FROM information_schema.STATISTICS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamiento_items'"
+            ) or [])
+        }
+    except Exception:
+        _idx = set()
+    if "uq_lev_item_uid" not in _idx:
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_levantamiento_items "
+                "ADD UNIQUE KEY uq_lev_item_uid (levantamiento_id, client_uid)")
+            print("[ensure_lev_gps] UNIQUE KEY uq_lev_item_uid agregada", flush=True)
+        except Exception as e_uk:
+            print(f"[ensure_lev_gps] no se pudo agregar uq_lev_item_uid: {e_uk}", flush=True)
+    if "idx_lev_borrador" not in _idx:
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_levantamiento_items "
+                "ADD INDEX idx_lev_borrador (levantamiento_id, es_borrador)")
+            print("[ensure_lev_gps] INDEX idx_lev_borrador agregada", flush=True)
+        except Exception as e_ix:
+            print(f"[ensure_lev_gps] no se pudo agregar idx_lev_borrador: {e_ix}", flush=True)
+    return faltantes
+
+
+def _ensure_lev_borrador_backfill():
+    """Backfill explícito (Daniel 2026-08-08, hallazgo #10 de la revisión
+    adversarial): el default-flip de _ensure_lev_items_gps_cols() solo
+    protege datos creados ANTES del ALTER. Un levantamiento que sigue
+    ABIERTO al momento del deploy, con equipos ya completos bajo las reglas
+    viejas (nombre + al menos 1 foto), también debe nacer es_borrador=0 —
+    si no, quedarían bloqueados retroactivamente para firmar sin que el
+    técnico haya vuelto a tocar nada. Idempotente: en el 2º boot ya no hay
+    filas que cumplan la condición (created_at < fecha del 1er boot)."""
+    try:
+        cols = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamiento_items'"
+            ) or [])
+        }
+        if "es_borrador" not in cols or "gps_captured_at" not in cols:
+            return 0  # _ensure_lev_items_gps_cols aun no corrio
+        deploy_at = mysql_fetchone(
+            "SELECT valor FROM mant_reglas_negocio WHERE clave='lev_borrador_deploy_at'")
+        if not deploy_at or not deploy_at.get("valor"):
+            mysql_execute(
+                "INSERT IGNORE INTO mant_reglas_negocio "
+                "(clave, valor, tipo_dato, categoria, label, unidad, orden) "
+                "VALUES ('lev_borrador_deploy_at', %s, 'string', 'terreno', "
+                " 'Marca interna: primer boot con geocerca de levantamiento', '', 19)",
+                (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),))
+            deploy_at = mysql_fetchone(
+                "SELECT valor FROM mant_reglas_negocio WHERE clave='lev_borrador_deploy_at'")
+        marca = (deploy_at or {}).get("valor")
+        if not marca:
+            return 0
+        n = mysql_execute(
+            "UPDATE mant_levantamiento_items li "
+            "   SET li.es_borrador = 0 "
+            " WHERE li.es_borrador = 1 "
+            "   AND li.gps_captured_at IS NULL "
+            "   AND li.created_at < %s "
+            "   AND ( li.maquina_id IS NOT NULL "
+            "      OR (COALESCE(li.nombre_snap,'') <> '' "
+            "          AND COALESCE(li.n_fotos,0) > 0) )",
+            (marca,))
+        if n:
+            print(f"[ensure_lev_gps] backfill: {n} equipo(s) legacy marcados es_borrador=0",
+                  flush=True)
+        return n
+    except Exception as e:
+        print(f"[ensure_lev_gps] backfill fallo (no fatal): {e}", flush=True)
+        return 0
 
 
 def _ensure_mant_visitas_factura_cols():
@@ -91183,6 +91608,15 @@ try:
         _ensure_lev_items_edicion_cols()
 except Exception as _ensure_lev_ed_err:
     print(f"[ILUS][WARN] _ensure_lev_items_edicion_cols: {_ensure_lev_ed_err}", flush=True)
+
+# Borrador + GPS por equipo del levantamiento (Daniel 2026-08-08 — geocerca
+# de 500m al guardar). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_lev_items_gps_cols()
+        _ensure_lev_borrador_backfill()
+except Exception as _ensure_lev_gps_err:
+    print(f"[ILUS][WARN] _ensure_lev_items_gps_cols: {_ensure_lev_gps_err}", flush=True)
 
 # CRÍTICO: repara OTs cerradas con equipos descubiertos huérfanos (bug de
 # app_context en _lev_promover_full_async, Daniel 2026-07-08 — caso real

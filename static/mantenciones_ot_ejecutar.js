@@ -5418,8 +5418,181 @@ function _levdSerieSugerida(){
   return `LEV${VID}-${String(_levdSeq).padStart(3,'0')}`;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// AUTOGUARDADO + GEOCERCA (2026-08-08, Daniel: "todos los datos se van a
+// guardar de manera automática, sin necesidad de presionar guardar, pero
+// la ubicación nunca se va a guardar hasta que yo le dé al botón de
+// guardar al equipo"). _levdCtx agrupa TODO lo que antes vivía en
+// variables sueltas por-campo, para que un timer de un equipo nunca
+// pueda escribir sobre el equipo que el técnico abrió después (bug real
+// encontrado en la revisión adversarial del diseño original).
+// ══════════════════════════════════════════════════════════════════════
+function _levdNuevoUid(){
+  try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(_e){}
+  return 'u' + Date.now() + Math.random().toString(36).slice(2, 10);
+}
+
+function _levdSnapshotCampos(){
+  const dano = _levdEl('levd_dano').checked;
+  const operativa = _levdEl('levd_operativa').checked;
+  return {
+    nombre: _levdEl('levd_nombre').value.trim(),
+    sku: _levdEl('levd_sku').value.trim(),
+    serie: _levdEl('levd_serie').value.trim(),
+    ubicacion: _levdEl('levd_ubicacion').value.trim(),
+    observaciones: _levdEl('levd_obs').value.trim(),
+    anomalias: dano ? _levdEl('levd_dano_txt').value.trim() : '',
+    estado_capturado: !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'),
+    doc_tido: _levdDoc ? _levdDoc.tido : '',
+    doc_numero: _levdDoc ? _levdDoc.numero : '',
+    doc_fecha: _levdDoc ? _levdDoc.fecha : '',
+  };
+}
+
+// Mutex ÚNICO de creación compartido por TODOS los campos y fotos del
+// equipo actual — si 2 campos cambian casi a la vez antes de que exista
+// iid, ambos esperan la MISMA promesa en vez de disparar 2 POST (el
+// segundo, sin esto, choca contra la BD y su dato se podía perder).
+function _levdEnsureIid(ctx){
+  if (ctx.iid) return Promise.resolve(ctx.iid);
+  if (ctx.creating) return ctx.creating;
+  ctx.creating = (async () => {
+    const r = await fetch(`/mantenciones/api/levantamientos/${VISITA_LEVANTAMIENTO_ID}/items`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(Object.assign(_levdSnapshotCampos(), { client_uid: ctx.clientUid })),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok || !d.id) throw new Error(d.error || 'No se pudo crear el equipo');
+    ctx.iid = d.id;
+    return d.id;
+  })();
+  ctx.creating.catch(() => { ctx.creating = null; });
+  return ctx.creating;
+}
+
+const _LEVD_DEBOUNCE_MS = 800;
+const _LEVD_CAMPOS_AUTOSAVE = ['nombre','sku','serie','ubicacion','observaciones',
+                                'anomalias','estado_capturado','doc_numero'];
+
+function _levdAutosaveEstado(txt, color){
+  const el = _levdEl('levdAutosaveEstado');
+  if (el){ el.textContent = txt; el.style.color = color; }
+}
+
+async function _levdEnviarCampo(ctx, campo){
+  ctx.timers.delete(campo);
+  if (ctx !== _levdCtx) return;   // el modal ya cambió de equipo — no escribir encima de otro
+  const snap = _levdSnapshotCampos();
+  const val = snap[campo];
+  if (ctx.ultimoOk[campo] === val) return;
+  try {
+    const iid = await _levdEnsureIid(ctx);
+    if (ctx !== _levdCtx) return;
+    const payload = {};
+    payload[campo] = val;
+    // anomalias/estado_capturado se derivan de 2 controles (switch + texto),
+    // y doc_* de 3 inputs — viajan juntos para que el backend nunca reciba
+    // una combinación a medias (ej. anomalias sin el estado que le corresponde).
+    if (campo === 'anomalias' || campo === 'estado_capturado'){
+      payload.anomalias = snap.anomalias; payload.estado_capturado = snap.estado_capturado;
+    }
+    if (campo === 'doc_numero'){
+      payload.doc_tido = snap.doc_tido; payload.doc_numero = snap.doc_numero; payload.doc_fecha = snap.doc_fecha;
+    }
+    _levdAutosaveEstado('Guardando…', '#9ca3af');
+    const r = await fetch(`/mantenciones/api/levantamiento-items/${iid}`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+    });
+    if (ctx !== _levdCtx) return;
+    if (r.ok){ ctx.ultimoOk[campo] = val; _levdAutosaveEstado('Guardado ✓', '#15803d'); }
+    else { _levdAutosaveEstado('No se pudo guardar — reintenta', '#dc2626'); }
+  } catch(_e){
+    if (ctx === _levdCtx) _levdAutosaveEstado('Sin conexión — reintenta', '#dc2626');
+  }
+}
+
+function _levdMarcarSucio(campo){
+  const ctx = _levdCtx;
+  if (!ctx) return;
+  if (ctx.timers.has(campo)) clearTimeout(ctx.timers.get(campo));
+  ctx.timers.set(campo, setTimeout(() => _levdEnviarCampo(ctx, campo), _LEVD_DEBOUNCE_MS));
+}
+
+// Dispara YA lo que esté pendiente (nunca lo descarta) — se llama antes de
+// abrir otro equipo, cerrar el modal, o finalizar. Daniel nunca pidió esto
+// explícitamente, pero es lo que hace que "se guarda solo" sea cierto de
+// verdad: sin este flush, cambiar de equipo en menos de 800ms perdía la
+// última letra escrita en silencio.
+function _levdFlushPendientes(ctx){
+  if (!ctx) return Promise.resolve();
+  const ps = [];
+  for (const [campo, t] of ctx.timers){
+    clearTimeout(t);
+    ps.push(_levdEnviarCampo(ctx, campo));
+  }
+  ctx.timers.clear();
+  return Promise.all(ps);
+}
+
+function _levdHaversineM(lat1, lon1, lat2, lon2){
+  const rad = Math.PI / 180, R = 6371000;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// GPS: se pide UNA sola vez, en el click de "Guardar equipo" (Daniel:
+// "el único dato que no se va a guardar si no tiene la ubicación"). Hace
+// hasta 2 intentos quedándose con la lectura MÁS PRECISA — un GPS de
+// celular puede reportar ±800m en interiores, comparar ciegamente contra
+// el radio sin mirar la precisión reportada (coords.accuracy) haría que
+// esto fuera una moneda al aire.
+function _levdGeoObtener(){
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation){ reject({codigo:'GPS_NO_DISPONIBLE'}); return; }
+    let mejor = null, intentos = 0;
+    const intentar = () => {
+      intentos++;
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          const lec = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+          if (!mejor || lec.acc < mejor.acc) mejor = lec;
+          if (intentos < 2 && mejor.acc > 150) { intentar(); return; }
+          resolve(mejor);
+        },
+        (err) => {
+          if (mejor){ resolve(mejor); return; }
+          reject({codigo: err && err.code === 1 ? 'GPS_DENEGADO' : 'GPS_TIMEOUT', raw: err});
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    };
+    intentar();
+  });
+}
+
+function _levdGeoMensaje(codigo, extra){
+  extra = extra || {};
+  if (codigo === 'GPS_DENEGADO') return 'No pudimos leer tu ubicación. Activa el GPS y da permiso al navegador, luego reintenta.';
+  if (codigo === 'GPS_NO_DISPONIBLE') return 'Este dispositivo no tiene ubicación disponible.';
+  if (codigo === 'GPS_TIMEOUT') return 'No se pudo obtener tu ubicación a tiempo. Reintenta.';
+  if (codigo === 'GPS_IMPRECISO') return `La señal GPS está muy imprecisa (±${extra.accuracy_m} m). Acércate a una ventana o sal un momento y reintenta.`;
+  if (codigo === 'GPS_FUERA_RANGO') return `Estás a ~${extra.dist_m >= 1000 ? (extra.dist_m/1000).toFixed(1)+' km' : extra.dist_m+' m'} del sitio (límite ${extra.radio_m} m). Tu trabajo quedó guardado, no se pierde nada.`;
+  if (codigo === 'GPS_REQUERIDO') return 'Necesitamos tu ubicación para cerrar este equipo. Actívala y vuelve a tocar «Guardar equipo».';
+  return extra.error || 'No se pudo verificar tu ubicación.';
+}
+
 function levdAbrir(prefill, editId){
   if (!_levdModal) _levdModal = new bootstrap.Modal(_levdEl('modalLevDesc'));
+  // Flush del equipo anterior ANTES de armar el nuevo contexto — si el
+  // técnico toca "Agregar equipo" o edita otro justo después de escribir,
+  // lo pendiente se guarda en vez de perderse.
+  if (_levdCtx) _levdFlushPendientes(_levdCtx);
+  _levdCtx = {
+    clientUid: _levdNuevoUid(), iid: editId || null, creating: null,
+    timers: new Map(), ultimoOk: {},
+  };
+  _levdAutosaveEstado('', '#9ca3af');
   _levdEditId = editId || null;
   _levdFotos = [];
   _levdFotosExistentes = (editId && prefill && prefill.fotos) ? prefill.fotos.map(f => ({id: f.id, url: f.url})) : [];
@@ -5593,10 +5766,19 @@ function _levdRenderFotos(){
     `<div class="levd-foto-th"><img src="${f.url}" alt="">` +
     `<button type="button" class="x" onclick="levdFotoEliminarExistente(${i})">✕</button></div>`
   ).join('');
-  const nuevasHtml = _levdFotos.map((f, i) =>
-    `<div class="levd-foto-th"><img src="${f.url}" alt="">` +
-    `<button type="button" class="x" onclick="levdQuitarFoto(${i})">✕</button></div>`
-  ).join('');
+  // 2026-08-08 (Daniel, autoguardado): las fotos suben de inmediato al
+  // elegirlas (ver _levdFotoInputChange) -- 3 estados visuales: subiendo
+  // (spinner), ok (miniatura normal), error (badge rojo, toca para
+  // reintentar sin volver a tomar la foto).
+  const nuevasHtml = _levdFotos.map((f, i) => {
+    const overlay = f.estado === 'subiendo'
+      ? '<div class="levd-foto-ov"><span class="spinner-border spinner-border-sm text-light"></span></div>'
+      : f.estado === 'error'
+      ? `<div class="levd-foto-ov levd-foto-ov-err" onclick="levdFotoReintentar(${i})" title="No se subió — toca para reintentar"><i class="bi bi-arrow-repeat"></i></div>`
+      : '';
+    return `<div class="levd-foto-th"><img src="${f.url}" alt="">${overlay}` +
+      `<button type="button" class="x" onclick="levdQuitarFoto(${i})">✕</button></div>`;
+  }).join('');
   wrap.innerHTML = existentesHtml + nuevasHtml + addBtn;
   if (typeof levdRefreshStepStates === 'function') levdRefreshStepStates();
 }
@@ -5625,19 +5807,61 @@ async function levdFotoEliminarExistente(i){
 }
 
 function levdQuitarFoto(i){
-  try { URL.revokeObjectURL(_levdFotos[i].url); } catch(_e){}
+  const f = _levdFotos[i];
+  if (!f) return;
+  try { URL.revokeObjectURL(f.url); } catch(_e){}
+  // Si ya se había subido al servidor, borrarla de verdad (mismo endpoint
+  // que las fotos "existentes" de edición) -- si no, solo era un blob local.
+  if (f.id){
+    fetch(`/mantenciones/api/levantamiento-fotos/${f.id}`, { method: 'DELETE' }).catch(() => {});
+  }
   _levdFotos.splice(i, 1);
   _levdRenderFotos();
+}
+
+function levdFotoReintentar(i){
+  const f = _levdFotos[i];
+  if (!f || !_levdCtx) return;
+  f.estado = 'subiendo';
+  _levdRenderFotos();
+  _levdSubirFoto(_levdCtx, f);
+}
+
+// 2026-08-08 (Daniel: soporta "foto como primera acción, antes del nombre").
+// Sube de inmediato -- antes solo se encolaba en memoria y el único POST
+// ocurría al final de levdGuardar, cuando el iid ya existía sí o sí. Ahora
+// una foto puede ser lo PRIMERO que crea el equipo, así que espera el
+// mismo mutex de creación que los campos de texto.
+async function _levdSubirFoto(ctx, ph){
+  try {
+    const iid = await _levdEnsureIid(ctx);
+    if (ctx !== _levdCtx) return;
+    const fd = new FormData();
+    fd.append('foto', ph.blob, `equipo_${iid}_${Date.now()}.jpg`);
+    const esPrimera = _levdFotosExistentes.length === 0 && _levdFotos.indexOf(ph) === 0;
+    fd.append('tipo_foto', esPrimera ? 'general' : 'detalle');
+    const rf = await fetch(`/mantenciones/api/levantamiento-items/${iid}/fotos`, { method: 'POST', body: fd });
+    const df = await rf.json().catch(() => ({}));
+    if (rf.ok && df.ok){ ph.estado = 'ok'; ph.id = df.id; }
+    else { ph.estado = 'error'; }
+  } catch(_e){
+    ph.estado = 'error';
+  }
+  if (ctx === _levdCtx) _levdRenderFotos();
 }
 
 async function _levdFotoInputChange(e){
   const files = Array.from(e.target.files || []);
   e.target.value = '';
+  const ctx = _levdCtx;
+  if (!ctx) return;
   for (const f of files){
     const blob = await _levdComprimir(f);
-    _levdFotos.push({ blob, url: URL.createObjectURL(blob) });
+    const ph = { blob, url: URL.createObjectURL(blob), estado: 'subiendo', id: null };
+    _levdFotos.push(ph);
+    _levdRenderFotos();
+    await _levdSubirFoto(ctx, ph);
   }
-  _levdRenderFotos();
 }
 document.addEventListener('DOMContentLoaded', () => {
   // 2026-08-08: dos inputs comparten el mismo handler -- cámara (capture)
@@ -5655,6 +5879,30 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   const elOperativa = _levdEl('levd_operativa');
   if (elOperativa) elOperativa.addEventListener('change', levdRefreshStepStates);
+
+  // Autoguardado (2026-08-08): un listener por campo -> _levdMarcarSucio
+  // arma/reinicia su propio debounce de 800ms. GPS/ubicación NUNCA entra
+  // acá — solo texto, switches y la factura.
+  [['levd_nombre','nombre'], ['levd_sku','sku'], ['levd_serie','serie'],
+   ['levd_ubicacion','ubicacion'], ['levd_obs','observaciones'],
+   ['levd_dano_txt','anomalias'], ['levd_doc_num','doc_numero']].forEach(([id, campo]) => {
+    const el = _levdEl(id);
+    if (el) el.addEventListener('input', () => _levdMarcarSucio(campo));
+  });
+  if (elOperativa) elOperativa.addEventListener('change', () => _levdMarcarSucio('estado_capturado'));
+  const elDano = _levdEl('levd_dano');
+  if (elDano) elDano.addEventListener('change', () => _levdMarcarSucio('estado_capturado'));
+
+  // Flush al cerrar el modal (equis, "Listo", click fuera) — nunca se
+  // pierde la última letra escrita por cerrar antes de que venza el debounce.
+  const modalEl = _levdEl('modalLevDesc');
+  if (modalEl) modalEl.addEventListener('hide.bs.modal', () => { if (_levdCtx) _levdFlushPendientes(_levdCtx); });
+  // Igual al ocultar la pestaña en el celular (bloqueo de pantalla, cambio
+  // de app) -- beforeunload no es confiable en mobile.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && _levdCtx) _levdFlushPendientes(_levdCtx);
+  });
+
   levdInit();
 });
 
@@ -5665,7 +5913,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // lo bloquearía. Los pasos opcionales (3/4/5) parten verdes y solo se ponen
 // rojos si el usuario los deja en un estado inválido a medio llenar.
 const LEVD_STEP_RULES = {
-  1: () => (_levdFotosExistentes.length + _levdFotos.length) > 0,
+  // 2026-08-08: solo cuentan fotos YA subidas (estado 'ok') -- una foto
+  // recién elegida pero aún "subiendo" (o que falló) no debe pintar el
+  // paso en verde, porque levdGuardar() tampoco la aceptaría como válida.
+  1: () => (_levdFotosExistentes.length + _levdFotos.filter(f => f.estado === 'ok').length) > 0,
   2: () => !!(_levdEl('levd_nombre') && _levdEl('levd_nombre').value.trim()),
   3: () => {
     const dano = _levdEl('levd_dano') && _levdEl('levd_dano').checked;
@@ -5690,25 +5941,34 @@ function levdRefreshStepStates(){
   }
 }
 
+// 2026-08-08 (Daniel: "el único dato que no se va a guardar si no tiene la
+// ubicación... para poder guardar la orden de trabajo necesito tomar los
+// datos de GPS"). Todo lo demás YA está guardado por el autoguardado antes
+// de llegar acá — este botón valida lo que falta, pide GPS UNA vez, y
+// finaliza el equipo (es_borrador -> 0) mandando finalizar:true.
 async function levdGuardar(){
   const err = _levdEl('levdErr');
   err.textContent = '';
   const editando = !!_levdEditId;
+  const ctx = _levdCtx;
+  if (!ctx){ err.textContent = 'Error interno — cierra y vuelve a abrir el equipo.'; return; }
   const nombre = _levdEl('levd_nombre').value.trim();
   if (!nombre){ err.textContent = 'El nombre del equipo es obligatorio.'; _levdEl('levd_nombre').focus(); return; }
-  // 2026-07-06: en edición, las fotos EXISTENTES cuentan para el mínimo —
-  // no se exige subir una foto nueva si ya tiene al menos 1.
-  if ((_levdFotosExistentes.length + _levdFotos.length) === 0){
-    err.textContent = 'Toma al menos 1 foto del equipo.'; return;
+  const fotosOk = _levdFotosExistentes.length + _levdFotos.filter(f => f.estado === 'ok').length;
+  if (fotosOk === 0){
+    const hayPendientes = _levdFotos.some(f => f.estado === 'subiendo');
+    err.textContent = hayPendientes ? 'Espera a que termine de subir la foto…' : 'Toma al menos 1 foto del equipo.';
+    return;
   }
-
-  const operativa = _levdEl('levd_operativa').checked;
+  const fotosMalas = _levdFotos.filter(f => f.estado === 'error');
+  if (fotosMalas.length){
+    err.textContent = `${fotosMalas.length} foto(s) no se subieron. Tócalas para reintentar antes de guardar.`;
+    return;
+  }
   const dano = _levdEl('levd_dano').checked;
   const danoTxt = _levdEl('levd_dano_txt').value.trim();
   if (dano && !danoTxt){ err.textContent = 'Describe brevemente el daño.'; _levdEl('levd_dano_txt').focus(); return; }
 
-  // Factura de origen: si escribió un número pero NO lo verificó, pedimos
-  // verificar (o borrar el campo) — evita amarrar documentos inexistentes.
   const _docNum = (_levdEl('levd_doc_num').value || '').replace(/\D/g, '');
   if (_docNum && (!_levdDoc || _levdDoc.numero !== _docNum)){
     _levdEl('levdDocWrap').style.display = '';
@@ -5716,59 +5976,55 @@ async function levdGuardar(){
     return;
   }
 
-  const payload = {
-    nombre,
-    sku:    _levdEl('levd_sku').value.trim(),
-    serie:  _levdEl('levd_serie').value.trim(),
-    ubicacion: _levdEl('levd_ubicacion').value.trim(),
-    observaciones: _levdEl('levd_obs').value.trim(),
-    anomalias: dano ? danoTxt : '',
-    estado_capturado: !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo'),
-    doc_tido:   _levdDoc ? _levdDoc.tido : '',
-    doc_numero: _levdDoc ? _levdDoc.numero : '',
-    doc_fecha:  _levdDoc ? _levdDoc.fecha : '',
-  };
-
   const btn = _levdEl('levdGuardarBtn');
   const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${editando ? 'Guardando cambios…' : 'Guardando…'}`;
   try {
-    const url = editando
-      ? `/mantenciones/api/levantamiento-items/${_levdEditId}`
-      : `/mantenciones/api/levantamientos/${VISITA_LEVANTAMIENTO_ID}/items`;
-    const r = await fetch(url, {
-      method: editando ? 'PATCH' : 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
+    // 1) Asegura que TODO lo tipeado quedó guardado (por si el técnico
+    //    escribió y tocó el botón antes de que venciera el debounce).
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Guardando…`;
+    await _levdFlushPendientes(ctx);
+    if (ctx !== _levdCtx){ return; }  // el modal cambió mientras esperábamos
+
+    // 2) Garantiza que existe el equipo (caso raro: click inmediato sin que
+    //    ningún campo haya disparado su propio autoguardado todavía).
+    let iid;
+    try { iid = await _levdEnsureIid(ctx); }
+    catch(_e){ err.textContent = 'No se pudo guardar el equipo. Revisa tu señal y reintenta.'; return; }
+
+    // 3) GPS — SOLO acá, y SOLO si la regla está activa (por defecto está
+    //    apagada). Nunca antes de este punto.
+    const payload = { finalizar: true };
+    if (REGLAS_TERRENO.geofence_lev_activo && !GEOF_ROL_EXENTO){
+      btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Verificando ubicación…`;
+      try {
+        const g = await _levdGeoObtener();
+        payload.gps_lat = g.lat; payload.gps_lng = g.lng; payload.gps_accuracy_m = Math.round(g.acc);
+      } catch(e){
+        err.textContent = _levdGeoMensaje(e.codigo, e);
+        return;
+      }
+    }
+
+    // 4) Finalizar en el servidor (revalida TODO de nuevo: nombre, fotos,
+    //    y si corresponde, la geocerca contra la distancia real).
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${editando ? 'Guardando cambios…' : 'Guardando…'}`;
+    const r = await fetch(`/mantenciones/api/levantamiento-items/${iid}`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok){
-      err.textContent = d.error ||
-        (d.error_codigo === 'LEV_CONGELADO' ? 'La OT ya fue firmada — no se puede editar.' : 'No se pudo guardar el equipo.');
+      err.textContent = d.error_codigo === 'GPS_FUERA_RANGO' || d.error_codigo === 'GPS_IMPRECISO'
+        ? _levdGeoMensaje(d.error_codigo, d)
+        : (d.error || (d.error_codigo === 'LEV_CONGELADO'
+            ? 'La OT ya fue firmada — no se puede editar.' : 'No se pudo guardar el equipo.'));
       return;
     }
-    const iid = editando ? _levdEditId : d.id;
 
-    // Subir fotos NUEVAS en cadena (si no hay ninguna existente, la 1ª nueva
-    // será la foto principal de la ficha al materializar)
-    let subidas = 0;
-    for (let i = 0; i < _levdFotos.length; i++){
-      btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Foto ${i+1}/${_levdFotos.length}…`;
-      try {
-        const fd = new FormData();
-        fd.append('foto', _levdFotos[i].blob, `equipo_${iid}_${i+1}.jpg`);
-        fd.append('tipo_foto', (i === 0 && !_levdFotosExistentes.length) ? 'general' : 'detalle');
-        const rf = await fetch(`/mantenciones/api/levantamiento-items/${iid}/fotos`, { method:'POST', body: fd });
-        const df = await rf.json().catch(() => ({}));
-        if (rf.ok && df.ok) subidas++;
-      } catch(_e){ /* la siguiente foto sigue */ }
-    }
-    if (_levdFotos.length && !subidas){
-      err.textContent = '⚠ Se guardó pero NINGUNA foto nueva subió. Revisa tu señal y reintenta.';
-    }
-
-    const estLbl = payload.estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
-                 : payload.estado_capturado === 'advertencia'    ? ' · ⚠️ con DAÑO reportado'
+    const operativa = _levdEl('levd_operativa').checked;
+    const estado_capturado = !operativa ? 'fuera_servicio' : (dano ? 'advertencia' : 'operativo');
+    const estLbl = estado_capturado === 'fuera_servicio' ? ' · ⚠️ FUERA DE SERVICIO'
+                 : estado_capturado === 'advertencia'    ? ' · ⚠️ con DAÑO reportado'
                  : '';
     if (editando){
       if (typeof ilusToast === 'function'){
@@ -5780,7 +6036,7 @@ async function levdGuardar(){
       return;
     }
 
-    _levdUltimo = { nombre, sku: payload.sku, ubicacion: payload.ubicacion };
+    _levdUltimo = { nombre, sku: _levdEl('levd_sku').value.trim(), ubicacion: _levdEl('levd_ubicacion').value.trim() };
     _levdSeq++;
     if (typeof ilusToast === 'function'){
       // 2026-07-06 (Daniel): el toast ahora avisa el estado capturado — un
@@ -5788,7 +6044,7 @@ async function levdGuardar(){
       // (no se encontró bug de código; lo más probable es un toque accidental
       // en terreno). Esta confirmación le da una oportunidad inmediata de
       // notarlo y corregirlo (editar o eliminar) antes de seguir.
-      ilusToast(`✓ ${nombre} guardado (${subidas} foto${subidas === 1 ? '' : 's'})${estLbl}`,
+      ilusToast(`✓ ${nombre} guardado (${fotosOk} foto${fotosOk === 1 ? '' : 's'})${estLbl}`,
                 { type: estLbl ? 'warning' : 'success' });
     }
     await levdInit();          // refresca lista + contador
