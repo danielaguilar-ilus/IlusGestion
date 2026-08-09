@@ -73167,6 +73167,26 @@ def _ot_pdf_context(vid, embed_images=False):
     # documenta lo que el técnico levantó en terreno). ──────────────────
     lev_items, lev_fotos_idx, lev_stats = [], {}, {}
     _lev_id_pdf = visita.get("levantamiento_id")
+    # FIX 2026-08-09 (Daniel: "¿por qué no se imprimen las fotos en las OT?")
+    # El enlace OT<->levantamiento existe en LOS DOS SENTIDOS:
+    #   · mant_visitas.levantamiento_id  → el que se leía acá, y
+    #   · mant_levantamientos.visita_id  → el que usan el resto de las
+    #     consultas del módulo (incluida la validación de cierre).
+    # Cuando el levantamiento se creó desde la OT queda poblado SOLO el
+    # segundo: `_lev_id_pdf` salía None, este bloque entero se saltaba y el
+    # anexo del informe imprimía "sin foto" en todos los equipos aunque la
+    # OT tuviera fotos reales (caso verificado en la OT-2026-00042: 11
+    # fotos en la base, 0 en el PDF). Se busca por el sentido inverso.
+    if not _lev_id_pdf:
+        try:
+            _lev_rev = mysql_fetchone(
+                "SELECT id FROM mant_levantamientos WHERE visita_id=%s "
+                " ORDER BY id DESC LIMIT 1", (vid,)
+            )
+            if _lev_rev:
+                _lev_id_pdf = _lev_rev["id"]
+        except Exception as _e_levrev:
+            print(f"[_ot_pdf_context][lev_rev] vid={vid}: {_e_levrev}", flush=True)
     if _lev_id_pdf:
         try:
             lev_items = mysql_fetchall(
