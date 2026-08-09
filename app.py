@@ -46998,7 +46998,14 @@ def _no_tecnico(view):
             role = (u["role"] if u else "") or ""
         except Exception:
             role = ""
-        if role == "tecnico":
+        # ENDURECIDO 2026-08-09 (auditoría de permisos de equipos/OT):
+        # antes esto comparaba `role == "tecnico"` EXACTO, así que un rol
+        # 'tecnico_externo' (o 'tecnico_jr', o cualquier variante creada por
+        # el admin) NO quedaba bloqueado y entraba a endpoints pensados solo
+        # para roles gestores. Se pasa a la familia de rol, que es el
+        # comparador que ya usa el resto del backend (_rol_familia) y que
+        # normaliza todas esas variantes a 'tecnico'.
+        if _rol_familia(role) == "tecnico":
             is_ajax = (
                 request.headers.get("X-Wizard") == "1"
                 or request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -58964,6 +58971,8 @@ def mant_maquina_destruir(mid):
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/serie", methods=["PUT"])
 @_mant_required
+@_no_tecnico   # 2026-08-09: la serie es dato de la FICHA GLOBAL del equipo.
+               # El técnico solo modifica equipos dentro de su OT asignada.
 def mant_maquina_actualizar_serie(mid):
     """
     Actualiza el N° serie de un equipo con auditoría completa.
@@ -60336,6 +60345,10 @@ def mant_visita_grabacion_video(vid):
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/solicitar-cambio", methods=["POST"])
 @_mant_required
+@_no_tecnico   # 2026-08-09: esta acción hace DOS cosas de gestión: cambia el
+               # estado operativo del equipo en su ficha global Y crea una OT
+               # nueva desde la ficha. El técnico ejecuta OTs asignadas, no las
+               # origina ni redefine el estado del parque de equipos.
 def mant_maquina_solicitar_cambio(mid):
     """
     Solicita cambio/reparación de un equipo dañado:
@@ -68552,6 +68565,8 @@ def mant_cliente_maquinas_list(cid):
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/aplica-mantencion", methods=["PUT"])
 @_mant_required
+@_no_tecnico   # 2026-08-09: define si el equipo entra al plan de mantención
+               # (y por lo tanto se cotiza). Decisión de gestión, no de terreno.
 def mant_maquina_aplica_mantencion(mid):
     """Marca si al equipo se le realiza mantención (SÍ/NO). Sirve para segregar
     accesorios/productos que no requieren seguimiento ni se cotizan como mantención."""
@@ -90789,6 +90804,9 @@ def mant_maquina_horometro_get(mid):
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/horometro", methods=["POST"])
 @_mant_required
+@_no_tecnico   # 2026-08-09: registro manual FUERA de una OT. El horómetro que
+               # el técnico carga durante su OT sigue entrando por el bridge de
+               # target_field de la tarea, que ya valida que la OT sea suya.
 def mant_maquina_horometro_post(mid):
     """Registra una lectura de horómetro manual (fuera de una OT).
     Body: { horas: number, fecha?: 'YYYY-MM-DD', notas?: str }
@@ -90822,6 +90840,9 @@ def mant_maquina_horometro_post(mid):
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/horometro/<int:lid>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico   # 2026-08-09: borrar una lectura histórica es corrección de
+               # ficha. El docstring ya decía "solo admin/superadmin" pero
+               # NADA lo hacía cumplir en el backend.
 def mant_maquina_horometro_delete(mid, lid):
     """Borra UNA lectura de horómetro (typo del operario, prueba, etc.) y
     recalcula la caché de mant_maquinas a partir de la lectura más reciente

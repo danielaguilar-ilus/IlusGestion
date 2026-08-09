@@ -108,6 +108,7 @@ jobs:
             tests/test_transport_productos_json_saldo.py \
             tests/test_transport_caracterizacion.py \
             tests/test_fedex_multibulto_poll.py \
+            tests/test_permisos_equipos_ot.py \
           ; do
             echo "::group::$f"
             if ! python3 "$f"; then
