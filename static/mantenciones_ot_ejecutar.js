@@ -2892,16 +2892,20 @@ function actualizarLockFirmar(ctxOrTotal, completas){
   const opcComp  = compl - oblComp;
   const opcPend  = Math.max(0, opcTot - opcComp);
 
+  // Desglose por equipo + header "Recorrido de la OT" + visibilidad de
+  // "Agregar equipo" para el técnico. Va ANTES del return temprano de abajo
+  // (BUG real 2026-08-08: estaba después de `if (!btn || !lbl) return;`, así
+  // que en toda OT sin botón Firmar en el DOM — ej. CERRADA, ya firmada —
+  // esto nunca se ejecutaba y la barra de avance del header quedaba oculta
+  // aunque hubiera datos reales) para que se recalcule en TODOS los casos,
+  // no solo cuando el botón de firmar existe.
+  _actualizarPanelCierre(oblTot, oblComp);
+  _hdrSyncProgress(oblTot, oblComp);
+
   const btn = document.getElementById('btnFirmar');
   const lbl = document.getElementById('btnFirmarLabel');
   const hint = document.getElementById('btnFirmarHint');
   if (!btn || !lbl) return;
-
-  // Desglose por equipo + visibilidad de "Agregar equipo" para el técnico.
-  // Va acá arriba (antes de los returns tempranos) para que se recalcule
-  // en TODOS los casos, no solo en el camino feliz.
-  _actualizarPanelCierre(oblTot, oblComp);
-  _hdrSyncProgress(oblTot, oblComp);
 
   // CSS shared snippets para el hint inferior (siempre visible)
   const hintCounters =
