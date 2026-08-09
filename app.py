@@ -73189,10 +73189,33 @@ def _ot_pdf_context(vid, embed_images=False):
             print(f"[_ot_pdf_context][lev_rev] vid={vid}: {_e_levrev}", flush=True)
     if _lev_id_pdf:
         try:
-            lev_items = mysql_fetchall(
-                "SELECT * FROM mant_levantamiento_items "
-                " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
-                " ORDER BY id ASC", (_lev_id_pdf,)) or []
+            # 2026-08-09 (Daniel: "¿por qué no se imprimen las fotos?" +
+            # "el levantamiento está muy metido de intruso en el código").
+            # El informe traía CUALQUIER item con nombre, incluidos los que
+            # el resto del módulo YA excluye: los BORRADORES (es_borrador=1,
+            # capturas a medias que el técnico nunca finalizó) y los
+            # declarados "no está" (estado_capturado='no_encontrado').
+            # Resultado visible en la OT-2026-00042: la app mostraba 0
+            # equipos capturados y el PDF imprimía 8 con "Sin registro
+            # fotográfico" -- equipos fantasma que ensuciaban un documento
+            # que firma el cliente. Se usa el MISMO criterio que
+            # _lev_materializar_equipos_nuevos y la validación de cierre,
+            # para que el informe diga lo mismo que la aplicación.
+            # Con try/except por la ventana de transición si la columna aún
+            # no existe en algún entorno (ILUS_SKIP_MIGRATIONS=1).
+            try:
+                lev_items = mysql_fetchall(
+                    "SELECT * FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                    "   AND COALESCE(es_borrador,0) = 0 "
+                    "   AND COALESCE(estado_capturado,'') <> 'no_encontrado' "
+                    " ORDER BY id ASC", (_lev_id_pdf,)) or []
+            except Exception as _e_lev_filtro:
+                print(f"[_ot_pdf_context][lev_items_filtro] {_e_lev_filtro}", flush=True)
+                lev_items = mysql_fetchall(
+                    "SELECT * FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                    " ORDER BY id ASC", (_lev_id_pdf,)) or []
             # FIX 2026-08-08: no imprimir la SERIE SUGERIDA como si fuera real.
             # El modal de terreno propone una serie automatica (LEV<vid>-<n>,
             # y el fallback interno LEV-<lev>-<item>) para que el tecnico la
