@@ -454,6 +454,25 @@
         {% endif %}
       </div>
     {% endfor %}
+
+    {# 2026-08-09 (Daniel: "¿por qué no se imprimen las fotos?"): fotos del
+       levantamiento que quedaron SIN equipo asociado. Antes la consulta las
+       descartaba y no salían en ninguna parte del informe -- evidencia que
+       el técnico sí tomó y que el cliente nunca veía. Se imprimen acá en
+       vez de perderse. #}
+    {% if lev_fotos_huerfanas %}
+      <div class="an-eq">
+        <div class="an-eq-tit">Registro fotográfico general de la visita</div>
+        <div class="an-fotos">
+          {% for f in lev_fotos_huerfanas %}
+          <figure>
+            <img src="{{ f.cloudinary_url }}" alt="">
+            <figcaption>{{ f.descripcion or f.tipo_foto or 'Evidencia' }}</figcaption>
+          </figure>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
   </div>
 
   {# ══ PIE ═════════════════════════════════════════════════════ #}

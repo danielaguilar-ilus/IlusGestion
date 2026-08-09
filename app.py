@@ -73166,6 +73166,10 @@ def _ot_pdf_context(vid, embed_images=False):
     # cargan SIN filtrar por maquina_id (materializados o no: el informe
     # documenta lo que el técnico levantó en terreno). ──────────────────
     lev_items, lev_fotos_idx, lev_stats = [], {}, {}
+    # Fotos del levantamiento que NO quedaron asociadas a un equipo del
+    # anexo (item_id nulo, o apuntando a un item que no se imprime).
+    # Antes se descartaban en la consulta y no aparecían en ningún lado.
+    lev_fotos_huerfanas = []
     _lev_id_pdf = visita.get("levantamiento_id")
     # FIX 2026-08-09 (Daniel: "¿por qué no se imprimen las fotos en las OT?")
     # El enlace OT<->levantamiento existe en LOS DOS SENTIDOS:
@@ -73231,13 +73235,24 @@ def _ot_pdf_context(vid, embed_images=False):
                 _s = str(_li.get("serie_snap") or "").strip()
                 if _s and _re_serie_auto.match(_s):
                     _li["serie_snap"] = ""
+            # 2026-08-09 (Daniel): antes esto exigia `item_id IS NOT NULL`, y
+            # las fotos que quedaron SIN equipo asociado no se imprimian en
+            # NINGUNA parte -- evidencia que existe en la base y nunca llega
+            # al informe que ve el cliente. Ahora se traen TODAS y las que no
+            # matcheen con un equipo del anexo caen a un bloque general al
+            # final, en vez de perderse.
             _lev_fotos = mysql_fetchall(
                 "SELECT item_id, cloudinary_url, tipo_foto, descripcion "
                 "  FROM mant_levantamiento_fotos "
-                " WHERE levantamiento_id=%s AND item_id IS NOT NULL "
+                " WHERE levantamiento_id=%s "
                 " ORDER BY id ASC", (_lev_id_pdf,)) or []
+            _ids_items = {int(i["id"]) for i in lev_items if i.get("id") is not None}
             for _f in _lev_fotos:
-                lev_fotos_idx.setdefault(_f["item_id"], []).append(_f)
+                _iid_f = _f.get("item_id")
+                if _iid_f is not None and int(_iid_f) in _ids_items:
+                    lev_fotos_idx.setdefault(_iid_f, []).append(_f)
+                else:
+                    lev_fotos_huerfanas.append(_f)
             _n_op = sum(1 for i in lev_items
                         if (i.get("estado_capturado") or "operativo") == "operativo")
             _n_adv = sum(1 for i in lev_items
@@ -73329,6 +73344,9 @@ def _ot_pdf_context(vid, embed_images=False):
             for _f in _lst:
                 if _f.get("cloudinary_url"):
                     _f["cloudinary_url"] = _img_a_data_uri(_f["cloudinary_url"], _cache)
+        for _f in lev_fotos_huerfanas:
+            if _f.get("cloudinary_url"):
+                _f["cloudinary_url"] = _img_a_data_uri(_f["cloudinary_url"], _cache)
 
     # ── Título/subtítulo REALES del documento + KPIs reales de la OT normal
     # + logo SPHS (Daniel 2026-08-08, queja textual): "la orden de trabajo
@@ -73395,6 +73413,7 @@ def _ot_pdf_context(vid, embed_images=False):
         "logo_shs_url": logo_shs_url,
         "lev_items": lev_items,
         "lev_fotos_idx": lev_fotos_idx,
+        "lev_fotos_huerfanas": lev_fotos_huerfanas,
         "lev_stats": lev_stats,
         "base_url": base_url,
         "generated_at": _now_chile_str('%d/%m/%Y %H:%M'),
