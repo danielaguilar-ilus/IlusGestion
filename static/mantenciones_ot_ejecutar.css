@@ -28,11 +28,18 @@
   overflow:hidden;
   transition:padding .2s ease;
 }
-/* 2026-08-09 (Daniel): el watermark del casco se ELIMINA del header.
-   Era favicon_192.png escalado y rotado 8deg al fondo de la tarjeta:
-   a ese tamaño y opacidad no se leía como el logo ILUS, solo ensuciaba
-   el fondo ("ni se entiende"). El branding del header ya lo da el chip
-   "ILUS · OT" de arriba, que sí se lee. No reintroducir. */
+/* Watermark del casco ESPARTANO — 2026-08-09 (Daniel: "era lo único que
+   lo hacía atractivo"). Antes era chico (110px, opacidad .08) y se leía
+   como una mancha. Ahora es un elemento de diseño de verdad: grande,
+   anclado al costado derecho y centrado vertical, para que se reconozca
+   el casco. NO volver a achicarlo ni quitarlo. */
+.tx-hdr::before {
+  content:''; position:absolute;
+  top:50%; right:-26px; transform:translateY(-50%) rotate(6deg);
+  width:200px; height:200px;
+  background:url('/static/favicon_192.png?v=20260517a') center/contain no-repeat;
+  opacity:.15; pointer-events:none;
+}
 /* Brand chip arriba con logo ILUS — más chico */
 .tx-hdr-brand{
   display:inline-flex;align-items:center;gap:6px;
@@ -65,12 +72,33 @@
   height:1px;margin:10px 0 8px;position:relative;z-index:1;
   background:linear-gradient(90deg,rgba(255,255,255,.24),rgba(255,255,255,.03));
 }
+/* Bloque logístico: el CLIENTE manda (es lo que el técnico busca al
+   abrir la OT), y dirección/fecha bajan a "chips" en una fila -- antes
+   eran 3 líneas apiladas del mismo peso, sin jerarquía. */
 .tx-hdr .meta{
   font-size:.76rem;opacity:.95;margin-top:6px;line-height:1.5;
   position:relative;z-index:1;
 }
 .tx-hdr .meta > div{display:flex;align-items:center;gap:5px;}
 .tx-hdr .meta i{font-size:.82rem;opacity:.85;width:14px;text-align:center;flex-shrink:0;}
+.tx-hdr-cliente{
+  font-size:.98rem;font-weight:800;letter-spacing:-.2px;
+  display:flex;align-items:center;gap:7px;
+}
+.tx-hdr-cliente i{font-size:.9rem;opacity:.8;flex-shrink:0}
+.tx-hdr-chips{
+  display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;
+  position:relative;z-index:1;
+}
+.tx-hdr-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.17);
+  padding:5px 11px;border-radius:8px;
+  font-size:.72rem;font-weight:600;line-height:1.3;
+  backdrop-filter:blur(6px);
+}
+.tx-hdr-chip i{font-size:.78rem;opacity:.85;flex-shrink:0}
 .tx-hdr .badge-est{
   display:inline-block;padding:3px 10px;border-radius:9999px;
   background:rgba(255,255,255,.22);
@@ -174,15 +202,23 @@
 .tx-hdr.collapsed .tx-hdr-progress-lbl{display:none}
 
 /* Compact contraparte card — botones más chicos */
+/* Contraparte compacta -- 2026-08-09: antes era una tarjeta alta con el
+   título en una fila, el nombre en otra y los botones en una tercera, y
+   con 1 solo contacto quedaba medio vacía (caso real OT-56: "Felipe P" +
+   1 botón ocupaban 3 filas). Ahora es UNA fila: nombre a la izquierda,
+   acciones a la derecha, y se parte en dos solo si no cabe. */
 .tx-hdr .contraparte-card{
-  background:rgba(255,255,255,.13);
-  border-radius:9px;padding:7px 10px;margin-top:7px;
-  border:1px solid rgba(255,255,255,.18);
+  background:rgba(255,255,255,.11);
+  border-radius:10px;padding:8px 12px;margin-top:8px;
+  border:1px solid rgba(255,255,255,.16);
   position:relative;z-index:1;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  backdrop-filter:blur(6px);
 }
-.tx-hdr .contraparte-titulo{font-size:.62rem;opacity:.85;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
-.tx-hdr .contraparte-nombre{font-weight:700;font-size:.84rem;margin-top:1px}
-.tx-hdr .contraparte-actions{display:flex;gap:5px;margin-top:5px;flex-wrap:wrap}
+.tx-hdr .contraparte-id{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
+.tx-hdr .contraparte-titulo{font-size:.58rem;opacity:.8;text-transform:uppercase;letter-spacing:.6px;font-weight:800}
+.tx-hdr .contraparte-nombre{font-weight:700;font-size:.86rem;margin-top:1px}
+.tx-hdr .contraparte-actions{display:flex;gap:5px;flex-wrap:wrap;flex-shrink:0}
 .tx-hdr .contraparte-actions .btn-ruta{margin-top:0;padding:5px 11px;font-size:.7rem;min-height:32px}
 
 /* ── GPS bar ── */

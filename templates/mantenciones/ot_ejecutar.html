@@ -62,15 +62,17 @@
     </div>
     <div class="tx-hdr-rule"></div>
     <div class="meta">
-      <div><i class="bi bi-building"></i><strong>{{ visita.razon_social }}</strong></div>
+      <div class="tx-hdr-cliente"><i class="bi bi-building"></i>{{ visita.razon_social }}</div>
       <div class="tx-hdr-extra">
         {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
-        {% if dir_visita %}
-        <div><i class="bi bi-geo-alt"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</div>
-        {% endif %}
-        {% if visita.fecha_programada %}
-        <div><i class="bi bi-calendar3"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</div>
-        {% endif %}
+        <div class="tx-hdr-chips">
+          {% if dir_visita %}
+          <span class="tx-hdr-chip"><i class="bi bi-geo-alt-fill"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</span>
+          {% endif %}
+          {% if visita.fecha_programada %}
+          <span class="tx-hdr-chip"><i class="bi bi-calendar3"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</span>
+          {% endif %}
+        </div>
       </div>
     </div>
 
@@ -78,11 +80,13 @@
     <div class="tx-hdr-extra">
     {% if visita.contacto_nombre %}
     <div class="contraparte-card">
-      <div class="contraparte-titulo">
-        <i class="bi bi-person-vcard"></i> Recibe en sitio
-      </div>
-      <div class="contraparte-nombre">
-        {{ visita.contacto_nombre }}{% if visita.contacto_cargo %} <small style="opacity:.85;font-weight:500">— {{ visita.contacto_cargo }}</small>{% endif %}
+      <div class="contraparte-id">
+        <div class="contraparte-titulo">
+          <i class="bi bi-person-vcard"></i> Recibe en sitio
+        </div>
+        <div class="contraparte-nombre">
+          {{ visita.contacto_nombre }}{% if visita.contacto_cargo %} <small style="opacity:.85;font-weight:500">— {{ visita.contacto_cargo }}</small>{% endif %}
+        </div>
       </div>
       {% if visita.contacto_tel or visita.contacto_email %}
       <div class="contraparte-actions">
