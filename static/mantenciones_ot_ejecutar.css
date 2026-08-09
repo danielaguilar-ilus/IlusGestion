@@ -28,14 +28,11 @@
   overflow:hidden;
   transition:padding .2s ease;
 }
-/* Watermark del casco — en la esquina inferior derecha (detrás de la
-   tarjeta de contacto / botón de ruta) para no competir con el anillo de
-   avance, que ahora ocupa la esquina superior derecha. */
-.tx-hdr::before {
-  content:''; position:absolute; bottom:-18px; right:-18px; width:130px; height:130px;
-  background:url('/static/favicon_192.png?v=20260517a') center/contain no-repeat;
-  opacity:.1; transform:rotate(8deg); pointer-events:none;
-}
+/* 2026-08-09 (Daniel): el watermark del casco se ELIMINA del header.
+   Era favicon_192.png escalado y rotado 8deg al fondo de la tarjeta:
+   a ese tamaño y opacidad no se leía como el logo ILUS, solo ensuciaba
+   el fondo ("ni se entiende"). El branding del header ya lo da el chip
+   "ILUS · OT" de arriba, que sí se lee. No reintroducir. */
 /* Brand chip arriba con logo ILUS — más chico */
 .tx-hdr-brand{
   display:inline-flex;align-items:center;gap:6px;
@@ -946,6 +943,9 @@
 .firma-banner{
   background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#2a0d0d 100%);
   color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;
+}
+.firma-banner .fb-logo{
+  width:48px;height:48px;background:#fff center/contain no-repeat;border-radius:8px;flex-shrink:0;
 }
 .firma-banner h5{font-size:1.05rem;margin:0;font-weight:800;letter-spacing:-.01em}
 .firma-banner .fb-sub{font-size:.78rem;opacity:.85;margin-top:2px}
