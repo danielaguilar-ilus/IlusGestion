@@ -1224,7 +1224,19 @@
       {% endif %}
       {% endif %}
       <div class="levd-list" id="levdList"></div>
-      {% if lev_editable %}
+      {# 2026-08-10 (Daniel): "nunca podrá agregar, a menos que sea una OT por
+         levantamiento y descubrimiento en terreno".
+         El técnico EJECUTA la lista de equipos que definió quien creó la OT;
+         no la amplía. La única excepción es el levantamiento/descubrimiento,
+         cuyo proposito ES que el técnico arme el inventario en terreno --
+         esconder el botón ahí dejaría esa modalidad sin forma de trabajar.
+         Mismo criterio que _ot_es_levantamiento() en el backend (tipo o
+         levantamiento asociado), para no tener dos definiciones distintas de
+         "esto es un levantamiento". El backend lo vuelve a validar en
+         mant_lev_item_crear: esconder el botón no basta, la ruta se puede
+         llamar directo. #}
+      {% set _es_lev_ot = (visita.tipo == 'levantamiento') or visita.levantamiento_id %}
+      {% if lev_editable and (_es_lev_ot or not es_tecnico) %}
       <button type="button" class="levd-add" onclick="levdAbrir()">
         <i class="bi bi-plus-circle-fill"></i> Agregar equipo
       </button>

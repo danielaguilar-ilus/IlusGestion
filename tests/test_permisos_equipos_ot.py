@@ -183,6 +183,32 @@ for ruta, metodo, porque in LEGITIMOS:
         check("@_no_tecnico" not in blq,
               f"{metodo} {ruta} NO lleva @_no_tecnico -- {porque}")
 
+# 4b. El tecnico solo agrega equipos si la OT ES de levantamiento
+#     (Daniel 2026-08-10: "nunca podra agregar, a menos que sea una OT por
+#      levantamiento y descubrimiento en terreno").
+#     No basta con esconder el boton en la plantilla: la ruta se llama directo.
+i_crear = next((i for i, l in enumerate(LINEAS)
+                if l.startswith("def mant_lev_item_crear")), None)
+check(i_crear is not None, "existe def mant_lev_item_crear")
+if i_crear is not None:
+    cuerpo_crear = "".join(LINEAS[i_crear:i_crear + 80])
+    check("TECNICO_NO_AGREGA_EQUIPOS" in cuerpo_crear,
+          "mant_lev_item_crear rechaza al tecnico con codigo TECNICO_NO_AGREGA_EQUIPOS")
+    check("_ot_es_levantamiento" in cuerpo_crear,
+          "usa _ot_es_levantamiento() -- misma definicion que el resto del backend, "
+          "no un criterio paralelo")
+    check('_rol_familia' in cuerpo_crear,
+          "decide por FAMILIA de rol (cubre tecnico_externo), no por string exacto")
+
+# 4c. La plantilla tampoco muestra el boton en una OT que no es levantamiento
+TPL = os.path.join(RAIZ, "templates", "mantenciones", "ot_ejecutar.html")
+with open(TPL, encoding="utf-8") as f:
+    tpl = f.read()
+check("_es_lev_ot" in tpl,
+      "la plantilla calcula si la OT es de levantamiento antes de mostrar 'Agregar equipo'")
+check("lev_editable and (_es_lev_ot or not es_tecnico)" in tpl,
+      "el boton 'Agregar equipo' se oculta al tecnico si la OT no es de levantamiento")
+
 
 # ══════════════════════════════════════════════════════════════════
 # 5. El borrado de maquinas sigue restringido a superadmin

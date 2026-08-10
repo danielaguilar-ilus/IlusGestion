@@ -85589,6 +85589,46 @@ def mant_lev_item_crear(lid):
     if not _lev_puede_accion(lid, "ejecutar", lev_row=lev):
         return _lev_403_response("ejecutar")
 
+    # ── El tecnico NO amplia la lista de equipos de una OT normal ──
+    # Daniel 2026-08-10: "nunca podra agregar, a menos que sea una OT por
+    # levantamiento y descubrimiento en terreno".
+    #
+    # En una preventiva / inspeccion / garantia / instalacion el alcance lo
+    # define quien crea la OT; el tecnico la EJECUTA. Sumar equipos en terreno
+    # cambiaba el alcance (y por lo tanto lo facturable) sin que nadie lo
+    # aprobara. La excepcion es el levantamiento/descubrimiento, cuyo proposito
+    # ES que el tecnico arme el inventario alla.
+    #
+    # Esto es el candado REAL: en la plantilla ya se esconde el boton, pero la
+    # ruta se puede llamar directo. Los roles gestores no se tocan.
+    try:
+        if _rol_familia((getattr(g, "user", None) or {}).get("role")) == "tecnico":
+            _v_lev = None
+            if lev.get("visita_id"):
+                _v_lev = mysql_fetchone(
+                    "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s",
+                    (lev["visita_id"],)
+                )
+            # Sin OT espejo el levantamiento es autonomo (flujo de
+            # levantamiento puro) => se permite, es su caso de uso.
+            if _v_lev and not _ot_es_levantamiento(_v_lev):
+                return jsonify({
+                    "ok": False,
+                    "error": "Esta OT no es de levantamiento: no puedes agregar "
+                             "equipos. Trabaja sobre los equipos asignados.",
+                    "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
+                }), 403
+    except Exception as _e_gate_add:
+        # FAIL-CLOSED a proposito: si no podemos determinar el tipo de OT no
+        # abrimos la puerta. Es una restriccion, no una funcionalidad: ante la
+        # duda conviene bloquear y que el gestor lo resuelva.
+        print(f"[lev_item_crear][gate_tecnico] lid={lid}: {_e_gate_add}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo validar el tipo de OT. Avisa a tu supervisor.",
+            "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
+        }), 403
+
     d = request.get_json(silent=True) or {}
     maquina_id = d.get("maquina_id")
     nombre = (d.get("nombre") or "").strip()[:300]
