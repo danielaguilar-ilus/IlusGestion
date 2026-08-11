@@ -642,9 +642,14 @@
               <div class="text-center text-muted py-4">
                 <i class="bi bi-building" style="font-size:2rem;opacity:.3"></i>
                 <div class="small mt-2">Este cliente no tiene máquinas registradas.</div>
+                {# FIX 2026-08-11: visita.cliente_id puede ser NULL en OT
+                   "Trabajo interno" — url_for con cid=None tira BuildError
+                   y tumba la página entera con 500. #}
+                {% if visita.cliente_id %}
                 <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}" class="btn btn-sm btn-outline-dark mt-2">
                   <i class="bi bi-plus-lg me-1"></i>Agregar máquinas
                 </a>
+                {% endif %}
               </div>
             {% endif %}
           </div>
@@ -950,6 +955,11 @@
       </div>
     </div>
     <div class="col-md-6">
+      {# FIX 2026-08-11: OT "Trabajo interno" no tiene cliente asociado
+         (visita.cliente_id NULL) — mostrar la sección completa con datos
+         vacíos (y un link roto con cid=None que tumbaba la página con 500)
+         no tenía sentido. Se reemplaza por un aviso simple. #}
+      {% if visita.cliente_id %}
       <h6 class="text-muted mb-3"><i class="bi bi-building me-1"></i>Datos del cliente</h6>
       <div class="task-item" style="cursor:default">
         <div class="task-body">
@@ -962,6 +972,15 @@
           </a>
         </div>
       </div>
+      {% else %}
+      <h6 class="text-muted mb-3"><i class="bi bi-clipboard2-check me-1"></i>Trabajo interno</h6>
+      <div class="task-item" style="cursor:default">
+        <div class="task-body text-muted small">
+          <i class="bi bi-info-circle me-1"></i>Esta OT es un trabajo interno de ILUS,
+          sin cliente asociado.
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>

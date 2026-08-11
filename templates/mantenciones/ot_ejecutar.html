@@ -996,10 +996,17 @@
           {% endif %}
         </div>
         <div class="d-flex gap-2 justify-content-center flex-wrap mt-3">
+          {# FIX 2026-08-11 (bug real en producción, OT interna sin cliente):
+             visita.cliente_id puede ser NULL desde que "Trabajo interno" se
+             puede crear sin cliente. url_for('mant_ficha', cid=None) tira
+             BuildError y tumba TODA la página con 500 — se omite el link
+             en vez de generarlo roto. #}
+          {% if visita.cliente_id %}
           <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}"
              class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-building me-1"></i>Ver ficha del cliente
           </a>
+          {% endif %}
         </div>
       {% elif puede_configurar %}
         {# 2026-05-22 (OT 2026-00004 Vitacura) — Banner accionable para
@@ -1018,10 +1025,12 @@
              class="btn btn-sm btn-dark fw-bold">
             <i class="bi bi-magic me-1"></i>Configurar OT (plantilla + equipos)
           </a>
+          {% if visita.cliente_id %}
           <a href="{{ url_for('mant_ficha', cid=visita.cliente_id) }}"
              class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-building me-1"></i>Ver ficha del cliente
           </a>
+          {% endif %}
         </div>
       {% else %}
         <div class="small mt-1">Pide al administrador que revise el levantamiento.</div>
