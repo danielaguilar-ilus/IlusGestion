@@ -218,6 +218,43 @@
     .doc{ width:auto; min-height:0; margin:0; padding:0; box-shadow:none; }
     .toolbar{ display:none !important; }
   }
+  /* ───── Datos para transferencia (Daniel 2026-08-11: "solo agregar la
+     siguiente imagen para que depositen"). Copiado 1:1 del bloque que ya
+     existe en templates/tickets/cotizacion_pdf.html (commit de4554b) para
+     que OT y Cotización se vean iguales. Los colores van explícitos porque
+     esta plantilla no define las variables --ilus-red/--ilus-black.
+     El ícono es SVG inline, no emoji: en el contenedor de Cloud Run donde
+     corre Playwright puede no haber fuente de emoji y saldría un cuadrado. */
+  .pago-strip {
+    display: flex; align-items: center; gap: 3.5mm;
+    background: linear-gradient(90deg, #0a0a0a 0%, #1c1c1c 100%);
+    border-left: 3px solid #dc2626;
+    border-radius: 3px;
+    padding: 2.8mm 4.5mm;
+    margin: 0 0 5mm;
+    page-break-inside: avoid;
+  }
+  .pago-strip .pago-icon-wrap {
+    flex-shrink: 0; width: 7mm; height: 7mm;
+    display: flex; align-items: center; justify-content: center;
+    background: #dc2626; border-radius: 50%;
+  }
+  .pago-strip .pago-icon-wrap svg { width: 4mm; height: 4mm; color: #fff; }
+  .pago-strip .pago-txt { flex: 1; min-width: 0; }
+  .pago-strip .pago-title {
+    color: #dc2626;
+    font-weight: 800; font-size: 7.2pt; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 1mm;
+  }
+  .pago-strip .pago-datos {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: .8mm 5mm;
+    color: #f3f4f6; font-size: 8.3pt; line-height: 1.35;
+  }
+  .pago-strip .pago-datos .pago-empresa {
+    font-weight: 800; letter-spacing: .01em; color: #fff;
+    text-transform: uppercase;
+  }
+  .pago-strip .pago-datos .pago-item b { color: #fff; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -405,6 +442,36 @@
       <div class="det">{% if visita.firma_supervisor_at %}{{ visita.firma_supervisor_at | chile_fmt }}{% endif %}</div>
     </div>
   </div>
+
+  {# ══ DATOS PARA TRANSFERENCIA (Daniel 2026-08-11) ═════════════
+     Mismo bloque que ya usa la Cotización (cotizacion_pdf.html) para que
+     el cliente no pregunte dónde depositar. Se OCULTA cuando no hay nada
+     que cobrar, porque pedir un depósito ahí sería un error de negocio:
+       · trabajo interno (sin cliente que pague),
+       · garantía / sin costo (cubierto, el cliente no paga).
+     Si Daniel prefiere que salga SIEMPRE, se quita este {% if %}. #}
+  {% set _mod_cobro = (visita.modalidad_cobro or '') | lower %}
+  {% if visita.cliente_id and _mod_cobro not in ('garantia', 'sin_costo', 'interno') %}
+  <div class="pago-strip">
+    <div class="pago-icon-wrap">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 10L12 4L21 10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M5 10V19M9.5 10V19M14.5 10V19M19 10V19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M3 19H21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="pago-txt">
+      <div class="pago-title">Datos para transferencia</div>
+      <div class="pago-datos">
+        <span class="pago-empresa">Sport and Health Solution SpA</span>
+        <span class="pago-item"><b>Banco:</b> BCI</span>
+        <span class="pago-item"><b>Cta. Cte.:</b> 27445585</span>
+        <span class="pago-item"><b>RUT:</b> 76.996.964-0</span>
+        <span class="pago-item"><b>Correo:</b> contacto@sphs.cl</span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   {# ══ ANEXO FOTOGRÁFICO Y DETALLE POR EQUIPO ══════════════════
      2026-07-10 (Daniel): registro COMPLETO — todos los equipos, todas
