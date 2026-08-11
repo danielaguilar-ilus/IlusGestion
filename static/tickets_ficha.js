@@ -2419,6 +2419,11 @@ const _TKOT = {
   // fecha=hoy, comportamiento sin cambios).
   pendingTipoPreset: null,
   pendingFechaPreset: null,
+  // FIX 2026-08-11 (Daniel, probando en vivo): mapa tipo_ot -> categoria
+  // (mant_categoria_tipo_map), para que "Plantillas extra" (Paso 5, por
+  // equipo) filtre por la MISMA categoría del tipo de OT elegido en el
+  // Paso 1, en vez de listar TODAS las plantillas del sistema mezcladas.
+  categoriaMap: null,
 };
 
 // ── Clave estable por fila de equipo: usa maquina_id si existe (para que
@@ -2530,6 +2535,21 @@ async function _tkotCargarPlantillas(){
     _TKOT.plantillas.cargadas = true;
   }catch(e){ console.warn('tkot plantillas:', e); }
   return _TKOT.plantillas.all;
+}
+
+// FIX 2026-08-11 (Daniel, probando en vivo): mapa tipo_ot -> categoria,
+// para filtrar "Plantillas extra" por la categoría del tipo de OT elegido.
+// Best-effort: si falla, _TKOT.categoriaMap queda null y el caller
+// (tkotAbrirMultiPlantilla) cae de vuelta a mostrar todas sin filtrar --
+// nunca bloquea agregar una plantilla extra por un problema de red.
+async function _tkotCargarCategoriaMap(){
+  if(_TKOT.categoriaMap) return _TKOT.categoriaMap;
+  try{
+    const r = await fetch('/mantenciones/api/plantillas/categorias');
+    const d = await r.json();
+    if(d && d.ok && d.mapa_tipo_ot) _TKOT.categoriaMap = d.mapa_tipo_ot;
+  }catch(e){ console.warn('tkot categoria map:', e); }
+  return _TKOT.categoriaMap;
 }
 
 // ── Técnicos (multi-select, idéntico a Mantenciones) ──
@@ -4441,13 +4461,26 @@ function tkotRecalcEqCount(){
 }
 
 // ── Multi-plantilla por equipo (idéntico a Mantenciones, clave = _tkotEqKey) ──
-function tkotAbrirMultiPlantilla(key, eqNombre){
-  const plantillas = _TKOT.plantillas.all || [];
-  if(!plantillas.length){
+async function tkotAbrirMultiPlantilla(key, eqNombre){
+  const todas = _TKOT.plantillas.all || [];
+  if(!todas.length){
     ilusAlert({ title:'Sin plantillas', message:'No hay plantillas activas en el sistema.',
       sub:'Pide a un administrador que cree plantillas en /mantenciones/plantillas.', type:'warning' });
     return;
   }
+  const tipoActual = document.getElementById('otTipo')?.value || '';
+  // FIX 2026-08-11 (Daniel, probando en vivo): filtrar por la categoría del
+  // tipo de OT elegido en el Paso 1 -- antes mostraba TODAS las plantillas
+  // del sistema mezcladas (Instalación, Control de Calidad, Garantía,
+  // Levantamiento...) sin importar qué tipo estuviera seleccionado.
+  // Best-effort: si no se puede resolver la categoría (mapa no cargó, o el
+  // tipo no tiene fila en mant_categoria_tipo_map), cae a mostrar todas --
+  // nunca bloquea agregar una plantilla extra.
+  const mapa = await _tkotCargarCategoriaMap();
+  const categoriaActual = mapa ? mapa[tipoActual] : null;
+  const plantillas = categoriaActual
+    ? todas.filter(p => p.categoria_admin === categoriaActual)
+    : todas;
   let modal = document.getElementById('modalMultiPlantilla');
   if(modal){ try{ bootstrap.Modal.getInstance(modal)?.dispose(); }catch(e){} modal.remove(); }
   modal = document.createElement('div');
@@ -4455,7 +4488,9 @@ function tkotAbrirMultiPlantilla(key, eqNombre){
   modal.className = 'modal fade';
   modal.tabIndex = -1;
   const seleccionadas = _TKOT.eqPlantillas[key] || new Set();
-  const tipoActual = document.getElementById('otTipo')?.value || '';
+  const _catAviso = (categoriaActual && plantillas.length < todas.length)
+    ? ' Se muestran solo las plantillas de la categoría de este tipo de OT.'
+    : '';
   modal.innerHTML = '<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">'
     + '<div class="modal-content" style="border-radius:12px">'
     + '<div class="modal-header" style="background:linear-gradient(135deg,#1e3a8a,#3b82f6);color:#fff">'
@@ -4464,7 +4499,8 @@ function tkotAbrirMultiPlantilla(key, eqNombre){
     + '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>'
     + '<div class="modal-body"><div class="alert alert-info py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>'
     + 'La plantilla del tipo de OT ('+esc(tipoActual||'—')+') ya se aplica automáticamente. '
-    + 'Aquí puedes agregar plantillas <strong>adicionales</strong> para este equipo.</div>'
+    + 'Aquí puedes agregar plantillas <strong>adicionales</strong> para este equipo.'+_catAviso+'</div>'
+    + (plantillas.length ? '' : '<div class="text-muted small text-center py-3">No hay plantillas extra en esta categoría.</div>')
     + '<div id="multiPlantillaList">' + plantillas.map(function(p){
         return '<label class="d-flex align-items-start gap-2 p-2 mb-1 border rounded" style="cursor:pointer;background:'+(seleccionadas.has(p.id)?'#eff6ff':'#fff')+'">'
           + '<input type="checkbox" class="mp-chk" data-pid="'+p.id+'" '+(seleccionadas.has(p.id)?'checked':'')+' style="margin-top:3px">'
