@@ -65042,6 +65042,179 @@ def mant_visita_firmar(vid):
 # Requiere: las 3 firmas (cliente, técnico, supervisor) presentes.
 # ══════════════════════════════════════════════════════════════════════
 
+def _ot_levantamiento_de(visita_o_vid):
+    """Resuelve el levantamiento_id de una OT mirando SIEMPRE ambos sentidos
+    del vínculo (mant_visitas.levantamiento_id ↔ mant_levantamientos.visita_id).
+
+    Acepta un dict de visita (con 'id' y opcionalmente 'levantamiento_id') o
+    directamente un vid (int). SOLO LECTURA — nunca escribe en la BD.
+
+    FIX 2026-08-10 (OT-2026-00042): el enlace queda a veces poblado en un
+    solo sentido (dato legacy / desincronización histórica). Varios call
+    sites del módulo miraban solo el campo forward (`v.get("levantamiento_id")`)
+    y por eso no encontraban levantamientos que sí existían por el lado
+    reverse — esta función centraliza el patrón bidireccional que ya usaban
+    _ot_validar_cierre R5 y el gate de firma técnica (`WHERE lv.visita_id=%s
+    OR lv.id=%s`).
+
+    Ojo: si el dict recibido no trae la columna `levantamiento_id` en su
+    SELECT original (algunos callers hacen SELECT parcial), no asumimos que
+    `.get()` refleja el valor real — si la key no está presente EN ABSOLUTO
+    se re-consulta el campo forward por id antes de caer al fallback reverse.
+    """
+    try:
+        _MISSING = object()
+        if isinstance(visita_o_vid, dict):
+            vid = visita_o_vid.get("id")
+            _raw = visita_o_vid.get("levantamiento_id", _MISSING)
+            if _raw is not _MISSING:
+                if _raw:
+                    return _raw
+                # La key está presente y es None/0 -> ya sabemos que el
+                # forward es vacío, no hace falta re-consultarlo.
+            elif vid:
+                try:
+                    _row = mysql_fetchone(
+                        "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                        (vid,)
+                    )
+                    if _row and _row.get("levantamiento_id"):
+                        return _row["levantamiento_id"]
+                except Exception:
+                    pass
+        else:
+            vid = visita_o_vid
+            if vid:
+                try:
+                    _row = mysql_fetchone(
+                        "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                        (vid,)
+                    )
+                    if _row and _row.get("levantamiento_id"):
+                        return _row["levantamiento_id"]
+                except Exception:
+                    pass
+        if not vid:
+            return None
+        try:
+            _rev = mysql_fetchone(
+                "SELECT id FROM mant_levantamientos WHERE visita_id=%s "
+                " ORDER BY id DESC LIMIT 1", (vid,)
+            )
+            if _rev:
+                return _rev["id"]
+        except Exception:
+            pass
+        return None
+    except Exception:
+        return None
+
+
+def _ot_equipos_y_fotos(vid):
+    """Fuente única de 'equipos y fotos' de una OT. Combina:
+      - mant_visita_tareas / mant_visita_fotos (checklist clásico)
+      - mant_levantamiento_items / mant_levantamiento_fotos (vía
+        _ot_levantamiento_de, resolviendo el link en ambos sentidos)
+
+    SOLO LECTURA. Devuelve dict con: equipos, fotos, eq_fotos_idx, lev_items,
+    lev_fotos_idx, lev_fotos_huerfanas, n_fotos_total (deduplicado por
+    foto_hash, MISMO criterio que ya usa _ot_validar_cierre R5 — con
+    COALESCE(foto_hash, CONCAT('id:', id)) para no penalizar fotos
+    históricas sin hash).
+    """
+    out = {
+        "equipos": [], "fotos": [], "eq_fotos_idx": {},
+        "lev_items": [], "lev_fotos_idx": {}, "lev_fotos_huerfanas": [],
+        "n_fotos_total": 0,
+    }
+    try:
+        equipos = mysql_fetchall(
+            "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+            "       m.marca, m.modelo "
+            "  FROM mant_visita_tareas vt "
+            "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
+            " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+            "   AND COALESCE(m.estado,'activo') != 'baja' "
+            " ORDER BY m.nombre", (vid,)
+        ) or []
+        out["equipos"] = [dict(e) for e in equipos]
+    except Exception:
+        pass
+
+    try:
+        fotos = mysql_fetchall(
+            "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+            "       tipo_foto, tomada_at, foto_hash "
+            "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
+            (vid,)
+        ) or []
+        out["fotos"] = [dict(f) for f in fotos]
+        for f in out["fotos"]:
+            mid = f.get("maquina_id")
+            if mid:
+                out["eq_fotos_idx"].setdefault(mid, []).append(f)
+    except Exception:
+        pass
+
+    _lev_id = _ot_levantamiento_de(vid)
+    if _lev_id:
+        try:
+            lev_items = mysql_fetchall(
+                "SELECT * FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                "   AND COALESCE(es_borrador,0) = 0 "
+                "   AND COALESCE(estado_capturado,'') <> 'no_encontrado' "
+                " ORDER BY id ASC", (_lev_id,)
+            ) or []
+        except Exception:
+            try:
+                lev_items = mysql_fetchall(
+                    "SELECT * FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                    " ORDER BY id ASC", (_lev_id,)
+                ) or []
+            except Exception:
+                lev_items = []
+        out["lev_items"] = [dict(i) for i in lev_items]
+        _ids_items = {int(i["id"]) for i in out["lev_items"] if i.get("id") is not None}
+        try:
+            _lev_fotos = mysql_fetchall(
+                "SELECT id, item_id, cloudinary_url, tipo_foto, descripcion, foto_hash "
+                "  FROM mant_levantamiento_fotos WHERE levantamiento_id=%s "
+                " ORDER BY id ASC", (_lev_id,)
+            ) or []
+        except Exception:
+            _lev_fotos = []
+        for _f in _lev_fotos:
+            _f = dict(_f)
+            _iid = _f.get("item_id")
+            if _iid is not None and int(_iid) in _ids_items:
+                out["lev_fotos_idx"].setdefault(_iid, []).append(_f)
+            else:
+                out["lev_fotos_huerfanas"].append(_f)
+
+    try:
+        _f1 = mysql_fetchone(
+            "SELECT COUNT(DISTINCT COALESCE(foto_hash, CONCAT('id:', id))) AS n "
+            "  FROM mant_visita_fotos WHERE visita_id=%s", (vid,)
+        ) or {}
+        _n1 = int(_f1.get("n") or 0)
+    except Exception:
+        _n1 = 0
+    _n2 = 0
+    if _lev_id:
+        try:
+            _f2 = mysql_fetchone(
+                "SELECT COUNT(DISTINCT COALESCE(foto_hash, CONCAT('id:', id))) AS n "
+                "  FROM mant_levantamiento_fotos WHERE levantamiento_id=%s", (_lev_id,)
+            ) or {}
+            _n2 = int(_f2.get("n") or 0)
+        except Exception:
+            _n2 = 0
+    out["n_fotos_total"] = _n1 + _n2
+    return out
+
+
 def _ot_es_levantamiento(v):
     """True si la OT captura fichas de equipo (o sea: si tiene levantamiento).
 
@@ -65054,12 +65227,30 @@ def _ot_es_levantamiento(v):
     _ensure_levantamiento_para_visita le crea un levantamiento por eso mismo.
     Mirar solo el tipo dejaba a esas OT en tierra de nadie: se comportaban
     como levantamiento para unas cosas y no para otras.
+
+    FIX 2026-08-10 (OT-2026-00042): antes solo miraba el campo forward
+    `v.get("levantamiento_id")` — si el link estaba SOLO en el sentido
+    reverse (mant_levantamientos.visita_id), esta función daba False aunque
+    el levantamiento existiera y tuviera datos. Ahora usa
+    _ot_levantamiento_de(v), que resuelve ambos sentidos. Se cachea el
+    resultado en el propio dict `v` (memoria de esta request, NUNCA se hace
+    UPDATE a la BD) para no repetir la query reverse en llamadas
+    subsecuentes sobre el mismo dict dentro del mismo request — esta función
+    se llama en un hot path (varias veces por request en algunos endpoints).
     """
     if not v:
         return False
     try:
-        return ((v.get("tipo") or "").strip().lower() == "levantamiento"
-                or bool(v.get("levantamiento_id")))
+        if (v.get("tipo") or "").strip().lower() == "levantamiento":
+            return True
+        if v.get("levantamiento_id"):
+            return True
+        _lev_id = _ot_levantamiento_de(v)
+        if _lev_id:
+            if isinstance(v, dict):
+                v["levantamiento_id"] = _lev_id
+            return True
+        return False
     except Exception:
         return False
 
@@ -68571,18 +68762,25 @@ def mant_visita_del(vid):
         "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id "
         "  FROM mant_visitas WHERE id=%s", (vid,)
     )
+    # FIX 2026-08-10 (OT-2026-00042): antes solo miraba v_info.levantamiento_id
+    # (campo forward) — si el link era solo reverse, el levantamiento quedaba
+    # huérfano al borrar la OT (bloqueando la creación de nuevos levantamientos
+    # para ese cliente/equipo). _ot_levantamiento_de(vid) resuelve ambos
+    # sentidos; se calcula ANTES del DELETE porque el sentido reverse depende
+    # de mant_levantamientos.visita_id, que no se toca al borrar la visita.
+    _lev_id_del = _ot_levantamiento_de(vid)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             # Sincronizar: si la OT tiene un levantamiento asociado, marcarlo cancelado
             # (antes quedaba huérfano y bloqueaba la creación de nuevos levantamientos).
-            if v_info and v_info.get("levantamiento_id"):
+            if _lev_id_del:
                 try:
                     cur.execute(
                         "UPDATE mant_levantamientos "
                         "   SET estado='cancelado', fecha_cierre=NOW() "
                         " WHERE id=%s AND estado IN ('borrador','en_curso')",
-                        (v_info["levantamiento_id"],)
+                        (_lev_id_del,)
                     )
                 except Exception as _e_sync:
                     print(f"[visita_del] sync levantamiento falló: {_e_sync}", flush=True)
@@ -69869,6 +70067,15 @@ def mant_ot_ejecutar(vid):
         flash("OT no encontrada.", "danger")
         return redirect(url_for("mant_ots_list"))
     visita = dict(visita)
+    # FIX 2026-08-10 (OT-2026-00042): `visita` se pasa directo al template,
+    # que lee `visita.levantamiento_id` crudo en varios puntos (botón
+    # "Re-materializar equipos", flags JS VISITA_LEVANTAMIENTO_ID, etc.).
+    # Si el link solo existe en el sentido reverse (dato legacy/desincroniza-
+    # ción histórica), esos puntos quedaban ciegos aunque el levantamiento sí
+    # existiera. _ot_es_levantamiento ya resuelve ambos sentidos y cachea el
+    # resultado en el propio dict — solo mutación en memoria de esta
+    # request, NUNCA un UPDATE a la BD.
+    _ot_es_levantamiento(visita)
 
     # 🔐 SEGURIDAD 2026-05-18 / refuerzo 2026-05-22 (Daniel — brecha Aaron):
     # Matriz unificada de permisos. Permite VER la página a:
@@ -69937,7 +70144,11 @@ def mant_ot_ejecutar(vid):
     # populó la tabla intermedia. Es seguro correr cada vez que se abre
     # la OT: si ya están sincronizados, no hace nada.
     # ════════════════════════════════════════════════════════════════
-    _lev_id = visita.get("levantamiento_id")
+    # FIX 2026-08-10 (OT-2026-00042): antes solo miraba el campo forward.
+    # Si el link estaba solo en el sentido reverse, este sync (y el
+    # safety-net de tareas de más abajo, que reusa `_lev_id`) se saltaba
+    # por completo aunque la OT sí tuviera levantamiento con equipos.
+    _lev_id = _ot_levantamiento_de(visita)
     if _lev_id:
         try:
             # PERF 2026-05-31 (ot_performance): este sync reconstruye la
@@ -70242,7 +70453,9 @@ def mant_ot_ejecutar(vid):
     # quedaron sin materializar (maquina_id NULL) para ofrecer el botón de
     # reparación manual "Re-materializar equipos" cuando la OT ya cerró.
     lev_huerfanos_count = 0
-    if visita.get("levantamiento_id"):
+    # FIX 2026-08-10 (OT-2026-00042): mismo bug — solo miraba el forward.
+    _lev_id_huerf = _ot_levantamiento_de(visita)
+    if _lev_id_huerf:
         try:
             try:
                 _row_huerf = mysql_fetchone(
@@ -70251,14 +70464,14 @@ def mant_ot_ejecutar(vid):
                     "  AND COALESCE(nombre_snap,'') <> '' "
                     "  AND COALESCE(es_borrador,0) = 0 "
                     "  AND COALESCE(estado_capturado,'') <> 'no_encontrado'",
-                    (visita["levantamiento_id"],)
+                    (_lev_id_huerf,)
                 )
             except Exception:
                 _row_huerf = mysql_fetchone(
                     "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
                     "WHERE levantamiento_id=%s AND maquina_id IS NULL "
                     "  AND COALESCE(nombre_snap,'') <> ''",
-                    (visita["levantamiento_id"],)
+                    (_lev_id_huerf,)
                 )
             lev_huerfanos_count = (_row_huerf or {}).get("n") or 0
         except Exception as _e_lh:
@@ -70534,6 +70747,17 @@ def _ensure_levantamiento_para_visita(vid):
     if not v:
         return None
     lev_id = v.get("levantamiento_id")
+    if lev_id:
+        return lev_id
+    # FIX 2026-08-10 (OT-2026-00042, bug real de duplicación): antes, si el
+    # link estaba SOLO en el sentido reverse (mant_levantamientos.visita_id
+    # poblado, mant_visitas.levantamiento_id vacío — dato legacy o
+    # desincronización histórica), esta función no lo encontraba y creaba un
+    # levantamiento NUEVO cada vez que se llamaba, duplicando el existente.
+    # Se busca primero en ambos sentidos con _ot_levantamiento_de antes de
+    # decidir crear uno — NO cambia CUÁNDO se crea (eso sigue igual más
+    # abajo), solo evita duplicar uno que ya existe.
+    lev_id = _ot_levantamiento_de(v)
     if lev_id:
         return lev_id
     # Solo crear para tipos que capturan ficha. Correctiva/garantía NO.
@@ -70884,6 +71108,16 @@ def mant_ot_equipo_fotos_list(vid, mid):
     está capturando ahora.
 
     2026-05-22 (Daniel) — UI de captura muestra miniaturas + galería.
+
+    TODO (2026-08-10, alcance OT-2026-00042): este endpoint NUNCA consulta
+    mant_levantamiento_fotos — un equipo capturado por levantamiento (link
+    solo en sentido reverse o no) no muestra acá sus fotos de terreno, solo
+    las de mant_visita_fotos/mant_maquina_fotos. Se dejó fuera de este fix
+    a propósito: sumar la tercera fuente cambia el contrato JSON que ya
+    consume el frontend (`fuente: "ot"|"galeria"`) y requiere coordinar el
+    cambio con quien mantiene ese JS. El helper de lectura ya existe listo
+    para reusar: _ot_equipos_y_fotos(vid)["lev_fotos_idx"].get(mid) (o
+    filtrar por item.maquina_id==mid dentro de "lev_items").
     """
     out_fotos = []
     # Fotos de esta OT (recientes primero)
@@ -71193,8 +71427,11 @@ def mant_ot_firmar_revision(vid):
         # captura fichas por levantamiento, las tareas sin maquina_id NO son
         # trabajables (no tienen tarjeta en pantalla) y por lo tanto no pueden
         # bloquear la firma. Ver el comentario largo en _ot_validar_cierre.
+        # FIX 2026-08-10 (OT-2026-00042): se agrega `id` al SELECT — sin él,
+        # _ot_es_levantamiento() no puede resolver el fallback reverse (lo
+        # necesita para buscar en mant_levantamientos.visita_id).
         _v_gate = mysql_fetchone(
-            "SELECT tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
+            "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
         _huerf_gate = (" AND t.maquina_id IS NOT NULL "
                        if _ot_es_levantamiento(_v_gate) else "")
         faltan_rows = mysql_fetchall(
@@ -71255,14 +71492,14 @@ def mant_ot_firmar_revision(vid):
         # Marcar levantamiento como cerrado si la OT tenía uno (la captura de
         # datos del equipo ya terminó; las correcciones de la ventana editan
         # mant_visita_equipos/mant_maquinas directamente, no dependen de esto).
-        v_info = mysql_fetchone(
-            "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
-        )
-        if v_info and v_info.get("levantamiento_id"):
+        # FIX 2026-08-10 (OT-2026-00042): antes solo miraba el campo forward
+        # — si el link era solo reverse, el levantamiento nunca se cerraba.
+        _lev_id_cierre = _ot_levantamiento_de(vid)
+        if _lev_id_cierre:
             mysql_execute(
                 "UPDATE mant_levantamientos SET estado='cerrado', fecha_cierre=NOW() "
                 " WHERE id=%s AND estado IN ('borrador','en_curso')",
-                (v_info["levantamiento_id"],)
+                (_lev_id_cierre,)
             )
         _mant_log("visita", vid, "firmada_tecnico",
                   f"{nombre_tec or ''} → firmada_tecnico (ventana de corrección)")
@@ -73268,6 +73505,19 @@ def _ot_pdf_context(vid, embed_images=False):
                 _lev_id_pdf = _lev_rev["id"]
         except Exception as _e_levrev:
             print(f"[_ot_pdf_context][lev_rev] vid={vid}: {_e_levrev}", flush=True)
+        # FIX 2026-08-10 (OT-2026-00042, bug real): resolver por el sentido
+        # inverso NO bastaba — el valor se usaba solo LOCALMENTE en esta
+        # función para cargar lev_items/lev_fotos_idx, pero nunca se
+        # escribía de vuelta en `visita["levantamiento_id"]`. Mas abajo,
+        # mant_visita_pdf/mant_ot_pdf_render deciden el TEMPLATE con
+        # `_ot_es_levantamiento(ctx["visita"])`, que solo mira el campo
+        # crudo `levantamiento_id` (sin el fallback). Resultado: ctx
+        # traía lev_items poblado (11 fotos) pero se elegía igual
+        # ot_pdf.html (el clásico, que no referencia lev_items) → 0 fotos
+        # en el PDF pese a que los datos sí existían. `visita` es un dict
+        # de esta sola request — no se persiste en BD, cero riesgo.
+        if _lev_id_pdf and not visita.get("levantamiento_id"):
+            visita["levantamiento_id"] = _lev_id_pdf
     if _lev_id_pdf:
         try:
             # 2026-08-09 (Daniel: "¿por qué no se imprimen las fotos?" +
@@ -85837,9 +86087,18 @@ def mant_lev_item_update(iid):
     if not _lev_puede_accion(item["levantamiento_id"], "ejecutar"):
         return _lev_403_response("ejecutar")
 
+    # FIX 2026-08-10 (OT-2026-00042): antes buscaba la visita por el campo
+    # FORWARD (mant_visitas.levantamiento_id=%s) — si el link estaba solo en
+    # el sentido reverse (dato legacy/desincronización histórica), esta
+    # consulta no encontraba la visita, `_visita_estado` quedaba vacío y
+    # `_editable` daba False (el equipo se veía "congelado" cuando en
+    # realidad la OT seguía editable). Acá el caller YA conoce con certeza
+    # el levantamiento_id del item, así que se resuelve la visita por el
+    # sentido reverse que SÍ es seguro: mant_levantamientos.visita_id.
     v = mysql_fetchone(
-        "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
-        (item["levantamiento_id"],)
+        "SELECT vv.estado FROM mant_levantamientos lv "
+        "  LEFT JOIN mant_visitas vv ON vv.id = lv.visita_id "
+        " WHERE lv.id=%s", (item["levantamiento_id"],)
     )
     _visita_estado = (v or {}).get("estado") or ""
     _editable = _visita_estado in _LEV_ESTADOS_EDITABLES
@@ -86188,9 +86447,15 @@ def mant_lev_foto_del(fid):
     if not _lev_puede_accion(foto["levantamiento_id"], "ejecutar"):
         return _lev_403_response("ejecutar")
 
+    # FIX 2026-08-10 (OT-2026-00042): mismo bug que en mant_lev_item_update —
+    # buscar la visita por el campo FORWARD (mant_visitas.levantamiento_id)
+    # falla cuando el link solo existe en el sentido reverse. Se resuelve
+    # por mant_levantamientos.visita_id, que acá el caller ya conoce con
+    # certeza vía foto["levantamiento_id"].
     v = mysql_fetchone(
-        "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
-        (foto["levantamiento_id"],)
+        "SELECT vv.estado FROM mant_levantamientos lv "
+        "  LEFT JOIN mant_visitas vv ON vv.id = lv.visita_id "
+        " WHERE lv.id=%s", (foto["levantamiento_id"],)
     )
     _editable = ((v or {}).get("estado") or "") in _LEV_ESTADOS_EDITABLES
     if not _editable:
@@ -86604,6 +86869,15 @@ def mant_maquina_ficha(mid):
     # por el técnico en el modo ejecución como foto principal del equipo)
     # FIX 2026-05-21: orden por tomada_at (created_at puede no existir en
     # filas viejas si la migración aún no corrió).
+    # TODO (2026-08-10, alcance OT-2026-00042): esta sección solo lee
+    # mant_maquina_fotos (la galería "promovida"). Si un equipo se capturó
+    # en un levantamiento cuyo link con la OT quedó solo en sentido reverse
+    # y la promoción a galería nunca corrió para ese caso, sus fotos de
+    # mant_levantamiento_fotos no aparecen acá. Se dejó fuera de este fix
+    # a propósito por el alcance (reestructurar esta sección para sumar la
+    # tercera fuente toca el JSON que ya consume el template de la ficha).
+    # El helper de lectura ya existe listo para reusar cuando se aborde:
+    # _ot_equipos_y_fotos(vid)["lev_fotos_idx"] / ["lev_items"].
     fotos_rows = mysql_fetchall(
         "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
         "       tomada_at AS created_at, levantamiento_id "
@@ -92347,7 +92621,16 @@ def _reparar_visita_fotos_maquina_id():
     maquina_id de su tarea. Sin esto, las fotos del levantamiento NO aparecen en la
     ficha del equipo (la proyección a la ficha y la sección 'último levantamiento'
     filtran por (visita_id, maquina_id)). Idempotente y barato (COUNT guard).
-    Bug 2026-06-02 — Daniel: 'quiero ver la foto del levantamiento en la ficha'."""
+    Bug 2026-06-02 — Daniel: 'quiero ver la foto del levantamiento en la ficha'.
+
+    TODO (2026-08-10, alcance OT-2026-00042): este backfill solo cubre
+    mant_visita_fotos (checklist clásico) — mant_levantamiento_fotos es una
+    tabla aparte que este backfill NUNCA toca. Una OT con fotos SOLO en
+    mant_levantamiento_fotos (levantamiento con link solo en sentido
+    reverse, o cualquier caso donde la promoción a la ficha no corrió)
+    sigue sin aparecer en la ficha del equipo vía este camino. No se
+    amplía acá por alcance — ver _ot_equipos_y_fotos(vid) como fuente
+    única de lectura ya lista para ese caso."""
     try:
         n = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_visita_fotos f "
