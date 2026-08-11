@@ -720,6 +720,11 @@ function renderTareaHtml(t, bloqueada, mid, pid){
       //      el switch entero y dejaba al técnico sin ningún control visible).
       //   2. Botón MUY prominente con label claro + 2 alternativas siempre visibles.
       //   3. Si ya se capturó, mostramos cómo (GPS/IP/manual) + dirección si la hay.
+      //
+      // POLÍTICA 2026-05-17 (Daniel): solo se acepta GPS real del dispositivo.
+      // Los botones "Usar IP" y "Escribir dirección" fueron ELIMINADOS porque
+      // vulneran la auditoría — el técnico podría falsear su posición. Si el
+      // GPS está denegado, el flujo envía al usuario a Ajustes (mostrarAyudaGPS).
       ctrlHtml = `<div class="ctrl">
         <div style="display:flex;flex-direction:column;gap:8px">
           <button type="button" class="tx-btn-gps"
@@ -728,11 +733,6 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
             <i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación (GPS)
           </button>
-          <!-- POLÍTICA 2026-05-17 (Daniel): solo se acepta GPS real del
-               dispositivo. Los botones "Usar IP" y "Escribir dirección"
-               fueron ELIMINADOS porque vulneran la auditoría — el técnico
-               podría falsear su posición. Si el GPS está denegado, el flujo
-               envía al usuario a Ajustes (mostrarAyudaGPS). -->
           <div style="background:#fef3c7;border:1px dashed #f59e0b;
             border-radius:8px;padding:7px 10px;font-size:.7rem;color:#92400e;
             display:flex;align-items:center;gap:6px">
@@ -761,9 +761,13 @@ function renderTareaHtml(t, bloqueada, mid, pid){
               al cerrar la OT.</div>
           </div>`
         : '';
+      // Estructura del bloque de foto (2 variantes excluyentes por breakpoint):
+      //   · Desktop (.d-none.d-md-flex) → zona con drag&drop real.
+      //   · Mobile  (.d-md-none)        → UN SOLO botón rojo grande que abre
+      //     el sheet de elección (abrirSheetFoto), + 2 inputs ocultos
+      //     (cámara / galería) que ese sheet dispara via click().
       ctrlHtml = `<div class="ctrl">
         ${_fotoAvisoHtml}
-        <!-- Desktop: zona con drag&drop real -->
         <label class="tx-btn-foto-zone d-none d-md-flex" id="dropzone-${t.id}"
           style="cursor:pointer;flex-direction:column;align-items:center;gap:6px;padding:18px;
           border:2px dashed #cbd5e1;border-radius:11px;background:#fafafa;
@@ -782,7 +786,6 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
         </label>
 
-        <!-- Mobile: UN SOLO botón rojo grande que abre sheet de elección -->
         <div class="d-md-none">
           <button type="button" class="ilus-foto-btn-main"
             ${bloqueada ? 'disabled' : ''}
@@ -797,7 +800,6 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             <i class="bi bi-camera-plus-fill" style="font-size:1.3rem"></i>
             <span>📷 Agregar foto</span>
           </button>
-          <!-- Inputs ocultos, disparados via click() desde abrirSheetFoto() -->
           <input type="file" id="fotoCam-${t.id}" accept="image/*,image/heic,image/heif"
             capture="environment" style="display:none"
             ${bloqueada ? 'disabled' : ''}
@@ -3337,6 +3339,10 @@ function renderAdjuntoItem(a){
             ? `<div class="adj-item-icon" style="cursor:pointer;background:#0a0a0a;color:#dc2626" onclick="abrirVideoModal('${_escapeAttr(url)}','${_escapeAttr(nombre)}')"><i class="bi bi-play-circle-fill"></i></div>`
             : `<div class="adj-item-icon"><i class="bi ${iconos[tipo] || iconos.otro}"></i></div>`)
       );
+  // 2026-05-17 — REFACTOR UX: la pestaña Info del técnico es SOLO LECTURA.
+  // El técnico no puede eliminar adjuntos preliminares — por eso .adj-actions
+  // solo trae "reproducir" y "ver/descargar". (eliminarAdjunto sigue definida
+  // pero ningún botón la dispara desde acá.)
   return `<div class="adj-item adj-${tipo}" data-id="${a.id}">
     ${previewSlot}
     <div class="adj-item-info">
@@ -3354,9 +3360,6 @@ function renderAdjuntoItem(a){
       ${url ? `<a class="adj-btn" href="${_escapeAttr(url)}" target="_blank" title="Ver / descargar">
         <i class="bi bi-eye-fill"></i>
       </a>` : ''}
-      <!-- 2026-05-17 — REFACTOR UX: la pestaña Info del técnico es SOLO
-           LECTURA. El técnico no puede eliminar adjuntos preliminares.
-           (eliminarAdjunto sigue definida pero ningún botón la dispara acá.) -->
     </div>
   </div>`;
 }
@@ -4456,6 +4459,10 @@ async function mostrarDiagnosticoGPS(){
       <div style="margin-top:5px;color:#94a3b8;font-size:.7rem">UA: ${_escapeHtml(caps.user_agent)}</div>
     </div>`;
 
+  // FIX 2026-05-17 — El botón "Enviar al admin" manda el diagnóstico al
+  // servidor para que Daniel lo revise SIN pedirle al técnico conectar el
+  // iPhone a un Mac. El backend devuelve un ID corto que el técnico comparte
+  // por WhatsApp para acelerar el lookup en /mantenciones/diagnostico-gps.
   const fullHtml = `
     <div style="max-height:60vh;overflow-y:auto">
       <h6 style="font-size:.82rem;font-weight:700;color:#0a0a0a;margin:0 0 6px">📊 Capacidades del navegador</h6>
@@ -4469,10 +4476,6 @@ async function mostrarDiagnosticoGPS(){
           style="background:#0a0a0a;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:600;cursor:pointer">
           <i class="bi bi-clipboard"></i> Copiar al portapapeles
         </button>
-        <!-- FIX 2026-05-17 — Envío del diagnóstico al servidor para que Daniel
-             (admin) lo revise SIN pedirle al técnico conectar el iPhone a un Mac.
-             El backend devuelve un ID corto que el técnico comparte por WhatsApp
-             para acelerar el lookup en /mantenciones/diagnostico-gps. -->
         <button type="button" id="gpsDiagSend"
           style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:700;cursor:pointer">
           <i class="bi bi-send-fill"></i> Enviar al admin
