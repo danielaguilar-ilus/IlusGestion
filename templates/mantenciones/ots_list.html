@@ -470,7 +470,7 @@ async function resetearOTs(){
       <div class="ot-titulo">{{ o.titulo or ((o.tipo or 'visita')|title + ' programada') }}</div>
       <div class="ot-info-pills">
         {% if o.tipo %}
-        <span class="ot-pill"><i class="bi bi-tag"></i>{{ o.tipo|title }}</span>
+        <span class="ot-pill"><i class="bi bi-tag"></i>{{ o.tipo|tipo_ot_label }}</span>
         {% endif %}
         {% if o.tecnico_nombre %}
         <span class="ot-pill"><i class="bi bi-person-badge"></i>{{ o.tecnico_nombre }}</span>

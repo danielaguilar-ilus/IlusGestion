@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}OT {{ visita.numero_ot or visita.id }} — {{ visita.razon_social }} — ILUS{% endblock %}
+{% block title %}OT {{ visita.numero_ot or visita.id }} — {{ visita.razon_social or 'Trabajo interno' }} — ILUS{% endblock %}
 {% block content %}
 <style>
 /* ════════════════════════════════════════════════════════════
@@ -381,7 +381,7 @@
     </span>
     {% if visita.tipo %}
     <span class="ot-numero" style="background:rgba(255,255,255,.08);color:#cfd3da;border-color:rgba(255,255,255,.18)">
-      {{ visita.tipo|title }}
+      {{ visita.tipo|tipo_ot_label }}
     </span>
     {% endif %}
     {# ─── Botón PDF: solo OT cerrada + 3 firmas presentes ─── #}
@@ -431,7 +431,11 @@
   {% endif %}
   <h2 class="ot-title">{{ visita.titulo or 'Orden de Trabajo' }}</h2>
   <div class="ot-subtitle">
+    {% if visita.cliente_id %}
     <i class="bi bi-building me-1"></i>{{ visita.razon_social }}
+    {% else %}
+    <i class="bi bi-clipboard2-check me-1"></i>Trabajo interno — sin cliente asociado
+    {% endif %}
   </div>
 
   <div class="ot-meta-grid">
@@ -945,7 +949,7 @@
         <div class="task-body">
           <div class="task-meta mb-1">
             <span class="pill"><strong>N° OT:</strong> {{ visita.numero_ot or 'VS-' ~ '%05d'|format(visita.id) }}</span>
-            <span class="pill"><strong>Tipo:</strong> {{ visita.tipo|title }}</span>
+            <span class="pill"><strong>Tipo:</strong> {{ visita.tipo|tipo_ot_label }}</span>
             <span class="pill"><strong>Estado:</strong> {{ visita.estado|title }}</span>
             {% if visita.costo %}<span class="pill"><strong>Costo:</strong> ${{ visita.costo|round|int }}</span>{% endif %}
           </div>

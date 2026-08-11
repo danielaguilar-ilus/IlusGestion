@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Ejecutar OT {{ visita.numero_ot }} — ILUS{% endblock %}
+{% block title %}Ejecutar {{ visita.numero_ot or ('OT #' ~ visita.id) }} — ILUS{% endblock %}
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ot_ejecutar.css') }}">
@@ -107,7 +107,9 @@
       {% endif %}
     </div>
     {% endif %}
-    {% if visita.estado not in ['cerrada','cancelada','anulada','firmada_tecnico','pendiente_aprobacion'] %}
+    {# FIX 2026-08-11: "Iniciar ruta al cliente" no tiene sentido en una OT
+       de Trabajo interno (sin cliente ni dirección de visita real). #}
+    {% if visita.cliente_id and visita.estado not in ['cerrada','cancelada','anulada','firmada_tecnico','pendiente_aprobacion'] %}
     <button class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
       {% if visita.ruta_iniciada_at %}
       <i class="bi bi-check-circle-fill"></i> Ruta · {{ (visita.ruta_app or '')|upper }}
