@@ -323,7 +323,9 @@
   } %}
   <div class="sec">
     Inventario levantado en terreno
-    <span class="mini">{{ lev_stats.total or 0 }} equipo(s) · {{ lev_stats.total_fotos or 0 }} foto(s) de respaldo</span>
+    {# 2026-08-11: el conteo sumaba SOLO las fotos del levantamiento, así que
+       una OT con 11 fotos de checklist mostraba "0 foto(s) de respaldo". #}
+    <span class="mini">{{ lev_stats.total or 0 }} equipo(s) · {{ (lev_stats.total_fotos or 0) + (fotos | length) }} foto(s) de respaldo</span>
   </div>
   <table class="inv">
     <thead>
@@ -415,7 +417,7 @@
   } %}
   <div class="sec" style="page-break-before:always; break-before:page;">
     Anexo — registro fotográfico y detalle por equipo
-    <span class="mini">{{ lev_stats.total or 0 }} equipo(s) · {{ lev_stats.total_fotos or 0 }} captura(s) del técnico en terreno</span>
+    <span class="mini">{{ lev_stats.total or 0 }} equipo(s) · {{ (lev_stats.total_fotos or 0) + (fotos | length) }} captura(s) del técnico en terreno</span>
   </div>
   <div class="anexo">
     {% for it in lev_items %}
@@ -472,6 +474,65 @@
           {% endfor %}
         </div>
       </div>
+    {% endif %}
+
+    {# FIX 2026-08-11 (Daniel — OT-2026-00042: "11 fotos en la validación de
+       cierre y 0 en el PDF"). Esta plantilla solo dibujaba las fotos del
+       LEVANTAMIENTO (mant_levantamiento_fotos). Las que el técnico sube
+       desde el CHECKLIST viven en mant_visita_fotos y no se imprimían en
+       ninguna parte — por eso una OT con 11 fotos reales salía con "0
+       foto(s) de respaldo". Se imprimen agrupadas POR EQUIPO, que es como
+       Daniel las pidió: "tengo que asociar la foto o la serie de fotos a
+       un equipo". Se reusan las mismas clases del anexo (.an-eq/.an-fotos)
+       para que el layout siga ajustado a hoja carta. #}
+    {% set _chk_huerfanas = (fotos or []) | rejectattr('maquina_id') | list %}
+    {% if fotos %}
+      <div class="an-eq-tit" style="margin-top:14px">Registro fotográfico del checklist</div>
+      {% for eq in (equipos or []) %}
+        {% set efs = eq_fotos_idx.get(eq.id) or [] %}
+        {% if efs %}
+        <div class="an-eq">
+          <div class="an-head">
+            <div>
+              <div class="an-tit">{{ eq.nombre }}</div>
+              <div class="an-meta">
+                Serie: {{ eq.serie or '—' }}
+                {%- if eq.sku %} · SKU: {{ eq.sku }}{% endif %}
+                {%- if eq.marca or eq.modelo %} · {{ eq.marca or '' }}{% if eq.marca and eq.modelo %} / {% endif %}{{ eq.modelo or '' }}{% endif %}
+              </div>
+            </div>
+            <span class="pill">{{ efs | length }} foto(s)</span>
+          </div>
+          <div class="an-fotos">
+            {% for f in efs %}
+            <figure>
+              <img src="{{ f.url }}" alt="{{ eq.nombre }} — foto {{ loop.index }}">
+              <figcaption>
+                {%- set _tf = TIPO_FOTO.get((f.tipo_foto or 'general') | lower, f.tipo_foto or '') -%}
+                {{ _tf or ('Foto ' ~ loop.index) }}
+              </figcaption>
+            </figure>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endfor %}
+      {% if _chk_huerfanas %}
+        <div class="an-eq">
+          <div class="an-eq-tit">Evidencia general de la visita</div>
+          <div class="an-fotos">
+            {% for f in _chk_huerfanas %}
+            <figure>
+              <img src="{{ f.url }}" alt="">
+              <figcaption>
+                {%- set _tf = TIPO_FOTO.get((f.tipo_foto or 'general') | lower, f.tipo_foto or '') -%}
+                {{ _tf or 'Evidencia' }}
+              </figcaption>
+            </figure>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
     {% endif %}
   </div>
 
