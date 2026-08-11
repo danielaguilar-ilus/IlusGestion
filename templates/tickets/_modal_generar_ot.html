@@ -97,6 +97,25 @@
             {# Checklist que quedará asociado a la OT — lo pinta tkotPintarPlantilla() #}
             <div id="otPlantillaInfo" class="small mt-2"></div>
 
+            {# Tarea 4 (2026-08-10): selector de plantilla — deja elegir una
+               distinta a la recomendada. Oculto por defecto: solo aparece si
+               GET /mantenciones/api/plantillas?tipo_visita= trae al menos una
+               plantilla para el tipo elegido (best-effort, ver
+               _tkotCargarPlantillaSelector en tickets_ficha.js). Se esconde en
+               levantamiento + modalidad "descubrimiento" (esa modalidad no
+               aplica checklist por adelantado). #}
+            <div id="otPlantillaSelectorWrap" style="display:none" class="mt-2">
+              <label class="form-label small fw-semibold mb-1">
+                <i class="bi bi-card-checklist me-1"></i>Plantilla de checklist a usar
+              </label>
+              <select id="otPlantillaSelect" class="form-select form-select-sm"
+                      onchange="tkotPlantillaSelectChange()"></select>
+              <small class="text-muted d-block mt-1" style="font-size:.7rem">
+                <i class="bi bi-info-circle me-1"></i>
+                ⭐ = la recomendada para este tipo de OT. Puedes elegir otra si aplica mejor.
+              </small>
+            </div>
+
             {# ── Modalidad del levantamiento: idéntica a Mantenciones ── #}
             <div id="otModoLevWrap" style="display:none">
               <div class="small fw-bold mt-3" style="color:#0f172a">

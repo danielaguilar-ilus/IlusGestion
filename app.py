@@ -49713,6 +49713,12 @@ def init_mantenciones_tables():
                 "COMMENT 'Familia del modelo Fracttal (las 8 del flujo ILUS).'",
                 "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_fam_act (familia_activo)",
                 "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_fam_chk (familia_checklist)",
+                # 2026-08-10 (Tarea 1): categoría manual del admin (pestaña).
+                # Ver _ensure_categoria_admin_plantillas() — se garantiza también
+                # fuera de este bloque porque prod corre con ILUS_SKIP_MIGRATIONS=1.
+                "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
+                "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL",
+                "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)",
             ]:
                 try: cur.execute(_mig_plant)
                 except Exception: pass
@@ -69477,6 +69483,10 @@ def mant_plantillas_listar():
         ?tipo_visita=preventiva|correctiva|garantia|...
         ?familia_checklist=instalacion|preventiva|correctivo|...
         ?familia_activo=cardio|trotadoras|todas|...
+        ?categoria=instalacion|mantencion|visitas|trabajo_interno  (Tarea 1.4)
+        ?tipo_ot=<cualquier tipo de _TIPO_OT_LABEL>  (Tarea 1.4 — resuelve
+                  la categoría vía mant_categoria_tipo_map y filtra por ella,
+                  igual que si se hubiera mandado ?categoria=<resuelta>)
         ?q=texto
 
     2026-08-10 (Tarea 4 — selector de plantilla al crear OT, backend): si
@@ -69488,6 +69498,14 @@ def mant_plantillas_listar():
     de negocio. `tv_raw` acepta cualquier valor de mant_visitas.tipo (no solo
     los 7 de `_PLANT_TIPO_VISITA`): _plantilla_estandar_para_tipo también
     resuelve por nombre de convención, no solo por la columna tipo_visita.
+
+    2026-08-10 (Tarea 1.4): `?categoria=` filtra DIRECTO por categoria_admin.
+    `?tipo_ot=` es azúcar sintáctico: resuelve la categoría default de ese
+    tipo vía mant_categoria_tipo_map y aplica el mismo filtro — sin duplicar
+    la regla de mapeo en el frontend. Ninguno de los dos rompe el uso
+    existente por `tipo_visita` (siguen siendo filtros independientes que
+    se pueden combinar). La categoría resuelta también viaja en la respuesta
+    como `categoria_resuelta` aunque no se filtre, útil para el selector.
     """
     tv_raw = (request.args.get("tipo_visita") or "").strip().lower()
     where, params = [], []
@@ -69496,6 +69514,19 @@ def mant_plantillas_listar():
     tv = tv_raw
     if tv in _PLANT_TIPO_VISITA:
         where.append("tipo_visita=%s"); params.append(tv)
+    # Tarea 1.4: categoría (pestaña) directa o resuelta desde tipo_ot.
+    categoria_resuelta = None
+    tipo_ot_raw = (request.args.get("tipo_ot") or "").strip().lower()
+    if tipo_ot_raw:
+        try:
+            _map_row = mysql_fetchone(
+                "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot_raw,))
+            categoria_resuelta = _map_row["categoria"] if _map_row else None
+        except Exception as _e_cat:
+            print(f"[plantillas_listar] resolver categoria de '{tipo_ot_raw}' falló: {_e_cat}", flush=True)
+    fcat = (request.args.get("categoria") or "").strip().lower() or categoria_resuelta
+    if fcat in _PLANT_CATEGORIAS_ADMIN:
+        where.append("categoria_admin=%s"); params.append(fcat)
     # FASE 3: filtros nuevos
     fchk = (request.args.get("familia_checklist") or "").strip().lower()
     _FAM_CHK_OK = ("instalacion","preventiva","correctivo","desinstalacion",
@@ -69542,6 +69573,7 @@ def mant_plantillas_listar():
             "tipo_visita": r.get("tipo_visita") or "otro",
             "familia_checklist": r.get("familia_checklist") or "otro",
             "familia_activo": r.get("familia_activo") or "todas",
+            "categoria_admin": r.get("categoria_admin") or "",
             "tiempo_estimado_min": r.get("tiempo_estimado_min"),
             "activa": bool(r.get("activa")),
             "es_sistema": bool(r.get("es_sistema")),
@@ -69552,7 +69584,78 @@ def mant_plantillas_listar():
         } for r in rows],
         "total": len(rows),
         "default_plantilla_id": default_plantilla_id,
+        "categoria_resuelta": categoria_resuelta,
     })
+
+
+@app.route("/mantenciones/api/plantillas/categorias", methods=["GET"])
+@_mant_required
+def mant_plantillas_categorias_listar():
+    """Tarea 1.3 — devuelve las 4 categorías (pestañas) + el mapeo editable
+    'tipo de OT -> categoría default' (mant_categoria_tipo_map), + cuántas
+    plantillas activas tiene cada categoría hoy (para la UI de pestañas)."""
+    mapa_rows = mysql_fetchall(
+        "SELECT tipo_ot, categoria FROM mant_categoria_tipo_map ORDER BY tipo_ot") or []
+    mapa = {r["tipo_ot"]: r["categoria"] for r in mapa_rows}
+    conteo_rows = mysql_fetchall(
+        "SELECT categoria_admin AS categoria, COUNT(*) AS n "
+        "  FROM mant_tarea_plantillas WHERE COALESCE(activa,1)=1 "
+        " GROUP BY categoria_admin") or []
+    conteo = {r["categoria"] or "": int(r["n"]) for r in conteo_rows}
+    return jsonify({
+        "ok": True,
+        "categorias": [{
+            "clave": clave,
+            "label": _PLANT_CATEGORIA_LABEL[clave],
+            "tipos_ot": [t for t, c in mapa.items() if c == clave],
+            "plantillas_count": conteo.get(clave, 0),
+        } for clave in _PLANT_CATEGORIAS_ADMIN],
+        "sin_categoria_count": conteo.get("", 0),
+        "mapa_tipo_ot": mapa,
+        "tipos_ot_disponibles": sorted(_TIPO_OT_LABEL.keys()),
+        "tipo_ot_label": _TIPO_OT_LABEL,
+    })
+
+
+@app.route("/mantenciones/api/plantillas/categorias", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def mant_plantillas_categorias_actualizar():
+    """Tarea 1.3 — reasigna qué tipos de OT caen en cada categoría (pestaña
+    default). Body: { mapa: { "<tipo_ot>": "<categoria>", ... } } — solo se
+    tocan las claves que llegan (partial update); no pisa el resto.
+    Protegido con @_no_tecnico (config del módulo, no operación de campo)."""
+    d = request.get_json(silent=True) or {}
+    mapa_in = d.get("mapa")
+    if not isinstance(mapa_in, dict) or not mapa_in:
+        return jsonify({"ok": False, "error": "Body debe traer 'mapa': {tipo_ot: categoria}"}), 400
+    actualizados, errores = [], []
+    for tipo_ot_raw, categoria_raw in mapa_in.items():
+        tipo_ot = (tipo_ot_raw or "").strip().lower()
+        categoria = (categoria_raw or "").strip().lower()
+        if tipo_ot not in _TIPO_OT_LABEL:
+            errores.append(f"tipo_ot desconocido: {tipo_ot_raw}")
+            continue
+        if categoria not in _PLANT_CATEGORIAS_ADMIN:
+            errores.append(f"categoria inválida para {tipo_ot_raw}: {categoria_raw}")
+            continue
+        try:
+            mysql_execute(
+                "INSERT INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) "
+                "VALUES (%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE categoria=VALUES(categoria), updated_by=VALUES(updated_by)",
+                (tipo_ot, categoria, current_username())
+            )
+            actualizados.append(tipo_ot)
+        except Exception as e_upd:
+            print(f"[plantillas_categorias_actualizar] {tipo_ot}: {e_upd}", flush=True)
+            errores.append(f"{tipo_ot}: no se pudo guardar")
+    if actualizados:
+        try:
+            _mant_log("plantilla_categoria_map", 0, "actualizado",
+                      f"{len(actualizados)} tipo(s) reasignados: {', '.join(actualizados)}")
+        except Exception: pass
+    return jsonify({"ok": bool(actualizados) or not errores, "actualizados": actualizados, "errores": errores})
 
 
 @app.route("/mantenciones/api/plantillas/<int:pid>", methods=["GET"])
@@ -69591,6 +69694,9 @@ def mant_plantilla_detalle(pid):
             "id": plant["id"], "nombre": plant["nombre"],
             "descripcion": plant.get("descripcion") or "",
             "tipo_visita": plant.get("tipo_visita") or "otro",
+            "familia_checklist": plant.get("familia_checklist") or "otro",
+            "familia_activo": plant.get("familia_activo") or "todas",
+            "categoria_admin": plant.get("categoria_admin") or "",
             "tiempo_estimado_min": plant.get("tiempo_estimado_min"),
             "activa": bool(plant.get("activa")),
             "es_sistema": bool(plant.get("es_sistema")),
@@ -69628,6 +69734,10 @@ def mant_plantilla_crear():
     fam_act = (d.get("familia_activo") or "").strip().lower()
     if fam_act not in _PLANT_FAMILIA_ACTIVO:
         fam_act = "todas"
+    # Tarea 1.3: categoria_admin (pestaña) — manual, no calculada. NULL si el
+    # admin no la asignó todavía (queda en "Sin categoría" en la UI).
+    cat_admin = (d.get("categoria_admin") or "").strip().lower()
+    cat_admin = cat_admin if cat_admin in _PLANT_CATEGORIAS_ADMIN else None
 
     items_in = d.get("items") or []
     items_norm = []
@@ -69645,9 +69755,9 @@ def mant_plantilla_crear():
             cur.execute(
                 "INSERT INTO mant_tarea_plantillas "
                 "(nombre, descripcion, tipo_visita, tiempo_estimado_min, "
-                " familia_checklist, familia_activo, activa, es_sistema, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s,1,0,%s)",
-                (nombre, desc, tv, tiempo, fam_chk, fam_act, current_username())
+                " familia_checklist, familia_activo, categoria_admin, activa, es_sistema, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,1,0,%s)",
+                (nombre, desc, tv, tiempo, fam_chk, fam_act, cat_admin, current_username())
             )
             pid = cur.lastrowid
             for it in items_norm:
@@ -69696,6 +69806,9 @@ def mant_plantilla_actualizar(pid):
     fam_act = (d.get("familia_activo") or "").strip().lower()
     if fam_act not in _PLANT_FAMILIA_ACTIVO:
         fam_act = "todas"
+    # Tarea 1.3: reasignación manual de categoria_admin desde el editor.
+    cat_admin = (d.get("categoria_admin") or "").strip().lower()
+    cat_admin = cat_admin if cat_admin in _PLANT_CATEGORIAS_ADMIN else None
 
     items_in = d.get("items") or []
     items_norm = []
@@ -69714,9 +69827,9 @@ def mant_plantilla_actualizar(pid):
                 "UPDATE mant_tarea_plantillas SET "
                 " nombre=%s, descripcion=%s, tipo_visita=%s, "
                 " tiempo_estimado_min=%s, activa=%s, "
-                " familia_checklist=%s, familia_activo=%s "
+                " familia_checklist=%s, familia_activo=%s, categoria_admin=%s "
                 "WHERE id=%s",
-                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, pid)
+                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, cat_admin, pid)
             )
             cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
             for it in items_norm:
@@ -90098,6 +90211,96 @@ def _ensure_plantillas_estandar_seed():
     return creadas
 
 
+# 2026-08-10 (Daniel — Tarea 1, plantillas por pestaña): "categoria_admin"
+# es la categoría MANUAL que el admin asigna a cada plantilla para
+# organizarla en 1 de las 4 pestañas de /mantenciones/plantillas
+# (Instalación / Mantención / Visitas / Trabajo interno). NO es un cálculo
+# automático — se asigna al crear/editar la plantilla y se puede reasignar.
+# Distinta de `familia_checklist` (las 9 familias del modelo Fracttal) y de
+# `tipo_visita` (el ENUM de 7 valores que usa _plantilla_estandar_para_tipo):
+# ninguna de esas dos es exactamente "la pestaña", por eso esta columna nueva.
+_PLANT_CATEGORIAS_ADMIN = ("instalacion", "mantencion", "visitas", "trabajo_interno")
+_PLANT_CATEGORIA_LABEL = {
+    "instalacion":     "Instalación",
+    "mantencion":      "Mantención",
+    "visitas":         "Visitas",
+    "trabajo_interno": "Trabajo interno",
+}
+# Mapeo DEFAULT "tipo de OT -> categoría" (confirmado por Daniel 2026-08-10
+# para arrancar). Vive en mant_categoria_tipo_map (editable desde el front —
+# Daniel: "lo dejaría editable por el front, a ver si es que quiero borrar
+# uno o mover un tipo"), NO como dict fijo en Python — este dict solo se usa
+# para el SEED inicial. cambio_equipo/desinstalacion/repuesto/visita_correctiva
+# no los mencionó Daniel explícitamente; se seedean con un default razonable
+# (documentado abajo) que el admin puede reasignar sin tocar código.
+_PLANT_CATEGORIA_TIPO_SEED = {
+    "instalacion":       "instalacion",
+    "desinstalacion":    "instalacion",   # extensión razonable, no confirmada por Daniel
+    "preventiva":        "mantencion",
+    "correctiva":        "mantencion",
+    "cambio_equipo":     "mantencion",    # extensión razonable, no confirmada por Daniel
+    "visita_tecnica":    "visitas",
+    "inspeccion":        "visitas",
+    "garantia":          "visitas",
+    "visita_correctiva": "visitas",       # extensión razonable, no confirmada por Daniel
+    "revision_interna":  "trabajo_interno",   # "Trabajo de bodega"
+    "capacitacion":      "trabajo_interno",
+    "control_calidad":   "trabajo_interno",
+    "repuesto":          "trabajo_interno",   # extensión razonable, no confirmada por Daniel
+    "levantamiento":     "trabajo_interno",   # descubrimiento en terreno, no encaja en las otras 3
+}
+
+
+def _ensure_categoria_admin_plantillas():
+    """Garantiza SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1):
+      1. mant_tarea_plantillas.categoria_admin — la categoría manual de la
+         plantilla (pestaña donde vive en /mantenciones/plantillas).
+      2. mant_categoria_tipo_map — mapeo editable "tipo de OT -> categoría
+         default", usado para preseleccionar/filtrar el selector de
+         plantilla al crear una OT (Tarea 4). Sembrado con
+         _PLANT_CATEGORIA_TIPO_SEED SOLO para los tipos que aún no tengan
+         fila — no pisa reasignaciones manuales que Daniel ya haya hecho.
+    Devuelve dict con lo que tuvo que crear/sembrar (para logging)."""
+    out = {"columna": False, "tabla": False, "seed": []}
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
+            "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL "
+            "COMMENT 'Pestaña asignada manualmente por el admin (Tarea 1, 2026-08-10)'"
+        )
+        out["columna"] = True
+    except Exception:
+        pass  # ya existía
+    try:
+        mysql_execute("ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)")
+    except Exception:
+        pass
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_categoria_tipo_map (
+                tipo_ot     VARCHAR(40) NOT NULL PRIMARY KEY,
+                categoria   ENUM('instalacion','mantencion','visitas','trabajo_interno') NOT NULL,
+                updated_by  VARCHAR(190),
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        out["tabla"] = True
+    except Exception as e_tbl:
+        print(f"[ensure_categoria_admin] CREATE TABLE mant_categoria_tipo_map falló: {e_tbl}", flush=True)
+        return out
+    for tipo_ot, categoria in _PLANT_CATEGORIA_TIPO_SEED.items():
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) "
+                "VALUES (%s,%s,'seed')",
+                (tipo_ot, categoria)
+            )
+            out["seed"].append(tipo_ot)
+        except Exception as e_seed:
+            print(f"[ensure_categoria_admin] seed '{tipo_ot}' falló: {e_seed}", flush=True)
+    return out
+
+
 def _ensure_lev_items_doc_col():
     """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
@@ -92696,6 +92899,19 @@ try:
         print(f"[ILUS] target_field agregado (skip-migrations): {_faltaron_tf}", flush=True)
 except Exception as _ensure_tf_err:
     print(f"[ILUS][WARN] _ensure_levantamiento_target_field: {_ensure_tf_err}", flush=True)
+
+# CRÍTICO: categoria_admin + mant_categoria_tipo_map SIEMPRE (incluso
+# skip-migrations) — Tarea 1 (pestañas de plantillas, 2026-08-10). Sin esto,
+# /mantenciones/plantillas no puede organizar por pestaña ni el modal de
+# Generar OT puede filtrar el selector de plantilla por categoría.
+try:
+    with app.app_context():
+        _cat_admin_out = _ensure_categoria_admin_plantillas()
+    if _cat_admin_out.get("seed"):
+        print(f"[ILUS] mant_categoria_tipo_map sembrado (skip-migrations): "
+              f"{_cat_admin_out['seed']}", flush=True)
+except Exception as _ensure_cat_err:
+    print(f"[ILUS][WARN] _ensure_categoria_admin_plantillas: {_ensure_cat_err}", flush=True)
 
 # CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
 try:

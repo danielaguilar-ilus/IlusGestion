@@ -2419,6 +2419,13 @@ const _TKOT = {
   // fecha=hoy, comportamiento sin cambios).
   pendingTipoPreset: null,
   pendingFechaPreset: null,
+  // Tarea 4 (2026-08-10): selector de plantilla del Paso 1. Cache por tipo
+  // de OT de la respuesta de GET /mantenciones/api/plantillas?tipo_visita=
+  // (trae default_plantilla_id calculado por el backend — misma fuente de
+  // verdad que _plantilla_estandar_para_tipo, sin duplicar la regla acá).
+  // `overrideId` = plantilla_id elegido a mano por el usuario (null =
+  // dejar que el backend decida el default al crear la OT).
+  plantillaSelector: { porTipo: {}, overrideId: null, cargando: false },
 };
 
 // ── Clave estable por fila de equipo: usa maquina_id si existe (para que
@@ -4238,11 +4245,76 @@ function tkotPintarPlantilla(tipo){
   }
 }
 
+// ── Tarea 4 (2026-08-10): selector de plantilla del Paso 1 ──────────
+// Se oculta solo en levantamiento + modalidad "descubrimiento" (esa
+// modalidad no aplica checklist por adelantado, el técnico arma el
+// inventario en terreno -- ver otModoLevWrap / _TKOT.modo).
+function _tkotPlantillaSelectorDebeOcultarse(){
+  const tipo = document.getElementById('otTipo')?.value;
+  return tipo === 'levantamiento' && _TKOT.modo === 'descubrimiento';
+}
+
+// Best-effort: si el fetch falla, el selector simplemente no aparece --
+// JAMÁS bloquea "Generar OT". El backend recalcula el default igual
+// (_plantilla_estandar_para_tipo) si no llega plantilla_id explícito.
+async function _tkotCargarPlantillaSelector(tipo){
+  const wrap = document.getElementById('otPlantillaSelectorWrap');
+  if(!wrap || !tipo) return;
+  _TKOT.plantillaSelector.overrideId = null; // cambió el tipo -> vuelve a "usar la recomendada"
+  const cache = _TKOT.plantillaSelector.porTipo;
+  if(!cache[tipo]){
+    try{
+      _TKOT.plantillaSelector.cargando = true;
+      const r = await fetch('/mantenciones/api/plantillas?tipo_visita=' + encodeURIComponent(tipo));
+      const d = await r.json();
+      if(d && d.ok) cache[tipo] = d;
+    }catch(e){
+      console.warn('tkot plantilla selector:', e);
+    }finally{
+      _TKOT.plantillaSelector.cargando = false;
+    }
+  }
+  _tkotRenderPlantillaSelector(tipo);
+}
+
+function _tkotRenderPlantillaSelector(tipo){
+  const sel = document.getElementById('otPlantillaSelect');
+  const wrap = document.getElementById('otPlantillaSelectorWrap');
+  if(!sel || !wrap) return;
+  const data = _TKOT.plantillaSelector.porTipo[tipo];
+  if(_tkotPlantillaSelectorDebeOcultarse() || !data || !Array.isArray(data.plantillas) || !data.plantillas.length){
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  const defId = data.default_plantilla_id;
+  sel.innerHTML = data.plantillas.map(p => {
+    const esDef = (p.id === defId);
+    const etiqueta = (esDef ? '⭐ ' : '') + p.nombre + ' — ' + (p.items_count || 0) +
+      ' tarea' + ((p.items_count || 0) !== 1 ? 's' : '') + (esDef ? ' (recomendada)' : '');
+    return '<option value="' + p.id + '"' + (esDef ? ' selected' : '') + '>' + esc(etiqueta) + '</option>';
+  }).join('');
+  _TKOT.plantillaSelector.overrideId = null; // recién pintado = queda en la default
+}
+
+// Llamado por el <select id="otPlantillaSelect"> en onchange. Si el
+// usuario vuelve a elegir la default, overrideId se limpia (el body de
+// tkotGenerar puede omitir plantilla_id igual -- el backend calcula lo
+// mismo -- pero mandarlo explícito no hace daño y es más claro).
+function tkotPlantillaSelectChange(){
+  const sel = document.getElementById('otPlantillaSelect');
+  const tipo = document.getElementById('otTipo')?.value;
+  const data = _TKOT.plantillaSelector.porTipo[tipo];
+  const val = sel ? parseInt(sel.value, 10) : NaN;
+  _TKOT.plantillaSelector.overrideId = (!isNaN(val) && val > 0) ? val : null;
+}
+
 function tkotTipoChange(){
   const tipo = document.getElementById('otTipo')?.value;
   const desc = document.getElementById('otTipoDescripcion');
   if(desc && tipo) desc.innerHTML = '<i class="bi bi-info-circle me-1"></i>' + (_TKOT_TIPO_DESC[tipo] || '');
   tkotPintarPlantilla(tipo);
+  if(tipo) _tkotCargarPlantillaSelector(tipo);
 
   const garWrap = document.getElementById('otGarantiaWrap');
   if(garWrap){
@@ -4282,6 +4354,10 @@ function tkotModoSet(modo){
   if(cEq) cEq.classList.toggle('on', _TKOT.modo === 'equipos');
   if(cDes) cDes.classList.toggle('on', _TKOT.modo === 'descubrimiento');
   if(hint) hint.style.display = (_TKOT.modo === 'descubrimiento') ? '' : 'none';
+  // Tarea 4: la modalidad puede esconder/mostrar el selector de plantilla
+  // sin que cambie el tipo de OT -- re-renderizar con los datos ya en cache.
+  const tipoNow = document.getElementById('otTipo')?.value;
+  if(tipoNow) _tkotRenderPlantillaSelector(tipoNow);
 }
 
 async function tkotAbrirCrearTipoOT(){
@@ -4892,6 +4968,13 @@ async function tkotGenerar(){
       forzar_feriado: false,
       forzar_choque: false,
     };
+    // Tarea 4 (2026-08-10): solo se manda plantilla_id si el usuario eligió
+    // explícitamente una distinta a la recomendada -- si dejó la default (o
+    // el fetch del selector falló y nunca cargó), se omite y el backend
+    // calcula la misma con _plantilla_estandar_para_tipo (nunca bloquea).
+    if(_TKOT.plantillaSelector.overrideId){
+      payload.plantilla_id = _TKOT.plantillaSelector.overrideId;
+    }
 
     // Modo ticket -> POST /tickets/api/tickets/<TID>/generar-ot (exige un
     // ticket real, vincula tk_tickets.visita_id). Modo cliente -> POST
