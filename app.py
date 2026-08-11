@@ -47042,6 +47042,29 @@ def _mant_required(view):
     return login_required(wrapped)
 
 
+def _es_rol_tecnico(user=None):
+    """True si `user` (o g.user si no se pasa) pertenece a la familia de rol
+    'tecnico' — normaliza 'tecnico_externo'/'tecnico_jr'/cualquier variante
+    vía _rol_familia(), igual que el resto del backend.
+
+    ÚNICA fuente de verdad para "¿es técnico?" fuera de un contexto de OT
+    específica (para eso está _puede_ot_accion). Usada por el decorador
+    @_no_tecnico Y por cualquier función núcleo que necesite el mismo
+    chequeo pero NO es una vista Flask (ej. _mant_visita_crear_core, que
+    se invoca desde dos endpoints distintos y solo uno de ellos llevaba
+    @_no_tecnico — FIX 2026-08-10). Un solo lugar define la regla; el
+    decorador y las funciones núcleo la reusan en vez de reimplementarla
+    cada uno a su manera.
+    """
+    try:
+        if user is None:
+            user = getattr(g, "user", None)
+        role = (user["role"] if user else "") or ""
+    except Exception:
+        role = ""
+    return _rol_familia(role) == "tecnico"
+
+
 def _no_tecnico(view):
     """Decorador: bloquea el acceso a usuarios con role='tecnico'.
 
@@ -47055,19 +47078,13 @@ def _no_tecnico(view):
     """
     @wraps(view)
     def wrapped(*args, **kwargs):
-        try:
-            u = getattr(g, "user", None)
-            role = (u["role"] if u else "") or ""
-        except Exception:
-            role = ""
         # ENDURECIDO 2026-08-09 (auditoría de permisos de equipos/OT):
         # antes esto comparaba `role == "tecnico"` EXACTO, así que un rol
         # 'tecnico_externo' (o 'tecnico_jr', o cualquier variante creada por
         # el admin) NO quedaba bloqueado y entraba a endpoints pensados solo
-        # para roles gestores. Se pasa a la familia de rol, que es el
-        # comparador que ya usa el resto del backend (_rol_familia) y que
-        # normaliza todas esas variantes a 'tecnico'.
-        if _rol_familia(role) == "tecnico":
+        # para roles gestores. _es_rol_tecnico() ya normaliza vía
+        # _rol_familia(), el comparador que usa el resto del backend.
+        if _es_rol_tecnico():
             is_ajax = (
                 request.headers.get("X-Wizard") == "1"
                 or request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -68420,6 +68437,19 @@ def _mant_visita_crear_core(d):
     _cliente_opcional = (_tipo_chk == "revision_interna")
     if (not _cliente_opcional and not d.get("cliente_id")) or not d.get("fecha_programada"):
         return {"error": "cliente_id y fecha_programada requeridos"}, 400
+    # FIX 2026-08-10 (revisión de seguridad post-commit): el endpoint dedicado
+    # /mantenciones/api/visitas/interna ya lleva @_no_tecnico, pero este núcleo
+    # también lo llama /mantenciones/api/visitas (mant_visita_crear), que SOLO
+    # tiene @_mant_required — sin este chequeo acá, un técnico podría crear una
+    # OT "Trabajo de bodega" sin cliente mandando tipo='revision_interna'
+    # directo a ese endpoint genérico, saltándose la restricción de rol que
+    # Daniel pidió explícitamente (el trabajo de bodega lo agenda supervisor+,
+    # nunca el propio técnico). Se valida acá, en el núcleo compartido —
+    # reusando _es_rol_tecnico(), la MISMA función que usa el decorador
+    # @_no_tecnico — para que la regla se cumpla sin importar por cuál de los
+    # dos endpoints entró la petición, sin reimplementar la comparación.
+    if _cliente_opcional and _es_rol_tecnico():
+        return {"error": "No tienes permiso para crear una OT de Trabajo de bodega."}, 403
 
     # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
     # COMPAT: la API /api/tecnicos ahora devuelve app_users.id en el campo `id`.
