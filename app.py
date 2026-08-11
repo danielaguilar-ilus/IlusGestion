@@ -47846,11 +47846,17 @@ def _ot_can_metadata(view_func):
     """Decorador para PUT de visita (editar título, fecha, técnico, tipo,
     estado, etc.).
 
-    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
-    Solo superadmin + admin pasan. Ejecutivo creador YA NO puede editar
-    (antes podía y modificaba OTs que él mismo levantó: cambiaba técnico,
-    movía fecha, etc.). Daniel: "el ejecutivo solo levanta — si necesita
-    corregir algo, lo pide al admin".
+    🔒 FIX 2026-05-22 (Daniel — brecha Aaron): el ejecutivo creador YA NO
+    puede editar SIN restricción (antes podía modificar cualquier OT que él
+    mismo hubiera levantado: cambiaba técnico, movía fecha, etc.).
+
+    ⚠️ CORREGIDO 2026-08-10 — este comentario decía "solo superadmin + admin
+    pasan", pero el chequeo real (`_puede_ot_accion(vid, 'metadata', user)`,
+    ver matriz de permisos en su docstring) permite la familia completa
+    superadmin/admin/supervisor/ejecutivo — NUNCA técnico. Daniel confirmó
+    2026-08-10 que supervisor y ejecutivo SÍ deben poder editar metadata
+    (ej. corregir garantía retroactiva); el texto viejo solo estaba
+    desactualizado, no hace falta agregar un chequeo de rol nuevo.
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
@@ -68768,20 +68774,71 @@ def mant_visita_update(vid):
     # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): el interruptor Aplica/No aplica
     # MANDA sobre modalidad_cobro suelta. Mapea a cubierto_por/modalidad_cobro/
     # estado_facturacion según el modelo canónico.
+    #
+    # CORRECCIÓN RETROACTIVA DE GARANTÍA (Daniel 2026-08-10): la OT puede
+    # crearse pagada, gestionarse, y descubrirse EN TERRENO que en realidad
+    # correspondía garantía (error del proveedor o error propio de ILUS).
+    # Se permite corregir el flag SOLO si: (a) la OT aún no está cerrada
+    # (estado='cerrada' — el cierre auditado con las 3 firmas vía
+    # /mantenciones/api/visitas/<id>/cerrar; 'completada' es solo un estado
+    # intermedio del flujo Fracttal, NO el cierre final) y (b) viene un
+    # motivo explícito cuando el cambio es "retroactivo" — es decir, la OT
+    # YA tenía otra cobertura declarada antes de este PUT (no es la primera
+    # vez que se fija el flag). El rol autorizado (supervisor+) ya lo filtra
+    # @_ot_can_metadata / _puede_ot_accion(..., 'metadata', ...) — no se
+    # necesita un chequeo de rol nuevo acá.
     if gar_aplica_upd is not None:
+        _row_gar_actual = mysql_fetchone(
+            "SELECT cubierto_por, modalidad_cobro, estado_facturacion, estado "
+            "  FROM mant_visitas WHERE id=%s", (vid,)
+        ) or {}
+        _gar_bool_actual = (
+            _row_gar_actual.get("cubierto_por") == "garantia"
+            or _row_gar_actual.get("modalidad_cobro") == "garantia"
+        )
+        # La regla dura "levantamiento nunca admite garantía" sigue aplicando
+        # ANTES de evaluar retroactividad — para ese tipo, _mapear_garantia_a_
+        # cobertura ya degrada automáticamente a pagado con warning.
+        _es_retroactivo = (
+            tipo_final not in _OT_TIPOS_SIN_GARANTIA
+            and _gar_bool_actual != gar_aplica_upd
+        )
+        if _es_retroactivo:
+            if (_row_gar_actual.get("estado") or "") == "cerrada":
+                return jsonify({
+                    "ok": False,
+                    "error": "No se puede corregir la garantía de una OT ya cerrada.",
+                    "error_codigo": "GARANTIA_OT_CERRADA",
+                }), 400
+            _gar_motivo = (d.get("garantia_motivo") or "").strip()
+            if len(_gar_motivo) < 10:
+                return jsonify({
+                    "ok": False,
+                    "error": "Esta OT ya tenía otra cobertura declarada. Para "
+                             "corregir la garantía indica un motivo (mínimo 10 "
+                             "caracteres): error de proveedor, error propio, etc.",
+                    "error_codigo": "GARANTIA_MOTIVO_REQUERIDO",
+                }), 400
+            d["garantia_motivo"] = _gar_motivo[:500]
+
         cobertura_upd, warn_gar_upd = _mapear_garantia_a_cobertura(gar_aplica_upd, tipo_final)
         if cobertura_upd:
             d["cubierto_por"]   = cobertura_upd["cubierto_por"]
             d["modalidad_cobro"] = cobertura_upd["modalidad_cobro"]
             # No degradar el pipeline si ya hay una factura ligada: un servicio
             # ya 'facturado' marcado como "no aplica garantía" sigue facturado.
-            _ef_actual = mysql_fetchone(
-                "SELECT estado_facturacion FROM mant_visitas WHERE id=%s", (vid,))
-            _ef_now = (_ef_actual or {}).get("estado_facturacion")
+            _ef_now = _row_gar_actual.get("estado_facturacion")
             if not (gar_aplica_upd is False and _ef_now == "facturado"):
                 d["estado_facturacion"] = cobertura_upd["estado_facturacion"]
             if warn_gar_upd:
                 warn_mod_upd = warn_gar_upd
+
+        if _es_retroactivo:
+            _mant_log(
+                "visita", vid, "garantia_retroactiva",
+                f"garantia_aplica: {_gar_bool_actual} -> {gar_aplica_upd} · "
+                f"motivo: {d.get('garantia_motivo', '')}"
+            )
     # Validar prioridad si llega
     if "prioridad" in d:
         p = (d.get("prioridad") or "").lower()
@@ -68816,7 +68873,7 @@ def mant_visita_update(vid):
                # FASE 1 — modelo Fracttal
                "modalidad_cobro","prioridad","diagnostico",
                # Garantía transversal (mapeada desde garantia_aplica)
-               "cubierto_por","estado_facturacion",
+               "cubierto_por","estado_facturacion","garantia_motivo",
                # Finanzas (margen por servicio)
                "costo_proveedor","proveedor_tipo","proveedor_nombre",
                # Documento ERP de origen (NVI/NVV), solo administrativo
@@ -90383,6 +90440,30 @@ def _ensure_lev_items_doc_col():
     return False
 
 
+def _ensure_garantia_motivo_col():
+    """Garantiza mant_visitas.garantia_motivo SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). Corrección retroactiva de garantía (Daniel
+    2026-08-10): cuando supervisor+ corrige `garantia_aplica` de una OT que
+    ya tenía otra cobertura declarada, el motivo obligatorio queda visible
+    en la ficha de la OT (además del registro completo en mant_logs vía
+    `_mant_log('visita', vid, 'garantia_retroactiva', ...)`)."""
+    try:
+        _c = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "  AND COLUMN_NAME='garantia_motivo'")
+        if not (_c or {}).get("n"):
+            mysql_execute(
+                "ALTER TABLE mant_visitas "
+                "ADD COLUMN garantia_motivo VARCHAR(500) NULL "
+                "COMMENT 'Motivo de la última corrección retroactiva de garantia_aplica'")
+            print("[ensure_garantia_motivo] columna agregada", flush=True)
+            return True
+    except Exception as e:
+        print(f"[ensure_garantia_motivo] {e}", flush=True)
+    return False
+
+
 def _ensure_lev_items_edicion_cols():
     """Garantiza mant_levantamiento_items.modificado_por/modificado_at
     SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1). Daniel 2026-07-06:
@@ -92935,6 +93016,13 @@ try:
         _ensure_lev_items_doc_col()
 except Exception as _ensure_ldoc_err:
     print(f"[ILUS][WARN] _ensure_lev_items_doc_col: {_ensure_ldoc_err}", flush=True)
+
+# Columna garantia_motivo (corrección retroactiva de garantía, 2026-08-10).
+try:
+    with app.app_context():
+        _ensure_garantia_motivo_col()
+except Exception as _ensure_garmot_err:
+    print(f"[ILUS][WARN] _ensure_garantia_motivo_col: {_ensure_garmot_err}", flush=True)
 
 # CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía

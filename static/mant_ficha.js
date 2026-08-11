@@ -722,7 +722,13 @@ function editarVisita(v) {
   if (_pn) _pn.value = v.proveedor_nombre || '';
   viProvToggleNombre();
   // Garantía: "Aplica" si la visita está cubierta por garantía.
-  _viSetGarantia(v.cubierto_por === 'garantia' || v.modalidad_cobro === 'garantia');
+  const _garActual = (v.cubierto_por === 'garantia' || v.modalidad_cobro === 'garantia');
+  _viSetGarantia(_garActual);
+  // 2026-08-10: guardamos el valor ORIGINAL con el que se abrió el modal
+  // (dataset, no un input) para que guardarVisita() pueda detectar si el
+  // usuario está CORRIGIENDO retroactivamente la garantía (la OT ya tenía
+  // otra cobertura declarada) y exigir un motivo antes de guardar.
+  document.getElementById('vi_id').dataset.garantiaOriginal = _garActual ? '1' : '0';
   document.getElementById('btnEliminarVisita').style.display = '';
   new bootstrap.Modal(document.getElementById('modalVisita')).show();
 }
@@ -4965,9 +4971,38 @@ async function _ctaCopiarClausula(btn) {
 
 // ─── Visitas ──────────────────────────────────────────────
 async function guardarVisita() {
-  const vid = document.getElementById('vi_id').value;
+  const viIdEl = document.getElementById('vi_id');
+  const vid = viIdEl.value;
   const fecha = document.getElementById('vi_fecha').value;
   if (!fecha) { ilusToast('La fecha es requerida', { type:'warning' }); return; }
+
+  // ── Corrección retroactiva de garantía (Daniel 2026-08-10) ─────────
+  // Si la OT ya tenía otra cobertura declarada (dataset guardado al abrir
+  // el modal en editarVisita) y el usuario cambió el toggle, exigimos un
+  // motivo ANTES de guardar. Regla #1 CLAUDE.md: nunca prompt() nativo.
+  const garNueva = document.getElementById('vi_gar_si')?.checked || false;
+  const garOriginalRaw = viIdEl.dataset.garantiaOriginal;
+  const esRetroactivo = !!vid && garOriginalRaw !== undefined
+    && ((garOriginalRaw === '1') !== garNueva);
+  let garantiaMotivo = null;
+  if (esRetroactivo) {
+    garantiaMotivo = await ilusPrompt({
+      title: 'Corrección de garantía',
+      message: 'Esta OT ya tenía otra cobertura declarada (' +
+                (garOriginalRaw === '1' ? 'Aplica garantía' : 'No aplica (pago)') +
+                '). Indica el motivo de la corrección.',
+      sub: 'Ej: error del proveedor, error propio de ILUS, etc. Solo se permite ' +
+           'corregir la garantía antes de que la OT se cierre.',
+      placeholder: 'Motivo de la corrección (mínimo 10 caracteres)',
+      required: true,
+    });
+    if (!garantiaMotivo || garantiaMotivo.trim().length < 10) {
+      ilusToast('Motivo requerido (mínimo 10 caracteres) para corregir la garantía', { type:'warning' });
+      return;
+    }
+    garantiaMotivo = garantiaMotivo.trim();
+  }
+
   const data = {
     cliente_id:      CID,
     titulo:          document.getElementById('vi_titulo').value.trim(),
@@ -4980,7 +5015,10 @@ async function guardarVisita() {
     costo:           parseFloat(document.getElementById('vi_costo').value) || 0,
     descripcion:     document.getElementById('vi_descripcion').value.trim(),
     // Garantía transversal (Aplica/No aplica) — independiente del tipo.
-    garantia_aplica: document.getElementById('vi_gar_si')?.checked || false,
+    garantia_aplica: garNueva,
+    // Motivo obligatorio SOLO si es corrección retroactiva (ver arriba).
+    // El backend lo exige/valida igual; lo mandamos siempre que exista.
+    garantia_motivo: garantiaMotivo,
     // FINANZAS (2026-06-10): margen = cobrado - costo proveedor.
     costo_proveedor: parseFloat(document.getElementById('vi_costo_prov')?.value) || null,
     proveedor_tipo:  document.getElementById('vi_prov_tipo')?.value || null,
@@ -5015,7 +5053,12 @@ async function guardarVisita() {
       }
     }
     location.reload();
-  } else { ilusToast('Error al guardar la visita', { type:'error' }); }
+  } else {
+    // Errores específicos de la corrección de garantía (400 con mensaje
+    // amigable del backend) — mostramos ese mensaje en vez del genérico.
+    const errBody = await r.json().catch(() => ({}));
+    ilusToast(errBody.error || 'Error al guardar la visita', { type:'error' });
+  }
 }
 
 async function eliminarVisita() {
