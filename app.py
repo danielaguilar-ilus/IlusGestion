@@ -49138,6 +49138,31 @@ def init_mantenciones_tables():
                 "  'desinstalacion','capacitacion','repuesto','revision_interna',"
                 "  'inspeccion','garantia'"
                 ") DEFAULT 'preventiva'",
+                # 2026-08-10 (Daniel) — Tipo de OT nuevo: 'control_calidad'
+                # (revisión de productos por evento, en bodega). MODIFY (no ADD)
+                # porque el ENUM YA EXISTE en prod desde el ALTER de arriba —
+                # mismo gotcha histórico "ENUM angosto (1265)" que obligó al
+                # MODIFY de mant_tarea_plantillas.familia_checklist: sin esto,
+                # cualquier OT creada con tipo_ot='control_calidad' truncaría a
+                # '' y mant_visitas.tipo la guardaría con el DEFAULT
+                # ('preventiva'), o el INSERT fallaría según sql_mode. Idempotente:
+                # ejecutar el mismo MODIFY en cada arranque no rompe nada.
+                "ALTER TABLE mant_visitas MODIFY tipo ENUM("
+                "  'levantamiento','instalacion','preventiva','correctiva',"
+                "  'visita_tecnica','visita_correctiva','cambio_equipo',"
+                "  'desinstalacion','capacitacion','repuesto','revision_interna',"
+                "  'inspeccion','garantia','control_calidad'"
+                ") DEFAULT 'preventiva'",
+                # 2026-08-10 (Daniel) — "Trabajo de bodega" (tipo='revision_interna')
+                # debe poder crearse SIN cliente asociado: es 100% interno, igual
+                # que en Tickets. cliente_id era NOT NULL desde el CREATE TABLE
+                # original (línea ~48094) — lo volvemos nullable. La FK
+                # (ON DELETE CASCADE) sigue funcionando igual para las OTs CON
+                # cliente: una FK normal no exige valor, solo lo valida si viene.
+                # Ver mant_visita_crear (acepta cliente_id=None solo para
+                # tipo='revision_interna') y el endpoint
+                # POST /mantenciones/api/visitas/interna.
+                "ALTER TABLE mant_visitas MODIFY COLUMN cliente_id INT NULL",
                 # Modalidad de cobro — NUEVO. Define la condición comercial de la OT:
                 #   pagado     → cliente paga la visita+repuestos
                 #   garantia   → cobertura comercial / fabricante (sin cargo al cliente)
@@ -68343,8 +68368,58 @@ def mant_visita_crear():
     """Crea una OT. Acepta tecnico_user_id (FK a app_users con role='tecnico')
     como alternativa al campo de texto legacy 'tecnico'."""
     d = request.get_json(silent=True) or {}
-    if not d.get("cliente_id") or not d.get("fecha_programada"):
-        return jsonify({"error": "cliente_id y fecha_programada requeridos"}), 400
+    payload, status = _mant_visita_crear_core(d)
+    return jsonify(payload), status
+
+
+@app.route("/mantenciones/api/visitas/interna", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_visita_crear_interna():
+    """Crea una OT de "Trabajo de bodega" (tipo='revision_interna') SIN
+    cliente asociado — 100% interno, igual que el tipo "sin cliente" de
+    Tickets (Daniel, 2026-08-10).
+
+    Endpoint dedicado y liviano: NO pasa por ninguna ficha de cliente. Arma
+    el payload correcto (tipo='revision_interna', cliente_id=None) y llama
+    al MISMO núcleo que /mantenciones/api/visitas (`_mant_visita_crear_core`)
+    para no duplicar la lógica de creación (modalidad de cobro, plantilla
+    inicial, notificaciones, etc.).
+
+    Se usa `mant_visita_crear_core` (NO `_mant_lev_crear_ot_core`): ese otro
+    camino de creación es específico de Levantamiento — SIEMPRE inserta una
+    fila en `mant_levantamientos` con `cliente_id` (columna NOT NULL ahí, sin
+    tocar) y no tiene sentido de negocio para un trabajo de bodega, que no es
+    un levantamiento de equipos de cliente.
+
+    Decorador `@_no_tecnico`: el trabajo de bodega lo agenda el
+    supervisor/ejecutivo, no lo crea el propio técnico (mismo criterio que
+    el resto de endpoints de gestión de OT que NO son de ejecución).
+    """
+    d = dict(request.get_json(silent=True) or {})
+    d["tipo"] = "revision_interna"
+    d.pop("cliente_id", None)   # fuerza sin cliente, pase lo que pase en el body
+    payload, status = _mant_visita_crear_core(d)
+    return jsonify(payload), status
+
+
+def _mant_visita_crear_core(d):
+    """Núcleo de creación de una OT "clásica" (mant_visita_crear), separado
+    del handler HTTP para poder reusarlo desde /mantenciones/api/visitas/interna
+    (Trabajo de bodega, sin cliente) sin duplicar lógica.
+
+    Devuelve (payload:dict, http_status:int) — el caller HTTP hace
+    jsonify(payload), status. NO llama jsonify/request directo: solo lee `d`.
+    """
+    # 2026-08-10 (Daniel) — "Trabajo de bodega" (tipo='revision_interna') es
+    # 100% interno, sin cliente asociado (igual que en Tickets). Es el ÚNICO
+    # tipo que puede omitir cliente_id — mant_visitas.cliente_id ya se hizo
+    # NULL-able (ver migración cerca de la línea ~49150). Cualquier otro tipo
+    # sigue exigiéndolo como antes.
+    _tipo_chk = (d.get("tipo") or "").strip().lower()
+    _cliente_opcional = (_tipo_chk == "revision_interna")
+    if (not _cliente_opcional and not d.get("cliente_id")) or not d.get("fecha_programada"):
+        return {"error": "cliente_id y fecha_programada requeridos"}, 400
 
     # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
     # COMPAT: la API /api/tecnicos ahora devuelve app_users.id en el campo `id`.
@@ -68430,7 +68505,7 @@ def mant_visita_crear():
                         prioridad,created_by,created_by_user_id,
                         costo_proveedor,proveedor_tipo,proveedor_nombre)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (d["cliente_id"], d.get("contrato_id") or None,
+                    (d.get("cliente_id"), d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
@@ -68455,7 +68530,7 @@ def mant_visita_crear():
                         tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
                         modalidad_cobro,prioridad,created_by)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (d["cliente_id"], d.get("contrato_id") or None,
+                    (d.get("cliente_id"), d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
@@ -68489,10 +68564,21 @@ def mant_visita_crear():
         for m in (d.get("maquina_ids") or []):
             try: maq_ids_inicial.append(int(m))
             except (TypeError, ValueError): continue
+        # 2026-08-10 (Tarea 4 — selector de plantilla): se valida que la
+        # plantilla exista y esté activa antes de usarla — mismo criterio que
+        # _mant_lev_crear_ot_core. Si no es válida, simplemente no se aplica
+        # (no bloquea la creación de la OT, igual que antes).
         plant_id_inicial = None
         try:
             if d.get("plantilla_id"):
-                plant_id_inicial = int(d["plantilla_id"])
+                _pid_try = int(d["plantilla_id"])
+                _pid_row = mysql_fetchone(
+                    "SELECT id FROM mant_tarea_plantillas "
+                    " WHERE id=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                    (_pid_try,)
+                )
+                if _pid_row:
+                    plant_id_inicial = _pid_try
         except (TypeError, ValueError):
             plant_id_inicial = None
         n_tareas_creadas = 0
@@ -68511,7 +68597,7 @@ def mant_visita_crear():
                             cur2.execute(
                                 f"SELECT id, nombre, serie FROM mant_maquinas "
                                 f"WHERE id IN ({ph}) AND cliente_id=%s",
-                                tuple(maq_ids_inicial) + (d["cliente_id"],)
+                                tuple(maq_ids_inicial) + (d.get("cliente_id"),)
                             )
                             m_rows = cur2.fetchall() or []
                             m_idx = {r["id"]: r for r in m_rows}
@@ -68565,7 +68651,7 @@ def mant_visita_crear():
             resp["warning"] = warn_mod
         if n_tareas_creadas:
             resp["tareas_creadas"] = n_tareas_creadas
-        return jsonify(resp)
+        return resp, 200
     finally:
         conn.close()
 
@@ -69073,7 +69159,10 @@ def mant_ots_list():
             "       COALESCE(tar.n_completas, 0) AS n_completas, "
             "       COALESCE(fot.n_fotos, 0)     AS n_fotos "
             "  FROM mant_visitas v "
-            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            # LEFT JOIN (era INNER) 2026-08-10: sin esto, las OT de Trabajo
+            # de bodega (cliente_id NULL) nunca aparecían en el listado
+            # principal — quedaban invisibles para admin/supervisor.
+            "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
             "  LEFT JOIN ( "
             "       SELECT visita_id, "
@@ -69115,7 +69204,7 @@ def mant_ots_list():
                 "       v.created_by, "
                 "       0 AS n_tareas, 0 AS n_completas, 0 AS n_fotos "
                 "  FROM mant_visitas v "
-                "  JOIN mant_clientes c ON c.id=v.cliente_id "
+                "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
                 f" WHERE {' AND '.join(where)} "
                 " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 200",
                 tuple(params)
@@ -69144,7 +69233,7 @@ def mant_ots_list():
             " SUM(CASE WHEN v.estado='completada' THEN 1 ELSE 0 END) AS completadas, "
             " SUM(CASE WHEN v.estado='programada' AND v.fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
             "FROM mant_visitas v "
-            "JOIN mant_clientes c ON c.id=v.cliente_id "
+            "LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             f"WHERE {' AND '.join(where)}"
         )
         kpis = mysql_fetchone(kpis_sql, tuple(params)) or kpis
@@ -69359,11 +69448,22 @@ def mant_plantillas_listar():
         ?familia_checklist=instalacion|preventiva|correctivo|...
         ?familia_activo=cardio|trotadoras|todas|...
         ?q=texto
+
+    2026-08-10 (Tarea 4 — selector de plantilla al crear OT, backend): si
+    llega ?tipo_visita=<tipo_ot>, además de filtrar (cuando el valor coincide
+    con el ENUM `tipo_visita` de mant_tarea_plantillas), la respuesta marca
+    qué plantilla es la DEFAULT — la misma que auto-elegiría
+    `_plantilla_estandar_para_tipo(tipo_ot)` al crear la OT — para que el
+    frontend pueda preseleccionarla en el selector, SIN duplicar esa regla
+    de negocio. `tv_raw` acepta cualquier valor de mant_visitas.tipo (no solo
+    los 7 de `_PLANT_TIPO_VISITA`): _plantilla_estandar_para_tipo también
+    resuelve por nombre de convención, no solo por la columna tipo_visita.
     """
+    tv_raw = (request.args.get("tipo_visita") or "").strip().lower()
     where, params = [], []
     if request.args.get("activa") == "1":
         where.append("activa=1")
-    tv = (request.args.get("tipo_visita") or "").strip().lower()
+    tv = tv_raw
     if tv in _PLANT_TIPO_VISITA:
         where.append("tipo_visita=%s"); params.append(tv)
     # FASE 3: filtros nuevos
@@ -69395,6 +69495,15 @@ def mant_plantillas_listar():
              ORDER BY p.activa DESC, p.es_sistema DESC, p.nombre""",
         tuple(params)
     ) or []
+    # Plantilla DEFAULT para tv_raw (ver docstring) — misma función que usa
+    # _mant_lev_crear_ot_core cuando no llega plantilla_id explícito.
+    default_plantilla_id = None
+    if tv_raw:
+        try:
+            default_plantilla_id = _plantilla_estandar_para_tipo(tv_raw)
+        except Exception as _e_def:
+            print(f"[plantillas_listar] default para tipo '{tv_raw}' falló: {_e_def}", flush=True)
+            default_plantilla_id = None
     return jsonify({
         "ok": True,
         "plantillas": [{
@@ -69409,8 +69518,10 @@ def mant_plantillas_listar():
             "items_count": int(r.get("items_count") or 0),
             "created_by": r.get("created_by") or "",
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "es_default": bool(default_plantilla_id) and r["id"] == default_plantilla_id,
         } for r in rows],
         "total": len(rows),
+        "default_plantilla_id": default_plantilla_id,
     })
 
 
@@ -69952,7 +70063,9 @@ def mant_ot_ficha(vid):
         "       COALESCE(u.username, t.email) AS tecnico_email, "
         "       COALESCE(u.foto_url, t.foto_url) AS tecnico_foto "
         "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        # LEFT JOIN (era INNER) 2026-08-10: Trabajo de bodega puede tener
+        # cliente_id NULL — ver mismo fix en mant_ot_ejecutar/_ot_pdf_context.
+        "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         "  LEFT JOIN mant_contratos ct ON ct.id=v.contrato_id "
         "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
         "  LEFT JOIN app_users   u ON u.id=v.tecnico_user_id "
@@ -70049,6 +70162,11 @@ def mant_ot_ejecutar(vid):
     # frontend (DESTINO_LAT/LNG) y al endpoint de respuesta GPS usar la
     # dirección ya parametrizada del cliente cuando el GPS del dispositivo
     # del técnico no funciona (default 'cliente_default').
+    # 2026-08-10 (Daniel — Trabajo de bodega sin cliente): LEFT JOIN (era
+    # INNER). Con cliente_id NULL una OT interna existía en mant_visitas pero
+    # esta vista devolvía "OT no encontrada" — la OT quedaba literalmente
+    # imposible de abrir/ejecutar. c.* queda NULL para esas OT; el template
+    # ya debe tolerar cliente ausente (ver _ot_es_interna).
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
         "       c.direccion AS cli_direccion, "
@@ -70058,7 +70176,7 @@ def mant_ot_ejecutar(vid):
         "       c.contacto_tel AS cli_contacto_tel, "
         "       COALESCE(u.nombre, u.username) AS tecnico_principal "
         "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
         " WHERE v.id=%s",
         (vid,)
@@ -71383,6 +71501,40 @@ def _ot_es_interna(v):
         return False
 
 
+# TODO(2026-08-10, Daniel — Trabajo de bodega sin cliente, riesgo conocido):
+# mant_visitas.cliente_id ahora puede ser NULL (tipo='revision_interna').
+# Ya se corrigieron a LEFT JOIN los puntos de MAYOR riesgo (el usuario no
+# podía ni abrir su propia OT): mant_ot_ejecutar, mant_ot_ficha (legacy),
+# mant_visita_resumen, mant_ots_list (listado + fallback + KPIs) y
+# _ot_pdf_context (PDF real + HTML imprimible, usado por mant_visita_pdf y
+# mant_ot_pdf_render). También: mant_visita_generar_informe NO se arregló —
+# ver TODO puntual ahí (mant_reportes.cliente_id sigue NOT NULL).
+#
+# Quedan ~15 lugares más con `JOIN mant_clientes c ON c.id=v.cliente_id`
+# (INNER) contra mant_visitas que NO se tocaron en esta tarea — no bloquean
+# la creación/ejecución de un Trabajo de bodega, pero sí pueden ocultarlo o
+# fallar si se navega a esas vistas secundarias. Los de mayor probabilidad
+# de uso real, pendientes de revisar caso a caso antes de anunciar la
+# feature ampliamente:
+#   - Tablero/calendario del día (visitas del día, ~línea 64107/64260) —
+#     probablemente aceptable que un trabajo de bodega no tenga "cliente"
+#     en la tarjeta del calendario, pero confirmar que no lo hace
+#     desaparecer del tablero.
+#   - Alertas SLA / vencimientos de OT (~línea 66141) — igual, confirmar que
+#     no se "pierde" una OT interna vencida.
+#   - Endpoints de firma de cliente / aprobación (~línea 71830, 72594) —
+#     revision_interna ya no exige firma de cliente (_ot_es_interna), pero
+#     si alguno de esos queries se llega a invocar sobre una OT sin cliente
+#     por otra vía, revisar que no reviente con "not found".
+#   - Vistas relacionadas a Ticket (~línea 75406, 75801, 75943) — un
+#     Trabajo de bodega normalmente NO nace de un ticket de cliente, así
+#     que el riesgo real es bajo, pero no está garantizado por diseño.
+# No se convirtieron a LEFT JOIN a ciegas para no arriesgar comportamiento
+# ya probado en producción sin poder verificar cada uno visualmente — usar
+# esta lista como punto de partida si aparece un bug real reportado por
+# Daniel sobre alguna de estas vistas con una OT de Trabajo de bodega.
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
 @_mant_required
 @_tecnico_owns_visita
@@ -72163,11 +72315,14 @@ def mant_visita_resumen(vid):
     """Resumen liviano de la OT para la revisión rápida del supervisor:
     qué se hizo (tareas, fotos, equipos), observaciones del técnico y su firma.
     Permite revisar SIN abrir la OT completa."""
+    # LEFT JOIN (era INNER) 2026-08-10: OT de Trabajo de bodega
+    # (tipo='revision_interna') puede tener cliente_id NULL — con INNER esta
+    # OT "desaparecía" del resumen aunque existiera.
     v = mysql_fetchone(
         "SELECT v.id, v.titulo, v.tipo, v.estado, v.tecnico, v.fecha_realizada, "
         "v.observaciones, v.firma_tecnico_nombre, v.firma_tecnico_at, v.firma_tecnico_url, "
         "c.razon_social "
-        "FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+        "FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
 
@@ -73212,6 +73367,12 @@ def _ot_pdf_context(vid, embed_images=False):
       - status == "not_found"  → ctx None
       - status == "incompleto" → ctx None, razones = lista (no cerrada / faltan firmas)
     """
+    # 2026-08-10 (Daniel — Trabajo de bodega sin cliente): LEFT JOIN (era
+    # INNER). Esta función alimenta TANTO el PDF real (mant_visita_pdf) como
+    # el HTML imprimible (mant_ot_pdf_render) — con INNER, una OT interna sin
+    # cliente_id jamás podía generar su PDF (status quedaba "not_found" en
+    # vez de "ok"/"incompleto"). _ot_es_interna() ya exime la firma de
+    # cliente para este caso (más abajo); c.* queda NULL en el ctx del template.
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
         "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
@@ -73223,7 +73384,7 @@ def _ot_pdf_context(vid, embed_images=False):
         "       COALESCE(us.nombre, us.username) AS responsable_nombre, "
         "       us.username AS responsable_email "
         "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         "  LEFT JOIN app_users u  ON u.id  = v.tecnico_user_id "
         "  LEFT JOIN app_users us ON us.id = v.firma_supervisor_user_id "
         " WHERE v.id=%s",
@@ -79216,6 +79377,17 @@ def mant_visita_generar_informe(vid):
         return jsonify({"error": "OT no encontrada"}), 404
     v = dict(v)
     cid = v.get("cliente_id")
+    # TODO(2026-08-10, Daniel — Trabajo de bodega sin cliente): una OT interna
+    # (tipo='revision_interna') ahora puede tener cliente_id=NULL. El INSERT
+    # INTO mant_reportes de más abajo pasa `cid` directo a la columna
+    # mant_reportes.cliente_id, que sigue siendo NOT NULL (CREATE TABLE,
+    # línea ~48599) — ese INSERT FALLARÁ (1048 Column cannot be null) si
+    # alguien pulsa "Subir la OT" desde un Trabajo de bodega. NO se corrige
+    # acá (requeriría además volver nullable mant_reportes.cliente_id y
+    # revisar cada JOIN/plantilla que asuma cliente en el módulo de
+    # Informes — fuera del alcance de esta tarea). Mientras tanto: o se
+    # bloquea este botón en el frontend para OT sin cliente_id, o se hace esa
+    # migración aparte antes de ofrecerlo.
 
     # Ticket asociado (trazabilidad)
     tk = mysql_fetchone(
@@ -79225,10 +79397,29 @@ def mant_visita_generar_informe(vid):
     ticket_num = str(tk.get("numero_ticket") or tk.get("id") or "").strip()
     ot_num = str(v.get("numero_ot") or v.get("id") or "").strip()
 
-    # Tipo de OT → tipo de informe
+    # Tipo de OT → tipo de informe (mant_reportes.tipo: ENUM más chico que
+    # mant_visitas.tipo — 'mantencion','instalacion','inspeccion',
+    # 'visita_tecnica','garantia','otro'). NO se amplía ese ENUM acá (fuera
+    # de alcance) — se mapea cada tipo de OT al valor EXISTENTE más cercano
+    # en criterio de negocio:
+    #   - cambio_equipo/desinstalacion → 'instalacion' (trabajo físico sobre
+    #     el equipo, misma naturaleza que una instalación).
+    #   - capacitacion/revision_interna → 'otro' (no son servicio técnico
+    #     sobre un equipo de cliente; revision_interna además puede no
+    #     tener cliente — ver TODO arriba).
+    #   - repuesto → 'visita_tecnica' (visita a cambiar/instalar un repuesto
+    #     puntual, no una instalación completa).
+    #   - visita_correctiva → 'visita_tecnica' (mismo criterio que
+    #     'correctiva', ya mapeada así).
+    #   - control_calidad (tipo nuevo, Tarea 1) → 'inspeccion' (es una
+    #     revisión/verificación de productos, misma naturaleza).
     _tipo_map = {"preventiva": "mantencion", "correctiva": "visita_tecnica",
                  "garantia": "garantia", "inspeccion": "inspeccion",
-                 "instalacion": "instalacion", "levantamiento": "inspeccion"}
+                 "instalacion": "instalacion", "levantamiento": "inspeccion",
+                 "cambio_equipo": "instalacion", "desinstalacion": "instalacion",
+                 "capacitacion": "otro", "revision_interna": "otro",
+                 "repuesto": "visita_tecnica", "visita_correctiva": "visita_tecnica",
+                 "control_calidad": "inspeccion"}
     tipo_rep = _tipo_map.get((v.get("tipo") or "").lower(), "visita_tecnica")
 
     # Equipos de la OT (defensivo con columnas que podrían no existir)
@@ -84709,6 +84900,11 @@ _TAREA_TIPO_EQUIVALENTE = {
     'repuesto':          'cambio',
     'desinstalacion':    'otro',
     'capacitacion':      'otro',
+    # 2026-08-10 (Daniel): 'control_calidad' es revisión/verificación de
+    # productos — el ENUM histórico de mant_visita_tareas.tipo no tiene ese
+    # valor, así que se traduce a 'inspeccion' (mismo criterio que
+    # visita_tecnica/revision_interna arriba).
+    'control_calidad':   'inspeccion',
 }
 
 
@@ -84770,8 +84966,13 @@ _TIPO_OT_LABEL = {
     'desinstalacion':    'Desinstalación',
     'capacitacion':      'Capacitación',
     'repuesto':          'Repuesto',
-    'revision_interna':  'Revisión interna',
+    # 2026-08-10 (Daniel): "Trabajo de bodega" es el MISMO tipo que ya
+    # existía como 'revision_interna' — solo cambia el label visible.
+    # NO cambiar el valor del ENUM (revision_interna), solo el texto.
+    'revision_interna':  'Trabajo de bodega',
     'visita_correctiva': 'Visita correctiva',
+    # 2026-08-10 (Daniel): tipo de OT nuevo — ver Tarea 1 (control_calidad).
+    'control_calidad':   'Control de Calidad',
 }
 
 
@@ -84965,7 +85166,7 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
                 "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
                 "desinstalacion", "capacitacion", "repuesto", "revision_interna",
-                "visita_correctiva")
+                "visita_correctiva", "control_calidad")
     tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
     if tipo_ot not in tipos_ok:
         tipo_ot = "levantamiento"
@@ -84974,6 +85175,31 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # preventiva/correctiva/visita técnica moría con el error 1265 y la
     # OT terminaba sin checklist (ver _tarea_tipo_seguro).
     tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+
+    # ─── Selector de plantilla (2026-08-10, backend para selector futuro) ──
+    # Por defecto la plantilla se auto-calcula con `_plantilla_estandar_para_
+    # tipo(tipo_ot)` (más abajo). Si el caller (frontend, fase posterior)
+    # manda data.plantilla_id, se valida que exista y esté activa; si es
+    # válida, MANDA sobre el auto-cálculo. Si no es válida (no existe,
+    # inactiva, o no vino), cae al comportamiento actual — nunca bloquea la
+    # creación de la OT por esto.
+    plantilla_id_override = None
+    try:
+        _pid_raw = data.get("plantilla_id")
+        if _pid_raw:
+            _pid_int = int(_pid_raw)
+            _pid_row = mysql_fetchone(
+                "SELECT id FROM mant_tarea_plantillas "
+                " WHERE id=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                (_pid_int,)
+            )
+            if _pid_row:
+                plantilla_id_override = _pid_int
+    except (TypeError, ValueError):
+        plantilla_id_override = None
+    except Exception as _e_pid:
+        print(f"[lev_crear] validar plantilla_id override falló: {_e_pid}", flush=True)
+        plantilla_id_override = None
 
     # ─── Flag opcional: ¿aplica garantía? ──────────────────────────
     # Garantía no es un tipo (cubre múltiples tipos), es una modalidad
@@ -85248,7 +85474,8 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 if not _tiene_plantillas:
                     try:
                         _tiene_plantillas = bool(
-                            _plantilla_estandar_para_tipo(tipo_ot))
+                            plantilla_id_override
+                            or _plantilla_estandar_para_tipo(tipo_ot))
                     except Exception:
                         pass
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
@@ -85411,7 +85638,10 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
         if visita_id and equipo_ids and not plantillas_por_equipo:
             try:
-                plant_id = _plantilla_estandar_para_tipo(tipo_ot)
+                # 2026-08-10: si el caller pidió una plantilla explícita
+                # (data.plantilla_id, ya validada arriba), MANDA sobre el
+                # auto-cálculo por tipo — selector de plantilla (Tarea 4).
+                plant_id = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
                 if plant_id:
                     _n_std = _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
                     print(f"[lev_crear] plantilla estándar {plant_id} aplicada a "
