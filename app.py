@@ -90431,6 +90431,42 @@ def _ensure_categoria_admin_plantillas():
             out["seed"].append(tipo_ot)
         except Exception as e_seed:
             print(f"[ensure_categoria_admin] seed '{tipo_ot}' falló: {e_seed}", flush=True)
+
+    # ── BACKFILL de categoria_admin (Daniel 2026-08-11, probando en vivo) ──
+    # La columna nació NULL para TODAS las plantillas existentes, así que el
+    # filtro por categoría del modal "Plantillas extra" devolvía lista vacía
+    # para casi todo tipo de OT ("cuando selecciono otra categoría que no sea
+    # levantamiento y mantención no trae las plantillas").
+    #
+    # Se clasifica cada plantilla por su `familia_checklist` (más específica)
+    # y, si esa no alcanza, por su `tipo_visita`. SOLO toca filas con
+    # categoria_admin IS NULL -> es idempotente Y respeta cualquier
+    # reasignación manual que Daniel ya haya hecho desde el admin (que es
+    # editable a propósito; este backfill es solo el punto de partida).
+    # Lo que no calce en ningún criterio queda NULL a propósito: aparece en
+    # la pestaña "Sin categoría" para que Daniel lo asigne a mano, en vez de
+    # adivinarle una categoría que podría ser la equivocada.
+    try:
+        _n_bf = mysql_execute_returning_rowcount("""
+            UPDATE mant_tarea_plantillas
+               SET categoria_admin = CASE
+                 WHEN familia_checklist IN ('instalacion','desinstalacion') THEN 'instalacion'
+                 WHEN familia_checklist IN ('preventiva','correctivo')      THEN 'mantencion'
+                 WHEN familia_checklist IN ('capacitacion','registro_productos',
+                                            'operacional_interno','rendiciones',
+                                            'control_calidad')              THEN 'trabajo_interno'
+                 WHEN tipo_visita = 'instalacion'                           THEN 'instalacion'
+                 WHEN tipo_visita IN ('preventiva','correctiva')            THEN 'mantencion'
+                 WHEN tipo_visita IN ('garantia','inspeccion','levantamiento') THEN 'visitas'
+                 ELSE NULL
+               END
+             WHERE categoria_admin IS NULL
+        """)
+        out["backfill"] = _n_bf
+        if _n_bf:
+            print(f"[ensure_categoria_admin] backfill categoria_admin: {_n_bf} plantilla(s)", flush=True)
+    except Exception as e_bf:
+        print(f"[ensure_categoria_admin] backfill falló: {e_bf}", flush=True)
     return out
 
 

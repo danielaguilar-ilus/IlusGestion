@@ -728,13 +728,11 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
             <i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación (GPS)
           </button>
-          {# ── POLÍTICA 2026-05-17 (Daniel) ──────────────────────────
-             Solo se acepta GPS real del dispositivo. Los botones
-             "Usar IP" y "Escribir dirección" fueron ELIMINADOS porque
-             vulneran la auditoría — el técnico podría falsear su
-             posición. Si el GPS está denegado, el flujo enviá al
-             usuario a Ajustes (mostrarAyudaGPS) para habilitar permiso.
-             ────────────────────────────────────────────────────────── #}
+          <!-- POLÍTICA 2026-05-17 (Daniel): solo se acepta GPS real del
+               dispositivo. Los botones "Usar IP" y "Escribir dirección"
+               fueron ELIMINADOS porque vulneran la auditoría — el técnico
+               podría falsear su posición. Si el GPS está denegado, el flujo
+               envía al usuario a Ajustes (mostrarAyudaGPS). -->
           <div style="background:#fef3c7;border:1px dashed #f59e0b;
             border-radius:8px;padding:7px 10px;font-size:.7rem;color:#92400e;
             display:flex;align-items:center;gap:6px">
@@ -765,7 +763,7 @@ function renderTareaHtml(t, bloqueada, mid, pid){
         : '';
       ctrlHtml = `<div class="ctrl">
         ${_fotoAvisoHtml}
-        {# Desktop: zona con drag&drop real #}
+        <!-- Desktop: zona con drag&drop real -->
         <label class="tx-btn-foto-zone d-none d-md-flex" id="dropzone-${t.id}"
           style="cursor:pointer;flex-direction:column;align-items:center;gap:6px;padding:18px;
           border:2px dashed #cbd5e1;border-radius:11px;background:#fafafa;
@@ -784,7 +782,7 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
         </label>
 
-        {# Mobile: UN SOLO botón rojo grande que abre sheet de elección #}
+        <!-- Mobile: UN SOLO botón rojo grande que abre sheet de elección -->
         <div class="d-md-none">
           <button type="button" class="ilus-foto-btn-main"
             ${bloqueada ? 'disabled' : ''}
@@ -799,7 +797,7 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             <i class="bi bi-camera-plus-fill" style="font-size:1.3rem"></i>
             <span>📷 Agregar foto</span>
           </button>
-          {# Inputs ocultos, disparados via click() desde abrirSheetFoto() #}
+          <!-- Inputs ocultos, disparados via click() desde abrirSheetFoto() -->
           <input type="file" id="fotoCam-${t.id}" accept="image/*,image/heic,image/heif"
             capture="environment" style="display:none"
             ${bloqueada ? 'disabled' : ''}
@@ -3356,9 +3354,9 @@ function renderAdjuntoItem(a){
       ${url ? `<a class="adj-btn" href="${_escapeAttr(url)}" target="_blank" title="Ver / descargar">
         <i class="bi bi-eye-fill"></i>
       </a>` : ''}
-      {# 2026-05-17 — REFACTOR UX: la pestaña Info del técnico es SOLO LECTURA.
-         El técnico no puede eliminar adjuntos preliminares.
-         (eliminarAdjunto sigue definida pero ningún botón la dispara desde acá.) #}
+      <!-- 2026-05-17 — REFACTOR UX: la pestaña Info del técnico es SOLO
+           LECTURA. El técnico no puede eliminar adjuntos preliminares.
+           (eliminarAdjunto sigue definida pero ningún botón la dispara acá.) -->
     </div>
   </div>`;
 }
@@ -4471,10 +4469,10 @@ async function mostrarDiagnosticoGPS(){
           style="background:#0a0a0a;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:600;cursor:pointer">
           <i class="bi bi-clipboard"></i> Copiar al portapapeles
         </button>
-        {# FIX 2026-05-17 — Envío del diagnóstico al servidor para que Daniel (admin)
-           lo revise SIN tener que pedirle al técnico que conecte el iPhone a un Mac.
-           El backend devuelve un ID corto que el técnico le comparte por WhatsApp
-           para acelerar el lookup en /mantenciones/diagnostico-gps. #}
+        <!-- FIX 2026-05-17 — Envío del diagnóstico al servidor para que Daniel
+             (admin) lo revise SIN pedirle al técnico conectar el iPhone a un Mac.
+             El backend devuelve un ID corto que el técnico comparte por WhatsApp
+             para acelerar el lookup en /mantenciones/diagnostico-gps. -->
         <button type="button" id="gpsDiagSend"
           style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.75rem;font-weight:700;cursor:pointer">
           <i class="bi bi-send-fill"></i> Enviar al admin
