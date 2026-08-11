@@ -1,0 +1,646 @@
+{# ══════════════════════════════════════════════════════════════════
+   PARTIAL COMPARTIDO: modal "Generar Orden de Trabajo" (#modalGenerarOT)
+   ══════════════════════════════════════════════════════════════════
+   Extraído el 2026-08-10 de templates/tickets/ficha.html para poder
+   incluirse TAMBIÉN desde templates/mantenciones/ficha.html (Daniel:
+   quedarse con un solo modal de "Generar OT" en vez de mantener dos
+   implementaciones -- el de Tickets, con agenda/calendario, y el viejo
+   #modalLevSelector de la ficha del cliente).
+
+   La lógica real vive en static/tickets_ficha.js (objeto _TKOT + funciones
+   tkot*/tkday*/tkcal*). Ese JS soporta DOS modos, según exista o no un
+   ticket real:
+     · Modo TICKET  -- TID = {{ ticket_id }} (entero). Los datos por
+       defecto (dirección, contacto, equipos) salen de tk_tickets /
+       tk_ticket_equipos. Submit -> POST /tickets/api/tickets/<TID>/generar-ot.
+     · Modo CLIENTE -- TID = null (definido así en el <script> de
+       mantenciones/ficha.html, ANTES de cargar tickets_ficha.js). Los
+       datos por defecto salen de CID/DATA (variables de mant_ficha.js) y
+       de los equipos ya renderizados en el DOM de la ficha
+       ([data-maquina-id]). Submit -> POST /mantenciones/api/clientes/<CID>/levantamientos.
+       Ambos endpoints delegan al mismo núcleo compartido
+       _mant_lev_crear_ot_core (app.py) -- ninguna lógica de negocio se
+       duplica, solo cambia qué endpoint HTTP se llama.
+
+   Mismo patrón de include+parametrización que templates/tickets/_tka_modal.html
+   (aunque acá la "parametrización" es la constante global TID en vez de un
+   objeto `opts`, porque el modo lo decide el JS entero, no solo el modal).
+
+   Requiere en el contexto Jinja: `permissions` (gate del botón "Nuevo tipo").
+   No requiere `ticket_id` -- este partial es 100% agnóstico del contexto que
+   lo incluye.
+   ══════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalGenerarOT" tabindex="-1" data-bs-backdrop="static">
+  {# modal-xl (1140px): el agendador del Paso 3 (mini-calendario 300px +
+     línea de tiempo del día) necesita aire. El CSS de .tksched igual
+     degrada solo a 260px de calendario bajo 1200px y a 1 columna bajo
+     768px, así que también se ve bien si algún día vuelve a modal-lg. #}
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;border:0">
+        <div>
+          <h5 class="modal-title fw-bold mb-0">
+            <i class="bi bi-clipboard2-plus me-2"></i>Generar Orden de Trabajo
+          </h5>
+          <small class="d-block mt-1" style="opacity:.85">
+            Crea una OT desde este ticket. El técnico la gestionará desde el módulo "Órdenes de Trabajo".
+          </small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="background:#fafafa">
+
+        {# ── Aviso: cliente sin ficha en Mantenciones (instalación de cliente nuevo) ── #}
+        <div id="tkotSinFichaWarn" class="d-flex gap-2 align-items-start p-2 rounded border mb-3"
+             style="display:none;background:#fff8e1;border-color:#fde68a !important">
+          <i class="bi bi-exclamation-triangle-fill text-warning mt-1"></i>
+          <div class="small" style="color:#78350f">
+            <strong>Este cliente todavía no tiene ficha en Mantenciones.</strong>
+            No hay equipos "de la ficha" que elegir — se incluirán <u>todos</u> los equipos
+            declarados en este ticket, tal cual quedaron registrados aquí.
+          </div>
+        </div>
+
+        {# ─── Paso 1: Tipo de OT ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">1</div>
+            <div class="lev-step-title">Tipo de orden de trabajo</div>
+            <div class="lev-step-sub">Selecciona qué se va a realizar</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="d-flex gap-2 align-items-end">
+              <div class="flex-grow-1">
+                <label class="form-label small fw-semibold">Tipo *</label>
+                <select id="otTipo" class="form-select form-select-sm" onchange="tkotTipoChange()">
+                  <option value="levantamiento">Levantamiento de ficha</option>
+                  <option value="instalacion">Instalación</option>
+                  <option value="preventiva">Mantención preventiva</option>
+                  <option value="visita_tecnica">Visita técnica</option>
+                  <option value="correctiva">Mantención correctiva</option>
+                  <option value="inspeccion">Inspección</option>
+                </select>
+              </div>
+              {% if permissions.superadmin %}
+              <button type="button" class="btn btn-sm btn-outline-secondary"
+                      onclick="tkotAbrirCrearTipoOT()"
+                      title="Crear un tipo personalizado de OT">
+                <i class="bi bi-plus-lg me-1"></i>Nuevo tipo
+              </button>
+              {% endif %}
+            </div>
+            <div id="otTipoDescripcion" class="small text-muted mt-2" style="font-size:.78rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Levantamiento de ficha: documentación visual de cada equipo. Se aplica
+              automáticamente la plantilla estándar a todos los equipos seleccionados.
+            </div>
+            {# Checklist que quedará asociado a la OT — lo pinta tkotPintarPlantilla() #}
+            <div id="otPlantillaInfo" class="small mt-2"></div>
+
+            {# Tarea 4 (2026-08-10): selector de plantilla — deja elegir una
+               distinta a la recomendada. Oculto por defecto: solo aparece si
+               GET /mantenciones/api/plantillas?tipo_visita= trae al menos una
+               plantilla para el tipo elegido (best-effort, ver
+               _tkotCargarPlantillaSelector en tickets_ficha.js). Se esconde en
+               levantamiento + modalidad "descubrimiento" (esa modalidad no
+               aplica checklist por adelantado). #}
+            <div id="otPlantillaSelectorWrap" style="display:none" class="mt-2">
+              <label class="form-label small fw-semibold mb-1">
+                <i class="bi bi-card-checklist me-1"></i>Plantilla de checklist a usar
+              </label>
+              <select id="otPlantillaSelect" class="form-select form-select-sm"
+                      onchange="tkotPlantillaSelectChange()"></select>
+              <small class="text-muted d-block mt-1" style="font-size:.7rem">
+                <i class="bi bi-info-circle me-1"></i>
+                ⭐ = la recomendada para este tipo de OT. Puedes elegir otra si aplica mejor.
+              </small>
+            </div>
+
+            {# ── Modalidad del levantamiento: idéntica a Mantenciones ── #}
+            <div id="otModoLevWrap" style="display:none">
+              <div class="small fw-bold mt-3" style="color:#0f172a">
+                <i class="bi bi-signpost-split me-1" style="color:#dc2626"></i>Modalidad del levantamiento
+              </div>
+              <div class="lev-modo-grid">
+                {# Sin `on` de fábrica: la modalidad NO viene preseleccionada.
+                   Manda el desplegable de arriba (Daniel 2026-08-06). #}
+                <div class="lev-modo-card" id="levModoEquipos" onclick="tkotModoSet('equipos')">
+                  <div class="chk"><i class="bi bi-check-lg"></i></div>
+                  <div class="ico">📋</div>
+                  <div class="tit">Con equipos del ticket</div>
+                  <div class="sub">Marca abajo los equipos declarados en este ticket que el
+                    técnico debe documentar.</div>
+                  <span class="tag" style="background:#f3f4f6;color:#374151">CLÁSICO</span>
+                </div>
+                <div class="lev-modo-card" id="levModoDescubrir" onclick="tkotModoSet('descubrimiento')">
+                  <div class="chk"><i class="bi bi-check-lg"></i></div>
+                  <div class="ico">🔭</div>
+                  <div class="tit">Descubrimiento en terreno</div>
+                  <div class="sub">El técnico crea el inventario allá: foto + nombre +
+                    N° de serie de cada máquina. Al cerrar la OT, los equipos quedan
+                    solos en la ficha del cliente.</div>
+                  <span class="tag" style="background:#fee2e2;color:#b91c1c">NUEVO · SIN MARCAR EQUIPOS</span>
+                </div>
+              </div>
+              <div id="levModoHint" class="small mt-2" style="display:none;background:#fff8e1;border:1px solid #fde68a;color:#78350f;border-radius:10px;padding:8px 11px;font-size:.76rem">
+                <i class="bi bi-binoculars-fill me-1"></i>
+                <strong>Descubrimiento activado:</strong> no necesitas marcar equipos (si marcas
+                algunos, igual valen — el técnico podrá <em>agregar los que encuentre de más</em> en terreno).
+              </div>
+            </div>
+
+            {# ── Garantía (cualquier tipo excepto levantamiento) ── #}
+            <div class="mt-2 p-2 rounded border" id="otGarantiaWrap" style="background:#f8fafc;display:none">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="otAplicaGarantia" role="switch">
+                <label class="form-check-label small fw-semibold" for="otAplicaGarantia">
+                  <i class="bi bi-shield-check me-1 text-success"></i>
+                  ¿Aplica garantía? <span class="text-muted">(sin cargo al cliente)</span>
+                </label>
+              </div>
+              <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                Si activas garantía, la OT queda con modalidad de cobro <em>garantía</em>
+                (cubierta por el fabricante/proveedor — el cliente no paga).
+              </small>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 2: Información básica + dirección ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">2</div>
+            <div class="lev-step-title">Información básica</div>
+            <div class="lev-step-sub">Título, notas y dirección</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="row g-2">
+              <div class="col-md-7">
+                <label class="form-label small fw-semibold">Título de la OT *</label>
+                <input type="text" id="levSelectTitulo" class="form-control form-control-sm"
+                       placeholder="Ej: Levantamiento inicial sala A">
+              </div>
+              <div class="col-md-5">
+                <label class="form-label small fw-semibold">Notas (opcional)</label>
+                <input type="text" id="levSelectNotas" class="form-control form-control-sm"
+                       placeholder="Ej: Pre-contrato anual 2026">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-geo-alt-fill text-danger me-1"></i>Dirección de la visita *</span>
+                  <small class="text-muted" style="font-weight:400;font-size:.7rem">
+                    Google Maps verifica y guía al técnico
+                  </small>
+                </label>
+                <div class="position-relative">
+                  <input type="text" id="levDireccion" class="form-control form-control-sm"
+                         placeholder="Empieza a escribir la dirección…"
+                         autocomplete="off">
+                  <small id="levDireccionHint" class="text-muted d-block mt-1" style="font-size:.72rem">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Default: dirección informada en el ticket. Selecciona una sugerencia para validar.
+                  </small>
+                </div>
+              </div>
+
+              {# ─── Contacto / contraparte que recibe en sitio ─── #}
+              <div class="col-12">
+                <label class="form-label small fw-semibold d-flex align-items-center justify-content-between">
+                  <span><i class="bi bi-person-vcard text-primary me-1"></i>Contacto en sitio (contraparte) *</span>
+                  <small class="text-muted" style="font-weight:400;font-size:.7rem">
+                    Persona que recibe al técnico
+                  </small>
+                </label>
+                <div class="d-flex gap-2 align-items-start">
+                  <select id="levContactoSel" class="form-select form-select-sm" style="flex:1"
+                          onchange="tkotContactoChange()">
+                    <option value="">— Cargando contactos… —</option>
+                  </select>
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          onclick="tkotToggleContactoManual()" title="Ingresar manualmente">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                </div>
+                <div id="levContactoBox" class="mt-2 p-2 rounded" style="background:#f8fafc;border:1px solid #e5e7eb;display:none">
+                  <div class="row g-2">
+                    <div class="col-md-7">
+                      <input type="text" id="levContactoNombre" class="form-control form-control-sm"
+                             placeholder="Nombre completo" maxlength="200">
+                    </div>
+                    <div class="col-md-5">
+                      <input type="text" id="levContactoCargo" class="form-control form-control-sm"
+                             placeholder="Cargo (opcional)" maxlength="120">
+                    </div>
+                    <div class="col-md-6">
+                      <input type="text" id="levContactoTel" class="form-control form-control-sm"
+                             placeholder="Teléfono" maxlength="50">
+                    </div>
+                    <div class="col-md-6">
+                      <input type="email" id="levContactoEmail" class="form-control form-control-sm"
+                             placeholder="Email (opcional)" maxlength="200">
+                    </div>
+                  </div>
+                  <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Este contacto queda registrado en la OT y el técnico lo verá al llegar.
+                  </small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 3: AGENDA (Programación + Calendario UNIFICADOS) ───
+           Antes esto eran dos tarjetas desconectadas ("Paso 3 Programación"
+           y "Paso 4 Calendario del mes"): el calendario solo informaba con
+           el title= nativo del navegador (el "globito" que Daniel odia) y
+           una lista de texto. Ahora es UNA sola superficie con dos vistas
+           sincronizadas:
+             · mini-calendario mensual  = control de entrada del DÍA
+               (clic en un día ⇒ setea #levFechaProg y dispara su onchange)
+             · línea de tiempo del día  = las OTs existentes se dibujan como
+               BLOQUES posicionados por hora real, y la OT que se está
+               creando se dibuja EN VIVO como un bloque propio que se
+               desliza al editar #levHoraIni/#levHoraFin.
+           REGLA #4.2 — NO se elimina ningún campo: #levFechaProg,
+           #levHoraIni, #levHoraFin, #levRangoDias, #levFechaFinWrap (con
+           sus 3 inputs), #levCalWarnChoque, #levCalTitulo, #levCalGrid
+           conservan sus IDs y siguen siendo la fuente de verdad que lee
+           tkotGenerar(). #levCalDetalle se conserva OCULTO como fallback.
+           Datos: el mismo caché _TKOT.cal.cache de
+           GET /mantenciones/api/calendario/mes/<anio>/<mes> — cero backend
+           nuevo. El choque sigue saliendo de tkotChequearChoque()
+           (/mantenciones/api/calendario/choque): alimenta a la vez el
+           banner explicativo y las clases .choque/.en-choque de los
+           bloques (la señal pre-verbal). ── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">3</div>
+            <div class="lev-step-title">Agenda</div>
+            <div class="lev-step-sub">Elige el día en el calendario y ajusta el horario</div>
+          </div>
+          <div class="lev-step-body">
+            <div id="levCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
+
+            {# Control fino: fecha + horario. El calendario manda para el DÍA. #}
+            <div class="tksched-inputs">
+              <div>
+                <label class="form-label small fw-semibold" for="levFechaProg">Fecha programada *</label>
+                <input type="date" id="levFechaProg" class="form-control form-control-sm" required
+                       onchange="tkotFechaProgChange()">
+              </div>
+              <div>
+                <label class="form-label small fw-semibold" for="levHoraIni">Hora inicio</label>
+                <input type="time" id="levHoraIni" class="form-control form-control-sm" value="09:00"
+                       oninput="tkotHoraInput()" onchange="tkotHoraInput()">
+              </div>
+              <div>
+                <label class="form-label small fw-semibold" for="levHoraFin">Hora término</label>
+                <input type="time" id="levHoraFin" class="form-control form-control-sm" value="13:00"
+                       oninput="tkotHoraInput()" onchange="tkotHoraInput()">
+              </div>
+            </div>
+            {# Chips de duración (2026-07-19): 1 tap para extender la OT a N
+               días. Solo escriben en los inputs que tkotGenerar() ya lee
+               (#levRangoDias/#levFechaFin/#levHoraIniFin/#levHoraFinFin) --
+               cero cambios de backend. Ver <script> más abajo, bloque junto
+               a tkotRangoChange (_levReanclarFin/levDurSet/levDurOtro/
+               levChipsRefresh, namespace _TKOT). Portado 1:1 desde
+               templates/mantenciones/ficha.html + static/mant_ficha.js
+               (allá con _LEV_MODAL en vez de _TKOT). #}
+            <div class="lev-dur-row" id="levDurChips" role="group" aria-label="Duración de la visita">
+              <span class="lev-dur-lbl">Duración:</span>
+              <button type="button" class="lev-dur-chip act" data-n="1" aria-pressed="true"  onclick="levDurSet(1)">1 día</button>
+              <button type="button" class="lev-dur-chip"     data-n="2" aria-pressed="false" onclick="levDurSet(2)">2 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="3" aria-pressed="false" onclick="levDurSet(3)">3 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="5" aria-pressed="false" onclick="levDurSet(5)">5 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="otro" aria-pressed="false" onclick="levDurOtro()">Otro…</button>
+              <span class="lev-dur-hasta" id="levDurHasta"></span>
+            </div>
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" id="levRangoDias"
+                     onchange="document.getElementById('levFechaFinWrap').style.display = this.checked ? '' : 'none'; tkotRangoChange();">
+              <label class="form-check-label small" for="levRangoDias">
+                ¿Se extenderá más de un día?
+              </label>
+            </div>
+            <div id="levFechaFinWrap" class="mt-3 p-3 rounded" style="display:none;background:#fef3c7;border:1px solid #fcd34d">
+              <div class="small fw-bold mb-2 text-warning-emphasis">
+                <i class="bi bi-calendar-range me-1"></i>Último día de la visita extendida
+              </div>
+              <div class="row g-2">
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="levFechaFin">Fecha término *</label>
+                  <input type="date" id="levFechaFin" class="form-control form-control-sm"
+                         oninput="tkotRangoChange()" onchange="tkotRangoChange()">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="levHoraIniFin">Hora inicio (último día)</label>
+                  <input type="time" id="levHoraIniFin" class="form-control form-control-sm" value="09:00"
+                         oninput="tkdayRenderMine()" onchange="tkdayRenderMine()">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small fw-semibold" for="levHoraFinFin">Hora término (último día)</label>
+                  <input type="time" id="levHoraFinFin" class="form-control form-control-sm" value="13:00"
+                         oninput="tkdayRenderMine()" onchange="tkdayRenderMine()">
+                </div>
+              </div>
+              <small class="text-muted d-block mt-2" style="font-size:.72rem">
+                <i class="bi bi-info-circle me-1"></i>
+                Para visitas multi-día. Si el técnico va a estar más de 1 día, indica fecha y horario del último día.
+              </small>
+            </div>
+
+            {# ── Las dos superficies sincronizadas ── #}
+            <div class="tksched">
+              {# Col A — mini-calendario del mes #}
+              <div class="tksched-col">
+                <div class="tkcal-toolbar">
+                  <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(-1)" aria-label="Mes anterior">
+                    <i class="bi bi-chevron-left"></i>
+                  </button>
+                  <div class="tkcal-titulo" id="levCalTitulo">—</div>
+                  <button type="button" class="tkcal-navbtn" onclick="tkotCalMes(1)" aria-label="Mes siguiente">
+                    <i class="bi bi-chevron-right"></i>
+                  </button>
+                  <button type="button" class="tkcal-hoy" onclick="tkotCalHoy()">Hoy</button>
+                </div>
+                <div class="tkcal-dow">
+                  <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+                </div>
+                <div class="tkcal-grid" id="levCalGrid">
+                  <div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div>
+                </div>
+                <div class="tkcal-leyenda">
+                  <span><i class="k" style="background:#dc2626"></i>Día seleccionado</span>
+                  <span><i class="k" style="background:#fff;border:1px solid #dc2626"></i>Hoy</span>
+                  <span><i class="k" style="background:#f8fafc;border:1px solid #e5e7eb"></i>Fin de semana</span>
+                </div>
+                {# Fallback conservado (REGLA #4.2): la lista textual del día
+                   sigue existiendo en el DOM; la info visible ahora vive en
+                   la línea de tiempo. #}
+                <div class="tkcal-detalle" id="levCalDetalle" style="display:none"></div>
+              </div>
+
+              {# Col B — línea de tiempo del día #}
+              <div class="tksched-col">
+                <div class="tkday-head">
+                  <span class="tkday-navd">
+                    <button type="button" id="levDayPrev" onclick="tkdayPaso(-1)" aria-label="Día anterior">
+                      <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <button type="button" id="levDayNext" onclick="tkdayPaso(1)" aria-label="Día siguiente">
+                      <i class="bi bi-chevron-right"></i>
+                    </button>
+                  </span>
+                  <span class="tkday-fecha" id="levDayFecha">—</span>
+                  <span class="tkday-cnt" id="levDayCnt" style="display:none"></span>
+                  <span class="tkday-chip-rango" id="levDayChipRango" style="display:none"></span>
+                  {# ── §4A "Sugerir próximo horario libre" (propuesta Fable): busca en el
+                     día mirado y, si está lleno, hasta 14 días hacia adelante — ver
+                     tkdaySugerirHueco()/_tkdayCalcularHueco() más abajo. Cero backend
+                     nuevo, solo lee _TKOT.cal.cache. #}
+                  <button type="button" id="levDaySugerirBtn" class="tkday-sugerir-btn"
+                          onclick="tkdaySugerirHueco()"
+                          title="Busca el próximo horario libre para los técnicos seleccionados">
+                    <i class="bi bi-stars" aria-hidden="true"></i>Sugerir horario
+                  </button>
+                  <span class="tkday-legend">
+                    <span><i class="k ag"></i>Agendada</span>
+                    <span><i class="k mine"></i>Tu OT</span>
+                  </span>
+                </div>
+                <div class="tkday-scroll" id="levDayScroll">
+                  <div class="tkday-inner" id="levDayInner">
+                    <div id="levDayGutter"></div>
+                    <div class="tkday-canvas" id="levDayCanvas">
+                      <div id="levDayRejilla"></div>
+                      <div id="levDayNow"></div>
+                      <div id="levDayBlks"></div>
+                      <div class="tkday-blk mine" id="levDayMine" style="display:none"></div>
+                      <div class="tkday-ghost" id="levDayGhost" style="display:none"></div>
+                    </div>
+                  </div>
+                </div>
+                <small class="text-muted d-block mt-2" style="font-size:.72rem">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Toca un espacio libre para fijar el horario de tu OT · toca un bloque para ver o
+                  gestionar esa OT (color por técnico). Tu OT aparece punteada en rojo y se mueve
+                  al cambiar el horario.
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 4: Técnicos asignados ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">4</div>
+            <div class="lev-step-title">Técnicos asignados *</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
+            </div>
+          </div>
+          <div class="lev-step-body">
+            <div id="levTecnicosBox" class="d-flex flex-wrap gap-2" style="min-height:42px">
+              <span class="text-muted small">Cargando técnicos…</span>
+            </div>
+            <small class="text-muted d-block mt-2" style="font-size:.74rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Puedes asignar varios técnicos. Cada uno verá la OT en su listado.
+            </small>
+          </div>
+        </div>
+
+        {# ─── Paso 5: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">5</div>
+            <div class="lev-step-title">Equipos y plantillas *</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
+            </div>
+          </div>
+          <div class="lev-step-body" style="padding:0">
+            <div style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;gap:8px;flex-wrap:wrap">
+              <small class="text-muted" style="font-size:.74rem">
+                <i class="bi bi-info-circle me-1"></i>
+                Equipos declarados en este ticket. Cada uno puede tener varias plantillas.
+              </small>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button class="btn btn-sm btn-outline-secondary" id="btnLevToggleTodos" onclick="tkotToggleTodos()">
+                  <i class="bi bi-check2-square me-1"></i>Marcar todos
+                </button>
+              </div>
+            </div>
+            <div class="table-responsive" style="max-height:38vh">
+              <table class="table table-sm mb-0 lev-table-eq">
+                <thead style="background:#f8fafc;position:sticky;top:0;z-index:1">
+                  <tr>
+                    <th style="width:40px"></th>
+                    <th>Equipo / SKU</th>
+                    <th style="width:200px">Plantillas extra</th>
+                  </tr>
+                </thead>
+                <tbody id="levSelectTbody"></tbody>
+              </table>
+            </div>
+            <div style="padding:8px 14px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:.72rem;color:#6b7280">
+              <i class="bi bi-lightbulb me-1 text-warning"></i>
+              <strong>Auto:</strong> el tipo seleccionado en el Paso 1 aplica su plantilla estándar.
+              Las plantillas extra agregan tareas adicionales.
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 6: Acceso y logística del sitio ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">6</div>
+            <div class="lev-step-title">Acceso y logística</div>
+            <div class="lev-step-sub">Info crítica para el técnico</div>
+          </div>
+          <div class="lev-step-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold d-block mb-2">
+                  <i class="bi bi-building text-primary me-1"></i>¿Tiene ascensor?
+                </label>
+                <div class="lev-yn-group" role="group" aria-label="¿Tiene ascensor?">
+                  <button type="button" class="lev-yn-btn yes" data-target="acceso_ascensor" data-val="1"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-check-lg me-1"></i>Sí
+                  </button>
+                  <button type="button" class="lev-yn-btn no" data-target="acceso_ascensor" data-val="0"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-x-lg me-1"></i>No
+                  </button>
+                </div>
+                <input type="hidden" id="acceso_ascensor" name="acceso_ascensor" value="">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold d-block mb-2">
+                  <i class="bi bi-p-square text-primary me-1"></i>¿Hay estacionamiento?
+                </label>
+                <div class="lev-yn-group" role="group" aria-label="¿Hay estacionamiento?">
+                  <button type="button" class="lev-yn-btn yes" data-target="acceso_estacionamiento" data-val="1"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-check-lg me-1"></i>Sí
+                  </button>
+                  <button type="button" class="lev-yn-btn no" data-target="acceso_estacionamiento" data-val="0"
+                          onclick="tkotSetAccesoYN(this)">
+                    <i class="bi bi-x-lg me-1"></i>No
+                  </button>
+                </div>
+                <input type="hidden" id="acceso_estacionamiento" name="acceso_estacionamiento" value="">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">
+                  <i class="bi bi-layers text-primary me-1"></i>Piso / nivel
+                </label>
+                <input type="text" id="acceso_piso" name="acceso_piso"
+                       class="form-control form-control-sm" maxlength="50"
+                       placeholder="Ej: piso 3, subterráneo 1">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">
+                  <i class="bi bi-journal-text text-primary me-1"></i>Notas adicionales de acceso
+                </label>
+                <textarea id="acceso_notas" name="acceso_notas"
+                          class="form-control form-control-sm" rows="2" maxlength="2000"
+                          placeholder="Ej: timbre 102, código del portón 1234, llamar al guardia 30 min antes, etc."></textarea>
+                <small class="text-muted d-block mt-1" style="font-size:.72rem">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Esta información llega completa al técnico para que esté preparado al llegar.
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# ─── Paso 7: Documentos y archivos preliminares ─── #}
+        <div class="lev-step-card">
+          <div class="lev-step-header">
+            <div class="lev-step-num">7</div>
+            <div class="lev-step-title">Documentos y archivos preliminares</div>
+            <div class="lev-step-sub">
+              <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
+            </div>
+          </div>
+          <div class="lev-step-body">
+            <input type="file" id="levAdjInput" multiple style="display:none"
+                   accept="image/*,application/pdf,video/*,audio/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                   onchange="tkotAdjFiles(this.files)">
+            <div class="lev-adj-zone" id="levAdjZone"
+                 onclick="document.getElementById('levAdjInput').click()"
+                 ondragover="event.preventDefault(); this.classList.add('dragover')"
+                 ondragleave="this.classList.remove('dragover')"
+                 ondrop="event.preventDefault(); this.classList.remove('dragover'); tkotAdjFiles(event.dataTransfer.files)">
+              <div style="font-size:1.9rem;color:#94a3b8;margin-bottom:.4rem">
+                <i class="bi bi-cloud-arrow-up-fill"></i>
+              </div>
+              <div class="fw-semibold" style="color:#475569;font-size:.92rem">
+                Toca o arrastra para subir
+              </div>
+              <div class="text-muted" style="font-size:.74rem">
+                PDFs, fotos, videos, audios o cualquier archivo (máx 100 MB)
+              </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <label class="lev-adj-pill-input" style="background:#fee2e2;border-color:#fca5a5;color:#dc2626">
+                <i class="bi bi-file-earmark-pdf-fill"></i> PDF
+                <input type="file" accept="application/pdf" multiple style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+                <i class="bi bi-camera-fill"></i> Foto (cámara)
+                <input type="file" accept="image/*" capture="environment" style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
+                <i class="bi bi-images"></i> Galería
+                <input type="file" accept="image/*" multiple style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#dbeafe;border-color:#93c5fd;color:#1e40af">
+                <i class="bi bi-camera-video-fill"></i> Video
+                <input type="file" accept="video/*" capture="environment" style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#f3e8ff;border-color:#d8b4fe;color:#7c3aed">
+                <i class="bi bi-mic-fill"></i> Audio
+                <input type="file" accept="audio/*" capture style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+              <label class="lev-adj-pill-input" style="background:#fef3c7;border-color:#fcd34d;color:#a16207">
+                <i class="bi bi-file-earmark-text-fill"></i> Documento
+                <input type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt" multiple style="display:none"
+                       onchange="tkotAdjFiles(this.files); this.value='';">
+              </label>
+            </div>
+
+            <div id="levAdjList" class="mt-2"></div>
+            <small class="text-muted d-block mt-2" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Los archivos se suben automáticamente DESPUÉS de crear la OT.
+              El técnico podrá verlos como información — no podrá modificarlos.
+            </small>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer" style="background:#fff;border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg me-1"></i>Cancelar
+        </button>
+        <button type="button" class="btn fw-bold text-white" id="btnLevIniciar"
+                style="background:linear-gradient(135deg,#7c2d12,#dc2626);padding:.55rem 1.4rem"
+                onclick="tkotGenerar()">
+          <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

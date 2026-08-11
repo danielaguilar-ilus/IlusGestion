@@ -55,6 +55,49 @@
   .tipo-lista       {background:#ede9fe;color:#5b21b6}
   .tipo-fecha_hora  {background:#fef9c3;color:#854d0e}
   .tipo-foto        {background:#fee2e2;color:#991b1b}
+
+  /* ── Editor de plantilla: pasos numerados (mismo grammar que
+     _repuestos_bodega_pane.html .rb-step*, prefijo propio .pl-step* —
+     Daniel 2026-08-10, Tarea 3: "hoy la encuentra confusa y redundante"). ── */
+  .pl-step{margin:0 0 14px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;
+           position:relative;overflow:visible;transition:border-color .2s,background .3s,box-shadow .2s}
+  .pl-step::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:12px 0 0 12px;
+                   background:linear-gradient(180deg,#dc2626,#a60000);opacity:0;transform:scaleY(.4);
+                   transform-origin:top;transition:opacity .3s,transform .35s cubic-bezier(.22,1,.36,1)}
+  .pl-step:hover{border-color:#cbd5e1}
+  .pl-step:hover::before{opacity:.5;transform:scaleY(1)}
+  .pl-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+  .pl-step.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d);opacity:1;transform:scaleY(1)}
+  .pl-step.is-optional{background:#fafafa;border-style:dashed;border-color:#d1d5db}
+  .pl-step.is-optional::before{display:none}
+  .pl-step-header{display:flex;align-items:center;gap:10px;padding:10px 14px;
+                  background:linear-gradient(135deg,#fff,#fafafa);border-bottom:1px solid #f1f5f9;
+                  border-radius:12px 12px 0 0}
+  .pl-step.is-complete .pl-step-header{background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border-bottom-color:#dcfce7}
+  .pl-step.is-optional .pl-step-header{background:linear-gradient(135deg,#fafafa,#f4f4f5)}
+  .pl-step-circle{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#dc2626,#991b1b);
+                  color:#fff;display:flex;align-items:center;justify-content:center;font-size:.82rem;
+                  font-weight:700;flex-shrink:0;transition:background .3s,transform .35s cubic-bezier(.34,1.56,.64,1)}
+  .pl-step.is-complete .pl-step-circle{background:linear-gradient(135deg,#22c55e,#15803d);transform:scale(1.08)}
+  .pl-step-circle .pl-step-check{display:none;font-size:.82rem;line-height:1}
+  .pl-step.is-complete .pl-step-circle .pl-step-num{display:none}
+  .pl-step.is-complete .pl-step-circle .pl-step-check{display:block}
+  .pl-step-title{font-weight:700;font-size:.92rem;color:#0f172a;min-width:0}
+  .pl-step.is-optional .pl-step-title{color:#374151}
+  .pl-step-sub{font-size:.73rem;color:#94a3b8;margin-left:auto;text-align:right;flex-shrink:0;padding-left:10px}
+  @media (max-width:575.98px){ .pl-step-sub{display:none} }
+  .pl-step-body{padding:14px}
+  .pl-req{color:#dc2626;font-weight:800}
+  .pl-cat-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+  .pl-cat-card{border:2px solid #e5e7eb;border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;
+              min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+              transition:border-color .15s,background .15s}
+  .pl-cat-card:hover{border-color:#cbd5e1;background:#f9fafb}
+  .pl-cat-card.active{border-color:#dc2626;background:#fee2e2}
+  .pl-cat-card i{font-size:1.1rem;color:#6b7280}
+  .pl-cat-card.active i{color:#dc2626}
+  .pl-cat-card span{font-size:.78rem;font-weight:700;color:#374151}
+  .pl-cat-card.active span{color:#991b1b}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -145,84 +188,132 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div class="row g-2 mb-3">
-          <div class="col-12 col-md-6">
-            <label class="form-label small fw-semibold">Nombre <span class="text-danger">*</span></label>
-            <input type="text" id="ePNombre" class="form-control form-control-sm"
-                   placeholder="Ej: Mantención preventiva trotadora">
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label small fw-semibold">Tipo de visita</label>
-            <select id="ePTipo" class="form-select form-select-sm">
-              <option value="preventiva">Preventiva</option>
-              <option value="correctiva">Correctiva</option>
-              <option value="garantia">Garantía</option>
-              <option value="levantamiento">Levantamiento</option>
-              <option value="inspeccion">Inspección</option>
-              <option value="instalacion">Instalación</option>
-              <option value="otro">Otro</option>
-            </select>
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label small fw-semibold">Tiempo estimado (min)</label>
-            <input type="number" id="ePTiempo" class="form-control form-control-sm" min="0">
-          </div>
-          {# 2026-08-08 (Daniel: "tambien el tipo de trabajo"): estos 2 campos
-             existian en la BD y en los filtros de arriba, pero el editor NO los
-             exponia -> toda plantilla creada por UI quedaba en 'otro'/'todas' y
-             no se podia filtrar por tipo de trabajo. #}
-          <div class="col-12 col-md-6">
-            <label class="form-label small fw-semibold">Tipo de trabajo</label>
-            <select id="ePFamiliaChecklist" class="form-select form-select-sm">
-              <option value="otro">— Sin clasificar —</option>
-              <option value="instalacion">📦 Instalación</option>
-              <option value="preventiva">🔧 Mant. preventiva</option>
-              <option value="correctivo">🔨 Correctivo</option>
-              <option value="desinstalacion">📤 Desinstalación</option>
-              <option value="capacitacion">🎓 Capacitación</option>
-              <option value="registro_productos">📋 Registro productos</option>
-              <option value="operacional_interno">⚙ Operacional interno</option>
-              <option value="rendiciones">💰 Rendiciones</option>
-              <option value="control_calidad">🔎 Control de calidad</option>
-            </select>
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label small fw-semibold">Aplica a máquinas</label>
-            <select id="ePFamiliaActivo" class="form-select form-select-sm">
-              <option value="todas">Aplica a todas</option>
-              <option value="cardio">Cardio</option>
-              <option value="selectorizado">Selectorizado</option>
-              <option value="carga_libre">Carga libre</option>
-              <option value="racks_estructuras">Racks y estructuras</option>
-              <option value="bancos">Bancos</option>
-              <option value="accesorios">Accesorios</option>
-              <option value="bicicletas">Bicicletas</option>
-              <option value="trotadoras">Trotadoras</option>
-              <option value="otros">Otros</option>
-            </select>
-          </div>
-          <div class="col-12">
-            <label class="form-label small fw-semibold">Descripción</label>
-            <textarea id="ePDesc" rows="2" class="form-control form-control-sm"
-                      placeholder="Para qué sirve esta plantilla, cuándo usarla…"></textarea>
-          </div>
-        </div>
 
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <div>
-            <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-card-list me-1"></i>Items del checklist</span>
-            <span class="badge bg-secondary ms-1" id="itCount">0</span>
+        {# ═══ PASO 1 — Info básica (nombre + categoría + clasificación) ═══ #}
+        <section class="pl-step" id="plStep1">
+          <div class="pl-step-header">
+            <div class="pl-step-circle"><span class="pl-step-num">1</span><span class="pl-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="pl-step-title">Info básica</div>
+            <div class="pl-step-sub">Cómo se llama y dónde vive</div>
           </div>
-          <button class="btn btn-sm btn-outline-primary" onclick="agregarItem()">
-            <i class="bi bi-plus-circle me-1"></i>Agregar item
-          </button>
-        </div>
+          <div class="pl-step-body">
+            <div class="row g-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Nombre <span class="pl-req">*</span></label>
+                <input type="text" id="ePNombre" class="form-control form-control-sm"
+                       placeholder="Ej: Mantención preventiva trotadora" oninput="refrescarPasos()">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Tipo de visita</label>
+                <select id="ePTipo" class="form-select form-select-sm">
+                  <option value="preventiva">Preventiva</option>
+                  <option value="correctiva">Correctiva</option>
+                  <option value="garantia">Garantía</option>
+                  <option value="levantamiento">Levantamiento</option>
+                  <option value="inspeccion">Inspección</option>
+                  <option value="instalacion">Instalación</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Tiempo estimado (min)</label>
+                <input type="number" id="ePTiempo" class="form-control form-control-sm" min="0">
+              </div>
 
-        <div id="itemsContainer">
-          <div class="text-muted text-center py-4 small">
-            Aún no hay items. Agrega el primero arriba.
+              {# Tarea 1/3 (2026-08-10): categoria_admin — la PESTAÑA donde vive
+                 la plantilla en /mantenciones/plantillas. Asignación MANUAL,
+                 el admin la puede reasignar cuando quiera; no es un cálculo
+                 automático fijo por tipo. #}
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Categoría (pestaña) <span class="pl-req">*</span></label>
+                <input type="hidden" id="ePCategoriaAdmin" value="">
+                <div class="pl-cat-cards" id="ePCategoriaCards"></div>
+                <div class="small text-muted mt-1">Define en qué pestaña de la pantalla de Plantillas aparece esta plantilla.</div>
+              </div>
+
+              {# 2026-08-08 (Daniel: "tambien el tipo de trabajo"): estos 2 campos
+                 existian en la BD y en los filtros de arriba, pero el editor NO los
+                 exponia -> toda plantilla creada por UI quedaba en 'otro'/'todas' y
+                 no se podia filtrar por tipo de trabajo. #}
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Tipo de trabajo (familia)</label>
+                <select id="ePFamiliaChecklist" class="form-select form-select-sm">
+                  <option value="otro">— Sin clasificar —</option>
+                  <option value="instalacion">📦 Instalación</option>
+                  <option value="preventiva">🔧 Mant. preventiva</option>
+                  <option value="correctivo">🔨 Correctivo</option>
+                  <option value="desinstalacion">📤 Desinstalación</option>
+                  <option value="capacitacion">🎓 Capacitación</option>
+                  <option value="registro_productos">📋 Registro productos</option>
+                  <option value="operacional_interno">⚙ Operacional interno</option>
+                  <option value="rendiciones">💰 Rendiciones</option>
+                  <option value="control_calidad">🔎 Control de calidad</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small fw-semibold">Aplica a máquinas</label>
+                <select id="ePFamiliaActivo" class="form-select form-select-sm">
+                  <option value="todas">Aplica a todas</option>
+                  <option value="cardio">Cardio</option>
+                  <option value="selectorizado">Selectorizado</option>
+                  <option value="carga_libre">Carga libre</option>
+                  <option value="racks_estructuras">Racks y estructuras</option>
+                  <option value="bancos">Bancos</option>
+                  <option value="accesorios">Accesorios</option>
+                  <option value="bicicletas">Bicicletas</option>
+                  <option value="trotadoras">Trotadoras</option>
+                  <option value="otros">Otros</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Descripción</label>
+                <textarea id="ePDesc" rows="2" class="form-control form-control-sm"
+                          placeholder="Para qué sirve esta plantilla, cuándo usarla…"></textarea>
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
+
+        {# ═══ PASO 2 — Items del checklist ═══ #}
+        <section class="pl-step" id="plStep2">
+          <div class="pl-step-header">
+            <div class="pl-step-circle"><span class="pl-step-num">2</span><span class="pl-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="pl-step-title">Items del checklist <span class="badge bg-secondary ms-1" id="itCount">0</span></div>
+            <div class="pl-step-sub">Qué debe revisar/registrar el técnico</div>
+          </div>
+          <div class="pl-step-body">
+            <div class="d-flex justify-content-end mb-2">
+              <button class="btn btn-sm btn-outline-primary" onclick="agregarItem()">
+                <i class="bi bi-plus-circle me-1"></i>Agregar item
+              </button>
+            </div>
+            <div id="itemsContainer">
+              <div class="text-muted text-center py-4 small">
+                Aún no hay items. Agrega el primero arriba.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ═══ PASO 3 — Configuración ═══ #}
+        <section class="pl-step is-optional" id="plStep3">
+          <div class="pl-step-header">
+            <div class="pl-step-circle" style="background:linear-gradient(135deg,#9ca3af,#6b7280)"><span class="pl-step-num">3</span><span class="pl-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="pl-step-title">Configuración <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></div>
+            <div class="pl-step-sub">Disponibilidad de la plantilla</div>
+          </div>
+          <div class="pl-step-body">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="ePActiva" checked>
+              <label class="form-check-label small" for="ePActiva">
+                Plantilla activa (disponible para aplicar a nuevas OTs)
+              </label>
+            </div>
+            <div class="small text-muted mt-2" id="ePEsSistemaNota" style="display:none">
+              <i class="bi bi-shield-lock me-1"></i>Plantilla del sistema: no se puede borrar, solo desactivar.
+            </div>
+          </div>
+        </section>
       </div>
       <div class="modal-footer d-flex justify-content-between">
         <div>
@@ -274,25 +365,30 @@ const TIPOS_VISITA_LABEL = {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// SEGMENTACION POR PESTAÑAS (Daniel 2026-08-08: "segmentarlas por
-// Instalacion, Mantencion, Visitas, Control Interno").
-// UNICA FUENTE DE VERDAD del agrupamiento familia_checklist -> pestaña.
-// Si mañana se agrega una familia nueva, se agrega SOLO aca.
+// SEGMENTACION POR PESTAÑAS (Daniel 2026-08-10, Tarea 2): 4 pestañas fijas
+// -- Instalación, Mantención, Visitas, Trabajo interno -- por la categoría
+// MANUAL `categoria_admin` de cada plantilla (asignada al crear/editar,
+// reasignable en cualquier momento — NO es un cálculo automático).
+// UNICA FUENTE DE VERDAD del agrupamiento categoria_admin -> pestaña.
+// Reemplaza el agrupamiento anterior por `familia_checklist` (Daniel
+// 2026-08-08), que quedó como filtro aparte ("Tipo de trabajo") pero ya
+// no decide la pestaña.
 // ═══════════════════════════════════════════════════════════════════
-const GRUPOS_PLANTILLA = [
-  {key:'todas',           label:'Todas',           icon:'bi-grid-3x3-gap-fill', familias:null},
-  {key:'instalacion',     label:'Instalación',     icon:'bi-box-seam',
-   familias:['instalacion','desinstalacion']},
-  {key:'mantencion',      label:'Mantención',      icon:'bi-wrench-adjustable',
-   familias:['preventiva','correctivo']},
-  {key:'visitas',         label:'Visitas',         icon:'bi-person-check',
-   familias:['capacitacion','registro_productos']},
-  {key:'control_interno', label:'Control Interno', icon:'bi-clipboard-check',
-   familias:['operacional_interno','control_calidad','rendiciones','otro']},
+const PL_CATEGORIAS = [
+  {key:'instalacion',     label:'Instalación',     icon:'bi-box-seam'},
+  {key:'mantencion',      label:'Mantención',      icon:'bi-wrench-adjustable'},
+  {key:'visitas',         label:'Visitas',         icon:'bi-person-check'},
+  {key:'trabajo_interno', label:'Trabajo interno', icon:'bi-clipboard-check'},
 ];
-// Familia desconocida / vacia cae en Control Interno (ahi vive 'otro'),
-// asi ninguna plantilla queda invisible en las pestañas (REGLA #4.2).
-const GRUPO_FALLBACK = 'control_interno';
+const GRUPOS_PLANTILLA = [
+  {key:'todas', label:'Todas', icon:'bi-grid-3x3-gap-fill', cats:null},
+  ...PL_CATEGORIAS.map(c => ({key:c.key, label:c.label, icon:c.icon, cats:[c.key]})),
+  // Plantillas sin categoria_admin asignada (decisión Tarea 2.2: 5ta pestaña
+  // "Sin categoría" en vez de esconderlas u obligarlas a "adivinar" una
+  // pestaña — así ninguna plantilla queda invisible, REGLA #4.2).
+  {key:'sin_categoria', label:'Sin categoría', icon:'bi-question-circle', cats:['']},
+];
+const GRUPO_FALLBACK = 'sin_categoria';
 let _tabActiva = 'todas';
 
 let _plantillas = [];
@@ -347,8 +443,8 @@ async function cargarPlantillas(){
 
 // ── Pestañas ────────────────────────────────────────────────────────
 function grupoDePlantilla(p){
-  const fam = String((p && p.familia_checklist) || 'otro').trim().toLowerCase();
-  const g = GRUPOS_PLANTILLA.find(x => x.familias && x.familias.indexOf(fam) !== -1);
+  const cat = String((p && p.categoria_admin) || '').trim().toLowerCase();
+  const g = GRUPOS_PLANTILLA.find(x => x.cats && x.cats.indexOf(cat) !== -1);
   return g ? g.key : GRUPO_FALLBACK;
 }
 
@@ -428,6 +524,26 @@ function renderPlantillas(){
   `).join('');
 }
 
+// ── Paso 1: tarjetas de categoría (categoria_admin) ─────────────────
+function renderCategoriaCards(seleccionada){
+  const cont = document.getElementById('ePCategoriaCards');
+  if (!cont) return;
+  cont.innerHTML = PL_CATEGORIAS.map(c => `
+    <div class="pl-cat-card${c.key===seleccionada?' active':''}" data-cat="${c.key}"
+         onclick="seleccionarCategoriaAdmin('${c.key}')" role="button" tabindex="0">
+      <i class="bi ${c.icon}"></i><span>${escHtml(c.label)}</span>
+    </div>
+  `).join('');
+}
+
+function seleccionarCategoriaAdmin(key){
+  document.getElementById('ePCategoriaAdmin').value = key;
+  document.querySelectorAll('#ePCategoriaCards .pl-cat-card').forEach(el => {
+    el.classList.toggle('active', el.dataset.cat === key);
+  });
+  refrescarPasos();
+}
+
 function abrirEditor(pid){
   _editId = pid || null;
   _items = [];
@@ -439,11 +555,16 @@ function abrirEditor(pid){
   document.getElementById('ePTiempo').value = '';
   document.getElementById('ePFamiliaChecklist').value = 'otro';
   document.getElementById('ePFamiliaActivo').value = 'todas';
+  document.getElementById('ePActiva').checked = true;
+  document.getElementById('ePEsSistemaNota').style.display = 'none';
+  renderCategoriaCards('');
   renderItems();
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
   _modal.show();
   if (pid){
     cargarDetalle(pid);
+  } else {
+    refrescarPasos();
   }
 }
 
@@ -459,9 +580,29 @@ async function cargarDetalle(pid){
     document.getElementById('ePTiempo').value = p.tiempo_estimado_min || '';
     document.getElementById('ePFamiliaChecklist').value = p.familia_checklist || 'otro';
     document.getElementById('ePFamiliaActivo').value = p.familia_activo || 'todas';
+    document.getElementById('ePActiva').checked = p.activa !== false;
+    document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
+    renderCategoriaCards(p.categoria_admin || '');
     _items = (d.items || []).map(it => ({...it}));
     renderItems();
+    refrescarPasos();
   } catch(e){ alert('Error: '+e.message); }
+}
+
+// ── Checklist rojo/verde del propio editor (mismo patrón que
+// RB_STEP_RULES de Repuestos, ver _repuestos_bodega_pane.html): cada
+// pl-step se pinta verde cuando su regla de "completo" se cumple. Paso 3
+// (Configuración) es opcional, nunca se marca completo por diseño.
+const PL_STEP_RULES = {
+  1: () => document.getElementById('ePNombre').value.trim().length > 0 &&
+           !!document.getElementById('ePCategoriaAdmin').value,
+  2: () => _items.length > 0,
+};
+function refrescarPasos(){
+  Object.keys(PL_STEP_RULES).forEach(function(n){
+    const sec = document.getElementById('plStep' + n);
+    if (sec) sec.classList.toggle('is-complete', !!PL_STEP_RULES[n]());
+  });
 }
 
 function agregarItem(){
@@ -519,6 +660,7 @@ function renderItems(){
   document.getElementById('itCount').textContent = _items.length;
   if (!_items.length){
     cont.innerHTML = '<div class="text-muted text-center py-4 small">Aún no hay items. Agrega el primero con el botón "Agregar item".</div>';
+    refrescarPasos();
     return;
   }
   cont.innerHTML = _items.map((it, idx) => {
@@ -603,6 +745,7 @@ function renderItems(){
         </div>
       </div>`;
   }).join('');
+  refrescarPasos();
 }
 
 async function guardarPlantilla(){
@@ -610,6 +753,17 @@ async function guardarPlantilla(){
   if (!nombre){
     await ilusAlert({ title:'Falta nombre', message:'Debes ingresar un nombre para la plantilla.', type:'warning' });
     return;
+  }
+  const categoriaAdmin = document.getElementById('ePCategoriaAdmin').value;
+  if (!categoriaAdmin){
+    const ok = await ilusConfirm({
+      title: 'Sin categoría',
+      message: 'No elegiste una categoría (pestaña) para esta plantilla.',
+      sub: 'Quedará en "Sin categoría" hasta que la asignes. ¿Guardar igual?',
+      okLabel: 'Guardar sin categoría', cancelLabel: 'Volver a editar',
+      type: 'warning',
+    });
+    if (!ok) return;
   }
   if (!_items.length){
     const ok = await ilusConfirm({
@@ -638,7 +792,8 @@ async function guardarPlantilla(){
     tiempo_estimado_min: parseInt(document.getElementById('ePTiempo').value) || null,
     familia_checklist: document.getElementById('ePFamiliaChecklist').value,
     familia_activo: document.getElementById('ePFamiliaActivo').value,
-    activa: true,
+    categoria_admin: categoriaAdmin || null,
+    activa: document.getElementById('ePActiva').checked,
     items: _items.map((it, idx) => ({
       orden: idx + 1,
       titulo: it.titulo.trim(),

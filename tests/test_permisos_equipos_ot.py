@@ -107,7 +107,30 @@ for ruta, metodo, porque in SENSIBLES:
 # ══════════════════════════════════════════════════════════════════
 # 2. `_no_tecnico` usa la FAMILIA de rol, no el string exacto
 # ══════════════════════════════════════════════════════════════════
+# FIX 2026-08-10: la comparacion se extrajo a _es_rol_tecnico() (helper
+# reusable) porque _no_tecnico es un DECORADOR (solo protege su propia
+# vista) y aparecio un segundo lugar -- _mant_visita_crear_core -- que
+# necesitaba el MISMO chequeo pero no es una vista Flask (lo llaman DOS
+# endpoints, solo uno de los cuales llevaba @_no_tecnico). En vez de
+# reimplementar la comparacion ahi tambien (duplicando la regla), ambos
+# puntos llaman a _es_rol_tecnico(), que es ahora la UNICA fuente de
+# verdad. El test verifica el mismo comportamiento en su nueva forma:
+# _no_tecnico DELEGA en el helper, y el helper (no _no_tecnico
+# directamente) es quien usa _rol_familia().
 print("\n2. _no_tecnico compara por familia de rol (cubre tecnico_externo)")
+
+i_helper = next((i for i, l in enumerate(LINEAS) if l.startswith("def _es_rol_tecnico")), None)
+check(i_helper is not None, "se encuentra def _es_rol_tecnico en app.py")
+
+cuerpo_helper = ""
+if i_helper is not None:
+    for l in LINEAS[i_helper:i_helper + 30]:
+        cuerpo_helper += l
+        if l.startswith("def ") and not l.startswith("def _es_rol_tecnico"):
+            break
+
+check('_rol_familia(role) == "tecnico"' in cuerpo_helper,
+      "_es_rol_tecnico() usa _rol_familia(role) == 'tecnico' (no la comparacion exacta antigua)")
 
 i_ini = next((i for i, l in enumerate(LINEAS) if l.startswith("def _no_tecnico")), None)
 check(i_ini is not None, "se encuentra def _no_tecnico en app.py")
@@ -119,10 +142,29 @@ if i_ini is not None:
         if l.startswith("def ") and not l.startswith("def _no_tecnico"):
             break
 
-check('_rol_familia(role) == "tecnico"' in cuerpo_no_tec,
-      "usa _rol_familia(role) == 'tecnico' (no la comparacion exacta antigua)")
+check('_es_rol_tecnico()' in cuerpo_no_tec,
+      "_no_tecnico delega en _es_rol_tecnico() (una sola fuente de verdad)")
 check('if role == "tecnico":' not in cuerpo_no_tec,
       "ya NO queda la comparacion exacta `role == \"tecnico\"` que dejaba pasar a tecnico_externo")
+
+# El mismo chequeo debe protegerse tambien en el CORE compartido de
+# creacion de OT -- ver contexto arriba: dos endpoints (uno CON
+# @_no_tecnico, otro SIN) llaman a _mant_visita_crear_core, asi que la
+# regla tiene que vivir dentro del core, no solo en el decorador de una
+# de las dos rutas.
+i_core = next((i for i, l in enumerate(LINEAS) if l.startswith("def _mant_visita_crear_core")), None)
+check(i_core is not None, "se encuentra def _mant_visita_crear_core en app.py")
+
+cuerpo_core = ""
+if i_core is not None:
+    for l in LINEAS[i_core:i_core + 40]:
+        cuerpo_core += l
+        if l.startswith("def ") and not l.startswith("def _mant_visita_crear_core"):
+            break
+
+check('_es_rol_tecnico()' in cuerpo_core,
+      "_mant_visita_crear_core tambien valida _es_rol_tecnico() antes de permitir "
+      "cliente_id vacio (Trabajo de bodega) -- cierra el hueco del endpoint sin @_no_tecnico")
 
 
 # ══════════════════════════════════════════════════════════════════

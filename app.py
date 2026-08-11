@@ -47042,6 +47042,29 @@ def _mant_required(view):
     return login_required(wrapped)
 
 
+def _es_rol_tecnico(user=None):
+    """True si `user` (o g.user si no se pasa) pertenece a la familia de rol
+    'tecnico' — normaliza 'tecnico_externo'/'tecnico_jr'/cualquier variante
+    vía _rol_familia(), igual que el resto del backend.
+
+    ÚNICA fuente de verdad para "¿es técnico?" fuera de un contexto de OT
+    específica (para eso está _puede_ot_accion). Usada por el decorador
+    @_no_tecnico Y por cualquier función núcleo que necesite el mismo
+    chequeo pero NO es una vista Flask (ej. _mant_visita_crear_core, que
+    se invoca desde dos endpoints distintos y solo uno de ellos llevaba
+    @_no_tecnico — FIX 2026-08-10). Un solo lugar define la regla; el
+    decorador y las funciones núcleo la reusan en vez de reimplementarla
+    cada uno a su manera.
+    """
+    try:
+        if user is None:
+            user = getattr(g, "user", None)
+        role = (user["role"] if user else "") or ""
+    except Exception:
+        role = ""
+    return _rol_familia(role) == "tecnico"
+
+
 def _no_tecnico(view):
     """Decorador: bloquea el acceso a usuarios con role='tecnico'.
 
@@ -47055,19 +47078,13 @@ def _no_tecnico(view):
     """
     @wraps(view)
     def wrapped(*args, **kwargs):
-        try:
-            u = getattr(g, "user", None)
-            role = (u["role"] if u else "") or ""
-        except Exception:
-            role = ""
         # ENDURECIDO 2026-08-09 (auditoría de permisos de equipos/OT):
         # antes esto comparaba `role == "tecnico"` EXACTO, así que un rol
         # 'tecnico_externo' (o 'tecnico_jr', o cualquier variante creada por
         # el admin) NO quedaba bloqueado y entraba a endpoints pensados solo
-        # para roles gestores. Se pasa a la familia de rol, que es el
-        # comparador que ya usa el resto del backend (_rol_familia) y que
-        # normaliza todas esas variantes a 'tecnico'.
-        if _rol_familia(role) == "tecnico":
+        # para roles gestores. _es_rol_tecnico() ya normaliza vía
+        # _rol_familia(), el comparador que usa el resto del backend.
+        if _es_rol_tecnico():
             is_ajax = (
                 request.headers.get("X-Wizard") == "1"
                 or request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -47829,11 +47846,17 @@ def _ot_can_metadata(view_func):
     """Decorador para PUT de visita (editar título, fecha, técnico, tipo,
     estado, etc.).
 
-    🔒 FIX 2026-05-22 (Daniel — brecha Aaron):
-    Solo superadmin + admin pasan. Ejecutivo creador YA NO puede editar
-    (antes podía y modificaba OTs que él mismo levantó: cambiaba técnico,
-    movía fecha, etc.). Daniel: "el ejecutivo solo levanta — si necesita
-    corregir algo, lo pide al admin".
+    🔒 FIX 2026-05-22 (Daniel — brecha Aaron): el ejecutivo creador YA NO
+    puede editar SIN restricción (antes podía modificar cualquier OT que él
+    mismo hubiera levantado: cambiaba técnico, movía fecha, etc.).
+
+    ⚠️ CORREGIDO 2026-08-10 — este comentario decía "solo superadmin + admin
+    pasan", pero el chequeo real (`_puede_ot_accion(vid, 'metadata', user)`,
+    ver matriz de permisos en su docstring) permite la familia completa
+    superadmin/admin/supervisor/ejecutivo — NUNCA técnico. Daniel confirmó
+    2026-08-10 que supervisor y ejecutivo SÍ deben poder editar metadata
+    (ej. corregir garantía retroactiva); el texto viejo solo estaba
+    desactualizado, no hace falta agregar un chequeo de rol nuevo.
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
@@ -49138,6 +49161,31 @@ def init_mantenciones_tables():
                 "  'desinstalacion','capacitacion','repuesto','revision_interna',"
                 "  'inspeccion','garantia'"
                 ") DEFAULT 'preventiva'",
+                # 2026-08-10 (Daniel) — Tipo de OT nuevo: 'control_calidad'
+                # (revisión de productos por evento, en bodega). MODIFY (no ADD)
+                # porque el ENUM YA EXISTE en prod desde el ALTER de arriba —
+                # mismo gotcha histórico "ENUM angosto (1265)" que obligó al
+                # MODIFY de mant_tarea_plantillas.familia_checklist: sin esto,
+                # cualquier OT creada con tipo_ot='control_calidad' truncaría a
+                # '' y mant_visitas.tipo la guardaría con el DEFAULT
+                # ('preventiva'), o el INSERT fallaría según sql_mode. Idempotente:
+                # ejecutar el mismo MODIFY en cada arranque no rompe nada.
+                "ALTER TABLE mant_visitas MODIFY tipo ENUM("
+                "  'levantamiento','instalacion','preventiva','correctiva',"
+                "  'visita_tecnica','visita_correctiva','cambio_equipo',"
+                "  'desinstalacion','capacitacion','repuesto','revision_interna',"
+                "  'inspeccion','garantia','control_calidad'"
+                ") DEFAULT 'preventiva'",
+                # 2026-08-10 (Daniel) — "Trabajo de bodega" (tipo='revision_interna')
+                # debe poder crearse SIN cliente asociado: es 100% interno, igual
+                # que en Tickets. cliente_id era NOT NULL desde el CREATE TABLE
+                # original (línea ~48094) — lo volvemos nullable. La FK
+                # (ON DELETE CASCADE) sigue funcionando igual para las OTs CON
+                # cliente: una FK normal no exige valor, solo lo valida si viene.
+                # Ver mant_visita_crear (acepta cliente_id=None solo para
+                # tipo='revision_interna') y el endpoint
+                # POST /mantenciones/api/visitas/interna.
+                "ALTER TABLE mant_visitas MODIFY COLUMN cliente_id INT NULL",
                 # Modalidad de cobro — NUEVO. Define la condición comercial de la OT:
                 #   pagado     → cliente paga la visita+repuestos
                 #   garantia   → cobertura comercial / fabricante (sin cargo al cliente)
@@ -49671,6 +49719,12 @@ def init_mantenciones_tables():
                 "COMMENT 'Familia del modelo Fracttal (las 8 del flujo ILUS).'",
                 "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_fam_act (familia_activo)",
                 "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_fam_chk (familia_checklist)",
+                # 2026-08-10 (Tarea 1): categoría manual del admin (pestaña).
+                # Ver _ensure_categoria_admin_plantillas() — se garantiza también
+                # fuera de este bloque porque prod corre con ILUS_SKIP_MIGRATIONS=1.
+                "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
+                "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL",
+                "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)",
             ]:
                 try: cur.execute(_mig_plant)
                 except Exception: pass
@@ -65042,6 +65096,179 @@ def mant_visita_firmar(vid):
 # Requiere: las 3 firmas (cliente, técnico, supervisor) presentes.
 # ══════════════════════════════════════════════════════════════════════
 
+def _ot_levantamiento_de(visita_o_vid):
+    """Resuelve el levantamiento_id de una OT mirando SIEMPRE ambos sentidos
+    del vínculo (mant_visitas.levantamiento_id ↔ mant_levantamientos.visita_id).
+
+    Acepta un dict de visita (con 'id' y opcionalmente 'levantamiento_id') o
+    directamente un vid (int). SOLO LECTURA — nunca escribe en la BD.
+
+    FIX 2026-08-10 (OT-2026-00042): el enlace queda a veces poblado en un
+    solo sentido (dato legacy / desincronización histórica). Varios call
+    sites del módulo miraban solo el campo forward (`v.get("levantamiento_id")`)
+    y por eso no encontraban levantamientos que sí existían por el lado
+    reverse — esta función centraliza el patrón bidireccional que ya usaban
+    _ot_validar_cierre R5 y el gate de firma técnica (`WHERE lv.visita_id=%s
+    OR lv.id=%s`).
+
+    Ojo: si el dict recibido no trae la columna `levantamiento_id` en su
+    SELECT original (algunos callers hacen SELECT parcial), no asumimos que
+    `.get()` refleja el valor real — si la key no está presente EN ABSOLUTO
+    se re-consulta el campo forward por id antes de caer al fallback reverse.
+    """
+    try:
+        _MISSING = object()
+        if isinstance(visita_o_vid, dict):
+            vid = visita_o_vid.get("id")
+            _raw = visita_o_vid.get("levantamiento_id", _MISSING)
+            if _raw is not _MISSING:
+                if _raw:
+                    return _raw
+                # La key está presente y es None/0 -> ya sabemos que el
+                # forward es vacío, no hace falta re-consultarlo.
+            elif vid:
+                try:
+                    _row = mysql_fetchone(
+                        "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                        (vid,)
+                    )
+                    if _row and _row.get("levantamiento_id"):
+                        return _row["levantamiento_id"]
+                except Exception:
+                    pass
+        else:
+            vid = visita_o_vid
+            if vid:
+                try:
+                    _row = mysql_fetchone(
+                        "SELECT levantamiento_id FROM mant_visitas WHERE id=%s",
+                        (vid,)
+                    )
+                    if _row and _row.get("levantamiento_id"):
+                        return _row["levantamiento_id"]
+                except Exception:
+                    pass
+        if not vid:
+            return None
+        try:
+            _rev = mysql_fetchone(
+                "SELECT id FROM mant_levantamientos WHERE visita_id=%s "
+                " ORDER BY id DESC LIMIT 1", (vid,)
+            )
+            if _rev:
+                return _rev["id"]
+        except Exception:
+            pass
+        return None
+    except Exception:
+        return None
+
+
+def _ot_equipos_y_fotos(vid):
+    """Fuente única de 'equipos y fotos' de una OT. Combina:
+      - mant_visita_tareas / mant_visita_fotos (checklist clásico)
+      - mant_levantamiento_items / mant_levantamiento_fotos (vía
+        _ot_levantamiento_de, resolviendo el link en ambos sentidos)
+
+    SOLO LECTURA. Devuelve dict con: equipos, fotos, eq_fotos_idx, lev_items,
+    lev_fotos_idx, lev_fotos_huerfanas, n_fotos_total (deduplicado por
+    foto_hash, MISMO criterio que ya usa _ot_validar_cierre R5 — con
+    COALESCE(foto_hash, CONCAT('id:', id)) para no penalizar fotos
+    históricas sin hash).
+    """
+    out = {
+        "equipos": [], "fotos": [], "eq_fotos_idx": {},
+        "lev_items": [], "lev_fotos_idx": {}, "lev_fotos_huerfanas": [],
+        "n_fotos_total": 0,
+    }
+    try:
+        equipos = mysql_fetchall(
+            "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
+            "       m.marca, m.modelo "
+            "  FROM mant_visita_tareas vt "
+            "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
+            " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+            "   AND COALESCE(m.estado,'activo') != 'baja' "
+            " ORDER BY m.nombre", (vid,)
+        ) or []
+        out["equipos"] = [dict(e) for e in equipos]
+    except Exception:
+        pass
+
+    try:
+        fotos = mysql_fetchall(
+            "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+            "       tipo_foto, tomada_at, foto_hash "
+            "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
+            (vid,)
+        ) or []
+        out["fotos"] = [dict(f) for f in fotos]
+        for f in out["fotos"]:
+            mid = f.get("maquina_id")
+            if mid:
+                out["eq_fotos_idx"].setdefault(mid, []).append(f)
+    except Exception:
+        pass
+
+    _lev_id = _ot_levantamiento_de(vid)
+    if _lev_id:
+        try:
+            lev_items = mysql_fetchall(
+                "SELECT * FROM mant_levantamiento_items "
+                " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                "   AND COALESCE(es_borrador,0) = 0 "
+                "   AND COALESCE(estado_capturado,'') <> 'no_encontrado' "
+                " ORDER BY id ASC", (_lev_id,)
+            ) or []
+        except Exception:
+            try:
+                lev_items = mysql_fetchall(
+                    "SELECT * FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                    " ORDER BY id ASC", (_lev_id,)
+                ) or []
+            except Exception:
+                lev_items = []
+        out["lev_items"] = [dict(i) for i in lev_items]
+        _ids_items = {int(i["id"]) for i in out["lev_items"] if i.get("id") is not None}
+        try:
+            _lev_fotos = mysql_fetchall(
+                "SELECT id, item_id, cloudinary_url, tipo_foto, descripcion, foto_hash "
+                "  FROM mant_levantamiento_fotos WHERE levantamiento_id=%s "
+                " ORDER BY id ASC", (_lev_id,)
+            ) or []
+        except Exception:
+            _lev_fotos = []
+        for _f in _lev_fotos:
+            _f = dict(_f)
+            _iid = _f.get("item_id")
+            if _iid is not None and int(_iid) in _ids_items:
+                out["lev_fotos_idx"].setdefault(_iid, []).append(_f)
+            else:
+                out["lev_fotos_huerfanas"].append(_f)
+
+    try:
+        _f1 = mysql_fetchone(
+            "SELECT COUNT(DISTINCT COALESCE(foto_hash, CONCAT('id:', id))) AS n "
+            "  FROM mant_visita_fotos WHERE visita_id=%s", (vid,)
+        ) or {}
+        _n1 = int(_f1.get("n") or 0)
+    except Exception:
+        _n1 = 0
+    _n2 = 0
+    if _lev_id:
+        try:
+            _f2 = mysql_fetchone(
+                "SELECT COUNT(DISTINCT COALESCE(foto_hash, CONCAT('id:', id))) AS n "
+                "  FROM mant_levantamiento_fotos WHERE levantamiento_id=%s", (_lev_id,)
+            ) or {}
+            _n2 = int(_f2.get("n") or 0)
+        except Exception:
+            _n2 = 0
+    out["n_fotos_total"] = _n1 + _n2
+    return out
+
+
 def _ot_es_levantamiento(v):
     """True si la OT captura fichas de equipo (o sea: si tiene levantamiento).
 
@@ -65054,12 +65281,30 @@ def _ot_es_levantamiento(v):
     _ensure_levantamiento_para_visita le crea un levantamiento por eso mismo.
     Mirar solo el tipo dejaba a esas OT en tierra de nadie: se comportaban
     como levantamiento para unas cosas y no para otras.
+
+    FIX 2026-08-10 (OT-2026-00042): antes solo miraba el campo forward
+    `v.get("levantamiento_id")` — si el link estaba SOLO en el sentido
+    reverse (mant_levantamientos.visita_id), esta función daba False aunque
+    el levantamiento existiera y tuviera datos. Ahora usa
+    _ot_levantamiento_de(v), que resuelve ambos sentidos. Se cachea el
+    resultado en el propio dict `v` (memoria de esta request, NUNCA se hace
+    UPDATE a la BD) para no repetir la query reverse en llamadas
+    subsecuentes sobre el mismo dict dentro del mismo request — esta función
+    se llama en un hot path (varias veces por request en algunos endpoints).
     """
     if not v:
         return False
     try:
-        return ((v.get("tipo") or "").strip().lower() == "levantamiento"
-                or bool(v.get("levantamiento_id")))
+        if (v.get("tipo") or "").strip().lower() == "levantamiento":
+            return True
+        if v.get("levantamiento_id"):
+            return True
+        _lev_id = _ot_levantamiento_de(v)
+        if _lev_id:
+            if isinstance(v, dict):
+                v["levantamiento_id"] = _lev_id
+            return True
+        return False
     except Exception:
         return False
 
@@ -65108,7 +65353,12 @@ def _ot_validar_cierre(vid):
     Las OT tipo 'levantamiento' eximen R2 (diagnóstico autogenerado al cerrar).
     """
     v = mysql_fetchone(
-        "SELECT id, tipo, estado, diagnostico, levantamiento_id, "
+        # cliente_id incluido (2026-08-10): _ot_es_interna(v) más abajo (R4)
+        # ahora también mira "cliente_id IS NULL" — sin esta columna en el
+        # SELECT, esa condición no puede evaluarse (fail-closed correcto,
+        # pero deja sin efecto la exención para OT de Capacitación/Control
+        # de Calidad sin cliente).
+        "SELECT id, tipo, estado, diagnostico, levantamiento_id, cliente_id, "
         "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url "
         "  FROM mant_visitas WHERE id=%s",
         (vid,)
@@ -68152,8 +68402,109 @@ def mant_visita_crear():
     """Crea una OT. Acepta tecnico_user_id (FK a app_users con role='tecnico')
     como alternativa al campo de texto legacy 'tecnico'."""
     d = request.get_json(silent=True) or {}
-    if not d.get("cliente_id") or not d.get("fecha_programada"):
-        return jsonify({"error": "cliente_id y fecha_programada requeridos"}), 400
+    payload, status = _mant_visita_crear_core(d)
+    return jsonify(payload), status
+
+
+def _tipo_es_trabajo_interno(tipo_ot):
+    """True si `tipo_ot` cae hoy en la categoría 'trabajo_interno' del mapeo
+    editable mant_categoria_tipo_map (Tarea 1, plantillas por pestaña,
+    2026-08-10). ÚNICA fuente de verdad de "¿este tipo de OT puede crearse
+    sin cliente?" — antes (commit 71ad441) esto era un string hardcodeado
+    ('revision_interna' únicamente); Daniel pidió generalizarlo a TODOS los
+    tipos de la categoría (Trabajo de bodega, Capacitación, Control de
+    Calidad) y que además sea editable sin tocar código — por eso consulta
+    la MISMA tabla que ya alimenta las pestañas de plantillas, en vez de
+    reimplementar la lista acá.
+
+    FAIL-CLOSED: si la tabla no existe o la consulta falla, devuelve False
+    (exige cliente) — más seguro que asumir "sin cliente" ante un error.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return False
+    try:
+        row = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_categoria_tipo_map "
+            " WHERE tipo_ot=%s AND categoria='trabajo_interno'", (tipo_ot,))
+        return bool(row)
+    except Exception:
+        return False
+
+
+@app.route("/mantenciones/api/visitas/interna", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_visita_crear_interna():
+    """Crea una OT de tipo "Trabajo interno" (Trabajo de bodega, Capacitación
+    o Control de Calidad — cualquier tipo que hoy caiga en la categoría
+    'trabajo_interno' de mant_categoria_tipo_map) SIN cliente asociado —
+    100% interno, igual que el tipo "sin cliente" de Tickets (Daniel,
+    2026-08-10; generalizado el mismo día a pedido suyo: "revisión de
+    calidad, capacitación, todo ese tipo de cosas que no amerita un
+    cliente... las podemos cubrir directo desde la orden de trabajo").
+
+    Endpoint dedicado y liviano: NO pasa por ninguna ficha de cliente. El
+    body debe traer `tipo` (uno de los que hoy son 'trabajo_interno' — se
+    valida acá, no se confía en el frontend); si no viene o no es válido,
+    cae a 'revision_interna' por compatibilidad con el comportamiento
+    anterior. Fuerza cliente_id=None pase lo que pase en el body, y llama
+    al MISMO núcleo que /mantenciones/api/visitas (`_mant_visita_crear_core`)
+    para no duplicar la lógica de creación (modalidad de cobro, plantilla
+    inicial, notificaciones, etc.).
+
+    Se usa `_mant_visita_crear_core` (NO `_mant_lev_crear_ot_core`): ese otro
+    camino de creación es específico de Levantamiento — SIEMPRE inserta una
+    fila en `mant_levantamientos` con `cliente_id` (columna NOT NULL ahí, sin
+    tocar) y no tiene sentido de negocio para un trabajo interno, que no es
+    un levantamiento de equipos de cliente.
+
+    Decorador `@_no_tecnico`: el trabajo interno lo agenda el
+    supervisor/ejecutivo, no lo crea el propio técnico (mismo criterio que
+    el resto de endpoints de gestión de OT que NO son de ejecución) — y
+    _mant_visita_crear_core() lo vuelve a validar internamente (ver ahí)
+    para que la regla se cumpla también si algún día se llama por otra vía.
+    """
+    d = dict(request.get_json(silent=True) or {})
+    tipo_pedido = (d.get("tipo") or "").strip().lower()
+    d["tipo"] = tipo_pedido if _tipo_es_trabajo_interno(tipo_pedido) else "revision_interna"
+    d.pop("cliente_id", None)   # fuerza sin cliente, pase lo que pase en el body
+    payload, status = _mant_visita_crear_core(d)
+    return jsonify(payload), status
+
+
+def _mant_visita_crear_core(d):
+    """Núcleo de creación de una OT "clásica" (mant_visita_crear), separado
+    del handler HTTP para poder reusarlo desde /mantenciones/api/visitas/interna
+    (Trabajo interno, sin cliente) sin duplicar lógica.
+
+    Devuelve (payload:dict, http_status:int) — el caller HTTP hace
+    jsonify(payload), status. NO llama jsonify/request directo: solo lee `d`.
+    """
+    # 2026-08-10 (Daniel) — cualquier tipo de OT de la categoría "Trabajo
+    # interno" (Trabajo de bodega, Capacitación, Control de Calidad — ver
+    # _tipo_es_trabajo_interno) es 100% interno, sin cliente asociado (igual
+    # que en Tickets). mant_visitas.cliente_id ya se hizo NULL-able (ver
+    # migración cerca de la línea ~49150). Cualquier tipo FUERA de esa
+    # categoría sigue exigiéndolo como antes — generalizado desde el string
+    # fijo 'revision_interna' (commit 71ad441) a la categoría completa.
+    _tipo_chk = (d.get("tipo") or "").strip().lower()
+    _cliente_opcional = _tipo_es_trabajo_interno(_tipo_chk)
+    if (not _cliente_opcional and not d.get("cliente_id")) or not d.get("fecha_programada"):
+        return {"error": "cliente_id y fecha_programada requeridos"}, 400
+    # FIX 2026-08-10 (revisión de seguridad post-commit): el endpoint dedicado
+    # /mantenciones/api/visitas/interna ya lleva @_no_tecnico, pero este núcleo
+    # también lo llama /mantenciones/api/visitas (mant_visita_crear), que SOLO
+    # tiene @_mant_required — sin este chequeo acá, un técnico podría crear una
+    # OT "Trabajo de bodega" sin cliente mandando tipo='revision_interna'
+    # directo a ese endpoint genérico, saltándose la restricción de rol que
+    # Daniel pidió explícitamente (el trabajo de bodega lo agenda supervisor+,
+    # nunca el propio técnico). Se valida acá, en el núcleo compartido —
+    # reusando _es_rol_tecnico(), la MISMA función que usa el decorador
+    # @_no_tecnico — para que la regla se cumpla sin importar por cuál de los
+    # dos endpoints entró la petición, sin reimplementar la comparación.
+    if _cliente_opcional and _es_rol_tecnico():
+        return {"error": "No tienes permiso para crear una OT de trabajo interno."}, 403
 
     # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
     # COMPAT: la API /api/tecnicos ahora devuelve app_users.id en el campo `id`.
@@ -68239,7 +68590,7 @@ def mant_visita_crear():
                         prioridad,created_by,created_by_user_id,
                         costo_proveedor,proveedor_tipo,proveedor_nombre)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (d["cliente_id"], d.get("contrato_id") or None,
+                    (d.get("cliente_id"), d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
@@ -68264,7 +68615,7 @@ def mant_visita_crear():
                         tecnico,tecnico_user_id,tipo,estado,descripcion,costo,
                         modalidad_cobro,prioridad,created_by)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (d["cliente_id"], d.get("contrato_id") or None,
+                    (d.get("cliente_id"), d.get("contrato_id") or None,
                      d.get("titulo","Mantención"), d["fecha_programada"],
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
@@ -68298,10 +68649,21 @@ def mant_visita_crear():
         for m in (d.get("maquina_ids") or []):
             try: maq_ids_inicial.append(int(m))
             except (TypeError, ValueError): continue
+        # 2026-08-10 (Tarea 4 — selector de plantilla): se valida que la
+        # plantilla exista y esté activa antes de usarla — mismo criterio que
+        # _mant_lev_crear_ot_core. Si no es válida, simplemente no se aplica
+        # (no bloquea la creación de la OT, igual que antes).
         plant_id_inicial = None
         try:
             if d.get("plantilla_id"):
-                plant_id_inicial = int(d["plantilla_id"])
+                _pid_try = int(d["plantilla_id"])
+                _pid_row = mysql_fetchone(
+                    "SELECT id FROM mant_tarea_plantillas "
+                    " WHERE id=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                    (_pid_try,)
+                )
+                if _pid_row:
+                    plant_id_inicial = _pid_try
         except (TypeError, ValueError):
             plant_id_inicial = None
         n_tareas_creadas = 0
@@ -68320,7 +68682,7 @@ def mant_visita_crear():
                             cur2.execute(
                                 f"SELECT id, nombre, serie FROM mant_maquinas "
                                 f"WHERE id IN ({ph}) AND cliente_id=%s",
-                                tuple(maq_ids_inicial) + (d["cliente_id"],)
+                                tuple(maq_ids_inicial) + (d.get("cliente_id"),)
                             )
                             m_rows = cur2.fetchall() or []
                             m_idx = {r["id"]: r for r in m_rows}
@@ -68374,7 +68736,7 @@ def mant_visita_crear():
             resp["warning"] = warn_mod
         if n_tareas_creadas:
             resp["tareas_creadas"] = n_tareas_creadas
-        return jsonify(resp)
+        return resp, 200
     finally:
         conn.close()
 
@@ -68412,20 +68774,71 @@ def mant_visita_update(vid):
     # GARANTÍA TRANSVERSAL (Daniel 2026-05-30): el interruptor Aplica/No aplica
     # MANDA sobre modalidad_cobro suelta. Mapea a cubierto_por/modalidad_cobro/
     # estado_facturacion según el modelo canónico.
+    #
+    # CORRECCIÓN RETROACTIVA DE GARANTÍA (Daniel 2026-08-10): la OT puede
+    # crearse pagada, gestionarse, y descubrirse EN TERRENO que en realidad
+    # correspondía garantía (error del proveedor o error propio de ILUS).
+    # Se permite corregir el flag SOLO si: (a) la OT aún no está cerrada
+    # (estado='cerrada' — el cierre auditado con las 3 firmas vía
+    # /mantenciones/api/visitas/<id>/cerrar; 'completada' es solo un estado
+    # intermedio del flujo Fracttal, NO el cierre final) y (b) viene un
+    # motivo explícito cuando el cambio es "retroactivo" — es decir, la OT
+    # YA tenía otra cobertura declarada antes de este PUT (no es la primera
+    # vez que se fija el flag). El rol autorizado (supervisor+) ya lo filtra
+    # @_ot_can_metadata / _puede_ot_accion(..., 'metadata', ...) — no se
+    # necesita un chequeo de rol nuevo acá.
     if gar_aplica_upd is not None:
+        _row_gar_actual = mysql_fetchone(
+            "SELECT cubierto_por, modalidad_cobro, estado_facturacion, estado "
+            "  FROM mant_visitas WHERE id=%s", (vid,)
+        ) or {}
+        _gar_bool_actual = (
+            _row_gar_actual.get("cubierto_por") == "garantia"
+            or _row_gar_actual.get("modalidad_cobro") == "garantia"
+        )
+        # La regla dura "levantamiento nunca admite garantía" sigue aplicando
+        # ANTES de evaluar retroactividad — para ese tipo, _mapear_garantia_a_
+        # cobertura ya degrada automáticamente a pagado con warning.
+        _es_retroactivo = (
+            tipo_final not in _OT_TIPOS_SIN_GARANTIA
+            and _gar_bool_actual != gar_aplica_upd
+        )
+        if _es_retroactivo:
+            if (_row_gar_actual.get("estado") or "") == "cerrada":
+                return jsonify({
+                    "ok": False,
+                    "error": "No se puede corregir la garantía de una OT ya cerrada.",
+                    "error_codigo": "GARANTIA_OT_CERRADA",
+                }), 400
+            _gar_motivo = (d.get("garantia_motivo") or "").strip()
+            if len(_gar_motivo) < 10:
+                return jsonify({
+                    "ok": False,
+                    "error": "Esta OT ya tenía otra cobertura declarada. Para "
+                             "corregir la garantía indica un motivo (mínimo 10 "
+                             "caracteres): error de proveedor, error propio, etc.",
+                    "error_codigo": "GARANTIA_MOTIVO_REQUERIDO",
+                }), 400
+            d["garantia_motivo"] = _gar_motivo[:500]
+
         cobertura_upd, warn_gar_upd = _mapear_garantia_a_cobertura(gar_aplica_upd, tipo_final)
         if cobertura_upd:
             d["cubierto_por"]   = cobertura_upd["cubierto_por"]
             d["modalidad_cobro"] = cobertura_upd["modalidad_cobro"]
             # No degradar el pipeline si ya hay una factura ligada: un servicio
             # ya 'facturado' marcado como "no aplica garantía" sigue facturado.
-            _ef_actual = mysql_fetchone(
-                "SELECT estado_facturacion FROM mant_visitas WHERE id=%s", (vid,))
-            _ef_now = (_ef_actual or {}).get("estado_facturacion")
+            _ef_now = _row_gar_actual.get("estado_facturacion")
             if not (gar_aplica_upd is False and _ef_now == "facturado"):
                 d["estado_facturacion"] = cobertura_upd["estado_facturacion"]
             if warn_gar_upd:
                 warn_mod_upd = warn_gar_upd
+
+        if _es_retroactivo:
+            _mant_log(
+                "visita", vid, "garantia_retroactiva",
+                f"garantia_aplica: {_gar_bool_actual} -> {gar_aplica_upd} · "
+                f"motivo: {d.get('garantia_motivo', '')}"
+            )
     # Validar prioridad si llega
     if "prioridad" in d:
         p = (d.get("prioridad") or "").lower()
@@ -68460,7 +68873,7 @@ def mant_visita_update(vid):
                # FASE 1 — modelo Fracttal
                "modalidad_cobro","prioridad","diagnostico",
                # Garantía transversal (mapeada desde garantia_aplica)
-               "cubierto_por","estado_facturacion",
+               "cubierto_por","estado_facturacion","garantia_motivo",
                # Finanzas (margen por servicio)
                "costo_proveedor","proveedor_tipo","proveedor_nombre",
                # Documento ERP de origen (NVI/NVV), solo administrativo
@@ -68571,18 +68984,25 @@ def mant_visita_del(vid):
         "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id "
         "  FROM mant_visitas WHERE id=%s", (vid,)
     )
+    # FIX 2026-08-10 (OT-2026-00042): antes solo miraba v_info.levantamiento_id
+    # (campo forward) — si el link era solo reverse, el levantamiento quedaba
+    # huérfano al borrar la OT (bloqueando la creación de nuevos levantamientos
+    # para ese cliente/equipo). _ot_levantamiento_de(vid) resuelve ambos
+    # sentidos; se calcula ANTES del DELETE porque el sentido reverse depende
+    # de mant_levantamientos.visita_id, que no se toca al borrar la visita.
+    _lev_id_del = _ot_levantamiento_de(vid)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             # Sincronizar: si la OT tiene un levantamiento asociado, marcarlo cancelado
             # (antes quedaba huérfano y bloqueaba la creación de nuevos levantamientos).
-            if v_info and v_info.get("levantamiento_id"):
+            if _lev_id_del:
                 try:
                     cur.execute(
                         "UPDATE mant_levantamientos "
                         "   SET estado='cancelado', fecha_cierre=NOW() "
                         " WHERE id=%s AND estado IN ('borrador','en_curso')",
-                        (v_info["levantamiento_id"],)
+                        (_lev_id_del,)
                     )
                 except Exception as _e_sync:
                     print(f"[visita_del] sync levantamiento falló: {_e_sync}", flush=True)
@@ -68875,7 +69295,10 @@ def mant_ots_list():
             "       COALESCE(tar.n_completas, 0) AS n_completas, "
             "       COALESCE(fot.n_fotos, 0)     AS n_fotos "
             "  FROM mant_visitas v "
-            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            # LEFT JOIN (era INNER) 2026-08-10: sin esto, las OT de Trabajo
+            # de bodega (cliente_id NULL) nunca aparecían en el listado
+            # principal — quedaban invisibles para admin/supervisor.
+            "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
             "  LEFT JOIN ( "
             "       SELECT visita_id, "
@@ -68917,7 +69340,7 @@ def mant_ots_list():
                 "       v.created_by, "
                 "       0 AS n_tareas, 0 AS n_completas, 0 AS n_fotos "
                 "  FROM mant_visitas v "
-                "  JOIN mant_clientes c ON c.id=v.cliente_id "
+                "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
                 f" WHERE {' AND '.join(where)} "
                 " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 200",
                 tuple(params)
@@ -68946,7 +69369,7 @@ def mant_ots_list():
             " SUM(CASE WHEN v.estado='completada' THEN 1 ELSE 0 END) AS completadas, "
             " SUM(CASE WHEN v.estado='programada' AND v.fecha_programada < CURDATE() THEN 1 ELSE 0 END) AS atrasadas "
             "FROM mant_visitas v "
-            "JOIN mant_clientes c ON c.id=v.cliente_id "
+            "LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             f"WHERE {' AND '.join(where)}"
         )
         kpis = mysql_fetchone(kpis_sql, tuple(params)) or kpis
@@ -69160,14 +69583,50 @@ def mant_plantillas_listar():
         ?tipo_visita=preventiva|correctiva|garantia|...
         ?familia_checklist=instalacion|preventiva|correctivo|...
         ?familia_activo=cardio|trotadoras|todas|...
+        ?categoria=instalacion|mantencion|visitas|trabajo_interno  (Tarea 1.4)
+        ?tipo_ot=<cualquier tipo de _TIPO_OT_LABEL>  (Tarea 1.4 — resuelve
+                  la categoría vía mant_categoria_tipo_map y filtra por ella,
+                  igual que si se hubiera mandado ?categoria=<resuelta>)
         ?q=texto
+
+    2026-08-10 (Tarea 4 — selector de plantilla al crear OT, backend): si
+    llega ?tipo_visita=<tipo_ot>, además de filtrar (cuando el valor coincide
+    con el ENUM `tipo_visita` de mant_tarea_plantillas), la respuesta marca
+    qué plantilla es la DEFAULT — la misma que auto-elegiría
+    `_plantilla_estandar_para_tipo(tipo_ot)` al crear la OT — para que el
+    frontend pueda preseleccionarla en el selector, SIN duplicar esa regla
+    de negocio. `tv_raw` acepta cualquier valor de mant_visitas.tipo (no solo
+    los 7 de `_PLANT_TIPO_VISITA`): _plantilla_estandar_para_tipo también
+    resuelve por nombre de convención, no solo por la columna tipo_visita.
+
+    2026-08-10 (Tarea 1.4): `?categoria=` filtra DIRECTO por categoria_admin.
+    `?tipo_ot=` es azúcar sintáctico: resuelve la categoría default de ese
+    tipo vía mant_categoria_tipo_map y aplica el mismo filtro — sin duplicar
+    la regla de mapeo en el frontend. Ninguno de los dos rompe el uso
+    existente por `tipo_visita` (siguen siendo filtros independientes que
+    se pueden combinar). La categoría resuelta también viaja en la respuesta
+    como `categoria_resuelta` aunque no se filtre, útil para el selector.
     """
+    tv_raw = (request.args.get("tipo_visita") or "").strip().lower()
     where, params = [], []
     if request.args.get("activa") == "1":
         where.append("activa=1")
-    tv = (request.args.get("tipo_visita") or "").strip().lower()
+    tv = tv_raw
     if tv in _PLANT_TIPO_VISITA:
         where.append("tipo_visita=%s"); params.append(tv)
+    # Tarea 1.4: categoría (pestaña) directa o resuelta desde tipo_ot.
+    categoria_resuelta = None
+    tipo_ot_raw = (request.args.get("tipo_ot") or "").strip().lower()
+    if tipo_ot_raw:
+        try:
+            _map_row = mysql_fetchone(
+                "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot_raw,))
+            categoria_resuelta = _map_row["categoria"] if _map_row else None
+        except Exception as _e_cat:
+            print(f"[plantillas_listar] resolver categoria de '{tipo_ot_raw}' falló: {_e_cat}", flush=True)
+    fcat = (request.args.get("categoria") or "").strip().lower() or categoria_resuelta
+    if fcat in _PLANT_CATEGORIAS_ADMIN:
+        where.append("categoria_admin=%s"); params.append(fcat)
     # FASE 3: filtros nuevos
     fchk = (request.args.get("familia_checklist") or "").strip().lower()
     _FAM_CHK_OK = ("instalacion","preventiva","correctivo","desinstalacion",
@@ -69197,6 +69656,15 @@ def mant_plantillas_listar():
              ORDER BY p.activa DESC, p.es_sistema DESC, p.nombre""",
         tuple(params)
     ) or []
+    # Plantilla DEFAULT para tv_raw (ver docstring) — misma función que usa
+    # _mant_lev_crear_ot_core cuando no llega plantilla_id explícito.
+    default_plantilla_id = None
+    if tv_raw:
+        try:
+            default_plantilla_id = _plantilla_estandar_para_tipo(tv_raw)
+        except Exception as _e_def:
+            print(f"[plantillas_listar] default para tipo '{tv_raw}' falló: {_e_def}", flush=True)
+            default_plantilla_id = None
     return jsonify({
         "ok": True,
         "plantillas": [{
@@ -69205,15 +69673,89 @@ def mant_plantillas_listar():
             "tipo_visita": r.get("tipo_visita") or "otro",
             "familia_checklist": r.get("familia_checklist") or "otro",
             "familia_activo": r.get("familia_activo") or "todas",
+            "categoria_admin": r.get("categoria_admin") or "",
             "tiempo_estimado_min": r.get("tiempo_estimado_min"),
             "activa": bool(r.get("activa")),
             "es_sistema": bool(r.get("es_sistema")),
             "items_count": int(r.get("items_count") or 0),
             "created_by": r.get("created_by") or "",
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "es_default": bool(default_plantilla_id) and r["id"] == default_plantilla_id,
         } for r in rows],
         "total": len(rows),
+        "default_plantilla_id": default_plantilla_id,
+        "categoria_resuelta": categoria_resuelta,
     })
+
+
+@app.route("/mantenciones/api/plantillas/categorias", methods=["GET"])
+@_mant_required
+def mant_plantillas_categorias_listar():
+    """Tarea 1.3 — devuelve las 4 categorías (pestañas) + el mapeo editable
+    'tipo de OT -> categoría default' (mant_categoria_tipo_map), + cuántas
+    plantillas activas tiene cada categoría hoy (para la UI de pestañas)."""
+    mapa_rows = mysql_fetchall(
+        "SELECT tipo_ot, categoria FROM mant_categoria_tipo_map ORDER BY tipo_ot") or []
+    mapa = {r["tipo_ot"]: r["categoria"] for r in mapa_rows}
+    conteo_rows = mysql_fetchall(
+        "SELECT categoria_admin AS categoria, COUNT(*) AS n "
+        "  FROM mant_tarea_plantillas WHERE COALESCE(activa,1)=1 "
+        " GROUP BY categoria_admin") or []
+    conteo = {r["categoria"] or "": int(r["n"]) for r in conteo_rows}
+    return jsonify({
+        "ok": True,
+        "categorias": [{
+            "clave": clave,
+            "label": _PLANT_CATEGORIA_LABEL[clave],
+            "tipos_ot": [t for t, c in mapa.items() if c == clave],
+            "plantillas_count": conteo.get(clave, 0),
+        } for clave in _PLANT_CATEGORIAS_ADMIN],
+        "sin_categoria_count": conteo.get("", 0),
+        "mapa_tipo_ot": mapa,
+        "tipos_ot_disponibles": sorted(_TIPO_OT_LABEL.keys()),
+        "tipo_ot_label": _TIPO_OT_LABEL,
+    })
+
+
+@app.route("/mantenciones/api/plantillas/categorias", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def mant_plantillas_categorias_actualizar():
+    """Tarea 1.3 — reasigna qué tipos de OT caen en cada categoría (pestaña
+    default). Body: { mapa: { "<tipo_ot>": "<categoria>", ... } } — solo se
+    tocan las claves que llegan (partial update); no pisa el resto.
+    Protegido con @_no_tecnico (config del módulo, no operación de campo)."""
+    d = request.get_json(silent=True) or {}
+    mapa_in = d.get("mapa")
+    if not isinstance(mapa_in, dict) or not mapa_in:
+        return jsonify({"ok": False, "error": "Body debe traer 'mapa': {tipo_ot: categoria}"}), 400
+    actualizados, errores = [], []
+    for tipo_ot_raw, categoria_raw in mapa_in.items():
+        tipo_ot = (tipo_ot_raw or "").strip().lower()
+        categoria = (categoria_raw or "").strip().lower()
+        if tipo_ot not in _TIPO_OT_LABEL:
+            errores.append(f"tipo_ot desconocido: {tipo_ot_raw}")
+            continue
+        if categoria not in _PLANT_CATEGORIAS_ADMIN:
+            errores.append(f"categoria inválida para {tipo_ot_raw}: {categoria_raw}")
+            continue
+        try:
+            mysql_execute(
+                "INSERT INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) "
+                "VALUES (%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE categoria=VALUES(categoria), updated_by=VALUES(updated_by)",
+                (tipo_ot, categoria, current_username())
+            )
+            actualizados.append(tipo_ot)
+        except Exception as e_upd:
+            print(f"[plantillas_categorias_actualizar] {tipo_ot}: {e_upd}", flush=True)
+            errores.append(f"{tipo_ot}: no se pudo guardar")
+    if actualizados:
+        try:
+            _mant_log("plantilla_categoria_map", 0, "actualizado",
+                      f"{len(actualizados)} tipo(s) reasignados: {', '.join(actualizados)}")
+        except Exception: pass
+    return jsonify({"ok": bool(actualizados) or not errores, "actualizados": actualizados, "errores": errores})
 
 
 @app.route("/mantenciones/api/plantillas/<int:pid>", methods=["GET"])
@@ -69252,6 +69794,9 @@ def mant_plantilla_detalle(pid):
             "id": plant["id"], "nombre": plant["nombre"],
             "descripcion": plant.get("descripcion") or "",
             "tipo_visita": plant.get("tipo_visita") or "otro",
+            "familia_checklist": plant.get("familia_checklist") or "otro",
+            "familia_activo": plant.get("familia_activo") or "todas",
+            "categoria_admin": plant.get("categoria_admin") or "",
             "tiempo_estimado_min": plant.get("tiempo_estimado_min"),
             "activa": bool(plant.get("activa")),
             "es_sistema": bool(plant.get("es_sistema")),
@@ -69289,6 +69834,10 @@ def mant_plantilla_crear():
     fam_act = (d.get("familia_activo") or "").strip().lower()
     if fam_act not in _PLANT_FAMILIA_ACTIVO:
         fam_act = "todas"
+    # Tarea 1.3: categoria_admin (pestaña) — manual, no calculada. NULL si el
+    # admin no la asignó todavía (queda en "Sin categoría" en la UI).
+    cat_admin = (d.get("categoria_admin") or "").strip().lower()
+    cat_admin = cat_admin if cat_admin in _PLANT_CATEGORIAS_ADMIN else None
 
     items_in = d.get("items") or []
     items_norm = []
@@ -69306,9 +69855,9 @@ def mant_plantilla_crear():
             cur.execute(
                 "INSERT INTO mant_tarea_plantillas "
                 "(nombre, descripcion, tipo_visita, tiempo_estimado_min, "
-                " familia_checklist, familia_activo, activa, es_sistema, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s,1,0,%s)",
-                (nombre, desc, tv, tiempo, fam_chk, fam_act, current_username())
+                " familia_checklist, familia_activo, categoria_admin, activa, es_sistema, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,1,0,%s)",
+                (nombre, desc, tv, tiempo, fam_chk, fam_act, cat_admin, current_username())
             )
             pid = cur.lastrowid
             for it in items_norm:
@@ -69357,6 +69906,9 @@ def mant_plantilla_actualizar(pid):
     fam_act = (d.get("familia_activo") or "").strip().lower()
     if fam_act not in _PLANT_FAMILIA_ACTIVO:
         fam_act = "todas"
+    # Tarea 1.3: reasignación manual de categoria_admin desde el editor.
+    cat_admin = (d.get("categoria_admin") or "").strip().lower()
+    cat_admin = cat_admin if cat_admin in _PLANT_CATEGORIAS_ADMIN else None
 
     items_in = d.get("items") or []
     items_norm = []
@@ -69375,9 +69927,9 @@ def mant_plantilla_actualizar(pid):
                 "UPDATE mant_tarea_plantillas SET "
                 " nombre=%s, descripcion=%s, tipo_visita=%s, "
                 " tiempo_estimado_min=%s, activa=%s, "
-                " familia_checklist=%s, familia_activo=%s "
+                " familia_checklist=%s, familia_activo=%s, categoria_admin=%s "
                 "WHERE id=%s",
-                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, pid)
+                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, cat_admin, pid)
             )
             cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
             for it in items_norm:
@@ -69754,7 +70306,9 @@ def mant_ot_ficha(vid):
         "       COALESCE(u.username, t.email) AS tecnico_email, "
         "       COALESCE(u.foto_url, t.foto_url) AS tecnico_foto "
         "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        # LEFT JOIN (era INNER) 2026-08-10: Trabajo de bodega puede tener
+        # cliente_id NULL — ver mismo fix en mant_ot_ejecutar/_ot_pdf_context.
+        "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         "  LEFT JOIN mant_contratos ct ON ct.id=v.contrato_id "
         "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
         "  LEFT JOIN app_users   u ON u.id=v.tecnico_user_id "
@@ -69851,6 +70405,11 @@ def mant_ot_ejecutar(vid):
     # frontend (DESTINO_LAT/LNG) y al endpoint de respuesta GPS usar la
     # dirección ya parametrizada del cliente cuando el GPS del dispositivo
     # del técnico no funciona (default 'cliente_default').
+    # 2026-08-10 (Daniel — Trabajo de bodega sin cliente): LEFT JOIN (era
+    # INNER). Con cliente_id NULL una OT interna existía en mant_visitas pero
+    # esta vista devolvía "OT no encontrada" — la OT quedaba literalmente
+    # imposible de abrir/ejecutar. c.* queda NULL para esas OT; el template
+    # ya debe tolerar cliente ausente (ver _ot_es_interna).
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
         "       c.direccion AS cli_direccion, "
@@ -69860,7 +70419,7 @@ def mant_ot_ejecutar(vid):
         "       c.contacto_tel AS cli_contacto_tel, "
         "       COALESCE(u.nombre, u.username) AS tecnico_principal "
         "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id=v.cliente_id "
+        "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         "  LEFT JOIN app_users u ON u.id=v.tecnico_user_id "
         " WHERE v.id=%s",
         (vid,)
@@ -69869,6 +70428,15 @@ def mant_ot_ejecutar(vid):
         flash("OT no encontrada.", "danger")
         return redirect(url_for("mant_ots_list"))
     visita = dict(visita)
+    # FIX 2026-08-10 (OT-2026-00042): `visita` se pasa directo al template,
+    # que lee `visita.levantamiento_id` crudo en varios puntos (botón
+    # "Re-materializar equipos", flags JS VISITA_LEVANTAMIENTO_ID, etc.).
+    # Si el link solo existe en el sentido reverse (dato legacy/desincroniza-
+    # ción histórica), esos puntos quedaban ciegos aunque el levantamiento sí
+    # existiera. _ot_es_levantamiento ya resuelve ambos sentidos y cachea el
+    # resultado en el propio dict — solo mutación en memoria de esta
+    # request, NUNCA un UPDATE a la BD.
+    _ot_es_levantamiento(visita)
 
     # 🔐 SEGURIDAD 2026-05-18 / refuerzo 2026-05-22 (Daniel — brecha Aaron):
     # Matriz unificada de permisos. Permite VER la página a:
@@ -69937,7 +70505,11 @@ def mant_ot_ejecutar(vid):
     # populó la tabla intermedia. Es seguro correr cada vez que se abre
     # la OT: si ya están sincronizados, no hace nada.
     # ════════════════════════════════════════════════════════════════
-    _lev_id = visita.get("levantamiento_id")
+    # FIX 2026-08-10 (OT-2026-00042): antes solo miraba el campo forward.
+    # Si el link estaba solo en el sentido reverse, este sync (y el
+    # safety-net de tareas de más abajo, que reusa `_lev_id`) se saltaba
+    # por completo aunque la OT sí tuviera levantamiento con equipos.
+    _lev_id = _ot_levantamiento_de(visita)
     if _lev_id:
         try:
             # PERF 2026-05-31 (ot_performance): este sync reconstruye la
@@ -70242,7 +70814,9 @@ def mant_ot_ejecutar(vid):
     # quedaron sin materializar (maquina_id NULL) para ofrecer el botón de
     # reparación manual "Re-materializar equipos" cuando la OT ya cerró.
     lev_huerfanos_count = 0
-    if visita.get("levantamiento_id"):
+    # FIX 2026-08-10 (OT-2026-00042): mismo bug — solo miraba el forward.
+    _lev_id_huerf = _ot_levantamiento_de(visita)
+    if _lev_id_huerf:
         try:
             try:
                 _row_huerf = mysql_fetchone(
@@ -70251,14 +70825,14 @@ def mant_ot_ejecutar(vid):
                     "  AND COALESCE(nombre_snap,'') <> '' "
                     "  AND COALESCE(es_borrador,0) = 0 "
                     "  AND COALESCE(estado_capturado,'') <> 'no_encontrado'",
-                    (visita["levantamiento_id"],)
+                    (_lev_id_huerf,)
                 )
             except Exception:
                 _row_huerf = mysql_fetchone(
                     "SELECT COUNT(*) AS n FROM mant_levantamiento_items "
                     "WHERE levantamiento_id=%s AND maquina_id IS NULL "
                     "  AND COALESCE(nombre_snap,'') <> ''",
-                    (visita["levantamiento_id"],)
+                    (_lev_id_huerf,)
                 )
             lev_huerfanos_count = (_row_huerf or {}).get("n") or 0
         except Exception as _e_lh:
@@ -70534,6 +71108,17 @@ def _ensure_levantamiento_para_visita(vid):
     if not v:
         return None
     lev_id = v.get("levantamiento_id")
+    if lev_id:
+        return lev_id
+    # FIX 2026-08-10 (OT-2026-00042, bug real de duplicación): antes, si el
+    # link estaba SOLO en el sentido reverse (mant_levantamientos.visita_id
+    # poblado, mant_visitas.levantamiento_id vacío — dato legacy o
+    # desincronización histórica), esta función no lo encontraba y creaba un
+    # levantamiento NUEVO cada vez que se llamaba, duplicando el existente.
+    # Se busca primero en ambos sentidos con _ot_levantamiento_de antes de
+    # decidir crear uno — NO cambia CUÁNDO se crea (eso sigue igual más
+    # abajo), solo evita duplicar uno que ya existe.
+    lev_id = _ot_levantamiento_de(v)
     if lev_id:
         return lev_id
     # Solo crear para tipos que capturan ficha. Correctiva/garantía NO.
@@ -70884,6 +71469,16 @@ def mant_ot_equipo_fotos_list(vid, mid):
     está capturando ahora.
 
     2026-05-22 (Daniel) — UI de captura muestra miniaturas + galería.
+
+    TODO (2026-08-10, alcance OT-2026-00042): este endpoint NUNCA consulta
+    mant_levantamiento_fotos — un equipo capturado por levantamiento (link
+    solo en sentido reverse o no) no muestra acá sus fotos de terreno, solo
+    las de mant_visita_fotos/mant_maquina_fotos. Se dejó fuera de este fix
+    a propósito: sumar la tercera fuente cambia el contrato JSON que ya
+    consume el frontend (`fuente: "ot"|"galeria"`) y requiere coordinar el
+    cambio con quien mantiene ese JS. El helper de lectura ya existe listo
+    para reusar: _ot_equipos_y_fotos(vid)["lev_fotos_idx"].get(mid) (o
+    filtrar por item.maquina_id==mid dentro de "lev_items").
     """
     out_fotos = []
     # Fotos de esta OT (recientes primero)
@@ -71129,10 +71724,22 @@ def _ot_es_interna(v):
     que ahí esté la firma del responsable." Y sobre el control de calidad por
     evento: "el trabajo se hace interno en la bodega siempre".
 
-    NO se agrega columna nueva: la OT ya persiste los dos discriminadores.
+    NO se agrega columna nueva: la OT ya persiste los discriminadores.
       - modalidad_cobro='interno'  -> operación interna ILUS (ya documentado
         así en el propio ALTER que crea la columna).
-      - tipo='revision_interna'    -> tipo de OT interno.
+      - tipo='revision_interna'    -> tipo de OT interno (compat: se
+        mantiene explícito por si alguna vez modalidad_cobro no viene
+        seteada en una OT vieja de este tipo).
+      - cliente_id IS NULL         -> FIX 2026-08-10 (Daniel: "revisión de
+        calidad, capacitación, todo ese tipo de cosas que no amerita un
+        cliente... las podemos cubrir directo desde la orden de trabajo").
+        Generalización sobre el chequeo anterior (que solo cubría
+        'revision_interna' hardcodeado): CUALQUIER OT creada sin cliente
+        (ver _tipo_es_trabajo_interno / POST /mantenciones/api/visitas/
+        interna) no puede tener firma de cliente por definición — no hay
+        cliente al que pedírsela. Esta condición es la consecuencia lógica
+        directa de que cliente_id sea nullable, no una regla de negocio
+        nueva que decidir caso por caso.
     OJO: NO usar proveedor_tipo='interno'. Ese campo es de finanzas y significa
     "lo ejecutó un técnico propio" — una OT de cliente normal también lo tiene,
     así que usarlo dejaría sin firma de cliente a casi todas las OT reales.
@@ -71144,9 +71751,44 @@ def _ot_es_interna(v):
         return False
     try:
         return ((v.get("modalidad_cobro") or "").strip().lower() == "interno"
-                or (v.get("tipo") or "").strip().lower() == "revision_interna")
+                or (v.get("tipo") or "").strip().lower() == "revision_interna"
+                or ("cliente_id" in v and v.get("cliente_id") is None))
     except Exception:
         return False
+
+
+# TODO(2026-08-10, Daniel — Trabajo de bodega sin cliente, riesgo conocido):
+# mant_visitas.cliente_id ahora puede ser NULL (tipo='revision_interna').
+# Ya se corrigieron a LEFT JOIN los puntos de MAYOR riesgo (el usuario no
+# podía ni abrir su propia OT): mant_ot_ejecutar, mant_ot_ficha (legacy),
+# mant_visita_resumen, mant_ots_list (listado + fallback + KPIs) y
+# _ot_pdf_context (PDF real + HTML imprimible, usado por mant_visita_pdf y
+# mant_ot_pdf_render). También: mant_visita_generar_informe NO se arregló —
+# ver TODO puntual ahí (mant_reportes.cliente_id sigue NOT NULL).
+#
+# Quedan ~15 lugares más con `JOIN mant_clientes c ON c.id=v.cliente_id`
+# (INNER) contra mant_visitas que NO se tocaron en esta tarea — no bloquean
+# la creación/ejecución de un Trabajo de bodega, pero sí pueden ocultarlo o
+# fallar si se navega a esas vistas secundarias. Los de mayor probabilidad
+# de uso real, pendientes de revisar caso a caso antes de anunciar la
+# feature ampliamente:
+#   - Tablero/calendario del día (visitas del día, ~línea 64107/64260) —
+#     probablemente aceptable que un trabajo de bodega no tenga "cliente"
+#     en la tarjeta del calendario, pero confirmar que no lo hace
+#     desaparecer del tablero.
+#   - Alertas SLA / vencimientos de OT (~línea 66141) — igual, confirmar que
+#     no se "pierde" una OT interna vencida.
+#   - Endpoints de firma de cliente / aprobación (~línea 71830, 72594) —
+#     revision_interna ya no exige firma de cliente (_ot_es_interna), pero
+#     si alguno de esos queries se llega a invocar sobre una OT sin cliente
+#     por otra vía, revisar que no reviente con "not found".
+#   - Vistas relacionadas a Ticket (~línea 75406, 75801, 75943) — un
+#     Trabajo de bodega normalmente NO nace de un ticket de cliente, así
+#     que el riesgo real es bajo, pero no está garantizado por diseño.
+# No se convirtieron a LEFT JOIN a ciegas para no arriesgar comportamiento
+# ya probado en producción sin poder verificar cada uno visualmente — usar
+# esta lista como punto de partida si aparece un bug real reportado por
+# Daniel sobre alguna de estas vistas con una OT de Trabajo de bodega.
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar-revision", methods=["POST"])
@@ -71193,8 +71835,11 @@ def mant_ot_firmar_revision(vid):
         # captura fichas por levantamiento, las tareas sin maquina_id NO son
         # trabajables (no tienen tarjeta en pantalla) y por lo tanto no pueden
         # bloquear la firma. Ver el comentario largo en _ot_validar_cierre.
+        # FIX 2026-08-10 (OT-2026-00042): se agrega `id` al SELECT — sin él,
+        # _ot_es_levantamiento() no puede resolver el fallback reverse (lo
+        # necesita para buscar en mant_levantamientos.visita_id).
         _v_gate = mysql_fetchone(
-            "SELECT tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
+            "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
         _huerf_gate = (" AND t.maquina_id IS NOT NULL "
                        if _ot_es_levantamiento(_v_gate) else "")
         faltan_rows = mysql_fetchall(
@@ -71241,7 +71886,9 @@ def mant_ot_firmar_revision(vid):
         # los dos únicos puntos que escriben 'pendiente_aprobacion' son las
         # dos firmas de cliente, y aprobar-cierre exige ese estado.
         _v_int = mysql_fetchone(
-            "SELECT modalidad_cobro, tipo FROM mant_visitas WHERE id=%s", (vid,))
+            # cliente_id incluido (2026-08-10) — ver comentario igual en
+            # _ot_validar_cierre sobre por qué _ot_es_interna lo necesita.
+            "SELECT modalidad_cobro, tipo, cliente_id FROM mant_visitas WHERE id=%s", (vid,))
         _es_int = _ot_es_interna(_v_int)
         _estado_post_firma = "pendiente_aprobacion" if _es_int else "firmada_tecnico"
         mysql_execute(
@@ -71255,14 +71902,14 @@ def mant_ot_firmar_revision(vid):
         # Marcar levantamiento como cerrado si la OT tenía uno (la captura de
         # datos del equipo ya terminó; las correcciones de la ventana editan
         # mant_visita_equipos/mant_maquinas directamente, no dependen de esto).
-        v_info = mysql_fetchone(
-            "SELECT levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
-        )
-        if v_info and v_info.get("levantamiento_id"):
+        # FIX 2026-08-10 (OT-2026-00042): antes solo miraba el campo forward
+        # — si el link era solo reverse, el levantamiento nunca se cerraba.
+        _lev_id_cierre = _ot_levantamiento_de(vid)
+        if _lev_id_cierre:
             mysql_execute(
                 "UPDATE mant_levantamientos SET estado='cerrado', fecha_cierre=NOW() "
                 " WHERE id=%s AND estado IN ('borrador','en_curso')",
-                (v_info["levantamiento_id"],)
+                (_lev_id_cierre,)
             )
         _mant_log("visita", vid, "firmada_tecnico",
                   f"{nombre_tec or ''} → firmada_tecnico (ventana de corrección)")
@@ -71926,11 +72573,14 @@ def mant_visita_resumen(vid):
     """Resumen liviano de la OT para la revisión rápida del supervisor:
     qué se hizo (tareas, fotos, equipos), observaciones del técnico y su firma.
     Permite revisar SIN abrir la OT completa."""
+    # LEFT JOIN (era INNER) 2026-08-10: OT de Trabajo de bodega
+    # (tipo='revision_interna') puede tener cliente_id NULL — con INNER esta
+    # OT "desaparecía" del resumen aunque existiera.
     v = mysql_fetchone(
         "SELECT v.id, v.titulo, v.tipo, v.estado, v.tecnico, v.fecha_realizada, "
         "v.observaciones, v.firma_tecnico_nombre, v.firma_tecnico_at, v.firma_tecnico_url, "
         "c.razon_social "
-        "FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+        "FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
 
@@ -71997,7 +72647,9 @@ def mant_ot_aprobar_cierre(vid):
     firma_sup_nombre = (d.get("firma_supervisor_nombre") or "").strip()[:200]
     # Validar estado actual
     v = mysql_fetchone(
-        "SELECT estado, modalidad_cobro, factura_nudo FROM mant_visitas WHERE id=%s",
+        # cliente_id incluido (2026-08-10) — ver comentario igual en
+        # _ot_validar_cierre sobre por qué _ot_es_interna lo necesita.
+        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id FROM mant_visitas WHERE id=%s",
         (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -72975,6 +73627,12 @@ def _ot_pdf_context(vid, embed_images=False):
       - status == "not_found"  → ctx None
       - status == "incompleto" → ctx None, razones = lista (no cerrada / faltan firmas)
     """
+    # 2026-08-10 (Daniel — Trabajo de bodega sin cliente): LEFT JOIN (era
+    # INNER). Esta función alimenta TANTO el PDF real (mant_visita_pdf) como
+    # el HTML imprimible (mant_ot_pdf_render) — con INNER, una OT interna sin
+    # cliente_id jamás podía generar su PDF (status quedaba "not_found" en
+    # vez de "ok"/"incompleto"). _ot_es_interna() ya exime la firma de
+    # cliente para este caso (más abajo); c.* queda NULL en el ctx del template.
     visita = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cli_rut, "
         "       c.direccion AS cli_direccion, c.comuna AS cli_comuna, "
@@ -72986,7 +73644,7 @@ def _ot_pdf_context(vid, embed_images=False):
         "       COALESCE(us.nombre, us.username) AS responsable_nombre, "
         "       us.username AS responsable_email "
         "  FROM mant_visitas v "
-        "  JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         "  LEFT JOIN app_users u  ON u.id  = v.tecnico_user_id "
         "  LEFT JOIN app_users us ON us.id = v.firma_supervisor_user_id "
         " WHERE v.id=%s",
@@ -73268,6 +73926,19 @@ def _ot_pdf_context(vid, embed_images=False):
                 _lev_id_pdf = _lev_rev["id"]
         except Exception as _e_levrev:
             print(f"[_ot_pdf_context][lev_rev] vid={vid}: {_e_levrev}", flush=True)
+        # FIX 2026-08-10 (OT-2026-00042, bug real): resolver por el sentido
+        # inverso NO bastaba — el valor se usaba solo LOCALMENTE en esta
+        # función para cargar lev_items/lev_fotos_idx, pero nunca se
+        # escribía de vuelta en `visita["levantamiento_id"]`. Mas abajo,
+        # mant_visita_pdf/mant_ot_pdf_render deciden el TEMPLATE con
+        # `_ot_es_levantamiento(ctx["visita"])`, que solo mira el campo
+        # crudo `levantamiento_id` (sin el fallback). Resultado: ctx
+        # traía lev_items poblado (11 fotos) pero se elegía igual
+        # ot_pdf.html (el clásico, que no referencia lev_items) → 0 fotos
+        # en el PDF pese a que los datos sí existían. `visita` es un dict
+        # de esta sola request — no se persiste en BD, cero riesgo.
+        if _lev_id_pdf and not visita.get("levantamiento_id"):
+            visita["levantamiento_id"] = _lev_id_pdf
     if _lev_id_pdf:
         try:
             # 2026-08-09 (Daniel: "¿por qué no se imprimen las fotos?" +
@@ -78966,6 +79637,17 @@ def mant_visita_generar_informe(vid):
         return jsonify({"error": "OT no encontrada"}), 404
     v = dict(v)
     cid = v.get("cliente_id")
+    # TODO(2026-08-10, Daniel — Trabajo de bodega sin cliente): una OT interna
+    # (tipo='revision_interna') ahora puede tener cliente_id=NULL. El INSERT
+    # INTO mant_reportes de más abajo pasa `cid` directo a la columna
+    # mant_reportes.cliente_id, que sigue siendo NOT NULL (CREATE TABLE,
+    # línea ~48599) — ese INSERT FALLARÁ (1048 Column cannot be null) si
+    # alguien pulsa "Subir la OT" desde un Trabajo de bodega. NO se corrige
+    # acá (requeriría además volver nullable mant_reportes.cliente_id y
+    # revisar cada JOIN/plantilla que asuma cliente en el módulo de
+    # Informes — fuera del alcance de esta tarea). Mientras tanto: o se
+    # bloquea este botón en el frontend para OT sin cliente_id, o se hace esa
+    # migración aparte antes de ofrecerlo.
 
     # Ticket asociado (trazabilidad)
     tk = mysql_fetchone(
@@ -78975,10 +79657,29 @@ def mant_visita_generar_informe(vid):
     ticket_num = str(tk.get("numero_ticket") or tk.get("id") or "").strip()
     ot_num = str(v.get("numero_ot") or v.get("id") or "").strip()
 
-    # Tipo de OT → tipo de informe
+    # Tipo de OT → tipo de informe (mant_reportes.tipo: ENUM más chico que
+    # mant_visitas.tipo — 'mantencion','instalacion','inspeccion',
+    # 'visita_tecnica','garantia','otro'). NO se amplía ese ENUM acá (fuera
+    # de alcance) — se mapea cada tipo de OT al valor EXISTENTE más cercano
+    # en criterio de negocio:
+    #   - cambio_equipo/desinstalacion → 'instalacion' (trabajo físico sobre
+    #     el equipo, misma naturaleza que una instalación).
+    #   - capacitacion/revision_interna → 'otro' (no son servicio técnico
+    #     sobre un equipo de cliente; revision_interna además puede no
+    #     tener cliente — ver TODO arriba).
+    #   - repuesto → 'visita_tecnica' (visita a cambiar/instalar un repuesto
+    #     puntual, no una instalación completa).
+    #   - visita_correctiva → 'visita_tecnica' (mismo criterio que
+    #     'correctiva', ya mapeada así).
+    #   - control_calidad (tipo nuevo, Tarea 1) → 'inspeccion' (es una
+    #     revisión/verificación de productos, misma naturaleza).
     _tipo_map = {"preventiva": "mantencion", "correctiva": "visita_tecnica",
                  "garantia": "garantia", "inspeccion": "inspeccion",
-                 "instalacion": "instalacion", "levantamiento": "inspeccion"}
+                 "instalacion": "instalacion", "levantamiento": "inspeccion",
+                 "cambio_equipo": "instalacion", "desinstalacion": "instalacion",
+                 "capacitacion": "otro", "revision_interna": "otro",
+                 "repuesto": "visita_tecnica", "visita_correctiva": "visita_tecnica",
+                 "control_calidad": "inspeccion"}
     tipo_rep = _tipo_map.get((v.get("tipo") or "").lower(), "visita_tecnica")
 
     # Equipos de la OT (defensivo con columnas que podrían no existir)
@@ -84459,6 +85160,11 @@ _TAREA_TIPO_EQUIVALENTE = {
     'repuesto':          'cambio',
     'desinstalacion':    'otro',
     'capacitacion':      'otro',
+    # 2026-08-10 (Daniel): 'control_calidad' es revisión/verificación de
+    # productos — el ENUM histórico de mant_visita_tareas.tipo no tiene ese
+    # valor, así que se traduce a 'inspeccion' (mismo criterio que
+    # visita_tecnica/revision_interna arriba).
+    'control_calidad':   'inspeccion',
 }
 
 
@@ -84520,8 +85226,13 @@ _TIPO_OT_LABEL = {
     'desinstalacion':    'Desinstalación',
     'capacitacion':      'Capacitación',
     'repuesto':          'Repuesto',
-    'revision_interna':  'Revisión interna',
+    # 2026-08-10 (Daniel): "Trabajo de bodega" es el MISMO tipo que ya
+    # existía como 'revision_interna' — solo cambia el label visible.
+    # NO cambiar el valor del ENUM (revision_interna), solo el texto.
+    'revision_interna':  'Trabajo de bodega',
     'visita_correctiva': 'Visita correctiva',
+    # 2026-08-10 (Daniel): tipo de OT nuevo — ver Tarea 1 (control_calidad).
+    'control_calidad':   'Control de Calidad',
 }
 
 
@@ -84715,7 +85426,7 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
                 "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
                 "desinstalacion", "capacitacion", "repuesto", "revision_interna",
-                "visita_correctiva")
+                "visita_correctiva", "control_calidad")
     tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
     if tipo_ot not in tipos_ok:
         tipo_ot = "levantamiento"
@@ -84724,6 +85435,31 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # preventiva/correctiva/visita técnica moría con el error 1265 y la
     # OT terminaba sin checklist (ver _tarea_tipo_seguro).
     tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+
+    # ─── Selector de plantilla (2026-08-10, backend para selector futuro) ──
+    # Por defecto la plantilla se auto-calcula con `_plantilla_estandar_para_
+    # tipo(tipo_ot)` (más abajo). Si el caller (frontend, fase posterior)
+    # manda data.plantilla_id, se valida que exista y esté activa; si es
+    # válida, MANDA sobre el auto-cálculo. Si no es válida (no existe,
+    # inactiva, o no vino), cae al comportamiento actual — nunca bloquea la
+    # creación de la OT por esto.
+    plantilla_id_override = None
+    try:
+        _pid_raw = data.get("plantilla_id")
+        if _pid_raw:
+            _pid_int = int(_pid_raw)
+            _pid_row = mysql_fetchone(
+                "SELECT id FROM mant_tarea_plantillas "
+                " WHERE id=%s AND COALESCE(activa,1)=1 LIMIT 1",
+                (_pid_int,)
+            )
+            if _pid_row:
+                plantilla_id_override = _pid_int
+    except (TypeError, ValueError):
+        plantilla_id_override = None
+    except Exception as _e_pid:
+        print(f"[lev_crear] validar plantilla_id override falló: {_e_pid}", flush=True)
+        plantilla_id_override = None
 
     # ─── Flag opcional: ¿aplica garantía? ──────────────────────────
     # Garantía no es un tipo (cubre múltiples tipos), es una modalidad
@@ -84998,7 +85734,8 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 if not _tiene_plantillas:
                     try:
                         _tiene_plantillas = bool(
-                            _plantilla_estandar_para_tipo(tipo_ot))
+                            plantilla_id_override
+                            or _plantilla_estandar_para_tipo(tipo_ot))
                     except Exception:
                         pass
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
@@ -85161,7 +85898,10 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
         if visita_id and equipo_ids and not plantillas_por_equipo:
             try:
-                plant_id = _plantilla_estandar_para_tipo(tipo_ot)
+                # 2026-08-10: si el caller pidió una plantilla explícita
+                # (data.plantilla_id, ya validada arriba), MANDA sobre el
+                # auto-cálculo por tipo — selector de plantilla (Tarea 4).
+                plant_id = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
                 if plant_id:
                     _n_std = _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
                     print(f"[lev_crear] plantilla estándar {plant_id} aplicada a "
@@ -85837,9 +86577,18 @@ def mant_lev_item_update(iid):
     if not _lev_puede_accion(item["levantamiento_id"], "ejecutar"):
         return _lev_403_response("ejecutar")
 
+    # FIX 2026-08-10 (OT-2026-00042): antes buscaba la visita por el campo
+    # FORWARD (mant_visitas.levantamiento_id=%s) — si el link estaba solo en
+    # el sentido reverse (dato legacy/desincronización histórica), esta
+    # consulta no encontraba la visita, `_visita_estado` quedaba vacío y
+    # `_editable` daba False (el equipo se veía "congelado" cuando en
+    # realidad la OT seguía editable). Acá el caller YA conoce con certeza
+    # el levantamiento_id del item, así que se resuelve la visita por el
+    # sentido reverse que SÍ es seguro: mant_levantamientos.visita_id.
     v = mysql_fetchone(
-        "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
-        (item["levantamiento_id"],)
+        "SELECT vv.estado FROM mant_levantamientos lv "
+        "  LEFT JOIN mant_visitas vv ON vv.id = lv.visita_id "
+        " WHERE lv.id=%s", (item["levantamiento_id"],)
     )
     _visita_estado = (v or {}).get("estado") or ""
     _editable = _visita_estado in _LEV_ESTADOS_EDITABLES
@@ -86188,9 +86937,15 @@ def mant_lev_foto_del(fid):
     if not _lev_puede_accion(foto["levantamiento_id"], "ejecutar"):
         return _lev_403_response("ejecutar")
 
+    # FIX 2026-08-10 (OT-2026-00042): mismo bug que en mant_lev_item_update —
+    # buscar la visita por el campo FORWARD (mant_visitas.levantamiento_id)
+    # falla cuando el link solo existe en el sentido reverse. Se resuelve
+    # por mant_levantamientos.visita_id, que acá el caller ya conoce con
+    # certeza vía foto["levantamiento_id"].
     v = mysql_fetchone(
-        "SELECT estado FROM mant_visitas WHERE levantamiento_id=%s LIMIT 1",
-        (foto["levantamiento_id"],)
+        "SELECT vv.estado FROM mant_levantamientos lv "
+        "  LEFT JOIN mant_visitas vv ON vv.id = lv.visita_id "
+        " WHERE lv.id=%s", (foto["levantamiento_id"],)
     )
     _editable = ((v or {}).get("estado") or "") in _LEV_ESTADOS_EDITABLES
     if not _editable:
@@ -86604,6 +87359,15 @@ def mant_maquina_ficha(mid):
     # por el técnico en el modo ejecución como foto principal del equipo)
     # FIX 2026-05-21: orden por tomada_at (created_at puede no existir en
     # filas viejas si la migración aún no corrió).
+    # TODO (2026-08-10, alcance OT-2026-00042): esta sección solo lee
+    # mant_maquina_fotos (la galería "promovida"). Si un equipo se capturó
+    # en un levantamiento cuyo link con la OT quedó solo en sentido reverse
+    # y la promoción a galería nunca corrió para ese caso, sus fotos de
+    # mant_levantamiento_fotos no aparecen acá. Se dejó fuera de este fix
+    # a propósito por el alcance (reestructurar esta sección para sumar la
+    # tercera fuente toca el JSON que ya consume el template de la ficha).
+    # El helper de lectura ya existe listo para reusar cuando se aborde:
+    # _ot_equipos_y_fotos(vid)["lev_fotos_idx"] / ["lev_items"].
     fotos_rows = mysql_fetchall(
         "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
         "       tomada_at AS created_at, levantamiento_id "
@@ -89564,6 +90328,96 @@ def _ensure_plantillas_estandar_seed():
     return creadas
 
 
+# 2026-08-10 (Daniel — Tarea 1, plantillas por pestaña): "categoria_admin"
+# es la categoría MANUAL que el admin asigna a cada plantilla para
+# organizarla en 1 de las 4 pestañas de /mantenciones/plantillas
+# (Instalación / Mantención / Visitas / Trabajo interno). NO es un cálculo
+# automático — se asigna al crear/editar la plantilla y se puede reasignar.
+# Distinta de `familia_checklist` (las 9 familias del modelo Fracttal) y de
+# `tipo_visita` (el ENUM de 7 valores que usa _plantilla_estandar_para_tipo):
+# ninguna de esas dos es exactamente "la pestaña", por eso esta columna nueva.
+_PLANT_CATEGORIAS_ADMIN = ("instalacion", "mantencion", "visitas", "trabajo_interno")
+_PLANT_CATEGORIA_LABEL = {
+    "instalacion":     "Instalación",
+    "mantencion":      "Mantención",
+    "visitas":         "Visitas",
+    "trabajo_interno": "Trabajo interno",
+}
+# Mapeo DEFAULT "tipo de OT -> categoría" (confirmado por Daniel 2026-08-10
+# para arrancar). Vive en mant_categoria_tipo_map (editable desde el front —
+# Daniel: "lo dejaría editable por el front, a ver si es que quiero borrar
+# uno o mover un tipo"), NO como dict fijo en Python — este dict solo se usa
+# para el SEED inicial. cambio_equipo/desinstalacion/repuesto/visita_correctiva
+# no los mencionó Daniel explícitamente; se seedean con un default razonable
+# (documentado abajo) que el admin puede reasignar sin tocar código.
+_PLANT_CATEGORIA_TIPO_SEED = {
+    "instalacion":       "instalacion",
+    "desinstalacion":    "instalacion",   # extensión razonable, no confirmada por Daniel
+    "preventiva":        "mantencion",
+    "correctiva":        "mantencion",
+    "cambio_equipo":     "mantencion",    # extensión razonable, no confirmada por Daniel
+    "visita_tecnica":    "visitas",
+    "inspeccion":        "visitas",
+    "garantia":          "visitas",
+    "visita_correctiva": "visitas",       # extensión razonable, no confirmada por Daniel
+    "revision_interna":  "trabajo_interno",   # "Trabajo de bodega"
+    "capacitacion":      "trabajo_interno",
+    "control_calidad":   "trabajo_interno",
+    "repuesto":          "trabajo_interno",   # extensión razonable, no confirmada por Daniel
+    "levantamiento":     "trabajo_interno",   # descubrimiento en terreno, no encaja en las otras 3
+}
+
+
+def _ensure_categoria_admin_plantillas():
+    """Garantiza SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1):
+      1. mant_tarea_plantillas.categoria_admin — la categoría manual de la
+         plantilla (pestaña donde vive en /mantenciones/plantillas).
+      2. mant_categoria_tipo_map — mapeo editable "tipo de OT -> categoría
+         default", usado para preseleccionar/filtrar el selector de
+         plantilla al crear una OT (Tarea 4). Sembrado con
+         _PLANT_CATEGORIA_TIPO_SEED SOLO para los tipos que aún no tengan
+         fila — no pisa reasignaciones manuales que Daniel ya haya hecho.
+    Devuelve dict con lo que tuvo que crear/sembrar (para logging)."""
+    out = {"columna": False, "tabla": False, "seed": []}
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
+            "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL "
+            "COMMENT 'Pestaña asignada manualmente por el admin (Tarea 1, 2026-08-10)'"
+        )
+        out["columna"] = True
+    except Exception:
+        pass  # ya existía
+    try:
+        mysql_execute("ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)")
+    except Exception:
+        pass
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_categoria_tipo_map (
+                tipo_ot     VARCHAR(40) NOT NULL PRIMARY KEY,
+                categoria   ENUM('instalacion','mantencion','visitas','trabajo_interno') NOT NULL,
+                updated_by  VARCHAR(190),
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        out["tabla"] = True
+    except Exception as e_tbl:
+        print(f"[ensure_categoria_admin] CREATE TABLE mant_categoria_tipo_map falló: {e_tbl}", flush=True)
+        return out
+    for tipo_ot, categoria in _PLANT_CATEGORIA_TIPO_SEED.items():
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) "
+                "VALUES (%s,%s,'seed')",
+                (tipo_ot, categoria)
+            )
+            out["seed"].append(tipo_ot)
+        except Exception as e_seed:
+            print(f"[ensure_categoria_admin] seed '{tipo_ot}' falló: {e_seed}", flush=True)
+    return out
+
+
 def _ensure_lev_items_doc_col():
     """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
@@ -89583,6 +90437,30 @@ def _ensure_lev_items_doc_col():
             return True
     except Exception as e:
         print(f"[ensure_lev_doc] {e}", flush=True)
+    return False
+
+
+def _ensure_garantia_motivo_col():
+    """Garantiza mant_visitas.garantia_motivo SIEMPRE (incluso con
+    ILUS_SKIP_MIGRATIONS=1). Corrección retroactiva de garantía (Daniel
+    2026-08-10): cuando supervisor+ corrige `garantia_aplica` de una OT que
+    ya tenía otra cobertura declarada, el motivo obligatorio queda visible
+    en la ficha de la OT (además del registro completo en mant_logs vía
+    `_mant_log('visita', vid, 'garantia_retroactiva', ...)`)."""
+    try:
+        _c = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "  AND COLUMN_NAME='garantia_motivo'")
+        if not (_c or {}).get("n"):
+            mysql_execute(
+                "ALTER TABLE mant_visitas "
+                "ADD COLUMN garantia_motivo VARCHAR(500) NULL "
+                "COMMENT 'Motivo de la última corrección retroactiva de garantia_aplica'")
+            print("[ensure_garantia_motivo] columna agregada", flush=True)
+            return True
+    except Exception as e:
+        print(f"[ensure_garantia_motivo] {e}", flush=True)
     return False
 
 
@@ -92139,6 +93017,13 @@ try:
 except Exception as _ensure_ldoc_err:
     print(f"[ILUS][WARN] _ensure_lev_items_doc_col: {_ensure_ldoc_err}", flush=True)
 
+# Columna garantia_motivo (corrección retroactiva de garantía, 2026-08-10).
+try:
+    with app.app_context():
+        _ensure_garantia_motivo_col()
+except Exception as _ensure_garmot_err:
+    print(f"[ILUS][WARN] _ensure_garantia_motivo_col: {_ensure_garmot_err}", flush=True)
+
 # CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía
 # en prod (el seed original solo corría en migración completa) y bloquea
@@ -92162,6 +93047,19 @@ try:
         print(f"[ILUS] target_field agregado (skip-migrations): {_faltaron_tf}", flush=True)
 except Exception as _ensure_tf_err:
     print(f"[ILUS][WARN] _ensure_levantamiento_target_field: {_ensure_tf_err}", flush=True)
+
+# CRÍTICO: categoria_admin + mant_categoria_tipo_map SIEMPRE (incluso
+# skip-migrations) — Tarea 1 (pestañas de plantillas, 2026-08-10). Sin esto,
+# /mantenciones/plantillas no puede organizar por pestaña ni el modal de
+# Generar OT puede filtrar el selector de plantilla por categoría.
+try:
+    with app.app_context():
+        _cat_admin_out = _ensure_categoria_admin_plantillas()
+    if _cat_admin_out.get("seed"):
+        print(f"[ILUS] mant_categoria_tipo_map sembrado (skip-migrations): "
+              f"{_cat_admin_out['seed']}", flush=True)
+except Exception as _ensure_cat_err:
+    print(f"[ILUS][WARN] _ensure_categoria_admin_plantillas: {_ensure_cat_err}", flush=True)
 
 # CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
 try:
@@ -92347,7 +93245,16 @@ def _reparar_visita_fotos_maquina_id():
     maquina_id de su tarea. Sin esto, las fotos del levantamiento NO aparecen en la
     ficha del equipo (la proyección a la ficha y la sección 'último levantamiento'
     filtran por (visita_id, maquina_id)). Idempotente y barato (COUNT guard).
-    Bug 2026-06-02 — Daniel: 'quiero ver la foto del levantamiento en la ficha'."""
+    Bug 2026-06-02 — Daniel: 'quiero ver la foto del levantamiento en la ficha'.
+
+    TODO (2026-08-10, alcance OT-2026-00042): este backfill solo cubre
+    mant_visita_fotos (checklist clásico) — mant_levantamiento_fotos es una
+    tabla aparte que este backfill NUNCA toca. Una OT con fotos SOLO en
+    mant_levantamiento_fotos (levantamiento con link solo en sentido
+    reverse, o cualquier caso donde la promoción a la ficha no corrió)
+    sigue sin aparecer en la ficha del equipo vía este camino. No se
+    amplía acá por alcance — ver _ot_equipos_y_fotos(vid) como fuente
+    única de lectura ya lista para ese caso."""
     try:
         n = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_visita_fotos f "

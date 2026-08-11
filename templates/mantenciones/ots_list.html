@@ -190,6 +190,86 @@
    un efecto espejo (sidebar duplicado) en algunos navegadores. Ahora
    la tab "Calendario" muestra un botón hacia /mantenciones/calendario
    en pantalla completa (sin iframe). */
+
+/* ═══════════════════════════════════════════════════════════════════
+   MODAL "Trabajo interno" (Daniel 2026-08-10): "quiero tener un módulo
+   de órdenes de trabajo... donde yo levante la gestión de orden de
+   trabajo, pero solamente con la opción de cubrir las órdenes internas...
+   revisión de calidad, capacitación, todo ese tipo de cosas que no
+   amerita un cliente." + "Necesito cubrir todos los trabajos del día con
+   una OT interna. Que quede espectacular! Un diseño profesional con
+   lógica."
+
+   Diseño = ESTÁNDAR de módulo/modal nuevo (Daniel, ver memoria
+   feedback_diseno_estandar_modales.md): pasos numerados que se pintan
+   verde al completarse, igual lenguaje visual que
+   templates/mantenciones/_repuestos_bodega_pane.html (.rb-step-*) y
+   templates/mantenciones/plantillas.html (.pl-step-*). Prefijo propio
+   .oti-step-* (Órdenes de Trabajo Interna) para no colisionar — este
+   modal vive en ots_list.html, que no carga tickets_ficha.css.
+   ═══════════════════════════════════════════════════════════════════ */
+.oti-step{
+  margin:0 0 14px;background:#fff;
+  border:1px solid #e5e7eb;border-radius:12px;
+  position:relative;overflow:visible;
+  transition:border-color .2s,background .3s,box-shadow .2s;
+}
+.oti-step::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  border-radius:12px 0 0 12px;
+  background:linear-gradient(180deg,#dc2626,#a60000);
+  opacity:0;transform:scaleY(.4);transform-origin:top;
+  transition:opacity .3s,transform .35s cubic-bezier(.22,1,.36,1);
+}
+.oti-step:hover{border-color:#cbd5e1}
+.oti-step:hover::before{opacity:.5;transform:scaleY(1)}
+.oti-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+.oti-step.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d);opacity:1;transform:scaleY(1)}
+.oti-step.is-optional{background:#fafafa;border-style:dashed;border-color:#d1d5db}
+.oti-step.is-optional::before{display:none}
+.oti-step-header{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;
+  background:linear-gradient(135deg,#fff,#fafafa);
+  border-bottom:1px solid #f1f5f9;border-radius:12px 12px 0 0;
+}
+.oti-step.is-complete .oti-step-header{background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border-bottom-color:#dcfce7}
+.oti-step.is-optional .oti-step-header{background:linear-gradient(135deg,#fafafa,#f4f4f5)}
+.oti-step-circle{
+  width:26px;height:26px;border-radius:50%;
+  background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.82rem;font-weight:700;flex-shrink:0;
+  transition:background .3s,transform .35s cubic-bezier(.34,1.56,.64,1);
+}
+.oti-step.is-complete .oti-step-circle{background:linear-gradient(135deg,#22c55e,#15803d);transform:scale(1.08)}
+.oti-step-circle .oti-step-check{display:none;font-size:.82rem;line-height:1}
+.oti-step.is-complete .oti-step-circle .oti-step-num{display:none}
+.oti-step.is-complete .oti-step-circle .oti-step-check{display:block}
+.oti-step-title{font-weight:700;font-size:.92rem;color:#0f172a;min-width:0}
+.oti-step.is-optional .oti-step-title{color:#374151}
+.oti-step-sub{font-size:.73rem;color:#94a3b8;margin-left:auto;text-align:right;flex-shrink:0;padding-left:10px}
+@media (max-width:575.98px){ .oti-step-sub{display:none} }
+.oti-step-body{padding:14px}
+
+/* Paso 1 — cards de tipo de trabajo interno (pobladas por JS desde
+   GET /mantenciones/api/plantillas/categorias, NUNCA hardcodeadas —
+   así si Daniel reasigna un tipo a otra categoría desde el admin de
+   plantillas, este selector se ajusta solo). */
+.oti-tipo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.oti-tipo-card{
+  border:2px solid #e5e7eb;border-radius:11px;padding:12px 10px;
+  text-align:center;cursor:pointer;transition:all .14s;background:#fff;
+  min-height:44px;
+}
+.oti-tipo-card:hover{border-color:#fca5a5;transform:translateY(-1px)}
+.oti-tipo-card.sel{border-color:#dc2626;background:linear-gradient(135deg,#fef2f2,#fff);box-shadow:0 2px 10px rgba(220,38,38,.15)}
+.oti-tipo-card .ico{font-size:1.5rem;color:#9ca3af;margin-bottom:4px}
+.oti-tipo-card.sel .ico{color:#dc2626}
+.oti-tipo-card .lbl{font-weight:700;font-size:.82rem;color:#374151}
+.oti-tipo-card.sel .lbl{color:#991b1b}
+
+/* Selector de plantilla — pastilla ⭐ = recomendada */
+.oti-plant-opt.rec::after{content:' ⭐';}
 </style>
 
 <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -211,6 +291,15 @@
     <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-light fw-bold">
       <i class="bi bi-building-add me-1"></i>Generar OT desde cliente
     </a>
+    {# 2026-08-10 (Daniel): OT 100% interna (Trabajo de bodega, Capacitación,
+       Control de Calidad...) SIN pasar por ninguna ficha de cliente ni
+       ticket. @_no_tecnico también en el backend (POST
+       /mantenciones/api/visitas/interna) — este botón queda oculto para el
+       rol técnico con el MISMO flag `is_tecnico` que ya oculta "Generar OT
+       desde cliente" arriba (no se inventa un mecanismo nuevo). #}
+    <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirModalOTInterna()">
+      <i class="bi bi-clipboard2-check me-1"></i>Trabajo interno
+    </button>
     {% endif %}
     {% if permissions.superadmin %}
     <button type="button" class="btn btn-sm btn-outline-danger" onclick="resetearOTs()"
@@ -1371,5 +1460,312 @@ function otWhatsApp(el){
   return false;
 }
 </script>
+
+{% if not is_tecnico %}
+{# ═══════════════════════════════════════════════════════════════════
+   Modal "Trabajo interno" — crea una OT SIN cliente ni ticket (Trabajo
+   de bodega / Capacitación / Control de Calidad — cualquier tipo que
+   HOY caiga en la categoría 'trabajo_interno' de mant_categoria_tipo_map,
+   ver GET /mantenciones/api/plantillas/categorias). Pedido de Daniel
+   2026-08-10 (ver comentario junto al botón que lo abre, arriba).
+
+   POST /mantenciones/api/visitas/interna — @_no_tecnico en el backend
+   (mant_visita_crear_interna, app.py). Este modal solo se renderiza
+   `{% if not is_tecnico %}` (mismo flag que ya oculta "Generar OT desde
+   cliente"), pero la autorización REAL vive en el backend — el ocultar
+   el botón es solo UX, no seguridad.
+   ═══════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalOTInterna" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a,#374151);color:#fff;border:0">
+        <div>
+          <h5 class="modal-title fw-bold mb-0">
+            <i class="bi bi-clipboard2-check me-2"></i>Nueva OT — Trabajo interno
+          </h5>
+          <small class="d-block mt-1" style="opacity:.85">
+            Sin cliente ni ticket asociado — bodega, capacitación, control de calidad y similares.
+          </small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="background:#fafafa">
+
+        {# ─── Paso 1: Tipo de trabajo interno (cards, pobladas por JS) ─── #}
+        <section class="oti-step" id="otiStep1">
+          <div class="oti-step-header">
+            <div class="oti-step-circle"><span class="oti-step-num">1</span><span class="oti-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="oti-step-title">Tipo de trabajo interno</div>
+            <div class="oti-step-sub">Qué se va a hacer</div>
+          </div>
+          <div class="oti-step-body">
+            <div class="oti-tipo-grid" id="otiTipoGrid">
+              <div class="text-muted small py-3 text-center" style="grid-column:1/-1">
+                <span class="spinner-border spinner-border-sm me-2"></span>Cargando tipos disponibles…
+              </div>
+            </div>
+            <input type="hidden" id="otiTipo" value="">
+          </div>
+        </section>
+
+        {# ─── Paso 2: Info básica ─── #}
+        <section class="oti-step" id="otiStep2">
+          <div class="oti-step-header">
+            <div class="oti-step-circle"><span class="oti-step-num">2</span><span class="oti-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="oti-step-title">Información básica</div>
+            <div class="oti-step-sub">Título y notas</div>
+          </div>
+          <div class="oti-step-body">
+            <div class="row g-2">
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Título de la OT <span class="oti-req">*</span></label>
+                <input type="text" id="otiTitulo" class="form-control form-control-sm"
+                       placeholder="Ej: Control de calidad — lote agosto" maxlength="200">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Descripción / notas (opcional)</label>
+                <textarea id="otiDescripcion" class="form-control form-control-sm" rows="2" maxlength="2000"
+                          placeholder="Detalle de la tarea, contexto, alcance…"></textarea>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ─── Paso 3: Agenda ─── #}
+        <section class="oti-step" id="otiStep3">
+          <div class="oti-step-header">
+            <div class="oti-step-circle"><span class="oti-step-num">3</span><span class="oti-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="oti-step-title">Agenda</div>
+            <div class="oti-step-sub">Fecha, horario y técnico</div>
+          </div>
+          <div class="oti-step-body">
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Fecha programada <span class="oti-req">*</span></label>
+                <input type="date" id="otiFecha" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Hora inicio</label>
+                <input type="time" id="otiHoraIni" class="form-control form-control-sm" value="09:00">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold">Hora término</label>
+                <input type="time" id="otiHoraFin" class="form-control form-control-sm" value="13:00">
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Técnico asignado (opcional)</label>
+                <select id="otiTecnico" class="form-select form-select-sm">
+                  <option value="">— Sin asignar aún —</option>
+                  {% for t in tecnicos %}
+                  <option value="{{ t.id }}">{{ t.nombre }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ─── Paso 4: Plantilla (opcional) ─── #}
+        <section class="oti-step is-optional" id="otiStep4">
+          <div class="oti-step-header">
+            <div class="oti-step-circle" style="background:linear-gradient(135deg,#9ca3af,#6b7280)"><span class="oti-step-num">4</span><span class="oti-step-check"><i class="bi bi-check-lg"></i></span></div>
+            <div class="oti-step-title">Plantilla de checklist <span class="text-muted fw-normal" style="font-size:.78rem">(opcional)</span></div>
+            <div class="oti-step-sub">Si no eliges, se aplica la estándar del tipo</div>
+          </div>
+          <div class="oti-step-body">
+            <select id="otiPlantilla" class="form-select form-select-sm">
+              <option value="">Elige un tipo primero…</option>
+            </select>
+            <small class="text-muted d-block mt-1" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              ⭐ = recomendada para este tipo. Si no seleccionas ninguna, la OT queda
+              igual sin plantilla forzada — puedes aplicarla después desde la ficha de la OT.
+            </small>
+          </div>
+        </section>
+
+      </div>
+      <div class="modal-footer" style="background:#fff;border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg me-1"></i>Cancelar
+        </button>
+        <button type="button" class="btn fw-bold text-white" id="btnOtiCrear"
+                style="background:linear-gradient(135deg,#0a0a0a,#374151);padding:.55rem 1.4rem"
+                onclick="otiCrearOT()">
+          <i class="bi bi-clipboard2-check me-1"></i>Crear OT interna
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<style>.oti-req{color:#dc2626;font-weight:800}</style>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  OT "Trabajo interno" — sin cliente ni ticket
+//  Paso 1 se puebla EN VIVO desde GET /mantenciones/api/plantillas/
+//  categorias (tipos_ot de la categoría "trabajo_interno") — nunca una
+//  lista fija: si Daniel reasigna un tipo desde el admin de plantillas,
+//  este selector se ajusta solo, sin tocar código (pedido explícito).
+// ════════════════════════════════════════════════════════════
+let _modalOTInterna = null;
+const _OTI_ICONS = {
+  revision_interna: 'bi-box-seam',
+  capacitacion:     'bi-mortarboard',
+  control_calidad:  'bi-patch-check',
+  repuesto:         'bi-gear',
+  levantamiento:    'bi-binoculars',
+};
+
+function otiEscHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function otiRefreshStepStates(){
+  document.getElementById('otiStep1').classList.toggle('is-complete', !!document.getElementById('otiTipo').value);
+  document.getElementById('otiStep2').classList.toggle('is-complete', !!document.getElementById('otiTitulo').value.trim());
+  document.getElementById('otiStep3').classList.toggle('is-complete', !!document.getElementById('otiFecha').value);
+}
+
+async function abrirModalOTInterna(){
+  // Reset del formulario cada vez que se abre (evita arrastrar datos de un intento anterior)
+  document.getElementById('otiTipo').value = '';
+  document.getElementById('otiTitulo').value = '';
+  document.getElementById('otiDescripcion').value = '';
+  document.getElementById('otiFecha').value = '';
+  document.getElementById('otiHoraIni').value = '09:00';
+  document.getElementById('otiHoraFin').value = '13:00';
+  document.getElementById('otiTecnico').value = '';
+  document.getElementById('otiPlantilla').innerHTML = '<option value="">Elige un tipo primero…</option>';
+  otiRefreshStepStates();
+
+  if (!_modalOTInterna) _modalOTInterna = new bootstrap.Modal(document.getElementById('modalOTInterna'));
+  _modalOTInterna.show();
+
+  await otiCargarTipos();
+}
+
+async function otiCargarTipos(){
+  const grid = document.getElementById('otiTipoGrid');
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/categorias');
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    const cat = (d.categorias || []).find(c => c.clave === 'trabajo_interno');
+    const tipos = (cat && cat.tipos_ot) || [];
+    if (!tipos.length){
+      grid.innerHTML = '<div class="text-muted small py-2 text-center" style="grid-column:1/-1">'
+        + 'No hay tipos de OT asignados a "Trabajo interno" — configúralo en /mantenciones/plantillas.</div>';
+      return;
+    }
+    grid.innerHTML = tipos.map(tipo => {
+      const label = (d.tipo_ot_label && d.tipo_ot_label[tipo]) || tipo;
+      const ico = _OTI_ICONS[tipo] || 'bi-clipboard2-check';
+      return `<div class="oti-tipo-card" data-tipo="${otiEscHtml(tipo)}" onclick="otiSeleccionarTipo(this)">
+        <div class="ico"><i class="bi ${ico}"></i></div>
+        <div class="lbl">${otiEscHtml(label)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = '<div class="alert alert-warning py-2 small mb-0" style="grid-column:1/-1">'
+      + 'No se pudieron cargar los tipos de trabajo interno. Cierra e intenta de nuevo.</div>';
+  }
+}
+
+function otiSeleccionarTipo(el){
+  document.querySelectorAll('#otiTipoGrid .oti-tipo-card').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  const tipo = el.dataset.tipo;
+  document.getElementById('otiTipo').value = tipo;
+  otiRefreshStepStates();
+  otiCargarPlantillas(tipo);
+}
+
+async function otiCargarPlantillas(tipo){
+  const sel = document.getElementById('otiPlantilla');
+  sel.innerHTML = '<option value="">— Sin plantilla (se aplica la estándar del tipo) —</option>';
+  if (!tipo) return;
+  try {
+    const r = await fetch('/mantenciones/api/plantillas?tipo_visita=' + encodeURIComponent(tipo) + '&activa=1');
+    const d = await r.json();
+    if (!r.ok || !d.ok) return;
+    (d.plantillas || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.className = p.es_default ? 'oti-plant-opt rec' : 'oti-plant-opt';
+      opt.textContent = (p.es_default ? '⭐ ' : '') + p.nombre;
+      if (p.es_default) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* best-effort — la OT igual se crea sin plantilla explícita */ }
+}
+
+async function otiCrearOT(){
+  const tipo = document.getElementById('otiTipo').value;
+  const titulo = document.getElementById('otiTitulo').value.trim();
+  const fecha = document.getElementById('otiFecha').value;
+  if (!tipo){
+    ilusToast('Elige el tipo de trabajo interno (paso 1).', { type: 'warning' });
+    return;
+  }
+  if (!titulo){
+    ilusToast('El título de la OT es obligatorio (paso 2).', { type: 'warning' });
+    return;
+  }
+  if (!fecha){
+    ilusToast('La fecha programada es obligatoria (paso 3).', { type: 'warning' });
+    return;
+  }
+  const body = {
+    tipo,
+    titulo,
+    descripcion: document.getElementById('otiDescripcion').value.trim(),
+    fecha_programada: fecha,
+    hora_inicio: document.getElementById('otiHoraIni').value || null,
+    hora_fin: document.getElementById('otiHoraFin').value || null,
+    tecnico_user_id: document.getElementById('otiTecnico').value || null,
+  };
+  const plantillaId = document.getElementById('otiPlantilla').value;
+  if (plantillaId) body.plantilla_id = plantillaId;
+
+  const btn = document.getElementById('btnOtiCrear');
+  const htmlOrig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creando…';
+  try {
+    const r = await fetch('/mantenciones/api/visitas/interna', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      ilusToast('No se pudo crear la OT: ' + (d.error || 'error desconocido'), { type: 'error' });
+      return;
+    }
+    if (_modalOTInterna) _modalOTInterna.hide();
+    await ilusAlert({
+      type: 'success',
+      title: 'OT interna creada',
+      message: 'La orden de trabajo quedó registrada' + (d.numero_ot ? ' como ' + d.numero_ot : '') + '.',
+    });
+    window.location.href = '/mantenciones/ot/' + d.id;
+  } catch (e) {
+    ilusToast('Error de red al crear la OT: ' + e.message, { type: 'error' });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = htmlOrig;
+  }
+}
+
+// Refresco en vivo del check verde de los pasos 2/3 al tipear
+document.addEventListener('DOMContentLoaded', () => {
+  ['otiTitulo', 'otiFecha'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', otiRefreshStepStates);
+  });
+});
+</script>
+{% endif %}
 
 {% endblock %}
