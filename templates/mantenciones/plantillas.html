@@ -205,7 +205,12 @@
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Tipo de visita</label>
-                <select id="ePTipo" class="form-select form-select-sm">
+                {# onchange -> renderItems(): el selector "Alimenta campo de la
+                   ficha" de cada ítem solo se muestra si el tipo es
+                   levantamiento (Daniel 2026-08-11), así que hay que repintar
+                   los ítems cuando cambia el tipo. #}
+                <select id="ePTipo" class="form-select form-select-sm"
+                        onchange="renderItems()">
                   <option value="preventiva">Preventiva</option>
                   <option value="correctiva">Correctiva</option>
                   <option value="garantia">Garantía</option>
@@ -663,6 +668,14 @@ function renderItems(){
     refrescarPasos();
     return;
   }
+  // 2026-08-11 (Daniel): "la única OT que rellena la ficha son los
+  // levantamientos nada más, así que quítala de las pantallas". El selector
+  // "Alimenta campo de la ficha" solo se dibuja en plantillas de
+  // levantamiento — en el resto era ruido que no hacía nada. NO se toca el
+  // dato guardado (target_field sigue en la BD para las que ya lo tenían) ni
+  // el backend: solo deja de ofrecerse donde no aplica.
+  const _esLevantamiento =
+    (document.getElementById('ePTipo')?.value || '') === 'levantamiento';
   cont.innerHTML = _items.map((it, idx) => {
     const tipoOpciones = TIPOS_RESPUESTA.map(t =>
       `<option value="${t.v}" ${it.tipo_respuesta===t.v?'selected':''}>${t.l}</option>`
@@ -702,15 +715,16 @@ function renderItems(){
         <textarea class="form-control form-control-sm mb-1" rows="1"
                   placeholder="Descripción / ayuda al técnico (opcional)"
                   oninput="actualizarItem(${idx}, 'descripcion', this.value)">${escHtml(it.descripcion||'')}</textarea>
+        ${_esLevantamiento ? `
         <div style="background:#eff6ff;border:1px dashed #bfdbfe;border-radius:6px;padding:6px 8px;margin-bottom:6px">
           <label style="font-size:.66rem;color:#1e40af;font-weight:700;text-transform:uppercase;letter-spacing:.3px">
-            <i class="bi bi-database-fill-up me-1"></i>Alimenta campo de la ficha (solo levantamiento)
+            <i class="bi bi-database-fill-up me-1"></i>Alimenta campo de la ficha
           </label>
           <select class="form-select form-select-sm mt-1" data-field="target_field"
                   onchange="actualizarItem(${idx}, 'target_field', this.value)">
             ${targetOpciones}
           </select>
-        </div>
+        </div>` : ''}
         ${showUnidadRango ? `
           <div class="row g-1 mb-1">
             <div class="col-4"><input type="text" class="form-control form-control-sm" placeholder="Unidad (V, bar…)"
