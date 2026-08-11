@@ -65347,7 +65347,12 @@ def _ot_validar_cierre(vid):
     Las OT tipo 'levantamiento' eximen R2 (diagnóstico autogenerado al cerrar).
     """
     v = mysql_fetchone(
-        "SELECT id, tipo, estado, diagnostico, levantamiento_id, "
+        # cliente_id incluido (2026-08-10): _ot_es_interna(v) más abajo (R4)
+        # ahora también mira "cliente_id IS NULL" — sin esta columna en el
+        # SELECT, esa condición no puede evaluarse (fail-closed correcto,
+        # pero deja sin efecto la exención para OT de Capacitación/Control
+        # de Calidad sin cliente).
+        "SELECT id, tipo, estado, diagnostico, levantamiento_id, cliente_id, "
         "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url "
         "  FROM mant_visitas WHERE id=%s",
         (vid,)
@@ -68395,32 +68400,68 @@ def mant_visita_crear():
     return jsonify(payload), status
 
 
+def _tipo_es_trabajo_interno(tipo_ot):
+    """True si `tipo_ot` cae hoy en la categoría 'trabajo_interno' del mapeo
+    editable mant_categoria_tipo_map (Tarea 1, plantillas por pestaña,
+    2026-08-10). ÚNICA fuente de verdad de "¿este tipo de OT puede crearse
+    sin cliente?" — antes (commit 71ad441) esto era un string hardcodeado
+    ('revision_interna' únicamente); Daniel pidió generalizarlo a TODOS los
+    tipos de la categoría (Trabajo de bodega, Capacitación, Control de
+    Calidad) y que además sea editable sin tocar código — por eso consulta
+    la MISMA tabla que ya alimenta las pestañas de plantillas, en vez de
+    reimplementar la lista acá.
+
+    FAIL-CLOSED: si la tabla no existe o la consulta falla, devuelve False
+    (exige cliente) — más seguro que asumir "sin cliente" ante un error.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return False
+    try:
+        row = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_categoria_tipo_map "
+            " WHERE tipo_ot=%s AND categoria='trabajo_interno'", (tipo_ot,))
+        return bool(row)
+    except Exception:
+        return False
+
+
 @app.route("/mantenciones/api/visitas/interna", methods=["POST"])
 @_mant_required
 @_no_tecnico
 def mant_visita_crear_interna():
-    """Crea una OT de "Trabajo de bodega" (tipo='revision_interna') SIN
-    cliente asociado — 100% interno, igual que el tipo "sin cliente" de
-    Tickets (Daniel, 2026-08-10).
+    """Crea una OT de tipo "Trabajo interno" (Trabajo de bodega, Capacitación
+    o Control de Calidad — cualquier tipo que hoy caiga en la categoría
+    'trabajo_interno' de mant_categoria_tipo_map) SIN cliente asociado —
+    100% interno, igual que el tipo "sin cliente" de Tickets (Daniel,
+    2026-08-10; generalizado el mismo día a pedido suyo: "revisión de
+    calidad, capacitación, todo ese tipo de cosas que no amerita un
+    cliente... las podemos cubrir directo desde la orden de trabajo").
 
-    Endpoint dedicado y liviano: NO pasa por ninguna ficha de cliente. Arma
-    el payload correcto (tipo='revision_interna', cliente_id=None) y llama
+    Endpoint dedicado y liviano: NO pasa por ninguna ficha de cliente. El
+    body debe traer `tipo` (uno de los que hoy son 'trabajo_interno' — se
+    valida acá, no se confía en el frontend); si no viene o no es válido,
+    cae a 'revision_interna' por compatibilidad con el comportamiento
+    anterior. Fuerza cliente_id=None pase lo que pase en el body, y llama
     al MISMO núcleo que /mantenciones/api/visitas (`_mant_visita_crear_core`)
     para no duplicar la lógica de creación (modalidad de cobro, plantilla
     inicial, notificaciones, etc.).
 
-    Se usa `mant_visita_crear_core` (NO `_mant_lev_crear_ot_core`): ese otro
+    Se usa `_mant_visita_crear_core` (NO `_mant_lev_crear_ot_core`): ese otro
     camino de creación es específico de Levantamiento — SIEMPRE inserta una
     fila en `mant_levantamientos` con `cliente_id` (columna NOT NULL ahí, sin
-    tocar) y no tiene sentido de negocio para un trabajo de bodega, que no es
+    tocar) y no tiene sentido de negocio para un trabajo interno, que no es
     un levantamiento de equipos de cliente.
 
-    Decorador `@_no_tecnico`: el trabajo de bodega lo agenda el
+    Decorador `@_no_tecnico`: el trabajo interno lo agenda el
     supervisor/ejecutivo, no lo crea el propio técnico (mismo criterio que
-    el resto de endpoints de gestión de OT que NO son de ejecución).
+    el resto de endpoints de gestión de OT que NO son de ejecución) — y
+    _mant_visita_crear_core() lo vuelve a validar internamente (ver ahí)
+    para que la regla se cumpla también si algún día se llama por otra vía.
     """
     d = dict(request.get_json(silent=True) or {})
-    d["tipo"] = "revision_interna"
+    tipo_pedido = (d.get("tipo") or "").strip().lower()
+    d["tipo"] = tipo_pedido if _tipo_es_trabajo_interno(tipo_pedido) else "revision_interna"
     d.pop("cliente_id", None)   # fuerza sin cliente, pase lo que pase en el body
     payload, status = _mant_visita_crear_core(d)
     return jsonify(payload), status
@@ -68429,18 +68470,20 @@ def mant_visita_crear_interna():
 def _mant_visita_crear_core(d):
     """Núcleo de creación de una OT "clásica" (mant_visita_crear), separado
     del handler HTTP para poder reusarlo desde /mantenciones/api/visitas/interna
-    (Trabajo de bodega, sin cliente) sin duplicar lógica.
+    (Trabajo interno, sin cliente) sin duplicar lógica.
 
     Devuelve (payload:dict, http_status:int) — el caller HTTP hace
     jsonify(payload), status. NO llama jsonify/request directo: solo lee `d`.
     """
-    # 2026-08-10 (Daniel) — "Trabajo de bodega" (tipo='revision_interna') es
-    # 100% interno, sin cliente asociado (igual que en Tickets). Es el ÚNICO
-    # tipo que puede omitir cliente_id — mant_visitas.cliente_id ya se hizo
-    # NULL-able (ver migración cerca de la línea ~49150). Cualquier otro tipo
-    # sigue exigiéndolo como antes.
+    # 2026-08-10 (Daniel) — cualquier tipo de OT de la categoría "Trabajo
+    # interno" (Trabajo de bodega, Capacitación, Control de Calidad — ver
+    # _tipo_es_trabajo_interno) es 100% interno, sin cliente asociado (igual
+    # que en Tickets). mant_visitas.cliente_id ya se hizo NULL-able (ver
+    # migración cerca de la línea ~49150). Cualquier tipo FUERA de esa
+    # categoría sigue exigiéndolo como antes — generalizado desde el string
+    # fijo 'revision_interna' (commit 71ad441) a la categoría completa.
     _tipo_chk = (d.get("tipo") or "").strip().lower()
-    _cliente_opcional = (_tipo_chk == "revision_interna")
+    _cliente_opcional = _tipo_es_trabajo_interno(_tipo_chk)
     if (not _cliente_opcional and not d.get("cliente_id")) or not d.get("fecha_programada"):
         return {"error": "cliente_id y fecha_programada requeridos"}, 400
     # FIX 2026-08-10 (revisión de seguridad post-commit): el endpoint dedicado
@@ -68455,7 +68498,7 @@ def _mant_visita_crear_core(d):
     # @_no_tecnico — para que la regla se cumpla sin importar por cuál de los
     # dos endpoints entró la petición, sin reimplementar la comparación.
     if _cliente_opcional and _es_rol_tecnico():
-        return {"error": "No tienes permiso para crear una OT de Trabajo de bodega."}, 403
+        return {"error": "No tienes permiso para crear una OT de trabajo interno."}, 403
 
     # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
     # COMPAT: la API /api/tecnicos ahora devuelve app_users.id en el campo `id`.
@@ -71624,10 +71667,22 @@ def _ot_es_interna(v):
     que ahí esté la firma del responsable." Y sobre el control de calidad por
     evento: "el trabajo se hace interno en la bodega siempre".
 
-    NO se agrega columna nueva: la OT ya persiste los dos discriminadores.
+    NO se agrega columna nueva: la OT ya persiste los discriminadores.
       - modalidad_cobro='interno'  -> operación interna ILUS (ya documentado
         así en el propio ALTER que crea la columna).
-      - tipo='revision_interna'    -> tipo de OT interno.
+      - tipo='revision_interna'    -> tipo de OT interno (compat: se
+        mantiene explícito por si alguna vez modalidad_cobro no viene
+        seteada en una OT vieja de este tipo).
+      - cliente_id IS NULL         -> FIX 2026-08-10 (Daniel: "revisión de
+        calidad, capacitación, todo ese tipo de cosas que no amerita un
+        cliente... las podemos cubrir directo desde la orden de trabajo").
+        Generalización sobre el chequeo anterior (que solo cubría
+        'revision_interna' hardcodeado): CUALQUIER OT creada sin cliente
+        (ver _tipo_es_trabajo_interno / POST /mantenciones/api/visitas/
+        interna) no puede tener firma de cliente por definición — no hay
+        cliente al que pedírsela. Esta condición es la consecuencia lógica
+        directa de que cliente_id sea nullable, no una regla de negocio
+        nueva que decidir caso por caso.
     OJO: NO usar proveedor_tipo='interno'. Ese campo es de finanzas y significa
     "lo ejecutó un técnico propio" — una OT de cliente normal también lo tiene,
     así que usarlo dejaría sin firma de cliente a casi todas las OT reales.
@@ -71639,7 +71694,8 @@ def _ot_es_interna(v):
         return False
     try:
         return ((v.get("modalidad_cobro") or "").strip().lower() == "interno"
-                or (v.get("tipo") or "").strip().lower() == "revision_interna")
+                or (v.get("tipo") or "").strip().lower() == "revision_interna"
+                or ("cliente_id" in v and v.get("cliente_id") is None))
     except Exception:
         return False
 
@@ -71773,7 +71829,9 @@ def mant_ot_firmar_revision(vid):
         # los dos únicos puntos que escriben 'pendiente_aprobacion' son las
         # dos firmas de cliente, y aprobar-cierre exige ese estado.
         _v_int = mysql_fetchone(
-            "SELECT modalidad_cobro, tipo FROM mant_visitas WHERE id=%s", (vid,))
+            # cliente_id incluido (2026-08-10) — ver comentario igual en
+            # _ot_validar_cierre sobre por qué _ot_es_interna lo necesita.
+            "SELECT modalidad_cobro, tipo, cliente_id FROM mant_visitas WHERE id=%s", (vid,))
         _es_int = _ot_es_interna(_v_int)
         _estado_post_firma = "pendiente_aprobacion" if _es_int else "firmada_tecnico"
         mysql_execute(
@@ -72532,7 +72590,9 @@ def mant_ot_aprobar_cierre(vid):
     firma_sup_nombre = (d.get("firma_supervisor_nombre") or "").strip()[:200]
     # Validar estado actual
     v = mysql_fetchone(
-        "SELECT estado, modalidad_cobro, factura_nudo FROM mant_visitas WHERE id=%s",
+        # cliente_id incluido (2026-08-10) — ver comentario igual en
+        # _ot_validar_cierre sobre por qué _ot_es_interna lo necesita.
+        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id FROM mant_visitas WHERE id=%s",
         (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
