@@ -198,6 +198,13 @@ const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
 function _emailChipsInit(boxId, hiddenId){
   const box = document.getElementById(boxId);
   const hidden = document.getElementById(hiddenId);
+  // 2026-08-10: este archivo ahora también se carga en modo "cliente"
+  // (mantenciones/ficha.html, TID=null -- ver _TKOT_MODO_CLIENTE), donde el
+  // composer de respuestas del ticket (#rpToBox/#rpCcBox) no existe en el
+  // DOM. Sin este guard, box.querySelector() de la línea siguiente tira
+  // TypeError y aborta la ejecución de TODO el script (incluida la lógica
+  // del modal #modalGenerarOT que sí se necesita en esa página).
+  if (!box || !hidden) return { setValue: function(){}, hayInvalidos: function(){ return false; } };
   const input = box.querySelector('.email-chip-input');
 
   function valoresValidos(){
@@ -250,20 +257,30 @@ const rpToChips = _emailChipsInit('rpToBox', 'rpTo');
 const rpCcChips = _emailChipsInit('rpCcBox', 'rpCc');
 
 // ══════════════ Editor Quill (caja de texto "potente") ══════════════
-const rpQuill = new Quill('#rpEditor', {
-  theme: 'snow',
-  placeholder: 'Escribe tu respuesta…',
-  // 2026-07-12 (Daniel): "editable, con muchas herramientas, y elegante" --
-  // toolbar ampliada (antes solo bold/italic/underline/listas/link/clean).
-  modules: { toolbar: [
-    [{header: [false, 2, 3]}],
-    ['bold','italic','underline','strike'],
-    [{color: []}, {background: []}],
-    [{list:'ordered'},{list:'bullet'}],
-    ['blockquote'],
-    ['link','clean'],
-  ] },
-});
+// 2026-08-10: en "modo cliente" (mantenciones/ficha.html) #rpEditor no
+// existe -- el composer de Respuestas es exclusivo del ticket. `new
+// Quill(...)` con un selector que no matchea NINGÚN elemento tira un error
+// síncrono ("Invalid Quill container") que abortaría el resto del script
+// (incluida la lógica del modal #modalGenerarOT). rpQuill queda `null` en
+// ese caso -- todo lo que lo usa vive dentro de funciones que solo se
+// disparan desde botones del composer, inexistentes en modo cliente.
+let rpQuill = null;
+if (document.getElementById('rpEditor')){
+  rpQuill = new Quill('#rpEditor', {
+    theme: 'snow',
+    placeholder: 'Escribe tu respuesta…',
+    // 2026-07-12 (Daniel): "editable, con muchas herramientas, y elegante" --
+    // toolbar ampliada (antes solo bold/italic/underline/listas/link/clean).
+    modules: { toolbar: [
+      [{header: [false, 2, 3]}],
+      ['bold','italic','underline','strike'],
+      [{color: []}, {background: []}],
+      [{list:'ordered'},{list:'bullet'}],
+      ['blockquote'],
+      ['link','clean'],
+    ] },
+  });
+}
 // 2026-07-18 (Daniel, bug real del Reintentar del micrófono): si el usuario
 // tuvo que recargar la página para que Chrome aplique el permiso de
 // micrófono recién activado, el borrador que estaba escribiendo se guarda
@@ -634,6 +651,10 @@ try{
 
 // ══════════════ Traductor (Google Cloud Translation) 2026-07-12 ══════════════
 (function(){
+  // 2026-08-10: sin guard, este IIFE tira TypeError en modo cliente
+  // (#rpTradIdiomaMenu no existe fuera del composer de un ticket) y aborta
+  // el resto del script -- mismo patrón que los demás IIFE de este archivo.
+  if (!document.getElementById('rpTradIdiomaMenu')) return;
   let rpTradLang = 'en';
   document.getElementById('rpTradIdiomaMenu').addEventListener('click', function(ev){
     const a = ev.target.closest('a[data-lang]');
@@ -711,9 +732,12 @@ try{
 // ══════════════ Conexión — envío "inteligente" ══════════════
 const rpOfflineBar = document.getElementById('rpOffline');
 function actualizarConexion(){
+  // 2026-08-10: #rpOffline/#rpBtnEnviar no existen en modo cliente.
+  if (!rpOfflineBar) return;
   const offline = !navigator.onLine;
   rpOfflineBar.classList.toggle('show', offline);
-  document.getElementById('rpBtnEnviar').disabled = offline;
+  const btn = document.getElementById('rpBtnEnviar');
+  if (btn) btn.disabled = offline;
 }
 window.addEventListener('online', actualizarConexion);
 window.addEventListener('offline', actualizarConexion);
@@ -1794,23 +1818,32 @@ function tkAbrirAdjunto(url, mime, nombre){
   tkAbrirLightboxGaleria([{url:url, mime:mime, nombre:nombre}], 0);
 }
 function tkCerrarLightbox(){
-  document.getElementById('tkLightbox').style.display = 'none';
+  const _el = document.getElementById('tkLightbox');
+  if (!_el) return;   // modo cliente: no existe
+  _el.style.display = 'none';
   document.getElementById('tkLightboxBody').innerHTML = '';
   _tkLb.items = []; _tkLb.idx = 0;
 }
-document.getElementById('tkLightbox').addEventListener('click', function(e){
-  if(e.target === this) tkCerrarLightbox();
-});
-document.getElementById('tkLightboxClose').addEventListener('click', tkCerrarLightbox);
-document.getElementById('tkLightboxPrev').addEventListener('click', function(e){
-  e.stopPropagation(); tkLightboxAnterior();
-});
-document.getElementById('tkLightboxNext').addEventListener('click', function(e){
-  e.stopPropagation(); tkLightboxSiguiente();
-});
+// 2026-08-10: #tkLightbox y compañía no existen en modo cliente (el
+// visor universal de adjuntos es exclusivo del ticket) -- sin este guard
+// los 4 addEventListener de abajo tiran TypeError sobre `null` y abortan
+// el resto del script.
+if (document.getElementById('tkLightbox')){
+  document.getElementById('tkLightbox').addEventListener('click', function(e){
+    if(e.target === this) tkCerrarLightbox();
+  });
+  document.getElementById('tkLightboxClose').addEventListener('click', tkCerrarLightbox);
+  document.getElementById('tkLightboxPrev').addEventListener('click', function(e){
+    e.stopPropagation(); tkLightboxAnterior();
+  });
+  document.getElementById('tkLightboxNext').addEventListener('click', function(e){
+    e.stopPropagation(); tkLightboxSiguiente();
+  });
+}
 document.addEventListener('keydown', function(e){
   if(e.key === 'Escape'){ tkCerrarLightbox(); return; }
-  if(document.getElementById('tkLightbox').style.display === 'none') return;
+  const _tkLbEl = document.getElementById('tkLightbox');
+  if(!_tkLbEl || _tkLbEl.style.display === 'none') return;
   if(e.key === 'ArrowLeft') tkLightboxAnterior();
   else if(e.key === 'ArrowRight') tkLightboxSiguiente();
 });
@@ -1829,6 +1862,7 @@ async function cargarEjecutivos(){
 }
 function poblarSelectEjecutivo(){
   const sel = document.getElementById('selEjecutivo');
+  if (!sel) return;   // modo cliente: no hay tarjeta "Estado y gestión"
   const actual = ticketActual ? (ticketActual.asignado_a || '') : '';
   let opts = '<option value="">Sin asignar</option>' + listaEjecutivos.map(function(e){
     return '<option value="'+esc(e.nombre)+'">'+esc(e.nombre)+'</option>';
@@ -1842,6 +1876,9 @@ function poblarSelectEjecutivo(){
   sel.value = actual;
 }
 
+// 2026-08-10: #btnGuardar/#btnEqDesdeDoc (y toda la sección "Estado y
+// gestión"/"Equipos declarados en el ticket") no existen en modo cliente.
+if (document.getElementById('btnGuardar'))
 document.getElementById('btnGuardar').addEventListener('click', async function(){
   const selEstadoBtn = document.getElementById('selEstado');
   const payload = {
@@ -1864,6 +1901,7 @@ document.getElementById('btnGuardar').addEventListener('click', async function()
 // a ciegas) por el modal "tka" (mismo componente que list.html, contexto
 // 'agregar' -- agrega equipos a ESTE ticket ya existente). Ver
 // templates/tickets/_tka_modal.html.
+if (document.getElementById('btnEqDesdeDoc'))
 document.getElementById('btnEqDesdeDoc').addEventListener('click', function(){
   tkaOpen({
     mode: 'agregar',
@@ -2024,34 +2062,40 @@ function actualizarGarVencPreview(){
     ? '<i class="bi bi-calendar-check me-1"></i>Vence: <b>'+esc(fmtFechaISO(venc))+'</b>'
     : '<span class="text-muted">Sin fecha de emisión — no se calculará vencimiento.</span>';
 }
-document.getElementById('garConGarantia').addEventListener('change', actualizarGarCampos);
-document.getElementById('garFechaEmision').addEventListener('input', actualizarGarVencPreview);
-document.getElementById('garMeses').addEventListener('input', actualizarGarVencPreview);
-document.getElementById('btnGarGuardar').addEventListener('click', async function(){
-  if(!garEquipoActual) return;
-  const payload = {
-    con_garantia: document.getElementById('garConGarantia').checked,
-    documento_garantia: document.getElementById('garDocumento').value.trim(),
-    notas: document.getElementById('garNotas').value.trim(),
-    fecha_emision: document.getElementById('garFechaEmision').value || '',
-    garantia_meses: +document.getElementById('garMeses').value || 6,
-  };
-  const btn = this; const original = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
-  try{
-    const r = await fetch('/tickets/api/tickets/'+TID+'/equipos/'+garEquipoActual.id, {method:'PATCH',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    const d = await r.json();
-    btn.disabled = false; btn.innerHTML = original;
-    if(d.ok){
-      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGarantiaEquipo')).hide();
-      ilusToast('✓ Ficha del equipo actualizada', {type:'success'});
-      cargar();
-    } else ilusToast(d.error||'Error al guardar la garantía', {type:'error'});
-  }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
-});
+// 2026-08-10: el modal "Garantía del equipo" (#modalGarantiaEquipo) es
+// exclusivo del ticket -- no existe en modo cliente.
+if (document.getElementById('garConGarantia')){
+  document.getElementById('garConGarantia').addEventListener('change', actualizarGarCampos);
+  document.getElementById('garFechaEmision').addEventListener('input', actualizarGarVencPreview);
+  document.getElementById('garMeses').addEventListener('input', actualizarGarVencPreview);
+  document.getElementById('btnGarGuardar').addEventListener('click', async function(){
+    if(!garEquipoActual) return;
+    const payload = {
+      con_garantia: document.getElementById('garConGarantia').checked,
+      documento_garantia: document.getElementById('garDocumento').value.trim(),
+      notas: document.getElementById('garNotas').value.trim(),
+      fecha_emision: document.getElementById('garFechaEmision').value || '',
+      garantia_meses: +document.getElementById('garMeses').value || 6,
+    };
+    const btn = this; const original = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+    try{
+      const r = await fetch('/tickets/api/tickets/'+TID+'/equipos/'+garEquipoActual.id, {method:'PATCH',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+      const d = await r.json();
+      btn.disabled = false; btn.innerHTML = original;
+      if(d.ok){
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalGarantiaEquipo')).hide();
+        ilusToast('✓ Ficha del equipo actualizada', {type:'success'});
+        cargar();
+      } else ilusToast(d.error||'Error al guardar la garantía', {type:'error'});
+    }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
+  });
+}
 
 // ══════════════ Adjuntos del composer (subida inmediata, se linkean al enviar) ══════════════
+// 2026-08-10: #rpFile (clip del composer) no existe en modo cliente.
+if (document.getElementById('rpFile'))
 document.getElementById('rpFile').addEventListener('change', async function(e){
   const files = Array.from(e.target.files || []);
   this.value = '';
@@ -2061,6 +2105,9 @@ document.getElementById('rpFile').addEventListener('change', async function(e){
 // editor de la respuesta debe adjuntarla, igual que si se hubiera elegido
 // con el clip 📎 — reutiliza EXACTAMENTE el mismo flujo de subida inmediata
 // (rpSubirArchivo → rpAdjuntos → renderRpAdjPreview) para no duplicar lógica.
+// 2026-08-10: rpQuill es null en modo cliente (ver constructor guardado
+// más arriba) -- no hay editor donde pegar.
+if (rpQuill)
 rpQuill.root.addEventListener('paste', function(e){
   const items = (e.clipboardData && e.clipboardData.items) || [];
   let imgItem = null;
@@ -2122,6 +2169,7 @@ function rpPlantillaCerrarDropdown(){
 
 async function rpCargarPlantillas(){
   const menu = document.getElementById('rpPlantillasMenu');
+  if (!menu) return;   // modo cliente: sin composer, sin dropdown de plantillas
   try{
     const r = await fetch('/tickets/api/plantillas');
     const d = await r.json();
@@ -2234,6 +2282,8 @@ async function rpPlantillaEliminar(p){
 
 rpCargarPlantillas();
 
+// 2026-08-10: composer de Respuestas -- no existe en modo cliente.
+if (document.getElementById('rpGuardarPlantilla'))
 document.getElementById('rpGuardarPlantilla').addEventListener('click', async function(){
   const cuerpo = rpQuill.root.innerHTML;
   if(!rpQuill.getText().trim()){ ilusToast('Escribe algo antes de guardarlo como plantilla', {type:'warning'}); return; }
@@ -2249,6 +2299,9 @@ document.getElementById('rpGuardarPlantilla').addEventListener('click', async fu
 });
 
 // ══════════════ Envío "inteligente" ══════════════
+// 2026-08-10: #rpBtnEnviar (enviar respuesta/comentario) no existe en modo
+// cliente.
+if (document.getElementById('rpBtnEnviar'))
 document.getElementById('rpBtnEnviar').addEventListener('click', async function(){
   if(!navigator.onLine){
     ilusToast('Sin conexión a internet. Revisa tu red e intenta de nuevo — tu texto no se perdió.', {type:'error'});
@@ -2328,6 +2381,16 @@ document.getElementById('rpBtnEnviar').addEventListener('click', async function(
 // reportar -- no asumir que el endpoint completo sigue sin adaptar.
 // ════════════════════════════════════════════════════════════
 
+// 2026-08-10: TID es una constante Jinja fija -- en tickets/ficha.html es
+// {{ ticket_id }} (entero), en mantenciones/ficha.html es `null` (ver
+// bloque de scripts, junto a ESTADO_LABEL/TIPO_LABEL). Todo el resto de
+// este archivo debe tratar TID===null como "modo cliente, sin ticket":
+// los defaults del modal salen de CID/DATA (mant_ficha.js) en vez de
+// ticketActual, y el submit postea a un endpoint distinto (ver
+// tkotGenerar()). Ningún dato de negocio se duplica -- ambos endpoints
+// delegan al mismo _mant_lev_crear_ot_core (app.py).
+const _TKOT_MODO_CLIENTE = (typeof TID === 'undefined' || TID === null);
+
 const _TKOT = {
   cid: null,               // cliente_id resuelto por RUT en mant_clientes (null = sin ficha)
   clienteResuelto: false,
@@ -2350,6 +2413,12 @@ const _TKOT = {
   // Chips de duración (2026-07-19): espejo numérico del rango real
   // (1 | 2 | 3 | 5 | 'otro'). Ver levChipsRefresh().
   durN: 1,
+  // Presets que abrirLevantamientoSelector() (mant_ficha.js) deja acá ANTES
+  // de mostrar el modal en modo cliente -- el listener show.bs.modal los
+  // consume y limpia. En modo ticket siempre quedan null (tipo=levantamiento,
+  // fecha=hoy, comportamiento sin cambios).
+  pendingTipoPreset: null,
+  pendingFechaPreset: null,
 };
 
 // ── Clave estable por fila de equipo: usa maquina_id si existe (para que
@@ -2367,6 +2436,13 @@ function _tkotNormRut(r){
 }
 async function _tkotResolverCliente(){
   _TKOT.cid = null; _TKOT.clienteResuelto = false;
+  // Modo cliente: el cliente_id YA se conoce -- es la ficha que estamos
+  // viendo (CID, mant_ficha.js). Nada que resolver por RUT.
+  if (_TKOT_MODO_CLIENTE){
+    _TKOT.cid = CID;
+    _TKOT.clienteResuelto = true;
+    return;
+  }
   const t = ticketActual || {};
   const rut = (t.rut || '').trim();
   const q = rut || (t.empresa || '').trim();
@@ -4217,6 +4293,28 @@ async function tkotAbrirCrearTipoOT(){
   });
 }
 
+// ── Paso 5, modo cliente: equipos DE LA FICHA que ya están renderizados en
+//    el DOM del tab "Equipos" ([data-maquina-id]) -- mismo origen que usaba
+//    el modal viejo (#modalLevSelector) en abrirLevantamientoSelector()
+//    (static/mant_ficha.js). Reconstruye un array con la MISMA forma que
+//    tkotRenderEquipos()/tkotGenerar() esperan de equiposCache (e.maquina_id
+//    presente en TODOS los casos, porque acá siempre son equipos de ficha
+//    real -- nunca "sin ficha" como puede pasar con un ticket). ──
+function _tkotLeerEquiposDesdeDOM(){
+  return Array.from(document.querySelectorAll('[data-maquina-id]')).map(function(tr){
+    const mid = tr.dataset.maquinaId;
+    const nombre = (tr.querySelector('.eq-name-main')?.textContent || '').trim() || ('Equipo #' + mid);
+    return {
+      id: mid,
+      maquina_id: mid,
+      nombre: nombre,
+      sku: tr.dataset.sku || '',
+      serie: tr.dataset.serie || '',
+      aplica: tr.dataset.aplica !== '0',
+    };
+  });
+}
+
 // ── Paso 5: equipos DEL TICKET (no del DOM de una ficha) ──
 function tkotRenderEquipos(){
   const tbody = document.getElementById('levSelectTbody');
@@ -4225,7 +4323,8 @@ function tkotRenderEquipos(){
   Object.keys(_TKOT.eqPlantillas).forEach(function(k){ delete _TKOT.eqPlantillas[k]; });
   if(!eqs.length){
     tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">'
-      + 'Este ticket no tiene equipos declarados.</td></tr>';
+      + (_TKOT_MODO_CLIENTE ? 'Este cliente no tiene equipos registrados todavía.' : 'Este ticket no tiene equipos declarados.')
+      + '</td></tr>';
     document.getElementById('levEqCount').textContent = '0';
     return;
   }
@@ -4234,14 +4333,22 @@ function tkotRenderEquipos(){
     const key = _tkotEqKey(e);
     const nombre = e.nombre || e.erp_kopr || 'Equipo';
     const sinFicha = !e.maquina_id;
+    // `aplica` (modo cliente, ver _tkotLeerEquiposDesdeDOM): equipos marcados
+    // `data-aplica="0"` en el DOM de la ficha (ej. accesorios/collarines que
+    // no llevan mantención) -- se muestran atenuados con el mismo aviso que
+    // usaba el modal viejo (#modalLevSelector), pero siguen siendo
+    // seleccionables (Regla #4.2: no se pierde la opción de marcarlos).
+    const noAplica = e.aplica === false;
     const rowCls = forzado ? ' lev-eq-forzado' : '';
+    const rowOpacity = (!forzado && noAplica) ? 'opacity:.5;' : '';
     const checkedAttr = forzado ? 'checked disabled' : '';
-    return '<tr class="'+rowCls+'" style="cursor:'+(forzado?'not-allowed':'pointer')+'" '
+    const sinMantBdg = noAplica ? ' <span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin mantención)</span>' : '';
+    return '<tr class="'+rowCls+'" style="'+rowOpacity+'cursor:'+(forzado?'not-allowed':'pointer')+'" '
       + (forzado ? '' : 'onclick="const c=this.querySelector(\'.lev-eq-chk\');c.checked=!c.checked;tkotRecalcEqCount();event.stopPropagation();"') + '>'
       + '<td><input type="checkbox" class="lev-eq-chk" data-key="'+esc(key)+'" '+checkedAttr+' '
       + (forzado?'':'onchange="tkotRecalcEqCount()" onclick="event.stopPropagation()"') + '></td>'
       + '<td><strong>'+esc(nombre)+'</strong>'
-      + (sinFicha ? ' <span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin ficha aún)</span>' : '')
+      + (sinFicha ? ' <span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin ficha aún)</span>' : sinMantBdg)
       + (e.sku ? '<div class="small text-muted">'+esc(e.sku)+'</div>' : '')
       + (e.serie ? '<div class="small text-muted">S/N: '+esc(e.serie)+'</div>' : '')
       // 2026-07-19 (Daniel): la OT hereda el contexto del ticket -- observacion
@@ -4477,11 +4584,66 @@ document.getElementById('modalGenerarOT').addEventListener('hide.bs.modal', func
   tkdayCerrarDetalle();
 });
 
+// ── BUG2 (modo cliente, portado 2026-08-10 desde _levSugerirDiaPreferido()
+//    de static/mant_ficha.js -- ver ese archivo para el original): sugiere
+//    la fecha según el "día preferido" de mantención del cliente.
+//    Consulta el backend (read-only) por el día habitual. Si existe:
+//    (a) prellena #levFechaProg -- SOLO si no hay un preset explícito
+//        (tipoPreset/fechaPreset de abrirLevantamientoSelector());
+//    (b) muestra un hint sutil (ámbar) junto al campo de fecha.
+//    Si el cliente no tiene día preferido, o el fetch falla, no muestra
+//    nada. Nunca lanza: protege la apertura del modal. ──
+function _tkotFechaProgHintEl(){
+  let el = document.getElementById('levFechaProgHint');
+  if (el) return el;
+  const input = document.getElementById('levFechaProg');
+  if (!input) return null;
+  el = document.createElement('div');
+  el.id = 'levFechaProgHint';
+  el.className = 'small mt-1';
+  el.style.cssText = 'display:none;font-size:.72rem;line-height:1.25;color:#b45309';
+  (input.parentNode || input).appendChild(el);
+  return el;
+}
+async function _tkotSugerirDiaPreferido(fechaPresetExplicita){
+  const hintEl = _tkotFechaProgHintEl();
+  if (hintEl){ hintEl.style.display = 'none'; hintEl.innerHTML = ''; }
+  try{
+    const r = await fetch('/mantenciones/api/clientes/' + CID + '/dia-preferido');
+    if (!r.ok) return;
+    const d = await r.json().catch(function(){ return null; });
+    if (!d || !d.ok) return;
+    const diaPref = d.dia_mantencion_pref;
+    const sugerida = d.sugerida;
+    if (diaPref == null || !sugerida || !/^\d{4}-\d{2}-\d{2}$/.test(sugerida)) return;
+
+    const input = document.getElementById('levFechaProg');
+    if (input && !fechaPresetExplicita){
+      input.value = sugerida;
+      if (typeof tkotFechaProgChange === 'function') tkotFechaProgChange();
+    }
+
+    const p = sugerida.split('-');
+    const ddmm = p[2] + '/' + p[1];
+    if (hintEl){
+      hintEl.innerHTML = '<i class="bi bi-calendar-heart me-1"></i>'
+        + 'Día preferido de este cliente: el <strong>' + esc(String(diaPref)) + '</strong> de cada mes'
+        + ' — sugerimos el <strong>' + esc(ddmm) + '</strong>.';
+      hintEl.style.display = '';
+    }
+  }catch(e){ /* falla en silencio -- nunca rompe la apertura del modal */ }
+}
+
 // ── Abrir el modal: reset + resolución de cliente + carga de todo ──
 document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', async function(){
   const tbody = document.getElementById('levSelectTbody');
   tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">Cargando…</td></tr>';
   document.getElementById('tkotSinFichaWarn').style.display = 'none';
+
+  // Modo cliente: los equipos salen del DOM de la ficha (ya renderizado),
+  // no de un ticket. Se lee ANTES de tkotRenderEquipos()/tkotAplicarForzadoInstalacion()
+  // más abajo, que son los que efectivamente pintan el Paso 5.
+  if (_TKOT_MODO_CLIENTE) equiposCache = _tkotLeerEquiposDesdeDOM();
 
   await _tkotResolverCliente();
   await _tkotCargarPlantillas();
@@ -4493,7 +4655,10 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
     tkotContactoChange();
   } else {
     // Sin ficha o sin contactos registrados -> manual, prellenado con lo
-    // que ya declaró el ticket (nombre_contacto/phone/email).
+    // que ya declaró el ticket (nombre_contacto/phone/email). En modo
+    // cliente ticketActual es null -> queda en blanco para que el usuario
+    // lo llene (mismo comportamiento que tenía el modal viejo
+    // #modalLevSelector, que tampoco prellenaba estos 3 campos).
     const t = ticketActual || {};
     document.getElementById('levContactoSel').value = '__manual';
     tkotContactoChange();
@@ -4502,27 +4667,50 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
     document.getElementById('levContactoEmail').value = t.email || '';
   }
 
+  // Tipo de OT: en modo ticket siempre 'levantamiento'. En modo cliente,
+  // respeta el preset que dejó abrirLevantamientoSelector() (mant_ficha.js)
+  // -- ej. "Programar mantención" pide 'preventiva' -- igual que hacía el
+  // modal viejo #modalLevSelector.
   const tipoSel = document.getElementById('otTipo');
-  if(tipoSel) tipoSel.value = 'levantamiento';
+  if(tipoSel){
+    const _tipoWanted = (_TKOT_MODO_CLIENTE && _TKOT.pendingTipoPreset) || 'levantamiento';
+    const _tipoHas = Array.from(tipoSel.options).some(function(o){ return o.value === _tipoWanted; });
+    tipoSel.value = _tipoHas ? _tipoWanted : 'levantamiento';
+  }
   // Sin preselección de modalidad: tkotTipoChange() la deja limpia y el
   // usuario elige (Daniel 2026-08-06). Antes aquí se marcaba 'equipos'.
   tkotTipoChange();
 
   // 2026-07-19 (Daniel): la OT hereda el contexto del ticket -- si Notas
   // está vacío, precargar con la descripción del ticket (no se pisa si ya
-  // hay algo tipeado, ej. reabrir el modal tras editar a mano).
+  // hay algo tipeado, ej. reabrir el modal tras editar a mano). En modo
+  // cliente ticketActual es null -> queda en '' (mismo default que el
+  // modal viejo).
   const levSelectNotasEl = document.getElementById('levSelectNotas');
   if(!levSelectNotasEl.value.trim()){
     levSelectNotasEl.value = (ticketActual || {}).descripcion || '';
   }
 
-  // Dirección: default = la del ticket (jobsite real), no la del cliente.
+  // Dirección: en modo ticket, default = la del ticket (jobsite real). En
+  // modo cliente, default = la del cliente (mismo comportamiento que tenía
+  // abrirLevantamientoSelector() en el modal viejo) -- editable de todas
+  // formas, Google Maps valida al elegir una sugerencia.
   const dirInput = document.getElementById('levDireccion');
-  const t0 = ticketActual || {};
-  dirInput.value = t0.direccion || '';
-  if(t0.direccion_lat) dirInput.dataset.lat = t0.direccion_lat;
-  if(t0.direccion_lng) dirInput.dataset.lng = t0.direccion_lng;
-  if(t0.direccion_place_id) dirInput.dataset.placeId = t0.direccion_place_id;
+  if (_TKOT_MODO_CLIENTE){
+    const _dirCliente = DATA.cliente_direccion || '';
+    const _comunaCliente = DATA.cliente_comuna || '';
+    let _dirCompleta = _dirCliente;
+    if (_comunaCliente && !_dirCompleta.toLowerCase().includes(_comunaCliente.toLowerCase())){
+      _dirCompleta = (_dirCompleta ? _dirCompleta + ', ' : '') + _comunaCliente;
+    }
+    dirInput.value = _dirCompleta || '';
+  } else {
+    const t0 = ticketActual || {};
+    dirInput.value = t0.direccion || '';
+    if(t0.direccion_lat) dirInput.dataset.lat = t0.direccion_lat;
+    if(t0.direccion_lng) dirInput.dataset.lng = t0.direccion_lng;
+    if(t0.direccion_place_id) dirInput.dataset.placeId = t0.direccion_place_id;
+  }
   if(!dirInput.dataset.placesInit && typeof ilusPlacesAutocomplete === 'function'){
     ilusPlacesAutocomplete(dirInput, {
       country: 'cl', types: ['address'],
@@ -4538,7 +4726,13 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   }
 
   const hoy = new Date();
-  const _fechaDef = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
+  const _hoyStr = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
+  // Fecha: en modo cliente respeta el preset (ej. la agenda del Plan Anual
+  // pide una fecha concreta), igual que hacía el modal viejo -- en modo
+  // ticket siempre es hoy (sin cambios de comportamiento).
+  const _fechaPreset = (_TKOT_MODO_CLIENTE && _TKOT.pendingFechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(_TKOT.pendingFechaPreset))
+    ? _TKOT.pendingFechaPreset : null;
+  const _fechaDef = _fechaPreset || _hoyStr;
   document.getElementById('levFechaProg').value = _fechaDef;
   document.getElementById('levFechaFin').value = '';
   document.getElementById('levRangoDias').checked = false;
@@ -4552,8 +4746,18 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   document.getElementById('levHoraFinFin').value = '13:00';
   _TKOT.durN = 1;
   if (typeof levChipsRefresh === 'function') levChipsRefresh();
+  // Presets consumidos -- se limpian para no "pegarse" en la próxima
+  // apertura del modal (ej. abrir por el botón normal después de haber
+  // venido de la agenda del Plan Anual).
+  _TKOT.pendingTipoPreset = null;
+  _TKOT.pendingFechaPreset = null;
 
   tkotCalInit();
+
+  // BUG2 (portado del modal viejo, 2026-06-23): sugerir la fecha según el
+  // "día preferido" de mantención del cliente -- solo aplica en modo
+  // cliente (un ticket no tiene "día preferido"). Falla en silencio.
+  if (_TKOT_MODO_CLIENTE) _tkotSugerirDiaPreferido(!!_fechaPreset);
 
   _TKOT.tecnicosSel.clear();
   const tBtn = document.getElementById('btnLevToggleTodos');
@@ -4689,9 +4893,18 @@ async function tkotGenerar(){
       forzar_choque: false,
     };
 
+    // Modo ticket -> POST /tickets/api/tickets/<TID>/generar-ot (exige un
+    // ticket real, vincula tk_tickets.visita_id). Modo cliente -> POST
+    // /mantenciones/api/clientes/<CID>/levantamientos (el endpoint real del
+    // modal viejo #modalLevSelector). Mismo payload para ambos -- los dos
+    // delegan a _mant_lev_crear_ot_core (app.py); `ticket_id`/`cliente_id`
+    // sobrantes en el payload los ignora el endpoint que no los necesita.
+    const _tkotUrl = _TKOT_MODO_CLIENTE
+      ? '/mantenciones/api/clientes/' + CID + '/levantamientos'
+      : '/tickets/api/tickets/' + TID + '/generar-ot';
     let d;
     for(let intento = 0; intento < 2; intento++){
-      const r = await fetch('/tickets/api/tickets/'+TID+'/generar-ot', {
+      const r = await fetch(_tkotUrl, {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(payload)
       });
@@ -4752,7 +4965,11 @@ async function tkotGenerar(){
     });
     tkotResetAccesoLogistica();
     tkotResetAdjuntos();
-    cargar();
+    // Modo ticket: recarga la ficha del ticket (ahora con visita_id).
+    // Modo cliente: el admin permanece en la ficha -- la OT ya quedó
+    // creada, mismo comportamiento que tenía el modal viejo
+    // #modalLevSelector ("El admin permanece en la ficha del cliente").
+    if (TID !== null) cargar();
   }catch(e){
     ilusToast('Error de red: ' + e.message, {type:'error'});
   }finally{
@@ -4807,6 +5024,8 @@ function renderAccionesOT(t){
 // ERP") -- no se elimina ninguna capacidad, solo cambia dónde se hace
 // (Regla #4.2). Se abre en pestaña nueva para no perder el estado de esta
 // ficha (la tarjeta "Cotización" se actualiza sola al volver/recargar).
+// 2026-08-10: tarjeta lateral "Cotización" -- exclusiva del ticket.
+if (document.getElementById('btnGenerarCotizacionSide'))
 document.getElementById('btnGenerarCotizacionSide').addEventListener('click', function(){
   window.open('/tickets/cotizaciones?desde_ticket=' + TID, '_blank');
 });
@@ -4848,8 +5067,16 @@ function renderCotizaciones(cots){
     + 'Ver en Cotizaciones <i class="bi bi-box-arrow-up-right"></i></a>';
 }
 
-cargarEjecutivos();
-cargar();
+// 2026-08-10: en modo cliente (TID=null) no hay ticket que cargar --
+// cargar() solo pintaría "No se pudo cargar el ticket" sobre elementos
+// del hero/composer que ni siquiera existen en esta página. El modal
+// #modalGenerarOT no depende de ninguna de las dos llamadas (los técnicos
+// del Paso 4 salen de GET /mantenciones/api/tecnicos, disparado por su
+// propio listener show.bs.modal).
+if (TID !== null){
+  cargarEjecutivos();
+  cargar();
+}
 
 // ══════════════ Auto-refresco silencioso (Daniel 2026-07-12: "necesito que
 // sea inmediata la velocidad") ══════════════
@@ -4881,4 +5108,5 @@ function _tkProgramarAutoRefresh(){
     _tkProgramarAutoRefresh();
   }, 6000);
 }
-_tkProgramarAutoRefresh();
+// 2026-08-10: sin ticket que refrescar en modo cliente.
+if (TID !== null) _tkProgramarAutoRefresh();
