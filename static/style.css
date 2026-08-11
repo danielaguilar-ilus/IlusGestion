@@ -880,6 +880,25 @@ body {
 .page-header .sub { color: #cbd5e1; font-size: .86rem; margin-top: 3px; }
 .page-header a    { color: #fff; }
 .page-header a:hover { color: #fee2e2; }
+/* FIX 2026-08-11 (Daniel — reporte visual en vivo, botón "Generar OT desde
+   cliente" ilegible): la regla ".page-header a { color: #fff }" de arriba
+   pisaba el color de texto oscuro que Bootstrap le da por defecto a
+   .btn-light/.btn-white (fondo casi blanco) — quedaba texto blanco sobre
+   fondo blanco. Se excluye explícitamente cualquier botón de fondo claro
+   dentro del header, sin tocar los botones outline/dark que sí necesitan
+   texto blanco (reglas de abajo). */
+.page-header a.btn-light,
+.page-header a.btn-white,
+.page-header .btn-light,
+.page-header .btn-white {
+  color: #1f2937;
+}
+.page-header a.btn-light:hover,
+.page-header a.btn-white:hover,
+.page-header .btn-light:hover,
+.page-header .btn-white:hover {
+  color: #0f172a;
+}
 .page-header .btn-outline-secondary,
 .page-header .btn-outline-light {
   border-color: #475569; color: #e2e8f0; background: transparent;
