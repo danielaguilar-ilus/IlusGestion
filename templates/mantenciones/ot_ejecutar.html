@@ -50,7 +50,7 @@
        cálculo paralelo que se pueda desincronizar. #}
     <div class="tx-hdr-toprow">
       <div class="tx-hdr-id">
-        <h2><i class="bi bi-clipboard2-pulse"></i>{{ visita.numero_ot }}</h2>
+        <h2><i class="bi bi-clipboard2-pulse"></i>{{ visita.numero_ot or ('OT #' ~ visita.id) }}</h2>
         <span class="badge-est{% if visita.estado in ('en_curso','en_ejecucion') %} badge-est-vivo{% endif %}">{{ visita.estado|upper }}</span>
       </div>
       <div class="tx-hdr-progress" id="hdrProgressWrap" style="display:none">
@@ -62,7 +62,7 @@
     </div>
     <div class="tx-hdr-rule"></div>
     <div class="meta">
-      <div class="tx-hdr-cliente"><i class="bi bi-building"></i>{{ visita.razon_social }}</div>
+      <div class="tx-hdr-cliente"><i class="bi bi-building"></i>{{ visita.razon_social or 'Trabajo interno' }}</div>
       <div class="tx-hdr-extra">
         {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
         <div class="tx-hdr-chips">
@@ -245,7 +245,7 @@
           </span>
         </div>
         <div class="k">Cliente</div>
-        <div class="v">{{ visita.razon_social }}</div>
+        <div class="v">{{ visita.razon_social or 'Trabajo interno' }}</div>
         {% if visita.cli_rut %}
         <div class="k">RUT</div>
         <div class="v font-monospace">{{ visita.cli_rut | rut_fmt }}</div>
@@ -1964,7 +1964,7 @@
         <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='favicon_192.png') }}')"></div>
         <div class="flex-grow-1">
           <h5 id="firmaModalTitulo"><i class="bi bi-pen-fill me-2"></i>Firma del técnico</h5>
-          <div class="fb-sub">{{ visita.numero_ot }} · {{ visita.razon_social }}</div>
+          <div class="fb-sub">{{ visita.numero_ot }} · {{ visita.razon_social or 'Trabajo interno' }}</div>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
@@ -2119,7 +2119,7 @@
         <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='favicon_192.png') }}')"></div>
         <div class="flex-grow-1">
           <h5><i class="bi bi-pen-fill me-2"></i>Firmar y cerrar OT</h5>
-          <div class="fb-sub">{{ visita.numero_ot or ('OT #' ~ visita.id) }} · {{ visita.razon_social }}</div>
+          <div class="fb-sub">{{ visita.numero_ot or ('OT #' ~ visita.id) }} · {{ visita.razon_social or 'Trabajo interno' }}</div>
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
@@ -2222,7 +2222,7 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.82rem">
             <div>
               <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Cliente</div>
-              <div class="fw-bold">{{ visita.razon_social }}</div>
+              <div class="fw-bold">{{ visita.razon_social or 'Trabajo interno' }}</div>
             </div>
             <div>
               <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Técnico</div>
