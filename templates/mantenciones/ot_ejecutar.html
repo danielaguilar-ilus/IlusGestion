@@ -2394,6 +2394,15 @@ const VISITA_ESTADO = "{{ visita.estado }}";
 // 2026-05-19 (Daniel) — VISITA_TIPO se usa para mostrar el banner
 // "esta foto va a la ficha técnica" cuando la OT es un levantamiento.
 const VISITA_TIPO = "{{ visita.tipo or '' }}";
+// FIX 2026-08-11 (Daniel, probando en vivo — OT-2026-00061 tipo Instalación
+// mostraba el banner como si fuera "Levantamiento de ficha"): el banner de
+// abajo (ES_LEVANTAMIENTO) es intencionalmente más amplio que "tipo ==
+// levantamiento" (ver comentario de VISITA_LEVANTAMIENTO_ID) -- eso está
+// bien, una Instalación que también captura fichas SÍ debe avisar que las
+// fotos van a la ficha permanente. Lo que no debía pasar es que el TEXTO
+// del banner llamara "Levantamiento de ficha" a una OT que el usuario
+// eligió como Instalación. Este label respeta el tipo REAL elegido.
+const VISITA_TIPO_LABEL = "{{ visita.tipo|tipo_ot_label }}";
 // FIX 2026-05-22 (Daniel — caso Vitacura OT 161-163):
 // Aaron puede crear desde el modal del cliente OTs tipo 'preventiva',
 // 'instalacion', etc. con `levantamiento_id` poblado. En esos casos las
