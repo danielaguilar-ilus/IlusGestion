@@ -455,9 +455,17 @@ async function resetearOTs(){
     {# Meta (cliente + título + pills) #}
     <div class="ot-meta">
       <div class="ot-cliente">
+        {# FIX 2026-08-11 (bug real en producción): o.cliente_id es NULL en
+           OT "Trabajo interno" — url_for con cid=None tira BuildError y
+           tumba TODO el listado (este bloque está dentro del loop de cada
+           fila), no solo la OT afectada. #}
+        {% if o.cliente_id %}
         <a href="{{ url_for('mant_ficha', cid=o.cliente_id) }}" title="Ver ficha del cliente">
           <i class="bi bi-building me-1"></i>{{ o.razon_social or 'Cliente' }}
         </a>
+        {% else %}
+        <span class="text-muted"><i class="bi bi-clipboard2-check me-1"></i>Trabajo interno</span>
+        {% endif %}
       </div>
       <div class="ot-titulo">{{ o.titulo or ((o.tipo or 'visita')|title + ' programada') }}</div>
       <div class="ot-info-pills">

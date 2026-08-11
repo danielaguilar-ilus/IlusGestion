@@ -337,9 +337,14 @@ async function ejecutarResetMantenciones(){
           <tr>
             <td class="fw-semibold text-nowrap">{{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}</td>
             <td>
+              {# FIX 2026-08-11: v.cliente_id NULL en OT "Trabajo interno". #}
+              {% if v.cliente_id %}
               <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" class="text-decoration-none fw-semibold">
                 {{ v.razon_social }}
               </a>
+              {% else %}
+              <span class="fw-semibold text-muted"><i class="bi bi-clipboard2-check me-1"></i>Trabajo interno</span>
+              {% endif %}
               {% if v.titulo %}<div class="small text-muted">{{ v.titulo }}</div>{% endif %}
             </td>
             <td><span class="badge bg-secondary" style="font-size:.65rem">{{ v.tipo }}</span></td>
