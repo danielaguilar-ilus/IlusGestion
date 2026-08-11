@@ -974,6 +974,22 @@ def rut_fmt_filter(value):
     return _formato_rut_chile(value)
 
 
+@app.template_filter('tipo_ot_label')
+def tipo_ot_label_filter(value):
+    """Filtro Jinja: {{ visita.tipo | tipo_ot_label }} → 'Trabajo de bodega'.
+
+    FIX 2026-08-11 (encontrado probando en vivo): varios templates hacían
+    {{ visita.tipo|title }}, que solo capitaliza el valor crudo del ENUM
+    ('revision_interna' -> 'Revision_interna', ilegible). _TIPO_OT_LABEL
+    (definido más abajo en este archivo, pero ya existe en el namespace del
+    módulo para cuando Flask sirve el primer request) es la ÚNICA fuente de
+    verdad del label humano de cada tipo — este filtro solo la expone a
+    Jinja, sin duplicar el mapeo.
+    """
+    v = (value or "").strip().lower()
+    return _TIPO_OT_LABEL.get(v, v.replace("_", " ").title() if v else "—")
+
+
 @app.template_filter('nudo_fmt')
 def nudo_fmt_filter(value):
     """Filtro Jinja: {{ item.nudo | nudo_fmt }} → '22886' (no '0000022886').
