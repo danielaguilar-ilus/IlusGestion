@@ -2613,10 +2613,17 @@ async function subirFotoTarea(tid, input, mid, pid){
   fd.append('tarea_id', String(tid));
   // 2026-05-19 (Daniel) — vínculo formal foto→máquina para que al cerrar
   // un levantamiento, la foto se asigne automáticamente a la ficha técnica.
-  // Si la OT es tipo `levantamiento`, además marcamos tipo_foto para la
+  // Si la OT captura fichas de equipo, además marcamos tipo_foto para la
   // promoción posterior (ver _promover_levantamiento_a_maquina).
+  // FIX 2026-08-10 (Frente 3 — respetar el tipo elegido): antes se miraba
+  // VISITA_TIPO crudo, así que una OT de Inspección/Preventiva/Instalación
+  // que también capturó fichas (ver ES_LEVANTAMIENTO, ot_ejecutar.html)
+  // NUNCA etiquetaba sus fotos como 'levantamiento' — quedaban fuera de la
+  // promoción a la ficha del equipo. Los otros 6 usos de este archivo ya
+  // usaban ES_LEVANTAMIENTO; este era el único que se quedó con el string
+  // crudo.
   if (mid) fd.append('maquina_id', String(mid));
-  if (VISITA_TIPO === 'levantamiento') fd.append('tipo_foto', 'levantamiento');
+  if (ES_LEVANTAMIENTO) fd.append('tipo_foto', 'levantamiento');
 
   const toastSub = ilusToast('Subiendo foto…', { type:'info', duration: 6000 });
 
