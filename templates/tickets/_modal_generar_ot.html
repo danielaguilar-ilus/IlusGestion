@@ -79,6 +79,19 @@
                   <option value="visita_tecnica">Visita técnica</option>
                   <option value="correctiva">Mantención correctiva</option>
                   <option value="inspeccion">Inspección</option>
+                  {# FIX 2026-08-11: faltaba expandir este select más allá de los
+                     6 originales -- tarea que quedó pendiente del Frente 2
+                     (el backend ya aceptaba estos 8 tipos hace varios commits,
+                     pero nunca eran seleccionables desde acá). Mismo orden:
+                     los 6 de siempre primero, estos al final. #}
+                  <option value="garantia">Garantía</option>
+                  <option value="cambio_equipo">Cambio de equipo</option>
+                  <option value="desinstalacion">Desinstalación</option>
+                  <option value="capacitacion">Capacitación</option>
+                  <option value="repuesto">Repuesto</option>
+                  <option value="revision_interna">Trabajo de bodega</option>
+                  <option value="visita_correctiva">Visita correctiva</option>
+                  <option value="control_calidad">Control de Calidad</option>
                 </select>
               </div>
               {% if permissions.superadmin %}
@@ -97,24 +110,13 @@
             {# Checklist que quedará asociado a la OT — lo pinta tkotPintarPlantilla() #}
             <div id="otPlantillaInfo" class="small mt-2"></div>
 
-            {# Tarea 4 (2026-08-10): selector de plantilla — deja elegir una
-               distinta a la recomendada. Oculto por defecto: solo aparece si
-               GET /mantenciones/api/plantillas?tipo_visita= trae al menos una
-               plantilla para el tipo elegido (best-effort, ver
-               _tkotCargarPlantillaSelector en tickets_ficha.js). Se esconde en
-               levantamiento + modalidad "descubrimiento" (esa modalidad no
-               aplica checklist por adelantado). #}
-            <div id="otPlantillaSelectorWrap" style="display:none" class="mt-2">
-              <label class="form-label small fw-semibold mb-1">
-                <i class="bi bi-card-checklist me-1"></i>Plantilla de checklist a usar
-              </label>
-              <select id="otPlantillaSelect" class="form-select form-select-sm"
-                      onchange="tkotPlantillaSelectChange()"></select>
-              <small class="text-muted d-block mt-1" style="font-size:.7rem">
-                <i class="bi bi-info-circle me-1"></i>
-                ⭐ = la recomendada para este tipo de OT. Puedes elegir otra si aplica mejor.
-              </small>
-            </div>
+            {# FIX 2026-08-11 (Daniel, probando en vivo): el selector de
+               plantilla del Paso 1 ("Tarea 4", 2026-08-10) quedaba duplicado
+               con "Plantillas extra" del Paso 5 (por equipo) — Daniel pidió
+               dejar la elección de plantilla SOLO ahí, dentro del equipo, y
+               sacar la de acá arriba. El backend (plantilla_id opcional en
+               _mant_lev_crear_ot_core) no se tocó — sigue disponible si se
+               necesita en el futuro, solo se retiró este selector duplicado. #}
 
             {# ── Modalidad del levantamiento: idéntica a Mantenciones ── #}
             <div id="otModoLevWrap" style="display:none">

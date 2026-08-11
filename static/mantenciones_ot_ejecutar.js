@@ -221,11 +221,18 @@ function renderPlantillas(mid){
   // ── 2026-05-20 (Daniel) — El botón "Ver ficha técnica" se movió a la
   //    tarjeta de cada equipo en la vista 1 (lista). El header de la vista
   //    2 ya no lo lleva para evitar duplicación.
+  // FIX 2026-08-11 (Daniel, probando en vivo): el banner se mostraba con el
+  // texto "Levantamiento de ficha" fijo aunque la OT fuera de otro tipo
+  // (ej. Instalación) que también captura fichas -- confundía al técnico,
+  // que veía una OT de Instalación "convertida" en Levantamiento. El
+  // criterio de CUÁNDO mostrarlo (ES_LEVANTAMIENTO) no cambia -- solo el
+  // texto ahora usa el tipo REAL elegido (VISITA_TIPO_LABEL).
+  const _esLevantamientoReal = (VISITA_TIPO === 'levantamiento');
   const levBannerHtml = ES_LEVANTAMIENTO
     ? `<div class="lev-banner-ficha" role="status" aria-live="polite">
          <i class="bi bi-camera-fill"></i>
          <div>
-           <strong>Levantamiento de ficha</strong>
+           <strong>${_esLevantamientoReal ? 'Levantamiento de ficha' : _escapeHtml(VISITA_TIPO_LABEL)}</strong>
            <div>Las fotos y datos que captures aquí van a formar parte de la
              <strong>ficha técnica permanente</strong> del equipo
              ${_escapeHtml(eq.nombre || ('#' + eq.id))}.</div>
