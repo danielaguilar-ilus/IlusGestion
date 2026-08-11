@@ -6694,15 +6694,50 @@ def register_tickets_routes(app, ctx):
         #    que usa mant_lev_crear_o_listar/_mant_lev_crear_ot_core (NO el
         #    vocabulario legado tipo_visita/'garantia', que ahora es un flag
         #    aparte -- aplica_garantia). Si el wizard no manda uno valido,
-        #    se infiere del tipo del ticket (mapeo TK_TIPOS -> tipo_ot). ──
-        tipos_ot_ok = ("levantamiento", "instalacion", "preventiva",
-                       "correctiva", "visita_tecnica", "inspeccion")
+        #    se infiere del tipo del ticket (mapeo TK_TIPOS -> tipo_ot).
+        #    2026-08-10 (Daniel, unificacion ACOTADA OT<->Tickets): se amplia
+        #    la whitelist a TODO el ENUM real de mant_visitas.tipo (13
+        #    valores, definido en app.py -- no se toca app.py en este cambio,
+        #    solo se referencia el vocabulario) + 'control_calidad', que un
+        #    agente en paralelo puede estar agregando al ENUM en este mismo
+        #    momento. Si el ALTER aun no esta aplicado cuando esto corra, la
+        #    propia base de datos rechaza el INSERT con error claro -- no hay
+        #    riesgo de corrupcion, solo un caso limite temporal. ──
+        tipos_ot_ok = (
+            "levantamiento", "instalacion", "preventiva", "correctiva",
+            "visita_tecnica", "visita_correctiva", "cambio_equipo",
+            "desinstalacion", "capacitacion", "repuesto", "revision_interna",
+            "inspeccion", "garantia", "control_calidad",
+        )
         tipo_ot = (d.get("tipo_ot") or "").strip().lower()
         if tipo_ot not in tipos_ot_ok:
+            # 2026-08-10: mapeo ampliado de los 16 valores de TK_TIPOS a su
+            # tipo de OT analogo (antes solo 5 de 16 estaban mapeados).
+            # Los 3 tipos de ticket que NO generan OT de mantencion por
+            # naturaleza -- 'shipping' (logistica/transporte), 'quotation'
+            # (cotizacion, no visita) y 'return' (devolucion) -- se dejan
+            # FUERA del dict a proposito: igual que antes de este cambio,
+            # caen al default "preventiva" del .get() de abajo. No se les
+            # asigna un tipo explicito porque no hay un tipo_ot analogo real
+            # y el comportamiento previo (fallback a preventiva) ya era el
+            # vigente para estos 3 -- no se altera ese caso limite.
             _map_tk_a_ot = {
-                "install": "instalacion", "repair": "correctiva",
-                "maintenance": "preventiva", "tech_support": "visita_tecnica",
+                "install": "instalacion",
+                "tech_support": "visita_tecnica",
                 "tech_evaluation": "inspeccion",
+                "maintenance": "preventiva",
+                "spare_parts": "repuesto",
+                "spare_parts_store": "repuesto",
+                "spare_parts_import": "repuesto",
+                "equipment_transfer": "cambio_equipo",
+                "warranty": "garantia",
+                "repair": "correctiva",
+                # mismo valor interno que hoy se re-etiqueta "Trabajo de
+                # bodega" en OT (revision_interna) -- ver nota del agente en
+                # paralelo que renombra el label en app.py.
+                "trabajo_bodega": "revision_interna",
+                "control_calidad": "control_calidad",
+                "capacitacion": "capacitacion",
             }
             tipo_ot = _map_tk_a_ot.get(t.get("tipo"), "preventiva")
 
