@@ -2954,15 +2954,24 @@ async function validarParaManifiesto(){
     return false;
   }
 
-  // Dirección/comuna/bultos/teléfono/email — TODOS obligatorios ahora
+  // Dirección/comuna/bultos/email — obligatorios para cualquier courier
   // (Daniel 2026-07-22: sin esto la llamada a FedEx falla después).
+  //
+  // FIX 2026-08-12 (Daniel, con captura real: Felca bloqueado pidiendo
+  // Teléfono): "el teléfono es elemental e indispensable para FedEx...
+  // si selecciona Felca o Milling se pueda avanzar, deja esa restricción
+  // solo para FedEx ya que FedEx sí o sí lo solicita". El teléfono pasa a
+  // ser obligatorio SOLO cuando el courier elegido es FedEx -- Felca,
+  // Milling y Shipit no lo exigen para generar su guía.
   const campos = [
     { id:'cli-dir',    nombre:'Dirección' },
     { id:'cli-bultos', nombre:'Total Bultos' },
     { id:'cli-comuna', nombre:'Comuna' },
-    { id:'cli-tel',    nombre:'Teléfono' },
     { id:'cli-email',  nombre:'Email' },
   ];
+  if (/fedex/i.test(_courierSel?.nombre || '')){
+    campos.push({ id:'cli-tel', nombre:'Teléfono' });
+  }
   const vacios = campos.filter(c => !(document.getElementById(c.id)?.value||'').trim());
   if(vacios.length){
     await ilusAlert({
