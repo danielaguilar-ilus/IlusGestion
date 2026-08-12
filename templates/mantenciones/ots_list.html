@@ -1365,6 +1365,10 @@ function editarOTRapido(otId, titulo, estado, tipo, modalidad, prioridad) {
   document.getElementById('otEditEstado').value = estado || 'programada';
   document.getElementById('otEditTipo').value = tipo || 'preventiva';
   document.getElementById('otEditModalidad').value = modalidad || 'pagado';
+  // 2026-08-12: guardamos la cobertura ORIGINAL para detectar si el usuario la
+  // está cambiando a "Garantía". El backend exige motivo en ese caso; pedirlo
+  // acá evita que reciba un error seco después de guardar.
+  document.getElementById('otEditId').dataset.modalidadOriginal = modalidad || 'pagado';
   document.getElementById('otEditPrioridad').value = prioridad || 'media';
   if (!_modalEditOT) _modalEditOT = new bootstrap.Modal(document.getElementById('modalEditarOT'));
   _modalEditOT.show();
@@ -1373,13 +1377,34 @@ function editarOTRapido(otId, titulo, estado, tipo, modalidad, prioridad) {
 async function guardarEdicionOT() {
   const id = document.getElementById('otEditId').value;
   if (!id) return;
+  const modalidadNueva = document.getElementById('otEditModalidad').value;
+  const modalidadPrevia = document.getElementById('otEditId').dataset.modalidadOriginal || 'pagado';
   const body = {
     titulo:          document.getElementById('otEditTitulo2').value.trim(),
     estado:          document.getElementById('otEditEstado').value,
     tipo:            document.getElementById('otEditTipo').value,
-    modalidad_cobro: document.getElementById('otEditModalidad').value,
+    modalidad_cobro: modalidadNueva,
     prioridad:       document.getElementById('otEditPrioridad').value,
   };
+  // ── Garantía desde este modal (Daniel 2026-08-12) ──────────────────
+  // Pasar una OT cobrable a "Garantía" significa que ILUS deja de cobrarla.
+  // El backend exige un motivo para eso; se lo pedimos acá con el mismo
+  // criterio que el toggle de garantía de la ficha del cliente (mínimo 10
+  // caracteres). Regla #1: nunca prompt() nativo.
+  if (modalidadNueva === 'garantia' && modalidadPrevia !== 'garantia') {
+    const motivo = await ilusPrompt({
+      title: 'Motivo de la garantía',
+      message: 'Esta OT pasará a GARANTÍA, así que deja de cobrarse al cliente.',
+      sub: 'Indica por qué se cubre por garantía (error del proveedor, error propio de ILUS, etc.). Queda registrado con tu nombre.',
+      placeholder: 'Motivo (mínimo 10 caracteres)',
+      required: true,
+    });
+    if (!motivo || motivo.trim().length < 10) {
+      ilusToast('Motivo requerido (mínimo 10 caracteres) para cubrir por garantía', { type: 'warning' });
+      return;
+    }
+    body.garantia_motivo = motivo.trim();
+  }
   try {
     const r = await fetch(`/mantenciones/api/visitas/${id}`, {
       method: 'PUT',

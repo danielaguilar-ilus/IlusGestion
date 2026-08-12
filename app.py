@@ -68773,6 +68773,23 @@ def mant_visita_update(vid):
     # Se evalúa con el tipo nuevo (si llega en el body) o el tipo actual de la BD.
     warn_mod_upd = None
     gar_aplica_upd = _parse_garantia_aplica(d.get("garantia_aplica"))
+    # ── FIX 2026-08-12 (Daniel: "el agujero por donde se escapa la plata") ──
+    # El modal "Editar OT" del listado (templates/mantenciones/ots_list.html)
+    # manda `modalidad_cobro` A SECAS, sin el flag `garantia_aplica`. Como toda
+    # la exigencia de motivo, el bloqueo de OT cerrada y el registro en la
+    # bitácora cuelgan de `gar_aplica_upd is not None`, ese modal dejaba marcar
+    # una OT cobrable como "Garantía" con dos clics: sin motivo, sin
+    # autorización y sin dejar rastro de qué cambió. Después esa OT firmaba su
+    # cierre sin problema porque el candado de factura la veía exenta.
+    #
+    # En vez de duplicar la validación acá (sería un segundo camino que se
+    # desincroniza), se DERIVA el flag: si el body pide modalidad 'garantia'
+    # y no mandó `garantia_aplica`, se comporta como si lo hubiera mandado y
+    # entra por la MISMA puerta de abajo (motivo obligatorio + bloqueo si está
+    # cerrada + auditoría). Una sola regla, un solo lugar.
+    if gar_aplica_upd is None and "modalidad_cobro" in d:
+        if (d.get("modalidad_cobro") or "").strip().lower() == "garantia":
+            gar_aplica_upd = True
     # tipo_final se reusa para validar modalidad y mapear garantía. Solo
     # consultamos la BD cuando alguno de esos casos aplica (edits que solo
     # tocan técnico/fecha no pagan la query extra).
@@ -68926,14 +68943,43 @@ def mant_visita_update(vid):
             tecnico_prev = (_prev or {}).get("tecnico_user_id")
         except Exception:
             tecnico_prev = None
+    # FIX 2026-08-12: valores previos de los dos campos con consecuencia
+    # económica/de cierre, para poder DETALLAR el cambio en la bitácora
+    # (antes quedaba registrado como "actualizada" sin decir qué cambió).
+    _mod_prev_audit = None
+    _estado_prev_audit = None
+    if "modalidad_cobro" in d or "estado" in d:
+        try:
+            _prev_aud = mysql_fetchone(
+                "SELECT modalidad_cobro, estado FROM mant_visitas WHERE id=%s", (vid,)
+            ) or {}
+            _mod_prev_audit = _prev_aud.get("modalidad_cobro")
+            _estado_prev_audit = _prev_aud.get("estado")
+        except Exception:
+            pass
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
         conn.commit()
-        _mant_log("visita", vid, "actualizada",
-                  f"⚠ {warn_mod_upd}" if warn_mod_upd else "")
+        # FIX 2026-08-12: antes esta bitácora anotaba "actualizada" con el
+        # detalle VACÍO, así que un cambio de cobertura (ej. pasar a
+        # "sin costo") quedaba registrado sin decir QUÉ cambió. Ahora se
+        # detalla el cambio de modalidad y de estado, que son los dos campos
+        # con consecuencia económica y de cierre.
+        _detalle_upd = []
+        if "modalidad_cobro" in d and _mod_prev_audit is not None:
+            if (d.get("modalidad_cobro") or "") != (_mod_prev_audit or ""):
+                _detalle_upd.append(
+                    f"cobertura: {_mod_prev_audit or '—'} → {d.get('modalidad_cobro')}")
+        if "estado" in d and _estado_prev_audit is not None:
+            if (d.get("estado") or "") != (_estado_prev_audit or ""):
+                _detalle_upd.append(
+                    f"estado: {_estado_prev_audit or '—'} → {d.get('estado')}")
+        if warn_mod_upd:
+            _detalle_upd.append(f"⚠ {warn_mod_upd}")
+        _mant_log("visita", vid, "actualizada", " · ".join(_detalle_upd))
         # Si el técnico cambió (o se asignó por primera vez), notificar.
         tecnico_nuevo = d.get("tecnico_user_id")
         try:
