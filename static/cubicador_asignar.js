@@ -3415,7 +3415,7 @@ function _resetCubicadorParaSiguiente(info){
           <i class="bi bi-check-circle-fill me-1"></i>
           ${verbo} manifiesto <strong>${corr}</strong> · Ingresa la siguiente factura ↓
         </div>
-        <a href="/transporte/manifiestos/${info.manifest_id}" target="_blank"
+        <a href="/transporte/manifiestos/${info.manifest_id}"
            style="background:#16a34a;color:#fff;padding:6px 14px;border-radius:50px;
                   font-size:.78rem;font-weight:700;text-decoration:none;white-space:nowrap">
           <i class="bi bi-box-arrow-up-right"></i> Ver manifiesto
