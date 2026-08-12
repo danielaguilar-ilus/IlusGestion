@@ -68787,9 +68787,16 @@ def mant_visita_update(vid):
     # y no mandó `garantia_aplica`, se comporta como si lo hubiera mandado y
     # entra por la MISMA puerta de abajo (motivo obligatorio + bloqueo si está
     # cerrada + auditoría). Una sola regla, un solo lugar.
-    if gar_aplica_upd is None and "modalidad_cobro" in d:
-        if (d.get("modalidad_cobro") or "").strip().lower() == "garantia":
-            gar_aplica_upd = True
+    _mod_pedida = (d.get("modalidad_cobro") or "").strip().lower() if "modalidad_cobro" in d else ""
+    if gar_aplica_upd is None and _mod_pedida == "garantia":
+        gar_aplica_upd = True
+    # DECISIÓN DE DANIEL 12-08-2026: "sin costo" TAMBIÉN exige motivo, con
+    # trazabilidad de quién lo declaró y por qué. Razón: hoy exime de factura
+    # igual que la garantía (ver el candado de _mant_visita_aprobar_cierre) y
+    # era la salida de menor resistencia para cerrar una OT sin cobrarla.
+    # Se valida junto con la garantía para no tener dos reglas separadas que
+    # se desincronicen; el mensaje distingue cuál de las dos es.
+    _cobertura_exenta_pedida = _mod_pedida in ("garantia", "sin_costo")
     # tipo_final se reusa para validar modalidad y mapear garantía. Solo
     # consultamos la BD cuando alguno de esos casos aplica (edits que solo
     # tocan técnico/fecha no pagan la query extra).
@@ -68820,6 +68827,33 @@ def mant_visita_update(vid):
     # vez que se fija el flag). El rol autorizado (supervisor+) ya lo filtra
     # @_ot_can_metadata / _puede_ot_accion(..., 'metadata', ...) — no se
     # necesita un chequeo de rol nuevo acá.
+    # ── "SIN COSTO" exige motivo igual que la garantía (Daniel 12-08-2026) ──
+    # No entra por el bloque de garantía de abajo (ahí gar_aplica_upd sigue
+    # siendo None), así que se valida acá con el MISMO criterio: bloqueo si la
+    # OT ya cerró, motivo de >=10 caracteres, y queda la traza de quién lo
+    # declaró (el _mant_log de más abajo registra usuario + antes→después).
+    if _cobertura_exenta_pedida and _mod_pedida == "sin_costo":
+        _row_sc = mysql_fetchone(
+            "SELECT modalidad_cobro, estado FROM mant_visitas WHERE id=%s", (vid,)
+        ) or {}
+        if (_row_sc.get("modalidad_cobro") or "") != "sin_costo":
+            if (_row_sc.get("estado") or "") == "cerrada":
+                return jsonify({
+                    "ok": False,
+                    "error": "No se puede dejar sin costo una OT ya cerrada.",
+                    "error_codigo": "SIN_COSTO_OT_CERRADA",
+                }), 400
+            _sc_motivo = (d.get("garantia_motivo") or "").strip()
+            if len(_sc_motivo) < 10:
+                return jsonify({
+                    "ok": False,
+                    "error": "Dejar la OT SIN COSTO significa que no se le cobra "
+                             "al cliente. Indica el motivo (mínimo 10 caracteres) "
+                             "para dejarlo justificado y trazable.",
+                    "error_codigo": "SIN_COSTO_MOTIVO_REQUERIDO",
+                }), 400
+            d["garantia_motivo"] = _sc_motivo[:500]
+
     if gar_aplica_upd is not None:
         _row_gar_actual = mysql_fetchone(
             "SELECT cubierto_por, modalidad_cobro, estado_facturacion, estado "
@@ -69748,6 +69782,85 @@ def mant_plantillas_listar():
         "default_plantilla_id": default_plantilla_id,
         "categoria_resuelta": categoria_resuelta,
     })
+
+
+@app.route("/mantenciones/api/diagnostico/cobertura-clasificacion", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_diag_cobertura_clasificacion():
+    """Mide qué porcentaje de los equipos de las fichas se puede clasificar
+    contra el catálogo de productos, cruzando por SKU.
+
+    POR QUÉ EXISTE (Daniel 12-08-2026): la regla nueva de plantillas dice que
+    el checklist se elige por la CLASIFICACIÓN DE PRODUCTO del equipo
+    (cat_clases_producto), y que si un producto no tiene plantilla NO se crea
+    la OT. Esa regla solo es viable si la mayoría de los equipos realmente
+    cruzan contra el catálogo. El puente es `mant_maquinas.sku` ->
+    `cat_productos.sku` -> `cat_productos.clase_producto`, y hasta hoy NUNCA
+    se había usado (no existía una sola consulta que uniera ambas tablas).
+
+    Es SOLO LECTURA y no cambia nada. Sirve para medir antes de construir y
+    para volver a medir mientras se limpian los datos.
+
+    Casos que se cuentan aparte porque cada uno se arregla distinto:
+      - sin_sku:        equipo sin código de producto.
+      - sku_generado:   SKU inventado por el sistema al crear el equipo a mano
+                        (formato MAN-<cliente>-<timestamp>); nunca va a existir
+                        en el catálogo.
+      - sku_no_catalogo: tiene SKU pero ese código no está en el catálogo.
+      - sin_clase:      está en el catálogo pero sin clasificación asignada.
+      - clasificable:   cruza y tiene clasificación -> es el número que importa.
+    """
+    try:
+        row = mysql_fetchone("""
+            SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN COALESCE(TRIM(m.sku),'') = '' THEN 1 ELSE 0 END) AS sin_sku,
+              SUM(CASE WHEN m.sku LIKE 'MAN-%' THEN 1 ELSE 0 END) AS sku_generado,
+              SUM(CASE WHEN COALESCE(TRIM(m.sku),'') <> ''
+                        AND m.sku NOT LIKE 'MAN-%'
+                        AND p.sku IS NULL THEN 1 ELSE 0 END) AS sku_no_catalogo,
+              SUM(CASE WHEN p.sku IS NOT NULL
+                        AND COALESCE(TRIM(p.clase_producto),'') = '' THEN 1 ELSE 0 END) AS sin_clase,
+              SUM(CASE WHEN p.sku IS NOT NULL
+                        AND COALESCE(TRIM(p.clase_producto),'') <> '' THEN 1 ELSE 0 END) AS clasificable
+              FROM mant_maquinas m
+              LEFT JOIN cat_productos p ON p.sku = m.sku
+             WHERE COALESCE(m.estado,'activo') <> 'baja'
+        """) or {}
+        total = int(row.get("total") or 0)
+        clasificable = int(row.get("clasificable") or 0)
+        pct = round(clasificable * 100.0 / total, 1) if total else 0.0
+
+        # Las clasificaciones que de verdad se usan hoy: sirve para saber
+        # cuántas plantillas hacen falta de inmediato vs cuáles pueden esperar.
+        por_clase = mysql_fetchall("""
+            SELECT COALESCE(NULLIF(TRIM(p.clase_producto),''),'(sin clasificar)') AS clase,
+                   COUNT(*) AS equipos
+              FROM mant_maquinas m
+              JOIN cat_productos p ON p.sku = m.sku
+             WHERE COALESCE(m.estado,'activo') <> 'baja'
+             GROUP BY 1 ORDER BY equipos DESC
+        """) or []
+
+        return jsonify({
+            "ok": True,
+            "total_equipos_activos": total,
+            "clasificable": clasificable,
+            "cobertura_pct": pct,
+            "no_clasificable": {
+                "sin_sku": int(row.get("sin_sku") or 0),
+                "sku_generado_a_mano": int(row.get("sku_generado") or 0),
+                "sku_fuera_del_catalogo": int(row.get("sku_no_catalogo") or 0),
+                "en_catalogo_sin_clase": int(row.get("sin_clase") or 0),
+            },
+            "equipos_por_clase": [
+                {"clase": r["clase"], "equipos": int(r["equipos"] or 0)} for r in por_clase
+            ],
+        })
+    except Exception as e:
+        print(f"[diag_cobertura_clasificacion] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo medir la cobertura."}), 500
 
 
 @app.route("/mantenciones/api/plantillas/categorias", methods=["GET"])
