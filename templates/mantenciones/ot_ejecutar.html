@@ -2414,6 +2414,17 @@ const VISITA_LEVANTAMIENTO_ID = {{ (visita.levantamiento_id or 0) | tojson }};
 const ES_LEVANTAMIENTO = (
   VISITA_TIPO === 'levantamiento' || !!VISITA_LEVANTAMIENTO_ID
 );
+// PASO 5e (2026-08-12, plan "el levantamiento es un tipo más"): ES_LEVANTAMIENTO
+// sigue siendo el criterio de EVIDENCIA (vínculo + items/fotos ya
+// capturados) -- NO se toca, sigue gobernando la visualización de lo que
+// una OT histórica ya capturó. Pero desde el Paso 5c del backend
+// (mant_ot_equipo_datos), la ficha PERMANENTE del equipo (mant_maquinas)
+// solo se escribe cuando el TIPO de la OT es 'levantamiento' -- una OT
+// con vínculo legacy (levantamiento_id poblado) pero de otro tipo ya NO
+// escribe la ficha, aunque ES_LEVANTAMIENTO siga dando true para mostrar
+// su evidencia. Este flag nuevo, más estricto, es el único correcto para
+// el banner "¿esto se guarda en la ficha permanente?".
+const ESCRIBE_FICHA_PERMANENTE = (VISITA_TIPO === 'levantamiento');
 // 2026-07-06 (Daniel) — CRUD de equipos descubiertos: editable mientras el
 // técnico no haya firmado (misma regla que enforcea el backend en
 // mant_lev_item_update, ver _LEV_ESTADOS_EDITABLES en app.py).

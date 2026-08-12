@@ -51207,6 +51207,44 @@ def _mant_log(entidad, entidad_id, accion, detalle=""):
         pass
 
 
+def _ensure_flujo_levantamiento_modificado_log():
+    """PASO 5f (2026-08-12, plan "el levantamiento es un tipo más"): deja
+    constancia en mant_logs (accion='flujo_levantamiento_modificado') de
+    que el flujo FROZEN de levantamiento (banner ❄ más arriba, app.py
+    ~52037) fue tocado con autorización explícita de Daniel el 2026-08-12
+    -- exactamente lo que el propio banner exige antes de cualquier
+    cambio futuro ("Cualquier cambio futuro requiere: nueva autorización,
+    audit en mant_logs accion='flujo_levantamiento_modificado'").
+
+    COUNT guard: se registra UNA sola vez (no en cada arranque/reinicio de
+    instancia) -- mismo espíritu que el resto de los _ensure_* del módulo.
+    """
+    try:
+        _ya = mysql_fetchone(
+            "SELECT id FROM mant_logs WHERE entidad='sistema' "
+            "  AND accion='flujo_levantamiento_modificado' LIMIT 1")
+        if _ya:
+            return
+        _mant_log(
+            "sistema", 0, "flujo_levantamiento_modificado",
+            "Autorización de Daniel 2026-08-12 -- plan 'el levantamiento es "
+            "un tipo más', Paso 5 (separar comportamiento por TIPO de OT en "
+            "vez de inferirlo de levantamiento_id): "
+            "_ensure_levantamiento_para_visita ya solo crea/busca "
+            "levantamiento bajo demanda para tipo='levantamiento' (antes "
+            "también preventiva/instalacion/inspeccion); mant_ot_equipo_foto "
+            "fuerza es_principal=False fuera de levantamiento (ya no pisa "
+            "el asset Cloudinary permanente ni mant_maquinas.foto_url); "
+            "mant_ot_equipo_datos ya solo escribe mant_maquinas cuando "
+            "tipo='levantamiento' (fuera de eso desvía a "
+            "mant_sugerencias_evidencia, nunca rechaza ni descarta el dato "
+            "del técnico); el bridge target_field en "
+            "mant_visita_tarea_respuesta quedó gateado igual."
+        )
+    except Exception as e:
+        print(f"[ensure_flujo_lev_modificado_log] {e}", flush=True)
+
+
 # ═════════════════════════════════════════════════════════════════════
 # PLAN 2026-05-21 — NOTIFICACIONES INTERNAS (campana en header sin DNS)
 # Helper para crear notificaciones idempotentes desde endpoints + cron.
@@ -52065,6 +52103,33 @@ def _mant_erp_doc_montos(tido, nudo):
 # ║ Cualquier cambio futuro requiere: nueva autorización, audit en     ║
 # ║ mant_logs accion='flujo_levantamiento_modificado'.                 ║
 # ╚════════════════════════════════════════════════════════════════════╝
+#
+# 🔓 EXCEPCIÓN AUTORIZADA — 2026-08-12 — plan "el levantamiento es un tipo
+# más". Daniel (super-admin) autorizó EXPLÍCITAMENTE tocar este flujo
+# FROZEN en esa fecha, en el marco de separar el COMPORTAMIENTO de la OT
+# (decide el TIPO, no el vínculo levantamiento_id) de la VISUALIZACIÓN de
+# evidencia ya capturada (esa sí sigue mirando el vínculo). Auditado en
+# mant_logs accion='flujo_levantamiento_modificado' (registrado una sola
+# vez al boot por _ensure_flujo_levantamiento_modificado_log, ver
+# definición junto a _mant_log). Cambios aplicados (Paso 5 del plan):
+#   - _ensure_levantamiento_para_visita: SOLO crea/busca levantamiento
+#     bajo demanda para tipo='levantamiento' (antes también
+#     preventiva/instalacion/inspeccion -- esa era la "segunda puerta"
+#     que revertía el Paso 4 apenas el técnico tocaba un equipo).
+#   - mant_ot_equipo_foto: `es_principal` se fuerza a False si el tipo de
+#     la OT no es 'levantamiento' -- ya no pisa el asset PERMANENTE de
+#     Cloudinary (`maquina_{mid}`) ni mant_maquinas.foto_url fuera de un
+#     levantamiento.
+#   - mant_ot_equipo_datos: el UPDATE a mant_maquinas (ficha permanente)
+#     SOLO corre si tipo='levantamiento'; fuera de eso el dato NUNCA se
+#     descarta ni se rechaza con error al técnico -- se desvía al canal
+#     ya existente mant_sugerencias_evidencia (_sugerencia_crear).
+#   - mant_visita_tarea_respuesta (bridge target_field): el mirror a
+#     mant_levantamiento_items también quedó gateado por tipo (el caso
+#     "horometro" NO se tocó -- no es un campo de ficha).
+# El resto del flujo (promoción al cerrar / _promover_levantamiento_*,
+# mant_lev_crear_o_listar, el safety-net de sync en mant_ot_ejecutar) NO
+# se tocó -- sigue exactamente igual.
 
 def _promover_levantamiento_a_maquina(vid, usuario=None):
     """Promueve datos capturados en una OT de levantamiento a la ficha
@@ -71151,6 +71216,16 @@ def mant_ot_equipo_datos(vid, mid):
     """
     d = request.get_json(silent=True) or {}
 
+    # PASO 5c (2026-08-12, plan "el levantamiento es un tipo más" --
+    # autorización de Daniel del 12-08-2026 para tocar este flujo FROZEN,
+    # ver banner en app.py): la ficha permanente del equipo (mant_maquinas)
+    # SOLO se escribe desde una OT de tipo levantamiento. Se resuelve acá
+    # arriba (una sola consulta) para usarlo en el UPDATE y en el audit
+    # log más abajo.
+    _v_ficha = mysql_fetchone(
+        "SELECT tipo, cliente_id FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    _escribe_ficha = (_v_ficha.get("tipo") or "").lower() == "levantamiento"
+
     # Campos string permitidos en mant_maquinas (clave → max_length).
     # 2026-05-22 — agregamos varios campos que antes solo vivían en
     # mant_levantamiento_items. El espejo asegura coherencia.
@@ -71226,7 +71301,42 @@ def mant_ot_equipo_datos(vid, mid):
     sets.append("last_visita_id=%s"); vals.append(vid)
     vals.append(mid)
     try:
-        mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
+        if _escribe_ficha:
+            mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
+        else:
+            # PASO 5c: fuera de un levantamiento, el dato NO se descarta ni
+            # se rechaza con 403/400 -- el modal autoguarda campo por campo
+            # con cola secuencial y reintento; un error ahí deja al técnico
+            # perdiendo datos con el cliente al frente. Se desvía al canal
+            # de sugerencias ya existente (Daniel: "el sistema no toma
+            # acciones automáticas, solo sugiere"). `last_visita_id` se
+            # excluye del cuerpo -- no es un dato de ficha, es trazabilidad
+            # interna sin valor para quien revise la sugerencia.
+            _campos_prop = {
+                k: v for k, v in zip([s.split('=')[0] for s in sets], vals[:-1])
+                if k != "last_visita_id"
+            }
+            if _campos_prop:
+                try:
+                    _sugerencia_crear(
+                        cliente_id=(valores_antes.get("cliente_id") or _v_ficha.get("cliente_id")),
+                        tipo="dato_ficha_equipo_ot",
+                        titulo=f"Datos de equipo capturados en OT #{vid} (fuera de levantamiento)",
+                        cuerpo=(
+                            f"El técnico propuso actualizar la ficha del equipo #{mid} "
+                            f"desde una OT tipo '{_v_ficha.get('tipo') or '?'}': "
+                            + ", ".join(f"{k}={v!r}" for k, v in _campos_prop.items())
+                            + ". Fuera de un levantamiento, ILUS no escribe la ficha "
+                              "automáticamente -- revisa y aplica manualmente si corresponde."
+                        ),
+                        entidad="maquina", entidad_id=mid,
+                        origen="sistema",
+                        metadata={"vid": vid, "mid": mid, "campos": _campos_prop,
+                                  "tipo_ot": _v_ficha.get("tipo")},
+                    )
+                except Exception as _e_sug:
+                    print(f"[mant_ot_equipo_datos] sugerencia dato_ficha_equipo_ot "
+                          f"vid={vid} mid={mid}: {_e_sug}", flush=True)
 
         # ── ESPEJO en mant_levantamiento_items (2026-05-22 Daniel) ────
         # Esto es lo que `_promover_levantamiento_a_maquina` vuelve a leer
@@ -71262,43 +71372,36 @@ def mant_ot_equipo_datos(vid, mid):
         # ── Audit log de cambios sensibles ──
         # Solo escribimos en mant_maquina_audit cuando cambia un campo CRÍTICO
         # (serie / marca / modelo). Para no inflar la tabla con cada edición.
-        try:
-            v_obs = mysql_fetchone(
-                "SELECT cliente_id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,)
-            ) or {}
-            # FIX 2026-05-22 (Daniel): el motivo "Levantamiento OT #X" también
-            # aplica cuando la OT es de otro tipo pero está vinculada a un
-            # levantamiento (mant_visitas.levantamiento_id NOT NULL). Permite
-            # trazabilidad consistente en mant_maquina_audit para los 2 flujos
-            # que generan herencia a la ficha.
-            es_lev = (
-                (v_obs.get("tipo") or "").lower() == "levantamiento"
-                or bool(v_obs.get("levantamiento_id"))
-            )
-            user = current_username()
-            motivo_base = (f"Levantamiento OT #{vid}" if es_lev
-                           else f"Edición desde OT #{vid}")
-            for campo in ("serie", "marca", "modelo"):
-                if campo not in d:
-                    continue
-                nuevo = (str(d.get(campo) or "").strip())[:120] or None
-                antes = (valores_antes.get(campo) or "") or None
-                if (antes or "") == (nuevo or ""):
-                    continue
-                try:
-                    mysql_execute(
-                        "INSERT INTO mant_maquina_audit "
-                        "(maquina_id, cliente_id, campo, valor_antes, valor_nuevo, "
-                        " motivo, usuario) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                        (mid, valores_antes.get("cliente_id") or v_obs.get("cliente_id"),
-                         campo, antes, nuevo, motivo_base, (user or "")[:190])
-                    )
-                except Exception as _e_aud:
-                    print(f"[mant_ot_equipo_datos] audit {campo} fallo: {_e_aud}",
-                          flush=True)
-        except Exception:
-            pass
+        #
+        # PASO 5c: este log registra valor_antes/valor_nuevo de mant_maquinas
+        # -- solo tiene sentido si el UPDATE de arriba REALMENTE corrió
+        # (_escribe_ficha). Si no corrió (se desvió a sugerencia), loguear
+        # "cambió de X a Y" sería falso: el dato no cambió en la ficha.
+        if _escribe_ficha:
+            try:
+                user = current_username()
+                motivo_base = f"Levantamiento OT #{vid}"
+                for campo in ("serie", "marca", "modelo"):
+                    if campo not in d:
+                        continue
+                    nuevo = (str(d.get(campo) or "").strip())[:120] or None
+                    antes = (valores_antes.get(campo) or "") or None
+                    if (antes or "") == (nuevo or ""):
+                        continue
+                    try:
+                        mysql_execute(
+                            "INSERT INTO mant_maquina_audit "
+                            "(maquina_id, cliente_id, campo, valor_antes, valor_nuevo, "
+                            " motivo, usuario) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (mid, valores_antes.get("cliente_id") or _v_ficha.get("cliente_id"),
+                             campo, antes, nuevo, motivo_base, (user or "")[:190])
+                        )
+                    except Exception as _e_aud:
+                        print(f"[mant_ot_equipo_datos] audit {campo} fallo: {_e_aud}",
+                              flush=True)
+            except Exception:
+                pass
         resp = {"ok": True}
         if warning:
             resp["warning"] = warning
@@ -71348,9 +71451,17 @@ def _ensure_levantamiento_para_visita(vid):
     lev_id = _ot_levantamiento_de(v)
     if lev_id:
         return lev_id
-    # Solo crear para tipos que capturan ficha. Correctiva/garantía NO.
+    # PASO 5a (2026-08-12, plan "el levantamiento es un tipo más" --
+    # autorización de Daniel del 12-08-2026 para tocar este flujo FROZEN,
+    # ver banner arriba): antes se creaba levantamiento bajo demanda para
+    # preventiva/instalacion/inspeccion también, no solo levantamiento --
+    # esa era la "segunda puerta" que revertía el Paso 4 en cuanto el
+    # técnico tocaba un dato de equipo o subía una foto. Ahora SOLO
+    # levantamiento captura ficha bajo demanda; correctiva/garantía/
+    # preventiva/instalación/inspección ya NO (edita mant_visita_equipos /
+    # sugerencias en su lugar, ver Paso 5c).
     tipo_v = (v.get("tipo") or "").lower()
-    if tipo_v not in ("preventiva", "levantamiento", "instalacion", "inspeccion"):
+    if tipo_v not in ("levantamiento",):
         return None
     cid = v.get("cliente_id")
     if not cid:
@@ -71562,6 +71673,26 @@ def mant_ot_equipo_foto(vid, mid):
     if es_principal and foto_actual and not (es_admin and force):
         # Hay foto previa y no es admin con force → degradar a 'detalle'
         es_principal = False
+    # PASO 5b (2026-08-12, plan "el levantamiento es un tipo más" --
+    # CORRECCIÓN DE FABLE, autorización de Daniel del 12-08-2026 para
+    # tocar este flujo FROZEN): no basta con condicionar el UPDATE a
+    # mant_maquinas más abajo -- `es_principal` TAMBIÉN decide el
+    # public_id de Cloudinary (carpeta permanente "maquina_{mid}") y el
+    # tipo_foto que se graba en mant_visita_fotos. Si solo se condicionara
+    # el UPDATE y `es_principal` se siguiera determinando igual, en una OT
+    # que ya NO debe escribir la ficha (instalación, preventiva,
+    # correctiva...) cada foto que el técnico suba seguiría marcándose
+    # "principal": mismo public_id, PISANDO el mismo asset de Cloudinary
+    # una y otra vez -- pérdida real de evidencia fotográfica (viola
+    # Regla #5 de auditoría). Por eso se fuerza a False acá, en el punto
+    # donde se DETERMINA es_principal, no solo donde se usa. La foto se
+    # sigue guardando SIEMPRE en mant_visita_fotos (eso no se toca -- es
+    # evidencia de la OT, cualquiera sea su tipo).
+    if es_principal:
+        _v_foto = mysql_fetchone(
+            "SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if (_v_foto.get("tipo") or "").lower() != "levantamiento":
+            es_principal = False
     tipo_foto_final = "principal" if es_principal else (
         "detalle" if tipo_foto_solicitado == "principal" else tipo_foto_solicitado
     )
@@ -73513,7 +73644,23 @@ def mant_visita_tarea_respuesta(vid, tid):
                         _registrar_horometro(_mid_t, _raw, visita_id=vid,
                                               fuente="ot", autor=current_username())
                     else:
-                        _mirror_ot_equipo_a_levantamiento(vid, _mid_t, {_tgt: _raw})
+                        # PASO 5d (2026-08-12, plan "el levantamiento es un
+                        # tipo más" -- autorización de Daniel del
+                        # 12-08-2026 para tocar este flujo FROZEN): el
+                        # bridge SOLO alimenta la ficha permanente (vía
+                        # mant_levantamiento_items → mant_maquinas al
+                        # promover) cuando la OT ES de tipo levantamiento.
+                        # _mirror_ot_equipo_a_levantamiento ya no-opea sola
+                        # para otros tipos desde el Paso 5a
+                        # (_ensure_levantamiento_para_visita solo crea/busca
+                        # levantamiento para tipo='levantamiento'), pero se
+                        # gatea también acá de forma explícita: evita la
+                        # consulta/INSERT de más y deja la intención clara
+                        # en el propio bridge, no escondida en otra función.
+                        _v_tgt = mysql_fetchone(
+                            "SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+                        if (_v_tgt.get("tipo") or "").lower() == "levantamiento":
+                            _mirror_ot_equipo_a_levantamiento(vid, _mid_t, {_tgt: _raw})
         except Exception as _e_bridge:
             print(f"[tarea_respuesta bridge target_field] vid={vid} tid={tid}: {_e_bridge}", flush=True)
         # Releer version actualizada para devolver al frontend
@@ -93440,6 +93587,16 @@ try:
         _ensure_lev_modalidad_captura_col()
 except Exception as _ensure_lev_modcap_err:
     print(f"[ILUS][WARN] _ensure_lev_modalidad_captura_col: {_ensure_lev_modcap_err}", flush=True)
+
+# Paso 5f: constancia en mant_logs de la autorización de Daniel 2026-08-12
+# para tocar el flujo FROZEN de levantamiento (ver banner ❄ app.py ~52037).
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 -- mant_logs ya existe en
+# cualquier entorno. COUNT guard adentro: se registra una sola vez.
+try:
+    with app.app_context():
+        _ensure_flujo_levantamiento_modificado_log()
+except Exception as _ensure_flujo_lev_err:
+    print(f"[ILUS][WARN] _ensure_flujo_levantamiento_modificado_log: {_ensure_flujo_lev_err}", flush=True)
 
 # Huella digital de fotos (Daniel 2026-08-09 — evitar que 4 copias de la
 # misma foto cuenten como 4 evidencias). SIEMPRE, incluso con
