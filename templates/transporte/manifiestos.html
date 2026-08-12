@@ -348,7 +348,28 @@
                 </a>
                 {% endif %}
                 {% if is_superadmin %}
-                <a href="#" onclick="event.preventDefault(); eliminarManifiesto({{ m.id }}, {{ (m.correlativo or ('#' ~ m.id))|tojson }})"
+                {# BUG REAL (2026-08-12, Daniel: "le doy a los 3 puntos y no
+                   lo elimina" -- sin ningún error visible). CAUSA REAL:
+                   |tojson envuelve el correlativo en comillas DOBLES
+                   literales (así es JSON válido) -- pero este onclick
+                   TAMBIÉN usaba comillas dobles, así que el HTML se cortaba
+                   justo ahí. Confirmado renderizando la plantilla real:
+                   onclick="...eliminarManifiesto(33, "MAN-2026-0033")"
+                   el navegador cierra el atributo en la comilla incrustada
+                   -- el onclick que de verdad queda es
+                   "eliminarManifiesto(33, " (JS inválido), así que el clic
+                   nunca llegaba a ejecutar nada, sin ningún log posible
+                   (el error pasa al COMPILAR el handler, antes de que
+                   corriera una sola línea de eliminarManifiesto). |tojson
+                   SÍ es seguro dentro de un atributo de comilla SIMPLE
+                   (escapa '), pero acá se usa el mismo patrón
+                   data-* ya probado en esta misma página (ver
+                   data-etiquetas-title arriba) -- ni siquiera necesita
+                   tojson, el auto-escape normal de Jinja alcanza. #}
+                <a href="#" class="js-eliminar-manifiesto"
+                   data-mid="{{ m.id }}"
+                   data-correlativo="{{ m.correlativo or ('#' ~ m.id) }}"
+                   onclick="event.preventDefault(); eliminarManifiesto(parseInt(this.dataset.mid, 10), this.dataset.correlativo)"
                    style="color:var(--ilus-red)">
                   <i class="bi bi-trash3-fill"></i> Eliminar manifiesto
                 </a>
