@@ -69843,8 +69843,29 @@ def mant_diag_cobertura_clasificacion():
              GROUP BY 1 ORDER BY equipos DESC
         """) or []
 
+        # LO ACCIONABLE: cuántos PRODUCTOS distintos hay que clasificar para
+        # levantar la cobertura, y a cuántos equipos afecta cada uno. Ordenado
+        # por impacto: clasificar los primeros de la lista es lo que más sube
+        # el porcentaje. (Ojo: la pantalla del catálogo solo muestra productos
+        # ACTIVOS, por eso ahí se ven menos de los que existen en la tabla.)
+        pendientes = mysql_fetchall("""
+            SELECT p.sku, p.nombre, p.activo, COUNT(*) AS equipos
+              FROM mant_maquinas m
+              JOIN cat_productos p ON p.sku = m.sku
+             WHERE COALESCE(m.estado,'activo') <> 'baja'
+               AND COALESCE(TRIM(p.clase_producto),'') = ''
+             GROUP BY p.sku, p.nombre, p.activo
+             ORDER BY equipos DESC
+        """) or []
+
         return jsonify({
             "ok": True,
+            "productos_por_clasificar": len(pendientes),
+            "productos_por_clasificar_top": [
+                {"sku": r["sku"], "nombre": r.get("nombre") or "",
+                 "activo": int(r.get("activo") or 0), "equipos": int(r["equipos"] or 0)}
+                for r in pendientes[:25]
+            ],
             "total_equipos_activos": total,
             "clasificable": clasificable,
             "cobertura_pct": pct,
