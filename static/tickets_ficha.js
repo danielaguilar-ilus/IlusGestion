@@ -4360,7 +4360,20 @@ function tkotRenderEquipos(){
   const tbody = document.getElementById('levSelectTbody');
   if(!tbody) return;
   const eqs = equiposCache || [];
-  Object.keys(_TKOT.eqPlantillas).forEach(function(k){ delete _TKOT.eqPlantillas[k]; });
+  // FIX 2026-08-12 (bug real reportado por Daniel: una plantilla que SÍ se
+  // marcaba por equipo terminaba sin aplicarse -- la OT caía en la tarea
+  // de respaldo genérica). Causa: esta función se vuelve a llamar cuando
+  // cambia el tipo de OT y eso activa/desactiva el modo "instalación sin
+  // ficha" (tkotAplicarForzadoInstalacion -> tkotRenderEquipos), y antes
+  // borraba TODAS las plantillas ya elegidas por equipo, en silencio, sin
+  // avisar. Ahora solo se limpia la selección de equipos que YA NO están
+  // en la lista actual -- si el equipo sigue ahí, su plantilla elegida se
+  // conserva. Con equiposCache vacío (modal recién abierto) esto sigue
+  // limpiando todo, como antes.
+  const _keysActuales = new Set(eqs.map(_tkotEqKey));
+  Object.keys(_TKOT.eqPlantillas).forEach(function(k){
+    if(!_keysActuales.has(k)) delete _TKOT.eqPlantillas[k];
+  });
   if(!eqs.length){
     tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">'
       + (_TKOT_MODO_CLIENTE ? 'Este cliente no tiene equipos registrados todavía.' : 'Este ticket no tiene equipos declarados.')
