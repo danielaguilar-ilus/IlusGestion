@@ -40514,27 +40514,48 @@ def tr_cubicador_enviar_manifiesto():
             # 4) Adjuntar item (idempotente por UNIQUE)
             # PR-B (Fase 1, 2026-08-01): ramo resuelto vía _tr_ramos_de_commitment
             # `ramo` en el body es opcional -- mismo mecanismo de
-            # desambiguación que tr_agregar_item, por si el cubicador algún
-            # día expone un selector de ramo (hoy no lo hace: documentos de
-            # 2+ ramos sin asignar todavía se rechazan acá igual que en los
-            # otros write-sites de documento completo, con el mismo mensaje
-            # que apunta a "Líneas pendientes").
+            # desambiguación que tr_agregar_item.
+            #
+            # FIX 2026-08-12 (Daniel, con captura real FCV 11216, despacho +
+            # instalación: "el documento tiene 2 ramos sin asignar... usa
+            # Líneas pendientes" -- "necesito modifica esa regla y que
+            # avance"). Este flujo (cubicador/asignar) no tiene granularidad
+            # de línea para elegir UN ramo, así que antes bloqueaba en seco
+            # cualquier documento con 2+ ramos pendientes. Pero desde la
+            # corrección del 2026-08-01 ("despachamos e instalamos juntos")
+            # ambos ramos YA pueden convivir sin fricción en el mismo
+            # manifiesto -- lo único que faltaba era dejar de exigir que el
+            # operador elija uno cuando en realidad quiere los dos. Ahora,
+            # ante "conflicto_multi_ramo", se asignan TODOS los ramos
+            # pendientes al mismo manifiesto destino en vez de rechazar.
             _ramo_solicitado_cub = (data.get("ramo") or "").strip().lower() or None
             _ramos_doc_cub = _tr_ramos_de_commitment(comm_id)
             _items_cub = _tr_items_existentes_de_commitment(comm_id)
             _plan_cub = _tr_plan_ramo_manifest_item(_ramos_doc_cub, _items_cub, mid, _ramo_solicitado_cub)
+            _nuevos_items_cub = []  # (item_id, ramo) recién insertados -- para notificar/loggear todos
             if _plan_cub["accion"] == "conflicto_multi_ramo":
-                conn.rollback()
-                _doc_lbl_cub = f"{tido} {nudo}".strip()
-                return jsonify(_tr_resp_conflicto_multi_ramo(_plan_cub, _doc_lbl_cub)), 409
-            _ramo_cub = _plan_cub.get("ramo") or "despacho"
-            cur.execute(
-                "INSERT IGNORE INTO transport_manifest_items "
-                "(manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)",
-                (mid, comm_id, _ramo_cub)
-            )
-            added = bool(cur.rowcount)
-            _new_item_id = cur.lastrowid if added else None
+                for _ramo_pend in _plan_cub["pendientes"]:
+                    cur.execute(
+                        "INSERT IGNORE INTO transport_manifest_items "
+                        "(manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)",
+                        (mid, comm_id, _ramo_pend)
+                    )
+                    if cur.rowcount:
+                        _nuevos_items_cub.append((cur.lastrowid, _ramo_pend))
+                added = bool(_nuevos_items_cub)
+                _new_item_id = _nuevos_items_cub[0][0] if _nuevos_items_cub else None
+                _ramo_cub = ", ".join(_plan_cub["pendientes"])
+            else:
+                _ramo_cub = _plan_cub.get("ramo") or "despacho"
+                cur.execute(
+                    "INSERT IGNORE INTO transport_manifest_items "
+                    "(manifest_id, commitment_id, ramo) VALUES (%s,%s,%s)",
+                    (mid, comm_id, _ramo_cub)
+                )
+                added = bool(cur.rowcount)
+                _new_item_id = cur.lastrowid if added else None
+                if added:
+                    _nuevos_items_cub.append((_new_item_id, _ramo_cub))
 
             # 5) Recalcular totales del manifiesto
             cur.execute("""
@@ -40562,13 +40583,17 @@ def tr_cubicador_enviar_manifiesto():
     except Exception: pass
 
     # 2026-06-14 (Daniel): "tu pedido está en preparación" al asignar desde el
-    # cubicador (solo si la factura se agregó nueva, no en duplicados).
-    if added and _new_item_id:
+    # cubicador (solo si la factura se agregó nueva, no en duplicados). Se
+    # notifica UN evento por cada ramo recién insertado (normalmente 1, pero
+    # 2 si el documento traía despacho+instalación pendientes, ver fix
+    # 2026-08-12) -- el anti-spam por commitment de _tr_event evita que el
+    # cliente reciba dos correos idénticos por el mismo despacho.
+    for _item_id_prep, _ramo_prep in _nuevos_items_cub:
         try:
-            _tr_event(_new_item_id, 'En preparación', fuente='sistema',
+            _tr_event(_item_id_prep, 'En preparación', fuente='sistema',
                       commitment_id=comm_id, notify_cliente=True)
         except Exception as _e_prep2:
-            print(f"[tr_event preparacion cub] item={_new_item_id}: {_e_prep2}", flush=True)
+            print(f"[tr_event preparacion cub] item={_item_id_prep}: {_e_prep2}", flush=True)
 
     return jsonify({
         "ok": True,

@@ -1814,8 +1814,17 @@ class TestWriteSitesRamoMultiple(unittest.TestCase):
     # ramo_solicitado explícito (granularidad de línea, ver su propio bloque
     # más abajo) -- por diseño nunca llega a la rama ambigua del planner, así
     # que es el único de los 4 que no referencia "conflicto_multi_ramo".
+    #
+    # FIX 2026-08-12 (Daniel, captura real FCV 11216: despacho+instalación
+    # bloqueados en /asignar con "usa Líneas pendientes" -- "necesito
+    # modifica esa regla y que avance"): tr_cubicador_enviar_manifiesto deja
+    # de bloquear con 409 -- ante "conflicto_multi_ramo" asigna TODOS los
+    # ramos pendientes al mismo manifiesto destino en vez de rechazar (ver
+    # TestCubicadorMultiRamoAvanza más abajo). Sale de esta lista: ya no
+    # devuelve 409 para ese caso, aunque sigue REFERENCIANDO
+    # "conflicto_multi_ramo" (lo consume distinto).
     FUNCIONES_CON_CONFLICTO_MULTI_RAMO = [
-        "tr_agregar_item", "tr_asignar_a_manifiesto", "tr_cubicador_enviar_manifiesto",
+        "tr_agregar_item", "tr_asignar_a_manifiesto",
     ]
 
     def test_los_cuatro_sitios_incluyen_ramo_en_el_insert(self):
@@ -1864,11 +1873,14 @@ class TestWriteSitesRamoMultiple(unittest.TestCase):
                              f"{nombre} todavía referencia 'conflicto_candado' -- "
                              "código muerto del candado retirado, limpiar.")
 
-    def test_tres_sitios_manejan_ambiguedad_multi_ramo_con_409(self):
-        """Los 3 write-sites SIN granularidad de línea (documento completo)
-        deben rechazar con 409 cuando un documento tiene 2+ ramos sin asignar
-        y no hay forma de saber cuál se quiere -- ver la excepción documentada
-        de tr_lineas_pendientes_enviar_manifiesto en FUNCIONES_CON_CONFLICTO_MULTI_RAMO."""
+    def test_dos_sitios_manejan_ambiguedad_multi_ramo_con_409(self):
+        """tr_agregar_item y tr_asignar_a_manifiesto (SIN granularidad de
+        línea, documento completo) deben seguir rechazando con 409 cuando un
+        documento tiene 2+ ramos sin asignar y no hay forma de saber cuál se
+        quiere -- ver las excepciones documentadas de
+        tr_lineas_pendientes_enviar_manifiesto (nunca llega a la ambigüedad)
+        y tr_cubicador_enviar_manifiesto (fix 2026-08-12: ya no bloquea, ver
+        TestCubicadorMultiRamoAvanza) en FUNCIONES_CON_CONFLICTO_MULTI_RAMO."""
         for nombre in self.FUNCIONES_CON_CONFLICTO_MULTI_RAMO:
             cuerpo = _norm(_cuerpo_funcion(nombre))
             with self.subTest(funcion=nombre):
@@ -1879,6 +1891,22 @@ class TestWriteSitesRamoMultiple(unittest.TestCase):
                     r'conflicto_multi_ramo.{0,400}?\), 409',
                     f"{nombre} maneja 'conflicto_multi_ramo' pero no devuelve 409.",
                 )
+
+    def test_cubicador_es_la_excepcion_que_ya_no_bloquea(self):
+        """Contraparte del test anterior: tr_cubicador_enviar_manifiesto SÍ
+        sigue referenciando 'conflicto_multi_ramo' (todavía usa el mismo
+        planner), pero NUNCA devuelve 409 por esa causa -- inserta todos los
+        ramos pendientes en el manifiesto destino en su lugar."""
+        cuerpo = _norm(_cuerpo_funcion("tr_cubicador_enviar_manifiesto"))
+        self.assertIn("conflicto_multi_ramo", cuerpo,
+                     "tr_cubicador_enviar_manifiesto ya no consulta 'conflicto_multi_ramo' -- "
+                     "revisar si el planner cambió de forma.")
+        self.assertNotRegex(
+            cuerpo,
+            r'conflicto_multi_ramo.{0,400}?\), 409',
+            "tr_cubicador_enviar_manifiesto volvió a bloquear con 409 en vez de "
+            "asignar todos los ramos pendientes (regresión del fix 2026-08-12).",
+        )
 
     def test_ningun_sitio_deja_ramo_sin_fallback(self):
         """Si el ramo resuelto viniera vacío por algún motivo, ninguno de los
