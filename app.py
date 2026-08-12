@@ -65595,17 +65595,39 @@ def _ot_validar_cierre(vid):
     # saltado / falla_detectada). Equipos fuera del plan quedan exentos.
     if es_levantamiento:
         try:
+            # PASO 6 (2026-08-12, plan "el levantamiento es un tipo más"):
+            # el universo de "equipos en plan" se acota de TODAS las
+            # máquinas del cliente a SOLO los equipos DE ESTA OT -- un
+            # cliente con 200 máquinas y una OT de 3 equipos generaba 197
+            # revisiones que nadie encargó (pedido explícito de Daniel).
+            # Universo nuevo: unión de mant_visita_tareas.maquina_id de
+            # ESTA visita_id + mant_levantamiento_items.maquina_id del
+            # levantamiento vinculado a ESTA OT, ambos con
+            # maquina_id IS NOT NULL. Se conserva el filtro
+            # aplica_mantencion, m.estado != 'baja' tal cual, y el
+            # NOT EXISTS contra mant_visita_equipos. NO se incluye
+            # mant_visita_equipos en la unión del universo -- eso dejaría
+            # la regla comparando "los que tienen fila y no tienen fila"
+            # (siempre 0), eliminándola de hecho (Regla #4.2 -- no se
+            # quita una regla sin permiso explícito).
+            _lev_id_r1b = v.get("levantamiento_id")
             _pend = mysql_fetchone(
                 "SELECT COUNT(*) AS cnt "
                 "  FROM mant_maquinas m "
-                " WHERE m.cliente_id = (SELECT v.cliente_id FROM mant_visitas v WHERE v.id=%s) "
+                " WHERE m.id IN ( "
+                "       SELECT maquina_id FROM mant_visita_tareas "
+                "        WHERE visita_id=%s AND maquina_id IS NOT NULL "
+                "       UNION "
+                "       SELECT maquina_id FROM mant_levantamiento_items "
+                "        WHERE levantamiento_id=%s AND maquina_id IS NOT NULL "
+                "   ) "
                 "   AND m.aplica_mantencion = 1 "
                 "   AND m.estado != 'baja' "
                 "   AND NOT EXISTS ( "
                 "       SELECT 1 FROM mant_visita_equipos ve "
                 "        WHERE ve.visita_id = %s AND ve.maquina_id = m.id "
                 "   )",
-                (vid, vid)
+                (vid, _lev_id_r1b, vid)
             )
             _pend_cnt = int((_pend or {}).get("cnt") or 0)
             if _pend_cnt > 0:
