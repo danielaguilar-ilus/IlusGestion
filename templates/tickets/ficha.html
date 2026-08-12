@@ -6,6 +6,12 @@
 {% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='tickets_ficha.css') }}">
+{# Estilo compartido del modal "Generar OT" (#modalGenerarOT, partial
+   tickets/_modal_generar_ot.html). Va DESPUÉS de tickets_ficha.css a
+   propósito: el mismo archivo lo carga mantenciones/ficha.html y así el
+   modal se ve idéntico desde las dos pantallas. Ver el encabezado de
+   static/modal_generar_ot.css. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='modal_generar_ot.css') }}">
 
 <div class="tk-hero" id="tkHero">
   <div class="top">

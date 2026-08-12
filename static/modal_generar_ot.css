@@ -1,0 +1,292 @@
+/* ══════════════════════════════════════════════════════════════════════
+   MODAL "GENERAR ORDEN DE TRABAJO" (#modalGenerarOT) — ESTILO COMPARTIDO
+   ══════════════════════════════════════════════════════════════════════
+   El modal es UN SOLO partial: templates/tickets/_modal_generar_ot.html,
+   incluido por DOS páginas distintas:
+     · templates/tickets/ficha.html        (carga tickets_ficha.css)
+     · templates/mantenciones/ficha.html   (carga mantenciones_ficha.css)
+
+   Hasta 2026-08-12 los estilos de sus tarjetas de paso (.lev-step-*)
+   vivían DUPLICADOS en esos dos .css (tickets_ficha.css ~1001 y
+   mantenciones_ficha.css ~1670, copias idénticas). Un cambio de diseño
+   había que hacerlo dos veces o el modal se veía distinto según desde
+   dónde se abriera. Ahora viven acá, en un solo lugar, y AMBAS páginas
+   cargan este archivo DESPUÉS del suyo (para ganar la cascada).
+
+   ── Qué se movió acá (verificado con grep antes de mover) ──
+   .lev-step-card / .lev-step-header / .lev-step-num / .lev-step-title /
+   .lev-step-sub / .lev-step-body — usadas ÚNICAMENTE dentro de
+   templates/tickets/_modal_generar_ot.html. Las menciones en
+   templates/mantenciones/_repuestos_bodega_pane.html son COMENTARIOS
+   (ese modal usa su propio prefijo .rb-step-*, copiado a propósito).
+
+   ── Qué se dejó donde estaba (a propósito, REGLA #4.2) ──
+   · .lev-step-card.lev-sc / .lev-step-ico / .lev-step-wm y todo el bloque
+     "POLISH 2026" al final de mantenciones_ficha.css: no se toca. Parte de
+     ese bloque quedó inerte cuando se retiró #modalLevSelector (ningún
+     HTML/JS escribe hoy la clase .lev-sc), pero eso se REPORTA, no se
+     borra.
+   · El resto de clases del modal (.lev-modo-*, .lev-yn-*, .lev-adj-*,
+     .lev-table-eq, .tkcal-*, .tksched-*) siguen en sus archivos actuales.
+     Ojo: ahí SÍ hay divergencia real entre Tickets y Mantenciones —
+     documentada en el reporte, no resuelta acá para no ampliar el cambio.
+
+   ── Diseño de los pasos ──
+   Patrón de Retiros (static/retiros_internal_detail.css ~100-175):
+   círculo grande con la etiqueta "PASO X" arriba, verde al completarse.
+   El tamaño del círculo (60px) es pedido explícito de Daniel el
+   2026-05-24: "más grandes para personas más ciegas".
+
+   TIPOGRAFÍA: Retiros usa 'Bebas Neue' para el número, pero esa fuente
+   solo se carga en las páginas PÚBLICAS (retiros/public_request.html,
+   public_tracking.html, tickets/soporte_publico.html). Este modal vive
+   dentro de base.html, que NO la carga: usarla caería a un fallback feo.
+   Por eso el número usa la fuente del sistema (la de base.html:
+   'Segoe UI'/Arial) con peso 900 y cifras tabulares.
+
+   Paleta ILUS (REGLA #2): rojo #dc2626, negro #0a0a0a, verde éxito
+   #16a34a. Nada de var(--ilus-red) acá: mantenciones_ficha.css lo define
+   como #e63946 y tickets no lo define igual — el color se escribe literal
+   para que el modal se vea IDÉNTICO desde las dos páginas.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Tarjeta de paso ──────────────────────────────────────────────── */
+.lev-step-card {
+  border-radius: 12px;
+  border: 1.5px solid #e5e7eb;
+  background: #ffffff;
+  margin-bottom: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  transition: border-color .25s ease, background .3s ease,
+              box-shadow .25s ease, transform .25s ease;
+}
+.lev-step-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 10px 26px -12px rgba(15, 23, 42, .18);
+  transform: translateY(-1px);
+}
+
+/* Paso COMPLETO — borde verde + degradado verde clarísimo + sombra verde.
+   Lo pinta tkotRefreshStepStates() (static/tickets_ficha.js). */
+.lev-step-card.is-complete {
+  border-color: #86efac;
+  border-style: solid;
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 55%);
+  box-shadow: 0 1px 3px rgba(22, 163, 74, .08),
+              0 14px 32px -18px rgba(22, 163, 74, .28);
+}
+.lev-step-card.is-complete:hover { border-color: #4ade80; }
+
+/* Paso OPCIONAL — punteado gris, no exige llenarse (Pasos 6 y 7).
+   Mismo lenguaje que .rb-step.is-optional del modal de Repuestos. */
+.lev-step-card.is-optional {
+  background: #fafafa;
+  border-style: dashed;
+  border-color: #d1d5db;
+  box-shadow: none;
+}
+
+/* Paso BLOQUEADO — gris punteado, atenuado. Reservado: hoy ningún paso
+   del modal se bloquea; queda definido para cuando haga falta. */
+.lev-step-card.is-blocked {
+  opacity: .6;
+  background: #fafafa;
+  border-style: dashed;
+  border-color: #d1d5db;
+  box-shadow: none;
+}
+.lev-step-card.is-blocked .lev-step-body { pointer-events: none; }
+
+/* ── Cabecera del paso ────────────────────────────────────────────── */
+.lev-step-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #fff, #fafafa);
+  border-bottom: 1px solid #f1f5f9;
+  transition: background .3s ease, border-color .25s ease;
+}
+.lev-step-card.is-complete .lev-step-header {
+  background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+  border-bottom-color: #dcfce7;
+}
+.lev-step-card.is-optional .lev-step-header,
+.lev-step-card.is-blocked .lev-step-header {
+  background: linear-gradient(135deg, #fafafa, #f4f4f5);
+}
+
+/* ── Círculo del paso + etiqueta "PASO X" ARRIBA ──────────────────── */
+.lev-step-circle-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+.lev-step-circle-label {
+  font-size: .6rem;
+  font-weight: 900;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: #dc2626;
+  line-height: 1;
+  white-space: nowrap;
+  transition: color .25s ease;
+}
+.lev-step-card.is-complete .lev-step-circle-label { color: #16a34a; }
+.lev-step-card.is-optional  .lev-step-circle-label { color: #9ca3af; }
+.lev-step-card.is-blocked   .lev-step-circle-label { color: #9ca3af; }
+
+/* El círculo conserva la clase .lev-step-num de siempre (el HTML del
+   partial ya la traía): así ningún selector externo se queda huérfano. */
+.lev-step-num {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #dc2626;
+  color: #fff;
+  border: 3px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.75rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  box-shadow: 0 8px 22px rgba(220, 38, 38, .38), 0 0 0 4px rgba(220, 38, 38, .10);
+  transition: background .3s cubic-bezier(.4, 0, .2, 1),
+              box-shadow .3s cubic-bezier(.4, 0, .2, 1),
+              transform .3s cubic-bezier(.4, 0, .2, 1);
+}
+.lev-step-card.is-complete .lev-step-num {
+  background: #16a34a;
+  box-shadow: 0 8px 22px rgba(22, 163, 74, .38), 0 0 0 4px rgba(22, 163, 74, .12);
+  transform: scale(1.04);
+}
+/* Anillo que pulsa UNA vez al completarse (patrón de Retiros). */
+.lev-step-card.is-complete .lev-step-num::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid #16a34a;
+  opacity: .35;
+  animation: levCirclePulseGreen 1.6s ease-in-out 1;
+}
+@keyframes levCirclePulseGreen {
+  0%   { transform: scale(.85); opacity: .7; }
+  100% { transform: scale(1.22); opacity: 0; }
+}
+.lev-step-card.is-optional .lev-step-num,
+.lev-step-card.is-blocked  .lev-step-num {
+  background: #9ca3af;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, .08), 0 0 0 4px rgba(156, 163, 175, .10);
+}
+
+/* Número ↔ check: el check reemplaza al número cuando el paso está listo. */
+.lev-step-num .lev-step-check { display: none; font-size: 1.7rem; line-height: 1; }
+.lev-step-card.is-complete .lev-step-num .lev-step-num-text { display: none; }
+.lev-step-card.is-complete .lev-step-num .lev-step-check { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lev-step-card,
+  .lev-step-header,
+  .lev-step-num,
+  .lev-step-circle-label { transition: background .2s ease, border-color .2s ease, color .2s ease; }
+  .lev-step-card:hover { transform: none; }
+  .lev-step-card.is-complete .lev-step-num { transform: none; }
+  .lev-step-card.is-complete .lev-step-num::after { animation: none; }
+}
+
+/* ── Títulos del paso ─────────────────────────────────────────────── */
+.lev-step-titles { flex: 1; min-width: 0; }
+.lev-step-title {
+  font-weight: 800;
+  font-size: 1rem;
+  color: #0a0a0a;
+  line-height: 1.25;
+  letter-spacing: -.01em;
+}
+/* El subtítulo pasó de ir a la derecha (margin-left:auto) a ir DEBAJO del
+   título: así el contador ("3 seleccionado(s)") queda pegado a lo que
+   cuenta y, sobre todo, deja de competir por el ancho en celular — donde
+   antes simplemente se ocultaba y Daniel perdía el dato. */
+.lev-step-sub {
+  font-size: .76rem;
+  color: #64748b;
+  margin-top: 3px;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  flex-wrap: wrap;
+}
+.lev-step-card.is-complete .lev-step-title { color: #0a0a0a; }
+
+/* Etiqueta "opcional" para los pasos que no bloquean el envío. */
+.lev-step-optlabel {
+  display: inline-block;
+  font-size: .6rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #6b7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 50px;
+  padding: 2px 8px;
+  line-height: 1.35;
+}
+
+/* ── Cuerpo del paso ──────────────────────────────────────────────── */
+.lev-step-body { padding: 14px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOBILE (REGLA #3) — Daniel opera este modal desde el celular y se quejó
+   de que "no se aprovecha el espacio". Acá se recupera ancho y alto sin
+   quitar NADA (Regla #4.2): el círculo y la etiqueta se achican, el
+   subtítulo se conserva (antes se ocultaba bajo 576px) y el modal-body
+   deja de gastar 1rem de padding a cada lado.
+   Los controles táctiles (.lev-yn-btn, .lev-adj-pill-input, .lev-dur-chip)
+   conservan sus 44px definidos en tickets_ficha.css / mantenciones_ficha.css.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 767.98px) {
+  .lev-step-card { margin-bottom: 12px; }
+  .lev-step-header { gap: 11px; padding: 10px 12px; }
+  .lev-step-circle-wrap { min-width: 54px; gap: 4px; }
+  .lev-step-circle-label { font-size: .56rem; letter-spacing: .1em; }
+  .lev-step-num {
+    width: 50px; height: 50px; font-size: 1.45rem; border-width: 2px;
+    box-shadow: 0 5px 14px rgba(220, 38, 38, .32), 0 0 0 3px rgba(220, 38, 38, .10);
+  }
+  .lev-step-card.is-complete .lev-step-num {
+    box-shadow: 0 5px 14px rgba(22, 163, 74, .32), 0 0 0 3px rgba(22, 163, 74, .12);
+  }
+  .lev-step-num .lev-step-check { font-size: 1.4rem; }
+  .lev-step-title { font-size: .92rem; }
+  .lev-step-sub { font-size: .72rem; }
+  .lev-step-body { padding: 12px 11px; }
+  /* Ancho útil: el modal-body de Bootstrap gasta 1rem por lado. */
+  #modalGenerarOT .modal-body { padding: .75rem .6rem; }
+}
+
+@media (max-width: 400px) {
+  .lev-step-circle-wrap { min-width: 46px; }
+  .lev-step-num { width: 44px; height: 44px; font-size: 1.25rem; }
+  .lev-step-num .lev-step-check { font-size: 1.2rem; }
+  .lev-step-circle-label { font-size: .52rem; }
+  /* En pantallas muy angostas el subtítulo largo empuja el header a 3
+     líneas: se recorta a una sola (sigue visible, no se oculta). */
+  .lev-step-sub {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
