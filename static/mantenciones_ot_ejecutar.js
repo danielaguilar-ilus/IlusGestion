@@ -2753,11 +2753,22 @@ function _calcCtxGlobal(){
                       rev.estado_revision === 'falla_detectada');
     if (_excluir){ nExcluidos++; return; }
     // Tareas HUÉRFANAS (maquina_id NULL -> midStr '0', sin tarjeta de equipo)
-    // en una OT que captura fichas: el técnico no puede abrirlas ni subirles
-    // foto, así que no cuentan para el candado. MISMO criterio que el backend
+    // en CUALQUIER OT: el técnico no puede abrirlas ni subirles foto, así
+    // que no cuentan para el candado. MISMO criterio que el backend
     // (_ot_validar_cierre R1/R3 y el gate de firma) para que el número de la
     // pantalla y el del servidor nunca vuelvan a divergir.
-    if (!(EQUIPOS_IDX || {})[midStr] && (typeof ES_LEVANTAMIENTO !== 'undefined') && ES_LEVANTAMIENTO) return;
+    //
+    // PASO 1f (2026-08-12, plan "el levantamiento es un tipo más"): el
+    // criterio YA NO es "ES_LEVANTAMIENTO" (incondicional al tipo, como en
+    // el backend) NI "ausencia en EQUIPOS_IDX" — EQUIPOS_IDX se construye
+    // filtrando equipos con estado != 'baja' (ver app.py, query de
+    // `equipos` en ot_ejecutar), así que un equipo dado de baja con tareas
+    // obligatorias pendientes también cae fuera de EQUIPOS_IDX sin ser
+    // huérfano: con el criterio viejo, el técnico vería "todo listo" en
+    // pantalla y el servidor lo bloquearía igual al firmar. El criterio
+    // correcto es la propia clave que el código ya usa para "sin máquina":
+    // midStr === '0' (ver `mid = t.get("maquina_id") or 0` en app.py).
+    if (midStr === '0') return;
     pls.forEach(p => {
       total += p.total;
       completas += p.completas;
