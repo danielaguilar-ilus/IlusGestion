@@ -998,33 +998,17 @@
    Mantenciones (templates/mantenciones/ficha.html + static/mant_ficha.js).
    Daniel rechazó el wizard genérico anterior (.otw-*); este bloque replica
    las tarjetas .lev-step-card tal cual, no un wizard de pasos con "Siguiente". ── */
-.lev-step-card {
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  margin-bottom: 14px;
-  overflow: hidden;
-  transition: border-color .2s, box-shadow .2s;
-}
-.lev-step-card:hover { border-color: #cbd5e1; }
-.lev-step-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, #fff, #fafafa);
-  border-bottom: 1px solid #f1f5f9;
-}
-.lev-step-num {
-  width: 26px; height: 26px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #dc2626, #991b1b);
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: .82rem; font-weight: 700;
-  flex-shrink: 0;
-}
-.lev-step-title { font-weight: 700; font-size: .92rem; color: #0f172a; }
-.lev-step-sub   { font-size: .73rem; color: #94a3b8; margin-left: auto; }
-.lev-step-body  { padding: 14px; }
+
+/* ── 2026-08-12: las 6 reglas de la tarjeta de paso (.lev-step-card,
+   .lev-step-header, .lev-step-num, .lev-step-title, .lev-step-sub,
+   .lev-step-body) SE MOVIERON a static/modal_generar_ot.css.
+   Motivo: eran una copia byte a byte de las que había en
+   static/mantenciones_ficha.css ~1670, porque el modal es un solo partial
+   (templates/tickets/_modal_generar_ot.html) incluido por las DOS fichas.
+   Antes de mover se verificó con grep que esas clases solo aparecen en ese
+   partial (las menciones en _repuestos_bodega_pane.html son comentarios).
+   El resto de clases del modal (.lev-modo-*, .lev-yn-*, .lev-adj-*,
+   .lev-table-eq, .tkcal-*, .tksched-*) NO se movió: sigue acá, intacto. ── */
 .lev-table-eq tr { cursor: pointer; }
 .lev-table-eq tr:hover { background: #f8fafc; }
 .lev-table-eq tr.row-selected { background: #fef2f2 !important; }
@@ -1109,7 +1093,11 @@
 
 @media (max-width: 575.98px){
   .lev-yn-btn { min-width:70px; }
-  .lev-step-sub { display:none; }
+  /* .lev-step-sub ya no se oculta en celular: se movió a
+     static/modal_generar_ot.css, donde ahora va DEBAJO del título (no a la
+     derecha) y por lo tanto ya no compite por el ancho. Ocultarlo hacía
+     desaparecer los contadores "N seleccionado(s)" justo en el celular,
+     que es donde Daniel arma las OT. */
 }
 
 /* ════════════════════════════════════════════════════════════════════

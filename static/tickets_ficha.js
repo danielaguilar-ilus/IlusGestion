@@ -2518,6 +2518,7 @@ function tkotContactoChange(){
       sel.dataset.origen = c.origen || 'principal';
     }
   }
+  tkotRefreshStepStates();
 }
 function tkotToggleContactoManual(){
   const sel = document.getElementById('levContactoSel');
@@ -2602,6 +2603,7 @@ function tkotToggleTecnico(tid){
   // El bloque "Tu OT" rotula "Nueva OT · N técnicos" -> se refresca al toque.
   if(typeof tkdayRenderMine === 'function') tkdayRenderMine();
   tkotChequearChoqueDebounced();
+  tkotRefreshStepStates();
 }
 
 // ════════════════════════════════════════════════════════════
@@ -4306,6 +4308,7 @@ function tkotTipoChange(){
 
   // Instalación + cliente SIN ficha -> forzar preselección total bloqueada.
   tkotAplicarForzadoInstalacion();
+  tkotRefreshStepStates();
 }
 
 // null = sin elegir. La modalidad NO viene preseleccionada: manda el tipo de
@@ -4318,6 +4321,7 @@ function tkotModoSet(modo){
   if(cEq) cEq.classList.toggle('on', _TKOT.modo === 'equipos');
   if(cDes) cDes.classList.toggle('on', _TKOT.modo === 'descubrimiento');
   if(hint) hint.style.display = (_TKOT.modo === 'descubrimiento') ? '' : 'none';
+  tkotRefreshStepStates();
 }
 
 async function tkotAbrirCrearTipoOT(){
@@ -4458,6 +4462,7 @@ function tkotRecalcEqCount(){
       plBtn.title = 'Selecciona el equipo primero';
     }
   });
+  tkotRefreshStepStates();
 }
 
 // ── Multi-plantilla por equipo (idéntico a Mantenciones, clave = _tkotEqKey) ──
@@ -4535,12 +4540,14 @@ function tkotSetAccesoYN(btn){
   if(hidden.value === val){
     hidden.value = '';
     document.querySelectorAll('.lev-yn-btn[data-target="'+target+'"]').forEach(function(b){ b.classList.remove('active'); });
+    tkotRefreshStepStates();
     return;
   }
   hidden.value = val;
   document.querySelectorAll('.lev-yn-btn[data-target="'+target+'"]').forEach(function(b){
     b.classList.toggle('active', b.dataset.val === val);
   });
+  tkotRefreshStepStates();
 }
 function tkotResetAccesoLogistica(){
   ['acceso_ascensor','acceso_estacionamiento'].forEach(function(id){
@@ -4552,6 +4559,7 @@ function tkotResetAccesoLogistica(){
   const notas = document.getElementById('acceso_notas');
   if(piso) piso.value = '';
   if(notas) notas.value = '';
+  tkotRefreshStepStates();
 }
 
 // ── Adjuntos preliminares (idéntico a Mantenciones) ──
@@ -4600,13 +4608,14 @@ function _tkotRenderAdjList(){
   if(!wrap) return;
   const arr = _TKOT.adjuntos || [];
   if(counter) counter.textContent = arr.length;
-  if(!arr.length){ wrap.innerHTML = ''; return; }
+  if(!arr.length){ wrap.innerHTML = ''; tkotRefreshStepStates(); return; }
   wrap.innerHTML = arr.map(function(f, idx){
     return '<div class="lev-adj-item"><div class="lev-adj-thumb"><i class="bi '+_tkotAdjIconClass(f)+'"></i></div>'
       + '<div class="lev-adj-info"><div class="lev-adj-name" title="'+esc(f.name)+'">'+esc(f.name)+'</div>'
       + '<div class="lev-adj-meta">'+_tkotAdjTipo(f).toUpperCase()+' · '+_tkotBytesPretty(f.size)+'</div></div>'
       + '<button type="button" class="lev-adj-rm" onclick="tkotRemoveAdj('+idx+')" title="Quitar"><i class="bi bi-x-lg"></i></button></div>';
   }).join('');
+  tkotRefreshStepStates();
 }
 function tkotRemoveAdj(idx){ _TKOT.adjuntos.splice(idx,1); _tkotRenderAdjList(); }
 function tkotResetAdjuntos(){ _TKOT.adjuntos = []; _tkotRenderAdjList(); }
@@ -4628,6 +4637,92 @@ async function _tkotSubirAdjuntos(vid){
   }
   return {ok, fail};
 }
+
+// ════════════════════════════════════════════════════════════════════
+// ESTADO VISUAL DE LOS 7 PASOS (2026-08-12)
+// ════════════════════════════════════════════════════════════════════
+// Hasta ahora las tarjetas del modal "Generar OT" eran mudas: los 7 pasos
+// se veían igual estuvieran llenos o vacíos, así que había que recorrerlos
+// uno por uno para saber qué faltaba. Ahora cada tarjeta se pinta verde
+// (borde + cabecera + círculo con ✓) apenas cumple su regla, igual que
+// PL_STEP_RULES (templates/mantenciones/plantillas.html),
+// otiRefreshStepStates() (templates/mantenciones/ots_list.html) y
+// RB_STEP_RULES (templates/mantenciones/_repuestos_bodega_pane.html).
+//
+// Las reglas son un ESPEJO de lo que ya valida tkotGenerar() antes de
+// enviar -- no agregan ni quitan requisitos, solo los muestran antes:
+//   1 Tipo      · hay tipo; si es levantamiento, además hay modalidad
+//   2 Info      · título + dirección + nombre de contacto (los 3 que
+//                 tkotGenerar() exige con toast)
+//   3 Agenda    · hay fecha programada
+//   4 Técnicos  · al menos uno
+//   5 Equipos   · al menos un checkbox marcado; EXCEPTO levantamiento por
+//                 descubrimiento, donde tkotGenerar() no exige equipos
+//                 (los captura el técnico en terreno) -> cuenta completo
+//   6 Acceso    · OPCIONAL (no bloquea el envío)
+//   7 Documentos· OPCIONAL (no bloquea el envío)
+// Los pasos 6 y 7 nacen con .is-optional (punteado gris) desde el HTML;
+// si el usuario los llena pasan a verde, si los vacía vuelven a punteado.
+// CERO cambio funcional: esto no valida, no bloquea y no toca el submit.
+const TKOT_STEP_RULES = {
+  1: function(){
+    const tipo = (document.getElementById('otTipo') || {}).value || '';
+    if(!tipo) return false;
+    // Levantamiento sin modalidad elegida = paso a medias (Daniel 2026-08-06:
+    // la modalidad NO viene preseleccionada, manda el desplegable).
+    if(tipo === 'levantamiento') return _TKOT.modo === 'equipos' || _TKOT.modo === 'descubrimiento';
+    return true;
+  },
+  2: function(){
+    const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
+    return !!(val('levSelectTitulo') && val('levDireccion') && val('levContactoNombre'));
+  },
+  3: function(){
+    const e = document.getElementById('levFechaProg');
+    return !!(e && e.value);
+  },
+  4: function(){ return _TKOT.tecnicosSel.size > 0; },
+  5: function(){
+    const tipo = (document.getElementById('otTipo') || {}).value || '';
+    if(tipo === 'levantamiento' && _TKOT.modo === 'descubrimiento') return true;
+    // Instalación sin ficha (forzarTodosEquipos) pinta los checkbox como
+    // "checked disabled" -> igual entran en este conteo, sin caso especial.
+    return document.querySelectorAll('.lev-eq-chk:checked').length > 0;
+  },
+  6: function(){
+    const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
+    return !!(val('acceso_ascensor') || val('acceso_estacionamiento') || val('acceso_piso') || val('acceso_notas'));
+  },
+  7: function(){ return (_TKOT.adjuntos || []).length > 0; },
+};
+const TKOT_STEPS_OPCIONALES = { 6: true, 7: true };
+
+function tkotRefreshStepStates(){
+  Object.keys(TKOT_STEP_RULES).forEach(function(n){
+    const card = document.getElementById('tkotStep' + n);
+    if(!card) return;
+    let ok = false;
+    // Nunca romper el modal por un paso: si una regla falla (un id que
+    // todavía no existe, por ejemplo), ese paso queda "no completo".
+    try{ ok = !!TKOT_STEP_RULES[n](); }catch(e){ ok = false; }
+    card.classList.toggle('is-complete', ok);
+    if(TKOT_STEPS_OPCIONALES[n]) card.classList.toggle('is-optional', !ok);
+  });
+}
+
+// Red de seguridad: además de las llamadas explícitas que hay en
+// tkotTipoChange/tkotModoSet/tkotRecalcEqCount/etc., se escucha en
+// delegación sobre el modal completo. Así también quedan cubiertos los
+// campos que se escriben a mano (título, dirección, piso, notas) y
+// cualquier control que se agregue al modal en el futuro sin acordarse de
+// llamar a tkotRefreshStepStates(). El setTimeout(0) deja que corran
+// primero los onclick/onchange inline del propio HTML.
+(function(){
+  const _m = document.getElementById('modalGenerarOT');
+  if(!_m) return;
+  const _tick = function(){ setTimeout(tkotRefreshStepStates, 0); };
+  ['input', 'change', 'click'].forEach(function(ev){ _m.addEventListener(ev, _tick, true); });
+})();
 
 // ── Si el modal "Generar OT" se cierra con el detalle de un bloque abierto,
 //    el overlay (que vive en <body>, fuera de la pila de Bootstrap) quedaría
@@ -4830,6 +4925,10 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   }catch(e){
     document.getElementById('levTecnicosBox').innerHTML = '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
   }
+
+  // Estado inicial de los 7 pasos (2026-08-12): se calcula al final, con
+  // todo ya prellenado (tipo, dirección, contacto, fecha, equipos).
+  tkotRefreshStepStates();
 });
 
 // ── Envío final ──

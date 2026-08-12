@@ -62,11 +62,25 @@
         </div>
 
         {# ─── Paso 1: Tipo de OT ─── #}
-        <div class="lev-step-card">
+        {# Los 7 pasos comparten la estructura de cabecera nueva (2026-08-12):
+           círculo grande con la etiqueta "PASO X" arriba, tomada de Retiros
+           (static/retiros_internal_detail.css). El id tkotStepN es lo único
+           que agrega la tarjeta: lo lee tkotRefreshStepStates()
+           (static/tickets_ficha.js) para pintarla verde al completarse.
+           Ningún id de campo cambió, ningún control se movió (REGLA #4.2). #}
+        <div class="lev-step-card" id="tkotStep1">
           <div class="lev-step-header">
-            <div class="lev-step-num">1</div>
-            <div class="lev-step-title">Tipo de orden de trabajo</div>
-            <div class="lev-step-sub">Selecciona qué se va a realizar</div>
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 1</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">1</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Tipo de orden de trabajo</div>
+              <div class="lev-step-sub">Selecciona qué se va a realizar</div>
+            </div>
           </div>
           <div class="lev-step-body">
             <div class="d-flex gap-2 align-items-end">
@@ -169,11 +183,19 @@
         </div>
 
         {# ─── Paso 2: Información básica + dirección ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card" id="tkotStep2">
           <div class="lev-step-header">
-            <div class="lev-step-num">2</div>
-            <div class="lev-step-title">Información básica</div>
-            <div class="lev-step-sub">Título, notas y dirección</div>
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 2</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">2</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Información básica</div>
+              <div class="lev-step-sub">Título, notas y dirección</div>
+            </div>
           </div>
           <div class="lev-step-body">
             <div class="row g-2">
@@ -275,11 +297,19 @@
            (/mantenciones/api/calendario/choque): alimenta a la vez el
            banner explicativo y las clases .choque/.en-choque de los
            bloques (la señal pre-verbal). ── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card" id="tkotStep3">
           <div class="lev-step-header">
-            <div class="lev-step-num">3</div>
-            <div class="lev-step-title">Agenda</div>
-            <div class="lev-step-sub">Elige el día en el calendario y ajusta el horario</div>
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 3</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">3</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Agenda</div>
+              <div class="lev-step-sub">Elige el día en el calendario y ajusta el horario</div>
+            </div>
           </div>
           <div class="lev-step-body">
             <div id="levCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
@@ -436,12 +466,20 @@
         </div>
 
         {# ─── Paso 4: Técnicos asignados ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card" id="tkotStep4">
           <div class="lev-step-header">
-            <div class="lev-step-num">4</div>
-            <div class="lev-step-title">Técnicos asignados *</div>
-            <div class="lev-step-sub">
-              <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 4</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">4</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Técnicos asignados *</div>
+              <div class="lev-step-sub">
+                <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
+              </div>
             </div>
           </div>
           <div class="lev-step-body">
@@ -456,12 +494,20 @@
         </div>
 
         {# ─── Paso 5: Equipos (del TICKET) + multi-plantilla por equipo ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card" id="tkotStep5">
           <div class="lev-step-header">
-            <div class="lev-step-num">5</div>
-            <div class="lev-step-title">Equipos y plantillas *</div>
-            <div class="lev-step-sub">
-              <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 5</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">5</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Equipos y plantillas *</div>
+              <div class="lev-step-sub">
+                <span class="badge bg-success" id="levEqCount">0</span> seleccionado(s)
+              </div>
             </div>
           </div>
           <div class="lev-step-body" style="padding:0">
@@ -497,11 +543,26 @@
         </div>
 
         {# ─── Paso 6: Acceso y logística del sitio ─── #}
-        <div class="lev-step-card">
+        {# Pasos 6 y 7: OPCIONALES. Nacen con .is-optional (punteado gris) y
+           no bloquean "Generar OT" — tkotRefreshStepStates() solo les quita
+           esa clase y los pinta verde SI el usuario los llena. Mismo criterio
+           que .rb-step.is-optional del modal de Repuestos. #}
+        <div class="lev-step-card is-optional" id="tkotStep6">
           <div class="lev-step-header">
-            <div class="lev-step-num">6</div>
-            <div class="lev-step-title">Acceso y logística</div>
-            <div class="lev-step-sub">Info crítica para el técnico</div>
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 6</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">6</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Acceso y logística</div>
+              <div class="lev-step-sub">
+                <span class="lev-step-optlabel">Opcional</span>
+                Info crítica para el técnico
+              </div>
+            </div>
           </div>
           <div class="lev-step-body">
             <div class="row g-3">
@@ -562,12 +623,21 @@
         </div>
 
         {# ─── Paso 7: Documentos y archivos preliminares ─── #}
-        <div class="lev-step-card">
+        <div class="lev-step-card is-optional" id="tkotStep7">
           <div class="lev-step-header">
-            <div class="lev-step-num">7</div>
-            <div class="lev-step-title">Documentos y archivos preliminares</div>
-            <div class="lev-step-sub">
-              <span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s) · opcional
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 7</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">7</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Documentos y archivos preliminares</div>
+              <div class="lev-step-sub">
+                <span class="lev-step-optlabel">Opcional</span>
+                <span><span class="badge bg-secondary" id="levAdjCount">0</span> archivo(s)</span>
+              </div>
             </div>
           </div>
           <div class="lev-step-body">
