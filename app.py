@@ -65440,6 +65440,24 @@ def _ot_es_levantamiento(v):
         return False
 
 
+def _ot_tarea_no_trabajable_sql(alias=""):
+    """Tarea sin maquina_id = sin tarjeta en pantalla = imposible de trabajar.
+
+    PASO 1 del plan "el levantamiento es un tipo más" (2026-08-12): antes
+    este filtro solo se aplicaba `if es_levantamiento`, como si el problema
+    de las tareas huérfanas fuera exclusivo del levantamiento. No lo es —
+    una tarea sin maquina_id no dibuja tarjeta en NINGÚN tipo de OT, así que
+    el técnico no puede abrirla, fotografiarla ni marcarla sin importar el
+    tipo. Por eso este helper se usa SIEMPRE, incondicional al tipo.
+
+    El `alias` es OBLIGATORIO cuando la consulta hace JOIN con otra tabla
+    que TAMBIÉN tiene columna `maquina_id` (ej. mant_visita_fotos) — sin el
+    alias correcto la columna queda ambigua → MySQL error 1052 → 500 en el
+    cierre de TODA OT, no solo levantamiento.
+    """
+    return f" AND {alias}maquina_id IS NOT NULL "
+
+
 def _ot_maquinas_excluidas_cierre(vid):
     """Set de maquina_id que NO deben bloquear el cierre de una OT: equipos
     marcados 'saltado' o 'falla_detectada' (ya quedaron documentados/con
@@ -65529,28 +65547,41 @@ def _ot_validar_cierre(vid):
     # el informe SÍ lo documenta (ver _ot_es_levantamiento en la selección de
     # template del PDF). Las tareas NO se borran (REGLA #4.2): siguen
     # existiendo y visibles, solo dejan de ser un candado infranqueable.
-    _huerf_sql = (" AND maquina_id IS NOT NULL " if es_levantamiento else "")
+    # PASO 1b (2026-08-12): el filtro de huérfanas ya NO depende del tipo —
+    # ver _ot_tarea_no_trabajable_sql().
+    _huerf_sql = _ot_tarea_no_trabajable_sql()
     if excluir_maquinas:
         _ph = ",".join(["%s"] * len(excluir_maquinas))
-        chk_row = mysql_fetchone(
-            "SELECT COUNT(*) AS total, "
-            " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+        _chk_base = (
             f"FROM mant_visita_tareas WHERE visita_id=%s "
             f"  AND (maquina_id IS NULL OR maquina_id NOT IN ({_ph}))"
-            + _huerf_sql,
-            (vid, *list(excluir_maquinas))
-        ) or {}
+        )
+        _chk_params = (vid, *list(excluir_maquinas))
     else:
-        chk_row = mysql_fetchone(
-            "SELECT COUNT(*) AS total, "
-            " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
-            "FROM mant_visita_tareas WHERE visita_id=%s" + _huerf_sql,
-            (vid,)
-        ) or {}
+        _chk_base = "FROM mant_visita_tareas WHERE visita_id=%s"
+        _chk_params = (vid,)
+    chk_row = mysql_fetchone(
+        "SELECT COUNT(*) AS total, "
+        " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+        + _chk_base + _huerf_sql,
+        _chk_params
+    ) or {}
+    # PASO 1c (2026-08-12, CRÍTICO): total_bruto es el MISMO COUNT pero SIN
+    # el filtro de huérfanas. Con el filtro de 1b ya incondicional, `total`
+    # (filtrado) puede dar 0 en una OT que SÍ tiene tareas (todas huérfanas)
+    # — usar `total` ahí dispararía el mensaje falso "La OT no tiene tareas
+    # asignadas" en una OT que en realidad está trabada por tareas
+    # imposibles de trabajar, no por falta de tareas. `total`/`done` (ya
+    # filtrados) se reservan para el mensaje de "Checklist incompleto".
+    chk_row_bruto = mysql_fetchone(
+        "SELECT COUNT(*) AS total " + _chk_base,
+        _chk_params
+    ) or {}
     total = int(chk_row.get("total") or 0)
     done = int(chk_row.get("done") or 0)
+    total_bruto = int(chk_row_bruto.get("total") or 0)
     # R1a — Tareas de checklist (preventivas/correctivas)
-    if total == 0 and not excluir_maquinas and not es_levantamiento:
+    if total_bruto == 0 and not excluir_maquinas and not es_levantamiento:
         razones.append("La OT no tiene tareas asignadas — agrega un checklist antes de cerrar.")
     elif done < total:
         razones.append(
@@ -65564,17 +65595,39 @@ def _ot_validar_cierre(vid):
     # saltado / falla_detectada). Equipos fuera del plan quedan exentos.
     if es_levantamiento:
         try:
+            # PASO 6 (2026-08-12, plan "el levantamiento es un tipo más"):
+            # el universo de "equipos en plan" se acota de TODAS las
+            # máquinas del cliente a SOLO los equipos DE ESTA OT -- un
+            # cliente con 200 máquinas y una OT de 3 equipos generaba 197
+            # revisiones que nadie encargó (pedido explícito de Daniel).
+            # Universo nuevo: unión de mant_visita_tareas.maquina_id de
+            # ESTA visita_id + mant_levantamiento_items.maquina_id del
+            # levantamiento vinculado a ESTA OT, ambos con
+            # maquina_id IS NOT NULL. Se conserva el filtro
+            # aplica_mantencion, m.estado != 'baja' tal cual, y el
+            # NOT EXISTS contra mant_visita_equipos. NO se incluye
+            # mant_visita_equipos en la unión del universo -- eso dejaría
+            # la regla comparando "los que tienen fila y no tienen fila"
+            # (siempre 0), eliminándola de hecho (Regla #4.2 -- no se
+            # quita una regla sin permiso explícito).
+            _lev_id_r1b = v.get("levantamiento_id")
             _pend = mysql_fetchone(
                 "SELECT COUNT(*) AS cnt "
                 "  FROM mant_maquinas m "
-                " WHERE m.cliente_id = (SELECT v.cliente_id FROM mant_visitas v WHERE v.id=%s) "
+                " WHERE m.id IN ( "
+                "       SELECT maquina_id FROM mant_visita_tareas "
+                "        WHERE visita_id=%s AND maquina_id IS NOT NULL "
+                "       UNION "
+                "       SELECT maquina_id FROM mant_levantamiento_items "
+                "        WHERE levantamiento_id=%s AND maquina_id IS NOT NULL "
+                "   ) "
                 "   AND m.aplica_mantencion = 1 "
                 "   AND m.estado != 'baja' "
                 "   AND NOT EXISTS ( "
                 "       SELECT 1 FROM mant_visita_equipos ve "
                 "        WHERE ve.visita_id = %s AND ve.maquina_id = m.id "
                 "   )",
-                (vid, vid)
+                (vid, _lev_id_r1b, vid)
             )
             _pend_cnt = int((_pend or {}).get("cnt") or 0)
             if _pend_cnt > 0:
@@ -65605,7 +65658,7 @@ def _ot_validar_cierre(vid):
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
             f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
-            + _huerf_sql.replace("maquina_id", "t.maquina_id") +
+            + _ot_tarea_no_trabajable_sql("t.") +
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid, *list(excluir_maquinas))
@@ -65616,7 +65669,7 @@ def _ot_validar_cierre(vid):
             "FROM mant_visita_tareas t "
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             "WHERE t.visita_id=%s AND t.requiere_foto=1 "
-            + _huerf_sql.replace("maquina_id", "t.maquina_id") +
+            + _ot_tarea_no_trabajable_sql("t.") +
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid,)
@@ -72142,17 +72195,12 @@ def mant_ot_firmar_revision(vid):
         # frontend.
         excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
         _excl_ph = ",".join(["%s"] * len(excluir_maquinas)) if excluir_maquinas else None
-        # Mismo criterio de huérfanas que R1/R3 de _ot_validar_cierre: si la OT
-        # captura fichas por levantamiento, las tareas sin maquina_id NO son
-        # trabajables (no tienen tarjeta en pantalla) y por lo tanto no pueden
-        # bloquear la firma. Ver el comentario largo en _ot_validar_cierre.
-        # FIX 2026-08-10 (OT-2026-00042): se agrega `id` al SELECT — sin él,
-        # _ot_es_levantamiento() no puede resolver el fallback reverse (lo
-        # necesita para buscar en mant_levantamientos.visita_id).
-        _v_gate = mysql_fetchone(
-            "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
-        _huerf_gate = (" AND t.maquina_id IS NOT NULL "
-                       if _ot_es_levantamiento(_v_gate) else "")
+        # PASO 1e (2026-08-12, plan "el levantamiento es un tipo más"): mismo
+        # criterio de huérfanas que R1/R3 de _ot_validar_cierre, ahora
+        # INCONDICIONAL al tipo — una tarea sin maquina_id no tiene tarjeta
+        # en pantalla en NINGUNA OT, así que no puede bloquear la firma en
+        # ninguna. Ver _ot_tarea_no_trabajable_sql().
+        _huerf_gate = _ot_tarea_no_trabajable_sql("t.")
         faltan_rows = mysql_fetchall(
             "SELECT t.maquina_id, "
             "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
@@ -85598,6 +85646,116 @@ def _plantilla_estandar_para_tipo(tipo_ot):
     return int(row["id"]) if row else None
 
 
+def _familia_plantilla_para_tipo(tipo_ot):
+    """Nombre de 'familia' (el texto ANTES del ' · ') que usa la convención
+    de nombre de las plantillas por clasificación real de equipo, ej.
+    'Mantención · Trotadora Motorizada' (sembradas en producción el
+    2026-08-12). Se resuelve con la MISMA tabla editable que ya decide en
+    qué pestaña vive cada plantilla (mant_categoria_tipo_map, Tarea 1,
+    2026-08-10) -- no se inventa un mapeo nuevo. Si la tabla no tiene el
+    tipo o la consulta falla, cae al seed fijo (_PLANT_CATEGORIA_TIPO_SEED),
+    mismo patrón de _tipo_es_trabajo_interno.
+
+    Devuelve None si el tipo no resuelve a ninguna categoría con label
+    conocido (_PLANT_CATEGORIA_LABEL) -- en ese caso el caller no debe
+    intentar armar un nombre de plantilla por clasificación.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return None
+    categoria = None
+    try:
+        row = mysql_fetchone(
+            "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot,))
+        categoria = row["categoria"] if row else None
+    except Exception:
+        categoria = None
+    if not categoria:
+        categoria = _PLANT_CATEGORIA_TIPO_SEED.get(tipo_ot)
+    return _PLANT_CATEGORIA_LABEL.get(categoria) if categoria else None
+
+
+def _plantilla_por_clasificacion_sku(sku, tipo_ot):
+    """ID de la plantilla que corresponde a un equipo SEGÚN SU CLASIFICACIÓN
+    REAL de catálogo -- no el criterio ciego de _plantilla_estandar_para_tipo
+    (que solo mira el tipo de OT y por eso puede darle a una trotadora el
+    checklist de una bicicleta si esa plantilla tiene más ítems). Daniel,
+    2026-08-12: "no le voy a hacer una verificación a una trotadora como a
+    una bicicleta".
+
+    Puente (medido en vivo el 2026-08-12, ver GET /mantenciones/api/
+    diagnostico/cobertura-clasificacion): mant_maquinas.sku ->
+    cat_productos.sku -> cat_productos.clase_producto (slug) ->
+    cat_clases_producto.nombre. Con ese nombre + la familia del tipo de OT
+    (Instalación/Mantención/...) arma el nombre de convención
+    "{familia} · {clasificación}" y busca una plantilla ACTIVA con ese
+    nombre exacto y al menos 1 ítem (mismo estándar de calidad que la
+    plantilla "de convención" de _plantilla_estandar_para_tipo).
+
+    Devuelve None si falta CUALQUIER eslabón (sin sku, sku fuera del
+    catálogo, producto sin clase asignada, o no existe todavía la
+    plantilla para esa clasificación) -- el caller SIEMPRE debe caer a
+    _plantilla_estandar_para_tipo en ese caso. NUNCA bloquea la creación
+    de la OT: "no hay suficiente información" es un caso legítimo, no un
+    error (medición real 2026-08-12: buena parte de los equipos hoy no
+    cruza contra el catálogo por SKU faltante/generado a mano/fuera de
+    catálogo).
+    """
+    sku = (sku or "").strip()
+    if not sku:
+        return None
+    familia = _familia_plantilla_para_tipo(tipo_ot)
+    if not familia:
+        return None
+    try:
+        clase_row = mysql_fetchone(
+            "SELECT cp.nombre AS clase_nombre "
+            "  FROM cat_productos p "
+            "  JOIN cat_clases_producto cp "
+            "    ON cp.slug = p.clase_producto AND cp.activo = 1 "
+            " WHERE p.sku = %s "
+            "   AND COALESCE(TRIM(p.clase_producto), '') <> '' "
+            " LIMIT 1",
+            (sku,)
+        )
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] resolver clase de sku={sku!r} falló: {e}", flush=True)
+        return None
+    if not clase_row or not clase_row.get("clase_nombre"):
+        return None
+    nombre_plantilla = f"{familia} · {clase_row['clase_nombre']}"
+    try:
+        prow = mysql_fetchone(
+            "SELECT p.id FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.nombre = %s AND COALESCE(p.activa, 1) = 1 "
+            " GROUP BY p.id LIMIT 1",
+            (nombre_plantilla,)
+        )
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] buscar plantilla '{nombre_plantilla}' falló: {e}", flush=True)
+        return None
+    return int(prow["id"]) if prow else None
+
+
+def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
+    """Wrapper de _plantilla_por_clasificacion_sku para cuando solo se tiene
+    el id de mant_maquinas a mano (no el sku ya resuelto en memoria). Si el
+    caller YA tiene el sku (ej. el dict `maquinas` de _mant_lev_crear_ot_core,
+    que lo trae en la misma consulta que arma la lista de equipos), preferir
+    llamar directo a _plantilla_por_clasificacion_sku y ahorrarse esta
+    consulta extra.
+    """
+    if not maquina_id:
+        return None
+    try:
+        row = mysql_fetchone("SELECT sku FROM mant_maquinas WHERE id=%s", (maquina_id,))
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] leer sku de maquina {maquina_id} falló: {e}", flush=True)
+        return None
+    return _plantilla_por_clasificacion_sku(row.get("sku") if row else None, tipo_ot)
+
+
 def _tarea_respaldo_texto(tipo_ot, nombre_equipo):
     """(titulo, descripcion) de la tarea de respaldo por equipo."""
     nombre_equipo = (nombre_equipo or 'equipo')[:240]
@@ -85664,11 +85822,39 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     titulo = (data.get("titulo") or "").strip()[:200] or f"Levantamiento {_now_chile_str('%d/%m/%Y')}"
     notas = (data.get("notas") or "").strip()
     equipo_ids = data.get("equipo_ids") or []
+
+    # ─── Tipo de OT (FASE 2 — modal generalizado 2026-05-16) ──────
+    # Valores permitidos: deben coincidir con el ENUM mant_visitas.tipo
+    # PASO 3d (2026-08-12, plan "el levantamiento es un tipo más"): este
+    # bloque se ADELANTÓ desde más abajo (antes se calculaba después de la
+    # validación SIN_EQUIPOS) porque `descubrimiento` necesita conocer
+    # `tipo_ot` para poder gatearse contra él -- ver comentario ahí abajo.
+    tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
+                "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
+                "desinstalacion", "capacitacion", "repuesto", "revision_interna",
+                "visita_correctiva", "control_calidad")
+    tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
+    if tipo_ot not in tipos_ok:
+        tipo_ot = "levantamiento"
+    # `mant_visita_tareas.tipo` tiene su propio ENUM, más estrecho que
+    # `tipos_ok`. Sin esta traducción, cada INSERT de tarea de una OT
+    # preventiva/correctiva/visita técnica moría con el error 1265 y la
+    # OT terminaba sin checklist (ver _tarea_tipo_seguro).
+    tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+
     # ── Levantamiento PURO de descubrimiento (Daniel 2026-06-23) ──────
     # Cliente nuevo sin equipos registrados: la OT parte con 0 equipos y
     # el TÉCNICO los captura en terreno (foto + nombre + serie) desde
     # Ejecutar OT. Al cerrar, se materializan en mant_maquinas.
-    descubrimiento = bool(data.get("descubrimiento"))
+    #
+    # PASO 3d (2026-08-12): "descubrimiento" SOLO tiene sentido si la OT ES
+    # de tipo levantamiento -- igual que el modal real (las tarjetas de
+    # modalidad solo aparecen ahí) y el mismo patrón que ya usa el wrapper
+    # de Tickets (tickets_module.py: "descubrimiento = bool(d.get(...)) and
+    # tipo_ot == 'levantamiento'"). Sin este gate, cualquier OT de otro tipo
+    # podía mandar descubrimiento=True y saltarse la validación de "al
+    # menos 1 equipo" de más abajo sin sentido de negocio.
+    descubrimiento = bool(data.get("descubrimiento")) and tipo_ot == "levantamiento"
 
     # ─── Equipos de TICKET sin ficha en Mantenciones (2026-07-12) ─────────
     # Caso "instalacion de cliente/equipo nuevo": no hay mant_maquinas de
@@ -85677,8 +85863,22 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # {nombre, sku, serie, maquina_id?}. Si trae maquina_id (el equipo SI
     # tiene ficha, ej. ticket de mantenimiento sobre equipo existente), se
     # respeta para poder cruzar plantillas/estado igual que un equipo_id normal.
+    #
+    # DECISIÓN DE DANIEL (2026-08-12, plan "el levantamiento es un tipo
+    # más", Paso 4): "equipos sin ficha simplemente no avanza la OT, ok."
+    # Un equipo/producto del ticket SIN maquina_id (no existe en
+    # mant_maquinas) es EXACTAMENTE el caso que generaba una tarea
+    # HUÉRFANA (maquina_id NULL, ver bloque "equipos_sin_maquina" más
+    # abajo) -- desde el Paso 1, una tarea huérfana no dibuja tarjeta:
+    # nadie puede verla ni trabajarla en pantalla. Fuera de un
+    # levantamiento (la vía legítima "para conocer al cliente" -- Daniel
+    # 2026-06-23), ese equipo queda EXCLUIDO en vez de crear la tarea
+    # huérfana silenciosa, y se reporta en la respuesta
+    # (equipos_excluidos). Un levantamiento SÍ sigue aceptando estos
+    # equipos tal cual, sin cambios -- es su función.
     equipos_ticket_raw = data.get("equipos_ticket") or []
     equipos_ticket_clean = []
+    equipos_excluidos_sin_ficha = []
     if isinstance(equipos_ticket_raw, list):
         for et in equipos_ticket_raw:
             if not isinstance(et, dict):
@@ -85690,6 +85890,14 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 maquina_id_et = int(et["maquina_id"]) if et.get("maquina_id") else None
             except (TypeError, ValueError):
                 maquina_id_et = None
+            if maquina_id_et is None and tipo_ot != "levantamiento":
+                equipos_excluidos_sin_ficha.append({
+                    "nombre": nombre_et,
+                    "sku": (et.get("sku") or "").strip()[:120] or None,
+                    "serie": (et.get("serie") or "").strip()[:120] or None,
+                    "motivo": "sin_ficha",
+                })
+                continue
             equipos_ticket_clean.append({
                 "id": maquina_id_et,
                 "nombre": nombre_et,
@@ -85699,6 +85907,19 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             })
 
     if not equipo_ids and not descubrimiento and not equipos_ticket_clean:
+        if equipos_excluidos_sin_ficha:
+            return {
+                "ok": False,
+                "error": (
+                    f"Ningún equipo pudo agregarse: {len(equipos_excluidos_sin_ficha)} "
+                    "producto(s) no tienen ficha registrada para este cliente. Fuera de "
+                    "un levantamiento, ILUS no crea tareas para equipos sin ficha -- "
+                    "regístralos primero en la ficha del cliente, o genera un "
+                    "Levantamiento por descubrimiento para conocerlos en terreno."
+                ),
+                "error_codigo": "EQUIPO_SIN_FICHA",
+                "equipos_excluidos": equipos_excluidos_sin_ficha,
+            }, 400
         return {
             "ok": False,
             "error": "Debes seleccionar al menos 1 equipo para el levantamiento.",
@@ -85732,20 +85953,8 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # Técnico principal (primero de la lista) — para la columna legacy mant_visitas.tecnico_user_id
     tecnico_principal = tecnico_ids[0] if tecnico_ids else None
 
-    # ─── Tipo de OT (FASE 2 — modal generalizado 2026-05-16) ──────
-    # Valores permitidos: deben coincidir con el ENUM mant_visitas.tipo
-    tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
-                "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
-                "desinstalacion", "capacitacion", "repuesto", "revision_interna",
-                "visita_correctiva", "control_calidad")
-    tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
-    if tipo_ot not in tipos_ok:
-        tipo_ot = "levantamiento"
-    # `mant_visita_tareas.tipo` tiene su propio ENUM, más estrecho que
-    # `tipos_ok`. Sin esta traducción, cada INSERT de tarea de una OT
-    # preventiva/correctiva/visita técnica moría con el error 1265 y la
-    # OT terminaba sin checklist (ver _tarea_tipo_seguro).
-    tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+    # (tipo_ot / tarea_tipo ya se calcularon más arriba -- PASO 3d, ver
+    # comentario junto a `descubrimiento`.)
 
     # ─── Selector de plantilla (2026-08-10, backend para selector futuro) ──
     # Por defecto la plantilla se auto-calcula con `_plantilla_estandar_para_
@@ -85850,17 +86059,54 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     if not tecnico_nombre:
         tecnico_nombre = current_username() or ""
 
+    # Resolución de plantilla POR EQUIPO (maquina_id -> plantilla_id o None),
+    # calculada una sola vez y reusada tanto por el pre-chequeo de "hay
+    # plantilla" (decide si se crea la tarea de respaldo "📷 Documentar") como
+    # por el bloque que las aplica de verdad post-commit -- mismo criterio
+    # que ya seguía este archivo para el cálculo ciego anterior ("MISMA
+    # función que decide en el paso 1, antes eran dos consultas distintas y
+    # podían discrepar"). Default {} defensivo: si algo revienta antes de
+    # poblarlo, el post-commit cae solo al criterio ciego por equipo.
+    _resolucion_plantilla_por_equipo = {}
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mant_levantamientos "
-                "(cliente_id, tecnico, titulo, notas, estado, created_by) "
-                "VALUES (%s,%s,%s,%s,'en_curso',%s)",
-                (cid, tecnico_nombre[:190], titulo, notas,
-                 current_username() or 'sistema')
-            )
-            lev_id = cur.lastrowid
+            # PASO 4a (2026-08-12, plan "el levantamiento es un tipo más"):
+            # el levantamiento (mant_levantamientos) SOLO nace si la OT ES
+            # de tipo levantamiento. Antes se creaba SIEMPRE, para
+            # cualquier tipo de OT (instalación, preventiva, correctiva...),
+            # poblando levantamiento_id incluso ahí -- eso es justo lo que
+            # hacía que _ot_es_levantamiento() diera True para OT que
+            # Daniel nunca eligió como levantamiento ("yo escogí
+            # Inspección, nunca escogí levantamiento").
+            lev_id = None
+            if tipo_ot == "levantamiento":
+                # PASO 3c: escribir modalidad_captura es CONDICIONAL a que
+                # la columna exista (_LEV_MODALIDAD_CAPTURA_COL_EXISTE,
+                # detectado UNA vez al boot). Si el ALTER no llegó a correr
+                # en este entorno y este INSERT nombrara la columna igual,
+                # moriría con MySQL 1054 y el modal "Generar OT" se caería
+                # al 100% desde Tickets y desde la ficha del cliente.
+                if _LEV_MODALIDAD_CAPTURA_COL_EXISTE:
+                    cur.execute(
+                        "INSERT INTO mant_levantamientos "
+                        "(cliente_id, tecnico, titulo, notas, estado, created_by, "
+                        " modalidad_captura) "
+                        "VALUES (%s,%s,%s,%s,'en_curso',%s,%s)",
+                        (cid, tecnico_nombre[:190], titulo, notas,
+                         current_username() or 'sistema',
+                         'descubrimiento' if descubrimiento else 'ficha')
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO mant_levantamientos "
+                        "(cliente_id, tecnico, titulo, notas, estado, created_by) "
+                        "VALUES (%s,%s,%s,%s,'en_curso',%s)",
+                        (cid, tecnico_nombre[:190], titulo, notas,
+                         current_username() or 'sistema')
+                    )
+                lev_id = cur.lastrowid
 
             # ─── Items del levantamiento (1 por equipo) ────────────
             # Descubrimiento: sin equipos preseleccionados → 0 items; el
@@ -85877,21 +86123,29 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             # Equipos del ticket SIN ficha (maquina_id NULL) -- ver docstring.
             if equipos_ticket_clean:
                 maquinas = list(maquinas) + equipos_ticket_clean
-            n_items = 0
-            for m in maquinas:
+            # PASO 4b: n_items SIEMPRE se calcula -- alimenta la descripción
+            # de la OT espejo (más abajo) y el payload de respuesta, para
+            # CUALQUIER tipo de OT. El INSERT en mant_levantamiento_items
+            # (evidencia del LEVANTAMIENTO -- levantamiento_id es NOT NULL
+            # con FK) en cambio SOLO corre si lev_id existe: con
+            # lev_id=None ese INSERT moriría (columna NOT NULL) fuera de
+            # este try/except, tumbando con un 500 CUALQUIER OT de
+            # instalación/preventiva/correctiva que traiga equipos.
+            n_items = len(maquinas)
+            if lev_id:
+                for m in maquinas:
+                    cur.execute(
+                        "INSERT INTO mant_levantamiento_items "
+                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                        " fecha_documento) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        (lev_id, m.get("id"), m.get("nombre"), m.get("sku"), m.get("serie"),
+                         m.get("doc_fecha"))
+                    )
                 cur.execute(
-                    "INSERT INTO mant_levantamiento_items "
-                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                    " fecha_documento) "
-                    "VALUES (%s,%s,%s,%s,%s,%s)",
-                    (lev_id, m.get("id"), m.get("nombre"), m.get("sku"), m.get("serie"),
-                     m.get("doc_fecha"))
+                    "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
+                    (n_items, lev_id)
                 )
-                n_items += 1
-            cur.execute(
-                "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
-                (n_items, lev_id)
-            )
 
             # ══════════════════════════════════════════════════════════
             # CREAR OT (mant_visitas) ESPEJO con fecha/hora/multi-técnico
@@ -85999,10 +86253,17 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                          acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas)
                     )
                 visita_id = cur.lastrowid
-                cur.execute(
-                    "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
-                    (visita_id, lev_id)
-                )
+                # PASO 4c: `visita_id` se asigna SIEMPRE (fuera del if) --
+                # si quedara adentro, TODA OT no-levantamiento nacería con
+                # visita_id=None internamente y rompería la aplicación de
+                # plantillas, la creación de tareas y el link mostrado al
+                # usuario más abajo. El UPDATE inverso (levantamiento →
+                # visita_id) sí es exclusivo de cuando existe levantamiento.
+                if lev_id:
+                    cur.execute(
+                        "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
+                        (visita_id, lev_id)
+                    )
 
                 # ─── Multi-técnico: registrar TODOS en mant_visita_tecnicos ─
                 # Esto permite que cada técnico vea la OT en "Mis OTs" y
@@ -86041,14 +86302,52 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 # MISMA función que decide en el paso 1 (más abajo): antes eran
                 # dos consultas distintas y podían discrepar — el pre-chequeo
                 # daba "sí hay plantilla" y luego el paso 1 no aplicaba nada.
+                #
+                # 2026-08-12 (Daniel: "no le voy a hacer una verificación a
+                # una trotadora como a una bicicleta"): antes esto era UN
+                # booleano ciego al tipo de OT. Ahora se resuelve POR EQUIPO
+                # según su clasificación real de catálogo
+                # (_plantilla_por_clasificacion_sku), con fallback individual
+                # al criterio ciego anterior (_plantilla_estandar_para_tipo)
+                # para el equipo que no tenga suficiente información (sin
+                # SKU, SKU fuera de catálogo, sin clase, o sin plantilla para
+                # esa clasificación todavía). El resultado se guarda en
+                # _resolucion_plantilla_por_equipo y se reusa tal cual en el
+                # paso 1 de más abajo -- ni un booleano ni una consulta de
+                # más, la MISMA decisión en los dos lugares.
                 _tiene_plantillas = bool(plantillas_por_equipo)
                 if not _tiene_plantillas:
                     try:
-                        _tiene_plantillas = bool(
-                            plantilla_id_override
-                            or _plantilla_estandar_para_tipo(tipo_ot))
-                    except Exception:
-                        pass
+                        if plantilla_id_override:
+                            # El usuario ya eligió una plantilla explícita
+                            # para TODA la OT (selector, Tarea 4) — manda
+                            # sobre cualquier cálculo automático.
+                            for _mm in maquinas:
+                                if _mm.get("id"):
+                                    _resolucion_plantilla_por_equipo[_mm["id"]] = plantilla_id_override
+                        else:
+                            _fallback_tipo_cache = {"val": None, "computed": False}
+                            def _fallback_tipo_ot():
+                                if not _fallback_tipo_cache["computed"]:
+                                    _fallback_tipo_cache["val"] = _plantilla_estandar_para_tipo(tipo_ot)
+                                    _fallback_tipo_cache["computed"] = True
+                                return _fallback_tipo_cache["val"]
+                            for _mm in maquinas:
+                                _mid = _mm.get("id")
+                                if not _mid:
+                                    continue
+                                _plant_id = None
+                                try:
+                                    _plant_id = _plantilla_por_clasificacion_sku(_mm.get("sku"), tipo_ot)
+                                except Exception as _e_cls:
+                                    print(f"[lev_crear] resolver plantilla por clasificación "
+                                          f"falló para maquina {_mid}: {_e_cls}", flush=True)
+                                if not _plant_id:
+                                    _plant_id = _fallback_tipo_ot()
+                                _resolucion_plantilla_por_equipo[_mid] = _plant_id
+                        _tiene_plantillas = any(_resolucion_plantilla_por_equipo.values())
+                    except Exception as _e_res:
+                        print(f"[lev_crear] resolución de plantilla por equipo falló: {_e_res}", flush=True)
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
                 # que se vayan a aplicar (evita duplicación con plantillas).
                 # Los equipos SIN maquina_id (declarados en un ticket, sin
@@ -86200,7 +86499,10 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             items_plantilla += n_added
             return n_added
 
-        # 1) Plantilla estándar del tipo
+        # 1) Plantilla por equipo — PRIMERO por clasificación real del
+        #    producto, con fallback ciego por tipo de OT para el equipo que
+        #    no resuelva (Daniel, 2026-08-12: "no le voy a hacer una
+        #    verificación a una trotadora como a una bicicleta").
         #
         # BUG FIX 2026-05-17 — Si el usuario ya pasó plantillas explícitas
         # en plantillas_por_equipo, NO aplicamos la estándar automática:
@@ -86209,19 +86511,42 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
         if visita_id and equipo_ids and not plantillas_por_equipo:
             try:
-                # 2026-08-10: si el caller pidió una plantilla explícita
-                # (data.plantilla_id, ya validada arriba), MANDA sobre el
-                # auto-cálculo por tipo — selector de plantilla (Tarea 4).
-                plant_id = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
-                if plant_id:
-                    _n_std = _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
-                    print(f"[lev_crear] plantilla estándar {plant_id} aplicada a "
-                          f"{len(equipo_ids)} equipo(s) → {_n_std} tarea(s) "
-                          f"(tipo '{tipo_ot}')", flush=True)
+                # Reusa EXACTO lo que ya resolvió el pre-chequeo de arriba
+                # (_resolucion_plantilla_por_equipo) — nunca se recalcula,
+                # para no correr el riesgo de que las dos decisiones
+                # discrepen (el bug real que ya se corrigió una vez en este
+                # mismo archivo para el criterio ciego anterior).
+                resolucion = dict(_resolucion_plantilla_por_equipo)
+                # Cualquier id de equipo_ids que no haya quedado resuelto
+                # arriba (ej. no aparece en `maquinas` porque no pertenece
+                # al cliente — caso raro, pero el comportamiento histórico
+                # igual le aplicaba la plantilla ciega) cae al mismo
+                # fallback por tipo, para no perder cobertura respecto al
+                # comportamiento anterior.
+                faltantes = [mid for mid in equipo_ids if mid not in resolucion]
+                if faltantes:
+                    plant_fallback = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
+                    for mid in faltantes:
+                        resolucion[mid] = plant_fallback
+
+                # Agrupar por plantilla_id resuelta — así un mismo tipo de OT
+                # con una trotadora y una bicicleta aplica DOS checklists
+                # distintos en vez de uno solo elegido a ciegas.
+                grupos = {}
+                for mid, plant_id in resolucion.items():
+                    if plant_id:
+                        grupos.setdefault(plant_id, []).append(mid)
+
+                if grupos:
+                    for plant_id, mids_grupo in grupos.items():
+                        _n_std = _aplicar_plantilla_a_equipos(plant_id, mids_grupo)
+                        print(f"[lev_crear] plantilla {plant_id} aplicada a "
+                              f"{len(mids_grupo)} equipo(s) → {_n_std} tarea(s) "
+                              f"(tipo '{tipo_ot}')", flush=True)
                 else:
-                    print(f"[lev_crear] sin plantilla estándar para el tipo "
-                          f"'{tipo_ot}' — se usará la tarea de respaldo por equipo",
-                          flush=True)
+                    print(f"[lev_crear] sin plantilla (ni por clasificación ni "
+                          f"estándar) para el tipo '{tipo_ot}' — se usará la "
+                          f"tarea de respaldo por equipo", flush=True)
             except Exception as e_pl:
                 print(f"[lev_crear] aplicar plantilla estándar falló: {e_pl}", flush=True)
 
@@ -86339,13 +86664,45 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             except Exception as _e_fb:
                 print(f"[lev_crear] fallback safety-net falló: {_e_fb}", flush=True)
 
-        try: _mant_log("levantamiento", lev_id, "creado",
-                       f"{n_items} equipo(s) · OT {numero_ot or '—'} · "
-                       f"{len(tecnico_ids)} técnico(s) · "
-                       f"{items_plantilla} items plantilla")
+        # PASO 4d (2026-08-12): con lev_id=None (OT no-levantamiento),
+        # loguear contra "levantamiento" con entidad_id NULL fallaría
+        # silenciosamente (mant_logs.entidad_id es NOT NULL, ver Regla #5
+        # de auditoría). Se audita como "visita" en su lugar para que TODA
+        # OT quede auditada, nunca en silencio.
+        try:
+            if lev_id:
+                _mant_log("levantamiento", lev_id, "creado",
+                          f"{n_items} equipo(s) · OT {numero_ot or '—'} · "
+                          f"{len(tecnico_ids)} técnico(s) · "
+                          f"{items_plantilla} items plantilla")
+            elif visita_id:
+                _mant_log("visita", visita_id, "creada",
+                          f"OT tipo {tipo_ot} · {n_items} equipo(s) · "
+                          f"{len(tecnico_ids)} técnico(s) · "
+                          f"{items_plantilla} items plantilla")
         except Exception: pass
 
-        return {
+        # PASO 4e: el "mensaje" reflejaba SIEMPRE "Levantamiento creado",
+        # aunque la OT creada fuera de instalación/preventiva/correctiva/
+        # etc. Ahora usa una etiqueta legible por tipo real.
+        _tipo_ot_label = {
+            'levantamiento':    'Levantamiento',
+            'instalacion':      'Instalación',
+            'preventiva':       'Mantención preventiva',
+            'correctiva':       'Mantención correctiva',
+            'visita_tecnica':   'Visita técnica',
+            'inspeccion':       'Inspección',
+            'garantia':         'Garantía',
+            'cambio_equipo':    'Cambio de equipo',
+            'desinstalacion':   'Desinstalación',
+            'capacitacion':     'Capacitación',
+            'repuesto':         'Repuesto',
+            'revision_interna': 'Trabajo de bodega',
+            'visita_correctiva': 'Visita correctiva',
+            'control_calidad':  'Control de calidad',
+        }.get(tipo_ot, tipo_ot.replace('_', ' ').capitalize())
+
+        _resp = {
             "ok": True,
             "id": lev_id,
             "n_items": n_items,
@@ -86355,13 +86712,21 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             "tecnicos_asignados": len(tecnico_ids),
             "items_plantilla_aplicados": items_plantilla,
             "mensaje": (
-                f"Levantamiento creado con {n_items} equipo(s) e items de plantilla "
-                f"aplicados ({items_plantilla} tareas). "
+                # "OT creada" (no "creado"/"creada" pegado a la etiqueta) para
+                # no tener que resolver concordancia de género por tipo.
+                f"{_tipo_ot_label}: OT creada con {n_items} equipo(s) e items de "
+                f"plantilla aplicados ({items_plantilla} tareas). "
                 f"La OT quedó programada para {fecha_prog}"
                 + (f" {hora_ini}" if hora_ini else "")
                 + f" — número {numero_ot}."
             ),
-        }, 200
+        }
+        # Equipos declarados sin ficha, excluidos de la OT (Paso 4, decisión
+        # de Daniel "equipos sin ficha simplemente no avanza la OT") -- se
+        # reportan aunque la creación haya sido exitosa con el resto.
+        if equipos_excluidos_sin_ficha:
+            _resp["equipos_excluidos"] = equipos_excluidos_sin_ficha
+        return _resp, 200
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
@@ -90980,6 +91345,65 @@ def _ensure_lev_items_gps_cols():
     return faltantes
 
 
+# PASO 3 del plan "el levantamiento es un tipo más" (2026-08-12): flag
+# global que refleja si `mant_levantamientos.modalidad_captura` YA existe
+# en este proceso. Se fija UNA sola vez en boot por
+# _ensure_lev_modalidad_captura_col() (mismo patrón que el resto de los
+# _ensure_* del módulo) para que el INSERT de _mant_lev_crear_ot_core no
+# tenga que golpear information_schema en cada request -- y, sobre todo,
+# para que JAMÁS nombre la columna en el INSERT si el ALTER no llegó a
+# correr en este entorno (producción corre con ILUS_SKIP_MIGRATIONS=1):
+# nombrar una columna inexistente hace morir el INSERT con MySQL 1054 y
+# se cae el modal "Generar OT" al 100% desde Tickets y desde la ficha del
+# cliente.
+_LEV_MODALIDAD_CAPTURA_COL_EXISTE = False
+
+
+def _ensure_lev_modalidad_captura_col():
+    """Agrega mant_levantamientos.modalidad_captura ENUM('descubrimiento',
+    'ficha') NULL -- persiste la modalidad de captura que hoy se lee del
+    payload (`descubrimiento`) pero se descarta, sin escribirse nunca en
+    la BD.
+
+    NULL por defecto, SIN backfill de lo histórico: NULL significa
+    "legacy, no sabemos" -- no se inventa la modalidad de OT viejas con
+    heurísticas.
+
+    NO se llama `modalidad` a secas: ese nombre ya lo usa
+    `modalidad_cobro` en este mismo módulo (ver _OT_MODALIDADES más
+    arriba) -- sería una colisión semántica confusa.
+
+    SIEMPRE en boot (incluso con ILUS_SKIP_MIGRATIONS=1), mismo patrón que
+    _ensure_lev_items_gps_cols. Columna todavía INERTE en este paso: hasta
+    que un lector la use (Paso 7 del plan), no cambia ningún
+    comportamiento -- SEGURO EN CALIENTE.
+    """
+    global _LEV_MODALIDAD_CAPTURA_COL_EXISTE
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamientos'"
+            ) or [])
+        }
+    except Exception as e_col:
+        print(f"[ensure_lev_modalidad] no se pudo leer information_schema: {e_col}", flush=True)
+        return
+    if "modalidad_captura" not in existing:
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_levantamientos "
+                "ADD COLUMN modalidad_captura ENUM('descubrimiento','ficha') NULL")
+            print("[ensure_lev_modalidad] columna modalidad_captura agregada", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_lev_modalidad] no se pudo agregar modalidad_captura: {e_add}", flush=True)
+            # Si el ALTER falló, la columna sigue sin existir -- el flag
+            # queda en False y el INSERT no debe nombrarla.
+            return
+    _LEV_MODALIDAD_CAPTURA_COL_EXISTE = True
+
+
 def _ensure_lev_borrador_backfill():
     """Backfill explícito (Daniel 2026-08-08, hallazgo #10 de la revisión
     adversarial): el default-flip de _ensure_lev_items_gps_cols() solo
@@ -93328,6 +93752,16 @@ try:
 except Exception as _ensure_lev_gps_err:
     print(f"[ILUS][WARN] _ensure_lev_items_gps_cols: {_ensure_lev_gps_err}", flush=True)
 
+# Modalidad de captura del levantamiento (Paso 3, plan "el levantamiento es
+# un tipo más", 2026-08-12). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 --
+# fija _LEV_MODALIDAD_CAPTURA_COL_EXISTE para que el INSERT sepa si puede
+# nombrar la columna con seguridad.
+try:
+    with app.app_context():
+        _ensure_lev_modalidad_captura_col()
+except Exception as _ensure_lev_modcap_err:
+    print(f"[ILUS][WARN] _ensure_lev_modalidad_captura_col: {_ensure_lev_modcap_err}", flush=True)
+
 # Huella digital de fotos (Daniel 2026-08-09 — evitar que 4 copias de la
 # misma foto cuenten como 4 evidencias). SIEMPRE, incluso con
 # ILUS_SKIP_MIGRATIONS=1: sin la columna, el INSERT de fotos falla.
@@ -93684,11 +94118,20 @@ def _reparar_fotos_levantamiento_a_galeria():
     'necesito que la ficha la mueva la OT'."""
     try:
         # COUNT guard: ¿hay fotos de levantamiento (con maquina_id) que NO estén ya en la galería?
+        # PASO 2 (2026-08-12, plan "el levantamiento es un tipo más"): el
+        # criterio era `v.tipo='levantamiento' OR v.levantamiento_id IS NOT
+        # NULL` -- ese OR incluía TODA OT que capturó fichas (preventiva,
+        # instalación, inspección...), no solo levantamiento puro. Después
+        # del Paso 4/5 el vínculo levantamiento_id deja de poblarse en OT
+        # no-levantamiento, pero las YA existentes seguían re-empujando
+        # fotos a la ficha en CADA arranque. Se acota a tipo='levantamiento'
+        # -- solo resta candidatos futuros, nada de lo ya copiado se
+        # revierte (SEGURO EN CALIENTE).
         n = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_visita_fotos f "
             "  JOIN mant_visitas v ON v.id=f.visita_id "
             " WHERE f.maquina_id IS NOT NULL "
-            "   AND (v.tipo='levantamiento' OR v.levantamiento_id IS NOT NULL) "
+            "   AND v.tipo='levantamiento' "
             "   AND (f.cloudinary_url IS NOT NULL OR (f.archivo_path IS NOT NULL AND f.archivo_path<>'')) "
             "   AND NOT EXISTS (SELECT 1 FROM mant_maquina_fotos mf "
             "        WHERE mf.maquina_id=f.maquina_id AND mf.visita_origen=f.visita_id "
@@ -93702,7 +94145,7 @@ def _reparar_fotos_levantamiento_a_galeria():
             "  FROM mant_visita_fotos f "
             "  JOIN mant_visitas v ON v.id=f.visita_id "
             " WHERE f.maquina_id IS NOT NULL "
-            "   AND (v.tipo='levantamiento' OR v.levantamiento_id IS NOT NULL) "
+            "   AND v.tipo='levantamiento' "
             "   AND (f.cloudinary_url IS NOT NULL OR (f.archivo_path IS NOT NULL AND f.archivo_path<>'')) "
             " ORDER BY f.maquina_id, f.tomada_at, f.id") or []
         insertadas = 0; heroes = 0; vistas = set()
