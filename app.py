@@ -85616,8 +85616,22 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # {nombre, sku, serie, maquina_id?}. Si trae maquina_id (el equipo SI
     # tiene ficha, ej. ticket de mantenimiento sobre equipo existente), se
     # respeta para poder cruzar plantillas/estado igual que un equipo_id normal.
+    #
+    # DECISIÓN DE DANIEL (2026-08-12, plan "el levantamiento es un tipo
+    # más", Paso 4): "equipos sin ficha simplemente no avanza la OT, ok."
+    # Un equipo/producto del ticket SIN maquina_id (no existe en
+    # mant_maquinas) es EXACTAMENTE el caso que generaba una tarea
+    # HUÉRFANA (maquina_id NULL, ver bloque "equipos_sin_maquina" más
+    # abajo) -- desde el Paso 1, una tarea huérfana no dibuja tarjeta:
+    # nadie puede verla ni trabajarla en pantalla. Fuera de un
+    # levantamiento (la vía legítima "para conocer al cliente" -- Daniel
+    # 2026-06-23), ese equipo queda EXCLUIDO en vez de crear la tarea
+    # huérfana silenciosa, y se reporta en la respuesta
+    # (equipos_excluidos). Un levantamiento SÍ sigue aceptando estos
+    # equipos tal cual, sin cambios -- es su función.
     equipos_ticket_raw = data.get("equipos_ticket") or []
     equipos_ticket_clean = []
+    equipos_excluidos_sin_ficha = []
     if isinstance(equipos_ticket_raw, list):
         for et in equipos_ticket_raw:
             if not isinstance(et, dict):
@@ -85629,6 +85643,14 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 maquina_id_et = int(et["maquina_id"]) if et.get("maquina_id") else None
             except (TypeError, ValueError):
                 maquina_id_et = None
+            if maquina_id_et is None and tipo_ot != "levantamiento":
+                equipos_excluidos_sin_ficha.append({
+                    "nombre": nombre_et,
+                    "sku": (et.get("sku") or "").strip()[:120] or None,
+                    "serie": (et.get("serie") or "").strip()[:120] or None,
+                    "motivo": "sin_ficha",
+                })
+                continue
             equipos_ticket_clean.append({
                 "id": maquina_id_et,
                 "nombre": nombre_et,
@@ -85638,6 +85660,19 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             })
 
     if not equipo_ids and not descubrimiento and not equipos_ticket_clean:
+        if equipos_excluidos_sin_ficha:
+            return {
+                "ok": False,
+                "error": (
+                    f"Ningún equipo pudo agregarse: {len(equipos_excluidos_sin_ficha)} "
+                    "producto(s) no tienen ficha registrada para este cliente. Fuera de "
+                    "un levantamiento, ILUS no crea tareas para equipos sin ficha -- "
+                    "regístralos primero en la ficha del cliente, o genera un "
+                    "Levantamiento por descubrimiento para conocerlos en terreno."
+                ),
+                "error_codigo": "EQUIPO_SIN_FICHA",
+                "equipos_excluidos": equipos_excluidos_sin_ficha,
+            }, 400
         return {
             "ok": False,
             "error": "Debes seleccionar al menos 1 equipo para el levantamiento.",
@@ -85780,33 +85815,41 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            # PASO 3c (2026-08-12, plan "el levantamiento es un tipo más"):
-            # escribir modalidad_captura es CONDICIONAL a que la columna
-            # exista (_LEV_MODALIDAD_CAPTURA_COL_EXISTE, detectado UNA vez
-            # al boot). Si el ALTER de _ensure_lev_modalidad_captura_col()
-            # no llegó a correr en este entorno y este INSERT nombrara la
-            # columna igual, el INSERT moriría con MySQL 1054 y el modal
-            # "Generar OT" se caería al 100% desde Tickets y desde la
-            # ficha del cliente.
-            if _LEV_MODALIDAD_CAPTURA_COL_EXISTE:
-                cur.execute(
-                    "INSERT INTO mant_levantamientos "
-                    "(cliente_id, tecnico, titulo, notas, estado, created_by, "
-                    " modalidad_captura) "
-                    "VALUES (%s,%s,%s,%s,'en_curso',%s,%s)",
-                    (cid, tecnico_nombre[:190], titulo, notas,
-                     current_username() or 'sistema',
-                     'descubrimiento' if descubrimiento else 'ficha')
-                )
-            else:
-                cur.execute(
-                    "INSERT INTO mant_levantamientos "
-                    "(cliente_id, tecnico, titulo, notas, estado, created_by) "
-                    "VALUES (%s,%s,%s,%s,'en_curso',%s)",
-                    (cid, tecnico_nombre[:190], titulo, notas,
-                     current_username() or 'sistema')
-                )
-            lev_id = cur.lastrowid
+            # PASO 4a (2026-08-12, plan "el levantamiento es un tipo más"):
+            # el levantamiento (mant_levantamientos) SOLO nace si la OT ES
+            # de tipo levantamiento. Antes se creaba SIEMPRE, para
+            # cualquier tipo de OT (instalación, preventiva, correctiva...),
+            # poblando levantamiento_id incluso ahí -- eso es justo lo que
+            # hacía que _ot_es_levantamiento() diera True para OT que
+            # Daniel nunca eligió como levantamiento ("yo escogí
+            # Inspección, nunca escogí levantamiento").
+            lev_id = None
+            if tipo_ot == "levantamiento":
+                # PASO 3c: escribir modalidad_captura es CONDICIONAL a que
+                # la columna exista (_LEV_MODALIDAD_CAPTURA_COL_EXISTE,
+                # detectado UNA vez al boot). Si el ALTER no llegó a correr
+                # en este entorno y este INSERT nombrara la columna igual,
+                # moriría con MySQL 1054 y el modal "Generar OT" se caería
+                # al 100% desde Tickets y desde la ficha del cliente.
+                if _LEV_MODALIDAD_CAPTURA_COL_EXISTE:
+                    cur.execute(
+                        "INSERT INTO mant_levantamientos "
+                        "(cliente_id, tecnico, titulo, notas, estado, created_by, "
+                        " modalidad_captura) "
+                        "VALUES (%s,%s,%s,%s,'en_curso',%s,%s)",
+                        (cid, tecnico_nombre[:190], titulo, notas,
+                         current_username() or 'sistema',
+                         'descubrimiento' if descubrimiento else 'ficha')
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO mant_levantamientos "
+                        "(cliente_id, tecnico, titulo, notas, estado, created_by) "
+                        "VALUES (%s,%s,%s,%s,'en_curso',%s)",
+                        (cid, tecnico_nombre[:190], titulo, notas,
+                         current_username() or 'sistema')
+                    )
+                lev_id = cur.lastrowid
 
             # ─── Items del levantamiento (1 por equipo) ────────────
             # Descubrimiento: sin equipos preseleccionados → 0 items; el
@@ -85823,21 +85866,29 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             # Equipos del ticket SIN ficha (maquina_id NULL) -- ver docstring.
             if equipos_ticket_clean:
                 maquinas = list(maquinas) + equipos_ticket_clean
-            n_items = 0
-            for m in maquinas:
+            # PASO 4b: n_items SIEMPRE se calcula -- alimenta la descripción
+            # de la OT espejo (más abajo) y el payload de respuesta, para
+            # CUALQUIER tipo de OT. El INSERT en mant_levantamiento_items
+            # (evidencia del LEVANTAMIENTO -- levantamiento_id es NOT NULL
+            # con FK) en cambio SOLO corre si lev_id existe: con
+            # lev_id=None ese INSERT moriría (columna NOT NULL) fuera de
+            # este try/except, tumbando con un 500 CUALQUIER OT de
+            # instalación/preventiva/correctiva que traiga equipos.
+            n_items = len(maquinas)
+            if lev_id:
+                for m in maquinas:
+                    cur.execute(
+                        "INSERT INTO mant_levantamiento_items "
+                        "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
+                        " fecha_documento) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        (lev_id, m.get("id"), m.get("nombre"), m.get("sku"), m.get("serie"),
+                         m.get("doc_fecha"))
+                    )
                 cur.execute(
-                    "INSERT INTO mant_levantamiento_items "
-                    "(levantamiento_id, maquina_id, nombre_snap, sku_snap, serie_snap, "
-                    " fecha_documento) "
-                    "VALUES (%s,%s,%s,%s,%s,%s)",
-                    (lev_id, m.get("id"), m.get("nombre"), m.get("sku"), m.get("serie"),
-                     m.get("doc_fecha"))
+                    "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
+                    (n_items, lev_id)
                 )
-                n_items += 1
-            cur.execute(
-                "UPDATE mant_levantamientos SET total_equipos=%s WHERE id=%s",
-                (n_items, lev_id)
-            )
 
             # ══════════════════════════════════════════════════════════
             # CREAR OT (mant_visitas) ESPEJO con fecha/hora/multi-técnico
@@ -85945,10 +85996,17 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                          acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas)
                     )
                 visita_id = cur.lastrowid
-                cur.execute(
-                    "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
-                    (visita_id, lev_id)
-                )
+                # PASO 4c: `visita_id` se asigna SIEMPRE (fuera del if) --
+                # si quedara adentro, TODA OT no-levantamiento nacería con
+                # visita_id=None internamente y rompería la aplicación de
+                # plantillas, la creación de tareas y el link mostrado al
+                # usuario más abajo. El UPDATE inverso (levantamiento →
+                # visita_id) sí es exclusivo de cuando existe levantamiento.
+                if lev_id:
+                    cur.execute(
+                        "UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s",
+                        (visita_id, lev_id)
+                    )
 
                 # ─── Multi-técnico: registrar TODOS en mant_visita_tecnicos ─
                 # Esto permite que cada técnico vea la OT en "Mis OTs" y
@@ -86285,13 +86343,45 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             except Exception as _e_fb:
                 print(f"[lev_crear] fallback safety-net falló: {_e_fb}", flush=True)
 
-        try: _mant_log("levantamiento", lev_id, "creado",
-                       f"{n_items} equipo(s) · OT {numero_ot or '—'} · "
-                       f"{len(tecnico_ids)} técnico(s) · "
-                       f"{items_plantilla} items plantilla")
+        # PASO 4d (2026-08-12): con lev_id=None (OT no-levantamiento),
+        # loguear contra "levantamiento" con entidad_id NULL fallaría
+        # silenciosamente (mant_logs.entidad_id es NOT NULL, ver Regla #5
+        # de auditoría). Se audita como "visita" en su lugar para que TODA
+        # OT quede auditada, nunca en silencio.
+        try:
+            if lev_id:
+                _mant_log("levantamiento", lev_id, "creado",
+                          f"{n_items} equipo(s) · OT {numero_ot or '—'} · "
+                          f"{len(tecnico_ids)} técnico(s) · "
+                          f"{items_plantilla} items plantilla")
+            elif visita_id:
+                _mant_log("visita", visita_id, "creada",
+                          f"OT tipo {tipo_ot} · {n_items} equipo(s) · "
+                          f"{len(tecnico_ids)} técnico(s) · "
+                          f"{items_plantilla} items plantilla")
         except Exception: pass
 
-        return {
+        # PASO 4e: el "mensaje" reflejaba SIEMPRE "Levantamiento creado",
+        # aunque la OT creada fuera de instalación/preventiva/correctiva/
+        # etc. Ahora usa una etiqueta legible por tipo real.
+        _tipo_ot_label = {
+            'levantamiento':    'Levantamiento',
+            'instalacion':      'Instalación',
+            'preventiva':       'Mantención preventiva',
+            'correctiva':       'Mantención correctiva',
+            'visita_tecnica':   'Visita técnica',
+            'inspeccion':       'Inspección',
+            'garantia':         'Garantía',
+            'cambio_equipo':    'Cambio de equipo',
+            'desinstalacion':   'Desinstalación',
+            'capacitacion':     'Capacitación',
+            'repuesto':         'Repuesto',
+            'revision_interna': 'Trabajo de bodega',
+            'visita_correctiva': 'Visita correctiva',
+            'control_calidad':  'Control de calidad',
+        }.get(tipo_ot, tipo_ot.replace('_', ' ').capitalize())
+
+        _resp = {
             "ok": True,
             "id": lev_id,
             "n_items": n_items,
@@ -86301,13 +86391,21 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             "tecnicos_asignados": len(tecnico_ids),
             "items_plantilla_aplicados": items_plantilla,
             "mensaje": (
-                f"Levantamiento creado con {n_items} equipo(s) e items de plantilla "
-                f"aplicados ({items_plantilla} tareas). "
+                # "OT creada" (no "creado"/"creada" pegado a la etiqueta) para
+                # no tener que resolver concordancia de género por tipo.
+                f"{_tipo_ot_label}: OT creada con {n_items} equipo(s) e items de "
+                f"plantilla aplicados ({items_plantilla} tareas). "
                 f"La OT quedó programada para {fecha_prog}"
                 + (f" {hora_ini}" if hora_ini else "")
                 + f" — número {numero_ot}."
             ),
-        }, 200
+        }
+        # Equipos declarados sin ficha, excluidos de la OT (Paso 4, decisión
+        # de Daniel "equipos sin ficha simplemente no avanza la OT") -- se
+        # reportan aunque la creación haya sido exitosa con el resto.
+        if equipos_excluidos_sin_ficha:
+            _resp["equipos_excluidos"] = equipos_excluidos_sin_ficha
+        return _resp, 200
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
