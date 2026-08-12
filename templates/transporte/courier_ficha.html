@@ -524,8 +524,19 @@
       <div class="d-flex align-items-center justify-content-between mb-2">
         <div id="tarStats" class="text-muted small"></div>
         <div class="d-flex gap-2">
-          <button class="btn btn-sm btn-outline-success" onclick="window.location='/transporte/couriers/export'">
-            <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
+          {# BUG REAL (2026-08-10, Daniel: "al presionar la tarifa solo entregue
+             la tarifa del courrier consultado y no todas"). Este botón vive
+             DENTRO de la ficha de UN courier pero apuntaba al export
+             CONSOLIDADO (todos los couriers) -- descargaba la tarifa de todos
+             cuando el usuario está mirando solo a este. El consolidado vive
+             en Couriers → "···" → Exportar tarifas; acá va SIEMPRE el
+             tarifario individual de este courier (mismo endpoint que usa el
+             botón "Excel" de su tarjeta, incluida la cotización en vivo de
+             Shipit cuando corresponde). #}
+          <button class="btn btn-sm btn-outline-success"
+                  onclick="window.location='/transporte/couriers/{{ courier.id }}/tarifario.xlsx'"
+                  title="Descarga solo el tarifario de {{ courier.nombre }}">
+            <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel de {{ courier.nombre }}
           </button>
           <button class="btn btn-sm btn-outline-primary" onclick="abrirImportTarifas()">
             <i class="bi bi-upload me-1"></i>Importar Excel

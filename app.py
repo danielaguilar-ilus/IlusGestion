@@ -41794,10 +41794,123 @@ def _xlsx_cell(v):
     return v
 
 
+def _sh_llenar_hoja_tarifario_shipit(ws, nombre, red_fill, blanco_font, pesos=None, limite=None):
+    """Llena `ws` con la lista de precios de Shipit, cotizada EN VIVO contra
+    su API (Shipit no tiene tabla de comunas propia como Felca/Milling/
+    FedEx: es un agregador que compara operadores por viaje). Compartida por
+    tr_tarifario_de_un_courier_xlsx (tarifario individual, que le pasa los
+    `pesos`/`limite` que vengan en la query string) y
+    transporte_couriers_export (el consolidado "Exportar tarifas", que usa
+    los valores por defecto) para no duplicar la lógica de cotización.
+
+    BUG REAL (2026-08-10, Daniel: "esto no es la realidad, no está Shipit").
+    El consolidado armaba una hoja por courier a partir de
+    transport_courier_comunas -- como Shipit no tiene filas ahí, quedaba
+    afuera en silencio. Esta función es lo que faltaba para incluirlo.
+
+    Devuelve True si escribió filas, False si no se pudo cotizar nada (para
+    que el llamador decida si vale la pena dejar la hoja).
+    """
+    import concurrent.futures as _cf
+    import shipit_client as _shc
+    import time as _t_dl
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    pesos = list(pesos) if pesos else [1, 3, 5, 10, 15]
+    pesos = sorted({p for p in pesos if 0 < p <= _shc.MAX_PESO_KG})[:6]
+    limite = limite if limite else min(40, max(1, 200 // max(1, len(pesos))))
+
+    comunas = mysql_fetchall(
+        "SELECT TRIM(comuna) AS comuna, COUNT(*) AS n FROM transport_commitments "
+        "WHERE comuna IS NOT NULL AND TRIM(comuna) <> '' "
+        "GROUP BY TRIM(comuna) ORDER BY n DESC LIMIT %s", (limite,)) or []
+    if not comunas or not pesos:
+        return False
+
+    origen_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
+    destinos = {}
+    for c in comunas:
+        try:
+            destinos[c["comuna"]], _ = _shipit_commune_id(c["comuna"])
+        except Exception:
+            destinos[c["comuna"]] = None
+    if not origen_id:
+        return False
+
+    _deadline = _t_dl.monotonic() + 60
+    tareas = [(c["comuna"], p) for c in comunas for p in pesos if destinos.get(c["comuna"])]
+
+    def _cotizar(par):
+        comuna, peso = par
+        if _t_dl.monotonic() > _deadline:
+            return par, None
+        payload, errores = _shc.build_rate_payload(
+            length=30, width=30, height=30, weight=peso,
+            origin_id=origen_id, destiny_id=destinos[comuna])
+        if errores:
+            return par, None
+        r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=8)
+        if not r.get("ok"):
+            return par, None
+        disp = [x for x in _shc.parse_rates_response(r.get("data"))
+                if x.get("disponible") and x.get("precio")]
+        if not disp:
+            return par, None
+        disp.sort(key=lambda x: x["precio"])
+        return par, disp[0]
+
+    res = {}
+    if tareas:
+        with _cf.ThreadPoolExecutor(max_workers=8) as pool:
+            for par, val in pool.map(_cotizar, tareas):
+                res[par] = val
+
+    ws.cell(1, 1, f"Lista de precios — {nombre}").font = Font(bold=True, size=14)
+    ws.cell(2, 1, f"Cotizado en vivo el {chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')} "
+                  f"· origen: bodega {_tr_sender_cfg().get('city') or 'Quilicura'} · 1 bulto")
+    ws.cell(3, 1, "Shipit compara varios operadores y cobra el más barato disponible. "
+                  "Estos precios son los vigentes al momento de generar el archivo.")
+    enc = ["Comuna", "Envíos ILUS"] + [f"{p:g} kg" for p in pesos] + ["Operador (peso menor)"]
+    for ci, h in enumerate(enc, 1):
+        c = ws.cell(5, ci, h)
+        c.font, c.fill = blanco_font, red_fill
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    huvo_datos = False
+    for ri, com in enumerate(comunas, 6):
+        ws.cell(ri, 1, _xlsx_cell(com["comuna"]))
+        ws.cell(ri, 2, com["n"])
+        operador = ""
+        for pi, p in enumerate(pesos):
+            fila = res.get((com["comuna"], p))
+            celda = ws.cell(ri, 3 + pi)
+            if fila:
+                celda.value = round(fila["precio"])
+                celda.number_format = '$#,##0'
+                huvo_datos = True
+                if not operador:
+                    operador = (fila["courier"] or "").replace("_", " ").title()
+            else:
+                celda.value = "—"
+        ws.cell(ri, 3 + len(pesos), _xlsx_cell(operador))
+    ws.freeze_panes = "A6"
+    for ci in range(1, len(enc) + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 24 if ci in (1, len(enc)) else 13
+    return huvo_datos
+
+
 @app.route("/transporte/couriers/export", methods=["GET"])
 @_tr_required
 def transporte_couriers_export():
-    """Export all courier pricing as Excel, one sheet per courier."""
+    """Export all courier pricing as Excel, one sheet per courier.
+
+    BUG REAL (2026-08-10, Daniel, con el archivo descargado en la mano:
+    "esto no es la realidad, no está Shipit"). Shipit no tiene filas en
+    transport_courier_comunas (cotiza en vivo, no tiene tabla) así que
+    quedaba afuera de este export en silencio -- se agrega su hoja cotizando
+    su API en vivo, igual que ya hace el tarifario individual (mismo
+    helper: _sh_llenar_hoja_tarifario_shipit).
+    """
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
     from io import BytesIO
@@ -41813,6 +41926,16 @@ def transporte_couriers_export():
     WHITE_FONT = Font(color="FFFFFF", bold=True)
 
     for c in couriers:
+        if "shipit" in (c['nombre'] or "").lower():
+            ws = wb.create_sheet(title=c['nombre'][:31])
+            try:
+                if not _sh_llenar_hoja_tarifario_shipit(ws, c['nombre'], RED_FILL, WHITE_FONT):
+                    wb.remove(ws)
+            except Exception as e:
+                print(f"[couriers export] Shipit en vivo falló: {e}", flush=True)
+                wb.remove(ws)
+            continue
+
         rows = mysql_fetchall(
             "SELECT codigo, sucursal, comuna, zona, region, dias_transito, dias_entrega, precios_json "
             "FROM transport_courier_comunas WHERE courier_id=%s ORDER BY region, comuna",
@@ -41914,10 +42037,15 @@ def tr_tarifario_de_un_courier_xlsx(cid):
     ws.title = nombre[:31]
 
     if es_shipit:
-        import concurrent.futures as _cf
         import shipit_client as _shc
-        import time as _t_dl
 
+        # La validación de query params (con sus 400 propios) se queda ACÁ,
+        # donde tiene sentido devolver un error HTTP -- el resto de la
+        # cotización vive en _sh_llenar_hoja_tarifario_shipit, compartida con
+        # el consolidado (transporte_couriers_export) para no tener dos
+        # copias de la misma lógica divergiendo con el tiempo (encontrado en
+        # code review 2026-08-10: la función nueva decía "compartida" pero
+        # esta ruta seguía con su propia copia).
         try:
             pesos = [float(p) for p in (request.args.get("pesos") or "1,3,5,10,15").split(",") if p.strip()]
         except ValueError:
@@ -41931,80 +42059,9 @@ def tr_tarifario_de_un_courier_xlsx(cid):
             limite = 40
         limite = min(limite, max(1, 200 // len(pesos)))
 
-        comunas = mysql_fetchall(
-            "SELECT TRIM(comuna) AS comuna, COUNT(*) AS n FROM transport_commitments "
-            "WHERE comuna IS NOT NULL AND TRIM(comuna) <> '' "
-            "GROUP BY TRIM(comuna) ORDER BY n DESC LIMIT %s", (limite,)) or []
-        if not comunas:
-            return jsonify({"error": "No hay comunas con historial para cotizar."}), 404
-
-        # commune_id resueltos ANTES del pool: dentro de un hilo no hay
-        # contexto Flask y la lectura de MySQL falla (bug del 2026-08-05).
-        origen_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
-        destinos = {}
-        for c in comunas:
-            try:
-                destinos[c["comuna"]], _ = _shipit_commune_id(c["comuna"])
-            except Exception:
-                destinos[c["comuna"]] = None
-
-        _deadline = _t_dl.monotonic() + 60
-        tareas = [(c["comuna"], p) for c in comunas for p in pesos
-                  if origen_id and destinos.get(c["comuna"])]
-
-        def _cotizar(par):
-            comuna, peso = par
-            if _t_dl.monotonic() > _deadline:
-                return par, None
-            payload, errores = _shc.build_rate_payload(
-                length=30, width=30, height=30, weight=peso,
-                origin_id=origen_id, destiny_id=destinos[comuna])
-            if errores:
-                return par, None
-            r = _shipit_request("POST", _shc.EP_RATES, payload=payload, timeout=8)
-            if not r.get("ok"):
-                return par, None
-            disp = [x for x in _shc.parse_rates_response(r.get("data"))
-                    if x.get("disponible") and x.get("precio")]
-            if not disp:
-                return par, None
-            disp.sort(key=lambda x: x["precio"])
-            return par, disp[0]
-
-        res = {}
-        if tareas:
-            with _cf.ThreadPoolExecutor(max_workers=8) as pool:
-                for par, val in pool.map(_cotizar, tareas):
-                    res[par] = val
-
-        ws.cell(1, 1, f"Lista de precios — {nombre}").font = Font(bold=True, size=14)
-        ws.cell(2, 1, f"Cotizado en vivo el {chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')} "
-                      f"· origen: bodega {_tr_sender_cfg().get('city') or 'Quilicura'} · 1 bulto")
-        ws.cell(3, 1, "Shipit compara varios operadores y cobra el más barato disponible. "
-                      "Estos precios son los vigentes al momento de generar el archivo.")
-        enc = ["Comuna", "Envíos ILUS"] + [f"{p:g} kg" for p in pesos] + ["Operador (peso menor)"]
-        for ci, h in enumerate(enc, 1):
-            c = ws.cell(5, ci, h)
-            c.font, c.fill = BLANCO, RED
-            c.alignment = Alignment(horizontal="center", wrap_text=True)
-        for ri, com in enumerate(comunas, 6):
-            ws.cell(ri, 1, _xlsx_cell(com["comuna"]))
-            ws.cell(ri, 2, com["n"])
-            operador = ""
-            for pi, p in enumerate(pesos):
-                fila = res.get((com["comuna"], p))
-                celda = ws.cell(ri, 3 + pi)
-                if fila:
-                    celda.value = round(fila["precio"])
-                    celda.number_format = '$#,##0'
-                    if not operador:
-                        operador = (fila["courier"] or "").replace("_", " ").title()
-                else:
-                    celda.value = "—"
-            ws.cell(ri, 3 + len(pesos), _xlsx_cell(operador))
-        ws.freeze_panes = "A6"
-        for ci in range(1, len(enc) + 1):
-            ws.column_dimensions[get_column_letter(ci)].width = 24 if ci in (1, len(enc)) else 13
+        if not _sh_llenar_hoja_tarifario_shipit(ws, nombre, RED, BLANCO, pesos=pesos, limite=limite):
+            return jsonify({"error": "No se pudo cotizar Shipit: sin comunas con historial "
+                                      "o sin respuesta de su API. Intenta de nuevo."}), 404
     else:
         filas = mysql_fetchall(
             "SELECT codigo, sucursal, comuna, zona, region, dias_transito, dias_entrega, precios_json "
@@ -42563,8 +42620,26 @@ def tr_tarifario_comparado_xlsx():
     if not filas_comuna:
         return jsonify({"error": "No hay comunas con historial de envíos todavía."}), 404
 
-    SLUGS = [("clickex", "Clickex"), ("felca", "Transporte Felca"),
-             ("milling", "Transportes Milling"), ("fedex_directo", "FedEx")]
+    # BUG REAL (2026-08-10, Daniel: "hay transportes que nada que ver...
+    # necesito que solo me entregues los transportes que están activos").
+    # Esta lista estaba fija en el código (Clickex/Felca/Milling/FedEx) sin
+    # mirar el interruptor Habilitado/Deshabilitado de cada courier -- un
+    # courier desactivado (ej. Clickex, "hasta que compartan la API") seguía
+    # apareciendo acá igual. Ahora sale de los couriers realmente activos,
+    # mapeados a su tabla de tarifas con el mismo traductor que ya usa el
+    # resto del motor (transporte_tarifas.slug_para_courier). Shipit no
+    # entra por acá a propósito: no tiene tabla, se cotiza aparte más abajo
+    # (columna "Shipit").
+    _couriers_activos = mysql_fetchall(
+        "SELECT nombre FROM transport_couriers WHERE activo=1 ORDER BY nombre") or []
+    SLUGS = []
+    _slugs_vistos = set()
+    for _ca in _couriers_activos:
+        _slug = _ttar.slug_para_courier(_ca.get("nombre") or "")
+        if not _slug or _slug in _slugs_vistos:
+            continue
+        _slugs_vistos.add(_slug)
+        SLUGS.append((_slug, _ttar.NOMBRE.get(_slug, _ca.get("nombre") or _slug)))
 
     # Precalentar la caché de tarifas ANTES de abrir hilos: _ttar._load lee
     # MySQL y dentro de un hilo no hay contexto Flask (mismo bug que rompió

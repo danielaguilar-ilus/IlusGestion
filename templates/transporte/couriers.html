@@ -88,9 +88,14 @@
             </button>
           </li>
           <li>
-            <a class="dropdown-item" href="/transporte/couriers/export">
+            {# BUG REAL (2026-08-10): era un <a href> plano -- instantáneo
+               mientras Shipit quedaba afuera en silencio, pero ahora que
+               Shipit se cotiza en vivo acá también, la descarga puede
+               tardar hasta ~1 minuto y necesita el mismo aviso que ya
+               tienen sus hermanos (Comparar tarifas, tarifario individual). #}
+            <button class="dropdown-item" type="button" onclick="descargarTarifasConsolidado()">
               <i class="bi bi-file-earmark-excel me-2 text-success"></i>Exportar tarifas
-            </a>
+            </button>
           </li>
           {% if g.permissions and g.permissions.get('superadmin') %}
           <li><hr class="dropdown-divider"></li>
@@ -1189,6 +1194,17 @@ async function _descargarExcel(url, nombreArchivo, mensajeEspera) {
   } finally {
     _excelEnCurso.delete(url);
   }
+}
+
+/* El consolidado "Exportar tarifas": una hoja por courier activo. Shipit
+   ahora se cotiza en vivo contra su API acá también (2026-08-10, antes
+   quedaba afuera en silencio), así que este botón dejó de ser instantáneo
+   -- necesita el mismo aviso de espera que ya tienen sus hermanos. */
+function descargarTarifasConsolidado() {
+  return _descargarExcel(
+    '/transporte/couriers/export',
+    'ILUS_Tarifas_Couriers.xlsx',
+    'Armando el tarifario de cada courier activo (Shipit se cotiza en vivo)… puede tardar un minuto');
 }
 
 /* Compara la MISMA comuna y el MISMO peso en todos los couriers. Shipit se
