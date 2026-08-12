@@ -314,8 +314,16 @@
       </div>
       <div class="d-flex gap-2">
         {% if not r.is_protected %}
+        {# BUG REAL: |tojson envuelve r.nombre (texto libre editable) en
+           comillas DOBLES literales -- pero este onclick TAMBIÉN usaba
+           comillas dobles, así que el HTML se cortaba en la primera
+           comilla incrustada, dejando un handler JS inválido (mismo
+           patrón ya corregido en templates/transporte/manifiestos.html).
+           Fix: data-* + this.dataset, sin tojson. #}
         <button type="button" class="btn btn-sm btn-outline-danger"
-                onclick="confirmarEliminarRol('{{ r.slug }}', {{ r.nombre|tojson }})">
+                data-slug="{{ r.slug }}"
+                data-nombre="{{ r.nombre }}"
+                onclick="confirmarEliminarRol(this.dataset.slug, this.dataset.nombre)">
           <i class="bi bi-trash me-1"></i>Eliminar rol
         </button>
         {% endif %}

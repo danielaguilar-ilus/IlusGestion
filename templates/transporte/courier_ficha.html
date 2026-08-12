@@ -873,7 +873,11 @@
                   <ul class="dropdown-menu dropdown-menu-end">
                     <li><a class="dropdown-item" href="#" onclick="abrirModalChofer({{ ch.id }});return false;">
                       <i class="bi bi-pencil me-2"></i>Editar / documentos</a></li>
-                    <li><a class="dropdown-item" href="#" onclick="resetearPinChofer({{ ch.id }}, {{ (ch.nombre or '')|tojson }});return false;">
+                    {# BUG REAL (mismo patrón que manifiestos.html): |tojson dentro
+                       de un onclick con comillas DOBLES corta el atributo en la
+                       primera comilla incrustada del nombre. Fix: data-* +
+                       this.dataset (auto-escape normal de Jinja, sin tojson). #}
+                    <li><a class="dropdown-item" href="#" data-nombre="{{ ch.nombre or '' }}" onclick="resetearPinChofer({{ ch.id }}, this.dataset.nombre);return false;">
                       <i class="bi bi-key me-2"></i>Resetear PIN</a></li>
                     <li><hr class="dropdown-divider"></li>
                     <li><h6 class="dropdown-header">Cambiar de transporte</h6></li>
