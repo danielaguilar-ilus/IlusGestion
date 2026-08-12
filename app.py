@@ -40141,12 +40141,27 @@ def tr_cubicador_enviar_manifiesto():
     lat_in       = data.get("direccion_lat")
     lng_in       = data.get("direccion_lng")
 
-    if not telefono_in:
-        return jsonify({"error": "El teléfono de contacto es obligatorio para asignar a manifiesto."}), 400
-    _tel_ok, _tel_res = validar_telefono_chileno(telefono_in)
-    if not _tel_ok:
-        return jsonify({"error": _tel_res}), 400
-    telefono_in = _tel_res  # normalizado (+56...)
+    # FIX 2026-08-12 (Daniel, con captura real: Felca bloqueado pidiendo
+    # Teléfono en /asignar): "el teléfono es elemental e indispensable para
+    # FedEx... si selecciona Felca o Milling se pueda avanzar, deja esa
+    # restricción solo para FedEx ya que FedEx sí o sí lo solicita". El
+    # teléfono pasa a ser obligatorio SOLO cuando el courier elegido es
+    # FedEx -- esta es la validación real (el frontend solo da feedback
+    # anticipado, ver el mismo fix en cubicador_asignar.js).
+    if "fedex" in courier.lower():
+        if not telefono_in:
+            return jsonify({"error": "El teléfono de contacto es obligatorio para asignar a manifiesto con FedEx."}), 400
+        _tel_ok, _tel_res = validar_telefono_chileno(telefono_in)
+        if not _tel_ok:
+            return jsonify({"error": _tel_res}), 400
+        telefono_in = _tel_res  # normalizado (+56...)
+    elif telefono_in:
+        # Si lo mandaron igual (aunque no sea obligatorio), se valida el
+        # formato -- no se guarda un teléfono con formato inválido.
+        _tel_ok, _tel_res = validar_telefono_chileno(telefono_in)
+        if not _tel_ok:
+            return jsonify({"error": _tel_res}), 400
+        telefono_in = _tel_res
 
     if not email_in:
         return jsonify({"error": "El correo de contacto es obligatorio para asignar a manifiesto."}), 400
