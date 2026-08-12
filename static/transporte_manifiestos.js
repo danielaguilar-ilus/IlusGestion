@@ -87,18 +87,32 @@ document.addEventListener('click', function(){
 // escriba el correlativo — un solo clic no alcanza para borrar algo con
 // trazabilidad real (Daniel: "si ya hay un compromiso de trazabilidad...").
 async function eliminarManifiesto(mid, correlativo, confirmText) {
-  if (!confirmText) {
-    const ok = await ilusConfirm({
-      title: 'Eliminar manifiesto',
-      message: '¿Eliminar el manifiesto ' + correlativo + '?',
-      sub: 'Desaparece del listado. Los despachos que agrupa y su historial de ' +
-           'seguimiento NO se borran — solo se deja de mostrar esta agrupación.',
-      okLabel: 'Eliminar', cancelLabel: 'Cancelar',
-      danger: true,
-    });
-    if (!ok) return;
-  }
+  // FIX 2026-08-12 (Daniel: "le doy a los 3 puntos y no lo elimina" -- sin
+  // ningún error visible). El ilusConfirm() de abajo vivía FUERA del
+  // try/catch: si por lo que sea (ej. ilus_ui.js todavía no terminó de
+  // cargar/ejecutar en ese instante) ilusConfirm no estaba listo, la
+  // función entera moría como un unhandled promise rejection -- nada en
+  // pantalla, nada que Daniel pudiera reportar salvo "no pasa nada". Otras
+  // páginas del proyecto (transporte_monitor.js, mantenciones_ot_ejecutar.js,
+  // etc.) ya se cuidan de esto con `typeof ilusConfirm === 'function'`;
+  // esta función no lo tenía. Ahora TODO el flujo -- incluido el propio
+  // ilusConfirm -- está dentro del try, y el catch deja rastro en la
+  // consola además de intentar avisar en pantalla.
   try {
+    if (!confirmText) {
+      if (typeof ilusConfirm !== 'function') {
+        throw new Error('El cuadro de confirmación no cargó todavía -- recarga la página (F5) e intenta de nuevo.');
+      }
+      const ok = await ilusConfirm({
+        title: 'Eliminar manifiesto',
+        message: '¿Eliminar el manifiesto ' + correlativo + '?',
+        sub: 'Desaparece del listado. Los despachos que agrupa y su historial de ' +
+             'seguimiento NO se borran — solo se deja de mostrar esta agrupación.',
+        okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     const r = await fetch('/transporte/manifiestos/' + mid + '/eliminar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -123,7 +137,13 @@ async function eliminarManifiesto(mid, correlativo, confirmText) {
     ilusToast('Manifiesto eliminado', { type: 'success' });
     setTimeout(function(){ location.reload(); }, 700);
   } catch (e) {
-    await ilusAlert({ title: 'No se pudo eliminar', message: e.message || 'Error de conexión', type: 'error' });
+    console.error('[eliminarManifiesto] mid=' + mid, e);
+    try {
+      await ilusAlert({ title: 'No se pudo eliminar', message: e.message || 'Error de conexión', type: 'error' });
+    } catch (_e2) {
+      // Si hasta ilusAlert falla, el console.error de arriba es lo único
+      // que queda -- mejor que la falla total y silenciosa de antes.
+    }
   }
 }
 
