@@ -71152,6 +71152,24 @@ def mant_ot_ejecutar(vid):
         except Exception as _e_lh:
             print(f"[ot_ejecutar] lev_huerfanos_count error: {_e_lh}", flush=True)
 
+    # PASO 7e (2026-08-12, plan "el levantamiento es un tipo más"): la
+    # plantilla necesita la modalidad_captura del levantamiento (Paso 3)
+    # para alinear el botón "Agregar equipo" con el candado REAL del
+    # backend (mant_lev_item_crear, Paso 7a-7d) -- criterio server-side es
+    # la única fuente de verdad, ver Paso 7f. Defensivo: si la columna aún
+    # no existe en este entorno (1054) o hay cualquier otro error, se
+    # asume None -- oculta el botón (más conservador: nunca muestra un
+    # botón que el backend luego rechazaría con 403).
+    lev_modalidad_captura = None
+    if _lev_id_huerf:
+        try:
+            _row_modcap = mysql_fetchone(
+                "SELECT modalidad_captura FROM mant_levantamientos WHERE id=%s",
+                (_lev_id_huerf,))
+            lev_modalidad_captura = (_row_modcap or {}).get("modalidad_captura")
+        except Exception as _e_modcap_tpl:
+            print(f"[ot_ejecutar] lev_modalidad_captura error: {_e_modcap_tpl}", flush=True)
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
@@ -71183,6 +71201,7 @@ def mant_ot_ejecutar(vid):
         # tupla de estados en Jinja/JS por separado.
         lev_editable=((visita.get("estado") or "") in _LEV_ESTADOS_EDITABLES),
         lev_huerfanos_count=lev_huerfanos_count,
+        lev_modalidad_captura=lev_modalidad_captura,
         # 2026-06-23 (Daniel) — controles de TERRENO habilitables desde
         # /mantenciones/configuracion (geofence check-in + control de tiempo).
         reglas_terreno={
@@ -86853,47 +86872,115 @@ def mant_lev_item_crear(lid):
     if not _lev_puede_accion(lid, "ejecutar", lev_row=lev):
         return _lev_403_response("ejecutar")
 
-    # ── El tecnico NO amplia la lista de equipos de una OT normal ──
-    # Daniel 2026-08-10: "nunca podra agregar, a menos que sea una OT por
-    # levantamiento y descubrimiento en terreno".
+    d = request.get_json(silent=True) or {}
+
+    # ── Candado REAL de "quién puede agregar equipos" ───────────────────
+    # PASO 7 (2026-08-12, plan "el levantamiento es un tipo más"): el
+    # candado de arriba (antes de este cambio) nunca podía dar False --
+    # `_v_lev` casi siempre resolvía `_ot_es_levantamiento()` a True porque
+    # el propio `levantamiento_id` de la OT apunta de vuelta a `lid`
+    # (el levantamiento con el que se entró al endpoint). Era código
+    # muerto. Daniel, textual: "el técnico ni nadie puede agregar
+    # productos que no estén en una factura cobrada, a menos que sea un
+    # levantamiento para conocer al cliente" -- confirma que el candado
+    # debe ser ESTRICTO.
     #
-    # En una preventiva / inspeccion / garantia / instalacion el alcance lo
-    # define quien crea la OT; el tecnico la EJECUTA. Sumar equipos en terreno
-    # cambiaba el alcance (y por lo tanto lo facturable) sin que nadie lo
-    # aprobara. La excepcion es el levantamiento/descubrimiento, cuyo proposito
-    # ES que el tecnico arme el inventario alla.
-    #
-    # Esto es el candado REAL: en la plantilla ya se esconde el boton, pero la
-    # ruta se puede llamar directo. Los roles gestores no se tocan.
-    try:
-        if _rol_familia((getattr(g, "user", None) or {}).get("role")) == "tecnico":
-            _v_lev = None
-            if lev.get("visita_id"):
-                _v_lev = mysql_fetchone(
-                    "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s",
-                    (lev["visita_id"],)
+    # 7a: criterio nuevo — SOLO se permite si la OT es tipo='levantamiento'
+    #     Y su modalidad_captura (Paso 3) es 'descubrimiento'.
+    # 7b: aplica a TODOS los roles, no solo técnico (Daniel: "si hay que
+    #     limitar todo a una factura por favor, o a menos que provenga de
+    #     la ficha de productos" -- sin excepción por rol).
+    # 7d: modalidad_captura IS NULL (legacy, de antes del Paso 3) se trata
+    #     como "NO es descubrimiento" -- lectura fail-closed correcta.
+    _v_lev = None
+    if lev.get("visita_id"):
+        _v_lev = mysql_fetchone(
+            "SELECT id, tipo FROM mant_visitas WHERE id=%s",
+            (lev["visita_id"],)
+        )
+    _puede_agregar = True
+    _motivo_bloqueo = None
+    if not lev.get("visita_id"):
+        # Sin OT espejo el levantamiento es autónomo (flujo de
+        # levantamiento puro) => se permite, es su caso de uso (Daniel
+        # 2026-06-23).
+        pass
+    elif ((_v_lev or {}).get("tipo") or "").strip().lower() != "levantamiento":
+        _puede_agregar = False
+        _motivo_bloqueo = "La OT vinculada no es de tipo levantamiento."
+    else:
+        try:
+            _lev_mod = mysql_fetchone(
+                "SELECT modalidad_captura FROM mant_levantamientos WHERE id=%s", (lid,))
+            _modalidad = (_lev_mod or {}).get("modalidad_captura")
+            if _modalidad != "descubrimiento":
+                _puede_agregar = False
+                _motivo_bloqueo = (
+                    "El levantamiento no es de modalidad 'descubrimiento' "
+                    f"(modalidad_captura={_modalidad!r})."
                 )
-            # Sin OT espejo el levantamiento es autonomo (flujo de
-            # levantamiento puro) => se permite, es su caso de uso.
-            if _v_lev and not _ot_es_levantamiento(_v_lev):
+        except Exception as _e_modcap:
+            # 7c (CORRECCIÓN DE FABLE, confirmada por Daniel como la
+            # interpretación correcta): SOLO para el error específico de
+            # columna inexistente (1054 -- el ALTER del Paso 3 aún no
+            # llegó a este entorno, recordar que prod corre con
+            # ILUS_SKIP_MIGRATIONS=1) se trata como "comportamiento aún no
+            # desplegado" y se permite -- NO se convierte el except
+            # genérico en fail-open. Cualquier OTRO error mantiene
+            # fail-closed (403), sin excepciones.
+            _msg_e = str(_e_modcap).lower()
+            if "1054" in _msg_e or "unknown column" in _msg_e:
+                print(f"[lev_item_crear][gate] lid={lid}: modalidad_captura aún no "
+                      f"desplegada en este entorno -- se permite sin el gate nuevo "
+                      f"(comportamiento pre-Paso 7).", flush=True)
+            else:
+                print(f"[lev_item_crear][gate] lid={lid}: {_e_modcap}", flush=True)
+                _puede_agregar = False
+                _motivo_bloqueo = "No se pudo validar la modalidad del levantamiento."
+
+    if not _puede_agregar:
+        # EXCEPCIÓN CONFIRMADA por Daniel: "debe considerarse una pequeña
+        # flexibilidad al super admin." Mismo patrón ya aprobado para la
+        # corrección retroactiva de garantía (mant_visita_update, ver
+        # "CORRECCIÓN RETROACTIVA DE GARANTÍA" / garantia_retroactiva):
+        # flag + motivo obligatorio (>=10 caracteres) + auditoría en
+        # mant_logs. Solo superadmin (_puede_superadmin, mismo mecanismo
+        # de permisos que usa el resto del módulo -- g.permissions).
+        _es_superadmin = bool((getattr(g, "permissions", {}) or {}).get("superadmin"))
+        _override = bool(d.get("override_superadmin"))
+        if _es_superadmin and _override:
+            _motivo_override = (d.get("override_motivo") or "").strip()
+            if len(_motivo_override) < 10:
                 return jsonify({
                     "ok": False,
-                    "error": "Esta OT no es de levantamiento: no puedes agregar "
-                             "equipos. Trabaja sobre los equipos asignados.",
-                    "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
-                }), 403
-    except Exception as _e_gate_add:
-        # FAIL-CLOSED a proposito: si no podemos determinar el tipo de OT no
-        # abrimos la puerta. Es una restriccion, no una funcionalidad: ante la
-        # duda conviene bloquear y que el gestor lo resuelva.
-        print(f"[lev_item_crear][gate_tecnico] lid={lid}: {_e_gate_add}", flush=True)
-        return jsonify({
-            "ok": False,
-            "error": "No se pudo validar el tipo de OT. Avisa a tu supervisor.",
-            "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
-        }), 403
+                    "error": "Para agregar un equipo fuera de un levantamiento por "
+                             "descubrimiento, indica el motivo (mínimo 10 caracteres).",
+                    "error_codigo": "OVERRIDE_MOTIVO_REQUERIDO",
+                }), 400
+            _mant_log(
+                "levantamiento", lid, "equipo_agregado_override_superadmin",
+                f"{current_username() or 'superadmin'} agregó equipo saltando el "
+                f"candado ({_motivo_bloqueo}) · motivo: {_motivo_override[:500]}"
+            )
+            # Sigue el flujo normal de creación más abajo (permitido).
+        elif _es_superadmin:
+            # Superadmin SIN el override explícito: se le avisa que puede
+            # forzarlo, pero no se le abre la puerta en silencio.
+            return jsonify({
+                "ok": False,
+                "error": f"{_motivo_bloqueo} Como superadmin puedes forzarlo con un "
+                         "motivo (override_superadmin=true + override_motivo).",
+                "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
+            }), 403
+        else:
+            return jsonify({
+                "ok": False,
+                "error": f"{_motivo_bloqueo} Trabaja sobre los equipos ya asociados a "
+                         "la factura, o pide que se genere un Levantamiento por "
+                         "descubrimiento para conocer al cliente.",
+                "error_codigo": "TECNICO_NO_AGREGA_EQUIPOS",
+            }), 403
 
-    d = request.get_json(silent=True) or {}
     maquina_id = d.get("maquina_id")
     nombre = (d.get("nombre") or "").strip()[:300]
     # client_uid (Daniel 2026-08-08): generado en el navegador al abrir un
