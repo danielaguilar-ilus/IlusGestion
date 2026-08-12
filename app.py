@@ -69816,9 +69816,9 @@ def mant_diag_cobertura_clasificacion():
             SELECT
               COUNT(*) AS total,
               SUM(CASE WHEN COALESCE(TRIM(m.sku),'') = '' THEN 1 ELSE 0 END) AS sin_sku,
-              SUM(CASE WHEN m.sku LIKE 'MAN-%' THEN 1 ELSE 0 END) AS sku_generado,
+              SUM(CASE WHEN LEFT(m.sku,4) = 'MAN-' THEN 1 ELSE 0 END) AS sku_generado,
               SUM(CASE WHEN COALESCE(TRIM(m.sku),'') <> ''
-                        AND m.sku NOT LIKE 'MAN-%'
+                        AND LEFT(m.sku,4) <> 'MAN-'
                         AND p.sku IS NULL THEN 1 ELSE 0 END) AS sku_no_catalogo,
               SUM(CASE WHEN p.sku IS NOT NULL
                         AND COALESCE(TRIM(p.clase_producto),'') = '' THEN 1 ELSE 0 END) AS sin_clase,
