@@ -65325,6 +65325,24 @@ def _ot_es_levantamiento(v):
         return False
 
 
+def _ot_tarea_no_trabajable_sql(alias=""):
+    """Tarea sin maquina_id = sin tarjeta en pantalla = imposible de trabajar.
+
+    PASO 1 del plan "el levantamiento es un tipo más" (2026-08-12): antes
+    este filtro solo se aplicaba `if es_levantamiento`, como si el problema
+    de las tareas huérfanas fuera exclusivo del levantamiento. No lo es —
+    una tarea sin maquina_id no dibuja tarjeta en NINGÚN tipo de OT, así que
+    el técnico no puede abrirla, fotografiarla ni marcarla sin importar el
+    tipo. Por eso este helper se usa SIEMPRE, incondicional al tipo.
+
+    El `alias` es OBLIGATORIO cuando la consulta hace JOIN con otra tabla
+    que TAMBIÉN tiene columna `maquina_id` (ej. mant_visita_fotos) — sin el
+    alias correcto la columna queda ambigua → MySQL error 1052 → 500 en el
+    cierre de TODA OT, no solo levantamiento.
+    """
+    return f" AND {alias}maquina_id IS NOT NULL "
+
+
 def _ot_maquinas_excluidas_cierre(vid):
     """Set de maquina_id que NO deben bloquear el cierre de una OT: equipos
     marcados 'saltado' o 'falla_detectada' (ya quedaron documentados/con
@@ -65414,28 +65432,41 @@ def _ot_validar_cierre(vid):
     # el informe SÍ lo documenta (ver _ot_es_levantamiento en la selección de
     # template del PDF). Las tareas NO se borran (REGLA #4.2): siguen
     # existiendo y visibles, solo dejan de ser un candado infranqueable.
-    _huerf_sql = (" AND maquina_id IS NOT NULL " if es_levantamiento else "")
+    # PASO 1b (2026-08-12): el filtro de huérfanas ya NO depende del tipo —
+    # ver _ot_tarea_no_trabajable_sql().
+    _huerf_sql = _ot_tarea_no_trabajable_sql()
     if excluir_maquinas:
         _ph = ",".join(["%s"] * len(excluir_maquinas))
-        chk_row = mysql_fetchone(
-            "SELECT COUNT(*) AS total, "
-            " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+        _chk_base = (
             f"FROM mant_visita_tareas WHERE visita_id=%s "
             f"  AND (maquina_id IS NULL OR maquina_id NOT IN ({_ph}))"
-            + _huerf_sql,
-            (vid, *list(excluir_maquinas))
-        ) or {}
+        )
+        _chk_params = (vid, *list(excluir_maquinas))
     else:
-        chk_row = mysql_fetchone(
-            "SELECT COUNT(*) AS total, "
-            " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
-            "FROM mant_visita_tareas WHERE visita_id=%s" + _huerf_sql,
-            (vid,)
-        ) or {}
+        _chk_base = "FROM mant_visita_tareas WHERE visita_id=%s"
+        _chk_params = (vid,)
+    chk_row = mysql_fetchone(
+        "SELECT COUNT(*) AS total, "
+        " SUM(CASE WHEN estado_trabajo='completada' OR completada=1 THEN 1 ELSE 0 END) AS done "
+        + _chk_base + _huerf_sql,
+        _chk_params
+    ) or {}
+    # PASO 1c (2026-08-12, CRÍTICO): total_bruto es el MISMO COUNT pero SIN
+    # el filtro de huérfanas. Con el filtro de 1b ya incondicional, `total`
+    # (filtrado) puede dar 0 en una OT que SÍ tiene tareas (todas huérfanas)
+    # — usar `total` ahí dispararía el mensaje falso "La OT no tiene tareas
+    # asignadas" en una OT que en realidad está trabada por tareas
+    # imposibles de trabajar, no por falta de tareas. `total`/`done` (ya
+    # filtrados) se reservan para el mensaje de "Checklist incompleto".
+    chk_row_bruto = mysql_fetchone(
+        "SELECT COUNT(*) AS total " + _chk_base,
+        _chk_params
+    ) or {}
     total = int(chk_row.get("total") or 0)
     done = int(chk_row.get("done") or 0)
+    total_bruto = int(chk_row_bruto.get("total") or 0)
     # R1a — Tareas de checklist (preventivas/correctivas)
-    if total == 0 and not excluir_maquinas and not es_levantamiento:
+    if total_bruto == 0 and not excluir_maquinas and not es_levantamiento:
         razones.append("La OT no tiene tareas asignadas — agrega un checklist antes de cerrar.")
     elif done < total:
         razones.append(
@@ -65490,7 +65521,7 @@ def _ot_validar_cierre(vid):
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
             f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
-            + _huerf_sql.replace("maquina_id", "t.maquina_id") +
+            + _ot_tarea_no_trabajable_sql("t.") +
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid, *list(excluir_maquinas))
@@ -65501,7 +65532,7 @@ def _ot_validar_cierre(vid):
             "FROM mant_visita_tareas t "
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             "WHERE t.visita_id=%s AND t.requiere_foto=1 "
-            + _huerf_sql.replace("maquina_id", "t.maquina_id") +
+            + _ot_tarea_no_trabajable_sql("t.") +
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid,)
@@ -72027,17 +72058,12 @@ def mant_ot_firmar_revision(vid):
         # frontend.
         excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
         _excl_ph = ",".join(["%s"] * len(excluir_maquinas)) if excluir_maquinas else None
-        # Mismo criterio de huérfanas que R1/R3 de _ot_validar_cierre: si la OT
-        # captura fichas por levantamiento, las tareas sin maquina_id NO son
-        # trabajables (no tienen tarjeta en pantalla) y por lo tanto no pueden
-        # bloquear la firma. Ver el comentario largo en _ot_validar_cierre.
-        # FIX 2026-08-10 (OT-2026-00042): se agrega `id` al SELECT — sin él,
-        # _ot_es_levantamiento() no puede resolver el fallback reverse (lo
-        # necesita para buscar en mant_levantamientos.visita_id).
-        _v_gate = mysql_fetchone(
-            "SELECT id, tipo, levantamiento_id FROM mant_visitas WHERE id=%s", (vid,))
-        _huerf_gate = (" AND t.maquina_id IS NOT NULL "
-                       if _ot_es_levantamiento(_v_gate) else "")
+        # PASO 1e (2026-08-12, plan "el levantamiento es un tipo más"): mismo
+        # criterio de huérfanas que R1/R3 de _ot_validar_cierre, ahora
+        # INCONDICIONAL al tipo — una tarea sin maquina_id no tiene tarjeta
+        # en pantalla en NINGUNA OT, así que no puede bloquear la firma en
+        # ninguna. Ver _ot_tarea_no_trabajable_sql().
+        _huerf_gate = _ot_tarea_no_trabajable_sql("t.")
         faltan_rows = mysql_fetchall(
             "SELECT t.maquina_id, "
             "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
