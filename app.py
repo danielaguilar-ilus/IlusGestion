@@ -85690,11 +85690,39 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     titulo = (data.get("titulo") or "").strip()[:200] or f"Levantamiento {_now_chile_str('%d/%m/%Y')}"
     notas = (data.get("notas") or "").strip()
     equipo_ids = data.get("equipo_ids") or []
+
+    # ─── Tipo de OT (FASE 2 — modal generalizado 2026-05-16) ──────
+    # Valores permitidos: deben coincidir con el ENUM mant_visitas.tipo
+    # PASO 3d (2026-08-12, plan "el levantamiento es un tipo más"): este
+    # bloque se ADELANTÓ desde más abajo (antes se calculaba después de la
+    # validación SIN_EQUIPOS) porque `descubrimiento` necesita conocer
+    # `tipo_ot` para poder gatearse contra él -- ver comentario ahí abajo.
+    tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
+                "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
+                "desinstalacion", "capacitacion", "repuesto", "revision_interna",
+                "visita_correctiva", "control_calidad")
+    tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
+    if tipo_ot not in tipos_ok:
+        tipo_ot = "levantamiento"
+    # `mant_visita_tareas.tipo` tiene su propio ENUM, más estrecho que
+    # `tipos_ok`. Sin esta traducción, cada INSERT de tarea de una OT
+    # preventiva/correctiva/visita técnica moría con el error 1265 y la
+    # OT terminaba sin checklist (ver _tarea_tipo_seguro).
+    tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+
     # ── Levantamiento PURO de descubrimiento (Daniel 2026-06-23) ──────
     # Cliente nuevo sin equipos registrados: la OT parte con 0 equipos y
     # el TÉCNICO los captura en terreno (foto + nombre + serie) desde
     # Ejecutar OT. Al cerrar, se materializan en mant_maquinas.
-    descubrimiento = bool(data.get("descubrimiento"))
+    #
+    # PASO 3d (2026-08-12): "descubrimiento" SOLO tiene sentido si la OT ES
+    # de tipo levantamiento -- igual que el modal real (las tarjetas de
+    # modalidad solo aparecen ahí) y el mismo patrón que ya usa el wrapper
+    # de Tickets (tickets_module.py: "descubrimiento = bool(d.get(...)) and
+    # tipo_ot == 'levantamiento'"). Sin este gate, cualquier OT de otro tipo
+    # podía mandar descubrimiento=True y saltarse la validación de "al
+    # menos 1 equipo" de más abajo sin sentido de negocio.
+    descubrimiento = bool(data.get("descubrimiento")) and tipo_ot == "levantamiento"
 
     # ─── Equipos de TICKET sin ficha en Mantenciones (2026-07-12) ─────────
     # Caso "instalacion de cliente/equipo nuevo": no hay mant_maquinas de
@@ -85758,20 +85786,8 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # Técnico principal (primero de la lista) — para la columna legacy mant_visitas.tecnico_user_id
     tecnico_principal = tecnico_ids[0] if tecnico_ids else None
 
-    # ─── Tipo de OT (FASE 2 — modal generalizado 2026-05-16) ──────
-    # Valores permitidos: deben coincidir con el ENUM mant_visitas.tipo
-    tipos_ok = ("levantamiento", "instalacion", "preventiva", "correctiva",
-                "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
-                "desinstalacion", "capacitacion", "repuesto", "revision_interna",
-                "visita_correctiva", "control_calidad")
-    tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
-    if tipo_ot not in tipos_ok:
-        tipo_ot = "levantamiento"
-    # `mant_visita_tareas.tipo` tiene su propio ENUM, más estrecho que
-    # `tipos_ok`. Sin esta traducción, cada INSERT de tarea de una OT
-    # preventiva/correctiva/visita técnica moría con el error 1265 y la
-    # OT terminaba sin checklist (ver _tarea_tipo_seguro).
-    tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+    # (tipo_ot / tarea_tipo ya se calcularon más arriba -- PASO 3d, ver
+    # comentario junto a `descubrimiento`.)
 
     # ─── Selector de plantilla (2026-08-10, backend para selector futuro) ──
     # Por defecto la plantilla se auto-calcula con `_plantilla_estandar_para_
@@ -85879,13 +85895,32 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mant_levantamientos "
-                "(cliente_id, tecnico, titulo, notas, estado, created_by) "
-                "VALUES (%s,%s,%s,%s,'en_curso',%s)",
-                (cid, tecnico_nombre[:190], titulo, notas,
-                 current_username() or 'sistema')
-            )
+            # PASO 3c (2026-08-12, plan "el levantamiento es un tipo más"):
+            # escribir modalidad_captura es CONDICIONAL a que la columna
+            # exista (_LEV_MODALIDAD_CAPTURA_COL_EXISTE, detectado UNA vez
+            # al boot). Si el ALTER de _ensure_lev_modalidad_captura_col()
+            # no llegó a correr en este entorno y este INSERT nombrara la
+            # columna igual, el INSERT moriría con MySQL 1054 y el modal
+            # "Generar OT" se caería al 100% desde Tickets y desde la
+            # ficha del cliente.
+            if _LEV_MODALIDAD_CAPTURA_COL_EXISTE:
+                cur.execute(
+                    "INSERT INTO mant_levantamientos "
+                    "(cliente_id, tecnico, titulo, notas, estado, created_by, "
+                    " modalidad_captura) "
+                    "VALUES (%s,%s,%s,%s,'en_curso',%s,%s)",
+                    (cid, tecnico_nombre[:190], titulo, notas,
+                     current_username() or 'sistema',
+                     'descubrimiento' if descubrimiento else 'ficha')
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO mant_levantamientos "
+                    "(cliente_id, tecnico, titulo, notas, estado, created_by) "
+                    "VALUES (%s,%s,%s,%s,'en_curso',%s)",
+                    (cid, tecnico_nombre[:190], titulo, notas,
+                     current_username() or 'sistema')
+                )
             lev_id = cur.lastrowid
 
             # ─── Items del levantamiento (1 por equipo) ────────────
@@ -91006,6 +91041,65 @@ def _ensure_lev_items_gps_cols():
     return faltantes
 
 
+# PASO 3 del plan "el levantamiento es un tipo más" (2026-08-12): flag
+# global que refleja si `mant_levantamientos.modalidad_captura` YA existe
+# en este proceso. Se fija UNA sola vez en boot por
+# _ensure_lev_modalidad_captura_col() (mismo patrón que el resto de los
+# _ensure_* del módulo) para que el INSERT de _mant_lev_crear_ot_core no
+# tenga que golpear information_schema en cada request -- y, sobre todo,
+# para que JAMÁS nombre la columna en el INSERT si el ALTER no llegó a
+# correr en este entorno (producción corre con ILUS_SKIP_MIGRATIONS=1):
+# nombrar una columna inexistente hace morir el INSERT con MySQL 1054 y
+# se cae el modal "Generar OT" al 100% desde Tickets y desde la ficha del
+# cliente.
+_LEV_MODALIDAD_CAPTURA_COL_EXISTE = False
+
+
+def _ensure_lev_modalidad_captura_col():
+    """Agrega mant_levantamientos.modalidad_captura ENUM('descubrimiento',
+    'ficha') NULL -- persiste la modalidad de captura que hoy se lee del
+    payload (`descubrimiento`) pero se descarta, sin escribirse nunca en
+    la BD.
+
+    NULL por defecto, SIN backfill de lo histórico: NULL significa
+    "legacy, no sabemos" -- no se inventa la modalidad de OT viejas con
+    heurísticas.
+
+    NO se llama `modalidad` a secas: ese nombre ya lo usa
+    `modalidad_cobro` en este mismo módulo (ver _OT_MODALIDADES más
+    arriba) -- sería una colisión semántica confusa.
+
+    SIEMPRE en boot (incluso con ILUS_SKIP_MIGRATIONS=1), mismo patrón que
+    _ensure_lev_items_gps_cols. Columna todavía INERTE en este paso: hasta
+    que un lector la use (Paso 7 del plan), no cambia ningún
+    comportamiento -- SEGURO EN CALIENTE.
+    """
+    global _LEV_MODALIDAD_CAPTURA_COL_EXISTE
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_levantamientos'"
+            ) or [])
+        }
+    except Exception as e_col:
+        print(f"[ensure_lev_modalidad] no se pudo leer information_schema: {e_col}", flush=True)
+        return
+    if "modalidad_captura" not in existing:
+        try:
+            mysql_execute(
+                "ALTER TABLE mant_levantamientos "
+                "ADD COLUMN modalidad_captura ENUM('descubrimiento','ficha') NULL")
+            print("[ensure_lev_modalidad] columna modalidad_captura agregada", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_lev_modalidad] no se pudo agregar modalidad_captura: {e_add}", flush=True)
+            # Si el ALTER falló, la columna sigue sin existir -- el flag
+            # queda en False y el INSERT no debe nombrarla.
+            return
+    _LEV_MODALIDAD_CAPTURA_COL_EXISTE = True
+
+
 def _ensure_lev_borrador_backfill():
     """Backfill explícito (Daniel 2026-08-08, hallazgo #10 de la revisión
     adversarial): el default-flip de _ensure_lev_items_gps_cols() solo
@@ -93353,6 +93447,16 @@ try:
         _ensure_lev_borrador_backfill()
 except Exception as _ensure_lev_gps_err:
     print(f"[ILUS][WARN] _ensure_lev_items_gps_cols: {_ensure_lev_gps_err}", flush=True)
+
+# Modalidad de captura del levantamiento (Paso 3, plan "el levantamiento es
+# un tipo más", 2026-08-12). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 --
+# fija _LEV_MODALIDAD_CAPTURA_COL_EXISTE para que el INSERT sepa si puede
+# nombrar la columna con seguridad.
+try:
+    with app.app_context():
+        _ensure_lev_modalidad_captura_col()
+except Exception as _ensure_lev_modcap_err:
+    print(f"[ILUS][WARN] _ensure_lev_modalidad_captura_col: {_ensure_lev_modcap_err}", flush=True)
 
 # Huella digital de fotos (Daniel 2026-08-09 — evitar que 4 copias de la
 # misma foto cuenten como 4 evidencias). SIEMPRE, incluso con
