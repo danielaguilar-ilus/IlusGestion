@@ -93595,11 +93595,20 @@ def _reparar_fotos_levantamiento_a_galeria():
     'necesito que la ficha la mueva la OT'."""
     try:
         # COUNT guard: ¿hay fotos de levantamiento (con maquina_id) que NO estén ya en la galería?
+        # PASO 2 (2026-08-12, plan "el levantamiento es un tipo más"): el
+        # criterio era `v.tipo='levantamiento' OR v.levantamiento_id IS NOT
+        # NULL` -- ese OR incluía TODA OT que capturó fichas (preventiva,
+        # instalación, inspección...), no solo levantamiento puro. Después
+        # del Paso 4/5 el vínculo levantamiento_id deja de poblarse en OT
+        # no-levantamiento, pero las YA existentes seguían re-empujando
+        # fotos a la ficha en CADA arranque. Se acota a tipo='levantamiento'
+        # -- solo resta candidatos futuros, nada de lo ya copiado se
+        # revierte (SEGURO EN CALIENTE).
         n = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_visita_fotos f "
             "  JOIN mant_visitas v ON v.id=f.visita_id "
             " WHERE f.maquina_id IS NOT NULL "
-            "   AND (v.tipo='levantamiento' OR v.levantamiento_id IS NOT NULL) "
+            "   AND v.tipo='levantamiento' "
             "   AND (f.cloudinary_url IS NOT NULL OR (f.archivo_path IS NOT NULL AND f.archivo_path<>'')) "
             "   AND NOT EXISTS (SELECT 1 FROM mant_maquina_fotos mf "
             "        WHERE mf.maquina_id=f.maquina_id AND mf.visita_origen=f.visita_id "
@@ -93613,7 +93622,7 @@ def _reparar_fotos_levantamiento_a_galeria():
             "  FROM mant_visita_fotos f "
             "  JOIN mant_visitas v ON v.id=f.visita_id "
             " WHERE f.maquina_id IS NOT NULL "
-            "   AND (v.tipo='levantamiento' OR v.levantamiento_id IS NOT NULL) "
+            "   AND v.tipo='levantamiento' "
             "   AND (f.cloudinary_url IS NOT NULL OR (f.archivo_path IS NOT NULL AND f.archivo_path<>'')) "
             " ORDER BY f.maquina_id, f.tomada_at, f.id") or []
         insertadas = 0; heroes = 0; vistas = set()
