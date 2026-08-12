@@ -85646,6 +85646,116 @@ def _plantilla_estandar_para_tipo(tipo_ot):
     return int(row["id"]) if row else None
 
 
+def _familia_plantilla_para_tipo(tipo_ot):
+    """Nombre de 'familia' (el texto ANTES del ' · ') que usa la convención
+    de nombre de las plantillas por clasificación real de equipo, ej.
+    'Mantención · Trotadora Motorizada' (sembradas en producción el
+    2026-08-12). Se resuelve con la MISMA tabla editable que ya decide en
+    qué pestaña vive cada plantilla (mant_categoria_tipo_map, Tarea 1,
+    2026-08-10) -- no se inventa un mapeo nuevo. Si la tabla no tiene el
+    tipo o la consulta falla, cae al seed fijo (_PLANT_CATEGORIA_TIPO_SEED),
+    mismo patrón de _tipo_es_trabajo_interno.
+
+    Devuelve None si el tipo no resuelve a ninguna categoría con label
+    conocido (_PLANT_CATEGORIA_LABEL) -- en ese caso el caller no debe
+    intentar armar un nombre de plantilla por clasificación.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return None
+    categoria = None
+    try:
+        row = mysql_fetchone(
+            "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot,))
+        categoria = row["categoria"] if row else None
+    except Exception:
+        categoria = None
+    if not categoria:
+        categoria = _PLANT_CATEGORIA_TIPO_SEED.get(tipo_ot)
+    return _PLANT_CATEGORIA_LABEL.get(categoria) if categoria else None
+
+
+def _plantilla_por_clasificacion_sku(sku, tipo_ot):
+    """ID de la plantilla que corresponde a un equipo SEGÚN SU CLASIFICACIÓN
+    REAL de catálogo -- no el criterio ciego de _plantilla_estandar_para_tipo
+    (que solo mira el tipo de OT y por eso puede darle a una trotadora el
+    checklist de una bicicleta si esa plantilla tiene más ítems). Daniel,
+    2026-08-12: "no le voy a hacer una verificación a una trotadora como a
+    una bicicleta".
+
+    Puente (medido en vivo el 2026-08-12, ver GET /mantenciones/api/
+    diagnostico/cobertura-clasificacion): mant_maquinas.sku ->
+    cat_productos.sku -> cat_productos.clase_producto (slug) ->
+    cat_clases_producto.nombre. Con ese nombre + la familia del tipo de OT
+    (Instalación/Mantención/...) arma el nombre de convención
+    "{familia} · {clasificación}" y busca una plantilla ACTIVA con ese
+    nombre exacto y al menos 1 ítem (mismo estándar de calidad que la
+    plantilla "de convención" de _plantilla_estandar_para_tipo).
+
+    Devuelve None si falta CUALQUIER eslabón (sin sku, sku fuera del
+    catálogo, producto sin clase asignada, o no existe todavía la
+    plantilla para esa clasificación) -- el caller SIEMPRE debe caer a
+    _plantilla_estandar_para_tipo en ese caso. NUNCA bloquea la creación
+    de la OT: "no hay suficiente información" es un caso legítimo, no un
+    error (medición real 2026-08-12: buena parte de los equipos hoy no
+    cruza contra el catálogo por SKU faltante/generado a mano/fuera de
+    catálogo).
+    """
+    sku = (sku or "").strip()
+    if not sku:
+        return None
+    familia = _familia_plantilla_para_tipo(tipo_ot)
+    if not familia:
+        return None
+    try:
+        clase_row = mysql_fetchone(
+            "SELECT cp.nombre AS clase_nombre "
+            "  FROM cat_productos p "
+            "  JOIN cat_clases_producto cp "
+            "    ON cp.slug = p.clase_producto AND cp.activo = 1 "
+            " WHERE p.sku = %s "
+            "   AND COALESCE(TRIM(p.clase_producto), '') <> '' "
+            " LIMIT 1",
+            (sku,)
+        )
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] resolver clase de sku={sku!r} falló: {e}", flush=True)
+        return None
+    if not clase_row or not clase_row.get("clase_nombre"):
+        return None
+    nombre_plantilla = f"{familia} · {clase_row['clase_nombre']}"
+    try:
+        prow = mysql_fetchone(
+            "SELECT p.id FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.nombre = %s AND COALESCE(p.activa, 1) = 1 "
+            " GROUP BY p.id LIMIT 1",
+            (nombre_plantilla,)
+        )
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] buscar plantilla '{nombre_plantilla}' falló: {e}", flush=True)
+        return None
+    return int(prow["id"]) if prow else None
+
+
+def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
+    """Wrapper de _plantilla_por_clasificacion_sku para cuando solo se tiene
+    el id de mant_maquinas a mano (no el sku ya resuelto en memoria). Si el
+    caller YA tiene el sku (ej. el dict `maquinas` de _mant_lev_crear_ot_core,
+    que lo trae en la misma consulta que arma la lista de equipos), preferir
+    llamar directo a _plantilla_por_clasificacion_sku y ahorrarse esta
+    consulta extra.
+    """
+    if not maquina_id:
+        return None
+    try:
+        row = mysql_fetchone("SELECT sku FROM mant_maquinas WHERE id=%s", (maquina_id,))
+    except Exception as e:
+        print(f"[plantilla_por_clasificacion] leer sku de maquina {maquina_id} falló: {e}", flush=True)
+        return None
+    return _plantilla_por_clasificacion_sku(row.get("sku") if row else None, tipo_ot)
+
+
 def _tarea_respaldo_texto(tipo_ot, nombre_equipo):
     """(titulo, descripcion) de la tarea de respaldo por equipo."""
     nombre_equipo = (nombre_equipo or 'equipo')[:240]
@@ -85949,6 +86059,16 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     if not tecnico_nombre:
         tecnico_nombre = current_username() or ""
 
+    # Resolución de plantilla POR EQUIPO (maquina_id -> plantilla_id o None),
+    # calculada una sola vez y reusada tanto por el pre-chequeo de "hay
+    # plantilla" (decide si se crea la tarea de respaldo "📷 Documentar") como
+    # por el bloque que las aplica de verdad post-commit -- mismo criterio
+    # que ya seguía este archivo para el cálculo ciego anterior ("MISMA
+    # función que decide en el paso 1, antes eran dos consultas distintas y
+    # podían discrepar"). Default {} defensivo: si algo revienta antes de
+    # poblarlo, el post-commit cae solo al criterio ciego por equipo.
+    _resolucion_plantilla_por_equipo = {}
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -86182,14 +86302,52 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 # MISMA función que decide en el paso 1 (más abajo): antes eran
                 # dos consultas distintas y podían discrepar — el pre-chequeo
                 # daba "sí hay plantilla" y luego el paso 1 no aplicaba nada.
+                #
+                # 2026-08-12 (Daniel: "no le voy a hacer una verificación a
+                # una trotadora como a una bicicleta"): antes esto era UN
+                # booleano ciego al tipo de OT. Ahora se resuelve POR EQUIPO
+                # según su clasificación real de catálogo
+                # (_plantilla_por_clasificacion_sku), con fallback individual
+                # al criterio ciego anterior (_plantilla_estandar_para_tipo)
+                # para el equipo que no tenga suficiente información (sin
+                # SKU, SKU fuera de catálogo, sin clase, o sin plantilla para
+                # esa clasificación todavía). El resultado se guarda en
+                # _resolucion_plantilla_por_equipo y se reusa tal cual en el
+                # paso 1 de más abajo -- ni un booleano ni una consulta de
+                # más, la MISMA decisión en los dos lugares.
                 _tiene_plantillas = bool(plantillas_por_equipo)
                 if not _tiene_plantillas:
                     try:
-                        _tiene_plantillas = bool(
-                            plantilla_id_override
-                            or _plantilla_estandar_para_tipo(tipo_ot))
-                    except Exception:
-                        pass
+                        if plantilla_id_override:
+                            # El usuario ya eligió una plantilla explícita
+                            # para TODA la OT (selector, Tarea 4) — manda
+                            # sobre cualquier cálculo automático.
+                            for _mm in maquinas:
+                                if _mm.get("id"):
+                                    _resolucion_plantilla_por_equipo[_mm["id"]] = plantilla_id_override
+                        else:
+                            _fallback_tipo_cache = {"val": None, "computed": False}
+                            def _fallback_tipo_ot():
+                                if not _fallback_tipo_cache["computed"]:
+                                    _fallback_tipo_cache["val"] = _plantilla_estandar_para_tipo(tipo_ot)
+                                    _fallback_tipo_cache["computed"] = True
+                                return _fallback_tipo_cache["val"]
+                            for _mm in maquinas:
+                                _mid = _mm.get("id")
+                                if not _mid:
+                                    continue
+                                _plant_id = None
+                                try:
+                                    _plant_id = _plantilla_por_clasificacion_sku(_mm.get("sku"), tipo_ot)
+                                except Exception as _e_cls:
+                                    print(f"[lev_crear] resolver plantilla por clasificación "
+                                          f"falló para maquina {_mid}: {_e_cls}", flush=True)
+                                if not _plant_id:
+                                    _plant_id = _fallback_tipo_ot()
+                                _resolucion_plantilla_por_equipo[_mid] = _plant_id
+                        _tiene_plantillas = any(_resolucion_plantilla_por_equipo.values())
+                    except Exception as _e_res:
+                        print(f"[lev_crear] resolución de plantilla por equipo falló: {_e_res}", flush=True)
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
                 # que se vayan a aplicar (evita duplicación con plantillas).
                 # Los equipos SIN maquina_id (declarados en un ticket, sin
@@ -86341,7 +86499,10 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             items_plantilla += n_added
             return n_added
 
-        # 1) Plantilla estándar del tipo
+        # 1) Plantilla por equipo — PRIMERO por clasificación real del
+        #    producto, con fallback ciego por tipo de OT para el equipo que
+        #    no resuelva (Daniel, 2026-08-12: "no le voy a hacer una
+        #    verificación a una trotadora como a una bicicleta").
         #
         # BUG FIX 2026-05-17 — Si el usuario ya pasó plantillas explícitas
         # en plantillas_por_equipo, NO aplicamos la estándar automática:
@@ -86350,19 +86511,42 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
         if visita_id and equipo_ids and not plantillas_por_equipo:
             try:
-                # 2026-08-10: si el caller pidió una plantilla explícita
-                # (data.plantilla_id, ya validada arriba), MANDA sobre el
-                # auto-cálculo por tipo — selector de plantilla (Tarea 4).
-                plant_id = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
-                if plant_id:
-                    _n_std = _aplicar_plantilla_a_equipos(plant_id, equipo_ids)
-                    print(f"[lev_crear] plantilla estándar {plant_id} aplicada a "
-                          f"{len(equipo_ids)} equipo(s) → {_n_std} tarea(s) "
-                          f"(tipo '{tipo_ot}')", flush=True)
+                # Reusa EXACTO lo que ya resolvió el pre-chequeo de arriba
+                # (_resolucion_plantilla_por_equipo) — nunca se recalcula,
+                # para no correr el riesgo de que las dos decisiones
+                # discrepen (el bug real que ya se corrigió una vez en este
+                # mismo archivo para el criterio ciego anterior).
+                resolucion = dict(_resolucion_plantilla_por_equipo)
+                # Cualquier id de equipo_ids que no haya quedado resuelto
+                # arriba (ej. no aparece en `maquinas` porque no pertenece
+                # al cliente — caso raro, pero el comportamiento histórico
+                # igual le aplicaba la plantilla ciega) cae al mismo
+                # fallback por tipo, para no perder cobertura respecto al
+                # comportamiento anterior.
+                faltantes = [mid for mid in equipo_ids if mid not in resolucion]
+                if faltantes:
+                    plant_fallback = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
+                    for mid in faltantes:
+                        resolucion[mid] = plant_fallback
+
+                # Agrupar por plantilla_id resuelta — así un mismo tipo de OT
+                # con una trotadora y una bicicleta aplica DOS checklists
+                # distintos en vez de uno solo elegido a ciegas.
+                grupos = {}
+                for mid, plant_id in resolucion.items():
+                    if plant_id:
+                        grupos.setdefault(plant_id, []).append(mid)
+
+                if grupos:
+                    for plant_id, mids_grupo in grupos.items():
+                        _n_std = _aplicar_plantilla_a_equipos(plant_id, mids_grupo)
+                        print(f"[lev_crear] plantilla {plant_id} aplicada a "
+                              f"{len(mids_grupo)} equipo(s) → {_n_std} tarea(s) "
+                              f"(tipo '{tipo_ot}')", flush=True)
                 else:
-                    print(f"[lev_crear] sin plantilla estándar para el tipo "
-                          f"'{tipo_ot}' — se usará la tarea de respaldo por equipo",
-                          flush=True)
+                    print(f"[lev_crear] sin plantilla (ni por clasificación ni "
+                          f"estándar) para el tipo '{tipo_ot}' — se usará la "
+                          f"tarea de respaldo por equipo", flush=True)
             except Exception as e_pl:
                 print(f"[lev_crear] aplicar plantilla estándar falló: {e_pl}", flush=True)
 
