@@ -4431,8 +4431,19 @@ function tkotRenderEquipos(){
       + (e.notas ? '<div class="eq-name-sub text-truncate" style="max-width:220px" title="'+esc(e.notas)+'">'+esc(e.notas)+'</div>' : '')
       + '</td>'
       + '<td onclick="event.stopPropagation()">'
+      // 2026-08-13 (Daniel probando en vivo, TK-2026-01313: "no puedo
+      // seleccionar la plantilla del equipo"): un equipo forzado (cliente
+      // sin ficha) SIEMPRE está marcado -- ya no hace falta bloquear el
+      // botón esperando el click del checkbox, se renderiza habilitado
+      // directo. El backend ya sabe aplicar esta selección a un equipo sin
+      // ficha (plantillas_por_ticket_equipo, app.py) -- antes se descartaba
+      // en silencio aunque se hubiera podido elegir.
       + (forzado
-          ? '<span class="small text-muted"><i class="bi bi-lock me-1"></i>incluido completo</span>'
+          ? '<div style="font-size:.63rem;color:#16a34a;margin-bottom:3px"><i class="bi bi-check-circle me-1"></i>estándar incluida</div>'
+            + '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs btn-outline-primary w-100" '
+            + 'style="font-size:.72rem;padding:.25rem .4rem" '
+            + 'onclick="tkotAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Agregar plantillas extra a este equipo">'
+            + '<i class="bi bi-plus-lg me-1"></i><span id="lev-pl-count-'+esc(key)+'">0 plantillas</span></button>'
           : '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs btn-outline-primary w-100" '
             + 'style="font-size:.72rem;padding:.25rem .4rem;opacity:.4;pointer-events:none" '
             + 'onclick="tkotAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Selecciona el equipo primero">'
