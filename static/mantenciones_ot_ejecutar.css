@@ -1591,3 +1591,265 @@
   .tx-tarea input[type="datetime-local"], .tx-tarea select,
   .tx-tarea textarea{ font-size:16px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   MAQUETA FABLE 12-08-2026 — retema integral de la pantalla del técnico
+   (aprobada por Daniel la noche del 12-08; aplicada el 13-08).
+   Principios de la maqueta que este bloque trae a la pantalla real:
+     · Full-bleed: aire y líneas finas en vez de cajas anidadas.
+     · El CLIENTE es el héroe del header; el N° de OT es un chip mono.
+     · Monoespaciada = dato duro (S/N, horas, contadores, folios).
+     · El semáforo verde/ámbar/rojo es DATO: barras segmentadas donde
+       cada segmento ES una tarea con su estado real.
+     · El checklist se lee como un carril: filas separadas por hairlines,
+       número de orden, knob circular a la derecha, "Siguiente" marcado.
+   Este bloque va AL FINAL a propósito: mismas clases y specificity igual
+   o mayor que las reglas históricas de arriba → gana por orden de archivo
+   sin tocar (ni romper) los selectores que el JS usa. Cero cambios de
+   funcionalidad: solo piel.
+   ════════════════════════════════════════════════════════════════════ */
+:root{ --tx-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Roboto Mono",monospace; }
+
+/* ── 1 · HEADER: portada de la OT ─────────────────────────────────── */
+.tx-hdr{padding:12px 14px 12px}
+.tx-hdr-top{
+  display:flex;align-items:center;gap:6px;margin-bottom:10px;
+  position:relative;z-index:1;flex-wrap:wrap;
+}
+.tx-hdr-sp{flex:1}
+.tx-hdr-brand{margin-bottom:0}
+.tx-hdr-otchip{
+  font-family:var(--tx-mono);font-size:.68rem;font-weight:700;color:#374151;
+  border:1.5px solid #e5e7eb;border-radius:9999px;padding:3px 9px;
+  white-space:nowrap;line-height:1.3;background:#fff;
+}
+.tx-hdr-tipo{
+  display:inline-flex;align-items:center;gap:7px;color:#dc2626;
+  font-size:.6rem;font-weight:850;letter-spacing:.13em;text-transform:uppercase;
+}
+.tx-hdr-tipo::before{content:'';width:20px;height:3px;background:#dc2626;border-radius:2px}
+.tx-hdr h2{
+  display:block;font-size:clamp(1.3rem, 5.5vw, 1.8rem);font-weight:850;
+  letter-spacing:-.03em;line-height:1.06;color:#0a0a0a;
+}
+.tx-hdr-id{gap:5px}
+.tx-hdr-dir{
+  font-size:.8rem;color:#475569;display:flex;gap:6px;align-items:flex-start;
+  line-height:1.35;margin-top:1px;position:relative;z-index:1;
+}
+.tx-hdr-dir i{color:#dc2626;flex-shrink:0;margin-top:1px;font-size:.85rem}
+
+/* Fila de métricas (heromtr): hora · fecha · contacto, con divisores */
+.tx-hdr-mtr{
+  display:flex;align-items:stretch;margin-top:12px;
+  border-top:1.5px solid #e5e7eb;border-bottom:1.5px solid #e5e7eb;
+  position:relative;z-index:1;
+}
+.tx-hdr-mtr .hm{flex:1;padding:9px 6px 10px;text-align:center;min-width:0}
+.tx-hdr-mtr .hm + .hm{border-left:1.5px solid #e5e7eb}
+.tx-hdr-mtr .hm .v{
+  font-family:var(--tx-mono);font-size:1.02rem;font-weight:700;letter-spacing:-.02em;
+  display:block;line-height:1.15;color:#0a0a0a;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tx-hdr-mtr .hm .v.hm-txt{font-family:inherit;font-weight:800;font-size:.88rem;padding-top:2px}
+.tx-hdr-mtr .hm .k{
+  font-size:.55rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:#94a3b8;display:block;margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+/* la celda del contacto (nombre de persona) necesita más aire que las horas */
+.tx-hdr-mtr .hm:last-child{flex:1.35}
+
+/* Franja de contacto: botones parejos Llamar · WhatsApp · Correo · Ruta.
+   minmax 60px verificado en preview: a 390px el contenedor real queda en
+   ~300px (paddings de mobile.css) y con 70px los 4 botones quebraban 3+1. */
+.tx-contact{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(60px,1fr));gap:8px;
+  margin-top:10px;position:relative;z-index:1;
+}
+.tx-contact .cbtn{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  padding:9px 4px 8px;border-radius:13px;border:1.5px solid #e5e7eb;
+  font-size:.67rem;font-weight:750;color:#0a0a0a;background:#fff;cursor:pointer;
+  text-decoration:none;min-height:56px;transition:transform .12s, background .15s;
+  text-align:center;line-height:1.15;
+}
+.tx-contact .cbtn:hover{background:#f8fafc;color:#0a0a0a}
+.tx-contact .cbtn:active{transform:scale(.94)}
+.tx-contact .cbtn i{font-size:1.15rem;line-height:1}
+.tx-contact .cbtn.call i{color:#3b82f6}
+.tx-contact .cbtn.wa i{color:#16a34a}
+.tx-contact .cbtn.mail i{color:#6b7280}
+.tx-contact .cbtn.ruta{border-color:#fca5a5;background:#fee2e2;color:#991b1b}
+.tx-contact .cbtn.ruta i{color:#dc2626}
+.tx-contact .cbtn.ruta:hover{background:#fecaca;color:#991b1b}
+.tx-contact .cbtn.ruta.iniciada{border-color:#16a34a;background:#dcfce7;color:#166534}
+.tx-contact .cbtn.ruta.iniciada i{color:#16a34a}
+
+/* Colapsado (scroll móvil): queda chip OT + estado + cliente + anillo */
+.tx-hdr.collapsed .tx-hdr-tipo{display:none}
+.tx-hdr.collapsed .tx-hdr-dir{display:none}
+.tx-hdr.collapsed .tx-hdr-top{margin-bottom:2px}
+.tx-hdr.collapsed .tx-hdr-otchip{font-size:.6rem;padding:2px 7px}
+@media (max-width:767.98px){
+  /* el toggle absoluto (arriba a la derecha) no debe pisar el estado */
+  .tx-hdr-top{padding-right:32px}
+}
+
+/* ── 2 · MÉTRICAS GLOBALES: fila con divisores, números mono ──────── */
+.tx-stats-glob{
+  display:flex;gap:0;background:transparent;margin-bottom:4px;
+  border-top:1.5px solid #e5e7eb;border-bottom:1.5px solid #e5e7eb;
+}
+.tx-stat-cell{
+  background:transparent;border:0;border-radius:0;flex:1;padding:10px 6px 11px;
+}
+.tx-stat-cell + .tx-stat-cell{border-left:1.5px solid #e5e7eb}
+.tx-stat-cell .n{
+  font-family:var(--tx-mono);font-size:1.22rem;font-weight:700;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+}
+.tx-stat-cell .l{margin-top:4px;letter-spacing:.09em;font-weight:800;font-size:.58rem}
+
+/* Título de sección estilo maqueta (sec-h): label + conteo mono */
+.tx-section-title{
+  font-size:.68rem;letter-spacing:.12em;color:#6b7280;margin:16px 2px 8px;
+  display:flex;align-items:baseline;gap:8px;
+}
+.tx-section-title i{font-size:.8rem}
+.tx-section-n{
+  font-family:var(--tx-mono);font-size:.68rem;font-weight:600;color:#94a3b8;
+  text-transform:none;letter-spacing:0;
+}
+
+/* ── 3 · TARJETA DE EQUIPO: borde tinta + S/N mono + eqbar segmentada ── */
+.tx-eq-card{
+  border:2px solid #0a0a0a;border-radius:16px;position:relative;overflow:hidden;
+  padding:14px 14px 20px;
+}
+.tx-eq-card.done{border-color:#16a34a}
+.tx-eq-card .eq-name{font-size:1.06rem;font-weight:850;letter-spacing:-.015em}
+.tx-eq-card .eq-sub{font-family:var(--tx-mono);font-size:.7rem;margin-top:2px}
+.tx-eq-card .eq-arrow{color:#dc2626}
+.tx-eq-card.done .eq-arrow{color:#16a34a}
+.tx-eq-card .eq-foto-wrap{border-radius:13px}
+/* La barra de avance vive pegada al borde inferior de la tarjeta (como el
+   eqbar de la maqueta). Sigue siendo el MISMO nodo .eq-prog-wrap de
+   siempre; _eqBarRender() (JS) la vuelve segmentada cuando hay checklist. */
+.tx-eq-card .eq-prog-wrap{
+  position:absolute;left:10px;right:10px;bottom:7px;margin:0;height:5px;
+  background:#eef0f3;border-radius:3px;
+}
+.tx-eq-card .eq-prog-wrap.eqbar-seg{
+  display:flex;gap:2px;background:transparent;overflow:visible;
+}
+.tx-eq-card .eq-prog-wrap.eqbar-seg i{flex:1;border-radius:2px;background:#e5e7eb;transition:background .3s}
+.tx-eq-card .eq-prog-wrap.eqbar-seg i.ok{background:#16a34a}
+.tx-eq-card .eq-prog-wrap.eqbar-seg i.warn{background:#f59e0b}
+.tx-eq-card .eq-prog-wrap.eqbar-seg i.fail{background:#dc2626}
+/* El semáforo del equipo tiñe sus segmentos completados (misma historia
+   que ya contaban los degradados de .eq-prog-bar por data-rev) */
+.tx-eq-card[data-rev="saltado"] .eq-prog-wrap.eqbar-seg i.ok{background:#f59e0b}
+.tx-eq-card[data-rev="falla_detectada"] .eq-prog-wrap.eqbar-seg i.ok{background:#dc2626}
+.tx-eq-card[data-rev="con_cambios"] .eq-prog-wrap.eqbar-seg i.ok{background:#3b82f6}
+
+/* ── 4 · RUNNER: cabecera de la vista de tareas ───────────────────── */
+/* El hero rojo degradado pasa a la cabecera blanca de la maqueta */
+.tx-pl-hero{
+  background:#fff;color:#0a0a0a;border-radius:0;box-shadow:none;
+  padding:0;margin-bottom:0;overflow:visible;
+}
+.tx-pl-hero::before{display:none}
+.run-appbar{display:flex;align-items:center;gap:10px;padding:2px 0 10px}
+.run-back{
+  width:44px;height:44px;border-radius:13px;flex-shrink:0;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  border:1.5px solid #e5e7eb;background:#fff;color:#0a0a0a;font-size:1.15rem;
+  transition:background .15s, transform .12s;
+}
+.run-back:hover{background:#f8fafc}
+.run-back:active{transform:scale(.94)}
+.run-t{flex:1;min-width:0}
+.run-t b{
+  display:block;font-size:.95rem;font-weight:800;letter-spacing:-.01em;color:#0a0a0a;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.25;
+}
+.run-t span{
+  display:block;font-size:.68rem;color:#6b7280;font-family:var(--tx-mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;
+}
+.run-chip{
+  display:inline-flex;align-items:center;gap:5px;flex-shrink:0;
+  font-family:var(--tx-mono);font-size:.64rem;font-weight:700;color:#6b7280;
+  border:1.5px solid #e5e7eb;border-radius:9999px;padding:4px 10px;white-space:nowrap;
+}
+.run-chip .sdot{width:8px;height:8px;border-radius:50%;background:#e5e7eb;flex-shrink:0}
+.run-chip.ok{border-color:#16a34a;color:#166534;background:#dcfce7}
+.run-chip.ok .sdot{background:#16a34a}
+.run-chip.warn{border-color:#f59e0b;color:#92400e;background:#fef3c7}
+.run-chip.warn .sdot{background:#f59e0b}
+.run-chip.fail{border-color:#dc2626;color:#991b1b;background:#fee2e2}
+.run-chip.fail .sdot{background:#dc2626}
+.run-chip.curso{border-color:#93c5fd;color:#1e40af;background:#dbeafe}
+.run-chip.curso .sdot{background:#3b82f6}
+.run-head{padding:0 0 10px;border-bottom:1.5px solid #e5e7eb;margin-bottom:0}
+.run-segbar{display:flex;gap:3px;height:7px;margin:2px 0 9px}
+.run-segbar i{flex:1;border-radius:3px;background:#e5e7eb;transition:background .3s;min-width:2px}
+.run-segbar i.ok{background:#16a34a}
+.run-segbar i.warn{background:#f59e0b}
+.run-segbar i.fail{background:#dc2626}
+.run-meta{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-family:var(--tx-mono);font-size:.72rem;color:#6b7280;
+}
+.run-meta .big{font-size:.98rem;font-weight:750;color:#0a0a0a;font-variant-numeric:tabular-nums}
+
+/* ── 5 · CHECKLIST: carril full-bleed con knob a la derecha ───────── */
+.tx-tarea{
+  border:0;border-bottom:1px solid #e9ecef;border-left:4px solid transparent;
+  border-radius:0;margin-bottom:0;padding:13px 10px 13px 8px;background:#fff;
+  transition:background .2s, border-color .2s;
+}
+.tx-tarea.done{background:#fff;border-color:#e9ecef;border-left-color:#16a34a}
+.tx-tarea.done.sem-warn{border-left-color:#f59e0b}
+.tx-tarea.done.sem-fail{border-left-color:#dc2626}
+.tx-tarea.next{border-left-color:#dc2626;box-shadow:none;background:#fff}
+.tx-tarea .ttl{align-items:center;gap:11px;margin-bottom:0}
+.tx-tarea .ttl-info{order:1}
+.tx-tarea .ttl-chk{
+  order:2;width:46px;height:46px;border-radius:50%;border-width:2.5px;
+  color:#a6adb5;font-size:1rem;
+  transition:all .22s cubic-bezier(.3,1.4,.5,1);
+}
+.tx-tarea .ttl-chk i{font-size:1.05rem}
+.tx-tarea.next .ttl-chk{border-color:#0a0a0a;color:#0a0a0a}
+.tx-tarea.done .ttl-chk{
+  background:#16a34a;border-color:#16a34a;color:#fff;
+  animation:txKnobPop .35s cubic-bezier(.3,1.6,.5,1);
+}
+.tx-tarea.done.sem-warn .ttl-chk{background:#f59e0b;border-color:#f59e0b}
+.tx-tarea.done.sem-fail .ttl-chk{background:#dc2626;border-color:#dc2626}
+@keyframes txKnobPop{0%{transform:scale(.6)}60%{transform:scale(1.12)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.tx-tarea.done .ttl-chk{animation:none}}
+.tx-tarea .tno{
+  font-family:var(--tx-mono);width:22px;padding-top:0;font-size:.68rem;font-weight:600;
+}
+.tx-tarea .ttl-text{font-size:.95rem;font-weight:700;letter-spacing:-.01em;line-height:1.3}
+.tx-tarea.done .ttl-text{text-decoration:none;opacity:1;color:#6b7280;font-weight:600}
+/* Tags en su propia fila bajo el título (ritmo de la maqueta) */
+.tx-tarea .ttl-badges{display:flex;gap:5px;margin:6px 0 0;flex-wrap:wrap;vertical-align:baseline}
+.tx-tarea .ttl-badges .tx-badge-obl{background:#fee2e2;color:#991b1b}
+.tx-tarea .ttl-badges .tx-badge-foto{background:#dbeafe;color:#1e40af}
+.tx-tarea .ttl-badges .tx-badge-tipo{background:#f3f4f6;color:#6b7280}
+/* El carril arranca con línea superior (la lista ES la pantalla) */
+#tareasList{border-top:1.5px solid #e5e7eb}
+#tareasList .tx-empty{border-top:0}
+
+/* ── 6 · DOCK INFERIOR: CTA grande, bloqueado = ghost ─────────────── */
+.tx-bottom{border-top:1.5px solid #e5e7eb;box-shadow:0 -6px 18px rgba(10,10,10,.05)}
+.tx-btn-firmar{
+  border-radius:15px;min-height:56px;font-size:1.02rem;letter-spacing:-.01em;
+}
+.tx-btn-firmar:disabled{background:#f1f5f9;color:#94a3b8;box-shadow:none}
+#btnFirmarHint{font-family:var(--tx-mono);font-size:.66rem !important;letter-spacing:0}

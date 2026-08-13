@@ -854,16 +854,43 @@ async function abrirModalFallaEquipo(mid){
 
 // ════════════════════════════════════════════════════════
 //  VISTA 3: render TAREAS de una plantilla
+//  2026-08-13 (maqueta Fable aprobada 12-08 — "el equipo = su checklist"):
+//  el hero rojo degradado se reemplaza por la cabecera del RUNNER de la
+//  maqueta: appbar (volver + equipo·plantilla + chip de estado agregado)
+//  y run-head con la BARRA SEGMENTADA (1 segmento = 1 tarea con su color
+//  semáforo real) + contador mono + obligatorias pendientes. La misma
+//  información de antes (nombre plantilla, equipo, X/N tareas, % avance)
+//  sigue toda presente — solo cambia la piel. #tProg se conserva porque
+//  _updateProgress lo actualiza.
 // ════════════════════════════════════════════════════════
 function renderTareas(mid, pid){
-  const eq = EQUIPOS_IDX[mid];
+  const eq = EQUIPOS_IDX[mid] || {};
   const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => String(p.plantilla_id) === String(pid));
   if (!grupo) return;
 
+  // "Volver": si el equipo tiene 1 sola plantilla, goToPlantillas re-entraría
+  // directo a tareas (loop) — en ese caso el back va a la lista de máquinas.
+  const _nPls = (PLANTILLAS_POR_MAQUINA[mid] || []).length;
+  const backCall = (_nPls === 1) ? 'goToMaquinas()' : `goToPlantillas('${mid}')`;
+
   document.getElementById('tareasHero').innerHTML = `
-    <h4><i class="bi bi-list-check me-2"></i>${_escapeHtml(grupo.plantilla_nombre)}</h4>
-    <div class="sub">${_escapeHtml(eq.nombre || ('Equipo #' + mid))} · <span id="tProg">${grupo.completas}</span>/${grupo.total} tareas</div>
-    <div class="prog-wrap"><div class="prog-bar" id="tProgBar" style="width:${grupo.progreso}%"></div></div>`;
+    <div class="run-appbar">
+      <button type="button" class="run-back" onclick="${backCall}" title="Volver" aria-label="Volver">
+        <i class="bi bi-arrow-left"></i>
+      </button>
+      <div class="run-t">
+        <b>${_escapeHtml(eq.nombre || ('Equipo #' + mid))} · ${_escapeHtml(grupo.plantilla_nombre)}</b>
+        <span>${eq.serie ? 'S/N ' + _escapeHtml(eq.serie) + ' · ' : ''}${_escapeHtml(typeof VISITA_NUMERO_OT !== 'undefined' ? VISITA_NUMERO_OT : '')}</span>
+      </div>
+      <span class="run-chip" id="runChip"><span class="sdot"></span><span id="runChipTxt">—</span></span>
+    </div>
+    <div class="run-head">
+      <div class="run-segbar" id="tSegbar"></div>
+      <div class="run-meta">
+        <span class="big"><span id="tProg">${grupo.completas}</span>/${grupo.total}</span>
+        <span id="tReq">—</span>
+      </div>
+    </div>`;
 
   const cont = document.getElementById('tareasList');
   const bloqueada = (grupo.bloqueado || VISITA_ESTADO === 'pendiente_aprobacion' || VISITA_ESTADO === 'cerrada' || !PUEDE_EJECUTAR_FLAG);
@@ -871,6 +898,108 @@ function renderTareas(mid, pid){
   // que el carril se lea como un recorrido, no una lista plana.
   const idxSiguiente = grupo.tareas.findIndex(t => !t.completada);
   cont.innerHTML = grupo.tareas.map((t, i) => renderTareaHtml(t, bloqueada, mid, pid, i, i === idxSiguiente)).join('');
+  _runHeadSync(grupo);
+}
+
+// ════════════════════════════════════════════════════════
+//  2026-08-13 (maqueta Fable) — helpers del lenguaje SEMÁFORO
+//  El color de cada tarea/segmento sale del DATO REAL:
+//    · pendiente  → gris
+//    · completada → verde
+//    · completada tipo 'verificacion' con valor alerta/falla → ámbar/rojo
+// ════════════════════════════════════════════════════════
+function _tareaSemaforo(t){
+  if (!t || !t.completada) return '';
+  const tipo = String(t.tipo_respuesta || '').trim().toLowerCase();
+  if (tipo === 'verificacion'){
+    let v = {};
+    try { v = t.valor_json ? (typeof t.valor_json === 'string' ? JSON.parse(t.valor_json) : t.valor_json) : {}; } catch(e){ v = {}; }
+    if (v && v.valor === 'falla') return 'fail';
+    if (v && v.valor === 'alerta') return 'warn';
+  }
+  return 'ok';
+}
+
+// Icono del "knob" (círculo derecho de cada fila) según el tipo de
+// respuesta — como en la maqueta: cámara para foto, teclado para dato,
+// pin para GPS… y check cuando está completada.
+const _KNOB_ICONS = {
+  texto: 'bi-keyboard', numero: 'bi-123', foto: 'bi-camera-fill',
+  gps: 'bi-geo-alt-fill', lista: 'bi-list-ul', fecha_hora: 'bi-calendar3',
+  sino: 'bi-hand-thumbs-up', verificacion: 'bi-shield-check',
+};
+function _knobIconHtml(t){
+  if (t && t.completada){
+    const sem = _tareaSemaforo(t);
+    if (sem === 'warn' || sem === 'fail') return '<i class="bi bi-exclamation-triangle-fill"></i>';
+    return '<i class="bi bi-check-lg"></i>';
+  }
+  const tipo = String((t && t.tipo_respuesta) || 'check').trim().toLowerCase() || 'check';
+  const ic = _KNOB_ICONS[tipo];
+  return ic ? `<i class="bi ${ic}"></i>` : '';
+}
+
+// Peor estado del grupo (para el chip agregado del appbar del runner).
+function _grupoWorst(grupo){
+  let worst = null;
+  (grupo.tareas || []).forEach(t => {
+    const s = _tareaSemaforo(t);
+    if (s === 'fail') worst = 'fail';
+    else if (s === 'warn' && worst !== 'fail') worst = 'warn';
+  });
+  if (worst) return worst;
+  if (grupo.total > 0 && grupo.completas >= grupo.total) return 'ok';
+  return (grupo.completas > 0) ? 'curso' : null;
+}
+
+// Pinta la cabecera del runner: barra segmentada + contadores + chip.
+// La llama renderTareas() al entrar y _updateProgress() en cada cambio.
+function _runHeadSync(grupo){
+  if (!grupo) return;
+  const seg = document.getElementById('tSegbar');
+  if (seg){
+    seg.innerHTML = (grupo.tareas || []).map(t => `<i class="${_tareaSemaforo(t)}"></i>`).join('');
+  }
+  const tProg = document.getElementById('tProg');
+  if (tProg) tProg.textContent = grupo.completas;
+  const req = document.getElementById('tReq');
+  if (req){
+    const pendObl = (grupo.tareas || []).filter(t => t.obligatoria && !t.completada).length;
+    if (pendObl > 0){
+      req.textContent = `${pendObl} obligatoria${pendObl === 1 ? '' : 's'} pendiente${pendObl === 1 ? '' : 's'}`;
+      req.style.color = '#b45309';
+    } else {
+      req.textContent = 'obligatorias completas ✓';
+      req.style.color = '#15803d';
+    }
+  }
+  const chip = document.getElementById('runChip');
+  if (chip){
+    const w = _grupoWorst(grupo);
+    chip.className = 'run-chip' + (w ? ' ' + w : '');
+    const txt = document.getElementById('runChipTxt');
+    if (txt) txt.textContent = ({fail: 'Falla', warn: 'Obs.', ok: 'OK', curso: 'En curso'})[w] || '—';
+  }
+}
+
+// Barra segmentada al pie de la tarjeta de cada equipo (vista 1) — el
+// "eqbar" de la maqueta: 1 segmento = 1 tarea, coloreado por su semáforo.
+// Si el equipo no tiene checklist, se deja la barra continua de siempre.
+function _eqBarRender(mid){
+  const midStr = String(mid);
+  const wrap = document.getElementById(`eqbar-${midStr}`);
+  if (!wrap) return;
+  const pls = PLANTILLAS_POR_MAQUINA[midStr] || [];
+  const segs = [];
+  pls.forEach(p => (p.tareas || []).forEach(t => segs.push(_tareaSemaforo(t))));
+  if (!segs.length) return;
+  wrap.classList.add('eqbar-seg');
+  wrap.innerHTML = segs.map(s => `<i class="${s}"></i>`).join('');
+}
+function _eqBarsInit(){
+  try {
+    (typeof EQUIPOS !== 'undefined' ? (EQUIPOS || []) : []).forEach(eq => _eqBarRender(eq.id));
+  } catch(e){ /* sin equipos clásicos (levantamiento puro) */ }
 }
 
 function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
@@ -1132,14 +1261,18 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
   // ya hecha — no tiene sentido apuntar "siguiente" a algo inactivo).
   const nextClass = (esSiguiente && !done && !bloqueada) ? ' next' : '';
   const tno = (typeof index === 'number') ? String(index + 1).padStart(2, '0') : '';
+  // 2026-08-13 (maqueta Fable) — semáforo real de la tarea: una verificación
+  // completada con alerta/falla pinta la fila (borde y knob) ámbar/rojo.
+  const _sem = _tareaSemaforo(t);
+  const semClass = (_sem === 'warn') ? ' sem-warn' : (_sem === 'fail') ? ' sem-fail' : '';
 
-  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${lockClass}"
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}"
        id="tar-${t.id}" data-version="${t.version || 0}">
     <div class="ttl">
       ${tno ? `<span class="tno">${tno}</span>` : ''}
       <div class="ttl-chk" ${isCheckType && !bloqueada ? `onclick="toggleCheck(${t.id}, ${mid}, ${pid})"` : ''}
         style="${isCheckType && !bloqueada ? 'cursor:pointer' : 'cursor:default'}">
-        ${done ? '<i class="bi bi-check-lg"></i>' : ''}
+        ${_knobIconHtml(t)}
       </div>
       <div class="ttl-info">
         <div class="ttl-text">${_escapeHtml(t.titulo)}
@@ -2996,20 +3129,25 @@ function _updateProgress(mid, pid){
   // El técnico corrige hasta la firma del CLIENTE (sello real = estado + permisos).
   grupo.bloqueado = false;
 
-  // Update vista 3 si está activa
-  const tProg = document.getElementById('tProg');
+  // Update vista 3 si está activa — 2026-08-13 (maqueta Fable): la cabecera
+  // del runner (barra segmentada + contador + chip) se sincroniza completa.
+  // #tProg/#tProgBar quedan cubiertos por _runHeadSync (guards internos).
+  _runHeadSync(grupo);
   const tProgBar = document.getElementById('tProgBar');
-  if (tProg) tProg.textContent = grupo.completas;
   if (tProgBar) tProgBar.style.width = grupo.progreso + '%';
 
-  // Marcar tarea como done visualmente
+  // Marcar tarea como done visualmente (+ semáforo real: una verificación
+  // con alerta/falla pinta la fila ámbar/rojo, no verde).
   document.querySelectorAll('.tx-tarea').forEach(el => {
     const tid = parseInt(el.id.replace('tar-', ''));
     const t = grupo.tareas.find(x => x.id === tid);
     if (t){
       el.classList.toggle('done', !!t.completada);
+      const _sem = _tareaSemaforo(t);
+      el.classList.toggle('sem-warn', _sem === 'warn');
+      el.classList.toggle('sem-fail', _sem === 'fail');
       const chk = el.querySelector('.ttl-chk');
-      if (chk) chk.innerHTML = t.completada ? '<i class="bi bi-check-lg"></i>' : '';
+      if (chk) chk.innerHTML = _knobIconHtml(t);
     }
   });
 
@@ -3037,6 +3175,9 @@ function _updateProgress(mid, pid){
     bloqueada: (compM === totM && totM > 0),
     n_plantillas: pls.length,
   };
+  // 2026-08-13 (maqueta Fable): refrescar la barra segmentada de la tarjeta
+  // del equipo en la vista 1 para que refleje el avance recién guardado.
+  _eqBarRender(mid);
 
   // Update stats globales
   // 2026-05-18 (Mejora UX firma): además de total/completas globales, sacamos
@@ -3274,7 +3415,7 @@ function actualizarLockFirmar(ctxOrTotal, completas){
       btn.disabled = true;
       btn.dataset.locked = '1';
       btn.innerHTML = '<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Agrega al menos 1 equipo</span>';
-      btn.style.background = '#cbd5e1';
+      btn.style.background = '#f1f5f9'; /* 2026-08-13 maqueta Fable: bloqueado = "ghost" claro, no slab gris */
       if (hint){
         hint.innerHTML = 'Agrega al menos 1 equipo descubierto en terreno antes de firmar.';
         hint.style.color = '#94a3b8';
@@ -3303,7 +3444,7 @@ function actualizarLockFirmar(ctxOrTotal, completas){
     btn.disabled = true;
     btn.dataset.locked = '1';
     btn.innerHTML = '<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Sin tareas asignadas</span>';
-    btn.style.background = '#cbd5e1';
+    btn.style.background = '#f1f5f9'; /* 2026-08-13 maqueta Fable: bloqueado = "ghost" claro, no slab gris */
     if (hint){
       hint.innerHTML = 'La OT no tiene tareas. Pide al administrador que revise el levantamiento.';
       hint.style.color = '#94a3b8';
@@ -3336,7 +3477,7 @@ function actualizarLockFirmar(ctxOrTotal, completas){
     const falta = oblTot - oblComp;
     btn.innerHTML = `<i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">` +
       `Faltan ${falta} tarea${falta>1?'s':''} obligatoria${falta>1?'s':''} (${oblComp}/${oblTot})</span>`;
-    btn.style.background = '#cbd5e1';
+    btn.style.background = '#f1f5f9'; /* 2026-08-13 maqueta Fable: bloqueado = "ghost" claro, no slab gris */
     if (hint){
       hint.innerHTML = `Completa las tareas obligatorias para habilitar la firma. ${hintCounters}`;
       hint.style.color = '#b45309';
@@ -3373,6 +3514,8 @@ function actualizarLockFirmar(ctxOrTotal, completas){
 document.addEventListener('DOMContentLoaded', () => {
   // 2026-05-18 (Mejora UX firma): incluir contadores de obligatorias
   actualizarLockFirmar(_calcCtxGlobal());
+  // 2026-08-13 (maqueta Fable): barras segmentadas en las tarjetas de equipo
+  _eqBarsInit();
   // Cargar lista de adjuntos en la pestaña Información (read-only)
   cargarAdjuntos();
   // Drag&drop sobre el uploader (no-op si no existe el uploader — técnico)
