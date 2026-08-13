@@ -6131,9 +6131,11 @@ function levdAbrir(prefill, editId){
   _levdModal.show();
   if (typeof levdRefreshStepStates === 'function') levdRefreshStepStates();
   // Nunca abrir la cámara automáticamente al editar — solo al crear "de cero".
-  // 2026-08-08: dispara el input sin capture (mismo que el botón único de fotos)
-  // para que el selector nativo ofrezca cámara + galería juntos.
-  if (!prefill && !editId) setTimeout(() => { try { _levdEl('levdFotoInputGaleria').click(); } catch(_e){} }, 450);
+  // 2026-08-13: dispara el input CON capture (levdFotoInput) -- equipo recién
+  // descubierto en terreno, lo natural es fotografiarlo ahí mismo. Antes
+  // disparaba el input sin capture (levdFotoInputGaleria); mismo motivo que
+  // el fix de _levdRenderFotos() de arriba.
+  if (!prefill && !editId) setTimeout(() => { try { _levdEl('levdFotoInput').click(); } catch(_e){} }, 450);
 }
 
 function levdDuplicar(){
@@ -6239,14 +6241,21 @@ function _levdComprimir(file){
 function _levdRenderFotos(){
   const wrap = _levdEl('levdFotos');
   // 2026-08-08 (Daniel: "el botón de tomar foto y el de elegir de la galería
-  // debería estar resumido y no en dos objetos diferentes"): un solo tile.
-  // Dispara el input SIN capture (levdFotoInputGaleria) -- sin el atributo
-  // capture, el selector nativo del teléfono ya ofrece "Cámara" y
-  // "Galería" juntos, así que un solo botón cubre ambos casos sin
-  // reintroducir el bug de Heiser (capture=environment bloqueaba la
-  // galería en su Android). El input con capture (levdFotoInput) se deja
-  // en el DOM por si se necesita en el futuro, pero ya no tiene botón propio.
-  const addBtn = '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInputGaleria\').click()" title="Agregar foto"><i class="bi bi-camera-fill"></i></button>';
+  // debería estar resumido y no en dos objetos diferentes"): se consolidó en
+  // un solo tile, apostando a que el selector nativo del teléfono ofrece
+  // "Cámara" y "Galería" juntos sin el atributo capture.
+  // 2026-08-13 (Daniel, en vivo -- OT 50): un técnico reportó que ese tile
+  // único lo mandaba directo a la galería, sin opción de cámara -- el
+  // supuesto de arriba no se cumple en todos los teléfonos/navegadores
+  // Android (mismo tipo de inconsistencia que ya se documentó para el bug
+  // de Heiser, pero en la dirección contraria). Se vuelve a DOS tiles
+  // explícitos -- mismo patrón ya aprobado en Repuestos
+  // (_repuestos_bodega_pane.html, "Tomar foto" + "Elegir fotos ya
+  // tomadas"): cada botón dispara SIEMPRE lo que dice, sin depender de que
+  // el navegador arme bien el selector combinado.
+  const addBtn =
+    '<button type="button" class="levd-foto-add" onclick="document.getElementById(\'levdFotoInput\').click()" title="Tomar foto"><i class="bi bi-camera-fill"></i></button>'
+    + '<button type="button" class="levd-foto-add-alt" onclick="document.getElementById(\'levdFotoInputGaleria\').click()" title="Elegir de la galería"><i class="bi bi-images"></i></button>';
   // 2026-07-06: en modo edición, primero las fotos YA subidas (borrado real
   // vía DELETE al servidor), luego las nuevas pendientes (solo en memoria).
   const existentesHtml = _levdFotosExistentes.map((f, i) =>
