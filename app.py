@@ -87092,15 +87092,24 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
       1. Selección explícita del Paso 5 -- solo cuenta si de verdad tiene
          ítems (una plantilla recién creada y vacía NO cuenta -- fix
          2026-08-13).
-      2. Plantilla estándar/por-clasificación del tipo -- SIEMPRE se
-         aplica, la explícita es ADICIONAL, nunca reemplazo (fix
-         2026-08-13; antes se saltaba si venía selección explícita).
+      2. Plantilla estándar/por-clasificación del tipo -- se aplica para
+         cada equipo que NO tenga una selección explícita válida (fix
+         2026-08-13 #2, Daniel en vivo: "debe predominar SOLAMENTE la
+         plantilla que selecciona el usuario en el modal" -- el intento
+         anterior la dejaba aditiva para no volver a dejar OTs sin
+         checklist, pero terminaba sumando UN SEGUNDO checklist encima del
+         que el usuario sí eligió a mano para ese equipo puntual). Un
+         equipo con selección explícita vacía (sin ítems) SIGUE cayendo
+         acá -- la protección original no se pierde, solo se vuelve
+         exclusiva por equipo en vez de "siempre todos".
          Nunca adivina con el checklist de otra máquina (fix 2026-08-13,
          _plantilla_estandar_para_tipo ya solo mira su lista explícita de
          genéricas reales).
       3. Extra por equipo (maquina_id real) y por ticket_equipo (equipo
-         sin ficha) -- suman encima, deduplicado por
-         (visita_id, plantilla_id, maquina_id).
+         sin ficha) -- deduplicado por (visita_id, plantilla_id,
+         maquina_id). Para equipos SIN selección explícita esto no agrega
+         nada (plantillas_por_equipo no trae esa key); para los que SÍ
+         tienen, es lo único que se les aplica (paso 2 ya los excluyó).
       4. Equipos sin ficha que no recibieron ninguna plantilla extra:
          tarea genérica "📋 {tipo}: {nombre}".
       5. Red de seguridad final: si tras todo lo anterior no se creó
@@ -87110,35 +87119,47 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
     items_plantilla = 0
 
     # 1) Validar que las plantillas explícitas (Paso 5) de verdad tengan
-    #    ítems -- si no, no cuentan para decidir si "ya hay checklist".
+    #    ítems -- si no, no cuentan para decidir si "ya hay checklist" NI
+    #    para excluir al equipo del paso 2 (fix 2026-08-13 #2: el chequeo
+    #    pasa a ser por plantilla_id individual, no solo agregado, porque
+    #    el paso 2 necesita saber CUÁL equipo tiene una selección válida).
     ids_explicitas = sorted({
         pid for pids in list(plantillas_por_equipo.values())
         + list(plantillas_por_ticket_equipo.values())
         for pid in pids
     })
-    explicitas_con_items = False
+    pids_con_items = set()
     if ids_explicitas:
         try:
             ph = ",".join(["%s"] * len(ids_explicitas))
-            row = mysql_fetchone(
-                f"SELECT COUNT(*) AS n FROM mant_tarea_plantilla_items "
-                f" WHERE plantilla_id IN ({ph})",
-                tuple(ids_explicitas))
-            explicitas_con_items = bool((row or {}).get("n") or 0)
+            rows_ci = mysql_fetchall(
+                f"SELECT plantilla_id, COUNT(*) AS n FROM mant_tarea_plantilla_items "
+                f" WHERE plantilla_id IN ({ph}) GROUP BY plantilla_id",
+                tuple(ids_explicitas)) or []
+            pids_con_items = {r["plantilla_id"] for r in rows_ci if int(r.get("n") or 0) > 0}
         except Exception as e:
             print(f"[lev_crear] validar items de plantillas explícitas falló: {e}", flush=True)
-        if not explicitas_con_items:
-            print(f"[lev_crear] plantillas explícitas {ids_explicitas} NO tienen "
-                  f"items -- se ignoran para el pre-chequeo, la estándar del tipo "
-                  f"cubre la OT.", flush=True)
+        vacias = [pid for pid in ids_explicitas if pid not in pids_con_items]
+        if vacias:
+            print(f"[lev_crear] plantillas explícitas {vacias} NO tienen items "
+                  f"-- se ignoran, el equipo cae a la estándar/por-clasificación.", flush=True)
+    explicitas_con_items = bool(pids_con_items)
 
-    # 2) Resolver plantilla estándar/por-clasificación por equipo CON
-    #    ficha -- SIEMPRE, sin importar si hay selección explícita.
+    # Equipos (maquina_id real) con AL MENOS una selección explícita VÁLIDA
+    # -- se excluyen del paso 2: para ellos manda solo lo que el usuario
+    # eligió (paso 3 más abajo), no se les suma la estándar/por-clasificación.
+    mids_con_seleccion_valida = {
+        mid for mid, pids in plantillas_por_equipo.items()
+        if any(pid in pids_con_items for pid in pids)
+    }
+
+    # 2) Resolver plantilla estándar/por-clasificación SOLO para equipos
+    #    CON ficha que el usuario NO seleccionó a mano (ver arriba).
     resolucion_por_equipo = {}
     try:
         if plantilla_id_override:
             for mm in maquinas:
-                if mm.get("id"):
+                if mm.get("id") and mm["id"] not in mids_con_seleccion_valida:
                     resolucion_por_equipo[mm["id"]] = plantilla_id_override
         else:
             fallback_cache = {"val": None, "computed": False}
@@ -87149,7 +87170,7 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
                 return fallback_cache["val"]
             for mm in maquinas:
                 mid = mm.get("id")
-                if not mid:
+                if not mid or mid in mids_con_seleccion_valida:
                     continue
                 plant_id = None
                 try:
@@ -87166,11 +87187,14 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
 
     # 3) Aplicar la estándar/por-clasificación, agrupada por plantilla_id
     #    (un mismo tipo de OT con una trotadora y una bicicleta aplica DOS
-    #    checklists distintos, no uno elegido a ciegas).
+    #    checklists distintos, no uno elegido a ciegas). Los equipos con
+    #    selección explícita válida (mids_con_seleccion_valida) NUNCA
+    #    entran acá -- ni siquiera vía "faltantes".
     if visita_id and equipo_ids:
         try:
             resolucion = dict(resolucion_por_equipo)
-            faltantes = [mid for mid in equipo_ids if mid not in resolucion]
+            faltantes = [mid for mid in equipo_ids
+                         if mid not in resolucion and mid not in mids_con_seleccion_valida]
             if faltantes:
                 plant_fallback = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
                 for mid in faltantes:
@@ -87193,7 +87217,9 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
         except Exception as e:
             print(f"[lev_crear] aplicar plantilla estándar falló: {e}", flush=True)
 
-    # 4) Extra por equipo CON ficha (maquina_id real).
+    # 4) Extra por equipo CON ficha (maquina_id real) -- para los mids en
+    #    mids_con_seleccion_valida, esto es la ÚNICA plantilla que reciben
+    #    (paso 2 ya los excluyó de la estándar/por-clasificación).
     if visita_id and plantillas_por_equipo:
         try:
             for mid, pids in plantillas_por_equipo.items():
@@ -87201,7 +87227,10 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
                     continue
                 for pid in pids:
                     try:
-                        items_plantilla += _ot_aplicar_plantilla_a_equipos(visita_id, tarea_tipo, pid, [mid])
+                        n_extra = _ot_aplicar_plantilla_a_equipos(visita_id, tarea_tipo, pid, [mid])
+                        items_plantilla += n_extra
+                        print(f"[lev_crear] plantilla explícita {pid} (equipo {mid}) "
+                              f"→ {n_extra} tarea(s)", flush=True)
                     except Exception as e:
                         print(f"[lev_crear] plantilla extra {pid} para mid {mid} falló: {e}", flush=True)
         except Exception as e:
