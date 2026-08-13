@@ -1173,6 +1173,7 @@
               data-sku="{{ m.sku or '' }}"
               data-serie="{{ m.serie or '' }}"
               data-cantidad="{{ m.cantidad or 1 }}"
+              data-notas="{{ m.notas or '' }}"
               data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}"
               {% if _es_baja %}style="display:none;opacity:.55;background:#f8f8f8" class="eq-row-baja"{% endif %}>
             <td style="text-align:center;vertical-align:middle">
@@ -5482,6 +5483,17 @@ window.__FICHA_DATA = {
   cid: {{ cliente.id }},
   cliente_direccion: {{ (cliente.direccion or '') | tojson }},
   cliente_comuna: {{ (cliente.comuna or '') | tojson }},
+  {# 2026-08-12 (calidad de datos, origen "Cliente existente" del modal
+     "Generar OT"): la ficha ya guarda lat/lng/place_id de Google Places
+     (validados al crear/editar el cliente). Antes no viajaban a
+     __FICHA_DATA y el modal solo prellenaba el TEXTO de la dirección --
+     _ot_destino_coords (app.py) ya hace fallback a mant_clientes cuando
+     mant_visitas.direccion_lat es NULL, así que la geocerca no se rompía,
+     pero la visita quedaba sin sus propias coordenadas guardadas. Aditivo,
+     no reemplaza nada -- REGLA #4.2. #}
+  cliente_direccion_lat: {{ cliente.direccion_lat if cliente.direccion_lat is not none else 'null' }},
+  cliente_direccion_lng: {{ cliente.direccion_lng if cliente.direccion_lng is not none else 'null' }},
+  cliente_direccion_place_id: {{ (cliente.direccion_place_id or '') | tojson }},
   cliente_rut: {{ (cliente.rut or '') | tojson }},
   cliente_razon_social: {{ (cliente.razon_social or '') | tojson }},
   cliente_contacto_email: {{ (cliente.contacto_email or '')|tojson }},

@@ -2434,16 +2434,24 @@ def _google_geocode_region_comuna(direccion, comuna_hint=""):
     Google, para separarlo"). Same criterio de tipos que usa
     ilusPlacesAutocomplete en static/ilus_ui.js (fields address_components).
 
-    Devuelve dict {"region": str, "comuna": str} — ambos "" si no se pudo
-    resolver o GOOGLE_MAPS_API_KEY no esta configurada. Nunca lanza
-    (fail-open: no debe bloquear la creacion del ticket)."""
+    Devuelve dict {"region": str, "comuna": str, "lat": float|None,
+    "lng": float|None, "place_id": str|None} — la Geocoding API ya trae
+    "geometry.location" (lat/lng) y "place_id" en la MISMA respuesta que
+    usábamos solo para region/comuna (2026-08-12: antes se descartaban --
+    "toda dirección se valida con Google Places, sin excepción" aplica
+    también a los tickets creados server-side desde un documento ERP, que
+    hasta ahora quedaban con direccion_lat/lng vacíos porque no pasan por
+    el navegador). region/comuna quedan "" y lat/lng/place_id quedan None
+    si no se pudo resolver o GOOGLE_MAPS_API_KEY no esta configurada. Nunca
+    lanza (fail-open: no debe bloquear la creacion del ticket)."""
+    _vacio = {"region": "", "comuna": "", "lat": None, "lng": None, "place_id": None}
     if not GOOGLE_MAPS_API_KEY:
-        return {"region": "", "comuna": ""}
+        return dict(_vacio)
     address = ", ".join([x for x in [
         (direccion or "").strip(), (comuna_hint or "").strip(), "Chile",
     ] if x])
     if not address.strip():
-        return {"region": "", "comuna": ""}
+        return dict(_vacio)
     try:
         import requests as _req
         resp = _req.get(
@@ -2454,17 +2462,25 @@ def _google_geocode_region_comuna(direccion, comuna_hint=""):
         )
         results = (resp.json() or {}).get("results") or []
         if not results:
-            return {"region": "", "comuna": ""}
-        comps = results[0].get("address_components") or []
+            return dict(_vacio)
+        primero = results[0]
+        comps = primero.get("address_components") or []
         region = next((c["long_name"] for c in comps
                        if "administrative_area_level_1" in (c.get("types") or [])), "")
         comuna = next((c["long_name"] for c in comps
                        if "locality" in (c.get("types") or [])
                        or "administrative_area_level_3" in (c.get("types") or [])), "")
-        return {"region": region, "comuna": comuna}
+        loc = ((primero.get("geometry") or {}).get("location")) or {}
+        lat = loc.get("lat")
+        lng = loc.get("lng")
+        place_id = primero.get("place_id") or None
+        return {"region": region, "comuna": comuna,
+                "lat": float(lat) if lat is not None else None,
+                "lng": float(lng) if lng is not None else None,
+                "place_id": place_id}
     except Exception as e:
         print(f"[geocode_region_comuna] {e}", flush=True)
-        return {"region": "", "comuna": ""}
+        return dict(_vacio)
 
 
 # ── INSTRUMENTACIÓN SQL 2026-05-26 (Daniel — audit runtime) ──────────

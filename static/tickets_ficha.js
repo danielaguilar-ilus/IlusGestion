@@ -892,7 +892,21 @@ async function cargar(){
   // Equipos — tabla "eq-table" (mismo lenguaje visual que Mantenciones):
   // Icono | Equipo(+notas/+N unidades) | SKU/Código | Serie | Tipo | Fecha Emisión | Garantía | Acción
   const le = document.getElementById('listaEquipos');
-  equiposCache = d.equipos || [];
+  // FIX 2026-08-12 (calidad de datos, origen "Factura o boleta"/Ticket
+  // desde ERP): `erp_kopr` es el código que llega SOLO desde un documento
+  // ERP (tk_api_crear_desde_documento / equipos-desde-documento); `sku` es
+  // una columna aparte que solo se llena si alguien la tipeó a mano en el
+  // form web de Tickets. Sin este fallback, un equipo declarado desde un
+  // documento ERP mostraba SKU vacío en el Paso 5 del modal "Generar OT" y
+  // llegaba SIN sku al payload `equipos_ticket` que arma la ficha real del
+  // equipo (_mant_lev_crear_ot_core, app.py) -- se perdía el SKU al
+  // promover el equipo a mant_maquinas. Se normaliza una sola vez acá para
+  // que TODO lo que lea equiposCache (tabla de esta ficha, modal "Generar
+  // OT", modal de garantía) reciba el mismo dato completo.
+  equiposCache = (d.equipos || []).map(function(eq){
+    if (!eq.sku && eq.erp_kopr) eq.sku = eq.erp_kopr;
+    return eq;
+  });
   renderGarantiaAlerta(t, equiposCache);
   if(d.equipos.length){
     le.innerHTML = '<div class="table-responsive"><table class="eq-table" id="tkEqTabla"><thead><tr>'
@@ -4351,6 +4365,14 @@ function _tkotLeerEquiposDesdeDOM(){
       sku: tr.dataset.sku || '',
       serie: tr.dataset.serie || '',
       aplica: tr.dataset.aplica !== '0',
+      // 2026-08-12 (calidad de datos, origen "Cliente existente"): la fila
+      // de la ficha ya trae la nota/observación del equipo (m.notas, ver
+      // templates/mantenciones/ficha.html) -- antes no viajaba al modal
+      // "Generar OT" (solo el modo ticket mostraba e.notas en el Paso 5,
+      // porque tk_ticket_equipos sí la exponía). Se lee del nuevo
+      // data-notas para que el Paso 5 muestre lo mismo sin importar el
+      // origen de la OT.
+      notas: tr.dataset.notas || '',
     };
   });
 }
@@ -4856,6 +4878,14 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   // abrirLevantamientoSelector() en el modal viejo) -- editable de todas
   // formas, Google Maps valida al elegir una sugerencia.
   const dirInput = document.getElementById('levDireccion');
+  // 2026-08-12: limpia lat/lng/placeId de una apertura anterior del modal
+  // ANTES de branchear -- sin esto, si el ticket/cliente actual no trae
+  // coordenadas, el dataset se quedaba con las del ticket/cliente anterior
+  // (el input es el mismo nodo DOM entre una apertura y otra). Cada rama de
+  // abajo las vuelve a poner si corresponde.
+  delete dirInput.dataset.lat;
+  delete dirInput.dataset.lng;
+  delete dirInput.dataset.placeId;
   if (_TKOT_MODO_CLIENTE){
     const _dirCliente = DATA.cliente_direccion || '';
     const _comunaCliente = DATA.cliente_comuna || '';
@@ -4864,6 +4894,15 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
       _dirCompleta = (_dirCompleta ? _dirCompleta + ', ' : '') + _comunaCliente;
     }
     dirInput.value = _dirCompleta || '';
+    // 2026-08-12 (calidad de datos, origen "Cliente existente"): la ficha
+    // ya tiene lat/lng/place_id verificados por Google Places (misma
+    // dirección que se acaba de armar arriba) -- se prellenan para que la
+    // visita quede con SUS PROPIAS coordenadas guardadas en vez de depender
+    // solo del fallback a mant_clientes que hace _ot_destino_coords
+    // (app.py) para la geocerca.
+    if (DATA.cliente_direccion_lat != null) dirInput.dataset.lat = DATA.cliente_direccion_lat;
+    if (DATA.cliente_direccion_lng != null) dirInput.dataset.lng = DATA.cliente_direccion_lng;
+    if (DATA.cliente_direccion_place_id) dirInput.dataset.placeId = DATA.cliente_direccion_place_id;
   } else {
     const t0 = ticketActual || {};
     dirInput.value = t0.direccion || '';
@@ -4949,14 +4988,21 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   _tkotMostrarRefCotizacion();
 });
 
-// ── Referencia de solo lectura: si esta OT nace de una cotización
-//    (?cotizacion_id= en la URL, puesto por el selector de origen de
-//    /mantenciones/ots), muestra sus ítems para que quien arma el Paso 5
-//    sepa qué equipos marcar -- NO los auto-selecciona (los SKU de una
-//    cotización no siempre calzan 1:1 con un mant_maquinas.id real del
-//    cliente, y una asociación automática equivocada es peor que pedirle
-//    a la persona que elija a mano con el contexto a la vista). Falla en
-//    silencio: es un adorno informativo, nunca debe bloquear el modal. ──
+// ── Referencia de la cotización + PRESELECCIÓN por SKU exacto (2026-08-12,
+//    pedido de Daniel: "si el SKU cruza limpio con un equipo real de la
+//    ficha, se preseleccione solo"). Sigue siendo de solo lectura para los
+//    ítems que NO calzan -- los SKU de una cotización no siempre tienen un
+//    mant_maquinas.id real del cliente detrás, y una asociación automática
+//    equivocada es peor que pedirle a la persona que elija a mano. Por eso
+//    el auto-check exige una coincidencia EXACTA de SKU (normalizado) Y que
+//    el equipo ya tenga maquina_id (equipo real de la ficha, no uno "sin
+//    ficha aún" declarado solo en un ticket) -- nunca ambigua: si el mismo
+//    SKU aparece en más de un equipo de la lista, no se autoselecciona
+//    ninguno (mismo criterio conservador que ya usaba este bloque). Falla
+//    en silencio: es un complemento informativo, nunca debe bloquear el
+//    modal. ──
+function _tkotNormSku(s){ return String(s || '').trim().toUpperCase(); }
+
 async function _tkotMostrarRefCotizacion(){
   const box = document.getElementById('otCotizacionRef');
   if (!box) return;
@@ -4971,14 +5017,52 @@ async function _tkotMostrarRefCotizacion(){
     const d = await r.json();
     if (!d || !d.ok || !d.cotizacion) return;
     const items = (d.items || []).slice(0, 12);
+
+    // Mapa SKU normalizado -> equipos reales de la ficha (maquina_id) que
+    // lo tienen. Si hay más de un equipo con el mismo SKU, se deja fuera
+    // (ambiguo) -- no se adivina cuál de los dos es.
+    const eqPorSku = {};
+    (equiposCache || []).forEach(function(e){
+      if (!e.maquina_id || !e.sku) return;
+      const k = _tkotNormSku(e.sku);
+      if (!eqPorSku[k]) eqPorSku[k] = [];
+      eqPorSku[k].push(e);
+    });
+
+    let nPreseleccionados = 0;
     const lista = items.map(function(it){
-      return '<li>' + (it.qty || 1) + '× ' + esc(it.nombre || it.sku || 'Ítem') + '</li>';
+      const skuNorm = it.sku ? _tkotNormSku(it.sku) : '';
+      const candidatos = skuNorm ? (eqPorSku[skuNorm] || []) : [];
+      let matchHtml = '';
+      if (candidatos.length === 1){
+        const eq = candidatos[0];
+        const key = _tkotEqKey(eq);
+        const chk = document.querySelector('.lev-eq-chk[data-key="' + key.replace(/"/g, '\\"') + '"]');
+        if (chk && !chk.checked && !chk.disabled){
+          chk.checked = true;
+          nPreseleccionados++;
+        }
+        if (chk && chk.checked){
+          matchHtml = ' <span style="color:#16a34a;font-weight:700"><i class="bi bi-check-circle-fill"></i> preseleccionado (SKU '+esc(it.sku)+')</span>';
+        }
+      }
+      return '<li>' + (it.qty || 1) + '× ' + esc(it.nombre || it.sku || 'Ítem') + matchHtml + '</li>';
     }).join('');
+
+    if (nPreseleccionados > 0){
+      tkotRecalcEqCount();
+      if (typeof tkotRefreshStepStates === 'function') tkotRefreshStepStates();
+    }
+
     box.style.cssText = 'background:#eff6ff;color:#1e3a8a;border:1px solid #93c5fd;border-radius:8px;padding:8px 10px';
     box.innerHTML = '<i class="bi bi-file-earmark-text me-1"></i>'
       + 'Referencia — cotización <strong>' + esc(d.cotizacion.numero_cotizacion || ('#' + cotId)) + '</strong>'
       + (lista ? ':<ul class="mb-0 mt-1" style="padding-left:1.1rem">' + lista + '</ul>' : ' (sin ítems).')
-      + '<div class="mt-1" style="opacity:.85">Elige en el Paso 5 los equipos que correspondan a estos productos.</div>';
+      + '<div class="mt-1" style="opacity:.85">'
+      + (nPreseleccionados > 0
+          ? nPreseleccionados + ' equipo' + (nPreseleccionados === 1 ? '' : 's') + ' con SKU exacto ya ' + (nPreseleccionados === 1 ? 'quedó marcado' : 'quedaron marcados') + ' en el Paso 5 -- revisa el resto.'
+          : 'Elige en el Paso 5 los equipos que correspondan a estos productos.')
+      + '</div>';
     box.style.display = '';
   }catch(e){ /* referencia opcional -- nunca bloquea el modal */ }
 }

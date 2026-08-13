@@ -7463,7 +7463,13 @@ def register_tickets_routes(app, ctx):
         # 2026-07-12 (Daniel): TABCM (comuna del ERP) no trae Region -- se
         # resuelve por Google Geocoding server-side (creacion via ERP no
         # pasa por el navegador). Fail-open: "" si Google no responde.
-        _geo_erp = {"region": ""}
+        # 2026-08-12: la MISMA respuesta de Geocoding ya trae lat/lng/
+        # place_id (antes se descartaban) -- se guardan también, así la
+        # dirección que llega al modal "Generar OT" viene ya verificada
+        # por Google (mismo estándar que una dirección tipeada a mano con
+        # el autocomplete, ver REGLA "Direcciones Google Places" del
+        # proyecto) en vez de solo texto crudo del ERP.
+        _geo_erp = {"region": "", "lat": None, "lng": None, "place_id": None}
         try:
             if _google_geocode_region_comuna:
                 _geo_erp = _google_geocode_region_comuna(
@@ -7477,13 +7483,16 @@ def register_tickets_routes(app, ctx):
                 cur.execute(
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, email, phone, "
-                    " direccion, comuna_nombre, region_nombre, numero_documento, asignado_a, created_by) "
-                    "VALUES ('erp','open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " direccion, direccion_lat, direccion_lng, direccion_place_id, "
+                    " comuna_nombre, region_nombre, numero_documento, asignado_a, created_by) "
+                    "VALUES ('erp','open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (tipo, prio, (d.get("descripcion") or "").strip()[:5000] or None,
                      rut, (primero.get("cliente_nombre") or "")[:150] or None,
                      (primero.get("email") or "")[:150] or None,
                      (primero.get("telefono") or "")[:20] or None,
                      (primero.get("direccion") or "")[:255] or None,
+                     _geo_erp.get("lat"), _geo_erp.get("lng"),
+                     (_geo_erp.get("place_id") or "")[:200] or None,
                      (primero.get("comuna") or "")[:120] or None,
                      (_geo_erp.get("region") or "")[:120] or None,
                      ", ".join(f"{x['tido']}-{x['nudo']}" for x in docs_ok)[:1000] or None,
@@ -7573,7 +7582,9 @@ def register_tickets_routes(app, ctx):
         rut = (hdr.get("cliente_rut") or "").strip()[:12] or None
         # 2026-07-12 (Daniel): misma resolucion de Region que en tk_desde_erp
         # -- TABCM no trae region, se resuelve por Google (fail-open).
-        _geo_zz = {"region": ""}
+        # 2026-08-12: mismo fix que tk_api_crear_desde_documento -- se
+        # guardan también lat/lng/place_id que ya trae esa respuesta.
+        _geo_zz = {"region": "", "lat": None, "lng": None, "place_id": None}
         try:
             if _google_geocode_region_comuna:
                 _geo_zz = _google_geocode_region_comuna(
@@ -7586,13 +7597,16 @@ def register_tickets_routes(app, ctx):
                 cur.execute(
                     "INSERT INTO tk_tickets "
                     "(origen, estado, tipo, prioridad, descripcion, rut, empresa, email, phone, "
-                    " direccion, comuna_nombre, region_nombre, numero_documento, created_by) "
-                    "VALUES ('erp','open','install','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " direccion, direccion_lat, direccion_lng, direccion_place_id, "
+                    " comuna_nombre, region_nombre, numero_documento, created_by) "
+                    "VALUES ('erp','open','install','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (f"Instalación detectada automáticamente desde documento ERP {tido}-{nudo}.",
                      rut, (hdr.get("cliente_nombre") or "")[:150] or None,
                      (hdr.get("email") or "")[:150] or None,
                      (hdr.get("telefono") or "")[:20] or None,
                      (hdr.get("direccion") or "")[:255] or None,
+                     _geo_zz.get("lat"), _geo_zz.get("lng"),
+                     (_geo_zz.get("place_id") or "")[:200] or None,
                      (hdr.get("comuna") or "")[:120] or None,
                      (_geo_zz.get("region") or "")[:120] or None,
                      f"{tido}-{nudo}"[:1000], user))
