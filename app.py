@@ -18003,22 +18003,31 @@ def _fedex_create_shipment(
     # Código postal de destino: primero el que viene en el recipient; si está
     # vacío o inválido, caer al mapping comuna → CP de Chile. Cadena de fallbacks:
     #   1) recipient.cod_postal (lo más confiable si vino del cliente)
-    #   2) dict hardcoded _comuna_to_postal (38 comunas grandes)
-    #   3) tabla externa _codigo_postal_chile (481 comunas, incluye CARAHUE,
-    #      TALCA, COPIAPO, comunas chicas, etc.)
+    #   2) tabla oficial _codigo_postal_chile (planilla FedEx 2025, 481 comunas)
+    #   3) dict hardcoded _comuna_to_postal (38 comunas grandes) — último recurso
     # FedEx CL rechaza el envío con "código postal no válido para el país" si no
     # llega un CP de 7 dígitos coherente con CL.
+    #
+    # 2026-08-13 (bug real, FCV 11275/Paine): estos dos pasos estaban al revés.
+    # _comuna_to_postal es un dict viejo tipeado a mano con 56 comunas; al
+    # comparar contra la planilla oficial FedEx 2025 (cl_codigos_postales.py,
+    # 481 comunas) 34 de esas 56 tienen el código MAL — incluida Paine
+    # (9680000 vs el oficial 9540000) y hasta Santiago mismo. Como este paso
+    # corría primero, el código incorrecto ganaba siempre para esas 34 comunas
+    # y la tabla oficial nunca llegaba a intervenir. FedEx rechazaba el envío
+    # con "código postal no válido para el país" porque 9680000 no es un CP
+    # real de Chile para FedEx.
     rec_postal   = _fedex_postal_cl(recipient.get("cod_postal"))
     if not rec_postal:
-        rec_postal = _fedex_postal_cl(_comuna_to_postal(rec_comuna))
-    if not rec_postal:
-        # Fallback final: tabla externa con 481 comunas (incluye CARAHUE).
         try:
             cp_ext = _codigo_postal_chile(rec_comuna)
             if cp_ext:
                 rec_postal = _fedex_postal_cl(cp_ext)
         except Exception:
             pass
+    if not rec_postal:
+        # Último recurso: dict viejo, solo si la tabla oficial no conoce la comuna.
+        rec_postal = _fedex_postal_cl(_comuna_to_postal(rec_comuna))
 
     shipper_dir = _fedex_split_address(ILUS_REMITENTE.get("bodega") or ILUS_REMITENTE["direccion"])
 
@@ -32508,7 +32517,11 @@ def tr_item_tracking_detalle(item_id):
 
     estado = row.get("estado_entrega") or "En preparación"
     meta = ESTADOS_ENTREGA_META.get(estado, {})
-    doc = f"{row.get('tido') or ''} {row.get('nudo') or ''}".strip()
+    # 2026-08-13 (Daniel, screenshot de este mismo modal: "FCV 0000011275"):
+    # este endpoint se armó antes de _doc_label (2026-08-05) y quedó con el
+    # nudo crudo del ERP (ceros a la izquierda hasta 10 dígitos). Mismo fix
+    # que ya tienen los demás call sites de "doc" en el módulo.
+    doc = _doc_label(row.get('tido'), row.get('nudo'))
 
     # Timeline de eventos ILUS (alto nivel).
     eventos_raw = mysql_fetchall("""
