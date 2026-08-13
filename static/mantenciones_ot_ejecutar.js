@@ -5443,6 +5443,45 @@ async function enviarFirmaWhatsApp(){
   }
 }
 
+// 2026-08-12 (Daniel: "que el cliente no se sienta expuesto, ¿podría enviar
+// la firma por ambos canales?") -- manda correo Y WhatsApp con el MISMO link
+// de firma en una sola pasada. Reusa el mismo patrón anti-bloqueo de popup
+// que enviarFirmaWhatsApp() (abrir la pestaña dentro del gesto de click).
+async function enviarFirmaAmbos(){
+  let tel = (typeof VISITA_CONTACTO_TEL !== 'undefined' && VISITA_CONTACTO_TEL) || '';
+  if (!tel){
+    tel = await ilusPrompt({
+      title: 'Enviar firma por ambos canales',
+      message: 'Teléfono del cliente (con o sin +56):',
+      sub: 'Se manda el mismo link de firma por WhatsApp y por correo. Si no hay teléfono, se manda solo por correo.',
+      placeholder: '+56 9 1234 5678', required: false,
+    });
+    if (tel === null) return;
+  }
+  const winRef = tel ? window.open('', '_blank') : null;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal: 'ambos', telefono: tel }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      if (winRef) winRef.close();
+      await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' });
+      return;
+    }
+    if (winRef && d.wa_link){
+      winRef.location.href = d.wa_link;
+    } else if (winRef){
+      winRef.close();
+    }
+    await ilusAlert({ title: '✅ Firma enviada', message: d.mensaje || 'Listo.', type: 'success' });
+  } catch (e){
+    if (winRef) winRef.close();
+    await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' });
+  }
+}
+
 async function enviarFirma(){
   const btn = document.getElementById('btnFirmarConfirm');
   if (_firmaStage === 'cliente'){ return _enviarFirmaCliente(btn); }

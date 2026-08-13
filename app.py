@@ -72628,7 +72628,12 @@ def mant_ot_enviar_firma_remota(vid):
         return jsonify({"ok": False, "error": "No tienes permiso para gestionar la firma de esta OT."}), 403
     d = request.get_json(silent=True) or {}
     canal = (d.get("canal") or "email").strip().lower()
-    if canal not in ("email", "whatsapp"):
+    # 2026-08-12 (Daniel: "que el cliente no se sienta expuesto, ¿podría
+    # enviar la firma por ambos canales?"): 'ambos' manda por los dos a la
+    # vez, con degradación honesta -- si falta el teléfono o el correo para
+    # UNO de los dos, se manda igual por el otro y se avisa cuál quedó
+    # afuera y por qué, en vez de fallar la petición completa.
+    if canal not in ("email", "whatsapp", "ambos"):
         canal = "email"
     email = (d.get("email") or "").strip()[:190]
     telefono_in = (d.get("telefono") or "").strip()[:40]
@@ -72646,77 +72651,113 @@ def mant_ot_enviar_firma_remota(vid):
     link = _public_base_url() + "/firmar-ot/" + token
     numero = v.get("numero_ot") or f"OT #{vid}"
     razon = v.get("razon_social") or "estimado cliente"
+    quiere_wa = canal in ("whatsapp", "ambos")
+    quiere_mail = canal in ("email", "ambos")
 
     # ── Canal WHATSAPP (deep-link wa.me, sin proveedor de pago) ──────────
-    if canal == "whatsapp":
+    wa_resultado = None   # dict con wa_link/telefono, o {"error": ...}
+    if quiere_wa:
         telefono = telefono_in or (v.get("contacto_tel") or "")
         if not telefono:
+            wa_resultado = {"error": "Falta el teléfono del cliente para generar el link de WhatsApp."}
+        else:
+            # 2026-08-12: usar validar_telefono_chileno() (no reimplementar el
+            # chequeo a mano) -- ya trae el parche para números tipo
+            # "56912345678" (código de país sin '+') que normalizar_telefono()
+            # a secas deja pasar sin el '+' y hacía fallar el match.
+            _tel_ok, tel_norm = validar_telefono_chileno(telefono)
+            if not _tel_ok:
+                wa_resultado = {"error": tel_norm}
+            else:
+                saludo = v.get("contacto_nombre") or razon
+                mensaje = (f"Hola {saludo}, el servicio técnico de tus equipos fue realizado "
+                           f"(orden {numero}). Para dejarlo conforme, revisa el detalle y firma "
+                           f"aquí (puedes hacerlo desde el celular):\n{link}\n\nEl enlace es "
+                           f"personal y vence en 5 días. — ILUS Fitness")
+                from urllib.parse import quote as _url_quote
+                wa_numero = tel_norm.lstrip("+")
+                wa_resultado = {
+                    "telefono": tel_norm,
+                    "wa_link": f"https://wa.me/{wa_numero}?text={_url_quote(mensaje)}",
+                }
+                _mant_log("visita", vid, "firma_remota_whatsapp_generada",
+                          f"Link de WhatsApp generado para {tel_norm} por {current_username()}.")
+        if canal == "whatsapp":
+            if wa_resultado.get("error"):
+                return jsonify({"ok": False, "error": wa_resultado["error"], "error_codigo": "TELEFONO_INVALIDO"}), 400
             return jsonify({
-                "ok": False,
-                "error": "Falta el teléfono del cliente. Escríbelo para generar el link de WhatsApp.",
-                "error_codigo": "TELEFONO_INVALIDO",
-            }), 400
-        # 2026-08-12: usar validar_telefono_chileno() (no reimplementar el
-        # chequeo a mano) -- ya trae el parche para números tipo
-        # "56912345678" (código de país sin '+') que normalizar_telefono()
-        # a secas deja pasar sin el '+' y hacía fallar el match.
-        _tel_ok, tel_norm = validar_telefono_chileno(telefono)
-        if not _tel_ok:
-            return jsonify({
-                "ok": False,
-                "error": tel_norm,
-                "error_codigo": "TELEFONO_INVALIDO",
-            }), 400
-        saludo = v.get("contacto_nombre") or razon
-        mensaje = (f"Hola {saludo}, el servicio técnico de tus equipos fue realizado "
-                   f"(orden {numero}). Para dejarlo conforme, revisa el detalle y firma "
-                   f"aquí (puedes hacerlo desde el celular):\n{link}\n\nEl enlace es "
-                   f"personal y vence en 5 días. — ILUS Fitness")
-        from urllib.parse import quote as _url_quote
-        wa_numero = tel_norm.lstrip("+")
-        wa_link = f"https://wa.me/{wa_numero}?text={_url_quote(mensaje)}"
-        _mant_log("visita", vid, "firma_remota_whatsapp_generada",
-                  f"Link de WhatsApp generado para {tel_norm} por {current_username()}.")
-        return jsonify({
-            "ok": True, "canal": "whatsapp", "enviado": None,
-            "telefono": tel_norm, "link": link, "wa_link": wa_link,
-            "mensaje": "Se abrirá WhatsApp con el mensaje listo — revísalo y confírmalo tú mismo.",
-        })
+                "ok": True, "canal": "whatsapp", "enviado": None,
+                "telefono": wa_resultado["telefono"], "link": link, "wa_link": wa_resultado["wa_link"],
+                "mensaje": "Se abrirá WhatsApp con el mensaje listo — revísalo y confírmalo tú mismo.",
+            })
 
-    # ── Canal EMAIL (comportamiento histórico, sin cambios) ──────────────
-    if not email or "@" not in email:
-        cli = mysql_fetchone(
-            "SELECT c.contacto_email, c.email_empresa FROM mant_clientes c "
-            "JOIN mant_visitas v ON v.cliente_id=c.id WHERE v.id=%s", (vid,)) or {}
-        email = (cli.get("contacto_email") or cli.get("email_empresa") or "").strip()
-    if not email or "@" not in email:
-        return jsonify({"ok": False, "error": "Falta el correo del cliente. Escríbelo para enviar el link."}), 400
-    try:
-        html = _ilus_email_master({
-            "subject": f"Firma tu orden de trabajo {numero}",
-            "title": "Firma de conformidad",
-            "subtitle": numero,
-            "customer_name": razon,
-            "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
-                        "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
-                        "El enlace es personal y vence en 5 días."),
-            "primary_cta_url": link,
-            "primary_cta_label": "Revisar y firmar la OT",
-        })
-    except Exception:
-        html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
-                f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
-    try:
-        ok = _send_ilus_email(email, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
-                              evento="ot_firma_remota", modulo="mantenciones")
-    except Exception as _e:
-        print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
-        ok = False
-    _mant_log("visita", vid, "firma_remota_enviada",
-              f"Link de firma enviado a {email} por {current_username()}.")
-    return jsonify({"ok": True, "canal": "email", "enviado": bool(ok), "email": email, "link": link,
-                    "mensaje": (f"Link de firma enviado a {email}." if ok else
-                                "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
+    # ── Canal EMAIL (comportamiento histórico, sin cambios cuando canal='email') ──
+    mail_resultado = None  # dict con enviado/email, o {"error": ...}
+    if quiere_mail:
+        email_dest = email
+        if not email_dest or "@" not in email_dest:
+            cli = mysql_fetchone(
+                "SELECT c.contacto_email, c.email_empresa FROM mant_clientes c "
+                "JOIN mant_visitas v ON v.cliente_id=c.id WHERE v.id=%s", (vid,)) or {}
+            email_dest = (cli.get("contacto_email") or cli.get("email_empresa") or "").strip()
+        if not email_dest or "@" not in email_dest:
+            mail_resultado = {"error": "Falta el correo del cliente para enviar el link."}
+        else:
+            try:
+                html = _ilus_email_master({
+                    "subject": f"Firma tu orden de trabajo {numero}",
+                    "title": "Firma de conformidad",
+                    "subtitle": numero,
+                    "customer_name": razon,
+                    "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
+                                "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
+                                "El enlace es personal y vence en 5 días."),
+                    "primary_cta_url": link,
+                    "primary_cta_label": "Revisar y firmar la OT",
+                })
+            except Exception:
+                html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
+                        f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
+            try:
+                ok = _send_ilus_email(email_dest, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
+                                      evento="ot_firma_remota", modulo="mantenciones")
+            except Exception as _e:
+                print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
+                ok = False
+            _mant_log("visita", vid, "firma_remota_enviada",
+                      f"Link de firma enviado a {email_dest} por {current_username()}.")
+            mail_resultado = {"enviado": bool(ok), "email": email_dest}
+        if canal == "email":
+            if mail_resultado.get("error"):
+                return jsonify({"ok": False, "error": mail_resultado["error"]}), 400
+            return jsonify({"ok": True, "canal": "email", "enviado": mail_resultado["enviado"],
+                            "email": mail_resultado["email"], "link": link,
+                            "mensaje": (f"Link de firma enviado a {mail_resultado['email']}." if mail_resultado["enviado"] else
+                                        "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
+
+    # ── canal == 'ambos': fusiona los dos resultados, degradación honesta ──
+    if wa_resultado.get("error") and mail_resultado.get("error"):
+        return jsonify({
+            "ok": False,
+            "error": f"No se pudo enviar por ningún canal — WhatsApp: {wa_resultado['error']} · Correo: {mail_resultado['error']}",
+        }), 400
+    partes = []
+    if not wa_resultado.get("error"):
+        partes.append("WhatsApp (ábrelo y confírmalo)")
+    if not mail_resultado.get("error"):
+        partes.append(f"correo a {mail_resultado.get('email')}" if mail_resultado.get("enviado")
+                       else "correo (no salió, revisa el canal de email)")
+    avisos = []
+    if wa_resultado.get("error"):
+        avisos.append(f"WhatsApp no se generó: {wa_resultado['error']}")
+    if mail_resultado.get("error"):
+        avisos.append(f"Correo no se generó: {mail_resultado['error']}")
+    return jsonify({
+        "ok": True, "canal": "ambos", "link": link,
+        "wa_link": wa_resultado.get("wa_link"), "telefono": wa_resultado.get("telefono"),
+        "email": mail_resultado.get("email"), "enviado": mail_resultado.get("enviado"),
+        "mensaje": "Se mandó por: " + " y ".join(partes) + (". " + " · ".join(avisos) if avisos else "."),
+    })
 
 
 @app.route("/firmar-ot/<token>", methods=["GET"])
