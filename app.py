@@ -1260,6 +1260,52 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 _GCS_BUCKET_OBJ = None
 _GCS_INIT_DONE = False
 
+# ── Inicialización perezosa THREAD-SAFE del cliente GCS ───────────────
+#
+#  BUG REAL MEDIDO EN PRODUCCIÓN (Cloud Run, 2026-08-13): al abrir el
+#  documento imprimible de una OT (/mantenciones/ot/<vid>/pdf) el HTML pide
+#  ~40 fotos de golpe a /f/<key>. En una hora se contaron 42 respuestas 304,
+#  36 respuestas 200 y **5 respuestas 503** (~6% de las fotos) → la OT salía
+#  impresa con huecos donde debían ir las fotos, delante del cliente.
+#
+#  CAUSA RAÍZ: la versión anterior marcaba la bandera de "ya inicializado"
+#  ANTES de tener el cliente construido:
+#
+#      if _GCS_INIT_DONE:            # (1) los otros hilos entran por acá
+#          return _GCS_BUCKET_OBJ    #     y se llevan None
+#      _GCS_INIT_DONE = True         # (2) se marca "listo" sin estarlo
+#      ...
+#      _GCS_BUCKET_OBJ = storage.Client().bucket(...)   # (3) recién acá hay bucket
+#
+#  Entre (2) y (3) pasan cientos de milisegundos: se importa
+#  google.cloud.storage por primera vez en el proceso y google-auth resuelve
+#  las credenciales ADC contra el servidor de metadatos de Cloud Run (una
+#  petición HTTP real, con reintentos propios). El server corre con
+#  `gunicorn --workers 2 --threads 8` (ver Dockerfile) → los otros 7 hilos
+#  del worker que caen dentro de esa ventana leen _GCS_INIT_DONE=True y
+#  reciben un _GCS_BUCKET_OBJ que TODAVÍA es None → serve_archivo() responde
+#  "Almacenamiento no disponible", 503. La ráfaga de 40 fotos golpea
+#  exactamente ahí, y la ventana se reabre con cada worker nuevo (arranque
+#  en frío, escalado de Cloud Run, o el reciclado por --max-requests 5000).
+#
+#  SEGUNDO FALLO, más grave: si la inicialización fallaba DE VERDAD una sola
+#  vez (parpadeo del servidor de metadatos), _GCS_INIT_DONE quedaba en True
+#  para siempre y ese worker devolvía None hasta morir — sin fotos, sin
+#  subidas y sin reintentar jamás, aunque Google ya estuviera sano.
+#
+#  FIX: (a) un lock hace que UN hilo inicialice y el resto ESPERE a que
+#  termine, en vez de irse con None; (b) la señal de "listo" pasa a ser el
+#  objeto mismo, que se asigna ANTES que la bandera — así nadie puede ver
+#  "listo pero None"; (c) un fallo real deja de ser permanente: se reintenta
+#  cada _GCS_RETRY_COOLDOWN_S, sin castigar con un reintento a cada request.
+#
+#  ⚠️  NO volver a escribir _GCS_INIT_DONE antes de _GCS_BUCKET_OBJ: ese
+#      orden invertido ES el bug.
+_GCS_INIT_LOCK = threading.Lock()
+_GCS_INIT_FAIL_MONO = 0.0        # time.monotonic() del último fallo de init
+_GCS_RETRY_COOLDOWN_S = 30.0     # tras un fallo, no reintentar antes de esto
+_GCS_INIT_WAIT_S = 15.0          # tope de espera de un hilo por el init ajeno
+
 # Mensaje único para cuando no hay almacenamiento. Lo ve el usuario final,
 # así que se escribe en castellano y sin jerga técnica.
 _STORAGE_OFF_MSG = ("El almacenamiento de Google Cloud no está disponible en "
@@ -1267,28 +1313,77 @@ _STORAGE_OFF_MSG = ("El almacenamiento de Google Cloud no está disponible en "
 
 
 def _gcs_bucket():
-    """Bucket GCS (lazy). None si está deshabilitado o no disponible.
+    """Bucket GCS (lazy, thread-safe). None si está deshabilitado o caído.
 
     Si devuelve None NO hay plan B: las subidas fallan con aviso. Antes se
     caía a Cloudinary; eso se retiró el 2026-08-05 por pedido de Daniel.
+
+    CONTRATO SIN CAMBIOS respecto de la versión anterior: devuelve el mismo
+    objeto bucket, o None. Lo que cambia es que ya NO devuelve None de forma
+    espuria mientras otro hilo está inicializando (ver el comentario largo
+    de arriba: eso producía ~6% de 503 en /f/<key>), y que un fallo real se
+    reintenta en vez de quedar latcheado toda la vida del worker.
     """
-    global _GCS_BUCKET_OBJ, _GCS_INIT_DONE
-    if _GCS_INIT_DONE:
-        return _GCS_BUCKET_OBJ
-    _GCS_INIT_DONE = True
+    global _GCS_BUCKET_OBJ, _GCS_INIT_DONE, _GCS_INIT_FAIL_MONO
+
+    # (1) Camino rápido, SIN lock: ya hay bucket. Es el 99,99% de las
+    #     llamadas, así que el fix no agrega costo al caso normal. Se mira
+    #     el OBJETO, no la bandera — la bandera es justo la que mentía.
+    b = _GCS_BUCKET_OBJ
+    if b is not None:
+        return b
+
+    # (2) Kill-switch de configuración (ILUS_STORAGE_GCS=0). No cambia en
+    #     caliente: se decide una vez, se avisa una vez, no se reintenta.
     if not GCS_ENABLED:
-        print("[ILUS] GCS deshabilitado (ILUS_STORAGE_GCS=0) — NO se guardarán "
-              "archivos nuevos.", flush=True)
+        if not _GCS_INIT_DONE:
+            _GCS_INIT_DONE = True
+            print("[ILUS] GCS deshabilitado (ILUS_STORAGE_GCS=0) — NO se guardarán "
+                  "archivos nuevos.", flush=True)
         return None
+
+    # (3) Falló hace poco: no reintentar en cada request. Con 40 fotos en
+    #     ráfaga serían 40 intentos seguidos contra el servidor de metadatos.
+    if _GCS_INIT_DONE and (time.monotonic() - _GCS_INIT_FAIL_MONO) < _GCS_RETRY_COOLDOWN_S:
+        return None
+
+    # (4) Inicializa UN solo hilo; los demás esperan acá en vez de irse con
+    #     None (que es lo que producía los 503). La espera tiene tope para
+    #     que un cliente colgado no bloquee al worker entero: si se agota, se
+    #     devuelve lo que haya — o sea, en el peor caso el comportamiento
+    #     viejo. Nunca peor que antes.
+    if not _GCS_INIT_LOCK.acquire(timeout=_GCS_INIT_WAIT_S):
+        print(f"[ILUS][GCS] init: se agotó la espera de {_GCS_INIT_WAIT_S:.0f}s "
+              f"por otro hilo inicializando el cliente.", flush=True)
+        return _GCS_BUCKET_OBJ
     try:
-        from google.cloud import storage as _gcs_lib
-        _GCS_BUCKET_OBJ = _gcs_lib.Client().bucket(GCS_BUCKET)
-        print(f"[ILUS] GCS listo — bucket {GCS_BUCKET}", flush=True)
-    except Exception as e:
-        print(f"[ILUS] GCS no disponible: {e} — NO se guardarán archivos "
-              f"nuevos hasta que se resuelva.", flush=True)
-        _GCS_BUCKET_OBJ = None
-    return _GCS_BUCKET_OBJ
+        # Doble chequeo: mientras esperábamos, el otro hilo ya terminó.
+        if _GCS_BUCKET_OBJ is not None:
+            return _GCS_BUCKET_OBJ
+        if _GCS_INIT_DONE and (time.monotonic() - _GCS_INIT_FAIL_MONO) < _GCS_RETRY_COOLDOWN_S:
+            return None
+        try:
+            from google.cloud import storage as _gcs_lib
+            # ORDEN CRÍTICO: primero el objeto, después la bandera.
+            _GCS_BUCKET_OBJ = _gcs_lib.Client().bucket(GCS_BUCKET)
+            _GCS_INIT_DONE = True
+            print(f"[ILUS] GCS listo — bucket {GCS_BUCKET}", flush=True)
+        except Exception as e:
+            _GCS_BUCKET_OBJ = None
+            _GCS_INIT_DONE = True
+            _GCS_INIT_FAIL_MONO = time.monotonic()
+            # Se registra el TIPO de excepción (no es lo mismo un
+            # ImportError que un DefaultCredentialsError que un Forbidden —
+            # cada uno se arregla distinto) y el mensaje RECORTADO: REGLA #4,
+            # nunca volcar payloads largos al log, que podrían arrastrar
+            # URLs firmadas o tokens.
+            _detalle = str(e).replace("\n", " ")[:300]
+            print(f"[ILUS] GCS no disponible ({type(e).__name__}): {_detalle} — "
+                  f"se reintenta en {_GCS_RETRY_COOLDOWN_S:.0f}s. NO se guardarán "
+                  f"archivos nuevos hasta que se resuelva.", flush=True)
+        return _GCS_BUCKET_OBJ
+    finally:
+        _GCS_INIT_LOCK.release()
 
 
 def _gcs_ready():
@@ -1643,6 +1738,12 @@ def serve_archivo(key):
         return resp
     b = _gcs_bucket()
     if not b:
+        # Se deja rastro en el log: antes este 503 salía MUDO y no había
+        # forma de atarlo a una causa. Si vuelve a aparecer, la línea
+        # "[ILUS] GCS no disponible (…)" de _gcs_bucket() dice por qué.
+        # Solo se loguea la key del objeto (no adivinable, sin datos
+        # personales) — REGLA #4.
+        print(f"[ILUS][/f] 503 sin almacenamiento — key={key}", flush=True)
         return "Almacenamiento no disponible", 503
 
     # ── Miniatura: servir de cache, o generarla y guardarla ──────────────
