@@ -195,6 +195,33 @@ _TK_COTIZ_TIPOS_SERVICIO_LABELS = {
     "otro": "Otro",
 }
 
+# Categorías operativas que deben viajar en la cotización/OT para conservar
+# checklist, foto y observación, pero que JAMÁS forman parte del cobro. La
+# regla vive también en backend para que un payload manipulado no pueda
+# asignarles precio ni hacerlas absorber costo de ruta.
+_TK_COTIZ_CLASES_NO_COBRABLES = frozenset({"accesorio"})
+
+
+def _tk_cotiz_clase_no_cobrable(clase_producto):
+    return str(clase_producto or "").strip().lower() in _TK_COTIZ_CLASES_NO_COBRABLES
+
+
+def _tk_cotiz_unidades_cobrables(items):
+    """Unidades físicas que pueden absorber el prorrateo de ruta."""
+    total_unidades = 0.0
+    for it in items or []:
+        if _tk_cotiz_clase_no_cobrable((it or {}).get("clase_producto")):
+            continue
+        try:
+            cantidad = max(float((it or {}).get("cantidad") or 0), 0.0)
+            precio = max(float((it or {}).get("precio_unitario") or 0), 0.0)
+            total = max(float((it or {}).get("total") or 0), 0.0)
+        except (TypeError, ValueError):
+            continue
+        if cantidad > 0 and precio > 0 and total > 0:
+            total_unidades += cantidad
+    return total_unidades
+
 # 🗓️ FASE 1 (Daniel 2026-07-15, alcance explícito): "hagamoslo por mientras
 # solamente con mi correo" -- el correo de confirmación tipo "reserva de
 # clínica" que se manda al generar una OT desde un ticket (.ics + botones
@@ -2412,6 +2439,13 @@ def register_tickets_routes(app, ctx):
         tarifa (p.ej. _tk_cotiz_recalcular la trae en batch para toda la
         cotización), se pasa acá y se evita 1 query por ítem (N+1). Si es
         None se busca de a uno como antes."""
+        # Accesorio es una línea OPERATIVA, no comercial: debe sobrevivir en
+        # la cotización para llegar a la OT/plantilla (foto + observación),
+        # pero su precio está bloqueado en $0 para cualquier servicio.
+        if _tk_cotiz_clase_no_cobrable(clase_producto):
+            return {"hh": 0.0, "precio_unitario": 0, "subtotal": 0, "total": 0,
+                    "no_cobrable": True}
+
         if tarifa is None:
             _cat_tarifa = ctx.get("_cat_obtener_tarifa_clase")
             if not _cat_tarifa or not clase_producto:
@@ -2432,7 +2466,11 @@ def register_tickets_routes(app, ctx):
             hh = tarifa["horas"] * tarifa["tecnicos"]
             # 2026-07-30: valor_hh ahora es un dict por tipo_servicio (ver
             # _tk_cotiz_pricing_config) -- este ítem usa el de SU tipo.
-            _valor_hh_tipo = cfg["valor_hh"].get(tipo_servicio, 20000.0) \
+            # "Copiado de Mantención" hereda también su valor HH: así una
+            # categoría nueva conserva el precio conocido hasta que se le
+            # configure una tarifa propia para el servicio solicitado.
+            _tipo_precio = tarifa.get("tipo_servicio_origen") or tipo_servicio
+            _valor_hh_tipo = cfg["valor_hh"].get(_tipo_precio, 20000.0) \
                 if isinstance(cfg.get("valor_hh"), dict) else cfg["valor_hh"]
             costo = hh * _valor_hh_tipo
             precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
@@ -2541,7 +2579,7 @@ def register_tickets_routes(app, ctx):
         # monto siga ahí listo). costo_ruta_aplicado es lo que de verdad
         # entra al subtotal -- $0 si el flag está activo.
         ruta_excluida = bool(cab.get("ruta_excluida"))
-        costo_ruta_aplicado = 0.0 if ruta_excluida else costo_ruta_total
+        costo_ruta_solicitado = 0.0 if ruta_excluida else costo_ruta_total
 
         items = mysql_fetchall(
             "SELECT id, clase_producto, cantidad, descuento_pct, erp_kopr, precio_manual "
@@ -2593,14 +2631,15 @@ def register_tickets_routes(app, ctx):
         # a MySQL en cada recálculo). Se acumulan los valores y se aplican
         # todos en un solo executemany al final del loop (mismo patrón ya
         # usado en _tr_bulk_sync_erp_mysql, ver app.py).
-        _item_updates = []  # (precio_unitario, subtotal, total, item_id)
+        _item_updates = []  # (precio_unitario, subtotal, total, precio_manual, item_id)
+        _items_cobrabilidad = []
         for it in items:
             _clase = it.get("clase_producto")
             # 2026-07-22 (Daniel: "precio unitario editable a mano"): si la
             # línea tiene un precio_manual, MANDA sobre el cálculo de tarifa
             # -- ni siquiera se consulta la tarifa. Respeta cantidad y el
             # descuento por ítem igual que el cálculo normal.
-            _pm = it.get("precio_manual")
+            _pm = None if _tk_cotiz_clase_no_cobrable(_clase) else it.get("precio_manual")
             calc = None
             if _pm is not None:
                 try:
@@ -2619,6 +2658,10 @@ def register_tickets_routes(app, ctx):
                     _sub = _tk_money_round(_pu * _cant)
                     calc = {"precio_unitario": _pu, "subtotal": _sub,
                             "total": _tk_money_round(_sub * (1 - _di / 100.0))}
+            if calc is None and _tk_cotiz_clase_no_cobrable(_clase):
+                calc = _tk_cotiz_calcular_item(
+                    _clase, tipo_servicio, it.get("cantidad"),
+                    it.get("descuento_pct"), cfg)
             if calc is None:
                 if _tarifas_batch_fn:
                     # Batch es autoritativo: si la clase no está en el map, no
@@ -2632,19 +2675,32 @@ def register_tickets_routes(app, ctx):
                     calc = _tk_cotiz_calcular_item(
                         _clase, tipo_servicio, it.get("cantidad"), it.get("descuento_pct"), cfg)
             if calc:
-                _item_updates.append((calc["precio_unitario"], calc["subtotal"], calc["total"], it["id"]))
+                _pm_guardado = None if _tk_cotiz_clase_no_cobrable(_clase) else it.get("precio_manual")
+                _item_updates.append((calc["precio_unitario"], calc["subtotal"], calc["total"],
+                                      _pm_guardado, it["id"]))
                 subtotal_items += calc["total"]
+                _items_cobrabilidad.append({
+                    "clase_producto": _clase,
+                    "cantidad": it.get("cantidad"),
+                    "precio_unitario": calc["precio_unitario"],
+                    "total": calc["total"],
+                })
             else:
                 # 2026-07-21 (revisión adversarial): si el ítem ya tenía un
                 # precio de un cálculo anterior (categoría desclasificada,
                 # tarifa borrada, o cambio de tipo_servicio), se resetea a
                 # $0 explícito -- nunca se deja un total "fantasma" que ya
                 # no suma al total de la cabecera.
-                _item_updates.append((0, 0, 0, it["id"]))
+                _pm_guardado = None if _tk_cotiz_clase_no_cobrable(_clase) else it.get("precio_manual")
+                _item_updates.append((0, 0, 0, _pm_guardado, it["id"]))
+                _items_cobrabilidad.append({
+                    "clase_producto": _clase, "cantidad": it.get("cantidad"),
+                    "precio_unitario": 0, "total": 0,
+                })
 
         if _item_updates:
-            _upd_sql = ("UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s "
-                        "WHERE id=%s")
+            _upd_sql = ("UPDATE tk_cotizacion_items SET precio_unitario=%s, subtotal=%s, total=%s, "
+                        "precio_manual=%s WHERE id=%s")
             _get_db_fn = ctx.get("get_db")
             if _get_db_fn:
                 _conn = _get_db_fn()
@@ -2653,8 +2709,13 @@ def register_tickets_routes(app, ctx):
                 _conn.commit()
             else:
                 # Defensivo (get_db no disponible en ctx): camino viejo de a uno.
-                for _pu, _sub, _tot, _iid in _item_updates:
-                    mysql_execute(_upd_sql, (_pu, _sub, _tot, _iid))
+                for _pu, _sub, _tot, _pm_save, _iid in _item_updates:
+                    mysql_execute(_upd_sql, (_pu, _sub, _tot, _pm_save, _iid))
+
+        # La ruta solo se reparte entre equipos que realmente tienen cobro.
+        # Accesorios, líneas en $0 y cantidades 0 no absorben ni un peso.
+        unidades_cobrables = _tk_cotiz_unidades_cobrables(_items_cobrabilidad)
+        costo_ruta_aplicado = costo_ruta_solicitado if unidades_cobrables > 0 else 0.0
 
         # Totales de cabecera -- misma secuencia que Triple A
         # (calculateTotals): subtotal = ítems + ruta; descuento sobre el
@@ -2697,6 +2758,7 @@ def register_tickets_routes(app, ctx):
             "subtotal_items": _tk_money_round(subtotal_items), "subtotal": _tk_money_round(subtotal),
             "descuento_monto": descuento_monto, "costo_ruta_total": costo_ruta_total,
             "costo_ruta_aplicado": costo_ruta_aplicado, "ruta_excluida": ruta_excluida,
+            "unidades_cobrables": unidades_cobrables,
             "iva_pct": iva_pct, "iva_monto": iva_monto, "total": total, "uf_total": uf_total,
         }
 
@@ -2999,12 +3061,10 @@ def register_tickets_routes(app, ctx):
         # monto detectado (ese monto se conserva SOLO para la vista
         # Detalle -- ver tk_api_cotizacion_detalle_calculo).
         costo_ruta = 0.0 if cot.get("ruta_excluida") else float(cot.get("costo_ruta") or 0)
-        total_unidades = 0.0
-        for it in items_rows:
-            try:
-                total_unidades += max(float(it.get("cantidad") or 0), 0.0)
-            except (TypeError, ValueError):
-                pass
+        # Solo los equipos cobrables absorben traslado. Un accesorio existe
+        # para la evidencia de entrega, pero conserva precio $0 también en el
+        # documento que ve el cliente.
+        total_unidades = _tk_cotiz_unidades_cobrables(items_rows)
         transporte_unidad = (costo_ruta / total_unidades) if total_unidades > 0 else 0.0
 
         # UF: prioriza el SNAPSHOT guardado al emitir (cot.uf_valor) sobre el
@@ -3049,7 +3109,9 @@ def register_tickets_routes(app, ctx):
         for it in items_rows:
             cant = int(float(it.get("cantidad") or 0))
             pu_base = int(it.get("precio_unitario") or 0)
-            pu = _tk_money_round(pu_base + transporte_unidad) if cant > 0 else pu_base
+            es_cobrable = (not _tk_cotiz_clase_no_cobrable(it.get("clase_producto"))
+                           and cant > 0 and pu_base > 0 and float(it.get("total") or 0) > 0)
+            pu = _tk_money_round(pu_base + transporte_unidad) if es_cobrable else pu_base
             tot = pu * cant
             suma_lineas += tot
             _nudo = (it.get("erp_nudo") or "").strip()
@@ -3057,28 +3119,14 @@ def register_tickets_routes(app, ctx):
                           "cantidad": cant, "precio_unitario": pu, "total": tot,
                           "precio_uf": _precio_uf_str(pu),
                           "clase_producto": it.get("clase_producto") or None,
+                          "es_cobrable": es_cobrable,
                           "documento": _nudo or "—"})
         subtotal_cab = int(cot.get("subtotal") or 0)
-        # 2026-07-24 (fix edge case documentado como deuda conocida: "si
-        # TODOS los ítems tienen cantidad 0 y hay ruta, el prorrateo cae
-        # entero en el ítem [0]" -- items[0]["cantidad"]==0 volvía un
-        # total>0 con cantidad 0, fila sin sentido). El residuo de
-        # redondeo va al primer ítem con cantidad > 0.
-        _idx_residuo = next((i for i, it in enumerate(items) if it["cantidad"] > 0), None)
-        # 2026-07-24 (hallazgo confirmado en revisión adversarial, severidad
-        # media): dejar el bloque de abajo sin ejecutar cuando NINGÚN ítem
-        # tiene cantidad>0 resolvía la "fila sin sentido" pero rompía algo
-        # peor -- el documento queda SIN CUADRAR (suma de líneas != Total
-        # de cabecera) cada vez que hay costo_ruta_aplicado>0 sin ningún
-        # producto real. Eso es más grave y más visible para un cliente que
-        # revisa el PDF que una fila con cantidad "sintética". Se sintetiza
-        # cantidad=1 SOLO para esta presentación (nunca se toca la BD) en el
-        # primer ítem de la lista -- mismo espíritu del resto del
-        # prorrateo: el costo de ruta viaja invisible dentro de un ítem,
-        # nunca como línea propia (pedido explícito de Daniel).
-        if _idx_residuo is None and items and subtotal_cab != suma_lineas:
-            items[0]["cantidad"] = 1
-            _idx_residuo = 0
+        # El residuo de redondeo va al primer equipo cobrable. Nunca se
+        # inventa una cantidad ni se contamina un accesorio para hacer calzar
+        # el documento; si no hay equipos cobrables, el recálculo ya aplica
+        # costo de ruta $0.
+        _idx_residuo = next((i for i, it in enumerate(items) if it["es_cobrable"]), None)
         if items and _idx_residuo is not None and suma_lineas != subtotal_cab and subtotal_cab > 0:
             delta = subtotal_cab - suma_lineas
             items[_idx_residuo]["total"] += delta
@@ -3599,11 +3647,12 @@ def register_tickets_routes(app, ctx):
             if tarifa:
                 horas = tarifa["horas"]
                 tecnicos = tarifa["tecnicos"]
-                hh = horas * tecnicos
+                hh = (horas * tecnicos) if (horas is not None and tecnicos is not None) else 0
                 # 2026-07-30: valor_hh es un dict por tipo_servicio (esta
                 # cotización completa comparte un único tipo_servicio, ver
                 # `tipo_servicio` arriba en esta función).
-                _valor_hh_tipo = cfg["valor_hh"].get(tipo_servicio, 20000.0) \
+                _tipo_precio = tarifa.get("tipo_servicio_origen") or tipo_servicio
+                _valor_hh_tipo = cfg["valor_hh"].get(_tipo_precio, 20000.0) \
                     if isinstance(cfg.get("valor_hh"), dict) else cfg["valor_hh"]
                 costo_mo = hh * _valor_hh_tipo
             else:
@@ -4155,6 +4204,8 @@ def register_tickets_routes(app, ctx):
                             precio_manual = max(int(float(_pmv)), 0)
                     except (TypeError, ValueError):
                         precio_manual = None
+                    if _tk_cotiz_clase_no_cobrable(clase_producto):
+                        precio_manual = None
                     # Multidocumento (2026-07-22): documento ERP de origen de
                     # la línea (el modal ERP compartido ya conoce tido/nudo).
                     erp_tido_it = (str(it.get("tido") or "").strip().upper())[:10] or None
@@ -4229,10 +4280,31 @@ def register_tickets_routes(app, ctx):
     @_tickets_required
     def tk_api_cotizacion_recalcular(cid):
         user = current_username() or "sistema"
+        d = request.get_json(silent=True) or {}
+        manual = bool(d.get("manual"))
+        anterior = mysql_fetchone(
+            "SELECT numero_cotizacion, estado, total FROM tk_cotizaciones WHERE id=%s", (cid,))
         totales = _tk_cotiz_recalcular(cid, user=user)
         if totales is None:
             return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
-        return jsonify({"ok": True, "totales": totales})
+        if manual:
+            _estaba_aprobada = (anterior or {}).get("estado") == "approved"
+            if _estaba_aprobada:
+                mysql_execute(
+                    "UPDATE tk_cotizaciones SET editada_post_aprobacion=1, updated_by=%s WHERE id=%s",
+                    (user, cid))
+            _tk_cotiz_log(
+                cid, "recalcular_aprobada" if _estaba_aprobada else "recalcular",
+                user=user,
+                detalle={
+                    "total_anterior": int((anterior or {}).get("total") or 0),
+                    "total_nuevo": int(totales.get("total") or 0),
+                    "unidades_cobrables": totales.get("unidades_cobrables"),
+                    "costo_ruta_aplicado": totales.get("costo_ruta_aplicado"),
+                })
+        return jsonify({"ok": True, "totales": totales,
+                        "total_anterior": int((anterior or {}).get("total") or 0),
+                        "editada_post_aprobacion": bool(manual and (anterior or {}).get("estado") == "approved")})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — flujo inverso: generar un TICKET a partir de una cotización
@@ -4590,6 +4662,8 @@ def register_tickets_routes(app, ctx):
                         if _pmv not in (None, ""):
                             precio_manual = max(int(float(_pmv)), 0)
                     except (TypeError, ValueError):
+                        precio_manual = None
+                    if _tk_cotiz_clase_no_cobrable(clase_producto):
                         precio_manual = None
                     erp_tido_it = (str(it.get("tido") or "").strip().upper())[:10] or None
                     erp_nudo_it = (str(it.get("nudo") or "").strip())[:30] or None

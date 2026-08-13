@@ -43,6 +43,10 @@
 .clc-modelo-badge.fijo{background:#fef3c7;color:#92400e}
 .clc-modelo-badge:hover{filter:brightness(.95)}
 .clc-fijo-unico{width:110px}
+.clc-num.bloqueado{background:#f3f4f6;color:#111827;font-weight:800;cursor:not-allowed}
+.clc-no-cobrable{display:inline-flex;align-items:center;gap:4px;font-size:.68rem;font-weight:800;
+  color:#166534;background:#dcfce7;border-radius:50px;padding:3px 8px;white-space:nowrap}
+.clc-modelo-badge:disabled{cursor:not-allowed;opacity:.75}
 .clc-precio-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;
   display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px;}
 .clc-precio-campo{display:flex;flex-direction:column;gap:4px;min-width:180px;}
@@ -211,16 +215,24 @@ function clcSyncValorHhInput(){
   document.getElementById('clcValorHh').value = v;
 }
 
-function clcPrecioUnit(hh){
+function clcPrecioUnit(hh, tipoOverride){
   if(hh==null) return null;
   const porTipo = _clcCfg.valor_hh_por_tipo || {};
-  const vh = parseFloat(porTipo[_clcServ] != null ? porTipo[_clcServ] : _clcCfg.valor_hh_base) || 0;
+  const tipoPrecio = tipoOverride || _clcServ;
+  const vh = parseFloat(porTipo[tipoPrecio] != null ? porTipo[tipoPrecio] : _clcCfg.valor_hh_base) || 0;
   const mg = parseFloat(_clcCfg.margen_pct)||0;
   return Math.round(hh * vh * (1 + mg/100));
 }
 
 function clcInputsTarifa(c){
   const tipo = _clcServ;
+  if(c.no_cobrable || c.slug === 'accesorio'){
+    return ''
+      + '<div class="clc-campo-mini"><label>Precio unitario ($)</label>'
+      +   '<input type="number" class="clc-num clc-fijo-unico bloqueado" value="0" disabled readonly '
+      +     'title="Bloqueado: el accesorio queda en la OT para foto y observación, pero no se cobra"></div>'
+      + '<span class="clc-no-cobrable"><i class="bi bi-lock-fill"></i> No cobrable · bloqueado</span>';
+  }
   // FIX 2026-07-30 (Daniel, en vivo: "no se sabe que es hora y que es
   // tecnico... sácaselo a los demás, porque lo único que va a actuar
   // diferente es el piso [categoría de precio fijo]... el piso es cantidad
@@ -248,7 +260,7 @@ function clcInputsTarifa(c){
   const horas = esCopiaDeMantencion ? c['mantencion_horas'] : c[tipo+'_horas'];
   const tecnicos = esCopiaDeMantencion ? c['mantencion_tecnicos'] : c[tipo+'_tecnicos'];
   const hh = (horas!=null && tecnicos!=null) ? horas*tecnicos : null;
-  const pu = clcPrecioUnit(hh);
+  const pu = clcPrecioUnit(hh, esCopiaDeMantencion ? 'mantencion' : tipo);
   const hhTxt = (hh==null) ? '<span class="clc-sinDatos">sin definir</span>'
     : '<b>'+ (Math.round(hh*100)/100) +'</b> HH';
   const puTxt = (pu==null) ? '' : ' · <span class="clc-precio-lbl"><b>'+fmtCLP(pu)+'</b>/u</span>';
@@ -267,6 +279,11 @@ function clcInputsTarifa(c){
 }
 
 async function clcToggleModelo(id, modeloActual){
+  const fila = _clcClases.find(c => String(c.id) === String(id));
+  if(fila && (fila.no_cobrable || fila.slug === 'accesorio')){
+    ilusToast('Accesorio está bloqueado en $0 porque es una línea operativa no cobrable', {type:'info'});
+    return;
+  }
   const nuevo = modeloActual === 'fijo' ? 'horas' : 'fijo';
   const msg = nuevo === 'fijo'
     ? 'Pasa a cobrarse por un precio unitario fijo (cantidad × precio) — sin horas ni técnicos.'
@@ -296,9 +313,9 @@ function clcRender(){
     '<tr class="'+(c.activo? '':'inactiva')+'">'
     + '<td><div class="clc-nombre">'+escH(c.nombre)+' '
     +   '<button type="button" class="clc-modelo-badge '+c.modelo_precio+'" '
-    +     'title="Click para cambiar el modelo de precio" '
-    +     'onclick="clcToggleModelo('+c.id+',\''+c.modelo_precio+'\')">'
-    +     (c.modelo_precio==='fijo' ? 'Precio fijo' : 'Por horas') + '</button>'
+    +     'title="'+((c.no_cobrable || c.slug==='accesorio') ? 'Bloqueado en $0' : 'Click para cambiar el modelo de precio')+'" '
+    +     ((c.no_cobrable || c.slug==='accesorio') ? 'disabled' : 'onclick="clcToggleModelo('+c.id+',\''+c.modelo_precio+'\')"')+'>'
+    +     ((c.no_cobrable || c.slug==='accesorio') ? 'No cobrable' : (c.modelo_precio==='fijo' ? 'Precio fijo' : 'Por horas')) + '</button>'
     + '</div><div class="clc-slug">'+escH(c.slug)+'</div></td>'
     + '<td>'+clcInputsTarifa(c)+'</td>'
     + '<td><span class="clc-badge '+(c.activo?'on':'off')+'">'+(c.activo?'Activa':'Inactiva')+'</span></td>'

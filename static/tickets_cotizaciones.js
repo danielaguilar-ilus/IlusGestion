@@ -160,7 +160,8 @@ async function _cotWizCargarEdicion(cid){
                tido: it.tido || null, nudo: it.nudo || null, koen: null,
                clase_producto: it.clase_producto || null,
                vaneli_original: (it.vaneli_original != null ? it.vaneli_original : null),
-               precio_manual: (it.precio_manual != null ? it.precio_manual : null) };
+               precio_manual: (String(it.clase_producto || '').toLowerCase() === 'accesorio'
+                 ? null : (it.precio_manual != null ? it.precio_manual : null)) };
     });
     _WIZ.rutaManual = (parseInt(c.costo_ruta, 10) || 0) > 0;
     // 2026-07-24 (Daniel, insiste: "quiero ver los productos que gestiono
@@ -722,16 +723,16 @@ async function cotWizBuscarRuta(){
     } else {
       hint.textContent = 'Comuna sin ruta cargada — ingresa el costo manualmente';
     }
-    cotWizResumen();
+    cotWizRecalcLocal();
   }catch(e){ /* silencioso */ }
 }
 (function(){
   const cr = document.getElementById('cotWizCostoRuta');
-  if (cr) cr.addEventListener('input', function(){ if (_WIZ) _WIZ.rutaManual = true; cotWizResumen(); });
+  if (cr) cr.addEventListener('input', function(){ if (_WIZ) _WIZ.rutaManual = true; cotWizRecalcLocal(); });
   const cm = document.getElementById('cotWizComuna');
   if (cm) cm.addEventListener('change', cotWizBuscarRuta);
   const cre = document.getElementById('cotWizRutaExcluida');
-  if (cre) cre.addEventListener('change', cotWizResumen);
+  if (cre) cre.addEventListener('change', cotWizRecalcLocal);
   // El descuento (modo + valor) ya dispara cotWizResumen via onchange/oninput
   // inline en el HTML -- no hace falta un listener extra aquí.
 })();
@@ -1022,6 +1023,10 @@ async function cotWizClasificar(){
   }catch(e){ console.warn('preview-clasificacion:', e); }
 }
 
+function _cotWizEsAccesorio(it){
+  return !!(it && String(it.clase_producto || '').trim().toLowerCase() === 'accesorio');
+}
+
 async function cotWizRender(){
   const body = document.getElementById('cotWizBody');
   if (!_WIZ || !_WIZ.items.length){
@@ -1033,13 +1038,16 @@ async function cotWizRender(){
     return '<option value="' + _cotEsc(c.value) + '">' + _cotEsc(c.label) + '</option>';
   }).join('');
   body.innerHTML = _WIZ.items.map(function(it, i){
+    const accesorio = _cotWizEsAccesorio(it);
     return '<tr>' +
       '<td class="cot-rev-sku">' + _cotEsc(it.sku) + '</td>' +
       '<td class="cot-rev-nombre" title="' + _cotEsc(it.nombre) + '">' + _cotEsc(it.nombre) + '</td>' +
       '<td><input type="number" min="0" step="1" class="cot-rev-cant" value="' + _cotEsc(it.qty) + '" onchange="cotWizCantidad(' + i + ', this.value)"></td>' +
       '<td><select class="cot-rev-select' + (it.clase_producto ? '' : ' sin-clasificar') + '" data-i="' + i + '" onchange="cotWizClase(' + i + ', this)">' +
         '<option value="">Sin clasificar</option>' + opts + '</select></td>' +
-      '<td class="cot-wiz-pu-cell"><input type="number" min="0" step="1" class="cot-rev-pu-input" data-i="' + i + '" placeholder="auto" title="Precio unitario — déjalo vacío para el precio automático o escribe uno a mano" onchange="cotWizPrecioManual(' + i + ', this.value)"></td>' +
+      '<td class="cot-wiz-pu-cell"><input type="number" min="0" step="1" class="cot-rev-pu-input' + (accesorio ? ' accesorio-bloqueado' : '') + '" data-i="' + i + '" '
+        + (accesorio ? 'value="0" disabled readonly title="Accesorio no cobrable: queda en la OT para foto y observación"' : 'placeholder="auto" title="Precio base unitario — la ruta se muestra debajo" onchange="cotWizPrecioManual(' + i + ', this.value)"') + '>'
+        + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">' + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable' : '') + '</div></td>' +
       '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
       '<td><button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button></td>' +
     '</tr>';
@@ -1061,8 +1069,12 @@ function cotWizClase(i, sel){
   if (!_WIZ || !_WIZ.items[i]) return;
   const it = _WIZ.items[i];
   it.clase_producto = sel.value || null;
+  if (_cotWizEsAccesorio(it)){
+    it.precio_manual = null;
+    it._precioCalc = 0;
+  }
   sel.classList.toggle('sin-clasificar', !sel.value);
-  cotWizPrecios();
+  cotWizRender().then(cotWizPrecios);
   _cotWizGuardarClaseEnCatalogo(it);
 }
 // 2026-07-23 (Daniel: "necesito ver los movimientos que he hecho de
@@ -1115,7 +1127,8 @@ async function cotWizPrecios(){
     // decide si mostrar ese o el precio_manual que el usuario haya escrito.
     _WIZ.items.forEach(function(it, i){
       const p = precios[i];
-      it._precioCalc = p ? p.precio_unitario : null;
+      it._precioCalc = _cotWizEsAccesorio(it) ? 0 : (p ? p.precio_unitario : null);
+      if (_cotWizEsAccesorio(it)) it.precio_manual = null;
     });
     cotWizRecalcLocal();
   }catch(e){
@@ -1137,23 +1150,85 @@ function cotWizRecalcLocal(){
   if (!_WIZ) return;
   const inputsPu = document.querySelectorAll('#cotWizBody .cot-rev-pu-input');
   const filasTot = document.querySelectorAll('#cotWizBody .cot-wiz-tot-cell');
+  const desgloses = document.querySelectorAll('#cotWizBody .cot-ruta-desglose');
+  const rutaDetectada = Math.max(parseInt((document.getElementById('cotWizCostoRuta') || {}).value, 10) || 0, 0);
+  const rutaExcluidaEl = document.getElementById('cotWizRutaExcluida');
+  const rutaExcluida = !!(rutaExcluidaEl && rutaExcluidaEl.checked);
+  const bases = _WIZ.items.map(function(it){
+    if (_cotWizEsAccesorio(it)) return 0;
+    const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
+    return (it.precio_manual != null) ? it.precio_manual : auto;
+  });
+  const unidadesCobrables = _WIZ.items.reduce(function(acc, it, i){
+    const qty = Math.max(parseInt(it.qty, 10) || 0, 0);
+    return acc + (!_cotWizEsAccesorio(it) && bases[i] != null && bases[i] > 0 ? qty : 0);
+  }, 0);
+  const rutaAplicada = (!rutaExcluida && unidadesCobrables > 0) ? rutaDetectada : 0;
+  let rutaRestante = rutaAplicada;
+  let filasCobrablesRestantes = _WIZ.items.filter(function(it, i){
+    return !_cotWizEsAccesorio(it) && (parseInt(it.qty, 10) || 0) > 0 && bases[i] != null && bases[i] > 0;
+  }).length;
   let suma = 0;
   _WIZ.items.forEach(function(it, i){
-    const auto = (it._precioCalc != null) ? Math.round(it._precioCalc) : null;
-    const pu = (it.precio_manual != null) ? it.precio_manual : auto;
-    const qty = it.qty || 0;
-    const tot = (pu != null) ? Math.round(pu * qty) : null;
-    suma += tot || 0;
+    const accesorio = _cotWizEsAccesorio(it);
+    const pu = accesorio ? 0 : bases[i];
+    const qty = Math.max(parseInt(it.qty, 10) || 0, 0);
+    const esCobrable = !accesorio && pu != null && pu > 0 && qty > 0;
+    const totBase = (pu != null) ? Math.round(pu * qty) : null;
+    let rutaLinea = 0;
+    if (esCobrable && rutaAplicada > 0){
+      filasCobrablesRestantes -= 1;
+      rutaLinea = filasCobrablesRestantes === 0
+        ? rutaRestante
+        : Math.round(rutaAplicada * qty / unidadesCobrables);
+      rutaRestante -= rutaLinea;
+    }
+    const totConRuta = (totBase != null) ? totBase + rutaLinea : null;
+    suma += totBase || 0;
     const inp = inputsPu[i];
     if (inp && document.activeElement !== inp){
       inp.value = (pu != null) ? pu : '';
-      inp.classList.toggle('manual', it.precio_manual != null);
+      inp.disabled = accesorio;
+      inp.readOnly = accesorio;
+      inp.classList.toggle('manual', !accesorio && it.precio_manual != null);
+      inp.classList.toggle('accesorio-bloqueado', accesorio);
     }
-    if (filasTot[i]) filasTot[i].innerHTML = (tot != null)
-      ? '<span class="cot-rev-precio">$' + tot.toLocaleString('es-CL') + '</span>'
+    if (desgloses[i]){
+      if (accesorio){
+        desgloses[i].className = 'cot-ruta-desglose no-cobrable';
+        desgloses[i].innerHTML = '<i class="bi bi-lock-fill"></i> $0 · no cobrable';
+      } else if (pu == null){
+        desgloses[i].className = 'cot-ruta-desglose';
+        desgloses[i].textContent = 'sin tarifa configurada';
+      } else {
+        const rutaUnidad = esCobrable && qty > 0 ? rutaLinea / qty : 0;
+        desgloses[i].className = 'cot-ruta-desglose';
+        desgloses[i].innerHTML = _wizCLP(pu) + ' base + ' + _wizCLP(rutaUnidad)
+          + ' ruta = <b>' + _wizCLP(pu + rutaUnidad) + '/u</b>';
+      }
+    }
+    if (filasTot[i]) filasTot[i].innerHTML = (totConRuta != null)
+      ? '<span class="cot-rev-precio' + (accesorio ? ' cero' : '') + '">$' + totConRuta.toLocaleString('es-CL') + '</span>'
       : '<span class="cot-rev-precio cero">sin clasificar</span>';
   });
   _WIZ.sumaItems = suma;
+  _WIZ.unidadesCobrables = unidadesCobrables;
+  _WIZ.rutaAplicada = rutaAplicada;
+  const hintRuta = document.getElementById('cotWizRutaProrrateoHint');
+  if (hintRuta){
+    hintRuta.classList.toggle('excluida', rutaExcluida || rutaAplicada === 0);
+    if (rutaExcluida){
+      hintRuta.textContent = 'Ruta excluida: no aumenta el precio de ningún equipo.';
+    } else if (rutaDetectada > 0 && unidadesCobrables > 0){
+      hintRuta.textContent = _wizCLP(rutaDetectada) + ' ÷ ' + unidadesCobrables
+        + ' equipo(s) cobrable(s) = ' + _wizCLP(rutaDetectada / unidadesCobrables)
+        + ' de ruta por unidad. Los accesorios quedan fuera.';
+    } else if (rutaDetectada > 0){
+      hintRuta.textContent = 'No hay equipos con precio: la ruta no se cobra ni se carga a accesorios.';
+    } else {
+      hintRuta.textContent = 'Ruta $0. Solo se reparte entre equipos con precio; los accesorios quedan fuera.';
+    }
+  }
   cotWizResumen();
 }
 
@@ -1162,6 +1237,12 @@ function cotWizRecalcLocal(){
 function cotWizPrecioManual(i, v){
   if (!_WIZ || !_WIZ.items[i]) return;
   const it = _WIZ.items[i];
+  if (_cotWizEsAccesorio(it)){
+    it.precio_manual = null;
+    it._precioCalc = 0;
+    cotWizRecalcLocal();
+    return;
+  }
   // FIX 2026-08-03 (Daniel: "1 piso vale 3500... 100x3500=350.000" no daba):
   // el input es type="number", así que si se escribe "3.500" (punto como
   // separador de miles, formato chileno) el navegador lo guarda como el
@@ -1251,12 +1332,9 @@ function cotWizDescModoCambio(){
 function cotWizResumen(){
   if (!_WIZ) return;
   const items = _WIZ.sumaItems || 0;
-  const rutaDetectada = Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0);
-  // 2026-07-24 (checkbox "excluir costo de ruta"): el resumen en vivo
-  // debe reflejar EXACTAMENTE lo que se va a guardar -- si está marcado,
-  // $0 acá también (el monto detectado sigue en el input, solo no suma).
-  const rutaExcluidaEl = document.getElementById('cotWizRutaExcluida');
-  const ruta = (rutaExcluidaEl && rutaExcluidaEl.checked) ? 0 : rutaDetectada;
+  // Se calcula en cotWizRecalcLocal porque depende también de cuántos
+  // equipos tienen precio. Sin equipos cobrables (o con exclusión), es $0.
+  const ruta = _WIZ.rutaAplicada || 0;
   const subtotal = items + ruta;
   const dsc = _cotWizDesc();
   // Descuento por % o por monto fijo (topeado al subtotal, nunca negativo).
@@ -1323,7 +1401,7 @@ function cotWizResumen(){
                                        clase_producto: it.clase_producto,
                                        vaneli_original: (it.vaneli_original != null ? it.vaneli_original : null),
                                        // precio unitario editado a mano (null = automático)
-                                       precio_manual: (it.precio_manual != null ? it.precio_manual : null) })),
+                                       precio_manual: (_cotWizEsAccesorio(it) ? null : (it.precio_manual != null ? it.precio_manual : null)) })),
         header: {
           cliente: empresa,
           rut: document.getElementById('cotWizRut').value.trim(),
@@ -1652,6 +1730,38 @@ async function cotCambiarEstado(cid, estado, btn){
   }catch(e){ ilusToast('Error de conexión', {type:'error'}); }
 }
 
+// ── Recotizar con las reglas vigentes (superadmin) ──
+async function cotRecalcular(cid, numero, btn){
+  const ok = await ilusConfirm({
+    title: 'Recotizar ' + numero,
+    message: 'Se recalcularán todas las líneas con la clasificación y tarifas vigentes.',
+    sub: 'Los accesorios quedarán en $0 y la ruta se dividirá solo entre equipos cobrables. No se borran productos, cliente ni evidencias.',
+    okLabel: 'Recotizar', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const original = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cid + '/recalcular', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({manual: true})
+    });
+    const d = await r.json();
+    if (!d.ok){
+      ilusToast(d.error || 'No se pudo recotizar', {type:'error'});
+      if (btn){ btn.disabled = false; btn.innerHTML = original; }
+      return;
+    }
+    const nuevo = (d.totales || {}).total || 0;
+    ilusToast('✓ ' + numero + ': ' + _wizCLP(d.total_anterior || 0) + ' → ' + _wizCLP(nuevo)
+      + (d.editada_post_aprobacion ? ' · quedó marcada como editada tras aprobación' : ''), {type:'success'});
+    setTimeout(function(){ location.reload(); }, 900);
+  }catch(e){
+    ilusToast('Error de conexión al recotizar', {type:'error'});
+    if (btn){ btn.disabled = false; btn.innerHTML = original; }
+  }
+}
+
 // ── Eliminar (soft, superadmin) ──
 async function cotEliminar(cid, numero){
   const ok = await ilusConfirm({
@@ -1673,12 +1783,14 @@ async function cotEliminar(cid, numero){
 // ── Historial (evidencia) ──
 const _COT_HIST_ICONOS = {
   crear:'bi-plus-circle', editar:'bi-pencil', editar_aprobada:'bi-pencil-fill',
+  recalcular:'bi-arrow-repeat', recalcular_aprobada:'bi-arrow-repeat',
   aprobar:'bi-check-circle', rechazar:'bi-x-circle', reabrir:'bi-arrow-counterclockwise',
   enviar_correo:'bi-envelope', generar_ticket:'bi-ticket-perforated',
   generar_ot:'bi-clipboard-check', eliminar:'bi-trash'
 };
 const _COT_HIST_LABEL = {
   crear:'Creada', editar:'Editada', editar_aprobada:'Editada (estaba aprobada)',
+  recalcular:'Recotizada', recalcular_aprobada:'Recotizada (estaba aprobada)',
   aprobar:'Aprobada', rechazar:'Rechazada', reabrir:'Reabierta',
   enviar_correo:'Enviada por correo', generar_ticket:'Ticket generado',
   generar_ot:'OT generada', eliminar:'Eliminada'

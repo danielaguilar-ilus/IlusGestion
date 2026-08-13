@@ -559,6 +559,28 @@ def register_catalogo_routes(app, ctx):
         except Exception as _e_seed_inst:
             print(f"[ILUS][WARN] seed tarifas instalacion: {_e_seed_inst}", flush=True)
 
+        # "Accesorio" es una categoría operativa: debe permanecer en la
+        # plantilla de la OT para foto/observación, pero nunca se cobra. La
+        # normalización es idempotente y deja un $0 explícito para TODOS los
+        # servicios, además de las defensas del motor de cotizaciones.
+        try:
+            _accesorio = mysql_fetchone(
+                "SELECT id FROM cat_clases_producto WHERE slug='accesorio' LIMIT 1")
+            if _accesorio:
+                mysql_execute(
+                    "UPDATE cat_clases_producto SET modelo_precio='fijo' "
+                    "WHERE id=%s", (_accesorio["id"],))
+                for _tipo_accesorio in _CAT_TIPOS_SERVICIO_TARIFA:
+                    mysql_execute(
+                        "INSERT INTO cat_clase_producto_tarifas "
+                        "(clase_id, tipo_servicio, horas, tecnicos, precio_piso, precio_fijo, updated_by) "
+                        "VALUES (%s,%s,NULL,NULL,NULL,0,'sistema') "
+                        "ON DUPLICATE KEY UPDATE horas=NULL, tecnicos=NULL, precio_piso=NULL, "
+                        "precio_fijo=0, updated_by='sistema'",
+                        (_accesorio["id"], _tipo_accesorio))
+        except Exception as _e_accesorio:
+            print(f"[ILUS][WARN] normalizar tarifa accesorio: {_e_accesorio}", flush=True)
+
         # Backfill de modelo_precio (2026-07-30): cualquier categoría que YA
         # tenga un precio_fijo cargado en algún tipo_servicio (ej. "Pisos")
         # se marca 'fijo' automáticamente -- así la UI simplificada (ver
@@ -824,6 +846,7 @@ def register_catalogo_routes(app, ctx):
         out = []
         for r in rows:
             r = dict(r)
+            r["no_cobrable"] = r.get("slug") == "accesorio"
             for ts in _CAT_TIPOS_SERVICIO_TARIFA:
                 info = tmap.get(r["id"], {}).get(ts) or {}
                 horas = info.get("horas")
@@ -1028,7 +1051,9 @@ def register_catalogo_routes(app, ctx):
         Desactivar es SOFT (Regla #5): no se borra, solo deja de ofrecerse
         en los dropdowns nuevos -- los productos ya clasificados con ella
         conservan el dato."""
-        if not mysql_fetchone("SELECT id FROM cat_clases_producto WHERE id=%s", (clid,)):
+        _clase_actual = mysql_fetchone(
+            "SELECT id, slug FROM cat_clases_producto WHERE id=%s", (clid,))
+        if not _clase_actual:
             return jsonify({"ok": False, "error": "Categoría no encontrada"}), 404
         d = request.get_json(silent=True) or {}
         sets, params = [], []
@@ -1049,6 +1074,9 @@ def register_catalogo_routes(app, ctx):
             _mp = (d.get("modelo_precio") or "").strip().lower()
             if _mp not in ("horas", "fijo"):
                 return jsonify({"ok": False, "error": "modelo_precio inválido"}), 400
+            if _clase_actual.get("slug") == "accesorio" and _mp != "fijo":
+                return jsonify({"ok": False,
+                                "error": "Accesorio es no cobrable y su precio está bloqueado en $0"}), 400
             sets.append("modelo_precio=%s"); params.append(_mp)
         if not sets:
             return jsonify({"ok": False, "error": "Sin cambios válidos"}), 400
@@ -1066,12 +1094,30 @@ def register_catalogo_routes(app, ctx):
         (mantención/instalación/visita técnica/venta de repuesto/otro —
         Daniel: "una clasificación para cada servicio que damos"). HH total
         no se guarda: se calcula (horas × técnicos) en cada lectura."""
-        if not mysql_fetchone("SELECT id FROM cat_clases_producto WHERE id=%s", (clid,)):
+        _clase_actual = mysql_fetchone(
+            "SELECT id, slug FROM cat_clases_producto WHERE id=%s", (clid,))
+        if not _clase_actual:
             return jsonify({"ok": False, "error": "Categoría no encontrada"}), 404
         d = request.get_json(silent=True) or {}
         tipo_servicio = (d.get("tipo_servicio") or "").strip().lower()
         if tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
             return jsonify({"ok": False, "error": "tipo_servicio inválido"}), 400
+
+        # La API también impone el bloqueo: ni una llamada manual ni un front
+        # desactualizado pueden asignar valor a los accesorios.
+        if _clase_actual.get("slug") == "accesorio":
+            user = current_username() or "sistema"
+            mysql_execute(
+                "UPDATE cat_clases_producto SET modelo_precio='fijo', updated_by=%s WHERE id=%s",
+                (user, clid))
+            mysql_execute(
+                "INSERT INTO cat_clase_producto_tarifas "
+                "(clase_id, tipo_servicio, horas, tecnicos, precio_piso, precio_fijo, updated_by) "
+                "VALUES (%s,%s,NULL,NULL,NULL,0,%s) "
+                "ON DUPLICATE KEY UPDATE horas=NULL, tecnicos=NULL, precio_piso=NULL, "
+                "precio_fijo=0, updated_by=VALUES(updated_by)",
+                (clid, tipo_servicio, user))
+            return jsonify({"ok": True, "bloqueada": True, "precio_fijo": 0})
 
         # Fila existente (2026-07-28): esta ruta ahora también guarda
         # precio_piso desde su propio input, en una llamada PATCH separada de
@@ -2483,24 +2529,33 @@ def register_catalogo_routes(app, ctx):
         desde tickets_module.py vía ctx['_cat_obtener_tarifa_clase'](slug,
         tipo_servicio) -- mismo patrón que _cat_crear_o_reusar_producto_desde_erp
         (lookup en tiempo de REQUEST, no de arranque). Devuelve None si la
-        categoría no existe, está inactiva, o no tiene tarifa cargada para
-        ese tipo_servicio (ej. "Rack Pro" hoy, o cualquier categoría en un
-        servicio cuya tabla Daniel aún no definió — 2026-07-21/2026-07-22).
+        categoría no existe, está inactiva, o no tiene tarifa propia NI una
+        tarifa de Mantención que pueda heredarse.
         Ahora soporta los 5 tipos (instalacion/mantencion/visita_tecnica/
-        venta_repuesto/otro) -- los que Daniel no cargó siguen dando None
-        (=> $0 en el motor de precio, nunca un valor inventado)."""
+        venta_repuesto/otro). La herencia coincide con lo que la pantalla
+        muestra como “copiado de Mantención”; nunca inventa una tarifa."""
         if not slug or tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
             return None
-        row = mysql_fetchone(
-            "SELECT t.horas, t.tecnicos, t.precio_piso, t.precio_fijo "
-            "FROM cat_clase_producto_tarifas t "
-            "JOIN cat_clases_producto c ON c.id=t.clase_id "
-            "WHERE c.slug=%s AND c.activo=1 AND t.tipo_servicio=%s "
-            # 2026-07-28: una clase puede tener tarifa SOLO por precio_fijo
-            # (ej. "Pisos" — se cobra $X por unidad, sin horas/técnicos), así
-            # que "tiene tarifa cargada" ahora es horas+tecnicos O precio_fijo.
-            "  AND (t.precio_fijo IS NOT NULL OR (t.horas IS NOT NULL AND t.tecnicos IS NOT NULL))",
-            (slug, tipo_servicio))
+        def _buscar(_tipo):
+            return mysql_fetchone(
+                "SELECT t.horas, t.tecnicos, t.precio_piso, t.precio_fijo "
+                "FROM cat_clase_producto_tarifas t "
+                "JOIN cat_clases_producto c ON c.id=t.clase_id "
+                "WHERE c.slug=%s AND c.activo=1 AND t.tipo_servicio=%s "
+                # 2026-07-28: una clase puede tener tarifa SOLO por precio_fijo
+                # (ej. "Pisos" — se cobra $X por unidad, sin horas/técnicos), así
+                # que "tiene tarifa cargada" ahora es horas+tecnicos O precio_fijo.
+                "  AND (t.precio_fijo IS NOT NULL OR (t.horas IS NOT NULL AND t.tecnicos IS NOT NULL))",
+                (slug, _tipo))
+        row = _buscar(tipo_servicio)
+        tipo_origen = tipo_servicio
+        # La pantalla de Clasificación ya mostraba “copiado de Mantención”
+        # cuando faltaba una tarifa propia. El motor ahora respeta exactamente
+        # esa misma fuente: hasta configurar el servicio, hereda también el
+        # valor HH de Mantención (p.ej. 1,5×3×$20.000 = $90.000).
+        if not row and tipo_servicio != "mantencion":
+            row = _buscar("mantencion")
+            tipo_origen = "mantencion"
         if not row:
             return None
         horas = row.get("horas")
@@ -2508,7 +2563,8 @@ def register_catalogo_routes(app, ctx):
         return {"horas": float(horas) if horas is not None else None,
                 "tecnicos": int(tecnicos) if tecnicos is not None else None,
                 "precio_piso": float(row["precio_piso"]) if row.get("precio_piso") is not None else None,
-                "precio_fijo": float(row["precio_fijo"]) if row.get("precio_fijo") is not None else None}
+                "precio_fijo": float(row["precio_fijo"]) if row.get("precio_fijo") is not None else None,
+                "tipo_servicio_origen": tipo_origen}
 
     ctx["_cat_obtener_tarifa_clase"] = _cat_obtener_tarifa_clase
 
@@ -2516,28 +2572,42 @@ def register_catalogo_routes(app, ctx):
         """Igual que _cat_obtener_tarifa_clase pero para MUCHAS clases en UNA
         sola query (escalabilidad 2026-07-22: recalcular/preview de una
         cotización de 200 ítems hacía 200 queries -- N+1). Devuelve
-        {slug: {"horas","tecnicos"}} solo para las que tienen tarifa cargada
-        y la categoría está activa; las demás no aparecen (=> el caller usa
-        None => $0, mismo criterio que la versión de a uno)."""
+        {slug: {"horas","tecnicos"}} para la tarifa propia o, si falta, la
+        heredada de Mantención. Las categorías sin ninguna quedan fuera."""
         if not slugs or tipo_servicio not in _CAT_TIPOS_SERVICIO_TARIFA:
             return {}
         uniq = sorted({(s or "").strip() for s in slugs if s and str(s).strip()})
         if not uniq:
             return {}
         placeholders = ",".join(["%s"] * len(uniq))
+        _tipos_busqueda = [tipo_servicio]
+        if tipo_servicio != "mantencion":
+            _tipos_busqueda.append("mantencion")
+        tipos_ph = ",".join(["%s"] * len(_tipos_busqueda))
         rows = mysql_fetchall(
-            "SELECT c.slug, t.horas, t.tecnicos, t.precio_piso, t.precio_fijo "
+            "SELECT c.slug, t.tipo_servicio, t.horas, t.tecnicos, t.precio_piso, t.precio_fijo "
             "FROM cat_clase_producto_tarifas t "
             "JOIN cat_clases_producto c ON c.id=t.clase_id "
-            f"WHERE c.activo=1 AND t.tipo_servicio=%s AND c.slug IN ({placeholders}) "
+            f"WHERE c.activo=1 AND t.tipo_servicio IN ({tipos_ph}) AND c.slug IN ({placeholders}) "
             "  AND (t.precio_fijo IS NOT NULL OR (t.horas IS NOT NULL AND t.tecnicos IS NOT NULL))",
-            tuple([tipo_servicio] + uniq)) or []
-        return {r["slug"]: {
+            tuple(_tipos_busqueda + uniq)) or []
+        out = {}
+        for r in rows:
+            _slug = r["slug"]
+            _origen = r.get("tipo_servicio") or tipo_servicio
+            # La tarifa propia siempre gana aunque MySQL devuelva primero la
+            # fila heredada de Mantención.
+            if _slug in out and out[_slug].get("tipo_servicio_origen") == tipo_servicio:
+                continue
+            if _slug not in out or _origen == tipo_servicio:
+                out[_slug] = {
                     "horas": float(r["horas"]) if r.get("horas") is not None else None,
                     "tecnicos": int(r["tecnicos"]) if r.get("tecnicos") is not None else None,
                     "precio_piso": float(r["precio_piso"]) if r.get("precio_piso") is not None else None,
-                    "precio_fijo": float(r["precio_fijo"]) if r.get("precio_fijo") is not None else None}
-                for r in rows}
+                    "precio_fijo": float(r["precio_fijo"]) if r.get("precio_fijo") is not None else None,
+                    "tipo_servicio_origen": _origen,
+                }
+        return out
 
     ctx["_cat_tarifas_clases_batch"] = _cat_tarifas_clases_batch
     # Visible desde tickets_module.py (modal de revisión de Cotizaciones,
