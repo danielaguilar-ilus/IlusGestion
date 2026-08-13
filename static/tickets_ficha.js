@@ -4442,14 +4442,34 @@ function tkotRenderEquipos(){
   tkotRecalcEqCount();
 }
 
-// Instalación + cliente sin ficha (CID null): todos los equipos del ticket
-// van completos, marcados y bloqueados (no hay "ficha" contra la cual
-// elegir un subconjunto -- Daniel: "ya lo requeriría de un plan, porque
-// el cliente no existe").
+// Cliente sin ficha (CID null): todos los equipos del ticket van completos,
+// marcados y bloqueados (no hay "ficha" contra la cual elegir un subconjunto
+// -- Daniel: "ya lo requeriría de un plan, porque el cliente no existe").
+//
+// 2026-08-12 (Daniel, probando en vivo un ticket de instalación con cliente
+// nuevo): "necesito que si es instalación o visita cree el cliente... si es
+// mantención correctiva, preventiva, [...] inspección, garantía, cambio,
+// visita correctiva, ahí podría creársele". El backend YA crea la ficha
+// mínima para CUALQUIER tipo cuando no hay cid ni match de RUT
+// (tickets_module.py, rama `cliente_recien_creado` de tk_api_generar_ot --
+// nunca estuvo condicionada por tipo_ot). Lo único que faltaba era esto:
+// el frontend solo pintaba el modo "forzado" (equipos bloqueados + aviso)
+// para 'instalacion' -- en los demás tipos, con un cliente nuevo, el
+// usuario veía checkboxes normales sin ningún aviso de que estaba creando
+// un cliente nuevo. Se extiende a los tipos que Daniel nombró explícitamente.
+// Deliberadamente AFUERA: 'levantamiento' (tiene su propio flujo de
+// descubrimiento) y 'desinstalacion' (quitar un equipo presupone que ya
+// existe en la ficha de alguien, no tiene sentido crear cliente+equipo a
+// la vez para eso).
+const _TKOT_TIPOS_FUERZAN_CLIENTE_NUEVO = [
+  'instalacion', 'correctiva', 'preventiva', 'visita_tecnica',
+  'inspeccion', 'garantia', 'cambio_equipo', 'visita_correctiva',
+];
 function tkotAplicarForzadoInstalacion(){
   const tipo = document.getElementById('otTipo')?.value;
   const warn = document.getElementById('tkotSinFichaWarn');
-  const debeForzar = (tipo === 'instalacion') && _TKOT.clienteResuelto && !_TKOT.cid && (equiposCache||[]).length > 0;
+  const debeForzar = _TKOT_TIPOS_FUERZAN_CLIENTE_NUEVO.indexOf(tipo) !== -1
+    && _TKOT.clienteResuelto && !_TKOT.cid && (equiposCache||[]).length > 0;
   if(warn) warn.style.display = (_TKOT.clienteResuelto && !_TKOT.cid) ? '' : 'none';
   if(debeForzar !== _TKOT.forzarTodosEquipos){
     _TKOT.forzarTodosEquipos = debeForzar;
@@ -5114,6 +5134,8 @@ async function tkotGenerar(){
       acceso_notas: (document.getElementById('acceso_notas')?.value || '').trim(),
       forzar_feriado: false,
       forzar_choque: false,
+      forzar_crear_cliente: false,
+      cliente_id_confirmado: null,
     };
     // FIX 2026-08-11: el selector de plantilla del Paso 1 se retiró (quedaba
     // duplicado con "Plantillas extra" del Paso 5, por equipo). Ya no se
@@ -5131,7 +5153,10 @@ async function tkotGenerar(){
       ? '/mantenciones/api/clientes/' + CID + '/levantamientos'
       : '/tickets/api/tickets/' + TID + '/generar-ot';
     let d;
-    for(let intento = 0; intento < 2; intento++){
+    // 2026-08-12: hasta 3 intentos -- feriado/choque (paso 1) y cliente_nuevo
+    // (paso 2, cuando ambos toques al mismo ticket) son confirmaciones
+    // independientes que pueden encadenarse en la misma corrida.
+    for(let intento = 0; intento < 3; intento++){
       const r = await fetch(_tkotUrl, {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(payload)
@@ -5140,6 +5165,51 @@ async function tkotGenerar(){
       if(d.ok || !d.requiere_confirmacion) break;
 
       const adv = d.advertencias || {};
+
+      // ── Cliente sin match exacto de RUT: se pregunta antes de crear una
+      //    ficha nueva -- primero ofrece el candidato más parecido (mismo
+      //    RUT sin dígito verificador, o nombre similar) si lo hay, y solo
+      //    si el usuario lo descarta se ofrece crear cliente nuevo. Daniel
+      //    2026-08-12: "chequear por el RUT, con y sin el código
+      //    verificador, y el nombre... déjalo bien inteligente". ──
+      if(adv.cliente_nuevo){
+        const cn = adv.cliente_nuevo;
+        const candidatos = cn.candidatos || [];
+        let usarExistente = false;
+        let c0 = null;
+        if(candidatos.length){
+          c0 = candidatos[0];
+          const motivo = c0.match === 'rut_sin_dv' ? 'mismo RUT (sin dígito verificador)' : 'nombre parecido';
+          usarExistente = await ilusConfirm({
+            title: 'Cliente parecido encontrado',
+            message: 'Este ticket no calzó por RUT exacto, pero encontramos:<br>'
+              + '<strong>' + esc(c0.razon_social || 'Cliente') + '</strong>'
+              + (c0.rut ? ' · RUT ' + esc(c0.rut) : '')
+              + '<br><span style="font-size:.85rem;color:#6b7280">Coincide por ' + motivo + '.</span>',
+            messageHtml: true,
+            sub: '¿Usar este cliente para la OT en vez de crear uno nuevo?',
+            okLabel: 'Usar este cliente', cancelLabel: 'No, crear cliente nuevo',
+            type: 'question',
+          });
+        }
+        if(usarExistente && c0){
+          payload.cliente_id_confirmado = c0.id;
+          continue;
+        }
+        const crear = await ilusConfirm({
+          title: 'Crear cliente nuevo',
+          message: 'No hay ficha para <strong>' + esc(cn.razon_social_ticket || 'este cliente') + '</strong>'
+            + (cn.rut_ticket ? ' (RUT ' + esc(cn.rut_ticket) + ')' : '') + '.',
+          messageHtml: true,
+          sub: 'Se creará una ficha mínima, editable después desde Mantenciones.',
+          okLabel: 'Sí, crear cliente', cancelLabel: 'Cancelar',
+          type: 'question',
+        });
+        if(!crear) return;
+        payload.forzar_crear_cliente = true;
+        continue;
+      }
+
       const partes = [];
       if(adv.feriado) partes.push('📅 ' + (adv.feriado.nombre || 'Feriado') + ' (' + (adv.feriado.fecha || fechaProg) + ')');
       if(adv.choque){
