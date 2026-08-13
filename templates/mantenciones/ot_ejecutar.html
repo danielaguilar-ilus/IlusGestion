@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Ejecutar {{ visita.numero_ot or ('OT #' ~ visita.id) }} — ILUS{% endblock %}
 
+{# ─── Rediseño premium 2026-08-13 (brief Daniel: "tecnología 2026, bonito,
+   atractivo") — Bebas Neue SOLO en esta pantalla, para los números grandes
+   de la etapa (step-circle) y títulos de sección. Se agrega vía el bloque
+   head_extra de base.html (NO se toca base.html en sí — el bloque ya
+   existía vacío para esto, línea ~172), así ninguna otra página del
+   sistema paga el costo de cargar esta fuente. Texto de cuerpo / tareas
+   del checklist sigue con la pila de sistema de siempre (legibilidad). #}
+{% block head_extra %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+{% endblock %}
+
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ot_ejecutar.css') }}">
 
@@ -934,6 +947,65 @@
      ════════════════════════════════════════════════════════ #}
   <div class="tx-tab-panel active" id="tabPanel-tareas" role="tabpanel" aria-labelledby="tabBtn-tareas">
 
+  {# ════════════════════════════════════════════════════════════════
+     STEPPER DE ETAPAS — rediseño premium 2026-08-13 (brief Daniel:
+     "debe ir enumerada"). 3 etapas REALES de ejecutar una OT (nada
+     inventado): Equipos → Checklist → Firmas. Tratamiento step-circle
+     de static/retiros_public_request.css (círculo 48→44px, radius 14,
+     rojo por defecto, verde+pulso+check al completar). Rojo mientras
+     falta, verde al 100% según su propia regla real:
+       1) Equipos    — TODOS los equipos con su checklist bloqueado
+                        (stats.bloqueada, el mismo dato que ya pinta
+                        .tx-eq-card.done en la grilla de abajo).
+       2) Checklist  — mismas obligatorias/total que ya destraba
+                        "Firmar OT" (ns.oblComp == ns.oblTot), CERO
+                        cálculo paralelo.
+       3) Firmas     — visita.estado == 'cerrada' (el cierre real).
+     Vive ANTES de #crumbs para quedar visible en las 4 vistas del
+     drill-down (SPA de setView() — este panel no se reemplaza al
+     navegar entre Máquinas/Plantillas/Tareas/Resumen). #}
+  {% set _stg = namespace(oblTot=0, oblComp=0, eqTot=equipos|length, eqDone=0) %}
+  {% for _mid, _pls in plantillas_por_maquina.items() %}
+    {% for _p in _pls %}
+      {% for _t in _p.tareas %}
+        {% if _t.obligatoria %}
+          {% set _stg.oblTot = _stg.oblTot + 1 %}
+          {% if _t.completada %}{% set _stg.oblComp = _stg.oblComp + 1 %}{% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  {% endfor %}
+  {% for _eq in equipos %}
+    {% set _s = stats_por_maquina.get(_eq.id|string, {}) %}
+    {% if _s.bloqueada %}{% set _stg.eqDone = _stg.eqDone + 1 %}{% endif %}
+  {% endfor %}
+  {% set _stg_eq_done = (_stg.eqTot > 0 and _stg.eqDone == _stg.eqTot) %}
+  {% set _stg_chk_done = (_stg.oblTot > 0 and _stg.oblComp == _stg.oblTot) %}
+  {% set _stg_firma_done = (visita.estado == 'cerrada') %}
+  <div class="tx-stage-stepper" id="txStageStepper"
+       data-obl-tot="{{ _stg.oblTot }}" data-eq-tot="{{ _stg.eqTot }}">
+    <div class="tx-stage{{ ' is-complete' if _stg_eq_done else '' }}" data-stage="equipos">
+      <div class="tx-stage-circle">
+        <span class="tx-stage-num">1</span><i class="bi bi-check-lg tx-stage-check"></i>
+      </div>
+      <div class="tx-stage-lbl">Equipos</div>
+    </div>
+    <div class="tx-stage-line{{ ' is-on' if _stg_eq_done else '' }}"></div>
+    <div class="tx-stage{{ ' is-complete' if _stg_chk_done else '' }}" data-stage="checklist">
+      <div class="tx-stage-circle">
+        <span class="tx-stage-num">2</span><i class="bi bi-check-lg tx-stage-check"></i>
+      </div>
+      <div class="tx-stage-lbl">Checklist</div>
+    </div>
+    <div class="tx-stage-line{{ ' is-on' if _stg_chk_done else '' }}"></div>
+    <div class="tx-stage{{ ' is-complete' if _stg_firma_done else '' }}" data-stage="firmas">
+      <div class="tx-stage-circle">
+        <span class="tx-stage-num">3</span><i class="bi bi-check-lg tx-stage-check"></i>
+      </div>
+      <div class="tx-stage-lbl">Firmas</div>
+    </div>
+  </div>
+
   {# ─── BREADCRUMB ─── #}
   <div class="tx-crumbs" id="crumbs">
     <button onclick="goToMaquinas()"><i class="bi bi-grid-3x3-gap-fill"></i> Máquinas</button>
@@ -1775,36 +1847,49 @@
     {% if puede_firmar_cliente %}
       {# Lado a lado desde 560px: la barra pasa de ~200px a ~110px y deja ver
          la sección de Firmas. En móvil siguen apilados. #}
-      <div class="tx-cta-grid">
-        <div>
-          <button class="tx-btn-firmar" id="btnFirmarCliente" onclick="abrirModalFirmaCliente()"
-                  style="background:linear-gradient(135deg,#2563eb,#1d4ed8)">
-            <i class="bi bi-person-badge"></i> Capturar firma del cliente
-          </button>
-          <small class="tx-cta-hint" style="color:#2563eb">
-            El cliente está conforme y firma aquí.
-          </small>
+      {# ════════════════════════════════════════════════════════════
+         FIRMA REMOTA ESPECTACULAR — rediseño premium 2026-08-13 (brief
+         Daniel: "no dejes por fuera el envío de la OT vía remoto para
+         que la firmen, algo espectacular"). Mismo tratamiento .form-head
+         oscuro/premium de static/retiros_public_request.css (radial rojo
+         + degradado negro + filete rojo abajo) envolviendo un selector de
+         canal con tarjetas grandes tocables (marca WhatsApp verde, correo
+         con la marca ILUS, presencial azul) en vez de los 2 botones
+         planos apilados de antes.
+         CERO cambio de lógica: los 3 onclick llaman EXACTAMENTE a las
+         mismas funciones de siempre (abrirModalFirmaCliente/
+         enviarFirmaWhatsApp/enviarFirmaRemota/enviarFirmaAmbos, definidas
+         en mantenciones_ot_ejecutar.js) — el truco de window.open('','_blank')
+         dentro de enviarFirmaWhatsApp()/enviarFirmaAmbos() sigue disparado
+         por un click directo y sincrónico sobre un <button>, no se envuelve
+         en ninguna capa extra que pueda perder la "user activation" y
+         bloquear el popup en iOS/Safari. #}
+      <div class="tx-sign-hub" id="txSignHub">
+        <div class="tx-sign-hub-head">
+          <i class="bi bi-vector-pen"></i>
+          <div>
+            <strong>¿Cómo firma el cliente?</strong>
+            <span>En persona, o le mandas el link para que firme a distancia.</span>
+          </div>
         </div>
-        <div>
-          <button class="tx-btn-firmar" onclick="enviarFirmaRemota()"
-                  style="background:linear-gradient(135deg,#0f766e,#115e59)">
-            <i class="bi bi-envelope-paper"></i> Enviar firma por correo
+        <div class="tx-channel-grid">
+          <button type="button" class="tx-channel-card is-presencial" id="btnFirmarCliente"
+                  onclick="abrirModalFirmaCliente()">
+            <span class="tx-channel-ico"><i class="bi bi-person-badge-fill"></i></span>
+            <span class="tx-channel-txt"><strong>En persona</strong><small>Firma aquí mismo</small></span>
           </button>
-          {# 2026-08-12 (Daniel, "potenciar la firma"): el técnico elige el
-             canal EN TERRENO. WhatsApp acá es un link wa.me -- abre TU
-             WhatsApp con el mensaje y el link de firma ya escritos, dirigido
-             al cliente; tú revisas y apretás enviar. No hay envío automático
-             de servidor (Twilio sigue dado de baja, ver CLAUDE.md #13 y la
-             memoria del incidente de US$20 con el sandbox). #}
-          <button class="tx-btn-firmar" onclick="enviarFirmaWhatsApp()"
-                  style="background:linear-gradient(135deg,#16a34a,#15803d);margin-top:8px">
-            <i class="bi bi-whatsapp"></i> Enviar firma por WhatsApp
+          <button type="button" class="tx-channel-card is-whatsapp" onclick="enviarFirmaWhatsApp()">
+            <span class="tx-channel-ico"><i class="bi bi-whatsapp"></i></span>
+            <span class="tx-channel-txt"><strong>WhatsApp</strong><small>Le llega el link al tiro</small></span>
           </button>
-          <small class="tx-cta-hint" style="color:#0d9488">
-            No está en sitio: elige el canal — le llega un link y firma a distancia.
-            <a href="javascript:void(0)" onclick="enviarFirmaAmbos()" style="color:#0d9488;font-weight:700;text-decoration:underline">Enviar por ambos</a>
-          </small>
+          <button type="button" class="tx-channel-card is-correo" onclick="enviarFirmaRemota()">
+            <span class="tx-channel-ico"><i class="bi bi-envelope-paper-fill"></i></span>
+            <span class="tx-channel-txt"><strong>Correo</strong><small>Envía el link por email</small></span>
+          </button>
         </div>
+        <button type="button" class="tx-sign-hub-both" onclick="enviarFirmaAmbos()">
+          <i class="bi bi-send-check-fill"></i> Enviar por WhatsApp y correo a la vez
+        </button>
       </div>
     {% else %}
       <button class="tx-btn-firmar" disabled>
