@@ -6913,8 +6913,8 @@ def register_tickets_routes(app, ctx):
         if cliente_recien_creado:
             equipo_ids = []
             equipos_ticket_payload = [
-                {"nombre": r.get("nombre"), "sku": r.get("sku"), "serie": r.get("serie"),
-                 "maquina_id": None}
+                {"id": r.get("id"), "nombre": r.get("nombre"), "sku": r.get("sku"),
+                 "serie": r.get("serie"), "maquina_id": None}
                 for r in eq_ticket_rows
             ]
         else:
@@ -6932,8 +6932,8 @@ def register_tickets_routes(app, ctx):
                 # implementacion anterior).
                 equipo_ids = [r["maquina_id"] for r in eq_ticket_rows if r.get("maquina_id")]
             equipos_ticket_payload = [
-                {"nombre": r.get("nombre"), "sku": r.get("sku"), "serie": r.get("serie"),
-                 "maquina_id": None}
+                {"id": r.get("id"), "nombre": r.get("nombre"), "sku": r.get("sku"),
+                 "serie": r.get("serie"), "maquina_id": None}
                 for r in eq_ticket_rows if not r.get("maquina_id")
             ]
 

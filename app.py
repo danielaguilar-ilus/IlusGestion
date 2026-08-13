@@ -86669,8 +86669,20 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                     "motivo": "sin_ficha",
                 })
                 continue
+            try:
+                ticket_equipo_id_et = int(et["id"]) if et.get("id") else None
+            except (TypeError, ValueError):
+                ticket_equipo_id_et = None
             equipos_ticket_clean.append({
                 "id": maquina_id_et,
+                # 2026-08-13: id ESTABLE de tk_ticket_equipos (independiente de
+                # si tiene ficha o no) -- permite que "plantillas extra por
+                # equipo" (más abajo) alcance también a equipos SIN ficha, que
+                # antes solo podían recibir la plantilla estándar (ver
+                # `plantillas_por_ticket_equipo`). El frontend calcula la
+                # misma clave `teq_<id>` a partir de este mismo id (tickets_
+                # module.py ya lo reenvía tal cual desde tk_ticket_equipos.id).
+                "ticket_equipo_id": ticket_equipo_id_et,
                 "nombre": nombre_et,
                 "sku": (et.get("sku") or "").strip()[:120] or None,
                 "serie": (et.get("serie") or "").strip()[:120] or None,
@@ -86808,15 +86820,27 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # Estructura: { "<maquina_id>": [plantilla_id, plantilla_id, ...] }
     # Si llega, además de la plantilla estándar del tipo, aplica estas
     # plantillas extra SOLO al equipo indicado.
+    #
+    # 2026-08-13: el modal (Paso 5) usa la MISMA clave para equipos con ficha
+    # ("<maquina_id>", numérica) y sin ficha ("teq_<ticket_equipo_id>",
+    # ver _tkotEqKey en tickets_ficha.js) -- antes, el `int(mid_str)` de abajo
+    # tiraba ValueError con el prefijo "teq_" y la descartaba en silencio: un
+    # equipo sin ficha nunca podía tener una plantilla extra, solo la
+    # estándar automática. Se separa en dos dicts: uno igual que antes
+    # (maquina_id real) y uno nuevo por ticket_equipo_id (más abajo, sección 2).
     plantillas_por_equipo_raw = data.get("plantillas_por_equipo") or {}
     plantillas_por_equipo = {}
+    plantillas_por_ticket_equipo = {}
     if isinstance(plantillas_por_equipo_raw, dict):
         for mid_str, plist in plantillas_por_equipo_raw.items():
             try:
-                mid_int = int(mid_str)
                 ids_int = [int(p) for p in (plist or []) if p]
-                if ids_int:
-                    plantillas_por_equipo[mid_int] = ids_int
+                if not ids_int:
+                    continue
+                if isinstance(mid_str, str) and mid_str.startswith("teq_"):
+                    plantillas_por_ticket_equipo[int(mid_str[4:])] = ids_int
+                else:
+                    plantillas_por_equipo[int(mid_str)] = ids_int
             except (TypeError, ValueError):
                 continue
     # Resolver nombre del técnico principal (para mant_levantamientos.tecnico VARCHAR)
@@ -87270,6 +87294,71 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             items_plantilla += n_added
             return n_added
 
+        def _aplicar_plantilla_a_equipo_sin_ficha(plantilla_id, m):
+            """Igual que _aplicar_plantilla_a_equipos, pero para un equipo
+            declarado en el ticket que TODAVÍA no tiene fila en mant_maquinas
+            (m['id'] es None -- ver equipos_ticket_clean). No hay ficha de la
+            que leer nombre/serie, así que se usan los datos del propio
+            ticket; las tareas quedan con maquina_id=NULL, igual que la
+            tarea de respaldo de "equipos_sin_maquina" que este mecanismo
+            reemplaza cuando el usuario sí eligió una plantilla explícita
+            para este equipo (2026-08-13, Daniel probando en vivo: "no puedo
+            seleccionar la plantilla del equipo" -- antes esa columna estaba
+            bloqueada para equipos sin ficha)."""
+            nonlocal items_plantilla
+            if not plantilla_id:
+                return 0
+            items_plant = mysql_fetchall(
+                "SELECT * FROM mant_tarea_plantilla_items "
+                "WHERE plantilla_id=%s ORDER BY orden, id",
+                (plantilla_id,)
+            ) or []
+            if not items_plant:
+                return 0
+            sufijo = (m.get("nombre") or "equipo")[:240]
+            if m.get("serie"):
+                sufijo += f" (S/N: {m['serie']})"
+            conn3 = get_mysql()
+            n_added = 0
+            try:
+                with conn3.cursor() as cur3:
+                    cur3.execute(
+                        "SELECT COALESCE(MAX(orden),0) AS mx "
+                        "FROM mant_visita_tareas WHERE visita_id=%s",
+                        (visita_id,)
+                    )
+                    next_orden = int((cur3.fetchone() or {}).get("mx") or 0)
+                    for it in items_plant:
+                        next_orden += 1
+                        titulo_full = f"{it['titulo']} — {sufijo}"[:300]
+                        cur3.execute(
+                            "INSERT INTO mant_visita_tareas "
+                            "(visita_id, orden, titulo, descripcion, tipo, "
+                            " maquina_id, plantilla_id, tipo_respuesta, target_field, "
+                            " obligatoria, "
+                            " requiere_foto, unidad, rango_min, rango_max, "
+                            " opciones_lista_json, estado_trabajo, created_by) "
+                            "VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,"
+                            "        %s,%s,%s,%s,%s,'pendiente',%s)",
+                            (visita_id, next_orden, titulo_full,
+                             it.get("descripcion"), tarea_tipo,
+                             plantilla_id,
+                             it.get("tipo_respuesta") or "check",
+                             it.get("target_field"),
+                             it.get("obligatoria") or 0,
+                             it.get("requiere_foto") or 0,
+                             it.get("unidad"), it.get("rango_min"),
+                             it.get("rango_max"),
+                             it.get("opciones_lista_json"),
+                             current_username())
+                        )
+                        n_added += 1
+                conn3.commit()
+            finally:
+                conn3.close()
+            items_plantilla += n_added
+            return n_added
+
         # 1) Plantilla por equipo — PRIMERO por clasificación real del
         #    producto, con fallback ciego por tipo de OT para el equipo que
         #    no resuelva (Daniel, 2026-08-12: "no le voy a hacer una
@@ -87335,13 +87424,48 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             except Exception as e_pl2:
                 print(f"[lev_crear] plantillas extra fallaron: {e_pl2}", flush=True)
 
+        # 2b) Plantillas EXTRA por equipo SIN ficha (ver
+        #     _aplicar_plantilla_a_equipo_sin_ficha arriba). `equipos_by_teq`
+        #     solo indexa entradas de equipos_ticket_clean (sin maquina_id
+        #     real) -- nunca confía en un ticket_equipo_id que no venga de la
+        #     propia consulta a tk_ticket_equipos de este ticket (ver
+        #     construcción de `maquinas` más abajo), así que un id ajeno
+        #     simplemente no matchea nada.
+        equipos_ticket_con_plantilla_extra = set()
+        if visita_id and plantillas_por_ticket_equipo:
+            try:
+                equipos_by_teq = {
+                    m.get("ticket_equipo_id"): m for m in maquinas
+                    if not m.get("id") and m.get("ticket_equipo_id")
+                }
+                for teq_id, pids in plantillas_por_ticket_equipo.items():
+                    m = equipos_by_teq.get(teq_id)
+                    if not m:
+                        continue  # equipo no incluido en esta OT
+                    for pid in pids:
+                        try:
+                            _n_extra2 = _aplicar_plantilla_a_equipo_sin_ficha(pid, m)
+                            if _n_extra2:
+                                equipos_ticket_con_plantilla_extra.add(teq_id)
+                        except Exception as _ep2:
+                            print(f"[lev_crear] plantilla extra {pid} para "
+                                  f"ticket_equipo {teq_id} falló: {_ep2}", flush=True)
+            except Exception as e_pl3:
+                print(f"[lev_crear] plantillas extra (equipos sin ficha) fallaron: {e_pl3}", flush=True)
+
         # ══════════════════════════════════════════════════════════════
         # Equipos de TICKET sin ficha (maquina_id NULL, ver equipos_ticket
         # arriba): las plantillas de arriba solo se aplican sobre equipo_ids
         # reales (mant_maquinas), asi que estos quedarian con 0 tareas.
-        # Se garantiza 1 tarea generica por equipo declarado en el ticket.
+        # Se garantiza 1 tarea generica por equipo declarado en el ticket --
+        # SALVO que ya haya recibido una plantilla extra explícita (2b arriba
+        # ya le creó tareas reales; mismo criterio anti-duplicación que ya
+        # usa el fallback "Gestión de tareas" de equipos CON ficha).
         # ══════════════════════════════════════════════════════════════
-        equipos_sin_maquina = [m for m in maquinas if not m.get("id")]
+        equipos_sin_maquina = [
+            m for m in maquinas if not m.get("id")
+            and m.get("ticket_equipo_id") not in equipos_ticket_con_plantilla_extra
+        ]
         if visita_id and equipos_sin_maquina:
             try:
                 _conn_tk = get_mysql()
