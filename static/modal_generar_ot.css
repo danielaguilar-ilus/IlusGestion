@@ -407,6 +407,17 @@
 .lev-table-eq tbody tr:has(.lev-eq-chk:checked) td:first-child{ box-shadow:inset 3px 0 0 #dc2626; }
 .lev-eq-chk{ width:17px; height:17px; accent-color:#dc2626; cursor:pointer; }
 .lev-eq-chk:checked{ background-color:#dc2626; border-color:#dc2626; } /* por si algún día pasan a .form-check-input */
+/* 2026-08-13 (Daniel, en vivo TK-2026-01313: "sale en rojo... se señala
+   como bloqueada" -- el rayado rojo de arriba es el indicador GENÉRICO de
+   "fila marcada", pensado para cuando el usuario elige un equipo a mano.
+   Un equipo forzado (cliente sin ficha) no lo elige nadie -- se incluye
+   solo -- así que el mismo rojo se leía como error/bloqueo en vez de
+   "incluido". Selector más específico (misma técnica :has(), + la clase
+   .lev-eq-forzado) para que gane sobre la regla genérica de arriba sin
+   tocarla -- la selección manual de equipos con ficha sigue en rojo igual
+   que siempre. ── */
+.lev-table-eq tbody tr.lev-eq-forzado:has(.lev-eq-chk:checked) td:first-child{ box-shadow:inset 3px 0 0 #16a34a; }
+.lev-table-eq tbody tr.lev-eq-forzado .lev-eq-chk{ accent-color:#16a34a; }
 
 /* ── Paso 6 — Acceso y logística ── */
 .lev-sc .lev-yn-group{ border-radius:10px; box-shadow:0 1px 2px rgba(15,23,42,.05); }

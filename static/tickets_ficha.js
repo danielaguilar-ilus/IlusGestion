@@ -4416,7 +4416,7 @@ function tkotRenderEquipos(){
     const rowOpacity = (!forzado && noAplica) ? 'opacity:.5;' : '';
     const checkedAttr = forzado ? 'checked disabled' : '';
     const sinMantBdg = noAplica ? ' <span style="font-size:.63rem;color:#9ca3af;margin-left:5px;font-weight:400">(sin mantención)</span>' : '';
-    return '<tr class="'+rowCls+'" style="'+rowOpacity+'cursor:'+(forzado?'not-allowed':'pointer')+'" '
+    return '<tr class="'+rowCls+'" style="'+rowOpacity+'cursor:'+(forzado?'default':'pointer')+'" '
       + (forzado ? '' : 'onclick="const c=this.querySelector(\'.lev-eq-chk\');c.checked=!c.checked;tkotRecalcEqCount();event.stopPropagation();"') + '>'
       + '<td><input type="checkbox" class="lev-eq-chk" data-key="'+esc(key)+'" '+checkedAttr+' '
       + (forzado?'':'onchange="tkotRecalcEqCount()" onclick="event.stopPropagation()"') + '></td>'

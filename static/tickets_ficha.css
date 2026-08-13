@@ -1105,9 +1105,14 @@
 .lev-adj-pill-input:active{transform:scale(.97)}
 .lev-adj-pill-input i{font-size:.95rem}
 
-/* ── Equipos del ticket sin ficha de cliente: preseleccionados y bloqueados ── */
-.lev-eq-forzado{opacity:.85;cursor:not-allowed !important}
-.lev-eq-forzado input[type=checkbox]{cursor:not-allowed}
+/* ── Equipos del ticket sin ficha de cliente: preseleccionados e incluidos
+   automáticamente. NO es un estado de error/bloqueo (Daniel 2026-08-13:
+   "sale en rojo... se señala como bloqueada" -- antes se pintaba igual
+   que un campo con problema) -- el checkbox no se puede desmarcar porque
+   SIEMPRE van todos, pero el equipo funciona igual que cualquier otro
+   (se le puede agregar plantilla extra). Verde = incluido, no rojo. ── */
+.lev-eq-forzado{cursor:default !important}
+.lev-eq-forzado input[type=checkbox]{cursor:default;accent-color:#16a34a}
 
 @media (max-width: 575.98px){
   .lev-yn-btn { min-width:70px; }
