@@ -385,6 +385,17 @@
               </button>
             </div>
           </div>
+          <div class="sr-sec">
+            <div class="sr-sec-h"><i class="bi bi-link-45deg"></i>¿Este pedido quedó en dos manifiestos?</div>
+            <div class="small text-muted mb-2">
+              Si esta factura también está en OTRO manifiesto y la visita vigente es la de ese
+              otro (mismo courier te la mostró como entregada ahí), usa esto para corregir
+              SOLO este registro. No llama a SimpliRoute ni toca el otro manifiesto.
+            </div>
+            <button type="button" class="btn btn-outline-warning sr-acc-btn" id="srBtnDesvincular" onclick="srDesvincularDuplicado()">
+              <i class="bi bi-scissors me-1"></i>Corregir vinculación cruzada
+            </button>
+          </div>
           <div id="srAccMsg" class="small mt-2"></div>
         </div>
       </div>

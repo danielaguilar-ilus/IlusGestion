@@ -1799,6 +1799,41 @@ async function srCancelarVisita() {
   }
 }
 
+async function srDesvincularDuplicado() {
+  var data = window._srItemData || {};
+  if (!data.item_id) return;
+  var ok = await ilusConfirm({
+    title: 'Corregir vinculación cruzada',
+    message: '¿Corregir el vínculo de SimpliRoute de este registro?',
+    sub: 'Se limpia SOLO este manifiesto. La visita real sigue intacta donde corresponde -- '
+       + 'no se llama a SimpliRoute. Si esta visita no está realmente compartida con otro '
+       + 'manifiesto, el sistema lo rechaza.',
+    okLabel: 'Sí, corregir', cancelLabel: 'No',
+  });
+  if (!ok) return;
+  var msg = document.getElementById('srAccMsg');
+  var btn = document.getElementById('srBtnDesvincular');
+  btn.disabled = true;
+  msg.innerHTML = '<span class="text-muted">Corrigiendo…</span>';
+  try {
+    var r = await fetch('/transporte/api/items/' + data.item_id + '/simpliroute/desvincular-duplicado', { method: 'POST' });
+    var d = await r.json();
+    if (!d.ok) {
+      msg.innerHTML = '<span class="text-danger">' + _srEsc(d.error || 'No se pudo corregir') + '</span>';
+      ilusToast(d.error || 'No se pudo corregir la vinculación', { type: 'error' });
+      return;
+    }
+    msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Corregido -- la visita sigue activa en el manifiesto #' + _srEsc(d.sigue_activa_en_manifiesto) + '</span>';
+    ilusToast('✓ Vinculación cruzada corregida', { type: 'success' });
+    setTimeout(function(){ window.location.reload(); }, 1200);
+  } catch (e) {
+    msg.innerHTML = '<span class="text-danger">Error de conexión</span>';
+    ilusToast('Error de conexión', { type: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function srReprogramar() {
   var data = window._srItemData || {};
   if (!data.item_id) return;

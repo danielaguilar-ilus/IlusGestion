@@ -33746,6 +33746,35 @@ def _sr_normalizar_reference(ref):
     return f"{tido}-{nudo}"
 
 
+def _sr_visita_pertenece_a_otro_manifiesto(commitment_id, manifest_id_actual, visit_id_candidato):
+    """True si `visit_id_candidato` ya está guardado en OTRA fila de
+    transport_manifest_items del MISMO commitment pero de un manifiesto
+    distinto -- esa fila es la dueña legítima de esa visita.
+
+    BUG REAL (2026-08-10, Daniel: caso FCV 11240, manifiesto 17 vs 41).
+    _simpliroute_poll_batch reconcilia visitas por 'reference' (tido-nudo)
+    para rescatar casos donde SimpliRoute recreó la visita con un id nuevo
+    (ver casos BLV 22738/22890, FCV 11137 en las funciones que llaman esto).
+    Ese rescate es correcto cuando solo hay UNA fila de ILUS de por medio.
+    Pero si el mismo commitment vive en DOS manifiestos (confirm_dup lo
+    permite: la subida vieja falló de verdad y se re-agregó a uno nuevo),
+    la reference es la MISMA para ambas filas -- y sin este freno, el
+    manifiesto VIEJO le "robaba" al NUEVO el visit_id vigente, heredando su
+    fecha/estado aunque nunca tuvo ese despacho. Antes de adoptar una visita
+    por reference hay que verificar que nadie más (en otro manifiesto) ya
+    la tenga guardada -- si la tiene, esa es la vigente y este item debe
+    quedarse como está.
+    """
+    if not visit_id_candidato:
+        return False
+    fila = mysql_fetchone("""
+        SELECT id FROM transport_manifest_items
+         WHERE commitment_id=%s AND manifest_id<>%s AND simpliroute_visit_id=%s
+         LIMIT 1
+    """, (commitment_id, manifest_id_actual, str(visit_id_candidato)))
+    return bool(fila)
+
+
 def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     """Vincula items SIN simpliroute_visit_id a una visita que YA EXISTE en
     SimpliRoute, buscándola por 'reference' (tido-nudo, ver
@@ -33761,6 +33790,23 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
     actualizaciones, aunque el chofer sí esté entregando en vivo).
 
     dry=True → solo reporta qué encontraría, no escribe nada.
+
+    BUG REAL (2026-08-10, Daniel: caso FCV 11240 / manifiesto 17 vs 41 —
+    "no puede decir entregado en el manifiesto antiguo... como lo actualicé
+    en el otro manifiesto, se está ligando la información"). El mismo
+    commitment puede quedar en DOS manifiestos a la vez (tr_asignar_a_manifiesto
+    lo permite con confirm_dup — caso legítimo: la subida del manifiesto
+    viejo falló de verdad y Daniel lo re-agregó a uno nuevo). Esta función
+    buscaba huérfanos SOLO por 'reference' (tido-nudo), sin mirar si esa
+    misma reference YA tenía una fila CON visita activa en otro manifiesto.
+    Si el manifiesto viejo quedó huérfano (su subida original nunca llegó a
+    SimpliRoute) y el nuevo sí subió bien, este reconciliador terminaba
+    pegándole al item VIEJO el visit_id que en realidad pertenece al
+    despacho NUEVO — y el poller normal, acto seguido, le copiaba encima
+    estado_entrega/fecha del despacho de hoy. El manifiesto viejo mentía.
+    Ahora se excluyen los commitments que ya tienen otra fila con visita
+    activa en OTRO manifiesto: esa es la copia vigente, y la vieja debe
+    quedar tal cual (huérfana, honesta) en vez de heredar datos ajenos.
     """
     import simpliroute_client as _src
     import datetime as _dt
@@ -33775,6 +33821,13 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False):
                AND (mi.estado_entrega IS NULL
                     OR mi.estado_entrega NOT IN ('Entregado','Devolución'))
                AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+               AND NOT EXISTS (
+                    SELECT 1 FROM transport_manifest_items mi2
+                     WHERE mi2.commitment_id = mi.commitment_id
+                       AND mi2.manifest_id <> mi.manifest_id
+                       AND mi2.simpliroute_visit_id IS NOT NULL
+                       AND mi2.simpliroute_visit_id <> ''
+               )
              ORDER BY tm.fecha DESC
              LIMIT %s
         """, (int(limit),)) or []
@@ -33883,7 +33936,7 @@ def _simpliroute_poll_batch(limit=400, dry=False):
         out["huerfanos"] = {"ok": False, "error": f"reconciliacion fallo: {e}"}
     try:
         cands = mysql_fetchall("""
-            SELECT mi.id AS item_id, mi.commitment_id, mi.simpliroute_visit_id,
+            SELECT mi.id AS item_id, mi.manifest_id, mi.commitment_id, mi.simpliroute_visit_id,
                    mi.estado_entrega, tm.fecha, tm.courier, c.tido, c.nudo
               FROM transport_manifest_items mi
               JOIN transport_manifests tm ON tm.id = mi.manifest_id
@@ -34090,13 +34143,20 @@ def _simpliroute_poll_batch(limit=400, dry=False):
 
             if visita_ref and str(visita_ref.get("id")) != vid:
                 nuevo_id = str(visita_ref.get("id") or "")
+                # BUG REAL (2026-08-10, caso FCV 11240): si esta visita ya es
+                # de OTRA fila del mismo commitment en OTRO manifiesto, esa
+                # es la vigente -- no se adopta acá (ver
+                # _sr_visita_pertenece_a_otro_manifiesto).
+                if _sr_visita_pertenece_a_otro_manifiesto(
+                        it.get("commitment_id"), it.get("manifest_id"), nuevo_id):
+                    pass
                 # 2026-08-07: el UPDATE va detrás de `dry` — antes no lo
                 # estaba, y no escribía en dry-run SOLO porque el match de
                 # arriba fallaba siempre (bug del normalizador). Con el
                 # normalizador arreglado, un dry-run sin esta guarda habría
                 # empezado a escribir en producción. En memoria el reemplazo
                 # se adopta igual, para que el dry reporte lo que HARÍA.
-                if not dry:
+                elif not dry:
                     try:
                         mysql_execute(
                             "UPDATE transport_manifest_items SET simpliroute_visit_id=%s, "
@@ -34185,6 +34245,14 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                                     None)
                                 if visita_nueva:
                                     break
+                    # BUG REAL (2026-08-10, caso FCV 11240): si la visita de
+                    # reemplazo ya es de OTRA fila del mismo commitment en
+                    # OTRO manifiesto, esa es la vigente -- no se adopta acá
+                    # (cae al mismo tratamiento que "sin reemplazo" de abajo).
+                    if visita_nueva and _sr_visita_pertenece_a_otro_manifiesto(
+                            it.get("commitment_id"), it.get("manifest_id"),
+                            str(visita_nueva.get("id") or "")):
+                        visita_nueva = None
                     if visita_nueva:
                         nuevo_id = str(visita_nueva.get("id") or "")
                         try:
@@ -34268,6 +34336,13 @@ def _simpliroute_poll_batch(limit=400, dry=False):
                             and _sr_rank(_cand) > _sr_rank(visita)):
                         if _mejor is None or _sr_rank(_cand) > _sr_rank(_mejor):
                             _mejor = _cand
+                # BUG REAL (2026-08-10, caso FCV 11240): igual que los otros
+                # dos rescates de esta función -- si _mejor ya es de OTRA fila
+                # del mismo commitment en OTRO manifiesto, esa es la vigente.
+                if _mejor is not None and _sr_visita_pertenece_a_otro_manifiesto(
+                        it.get("commitment_id"), it.get("manifest_id"),
+                        str(_mejor.get("id") or "")):
+                    _mejor = None
                 if _mejor is not None:
                     nuevo_id = str(_mejor.get("id") or "")
                     if not dry:
@@ -39457,6 +39532,79 @@ def tr_item_simpliroute_reenviar(item_id):
                  400 if "Datos incompletos" in (r.get("error") or "") else 502
         return jsonify(r), status
     return jsonify(r)
+
+
+@app.route("/transporte/api/items/<int:item_id>/simpliroute/desvincular-duplicado", methods=["POST"])
+@_tr_required
+def tr_item_simpliroute_desvincular_duplicado(item_id):
+    """Desvincula LOCALMENTE la visita SimpliRoute de un item, SIN llamar a la
+    API externa (a diferencia de .../cancelar, que sí la borra en SimpliRoute).
+
+    BUG REAL (2026-08-10, Daniel: caso FCV 11240, manifiesto 17 vs 41 —
+    "no puede decir entregado en el manifiesto antiguo... como lo actualicé
+    en el otro manifiesto, se está ligando la información"). Cuando el mismo
+    commitment queda en dos manifiestos (confirm_dup permite esto: la subida
+    del manifiesto viejo falló de verdad y se re-agregó a uno nuevo que sí
+    subió bien), _simpliroute_reconciliar_huerfanos podía pegarle al item del
+    manifiesto VIEJO el mismo visit_id del NUEVO (arreglado hoy para que no
+    vuelva a pasar — ver esa función). Ese visit_id sigue siendo una visita
+    REAL que SimpliRoute gestiona para el despacho nuevo: llamar a
+    .../cancelar la borraría también ahí. Este endpoint solo corrige la fila
+    local equivocada, dejando la visita intacta donde de verdad corresponde.
+
+    Por seguridad exige que el visit_id esté REALMENTE compartido con otra
+    fila del mismo commitment en OTRO manifiesto — si no lo está, no es un
+    caso de vinculación cruzada y no se puede usar para abandonar un
+    seguimiento real (para eso está /cancelar).
+    """
+    mi = mysql_fetchone("""
+        SELECT mi.id, mi.commitment_id, mi.manifest_id, mi.simpliroute_visit_id,
+               mi.estado_entrega
+        FROM transport_manifest_items mi
+        WHERE mi.id=%s
+    """, (item_id,))
+    if not mi:
+        return jsonify({"ok": False, "error": "Item no encontrado"}), 404
+
+    vid = (mi.get("simpliroute_visit_id") or "").strip()
+    if not vid:
+        return jsonify({"ok": False, "error": "Este item no tiene una visita vinculada."}), 400
+
+    compartido = mysql_fetchone("""
+        SELECT mi2.id, mi2.manifest_id
+        FROM transport_manifest_items mi2
+        WHERE mi2.commitment_id=%s AND mi2.id<>%s
+          AND mi2.simpliroute_visit_id=%s
+        LIMIT 1
+    """, (mi["commitment_id"], item_id, vid))
+    if not compartido:
+        return jsonify({"ok": False,
+                         "error": "Esta visita no está compartida con otro manifiesto -- no es "
+                                  "un caso de vinculación cruzada. Si quieres anular el "
+                                  "seguimiento, usa «Cancelar visita»."}), 400
+
+    mysql_execute(
+        "UPDATE transport_manifest_items SET simpliroute_visit_id=NULL, "
+        "simpliroute_tracking_id=NULL, simpliroute_synced_at=NULL, "
+        "simpliroute_error=NULL WHERE id=%s", (item_id,))
+    _tr_log("manifest_item", item_id, "vinculación cruzada de SimpliRoute corregida",
+            f"visita {vid} desvinculada LOCALMENTE (sigue activa en el manifiesto "
+            f"#{compartido['manifest_id']}, item {compartido['id']} -- esa es la vigente); "
+            f"no se llamó a la API de SimpliRoute")
+
+    estado_actual = (mi.get("estado_entrega") or "").strip()
+    if estado_actual not in ESTADOS_ENTREGA_TERMINALES:
+        try:
+            _tr_apply_carrier_status(
+                item_id, 'En preparación', fuente='sistema',
+                comentario='Vinculación cruzada de SimpliRoute corregida (la visita real '
+                           'sigue en otro manifiesto)',
+                notify_cliente=False)
+        except Exception as _e_desv:
+            print(f"[tr_event sr_desvinc] item={item_id}: {_e_desv}", flush=True)
+
+    return jsonify({"ok": True, "visit_id_liberado": vid,
+                     "sigue_activa_en_manifiesto": compartido["manifest_id"]})
 
 
 @app.route("/transporte/manifiestos/<int:mid>/export", methods=["GET"])
