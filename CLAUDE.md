@@ -428,7 +428,15 @@ viejo al nuevo de Google.
   `ilus-app-498503`.
 - URL de producción:
   `https://ilus-app-469212710544.southamerica-west1.run.app`
-- **Pide OK a Daniel antes de cada merge a main** (= deploy a producción).
+- **Claude (acciones directas de esta sesión) NO necesita pedir OK a Daniel
+  antes de cada merge a main** — autorización permanente desde 2026-05-22,
+  reconfirmada 2026-08-09 y 2026-08-13 ("lo que yo quería era que tus
+  agentes estén limitados, no tú como tal"). Revisa el diff, valida
+  sintaxis, y mergea/despliega directo.
+  **Los agentes delegados (Agent tool) SÍ siguen restringidos: nunca hacen
+  push ni merge a main por su cuenta** — dejan el trabajo commiteado
+  localmente (o en su rama del worktree) para que Claude lo revise y
+  mergee él mismo.
 
 ### Railway = SOLO redirector (no es producción, no es respaldo)
 
