@@ -175,6 +175,18 @@ function goToPlantillas(mid){
   mid = String(mid);
   _state.mid = mid;
   _state.pid = null;
+  // 2026-08-12 (maqueta Fable aprobada — "un solo carril, sin menús"):
+  // "Tocar el equipo entra DIRECTO a su checklist — se elimina el paso
+  // intermedio". El caso real más común es 1 plantilla por equipo: ahí no
+  // hay nada que elegir, así que saltamos la vista intermedia y vamos
+  // directo a las tareas. Si el equipo tiene 2+ plantillas SÍ mostramos el
+  // selector (necesario — no es un "menú", es información real que el
+  // técnico tiene que decidir), pero eso queda como caso raro, no la regla.
+  const pls = PLANTILLAS_POR_MAQUINA[mid] || [];
+  if (pls.length === 1){
+    goToTareas(mid, pls[0].plantilla_id);
+    return;
+  }
   setView('plantillas');
   renderPlantillas(mid);
   renderCrumbs();
@@ -187,6 +199,145 @@ function goToTareas(mid, pid){
   setView('tareas');
   renderTareas(mid, pid);
   renderCrumbs();
+}
+
+// ════════════════════════════════════════════════════════
+//  VISTA 4: RESUMEN DE VISITA (2026-08-12 — maqueta Fable aprobada)
+//  "Antes de pedirle nada al cliente, el técnico confirma que no queda
+//  nada pendiente." Se llega acá desde el botón "Firmar OT" del bottom
+//  bar (ver abrirResumenOFirma) cuando SÍ hay checklist clásico que
+//  resumir. NO reemplaza a abrirModalFirma()/enviarFirma() -- el botón
+//  final de esta vista llama exactamente a la misma abrirModalFirma() de
+//  siempre.
+// ════════════════════════════════════════════════════════
+function goToResumen(){
+  _state.mid = null;
+  _state.pid = null;
+  setView('resumen'); // setView ya fija _state.view
+  renderResumen();
+  renderCrumbs();
+}
+
+// Punto de entrada del botón "Firmar OT" del bottom bar (reemplaza el
+// onclick que antes llamaba abrirModalFirma() directo). Decide si hay
+// algo que resumir: en un levantamiento de descubrimiento puro (sin
+// equipos clásicos, EQUIPOS.length===0) no hay checklist que mostrar en
+// esta vista -- se firma directo, exactamente como se hacía antes de
+// este cambio.
+function abrirResumenOFirma(){
+  const ctx = _calcCtxGlobal();
+  const esDescubrimientoPuro = ES_LEVANTAMIENTO && (typeof EQUIPOS !== 'undefined') && EQUIPOS.length === 0;
+  if (esDescubrimientoPuro || ctx.total === 0){
+    abrirModalFirma();
+    return;
+  }
+  goToResumen();
+}
+
+// Colores/etiquetas compartidos por el resumen (mismo semáforo que el
+// resto del carril: verde ok, ámbar observación, rojo falla).
+const _RESUMEN_COLOR = {ok:'#16a34a', obs:'#f59e0b', fail:'#dc2626', pend:'#cbd5e1'};
+const _DIAG_LABEL = {
+  aprobado:    '<i class="bi bi-patch-check-fill"></i>Aprobado',
+  observacion: '<i class="bi bi-eye-fill"></i>Observación',
+  falla:       '<i class="bi bi-x-octagon-fill"></i>Falla',
+};
+
+// Construye 1 fila de resumen para un equipo: nombre, avance, badges de
+// estado_revision (saltado/falla) y diagnóstico (aprobado/obs/falla).
+function _resumenFilaEquipo(eq){
+  const mid = String(eq.id);
+  const rev = (EQUIPOS_ESTADO_REVISION || {})[mid] || {};
+  const pls = PLANTILLAS_POR_MAQUINA[mid] || [];
+  let tot = 0, comp = 0;
+  pls.forEach(p => { tot += p.total; comp += p.completas; });
+
+  const excluido = (rev.estado_revision === 'saltado' || rev.estado_revision === 'falla_detectada');
+  let worst = 'ok';
+  if (rev.diagnostico_estado === 'falla' || rev.estado_revision === 'falla_detectada') worst = 'fail';
+  else if (rev.diagnostico_estado === 'observacion' || rev.estado_revision === 'con_cambios' || rev.estado_revision === 'saltado') worst = 'obs';
+  else if (tot > 0 && comp < tot) worst = 'pend';
+
+  const badges = [];
+  if (excluido){
+    const esSaltado = (rev.estado_revision === 'saltado');
+    badges.push(`<span class="eqrev-badge eqrev-${rev.estado_revision}"><i class="bi bi-${esSaltado ? 'skip-forward-fill' : 'exclamation-triangle-fill'}"></i>${esSaltado ? 'Saltado' : 'Falla'}</span>`);
+  }
+  if (rev.diagnostico_estado){
+    badges.push(`<span class="eqdiag-badge eqdiag-${rev.diagnostico_estado}">${_DIAG_LABEL[rev.diagnostico_estado] || ''}</span>`);
+  }
+  const diagTxt = rev.diagnostico_texto || rev.observacion_tecnico || '';
+
+  return `<div class="resumen-eqrow">
+    <div class="rr-top">
+      <span class="sdot" style="background:${_RESUMEN_COLOR[worst] || _RESUMEN_COLOR.pend}"></span>
+      <span class="rr-name">${_escapeHtml(eq.nombre || `Equipo #${mid}`)}</span>
+      <span class="rr-count">${excluido ? '—' : `${comp}/${tot}`}</span>
+    </div>
+    ${badges.length ? `<div class="rr-tags">${badges.join('')}</div>` : ''}
+    ${diagTxt ? `<div class="rr-diag">“${_escapeHtml(diagTxt)}”</div>` : ''}
+  </div>`;
+}
+
+// "Tiempo en sitio" — misma normalización que _humanizeAgo/
+// actualizarPipelineTimes ya usan para timestamps crudos 'YYYY-MM-DD
+// HH:MM:SS' (UTC, sin TZ) de MySQL, no un parseo paralelo.
+function _resumenTiempoEnSitio(){
+  if (!VISITA_HORA_INICIO_RAW) return '—';
+  try {
+    const norm = VISITA_HORA_INICIO_RAW.replace(' ', 'T');
+    const dStart = new Date(norm.endsWith('Z') || norm.includes('+') ? norm : norm + 'Z');
+    if (isNaN(dStart.getTime())) return '—';
+    const diffMs = Date.now() - dStart.getTime();
+    if (diffMs < 0) return '—';
+    const mins = Math.floor(diffMs / 60000);
+    const hrs = Math.floor(mins / 60);
+    const rmin = mins % 60;
+    return hrs > 0 ? `${hrs}h ${rmin}m` : `${rmin} min`;
+  } catch(e){ return '—'; }
+}
+
+function renderResumen(){
+  const ctx = _calcCtxGlobal();
+  const opcTot = ctx.total - ctx.oblTot;
+  const opcComp = ctx.completas - ctx.oblComp;
+
+  // Recorre TODOS los equipos de la OT (no solo los pendientes, a
+  // diferencia de _pendientesPorEquipo) para que el técnico vea el
+  // estado completo, no solo lo que falta.
+  const rowsHtml = (EQUIPOS && EQUIPOS.length)
+    ? EQUIPOS.map(_resumenFilaEquipo).join('')
+    : `<div class="resumen-empty"><i class="bi bi-inbox" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>Sin equipos para resumir.</div>`;
+
+  const nNovedad = (EQUIPOS || []).filter(eq => {
+    const rev = (EQUIPOS_ESTADO_REVISION || {})[String(eq.id)] || {};
+    return rev.estado_revision === 'falla_detectada' || rev.estado_revision === 'saltado' ||
+           rev.diagnostico_estado === 'observacion' || rev.diagnostico_estado === 'falla';
+  }).length;
+  const listo = (ctx.oblComp >= ctx.oblTot);
+  const titulo = listo
+    ? (nNovedad ? 'Checklist completo, con novedades para informar.' : 'Nada pendiente. Listo para el cliente.')
+    : 'Aún quedan tareas obligatorias.';
+
+  document.getElementById('resumenBody').innerHTML = `
+    <div class="resumen-hero">
+      <span class="lbl"><i class="bi bi-clipboard2-check-fill"></i> Resumen de visita</span>
+      <h4>${_escapeHtml(titulo)}</h4>
+      <p>${_escapeHtml(VISITA_NUMERO_OT)} · revisa antes de pasar a la firma del cliente</p>
+    </div>
+    <div class="resumen-stats">
+      <div class="resumen-stat g"><span class="v">${ctx.oblComp}/${ctx.oblTot}</span><span class="k">Obligatorias</span></div>
+      <div class="resumen-stat"><span class="v">${opcComp}/${opcTot}</span><span class="k">Opcionales</span></div>
+      <div class="resumen-stat"><span class="v">${_resumenTiempoEnSitio()}</span><span class="k">En sitio</span></div>
+      <div class="resumen-stat${nNovedad ? ' warn' : ''}"><span class="v">${FOTOS_COUNT}</span><span class="k">Fotos</span></div>
+    </div>
+    <div class="resumen-eqlist">${rowsHtml}</div>
+    <div class="resumen-cta-wrap">
+      <button type="button" class="resumen-cta" onclick="abrirModalFirma()">
+        <i class="bi bi-pen-fill"></i> Confirmar y pasar a firma
+      </button>
+    </div>
+  `;
 }
 
 function renderCrumbs(){
@@ -318,7 +469,18 @@ function _renderAccionesRapidasYObs(mid){
     badgeHtml = `<span class="eqrev-badge eqrev-verificado"><i class="bi bi-check-circle-fill"></i>Verificado</span>`;
   }
 
-  const accionesHtml = readonly ? '' : `
+  // 2026-08-12 (Daniel): "que el técnico también pueda saltarse con un
+  // argumento... de casi todas menos las levantamiento, porque el técnico
+  // no las va a marcar porque no está levantándolas, va a levantar lo que
+  // existe". Se usa VISITA_TIPO (el tipo REAL de la OT), no ES_LEVANTAMIENTO
+  // (que también es true para una OT 'preventiva' con levantamiento_id
+  // heredado — ver comentario de esa const más arriba) para no apagar el
+  // saltado en OTs que solo COMPARTEN datos con un levantamiento pero no
+  // son uno. "Reportar falla" cae en el mismo criterio: ambos son formas de
+  // "gestionar sin ejecutar", que no aplica cuando el trabajo ES levantar
+  // lo que existe.
+  const esLevantamientoTipo = (VISITA_TIPO === 'levantamiento');
+  const accionesHtml = (readonly || esLevantamientoTipo) ? '' : `
     <div class="eq-acciones-rapidas">
       <button type="button" class="eq-accion-btn warn"
               onclick="abrirModalSaltarEquipo(${mid})">
@@ -342,6 +504,7 @@ function _renderAccionesRapidasYObs(mid){
       ${estado ? `<small class="text-muted" style="font-size:.7rem">${revBy} ${revAt}</small>` : ''}
     </div>
     ${accionesHtml}
+    ${_renderDiagnosticoEquipo(mid, rev, readonly)}
     <div class="tx-obs-rapida">
       <label for="obs-rapida-${mid}">
         <i class="bi bi-chat-left-text-fill"></i>
@@ -356,6 +519,123 @@ function _renderAccionesRapidasYObs(mid){
       <div class="tx-obs-status" id="obs-rapida-status-${mid}"></div>
     </div>
   `;
+}
+
+// ════════════════════════════════════════════════════════
+// 2026-08-12 (Daniel — requisito nuevo sobre el flujo rediseñado):
+// "necesito un diagnóstico de la orden de trabajo... de cada máquina,
+// para resumirlo en la orden de trabajo y saber qué es lo que está
+// aprobado y desaprobado". BORRADOR explícito (Daniel pidió revisar el
+// modelo antes de darlo por cerrado) — 3 estados simples (aprobado /
+// observación / falla) + texto, guardados en mant_visita_equipos
+// (columnas diagnostico_estado/diagnostico_texto, separadas de
+// estado_revision — ver _ensure_mant_visita_equipos_diagnostico_cols en
+// app.py). Se resume en la Vista 4 (renderResumen).
+// ════════════════════════════════════════════════════════
+function _renderDiagnosticoEquipo(mid, rev, readonly){
+  const dEstado = rev.diagnostico_estado || '';
+  const dTexto = rev.diagnostico_texto || '';
+  const btn = (estado, cls, icon, label) => `
+    <button type="button" class="eq-accion-btn ${cls}${dEstado === estado ? ' is-active' : ''}"
+            ${readonly ? 'disabled' : ''}
+            onclick="pedirDiagnosticoEquipo(${mid}, '${estado}')">
+      <i class="bi ${icon}"></i>${label}
+    </button>`;
+  return `
+    <div class="diag-bloque">
+      <label><i class="bi bi-clipboard2-pulse-fill"></i>Diagnóstico del equipo <small class="text-muted fw-normal" style="font-size:.68rem">(borrador — se resume en la OT)</small></label>
+      <div class="eq-acciones-rapidas">
+        ${btn('aprobado', 'success', 'bi-patch-check-fill', 'Aprobado')}
+        ${btn('observacion', 'warn', 'bi-eye-fill', 'Observación')}
+        ${btn('falla', 'danger', 'bi-x-octagon-fill', 'Falla')}
+      </div>
+      ${dTexto ? `<div class="diag-texto">${_escapeHtml(dTexto)}</div>` : ''}
+    </div>
+  `;
+}
+
+// 'aprobado' guarda directo (no exige texto). 'observacion'/'falla' piden
+// texto vía ilusPrompt -- mismo patrón ya probado en abrirModalFallaEquipo.
+async function pedirDiagnosticoEquipo(mid, estado){
+  if (estado === 'aprobado'){
+    await guardarDiagnosticoEquipo(mid, 'aprobado', '');
+    return;
+  }
+  if (typeof ilusPrompt !== 'function'){
+    console.error('ilusPrompt no disponible');
+    return;
+  }
+  const eq = EQUIPOS_IDX[String(mid)] || {};
+  const nombreEq = eq.nombre || ('Equipo #' + mid);
+  const rev = EQUIPOS_ESTADO_REVISION[String(mid)] || {};
+  const label = (estado === 'falla') ? 'Falla' : 'Observación';
+  const texto = await ilusPrompt({
+    title: `Diagnóstico — ${label} · ${nombreEq}`,
+    message: `Describe la ${label.toLowerCase()} encontrada en este equipo:`,
+    sub: 'Queda resumido en la ficha de la OT antes de la firma del cliente.',
+    placeholder: estado === 'falla'
+      ? 'Ej: motor con ruido anormal, banda con desgaste crítico…'
+      : 'Ej: correa con desgaste leve, sugerimos control en 6 meses…',
+    defaultValue: (rev.diagnostico_estado === estado) ? (rev.diagnostico_texto || '') : '',
+    required: true,
+    multiline: true,
+  });
+  if (!texto || texto.trim().length < 10){
+    if (texto !== null && typeof ilusToast === 'function'){
+      ilusToast('Describe el diagnóstico (mínimo 10 caracteres)', {type:'warning'});
+    }
+    return;
+  }
+  await guardarDiagnosticoEquipo(mid, estado, texto.trim());
+}
+
+async function guardarDiagnosticoEquipo(mid, estado, texto){
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/equipos/${mid}/diagnostico`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({estado, texto: texto || ''})
+    });
+    const d = await r.json();
+    if (!d.ok){ throw new Error(d.error || 'No se pudo guardar el diagnóstico'); }
+    EQUIPOS_ESTADO_REVISION[String(mid)] = {
+      ...(EQUIPOS_ESTADO_REVISION[String(mid)] || {}),
+      diagnostico_estado: d.diagnostico_estado || estado,
+      diagnostico_texto: d.diagnostico_texto || texto || '',
+    };
+    _refreshEqDiagBadge(mid);
+    if (_state.view === 'plantillas' && String(_state.mid) === String(mid)){
+      renderPlantillas(mid);
+    }
+    if (typeof ilusToast === 'function'){
+      const msg = {aprobado:'✓ Diagnóstico: aprobado', observacion:'Diagnóstico: observación registrada', falla:'🚨 Diagnóstico: falla registrada'}[estado] || 'Diagnóstico guardado';
+      ilusToast(msg, {type: estado === 'falla' ? 'danger' : 'success'});
+    }
+  } catch (e){
+    if (typeof ilusAlert === 'function'){
+      ilusAlert({title:'Error', message: e.message || 'No se pudo guardar', type:'error'});
+    } else {
+      console.error(e);
+    }
+  }
+}
+
+// Espejo de _refreshEqCardBadge pero para el badge de diagnóstico de la
+// card en la Vista 1 (lista de máquinas).
+function _refreshEqDiagBadge(mid){
+  const rev = EQUIPOS_ESTADO_REVISION[String(mid)] || {};
+  const dEstado = rev.diagnostico_estado || '';
+  const badge = document.getElementById(`eqdiag-badge-${mid}`);
+  if (!badge) return;
+  if (!dEstado){ badge.style.display = 'none'; return; }
+  badge.style.display = '';
+  badge.className = `eqdiag-badge eqdiag-${dEstado}`;
+  const label = {
+    aprobado:    '<i class="bi bi-patch-check-fill"></i>Aprobado',
+    observacion: '<i class="bi bi-eye-fill"></i>Observación',
+    falla:       '<i class="bi bi-x-octagon-fill"></i>Falla',
+  }[dEstado] || dEstado;
+  badge.innerHTML = label;
 }
 
 // Guarda observación libre (sin cambiar estado) auto-save al blur.
@@ -493,9 +773,11 @@ async function confirmarSaltarEquipo(){
     }
     return;
   }
-  if (obs.length < 5){
+  if (obs.length < 10){
     if (typeof ilusToast === 'function'){
-      ilusToast('Escribe al menos 5 caracteres de observación', {type:'warning'});
+      // 2026-08-12: unificado a 10 caracteres (mismo estándar del resto de
+      // motivos obligatorios del proyecto — ver _MOTIVO_MIN_CHARS en app.py).
+      ilusToast('Escribe al menos 10 caracteres de observación', {type:'warning'});
     }
     document.getElementById('skipObservacion').focus();
     return;
@@ -544,7 +826,8 @@ async function confirmarSaltarEquipo(){
   }
 }
 
-// Modal "Reportar falla" — pide observación detallada (mín 5 chars).
+// Modal "Reportar falla" — pide observación detallada (mín 10 chars, ver
+// _MOTIVO_MIN_CHARS en app.py — 2026-08-12 unificado con el resto).
 async function abrirModalFallaEquipo(mid){
   if (typeof ilusPrompt !== 'function'){
     console.error('ilusPrompt no disponible');
@@ -560,9 +843,9 @@ async function abrirModalFallaEquipo(mid){
     required: true,
     multiline: true,
   });
-  if (!desc || desc.trim().length < 5){
+  if (!desc || desc.trim().length < 10){
     if (typeof ilusToast === 'function'){
-      ilusToast('La descripción debe tener al menos 5 caracteres', {type:'warning'});
+      ilusToast('La descripción debe tener al menos 10 caracteres', {type:'warning'});
     }
     return;
   }
@@ -584,10 +867,13 @@ function renderTareas(mid, pid){
 
   const cont = document.getElementById('tareasList');
   const bloqueada = (grupo.bloqueado || VISITA_ESTADO === 'pendiente_aprobacion' || VISITA_ESTADO === 'cerrada' || !PUEDE_EJECUTAR_FLAG);
-  cont.innerHTML = grupo.tareas.map(t => renderTareaHtml(t, bloqueada, mid, pid)).join('');
+  // 2026-08-12 (maqueta Fable aprobada) — índice + "próxima pendiente" para
+  // que el carril se lea como un recorrido, no una lista plana.
+  const idxSiguiente = grupo.tareas.findIndex(t => !t.completada);
+  cont.innerHTML = grupo.tareas.map((t, i) => renderTareaHtml(t, bloqueada, mid, pid, i, i === idxSiguiente)).join('');
 }
 
-function renderTareaHtml(t, bloqueada, mid, pid){
+function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
   const done = !!t.completada;
   // ── FIX 2026-05-17 (GPS DEFINITIVO) ───────────────────────────────
   // Normalizar `tipo_respuesta`: a veces llega 'GPS' (mayúsculas),
@@ -841,9 +1127,16 @@ function renderTareaHtml(t, bloqueada, mid, pid){
   // técnicos, isLockedByOther agrega class is-locked-other (CSS deshabilita).
   const lockClass = (isLockedByOther && !IS_ADMIN_LOCK) ? ' is-locked-other' : '';
 
-  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${lockClass}"
+  // 2026-08-12 (maqueta Fable aprobada) — número de orden + tag "Siguiente"
+  // en la tarea próxima a completar (solo cuando aún no está bloqueada ni
+  // ya hecha — no tiene sentido apuntar "siguiente" a algo inactivo).
+  const nextClass = (esSiguiente && !done && !bloqueada) ? ' next' : '';
+  const tno = (typeof index === 'number') ? String(index + 1).padStart(2, '0') : '';
+
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${lockClass}"
        id="tar-${t.id}" data-version="${t.version || 0}">
     <div class="ttl">
+      ${tno ? `<span class="tno">${tno}</span>` : ''}
       <div class="ttl-chk" ${isCheckType && !bloqueada ? `onclick="toggleCheck(${t.id}, ${mid}, ${pid})"` : ''}
         style="${isCheckType && !bloqueada ? 'cursor:pointer' : 'cursor:default'}">
         ${done ? '<i class="bi bi-check-lg"></i>' : ''}
@@ -854,6 +1147,7 @@ function renderTareaHtml(t, bloqueada, mid, pid){
             ${t.obligatoria ? '<span class="tx-badge-obl">Obligatoria</span>' : ''}
             ${t.requiere_foto ? '<span class="tx-badge-foto">📷 Foto</span>' : ''}
             <span class="tx-badge-tipo">${_escapeHtml(tipo)}</span>
+            <span class="nxt-tag">Siguiente</span>
           </span>
         </div>
         ${t.descripcion ? `<div class="ttl-sub">${_escapeHtml(t.descripcion)}</div>` : ''}
@@ -1864,12 +2158,16 @@ function _refrescarTareaActual(tid){
   const grupo = (PLANTILLAS_POR_MAQUINA[_state.mid] || [])
     .find(p => String(p.plantilla_id) === String(_state.pid));
   if (!grupo) return;
-  const tar = grupo.tareas.find(t => t.id === tid);
+  const idx = grupo.tareas.findIndex(t => t.id === tid);
+  const tar = idx >= 0 ? grupo.tareas[idx] : null;
   if (!tar) return;
   const oldEl = document.getElementById('tar-' + tid);
   if (!oldEl) return;
+  // 2026-08-12: pasa index/esSiguiente igual que renderTareas() para que el
+  // refresh por lock no le borre el número de orden ni el tag "Siguiente".
+  const idxSiguiente = grupo.tareas.findIndex(t => !t.completada);
   const wrap = document.createElement('div');
-  wrap.innerHTML = renderTareaHtml(tar, false, _state.mid, _state.pid);
+  wrap.innerHTML = renderTareaHtml(tar, false, _state.mid, _state.pid, idx, idx === idxSiguiente);
   oldEl.replaceWith(wrap.firstElementChild);
 }
 
@@ -2714,6 +3012,20 @@ function _updateProgress(mid, pid){
       if (chk) chk.innerHTML = t.completada ? '<i class="bi bi-check-lg"></i>' : '';
     }
   });
+
+  // 2026-08-12 (maqueta Fable aprobada) — "siguiente automático": recalcula
+  // cuál es la próxima tarea pendiente y la marca/desplaza. El guard
+  // `!nextEl.classList.contains('next')` evita re-scrollear en cada
+  // actualización que NO cambia cuál es la siguiente (ej. editar de nuevo
+  // una tarea ya completada) — solo se mueve la vista cuando el "siguiente"
+  // real cambió.
+  const idxSig = grupo.tareas.findIndex(t => !t.completada);
+  const nextEl = idxSig >= 0 ? document.getElementById(`tar-${grupo.tareas[idxSig].id}`) : null;
+  document.querySelectorAll('.tx-tarea.next').forEach(el => { if (el !== nextEl) el.classList.remove('next'); });
+  if (nextEl && !nextEl.classList.contains('next')){
+    nextEl.classList.add('next');
+    setTimeout(() => { nextEl.scrollIntoView({block:'center', behavior:'smooth'}); }, 150);
+  }
 
   // Recalcular stats máquina
   const pls = PLANTILLAS_POR_MAQUINA[mid];

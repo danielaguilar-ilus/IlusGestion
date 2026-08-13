@@ -65888,6 +65888,13 @@ def mant_visita_cerrar(vid):
 # deje una observación libre. Cada decisión queda con audit trail.
 # ══════════════════════════════════════════════════════════════════════
 
+# 2026-08-12 (Daniel — "mínimo ~10 caracteres, mismo estándar que ya usa
+# el proyecto para motivos obligatorios"): unifica el mínimo de la
+# observación de saltar/marcar equipo con el resto de motivos obligatorios
+# del proyecto (garantía retroactiva, "sin costo", etc. — todos exigen 10).
+# Antes esta pantalla pedía solo 5; quedaba más laxo que el resto sin razón.
+_MOTIVO_MIN_CHARS = 10
+
 # Razones válidas para saltar un equipo. Cualquier otra cae como 'otro'.
 _RAZONES_SALTADO_VALIDAS = (
     "no_encontrado", "dado_de_baja", "danado_inaccesible",
@@ -65936,7 +65943,9 @@ def _ot_visita_equipo_link_ok(vid, mid):
 @_tecnico_owns_visita
 def mant_visita_equipo_saltar(vid, mid):
     """El técnico salta un equipo durante la OT: registra razón +
-    observación obligatoria (mín 5 chars). Idempotente vía upsert.
+    observación obligatoria (mín 10 chars — mismo estándar que el resto
+    del proyecto para motivos obligatorios, ver _MOTIVO_MIN_CHARS).
+    Idempotente vía upsert.
     """
     if not _ot_visita_equipo_link_ok(vid, mid):
         return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
@@ -65945,10 +65954,10 @@ def mant_visita_equipo_saltar(vid, mid):
     razon_raw = (d.get("razon") or "").strip().lower()
     razon = razon_raw if razon_raw in _RAZONES_SALTADO_VALIDAS else "otro"
     obs = (d.get("observacion") or "").strip()
-    if len(obs) < 5:
+    if len(obs) < _MOTIVO_MIN_CHARS:
         return jsonify({
             "ok": False,
-            "error": "La observación es obligatoria (mínimo 5 caracteres)."
+            "error": f"La observación es obligatoria (mínimo {_MOTIVO_MIN_CHARS} caracteres)."
         }), 400
     obs = obs[:2000]  # cap razonable
 
@@ -66019,11 +66028,12 @@ def mant_visita_equipo_marcar(vid, mid):
     razon_raw = (d.get("razon") or "").strip().lower()
     razon = razon_raw if razon_raw in _RAZONES_SALTADO_VALIDAS else None
 
-    # Obs obligatoria para estados problemáticos
-    if estado in ("saltado", "falla_detectada") and len(obs) < 5:
+    # Obs obligatoria para estados problemáticos (mismo estándar de 10
+    # caracteres que el resto del proyecto — ver _MOTIVO_MIN_CHARS).
+    if estado in ("saltado", "falla_detectada") and len(obs) < _MOTIVO_MIN_CHARS:
         return jsonify({
             "ok": False,
-            "error": "La observación es obligatoria para este estado (mín 5 caracteres)."
+            "error": f"La observación es obligatoria para este estado (mín {_MOTIVO_MIN_CHARS} caracteres)."
         }), 400
 
     user = current_username()
@@ -66120,6 +66130,91 @@ def mant_visita_equipo_observacion(vid, mid):
     })
 
 
+# Estados válidos del diagnóstico técnico por equipo. Ver
+# _ensure_mant_visita_equipos_diagnostico_cols para el porqué de mantenerlo
+# separado de _ESTADOS_REVISION_VALIDOS.
+_DIAGNOSTICO_ESTADOS_VALIDOS = ("aprobado", "observacion", "falla")
+
+
+@app.route(
+    "/mantenciones/api/visitas/<int:vid>/equipos/<int:mid>/diagnostico",
+    methods=["POST"]
+)
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_equipo_diagnostico(vid, mid):
+    """Diagnóstico técnico del equipo en esta visita: aprobado / observación
+    / falla + texto. Es el "¿qué está aprobado y desaprobado?" que Daniel
+    pidió poder resumir en la OT (2026-08-12) — DISTINTO de estado_revision
+    (que es el flujo de saltar/verificar la visita del equipo, no el
+    veredicto técnico sobre su estado). Ver comentario en
+    _ensure_mant_visita_equipos_diagnostico_cols.
+
+    'aprobado' no exige texto (puede ser un simple visto bueno). 'observacion'
+    y 'falla' exigen texto (mín _MOTIVO_MIN_CHARS) para quedar trazable en
+    el resumen de la visita, mismo estándar que el resto de motivos
+    obligatorios del proyecto.
+
+    BORRADOR: modelo sujeto a revisión de Daniel una vez que vea el flujo
+    funcionando.
+    """
+    if not _ot_visita_equipo_link_ok(vid, mid):
+        return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
+
+    d = request.get_json(silent=True) or {}
+    estado = (d.get("estado") or "").strip().lower()
+    if estado not in _DIAGNOSTICO_ESTADOS_VALIDOS:
+        return jsonify({
+            "ok": False,
+            "error": f"estado inválido (debe ser uno de: "
+                     f"{', '.join(_DIAGNOSTICO_ESTADOS_VALIDOS)})"
+        }), 400
+
+    texto = (d.get("texto") or "").strip()
+    if estado in ("observacion", "falla") and len(texto) < _MOTIVO_MIN_CHARS:
+        return jsonify({
+            "ok": False,
+            "error": f"Describe el diagnóstico (mínimo {_MOTIVO_MIN_CHARS} caracteres)."
+        }), 400
+    texto = texto[:3000]
+
+    user = current_username()
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, "
+            "   diagnostico_estado, diagnostico_texto, revisado_at, revisado_por) "
+            "VALUES (%s, %s, 'verificado', %s, %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  diagnostico_estado=VALUES(diagnostico_estado), "
+            "  diagnostico_texto=VALUES(diagnostico_texto), "
+            "  revisado_at=NOW(), "
+            "  revisado_por=VALUES(revisado_por)",
+            (vid, mid, estado, (texto or None), user)
+        )
+    except Exception as e:
+        print(f"[visita_equipo_diagnostico] error vid={vid} mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el diagnóstico"}), 500
+
+    try:
+        _mant_log(
+            "visita", vid, "equipo_diagnostico",
+            f"Equipo #{mid} diagnóstico → {estado} por {user}"
+            + (f" · {texto[:150]}" if texto else "")
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "maquina_id": mid,
+        "diagnostico_estado": estado,
+        "diagnostico_texto": texto or None,
+        "revisado_por": user,
+    })
+
+
 @app.route(
     "/mantenciones/api/visitas/<int:vid>/equipos-estado",
     methods=["GET"]
@@ -66132,7 +66227,8 @@ def mant_visita_equipos_estado(vid):
     """
     rows = mysql_fetchall(
         "SELECT maquina_id, estado_revision, razon_saltado, "
-        "       observacion_tecnico, revisado_at, revisado_por "
+        "       observacion_tecnico, revisado_at, revisado_por, "
+        "       diagnostico_estado, diagnostico_texto "
         "  FROM mant_visita_equipos WHERE visita_id=%s",
         (vid,)
     ) or []
@@ -66144,6 +66240,8 @@ def mant_visita_equipos_estado(vid):
             "observacion_tecnico":  r.get("observacion_tecnico") or "",
             "revisado_at":          str(r["revisado_at"])[:19] if r.get("revisado_at") else "",
             "revisado_por":         r.get("revisado_por") or "",
+            "diagnostico_estado":   r.get("diagnostico_estado") or "",
+            "diagnostico_texto":    r.get("diagnostico_texto") or "",
         }
     return jsonify({"ok": True, "equipos": out})
 
@@ -71159,7 +71257,8 @@ def mant_ot_ejecutar(vid):
     try:
         _rows_ve = mysql_fetchall(
             "SELECT maquina_id, estado_revision, razon_saltado, "
-            "       observacion_tecnico, revisado_at, revisado_por "
+            "       observacion_tecnico, revisado_at, revisado_por, "
+            "       diagnostico_estado, diagnostico_texto "
             "  FROM mant_visita_equipos WHERE visita_id=%s",
             (vid,)
         ) or []
@@ -71170,6 +71269,10 @@ def mant_ot_ejecutar(vid):
                 "observacion_tecnico": _r.get("observacion_tecnico") or "",
                 "revisado_at":         str(_r["revisado_at"])[:19] if _r.get("revisado_at") else "",
                 "revisado_por":        _r.get("revisado_por") or "",
+                # 2026-08-12 (borrador diagnóstico por equipo) — ver
+                # _ensure_mant_visita_equipos_diagnostico_cols.
+                "diagnostico_estado":  _r.get("diagnostico_estado") or "",
+                "diagnostico_texto":   _r.get("diagnostico_texto") or "",
             }
     except Exception as _e_ve:
         print(f"[ot_ejecutar] equipos_estado_revision load error: {_e_ve}", flush=True)
@@ -91176,6 +91279,61 @@ def _ensure_garantia_motivo_col():
     return False
 
 
+def _ensure_mant_visita_equipos_diagnostico_cols():
+    """Garantiza mant_visita_equipos.diagnostico_estado/diagnostico_texto
+    SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1).
+
+    2026-08-12 (Daniel — flujo rediseñado de Ejecutar OT, requisito nuevo):
+    "necesito un diagnóstico de la orden de trabajo... de cada máquina,
+    para resumirlo en la orden de trabajo y saber qué es lo que está
+    aprobado y desaprobado". Daniel mismo pidió revisar el modelo antes de
+    darlo por cerrado ("yo creo que", "revisémoslo") — por eso esto es a
+    propósito LIVIANO: 2 columnas nuevas sobre la tabla `mant_visita_equipos`
+    que YA existe (trazabilidad por equipo, 2026-05-21) en vez de una tabla
+    nueva. Mismo (visita_id, maquina_id) UNIQUE que ya usa esa tabla para
+    saltar/marcar/observación — el diagnóstico es una dimensión MÁS de la
+    misma fila, no un concepto aparte con su propio ciclo de vida.
+
+    diagnostico_estado se mantiene DELIBERADAMENTE separado de
+    estado_revision (verificado/con_cambios/saltado/falla_detectada): ese
+    campo es el estado del FLUJO de revisión del técnico (¿tocó este
+    equipo? ¿lo saltó?), mientras que diagnostico_estado es el VEREDICTO
+    técnico sobre el equipo (aprobado/observación/falla) — un equipo puede
+    estar 'verificado' (el técnico completó su checklist) y aun así tener
+    diagnóstico 'falla' (encontró algo malo). Mezclarlos en una sola
+    columna habría pisado la semántica de saltar/marcar que ya está en
+    producción.
+
+    BORRADOR: este modelo de datos se revisará con Daniel una vez que vea
+    el flujo funcionando — ver reporte de la tarea 2026-08-12."""
+    try:
+        _cols = mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_equipos' "
+            "  AND COLUMN_NAME IN ('diagnostico_estado','diagnostico_texto')"
+        ) or []
+        _existentes = {(r.get("COLUMN_NAME") or "").lower() for r in _cols}
+        _agregadas = []
+        if "diagnostico_estado" not in _existentes:
+            mysql_execute(
+                "ALTER TABLE mant_visita_equipos "
+                "ADD COLUMN diagnostico_estado ENUM('aprobado','observacion','falla') NULL "
+                "COMMENT 'Veredicto tecnico del equipo en esta visita (borrador 2026-08-12)'")
+            _agregadas.append("diagnostico_estado")
+        if "diagnostico_texto" not in _existentes:
+            mysql_execute(
+                "ALTER TABLE mant_visita_equipos "
+                "ADD COLUMN diagnostico_texto TEXT NULL "
+                "COMMENT 'Detalle del diagnostico (obligatorio si observacion/falla)'")
+            _agregadas.append("diagnostico_texto")
+        if _agregadas:
+            print(f"[ensure_diagnostico_equipo] columnas agregadas: {_agregadas}", flush=True)
+        return _agregadas
+    except Exception as e:
+        print(f"[ensure_diagnostico_equipo] {e}", flush=True)
+    return []
+
+
 def _ensure_lev_items_edicion_cols():
     """Garantiza mant_levantamiento_items.modificado_por/modificado_at
     SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1). Daniel 2026-07-06:
@@ -93804,6 +93962,14 @@ try:
         _ensure_garantia_motivo_col()
 except Exception as _ensure_garmot_err:
     print(f"[ILUS][WARN] _ensure_garantia_motivo_col: {_ensure_garmot_err}", flush=True)
+
+# Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
+# 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_visita_equipos_diagnostico_cols()
+except Exception as _ensure_diag_err:
+    print(f"[ILUS][WARN] _ensure_mant_visita_equipos_diagnostico_cols: {_ensure_diag_err}", flush=True)
 
 # CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía
