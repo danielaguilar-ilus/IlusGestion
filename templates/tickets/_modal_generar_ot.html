@@ -123,6 +123,13 @@
             </div>
             {# Checklist que quedará asociado a la OT — lo pinta tkotPintarPlantilla() #}
             <div id="otPlantillaInfo" class="small mt-2"></div>
+            {# Referencia de solo lectura cuando esta OT nace de una cotización
+               (origen "Cotización" del selector de /mantenciones/ots) — la
+               llena _tkotMostrarRefCotizacion() (static/tickets_ficha.js) si
+               la URL trae ?cotizacion_id=. Elemento APARTE de otPlantillaInfo
+               a propósito: ese otro div lo pisa tkotPintarPlantilla() cada vez
+               que cambia el tipo, y esta referencia debe sobrevivir a eso. #}
+            <div id="otCotizacionRef" class="small mt-2" style="display:none"></div>
 
             {# FIX 2026-08-11 (Daniel, probando en vivo): el selector de
                plantilla del Paso 1 ("Tarea 4", 2026-08-10) quedaba duplicado

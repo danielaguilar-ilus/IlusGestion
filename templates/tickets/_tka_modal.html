@@ -1042,6 +1042,13 @@ function tkaOpen(opts){
     onSeleccionarEntidad: (typeof opts.onSeleccionarEntidad === 'function') ? opts.onSeleccionarEntidad : null,
     rutPrefill: opts.rutPrefill || '',
     tabs: Array.isArray(opts.tabs) ? opts.tabs : null,
+    // 2026-08-12 (selector de origen de "Generar OT", /mantenciones/ots):
+    // querystring OPCIONAL que se agrega al redirect de mode:'crear' (ej.
+    // '?abrir_generar_ot=1') -- aditivo, default '' preserva el
+    // comportamiento de siempre para el resto de los callers (Nuevo
+    // ticket desde /tickets, etc.). Solo debe traer un querystring
+    // (arranca con '?'), nunca datos de usuario sin validar.
+    redirectQuery: (typeof opts.redirectQuery === 'string') ? opts.redirectQuery : '',
   };
   _tkaApplyTabsFilter();
   // Daniel 2026-07-12: "siempre recomiende el RUT del dueño de la ficha...
@@ -2282,7 +2289,7 @@ async function tkaAsociarSeleccion(){
       }
       ilusToast('✓ ' + (d.numero_ticket || 'Ticket') + ' creado', { type:'success' });
       tkaClose();
-      setTimeout(()=> location.href = '/tickets/' + d.id, 400);
+      setTimeout(()=> location.href = '/tickets/' + d.id + (_TKA.ctx.redirectQuery || ''), 400);
     }catch(e){
       ilusAlert({ type:'error', title:'Error de red', message: e.message });
     }finally{
