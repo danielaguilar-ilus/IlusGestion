@@ -73018,6 +73018,213 @@ def _ot_resumen_firma(vid):
         " WHERE v.id=%s", (vid,))
 
 
+_OT_FIRMA_EQ_BADGES = {
+    "operativo":      ("OK", "eq-ok"),
+    "advertencia":    ("Con observación", "eq-warn"),
+    "fuera_servicio": ("Fuera de servicio", "eq-err"),
+    "en_reparacion":  ("En reparación", "eq-err"),
+    "dado_baja":      ("Dado de baja", "eq-err"),
+}
+_OT_FIRMA_EQ_MAX_TAREAS = 6
+_OT_FIRMA_EQ_MAX_FOTOS = 4
+_OT_FIRMA_EQ_MAX_EQUIPOS = 20
+
+
+def _ot_firma_foto_thumb(url):
+    """URL de miniatura liviana para la página pública de firma.
+
+    Solo agrega `?w=160` (miniatura cacheada en GCS, ver `/f/<key>` en
+    app.py) cuando la URL es una ruta interna `/f/<key>` -- las fotos
+    legacy que aún guardan una URL absoluta de Cloudinary (pre-migración a
+    GCS) se sirven tal cual, sin intentar adivinar un parámetro de tamaño
+    que ese proveedor no entendería.
+    """
+    if not url:
+        return ""
+    if url.startswith("/f/"):
+        return url + "?w=160"
+    return url
+
+
+def _ot_firma_equipos_detalle(vid, v):
+    """Detalle liviano de equipos + checklist + miniaturas de fotos para la
+    página pública de firma (`/firmar-ot/<token>`).
+
+    2026-08-13 (hallazgo real de Daniel, dueño de ILUS: "¿el cliente ve la
+    OT antes de firmar?" -- la respuesta era NO): la página solo mostraba
+    "Equipos atendidos: N" -- un CONTEO, no la lista de equipos, ni qué se
+    hizo, ni evidencia fotográfica. El cliente firmaba una declaración
+    legal de conformidad a ciegas. Riesgo real de negocio: un reclamo
+    futuro sin evidencia de qué vio el cliente al firmar.
+
+    Reusa la MISMA fuente de datos que `_ot_pdf_context` (equipos vía
+    mant_visita_tareas/mant_maquinas + checklist + mant_visita_fotos para
+    la OT "normal", y equipos vía mant_levantamiento_items/_fotos para la
+    OT de tipo levantamiento/descubrimiento -- ver `_ot_es_levantamiento`,
+    ÚNICA fuente de verdad de esa distinción) para que la lista que el
+    cliente ve ANTES de firmar sea la MISMA que la que después queda en el
+    informe/PDF cerrado -- nunca una consulta paralela que pueda divergir.
+
+    A diferencia de `_ot_pdf_context`, deliberadamente:
+      - NO exige estado='cerrada' ni las 3 firmas -- se llama con la OT en
+        'firmada_tecnico' (el técnico ya firmó, el cliente todavía no).
+      - NO embebe fotos en base64 (eso es SOLO para el PDF de Playwright,
+        ver embed_images en _ot_pdf_context) -- entrega URLs de miniatura
+        `/f/<key>?w=160` para que cargue rápido en el celular del cliente
+        con cualquier calidad de conexión (link abierto desde WhatsApp o
+        correo).
+      - Trunca checklist/fotos/equipos por los límites _OT_FIRMA_EQ_MAX_* --
+        esto NO es el anexo completo del informe, es un resumen para que
+        el cliente decida si firmar. El PDF/informe posterior sigue siendo
+        el documento completo.
+
+    Devuelve tupla (equipos, equipos_extra):
+      - equipos: lista de dicts, truncada a _OT_FIRMA_EQ_MAX_EQUIPOS --
+        [{ "nombre", "sub" (marca/modelo o serie), "badge_txt", "badge_cls",
+           "notas": [str,...],
+           "tareas": [{"titulo","ok"}], "tareas_total", "tareas_ok", "tareas_extra",
+           "fotos": [url,...], "fotos_extra" (int) }]
+      - equipos_extra: int, cuántos equipos quedaron fuera del tope (para
+        que la página avise "+N equipos más" en vez de listarlos todos
+        expandidos de una -- OT reales de este proyecto han llegado a 40
+        equipos, ver docstring de _ot_pdf_context).
+    """
+    equipos_out = []
+    equipos_extra = 0
+
+    try:
+        es_lev = _ot_es_levantamiento(v) if v else False
+    except Exception:
+        es_lev = False
+
+    _lev_id = None
+    if es_lev:
+        try:
+            _lev_id = (v.get("levantamiento_id") if v else None) or None
+            if not _lev_id:
+                _r = mysql_fetchone(
+                    "SELECT id FROM mant_levantamientos WHERE visita_id=%s "
+                    " ORDER BY id DESC LIMIT 1", (vid,))
+                if _r:
+                    _lev_id = _r["id"]
+        except Exception as _e:
+            print(f"[_ot_firma_equipos_detalle][lev_id] vid={vid}: {_e}", flush=True)
+            _lev_id = None
+
+    # ── Camino levantamiento: mismos filtros de exclusión que _ot_pdf_context
+    #    (sin borradores, sin "no encontrado" -- equipos fantasma que el
+    #    resto del módulo ya excluye) ──────────────────────────────────────
+    if es_lev and _lev_id:
+        try:
+            try:
+                lev_items = mysql_fetchall(
+                    "SELECT id, nombre_snap, sku_snap, serie_snap, estado_capturado, "
+                    "       anomalias, observaciones "
+                    "  FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                    "   AND COALESCE(es_borrador,0) = 0 "
+                    "   AND COALESCE(estado_capturado,'') <> 'no_encontrado' "
+                    " ORDER BY id ASC", (_lev_id,)) or []
+            except Exception:
+                lev_items = mysql_fetchall(
+                    "SELECT id, nombre_snap, sku_snap, serie_snap, estado_capturado, "
+                    "       anomalias, observaciones "
+                    "  FROM mant_levantamiento_items "
+                    " WHERE levantamiento_id=%s AND COALESCE(nombre_snap,'') <> '' "
+                    " ORDER BY id ASC", (_lev_id,)) or []
+            fotos_idx = {}
+            _ids = [i["id"] for i in lev_items if i.get("id") is not None]
+            if _ids:
+                _ph = ",".join(["%s"] * len(_ids))
+                _lev_fotos = mysql_fetchall(
+                    f"SELECT item_id, cloudinary_url FROM mant_levantamiento_fotos "
+                    f" WHERE item_id IN ({_ph}) ORDER BY id ASC", tuple(_ids)) or []
+                for f in _lev_fotos:
+                    if f.get("cloudinary_url"):
+                        fotos_idx.setdefault(f["item_id"], []).append(f["cloudinary_url"])
+            for it in lev_items[:_OT_FIRMA_EQ_MAX_EQUIPOS]:
+                est = (it.get("estado_capturado") or "operativo")
+                badge_txt, badge_cls = _OT_FIRMA_EQ_BADGES.get(est, ("OK", "eq-ok"))
+                notas = []
+                for _campo in ("anomalias", "observaciones"):
+                    _txt = (it.get(_campo) or "").strip()
+                    if _txt:
+                        notas.append(_txt[:220])
+                fotos_all = fotos_idx.get(it["id"], [])
+                equipos_out.append({
+                    "nombre": it.get("nombre_snap") or "Equipo",
+                    "sub": it.get("serie_snap") or it.get("sku_snap") or "",
+                    "badge_txt": badge_txt, "badge_cls": badge_cls,
+                    "notas": notas[:2],
+                    "tareas": [], "tareas_total": 0, "tareas_ok": 0, "tareas_extra": 0,
+                    "fotos": [_ot_firma_foto_thumb(u) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
+                    "fotos_extra": max(0, len(fotos_all) - _OT_FIRMA_EQ_MAX_FOTOS),
+                })
+            equipos_extra = max(0, len(lev_items) - _OT_FIRMA_EQ_MAX_EQUIPOS)
+        except Exception as _e:
+            print(f"[_ot_firma_equipos_detalle][lev] vid={vid}: {_e}", flush=True)
+
+    # ── Camino normal (o fallback si el levantamiento no trajo items):
+    #    equipos vía checklist técnico, mismo criterio que _ot_pdf_context
+    #    (DISTINCT vía mant_visita_tareas, excluye equipos dados de baja) ──
+    if not equipos_out:
+        try:
+            equipos = mysql_fetchall(
+                "SELECT DISTINCT m.id, m.nombre, m.marca, m.modelo, m.serie, "
+                "       m.estado_capturado "
+                "  FROM mant_visita_tareas vt "
+                "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
+                " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
+                "   AND COALESCE(m.estado,'activo') != 'baja' "
+                " ORDER BY m.nombre", (vid,)) or []
+            tareas = mysql_fetchall(
+                "SELECT maquina_id, titulo, completada "
+                "  FROM mant_visita_tareas "
+                " WHERE visita_id=%s AND maquina_id IS NOT NULL "
+                " ORDER BY orden, id", (vid,)) or []
+            tareas_idx = {}
+            for t in tareas:
+                tareas_idx.setdefault(t["maquina_id"], []).append(t)
+            fotos = mysql_fetchall(
+                "SELECT maquina_id, archivo_path, cloudinary_url "
+                "  FROM mant_visita_fotos "
+                " WHERE visita_id=%s AND maquina_id IS NOT NULL "
+                " ORDER BY tomada_at", (vid,)) or []
+            fotos_idx = {}
+            for f in fotos:
+                url = f.get("cloudinary_url") or (
+                    f"/static/uploads/mantenciones/{f['archivo_path']}"
+                    if f.get("archivo_path") else "")
+                if url:
+                    fotos_idx.setdefault(f["maquina_id"], []).append(url)
+            for eq in equipos[:_OT_FIRMA_EQ_MAX_EQUIPOS]:
+                mid = eq["id"]
+                t_list = tareas_idx.get(mid, [])
+                t_total = len(t_list)
+                t_ok = sum(1 for t in t_list if t.get("completada"))
+                sub = " · ".join([x for x in (eq.get("marca"), eq.get("modelo")) if x]) or (eq.get("serie") or "")
+                est = eq.get("estado_capturado") or "operativo"
+                badge_txt, badge_cls = _OT_FIRMA_EQ_BADGES.get(est, ("OK", "eq-ok"))
+                fotos_all = fotos_idx.get(mid, [])
+                equipos_out.append({
+                    "nombre": eq.get("nombre") or "Equipo",
+                    "sub": sub,
+                    "badge_txt": badge_txt, "badge_cls": badge_cls,
+                    "notas": [],
+                    "tareas": [{"titulo": t.get("titulo") or "", "ok": bool(t.get("completada"))}
+                               for t in t_list[:_OT_FIRMA_EQ_MAX_TAREAS]],
+                    "tareas_total": t_total, "tareas_ok": t_ok,
+                    "tareas_extra": max(0, t_total - _OT_FIRMA_EQ_MAX_TAREAS),
+                    "fotos": [_ot_firma_foto_thumb(u) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
+                    "fotos_extra": max(0, len(fotos_all) - _OT_FIRMA_EQ_MAX_FOTOS),
+                })
+            equipos_extra = max(0, len(equipos) - _OT_FIRMA_EQ_MAX_EQUIPOS)
+        except Exception as _e:
+            print(f"[_ot_firma_equipos_detalle][chk] vid={vid}: {_e}", flush=True)
+
+    return equipos_out, equipos_extra
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/enviar-firma-remota", methods=["POST"])
 @_mant_required
 def mant_ot_enviar_firma_remota(vid):
@@ -73191,7 +73398,16 @@ def ot_firma_publica(token):
         estado = "no_disponible"
     else:
         estado = "firmar"
-    return render_template("mantenciones/firma_publica.html", estado=estado, token=token, ot=v)
+    # 2026-08-13 (hallazgo real de Daniel): el detalle de equipos/checklist/
+    # fotos solo se necesita -- y solo se consulta -- cuando de verdad vamos
+    # a mostrar el formulario de firma. Para los otros 3 estados (ya_firmada/
+    # no_disponible/invalido) no tiene sentido pagar el costo de esas
+    # queries extra. Ver docstring de _ot_firma_equipos_detalle.
+    equipos_firma, equipos_firma_extra = (
+        _ot_firma_equipos_detalle(vid, v) if estado == "firmar" else ([], 0)
+    )
+    return render_template("mantenciones/firma_publica.html", estado=estado, token=token,
+                            ot=v, equipos_firma=equipos_firma, equipos_firma_extra=equipos_firma_extra)
 
 
 @app.route("/firmar-ot/<token>", methods=["POST"])

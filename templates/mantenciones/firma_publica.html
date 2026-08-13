@@ -20,6 +20,36 @@
     .row{display:flex;justify-content:space-between;gap:12px;font-size:.86rem;padding:5px 0;}
     .row .k{color:#9ca3af}
     .row .v{color:#f3f4f6;font-weight:600;text-align:right}
+    /* ── Detalle de equipos atendidos (2026-08-13): el cliente debe VER lo
+       que va a firmar, no solo un conteo. Acordeón nativo <details> --
+       cero JS, y las fotos con loading="lazy" dentro de un <details>
+       cerrado NO se piden a la red hasta que el cliente lo abre: barato
+       por defecto en cualquier conexión. ── */
+    .eq-section{margin:14px 0;border-top:1px solid #262629;padding-top:12px;}
+    .eq-section-title{font-size:.78rem;color:#9ca3af;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px}
+    .eq-item{background:#0e0e10;border:1px solid #262629;border-radius:10px;margin-bottom:8px;overflow:hidden;}
+    .eq-item summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:11px 13px;min-height:44px;}
+    .eq-item summary::-webkit-details-marker{display:none}
+    .eq-item summary::after{content:'⌄';color:#6b7280;font-size:1rem;margin-left:6px;transition:transform .15s;flex:none}
+    .eq-item[open] summary::after{transform:rotate(180deg)}
+    .eq-name{font-weight:700;font-size:.88rem;color:#f3f4f6;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .eq-badge{font-size:.66rem;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;flex:none}
+    .eq-ok{background:#dcfce7;color:#166534}
+    .eq-warn{background:#fff8e1;color:#92400e}
+    .eq-err{background:#fee2e2;color:#991b1b}
+    .eq-body{padding:0 13px 13px;}
+    .eq-sub{color:#9ca3af;font-size:.78rem;margin-bottom:6px}
+    .eq-chk-summary{font-size:.76rem;color:#9ca3af;margin-bottom:5px}
+    .eq-tareas{list-style:none;margin:0 0 6px;padding:0;font-size:.82rem;}
+    .eq-tareas li{padding:3px 0;color:#d1d5db}
+    .eq-tareas li.ok::before{content:'✓ ';color:#4ade80;font-weight:700}
+    .eq-tareas li.pend::before{content:'· ';color:#6b7280}
+    .eq-tareas li.extra{color:#6b7280;font-style:italic}
+    .eq-nota{font-size:.78rem;color:#fbbf24;background:#1c1a12;border-radius:8px;padding:7px 9px;margin:6px 0;line-height:1.4}
+    .eq-fotos{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+    .eq-fotos img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #262629;background:#1a1a1d}
+    .eq-fotos-extra{font-size:.72rem;color:#9ca3af;background:#1a1a1d;border-radius:8px;padding:5px 8px;}
+    .eq-more{color:#6b7280;font-size:.78rem;text-align:center;padding:4px 0 0}
     label{display:block;font-size:.78rem;color:#9ca3af;font-weight:600;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.4px}
     input[type=text]{width:100%;background:#0e0e10;border:1px solid #303034;border-radius:10px;color:#fff;
       font-size:16px;padding:12px 13px;min-height:46px;outline:none;}
@@ -56,6 +86,44 @@
         {% if ot.fecha_programada %}<div class="row"><span class="k">Fecha</span><span class="v">{{ ot.fecha_programada.strftime('%d/%m/%Y') if ot.fecha_programada.strftime is defined else ot.fecha_programada }}</span></div>{% endif %}
         {% if ot.n_equipos %}<div class="row"><span class="k">Equipos atendidos</span><span class="v">{{ ot.n_equipos }}</span></div>{% endif %}
       </div>
+
+      {% if equipos_firma %}
+      <div class="eq-section">
+        <div class="eq-section-title">Detalle del trabajo realizado</div>
+        {% for eq in equipos_firma %}
+        <details class="eq-item"{% if equipos_firma|length == 1 %} open{% endif %}>
+          <summary>
+            <span class="eq-name">{{ eq.nombre }}</span>
+            <span class="eq-badge {{ eq.badge_cls }}">{{ eq.badge_txt }}</span>
+          </summary>
+          <div class="eq-body">
+            {% if eq.sub %}<div class="eq-sub">{{ eq.sub }}</div>{% endif %}
+            {% if eq.tareas_total %}
+            <div class="eq-chk-summary">{{ eq.tareas_ok }}/{{ eq.tareas_total }} tareas del checklist completadas</div>
+            <ul class="eq-tareas">
+              {% for t in eq.tareas %}
+              <li class="{{ 'ok' if t.ok else 'pend' }}">{{ t.titulo }}</li>
+              {% endfor %}
+              {% if eq.tareas_extra %}<li class="extra">+{{ eq.tareas_extra }} tarea{{ 's' if eq.tareas_extra != 1 else '' }} más</li>{% endif %}
+            </ul>
+            {% endif %}
+            {% for nota in eq.notas %}<div class="eq-nota">⚠ {{ nota }}</div>{% endfor %}
+            {% if eq.fotos %}
+            <div class="eq-fotos">
+              {% for foto in eq.fotos %}
+              <img src="{{ foto }}" loading="lazy" decoding="async" alt="Foto de {{ eq.nombre }}">
+              {% endfor %}
+              {% if eq.fotos_extra %}<span class="eq-fotos-extra">+{{ eq.fotos_extra }}</span>{% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </details>
+        {% endfor %}
+        {% if equipos_firma_extra %}
+        <div class="eq-more">+{{ equipos_firma_extra }} equipo{{ 's' if equipos_firma_extra != 1 else '' }} más en el informe completo de la OT.</div>
+        {% endif %}
+      </div>
+      {% endif %}
 
       <label for="fNombre">Tu nombre</label>
       <input type="text" id="fNombre" placeholder="Nombre de quien firma" autocomplete="name">
