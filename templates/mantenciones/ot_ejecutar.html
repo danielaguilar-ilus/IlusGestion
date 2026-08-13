@@ -80,8 +80,13 @@
          solo cambia la piel. fecha con chile_fmt (REGLA #6). #}
       <div class="tx-hdr-mtr">
         <div class="hm">
-          {# [:5] corta los segundos: '13:00:00' → '13:00' (dato mono estilo maqueta) #}
-          <span class="v">{{ (visita.hora_inicio|string)[:5] if visita.hora_inicio else '—' }}</span>
+          {# BUG 2026-08-13: visita.hora_inicio llega como timedelta de MySQL
+             -- str(timedelta(hours=9)) da '9:00:00' (hora SIN cero a la
+             izquierda, no '09:00:00'), así que [:5] cortaba en medio de los
+             segundos y dejaba "9:00:" con dos puntos colgando. Se separa por
+             ':' y se rellena la hora a 2 dígitos en vez de cortar a ciegas. #}
+          {% set _hi = (visita.hora_inicio|string).split(':') if visita.hora_inicio else [] %}
+          <span class="v">{{ '%02d:%s' % (_hi[0]|int, _hi[1]) if _hi|length >= 2 else '—' }}</span>
           <span class="k">Agendada</span>
         </div>
         <div class="hm">
