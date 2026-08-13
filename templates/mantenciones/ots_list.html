@@ -1504,7 +1504,7 @@ function otWhatsApp(el){
        navega a /tickets/<tid>?abrir_generar_ot=1 -- misma idea, el modal
        en modo TICKET se auto-abre allá (ver templates/tickets/ficha.html).
      · Cotización → busca en tk_cotizaciones (GET nuevo, ver
-       tickets_module.py: tk_api_cotizaciones_buscar) y resuelve a Ticket
+       tickets_module.py: tk_api_cotizacion_buscar) y resuelve a Ticket
        (si la cotización ya tiene ticket_id) o a Cliente (por RUT, mismo
        resolver que usa _TKOT en modo ticket) -- navega al que corresponda
        con &cotizacion_id= de referencia. Si no hay ni ticket ni ficha,
