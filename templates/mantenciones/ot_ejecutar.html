@@ -1451,9 +1451,13 @@
     {% set stats = stats_por_maquina.get(eq.id|string, {}) %}
     {% set rev = equipos_estado_revision.get(eq.id|string) if equipos_estado_revision else None %}
     {% set _rev_estado = (rev.estado_revision if rev else '') %}
+    {# 2026-08-12 (borrador diagnóstico por equipo) — ver
+       _ensure_mant_visita_equipos_diagnostico_cols en app.py. #}
+    {% set _rev_diag = (rev.diagnostico_estado if rev else '') %}
     <div class="tx-eq-card{% if stats.bloqueada %} done{% endif %}"
          id="tx-eq-card-{{ eq.id }}"
          data-rev="{{ _rev_estado }}"
+         data-diag="{{ _rev_diag }}"
          onclick="goToPlantillas('{{ eq.id }}')">
       <div class="eq-foto-wrap">
         {% if eq.foto_url %}
@@ -1499,6 +1503,18 @@
               <i class="bi bi-check-circle-fill"></i>Verificado
             {% endif %}
           </span>
+          {# Badge de diagnóstico (borrador 2026-08-12) — solo si el técnico
+             ya diagnosticó este equipo en esta visita. #}
+          <span class="eqdiag-badge eqdiag-{{ _rev_diag }}" id="eqdiag-badge-{{ eq.id }}"
+                {% if not _rev_diag %}style="display:none"{% endif %}>
+            {% if _rev_diag == 'falla' %}
+              <i class="bi bi-x-octagon-fill"></i>Falla
+            {% elif _rev_diag == 'observacion' %}
+              <i class="bi bi-eye-fill"></i>Observación
+            {% elif _rev_diag == 'aprobado' %}
+              <i class="bi bi-patch-check-fill"></i>Aprobado
+            {% endif %}
+          </span>
         </div>
         <div class="eq-prog-wrap"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
       </div>
@@ -1510,7 +1526,11 @@
                 onclick="event.stopPropagation(); abrirModalFichaTecnica({{ eq.id }})">
           <i class="bi bi-clipboard-check-fill"></i>
         </button>
-        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar %}
+        {# 2026-08-12 (Daniel): "que el técnico también pueda saltarse con
+           un argumento... de casi todas menos las levantamiento, porque el
+           técnico no las va a marcar porque no está levantándolas, va a
+           levantar lo que existe" — se agrega la exclusión de tipo. #}
+        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar and (visita.tipo or '') != 'levantamiento' %}
         <button type="button" class="eq-action-btn"
                 title="Saltar este equipo"
                 aria-label="Saltar este equipo"
@@ -1518,9 +1538,14 @@
                 onclick="event.stopPropagation(); abrirModalSaltarEquipo({{ eq.id }})">
           <i class="bi bi-skip-forward-fill"></i>
         </button>
+        {% endif %}
         {# 2026-06-10 (Daniel): excluir collarines/accesorios de mantención
            DESDE el levantamiento — "no vale la pena levantar un par de
-           collarines". Toggle directo a mant_maquinas.aplica_mantencion. #}
+           collarines". Toggle directo a mant_maquinas.aplica_mantencion.
+           Mismo gate original (estado + puede_ejecutar) SIN la exclusión
+           de tipo levantamiento de arriba — este toggle se usa justamente
+           EN el levantamiento, es un botón distinto de "Saltar equipo". #}
+        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar %}
         {% set _apl_ot = (eq.aplica_mantencion if eq.aplica_mantencion is not none else 1) %}
         <button type="button" class="eq-action-btn" id="eqAplBtn-{{ eq.id }}"
                 data-aplica="{{ 1 if _apl_ot else 0 }}"
@@ -1569,6 +1594,23 @@
        #tareasList (que se re-renderiza por tarea) para conservar el id
        único y las opciones cargadas. Lo llena _chkCargarMarcas(). #}
     <datalist id="chkMarcasDL"></datalist>
+  </div>
+
+  {# ════════════════════════════════════════════════════════
+     VISTA 4: RESUMEN DE VISITA (2026-08-12 — maqueta Fable aprobada)
+     "Antes de pedirle nada al cliente, el técnico confirma que no queda
+     nada pendiente." Se llega acá al tocar "Firmar OT" con las
+     obligatorias completas (ver abrirResumenOFirma en el JS) — NO
+     reemplaza ni toca abrirModalFirma()/enviarFirma(), solo antepone
+     este chequeo visual. Contenido 100% dinámico (renderResumen()).
+     ════════════════════════════════════════════════════════ #}
+  <div class="tx-view" id="view-resumen">
+    <button type="button" class="resumen-back" onclick="goToMaquinas()">
+      <i class="bi bi-arrow-left"></i> Volver a máquinas
+    </button>
+    <div id="resumenBody">
+      {# Llenado dinámico por renderResumen() #}
+    </div>
   </div>
 
   </div> {# /tabPanel-tareas #}
@@ -1718,7 +1760,13 @@
       <i class="bi bi-check-circle-fill"></i> OT completada
     </button>
   {% else %}
-    <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirModalFirma()" disabled
+    {# 2026-08-12: antes abría abrirModalFirma() directo. Ahora pasa primero
+       por el "Resumen de visita" de la maqueta aprobada (abrirResumenOFirma
+       decide: si hay checklist clásico que resumir, muestra el resumen; si
+       no aplica —ej. levantamiento de descubrimiento puro— llama a
+       abrirModalFirma() igual que antes, sin cambios). abrirModalFirma()/
+       enviarFirma() NO se tocaron. #}
+    <button class="tx-btn-firmar" id="btnFirmar" onclick="abrirResumenOFirma()" disabled
             data-locked="1" title="Completá todas las tareas antes de firmar">
       <i class="bi bi-lock-fill"></i> <span id="btnFirmarLabel">Cargando tareas…</span>
     </button>
@@ -1904,7 +1952,7 @@
           <label class="fw-bold mb-1 d-block" style="font-size:.86rem;color:#374151"
                  for="skipObservacion">
             Observación <span class="text-danger">*</span>
-            <small class="text-muted fw-normal" style="font-size:.72rem">(mínimo 5 caracteres)</small>
+            <small class="text-muted fw-normal" style="font-size:.72rem">(mínimo 10 caracteres)</small>
           </label>
           <textarea id="skipObservacion" class="form-control"
                     rows="3" maxlength="2000"
@@ -2435,6 +2483,23 @@ const STATS_POR_MAQUINA = {{ stats_por_maquina | tojson }};
 // Keys = String(maquina_id). Vacío {} si nada se ha tocado todavía.
 let EQUIPOS_ESTADO_REVISION = {{ (equipos_estado_revision or {}) | tojson }};
 const PUEDE_EJECUTAR_FLAG = {{ 'true' if puede_ejecutar else 'false' }};
+
+// 2026-08-12 (Resumen de visita, maqueta Fable aprobada) — datos que solo
+// esa pantalla necesita. FOTOS_COUNT cuenta TODAS las fotos de la visita
+// (mant_visita_fotos), no solo las de la tarea/equipo actualmente en
+// pantalla (esas se pierden del DOM al navegar entre vistas).
+//
+// VISITA_HORA_INICIO_RAW: MISMO formato crudo 'YYYY-MM-DD HH:MM:SS' (UTC,
+// sin TZ) que ya usan los data-ts del "Recorrido de la OT" de más abajo —
+// se imprime plano (sin el filtro tojson) a propósito, igual que esos
+// data-ts, porque el valor es un datetime de MySQL y este es el formato
+// que _humanizeAgo()/actualizarPipelineTimes() ya saben normalizar
+// (agregan 'T' y 'Z' antes de new Date()). El "tiempo en sitio" se calcula
+// en vivo en renderResumen() con esa misma normalización, no un cálculo
+// paralelo.
+const FOTOS_COUNT = {{ fotos | length }};
+const VISITA_HORA_INICIO_RAW = "{{ visita.hora_real_inicio or visita.llego_al_sitio_at or '' }}";
+const VISITA_NUMERO_OT = {{ (visita.numero_ot or ('OT #' ~ visita.id)) | tojson }};
 
 // ─── Concurrencia multitécnico (Parte 3 - anti duplicación) ───
 // Lock TTL: si una tarea está locked_at < 10 min, otros técnicos ven badge
