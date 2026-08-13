@@ -45,6 +45,7 @@
 }
 .tk-row-btn-calc:hover{background:#dc2626;color:#fff;}
 .tk-row-btn-calc:active{transform:scale(.96);}
+.tk-row-btn-calc:disabled{opacity:.5;cursor:not-allowed;}
 @media(max-width:640px){.tk-row{grid-template-columns:1fr;justify-items:start;}}
 .tk-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
   font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;white-space:nowrap;}
@@ -230,6 +231,16 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-rev-select.sin-clasificar{border-color:#f59e0b;background:#fff8e1;}
 .cot-rev-precio{font-family:'JetBrains Mono',monospace;font-size:.8rem;font-weight:700;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums;}
 .cot-rev-precio.cero{color:#c1c5cc;font-weight:500;font-style:italic;}
+.cot-rev-pu-input{width:108px;min-height:36px;font-size:.8rem;border:1px solid #d1d5db;border-radius:7px;
+  padding:4px 7px;text-align:right;font-variant-numeric:tabular-nums;}
+.cot-rev-pu-input.manual{border-color:#f59e0b;background:#fffbeb;}
+.cot-rev-pu-input.accesorio-bloqueado{background:#f3f4f6;color:#111827;font-weight:800;cursor:not-allowed;}
+.cot-ruta-desglose{font-size:.64rem;line-height:1.25;color:#64748b;margin-top:3px;white-space:nowrap;}
+.cot-ruta-desglose b{color:#0f172a;}
+.cot-ruta-desglose.no-cobrable{color:#15803d;font-weight:700;}
+.cot-wiz-ruta-prorrateo{margin-top:6px;padding:7px 9px;border-radius:8px;background:#eff6ff;color:#1e40af;
+  font-size:.72rem;font-weight:700;}
+.cot-wiz-ruta-prorrateo.excluida{background:#f3f4f6;color:#6b7280;}
 
 /* ══ Paso 1 en secciones numeradas — réplica del lenguaje visual del modal
    "Generar OT" de Mantenciones (.lev-step-card/.lev-step-header en

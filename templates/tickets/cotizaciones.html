@@ -168,6 +168,11 @@
             {% endif %}
             <button type="button" class="tk-row-btn-del" title="Eliminar cotización"
                     onclick="cotEliminar({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')"><i class="bi bi-trash"></i></button>
+            <button type="button" class="tk-row-btn-calc"
+                    title="Recotizar con las tarifas, clasificación y regla de ruta vigentes"
+                    onclick="cotRecalcular({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}', this)">
+              <i class="bi bi-arrow-repeat"></i>
+            </button>
             {# Detalle de cálculo: estricto superadmin (Daniel lo pidió así). #}
             <a class="tk-row-btn-calc" href="/tickets/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
                title="Ver detalle de cálculo (horas-hombre, técnicos, zona) — solo superadmin">
@@ -349,7 +354,7 @@
                 <div class="cot-wiz-ts-pill on" data-v="mantencion" style="--tc:#f59e0b;--tbg:#fffbeb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button">
                   <i class="bi bi-tools"></i><span>Mantención</span></div>
                 <div class="cot-wiz-ts-pill" data-v="instalacion" style="--tc:#3b82f6;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
-                     title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
+                     title="Usa la tarifa propia de instalación o, si falta, la tarifa visible copiada de Mantención">
                   <i class="bi bi-house-gear-fill"></i><span>Instalación</span></div>
                 <div class="cot-wiz-ts-pill" data-v="venta_repuesto" style="--tc:#1d4ed8;--tbg:#eff6ff;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
                      title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
@@ -360,7 +365,7 @@
                 <div class="cot-wiz-ts-pill" data-v="otro" style="--tc:#6b7280;--tbg:#f9fafb;" onclick="cotWizTipoServ(this)" tabindex="0" role="button"
                      title="Sin tarifa de mano de obra definida todavía — los ítems quedarán en $0">
                   <i class="bi bi-three-dots"></i><span>Otro</span></div>
-                <div class="cot-wiz-ts-hint">Solo Mantención tiene tarifa de mano de obra cargada hoy — los demás tipos cotizan en $0 hasta que se definan.</div>
+                <div class="cot-wiz-ts-hint">Cada servicio usa su tarifa propia; si una categoría nueva aún no la tiene, usa temporalmente la tarifa visible copiada de Mantención.</div>
               </div>
             </div>
             <div class="cot-wiz-campo" id="campoEjecutivo"><label>Ejecutivo o vendedor solicitante</label>
@@ -396,6 +401,9 @@
                 <input id="cotWizCostoRuta" type="number" min="0" step="1" class="form-control" value="0">
               </div>
               <div class="cot-wiz-hint" id="cotWizRutaHint">Se obtiene automáticamente según la comuna del cliente</div>
+              <div class="cot-wiz-ruta-prorrateo" id="cotWizRutaProrrateoHint">
+                La ruta se divide solo entre equipos con precio; los accesorios no participan.
+              </div>
               {# 2026-07-24 (Daniel: "con check para excluirlo en caso de que
                  me soliciten comercial no incluirlo"): el monto detectado
                  sigue ahí (se ve en el Detalle interno), pero no entra al
@@ -475,7 +483,7 @@
       <div class="cot-rev-tabla-wrap">
         <table class="cot-rev-tabla" style="min-width:700px;">
           <thead>
-            <tr><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Característica</th><th>P. Unit.</th><th>Total</th><th></th></tr>
+            <tr><th>SKU</th><th>Descripción</th><th>Cant.</th><th>Característica</th><th>P. base/u</th><th>Total con ruta</th><th></th></tr>
           </thead>
           <tbody id="cotWizBody">
             <tr class="cot-wiz-vacio"><td colspan="7">Sin productos todavía — usa "Agregar producto"</td></tr>
