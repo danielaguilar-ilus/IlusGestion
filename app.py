@@ -5151,12 +5151,28 @@ def _csrf_is_exempt(path: str) -> bool:
     return False
 
 
+def _ilus_uid_actual():
+    """Id del usuario logueado, o 0. Para el <meta name="ilus-uid"> que ata el
+    auto-reparado de token a la identidad (ver api_csrf_token).
+
+    Va por context processor y NO leyendo `g` en el template: base.html se
+    renderiza también fuera de un request real (los tests montan un Environment
+    Jinja pelado), y ahí `g` no existe — un `{{ g.user.id }}` suelto revienta
+    la página entera con UndefinedError.
+    """
+    try:
+        u = getattr(g, "user", None)
+        return (u.get("id") if u else 0) or 0
+    except Exception:
+        return 0
+
+
 @app.context_processor
 def _inject_csrf_token():
     """Expone csrf_token() a TODOS los templates. Sin args, devuelve el
     token de la sesión actual (lo crea si no existe). Igual nombre que
     flask-wtf para que pegar snippets sea trivial."""
-    return {"csrf_token": _csrf_get_token}
+    return {"csrf_token": _csrf_get_token, "ilus_uid": _ilus_uid_actual}
 
 
 def _csrf_check_request():
@@ -5175,22 +5191,62 @@ def _csrf_check_request():
     # Comparación constante de tiempo
     if not token_session or not token_req \
             or not secrets.compare_digest(str(token_session), str(token_req)):
-        # Logueo discreto pero útil para diagnosticar formularios sin token
+        # ── DIAGNÓSTICO HONESTO: ¿sesión muerta o token viejo? ────────────
+        # BUG REAL (2026-08-10, Daniel: "al momento de cambiar la comuna o el
+        # bulto, me está dando ese error de token"). Los logs de producción
+        # mostraban `has_session=True has_req=True`: los DOS tokens existían
+        # pero no coincidían. Investigando resultó que Daniel NO estaba
+        # logueado — su sesión había caducado por inactividad (tenía la
+        # pestaña abierta desde la noche anterior) y el token que la pestaña
+        # capturó al cargar ya no era el de la sesión anónima nueva.
+        #
+        # El problema de fondo era el MENSAJE: este chequeo corre en
+        # before_request, ANTES de @login_required, así que una sesión
+        # caducada se presentaba como "CSRF token inválido" — un error
+        # técnico que no le dice nada al operador y que además hace pensar
+        # que el sistema está roto. Ahora se distingue el caso real.
+        sesion_viva = bool(getattr(g, "user", None))
+        # Huella del token (nunca el token en claro, REGLA #4) para poder
+        # diagnosticar "son distintos" sin exponer material reutilizable.
+        def _hb(v):
+            try:
+                return hashlib.sha256(str(v).encode()).hexdigest()[:8] if v else "-"
+            except Exception:
+                return "?"
         try:
             print(f"[CSRF] reject path={path} method={request.method} "
-                  f"has_session={bool(token_session)} has_req={bool(token_req)}",
+                  f"has_session={bool(token_session)} has_req={bool(token_req)} "
+                  f"user={'si' if sesion_viva else 'NO'} "
+                  f"ses={_hb(token_session)} req={_hb(token_req)}",
                   flush=True)
         except Exception:
             pass
-        is_ajax = (
-            request.headers.get("X-Requested-With") == "XMLHttpRequest"
-            or (request.headers.get("Accept") or "").startswith("application/json")
-            or request.is_json
-            or "/api/" in path
-        )
+        # _is_ajax_request() (definido más abajo) cubre además X-Wizard=1, que
+        # el chequeo inline anterior NO consideraba: el wizard de "crear
+        # cliente" en Mantenciones postea con ese header y FormData, así que
+        # caía a la rama HTML (flash + redirect) y el usuario perdía todo lo
+        # escrito sin ningún mensaje útil.
+        is_ajax = _is_ajax_request()
         if is_ajax:
-            return jsonify({"ok": False,
-                            "error": "CSRF token inválido. Recarga la página."}), 403
+            if not sesion_viva:
+                # 401, no 403: el problema es la sesión, no el token. El
+                # frontend NO debe reintentar esto — debe mandar a re-entrar.
+                return jsonify({
+                    "ok": False,
+                    "error_codigo": "SESSION_EXPIRED",
+                    "error": "Tu sesión expiró. Vuelve a iniciar sesión para continuar.",
+                }), 401
+            # Sesión viva y token viejo: esto SÍ es auto-reparable. El código
+            # se emite EXCLUSIVAMENTE acá (before_request), o sea la vista
+            # nunca corrió y la petición no tuvo ningún efecto — por eso el
+            # frontend puede reintentarla una vez sin riesgo de duplicar nada.
+            # ⚠️ NO copiar este error_codigo dentro de una vista: rompería esa
+            # garantía y el reintento podría repetir una escritura.
+            return jsonify({
+                "ok": False,
+                "error_codigo": "CSRF_INVALIDO",
+                "error": "CSRF token inválido. Recarga la página.",
+            }), 403
         flash("Tu sesión expiró o el formulario perdió validez. "
               "Recarga la página e intenta de nuevo.", "warning")
         # Si el usuario está autenticado, volvemos a la misma URL vía GET
@@ -5209,6 +5265,44 @@ def login_required(view):
             return redirect(url_for("login", next=request.path))
         return view(*a, **kw)
     return wrapped
+
+
+@app.route("/api/csrf-token", methods=["GET"])
+def api_csrf_token():
+    """Devuelve el token CSRF vigente de LA SESIÓN DE QUIEN LLAMA.
+
+    Existe para que una pestaña abierta hace rato pueda auto-repararse cuando
+    su token quedó viejo, en vez de tirarle al operador un "recarga la página"
+    (2026-08-10, Daniel: "esto tiene que funcionar bien").
+
+    POR QUÉ ESTO NO DEBILITA LA PROTECCIÓN CSRF (verificado, no asumido):
+      · Es GET: no muta nada.
+      · Un sitio atacante NO puede leer la respuesta. El proyecto no tiene
+        CORS habilitado en ninguna parte, así que sin cabecera
+        Access-Control-Allow-Origin el navegador le niega el body a su JS.
+        Es la misma razón por la que el <meta name="csrf-token"> que ya va en
+        TODAS las páginas HTML no es una filtración hoy: no estamos exponiendo
+        nada nuevo, solo lo mismo por otro verbo.
+      · SESSION_COOKIE_SAMESITE='Lax' impide que la cookie viaje en un fetch
+        cross-site, así que un atacante recibiría —si pudiera leerlo, que no
+        puede— el token de una sesión ANÓNIMA, inservible.
+      · El token solo vale contra la sesión de la misma cookie.
+
+    `uid` es la pieza de SEGURIDAD del reintento automático: login() hace
+    session.clear(), o sea CADA login rota el token. Sin atar el refresco a la
+    identidad, una pestaña vieja de un operador podría reejecutar su escritura
+    bajo la sesión del usuario que entró después en el mismo navegador
+    (terminal compartida de bodega) — quedando registrada en la auditoría a
+    nombre de quien nunca la hizo, y evaluando permisos contra el rol
+    equivocado. El frontend compara este uid y, si cambió, NO reintenta.
+    """
+    u = getattr(g, "user", None)
+    return jsonify({
+        "ok": True,
+        "csrf_token": _csrf_get_token(),
+        "autenticado": bool(u),
+        "uid": (u.get("id") if u else 0) or 0,
+    })
 
 
 def _is_ajax_request():

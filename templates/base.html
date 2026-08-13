@@ -92,6 +92,12 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   #}
   <meta name="csrf-token" content="{{ csrf_token() }}">
+  {# Identidad de la sesión que renderizó ESTA página. La usa el auto-reparado
+     de token del wrapper de fetch: si al refrescar el token resulta que ahora
+     hay OTRO usuario logueado en el navegador (terminal compartida), NO se
+     reintenta la escritura — se avisa. Sin esto, una pestaña vieja podría
+     ejecutar su acción bajo la identidad del usuario que entró después. #}
+  <meta name="ilus-uid" content="{{ ilus_uid() if ilus_uid is defined else 0 }}">
 
   {# ── Favicons (regenerados 2026-05-17 desde Logo.png oficial) ──
      Casco espartano BLANCO sobre fondo NEGRO #0a0a0a.
@@ -178,6 +184,10 @@
       var meta = document.querySelector('meta[name="csrf-token"]');
       window.__CSRF_TOKEN = meta ? meta.getAttribute('content') : '';
     } catch(e) { window.__CSRF_TOKEN = ''; }
+    try {
+      var metaUid = document.querySelector('meta[name="ilus-uid"]');
+      window.__ILUS_UID = metaUid ? metaUid.getAttribute('content') : '0';
+    } catch(e) { window.__ILUS_UID = '0'; }
     if (!window.fetch || !window.__CSRF_TOKEN) return;
     var _origFetch = window.fetch.bind(window);
     window.fetch = function(input, init){
@@ -196,8 +206,124 @@
           if (keys.indexOf('x-csrf-token') === -1) init.headers['X-CSRF-Token'] = window.__CSRF_TOKEN;
         }
       } catch(e) { /* fail-open: si el wrap falla, no rompemos el request */ }
-      return _origFetch(input, init);
+
+      /* ── AUTO-REPARADO DEL TOKEN (2026-08-10) ─────────────────────────
+         Daniel: "al cambiar la comuna o el bulto me da error de token...
+         esto tiene que funcionar bien". window.__CSRF_TOKEN es una foto
+         tomada al cargar la pagina y nunca se refresca: si el token de la
+         sesion rota, la pestaña queda MUERTA para toda escritura hasta un
+         F5 — no solo para cotizar.
+
+         Por que este reintento es seguro:
+         · Solo ante 403 CON error_codigo === 'CSRF_INVALIDO', que el
+           servidor emite EXCLUSIVAMENTE desde before_request (app.py), o
+           sea la vista nunca corrio y la peticion no tuvo NINGUN efecto.
+           Por eso reenviarla no puede duplicar una escritura. Un
+           retry-on-cualquier-403 SI seria peligroso.
+         · SESSION_EXPIRED (401) NO se reintenta: ahi la sesion murio de
+           verdad y hay que volver a entrar.
+         · Se verifica que siga siendo EL MISMO USUARIO. login() rota el
+           token, asi que sin este chequeo una pestaña vieja podria
+           reejecutar su accion bajo la sesion de quien entro despues en el
+           mismo navegador (terminal compartida) — quedando en la auditoria
+           a nombre de quien nunca la hizo.
+         · UN solo reintento, por flujo de control (va por _origFetch, no
+           por window.fetch): es estructuralmente imposible el bucle. */
+      return _origFetch(input, init).then(function(r){
+        if (!r || r.status !== 403) return r;
+        /* Si el caller ya abortó (AbortController), no reintentamos: su
+           propio manejo de red debe seguir viendo el abort. */
+        if (init && init.signal && init.signal.aborted) return r;
+        return r.clone().json().catch(function(){ return null; }).then(function(d){
+          if (!d || d.error_codigo !== 'CSRF_INVALIDO') return r;
+          return _refrescarCsrf().then(function(info){
+            /* No se pudo llegar al servidor: devolvemos el 403 original y
+               que el caller muestre su error normal. No inventamos
+               "sesion expirada" ante una caida de red. */
+            if (!info || !info.alcanzado) return r;
+            if (!info.autenticado) { _avisarSesionExpirada(); return r; }
+            if (String(info.uid) !== String(window.__ILUS_UID)) {
+              _avisarCambioDeUsuario(); return r;
+            }
+            if (!info.token || info.token === window.__CSRF_TOKEN) return r;
+            window.__CSRF_TOKEN = info.token;
+            _propagarTokenAlDom(info.token);
+            try {
+              if (init.headers instanceof Headers) init.headers.set('X-CSRF-Token', info.token);
+              else if (Array.isArray(init.headers)) {
+                init.headers = init.headers.filter(function(p){ return (p[0]||'').toLowerCase() !== 'x-csrf-token'; });
+                init.headers.push(['X-CSRF-Token', info.token]);
+              } else { init.headers['X-CSRF-Token'] = info.token; }
+            } catch(e) { return r; }
+            /* Un unico reintento. Si vuelve a fallar, se devuelve tal cual.
+               El rechazo NO se traga: si la red se cae acá, el caller debe
+               poder distinguirlo (hay pantallas con su propio reintento por
+               AbortError que dependen de eso). */
+            return _origFetch(input, init);
+          });
+        });
+      });
     };
+
+    /* Refresco single-flight: varias peticiones que fallan a la vez
+       comparten una sola consulta al servidor. */
+    var _csrfEnVuelo = null;
+    function _refrescarCsrf(){
+      if (_csrfEnVuelo) return _csrfEnVuelo;
+      _csrfEnVuelo = _origFetch('/api/csrf-token', { credentials: 'same-origin' })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          return { alcanzado: true, token: d && d.csrf_token,
+                   autenticado: !!(d && d.autenticado), uid: (d && d.uid) || 0 };
+        })
+        .catch(function(){ return { alcanzado: false }; })
+        .then(function(res){ _csrfEnVuelo = null; return res; });
+      return _csrfEnVuelo;
+    }
+
+    /* El token viejo tambien vive en los <input hidden> de los formularios
+       clasicos. Si no se actualizan, el usuario pierde todo lo escrito al
+       enviar (el submit es navegacion completa, no hay reintento posible). */
+    function _propagarTokenAlDom(tok){
+      try {
+        var m = document.querySelector('meta[name="csrf-token"]');
+        if (m) m.setAttribute('content', tok);
+        var inputs = document.querySelectorAll('input[name="csrf_token"]');
+        for (var i = 0; i < inputs.length; i++) inputs[i].value = tok;
+      } catch(e) {}
+    }
+
+    var _avisoSesionMostrado = false;
+    function _avisarSesionExpirada(){
+      if (_avisoSesionMostrado) return;
+      _avisoSesionMostrado = true;
+      var msg = 'Tu sesion expiro por inactividad. Vuelve a iniciar sesion para continuar; '
+              + 'lo que tengas en pantalla no se guardo.';
+      try {
+        if (typeof ilusAlert === 'function') {
+          ilusAlert({ title: 'Sesion expirada', message: msg, type: 'warning' })
+            .then(function(){ location.assign('/login'); });
+          return;
+        }
+      } catch(e) {}
+      if (typeof ilusToast === 'function') ilusToast(msg, { type: 'warning' });
+      setTimeout(function(){ location.assign('/login'); }, 2500);
+    }
+
+    var _avisoUsuarioMostrado = false;
+    function _avisarCambioDeUsuario(){
+      if (_avisoUsuarioMostrado) return;
+      _avisoUsuarioMostrado = true;
+      var msg = 'En este navegador inicio sesion otro usuario. Por seguridad esta accion '
+              + 'no se ejecuto. Recarga la pagina para continuar con la sesion actual.';
+      try {
+        if (typeof ilusAlert === 'function') {
+          ilusAlert({ title: 'Cambio de usuario detectado', message: msg, type: 'warning' });
+          return;
+        }
+      } catch(e) {}
+      if (typeof ilusToast === 'function') ilusToast(msg, { type: 'warning' });
+    }
     // Wrap XMLHttpRequest también (ot_ejecutar.html lo usa para uploads con progreso)
     try {
       var _origOpen = XMLHttpRequest.prototype.open;
