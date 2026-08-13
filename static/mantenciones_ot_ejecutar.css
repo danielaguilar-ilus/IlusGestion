@@ -1915,7 +1915,12 @@
   /* Ambas pestañas conviven a la vista — el toggle de arriba ya no hace
      falta (no hay nada que elegir). #tabPanel-info NO tiene .active por
      defecto (línea 208 del template): se fuerza visible igual. */
-  .tx-tabs{display:none}
+  /* !important necesario: verificado en vivo contra OT-2026-00081 -- sin
+     esto, .tx-tabs pierde la cascada contra una regla más específica que
+     ya existe en el documento (probablemente un <style> inline del propio
+     template, que en el DOM aparece después que este archivo enlazado).
+     Mismo motivo por el que la línea de abajo ya llevaba !important. */
+  .tx-tabs{display:none !important}
   .tx-tab-panel{display:block !important}
   #tabPanel-tareas{grid-area:main; min-width:0}
   #tabPanel-info{grid-area:side; min-width:0; position:sticky; top:20px}
