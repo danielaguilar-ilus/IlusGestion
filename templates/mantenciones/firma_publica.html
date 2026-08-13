@@ -57,10 +57,22 @@
     .sig-wrap{position:relative;margin-top:6px;}
     canvas{width:100%;height:190px;background:#fff;border-radius:12px;border:2px dashed #d1d5db;touch-action:none;display:block;}
     .sig-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#9ca3af;font-size:.85rem;pointer-events:none;}
-    .sig-tools{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
+    /* 2026-08-13 (Daniel: "herramienta que dé borrado, algo que llame la
+       atención, que venda" — ver memoria ot_firma_potenciada_whatsapp_correo):
+       antes .lnk era texto gris casi invisible. El lápiz de firma es la
+       herramienta central de esta página — sus controles deben sentirse a
+       la altura, no como un detalle olvidado. */
+    .sig-tools{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap}
     .sig-tools-left{display:flex;gap:8px;align-items:center;}
-    .lnk{background:none;border:0;color:#9ca3af;font-size:.8rem;font-weight:600;cursor:pointer;padding:6px 4px;}
-    .lnk:active{color:#fff}
+    .lnk{
+      background:#1a1a1d;border:1.5px solid #303034;color:#e5e7eb;
+      font-size:.78rem;font-weight:700;cursor:pointer;
+      padding:9px 14px;min-height:40px;border-radius:10px;
+      display:inline-flex;align-items:center;gap:6px;
+      transition:background .15s,border-color .15s,transform .12s;
+    }
+    .lnk:hover{border-color:#dc2626;background:#211012}
+    .lnk:active{transform:scale(.95);color:#fff;border-color:#dc2626}
     .btn{display:block;width:100%;background:#dc2626;color:#fff;border:0;border-radius:12px;font-size:1rem;font-weight:700;
       padding:15px;min-height:52px;margin-top:18px;cursor:pointer;transition:background .15s;}
     .btn:hover{background:#b91c1c}.btn:disabled{opacity:.6}
