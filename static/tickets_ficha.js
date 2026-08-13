@@ -3697,19 +3697,39 @@ function tkdayAbrirDetalle(lista){
   const cuerpo = lista.map(function(v){
     const est = String(v.estado || '').toLowerCase();
     const hi = v.hora_inicio || '--', hf = v.hora_fin || '';
-    return '<div class="pop-grp">'
-      + (uno ? '' : '<div class="pop-row"><i class="bi bi-clipboard2" aria-hidden="true"></i>'
-          + '<span class="v mono">' + esc(v.numero_ot || ('OT #' + (v.visita_id != null ? v.visita_id : '?'))) + '</span></div>')
+    // 2026-08-12 (Daniel: "que se distinga el cliente, que se indique qué
+    // máquina, algo que le sirva de información para ubicarse"): CLIENTE
+    // grande como título de la tarjeta (antes era una fila más, igual de
+    // chica que "Ticket" o "Tipo" -- no había forma de distinguirlo de un
+    // vistazo). El N° de OT + estado como sub-cabecera SOLO cuando hay
+    // varias OT en la lista (uno===false) -- con una sola OT eso ya se
+    // muestra en la cabecera del popover completo (variable `cab`, arriba);
+    // repetirlo acá sería la misma info dos veces en la misma tarjeta.
+    const cabecera = (uno ? '' : '<div class="pop-grp-head">'
+        + '<span class="mono text-muted">' + esc(v.numero_ot || ('OT #' + (v.visita_id != null ? v.visita_id : '?'))) + '</span>'
+        + (est ? '<span class="' + _tkdayBadgeCls(est) + '">' + esc(est.replace(/_/g, ' ')) + '</span>' : '')
+        + '</div>')
+      + '<div class="pop-grp-cliente">' + esc(v.cliente_nombre || 'Cliente sin nombre') + '</div>';
+    // "equipos" lo entrega mant_calendario_mes desde 2026-08-12 (GROUP BY
+    // batch en el backend, no 1 query por visita) -- puede venir vacío en OT
+    // sin tareas ligadas a máquina todavía (recién creada, o levantamiento
+    // por descubrimiento sin materializar). Tope de 3 nombres + "+N" para no
+    // desbordar la tarjeta con clientes que tienen muchos equipos en una OT.
+    const eqList = Array.isArray(v.equipos) ? v.equipos : [];
+    const eqTxt = eqList.length
+      ? (eqList.slice(0, 3).join(', ') + (eqList.length > 3 ? ' +' + (eqList.length - 3) : ''))
+      : '';
+    return '<div class="pop-grp est-' + esc(est || 'closed') + '">'
+      + cabecera
       // SOLO campos que el endpoint YA entrega (mant_calendario_mes):
       // visita_id, numero_ot, ticket_id, numero_ticket, cliente_id,
       // cliente_nombre, titulo, tipo, estado, hora_inicio, hora_fin,
-      // tecnico_id, tecnico_nombre.
+      // tecnico_id, tecnico_nombre, equipos.
+      + _tkdayPopFila('bi-gear-wide-connected', 'Equipos', eqTxt, false)
       + _tkdayPopFila('bi-person-badge', 'Técnico', v.tecnico_nombre || v.tecnico || 'Sin asignar', false)
       + _tkdayPopFila('bi-clock', 'Horario', hi + (hf ? '–' + hf : ''), true)
       + _tkdayPopFila('bi-calendar3', 'Fecha', _TKOT.day.fecha
           ? _TKOT.day.fecha.split('-').reverse().join('/') : '', true)
-      + _tkdayPopFila('bi-flag', 'Estado', est ? est.replace(/_/g, ' ') : '', false)
-      + _tkdayPopFila('bi-building', 'Cliente', v.cliente_nombre || '', false)
       + _tkdayPopFila('bi-card-text', 'Título', v.titulo || '', false)
       + _tkdayPopFila('bi-tag', 'Tipo', v.tipo || '', false)
       + _tkdayPopFila('bi-ticket-detailed', 'Ticket', v.numero_ticket || '', true)
