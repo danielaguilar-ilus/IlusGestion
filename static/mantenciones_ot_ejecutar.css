@@ -1853,3 +1853,117 @@
 }
 .tx-btn-firmar:disabled{background:#f1f5f9;color:#94a3b8;box-shadow:none}
 #btnFirmarHint{font-family:var(--tx-mono);font-size:.66rem !important;letter-spacing:0}
+
+/* ════════════════════════════════════════════════════════════════════
+   DESKTOP REAL (2026-08-13, Daniel — presentación de negocio): la
+   maqueta Fable de arriba es mobile-first a propósito, pero por debajo
+   de este bloque ESO SEGUÍA SIENDO LA ÚNICA VISTA en cualquier ancho:
+   a 1920px .tx-wrap (max-width:820px, línea 17) dejaba el header, las
+   tarjetas de equipo y el checklist flotando en una columna angosta con
+   franjas grises vacías a los lados — la vista de celular, escalada, no
+   una vista de escritorio. Confirmado en vivo contra OT-2026-00081.
+
+   Por debajo de 1200px NO CAMBIA NADA de este archivo: mobile y tablet
+   siguen siendo pixel-a-pixel la maqueta aprobada el 12-08.
+
+   ≥1200px pasa a ser una disposición de DOS COLUMNAS reales (no "más
+   ancho y ya"):
+     · Header (hero cliente) y barra GPS: ancho completo arriba, sin
+       cambios de contenido.
+     · Columna PRINCIPAL (izquierda, flexible) = pestaña "Gestión de
+       tareas" (#tabPanel-tareas): el drill-down equipos → plantillas →
+       checklist → resumen. Es la que abre por defecto, así que pasa a
+       ser la protagonista del ancho disponible.
+     · Columna LATERAL (derecha, ~380px, FIJA con scroll de la página —
+       position:sticky) = pestaña "Información" (#tabPanel-info): Datos
+       de la OT, Recorrido de la OT (el pipeline de progreso), Firmas y
+       Adjuntos. En una pantalla ancha sobra espacio para tener AMBAS
+       pestañas a la vista al mismo tiempo en vez de obligar a elegir
+       una con clic — por eso los botones .tx-tabs se ocultan en
+       desktop (nada se borra: cambiarTabOT() sigue intacta en el JS,
+       mobile/tablet la siguen usando exactamente igual).
+   Cero HTML nuevo, cero JS tocado: mismos ids, mismo drill-down, mismos
+   locks de tarea entre técnicos, mismo GPS, misma firma, mismo PDF.
+   Solo cómo se ACOMODA en una pantalla ancha (REGLA #4.2).
+   ════════════════════════════════════════════════════════════════════ */
+@media (min-width:1200px){
+  .tx-wrap{
+    max-width:1440px;
+    padding-left:24px;padding-right:24px;padding-top:16px;
+    display:grid;
+    /* La columna lateral es un % del ancho real, no un px fijo -- probado
+       en vivo: con 380px fijos, justo en el borde de 1200px la columna
+       PRINCIPAL quedaba en ~429px (peor que el celular). Con minmax()
+       porcentual la lateral se achica sola cerca del quiebre (mínimo
+       260px) y crece con la pantalla en 1440/1920 (los dos casos que
+       Daniel pidió probar), sin robarle todo el ancho a la principal. */
+    grid-template-columns:minmax(0,1fr) minmax(260px,32%);
+    grid-template-areas:
+      "hdr  hdr"
+      "gps  gps"
+      "main side";
+    column-gap:30px;
+    align-items:start;
+  }
+  /* position:relative (no static): .tx-hdr sigue siendo el contenedor de
+     posicionamiento de su propio ::before (el watermark del casco, con
+     right:-26px) y de .tx-hdr-toggle -- con static puro, ambos se escapan
+     al viewport y generaban scroll horizontal fantasma (detectado en vivo
+     a 1440px: 36px de overflow). Solo se le quita el sticky. */
+  .tx-hdr{grid-area:hdr; position:relative; top:auto}
+  .tx-gps{grid-area:gps; margin-bottom:14px}
+  /* Ambas pestañas conviven a la vista — el toggle de arriba ya no hace
+     falta (no hay nada que elegir). #tabPanel-info NO tiene .active por
+     defecto (línea 208 del template): se fuerza visible igual. */
+  .tx-tabs{display:none}
+  .tx-tab-panel{display:block !important}
+  #tabPanel-tareas{grid-area:main; min-width:0}
+  #tabPanel-info{grid-area:side; min-width:0; position:sticky; top:20px}
+  #tabPanel-info::before{
+    content:'Resumen y progreso de la OT';
+    display:block;margin:0 2px 10px;
+    font-size:.68rem;font-weight:800;letter-spacing:.12em;
+    text-transform:uppercase;color:#94a3b8;
+  }
+
+  /* Recorrido de la OT: 6 pasos horizontales no entran cómodos en una
+     columna de ~380px (el ANCHO REAL de la columna es angosto aunque el
+     viewport no lo sea) — se lee mejor como línea de tiempo vertical.
+     Mismas reglas que ya usa esta pieza en mobile ≤640px (línea ~475),
+     reutilizadas aquí porque el problema es el mismo: poco ancho. */
+  #tabPanel-info .pipe-track{
+    flex-direction:column;align-items:stretch;
+    padding:10px 4px;gap:0;
+  }
+  #tabPanel-info .pipe-track::before{display:none}
+  #tabPanel-info .pipe-step{
+    flex-direction:row;align-items:flex-start;text-align:left;
+    padding:6px 4px 20px 4px;gap:14px;position:relative;
+  }
+  #tabPanel-info .pipe-step:last-child{padding-bottom:6px}
+  #tabPanel-info .pipe-step:not(:last-child)::after{
+    content:'';position:absolute;left:17px;top:42px;bottom:6px;
+    width:1px;background:#e5e7eb;border-radius:2px;z-index:0;
+  }
+  #tabPanel-info .pipe-step.done:not(:last-child)::after{
+    width:2px;left:16.5px;background:#16a34a;
+  }
+  #tabPanel-info .pipe-step + .pipe-step::before{display:none}
+  #tabPanel-info .pipe-meta{margin-top:2px;text-align:left;align-items:flex-start;gap:4px;flex:1}
+  #tabPanel-info .pipe-label{font-size:.95rem;white-space:normal;line-height:1.25}
+  #tabPanel-info .pipe-sub{font-size:.72rem;white-space:normal}
+  #tabPanel-info .pipe-time{font-size:.74rem}
+  #tabPanel-info .pipe-ago{font-size:.66rem;padding:2px 8px}
+
+  /* Equipos: minmax(300px,..) medido en vivo daba solo 2 columnas incluso
+     a 1920px (columna principal ~917px, 3×300+2×10 no entraba por poco).
+     260px sigue siendo cómodo (foto+nombre+acciones) y suma la 3ª
+     columna en pantallas grandes sin tocar el valor mobile/tablet. */
+  .tx-eq-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+
+  /* CTA de firma (barra fija inferior): sigue fija abajo, pero ya no
+     estira el botón de borde a borde en pantallas anchas -- mismo
+     problema que el resto de la maqueta ("no me gusta el contenedor"),
+     versión bottom-bar. Contenido centrado a un ancho legible. */
+  .tx-bottom-body{max-width:900px;margin:0 auto}
+}
