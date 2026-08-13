@@ -281,7 +281,46 @@
           </div>
         </div>
 
-        {# ─── Paso 3: AGENDA (Programación + Calendario UNIFICADOS) ───
+        {# ─── Paso 3: TÉCNICOS ASIGNADOS ───
+           2026-08-13 (Daniel, en vivo -- TK-2026-01313): "el paso tres se
+           hable de los técnicos, porque selecciono el técnico y después me
+           dice que no hay hueco, entonces tengo que devolverme". Antes
+           Agenda era el Paso 3 y Técnicos el Paso 4 -- se elegía UN
+           horario a ciegas y recién después, al elegir técnico, aparecía
+           el choque de horario (o el propio botón "Sugerir horario" del
+           Paso de Agenda, que busca huecos "para los técnicos
+           seleccionados", no tenía a quién buscarle). Se invierte el
+           orden: primero QUIÉN (este bloque), después CUÁNDO (bloque de
+           Agenda, ahora Paso 4, más abajo) -- mismos ids/campos/lógica de
+           cada uno, solo cambia el orden visual y la numeración. ── #}
+        <div class="lev-step-card" id="tkotStep3">
+          <div class="lev-step-header">
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 3</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">3</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Técnicos asignados *</div>
+              <div class="lev-step-sub">
+                <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
+              </div>
+            </div>
+          </div>
+          <div class="lev-step-body">
+            <div id="levTecnicosBox" class="d-flex flex-wrap gap-2" style="min-height:42px">
+              <span class="text-muted small">Cargando técnicos…</span>
+            </div>
+            <small class="text-muted d-block mt-2" style="font-size:.74rem">
+              <i class="bi bi-info-circle me-1"></i>
+              Puedes asignar varios técnicos. Cada uno verá la OT en su listado.
+            </small>
+          </div>
+        </div>
+
+        {# ─── Paso 4: AGENDA (Programación + Calendario UNIFICADOS) ───
            Antes esto eran dos tarjetas desconectadas ("Paso 3 Programación"
            y "Paso 4 Calendario del mes"): el calendario solo informaba con
            el title= nativo del navegador (el "globito" que Daniel odia) y
@@ -303,13 +342,16 @@
            nuevo. El choque sigue saliendo de tkotChequearChoque()
            (/mantenciones/api/calendario/choque): alimenta a la vez el
            banner explicativo y las clases .choque/.en-choque de los
-           bloques (la señal pre-verbal). ── #}
-        <div class="lev-step-card" id="tkotStep3">
+           bloques (la señal pre-verbal). Ahora es el Paso 4 (2026-08-13,
+           ver comentario del Paso 3 arriba): con el técnico ya elegido,
+           "Sugerir horario" y el choque de agenda tienen a quién
+           consultarle desde el primer momento. ── #}
+        <div class="lev-step-card" id="tkotStep4">
           <div class="lev-step-header">
             <div class="lev-step-circle-wrap">
-              <div class="lev-step-circle-label">Paso 3</div>
+              <div class="lev-step-circle-label">Paso 4</div>
               <div class="lev-step-num">
-                <span class="lev-step-num-text">3</span>
+                <span class="lev-step-num-text">4</span>
                 <i class="bi bi-check-lg lev-step-check"></i>
               </div>
             </div>
@@ -469,34 +511,6 @@
                 </small>
               </div>
             </div>
-          </div>
-        </div>
-
-        {# ─── Paso 4: Técnicos asignados ─── #}
-        <div class="lev-step-card" id="tkotStep4">
-          <div class="lev-step-header">
-            <div class="lev-step-circle-wrap">
-              <div class="lev-step-circle-label">Paso 4</div>
-              <div class="lev-step-num">
-                <span class="lev-step-num-text">4</span>
-                <i class="bi bi-check-lg lev-step-check"></i>
-              </div>
-            </div>
-            <div class="lev-step-titles">
-              <div class="lev-step-title">Técnicos asignados *</div>
-              <div class="lev-step-sub">
-                <span class="badge bg-primary" id="levTecCount">0</span> seleccionado(s)
-              </div>
-            </div>
-          </div>
-          <div class="lev-step-body">
-            <div id="levTecnicosBox" class="d-flex flex-wrap gap-2" style="min-height:42px">
-              <span class="text-muted small">Cargando técnicos…</span>
-            </div>
-            <small class="text-muted d-block mt-2" style="font-size:.74rem">
-              <i class="bi bi-info-circle me-1"></i>
-              Puedes asignar varios técnicos. Cada uno verá la OT en su listado.
-            </small>
           </div>
         </div>
 
