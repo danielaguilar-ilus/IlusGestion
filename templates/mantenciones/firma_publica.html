@@ -28,6 +28,7 @@
     canvas{width:100%;height:190px;background:#fff;border-radius:12px;border:2px dashed #d1d5db;touch-action:none;display:block;}
     .sig-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#9ca3af;font-size:.85rem;pointer-events:none;}
     .sig-tools{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
+    .sig-tools-left{display:flex;gap:8px;align-items:center;}
     .lnk{background:none;border:0;color:#9ca3af;font-size:.8rem;font-weight:600;cursor:pointer;padding:6px 4px;}
     .lnk:active{color:#fff}
     .btn{display:block;width:100%;background:#dc2626;color:#fff;border:0;border-radius:12px;font-size:1rem;font-weight:700;
@@ -67,7 +68,10 @@
         <div class="sig-hint" id="sigHint">Firma aquí con el dedo o el mouse</div>
       </div>
       <div class="sig-tools">
-        <button class="lnk" type="button" onclick="limpiarFirma()">↺ Borrar firma</button>
+        <span class="sig-tools-left">
+          <button class="lnk" type="button" onclick="deshacerFirma()">↩ Deshacer</button>
+          <button class="lnk" type="button" onclick="limpiarFirma()">↺ Borrar todo</button>
+        </span>
         <span class="muted" style="font-size:.74rem">Conforme con el servicio</span>
       </div>
 
@@ -103,22 +107,101 @@
   <script>
     const TOKEN = {{ token|tojson }};
     const cv = document.getElementById('sig'), ctx = cv.getContext('2d');
+    const sigHint = document.getElementById('sigHint');
     let drawing = false, has = false;
-    function fit(){ const r = cv.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
-      cv.width = r.width * dpr; cv.height = r.height * dpr; ctx.scale(dpr, dpr);
-      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111'; }
-    fit(); window.addEventListener('resize', () => { const d = cv.toDataURL(); fit(); });
-    function pos(e){ const r = cv.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e;
-      return { x: t.clientX - r.left, y: t.clientY - r.top }; }
-    function start(e){ e.preventDefault(); drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y);
-      document.getElementById('sigHint').style.display = 'none'; }
-    function move(e){ if(!drawing) return; e.preventDefault(); const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); has = true; }
-    function end(e){ drawing = false; }
-    cv.addEventListener('mousedown', start); cv.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', end);
-    cv.addEventListener('touchstart', start, {passive:false}); cv.addEventListener('touchmove', move, {passive:false});
-    cv.addEventListener('touchend', end);
-    function limpiarFirma(){ ctx.clearRect(0,0,cv.width,cv.height); has = false; document.getElementById('sigHint').style.display = ''; }
+    let history = [];              // stack de dataURL para "deshacer" (mismo patrón que el canvas interno de la app)
+    const MAX_HISTORY = 20;
+
+    // 2026-08-12 (Daniel, "potenciar la firma"): fix de un bug real -- la
+    // versión anterior capturaba cv.toDataURL() en un resize pero NUNCA lo
+    // restauraba, así que cualquier resize (el teclado virtual aparece al
+    // enfocar Nombre/RUT, o una rotación de pantalla) BORRABA la firma ya
+    // dibujada sin avisar. Ahora sí se restaura después de reajustar.
+    function fit(){
+      const r = cv.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      let prevImg = null;
+      if (has && cv.width > 0 && cv.height > 0){
+        try { prevImg = cv.toDataURL('image/png'); } catch(e) {}
+      }
+      cv.width = r.width * dpr; cv.height = r.height * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
+      if (prevImg){
+        const img = new Image();
+        img.onload = () => { ctx.drawImage(img, 0, 0, r.width, r.height); };
+        img.src = prevImg;
+      }
+    }
+    fit();
+    // Debounce: iOS/Android disparan varios 'resize' seguidos al mostrar/
+    // ocultar el teclado virtual -- evita re-ajustar (y redibujar) de más.
+    let resizeT = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeT);
+      resizeT = setTimeout(fit, 120);
+    });
+
+    function pos(e){
+      const r = cv.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    function pushHistory(){
+      try {
+        history.push(cv.toDataURL('image/png'));
+        if (history.length > MAX_HISTORY) history.shift();
+      } catch(e) {}
+    }
+    // Pointer Events unificados (mouse + touch + lápiz óptico en un solo set
+    // de handlers) con setPointerCapture: el trazo sigue perteneciendo al
+    // canvas aunque el dedo/stylus se mueva rápido y "se escape" del área
+    // durante el gesto -- más robusto entre navegadores/dispositivos
+    // táctiles que los mousedown/touchstart separados de antes.
+    function start(e){
+      if (drawing) return;  // ignora un segundo pointer (ej. un segundo dedo accidental) mientras ya hay un trazo en curso
+      e.preventDefault();
+      try { cv.setPointerCapture(e.pointerId); } catch(err) {}
+      pushHistory();
+      drawing = true;
+      const p = pos(e);
+      ctx.beginPath(); ctx.moveTo(p.x, p.y);
+      sigHint.style.display = 'none';
+    }
+    function move(e){
+      if (!drawing) return;
+      e.preventDefault();
+      const p = pos(e);
+      ctx.lineTo(p.x, p.y); ctx.stroke();
+      has = true;
+    }
+    function end(e){
+      if (!drawing) return;
+      drawing = false;
+      try { cv.releasePointerCapture(e.pointerId); } catch(err) {}
+    }
+    cv.addEventListener('pointerdown', start);
+    cv.addEventListener('pointermove', move);
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+    cv.addEventListener('pointerleave', e => { if (drawing) end(e); });
+
+    function limpiarFirma(){
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      has = false; history = [];
+      sigHint.style.display = '';
+    }
+    function deshacerFirma(){
+      if (!history.length){ limpiarFirma(); return; }
+      const dataUrl = history.pop();
+      const img = new Image();
+      img.onload = () => {
+        const dpr = window.devicePixelRatio || 1;
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        ctx.drawImage(img, 0, 0, cv.width / dpr, cv.height / dpr);
+        if (!history.length){ has = false; sigHint.style.display = ''; }
+      };
+      img.src = dataUrl;
+    }
     async function enviar(){
       const nombre = document.getElementById('fNombre').value.trim();
       const rut = document.getElementById('fRut').value.trim();
