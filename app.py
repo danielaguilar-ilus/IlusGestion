@@ -86647,6 +86647,12 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # excepción a la regla, sin tocar el caso normal (cliente YA existente
     # con un ticket que referencia un equipo que de verdad no tiene ficha).
     cliente_es_nuevo = bool(data.get("cliente_nuevo"))
+    # Mismos 8 tipos que _TKOT_TIPOS_FUERZAN_CLIENTE_NUEVO (tickets_ficha.js)
+    # -- ver comentario completo más abajo, junto a donde se usa.
+    _TIPOS_OT_DAN_ALTA_EQUIPO = (
+        "instalacion", "correctiva", "preventiva", "visita_tecnica",
+        "inspeccion", "garantia", "cambio_equipo", "visita_correctiva",
+    )
     equipos_ticket_raw = data.get("equipos_ticket") or []
     equipos_ticket_clean = []
     equipos_excluidos_sin_ficha = []
@@ -86663,17 +86669,25 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 maquina_id_et = None
             # 2026-08-13 (Daniel, en vivo -- "la instalación también podría
             # tomar el rol de alimentar la ficha, si es la primera vez que
-            # se está instalando"): un equipo del ticket SIN maquina_id en
-            # una OT de Instalación es, por definición del tipo, equipo
-            # NUEVO llegando por primera vez -- no importa si el CLIENTE es
-            # nuevo o ya existía (a diferencia de `cliente_es_nuevo` más
-            # abajo, que solo cubre el caso de cliente recién creado). Se
-            # da de alta en mant_maquinas de una vez, con trazabilidad real
-            # (mant_logs) -- la OT de instalación ES el evento que registra
-            # el equipo, no una tarea huérfana aparte. Si el alta falla
-            # (error de BD), se sigue de largo: cae al mismo camino que ya
-            # existía antes (excluido / cliente_es_nuevo), sin romper nada.
-            if maquina_id_et is None and tipo_ot == "instalacion":
+            # se está instalando" + "esto [descubrimiento] es un simple
+            # estado, no lo trates como que es el único que puede agregar
+            # equipos"): un equipo del ticket SIN maquina_id en un tipo de
+            # OT donde tiene sentido que el equipo sea genuinamente nuevo
+            # es, por definición, equipo llegando por primera vez -- no
+            # importa si el CLIENTE es nuevo o ya existía (a diferencia de
+            # `cliente_es_nuevo` más abajo, que solo cubre cliente recién
+            # creado). MISMA lista de tipos que ya usa el frontend para
+            # forzar la creación de cliente (_TKOT_TIPOS_FUERZAN_CLIENTE_
+            # NUEVO en tickets_ficha.js -- deliberadamente sin
+            # 'levantamiento' -- tiene su propio flujo de descubrimiento,
+            # que sigue existiendo intacto como una opción más, no la
+            # única -- ni 'desinstalacion' -- quitar algo que nunca existió
+            # no tiene sentido). Se da de alta en mant_maquinas de una vez,
+            # con trazabilidad real (mant_logs) -- la OT ES el evento que
+            # registra el equipo, no una tarea huérfana aparte. Si el alta
+            # falla (error de BD), se sigue de largo: cae al mismo camino
+            # que ya existía antes (excluido / cliente_es_nuevo).
+            if maquina_id_et is None and tipo_ot in _TIPOS_OT_DAN_ALTA_EQUIPO:
                 try:
                     mysql_execute(
                         "INSERT INTO mant_maquinas "
@@ -86687,13 +86701,13 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                     maquina_id_et = (_maq_nueva or {}).get("id")
                 except Exception as _e_maq_alta:
                     print(f"[lev_crear] alta automática de máquina falló para "
-                          f"'{nombre_et}' (instalación): {_e_maq_alta}", flush=True)
+                          f"'{nombre_et}' (tipo '{tipo_ot}'): {_e_maq_alta}", flush=True)
                     maquina_id_et = None
                 if maquina_id_et:
                     equipo_ids.append(maquina_id_et)
                     _mant_log(
-                        "maquina", maquina_id_et, "creada_por_instalacion",
-                        f"Alta automática por OT de instalación"
+                        "maquina", maquina_id_et, "creada_por_ot",
+                        f"Alta automática por OT de tipo '{tipo_ot}'"
                         f"{f' (ticket #{ticket_id})' if ticket_id else ''}: "
                         f"equipo declarado en el ticket, sin ficha previa."
                     )
