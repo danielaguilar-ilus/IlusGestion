@@ -4424,6 +4424,29 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "cotizacion": _cot, "items": items,
                         "destinatarios_sugeridos": _sug})
 
+    @app.route("/tickets/api/cotizaciones/buscar", methods=["GET"])
+    @_tickets_required
+    def tk_api_cotizacion_buscar():
+        """Búsqueda liviana de cotizaciones (número / empresa / RUT) para
+        el selector de origen "Generar OT" (2026-08-12,
+        /mantenciones/ots -- Daniel: "Cotización interna del sistema").
+        Solo lectura, top 8, sin ítems (para eso está el GET por id de
+        arriba) -- el caller solo necesita decidir a qué ticket o ficha
+        de cliente saltar."""
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "cotizaciones": []})
+        like = f"%{q}%"
+        rows = mysql_fetchall(
+            "SELECT id, numero_cotizacion, empresa, rut, estado, ticket_id "
+            "FROM tk_cotizaciones "
+            "WHERE COALESCE(eliminada,0)=0 "
+            "  AND (numero_cotizacion LIKE %s OR empresa LIKE %s OR rut LIKE %s) "
+            "ORDER BY created_at DESC LIMIT 8",
+            (like, like, like)
+        ) or []
+        return jsonify({"ok": True, "cotizaciones": [dict(r) for r in rows]})
+
     @app.route("/tickets/api/cotizaciones/<int:cid>/actualizar", methods=["POST"])
     @_tickets_required
     def tk_api_cotizacion_actualizar(cid):

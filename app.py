@@ -69377,6 +69377,17 @@ def mant_ots_list():
     q          = (request.args.get("q") or "").strip()
     solo_mias  = request.args.get("solo_mias") == "1"
     ver_todas  = request.args.get("todas") == "1"
+    # 🔎 FILTRO 2026-08-12 (Daniel, viendo el listado en vivo): "filtra lo
+    # que se hace programado automáticamente... a menos que lo busque" --
+    # sus ~72 OT de prueba (OT-2026-00001..00072, cliente "Juan Daniel
+    # Aguilar Tejera") se perdían entre "ruido" generado SIN una decisión
+    # humana por-OT: sugerencias del Agente aceptadas con un clic desde la
+    # ficha del cliente, registros retroactivos, el seguimiento automático
+    # tras una visita histórica, y las tandas del Plan Anual. Ver
+    # `_OT_TITULOS_AUTO` más abajo para el detalle de qué NO cuenta como
+    # ruido (Trabajo interno NO está acá -- lo crea a mano un supervisor,
+    # solo que por otra razón tampoco tiene numero_ot).
+    incluir_auto = request.args.get("incluir_auto") == "1"
 
     # ── Lógica por rol (matriz 2026-05-18) ──────────────────────────
     # FIX 2026-05-18 (Aaron Urbina): normalizamos vía `_rol_familia` para que
@@ -69536,9 +69547,38 @@ def mant_ots_list():
         except (TypeError, ValueError):
             pass
     if q:
-        where.append("(c.razon_social LIKE %s OR v.titulo LIKE %s OR v.numero_ot LIKE %s)")
+        # 2026-08-12: se agregó el contacto (de la ficha Y el declarado en
+        # la propia OT, que puede diferir) -- Daniel busca sus pruebas por
+        # "Juan Daniel Aguilar Tejera" (razón social) pero también por el
+        # contacto "prueba", que antes esta búsqueda no encontraba.
+        where.append(
+            "(c.razon_social LIKE %s OR v.titulo LIKE %s OR v.numero_ot LIKE %s "
+            " OR c.contacto_nombre LIKE %s OR v.contacto_nombre LIKE %s)"
+        )
         like = f"%{q}%"
-        params.extend([like, like, like])
+        params.extend([like, like, like, like, like])
+
+    # 🔎 Ocultar por defecto el "ruido" no deliberado por OT individual (ver
+    # comentario junto a `incluir_auto` más arriba). Se identifica por el
+    # marcador estable que cada flujo pone en `titulo` -- ninguno de esos 4
+    # flujos asigna numero_ot (confirmado en el código: _mant_intel_accion,
+    # mant_visita_historica/crear_proxima, mant_planificador_generar_ots
+    # SÍ asigna numero_ot pero el marcador de título sigue siendo único y
+    # reconocible). Con `cliente_id IS NOT NULL` de guardia para NUNCA
+    # tocar "Trabajo interno" (cliente_id NULL): esas OT las crea a
+    # mano un supervisor y Daniel no pidió ocultarlas, solo las de agenda
+    # automática. Se desactiva solo con `incluir_auto=1` O apenas hay una
+    # búsqueda activa (`q`) -- "a menos que lo busque".
+    _OT_TITULOS_AUTO = (
+        "%(agendada por el Agente)%",
+        "%(registro retroactivo)%",
+        "%(sugerida por sistema)%",
+        "%(Plan anual)%",
+    )
+    if not incluir_auto and not q:
+        marcadores = " OR ".join(["v.titulo LIKE %s"] * len(_OT_TITULOS_AUTO))
+        where.append(f"NOT (v.cliente_id IS NOT NULL AND ({marcadores}))")
+        params.extend(_OT_TITULOS_AUTO)
 
     ots = []
     kpis = {"total": 0, "programadas": 0, "completadas": 0, "atrasadas": 0}
@@ -69700,6 +69740,7 @@ def mant_ots_list():
         filtros={
             "estado": estado, "tipo": tipo,
             "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
+            "incluir_auto": incluir_auto,
         },
         # 🔐 2026-05-18 — Flags de rol para el template (ocultar botones
         # de "Eliminar" / "Editar" que el rol no debería ver).

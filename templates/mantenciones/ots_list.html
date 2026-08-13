@@ -278,77 +278,47 @@
     <div class="sub">Todas las OTs · {{ ots|length }} resultado(s) · gestiona tareas, fotos y técnicos</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <a href="{{ url_for('mant_index') }}" class="btn btn-sm btn-outline-light">
-      <i class="bi bi-arrow-left me-1"></i>Dashboard
-    </a>
+    {# 2026-08-12 (Daniel, viendo el header en vivo): "no me interesa el
+       botón del dashboard... elimina el código" — el atajo "← Dashboard"
+       se retiró (mant_index YA está en el sidebar: Mantenciones → primer
+       ítem, ver templates/base.html ~L526 — no se pierde alcance).
+
+       "Seguimiento" NO se retiró aunque Daniel lo pidió junto con Dashboard:
+       verifiqué templates/base.html completo y NINGÚN otro lugar del
+       proyecto enlaza a mant_seguimiento_vista (grep confirmado) — es el
+       ÚNICO acceso de toda la app a "Seguimiento técnicos en tiempo real".
+       Quitarlo lo habría dejado alcanzable solo tecleando la URL a mano.
+       Regla del proyecto: si no está en el sidebar, no se borra sin
+       decirlo — ver reporte de esta tarea. #}
     {% if permissions.admin or permissions.superadmin %}
     <a href="{{ url_for('mant_seguimiento_vista') }}" class="btn btn-sm btn-outline-light"
        title="Seguimiento técnicos en tiempo real">
       <i class="bi bi-broadcast me-1"></i>Seguimiento
     </a>
     {% endif %}
+    {# 2026-08-12 — Botón único "Generar OT" (Daniel: "no necesitamos dos
+       botones, el mismo botón puede abrir uno"). Reemplaza a la vez:
+       "Generar OT desde cliente" (antes solo navegaba a /mantenciones/clientes
+       para elegir uno a mano), "Trabajo interno" (modal propio,
+       #modalOTInterna — se CONSERVA tal cual, ver más abajo, solo cambia
+       su punto de entrada) y de paso resuelve Ticket/Cotización/Documento
+       ERP, que antes no tenían ningún botón acá. Abre el selector de
+       origen (#modalOTOrigen) — mismo flag is_tecnico que ya ocultaba
+       ambos botones viejos (no se inventa un mecanismo nuevo de permisos). #}
     {% if not is_tecnico %}
-    <a href="{{ url_for('mant_clientes') }}" class="btn btn-sm btn-light fw-bold">
-      <i class="bi bi-building-add me-1"></i>Generar OT desde cliente
-    </a>
-    {# 2026-08-10 (Daniel): OT 100% interna (Trabajo de bodega, Capacitación,
-       Control de Calidad...) SIN pasar por ninguna ficha de cliente ni
-       ticket. @_no_tecnico también en el backend (POST
-       /mantenciones/api/visitas/interna) — este botón queda oculto para el
-       rol técnico con el MISMO flag `is_tecnico` que ya oculta "Generar OT
-       desde cliente" arriba (no se inventa un mecanismo nuevo). #}
-    <button type="button" class="btn btn-sm btn-outline-light fw-bold" onclick="abrirModalOTInterna()">
-      <i class="bi bi-clipboard2-check me-1"></i>Trabajo interno
-    </button>
-    {% endif %}
-    {% if permissions.superadmin %}
-    <button type="button" class="btn btn-sm btn-outline-danger" onclick="resetearOTs()"
-            title="Borrar TODAS las OTs (con respaldo automático) — solo superadmin">
-      <i class="bi bi-trash3 me-1"></i>Resetear OTs
+    <button type="button" class="btn btn-sm btn-light fw-bold" onclick="abrirSelectorOrigenOT()">
+      <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
     </button>
     {% endif %}
   </div>
 </div>
 
-{% if permissions.superadmin %}
-<script>
-// Reseteo masivo de OTs (superadmin). Respaldo + confirmación escrita.
-async function resetearOTs(){
-  if(typeof ilusPrompt !== 'function'){ return; }
-  const txt = await ilusPrompt({
-    title: 'Resetear todas las OTs',
-    message: 'Esto borra TODAS las órdenes de trabajo. Se guarda un respaldo automático (reversible). Para confirmar escribe exactamente:',
-    sub: '<strong style="color:#dc2626">BORRAR OT</strong>',
-    subHtml: true,
-    placeholder: 'BORRAR OT',
-    okLabel: 'Resetear sistema',
-    cancelLabel: 'Cancelar',
-    danger: true,
-  });
-  if(txt === null) return;
-  if((txt||'').trim().toUpperCase() !== 'BORRAR OT'){
-    ilusToast('Confirmación incorrecta — no se borró nada.', {type:'warning'});
-    return;
-  }
-  try{
-    const r = await fetch('/mantenciones/api/ots/reset', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({confirm_text:'BORRAR OT'})
-    });
-    const d = await r.json();
-    if(r.ok && d.ok){
-      await ilusAlert({type:'success', title:'Sistema limpio',
-        message: d.mensaje || ((d.borradas||0)+' OTs respaldadas y borradas.')});
-      location.reload();
-    } else {
-      ilusToast(d.error || 'No se pudo resetear.', {type:'error'});
-    }
-  }catch(e){
-    ilusToast('Error de red al resetear.', {type:'error'});
-  }
-}
-</script>
-{% endif %}
+{# 2026-08-12 — "Resetear OTs" se retiró del header (botón + su script)
+   a pedido explícito de Daniel ("elimina también resetear OTs, no me
+   interesa"). El endpoint backend POST /mantenciones/api/ots/reset NO se
+   tocó (ruta backend completa — fuera del alcance autorizado; ver
+   reporte). Si en el futuro se necesita, se re-expone desde donde
+   corresponda. #}
 
 {% if fatal_error %}
 <div class="alert alert-danger" style="font-size:.85rem">
@@ -384,7 +354,7 @@ async function resetearOTs(){
     <div class="col-md-4">
       <label class="form-label small fw-semibold mb-1">Buscar</label>
       <input type="text" name="q" class="form-control form-control-sm"
-             value="{{ filtros.q }}" placeholder="Cliente, título o N° OT">
+             value="{{ filtros.q }}" placeholder="Cliente, contacto, título o N° OT">
     </div>
     <div class="col-md-2">
       <label class="form-label small fw-semibold mb-1">Estado</label>
@@ -418,6 +388,27 @@ async function resetearOTs(){
       <a href="{{ url_for('mant_ots_list') }}" class="btn btn-outline-secondary btn-sm" title="Limpiar">
         <i class="bi bi-x-lg"></i>
       </a>
+    </div>
+  </div>
+  {# 2026-08-12 (Daniel: "filtra lo que se hace programado automáticamente...
+     a menos que lo busque"): por defecto el listado ya oculta las OT que
+     nacieron sin una decisión humana por-OT (sugerencias del Agente
+     aceptadas, registros retroactivos, seguimiento automático tras una
+     visita histórica, tandas del Plan Anual) — ver `_OT_TITULOS_AUTO` en
+     mant_ots_list (app.py). Este checkbox es el escape manual explícito
+     ("tu criterio de cuál es más limpio" — se optó por checkbox + Buscar
+     ya activo, ambos evitan tener que recordar palabras clave como
+     "Agente"). Se auto-envía el form al togglear: no hace falta tocar
+     "Filtrar" aparte, consistente con REGLA #4.3 (recargar al cambiar un
+     filtro). #}
+  <div class="mt-2">
+    <div class="form-check form-check-sm">
+      <input type="checkbox" class="form-check-input" id="filtroIncluirAuto" name="incluir_auto" value="1"
+             {% if filtros.incluir_auto %}checked{% endif %}
+             onchange="this.form.submit()">
+      <label class="form-check-label small text-muted" for="filtroIncluirAuto" style="font-size:.78rem">
+        Incluir OT generadas automáticamente (Agente, retroactivas, Plan Anual…)
+      </label>
     </div>
   </div>
 </form>
@@ -1496,6 +1487,306 @@ function otWhatsApp(el){
 
 {% if not is_tecnico %}
 {# ═══════════════════════════════════════════════════════════════════
+   Modal "Generar OT" — SELECTOR DE ORIGEN (2026-08-12)
+   Daniel: "vas a integrar el modal que te estoy pidiendo, el que venimos
+   usando en todos lados, estandarizado". El modal #modalGenerarOT (Ticket/
+   Cliente) y el modal #modalOTInterna (Trabajo interno) YA EXISTEN y
+   funcionan — este selector NO los reimplementa, solo decide CUÁL abrir y
+   con qué datos, según el origen elegido:
+     · Cliente existente → busca ficha local (misma
+       /mantenciones/api/clientes/autocomplete que ya usa el resto del
+       proyecto) y NAVEGA a /mantenciones/clientes/<cid>?abrir_generar_ot=1
+       -- esa página incluye #modalGenerarOT en modo CLIENTE (TID=null,
+       ver static/tickets_ficha.js) y mant_ficha.js lo auto-abre al detectar
+       el query param (ver abrirGenerarOT() en el DOMContentLoaded de ese
+       archivo). No se reimplementa el modal de 7 pasos acá.
+     · Ticket → busca por número/empresa/RUT (GET /tickets/api/tickets) y
+       navega a /tickets/<tid>?abrir_generar_ot=1 -- misma idea, el modal
+       en modo TICKET se auto-abre allá (ver templates/tickets/ficha.html).
+     · Cotización → busca en tk_cotizaciones (GET nuevo, ver
+       tickets_module.py: tk_api_cotizaciones_buscar) y resuelve a Ticket
+       (si la cotización ya tiene ticket_id) o a Cliente (por RUT, mismo
+       resolver que usa _TKOT en modo ticket) -- navega al que corresponda
+       con &cotizacion_id= de referencia. Si no hay ni ticket ni ficha,
+       avisa en vez de improvisar un tercer camino.
+     · Factura o boleta → reusa el buscador ERP YA CONSTRUIDO
+       (templates/tickets/_tka_modal.html, tkaOpen({mode:'crear'})) que hoy
+       alimenta "+ Nuevo ticket desde documento" en /tickets: crea un
+       ticket con las líneas del documento y navega a su ficha. Se le
+       agregó un `redirectQuery` opcional (aditivo, no rompe los demás
+       callers) para que YA llegue con ?abrir_generar_ot=1.
+     · Trabajo interno → NO navega a ningún lado: cierra este selector y
+       abre #modalOTInterna, el MISMO modal que existía como botón aparte
+       hasta hoy (ver más abajo) -- Daniel: "el mismo botón puede abrir
+       uno" en vez de dos botones separados en el header.
+   ═══════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="modalOTOrigen" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;border:0">
+        <div>
+          <h5 class="modal-title fw-bold mb-0">
+            <i class="bi bi-signpost-split me-2"></i>Generar Orden de Trabajo
+          </h5>
+          <small class="d-block mt-1" style="opacity:.85">¿De dónde nace esta OT?</small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="background:#fafafa">
+
+        <div id="otogGridWrap">
+          <div class="otog-grid">
+            <button type="button" class="otog-card" onclick="otogElegir('cliente')">
+              <div class="ico"><i class="bi bi-building-check"></i></div>
+              <div class="tit">Cliente existente</div>
+              <div class="sub">Busca una ficha ya registrada en Mantenciones</div>
+            </button>
+            <button type="button" class="otog-card" onclick="otogElegir('ticket')">
+              <div class="ico"><i class="bi bi-ticket-perforated"></i></div>
+              <div class="tit">Ticket</div>
+              <div class="sub">Nace de un ticket de servicio técnico</div>
+            </button>
+            <button type="button" class="otog-card" onclick="otogElegir('cotizacion')">
+              <div class="ico"><i class="bi bi-file-earmark-text"></i></div>
+              <div class="tit">Cotización</div>
+              <div class="sub">Cotización interna del sistema (tk_cotizaciones)</div>
+            </button>
+            <button type="button" class="otog-card" onclick="otogElegir('documento')">
+              <div class="ico"><i class="bi bi-receipt"></i></div>
+              <div class="tit">Factura o boleta</div>
+              <div class="sub">Búscala por folio o cliente en el ERP</div>
+            </button>
+            <button type="button" class="otog-card" onclick="otogElegir('interno')">
+              <div class="ico"><i class="bi bi-clipboard2-check"></i></div>
+              <div class="tit">Trabajo interno</div>
+              <div class="sub">Bodega, capacitación o control de calidad — sin cliente</div>
+            </button>
+          </div>
+        </div>
+
+        <div id="otogBuscarWrap" style="display:none">
+          <button type="button" class="otog-back-btn" onclick="otogVolver()">
+            <i class="bi bi-chevron-left"></i> Cambiar origen
+          </button>
+          <div id="otogBuscarTitulo" class="fw-bold mb-2" style="font-size:.9rem;color:#0f172a"></div>
+          <div class="d-flex gap-2 mb-2">
+            <input type="text" id="otogBuscarInput" class="form-control form-control-sm"
+                   autocomplete="off" oninput="otogOnInput()"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();otogBuscar();}">
+            <button type="button" class="btn btn-ilus btn-sm" onclick="otogBuscar()" title="Buscar">
+              <i class="bi bi-search"></i>
+            </button>
+          </div>
+          <div id="otogResultados"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+.otog-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.otog-card{
+  border:2px solid #e5e7eb;border-radius:14px;padding:18px 12px;background:#fff;
+  text-align:center;cursor:pointer;transition:all .16s;min-height:44px;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+.otog-card:hover{border-color:#fca5a5;transform:translateY(-2px);box-shadow:0 6px 16px rgba(220,38,38,.14)}
+.otog-card:active{transform:scale(.97)}
+.otog-card .ico{font-size:1.9rem;color:#dc2626;line-height:1}
+.otog-card .tit{font-weight:800;font-size:.9rem;color:#0f172a}
+.otog-card .sub{font-size:.71rem;color:#6b7280;line-height:1.3}
+.otog-back-btn{
+  border:none;background:transparent;color:#dc2626;font-weight:700;font-size:.84rem;
+  padding:6px 4px;margin:-6px 0 8px -4px;cursor:pointer;display:inline-flex;align-items:center;gap:2px;
+  min-height:44px;
+}
+.otog-back-btn:hover{text-decoration:underline}
+.otog-result-item{
+  border:1.5px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:8px;
+  cursor:pointer;transition:all .14s;background:#fff;min-height:44px;
+}
+.otog-result-item:hover{border-color:#dc2626;background:#fef2f2}
+.otog-result-item .ri-tit{font-weight:700;font-size:.86rem;color:#0f172a}
+.otog-result-item .ri-sub{font-size:.73rem;color:#6b7280;margin-top:2px}
+@media (max-width:480px){ .otog-grid{grid-template-columns:repeat(2,1fr)} }
+</style>
+<script>
+const _OTOG = { origen: null, timer: null };
+let _modalOTOrigen = null;
+
+const _OTOG_CONFIG = {
+  cliente:    { titulo: 'Busca por razón social o RUT', placeholder: 'Ej: Sportlife o 76.123.456-7', minLen: 2 },
+  ticket:     { titulo: 'Busca por número de ticket, empresa o RUT', placeholder: 'Ej: TK-2026-00123', minLen: 2 },
+  cotizacion: { titulo: 'Busca por número de cotización, empresa o RUT', placeholder: 'Ej: COT-2026-00045', minLen: 2 },
+};
+
+function abrirSelectorOrigenOT(){
+  document.getElementById('otogGridWrap').style.display = '';
+  document.getElementById('otogBuscarWrap').style.display = 'none';
+  document.getElementById('otogBuscarInput').value = '';
+  document.getElementById('otogResultados').innerHTML = '';
+  _OTOG.origen = null;
+  if (!_modalOTOrigen) _modalOTOrigen = new bootstrap.Modal(document.getElementById('modalOTOrigen'));
+  _modalOTOrigen.show();
+}
+
+function otogVolver(){
+  document.getElementById('otogGridWrap').style.display = '';
+  document.getElementById('otogBuscarWrap').style.display = 'none';
+}
+
+function otogEsc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function otogElegir(origen){
+  if (origen === 'interno'){
+    const m = bootstrap.Modal.getInstance(document.getElementById('modalOTOrigen'));
+    if (m) m.hide();
+    setTimeout(() => { if (typeof abrirModalOTInterna === 'function') abrirModalOTInterna(); }, 250);
+    return;
+  }
+  if (origen === 'documento'){
+    const m = bootstrap.Modal.getInstance(document.getElementById('modalOTOrigen'));
+    if (m) m.hide();
+    setTimeout(() => {
+      if (typeof tkaOpen === 'function'){
+        tkaOpen({ mode: 'crear', tabs: ['doc','cli'], redirectQuery: '?abrir_generar_ot=1' });
+      } else {
+        ilusToast('No se pudo abrir el buscador de documentos ERP.', {type:'error'});
+      }
+    }, 250);
+    return;
+  }
+  _OTOG.origen = origen;
+  const cfg = _OTOG_CONFIG[origen];
+  document.getElementById('otogGridWrap').style.display = 'none';
+  document.getElementById('otogBuscarWrap').style.display = '';
+  document.getElementById('otogBuscarTitulo').textContent = cfg.titulo;
+  const inp = document.getElementById('otogBuscarInput');
+  inp.placeholder = cfg.placeholder;
+  inp.value = '';
+  document.getElementById('otogResultados').innerHTML = '';
+  inp.focus();
+}
+
+function otogOnInput(){
+  clearTimeout(_OTOG.timer);
+  _OTOG.timer = setTimeout(otogBuscar, 320);
+}
+
+async function otogBuscar(){
+  const cfg = _OTOG_CONFIG[_OTOG.origen];
+  const cont = document.getElementById('otogResultados');
+  if (!cfg) return;
+  const q = (document.getElementById('otogBuscarInput').value || '').trim();
+  if (q.length < cfg.minLen){
+    cont.innerHTML = '<div class="text-muted small py-2">Escribe al menos ' + cfg.minLen + ' caracteres…</div>';
+    return;
+  }
+  cont.innerHTML = '<div class="text-muted small py-2"><span class="spinner-border spinner-border-sm me-2"></span>Buscando…</div>';
+  try{
+    if (_OTOG.origen === 'cliente') await _otogBuscarCliente(q, cont);
+    else if (_OTOG.origen === 'ticket') await _otogBuscarTicket(q, cont);
+    else if (_OTOG.origen === 'cotizacion') await _otogBuscarCotizacion(q, cont);
+  }catch(e){
+    cont.innerHTML = '<div class="text-danger small py-2">Sin conexión: ' + otogEsc(e.message) + '</div>';
+  }
+}
+
+async function _otogBuscarCliente(q, cont){
+  const r = await fetch('/mantenciones/api/clientes/autocomplete?q=' + encodeURIComponent(q));
+  let arr = await r.json();
+  if (!Array.isArray(arr)) arr = [];
+  // Solo fichas YA registradas en Mantenciones (con id local) — "cliente
+  // existente" significa ficha existente, no una entidad suelta del ERP.
+  arr = arr.filter(c => c.origen === 'local' && c.id);
+  if (!arr.length){
+    cont.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-info-circle me-1"></i>'
+      + 'Sin fichas registradas para "' + otogEsc(q) + '". Créala primero desde Clientes.</div>';
+    return;
+  }
+  cont.innerHTML = arr.map(c => (
+    '<div class="otog-result-item" onclick="otogIrACliente(' + c.id + ')">'
+    + '<div class="ri-tit">' + otogEsc(c.razon_social) + '</div>'
+    + '<div class="ri-sub">' + otogEsc(c.rut || 'Sin RUT') + (c.comuna ? ' · ' + otogEsc(c.comuna) : '') + '</div>'
+    + '</div>'
+  )).join('');
+}
+function otogIrACliente(cid){
+  window.location.href = '/mantenciones/clientes/' + cid + '?abrir_generar_ot=1';
+}
+
+async function _otogBuscarTicket(q, cont){
+  const r = await fetch('/tickets/api/tickets?q=' + encodeURIComponent(q) + '&limit=8');
+  const d = await r.json();
+  const arr = (d && d.tickets) || [];
+  if (!arr.length){
+    cont.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-info-circle me-1"></i>Sin tickets para "' + otogEsc(q) + '".</div>';
+    return;
+  }
+  cont.innerHTML = arr.map(t => (
+    '<div class="otog-result-item" onclick="otogIrATicket(' + t.id + ')">'
+    + '<div class="ri-tit">' + otogEsc(t.numero_ticket || ('#' + t.id)) + ' — ' + otogEsc(t.empresa || t.nombre_contacto || 'Sin empresa') + '</div>'
+    + '<div class="ri-sub">' + otogEsc(t.titulo || '') + '</div>'
+    + '</div>'
+  )).join('');
+}
+function otogIrATicket(tid){
+  window.location.href = '/tickets/' + tid + '?abrir_generar_ot=1';
+}
+
+async function _otogBuscarCotizacion(q, cont){
+  const r = await fetch('/tickets/api/cotizaciones/buscar?q=' + encodeURIComponent(q));
+  const d = await r.json();
+  const arr = (d && d.ok && d.cotizaciones) || [];
+  if (!arr.length){
+    cont.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-info-circle me-1"></i>Sin cotizaciones para "' + otogEsc(q) + '".</div>';
+    return;
+  }
+  cont.innerHTML = arr.map(c => (
+    '<div class="otog-result-item" onclick="otogIrACotizacion(' + c.id + ',' + (c.ticket_id || 'null') + ')">'
+    + '<div class="ri-tit">' + otogEsc(c.numero_cotizacion || ('#' + c.id)) + ' — ' + otogEsc(c.empresa || 'Sin empresa') + '</div>'
+    + '<div class="ri-sub">' + otogEsc(c.rut || '') + (c.ticket_id ? ' · con ticket' : ' · sin ticket') + '</div>'
+    + '</div>'
+  )).join('');
+}
+async function otogIrACotizacion(cotId, ticketId){
+  if (ticketId){
+    window.location.href = '/tickets/' + ticketId + '?abrir_generar_ot=1&cotizacion_id=' + cotId;
+    return;
+  }
+  // Sin ticket asociado: resolver el cliente por RUT (mismo patrón que
+  // _tkotResolverCliente en static/tickets_ficha.js).
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + cotId);
+    const d = await r.json();
+    const rut = (d && d.ok && d.cotizacion) ? (d.cotizacion.rut || '') : '';
+    if (rut){
+      const r2 = await fetch('/mantenciones/api/clientes/autocomplete?q=' + encodeURIComponent(rut));
+      let arr = await r2.json();
+      if (!Array.isArray(arr)) arr = [];
+      const norm = s => String(s || '').replace(/[.\s]/g, '').toUpperCase();
+      const match = arr.find(c => c.origen === 'local' && c.id && norm(c.rut) === norm(rut));
+      if (match){
+        window.location.href = '/mantenciones/clientes/' + match.id + '?abrir_generar_ot=1&cotizacion_id=' + cotId;
+        return;
+      }
+    }
+  }catch(e){ /* cae al aviso de abajo */ }
+  await ilusAlert({
+    type: 'warning',
+    title: 'Sin ficha ni ticket asociado',
+    message: 'Esta cotización todavía no tiene un ticket ni una ficha de cliente en Mantenciones para anclar la OT.',
+    sub: 'Genera un ticket desde la cotización (en Cotizaciones) o crea la ficha del cliente primero.',
+  });
+}
+</script>
+{% endif %}
+
+{% if not is_tecnico %}
+{# ═══════════════════════════════════════════════════════════════════
    Modal "Trabajo interno" — crea una OT SIN cliente ni ticket (Trabajo
    de bodega / Capacitación / Control de Calidad — cualquier tipo que
    HOY caiga en la categoría 'trabajo_interno' de mant_categoria_tipo_map,
@@ -1799,6 +2090,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
+{% endif %}
+
+{# Origen "Factura o boleta" (selector de arriba) reusa el buscador ERP
+   compartido tal cual — mismo include que templates/tickets/ficha.html,
+   templates/clientes_hub/repuestos.html, etc. (mode:'crear' crea un
+   ticket con las líneas elegidas y navega a su ficha). #}
+{% if not is_tecnico %}
+{% include "tickets/_tka_modal.html" %}
 {% endif %}
 
 {% endblock %}

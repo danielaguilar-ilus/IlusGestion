@@ -666,6 +666,30 @@ async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
 
   new bootstrap.Modal(modalEl).show();
 }
+
+// ════════════════════════════════════════════════════════════
+// Auto-abrir "Generar OT" al llegar con ?abrir_generar_ot=1 (2026-08-12)
+// El selector de origen de /mantenciones/ots (origen "Cliente existente" /
+// "Cotización") NO reimplementa el modal de 7 pasos -- resuelve el cliente
+// y NAVEGA a esta ficha con el query param; acá lo abrimos solos, por el
+// MISMO camino que un click manual en "Generar OT" (abrirGenerarOT(),
+// arriba, con su aviso "sin equipos" incluido). ?cotizacion_id= (si vino)
+// lo lee _tkotMostrarRefCotizacion() (tickets_ficha.js) directo desde la
+// URL -- no hace falta pasarlo a mano acá.
+// ════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  try{
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('abrir_generar_ot') === '1'){
+      abrirGenerarOT();
+      // Limpia la URL visible para que un refresh no vuelva a abrir el modal solo.
+      qs.delete('abrir_generar_ot');
+      const resto = qs.toString();
+      history.replaceState(null, '', window.location.pathname + (resto ? '?' + resto : ''));
+    }
+  }catch(e){ console.warn('auto-abrir generar OT:', e); }
+});
+
 function escHtml(s){
   return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }

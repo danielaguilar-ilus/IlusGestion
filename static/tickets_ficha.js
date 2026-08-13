@@ -4942,7 +4942,46 @@ document.getElementById('modalGenerarOT').addEventListener('show.bs.modal', asyn
   // Estado inicial de los 7 pasos (2026-08-12): se calcula al final, con
   // todo ya prellenado (tipo, dirección, contacto, fecha, equipos).
   tkotRefreshStepStates();
+
+  // Referencia de la cotización de origen (selector de /mantenciones/ots,
+  // 2026-08-12) — puramente informativa, no toca equipo_ids/payload.
+  // No se espera (no debe demorar la apertura del modal).
+  _tkotMostrarRefCotizacion();
 });
+
+// ── Referencia de solo lectura: si esta OT nace de una cotización
+//    (?cotizacion_id= en la URL, puesto por el selector de origen de
+//    /mantenciones/ots), muestra sus ítems para que quien arma el Paso 5
+//    sepa qué equipos marcar -- NO los auto-selecciona (los SKU de una
+//    cotización no siempre calzan 1:1 con un mant_maquinas.id real del
+//    cliente, y una asociación automática equivocada es peor que pedirle
+//    a la persona que elija a mano con el contexto a la vista). Falla en
+//    silencio: es un adorno informativo, nunca debe bloquear el modal. ──
+async function _tkotMostrarRefCotizacion(){
+  const box = document.getElementById('otCotizacionRef');
+  if (!box) return;
+  box.style.display = 'none';
+  box.innerHTML = '';
+  let cotId = null;
+  try{ cotId = new URLSearchParams(window.location.search).get('cotizacion_id'); }
+  catch(e){ return; }
+  if (!cotId) return;
+  try{
+    const r = await fetch('/tickets/api/cotizaciones/' + encodeURIComponent(cotId));
+    const d = await r.json();
+    if (!d || !d.ok || !d.cotizacion) return;
+    const items = (d.items || []).slice(0, 12);
+    const lista = items.map(function(it){
+      return '<li>' + (it.qty || 1) + '× ' + esc(it.nombre || it.sku || 'Ítem') + '</li>';
+    }).join('');
+    box.style.cssText = 'background:#eff6ff;color:#1e3a8a;border:1px solid #93c5fd;border-radius:8px;padding:8px 10px';
+    box.innerHTML = '<i class="bi bi-file-earmark-text me-1"></i>'
+      + 'Referencia — cotización <strong>' + esc(d.cotizacion.numero_cotizacion || ('#' + cotId)) + '</strong>'
+      + (lista ? ':<ul class="mb-0 mt-1" style="padding-left:1.1rem">' + lista + '</ul>' : ' (sin ítems).')
+      + '<div class="mt-1" style="opacity:.85">Elige en el Paso 5 los equipos que correspondan a estos productos.</div>';
+    box.style.display = '';
+  }catch(e){ /* referencia opcional -- nunca bloquea el modal */ }
+}
 
 // ── Envío final ──
 async function tkotGenerar(){
@@ -5245,6 +5284,38 @@ function renderCotizaciones(cots){
 if (TID !== null){
   cargarEjecutivos();
   cargar();
+}
+
+// ── Auto-abrir "Generar OT" al llegar con ?abrir_generar_ot=1 (2026-08-12)
+//    El selector de origen de /mantenciones/ots (origen "Ticket", o
+//    "Cotización" cuando la cotización ya tiene ticket_id) NO reimplementa
+//    el modal de 7 pasos -- resuelve el ticket y NAVEGA a esta ficha con el
+//    query param; acá lo abrimos solos, con el MISMO trigger nativo que
+//    usan los botones de siempre (data-bs-toggle="modal"). Gate TID!==null
+//    a propósito: en modo cliente este mismo archivo también se carga
+//    (mantenciones/ficha.html, TID=null) y el query param ya lo maneja
+//    abrirGenerarOT() desde static/mant_ficha.js -- sin este gate, el
+//    modal se abriría DOS veces en esa página. ──
+if (TID !== null){
+  try{
+    const _qsOt = new URLSearchParams(window.location.search);
+    if (_qsOt.get('abrir_generar_ot') === '1'){
+      _qsOt.delete('abrir_generar_ot');
+      const _restoOt = _qsOt.toString();
+      history.replaceState(null, '', window.location.pathname + (_restoOt ? '?' + _restoOt : ''));
+      // Pequeño margen (mismo criterio que el resto de este cambio, ver
+      // otogElegir() en ots_list.html) para que cargar() -- disparado
+      // arriba, SIN await, a propósito para no bloquear el resto de la
+      // ficha -- alcance a resolver ticketActual antes de que el listener
+      // show.bs.modal intente prellenar dirección/contacto/equipos desde
+      // ahí. No es una garantía dura (best-effort): si la red va lenta
+      // igual abre con los campos en blanco, editables a mano.
+      setTimeout(function(){
+        const _mOt = document.getElementById('modalGenerarOT');
+        if (_mOt) new bootstrap.Modal(_mOt).show();
+      }, 400);
+    }
+  }catch(e){ console.warn('auto-abrir generar OT (modo ticket):', e); }
 }
 
 // ══════════════ Auto-refresco silencioso (Daniel 2026-07-12: "necesito que
