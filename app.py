@@ -51041,7 +51041,7 @@ def init_mantenciones_tables():
                 "       'contrato_por_vencer','cobranza','sin_mantencion',"
                 "       'contrato_riesgo','ai_alerta',"
                 "       'ot_asignada','ot_pendiente_aprobacion',"
-                "       'ot_aprobada','ot_rechazada',"
+                "       'ot_aprobada','ot_rechazada','ot_firmada_cliente',"
                 "       'sugerencia','ot_sugerida_cron',"
                 "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
                 "       'otro') DEFAULT 'otro'",
@@ -65888,6 +65888,13 @@ def mant_visita_cerrar(vid):
 # deje una observación libre. Cada decisión queda con audit trail.
 # ══════════════════════════════════════════════════════════════════════
 
+# 2026-08-12 (Daniel — "mínimo ~10 caracteres, mismo estándar que ya usa
+# el proyecto para motivos obligatorios"): unifica el mínimo de la
+# observación de saltar/marcar equipo con el resto de motivos obligatorios
+# del proyecto (garantía retroactiva, "sin costo", etc. — todos exigen 10).
+# Antes esta pantalla pedía solo 5; quedaba más laxo que el resto sin razón.
+_MOTIVO_MIN_CHARS = 10
+
 # Razones válidas para saltar un equipo. Cualquier otra cae como 'otro'.
 _RAZONES_SALTADO_VALIDAS = (
     "no_encontrado", "dado_de_baja", "danado_inaccesible",
@@ -65936,7 +65943,9 @@ def _ot_visita_equipo_link_ok(vid, mid):
 @_tecnico_owns_visita
 def mant_visita_equipo_saltar(vid, mid):
     """El técnico salta un equipo durante la OT: registra razón +
-    observación obligatoria (mín 5 chars). Idempotente vía upsert.
+    observación obligatoria (mín 10 chars — mismo estándar que el resto
+    del proyecto para motivos obligatorios, ver _MOTIVO_MIN_CHARS).
+    Idempotente vía upsert.
     """
     if not _ot_visita_equipo_link_ok(vid, mid):
         return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
@@ -65945,10 +65954,10 @@ def mant_visita_equipo_saltar(vid, mid):
     razon_raw = (d.get("razon") or "").strip().lower()
     razon = razon_raw if razon_raw in _RAZONES_SALTADO_VALIDAS else "otro"
     obs = (d.get("observacion") or "").strip()
-    if len(obs) < 5:
+    if len(obs) < _MOTIVO_MIN_CHARS:
         return jsonify({
             "ok": False,
-            "error": "La observación es obligatoria (mínimo 5 caracteres)."
+            "error": f"La observación es obligatoria (mínimo {_MOTIVO_MIN_CHARS} caracteres)."
         }), 400
     obs = obs[:2000]  # cap razonable
 
@@ -66019,11 +66028,12 @@ def mant_visita_equipo_marcar(vid, mid):
     razon_raw = (d.get("razon") or "").strip().lower()
     razon = razon_raw if razon_raw in _RAZONES_SALTADO_VALIDAS else None
 
-    # Obs obligatoria para estados problemáticos
-    if estado in ("saltado", "falla_detectada") and len(obs) < 5:
+    # Obs obligatoria para estados problemáticos (mismo estándar de 10
+    # caracteres que el resto del proyecto — ver _MOTIVO_MIN_CHARS).
+    if estado in ("saltado", "falla_detectada") and len(obs) < _MOTIVO_MIN_CHARS:
         return jsonify({
             "ok": False,
-            "error": "La observación es obligatoria para este estado (mín 5 caracteres)."
+            "error": f"La observación es obligatoria para este estado (mín {_MOTIVO_MIN_CHARS} caracteres)."
         }), 400
 
     user = current_username()
@@ -66120,6 +66130,91 @@ def mant_visita_equipo_observacion(vid, mid):
     })
 
 
+# Estados válidos del diagnóstico técnico por equipo. Ver
+# _ensure_mant_visita_equipos_diagnostico_cols para el porqué de mantenerlo
+# separado de _ESTADOS_REVISION_VALIDOS.
+_DIAGNOSTICO_ESTADOS_VALIDOS = ("aprobado", "observacion", "falla")
+
+
+@app.route(
+    "/mantenciones/api/visitas/<int:vid>/equipos/<int:mid>/diagnostico",
+    methods=["POST"]
+)
+@_mant_required
+@_tecnico_owns_visita
+def mant_visita_equipo_diagnostico(vid, mid):
+    """Diagnóstico técnico del equipo en esta visita: aprobado / observación
+    / falla + texto. Es el "¿qué está aprobado y desaprobado?" que Daniel
+    pidió poder resumir en la OT (2026-08-12) — DISTINTO de estado_revision
+    (que es el flujo de saltar/verificar la visita del equipo, no el
+    veredicto técnico sobre su estado). Ver comentario en
+    _ensure_mant_visita_equipos_diagnostico_cols.
+
+    'aprobado' no exige texto (puede ser un simple visto bueno). 'observacion'
+    y 'falla' exigen texto (mín _MOTIVO_MIN_CHARS) para quedar trazable en
+    el resumen de la visita, mismo estándar que el resto de motivos
+    obligatorios del proyecto.
+
+    BORRADOR: modelo sujeto a revisión de Daniel una vez que vea el flujo
+    funcionando.
+    """
+    if not _ot_visita_equipo_link_ok(vid, mid):
+        return jsonify({"ok": False, "error": "Equipo no pertenece a esta OT"}), 404
+
+    d = request.get_json(silent=True) or {}
+    estado = (d.get("estado") or "").strip().lower()
+    if estado not in _DIAGNOSTICO_ESTADOS_VALIDOS:
+        return jsonify({
+            "ok": False,
+            "error": f"estado inválido (debe ser uno de: "
+                     f"{', '.join(_DIAGNOSTICO_ESTADOS_VALIDOS)})"
+        }), 400
+
+    texto = (d.get("texto") or "").strip()
+    if estado in ("observacion", "falla") and len(texto) < _MOTIVO_MIN_CHARS:
+        return jsonify({
+            "ok": False,
+            "error": f"Describe el diagnóstico (mínimo {_MOTIVO_MIN_CHARS} caracteres)."
+        }), 400
+    texto = texto[:3000]
+
+    user = current_username()
+    try:
+        mysql_execute(
+            "INSERT INTO mant_visita_equipos "
+            "  (visita_id, maquina_id, estado_revision, "
+            "   diagnostico_estado, diagnostico_texto, revisado_at, revisado_por) "
+            "VALUES (%s, %s, 'verificado', %s, %s, NOW(), %s) "
+            "ON DUPLICATE KEY UPDATE "
+            "  diagnostico_estado=VALUES(diagnostico_estado), "
+            "  diagnostico_texto=VALUES(diagnostico_texto), "
+            "  revisado_at=NOW(), "
+            "  revisado_por=VALUES(revisado_por)",
+            (vid, mid, estado, (texto or None), user)
+        )
+    except Exception as e:
+        print(f"[visita_equipo_diagnostico] error vid={vid} mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el diagnóstico"}), 500
+
+    try:
+        _mant_log(
+            "visita", vid, "equipo_diagnostico",
+            f"Equipo #{mid} diagnóstico → {estado} por {user}"
+            + (f" · {texto[:150]}" if texto else "")
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "visita_id": vid,
+        "maquina_id": mid,
+        "diagnostico_estado": estado,
+        "diagnostico_texto": texto or None,
+        "revisado_por": user,
+    })
+
+
 @app.route(
     "/mantenciones/api/visitas/<int:vid>/equipos-estado",
     methods=["GET"]
@@ -66132,7 +66227,8 @@ def mant_visita_equipos_estado(vid):
     """
     rows = mysql_fetchall(
         "SELECT maquina_id, estado_revision, razon_saltado, "
-        "       observacion_tecnico, revisado_at, revisado_por "
+        "       observacion_tecnico, revisado_at, revisado_por, "
+        "       diagnostico_estado, diagnostico_texto "
         "  FROM mant_visita_equipos WHERE visita_id=%s",
         (vid,)
     ) or []
@@ -66144,6 +66240,8 @@ def mant_visita_equipos_estado(vid):
             "observacion_tecnico":  r.get("observacion_tecnico") or "",
             "revisado_at":          str(r["revisado_at"])[:19] if r.get("revisado_at") else "",
             "revisado_por":         r.get("revisado_por") or "",
+            "diagnostico_estado":   r.get("diagnostico_estado") or "",
+            "diagnostico_texto":    r.get("diagnostico_texto") or "",
         }
     return jsonify({"ok": True, "equipos": out})
 
@@ -71200,7 +71298,8 @@ def mant_ot_ejecutar(vid):
     try:
         _rows_ve = mysql_fetchall(
             "SELECT maquina_id, estado_revision, razon_saltado, "
-            "       observacion_tecnico, revisado_at, revisado_por "
+            "       observacion_tecnico, revisado_at, revisado_por, "
+            "       diagnostico_estado, diagnostico_texto "
             "  FROM mant_visita_equipos WHERE visita_id=%s",
             (vid,)
         ) or []
@@ -71211,6 +71310,10 @@ def mant_ot_ejecutar(vid):
                 "observacion_tecnico": _r.get("observacion_tecnico") or "",
                 "revisado_at":         str(_r["revisado_at"])[:19] if _r.get("revisado_at") else "",
                 "revisado_por":        _r.get("revisado_por") or "",
+                # 2026-08-12 (borrador diagnóstico por equipo) — ver
+                # _ensure_mant_visita_equipos_diagnostico_cols.
+                "diagnostico_estado":  _r.get("diagnostico_estado") or "",
+                "diagnostico_texto":   _r.get("diagnostico_texto") or "",
             }
     except Exception as _e_ve:
         print(f"[ot_ejecutar] equipos_estado_revision load error: {_e_ve}", flush=True)
@@ -72454,9 +72557,12 @@ def mant_ot_firmar_cliente(vid):
             print(f"[firma-cliente] no se guardó identidad firmante vid={vid}: {_e_sig}", flush=True)
         _mant_log("visita", vid, "firmada_cliente",
                   f"{nombre_cli or ''} → pendiente_aprobacion")
-        # Notificar al ejecutivo SSTT / creador para que firme la aprobación final.
+        # Notificar al ejecutivo SSTT / creador para que firme la aprobación final,
+        # Y a TODOS los técnicos asignados (2026-08-12, Daniel "potenciar la
+        # firma": "que le mande una notificación al técnico... al correo de
+        # los técnicos que estén asignados, uno o todos").
         try:
-            _notificar_ot_pendiente_aprobacion_async(vid, request.host_url)
+            _notificar_ot_pendiente_aprobacion_async(vid, request.host_url, notificar_tecnicos=True)
         except Exception as e_n:
             print(f"[notif-pend-aprob] fail vid={vid}: {e_n}", flush=True)
         # Sincronizar estado del ticket vinculado (si lo hay). Aditivo.
@@ -72514,10 +72620,18 @@ def _ot_firma_token_validar(token):
 
 
 def _ot_resumen_firma(vid):
-    """Resumen liviano de la OT para la página pública de firma."""
+    """Resumen liviano de la OT para la página pública de firma.
+
+    2026-08-12 (Daniel, "potenciar la firma"): se agrega contacto_tel/
+    contacto_nombre -- el técnico en terreno necesita el teléfono del
+    cliente para poder ofrecer el canal WhatsApp (link wa.me) además del
+    correo. Aditivo puro: los callers existentes solo leían las columnas
+    que ya estaban, agregar columnas al SELECT no les afecta.
+    """
     return mysql_fetchone(
         "SELECT v.id, v.numero_ot, v.estado, v.fecha_programada, v.titulo, v.tipo, "
         "       v.firma_tecnico_url, v.firma_tecnico_nombre, v.firma_cliente_url, "
+        "       v.contacto_tel, v.contacto_nombre, "
         "       COALESCE(ut.nombre, ut.username, v.tecnico) AS tecnico_nombre, "
         "       c.razon_social, "
         "       (SELECT COUNT(*) FROM mant_visita_equipos e WHERE e.visita_id=v.id) AS n_equipos "
@@ -72530,12 +72644,40 @@ def _ot_resumen_firma(vid):
 @app.route("/mantenciones/api/visitas/<int:vid>/enviar-firma-remota", methods=["POST"])
 @_mant_required
 def mant_ot_enviar_firma_remota(vid):
-    """Envía al cliente un correo con un link para firmar la OT a distancia.
-    Requiere OT en 'firmada_tecnico' (técnico ya firmó) y cliente sin firmar."""
+    """Genera el link de firma a distancia y lo entrega al cliente por el
+    canal que el técnico elija en terreno.
+
+    Requiere OT en 'firmada_tecnico' (técnico ya firmó) y cliente sin firmar.
+
+    Body JSON:
+      canal: 'email' (default, comportamiento histórico sin cambios) o
+             'whatsapp' (2026-08-12, Daniel "potenciar la firma").
+      email:    override del correo destino (solo canal='email').
+      telefono: override del teléfono destino (solo canal='whatsapp').
+
+    canal='whatsapp' NO manda nada por servidor -- genera el link de firma
+    y un deep-link `https://wa.me/<tel>?text=...` con el mensaje ya armado.
+    El FRONTEND abre ese link, que lanza la app de WhatsApp DEL TÉCNICO con
+    el chat dirigido al cliente y el mensaje precargado; el técnico revisa
+    y aprieta enviar él mismo. Deliberado: ILUS dio de baja Twilio (WhatsApp
+    Business API) por costo/inviabilidad de sandbox -- no hay ningún envío
+    automático de WhatsApp desde el servidor en este flujo, cero costo,
+    cero dependencia de un proveedor de pago. Ver memoria
+    twilio_whatsapp_aprendizaje.md.
+    """
     if not _puede_ot_accion(vid, "firmar_cliente"):
         return jsonify({"ok": False, "error": "No tienes permiso para gestionar la firma de esta OT."}), 403
     d = request.get_json(silent=True) or {}
+    canal = (d.get("canal") or "email").strip().lower()
+    # 2026-08-12 (Daniel: "que el cliente no se sienta expuesto, ¿podría
+    # enviar la firma por ambos canales?"): 'ambos' manda por los dos a la
+    # vez, con degradación honesta -- si falta el teléfono o el correo para
+    # UNO de los dos, se manda igual por el otro y se avisa cuál quedó
+    # afuera y por qué, en vez de fallar la petición completa.
+    if canal not in ("email", "whatsapp", "ambos"):
+        canal = "email"
     email = (d.get("email") or "").strip()[:190]
+    telefono_in = (d.get("telefono") or "").strip()[:40]
     v = _ot_resumen_firma(vid)
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada."}), 404
@@ -72545,44 +72687,118 @@ def mant_ot_enviar_firma_remota(vid):
         return jsonify({"ok": False, "error": "El cliente ya firmó esta OT."}), 400
     if (v.get("estado") or "").lower() != "firmada_tecnico":
         return jsonify({"ok": False, "error": f"La OT no está lista para la firma del cliente (estado: {v.get('estado')})."}), 400
-    if not email or "@" not in email:
-        cli = mysql_fetchone(
-            "SELECT c.contacto_email, c.email_empresa FROM mant_clientes c "
-            "JOIN mant_visitas v ON v.cliente_id=c.id WHERE v.id=%s", (vid,)) or {}
-        email = (cli.get("contacto_email") or cli.get("email_empresa") or "").strip()
-    if not email or "@" not in email:
-        return jsonify({"ok": False, "error": "Falta el correo del cliente. Escríbelo para enviar el link."}), 400
 
     token = _ot_firma_token(vid)
     link = _public_base_url() + "/firmar-ot/" + token
     numero = v.get("numero_ot") or f"OT #{vid}"
     razon = v.get("razon_social") or "estimado cliente"
-    try:
-        html = _ilus_email_master({
-            "subject": f"Firma tu orden de trabajo {numero}",
-            "title": "Firma de conformidad",
-            "subtitle": numero,
-            "customer_name": razon,
-            "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
-                        "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
-                        "El enlace es personal y vence en 5 días."),
-            "primary_cta_url": link,
-            "primary_cta_label": "Revisar y firmar la OT",
-        })
-    except Exception:
-        html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
-                f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
-    try:
-        ok = _send_ilus_email(email, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
-                              evento="ot_firma_remota", modulo="mantenciones")
-    except Exception as _e:
-        print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
-        ok = False
-    _mant_log("visita", vid, "firma_remota_enviada",
-              f"Link de firma enviado a {email} por {current_username()}.")
-    return jsonify({"ok": True, "enviado": bool(ok), "email": email, "link": link,
-                    "mensaje": (f"Link de firma enviado a {email}." if ok else
-                                "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
+    quiere_wa = canal in ("whatsapp", "ambos")
+    quiere_mail = canal in ("email", "ambos")
+
+    # ── Canal WHATSAPP (deep-link wa.me, sin proveedor de pago) ──────────
+    wa_resultado = None   # dict con wa_link/telefono, o {"error": ...}
+    if quiere_wa:
+        telefono = telefono_in or (v.get("contacto_tel") or "")
+        if not telefono:
+            wa_resultado = {"error": "Falta el teléfono del cliente para generar el link de WhatsApp."}
+        else:
+            # 2026-08-12: usar validar_telefono_chileno() (no reimplementar el
+            # chequeo a mano) -- ya trae el parche para números tipo
+            # "56912345678" (código de país sin '+') que normalizar_telefono()
+            # a secas deja pasar sin el '+' y hacía fallar el match.
+            _tel_ok, tel_norm = validar_telefono_chileno(telefono)
+            if not _tel_ok:
+                wa_resultado = {"error": tel_norm}
+            else:
+                saludo = v.get("contacto_nombre") or razon
+                mensaje = (f"Hola {saludo}, el servicio técnico de tus equipos fue realizado "
+                           f"(orden {numero}). Para dejarlo conforme, revisa el detalle y firma "
+                           f"aquí (puedes hacerlo desde el celular):\n{link}\n\nEl enlace es "
+                           f"personal y vence en 5 días. — ILUS Fitness")
+                from urllib.parse import quote as _url_quote
+                wa_numero = tel_norm.lstrip("+")
+                wa_resultado = {
+                    "telefono": tel_norm,
+                    "wa_link": f"https://wa.me/{wa_numero}?text={_url_quote(mensaje)}",
+                }
+                _mant_log("visita", vid, "firma_remota_whatsapp_generada",
+                          f"Link de WhatsApp generado para {tel_norm} por {current_username()}.")
+        if canal == "whatsapp":
+            if wa_resultado.get("error"):
+                return jsonify({"ok": False, "error": wa_resultado["error"], "error_codigo": "TELEFONO_INVALIDO"}), 400
+            return jsonify({
+                "ok": True, "canal": "whatsapp", "enviado": None,
+                "telefono": wa_resultado["telefono"], "link": link, "wa_link": wa_resultado["wa_link"],
+                "mensaje": "Se abrirá WhatsApp con el mensaje listo — revísalo y confírmalo tú mismo.",
+            })
+
+    # ── Canal EMAIL (comportamiento histórico, sin cambios cuando canal='email') ──
+    mail_resultado = None  # dict con enviado/email, o {"error": ...}
+    if quiere_mail:
+        email_dest = email
+        if not email_dest or "@" not in email_dest:
+            cli = mysql_fetchone(
+                "SELECT c.contacto_email, c.email_empresa FROM mant_clientes c "
+                "JOIN mant_visitas v ON v.cliente_id=c.id WHERE v.id=%s", (vid,)) or {}
+            email_dest = (cli.get("contacto_email") or cli.get("email_empresa") or "").strip()
+        if not email_dest or "@" not in email_dest:
+            mail_resultado = {"error": "Falta el correo del cliente para enviar el link."}
+        else:
+            try:
+                html = _ilus_email_master({
+                    "subject": f"Firma tu orden de trabajo {numero}",
+                    "title": "Firma de conformidad",
+                    "subtitle": numero,
+                    "customer_name": razon,
+                    "message": ("El servicio técnico de tus equipos fue realizado. Para dejarlo conforme, "
+                                "revisa el detalle y firma en línea (puedes hacerlo desde tu celular). "
+                                "El enlace es personal y vence en 5 días."),
+                    "primary_cta_url": link,
+                    "primary_cta_label": "Revisar y firmar la OT",
+                })
+            except Exception:
+                html = (f"<p>Hola {razon},</p><p>Firma tu orden de trabajo {numero} en este enlace "
+                        f"(vence en 5 días): <a href='{link}'>{link}</a></p>")
+            try:
+                ok = _send_ilus_email(email_dest, _brand_subject(f"Firma tu orden de trabajo {numero}"), html,
+                                      evento="ot_firma_remota", modulo="mantenciones")
+            except Exception as _e:
+                print(f"[firma-remota] email fail vid={vid}: {_e}", flush=True)
+                ok = False
+            _mant_log("visita", vid, "firma_remota_enviada",
+                      f"Link de firma enviado a {email_dest} por {current_username()}.")
+            mail_resultado = {"enviado": bool(ok), "email": email_dest}
+        if canal == "email":
+            if mail_resultado.get("error"):
+                return jsonify({"ok": False, "error": mail_resultado["error"]}), 400
+            return jsonify({"ok": True, "canal": "email", "enviado": mail_resultado["enviado"],
+                            "email": mail_resultado["email"], "link": link,
+                            "mensaje": (f"Link de firma enviado a {mail_resultado['email']}." if mail_resultado["enviado"] else
+                                        "El correo no salió (revisa el canal de email), pero el link quedó generado — puedes copiarlo.")})
+
+    # ── canal == 'ambos': fusiona los dos resultados, degradación honesta ──
+    if wa_resultado.get("error") and mail_resultado.get("error"):
+        return jsonify({
+            "ok": False,
+            "error": f"No se pudo enviar por ningún canal — WhatsApp: {wa_resultado['error']} · Correo: {mail_resultado['error']}",
+        }), 400
+    partes = []
+    if not wa_resultado.get("error"):
+        partes.append("WhatsApp (ábrelo y confírmalo)")
+    if not mail_resultado.get("error"):
+        partes.append(f"correo a {mail_resultado.get('email')}" if mail_resultado.get("enviado")
+                       else "correo (no salió, revisa el canal de email)")
+    avisos = []
+    if wa_resultado.get("error"):
+        avisos.append(f"WhatsApp no se generó: {wa_resultado['error']}")
+    if mail_resultado.get("error"):
+        avisos.append(f"Correo no se generó: {mail_resultado['error']}")
+    return jsonify({
+        "ok": True, "canal": "ambos", "link": link,
+        "wa_link": wa_resultado.get("wa_link"), "telefono": wa_resultado.get("telefono"),
+        "email": mail_resultado.get("email"), "enviado": mail_resultado.get("enviado"),
+        "mensaje": "Se mandó por: " + " y ".join(partes) + (". " + " · ".join(avisos) if avisos else "."),
+    })
 
 
 @app.route("/firmar-ot/<token>", methods=["GET"])
@@ -72646,9 +72862,9 @@ def ot_firma_publica_submit(token):
         except Exception as _e:
             print(f"[firma-remota] audit fail vid={vid}: {_e}", flush=True)
         _mant_log("visita", vid, "firmada_cliente_remoto",
-                  f"{nombre} firmó remotamente (por correo) → pendiente_aprobacion")
+                  f"{nombre} firmó remotamente → pendiente_aprobacion")
         try:
-            _notificar_ot_pendiente_aprobacion_async(vid, _public_base_url())
+            _notificar_ot_pendiente_aprobacion_async(vid, _public_base_url(), notificar_tecnicos=True)
         except Exception as e_n:
             print(f"[notif-firma-remota] fail vid={vid}: {e_n}", flush=True)
         # Sincronizar estado del ticket vinculado (si lo hay). Aditivo.
@@ -72669,15 +72885,116 @@ def ot_firma_publica_submit(token):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# TÉCNICOS ASIGNADOS a una visita — mismo criterio dual que
+# _mant_get_tecnico_emails (arriba): cubre las DOS vías de asignación,
+# cada una en su propio try/except (degradación segura).
+#
+#   Vía A (moderna, CON cuenta app_users): mant_visitas.tecnico_user_id
+#   (principal) + mant_visita_tecnicos.tecnico_user_id (colaboradores).
+#   Estos SÍ pueden recibir notificación interna (campana) porque tienen
+#   user_id real.
+#
+#   Vía B (legacy, SIN cuenta): mant_visita_tecnicos.tecnico_id →
+#   mant_tecnicos.email, para técnicos/externos que nunca tuvieron login.
+#   Solo pueden recibir email directo (no hay user_id para la campana).
+#   Se excluyen los que YA tienen tecnico_user_id (evita duplicar aviso
+#   a la misma persona por las dos vías).
+# ═════════════════════════════════════════════════════════════════════
+
+def _mant_get_tecnicos_asignados_con_cuenta(vid):
+    """Técnicos (principal + colaboradores) CON cuenta en app_users.
+    Devuelve lista de dicts {id, username, nombre, phone}, deduplicado."""
+    out, vistos = [], set()
+    try:
+        rows = mysql_fetchall(
+            f"SELECT DISTINCT u.id, u.username, u.nombre, u.phone "
+            f"  FROM `{AUTH_TABLE}` u "
+            "  WHERE u.active=1 AND ("
+            "        u.id = (SELECT tecnico_user_id FROM mant_visitas WHERE id=%s) "
+            "     OR u.id IN (SELECT tecnico_user_id FROM mant_visita_tecnicos "
+            "                  WHERE visita_id=%s AND tecnico_user_id IS NOT NULL)"
+            "  )",
+            (vid, vid)
+        ) or []
+        for r in rows:
+            uid = r.get("id")
+            if uid and uid not in vistos:
+                vistos.add(uid)
+                out.append(r)
+    except Exception as e:
+        print(f"[mant-tec-asignados:cuenta] vid={vid}: {e}", flush=True)
+    return out
+
+
+def _mant_get_tecnicos_legacy_solo_email(vid):
+    """Técnicos legacy (catálogo mant_tecnicos, SIN cuenta app_users)
+    asignados vía mant_visita_tecnicos.tecnico_id. Solo sirven para email
+    directo -- no hay user_id para notificación interna. Excluye filas que
+    YA tienen tecnico_user_id (esas se cubren por la vía con cuenta)."""
+    out, vistos = [], set()
+    try:
+        for r in (mysql_fetchall(
+            "SELECT t.email FROM mant_visita_tecnicos vt "
+            "JOIN mant_tecnicos t ON t.id=vt.tecnico_id "
+            "WHERE vt.visita_id=%s AND vt.tecnico_user_id IS NULL",
+            (vid,)
+        ) or []):
+            e = (r.get("email") or "").strip().lower()
+            if e and "@" in e and 6 <= len(e) <= 180 and e not in vistos:
+                vistos.add(e)
+                out.append(e)
+    except Exception as e:
+        print(f"[mant-tec-asignados:legacy] vid={vid}: {e}", flush=True)
+    return out
+
+
+def _ensure_mant_notif_tipo_ot_firmada_cliente():
+    """Amplía mant_notificaciones.tipo ENUM con 'ot_firmada_cliente' AUNQUE
+    ILUS_SKIP_MIGRATIONS=1 (mismo gotcha que el resto de _ensure_*: la
+    migración original de este ENUM vive dentro de init_db(), que en prod
+    NO corre). Sin este valor en el ENUM, el INSERT de _mant_notificar()
+    para la notificación a técnicos (2026-08-12, "potenciar la firma")
+    fallaría en modo SQL estricto -- silencioso porque _mant_notificar
+    atrapa la excepción, así que el técnico simplemente nunca vería la
+    campana encenderse. Idempotente: MODIFY COLUMN con el mismo ENUM (o
+    ampliado) no falla si ya existe."""
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
+            "  ENUM('vencimiento','sla','visita_proxima','visita_atrasada',"
+            "       'factura_pendiente','garantia','garantia_por_vencer',"
+            "       'contrato_por_vencer','cobranza','sin_mantencion',"
+            "       'contrato_riesgo','ai_alerta',"
+            "       'ot_asignada','ot_pendiente_aprobacion',"
+            "       'ot_aprobada','ot_rechazada','ot_firmada_cliente',"
+            "       'sugerencia','ot_sugerida_cron',"
+            "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
+            "       'otro') DEFAULT 'otro'"
+        )
+    except Exception as e:
+        print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)
+
+
+# ═════════════════════════════════════════════════════════════════════
 # NOTIFICACIÓN: OT pasa a 'pendiente_aprobacion' → avisar al creador
 # (y supervisores/admin) para que entren a firmar la aprobación final.
 # Email + WhatsApp best-effort, en hilo daemon. Respeta kill-switches.
 # ═════════════════════════════════════════════════════════════════════
 
-def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
+def _notificar_ot_pendiente_aprobacion_async(vid, host_url="", notificar_tecnicos=False):
     """Dispara hilo daemon que envía email + WhatsApp al `created_by` y
     a los supervisores/admin que tengan email o teléfono cargado, con
     un link directo a la OT para firmar como aprobador.
+
+    notificar_tecnicos (2026-08-12, Daniel "potenciar la firma"): cuando es
+    True, ADEMÁS avisa a TODOS los técnicos asignados a la OT (principal +
+    colaboradores) de que el CLIENTE firmó -- con un mensaje informativo
+    distinto (no les pide "aprobar", eso no es su rol; solo les confirma
+    que quedó firmada). Los llamadores lo activan solo en los dos puntos
+    donde firma el cliente (presencial y remoto) -- se deja en False por
+    default para no cambiar el comportamiento existente cuando firma el
+    técnico (ese caso ya se notifica a sí mismo al ver el resultado en
+    pantalla).
 
     NO bloquea la respuesta del endpoint. Si hay errores, los loguea pero
     nunca falla la firma del técnico.
@@ -72749,7 +73066,40 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
             except Exception as _e:
                 print(f"[notif-pend] err buscando supervisores: {_e}", flush=True)
 
-            if not destinos:
+            # 3) Técnicos asignados (SOLO si se pide explícitamente -- hoy:
+            #    cuando firma el CLIENTE). Van en un pool APARTE de `destinos`
+            #    porque su mensaje es informativo ("el cliente firmó"), no un
+            #    pedido de aprobación -- un técnico común no tiene permiso de
+            #    aprobar el cierre (_puede_ot_accion) y mandarle ese CTA sería
+            #    engañoso. dedupe contra `destinos`: si el técnico también es
+            #    el creador o un supervisor, ya recibió el aviso de aprobación
+            #    y no necesita el informativo aparte.
+            destinos_tecnicos = []
+            emails_tecnicos_legacy = []
+            if notificar_tecnicos:
+                try:
+                    for r in _mant_get_tecnicos_asignados_con_cuenta(vid):
+                        uid_t = r.get("id")
+                        if not uid_t or uid_t in seen_ids:
+                            continue  # ya notificado como creador/supervisor
+                        seen_ids.add(uid_t)
+                        destinos_tecnicos.append({
+                            "id":       uid_t,
+                            "username": (r.get("username") or "").strip(),
+                            "nombre":   (r.get("nombre") or r.get("username") or "").strip(),
+                            "phone":    (r.get("phone") or "").strip(),
+                        })
+                except Exception as _e:
+                    print(f"[notif-pend] err técnicos con cuenta vid={vid}: {_e}", flush=True)
+                try:
+                    ya_emails = {d["username"].strip().lower() for d in destinos + destinos_tecnicos
+                                 if d.get("username")}
+                    emails_tecnicos_legacy = [e for e in _mant_get_tecnicos_legacy_solo_email(vid)
+                                              if e not in ya_emails]
+                except Exception as _e:
+                    print(f"[notif-pend] err técnicos legacy vid={vid}: {_e}", flush=True)
+
+            if not destinos and not destinos_tecnicos and not emails_tecnicos_legacy:
                 print(f"[notif-pend-aprob] sin destinatarios vid={vid}", flush=True)
                 return
 
@@ -72785,6 +73135,31 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                               flush=True)
             except Exception as _e_ni_outer:
                 print(f"[notif-pend][interna] vid={vid} outer: {_e_ni_outer}", flush=True)
+
+            # 2026-08-12 (Daniel) — NOTIFICACIÓN INTERNA a técnicos asignados:
+            # informativa ("el cliente firmó"), NUNCA el CTA de aprobar.
+            titulo_tec = f"{numero_ot}: el cliente firmó conforme"
+            cuerpo_tec = (
+                f"El cliente ({razon}) firmó la orden de trabajo {numero_ot}. "
+                f"Queda pendiente de aprobación del supervisor para cerrarse."
+            )
+            for d_dest in destinos_tecnicos:
+                try:
+                    _mant_notificar(
+                        destino_user_id=int(d_dest["id"]),
+                        tipo="ot_firmada_cliente",
+                        titulo=titulo_tec,
+                        cuerpo=cuerpo_tec,
+                        url_accion=f"/mantenciones/ot/{vid}/ejecutar",
+                        # ENUM real: 'baja'|'media'|'alta'|'urgente' (mant_notificaciones.
+                        # prioridad) -- "normal" no es un valor válido y hacía fallar el
+                        # INSERT primario (silencioso, con fallback al legacy sin prioridad).
+                        prioridad="media",
+                        visita_id=vid,
+                    )
+                except Exception as _e_nt:
+                    print(f"[notif-pend][interna-tec] vid={vid} dest={d_dest.get('id')}: {_e_nt}",
+                          flush=True)
 
             # 2026-05-21: subject + WA usan marca editable desde /comunicaciones
             subject = _brand_subject(f"{numero_ot} esperando tu firma de aprobación")
@@ -72860,6 +73235,88 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url=""):
                           f"reason=sin_canal_activo "
                           f"(canales: email={_canal_activo('email')} wa={_canal_activo('whatsapp')})",
                           flush=True)
+
+            # ── Técnicos asignados (2026-08-12) — mensaje INFORMATIVO,
+            # nunca el CTA "firma como aprobador" (un técnico no puede
+            # aprobar el cierre; ver matriz de _puede_ot_accion). ──────────
+            if destinos_tecnicos or emails_tecnicos_legacy:
+                subject_tec = _brand_subject(f"{numero_ot}: el cliente firmó conforme")
+                wa_template_tec = (
+                    _brand_wa_prefix(f"{numero_ot}: cliente firmó") +
+                    f"Hola {{nombre}}, el cliente {razon} firmó conforme la OT "
+                    f"{numero_ot}. Queda pendiente de la aprobación del supervisor "
+                    f"para cerrarse.\n\nVer detalle:\n{link_ot}"
+                )
+                for d_dest in destinos_tecnicos:
+                    nombre_d = d_dest["nombre"] or "equipo ILUS"
+                    username = d_dest["username"]
+                    is_email = bool(username and "@" in username
+                                    and "." in username.split("@")[-1])
+                    email_ok = False
+                    if is_email:
+                        try:
+                            cuerpo = _ilus_email_html(
+                                titulo="El cliente firmó conforme",
+                                subtitulo=f"{numero_ot} · {razon}",
+                                saludo=nombre_d,
+                                parrafos=[
+                                    f"El cliente <strong>{razon}</strong> firmó conforme la OT "
+                                    f"<strong>{numero_ot}</strong>.",
+                                    "Queda pendiente de la aprobación del supervisor para cerrarse.",
+                                ],
+                                btn_primario_txt="Ver la OT",
+                                btn_primario_url=link_ot,
+                                info_lineas=[("", "Cliente", razon), ("", "OT", numero_ot)],
+                            )
+                            email_ok = _send_ilus_email(
+                                username, subject_tec, cuerpo,
+                                evento="ot_firmada_cliente",
+                                modulo="mantenciones",
+                                asincrono=True,
+                            )
+                        except Exception as e_e:
+                            print(f"[notif-pend][email-tec] vid={vid} dest={username}: {e_e}",
+                                  flush=True)
+                    phone = d_dest["phone"]
+                    if wa_ok and phone:
+                        try:
+                            _send_whatsapp(
+                                wa["account_sid"], wa["auth_token"], wa["from_number"],
+                                phone, wa_template_tec.replace("{nombre}", nombre_d),
+                                modulo="mantenciones",
+                            )
+                        except Exception as e_w:
+                            print(f"[notif-pend][wa-tec] vid={vid} dest={phone}: {e_w}",
+                                  flush=True)
+                    if not (email_ok or (wa_ok and phone)):
+                        print(f"[notify-fail-tec] vid={vid} dest={username or phone or 'sin-contacto'} "
+                              f"reason=sin_canal_activo", flush=True)
+
+                # Técnicos legacy SIN cuenta (catálogo mant_tecnicos): solo
+                # email directo, no hay user_id para notificación interna.
+                for email_leg in emails_tecnicos_legacy:
+                    try:
+                        cuerpo = _ilus_email_html(
+                            titulo="El cliente firmó conforme",
+                            subtitulo=f"{numero_ot} · {razon}",
+                            saludo="equipo técnico",
+                            parrafos=[
+                                f"El cliente <strong>{razon}</strong> firmó conforme la OT "
+                                f"<strong>{numero_ot}</strong>.",
+                                "Queda pendiente de la aprobación del supervisor para cerrarse.",
+                            ],
+                            btn_primario_txt="Ver la OT",
+                            btn_primario_url=link_ot,
+                            info_lineas=[("", "Cliente", razon), ("", "OT", numero_ot)],
+                        )
+                        _send_ilus_email(
+                            email_leg, subject_tec, cuerpo,
+                            evento="ot_firmada_cliente", modulo="mantenciones",
+                            asincrono=True,
+                        )
+                    except Exception as e_e:
+                        print(f"[notif-pend][email-tec-legacy] vid={vid} dest={email_leg}: {e_e}",
+                              flush=True)
         except Exception as e_outer:
             print(f"[notif-pend-aprob] outer fail vid={vid}: {e_outer}",
                   flush=True)
@@ -91217,6 +91674,61 @@ def _ensure_garantia_motivo_col():
     return False
 
 
+def _ensure_mant_visita_equipos_diagnostico_cols():
+    """Garantiza mant_visita_equipos.diagnostico_estado/diagnostico_texto
+    SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1).
+
+    2026-08-12 (Daniel — flujo rediseñado de Ejecutar OT, requisito nuevo):
+    "necesito un diagnóstico de la orden de trabajo... de cada máquina,
+    para resumirlo en la orden de trabajo y saber qué es lo que está
+    aprobado y desaprobado". Daniel mismo pidió revisar el modelo antes de
+    darlo por cerrado ("yo creo que", "revisémoslo") — por eso esto es a
+    propósito LIVIANO: 2 columnas nuevas sobre la tabla `mant_visita_equipos`
+    que YA existe (trazabilidad por equipo, 2026-05-21) en vez de una tabla
+    nueva. Mismo (visita_id, maquina_id) UNIQUE que ya usa esa tabla para
+    saltar/marcar/observación — el diagnóstico es una dimensión MÁS de la
+    misma fila, no un concepto aparte con su propio ciclo de vida.
+
+    diagnostico_estado se mantiene DELIBERADAMENTE separado de
+    estado_revision (verificado/con_cambios/saltado/falla_detectada): ese
+    campo es el estado del FLUJO de revisión del técnico (¿tocó este
+    equipo? ¿lo saltó?), mientras que diagnostico_estado es el VEREDICTO
+    técnico sobre el equipo (aprobado/observación/falla) — un equipo puede
+    estar 'verificado' (el técnico completó su checklist) y aun así tener
+    diagnóstico 'falla' (encontró algo malo). Mezclarlos en una sola
+    columna habría pisado la semántica de saltar/marcar que ya está en
+    producción.
+
+    BORRADOR: este modelo de datos se revisará con Daniel una vez que vea
+    el flujo funcionando — ver reporte de la tarea 2026-08-12."""
+    try:
+        _cols = mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_equipos' "
+            "  AND COLUMN_NAME IN ('diagnostico_estado','diagnostico_texto')"
+        ) or []
+        _existentes = {(r.get("COLUMN_NAME") or "").lower() for r in _cols}
+        _agregadas = []
+        if "diagnostico_estado" not in _existentes:
+            mysql_execute(
+                "ALTER TABLE mant_visita_equipos "
+                "ADD COLUMN diagnostico_estado ENUM('aprobado','observacion','falla') NULL "
+                "COMMENT 'Veredicto tecnico del equipo en esta visita (borrador 2026-08-12)'")
+            _agregadas.append("diagnostico_estado")
+        if "diagnostico_texto" not in _existentes:
+            mysql_execute(
+                "ALTER TABLE mant_visita_equipos "
+                "ADD COLUMN diagnostico_texto TEXT NULL "
+                "COMMENT 'Detalle del diagnostico (obligatorio si observacion/falla)'")
+            _agregadas.append("diagnostico_texto")
+        if _agregadas:
+            print(f"[ensure_diagnostico_equipo] columnas agregadas: {_agregadas}", flush=True)
+        return _agregadas
+    except Exception as e:
+        print(f"[ensure_diagnostico_equipo] {e}", flush=True)
+    return []
+
+
 def _ensure_lev_items_edicion_cols():
     """Garantiza mant_levantamiento_items.modificado_por/modificado_at
     SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1). Daniel 2026-07-06:
@@ -93846,6 +94358,14 @@ try:
 except Exception as _ensure_garmot_err:
     print(f"[ILUS][WARN] _ensure_garantia_motivo_col: {_ensure_garmot_err}", flush=True)
 
+# Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
+# 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_mant_visita_equipos_diagnostico_cols()
+except Exception as _ensure_diag_err:
+    print(f"[ILUS][WARN] _ensure_mant_visita_equipos_diagnostico_cols: {_ensure_diag_err}", flush=True)
+
 # CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía
 # en prod (el seed original solo corría en migración completa) y bloquea
@@ -94022,6 +94542,15 @@ try:
         _ensure_comm_client_config_logo_gcp()
 except Exception as _ensure_logo_err:
     print(f"[ILUS][WARN] _ensure_comm_client_config_logo_gcp: {_ensure_logo_err}", flush=True)
+
+# ENUM mant_notificaciones.tipo + 'ot_firmada_cliente' (firma potenciada,
+# 2026-08-12). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 -- ver docstring
+# de _ensure_mant_notif_tipo_ot_firmada_cliente.
+try:
+    with app.app_context():
+        _ensure_mant_notif_tipo_ot_firmada_cliente()
+except Exception as _ensure_notiftipo_err:
+    print(f"[ILUS][WARN] _ensure_mant_notif_tipo_ot_firmada_cliente: {_ensure_notiftipo_err}", flush=True)
 
 
 def _reparar_ruts_clientes_corruptos():
