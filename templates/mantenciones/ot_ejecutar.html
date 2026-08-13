@@ -1302,8 +1302,16 @@
                   <span class="text-muted fw-normal" style="font-size:.72rem">— mínimo 1, puedes tomar varias</span>
                 </label>
                 <div class="levd-fotos" id="levdFotos">
-                  <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInputGaleria').click()" title="Agregar foto">
+                  {# 2026-08-13: marcado estático solo para el primer pintado -- se
+                     reemplaza de inmediato con _levdRenderFotos() (ver static/
+                     mantenciones_ot_ejecutar.js), que es la fuente real. Debe
+                     seguir el mismo patrón de 2 botones para no mostrar el viejo
+                     de 1 solo tile en el instante antes de que el JS corra. #}
+                  <button type="button" class="levd-foto-add" onclick="document.getElementById('levdFotoInput').click()" title="Tomar foto">
                     <i class="bi bi-camera-fill"></i>
+                  </button>
+                  <button type="button" class="levd-foto-add-alt" onclick="document.getElementById('levdFotoInputGaleria').click()" title="Elegir de la galería">
+                    <i class="bi bi-images"></i>
                   </button>
                 </div>
                 <input type="file" id="levdFotoInput" accept="image/*" capture="environment" multiple style="display:none">
