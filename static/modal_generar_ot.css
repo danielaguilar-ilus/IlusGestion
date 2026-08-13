@@ -436,3 +436,32 @@
 .lev-adj-item:hover{ border-color:#cbd5e1; box-shadow:0 2px 8px rgba(15,23,42,.06); }
 .lev-adj-item .lev-adj-thumb{ background:linear-gradient(135deg,#f8fafc,#eef2f7); border:1px solid #e2e8f0; }
 
+
+/* ── Paso 5 — Plantilla OBLIGATORIA por equipo ──────────────────────────
+   Daniel 2026-08-13, probando OTs reales: "no quiero nada automático, todo
+   lo debe escoger el usuario y si no escoge no lo debe dejar avanzar".
+   Antes el botón decía "0 plantillas" en gris y la OT se creaba igual
+   (el backend rellenaba con una plantilla automática) -- no se leía como
+   algo pendiente. Ahora el estado es binario y evidente:
+     .lev-pl-btn-pendiente = rojo, falta elegir  -> el Paso 5 no se completa
+                                                    y el submit se bloquea
+     .lev-pl-btn-ok        = verde, ya eligió
+   Los pinta _tkotPintarBotonPlantilla() (tickets_ficha.js), fuente única
+   para los 3 momentos en que se repinta (render, marcar equipo, guardar). */
+.lev-pl-btn-pendiente{
+  background:#fef2f2; color:#b91c1c; border:1px solid #fca5a5; font-weight:700;
+  animation:levPlPulso 2.4s ease-in-out infinite;
+}
+.lev-pl-btn-pendiente:hover{ background:#fee2e2; color:#991b1b; border-color:#f87171; }
+.lev-pl-btn-ok{
+  background:#f0fdf4; color:#15803d; border:1px solid #86efac; font-weight:700;
+}
+.lev-pl-btn-ok:hover{ background:#dcfce7; color:#166534; border-color:#4ade80; }
+@keyframes levPlPulso{
+  0%,100%{ box-shadow:0 0 0 0 rgba(220,38,38,0); }
+  50%    { box-shadow:0 0 0 3px rgba(220,38,38,.13); }
+}
+/* Respeta la preferencia del sistema (REGLA #3 / accesibilidad). */
+@media (prefers-reduced-motion: reduce){
+  .lev-pl-btn-pendiente{ animation:none; }
+}

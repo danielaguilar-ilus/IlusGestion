@@ -86768,6 +86768,16 @@ def _ot_resolver_equipos(cid, data, tipo_ot, ticket_id):
                                califican para alta automática ni para
                                cliente_nuevo -- se reportan, no bloquean
                                el resto de la OT
+      altas_automaticas    -- dict {ticket_equipo_id: nuevo_maquina_id}.
+                               El frontend elige la plantilla ANTES de
+                               que exista ficha, usando la key teq_<id>
+                               (plantillas_por_ticket_equipo); acá recién
+                               se sabe el maquina_id real. El caller debe
+                               remapear esa selección a plantillas_por_equipo
+                               con este dict -- si no, un equipo nuevo
+                               jamás podría cumplir "elige tu plantilla"
+                               porque el id que le pertenece no existía
+                               todavía cuando el usuario eligió (2026-08-13).
     """
     equipo_ids = []
     for x in (data.get("equipo_ids") or []):
@@ -86778,6 +86788,7 @@ def _ot_resolver_equipos(cid, data, tipo_ot, ticket_id):
     cliente_es_nuevo = bool(data.get("cliente_nuevo"))
     equipos_ticket_clean = []
     equipos_excluidos = []
+    altas_automaticas = {}
     equipos_ticket_raw = data.get("equipos_ticket") or []
     if isinstance(equipos_ticket_raw, list):
         for et in equipos_ticket_raw:
@@ -86795,6 +86806,12 @@ def _ot_resolver_equipos(cid, data, tipo_ot, ticket_id):
                 nuevo_id = _ot_dar_alta_equipo_automatica(cid, et, nombre_et, tipo_ot, ticket_id)
                 if nuevo_id:
                     equipo_ids.append(nuevo_id)
+                    try:
+                        teq_previo = int(et["id"]) if et.get("id") else None
+                    except (TypeError, ValueError):
+                        teq_previo = None
+                    if teq_previo:
+                        altas_automaticas[teq_previo] = nuevo_id
                     continue
                 # alta falló -- sigue de largo, cae al camino normal de abajo
 
@@ -86823,6 +86840,7 @@ def _ot_resolver_equipos(cid, data, tipo_ot, ticket_id):
         "equipo_ids": equipo_ids,
         "equipos_ticket_clean": equipos_ticket_clean,
         "equipos_excluidos": equipos_excluidos,
+        "altas_automaticas": altas_automaticas,
     }
 
 
@@ -86889,6 +86907,95 @@ def _ot_resolver_plantillas_payload(data):
             except (TypeError, ValueError):
                 continue
     return por_equipo, por_ticket_equipo
+
+
+def _plantillas_con_items(pids):
+    """Subset de `pids` que de verdad tienen al menos 1 item en
+    mant_tarea_plantilla_items. Una plantilla vacía NUNCA cuenta como
+    checklist real -- mismo criterio en toda la app (antes duplicado en
+    _plantilla_estandar_para_tipo, _ot_resolver_checklist paso 1 y ahora
+    también _ot_validar_plantillas_elegidas)."""
+    pids = sorted({int(p) for p in pids if p})
+    if not pids:
+        return set()
+    try:
+        ph = ",".join(["%s"] * len(pids))
+        rows = mysql_fetchall(
+            f"SELECT plantilla_id, COUNT(*) AS n FROM mant_tarea_plantilla_items "
+            f" WHERE plantilla_id IN ({ph}) GROUP BY plantilla_id",
+            tuple(pids)) or []
+        return {r["plantilla_id"] for r in rows if int(r.get("n") or 0) > 0}
+    except Exception as e:
+        print(f"[plantillas_con_items] falló para {pids}: {e}", flush=True)
+        return set()
+
+
+def _ot_validar_plantillas_elegidas(tipo_ot, equipo_ids, equipos_ticket_clean,
+                                     plantilla_id_override, plantillas_por_equipo,
+                                     plantillas_por_ticket_equipo):
+    """Daniel 2026-08-13, en vivo, probando OTs reales: "no quiero nada
+    automático, todo lo debe escoger el usuario y si no escoge no lo debe
+    dejar avanzar". Se llama ANTES de tocar la base de datos -- si falta
+    algo, la OT ni se empieza a crear (a diferencia de las redes de
+    seguridad de _ot_resolver_checklist, que rellenan DESPUÉS de crear).
+
+    Devuelve None si está todo elegido, o un dict (ok:False, ...) listo
+    para responder 400 sin crear nada.
+
+    'levantamiento' queda afuera a propósito: no varía por clasificación
+    de equipo, siempre usa el mismo checklist fotográfico estándar
+    (_PLANTILLA_ESTANDAR_NOMBRE['levantamiento']) -- exigir una "elección"
+    ahí sería puro trámite sin ninguna decisión real detrás.
+    """
+    if tipo_ot == "levantamiento":
+        return None
+
+    pendientes = []
+    for mid in equipo_ids:
+        pendientes.append(("equipo", mid, plantillas_por_equipo.get(mid) or []))
+    for et in equipos_ticket_clean:
+        if et.get("id"):
+            pendientes.append(("equipo", et["id"], plantillas_por_equipo.get(et["id"]) or []))
+        elif et.get("ticket_equipo_id"):
+            teq = et["ticket_equipo_id"]
+            pendientes.append(("ticket_equipo", teq, plantillas_por_ticket_equipo.get(teq) or []))
+    if not pendientes:
+        return None
+
+    todos_los_pids = {pid for _, _, pids in pendientes for pid in pids}
+    if plantilla_id_override:
+        todos_los_pids.add(plantilla_id_override)
+    pids_con_items = _plantillas_con_items(todos_los_pids)
+    override_ok = bool(plantilla_id_override and plantilla_id_override in pids_con_items)
+
+    sin_elegir = [
+        (tipo_clave, clave) for tipo_clave, clave, pids in pendientes
+        if not any(p in pids_con_items for p in pids) and not override_ok
+    ]
+    if not sin_elegir:
+        return None
+
+    mids_equipo = [c for t, c in sin_elegir if t == "equipo"]
+    nombres = []
+    if mids_equipo:
+        try:
+            ph = ",".join(["%s"] * len(mids_equipo))
+            rows = mysql_fetchall(
+                f"SELECT nombre FROM mant_maquinas WHERE id IN ({ph})", tuple(mids_equipo)) or []
+            nombres = [r["nombre"] for r in rows]
+        except Exception as e:
+            print(f"[validar_plantillas_elegidas] leer nombres falló: {e}", flush=True)
+    nombres += [f"equipo sin ficha #{c}" for t, c in sin_elegir if t == "ticket_equipo"]
+    return {
+        "ok": False,
+        "error": (
+            "Elige una plantilla de checklist para cada equipo antes de crear "
+            "la OT (o una plantilla general en el Paso 1). Falta para: "
+            f"{', '.join(nombres) if nombres else f'{len(sin_elegir)} equipo(s)'}."
+        ),
+        "error_codigo": "PLANTILLA_SIN_ELEGIR",
+        "equipos_sin_plantilla": len(sin_elegir),
+    }
 
 
 def _ot_tribool(val):
@@ -87123,22 +87230,17 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
     #    para excluir al equipo del paso 2 (fix 2026-08-13 #2: el chequeo
     #    pasa a ser por plantilla_id individual, no solo agregado, porque
     #    el paso 2 necesita saber CUÁL equipo tiene una selección válida).
+    #    Nota: en el flujo normal esto ya no debería encontrar ninguna
+    #    vacía -- _ot_validar_plantillas_elegidas la rechaza ANTES de crear
+    #    la OT -- pero se mantiene como red de seguridad para llamadas que
+    #    no pasan por ese gate (o datos legacy).
     ids_explicitas = sorted({
         pid for pids in list(plantillas_por_equipo.values())
         + list(plantillas_por_ticket_equipo.values())
         for pid in pids
     })
-    pids_con_items = set()
+    pids_con_items = _plantillas_con_items(ids_explicitas)
     if ids_explicitas:
-        try:
-            ph = ",".join(["%s"] * len(ids_explicitas))
-            rows_ci = mysql_fetchall(
-                f"SELECT plantilla_id, COUNT(*) AS n FROM mant_tarea_plantilla_items "
-                f" WHERE plantilla_id IN ({ph}) GROUP BY plantilla_id",
-                tuple(ids_explicitas)) or []
-            pids_con_items = {r["plantilla_id"] for r in rows_ci if int(r.get("n") or 0) > 0}
-        except Exception as e:
-            print(f"[lev_crear] validar items de plantillas explícitas falló: {e}", flush=True)
         vacias = [pid for pid in ids_explicitas if pid not in pids_con_items]
         if vacias:
             print(f"[lev_crear] plantillas explícitas {vacias} NO tienen items "
@@ -87607,6 +87709,7 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     equipo_ids = eq["equipo_ids"]
     equipos_ticket_clean = eq["equipos_ticket_clean"]
     equipos_excluidos = eq["equipos_excluidos"]
+    altas_automaticas = eq["altas_automaticas"]
 
     if not equipo_ids and not descubrimiento and not equipos_ticket_clean:
         if equipos_excluidos:
@@ -87632,8 +87735,27 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     tecnico_ids, tecnico_principal = _ot_resolver_tecnicos(data)
     plantilla_id_override = _ot_resolver_plantilla_override(data)
     plantillas_por_equipo, plantillas_por_ticket_equipo = _ot_resolver_plantillas_payload(data)
+    # El usuario elige la plantilla ANTES de que exista ficha (key teq_<id>,
+    # ver _ot_resolver_plantillas_payload); si ese equipo se dio de alta
+    # automática en _ot_resolver_equipos recién arriba, remapear su
+    # elección al maquina_id real -- si no, _ot_validar_plantillas_elegidas
+    # de más abajo lo vería como "sin elegir" aunque el usuario sí eligió.
+    for _teq_previo, _mid_nuevo in altas_automaticas.items():
+        if _teq_previo in plantillas_por_ticket_equipo:
+            plantillas_por_equipo[_mid_nuevo] = plantillas_por_ticket_equipo.pop(_teq_previo)
     aplica_garantia = bool(data.get("aplica_garantia")) and tipo_ot != 'levantamiento'
     dir_contacto = _ot_resolver_direccion_contacto_acceso(data)
+
+    # 2026-08-13 (Daniel, en vivo: "no quiero nada automático, todo lo debe
+    # escoger el usuario y si no escoge no lo debe dejar avanzar"): valida
+    # ANTES de tocar la base de datos -- si falta una plantilla, la OT ni
+    # se empieza a crear (a diferencia de las redes de seguridad de
+    # _ot_resolver_checklist, que rellenan DESPUÉS de crear).
+    err_plantillas = _ot_validar_plantillas_elegidas(
+        tipo_ot, equipo_ids, equipos_ticket_clean, plantilla_id_override,
+        plantillas_por_equipo, plantillas_por_ticket_equipo)
+    if err_plantillas:
+        return err_plantillas, 400
 
     # 2026-08-13 (verificación adversarial -- bug real encontrado y
     # corregido): este try/except es el ÚNICO nivel de manejo "duro" de
