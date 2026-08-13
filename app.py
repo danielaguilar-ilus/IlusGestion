@@ -87161,39 +87161,78 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 # _resolucion_plantilla_por_equipo y se reusa tal cual en el
                 # paso 1 de más abajo -- ni un booleano ni una consulta de
                 # más, la MISMA decisión en los dos lugares.
-                _tiene_plantillas = bool(plantillas_por_equipo)
-                if not _tiene_plantillas:
+                #
+                # 2026-08-13 (Daniel, en vivo -- OT-2026-00079/253/252, las 3
+                # con la MISMA falla): antes esto era
+                # `_tiene_plantillas = bool(plantillas_por_equipo)` y, si
+                # venía una selección explícita, NO se calculaba la
+                # resolución estándar (el paso 1 de abajo también se
+                # saltaba). Dos errores en cadena: (1) la UI del Paso 5
+                # promete que las plantillas elegidas son ADICIONALES a la
+                # estándar del tipo, pero el backend las trataba como
+                # REEMPLAZO; (2) se confiaba a ciegas en que la selección
+                # explícita tuviera tareas -- una plantilla recién creada y
+                # aún sin alimentar (0 items) dejaba la OT sin NINGÚN
+                # checklist, solo la tarea genérica del safety-net. Ahora la
+                # resolución por equipo se calcula SIEMPRE y la selección
+                # explícita solo cuenta si de verdad tiene items.
+                _explicitas_con_items = False
+                _ids_explicitas = sorted({
+                    pid for pids in list(plantillas_por_equipo.values())
+                    + list(plantillas_por_ticket_equipo.values())
+                    for pid in pids
+                })
+                if _ids_explicitas:
                     try:
-                        if plantilla_id_override:
-                            # El usuario ya eligió una plantilla explícita
-                            # para TODA la OT (selector, Tarea 4) — manda
-                            # sobre cualquier cálculo automático.
-                            for _mm in maquinas:
-                                if _mm.get("id"):
-                                    _resolucion_plantilla_por_equipo[_mm["id"]] = plantilla_id_override
-                        else:
-                            _fallback_tipo_cache = {"val": None, "computed": False}
-                            def _fallback_tipo_ot():
-                                if not _fallback_tipo_cache["computed"]:
-                                    _fallback_tipo_cache["val"] = _plantilla_estandar_para_tipo(tipo_ot)
-                                    _fallback_tipo_cache["computed"] = True
-                                return _fallback_tipo_cache["val"]
-                            for _mm in maquinas:
-                                _mid = _mm.get("id")
-                                if not _mid:
-                                    continue
-                                _plant_id = None
-                                try:
-                                    _plant_id = _plantilla_por_clasificacion_sku(_mm.get("sku"), tipo_ot)
-                                except Exception as _e_cls:
-                                    print(f"[lev_crear] resolver plantilla por clasificación "
-                                          f"falló para maquina {_mid}: {_e_cls}", flush=True)
-                                if not _plant_id:
-                                    _plant_id = _fallback_tipo_ot()
-                                _resolucion_plantilla_por_equipo[_mid] = _plant_id
-                        _tiene_plantillas = any(_resolucion_plantilla_por_equipo.values())
-                    except Exception as _e_res:
-                        print(f"[lev_crear] resolución de plantilla por equipo falló: {_e_res}", flush=True)
+                        _ph_exp = ",".join(["%s"] * len(_ids_explicitas))
+                        _row_exp = mysql_fetchone(
+                            f"SELECT COUNT(*) AS n FROM mant_tarea_plantilla_items "
+                            f" WHERE plantilla_id IN ({_ph_exp})",
+                            tuple(_ids_explicitas))
+                        _explicitas_con_items = bool((_row_exp or {}).get("n") or 0)
+                    except Exception as _e_exp:
+                        print(f"[lev_crear] validar items de plantillas explícitas "
+                              f"falló: {_e_exp}", flush=True)
+                    if not _explicitas_con_items:
+                        print(f"[lev_crear] plantillas explícitas {_ids_explicitas} "
+                              f"NO tienen items -- se ignoran para el pre-chequeo, "
+                              f"la estándar del tipo cubre la OT.", flush=True)
+                _tiene_plantillas = False
+                try:
+                    if plantilla_id_override:
+                        # El usuario ya eligió una plantilla explícita
+                        # para TODA la OT (selector, Tarea 4) — manda
+                        # sobre cualquier cálculo automático.
+                        for _mm in maquinas:
+                            if _mm.get("id"):
+                                _resolucion_plantilla_por_equipo[_mm["id"]] = plantilla_id_override
+                    else:
+                        _fallback_tipo_cache = {"val": None, "computed": False}
+                        def _fallback_tipo_ot():
+                            if not _fallback_tipo_cache["computed"]:
+                                _fallback_tipo_cache["val"] = _plantilla_estandar_para_tipo(tipo_ot)
+                                _fallback_tipo_cache["computed"] = True
+                            return _fallback_tipo_cache["val"]
+                        for _mm in maquinas:
+                            _mid = _mm.get("id")
+                            if not _mid:
+                                continue
+                            _plant_id = None
+                            try:
+                                _plant_id = _plantilla_por_clasificacion_sku(_mm.get("sku"), tipo_ot)
+                            except Exception as _e_cls:
+                                print(f"[lev_crear] resolver plantilla por clasificación "
+                                      f"falló para maquina {_mid}: {_e_cls}", flush=True)
+                            if not _plant_id:
+                                _plant_id = _fallback_tipo_ot()
+                            _resolucion_plantilla_por_equipo[_mid] = _plant_id
+                    _tiene_plantillas = any(_resolucion_plantilla_por_equipo.values()) \
+                        or _explicitas_con_items
+                except Exception as _e_res:
+                    print(f"[lev_crear] resolución de plantilla por equipo falló: {_e_res}", flush=True)
+                    # La selección explícita validada sigue contando aunque
+                    # la resolución automática haya fallado.
+                    _tiene_plantillas = _explicitas_con_items
                 # Solo crear el fallback "📷 Documentar" si NO hay plantillas
                 # que se vayan a aplicar (evita duplicación con plantillas).
                 # Los equipos SIN maquina_id (declarados en un ticket, sin
@@ -87415,12 +87454,22 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         #    no resuelva (Daniel, 2026-08-12: "no le voy a hacer una
         #    verificación a una trotadora como a una bicicleta").
         #
-        # BUG FIX 2026-05-17 — Si el usuario ya pasó plantillas explícitas
-        # en plantillas_por_equipo, NO aplicamos la estándar automática:
-        # el usuario sabe lo que quiere, evitamos duplicación silenciosa.
-        # (El dedup interno de _aplicar_plantilla_a_equipos también lo
-        # cubriría, pero saltar el paso 1 entero es más limpio y eficiente.)
-        if visita_id and equipo_ids and not plantillas_por_equipo:
+        # 2026-08-13 (Daniel, en vivo -- OT-2026-00079 y 2 más el mismo día,
+        # todas "sin checklist"): antes este paso se SALTABA por completo si
+        # venía cualquier selección explícita (`and not plantillas_por_equipo`,
+        # BUG FIX 2026-05-17), tratando la selección del Paso 5 como
+        # REEMPLAZO de la estándar. Pero la propia UI del Paso 5 dice
+        # "Plantillas EXTRA... la del tipo de OT ya se aplica
+        # automáticamente" y "Auto: el tipo seleccionado en el Paso 1 aplica
+        # su plantilla estándar. Las plantillas extra agregan tareas
+        # adicionales." -- o sea el backend hacía lo contrario de lo que la
+        # pantalla promete. Peor aún: si la plantilla elegida estaba vacía
+        # (recién creada, sin items), la OT quedaba con CERO checklist.
+        # Ahora la estándar se aplica SIEMPRE; las extra suman encima. La
+        # duplicación no es un riesgo: _aplicar_plantilla_a_equipos ya
+        # deduplica por (visita_id, plantilla_id, maquina_id), así que si la
+        # extra elegida ES la misma que la estándar, se aplica una sola vez.
+        if visita_id and equipo_ids:
             try:
                 # Reusa EXACTO lo que ya resolvió el pre-chequeo de arriba
                 # (_resolucion_plantilla_por_equipo) — nunca se recalcula,
