@@ -942,7 +942,25 @@
 .tkday-pop .pop-row > i{color:#9ca3af;margin-top:3px;flex-shrink:0;}
 .tkday-pop .pop-row .v{color:#0f172a;font-weight:700;min-width:0;overflow-wrap:anywhere;}
 .tkday-pop .pop-row .v.mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
-.tkday-pop .pop-grp + .pop-grp{border-top:1px dashed #f1f5f9;margin-top:8px;padding-top:8px;}
+.tkday-pop .pop-grp + .pop-grp{margin-top:10px;}
+/* 2026-08-12 (Daniel: "que se vea más atractivo, que se distinga el
+   cliente, que se indique qué máquina"): la tarjeta de cada OT en el
+   popover de "misma franja" pasa de una lista plana de filas (todas del
+   mismo peso visual) a una tarjeta propia con borde, franja de color por
+   estado (mismo lenguaje semáforo de siempre) y el nombre del cliente
+   como título -- antes "Cliente" era una fila más, igual de chica que
+   "Ticket" o "Tipo". */
+.tkday-pop .pop-grp{border:1px solid #eef0f3;border-left:3px solid #d1d5db;border-radius:10px;
+  padding:10px 12px;background:#fbfbfc;}
+.tkday-pop .pop-grp.est-programada{border-left-color:#3b82f6;}
+.tkday-pop .pop-grp.est-en_curso{border-left-color:#f59e0b;}
+.tkday-pop .pop-grp.est-completada,.tkday-pop .pop-grp.est-cerrada{border-left-color:#16a34a;}
+.tkday-pop .pop-grp.est-cancelada{border-left-color:#dc2626;}
+.tkday-pop .pop-grp.est-reagendada,.tkday-pop .pop-grp.est-pendiente_aprobacion{border-left-color:#f59e0b;}
+.tkday-pop .pop-grp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px;}
+.tkday-pop .pop-grp-head .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;font-size:.72rem;}
+.tkday-pop .pop-grp-cliente{font-size:.95rem;font-weight:800;color:#0f172a;margin-bottom:4px;
+  overflow-wrap:anywhere;}
 .tkday-pop .pop-foot{padding:10px 14px;border-top:1px solid #f1f5f9;
   display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;}
 @media (max-width:767.98px){ .tkday-pop .pop-card{max-height:88vh;} }

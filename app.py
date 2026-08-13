@@ -64427,6 +64427,26 @@ def mant_calendario_mes(anio, mes):
         ) or []
         visitas = [dict(v) for v in visitas]
 
+        # Equipos por visita (Daniel 2026-08-12: "que se indique qué máquina"
+        # en el popover de "misma franja" del calendario) -- 1 sola query
+        # batch por TODOS los ids del mes, no una por visita (evita N+1).
+        # mant_visita_tareas.maquina_id es la fuente universal de "qué equipo
+        # toca esta OT" para cualquier tipo (no solo levantamiento) desde el
+        # Paso 1 de "separar el levantamiento" (2026-08-12).
+        equipos_por_visita = {}
+        _ids = [v["id"] for v in visitas]
+        if _ids:
+            _ph = ",".join(["%s"] * len(_ids))
+            _eq_rows = mysql_fetchall(
+                f"SELECT DISTINCT t.visita_id, m.nombre "
+                f"  FROM mant_visita_tareas t "
+                f"  JOIN mant_maquinas m ON m.id = t.maquina_id "
+                f" WHERE t.visita_id IN ({_ph}) ",
+                tuple(_ids)
+            ) or []
+            for _r in _eq_rows:
+                equipos_por_visita.setdefault(_r["visita_id"], []).append(_r["nombre"])
+
         # Serializar TIME->str y DATE->str (mismo fix 2026-06-09 que
         # mant_calendario_dia_drill: hora_inicio/hora_fin llegan como
         # timedelta de PyMySQL; fecha_programada es un date de PyMySQL, se
@@ -64478,6 +64498,7 @@ def mant_calendario_mes(anio, mes):
                 "fecha_fin": v.get("fecha_fin"),
                 "tecnico_id": v.get("tecnico_id"),
                 "tecnico_nombre": v.get("tecnico_nombre"),
+                "equipos": equipos_por_visita.get(v["id"], []),
             })
         for fk in dias:
             dias[fk]["n_visitas"] = len(dias[fk]["visitas"])
