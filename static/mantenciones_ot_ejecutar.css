@@ -1919,3 +1919,181 @@
      versión bottom-bar. Contenido centrado a un ancho legible. */
   .tx-bottom-body{max-width:900px;margin:0 auto}
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   REDISEÑO PREMIUM 2026-08-13 — nivel static/retiros_public_request.css
+   (brief Daniel: "espectacular, superentretenido, fresco a la vista...
+   necesito al técnico enamorado de gestionar la OT, tecnología 2026").
+   Va AL FINAL del archivo a propósito, mismo criterio que el bloque
+   MAQUETA FABLE de arriba: gana la cascada sin tocar selectores que el
+   JS ya usa. Radios/sombras/easing copiados de static/retiros_public_
+   request.css. El ROJO es la excepción deliberada, no un descuido:
+   retiros_public_request.css usa --ilus-red:#e60000 en el relleno real
+   de .step-circle/.form-head (confirmado con grep, no de memoria). Acá
+   se usa #dc2626 en su lugar a propósito -- es el rojo canónico de
+   CLAUDE.md REGLA #2 y el que YA domina el resto de este archivo (todos
+   los botones/badges/acentos existentes de Ejecutar OT); introducir
+   #e60000 solo para el stepper habría dejado dos rojos "ILUS" distintos
+   conviviendo en la misma pantalla.
+   Prefijo tx- para los tokens nuevos (mismo prefijo que domina el
+   archivo) — únicos existentes hoy eran --tx-mono y --pct, sin choque.
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --tx-red:#dc2626;--tx-red-dk:#a60000;
+  --tx-green:#16a34a;--tx-green-bg:#dcfce7;
+  --tx-amber:#f59e0b;
+  --tx-shadow-sm:0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+  --tx-shadow-md:0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
+  --tx-shadow-red:0 10px 28px -6px rgba(220,38,38,.42);
+  --tx-r-sm:10px;--tx-r-md:14px;--tx-r-lg:18px;--tx-r-xl:24px;
+  --tx-display:'Bebas Neue','Inter',sans-serif;
+  --tx-ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --tx-ease-out:cubic-bezier(.22,1,.36,1);
+}
+
+/* ── 1 · STEPPER DE ETAPAS (Equipos → Checklist → Firmas) ────────────
+   Tratamiento .step-circle de retiros_public_request.css: cuadrado
+   redondeado 44px, degradado rojo por defecto, verde+pulso+check al
+   completar según la regla real de cada etapa (ver Jinja en el
+   template). Bebas Neue SOLO para el número grande — nunca en el
+   resto del checklist (brief explícito). */
+.tx-stage-stepper{
+  display:flex;align-items:flex-start;gap:4px;margin:2px 2px 18px;
+  animation:ilus-fade-up .4s var(--tx-ease-out) both;
+}
+.tx-stage{display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto;min-width:58px}
+.tx-stage-circle{
+  width:44px;height:44px;border-radius:13px;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--tx-display);font-size:1.3rem;letter-spacing:.02em;
+  background:linear-gradient(150deg,var(--tx-red) 0%,var(--tx-red-dk) 100%);
+  box-shadow:0 8px 18px -6px rgba(220,38,38,.45), 0 1px 0 rgba(255,255,255,.2) inset;
+  transition:all .35s var(--tx-ease-spring);position:relative;
+}
+.tx-stage.is-complete .tx-stage-circle{
+  background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+  box-shadow:0 8px 18px -6px rgba(22,163,74,.45), 0 1px 0 rgba(255,255,255,.25) inset;
+  transform:scale(1.04);
+}
+.tx-stage.is-complete .tx-stage-circle::after{
+  content:'';position:absolute;inset:-4px;border-radius:15px;
+  border:2px solid var(--tx-green);opacity:.35;animation:txStagePulse 1.6s ease-in-out 1;
+}
+@keyframes txStagePulse{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+.tx-stage-check{display:none;font-size:1.15rem}
+.tx-stage.is-complete .tx-stage-num{display:none}
+.tx-stage.is-complete .tx-stage-check{display:block}
+.tx-stage-lbl{font-size:.62rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;text-align:center;line-height:1.2}
+.tx-stage.is-complete .tx-stage-lbl{color:#15803d}
+.tx-stage-line{flex:1 1 auto;height:2px;border-radius:2px;background:#e5e7eb;margin-top:21px;min-width:10px;transition:background .4s var(--tx-ease-out)}
+.tx-stage-line.is-on{background:var(--tx-green)}
+
+/* ── 2 · OBLIGATORIO vs OPCIONAL — semáforo visible de un vistazo ────
+   Lo obligatorio ya se marcaba en rojo/verde (.tx-badge-obl existente).
+   Lo opcional ahora se distingue DESDE EL INICIO — nunca se "exige"
+   algo que no lo es (mismo criterio ya establecido en .levd-step.is-optional). */
+.tx-tarea.is-optional:not(.done):not(.next){border-left-style:dashed;border-left-color:#cbd5e1}
+.tx-tarea .ttl-badges .tx-badge-opt{
+  background:#f3f4f6;color:#6b7280;border:1px dashed #cbd5e1;
+}
+
+/* ── 3 · APROVECHAR EL ESPACIO EN MOBILE/TABLET (<1200px) ─────────────
+   Brief: "hay que aprovechar los espacios... enfoque mobile/tablet,
+   donde vive el técnico la mayor parte del tiempo". NO toca el bloque
+   @media(min-width:1200px) de arriba (desktop real). */
+@media (max-width:767.98px){
+  .tx-wrap{padding:8px 8px 110px}
+  .info-card{padding:14px 12px}
+  .tx-tarea{padding:12px 8px 12px 6px}
+  .tx-eq-grid{gap:8px}
+  .tx-eq-card{padding:12px 12px 18px}
+}
+@media (max-width:380px){
+  .tx-stage-lbl{font-size:.56rem}
+  .tx-stage-circle{width:40px;height:40px;font-size:1.15rem;border-radius:12px}
+  .tx-stage-line{margin-top:19px}
+}
+
+/* ── 4 · FIRMA REMOTA ESPECTACULAR ─────────────────────────────────────
+   Contenedor con el MISMO tratamiento .form-head oscuro/premium de
+   retiros_public_request.css (radial rojo arriba-derecha + degradado
+   negro + filete rojo abajo) envolviendo un selector de 3 canales
+   tocables — reemplaza los 2 botones planos apilados de antes. */
+.tx-sign-hub{
+  position:relative;overflow:hidden;border-radius:var(--tx-r-lg);
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.22) 0%, transparent 45%),
+    linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+  border-bottom:4px solid var(--tx-red);
+  padding:16px 14px 14px;margin-bottom:2px;
+  box-shadow:var(--tx-shadow-md);
+  animation:ilus-fade-up .4s var(--tx-ease-out) both;
+}
+.tx-sign-hub-head{display:flex;align-items:center;gap:10px;color:#fff;margin-bottom:12px;position:relative;z-index:1}
+.tx-sign-hub-head i{font-size:1.15rem;color:var(--tx-red);flex-shrink:0}
+.tx-sign-hub-head strong{display:block;font-size:.92rem;font-weight:800;letter-spacing:-.01em}
+.tx-sign-hub-head span{display:block;font-size:.72rem;color:#cbd5e1;margin-top:1px}
+.tx-channel-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;position:relative;z-index:1}
+.tx-channel-card{
+  display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;
+  background:rgba(255,255,255,.045);border:1.5px solid rgba(255,255,255,.12);
+  border-radius:var(--tx-r-md);padding:14px 6px 12px;cursor:pointer;color:#fff;
+  transition:transform .18s var(--tx-ease-spring), background .18s, border-color .18s, box-shadow .18s;
+  min-height:96px;justify-content:center;
+}
+.tx-channel-card:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.28);transform:translateY(-2px)}
+.tx-channel-card:active{transform:scale(.96)}
+.tx-channel-ico{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex-shrink:0;transition:box-shadow .18s}
+.tx-channel-card.is-presencial .tx-channel-ico{background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff}
+.tx-channel-card.is-whatsapp .tx-channel-ico{background:linear-gradient(135deg,#25d366,#128c4a);color:#fff}
+.tx-channel-card.is-correo .tx-channel-ico{background:linear-gradient(135deg,var(--tx-red),var(--tx-red-dk));color:#fff}
+.tx-channel-card:hover .tx-channel-ico{box-shadow:0 6px 16px -4px rgba(0,0,0,.5)}
+.tx-channel-txt strong{display:block;font-size:.8rem;font-weight:800;letter-spacing:-.01em}
+.tx-channel-txt small{display:block;font-size:.63rem;color:#9ca3af;margin-top:2px;line-height:1.25}
+.tx-sign-hub-both{
+  /* min-height 44px (Regla #3, Apple HIG): este botón dispara una acción real
+     de firma remota igual que .tx-btn-firmar (min-height 44/48px) -- no debe
+     tener un área táctil menor solo porque su estilo es "ghost". Un técnico
+     en terreno, a veces con guantes o apurado, necesita el mismo estándar. */
+  width:100%;margin-top:10px;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.25);
+  color:#e5e7eb;border-radius:var(--tx-r-sm);padding:12px 10px;font-size:.76rem;font-weight:700;
+  display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
+  transition:background .15s,border-color .15s;position:relative;z-index:1;min-height:44px;
+}
+.tx-sign-hub-both:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.4)}
+.tx-sign-hub-both:active{transform:scale(.97)}
+.tx-sign-hub-both i{color:var(--tx-red)}
+@media (max-width:380px){
+  .tx-channel-txt small{display:none}
+  .tx-channel-card{padding:12px 4px;min-height:76px}
+}
+
+/* ── 5 · ENTRETENIDO PERO RÁPIDO — entrada escalonada + tacto ─────────
+   Reusa @keyframes ilus-fade-up (static/style.css, global) — cero
+   animación nueva para esto, solo delay escalonado por posición.
+   Sin clics ni pasos extra: puramente sensación visual al cargar. */
+.info-card{animation:ilus-fade-up .38s var(--tx-ease-out) both}
+.info-card:nth-of-type(1){animation-delay:.02s}
+.info-card:nth-of-type(2){animation-delay:.06s}
+.info-card:nth-of-type(3){animation-delay:.10s}
+.info-card:nth-of-type(4){animation-delay:.14s}
+.info-card:nth-of-type(5){animation-delay:.18s}
+.tx-eq-card{animation:ilus-fade-up .32s var(--tx-ease-out) both}
+.tx-eq-card:nth-child(1){animation-delay:.02s}
+.tx-eq-card:nth-child(2){animation-delay:.05s}
+.tx-eq-card:nth-child(3){animation-delay:.08s}
+.tx-eq-card:nth-child(4){animation-delay:.11s}
+.tx-eq-card:nth-child(5){animation-delay:.14s}
+.tx-eq-card:nth-child(n+6){animation-delay:.16s}
+.tx-channel-card,.tx-sign-hub-both,.tx-stage-circle{will-change:transform}
+
+/* Accesibilidad — TODA animación nueva de este bloque respeta
+   prefers-reduced-motion (mismo patrón que static/modal_generar_ot.css
+   .lev-pl-btn-pendiente). Un solo bloque consolidado para no fragmentar
+   más los ya existentes arriba. */
+@media (prefers-reduced-motion:reduce){
+  .tx-stage-stepper,.tx-sign-hub,.info-card,.tx-eq-card{animation:none}
+  .tx-stage.is-complete .tx-stage-circle::after{animation:none}
+  .tx-stage-circle,.tx-channel-card,.tx-sign-hub-both,.tx-eq-card,.tx-stage-line,.tx-channel-ico{transition:none}
+  .tx-channel-card:hover,.tx-channel-card:active,.tx-eq-card:active,.tx-sign-hub-both:active{transform:none}
+}

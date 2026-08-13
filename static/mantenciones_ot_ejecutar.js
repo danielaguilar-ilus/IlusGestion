@@ -1265,8 +1265,14 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
   // completada con alerta/falla pinta la fila (borde y knob) ámbar/rojo.
   const _sem = _tareaSemaforo(t);
   const semClass = (_sem === 'warn') ? ' sem-warn' : (_sem === 'fail') ? ' sem-fail' : '';
+  // 2026-08-13 (rediseño premium — brief Daniel: "semáforo en rojo a lo
+  // obligatorio que se pueda pasar por alto, e indicar que es opcional").
+  // Puramente visual: lo obligatorio ya se marcaba en rojo/verde (Obligatoria
+  // badge); ahora lo OPCIONAL se distingue desde el inicio con su propio
+  // badge + borde punteado — nunca se "exige" algo que no lo es.
+  const optClass = (!t.obligatoria) ? ' is-optional' : '';
 
-  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}"
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}${optClass}"
        id="tar-${t.id}" data-version="${t.version || 0}">
     <div class="ttl">
       ${tno ? `<span class="tno">${tno}</span>` : ''}
@@ -1277,7 +1283,7 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       <div class="ttl-info">
         <div class="ttl-text">${_escapeHtml(t.titulo)}
           <span class="ttl-badges">
-            ${t.obligatoria ? '<span class="tx-badge-obl">Obligatoria</span>' : ''}
+            ${t.obligatoria ? '<span class="tx-badge-obl">Obligatoria</span>' : '<span class="tx-badge-opt">Opcional</span>'}
             ${t.requiere_foto ? '<span class="tx-badge-foto">📷 Foto</span>' : ''}
             <span class="tx-badge-tipo">${_escapeHtml(tipo)}</span>
             <span class="nxt-tag">Siguiente</span>
@@ -3184,6 +3190,15 @@ function _updateProgress(mid, pid){
   // 2026-08-13 (maqueta Fable): refrescar la barra segmentada de la tarjeta
   // del equipo en la vista 1 para que refleje el avance recién guardado.
   _eqBarRender(mid);
+  // 2026-08-13 (rediseño premium, fix de verificación adversarial): el
+  // stepper de etapas observa la clase 'done' de .tx-eq-card vía
+  // MutationObserver, pero nada la tocaba en runtime -- solo el render
+  // server-side de Jinja la fijaba al cargar la página, así que la etapa
+  // "Equipos" se quedaba en rojo aunque el técnico terminara el último
+  // checklist obligatorio del último equipo. Este toggle es lo único que
+  // faltaba: el observer ya estaba listo para reaccionar a este cambio.
+  document.getElementById('tx-eq-card-' + mid)
+    ?.classList.toggle('done', STATS_POR_MAQUINA[mid].bloqueada);
 
   // Update stats globales
   // 2026-05-18 (Mejora UX firma): además de total/completas globales, sacamos
@@ -6944,4 +6959,60 @@ async function factAsociar(){
       btn.innerHTML = '<i class="bi bi-crosshair"></i> Reintentar';
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
   });
+})();
+
+// ════════════════════════════════════════════════════════════════════
+//  STEPPER DE ETAPAS — sync en vivo (rediseño premium 2026-08-13)
+//  Bloque 100% ADITIVO: no toca ni reemplaza ninguna función existente,
+//  solo OBSERVA nodos que otras funciones (_updateProgress, actualizar-
+//  LockFirmar, etc.) ya actualizan por su cuenta y refleja el resultado
+//  en el nuevo #txStageStepper (ver templates/mantenciones/ot_ejecutar.html).
+//  Si el stepper no existe en el DOM (por si algún día se quita), este
+//  bloque no hace nada — no puede romper el resto de la pantalla.
+// ════════════════════════════════════════════════════════════════════
+(function () {
+  const stepper = document.getElementById('txStageStepper');
+  if (!stepper) return;
+
+  const stgChecklist = stepper.querySelector('.tx-stage[data-stage="checklist"]');
+  const stgEquipos = stepper.querySelector('.tx-stage[data-stage="equipos"]');
+  const lineEq = stgEquipos ? stepper.querySelector('.tx-stage-line') : null;
+  const oblTot = parseInt(stepper.dataset.oblTot || '0', 10);
+
+  function syncChecklistStage() {
+    if (!stgChecklist || !oblTot) return;
+    const compEl = document.getElementById('statOblComp');
+    const totEl = document.getElementById('statOblTot');
+    if (!compEl || !totEl) return;
+    const comp = parseInt(compEl.textContent || '0', 10);
+    const tot = parseInt(totEl.textContent || '0', 10) || oblTot;
+    const done = tot > 0 && comp >= tot;
+    stgChecklist.classList.toggle('is-complete', done);
+    const lines = stepper.querySelectorAll('.tx-stage-line');
+    if (lines[1]) lines[1].classList.toggle('is-on', done);
+  }
+
+  function syncEquiposStage() {
+    if (!stgEquipos) return;
+    const cards = document.querySelectorAll('.tx-eq-card');
+    if (!cards.length) return;
+    const doneCount = document.querySelectorAll('.tx-eq-card.done').length;
+    const done = doneCount === cards.length;
+    stgEquipos.classList.toggle('is-complete', done);
+    if (lineEq) lineEq.classList.toggle('is-on', done);
+  }
+
+  // Los contadores globales (#statOblComp/#statOblTot) y las tarjetas de
+  // equipo (.tx-eq-card) ya son actualizados en vivo por el resto del
+  // archivo (_updateProgress, _refreshEqCardBadge) — solo los observamos.
+  const mo = new MutationObserver(() => { syncChecklistStage(); syncEquiposStage(); });
+  const statTot = document.getElementById('statOblTot');
+  const statComp = document.getElementById('statOblComp');
+  if (statTot) mo.observe(statTot, { childList: true, characterData: true, subtree: true });
+  if (statComp) mo.observe(statComp, { childList: true, characterData: true, subtree: true });
+  const eqGrid = document.querySelector('.tx-eq-grid');
+  if (eqGrid) mo.observe(eqGrid, { attributes: true, attributeFilter: ['class'], subtree: true });
+
+  syncChecklistStage();
+  syncEquiposStage();
 })();
