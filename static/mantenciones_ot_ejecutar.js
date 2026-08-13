@@ -5376,7 +5376,7 @@ async function enviarFirmaRemota(){
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: (email || '').trim() }),
+      body: JSON.stringify({ canal: 'email', email: (email || '').trim() }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok){ await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' }); return; }
@@ -5386,6 +5386,61 @@ async function enviarFirmaRemota(){
       await ilusAlert({ title: 'Link generado', message: (d.mensaje || ''), sub: (d.link || ''), type: 'warning' });
     }
   } catch (e){ await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' }); }
+}
+
+// 2026-08-12 (Daniel, "potenciar la firma") — alternativa por WhatsApp: el
+// técnico decide EN TERRENO ("no está, te la puedo mandar al correo" [o por
+// WhatsApp]). Genera el link de firma en el servidor (igual que el correo) y
+// abre WhatsApp DEL PROPIO TÉCNICO con el mensaje ya escrito y dirigido al
+// teléfono del cliente vía wa.me — el técnico revisa y aprieta enviar él
+// mismo. Deliberadamente NO hay envío automático de servidor: Twilio/WhatsApp
+// Business API sigue dado de baja (ver CLAUDE.md — incidente de US$20 con el
+// sandbox), así que este botón no depende de ningún proveedor de pago.
+async function enviarFirmaWhatsApp(){
+  let tel = (typeof VISITA_CONTACTO_TEL !== 'undefined' && VISITA_CONTACTO_TEL) || '';
+  if (!tel){
+    tel = await ilusPrompt({
+      title: 'Enviar firma por WhatsApp',
+      message: 'Teléfono del cliente (con o sin +56):',
+      sub: 'La OT no tiene un teléfono de contacto cargado — escríbelo para generar el link.',
+      placeholder: '+56 9 1234 5678', required: true,
+    });
+    if (!tel) return;
+  }
+  // 2026-08-12 (hallazgo de code-review): abrir la pestaña YA, dentro del
+  // gesto de click/confirmación del técnico, y recién asignarle destino
+  // cuando llega la respuesta del servidor. Si se abre DESPUÉS del
+  // fetch/await, Safari/iOS y otros navegadores estrictos bloquean el popup
+  // por haber perdido la "user activation" del click original.
+  const winRef = window.open('', '_blank');
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canal: 'whatsapp', telefono: tel }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      if (winRef) winRef.close();
+      await ilusAlert({ title: 'No se pudo', message: (d.error || 'Error'), type: 'error' });
+      return;
+    }
+    if (winRef){
+      winRef.location.href = d.wa_link;
+      ilusToast('✓ Abriendo WhatsApp con el link de firma…', { type: 'success' });
+    } else {
+      // El navegador bloqueó igual la ventana en blanco (bloqueadores muy
+      // estrictos) -- no dejar al técnico sin salida: mostrar el link.
+      await ilusAlert({
+        title: 'Link de WhatsApp generado',
+        message: 'El navegador bloqueó la ventana emergente. Abre este link manualmente:',
+        sub: d.wa_link,
+        type: 'warning',
+      });
+    }
+  } catch (e){
+    if (winRef) winRef.close();
+    await ilusAlert({ title: 'Error de red', message: e.message, type: 'error' });
+  }
 }
 
 async function enviarFirma(){

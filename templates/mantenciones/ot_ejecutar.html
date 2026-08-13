@@ -1745,8 +1745,18 @@
                   style="background:linear-gradient(135deg,#0f766e,#115e59)">
             <i class="bi bi-envelope-paper"></i> Enviar firma por correo
           </button>
+          {# 2026-08-12 (Daniel, "potenciar la firma"): el técnico elige el
+             canal EN TERRENO. WhatsApp acá es un link wa.me -- abre TU
+             WhatsApp con el mensaje y el link de firma ya escritos, dirigido
+             al cliente; tú revisas y apretás enviar. No hay envío automático
+             de servidor (Twilio sigue dado de baja, ver CLAUDE.md #13 y la
+             memoria del incidente de US$20 con el sandbox). #}
+          <button class="tx-btn-firmar" onclick="enviarFirmaWhatsApp()"
+                  style="background:linear-gradient(135deg,#16a34a,#15803d);margin-top:8px">
+            <i class="bi bi-whatsapp"></i> Enviar firma por WhatsApp
+          </button>
           <small class="tx-cta-hint" style="color:#0d9488">
-            No está en sitio: le llega un link y firma a distancia.
+            No está en sitio: elige el canal — le llega un link y firma a distancia.
           </small>
         </div>
       </div>
@@ -2439,6 +2449,11 @@
 // ════════════════════════════════════════════════════════
 const VID = {{ visita.id }};
 const VISITA_ESTADO = "{{ visita.estado }}";
+// 2026-08-12 (Daniel, "potenciar la firma") — teléfono del contacto para
+// ofrecer el canal WhatsApp (link wa.me) al enviar la firma remota. Queda
+// en '' (string vacío, falsy) si la OT no tiene contacto_tel cargado; el
+// técnico lo completa a mano en ese caso (ver enviarFirmaWhatsApp()).
+const VISITA_CONTACTO_TEL = {{ (visita.contacto_tel or '') | tojson }};
 // 2026-05-19 (Daniel) — VISITA_TIPO se usa para mostrar el banner
 // "esta foto va a la ficha técnica" cuando la OT es un levantamiento.
 const VISITA_TIPO = "{{ visita.tipo or '' }}";
