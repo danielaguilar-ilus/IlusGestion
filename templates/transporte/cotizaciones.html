@@ -283,8 +283,15 @@
                 <i class="bi bi-trash"></i>
               </button>
               {% endif %}
+              {# 2026-08-13 (Daniel: "que lo abra en un modal, sí, para poder
+                 imprimir, con una barra de proceso, esa que ya teníamos en
+                 transporte"): mismo patrón que el botón PDF de arriba —
+                 openPdf() con el href/target="_blank" como fallback si JS
+                 no corrió. Antes abría en pestaña nueva Y ni siquiera tenía
+                 ruta en el backend (404 real). #}
               <a class="trc-row-btn trc-row-btn-calc" href="/transporte/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
-                 title="Ver detalle de cálculo (courier, peso, margen, descuento) — solo superadmin">
+                 onclick="openPdf('/transporte/cotizaciones/{{ c.id }}/detalle-calculo', {title: 'Detalle de cálculo — {{ (c.numero or ('#' ~ c.id))|e }}'}); return false;"
+                 title="Ver detalle de cálculo (courier, peso, peso volumétrico, m³, margen, descuento) — solo superadmin">
                 <i class="bi bi-calculator-fill"></i>
               </a>
             {% endif %}

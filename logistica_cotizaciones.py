@@ -2303,12 +2303,26 @@ def register_logistica_cotizaciones(app, ctx=None):
 
         items_detalle = []
         for it in items:
-            peso_pred = max(_f(it.get("peso_kg")), _f(it.get("volumen_cm3")) / _DIVISOR_VOLUMETRICO)
+            peso_real = _f(it.get("peso_kg"))
+            volumen_cm3 = _f(it.get("volumen_cm3"))
+            peso_vol = volumen_cm3 / _DIVISOR_VOLUMETRICO
+            peso_pred = max(peso_real, peso_vol)
             share_pct = (round(it["costo_courier_prorrateo"] / cot["costo_courier"] * 100.0, 2)
                         if cot.get("costo_courier") else 0.0)
             items_detalle.append({
                 "item_id": it["id"],
                 "descripcion": it.get("descripcion") or it.get("erp_kopr"),
+                "cantidad": int(it.get("cantidad") or 1),
+                "total_bultos": int(it.get("total_bultos") or 0),
+                # 2026-08-13 (Daniel: "que me entregue un detalle más afinado
+                # de cuánto mide... el kilo, peso volumétrico, metros
+                # cúbicos"): antes solo se exponía el predominante (el que
+                # gana el prorrateo) -- se agregan los 3 valores crudos para
+                # que el detalle de cálculo pueda reemplazar la necesidad de
+                # abrir el cubicador aparte.
+                "peso_real_kg": round(peso_real, 3),
+                "peso_vol_kg": round(peso_vol, 3),
+                "volumen_m3": round(volumen_cm3 / 1_000_000, 4),
                 "peso_predominante_kg": round(peso_pred, 3),
                 "share_pct_del_flete": share_pct,
                 "formula": (
@@ -2345,6 +2359,11 @@ def register_logistica_cotizaciones(app, ctx=None):
                 "peso_vol_kg": (float(cot.get("peso_vol_kg")) if cot.get("peso_vol_kg") is not None else None),
                 "peso_facturable_kg": (float(cot.get("peso_facturable_kg"))
                                        if cot.get("peso_facturable_kg") is not None else None),
+                # volumen_m3 = peso_vol_kg convertido de vuelta: peso_vol_kg
+                # ya es volumen_cm3 / _DIVISOR_VOLUMETRICO (4000), y
+                # 1 m3 = 1.000.000 cm3 -> volumen_m3 = peso_vol_kg * 4000 / 1e6.
+                "volumen_m3": (round(float(cot.get("peso_vol_kg")) * _DIVISOR_VOLUMETRICO / 1_000_000, 4)
+                              if cot.get("peso_vol_kg") is not None else None),
                 "comuna_resuelta": cot.get("comuna_resuelta"),
             },
             "items": items_detalle,
@@ -2587,13 +2606,33 @@ def register_logistica_cotizaciones(app, ctx=None):
         @app.route("/transporte/cotizaciones/<int:cid>/detalle-calculo")
         @_tr_required
         def lc_cotizacion_detalle_calculo(cid):
-            """Desglose interno del cálculo (courier, peso, margen,
-            descuento) -- solo superadmin. Reusa la MISMA lógica que ya
-            expone GET .../api/<id>/calculo (lc_calculo) invocando esa view
-            function directamente -- mismo mecanismo de reuso que ya usa
-            _lc_invocar_comparador para no duplicar cálculo."""
+            """Desglose interno del cálculo (courier, peso, peso volumétrico,
+            volumen m³, margen, descuento) -- solo superadmin. Reusa la MISMA
+            lógica que ya expone GET .../api/<id>/calculo (lc_calculo)
+            invocando esa view function directamente -- mismo mecanismo de
+            reuso que ya usa _lc_invocar_comparador para no duplicar cálculo.
+
+            2026-08-13 (Daniel, en vivo: "necesito que repares el detalle del
+            courier... para poder suprimir el cubicador, que me entregue un
+            detalle más afinado... el kilo, peso volumétrico, metros
+            cúbicos... que lo abra en un modal, no en otra pantalla, para
+            poder imprimirlo"): esta vista NO existía con backend antes de
+            esta fecha aunque el botón ya la enlazaba (404 real en
+            producción) -- se construye la página, se enriquece con
+            peso/volumen por ítem (antes lc_calculo solo exponía el
+            predominante) y el botón en cotizaciones.html pasa de
+            target="_blank" a abrirla en el modal global de PDF (openPdf,
+            templates/_partials/pdf_modal.html) que ya trae la barra de
+            progreso con identidad ILUS que Daniel pidió reusar."""
             if not _lc_solo_superadmin():
                 return "No tienes permiso para ver el detalle de cálculo de esta cotización.", 403
+            mysql_fetchone = _h("mysql_fetchone")
+            chile_fmt = _h("chile_fmt_filter")
+            cot = mysql_fetchone(
+                "SELECT numero, empresa, rut, estado, created_at "
+                "FROM transport_cotizaciones WHERE id=%s AND COALESCE(eliminada,0)=0", (cid,))
+            if not cot:
+                return "Cotización no encontrada", 404
             view = app.view_functions.get("lc_calculo")
             if view is None:
                 return "El detalle de cálculo no está disponible en este momento.", 503
@@ -2602,47 +2641,23 @@ def register_logistica_cotizaciones(app, ctx=None):
             if not data or not data.get("ok"):
                 return "Cotización no encontrada", 404
 
-            return render_template_string(
-                """
-{% extends "base.html" %}
-{% block title %}Detalle de cálculo — Cotización #{{ cid }}{% endblock %}
-{% block content %}
-<div style="max-width:900px;margin:0 auto;">
-  <h4 style="font-weight:800;margin-bottom:2px;">Detalle de cálculo — Cotización #{{ cid }}</h4>
-  <p style="color:#6b7280;font-size:.85rem;margin-bottom:18px;">
-    Courier: <strong>{{ data.courier.courier_nombre or '—' }}</strong> ·
-    Costo flete: <strong>${{ '{:,}'.format(data.courier.costo_courier)|replace(',', '.') }}</strong>
-    {% if data.courier.comuna_resuelta %} · Comuna: {{ data.courier.comuna_resuelta }}{% endif %}
-  </p>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
-      <thead><tr>
-        <th>Ítem</th><th class="text-end">Flete prorrateado</th><th class="text-end">Margen</th>
-        <th class="text-end">Subtotal</th><th class="text-end">Desc. línea</th><th class="text-end">Total</th>
-      </tr></thead>
-      <tbody>
-        {% for it in data.items %}
-        <tr>
-          <td>{{ it.descripcion or '—' }}</td>
-          <td class="text-end">${{ '{:,}'.format(it.costo_courier_prorrateo)|replace(',', '.') }}</td>
-          <td class="text-end">{{ it.margen_pct_aplicado }}% (${{ '{:,}'.format(it.margen_monto)|replace(',', '.') }})</td>
-          <td class="text-end">${{ '{:,}'.format(it.subtotal)|replace(',', '.') }}</td>
-          <td class="text-end">{{ it.descuento_pct }}%</td>
-          <td class="text-end"><strong>${{ '{:,}'.format(it.total)|replace(',', '.') }}</strong></td>
-        </tr>
-        <tr><td colspan="6" style="color:#6b7280;font-size:.78rem;">{{ it.formula }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <div style="margin-top:14px;padding:14px;background:#f8fafc;border-radius:10px;font-size:.85rem;">
-    {{ data.header.formula }}
-  </div>
-  <p style="margin-top:18px"><a href="/transporte/cotizaciones">&larr; Volver a Cotizaciones</a></p>
-</div>
-{% endblock %}
-                """,
-                cid=cid, data=data)
+            estado_labels = {"draft": "Borrador", "sent": "Enviada", "approved": "Aprobada",
+                              "rejected": "Cancelada", "expired": "Vencida"}
+            cot = dict(cot)
+            cot["estado_label"] = estado_labels.get(cot.get("estado"), cot.get("estado") or "")
+            cot["created_at_fmt"] = (chile_fmt(cot["created_at"], "%d/%m/%Y %H:%M")
+                                     if callable(chile_fmt) and cot.get("created_at") else "")
+
+            import datetime as _dt
+            from zoneinfo import ZoneInfo
+            generado_at = _dt.datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
+
+            return render_template(
+                "transporte/cotizacion_detalle_calculo.html",
+                cot=cot, data=data,
+                divisor_volumetrico=_DIVISOR_VOLUMETRICO,
+                generado_at=generado_at,
+            )
 
         _rutas_fase2.append("<id>/pdf [GET] + <id>/ver [GET] + [GET] (lista) + "
                             "<id>/detalle-calculo [GET]")
