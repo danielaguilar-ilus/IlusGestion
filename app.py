@@ -85897,6 +85897,16 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
     # huérfana silenciosa, y se reporta en la respuesta
     # (equipos_excluidos). Un levantamiento SÍ sigue aceptando estos
     # equipos tal cual, sin cambios -- es su función.
+    # 2026-08-12 (Daniel, probando en vivo -- Instalación con cliente nuevo
+    # bloqueaba "Generar OT"): un cliente RECIÉN CREADO (tickets_module.py,
+    # rama cliente_recien_creado) no PUEDE tener ficha para sus equipos --
+    # no existía hace un segundo. Excluirlos por "sin_ficha" en ese caso
+    # dejaba la OT sin ningún equipo válido y el creador entero fallaba con
+    # EQUIPO_SIN_FICHA. `cliente_nuevo` (lev_payload) es el mismo caso que ya
+    # cubre `descubrimiento` para levantamiento -- se agrega como segunda
+    # excepción a la regla, sin tocar el caso normal (cliente YA existente
+    # con un ticket que referencia un equipo que de verdad no tiene ficha).
+    cliente_es_nuevo = bool(data.get("cliente_nuevo"))
     equipos_ticket_raw = data.get("equipos_ticket") or []
     equipos_ticket_clean = []
     equipos_excluidos_sin_ficha = []
@@ -85911,7 +85921,7 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 maquina_id_et = int(et["maquina_id"]) if et.get("maquina_id") else None
             except (TypeError, ValueError):
                 maquina_id_et = None
-            if maquina_id_et is None and tipo_ot != "levantamiento":
+            if maquina_id_et is None and tipo_ot != "levantamiento" and not cliente_es_nuevo:
                 equipos_excluidos_sin_ficha.append({
                     "nombre": nombre_et,
                     "sku": (et.get("sku") or "").strip()[:120] or None,

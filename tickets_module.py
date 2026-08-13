@@ -6778,33 +6778,85 @@ def register_tickets_routes(app, ctx):
         if cliente_id and not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cliente_id,)):
             cliente_id = None
 
+        # 2026-08-12 (Daniel, probando en vivo): crear el cliente ya NO es
+        # silencioso -- se le pregunta a quien genera la OT, con el RUT
+        # comparado CON y SIN digito verificador (formatos inconsistentes en
+        # mant_clientes) y por nombre, antes de decidir crear una ficha
+        # nueva. `forzar_crear_cliente` = confirmo crear ficha nueva;
+        # `cliente_id_confirmado` = eligio usar uno de los candidatos
+        # sugeridos. Mismo patron ya usado arriba para feriado/choque
+        # (requiere_confirmacion + reintento).
+        forzar_crear_cliente = bool(d.get("forzar_crear_cliente"))
+        try:
+            cliente_id_confirmado = int(d.get("cliente_id_confirmado")) if d.get("cliente_id_confirmado") else None
+        except (TypeError, ValueError):
+            cliente_id_confirmado = None
+        if cliente_id_confirmado and not cliente_id:
+            _cand_row = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cliente_id_confirmado,))
+            if _cand_row:
+                cliente_id = _cand_row["id"]
+
         cliente_recien_creado = False
         if not cliente_id:
             rut_ticket = (t.get("rut") or "").strip()
             rut_norm = (normalizar_rut(rut_ticket) if normalizar_rut else rut_ticket) or None
+            razon_social_ticket = (t.get("empresa") or "").strip()[:200] or f"Cliente ticket #{tid}"
             match = mysql_fetchone(
                 "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1",
                 (rut_norm,)) if rut_norm else None
             if match:
                 cliente_id = match["id"]
+            elif not forzar_crear_cliente:
+                # Sin match exacto de RUT -- antes de crear una ficha nueva
+                # se buscan candidatos por RUT SIN digito verificador y por
+                # razon social, y se pregunta (en vez de duplicar clientes
+                # en silencio). "chequear por el RUT, con y sin el codigo
+                # verificador, y el nombre... dejalo bien inteligente".
+                candidatos = []
+                vistos_ids = set()
+                rut_cuerpo_ticket = (_rut_cuerpo(rut_norm) if (_rut_cuerpo and rut_norm) else "")
+                if rut_cuerpo_ticket:
+                    rows_rut = mysql_fetchall(
+                        "SELECT id, razon_social, rut FROM mant_clientes "
+                        "WHERE rut IS NOT NULL AND rut <> '' LIMIT 1000") or []
+                    for r in rows_rut:
+                        if _rut_cuerpo(r.get("rut")) == rut_cuerpo_ticket and r["id"] not in vistos_ids:
+                            candidatos.append({"id": r["id"], "razon_social": r.get("razon_social"),
+                                                "rut": r.get("rut"), "match": "rut_sin_dv"})
+                            vistos_ids.add(r["id"])
+                if razon_social_ticket and not candidatos:
+                    rows_nom = mysql_fetchall(
+                        "SELECT id, razon_social, rut FROM mant_clientes "
+                        "WHERE razon_social LIKE %s LIMIT 5",
+                        (f"%{razon_social_ticket}%",)) or []
+                    for r in rows_nom:
+                        if r["id"] not in vistos_ids:
+                            candidatos.append({"id": r["id"], "razon_social": r.get("razon_social"),
+                                                "rut": r.get("rut"), "match": "nombre"})
+                            vistos_ids.add(r["id"])
+                return jsonify({
+                    "ok": False,
+                    "requiere_confirmacion": True,
+                    "advertencias": {
+                        "cliente_nuevo": {
+                            "razon_social_ticket": razon_social_ticket,
+                            "rut_ticket": rut_norm,
+                            "candidatos": candidatos[:5],
+                        }
+                    },
+                })
             else:
-                # ── Cliente/equipo 100% nuevo (instalacion sin ficha aun) ──
-                # mant_visitas.cliente_id es NOT NULL/FK -- no hay forma de
-                # crear la OT sin una fila en mant_clientes. Se crea una
-                # ficha MINIMA (razon_social+rut+contacto+direccion, todo
-                # tomado del propio ticket) en vez de bloquear "Generar OT".
-                # DECISION DE PRODUCTO ASUMIDA (no confirmada explicitamente
-                # por Daniel -- contrato la deja como riesgo abierto #1;
-                # ver reporte). Reversible: es solo un alta en mant_clientes,
-                # editable despues desde la ficha normal.
-                razon_social_nueva = (t.get("empresa") or "").strip()[:200] \
-                    or f"Cliente ticket #{tid}"
+                # ── Cliente/equipo 100% nuevo, confirmado por quien genera
+                #    la OT (forzar_crear_cliente=True). mant_visitas.cliente_id
+                #    es NOT NULL/FK -- se crea una ficha MINIMA
+                #    (razon_social+rut+contacto+direccion, tomado del propio
+                #    ticket), editable despues desde la ficha normal. ──
                 mysql_execute(
                     "INSERT INTO mant_clientes "
                     "(razon_social, rut, contacto_nombre, contacto_tel, contacto_email, "
                     " direccion, comuna, region, estado, created_by) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'prospecto',%s)",
-                    (razon_social_nueva, rut_norm,
+                    (razon_social_ticket, rut_norm,
                      (t.get("nombre_contacto") or "").strip()[:200] or None,
                      (t.get("phone") or "").strip()[:50] or None,
                      (t.get("email") or "").strip()[:200] or None,
@@ -6817,9 +6869,9 @@ def register_tickets_routes(app, ctx):
                 cliente_id = (_cli_new or {}).get("id")
                 cliente_recien_creado = True
                 _tk_log(tid, "otro",
-                        f"Cliente creado automaticamente en Mantenciones (ficha minima, "
-                        f"sin confirmacion explicita) para poder generar la OT: "
-                        f"«{razon_social_nueva}» (ID {cliente_id}).")
+                        f"Cliente creado en Mantenciones (ficha minima, confirmado "
+                        f"por el usuario) para poder generar la OT: "
+                        f"«{razon_social_ticket}» (ID {cliente_id}).")
         if not cliente_id:
             return jsonify({"ok": False, "error": "No fue posible resolver ni crear el cliente para la OT."}), 400
 
@@ -6983,6 +7035,7 @@ def register_tickets_routes(app, ctx):
                 "notas": notas_final,
                 "equipo_ids": equipo_ids,
                 "descubrimiento": descubrimiento,
+                "cliente_nuevo": cliente_recien_creado,
                 "equipos_ticket": equipos_ticket_payload,
                 "fecha_programada": fecha_programada,
                 "hora_inicio": hora_inicio,
