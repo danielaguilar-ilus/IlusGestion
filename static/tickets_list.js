@@ -15,8 +15,12 @@ const TK_TIPOS_SIN_CLIENTE = ['control_calidad', 'trabajo_bodega', 'capacitacion
 let _tkTimer = null;
 
 // ── Estado de la bandeja (orden / paginacion / toggle Hoy) ──
-// sort vacio = orden inteligente del backend (no-leidos primero, etc.).
-let tkSort = '';          // columna activa (whitelist backend) o ''
+// Default SIEMPRE "Actualizado" desc (Daniel, 2026-08-13: "que la tabla
+// de tickets se filtre SIEMPRE por el actualizado"). El viejo orden
+// "inteligente" (no-leidos primero, etc. -- ver _TK_ORDER_DEFAULT en
+// tickets_module.py) sigue vivo en el backend con sort='', pero ya no es
+// el default ni queda expuesto por la UI (ver tkSortClick / btnLimpiar).
+let tkSort = 'updated_at'; // columna activa (whitelist backend); default 'updated_at'
 let tkDir = 'desc';       // 'desc' | 'asc'
 let tkPage = 1;
 let tkLimit = 50;         // default 50 (selector 10/25/50/100)
@@ -73,11 +77,21 @@ function tkTheadHtml(){
       + c[0] + ' <i class="bi '+ic+'"></i></th>';
   }).join('') + '</tr>';
 }
-// Ciclo por clic: sin orden → desc → asc → sin orden (vuelve al inteligente)
+// Ciclo por clic (Daniel, 2026-08-13): "Actualizado" es el default y NUNCA
+// cae al orden inteligente -- en su propia columna el ciclo es desc → asc →
+// desc. En el resto de columnas el usuario ordena libre (desc → asc), y el
+// 3er clic vuelve a "Actualizado" desc en vez de caer al orden inteligente
+// (sort='' sigue existiendo en el backend, ver _TK_ORDER_DEFAULT, pero ya
+// no queda expuesto por la UI -- Regla #4.2: no se borro, solo dejo de ser
+// alcanzable por click).
 window.tkSortClick = function(col){
-  if(tkSort !== col){ tkSort = col; tkDir = 'desc'; }
+  if(col === 'updated_at'){
+    tkDir = (tkSort === 'updated_at' && tkDir === 'desc') ? 'asc' : 'desc';
+    tkSort = 'updated_at';
+  }
+  else if(tkSort !== col){ tkSort = col; tkDir = 'desc'; }
   else if(tkDir === 'desc'){ tkDir = 'asc'; }
-  else { tkSort = ''; tkDir = 'desc'; }
+  else { tkSort = 'updated_at'; tkDir = 'desc'; }
   tkPage = 1; cargarTickets();
 };
 
@@ -334,7 +348,7 @@ document.getElementById('btnLimpiar').addEventListener('click', function(){
   ['fTicket','fQ','fRut','fDesde','fHasta','fEstado','fTipo','fPrio','fResp']
     .forEach(function(id){ document.getElementById(id).value=''; });
   tkHoy = false; btnHoy.classList.remove('on');
-  tkSort = ''; tkDir = 'desc'; tkPage = 1;
+  tkSort = 'updated_at'; tkDir = 'desc'; tkPage = 1; // limpiar vuelve al default, no al orden inteligente
   cargarTickets();
 });
 
