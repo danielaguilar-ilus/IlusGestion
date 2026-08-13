@@ -437,6 +437,14 @@ async function cargarPlantillas(){
       return;
     }
     _plantillas = d.plantillas || [];
+    // 2026-08-12 (Daniel: "quiero buscar el selector de peso y me cuesta"):
+    // el backend YA busca bien (nombre/descripcion LIKE), pero el resultado
+    // se filtraba OTRA VEZ en cliente por la pestaña activa -- si el término
+    // buscado vivía en una pestaña distinta a la que estabas mirando, la
+    // pantalla se quedaba en 0 resultados y parecía que no había buscador.
+    // Con una búsqueda activa, se salta directo a "Todas" para no esconder
+    // coincidencias reales detrás de una pestaña que ya no aplica.
+    if (q) _tabActiva = 'todas';
     renderTabs();
     renderPlantillas();
   } catch(e){

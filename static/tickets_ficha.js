@@ -5121,7 +5121,24 @@ async function tkotGenerar(){
       if(adv.feriado) payload.forzar_feriado = true;
       if(adv.choque) payload.forzar_choque = true;
     }
-    if(!d.ok){ ilusToast(d.error || 'No se pudo generar la OT', {type:'error'}); return; }
+    if(!d.ok){
+      // 2026-08-12 (Daniel: "esto está malo... que no lea, que sepa... el
+      // plan me mete los ojos"): probó a propósito el caso de equipos sin
+      // ficha y el toast de una sola línea con el texto crudo del backend
+      // no le sirvió. El backend YA manda el detalle estructurado
+      // (equipos_excluidos: [{nombre, sku, motivo}]) -- antes se descartaba
+      // y solo se mostraba el conteo dentro de una oración. Ahora, para ESE
+      // caso puntual, se arma una tarjeta por producto (mismo lenguaje
+      // visual de las tarjetas de equipo del propio modal: ícono, nombre,
+      // SKU) en vez de una frase para leer completa. Cualquier OTRO error
+      // sigue con el toast de siempre -- no se toca ese camino.
+      if(d.error_codigo === 'EQUIPO_SIN_FICHA' && Array.isArray(d.equipos_excluidos) && d.equipos_excluidos.length){
+        await _tkotAlertEquiposSinFicha(d.equipos_excluidos);
+      } else {
+        ilusToast(d.error || 'No se pudo generar la OT', {type:'error'});
+      }
+      return;
+    }
 
     const visitaId = d.visita_id;
     const modalInst = bootstrap.Modal.getInstance(document.getElementById('modalGenerarOT'));
@@ -5164,6 +5181,35 @@ async function tkotGenerar(){
   }finally{
     btn.disabled = false; btn.innerHTML = btnHTMLOrig;
   }
+}
+
+// 2026-08-12 (Daniel: "que no lea, que sepa" -- el equipo sin ficha tiene
+// que verse, no leerse). Tarjeta por producto excluido (mismo lenguaje
+// visual que las tarjetas de equipo del modal: ícono + nombre + SKU en
+// mono) en vez de una frase de una sola línea con el conteo. Los dos
+// caminos posibles (ficha o levantamiento) quedan como 2 líneas cortas con
+// ícono, no una oración para leer completa.
+async function _tkotAlertEquiposSinFicha(lista){
+  const tarjetas = lista.map(function(eq){
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;'
+      + 'background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-bottom:6px;text-align:left">'
+      + '<i class="bi bi-box-seam" style="color:#dc2626;font-size:1.1rem;flex-shrink:0"></i>'
+      + '<div style="min-width:0"><div style="font-weight:700;color:#0f172a;overflow-wrap:anywhere">' + esc(eq.nombre || 'Producto') + '</div>'
+      + (eq.sku ? '<div style="font-size:.72rem;color:#991b1b;font-family:monospace">SKU ' + esc(eq.sku) + '</div>' : '')
+      + '</div></div>';
+  }).join('');
+  const n = lista.length;
+  const html = '<div style="margin:6px 0 12px">' + tarjetas + '</div>'
+    + '<div style="text-align:left;font-size:.85rem;line-height:1.7">'
+    + '<div>📋 <strong>Regístralo primero</strong> en la ficha del cliente, o</div>'
+    + '<div>🔍 <strong>Genera un Levantamiento por descubrimiento</strong> para conocerlo en terreno</div>'
+    + '</div>';
+  await ilusAlert({
+    title: (n === 1 ? '1 equipo no se pudo agregar' : n + ' equipos no se pudieron agregar'),
+    message: html, messageHtml: true,
+    sub: 'Fuera de un levantamiento, ILUS no crea tareas para equipos sin ficha registrada.',
+    type: 'danger', okLabel: 'Entendido',
+  });
 }
 
 // ── Tarjeta de estado en Acciones (llamada desde cargar()) ──
