@@ -86381,6 +86381,30 @@ _PLANTILLA_ESTANDAR_NOMBRE = {
     'garantia':       'Garantía estándar',
 }
 
+# 2026-08-13 — Nombres REALES (los que de verdad existen hoy en producción)
+# de las plantillas genuinamente GENÉRICAS: las que sirven para cualquier
+# equipo porque describen el PROCEDIMIENTO, no la máquina (documentar con
+# fotos, pasos de instalación, diagnóstico inicial de garantía). Se buscan
+# después de los nombres "estándar" de arriba y ANTES de rendirse.
+#
+# Es una lista explícita a propósito. El intento anterior fue deducirlo
+# ("la que tenga más ítems del mismo tipo"), y en producción eso le puso a
+# una trotadora el checklist de una grúa horquilla y después el de una
+# bicicleta. Tampoco sirve el campo `familia_activo='todas'`: medido el
+# 2026-08-13, las 76 plantillas activas lo tienen en 'todas' (nunca se
+# llenó de verdad), así que no distingue nada.
+#
+# Los tipos que NO aparecen acá (preventiva, correctiva, visita_tecnica,
+# inspeccion) hoy NO tienen ninguna plantilla genérica real: TODAS sus
+# plantillas son específicas de un tipo de máquina. Para esos, cuando el
+# equipo no resuelve por clasificación, se deja la tarea de respaldo
+# genérica -- nunca el checklist de otra máquina.
+_PLANTILLA_GENERICA_NOMBRES = {
+    'levantamiento': ['Levantamiento fotográfico estándar', 'Levantamiento de Ficha'],
+    'instalacion':   ['Instalación de equipos — Checklist completo ILUS'],
+    'garantia':      ['Garantía — diagnóstico inicial'],
+}
+
 
 def _plantilla_estandar_para_tipo(tipo_ot):
     """ID de la plantilla de checklist que corresponde a un tipo de OT, o None.
@@ -86408,16 +86432,77 @@ def _plantilla_estandar_para_tipo(tipo_ot):
         )
         if row:
             return int(row["id"])
-    row = mysql_fetchone(
-        "SELECT p.id, COUNT(i.id) AS n_items FROM mant_tarea_plantillas p "
-        "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
-        " WHERE p.tipo_visita=%s AND COALESCE(p.activa,1)=1 "
-        " GROUP BY p.id "
-        " ORDER BY COALESCE(p.es_sistema,0) DESC, n_items DESC, p.id "
-        " LIMIT 1",
-        (tipo_ot,)
-    )
-    return int(row["id"]) if row else None
+    # ── 2026-08-13 (Daniel, en vivo, dos veces el mismo día): una OT de
+    #    mantención de TROTADORA salió con el checklist "Chequeo semanal de
+    #    grúa horquilla — interno SPHS" (23 ítems) y, al filtrar eso, pasó a
+    #    salir con el de "bicicletas Recumbent".
+    #
+    #    Causa: acá había una consulta "gana la que tenga más ítems del mismo
+    #    tipo_visita", sin ningún filtro. Como en ILUS prácticamente TODAS
+    #    las plantillas son específicas de una máquina ("Mantención de
+    #    escaladoras", "Mantención · Trotadora Motorizada", "Mantención de
+    #    bicicletas - Elípticas"...), esa consulta casi siempre devolvía el
+    #    checklist de OTRO equipo. Es exactamente lo que Daniel pidió evitar
+    #    el 2026-08-12 ("no le voy a hacer una verificación a una trotadora
+    #    como a una bicicleta") y termina como dato falso en la ficha del
+    #    cliente.
+    #
+    #    Se elimina la adivinanza. Solo califica una plantilla de la lista
+    #    explícita _PLANTILLA_GENERICA_NOMBRES (las que describen un
+    #    PROCEDIMIENTO, no una máquina), y además tiene que ser de la misma
+    #    categoría administrativa -- un checklist interno de bodega jamás
+    #    debe caer en la máquina de un cliente, ni al revés.
+    #
+    #    Si no hay ninguna, devuelve None A PROPÓSITO: el caller cae a la
+    #    tarea de respaldo por equipo (_tarea_respaldo_texto) y el técnico
+    #    igual puede trabajar -- la plantilla NUNCA bloquea la OT (Daniel:
+    #    "no quiero que sea un impedimento la plantilla para poder seguir
+    #    avanzando"). Y por encima de todo esto manda SIEMPRE lo que el
+    #    usuario eligió a mano en el Paso 5 ("que las plantillas funcionen
+    #    según las que yo vaya escogiendo"), que se aplica aparte. ──
+    categoria = _categoria_admin_para_tipo(tipo_ot)
+    for nombre_gen in _PLANTILLA_GENERICA_NOMBRES.get(tipo_ot, []):
+        row = mysql_fetchone(
+            "SELECT p.id FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.nombre=%s AND COALESCE(p.activa,1)=1 "
+            "   AND (%s IS NULL OR p.categoria_admin = %s) "
+            " GROUP BY p.id LIMIT 1",
+            (nombre_gen, categoria, categoria)
+        )
+        if row:
+            return int(row["id"])
+    print(f"[plantilla_estandar] no hay plantilla GENÉRICA para tipo "
+          f"'{tipo_ot}' (categoría {categoria!r}) — se deja la tarea de "
+          f"respaldo por equipo en vez de adivinar con el checklist de "
+          f"otra máquina", flush=True)
+    return None
+
+
+def _categoria_admin_para_tipo(tipo_ot):
+    """Slug de la categoría administrativa de un tipo de OT
+    ('instalacion' | 'mantencion' | 'visitas' | 'trabajo_interno'), o None.
+
+    Misma tabla editable que ya decide en qué pestaña vive cada plantilla
+    (mant_categoria_tipo_map), con el mismo fallback al seed fijo que usa
+    _familia_plantilla_para_tipo -- de hecho esa función ahora se apoya en
+    esta para no tener dos lecturas distintas de la misma tabla.
+
+    Se usa para que una plantilla NUNCA cruce de categoría: un checklist
+    interno de bodega no puede terminar en la OT de un cliente (bug real
+    2026-08-13, ver _plantilla_estandar_para_tipo).
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return None
+    try:
+        row = mysql_fetchone(
+            "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot,))
+        if row and row.get("categoria"):
+            return row["categoria"]
+    except Exception:
+        pass
+    return _PLANT_CATEGORIA_TIPO_SEED.get(tipo_ot)
 
 
 def _familia_plantilla_para_tipo(tipo_ot):
@@ -86434,18 +86519,7 @@ def _familia_plantilla_para_tipo(tipo_ot):
     conocido (_PLANT_CATEGORIA_LABEL) -- en ese caso el caller no debe
     intentar armar un nombre de plantilla por clasificación.
     """
-    tipo_ot = (tipo_ot or "").strip().lower()
-    if not tipo_ot:
-        return None
-    categoria = None
-    try:
-        row = mysql_fetchone(
-            "SELECT categoria FROM mant_categoria_tipo_map WHERE tipo_ot=%s", (tipo_ot,))
-        categoria = row["categoria"] if row else None
-    except Exception:
-        categoria = None
-    if not categoria:
-        categoria = _PLANT_CATEGORIA_TIPO_SEED.get(tipo_ot)
+    categoria = _categoria_admin_para_tipo(tipo_ot)
     return _PLANT_CATEGORIA_LABEL.get(categoria) if categoria else None
 
 
