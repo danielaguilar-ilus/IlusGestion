@@ -1691,14 +1691,27 @@
     {# OT cerrada — botón descargar PDF · 🔒 SOLO superadmin (brecha Aaron 2026-06-02):
        los roles no-superadmin (ejecutivo/supervisor/técnico) NO deben ver la descarga. #}
     {# 2026-08-08 (Daniel): el PDF se ve en un modal, no en pestaña nueva.
-       href se conserva (clic derecho / clic central -- REGLA #4.2); acá el
-       link YA apunta al PDF real (Playwright), así que iframe y descarga
-       usan la misma URL -- consistente con ot_ficha.html/ots_list.html. #}
-    <a href="/mantenciones/api/visitas/{{ visita.id }}/pdf"
+       href se conserva (clic derecho / clic central -- REGLA #4.2).
+
+       FIX 2026-08-13 (Daniel: "pasamos a dañar la impresión de las OT,
+       quiero que funcionen como antes, ese diseño me gusta, y que la baje
+       siempre a un modal... necesito imprimirla"): el comentario anterior
+       decía ser "consistente con ot_ficha.html/ots_list.html" pero hacía lo
+       CONTRARIO -- mandaba el PDF de Playwright al iframe. Dos efectos, los
+       dos rompen imprimir:
+         1. El iframe quedaba con un PDF nativo, no HTML. El botón Imprimir
+            del modal hace iframe.contentWindow.print(), que el visor de PDF
+            del navegador bloquea -> no imprimía.
+         2. Playwright arranca Chromium en frío (~25 s medidos en Cloud Run
+            hoy) y el modal se rinde a los 15 s -> marco en blanco.
+       Ahora hace lo mismo que las otras dos pantallas: el HTML imprimible
+       (mant_ot_pdf_render, el diseño de siempre) va al iframe y SÍ imprime;
+       el PDF real de Playwright queda en el botón Descargar. #}
+    <a href="{{ url_for('mant_ot_pdf_render', vid=visita.id) }}"
        class="tx-btn-firmar" target="_blank" rel="noopener"
-       onclick="openPdf('/mantenciones/api/visitas/{{ visita.id }}/pdf', {title: 'Orden de Trabajo'}); return false;"
+       onclick="openPdf('{{ url_for('mant_ot_pdf_render', vid=visita.id) }}', {downloadUrl: '{{ url_for('mant_visita_pdf', vid=visita.id) }}', title: 'Orden de Trabajo'}); return false;"
        style="background:linear-gradient(135deg,#16a34a,#15803d);text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px">
-      <i class="bi bi-file-earmark-pdf-fill"></i> Descargar PDF de la OT
+      <i class="bi bi-file-earmark-pdf-fill"></i> Ver / imprimir PDF de la OT
     </a>
     {% else %}
     {# Roles no-superadmin: estado de solo lectura, sin botón de descarga. #}
