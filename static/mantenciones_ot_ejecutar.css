@@ -1866,104 +1866,51 @@
    Por debajo de 1200px NO CAMBIA NADA de este archivo: mobile y tablet
    siguen siendo pixel-a-pixel la maqueta aprobada el 12-08.
 
-   ≥1200px pasa a ser una disposición de DOS COLUMNAS reales (no "más
-   ancho y ya"):
-     · Header (hero cliente) y barra GPS: ancho completo arriba, sin
-       cambios de contenido.
-     · Columna PRINCIPAL (izquierda, flexible) = pestaña "Gestión de
-       tareas" (#tabPanel-tareas): el drill-down equipos → plantillas →
-       checklist → resumen. Es la que abre por defecto, así que pasa a
-       ser la protagonista del ancho disponible.
-     · Columna LATERAL (derecha, ~380px, FIJA con scroll de la página —
-       position:sticky) = pestaña "Información" (#tabPanel-info): Datos
-       de la OT, Recorrido de la OT (el pipeline de progreso), Firmas y
-       Adjuntos. En una pantalla ancha sobra espacio para tener AMBAS
-       pestañas a la vista al mismo tiempo en vez de obligar a elegir
-       una con clic — por eso los botones .tx-tabs se ocultan en
-       desktop (nada se borra: cambiarTabOT() sigue intacta en el JS,
-       mobile/tablet la siguen usando exactamente igual).
+   ≥1200px el contenido usa el ancho real de la pantalla, y NADA MÁS que
+   eso: misma navegación por pestañas de siempre, un panel a la vez.
+
+   ⚠️ HISTORIA (para no repetir el error): la primera versión de este
+   bloque, subida esta misma mañana, además partía la pantalla en dos
+   columnas fijas y escondía las pestañas con
+   `.tx-tabs{display:none !important}`, razonando que con ambos paneles
+   visibles "no había nada que elegir". Daniel lo rechazó el mismo día
+   ("no me gustó cómo quedó el menú... quería que lo dejaras como el
+   formato que teníamos manejando"): resolver la queja del contenedor NO
+   autorizaba cambiarle la navegación aprendida. Si en el futuro se
+   quiere volver a proponer las 2 columnas, que sea un pedido explícito
+   suyo — no un efecto colateral de ensanchar el contenedor.
+
    Cero HTML nuevo, cero JS tocado: mismos ids, mismo drill-down, mismos
    locks de tarea entre técnicos, mismo GPS, misma firma, mismo PDF.
    Solo cómo se ACOMODA en una pantalla ancha (REGLA #4.2).
    ════════════════════════════════════════════════════════════════════ */
 @media (min-width:1200px){
+  /* ── REVISIÓN 2026-08-13 (Daniel, el mismo día): "no me gustó cómo quedó
+     el menú... quería que lo dejaras como el formato que teníamos
+     manejando".
+
+     La primera versión de este bloque resolvía la queja del contenedor
+     angosto partiendo la pantalla en DOS COLUMNAS fijas y, de paso,
+     ESCONDÍA las pestañas (.tx-tabs{display:none}) porque con ambos
+     paneles a la vista "no había nada que elegir". Ese fue el error: le
+     cambió a Daniel la navegación que ya tenía aprendida, que no es lo
+     que había pedido.
+
+     Las dos quejas son distintas y ahora se atienden por separado:
+       · "el contenedor angosto" (pedido varias veces) → SE MANTIENE
+         resuelto: .tx-wrap usa el ancho real de la pantalla.
+       · "el menú" → SE DEVUELVE: las pestañas vuelven a verse y a mandar,
+         un panel a la vez, igual que en mobile y que antes de hoy.
+     Es decir: misma navegación de siempre, pero sin la jaula de 820px. ── */
   .tx-wrap{
     max-width:1440px;
     padding-left:24px;padding-right:24px;padding-top:16px;
-    display:grid;
-    /* La columna lateral es un % del ancho real, no un px fijo -- probado
-       en vivo: con 380px fijos, justo en el borde de 1200px la columna
-       PRINCIPAL quedaba en ~429px (peor que el celular). Con minmax()
-       porcentual la lateral se achica sola cerca del quiebre (mínimo
-       260px) y crece con la pantalla en 1440/1920 (los dos casos que
-       Daniel pidió probar), sin robarle todo el ancho a la principal. */
-    grid-template-columns:minmax(0,1fr) minmax(260px,32%);
-    grid-template-areas:
-      "hdr  hdr"
-      "gps  gps"
-      "main side";
-    column-gap:30px;
-    align-items:start;
   }
-  /* position:relative (no static): .tx-hdr sigue siendo el contenedor de
-     posicionamiento de su propio ::before (el watermark del casco, con
-     right:-26px) y de .tx-hdr-toggle -- con static puro, ambos se escapan
-     al viewport y generaban scroll horizontal fantasma (detectado en vivo
-     a 1440px: 36px de overflow). Solo se le quita el sticky. */
-  .tx-hdr{grid-area:hdr; position:relative; top:auto}
-  .tx-gps{grid-area:gps; margin-bottom:14px}
-  /* Ambas pestañas conviven a la vista — el toggle de arriba ya no hace
-     falta (no hay nada que elegir). #tabPanel-info NO tiene .active por
-     defecto (línea 208 del template): se fuerza visible igual. */
-  /* !important necesario: verificado en vivo contra OT-2026-00081 -- sin
-     esto, .tx-tabs pierde la cascada contra una regla más específica que
-     ya existe en el documento (probablemente un <style> inline del propio
-     template, que en el DOM aparece después que este archivo enlazado).
-     Mismo motivo por el que la línea de abajo ya llevaba !important. */
-  .tx-tabs{display:none !important}
-  .tx-tab-panel{display:block !important}
-  #tabPanel-tareas{grid-area:main; min-width:0}
-  #tabPanel-info{grid-area:side; min-width:0; position:sticky; top:20px}
-  #tabPanel-info::before{
-    content:'Resumen y progreso de la OT';
-    display:block;margin:0 2px 10px;
-    font-size:.68rem;font-weight:800;letter-spacing:.12em;
-    text-transform:uppercase;color:#94a3b8;
-  }
-
-  /* Recorrido de la OT: 6 pasos horizontales no entran cómodos en una
-     columna de ~380px (el ANCHO REAL de la columna es angosto aunque el
-     viewport no lo sea) — se lee mejor como línea de tiempo vertical.
-     Mismas reglas que ya usa esta pieza en mobile ≤640px (línea ~475),
-     reutilizadas aquí porque el problema es el mismo: poco ancho. */
-  #tabPanel-info .pipe-track{
-    flex-direction:column;align-items:stretch;
-    padding:10px 4px;gap:0;
-  }
-  #tabPanel-info .pipe-track::before{display:none}
-  #tabPanel-info .pipe-step{
-    flex-direction:row;align-items:flex-start;text-align:left;
-    padding:6px 4px 20px 4px;gap:14px;position:relative;
-  }
-  #tabPanel-info .pipe-step:last-child{padding-bottom:6px}
-  #tabPanel-info .pipe-step:not(:last-child)::after{
-    content:'';position:absolute;left:17px;top:42px;bottom:6px;
-    width:1px;background:#e5e7eb;border-radius:2px;z-index:0;
-  }
-  #tabPanel-info .pipe-step.done:not(:last-child)::after{
-    width:2px;left:16.5px;background:#16a34a;
-  }
-  #tabPanel-info .pipe-step + .pipe-step::before{display:none}
-  #tabPanel-info .pipe-meta{margin-top:2px;text-align:left;align-items:flex-start;gap:4px;flex:1}
-  #tabPanel-info .pipe-label{font-size:.95rem;white-space:normal;line-height:1.25}
-  #tabPanel-info .pipe-sub{font-size:.72rem;white-space:normal}
-  #tabPanel-info .pipe-time{font-size:.74rem}
-  #tabPanel-info .pipe-ago{font-size:.66rem;padding:2px 8px}
 
   /* Equipos: minmax(300px,..) medido en vivo daba solo 2 columnas incluso
-     a 1920px (columna principal ~917px, 3×300+2×10 no entraba por poco).
-     260px sigue siendo cómodo (foto+nombre+acciones) y suma la 3ª
-     columna en pantallas grandes sin tocar el valor mobile/tablet. */
+     a 1920px. 260px sigue siendo cómodo (foto+nombre+acciones) y suma la
+     3ª columna en pantallas grandes sin tocar el valor mobile/tablet.
+     Ahora el panel ocupa todo el ancho, así que rinde aún mejor. */
   .tx-eq-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
 
   /* CTA de firma (barra fija inferior): sigue fija abajo, pero ya no

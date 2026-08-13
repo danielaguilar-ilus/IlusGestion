@@ -4438,13 +4438,17 @@ function tkotRenderEquipos(){
       // directo. El backend ya sabe aplicar esta selección a un equipo sin
       // ficha (plantillas_por_ticket_equipo, app.py) -- antes se descartaba
       // en silencio aunque se hubiera podido elegir.
+      // 2026-08-13 (Daniel, en vivo: "no quiero nada automático, todo lo
+      // debe escoger el usuario y si no escoge no lo debe dejar avanzar"):
+      // ya no hay plantilla "incluida" gratis -- el botón parte en rojo
+      // pidiendo la elección (obligatoria, el backend la exige) y pasa a
+      // verde recién cuando el usuario elige algo en tkotGuardarMultiPlantilla.
       + (forzado
-          ? '<div style="font-size:.63rem;color:#16a34a;margin-bottom:3px"><i class="bi bi-check-circle me-1"></i>estándar incluida</div>'
-            + '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs btn-outline-primary w-100" '
+          ? '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs w-100 lev-pl-btn-pendiente" '
             + 'style="font-size:.72rem;padding:.25rem .4rem" '
-            + 'onclick="tkotAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Agregar plantillas extra a este equipo">'
-            + '<i class="bi bi-plus-lg me-1"></i><span id="lev-pl-count-'+esc(key)+'">0 plantillas</span></button>'
-          : '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs btn-outline-primary w-100" '
+            + 'onclick="tkotAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Elegir plantilla de checklist para este equipo (obligatorio)">'
+            + '<i class="bi bi-exclamation-circle me-1"></i><span id="lev-pl-count-'+esc(key)+'">Elegir plantilla</span></button>'
+          : '<button id="lev-pl-btn-'+esc(key)+'" class="btn btn-xs btn-outline-secondary w-100" '
             + 'style="font-size:.72rem;padding:.25rem .4rem;opacity:.4;pointer-events:none" '
             + 'onclick="tkotAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Selecciona el equipo primero">'
             + '<i class="bi bi-lock me-1"></i><span id="lev-pl-count-'+esc(key)+'">marca el equipo</span></button>')
@@ -4515,18 +4519,63 @@ function tkotRecalcEqCount(){
     const seleccionado = c.checked;
     if(seleccionado){
       plBtn.style.opacity = '1'; plBtn.style.pointerEvents = 'auto';
-      plBtn.title = 'Agregar plantillas extra a este equipo';
-      const countSpan = document.getElementById('lev-pl-count-' + key);
-      if(countSpan){
-        const n2 = (_TKOT.eqPlantillas[key] && _TKOT.eqPlantillas[key].size) || 0;
-        countSpan.textContent = n2 ? (n2 + ' plantilla' + (n2>1?'s':'') + ' extra') : '0 plantillas';
-      }
+      _tkotPintarBotonPlantilla(key);
     } else {
       plBtn.style.opacity = '.4'; plBtn.style.pointerEvents = 'none';
       plBtn.title = 'Selecciona el equipo primero';
     }
   });
   tkotRefreshStepStates();
+}
+
+// 2026-08-13 (Daniel: "si no escoge no lo debe dejar avanzar") -- estado
+// visual único del botón de plantilla por equipo: rojo mientras falta
+// elegir, verde con el conteo cuando ya eligió. Centralizado acá porque
+// lo pintan 3 lugares distintos (render inicial, recalc al marcar el
+// equipo, y al guardar la selección) y antes se desincronizaban.
+// Equipos MARCADOS que todavía no tienen plantilla elegida. Devuelve
+// [{key, nombre}]. Es la fuente única de la regla "sin plantilla no
+// avanza" (Daniel 2026-08-13): la usan el estado del Paso 5 y la
+// validación del submit, para que el punto verde y el bloqueo del botón
+// nunca se contradigan. El backend valida lo mismo por su cuenta
+// (_ot_validar_plantillas_elegidas) -- esto es solo para no hacerle
+// perder el viaje al usuario.
+function _tkotEquiposSinPlantilla(){
+  const tipo = (document.getElementById('otTipo') || {}).value || '';
+  // Levantamiento usa siempre el mismo checklist fotográfico estándar,
+  // no se elige por equipo -- mismo criterio que el backend.
+  if(tipo === 'levantamiento') return [];
+  const faltan = [];
+  document.querySelectorAll('.lev-eq-chk:checked').forEach(function(c){
+    const key = c.dataset.key;
+    const n = (_TKOT.eqPlantillas[key] && _TKOT.eqPlantillas[key].size) || 0;
+    if(n) return;
+    const fila = c.closest('tr');
+    const nombre = (fila && fila.querySelector('td:nth-child(2) strong'))
+      ? fila.querySelector('td:nth-child(2) strong').textContent.trim()
+      : ('equipo ' + key);
+    faltan.push({ key: key, nombre: nombre });
+  });
+  return faltan;
+}
+
+function _tkotPintarBotonPlantilla(key){
+  const btn = document.getElementById('lev-pl-btn-' + key);
+  const span = document.getElementById('lev-pl-count-' + key);
+  if(!btn || !span) return;
+  const n = (_TKOT.eqPlantillas[key] && _TKOT.eqPlantillas[key].size) || 0;
+  btn.classList.remove('lev-pl-btn-pendiente', 'lev-pl-btn-ok', 'btn-outline-primary', 'btn-outline-secondary');
+  if(n){
+    btn.classList.add('lev-pl-btn-ok');
+    btn.title = 'Cambiar la plantilla de checklist de este equipo';
+    btn.querySelector('i')?.setAttribute('class', 'bi bi-check-circle-fill me-1');
+    span.textContent = n + ' plantilla' + (n > 1 ? 's' : '');
+  } else {
+    btn.classList.add('lev-pl-btn-pendiente');
+    btn.title = 'Elegir plantilla de checklist para este equipo (obligatorio)';
+    btn.querySelector('i')?.setAttribute('class', 'bi bi-exclamation-circle me-1');
+    span.textContent = 'Elegir plantilla';
+  }
 }
 
 // ── Multi-plantilla por equipo (idéntico a Mantenciones, clave = _tkotEqKey) ──
@@ -4590,10 +4639,14 @@ function tkotGuardarMultiPlantilla(key){
   if(!modal) return;
   const ids = Array.from(modal.querySelectorAll('.mp-chk:checked')).map(function(c){ return parseInt(c.dataset.pid); });
   if(ids.length) _TKOT.eqPlantillas[key] = new Set(ids); else delete _TKOT.eqPlantillas[key];
-  const counter = document.getElementById('lev-pl-count-' + key);
-  if(counter) counter.textContent = ids.length ? (ids.length + ' plantilla' + (ids.length>1?'s':'') + ' extra') : '0 plantillas';
+  _tkotPintarBotonPlantilla(key);
+  tkotRefreshStepStates();
   bootstrap.Modal.getInstance(modal)?.hide();
-  ilusToast('✓ ' + ids.length + ' plantilla(s) asignada(s) al equipo', {type:'success', duration:2000});
+  if(ids.length){
+    ilusToast('✓ ' + ids.length + ' plantilla(s) asignada(s) al equipo', {type:'success', duration:2000});
+  } else {
+    ilusToast('Este equipo quedó sin plantilla — es obligatoria para crear la OT', {type:'warning'});
+  }
 }
 
 // ── Acceso y logística (idéntico a Mantenciones) ──
@@ -4755,7 +4808,10 @@ const TKOT_STEP_RULES = {
     if(tipo === 'levantamiento' && _TKOT.modo === 'descubrimiento') return true;
     // Instalación sin ficha (forzarTodosEquipos) pinta los checkbox como
     // "checked disabled" -> igual entran en este conteo, sin caso especial.
-    return document.querySelectorAll('.lev-eq-chk:checked').length > 0;
+    if(document.querySelectorAll('.lev-eq-chk:checked').length === 0) return false;
+    // 2026-08-13 (Daniel: "si no escoge no lo debe dejar avanzar"): el paso
+    // no está completo mientras haya un equipo marcado sin plantilla.
+    return _tkotEquiposSinPlantilla().length === 0;
   },
   6: function(){
     const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
@@ -5058,6 +5114,29 @@ async function tkotGenerar(){
     if(!okDesc) return;
     esDescubrimiento = true;
     tkotModoSet('descubrimiento');
+  }
+
+  // 2026-08-13 (Daniel: "no quiero nada automático, todo lo debe escoger
+  // el usuario y si no escoge no lo debe dejar avanzar"). El backend
+  // rechaza igual (_ot_validar_plantillas_elegidas), pero acá se avisa
+  // ANTES de mandar y diciendo QUÉ equipo falta, para no hacer perder el
+  // viaje ni obligar a interpretar un error del servidor.
+  const _sinPlantilla = _tkotEquiposSinPlantilla();
+  if(_sinPlantilla.length){
+    const _lista = _sinPlantilla.slice(0, 6).map(function(e){ return '• ' + esc(e.nombre); }).join('<br>');
+    const _resto = _sinPlantilla.length > 6 ? '<br>…y ' + (_sinPlantilla.length - 6) + ' más' : '';
+    await ilusAlert({
+      title: 'Falta elegir la plantilla',
+      message: 'Cada equipo necesita su plantilla de checklist antes de crear la OT.',
+      sub: 'Sin plantilla en:<br>' + _lista + _resto
+         + '<br><br>Ve al paso <strong>Equipos</strong> y usa el botón rojo <strong>Elegir plantilla</strong> de cada uno.',
+      subHtml: true,
+      type: 'warning',
+    });
+    // Deja al usuario mirando el equipo que falta.
+    const _btn = document.getElementById('lev-pl-btn-' + _sinPlantilla[0].key);
+    if(_btn) _btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
   }
 
   const fechaProg = document.getElementById('levFechaProg').value;
