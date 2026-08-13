@@ -26,15 +26,67 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# ════════════════════════════════════════════════════════════════════
+#  PLAYWRIGHT_BROWSERS_PATH — MISMA RUTA EN BUILD Y EN RUNTIME
+#  ------------------------------------------------------------------
+#  BUG REAL MEDIDO EN PRODUCCION (Cloud Run, 2026-08-12): en CADA arranque
+#  en frio los logs mostraban
+#     [playwright] Chromium no encontrado. Auto-install en /app/.pw-browsers...
+#  y se bajaban ~170MB de Chromium (20-27s) 4 veces el mismo dia.
+#
+#  CAUSA: este Dockerfile SI instalaba Chromium en el build, pero sin fijar
+#  PLAYWRIGHT_BROWSERS_PATH → iba a /root/.cache/ms-playwright. En cambio
+#  app.py (linea ~20) hace
+#     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/app/.pw-browsers")
+#  antes de importar playwright. Resultado: el binario horneado en la imagen
+#  quedaba en una ruta que el runtime NUNCA miraba → "Executable doesn't
+#  exist" → se disparaba el auto-install de runtime
+#  (_pw_install_chromium_runtime) en cada instancia nueva. Como el FS del
+#  contenedor de Cloud Run no persiste — y ademas es RAM — cada instancia
+#  volvia a descargarlo y se comia ~350MB de los 2Gi de memoria.
+#
+#  FIX: declarar la variable ANTES del install para que build y runtime
+#  apunten al mismo directorio. Se elige /app/.pw-browsers a proposito: es
+#  exactamente el default que app.py ya tiene hardcodeado, asi que si algun
+#  dia esta ENV se perdiera (deploy con --env-vars-file, override manual en
+#  la consola, etc.) el setdefault de Python cae en la MISMA carpeta donde
+#  el build dejo el binario. Una sola ruta, imposible que se desalineen.
+#
+#  ⚠️ No mover este ENV despues del install ni cambiar la ruta en un solo
+#     lado: si build y runtime se separan otra vez, vuelve el bug.
+# ════════════════════════════════════════════════════════════════════
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.pw-browsers
+
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Instalar Chromium para Playwright (el binario va a /root/.cache/ms-playwright
-# por default; lo dejamos ahí porque corremos como root en el container).
-# Si esto fallara en el build, la app sigue arrancando pero las PDFs de
-# etiquetas dan 503 amigable (ver _pw_pdf en app.py).
-RUN python -m playwright install chromium --with-deps || \
-    echo "WARNING: Chromium install failed; PDF endpoints will return 503"
+# Instalar Chromium para Playwright DENTRO de la imagen (build time), en la
+# ruta de arriba. Con esto el auto-install de runtime queda como red de
+# seguridad que en produccion NO se dispara nunca.
+#
+# Se reintenta 3 veces: una caida momentanea del CDN de Playwright no debe
+# romper un deploy, pero tampoco queremos que falle en silencio (fallar
+# callado es justo lo que produjo el bug de arriba). Si aun asi no queda,
+# el build NO se rompe: la app arranca igual y degrada como hoy
+# (auto-install en el primer PDF y, si tampoco puede, HTML imprimible /
+# 503 amigable — ver _pw_pdf y PDFEngineUnavailable en app.py).
+RUN set -eu; \
+    ok=0; \
+    for intento in 1 2 3; do \
+        if python -m playwright install --with-deps chromium; then ok=1; break; fi; \
+        echo "[build][playwright] intento $intento fallo; reintentando..."; \
+        sleep 5; \
+    done; \
+    if [ "$ok" = "1" ] && [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then \
+        echo "[build][playwright] OK Chromium horneado en $PLAYWRIGHT_BROWSERS_PATH"; \
+        ls -1 "$PLAYWRIGHT_BROWSERS_PATH" || true; \
+        du -sh "$PLAYWRIGHT_BROWSERS_PATH" || true; \
+    else \
+        echo "[build][playwright] WARNING: Chromium NO quedo en la imagen."; \
+        echo "[build][playwright] WARNING: la app arranca igual, pero cada instancia"; \
+        echo "[build][playwright] WARNING: nueva lo bajara en runtime (~25s) o degradara"; \
+        echo "[build][playwright] WARNING: a HTML imprimible. Revisar este build."; \
+    fi
 
 COPY . ./
 
