@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detalle de cálculo — {{ cot.numero }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='bootstrap-icons.css') }}">
+<style>
+  :root {
+    --ilus-red: #dc2626;
+    --ilus-black: #0a0a0a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 32px 40px;
+    background: #f4f4f5;
+    color: #18181b;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: .92rem;
+  }
+  .dc-wrap { max-width: 960px; margin: 0 auto; }
+
+  /* ── Encabezado ── */
+  .dc-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+    border-bottom: 3px solid var(--ilus-black);
+  }
+  .dc-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 900;
+    font-size: 1.05rem;
+    letter-spacing: .01em;
+    color: var(--ilus-black);
+  }
+  .dc-brand .tri { color: var(--ilus-red); font-size: .8rem; }
+  .dc-brand .dot { color: var(--ilus-red); }
+  .dc-title {
+    margin: 6px 0 2px;
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: var(--ilus-black);
+  }
+  .dc-sub { color: #71717a; font-size: .82rem; }
+  .dc-meta { text-align: right; font-size: .82rem; color: #52525b; }
+  .dc-meta .num {
+    display: inline-block;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-weight: 800;
+    font-size: .95rem;
+    color: var(--ilus-black);
+    background: #f4f4f5;
+    border: 1px solid #e4e4e7;
+    border-radius: 6px;
+    padding: 3px 10px;
+    margin-bottom: 4px;
+  }
+  .dc-badge {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 2px 10px;
+    border-radius: 99px;
+    font-size: .72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    background: #f3f4f6;
+    color: #52525b;
+  }
+  .dc-badge.st-approved { background: #dcfce7; color: #15803d; }
+  .dc-badge.st-sent     { background: #dbeafe; color: #1d4ed8; }
+  .dc-badge.st-rejected { background: #fee2e2; color: #b91c1c; }
+  .dc-badge.st-expired  { background: #fff8e1; color: #b45309; }
+
+  /* ── Franja cliente/courier ── */
+  .dc-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    background: #fff;
+    border: 1px solid #e4e4e7;
+    border-radius: 10px;
+    font-size: .84rem;
+  }
+  .dc-info div b { color: #18181b; }
+  .dc-info div span { color: #71717a; }
+
+  /* ── KPIs de peso/volumen (el motivo de este rediseño: 2026-08-13,
+     Daniel: "el kilo, peso volumétrico, metros cúbicos" -- ya no hace
+     falta abrir el cubicador aparte para ver esto) ── */
+  .dc-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .dc-kpi {
+    padding: 14px 16px;
+    background: #fff;
+    border: 1px solid #e4e4e7;
+    border-left: 4px solid var(--ilus-red);
+    border-radius: 10px;
+  }
+  .dc-kpi .lbl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: #71717a;
+    margin-bottom: 6px;
+  }
+  .dc-kpi .lbl i { color: var(--ilus-red); }
+  .dc-kpi .val {
+    font-size: 1.35rem;
+    font-weight: 900;
+    color: var(--ilus-black);
+    font-variant-numeric: tabular-nums;
+  }
+  .dc-kpi .val small { font-size: .68rem; font-weight: 700; color: #a1a1aa; }
+  .dc-kpi.is-ganador { border-left-color: #15803d; }
+  .dc-kpi.is-ganador .lbl i { color: #15803d; }
+  .dc-kpi-hint { font-size: .68rem; color: #a1a1aa; margin-top: 2px; }
+
+  /* ── Tabla de ítems ── */
+  .dc-section-title {
+    font-size: .78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: #71717a;
+    margin: 0 0 8px 2px;
+  }
+  .dc-table-wrap {
+    overflow-x: auto;
+    background: #fff;
+    border: 1px solid #e4e4e7;
+    border-radius: 10px;
+    margin-bottom: 18px;
+  }
+  table.dc-table { width: 100%; border-collapse: collapse; font-size: .82rem; white-space: nowrap; }
+  table.dc-table th {
+    text-align: left;
+    padding: 10px 12px;
+    background: #fafafa;
+    color: #52525b;
+    font-size: .68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    border-bottom: 1px solid #e4e4e7;
+  }
+  table.dc-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f4f4f5;
+    color: #27272a;
+  }
+  table.dc-table tr:last-child td { border-bottom: 0; }
+  table.dc-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.dc-table .desc { white-space: normal; min-width: 180px; font-weight: 600; }
+  table.dc-table .formula-row td {
+    padding: 0 12px 10px;
+    color: #a1a1aa;
+    font-size: .72rem;
+    white-space: normal;
+  }
+  table.dc-table .peso-cell { color: #52525b; }
+  table.dc-table .peso-cell.is-predominante { color: var(--ilus-black); font-weight: 800; }
+  table.dc-table .total-cell { font-weight: 800; color: var(--ilus-black); }
+
+  /* ── Resumen final ── */
+  .dc-summary {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .dc-summary-box {
+    width: min(360px, 100%);
+    background: var(--ilus-black);
+    color: #fff;
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .dc-summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: .82rem;
+    padding: 4px 0;
+    color: #d4d4d8;
+  }
+  .dc-summary-row b { color: #fff; font-variant-numeric: tabular-nums; }
+  .dc-summary-row.total {
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid #3f3f46;
+    font-size: 1rem;
+    font-weight: 800;
+  }
+  .dc-summary-row.total b { color: var(--ilus-red); font-size: 1.15rem; }
+  .dc-formula {
+    margin-top: 14px;
+    font-size: .72rem;
+    color: #a1a1aa;
+    line-height: 1.5;
+  }
+
+  .dc-foot-note {
+    margin-top: 22px;
+    text-align: center;
+    font-size: .7rem;
+    color: #a1a1aa;
+  }
+
+  @media (max-width: 720px) {
+    body { padding: 16px; }
+    .dc-kpis { grid-template-columns: repeat(2, 1fr); }
+    .dc-head { flex-direction: column; }
+    .dc-meta { text-align: left; }
+  }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .dc-kpi, .dc-table-wrap, .dc-info { border-color: #ddd; }
+    .dc-summary-box { background: #fff !important; color: #18181b !important; border: 2px solid var(--ilus-black); }
+    .dc-summary-row { color: #52525b !important; }
+    .dc-summary-row b { color: #18181b !important; }
+    .dc-summary-row.total b { color: var(--ilus-red) !important; }
+    .dc-formula { color: #71717a !important; }
+  }
+</style>
+</head>
+<body>
+<div class="dc-wrap">
+
+  <div class="dc-head">
+    <div>
+      <div class="dc-brand"><span class="tri">&#9650;</span>ILUS<span class="dot">.</span></div>
+      <div class="dc-title">Detalle de cálculo</div>
+      <div class="dc-sub">Desglose interno — solo superadmin. No es un documento para el cliente.</div>
+    </div>
+    <div class="dc-meta">
+      <div class="num">{{ cot.numero }}</div><br>
+      <span>{{ cot.created_at_fmt }}</span>
+      <div><span class="dc-badge st-{{ cot.estado }}">{{ cot.estado_label }}</span></div>
+    </div>
+  </div>
+
+  <div class="dc-info">
+    <div><span>Cliente:</span> <b>{{ cot.empresa or '—' }}</b></div>
+    {% if cot.rut %}<div><span>RUT:</span> <b>{{ cot.rut }}</b></div>{% endif %}
+    <div><span>Courier:</span> <b>{{ data.courier.courier_nombre or '—' }}</b></div>
+    {% if data.courier.comuna_resuelta %}<div><span>Comuna:</span> <b>{{ data.courier.comuna_resuelta }}</b></div>{% endif %}
+    <div><span>Costo flete:</span> <b>${{ '{:,}'.format(data.courier.costo_courier)|replace(',', '.') }}</b></div>
+  </div>
+
+  <div class="dc-kpis">
+    <div class="dc-kpi">
+      <div class="lbl"><i class="bi bi-box-seam"></i> Peso real</div>
+      <div class="val">{{ '%.2f'|format(data.courier.peso_kg or 0) }} <small>kg</small></div>
+    </div>
+    <div class="dc-kpi">
+      <div class="lbl"><i class="bi bi-arrows-angle-expand"></i> Peso volumétrico</div>
+      <div class="val">{{ '%.2f'|format(data.courier.peso_vol_kg or 0) }} <small>kg</small></div>
+      <div class="dc-kpi-hint">divisor {{ divisor_volumetrico|int }} cm³/kg</div>
+    </div>
+    <div class="dc-kpi is-ganador">
+      <div class="lbl"><i class="bi bi-check-circle-fill"></i> Peso facturable</div>
+      <div class="val">{{ '%.2f'|format(data.courier.peso_facturable_kg or 0) }} <small>kg</small></div>
+      <div class="dc-kpi-hint">el mayor entre real y volumétrico — el que cobra el courier</div>
+    </div>
+    <div class="dc-kpi">
+      <div class="lbl"><i class="bi bi-boxes"></i> Volumen</div>
+      <div class="val">{{ '%.3f'|format(data.courier.volumen_m3 or 0) }} <small>m³</small></div>
+    </div>
+  </div>
+
+  {# OJO: data['items'] con corchetes, NUNCA data.items -- Jinja resuelve
+     el "." como getattr() primero, y un dict de Python YA TIENE un método
+     .items() propio que le gana al key "items" del dict (bug real
+     encontrado 2026-08-13 al verificar este mismo template: TypeError
+     "object of type 'builtin_function_or_method' has no len()"). Mismo
+     riesgo con keys "keys"/"values"/"get"/"update"/"pop". #}
+  <div class="dc-section-title">Ítems cotizados ({{ data['items']|length }})</div>
+  <div class="dc-table-wrap">
+    <table class="dc-table">
+      <thead>
+        <tr>
+          <th>Ítem</th>
+          <th class="num">Bultos</th>
+          <th class="num">Peso real</th>
+          <th class="num">Peso vol.</th>
+          <th class="num">Volumen</th>
+          <th class="num">Flete prorrateado</th>
+          <th class="num">Margen</th>
+          <th class="num">Desc.</th>
+          <th class="num">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in data['items'] %}
+        <tr>
+          <td class="desc">{{ it.descripcion or '—' }}{% if it.cantidad and it.cantidad != 1 %} <span style="color:#a1a1aa;font-weight:400;">×{{ it.cantidad }}</span>{% endif %}</td>
+          <td class="num">{{ it.total_bultos or '—' }}</td>
+          <td class="num peso-cell {{ 'is-predominante' if it.peso_real_kg >= it.peso_vol_kg else '' }}">{{ '%.2f'|format(it.peso_real_kg) }} kg</td>
+          <td class="num peso-cell {{ 'is-predominante' if it.peso_vol_kg > it.peso_real_kg else '' }}">{{ '%.2f'|format(it.peso_vol_kg) }} kg</td>
+          <td class="num">{{ '%.3f'|format(it.volumen_m3) }} m³</td>
+          <td class="num">${{ '{:,}'.format(it.costo_courier_prorrateo)|replace(',', '.') }}</td>
+          <td class="num">{{ it.margen_pct_aplicado }}%</td>
+          <td class="num">{{ it.descuento_pct }}%</td>
+          <td class="num total-cell">${{ '{:,}'.format(it.total)|replace(',', '.') }}</td>
+        </tr>
+        <tr class="formula-row"><td colspan="9">{{ it.formula }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="dc-summary">
+    <div class="dc-summary-box">
+      <div class="dc-summary-row"><span>Suma de ítems</span> <b>${{ '{:,}'.format(data.header.subtotal_items)|replace(',', '.') }}</b></div>
+      <div class="dc-summary-row"><span>Descuento global ({{ data.header.descuento_pct }}%)</span> <b>− ${{ '{:,}'.format(data.header.descuento_monto)|replace(',', '.') }}</b></div>
+      <div class="dc-summary-row"><span>Subtotal</span> <b>${{ '{:,}'.format(data.header.subtotal)|replace(',', '.') }}</b></div>
+      <div class="dc-summary-row"><span>IVA ({{ data.header.iva_pct }}%)</span> <b>${{ '{:,}'.format(data.header.iva_monto)|replace(',', '.') }}</b></div>
+      <div class="dc-summary-row total"><span>Total</span> <b>${{ '{:,}'.format(data.header.total)|replace(',', '.') }}</b></div>
+      <div class="dc-formula">{{ data.header.formula }}</div>
+    </div>
+  </div>
+
+  <div class="dc-foot-note">ILUS Fitness · Detalle de cálculo generado el {{ generado_at }}</div>
+
+</div>
+</body>
+</html>
