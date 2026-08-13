@@ -3190,6 +3190,15 @@ function _updateProgress(mid, pid){
   // 2026-08-13 (maqueta Fable): refrescar la barra segmentada de la tarjeta
   // del equipo en la vista 1 para que refleje el avance recién guardado.
   _eqBarRender(mid);
+  // 2026-08-13 (rediseño premium, fix de verificación adversarial): el
+  // stepper de etapas observa la clase 'done' de .tx-eq-card vía
+  // MutationObserver, pero nada la tocaba en runtime -- solo el render
+  // server-side de Jinja la fijaba al cargar la página, así que la etapa
+  // "Equipos" se quedaba en rojo aunque el técnico terminara el último
+  // checklist obligatorio del último equipo. Este toggle es lo único que
+  // faltaba: el observer ya estaba listo para reaccionar a este cambio.
+  document.getElementById('tx-eq-card-' + mid)
+    ?.classList.toggle('done', STATS_POR_MAQUINA[mid].bloqueada);
 
   // Update stats globales
   // 2026-05-18 (Mejora UX firma): además de total/completas globales, sacamos

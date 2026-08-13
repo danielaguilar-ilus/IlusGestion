@@ -1926,13 +1926,15 @@
    necesito al técnico enamorado de gestionar la OT, tecnología 2026").
    Va AL FINAL del archivo a propósito, mismo criterio que el bloque
    MAQUETA FABLE de arriba: gana la cascada sin tocar selectores que el
-   JS ya usa. Valores (hex, radios, sombras, easing) copiados TAL CUAL
-   de static/retiros_public_request.css — el rojo usado ahí es #dc2626
-   (var(--red-500) en ese archivo), el mismo que ya domina todo este
-   archivo y el canónico de CLAUDE.md REGLA #2 — se evita introducir un
-   tercer rojo (retiros también define un --ilus-red:#e60000 heredado
-   de la marca del hero de esa página, que NO es el que se usa en sus
-   propios componentes step-circle/shadows).
+   JS ya usa. Radios/sombras/easing copiados de static/retiros_public_
+   request.css. El ROJO es la excepción deliberada, no un descuido:
+   retiros_public_request.css usa --ilus-red:#e60000 en el relleno real
+   de .step-circle/.form-head (confirmado con grep, no de memoria). Acá
+   se usa #dc2626 en su lugar a propósito -- es el rojo canónico de
+   CLAUDE.md REGLA #2 y el que YA domina el resto de este archivo (todos
+   los botones/badges/acentos existentes de Ejecutar OT); introducir
+   #e60000 solo para el stepper habría dejado dos rojos "ILUS" distintos
+   conviviendo en la misma pantalla.
    Prefijo tx- para los tokens nuevos (mismo prefijo que domina el
    archivo) — únicos existentes hoy eran --tx-mono y --pct, sin choque.
    ════════════════════════════════════════════════════════════════════ */
@@ -2049,10 +2051,14 @@
 .tx-channel-txt strong{display:block;font-size:.8rem;font-weight:800;letter-spacing:-.01em}
 .tx-channel-txt small{display:block;font-size:.63rem;color:#9ca3af;margin-top:2px;line-height:1.25}
 .tx-sign-hub-both{
+  /* min-height 44px (Regla #3, Apple HIG): este botón dispara una acción real
+     de firma remota igual que .tx-btn-firmar (min-height 44/48px) -- no debe
+     tener un área táctil menor solo porque su estilo es "ghost". Un técnico
+     en terreno, a veces con guantes o apurado, necesita el mismo estándar. */
   width:100%;margin-top:10px;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.25);
-  color:#e5e7eb;border-radius:var(--tx-r-sm);padding:10px;font-size:.76rem;font-weight:700;
+  color:#e5e7eb;border-radius:var(--tx-r-sm);padding:12px 10px;font-size:.76rem;font-weight:700;
   display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
-  transition:background .15s,border-color .15s;position:relative;z-index:1;min-height:40px;
+  transition:background .15s,border-color .15s;position:relative;z-index:1;min-height:44px;
 }
 .tx-sign-hub-both:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.4)}
 .tx-sign-hub-both:active{transform:scale(.97)}
@@ -2079,7 +2085,6 @@
 .tx-eq-card:nth-child(4){animation-delay:.11s}
 .tx-eq-card:nth-child(5){animation-delay:.14s}
 .tx-eq-card:nth-child(n+6){animation-delay:.16s}
-.tx-eq-card:active{transform:scale(.98)}
 .tx-channel-card,.tx-sign-hub-both,.tx-stage-circle{will-change:transform}
 
 /* Accesibilidad — TODA animación nueva de este bloque respeta
@@ -2089,6 +2094,6 @@
 @media (prefers-reduced-motion:reduce){
   .tx-stage-stepper,.tx-sign-hub,.info-card,.tx-eq-card{animation:none}
   .tx-stage.is-complete .tx-stage-circle::after{animation:none}
-  .tx-stage-circle,.tx-channel-card,.tx-sign-hub-both,.tx-eq-card{transition:none}
+  .tx-stage-circle,.tx-channel-card,.tx-sign-hub-both,.tx-eq-card,.tx-stage-line,.tx-channel-ico{transition:none}
   .tx-channel-card:hover,.tx-channel-card:active,.tx-eq-card:active,.tx-sign-hub-both:active{transform:none}
 }
