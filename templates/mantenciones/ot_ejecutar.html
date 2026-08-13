@@ -29,29 +29,42 @@
     {% endfor %}
   {% endfor %}
 
-  {# ─── HEADER STICKY con branding ILUS (compacto + colapsable) ─── #}
+  {# ─── HEADER STICKY con branding ILUS (compacto + colapsable) ───
+     2026-08-13 v3 (maqueta Fable aprobada el 12-08 — "portada de la OT"):
+     el CLIENTE pasa a ser el héroe (h2 grande con kicker rojo del tipo de
+     OT), el número de OT baja a chip monoespaciado en la fila superior,
+     fecha/hora/contacto se leen como fila de métricas con divisores
+     (heromtr de la maqueta) y el contacto accionable queda como franja de
+     botones parejos (Llamar · WhatsApp · Correo · Ruta), igual que la
+     franja "contact" de la maqueta. NINGÚN dato ni acción se elimina:
+     mismo toggle de colapso, mismo anillo de avance (ids intactos,
+     _hdrSyncProgress no se toca), mismos tel:/wa.me/mailto: y el mismo
+     btnRuta/abrirModalRuta() con su estado "iniciada". #}
   <div class="tx-hdr" id="txHdr">
     {# Toggle expand/collapse — solo móvil, escondido en desktop #}
     <button type="button" class="tx-hdr-toggle d-md-none" id="txHdrToggle"
             onclick="toggleHdrCollapse()" title="Colapsar / expandir info">
       <i class="bi bi-chevron-up" id="txHdrToggleIcon"></i>
     </button>
-    <div class="tx-hdr-brand">
-      <span class="ilus-mark"></span>
-      ILUS · OT
+    {# Orden verificado en preview móvil 390px: brand + estado a la
+       izquierda, chip OT a la derecha — si no cabe, el chip baja solo. #}
+    <div class="tx-hdr-top">
+      <div class="tx-hdr-brand">
+        <span class="ilus-mark"></span>
+        ILUS · OT
+      </div>
+      <span class="badge-est{% if visita.estado in ('en_curso','en_ejecucion') %} badge-est-vivo{% endif %}">{{ visita.estado|upper }}</span>
+      <span class="tx-hdr-sp"></span>
+      <span class="tx-hdr-otchip">{{ visita.numero_ot or ('OT #' ~ visita.id) }}</span>
     </div>
-    {# 2026-08-09 v2 (Daniel: el primer intento "quedó igual" -- pedía algo
-       potente, no un agregado chico): rediseño real del bloque identidad.
-       El número de OT pasa a ser el elemento dominante (antes competía en
-       tamaño con todo el resto) y el avance se muestra como anillo radial
-       a la derecha en vez de una barra fina que dejaba todo ese lado de la
-       tarjeta vacío. hdrSyncProgress() (JS) sigue usando los MISMOS
-       números que el candado de "Firmar OT" (_calcCtxGlobal) -- nunca un
-       cálculo paralelo que se pueda desincronizar. #}
     <div class="tx-hdr-toprow">
       <div class="tx-hdr-id">
-        <h2><i class="bi bi-clipboard2-pulse"></i>{{ visita.numero_ot or ('OT #' ~ visita.id) }}</h2>
-        <span class="badge-est{% if visita.estado in ('en_curso','en_ejecucion') %} badge-est-vivo{% endif %}">{{ visita.estado|upper }}</span>
+        <span class="tx-hdr-tipo">{{ visita.tipo | tipo_ot_label }}</span>
+        <h2>{{ visita.razon_social or 'Trabajo interno' }}</h2>
+        {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
+        {% if dir_visita %}
+        <div class="tx-hdr-dir"><i class="bi bi-geo-alt-fill"></i><span>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</span></div>
+        {% endif %}
       </div>
       <div class="tx-hdr-progress" id="hdrProgressWrap" style="display:none">
         <div class="tx-hdr-ring" id="hdrProgressRing" style="--pct:0">
@@ -60,64 +73,61 @@
         <span class="tx-hdr-progress-lbl" id="hdrProgressLbl">Avance</span>
       </div>
     </div>
-    <div class="tx-hdr-rule"></div>
-    <div class="meta">
-      <div class="tx-hdr-cliente"><i class="bi bi-building"></i>{{ visita.razon_social or 'Trabajo interno' }}</div>
-      <div class="tx-hdr-extra">
-        {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
-        <div class="tx-hdr-chips">
-          {% if dir_visita %}
-          <span class="tx-hdr-chip"><i class="bi bi-geo-alt-fill"></i>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</span>
-          {% endif %}
-          {% if visita.fecha_programada %}
-          <span class="tx-hdr-chip"><i class="bi bi-calendar3"></i>{{ visita.fecha_programada }}{% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}</span>
-          {% endif %}
-        </div>
-      </div>
-    </div>
 
-    {# ─── Contacto en sitio (contraparte) — compacto ─── #}
     <div class="tx-hdr-extra">
-    {% if visita.contacto_nombre %}
-    <div class="contraparte-card">
-      <div class="contraparte-id">
-        <div class="contraparte-titulo">
-          <i class="bi bi-person-vcard"></i> Recibe en sitio
+      {# Fila de métricas estilo maqueta: hora agendada · fecha · contacto.
+         Mismos datos que antes mostraban los chips y la contraparte-card,
+         solo cambia la piel. fecha con chile_fmt (REGLA #6). #}
+      <div class="tx-hdr-mtr">
+        <div class="hm">
+          {# [:5] corta los segundos: '13:00:00' → '13:00' (dato mono estilo maqueta) #}
+          <span class="v">{{ (visita.hora_inicio|string)[:5] if visita.hora_inicio else '—' }}</span>
+          <span class="k">Agendada</span>
         </div>
-        <div class="contraparte-nombre">
-          {{ visita.contacto_nombre }}{% if visita.contacto_cargo %} <small style="opacity:.85;font-weight:500">— {{ visita.contacto_cargo }}</small>{% endif %}
+        <div class="hm">
+          <span class="v">{{ visita.fecha_programada | chile_fmt('%d/%m') if visita.fecha_programada else '—' }}</span>
+          <span class="k">Fecha</span>
+        </div>
+        <div class="hm">
+          <span class="v hm-txt">{{ visita.contacto_nombre or '—' }}</span>
+          {# Con cargo, el label corto "Recibe · <cargo>" cabe en la celda
+             (probado a 390px); sin cargo, el clásico "Recibe en sitio". #}
+          <span class="k">{% if visita.contacto_cargo %}Recibe · {{ visita.contacto_cargo }}{% else %}Recibe en sitio{% endif %}</span>
         </div>
       </div>
-      {% if visita.contacto_tel or visita.contacto_email %}
-      <div class="contraparte-actions">
+
+      {# ─── Franja de contacto (maqueta: Llamar · WhatsApp · Correo · Ruta)
+         Mismas acciones de siempre — tel:, wa.me, mailto: y el botón de
+         ruta con abrirModalRuta() + estado iniciada. FIX 2026-08-11 se
+         conserva: sin cliente (Trabajo interno) o en estado terminal no
+         hay botón Ruta. #}
+      {% set _hay_ruta = visita.cliente_id and visita.estado not in ['cerrada','cancelada','anulada','firmada_tecnico','pendiente_aprobacion'] %}
+      {% if visita.contacto_tel or visita.contacto_email or _hay_ruta %}
+      <div class="tx-contact">
         {% if visita.contacto_tel %}
-        <a href="tel:{{ visita.contacto_tel }}" class="btn-ruta" style="background:#dcfce7;color:#15803d;border-color:#16a34a">
-          <i class="bi bi-telephone-fill"></i> Llamar
+        <a href="tel:{{ visita.contacto_tel }}" class="cbtn call">
+          <i class="bi bi-telephone-fill"></i><span>Llamar</span>
         </a>
-        <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}" target="_blank" class="btn-ruta" style="background:#25d366;color:#fff;border-color:#25d366">
-          <i class="bi bi-whatsapp"></i> WhatsApp
+        <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}" target="_blank" class="cbtn wa">
+          <i class="bi bi-whatsapp"></i><span>WhatsApp</span>
         </a>
         {% endif %}
         {% if visita.contacto_email %}
-        <a href="mailto:{{ visita.contacto_email }}" class="btn-ruta" style="background:#dbeafe;color:#1e40af;border-color:#3b82f6">
-          <i class="bi bi-envelope-fill"></i>
+        <a href="mailto:{{ visita.contacto_email }}" class="cbtn mail">
+          <i class="bi bi-envelope-fill"></i><span>Correo</span>
         </a>
+        {% endif %}
+        {% if _hay_ruta %}
+        <button class="cbtn ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
+          {% if visita.ruta_iniciada_at %}
+          <i class="bi bi-check-circle-fill"></i><span>Ruta · {{ (visita.ruta_app or '')|upper }}</span>
+          {% else %}
+          <i class="bi bi-signpost-split-fill"></i><span>Ruta</span>
+          {% endif %}
+        </button>
         {% endif %}
       </div>
       {% endif %}
-    </div>
-    {% endif %}
-    {# FIX 2026-08-11: "Iniciar ruta al cliente" no tiene sentido en una OT
-       de Trabajo interno (sin cliente ni dirección de visita real). #}
-    {% if visita.cliente_id and visita.estado not in ['cerrada','cancelada','anulada','firmada_tecnico','pendiente_aprobacion'] %}
-    <button class="btn-ruta {% if visita.ruta_iniciada_at %}iniciada{% endif %}" id="btnRuta" onclick="abrirModalRuta()">
-      {% if visita.ruta_iniciada_at %}
-      <i class="bi bi-check-circle-fill"></i> Ruta · {{ (visita.ruta_app or '')|upper }}
-      {% else %}
-      <i class="bi bi-signpost-split-fill"></i> Iniciar ruta al cliente
-      {% endif %}
-    </button>
-    {% endif %}
     </div> {# /tx-hdr-extra #}
   </div>
 
@@ -957,7 +967,12 @@
       </div>
     </div>
 
-    <div class="tx-section-title"><i class="bi bi-boxes"></i>Selecciona una máquina</div>
+    {# 2026-08-13 (maqueta Fable): la sección se titula como la portada de
+       la maqueta — label "Equipos" + conteo mono. Mismo rol que el viejo
+       "Selecciona una máquina" (nada desaparece, cambia la piel). #}
+    <div class="tx-section-title"><i class="bi bi-boxes"></i>Equipos
+      <span class="tx-section-n">{{ equipos|length }} asignado{{ '' if equipos|length == 1 else 's' }}</span>
+    </div>
 
     {% if not equipos %}
     {% if visita.levantamiento_id and visita.estado in ('creada','programada','asignada','en_curso','en_ejecucion','reagendada') %}
@@ -1524,7 +1539,11 @@
             {% endif %}
           </span>
         </div>
-        <div class="eq-prog-wrap"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
+        {# 2026-08-13 (maqueta Fable): id para que _eqBarRender() (JS) la
+           convierta en barra SEGMENTADA (1 segmento = 1 tarea con su color
+           semáforo real). La barra continua queda como fallback server-side
+           hasta que corra el JS. #}
+        <div class="eq-prog-wrap" id="eqbar-{{ eq.id }}"><div class="eq-prog-bar" style="width:{{ stats.progreso or 0 }}%"></div></div>
       </div>
       <div class="eq-actions" onclick="event.stopPropagation()">
         <button type="button" class="eq-action-btn"
