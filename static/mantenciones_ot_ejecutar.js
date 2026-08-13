@@ -1471,13 +1471,17 @@ async function abrirModalFichaTecnica(mid){
   if (!modalEl){ ilusToast('Modal no disponible', { type: 'error' }); return; }
   const body = document.getElementById('modalFichaBody');
   const linkFull = document.getElementById('modalFichaAbrirFull');
-  body.innerHTML = `<div class="text-center text-muted py-5">
-      <div class="spinner-border" role="status" style="color:#dc2626"></div>
-      <div class="mt-2 small">Cargando ficha técnica…</div>
-    </div>`;
+  body.innerHTML = '';
   if (linkFull) linkFull.href = '/mantenciones/maquinas/' + mid;
   const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
   modal.show();
+  // 2026-08-13 (Daniel: "quería cambiar el detalle de cómo se ve la
+  // carga", señalando el loader de marca -- ILUS + anillo rojo -- que ya
+  // usan Catálogo/Tickets/Cubicador/Transporte): esta ficha usaba un
+  // spinner-border genérico de Bootstrap dentro del modal. ilusLoader
+  // (ilus_ui.js) es z-index:100001, por encima de CUALQUIER modal
+  // Bootstrap (~1055) -- se ve por encima, no hace falta tocar el modal.
+  if (window.ilusLoader) { try { ilusLoader.show('Cargando ficha técnica…'); } catch(e){} }
   try {
     // 1) Carga ficha técnica (datos del equipo)
     const r = await fetch('/mantenciones/api/maquinas/' + mid + '/ficha-tecnica', {
@@ -1510,6 +1514,8 @@ async function abrirModalFichaTecnica(mid){
     body.innerHTML = `<div class="alert alert-danger" style="margin:0">
       <i class="bi bi-x-circle me-2"></i>Error de conexión al cargar la ficha técnica.
     </div>`;
+  } finally {
+    if (window.ilusLoader) { try { ilusLoader.hide(); } catch(e){} }
   }
 }
 
