@@ -2402,8 +2402,8 @@ const _TKOT = {
   eqPlantillas: {},         // { claveEquipo: Set<plantillaId> }
   contactos: { lista: [], cargados: false },
   adjuntos: [],
-  cal: { anio: null, mes: null, cache: {}, error: {}, diaSel: null }, // calendario del mes (Paso 3 · col A)
-  // Línea de tiempo del día (Paso 3 · col B). `fecha` = día que se está
+  cal: { anio: null, mes: null, cache: {}, error: {}, diaSel: null }, // calendario del mes (Paso 4 · col A)
+  // Línea de tiempo del día (Paso 4 · col B). `fecha` = día que se está
   // mirando (normalmente == #levFechaProg; puede diferir si se usan las
   // flechas ‹ › para recorrer un rango multi-día). `choqueKeys` = claves de
   // las visitas que tkotChequearChoque() marcó en conflicto, para pintarlas
@@ -2903,7 +2903,7 @@ function tkotRangoChange(){
 
 // ════════════════════════════════════════════════════════════
 // Chips de duración (2026-07-19): [1 día][2 días][3 días][5 días][Otro…]
-// junto al Paso 3 "Agenda". Un tap = extender la OT a N días sin tocar el
+// junto al Paso 4 "Agenda". Un tap = extender la OT a N días sin tocar el
 // toggle "¿Se extenderá más de un día?" a mano. Regla única de sincronía:
 // mientras exista un rango válido, la duración SIEMPRE viaja con la fecha
 // de inicio (venga de chip o de "Otro…") -- sin flag de modo aparte (P2).
@@ -3578,9 +3578,9 @@ function tkdayRenderMine(){
   let _durTxt = '';
   if(_dmin > 0){ const _h = Math.floor(_dmin/60), _m = _dmin % 60;
     _durTxt = (_h ? _h + ' h' : '') + (_h && _m ? ' ' : '') + (_m ? _m + ' min' : ''); }
-  // 0 técnicos: guía neutra (se asignan en el Paso 4), no un "0" alarmante.
+  // 0 técnicos: guía neutra (se asignan en el Paso 3), no un "0" alarmante.
   const _tecPend = nTec === 0;
-  const _tecTxt = _tecPend ? 'Asigna técnico en el paso 4' : (nTec + (nTec === 1 ? ' técnico' : ' técnicos'));
+  const _tecTxt = _tecPend ? 'Asigna técnico en el paso 3' : (nTec + (nTec === 1 ? ' técnico' : ' técnicos'));
   const _tecIco = _tecPend ? 'bi-person-plus' : 'bi-person-check-fill';
   const _durLine = _durTxt ? '<div class="mine-dur"><i class="bi bi-clock-history"></i>' + esc(_durTxt) + '</div>' : '';
   const _tecLine = '<div class="mine-tec' + (_tecPend ? ' pendiente' : '') + '"><i class="bi ' + _tecIco + '"></i>' + esc(_tecTxt) + '</div>';
@@ -4741,11 +4741,15 @@ const TKOT_STEP_RULES = {
     const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
     return !!(val('levSelectTitulo') && val('levDireccion') && val('levContactoNombre'));
   },
-  3: function(){
+  // 2026-08-13: Paso 3 y 4 se invirtieron en el HTML (Técnicos ahora va
+  // primero -- ver comentario en _modal_generar_ot.html). Estas reglas
+  // deben seguir la misma numeración que el id del card (tkotStep3/4), no
+  // el campo que validaban antes.
+  3: function(){ return _TKOT.tecnicosSel.size > 0; },
+  4: function(){
     const e = document.getElementById('levFechaProg');
     return !!(e && e.value);
   },
-  4: function(){ return _TKOT.tecnicosSel.size > 0; },
   5: function(){
     const tipo = (document.getElementById('otTipo') || {}).value || '';
     if(tipo === 'levantamiento' && _TKOT.modo === 'descubrimiento') return true;
@@ -5426,7 +5430,7 @@ function renderCotizaciones(cots){
 // cargar() solo pintaría "No se pudo cargar el ticket" sobre elementos
 // del hero/composer que ni siquiera existen en esta página. El modal
 // #modalGenerarOT no depende de ninguna de las dos llamadas (los técnicos
-// del Paso 4 salen de GET /mantenciones/api/tecnicos, disparado por su
+// del Paso 3 salen de GET /mantenciones/api/tecnicos, disparado por su
 // propio listener show.bs.modal).
 if (TID !== null){
   cargarEjecutivos();

@@ -86661,6 +86661,43 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 maquina_id_et = int(et["maquina_id"]) if et.get("maquina_id") else None
             except (TypeError, ValueError):
                 maquina_id_et = None
+            # 2026-08-13 (Daniel, en vivo -- "la instalación también podría
+            # tomar el rol de alimentar la ficha, si es la primera vez que
+            # se está instalando"): un equipo del ticket SIN maquina_id en
+            # una OT de Instalación es, por definición del tipo, equipo
+            # NUEVO llegando por primera vez -- no importa si el CLIENTE es
+            # nuevo o ya existía (a diferencia de `cliente_es_nuevo` más
+            # abajo, que solo cubre el caso de cliente recién creado). Se
+            # da de alta en mant_maquinas de una vez, con trazabilidad real
+            # (mant_logs) -- la OT de instalación ES el evento que registra
+            # el equipo, no una tarea huérfana aparte. Si el alta falla
+            # (error de BD), se sigue de largo: cae al mismo camino que ya
+            # existía antes (excluido / cliente_es_nuevo), sin romper nada.
+            if maquina_id_et is None and tipo_ot == "instalacion":
+                try:
+                    mysql_execute(
+                        "INSERT INTO mant_maquinas "
+                        "(cliente_id, sku, nombre, serie, cantidad, estado, created_by) "
+                        "VALUES (%s,%s,%s,%s,1,'activo',%s)",
+                        (cid, (et.get("sku") or "").strip()[:100] or None, nombre_et,
+                         (et.get("serie") or "").strip()[:100] or None,
+                         current_username() or "sistema")
+                    )
+                    _maq_nueva = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
+                    maquina_id_et = (_maq_nueva or {}).get("id")
+                except Exception as _e_maq_alta:
+                    print(f"[lev_crear] alta automática de máquina falló para "
+                          f"'{nombre_et}' (instalación): {_e_maq_alta}", flush=True)
+                    maquina_id_et = None
+                if maquina_id_et:
+                    equipo_ids.append(maquina_id_et)
+                    _mant_log(
+                        "maquina", maquina_id_et, "creada_por_instalacion",
+                        f"Alta automática por OT de instalación"
+                        f"{f' (ticket #{ticket_id})' if ticket_id else ''}: "
+                        f"equipo declarado en el ticket, sin ficha previa."
+                    )
+                    continue
             if maquina_id_et is None and tipo_ot != "levantamiento" and not cliente_es_nuevo:
                 equipos_excluidos_sin_ficha.append({
                     "nombre": nombre_et,
