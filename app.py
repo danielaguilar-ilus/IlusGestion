@@ -20576,6 +20576,11 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
     # Cloud Run). Mismo patrón que ya usa Retiros para su link de seguimiento.
     # Crítico ahora que el estado lo va a actualizar un poller en background.
     track_url = f"{_public_base_url()}/t/{tok}"
+    # 2026-08-13 (Daniel + auditoría de ChatGPT: "no quiero que solicites el
+    # RUT"): además del link directo, se incluye el código corto como
+    # respaldo por si el cliente no tiene el correo a mano y quiere volver
+    # a /seguimiento a escribirlo manualmente.
+    tracking_code = _tr_ensure_tracking_code(commitment_id) or ""
     # FIX 2026-07-26 (Daniel: "el número de seguimiento debería ser 22703" +
     # "para que no nos pisemos con las facturas que vienen con el mismo
     # correlativo"): tido-nudo (mismo patrón de simpliroute_client.py
@@ -20700,6 +20705,7 @@ def _tr_notificar_cliente(commitment_id, estado, comentario=None, forzar=False):
                                  ("Courier", courier_real),
                                  ("Dirección de entrega", direccion_real) if direccion_real else None,
                                  ("Entrega estimada", fecha_entrega_real) if fecha_entrega_real else None,
+                                 ("Código de seguimiento ILUS", tracking_code) if tracking_code else None,
                              ] if r]),
         "primary_cta_url":   track_url,
         "primary_cta_label": cta_label,
@@ -20760,6 +20766,64 @@ def _tr_ensure_public_token(commitment_id):
         return None
     except Exception as _tok_err:
         print(f"[tr_token] no se pudo generar token: {_tok_err}", flush=True)
+        return None
+
+
+# Alfabeto sin caracteres ambiguos al dictarlo/tipearlo a mano (sin 0/O,
+# 1/I/L). 32 símbolos → 8 caracteres random ≈ 32^8 ≈ 1.1 billones de
+# combinaciones, protegido además por rate-limit en /seguimiento.
+_TR_TRACKING_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+
+
+def _tr_generar_tracking_code() -> str:
+    """Genera un código tipo 'ILUS-7K9M-42QF' (8 chars random en 2 bloques)."""
+    chars = "".join(secrets.choice(_TR_TRACKING_CODE_ALPHABET) for _ in range(8))
+    return f"ILUS-{chars[:4]}-{chars[4:]}"
+
+
+def _tr_normalizar_tracking_code(raw: str) -> str:
+    """Normaliza lo que el cliente tipeó: mayúsculas, sin espacios/guiones/
+    prefijo 'ILUS'. El alfabeto de generación (_TR_TRACKING_CODE_ALPHABET)
+    ya excluye 0/1/I/L/O a propósito -- ningún código real los contiene,
+    así que no hace falta (ni conviene) "corregir" esos caracteres acá:
+    mapearlos entre sí no ayudaría a matchear nada, porque ninguno de los
+    dos existe jamás en un código real."""
+    s = (raw or "").strip().upper()
+    s = re.sub(r"[^A-Z0-9]", "", s)
+    if s.startswith("ILUS"):
+        s = s[4:]
+    return s
+
+
+def _tr_ensure_tracking_code(commitment_id):
+    """Garantiza que el commitment tenga su código corto de seguimiento
+    (lo crea lazy si falta). Mismo criterio que _tr_ensure_public_token:
+    vive en transport_commitments, no en el manifest_item, para sobrevivir
+    reasignaciones. Devuelve el código (ej. 'ILUS-7K9M-42QF') o None si falló.
+    """
+    try:
+        r = mysql_fetchone(
+            "SELECT tracking_code FROM transport_commitments WHERE id=%s",
+            (commitment_id,)
+        )
+        if not r:
+            return None
+        code = (r.get("tracking_code") or "").strip()
+        if code:
+            return code
+        for _ in range(5):
+            new_code = _tr_generar_tracking_code()
+            try:
+                mysql_execute(
+                    "UPDATE transport_commitments SET tracking_code=%s WHERE id=%s",
+                    (new_code, commitment_id)
+                )
+                return new_code
+            except Exception:
+                continue
+        return None
+    except Exception as _code_err:
+        print(f"[tr_tracking_code] no se pudo generar código: {_code_err}", flush=True)
         return None
 
 
@@ -31305,15 +31369,60 @@ def _tracking_payload(token):
     if not c:
         return None
     cid = c["id"]
-    # Manifest item más reciente para este commitment
-    mi = mysql_fetchone("""
+    # 2026-08-13 (auditoría de ChatGPT sobre este archivo, Daniel: "el
+    # seguimiento debe ser amigable"): FIX REAL -- antes esto traía solo el
+    # ÚLTIMO manifest_item (ORDER BY id DESC LIMIT 1). En un pedido dividido
+    # en más de un despacho (reasignación de manifiesto, o el ERP separó el
+    # documento en dos), el cliente podía ver "Entregado" cuando en realidad
+    # SOLO el ítem más reciente había llegado y el resto seguía en camino --
+    # o al revés, ver "En ruta" cuando el ítem representativo elegido al azar
+    # aún no había avanzado pese a que otro sí. Se traen TODOS los items y se
+    # elige el REPRESENTATIVO de forma conservadora: primero cualquier ítem
+    # en alerta (Problema/Entrega fallida/Devolución -- eso SIEMPRE debe
+    # verse, sin importar qué tan avanzado esté el resto), y si no hay
+    # ninguno en alerta, el de estado MENOS avanzado (nunca le decimos
+    # "llegó" al cliente si una parte de su pedido sigue en camino).
+    items_mi = mysql_fetchall("""
         SELECT tmi.id AS item_id, tmi.estado_entrega, tmi.manifest_id,
                tm.courier, tm.correlativo
         FROM transport_manifest_items tmi
         LEFT JOIN transport_manifests tm ON tm.id = tmi.manifest_id
         WHERE tmi.commitment_id=%s
-        ORDER BY tmi.id DESC LIMIT 1
-    """, (cid,))
+        ORDER BY tmi.id ASC
+    """, (cid,)) or []
+
+    def _mi_prioridad(item):
+        est = item.get("estado_entrega") or "En preparación"
+        if est in ("Problema", "Entrega fallida", "Devolución"):
+            return (0, 0)
+        step = ESTADOS_ENTREGA_META.get(est, {}).get("step", 1)
+        return (1, step)
+
+    mi = min(items_mi, key=_mi_prioridad) if items_mi else None
+    # Cuántos despachos distintos tiene este pedido -- dato real (no
+    # inventado) para avisar al cliente que su compra viene en más de una
+    # parte, en vez de dejarlo adivinar por qué el estado "salta".
+    multi_envio_total = len(items_mi) if len(items_mi) > 1 else 0
+
+    # 2026-08-13 (auditoría de ChatGPT: "el cliente no ve qué productos están
+    # viajando... el backend ya conoce SKU/descripción/cantidad"): se listan
+    # los productos REALES del documento (transport_commitment_lines, ya
+    # poblada -- ver [[ot_clasificacion_catalogo_hallazgo]]), excluyendo las
+    # líneas de servicio ZZ* (flete/instalación/etc, no son productos que el
+    # cliente reciba en la caja) con el MISMO criterio de prefijo que ya usa
+    # el resto del proyecto (cubicador, erp_engine, tickets_module).
+    productos_raw = mysql_fetchall("""
+        SELECT koprct, nokopr, cantidad
+        FROM transport_commitment_lines
+        WHERE commitment_id=%s AND cantidad > 0
+        ORDER BY id ASC
+    """, (cid,)) or []
+    productos = [
+        {"sku": p.get("koprct") or "", "nombre": (p.get("nokopr") or "").strip() or p.get("koprct") or "",
+         "cantidad": int(p.get("cantidad") or 0)}
+        for p in productos_raw
+        if not (p.get("koprct") or "").strip().upper().startswith("ZZ")
+    ]
     # Timeline (toda la historia, ordenada por fecha)
     eventos_raw = mysql_fetchall("""
         SELECT estado, fuente, ts_utc, comentario, lat, lng
@@ -31477,6 +31586,14 @@ def _tracking_payload(token):
         # chofer asignado con ping reciente. Privacidad: solo lat/lng + ETA
         # estimada, nunca nombre/RUT/patente del chofer.
         "driver_live":   _tracking_driver_live(c["id"], estado_actual),
+        # 2026-08-13: cuántos despachos distintos tiene este pedido (0 si es
+        # uno solo). Dato real, derivado de items_mi arriba -- ver comentario
+        # de _mi_prioridad.
+        "multi_envio_total": multi_envio_total,
+        # 2026-08-13: productos reales del pedido (SKU/nombre/cantidad), sin
+        # líneas de servicio ZZ*. Lista vacía si el documento no tiene líneas
+        # sincronizadas todavía -- el template cae al conteo de bultos.
+        "productos":     productos,
     }
 
 
@@ -31542,14 +31659,28 @@ def _tracking_driver_live(commitment_id, estado_actual):
     """, (drv["driver_id"],))
     if not ping:
         return None
-    # Distancia estimada (haversine, si hay coords de destino)
+    # Distancia estimada (haversine, si hay coords de destino) -- SIEMPRE
+    # con las coordenadas REALES, antes de difuminar nada. Difuminar y
+    # después medir distancia habría introducido error en la ETA a cambio
+    # de nada (el ETA no se le muestra a nadie más que al propio cliente).
     dist_m = None
     if mi.get("dest_lat") and mi.get("dest_lng"):
         dist_m = _haversine_m(ping["lat"], ping["lng"],
                               mi["dest_lat"], mi["dest_lng"])
+    # 2026-08-13 (auditoría de ChatGPT: "se entregan coordenadas exactas del
+    # conductor al navegador... conviene entregar ubicación aproximada").
+    # Se difumina la posición ANTES de que salga al navegador: redondeo a
+    # ~100m (3 decimales) + ruido aleatorio de hasta ~150m, distinto en cada
+    # sondeo (el cliente vuelve a pedir esto cada 30s) -- así ni siquiera
+    # juntando varias lecturas se puede reconstruir la posición exacta real
+    # del chofer. El destino NO se difumina: ya es la dirección que el
+    # propio cliente dio para su entrega, no es un dato ajeno.
+    import random as _rnd
+    lat_fuzz = round(float(ping["lat"]) + _rnd.uniform(-0.0013, 0.0013), 3)
+    lng_fuzz = round(float(ping["lng"]) + _rnd.uniform(-0.0013, 0.0013), 3)
     return {
-        "lat": float(ping["lat"]),
-        "lng": float(ping["lng"]),
+        "lat": lat_fuzz,
+        "lng": lng_fuzz,
         "dest_lat": float(mi["dest_lat"]) if mi.get("dest_lat") else None,
         "dest_lng": float(mi["dest_lng"]) if mi.get("dest_lng") else None,
         "age_s": int(ping["age_s"] or 0),
@@ -31725,7 +31856,10 @@ def tr_public_seguimiento_buscar():
 
 @app.route("/seguimiento")
 def seguimiento_lookup_page():
-    """Página pública del módulo Seguimiento. Form simple: doc + RUT."""
+    """Página pública del módulo Seguimiento. 2026-08-13: el formulario
+    principal pide solo el código de seguimiento ILUS (ver
+    seguimiento_por_codigo) -- ya no pide RUT. seguimiento_buscar (doc+RUT)
+    sigue vivo como respaldo, no se borra (REGLA #4.2)."""
     return render_template("transporte/seguimiento_lookup.html",
                            error=None, prefill=None)
 
@@ -31802,6 +31936,116 @@ def seguimiento_buscar():
                                       "tu link. Intenta de nuevo en unos minutos."),
                                prefill=None), 500
     return redirect(url_for("tr_public_tracking", token=tok))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  SEGUIMIENTO SIN RUT (2026-08-13) — Daniel, viendo /seguimiento en vivo:
+#  "no quiero que solicites el RUT... necesito que sea amigable". Auditoría
+#  de ChatGPT sobre el código real confirmó que el RUT era prescindible: el
+#  token largo del link directo ya es el mecanismo de seguridad real; para
+#  cuando el cliente escribe a mano, un código corto y aleatorio (que NO es
+#  predecible ni correlativo, a diferencia del número de factura) alcanza
+#  igual de bien y es mucho menos incómodo de pedir.
+#
+#  seguimiento_buscar() (doc+RUT, arriba) NO se borra -- REGLA #4.2 -- queda
+#  como respaldo interno/legado, simplemente ya no es lo que ofrece la UI
+#  principal de /seguimiento.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.route("/seguimiento/codigo", methods=["POST"])
+@rate_limited("seguimiento_codigo", max_attempts=10, window_seconds=3600)
+def seguimiento_por_codigo():
+    """Busca el commitment por tracking_code (sin RUT) y redirige a /t/<token>."""
+    raw = (request.form.get("tracking_code") or "").strip()
+    code_norm = _tr_normalizar_tracking_code(raw)
+    if len(code_norm) < 6:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error="Ingresa tu código de seguimiento ILUS completo.",
+                               prefill={"tracking_code": raw}), 400
+
+    row = mysql_fetchone(
+        "SELECT id, public_token FROM transport_commitments "
+        "WHERE REPLACE(REPLACE(UPPER(IFNULL(tracking_code,'')),'ILUS-',''),'-','') = %s "
+        "LIMIT 1",
+        (code_norm,)
+    )
+    if not row:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error=("No encontramos ese código. Revisa que esté "
+                                      "completo o usa \"No encuentro mi código\"."),
+                               prefill={"tracking_code": raw}), 404
+
+    tok = _tr_ensure_public_token(row["id"])
+    if not tok:
+        return render_template("transporte/seguimiento_lookup.html",
+                               error=("Tuvimos un problema técnico generando "
+                                      "tu link. Intenta de nuevo en unos minutos."),
+                               prefill=None), 500
+    return redirect(url_for("tr_public_tracking", token=tok))
+
+
+@app.route("/seguimiento/recuperar", methods=["GET"])
+def seguimiento_recuperar_page():
+    """Página 'No encuentro mi código': el cliente escribe su correo."""
+    return render_template("transporte/seguimiento_recuperar.html", enviado=False)
+
+
+@app.route("/seguimiento/recuperar", methods=["POST"])
+@rate_limited("seguimiento_recuperar", max_attempts=5, window_seconds=3600)
+def seguimiento_recuperar_enviar():
+    """Manda por correo los enlaces de seguimiento activos para ese email.
+
+    Respuesta SIEMPRE genérica ("si existe, te lo mandamos"), exista o no un
+    pedido con ese correo -- evita que alguien use este formulario para
+    confirmar si un email específico compró en ILUS (anti-enumeración, mismo
+    criterio que pidió ChatGPT en la auditoría)."""
+    email_raw = (request.form.get("email") or "").strip().lower()
+    if email_raw and re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_raw):
+        try:
+            rows = mysql_fetchall(
+                "SELECT id, tido, nudo FROM transport_commitments "
+                "WHERE LOWER(IFNULL(email,''))=%s "
+                "ORDER BY id DESC LIMIT 8",
+                (email_raw,)
+            ) or []
+            if rows:
+                items_html = []
+                for r in rows:
+                    tok = _tr_ensure_public_token(r["id"])
+                    code = _tr_ensure_tracking_code(r["id"])
+                    if not tok:
+                        continue
+                    doc = f"{r.get('tido') or ''}-{r.get('nudo') or ''}".strip("-")
+                    url = f"{_public_base_url()}/t/{tok}"
+                    items_html.append(
+                        f'<tr><td style="padding:10px 0;border-bottom:1px solid #eee">'
+                        f'<a href="{url}" style="color:#c70010;font-weight:700;'
+                        f'text-decoration:none">Pedido {doc}</a>'
+                        + (f'<div style="color:#68707c;font-size:12px;margin-top:2px">'
+                           f'Código: {code}</div>' if code else '')
+                        + '</td></tr>'
+                    )
+                if items_html:
+                    html = _ilus_email_master({
+                        "subject":          _brand_subject("Tus enlaces de seguimiento"),
+                        "preheader":        "Aquí están los enlaces para seguir tus pedidos.",
+                        "title":            "Tus enlaces de seguimiento",
+                        "subtitle":         "Seguimiento de despacho · ILUS Fitness",
+                        "message":          ("Encontramos "
+                                              + (f"{len(items_html)} pedidos" if len(items_html) != 1 else "1 pedido")
+                                              + " asociados a este correo. Toca cualquiera para ver el estado en vivo:"),
+                        "detail_rows_html": "".join(items_html),
+                        "closing_message":  ("Si no reconoces esta solicitud, ignora este correo — "
+                                              "nadie más puede ver tu pedido sin este enlace."),
+                    })
+                    _send_ilus_email(email_raw,
+                                     _brand_subject("Tus enlaces de seguimiento"),
+                                     html, evento="seguimiento_recuperar",
+                                     modulo="transporte", asincrono=True)
+        except Exception as _e_rec:
+            print(f"[seguimiento_recuperar] falló: {_e_rec}", flush=True)
+    # Misma respuesta exista o no un pedido con ese correo.
+    return render_template("transporte/seguimiento_recuperar.html", enviado=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -91501,6 +91745,13 @@ def _ensure_transport_tracking_tables():
     needed = {
         "public_token": "VARCHAR(60) NULL COMMENT 'Token URL-safe para tracking público del cliente'",
         "delivered_at": "DATETIME NULL COMMENT 'Caché del primer evento Entregado'",
+        # 2026-08-13 (Daniel + auditoría de ChatGPT sobre /seguimiento: "no
+        # quiero que solicites el RUT"): código corto legible ("ILUS-7K9M-42QF")
+        # como alternativa al RUT para /seguimiento. Se guarda en texto plano
+        # (mismo criterio que public_token: es un secreto tipo bearer, no una
+        # contraseña de cuenta -- se protege con entropía + rate-limit, no con
+        # hash, igual que el token largo ya establecido en este mismo archivo).
+        "tracking_code": "VARCHAR(20) NULL COMMENT 'Código corto de seguimiento (ILUS-XXXX-XXXX), alternativa al RUT en /seguimiento'",
     }
     try:
         existing = {
@@ -91537,6 +91788,13 @@ def _ensure_transport_tracking_tables():
         )
     except Exception:
         pass
+    try:
+        mysql_execute(
+            "ALTER TABLE transport_commitments "
+            "ADD UNIQUE INDEX uq_tcomm_tracking_code (tracking_code)"
+        )
+    except Exception:
+        pass  # ya existe
 
     # 5) Columnas nuevas en transport_manifest_items (tracking courier — FedEx/etc.)
     #    Atadas al ITEM (no al commitment) porque el tracking-number depende de
