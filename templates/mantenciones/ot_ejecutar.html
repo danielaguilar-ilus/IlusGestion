@@ -42,6 +42,42 @@
     {% endfor %}
   {% endfor %}
 
+  {# Estado operativo del hero: se deriva exclusivamente de campos reales de
+     la OT. No promete ETA ni ubicación en vivo cuando esos datos no existen. #}
+  {% set _hero_est = (visita.estado or '')|lower %}
+  {% set _hero_live = namespace(label='PROGRAMADA', tone='ready', icon='bi-calendar2-check-fill', next='Revisa la agenda y comienza la ruta cuando corresponda.') %}
+  {% if _hero_est == 'cerrada' %}
+    {% set _hero_live.label = 'OT CERRADA' %}
+    {% set _hero_live.tone = 'done' %}
+    {% set _hero_live.icon = 'bi-patch-check-fill' %}
+    {% set _hero_live.next = 'Trabajo finalizado con su trazabilidad y evidencias registradas.' %}
+  {% elif _hero_est == 'pendiente_aprobacion' %}
+    {% set _hero_live.label = 'EN APROBACIÓN' %}
+    {% set _hero_live.tone = 'review' %}
+    {% set _hero_live.icon = 'bi-hourglass-split' %}
+    {% set _hero_live.next = 'La ejecución terminó y espera la validación correspondiente.' %}
+  {% elif _hero_est == 'firmada_tecnico' %}
+    {% set _hero_live.label = 'FIRMA PENDIENTE' %}
+    {% set _hero_live.tone = 'review' %}
+    {% set _hero_live.icon = 'bi-vector-pen' %}
+    {% set _hero_live.next = 'La firma técnica está lista; falta completar la validación final.' %}
+  {% elif visita.get('hora_real_inicio') or _hero_est in ['en_ejecucion','en_curso'] %}
+    {% set _hero_live.label = 'EJECUTANDO' %}
+    {% set _hero_live.tone = 'live' %}
+    {% set _hero_live.icon = 'bi-tools' %}
+    {% set _hero_live.next = 'Completa equipos, checklist, evidencias y firmas.' %}
+  {% elif visita.get('llego_al_sitio_at') %}
+    {% set _hero_live.label = 'EN SITIO' %}
+    {% set _hero_live.tone = 'live' %}
+    {% set _hero_live.icon = 'bi-geo-alt-fill' %}
+    {% set _hero_live.next = 'Inicia la ejecución y registra la primera tarea.' %}
+  {% elif visita.get('ruta_iniciada_at') %}
+    {% set _hero_live.label = 'EN RUTA' %}
+    {% set _hero_live.tone = 'route' %}
+    {% set _hero_live.icon = 'bi-signpost-split-fill' %}
+    {% set _hero_live.next = 'Siguiente hito: llegada al sitio del cliente.' %}
+  {% endif %}
+
   {# ─── HEADER STICKY con branding ILUS (compacto + colapsable) ───
      2026-08-13 v3 (maqueta Fable aprobada el 12-08 — "portada de la OT"):
      el CLIENTE pasa a ser el héroe (h2 grande con kicker rojo del tipo de
@@ -85,11 +121,22 @@
         <div class="tx-hdr-dir"><i class="bi bi-geo-alt-fill"></i><span>{{ dir_visita }}{% if visita.cli_comuna and not visita.direccion_visita %}, {{ visita.cli_comuna }}{% endif %}</span></div>
         {% endif %}
       </div>
-      <div class="tx-hdr-progress" id="hdrProgressWrap" style="display:none">
-        <div class="tx-hdr-ring" id="hdrProgressRing" style="--pct:0">
-          <span id="hdrProgressPct">0%</span>
+      <div class="tx-live-card is-{{ _hero_live.tone }}" aria-label="Estado operativo de la OT">
+        <div class="tx-live-orbit" aria-hidden="true">
+          <span class="tx-live-radar"></span>
+          <i class="bi {{ _hero_live.icon }}"></i>
         </div>
-        <span class="tx-hdr-progress-lbl" id="hdrProgressLbl">Avance</span>
+        <div class="tx-live-copy">
+          <span class="tx-live-kicker"><span class="tx-live-dot"></span>Estado operativo</span>
+          <strong>{{ _hero_live.label }}</strong>
+          <span class="tx-live-next">{{ _hero_live.next }}</span>
+        </div>
+        <div class="tx-hdr-progress" id="hdrProgressWrap" style="display:none">
+          <div class="tx-hdr-ring" id="hdrProgressRing" style="--pct:0">
+            <span id="hdrProgressPct">0%</span>
+          </div>
+          <span class="tx-hdr-progress-lbl" id="hdrProgressLbl">Avance</span>
+        </div>
       </div>
     </div>
 
@@ -180,6 +227,11 @@
     </div> {# /tx-hdr-extra #}
   </div>
 
+  {# El recorrido se renderiza con sus datos originales dentro de Información
+     y el JS lo eleva a este slot al cargar. Así conserva todos sus IDs,
+     timestamps y animaciones sin duplicar lógica ni estado. #}
+  <div class="tx-journey-slot" id="txJourneySlot" aria-live="polite"></div>
+
   {# ─── GPS BAR ───
        FIX 2026-05-17: las acciones son visibles SIEMPRE (display:flex),
        no escondidas tras intentar auto-detección que en iOS Safari
@@ -236,13 +288,13 @@
     <button type="button" class="tx-tab-btn" id="tabBtn-info" onclick="cambiarTabOT('info')"
             role="tab" aria-controls="tabPanel-info">
       <i class="bi bi-info-circle-fill"></i>
-      <span>Información</span>
+      <span>Información de la OT</span>
       <span class="badge-count" id="adjCountBadge">0</span>
     </button>
     <button type="button" class="tx-tab-btn active" id="tabBtn-tareas" onclick="cambiarTabOT('tareas')"
             role="tab" aria-controls="tabPanel-tareas">
       <i class="bi bi-list-check"></i>
-      <span>Gestión de tareas</span>
+      <span>Trabajo técnico</span>
     </button>
   </div>
 
@@ -776,6 +828,7 @@
        a "Recorrido de la OT" -- mismo nombre que Daniel usa para describir
        la animación que pidió, y coherente con el lenguaje del stepper de
        Retiros/Transporte que quiso copiar. #}
+    <span id="txJourneyOrigin" hidden></span>
     <div class="info-card pipeline-card">
       <h5>
         <i class="bi bi-truck"></i>Recorrido de la OT
@@ -984,6 +1037,15 @@
      #tabPanel-tareas — verificado con grep antes de envolver. #}
   <div class="tx-cols">
   <div class="tx-col-main">
+
+  <div class="tx-work-head">
+    <div>
+      <span class="tx-work-kicker"><i class="bi bi-broadcast-pin"></i> Ejecución guiada</span>
+      <h3>Trabajo técnico</h3>
+      <p>Avanza por equipos, checklist y evidencias. El sistema conserva cada registro para el cierre.</p>
+    </div>
+    <span class="tx-work-live"><span></span>Autoguardado activo</span>
+  </div>
 
   {# ════════════════════════════════════════════════════════════════
      STEPPER DE ETAPAS — rediseño premium 2026-08-13 (brief Daniel:
@@ -1800,11 +1862,11 @@
      firmar NO se duplica acá — vive en la barra inferior con sus 5
      estados; duplicarlo obligaría a espejar toda esa máquina de estados
      y es justo donde se rompen las cosas. #}
-  <aside class="tx-col-side tx-desk" id="txSideCard" aria-label="Resumen de ejecución">
+  <aside class="tx-col-side tx-desk" id="txSideCard" aria-label="Control de cierre">
     <div class="tx-side-card">
       <div class="tx-side-band"></div>
       <div class="tx-side-body">
-        <div class="tx-side-ttl"><i class="bi bi-activity"></i>Resumen de ejecución</div>
+        <div class="tx-side-ttl"><i class="bi bi-shield-check"></i>Control de cierre</div>
         <div class="tx-side-hero">
           <div class="tx-side-ring" id="txSideRing" style="--pct:0"><span id="txSidePct">0%</span></div>
           <div class="tx-side-rows">
