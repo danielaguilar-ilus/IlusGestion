@@ -2097,3 +2097,315 @@
   .tx-stage-circle,.tx-channel-card,.tx-sign-hub-both,.tx-eq-card,.tx-stage-line,.tx-channel-ico{transition:none}
   .tx-channel-card:hover,.tx-channel-card:active,.tx-eq-card:active,.tx-sign-hub-both:active{transform:none}
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   ESCRITORIO PREMIUM 2026-08-13 v2
+   ──────────────────────────────────────────────────────────────────────
+   Daniel, con captura de produccion en mano: "la parte de como se ve en
+   el computador de la OT... se ve mal, tiene como espacios vacios,
+   horrible... esta muy insipido esto. Ponle color, ponle cariño. Esto es
+   lo que mas me ha costado contigo."
+
+   Causa real del "espacio vacio": en escritorio la pantalla era UNA sola
+   columna a todo el ancho, y .tx-eq-grid con minmax(260px,1fr) dejaba una
+   tarjeta de 260px con el resto del monitor en blanco.
+
+   REGLA DURA DE ESTE BLOQUE: el celular NO se toca. Daniel: "el telefono
+   se ve maravilloso, te lo digo sinceramente". TODO lo de aca vive dentro
+   de @media(min-width:1200px); los nodos HTML nuevos llevan .tx-desk y
+   nacen ocultos. Por debajo de 1200px no cambia ni un pixel.
+
+   Va al FINAL del archivo a proposito: gana la cascada sin renombrar
+   selectores que el JS ya usa (mismo criterio que los bloques de arriba).
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Guard: los nodos nuevos existen en el DOM pero solo se ven en escritorio. */
+.tx-desk{display:none}
+
+/* Interpola el conteo de los anillos de avance. Sin soporte degrada a
+   salto seco, exactamente como se comporta hoy. */
+@property --pct{syntax:'<number>';inherits:false;initial-value:0}
+
+@keyframes txLineOn{from{transform:scaleX(0);transform-origin:left}to{transform:scaleX(1)}}
+@keyframes txStagePulseRed{
+  0%,100%{box-shadow:0 10px 22px -8px rgba(220,38,38,.35),0 0 0 0 rgba(220,38,38,.40)}
+  55%    {box-shadow:0 10px 22px -8px rgba(220,38,38,.35),0 0 0 14px rgba(220,38,38,0)}}
+/* El "giro potente" que pidio Daniel para cuando el cliente firma. */
+@keyframes txSignedSpin{
+  0%  {transform:scale(.5) rotate(-40deg)}
+  55% {transform:scale(1.15) rotate(380deg)}
+  78% {transform:scale(.96) rotate(352deg)}
+  100%{transform:scale(1) rotate(360deg)}}
+@keyframes txSignedHalo{
+  0%  {box-shadow:0 0 0 0 rgba(22,163,74,.4)}
+  100%{box-shadow:0 0 0 26px rgba(22,163,74,0)}}
+@keyframes txPopIn{
+  0%  {opacity:0;transform:translate(-50%,8px) scale(.6)}
+  100%{opacity:1;transform:translate(-50%,0) scale(1)}}
+@keyframes txPopOut{to{opacity:0;transform:translate(-50%,-6px)}}
+
+@media (min-width:1200px){
+  :root{
+    /* Colores del tracking de la maqueta que aprobo Daniel. Azul y ambar ya
+       son paleta de apoyo del proyecto; morado y rosa son nuevos y se usan
+       SOLO en el tracking y los anillos, nunca en botones, para no competir
+       con el rojo de marca. */
+    --tx-stg1:#3b82f6; --tx-stg1-dk:#4f46e5;
+    --tx-stg2:#f59e0b; --tx-stg2-dk:#d97706;
+    --tx-stg3:#8b5cf6; --tx-stg3-dk:#6d28d9;
+    --tx-pink:#ec4899;
+    --tx-side-w:clamp(330px,26vw,400px);
+  }
+
+  .tx-desk{display:block}
+
+  /* ── A · HERO OSCURO ────────────────────────────────────────────── */
+  .tx-hdr{
+    position:static;
+    border:1px solid rgba(255,255,255,.06);border-top:0;
+    border-bottom:4px solid var(--tx-red);
+    border-radius:var(--tx-r-xl);padding:26px 28px 22px;color:#fff;
+    background:
+      radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.20) 0%, transparent 45%),
+      radial-gradient(90% 120% at 82% 115%, rgba(120,15,15,.30) 0%, transparent 60%),
+      linear-gradient(135deg,#0a0a0a 0%,#161616 55%,#1a0a0a 100%);
+    box-shadow:var(--tx-shadow-md), 0 24px 60px -18px rgba(10,10,10,.35);
+    margin-bottom:14px;
+  }
+  .tx-hdr::before{width:260px;height:260px;right:-30px;opacity:.07;filter:brightness(0) invert(1)}
+  .tx-hero-tex{position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px) 0 0/100% 38px;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 60%);
+            mask-image:linear-gradient(90deg,transparent,#000 60%)}
+  .tx-hdr-top{margin-bottom:14px}
+  .tx-hdr-brand{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);color:#fff}
+  .tx-hdr .badge-est{background:rgba(255,255,255,.92);border-color:transparent;color:#0a0a0a}
+  .tx-hdr .badge-est-vivo{background:var(--tx-red);color:#fff}
+  .tx-hdr-otchip{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.18);color:#e5e7eb}
+  .tx-hdr-tipo{background:linear-gradient(135deg,var(--tx-red),var(--tx-red-dk));color:#fff;
+    padding:5px 12px;border-radius:9999px;font-size:.62rem;letter-spacing:.12em;
+    box-shadow:0 6px 16px -6px rgba(220,38,38,.5)}
+  .tx-hdr-tipo::before{content:none}
+  .tx-hero-num{font-family:var(--tx-display);font-weight:400;color:#fff;
+    font-size:clamp(2.6rem,3.4vw,3.6rem);letter-spacing:.02em;line-height:.92;
+    text-shadow:0 2px 20px rgba(0,0,0,.4);margin:2px 0 0}
+  .tx-hdr h2{font-size:1.02rem;font-weight:700;color:#e5e7eb;letter-spacing:0}
+  .tx-hdr h2 i{color:var(--tx-red)}
+  .tx-hdr-dir{color:#94a3b8;font-size:.82rem}
+
+  .tx-hdr-progress{gap:6px;flex-direction:column-reverse}
+  .tx-hdr-progress-lbl{color:#94a3b8;font-size:.6rem;letter-spacing:.16em}
+  .tx-hdr-ring{width:118px;height:118px;animation:none;
+    background:conic-gradient(var(--tx-stg1) 0,
+               var(--tx-stg3) calc(var(--pct)*.55%),
+               var(--tx-pink) calc(var(--pct)*1%),
+               rgba(255,255,255,.10) 0);
+    transition:--pct .8s var(--tx-ease-out);
+    filter:drop-shadow(0 0 10px rgba(139,92,246,.25))}
+  .tx-hdr-ring::before{inset:9px;background:#111214}
+  .tx-hdr-ring span{color:#fff;font-size:1.5rem}
+  .tx-hdr-progress.is-completa .tx-hdr-ring{
+    background:conic-gradient(#22c55e calc(var(--pct)*1%), rgba(255,255,255,.10) 0);
+    filter:drop-shadow(0 0 10px rgba(34,197,94,.35))}
+  .tx-hdr-progress.is-completa .tx-hdr-ring span{color:#4ade80}
+
+  .tx-hdr-mtr{border:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+    gap:10px;margin-top:16px}
+  .tx-hdr-mtr .hm{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);
+    border-radius:var(--tx-r-md);padding:12px 10px;text-align:center}
+  .tx-hdr-mtr .hm + .hm{border-left:1px solid rgba(255,255,255,.10)}
+  .tx-hdr-mtr .hm .v{color:#fff}
+  .tx-hdr-mtr .hm .k{color:#94a3b8}
+  .tx-hdr-mtr .hm:last-child{flex:none}
+  .tx-hdr-mtr .hm.tx-desk{display:block}
+  .tx-hdr-mtr .hm.hm-auto .v{color:#4ade80;font-family:inherit;font-weight:800;font-size:.88rem}
+  .tx-hdr-mtr .hm.hm-auto .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+    background:#4ade80;margin-right:6px;box-shadow:0 0 0 0 rgba(74,222,128,.5);
+    animation:pipePulseDot 2.4s ease-in-out infinite}
+  .tx-hdr-mtr .hm.hm-auto{border-color:rgba(74,222,128,.25)}
+
+  .tx-contact{display:flex;gap:10px;margin-top:12px}
+  .tx-contact .cbtn{flex:0 1 auto;flex-direction:row;min-height:44px;padding:10px 18px;
+    border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#e5e7eb;font-size:.8rem;gap:8px;
+    transition:transform .18s var(--tx-ease-spring),background .18s,border-color .18s}
+  .tx-contact .cbtn:hover{background:rgba(255,255,255,.12);color:#fff;transform:translateY(-1px)}
+  .tx-contact .cbtn.wa{border-color:rgba(37,211,102,.35)}
+  .tx-contact .cbtn.ruta{background:linear-gradient(135deg,var(--tx-red),var(--tx-red-dk));
+    border-color:transparent;color:#fff;margin-left:auto;
+    box-shadow:0 10px 24px -8px rgba(220,38,38,.55)}
+  .tx-contact .cbtn.ruta i{color:#fff}
+  .tx-contact .cbtn.ruta:hover{box-shadow:var(--tx-shadow-red);color:#fff}
+  .tx-contact .cbtn.ruta.iniciada{background:linear-gradient(135deg,#16a34a,#15803d);
+    box-shadow:0 10px 24px -8px rgba(22,163,74,.5)}
+
+  /* ── B · PESTAÑAS (se quedan visibles: Daniel ya rechazo esconderlas) ── */
+  .tx-tabs{background:transparent;border:0;border-bottom:2px solid #e5e7eb;border-radius:0;
+    padding:0;gap:28px;box-shadow:none;margin:4px 0 18px}
+  .tx-tab-btn{flex:0 0 auto;border-radius:0;padding:12px 4px;min-height:48px;
+    font-size:.92rem;color:#6b7280;position:relative}
+  .tx-tab-btn:hover{background:transparent;color:#0a0a0a}
+  .tx-tab-btn::after{content:'';position:absolute;left:0;right:0;bottom:-2px;height:3px;
+    border-radius:2px;background:transparent;transition:background .2s var(--tx-ease-out)}
+  .tx-tab-btn.active{background:transparent;color:#0a0a0a;box-shadow:none}
+  .tx-tab-btn.active::after{background:var(--tx-red)}
+  .tx-tab-btn.active .badge-count{background:#fee2e2;color:var(--tx-red)}
+
+  /* ── C · TRACKING DE 3 ETAPAS ──────────────────────────────────── */
+  .tx-stage-stepper{align-items:center;gap:16px;margin:0 0 22px}
+  .tx-stage{flex-direction:row;gap:14px;min-width:0;position:relative}
+  .tx-stage-lbl{display:none}
+  .tx-stage-num{display:none}
+  .tx-stage-ico{display:block;font-size:1.35rem}
+  .tx-stage-circle{width:56px;height:56px;border-radius:50%}
+  .tx-stage[data-stage="equipos"]   .tx-stage-circle{background:linear-gradient(150deg,var(--tx-stg1),var(--tx-stg1-dk));box-shadow:0 10px 22px -8px rgba(59,130,246,.55),0 1px 0 rgba(255,255,255,.25) inset}
+  .tx-stage[data-stage="checklist"] .tx-stage-circle{background:linear-gradient(150deg,var(--tx-stg2),var(--tx-stg2-dk));box-shadow:0 10px 22px -8px rgba(245,158,11,.5),0 1px 0 rgba(255,255,255,.25) inset}
+  .tx-stage[data-stage="firmas"]    .tx-stage-circle{background:linear-gradient(150deg,var(--tx-stg3),var(--tx-stg3-dk));box-shadow:0 10px 22px -8px rgba(139,92,246,.5),0 1px 0 rgba(255,255,255,.25) inset}
+  .tx-stage.is-complete .tx-stage-circle{background:linear-gradient(150deg,#22c55e,#15803d);
+    box-shadow:0 10px 22px -8px rgba(22,163,74,.5),0 1px 0 rgba(255,255,255,.25) inset}
+  .tx-stage.is-complete .tx-stage-ico{display:none}
+  .tx-stage.is-active .tx-stage-circle{outline:3px solid rgba(220,38,38,.35);outline-offset:3px;
+    animation:txStagePulseRed 1.8s ease-in-out infinite}
+  .tx-stage-meta{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .tx-stage-bignum{font-family:var(--tx-display);font-size:1.9rem;line-height:1;color:#d1d5db;letter-spacing:.02em}
+  .tx-stage-name{font-size:.95rem;font-weight:800;color:#0a0a0a;letter-spacing:-.01em;white-space:nowrap}
+  .tx-stage-state{font-size:.72rem;font-weight:700;color:#9ca3af}
+  .tx-stage.is-active[data-stage="equipos"]   .tx-stage-state{color:var(--tx-stg1)}
+  .tx-stage.is-active[data-stage="checklist"] .tx-stage-state{color:#b45309}
+  .tx-stage.is-active[data-stage="firmas"]    .tx-stage-state{color:#7c3aed}
+  .tx-stage.is-complete .tx-stage-state{color:#15803d}
+  .tx-stage.is-complete .tx-stage-bignum{color:#86efac}
+  .tx-stage-line{height:3px;margin-top:0;align-self:center}
+  .tx-stage-line.is-on{background:linear-gradient(90deg,#16a34a,#22c55e);
+    animation:txLineOn .45s var(--tx-ease-out)}
+
+  /* El momento en que el cliente firma a distancia */
+  .tx-stage.just-signed .tx-stage-check{animation:txSignedSpin .9s var(--tx-ease-spring) both}
+  .tx-stage.just-signed .tx-stage-circle{animation:txSignedHalo 1s ease-out 3}
+  .tx-signed-pop{position:absolute;top:-46px;left:50%;z-index:5;
+    background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;font-size:.72rem;font-weight:800;
+    padding:7px 14px;border-radius:9999px;box-shadow:0 10px 24px -8px rgba(22,163,74,.55);
+    white-space:nowrap;animation:txPopIn .5s var(--tx-ease-spring) both,txPopOut .4s ease-in 3.6s both}
+
+  /* ── D · DOS COLUMNAS (esto es lo que mata el espacio vacio) ────── */
+  .tx-cols{display:grid;grid-template-columns:minmax(0,1fr) var(--tx-side-w);gap:24px;align-items:start}
+  .tx-col-side{position:sticky;top:16px;display:block}
+
+  .tx-eq-grid{grid-template-columns:1fr;gap:14px}
+  .tx-eq-card{padding:18px 20px 26px;border-radius:var(--tx-r-lg);gap:18px;align-items:center;
+    box-shadow:var(--tx-shadow-sm)}
+  .tx-eq-card:hover{box-shadow:var(--tx-shadow-md);transform:translateY(-2px)}
+  .tx-eq-card .eq-foto-wrap{width:96px;height:96px;border-radius:var(--tx-r-md)}
+  .tx-eq-card .eq-name{font-size:1.18rem}
+  .tx-eq-card .eq-sub{font-size:.78rem;margin-top:4px}
+  .tx-eq-card .tx-eq-meta-row{gap:12px;margin-top:8px}
+  .tx-eq-card .eq-actions{flex-direction:row;gap:8px;align-self:center;flex:0 0 auto}
+  .tx-eq-card .eq-action-btn{width:auto;height:44px;padding:0 14px;border-radius:var(--tx-r-sm);
+    font-size:.8rem;font-weight:700;gap:7px;display:inline-flex}
+  .eq-action-lbl{display:inline}
+  .tx-eq-open{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;
+    border:0;border-radius:12px;cursor:pointer;color:#fff;font-weight:800;font-size:.84rem;
+    letter-spacing:.01em;text-transform:uppercase;
+    background:linear-gradient(135deg,var(--tx-red),#b91c1c);
+    box-shadow:0 10px 22px -8px rgba(220,38,38,.5);
+    transition:transform .18s var(--tx-ease-spring),box-shadow .2s}
+  .tx-eq-open:hover{transform:translateY(-1px);box-shadow:var(--tx-shadow-red)}
+  .tx-eq-open:active{transform:scale(.96)}
+  /* El chevron decorativo lo reemplaza .tx-eq-open, que hace lo MISMO pero
+     se lee. El celular conserva el chevron. Si Daniel lo quiere de vuelta
+     en escritorio: borrar esta linea. */
+  .tx-eq-card .eq-arrow{display:none}
+  .tx-note-foot{margin-top:12px;font-size:.76rem;color:#6b7280;display:flex;gap:8px;align-items:center}
+  .tx-note-foot i{color:var(--tx-stg1)}
+  .tx-section-title{font-size:.72rem;margin:18px 2px 10px}
+  .tx-stats-glob{margin-bottom:10px;border-radius:12px;border:1.5px solid #e5e7eb;background:#fff}
+  .tx-tarea{padding:15px 14px 15px 10px}
+  .tx-tarea .ttl-text{font-size:1rem}
+
+  /* ── E · COLUMNA LATERAL "RESUMEN DE EJECUCION" ────────────────── */
+  .tx-side-card{background:#fff;border:1.5px solid #e5e7eb;border-radius:var(--tx-r-lg);
+    box-shadow:var(--tx-shadow-md);overflow:hidden;
+    animation:ilus-fade-up .4s var(--tx-ease-out) both;animation-delay:.08s}
+  .tx-side-band{height:5px;background:linear-gradient(90deg,var(--tx-red) 0%,var(--tx-stg3) 60%,var(--tx-pink) 100%)}
+  .tx-side-body{padding:18px 18px 16px}
+  .tx-side-ttl{font-size:.66rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+    color:#6b7280;margin-bottom:14px;display:flex;gap:8px;align-items:center}
+  .tx-side-ttl i{color:var(--tx-red)}
+  .tx-side-hero{display:flex;gap:16px;align-items:center}
+  .tx-side-ring{--pct:0;width:92px;height:92px;border-radius:50%;flex-shrink:0;position:relative;
+    display:flex;align-items:center;justify-content:center;
+    background:conic-gradient(var(--tx-stg1) 0,var(--tx-stg3) calc(var(--pct)*.55%),
+               var(--tx-pink) calc(var(--pct)*1%),#eef0f3 0);
+    transition:--pct .8s var(--tx-ease-out)}
+  .tx-side-ring::before{content:'';position:absolute;inset:8px;border-radius:50%;background:#fff}
+  .tx-side-ring span{position:relative;font-weight:900;font-size:1.15rem;color:#0a0a0a;
+    font-variant-numeric:tabular-nums}
+  .tx-side-ring.is-completa{background:conic-gradient(#22c55e calc(var(--pct)*1%),#eef0f3 0)}
+  .tx-side-ring.is-completa span{color:#15803d}
+  .tx-side-rows{flex:1;display:flex;flex-direction:column;gap:9px;min-width:0}
+  .tx-side-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    font-size:.8rem;font-weight:600;color:#374151}
+  .tx-side-row > span:first-child{display:flex;gap:7px;align-items:center;min-width:0}
+  .tx-side-row i{color:#9ca3af;font-size:.85rem}
+  .tx-side-row .val{font-family:var(--tx-mono);font-weight:700;color:#0a0a0a;white-space:nowrap}
+  .tx-side-row .val.warn{color:#b45309}
+  .tx-side-row .val.ok{color:#15803d}
+  .tx-side-aviso{margin-top:14px;border-radius:12px;padding:11px 13px;display:flex;gap:10px;
+    font-size:.78rem;line-height:1.45;transition:background .3s,border-color .3s}
+  .tx-side-aviso i{font-size:1rem;flex-shrink:0;margin-top:1px}
+  .tx-side-aviso strong{display:block;font-size:.68rem;font-weight:800;letter-spacing:.06em;
+    text-transform:uppercase;margin-bottom:2px}
+  .tx-side-aviso.is-warn{background:#fffbeb;border:1px solid #fde68a;color:#78350f}
+  .tx-side-aviso.is-warn i{color:var(--tx-amber)}
+  .tx-side-aviso.is-warn strong{color:#92400e}
+  .tx-side-aviso.is-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+  .tx-side-aviso.is-ok i{color:#16a34a}
+  .tx-side-aviso.is-ok strong{color:#15803d}
+  .tx-side-vresumen{width:100%;margin-top:12px;min-height:44px;border-radius:12px;
+    border:1.5px solid #e5e7eb;background:#fff;color:#0a0a0a;font-weight:700;font-size:.82rem;
+    display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
+    transition:border-color .15s,background .15s,color .15s}
+  .tx-side-vresumen:hover{border-color:var(--tx-red);background:#fef2f2;color:var(--tx-red)}
+  .tx-side-foot{border-top:1px solid #f3f4f6;padding:10px 18px;font-size:.68rem;color:#9ca3af;
+    display:flex;gap:6px;align-items:center}
+  .tx-side-foot i{color:#16a34a}
+
+  /* ── F · BARRA INFERIOR ────────────────────────────────────────── */
+  .tx-bottom{padding:10px 24px;padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+  .tx-bottom-body{max-width:1392px;margin:0 auto;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .tx-bottom-note{display:flex;align-items:center;gap:8px;font-size:.76rem;font-weight:600;color:#6b7280}
+  .tx-bottom-note i{color:#16a34a}
+  .tx-bottom-body .tx-btn-firmar{width:auto;min-width:320px;max-width:480px;margin-left:auto;order:4}
+  #btnFirmarHint{order:3;margin:0 0 0 auto !important;text-align:right;display:flex;align-items:center}
+  .tx-bottom-body .tx-btn-firmar + #btnFirmarHint{margin-left:16px}
+  #btnFirmarDetalle{order:2;margin:0 !important}
+  .tx-bottom .tx-sign-hub{max-width:720px;margin:0 auto;flex:1}
+  .tx-bottom .tx-cta-grid{flex:1;max-width:900px;margin-left:auto}
+
+  /* ── G · PESTAÑA INFORMACION EN 2 COLUMNAS ─────────────────────── */
+  #tabPanel-info{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+  #tabPanel-info > .info-card{margin-bottom:0}
+  #tabPanel-info > .pipeline-card,
+  #tabPanel-info > .info-card-full,
+  #tabPanel-info > #iosInstallBanner{grid-column:1 / -1}
+}
+
+/* El hub de firma, al recibirse la firma del cliente (sirve en cualquier ancho). */
+.tx-sign-hub.is-signed .tx-channel-grid,
+.tx-sign-hub.is-signed .tx-sign-hub-both{display:none}
+.tx-sign-hub-ok{background:rgba(34,197,94,.12);border:1.5px solid rgba(34,197,94,.45);
+  border-radius:14px;color:#bbf7d0;padding:16px;display:flex;gap:10px;align-items:center;
+  font-weight:700;font-size:.86rem}
+.tx-sign-hub-ok i{color:#4ade80;font-size:1.3rem}
+
+@media (prefers-reduced-motion:reduce){
+  .tx-stage.is-active .tx-stage-circle,
+  .tx-stage.just-signed .tx-stage-circle,
+  .tx-stage.just-signed .tx-stage-check,
+  .tx-signed-pop,
+  .tx-stage-line.is-on,
+  .tx-hdr-mtr .hm.hm-auto .dot,
+  .tx-side-card{animation:none !important}
+  .tx-hdr-ring,.tx-side-ring{transition:none}
+  .tx-eq-card:hover,.tx-eq-open:hover,.tx-contact .cbtn:hover{transform:none}
+}

@@ -2348,8 +2348,25 @@ async function _refrescarLocks(){
       // Re-render la vista de tareas para reflejar nuevos badges
       renderTareas(_state.mid, _state.pid);
     }
+
+    // 2026-08-13 — ¿el cliente firmó a distancia mientras el técnico
+    // miraba esta pantalla? Antes se quedaba en "esperando firma del
+    // cliente" hasta recargar a mano. Ahora avanza solo. Va montado en
+    // este mismo sondeo (no hay temporizador nuevo); si el backend es
+    // viejo y no manda la clave, `firma_cliente` viene undefined y esto
+    // simplemente no se dispara.
+    if (d.firma_cliente && !VISITA_YA_FIRMADA_CLIENTE){
+      VISITA_YA_FIRMADA_CLIENTE = true;
+      if (typeof window.txCelebrarFirmaCliente === 'function'){
+        window.txCelebrarFirmaCliente();
+      }
+    }
   } catch(e){ /* silencioso */ }
 }
+// Arranca en true si la OT YA venía firmada al cargar la página: así no
+// se "celebra" una firma vieja al primer sondeo.
+let VISITA_YA_FIRMADA_CLIENTE = (typeof VISITA_ESTADO !== 'undefined' &&
+  ['pendiente_aprobacion','cerrada','completada'].indexOf(VISITA_ESTADO) !== -1);
 
 // Arrancar polling cada 25s (cache 5min — barato).
 if (typeof window !== 'undefined'){
@@ -7002,17 +7019,181 @@ async function factAsociar(){
     if (lineEq) lineEq.classList.toggle('is-on', done);
   }
 
+  // ── Estados del tracking (escritorio 2026-08-13) ──────────────────
+  // La PRIMERA etapa sin completar es la "activa": palpita en rojo hasta
+  // que se completa y pasa a verde. Daniel: "el estado cambia de rojo
+  // palpitante a verde, y sigue avanzando si corresponde".
+  const TX_STAGE_TXT = {
+    equipos:   { done: 'Completa', active: 'En revisión',       idle: 'Pendiente' },
+    checklist: { done: 'Completa', active: 'En curso',          idle: 'Pendiente' },
+    firmas:    { done: 'Firmada',  active: 'Lista para firmar', idle: 'Bloqueada' },
+  };
+  function syncStageStates() {
+    const etapas = Array.from(stepper.querySelectorAll('.tx-stage'));
+    let yaActiva = false;
+    etapas.forEach((el) => {
+      const key = el.dataset.stage;
+      const txt = TX_STAGE_TXT[key];
+      if (!txt) return;
+      const done = el.classList.contains('is-complete');
+      const activa = !done && !yaActiva;
+      if (activa) yaActiva = true;
+      el.classList.toggle('is-active', activa);
+      const st = el.querySelector('.tx-stage-state');
+      if (st) st.textContent = done ? txt.done : (activa ? txt.active : txt.idle);
+    });
+  }
+
   // Los contadores globales (#statOblComp/#statOblTot) y las tarjetas de
   // equipo (.tx-eq-card) ya son actualizados en vivo por el resto del
   // archivo (_updateProgress, _refreshEqCardBadge) — solo los observamos.
-  const mo = new MutationObserver(() => { syncChecklistStage(); syncEquiposStage(); });
+  function syncAll() {
+    syncChecklistStage();
+    syncEquiposStage();
+    syncStageStates();
+    if (typeof window.txDeskSyncSide === 'function') window.txDeskSyncSide();
+  }
+  const mo = new MutationObserver(syncAll);
   const statTot = document.getElementById('statOblTot');
   const statComp = document.getElementById('statOblComp');
   if (statTot) mo.observe(statTot, { childList: true, characterData: true, subtree: true });
   if (statComp) mo.observe(statComp, { childList: true, characterData: true, subtree: true });
   const eqGrid = document.querySelector('.tx-eq-grid');
   if (eqGrid) mo.observe(eqGrid, { attributes: true, attributeFilter: ['class'], subtree: true });
+  const stTot = document.getElementById('statTot');
+  const stComp = document.getElementById('statComp');
+  if (stTot) mo.observe(stTot, { childList: true, characterData: true, subtree: true });
+  if (stComp) mo.observe(stComp, { childList: true, characterData: true, subtree: true });
 
-  syncChecklistStage();
-  syncEquiposStage();
+  syncAll();
+  window.txDeskSyncAll = syncAll;
+})();
+
+// ════════════════════════════════════════════════════════════════════
+//  RESUMEN LATERAL DE ESCRITORIO + el momento "el cliente firmó"
+//  (2026-08-13). 100% ADITIVO y 100% ESPEJO: no calcula nada por su
+//  cuenta, solo refleja contadores que el resto del archivo ya mantiene.
+//  Si los nodos no existen (móvil, o pestaña Información), no hace nada.
+// ════════════════════════════════════════════════════════════════════
+(function () {
+  const side = document.getElementById('txSideCard');
+
+  function num(id) {
+    const el = document.getElementById(id);
+    return parseInt((el && el.textContent) || '0', 10) || 0;
+  }
+  function set(id, txt, cls) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = txt;
+    if (cls !== undefined) el.className = 'val' + (cls ? ' ' + cls : '');
+  }
+
+  function syncSide() {
+    // Espejo de obligatorias también en el hero (tarjeta-dato de arriba).
+    const oblComp = num('statOblComp');
+    const oblTot = num('statOblTot');
+    const hc = document.getElementById('heroOblComp');
+    const ht = document.getElementById('heroOblTot');
+    if (hc) hc.textContent = String(oblComp);
+    if (ht) ht.textContent = String(oblTot);
+
+    if (!side) return;
+
+    const cards = document.querySelectorAll('.tx-eq-card');
+    const eqDone = document.querySelectorAll('.tx-eq-card.done').length;
+    set('txSideEq', eqDone + '/' + cards.length,
+        cards.length && eqDone === cards.length ? 'ok' : '');
+    set('txSideObl', oblComp + '/' + oblTot,
+        oblTot && oblComp >= oblTot ? 'ok' : (oblTot ? 'warn' : ''));
+    set('txSideTot', num('statComp') + '/' + num('statTot'));
+
+    // El anillo lateral copia el porcentaje que ya calculó el del hero.
+    const pctEl = document.getElementById('hdrProgressPct');
+    const pct = parseInt((pctEl && pctEl.textContent) || '0', 10) || 0;
+    const ring = document.getElementById('txSideRing');
+    const pctTxt = document.getElementById('txSidePct');
+    if (ring) {
+      ring.style.setProperty('--pct', String(pct));
+      ring.classList.toggle('is-completa', pct >= 100);
+    }
+    if (pctTxt) pctTxt.textContent = pct + '%';
+
+    // Aviso: qué falta para poder firmar.
+    const aviso = document.getElementById('txSideAviso');
+    const ttl = document.getElementById('txSideAvisoTtl');
+    const sub = document.getElementById('txSideAvisoSub');
+    if (aviso && ttl && sub) {
+      const pend = Math.max(0, oblTot - oblComp);
+      if (!oblTot) {
+        aviso.style.display = 'none';
+      } else if (pend > 0) {
+        aviso.style.display = '';
+        aviso.className = 'tx-side-aviso is-warn';
+        ttl.textContent = 'Falta' + (pend === 1 ? '' : 'n') + ' ' + pend +
+                          ' tarea' + (pend === 1 ? '' : 's') + ' obligatoria' + (pend === 1 ? '' : 's');
+        sub.textContent = 'Completa el checklist para habilitar la firma.';
+      } else {
+        aviso.style.display = '';
+        aviso.className = 'tx-side-aviso is-ok';
+        ttl.textContent = 'Todo listo';
+        sub.textContent = 'Puedes firmar la OT desde la barra de abajo.';
+      }
+    }
+  }
+  window.txDeskSyncSide = syncSide;
+
+  // ── El momento: el cliente firmó a distancia ──────────────────────
+  // Daniel: "ah, mira, el cliente ya firmó, pum, y avanzó, listo".
+  // Idempotente: si se llama dos veces, la segunda no hace nada.
+  let yaCelebrado = false;
+  window.txCelebrarFirmaCliente = function () {
+    if (yaCelebrado) return;
+    yaCelebrado = true;
+
+    const etapa = document.querySelector('.tx-stage[data-stage="firmas"]');
+    if (etapa) {
+      etapa.classList.remove('is-active');
+      etapa.classList.add('is-complete', 'just-signed');
+      const st = etapa.querySelector('.tx-stage-state');
+      if (st) st.textContent = 'Firmada';
+      const lineas = document.querySelectorAll('.tx-stage-line');
+      const ultima = lineas[lineas.length - 1];
+      if (ultima) ultima.classList.add('is-on');
+      // Globo "El cliente firmó" — se va solo a los ~4s.
+      const pop = document.createElement('span');
+      pop.className = 'tx-signed-pop';
+      pop.textContent = '✓ El cliente firmó';
+      etapa.appendChild(pop);
+      setTimeout(() => { try { pop.remove(); } catch (e) {} }, 4200);
+      setTimeout(() => { try { etapa.classList.remove('just-signed'); } catch (e) {} }, 3200);
+    }
+
+    // El hub de firma remota se apaga con gracia.
+    const hub = document.getElementById('txSignHub');
+    if (hub && !hub.classList.contains('is-signed')) {
+      hub.classList.add('is-signed');
+      const ok = document.createElement('div');
+      ok.className = 'tx-sign-hub-ok';
+      ok.innerHTML = '<i class="bi bi-patch-check-fill"></i> Firma del cliente recibida';
+      hub.appendChild(ok);
+    }
+
+    // Aviso lateral a verde.
+    const aviso = document.getElementById('txSideAviso');
+    const ttl = document.getElementById('txSideAvisoTtl');
+    const sub = document.getElementById('txSideAvisoSub');
+    if (aviso && ttl && sub) {
+      aviso.style.display = '';
+      aviso.className = 'tx-side-aviso is-ok';
+      ttl.textContent = 'El cliente ya firmó';
+      sub.textContent = 'La OT quedó sellada — lista para el cierre.';
+    }
+
+    try {
+      ilusToast('✓ El cliente firmó la OT', { type: 'success', duration: 6000 });
+    } catch (e) {}
+  };
+
+  syncSide();
 })();
