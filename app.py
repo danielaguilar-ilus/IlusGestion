@@ -74935,7 +74935,21 @@ def mant_visita_tareas_locks(vid):
             "locked_at": str(r["locked_at"])[:16] if r.get("locked_at") else None,
             "version": int(r.get("version") or 0),
         })
-    return jsonify({"ok": True, "locks": out})
+    # 2026-08-13 (Daniel: "cuando firme el cliente... que el técnico no
+    # quede en el aire, sino que: ah, mira, el cliente ya firmó, pum, y
+    # avanzó"). Se agrega el estado de la OT y si ya está la firma del
+    # cliente a ESTA respuesta en vez de crear un endpoint y un sondeo
+    # nuevos: este ya corre cada 25s, ya tiene el gate de permisos
+    # (@_ot_can_view) y es una consulta más de 2 columnas por la PK.
+    # Aditivo: los callers viejos ignoran las claves nuevas.
+    est = mysql_fetchone(
+        "SELECT estado, firma_cliente_url FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    return jsonify({
+        "ok": True,
+        "locks": out,
+        "estado": est.get("estado"),
+        "firma_cliente": bool(est.get("firma_cliente_url")),
+    })
 
 
 # ═════════════════════════════════════════════════════════════════════

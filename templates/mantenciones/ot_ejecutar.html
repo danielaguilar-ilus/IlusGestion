@@ -54,6 +54,9 @@
      _hdrSyncProgress no se toca), mismos tel:/wa.me/mailto: y el mismo
      btnRuta/abrirModalRuta() con su estado "iniciada". #}
   <div class="tx-hdr" id="txHdr">
+    {# Textura rayada del hero oscuro de escritorio (misma receta que el
+       .form-head del sistema aprobado). Solo visible >=1200px vía .tx-desk. #}
+    <span class="tx-hero-tex tx-desk" aria-hidden="true"></span>
     {# Toggle expand/collapse — solo móvil, escondido en desktop #}
     <button type="button" class="tx-hdr-toggle d-md-none" id="txHdrToggle"
             onclick="toggleHdrCollapse()" title="Colapsar / expandir info">
@@ -73,6 +76,9 @@
     <div class="tx-hdr-toprow">
       <div class="tx-hdr-id">
         <span class="tx-hdr-tipo">{{ visita.tipo | tipo_ot_label }}</span>
+        {# Número de OT gigante — protagonista del hero en escritorio (maqueta
+           aprobada). En móvil el número ya vive en el chip de arriba. #}
+        <div class="tx-hero-num tx-desk">{{ visita.numero_ot or ('OT #' ~ visita.id) }}</div>
         <h2>{{ visita.razon_social or 'Trabajo interno' }}</h2>
         {% set dir_visita = visita.direccion_visita or visita.cli_direccion %}
         {% if dir_visita %}
@@ -105,6 +111,31 @@
         <div class="hm">
           <span class="v">{{ visita.fecha_programada | chile_fmt('%d/%m') if visita.fecha_programada else '—' }}</span>
           <span class="k">Fecha</span>
+        </div>
+        {# Tarjetas-dato extra del hero de escritorio (maqueta aprobada).
+           Datos REALES ya disponibles: cantidad de equipos y el mismo
+           contador de obligatorias que destraba el botón de firmar (se
+           calcula acá arriba con namespace porque el header se renderiza
+           ANTES del bloque de tareas; el espejo en vivo lo mantiene
+           txDeskSync). Ocultas <1200px por .tx-desk. #}
+        {% set nsh = namespace(oblTot=0, oblComp=0) %}
+        {% for _mid, _pls in plantillas_por_maquina.items() %}
+          {% for _p in _pls %}{% for _t in _p.tareas %}{% if _t.obligatoria %}
+            {% set nsh.oblTot = nsh.oblTot + 1 %}
+            {% if _t.completada %}{% set nsh.oblComp = nsh.oblComp + 1 %}{% endif %}
+          {% endif %}{% endfor %}{% endfor %}
+        {% endfor %}
+        <div class="hm tx-desk">
+          <span class="v">{{ equipos|length }}</span>
+          <span class="k">Equipo{{ '' if equipos|length == 1 else 's' }}</span>
+        </div>
+        <div class="hm tx-desk">
+          <span class="v"><span id="heroOblComp">{{ nsh.oblComp }}</span>/<span id="heroOblTot">{{ nsh.oblTot }}</span></span>
+          <span class="k">Obligatorias</span>
+        </div>
+        <div class="hm tx-desk hm-auto">
+          <span class="v"><span class="dot"></span>Activo</span>
+          <span class="k">Autoguardado</span>
         </div>
         <div class="hm">
           <span class="v hm-txt">{{ visita.contacto_nombre or '—' }}</span>
@@ -947,6 +978,13 @@
      ════════════════════════════════════════════════════════ #}
   <div class="tx-tab-panel active" id="tabPanel-tareas" role="tabpanel" aria-labelledby="tabBtn-tareas">
 
+  {# Envoltorio de 2 columnas SOLO escritorio (2026-08-13). Estos divs no
+     tienen estilo <1200px, así que en móvil son transparentes al layout
+     y no cambian nada. Ningún selector del JS usa hijos directos de
+     #tabPanel-tareas — verificado con grep antes de envolver. #}
+  <div class="tx-cols">
+  <div class="tx-col-main">
+
   {# ════════════════════════════════════════════════════════════════
      STEPPER DE ETAPAS — rediseño premium 2026-08-13 (brief Daniel:
      "debe ir enumerada"). 3 etapas REALES de ejecutar una OT (nada
@@ -984,25 +1022,49 @@
   {% set _stg_firma_done = (visita.estado == 'cerrada') %}
   <div class="tx-stage-stepper" id="txStageStepper"
        data-obl-tot="{{ _stg.oblTot }}" data-eq-tot="{{ _stg.eqTot }}">
+    {# Cada etapa: círculo (número en móvil / ícono en escritorio) + bloque
+       de metadatos solo-escritorio con el número grande, el nombre largo y
+       el estado en vivo (lo pinta txDeskSync). Móvil conserva .tx-stage-lbl. #}
     <div class="tx-stage{{ ' is-complete' if _stg_eq_done else '' }}" data-stage="equipos">
       <div class="tx-stage-circle">
-        <span class="tx-stage-num">1</span><i class="bi bi-check-lg tx-stage-check"></i>
+        <span class="tx-stage-num">1</span>
+        <i class="bi bi-boxes tx-stage-ico tx-desk"></i>
+        <i class="bi bi-check-lg tx-stage-check"></i>
       </div>
       <div class="tx-stage-lbl">Equipos</div>
+      <div class="tx-stage-meta tx-desk">
+        <span class="tx-stage-bignum">01</span>
+        <span class="tx-stage-name">Equipos</span>
+        <span class="tx-stage-state"></span>
+      </div>
     </div>
     <div class="tx-stage-line{{ ' is-on' if _stg_eq_done else '' }}"></div>
     <div class="tx-stage{{ ' is-complete' if _stg_chk_done else '' }}" data-stage="checklist">
       <div class="tx-stage-circle">
-        <span class="tx-stage-num">2</span><i class="bi bi-check-lg tx-stage-check"></i>
+        <span class="tx-stage-num">2</span>
+        <i class="bi bi-list-check tx-stage-ico tx-desk"></i>
+        <i class="bi bi-check-lg tx-stage-check"></i>
       </div>
       <div class="tx-stage-lbl">Checklist</div>
+      <div class="tx-stage-meta tx-desk">
+        <span class="tx-stage-bignum">02</span>
+        <span class="tx-stage-name">Checklist</span>
+        <span class="tx-stage-state"></span>
+      </div>
     </div>
     <div class="tx-stage-line{{ ' is-on' if _stg_chk_done else '' }}"></div>
     <div class="tx-stage{{ ' is-complete' if _stg_firma_done else '' }}" data-stage="firmas">
       <div class="tx-stage-circle">
-        <span class="tx-stage-num">3</span><i class="bi bi-check-lg tx-stage-check"></i>
+        <span class="tx-stage-num">3</span>
+        <i class="bi bi-vector-pen tx-stage-ico tx-desk"></i>
+        <i class="bi bi-check-lg tx-stage-check"></i>
       </div>
       <div class="tx-stage-lbl">Firmas</div>
+      <div class="tx-stage-meta tx-desk">
+        <span class="tx-stage-bignum">03</span>
+        <span class="tx-stage-name">Evidencias y firmas</span>
+        <span class="tx-stage-state"></span>
+      </div>
     </div>
   </div>
 
@@ -1660,10 +1722,21 @@
           <i class="bi {{ 'bi-wrench-adjustable' if _apl_ot else 'bi-dash-circle' }}"></i>
         </button>
         {% endif %}
+        {# CTA explícito de escritorio: hace EXACTAMENTE lo mismo que el
+           click en la tarjeta y que el chevrón (goToPlantillas), pero se
+           lee. En móvil sigue mandando el chevrón. #}
+        <button type="button" class="tx-eq-open tx-desk"
+                onclick="event.stopPropagation(); goToPlantillas('{{ eq.id }}')">
+          Abrir checklist <i class="bi bi-arrow-right"></i>
+        </button>
       </div>
       <i class="bi bi-chevron-right eq-arrow"></i>
     </div>
     {% endfor %}
+    </div>
+    <div class="tx-note-foot tx-desk">
+      <i class="bi bi-info-circle-fill"></i>
+      Las fotos y observaciones quedan asociadas a este equipo y a la OT.
     </div>
   </div>
 
@@ -1717,6 +1790,43 @@
     </div>
   </div>
 
+  </div>{# /tx-col-main #}
+
+  {# ─── COLUMNA LATERAL "RESUMEN DE EJECUCIÓN" — solo escritorio ───
+     Todos los números son ESPEJO de contadores que ya existen y que el
+     JS ya mantiene (#statComp/#statTot, #statOblComp/#statOblTot,
+     .tx-eq-card.done, #hdrProgressPct). No hay ningún cálculo paralelo:
+     lo sincroniza txDeskSync con MutationObserver. El botón real de
+     firmar NO se duplica acá — vive en la barra inferior con sus 5
+     estados; duplicarlo obligaría a espejar toda esa máquina de estados
+     y es justo donde se rompen las cosas. #}
+  <aside class="tx-col-side tx-desk" id="txSideCard" aria-label="Resumen de ejecución">
+    <div class="tx-side-card">
+      <div class="tx-side-band"></div>
+      <div class="tx-side-body">
+        <div class="tx-side-ttl"><i class="bi bi-activity"></i>Resumen de ejecución</div>
+        <div class="tx-side-hero">
+          <div class="tx-side-ring" id="txSideRing" style="--pct:0"><span id="txSidePct">0%</span></div>
+          <div class="tx-side-rows">
+            <div class="tx-side-row"><span><i class="bi bi-boxes"></i>Equipos revisados</span><span class="val" id="txSideEq">0/0</span></div>
+            <div class="tx-side-row"><span><i class="bi bi-list-check"></i>Tareas obligatorias</span><span class="val" id="txSideObl">0/0</span></div>
+            <div class="tx-side-row"><span><i class="bi bi-check2-square"></i>Total tareas</span><span class="val" id="txSideTot">0/0</span></div>
+          </div>
+        </div>
+        <div class="tx-side-aviso is-warn" id="txSideAviso">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <div><strong id="txSideAvisoTtl">Cargando…</strong><span id="txSideAvisoSub"></span></div>
+        </div>
+        <button type="button" class="tx-side-vresumen" id="txSideVerResumen" onclick="goToResumen()">
+          <i class="bi bi-card-checklist"></i> Ver resumen antes de firmar
+        </button>
+      </div>
+      <div class="tx-side-foot"><i class="bi bi-shield-check"></i>Cada cambio registra usuario, fecha y hora.</div>
+    </div>
+  </aside>
+
+  </div>{# /tx-cols #}
+
   </div> {# /tabPanel-tareas #}
 
 </div>
@@ -1758,6 +1868,11 @@
     <i class="bi bi-chevron-down"></i><span id="txGripTxt">Ocultar</span>
   </button>
   <div class="tx-bottom-body">
+  {# Nota de guardado automático (maqueta aprobada) — es un hecho real del
+     sistema: cada cambio se guarda al instante, no un texto decorativo. #}
+  <div class="tx-bottom-note tx-desk">
+    <i class="bi bi-check-circle-fill"></i>Guardado automático activo — cada cambio queda registrado con tu usuario.
+  </div>
   {% if visita.estado == 'cerrada' %}
     {% if _es_superadmin %}
     {# OT cerrada — botón descargar PDF · 🔒 SOLO superadmin (brecha Aaron 2026-06-02):
