@@ -3,14 +3,17 @@
 insípido... header gigante, sin contenedor... el footer sácalo... trabaja
 con contundencia").
 
-Es un cambio 100% de plantilla (sin tocar backend): el formulario sigue
-mandando los MISMOS campos (doc_type con los mismos 4 values, doc_number,
-customer_rut) al mismo endpoint (seguimiento_buscar), así que estos tests
-se centran en que el contrato con el backend no se haya movido un pelo
-mientras cambiaba toda la piel visual -- el <select> de tipo de documento
-pasó a ser un grupo de radios estilo "chip", y hay que confirmar que sigue
-preseleccionando el mismo valor que antes cuando vuelve un prefill (typo
-en el RUT, por ejemplo).
+ACTUALIZADO la MISMA noche, horas después: Daniel trajo una auditoría de
+ChatGPT y pidió sacar el RUT del formulario ("no quiero que solicites el
+RUT"). El <select>/chips de tipo de documento + campo RUT que este archivo
+probaba originalmente YA NO son el formulario principal -- se reemplazaron
+por un único campo de código de seguimiento (ver seguimiento_por_codigo,
+app.py, y tests/test_seguimiento_sin_rut.py para la cobertura del diseño
+nuevo). Los tests que dependían de esos campos/chips se retiraron de acá
+(no tenía sentido dejarlos fallando contra un formulario que ya no existe
+a propósito) -- quedan solo los que siguen siendo ciertos hoy: método
+POST, manejo de errores, footer fuera, hero sin max-width y con la
+previsualización de ruta.
 
 Correr con:  py -m unittest tests.test_seguimiento_lookup_rediseno -v
 """
@@ -31,8 +34,16 @@ def _render(**ctx):
     app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"),
                 static_folder=os.path.join(BASE_DIR, "static"))
 
-    @app.route("/transporte/seguimiento/buscar", methods=["POST"])
+    @app.route("/seguimiento/buscar", methods=["POST"])
     def seguimiento_buscar():
+        return "stub"
+
+    @app.route("/seguimiento/codigo", methods=["POST"])
+    def seguimiento_por_codigo():
+        return "stub"
+
+    @app.route("/seguimiento/recuperar", methods=["GET"])
+    def seguimiento_recuperar_page():
         return "stub"
 
     with app.test_request_context():
@@ -40,43 +51,8 @@ def _render(**ctx):
 
 
 class TestContratoConBackendIntacto(unittest.TestCase):
-    """El rediseño no debe tocar nombres/values de campos ni el endpoint."""
-
-    def test_action_apunta_a_seguimiento_buscar(self):
-        self.assertIn('action="/transporte/seguimiento/buscar"', _render(error=None, prefill={}))
-
     def test_metodo_sigue_siendo_post(self):
         self.assertIn('method="POST"', TPL_SRC)
-
-    def test_campos_con_los_mismos_nombres(self):
-        for campo in ('name="doc_type"', 'name="doc_number"', 'name="customer_rut"'):
-            self.assertIn(campo, TPL_SRC)
-
-    def test_los_4_values_de_doc_type_se_mantienen(self):
-        for value in ('value=""', 'value="BLV"', 'value="FCV"', 'value="GDV"'):
-            self.assertIn(value, TPL_SRC)
-
-
-class TestChipsPreseleccionanIgualQueElSelectViejo(unittest.TestCase):
-    """El <select> con option selected pasó a radios con checked -- debe
-    seguir marcando el mismo tipo cuando el backend manda un prefill
-    (ej: el usuario mandó mal el RUT y vuelve a la página con lo que ya
-    había tipeado)."""
-
-    def test_prefill_fcv_marca_el_radio_de_factura(self):
-        html = _render(error=None, prefill={"doc_type": "FCV", "doc_number": "12345", "customer_rut": ""})
-        self.assertIn('id="dtFCV" name="doc_type" value="FCV" checked', html)
-        self.assertNotIn('id="dtAny" name="doc_type" value="" checked', html)
-
-    def test_sin_prefill_marca_cualquiera_por_defecto(self):
-        html = _render(error=None, prefill={})
-        self.assertIn('id="dtAny" name="doc_type" value="" checked', html)
-
-    def test_prefill_conserva_el_numero_y_el_rut_tipeados(self):
-        html = _render(error=None, prefill={"doc_type": "", "doc_number": "99887",
-                                             "customer_rut": "11.111.111-1"})
-        self.assertIn('value="99887"', html)
-        self.assertIn('value="11.111.111-1"', html)
 
 
 class TestErrorSigueRenderizando(unittest.TestCase):

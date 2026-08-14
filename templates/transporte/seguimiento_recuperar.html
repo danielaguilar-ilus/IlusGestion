@@ -1,0 +1,190 @@
+{# "No encuentro mi código" — recuperación por correo.
+   2026-08-13 (auditoría de ChatGPT + Daniel: "no quiero que solicites el
+   RUT"). El cliente escribe su correo; la respuesta es SIEMPRE genérica
+   (exista o no un pedido con ese correo) para no dejar confirmar por este
+   formulario si un email específico compró en ILUS. Ver
+   seguimiento_recuperar_enviar (app.py) para la lógica real.
+
+   Misma identidad visual que seguimiento_lookup.html (hero full-bleed,
+   tarjeta montada) para que el recorrido se sienta continuo.
+#}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Recuperar código de seguimiento · ILUS Fitness</title>
+  <link rel="icon" type="image/png" sizes="16x16"   href="{{ url_for('static', filename='favicon_16.png') }}">
+  <link rel="icon" type="image/png" sizes="32x32"   href="{{ url_for('static', filename='favicon_32.png') }}">
+  <link rel="icon" type="image/png" sizes="64x64"   href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --ink:#0a0a0a; --red:#dc2626; --red-lt:#f87171; --paper:#efeff1;
+      --gray:#6b7280; --gray-2:#a1a1aa; --green:#16a34a; --green-lt:#4ade80;
+      --display:'Barlow Condensed',system-ui,sans-serif;
+      --body:'Barlow',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+      --shell:520px;
+    }
+    *,*::before,*::after{ box-sizing:border-box; }
+    body{
+      margin:0; padding:0; font-family:var(--body); background:var(--paper);
+      color:var(--ink); -webkit-font-smoothing:antialiased; overflow-x:hidden;
+      padding-bottom:env(safe-area-inset-bottom);
+    }
+    .shell{ max-width:var(--shell); margin:0 auto; padding:0 1.1rem; }
+    .hd{
+      background:var(--ink); padding:calc(.6rem + env(safe-area-inset-top)) 1.1rem .6rem;
+      display:flex; align-items:center; gap:.6rem; position:sticky; top:0; z-index:40;
+    }
+    .hd-lock{ display:flex; align-items:flex-end; gap:.45rem; }
+    .hd img{ height:34px; width:auto; max-width:40vw; display:block; }
+    .hd-fit{
+      font-family:var(--display); font-weight:800; font-size:1.35rem;
+      letter-spacing:.02em; text-transform:uppercase; color:#fff;
+      line-height:1; white-space:nowrap; margin-bottom:.05rem;
+    }
+    .hd-s{
+      margin-left:auto; font-size:.62rem; letter-spacing:.18em; text-transform:uppercase;
+      color:var(--gray-2); font-weight:700; white-space:nowrap;
+    }
+    .accent{ height:4px; background:var(--red); }
+
+    .hero{
+      position:relative; overflow:hidden; background:var(--ink); color:#fff;
+      padding:2.6rem 1.1rem 5.5rem; text-align:center;
+    }
+    .hero::before{
+      content:''; position:absolute; inset:0;
+      background-image:repeating-linear-gradient(115deg, rgba(255,255,255,.035) 0 1px, transparent 1px 12px);
+      pointer-events:none;
+    }
+    .hero::after{
+      content:''; position:absolute; top:-35%; left:50%; transform:translateX(-50%);
+      width:120vw; height:60vw; max-width:820px; max-height:420px;
+      background:radial-gradient(circle, rgba(220,38,38,.32) 0%, transparent 62%);
+      pointer-events:none;
+    }
+    .hero > *{ position:relative; z-index:1; }
+    .hero-ic{
+      width:64px; height:64px; margin:0 auto; border-radius:18px;
+      background:rgba(255,255,255,.08); border:1.5px solid rgba(255,255,255,.18);
+      display:grid; place-items:center; font-size:1.7rem; color:var(--red-lt);
+    }
+    .hero-ic.is-ok{ background:rgba(22,163,74,.18); border-color:rgba(22,163,74,.5); color:var(--green-lt); }
+    .hero h1{
+      font-family:var(--display); font-weight:900;
+      font-size:clamp(1.9rem,7vw,2.6rem); line-height:1.02;
+      letter-spacing:-.01em; text-transform:uppercase; text-wrap:balance;
+      margin:1rem 0 .5rem;
+    }
+    .hero p{ font-size:.98rem; color:#d4d4d8; line-height:1.5; max-width:400px; margin:0 auto; font-weight:500; }
+
+    .search-wrap{ margin-top:-3.6rem; padding-bottom:2.5rem; }
+    .card{
+      background:#fff; border-radius:20px;
+      box-shadow:0 1px 2px rgba(0,0,0,.05), 0 24px 48px -20px rgba(0,0,0,.35);
+      padding:1.5rem 1.4rem 1.6rem;
+    }
+    .row{ margin-bottom:1.05rem; }
+    .lbl{
+      font-size:.78rem; font-weight:700; color:var(--ink); text-transform:uppercase;
+      letter-spacing:.4px; margin-bottom:.5rem; display:flex; align-items:center; gap:.35rem;
+    }
+    .lbl i{ color:var(--red); }
+    .input{
+      width:100%; padding:.8rem .95rem; border:1.5px solid #d1d5db; border-radius:12px;
+      font-size:16px; background:#fff; color:var(--ink);
+      transition:border-color .15s, box-shadow .15s; min-height:50px;
+    }
+    .input:focus{ outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(220,38,38,.12); }
+    .help{ font-size:.74rem; color:var(--gray); margin-top:.4rem; line-height:1.4; }
+    .btn{
+      width:100%; padding:.9rem 1rem; border-radius:12px; border:none;
+      background:var(--red); color:#fff; font-family:var(--display); font-weight:800;
+      font-size:1.2rem; letter-spacing:.02em; text-transform:uppercase; cursor:pointer;
+      transition:transform .12s, box-shadow .15s, background .15s; min-height:50px;
+      display:inline-flex; align-items:center; justify-content:center; gap:.5rem;
+      box-shadow:0 10px 24px -10px rgba(220,38,38,.6);
+    }
+    .btn:hover{ background:#b91c1c; transform:translateY(-1px); }
+    .back-link{
+      display:flex; align-items:center; justify-content:center; gap:.4rem;
+      margin-top:1rem; padding:.6rem; min-height:44px;
+      font-size:.85rem; font-weight:700; color:var(--gray);
+      text-decoration:none; border-radius:10px; transition:background .15s, color .15s;
+    }
+    .back-link:hover{ background:#f4f4f5; color:var(--ink); }
+    .back-link i{ color:var(--red); }
+    .ok-list{ margin:0; padding:0; list-style:none; text-align:left; }
+    .ok-list li{
+      display:flex; gap:.55rem; padding:.5rem 0; font-size:.88rem; color:#374151;
+      align-items:flex-start; line-height:1.42; border-bottom:1px solid #f1f1f3;
+    }
+    .ok-list li:last-child{ border-bottom:0; }
+    .ok-list li i{ color:var(--green); margin-top:2px; flex-shrink:0; }
+  </style>
+</head>
+<body>
+
+  <header class="hd">
+    <div class="hd-lock">
+      <img src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}"
+           alt="ILUS Fitness"
+           onerror="this.onerror=null;this.src='{{ url_for('static', filename='Logo.png') }}'">
+      <span class="hd-fit">Fitness</span>
+    </div>
+    <div class="hd-s">Seguimiento</div>
+  </header>
+  <div class="accent"></div>
+
+  {% if enviado %}
+  <section class="hero">
+    <div class="hero-ic is-ok"><i class="bi bi-envelope-check-fill"></i></div>
+    <h1>Revisa tu correo</h1>
+    <p>Si ese correo tiene pedidos con nosotros, te acabamos de enviar los enlaces de seguimiento.</p>
+  </section>
+  <div class="shell search-wrap">
+    <div class="card">
+      <ul class="ok-list">
+        <li><i class="bi bi-check-circle-fill"></i><div>Puede tardar unos minutos en llegar. Revisa también spam/promociones.</div></li>
+        <li><i class="bi bi-check-circle-fill"></i><div>Si no llega nada, verifica que sea el mismo correo que usaste al comprar.</div></li>
+      </ul>
+      <a class="back-link" href="{{ url_for('seguimiento_lookup_page') }}">
+        <i class="bi bi-arrow-left"></i>Volver a Seguimiento
+      </a>
+    </div>
+  </div>
+  {% else %}
+  <section class="hero">
+    <div class="hero-ic"><i class="bi bi-envelope-paper-fill"></i></div>
+    <h1>¿No encuentras<br>tu código?</h1>
+    <p>Escribe el correo con el que hiciste tu pedido y te reenviamos tus enlaces de seguimiento.</p>
+  </section>
+  <div class="shell search-wrap">
+    <div class="card">
+      <form method="POST" action="{{ url_for('seguimiento_recuperar_enviar') }}" novalidate>
+        <div class="row">
+          <label class="lbl" for="emailInput"><i class="bi bi-envelope"></i>Tu correo</label>
+          <input id="emailInput" type="email" name="email" class="input"
+                 placeholder="Ej: nombre@correo.com" autocomplete="email" required>
+          <div class="help">Solo lo usamos para reenviarte tus propios enlaces de seguimiento.</div>
+        </div>
+        <button class="btn" type="submit">
+          <i class="bi bi-send-fill"></i>Enviarme mis enlaces
+        </button>
+      </form>
+      <a class="back-link" href="{{ url_for('seguimiento_lookup_page') }}">
+        <i class="bi bi-arrow-left"></i>Ya tengo mi código
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+</body>
+</html>

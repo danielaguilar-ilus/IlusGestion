@@ -1,36 +1,29 @@
 {# Módulo Seguimiento — página pública de búsqueda.
-   El cliente escribe nº de factura/boleta + RUT y le mostramos su despacho.
    Visión Daniel 2026-06-06: cara real al cliente, sin redirigir a FedEx;
    nosotros consumimos FedEx Track API y mostramos en NUESTRA UI.
 
-   REDISEÑO 2026-08-13 (Daniel, en vivo, mostrando captura de esta misma
+   REDISEÑO 2026-08-13 (a): Daniel, en vivo, mostrando captura de esta misma
    página): "el diseño está bonito pero está muy insípido... quiero que el
    header sea gigantesco, que no tenga contenedor, y que contenga también
-   el tracking de todo el envío... el footer sácalo... actúa como
-   especialista en interfaz y en marketing... trabajemos con contundencia".
-   Se toma como referencia directa la identidad ya validada por Daniel en
-   public_tracking.html (industrial/atlético: negro + rojo, textura
-   diagonal, halo radial animado, Barlow Condensed) para que TODO el
-   recorrido -- buscar aquí, ver el estado allá -- se sienta una sola
-   marca, no dos productos distintos. El header pasa de ser una franja
-   delgada a un hero de pantalla completa sin max-width, con un mini-mapa
-   de 3 paradas (Pedido → En camino → Entregado) animado como preview de lo
-   que el cliente va a poder ver -- ahí vive el "tracking de todo el envío"
-   que pidió, antes incluso de buscar. La tarjeta de búsqueda flota
-   montada sobre el borde inferior del hero (mismo patrón que el
-   "scoreboard" de public_tracking.html). Selector de tipo de documento:
-   pasa de <select> a chips segmentados (mismo valor/nombre que antes, el
-   backend no cambia). Footer eliminado (pedido explícito).
+   el tracking de todo el envío... el footer sácalo... trabajemos con
+   contundencia". Header full-bleed sin max-width, mini-mapa de 3 paradas
+   animado dentro del hero, tarjeta de búsqueda montada sobre el borde
+   inferior (mismo patrón "scoreboard" de public_tracking.html), footer
+   eliminado.
 
-   Nota pendiente para Daniel (NO resuelta en este pase, es un cambio de
-   backend/datos, no de diseño): "la factura y boleta algún día van a topar
-   con los mismos números" -- FCV y BLV son secuencias independientes en el
-   ERP, así que un mismo correlativo puede repetirse entre una y otra. El
-   selector de tipo (Cualquiera/Boleta/Factura/Guía) ya existe justo para
-   desambiguar eso, pero si algún día "Cualquiera" devuelve más de un
-   documento hace falta una pantalla de desambiguación (elegir cuál de los
-   2-3 resultados es el tuyo) -- eso vive en seguimiento_buscar (app.py),
-   no en esta plantilla.
+   REDISEÑO 2026-08-13 (b), MISMA noche — auditoría de ChatGPT sobre el
+   código real + Daniel: "no quiero que solicites el RUT... el seguimiento
+   debe ser amigable". El formulario de tipo+número+RUT se reemplaza por
+   UN solo campo: el código corto de seguimiento ILUS (ver
+   _tr_ensure_tracking_code, app.py) que ya viaja en cada correo de
+   notificación junto al link directo. Quien tiene el link nunca necesita
+   esta página; quien la necesita solo escribe el código, sin exponer su
+   RUT a un formulario público. "No encuentro mi código" cae a
+   /seguimiento/recuperar (por correo, respuesta siempre genérica).
+
+   seguimiento_buscar() (doc+RUT) NO se borra -- REGLA #4.2 -- sigue vivo
+   en app.py como respaldo interno, simplemente esta plantilla ya no lo
+   ofrece como flujo principal.
 #}<!doctype html>
 <html lang="es">
 <head>
@@ -233,6 +226,14 @@
       outline:none; border-color:var(--red);
       box-shadow:0 0 0 3px rgba(220,38,38,.12);
     }
+    /* Código de seguimiento: monoespaciado + letter-spacing generoso, para
+       que se lea/escriba como lo que es -- un código, no un texto libre. */
+    .code-input{
+      font-family:ui-monospace,'SF Mono',Consolas,monospace;
+      font-size:1.15rem; font-weight:700; letter-spacing:.06em;
+      text-align:center; text-transform:uppercase;
+    }
+    .code-input::placeholder{ font-weight:600; letter-spacing:.06em; opacity:.45; }
     .help{ font-size:.74rem; color:var(--gray); margin-top:.4rem; line-height:1.4; }
     .help.trust{ display:flex; align-items:center; gap:.3rem; color:#71717a; }
     .help.trust i{ color:var(--green); }
@@ -249,6 +250,16 @@
     }
     .btn:hover{ background:#b91c1c; transform:translateY(-1px); }
     .btn:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
+
+    .lost-link{
+      display:flex; align-items:center; justify-content:center; gap:.4rem;
+      margin-top:1rem; padding:.6rem; min-height:44px;
+      font-size:.85rem; font-weight:700; color:var(--gray);
+      text-decoration:none; border-radius:10px;
+      transition:background .15s, color .15s;
+    }
+    .lost-link:hover{ background:#f4f4f5; color:var(--ink); }
+    .lost-link i{ color:var(--red); }
 
     .err{
       background:#fee2e2; border:1px solid #fecaca; color:#991b1b;
@@ -326,72 +337,51 @@
       </div>
       {% endif %}
 
-      <form method="POST" action="{{ url_for('seguimiento_buscar') }}" novalidate>
+      <form method="POST" action="{{ url_for('seguimiento_por_codigo') }}" novalidate>
         {% set prefill = prefill or {} %}
-        {% set _dt = prefill.doc_type or '' %}
         <div class="row">
-          <label class="lbl" for="docInput"><i class="bi bi-receipt"></i>N.º de documento</label>
-          <div class="doctype" role="radiogroup" aria-label="Tipo de documento">
-            <input type="radio" id="dtAny" name="doc_type" value="" {% if not _dt %}checked{% endif %}>
-            <label for="dtAny">Cualquiera</label>
-            <input type="radio" id="dtBLV" name="doc_type" value="BLV" {% if _dt == 'BLV' %}checked{% endif %}>
-            <label for="dtBLV">Boleta</label>
-            <input type="radio" id="dtFCV" name="doc_type" value="FCV" {% if _dt == 'FCV' %}checked{% endif %}>
-            <label for="dtFCV">Factura</label>
-            <input type="radio" id="dtGDV" name="doc_type" value="GDV" {% if _dt == 'GDV' %}checked{% endif %}>
-            <label for="dtGDV">Guía</label>
-          </div>
-          <input id="docInput" type="text" name="doc_number" inputmode="numeric"
-                 class="input"
-                 placeholder="Ej: 12345"
-                 autocomplete="off"
-                 value="{{ prefill.doc_number or '' }}"
+          <label class="lbl" for="codeInput"><i class="bi bi-upc-scan"></i>Código de seguimiento ILUS</label>
+          <input id="codeInput" type="text" name="tracking_code"
+                 class="input code-input"
+                 placeholder="ILUS-XXXX-XXXX"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 value="{{ prefill.tracking_code or '' }}"
                  required>
-          <div class="help">Está en la parte superior de tu boleta o factura — generalmente entre 4 y 7 dígitos. Si no sabes el tipo exacto, deja "Cualquiera".</div>
-        </div>
-
-        <div class="row">
-          <label class="lbl" for="rutInput"><i class="bi bi-person-vcard"></i>Tu RUT</label>
-          <input id="rutInput" type="text" name="customer_rut"
-                 class="input"
-                 placeholder="Ej: 12.345.678-9"
-                 autocomplete="off"
-                 value="{{ prefill.customer_rut or '' }}"
-                 required>
-          <div class="help trust"><i class="bi bi-shield-check"></i>Solo lo usamos para confirmar que el pedido es tuyo.</div>
+          <div class="help">Está en el correo de confirmación de tu pedido, justo bajo el botón "Seguir mi pedido".</div>
         </div>
 
         <button class="btn" type="submit">
           <i class="bi bi-search"></i>
           Ver estado de mi despacho
         </button>
+
+        <a class="lost-link" href="{{ url_for('seguimiento_recuperar_page') }}">
+          <i class="bi bi-envelope-paper"></i>No encuentro mi código
+        </a>
       </form>
     </div>
 
     <div class="tips">
       <h3>Tips útiles</h3>
       <ul>
-        <li><i class="bi bi-check-circle-fill"></i><div>Si tu documento es una <strong>boleta</strong>, suele empezar con BLV. Si es <strong>factura</strong>, con FCV.</div></li>
+        <li><i class="bi bi-check-circle-fill"></i><div>Tu código empieza siempre con <strong>ILUS-</strong> y tiene 8 caracteres — lo enviamos junto con cada actualización de tu pedido.</div></li>
         <li><i class="bi bi-check-circle-fill"></i><div>Si va con FedEx, mostramos el estado <strong>en vivo</strong> sin que tengas que ir al sitio de FedEx.</div></li>
+        <li><i class="bi bi-shield-check"></i><div>Nunca pedimos tu RUT ni datos de pago para ver el estado de tu pedido.</div></li>
       </ul>
     </div>
   </div>
 
   <script>
-    // Formato visual ligero del RUT (sin bloquear): puntos + guion al perder foco.
-    document.getElementById('rutInput').addEventListener('blur', function(){
-      var v = (this.value || '').replace(/[^\dKk]/g, '').toUpperCase();
-      if (v.length < 2) return;
-      var cuerpo = v.slice(0, -1);
-      var dv     = v.slice(-1);
-      var fmt = '';
-      while (cuerpo.length > 3) { fmt = '.' + cuerpo.slice(-3) + fmt; cuerpo = cuerpo.slice(0, -3); }
-      fmt = cuerpo + fmt + '-' + dv;
-      this.value = fmt;
+    // Formato visual ligero del código: fuerza mayúsculas mientras escribe
+    // (el backend igual normaliza, esto es solo comodidad visual).
+    document.getElementById('codeInput').addEventListener('input', function(){
+      var start = this.selectionStart, end = this.selectionEnd;
+      this.value = this.value.toUpperCase();
+      this.setSelectionRange(start, end);
     });
 
     // Auto-focus el primer input
-    document.getElementById('docInput').focus();
+    document.getElementById('codeInput').focus();
   </script>
 </body>
 </html>

@@ -181,6 +181,13 @@ body{
   margin-top:.5rem; font-size:1.02rem; color:#e4e4e7;
   font-weight:600; line-height:1.32;
 }
+.multi-envio{
+  display:flex; align-items:center; gap:.5rem; margin-top:.7rem;
+  padding:.55rem .8rem; border-radius:11px; font-size:.82rem; font-weight:600;
+  background:rgba(245,158,11,.14); border:1px solid rgba(245,158,11,.35);
+  color:var(--amber-lt); line-height:1.4;
+}
+.multi-envio i{ flex-shrink:0; font-size:.95rem; }
 
 /* Estado — el dato estrella */
 .estado-wrap{ margin-top:1.15rem; }
@@ -561,6 +568,23 @@ a.nextup:active{ background:rgba(255,255,255,.13); }
   font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
   color:var(--gray); font-weight:700;
 }
+
+/* ── PRODUCTOS del pedido (mismo lenguaje que .route-card) ────── */
+.prod-card{
+  margin:0 1.1rem .8rem; background:#fff; border:1px solid var(--line);
+  border-radius:16px; padding:1.05rem 1.1rem 1.15rem; overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,.045); position:relative;
+  animation:rise .55s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:.24s;
+}
+.prod-list{ list-style:none; margin:1rem 0 0; padding:0; }
+.prod-list li{
+  display:flex; align-items:baseline; justify-content:space-between; gap:.6rem;
+  padding:.5rem 0; border-bottom:1px solid #f1f1f3; font-size:.9rem; color:#27272a;
+}
+.prod-list li:last-child{ border-bottom:0; }
+.prod-n{ font-weight:600; }
+.prod-q{ flex-shrink:0; color:var(--gray); font-weight:700; font-variant-numeric:tabular-nums; }
+.prod-more{ color:var(--gray) !important; font-style:italic; font-weight:500 !important; }
 
 /* ── CONTENIDO ──────────────────────────────────────────────── */
 .wrap{ padding:.95rem 1.1rem 1.6rem; }
@@ -1217,6 +1241,18 @@ a.kv:active{ background:#fafafa; }
     <i class="bi bi-receipt"></i>{{ data.doc }}
   </button>
   {% if data.cliente %}<div class="cli">{{ data.cliente }}</div>{% endif %}
+  {# 2026-08-13 (fix real, no solo diseño): antes el estado se armaba con el
+     ÚLTIMO manifest_item nada más -- un pedido dividido en 2+ despachos
+     podía mostrar "Entregado" con una parte todavía en camino. Ahora se
+     agrega todo el pedido (ver _tracking_payload) y, si hay más de un
+     despacho, se avisa acá -- dato real (multi_envio_total viene de contar
+     los items reales), no una suposición. #}
+  {% if data.multi_envio_total and data.multi_envio_total > 1 %}
+  <div class="multi-envio">
+    <i class="bi bi-box-seam-fill"></i>
+    Tu pedido se despacha en {{ data.multi_envio_total }} partes — este es el estado del que va más atrasado.
+  </div>
+  {% endif %}
 
   <div id="tkState" class="estado-wrap s-{{ data.estado_color }}">
     <div class="estado-top">
@@ -1367,6 +1403,25 @@ a.kv:active{ background:#fafafa; }
     <div class="route-lbl origin"><b>Centro ILUS</b><span>Quilicura</span></div>
     <div class="route-lbl dest"><b>{{ data.destino }}</b><span>Destino</span></div>
   </div>
+</div>
+{% endif %}
+
+{# 2026-08-13 (auditoría de ChatGPT: "el cliente no ve qué productos están
+   viajando"). Lista real (transport_commitment_lines), tope de 6 filas
+   visibles -- si el documento no tiene líneas sincronizadas (data.productos
+   vacío) la tarjeta simplemente no aparece; el conteo de bultos del
+   scoreboard de arriba sigue mostrándose igual. #}
+{% if data.productos %}
+<div class="prod-card">
+  <div class="route-h"><i class="bi bi-box-seam-fill"></i>Qué viene en tu pedido</div>
+  <ul class="prod-list">
+    {% for p in data.productos[:6] %}
+    <li><span class="prod-n">{{ p.nombre }}</span>{% if p.cantidad and p.cantidad != 1 %}<span class="prod-q">×{{ p.cantidad|int }}</span>{% endif %}</li>
+    {% endfor %}
+    {% if data.productos|length > 6 %}
+    <li class="prod-more">+ {{ data.productos|length - 6 }} producto{{ 's' if data.productos|length - 6 != 1 else '' }} más</li>
+    {% endif %}
+  </ul>
 </div>
 {% endif %}
 
