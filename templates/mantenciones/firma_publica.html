@@ -140,7 +140,8 @@
       <label for="fNombre">Tu nombre</label>
       <input type="text" id="fNombre" placeholder="Nombre de quien firma" autocomplete="name">
       <label for="fRut">Tu RUT</label>
-      <input type="text" id="fRut" placeholder="12.345.678-9" inputmode="text" autocomplete="off">
+      <input type="text" id="fRut" placeholder="12.345.678-9" inputmode="text" autocomplete="off"
+             oninput="_fmtRutInput(this)" maxlength="12">
 
       <label>Tu firma</label>
       <div class="sig-wrap">
@@ -186,6 +187,28 @@
   {% if estado == 'firmar' %}
   <script>
     const TOKEN = {{ token|tojson }};
+
+    // ── RUT con formato mientras se escribe (2026-08-13, Daniel: "el RUT
+    //    tiene que tener formato de RUT, urgente"). Misma lógica que
+    //    _ilusFmtRut de static/mant_ficha.js (no se puede importar: esta
+    //    página es pública y autocontenida, sin base.html ni bundles) y
+    //    idempotente con _formato_rut_chile del backend: extrae dígitos+K
+    //    primero, así reformatear un valor ya formateado da lo mismo.
+    //    El backend igual valida con validar_rut() -- esto es ayuda visual,
+    //    no reemplaza la validación real.
+    function _fmtRutInput(el){
+      const clean = String(el.value || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      if (!clean){ el.value = ''; return; }
+      if (clean.length < 2){ el.value = clean; return; }
+      const cuerpo = clean.slice(0, -1).slice(0, 8);  // RUT chileno: máx 8 dígitos de cuerpo
+      const dv = clean.slice(-1);
+      let out = '';
+      for (let i = 0; i < cuerpo.length; i++){
+        if (i > 0 && (cuerpo.length - i) % 3 === 0) out += '.';
+        out += cuerpo[i];
+      }
+      el.value = out + '-' + dv;
+    }
     const cv = document.getElementById('sig'), ctx = cv.getContext('2d');
     const sigHint = document.getElementById('sigHint');
     let drawing = false, has = false;
