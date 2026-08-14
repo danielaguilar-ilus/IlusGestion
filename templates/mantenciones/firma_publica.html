@@ -4,184 +4,656 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#0a0a0a">
   <title>Firma de conformidad · ILUS</title>
+  {# ── Rediseño 2026-08-13 (pedido de Daniel: "idéntico al formato de diseño
+     de toda la aplicación... con el diseño numerado... que el cliente quede
+     sorprendido"). Fuente de verdad visual: static/retiros_public_request.css
+     + templates/retiros/public_request.html (la página pública aprobada).
+     Tokens, sombras, radios y el patrón .step-section/.step-circle vienen
+     COPIADOS de ahí, no inventados. ── #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
+    :root{
+      --ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a;--ink-2:#161616;
+      --gray-1:#f3f4f6;--gray-2:#e5e7eb;--gray-3:#9ca3af;--gray-4:#374151;
+      --red-500:#dc2626;--red-600:#c81e1e;--red-700:#a60000;
+      --green-500:#16a34a;--green-050:#dcfce7;
+      --amber-500:#f59e0b;
+      --ring: 0 0 0 4px rgba(220,38,38,.16);
+      --shadow-sm: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+      --shadow-md: 0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
+      --shadow-lg: 0 1px 0 rgba(255,255,255,.7) inset, 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+      --shadow-red: 0 10px 28px -6px rgba(220,38,38,.42);
+      --r-sm:10px;--r-md:14px;--r-lg:18px;--r-xl:24px;
+      --display:'Bebas Neue','Inter',sans-serif;
+      --ease-spring: cubic-bezier(.34,1.56,.64,1);
+      --ease-out: cubic-bezier(.22,1,.36,1);
+    }
     *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-      background:#0a0a0a;color:#fff;min-height:100vh;padding:18px 14px 36px;}
-    .wrap{max-width:520px;margin:0 auto;}
-    .brand{display:flex;align-items:center;gap:10px;font-size:1.35rem;font-weight:800;letter-spacing:-.5px;margin:6px 2px 18px;}
-    .brand span{color:#dc2626}
-    .card{background:#141417;border:1px solid #262629;border-radius:16px;padding:18px 18px 16px;box-shadow:0 16px 50px rgba(0,0,0,.4);}
-    .ot-num{display:inline-block;background:#fee2e2;color:#991b1b;font-weight:800;font-size:.8rem;padding:3px 10px;border-radius:8px;letter-spacing:.4px;}
-    h1{font-size:1.12rem;font-weight:700;margin:14px 0 4px;}
-    .muted{color:#9ca3af;font-size:.86rem;line-height:1.5;}
-    .rows{margin:14px 0;border-top:1px solid #262629;padding-top:12px;}
-    .row{display:flex;justify-content:space-between;gap:12px;font-size:.86rem;padding:5px 0;}
-    .row .k{color:#9ca3af}
-    .row .v{color:#f3f4f6;font-weight:600;text-align:right}
-    /* ── Detalle de equipos atendidos (2026-08-13): el cliente debe VER lo
-       que va a firmar, no solo un conteo. Acordeón nativo <details> --
-       cero JS, y las fotos con loading="lazy" dentro de un <details>
-       cerrado NO se piden a la red hasta que el cliente lo abre: barato
-       por defecto en cualquier conexión. ── */
-    .eq-section{margin:14px 0;border-top:1px solid #262629;padding-top:12px;}
-    .eq-section-title{font-size:.78rem;color:#9ca3af;font-weight:600;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px}
-    .eq-item{background:#0e0e10;border:1px solid #262629;border-radius:10px;margin-bottom:8px;overflow:hidden;}
-    .eq-item summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:11px 13px;min-height:44px;}
+    html{-webkit-text-size-adjust:100%}
+    body{
+      margin:0;color:#111827;
+      font-family:'Inter','Segoe UI',Arial,sans-serif;
+      -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+      min-height:100vh;
+      /* Lienzo oscuro premium — mismos valores del hero de /retiros/solicitar */
+      background:
+        radial-gradient(ellipse 80% 60% at 10% 110%, rgba(120,15,15,.25) 0%, transparent 60%),
+        linear-gradient(135deg, #0a0a0a 0%, #111 50%, #0a0a0a 100%);
+    }
+    ::selection{background:rgba(220,38,38,.18);color:#0a0a0a}
+    /* Malla técnica sutil sobre el fondo (textura "engineered" de la referencia) */
+    .bg-tex{
+      position:fixed;inset:0;pointer-events:none;z-index:0;
+      background:
+        linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px) 0 0/ 46px 46px,
+        linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px) 0 0/ 46px 46px;
+      -webkit-mask-image:radial-gradient(ellipse 90% 80% at 50% 30%, #000 30%, transparent 100%);
+              mask-image:radial-gradient(ellipse 90% 80% at 50% 30%, #000 30%, transparent 100%);
+    }
+    .page{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;
+      padding:0 14px calc(env(safe-area-inset-bottom, 0px));}
+    .wrap{width:100%;max-width:660px;margin:0 auto;flex:1}
+
+    /* ── Cabecera con LOGO (Daniel: la página de firma no tenía el logo) ── */
+    .page-head{
+      text-align:center;padding:30px 0 22px;position:relative;
+      animation:fadeInUp .55s var(--ease-out) both;
+    }
+    .page-head img{
+      width:180px;max-width:60vw;display:block;margin:0 auto;
+      filter:drop-shadow(0 6px 18px rgba(230,0,0,.25));
+    }
+    .head-pill{
+      display:inline-flex;align-items:center;gap:7px;margin-top:14px;
+      background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);
+      border-radius:50px;padding:7px 15px;font-size:.72rem;font-weight:800;
+      letter-spacing:.05em;text-transform:uppercase;color:#e5e7eb;
+      backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+      box-shadow:0 1px 0 rgba(255,255,255,.06) inset;
+    }
+    .head-pill svg{flex:none}
+
+    /* ── Card blanca premium (patrón .form-card de la referencia) ── */
+    .form-card{
+      background:rgba(255,255,255,.97);
+      border:1px solid rgba(229,231,235,.9);border-radius:var(--r-xl);
+      box-shadow:var(--shadow-lg);
+      overflow:hidden;position:relative;
+      animation:fadeInUp .55s .08s var(--ease-out) both;
+    }
+    .form-head{
+      background:
+        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.16) 0%, transparent 45%),
+        linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+      color:#fff;padding:28px 26px 24px;border-bottom:4px solid var(--ilus-red);
+      display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;
+      position:relative;overflow:hidden;
+    }
+    .form-head::before{
+      content:'';position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px) 0 0/100% 38px;
+      -webkit-mask-image:linear-gradient(90deg,transparent,#000 60%);mask-image:linear-gradient(90deg,transparent,#000 60%);
+    }
+    .form-head::after{
+      content:'';position:absolute;right:-90px;top:-90px;width:280px;height:280px;
+      background:radial-gradient(circle, rgba(220,38,38,.22) 0%, transparent 70%);
+      pointer-events:none;
+    }
+    .form-head h1{
+      margin:0;font-family:var(--display);font-weight:400;font-size:2.3rem;
+      letter-spacing:.015em;line-height:.92;
+      position:relative;z-index:1;text-shadow:0 2px 20px rgba(0,0,0,.4);
+    }
+    .form-head .form-sub{color:#cbd5e1;font-size:.88rem;margin-top:7px;position:relative;z-index:1;font-weight:500;max-width:400px;line-height:1.5}
+    .form-head .form-pill{
+      background:rgba(220,38,38,.16);color:#fecaca;border:1px solid rgba(220,38,38,.4);
+      border-radius:50px;padding:9px 16px;font-size:.8rem;font-weight:800;letter-spacing:.05em;
+      text-transform:uppercase;display:inline-flex;align-items:center;gap:7px;position:relative;z-index:1;flex-shrink:0;
+      box-shadow:0 6px 16px -6px rgba(220,38,38,.4);
+      font-variant-numeric:tabular-nums;
+    }
+    .form-body{padding:26px 24px 28px}
+
+    /* ════════════════════════════════════════════════════════════
+       PASOS NUMERADOS — patrón .step-section / .step-circle copiado
+       de retiros_public_request.css. Rojo → verde al completarse.
+       ════════════════════════════════════════════════════════════ */
+    .step-section{
+      margin:0 0 20px;padding:22px 20px;background:#fff;
+      border:1.5px solid var(--gray-2);border-radius:var(--r-md);
+      box-shadow:var(--shadow-sm);position:relative;overflow:hidden;
+      transition:border-color .3s, background .3s, box-shadow .3s;
+    }
+    .step-section::before{
+      content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+      background:linear-gradient(180deg,var(--ilus-red),#a60000);
+      opacity:0;transform:scaleY(.4);transform-origin:top;
+      transition:opacity .3s,transform .35s var(--ease-out);
+    }
+    .step-section.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%, #fff 55%)}
+    .step-section.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d);opacity:1;transform:scaleY(1)}
+    .step-header{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+    .step-circle{
+      width:48px;height:48px;border-radius:14px;color:#fff;
+      display:flex;align-items:center;justify-content:center;font-family:var(--display);
+      font-size:1.55rem;letter-spacing:.02em;flex-shrink:0;
+      background:linear-gradient(150deg,var(--ilus-red) 0%,#a60000 100%);
+      box-shadow:0 10px 22px -6px rgba(220,38,38,.5), 0 1px 0 rgba(255,255,255,.25) inset;
+      transition:all .35s var(--ease-spring);
+      position:relative;
+    }
+    .step-section.is-complete .step-circle{
+      background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+      box-shadow:0 10px 22px -6px rgba(22,163,74,.5), 0 1px 0 rgba(255,255,255,.3) inset;
+      transform:scale(1.04);
+    }
+    .step-section.is-complete .step-circle::after{
+      content:'';position:absolute;inset:-4px;border-radius:16px;
+      border:2px solid #16a34a;opacity:.35;animation:circlePulseGreen 1.6s ease-in-out 1;
+    }
+    @keyframes circlePulseGreen{
+      0%{transform:scale(.85);opacity:.7}
+      100%{transform:scale(1.25);opacity:0}
+    }
+    .step-circle .step-check{display:none;line-height:0}
+    .step-section.is-complete .step-circle .step-num-text{display:none}
+    .step-section.is-complete .step-circle .step-check{display:block}
+    /* Paso 3 bloqueado hasta identificarse: círculo gris (mismo recurso que el
+       paso "comentarios" de la referencia) que salta a rojo al habilitarse. */
+    .step-section.is-locked .step-circle{
+      background:linear-gradient(150deg,#9ca3af 0%,#6b7280 100%);
+      box-shadow:0 6px 14px rgba(107,114,128,.25);
+    }
+    .step-titles{flex:1;min-width:0;padding-top:2px}
+    .step-titles h2{
+      margin:0;font-size:1.16rem;font-weight:900;color:#0a0a0a;letter-spacing:-.02em;
+      line-height:1.2;font-family:'Inter','Segoe UI',sans-serif;
+    }
+    .step-titles .step-sub{
+      margin:5px 0 0;font-size:.84rem;color:#6b7280;line-height:1.5;
+    }
+    .step-titles .step-sub strong{color:#374151;font-weight:700}
+
+    /* ── Datos de la OT (paso 1) ── */
+    .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px}
+    .meta-cell{
+      background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+      border:1.5px solid var(--gray-2);border-radius:var(--r-sm);padding:10px 13px;min-width:0;
+    }
+    .meta-cell.span2{grid-column:1 / -1}
+    .meta-k{display:block;font-size:.66rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:3px}
+    .meta-v{display:block;font-size:.92rem;font-weight:800;color:#0a0a0a;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis}
+
+    /* ── Detalle de equipos atendidos: el cliente debe VER lo que va a
+       firmar, no solo un conteo. Acordeón nativo <details> — cero JS, y las
+       fotos con loading="lazy" dentro de un <details> cerrado NO se piden a
+       la red hasta que el cliente lo abre: barato en cualquier conexión. ── */
+    .eq-list{margin-top:16px}
+    .eq-list-title{
+      font-size:.72rem;color:#6b7280;font-weight:900;margin-bottom:10px;
+      text-transform:uppercase;letter-spacing:.12em;display:flex;align-items:center;gap:10px;
+    }
+    .eq-list-title::before{content:'';width:22px;height:3px;border-radius:3px;
+      background:linear-gradient(90deg,var(--ilus-red),#ff5a5a);flex-shrink:0}
+    .eq-item{
+      background:#fff;border:1.5px solid var(--gray-2);border-radius:12px;
+      margin-bottom:10px;overflow:hidden;box-shadow:var(--shadow-sm);
+      transition:border-color .2s, box-shadow .2s;
+    }
+    .eq-item[open]{border-color:#d1d5db;box-shadow:var(--shadow-md)}
+    .eq-item summary{
+      list-style:none;cursor:pointer;display:flex;justify-content:space-between;
+      align-items:center;gap:10px;padding:13px 15px;min-height:48px;user-select:none;
+    }
     .eq-item summary::-webkit-details-marker{display:none}
-    .eq-item summary::after{content:'⌄';color:#6b7280;font-size:1rem;margin-left:6px;transition:transform .15s;flex:none}
+    .eq-item summary::after{
+      content:'⌄';color:#9ca3af;font-size:1.05rem;font-weight:700;margin-left:4px;
+      transition:transform .2s var(--ease-out);flex:none;line-height:1;
+    }
     .eq-item[open] summary::after{transform:rotate(180deg)}
-    .eq-name{font-weight:700;font-size:.88rem;color:#f3f4f6;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .eq-badge{font-size:.66rem;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;flex:none}
+    .eq-name{font-weight:800;font-size:.9rem;color:#0a0a0a;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}
+    .eq-badge{font-size:.66rem;font-weight:800;padding:4px 10px;border-radius:50px;white-space:nowrap;flex:none;letter-spacing:.02em}
     .eq-ok{background:#dcfce7;color:#166534}
     .eq-warn{background:#fff8e1;color:#92400e}
     .eq-err{background:#fee2e2;color:#991b1b}
-    .eq-body{padding:0 13px 13px;}
-    .eq-sub{color:#9ca3af;font-size:.78rem;margin-bottom:6px}
-    .eq-chk-summary{font-size:.76rem;color:#9ca3af;margin-bottom:5px}
-    .eq-tareas{list-style:none;margin:0 0 6px;padding:0;font-size:.82rem;}
-    .eq-tareas li{padding:3px 0;color:#d1d5db}
-    .eq-tareas li.ok::before{content:'✓ ';color:#4ade80;font-weight:700}
-    .eq-tareas li.pend::before{content:'· ';color:#6b7280}
-    .eq-tareas li.extra{color:#6b7280;font-style:italic}
-    .eq-nota{font-size:.78rem;color:#fbbf24;background:#1c1a12;border-radius:8px;padding:7px 9px;margin:6px 0;line-height:1.4}
-    .eq-fotos{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
-    .eq-fotos img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #262629;background:#1a1a1d}
-    .eq-fotos-extra{font-size:.72rem;color:#9ca3af;background:#1a1a1d;border-radius:8px;padding:5px 8px;}
-    .eq-more{color:#6b7280;font-size:.78rem;text-align:center;padding:4px 0 0}
-    label{display:block;font-size:.78rem;color:#9ca3af;font-weight:600;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.4px}
-    input[type=text]{width:100%;background:#0e0e10;border:1px solid #303034;border-radius:10px;color:#fff;
-      font-size:16px;padding:12px 13px;min-height:46px;outline:none;}
-    input[type=text]:focus{border-color:#dc2626;}
-    .sig-wrap{position:relative;margin-top:6px;}
-    canvas{width:100%;height:190px;background:#fff;border-radius:12px;border:2px dashed #d1d5db;touch-action:none;display:block;}
-    .sig-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#9ca3af;font-size:.85rem;pointer-events:none;}
-    /* 2026-08-13 (Daniel: "herramienta que dé borrado, algo que llame la
-       atención, que venda" — ver memoria ot_firma_potenciada_whatsapp_correo):
-       antes .lnk era texto gris casi invisible. El lápiz de firma es la
-       herramienta central de esta página — sus controles deben sentirse a
-       la altura, no como un detalle olvidado. */
-    .sig-tools{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px;flex-wrap:wrap}
-    .sig-tools-left{display:flex;gap:8px;align-items:center;}
-    .lnk{
-      background:#1a1a1d;border:1.5px solid #303034;color:#e5e7eb;
-      font-size:.78rem;font-weight:700;cursor:pointer;
-      padding:9px 14px;min-height:40px;border-radius:10px;
-      display:inline-flex;align-items:center;gap:6px;
-      transition:background .15s,border-color .15s,transform .12s;
+    .eq-body{padding:0 15px 15px;border-top:1px dashed var(--gray-2);padding-top:12px}
+    .eq-sub{color:#6b7280;font-size:.78rem;margin-bottom:8px}
+    .eq-chk-summary{font-size:.76rem;color:#374151;font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .eq-bar{height:6px;border-radius:50px;background:var(--gray-1);overflow:hidden;margin-bottom:10px}
+    .eq-bar-fill{height:100%;border-radius:50px;background:linear-gradient(90deg,#22c55e,#16a34a);
+      box-shadow:0 0 8px rgba(22,163,74,.4);transition:width .4s var(--ease-out)}
+    .eq-tareas{list-style:none;margin:0 0 6px;padding:0;font-size:.82rem}
+    .eq-tareas li{padding:3px 0;color:#374151}
+    .eq-tareas li.ok::before{content:'✓ ';color:#16a34a;font-weight:900}
+    .eq-tareas li.pend::before{content:'· ';color:#9ca3af;font-weight:900}
+    .eq-tareas li.extra{color:#9ca3af;font-style:italic}
+    .eq-nota{
+      font-size:.78rem;color:#78350f;background:#fff8e1;border:1px solid #fde68a;
+      border-left:4px solid var(--amber-500);border-radius:8px;padding:8px 11px;margin:8px 0;line-height:1.5;
     }
-    .lnk:hover{border-color:#dc2626;background:#211012}
-    .lnk:active{transform:scale(.95);color:#fff;border-color:#dc2626}
-    .btn{display:block;width:100%;background:#dc2626;color:#fff;border:0;border-radius:12px;font-size:1rem;font-weight:700;
-      padding:15px;min-height:52px;margin-top:18px;cursor:pointer;transition:background .15s;}
-    .btn:hover{background:#b91c1c}.btn:disabled{opacity:.6}
-    .foot{text-align:center;color:#6b7280;font-size:.72rem;margin-top:18px;line-height:1.5}
-    .state{text-align:center;padding:28px 10px}
-    .state .ico{font-size:2.6rem;margin-bottom:10px}
-    .ok-ico{color:#22c55e}.warn-ico{color:#f59e0b}.err-ico{color:#ef4444}
-    .err{color:#fca5a5;font-size:.82rem;margin-top:8px;min-height:18px;text-align:center}
+    .eq-fotos{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px;align-items:center}
+    .eq-fotos img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1.5px solid var(--gray-2);background:var(--gray-1)}
+    .eq-fotos-extra{font-size:.72rem;font-weight:700;color:#6b7280;background:var(--gray-1);border-radius:8px;padding:6px 9px}
+    .eq-more{color:#9ca3af;font-size:.78rem;text-align:center;padding:4px 0 0}
+
+    /* ── Campos (paso 2) — mismo lenguaje de inputs de la referencia ── */
+    .field-grid{display:grid;grid-template-columns:1fr;gap:14px}
+    .field label{
+      display:flex;align-items:center;gap:5px;font-size:.82rem;color:#0a0a0a;
+      font-weight:800;letter-spacing:-.005em;margin:0 0 6px;
+    }
+    .req{color:var(--ilus-red);font-weight:900}
+    .field input[type=text]{
+      width:100%;background:#fff;border:1.5px solid #e5e7eb;border-radius:var(--r-sm);
+      color:#111827;font-size:16px;padding:12px 13px;min-height:48px;outline:none;
+      transition:border-color .16s var(--ease-out), box-shadow .16s var(--ease-out), background-color .16s;
+    }
+    .field input[type=text]::placeholder{color:#aeb4bd}
+    .field input[type=text]:hover:not(:focus){border-color:#cbd5e1}
+    .field input[type=text]:focus{border-color:var(--ilus-red);box-shadow:var(--ring);background-color:#fff}
+    .input-help{font-size:.73rem;color:#6b7280;margin-top:5px;line-height:1.45;display:flex;align-items:center;gap:7px}
+    .input-help::before{content:'';width:3px;height:13px;background:linear-gradient(180deg,#d1d5db,#e5e7eb);border-radius:2px;flex-shrink:0}
+    /* Validación en vivo — .field-valid / .field-invalid copiados de la referencia */
+    .field-valid{border-color:#16a34a !important;background:#f0fdf4 !important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%2316a34a'%3E%3Cpath d='M13.485 1.929a.75.75 0 0 1 0 1.06l-7.5 7.5a.75.75 0 0 1-1.06 0L1.515 7.078a.75.75 0 1 1 1.06-1.06l3.388 3.388 6.97-6.97a.75.75 0 0 1 1.061 0z'/%3E%3C/svg%3E") !important;background-repeat:no-repeat !important;background-position:right 10px center !important;background-size:14px !important;padding-right:32px !important}
+    .field-invalid{border-color:#dc2626 !important;background:#fef2f2 !important;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23dc2626'%3E%3Cpath d='M4.646 4.646a.75.75 0 0 1 1.06 0L8 6.94l2.293-2.293a.75.75 0 1 1 1.06 1.06L9.06 8l2.293 2.293a.75.75 0 0 1-1.06 1.06L8 9.06l-2.293 2.293a.75.75 0 0 1-1.06-1.06L6.94 8 4.646 5.706a.75.75 0 0 1 0-1.06z'/%3E%3C/svg%3E") !important;background-repeat:no-repeat !important;background-position:right 10px center !important;background-size:14px !important;padding-right:32px !important}
+    .input-error{font-size:.75rem;color:var(--ilus-red);margin-top:4px;font-weight:700;display:none}
+    .input-ok{font-size:.75rem;color:#16a34a;margin-top:4px;font-weight:700;display:none}
+    .input-error.show,.input-ok.show{display:block}
+    /* Empujoncito al paso 2 cuando tocan el lápiz bloqueado */
+    @keyframes stepNudge{
+      0%,100%{box-shadow:var(--shadow-sm)}
+      40%{box-shadow:0 0 0 4px rgba(220,38,38,.18), var(--shadow-md)}
+    }
+    .step-section.nudge{animation:stepNudge .6s var(--ease-out) 1;border-color:var(--red-500)}
+
+    /* ════════════════════════════════════════════════════════════
+       PASO 3 — EL LÁPIZ DE FIRMA (Daniel: "herramientas potentes,
+       que llamen la atención, que vendan")
+       ════════════════════════════════════════════════════════════ */
+    .sig-panel{
+      background:linear-gradient(180deg,#fcfcfd 0%,#f6f7f9 100%);
+      border:1.5px solid var(--gray-2);border-radius:var(--r-md);padding:14px;
+      box-shadow:inset 0 1px 2px rgba(15,23,42,.03);
+    }
+    .sig-wrap{position:relative}
+    #sig{
+      width:100%;height:210px;background:#fff;border-radius:12px;
+      border:2px dashed #d1d5db;touch-action:none;display:block;
+      transition:border-color .3s;
+    }
+    .sig-hint{
+      position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      color:#9ca3af;font-size:.85rem;pointer-events:none;text-align:center;
+      display:flex;flex-direction:column;align-items:center;gap:6px;width:90%;
+    }
+    .sig-hint svg{opacity:.55}
+    /* Mientras el candado está puesto, la pista de "firma aquí" no compite
+       con el mensaje del candado (fallback sin :has = solo se superponen). */
+    .sig-wrap:has(.sig-lock:not(.off)) .sig-hint{opacity:0}
+    /* Candado: nadie firma sin identificarse (Daniel 2026-08-13:
+       "no debe firmar si no se identifica ok"). El overlay intercepta el
+       puntero; start() además tiene su propio guard por si acaso. */
+    .sig-lock{
+      position:absolute;inset:0;z-index:2;border-radius:12px;cursor:pointer;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;
+      background:rgba(246,247,249,.9);
+      backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+      border:2px dashed #d1d5db;text-align:center;padding:14px;
+      transition:opacity .35s var(--ease-out), visibility .35s;
+    }
+    .sig-lock.off{opacity:0;visibility:hidden;pointer-events:none}
+    .sig-lock-ico{
+      width:44px;height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(150deg,#9ca3af 0%,#6b7280 100%);color:#fff;
+      box-shadow:0 8px 18px -6px rgba(107,114,128,.5);
+    }
+    .sig-lock-txt{font-size:.88rem;font-weight:800;color:#374151;letter-spacing:-.01em}
+    .sig-lock-sub{font-size:.74rem;color:#9ca3af;font-weight:600;max-width:260px;line-height:1.45}
+    /* Momento del desbloqueo: anillo verde que respira una vez sobre el lienzo */
+    @keyframes sigReady{
+      0%{box-shadow:0 0 0 0 rgba(22,163,74,.45)}
+      100%{box-shadow:0 0 0 16px rgba(22,163,74,0)}
+    }
+    .sig-wrap.just-unlocked #sig{animation:sigReady .9s var(--ease-out) 1;border-color:#86efac}
+    .sig-tools{display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap}
+    .sig-tools-left{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+    /* Herramientas protagonistas: botones negros que se encienden en rojo
+       (mismo gesto del botón de seguimiento de la referencia). */
+    .tool-btn{
+      background:#0a0a0a;color:#fff;border:none;border-radius:var(--r-sm);
+      font-family:inherit;font-size:.84rem;font-weight:800;letter-spacing:.01em;
+      cursor:pointer;padding:12px 17px;min-height:46px;white-space:nowrap;
+      display:inline-flex;align-items:center;gap:8px;
+      box-shadow:0 8px 18px -6px rgba(0,0,0,.4);
+      transition:transform .18s var(--ease-out), box-shadow .2s, background .2s, opacity .2s;
+    }
+    .tool-btn svg{flex:none}
+    .tool-btn:hover:not(:disabled){background:var(--ilus-red);transform:translateY(-1px);box-shadow:0 10px 22px -6px rgba(220,38,38,.45)}
+    .tool-btn:active:not(:disabled){transform:scale(.95)}
+    .tool-btn:disabled{opacity:.35;cursor:not-allowed;box-shadow:none}
+    .sig-status{
+      display:none;align-items:center;gap:6px;
+      background:var(--green-050);color:#166534;border:1px solid #86efac;
+      border-radius:50px;padding:7px 13px;font-size:.74rem;font-weight:800;letter-spacing:.02em;
+    }
+    .sig-status.on{display:inline-flex;animation:statusPop .32s var(--ease-spring)}
+    @keyframes statusPop{0%{transform:scale(.8);opacity:0}100%{transform:scale(1);opacity:1}}
+
+    /* ── CTA principal — patrón .submit-btn de la referencia ── */
+    .submit-btn{
+      background:linear-gradient(180deg,#f10000 0%,var(--ilus-red) 45%, #b30000 100%);
+      color:#fff;font-family:inherit;font-weight:900;font-size:1.05rem;padding:17px 28px;
+      border:none;border-radius:var(--r-md);width:100%;min-height:54px;
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      box-shadow:0 16px 32px -8px rgba(230,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22), inset 0 -2px 0 rgba(0,0,0,.12);
+      transition:transform .2s var(--ease-out), box-shadow .25s var(--ease-out), background .2s;
+      cursor:pointer;letter-spacing:.04em;margin-top:6px;text-transform:uppercase;
+      position:relative;overflow:hidden;
+    }
+    .submit-btn::before{
+      content:'';position:absolute;inset:0;
+      background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,.25) 50%, transparent 70%);
+      transform:translateX(-100%);transition:transform .6s cubic-bezier(.4,0,.2,1);
+    }
+    .submit-btn:hover{
+      background:linear-gradient(180deg, var(--ilus-red-dk) 0%, #960000 100%);
+      transform:translateY(-2px);
+      box-shadow:0 22px 40px rgba(230,0,0,.45), inset 0 1px 0 rgba(255,255,255,.18);
+    }
+    .submit-btn:hover::before{transform:translateX(100%)}
+    .submit-btn:active{transform:translateY(0);box-shadow:0 8px 18px rgba(230,0,0,.3)}
+    .submit-btn:disabled{opacity:.7;cursor:not-allowed;transform:none}
+    .err{color:var(--red-500);font-size:.82rem;font-weight:700;margin:10px 0 4px;min-height:18px;text-align:center}
+    .foot-pill{
+      display:flex;align-items:center;justify-content:center;gap:7px;
+      background:#f9fafb;border:1px solid #eef0f2;border-radius:50px;
+      padding:9px 16px;width:fit-content;max-width:100%;margin:16px auto 0;
+      font-size:.72rem;color:#6b7280;line-height:1.4;text-align:center;
+    }
+    .foot-pill svg{flex:none;color:#9ca3af}
+
+    /* ── Estados (ya firmada / no disponible / inválido / gracias) ── */
+    .state-card .state{text-align:center;padding:44px 26px 40px}
+    .state-ico{
+      width:84px;height:84px;border-radius:24px;margin:0 auto 18px;
+      display:flex;align-items:center;justify-content:center;position:relative;
+    }
+    .state-ico::after{
+      content:'';position:absolute;inset:-6px;border-radius:28px;border:2px solid currentColor;
+      opacity:.25;animation:circlePulseGreen 1.6s ease-in-out 1;
+    }
+    .state-ico.ok{background:#dcfce7;color:#16a34a;box-shadow:0 14px 30px -10px rgba(22,163,74,.45)}
+    .state-ico.warn{background:#fff8e1;color:#b45309;box-shadow:0 14px 30px -10px rgba(245,158,11,.45)}
+    .state-ico.bad{background:#fee2e2;color:#dc2626;box-shadow:0 14px 30px -10px rgba(220,38,38,.45)}
+    .state-title{
+      margin:0 0 8px;font-family:var(--display);font-weight:400;font-size:2rem;
+      letter-spacing:.02em;color:#0a0a0a;line-height:1;
+    }
+    .state-txt{margin:0 auto;color:#6b7280;font-size:.9rem;line-height:1.6;max-width:380px}
+    .state-txt strong{color:#374151}
+
+    /* ── Footer de página ── */
+    .page-foot{
+      text-align:center;color:#9ca3af;padding:30px 0 26px;margin-top:26px;position:relative;
+    }
+    .page-foot::before{content:'';position:absolute;left:50%;transform:translateX(-50%);top:0;width:min(420px,80%);height:1px;
+      background:linear-gradient(90deg,transparent,rgba(220,38,38,.5),transparent)}
+    .page-foot img{width:96px;margin-bottom:10px;filter:drop-shadow(0 4px 14px rgba(230,0,0,.2))}
+    .page-foot .foot-brand{font-weight:800;color:#fff;font-size:.9rem}
+    .page-foot .foot-small{font-size:.72rem;margin-top:3px;line-height:1.5}
+
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+    .step-section{animation:fadeInUp .55s var(--ease-out) both}
+    .step-section:nth-of-type(1){animation-delay:.12s}
+    .step-section:nth-of-type(2){animation-delay:.2s}
+    .step-section:nth-of-type(3){animation-delay:.28s}
+
+    /* ── Desktop ── */
+    @media(min-width:700px){
+      .form-body{padding:32px 34px 34px}
+      .form-head{padding:34px 34px 30px}
+      .form-head h1{font-size:2.7rem}
+      .field-grid{grid-template-columns:1.3fr 1fr}
+      #sig{height:230px}
+    }
+    /* ── Mobile compacto ── */
+    @media(max-width:600px){
+      .step-section{padding:18px 15px;margin-bottom:16px}
+      .step-circle{width:40px;height:40px;font-size:1.25rem;border-radius:12px}
+      .step-titles h2{font-size:1.05rem}
+      .step-titles .step-sub{font-size:.79rem}
+      .form-head h1{font-size:1.9rem;letter-spacing:.02em}
+      .form-head .form-sub{font-size:.82rem}
+      .meta-grid{grid-template-columns:1fr 1fr;gap:8px}
+      .page-head{padding:24px 0 18px}
+      .page-head img{width:150px}
+      .tool-btn{flex:1;justify-content:center}
+      .sig-tools-left{width:100%}
+      .sig-status{margin:0 auto}
+    }
+    /* ── Accesibilidad: reduced motion ── */
+    @media (prefers-reduced-motion: reduce){
+      .page-head,.form-card,.step-section{animation:none}
+      .step-section.is-complete .step-circle::after{animation:none}
+      .state-ico::after{animation:none}
+      .sig-wrap.just-unlocked #sig{animation:none}
+      .sig-status.on{animation:none}
+      .step-section.nudge{animation:none}
+      .submit-btn::before{display:none}
+      .step-circle,.submit-btn,.tool-btn,.eq-bar-fill{transition:none}
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="brand">ILUS<span>.</span></div>
+  <div class="bg-tex" aria-hidden="true"></div>
+  <div class="page">
 
+    <header class="page-head">
+      <picture>
+        <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+        <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" decoding="async" fetchpriority="high">
+      </picture>
+      <span class="head-pill">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0c.69 0 1.3.28 2.2.6.9.32 2.1.68 3.6.9.4.06.7.4.7.8 0 3.5-.6 6.1-1.7 8-1.1 1.9-2.7 3.1-4.5 3.6a1 1 0 0 1-.6 0c-1.8-.5-3.4-1.7-4.5-3.6C2.1 8.4 1.5 5.8 1.5 2.3c0-.4.3-.74.7-.8 1.5-.22 2.7-.58 3.6-.9C6.7.28 7.31 0 8 0z"/></svg>
+        Firma electrónica de conformidad
+      </span>
+    </header>
+
+    <div class="wrap">
     {% if estado == 'firmar' %}
-    <div class="card">
-      <span class="ot-num">{{ ot.numero_ot or ('OT #' ~ ot.id) }}</span>
-      <h1>Firma de conformidad</h1>
-      <p class="muted">El servicio técnico de tus equipos fue realizado. Revisa el detalle y firma para dejarlo conforme.</p>
-      <div class="rows">
-        <div class="row"><span class="k">Cliente</span><span class="v">{{ ot.razon_social }}</span></div>
-        {% if ot.tecnico_nombre %}<div class="row"><span class="k">Técnico</span><span class="v">{{ ot.tecnico_nombre }}</span></div>{% endif %}
-        {% if ot.fecha_programada %}<div class="row"><span class="k">Fecha</span><span class="v">{{ ot.fecha_programada.strftime('%d/%m/%Y') if ot.fecha_programada.strftime is defined else ot.fecha_programada }}</span></div>{% endif %}
-        {% if ot.n_equipos %}<div class="row"><span class="k">Equipos atendidos</span><span class="v">{{ ot.n_equipos }}</span></div>{% endif %}
+    <div class="form-card">
+      <div class="form-head">
+        <div>
+          <h1>Firma de conformidad</h1>
+          <div class="form-sub">El servicio técnico de tus equipos fue realizado. Revisa el detalle y firma para dejarlo conforme.</div>
+        </div>
+        <span class="form-pill">{{ ot.numero_ot or ('OT #' ~ ot.id) }}</span>
       </div>
+      <div class="form-body">
 
-      {% if equipos_firma %}
-      <div class="eq-section">
-        <div class="eq-section-title">Detalle del trabajo realizado</div>
-        {% for eq in equipos_firma %}
-        <details class="eq-item"{% if equipos_firma|length == 1 %} open{% endif %}>
-          <summary>
-            <span class="eq-name">{{ eq.nombre }}</span>
-            <span class="eq-badge {{ eq.badge_cls }}">{{ eq.badge_txt }}</span>
-          </summary>
-          <div class="eq-body">
-            {% if eq.sub %}<div class="eq-sub">{{ eq.sub }}</div>{% endif %}
-            {% if eq.tareas_total %}
-            <div class="eq-chk-summary">{{ eq.tareas_ok }}/{{ eq.tareas_total }} tareas del checklist completadas</div>
-            <ul class="eq-tareas">
-              {% for t in eq.tareas %}
-              <li class="{{ 'ok' if t.ok else 'pend' }}">{{ t.titulo }}</li>
-              {% endfor %}
-              {% if eq.tareas_extra %}<li class="extra">+{{ eq.tareas_extra }} tarea{{ 's' if eq.tareas_extra != 1 else '' }} más</li>{% endif %}
-            </ul>
-            {% endif %}
-            {% for nota in eq.notas %}<div class="eq-nota">⚠ {{ nota }}</div>{% endfor %}
-            {% if eq.fotos %}
-            <div class="eq-fotos">
-              {% for foto in eq.fotos %}
-              <img src="{{ foto }}" loading="lazy" decoding="async" alt="Foto de {{ eq.nombre }}">
-              {% endfor %}
-              {% if eq.fotos_extra %}<span class="eq-fotos-extra">+{{ eq.fotos_extra }}</span>{% endif %}
+        {# ══ PASO 1 — REVISA EL TRABAJO REALIZADO ══ #}
+        <section class="step-section" id="paso1">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">1</span>
+              <span class="step-check"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.2 6.4 11.3 2.5 7.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             </div>
+            <div class="step-titles">
+              <h2>Revisa el trabajo realizado</h2>
+              <p class="step-sub">Estos son los datos de tu orden y el detalle de lo que hicimos en cada equipo.</p>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-cell span2"><span class="meta-k">Cliente</span><span class="meta-v">{{ ot.razon_social }}</span></div>
+            {% if ot.tecnico_nombre %}<div class="meta-cell"><span class="meta-k">Técnico</span><span class="meta-v">{{ ot.tecnico_nombre }}</span></div>{% endif %}
+            {% if ot.fecha_programada %}<div class="meta-cell"><span class="meta-k">Fecha del servicio</span><span class="meta-v">{{ ot.fecha_programada.strftime('%d/%m/%Y') if ot.fecha_programada.strftime is defined else ot.fecha_programada }}</span></div>{% endif %}
+            {% if ot.n_equipos %}<div class="meta-cell"><span class="meta-k">Equipos atendidos</span><span class="meta-v">{{ ot.n_equipos }}</span></div>{% endif %}
+          </div>
+
+          {% if equipos_firma %}
+          <div class="eq-list">
+            <div class="eq-list-title">Detalle por equipo</div>
+            {% for eq in equipos_firma %}
+            <details class="eq-item"{% if equipos_firma|length == 1 %} open{% endif %}>
+              <summary>
+                <span class="eq-name">{{ eq.nombre }}</span>
+                <span class="eq-badge {{ eq.badge_cls }}">{{ eq.badge_txt }}</span>
+              </summary>
+              <div class="eq-body">
+                {% if eq.sub %}<div class="eq-sub">{{ eq.sub }}</div>{% endif %}
+                {% if eq.tareas_total %}
+                <div class="eq-chk-summary">
+                  <span>Checklist del servicio</span>
+                  <span>{{ eq.tareas_ok }}/{{ eq.tareas_total }} tareas</span>
+                </div>
+                <div class="eq-bar"><div class="eq-bar-fill" style="width:{{ ((eq.tareas_ok or 0) * 100 / eq.tareas_total)|round|int }}%"></div></div>
+                <ul class="eq-tareas">
+                  {% for t in eq.tareas %}
+                  <li class="{{ 'ok' if t.ok else 'pend' }}">{{ t.titulo }}</li>
+                  {% endfor %}
+                  {% if eq.tareas_extra %}<li class="extra">+{{ eq.tareas_extra }} tarea{{ 's' if eq.tareas_extra != 1 else '' }} más</li>{% endif %}
+                </ul>
+                {% endif %}
+                {% for nota in eq.notas %}<div class="eq-nota">⚠ {{ nota }}</div>{% endfor %}
+                {% if eq.fotos %}
+                <div class="eq-fotos">
+                  {% for foto in eq.fotos %}
+                  <img src="{{ foto }}" loading="lazy" decoding="async" alt="Foto de {{ eq.nombre }}">
+                  {% endfor %}
+                  {% if eq.fotos_extra %}<span class="eq-fotos-extra">+{{ eq.fotos_extra }}</span>{% endif %}
+                </div>
+                {% endif %}
+              </div>
+            </details>
+            {% endfor %}
+            {% if equipos_firma_extra %}
+            <div class="eq-more">+{{ equipos_firma_extra }} equipo{{ 's' if equipos_firma_extra != 1 else '' }} más en el informe completo de la OT.</div>
             {% endif %}
           </div>
-        </details>
-        {% endfor %}
-        {% if equipos_firma_extra %}
-        <div class="eq-more">+{{ equipos_firma_extra }} equipo{{ 's' if equipos_firma_extra != 1 else '' }} más en el informe completo de la OT.</div>
-        {% endif %}
-      </div>
-      {% endif %}
+          {% endif %}
+        </section>
 
-      <label for="fNombre">Tu nombre</label>
-      <input type="text" id="fNombre" placeholder="Nombre de quien firma" autocomplete="name">
-      <label for="fRut">Tu RUT</label>
-      <input type="text" id="fRut" placeholder="12.345.678-9" inputmode="text" autocomplete="off"
-             oninput="_fmtRutInput(this)" maxlength="12">
+        {# ══ PASO 2 — IDENTIFÍCATE ══ #}
+        <section class="step-section" id="paso2">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">2</span>
+              <span class="step-check"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.2 6.4 11.3 2.5 7.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="step-titles">
+              <h2>Identifícate</h2>
+              <p class="step-sub">Nombre y RUT de quien firma. Con esto tu firma queda <strong>respaldada legalmente</strong>.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="fNombre">Tu nombre <span class="req">*</span></label>
+              <input type="text" id="fNombre" placeholder="Nombre de quien firma" autocomplete="name">
+              <div class="input-help">Tal como aparece en tu cédula de identidad.</div>
+            </div>
+            <div class="field">
+              <label for="fRut">Tu RUT <span class="req">*</span></label>
+              <input type="text" id="fRut" placeholder="12.345.678-5" inputmode="text" autocomplete="off"
+                     oninput="_fmtRutInput(this)" maxlength="12">
+              <div class="input-help">Con dígito verificador. Ej: 12.345.678-5</div>
+              <div class="input-error" id="rutMsgErr">RUT inválido — revisa el dígito verificador</div>
+              <div class="input-ok" id="rutMsgOk">RUT válido</div>
+            </div>
+          </div>
+        </section>
 
-      <label>Tu firma</label>
-      <div class="sig-wrap">
-        <canvas id="sig"></canvas>
-        <div class="sig-hint" id="sigHint">Firma aquí con el dedo o el mouse</div>
-      </div>
-      <div class="sig-tools">
-        <span class="sig-tools-left">
-          <button class="lnk" type="button" onclick="deshacerFirma()">↩ Deshacer</button>
-          <button class="lnk" type="button" onclick="limpiarFirma()">↺ Borrar todo</button>
-        </span>
-        <span class="muted" style="font-size:.74rem">Conforme con el servicio</span>
-      </div>
+        {# ══ PASO 3 — FIRMA ══ #}
+        <section class="step-section is-locked" id="paso3">
+          <div class="step-header">
+            <div class="step-circle">
+              <span class="step-num-text">3</span>
+              <span class="step-check"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.2 6.4 11.3 2.5 7.4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </div>
+            <div class="step-titles">
+              <h2>Firma aquí</h2>
+              <p class="step-sub">Dibuja tu firma con el dedo o el mouse. Si no te gusta cómo quedó, <strong>deshaz o bórrala</strong> las veces que quieras.</p>
+            </div>
+          </div>
+          <div class="sig-panel">
+            <div class="sig-wrap" id="sigWrap">
+              <canvas id="sig"></canvas>
+              <div class="sig-hint" id="sigHint">
+                <svg width="26" height="26" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M12.1.9a1.5 1.5 0 0 1 2.12 0l.88.88a1.5 1.5 0 0 1 0 2.12L6.5 12.5 2 14l1.5-4.5L12.1.9zM11 3.1l1.9 1.9 1.14-1.14a.5.5 0 0 0 0-.71l-1.19-1.19a.5.5 0 0 0-.71 0L11 3.1z"/></svg>
+                Firma aquí con el dedo o el mouse
+              </div>
+              {# Candado del lápiz: nadie firma sin identificarse antes #}
+              <div class="sig-lock" id="sigLock" onclick="_sigLockClick()">
+                <span class="sig-lock-ico">
+                  <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-.5V4.5A3.5 3.5 0 0 0 8 1zm2 5H6V4.5a2 2 0 1 1 4 0V6z"/></svg>
+                </span>
+                <span class="sig-lock-txt">Primero identifícate para poder firmar</span>
+                <span class="sig-lock-sub">Completa el paso 2 con tu nombre y RUT y este espacio se habilita solo.</span>
+              </div>
+            </div>
+            <div class="sig-tools">
+              <span class="sig-tools-left">
+                <button class="tool-btn" type="button" onclick="deshacerFirma()" disabled>
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M6.85 2.15a.5.5 0 0 1 0 .7L4.71 5H10a5 5 0 0 1 0 10H6a.75.75 0 0 1 0-1.5h4a3.5 3.5 0 1 0 0-7H4.71l2.14 2.15a.5.5 0 1 1-.7.7l-3-3a.5.5 0 0 1 0-.7l3-3a.5.5 0 0 1 .7 0z"/></svg>
+                  Deshacer
+                </button>
+                <button class="tool-btn" type="button" onclick="limpiarFirma()" disabled>
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8.09 2.4a2 2 0 0 1 2.83 0l2.68 2.68a2 2 0 0 1 0 2.83L9.06 12.5H13a.75.75 0 0 1 0 1.5H5.56a2 2 0 0 1-1.42-.59l-1.73-1.73a2 2 0 0 1 0-2.83L8.09 2.4zm1.77 1.06a.5.5 0 0 0-.71 0L5.62 6.99l3.39 3.39 3.53-3.53a.5.5 0 0 0 0-.71L9.86 3.46z"/></svg>
+                  Borrar todo
+                </button>
+              </span>
+              <span class="sig-status" id="sigStatus">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.2 6.4 11.3 2.5 7.4" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Firma lista
+              </span>
+            </div>
+          </div>
+        </section>
 
-      <div class="err" id="err"></div>
-      <button class="btn" id="btnFirmar" onclick="enviar()">Firmar y enviar</button>
-      <div class="foot">Al firmar declaras conformidad con el servicio realizado.<br>Enlace seguro · ILUS Fitness.</div>
+        <div class="err" id="err"></div>
+        <button class="submit-btn" id="btnFirmar" onclick="enviar()">Firmar y enviar</button>
+        <div class="foot-pill">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-.5V4.5A3.5 3.5 0 0 0 8 1zm2 5H6V4.5a2 2 0 1 1 4 0V6z"/></svg>
+          <span>Al firmar declaras conformidad con el servicio realizado · Enlace seguro ILUS</span>
+        </div>
+      </div>
     </div>
 
     {% elif estado == 'ya_firmada' %}
-    <div class="card"><div class="state">
-      <div class="ico ok-ico">✓</div>
-      <h1>Esta orden ya fue firmada</h1>
-      <p class="muted">Gracias. La orden de trabajo {{ ot.numero_ot or '' }} ya tiene la firma de conformidad registrada.</p>
+    <div class="form-card state-card"><div class="state">
+      <div class="state-ico ok"><svg width="38" height="38" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.2 6.4 11.3 2.5 7.4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <h1 class="state-title">Esta orden ya fue firmada</h1>
+      <p class="state-txt">Gracias. La orden de trabajo <strong>{{ ot.numero_ot or '' }}</strong> ya tiene la firma de conformidad registrada.</p>
     </div></div>
 
     {% elif estado == 'no_disponible' %}
-    <div class="card"><div class="state">
-      <div class="ico warn-ico">⏳</div>
-      <h1>Aún no disponible para firmar</h1>
-      <p class="muted">Esta orden todavía no está lista para tu firma. Si crees que es un error, contacta a tu ejecutivo de ILUS.</p>
+    <div class="form-card state-card"><div class="state">
+      <div class="state-ico warn"><svg width="36" height="36" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.8"/><path d="M8 4.6V8l2.3 2.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <h1 class="state-title">Aún no disponible para firmar</h1>
+      <p class="state-txt">Esta orden todavía no está lista para tu firma. Si crees que es un error, contacta a tu ejecutivo de ILUS.</p>
     </div></div>
 
     {% else %}
-    <div class="card"><div class="state">
-      <div class="ico err-ico">⚠️</div>
-      <h1>Enlace no válido o vencido</h1>
-      <p class="muted">Este enlace de firma no es válido o ya expiró. Pídele a ILUS que te envíe uno nuevo.</p>
+    <div class="form-card state-card"><div class="state">
+      <div class="state-ico bad"><svg width="36" height="36" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M6.9 1.6a1.3 1.3 0 0 1 2.2 0l6 10.4a1.3 1.3 0 0 1-1.1 1.95H2a1.3 1.3 0 0 1-1.1-1.95l6-10.4zM8 5.5a.75.75 0 0 0-.75.75v2.5a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8 5.5zm0 6.6a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8z"/></svg></div>
+      <h1 class="state-title">Enlace no válido o vencido</h1>
+      <p class="state-txt">Este enlace de firma no es válido o ya expiró. Pídele a ILUS que te envíe uno nuevo.</p>
     </div></div>
     {% endif %}
+    </div>
+
+    <footer class="page-foot">
+      <picture>
+        <source srcset="{{ url_for('static', filename='Logo_small.webp') }}" type="image/webp">
+        <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS" loading="lazy" decoding="async">
+      </picture>
+      <div class="foot-brand">ILUS Fitness</div>
+      <div class="foot-small">Firma electrónica segura · Todos los derechos reservados</div>
+    </footer>
   </div>
 
   {% if estado == 'firmar' %}
@@ -214,6 +686,11 @@
     let drawing = false, has = false;
     let history = [];              // stack de dataURL para "deshacer" (mismo patrón que el canvas interno de la app)
     const MAX_HISTORY = 20;
+    // ── Candado del lápiz (Daniel 2026-08-13: "no debe firmar si no se
+    //    identifica ok"). Mientras nombre/RUT no estén OK, el overlay
+    //    #sigLock intercepta el puntero Y start() ignora el evento. El
+    //    backend valida lo mismo por su cuenta — esto es la guía visual.
+    let sigLocked = true;
 
     // 2026-08-12 (Daniel, "potenciar la firma"): fix de un bug real -- la
     // versión anterior capturaba cv.toDataURL() en un resize pero NUNCA lo
@@ -261,6 +738,7 @@
     // durante el gesto -- más robusto entre navegadores/dispositivos
     // táctiles que los mousedown/touchstart separados de antes.
     function start(e){
+      if (sigLocked) return;  // sin identificarse no se firma (el overlay ya intercepta; esto es el cinturón)
       if (drawing) return;  // ignora un segundo pointer (ej. un segundo dedo accidental) mientras ya hay un trazo en curso
       e.preventDefault();
       try { cv.setPointerCapture(e.pointerId); } catch(err) {}
@@ -292,6 +770,7 @@
       ctx.clearRect(0, 0, cv.width, cv.height);
       has = false; history = [];
       sigHint.style.display = '';
+      _syncSteps();
     }
     function deshacerFirma(){
       if (!history.length){ limpiarFirma(); return; }
@@ -302,6 +781,7 @@
         ctx.clearRect(0, 0, cv.width, cv.height);
         ctx.drawImage(img, 0, 0, cv.width / dpr, cv.height / dpr);
         if (!history.length){ has = false; sigHint.style.display = ''; }
+        _syncSteps();
       };
       img.src = dataUrl;
     }
@@ -322,11 +802,115 @@
         const d = await r.json().catch(()=>({}));
         if(!r.ok || !d.ok){ err.textContent = (d.error || 'No se pudo registrar la firma.'); btn.disabled = false; btn.textContent = 'Firmar y enviar'; return; }
         document.querySelector('.wrap').innerHTML =
-          '<div class="brand">ILUS<span>.</span></div><div class="card"><div class="state">' +
-          '<div class="ico ok-ico">✓</div><h1>¡Gracias! Firma registrada</h1>' +
-          '<p class="muted">Tu conformidad quedó guardada. El equipo de ILUS ya fue notificado. Puedes cerrar esta página.</p></div></div>';
+          '<div class="form-card state-card"><div class="state">' +
+          '<div class="state-ico ok"><svg width="38" height="38" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 4.2 6.4 11.3 2.5 7.4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
+          '<h1 class="state-title">¡Gracias! Firma registrada</h1>' +
+          '<p class="state-txt">Tu conformidad quedó guardada. El equipo de ILUS ya fue notificado. Puedes cerrar esta página.</p></div></div>';
+        window.scrollTo(0, 0);
       }catch(e){ err.textContent = 'Error de conexión. Intenta de nuevo.'; btn.disabled = false; btn.textContent = 'Firmar y enviar'; }
     }
+
+    // ════════════════════════════════════════════════════════════
+    // Pasos que se completan DE VERDAD (no decorativos) + candado
+    // del lápiz. Aditivo: no toca la lógica del canvas ni el POST.
+    // ════════════════════════════════════════════════════════════
+    const fNombre = document.getElementById('fNombre');
+    const fRut = document.getElementById('fRut');
+
+    // Módulo 11 chileno — mismo criterio que validar_rut() del backend
+    // (cuerpo de 6 a 8 dígitos + DV 0-9/K). Solo guía visual: la barrera
+    // real sigue siendo el servidor.
+    function _rutValidoJs(v){
+      const clean = String(v || '').replace(/[^0-9kK]/g, '').toUpperCase();
+      if (clean.length < 7 || clean.length > 9) return false;
+      const cuerpo = clean.slice(0, -1), dv = clean.slice(-1);
+      if (!/^[0-9]+$/.test(cuerpo)) return false;
+      let suma = 0, mul = 2;
+      for (let i = cuerpo.length - 1; i >= 0; i--){
+        suma += parseInt(cuerpo[i], 10) * mul;
+        mul = (mul === 7) ? 2 : mul + 1;
+      }
+      const res = 11 - (suma % 11);
+      const dvOk = (res === 11) ? '0' : (res === 10) ? 'K' : String(res);
+      return dv === dvOk;
+    }
+    function _setStep(n, done){
+      const el = document.getElementById('paso' + n);
+      if (el) el.classList.toggle('is-complete', !!done);
+    }
+    function _setSigLock(lock){
+      if (lock === sigLocked) return;
+      sigLocked = lock;
+      const ov = document.getElementById('sigLock');
+      const wrap = document.getElementById('sigWrap');
+      const paso3 = document.getElementById('paso3');
+      document.querySelectorAll('.tool-btn').forEach(b => { b.disabled = lock; });
+      if (paso3) paso3.classList.toggle('is-locked', lock);
+      if (lock){
+        ov.classList.remove('off');
+        wrap.classList.remove('just-unlocked');
+      } else {
+        ov.classList.add('off');
+        wrap.classList.add('just-unlocked');
+        setTimeout(() => wrap.classList.remove('just-unlocked'), 1300);
+      }
+    }
+    // Feedback visual del RUT (verde/rojo) — clases .field-valid/.field-invalid
+    // de la referencia. No pisa a _fmtRutInput: el atributo oninput formatea
+    // primero y este listener valida después.
+    function _rutFieldUi(esBlur){
+      const clean = String(fRut.value || '').replace(/[^0-9kK]/g, '');
+      const ok = _rutValidoJs(fRut.value);
+      fRut.classList.remove('field-valid', 'field-invalid');
+      document.getElementById('rutMsgErr').classList.remove('show');
+      document.getElementById('rutMsgOk').classList.remove('show');
+      if (!clean.length) return;
+      if (ok){
+        fRut.classList.add('field-valid');
+        document.getElementById('rutMsgOk').classList.add('show');
+      } else if (esBlur || clean.length >= 8){
+        fRut.classList.add('field-invalid');
+        document.getElementById('rutMsgErr').classList.add('show');
+      }
+    }
+    function _syncSteps(){
+      const nombreOk = fNombre.value.trim().length >= 2;
+      const rutOk = _rutValidoJs(fRut.value);
+      fNombre.classList.toggle('field-valid', nombreOk);
+      _setStep(2, nombreOk && rutOk);
+      _setSigLock(!(nombreOk && rutOk));
+      _setStep(3, has);
+      const chip = document.getElementById('sigStatus');
+      if (chip) chip.classList.toggle('on', has);
+    }
+    // Paso 1 = "revisó el trabajo": abrió el detalle de un equipo o siguió
+    // adelante con su identificación. Señal real de avance, no decorado.
+    let _p1 = false;
+    function _marcarP1(){ if (!_p1){ _p1 = true; _setStep(1, true); } }
+    document.querySelectorAll('.eq-item').forEach(d => d.addEventListener('toggle', _marcarP1));
+    ['focus', 'input'].forEach(ev => {
+      fNombre.addEventListener(ev, _marcarP1);
+      fRut.addEventListener(ev, _marcarP1);
+    });
+    fNombre.addEventListener('input', _syncSteps);
+    fRut.addEventListener('input', () => { _rutFieldUi(false); _syncSteps(); });
+    fRut.addEventListener('blur', () => { _rutFieldUi(true); });
+    cv.addEventListener('pointerup', _syncSteps);
+    cv.addEventListener('pointercancel', _syncSteps);
+    // Tocar el candado lleva al campo que falta (y avisa dónde mirar)
+    function _sigLockClick(){
+      const paso2 = document.getElementById('paso2');
+      if (paso2){
+        paso2.classList.remove('nudge');
+        void paso2.offsetWidth;  // reinicia la animación si tocan de nuevo
+        paso2.classList.add('nudge');
+        setTimeout(() => paso2.classList.remove('nudge'), 700);
+      }
+      const target = (fNombre.value.trim().length < 2) ? fNombre : fRut;
+      try { target.focus({ preventScroll: false }); } catch(e) { target.focus(); }
+    }
+    window.addEventListener('pageshow', _syncSteps);
+    _syncSteps();
   </script>
   {% endif %}
 </body>
