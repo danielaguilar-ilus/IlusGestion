@@ -480,6 +480,88 @@ a.nextup:active{ background:rgba(255,255,255,.13); }
   text-transform:uppercase; color:var(--gray); font-weight:700;
 }
 
+/* ── RUTA DEL ENVÍO ─────────────────────────────────────────────
+   2026-08-13 (Daniel, mostrando una referencia visual: "algo así con
+   muchísima tecnología, integrando los mapas tipo ILUS e información
+   interesante"). Diagrama origen→destino DECORATIVO, no un mapa real con
+   ruta calculada -- no tenemos paradas intermedias reales (eso viviría en
+   la secuencia de visitas de SimpliRoute, que hoy no se trae acá), así
+   que se muestran solo los 2 puntos que SÍ son datos reales: la bodega
+   ILUS (fija, [[project_ilus_etiquetas]] ILUS_REMITENTE en app.py) y el
+   destino real del cliente. El mapa en vivo con GPS real del chofer
+   (.live-card, más abajo) sigue siendo la fuente de verdad cuando el
+   pedido está "En ruta" -- este diagrama es el "scene-setter" que se ve
+   en TODOS los estados, incluso antes de que haya GPS. Sin ETA con
+   confianza % ni conteo de paradas: no hay lógica real detrás de esos
+   dos datos, y mostrarlos sería inventar precisión que no existe. */
+.route-card{
+  margin:0 1.1rem .8rem; background:#fff; border:1px solid var(--line);
+  border-radius:16px; padding:1.05rem 1.1rem 1.2rem; overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,.045); position:relative;
+  animation:rise .55s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:.2s;
+}
+.route-card::before{
+  content:''; position:absolute; top:0; left:0; right:0; height:3px;
+  background:linear-gradient(90deg,var(--red),#f97316 45%,var(--red));
+  background-size:200% 100%; animation:sheenSlide 6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion:reduce){ .route-card::before{ animation:none; } }
+.route-h{
+  display:flex; align-items:center; gap:.5rem; margin-bottom:1.15rem;
+  font-family:var(--display); font-weight:800; font-size:.82rem;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink);
+}
+.route-h i{ color:var(--red); font-size:.98rem; }
+.route-viz{ position:relative; height:34px; margin:0 17px; }
+.route-viz::before{     /* textura de grilla, sutil -- "mapa" sin serlo */
+  content:''; position:absolute; inset:-10px -17px 26px;
+  background-image:radial-gradient(circle, #e4e4e7 1px, transparent 1px);
+  background-size:13px 13px; opacity:.55; pointer-events:none; z-index:0;
+}
+.route-line{
+  position:absolute; top:15px; left:17px; right:17px; height:3px;
+  border-radius:99px; background:#e4e4e7; z-index:1; overflow:hidden;
+}
+.route-line i{
+  display:block; height:100%; border-radius:99px; width:var(--route-pct,4%);
+  background:linear-gradient(90deg,#16a34a,#22c55e); transition:width .9s cubic-bezier(.2,.8,.25,1);
+}
+.route-card.is-warn .route-line i{ background:linear-gradient(90deg,#b45309,var(--amber)); }
+.route-card.is-bad .route-line i{ background:linear-gradient(90deg,#991b1b,var(--red)); }
+.route-pt{
+  position:absolute; top:-1px; width:32px; height:32px; margin-left:-16px;
+  border-radius:50%; background:#fff; border:3px solid #e4e4e7; z-index:2;
+  display:grid; place-items:center; font-size:.92rem; color:var(--gray);
+}
+.route-pt.origin{ left:17px; }
+.route-pt.dest{ left:calc(100% - 17px); }
+.route-pt.is-done{ border-color:#16a34a; color:#16a34a; background:#f0fdf4; }
+.route-card.is-warn .route-pt.is-done{ border-color:var(--amber); color:#b45309; background:var(--amber-bg); }
+.route-card.is-bad .route-pt.is-done{ border-color:var(--red); color:var(--red); background:#fee2e2; }
+.route-marker{
+  position:absolute; top:4px; width:26px; height:26px; margin-left:-13px;
+  border-radius:50%; background:var(--ink); color:#fff; z-index:3;
+  display:grid; place-items:center; font-size:.78rem;
+  box-shadow:0 4px 12px -2px rgba(0,0,0,.4);
+  left:var(--route-pct,4%); transition:left .9s cubic-bezier(.2,.8,.25,1);
+}
+.route-marker.is-live{ animation:routeTravel 3.6s cubic-bezier(.4,0,.2,1) infinite; }
+@keyframes routeTravel{
+  0%{ left:6%; opacity:0; } 10%{ opacity:1; } 90%{ opacity:1; } 100%{ left:92%; opacity:0; }
+}
+@media (prefers-reduced-motion:reduce){ .route-marker.is-live{ animation:none; left:var(--route-pct,50%); opacity:1; } }
+.route-lbls{ display:flex; justify-content:space-between; margin-top:.55rem; gap:.6rem; }
+.route-lbl{ min-width:0; font-size:.7rem; }
+.route-lbl.dest{ text-align:right; }
+.route-lbl b{
+  display:block; font-weight:700; color:var(--ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.route-lbl span{
+  font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--gray); font-weight:700;
+}
+
 /* ── CONTENIDO ──────────────────────────────────────────────── */
 .wrap{ padding:.95rem 1.1rem 1.6rem; }
 
@@ -1263,6 +1345,30 @@ a.kv:active{ background:#fafafa; }
     {% endif %}
   </div>
 </div>
+
+{# ── Ruta del envío: diagrama origen→destino, 2 puntos REALES (bodega
+   ILUS fija + destino del cliente), sin paradas intermedias inventadas.
+   route_pct: dónde va el marcador. En "En ruta" viaja animado en loop
+   (no se puede calcular una fracción honesta sin distancia total real),
+   en el resto de los estados queda fijo en un punto que sí es verdad. #}
+{% set route_pct = 96 if entregado else (55 if alerta else (4 if cur == 1 else (18 if cur == 2 else 50))) %}
+{% if data.destino %}
+<div class="route-card{% if devolucion %} is-bad{% elif fallida %} is-warn{% endif %}">
+  <div class="route-h"><i class="bi bi-signpost-split-fill"></i>Ruta del envío</div>
+  <div class="route-viz" style="--route-pct:{{ route_pct }}%">
+    <div class="route-line"><i></i></div>
+    <div class="route-pt origin is-done"><i class="bi bi-building"></i></div>
+    <div class="route-pt dest{% if entregado %} is-done{% endif %}"><i class="bi bi-geo-alt-fill"></i></div>
+    <div class="route-marker{% if est == 'En ruta' and not alerta %} is-live{% endif %}">
+      <i class="bi {% if entregado %}bi-check-lg{% else %}bi-truck{% endif %}"></i>
+    </div>
+  </div>
+  <div class="route-lbls">
+    <div class="route-lbl origin"><b>Centro ILUS</b><span>Quilicura</span></div>
+    <div class="route-lbl dest"><b>{{ data.destino }}</b><span>Destino</span></div>
+  </div>
+</div>
+{% endif %}
 
 <div class="autobar">
   <span class="live-dot"></span><span id="tkAuto">Se actualiza solo</span>
