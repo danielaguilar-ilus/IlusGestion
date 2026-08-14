@@ -93287,6 +93287,54 @@ def _ensure_lev_borrador_backfill():
         return 0
 
 
+def _ensure_mant_visitas_estado_enum():
+    """Garantiza que mant_visitas.estado acepte TODOS los estados del flujo
+    de OT, SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1).
+
+    BUG REAL 2026-08-14 (Daniel, bloqueado en terreno con el celular en la
+    mano): al firmar el técnico salía
+        (1265, "Data truncated for column 'estado' at row 1")
+    y la OT no podía avanzar a la firma del cliente.
+
+    Causa: el ALTER que amplía este ENUM vive dentro del bloque grande de
+    migraciones (app.py ~49878), y producción corre con
+    ILUS_SKIP_MIGRATIONS=1 -- así que ese ALTER NUNCA se ejecutó allá. La
+    columna seguía con el ENUM original de 4 valores
+    ('programada','completada','cancelada','reagendada'), y el código
+    escribe 'firmada_tecnico' / 'pendiente_aprobacion' / 'en_ejecucion' /
+    'cerrada'. MySQL, en vez de fallar fuerte, TRUNCA -> error 1265.
+
+    Es exactamente el gotcha ya documentado del proyecto ("ENUM angosto"):
+    toda columna nueva o ampliada tiene que garantizarse con un _ensure_*
+    que corra en el arranque, no solo en el bloque de migraciones.
+
+    Idempotente y barato: lee el tipo actual y solo hace el ALTER si le
+    falta algún valor.
+    """
+    ESTADOS = ('creada','programada','asignada','en_curso','en_ejecucion',
+               'firmada_tecnico','pendiente_info','pendiente_repuesto',
+               'pendiente_aprobacion','completada','cerrada','cancelada',
+               'anulada','reagendada')
+    try:
+        row = mysql_fetchone(
+            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "   AND COLUMN_NAME='estado'")
+        actual = (row or {}).get("t") or ""
+        faltan = [e for e in ESTADOS if f"'{e}'" not in actual]
+        if not faltan:
+            return []
+        mysql_execute(
+            "ALTER TABLE mant_visitas MODIFY estado ENUM("
+            + ",".join(f"'{e}'" for e in ESTADOS)
+            + ") DEFAULT 'programada'")
+        print(f"[ILUS] mant_visitas.estado ampliado — faltaban: {faltan}", flush=True)
+        return faltan
+    except Exception as e:
+        print(f"[ILUS][WARN] _ensure_mant_visitas_estado_enum: {e}", flush=True)
+        return []
+
+
 def _ensure_mant_visitas_factura_cols():
     """Garantiza las columnas del SELLO factura↔OT SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Sin ellas, asociar factura / firmar el cierre
@@ -95537,6 +95585,16 @@ try:
               f"{_faltaron_suc_geo}", flush=True)
 except Exception as _ensure_suc_geo_err:
     print(f"[ILUS][WARN] _ensure_mant_sucursales_geo_columns: {_ensure_suc_geo_err}", flush=True)
+
+# CRÍTICO: el ENUM de mant_visitas.estado SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1. Sin esto, firmar como técnico revienta con
+# "(1265, Data truncated for column 'estado')" y la OT no avanza a la firma
+# del cliente (bug real en producción, 2026-08-14).
+try:
+    with app.app_context():
+        _ensure_mant_visitas_estado_enum()
+except Exception as _ensure_est_err:
+    print(f"[ILUS][WARN] _ensure_mant_visitas_estado_enum: {_ensure_est_err}", flush=True)
 
 # CRÍTICO: columnas del SELLO factura↔OT (asociar factura + gate de firma
 # del responsable) SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
