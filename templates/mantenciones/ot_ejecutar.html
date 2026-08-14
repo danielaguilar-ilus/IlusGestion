@@ -847,7 +847,7 @@
         <div class="pipe-step {{ 'done' if done_asignada else '' }} {{ 'current' if _ns_pipe.idx == 0 else '' }}"
              data-ts="{{ ts_asignada or '' }}" data-key="asignada">
           <div class="pipe-circle">
-            <i class="bi {{ 'bi-check-lg' if (done_asignada and _ns_pipe.idx != 0) else 'bi-person-check-fill' }}"></i>
+            <i class="bi bi-person-check-fill"></i>
           </div>
           <div class="pipe-meta">
             <div class="pipe-label">Asignada</div>
@@ -861,7 +861,7 @@
         <div class="pipe-step {{ 'done' if done_ruta else '' }} {{ 'current' if _ns_pipe.idx == 1 else '' }}"
              data-ts="{{ ts_ruta or '' }}" data-key="ruta">
           <div class="pipe-circle">
-            <i class="bi {{ 'bi-check-lg' if (done_ruta and _ns_pipe.idx != 1) else 'bi-signpost-split-fill' }}"></i>
+            <i class="bi bi-signpost-split-fill"></i>
           </div>
           <div class="pipe-meta">
             <div class="pipe-label">En ruta</div>
@@ -875,7 +875,7 @@
         <div class="pipe-step {{ 'done' if done_sitio else '' }} {{ 'current' if _ns_pipe.idx == 2 else '' }}"
              data-ts="{{ ts_sitio or '' }}" data-key="sitio">
           <div class="pipe-circle">
-            <i class="bi {{ 'bi-check-lg' if (done_sitio and _ns_pipe.idx != 2) else 'bi-geo-alt-fill' }}"></i>
+            <i class="bi bi-geo-alt-fill"></i>
           </div>
           <div class="pipe-meta">
             <div class="pipe-label">En sitio</div>
@@ -889,7 +889,7 @@
         <div class="pipe-step {{ 'done' if done_ejec else '' }} {{ 'current' if _ns_pipe.idx == 3 else '' }}"
              data-ts="{{ ts_ejec or '' }}" data-key="ejec">
           <div class="pipe-circle">
-            <i class="bi {{ 'bi-check-lg' if (done_ejec and _ns_pipe.idx != 3) else 'bi-tools' }}"></i>
+            <i class="bi bi-tools"></i>
           </div>
           <div class="pipe-meta">
             <div class="pipe-label">Ejecutando</div>
@@ -903,7 +903,7 @@
         <div class="pipe-step {{ 'done' if done_firma else '' }} {{ 'current' if _ns_pipe.idx == 4 else '' }}"
              data-ts="{{ ts_firma or '' }}" data-key="firma">
           <div class="pipe-circle">
-            <i class="bi {{ 'bi-check-lg' if (done_firma and _ns_pipe.idx != 4) else 'bi-pen-fill' }}"></i>
+            <i class="bi bi-pen-fill"></i>
           </div>
           <div class="pipe-meta">
             <div class="pipe-label">Pend. aprobación</div>
@@ -2048,6 +2048,24 @@
             <strong>¿Cómo firma el cliente?</strong>
             <span>En persona, o le mandas el link para que firme a distancia.</span>
           </div>
+        </div>
+        {# 2026-08-14 (Daniel: "me gustaría sugerir el teléfono del cliente
+           a menos que no tenga, y el correo igual"): el técnico ve A DÓNDE
+           va a salir el link ANTES de elegir el canal, y si falta alguno lo
+           sabe de antemano en vez de descubrirlo con un error. Datos que ya
+           vienen en la visita — no se consulta nada nuevo. #}
+        <div class="tx-sign-dest">
+          <span class="tx-sign-dest-lbl">Se enviará a</span>
+          {% if visita.contacto_tel %}
+            <span class="tx-sign-dest-item"><i class="bi bi-whatsapp"></i>{{ visita.contacto_tel }}</span>
+          {% else %}
+            <span class="tx-sign-dest-item is-falta"><i class="bi bi-whatsapp"></i>sin teléfono registrado</span>
+          {% endif %}
+          {% if visita.contacto_email %}
+            <span class="tx-sign-dest-item"><i class="bi bi-envelope-fill"></i>{{ visita.contacto_email }}</span>
+          {% else %}
+            <span class="tx-sign-dest-item is-falta"><i class="bi bi-envelope-fill"></i>sin correo registrado</span>
+          {% endif %}
         </div>
         <div class="tx-channel-grid">
           <button type="button" class="tx-channel-card is-presencial" id="btnFirmarCliente"

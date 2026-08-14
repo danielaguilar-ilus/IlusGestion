@@ -558,8 +558,15 @@
   box-shadow:0 2px 6px rgba(0,0,0,.08);
 }
 .tx-eq-card .eq-foto-img{
-  width:100%;height:100%;object-fit:cover;display:block;
-  transition:opacity .25s;
+  /* 2026-08-14 (Daniel: "las imagenes de cuando entras a las ordenes de
+     trabajo estan mal justificadas y se cortan"): estaba en object-fit:cover,
+     que RECORTA la foto para llenar el cuadro — a una trotadora o un rack le
+     cortaba media maquina. `contain` muestra el producto completo dentro del
+     cuadro, centrado, con el fondo gris del contenedor haciendo de marco.
+     Es lo correcto para fotos de catalogo: importa reconocer el equipo, no
+     llenar el recuadro. */
+  width:100%;height:100%;object-fit:contain;object-position:center;display:block;
+  padding:3px;transition:opacity .25s;
 }
 .tx-eq-card .eq-foto-empty{
   width:100%;height:100%;
@@ -2504,7 +2511,14 @@
   #btnFirmarHint{order:3;margin:0 0 0 auto !important;text-align:right;display:flex;align-items:center}
   .tx-bottom-body .tx-btn-firmar + #btnFirmarHint{margin-left:16px}
   #btnFirmarDetalle{order:2;margin:0 !important}
-  .tx-bottom .tx-sign-hub{max-width:720px;margin:0 auto;flex:1}
+  /* ⚠️ flex-basis 100%, NO `flex:1`. Con `flex:1` (= 1 1 0%) el hub se
+     encogia hasta ~130px porque compartia la fila con los textos de la
+     barra ("Guardado automatico...", "Ventana de correccion...", el aviso
+     de superadmin) y quedaba con una palabra por linea: "¿Como / firma el
+     / cliente?". Bug real reportado por Daniel el 2026-08-14 con captura.
+     Ocupando su propia fila (el contenedor ya tiene flex-wrap:wrap) el hub
+     recupera su ancho y las 3 tarjetas de canal vuelven a caber. */
+  .tx-bottom .tx-sign-hub{flex:0 0 100%;max-width:720px;margin:0 auto}
   .tx-bottom .tx-cta-grid{flex:1;max-width:900px;margin-left:auto}
 
   /* ── G · PESTAÑA INFORMACION EN 2 COLUMNAS ─────────────────────── */
@@ -2570,4 +2584,46 @@
   .tx-journey-card .pipe-step.current .pipe-circle i,
   .tx-journey-card .pipe-step.done .pipe-circle::after{animation:none !important}
   .pipe-step + .pipe-step::before{transition:none}
+}
+
+/* ── Destinos sugeridos en el bloque de firma (2026-08-14, Daniel:
+   "me gustaria sugerir el telefono del cliente a menos que no tenga, y el
+   correo igual"). El tecnico ve A DONDE sale el link antes de elegir el
+   canal, y si falta un dato lo sabe de antemano en vez de descubrirlo con
+   un error despues de apretar. ── */
+.tx-sign-dest{
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  margin:0 0 12px;padding:9px 11px;border-radius:10px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);
+  position:relative;z-index:1;
+}
+.tx-sign-dest-lbl{
+  font-size:.63rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:#9ca3af;flex:0 0 auto;
+}
+.tx-sign-dest-item{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:.78rem;font-weight:600;color:#e5e7eb;
+  background:rgba(255,255,255,.06);border-radius:8px;padding:4px 9px;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.tx-sign-dest-item i{color:#4ade80;font-size:.9rem;flex:0 0 auto}
+.tx-sign-dest-item.is-falta{color:#fca5a5;background:rgba(220,38,38,.10);font-style:italic}
+.tx-sign-dest-item.is-falta i{color:#f87171}
+
+/* ── El recorrido: la insignia ✓ del hito completado, en CUALQUIER ancho ──
+   Antes, al completarse un hito su icono propio se reemplazaba por un
+   check generico, asi que todos los circulos terminaban identicos (Daniel,
+   2026-08-14: "el recorrido de la OT es distinto al que hicimos en
+   transporte"). Ahora el icono propio se conserva -- como en transporte y
+   retiros -- y el ✓ va de insignia en la esquina. Esta regla vive fuera
+   del bloque de escritorio para que el celular tambien la tenga. */
+.pipe-step.done .pipe-circle{position:relative}
+.pipe-step.done .pipe-circle::after{
+  content:'✓';position:absolute;right:-3px;bottom:-3px;
+  width:19px;height:19px;border-radius:50%;
+  background:#16a34a;color:#fff;font-size:.64rem;font-weight:900;
+  display:flex;align-items:center;justify-content:center;
+  border:2.5px solid #fff;font-family:Arial,sans-serif;
+  animation:badgePopOT .45s cubic-bezier(.34,1.56,.64,1) both;
 }
