@@ -24,6 +24,35 @@
    seguimiento_buscar() (doc+RUT) NO se borra -- REGLA #4.2 -- sigue vivo
    en app.py como respaldo interno, simplemente esta plantilla ya no lo
    ofrece como flujo principal.
+
+   REDISEÑO 2026-08-14 (c) — Daniel viendo la versión (b) en producción:
+   "está muy insípido... la tarjeta blanca se ve muy vacía/pobre... los
+   colores no me convencen... el campo del código se ve raro/roto".
+   Qué cambió y por qué:
+   · El placeholder "ILUS-XXXX-XXXX" (mono, bold, centrado, 45% opacidad)
+     se leía en el celular como una rayita rota. Ahora es un ejemplo real
+     legible ("Ej: ILUS-7K9M-42QF", mismo patrón "Ej:" del resto del
+     proyecto), en tipografía de texto normal — el MONO queda solo para lo
+     que el cliente escribe. El campo pasa de centrado a alineado a la
+     izquierda con ícono de escáner dentro (lee como input, no como texto
+     suelto) y muestra un check verde cuando el código está completo.
+   · El mini-mapa del hero adopta el MISMO stepper de emojis sobre círculo
+     claro de public_tracking.html (el que a Daniel le encanta) — antes
+     usaba glifos tenues que no dialogaban con la página de resultado.
+   · La tarjeta gana el lenguaje de las tarjetas del resultado: filete
+     superior rojo→naranja animado, cabecera con insignia + título display,
+     franja de confianza bajo el botón, entrada escalonada "rise".
+   · Riqueza de color DENTRO de la paleta oficial (REGLA #2): verde éxito
+     con más protagonismo (avance del mini-mapa, check del código, sellos
+     de confianza), ámbar puntual, y el gradiente rojo→naranja ya
+     establecido en public_tracking. Nada de paletas nuevas.
+   · El autofocus del campo queda solo en escritorio: en el celular
+     levantaba el teclado apenas cargaba la página y tapaba medio hero
+     (el cliente ni alcanzaba a ver dónde estaba). No se elimina — se
+     condiciona, documentado aquí.
+   · NADA se quitó: header, hero, mini-mapa, tips, link de recuperar y el
+     contrato del form (POST seguimiento_por_codigo + tracking_code)
+     siguen intactos.
 #}<!doctype html>
 <html lang="es">
 <head>
@@ -49,11 +78,16 @@
       --ink-2:#18181b;
       --red:#dc2626;
       --red-lt:#f87171;
+      --orange:#f97316;      /* solo dentro del gradiente rojo→naranja ya
+                                establecido en public_tracking.html */
       --paper:#efeff1;
+      --line:#e0e0e4;
       --gray:#6b7280;
       --gray-2:#a1a1aa;
       --green:#16a34a;
       --green-lt:#4ade80;
+      --amber:#f59e0b;
+      --amber-lt:#fbbf24;
       --display:'Barlow Condensed',system-ui,sans-serif;
       --body:'Barlow',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
       --shell:560px;
@@ -68,6 +102,7 @@
       -webkit-font-smoothing:antialiased;
       overflow-x:hidden;
       padding-bottom:env(safe-area-inset-bottom);
+      -webkit-tap-highlight-color:transparent;
     }
     .shell{ max-width:var(--shell); margin:0 auto; padding:0 1.1rem; }
 
@@ -90,7 +125,9 @@
       font-size:.62rem; letter-spacing:.18em; text-transform:uppercase;
       color:var(--gray-2); font-weight:700; white-space:nowrap;
     }
-    .accent{ height:4px; background:var(--red); }
+    /* Filete bicolor rojo/grafito: el MISMO acento del resultado
+       (public_tracking.html .accent) — antes era una barra roja plana. */
+    .accent{ height:5px; background:linear-gradient(90deg,var(--red) 0%,var(--red) 38%,#3f3f46 38%,#3f3f46 100%); }
 
     /* ══════════════════ HERO gigante, sin contenedor ══════════════════ */
     /* Daniel: "que sea gigante, que no tenga contenedor" -- full-bleed,
@@ -100,7 +137,7 @@
     .hero{
       position:relative; overflow:hidden;
       background:var(--ink); color:#fff;
-      padding:2.6rem 1.1rem 6.5rem;
+      padding:2.5rem 1.1rem 6.8rem;
       text-align:center;
     }
     .hero::before{      /* rejilla diagonal: misma textura industrial que el resultado */
@@ -109,21 +146,44 @@
         rgba(255,255,255,.035) 0 1px, transparent 1px 12px);
       pointer-events:none;
     }
-    .hero::after{
+    .hero::after{       /* halo rojo de marca, arriba */
       content:''; position:absolute; top:-35%; left:50%; transform:translateX(-50%);
       width:120vw; height:60vw; max-width:820px; max-height:420px;
-      background:radial-gradient(circle, rgba(220,38,38,.32) 0%, transparent 62%);
+      background:radial-gradient(circle, rgba(220,38,38,.34) 0%, transparent 62%);
+      pointer-events:none;
+    }
+    /* Segundo halo, VERDE y abajo, detrás del mini-mapa: el mismo código
+       semántico del resultado (verde = el pedido avanza bien). Dos focos de
+       color en vez de uno = el hero deja de sentirse plano. */
+    .hero-glow{
+      position:absolute; left:50%; bottom:-22%; transform:translateX(-50%);
+      width:140vw; height:58vw; max-width:940px; max-height:400px;
+      background:radial-gradient(ellipse at center, rgba(22,163,74,.17) 0%, transparent 60%);
       pointer-events:none;
     }
     .hero-mesh{
       position:absolute; inset:-40%; pointer-events:none; mix-blend-mode:screen;
       background:conic-gradient(from 0deg at 30% 70%,
-        rgba(220,38,38,.12), transparent 22%, transparent 55%, rgba(220,38,38,.08), transparent 85%);
+        rgba(220,38,38,.13), transparent 20%,
+        transparent 46%, rgba(22,163,74,.09), transparent 62%,
+        transparent 80%, rgba(220,38,38,.08), transparent 95%);
       animation:meshDrift 24s linear infinite;
     }
     @keyframes meshDrift{ to{ transform:rotate(360deg); } }
-    @media (prefers-reduced-motion:reduce){ .hero-mesh{ animation:none; } }
     .hero > *{ position:relative; z-index:1; }
+    /* Doble clase = más especificidad que `.hero > *`: las capas decorativas
+       DEBEN quedar absolutas (fuera del flujo) o abren un hueco gigante. */
+    .hero .hero-glow, .hero .hero-mesh{ position:absolute; z-index:0; }
+
+    /* Entrada escalonada del hero (mismo espíritu "rise" del resultado) */
+    .hero-kicker, .hero h1, .hero p, .route{
+      animation:rise .6s cubic-bezier(.2,.7,.3,1) backwards;
+    }
+    .hero-kicker{ animation-delay:.04s; }
+    .hero h1{ animation-delay:.1s; }
+    .hero p{ animation-delay:.18s; }
+    .route{ animation-delay:.28s; }
+    @keyframes rise{ from{ opacity:0; transform:translateY(16px); } to{ opacity:1; transform:none; } }
 
     .hero-kicker{
       display:inline-flex; align-items:center; gap:.4rem;
@@ -133,12 +193,28 @@
     .hero-kicker::before{
       content:''; width:6px; height:6px; border-radius:50%;
       background:var(--red-lt); box-shadow:0 0 8px 1px rgba(248,113,113,.8);
+      animation:kickerPulse 2.4s ease-in-out infinite;
+    }
+    @keyframes kickerPulse{
+      0%,100%{ box-shadow:0 0 6px 1px rgba(248,113,113,.65); }
+      50%{ box-shadow:0 0 12px 3px rgba(248,113,113,.95); }
     }
     .hero h1{
       font-family:var(--display); font-weight:900;
-      font-size:clamp(2.3rem,8vw,3.4rem); line-height:.98;
+      font-size:clamp(2.4rem,8.4vw,3.5rem); line-height:.96;
       letter-spacing:-.01em; text-transform:uppercase; text-wrap:balance;
       margin:.5rem 0 .6rem;
+    }
+    /* "tu pedido" en el gradiente rojo→naranja ya establecido (filete de las
+       tarjetas del resultado). Con @supports para no dejar texto invisible
+       en navegadores sin background-clip:text. */
+    .hero h1 .hl{ color:var(--red-lt); }
+    @supports ((-webkit-background-clip:text) or (background-clip:text)){
+      .hero h1 .hl{
+        background:linear-gradient(92deg,var(--red-lt) 10%,var(--orange) 90%);
+        -webkit-background-clip:text; background-clip:text;
+        color:transparent;
+      }
     }
     .hero p{
       font-size:1rem; color:#d4d4d8; line-height:1.5;
@@ -147,114 +223,236 @@
 
     /* ── Mini-mapa de 3 paradas: "el tracking de todo el envío", el
        adelanto visual de lo que el cliente va a poder ver una vez busque.
-       Puramente decorativo/promesa -- no representa un pedido real todavía. #}
+       Puramente decorativo/promesa -- no representa un pedido real todavía.
+       2026-08-14: mismo lenguaje del stepper del resultado (emoji de color
+       sobre círculo claro, borde verde, insignia ✓, paso activo que pulsa)
+       para que la promesa y el resultado sean literalmente la misma pieza. */
     .route{
-      margin:2rem auto 0; max-width:400px;
+      margin:2.1rem auto 0; max-width:400px;
       display:grid; grid-template-columns:1fr 1fr 1fr; gap:0;
       position:relative;
     }
     .route-line{
-      position:absolute; top:19px; left:12%; right:12%; height:2px;
-      background:rgba(255,255,255,.16);
+      position:absolute; top:25px; left:14%; right:14%; height:3px;
+      border-radius:99px;
+      background:linear-gradient(90deg, var(--green) 0%, #22c55e 34%,
+        rgba(255,255,255,.16) 58%, rgba(255,255,255,.16) 100%);
     }
     .route-line i{
-      position:absolute; top:-3px; left:0; width:8px; height:8px; border-radius:50%;
-      background:var(--red-lt); box-shadow:0 0 10px 2px rgba(248,113,113,.85);
+      position:absolute; top:-3px; left:0; width:9px; height:9px; border-radius:50%;
+      background:var(--green-lt); box-shadow:0 0 10px 2px rgba(74,222,128,.85);
       animation:routePulse 3.2s cubic-bezier(.4,0,.2,1) infinite;
     }
     @keyframes routePulse{
       0%{ left:0; opacity:0; }
       8%{ opacity:1; }
       92%{ opacity:1; }
-      100%{ left:calc(100% - 8px); opacity:0; }
+      100%{ left:calc(100% - 9px); opacity:0; }
     }
-    @media (prefers-reduced-motion:reduce){ .route-line i{ animation:none; left:calc(100% - 8px); opacity:1; } }
     .route-stop{ position:relative; display:flex; flex-direction:column; align-items:center; gap:.5rem; }
     .route-dot{
-      width:40px; height:40px; border-radius:50%;
-      display:grid; place-items:center; font-size:1.05rem;
-      background:rgba(255,255,255,.07); border:1.5px solid rgba(255,255,255,.22); color:#fff;
+      position:relative;
+      width:52px; height:52px; border-radius:50%;
+      display:grid; place-items:center; font-size:1.5rem; line-height:1;
+      background:#f6f8fb; border:3px solid #3f3f46;
+      box-shadow:0 0 0 4px rgba(255,255,255,.06);
+      filter:grayscale(.65) brightness(.85);
     }
-    .route-stop:first-child .route-dot{
-      background:linear-gradient(155deg,#16a34a,#15803d); border-color:#22c55e;
-      box-shadow:0 0 0 4px rgba(22,163,74,.2);
+    .route-stop.done .route-dot,
+    .route-stop.active .route-dot{ filter:none; background:#f0fdf4; border-color:var(--green); }
+    .route-stop.done .route-dot::after{     /* insignia ✓, misma del resultado */
+      content:'✓'; position:absolute; right:-4px; bottom:-4px;
+      width:20px; height:20px; border-radius:50%;
+      background:var(--green); color:#fff; font-size:.66rem; font-weight:900;
+      display:flex; align-items:center; justify-content:center;
+      border:2px solid var(--ink); font-family:Arial,sans-serif;
     }
-    .route-lbl{ font-size:.66rem; letter-spacing:.05em; text-transform:uppercase; color:var(--gray-2); font-weight:700; }
-    .route-stop:first-child .route-lbl{ color:#fff; }
+    .route-stop.active .route-dot{
+      transform:scale(1.08);
+      box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(22,163,74,.7);
+      animation:stopPulse 2s infinite;
+    }
+    @keyframes stopPulse{
+      70%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 14px rgba(22,163,74,0); }
+      100%{ box-shadow:0 0 0 4px rgba(255,255,255,.06), 0 0 0 0 rgba(22,163,74,0); }
+    }
+    .route-lbl{ font-size:.64rem; letter-spacing:.06em; text-transform:uppercase; color:var(--gray-2); font-weight:700; }
+    .route-stop.done .route-lbl, .route-stop.active .route-lbl{ color:#fff; }
 
     /* ══════════════════ Tarjeta de búsqueda: monta sobre el hero ══════════════════ */
-    .search-wrap{ margin-top:-4.6rem; padding-bottom:2.5rem; }
+    .search-wrap{ margin-top:-4.9rem; padding-bottom:2.2rem; position:relative; z-index:5; }
     .card{
-      background:#fff;
+      position:relative; overflow:hidden;
+      background:#fff; border:1px solid var(--line);
       border-radius:20px;
-      box-shadow:0 1px 2px rgba(0,0,0,.05), 0 24px 48px -20px rgba(0,0,0,.35);
-      padding:1.5rem 1.4rem 1.6rem;
+      box-shadow:0 1px 2px rgba(0,0,0,.05), 0 28px 56px -22px rgba(0,0,0,.42);
+      padding:1.4rem 1.35rem 1.15rem;
+      animation:rise .6s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:.2s;
     }
+    /* Filete superior rojo→naranja con barrido: el sello de las tarjetas
+       del resultado (route-card/prod-card de public_tracking.html). */
+    .card::before{
+      content:''; position:absolute; top:0; left:0; right:0; height:3px; z-index:2;
+      background:linear-gradient(90deg,var(--red),var(--orange) 45%,var(--red));
+      background-size:200% 100%; animation:sheenSlide 6s ease-in-out infinite;
+    }
+    @keyframes sheenSlide{ 0%,100%{ background-position:0% 0; } 50%{ background-position:100% 0; } }
+    /* Grilla de puntos en la esquina (la textura "mapa sin serlo" de
+       route-viz del resultado) — la tarjeta deja de ser un rectángulo
+       blanco pelado sin meter ruido sobre el contenido. */
+    .card-grid{
+      position:absolute; top:0; right:0; width:170px; height:130px;
+      background-image:radial-gradient(circle, #d4d4d8 1px, transparent 1px);
+      background-size:12px 12px; opacity:.5; pointer-events:none;
+      -webkit-mask-image:radial-gradient(circle at top right, #000 0%, transparent 72%);
+              mask-image:radial-gradient(circle at top right, #000 0%, transparent 72%);
+    }
+    .card > *{ position:relative; z-index:1; }
+    /* Doble clase = más especificidad que `.card > *`: la grilla DEBE quedar
+       absoluta (decorativa, fuera del flujo) o abre un hueco en la tarjeta. */
+    .card .card-grid{ position:absolute; z-index:0; }
+
+    .card-head{ display:flex; align-items:center; gap:.7rem; margin-bottom:1.1rem; }
+    .card-badge{
+      flex-shrink:0; width:44px; height:44px; border-radius:13px;
+      display:grid; place-items:center; font-size:1.3rem;
+      background:linear-gradient(155deg,var(--red),#b91c1c); color:#fff;
+      box-shadow:0 10px 20px -8px rgba(220,38,38,.65);
+    }
+    .card-title{
+      font-family:var(--display); font-weight:800; font-size:1.32rem;
+      letter-spacing:.04em; text-transform:uppercase; line-height:1;
+      color:var(--ink); margin:0;
+    }
+    .card-sub{
+      display:flex; align-items:center; gap:.35rem;
+      margin-top:.28rem; font-size:.74rem; font-weight:600; color:var(--gray);
+    }
+    .card-sub::before{
+      content:''; width:6px; height:6px; border-radius:50%; flex-shrink:0;
+      background:#22c55e; box-shadow:0 0 6px 1px rgba(34,197,94,.8);
+    }
+
     .row{ margin-bottom:1.05rem; }
     .lbl{
-      font-size:.78rem; font-weight:700; color:var(--ink);
-      text-transform:uppercase; letter-spacing:.4px; margin-bottom:.5rem;
-      display:flex; align-items:center; gap:.35rem;
+      font-size:.72rem; font-weight:800; color:var(--ink);
+      text-transform:uppercase; letter-spacing:.09em; margin-bottom:.5rem;
+      display:block;
     }
-    .lbl i{ color:var(--red); }
 
-    /* Chips segmentados de tipo de documento -- reemplazan el <select> plano.
-       Mismos value= de siempre (backend intacto), solo cambia la piel. */
-    .doctype{ display:flex; gap:.4rem; margin-bottom:.6rem; flex-wrap:wrap; }
-    .doctype input{ position:absolute; opacity:0; pointer-events:none; }
-    .doctype label{
-      flex:1 1 auto; text-align:center; cursor:pointer;
-      padding:.55rem .5rem; border-radius:10px; border:1.5px solid #e4e4e7;
-      font-size:.78rem; font-weight:700; color:var(--gray);
-      transition:background .15s, border-color .15s, color .15s;
-      min-height:40px; display:flex; align-items:center; justify-content:center;
+    /* ── Campo del código ──────────────────────────────────────────
+       Antes: mono + bold + centrado + placeholder "ILUS-XXXX-XXXX" al 45%
+       de opacidad = en una captura de celular parecía una rayita rota.
+       Ahora: alineado a la IZQUIERDA (lee como input normal), ícono de
+       escáner dentro a la izquierda, placeholder de EJEMPLO en tipografía
+       de texto ("Ej: …") — el mono queda reservado para lo que el cliente
+       escribe, que sí es un código. Check verde al completar los 8
+       caracteres (misma validación de formato que normaliza el backend,
+       cero datos inventados). */
+    .code-field{ position:relative; }
+    .code-ico{
+      position:absolute; left:.7rem; top:50%; transform:translateY(-50%);
+      width:36px; height:36px; border-radius:11px;
+      display:grid; place-items:center; font-size:1.1rem;
+      background:#f4f4f5; color:var(--red);
+      transition:background .18s, color .18s;
+      pointer-events:none;
     }
-    .doctype input:checked + label{
-      background:var(--ink); border-color:var(--ink); color:#fff;
-    }
-    .doctype input:focus-visible + label{ outline:2px solid var(--red); outline-offset:2px; }
-
-    .input{
-      width:100%; padding:.8rem .95rem;
-      border:1.5px solid #d1d5db; border-radius:12px;
-      font-size:16px;     /* anti-zoom iOS */
-      background:#fff; color:var(--ink);
-      transition:border-color .15s, box-shadow .15s;
-      min-height:50px;
-    }
-    .input:focus{
-      outline:none; border-color:var(--red);
-      box-shadow:0 0 0 3px rgba(220,38,38,.12);
-    }
-    /* Código de seguimiento: monoespaciado + letter-spacing generoso, para
-       que se lea/escriba como lo que es -- un código, no un texto libre. */
     .code-input{
+      width:100%; min-height:54px;
+      padding:.85rem 3rem .85rem 3.5rem;
+      border:1.5px solid #d4d4d8; border-radius:14px;
+      background:#fff; color:var(--ink);
       font-family:ui-monospace,'SF Mono',Consolas,monospace;
-      font-size:1.15rem; font-weight:700; letter-spacing:.06em;
-      text-align:center; text-transform:uppercase;
+      font-size:16.5px;      /* ≥16px: anti-zoom iOS (REGLA #3) */
+      font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+      text-align:left;
+      transition:border-color .18s, box-shadow .18s;
     }
-    .code-input::placeholder{ font-weight:600; letter-spacing:.06em; opacity:.45; }
-    .help{ font-size:.74rem; color:var(--gray); margin-top:.4rem; line-height:1.4; }
-    .help.trust{ display:flex; align-items:center; gap:.3rem; color:#71717a; }
-    .help.trust i{ color:var(--green); }
+    .code-input:focus{
+      outline:none; border-color:var(--red);
+      box-shadow:0 0 0 3.5px rgba(220,38,38,.13);
+    }
+    .code-input:focus ~ .code-ico,
+    .code-field:focus-within .code-ico{
+      background:var(--red); color:#fff;
+    }
+    .code-input::placeholder{
+      font-family:var(--body); font-weight:500; font-size:15.5px;
+      letter-spacing:.01em; text-transform:none; color:#9ca3af; opacity:1;
+    }
+    .code-ok{
+      position:absolute; right:.85rem; top:50%;
+      width:26px; height:26px; border-radius:50%;
+      display:grid; place-items:center; font-size:.8rem;
+      background:var(--green); color:#fff;
+      transform:translateY(-50%) scale(0); opacity:0; pointer-events:none;
+    }
+    .code-field.is-complete .code-input{
+      border-color:var(--green);
+      box-shadow:0 0 0 3.5px rgba(22,163,74,.13);
+    }
+    .code-field.is-complete .code-ico{ background:#f0fdf4; color:var(--green); }
+    .code-field.is-complete .code-ok{
+      opacity:1;
+      animation:okPop .45s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    @keyframes okPop{
+      0%{ transform:translateY(-50%) scale(0); }
+      60%{ transform:translateY(-50%) scale(1.25); }
+      100%{ transform:translateY(-50%) scale(1); }
+    }
+
+    .help{ font-size:.76rem; color:var(--gray); margin-top:.45rem; line-height:1.45; }
+    .help strong{ color:var(--ink); font-weight:700; }
 
     .btn{
-      width:100%; padding:.9rem 1rem; border-radius:12px; border:none;
-      background:var(--red); color:#fff;
-      font-family:var(--display); font-weight:800; font-size:1.25rem;
-      letter-spacing:.02em; text-transform:uppercase;
-      cursor:pointer; transition:transform .12s, box-shadow .15s, background .15s;
-      min-height:50px;
-      display:inline-flex; align-items:center; justify-content:center; gap:.5rem;
-      box-shadow:0 10px 24px -10px rgba(220,38,38,.6);
+      position:relative; overflow:hidden;
+      width:100%; padding:.9rem 1rem; border-radius:14px; border:none;
+      background:linear-gradient(155deg,var(--red) 0%,#b91c1c 100%); color:#fff;
+      font-family:var(--display); font-weight:800; font-size:1.3rem;
+      letter-spacing:.03em; text-transform:uppercase;
+      cursor:pointer; transition:transform .12s, box-shadow .15s, filter .15s;
+      min-height:54px;
+      display:inline-flex; align-items:center; justify-content:center; gap:.55rem;
+      box-shadow:0 12px 26px -10px rgba(220,38,38,.65);
     }
-    .btn:hover{ background:#b91c1c; transform:translateY(-1px); }
-    .btn:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
+    .btn::after{      /* barrido de luz ocasional: el botón se siente vivo */
+      content:''; position:absolute; inset:0;
+      background:linear-gradient(105deg, transparent 42%, rgba(255,255,255,.28) 50%, transparent 58%);
+      transform:translateX(-130%);
+      animation:btnSheen 4.6s ease-in-out infinite;
+      pointer-events:none;
+    }
+    @keyframes btnSheen{
+      0%, 62%{ transform:translateX(-130%); }
+      78%, 100%{ transform:translateX(130%); }
+    }
+    .btn:hover{ filter:brightness(1.06); transform:translateY(-1px); }
+    .btn:active{ transform:scale(.985); }
+    .btn:disabled{ opacity:.65; cursor:not-allowed; transform:none; }
+    .btn .spin{ animation:spinFull 1s linear infinite; }
+    @keyframes spinFull{ to{ transform:rotate(360deg); } }
+
+    /* Sellos de confianza — verdades del servicio, no promesas infladas */
+    .trust{
+      display:flex; justify-content:center; flex-wrap:wrap;
+      gap:.35rem 1rem; margin-top:.95rem;
+    }
+    .trust span{
+      display:inline-flex; align-items:center; gap:.34rem;
+      font-size:.72rem; font-weight:700; color:#71717a; letter-spacing:.01em;
+      white-space:nowrap;
+    }
+    .trust i{ font-size:.88rem; }
+    .trust .t-green i{ color:var(--green); }
+    .trust .t-amber i{ color:var(--amber); }
+    .trust .t-red i{ color:var(--red); }
 
     .lost-link{
       display:flex; align-items:center; justify-content:center; gap:.4rem;
-      margin-top:1rem; padding:.6rem; min-height:44px;
-      font-size:.85rem; font-weight:700; color:var(--gray);
+      margin-top:.7rem; padding:.6rem; min-height:44px;
+      font-size:.86rem; font-weight:700; color:var(--gray);
       text-decoration:none; border-radius:10px;
       transition:background .15s, color .15s;
     }
@@ -266,29 +464,58 @@
       border-radius:11px; padding:.7rem .85rem; font-size:.88rem;
       margin-bottom:1rem;
       display:flex; align-items:flex-start; gap:.5rem;
+      animation:errShake .4s cubic-bezier(.36,.07,.19,.97) both;
     }
     .err i{ font-size:1.05rem; margin-top:1px; }
+    @keyframes errShake{
+      10%,90%{ transform:translateX(-1px); }
+      20%,80%{ transform:translateX(2px); }
+      30%,50%,70%{ transform:translateX(-3px); }
+      40%,60%{ transform:translateX(3px); }
+    }
 
-    /* Tips */
+    /* Tips — mismo lenguaje de tarjeta que el resultado, con chips de
+       ícono en color semántico (verde = garantía, rojo = "en vivo"). */
     .tips{
-      margin-top:1.1rem; padding:1.1rem 1.2rem; border-radius:16px;
-      background:#fff; border:1px solid #e4e4e7;
+      margin-top:.9rem; padding:1.05rem 1.15rem 1.05rem; border-radius:16px;
+      background:#fff; border:1px solid var(--line);
+      box-shadow:0 1px 2px rgba(0,0,0,.045);
+      animation:rise .6s cubic-bezier(.2,.7,.3,1) backwards; animation-delay:.32s;
     }
     .tips h3{
-      font-size:.72rem; font-weight:800; color:var(--gray);
-      text-transform:uppercase; letter-spacing:.1em; margin:0 0 .7rem;
+      display:flex; align-items:center; gap:.45rem;
+      font-family:var(--display); font-size:.85rem; font-weight:800;
+      color:var(--ink); text-transform:uppercase; letter-spacing:.12em;
+      margin:0 0 .75rem;
     }
+    .tips h3 i{ color:var(--amber); font-size:.95rem; }
     .tips ul{ margin:0; padding:0; list-style:none; }
     .tips li{
-      display:flex; gap:.55rem; padding:.4rem 0; font-size:.85rem; color:#374151;
-      align-items:flex-start; line-height:1.42;
+      display:flex; gap:.65rem; padding:.45rem 0; font-size:.85rem; color:#374151;
+      align-items:flex-start; line-height:1.45;
     }
-    .tips li i{ color:var(--green); margin-top:2px; flex-shrink:0; }
+    .tips li + li{ border-top:1px solid #f4f4f5; }
+    .tip-ic{
+      flex-shrink:0; width:30px; height:30px; border-radius:9px;
+      display:grid; place-items:center; font-size:.92rem; margin-top:1px;
+    }
+    .tip-ic.g{ background:#f0fdf4; color:var(--green); border:1px solid #dcfce7; }
+    .tip-ic.r{ background:#fee2e2; color:var(--red); border:1px solid #fecaca; }
     .tips strong{ color:var(--ink); }
 
     @media (max-width:480px){
-      .hero{ padding:2.2rem .9rem 6.5rem; }
-      .card{ padding:1.3rem 1.1rem 1.4rem; }
+      .hero{ padding:2.2rem .9rem 6.6rem; }
+      .card{ padding:1.25rem 1.05rem 1.05rem; }
+      .route-dot{ width:48px; height:48px; font-size:1.35rem; }
+      .route-line{ top:23px; }
+      .trust{ gap:.3rem .75rem; }
+    }
+
+    @media (prefers-reduced-motion:reduce){
+      .hero-mesh, .card::before, .btn::after,
+      .hero-kicker::before, .route-stop.active .route-dot{ animation:none; }
+      .route-line i{ animation:none; left:calc(100% - 9px); opacity:1; }
+      .hero-kicker, .hero h1, .hero p, .route, .card, .tips, .err{ animation:none; }
     }
   </style>
 </head>
@@ -306,23 +533,26 @@
   <div class="accent"></div>
 
   <section class="hero">
+    <div class="hero-glow"></div>
     <div class="hero-mesh"></div>
     <span class="hero-kicker">Trazabilidad ILUS en tiempo real</span>
-    <h1>¿Dónde está<br>tu pedido?</h1>
-    <p>Ingresa el número de tu documento y te mostramos el estado de tu despacho al instante.</p>
+    <h1>¿Dónde está<br><span class="hl">tu pedido?</span></h1>
+    {# Copy corregido 2026-08-14: decía "el número de tu documento", pero el
+       campo pide el CÓDIGO de seguimiento desde el rediseño (b). #}
+    <p>Escribe el código que te enviamos por correo y mira el avance de tu despacho al instante.</p>
 
     <div class="route" aria-hidden="true">
       <div class="route-line"><i></i></div>
-      <div class="route-stop">
-        <div class="route-dot"><i class="bi bi-check-lg"></i></div>
+      <div class="route-stop done">
+        <div class="route-dot">📦</div>
         <span class="route-lbl">Pedido</span>
       </div>
-      <div class="route-stop">
-        <div class="route-dot"><i class="bi bi-truck"></i></div>
+      <div class="route-stop active">
+        <div class="route-dot">🚚</div>
         <span class="route-lbl">En camino</span>
       </div>
       <div class="route-stop">
-        <div class="route-dot"><i class="bi bi-geo-alt-fill"></i></div>
+        <div class="route-dot">🏠</div>
         <span class="route-lbl">Entregado</span>
       </div>
     </div>
@@ -330,6 +560,16 @@
 
   <div class="shell search-wrap">
     <div class="card">
+      <div class="card-grid" aria-hidden="true"></div>
+
+      <div class="card-head">
+        <div class="card-badge"><i class="bi bi-upc-scan"></i></div>
+        <div>
+          <h2 class="card-title">Busca tu pedido</h2>
+          <div class="card-sub">Estado real de tu despacho, al instante</div>
+        </div>
+      </div>
+
       {% if error %}
       <div class="err" role="alert">
         <i class="bi bi-exclamation-triangle-fill"></i>
@@ -340,20 +580,30 @@
       <form method="POST" action="{{ url_for('seguimiento_por_codigo') }}" novalidate>
         {% set prefill = prefill or {} %}
         <div class="row">
-          <label class="lbl" for="codeInput"><i class="bi bi-upc-scan"></i>Código de seguimiento ILUS</label>
-          <input id="codeInput" type="text" name="tracking_code"
-                 class="input code-input"
-                 placeholder="ILUS-XXXX-XXXX"
-                 autocomplete="off" autocapitalize="characters" spellcheck="false"
-                 value="{{ prefill.tracking_code or '' }}"
-                 required>
-          <div class="help">Está en el correo de confirmación de tu pedido, justo bajo el botón "Seguir mi pedido".</div>
+          <label class="lbl" for="codeInput">Código de seguimiento ILUS</label>
+          <div class="code-field" id="codeField">
+            <input id="codeInput" type="text" name="tracking_code"
+                   class="code-input"
+                   placeholder="Ej: ILUS-7K9M-42QF"
+                   autocomplete="off" autocapitalize="characters" spellcheck="false"
+                   value="{{ prefill.tracking_code or '' }}"
+                   required>
+            <span class="code-ico" aria-hidden="true"><i class="bi bi-upc-scan"></i></span>
+            <span class="code-ok" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+          </div>
+          <div class="help">Tiene el formato <strong>ILUS-XXXX-XXXX</strong> y está en el correo de confirmación de tu pedido, justo bajo el botón "Seguir mi pedido".</div>
         </div>
 
-        <button class="btn" type="submit">
+        <button class="btn" type="submit" id="searchBtn">
           <i class="bi bi-search"></i>
           Ver estado de mi despacho
         </button>
+
+        <div class="trust" aria-hidden="true">
+          <span class="t-green"><i class="bi bi-shield-check"></i>Sin RUT ni claves</span>
+          <span class="t-amber"><i class="bi bi-lightning-charge-fill"></i>Respuesta al instante</span>
+          <span class="t-red"><i class="bi bi-truck"></i>Directo del courier</span>
+        </div>
 
         <a class="lost-link" href="{{ url_for('seguimiento_recuperar_page') }}">
           <i class="bi bi-envelope-paper"></i>No encuentro mi código
@@ -362,26 +612,51 @@
     </div>
 
     <div class="tips">
-      <h3>Tips útiles</h3>
+      <h3><i class="bi bi-stars"></i>Tips útiles</h3>
       <ul>
-        <li><i class="bi bi-check-circle-fill"></i><div>Tu código empieza siempre con <strong>ILUS-</strong> y tiene 8 caracteres — lo enviamos junto con cada actualización de tu pedido.</div></li>
-        <li><i class="bi bi-check-circle-fill"></i><div>Si va con FedEx, mostramos el estado <strong>en vivo</strong> sin que tengas que ir al sitio de FedEx.</div></li>
-        <li><i class="bi bi-shield-check"></i><div>Nunca pedimos tu RUT ni datos de pago para ver el estado de tu pedido.</div></li>
+        <li><span class="tip-ic g"><i class="bi bi-upc"></i></span><div>Tu código empieza siempre con <strong>ILUS-</strong> y tiene 8 caracteres — lo enviamos junto con cada actualización de tu pedido.</div></li>
+        <li><span class="tip-ic r"><i class="bi bi-broadcast"></i></span><div>Si va con FedEx, mostramos el estado <strong>en vivo</strong> sin que tengas que ir al sitio de FedEx.</div></li>
+        <li><span class="tip-ic g"><i class="bi bi-shield-check"></i></span><div>Nunca pedimos tu RUT ni datos de pago para ver el estado de tu pedido.</div></li>
       </ul>
     </div>
   </div>
 
   <script>
-    // Formato visual ligero del código: fuerza mayúsculas mientras escribe
-    // (el backend igual normaliza, esto es solo comodidad visual).
-    document.getElementById('codeInput').addEventListener('input', function(){
-      var start = this.selectionStart, end = this.selectionEnd;
-      this.value = this.value.toUpperCase();
-      this.setSelectionRange(start, end);
-    });
+    (function(){
+      var input = document.getElementById('codeInput');
+      var field = document.getElementById('codeField');
+      var form  = input.form;
+      var btn   = document.getElementById('searchBtn');
 
-    // Auto-focus el primer input
-    document.getElementById('codeInput').focus();
+      // Mayúsculas mientras escribe (el backend igual normaliza; esto es
+      // comodidad visual) + check verde cuando el código está completo:
+      // misma normalización que _tr_normalizar_tracking_code (quitar todo
+      // lo que no sea letra/número y el prefijo ILUS) => 8 caracteres.
+      function refresh(){
+        var start = input.selectionStart, end = input.selectionEnd;
+        input.value = input.value.toUpperCase();
+        try{ input.setSelectionRange(start, end); }catch(e){}
+        var norm = input.value.replace(/[^A-Z0-9]/g, '').replace(/^ILUS/, '');
+        field.classList.toggle('is-complete', norm.length === 8);
+      }
+      input.addEventListener('input', refresh);
+      if (input.value) refresh();   // prefill: pinta el check de entrada
+
+      // Estado de carga al enviar: el POST navega, pero en 3G el cliente
+      // merece saber que algo está pasando (y se evita el doble submit).
+      form.addEventListener('submit', function(){
+        btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Buscando tu pedido…';
+        setTimeout(function(){ btn.disabled = true; }, 0);
+      });
+
+      // Autofocus SOLO en escritorio: en el celular el teclado saltaba
+      // apenas cargaba la página y tapaba medio hero antes de que el
+      // cliente viera dónde estaba parado. preventScroll: sin esto el
+      // navegador scrollea hasta el input y se salta el hero completo.
+      if (window.matchMedia('(min-width: 768px)').matches){
+        try{ input.focus({ preventScroll:true }); }catch(e){ /* navegadores viejos */ }
+      }
+    })();
   </script>
 </body>
 </html>
