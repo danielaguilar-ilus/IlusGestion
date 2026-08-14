@@ -37038,8 +37038,17 @@ def tr_cron_refrescar_saldo_productos():
     # hace meses que nunca tuvo guía, probablemente nunca la va a tener). Deja
     # de aparecer en este segundo grupo recién cuando AMBAS condiciones se
     # cumplen: terminal Y con guía — el corte real que pidió Daniel.
+    # FIX 2026-08-14: c.guia_intentada_at DEBE estar en la lista del SELECT.
+    # La rotación del 2026-08-07 ordena por esa columna, pero con DISTINCT
+    # MySQL exige que lo ordenado esté en la lista (error 3065, "Expression
+    # #2 of ORDER BY... not in SELECT list; incompatible with DISTINCT").
+    # Consecuencia real: el cron completo llevaba fallando desde entonces en
+    # CADA corrida -- ni saldo ni guías se refrescaban, y el error se
+    # repetía en los logs cada pocos minutos. Incluirla no cambia el
+    # conjunto de filas (depende 1:1 de c.id) y los consumidores ignoran
+    # la clave extra.
     docs = mysql_fetchall("""
-        SELECT DISTINCT c.id, c.tido, c.nudo,
+        SELECT DISTINCT c.id, c.tido, c.nudo, c.guia_intentada_at,
                (mi.id IS NOT NULL
                 AND mi.estado_entrega NOT IN ('Entregado', 'Problema', 'Entrega fallida', 'Devolución')) AS activo
         FROM transport_commitments c
