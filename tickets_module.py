@@ -8033,6 +8033,50 @@ def register_tickets_routes(app, ctx):
         return jsonify({"ok": True, "resultados": resultados})
 
     # ─────────────────────────────────────────────────────────────────
+    #  API — Región a partir de una dirección/comuna (server-side)
+    #
+    #  2026-08-14 (Daniel, reportado por Juan Pablo con captura: la
+    #  cotización se quedaba trabada). Al elegir un cliente del ERP, el
+    #  wizard limpiaba la Región a propósito (los datos del ERP nunca
+    #  pasaron por Google Places) y mostraba "Se completa al validar la
+    #  dirección". Pero la dirección que trae el ERP suele ser inservible
+    #  para Places -- en el caso real era literalmente "las condes", que
+    #  es una comuna, no una calle -- así que el usuario no tenía forma
+    #  de completar la Región y quedaba bloqueado con el campo en rojo.
+    #
+    #  Este endpoint resuelve la Región por Geocoding (que SÍ tolera una
+    #  dirección vaga: "las condes, Chile" devuelve Metropolitana), para
+    #  que el formulario deje de bloquear. NO reemplaza la validación
+    #  fina con Places: si el usuario después elige una sugerencia real,
+    #  esa gana y además aporta lat/lng/place_id.
+    #
+    #  Se llama SOLO al elegir un cliente (1 consulta), no por cada
+    #  resultado de la búsqueda -- geocodificar N resultados por cada
+    #  tecla sería caro en la cuota de Google.
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/geo/region", methods=["GET"])
+    @_tk_required
+    def tk_api_geo_region():
+        direccion = (request.args.get("direccion") or "").strip()
+        comuna = (request.args.get("comuna") or "").strip()
+        if not direccion and not comuna:
+            return jsonify({"ok": False, "region": "", "comuna": ""})
+        try:
+            if not _google_geocode_region_comuna:
+                return jsonify({"ok": False, "region": "", "comuna": ""})
+            geo = _google_geocode_region_comuna(direccion, comuna) or {}
+            return jsonify({
+                "ok": bool(geo.get("region")),
+                "region": geo.get("region") or "",
+                "comuna": geo.get("comuna") or comuna,
+            })
+        except Exception as e:
+            # Fail-open: que no poder resolver la region NUNCA rompa el
+            # wizard -- el usuario siempre puede escribirla a mano.
+            print(f"[tk_geo_region] {e}", flush=True)
+            return jsonify({"ok": False, "region": "", "comuna": comuna})
+
+    # ─────────────────────────────────────────────────────────────────
     #  API — resumen de la FICHA de un cliente de Mantenciones, para
     #  precargar el wizard de Cotizaciones cuando nace "desde ficha"
     #  (Daniel, rediseño Paso 1 estilo "Generar OT" -- 2026-07-23):

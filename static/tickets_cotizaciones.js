@@ -602,14 +602,57 @@ function cotWizElegirCliente(c){
   if (c.direccion) document.getElementById('cotWizDireccion').value = c.direccion;
   if (c.comuna) document.getElementById('cotWizComuna').value = c.comuna;
   document.getElementById('cotWizDireccionHint').innerHTML =
-    '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>' +
-    'Dirección del ERP sin validar — vuelve a escribirla y elige una opción de la lista para completar la Región.';
+    '<i class="bi bi-hourglass-split me-1" style="color:#6b7280"></i>' +
+    'Completando la Región desde la dirección del ERP…';
+  // 2026-08-14 (Daniel, reportado por Juan Pablo): antes esto dejaba la
+  // Región vacía y en rojo con un "vuelve a escribir la dirección", pero
+  // la dirección del ERP muchas veces NO sirve para Google Places (el caso
+  // real traía "las condes", que es una comuna, no una calle) -- el usuario
+  // quedaba bloqueado sin salida. Ahora se resuelve la Región por
+  // Geocoding, que sí tolera una dirección vaga. La validación fina con
+  // Places sigue disponible y manda si el usuario elige una sugerencia.
+  _cotWizResolverRegionERP(c.direccion || '', c.comuna || '');
   if (c.contacto_email) document.getElementById('cotWizEmail').value = c.contacto_email;
   if (c.contacto_tel) document.getElementById('cotWizTelefono').value = c.contacto_tel;
   document.getElementById('cotWizCliQ').value = (c.empresa || '') + (c.rut ? ' — ' + c.rut : '');
   _wizCliOcultar();
   cotWizBuscarRuta();
 }
+// Resuelve la Región desde la dirección/comuna que trajo el ERP, para que
+// el formulario no quede bloqueado con la Región vacía (ver el comentario
+// en cotWizElegirCliente). Falla en silencio: si Google no responde o no
+// hay clave configurada, se deja el aviso de siempre y el usuario puede
+// escribir la Región a mano — nunca rompe el wizard.
+async function _cotWizResolverRegionERP(direccion, comuna){
+  const hint = document.getElementById('cotWizDireccionHint');
+  const elRegion = document.getElementById('cotWizRegion');
+  const avisoManual =
+    '<i class="bi bi-exclamation-triangle-fill me-1" style="color:#f59e0b"></i>' +
+    'Dirección del ERP sin validar — vuelve a escribirla y elige una opción de la lista.';
+  try{
+    const r = await fetch('/tickets/api/geo/region?direccion=' +
+      encodeURIComponent(direccion) + '&comuna=' + encodeURIComponent(comuna));
+    const d = await r.json();
+    if (d && d.ok && d.region){
+      if (elRegion) elRegion.value = d.region;
+      // Si Google devolvió una comuna más precisa y el campo está vacío, la usa.
+      const elCom = document.getElementById('cotWizComuna');
+      if (elCom && !elCom.value && d.comuna) elCom.value = d.comuna;
+      if (hint) hint.innerHTML =
+        '<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>' +
+        'Región completada desde la dirección del ERP. Si quieres la dirección exacta ' +
+        '(con calle y número), vuelve a escribirla y elige una opción de la lista.';
+      // Revalida para que el campo Región salga del rojo al instante
+      // (es la misma función que valida el paso, línea ~412).
+      if (typeof cotWizValidarPaso1 === 'function') cotWizValidarPaso1();
+    } else {
+      if (hint) hint.innerHTML = avisoManual;
+    }
+  }catch(e){
+    if (hint) hint.innerHTML = avisoManual;
+  }
+}
+
 // 2026-07-22 (Daniel: "también existe la posibilidad de crear un cliente
 // como en Triple A"): no hay una tabla de "clientes" separada en este
 // wizard -- los datos del cliente viven directo en la cotización, así
