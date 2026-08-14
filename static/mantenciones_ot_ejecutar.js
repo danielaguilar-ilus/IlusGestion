@@ -3549,7 +3549,28 @@ function actualizarLockFirmar(ctxOrTotal, completas){
 }
 
 // Llamar al cargar la página
+// En escritorio el recorrido operativo debe quedar siempre a la vista, entre
+// el hero y las pestañas. Movemos el nodo original (no lo clonamos) para
+// conservar sus IDs, timestamps, clases y toda la lógica de actualización.
+// En móvil se deja en Información, tal como funcionaba antes del rediseño.
+function _txElevarRecorrido(){
+  const slot = document.getElementById('txJourneySlot');
+  const origin = document.getElementById('txJourneyOrigin');
+  const card = document.querySelector('.pipeline-card');
+  if (!slot || !origin || !card || !window.matchMedia) return;
+  if (window.matchMedia('(min-width: 1200px)').matches){
+    if (card.parentElement !== slot) slot.appendChild(card);
+    card.classList.add('tx-journey-card');
+  } else {
+    if (card.previousElementSibling !== origin) origin.insertAdjacentElement('afterend', card);
+    card.classList.remove('tx-journey-card');
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  _txElevarRecorrido();
+  const txDeskMedia = window.matchMedia && window.matchMedia('(min-width: 1200px)');
+  if (txDeskMedia && txDeskMedia.addEventListener) txDeskMedia.addEventListener('change', _txElevarRecorrido);
   // 2026-05-18 (Mejora UX firma): incluir contadores de obligatorias
   actualizarLockFirmar(_calcCtxGlobal());
   // 2026-08-13 (maqueta Fable): barras segmentadas en las tarjetas de equipo
