@@ -24,6 +24,45 @@
   padding:12px 14px;margin-bottom:14px;
 }
 
+/* ── Chips de origen (Mis OT / Automáticas / Todas) — 2026-08-14.
+   Mismo lenguaje del sistema aprobado: pastilla activa en rojo ILUS con
+   sombra cálida, inactivas blancas que se levantan al pasar, contador en
+   número tabular. Táctil ≥44px. ── */
+.origen-bar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin:0 0 14px;
+}
+.origen-chip{
+  display:inline-flex;align-items:center;gap:8px;
+  min-height:44px;padding:9px 18px;border-radius:9999px;
+  background:#fff;border:1.5px solid #e5e7eb;
+  color:#374151;font-weight:800;font-size:.86rem;text-decoration:none;
+  transition:transform .18s cubic-bezier(.34,1.56,.64,1),
+             box-shadow .2s,border-color .15s,background .15s,color .15s;
+}
+.origen-chip i{font-size:1rem;color:#9ca3af;transition:color .15s}
+.origen-chip:hover{transform:translateY(-1px);border-color:#d1d5db;
+  box-shadow:0 4px 12px rgba(15,23,42,.08);color:#0a0a0a}
+.origen-chip .oc-n{
+  font-variant-numeric:tabular-nums;font-size:.74rem;font-weight:800;
+  background:#f3f4f6;color:#6b7280;border-radius:9999px;padding:2px 9px;
+}
+.origen-chip.active{
+  background:linear-gradient(135deg,#dc2626,#a60000);
+  border-color:transparent;color:#fff;
+  box-shadow:0 10px 24px -8px rgba(220,38,38,.55);
+}
+.origen-chip.active i{color:#fecaca}
+.origen-chip.active .oc-n{background:rgba(255,255,255,.2);color:#fff}
+.origen-hint{font-size:.76rem;color:#9ca3af;font-weight:600;margin-left:2px}
+@media (max-width:768px){
+  .origen-hint{display:none}
+  .origen-chip{flex:1;justify-content:center;padding:9px 10px}
+}
+@media (prefers-reduced-motion:reduce){
+  .origen-chip,.origen-chip:hover{transform:none;transition:none}
+}
+
 .ot-row{
   background:#fff;border:1px solid #eaecf0;border-radius:11px;
   padding:14px 18px;margin-bottom:10px;
@@ -348,8 +387,42 @@
   </div>
 </div>
 
+{# ── Chips de ORIGEN (Daniel 2026-08-14, antes de salir de viaje):
+   "cuando yo entro acá necesito que me salgan las OT que yo he hecho...
+   y poder filtrar las que están programadas [automáticas]". La entrada
+   limpia cae en "Mis OT"; un clic cambia de mundo. Los técnicos no ven
+   esta barra: su vista ya viene forzada a sus OT asignadas. #}
+{% if origen %}
+<div class="origen-bar">
+  <a class="origen-chip {{ 'active' if origen == 'mias' }}"
+     href="{{ url_for('mant_ots_list', origen='mias') }}">
+    <i class="bi bi-person-fill-check"></i>
+    <span class="oc-lbl">Mis OT</span>
+    {% if conteos_origen and conteos_origen.mias is not none %}<span class="oc-n">{{ conteos_origen.mias }}</span>{% endif %}
+  </a>
+  <a class="origen-chip {{ 'active' if origen == 'auto' }}"
+     href="{{ url_for('mant_ots_list', origen='auto') }}">
+    <i class="bi bi-robot"></i>
+    <span class="oc-lbl">Automáticas</span>
+    {% if conteos_origen %}<span class="oc-n">{{ conteos_origen.auto }}</span>{% endif %}
+  </a>
+  <a class="origen-chip {{ 'active' if origen == 'todas' }}"
+     href="{{ url_for('mant_ots_list', origen='todas') }}">
+    <i class="bi bi-collection-fill"></i>
+    <span class="oc-lbl">Todas</span>
+    {% if conteos_origen %}<span class="oc-n">{{ conteos_origen.total }}</span>{% endif %}
+  </a>
+  <span class="origen-hint">
+    {% if origen == 'mias' %}Órdenes creadas por ti o asignadas a ti.
+    {% elif origen == 'auto' %}Generadas por el sistema: Plan Anual, Agente, retroactivas.
+    {% else %}Todas las órdenes del módulo.{% endif %}
+  </span>
+</div>
+{% endif %}
+
 {# ── Filtros ── #}
 <form method="get" class="filtros-bar">
+  {% if origen %}<input type="hidden" name="origen" value="{{ origen }}">{% endif %}
   <div class="row g-2 align-items-end">
     <div class="col-md-4">
       <label class="form-label small fw-semibold mb-1">Buscar</label>

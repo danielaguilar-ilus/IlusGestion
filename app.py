@@ -70122,6 +70122,46 @@ def mant_ots_list():
     if es_tecnico:
         solo_mias = True
 
+    # ── ORIGEN (chips "Mis OT / Automáticas / Todas") — Daniel 2026-08-14,
+    #    antes de salir de viaje: "cuando yo entro acá necesito que me
+    #    salgan las órdenes de trabajo que yo he hecho... las que yo hago a
+    #    mano, quiero verlas; y poder filtrar las que están programadas
+    #    [automáticas]". El listado le mezclaba sus OT hechas a mano con
+    #    las tandas del Plan Anual / [PM] / registros retroactivos.
+    #
+    #    mias  → creadas por mí O asignadas a mí (misma identidad robusta
+    #            del filtro del ejecutivo: FK + username + nombre legible).
+    #    auto  → SOLO las generadas sin decisión humana por-OT (creador
+    #            cron/sistema/vacío O título con marcador de flujo auto).
+    #    todas → comportamiento histórico completo (con su checkbox
+    #            incluir_auto intacto — REGLA #4.2, nada se quita).
+    #
+    #    DEFAULT: entrada "limpia" (sin ningún filtro en la URL) → mias.
+    #    Si la URL YA trae un filtro explícito (estado/tipo/técnico/
+    #    cliente/q/todas=1) → todas, para NO romper los deep-links que el
+    #    resto del sistema genera (correos de aprobación con ?estado=...,
+    #    accesos desde fichas con ?cliente_id=...): esos deben seguir
+    #    mostrando lo que siempre mostraron. Supersede el default del
+    #    ejecutivo del 2026-06-12 solo en la entrada limpia.
+    #    Técnico: no aplica — su solo_mias forzado manda.
+    _OT_TITULOS_AUTO = (
+        "%(agendada por el Agente)%",
+        "%(registro retroactivo)%",
+        "%(sugerida por sistema)%",
+        "%(Plan anual)%",
+    )
+    origen = (request.args.get("origen") or "").strip().lower()
+    if origen not in ("mias", "auto", "todas"):
+        origen = ""
+    if es_tecnico or solo_mias:
+        origen = ""
+    elif not origen:
+        _hay_filtro_explicito = bool(
+            estado or tipo or tecnico_id or cliente_id or q or ver_todas
+            or request.args.get("mias") == "1" or incluir_auto
+        )
+        origen = "todas" if _hay_filtro_explicito else "mias"
+
     where = ["1=1"]
     params = []
 
@@ -70145,7 +70185,14 @@ def mant_ots_list():
     # 2026-06-12 (Daniel) — el ejecutivo SSTT ahora ve TODAS las OTs por
     # defecto (para revisar/corregir en la ventana post-firma del técnico).
     # El filtro "solo mis creadas/asignadas" queda OPT-IN vía ?mias=1.
-    if es_ejecutivo and request.args.get("mias") == "1" and not solo_mias:
+    # 2026-08-14: la identidad "creadas por mí / asignadas a mí" se calcula
+    # SIEMPRE (no solo para el ejecutivo) porque ahora la usan tres cosas:
+    # el filtro legacy del ejecutivo (?mias=1), el chip origen=mias de
+    # Daniel, y los contadores de los chips. La construcción es la misma
+    # de siempre — solo se separan las cláusulas de sus parámetros para
+    # poder reusarlas en el COUNT.
+    mias_clauses, mias_params = [], []
+    if user and not solo_mias:
         username_actual = (user.get("username") or "").strip()
         nombre_actual = (user.get("nombre") or "").strip()
         user_id_actual = user.get("id")
@@ -70164,33 +70211,53 @@ def mant_ots_list():
         except Exception:
             _has_created_by_user_id = False
 
-        clauses = []
         # Match por FK estable (preferido — no depende del formato del string).
         if _has_created_by_user_id and user_id_actual:
-            clauses.append("v.created_by_user_id=%s")
-            params.append(int(user_id_actual))
+            mias_clauses.append("v.created_by_user_id=%s")
+            mias_params.append(int(user_id_actual))
         # Match legacy contra `created_by` por username (email) — compat con
         # OTs creadas antes de la migración del FK.
         if username_actual:
-            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
-            params.append(username_actual)
+            mias_clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            mias_params.append(username_actual)
         # Match legacy contra `created_by` por nombre legible — para OTs donde
         # el string guardó el nombre en vez del email (caso Aaron OT-2026-00008,
         # created_by='Aaron Urbina' vs username='urbinaaaron65@gmail.com').
         if nombre_actual and nombre_actual.lower() != username_actual.lower():
-            clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
-            params.append(nombre_actual)
+            mias_clauses.append("LOWER(TRIM(v.created_by))=LOWER(TRIM(%s))")
+            mias_params.append(nombre_actual)
         # Match como técnico asignado (principal o colaborador).
         if user_id_actual:
-            clauses.append("v.tecnico_user_id=%s")
-            params.append(int(user_id_actual))
-            clauses.append(
+            mias_clauses.append("v.tecnico_user_id=%s")
+            mias_params.append(int(user_id_actual))
+            mias_clauses.append(
                 "v.id IN (SELECT visita_id FROM mant_visita_tecnicos "
                 "         WHERE tecnico_user_id=%s)"
             )
-            params.append(int(user_id_actual))
-        if clauses:
-            where.append("(" + " OR ".join(clauses) + ")")
+            mias_params.append(int(user_id_actual))
+
+    # Aplica el filtro de identidad: chip origen=mias (cualquier rol no
+    # técnico) O el opt-in histórico del ejecutivo (?mias=1) — misma
+    # cláusula, mismo comportamiento del bloque original.
+    if mias_clauses and not solo_mias and (
+        origen == "mias" or (es_ejecutivo and request.args.get("mias") == "1")
+    ):
+        where.append("(" + " OR ".join(mias_clauses) + ")")
+        params.extend(mias_params)
+
+    # Chip origen=auto: SOLO las OT generadas sin decisión humana por-OT.
+    # Doble criterio (cualquiera de los dos la marca): creador no humano
+    # (los mismos tokens de la auditoría de auto-creadas + NULL/vacío), o
+    # el marcador estable de título que deja cada flujo automático.
+    if origen == "auto" and not solo_mias:
+        _toks_ph = ",".join(["%s"] * len(_AUTO_CREATED_BY_TOKENS))
+        _marc_ph = " OR ".join(["v.titulo LIKE %s"] * len(_OT_TITULOS_AUTO))
+        where.append(
+            "(v.created_by IS NULL OR TRIM(v.created_by)='' "
+            f" OR LOWER(TRIM(v.created_by)) IN ({_toks_ph}) OR ({_marc_ph}))"
+        )
+        params.extend(list(_AUTO_CREATED_BY_TOKENS))
+        params.extend(list(_OT_TITULOS_AUTO))
 
     # Filtro "mis OTs": muestra TODAS las OTs donde el usuario aparece como
     # técnico, sea como principal (v.tecnico_user_id) o como colaborador en
@@ -70288,13 +70355,12 @@ def mant_ots_list():
     # mano un supervisor y Daniel no pidió ocultarlas, solo las de agenda
     # automática. Se desactiva solo con `incluir_auto=1` O apenas hay una
     # búsqueda activa (`q`) -- "a menos que lo busque".
-    _OT_TITULOS_AUTO = (
-        "%(agendada por el Agente)%",
-        "%(registro retroactivo)%",
-        "%(sugerida por sistema)%",
-        "%(Plan anual)%",
-    )
-    if not incluir_auto and not q:
+    # (2026-08-14: la tupla _OT_TITULOS_AUTO ahora se define una sola vez,
+    # arriba junto al chip `origen`, porque también la usa origen=auto.)
+    # El ocultamiento por defecto solo aplica en la vista completa: en
+    # origen=mias no hay nada que ocultar (todo es del usuario) y en
+    # origen=auto el ruido ES lo que se quiere ver.
+    if not incluir_auto and not q and origen in ("", "todas"):
         marcadores = " OR ".join(["v.titulo LIKE %s"] * len(_OT_TITULOS_AUTO))
         where.append(f"NOT (v.cliente_id IS NOT NULL AND ({marcadores}))")
         params.extend(_OT_TITULOS_AUTO)
@@ -70450,12 +70516,44 @@ def mant_ots_list():
         flush=True
     )
 
+    # ── Contadores de los chips de origen (2026-08-14) ──────────────────
+    # Un solo COUNT global con CASE — independiente del filtro activo, para
+    # que cada chip muestre cuántas hay "del otro lado" sin tener que
+    # hacer clic. Fail-open: si falla, los chips salen sin número.
+    conteos_origen = None
+    if origen:
+        try:
+            _cnt_sql = "SELECT COUNT(*) AS total"
+            _cnt_params = []
+            if mias_clauses:
+                _cnt_sql += (", SUM(CASE WHEN (" + " OR ".join(mias_clauses)
+                             + ") THEN 1 ELSE 0 END) AS mias")
+                _cnt_params.extend(mias_params)
+            _toks_ph = ",".join(["%s"] * len(_AUTO_CREATED_BY_TOKENS))
+            _marc_ph = " OR ".join(["v.titulo LIKE %s"] * len(_OT_TITULOS_AUTO))
+            _cnt_sql += (", SUM(CASE WHEN (v.created_by IS NULL OR TRIM(v.created_by)='' "
+                         f" OR LOWER(TRIM(v.created_by)) IN ({_toks_ph}) OR ({_marc_ph})) "
+                         "THEN 1 ELSE 0 END) AS auto")
+            _cnt_params.extend(list(_AUTO_CREATED_BY_TOKENS))
+            _cnt_params.extend(list(_OT_TITULOS_AUTO))
+            _cnt_sql += " FROM mant_visitas v"
+            _row_cnt = mysql_fetchone(_cnt_sql, tuple(_cnt_params)) or {}
+            conteos_origen = {
+                "total": int(_row_cnt.get("total") or 0),
+                "mias": int(_row_cnt.get("mias") or 0) if mias_clauses else None,
+                "auto": int(_row_cnt.get("auto") or 0),
+            }
+        except Exception as _e_cnt:
+            print(f"[ots_list] conteos origen fallaron: {_e_cnt}", flush=True)
+
     return render_template(
         "mantenciones/ots_list.html",
         ots=ots,
         kpis=kpis,
         tecnicos=tecnicos,
         fatal_error=fatal_error,
+        origen=origen,
+        conteos_origen=conteos_origen,
         filtros={
             "estado": estado, "tipo": tipo,
             "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
