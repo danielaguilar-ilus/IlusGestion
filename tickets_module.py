@@ -8055,7 +8055,7 @@ def register_tickets_routes(app, ctx):
     #  tecla sería caro en la cuota de Google.
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/geo/region", methods=["GET"])
-    @_tk_required
+    @_tickets_required
     def tk_api_geo_region():
         direccion = (request.args.get("direccion") or "").strip()
         comuna = (request.args.get("comuna") or "").strip()
