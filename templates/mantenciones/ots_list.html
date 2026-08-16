@@ -63,6 +63,130 @@
   .origen-chip,.origen-chip:hover{transform:none;transition:none}
 }
 
+/* ═══════════════ TABLA DE OT (vista por defecto) ═══════════════
+   Daniel 2026-08-16: "así tabla... un diseño bonito, con el mismo diseño
+   que veníamos haciéndolo". Mismo lenguaje del sistema: cabecera oscura
+   con acento rojo, franja de estado por fila, números en tipografía
+   tabular, fila seleccionada en rojo suave. */
+.tabla-wrap{
+  background:#fff;border:1px solid #eaecf0;border-radius:14px;
+  box-shadow:0 1px 3px rgba(15,23,42,.06);overflow:hidden;
+}
+.tabla-scroll{overflow-x:auto}
+.tabla-ots{width:100%;border-collapse:separate;border-spacing:0;font-size:.86rem}
+/* Pestañas de fase: Creadas / En gestión / Realizadas */
+.fase-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.fase-tab{
+  display:inline-flex;align-items:center;gap:7px;min-height:42px;
+  padding:8px 16px;border-radius:10px;background:#fff;border:1.5px solid #e5e7eb;
+  color:#475569;font-weight:700;font-size:.84rem;text-decoration:none;
+  transition:border-color .15s,box-shadow .18s,color .15s,background .15s;
+}
+.fase-tab i{font-size:.9rem;color:#94a3b8;transition:color .15s}
+.fase-tab:hover{color:#0f172a;border-color:#cbd5e1;box-shadow:0 3px 10px rgba(15,23,42,.07)}
+.fase-n{
+  font-size:.72rem;font-weight:800;font-variant-numeric:tabular-nums;
+  background:#f1f5f9;color:#64748b;border-radius:50px;padding:2px 8px;
+}
+.fase-tab.active{background:#0f172a;border-color:#0f172a;color:#fff}
+.fase-tab.active i,.fase-tab.active .fase-n{color:#fff}
+.fase-tab.active .fase-n{background:rgba(255,255,255,.18)}
+.fase-tab.f-creada.active{background:#1d4ed8;border-color:#1d4ed8}
+.fase-tab.f-gestion.active{background:#b45309;border-color:#b45309}
+.fase-tab.f-realizada.active{background:#15803d;border-color:#15803d}
+@media (max-width:768px){ .fase-tab{flex:1;justify-content:center;padding:8px 9px;font-size:.78rem} }
+
+.tabla-ots thead th{
+  position:sticky;top:0;z-index:2;
+  background:#0a0a0a;
+  color:#e2e8f0;font-size:.68rem;font-weight:800;
+  letter-spacing:.09em;text-transform:uppercase;
+  padding:13px 14px;text-align:left;white-space:nowrap;
+  border-bottom:3px solid var(--ilus-red,#dc2626);
+}
+.tabla-ots thead th.th-sort{cursor:pointer;user-select:none;transition:color .15s}
+.tabla-ots thead th.th-sort:hover{color:#fff}
+.tabla-ots thead th.th-sort i{opacity:.55;font-size:.7rem;margin-left:3px}
+.tabla-ots thead th.th-sort.activa{color:#fff}
+.tabla-ots thead th.th-sort.activa i{opacity:1;color:#fca5a5}
+.tabla-ots thead th.th-chk{width:42px;padding-left:16px}
+.tabla-ots thead th.th-acc{width:96px}
+.tabla-ots tbody tr{
+  border-left:4px solid transparent;
+  transition:background .13s,box-shadow .13s;
+  cursor:pointer;   /* Daniel: "al seleccionar la fila me deje entrar y ver cada OT" */
+}
+.tabla-ots tbody tr:nth-child(even){background:#fcfcfd}
+.tabla-ots tbody tr:hover{background:#fef2f2}
+.tabla-ots tbody tr.sel{background:#fee2e2;box-shadow:inset 3px 0 0 var(--ilus-red,#dc2626)}
+.tabla-ots tbody td{
+  padding:12px 14px;border-bottom:1px solid #f1f3f5;vertical-align:middle;
+}
+.tabla-ots tbody tr:last-child td{border-bottom:0}
+.tabla-ots td.td-chk{padding-left:16px}
+.tabla-ots input[type=checkbox]{width:17px;height:17px;cursor:pointer;accent-color:#dc2626}
+/* N° OT — el dato que Daniel busca primero */
+.t-num{
+  font-family:'JetBrains Mono',ui-monospace,monospace;
+  font-size:.78rem;font-weight:800;letter-spacing:.02em;
+  background:#fee2e2;color:#991b1b;padding:5px 10px;border-radius:7px;
+  white-space:nowrap;font-variant-numeric:tabular-nums;
+}
+.t-num.sinot{background:#f3f4f6;color:#9ca3af;font-weight:700}
+.t-cliente{font-weight:700;color:#0f172a;text-decoration:none;display:block;
+  max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t-cliente:hover{color:var(--ilus-red,#dc2626)}
+.t-sub{font-size:.72rem;color:#9ca3af;max-width:230px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.t-tipo{font-size:.73rem;color:#475569;background:#f1f5f9;border:1px solid #e2e8f0;
+  padding:3px 9px;border-radius:50px;white-space:nowrap}
+.t-tec{font-size:.8rem;color:#334155;white-space:nowrap}
+.t-tec.sin{color:#cbd5e1;font-style:italic}
+.t-fecha{font-size:.8rem;color:#334155;white-space:nowrap;font-variant-numeric:tabular-nums}
+.t-fecha .yr{color:#9ca3af;font-size:.72rem}
+/* Avance: barra + fracción, mismo verde del sistema */
+.t-prog{display:flex;align-items:center;gap:8px;min-width:104px}
+.t-prog-bar{flex:1;height:6px;background:#eef0f3;border-radius:50px;overflow:hidden;min-width:52px}
+.t-prog-fill{height:100%;border-radius:50px;background:linear-gradient(90deg,#16a34a,#22c55e);
+  transition:width .5s cubic-bezier(.16,1,.3,1)}
+.t-prog-txt{font-size:.72rem;font-weight:700;color:#64748b;font-variant-numeric:tabular-nums;white-space:nowrap}
+.t-prog.done .t-prog-txt{color:#15803d}
+.t-abrir{
+  display:inline-flex;align-items:center;gap:5px;
+  background:linear-gradient(135deg,#dc2626,#a60000);color:#fff;
+  border:0;border-radius:8px;padding:7px 13px;font-size:.75rem;font-weight:800;
+  text-decoration:none;white-space:nowrap;
+  box-shadow:0 4px 12px -4px rgba(220,38,38,.5);transition:transform .15s,box-shadow .2s;
+}
+.t-abrir:hover{color:#fff;transform:translateY(-1px);box-shadow:0 7px 16px -5px rgba(220,38,38,.6)}
+.tabla-foot{padding:11px 16px;background:#fafbfc;border-top:1px solid #f1f3f5;
+  font-size:.76rem;color:#94a3b8;font-weight:600}
+/* Barra de selección */
+.tsel-bar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:11px 16px;background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;
+}
+.tsel-n{font-size:.82rem;margin-right:4px}
+.tsel-n strong{font-size:1rem;color:#fca5a5;font-variant-numeric:tabular-nums}
+.tsel-btn{
+  display:inline-flex;align-items:center;gap:6px;min-height:36px;
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);
+  color:#e2e8f0;border-radius:8px;padding:6px 13px;font-size:.78rem;font-weight:700;
+  cursor:pointer;transition:background .15s,border-color .15s,color .15s;
+}
+.tsel-btn:hover{background:rgba(255,255,255,.2);color:#fff;border-color:rgba(255,255,255,.35)}
+.tsel-btn.ghost{background:transparent;border-color:rgba(255,255,255,.14);color:#94a3b8}
+.tsel-btn.ghost:hover{color:#fff}
+@media (max-width:900px){
+  .tabla-ots{font-size:.8rem}
+  .tabla-ots thead th,.tabla-ots tbody td{padding:10px 9px}
+  .t-cliente,.t-sub{max-width:150px}
+}
+@media (prefers-reduced-motion:reduce){
+  .tabla-ots tbody tr,.t-abrir,.t-prog-fill{transition:none}
+  .t-abrir:hover{transform:none}
+}
+
 .ot-row{
   background:#fff;border:1px solid #eaecf0;border-radius:11px;
   padding:14px 18px;margin-bottom:10px;
@@ -420,9 +544,35 @@
 </div>
 {% endif %}
 
+{# ── Fases del trabajo (Daniel 2026-08-16: "un filtro que diga qué está
+   creado, qué está en gestión y qué está realizado"). Los 14 estados del
+   ENUM agrupados en las 3 fases con las que él piensa el negocio. ── #}
+<div class="fase-bar">
+  <a class="fase-tab {{ 'active' if not filtros.fase }}"
+     href="{{ url_for('mant_ots_list', origen=origen or None, solo_ot='0' if not filtros.solo_ot else None) }}">
+    <i class="bi bi-grid-fill"></i> Todas
+  </a>
+  <a class="fase-tab f-creada {{ 'active' if filtros.fase == 'creada' }}"
+     href="{{ url_for('mant_ots_list', fase='creada', origen=origen or None, solo_ot='0' if not filtros.solo_ot else None) }}">
+    <i class="bi bi-file-earmark-plus-fill"></i> Creadas
+    {% if conteos_fase %}<span class="fase-n">{{ conteos_fase.creada }}</span>{% endif %}
+  </a>
+  <a class="fase-tab f-gestion {{ 'active' if filtros.fase == 'gestion' }}"
+     href="{{ url_for('mant_ots_list', fase='gestion', origen=origen or None, solo_ot='0' if not filtros.solo_ot else None) }}">
+    <i class="bi bi-gear-fill"></i> En gestión
+    {% if conteos_fase %}<span class="fase-n">{{ conteos_fase.gestion }}</span>{% endif %}
+  </a>
+  <a class="fase-tab f-realizada {{ 'active' if filtros.fase == 'realizada' }}"
+     href="{{ url_for('mant_ots_list', fase='realizada', origen=origen or None, solo_ot='0' if not filtros.solo_ot else None) }}">
+    <i class="bi bi-check-circle-fill"></i> Realizadas
+    {% if conteos_fase %}<span class="fase-n">{{ conteos_fase.realizada }}</span>{% endif %}
+  </a>
+</div>
+
 {# ── Filtros ── #}
 <form method="get" class="filtros-bar">
   {% if origen %}<input type="hidden" name="origen" value="{{ origen }}">{% endif %}
+  {% if filtros.fase %}<input type="hidden" name="fase" value="{{ filtros.fase }}">{% endif %}
   <div class="row g-2 align-items-end">
     <div class="col-md-4">
       <label class="form-label small fw-semibold mb-1">Buscar</label>
@@ -474,7 +624,7 @@
      "Agente"). Se auto-envía el form al togglear: no hace falta tocar
      "Filtrar" aparte, consistente con REGLA #4.3 (recargar al cambiar un
      filtro). #}
-  <div class="mt-2">
+  <div class="mt-2 d-flex flex-wrap gap-3">
     <div class="form-check form-check-sm">
       <input type="checkbox" class="form-check-input" id="filtroIncluirAuto" name="incluir_auto" value="1"
              {% if filtros.incluir_auto %}checked{% endif %}
@@ -483,12 +633,27 @@
         Incluir OT generadas automáticamente (Agente, retroactivas, Plan Anual…)
       </label>
     </div>
+    {# 2026-08-16 (Daniel: "las automáticas me dicen VS nada más, quiero ver
+       solamente las que dicen OT"). Viene marcado por DEFECTO; desmarcarlo
+       manda solo_ot=0 y trae de vuelta las visitas sin número. #}
+    <div class="form-check form-check-sm">
+      <input type="checkbox" class="form-check-input" id="filtroSoloOt"
+             {% if filtros.solo_ot %}checked{% endif %}
+             onchange="document.getElementById('soloOtVal').value = this.checked ? '1' : '0'; this.form.submit()">
+      <input type="hidden" name="solo_ot" id="soloOtVal" value="{{ '1' if filtros.solo_ot else '0' }}">
+      <label class="form-check-label small text-muted" for="filtroSoloOt" style="font-size:.78rem">
+        Solo con N° de OT <span class="text-muted">(oculta las VS- automáticas)</span>
+      </label>
+    </div>
   </div>
 </form>
 
 {# ── Tabs de vistas (Lista / Kanban / Cards / Calendario) ── #}
 <div class="vistas-bar">
-  <button class="vista-tab active" data-vista="lista" onclick="cambiarVista('lista')">
+  <button class="vista-tab active" data-vista="tabla" onclick="cambiarVista('tabla')">
+    <i class="bi bi-table"></i> Tabla
+  </button>
+  <button class="vista-tab" data-vista="lista" onclick="cambiarVista('lista')">
     <i class="bi bi-list-ul"></i> Lista
   </button>
   <button class="vista-tab" data-vista="kanban" onclick="cambiarVista('kanban')">
@@ -502,8 +667,64 @@
   </button>
 </div>
 
+{# ═══════════════════════════════════════════════════════════════════
+   Vista TABLA — Daniel 2026-08-16: "se suponía que iba a ser como una
+   especie de tabla con ciertos datos... como la 79, la 59, y dejarlas en
+   ese orden. Así tabla. Algo que yo seleccione la fila... un diseño
+   bonito, con el mismo diseño que veníamos haciéndolo."
+   Es la vista por DEFECTO; la Lista de tarjetas se conserva en su pestaña
+   (REGLA #4.2: no se quita nada). Se renderiza desde el mismo _OTS_DATA
+   que ya usan Kanban/Mosaico — cero consultas nuevas.
+   ═══════════════════════════════════════════════════════════════════ #}
+<div id="vista-tabla">
+  {% if ots %}
+  <div class="tabla-wrap">
+    {# Barra de selección — aparece al marcar filas #}
+    <div class="tsel-bar" id="tselBar" hidden>
+      <span class="tsel-n"><strong id="tselCount">0</strong> seleccionadas</span>
+      <button type="button" class="tsel-btn" onclick="tablaAbrirSeleccion()">
+        <i class="bi bi-box-arrow-up-right"></i> Abrir
+      </button>
+      <button type="button" class="tsel-btn" onclick="tablaCopiarSeleccion()">
+        <i class="bi bi-clipboard"></i> Copiar N°
+      </button>
+      <button type="button" class="tsel-btn ghost" onclick="tablaLimpiarSeleccion()">
+        <i class="bi bi-x-lg"></i> Quitar selección
+      </button>
+    </div>
+    <div class="tabla-scroll">
+      <table class="tabla-ots" id="tablaOts">
+        <thead>
+          <tr>
+            <th class="th-chk"><input type="checkbox" id="tchkAll" onchange="tablaToggleTodas(this)" aria-label="Seleccionar todas"></th>
+            <th class="th-sort" data-col="numero_ot" onclick="tablaOrdenar('numero_ot')">N° OT <i class="bi bi-arrow-down"></i></th>
+            <th class="th-sort" data-col="razon_social" onclick="tablaOrdenar('razon_social')">Cliente <i class="bi"></i></th>
+            <th class="th-sort" data-col="tipo" onclick="tablaOrdenar('tipo')">Tipo <i class="bi"></i></th>
+            <th class="th-sort" data-col="tecnico_nombre" onclick="tablaOrdenar('tecnico_nombre')">Técnico <i class="bi"></i></th>
+            <th class="th-sort" data-col="fecha_programada" onclick="tablaOrdenar('fecha_programada')">Fecha <i class="bi"></i></th>
+            <th>Avance</th>
+            <th class="th-sort" data-col="estado" onclick="tablaOrdenar('estado')">Estado <i class="bi"></i></th>
+            <th class="th-acc"></th>
+          </tr>
+        </thead>
+        <tbody id="tablaBody"></tbody>
+      </table>
+    </div>
+    <div class="tabla-foot">
+      <span id="tablaResumen"></span>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <i class="bi bi-inbox"></i>
+    <h5 class="fw-bold">Sin órdenes de trabajo</h5>
+    <p class="text-muted small mb-0">No hay OT que coincidan con los filtros actuales.</p>
+  </div>
+  {% endif %}
+</div>
+
 {# ── Vista LISTA (la actual) ── #}
-<div id="vista-lista">
+<div id="vista-lista" style="display:none">
 {% if ots %}
   {% for o in ots %}
   <div class="ot-row estado-{{ o.estado }}">
@@ -795,13 +1016,14 @@ const _OTS_DATA = JSON.parse(document.getElementById('otsData').textContent);
 
 function cambiarVista(v){
   document.querySelectorAll('.vista-tab').forEach(b => b.classList.toggle('active', b.dataset.vista === v));
-  ['lista','kanban','cards','calendario'].forEach(name => {
+  ['tabla','lista','kanban','cards','calendario'].forEach(name => {
     const el = document.getElementById('vista-' + name);
     if (el) el.style.display = (name === v) ? '' : 'none';
   });
   try { localStorage.setItem('ots_vista', v); } catch(e){}
   // Lazy render según vista
-  if (v === 'kanban') renderKanban();
+  if (v === 'tabla') renderTabla();
+  else if (v === 'kanban') renderKanban();
   else if (v === 'cards') renderCards();
   // Vista calendario: ya NO carga un iframe (eliminado por bug de efecto
   // espejo). El bloque #vista-calendario solo muestra un botón hacia el
@@ -1129,12 +1351,172 @@ function renderCards(){
 }
 
 // ════════════════════════════════════════════════════════════
+//  VISTA TABLA — Daniel 2026-08-16
+//  Render desde _OTS_DATA (el mismo que ya usan Kanban/Mosaico: cero
+//  consultas nuevas). El orden inicial ya viene resuelto por el servidor
+//  (N° de OT descendente); acá solo se re-ordena si el usuario hace clic
+//  en una cabecera.
+// ════════════════════════════════════════════════════════════
+let _tOrden = { col: 'numero_ot', dir: 'desc' };
+let _tSel = new Set();
+
+function _tFecha(f){
+  if (!f) return '<span class="text-muted">—</span>';
+  const s = String(f).slice(0, 10).split('-');   // YYYY-MM-DD
+  if (s.length !== 3) return _escHtml(String(f));
+  return s[2] + '/' + s[1] + ' <span class="yr">' + s[0] + '</span>';
+}
+function _tEstadoLabel(e){
+  return String(e || 'programada').replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderTabla(){
+  const tb = document.getElementById('tablaBody');
+  if (!tb) return;
+  const filas = (_OTS_DATA.ots || []).slice();
+
+  // Orden client-side. Las OT sin número van SIEMPRE al final cuando se
+  // ordena por número (son visitas, no órdenes -- ver `solo_ot` en app.py).
+  const col = _tOrden.col, dir = _tOrden.dir === 'asc' ? 1 : -1;
+  filas.sort((a, b) => {
+    let x = a[col], y = b[col];
+    if (col === 'numero_ot'){
+      const vx = !x, vy = !y;
+      if (vx !== vy) return vx ? 1 : -1;     // sin número → al fondo
+    }
+    x = (x === null || x === undefined) ? '' : String(x);
+    y = (y === null || y === undefined) ? '' : String(y);
+    return x.localeCompare(y, 'es', { numeric: true }) * dir;
+  });
+
+  // Cabecera: marcar la columna activa con su flecha
+  document.querySelectorAll('#tablaOts th.th-sort').forEach(th => {
+    const act = th.dataset.col === col;
+    th.classList.toggle('activa', act);
+    const ic = th.querySelector('i');
+    if (ic) ic.className = act
+      ? ('bi bi-arrow-' + (_tOrden.dir === 'asc' ? 'up' : 'down'))
+      : 'bi';
+  });
+
+  tb.innerHTML = filas.map(o => {
+    const tot = o.n_tareas || 0, hechas = o.n_completas || 0;
+    const pct = tot ? Math.round(hechas * 100 / tot) : 0;
+    const num = o.numero_ot
+      ? '<span class="t-num">' + _escHtml(o.numero_ot) + '</span>'
+      : '<span class="t-num sinot" title="Visita sin N° de OT">VS-' +
+        String(o.id).padStart(5, '0') + '</span>';
+    const cli = o.cliente_id
+      ? '<a class="t-cliente" href="/mantenciones/clientes/' + o.cliente_id + '">' +
+        _escHtml(o.razon_social || 'Cliente') + '</a>'
+      : '<span class="t-cliente text-muted">Trabajo interno</span>';
+    // La fila entera abre la OT (Daniel: "que al seleccionar la fila me
+    // deje entrar y ver cada orden de trabajo"). La casilla y el botón
+    // paran la propagación para no abrir sin querer al marcar.
+    return '<tr data-id="' + o.id + '" class="' + (_tSel.has(o.id) ? 'sel' : '') + '"' +
+      ' onclick="tablaAbrirFila(event,' + o.id + ')" title="Abrir esta OT">' +
+      '<td class="td-chk" onclick="event.stopPropagation()">' +
+        '<input type="checkbox" ' + (_tSel.has(o.id) ? 'checked' : '') +
+        ' onchange="tablaToggleFila(' + o.id + ', this)" aria-label="Seleccionar OT"></td>' +
+      '<td>' + num + '</td>' +
+      '<td>' + cli + (o.titulo ? '<div class="t-sub">' + _escHtml(o.titulo) + '</div>' : '') + '</td>' +
+      '<td><span class="t-tipo">' + _escHtml((o.tipo || '—').replace(/_/g, ' ')) + '</span></td>' +
+      '<td>' + (o.tecnico_nombre
+          ? '<span class="t-tec">' + _escHtml(o.tecnico_nombre) + '</span>'
+          : '<span class="t-tec sin">Sin asignar</span>') + '</td>' +
+      '<td class="t-fecha">' + _tFecha(o.fecha_programada) + '</td>' +
+      '<td><div class="t-prog' + (tot && hechas >= tot ? ' done' : '') + '">' +
+        '<div class="t-prog-bar"><div class="t-prog-fill" style="width:' + pct + '%"></div></div>' +
+        '<span class="t-prog-txt">' + hechas + '/' + tot + '</span></div></td>' +
+      '<td><span class="badge-estado bs-' + _escHtml(o.estado || 'programada') + '">' +
+        _escHtml(_tEstadoLabel(o.estado)) + '</span></td>' +
+      '<td onclick="event.stopPropagation()"><a class="t-abrir" href="/mantenciones/ot/' + o.id + '">' +
+        '<i class="bi bi-box-arrow-in-right"></i>Abrir</a></td>' +
+      '</tr>';
+  }).join('');
+
+  const res = document.getElementById('tablaResumen');
+  if (res){
+    const conNum = filas.filter(o => o.numero_ot).length;
+    res.textContent = filas.length + ' fila(s) · ' + conNum + ' con N° de OT · ' +
+      (filas.length - conNum) + ' visitas sin número';
+  }
+  _tSelRefrescar();
+}
+
+function tablaOrdenar(col){
+  if (_tOrden.col === col) _tOrden.dir = (_tOrden.dir === 'asc') ? 'desc' : 'asc';
+  else { _tOrden.col = col; _tOrden.dir = (col === 'numero_ot' || col === 'fecha_programada') ? 'desc' : 'asc'; }
+  renderTabla();
+}
+
+function tablaAbrirFila(ev, id){
+  // Si el clic salió de un enlace/botón/casilla, ese control manda.
+  if (ev && ev.target && ev.target.closest('a,button,input,label')) return;
+  // Ctrl/Cmd o botón central: pestaña nueva, como espera cualquiera.
+  if (ev && (ev.ctrlKey || ev.metaKey)) window.open('/mantenciones/ot/' + id, '_blank');
+  else window.location.href = '/mantenciones/ot/' + id;
+}
+
+function tablaToggleFila(id, chk){
+  if (chk.checked) _tSel.add(id); else _tSel.delete(id);
+  const tr = chk.closest('tr');
+  if (tr) tr.classList.toggle('sel', chk.checked);
+  _tSelRefrescar();
+}
+function tablaToggleTodas(chk){
+  document.querySelectorAll('#tablaBody tr').forEach(tr => {
+    const id = parseInt(tr.dataset.id, 10);
+    const c = tr.querySelector('input[type=checkbox]');
+    if (chk.checked) _tSel.add(id); else _tSel.delete(id);
+    if (c) c.checked = chk.checked;
+    tr.classList.toggle('sel', chk.checked);
+  });
+  _tSelRefrescar();
+}
+function _tSelRefrescar(){
+  const bar = document.getElementById('tselBar');
+  const n = document.getElementById('tselCount');
+  if (n) n.textContent = _tSel.size;
+  if (bar) bar.hidden = (_tSel.size === 0);
+  const all = document.getElementById('tchkAll');
+  const filas = document.querySelectorAll('#tablaBody tr').length;
+  if (all) all.checked = (filas > 0 && _tSel.size === filas);
+}
+function tablaLimpiarSeleccion(){ _tSel.clear(); renderTabla(); }
+function tablaAbrirSeleccion(){
+  if (!_tSel.size) return;
+  // Abre cada OT en su pestaña. Aviso arriba de 8 para no gatillar el
+  // bloqueador de ventanas emergentes del navegador sin avisar.
+  const ids = Array.from(_tSel);
+  const go = () => ids.forEach(id => window.open('/mantenciones/ot/' + id, '_blank'));
+  if (ids.length > 8){
+    ilusConfirm({
+      title: 'Abrir ' + ids.length + ' órdenes',
+      message: '¿Abrir ' + ids.length + ' pestañas nuevas?',
+      sub: 'El navegador puede bloquear tantas ventanas a la vez.',
+      okLabel: 'Abrir igual', cancelLabel: 'Cancelar',
+    }).then(ok => { if (ok) go(); });
+  } else go();
+}
+function tablaCopiarSeleccion(){
+  if (!_tSel.size) return;
+  const mapa = {};
+  (_OTS_DATA.ots || []).forEach(o => { mapa[o.id] = o.numero_ot || ('VS-' + String(o.id).padStart(5,'0')); });
+  const txt = Array.from(_tSel).map(id => mapa[id]).filter(Boolean).join('\n');
+  navigator.clipboard.writeText(txt)
+    .then(() => ilusToast('✓ ' + _tSel.size + ' N° copiados', { type: 'success' }))
+    .catch(() => ilusToast('No se pudo copiar', { type: 'error' }));
+}
+
+// ════════════════════════════════════════════════════════════
 //  Init: cargar vista guardada
 // ════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  let vista = 'lista';
-  try { vista = localStorage.getItem('ots_vista') || 'lista'; } catch(e){}
-  if (vista !== 'lista') cambiarVista(vista);
+  let vista = 'tabla';
+  try { vista = localStorage.getItem('ots_vista') || 'tabla'; } catch(e){}
+  cambiarVista(vista);
 });
 </script>
 

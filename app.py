@@ -70171,8 +70171,63 @@ def mant_ots_list():
         )
         origen = "todas" if _hay_filtro_explicito else "mias"
 
+    # ── SOLO OT REALES (Daniel 2026-08-16, viendo el listado): "en Mis OT
+    #    me dice que tengo veinte, pero no me filtra las que son orden de
+    #    trabajo". El listado mezcla las OT con número real
+    #    (OT-2026-000XX) con VISITAS que nunca recibieron número y que la
+    #    pantalla muestra como "VS-00211" — un número de pantalla, no una
+    #    OT. Este filtro deja solo las que de verdad son órdenes.
+    #    2026-08-16, segunda pasada (Daniel, textual): "no quiero ver nada
+    #    automático, a menos que yo lo seleccione... las automáticas me
+    #    dicen VS nada más, quiero ver solamente las que dicen OT. Me
+    #    molesta tener que hacerle seguimiento a eso". Por eso el filtro
+    #    viene ACTIVADO por defecto: `?solo_ot=0` es el escape explícito
+    #    para volver a verlas (nada se pierde, REGLA #4.2).
+    solo_ot = request.args.get("solo_ot", "1") != "0"
+    if solo_ot:
+        where_solo_ot = "v.numero_ot IS NOT NULL AND TRIM(v.numero_ot) <> ''"
+    else:
+        where_solo_ot = None
+
+    # ── FASE del trabajo (Daniel: "mostrarme un filtro que diga qué está
+    #    creado, qué está en gestión y qué está realizado"). Agrupa los 14
+    #    estados del ENUM en las 3 fases con las que él piensa el negocio.
+    #    Reusa el mismo criterio del Kanban (_grupoKanban en el template)
+    #    para que las dos vistas cuenten igual.
+    _FASES = {
+        "creada":    ("creada", "programada", "asignada", "reagendada"),
+        "gestion":   ("en_curso", "en_ejecucion", "pendiente_info",
+                      "pendiente_repuesto", "firmada_tecnico", "pendiente_aprobacion"),
+        "realizada": ("completada", "cerrada"),
+    }
+    fase = (request.args.get("fase") or "").strip().lower()
+    if fase not in _FASES:
+        fase = ""
+
+    # ── ORDEN (Daniel: "como la setenta y nueve, cincuenta y nueve, y
+    #    dejarlas en ese orden"). Antes ordenaba por fecha_programada, así
+    #    que los números salían salteados. Ahora manda el N° de OT
+    #    descendente: como el formato es OT-AAAA-NNNNN con ceros a la
+    #    izquierda y mismo prefijo, el orden alfabético descendente ES el
+    #    numérico (79 > 59) y además respeta el año. Las visitas sin número
+    #    van al final. `?orden=fecha` recupera el criterio anterior para
+    #    quien lo prefiera — no se pierde (REGLA #4.2).
+    orden = (request.args.get("orden") or "numero").strip().lower()
+    if orden == "fecha":
+        _orden_sql = " ORDER BY v.fecha_programada DESC, v.id DESC "
+    else:
+        orden = "numero"
+        _orden_sql = (" ORDER BY (v.numero_ot IS NULL OR TRIM(v.numero_ot)='') ASC, "
+                      "          v.numero_ot DESC, v.fecha_programada DESC, v.id DESC ")
+
     where = ["1=1"]
     params = []
+    if where_solo_ot:
+        where.append(where_solo_ot)
+    if fase:
+        _ph_fase = ",".join(["%s"] * len(_FASES[fase]))
+        where.append(f"v.estado IN ({_ph_fase})")
+        params.extend(_FASES[fase])
 
     # ── EJECUTIVO (Aaron) — filtrar a sus OTs (creadas + asignadas) por DEFAULT ──
     # Daniel: "el ejecutivo NO ejecuta — solo crea/supervisa". Por
@@ -70411,7 +70466,7 @@ def mant_ots_list():
             "       GROUP BY visita_id"
             "  ) fot ON fot.visita_id = v.id "
             f" WHERE {' AND '.join(where)} "
-            " ORDER BY v.fecha_programada DESC, v.id DESC "
+            f" {_orden_sql} "
             " LIMIT 200"
         )
         ots = mysql_fetchall(sql, tuple(params)) or []
@@ -70440,7 +70495,7 @@ def mant_ots_list():
                 "  FROM mant_visitas v "
                 "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
                 f" WHERE {' AND '.join(where)} "
-                " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 200",
+                f" {_orden_sql} LIMIT 200",
                 tuple(params)
             ) or []
             ots = [dict(o) for o in ots]
@@ -70525,6 +70580,40 @@ def mant_ots_list():
         flush=True
     )
 
+    # ── Contadores por FASE (creada / gestión / realizada) ──────────────
+    # Se calculan sobre el MISMO universo que la tabla está mostrando
+    # (mismo `where`, pero sin el filtro de fase), para que los números de
+    # las pestañas cuadren con lo que se ve al hacer clic.
+    conteos_fase = None
+    try:
+        _w_sin_fase, _p_sin_fase = [], []
+        _i = 0
+        for _c in where:
+            if _c.startswith("v.estado IN (") and fase:
+                _i += len(_FASES[fase])
+                continue
+            _n = _c.count("%s")
+            _w_sin_fase.append(_c)
+            _p_sin_fase.extend(params[_i:_i + _n])
+            _i += _n
+        _cf_sql = (
+            "SELECT "
+            + ", ".join(
+                f"SUM(CASE WHEN v.estado IN ({','.join(['%s'] * len(_est))}) THEN 1 ELSE 0 END) AS {_k}"
+                for _k, _est in _FASES.items()
+            )
+            + " FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+            + f" WHERE {' AND '.join(_w_sin_fase)}"
+        )
+        _cf_params = []
+        for _est in _FASES.values():
+            _cf_params.extend(_est)
+        _cf_params.extend(_p_sin_fase)
+        _cf = mysql_fetchone(_cf_sql, tuple(_cf_params)) or {}
+        conteos_fase = {k: int(_cf.get(k) or 0) for k in _FASES}
+    except Exception as _e_cf:
+        print(f"[ots_list] conteos por fase fallaron: {_e_cf}", flush=True)
+
     # ── Contadores de los chips de origen (2026-08-14) ──────────────────
     # Un solo COUNT global con CASE — independiente del filtro activo, para
     # que cada chip muestre cuántas hay "del otro lado" sin tener que
@@ -70563,10 +70652,13 @@ def mant_ots_list():
         fatal_error=fatal_error,
         origen=origen,
         conteos_origen=conteos_origen,
+        fase=fase,
+        conteos_fase=conteos_fase,
         filtros={
             "estado": estado, "tipo": tipo,
             "tecnico_id": tecnico_id, "cliente_id": cliente_id, "q": q,
             "incluir_auto": incluir_auto,
+            "solo_ot": solo_ot, "orden": orden, "fase": fase,
         },
         # 🔐 2026-05-18 — Flags de rol para el template (ocultar botones
         # de "Eliminar" / "Editar" que el rol no debería ver).
