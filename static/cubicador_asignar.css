@@ -956,3 +956,49 @@
 @media (prefers-reduced-motion:reduce){
   .db-bodega-alert{ animation:none; }
 }
+
+/* Chip de bodega en la FILA DEL PRODUCTO (2026-08-17).
+   El aviso del encabezado dice que el documento tiene una excepcion; esto
+   dice CUAL equipo la tiene. Va debajo de la descripcion, sobre fondo claro
+   (la tabla), asi que usa el ambar en version solida y no la translucida del
+   banner oscuro. Solo se pinta en las lineas que NO salen de la principal. */
+.cub-bodega-chip{
+  display:inline-flex; align-items:center; gap:5px;
+  margin-top:5px;
+  padding:2px 9px 2px 5px;
+  border-radius:50px;
+  background:#fff8e1;
+  border:1px solid #fcd34d;
+  color:#92400e;
+  font-size:.68rem;
+  font-weight:700;
+  line-height:1.5;
+  white-space:nowrap;
+  max-width:100%;
+}
+.cub-bodega-chip > i{ font-size:.78rem; color:#d97706; flex-shrink:0; }
+.cub-bodega-chip .cbc-num{
+  display:inline-grid; place-items:center;
+  min-width:19px; height:19px;
+  border-radius:50%;
+  background:#f59e0b;
+  color:#0a0a0a;
+  font-family:ui-monospace,'SF Mono',Consolas,monospace;
+  font-size:.66rem;
+  font-weight:900;
+  flex-shrink:0;
+}
+/* El nombre puede ser largo ("Motion La Dehesa") y la columna es angosta:
+   se recorta con puntos suspensivos en vez de romper el ancho de la tabla.
+   El nombre completo queda en el title del chip. */
+.cub-bodega-chip .cbc-nom{
+  overflow:hidden; text-overflow:ellipsis; min-width:0;
+}
+/* Marca de referencia que el aviso del encabezado menciona ("cada producto
+   marcado con ..."), para que el usuario sepa que icono buscar abajo. */
+.dba-inline-demo{
+  display:inline-block;
+  padding:0 4px;
+  border-radius:4px;
+  background:rgba(245,158,11,.30);
+}

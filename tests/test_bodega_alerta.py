@@ -238,6 +238,41 @@ class TestLlegaALasPantallas(unittest.TestCase):
         for clase in (".db-bodega-alert", ".dba-chip", ".dba-chip-num", ".dba-title"):
             self.assertIn(clase, self.css, f"falta el estilo {clase}")
 
+    def test_cada_producto_muestra_su_bodega_en_la_tabla(self):
+        """El backend manda bodega por linea; la TABLA tiene que pintarla.
+
+        Sin esto, el aviso del encabezado le dice al usuario "revisa producto
+        por producto" y la pantalla no se lo permite -- tiene que abrir el ERP
+        igual, que es justo el trabajo que este cambio venia a evitar.
+        (Hallazgo real de la revision adversarial: la primera version mandaba
+        el dato y nunca lo pintaba.)
+        """
+        self.assertIn("function _bodegaChip(", self.js_asignar)
+        # Y que este ENGANCHADO a la fila, no solo definido.
+        self.assertIn("${_bodegaChip(l)}", self.js_asignar)
+        self.assertIn(".cub-bodega-chip", self.css)
+
+    def test_el_chip_solo_aparece_cuando_no_es_la_principal(self):
+        # Si apareciera en las 8 lineas de un documento normal seria ruido y
+        # en dos semanas nadie lo miraria.
+        self.assertIn("if (!l || !l.bodega_alerta) return '';", self.js_asignar)
+
+    def test_el_titulo_del_aviso_no_hardcodea_el_numero_de_bodega(self):
+        """La bodega principal sale de una variable de entorno.
+
+        Escribir "02" a mano dejaba esta pantalla mintiendo el dia que la
+        empresa cambie de bodega principal, mientras el resto del sistema
+        diria otra cosa. (Segundo hallazgo de la revision adversarial.)
+        """
+        self.assertIn("bod.principal", self.js_asignar)
+        self.assertNotIn("NO sale completo de la bodega 02", self.js_asignar)
+
+    def test_distingue_pedido_completo_de_pedido_parcial(self):
+        # "No sale COMPLETO de la 02" es falso cuando de la 02 no sale nada,
+        # que es justo el caso mas grave.
+        self.assertIn("const completo =", self.js_asignar)
+        self.assertIn("NO sale de la bodega", self.js_asignar)
+
     def test_el_monitor_muestra_el_nombre_no_solo_el_numero(self):
         self.assertIn("bodegas_info", self.js_monitor)
         self.assertIn("info.resumen", self.js_monitor)
