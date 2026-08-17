@@ -96099,6 +96099,136 @@ try:
 except Exception as _diag_cld_err:
     print(f"[ILUS][WARN] diagnostico Cloudinary: {_diag_cld_err}", flush=True)
 
+# ═════════════════════════════════════════════════════════════════════
+# MIGRACION REAL Cloudinary -> GCS (Daniel 2026-08-17: "se puede mudar de
+# cloudinary a google cloud para dejar regularizado? Es un trabajo
+# delicado, esto es lo mas robusto que debemos tener el almacenamiento").
+#
+# Descarga cada archivo TODAVIA en Cloudinary y lo re-sube a nuestro
+# propio bucket GCS, actualizando la columna en la BD para que apunte a
+# /f/<key> -- el mismo destino que ya usan TODOS los archivos nuevos
+# desde 2026-06-08. Con esto deja de existir la clase de bug que afecto
+# al contrato Sodimac (Cloudinary rechazando la entrega con 401).
+#
+# GARANTIAS DE SEGURIDAD (esto es delicado, se disena para no poder
+# perder un archivo):
+#   - NUNCA borra nada de Cloudinary. Es un COPY, no un MOVE. Si algo
+#     sale mal, el dato original sigue intacto y accesible.
+#   - Si la descarga desde Cloudinary falla (como Sodimac, HTTP 401),
+#     esa fila se deja EXACTAMENTE como estaba -- no se toca la BD -- y
+#     se loguea como "requiere re-subida manual" (igual a como Daniel
+#     resolvio Sodimac: pidiendo el archivo de vuelta).
+#   - Se verifica que el contenido descargado no este vacio antes de
+#     subirlo.
+#   - GET_LOCK evita que dos instancias de Cloud Run corriendo en
+#     paralelo (durante un rolling deploy) intenten migrar el mismo
+#     archivo dos veces a la vez.
+#   - Idempotente por diseno: solo toca filas con cloudinary_url que
+#     empiece con 'http' -- una vez migrada una fila, su URL pasa a
+#     empezar con '/f/' y la siguiente pasada ya no la vuelve a tocar.
+def _ensure_migracion_cloudinary_a_gcs():
+    if not _gcs_ready():
+        print("[ILUS][MIGRACION-CLD] GCS no disponible, se pospone", flush=True)
+        return
+    try:
+        _lock = mysql_fetchone("SELECT GET_LOCK('ilus_migracion_cloudinary_gcs', 0) AS ok")
+        if not (_lock and _lock.get("ok")):
+            print("[ILUS][MIGRACION-CLD] otra instancia ya tiene el lock, se omite", flush=True)
+            return
+    except Exception as _e_lock:
+        print(f"[ILUS][MIGRACION-CLD] no se pudo tomar GET_LOCK: {_e_lock}", flush=True)
+        return
+
+    import requests as _rq_mig
+    import uuid as _uuid_mig
+
+    def _descargar(url):
+        r = _rq_mig.get(url, timeout=30, stream=True)
+        if r.status_code not in (200, 206):
+            raise RuntimeError(f"HTTP {r.status_code}")
+        data = r.content
+        if not data:
+            raise RuntimeError("contenido vacio")
+        return data
+
+    _ok, _fail = [], []
+    try:
+        # ── Contratos (raw: PDF/DOCX) ──────────────────────────────
+        for _fila in (mysql_fetchall(
+            "SELECT id, archivo_nombre FROM mant_contratos "
+            "WHERE cloudinary_url LIKE 'http%%'") or []):
+            _cid, _nom = _fila["id"], _fila.get("archivo_nombre") or f"contrato_{_fila['id']}"
+            try:
+                _row = mysql_fetchone("SELECT cloudinary_url FROM mant_contratos WHERE id=%s", (_cid,))
+                _data = _descargar(_row["cloudinary_url"])
+                _res = _cloud_upload_raw(_data, f"ctr{_cid}_{_uuid_mig.uuid4().hex[:8]}", folder="ilus/contratos")
+                mysql_execute("UPDATE mant_contratos SET cloudinary_url=%s WHERE id=%s", (_res["url"], _cid))
+                _ok.append(f"contrato id={_cid} ({_nom})")
+            except Exception as _e:
+                _fail.append(f"contrato id={_cid} ({_nom}): {_e}")
+
+        # ── Adjuntos de contratos (raw) ─────────────────────────────
+        for _fila in (mysql_fetchall(
+            "SELECT id, archivo_nombre FROM mant_contrato_adjuntos "
+            "WHERE cloudinary_url LIKE 'http%%'") or []):
+            _aid, _nom = _fila["id"], _fila.get("archivo_nombre") or f"adjunto_{_fila['id']}"
+            try:
+                _row = mysql_fetchone("SELECT cloudinary_url FROM mant_contrato_adjuntos WHERE id=%s", (_aid,))
+                _data = _descargar(_row["cloudinary_url"])
+                _res = _cloud_upload_raw(_data, f"adj{_aid}_{_uuid_mig.uuid4().hex[:8]}", folder="ilus/contratos")
+                mysql_execute("UPDATE mant_contrato_adjuntos SET cloudinary_url=%s WHERE id=%s", (_res["url"], _aid))
+                _ok.append(f"adjunto id={_aid} ({_nom})")
+            except Exception as _e:
+                _fail.append(f"adjunto id={_aid} ({_nom}): {_e}")
+
+        # ── Fotos de máquina (imagen) ───────────────────────────────
+        for _fila in (mysql_fetchall(
+            "SELECT id FROM mant_maquina_fotos "
+            "WHERE cloudinary_url LIKE 'http%%'") or []):
+            _fid = _fila["id"]
+            try:
+                _row = mysql_fetchone("SELECT cloudinary_url FROM mant_maquina_fotos WHERE id=%s", (_fid,))
+                _data = _descargar(_row["cloudinary_url"])
+                _res = _cloud_upload_image_full(_data, f"maqfoto{_fid}_{_uuid_mig.uuid4().hex[:8]}", folder="ilus/maquinas")
+                mysql_execute("UPDATE mant_maquina_fotos SET cloudinary_url=%s WHERE id=%s", (_res["url"], _fid))
+                _ok.append(f"foto maquina id={_fid}")
+            except Exception as _e:
+                _fail.append(f"foto maquina id={_fid}: {_e}")
+
+        # ── Fotos de visita (imagen) ─────────────────────────────────
+        for _fila in (mysql_fetchall(
+            "SELECT id, visita_id FROM mant_visita_fotos "
+            "WHERE cloudinary_url LIKE 'http%%'") or []):
+            _fid, _vid = _fila["id"], _fila.get("visita_id")
+            try:
+                _row = mysql_fetchone("SELECT cloudinary_url FROM mant_visita_fotos WHERE id=%s", (_fid,))
+                _data = _descargar(_row["cloudinary_url"])
+                _res = _cloud_upload_image_full(_data, f"visfoto{_fid}_{_uuid_mig.uuid4().hex[:8]}", folder=f"ilus/visitas/v{_vid}")
+                mysql_execute("UPDATE mant_visita_fotos SET cloudinary_url=%s WHERE id=%s", (_res["url"], _fid))
+                _ok.append(f"foto visita id={_fid} (vid={_vid})")
+            except Exception as _e:
+                _fail.append(f"foto visita id={_fid} (vid={_vid}): {_e}")
+
+        print(f"[ILUS][MIGRACION-CLD] ===== resultado: {len(_ok)} migrados OK, "
+              f"{len(_fail)} requieren re-subida manual =====", flush=True)
+        for _o in _ok:
+            print(f"[ILUS][MIGRACION-CLD] OK: {_o}", flush=True)
+        for _f in _fail:
+            print(f"[ILUS][MIGRACION-CLD] FALLO (requiere re-subida manual): {_f}", flush=True)
+    finally:
+        try:
+            mysql_execute("SELECT RELEASE_LOCK('ilus_migracion_cloudinary_gcs')")
+        except Exception:
+            pass
+
+
+try:
+    with app.app_context():
+        _ensure_migracion_cloudinary_a_gcs()
+except Exception as _mig_cld_err:
+    print(f"[ILUS][WARN] migracion Cloudinary->GCS: {_mig_cld_err}", flush=True)
+
+
 # CRÍTICO: columnas del SELLO factura↔OT (asociar factura + gate de firma
 # del responsable) SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
 try:
