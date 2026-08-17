@@ -863,3 +863,96 @@
 .mf-input:focus{border-color:#CC0000;box-shadow:0 0 0 3px rgba(204,0,0,.12)}
 .mf-alert{background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:9px 12px;
           border-radius:6px;font-size:.82rem;margin-top:12px}
+
+/* ══════════════════════════════════════════════════════════════════
+   AVISO DE BODEGA DISTINTA A LA PRINCIPAL  (2026-08-17, Daniel)
+   ------------------------------------------------------------------
+   "Todas las ventas salen de la bodega 02, pero existen bodegas de
+    liquidacion 15, incidencias 13, Motion Vitacura 06, Motion La
+    Dehesa 05 y repuestos 18... que el usuario sepa que hay una
+    excepcion, ya que el 98% sale de la 02."
+
+   Vive DENTRO del banner oscuro del documento, asi que los colores
+   estan pensados sobre fondo negro (#0a0a0a). Ambar de la REGLA #2
+   (#f59e0b) porque es una ADVERTENCIA que exige verificar, no un
+   error: el documento esta bien, lo que cambia es de donde se saca
+   la mercaderia. Rojo habria gritado "algo esta roto".
+   ══════════════════════════════════════════════════════════════════ */
+.db-bodega-alert{
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  background:linear-gradient(135deg, rgba(245,158,11,.20) 0%, rgba(245,158,11,.08) 100%);
+  border:1px solid rgba(245,158,11,.45);
+  border-left:4px solid #f59e0b;
+  border-radius:10px;
+  padding:12px 14px;
+  margin-bottom:8px;
+  /* Entrada suave: aparece DESPUES del resto del banner, para que el ojo
+     lo note sin que la pantalla parezca saltar. */
+  animation:dbaIn .45s cubic-bezier(.2,.7,.3,1) both .12s;
+}
+@keyframes dbaIn{
+  from{ opacity:0; transform:translateY(-6px); }
+  to  { opacity:1; transform:none; }
+}
+.dba-icon{
+  flex-shrink:0;
+  width:34px; height:34px;
+  border-radius:9px;
+  display:grid; place-items:center;
+  font-size:1.05rem;
+  background:#f59e0b;
+  color:#0a0a0a;
+  box-shadow:0 4px 12px -3px rgba(245,158,11,.7);
+}
+.dba-body{ min-width:0; flex:1; }
+.dba-title{
+  font-size:.86rem;
+  font-weight:800;
+  color:#fde68a;
+  letter-spacing:.01em;
+  line-height:1.25;
+}
+.dba-chips{
+  display:flex; flex-wrap:wrap; gap:6px;
+  margin-top:7px;
+}
+.dba-chip{
+  display:inline-flex; align-items:center; gap:6px;
+  background:rgba(255,255,255,.10);
+  border:1px solid rgba(245,158,11,.40);
+  border-radius:50px;
+  padding:3px 11px 3px 4px;
+  font-size:.76rem;
+  font-weight:700;
+  color:#fff;
+  white-space:nowrap;
+}
+/* El NUMERO de bodega en un disco propio: es el dato que la persona va a
+   buscar en el ERP, tiene que leerse de un golpe. */
+.dba-chip-num{
+  display:inline-grid; place-items:center;
+  min-width:22px; height:22px;
+  border-radius:50%;
+  background:#f59e0b;
+  color:#0a0a0a;
+  font-family:ui-monospace,'SF Mono',Consolas,monospace;
+  font-size:.72rem;
+  font-weight:900;
+}
+.dba-sub{
+  margin-top:7px;
+  font-size:.74rem;
+  color:#d4d4d8;
+  line-height:1.4;
+}
+
+@media (max-width:480px){
+  .db-bodega-alert{ padding:11px 12px; gap:10px; }
+  .dba-icon{ width:30px; height:30px; font-size:.95rem; }
+  .dba-title{ font-size:.82rem; }
+}
+@media (prefers-reduced-motion:reduce){
+  .db-bodega-alert{ animation:none; }
+}

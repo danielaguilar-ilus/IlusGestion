@@ -700,6 +700,32 @@ function renderDoc(d, elapsedMs){
            <span style="color:#9ca3af;font-style:italic">Sin observaciones</span>
          </div>`;
 
+    // ── AVISO DE BODEGA (2026-08-17, Daniel) ──────────────────────────
+    // "Todas las ventas salen de la bodega 02, pero existen bodegas de
+    //  liquidación 15, incidencias 13, Motion Vitacura 06, Motion La Dehesa
+    //  05 y repuestos 18... que el usuario sepa que hay una excepción, ya
+    //  que el 98% sale de la 02."
+    // El backend ya decidió si hay excepción y armó el texto (d.bodegas,
+    // ver _tr_bodegas_analizar en app.py) -- acá SOLO se pinta, para que el
+    // criterio de qué es excepción viva en un único lugar.
+    const bod = d.bodegas || {};
+    const bodegaTxt = bod.alerta
+      ? `<div class="db-bodega-alert">
+           <div class="dba-icon"><i class="bi bi-sign-turn-right-fill"></i></div>
+           <div class="dba-body">
+             <div class="dba-title">Ojo · este pedido NO sale completo de la bodega 02</div>
+             <div class="dba-chips">
+               ${(bod.excepciones || []).map(e => `
+                 <span class="dba-chip">
+                   <span class="dba-chip-num">${escHtml(e.codigo)}</span>
+                   ${escHtml(e.nombre || 'Bodega ' + e.codigo)}
+                 </span>`).join('')}
+             </div>
+             <div class="dba-sub">Revisa producto por producto de dónde sale antes de armar el despacho.</div>
+           </div>
+         </div>`
+      : '';
+
     banner.innerHTML = `
       <div style="background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-radius:10px;padding:16px 20px;margin-bottom:14px;border-left:4px solid #dc2626">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -723,6 +749,7 @@ function renderDoc(d, elapsedMs){
           <div class="db-row"><strong>💵 Neto</strong><span class="font-mono">${fClp(h.valor_neto)}</span></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${zzTxt}</div>
+        ${bodegaTxt}
         ${obsTxt}
       </div>
     `;

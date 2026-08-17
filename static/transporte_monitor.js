@@ -1555,12 +1555,29 @@ function _preventaBadge(c) {
 // distinta a la principal marque advertencia en la fila").
 // El backend ya decide la bandera (bodega_alerta) contra TR_BODEGA_PRINCIPAL
 // -- acá solo se pinta, para que el criterio viva en un solo lugar.
+// 2026-08-17 (Daniel): el badge mostraba SOLO el número ("BOD 06"), que no le
+// dice nada a quien prepara el despacho. Ahora muestra el NOMBRE ("Motion
+// Vitacura"), que es como la gente la conoce. El backend arma los nombres en
+// `bodegas_info` (_tr_bodegas_analizar); si por algún motivo no viniera —una
+// respuesta cacheada de antes de este cambio— cae al comportamiento anterior
+// con el número, que sigue siendo información útil.
 function _bodegaBadge(c) {
   if (!c || !c.bodega_alerta) return '';
-  var bods = (c.bodegas || '').split(',').filter(Boolean).join(', ');
-  return '<span class="tr-bodega-badge" title="Salió de una bodega distinta a la principal' +
-    (bods ? ' (bodega ' + bods + ')' : '') + ' — verificar antes de despachar">' +
-    '<i class="bi bi-box-seam"></i>BOD ' + (bods || '?') + '</span>';
+  var info = c.bodegas_info || null;
+  var texto, titulo;
+  if (info && info.resumen) {
+    texto  = info.resumen;
+    titulo = info.mensaje || texto;
+  } else {
+    var bods = (c.bodegas || '').split(',').filter(Boolean).join(', ');
+    texto  = 'BOD ' + (bods || '?');
+    titulo = 'Salió de una bodega distinta a la principal' +
+             (bods ? ' (bodega ' + bods + ')' : '') + ' — verificar antes de despachar';
+  }
+  // attr()/esc() se declaran más abajo en este mismo archivo; las
+  // declaraciones de función se elevan, así que están disponibles acá.
+  return '<span class="tr-bodega-badge" title="' + attr(titulo) + '">' +
+    '<i class="bi bi-sign-turn-right-fill"></i>' + esc(texto) + '</span>';
 }
 
 // Badge "En manifiesto / En gestión" (cuando el doc ya está en un manifiesto).
