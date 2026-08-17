@@ -62960,10 +62960,23 @@ def mant_contrato_archivo(ctid):
                            allow_redirects=True)
 
             if r_up.status_code not in (200, 206):
+                # DIAGNOSTICO 2026-08-17 (Daniel: contrato Sodimac ctid=35 no
+                # carga, "me arroja a Cloudinary"). Antes este log no decia
+                # NI la URL NI el motivo del rechazo -- solo el status code.
+                # Con eso no se puede distinguir "cuenta sin permiso para
+                # servir PDFs/ZIP" (bloqueo de seguridad que Cloudinary
+                # activa por defecto en cuentas, ver
+                # support.cloudinary.com "Restricted media types") de "este
+                # recurso puntual se subio mal". Se imprime el host+path
+                # (sin query, por si trajera firma) + el cuerpo del error.
+                try:
+                    _cld_body = r_up.text[:300]
+                except Exception:
+                    _cld_body = ""
                 print(f"[mant_contrato_archivo] ctid={ctid} Cloudinary "
-                      f"status={r_up.status_code}, intentando fallback "
-                      f"disco", flush=True)
-                # No retornamos aquí — caemos al fallback de disco abajo
+                      f"status={r_up.status_code} url={cld_url.split('?')[0]} "
+                      f"body={_cld_body!r}, intentando fallback disco", flush=True)
+                # No retornamos aqui -- caemos al fallback de disco abajo
                 r_up.close()
                 raise RuntimeError(f"Cloudinary HTTP {r_up.status_code}")
 
