@@ -96202,7 +96202,15 @@ def _ensure_migracion_cloudinary_a_gcs():
                     mysql_execute(f"UPDATE `{_tabla}` SET `{_col}`=%s WHERE id=%s", (_new_url, _rid))
                     _ok.append(f"{_tabla}#{_rid}")
                 except Exception as _e:
-                    _fail.append(f"{_tabla}#{_rid}: {_e}")
+                    # DIAGNOSTICO 2026-08-17: 4 casos (Echaurren, Ksport,
+                    # contrato de prueba + su adjunto) siguen fallando con
+                    # 401 AUN con el fallback firmado activo -- las
+                    # credenciales SI estan en Cloud Run (verificado). El
+                    # sospechoso es que a estos 4 les falte
+                    # cloudinary_public_id en la BD (nunca se guardo al
+                    # subirlos) -- sin eso, _cloudinary_urls_firmadas_legacy
+                    # devuelve [] y el fallback nunca se intenta de verdad.
+                    _fail.append(f"{_tabla}#{_rid} (pid={_pid!r}): {_e}")
 
         print(f"[ILUS][MIGRACION-CLD] ===== resultado: {len(_ok)} migrados OK, "
               f"{len(_fail)} requieren re-subida manual =====", flush=True)
