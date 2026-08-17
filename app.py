@@ -29392,10 +29392,31 @@ def _tr_etiqueta_facturas(commitment_ids):
         total = int(c.get("n_bultos") or 1)
         if total < 1:
             total = 1
-        doc = (f"{(c.get('tido') or '').strip()} {(c.get('nudo') or '').strip()}").strip()
+        # 2026-08-17 (Daniel, con foto de la etiqueta impresa: "es posible
+        # eliminar todos esos ceros"): la etiqueta imprimía "0000023102".
+        # Los ceros son el relleno interno del ERP (10 chars) y nadie los dice
+        # en voz alta -- mismo criterio que ya aplican nudo_fmt_filter (~993)
+        # y _doc_label (~42736) en el resto de las pantallas.
+        #
+        # Se normaliza ACÁ, en el origen, y NO con un filtro en la plantilla.
+        # Motivo concreto: doc_numero alimenta a la vez el número impreso, el
+        # data-code del código de barras y los data-doc que usa el filtro de
+        # rangos de bultos ("23102:1,3,5-8"). Si se pelara solo en la parte
+        # visible, el filtro compararía "23102" contra data-doc="0000023102"
+        # y devolvería 0 resultados con un aviso VERDE de éxito. Cambiando el
+        # origen, los dos lados cambian juntos y el filtro sigue sano.
+        #
+        # ⚠️ El valor GUARDADO en transport_commitments.nudo NO se toca: es
+        # parte de la UNIQUE KEY uq_doc(tido,nudo) y perder el relleno ya
+        # generó documentos duplicados antes. Esto es solo presentación.
+        doc = _doc_label(c.get("tido"), c.get("nudo"))
         facturas.append({
             "commitment_id": cid,
-            "doc_numero":    (c.get("nudo") or "").strip(),
+            "doc_numero":    nudo_fmt_filter(c.get("nudo")),
+            # Crudo, con relleno: lo que realmente está en la base. No se usa
+            # hoy en la etiqueta, se expone para quien necesite el valor exacto
+            # del ERP sin tener que volver a consultarlo.
+            "doc_numero_erp": (c.get("nudo") or "").strip(),
             "doc_tipo":      (c.get("tido") or "").strip(),
             "doc_full":      doc,
             "cliente":       (c.get("cliente_nombre") or "").strip(),
@@ -36215,15 +36236,27 @@ def tr_buscar_interno():
         q_clean = re.sub(r"[^A-Za-z0-9]", "", q)
         rut_clean = re.sub(r"[^0-9Kk]", "", q).upper()
         # Búsqueda flexible: por nudo (nº doc), por RUT, o por nombre LIKE.
+        #
+        # 2026-08-17: el nº de documento se muestra SIN los ceros de relleno en
+        # todas las pantallas y, desde hoy, también en la etiqueta impresa. La
+        # base en cambio lo guarda con relleno ("0000023102"), así que un
+        # `nudo = %s` exacto dejaba sin resultados a quien copiara lo que ve.
+        # Se AMPLÍA la comparación para aceptar las dos formas (con y sin
+        # ceros); no se quita ninguna condición previa. Mismo patrón tolerante
+        # que ya usa el Monitor (LPAD(%s, 10, '0')). Todo sigue parametrizado
+        # con %s -- REGLA #4.
         rows = mysql_fetchall("""
             SELECT id, tido, nudo, cliente_nombre, cliente_rut, comuna,
                    delivered_at, public_token
             FROM transport_commitments
             WHERE nudo = %s
+               OR nudo = LPAD(%s, 10, '0')
+               OR TRIM(LEADING '0' FROM nudo) = TRIM(LEADING '0' FROM %s)
                OR REPLACE(REPLACE(REPLACE(UPPER(IFNULL(cliente_rut,'')),'.',''),'-',''),' ','') LIKE %s
                OR UPPER(IFNULL(cliente_nombre,'')) LIKE %s
             ORDER BY id DESC LIMIT 30
-        """, (q_clean or q, f"%{rut_clean}%" if rut_clean else "%__NUNCA__%",
+        """, (q_clean or q, q_clean or q, q_clean or q,
+              f"%{rut_clean}%" if rut_clean else "%__NUNCA__%",
               f"%{q.upper()}%")) or []
         resultados = rows
         # Si solo hay un resultado, cargamos su detalle automáticamente
@@ -40339,7 +40372,13 @@ def _tr_manifiesto_export_impl(mid):
         ])
         for ri, it in enumerate(items, 2):
             nombre = (it.get("cliente_nombre") or "").strip()
-            nudo   = it.get("nudo") or ""
+            # 2026-08-17: sin los ceros de relleno del ERP. Este Excel es el que
+            # se carga a mano en el panel de SimpliRoute, así que el "Título" y
+            # el "Id de referencia" son literalmente lo que el despachador de
+            # Felca ve y teclea. Tiene que coincidir con el número impreso en la
+            # etiqueta de la caja (que desde hoy también va sin ceros) y con lo
+            # que manda la conexión directa (simpliroute_client._nudo_limpio).
+            nudo   = nudo_fmt_filter(it.get("nudo"))
             comuna = (it.get("comuna") or "").strip()
             dirc   = (it.get("direccion") or "").strip()
             peso   = round(_peso_declarar(it), 2)
