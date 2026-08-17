@@ -51,6 +51,30 @@ def _f(v):
         return None
 
 
+def _nudo_limpio(v):
+    """Nº de documento sin los ceros de relleno del ERP: '0000023102' → '23102'.
+
+    2026-08-17. El ERP rellena el correlativo con ceros hasta 10 caracteres.
+    Ese relleno es un detalle de SU formato interno, pero hasta hoy viajaba
+    tal cual al título y a la referencia de la visita. Consecuencia real: el
+    despachador de Felca ve "0000023102" en su aplicación y busca "23102" —
+    el mismo pedido, dos textos distintos. Es el escenario que ya está
+    documentado en _sr_normalizar_reference() de app.py (caso BLV 22890:
+    "ILUS sube BLV-0000022890 y Felca opera 22890 — dos universos de visitas
+    en la misma cuenta"). Desde hoy la etiqueta impresa también sale sin
+    ceros, así que el número de la caja y el de la aplicación coinciden.
+
+    Se conserva el valor original si al pelar no queda nada (un '0000000000'):
+    es preferible mandar algo raro a mandar vacío, porque un título vacío hace
+    que la visita se rechace por completo.
+
+    Réplica local a propósito: este módulo es PURO (sin Flask, sin app.py) y
+    no puede importar nudo_fmt_filter. Misma regla, tres líneas.
+    """
+    s = _s(v)
+    return s.lstrip("0") or s
+
+
 def build_visit_payload(item, *, planned_date, window_start=None, window_end=None,
                         duration=None):
     """Construye el JSON de UNA visita a partir de un item de manifiesto ILUS.
@@ -67,7 +91,10 @@ def build_visit_payload(item, *, planned_date, window_start=None, window_end=Non
     """
     errores = []
 
-    nudo = _s(item.get("nudo"))
+    # Sin los ceros de relleno del ERP: es el número que el chofer lee en la
+    # etiqueta pegada a la caja y el que el despachador de Felca teclea para
+    # buscar. Ver _nudo_limpio() arriba.
+    nudo = _nudo_limpio(item.get("nudo"))
     cliente = _s(item.get("cliente_nombre"))
     direccion = _s(item.get("direccion"))
     comuna = _s(item.get("comuna"))
