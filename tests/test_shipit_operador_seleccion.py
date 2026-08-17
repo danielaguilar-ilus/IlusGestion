@@ -226,11 +226,13 @@ class TestReglasDelProyecto(unittest.TestCase):
                               f"«{rx}» no puede aparecer en el código nuevo")
 
     def test_limites_de_shipit_son_los_reales(self):
-        # 1 bulto y 15 kg (NO 20). Espejo de shipit_client.
+        # 1 bulto y 20 kg desde el 2026-08-17 (era 15; Daniel lo subió para
+        # hacer pruebas). Lo que este test protege NO es el número en sí, sino
+        # que la pantalla y el backend digan LO MISMO: si se cambia uno solo,
+        # la pantalla promete un tope que el backend no aplica.
         self.assertIn("SHIPIT_MAX_BULTOS  = 1", self.js)
-        self.assertIn("SHIPIT_MAX_PESO_KG = 15", self.js)
         self.assertEqual(1, sc.MAX_BULTOS)
-        self.assertEqual(15.0, sc.MAX_PESO_KG)
+        self.assertIn(f"SHIPIT_MAX_PESO_KG = {sc.MAX_PESO_KG:g}", self.js)
 
     def test_no_se_borro_nada_de_la_pantalla(self):
         # Regla #4.2: se AGREGA la posibilidad de elegir; lo que ya existía

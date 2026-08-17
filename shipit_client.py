@@ -104,16 +104,28 @@ def find_commune_id(nombre_comuna, communes):
 # la restricción indicada, o quince kilos o no es multibulto, dependiendo
 # de cada caso -- no vayas a mandar algo genérico, algo específico."
 #
-# MAX_PESO_KG = 15.0 viene del Centro de Ayuda oficial de Shipit (retiro con
-# flota propia "héroe": hasta 15 kg o arista < 60cm -- artículo 360007646813).
-# Daniel decidió usarlo como tope operativo directo ("si tú me dices que son
-# quince kilos, yo encantado de limitarla"), sin esperar la confirmación del
-# ejecutivo -- acepta explícitamente que las barras de 20 kg queden fuera de
-# Shipit y se coticen por otro courier. Constantes (no mágicas) para poder
-# ajustarlas después sin tocar la lógica, si el contrato real de ILUS define
-# otro tope por courier.
+# ── Tope de peso: 20 kg desde el 2026-08-17 (era 15) ────────────────────
+# Pedido explícito de Daniel: "aumentemos la restricción de Shipit de 15 kg a
+# 20 kg para realizar pruebas". Se le había informado antes, ese mismo día,
+# que 15 kg es el tope OFICIAL documentado y decidió subirlo igual.
+#
+# ⚠️ QUÉ SIGNIFICA ESTO EN LA REALIDAD (verificado en el Centro de Ayuda de
+# Shipit, artículos 360007646813 y 1260803326050 -- no de oídas):
+#   · Retiro con la FLOTA PROPIA de Shipit ("héroe"), que es el flujo que usa
+#     ILUS hoy: tope duro de 15 kg o arista mayor a 60 cm. Textual: "solo
+#     retiramos con héroe productos que tengan un peso de hasta 15 kg". Si el
+#     bulto excede, el héroe avisa al coordinador de flota EN LA BODEGA.
+#   · Retiro directo por el courier (excepción manual, hay que avisarle a
+#     Shipit antes de las 11:00 del mismo día): ahí el tope sube según el
+#     operador -- Chilexpress/Bluexpress 100 kg, Starken 500 kg,
+#     Sameday/Nextday 15-25 kg, 99minutos 25 kg, Spread 15 kg.
+#
+# O sea: entre 15 y 20 kg, ILUS ahora COTIZA por Shipit, pero el retiro puede
+# rebotar en bodega salvo que se gestione la excepción con el ejecutivo. Por
+# eso esto es una constante y no una regla enterrada: volver a 15 es cambiar
+# este número (y su espejo SHIPIT_MAX_PESO_KG en static/cubicador_asignar.js).
 MAX_BULTOS = 1
-MAX_PESO_KG = 15.0
+MAX_PESO_KG = 20.0
 
 
 def verificar_restricciones(n_bultos, peso_kg):
