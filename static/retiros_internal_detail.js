@@ -2056,12 +2056,18 @@ function rbaRenderDocLineas(lineas, fetchMs){
     // bodega 02 -- mismo criterio que ya aplica para "sin saldo". No se
     // deshabilita el checkbox: el operador puede marcarla a mano si de
     // verdad va a retirar de otra bodega.
-    // 2026-08-17: mismo criterio que _rbaStockEstado -- rojo solo si de
-    // verdad no hay nada físico, ámbar si hay algo físico pero comprometido.
-    // La selección sigue igual de cautelosa que antes en los dos casos
-    // (decisión manual a propósito, ninguno viene pre-marcado).
+    // FIX 2026-08-17-b (Daniel, espejo exacto del arreglo en
+    // tickets/_tka_modal.html): "si está cargado positivamente quiero que
+    // lo seleccione para avanzar... si hay 1 en stock y está comprometido,
+    // puede ser por el mismo documento que estoy cotizando... yo veré si
+    // avanzo o no -- solo selecciónalo si hay al menos 1 y notifica que
+    // está comprometido". SOLO 'sin' (0 físico) deja la línea sin marcar;
+    // 'comprometido' (físico >= 1) SÍ se pre-selecciona, con el aviso ámbar
+    // siempre visible. Random no expone a qué documento pertenece el
+    // "comprometido" (STOCNV1 es un contador global), así que no se puede
+    // confirmar en código si es el mismo documento -- se avisa igual.
     const stockEstado = _rbaStockEstado(l);
-    const sinStockBod = stockEstado !== '';
+    const sinStockBod = stockEstado === 'sin';
     const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
                          : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
     const lineKey = `DOC|${sku}|${i}`;
@@ -2441,8 +2447,9 @@ async function rbaToggleDocCli(idx){
       const lineKey = `CLI|${idx}|${sku}|${j}`;
       // Ver comentario equivalente en rbaRenderDocLineas (mismo criterio,
       // mismo motivo: Daniel, "dale una vuelta al módulo de retiros").
+      // 2026-08-17-b: solo 'sin' (0 físico) deja la línea sin marcar.
       const stockEstado = _rbaStockEstado(l);
-      const sinStockBod = stockEstado !== '';
+      const sinStockBod = stockEstado === 'sin';
       const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
                            : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
       // Daniel 2026-05-24: pre-marcar las que tienen saldo, permitir

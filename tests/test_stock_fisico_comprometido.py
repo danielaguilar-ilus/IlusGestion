@@ -93,31 +93,52 @@ class TestComportamientoEnElNavegador(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════════
 #  2) La selección sigue igual de cautelosa (decisión deliberada, no un bug)
 # ══════════════════════════════════════════════════════════════════════════
-class TestLaSeleccionNoCambio(unittest.TestCase):
-    """Daniel pidió VER el desglose para decidir él mismo -- no pidió que el
-    sistema pre-seleccione líneas con stock disputado. Cambiar el default de
-    selección tiene riesgo de negocio real (auto-incluir en un despacho algo
-    que ya está comprometido para otro pedido); el pedido textual fue sobre
-    INFORMACIÓN, no sobre automatizar la decisión. Estas pruebas fijan que
-    ese comportamiento se mantuvo."""
+class TestLaPreseleccionDeComprometidoCambio(unittest.TestCase):
+    """FIX 2026-08-17-b. Daniel, viendo el resultado del pase anterior (dos
+    Gymleco con 1 físico + 1 comprometido, sin marcar): "si está cargado
+    positivamente quiero que lo seleccione para avanzar, ya que da la
+    sensación que no está cargado positivamente... si hay 1 en stock y está
+    comprometido -- puede ser por el mismo documento que estoy cotizando --
+    yo veré si avanzo o no... solo selecciónalo si hay al menos 1 y notifica
+    que está comprometido".
+
+    O sea: el primer pase (no pre-marcar NINGUNO de los dos estados) fue
+    DEMASIADO cauteloso -- leía como "esto está roto" cuando en realidad
+    había una unidad física real disponible. Daniel confirma explícitamente
+    que asume el riesgo de la posible confusión ("esto puede ocasionar una
+    tremenda confusión") a cambio de no frenar el flujo cuando sí hay algo
+    físico.
+
+    Regla vigente: SOLO 'sin' (0 físico) deja la línea sin marcar. 'comprometido'
+    (físico >= 1) se pre-selecciona iguial que una línea sana, con el aviso
+    ámbar siempre visible encima."""
 
     @classmethod
     def setUpClass(cls):
         cls.tka = _leer(TPL_TKA)
         cls.rba = _leer(JS_RBA)
 
-    def test_ninguno_de_los_dos_estados_viene_premarcado(self):
-        # sinStockBod sigue siendo true para AMBOS estados ('sin' Y
-        # 'comprometido') -- solo cambió qué clase visual se le pone a la fila.
+    def test_solo_sin_bloquea_la_preseleccion(self):
         for fuente, nombre in ((self.tka, "_tka_modal.html"), (self.rba, "retiros_internal_detail.js")):
-            self.assertIn("const sinStockBod = stockEstado !== '';", fuente,
-                          f"{nombre}: sinStockBod debe seguir cubriendo los 2 estados")
+            self.assertIn("const sinStockBod = stockEstado === 'sin';", fuente,
+                          f"{nombre}: sinStockBod debe cubrir SOLO 'sin', no 'comprometido'")
+            self.assertNotIn("const sinStockBod = stockEstado !== '';", fuente,
+                             f"{nombre}: quedó el criterio viejo (bloqueaba los 2 estados)")
 
-    def test_seleccionar_todas_sigue_sin_arrastrar_stock_disputado(self):
-        # El guard de "toggle all" compara contra dataset.sinStock, que sigue
-        # poblándose desde el mismo sinStockBod de arriba -- no se tocó.
+    def test_comprometido_participa_en_seleccionar_todas(self):
+        # El guard de "toggle all" no cambió de código -- compara contra
+        # dataset.sinStock, que ahora solo es true para 'sin'. Por
+        # construcción, 'comprometido' ya participa en el bulk-select.
         self.assertIn("if (checked && (isZero || sinStockBod)) return;", self.tka)
         self.assertIn("if (checked && (isZero || sinStockBod)) return;", self.rba)
+
+    def test_el_aviso_ambar_sobrevive_estando_seleccionada(self):
+        # Riesgo real: .is-selected (verde) y .is-stock-comprometido (ámbar)
+        # ahora coexisten en la misma fila -- sin el selector compuesto, el
+        # verde tapaba el aviso justo en el caso que más importa mostrarlo.
+        self.assertIn(".tka-line.is-selected.is-stock-comprometido{", self.tka)
+        css_rba = _leer(CSS_RBA)
+        self.assertIn(".rba-line.is-selected.is-stock-comprometido{", css_rba)
 
 
 # ══════════════════════════════════════════════════════════════════════════

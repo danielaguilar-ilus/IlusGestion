@@ -1400,6 +1400,9 @@
     display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
   }
   .rba-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
+  /* 2026-08-17-b: espejo exacto de .tka-line.is-selected.is-stock-comprometido
+     en _tka_modal.html -- ver el comentario largo ahí. */
+  .rba-line.is-selected.is-stock-comprometido{background:linear-gradient(180deg,#fffbeb 0%, #fff 100%);border-color:#fcd34d}
   .rba-line-tag-zero{
     display:inline-flex;align-items:center;gap:3px;
     font-size:.74rem;font-weight:700;color:#16a34a;
