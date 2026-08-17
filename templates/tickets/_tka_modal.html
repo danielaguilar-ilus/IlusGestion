@@ -311,6 +311,13 @@
   .tka-line.is-no-stock{opacity:.7;background:#fef2f2}
   .tka-line.is-no-stock .tka-chk{opacity:.65}
   .tka-line.is-no-stock:hover{opacity:1;background:#fee2e2}
+  /* 2026-08-17 (Daniel: "hay 1 y está comprometido, yo veré si avanzo o
+     no"): NO es lo mismo que .is-no-stock -- acá SÍ hay algo físico en la
+     bodega, solo que ya está reservado en otro lado. Tratamiento más suave
+     (sin atenuar tanto la fila) porque no es una señal de "no hay nada",
+     es una señal de "mira el desglose antes de avanzar". */
+  .tka-line.is-stock-comprometido{background:#fffbeb}
+  .tka-line.is-stock-comprometido:hover{background:#fff8e1}
   .tka-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
   .tka-line-tag-zero{
     display:inline-flex;align-items:center;gap:3px;
@@ -347,6 +354,14 @@
      documento). */
   .tka-line .ln-stock-warn{
     color:#b91c1c;font-size:.68rem;font-weight:800;margin-top:1px;
+    display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
+  }
+  /* 2026-08-17: hay físico, pero ya está comprometido en otro lado -- NO es
+     lo mismo que "no hay nada" (.ln-stock-warn, rojo). Ámbar informativo
+     (REGLA #2) porque exige verificar, no bloquea: el dato completo se
+     muestra a la vista para que la persona decida. */
+  .tka-line .ln-stock-info{
+    color:#b45309;font-size:.68rem;font-weight:800;margin-top:1px;
     display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
   }
   .tka-line .ln-qty-input{
@@ -1265,14 +1280,55 @@ function _tkaSaldoLinea(l){
 // factura/cotización), un dato distinto de si hay stock físico para
 // cumplirlo. No bloquea la selección -- eso lo sigue decidiendo el saldo,
 // que es un concepto separado y válido -- solo avisa.
-function _tkaStockBadge(l){
+// FIX 2026-08-17 (Daniel: "creo que fui yo quien te pidió que solo tomaras
+// el stock teórico [fisico - comprometido - devengado], pero yo requiero
+// mapear la información completa... si hay al menos uno físico positivo y
+// cuántos están comprometidos, para tomar la decisión -- es decir, hay 1 y
+// está comprometido, yo veré si avanzo o no").
+//
+// Antes esta función colapsaba TODO a un booleano (disponible = físico -
+// comprometido > 0) y, si daba <= 0, mostraba el mismo "Sin stock bod. 02"
+// sin importar si el físico era 0 o si era 1 (pero ya comprometido en otro
+// lado) -- ver el caso real de la captura de Daniel: Gymleco Lateral
+// Biceps y Calf Raise, "1 u. saldo 1", ambos con 1 físico comprometido,
+// mostrados como si no hubiera NADA. Son dos situaciones muy distintas
+// para quien cotiza:
+//   · físico = 0            -> no hay nada que ir a buscar. Sigue siendo
+//                               "Sin stock bod. 02" en rojo.
+//   · físico > 0, comprometido cubre el físico -> SÍ hay algo físico en la
+//                               bodega, solo que ya tiene dueño. Ahora se
+//                               muestra el desglose real A LA VISTA (no
+//                               solo en el tooltip), en ámbar informativo,
+//                               para que la persona decida con el dato
+//                               completo -- no se le impone una conclusión.
+// '' (stock sano u OK) | 'sin' (0 físico, no hay nada que ir a buscar) |
+// 'comprometido' (algo físico SÍ hay, pero ya tiene dueño en otro lado).
+// Único lugar donde se decide la distinción -- el badge y las filas de
+// tabla (abajo, 2 pestañas) SOLO consultan esto, para no repetir el
+// criterio en 3 lugares y que se desalinee con el tiempo.
+function _tkaStockEstado(l){
   const st = l && l.stock;
   if (!st || st.hay_stock !== false) return '';
+  return (parseFloat(st.fisico) || 0) <= 0 ? 'sin' : 'comprometido';
+}
+
+function _tkaStockBadge(l){
+  const estado = _tkaStockEstado(l);
+  if (!estado) return '';
+  const st = l.stock;
   const f = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
   const tip = 'Físico bodega 02: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido)
     + ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
-  return '<span class="ln-stock-warn" title="' + _tkaEsc(tip) + '">'
-    + '<i class="bi bi-exclamation-triangle-fill"></i>Sin stock bod. 02</span>';
+
+  if (estado === 'sin'){
+    return '<span class="ln-stock-warn" title="' + _tkaEsc(tip) + '">'
+      + '<i class="bi bi-exclamation-triangle-fill"></i>Sin stock bod. 02</span>';
+  }
+
+  let texto = f(st.fisico) + ' físico';
+  if ((parseFloat(st.comprometido) || 0) > 0) texto += ' · ' + f(st.comprometido) + ' comp.';
+  return '<span class="ln-stock-info" title="' + _tkaEsc(tip) + '">'
+    + '<i class="bi bi-info-circle-fill"></i>' + _tkaEsc(texto) + '</span>';
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1378,12 +1434,22 @@ function tkaRenderDocLineas(lineas, fetchMs){
     // "sin saldo" -- no viene pre-marcado. No se DESHABILITA el checkbox
     // (igual que "sin saldo": el operador puede marcarlo a mano si de
     // verdad va a trasladar mercadería desde otra bodega).
-    const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
+    // 2026-08-17: el estado del stock ya no colapsa a un booleano -- ver
+    // _tkaStockEstado. La SELECCIÓN sigue siendo igual de cautelosa que
+    // antes (ninguno de los dos estados viene pre-marcado ni entra en
+    // "Seleccionar todas": eso lo decide la persona a mano, a propósito).
+    // Lo único que cambia es el TINTE de la fila: rojo solo si de verdad no
+    // hay nada físico; ámbar si hay algo físico pero comprometido -- no es
+    // honesto pintarlos igual.
+    const stockEstado = _tkaStockEstado(l);
+    const sinStockBod = stockEstado !== '';
+    const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
+                         : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
     const lineKey = `DOC|${sku}|${i}`;
     const initialMax = isZero ? qty : saldo;
     const initialQty = isZero ? 0 : saldo;
     const preChecked = !isZero && !sinStockBod;
-    html += `<div class="tka-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" style="animation:tkaDocIn .35s var(--tka-ease-spring) ${i*30}ms both">
+    html += `<div class="tka-line ${isZero?'is-zero':''} ${rowStockClass} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" style="animation:tkaDocIn .35s var(--tka-ease-spring) ${i*30}ms both">
       <label class="tka-chk ${preChecked?'is-checked':''}" data-sku="${_tkaEsc(sku)}" data-saldo="${saldo}">
         <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" data-sin-stock="${sinStockBod?1:0}" onchange="tkaToggleLineaDoc(this)">
         <span class="tka-chk-mark">✓</span>
@@ -1676,9 +1742,16 @@ async function tkaToggleDocCli(idx){
       const initialQty = isZero ? 0 : saldo;
       // Ver comentario equivalente en la pestaña "por documento" (mismo
       // criterio, mismo motivo: Daniel, "así funcionaba la parte de Retiros").
-      const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
+      // 2026-08-17: mismo criterio de _tkaStockEstado que la pestaña "Por
+      // documento" (arriba) -- rojo solo si de verdad no hay nada físico,
+      // ámbar si hay algo físico pero comprometido. La selección sigue sin
+      // pre-marcarse en ninguno de los dos casos (decisión manual a propósito).
+      const stockEstado = _tkaStockEstado(l);
+      const sinStockBod = stockEstado !== '';
+      const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
+                           : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
       const preChecked = !isZero && !sinStockBod;
-      html += `<div class="tka-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}">
+      html += `<div class="tka-line ${isZero?'is-zero':''} ${rowStockClass} ${preChecked?'is-selected':''}" data-key="${_tkaEsc(lineKey)}">
         <label class="tka-chk ${preChecked?'is-checked':''}">
           <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_tkaEsc(lineKey)}" data-doc-tido="${_tkaEsc(doc.tido_display)}" data-doc-nudo="${_tkaEsc(doc.nudo_display)}" data-sku="${_tkaEsc(sku)}" data-nombre="${_tkaEsc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" onchange="tkaToggleLineaCli(this)">
           <span class="tka-chk-mark">✓</span>
