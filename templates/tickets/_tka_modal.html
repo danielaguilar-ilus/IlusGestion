@@ -319,6 +319,15 @@
   .tka-line.is-stock-comprometido{background:#fffbeb}
   .tka-line.is-stock-comprometido:hover{background:#fff8e1}
   .tka-line.is-selected{background:linear-gradient(180deg,#f0fdf4 0%, #fff 100%);border-color:#86efac}
+  /* 2026-08-17-b: desde que 'comprometido' se pre-selecciona (Daniel: "si
+     está cargado positivamente quiero que lo seleccione"), una fila puede
+     tener is-selected Y is-stock-comprometido a la vez. El verde de
+     "seleccionado" solo, no puede tapar el ámbar -- si lo tapa, la persona
+     pierde el aviso justo en el caso que más le importa ver. Selector
+     compuesto (misma especificidad que .is-selected sola no basta: gana el
+     que aparece último en el archivo, y eso es frágil) para que el ámbar
+     GANE siempre que ambas clases coexistan, sin depender del orden. */
+  .tka-line.is-selected.is-stock-comprometido{background:linear-gradient(180deg,#fffbeb 0%, #fff 100%);border-color:#fcd34d}
   .tka-line-tag-zero{
     display:inline-flex;align-items:center;gap:3px;
     font-size:.74rem;font-weight:700;color:#16a34a;
@@ -1435,14 +1444,23 @@ function tkaRenderDocLineas(lineas, fetchMs){
     // (igual que "sin saldo": el operador puede marcarlo a mano si de
     // verdad va a trasladar mercadería desde otra bodega).
     // 2026-08-17: el estado del stock ya no colapsa a un booleano -- ver
-    // _tkaStockEstado. La SELECCIÓN sigue siendo igual de cautelosa que
-    // antes (ninguno de los dos estados viene pre-marcado ni entra en
-    // "Seleccionar todas": eso lo decide la persona a mano, a propósito).
-    // Lo único que cambia es el TINTE de la fila: rojo solo si de verdad no
-    // hay nada físico; ámbar si hay algo físico pero comprometido -- no es
-    // honesto pintarlos igual.
+    // _tkaStockEstado. FIX 2026-08-17-b (Daniel, con captura viendo dos
+    // Gymleco sin marcar: "si está cargado positivamente quiero que lo
+    // seleccione para avanzar, ya que da la sensación que no está cargado
+    // positivamente... si hay 1 en stock y está comprometido -- puede ser
+    // por el mismo documento que estoy cotizando -- yo veré si avanzo o
+    // no... solo selecciónalo si hay al menos 1 y notifica que está
+    // comprometido"). SOLO 'sin' (0 físico, no hay nada que ir a buscar)
+    // deja la línea sin marcar; 'comprometido' (físico >= 1) SÍ se
+    // pre-selecciona -- el aviso ámbar sigue ahí para que la persona sepa
+    // que hay una reclamación sobre esa unidad, pero ya no la bloquea por
+    // default. Random no expone A QUÉ documento pertenece el "comprometido"
+    // (STOCNV1 es un contador global, ver [[erp_modal_estandar_busqueda]]),
+    // así que no se puede confirmar en código si es el mismo documento que
+    // se está cotizando -- se avisa igual y la persona decide con el dato
+    // que sí hay.
     const stockEstado = _tkaStockEstado(l);
-    const sinStockBod = stockEstado !== '';
+    const sinStockBod = stockEstado === 'sin';
     const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
                          : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
     const lineKey = `DOC|${sku}|${i}`;
@@ -1742,12 +1760,12 @@ async function tkaToggleDocCli(idx){
       const initialQty = isZero ? 0 : saldo;
       // Ver comentario equivalente en la pestaña "por documento" (mismo
       // criterio, mismo motivo: Daniel, "así funcionaba la parte de Retiros").
-      // 2026-08-17: mismo criterio de _tkaStockEstado que la pestaña "Por
-      // documento" (arriba) -- rojo solo si de verdad no hay nada físico,
-      // ámbar si hay algo físico pero comprometido. La selección sigue sin
-      // pre-marcarse en ninguno de los dos casos (decisión manual a propósito).
+      // 2026-08-17-b: mismo criterio que la pestaña "Por documento" (arriba)
+      // -- ver el comentario largo ahí. Solo 'sin' (0 físico) deja la línea
+      // sin marcar; 'comprometido' (físico >= 1) se pre-selecciona con el
+      // aviso ámbar siempre visible.
       const stockEstado = _tkaStockEstado(l);
-      const sinStockBod = stockEstado !== '';
+      const sinStockBod = stockEstado === 'sin';
       const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
                            : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
       const preChecked = !isZero && !sinStockBod;
