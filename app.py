@@ -15803,7 +15803,16 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
                 "       LTRIM(RTRIM(COALESCE(ESLIDO, ''))) AS ESLIDO, "
                 "       COALESCE(PPPRNE,  0) AS PPPRNE, "
                 "       COALESCE(VANELI,  0) AS VANELI, "
-                "       COALESCE(VABRLI,  0) AS VABRLI "
+                "       COALESCE(VABRLI,  0) AS VABRLI, "
+                # BODEGA de origen de la línea (2026-08-17, Daniel: "necesito
+                # que me avises cuando una factura cuente con una bodega
+                # distinta a la 02... el equipo BBP sale de la bodega 06").
+                # Es la MISMA columna que el sync del Monitor ya agrega por
+                # documento; acá se trae por LÍNEA para poder decir QUÉ equipo
+                # sale de dónde en Asignar y Cotizar. Solo se agrega una
+                # columna a una consulta que ya corría: cero llamadas extra
+                # al ERP. Lectura pura, sigue pasando por _random_sql_query.
+                "       LTRIM(RTRIM(COALESCE(BOSULIDO, ''))) AS BOSULIDO "
                 "  FROM MAEDDO "
                 " WHERE LTRIM(RTRIM(EMPRESA)) = %s "
                 "   AND LTRIM(RTRIM(TIDO))    = %s "
@@ -16558,6 +16567,11 @@ def _cubicador_fetch(tido, nudo, fast=False):
             "sku":              sku,
             "descripcion_erp":  descripcion,
             "nombre_app":       nombre_app,
+            # Bodega de origen de ESTA línea (2026-08-17). Clave NUEVA: no
+            # reemplaza ni renombra nada, así que los exports y templates que
+            # ya leen este dict siguen funcionando igual (esta función está
+            # blindada — solo se agrega).
+            "bodega":           (l.get("BOSULIDO") or "").strip(),
             "cantidad":         qty,
             "total_bultos":     total_bultos,
             "app_id":           app_data["app_id"] if tiene_ficha else None,
@@ -19196,6 +19210,15 @@ def api_asignar_documento():
             # Sin esto, la fila "sin ficha" no puede abrir el editor de
             # medidas (necesita el pid para crear/actualizar la ficha).
             "app_id":          l.get("app_id"),
+            # Bodega de origen de ESTA línea + su nombre legible (2026-08-17).
+            # El front pinta un chip ámbar en la fila del producto cuando no
+            # es la principal, para que se vea CUÁL equipo hay que ir a buscar
+            # a otra bodega y no solo que "el documento tiene algo raro".
+            "bodega":          (l.get("bodega") or "").strip(),
+            "bodega_nombre":   _tr_bodega_nombre(l.get("bodega")),
+            "bodega_alerta":   bool((l.get("bodega") or "").strip()
+                                    and _tr_bodega_norm(l.get("bodega"))
+                                        != _tr_bodega_norm(TR_BODEGA_PRINCIPAL)),
             "peso_kg_u":       round(peso_kg_u,  3),
             "peso_vol_u":      round(peso_vol_u, 3),
             "vol_u":           round(l["vol_u"], 1),   # cm³/u
@@ -19347,6 +19370,12 @@ def api_asignar_documento():
         "ok":     True,
         "header": {**hdr, "postal_destino": postal_destino},
         "lineas": lineas_out,
+        # Resumen de bodegas del documento (2026-08-17, Daniel: "cuando llame
+        # a la factura por el Asignar y Cotizar... que el usuario sepa que hay
+        # una excepción, ya que el 98% sale de la 02"). Se calcula sobre las
+        # líneas de PRODUCTO que ya vienen resueltas arriba -- sin consultar
+        # nada extra. El front lo usa para el aviso grande del encabezado.
+        "bodegas": _tr_bodegas_analizar([l.get("bodega") for l in lineas_out]),
         "totales": {
             "total_qty":    int(tot_qty),
             "total_bultos": int(tot_bultos),
@@ -21124,6 +21153,139 @@ def _tr_nudo_display(nudo):
 # Monitor. Configurable por entorno para no tener que tocar código si la
 # empresa cambia de bodega principal.
 TR_BODEGA_PRINCIPAL = os.environ.get("ILUS_TR_BODEGA_PRINCIPAL", "2").strip()
+
+# ── Nombres de bodega (2026-08-17, Daniel) ───────────────────────────────
+# Textual: "todas las ventas salen de la bodega 02 pero existen bodegas de
+# liquidacion 15, Incidencias 13, Motion Vitacura 06 y Motion la dehesa 05.
+# Repuestos 18... que el usuario sepa que hay una excepcion ya que el 98%
+# sale de la 02".
+#
+# Hasta hoy la advertencia mostraba SOLO el número ("BOD 06"), que no le dice
+# nada a quien prepara el despacho. Con el nombre, la persona entiende de una
+# que ese equipo NO está en la bodega principal y que tiene que ir a buscarlo
+# a otro lado (o coordinar el traslado) antes de dar el despacho por armado.
+#
+# La clave es el número SIN ceros a la izquierda: el ERP devuelve "02"/"06" y
+# acá se compara normalizado (ver _tr_bodega_norm). La 12 sale del caso
+# histórico del 2026-08-02 (bodega del gimnasio).
+TR_BODEGAS_NOMBRES = {
+    "2":  "Principal",
+    "5":  "Motion La Dehesa",
+    "6":  "Motion Vitacura",
+    # La 12 ya avisaba (cualquier bodega != principal avisa). Daniel pidió
+    # explícitamente nombrarla el 2026-08-17 — es el gimnasio propio de ILUS,
+    # y fue el caso que originó toda esta advertencia el 2026-08-02 (FCV
+    # 0000011149: "esa factura la sacaron no de la bodega dos, que es la
+    # principal, sino de la bodega doce, que es del gimnasio").
+    "12": "Gimnasio ILUS",
+    "13": "Incidencias",
+    "15": "Liquidación",
+    "18": "Repuestos",
+}
+
+
+def _tr_bodega_norm(codigo):
+    """Código de bodega comparable: '02' → '2', '  06 ' → '6', '' → ''.
+
+    El ERP rellena con ceros a la izquierda. Comparar '02' contra '2' daba
+    advertencia en TODAS las filas, incluida la bodega principal (bug real
+    del 2026-08-02). Se normaliza SIEMPRE antes de comparar o de buscar el
+    nombre.
+    """
+    s = str(codigo or "").strip()
+    return s.lstrip("0") or ("0" if s else "")
+
+
+def _tr_bodega_nombre(codigo):
+    """Nombre legible de una bodega: '06' → 'Motion Vitacura'.
+
+    Devuelve '' si el código no está en el diccionario — una bodega nueva del
+    ERP no puede romper la pantalla ni inventarle un nombre. En ese caso la
+    UI muestra solo el número, que sigue siendo información útil.
+    """
+    return TR_BODEGAS_NOMBRES.get(_tr_bodega_norm(codigo), "")
+
+
+def _tr_bodega_label(codigo):
+    """Etiqueta completa para la UI: '06' → 'Bodega 06 · Motion Vitacura'.
+
+    Se conserva el código TAL COMO VINO del ERP (con sus ceros) porque es lo
+    que la persona va a ver en Random si lo va a chequear; el nombre es la
+    ayuda, no el reemplazo.
+    """
+    cod = str(codigo or "").strip()
+    if not cod:
+        return ""
+    nom = _tr_bodega_nombre(cod)
+    return f"Bodega {cod} · {nom}" if nom else f"Bodega {cod}"
+
+
+def _tr_bodegas_analizar(bodegas):
+    """Analiza las bodegas de origen de un documento y arma la advertencia.
+
+    Pedido de Daniel (2026-08-17): "necesito que me avisaras cuando una
+    factura cuente con una bodega distinta a la bodega 02, que le avise al
+    usuario para que sepa que no debe avanzar sacando el producto de la
+    bodega 02 siendo que tiene que sacar lo de una bodega distinta".
+
+    `bodegas` acepta lo que haya a mano, sin que el caller tenga que
+    normalizar: el string separado por comas que guarda
+    transport_commitments.bodegas ("02,06"), o una lista de códigos.
+
+    Devuelve SIEMPRE el mismo dict (nunca None, nunca lanza) para que la UI
+    no tenga que preguntar si vino o no:
+      alerta      -> bool: hay al menos una bodega distinta a la principal
+      principal   -> código normalizado de la bodega principal
+      codigos     -> lista de códigos tal como vinieron, sin repetir
+      excepciones -> [{codigo, nombre, label}] solo las distintas a la principal
+      resumen     -> texto corto listo para un badge ("Motion Vitacura")
+      mensaje     -> frase completa para una alerta o un tooltip
+    """
+    if isinstance(bodegas, str):
+        crudos = [b.strip() for b in bodegas.split(",") if b.strip()]
+    elif bodegas:
+        crudos = [str(b).strip() for b in bodegas if str(b or "").strip()]
+    else:
+        crudos = []
+
+    # Sin repetir, conservando el orden en que llegaron (el ERP ya los ordena).
+    vistos, codigos = set(), []
+    for c in crudos:
+        n = _tr_bodega_norm(c)
+        if n not in vistos:
+            vistos.add(n)
+            codigos.append(c)
+
+    principal = _tr_bodega_norm(TR_BODEGA_PRINCIPAL)
+    excepciones = [{
+        "codigo": c,
+        "nombre": _tr_bodega_nombre(c),
+        "label":  _tr_bodega_label(c),
+    } for c in codigos if _tr_bodega_norm(c) != principal]
+
+    if excepciones:
+        # El nombre manda en el resumen (es lo que la persona reconoce); si la
+        # bodega no está en el diccionario, cae al número.
+        partes = [e["nombre"] or f"Bodega {e['codigo']}" for e in excepciones]
+        resumen = " · ".join(partes)
+        detalle = ", ".join(e["label"] for e in excepciones)
+        mensaje = (
+            f"Este documento tiene producto en {detalle}. "
+            f"No lo saques de la bodega {TR_BODEGA_PRINCIPAL.zfill(2)} — "
+            f"revisa en el ERP de dónde sale cada equipo antes de despachar."
+        )
+    else:
+        resumen = ""
+        mensaje = ""
+
+    return {
+        "alerta":      bool(excepciones),
+        "principal":   principal,
+        "codigos":     codigos,
+        "excepciones": excepciones,
+        "resumen":     resumen,
+        "mensaje":     mensaje,
+    }
 
 # Fecha de NACIMIENTO operativo del Monitor (2026-08-03, Daniel: al cargar el
 # histórico del ERP -8.441 documentos quedaron marcados 'Problema' de golpe --
@@ -24424,6 +24586,13 @@ def tr_compromisos_json():
             # mirarlo, aunque parte haya salido de la principal.
             "bodegas":      r.get("bodegas") or "",
             "bodega_alerta": bool(_bodegas_doc and any(b != _bod_principal for b in _bodegas_doc)),
+            # Nombres legibles + frase de aviso (2026-08-17, Daniel: "todas
+            # las ventas salen de la 02, pero existen liquidación 15,
+            # incidencias 13, Motion Vitacura 06, Motion La Dehesa 05,
+            # repuestos 18... que el usuario sepa que hay una excepción").
+            # `bodega_alerta` de arriba NO se toca: se mantiene por
+            # compatibilidad con el badge que ya existe en el Monitor.
+            "bodegas_info": _tr_bodegas_analizar(r.get("bodegas") or ""),
             "estado":       r["estado"] or "Pendiente",
             # Lo que se muestra en la columna ESTADO del Monitor: la realidad
             # logística. `estado_erp` queda disponible como dato secundario

@@ -664,6 +664,25 @@ function finishProgress(){
 // ════════════════════════════════════════════════════════════
 //  RENDER DOCUMENTO
 // ════════════════════════════════════════════════════════════
+// Chip de bodega en la fila del PRODUCTO (2026-08-17, Daniel: "el equipo BBP
+// sale de la bodega 06... quisiera identificar cuando no sea de la bodega 02").
+// El aviso del encabezado dice que el documento tiene una excepcion; esto dice
+// CUAL equipo la tiene, que es lo que evita tener que abrir Random para
+// averiguarlo. Solo aparece en las lineas que NO salen de la principal: si
+// apareciera en todas seria ruido y dejaria de leerse.
+// El backend ya decide `bodega_alerta` por linea (api_asignar_documento).
+function _bodegaChip(l){
+  if (!l || !l.bodega_alerta) return '';
+  const cod = l.bodega || '?';
+  const nom = l.bodega_nombre || '';
+  const txt = nom ? `Bodega ${cod} · ${nom}` : `Bodega ${cod}`;
+  return `<div class="cub-bodega-chip" title="${escHtml('Este producto sale de ' + txt + ' — no está en la bodega principal')}">`
+       + `<i class="bi bi-sign-turn-right-fill"></i>`
+       + `<span class="cbc-num">${escHtml(cod)}</span>`
+       + `<span class="cbc-nom">${escHtml(nom || 'Otra bodega')}</span>`
+       + `</div>`;
+}
+
 function renderDoc(d, elapsedMs){
   const h = d.header, tot = d.totales;
 
@@ -700,6 +719,49 @@ function renderDoc(d, elapsedMs){
            <span style="color:#9ca3af;font-style:italic">Sin observaciones</span>
          </div>`;
 
+    // ── AVISO DE BODEGA (2026-08-17, Daniel) ──────────────────────────
+    // El TEXTO lo arma el backend (bod.mensaje / bod.resumen), no se escribe
+    // a mano acá: el numero de la bodega principal sale de una variable de
+    // entorno (ILUS_TR_BODEGA_PRINCIPAL) y hardcodear "02" dejaria esta
+    // pantalla mintiendo el dia que la empresa cambie de bodega. Ademas el
+    // titulo distingue si el pedido sale COMPLETO de otra bodega o solo en
+    // parte -- decir "no sale completo de la 02" cuando de la 02 no sale
+    // nada es confuso justo en el caso mas grave.
+    // "Todas las ventas salen de la bodega 02, pero existen bodegas de
+    //  liquidación 15, incidencias 13, Motion Vitacura 06, Motion La Dehesa
+    //  05 y repuestos 18... que el usuario sepa que hay una excepción, ya
+    //  que el 98% sale de la 02."
+    // El backend ya decidió si hay excepción y armó el texto (d.bodegas,
+    // ver _tr_bodegas_analizar en app.py) -- acá SOLO se pinta, para que el
+    // criterio de qué es excepción viva en un único lugar.
+    const bod = d.bodegas || {};
+    let bodegaTxt = '';
+    if (bod.alerta) {
+      // ¿Sale ALGO de la bodega principal, o el pedido entero está en otra?
+      const nExcep   = (bod.excepciones || []).length;
+      const nTotales = (bod.codigos || []).length;
+      const completo = nTotales > 0 && nExcep === nTotales;   // nada de la principal
+      const bodPpal  = (bod.principal || '2').padStart(2, '0');
+      const titulo = completo
+        ? `Ojo · este pedido NO sale de la bodega ${bodPpal}`
+        : `Ojo · este pedido NO sale completo de la bodega ${bodPpal}`;
+      bodegaTxt =
+        `<div class="db-bodega-alert">
+           <div class="dba-icon"><i class="bi bi-sign-turn-right-fill"></i></div>
+           <div class="dba-body">
+             <div class="dba-title">${escHtml(titulo)}</div>
+             <div class="dba-chips">
+               ${(bod.excepciones || []).map(e => `
+                 <span class="dba-chip">
+                   <span class="dba-chip-num">${escHtml(e.codigo)}</span>
+                   ${escHtml(e.nombre || 'Bodega ' + e.codigo)}
+                 </span>`).join('')}
+             </div>
+             <div class="dba-sub">Abajo, cada producto marcado con <span class="dba-inline-demo">🏷</span> sale de otra bodega.</div>
+           </div>
+         </div>`;
+    }
+
     banner.innerHTML = `
       <div style="background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-radius:10px;padding:16px 20px;margin-bottom:14px;border-left:4px solid #dc2626">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -723,6 +785,7 @@ function renderDoc(d, elapsedMs){
           <div class="db-row"><strong>💵 Neto</strong><span class="font-mono">${fClp(h.valor_neto)}</span></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">${zzTxt}</div>
+        ${bodegaTxt}
         ${obsTxt}
       </div>
     `;
@@ -1000,7 +1063,7 @@ function renderCubaje(){
     rows += `<tr class="cub-row" data-sku="${_skuAttr}" data-app-id="${_appIdAttr}" data-qty="${parseInt(qty)}" data-uxv="${l.unidades_por_venta || 1}">
       <td class="tc" data-label=""><input type="checkbox" class="cube-chk" data-idx="${idx}" onchange="actualizarBotonEliminarSeleccionados()"></td>
       <td class="mono" data-label="SKU" data-cell="sku">${l.sku}</td>
-      <td class="cube-desc" data-label="Descripción" style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}</td>
+      <td class="cube-desc" data-label="Descripción" style="font-size:.82rem;max-width:200px;line-height:1.3">${l.descripcion_erp||'—'}${_bodegaChip(l)}</td>
       <td class="tc" data-label="Cant.">${parseInt(qty)}</td>
       <td class="tc" data-label="Bultos/u" data-cell="bultos">${bultosCell}</td>
       <td class="tr" data-label="KG Real/u" data-cell="kg-u">${sf?'<span class="sf">—</span>':fCl(l.peso_kg_u)}</td>
