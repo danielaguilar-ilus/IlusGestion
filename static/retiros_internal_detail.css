@@ -1387,6 +1387,14 @@
   .rba-line.is-no-stock{opacity:.7;background:#fef2f2}
   .rba-line.is-no-stock .rba-chk{opacity:.65}
   .rba-line.is-no-stock:hover{opacity:1;background:#fee2e2}
+  /* 2026-08-17 (Daniel: "hay 1 y está comprometido, yo veré si avanzo o
+     no" -- espejo exacto de .tka-line.is-stock-comprometido en
+     tickets/_tka_modal.html): NO es lo mismo que .is-no-stock -- acá SÍ hay
+     algo físico, solo que ya está reservado en otro lado. Tratamiento más
+     suave (sin atenuar la fila) porque no dice "no hay nada", dice "mira
+     el desglose antes de avanzar". */
+  .rba-line.is-stock-comprometido{background:#fffbeb}
+  .rba-line.is-stock-comprometido:hover{background:#fff8e1}
   .rba-line .ln-stock-warn{
     color:#b91c1c;font-size:.68rem;font-weight:800;margin-top:1px;
     display:inline-flex;align-items:center;gap:3px;white-space:nowrap;

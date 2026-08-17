@@ -2056,7 +2056,14 @@ function rbaRenderDocLineas(lineas, fetchMs){
     // bodega 02 -- mismo criterio que ya aplica para "sin saldo". No se
     // deshabilita el checkbox: el operador puede marcarla a mano si de
     // verdad va a retirar de otra bodega.
-    const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
+    // 2026-08-17: mismo criterio que _rbaStockEstado -- rojo solo si de
+    // verdad no hay nada físico, ámbar si hay algo físico pero comprometido.
+    // La selección sigue igual de cautelosa que antes en los dos casos
+    // (decisión manual a propósito, ninguno viene pre-marcado).
+    const stockEstado = _rbaStockEstado(l);
+    const sinStockBod = stockEstado !== '';
+    const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
+                         : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
     const lineKey = `DOC|${sku}|${i}`;
     // Daniel 2026-05-24: PRE-MARCAR las líneas con saldo automáticamente
     // + permitir marcar manualmente las sin saldo (con aviso amable).
@@ -2065,7 +2072,7 @@ function rbaRenderDocLineas(lineas, fetchMs){
     const initialMax = isZero ? qty : saldo;   // permitir cantidad histórica si no hay saldo
     const initialQty = isZero ? 0 : saldo;     // por default no llevarse nada de las sin saldo
     const preChecked = !isZero && !sinStockBod; // marcadas: solo las con saldo Y con stock en bod. 02
-    html += `<div class="rba-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
+    html += `<div class="rba-line ${isZero?'is-zero':''} ${rowStockClass} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" style="animation:rbaDocIn .35s var(--ease-spring) ${i*30}ms both">
       <label class="rba-chk ${preChecked?'is-checked':''}" data-sku="${_esc(sku)}" data-saldo="${saldo}">
         <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" data-sin-stock="${sinStockBod?1:0}" onchange="rbaToggleLineaDoc(this)">
         <span class="rba-chk-mark">✓</span>
@@ -2119,14 +2126,43 @@ function _rbaSaldoLinea(l){
 // ver app.py) -- acá nunca se mostraba. "saldo" es cuánto falta por
 // despachar de ESE documento, no si hay stock físico para retirarlo. No
 // bloquea la selección -- eso lo sigue decidiendo el saldo -- solo avisa.
-function _rbaStockBadge(l){
+// FIX 2026-08-17 (Daniel, mismo pedido que en _tkaStockBadge de
+// tickets/_tka_modal.html -- espejo exacto, mismo arreglo): "requiero
+// mapear la información completa... si hay al menos uno físico positivo y
+// cuántos están comprometidos, para tomar la decisión... yo veré si avanzo
+// o no". Antes esta función colapsaba a un booleano y mostraba "Sin stock
+// bod. 02" tanto si el físico era 0 como si era 1 (pero comprometido) --
+// dos situaciones muy distintas para quien retira. Ahora se distingue: cero
+// físico sigue en rojo ("no hay nada"); físico positivo pero comprometido
+// muestra el desglose real en ámbar informativo, para decidir con el dato
+// completo en vez de un "sin stock" que suena a que no hay absolutamente nada.
+// '' (OK) | 'sin' (0 físico) | 'comprometido' (algo físico, ya reservado).
+// Espejo exacto de _tkaStockEstado en tickets/_tka_modal.html -- único
+// lugar donde se decide la distinción; el badge y las 2 filas de tabla
+// (abajo) solo consultan esto.
+function _rbaStockEstado(l){
   const st = l && l.stock;
   if (!st || st.hay_stock !== false) return '';
+  return (parseFloat(st.fisico) || 0) <= 0 ? 'sin' : 'comprometido';
+}
+
+function _rbaStockBadge(l){
+  const estado = _rbaStockEstado(l);
+  if (!estado) return '';
+  const st = l.stock;
   const f = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
   const tip = 'Físico bodega 02: ' + f(st.fisico) + ' · Comprometido: ' + f(st.comprometido)
     + ' · Devengado: ' + f(st.devengado) + ' · Disponible: ' + f(st.disponible);
-  return '<span class="ln-stock-warn" title="' + _esc(tip) + '">'
-    + '<i class="bi bi-exclamation-triangle-fill"></i>Sin stock bod. 02</span>';
+
+  if (estado === 'sin'){
+    return '<span class="ln-stock-warn" title="' + _esc(tip) + '">'
+      + '<i class="bi bi-exclamation-triangle-fill"></i>Sin stock bod. 02</span>';
+  }
+
+  let texto = f(st.fisico) + ' físico';
+  if ((parseFloat(st.comprometido) || 0) > 0) texto += ' · ' + f(st.comprometido) + ' comp.';
+  return '<span class="ln-stock-info" title="' + _esc(tip) + '">'
+    + '<i class="bi bi-info-circle-fill"></i>' + _esc(texto) + '</span>';
 }
 
 function rbaToggleAllDoc(checked){
@@ -2405,13 +2441,16 @@ async function rbaToggleDocCli(idx){
       const lineKey = `CLI|${idx}|${sku}|${j}`;
       // Ver comentario equivalente en rbaRenderDocLineas (mismo criterio,
       // mismo motivo: Daniel, "dale una vuelta al módulo de retiros").
-      const sinStockBod = !!(l.stock && l.stock.hay_stock === false);
+      const stockEstado = _rbaStockEstado(l);
+      const sinStockBod = stockEstado !== '';
+      const rowStockClass = stockEstado === 'sin' ? 'is-no-stock'
+                           : stockEstado === 'comprometido' ? 'is-stock-comprometido' : '';
       // Daniel 2026-05-24: pre-marcar las que tienen saldo, permitir
       // marcar las sin saldo (con aviso amable).
       const initialMax = isZero ? qty : saldo;
       const initialQty = isZero ? 0 : saldo;
       const preChecked = !isZero && !sinStockBod;
-      html += `<div class="rba-line ${isZero?'is-zero':''} ${sinStockBod?'is-no-stock':''} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}">
+      html += `<div class="rba-line ${isZero?'is-zero':''} ${rowStockClass} ${preChecked?'is-selected':''}" data-key="${_esc(lineKey)}">
         <label class="rba-chk ${preChecked?'is-checked':''}">
           <input type="checkbox" ${preChecked?'checked':''} data-line-key="${_esc(lineKey)}" data-doc-tido="${_esc(doc.tido_display)}" data-doc-nudo="${_esc(doc.nudo_display)}" data-sku="${_esc(sku)}" data-nombre="${_esc(nom)}" data-qty="${saldo}" data-cantidad-doc="${qty}" data-is-zero="${isZero?1:0}" data-sin-stock="${sinStockBod?1:0}" onchange="rbaToggleLineaCli(this)">
           <span class="rba-chk-mark">✓</span>
