@@ -96166,14 +96166,24 @@ def _ensure_migracion_cloudinary_a_gcs():
             _motivo = str(_e1)
         # Intento 2: URL FIRMADA -- cubre los PDF a los que Cloudinary
         # responde 401 sin firma (el caso real de Sodimac/Echaurren/Ksport).
+        # DIAGNOSTICO 2026-08-17: el resultado de CADA URL firmada probada
+        # se acumula para saber si el algoritmo de firma sigue siendo
+        # valido para esta cuenta -- antes se descartaba en silencio.
+        _intentos_firmados = []
         if public_id:
-            for _signed in _cloudinary_urls_firmadas_legacy(public_id):
+            _urls_firmadas = _cloudinary_urls_firmadas_legacy(public_id)
+            if not _urls_firmadas:
+                _intentos_firmados.append("sin credenciales/public_id para firmar")
+            for _signed in _urls_firmadas:
                 try:
                     r2 = _rq_mig.get(_signed, timeout=30, stream=True)
                     if r2.status_code in (200, 206) and r2.content:
                         return r2.content
-                except Exception:
-                    pass
+                    _intentos_firmados.append(f"HTTP {r2.status_code}")
+                except Exception as _e2:
+                    _intentos_firmados.append(str(_e2)[:80])
+        if _intentos_firmados:
+            _motivo = f"{_motivo}; firmado: {' / '.join(_intentos_firmados)}"
         raise RuntimeError(_motivo)
 
     _ok, _fail = [], []
