@@ -21172,7 +21172,12 @@ TR_BODEGAS_NOMBRES = {
     "2":  "Principal",
     "5":  "Motion La Dehesa",
     "6":  "Motion Vitacura",
-    "12": "Gimnasio",
+    # La 12 ya avisaba (cualquier bodega != principal avisa). Daniel pidió
+    # explícitamente nombrarla el 2026-08-17 — es el gimnasio propio de ILUS,
+    # y fue el caso que originó toda esta advertencia el 2026-08-02 (FCV
+    # 0000011149: "esa factura la sacaron no de la bodega dos, que es la
+    # principal, sino de la bodega doce, que es del gimnasio").
+    "12": "Gimnasio ILUS",
     "13": "Incidencias",
     "15": "Liquidación",
     "18": "Repuestos",

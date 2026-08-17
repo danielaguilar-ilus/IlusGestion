@@ -79,6 +79,9 @@ class TestDiccionarioDeBodegas(unittest.TestCase):
         self.assertEqual(nombre("13"), "Incidencias")
         self.assertEqual(nombre("15"), "Liquidación")
         self.assertEqual(nombre("18"), "Repuestos")
+        # Agregada a pedido de Daniel el 2026-08-17: "considera la bodega 12
+        # del gimnasio ILUS para que se incluya como alerta".
+        self.assertEqual(nombre("12"), "Gimnasio ILUS")
 
     def test_el_cero_a_la_izquierda_no_cambia_nada(self):
         # El ERP devuelve "06"; una persona escribiria "6". Las dos formas
@@ -143,6 +146,23 @@ class TestCuandoSeAvisa(unittest.TestCase):
         r = self.analizar("18")
         self.assertTrue(r["alerta"])
         self.assertEqual(r["resumen"], "Repuestos")
+
+    def test_el_gimnasio_ilus_bodega_12_tambien_avisa(self):
+        # Pedido de Daniel el 2026-08-17. Es ademas el caso que origino toda
+        # esta advertencia el 2026-08-02 (FCV 0000011149 salio de la 12).
+        r = self.analizar("02,12")
+        self.assertTrue(r["alerta"])
+        self.assertEqual(r["resumen"], "Gimnasio ILUS")
+        self.assertIn("Bodega 12 · Gimnasio ILUS", r["mensaje"])
+
+    def test_todas_las_bodegas_conocidas_avisan_salvo_la_principal(self):
+        # Barrido completo: ninguna bodega del diccionario puede quedarse sin
+        # avisar por un descuido al agregarla.
+        for cod in ("05", "06", "12", "13", "15", "18"):
+            with self.subTest(bodega=cod):
+                self.assertTrue(self.analizar(cod)["alerta"],
+                                f"la bodega {cod} deberia avisar")
+        self.assertFalse(self.analizar("02")["alerta"])
 
     def test_bodega_repetida_no_se_duplica_en_el_aviso(self):
         r = self.analizar("06,06,02")
