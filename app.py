@@ -96016,6 +96016,89 @@ try:
 except Exception as _ensure_est_err:
     print(f"[ILUS][WARN] _ensure_mant_visitas_estado_enum: {_ensure_est_err}", flush=True)
 
+# DIAGNOSTICO 2026-08-17 (Daniel, tras el caso del contrato Sodimac
+# ctid=35): "me preocupa porque te habia pedido una migracion de
+# Cloudinary a Google Cloud y al parecer no se hizo -- que mas clientes
+# tenemos bajo estas condiciones?"
+#
+# La migracion SI se hizo, pero fue de dos alcances distintos que se
+# confundieron con el tiempo:
+#   1) El PUNTO DE ENTRADA -- todo archivo NUEVO (fotos, contratos, etc.)
+#      se sube a GCS desde 2026-06-08. Esto esta 100% vigente.
+#   2) Los ARCHIVOS VIEJOS que ya estaban en Cloudinary antes de esa
+#      fecha -- la memoria del proyecto registra que se migraron 71 fotos
+#      de PRODUCTO, pero deja anotado un pendiente de "426 archivos viejos
+#      Cloudinary->GCS" sin detallar cuales tablas cubria. Contratos
+#      quedo fuera: por eso Sodimac (subido antes del 2026-06-08) sigue
+#      apuntando a Cloudinary y ahora esa cuenta lo rechaza con 401.
+#
+# Este bloque NO migra nada (0 riesgo, 0 escritura) -- solo cuenta, por
+# cada tabla que guarda `cloudinary_url`, cuantos registros siguen
+# apuntando a Cloudinary real (http...) contra cuantos ya estan en GCS
+# (/f/...), para saber el alcance REAL antes de decidir el plan de
+# migracion. Corre una sola vez en boot y solo imprime a los logs.
+try:
+    with app.app_context():
+        _tablas_cld = [
+            ("mant_contratos",         "id",  "cliente_id"),
+            ("mant_contrato_adjuntos", "id",  "contrato_id"),
+            ("mant_maquina_fotos",     "id",  "maquina_id"),
+            ("mant_visita_fotos",      "id",  "visita_id"),
+            ("login_images",           "id",  None),
+            ("retiros_carousel",       "id",  None),
+        ]
+        print("[ILUS][DIAG-CLOUDINARY] ===== inicio auditoria archivos en Cloudinary =====", flush=True)
+        _total_cld = 0
+        for _tabla, _pk, _fk in _tablas_cld:
+            try:
+                _r = mysql_fetchone(
+                    f"SELECT "
+                    f"  SUM(CASE WHEN cloudinary_url LIKE 'http%%' THEN 1 ELSE 0 END) AS en_cloudinary, "
+                    f"  SUM(CASE WHEN cloudinary_url LIKE '/f/%%'  THEN 1 ELSE 0 END) AS en_gcs, "
+                    f"  COUNT(*) AS total_filas "
+                    f"FROM {_tabla}"
+                )
+                _en_cld = int((_r or {}).get("en_cloudinary") or 0)
+                _en_gcs = int((_r or {}).get("en_gcs") or 0)
+                _tot = int((_r or {}).get("total_filas") or 0)
+                _total_cld += _en_cld
+                print(f"[ILUS][DIAG-CLOUDINARY] {_tabla}: {_en_cld} en Cloudinary (sin migrar), "
+                      f"{_en_gcs} en GCS (ok), {_tot} filas totales", flush=True)
+                # Para contratos, listar CUALES clientes -- es lo que Daniel necesita
+                # para saber a quien le puede volver a pasar.
+                if _tabla == "mant_contratos" and _en_cld > 0:
+                    _filas = mysql_fetchall(
+                        "SELECT ct.id AS ctid, ct.archivo_nombre, c.razon_social "
+                        "  FROM mant_contratos ct "
+                        "  LEFT JOIN mant_clientes c ON c.id = ct.cliente_id "
+                        " WHERE ct.cloudinary_url LIKE 'http%%' "
+                        " ORDER BY ct.id"
+                    ) or []
+                    for _f in _filas:
+                        print(f"[ILUS][DIAG-CLOUDINARY]   contrato ctid={_f.get('ctid')} "
+                              f"cliente=\"{_f.get('razon_social')}\" "
+                              f"archivo=\"{_f.get('archivo_nombre')}\"", flush=True)
+                if _tabla == "mant_contrato_adjuntos" and _en_cld > 0:
+                    _filas = mysql_fetchall(
+                        "SELECT a.id AS aid, a.contrato_id, a.archivo_nombre, c.razon_social "
+                        "  FROM mant_contrato_adjuntos a "
+                        "  LEFT JOIN mant_contratos ct ON ct.id = a.contrato_id "
+                        "  LEFT JOIN mant_clientes c ON c.id = ct.cliente_id "
+                        " WHERE a.cloudinary_url LIKE 'http%%' "
+                        " ORDER BY a.id"
+                    ) or []
+                    for _f in _filas:
+                        print(f"[ILUS][DIAG-CLOUDINARY]   adjunto aid={_f.get('aid')} "
+                              f"contrato_id={_f.get('contrato_id')} "
+                              f"cliente=\"{_f.get('razon_social')}\" "
+                              f"archivo=\"{_f.get('archivo_nombre')}\"", flush=True)
+            except Exception as _e_tabla:
+                print(f"[ILUS][DIAG-CLOUDINARY] {_tabla}: error consultando ({_e_tabla})", flush=True)
+        print(f"[ILUS][DIAG-CLOUDINARY] ===== fin auditoria: {_total_cld} archivos totales "
+              f"aun en Cloudinary sin migrar =====", flush=True)
+except Exception as _diag_cld_err:
+    print(f"[ILUS][WARN] diagnostico Cloudinary: {_diag_cld_err}", flush=True)
+
 # CRÍTICO: columnas del SELLO factura↔OT (asociar factura + gate de firma
 # del responsable) SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
 try:
