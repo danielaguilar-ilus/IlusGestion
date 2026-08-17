@@ -76,11 +76,29 @@ class TestVerificarRestricciones(unittest.TestCase):
     exceda de los quince kilos... maneja la restricción indicada, o quince
     kilos o no es multibulto, dependiendo de cada caso -- no vayas a mandar
     algo genérico, algo específico.' Cada test verifica que el mensaje
-    identifique la regla exacta, no un texto genérico de rechazo."""
+    identifique la regla exacta, no un texto genérico de rechazo.
+
+    2026-08-17: el tope de peso pasó de 15 a 20 kg a pedido de Daniel
+    ("aumentemos la restricción de Shipit de 15 a 20 kg para realizar
+    pruebas"). Los tests se leen desde sc.MAX_PESO_KG en vez de tener el
+    número escrito a mano: así el próximo ajuste del tope no obliga a
+    reescribirlos, y lo que se verifica es la REGLA (mensaje específico por
+    causa), que es lo que Daniel pidió y no cambió.
+    """
 
     def test_dentro_de_limites_no_hay_problemas(self):
-        self.assertEqual(sc.verificar_restricciones(1, 14.9), [])
-        self.assertEqual(sc.verificar_restricciones(1, 15.0), [])  # límite inclusive
+        self.assertEqual(sc.verificar_restricciones(1, sc.MAX_PESO_KG - 0.1), [])
+        self.assertEqual(sc.verificar_restricciones(1, sc.MAX_PESO_KG), [])  # inclusive
+
+    def test_el_tope_vigente_es_20_kg(self):
+        # Fija la decisión del 2026-08-17. Si alguien lo vuelve a mover, que
+        # sea a propósito y con este test enfrente.
+        self.assertEqual(sc.MAX_PESO_KG, 20.0)
+
+    def test_una_barra_de_20_kg_ahora_si_pasa(self):
+        # Era el caso que Daniel aceptó dejar fuera en agosto y que ahora
+        # quiere poder probar por Shipit.
+        self.assertEqual(sc.verificar_restricciones(1, 20), [])
 
     def test_multibulto_reporta_mensaje_especifico_de_bultos(self):
         problemas = sc.verificar_restricciones(3, 5)
@@ -89,15 +107,15 @@ class TestVerificarRestricciones(unittest.TestCase):
         self.assertIn("1 bulto", problemas[0])
 
     def test_sobrepeso_reporta_mensaje_especifico_de_kilos_no_de_bultos(self):
-        # Caso real que menciona Daniel: una barra de 20 kg, 1 solo bulto.
-        problemas = sc.verificar_restricciones(1, 20)
+        sobre = sc.MAX_PESO_KG + 5      # 25 kg con el tope actual
+        problemas = sc.verificar_restricciones(1, sobre)
         self.assertEqual(len(problemas), 1)
-        self.assertIn("20 kg", problemas[0])
-        self.assertIn("15", problemas[0])
+        self.assertIn(f"{sobre:g} kg", problemas[0])
+        self.assertIn(f"{sc.MAX_PESO_KG:g}", problemas[0])
         self.assertNotIn("bulto", problemas[0].split("—")[0])  # el motivo no mezcla bultos
 
     def test_ambas_restricciones_a_la_vez_devuelve_dos_mensajes_separados(self):
-        problemas = sc.verificar_restricciones(2, 20)
+        problemas = sc.verificar_restricciones(2, sc.MAX_PESO_KG + 5)
         self.assertEqual(len(problemas), 2)
         self.assertTrue(any("bultos" in p for p in problemas))
         self.assertTrue(any("kg" in p for p in problemas))

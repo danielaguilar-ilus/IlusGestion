@@ -1282,8 +1282,11 @@ function _logoFor(c){
 // Tope operativo de Shipit — espejo de shipit_client.MAX_BULTOS /
 // MAX_PESO_KG. La REGLA la aplica el backend (verificar_restricciones), acá
 // solo se EXPLICA en pantalla para que el bloqueo no aparezca de la nada.
+// 2026-08-17: 20 kg (era 15), a pedido de Daniel para hacer pruebas. Si se
+// cambia acá hay que cambiar shipit_client.MAX_PESO_KG también, o la pantalla
+// prometería un tope distinto al que aplica el backend.
 const SHIPIT_MAX_BULTOS  = 1;
-const SHIPIT_MAX_PESO_KG = 15;
+const SHIPIT_MAX_PESO_KG = 20;
 
 // Operador de Shipit elegido a mano. null = "el más barato" (default).
 // Vive FUERA de _cotizaciones A PROPÓSITO: esos objetos se guardan tal cual
