@@ -1225,7 +1225,7 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
             onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
         </div>
 
-        <div id="t-fotos-${t.id}" class="foto-result"></div>
+        <div id="t-fotos-${t.id}" class="foto-result">${_fotosTareaTilesHtml(t.id, mid, pid)}</div>
       </div>`;
       break;
     }
@@ -3049,6 +3049,96 @@ async function _subirFotoIntento(fd, intento){
   }
 }
 
+// ════════════════════════════════════════════════════════
+//  FOTOS POR TAREA — galería con eliminar
+//  2026-08-18 (Daniel, urgente OT-2026-00097): el técnico sube una foto
+//  equivocada y necesita corregirla. El endpoint DELETE ya existía (modal
+//  CAPTURA del equipo, 2026-06-12) — acá se conecta al checklist:
+//  · Las fotos ya subidas se renderizan al cargar (antes el contenedor
+//    quedaba vacío tras un reload y la foto "desaparecía" de la vista).
+//  · Basurero por foto con ilusConfirm (REGLA #1), solo si la OT sigue
+//    editable (misma regla readonly de _renderFotosTiles).
+//  · Si era la única foto de la tarea, el backend la des-completa y acá
+//    se sincroniza el progreso local (_updateProgress).
+// ════════════════════════════════════════════════════════
+// Índice {tarea_id: [foto,…]} construido bajo demanda: este archivo define
+// renderTareas() MUY arriba y el índice acá abajo — con `const` en el tope
+// del módulo, un render temprano caería en la zona muerta temporal (TDZ).
+var _FOTOS_POR_TAREA_CACHE = null;
+function _fotosIdx(){
+  if (_FOTOS_POR_TAREA_CACHE) return _FOTOS_POR_TAREA_CACHE;
+  const idx = {};
+  (typeof FOTOS_VISITA !== 'undefined' && Array.isArray(FOTOS_VISITA) ? FOTOS_VISITA : [])
+    .forEach(f => {
+      if (!f || !f.tarea_id || !f.url) return;
+      (idx[f.tarea_id] = idx[f.tarea_id] || []).push(f);
+    });
+  _FOTOS_POR_TAREA_CACHE = idx;
+  return idx;
+}
+
+function _fotosTareaReadonly(){
+  return (VISITA_ESTADO === 'cerrada' ||
+          VISITA_ESTADO === 'pendiente_aprobacion' ||
+          !PUEDE_EJECUTAR_FLAG);
+}
+
+function _fotosTareaTilesHtml(tid, mid, pid){
+  const fotos = _fotosIdx()[tid] || [];
+  const ro = _fotosTareaReadonly();
+  return fotos.map(f => `
+    <div class="tx-foto-tile" id="fotoTile-${f.id}">
+      <img src="${_escapeAttr(cloudTx(f.url, 'card'))}" alt="Foto de la tarea"
+           loading="lazy" decoding="async">
+      ${(!ro && f.id) ? `<button type="button" class="tx-foto-del" title="Eliminar esta foto"
+          aria-label="Eliminar esta foto"
+          onclick="borrarFotoTarea(${tid}, ${f.id}, ${mid}, ${pid})">
+          <i class="bi bi-trash-fill"></i></button>` : ''}
+    </div>`).join('');
+}
+
+function _fotosTareaRepaint(tid, mid, pid){
+  const cont = document.getElementById('t-fotos-' + tid);
+  if (cont) cont.innerHTML = _fotosTareaTilesHtml(tid, mid, pid);
+}
+
+async function borrarFotoTarea(tid, fid, mid, pid){
+  const ok = await ilusConfirm({
+    title: 'Eliminar foto',
+    message: '¿Quitar esta foto de la tarea?',
+    sub: 'Se elimina de la evidencia de esta OT. Si era la única de la tarea, la tarea vuelve a quedar pendiente para subir la correcta.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/fotos/${fid}`, {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo eliminar la foto');
+    const _idx = _fotosIdx();
+    _idx[tid] = (_idx[tid] || []).filter(f => String(f.id) !== String(fid));
+    _fotosTareaRepaint(tid, mid, pid);
+    if (j.tarea_descompletada){
+      try {
+        const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => String(p.plantilla_id) === String(pid));
+        const tar = grupo && grupo.tareas.find(t => t.id === tid);
+        if (tar){ tar.completada = 0; _updateProgress(mid, pid); }
+      } catch(eSync){
+        console.warn('[borrarFotoTarea] sync progreso local:', eSync);
+      }
+      ilusToast('✓ Foto eliminada — la tarea volvió a pendiente', { type: 'success' });
+    } else {
+      ilusToast('✓ Foto eliminada', { type: 'success' });
+    }
+  } catch(e){
+    console.error('[borrarFotoTarea]', e);
+    ilusToast(e.message || 'No se pudo eliminar la foto', { type: 'error' });
+  }
+}
+
 async function subirFotoTarea(tid, input, mid, pid){
   if (!input.files || !input.files[0]) return;
   let file = input.files[0];
@@ -3119,13 +3209,24 @@ async function subirFotoTarea(tid, input, mid, pid){
     } catch(e){
       console.warn('[subirFoto] marcar completada falló:', e);
     }
+    // 2026-08-18: la respuesta ahora trae `fotos:[{id,tarea_id,url}]` — se
+    // registran en el índice local para que el tile nuevo nazca con su botón
+    // de eliminar (antes se inyectaba un <img> suelto, imborrable sin recargar).
+    const nuevas = (res.data && Array.isArray(res.data.fotos)) ? res.data.fotos : [];
     const url = (res.data && (res.data.url || res.data.cloudinary_url)) || '';
-    if (url){
+    if (nuevas.length){
+      const _idxUp = _fotosIdx();
+      _idxUp[tid] = (_idxUp[tid] || []).concat(
+        nuevas.filter(f => f && f.url).map(f => ({ id: f.id, tarea_id: tid, url: f.url }))
+      );
+      _fotosTareaRepaint(tid, mid, pid);
+    } else if (url){
+      // Backend antiguo (sin `fotos`) — preview sin id, se vuelve borrable al recargar.
       const cont = document.getElementById('t-fotos-' + tid);
       // PERF 2026-05-22: 'card' (≤400px) — preview inline después de subir.
-      if (cont) cont.innerHTML += `<img src="${_escapeAttr(cloudTx(url, 'card'))}" alt=""
-            loading="lazy" decoding="async"
-            style="max-width:100%;border-radius:8px;margin-top:6px">`;
+      if (cont) cont.innerHTML += `<div class="tx-foto-tile"><img
+            src="${_escapeAttr(cloudTx(url, 'card'))}" alt=""
+            loading="lazy" decoding="async"></div>`;
     }
     return;
   }
@@ -3803,7 +3904,11 @@ async function cargarAdjuntos(){
       return;
     }
     const items = d.adjuntos || [];
-    document.getElementById('adjCountBadge').textContent = items.length;
+    const _badgeAdj = document.getElementById('adjCountBadge');
+    _badgeAdj.textContent = items.length;
+    // 2026-08-18: en móvil un "0" permanente partía el título de la pestaña
+    // en dos líneas. El contador vuelve solo en cuanto hay documentos.
+    _badgeAdj.classList.toggle('is-zero', !items.length);
     if (!items.length){
       cont.innerHTML = `<div class="text-muted small text-center py-3" style="font-style:italic">
         <i class="bi bi-folder-x" style="font-size:1.5rem;display:block;margin-bottom:4px;opacity:.4"></i>

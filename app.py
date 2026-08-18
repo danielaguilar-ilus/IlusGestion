@@ -72313,6 +72313,13 @@ def mant_ot_ejecutar(vid):
             f"/static/uploads/mantenciones/{f['archivo_path']}"
             if f.get("archivo_path") else ""
         )
+    # 2026-08-18 (OT-2026-00097) — versión JSON-safe para el frontend
+    # (tomada_at es datetime y rompería |tojson): el checklist renderiza
+    # las fotos ya subidas de cada tarea con su botón de eliminar.
+    fotos_js = [
+        {"id": f["id"], "tarea_id": f.get("tarea_id"), "url": f["url"]}
+        for f in fotos if f.get("url")
+    ]
 
     # ════════════════════════════════════════════════════════════════
     # FIX 2026-05-17 — Keys stringificadas para JSON.
@@ -72398,6 +72405,7 @@ def mant_ot_ejecutar(vid):
         stats_por_maquina=stats_por_maquina,
         equipos_estado_revision=equipos_estado_revision,
         fotos=fotos,
+        fotos_js=fotos_js,
         current_user_id=_user_id_actual,
         is_admin_lock=_is_admin_lock,
         # 🔐 2026-05-18 — Si el usuario solo puede VER (admin/ejecutivo no
@@ -76910,6 +76918,9 @@ def mant_visita_fotos_subir(vid):
     errors = []
     dups = []         # nombres de archivos cuya imagen YA existía en esta OT
     first_url = None  # devolvemos al frontend para mostrar inline
+    fotos_out = []    # 2026-08-18 (OT-2026-00097): {id, tarea_id, url} de cada
+                      # foto insertada — el frontend necesita el id para poder
+                      # eliminarla desde el checklist sin recargar la página.
     user = current_username()
     # ¿Hay almacenamiento persistente (Google Cloud Storage)?
     cloud_ok = _gcs_ready()
@@ -76987,21 +76998,29 @@ def mant_visita_fotos_subir(vid):
             # → error 1048. Migración ALTER ya está aplicada, pero por
             # defensiva pasamos string vacío si no hay path real.
             ap = archivo_path or ""
-            mysql_execute(
-                "INSERT INTO mant_visita_fotos "
-                "(visita_id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
-                " archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb, foto_hash) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (
-                    vid, tarea_id, maquina_id,
-                    ap, cld_url,
-                    f.filename[:300],
-                    tipo_foto, descripcion or None, user, size_kb, _hash
+            # 2026-08-18: cursor directo (no mysql_execute) para capturar
+            # lastrowid — el frontend necesita el id para el botón eliminar.
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO mant_visita_fotos "
+                    "(visita_id, tarea_id, maquina_id, archivo_path, cloudinary_url, "
+                    " archivo_nombre, tipo_foto, descripcion, tomada_por, file_size_kb, foto_hash) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (
+                        vid, tarea_id, maquina_id,
+                        ap, cld_url,
+                        f.filename[:300],
+                        tipo_foto, descripcion or None, user, size_kb, _hash
+                    )
                 )
-            )
+                new_fid = cur.lastrowid
+            conn.commit()
             saved += 1
+            _furl = cld_url or (f"/static/{archivo_path}" if archivo_path else None)
+            fotos_out.append({"id": new_fid, "tarea_id": tarea_id, "url": _furl})
             if first_url is None:
-                first_url = cld_url or (f"/static/{archivo_path}" if archivo_path else None)
+                first_url = _furl
         except Exception as e:
             print(f"[fotos_subir vid={vid}] INSERT BD FAIL para "
                   f"{f.filename!r}: {e}\n{_tb.format_exc()}", flush=True)
@@ -77030,6 +77049,7 @@ def mant_visita_fotos_subir(vid):
         "ok": True,
         "saved": saved,
         "url": first_url,        # para que el frontend muestre inline
+        "fotos": fotos_out,      # 2026-08-18: ids para poder eliminar sin recargar
         "errors": errors[:3],
         "persistente": bool(first_url and first_url.startswith("https://")),
         # Daniel 2026-08-09: la foto se guarda igual (repetir una toma puede
@@ -77227,7 +77247,7 @@ def mant_visita_foto_delete(vid, fid):
          puede subir la correcta y vuelve a quedar como principal.
     Audit: mant_logs siempre (antes de borrar, REGLA #5)."""
     row = mysql_fetchone(
-        "SELECT archivo_path, cloudinary_url, maquina_id "
+        "SELECT archivo_path, cloudinary_url, maquina_id, tarea_id "
         "  FROM mant_visita_fotos WHERE id=%s AND visita_id=%s",
         (fid, vid)
     )
@@ -77273,7 +77293,33 @@ def mant_visita_foto_delete(vid, fid):
                 )
         except Exception as _e_pr:
             print(f"[foto_delete] foto principal vid={vid} mid={_mid}: {_e_pr}", flush=True)
-    return jsonify({"ok": True, "deleted": True})
+    # 4) 2026-08-18 (Daniel, urgente OT-2026-00097) — si era la ÚNICA foto de
+    #    una tarea tipo 'foto', la tarea vuelve a PENDIENTE: subirFotoTarea la
+    #    marcó completada al subir, y dejarla "completada" sin evidencia
+    #    permitiría cerrar la OT sin la foto correcta (validador R5 cuenta
+    #    fotos de la OT completa, no por tarea).
+    tarea_descompletada = False
+    _tid = row.get("tarea_id")
+    if _tid:
+        try:
+            _rem = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_visita_fotos "
+                " WHERE visita_id=%s AND tarea_id=%s",
+                (vid, _tid)
+            )
+            if not ((_rem or {}).get("n") or 0):
+                n_up = mysql_execute_returning_rowcount(
+                    "UPDATE mant_visita_tareas "
+                    "   SET completada=0, completada_at=NULL, completada_por=NULL "
+                    " WHERE id=%s AND visita_id=%s AND tipo_respuesta='foto' "
+                    "   AND completada=1",
+                    (_tid, vid)
+                )
+                tarea_descompletada = bool(n_up)
+        except Exception as _e_tar:
+            print(f"[foto_delete] descompletar tarea vid={vid} tid={_tid}: {_e_tar}", flush=True)
+    return jsonify({"ok": True, "deleted": True,
+                    "tarea_descompletada": tarea_descompletada})
 
 
 # ═════════════════════════════════════════════════════════════════════

@@ -2627,3 +2627,81 @@
   border:2.5px solid #fff;font-family:Arial,sans-serif;
   animation:badgePopOT .45s cubic-bezier(.34,1.56,.64,1) both;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   FOTOS DE LA TAREA — miniatura con basurero (2026-08-18, Daniel:
+   "que los técnicos puedan eliminar las fotos por si se equivocan").
+   Mismo lenguaje visual que .cap-foto-tile del modal del equipo: la
+   foto manda, el basurero rojo flota arriba a la derecha y solo existe
+   mientras la OT sigue editable (lo decide el JS, no el CSS).
+   ════════════════════════════════════════════════════════════════════ */
+.tx-foto-tile{
+  position:relative;width:76px;height:76px;border-radius:10px;
+  overflow:hidden;border:1px solid #e5e7eb;background:#f8fafc;
+  flex:0 0 auto;animation:ilus-fade-up .28s cubic-bezier(.16,1,.3,1) both;
+}
+.tx-foto-tile img{width:100%;height:100%;object-fit:cover;display:block;border:0;border-radius:0}
+.tx-foto-del{
+  position:absolute;top:3px;right:3px;width:30px;height:30px;
+  border:0;border-radius:50%;background:rgba(220,38,38,.94);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.82rem;line-height:1;cursor:pointer;z-index:2;padding:0;
+  box-shadow:0 1px 5px rgba(0,0,0,.38);transition:transform .12s, background .15s;
+}
+.tx-foto-del:hover{background:#b91c1c}
+.tx-foto-del:active{transform:scale(.9)}
+
+/* ════════════════════════════════════════════════════════════════════
+   MÓVIL — arreglos de la vista del técnico (2026-08-18, Daniel:
+   "la vista responsiva se ve mal y fea", captura de la OT-2026-00097
+   en iPhone). Tres problemas concretos de esa captura:
+     1) La pestaña "Información de la OT" partía el texto en dos líneas
+        y desalineaba las dos pestañas (el "0" de adjuntos empujaba).
+     2) El breadcrumb repetía el nombre completo del equipo y ocupaba
+        dos renglones antes del checklist.
+     3) El stepper 1-2-3 flotaba suelto, sin la tarjeta que sí tiene en
+        escritorio, con las líneas de unión casi invisibles.
+   Solo piel y espaciado: ninguna regla cambia comportamiento ni
+   esconde acciones.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width:767.98px){
+  /* 1 · Pestañas: una línea cada una, mismo alto, sin apretujarse */
+  .tx-tabs{gap:5px;padding:4px}
+  .tx-tab-btn{
+    padding:10px 6px;font-size:.79rem;gap:6px;min-height:46px;
+    white-space:nowrap;overflow:hidden;
+  }
+  .tx-tab-btn > span:not(.badge-count){overflow:hidden;text-overflow:ellipsis}
+  .tx-tab-btn i{flex:0 0 auto;font-size:.92rem}
+  /* El contador solo aparece cuando hay documentos (lo marca el JS) */
+  .tx-tab-btn .badge-count.is-zero{display:none}
+  .tx-tab-btn .badge-count{flex:0 0 auto;padding:1px 6px}
+
+  /* 2 · Breadcrumb: una sola línea, el nombre largo se recorta */
+  .tx-crumbs{flex-wrap:nowrap;gap:2px;padding:6px 0;margin-bottom:8px;min-width:0}
+  .tx-crumbs button{padding:4px 6px;min-width:0;max-width:100%}
+  .tx-crumbs button, .tx-crumbs .curr{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;
+    line-height:1.9;
+  }
+  .tx-crumbs button:first-child{flex:0 0 auto}
+  .tx-crumbs .sep{flex:0 0 auto}
+
+  /* 3 · Stepper dentro de su tarjeta, como en escritorio */
+  .tx-stage-stepper{
+    gap:6px;margin:0 0 14px;padding:14px 12px 12px;
+    background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+    box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  .tx-stage{min-width:0;flex:0 0 auto;gap:7px}
+  .tx-stage-lbl{font-size:.6rem;letter-spacing:.05em}
+  .tx-stage-line{margin-top:22px;min-width:16px;height:3px;background:#e5e7eb}
+
+  /* Miniaturas de foto: táctiles, con aire para el basurero */
+  .tx-tarea .foto-result{gap:8px;margin-top:10px}
+  .tx-foto-tile{width:84px;height:84px}
+}
+@media (max-width:380px){
+  .tx-tab-btn{font-size:.74rem;padding:10px 4px;gap:5px}
+  .tx-foto-tile{width:76px;height:76px}
+}
