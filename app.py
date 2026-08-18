@@ -40261,14 +40261,50 @@ def tr_simpliroute_visitas_congeladas():
     })
 
 
+def _sr_fecha_rescate(valor, hoy):
+    """Valida la fecha a la que se reprograma un rescate. Devuelve (fecha, error).
+
+    2026-08-18. El rescate nacio reprogramando siempre a HOY, y eso lo hacia
+    inutil despues del horario: a las 19:30 el tablero del despachador del dia
+    ya cerro, asi que la visita "rescatada" a hoy amanecia vencida otra vez --
+    el mismo bug que se estaba arreglando, en version diaria.
+
+    Reglas:
+      - Sin valor -> hoy (comportamiento previo, no se rompe ningun caller).
+      - NUNCA al pasado: programar hacia atras es exactamente lo que dejaba las
+        visitas invisibles. Es el error que este endpoint existe para reparar.
+      - Tope de 30 dias: un dedazo tipo 2027-08-19 mandaria la carga a un ano
+        que nadie va a mirar, y quedaria igual de perdida.
+    """
+    import datetime as _dt
+
+    crudo = (str(valor or "")).strip()
+    if not crudo:
+        return hoy.isoformat(), None
+    try:
+        f = _dt.date.fromisoformat(crudo)
+    except ValueError:
+        return None, "Fecha inválida. Usa el formato AAAA-MM-DD."
+    if f < hoy:
+        return None, ("No se puede reprogramar al pasado — es justamente lo que "
+                      "dejó estas visitas invisibles.")
+    if (f - hoy).days > 30:
+        return None, "La fecha está a más de 30 días. Revisa que no sea un error."
+    return f.isoformat(), None
+
+
 @app.route("/transporte/api/simpliroute/rescatar-congeladas", methods=["POST"])
 @_tr_required
 def tr_simpliroute_rescatar_congeladas():
-    """Reprograma a HOY las visitas que quedaron atrapadas en un día vencido.
+    """Reprograma las visitas que quedaron atrapadas en un día vencido.
 
     2026-08-18. Acción de rescate para los despachos que se perdieron por el
     bug de la fecha (ver tr_manifiesto_subir_simpliroute). Reusa el MISMO
     PATCH que tr_item_simpliroute_reprogramar -- no reimplementa la llamada.
+
+    Acepta `fecha` (AAAA-MM-DD) para elegir el día destino; sin ella, HOY.
+    Rescatar "a hoy" a las 19:30 no sirve de nada: el tablero del despachador
+    ya cerró y la visita amanece vencida de nuevo.
 
     Deliberadamente ACOTADO: solo toca visitas que (a) están en 'pending',
     (b) no tienen chofer asignado y (c) su fecha YA VENCIÓ. Una visita
@@ -40290,7 +40326,9 @@ def tr_simpliroute_rescatar_congeladas():
         return jsonify({"ok": False, "error": "item_ids inválidos."}), 400
 
     hoy = _now_chile().date()
-    hoy_str = hoy.isoformat()
+    destino_str, _err_fecha = _sr_fecha_rescate(body.get("fecha"), hoy)
+    if _err_fecha:
+        return jsonify({"ok": False, "error": _err_fecha}), 400
     _ph = ",".join(["%s"] * len(item_ids))
     filas = mysql_fetchall(f"""
         SELECT mi.id AS item_id, mi.simpliroute_visit_id, tm.courier,
@@ -40328,28 +40366,28 @@ def tr_simpliroute_rescatar_congeladas():
                                "error": f"Ya no está libre (estado '{_estado}') "
                                         f"— el courier la tomó. No se tocó."})
             continue
-        if (v.get("planned_date") or "").strip() == hoy_str:
+        if (v.get("planned_date") or "").strip() == destino_str:
             resultados.append({"item_id": iid, "doc": doc, "ok": False,
-                               "error": "Ya está programada para hoy."})
+                               "error": f"Ya está programada para el {destino_str}."})
             continue
 
         r = _simpliroute_request("PATCH", f"{_src.EP_VISITS}{vid}/", token,
-                                 payload={"planned_date": hoy_str}, timeout=20)
+                                 payload={"planned_date": destino_str}, timeout=20)
         if not r.get("ok"):
             resultados.append({"item_id": iid, "doc": doc, "ok": False,
                                "error": r.get("error") or "SimpliRoute rechazó el cambio."})
             continue
 
         _tr_log("manifest_item", iid, "visita SimpliRoute rescatada",
-                f"visita {vid}: {v.get('planned_date') or '—'} → {hoy_str} "
+                f"visita {vid}: {v.get('planned_date') or '—'} → {destino_str} "
                 f"(estaba sin planificar en un dia vencido)")
         resultados.append({"item_id": iid, "doc": doc, "ok": True,
                            "visit_id": vid, "fecha_anterior": v.get("planned_date"),
-                           "fecha": hoy_str})
+                           "fecha": destino_str})
 
     ok_n = sum(1 for x in resultados if x.get("ok"))
     return jsonify({
-        "ok": True, "fecha": hoy_str,
+        "ok": True, "fecha": destino_str, "hoy": hoy.isoformat(),
         "rescatadas": ok_n,
         "sin_cambio": len(resultados) - ok_n,
         "resultados": resultados,
