@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}OT 2.0 · Diagnóstico{% endblock %}
+
+{#
+  ÓRDENES DE TRABAJO 2.0 — ETAPA 1: MEDIR (Daniel, 2026-08-18)
+
+  Primera pantalla del módulo 2.0. Es de SOLO LECTURA a propósito: antes de
+  construir nada nuevo, hay que ver el tamaño real del problema con datos
+  reales. Ver el comentario de `ot2_diagnostico` en app.py para el porqué.
+
+  Esta pantalla se borra el día que el número llegue a cero y se quede ahí.
+#}
+
+{% block content %}
+<style>
+  .d2-wrap{max-width:1180px}
+
+  /* Encabezado: identifica que esto es el módulo NUEVO, no el actual */
+  .d2-head{
+    background:linear-gradient(135deg,#0a0a0a,#1c1c22);
+    border-radius:16px; padding:26px 30px; margin-bottom:22px;
+    position:relative; overflow:hidden; color:#fff;
+  }
+  .d2-head::before{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.03) 0 1px,transparent 1px 12px);
+  }
+  .d2-badge{
+    display:inline-flex; align-items:center; gap:7px;
+    background:rgba(220,38,38,.16); border:1px solid rgba(220,38,38,.4);
+    color:#fca5a5; border-radius:999px; padding:4px 13px;
+    font-size:.68rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase;
+  }
+  .d2-head h1{font-size:1.7rem; font-weight:800; margin:12px 0 6px; letter-spacing:-.01em}
+  .d2-head p{color:#a1a1aa; font-size:.93rem; margin:0; max-width:70ch; line-height:1.55}
+
+  /* Marcadores */
+  .d2-kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin-bottom:22px}
+  .d2-kpi{
+    background:#fff; border:1px solid #eaecf0; border-radius:13px; padding:18px 20px;
+    box-shadow:0 1px 3px rgba(15,23,42,.05);
+  }
+  .d2-kpi .n{font-size:2.1rem; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; color:#0f172a}
+  .d2-kpi .l{font-size:.7rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:#9ca3af; margin-top:7px}
+  .d2-kpi .sub{font-size:.76rem; color:#64748b; margin-top:5px}
+  .d2-kpi.alerta{border-color:#fecaca; background:#fef2f2}
+  .d2-kpi.alerta .n{color:#dc2626}
+  .d2-kpi.ok{border-color:#bbf7d0; background:#f0fdf4}
+  .d2-kpi.ok .n{color:#15803d}
+
+  /* Explicación */
+  .d2-expl{
+    background:#fffbeb; border:1px solid #fde68a; border-left:4px solid #f59e0b;
+    border-radius:11px; padding:16px 20px; margin-bottom:22px;
+  }
+  .d2-expl h3{font-size:.92rem; font-weight:800; color:#92400e; margin:0 0 7px}
+  .d2-expl p{font-size:.86rem; color:#78350f; margin:0 0 6px; line-height:1.55}
+  .d2-expl p:last-child{margin-bottom:0}
+
+  /* Tabla */
+  .d2-card{background:#fff; border:1px solid #eaecf0; border-radius:14px; overflow:hidden;
+           box-shadow:0 1px 3px rgba(15,23,42,.05)}
+  .d2-card-head{padding:15px 20px; border-bottom:1px solid #f1f3f5; display:flex;
+                align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+  .d2-card-head h2{font-size:1rem; font-weight:800; margin:0; color:#0f172a}
+  .d2-scroll{overflow-x:auto}
+  .d2-tabla{width:100%; border-collapse:separate; border-spacing:0; font-size:.85rem}
+  .d2-tabla thead th{
+    position:sticky; top:0; z-index:2; background:#0a0a0a; color:#e2e8f0;
+    font-size:.66rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase;
+    padding:12px 14px; text-align:left; white-space:nowrap;
+    border-bottom:3px solid #dc2626;
+  }
+  .d2-tabla tbody td{padding:11px 14px; border-bottom:1px solid #f1f3f5; vertical-align:middle}
+  .d2-tabla tbody tr:nth-child(even){background:#fcfcfd}
+  .d2-tabla tbody tr:hover{background:#fef2f2}
+  .d2-num{font-family:'JetBrains Mono',ui-monospace,monospace; font-size:.76rem; font-weight:800;
+          background:#fee2e2; color:#991b1b; padding:4px 9px; border-radius:6px; white-space:nowrap}
+  .d2-num.sinot{background:#f3f4f6; color:#9ca3af}
+  .d2-tipo{font-size:.72rem; background:#f1f5f9; border:1px solid #e2e8f0; color:#475569;
+           padding:3px 9px; border-radius:999px; white-space:nowrap}
+  .d2-cli{font-weight:700; color:#0f172a; text-decoration:none; max-width:230px;
+          display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle}
+  .d2-cli:hover{color:#dc2626}
+  .d2-fecha{font-size:.78rem; color:#475569; white-space:nowrap; font-variant-numeric:tabular-nums}
+  .d2-chip-si{font-size:.68rem; font-weight:800; color:#991b1b; background:#fee2e2;
+              border:1px solid #fecaca; padding:3px 9px; border-radius:999px; white-space:nowrap}
+  .d2-chip-no{font-size:.68rem; font-weight:700; color:#64748b; background:#f3f4f6;
+              border:1px solid #e5e7eb; padding:3px 9px; border-radius:999px; white-space:nowrap}
+  .d2-ver{display:inline-flex; align-items:center; gap:5px; background:#0f172a; color:#fff;
+          border-radius:7px; padding:6px 12px; font-size:.73rem; font-weight:700; text-decoration:none; white-space:nowrap}
+  .d2-ver:hover{background:#dc2626; color:#fff}
+
+  .d2-vacio{padding:56px 30px; text-align:center}
+  .d2-vacio i{font-size:3.2rem; color:#16a34a; display:block; margin-bottom:12px}
+  .d2-vacio h3{font-size:1.1rem; font-weight:800; color:#15803d; margin:0 0 6px}
+  .d2-vacio p{color:#64748b; font-size:.88rem; margin:0}
+
+  .d2-pie{padding:13px 20px; background:#fafbfc; border-top:1px solid #f1f3f5;
+          font-size:.76rem; color:#94a3b8; font-weight:600}
+
+  @media (max-width:768px){
+    .d2-head{padding:20px}
+    .d2-head h1{font-size:1.35rem}
+    .d2-tabla{font-size:.78rem}
+    .d2-tabla thead th,.d2-tabla tbody td{padding:9px 10px}
+    .d2-cli{max-width:130px}
+  }
+</style>
+
+<div class="d2-wrap">
+
+  <div class="d2-head">
+    <span class="d2-badge"><i class="bi bi-rulers"></i>OT 2.0 · Etapa 1</span>
+    <h1>¿Cuántas OT tocaron la ficha sin que nadie lo decidiera?</h1>
+    <p>
+      Antes de construir el módulo nuevo, medimos el problema real con tus datos.
+      Esta pantalla es de solo lectura: no crea, no edita y no borra nada.
+    </p>
+  </div>
+
+  {% if error %}
+  <div class="alert alert-warning" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+    No se pudo completar la medición. El detalle quedó en el registro del servidor.
+  </div>
+  {% endif %}
+
+  <div class="d2-kpis">
+    <div class="d2-kpi {{ 'alerta' if resumen.afectadas else 'ok' }}">
+      <div class="n">{{ resumen.afectadas }}</div>
+      <div class="l">OT afectadas</div>
+      <div class="sub">de {{ resumen.universo }} revisadas</div>
+    </div>
+    <div class="d2-kpi {{ 'alerta' if resumen.con_promocion else 'ok' }}">
+      <div class="n">{{ resumen.con_promocion }}</div>
+      <div class="l">Llegaron a la ficha</div>
+      <div class="sub">modificaron datos del cliente de verdad</div>
+    </div>
+    <div class="d2-kpi">
+      <div class="n">{{ resumen.clientes }}</div>
+      <div class="l">Clientes alcanzados</div>
+      <div class="sub">fichas que podrían tener datos que nadie aprobó</div>
+    </div>
+    <div class="d2-kpi">
+      <div class="n">
+        {%- if resumen.universo -%}
+          {{ ((resumen.afectadas / resumen.universo) * 100) | round(1) }}%
+        {%- else -%}—{%- endif -%}
+      </div>
+      <div class="l">Proporción</div>
+      <div class="sub">cuánto del total se vio afectado</div>
+    </div>
+  </div>
+
+  <div class="d2-expl">
+    <h3><i class="bi bi-info-circle-fill me-1"></i>Qué estás viendo exactamente</h3>
+    <p>
+      Cuando un técnico sube la foto de un equipo o corrige su número de serie, el sistema
+      le engancha a esa orden un “levantamiento” por debajo — y al cerrarla, lo capturado
+      se copia a la ficha del cliente. Eso ocurre aunque la orden se haya creado como
+      <strong>{{ tipos_medidos | join(', ') }}</strong>, y sin que nadie lo elija.
+    </p>
+    <p>
+      Cada caso de la lista dejó un registro propio en el sistema, así que esto no es una
+      estimación: es el conteo exacto de las veces que pasó.
+    </p>
+  </div>
+
+  <div class="d2-card">
+    <div class="d2-card-head">
+      <h2>Los casos, uno por uno</h2>
+      {% if por_tipo %}
+      <div class="d-flex gap-2 flex-wrap">
+        {% for t in por_tipo %}
+        <span class="d2-tipo">{{ t.tipo }} · <strong>{{ t.n }}</strong></span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    {% if filas %}
+    <div class="d2-scroll">
+      <table class="d2-tabla">
+        <thead>
+          <tr>
+            <th>N° OT</th>
+            <th>Cliente</th>
+            <th>Se creó como</th>
+            <th>Cuándo ocurrió</th>
+            <th>Quién lo gatilló</th>
+            <th>¿Llegó a la ficha?</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in filas %}
+          <tr>
+            <td>
+              {% if f.numero_ot %}
+                <span class="d2-num">{{ f.numero_ot }}</span>
+              {% else %}
+                <span class="d2-num sinot">VS-{{ '%05d'|format(f.id) }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if f.cliente_id %}
+                <a class="d2-cli" href="{{ url_for('mant_ficha', cid=f.cliente_id) }}"
+                   title="{{ f.razon_social or 'Cliente' }}">{{ f.razon_social or 'Cliente' }}</a>
+              {% else %}
+                <span class="text-muted">Trabajo interno</span>
+              {% endif %}
+            </td>
+            <td><span class="d2-tipo">{{ f.tipo }}</span></td>
+            <td class="d2-fecha">{{ f.cuando or '—' }}</td>
+            <td class="d2-fecha">{{ f.quien or '—' }}</td>
+            <td>
+              {% if f.promovida %}
+                <span class="d2-chip-si">Sí, modificó la ficha</span>
+              {% else %}
+                <span class="d2-chip-no">Todavía no</span>
+              {% endif %}
+            </td>
+            <td>
+              <a class="d2-ver" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+                <i class="bi bi-box-arrow-in-right"></i>Ver OT
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="d2-pie">
+      Mostrando {{ filas | length }} caso(s){% if resumen.afectadas > filas|length %},
+      los más recientes de {{ resumen.afectadas }}{% endif %}.
+      Esta pantalla no modifica nada — solo cuenta.
+    </div>
+    {% else %}
+    <div class="d2-vacio">
+      <i class="bi bi-check-circle-fill"></i>
+      <h3>Ningún caso encontrado</h3>
+      <p>
+        No hay órdenes de {{ tipos_medidos | join(', ') }} que hayan terminado tocando la
+        ficha del cliente por su cuenta. Si esto se mantiene así, esta pantalla ya cumplió
+        su trabajo y se puede retirar.
+      </p>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

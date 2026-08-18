@@ -70303,6 +70303,147 @@ def mant_mi_dia():
 # Vista pro: todas las OTs con filtros (estado, técnico, cliente, rango)
 # ═════════════════════════════════════════════════════════════════════
 
+# ═════════════════════════════════════════════════════════════════════
+#  ÓRDENES DE TRABAJO 2.0 — ETAPA 1: MEDIR (Daniel, 2026-08-18)
+# ═════════════════════════════════════════════════════════════════════
+#  Daniel pidió reconstruir el módulo de OT con código limpio, en paralelo
+#  y sin borrar nada ("es posible crear algo paralelo, probarlo, y después
+#  migrar todo sin traer el cáncer?").
+#
+#  Una auditoría de 11 agentes con verificación adversarial concluyó que
+#  el primer paso NO es una pantalla nueva, sino MEDIR: las tres estrategias
+#  de migración evaluadas arrastraban el mismo problema, porque quien
+#  escribe la ficha del cliente es el código actual, no el módulo nuevo.
+#
+#  QUÉ MIDE ESTA PANTALLA
+#  ----------------------
+#  `_ensure_levantamiento_para_visita` (app.py ~72645) crea un levantamiento
+#  y se lo estampa a la OT cuando el técnico sube una foto de un equipo o
+#  edita su serie/marca/modelo. Su filtro (~72683) acepta CUATRO tipos:
+#  preventiva, levantamiento, instalacion, inspeccion. O sea: una OT creada
+#  como Preventiva se convierte en "modificadora de ficha" a mitad de la
+#  ejecución, sin que nadie lo elija. Al cerrar, lo capturado se promueve
+#  a mant_maquinas.
+#
+#  Cada vez que eso pasa, la función deja rastro en mant_logs con
+#  accion='levantamiento_creado_auto' (app.py ~72708). Ese registro es el
+#  marcador DEFINITIVO — no una heurística por nombre — y es lo que esta
+#  pantalla cuenta.
+#
+#  GARANTÍAS
+#  ---------
+#  - SOLO LECTURA. Cero INSERT/UPDATE/DELETE. No puede romper nada.
+#  - Ruta nueva bajo /ot/ (el prefijo del módulo 2.0). Nada de lo actual
+#    se toca ni se mueve: /mantenciones/ots sigue intacto (REGLA #4.2).
+#  - Reusa `_mant_required`, el mismo control de acceso del módulo actual.
+#
+#  Se borra el día que el contador llegue a cero y se mantenga ahí — es su
+#  propio criterio de éxito.
+# ═════════════════════════════════════════════════════════════════════
+
+# Los 3 tipos que NO son levantamiento pero que el gatillo igual acepta.
+# 'levantamiento' queda fuera a propósito: en ese tipo alimentar la ficha
+# ES el objetivo, no un efecto secundario.
+_OT2_TIPOS_CONTAMINABLES = ("preventiva", "instalacion", "inspeccion")
+
+
+@app.route("/ot/diagnostico")
+@_mant_required
+def ot2_diagnostico():
+    """OT 2.0 · Etapa 1 — cuántas OT terminaron tocando la ficha sin decidirlo.
+
+    Solo lectura. Tres consultas de conteo + una de detalle, todas SELECT.
+    """
+    _ph = ",".join(["%s"] * len(_OT2_TIPOS_CONTAMINABLES))
+    resumen = {"afectadas": 0, "universo": 0, "clientes": 0, "con_promocion": 0}
+    filas = []
+    por_tipo = []
+    error = None
+
+    try:
+        # ── 1. El número que importa: OT de tipo NO-levantamiento que
+        #       terminaron con un levantamiento pegado automáticamente.
+        #       Se cruza contra mant_logs, que es el rastro definitivo.
+        base_from = (
+            " FROM mant_visitas v "
+            " JOIN mant_logs l ON l.entidad='visita' AND l.entidad_id=v.id "
+            "                 AND l.accion='levantamiento_creado_auto' "
+            f" WHERE v.tipo IN ({_ph}) "
+        )
+        r = mysql_fetchone(
+            "SELECT COUNT(DISTINCT v.id) AS n, COUNT(DISTINCT v.cliente_id) AS c"
+            + base_from,
+            tuple(_OT2_TIPOS_CONTAMINABLES)
+        ) or {}
+        resumen["afectadas"] = int(r.get("n") or 0)
+        resumen["clientes"] = int(r.get("c") or 0)
+
+        # ── 2. El universo con el que comparar (para que el número tenga
+        #       escala: 8 de 12 es grave, 8 de 900 es anecdótico).
+        r2 = mysql_fetchone(
+            f"SELECT COUNT(*) AS n FROM mant_visitas WHERE tipo IN ({_ph})",
+            tuple(_OT2_TIPOS_CONTAMINABLES)
+        ) or {}
+        resumen["universo"] = int(r2.get("n") or 0)
+
+        # ── 3. De las afectadas, cuántas llegaron a promover de verdad a la
+        #       ficha (dejaron rastro en mant_maquina_levantamientos). Esta
+        #       es la parte con consecuencia real sobre los datos del cliente.
+        r3 = mysql_fetchone(
+            "SELECT COUNT(DISTINCT v.id) AS n"
+            + base_from
+            + "   AND EXISTS (SELECT 1 FROM mant_maquina_levantamientos ml "
+              "               WHERE ml.visita_id = v.id)",
+            tuple(_OT2_TIPOS_CONTAMINABLES)
+        ) or {}
+        resumen["con_promocion"] = int(r3.get("n") or 0)
+
+        # ── 4. Desglose por tipo, para saber cuál duele más.
+        por_tipo = mysql_fetchall(
+            "SELECT v.tipo, COUNT(DISTINCT v.id) AS n"
+            + base_from
+            + " GROUP BY v.tipo ORDER BY n DESC",
+            tuple(_OT2_TIPOS_CONTAMINABLES)
+        ) or []
+
+        # ── 5. El detalle, para poder abrir un caso concreto y verlo.
+        filas = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, "
+            "       v.titulo, v.cliente_id, c.razon_social, "
+            "       v.levantamiento_id, MIN(l.created_at) AS cuando, "
+            "       MIN(l.usuario) AS quien, "
+            "       EXISTS (SELECT 1 FROM mant_maquina_levantamientos ml "
+            "               WHERE ml.visita_id = v.id) AS promovida "
+            "  FROM mant_visitas v "
+            "  JOIN mant_logs l ON l.entidad='visita' AND l.entidad_id=v.id "
+            "                   AND l.accion='levantamiento_creado_auto' "
+            "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            f" WHERE v.tipo IN ({_ph}) "
+            " GROUP BY v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, "
+            "          v.titulo, v.cliente_id, c.razon_social, v.levantamiento_id "
+            " ORDER BY cuando DESC "
+            " LIMIT 300",
+            tuple(_OT2_TIPOS_CONTAMINABLES)
+        ) or []
+        filas = [dict(f) for f in filas]
+        for f in filas:
+            fp = f.get("fecha_programada")
+            f["fecha_programada"] = str(fp)[:10] if fp else ""
+            cu = f.get("cuando")
+            f["cuando"] = str(cu)[:19] if cu else ""
+
+    except Exception as e:
+        # Fail-open: una pantalla de diagnóstico jamás debe tumbar nada.
+        error = str(e)[:300]
+        print(f"[ot2_diagnostico] {e}", flush=True)
+
+    return render_template(
+        "ot2/diagnostico.html",
+        resumen=resumen, filas=filas, por_tipo=por_tipo,
+        tipos_medidos=_OT2_TIPOS_CONTAMINABLES, error=error,
+    )
+
+
 @app.route("/mantenciones/ots")
 @_mant_required
 def mant_ots_list():
