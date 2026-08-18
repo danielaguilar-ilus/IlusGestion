@@ -289,7 +289,9 @@
             role="tab" aria-controls="tabPanel-info">
       <i class="bi bi-info-circle-fill"></i>
       <span>Información de la OT</span>
-      <span class="badge-count" id="adjCountBadge">0</span>
+      {# is-zero: en móvil el "0" partía el título en dos líneas. El JS
+         (cargarAdjuntos) le quita la clase apenas hay documentos. #}
+      <span class="badge-count is-zero" id="adjCountBadge">0</span>
     </button>
     <button type="button" class="tx-tab-btn active" id="tabBtn-tareas" onclick="cambiarTabOT('tareas')"
             role="tab" aria-controls="tabPanel-tareas">
@@ -2839,6 +2841,11 @@ const PUEDE_EJECUTAR_FLAG = {{ 'true' if puede_ejecutar else 'false' }};
 // en vivo en renderResumen() con esa misma normalización, no un cálculo
 // paralelo.
 const FOTOS_COUNT = {{ fotos | length }};
+// 2026-08-18 (Daniel, urgente OT-2026-00097) — lista {id, tarea_id, url} de
+// las fotos ya subidas: el checklist las muestra por tarea con su botón de
+// eliminar (antes el contenedor quedaba vacío al recargar y el técnico no
+// podía corregir una foto equivocada).
+const FOTOS_VISITA = {{ fotos_js | tojson }};
 const VISITA_HORA_INICIO_RAW = "{{ visita.hora_real_inicio or visita.llego_al_sitio_at or '' }}";
 const VISITA_NUMERO_OT = {{ (visita.numero_ot or ('OT #' ~ visita.id)) | tojson }};
 
