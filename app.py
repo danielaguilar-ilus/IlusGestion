@@ -39831,13 +39831,34 @@ def tr_manifiesto_subir_simpliroute(mid):
                      f"(variable de entorno). Avisa al administrador."
         }), 503
 
-    # planned_date: la fecha del manifiesto es OBLIGATORIA para SimpliRoute
-    # (el Excel la dejaba vacía y la ponía el transportista).
+    # ── planned_date = EL DÍA EN QUE SE SUBE, no el día del manifiesto ──────
+    # FIX 2026-08-18 (levantamiento urgente: "suben desde el botón y no
+    # aparece en SimpliRoute"). Causa raíz encontrada con evidencia en vivo:
+    # la visita se creaba con la fecha del MANIFIESTO, que es el día en que
+    # Alison lo armó en ILUS -- no el día en que se entrega la carga al
+    # transporte. Cuando el manifiesto se sube al día siguiente (lo normal),
+    # la visita nacía en un día YA CERRADO y quedaba invisible para el
+    # despachador, en estado 'pending' para siempre.
+    #
+    # Casos reales medidos contra la API el 2026-08-18:
+    #   · FCV 11286 -- manifiesto 13/08, subido el 14/08 -> planned_date
+    #     13/08 -> 4,4 DÍAS en 'pending', nunca entregado.
+    #   · FCV 11273 -- manifiesto 17/08, subido el 18/08 -> planned_date
+    #     17/08 -> 'pending'.
+    #   · BLV 23088 (control) -- visita creada por el propio Felca con la
+    #     fecha del día -> 'completed', entregada. Ninguna visita creada por
+    #     ILUS llegó nunca a entregarse.
+    #
+    # Criterio de Daniel (2026-08-18), textual: "el día que se suben a
+    # SimpliRoute, porque ahí se estaría entregando al transporte". Subir =
+    # entregar la carga. Por eso la fecha es HOY (hora Chile), y si difiere
+    # de la del manifiesto se avisa explícitamente en la respuesta -- nunca
+    # se cambia en silencio.
     _fecha = man.get("fecha")
-    planned_date = _fecha.isoformat() if hasattr(_fecha, "isoformat") else str(_fecha or "").strip()
-    if not planned_date:
-        return jsonify({"error": "El manifiesto no tiene fecha de despacho — "
-                                 "SimpliRoute la exige para crear las visitas."}), 400
+    fecha_manifiesto = (_fecha.isoformat() if hasattr(_fecha, "isoformat")
+                        else str(_fecha or "").strip())
+    planned_date = _now_chile().date().isoformat()
+    fecha_cambiada = bool(fecha_manifiesto and fecha_manifiesto != planned_date)
 
     items = _tr_manifiesto_items_simpliroute(mid)
     if not items:
@@ -39914,8 +39935,13 @@ def tr_manifiesto_subir_simpliroute(mid):
 
     creadas = sum(1 for x in resultados if x.get("ok"))
     errores = sum(1 for x in resultados if not x.get("ok"))
+    # La fecha usada queda en la trazabilidad SIEMPRE: es el dato que
+    # explica en qué día del tablero del courier cayó cada visita, y fue
+    # justo lo que faltó para diagnosticar el problema de agosto 2026.
     _tr_log("manifest", mid, "subida a SimpliRoute",
-            f"courier={courier}; creadas={creadas}; errores={errores}; ya_estaban={ya_subidos}")
+            f"courier={courier}; creadas={creadas}; errores={errores}; "
+            f"ya_estaban={ya_subidos}; fecha_visita={planned_date}"
+            + (f" (manifiesto {fecha_manifiesto})" if fecha_cambiada else ""))
 
     # 2026-07-25 (fix Daniel: MAN-2026-0011 se quedaba en "En preparación" pese
     # a que SimpliRoute ya mostraba la visita asignada a chofer/vehículo).
@@ -39934,10 +39960,34 @@ def tr_manifiesto_subir_simpliroute(mid):
         except Exception as _e_sr_ev:
             print(f"[tr_event sr_subida] item={x.get('item_id')}: {_e_sr_ev}", flush=True)
 
+    # ── Avisos honestos para quien aprieta el botón ────────────────────────
+    # 2026-08-18. Antes la respuesta decía "creadas=1, errores=0" y todos
+    # asumían que el courier ya la tenía en su ruta. No es así: una visita
+    # recién creada queda SIN PLANIFICAR (status 'pending', sin chofer) hasta
+    # que el despachador la mete en una ruta. Ese matiz es exactamente lo que
+    # hizo que 4 despachos se perdieran en agosto sin que nadie se enterara.
+    avisos = []
+    if fecha_cambiada:
+        avisos.append(
+            f"La visita se programó para HOY ({planned_date}), no para la fecha "
+            f"del manifiesto ({fecha_manifiesto}): subir es entregar la carga al "
+            f"transporte, y una fecha pasada queda invisible en su tablero."
+        )
+    if creadas:
+        avisos.append(
+            f"{creadas} visita(s) quedaron creadas pero AÚN SIN PLANIFICAR en "
+            f"{courier}. Recién aparecen en la ruta cuando el despachador las "
+            f"asigna a un chofer. Si en un par de horas siguen sin moverse, "
+            f"conviene llamarlos."
+        )
+
     return jsonify({
         "ok": True, "total": len(items), "creadas": creadas,
         "ya_estaban": ya_subidos, "errores": errores, "resultados": resultados,
         "courier": courier, "fecha": planned_date,
+        "fecha_manifiesto": fecha_manifiesto,
+        "fecha_cambiada": fecha_cambiada,
+        "avisos": avisos,
     })
 
 
@@ -40091,6 +40141,219 @@ def tr_item_simpliroute_reprogramar(item_id):
             f"visita {vid} → nueva fecha {fecha}")
 
     return jsonify({"ok": True, "visit_id": vid, "fecha": fecha})
+
+
+def _sr_visita_sin_planificar(v):
+    """¿Esta visita está creada pero nadie la metió todavía en una ruta?
+
+    2026-08-18. Criterio en UN solo lugar: lo usan el listado de congeladas
+    y el rescate, y si se separan uno podría mover una visita que el otro
+    considera intocable.
+
+    'pending' es el estado con que nace toda visita creada por API. El
+    despachador la asigna a un vehículo y ahí aparece `route` (un dict con
+    driver_name -- misma lectura que ya hace tr_compromiso_trazabilidad; NO
+    hay campo `driver` en la raíz). Cualquier otro estado (on_its_way,
+    completed, failed, partial) significa que el courier YA la tomó.
+    """
+    if not isinstance(v, dict):
+        return False
+    if (v.get("status") or "").strip().lower() != "pending":
+        return False
+    return not isinstance(v.get("route"), dict)
+
+
+@app.route("/transporte/api/simpliroute/visitas-congeladas", methods=["GET"])
+@_tr_required
+def tr_simpliroute_visitas_congeladas():
+    """Visitas que ILUS creó en SimpliRoute y que siguen SIN PLANIFICAR.
+
+    2026-08-18. Nace del levantamiento urgente: Alison subía los despachos
+    con el botón, ILUS decía "creadas=1, errores=0", y la carga nunca salía.
+    Medido contra la API ese día: las visitas existían pero estaban en
+    'pending' sin chofer, varias con la fecha del manifiesto (un día ya
+    cerrado) -- FCV 11286 llevaba 4,4 días así. Nadie tenía forma de verlo
+    sin abrir cada pedido de a uno.
+
+    SOLO LECTURA: lista y explica. No reprograma ni cancela nada -- para eso
+    está el botón de rescate, que es una acción deliberada y auditada.
+
+    Consulta el estado EN VIVO contra SimpliRoute (reusa _simpliroute_request,
+    no duplica la llamada). Si la consulta de un item falla, ese item se
+    reporta como 'desconocido' en vez de romper la respuesta entera.
+    """
+    import simpliroute_client as _src
+
+    dias = request.args.get("dias", type=int) or 14
+    dias = max(1, min(dias, 90))
+
+    filas = mysql_fetchall("""
+        SELECT mi.id AS item_id, mi.simpliroute_visit_id, mi.simpliroute_synced_at,
+               tm.id AS manifest_id, tm.correlativo, tm.courier, tm.fecha AS fecha_manifiesto,
+               c.tido, c.nudo, c.cliente_nombre, c.comuna
+        FROM transport_manifest_items mi
+        JOIN transport_manifests   tm ON tm.id = mi.manifest_id
+        LEFT JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE NULLIF(TRIM(mi.simpliroute_visit_id), '') IS NOT NULL
+          AND mi.estado_entrega NOT IN ('Entregado', 'Devolución')
+          AND tm.fecha >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
+        ORDER BY tm.fecha ASC, mi.id ASC
+        LIMIT 100
+    """, (dias,)) or []
+
+    hoy = _now_chile().date()
+    congeladas, revisadas, sin_respuesta = [], 0, 0
+
+    for f in filas:
+        token = _simpliroute_token_for_courier(f.get("courier"))
+        if not token:
+            continue
+        vid = (f.get("simpliroute_visit_id") or "").strip()
+        r = _simpliroute_request("GET", f"{_src.EP_VISITS}{vid}/", token, timeout=15)
+        revisadas += 1
+        if not r.get("ok"):
+            sin_respuesta += 1
+            continue
+        v = r.get("data")
+        if not _sr_visita_sin_planificar(v):
+            continue
+
+        pd = (v.get("planned_date") or "").strip()
+        try:
+            dias_atras = (hoy - datetime.strptime(pd, "%Y-%m-%d").date()).days if pd else None
+        except ValueError:
+            dias_atras = None
+
+        congeladas.append({
+            "item_id": f["item_id"],
+            "manifest_id": f["manifest_id"],
+            "correlativo": f.get("correlativo"),
+            "courier": f.get("courier"),
+            "doc": _doc_label(f.get("tido"), f.get("nudo")),
+            "cliente": f.get("cliente_nombre") or "—",
+            "comuna": f.get("comuna") or "—",
+            "visit_id": vid,
+            "planned_date": pd,
+            # Negativo = programada a futuro (normal). Positivo = quedó en un
+            # día que ya pasó: ese es el caso grave, el tablero ya cerró.
+            "dias_en_el_pasado": dias_atras,
+            "vencida": bool(dias_atras is not None and dias_atras > 0),
+        })
+
+    vencidas = sum(1 for c in congeladas if c["vencida"])
+    if not congeladas:
+        resumen = "Ninguna visita quedó sin planificar."
+    else:
+        resumen = f"{len(congeladas)} visita(s) creadas por ILUS siguen sin planificar"
+        if vencidas:
+            resumen += f", {vencidas} de ellas con la fecha ya vencida"
+        resumen += "."
+
+    return jsonify({
+        "ok": True,
+        "hoy": hoy.isoformat(),
+        "revisadas": revisadas,
+        "sin_respuesta": sin_respuesta,
+        "congeladas": congeladas,
+        "total_congeladas": len(congeladas),
+        "total_vencidas": vencidas,
+        "resumen": resumen,
+    })
+
+
+@app.route("/transporte/api/simpliroute/rescatar-congeladas", methods=["POST"])
+@_tr_required
+def tr_simpliroute_rescatar_congeladas():
+    """Reprograma a HOY las visitas que quedaron atrapadas en un día vencido.
+
+    2026-08-18. Acción de rescate para los despachos que se perdieron por el
+    bug de la fecha (ver tr_manifiesto_subir_simpliroute). Reusa el MISMO
+    PATCH que tr_item_simpliroute_reprogramar -- no reimplementa la llamada.
+
+    Deliberadamente ACOTADO: solo toca visitas que (a) están en 'pending',
+    (b) no tienen chofer asignado y (c) su fecha YA VENCIÓ. Una visita
+    programada a futuro, o que el courier ya tomó, no se toca nunca -- mover
+    la fecha de algo que el despachador ya planificó sería peor que el bug.
+
+    Cada reprogramación queda en la trazabilidad del item.
+    """
+    import simpliroute_client as _src
+
+    body = request.get_json(silent=True) or {}
+    item_ids = body.get("item_ids") or []
+    if not isinstance(item_ids, list) or not item_ids:
+        return jsonify({"ok": False,
+                        "error": "Indica qué visitas rescatar (item_ids)."}), 400
+    try:
+        item_ids = [int(x) for x in item_ids][:100]
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "item_ids inválidos."}), 400
+
+    hoy = _now_chile().date()
+    hoy_str = hoy.isoformat()
+    _ph = ",".join(["%s"] * len(item_ids))
+    filas = mysql_fetchall(f"""
+        SELECT mi.id AS item_id, mi.simpliroute_visit_id, tm.courier,
+               c.tido, c.nudo
+        FROM transport_manifest_items mi
+        JOIN transport_manifests   tm ON tm.id = mi.manifest_id
+        LEFT JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.id IN ({_ph})
+          AND NULLIF(TRIM(mi.simpliroute_visit_id), '') IS NOT NULL
+    """, tuple(item_ids)) or []
+
+    resultados = []
+    for f in filas:
+        iid = f["item_id"]
+        vid = (f.get("simpliroute_visit_id") or "").strip()
+        doc = _doc_label(f.get("tido"), f.get("nudo"))
+        token = _simpliroute_token_for_courier(f.get("courier"))
+        if not token:
+            resultados.append({"item_id": iid, "doc": doc, "ok": False,
+                               "error": "Sin token para este courier."})
+            continue
+
+        # Re-verificar contra la API ANTES de tocar: el estado pudo cambiar
+        # entre que se listó y que se apretó el botón, y no queremos mover
+        # una visita que el courier ya planificó en el intertanto.
+        rv = _simpliroute_request("GET", f"{_src.EP_VISITS}{vid}/", token, timeout=15)
+        if not rv.get("ok"):
+            resultados.append({"item_id": iid, "doc": doc, "ok": False,
+                               "error": "No se pudo leer la visita en SimpliRoute."})
+            continue
+        v = rv.get("data") if isinstance(rv.get("data"), dict) else {}
+        if not _sr_visita_sin_planificar(v):
+            _estado = (v.get("status") or "—").strip() or "—"
+            resultados.append({"item_id": iid, "doc": doc, "ok": False,
+                               "error": f"Ya no está libre (estado '{_estado}') "
+                                        f"— el courier la tomó. No se tocó."})
+            continue
+        if (v.get("planned_date") or "").strip() == hoy_str:
+            resultados.append({"item_id": iid, "doc": doc, "ok": False,
+                               "error": "Ya está programada para hoy."})
+            continue
+
+        r = _simpliroute_request("PATCH", f"{_src.EP_VISITS}{vid}/", token,
+                                 payload={"planned_date": hoy_str}, timeout=20)
+        if not r.get("ok"):
+            resultados.append({"item_id": iid, "doc": doc, "ok": False,
+                               "error": r.get("error") or "SimpliRoute rechazó el cambio."})
+            continue
+
+        _tr_log("manifest_item", iid, "visita SimpliRoute rescatada",
+                f"visita {vid}: {v.get('planned_date') or '—'} → {hoy_str} "
+                f"(estaba sin planificar en un dia vencido)")
+        resultados.append({"item_id": iid, "doc": doc, "ok": True,
+                           "visit_id": vid, "fecha_anterior": v.get("planned_date"),
+                           "fecha": hoy_str})
+
+    ok_n = sum(1 for x in resultados if x.get("ok"))
+    return jsonify({
+        "ok": True, "fecha": hoy_str,
+        "rescatadas": ok_n,
+        "sin_cambio": len(resultados) - ok_n,
+        "resultados": resultados,
+    })
 
 
 def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema', comentario_evento=None):
