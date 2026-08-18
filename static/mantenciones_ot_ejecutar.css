@@ -2677,14 +2677,18 @@
   .tx-tab-btn .badge-count.is-zero{display:none}
   .tx-tab-btn .badge-count{flex:0 0 auto;padding:1px 6px}
 
-  /* 2 · Breadcrumb: una sola línea, el nombre largo se recorta */
+  /* 2 · Breadcrumb: una sola línea. El nivel ACTUAL manda — el equipo
+     intermedio cede espacio primero, porque su nombre completo ya se lee
+     en la tarjeta de abajo (con su S/N). */
   .tx-crumbs{flex-wrap:nowrap;gap:2px;padding:6px 0;margin-bottom:8px;min-width:0}
-  .tx-crumbs button{padding:4px 6px;min-width:0;max-width:100%}
+  .tx-crumbs button{padding:4px 6px;min-width:0}
   .tx-crumbs button, .tx-crumbs .curr{
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;
     line-height:1.9;
   }
-  .tx-crumbs button:first-child{flex:0 0 auto}
+  .tx-crumbs > button:first-child{flex:0 0 auto}
+  .tx-crumbs > button:not(:first-child){flex:0 1 auto;max-width:34%}
+  .tx-crumbs > .curr{flex:1 1 auto;min-width:0}
   .tx-crumbs .sep{flex:0 0 auto}
 
   /* 3 · Stepper dentro de su tarjeta, como en escritorio */
