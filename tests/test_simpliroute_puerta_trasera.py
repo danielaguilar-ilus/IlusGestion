@@ -317,3 +317,38 @@ class TestLaVentanaNoEscondeLoUrgente(unittest.TestCase):
         # "esto es todo lo que hay".
         self.assertIn("d.tope_alcanzado", self.js)
         self.assertIn("máximo por", self.js)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  6. La columna de atraso no puede decir "-1 días"
+# ══════════════════════════════════════════════════════════════════════
+class TestLaColumnaDeAtrasoDiceLaVerdad(unittest.TestCase):
+    """Visto en produccion apenas se ejecuto el rescate: con las 25 visitas
+    ya movidas al dia siguiente, la columna quedaba en "Vencida hace -1 días".
+
+    `dias_en_el_pasado` es NEGATIVO cuando la visita esta programada a
+    futuro, que es el caso NORMAL despues de rescatar. La cabecera ademas
+    afirmaba que todas estaban vencidas cuando ninguna lo estaba.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _leer("static/transporte_visitas_congeladas.js")
+
+    def test_solo_se_muestran_dias_cuando_hay_atraso_real(self):
+        self.assertIn("var vencida = dias > 0", self.js)
+        self.assertIn("txtDias", self.js)
+
+    def test_a_futuro_dice_al_dia_y_no_un_numero_negativo(self):
+        self.assertIn("'Al día'", self.js)
+
+    def test_el_dia_mismo_se_distingue(self):
+        # "0 días" seria ambiguo: no esta atrasada, pero es hoy.
+        self.assertIn("'Es hoy'", self.js)
+
+    def test_sin_atraso_el_color_es_verde_no_gris_de_alerta(self):
+        self.assertIn("!vencida ? '#16a34a'", self.js)
+
+    def test_la_cabecera_no_afirma_que_todas_estan_vencidas(self):
+        self.assertIn("Atraso</th>", self.js)
+        self.assertNotIn("Vencida hace</th>", self.js)

@@ -60,8 +60,15 @@
 
   // ── Pintado ──────────────────────────────────────────────────────────
   function filaHtml(c) {
+    // dias_en_el_pasado es NEGATIVO cuando la visita esta programada a
+    // futuro (caso normal despues de un rescate). "Vencida hace -1 dias" no
+    // se le dice a nadie: se muestra el estado real, que es otra cosa.
     var dias = c.dias_en_el_pasado || 0;
-    var tono = dias >= 7 ? '#dc2626' : (dias >= 3 ? '#f59e0b' : '#6b7280');
+    var vencida = dias > 0;
+    var tono = !vencida ? '#16a34a' : (dias >= 7 ? '#dc2626' : (dias >= 3 ? '#f59e0b' : '#6b7280'));
+    var txtDias = vencida
+      ? (dias + ' día' + (dias === 1 ? '' : 's'))
+      : (dias === 0 ? 'Es hoy' : 'Al día');
     return ''
       + '<tr>'
       +   '<td class="vc-check">'
@@ -74,7 +81,7 @@
       +   '<td>' + esc((c.courier || '').replace('Transporte ', '')) + '</td>'
       +   '<td class="vc-num">' + fechaCL(c.planned_date) + '</td>'
       +   '<td class="vc-num"><span class="vc-dias" style="color:' + tono + '">'
-      +     dias + ' día' + (dias === 1 ? '' : 's') + '</span></td>'
+      +     txtDias + '</span></td>'
       + '</tr>';
   }
 
@@ -139,7 +146,7 @@
       +   '<thead><tr>'
       +     '<th class="vc-check"><input type="checkbox" class="form-check-input" id="vcTodas" checked></th>'
       +     '<th>Documento</th><th>Cliente</th><th>Courier</th>'
-      +     '<th class="vc-num">Programada</th><th class="vc-num">Vencida hace</th>'
+      +     '<th class="vc-num">Programada</th><th class="vc-num">Atraso</th>'
       +   '</tr></thead><tbody>'
       +   _cong.map(filaHtml).join('')
       + '</tbody></table></div>';
