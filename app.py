@@ -71308,6 +71308,392 @@ def ot2_diagnostico():
     )
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  OT 2.0 · CREACIÓN INDEPENDIENTE
+# ══════════════════════════════════════════════════════════════════════
+#  Daniel (19-08-2026), textual: "quiero que crees las órdenes de trabajo
+#  con código nuevo, que sea símil a este, pero sin los males que hereda
+#  del levantamiento... necesito que sea independiente para que después
+#  eliminemos la otra y no quede afectada esta" + "dos módulos
+#  independientes, pero conectados a la misma base de datos".
+#
+#  QUÉ SIGNIFICA "INDEPENDIENTE" ACÁ, EN CONCRETO:
+#  - NO llama a _mant_lev_crear_ot_core ni a NADA de su cadena
+#    (_ot_crear_registro, _ot_resolver_checklist, _ot_resolver_tipo,
+#    _ot_crear_visita_espejo, _ot_limpiar_huerfanos). Si mañana se borra
+#    ese núcleo entero, esto sigue funcionando.
+#  - NUNCA escribe mant_visitas.levantamiento_id, ni inserta en
+#    mant_levantamientos / mant_levantamiento_items. El levantamiento es
+#    UN TIPO más, no un efecto secundario de cualquier OT.
+#  - NUNCA degrada el tipo a 'levantamiento' por defecto: si el tipo no
+#    viene o no es válido, responde 400. (El núcleo viejo hacía
+#    `data.get("tipo_ot") or "levantamiento"` — ese default es
+#    exactamente el origen de "elegí instalación y por debajo dice
+#    levantamiento".)
+#
+#  SÍ COMPARTE (a propósito, no por descuido): la MISMA base de datos y
+#  las MISMAS tablas. mant_visitas.id es la identidad pública de una OT —
+#  la URL /mantenciones/ot/<vid>, el token de firma que se le manda al
+#  cliente (_ot_firma_token lleva el id crudo) y tk_tickets.visita_id
+#  apuntan ahí. Una tabla nueva rompería los links de firma que ya están
+#  en manos de clientes.
+#
+#  Helpers genéricos que SÍ se reutilizan (no arrastran levantamiento):
+#    _next_ot_number_atomic  — correlativo atómico, evita colisiones
+#    _tarea_tipo_seguro      — sin esto vuelve el MySQL 1265 que dejaba
+#                              OT sin checklist (ver memoria de gotchas)
+#    _mant_log               — auditoría (REGLA #5)
+#    _tipo_es_trabajo_interno— única fuente de verdad de "¿va sin cliente?"
+# ══════════════════════════════════════════════════════════════════════
+
+def _ensure_ot_acceso_cols():
+    """Columnas de ACCESO AL LUGAR en mant_visitas — SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1 (por eso es un _ensure_ y no una migración
+    condicional).
+
+    Daniel (19-08-2026): el paso de equipos no se da por completo hasta
+    responder "¿tiene ascensor?" y "¿hay estacionamiento?"; el piso es
+    opcional (rango -5 a 30) y las notas también.
+
+    Van en la VISITA y no en el cliente a propósito: el mismo cliente
+    puede tener una sala en el subterráneo y otra en el piso 12, y el
+    dato que le importa al técnico es el de ESTA salida.
+    """
+    _cols = [
+        ("acceso_ascensor",       "TINYINT(1) NULL COMMENT 'Hay ascensor en el lugar (1/0). NULL = sin responder'"),
+        ("acceso_estacionamiento","TINYINT(1) NULL COMMENT 'Hay estacionamiento (1/0). NULL = sin responder'"),
+        ("acceso_piso",           "SMALLINT NULL COMMENT 'Nivel/piso del equipo, -5 a 30. Opcional'"),
+        ("acceso_notas",          "VARCHAR(500) NULL COMMENT 'Indicaciones de acceso para el tecnico'"),
+    ]
+    for _nombre, _ddl in _cols:
+        try:
+            _r = mysql_fetchone(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+                "   AND COLUMN_NAME=%s", (_nombre,))
+            if not _r:
+                mysql_execute(f"ALTER TABLE mant_visitas ADD COLUMN {_nombre} {_ddl}")
+                print(f"[ensure_ot_acceso] +{_nombre}", flush=True)
+        except Exception as e:
+            print(f"[ensure_ot_acceso] {_nombre}: {e}", flush=True)
+
+
+# Rango del selector de piso (Daniel: "puede ser desde un menos cinco a un
+# piso treinta, no creo que haya más de treinta pisos aquí en Chile").
+_OT2_PISO_MIN, _OT2_PISO_MAX = -5, 30
+
+# Jornada real de los técnicos (Daniel, 19-08-2026). No bloquea: avisa.
+_OT2_JORNADA_INI, _OT2_JORNADA_FIN = "08:00", "17:00"
+_OT2_COLACION_INI, _OT2_COLACION_FIN = "13:00", "14:00"
+
+
+def _ot2_err(mensaje, codigo, http=400, **extra):
+    """Respuesta de error uniforme: mensaje amigable para la pantalla,
+    código estable para el JS. El detalle técnico va al log, nunca al
+    cliente (REGLA #4)."""
+    payload = {"ok": False, "error": mensaje, "codigo": codigo}
+    payload.update(extra)
+    return jsonify(payload), http
+
+
+@app.route("/ot/api/crear", methods=["POST"])
+@_require_superadmin
+def ot2_api_crear():
+    """Crea una Orden de Trabajo — flujo NUEVO, sin pasar por el núcleo viejo.
+
+    Devuelve {ok, visita_id, numero_ot, ot_url, n_tareas}.
+
+    Todas las validaciones corren ANTES de tocar la base: si algo falta,
+    la OT no se empieza a crear a medias. La escritura completa vive en
+    UNA transacción — o queda todo, o no queda nada (incluido el
+    correlativo, que se devuelve solo con el rollback).
+    """
+    d = request.get_json(silent=True) or {}
+
+    # ── 1. TIPO — obligatorio y explícito. Nunca hay default. ──────────
+    tipo_ot = (d.get("tipo_ot") or "").strip().lower()
+    if not tipo_ot:
+        return _ot2_err("Elige el tipo de orden de trabajo.", "TIPO_REQUERIDO")
+    if tipo_ot not in _OT_TIPOS_VALIDOS:
+        return _ot2_err("Ese tipo de orden de trabajo no existe.", "TIPO_INVALIDO")
+
+    es_interna = _tipo_es_trabajo_interno(tipo_ot)
+
+    # ── 2. CLIENTE — obligatorio salvo trabajo interno ─────────────────
+    #    Daniel: "si es interna, tiene que estar a nombre de la empresa, o
+    #    al menos no tener cliente, porque nadie va a firmar".
+    cliente_id = d.get("cliente_id")
+    try:
+        cliente_id = int(cliente_id) if cliente_id not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        return _ot2_err("El cliente indicado no es válido.", "CLIENTE_INVALIDO")
+
+    if not es_interna and not cliente_id:
+        return _ot2_err("Esta orden necesita un cliente asignado.", "CLIENTE_REQUERIDO")
+    if es_interna:
+        cliente_id = None  # trabajo interno NUNCA queda colgado de un cliente
+
+    if cliente_id:
+        _cli = mysql_fetchone(
+            "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cliente_id,))
+        if not _cli:
+            return _ot2_err("No encontramos ese cliente.", "CLIENTE_NO_EXISTE", http=404)
+
+    # ── 3. AGENDA ──────────────────────────────────────────────────────
+    fecha_prog = (d.get("fecha_programada") or "").strip()
+    if not fecha_prog:
+        return _ot2_err("Falta la fecha programada.", "FECHA_REQUERIDA")
+    try:
+        import datetime as _dt
+        _f = _dt.datetime.strptime(fecha_prog[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return _ot2_err("La fecha programada no es válida.", "FECHA_INVALIDA")
+
+    hora_ini = (d.get("hora_inicio") or "").strip()[:5] or None
+    hora_fin = (d.get("hora_fin") or "").strip()[:5] or None
+
+    # Fuera de jornada NO bloquea -- avisa (Daniel: "se puede extender la
+    # jornada laboral, pero siempre con una alerta"). El aviso viaja de
+    # vuelta para que la pantalla lo muestre; la OT se crea igual.
+    avisos = []
+    if hora_ini and hora_ini < _OT2_JORNADA_INI:
+        avisos.append(f"Empieza antes de las {_OT2_JORNADA_INI}, fuera de la jornada.")
+    if hora_fin and hora_fin > _OT2_JORNADA_FIN:
+        avisos.append(f"Termina después de las {_OT2_JORNADA_FIN}: es jornada extendida.")
+    if hora_ini and hora_fin and hora_ini < _OT2_COLACION_FIN and hora_fin > _OT2_COLACION_INI:
+        avisos.append(f"Cruza la colación ({_OT2_COLACION_INI}–{_OT2_COLACION_FIN}).")
+    if _f.weekday() >= 5:
+        avisos.append("Cae en fin de semana, cuando no hay operación.")
+
+    # ── 4. ACCESO AL LUGAR — obligatorio salvo trabajo interno ─────────
+    #    (en bodega no hay "ascensor del cliente" que preguntar)
+    acc = d.get("acceso") or {}
+    acc_asc = acc.get("ascensor")
+    acc_est = acc.get("estacionamiento")
+    if not es_interna:
+        if acc_asc is None or acc_est is None:
+            return _ot2_err(
+                "Falta responder si el lugar tiene ascensor y estacionamiento.",
+                "ACCESO_REQUERIDO")
+    acc_asc = None if acc_asc is None else (1 if acc_asc else 0)
+    acc_est = None if acc_est is None else (1 if acc_est else 0)
+
+    acc_piso = acc.get("piso")
+    if acc_piso in ("", None):
+        acc_piso = None
+    else:
+        try:
+            acc_piso = int(acc_piso)
+        except (TypeError, ValueError):
+            return _ot2_err("El piso indicado no es válido.", "PISO_INVALIDO")
+        if not (_OT2_PISO_MIN <= acc_piso <= _OT2_PISO_MAX):
+            return _ot2_err(
+                f"El piso debe estar entre {_OT2_PISO_MIN} y {_OT2_PISO_MAX}.",
+                "PISO_FUERA_DE_RANGO")
+    acc_notas = (acc.get("notas") or "").strip()[:500] or None
+
+    # ── 5. EQUIPOS + PLANTILLA POR EQUIPO ──────────────────────────────
+    #    Daniel 2026-08-13: "no quiero nada automático, todo lo debe
+    #    escoger el usuario y si no escoge no lo debe dejar avanzar".
+    #    Acá se valida ANTES de crear nada, no se rellena después.
+    equipos_in = d.get("equipos") or []
+    equipos = []
+    for e in equipos_in:
+        try:
+            mid = int(e.get("maquina_id"))
+            pid = int(e.get("plantilla_id"))
+        except (TypeError, ValueError):
+            return _ot2_err(
+                "Cada equipo necesita su checklist elegido.",
+                "PLANTILLA_REQUERIDA")
+        equipos.append({"maquina_id": mid, "plantilla_id": pid})
+
+    if not equipos and not es_interna:
+        return _ot2_err(
+            "Agrega al menos un equipo a la orden.", "SIN_EQUIPOS")
+
+    # Trabajo interno sin equipos: necesita al menos una plantilla suelta
+    # para no nacer con checklist vacío (una OT sin tareas es una OT que
+    # nadie puede ejecutar ni cerrar).
+    plantilla_suelta = d.get("plantilla_id")
+    if not equipos:
+        try:
+            plantilla_suelta = int(plantilla_suelta)
+        except (TypeError, ValueError):
+            return _ot2_err(
+                "Elige el checklist de trabajo.", "PLANTILLA_REQUERIDA")
+
+    # Todas las plantillas referidas tienen que existir y estar activas.
+    _pids = sorted({e["plantilla_id"] for e in equipos} |
+                   ({plantilla_suelta} if plantilla_suelta else set()))
+    if _pids:
+        _ph = ",".join(["%s"] * len(_pids))
+        _found = mysql_fetchall(
+            f"SELECT id FROM mant_tarea_plantillas WHERE id IN ({_ph})",
+            tuple(_pids)) or []
+        if len({r["id"] for r in _found}) != len(_pids):
+            return _ot2_err(
+                "Uno de los checklists elegidos ya no existe.",
+                "PLANTILLA_NO_EXISTE", http=404)
+
+    # Los equipos deben pertenecer al cliente de la OT (si hay cliente).
+    if equipos and cliente_id:
+        _mids = sorted({e["maquina_id"] for e in equipos})
+        _ph = ",".join(["%s"] * len(_mids))
+        _ok = mysql_fetchall(
+            f"SELECT id FROM mant_maquinas WHERE id IN ({_ph}) AND cliente_id=%s",
+            tuple(_mids) + (cliente_id,)) or []
+        if len({r["id"] for r in _ok}) != len(_mids):
+            return _ot2_err(
+                "Alguno de los equipos no pertenece a este cliente.",
+                "EQUIPO_AJENO")
+
+    # ── 6. TÉCNICOS ────────────────────────────────────────────────────
+    tec_ids = []
+    for t in (d.get("tecnico_user_ids") or []):
+        try:
+            tec_ids.append(int(t))
+        except (TypeError, ValueError):
+            continue
+    tec_ids = sorted(set(tec_ids))
+    lider_id = d.get("tecnico_lider_id")
+    try:
+        lider_id = int(lider_id) if lider_id else (tec_ids[0] if tec_ids else None)
+    except (TypeError, ValueError):
+        lider_id = tec_ids[0] if tec_ids else None
+    if lider_id and lider_id not in tec_ids:
+        tec_ids.append(lider_id)
+
+    tecnico_nombre = None
+    if lider_id:
+        _t = mysql_fetchone(
+            "SELECT COALESCE(nombre, username) AS n FROM app_users WHERE id=%s",
+            (lider_id,))
+        tecnico_nombre = (_t or {}).get("n")
+
+    # ── 7. RESTO DE CAMPOS ─────────────────────────────────────────────
+    titulo = (d.get("titulo") or "").strip()[:200]
+    if not titulo:
+        titulo = f"{_TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title())} {_f.strftime('%d/%m/%Y')}"
+    descripcion = (d.get("descripcion") or "").strip()[:2000] or None
+    ticket_id = d.get("ticket_id")
+    try:
+        ticket_id = int(ticket_id) if ticket_id else None
+    except (TypeError, ValueError):
+        ticket_id = None
+    tarea_tipo = _tarea_tipo_seguro(tipo_ot)
+
+    # ── 8. ESCRITURA — una sola transacción ────────────────────────────
+    conn = None
+    try:
+        conn = get_mysql()
+        conn.autocommit(False)
+        cur = conn.cursor()
+
+        numero_ot = _next_ot_number_atomic(conn)
+
+        cur.execute(
+            "INSERT INTO mant_visitas "
+            "  (numero_ot, cliente_id, titulo, descripcion, fecha_programada, "
+            "   hora_inicio, hora_fin, tipo, estado, tecnico, tecnico_user_id, "
+            "   acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas, "
+            "   created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,%s)",
+            (numero_ot, cliente_id, titulo, descripcion, _f,
+             hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
+             acc_asc, acc_est, acc_piso, acc_notas,
+             current_username()))
+        vid = cur.lastrowid
+
+        # Técnicos asignados (N:N)
+        for tid in tec_ids:
+            cur.execute(
+                "INSERT IGNORE INTO mant_visita_tecnicos "
+                "  (visita_id, tecnico_id, tecnico_user_id, rol) "
+                "VALUES (%s, NULL, %s, %s)",
+                (vid, tid, "lider" if tid == lider_id else "tecnico"))
+
+        # Checklist: se copian los items de la plantilla elegida, por equipo.
+        n_tareas, orden = 0, 0
+        _destinos = ([(e["maquina_id"], e["plantilla_id"]) for e in equipos]
+                     or [(None, plantilla_suelta)])
+        for mid, pid in _destinos:
+            cur.execute(
+                "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
+                "       requiere_foto, unidad, rango_min, rango_max, "
+                "       opciones_lista_json, target_field "
+                "  FROM mant_tarea_plantilla_items "
+                " WHERE plantilla_id=%s ORDER BY orden, id", (pid,))
+            # get_mysql() usa DictCursor -> las filas son dicts, no tuplas.
+            # Se materializan ANTES de reusar el cursor para los INSERT.
+            _items = cur.fetchall()
+            for it in _items:
+                orden += 1
+                cur.execute(
+                    "INSERT INTO mant_visita_tareas "
+                    "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
+                    "   maquina_id, tipo_respuesta, target_field, obligatoria, "
+                    "   requiere_foto, unidad, rango_min, rango_max, "
+                    "   opciones_lista_json, estado_trabajo, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                    "        'pendiente',%s)",
+                    (vid, pid, orden, (it.get("titulo") or "")[:300],
+                     it.get("descripcion"), tarea_tipo, mid,
+                     it.get("tipo_respuesta") or "check", it.get("target_field"),
+                     it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                     it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
+                     it.get("opciones_lista_json"), current_username()))
+                n_tareas += 1
+
+        # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
+        if n_tareas == 0:
+            conn.rollback()
+            return _ot2_err(
+                "El checklist elegido no tiene tareas.", "CHECKLIST_VACIO")
+
+        # Vínculo con el ticket de origen, si vino de ahí.
+        if ticket_id:
+            try:
+                cur.execute(
+                    "UPDATE tk_tickets SET visita_id=%s WHERE id=%s AND visita_id IS NULL",
+                    (vid, ticket_id))
+            except Exception as _e_tk:
+                print(f"[ot2_crear] ticket {ticket_id}: {_e_tk}", flush=True)
+
+        conn.commit()
+
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        print(f"[ot2_api_crear] {e}", flush=True)
+        return _ot2_err(
+            "No pudimos crear la orden de trabajo. Ya quedó registrado el detalle.",
+            "ERROR_INTERNO", http=500)
+    finally:
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+    # ── 9. DESPUÉS del commit: auditoría y avisos (nunca tumban la OT) ──
+    try:
+        _mant_log("visita", vid, "creada",
+                  f"{numero_ot} · {tipo_ot} · OT 2.0 · {n_tareas} tareas")
+    except Exception as e:
+        print(f"[ot2_crear] log: {e}", flush=True)
+    if lider_id:
+        try:
+            _notificar_ot_asignada_interna(vid, lider_id, motivo="asignada")
+        except Exception as e:
+            print(f"[ot2_crear] notif: {e}", flush=True)
+
+    return jsonify({
+        "ok": True, "visita_id": vid, "numero_ot": numero_ot,
+        "ot_url": url_for("mant_ot_ficha", vid=vid),
+        "n_tareas": n_tareas, "avisos": avisos,
+    })
+
+
 @app.route("/mantenciones/ots")
 @_mant_required
 def mant_ots_list():
@@ -97708,6 +98094,14 @@ try:
         _ensure_estado_facturacion_nota_venta()
 except Exception as _ensure_efnv_err:
     print(f"[ILUS][WARN] _ensure_estado_facturacion_nota_venta: {_ensure_efnv_err}", flush=True)
+
+# Acceso al lugar en la OT (ascensor / estacionamiento / piso / notas),
+# Daniel 2026-08-19 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_ot_acceso_cols()
+except Exception as _ensure_acc_err:
+    print(f"[ILUS][WARN] _ensure_ot_acceso_cols: {_ensure_acc_err}", flush=True)
 
 # Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
 # 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
