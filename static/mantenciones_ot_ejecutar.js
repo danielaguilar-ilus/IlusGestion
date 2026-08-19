@@ -7033,6 +7033,68 @@ async function factAsociar(){
   }
 }
 
+// ═════════════════════════════════════════════════════════════
+// SALIDA POR GARANTÍA — la otra mitad del sello factura↔OT.
+// 2026-08-19 (Daniel, urgente — OT-2026-00098): "que Aaron coloque esto
+// como garantía y anule cualquier declaración de documento".
+// El motivo es obligatorio (≥10 caracteres) porque la garantía es plata
+// que ILUS no cobra: tiene que quedar justificada y con nombre.
+// ═════════════════════════════════════════════════════════════
+async function declararGarantia(){
+  const motivo = await ilusPrompt({
+    title: 'Declarar como garantía',
+    message: '¿Por qué esta visita no se le cobra al cliente?',
+    sub: 'Queda registrado con tu usuario y fecha. Mínimo 10 caracteres.',
+    placeholder: 'Ej: falla del equipo dentro del período de garantía del proveedor',
+    required: true,
+    multiline: true,
+    okLabel: 'Continuar',
+  });
+  if (!motivo) return;                      // null = canceló
+  if (motivo.trim().length < 10){
+    ilusToast('El motivo debe tener al menos 10 caracteres.', { type:'warning' });
+    return;
+  }
+  const ok = await ilusConfirm({
+    title: 'Confirmar garantía',
+    message: 'Esta OT quedará como GARANTÍA y podrá cerrarse sin factura.',
+    sub: 'Si tenía un documento de cobro asociado, se anula. Queda todo en el registro de la OT.',
+    okLabel: 'Sí, es garantía', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+
+  const btn = document.getElementById('garBtn');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/cobertura`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ garantia_aplica: true, motivo: motivo.trim() }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo declarar la garantía');
+    if (d.warning){
+      // Caso real: tipo='levantamiento' no admite garantía — el backend la
+      // degrada a servicio pagado y hay que decirlo, no fingir que resultó.
+      await ilusAlert({ title: 'Garantía no aplicable', message: d.warning, type: 'warning' });
+    } else {
+      ilusToast(d.documento_anulado
+        ? `✓ Garantía declarada — documento ${d.documento_anulado} anulado`
+        : '✓ Garantía declarada — ya puedes firmar el cierre', { type:'success' });
+    }
+    setTimeout(() => window.location.reload(), 1100);
+  } catch(e){
+    console.error('[declararGarantia]', e);
+    const err = document.getElementById('factErr');
+    if (err) err.textContent = e.message || 'No se pudo declarar la garantía';
+    ilusToast(e.message || 'No se pudo declarar la garantía', { type:'error' });
+    if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
 /* ---- (limite del <script> original en el template) ---- */
 
 (function(){
