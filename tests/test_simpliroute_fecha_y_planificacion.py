@@ -94,7 +94,11 @@ class TestLaFechaEsElDiaDeLaSubida(unittest.TestCase):
         cls.src = _cuerpo("tr_manifiesto_subir_simpliroute")
 
     def test_planned_date_sale_de_la_hora_chile_no_del_manifiesto(self):
-        self.assertIn("planned_date = _now_chile().date().isoformat()", self.src)
+        # 2026-08-18: el calculo se movio al helper compartido
+        # _sr_planned_date_hoy(), porque el reenvio y el redespacho
+        # automatico entraban por otra puerta y seguian usando la fecha del
+        # manifiesto. Ver tests/test_simpliroute_puerta_trasera.py.
+        self.assertIn("planned_date = _sr_planned_date_hoy()", self.src)
 
     def test_ya_no_usa_la_fecha_del_manifiesto_como_planned_date(self):
         """El bug exacto: planned_date salia de man['fecha'].
@@ -115,8 +119,11 @@ class TestLaFechaEsElDiaDeLaSubida(unittest.TestCase):
         """En Chile (UTC-4) una subida a las 21:30 es 01:30 UTC del dia
         SIGUIENTE. Con UTC, la visita nacia manana y quedaba igual de
         invisible -- el mismo bug con otro disfraz. REGLA #6."""
-        self.assertIn("_now_chile()", self.src)
+        # La hora Chile vive ahora dentro de _sr_planned_date_hoy(): aca se
+        # verifica que se use ESE helper y no una fecha calculada aparte.
+        self.assertIn("_sr_planned_date_hoy()", self.src)
         self.assertNotIn("datetime.utcnow().date()", self.src)
+        self.assertIn("_now_chile()", _cuerpo("_sr_planned_date_hoy"))
 
 
 class TestSeAvisaCuandoLaFechaCambia(unittest.TestCase):
@@ -231,8 +238,11 @@ class TestRescateEsConservador(unittest.TestCase):
         # Nunca "rescata todo lo que encuentre" por su cuenta.
         self.assertIn("item_ids", self.src)
 
-    def test_no_reprograma_lo_que_ya_esta_para_hoy(self):
-        self.assertIn("Ya está programada para hoy", self.src)
+    def test_no_reprograma_lo_que_ya_esta_en_la_fecha_destino(self):
+        # 2026-08-18: el rescate paso de "siempre hoy" a fecha elegible, asi
+        # que la comparacion es contra el destino, no contra hoy.
+        self.assertIn("Ya está programada para el", self.src)
+        self.assertIn("== destino_str", self.src)
 
     def test_cada_rescate_queda_en_la_trazabilidad(self):
         self.assertIn("visita SimpliRoute rescatada", self.src)
@@ -240,7 +250,9 @@ class TestRescateEsConservador(unittest.TestCase):
     def test_reusa_el_mismo_patch_que_reprogramar(self):
         # No se reimplementa la llamada al courier.
         self.assertIn("EP_VISITS", self.src)
-        self.assertIn('"planned_date": hoy_str', self.src.replace("'", '"'))
+        # La fecha del PATCH sale de la variable validada (antes era hoy_str;
+        # ver tests/test_rescate_elige_fecha.py para las reglas del destino).
+        self.assertIn('"planned_date": destino_str', self.src.replace("'", '"'))
 
     def test_tiene_tope_de_cuantas_toca_de_una_vez(self):
         self.assertIn("[:100]", self.src)

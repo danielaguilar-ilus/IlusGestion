@@ -18975,9 +18975,16 @@ def _tr_redespacho_automatico(item_id, commitment_id):
         except Exception as _e_cnt:
             print(f"[redespacho] no se pudo incrementar el contador "
                   f"(item={item_id}): {_e_cnt}", flush=True)
-        fecha_str = _ra.proxima_fecha_habil(_now_chile()).strftime("%d/%m/%Y")
+        # UNA sola fecha: la que se le promete al cliente y la que se
+        # programa en SimpliRoute son el mismo valor. Antes se calculaba el
+        # proximo dia habil SOLO para el mensaje, y la visita se creaba con
+        # la fecha del manifiesto -- ILUS le prometia al cliente el 19 y
+        # dejaba la visita en el 13, en un dia que el courier ya cerro.
+        fecha_reintento = _ra.proxima_fecha_habil(_now_chile())
+        fecha_str = fecha_reintento.strftime("%d/%m/%Y")
         r = _tr_simpliroute_reenviar_item(
             item_id, fuente_evento='sistema',
+            planned_date=fecha_reintento.isoformat(),
             comentario_evento=_ra.mensaje_redespacho_cliente(
                 courier_nombre=courier, fecha_estimada_str=fecha_str,
                 accion=decision["accion"]))
@@ -39857,7 +39864,7 @@ def tr_manifiesto_subir_simpliroute(mid):
     _fecha = man.get("fecha")
     fecha_manifiesto = (_fecha.isoformat() if hasattr(_fecha, "isoformat")
                         else str(_fecha or "").strip())
-    planned_date = _now_chile().date().isoformat()
+    planned_date = _sr_planned_date_hoy()
     fecha_cambiada = bool(fecha_manifiesto and fecha_manifiesto != planned_date)
 
     items = _tr_manifiesto_items_simpliroute(mid)
@@ -40394,7 +40401,26 @@ def tr_simpliroute_rescatar_congeladas():
     })
 
 
-def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema', comentario_evento=None):
+def _sr_planned_date_hoy():
+    """La fecha con que nace una visita nueva en SimpliRoute: HOY, hora Chile.
+
+    2026-08-18. Fuente unica de verdad. Existe porque el bug de PR #162 tenia
+    DOS puertas y solo se cerro una: la subida del manifiesto ya usaba hoy,
+    pero el reenvio (boton manual + redespacho automatico) seguia usando la
+    fecha del MANIFIESTO, o sea un dia normalmente ya cerrado en el tablero
+    del despachador. La visita nacia invisible, igual que FCV 11286.
+
+    Hora Chile y NO UTC: una subida a las 21:30 en Chile es 01:30 UTC del dia
+    siguiente -- el mismo bug con otro disfraz (REGLA #6).
+
+    Criterio de Daniel: "el dia que se suben a SimpliRoute, porque ahi se
+    estaria entregando al transporte". Subir = entregar la carga al courier.
+    """
+    return _now_chile().date().isoformat()
+
+
+def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema',
+                                  comentario_evento=None, planned_date=None):
     """Recrea la visita SimpliRoute de UN item. FUNCIÓN COMPARTIDA.
 
     Extraída 2026-08-05 de lo que antes era el cuerpo de la ruta
@@ -40428,10 +40454,12 @@ def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema', comentari
         return {"ok": False,
                 "error": "Falta configurar el token de SimpliRoute de este courier."}
 
-    _fecha = mi.get("fecha")
-    planned_date = _fecha.isoformat() if hasattr(_fecha, "isoformat") else str(_fecha or "").strip()
-    if not planned_date:
-        return {"ok": False, "error": "El manifiesto no tiene fecha de despacho."}
+    # La visita NACE con la fecha de hoy, no con la del manifiesto. Ese era
+    # el bug de PR #162 entrando por la otra puerta: el manifiesto suele ser
+    # de dias atras, y una visita en un dia cerrado no la ve nadie.
+    # `planned_date` explicito solo lo usa el redespacho automatico, que
+    # necesita el MISMO dia habil que ya le prometio al cliente.
+    planned_date = (str(planned_date or "").strip() or _sr_planned_date_hoy())
 
     items = _tr_manifiesto_items_simpliroute(mi["manifest_id"])
     it = next((x for x in items if x.get("item_id") == item_id), None)
@@ -40492,7 +40520,6 @@ def tr_item_simpliroute_reenviar(item_id):
                  400 if "ya tiene una visita" in (r.get("error") or "") else \
                  400 if "no trabaja con SimpliRoute" in (r.get("error") or "") else \
                  503 if "Falta configurar" in (r.get("error") or "") else \
-                 400 if "fecha de despacho" in (r.get("error") or "") else \
                  400 if "Datos incompletos" in (r.get("error") or "") else 502
         return jsonify(r), status
     return jsonify(r)

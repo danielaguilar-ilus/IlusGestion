@@ -50,6 +50,14 @@
         <i class="bi bi-cash-coin"></i> Revisar finanzas
       </button>
       {% endif %}
+      {# Visitas sin planificar (2026-08-18). Reusa .btn-monitor: es una
+         accion de control, no compite con "Nuevo manifiesto". No trae
+         contador porque el dato solo existe en SimpliRoute -- calcularlo
+         en cada carga de pagina costaria una llamada por visita. #}
+      <button type="button" class="btn-monitor" id="btnVisitasCongeladas"
+              title="Revisa en el transportista si alguna visita quedó sin chofer en un día ya vencido">
+        <i class="bi bi-calendar-x"></i> Visitas sin planificar
+      </button>
       <button class="btn-nuevo-man" data-bs-toggle="modal" data-bs-target="#newManModal">
         <i class="bi bi-plus-circle-fill"></i> Nuevo manifiesto
       </button>
@@ -564,11 +572,54 @@
 {% endif %}
 
 {% include 'transporte/_etiquetas_modal.html' %}
+
+{# ═══════════════════════════════════════════════════════════════════════
+   Visitas sin planificar — panel de rescate (2026-08-18)
+   Nace del incidente "subo a Felca y no llega": la visita caía en un día ya
+   cerrado del tablero del despachador y quedaba invisible. Se encontraron
+   19, la más vieja de 14 días. La lógica vive en
+   static/transporte_visitas_congeladas.js.
+   ═══════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade" id="vcModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content vc-content">
+      <div class="modal-header vc-header">
+        <div>
+          <h5 class="modal-title vc-title">
+            <i class="bi bi-calendar-x me-2"></i>Visitas sin planificar
+          </h5>
+          <div class="vc-title-sub">Las que quedaron en el transportista sin chofer asignado</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <div id="vcCuerpo"></div>
+      </div>
+
+      <div class="modal-footer vc-footer d-none" id="vcPie">
+        <div class="vc-fecha-wrap">
+          <label for="vcFecha" class="vc-fecha-lbl">Reprogramar para</label>
+          <input type="date" id="vcFecha" class="form-control vc-fecha">
+        </div>
+        <div class="vc-acciones">
+          <button type="button" class="btn btn-outline-secondary fw-bold" id="vcBtnRecargar"
+                  style="border-radius:10px">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+          <button type="button" class="btn-nuevo-man" id="vcBtnRescatar"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script defer src="{{ url_for('static', filename='transporte_etiquetas_modal.js') }}"></script>
 <script defer src="{{ url_for('static', filename='transporte_manifiestos.js') }}"></script>
+<script defer src="{{ url_for('static', filename='transporte_visitas_congeladas.js') }}"></script>
 
 {% if is_superadmin %}
 {# ── REVISAR FINANZAS: barrido del histórico financiero (2026-08-05) ──────

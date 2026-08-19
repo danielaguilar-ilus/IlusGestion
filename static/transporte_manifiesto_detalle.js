@@ -1,3 +1,26 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Fecha ISO -> dd/mm/aaaa. REGLA #6: ninguna fecha se muestra en ISO.
+   Se parte el string a mano a proposito: new Date('2026-08-18') se
+   interpreta como UTC y en Chile (UTC-4) retrocede al 17.
+   ───────────────────────────────────────────────────────────────────── */
+function _srFechaCL(iso){
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? (m[3] + '/' + m[2] + '/' + m[1]) : '';
+}
+
+/* Avisos del backend (fecha cambiada, visita sin planificar).
+   Existen desde PR #162 pero no los leia nadie: el backend los calculaba
+   y el front pintaba el mismo verde de siempre. Esa fue la falla muda que
+   dejo FCV 11286 congelada 4,4 dias sin que nadie se enterara. */
+function _srAvisosHtml(d){
+  var avisos = (d && d.avisos) || [];
+  if (!avisos.length) return '';
+  return '<div class="alert alert-warning py-2 mb-1 mt-1" style="font-size:.82rem">'
+    + '<div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill me-1"></i>Antes de cerrar, lee esto</div>'
+    + avisos.map(function(a){ return '• ' + _srEsc(a); }).join('<br>')
+    + '</div>';
+}
+
 /* ==========================================================================
    transporte_manifiesto_detalle.js
    Extraido TAL CUAL del bloque <script> inline de
@@ -3059,7 +3082,9 @@ async function _srEjecutar() {
   bar.style.width = '100%'; bar.textContent = '100%';
   msg.textContent = '¡Listo!';
 
-  var fechaLbl = d.fecha || MFD.fechaLbl;
+  // d.fecha viene ISO (2026-08-18) desde el backend. REGLA #6: jamas se
+  // muestra ISO crudo en pantalla -- Alison busca "18/08" en SimpliRoute.
+  var fechaLbl = _srFechaCL(d.fecha) || MFD.fechaLbl;
   var fechaEl = document.getElementById('srFechaTxt');
   if (fechaEl) fechaEl.textContent = fechaLbl;
 
@@ -3072,8 +3097,14 @@ async function _srEjecutar() {
       + '<i class="bi bi-check-circle-fill me-1"></i>' + d.creadas + ' visita(s) creada(s) en la cuenta de '
       + _srEsc(d.courier || 'el transportista') + '.'
       + (d.ya_estaban ? ' (' + d.ya_estaban + ' ya estaban subidas y se saltaron.)' : '') + '</div>';
+    resDiv.innerHTML += _srAvisosHtml(d);
     document.getElementById('srDondeVerla').classList.remove('d-none');
-    setTimeout(function(){ location.reload(); }, 4500);
+    // Sin avisos se recarga solo (flujo feliz de siempre). CON avisos NO:
+    // recargar a los 4,5 s se llevaria de la pantalla justo lo que Alison
+    // tiene que leer -- que la carga quedo sin planificar.
+    if (!(d.avisos && d.avisos.length)) {
+      setTimeout(function(){ location.reload(); }, 4500);
+    }
   } else {
     var fallidos = (d.resultados || []).filter(function(x){ return !x.ok; });
     resDiv.innerHTML = '<div class="alert alert-warning py-2 mb-1" style="font-size:.85rem">'
@@ -3082,7 +3113,7 @@ async function _srEjecutar() {
       + fallidos.slice(0, 5).map(function(f){
           return '• Item ' + f.item_id + ': ' + _srEsc(f.error || 'sin detalle');
         }).join('<br>') + (fallidos.length > 5 ? '<br>…y ' + (fallidos.length - 5) + ' más' : '')
-      + '</div>';
+      + '</div>' + _srAvisosHtml(d);
     if (d.creadas > 0) document.getElementById('srDondeVerla').classList.remove('d-none');
     setTimeout(function(){ location.reload(); }, 4500);
   }
