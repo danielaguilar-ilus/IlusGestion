@@ -9,7 +9,7 @@
    Este archivo usa variables globales declaradas en un <script> INLINE que
    quedo en el template, ANTES del <script defer src="...ot_ejecutar.js">:
    VID, VISITA_ESTADO, VISITA_TIPO, VISITA_LEVANTAMIENTO_ID,
-   ES_LEVANTAMIENTO, LEV_EDITABLE, DESTINO_LAT, DESTINO_LNG, DESTINO_DIR,
+   ES_LEVANTAMIENTO, ESCRIBE_FICHA_PERMANENTE, LEV_EDITABLE, DESTINO_LAT, DESTINO_LNG, DESTINO_DIR,
    RUTA_YA_INICIADA, EQUIPOS, EQUIPOS_IDX, PLANTILLAS_POR_MAQUINA,
    STATS_POR_MAQUINA, EQUIPOS_ESTADO_REVISION (let), PUEDE_EJECUTAR_FLAG,
    CURRENT_USER_ID, IS_ADMIN_LOCK, TAREAS_LOCKS (let), _CLOUD_TX_PROFILES,
@@ -2008,7 +2008,14 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
            Los datos del equipo no se pueden modificar desde aquí.
          </div>
        </div>`
-    : (ES_LEVANTAMIENTO
+    // PASO 5e (2026-08-12, plan "el levantamiento es un tipo más"): el
+    // banner de "¿esto se guarda en la ficha permanente?" usa
+    // ESCRIBE_FICHA_PERMANENTE (tipo==='levantamiento' estricto) -- el
+    // MISMO criterio que ahora usa el backend en mant_ot_equipo_datos
+    // (Paso 5c). ES_LEVANTAMIENTO (más amplio, incluye vínculo legacy) se
+    // sigue usando en el resto del archivo para mostrar EVIDENCIA ya
+    // capturada -- no se toca esa parte.
+    : (ESCRIBE_FICHA_PERMANENTE
         ? `<div class="lev-banner-ficha" role="status">
              <i class="bi bi-clipboard-check-fill"></i>
              <div>
@@ -2023,7 +2030,9 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
              <div>
                <strong>Edición rápida del equipo</strong>
                <div>Puedes actualizar marca/modelo/datos si los conoces.
-                 Los cambios quedan registrados en el historial del equipo.</div>
+                 Los cambios quedan registrados en el historial de esta OT
+                 y como sugerencia para la ficha del equipo -- fuera de un
+                 Levantamiento, ILUS no la actualiza automáticamente.</div>
              </div>
            </div>`);
 
