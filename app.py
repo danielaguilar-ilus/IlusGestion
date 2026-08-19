@@ -70759,26 +70759,71 @@ _OT2_TIPO_ICONS = {
 }
 
 # Los 14 valores reales de mant_visitas.estado → (label, clase css, ícono,
-# bucket de KPI). bucket=None queda fuera de los 4 contadores del hero
+# bucket de KPI). bucket=None queda fuera de los contadores del hero
 # (cancelada/anulada no son "trabajo pendiente" ni "trabajo hecho").
+# 'comp' y 'cerr' quedan SEPARADOS a propósito -- son etapas distintas
+# (completada = el técnico terminó; cerrada = las 3 firmas + facturación
+# quedaron OK). Mezclarlas escondería justo lo que Daniel pidió ver.
 _OT2_ESTADO_META = {
-    "creada":               ("Creada",              "est-programada",          "bi-plus-circle",        "prog"),
-    "programada":           ("Programada",           "est-programada",          "bi-calendar-event",     "prog"),
-    "asignada":             ("Asignada",             "est-programada",          "bi-person-check",       "prog"),
-    "reagendada":           ("Reagendada",           "est-programada",          "bi-calendar2-week",     "prog"),
-    "en_curso":             ("En ejecución",         "est-en_ejecucion",        "bi-lightning-charge-fill", "ejec"),
-    "en_ejecucion":         ("En ejecución",         "est-en_ejecucion",        "bi-lightning-charge-fill", "ejec"),
-    "firmada_tecnico":      ("Firmada técnico",      "est-firmada_tecnico",     "bi-pen",                "aprob"),
-    "pendiente_info":       ("Falta información",    "est-pendiente_aprobacion","bi-question-circle",    "aprob"),
-    "pendiente_repuesto":   ("Falta repuesto",       "est-pendiente_aprobacion","bi-box-seam",           "aprob"),
-    "pendiente_aprobacion": ("Por aprobar",          "est-pendiente_aprobacion","bi-hourglass-split",    "aprob"),
-    "completada":           ("Completada",           "est-completada",          "bi-check-circle-fill",  "comp"),
-    "cerrada":              ("Cerrada",              "est-cerrada",             "bi-lock-fill",          "comp"),
-    "cancelada":            ("Cancelada",            "est-cancelada",           "bi-x-circle",           None),
-    "anulada":              ("Anulada",              "est-cancelada",           "bi-slash-circle",       None),
+    "creada":               ("Creada",              "st-prog",   "bi-plus-circle",           "prog"),
+    "programada":           ("Programada",          "st-prog",   "bi-calendar2-event",       "prog"),
+    "asignada":             ("Asignada",            "st-prog",   "bi-person-check",          "prog"),
+    "reagendada":           ("Reagendada",          "st-prog",   "bi-calendar2-week",        "prog"),
+    "en_curso":             ("En ejecución",        "st-ejec",   "bi-lightning-charge-fill", "ejec"),
+    "en_ejecucion":         ("En ejecución",        "st-ejec",   "bi-lightning-charge-fill", "ejec"),
+    "firmada_tecnico":      ("Firmada técnico",     "st-aprob",  "bi-pen",                   "aprob"),
+    "pendiente_info":       ("Falta información",   "st-aprob",  "bi-question-circle",       "aprob"),
+    "pendiente_repuesto":   ("Falta repuesto",      "st-aprob",  "bi-box-seam",              "aprob"),
+    "pendiente_aprobacion": ("Por aprobar",         "st-aprob",  "bi-hourglass-split",        "aprob"),
+    "completada":           ("Completada",          "st-comp",   "bi-check-circle-fill",     "comp"),
+    "cerrada":              ("Cerrada",             "st-cerr",   "bi-lock-fill",              "cerr"),
+    "cancelada":            ("Cancelada",           "st-cancel", "bi-x-circle",               None),
+    "anulada":              ("Anulada",             "st-cancel", "bi-slash-circle",           None),
 }
 _OT2_DOW_ES = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+_OT2_MESES_ES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+                  "agosto", "septiembre", "octubre", "noviembre", "diciembre")
 _OT2_PER_PAGE_OPCIONES = (10, 25, 50, 100)
+
+# Daniel, 19-08-2026: "quiero verlas como tabla, como tarjeta, Kanban, y un
+# posible calendario... algo bien potente, tipo Trello". Las 4 vistas leen
+# el MISMO universo de filas (origen + búsqueda); lo único que cambia es
+# cómo se agrupan. Kanban queda oculto del selector en móvil (columnas
+# lado a lado no funcionan en pantalla chica) -- confirmado con Daniel.
+_OT2_VISTAS = ("tarjeta", "tabla", "kanban", "calendario")
+_OT2_FASES = ("ejec", "prog", "aprob", "comp", "cerr")
+_OT2_FASE_LABELS = {
+    "ejec": "En ejecución", "prog": "Programadas", "aprob": "Por aprobar",
+    "comp": "Completadas", "cerr": "Cerradas",
+}
+_OT2_FASE_A_ESTADOS = {
+    clave: [k for k, v in _OT2_ESTADO_META.items() if v[3] == clave]
+    for clave in _OT2_FASES
+}
+# Kanban y Calendario NO paginan (muestran el panorama completo agrupado) --
+# por eso llevan un tope propio en vez de LIMIT/OFFSET. Si algún día un
+# cliente acumula más OT reales que este tope, se recorta CON AVISO
+# ("+N más") en vez de fallar o mentir el conteo -- el total real siempre
+# sale de `kpis`, que es un COUNT aparte sin tope.
+_OT2_KANBAN_LIMIT_TOTAL = 400
+_OT2_KANBAN_CAP_COL = 40
+_OT2_CAL_CAP_DIA = 4
+
+_OT2_SELECT_FILAS = (
+    "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
+    "       v.fecha_programada, v.cliente_id, c.razon_social, "
+    "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+    "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
+    "       COALESCE(tar.n_completas, 0) AS n_completas, "
+    "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at "
+)
+_OT2_JOIN_TAREAS = (
+    "  LEFT JOIN ( "
+    "       SELECT visita_id, COUNT(*) AS n_tareas, "
+    "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS n_completas "
+    "         FROM mant_visita_tareas GROUP BY visita_id "
+    "  ) tar ON tar.visita_id = v.id "
+)
 
 
 def _ot2_iniciales(nombre):
@@ -70790,16 +70835,90 @@ def _ot2_iniciales(nombre):
     return (partes[0][0] + partes[1][0]).upper()
 
 
+def _ot2_enriquecer_fila(f, hoy):
+    """Agrega a `f` (fila cruda de _OT2_SELECT_FILAS) los campos derivados
+    que usa el template: fecha, tipo, estado, sello, anillo. Muta in place.
+
+    Compartida por las 4 vistas -- Tabla/Tarjeta traen su página ya lista
+    para esto; Kanban/Calendario traen su propio recorte de filas (sin
+    paginar) y pasan por la MISMA función para no duplicar la lógica.
+    """
+    fp = f.get("fecha_programada")
+    if fp and hasattr(fp, "isoformat"):
+        f["fecha_dia"] = fp.strftime("%d/%m")
+        f["fecha_dow"] = "Hoy" if fp == hoy else _OT2_DOW_ES[fp.weekday()]
+        f["fecha_es_hoy"] = (fp == hoy)
+    else:
+        f["fecha_dia"], f["fecha_dow"], f["fecha_es_hoy"] = "—", "", False
+
+    # Split seguro de "OT-2026-00161" -> prefijo "2026" + sufijo "00161".
+    num = f.get("numero_ot") or ""
+    partes = num.split("-")
+    if len(partes) == 3:
+        f["numero_prefijo"], f["numero_sufijo"] = partes[1], partes[2]
+    else:
+        f["numero_prefijo"], f["numero_sufijo"] = "", num
+
+    tipo = f.get("tipo") or ""
+    f["tipo_label"] = _TIPO_OT_LABEL.get(tipo, tipo.replace("_", " ").title() or "Sin tipo")
+    f["tipo_icon"] = _OT2_TIPO_ICONS.get(tipo, "bi-clipboard2")
+
+    estado = f.get("estado")
+    meta = _OT2_ESTADO_META.get(estado)
+    if meta:
+        f["estado_label"], f["estado_class"], f["estado_icon"], f["estado_fase"] = meta
+    else:
+        f["estado_label"] = (estado or "—").replace("_", " ").title()
+        f["estado_class"], f["estado_icon"], f["estado_fase"] = "st-prog", "bi-question-circle", None
+    f["estado_en_vivo"] = estado in ("en_curso", "en_ejecucion")
+
+    # Subtítulo del sello de estado -- SIEMPRE un dato real, nunca
+    # fabricado. Cae a la fecha programada si no hay timestamp más
+    # específico para ese estado.
+    def _hhmm(dt):
+        return dt.strftime("%H:%M") if dt and hasattr(dt, "strftime") else None
+    def _ddmm(dt):
+        return dt.strftime("%d/%m") if dt and hasattr(dt, "strftime") else None
+    hri, cerr_at, ftec_at = f.get("hora_real_inicio"), f.get("cerrada_at"), f.get("firma_tecnico_at")
+    if estado in ("en_curso", "en_ejecucion") and _hhmm(hri):
+        f["estado_sub"] = f"En sitio desde {_hhmm(hri)}"
+    elif estado == "cerrada" and _ddmm(cerr_at):
+        f["estado_sub"] = f"Cerrada el {_ddmm(cerr_at)}"
+    elif estado in ("firmada_tecnico", "pendiente_aprobacion", "pendiente_info", "pendiente_repuesto") and _ddmm(ftec_at):
+        f["estado_sub"] = f"Firmada por el técnico el {_ddmm(ftec_at)}"
+    elif f["fecha_dia"] != "—":
+        f["estado_sub"] = f"Programada {f['fecha_dia']}"
+    else:
+        f["estado_sub"] = ""
+
+    f["tecnico_ini"] = _ot2_iniciales(f.get("tecnico_nombre"))
+
+    nt, nc = f.get("n_tareas") or 0, f.get("n_completas") or 0
+    f["check_pct"] = round(nc * 100 / nt) if nt else 0
+    f["check_done"] = bool(nt and nc >= nt)
+    # Anillo SVG: circunferencia real para r=26 es 2*pi*26=163.36.
+    # offset=0 -> anillo lleno; offset=163.36 -> anillo vacío.
+    f["ring_offset"] = round(163.36 * (1 - f["check_pct"] / 100), 1)
+
+
 @app.route("/ot/")
 @_require_superadmin
 def ot2_panel():
-    """OT 2.0 · BETA solo superadmin — tabla simple de OT reales.
+    """OT 2.0 · BETA solo superadmin — panel de OT reales, 4 vistas.
 
     Daniel (18-08-2026, antes de dormir): "modalidad de prueba donde
     solamente el superadministrador pueda ver este módulo... hagamos una
     tabla donde visualicemos las órdenes de trabajo, y solo eso... vamos a
     reestructurar todo de ahí para adelante... utilicemos la información
     que ya existe."
+
+    Daniel (19-08-2026): "quiero verlas como tabla, como tarjeta, Kanban,
+    y un posible calendario... algo bien potente, tipo Trello". Las 4
+    vistas comparten el mismo universo (origen + búsqueda); Tabla/Tarjeta
+    paginan (REGLA #4.3), Kanban/Calendario muestran el panorama completo
+    agrupado (con tope + aviso, ver _OT2_KANBAN_LIMIT_TOTAL). Kanban
+    agrupa por las 5 fases ya usadas en el scoreboard (confirmado con
+    Daniel, no por los 13 estados crudos).
 
     SOLO LECTURA. Consultas propias y aisladas — no reutiliza la función
     gigante de /mantenciones/ots (esa es justo la que se quiere dejar
@@ -70811,10 +70930,14 @@ def ot2_panel():
     tecnico_nombre es el snapshot que se guarda directo al asignar (más
     confiable que tecnico_id, que la auditoría del 18-08 encontró "zombie":
     8 lecturas, 0 escrituras — casi siempre vacío).
-
-    Paginación real (REGLA #4.3): page/per_page en la URL, sin JavaScript.
     """
+    import datetime as _dt
+    import calendar as _calmod
+
     origen = "automaticas" if request.args.get("origen") == "automaticas" else "reales"
+    vista = request.args.get("vista") or "tarjeta"
+    if vista not in _OT2_VISTAS:
+        vista = "tarjeta"
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (TypeError, ValueError):
@@ -70826,20 +70949,54 @@ def ot2_panel():
     if per_page not in _OT2_PER_PAGE_OPCIONES:
         per_page = 25
 
-    filas, kpis, error = [], {"ejec": 0, "prog": 0, "aprob": 0, "comp": 0}, None
-    conteo_reales = conteo_automaticas = total_paginas = 0
+    # Buscador + filtro por fase (Daniel, 19-08-2026: "tiene que haber un
+    # filtro"). q busca por N° OT / cliente / técnico; fase filtra por el
+    # mismo bucket que ya usan los KPIs -- solo aplica a Tabla/Tarjeta:
+    # en Kanban la fase ES la columna (no tiene sentido filtrarla) y en
+    # Calendario el color del chip ya distingue el estado.
+    q = (request.args.get("q") or "").strip()[:120]
+    fase = request.args.get("fase") or ""
+    if fase not in _OT2_FASES or vista not in ("tabla", "tarjeta"):
+        fase = ""
+
+    filas, kpis, error = [], {k: 0 for k in _OT2_FASES}, None
+    conteo_reales = conteo_automaticas = total_paginas = total_filtrado = 0
+    kanban_cols = []
+    cal_semanas, cal_mes_label, cal_mes_ant, cal_mes_sig, cal_mes_actual = [], "", "", "", ""
     hoy = None
     where_origen = (
         "v.numero_ot IS NOT NULL AND TRIM(v.numero_ot) <> ''" if origen == "reales"
         else "(v.numero_ot IS NULL OR TRIM(v.numero_ot) = '')"
     )
 
+    # Cláusulas extra parametrizadas -- se aplican SOBRE el JOIN a
+    # app_users (para poder buscar por técnico), así que van después del
+    # FROM completo, nunca concatenadas con el valor crudo del usuario.
+    # q y fase van SEPARADAS: Tabla/Tarjeta usan ambas; Kanban/Calendario
+    # solo q (fase no aplica en esas dos vistas, ver arriba).
+    extra_where_q, extra_params_q = [], []
+    if q:
+        extra_where_q.append(
+            "(v.numero_ot LIKE %s OR c.razon_social LIKE %s "
+            " OR COALESCE(au.nombre, au.username) LIKE %s)"
+        )
+        like = f"%{q}%"
+        extra_params_q.extend([like, like, like])
+    where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
+
+    extra_where, extra_params = list(extra_where_q), list(extra_params_q)
+    if fase:
+        _ph = ",".join(["%s"] * len(_OT2_FASE_A_ESTADOS[fase]))
+        extra_where.append(f"v.estado IN ({_ph})")
+        extra_params.extend(_OT2_FASE_A_ESTADOS[fase])
+    where_extra_sql = (" AND " + " AND ".join(extra_where)) if extra_where else ""
+
     try:
-        import datetime as _dt
         hoy = _dt.date.today()
 
-        # Los dos totales del hero/pestañas — siempre ambos, sin importar
-        # qué pestaña esté activa, para que la comparación tenga sentido.
+        # Los dos totales del hero/pestañas — siempre el universo COMPLETO,
+        # sin q/fase, para que la pestaña siga diciendo "cuántas hay en
+        # total" y no se confunda con "cuántas coinciden con tu búsqueda".
         conteo_reales = int((mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_visitas "
             "WHERE numero_ot IS NOT NULL AND TRIM(numero_ot) <> ''"
@@ -70848,82 +71005,121 @@ def ot2_panel():
             "SELECT COUNT(*) AS n FROM mant_visitas "
             "WHERE numero_ot IS NULL OR TRIM(numero_ot) = ''"
         ) or {}).get("n") or 0)
-        total_filas = conteo_reales if origen == "reales" else conteo_automaticas
-        total_paginas = max(1, -(-total_filas // per_page))  # ceil sin importar math
+
+        # JOINs comunes a todas las consultas -- SIN WHERE, para poder
+        # anteponer el JOIN de `tar` sin que el WHERE quede en medio (SQL
+        # inválido si el WHERE va antes que todos los JOIN).
+        _joins_comunes = (
+            "  FROM mant_visitas v "
+            "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
+            "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
+        )
+        _where_completo = f" WHERE {where_origen} {where_extra_sql} "
+
+        # Total FILTRADO (con q/fase) -- el que manda para la paginación de
+        # Tabla/Tarjeta, y también el número que se muestra en el aviso de
+        # "filtro activo" en las 4 vistas.
+        total_filtrado = int((mysql_fetchone(
+            f"SELECT COUNT(*) AS n {_joins_comunes}{_where_completo}",
+            tuple(extra_params)
+        ) or {}).get("n") or 0)
+        total_paginas = max(1, -(-total_filtrado // per_page))  # ceil sin importar math
         if page > total_paginas:
             page = total_paginas
 
-        # KPIs del corte ACTUAL (reales o automáticas, no mezclados).
+        # KPIs del corte ACTUAL (reales o automáticas) + q, pero SIN fase
+        # -- si no, al filtrar por "Programadas" los otros 4 contadores
+        # colapsarían a 0 y el usuario no podría volver a ellos con un
+        # clic. Además: es la fuente de verdad del TOTAL real por fase que
+        # usa Kanban para su encabezado de columna (sin el tope de fetch).
+        _where_kpi = f" WHERE {where_origen} {where_extra_sql_q} "
         for fila_kpi in (mysql_fetchall(
-            f"SELECT v.estado, COUNT(*) AS n FROM mant_visitas v "
-            f"WHERE {where_origen} GROUP BY v.estado"
+            f"SELECT v.estado, COUNT(*) AS n {_joins_comunes}{_where_kpi} GROUP BY v.estado",
+            tuple(extra_params_q)
         ) or []):
             bucket = (_OT2_ESTADO_META.get(fila_kpi["estado"]) or (None, None, None, None))[3]
             if bucket:
                 kpis[bucket] += int(fila_kpi["n"] or 0)
 
-        filas = mysql_fetchall(
-            "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
-            "       v.fecha_programada, v.cliente_id, c.razon_social, "
-            # BUG REAL 2026-08-19 (encontrado al verificar en vivo con la
-            # sesion de Daniel): v.tecnico_nombre NO existe en mant_visitas
-            # -- esa columna la tenia otra tabla. La real y confirmada
-            # contra el ALTER (app.py ~50330) es tecnico_user_id, ya unida
-            # mas abajo contra app_users.
-            "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
-            "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
-            "       COALESCE(tar.n_completas, 0) AS n_completas "
-            "  FROM mant_visitas v "
-            "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
-            "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
-            "  LEFT JOIN ( "
-            "       SELECT visita_id, COUNT(*) AS n_tareas, "
-            "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS n_completas "
-            "         FROM mant_visita_tareas GROUP BY visita_id "
-            "  ) tar ON tar.visita_id = v.id "
-            f" WHERE {where_origen} "
-            " ORDER BY v.numero_ot DESC, v.id DESC "
-            " LIMIT %s OFFSET %s",
-            (per_page, (page - 1) * per_page)
-        ) or []
-        filas = [dict(f) for f in filas]
+        if vista in ("tabla", "tarjeta"):
+            filas = mysql_fetchall(
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_completo +
+                " ORDER BY v.numero_ot DESC, v.id DESC "
+                " LIMIT %s OFFSET %s",
+                tuple(extra_params) + (per_page, (page - 1) * per_page)
+            ) or []
+            filas = [dict(f) for f in filas]
+            for f in filas:
+                _ot2_enriquecer_fila(f, hoy)
 
-        for f in filas:
-            fp = f.get("fecha_programada")
-            if fp and hasattr(fp, "isoformat"):
-                f["fecha_dia"] = fp.strftime("%d/%m")
-                f["fecha_dow"] = "Hoy" if fp == hoy else _OT2_DOW_ES[fp.weekday()]
-                f["fecha_es_hoy"] = (fp == hoy)
-            else:
-                f["fecha_dia"], f["fecha_dow"], f["fecha_es_hoy"] = "—", "", False
+        elif vista == "kanban":
+            _where_solo_q = f" WHERE {where_origen} {where_extra_sql_q} "
+            filas_kanban = mysql_fetchall(
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_solo_q +
+                " ORDER BY v.numero_ot DESC, v.id DESC LIMIT %s",
+                tuple(extra_params_q) + (_OT2_KANBAN_LIMIT_TOTAL,)
+            ) or []
+            filas_kanban = [dict(f) for f in filas_kanban]
+            for f in filas_kanban:
+                _ot2_enriquecer_fila(f, hoy)
+            for clave in _OT2_FASES:
+                en_fase = [f for f in filas_kanban if f.get("estado_fase") == clave]
+                mostradas = en_fase[:_OT2_KANBAN_CAP_COL]
+                kanban_cols.append({
+                    "clave": clave, "label": _OT2_FASE_LABELS[clave],
+                    "total": kpis[clave], "filas": mostradas,
+                    "recortado": max(0, kpis[clave] - len(mostradas)),
+                })
 
-            # Split seguro de "OT-2026-00161" -> prefijo "2026" + sufijo
-            # "00161". Nunca en el template: si el formato alguna vez
-            # cambia, esto degrada a mostrar el número entero sin romper.
-            num = f.get("numero_ot") or ""
-            partes = num.split("-")
-            if len(partes) == 3:
-                f["numero_prefijo"], f["numero_sufijo"] = partes[1], partes[2]
-            else:
-                f["numero_prefijo"], f["numero_sufijo"] = "", num
+        elif vista == "calendario":
+            mes_str = request.args.get("mes") or hoy.strftime("%Y-%m")
+            try:
+                cal_anio, cal_mes_num = (int(x) for x in mes_str.split("-"))
+                _dt.date(cal_anio, cal_mes_num, 1)  # valida que exista
+            except (ValueError, TypeError):
+                cal_anio, cal_mes_num = hoy.year, hoy.month
+                mes_str = hoy.strftime("%Y-%m")
+            cal_mes_actual = mes_str
 
-            tipo = f.get("tipo") or ""
-            f["tipo_label"] = _TIPO_OT_LABEL.get(tipo, tipo.replace("_", " ").title() or "Sin tipo")
-            f["tipo_icon"] = _OT2_TIPO_ICONS.get(tipo, "bi-clipboard2")
+            primer_dia = _dt.date(cal_anio, cal_mes_num, 1)
+            ultimo_dia_num = _calmod.monthrange(cal_anio, cal_mes_num)[1]
+            ultimo_dia = _dt.date(cal_anio, cal_mes_num, ultimo_dia_num)
+            cal_mes_ant = (primer_dia - _dt.timedelta(days=1)).strftime("%Y-%m")
+            cal_mes_sig = (ultimo_dia + _dt.timedelta(days=1)).strftime("%Y-%m")
+            cal_mes_label = f"{_OT2_MESES_ES[cal_mes_num - 1].capitalize()} {cal_anio}"
 
-            meta = _OT2_ESTADO_META.get(f.get("estado"))
-            if meta:
-                f["estado_label"], f["estado_class"], f["estado_icon"], _ = meta
-            else:
-                f["estado_label"] = (f.get("estado") or "—").replace("_", " ").title()
-                f["estado_class"], f["estado_icon"] = "est-programada", "bi-question-circle"
-            f["estado_en_vivo"] = f.get("estado") in ("en_curso", "en_ejecucion")
+            _where_mes = (
+                f" WHERE {where_origen} {where_extra_sql_q} "
+                " AND v.fecha_programada BETWEEN %s AND %s "
+            )
+            filas_cal = mysql_fetchall(
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_mes +
+                " ORDER BY v.fecha_programada ASC, v.numero_ot DESC ",
+                tuple(extra_params_q) + (primer_dia, ultimo_dia)
+            ) or []
+            filas_cal = [dict(f) for f in filas_cal]
+            for f in filas_cal:
+                _ot2_enriquecer_fila(f, hoy)
 
-            f["tecnico_ini"] = _ot2_iniciales(f.get("tecnico_nombre"))
+            por_dia = {}
+            for f in filas_cal:
+                fp = f.get("fecha_programada")
+                if fp and hasattr(fp, "day"):
+                    por_dia.setdefault(fp.day, []).append(f)
 
-            nt, nc = f.get("n_tareas") or 0, f.get("n_completas") or 0
-            f["check_pct"] = round(nc * 100 / nt) if nt else 0
-            f["check_done"] = bool(nt and nc >= nt)
+            primer_dow = primer_dia.weekday()  # 0=lunes
+            celdas = [None] * primer_dow
+            for d in range(1, ultimo_dia_num + 1):
+                dia_filas = por_dia.get(d, [])
+                celdas.append({
+                    "num": d,
+                    "es_hoy": (hoy.year == cal_anio and hoy.month == cal_mes_num and hoy.day == d),
+                    "filas": dia_filas[:_OT2_CAL_CAP_DIA],
+                    "recortado": max(0, len(dia_filas) - _OT2_CAL_CAP_DIA),
+                })
+            while len(celdas) % 7 != 0:
+                celdas.append(None)
+            cal_semanas = [celdas[i:i + 7] for i in range(0, len(celdas), 7)]
 
     except Exception as e:
         error = str(e)[:300]
@@ -70931,10 +71127,15 @@ def ot2_panel():
 
     return render_template(
         "ot2/panel.html",
-        filas=filas, origen=origen, kpis=kpis,
+        filas=filas, origen=origen, vista=vista, kpis=kpis,
         conteo_reales=conteo_reales, conteo_automaticas=conteo_automaticas,
+        total_filtrado=total_filtrado, q=q, fase=fase,
         page=page, per_page=per_page, total_paginas=total_paginas,
         per_page_opciones=_OT2_PER_PAGE_OPCIONES, error=error,
+        kanban_cols=kanban_cols,
+        cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
+        cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
+        cal_dow=("L", "M", "M", "J", "V", "S", "D"),
     )
 
 

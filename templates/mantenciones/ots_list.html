@@ -1517,6 +1517,16 @@ document.addEventListener('DOMContentLoaded', () => {
   let vista = 'tabla';
   try { vista = localStorage.getItem('ots_vista') || 'tabla'; } catch(e){}
   cambiarVista(vista);
+
+  // OT 2.0 (Daniel, 19-08-2026: "un botón de generar OT... ahí donde
+  // vamos a agregar el modal ultra potente que ya tenemos"). El botón
+  // vive en /ot/ y NO duplica el selector (#modalOTOrigen, 739+ líneas
+  // de HTML/JS ya probadas) -- navega hasta acá con este parámetro y
+  // el selector se auto-abre. Mismo patrón `?abrir_generar_ot=1` que ya
+  // usan clientes/tickets/cotizaciones para llegar directo al modal.
+  if (new URLSearchParams(location.search).get('abrir_generar_ot') === '1') {
+    abrirSelectorOrigenOT();
+  }
 });
 </script>
 

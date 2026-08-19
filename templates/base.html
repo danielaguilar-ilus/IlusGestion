@@ -664,6 +664,21 @@
        class="sidebar-link{% if request.endpoint in ['mant_ots_list','mant_ot_ficha','mant_calendario'] %} active{% endif %}">
       <i class="bi bi-clipboard2-pulse"></i><span>Órdenes de Trabajo</span>
     </a>
+    {# OT 2.0 (Daniel, 18/19-08-2026): módulo en construcción por
+       estrangulamiento -- vive en paralelo al de arriba, que sigue
+       intacto (REGLA #4.2). "Modalidad de prueba donde solamente el
+       superadministrador pueda ver este módulo" -- gate propio, no el
+       de permissions.mantenciones del bloque completo. #}
+    {% if permissions.superadmin %}
+    <a href="{{ url_for('ot2_panel') }}"
+       class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico'] %} active{% endif %}"
+       style="display:flex;align-items:center;gap:8px">
+      <i class="bi bi-clipboard2-pulse-fill"></i><span>Órdenes de Trabajo 2.0</span>
+      <span style="margin-left:auto;font-size:.62rem;font-weight:800;letter-spacing:.06em;
+                   background:var(--ilus-red,#dc2626);color:#fff;border-radius:999px;
+                   padding:1px 7px;line-height:1.5">BETA</span>
+    </a>
+    {% endif %}
     {# ── Taller (2026-07-29, Daniel: "Servicio Técnico está muy largo, se
        tiene que contraer") — agrupa lo de apoyo al taller (plantillas de
        checklist, proveedores/repuestos, técnicos) detrás de un segundo

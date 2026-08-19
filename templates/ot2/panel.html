@@ -7,29 +7,46 @@
 
 {#
   ══════════════════════════════════════════════════════════════════════
-  ÓRDENES DE TRABAJO 2.0 — pantalla principal (Daniel, 18-08-2026)
+  ÓRDENES DE TRABAJO 2.0 — "Centro de Control" (Daniel, 18/19-08-2026)
   ══════════════════════════════════════════════════════════════════════
-  Diseñado con Fable, construido con Sonnet sobre datos reales.
+  Segunda pasada del diseño. Diseñado con Fable siguiendo /retiros/solicitar
+  como referencia real (verificado en vivo: Bebas Neue para titulares,
+  logo real Logo_optimized.png, paleta ILUS), construido con Sonnet sobre
+  datos reales de mant_visitas.
 
-  "modalidad de prueba donde solamente el superadministrador pueda ver
-  este módulo... hagamos una tabla donde visualicemos las órdenes de
-  trabajo, y solo eso... vamos a reestructurar todo de ahí para adelante"
+  QUÉ CAMBIÓ respecto a la primera versión (anoche):
+  - Filas planas → fichas-tarjeta con "sello" de estado grande (regla del
+    sistema ILUS: el estado es siempre el elemento visual más grande).
+  - Barra de progreso lineal → anillo SVG con porcentaje al centro.
+  - Buscador y filtro por fase: REALES esta vez (Daniel los pidió
+    explícitamente hoy). "Limpiar" recarga la tabla (REGLA #4.3).
+  - Botón "Generar OT": abre el modal potente YA EXISTENTE
+    (#modalOTOrigen en /mantenciones/ots) vía ?abrir_generar_ot=1 -- no
+    se duplica ese modal, sería repetir el error que Daniel pidió evitar.
+  - "Cerrada" y "Completada" quedan como fases SEPARADAS del scoreboard
+    -- son etapas distintas (técnico terminó vs. las 3 firmas + factura
+    ok) y mezclarlas escondería justo lo que se pidió ver.
 
-  ALCANCE DE ESTA VERSIÓN (a propósito, no es un olvido):
-  - Sin barra de búsqueda ni chips de filtro: eran decorativos en el
-    mockup de diseño. Se agregan cuando tengan una consulta real detrás.
-  - Sin botón "Nueva OT": la creación es la etapa siguiente del plan
-    (ver memoria ot2_plan_migracion), no "solo la tabla" de hoy.
-  - El botón "Plantillas" y las pestañas Reales/Automáticas SÍ son
-    reales — enlazan a rutas de verdad, no son atrezzo.
-  - Paginación real vía query string (page/per_page), sin JavaScript
-    (REGLA #4.3).
+  QUÉ SIGUE SIN CONSTRUIR A PROPÓSITO (no es descuido):
+  - Botones "Editar" / "Más opciones" por fila: el mockup de diseño los
+    proponía, pero no tienen destino real definido todavía -- se agregan
+    cuando Daniel diga qué deben hacer. Por ahora cada ficha solo tiene
+    "Abrir", que sí es real (va a la ficha de la OT).
+  - Los <select> de Estado/Técnico/Tipo del toolbar: el buscador de texto
+    y los KPIs-filtro SÍ son reales; esos selects adicionales quedan para
+    cuando su consulta esté lista.
+  - El "campo de acciones" que pidió Daniel hoy es, por ahora, el botón
+    Abrir -- el resto de acciones (editar, duplicar, cancelar) es la
+    Etapa 4 del plan (crear/editar desde el módulo nuevo).
   ══════════════════════════════════════════════════════════════════════
 #}
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;0,900;1,800;1,900&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+{# Bebas Neue para titulares -- confirmado en vivo contra /retiros/solicitar
+   (no Barlow Condensed: esa era una referencia de memoria desactualizada).
+   Barlow se conserva para cuerpo/datos, ya validado en toda la app. #}
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 
 <style>
@@ -40,248 +57,383 @@
   --info:#3b82f6; --info-bg:#dbeafe; --info-tx:#1d4ed8;
   --muted:#6b7280; --muted-bg:#f3f4f6;
   --ink-soft:rgba(255,255,255,.62); --ink-faint:rgba(255,255,255,.38);
-  --line:#ececee; --page-bg:#f4f4f5;
-  --font-d:"Barlow Condensed","Arial Narrow",sans-serif; --font-b:"Barlow",system-ui,sans-serif;
-  --r-lg:22px; --r-md:14px;
-  --shadow-card:0 30px 60px -22px rgba(10,10,10,.28), 0 4px 14px rgba(10,10,10,.06);
+  --line:#e5e7eb; --page-bg:#eef0f2;
+  --font-hero:"Bebas Neue",'Barlow Condensed',sans-serif;
+  --font-d:"Barlow Condensed",sans-serif; --font-b:"Barlow",system-ui,sans-serif;
+  --r-lg:20px; --r-md:12px;
+  --chamfer:polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  --chamfer-sm:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%);
+  --shadow-card:0 30px 60px -22px rgba(10,10,10,.24), 0 4px 14px rgba(10,10,10,.06);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
-body{font-family:var(--font-b);background:var(--page-bg);color:var(--ilus-black);min-height:100vh;font-variant-numeric:tabular-nums}
+body{
+  font-family:var(--font-b);background:var(--page-bg);color:var(--ilus-black);
+  min-height:100vh;font-variant-numeric:tabular-nums;
+  background-image:radial-gradient(rgba(10,10,10,.045) 1px, transparent 1px);
+  background-size:22px 22px;
+}
 a{text-decoration:none;color:inherit}
 button{font-family:inherit;cursor:pointer}
-.shell{max-width:1180px;margin:0 auto;padding:0 28px;position:relative;z-index:2}
+.shell{max-width:1280px;margin:0 auto;padding:0 26px;position:relative;z-index:2}
 
 @keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
-.rise{opacity:0;animation:rise .65s cubic-bezier(.2,.7,.25,1) forwards}
-.d1{animation-delay:.05s} .d2{animation-delay:.14s} .d3{animation-delay:.23s} .d4{animation-delay:.32s} .d5{animation-delay:.41s}
-@keyframes meshDrift{to{transform:rotate(360deg)}}
-@keyframes sonar{0%{transform:scale(.6);opacity:.9}100%{transform:scale(2.4);opacity:0}}
-@keyframes barGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.rise{opacity:0;animation:rise .6s cubic-bezier(.2,.7,.25,1) forwards}
+.d1{animation-delay:.05s} .d2{animation-delay:.13s} .d3{animation-delay:.21s} .d4{animation-delay:.29s}
+@keyframes pulse-dot{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}70%{box-shadow:0 0 0 9px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+@keyframes ringfill{from{stroke-dashoffset:163.36}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition:none!important}.rise{opacity:1}}
 
-.hero{position:relative;background:var(--ilus-black);color:var(--ilus-white);overflow:hidden;padding:26px 0 150px}
-.hero::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.035) 0 1px,transparent 1px 12px)}
-.hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(640px 400px at 84% -10%,rgba(220,38,38,.26),transparent 64%),radial-gradient(520px 340px at -8% 108%,rgba(220,38,38,.10),transparent 60%)}
-.hero .mesh{position:absolute;inset:-45%;pointer-events:none;background:conic-gradient(from 0deg at 68% 32%,transparent 0deg,rgba(220,38,38,.09) 55deg,transparent 120deg,rgba(59,130,246,.05) 195deg,transparent 255deg,rgba(220,38,38,.06) 318deg,transparent 360deg);mix-blend-mode:screen;animation:meshDrift 24s linear infinite}
-.hero .wm{position:absolute;right:-30px;bottom:-96px;z-index:0;pointer-events:none;font-family:var(--font-d);font-weight:900;font-style:italic;font-size:330px;line-height:.8;letter-spacing:-6px;color:transparent;-webkit-text-stroke:1px rgba(255,255,255,.055);user-select:none}
-
-.topbar{display:flex;align-items:center;gap:22px}
-.brand{display:flex;align-items:baseline;gap:10px}
-.brand .word{font-family:var(--font-d);font-weight:900;font-size:30px;letter-spacing:.5px;line-height:1}
-.brand .word i{color:var(--ilus-red);font-style:normal}
-.brand .tag{font-size:10px;font-weight:700;letter-spacing:.32em;color:var(--ink-faint);text-transform:uppercase}
-.crumb{font-size:13px;font-weight:600;color:var(--ink-soft);display:flex;align-items:center;gap:8px;padding-left:22px;border-left:1px solid rgba(255,255,255,.14)}
+/* ══════════════════ HERO ══════════════════ */
+.hero{
+  position:relative;color:#fff;padding:26px 0 150px;overflow:hidden;
+  background:
+    radial-gradient(900px 420px at 88% -18%, rgba(220,38,38,.30), transparent 62%),
+    radial-gradient(560px 280px at -6% 108%, rgba(220,38,38,.10), transparent 60%),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,.03) 0 2px, transparent 2px 16px),
+    linear-gradient(180deg,#141414 0%, var(--ilus-black) 100%);
+  border-bottom:3px solid var(--ilus-red);
+}
+.topbar{display:flex;align-items:center;gap:20px}
+.brand{display:flex;align-items:center;flex:0 0 auto;opacity:1;transition:opacity .2s}
+.brand:hover{opacity:.85}
+.brand img{display:block;height:32px;width:auto}
+.crumb{font-size:12.5px;font-weight:600;color:var(--ink-soft);display:flex;align-items:center;gap:8px;padding-left:20px;border-left:1px solid rgba(255,255,255,.14);text-transform:uppercase;letter-spacing:.5px}
 .crumb b{color:#fff;font-weight:700}
-.top-actions{margin-left:auto;display:flex;align-items:center;gap:12px}
-.btn-plantillas{display:flex;align-items:center;gap:12px;padding:8px 18px 8px 8px;min-height:44px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.17);border-radius:var(--r-md);transition:border-color .2s,background .2s,transform .2s}
-.btn-plantillas .ic{width:38px;height:38px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;background:var(--ilus-red);color:#fff;font-size:18px;box-shadow:0 6px 18px -6px rgba(220,38,38,.7)}
-.btn-plantillas .tx{display:flex;flex-direction:column;line-height:1.12}
-.btn-plantillas .tx strong{font-family:var(--font-d);font-weight:800;font-size:17px;letter-spacing:.06em;text-transform:uppercase}
-.btn-plantillas .tx small{font-size:11px;color:var(--ink-soft);font-weight:500}
-.btn-plantillas:hover{border-color:rgba(220,38,38,.65);background:rgba(220,38,38,.10);transform:translateY(-1px)}
-.btn-salir{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:8px 16px;border-radius:var(--r-md);color:var(--ink-soft);border:1px solid rgba(255,255,255,.14);font-size:13px;font-weight:700;transition:border-color .2s,color .2s}
+.top-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+.btn-accion{display:flex;align-items:center;gap:11px;padding:8px 16px 8px 8px;min-height:44px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.17);border-radius:var(--r-md);transition:border-color .2s,background .2s,transform .2s}
+.btn-accion .ic{width:34px;height:34px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;background:var(--ilus-red);color:#fff;font-size:16px;box-shadow:0 6px 16px -6px rgba(220,38,38,.7)}
+.btn-accion .tx{display:flex;flex-direction:column;line-height:1.1}
+.btn-accion .tx strong{font-family:var(--font-d);font-weight:800;font-size:15.5px;letter-spacing:.04em;text-transform:uppercase}
+.btn-accion .tx small{font-size:10.5px;color:var(--ink-soft);font-weight:500}
+.btn-accion:hover{border-color:rgba(220,38,38,.65);background:rgba(220,38,38,.10);transform:translateY(-1px)}
+.btn-accion.acento{background:linear-gradient(180deg,#ef3b3b,var(--ilus-red) 60%);border-color:transparent;box-shadow:0 10px 26px -10px rgba(220,38,38,.75)}
+.btn-accion.acento .ic{background:rgba(255,255,255,.18);box-shadow:none}
+.btn-accion.acento .tx small{color:rgba(255,255,255,.82)}
+.btn-accion.acento:hover{transform:translateY(-2px);box-shadow:0 16px 32px -10px rgba(220,38,38,.85)}
+.btn-salir{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:8px 14px;border-radius:var(--r-md);color:var(--ink-soft);border:1px solid rgba(255,255,255,.14);font-size:13px;font-weight:700;transition:border-color .2s,color .2s}
 .btn-salir:hover{color:#fff;border-color:rgba(255,255,255,.4)}
 
-.hero-grid{display:grid;grid-template-columns:1.35fr .9fr;gap:56px;align-items:end;margin-top:58px}
-.kicker{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--ilus-red-2)}
-.kicker::before{content:"";width:26px;height:2px;background:var(--ilus-red)}
-.hero h1{font-family:var(--font-d);font-weight:900;text-transform:uppercase;font-size:clamp(52px,7.2vw,92px);line-height:.92;letter-spacing:-1px;margin-top:14px}
-.hero h1 .v2{font-style:italic;color:transparent;-webkit-text-stroke:2px var(--ilus-red);padding-left:6px}
-.hero .sub{margin-top:20px;max-width:56ch;font-size:16px;line-height:1.55;color:var(--ink-soft);font-weight:500}
+.hero-grid{display:grid;grid-template-columns:1.3fr .95fr;gap:52px;align-items:end;margin-top:50px}
+.kicker{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-d);font-size:11px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--ilus-red-2)}
+.kicker::before{content:"";width:24px;height:2px;background:var(--ilus-red)}
+.hero h1{font-family:var(--font-hero);font-weight:400;text-transform:uppercase;font-size:clamp(46px,6.6vw,80px);line-height:.9;letter-spacing:.5px;margin-top:12px}
+.hero h1 .v2{color:transparent;-webkit-text-stroke:2px var(--ilus-red);padding-left:8px}
+.hero .sub{margin-top:16px;max-width:56ch;font-size:15.5px;line-height:1.55;color:var(--ink-soft);font-weight:500}
 .hero .sub b{color:#fff;font-weight:700}
-.hero .sub .num-ej{font-family:var(--font-d);font-weight:800;letter-spacing:.04em;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:7px;padding:1px 8px 2px}
-.beta-pill{display:inline-flex;align-items:center;gap:7px;margin-top:22px;font-size:11px;font-weight:700;color:var(--ink-faint);border:1px dashed rgba(255,255,255,.25);border-radius:99px;padding:6px 13px}
+.hero .sub .num-ej{font-family:var(--font-d);font-weight:800;letter-spacing:.04em;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:6px;padding:1px 7px 2px}
+.beta-pill{display:inline-flex;align-items:center;gap:7px;margin-top:18px;font-size:11px;font-weight:700;color:var(--ink-faint);border:1px dashed rgba(255,255,255,.25);border-radius:99px;padding:6px 13px}
 .beta-pill i{color:var(--warn)}
 
-.sep-panel{position:relative;z-index:1;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:22px 24px 20px;backdrop-filter:blur(6px)}
-.sep-panel .lbl{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.28em;text-transform:uppercase;color:var(--ink-faint)}
+.sep-panel{position:relative;z-index:1;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.13);border-radius:16px;padding:20px 22px 18px;backdrop-filter:blur(6px)}
+.sep-panel .lbl{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.26em;text-transform:uppercase;color:var(--ink-faint)}
 .sep-panel .lbl i{color:var(--ilus-red-2);font-size:13px}
-.sep-top{display:flex;align-items:baseline;gap:14px;margin-top:8px}
-.sep-top .big{font-family:var(--font-d);font-weight:900;font-size:76px;line-height:.9;letter-spacing:-1px}
-.sep-top .what{font-size:14px;font-weight:600;color:var(--ink-soft);line-height:1.3;padding-bottom:8px}
+.sep-top{display:flex;align-items:baseline;gap:13px;margin-top:8px}
+.sep-top .big{font-family:var(--font-hero);font-weight:400;font-size:64px;line-height:.85}
+.sep-top .what{font-size:13.5px;font-weight:600;color:var(--ink-soft);line-height:1.3;padding-bottom:6px}
 .sep-top .what b{color:#fff}
-.ratio{display:flex;height:12px;border-radius:99px;overflow:hidden;margin-top:18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09)}
-.ratio .hum{background:linear-gradient(90deg,var(--ilus-red),var(--ilus-red-2));transform-origin:left;animation:barGrow .9s .5s cubic-bezier(.2,.7,.25,1) backwards}
-.ratio .aut{flex:1;background:repeating-linear-gradient(115deg,rgba(255,255,255,.22) 0 5px,rgba(255,255,255,.06) 5px 10px);transform-origin:left;animation:barGrow .9s .62s cubic-bezier(.2,.7,.25,1) backwards}
-.ratio-leg{display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;font-weight:600;color:var(--ink-soft)}
-.ratio-leg .sw{display:inline-block;width:9px;height:9px;border-radius:2.5px;margin-right:6px;vertical-align:-1px}
+.ratio{display:flex;height:11px;border-radius:99px;overflow:hidden;margin-top:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09)}
+.ratio .hum{background:linear-gradient(90deg,var(--ilus-red),var(--ilus-red-2))}
+.ratio .aut{flex:1;background:repeating-linear-gradient(115deg,rgba(255,255,255,.22) 0 5px,rgba(255,255,255,.06) 5px 10px)}
+.ratio-leg{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;font-weight:600;color:var(--ink-soft)}
+.ratio-leg .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .ratio-leg .sw.r{background:var(--ilus-red)}
 .ratio-leg .sw.g{background:repeating-linear-gradient(115deg,rgba(255,255,255,.5) 0 2px,rgba(255,255,255,.12) 2px 4px)}
-.sep-div{height:1px;background:rgba(255,255,255,.09);margin:16px 0 13px}
-.sep-auto{display:flex;align-items:center;gap:12px}
-.sep-auto .robot{width:40px;height:40px;flex:0 0 auto;border-radius:11px;display:grid;place-items:center;font-size:19px;color:#e4e4e7;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.28)}
-.sep-auto .n{font-family:var(--font-d);font-weight:800;font-size:30px;line-height:1}
-.sep-auto .d{font-size:12px;color:var(--ink-soft);line-height:1.35;font-weight:500}
+.sep-div{height:1px;background:rgba(255,255,255,.09);margin:14px 0 12px}
+.sep-auto{display:flex;align-items:center;gap:11px}
+.sep-auto .robot{width:36px;height:36px;flex:0 0 auto;border-radius:10px;display:grid;place-items:center;font-size:17px;color:#e4e4e7;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.28)}
+.sep-auto .n{font-family:var(--font-d);font-weight:800;font-size:26px;line-height:1}
+.sep-auto .d{font-size:11.5px;color:var(--ink-soft);line-height:1.35;font-weight:500}
 .sep-auto .d b{color:#fff}
-.btn-ver-auto{margin-top:16px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:44px;border-radius:var(--r-md);background:transparent;color:#fff;border:1.5px dashed rgba(255,255,255,.32);font-family:var(--font-d);font-weight:700;font-size:15.5px;letter-spacing:.08em;text-transform:uppercase;transition:border-color .2s,background .2s}
+.btn-ver-auto{margin-top:14px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;border-radius:var(--r-md);background:transparent;color:#fff;border:1.5px dashed rgba(255,255,255,.32);font-family:var(--font-d);font-weight:700;font-size:14.5px;letter-spacing:.07em;text-transform:uppercase;transition:border-color .2s,background .2s}
 .btn-ver-auto:hover{border-color:rgba(255,255,255,.7);background:rgba(255,255,255,.05)}
-.btn-ver-auto.activo{border-style:solid;border-color:var(--ilus-red);background:rgba(220,38,38,.14);color:#fff}
+.btn-ver-auto.activo{border-style:solid;border-color:var(--ilus-red);background:rgba(220,38,38,.14)}
 
-.board-wrap{margin-top:-108px;padding-bottom:70px}
+/* ══════════════════ TARJETA MONTADA ══════════════════ */
+.board-wrap{margin-top:-112px;padding-bottom:64px}
 .board{background:var(--ilus-white);border-radius:var(--r-lg);border:1px solid rgba(10,10,10,.06);box-shadow:var(--shadow-card);overflow:hidden}
 
-.err-banner{display:flex;align-items:center;gap:12px;background:#fef2f2;border-bottom:1px solid #fecaca;color:#991b1b;padding:14px 28px;font-size:13.5px;font-weight:600}
-.err-banner i{font-size:18px;flex:0 0 auto}
+.err-banner{display:flex;align-items:center;gap:12px;background:#fef2f2;border-bottom:1px solid #fecaca;color:#991b1b;padding:14px 26px;font-size:13.5px;font-weight:600}
 
-.tabs{display:flex;align-items:center;gap:8px;padding:20px 28px 0;border-bottom:1px solid var(--line)}
-.tab{display:inline-flex;align-items:center;gap:10px;padding:12px 6px 16px;margin-right:18px;font-family:var(--font-d);font-weight:800;font-size:20px;letter-spacing:.03em;text-transform:uppercase;color:var(--ilus-black);position:relative}
-.tab .ct{font-size:13px;font-weight:800;color:#fff;background:var(--ilus-black);border-radius:99px;padding:2px 10px;letter-spacing:.02em}
+.tabs{display:flex;align-items:center;gap:8px;padding:18px 26px 0;border-bottom:1px solid var(--line)}
+.tab{display:inline-flex;align-items:center;gap:9px;padding:11px 6px 15px;margin-right:16px;font-family:var(--font-d);font-weight:800;font-size:18px;letter-spacing:.03em;text-transform:uppercase;color:var(--ilus-black);position:relative}
+.tab .ct{font-size:12.5px;font-weight:800;color:#fff;background:var(--ilus-black);border-radius:99px;padding:2px 9px}
 .tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;background:var(--ilus-red);border-radius:3px 3px 0 0}
 .tab.active i{color:var(--ilus-red)}
-.tab.ghost{align-self:center;margin:0 0 10px;padding:9px 16px;border-radius:99px;border:1.5px dashed #d4d4d8;color:var(--muted);font-size:16px;font-weight:700;transition:border-color .2s,color .2s,background .2s}
+.tab.ghost{align-self:center;margin:0 0 9px;padding:8px 15px;border-radius:99px;border:1.5px dashed #d4d4d8;color:var(--muted);font-size:14.5px;font-weight:700;transition:border-color .2s,color .2s,background .2s}
 .tab.ghost .ct{background:var(--muted-bg);color:var(--muted)}
 .tab.ghost:hover,.tab.ghost.active{border-color:var(--ilus-black);color:var(--ilus-black);background:#fafafa}
 .tab.ghost.active .ct{background:var(--ilus-red);color:#fff}
-.tabs-note{margin-left:auto;align-self:center;padding-bottom:10px;font-size:12px;color:var(--muted);font-weight:500;text-align:right;max-width:30ch;line-height:1.35}
+.tabs-note{margin-left:auto;align-self:center;padding-bottom:9px;font-size:11.5px;color:var(--muted);font-weight:500;text-align:right;max-width:28ch;line-height:1.35}
 .tabs-note i{color:var(--warn);margin-right:4px}
 
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}
-.kpi{display:flex;align-items:center;gap:14px;padding:20px 26px;border-right:1px solid var(--line)}
-.kpi:last-child{border-right:none}
-.kpi .ic{width:42px;height:42px;border-radius:12px;flex:0 0 auto;display:grid;place-items:center;font-size:19px}
-.kpi .n{font-family:var(--font-d);font-weight:900;font-size:38px;line-height:.95}
-.kpi .l{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-top:3px}
-.kpi.warn .ic{background:var(--warn-bg);color:var(--warn-tx)}
-.kpi.info .ic{background:var(--info-bg);color:var(--info-tx)}
-.kpi.amber-o .ic{background:#fff;color:var(--warn-tx);border:1.5px solid var(--warn)}
-.kpi.ok .ic{background:var(--ok-bg);color:var(--ok)}
-.live{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);vertical-align:2px}
-.live::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:2px solid var(--warn);animation:sonar 1.8s ease-out infinite}
+/* ── scoreboard: 5 contadores por fase, clicables ── */
+.scoreboard{display:grid;grid-template-columns:repeat(5,1fr);background:repeating-linear-gradient(-45deg,rgba(255,255,255,.02) 0 2px,transparent 2px 16px),var(--ilus-black)}
+.tile{--tc:#9ca3af;position:relative;padding:18px 20px 15px;border-right:1px solid rgba(255,255,255,.08);cursor:pointer;transition:background .15s}
+.tile:last-child{border-right:none}
+.tile:hover{background:rgba(255,255,255,.055)}
+.tile .num{font-family:var(--font-d);font-weight:900;font-size:36px;line-height:1;color:#fff}
+.tile .lbl{display:flex;align-items:center;gap:7px;margin-top:5px;font-size:10.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:#9ca3af;white-space:nowrap}
+.tile .lbl i{font-size:11px}
+.tile::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--tc);opacity:.28;transition:opacity .15s}
+.tile:hover::after{opacity:.7}
+.tile.active{background:rgba(220,38,38,.10)}
+.tile.active::after{opacity:1}
+.tile.active .lbl{color:#e5e7eb}
+.t-ejec{--tc:var(--ilus-red)} .t-prog{--tc:var(--info)} .t-aprob{--tc:var(--warn)} .t-comp{--tc:var(--ok)} .t-cerr{--tc:#9ca3af}
+.live-dot{position:relative;display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ilus-red)}
+.live-dot::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:2px solid var(--ilus-red);animation:pulse-dot 1.7s ease-out infinite}
 
-.thead,.ot-row{display:grid;grid-template-columns:150px minmax(0,1.6fr) 178px 104px 158px 148px 34px;gap:16px;align-items:center;padding:0 28px}
-.thead{padding-top:18px;padding-bottom:10px;border-bottom:1px solid var(--line);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#a1a1aa}
-.ot-row{padding-top:16px;padding-bottom:16px;border-bottom:1px solid #f1f1f2;position:relative;transition:background .16s,box-shadow .16s}
-.ot-row::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;background:var(--ilus-red);border-radius:0 3px 3px 0;opacity:0;transform:scaleY(.4);transition:opacity .18s,transform .18s}
-.ot-row:hover{background:#fafafa}
-.ot-row:hover::before{opacity:1;transform:scaleY(1)}
-.ot-row:last-of-type{border-bottom:none}
-.c-num .num{font-family:var(--font-d);font-weight:800;font-size:21px;letter-spacing:.02em;line-height:1;white-space:nowrap}
-.c-num .num .yr{color:#a1a1aa;font-weight:700}
-.c-num .num.sinot{color:#a1a1aa;font-size:17px}
-.tipo{display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--muted-bg);border-radius:6px;padding:3px 8px}
-.tipo i{font-size:11px}
-.c-cliente .cli{font-weight:700;font-size:15px;line-height:1.25}
-.c-cliente .tit{font-size:13px;color:var(--muted);margin-top:3px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}
-.estado{display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:5px 14px;border-radius:99px;font-family:var(--font-d);font-weight:700;font-size:15px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
-.est-en_ejecucion{background:var(--warn-bg);color:var(--warn-tx)}
-.est-programada{background:var(--info-bg);color:var(--info-tx)}
-.est-firmada_tecnico{background:#fff;color:#15803d;border:1.5px solid #86efac}
-.est-pendiente_aprobacion{background:#fff;color:var(--warn-tx);border:1.5px solid var(--warn)}
-.est-completada{background:var(--ok);color:#fff}
-.est-cerrada{background:var(--muted-bg);color:var(--muted)}
-.est-cancelada{background:#fee2e2;color:var(--ilus-red);text-decoration:line-through}
-.c-fecha .dia{font-family:var(--font-d);font-weight:800;font-size:20px;line-height:1;white-space:nowrap}
-.c-fecha .dow{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#a1a1aa;margin-top:3px}
-.c-fecha.hoy .dia,.c-fecha.hoy .dow{color:var(--ilus-red)}
+/* ── toolbar: buscador + filtro activo (REAL) ── */
+.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 26px}
+.search{display:flex;align-items:center;gap:9px;flex:1 1 260px;max-width:420px;min-height:44px;background:var(--muted-bg);border:1px solid transparent;border-radius:var(--r-md);padding:0 15px;transition:border-color .2s,background .2s}
+.search:focus-within{background:#fff;border-color:var(--ilus-black)}
+.search i{color:var(--muted)}
+.search input{border:none;outline:none;background:transparent;width:100%;font-family:var(--font-b);font-size:16px;font-weight:500;color:var(--ilus-black)}
+.search input::placeholder{color:#a1a1aa}
+.btn-soft{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:7px 15px;border-radius:99px;font-size:13px;font-weight:700;color:var(--ilus-black);background:#fff;border:1px solid #e4e4e7;transition:border-color .16s}
+.btn-soft:hover{border-color:var(--ilus-black)}
+.filtro-activo{margin:0 26px 14px;font-size:.8rem;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:7px}
+.filtro-activo i{color:var(--info)}
+.filtro-activo b{color:var(--ilus-black)}
+
+/* ══════════════════ FICHAS (una por OT) ══════════════════ */
+.grid-ot{display:grid;grid-template-columns:132px minmax(220px,1.6fr) 198px minmax(160px,1fr) 92px 116px;gap:16px;align-items:center}
+.thead{padding:16px 26px 10px;background:#f9fafb;border-bottom:1px solid var(--line)}
+.thead span{font-family:var(--font-d);font-weight:700;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:#a1a1aa}
+.fichas{display:flex;flex-direction:column;gap:11px;padding:14px;background:#f2f3f5}
+
+.ficha{--st:var(--muted);--st-bg:var(--muted-bg);position:relative;padding:16px 20px 16px 24px;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 1px 3px rgba(10,10,10,.06);transition:transform .18s,box-shadow .18s,border-color .18s;cursor:pointer}
+.ficha::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--st);border-radius:11px 0 0 11px;transition:width .18s}
+.ficha:hover{transform:translateY(-2px);border-color:#d1d5db;box-shadow:0 16px 34px rgba(10,10,10,.13),0 6px 16px rgba(220,38,38,.08)}
+.ficha:hover::before{width:8px}
+
+.c-ot .serie{font-family:var(--font-d);font-weight:600;font-size:12.5px;letter-spacing:1.5px;color:#9ca3af}
+.c-ot .numero{font-family:var(--font-d);font-weight:800;font-size:29px;line-height:1;color:var(--ink);letter-spacing:.3px}
+.c-ot .numero.sinot{color:#a1a1aa;font-size:22px}
+.chip-tipo{display:inline-flex;align-items:center;gap:5px;margin-top:7px;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#475569;border:1px solid var(--line);border-radius:5px;padding:2.5px 7px;background:#fafafa;white-space:nowrap}
+.chip-tipo i{color:var(--ilus-red);font-size:10.5px}
+
+.c-cli .nombre{font-size:15.5px;font-weight:700;color:var(--ink);line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.c-cli .detalle{margin-top:4px;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.stamp{position:relative;display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:56px;padding:8px 12px 8px 13px;background:var(--st-bg);border-left:3px solid var(--st);clip-path:var(--chamfer-sm)}
+.stamp .st-label{display:flex;align-items:center;gap:7px;font-family:var(--font-d);font-weight:800;font-size:16.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--st);line-height:1}
+.stamp .st-label i{font-size:14px}
+.stamp .st-sub{font-size:10.5px;font-weight:600;color:#475569;opacity:.8}
+.st-ejec .stamp{--st:var(--ilus-red);--st-bg:#fee2e2}
+.st-prog .stamp{--st:var(--info);--st-bg:var(--info-bg)}
+.st-aprob .stamp{--st:#b45309;--st-bg:var(--warn-bg)}
+.st-comp .stamp{--st:var(--ok);--st-bg:var(--ok-bg)}
+.st-cerr .stamp{--st:#4b5563;--st-bg:var(--muted-bg)}
+.st-cancel .stamp{--st:var(--ilus-red);--st-bg:#fee2e2}
+.st-cancel .st-label{text-decoration:line-through}
+.ficha.st-ejec::before{background:var(--ilus-red)} .ficha.st-prog::before{background:var(--info)} .ficha.st-aprob::before{background:#b45309} .ficha.st-comp::before{background:var(--ok)} .ficha.st-cerr::before{background:#4b5563} .ficha.st-cancel::before{background:var(--ilus-red)}
+
 .c-tec{display:flex;align-items:center;gap:10px;min-width:0}
-.avatar{width:34px;height:34px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;background:var(--ilus-black);color:#fff;font-family:var(--font-d);font-weight:800;font-size:13px;letter-spacing:.04em}
-.avatar.sin{background:var(--muted-bg);color:#a1a1aa;font-size:15px}
-.c-tec .tn{font-size:13.5px;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.c-check .cnt{display:flex;align-items:baseline;gap:5px;margin-bottom:6px}
-.c-check .cnt b{font-family:var(--font-d);font-weight:800;font-size:17px;line-height:1}
-.c-check .cnt small{font-size:11px;color:#a1a1aa;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
-.track{height:7px;border-radius:99px;background:var(--muted-bg);overflow:hidden}
-.fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--ilus-red),var(--ilus-red-2));transform-origin:left;animation:barGrow .8s .45s cubic-bezier(.2,.7,.25,1) backwards}
-.c-check.done .fill{background:var(--ok)}
-.c-check.done .cnt b{color:var(--ok)}
-.c-check.zero .cnt b{color:#a1a1aa}
-.c-go{text-align:right;color:#d4d4d8;font-size:18px;transition:color .16s,transform .16s}
-.ot-row:hover .c-go{color:var(--ilus-red);transform:translateX(2px)}
+.avatar{flex:none;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--ilus-black);color:#fff;font-family:var(--font-d);font-weight:700;font-size:13.5px;letter-spacing:.5px;box-shadow:0 0 0 2px var(--ilus-red)}
+.avatar.sin{background:#fff;color:#a1a1aa;box-shadow:none;border:1.5px dashed #d1d5db;font-size:15px}
+.c-tec .tn{font-size:13px;font-weight:700;color:var(--ink);line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-.pager{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 28px 20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);font-weight:500}
+.c-av{display:flex;flex-direction:column;align-items:center;gap:3px}
+.ring{position:relative;width:52px;height:52px}
+.ring svg{width:52px;height:52px;transform:rotate(-90deg)}
+.ring .track{fill:none;stroke:#e5e7eb;stroke-width:5}
+.ring .bar{fill:none;stroke:var(--st,var(--ilus-red));stroke-width:5;stroke-linecap:round;stroke-dasharray:163.36;animation:ringfill .9s cubic-bezier(.2,.7,.25,1) .3s both}
+.ring .pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-d);font-weight:800;font-size:14.5px;color:var(--ink)}
+.c-av .tareas{font-size:10px;font-weight:600;color:var(--muted);white-space:nowrap}
+
+.c-go{display:flex;justify-content:flex-end}
+.btn-abrir{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-d);font-weight:800;font-size:13.5px;letter-spacing:.05em;text-transform:uppercase;color:#fff;background:var(--ilus-black);border:none;cursor:pointer;padding:9px 13px;clip-path:var(--chamfer-sm);transition:background .15s,transform .15s;white-space:nowrap}
+.btn-abrir i{font-size:12px;transition:transform .15s}
+.ficha:hover .btn-abrir{background:var(--ilus-red)}
+.ficha:hover .btn-abrir i{transform:translateX(3px)}
+
+/* ── paginación (patrón Etiquetas, REGLA #4.3) ── */
+.pager{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 26px 20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);font-weight:500}
 .pager .count b{color:var(--ilus-black);font-weight:700}
 .pp-group{display:inline-flex;align-items:center;gap:6px;border:1px solid #e4e4e7;border-radius:99px;padding:4px;background:#fff}
-.pp-group a{display:inline-flex;align-items:center;justify-content:center;min-width:30px;min-height:30px;border-radius:99px;font-size:12.5px;font-weight:700;color:var(--muted)}
+.pp-group a{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px;border-radius:99px;font-size:12.5px;font-weight:700;color:var(--muted)}
+@media (max-width:640px){.pp-group a{min-width:40px;min-height:40px}}
 .pp-group a.on{background:var(--ilus-black);color:#fff}
 .pp-group a:hover:not(.on){color:var(--ilus-black)}
 .pager-nav{margin-left:auto;display:flex;align-items:center;gap:8px}
-.pbtn{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:7px 16px;border-radius:99px;border:1px solid #e4e4e7;background:#fff;font-size:13px;font-weight:700;color:var(--ilus-black);transition:border-color .16s}
+.pbtn{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:7px 16px;border-radius:99px;border:1px solid #e4e4e7;background:#fff;font-size:13px;font-weight:700;color:var(--ilus-black);transition:border-color .16s}
 .pbtn:hover{border-color:var(--ilus-black)}
 .pbtn.disabled{opacity:.4;pointer-events:none}
-.pcur{font-family:var(--font-d);font-weight:800;font-size:16px;letter-spacing:.04em;padding:0 8px;text-transform:uppercase}
+.pcur{font-family:var(--font-d);font-weight:800;font-size:15px;letter-spacing:.03em;padding:0 8px;text-transform:uppercase}
 .pcur b{color:var(--ilus-red)}
 
-.vacio{padding:70px 30px;text-align:center}
-.vacio i{font-size:3.2rem;color:#d4d4d8;display:block;margin-bottom:14px}
-.vacio h3{font-family:var(--font-d);font-weight:800;font-size:1.3rem;color:var(--ilus-black);margin:0 0 6px}
-.vacio p{color:var(--muted);font-size:.9rem;margin:0}
+.vacio{padding:66px 30px;text-align:center}
+.vacio i{font-size:3.1rem;color:#d4d4d8;display:block;margin-bottom:14px}
+.vacio h3{font-family:var(--font-d);font-weight:800;font-size:1.25rem;color:var(--ilus-black);margin:0 0 6px}
+.vacio p{color:var(--muted);font-size:.88rem;margin:0}
 
-.foot{text-align:center;padding:0 28px 42px;font-size:12px;color:#a1a1aa;font-weight:500}
+.foot{text-align:center;padding:0 26px 40px;font-size:12px;color:#a1a1aa;font-weight:500}
 .foot b{color:var(--muted)}
 
-@media (max-width:1150px){
-  .thead,.ot-row{grid-template-columns:140px minmax(0,1.5fr) 168px 92px 44px 132px 30px}
-  .c-tec .tn{display:none}
+/* ── selector de vista: Tarjeta / Tabla / Kanban / Calendario ── */
+.vista-switch{display:flex;align-items:center;gap:6px;padding:14px 26px 0;flex-wrap:wrap}
+.vs-btn{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:7px 14px;border-radius:9px;font-family:var(--font-d);font-weight:700;font-size:13.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
+.vs-btn i{font-size:14px}
+.vs-btn:hover{background:var(--muted-bg);color:var(--ilus-black)}
+.vs-btn.active{background:var(--ilus-black);color:#fff}
+
+/* ══════════════════ VISTA TABLA (densa) ══════════════════ */
+.tabla-wrap{overflow-x:auto;padding:0 14px 14px;background:#f2f3f5}
+.ot-table{width:100%;border-collapse:separate;border-spacing:0 8px}
+.ot-table thead th{font-family:var(--font-d);font-weight:700;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#a1a1aa;text-align:left;padding:0 14px 6px}
+.ot-table tbody tr{--st:var(--muted);background:#fff;box-shadow:0 1px 3px rgba(10,10,10,.06);cursor:pointer;transition:transform .12s,box-shadow .12s}
+.ot-table tbody tr:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(10,10,10,.1)}
+.ot-table td{padding:12px 14px;font-size:13.5px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);white-space:nowrap}
+.ot-table td:first-child{border-left:4px solid var(--st);border-radius:9px 0 0 9px}
+.ot-table td:last-child{border-right:1px solid var(--line);border-radius:0 9px 9px 0;text-align:right}
+.ot-table .td-num{font-family:var(--font-d);font-weight:800;font-size:16px}
+.ot-table .td-num small{display:block;font-weight:600;font-size:10px;color:#9ca3af;letter-spacing:1px}
+.ot-table .td-cli{font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.ot-table .td-cli small{display:block;font-weight:500;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.ot-table .td-estado{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:var(--st);text-transform:uppercase}
+.ot-table .td-tec{display:flex;align-items:center;gap:8px}
+.ot-table .avatar{width:28px;height:28px;font-size:11px}
+.ot-table tr.st-ejec{--st:var(--ilus-red)} .ot-table tr.st-prog{--st:var(--info)} .ot-table tr.st-aprob{--st:#b45309} .ot-table tr.st-comp{--st:var(--ok)} .ot-table tr.st-cerr{--st:#4b5563} .ot-table tr.st-cancel{--st:var(--ilus-red)}
+.tbl-abrir{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-d);font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#fff;background:var(--ilus-black);border-radius:7px;padding:6px 10px}
+
+/* ══════════════════ VISTA KANBAN ══════════════════ */
+.kanban-wrap{overflow-x:auto;padding:16px 14px 22px;background:#f2f3f5}
+.kanban-board{display:flex;gap:14px;align-items:flex-start;min-width:min-content}
+.kcol{--st:var(--muted);flex:0 0 272px;width:272px;background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:0 1px 3px rgba(10,10,10,.06);display:flex;flex-direction:column;max-height:74vh}
+.kcol-head{display:flex;align-items:center;gap:8px;padding:13px 14px;border-bottom:2px solid var(--st)}
+.kcol-dot{width:9px;height:9px;border-radius:50%;background:var(--st);flex:none}
+.kcol-label{font-family:var(--font-d);font-weight:800;font-size:14px;letter-spacing:.02em;text-transform:uppercase;color:var(--ilus-black)}
+.kcol-count{margin-left:auto;font-size:12px;font-weight:800;color:#fff;background:var(--st);border-radius:99px;padding:2px 9px}
+.kcol-body{padding:10px;display:flex;flex-direction:column;gap:9px;overflow-y:auto}
+.kcol-ejec{--st:var(--ilus-red)} .kcol-prog{--st:var(--info)} .kcol-aprob{--st:#b45309} .kcol-comp{--st:var(--ok)} .kcol-cerr{--st:#4b5563}
+.kcard{display:block;background:#fafafa;border:1px solid var(--line);border-left:3px solid var(--st);border-radius:9px;padding:10px 12px;transition:transform .12s,box-shadow .12s,background .12s}
+.kcard:hover{background:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(10,10,10,.1)}
+.kcard-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.kcard-num{font-family:var(--font-d);font-weight:800;font-size:14px}
+.kcard-tipo{color:var(--st);font-size:12px}
+.kcard-cli{margin-top:4px;font-size:12.5px;font-weight:600;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kcard-foot{margin-top:8px;display:flex;align-items:center;justify-content:space-between}
+.kcard-av{width:22px;height:22px;border-radius:50%;background:var(--ilus-black);color:#fff;display:grid;place-items:center;font-size:9.5px;font-weight:700;font-family:var(--font-d);flex:none}
+.kcard-av.sin{background:#fff;border:1.5px dashed #d1d5db;color:#a1a1aa}
+.kcard-pct{font-size:11px;font-weight:800;color:var(--st)}
+.kcol-mas{padding:8px 6px;text-align:center;font-size:11px;font-weight:600;color:var(--muted)}
+.kcol-vacio{padding:24px 10px;text-align:center;font-size:12px;color:#c4c4c8;font-weight:600}
+@media (max-width:900px){.vs-kanban{display:none}}
+
+/* ══════════════════ VISTA CALENDARIO ══════════════════ */
+.cal-nav{display:flex;align-items:center;justify-content:center;gap:18px;padding:18px 26px 6px}
+.cal-mes{font-family:var(--font-hero);font-size:26px;letter-spacing:.5px;min-width:220px;text-align:center}
+.cal-navbtn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:99px;border:1px solid #e4e4e7;background:#fff;color:var(--ilus-black)}
+.cal-navbtn:hover{border-color:var(--ilus-black)}
+.cal-grid{padding:10px 26px 26px}
+.cal-dow-row{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.cal-dow{text-align:center;font-family:var(--font-d);font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#a1a1aa;padding:4px 0}
+.cal-week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.cal-day{min-height:104px;background:#fafafa;border:1px solid var(--line);border-radius:9px;padding:6px;display:flex;flex-direction:column;gap:4px;overflow:hidden}
+.cal-day.hoy{border-color:var(--ilus-red);box-shadow:inset 0 0 0 1px var(--ilus-red)}
+.cal-day-off{background:transparent;border-color:transparent}
+.cal-daynum{font-family:var(--font-d);font-weight:700;font-size:12.5px;color:var(--muted)}
+.cal-day.hoy .cal-daynum{color:var(--ilus-red);font-weight:800}
+.cal-chip{display:block;font-size:10.5px;font-weight:700;padding:3px 6px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-chip.st-ejec{background:#fee2e2;color:#991b1b}
+.cal-chip.st-prog{background:var(--info-bg);color:var(--info-tx)}
+.cal-chip.st-aprob{background:var(--warn-bg);color:var(--warn-tx)}
+.cal-chip.st-comp{background:var(--ok-bg);color:#166534}
+.cal-chip.st-cerr{background:var(--muted-bg);color:#374151}
+.cal-chip.st-cancel{background:#fee2e2;color:#991b1b;text-decoration:line-through}
+.cal-mas{font-size:9.5px;font-weight:700;color:var(--muted);padding:0 2px}
+
+/* ══════════════════ RESPONSIVE ══════════════════ */
+@media (max-width:1180px){
+  .grid-ot{grid-template-columns:116px minmax(190px,1.5fr) 178px 132px 78px 98px;gap:12px}
+  .c-ot .numero{font-size:25px}
+  .stamp .st-label{font-size:14.5px}
 }
 @media (max-width:1024px){
   .thead{display:none}
-  .ot-row{grid-template-columns:1fr auto;grid-template-areas:"num estado" "cli cli" "meta meta" "check check";gap:10px 12px;padding:16px;margin:12px 16px;border:1px solid var(--line);border-radius:var(--r-md)}
-  .ot-row::before{top:14px;bottom:14px}
-  .c-num{grid-area:num;display:flex;align-items:center;gap:10px}
-  .c-num .tipo{margin-top:0}
-  .c-cliente{grid-area:cli}
-  .c-estado{grid-area:estado;justify-self:end}
-  .c-fecha,.c-tec{display:none}
-  .m-meta{grid-area:meta;display:flex!important;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-weight:600}
-  .m-meta i{font-size:13px}
-  .m-meta .hoy{color:var(--ilus-red);font-weight:700}
-  .m-meta .sep{color:#d4d4d8}
-  .c-check{grid-area:check}
-  .c-go{display:none}
+  .grid-ot{grid-template-columns:1fr auto;grid-template-areas:"ot estado" "cli cli" "tec avance" "acc acc";gap:12px 16px;align-items:start}
+  .c-ot{grid-area:ot} .c-cli{grid-area:cli;border-top:1px dashed var(--line);padding-top:11px}
+  .c-est{grid-area:estado;align-self:center} .c-tec{grid-area:tec;align-self:center}
+  .c-av{grid-area:avance;flex-direction:row;gap:9px}
+  .c-go{grid-area:acc;border-top:1px dashed var(--line);padding-top:11px}
+  .btn-abrir{width:100%;justify-content:center;min-height:44px}
+  .scoreboard{grid-template-columns:repeat(3,1fr)}
+  .tile{border-bottom:1px solid rgba(255,255,255,.08)}
 }
 @media (max-width:960px){
-  .hero-grid{grid-template-columns:1fr;gap:36px;align-items:start}
-  .sep-panel{max-width:520px}
-  .hero .wm{font-size:240px;bottom:-70px}
+  .hero-grid{grid-template-columns:1fr;gap:32px;align-items:start}
+  .sep-panel{max-width:480px}
   .tabs-note{display:none}
 }
-@media (max-width:860px){
-  .shell{padding:0 16px}
-  .hero{padding-bottom:128px}
+@media (max-width:640px){
+  .shell{padding:0 15px}
+  .hero{padding-bottom:126px}
+  .board-wrap{margin-top:-96px}
   .crumb{display:none}
-  .btn-plantillas .tx small{display:none}
-  .kpis{grid-template-columns:1fr 1fr}
-  .kpi:nth-child(2){border-right:none}
-  .kpi:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .scoreboard{grid-template-columns:repeat(2,1fr)}
+  .tile .num{font-size:30px}
+  .btn-accion .tx{display:none}
+  .btn-accion{padding:8px;gap:0}
+  .btn-salir span{display:none}
   .pager{justify-content:center}
   .pager-nav{margin-left:0;width:100%;justify-content:center}
-}
-.m-meta{display:none}
-@media (max-width:480px){
-  .topbar{gap:12px}
-  .brand .tag{display:none}
-  .brand .word{font-size:26px}
-  .btn-salir span{display:none}
-  .btn-plantillas{padding:6px 13px 6px 6px;gap:9px}
-  .btn-plantillas .ic{width:34px;height:34px;font-size:16px}
-  .btn-plantillas .tx strong{font-size:15px}
+  .fichas{padding:10px;gap:9px}
+  .ficha{padding:15px 15px 15px 20px}
+  .vs-btn{min-height:44px}
+  .vs-btn span{display:none}
+  .cal-day{min-height:74px;padding:4px}
+  .cal-mes{font-size:20px;min-width:160px}
+  .kcol{flex-basis:238px;width:238px}
+  /* En una celda de ~44px un chip de texto queda ilegible y recortado
+     (medido: fuente 9px y desbordando). En móvil el chip pasa a ser un
+     punto de color -- se ve la CARGA del día y su estado, y el detalle
+     se consulta desde Tarjetas/Tabla, que sí son legibles en teléfono. */
+  .cal-day{flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:3px}
+  .cal-daynum{width:100%}
+  .cal-chip{width:7px;height:7px;padding:0;border-radius:50%;font-size:0;color:transparent;overflow:visible}
+  .cal-chip.st-ejec{background:var(--ilus-red)}
+  .cal-chip.st-prog{background:var(--info)}
+  .cal-chip.st-aprob{background:var(--warn)}
+  .cal-chip.st-comp{background:var(--ok)}
+  .cal-chip.st-cerr{background:#9ca3af}
+  .cal-chip.st-cancel{background:#fca5a5}
+  .cal-mas{font-size:9px}
 }
 @media (max-width:420px){
-  .hero h1{font-size:56px}
-  .sep-top .big{font-size:60px}
-  .tab{font-size:18px;margin-right:8px}
-  .tab.ghost{font-size:14px;padding:8px 12px}
+  .hero h1{font-size:54px}
+  .sep-top .big{font-size:52px}
+  .brand img{height:26px}
+  .cal-grid{padding:6px 10px 20px}
+  .cal-dow-row,.cal-week{gap:3px}
 }
 </style>
 </head>
 <body>
 
 <header class="hero">
-  <div class="mesh"></div>
-  <div class="wm">OT</div>
   <div class="shell">
 
     <nav class="topbar rise d1">
-      <div class="brand">
-        <div class="word">ILUS<i>.</i></div>
-        <div class="tag">Sport &amp; Health</div>
-      </div>
+      <a class="brand" href="{{ url_for('mant_index') }}" aria-label="ILUS Sport & Health">
+        <picture>
+          <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
+          <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS"
+               width="112" height="32" decoding="async" fetchpriority="high">
+        </picture>
+      </a>
       <div class="crumb">Mantenciones <i class="bi bi-chevron-right" style="font-size:10px"></i> <b>OT 2.0</b></div>
       <div class="top-actions">
-        <a class="btn-plantillas" href="{{ url_for('mant_plantillas_page') }}" aria-label="Plantillas de checklist">
+        <a class="btn-accion" href="{{ url_for('mant_plantillas_page') }}" aria-label="Plantillas de checklist">
           <span class="ic"><i class="bi bi-ui-checks"></i></span>
           <span class="tx"><strong>Plantillas</strong><small>Checklists de mantención</small></span>
+        </a>
+        {# Abre el modal potente YA EXISTENTE (#modalOTOrigen en
+           /mantenciones/ots) -- ver DOMContentLoaded en ots_list.html. #}
+        <a class="btn-accion acento" href="{{ url_for('mant_ots_list') }}?abrir_generar_ot=1" aria-label="Generar Orden de Trabajo">
+          <span class="ic"><i class="bi bi-plus-lg"></i></span>
+          <span class="tx"><strong>Generar OT</strong><small>Cliente · Ticket · Cotización · Interno</small></span>
         </a>
         <a class="btn-salir" href="{{ url_for('mant_index') }}"><i class="bi bi-box-arrow-left"></i><span>Salir</span></a>
       </div>
@@ -289,7 +441,7 @@ button{font-family:inherit;cursor:pointer}
 
     <div class="hero-grid">
       <div class="rise d2">
-        <span class="kicker">Módulo de servicio técnico</span>
+        <span class="kicker">Centro de control operativo</span>
         <h1>Órdenes<br>de trabajo<span class="v2">2.0</span></h1>
         <p class="sub">
           Solo las órdenes <b>creadas por una persona</b> — las que llevan número
@@ -322,12 +474,9 @@ button{font-family:inherit;cursor:pointer}
           <span class="d"><b>automáticas separadas</b> de esta vista<br>visitas sin número de OT</span>
         </div>
         <a class="btn-ver-auto {{ 'activo' if origen == 'automaticas' }}"
-           href="{{ url_for('ot2_panel', origen='automaticas' if origen == 'reales' else 'reales') }}">
-          {% if origen == 'reales' %}
-            Ver automáticas <i class="bi bi-arrow-right"></i>
-          {% else %}
-            <i class="bi bi-arrow-left"></i> Volver a las reales
-          {% endif %}
+           href="{{ url_for('ot2_panel', origen='automaticas' if origen == 'reales' else 'reales', vista=vista) }}">
+          {% if origen == 'reales' %}Ver automáticas <i class="bi bi-arrow-right"></i>
+          {% else %}<i class="bi bi-arrow-left"></i> Volver a las reales{% endif %}
         </a>
       </aside>
     </div>
@@ -346,11 +495,11 @@ button{font-family:inherit;cursor:pointer}
       {% endif %}
 
       <nav class="tabs" aria-label="Origen de las órdenes">
-        <a class="tab {{ 'active' if origen == 'reales' }}" href="{{ url_for('ot2_panel', origen='reales') }}"
+        <a class="tab {{ 'active' if origen == 'reales' }}" href="{{ url_for('ot2_panel', origen='reales', vista=vista, q=q or None) }}"
            {{ 'aria-current="page"' | safe if origen == 'reales' }}>
           <i class="bi bi-person-fill"></i> OT reales <span class="ct">{{ conteo_reales }}</span>
         </a>
-        <a class="tab ghost {{ 'active' if origen == 'automaticas' }}" href="{{ url_for('ot2_panel', origen='automaticas') }}">
+        <a class="tab ghost {{ 'active' if origen == 'automaticas' }}" href="{{ url_for('ot2_panel', origen='automaticas', vista=vista, q=q or None) }}">
           <i class="bi bi-robot"></i> Automáticas <span class="ct">{{ conteo_automaticas }}</span>
         </a>
         <p class="tabs-note">
@@ -359,104 +508,274 @@ button{font-family:inherit;cursor:pointer}
         </p>
       </nav>
 
-      <div class="kpis">
-        <div class="kpi warn">
-          <span class="ic"><i class="bi bi-lightning-charge-fill"></i></span>
-          <span><span class="n">{{ kpis.ejec }}</span><div class="l"><span class="live"></span>&nbsp; En ejecución</div></span>
-        </div>
-        <div class="kpi info">
-          <span class="ic"><i class="bi bi-calendar-event"></i></span>
-          <span><span class="n">{{ kpis.prog }}</span><div class="l">Programadas</div></span>
-        </div>
-        <div class="kpi amber-o">
-          <span class="ic"><i class="bi bi-hourglass-split"></i></span>
-          <span><span class="n">{{ kpis.aprob }}</span><div class="l">Por aprobar</div></span>
-        </div>
-        <div class="kpi ok">
-          <span class="ic"><i class="bi bi-check2-circle"></i></span>
-          <span><span class="n">{{ kpis.comp }}</span><div class="l">Completadas</div></span>
-        </div>
+      {# Selector de vista (Daniel, 19-08-2026: "quiero verlas como tabla,
+         como tarjeta, Kanban, y un posible calendario... tipo Trello").
+         Kanban va oculto en el switcher de móvil (columnas lado a lado no
+         funcionan en pantalla chica) -- confirmado con Daniel; el backend
+         igual la sirve si alguien llega por un link directo. #}
+      <nav class="vista-switch" aria-label="Tipo de vista">
+        <a class="vs-btn {{ 'active' if vista=='tarjeta' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tarjeta', q=q or None, fase=fase or None) }}">
+          <i class="bi bi-grid-3x3-gap-fill"></i><span>Tarjetas</span>
+        </a>
+        <a class="vs-btn {{ 'active' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None) }}">
+          <i class="bi bi-table"></i><span>Tabla</span>
+        </a>
+        <a class="vs-btn vs-kanban {{ 'active' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None) }}">
+          <i class="bi bi-kanban-fill"></i><span>Kanban</span>
+        </a>
+        <a class="vs-btn {{ 'active' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None) }}">
+          <i class="bi bi-calendar3"></i><span>Calendario</span>
+        </a>
+      </nav>
+
+      {# Scoreboard: 5 fases, clicables como filtro (REGLA #4.3: un
+         segundo clic sobre el mismo filtro lo QUITA, no lo repite). La
+         fase solo existe como filtro en Tabla/Tarjeta (en Kanban ES la
+         columna, en Calendario el color del chip ya la distingue) -- por
+         eso un clic aquí siempre aterriza en una de esas dos, nunca se
+         queda "filtrando" un Kanban/Calendario donde no aplicaría. #}
+      {% set vista_lista = vista if vista in ('tabla','tarjeta') else 'tarjeta' %}
+      <div class="scoreboard">
+        <a class="tile t-ejec {{ 'active' if fase=='ejec' }}"
+           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='ejec' else 'ejec') }}">
+          <div class="num">{{ kpis.ejec }}</div>
+          <div class="lbl">{% if kpis.ejec %}<span class="live-dot"></span>{% endif %} En ejecución</div>
+        </a>
+        <a class="tile t-prog {{ 'active' if fase=='prog' }}"
+           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='prog' else 'prog') }}">
+          <div class="num">{{ kpis.prog }}</div><div class="lbl">Programadas</div>
+        </a>
+        <a class="tile t-aprob {{ 'active' if fase=='aprob' }}"
+           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='aprob' else 'aprob') }}">
+          <div class="num">{{ kpis.aprob }}</div><div class="lbl">Por aprobar</div>
+        </a>
+        <a class="tile t-comp {{ 'active' if fase=='comp' }}"
+           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='comp' else 'comp') }}">
+          <div class="num">{{ kpis.comp }}</div><div class="lbl">Completadas</div>
+        </a>
+        <a class="tile t-cerr {{ 'active' if fase=='cerr' }}"
+           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='cerr' else 'cerr') }}">
+          <div class="num">{{ kpis.cerr }}</div><div class="lbl">Cerradas</div>
+        </a>
       </div>
 
-      {% if filas %}
-      <div class="thead" aria-hidden="true">
-        <span>N° OT</span><span>Cliente / Orden</span><span>Estado</span>
-        <span>Programada</span><span>Técnico</span><span>Checklist</span><span></span>
-      </div>
+      <form method="get" class="toolbar">
+        <input type="hidden" name="origen" value="{{ origen }}">
+        <input type="hidden" name="vista" value="{{ vista }}">
+        {% if fase %}<input type="hidden" name="fase" value="{{ fase }}">{% endif %}
+        {% if vista == 'calendario' and cal_mes_actual %}<input type="hidden" name="mes" value="{{ cal_mes_actual }}">{% endif %}
+        <div class="search">
+          <i class="bi bi-search"></i>
+          <input type="search" name="q" value="{{ q }}" placeholder="Buscar por N° OT, cliente o técnico…" aria-label="Buscar órdenes">
+        </div>
+        <button class="btn-soft" type="submit"><i class="bi bi-funnel"></i> Buscar</button>
+        {% if q or fase %}
+        <a class="btn-soft" href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}"><i class="bi bi-x-lg"></i> Limpiar</a>
+        {% endif %}
+      </form>
 
-      {% for f in filas %}
-      <a class="ot-row" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
-        <div class="c-num">
-          {% if f.numero_ot %}
-            <div class="num"><span class="yr">OT-{{ f.numero_prefijo }}-</span>{{ f.numero_sufijo }}</div>
+      {% if q or fase %}
+      <p class="filtro-activo">
+        <i class="bi bi-info-circle-fill"></i>
+        {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'ejec':'En ejecución','prog':'Programadas','aprob':'Por aprobar','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}
+      </p>
+      {% endif %}
+
+      {% if vista in ('tarjeta', 'tabla') %}
+        {% if filas %}
+          {% if vista == 'tarjeta' %}
+          <div class="thead grid-ot" aria-hidden="true">
+            <span>N° OT</span><span>Cliente · Trabajo</span><span>Estado</span>
+            <span>Técnico</span><span>Avance</span><span></span>
+          </div>
+
+          <div class="fichas">
+            {% for f in filas %}
+            <a class="ficha {{ f.estado_class }} grid-ot" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+              <div class="c-ot">
+                {% if f.numero_ot %}
+                  <div class="serie">OT-{{ f.numero_prefijo }}</div>
+                  <div class="numero">{{ f.numero_sufijo }}</div>
+                {% else %}
+                  <div class="serie">Automática</div>
+                  <div class="numero sinot">VS-{{ '%05d'|format(f.id) }}</div>
+                {% endif %}
+                <span class="chip-tipo"><i class="bi {{ f.tipo_icon }}"></i> {{ f.tipo_label }}</span>
+              </div>
+              <div class="c-cli">
+                <div class="nombre">{{ f.razon_social or 'Trabajo interno' }}</div>
+                {% if f.titulo %}<div class="detalle">{{ f.titulo }}</div>{% endif %}
+              </div>
+              <div class="c-est">
+                <div class="stamp">
+                  <div class="st-label">
+                    {% if f.estado_en_vivo %}<span class="live-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
+                    {{ f.estado_label }}
+                  </div>
+                  {% if f.estado_sub %}<div class="st-sub">{{ f.estado_sub }}</div>{% endif %}
+                </div>
+              </div>
+              <div class="c-tec">
+                {% if f.tecnico_ini %}<span class="avatar">{{ f.tecnico_ini }}</span>{% else %}<span class="avatar sin"><i class="bi bi-person-plus"></i></span>{% endif %}
+                <span class="tn">{{ f.tecnico_nombre or 'Por asignar' }}</span>
+              </div>
+              <div class="c-av">
+                <div class="ring">
+                  <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="26"/><circle class="bar" cx="32" cy="32" r="26" style="stroke-dashoffset:{{ f.ring_offset }}"/></svg>
+                  <div class="pct">{{ f.check_pct }}</div>
+                </div>
+                <div class="tareas">{{ f.n_completas }}/{{ f.n_tareas }} tareas</div>
+              </div>
+              <div class="c-go">
+                <span class="btn-abrir">Abrir <i class="bi bi-arrow-right"></i></span>
+              </div>
+            </a>
+            {% endfor %}
+          </div>
           {% else %}
-            <div class="num sinot">VS-{{ '%05d'|format(f.id) }}</div>
+          <div class="tabla-wrap">
+            <table class="ot-table">
+              <thead>
+                <tr><th>N° OT</th><th>Cliente · Trabajo</th><th>Estado</th><th>Técnico</th><th>Avance</th><th></th></tr>
+              </thead>
+              <tbody>
+                {% for f in filas %}
+                <tr class="{{ f.estado_class }}" onclick="location.href='{{ url_for('mant_ot_ficha', vid=f.id) }}'">
+                  <td>
+                    <span class="td-num">
+                      {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
+                      {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
+                    </span>
+                  </td>
+                  <td>
+                    <div class="td-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
+                    <small>{{ f.tipo_label }}{% if f.titulo %} · {{ f.titulo }}{% endif %}</small>
+                  </td>
+                  <td>
+                    <span class="td-estado">
+                      {% if f.estado_en_vivo %}<span class="live-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
+                      {{ f.estado_label }}
+                    </span>
+                  </td>
+                  <td>
+                    <div class="td-tec">
+                      {% if f.tecnico_ini %}<span class="avatar">{{ f.tecnico_ini }}</span>{% else %}<span class="avatar sin"><i class="bi bi-person-plus"></i></span>{% endif %}
+                      {{ f.tecnico_nombre or 'Por asignar' }}
+                    </div>
+                  </td>
+                  <td>{{ f.n_completas }}/{{ f.n_tareas }} · {{ f.check_pct }}%</td>
+                  <td><a class="tbl-abrir" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
           {% endif %}
-          <span class="tipo"><i class="bi {{ f.tipo_icon }}"></i> {{ f.tipo_label }}</span>
-        </div>
-        <div class="c-cliente">
-          <div class="cli">{{ f.razon_social or 'Trabajo interno' }}</div>
-          {% if f.titulo %}<div class="tit">{{ f.titulo }}</div>{% endif %}
-        </div>
-        <div class="c-estado">
-          <span class="estado {{ f.estado_class }}">
-            {% if f.estado_en_vivo %}<span class="live"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
-            {{ f.estado_label }}
-          </span>
-        </div>
-        <div class="c-fecha {{ 'hoy' if f.fecha_es_hoy }}"><div class="dia">{{ f.fecha_dia }}</div><div class="dow">{{ f.fecha_dow }}</div></div>
-        <div class="c-tec">
-          {% if f.tecnico_ini %}<span class="avatar">{{ f.tecnico_ini }}</span>{% else %}<span class="avatar sin"><i class="bi bi-person"></i></span>{% endif %}
-          <span class="tn">{{ f.tecnico_nombre or 'Sin asignar' }}</span>
-        </div>
-        <div class="m-meta">
-          <i class="bi bi-calendar-event"></i>
-          <span class="{{ 'hoy' if f.fecha_es_hoy }}">{{ f.fecha_dow }} {{ f.fecha_dia }}</span>
-          <span class="sep">·</span><i class="bi bi-person"></i><span>{{ f.tecnico_nombre or 'Sin asignar' }}</span>
-        </div>
-        <div class="c-check {{ 'done' if f.check_done else ('zero' if not f.n_tareas) }}">
-          <div class="cnt"><b>{{ f.n_completas }}/{{ f.n_tareas }}</b><small>tareas</small></div>
-          <div class="track"><div class="fill" style="width:{{ f.check_pct }}%"></div></div>
-        </div>
-        <div class="c-go"><i class="bi bi-chevron-right"></i></div>
-      </a>
-      {% endfor %}
 
-      {% set base_args = {'origen': origen, 'per_page': per_page} %}
-      <footer class="pager">
-        <span class="count">
-          Mostrando <b>{{ ((page-1)*per_page + 1) }}–{{ [(page*per_page), (conteo_reales if origen=='reales' else conteo_automaticas)] | min }}</b>
-          de <b>{{ conteo_reales if origen == 'reales' else conteo_automaticas }}</b>
-        </span>
-        <div class="pp-group">
-          {% for opt in per_page_opciones %}
-          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, per_page=opt, page=1) }}">{{ opt }}</a>
+          <footer class="pager">
+            <span class="count">
+              Mostrando <b>{{ ((page-1)*per_page + 1) }}–{{ [(page*per_page), total_filtrado] | min }}</b>
+              de <b>{{ total_filtrado }}</b>
+            </span>
+            <div class="pp-group">
+              {% for opt in per_page_opciones %}
+              <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None) }}">{{ opt }}</a>
+              {% endfor %}
+            </div>
+            <div class="pager-nav">
+              <a class="pbtn {{ 'disabled' if page <= 1 }}"
+                 href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None) if page > 1 else '#' }}">
+                <i class="bi bi-chevron-left"></i> Anterior
+              </a>
+              <span class="pcur">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
+              <a class="pbtn {{ 'disabled' if page >= total_paginas }}"
+                 href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None) if page < total_paginas else '#' }}">
+                Siguiente <i class="bi bi-chevron-right"></i>
+              </a>
+            </div>
+          </footer>
+
+        {% else %}
+        <div class="vacio">
+          <i class="bi bi-inbox"></i>
+          {% if q or fase %}
+          <h3>Sin resultados para este filtro</h3>
+          <p>Prueba con otro texto o quita el filtro de estado.</p>
+          {% else %}
+          <h3>{% if origen == 'reales' %}Ninguna OT real todavía{% else %}Ninguna automática todavía{% endif %}</h3>
+          <p>No hay órdenes que coincidan con esta vista.</p>
+          {% endif %}
+        </div>
+        {% endif %}
+
+      {% elif vista == 'kanban' %}
+      <div class="kanban-wrap">
+        <div class="kanban-board">
+          {% for col in kanban_cols %}
+          <div class="kcol kcol-{{ col.clave }}">
+            <div class="kcol-head">
+              <span class="kcol-dot"></span>
+              <span class="kcol-label">{{ col.label }}</span>
+              <span class="kcol-count">{{ col.total }}</span>
+            </div>
+            <div class="kcol-body">
+              {% for f in col.filas %}
+              <a class="kcard" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+                <div class="kcard-top">
+                  <span class="kcard-num">{% if f.numero_ot %}OT-{{ f.numero_sufijo }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}</span>
+                  <span class="kcard-tipo"><i class="bi {{ f.tipo_icon }}"></i></span>
+                </div>
+                <div class="kcard-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
+                <div class="kcard-foot">
+                  {% if f.tecnico_ini %}<span class="kcard-av">{{ f.tecnico_ini }}</span>{% else %}<span class="kcard-av sin"><i class="bi bi-person"></i></span>{% endif %}
+                  <span class="kcard-pct">{{ f.check_pct }}%</span>
+                </div>
+              </a>
+              {% endfor %}
+              {% if not col.filas %}<div class="kcol-vacio">Sin OT aquí</div>{% endif %}
+              {% if col.recortado %}<div class="kcol-mas">+{{ col.recortado }} más — usa la vista Tabla para verlas todas</div>{% endif %}
+            </div>
+          </div>
           {% endfor %}
         </div>
-        <div class="pager-nav">
-          <a class="pbtn {{ 'disabled' if page <= 1 }}"
-             href="{{ url_for('ot2_panel', origen=origen, per_page=per_page, page=page-1) if page > 1 else '#' }}">
-            <i class="bi bi-chevron-left"></i> Anterior
-          </a>
-          <span class="pcur">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
-          <a class="pbtn {{ 'disabled' if page >= total_paginas }}"
-             href="{{ url_for('ot2_panel', origen=origen, per_page=per_page, page=page+1) if page < total_paginas else '#' }}">
-            Siguiente <i class="bi bi-chevron-right"></i>
-          </a>
-        </div>
-      </footer>
+      </div>
 
-      {% else %}
-      <div class="vacio">
-        <i class="bi bi-inbox"></i>
-        <h3>{% if origen == 'reales' %}Ninguna OT real todavía{% else %}Ninguna automática todavía{% endif %}</h3>
-        <p>No hay órdenes que coincidan con esta vista.</p>
+      {% elif vista == 'calendario' %}
+      <div class="cal-nav">
+        <a class="cal-navbtn" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_ant) }}" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></a>
+        <span class="cal-mes">{{ cal_mes_label }}</span>
+        <a class="cal-navbtn" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_sig) }}" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></a>
+      </div>
+      <div class="cal-grid">
+        <div class="cal-dow-row">
+          {% for d in cal_dow %}<div class="cal-dow">{{ d }}</div>{% endfor %}
+        </div>
+        {% for semana in cal_semanas %}
+        <div class="cal-week">
+          {% for celda in semana %}
+            {% if celda %}
+            <div class="cal-day {{ 'hoy' if celda.es_hoy }}">
+              <span class="cal-daynum">{{ celda.num }}</span>
+              {% for f in celda.filas %}
+              <a class="cal-chip {{ f.estado_class }}" href="{{ url_for('mant_ot_ficha', vid=f.id) }}"
+                 title="{{ f.razon_social or 'Trabajo interno' }} · {{ f.estado_label }}">
+                {% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ (f.razon_social or 'Interno')[:14] }}
+              </a>
+              {% endfor %}
+              {% if celda.recortado %}<div class="cal-mas">+{{ celda.recortado }} más</div>{% endif %}
+            </div>
+            {% else %}
+            <div class="cal-day cal-day-off"></div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% endfor %}
       </div>
       {% endif %}
 
     </section>
 
-    <p class="foot rise d5"><b>ILUS Sport &amp; Health</b> · Órdenes de Trabajo 2.0 · módulo de prueba</p>
+    <p class="foot"><b>ILUS Sport &amp; Health</b> · Órdenes de Trabajo 2.0 · módulo de prueba</p>
   </div>
 </main>
 
