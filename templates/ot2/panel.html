@@ -500,13 +500,29 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <div class="ot2-sem">
       {% for celda in semana %}
         {% if celda %}
-        <div class="ot2-dia {{ 'hoy' if celda.es_hoy }}">
+        {# El día completo es clicable: abre la agenda de ese día en un
+           modal. Daniel: "no es que lo va a abrir directo — quiero ver
+           quién es la OT, quién es el técnico asignado". Con más de 4
+           trabajos en el día, el modal es además la única forma de verlos
+           todos sin que la celda reviente. #}
+        <div class="ot2-dia {{ 'hoy' if celda.es_hoy }}" style="cursor:pointer"
+             onclick="OT2D.abrir(this)"
+             data-dia="{{ celda.num }}" data-total="{{ celda.filas|length + celda.recortado }}"
+             data-ots='{{ celda.filas | map(attribute="id") | list | tojson }}'>
           <span class="d">{{ celda.num }}</span>
           {% for f in celda.filas %}
-          <a class="ot2-ch f-{{ f.estado_fase or 'cancel' }}" href="{{ url_for('mant_ot_ficha', vid=f.id) }}"
-             title="{{ f.razon_social or 'Trabajo interno' }} · {{ f.estado_label }}">
+          <span class="ot2-ch f-{{ f.estado_fase or 'cancel' }}"
+                data-ot="{% if f.numero_ot %}OT-{{ f.numero_prefijo }}-{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %}"
+                data-cli="{{ f.razon_social or 'Trabajo interno' }}"
+                data-tipo="{{ f.tipo_label }}" data-estado="{{ f.estado_label }}"
+                data-fase="{{ f.estado_fase or 'cancel' }}"
+                data-tec="{{ f.tecnico_nombre or 'Sin asignar' }}"
+                data-ini="{{ f.tecnico_ini or '' }}"
+                data-av="{{ f.n_completas }}/{{ f.n_tareas }} · {{ f.check_pct }}%"
+                data-sub="{{ f.estado_sub or '' }}"
+                data-url="{{ url_for('mant_ot_ficha', vid=f.id) }}">
             {% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ (f.razon_social or 'Interno')[:14] }}
-          </a>
+          </span>
           {% endfor %}
           {% if celda.recortado %}<div class="ot2-mas">+{{ celda.recortado }} más</div>{% endif %}
         </div>
@@ -526,6 +542,83 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    /ot/api/crear). No es el de Tickets: si mañana se borra aquel, este
    sigue funcionando — que es justo lo que Daniel pidió. #}
 {% include "ot2/_modal_crear.html" %}
+
+{# ── Modal de AGENDA DEL DÍA (calendario) ─────────────────────────────
+   Daniel: "cuando presione en el calendario me entrega otro modal
+   indicándome qué es la OT... no es que lo va a abrir directo, porque
+   quiero ver quién es la OT, quién es el técnico asignado". #}
+<div class="modal fade" id="ot2ModalDia" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content" style="border:0;border-radius:15px;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
+                  padding:16px 22px;display:flex;align-items:center;gap:13px;
+                  border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <i class="bi bi-calendar-week-fill" style="font-size:1.4rem;color:var(--ilus-red,#dc2626)"></i>
+        <div>
+          <h5 style="margin:0;font-weight:800" id="ot2DiaTit">Agenda del día</h5>
+          <div style="font-size:.78rem;color:rgba(255,255,255,.62)" id="ot2DiaSub"></div>
+        </div>
+        <button type="button" style="margin-left:auto;background:transparent;border:0;
+                color:rgba(255,255,255,.7);font-size:1.4rem" data-bs-dismiss="modal">&times;</button>
+      </div>
+      <div style="padding:16px 20px;max-height:62vh;overflow-y:auto" id="ot2DiaBody"></div>
+    </div>
+  </div>
+</div>
+<style>
+.o2d{--c:#6b7280;display:flex;align-items:center;gap:13px;padding:13px;border:1px solid #eaecf0;
+  border-left:4px solid var(--c);border-radius:10px;margin-bottom:9px;background:#fff;
+  text-decoration:none;transition:transform .14s,box-shadow .14s}
+.o2d:hover{transform:translateX(3px);box-shadow:0 8px 18px rgba(10,10,10,.1)}
+.o2d.f-pend{--c:#3b82f6} .o2d.f-ejec{--c:#dc2626} .o2d.f-comp{--c:#16a34a}
+.o2d.f-cerr{--c:#4b5563} .o2d.f-cancel{--c:#dc2626}
+.o2d .nu{font-weight:900;font-size:.92rem;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums}
+.o2d .cl{font-weight:700;font-size:.88rem;color:#0a0a0a}
+.o2d .mt{font-size:.76rem;color:#6b7280}
+.o2d .es{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--c);border:1.5px solid var(--c);border-radius:999px;padding:3px 10px;white-space:nowrap}
+.o2d .tc{width:32px;height:32px;border-radius:50%;background:#0a0a0a;color:#fff;
+  display:grid;place-items:center;font-size:.68rem;font-weight:800;flex:none;
+  box-shadow:0 0 0 2px var(--ilus-red,#dc2626)}
+.o2d .tc.sin{background:#fff;color:#c7cbd1;border:1.5px dashed #d1d5db;box-shadow:none}
+</style>
+
+<script>
+/* Agenda del día del calendario. Lee los datos que ya vienen en el DOM —
+   no hace una consulta más al servidor. */
+window.OT2D = (function(){
+  var m = null;
+  function abrir(celda){
+    var chips = celda.querySelectorAll('.ot2-ch');
+    if (!chips.length) return;                       // día vacío: no molesta
+    var dia = celda.dataset.dia, total = celda.dataset.total;
+    document.getElementById('ot2DiaTit').textContent = 'Día ' + dia;
+    document.getElementById('ot2DiaSub').textContent =
+      total + (total === '1' ? ' orden agendada' : ' órdenes agendadas') +
+      (chips.length < total ? ' · se listan las ' + chips.length + ' primeras' : '');
+    var html = '';
+    chips.forEach(function(c){
+      var d = c.dataset;
+      html += '<a class="o2d f-'+d.fase+'" href="'+d.url+'">'+
+        '<span class="nu">'+d.ot+'</span>'+
+        '<span style="flex:1;min-width:0">'+
+          '<span class="cl d-block text-truncate">'+d.cli+'</span>'+
+          '<span class="mt">'+d.tipo+(d.sub ? ' · '+d.sub : '')+'</span></span>'+
+        (d.ini ? '<span class="tc">'+d.ini+'</span>'
+               : '<span class="tc sin"><i class="bi bi-person"></i></span>')+
+        '<span style="min-width:96px">'+
+          '<span class="mt d-block">'+d.tec+'</span>'+
+          '<span class="mt">'+d.av+'</span></span>'+
+        '<span class="es">'+d.estado+'</span>'+
+        '<i class="bi bi-arrow-right text-muted"></i></a>';
+    });
+    document.getElementById('ot2DiaBody').innerHTML = html;
+    m = m || new bootstrap.Modal(document.getElementById('ot2ModalDia'));
+    m.show();
+  }
+  return {abrir:abrir};
+})();
+</script>
 
 <script>
 /* ── Kanban: la tarjeta se mueve de verdad al arrastrarla ─────────────

@@ -177,7 +177,7 @@ window.OT2C = (function(){
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
-         ticket_id:null};
+         ticket_id:null, visto:{}};
     paso = 0;
   }
 
@@ -214,11 +214,16 @@ window.OT2C = (function(){
     }
   }
 
+  /* El verde solo aparece en pasos que YA SE VISITARON y quedaron
+     completos. Sin esta condición, "Detalle" y "Técnicos" nacían en verde
+     —porque son válidos vacíos— y daban a entender que ya estaban hechos
+     sin que nadie los hubiera mirado. */
   function riel(){
     var ps = pasos();
     document.getElementById('o2mRiel').innerHTML = ps.map(function(p,i){
-      var cls = i===paso ? 'on' : (completo(p.k) ? 'ok' : '');
-      var ico = completo(p.k) && i!==paso ? '<i class="bi bi-check-lg"></i>' : (i+1);
+      var listo = S.visto[p.k] && completo(p.k);
+      var cls = i===paso ? 'on' : (listo ? 'ok' : '');
+      var ico = (listo && i!==paso) ? '<i class="bi bi-check-lg"></i>' : (i+1);
       return '<button type="button" class="o2m-p '+cls+'" onclick="OT2C.ir('+i+')">'+
              '<span class="c">'+ico+'</span>'+p.n+'</button>';
     }).join('');
@@ -237,6 +242,8 @@ window.OT2C = (function(){
 
   /* ── Pintado de cada paso ──────────────────────────────────────────── */
   function pintar(){
+    var ps0 = pasos();
+    if (ps0[paso]) S.visto[ps0[paso].k] = true;   // este paso ya se miró
     riel();
     var ps = pasos(), k = ps[paso].k, b = document.getElementById('o2mBody');
     document.getElementById('o2mAtras').style.visibility = paso===0 ? 'hidden' : 'visible';
