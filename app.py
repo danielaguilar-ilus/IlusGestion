@@ -70809,7 +70809,12 @@ def ot2_panel():
         filas = mysql_fetchall(
             "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
             "       v.fecha_programada, v.cliente_id, c.razon_social, "
-            "       COALESCE(v.tecnico_nombre, au.nombre) AS tecnico_nombre, "
+            # BUG REAL 2026-08-19 (encontrado al verificar en vivo con la
+            # sesion de Daniel): v.tecnico_nombre NO existe en mant_visitas
+            # -- esa columna la tenia otra tabla. La real y confirmada
+            # contra el ALTER (app.py ~50330) es tecnico_user_id, ya unida
+            # mas abajo contra app_users.
+            "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
             "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
             "       COALESCE(tar.n_completas, 0) AS n_completas "
             "  FROM mant_visitas v "
