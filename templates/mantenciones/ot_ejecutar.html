@@ -2577,6 +2577,30 @@
             <i class="bi bi-link-45deg me-1"></i>Asociar factura a esta OT
           </button>
           <div class="small text-danger mt-1" id="factErr" style="min-height:16px"></div>
+
+          {# ── SALIDA POR GARANTÍA (Daniel 2026-08-19, caso OT-2026-00098) ──
+             Aaron quedó trabado: no puede firmar sin factura, y no podía
+             declarar la garantía porque con el cliente ya firmado la OT
+             queda sellada para edición. La garantía es la otra mitad de la
+             regla financiera (factura O garantía justificada, sin tercera
+             opción), así que vive aquí mismo, junto al candado que abre. #}
+          {% if puede_cobertura %}
+          <div class="mt-3 pt-3" style="border-top:1px dashed #fecaca">
+            <div class="small fw-semibold mb-1" style="color:#7f1d1d">
+              ¿Esta visita no se le cobra al cliente?
+            </div>
+            <div class="small mb-2" style="color:#991b1b">
+              Declárala como <strong>garantía</strong>: queda cerrable sin factura,
+              con tu nombre y el motivo registrados. Si había un documento de
+              cobro asociado, se anula.
+            </div>
+            <button type="button" class="btn btn-sm fw-bold" id="garBtn"
+                    style="background:#fff;color:#b45309;border:1.5px solid #f59e0b"
+                    onclick="declararGarantia()">
+              <i class="bi bi-shield-fill-check me-1"></i>Declarar como garantía
+            </button>
+          </div>
+          {% endif %}
         </div>
         {% endif %}
 

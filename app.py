@@ -48493,6 +48493,7 @@ def _puede_ot_accion(vid, accion, user=None):
     eliminar     │   ✓      │   ✗    │   ✗     │   ✗     │   ✗       │  ✗
     aprobar      │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← ejecutivo firma
     firmar_creador│  ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← como supervisor
+    cobertura    │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← garantía, hasta antes de cerrar (19-08)
     ─────────────┴──────────┴────────┴─────────┴─────────┴───────────┴───────
 
     Decisión final 2026-05-22 (Daniel):
@@ -48826,6 +48827,33 @@ def _puede_ot_accion(vid, accion, user=None):
             return True
         return False
 
+    # ── COBERTURA (2026-08-19, Daniel — caso OT-2026-00098) ──────
+    # Declarar que la visita va por GARANTÍA (o volver a servicio pagado).
+    # Es la ÚNICA salida del sello factura↔OT cuando el trabajo no se cobra.
+    #
+    # Por qué NO viaja por 'metadata': con el cliente ya firmado la OT queda
+    # sellada para edición (candado 2026-08-09 que impide reasignar técnico o
+    # mover la fecha de una OT firmada) y eso dejaba a la gestión en un
+    # callejón sin salida — no puede firmar sin factura, y no puede declarar
+    # la garantía porque la OT ya está sellada. Solo el superadmin destrababa.
+    # Aaron (ejecutivo SSTT) es justamente quien cierra el flujo.
+    #
+    # La regla decidida por Daniel (10-08-2026) es "supervisor+ y SOLO antes
+    # de que la OT se cierre" — pendiente_aprobacion ES antes de cerrar.
+    # NUNCA técnico: quien ejecuta no decide si se le cobra al cliente.
+    if accion == "cobertura":
+        if estado_ot in ("completada", "cerrada", "cancelada", "anulada"):
+            print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
+                  f"-> DENIED (OT ya cerrada/anulada: estado={estado_ot})", flush=True)
+            return False
+        if role in ("admin", "supervisor", "ejecutivo"):
+            print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
+                  f"-> ALLOWED (gestión, OT aún no cerrada)", flush=True)
+            return True
+        print(f"[PERM] vid={vid} action=cobertura role={role_raw}->{role} user={username} "
+              f"-> DENIED (solo gestión declara garantía)", flush=True)
+        return False
+
     # ── VER ────────────────────────────────────────────────────
     # Lectura: admin/supervisor/ejecutivo (TODAS), creador, técnico
     # asignado/colaborador.
@@ -49122,6 +49150,34 @@ def _ot_can_view(view_func):
                 u.get("id"),
                 u.get("username"),
                 accion="ver",
+            )
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
+def _ot_can_cobertura(view_func):
+    """Decorador para declarar la COBERTURA de la OT (garantía / servicio pagado).
+
+    2026-08-19 (Daniel, caso OT-2026-00098 — Aaron bloqueado): la garantía es
+    la única salida del sello factura↔OT y tenía que viajar por
+    `@_ot_can_metadata`, que con el cliente ya firmado bloquea a TODOS salvo
+    superadmin. Resultado: la OT quedaba trabada (no se puede firmar sin
+    factura, no se puede declarar la garantía porque está sellada).
+
+    Este gate es más angosto que 'metadata' — solo la cobertura — y más
+    largo en el tiempo: vale hasta que la OT se cierre de verdad. Nunca
+    técnico. Ver la acción 'cobertura' en `_puede_ot_accion`.
+    """
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _puede_ot_accion(vid, "cobertura", u):
+            return _ot_403_response(
+                vid,
+                (u.get("role") or "").lower(),
+                u.get("id"),
+                u.get("username"),
+                accion="cobertura",
             )
         return view_func(vid, *args, **kwargs)
     return wrapped
@@ -72700,6 +72756,11 @@ def mant_ot_ejecutar(vid):
     # 2026-07-12 (Daniel) — Finanzas de la OT (costo al cliente vs costo de
     # proveedor/interno + margen). Sensible: mismo gate que editar metadata.
     puede_metadata_flag = _puede_ot_accion(vid, "metadata", u)
+    # 2026-08-19 (Daniel, caso OT-2026-00098) — declarar GARANTÍA desde el
+    # modal de cierre. Gate propio (más angosto que metadata, pero vigente
+    # hasta que la OT se cierre): con el cliente firmado, 'metadata' ya está
+    # sellado y la gestión quedaba sin forma de destrabar el sello de factura.
+    puede_cobertura_flag = _puede_ot_accion(vid, "cobertura", u)
     # Comparar created_by (varchar username) con el username del user actual,
     # case insensitive y trim, igual que en `_puede_ot_accion`.
     _creator_username = (visita.get("created_by") or "").strip().lower()
@@ -73129,6 +73190,7 @@ def mant_ot_ejecutar(vid):
         ot_necesita_config=ot_necesita_config,
         tareas_huerfanas=_tareas_huerf_v,
         puede_metadata=puede_metadata_flag,
+        puede_cobertura=puede_cobertura_flag,
     )
 
 
@@ -75659,6 +75721,126 @@ def _erp_doc_lookup(tido, nudo):
         if doc:
             return doc, via, True, None
     return None, None, respondio, ultimo_error
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/cobertura", methods=["POST"])
+@_mant_required
+@_ot_can_cobertura
+def mant_ot_declarar_cobertura(vid):
+    """Declara la COBERTURA de la OT: garantía (no se cobra) o servicio pagado.
+
+    2026-08-19 (Daniel, urgente — OT-2026-00098 Inmobiliaria De Deportes La
+    Dehesa): *"lo que requiero es que Aaron coloque esto como garantía y
+    anule cualquier declaración de documento"*.
+
+    Es la contraparte del sello factura↔OT (`mant_ot_asociar_factura`): en vez
+    de amarrar un documento de cobro, declara que el trabajo NO se cobra. Al
+    quedar en garantía, `modalidad_cobro='garantia'` y el gate de firma del
+    modal de cierre desaparece (ver ot_ejecutar.html).
+
+    Body: {garantia_aplica: bool, motivo: str}
+
+    Reglas (todas ya decididas por Daniel, ver memoria del proyecto):
+      · Motivo OBLIGATORIO ≥ 10 caracteres — la garantía debe quedar
+        justificada y trazable ("bien autorizada de quién y por qué").
+      · Solo gestión (admin/supervisor/ejecutivo/superadmin), nunca técnico.
+      · Solo hasta antes de cerrar la OT (lo enforcea `_ot_can_cobertura`).
+      · tipo='levantamiento' NUNCA admite garantía — `_mapear_garantia_a_
+        cobertura` lo degrada a pagado y se devuelve el warning al frontend.
+      · Al pasar a garantía se ANULA el documento de cobro ligado (si había):
+        una OT que no se cobra no puede quedar apuntando a una factura. El
+        valor anterior queda escrito en `mant_logs` (REGLA #5), nunca se
+        pierde. NO se toca `documento_erp_*` (la nota de venta de origen):
+        ese dato es la trazabilidad de dónde nació la OT, no un cobro.
+    """
+    d = request.get_json(silent=True) or {}
+    gar = _parse_garantia_aplica(d.get("garantia_aplica"))
+    if gar is None:
+        return jsonify({"ok": False,
+                        "error": "Indica si la garantía aplica o no."}), 400
+    motivo = (d.get("motivo") or "").strip()
+    if len(motivo) < 10:
+        return jsonify({
+            "ok": False,
+            "error": ("Explica por qué esta visita va por garantía "
+                      "(mínimo 10 caracteres). Queda registrado con tu "
+                      "usuario para respaldar que no se cobró."),
+            "error_codigo": "COBERTURA_MOTIVO_REQUERIDO",
+        }), 400
+
+    v = mysql_fetchone(
+        "SELECT id, tipo, estado, cubierto_por, modalidad_cobro, "
+        "       estado_facturacion, factura_tido, factura_nudo "
+        "  FROM mant_visitas WHERE id=%s", (vid,)
+    )
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+
+    cobertura, warn = _mapear_garantia_a_cobertura(gar, v.get("tipo"))
+    if not cobertura:
+        return jsonify({"ok": False, "error": "No se pudo mapear la cobertura"}), 400
+
+    _gar_efectiva = (cobertura.get("modalidad_cobro") == "garantia")
+    _doc_previo = ""
+    if v.get("factura_nudo"):
+        _doc_previo = f"{v.get('factura_tido') or 'FCV'} {v.get('factura_nudo')}"
+
+    # Audit ANTES de escribir (REGLA #5): el estado previo completo queda
+    # registrado aunque el UPDATE falle a mitad de camino.
+    try:
+        _mant_log(
+            "visita", vid, "garantia_retroactiva",
+            f"cobertura: {v.get('modalidad_cobro')} -> "
+            f"{cobertura['modalidad_cobro']} · estado_ot={v.get('estado')} · "
+            + (f"documento anulado: {_doc_previo} · " if (_gar_efectiva and _doc_previo) else "")
+            + f"motivo: {motivo[:400]} · por {current_username() or '?'}"
+        )
+    except Exception as _e_log:
+        print(f"[cobertura] audit fail vid={vid}: {_e_log}", flush=True)
+
+    sets = ["cubierto_por=%s", "modalidad_cobro=%s", "estado_facturacion=%s",
+            "garantia_motivo=%s"]
+    params = [cobertura["cubierto_por"], cobertura["modalidad_cobro"],
+              cobertura["estado_facturacion"], motivo[:500]]
+    if _gar_efectiva and _doc_previo:
+        # "Anula cualquier declaración de documento": la OT deja de estar
+        # amarrada a un cobro. Queda en el audit log de arriba.
+        sets += ["factura_tido=NULL", "factura_nudo=NULL",
+                 "factura_emitida_at=NULL", "factura_monto=NULL",
+                 "factura_rut=NULL", "factura_rut_ok=NULL",
+                 "factura_rut_justif=NULL"]
+    params.append(vid)
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET " + ", ".join(sets) + " WHERE id=%s",
+            tuple(params)
+        )
+    except Exception as e:
+        print(f"[cobertura] UPDATE fail vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "No se pudo guardar la cobertura."}), 500
+
+    # Con la OT en garantía ya no hay factura pendiente que reclamar.
+    try:
+        if _gar_efectiva:
+            mysql_execute(
+                "UPDATE mant_notificaciones SET archivada_at=NOW() "
+                " WHERE visita_id=%s AND tipo='factura_pendiente' "
+                "   AND archivada_at IS NULL",
+                (vid,)
+            )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "garantia": _gar_efectiva,
+        "cubierto_por": cobertura["cubierto_por"],
+        "modalidad_cobro": cobertura["modalidad_cobro"],
+        "estado_facturacion": cobertura["estado_facturacion"],
+        "documento_anulado": _doc_previo if (_gar_efectiva and _doc_previo) else None,
+        "warning": warn,
+    })
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/asociar-factura", methods=["POST"])
