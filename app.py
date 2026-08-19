@@ -92000,27 +92000,71 @@ def mant_maquina_ficha(mid):
     # tercera fuente toca el JSON que ya consume el template de la ficha).
     # El helper de lectura ya existe listo para reusar cuando se aborde:
     # _ot_equipos_y_fotos(vid)["lev_fotos_idx"] / ["lev_items"].
-    fotos_rows = mysql_fetchall(
+    # ── Galería del equipo: las DOS fuentes ───────────────────────────
+    #
+    # REGRESIÓN CORREGIDA (2026-08-19). Al cerrar la contaminación del
+    # levantamiento (commit 720c482/b6c3344), las OT de instalación,
+    # preventiva e inspección dejaron de escribir en mant_levantamiento_fotos,
+    # y como mant_maquina_fotos SOLO se puebla por el carril del
+    # levantamiento (al cerrar la OT), las fotos que el técnico toma en
+    # esos tipos —los más frecuentes— dejaron de verse en la ficha del
+    # equipo. El fix del levantamiento era correcto; el efecto colateral
+    # sobre la galería, no.
+    #
+    # Se resuelve LEYENDO las dos tablas en vez de volver a escribir en la
+    # ficha: mant_maquina_fotos (promovidas al cerrar) + mant_visita_fotos
+    # (tomadas en cualquier OT, estén o no cerradas). Así la foto se ve al
+    # instante y la ficha permanente sigue sin ser pisada por una OT que
+    # no es un levantamiento — que es justo lo que Daniel pidió separar.
+    #
+    # ⚠️ A PROPÓSITO no se toca `calidad_ficha` (~app.py:92805) ni el JSON
+    # que lo alimenta: ese score 0-100 decide qué equipos necesitan
+    # levantamiento, y 22 de sus puntos dependen de fotos. Si contara
+    # también estas, cientos de fichas subirían de nota sin que nadie
+    # hubiera capturado un dato nuevo, y el módulo dejaría de señalar el
+    # trabajo que falta. Se muestran las fotos; no se cambia el indicador.
+    # El UNION va en try: mant_visita_fotos.cloudinary_url se agregó por un
+    # ALTER del bloque condicional (app.py:50720), que NO corre con
+    # ILUS_SKIP_MIGRATIONS=1. Si en algún ambiente esa columna faltara, la
+    # ficha del equipo NO puede caerse: degrada a las fotos promovidas,
+    # que es exactamente como estaba antes.
+    _sql_union = (
         "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
-        "       tomada_at AS created_at, levantamiento_id "
+        "       tomada_at AS created_at, NULL AS visita_id, 'ficha' AS fuente "
         "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        " ORDER BY tomada_at DESC LIMIT 200",
-        (mid,)
-    ) or []
-    fotos = []
+        "UNION ALL "
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
+        "       tomada_at AS created_at, visita_id, 'ot' AS fuente "
+        "  FROM mant_visita_fotos "
+        " WHERE maquina_id=%s AND COALESCE(cloudinary_url, archivo_path, '') <> '' "
+        " ORDER BY created_at DESC LIMIT 200"
+    )
+    try:
+        fotos_rows = mysql_fetchall(_sql_union, (mid, mid)) or []
+    except Exception as _e_fotos:
+        print(f"[maquina_ficha] galeria union: {_e_fotos}", flush=True)
+        fotos_rows = mysql_fetchall(
+            "SELECT id, archivo_path, cloudinary_url, descripcion, tomada_por, "
+            "       tomada_at AS created_at, NULL AS visita_id, 'ficha' AS fuente "
+            "  FROM mant_maquina_fotos WHERE maquina_id=%s "
+            " ORDER BY tomada_at DESC LIMIT 200", (mid,)) or []
+    fotos, _vistas = [], set()
     for r in fotos_rows:
         url = r.get("cloudinary_url") or (
             f"/static/uploads/mantenciones/{r['archivo_path']}"
             if r.get("archivo_path") else ""
         )
-        if not url:
-            continue
+        if not url or url in _vistas:
+            continue  # la misma foto puede estar promovida Y en la visita
+        _vistas.add(url)
         fotos.append({
             "id": r["id"],
             "url": url,
             "descripcion": r.get("descripcion") or "",
             "tomada_por": r.get("tomada_por") or "",
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
+            "fuente": r.get("fuente") or "ficha",
+            "visita_id": r.get("visita_id"),
         })
 
     # Audit log: eventos del equipo

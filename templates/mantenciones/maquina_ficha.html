@@ -782,6 +782,15 @@
         <div class="foto-meta">
           <div><strong>{{ f.tomada_por or 'Anónimo' }}</strong></div>
           <div>{{ f.created_at }}</div>
+          {# De qué OT viene. Las fotos tomadas en una OT abierta ahora se
+             ven al instante (antes solo aparecían al cerrarla), así que
+             conviene distinguirlas de las ya promovidas a la ficha. #}
+          {% if f.fuente == 'ot' and f.visita_id %}
+          <div><a href="{{ url_for('mant_ot_ficha', vid=f.visita_id) }}"
+                  onclick="event.stopPropagation()"
+                  style="font-size:.68rem;color:#3b82f6;text-decoration:none">
+            <i class="bi bi-clipboard2-pulse"></i> Ver OT</a></div>
+          {% endif %}
         </div>
       </div>
       {% endfor %}
