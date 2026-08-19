@@ -71048,6 +71048,38 @@ def ot2_panel():
     if fase not in _OT2_FASES or vista not in ("tabla", "tarjeta"):
         fase = ""
 
+    # Filtros de columna (Daniel, 19-08: "tiene que tener unos filtros acá
+    # arriba potentes"). Mismo trío que ya usa /mantenciones/ots, que es el
+    # que él conoce: tipo, técnico y estado -- este último ya lo cubre el
+    # filtro por fase de los KPI, así que no se duplica.
+    f_tipo = (request.args.get("tipo") or "").strip().lower()
+    if f_tipo not in _OT_TIPOS_VALIDOS:
+        f_tipo = ""
+    try:
+        f_tec = int(request.args.get("tecnico") or 0) or None
+    except (TypeError, ValueError):
+        f_tec = None
+
+    # Orden por columna (Daniel: "siempre ordenado por el número de OT,
+    # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
+    # puedo hacer").
+    # LISTA BLANCA obligatoria: el ORDER BY es lo único de la consulta que
+    # no admite parámetros %s, así que el valor se MAPEA a SQL fijo. Nunca
+    # se concatena lo que llega del usuario (REGLA #4).
+    _ORDEN_SQL = {
+        "ot":      "v.numero_ot {d}, v.id {d}",
+        "cliente": "c.razon_social {d}, v.numero_ot DESC",
+        "tipo":    "v.tipo {d}, v.numero_ot DESC",
+        "estado":  "v.estado {d}, v.numero_ot DESC",
+        "fecha":   "v.fecha_programada {d}, v.numero_ot DESC",
+        "tecnico": "COALESCE(au.nombre, au.username) {d}, v.numero_ot DESC",
+    }
+    orden = (request.args.get("orden") or "ot").lower()
+    if orden not in _ORDEN_SQL:
+        orden = "ot"
+    dir_ = "ASC" if (request.args.get("dir") or "").lower() == "asc" else "DESC"
+    order_by = _ORDEN_SQL[orden].format(d=dir_)
+
     filas, kpis, error = [], {k: 0 for k in _OT2_FASES}, None
     conteo_reales = conteo_automaticas = total_paginas = total_filtrado = 0
     kanban_cols = []
@@ -71071,6 +71103,15 @@ def ot2_panel():
         )
         like = f"%{q}%"
         extra_params_q.extend([like, like, like])
+    # Tipo y técnico entran junto con q (afectan el universo de las 4
+    # vistas, no solo el listado): un Kanban filtrado por técnico tiene
+    # tanto sentido como una tabla filtrada por técnico.
+    if f_tipo:
+        extra_where_q.append("v.tipo = %s")
+        extra_params_q.append(f_tipo)
+    if f_tec:
+        extra_where_q.append("v.tecnico_user_id = %s")
+        extra_params_q.append(f_tec)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -71133,7 +71174,7 @@ def ot2_panel():
         if vista in ("tabla", "tarjeta"):
             filas = mysql_fetchall(
                 _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS + _where_completo +
-                " ORDER BY v.numero_ot DESC, v.id DESC "
+                f" ORDER BY {order_by} "
                 " LIMIT %s OFFSET %s",
                 tuple(extra_params) + (per_page, (page - 1) * per_page)
             ) or []
@@ -71214,6 +71255,26 @@ def ot2_panel():
         error = str(e)[:300]
         print(f"[ot2_panel] {e}", flush=True)
 
+    # Opciones de los filtros. Los tipos salen de los que REALMENTE se
+    # usan en las OT existentes, no de la lista completa: un desplegable
+    # con 16 tipos donde 5 nunca se usaron es ruido. Si el filtro activo
+    # apunta a un tipo sin uso, igual se incluye para no dejarlo huérfano.
+    tipos_opts, tecnicos_opts = [], []
+    try:
+        for r in (mysql_fetchall(
+            "SELECT DISTINCT tipo FROM mant_visitas WHERE tipo IS NOT NULL") or []):
+            t = r.get("tipo")
+            if t:
+                tipos_opts.append((t, _TIPO_OT_LABEL.get(t, t.replace("_", " ").title())))
+        tipos_opts.sort(key=lambda x: x[1])
+        tecnicos_opts = [
+            (r["id"], r["n"]) for r in (mysql_fetchall(
+                "SELECT DISTINCT au.id, COALESCE(au.nombre, au.username) AS n "
+                "  FROM mant_visitas v JOIN app_users au ON au.id = v.tecnico_user_id "
+                " ORDER BY n") or []) if r.get("n")]
+    except Exception as e:
+        print(f"[ot2_panel] opciones de filtro: {e}", flush=True)
+
     return render_template(
         "ot2/panel.html",
         filas=filas, origen=origen, vista=vista, kpis=kpis,
@@ -71222,6 +71283,8 @@ def ot2_panel():
         page=page, per_page=per_page, total_paginas=total_paginas,
         per_page_opciones=_OT2_PER_PAGE_OPCIONES, error=error,
         kanban_cols=kanban_cols,
+        orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
+        tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
         cal_dow=("L", "M", "M", "J", "V", "S", "D"),

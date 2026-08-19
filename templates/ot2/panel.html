@@ -101,6 +101,13 @@
 .ot2-tabla{width:100%;border-collapse:collapse;min-width:900px}
 .ot2-tabla thead th{background:#0a0a0a;color:#fff;font-size:.68rem;font-weight:800;
   letter-spacing:.09em;text-transform:uppercase;text-align:left;padding:12px 14px;white-space:nowrap}
+.ot2-th{display:inline-flex;align-items:center;gap:6px;color:rgba(255,255,255,.72);
+  text-decoration:none;transition:color .14s}
+.ot2-th i{font-size:.72rem;opacity:.5}
+.ot2-th:hover{color:#fff}
+.ot2-th:hover i{opacity:.9}
+.ot2-th.act{color:#fff}
+.ot2-th.act i{opacity:1;color:var(--ilus-red,#dc2626)}
 .ot2-tabla tbody tr{--c:#6b7280;border-bottom:1px solid var(--ot-line);
   cursor:pointer;transition:background .14s}
 .ot2-tabla tbody tr:hover{background:#fafbfc}
@@ -142,12 +149,22 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-tabla tbody tr:hover + .ot2-det,
 .ot2-det:hover{display:table-row}
 .ot2-det td{padding:0 14px 13px;border-left:4px solid var(--c)}
-.ot2-det-in{display:flex;gap:22px;flex-wrap:wrap;padding:11px 14px;background:#fff;
-  border:1px dashed #dfe3e8;border-radius:9px}
-.ot2-det-it{display:flex;flex-direction:column;gap:2px;min-width:120px}
-.ot2-det-it .k{font-size:.62rem;font-weight:800;letter-spacing:.08em;
-  text-transform:uppercase;color:#9ca3af}
-.ot2-det-it .v{font-size:.83rem;font-weight:700;color:#0a0a0a}
+.ot2-det-in{display:flex;gap:8px;flex-wrap:wrap;padding:11px 13px;
+  background:linear-gradient(180deg,#fff,#fafbfc);
+  border:1px solid #e8ebef;border-radius:10px}
+/* Pastillas de color, una por dato — el lenguaje de la tabla de Etiquetas */
+.dp{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:700;
+  padding:5px 11px;border-radius:999px;white-space:nowrap;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis}
+.dp i{font-size:.8rem;flex:none}
+.dp b{font-weight:800}
+.dp-trab{background:#ede9fe;color:#5b21b6}
+.dp-sit {background:#ffedd5;color:#9a3412}
+.dp-fec {background:#dbeafe;color:#1d4ed8}
+.dp-chk {background:#fef3c7;color:#92400e}
+.dp-ok  {background:#dcfce7;color:#166534}
+.dp-tec {background:#f3e8ff;color:#6b21a8}
+.dp-cli {background:#e0f2fe;color:#075985}
 
 /* ══════════════ KANBAN — 4 columnas, tarjeta que se mueve ══════════ */
 .ot2-kan-wrap{overflow-x:auto;padding-bottom:8px}
@@ -324,10 +341,31 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <input type="search" name="q" value="{{ q }}"
              placeholder="Buscar por N° OT, cliente o técnico…" aria-label="Buscar órdenes">
     </div>
+
+    {# Filtros de columna — mismo trío que ya usa /mantenciones/ots #}
+    <select name="tipo" class="form-select form-select-sm" style="min-height:44px;max-width:190px"
+            onchange="this.form.submit()" aria-label="Filtrar por tipo">
+      <option value="">Todos los tipos</option>
+      {% for v, n in tipos_opts %}
+      <option value="{{ v }}" {{ 'selected' if f_tipo == v }}>{{ n }}</option>
+      {% endfor %}
+    </select>
+    <select name="tecnico" class="form-select form-select-sm" style="min-height:44px;max-width:190px"
+            onchange="this.form.submit()" aria-label="Filtrar por técnico">
+      <option value="">Todos los técnicos</option>
+      {% for tid, n in tecnicos_opts %}
+      <option value="{{ tid }}" {{ 'selected' if f_tec == tid }}>{{ n }}</option>
+      {% endfor %}
+    </select>
+
+    {# El orden viaja en el formulario para no perderse al buscar #}
+    <input type="hidden" name="orden" value="{{ orden }}">
+    <input type="hidden" name="dir" value="{{ dir }}">
+
     <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
       <i class="bi bi-funnel me-1"></i>Buscar
     </button>
-    {% if q or fase %}
+    {% if q or fase or f_tipo or f_tec %}
     <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
       <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -335,10 +373,10 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% endif %}
   </form>
 
-  {% if q or fase %}
+  {% if q or fase or f_tipo or f_tec %}
   <p class="ot2-nota">
     <i class="bi bi-info-circle-fill text-primary"></i>
-    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}
   </p>
   {% endif %}
 
@@ -360,10 +398,29 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <div class="ot2-tabla-wrap">
       <div class="ot2-scroll">
         <table class="ot2-tabla">
+          {# Encabezados ordenables. Un clic ordena; volver a hacer clic en
+             la misma columna invierte el sentido. El orden por defecto
+             sigue siendo el N° de OT descendente, como pidió Daniel. #}
+          {% macro th(col, label) %}
+            {% set act = (orden == col) %}
+            {% set nueva_dir = 'asc' if (act and dir == 'desc') else ('desc' if act else 'desc') %}
+            <th>
+              <a class="ot2-th {{ 'act' if act }}"
+                 href="{{ url_for('ot2_panel', origen=origen, vista=vista, q=q or None,
+                                  fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None,
+                                  per_page=per_page, orden=col,
+                                  dir=('asc' if act and dir=='desc' else 'desc')) }}">
+                {{ label }}
+                {% if act %}<i class="bi bi-caret-{{ 'up' if dir=='asc' else 'down' }}-fill"></i>
+                {% else %}<i class="bi bi-arrow-down-up"></i>{% endif %}
+              </a>
+            </th>
+          {% endmacro %}
           <thead>
             <tr>
-              <th>N° OT</th><th>Cliente</th><th>Tipo</th><th>Estado</th>
-              <th>Técnico</th><th>Fecha</th><th>Avance</th><th></th>
+              {{ th('ot','N° OT') }}{{ th('cliente','Cliente') }}{{ th('tipo','Tipo') }}
+              {{ th('estado','Estado') }}{{ th('tecnico','Técnico') }}{{ th('fecha','Fecha') }}
+              <th>Avance</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -401,20 +458,27 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 <a class="ot2-abrir" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a>
               </td>
             </tr>
-            {# El detalle que se despliega al pasar por encima #}
+            {# El detalle que se despliega al pasar por encima. Cada dato
+               en su propia pastilla de color, como la tabla de Etiquetas
+               (Daniel: "lo quiero más colorido"). #}
             <tr class="ot2-det f-{{ f.estado_fase or 'cancel' }}">
               <td colspan="8">
                 <div class="ot2-det-in">
-                  <div class="ot2-det-it"><span class="k">Trabajo</span>
-                    <span class="v">{{ f.titulo or '—' }}</span></div>
-                  <div class="ot2-det-it"><span class="k">Situación</span>
-                    <span class="v">{{ f.estado_sub or '—' }}</span></div>
-                  <div class="ot2-det-it"><span class="k">Programada</span>
-                    <span class="v">{{ f.fecha_dow }} {{ f.fecha_dia }}</span></div>
-                  <div class="ot2-det-it"><span class="k">Checklist</span>
-                    <span class="v">{{ f.n_completas }} de {{ f.n_tareas }} · {{ f.check_pct }}%</span></div>
-                  <div class="ot2-det-it"><span class="k">Técnico</span>
-                    <span class="v">{{ f.tecnico_nombre or 'Sin asignar' }}</span></div>
+                  <span class="dp dp-trab"><i class="bi bi-card-text"></i>
+                    <b>{{ f.titulo or 'Sin título' }}</b></span>
+                  {% if f.estado_sub %}
+                  <span class="dp dp-sit"><i class="bi bi-activity"></i>{{ f.estado_sub }}</span>
+                  {% endif %}
+                  <span class="dp dp-fec"><i class="bi bi-calendar2-event"></i>
+                    {{ f.fecha_dow }} {{ f.fecha_dia }}</span>
+                  <span class="dp {{ 'dp-ok' if f.check_done else 'dp-chk' }}">
+                    <i class="bi bi-check2-square"></i>
+                    {{ f.n_completas }}/{{ f.n_tareas }} tareas · {{ f.check_pct }}%</span>
+                  <span class="dp dp-tec"><i class="bi bi-person-fill"></i>
+                    {{ f.tecnico_nombre or 'Sin asignar' }}</span>
+                  {% if f.razon_social %}
+                  <span class="dp dp-cli"><i class="bi bi-building"></i>{{ f.razon_social }}</span>
+                  {% endif %}
                 </div>
               </td>
             </tr>
