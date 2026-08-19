@@ -69834,6 +69834,13 @@ _OT_PRIORIDADES = ("baja", "media", "alta", "urgente")
 # costo ni garantía. Si llega garantia → se fuerza a sin_costo.
 _OT_TIPOS_SIN_GARANTIA = ("levantamiento",)
 
+# Documentos del ERP que sirven para CERRAR una OT cobrable (Daniel
+# 2026-08-19). La nota de venta entró con el mismo peso que la factura;
+# se separa en su propia tupla porque aún puede facturarse después y por
+# eso no marca la OT como 'facturado'.
+_OT_DOCS_NOTA_VENTA = ("NVV", "NVI")
+_OT_DOCS_CIERRE = ("FCV", "FCE", "BLV", "BLE") + _OT_DOCS_NOTA_VENTA
+
 
 def _normalizar_modalidad_cobro(tipo, modalidad_raw):
     """Aplica reglas de negocio a la modalidad de cobro de una OT.
@@ -75939,7 +75946,7 @@ def mant_ot_declarar_cobertura(vid):
     quedar en garantía, `modalidad_cobro='garantia'` y el gate de firma del
     modal de cierre desaparece (ver ot_ejecutar.html).
 
-    Body: {garantia_aplica: bool, motivo: str}
+    Body: {garantia_aplica: bool, motivo: str, monto: number}
 
     Reglas (todas ya decididas por Daniel, ver memoria del proyecto):
       · Motivo OBLIGATORIO ≥ 10 caracteres — la garantía debe quedar
@@ -75969,6 +75976,29 @@ def mant_ot_declarar_cobertura(vid):
             "error_codigo": "COBERTURA_MOTIVO_REQUERIDO",
         }), 400
 
+    # Valorización obligatoria (Daniel 2026-08-19): *"es necesario siempre
+    # calcular el monto para control aunque sea garantía"*. Una garantía sin
+    # monto es plata que ILUS regala sin poder medirla: se sabe que no se
+    # cobró, pero no cuánto costó. Solo se exige al DECLARAR garantía —
+    # volver a servicio pagado no lo necesita (ahí el monto lo trae el
+    # documento del ERP).
+    _monto_raw = d.get("monto")
+    monto = None
+    if _monto_raw is not None and str(_monto_raw).strip() != "":
+        try:
+            monto = float(str(_monto_raw).replace(".", "").replace(",", ".")
+                          if isinstance(_monto_raw, str) else _monto_raw)
+        except (TypeError, ValueError):
+            monto = None
+    if gar and (monto is None or monto <= 0):
+        return jsonify({
+            "ok": False,
+            "error": ("Indica cuánto vale esta visita aunque no se cobre. "
+                      "El monto queda para control interno: es la única forma "
+                      "de medir cuánto se entregó en garantía."),
+            "error_codigo": "COBERTURA_MONTO_REQUERIDO",
+        }), 400
+
     v = mysql_fetchone(
         "SELECT id, tipo, estado, cubierto_por, modalidad_cobro, "
         "       estado_facturacion, factura_tido, factura_nudo "
@@ -75994,6 +76024,7 @@ def mant_ot_declarar_cobertura(vid):
             f"cobertura: {v.get('modalidad_cobro')} -> "
             f"{cobertura['modalidad_cobro']} · estado_ot={v.get('estado')} · "
             + (f"documento anulado: {_doc_previo} · " if (_gar_efectiva and _doc_previo) else "")
+            + (f"valorizada en ${monto:,.0f} · " if (monto and monto > 0) else "")
             + f"motivo: {motivo[:400]} · por {current_username() or '?'}"
         )
     except Exception as _e_log:
@@ -76003,6 +76034,9 @@ def mant_ot_declarar_cobertura(vid):
             "garantia_motivo=%s"]
     params = [cobertura["cubierto_por"], cobertura["modalidad_cobro"],
               cobertura["estado_facturacion"], motivo[:500]]
+    if monto is not None and monto > 0:
+        sets.append("costo=%s")
+        params.append(monto)
     if _gar_efectiva and _doc_previo:
         # "Anula cualquier declaración de documento": la OT deja de estar
         # amarrada a un cobro. Queda en el audit log de arriba.
@@ -76040,6 +76074,7 @@ def mant_ot_declarar_cobertura(vid):
         "modalidad_cobro": cobertura["modalidad_cobro"],
         "estado_facturacion": cobertura["estado_facturacion"],
         "documento_anulado": _doc_previo if (_gar_efectiva and _doc_previo) else None,
+        "monto": monto,
         "warning": warn,
     })
 
@@ -76057,9 +76092,14 @@ def mant_ot_asociar_factura(vid):
     justificacion}. confirmar=false → solo preview (consulta ERP + análisis).
     """
     d = request.get_json(silent=True) or {}
+    # 2026-08-19 (Daniel): la nota de venta entra con el MISMO peso que la
+    # factura — "alguna NVV o NVI tienen el mismo peso de una FCV o BLV".
+    # La diferencia no está en si cierra o no (ambas cierran), sino en el
+    # pipeline comercial: la nota de venta aún puede facturarse después.
     tipo = (d.get("tipo") or "FCV").strip().upper()[:5]
-    if tipo not in ("FCV", "FCE", "BLV", "BLE"):
+    if tipo not in _OT_DOCS_CIERRE:
         tipo = "FCV"
+    _es_nota_venta = tipo in _OT_DOCS_NOTA_VENTA
     numero = re.sub(r"[^0-9]", "", str(d.get("numero") or ""))
     if not numero:
         return jsonify({"ok": False, "error": "Indica el número de la factura/boleta."}), 400
@@ -76114,18 +76154,43 @@ def mant_ot_asociar_factura(vid):
                                  "Explica en texto por qué corresponde igual.",
                         "analisis": analisis}), 409
 
-    mysql_execute(
-        "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
-        "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
-        "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
-        "  factura_rut_justif=%s, factura_asociada_por=%s, "
-        "  estado_facturacion='facturado' "
-        " WHERE id=%s",
-        (tipo, numero[:20], rut_fact[:20] or None, _monto,
-         1 if analisis["match"] else 0, justif or None,
-         current_username(), vid))
+    # La nota de venta NO marca la OT como facturada: queda en su propio
+    # estado para que Cobranza pueda encontrar lo que falta convertir.
+    _estado_fact = "con_nota_venta" if _es_nota_venta else "facturado"
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+            "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
+            "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
+            "  factura_rut_justif=%s, factura_asociada_por=%s, "
+            # Valorización de la visita (Daniel 2026-08-19: "es necesario
+            # siempre calcular el monto para control"). Solo la rellena si
+            # está vacía: un monto cargado a mano no se pisa con el del ERP.
+            "  costo=COALESCE(NULLIF(costo,0), %s), "
+            "  estado_facturacion=%s "
+            " WHERE id=%s",
+            (tipo, numero[:20], rut_fact[:20] or None, _monto,
+             1 if analisis["match"] else 0, justif or None,
+             current_username(), _monto, _estado_fact, vid))
+    except Exception as _e_up:
+        # Fallback: base sin la migración del ENUM todavía aplicada. La OT
+        # igual queda amarrada al documento (que es lo que destraba la firma).
+        print(f"[asociar-factura] UPDATE con estado={_estado_fact} falló vid={vid}: "
+              f"{_e_up} — reintento sin el estado nuevo", flush=True)
+        mysql_execute(
+            "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+            "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
+            "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
+            "  factura_rut_justif=%s, factura_asociada_por=%s, "
+            "  costo=COALESCE(NULLIF(costo,0), %s) "
+            " WHERE id=%s",
+            (tipo, numero[:20], rut_fact[:20] or None, _monto,
+             1 if analisis["match"] else 0, justif or None,
+             current_username(), _monto, vid))
     _mant_log("visita", vid, "factura_asociada",
-              f"{tipo} {numero} · ${_monto or 0:,.0f} · RUT "
+              f"{tipo} {numero} · ${_monto or 0:,.0f} · "
+              + ("NOTA DE VENTA (aún facturable) · " if _es_nota_venta else "")
+              + "RUT "
               + ("coincide" if analisis["match"]
                  else f"NO coincide ({analisis['nivel']}) — justif: {justif[:150]}"))
     return jsonify({"ok": True, "guardado": True, "factura": fact, "analisis": analisis})
@@ -94477,6 +94542,40 @@ def _ensure_garantia_motivo_col():
     return False
 
 
+def _ensure_estado_facturacion_nota_venta():
+    """Añade 'con_nota_venta' al ENUM mant_visitas.estado_facturacion SIEMPRE
+    (incluso con ILUS_SKIP_MIGRATIONS=1).
+
+    2026-08-19 (Daniel): la nota de venta (NVV/NVI) pasa a tener el MISMO peso
+    que una factura para cerrar la OT — *"alguna NVV o NVI tienen el mismo
+    peso de una FCV o BLV"*. Pero agregó la salvedad clave: *"en algunos casos
+    se pueden facturar, sobre todo las NVV"*.
+
+    Por eso la nota de venta NO puede marcar la OT como 'facturado': inflaría
+    el pipeline comercial con plata que todavía no se facturó y Cobranza
+    perdería de vista lo que falta convertir. Este estado propio deja la OT
+    cerrable y, a la vez, encontrable con un filtro
+    (`estado_facturacion='con_nota_venta'`)."""
+    try:
+        _r = mysql_fetchone(
+            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "  AND COLUMN_NAME='estado_facturacion'")
+        _t = ((_r or {}).get("t") or "").lower()
+        if _t and "con_nota_venta" not in _t:
+            mysql_execute(
+                "ALTER TABLE mant_visitas MODIFY estado_facturacion "
+                "  ENUM('sin_cotizar','cotizado','con_oc','con_nota_venta',"
+                "       'facturado','no_aplica') "
+                "  NOT NULL DEFAULT 'sin_cotizar' "
+                "  COMMENT 'Pipeline comercial denormalizado para filtros'")
+            print("[ensure_estado_facturacion] con_nota_venta agregado al ENUM", flush=True)
+            return True
+    except Exception as e:
+        print(f"[ensure_estado_facturacion] {e}", flush=True)
+    return False
+
+
 def _ensure_mant_visita_equipos_diagnostico_cols():
     """Garantiza mant_visita_equipos.diagnostico_estado/diagnostico_texto
     SIEMPRE (incluso con ILUS_SKIP_MIGRATIONS=1).
@@ -97444,6 +97543,14 @@ try:
         _ensure_garantia_motivo_col()
 except Exception as _ensure_garmot_err:
     print(f"[ILUS][WARN] _ensure_garantia_motivo_col: {_ensure_garmot_err}", flush=True)
+
+# Estado 'con_nota_venta' en el pipeline comercial (Daniel 2026-08-19): la
+# NVV/NVI cierra la OT igual que una factura, pero no la marca como facturada.
+try:
+    with app.app_context():
+        _ensure_estado_facturacion_nota_venta()
+except Exception as _ensure_efnv_err:
+    print(f"[ILUS][WARN] _ensure_estado_facturacion_nota_venta: {_ensure_efnv_err}", flush=True)
 
 # Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
 # 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

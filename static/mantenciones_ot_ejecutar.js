@@ -7055,10 +7055,31 @@ async function declararGarantia(){
     ilusToast('El motivo debe tener al menos 10 caracteres.', { type:'warning' });
     return;
   }
+
+  // Valorización obligatoria (Daniel 2026-08-19): "es necesario siempre
+  // calcular el monto para control aunque sea garantía". No se cobra, pero
+  // se mide. Se propone el costo que ya tenga la OT, si lo hay.
+  const montoTxt = await ilusPrompt({
+    title: '¿Cuánto vale esta visita?',
+    message: 'Monto en pesos, sin puntos ni símbolos (ej: 85000).',
+    sub: 'No se le cobra al cliente — queda solo para control interno de cuánto se entregó en garantía.',
+    placeholder: 'Ej: 85000',
+    inputType: 'number',
+    defaultValue: (typeof VISITA_COSTO !== 'undefined' && VISITA_COSTO > 0) ? String(VISITA_COSTO) : '',
+    required: true,
+    okLabel: 'Continuar',
+  });
+  if (montoTxt === null) return;            // canceló
+  const monto = parseFloat(String(montoTxt).replace(/[^0-9.]/g, ''));
+  if (!monto || monto <= 0){
+    ilusToast('Indica un monto mayor a 0 para poder controlarlo.', { type:'warning' });
+    return;
+  }
+
   const ok = await ilusConfirm({
     title: 'Confirmar garantía',
-    message: 'Esta OT quedará como GARANTÍA y podrá cerrarse sin factura.',
-    sub: 'Si tenía un documento de cobro asociado, se anula. Queda todo en el registro de la OT.',
+    message: `Esta OT quedará como GARANTÍA, valorizada en $${monto.toLocaleString('es-CL')}.`,
+    sub: 'Podrá cerrarse sin factura y no se le cobra al cliente. Si tenía un documento de cobro asociado, se anula. Queda todo en el registro de la OT.',
     okLabel: 'Sí, es garantía', cancelLabel: 'Cancelar',
   });
   if (!ok) return;
@@ -7072,7 +7093,7 @@ async function declararGarantia(){
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/cobertura`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ garantia_aplica: true, motivo: motivo.trim() }),
+      body: JSON.stringify({ garantia_aplica: true, motivo: motivo.trim(), monto }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo declarar la garantía');
@@ -7082,8 +7103,9 @@ async function declararGarantia(){
       await ilusAlert({ title: 'Garantía no aplicable', message: d.warning, type: 'warning' });
     } else {
       ilusToast(d.documento_anulado
-        ? `✓ Garantía declarada — documento ${d.documento_anulado} anulado`
-        : '✓ Garantía declarada — ya puedes firmar el cierre', { type:'success' });
+        ? `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — documento ${d.documento_anulado} anulado`
+        : `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — ya puedes firmar el cierre`,
+        { type:'success' });
     }
     setTimeout(() => window.location.reload(), 1100);
   } catch(e){

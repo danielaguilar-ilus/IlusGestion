@@ -2530,7 +2530,8 @@
         {% elif visita.factura_nudo %}
         <div class="alert py-2 small mb-3" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
           <i class="bi bi-receipt me-1"></i>
-          <strong>Factura asociada:</strong> {{ visita.factura_tido or 'FCV' }} N° {{ visita.factura_nudo }}
+          <strong>{{ 'Nota de venta asociada' if visita.factura_tido in ('NVV','NVI') else 'Factura asociada' }}:</strong>
+          {{ visita.factura_tido or 'FCV' }} N° {{ visita.factura_nudo }}
           {% if visita.factura_monto %} · ${{ '{:,.0f}'.format(visita.factura_monto|float).replace(',', '.') }}{% endif %}
           {% if visita.factura_rut_ok == 0 %}
           <div class="mt-1" style="color:#92400e"><i class="bi bi-exclamation-triangle-fill me-1"></i>
@@ -2540,20 +2541,30 @@
         {% else %}
         <div class="mb-3 p-3" id="factGate" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
           <div class="fw-bold small mb-1" style="color:#991b1b">
-            <i class="bi bi-lock-fill me-1"></i>Firma bloqueada: OT cobrable sin factura
+            <i class="bi bi-lock-fill me-1"></i>Firma bloqueada: OT cobrable sin documento
           </div>
           <div class="small mb-2" style="color:#7f1d1d">
-            Asocia la factura del ERP para poder firmar el cierre. El RUT debe
-            coincidir con el del cliente ({{ (visita.cli_rut or '—') }}) — si no coincide,
-            deberás explicar por qué.
+            Asocia el documento del ERP — factura, boleta o nota de venta — para
+            poder firmar el cierre. El RUT debe coincidir con el del cliente
+            ({{ (visita.cli_rut or '—') }}) — si no coincide, deberás explicar por qué.
           </div>
           <div class="d-flex gap-2 flex-wrap align-items-end">
             <div>
               <label class="form-label small fw-semibold mb-1">Tipo</label>
+              {# 2026-08-19 (Daniel): la nota de venta cierra igual que la
+                 factura — "alguna NVV o NVI tienen el mismo peso de una FCV
+                 o BLV". Se separan en su propio grupo porque la NVV aún
+                 puede facturarse después (la OT queda marcada como tal). #}
               <select id="factTipo" class="form-select form-select-sm" style="width:auto">
-                <option value="FCV" selected>FCV — Factura</option>
-                <option value="FCE">FCE — Factura exenta</option>
-                <option value="BLV">BLV — Boleta</option>
+                <optgroup label="Factura / boleta">
+                  <option value="FCV" selected>FCV — Factura</option>
+                  <option value="FCE">FCE — Factura exenta</option>
+                  <option value="BLV">BLV — Boleta</option>
+                </optgroup>
+                <optgroup label="Nota de venta (facturable después)">
+                  <option value="NVV">NVV — Nota de venta</option>
+                  <option value="NVI">NVI — Nota de venta instalación</option>
+                </optgroup>
               </select>
             </div>
             <div style="flex:1;min-width:150px">
@@ -2872,6 +2883,9 @@ const FOTOS_COUNT = {{ fotos | length }};
 const FOTOS_VISITA = {{ fotos_js | tojson }};
 const VISITA_HORA_INICIO_RAW = "{{ visita.hora_real_inicio or visita.llego_al_sitio_at or '' }}";
 const VISITA_NUMERO_OT = {{ (visita.numero_ot or ('OT #' ~ visita.id)) | tojson }};
+// 2026-08-19 (Daniel) — valorización de la visita: se propone como monto por
+// defecto al declarar garantía ("siempre calcular el monto para control").
+const VISITA_COSTO = {{ (visita.costo | float) if visita.costo else 0 }};
 
 // ─── Concurrencia multitécnico (Parte 3 - anti duplicación) ───
 // Lock TTL: si una tarea está locked_at < 10 min, otros técnicos ven badge
