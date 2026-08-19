@@ -272,3 +272,48 @@ class TestPanelDeVisitasSinPlanificar(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  5. La ventana del listado no puede esconder los casos viejos
+# ══════════════════════════════════════════════════════════════════════
+class TestLaVentanaNoEscondeLoUrgente(unittest.TestCase):
+    """Bug encontrado ejecutando el rescate REAL el 2026-08-18.
+
+    El listado nacio con ventana de 14 dias. BLV 22912 y BLV 22909 llevaban
+    exactamente 14 dias congeladas y se cayeron SOLAS de la lista justo al
+    cumplirse el plazo -- los dos casos mas viejos, o sea los dos clientes
+    que llevaban mas tiempo esperando, eran los unicos invisibles.
+
+    Una herramienta que esconde lo peor a medida que empeora es peor que no
+    tenerla.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = _cuerpo("tr_simpliroute_visitas_congeladas")
+        cls.js  = _leer("static/transporte_visitas_congeladas.js")
+
+    def test_la_ventana_por_defecto_es_amplia(self):
+        self.assertIn("or 90", self.src)
+        self.assertNotIn("or 14", self.src)
+
+    def test_se_puede_pedir_hasta_un_año(self):
+        self.assertIn("min(dias, 365)", self.src)
+
+    def test_la_respuesta_declara_la_ventana_usada(self):
+        # Sin esto, la pantalla no puede decir sobre que se reviso y el
+        # usuario no distingue "no hay nada" de "no se miro ahi".
+        self.assertIn("'dias_ventana': dias", self.src.replace('"', "'"))
+
+    def test_la_respuesta_avisa_si_el_tope_recorto(self):
+        self.assertIn("'tope_alcanzado'", self.src.replace('"', "'"))
+
+    def test_la_pantalla_dice_sobre_cuantos_dias_reviso(self):
+        self.assertIn("d.dias_ventana", self.js)
+
+    def test_la_pantalla_avisa_cuando_llego_al_tope(self):
+        # REGLA: si se acota la cobertura, se dice. Callarlo se lee como
+        # "esto es todo lo que hay".
+        self.assertIn("d.tope_alcanzado", self.js)
+        self.assertIn("máximo por", self.js)

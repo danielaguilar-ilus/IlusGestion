@@ -91,7 +91,8 @@
         + '<i class="bi bi-check-circle-fill"></i>'
         + '<div class="vc-vacio-t">Ninguna visita quedó atrapada</div>'
         + '<div class="vc-vacio-s">Se revisaron ' + ((d && d.revisadas) || 0)
-        +   ' visitas activas contra la cuenta de cada transportista. '
+        +   ' visitas activas de los últimos ' + ((d && d.dias_ventana) || 90)
+        +   ' días contra la cuenta de cada transportista. '
         +   'Todas están planificadas o ya las tomó el courier.</div>'
         + '</div>';
       if (pie) pie.classList.add('d-none');
@@ -108,6 +109,14 @@
       ? ('<strong>' + nVencidas + '</strong> con la fecha ya vencida: esas no las '
          + 've nadie hasta que se reprogramen.')
       : 'Ninguna está vencida todavía.';
+    // El backend revisa como maximo 100 visitas por consulta. Si se llego al
+    // tope, puede haber mas atras y callarlo se leeria como "esto es todo".
+    var txtTope = (d && d.tope_alcanzado)
+      ? ('<div class="vc-aviso mt-2"><i class="bi bi-layers-half me-1"></i>'
+         + 'Se revisaron las 100 visitas más antiguas, que es el máximo por '
+         + 'consulta. Reprograma estas y vuelve a revisar por si quedan más.</div>')
+      : '';
+
     var txtSinResp = sinResp > 0
       ? ('<div class="vc-aviso"><i class="bi bi-exclamation-triangle-fill me-1"></i>'
          + sinResp + ' visita(s) no respondieron a la consulta y quedaron fuera '
@@ -125,6 +134,7 @@
       +   '</div>'
       + '</div>'
       + txtSinResp
+      + txtTope
       + '<div class="vc-tabla-wrap"><table class="vc-tabla">'
       +   '<thead><tr>'
       +     '<th class="vc-check"><input type="checkbox" class="form-check-input" id="vcTodas" checked></th>'

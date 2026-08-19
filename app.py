@@ -40191,8 +40191,15 @@ def tr_simpliroute_visitas_congeladas():
     """
     import simpliroute_client as _src
 
-    dias = request.args.get("dias", type=int) or 14
-    dias = max(1, min(dias, 90))
+    # 90 dias por default, no 14. Bug encontrado al ejecutar el rescate real
+    # el 2026-08-18: BLV 22912 y BLV 22909 llevaban 14 dias congeladas y se
+    # habian CAIDO SOLAS del listado justo al cumplirse la ventana. Los casos
+    # mas viejos son los mas urgentes -- son los que llevan mas tiempo sin
+    # llegarle al cliente -- y eran precisamente los que se escondian.
+    # Una ventana angosta aca no ahorra nada: el costo real son las llamadas
+    # a la API del courier, y esas ya estan topadas por el LIMIT 100.
+    dias = request.args.get("dias", type=int) or 90
+    dias = max(1, min(dias, 365))
 
     filas = mysql_fetchall("""
         SELECT mi.id AS item_id, mi.simpliroute_visit_id, mi.simpliroute_synced_at,
@@ -40264,6 +40271,8 @@ def tr_simpliroute_visitas_congeladas():
         "congeladas": congeladas,
         "total_congeladas": len(congeladas),
         "total_vencidas": vencidas,
+        "dias_ventana": dias,
+        "tope_alcanzado": len(filas) >= 100,
         "resumen": resumen,
     })
 
