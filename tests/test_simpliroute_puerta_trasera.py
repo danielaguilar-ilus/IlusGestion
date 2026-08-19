@@ -352,3 +352,36 @@ class TestLaColumnaDeAtrasoDiceLaVerdad(unittest.TestCase):
     def test_la_cabecera_no_afirma_que_todas_estan_vencidas(self):
         self.assertIn("Atraso</th>", self.js)
         self.assertNotIn("Vencida hace</th>", self.js)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  7. Mobile: el panel se opera con el dedo
+# ══════════════════════════════════════════════════════════════════════
+class TestPanelTactilEnCelular(unittest.TestCase):
+    """REGLA #3. Medido en un iframe de 390px contra produccion el
+    2026-08-18: el boton de reprogramar quedaba en 40px, bajo el minimo
+    tactil de 44px (Apple HIG).
+
+    La casilla de cada fila importa igual o mas: ahi se elige QUE despacho se
+    reprograma, y errarle en el celular significa mover la carga equivocada
+    en el tablero de un tercero.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.css = _leer("static/transporte_manifiestos.css")
+        i = cls.css.index("@media (max-width:575.98px)")
+        cls.movil = cls.css[i:i + 1400]
+
+    def test_los_controles_del_pie_llegan_a_44px(self):
+        self.assertIn("min-height:44px", self.movil)
+
+    def test_la_casilla_de_seleccion_se_agranda(self):
+        self.assertIn(".vc-tabla .vc-sel", self.movil)
+
+    def test_las_filas_tienen_aire_para_tocarlas(self):
+        self.assertIn("padding-top:11px", self.movil)
+
+    def test_la_tabla_scrollea_dentro_de_su_caja(self):
+        # Verificado en vivo: la pagina NO scrollea horizontal, la tabla si.
+        self.assertIn(".vc-tabla-wrap{ overflow-x:auto", self.css)

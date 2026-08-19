@@ -545,4 +545,14 @@
   .vc-acciones .btn-nuevo-man{ flex:1; justify-content:center; }
   .vc-resumen{ flex-direction:column; align-items:flex-start; gap:8px; }
   .vc-tabla{ font-size:.8rem; }
+
+  /* REGLA #3: 44px es el minimo tactil (Apple HIG). Medido en un iframe de
+     390px el 2026-08-18: el boton quedaba en 40px. La casilla de cada fila
+     tambien se agranda -- ahi se elige que despacho se reprograma, y errarle
+     en el celular significa mover la carga equivocada. */
+  .vc-fecha,
+  .vc-acciones .btn-nuevo-man,
+  .vc-acciones .btn{ min-height:44px; }
+  .vc-tabla .vc-sel{ width:20px; height:20px; margin-top:2px; }
+  .vc-tabla tbody td{ padding-top:11px; padding-bottom:11px; }
 }
