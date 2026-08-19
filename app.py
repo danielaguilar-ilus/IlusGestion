@@ -70828,6 +70828,7 @@ _OT2_TIPO_ICONS = {
     "revision_interna":  "bi-building",
     "visita_correctiva": "bi-wrench-adjustable",
     "control_calidad":   "bi-patch-check",
+    "movimiento_equipos": "bi-arrows-move",
 }
 
 # Los 14 valores reales de mant_visitas.estado → (label, clase css, ícono,
@@ -71345,6 +71346,56 @@ def ot2_diagnostico():
 #    _mant_log               — auditoría (REGLA #5)
 #    _tipo_es_trabajo_interno— única fuente de verdad de "¿va sin cliente?"
 # ══════════════════════════════════════════════════════════════════════
+
+def _ensure_ot_tipos_enum():
+    """Garantiza que mant_visitas.tipo acepte TODOS los tipos que la app
+    ofrece — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+
+    POR QUÉ EXISTE: dentro de init_mantenciones_tables() hay CUATRO MODIFY
+    sobre esta misma columna, sin guardas, y gana el último (app.py ~52131).
+    Ese último NO lista 'control_calidad', así que el tipo desaparecía del
+    ENUM en cada arranque aunque estuviera en _TIPO_OT_LABEL, en
+    _OT_TIPOS_VALIDOS, en los iconos y en el <select> del modal: el usuario
+    lo veía, lo elegía, y la inserción moría con un MySQL 1265 (Data
+    truncated). Este _ensure_ corre DESPUÉS de todo el boot, así que es el
+    que manda.
+
+    Agrega además 'movimiento_equipos' (Daniel, 19-08-2026): trasladar
+    máquinas dentro de un gimnasio no es instalación ni desinstalación y
+    no tenía dónde caer. Se confirmó contra la operación real: el software
+    anterior de la empresa ya usaba "Movimiento de equipos" como tipo.
+
+    Preserva 'retroactiva', que no se ofrece en pantalla pero SÍ se escribe
+    desde /mantenciones/api/clientes/<cid>/visitas/retroactiva — si se
+    cayera del ENUM, ese endpoint empezaría a fallar en silencio.
+    """
+    _todos = (
+        "'preventiva','correctiva','garantia','inspeccion','levantamiento',"
+        "'instalacion','retroactiva','visita_tecnica','visita_correctiva',"
+        "'cambio_equipo','desinstalacion','capacitacion','repuesto',"
+        "'revision_interna','control_calidad','movimiento_equipos'"
+    )
+    try:
+        _r = mysql_fetchone(
+            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "   AND COLUMN_NAME='tipo'")
+        _t = ((_r or {}).get("t") or "").lower()
+        if not _t:
+            return False
+        _faltan = [v for v in ("control_calidad", "movimiento_equipos")
+                   if v not in _t]
+        if not _faltan:
+            return False
+        mysql_execute(
+            f"ALTER TABLE mant_visitas MODIFY COLUMN tipo ENUM({_todos}) "
+            "  NOT NULL DEFAULT 'preventiva'")
+        print(f"[ensure_ot_tipos] ENUM completado (+{','.join(_faltan)})", flush=True)
+        return True
+    except Exception as e:
+        print(f"[ensure_ot_tipos] {e}", flush=True)
+    return False
+
 
 def _ensure_ot_acceso_cols():
     """Columnas de ACCESO AL LUGAR en mant_visitas — SIEMPRE, incluso con
@@ -88996,6 +89047,10 @@ _TAREA_TIPO_EQUIVALENTE = {
     # valor, así que se traduce a 'inspeccion' (mismo criterio que
     # visita_tecnica/revision_interna arriba).
     'control_calidad':   'inspeccion',
+    # 2026-08-19 (Daniel): trasladar equipos dentro de un gimnasio. El ENUM
+    # de mant_visita_tareas.tipo tampoco lo tiene, y el trabajo real que
+    # hace el técnico es verificar el equipo antes y después de moverlo.
+    'movimiento_equipos': 'inspeccion',
 }
 
 
@@ -89064,6 +89119,9 @@ _TIPO_OT_LABEL = {
     'visita_correctiva': 'Visita correctiva',
     # 2026-08-10 (Daniel): tipo de OT nuevo — ver Tarea 1 (control_calidad).
     'control_calidad':   'Control de Calidad',
+    # 2026-08-19 (Daniel): trasladar máquinas dentro del gimnasio. No es
+    # instalación ni desinstalación — antes no tenía dónde caer.
+    'movimiento_equipos': 'Movimiento de equipos',
 }
 
 
@@ -89377,6 +89435,8 @@ _OT_TIPOS_VALIDOS = (
     "visita_tecnica", "inspeccion", "garantia", "cambio_equipo",
     "desinstalacion", "capacitacion", "repuesto", "revision_interna",
     "visita_correctiva", "control_calidad",
+    # 2026-08-19 (Daniel): trasladar equipos dentro del gimnasio.
+    "movimiento_equipos",
 )
 
 # Mismos 8 tipos que _TKOT_TIPOS_FUERZAN_CLIENTE_NUEVO (tickets_ficha.js):
@@ -98094,6 +98154,15 @@ try:
         _ensure_estado_facturacion_nota_venta()
 except Exception as _ensure_efnv_err:
     print(f"[ILUS][WARN] _ensure_estado_facturacion_nota_venta: {_ensure_efnv_err}", flush=True)
+
+# ENUM de tipos de OT completo (control_calidad se caía en cada boot;
+# movimiento_equipos es nuevo) — Daniel 2026-08-19. Va ANTES del resto de
+# los _ensure_ de OT porque los demás asumen que el tipo ya es válido.
+try:
+    with app.app_context():
+        _ensure_ot_tipos_enum()
+except Exception as _ensure_tipos_err:
+    print(f"[ILUS][WARN] _ensure_ot_tipos_enum: {_ensure_tipos_err}", flush=True)
 
 # Acceso al lugar en la OT (ascensor / estacionamiento / piso / notas),
 # Daniel 2026-08-19 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
