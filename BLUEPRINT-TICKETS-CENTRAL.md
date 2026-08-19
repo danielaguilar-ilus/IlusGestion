@@ -1,4 +1,4 @@
-# Blueprint — Módulo TICKETS CENTRAL (ILUS Sport & Health)
+# Blueprint — Módulo TICKETS CENTRAL (ILUS Fitness)
 
 > Documento de arquitectura para replicar en **nuestro código (Flask + MySQL, Google Cloud Run)** el sistema de tickets de `ilus-back`/`ilus-front` (NestJS + Next.js), como un módulo **dedicado y central** al nivel de Retiros/Transporte. No se toca ni se porta el código de terceros: solo se usa como modelo. Se centraliza aquí todo el soporte, incluyendo los tickets que hoy viven en Mantenciones (`mant_tickets*`), **sin romperlos** (Regla #4.2).
 >

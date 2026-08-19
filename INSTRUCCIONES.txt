@@ -1,5 +1,5 @@
 ====================================================
-  ILUS Sport and Health — Sistema de Etiquetas
+  ILUS Fitness — Sistema de Etiquetas
 ====================================================
 
 REQUISITO PREVIO: Python

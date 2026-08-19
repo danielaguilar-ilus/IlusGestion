@@ -18,23 +18,46 @@ correo, PDFs, actas, etiquetas impresas, mensajes de WhatsApp/SMS.
 El nombre **"ILUS Sport & Health" queda fuera de uso** en texto nuevo, y se
 corrige donde aparezca al pasar por ese código.
 
+### ⚠️ La MARCA no es la RAZÓN SOCIAL — no confundirlas nunca
+
+La empresa tiene **dos nombres, los dos correctos**, cada uno con su lugar
+(ya declarados en `app.py` ~83928, desde 2026-05-30):
+
+| Concepto | Valor | Constante | Dónde va |
+|---|---|---|---|
+| Marca comercial | **ILUS Fitness** | `ILUS_BRAND` | Todo lo que ve una persona: UI, correos, etiquetas, footers |
+| Razón social (entidad legal) | **Sport and Health Solutions SPA** | `ILUS_LEGAL` | Solo documentos legales/tributarios |
+| RUT | 76.996.964-0 | `ILUS_RUT` | Junto a la razón social |
+
+**"Sport and Health Solutions SPA" NO se reemplaza por "ILUS Fitness"** en
+documentos con efecto legal o contable: cotizaciones PDF, datos de
+transferencia bancaria, packing lists, actas. Ahí la razón social es
+obligatoria y cambiarla es un error grave — el cliente transferiría a un
+nombre que no coincide con la cuenta.
+
+Lo que la REGLA elimina es el híbrido **"ILUS Sport & Health"**, que no es
+ni la marca ni la razón social: es un nombre viejo que quedó suelto.
+
 ### Qué NO se toca (no es marca, es identificador técnico)
 
 Cambiar cualquiera de estos rompe cosas en producción:
 
 - El dominio de correo **`@sphs.cl`** (la cuenta real es
-  `daniel.aguilar@sphs.cl`) y cualquier `sphs` en DSN, config o credenciales.
+  `daniel.aguilar@sphs.cl`, y `contacto@sphs.cl` en documentos) y cualquier
+  `sphs` en DSN, config o credenciales.
 - Nombres de variables, claves de entorno, rutas, endpoints, nombres de archivo.
-- Razones sociales en datos reales del ERP (ahí manda Random, no ILUS).
+- Razones sociales de CLIENTES que vienen del ERP Random (ahí manda Random,
+  no ILUS — REGLA #4.1). Ojo: existe un cliente real llamado "SPORT AND
+  HEALTH SOLUTIONS SPA" en los datos históricos; ese dato no se toca.
 
 ### Cómo escribirlo bien
 
-`ILUS_BRAND_NAME` (REGLA #11) ya tiene default `ILUS Fitness` — esa es la
-fuente correcta. Si el texto puede leer la marca desde ahí, mejor que
-escribirla a mano:
+Preferir las constantes a escribir el nombre a mano:
 
 ```python
-brand = _get_brand_cfg()      # brand["name"] → "ILUS Fitness"
+ILUS_BRAND                     # → "ILUS Fitness"   (marca, para el usuario)
+ILUS_LEGAL                     # → "Sport and Health Solutions SPA" (legal)
+brand = _get_brand_cfg()       # brand["name"] → "ILUS Fitness" (REGLA #11)
 ```
 
 ---
@@ -179,7 +202,7 @@ aplica las correcciones móviles globalmente. Respetar:
 ## 🚫 REGLA #4.1 — ERP Random es **READ-ONLY ABSOLUTO** (no negociable)
 
 **El ERP Random (cloud.random.cl:8058 SQL Server + REST API) es la
-fuente de verdad de la empresa. ILUS Sport & Health JAMÁS modifica
+fuente de verdad de la empresa. ILUS Fitness JAMÁS modifica
 sus tablas. Solo consulta.**
 
 Esta regla NO admite excepciones de ningún tipo. Ni siquiera "para

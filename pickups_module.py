@@ -1348,7 +1348,7 @@ def register_pickup_routes(app, ctx):
                 desc += f" Seguimiento: {link}"
             lines = [
                 "BEGIN:VCALENDAR", "VERSION:2.0",
-                "PRODID:-//ILUS Sport & Health//Retiros//ES",
+                "PRODID:-//ILUS Fitness//Retiros//ES",
                 "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
                 "BEGIN:VEVENT",
                 f"UID:retiro-{code}@ilusfitness.com",

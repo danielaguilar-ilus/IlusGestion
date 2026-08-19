@@ -490,7 +490,7 @@ table td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
 </div>
 
 <div class="footer">
-  Generado ${new Date().toLocaleString('es-CL')} · ILUS Sport and Health Solutions
+  Generado ${new Date().toLocaleString('es-CL')} · ILUS Fitness
 </div>
 <scr${''}ipt>setTimeout(()=>window.print(),300);</scr${''}ipt>
 </body></html>`;

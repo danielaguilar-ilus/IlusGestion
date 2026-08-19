@@ -6,7 +6,7 @@ para que todas trabajen igual y no se pisen entre sí.
 ---
 
 ```
-Trabajamos en el proyecto ILUS Sport & Health. Antes de tocar código, lee CLAUDE.md
+Trabajamos en el proyecto ILUS Fitness. Antes de tocar código, lee CLAUDE.md
 (reglas no negociables) y revisa tu memoria del proyecto. Reglas de cómo operamos:
 
 1. ERP Random = READ-ONLY ABSOLUTO. Solo SELECT vía _random_sql_query (SQL Server) o

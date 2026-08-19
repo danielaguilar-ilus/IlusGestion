@@ -127,7 +127,9 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
 <article class="rl-label">
   <div class="rl-head">
     {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
-    <div class="rl-head-txt">BODEGA DE REPUESTOS<small>ILUS SPORT &amp; HEALTH</small></div>
+    {# Marca comercial, no razón social: la etiqueta la lee una persona en
+       bodega, no es un documento tributario (REGLA #0 de CLAUDE.md). #}
+    <div class="rl-head-txt">BODEGA DE REPUESTOS<small>ILUS FITNESS</small></div>
   </div>
   <div class="rl-marca {{ 'rl-marca-vacio' if not r.marca_nombre else '' }}">{{ r.marca_nombre or 'SIN MARCA' }}</div>
   <div class="rl-body">
