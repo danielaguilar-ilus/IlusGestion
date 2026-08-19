@@ -3,12 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>OT 2.0 — Órdenes de Trabajo · ILUS</title>
+<title>Órdenes de Trabajo · ILUS Fitness</title>
 
 {#
   ══════════════════════════════════════════════════════════════════════
-  ÓRDENES DE TRABAJO 2.0 — "Centro de Control" (Daniel, 18/19-08-2026)
+  ÓRDENES DE TRABAJO — "Centro de Control" (Daniel, 18/19-08-2026)
   ══════════════════════════════════════════════════════════════════════
+  NOMBRE: adentro esto se llama solo "Órdenes de Trabajo". El "2.0" vive
+  ÚNICAMENTE en el link del sidebar (Daniel, 19-08: "solo allí se llamará
+  así") -- está ahí para distinguir los dos módulos mientras conviven,
+  no es parte del nombre del producto.
+  MARCA: siempre "ILUS Fitness", nunca "ILUS Sport & Health".
   Segunda pasada del diseño. Diseñado con Fable siguiendo /retiros/solicitar
   como referencia real (verificado en vivo: Bebas Neue para titulares,
   logo real Logo_optimized.png, paleta ILUS), construido con Sonnet sobre
@@ -118,7 +123,11 @@ button{font-family:inherit;cursor:pointer}
 .kicker{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-d);font-size:11px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--ilus-red-2)}
 .kicker::before{content:"";width:24px;height:2px;background:var(--ilus-red)}
 .hero h1{font-family:var(--font-hero);font-weight:400;text-transform:uppercase;font-size:clamp(46px,6.6vw,80px);line-height:.9;letter-spacing:.5px;margin-top:12px}
-.hero h1 .v2{color:transparent;-webkit-text-stroke:2px var(--ilus-red);padding-left:8px}
+/* El acento del titular es el punto rojo del logotipo ("ILUS."), no un
+   "2.0": Daniel pidió que el "2.0" viva SOLO en el sidebar, para
+   distinguir los dos módulos mientras conviven. Dentro del módulo esto
+   es, simplemente, Órdenes de Trabajo. */
+.hero h1 .punto{color:var(--ilus-red)}
 .hero .sub{margin-top:16px;max-width:56ch;font-size:15.5px;line-height:1.55;color:var(--ink-soft);font-weight:500}
 .hero .sub b{color:#fff;font-weight:700}
 .hero .sub .num-ej{font-family:var(--font-d);font-weight:800;letter-spacing:.04em;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:6px;padding:1px 7px 2px}
@@ -416,14 +425,14 @@ button{font-family:inherit;cursor:pointer}
   <div class="shell">
 
     <nav class="topbar rise d1">
-      <a class="brand" href="{{ url_for('mant_index') }}" aria-label="ILUS Sport & Health">
+      <a class="brand" href="{{ url_for('mant_index') }}" aria-label="ILUS Fitness">
         <picture>
           <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
           <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS"
                width="112" height="32" decoding="async" fetchpriority="high">
         </picture>
       </a>
-      <div class="crumb">Mantenciones <i class="bi bi-chevron-right" style="font-size:10px"></i> <b>OT 2.0</b></div>
+      <div class="crumb">Mantenciones <i class="bi bi-chevron-right" style="font-size:10px"></i> <b>Órdenes de Trabajo</b></div>
       <div class="top-actions">
         <a class="btn-accion" href="{{ url_for('mant_plantillas_page') }}" aria-label="Plantillas de checklist">
           <span class="ic"><i class="bi bi-ui-checks"></i></span>
@@ -442,7 +451,7 @@ button{font-family:inherit;cursor:pointer}
     <div class="hero-grid">
       <div class="rise d2">
         <span class="kicker">Centro de control operativo</span>
-        <h1>Órdenes<br>de trabajo<span class="v2">2.0</span></h1>
+        <h1>Órdenes<br>de trabajo<span class="punto">.</span></h1>
         <p class="sub">
           Solo las órdenes <b>creadas por una persona</b> — las que llevan número
           <span class="num-ej">OT-2026-·····</span> — viven en esta vista.
@@ -775,7 +784,7 @@ button{font-family:inherit;cursor:pointer}
 
     </section>
 
-    <p class="foot"><b>ILUS Sport &amp; Health</b> · Órdenes de Trabajo 2.0 · módulo de prueba</p>
+    <p class="foot"><b>ILUS Fitness</b> · Órdenes de Trabajo · módulo de prueba</p>
   </div>
 </main>
 

@@ -1,8 +1,41 @@
-# ILUS Sport & Health — Reglas para Claude
+# ILUS Fitness — Reglas para Claude
 
 Este archivo establece las **reglas no negociables** del proyecto que TODO
 agente que toque código debe respetar. Está pensado para Claude pero
 sirve a cualquier desarrollador.
+
+---
+
+## 🏷️ REGLA #0 — La empresa SIEMPRE se llama "ILUS Fitness"
+
+**Pedido explícito de Daniel (2026-08-19): "deja como regla que siempre es
+Ilus Fitness".**
+
+Todo texto de marca **visible para una persona** dice **ILUS Fitness**:
+footers, títulos, `<title>`, `aria-label`, `alt`, asuntos y cuerpos de
+correo, PDFs, actas, etiquetas impresas, mensajes de WhatsApp/SMS.
+
+El nombre **"ILUS Sport & Health" queda fuera de uso** en texto nuevo, y se
+corrige donde aparezca al pasar por ese código.
+
+### Qué NO se toca (no es marca, es identificador técnico)
+
+Cambiar cualquiera de estos rompe cosas en producción:
+
+- El dominio de correo **`@sphs.cl`** (la cuenta real es
+  `daniel.aguilar@sphs.cl`) y cualquier `sphs` en DSN, config o credenciales.
+- Nombres de variables, claves de entorno, rutas, endpoints, nombres de archivo.
+- Razones sociales en datos reales del ERP (ahí manda Random, no ILUS).
+
+### Cómo escribirlo bien
+
+`ILUS_BRAND_NAME` (REGLA #11) ya tiene default `ILUS Fitness` — esa es la
+fuente correcta. Si el texto puede leer la marca desde ahí, mejor que
+escribirla a mano:
+
+```python
+brand = _get_brand_cfg()      # brand["name"] → "ILUS Fitness"
+```
 
 ---
 
