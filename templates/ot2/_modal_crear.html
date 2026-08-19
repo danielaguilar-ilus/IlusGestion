@@ -488,9 +488,41 @@ window.OT2C = (function(){
   }
 
   /* ── Acciones ─────────────────────────────────────────────────────── */
+  /* Al elegir el origen se abre la RÉPLICA del formulario grande de OT
+     (templates/ot2/_modal_ot_form.html) — que es el paso siguiente que
+     Daniel quiere revisar. Esa réplica todavía no hace nada: es la
+     maqueta que él va a ir explicando.
+
+     El wizard corto de este mismo archivo sigue vivo y funcionando
+     (crea OT de verdad contra /ot/api/crear); queda accesible con
+     OT2C.abrirWizard() mientras se define cuál de los dos se queda. */
   function setOrigen(v){
     S.origen = v;
     if (v==='interno'){ S.cliente=null; if(S.tipo && !(TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno) S.tipo=null; }
+
+    var form = document.getElementById('ot2ModalForm');
+    if (form){
+      var sub = document.getElementById('o2fSubtitulo');
+      if (sub){
+        var textos = {
+          cliente:   'Crea una OT para un cliente con ficha en Mantenciones.',
+          ticket:    'Crea una OT desde este ticket. El técnico la gestionará desde el módulo "Órdenes de Trabajo".',
+          cotizacion:'Crea una OT desde una cotización del sistema.',
+          documento: 'Crea una OT desde una factura o boleta del ERP.',
+          interno:   'Trabajo interno de bodega — esta OT no lleva cliente.'
+        };
+        sub.textContent = textos[v] || textos.cliente;
+      }
+      // El aviso de "sin ficha" solo tiene sentido cuando hay cliente.
+      var av = document.getElementById('o2fAvisoSinFicha');
+      if (av) av.style.display = (v === 'interno') ? 'none' : '';
+
+      if (modal) modal.hide();
+      setTimeout(function(){
+        (window.__o2fModal = window.__o2fModal || new bootstrap.Modal(form)).show();
+      }, 220);
+      return;
+    }
     pintar();
   }
   function setTipo(i){
@@ -639,7 +671,18 @@ window.OT2C = (function(){
     if (new URLSearchParams(location.search).get('crear') === '1') abrir();
   });
 
-  return {abrir:abrir, ir:ir, setOrigen:setOrigen, setTipo:setTipo, setAcc:setAcc,
+  /* Wizard corto, el que SÍ crea OT de verdad contra /ot/api/crear.
+     Queda accesible mientras se decide cuál de los dos flujos se queda:
+     OT2C.abrirWizard() desde la consola o desde un botón futuro. */
+  function abrirWizard(opts){
+    var form = document.getElementById('ot2ModalForm');
+    var tmp = form && form.id;
+    if (form) form.id = '__ot2FormOculto';   // que setOrigen no lo encuentre
+    abrir(opts);
+    if (form) setTimeout(function(){ form.id = tmp; }, 50);
+  }
+
+  return {abrir:abrir, abrirWizard:abrirWizard, ir:ir, setOrigen:setOrigen, setTipo:setTipo, setAcc:setAcc,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli,
           setCli:setCli, avisosAgenda:avisosAgenda, S:S};
 })();
