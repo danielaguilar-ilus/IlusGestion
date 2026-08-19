@@ -448,3 +448,101 @@
   .cell-avance{ min-width:0; }
   .trx-progress{ min-width:0; width:160px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Visitas sin planificar — panel de rescate (2026-08-18)
+   ───────────────────────────────────────────────────────────────────────
+   Cabecera oscura con acento rojo, igual que el estandar de modales del
+   proyecto. El numero grande es el dato estrella: cuantos despachos estan
+   detenidos. Se lee de un vistazo desde el celular.
+   ═══════════════════════════════════════════════════════════════════════ */
+.vc-content{ border:0; border-radius:16px; overflow:hidden; }
+.vc-header{
+  background:var(--ilus-black); color:#fff;
+  border-bottom:3px solid var(--ilus-red);
+  padding:16px 20px;
+}
+.vc-title{ font-weight:800; font-size:1.05rem; margin:0; letter-spacing:-.2px; }
+.vc-title-sub{ font-size:.78rem; opacity:.72; margin-top:2px; }
+
+.vc-cargando, .vc-error{
+  padding:34px 18px; text-align:center;
+  font-size:.9rem; color:#6b7280; font-weight:600;
+}
+.vc-error{ color:var(--ilus-red); }
+
+/* Estado sano: se dice explicitamente que se reviso, no se deja en blanco.
+   Un panel vacio sin explicacion se lee como "no cargo". */
+.vc-vacio{ padding:34px 22px; text-align:center; }
+.vc-vacio i{ font-size:2.4rem; color:#16a34a; }
+.vc-vacio-t{ font-weight:800; font-size:1rem; margin-top:10px; color:var(--ilus-black); }
+.vc-vacio-s{ font-size:.83rem; color:#6b7280; margin-top:5px; line-height:1.5; }
+
+.vc-resumen{
+  display:flex; align-items:center; gap:15px;
+  background:#fff8e1; border:1px solid #f59e0b;
+  border-radius:12px; padding:13px 16px; margin-bottom:13px;
+}
+.vc-resumen-n{
+  font-size:2.1rem; font-weight:800; line-height:1;
+  color:#b45309; font-variant-numeric:tabular-nums;
+}
+.vc-resumen-t{ font-weight:800; font-size:.9rem; color:#7a4a00; line-height:1.25; }
+.vc-resumen-s{ font-size:.79rem; color:#7a4a00; opacity:.9; margin-top:3px; line-height:1.45; }
+
+.vc-aviso{
+  background:#fef2f2; border:1px solid #fecaca; color:#991b1b;
+  border-radius:10px; padding:9px 12px; font-size:.79rem; line-height:1.5;
+}
+
+.vc-tabla-wrap{ overflow-x:auto; }
+.vc-tabla{ width:100%; border-collapse:collapse; font-size:.84rem; }
+.vc-tabla thead th{
+  background:#f9fafb; border-bottom:1.5px solid #e5e7eb;
+  padding:8px 10px; text-align:left;
+  font-size:.72rem; font-weight:800; text-transform:uppercase;
+  letter-spacing:.4px; color:#6b7280; white-space:nowrap;
+}
+.vc-tabla tbody td{
+  padding:9px 10px; border-bottom:1px solid #f3f4f6;
+  vertical-align:top; color:var(--ilus-black);
+}
+.vc-tabla tbody tr:last-child td{ border-bottom:0; }
+.vc-tabla .vc-sub{ font-size:.72rem; color:#9ca3af; margin-top:1px; }
+.vc-tabla .vc-check{ width:34px; }
+.vc-tabla .vc-num{ text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.vc-dias{ font-weight:800; }
+
+.vc-footer{ gap:12px; justify-content:space-between; flex-wrap:wrap; }
+.vc-fecha-wrap{ display:flex; align-items:center; gap:9px; }
+.vc-fecha-lbl{ font-size:.8rem; font-weight:700; color:#6b7280; margin:0; white-space:nowrap; }
+.vc-fecha{
+  width:auto; font-size:.86rem; font-weight:600;
+  border-radius:10px; border:1.5px solid #e5e7eb; padding:8px 11px;
+}
+.vc-fecha:focus{ outline:none; border-color:var(--ilus-red); box-shadow:none; }
+.vc-acciones{ display:flex; align-items:center; gap:8px; }
+
+/* Resultado del rescate: mismo lenguaje visual que el resumen, en verde. */
+.vc-resultado{
+  text-align:center; padding:26px 18px;
+  background:#dcfce7; border:1px solid #16a34a; border-radius:12px;
+}
+.vc-resultado-n{
+  font-size:2.6rem; font-weight:800; line-height:1;
+  color:#15803d; font-variant-numeric:tabular-nums;
+}
+.vc-resultado-t{ font-weight:800; font-size:.95rem; color:#14532d; margin-top:6px; }
+.vc-resultado-s{ font-size:.81rem; color:#166534; margin-top:4px; line-height:1.45; }
+
+/* REGLA #3 mobile-first: en celular el pie se apila y los controles
+   ocupan el ancho completo (touch >= 44px lo da el .btn-nuevo-man). */
+@media (max-width:575.98px){
+  .vc-footer{ flex-direction:column; align-items:stretch; }
+  .vc-fecha-wrap{ justify-content:space-between; }
+  .vc-fecha{ flex:1; min-width:0; }
+  .vc-acciones{ width:100%; }
+  .vc-acciones .btn-nuevo-man{ flex:1; justify-content:center; }
+  .vc-resumen{ flex-direction:column; align-items:flex-start; gap:8px; }
+  .vc-tabla{ font-size:.8rem; }
+}

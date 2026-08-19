@@ -102,6 +102,9 @@ jobs:
             tests/test_contrato_parser.py \
             tests/test_fedex_parse.py \
             tests/test_simpliroute_payload.py \
+            tests/test_simpliroute_fecha_y_planificacion.py \
+            tests/test_simpliroute_puerta_trasera.py \
+            tests/test_rescate_elige_fecha.py \
             tests/test_trafico_buscar_cliente_query.py \
             tests/test_trafico_correlativo_cotizaciones.py \
             tests/test_transport_label_address.py \

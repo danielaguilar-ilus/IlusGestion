@@ -18975,9 +18975,16 @@ def _tr_redespacho_automatico(item_id, commitment_id):
         except Exception as _e_cnt:
             print(f"[redespacho] no se pudo incrementar el contador "
                   f"(item={item_id}): {_e_cnt}", flush=True)
-        fecha_str = _ra.proxima_fecha_habil(_now_chile()).strftime("%d/%m/%Y")
+        # UNA sola fecha: la que se le promete al cliente y la que se
+        # programa en SimpliRoute son el mismo valor. Antes se calculaba el
+        # proximo dia habil SOLO para el mensaje, y la visita se creaba con
+        # la fecha del manifiesto -- ILUS le prometia al cliente el 19 y
+        # dejaba la visita en el 13, en un dia que el courier ya cerro.
+        fecha_reintento = _ra.proxima_fecha_habil(_now_chile())
+        fecha_str = fecha_reintento.strftime("%d/%m/%Y")
         r = _tr_simpliroute_reenviar_item(
             item_id, fuente_evento='sistema',
+            planned_date=fecha_reintento.isoformat(),
             comentario_evento=_ra.mensaje_redespacho_cliente(
                 courier_nombre=courier, fecha_estimada_str=fecha_str,
                 accion=decision["accion"]))
@@ -39857,7 +39864,7 @@ def tr_manifiesto_subir_simpliroute(mid):
     _fecha = man.get("fecha")
     fecha_manifiesto = (_fecha.isoformat() if hasattr(_fecha, "isoformat")
                         else str(_fecha or "").strip())
-    planned_date = _now_chile().date().isoformat()
+    planned_date = _sr_planned_date_hoy()
     fecha_cambiada = bool(fecha_manifiesto and fecha_manifiesto != planned_date)
 
     items = _tr_manifiesto_items_simpliroute(mid)
@@ -40261,14 +40268,50 @@ def tr_simpliroute_visitas_congeladas():
     })
 
 
+def _sr_fecha_rescate(valor, hoy):
+    """Valida la fecha a la que se reprograma un rescate. Devuelve (fecha, error).
+
+    2026-08-18. El rescate nacio reprogramando siempre a HOY, y eso lo hacia
+    inutil despues del horario: a las 19:30 el tablero del despachador del dia
+    ya cerro, asi que la visita "rescatada" a hoy amanecia vencida otra vez --
+    el mismo bug que se estaba arreglando, en version diaria.
+
+    Reglas:
+      - Sin valor -> hoy (comportamiento previo, no se rompe ningun caller).
+      - NUNCA al pasado: programar hacia atras es exactamente lo que dejaba las
+        visitas invisibles. Es el error que este endpoint existe para reparar.
+      - Tope de 30 dias: un dedazo tipo 2027-08-19 mandaria la carga a un ano
+        que nadie va a mirar, y quedaria igual de perdida.
+    """
+    import datetime as _dt
+
+    crudo = (str(valor or "")).strip()
+    if not crudo:
+        return hoy.isoformat(), None
+    try:
+        f = _dt.date.fromisoformat(crudo)
+    except ValueError:
+        return None, "Fecha inválida. Usa el formato AAAA-MM-DD."
+    if f < hoy:
+        return None, ("No se puede reprogramar al pasado — es justamente lo que "
+                      "dejó estas visitas invisibles.")
+    if (f - hoy).days > 30:
+        return None, "La fecha está a más de 30 días. Revisa que no sea un error."
+    return f.isoformat(), None
+
+
 @app.route("/transporte/api/simpliroute/rescatar-congeladas", methods=["POST"])
 @_tr_required
 def tr_simpliroute_rescatar_congeladas():
-    """Reprograma a HOY las visitas que quedaron atrapadas en un día vencido.
+    """Reprograma las visitas que quedaron atrapadas en un día vencido.
 
     2026-08-18. Acción de rescate para los despachos que se perdieron por el
     bug de la fecha (ver tr_manifiesto_subir_simpliroute). Reusa el MISMO
     PATCH que tr_item_simpliroute_reprogramar -- no reimplementa la llamada.
+
+    Acepta `fecha` (AAAA-MM-DD) para elegir el día destino; sin ella, HOY.
+    Rescatar "a hoy" a las 19:30 no sirve de nada: el tablero del despachador
+    ya cerró y la visita amanece vencida de nuevo.
 
     Deliberadamente ACOTADO: solo toca visitas que (a) están en 'pending',
     (b) no tienen chofer asignado y (c) su fecha YA VENCIÓ. Una visita
@@ -40290,7 +40333,9 @@ def tr_simpliroute_rescatar_congeladas():
         return jsonify({"ok": False, "error": "item_ids inválidos."}), 400
 
     hoy = _now_chile().date()
-    hoy_str = hoy.isoformat()
+    destino_str, _err_fecha = _sr_fecha_rescate(body.get("fecha"), hoy)
+    if _err_fecha:
+        return jsonify({"ok": False, "error": _err_fecha}), 400
     _ph = ",".join(["%s"] * len(item_ids))
     filas = mysql_fetchall(f"""
         SELECT mi.id AS item_id, mi.simpliroute_visit_id, tm.courier,
@@ -40328,35 +40373,54 @@ def tr_simpliroute_rescatar_congeladas():
                                "error": f"Ya no está libre (estado '{_estado}') "
                                         f"— el courier la tomó. No se tocó."})
             continue
-        if (v.get("planned_date") or "").strip() == hoy_str:
+        if (v.get("planned_date") or "").strip() == destino_str:
             resultados.append({"item_id": iid, "doc": doc, "ok": False,
-                               "error": "Ya está programada para hoy."})
+                               "error": f"Ya está programada para el {destino_str}."})
             continue
 
         r = _simpliroute_request("PATCH", f"{_src.EP_VISITS}{vid}/", token,
-                                 payload={"planned_date": hoy_str}, timeout=20)
+                                 payload={"planned_date": destino_str}, timeout=20)
         if not r.get("ok"):
             resultados.append({"item_id": iid, "doc": doc, "ok": False,
                                "error": r.get("error") or "SimpliRoute rechazó el cambio."})
             continue
 
         _tr_log("manifest_item", iid, "visita SimpliRoute rescatada",
-                f"visita {vid}: {v.get('planned_date') or '—'} → {hoy_str} "
+                f"visita {vid}: {v.get('planned_date') or '—'} → {destino_str} "
                 f"(estaba sin planificar en un dia vencido)")
         resultados.append({"item_id": iid, "doc": doc, "ok": True,
                            "visit_id": vid, "fecha_anterior": v.get("planned_date"),
-                           "fecha": hoy_str})
+                           "fecha": destino_str})
 
     ok_n = sum(1 for x in resultados if x.get("ok"))
     return jsonify({
-        "ok": True, "fecha": hoy_str,
+        "ok": True, "fecha": destino_str, "hoy": hoy.isoformat(),
         "rescatadas": ok_n,
         "sin_cambio": len(resultados) - ok_n,
         "resultados": resultados,
     })
 
 
-def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema', comentario_evento=None):
+def _sr_planned_date_hoy():
+    """La fecha con que nace una visita nueva en SimpliRoute: HOY, hora Chile.
+
+    2026-08-18. Fuente unica de verdad. Existe porque el bug de PR #162 tenia
+    DOS puertas y solo se cerro una: la subida del manifiesto ya usaba hoy,
+    pero el reenvio (boton manual + redespacho automatico) seguia usando la
+    fecha del MANIFIESTO, o sea un dia normalmente ya cerrado en el tablero
+    del despachador. La visita nacia invisible, igual que FCV 11286.
+
+    Hora Chile y NO UTC: una subida a las 21:30 en Chile es 01:30 UTC del dia
+    siguiente -- el mismo bug con otro disfraz (REGLA #6).
+
+    Criterio de Daniel: "el dia que se suben a SimpliRoute, porque ahi se
+    estaria entregando al transporte". Subir = entregar la carga al courier.
+    """
+    return _now_chile().date().isoformat()
+
+
+def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema',
+                                  comentario_evento=None, planned_date=None):
     """Recrea la visita SimpliRoute de UN item. FUNCIÓN COMPARTIDA.
 
     Extraída 2026-08-05 de lo que antes era el cuerpo de la ruta
@@ -40390,10 +40454,12 @@ def _tr_simpliroute_reenviar_item(item_id, *, fuente_evento='sistema', comentari
         return {"ok": False,
                 "error": "Falta configurar el token de SimpliRoute de este courier."}
 
-    _fecha = mi.get("fecha")
-    planned_date = _fecha.isoformat() if hasattr(_fecha, "isoformat") else str(_fecha or "").strip()
-    if not planned_date:
-        return {"ok": False, "error": "El manifiesto no tiene fecha de despacho."}
+    # La visita NACE con la fecha de hoy, no con la del manifiesto. Ese era
+    # el bug de PR #162 entrando por la otra puerta: el manifiesto suele ser
+    # de dias atras, y una visita en un dia cerrado no la ve nadie.
+    # `planned_date` explicito solo lo usa el redespacho automatico, que
+    # necesita el MISMO dia habil que ya le prometio al cliente.
+    planned_date = (str(planned_date or "").strip() or _sr_planned_date_hoy())
 
     items = _tr_manifiesto_items_simpliroute(mi["manifest_id"])
     it = next((x for x in items if x.get("item_id") == item_id), None)
@@ -40454,7 +40520,6 @@ def tr_item_simpliroute_reenviar(item_id):
                  400 if "ya tiene una visita" in (r.get("error") or "") else \
                  400 if "no trabaja con SimpliRoute" in (r.get("error") or "") else \
                  503 if "Falta configurar" in (r.get("error") or "") else \
-                 400 if "fecha de despacho" in (r.get("error") or "") else \
                  400 if "Datos incompletos" in (r.get("error") or "") else 502
         return jsonify(r), status
     return jsonify(r)

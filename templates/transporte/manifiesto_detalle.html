@@ -1723,8 +1723,14 @@ function mfdFiltrarTabla(){
             <i class="bi bi-info-circle-fill fs-5"></i>
             <div>
               Se subirán las facturas de este manifiesto a la cuenta de SimpliRoute de
-              <strong>{{ manifiesto.courier }}</strong> como visitas para el
-              <strong>{{ manifiesto.fecha|chile_fmt('%d/%m/%Y') if manifiesto.fecha else '(sin fecha)' }}</strong>.
+              <strong>{{ manifiesto.courier }}</strong> como visitas para <strong>HOY</strong>,
+              el día en que se entrega la carga al transporte.
+              <div class="mt-1" style="opacity:.85">
+                El manifiesto es del
+                <strong>{{ manifiesto.fecha|chile_fmt('%d/%m/%Y') if manifiesto.fecha else '(sin fecha)' }}</strong>,
+                pero la visita se programa hoy: si naciera con una fecha ya pasada,
+                quedaría en un día cerrado del tablero del courier y no la vería nadie.
+              </div>
               Las que ya se subieron antes se saltan (no se duplican).
             </div>
           </div>
