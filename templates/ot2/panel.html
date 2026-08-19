@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>OT 2.0 — Órdenes de Trabajo · ILUS</title>
+
+{#
+  ══════════════════════════════════════════════════════════════════════
+  ÓRDENES DE TRABAJO 2.0 — pantalla principal (Daniel, 18-08-2026)
+  ══════════════════════════════════════════════════════════════════════
+  Diseñado con Fable, construido con Sonnet sobre datos reales.
+
+  "modalidad de prueba donde solamente el superadministrador pueda ver
+  este módulo... hagamos una tabla donde visualicemos las órdenes de
+  trabajo, y solo eso... vamos a reestructurar todo de ahí para adelante"
+
+  ALCANCE DE ESTA VERSIÓN (a propósito, no es un olvido):
+  - Sin barra de búsqueda ni chips de filtro: eran decorativos en el
+    mockup de diseño. Se agregan cuando tengan una consulta real detrás.
+  - Sin botón "Nueva OT": la creación es la etapa siguiente del plan
+    (ver memoria ot2_plan_migracion), no "solo la tabla" de hoy.
+  - El botón "Plantillas" y las pestañas Reales/Automáticas SÍ son
+    reales — enlazan a rutas de verdad, no son atrezzo.
+  - Paginación real vía query string (page/per_page), sin JavaScript
+    (REGLA #4.3).
+  ══════════════════════════════════════════════════════════════════════
+#}
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;0,800;0,900;1,800;1,900&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+<style>
+:root{
+  --ilus-red:#dc2626; --ilus-red-2:#ef4444; --ilus-black:#0a0a0a; --ilus-white:#fff;
+  --ok:#16a34a; --ok-bg:#dcfce7;
+  --warn:#f59e0b; --warn-bg:#fff8e1; --warn-tx:#b45309;
+  --info:#3b82f6; --info-bg:#dbeafe; --info-tx:#1d4ed8;
+  --muted:#6b7280; --muted-bg:#f3f4f6;
+  --ink-soft:rgba(255,255,255,.62); --ink-faint:rgba(255,255,255,.38);
+  --line:#ececee; --page-bg:#f4f4f5;
+  --font-d:"Barlow Condensed","Arial Narrow",sans-serif; --font-b:"Barlow",system-ui,sans-serif;
+  --r-lg:22px; --r-md:14px;
+  --shadow-card:0 30px 60px -22px rgba(10,10,10,.28), 0 4px 14px rgba(10,10,10,.06);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{font-family:var(--font-b);background:var(--page-bg);color:var(--ilus-black);min-height:100vh;font-variant-numeric:tabular-nums}
+a{text-decoration:none;color:inherit}
+button{font-family:inherit;cursor:pointer}
+.shell{max-width:1180px;margin:0 auto;padding:0 28px;position:relative;z-index:2}
+
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.rise{opacity:0;animation:rise .65s cubic-bezier(.2,.7,.25,1) forwards}
+.d1{animation-delay:.05s} .d2{animation-delay:.14s} .d3{animation-delay:.23s} .d4{animation-delay:.32s} .d5{animation-delay:.41s}
+@keyframes meshDrift{to{transform:rotate(360deg)}}
+@keyframes sonar{0%{transform:scale(.6);opacity:.9}100%{transform:scale(2.4);opacity:0}}
+@keyframes barGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition:none!important}.rise{opacity:1}}
+
+.hero{position:relative;background:var(--ilus-black);color:var(--ilus-white);overflow:hidden;padding:26px 0 150px}
+.hero::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.035) 0 1px,transparent 1px 12px)}
+.hero::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(640px 400px at 84% -10%,rgba(220,38,38,.26),transparent 64%),radial-gradient(520px 340px at -8% 108%,rgba(220,38,38,.10),transparent 60%)}
+.hero .mesh{position:absolute;inset:-45%;pointer-events:none;background:conic-gradient(from 0deg at 68% 32%,transparent 0deg,rgba(220,38,38,.09) 55deg,transparent 120deg,rgba(59,130,246,.05) 195deg,transparent 255deg,rgba(220,38,38,.06) 318deg,transparent 360deg);mix-blend-mode:screen;animation:meshDrift 24s linear infinite}
+.hero .wm{position:absolute;right:-30px;bottom:-96px;z-index:0;pointer-events:none;font-family:var(--font-d);font-weight:900;font-style:italic;font-size:330px;line-height:.8;letter-spacing:-6px;color:transparent;-webkit-text-stroke:1px rgba(255,255,255,.055);user-select:none}
+
+.topbar{display:flex;align-items:center;gap:22px}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand .word{font-family:var(--font-d);font-weight:900;font-size:30px;letter-spacing:.5px;line-height:1}
+.brand .word i{color:var(--ilus-red);font-style:normal}
+.brand .tag{font-size:10px;font-weight:700;letter-spacing:.32em;color:var(--ink-faint);text-transform:uppercase}
+.crumb{font-size:13px;font-weight:600;color:var(--ink-soft);display:flex;align-items:center;gap:8px;padding-left:22px;border-left:1px solid rgba(255,255,255,.14)}
+.crumb b{color:#fff;font-weight:700}
+.top-actions{margin-left:auto;display:flex;align-items:center;gap:12px}
+.btn-plantillas{display:flex;align-items:center;gap:12px;padding:8px 18px 8px 8px;min-height:44px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.17);border-radius:var(--r-md);transition:border-color .2s,background .2s,transform .2s}
+.btn-plantillas .ic{width:38px;height:38px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;background:var(--ilus-red);color:#fff;font-size:18px;box-shadow:0 6px 18px -6px rgba(220,38,38,.7)}
+.btn-plantillas .tx{display:flex;flex-direction:column;line-height:1.12}
+.btn-plantillas .tx strong{font-family:var(--font-d);font-weight:800;font-size:17px;letter-spacing:.06em;text-transform:uppercase}
+.btn-plantillas .tx small{font-size:11px;color:var(--ink-soft);font-weight:500}
+.btn-plantillas:hover{border-color:rgba(220,38,38,.65);background:rgba(220,38,38,.10);transform:translateY(-1px)}
+.btn-salir{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:8px 16px;border-radius:var(--r-md);color:var(--ink-soft);border:1px solid rgba(255,255,255,.14);font-size:13px;font-weight:700;transition:border-color .2s,color .2s}
+.btn-salir:hover{color:#fff;border-color:rgba(255,255,255,.4)}
+
+.hero-grid{display:grid;grid-template-columns:1.35fr .9fr;gap:56px;align-items:end;margin-top:58px}
+.kicker{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--ilus-red-2)}
+.kicker::before{content:"";width:26px;height:2px;background:var(--ilus-red)}
+.hero h1{font-family:var(--font-d);font-weight:900;text-transform:uppercase;font-size:clamp(52px,7.2vw,92px);line-height:.92;letter-spacing:-1px;margin-top:14px}
+.hero h1 .v2{font-style:italic;color:transparent;-webkit-text-stroke:2px var(--ilus-red);padding-left:6px}
+.hero .sub{margin-top:20px;max-width:56ch;font-size:16px;line-height:1.55;color:var(--ink-soft);font-weight:500}
+.hero .sub b{color:#fff;font-weight:700}
+.hero .sub .num-ej{font-family:var(--font-d);font-weight:800;letter-spacing:.04em;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:7px;padding:1px 8px 2px}
+.beta-pill{display:inline-flex;align-items:center;gap:7px;margin-top:22px;font-size:11px;font-weight:700;color:var(--ink-faint);border:1px dashed rgba(255,255,255,.25);border-radius:99px;padding:6px 13px}
+.beta-pill i{color:var(--warn)}
+
+.sep-panel{position:relative;z-index:1;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.13);border-radius:18px;padding:22px 24px 20px;backdrop-filter:blur(6px)}
+.sep-panel .lbl{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.28em;text-transform:uppercase;color:var(--ink-faint)}
+.sep-panel .lbl i{color:var(--ilus-red-2);font-size:13px}
+.sep-top{display:flex;align-items:baseline;gap:14px;margin-top:8px}
+.sep-top .big{font-family:var(--font-d);font-weight:900;font-size:76px;line-height:.9;letter-spacing:-1px}
+.sep-top .what{font-size:14px;font-weight:600;color:var(--ink-soft);line-height:1.3;padding-bottom:8px}
+.sep-top .what b{color:#fff}
+.ratio{display:flex;height:12px;border-radius:99px;overflow:hidden;margin-top:18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09)}
+.ratio .hum{background:linear-gradient(90deg,var(--ilus-red),var(--ilus-red-2));transform-origin:left;animation:barGrow .9s .5s cubic-bezier(.2,.7,.25,1) backwards}
+.ratio .aut{flex:1;background:repeating-linear-gradient(115deg,rgba(255,255,255,.22) 0 5px,rgba(255,255,255,.06) 5px 10px);transform-origin:left;animation:barGrow .9s .62s cubic-bezier(.2,.7,.25,1) backwards}
+.ratio-leg{display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;font-weight:600;color:var(--ink-soft)}
+.ratio-leg .sw{display:inline-block;width:9px;height:9px;border-radius:2.5px;margin-right:6px;vertical-align:-1px}
+.ratio-leg .sw.r{background:var(--ilus-red)}
+.ratio-leg .sw.g{background:repeating-linear-gradient(115deg,rgba(255,255,255,.5) 0 2px,rgba(255,255,255,.12) 2px 4px)}
+.sep-div{height:1px;background:rgba(255,255,255,.09);margin:16px 0 13px}
+.sep-auto{display:flex;align-items:center;gap:12px}
+.sep-auto .robot{width:40px;height:40px;flex:0 0 auto;border-radius:11px;display:grid;place-items:center;font-size:19px;color:#e4e4e7;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.28)}
+.sep-auto .n{font-family:var(--font-d);font-weight:800;font-size:30px;line-height:1}
+.sep-auto .d{font-size:12px;color:var(--ink-soft);line-height:1.35;font-weight:500}
+.sep-auto .d b{color:#fff}
+.btn-ver-auto{margin-top:16px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:44px;border-radius:var(--r-md);background:transparent;color:#fff;border:1.5px dashed rgba(255,255,255,.32);font-family:var(--font-d);font-weight:700;font-size:15.5px;letter-spacing:.08em;text-transform:uppercase;transition:border-color .2s,background .2s}
+.btn-ver-auto:hover{border-color:rgba(255,255,255,.7);background:rgba(255,255,255,.05)}
+.btn-ver-auto.activo{border-style:solid;border-color:var(--ilus-red);background:rgba(220,38,38,.14);color:#fff}
+
+.board-wrap{margin-top:-108px;padding-bottom:70px}
+.board{background:var(--ilus-white);border-radius:var(--r-lg);border:1px solid rgba(10,10,10,.06);box-shadow:var(--shadow-card);overflow:hidden}
+
+.err-banner{display:flex;align-items:center;gap:12px;background:#fef2f2;border-bottom:1px solid #fecaca;color:#991b1b;padding:14px 28px;font-size:13.5px;font-weight:600}
+.err-banner i{font-size:18px;flex:0 0 auto}
+
+.tabs{display:flex;align-items:center;gap:8px;padding:20px 28px 0;border-bottom:1px solid var(--line)}
+.tab{display:inline-flex;align-items:center;gap:10px;padding:12px 6px 16px;margin-right:18px;font-family:var(--font-d);font-weight:800;font-size:20px;letter-spacing:.03em;text-transform:uppercase;color:var(--ilus-black);position:relative}
+.tab .ct{font-size:13px;font-weight:800;color:#fff;background:var(--ilus-black);border-radius:99px;padding:2px 10px;letter-spacing:.02em}
+.tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;background:var(--ilus-red);border-radius:3px 3px 0 0}
+.tab.active i{color:var(--ilus-red)}
+.tab.ghost{align-self:center;margin:0 0 10px;padding:9px 16px;border-radius:99px;border:1.5px dashed #d4d4d8;color:var(--muted);font-size:16px;font-weight:700;transition:border-color .2s,color .2s,background .2s}
+.tab.ghost .ct{background:var(--muted-bg);color:var(--muted)}
+.tab.ghost:hover,.tab.ghost.active{border-color:var(--ilus-black);color:var(--ilus-black);background:#fafafa}
+.tab.ghost.active .ct{background:var(--ilus-red);color:#fff}
+.tabs-note{margin-left:auto;align-self:center;padding-bottom:10px;font-size:12px;color:var(--muted);font-weight:500;text-align:right;max-width:30ch;line-height:1.35}
+.tabs-note i{color:var(--warn);margin-right:4px}
+
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}
+.kpi{display:flex;align-items:center;gap:14px;padding:20px 26px;border-right:1px solid var(--line)}
+.kpi:last-child{border-right:none}
+.kpi .ic{width:42px;height:42px;border-radius:12px;flex:0 0 auto;display:grid;place-items:center;font-size:19px}
+.kpi .n{font-family:var(--font-d);font-weight:900;font-size:38px;line-height:.95}
+.kpi .l{font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+.kpi.warn .ic{background:var(--warn-bg);color:var(--warn-tx)}
+.kpi.info .ic{background:var(--info-bg);color:var(--info-tx)}
+.kpi.amber-o .ic{background:#fff;color:var(--warn-tx);border:1.5px solid var(--warn)}
+.kpi.ok .ic{background:var(--ok-bg);color:var(--ok)}
+.live{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);vertical-align:2px}
+.live::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:2px solid var(--warn);animation:sonar 1.8s ease-out infinite}
+
+.thead,.ot-row{display:grid;grid-template-columns:150px minmax(0,1.6fr) 178px 104px 158px 148px 34px;gap:16px;align-items:center;padding:0 28px}
+.thead{padding-top:18px;padding-bottom:10px;border-bottom:1px solid var(--line);font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#a1a1aa}
+.ot-row{padding-top:16px;padding-bottom:16px;border-bottom:1px solid #f1f1f2;position:relative;transition:background .16s,box-shadow .16s}
+.ot-row::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;background:var(--ilus-red);border-radius:0 3px 3px 0;opacity:0;transform:scaleY(.4);transition:opacity .18s,transform .18s}
+.ot-row:hover{background:#fafafa}
+.ot-row:hover::before{opacity:1;transform:scaleY(1)}
+.ot-row:last-of-type{border-bottom:none}
+.c-num .num{font-family:var(--font-d);font-weight:800;font-size:21px;letter-spacing:.02em;line-height:1;white-space:nowrap}
+.c-num .num .yr{color:#a1a1aa;font-weight:700}
+.c-num .num.sinot{color:#a1a1aa;font-size:17px}
+.tipo{display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--muted-bg);border-radius:6px;padding:3px 8px}
+.tipo i{font-size:11px}
+.c-cliente .cli{font-weight:700;font-size:15px;line-height:1.25}
+.c-cliente .tit{font-size:13px;color:var(--muted);margin-top:3px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}
+.estado{display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:5px 14px;border-radius:99px;font-family:var(--font-d);font-weight:700;font-size:15px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.est-en_ejecucion{background:var(--warn-bg);color:var(--warn-tx)}
+.est-programada{background:var(--info-bg);color:var(--info-tx)}
+.est-firmada_tecnico{background:#fff;color:#15803d;border:1.5px solid #86efac}
+.est-pendiente_aprobacion{background:#fff;color:var(--warn-tx);border:1.5px solid var(--warn)}
+.est-completada{background:var(--ok);color:#fff}
+.est-cerrada{background:var(--muted-bg);color:var(--muted)}
+.est-cancelada{background:#fee2e2;color:var(--ilus-red);text-decoration:line-through}
+.c-fecha .dia{font-family:var(--font-d);font-weight:800;font-size:20px;line-height:1;white-space:nowrap}
+.c-fecha .dow{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#a1a1aa;margin-top:3px}
+.c-fecha.hoy .dia,.c-fecha.hoy .dow{color:var(--ilus-red)}
+.c-tec{display:flex;align-items:center;gap:10px;min-width:0}
+.avatar{width:34px;height:34px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;background:var(--ilus-black);color:#fff;font-family:var(--font-d);font-weight:800;font-size:13px;letter-spacing:.04em}
+.avatar.sin{background:var(--muted-bg);color:#a1a1aa;font-size:15px}
+.c-tec .tn{font-size:13.5px;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.c-check .cnt{display:flex;align-items:baseline;gap:5px;margin-bottom:6px}
+.c-check .cnt b{font-family:var(--font-d);font-weight:800;font-size:17px;line-height:1}
+.c-check .cnt small{font-size:11px;color:#a1a1aa;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.track{height:7px;border-radius:99px;background:var(--muted-bg);overflow:hidden}
+.fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--ilus-red),var(--ilus-red-2));transform-origin:left;animation:barGrow .8s .45s cubic-bezier(.2,.7,.25,1) backwards}
+.c-check.done .fill{background:var(--ok)}
+.c-check.done .cnt b{color:var(--ok)}
+.c-check.zero .cnt b{color:#a1a1aa}
+.c-go{text-align:right;color:#d4d4d8;font-size:18px;transition:color .16s,transform .16s}
+.ot-row:hover .c-go{color:var(--ilus-red);transform:translateX(2px)}
+
+.pager{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 28px 20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);font-weight:500}
+.pager .count b{color:var(--ilus-black);font-weight:700}
+.pp-group{display:inline-flex;align-items:center;gap:6px;border:1px solid #e4e4e7;border-radius:99px;padding:4px;background:#fff}
+.pp-group a{display:inline-flex;align-items:center;justify-content:center;min-width:30px;min-height:30px;border-radius:99px;font-size:12.5px;font-weight:700;color:var(--muted)}
+.pp-group a.on{background:var(--ilus-black);color:#fff}
+.pp-group a:hover:not(.on){color:var(--ilus-black)}
+.pager-nav{margin-left:auto;display:flex;align-items:center;gap:8px}
+.pbtn{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:7px 16px;border-radius:99px;border:1px solid #e4e4e7;background:#fff;font-size:13px;font-weight:700;color:var(--ilus-black);transition:border-color .16s}
+.pbtn:hover{border-color:var(--ilus-black)}
+.pbtn.disabled{opacity:.4;pointer-events:none}
+.pcur{font-family:var(--font-d);font-weight:800;font-size:16px;letter-spacing:.04em;padding:0 8px;text-transform:uppercase}
+.pcur b{color:var(--ilus-red)}
+
+.vacio{padding:70px 30px;text-align:center}
+.vacio i{font-size:3.2rem;color:#d4d4d8;display:block;margin-bottom:14px}
+.vacio h3{font-family:var(--font-d);font-weight:800;font-size:1.3rem;color:var(--ilus-black);margin:0 0 6px}
+.vacio p{color:var(--muted);font-size:.9rem;margin:0}
+
+.foot{text-align:center;padding:0 28px 42px;font-size:12px;color:#a1a1aa;font-weight:500}
+.foot b{color:var(--muted)}
+
+@media (max-width:1150px){
+  .thead,.ot-row{grid-template-columns:140px minmax(0,1.5fr) 168px 92px 44px 132px 30px}
+  .c-tec .tn{display:none}
+}
+@media (max-width:1024px){
+  .thead{display:none}
+  .ot-row{grid-template-columns:1fr auto;grid-template-areas:"num estado" "cli cli" "meta meta" "check check";gap:10px 12px;padding:16px;margin:12px 16px;border:1px solid var(--line);border-radius:var(--r-md)}
+  .ot-row::before{top:14px;bottom:14px}
+  .c-num{grid-area:num;display:flex;align-items:center;gap:10px}
+  .c-num .tipo{margin-top:0}
+  .c-cliente{grid-area:cli}
+  .c-estado{grid-area:estado;justify-self:end}
+  .c-fecha,.c-tec{display:none}
+  .m-meta{grid-area:meta;display:flex!important;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);font-weight:600}
+  .m-meta i{font-size:13px}
+  .m-meta .hoy{color:var(--ilus-red);font-weight:700}
+  .m-meta .sep{color:#d4d4d8}
+  .c-check{grid-area:check}
+  .c-go{display:none}
+}
+@media (max-width:960px){
+  .hero-grid{grid-template-columns:1fr;gap:36px;align-items:start}
+  .sep-panel{max-width:520px}
+  .hero .wm{font-size:240px;bottom:-70px}
+  .tabs-note{display:none}
+}
+@media (max-width:860px){
+  .shell{padding:0 16px}
+  .hero{padding-bottom:128px}
+  .crumb{display:none}
+  .btn-plantillas .tx small{display:none}
+  .kpis{grid-template-columns:1fr 1fr}
+  .kpi:nth-child(2){border-right:none}
+  .kpi:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .pager{justify-content:center}
+  .pager-nav{margin-left:0;width:100%;justify-content:center}
+}
+.m-meta{display:none}
+@media (max-width:480px){
+  .topbar{gap:12px}
+  .brand .tag{display:none}
+  .brand .word{font-size:26px}
+  .btn-salir span{display:none}
+  .btn-plantillas{padding:6px 13px 6px 6px;gap:9px}
+  .btn-plantillas .ic{width:34px;height:34px;font-size:16px}
+  .btn-plantillas .tx strong{font-size:15px}
+}
+@media (max-width:420px){
+  .hero h1{font-size:56px}
+  .sep-top .big{font-size:60px}
+  .tab{font-size:18px;margin-right:8px}
+  .tab.ghost{font-size:14px;padding:8px 12px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="mesh"></div>
+  <div class="wm">OT</div>
+  <div class="shell">
+
+    <nav class="topbar rise d1">
+      <div class="brand">
+        <div class="word">ILUS<i>.</i></div>
+        <div class="tag">Sport &amp; Health</div>
+      </div>
+      <div class="crumb">Mantenciones <i class="bi bi-chevron-right" style="font-size:10px"></i> <b>OT 2.0</b></div>
+      <div class="top-actions">
+        <a class="btn-plantillas" href="{{ url_for('mant_plantillas_page') }}" aria-label="Plantillas de checklist">
+          <span class="ic"><i class="bi bi-ui-checks"></i></span>
+          <span class="tx"><strong>Plantillas</strong><small>Checklists de mantención</small></span>
+        </a>
+        <a class="btn-salir" href="{{ url_for('mant_index') }}"><i class="bi bi-box-arrow-left"></i><span>Salir</span></a>
+      </div>
+    </nav>
+
+    <div class="hero-grid">
+      <div class="rise d2">
+        <span class="kicker">Módulo de servicio técnico</span>
+        <h1>Órdenes<br>de trabajo<span class="v2">2.0</span></h1>
+        <p class="sub">
+          Solo las órdenes <b>creadas por una persona</b> — las que llevan número
+          <span class="num-ej">OT-2026-·····</span> — viven en esta vista.
+          Las generadas por el sistema quedaron <b>separadas</b>, a un clic, sin mezclarse.
+        </p>
+        <div class="beta-pill"><i class="bi bi-flask-fill"></i> Beta — visible solo para Super Administrador</div>
+      </div>
+
+      <aside class="sep-panel rise d3" aria-label="Separación entre órdenes reales y automáticas">
+        <div class="lbl"><i class="bi bi-person-check-fill"></i> Creadas por personas</div>
+        <div class="sep-top">
+          <div class="big">{{ conteo_reales }}</div>
+          <div class="what"><b>OT reales</b><br>con número asignado</div>
+        </div>
+        {% set total_corte = (conteo_reales + conteo_automaticas) or 1 %}
+        {% set pct_hum = ((conteo_reales / total_corte) * 100) | round(0, 'floor') | int %}
+        <div class="ratio" role="img" aria-label="{{ pct_hum }} por ciento humanas">
+          <div class="hum" style="width:{{ pct_hum }}%"></div>
+          <div class="aut"></div>
+        </div>
+        <div class="ratio-leg">
+          <span><span class="sw r"></span>Humanas · {{ pct_hum }}%</span>
+          <span><span class="sw g"></span>Automáticas · {{ 100 - pct_hum }}%</span>
+        </div>
+        <div class="sep-div"></div>
+        <div class="sep-auto">
+          <span class="robot"><i class="bi bi-robot"></i></span>
+          <span class="n">{{ conteo_automaticas }}</span>
+          <span class="d"><b>automáticas separadas</b> de esta vista<br>visitas sin número de OT</span>
+        </div>
+        <a class="btn-ver-auto {{ 'activo' if origen == 'automaticas' }}"
+           href="{{ url_for('ot2_panel', origen='automaticas' if origen == 'reales' else 'reales') }}">
+          {% if origen == 'reales' %}
+            Ver automáticas <i class="bi bi-arrow-right"></i>
+          {% else %}
+            <i class="bi bi-arrow-left"></i> Volver a las reales
+          {% endif %}
+        </a>
+      </aside>
+    </div>
+  </div>
+</header>
+
+<main class="board-wrap">
+  <div class="shell">
+    <section class="board rise d4">
+
+      {% if error %}
+      <div class="err-banner">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        No se pudo cargar la información completa. El detalle quedó en el registro del servidor.
+      </div>
+      {% endif %}
+
+      <nav class="tabs" aria-label="Origen de las órdenes">
+        <a class="tab {{ 'active' if origen == 'reales' }}" href="{{ url_for('ot2_panel', origen='reales') }}"
+           {{ 'aria-current="page"' | safe if origen == 'reales' }}>
+          <i class="bi bi-person-fill"></i> OT reales <span class="ct">{{ conteo_reales }}</span>
+        </a>
+        <a class="tab ghost {{ 'active' if origen == 'automaticas' }}" href="{{ url_for('ot2_panel', origen='automaticas') }}">
+          <i class="bi bi-robot"></i> Automáticas <span class="ct">{{ conteo_automaticas }}</span>
+        </a>
+        <p class="tabs-note">
+          <i class="bi bi-info-circle-fill"></i>
+          Las automáticas las genera el Plan Anual, el cron nocturno o el agente de sugerencias.
+        </p>
+      </nav>
+
+      <div class="kpis">
+        <div class="kpi warn">
+          <span class="ic"><i class="bi bi-lightning-charge-fill"></i></span>
+          <span><span class="n">{{ kpis.ejec }}</span><div class="l"><span class="live"></span>&nbsp; En ejecución</div></span>
+        </div>
+        <div class="kpi info">
+          <span class="ic"><i class="bi bi-calendar-event"></i></span>
+          <span><span class="n">{{ kpis.prog }}</span><div class="l">Programadas</div></span>
+        </div>
+        <div class="kpi amber-o">
+          <span class="ic"><i class="bi bi-hourglass-split"></i></span>
+          <span><span class="n">{{ kpis.aprob }}</span><div class="l">Por aprobar</div></span>
+        </div>
+        <div class="kpi ok">
+          <span class="ic"><i class="bi bi-check2-circle"></i></span>
+          <span><span class="n">{{ kpis.comp }}</span><div class="l">Completadas</div></span>
+        </div>
+      </div>
+
+      {% if filas %}
+      <div class="thead" aria-hidden="true">
+        <span>N° OT</span><span>Cliente / Orden</span><span>Estado</span>
+        <span>Programada</span><span>Técnico</span><span>Checklist</span><span></span>
+      </div>
+
+      {% for f in filas %}
+      <a class="ot-row" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+        <div class="c-num">
+          {% if f.numero_ot %}
+            <div class="num"><span class="yr">OT-{{ f.numero_prefijo }}-</span>{{ f.numero_sufijo }}</div>
+          {% else %}
+            <div class="num sinot">VS-{{ '%05d'|format(f.id) }}</div>
+          {% endif %}
+          <span class="tipo"><i class="bi {{ f.tipo_icon }}"></i> {{ f.tipo_label }}</span>
+        </div>
+        <div class="c-cliente">
+          <div class="cli">{{ f.razon_social or 'Trabajo interno' }}</div>
+          {% if f.titulo %}<div class="tit">{{ f.titulo }}</div>{% endif %}
+        </div>
+        <div class="c-estado">
+          <span class="estado {{ f.estado_class }}">
+            {% if f.estado_en_vivo %}<span class="live"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
+            {{ f.estado_label }}
+          </span>
+        </div>
+        <div class="c-fecha {{ 'hoy' if f.fecha_es_hoy }}"><div class="dia">{{ f.fecha_dia }}</div><div class="dow">{{ f.fecha_dow }}</div></div>
+        <div class="c-tec">
+          {% if f.tecnico_ini %}<span class="avatar">{{ f.tecnico_ini }}</span>{% else %}<span class="avatar sin"><i class="bi bi-person"></i></span>{% endif %}
+          <span class="tn">{{ f.tecnico_nombre or 'Sin asignar' }}</span>
+        </div>
+        <div class="m-meta">
+          <i class="bi bi-calendar-event"></i>
+          <span class="{{ 'hoy' if f.fecha_es_hoy }}">{{ f.fecha_dow }} {{ f.fecha_dia }}</span>
+          <span class="sep">·</span><i class="bi bi-person"></i><span>{{ f.tecnico_nombre or 'Sin asignar' }}</span>
+        </div>
+        <div class="c-check {{ 'done' if f.check_done else ('zero' if not f.n_tareas) }}">
+          <div class="cnt"><b>{{ f.n_completas }}/{{ f.n_tareas }}</b><small>tareas</small></div>
+          <div class="track"><div class="fill" style="width:{{ f.check_pct }}%"></div></div>
+        </div>
+        <div class="c-go"><i class="bi bi-chevron-right"></i></div>
+      </a>
+      {% endfor %}
+
+      {% set base_args = {'origen': origen, 'per_page': per_page} %}
+      <footer class="pager">
+        <span class="count">
+          Mostrando <b>{{ ((page-1)*per_page + 1) }}–{{ [(page*per_page), (conteo_reales if origen=='reales' else conteo_automaticas)] | min }}</b>
+          de <b>{{ conteo_reales if origen == 'reales' else conteo_automaticas }}</b>
+        </span>
+        <div class="pp-group">
+          {% for opt in per_page_opciones %}
+          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, per_page=opt, page=1) }}">{{ opt }}</a>
+          {% endfor %}
+        </div>
+        <div class="pager-nav">
+          <a class="pbtn {{ 'disabled' if page <= 1 }}"
+             href="{{ url_for('ot2_panel', origen=origen, per_page=per_page, page=page-1) if page > 1 else '#' }}">
+            <i class="bi bi-chevron-left"></i> Anterior
+          </a>
+          <span class="pcur">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
+          <a class="pbtn {{ 'disabled' if page >= total_paginas }}"
+             href="{{ url_for('ot2_panel', origen=origen, per_page=per_page, page=page+1) if page < total_paginas else '#' }}">
+            Siguiente <i class="bi bi-chevron-right"></i>
+          </a>
+        </div>
+      </footer>
+
+      {% else %}
+      <div class="vacio">
+        <i class="bi bi-inbox"></i>
+        <h3>{% if origen == 'reales' %}Ninguna OT real todavía{% else %}Ninguna automática todavía{% endif %}</h3>
+        <p>No hay órdenes que coincidan con esta vista.</p>
+      </div>
+      {% endif %}
+
+    </section>
+
+    <p class="foot rise d5"><b>ILUS Sport &amp; Health</b> · Órdenes de Trabajo 2.0 · módulo de prueba</p>
+  </div>
+</main>
+
+</body>
+</html>
