@@ -1,792 +1,601 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Órdenes de Trabajo · ILUS Fitness</title>
+{% extends "base.html" %}
+{% block title %}Órdenes de Trabajo 2.0 — ILUS Fitness{% endblock %}
 
 {#
   ══════════════════════════════════════════════════════════════════════
-  ÓRDENES DE TRABAJO — "Centro de Control" (Daniel, 18/19-08-2026)
+  ÓRDENES DE TRABAJO 2.0 — panel (Daniel, 18/19-08-2026)
   ══════════════════════════════════════════════════════════════════════
   NOMBRE: adentro esto se llama solo "Órdenes de Trabajo". El "2.0" vive
-  ÚNICAMENTE en el link del sidebar (Daniel, 19-08: "solo allí se llamará
-  así") -- está ahí para distinguir los dos módulos mientras conviven,
-  no es parte del nombre del producto.
-  MARCA: siempre "ILUS Fitness", nunca "ILUS Sport & Health".
-  Segunda pasada del diseño. Diseñado con Fable siguiendo /retiros/solicitar
-  como referencia real (verificado en vivo: Bebas Neue para titulares,
-  logo real Logo_optimized.png, paleta ILUS), construido con Sonnet sobre
-  datos reales de mant_visitas.
+  ÚNICAMENTE en el link del sidebar (Daniel: "solo allí se llamará así")
+  — está para distinguir los dos módulos mientras conviven.
+  MARCA: siempre "ILUS Fitness", nunca "ILUS Sport & Health" (REGLA #0).
 
-  QUÉ CAMBIÓ respecto a la primera versión (anoche):
-  - Filas planas → fichas-tarjeta con "sello" de estado grande (regla del
-    sistema ILUS: el estado es siempre el elemento visual más grande).
-  - Barra de progreso lineal → anillo SVG con porcentaje al centro.
-  - Buscador y filtro por fase: REALES esta vez (Daniel los pidió
-    explícitamente hoy). "Limpiar" recarga la tabla (REGLA #4.3).
-  - Botón "Generar OT": abre el modal potente YA EXISTENTE
-    (#modalOTOrigen en /mantenciones/ots) vía ?abrir_generar_ot=1 -- no
-    se duplica ese modal, sería repetir el error que Daniel pidió evitar.
-  - "Cerrada" y "Completada" quedan como fases SEPARADAS del scoreboard
-    -- son etapas distintas (técnico terminó vs. las 3 firmas + factura
-    ok) y mezclarlas escondería justo lo que se pidió ver.
+  POR QUÉ EXTIENDE base.html (2ª pasada, 19-08 tarde):
+  la primera versión era una página suelta con hero negro full-bleed.
+  Daniel, viéndola: "no me gustó ese header negro... quiero el header de
+  las órdenes de trabajo, y CON EL SIDEBAR, nunca pierdas eso". Así que
+  ahora usa `.page-header` (la clase global que ya usan Técnicos,
+  Plantillas, Catálogo y Tickets) y hereda el sidebar como el resto.
 
-  QUÉ SIGUE SIN CONSTRUIR A PROPÓSITO (no es descuido):
-  - Botones "Editar" / "Más opciones" por fila: el mockup de diseño los
-    proponía, pero no tienen destino real definido todavía -- se agregan
-    cuando Daniel diga qué deben hacer. Por ahora cada ficha solo tiene
-    "Abrir", que sí es real (va a la ficha de la OT).
-  - Los <select> de Estado/Técnico/Tipo del toolbar: el buscador de texto
-    y los KPIs-filtro SÍ son reales; esos selects adicionales quedan para
-    cuando su consulta esté lista.
-  - El "campo de acciones" que pidió Daniel hoy es, por ahora, el botón
-    Abrir -- el resto de acciones (editar, duplicar, cancelar) es la
-    Etapa 4 del plan (crear/editar desde el módulo nuevo).
+  BOTÓN "SEGUIMIENTO": deliberadamente NO está acá (Daniel lo pidió). En
+  /mantenciones/ots SÍ se conserva, porque es el único acceso de toda la
+  app a mant_seguimiento_vista — quitarlo de allá dejaría esa pantalla
+  alcanzable solo tecleando la URL.
+
+  CUATRO FASES, no cinco (Daniel: "pendiente, en ejecución, completadas y
+  cerradas"). El estado fino no se pierde: sigue en el sello de cada fila.
   ══════════════════════════════════════════════════════════════════════
 #}
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-{# Bebas Neue para titulares -- confirmado en vivo contra /retiros/solicitar
-   (no Barlow Condensed: esa era una referencia de memoria desactualizada).
-   Barlow se conserva para cuerpo/datos, ya validado en toda la app. #}
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-
+{% block content %}
 <style>
-:root{
-  --ilus-red:#dc2626; --ilus-red-2:#ef4444; --ilus-black:#0a0a0a; --ilus-white:#fff;
-  --ok:#16a34a; --ok-bg:#dcfce7;
-  --warn:#f59e0b; --warn-bg:#fff8e1; --warn-tx:#b45309;
-  --info:#3b82f6; --info-bg:#dbeafe; --info-tx:#1d4ed8;
-  --muted:#6b7280; --muted-bg:#f3f4f6;
-  --ink-soft:rgba(255,255,255,.62); --ink-faint:rgba(255,255,255,.38);
-  --line:#e5e7eb; --page-bg:#eef0f2;
-  --font-hero:"Bebas Neue",'Barlow Condensed',sans-serif;
-  --font-d:"Barlow Condensed",sans-serif; --font-b:"Barlow",system-ui,sans-serif;
-  --r-lg:20px; --r-md:12px;
-  --chamfer:polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
-  --chamfer-sm:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%);
-  --shadow-card:0 30px 60px -22px rgba(10,10,10,.24), 0 4px 14px rgba(10,10,10,.06);
+/* ── Tokens locales del módulo (sobre la paleta global ILUS) ───────── */
+.ot2{
+  --ot-pend:#3b82f6; --ot-pend-bg:#dbeafe;
+  --ot-ejec:#dc2626;  --ot-ejec-bg:#fee2e2;
+  --ot-comp:#16a34a;  --ot-comp-bg:#dcfce7;
+  --ot-cerr:#4b5563;  --ot-cerr-bg:#f3f4f6;
+  --ot-cancel:#dc2626;
+  --ot-line:#eaecf0;
 }
-*{margin:0;padding:0;box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{
-  font-family:var(--font-b);background:var(--page-bg);color:var(--ilus-black);
-  min-height:100vh;font-variant-numeric:tabular-nums;
-  background-image:radial-gradient(rgba(10,10,10,.045) 1px, transparent 1px);
-  background-size:22px 22px;
-}
-a{text-decoration:none;color:inherit}
-button{font-family:inherit;cursor:pointer}
-.shell{max-width:1280px;margin:0 auto;padding:0 26px;position:relative;z-index:2}
 
-@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
-.rise{opacity:0;animation:rise .6s cubic-bezier(.2,.7,.25,1) forwards}
-.d1{animation-delay:.05s} .d2{animation-delay:.13s} .d3{animation-delay:.21s} .d4{animation-delay:.29s}
-@keyframes pulse-dot{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}70%{box-shadow:0 0 0 9px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
-@keyframes ringfill{from{stroke-dashoffset:163.36}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition:none!important}.rise{opacity:1}}
+/* ── KPIs por fase, clicables como filtro ──────────────────────────── */
+.ot2-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:10px;margin-bottom:14px}
+.ot2-kpi{--c:#6b7280;position:relative;background:#fff;border:1px solid var(--ot-line);
+  border-radius:11px;padding:14px 16px;display:flex;flex-direction:column;gap:2px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);text-decoration:none;overflow:hidden;
+  transition:transform .16s,box-shadow .16s,border-color .16s}
+.ot2-kpi::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;
+  background:var(--c);opacity:.35;transition:opacity .16s}
+.ot2-kpi:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(10,10,10,.09);
+  border-color:#d7dae0}
+.ot2-kpi:hover::after{opacity:.8}
+.ot2-kpi.on{border-color:var(--c);box-shadow:inset 0 0 0 1px var(--c)}
+.ot2-kpi.on::after{opacity:1}
+.ot2-kpi .num{font-size:1.7rem;font-weight:900;line-height:1;letter-spacing:-.02em;color:var(--c)}
+.ot2-kpi .lbl{font-size:.7rem;color:#6b7280;text-transform:uppercase;
+  letter-spacing:.5px;font-weight:700;display:flex;align-items:center;gap:6px}
+.k-pend{--c:var(--ot-pend)} .k-ejec{--c:var(--ot-ejec)}
+.k-comp{--c:var(--ot-comp)} .k-cerr{--c:var(--ot-cerr)}
+@keyframes ot2pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}
+  70%{box-shadow:0 0 0 8px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+.ot2-dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+  background:var(--ot-ejec);animation:ot2pulse 1.8s ease-out infinite}
 
-/* ══════════════════ HERO ══════════════════ */
-.hero{
-  position:relative;color:#fff;padding:26px 0 150px;overflow:hidden;
-  background:
-    radial-gradient(900px 420px at 88% -18%, rgba(220,38,38,.30), transparent 62%),
-    radial-gradient(560px 280px at -6% 108%, rgba(220,38,38,.10), transparent 60%),
-    repeating-linear-gradient(-45deg, rgba(255,255,255,.03) 0 2px, transparent 2px 16px),
-    linear-gradient(180deg,#141414 0%, var(--ilus-black) 100%);
-  border-bottom:3px solid var(--ilus-red);
-}
-.topbar{display:flex;align-items:center;gap:20px}
-.brand{display:flex;align-items:center;flex:0 0 auto;opacity:1;transition:opacity .2s}
-.brand:hover{opacity:.85}
-.brand img{display:block;height:32px;width:auto}
-.crumb{font-size:12.5px;font-weight:600;color:var(--ink-soft);display:flex;align-items:center;gap:8px;padding-left:20px;border-left:1px solid rgba(255,255,255,.14);text-transform:uppercase;letter-spacing:.5px}
-.crumb b{color:#fff;font-weight:700}
-.top-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
-.btn-accion{display:flex;align-items:center;gap:11px;padding:8px 16px 8px 8px;min-height:44px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.17);border-radius:var(--r-md);transition:border-color .2s,background .2s,transform .2s}
-.btn-accion .ic{width:34px;height:34px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;background:var(--ilus-red);color:#fff;font-size:16px;box-shadow:0 6px 16px -6px rgba(220,38,38,.7)}
-.btn-accion .tx{display:flex;flex-direction:column;line-height:1.1}
-.btn-accion .tx strong{font-family:var(--font-d);font-weight:800;font-size:15.5px;letter-spacing:.04em;text-transform:uppercase}
-.btn-accion .tx small{font-size:10.5px;color:var(--ink-soft);font-weight:500}
-.btn-accion:hover{border-color:rgba(220,38,38,.65);background:rgba(220,38,38,.10);transform:translateY(-1px)}
-.btn-accion.acento{background:linear-gradient(180deg,#ef3b3b,var(--ilus-red) 60%);border-color:transparent;box-shadow:0 10px 26px -10px rgba(220,38,38,.75)}
-.btn-accion.acento .ic{background:rgba(255,255,255,.18);box-shadow:none}
-.btn-accion.acento .tx small{color:rgba(255,255,255,.82)}
-.btn-accion.acento:hover{transform:translateY(-2px);box-shadow:0 16px 32px -10px rgba(220,38,38,.85)}
-.btn-salir{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:8px 14px;border-radius:var(--r-md);color:var(--ink-soft);border:1px solid rgba(255,255,255,.14);font-size:13px;font-weight:700;transition:border-color .2s,color .2s}
-.btn-salir:hover{color:#fff;border-color:rgba(255,255,255,.4)}
+/* ── Barra de origen + búsqueda ────────────────────────────────────── */
+.ot2-bar{background:#fff;border:1px solid var(--ot-line);border-radius:11px;
+  padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;
+  gap:10px;flex-wrap:wrap}
+.ot2-chip{display:inline-flex;align-items:center;gap:8px;min-height:44px;
+  padding:9px 18px;border-radius:9999px;background:#fff;border:1.5px solid #e5e7eb;
+  color:#374151;font-weight:800;font-size:.86rem;text-decoration:none;
+  transition:transform .18s,border-color .18s,background .18s}
+.ot2-chip:hover{transform:translateY(-1px);border-color:#c7cbd1;color:#111}
+.ot2-chip.on{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff;
+  box-shadow:0 6px 16px -6px rgba(220,38,38,.6)}
+.ot2-chip .n{font-variant-numeric:tabular-nums;font-weight:900;opacity:.85}
+.ot2-search{display:flex;align-items:center;gap:8px;flex:1 1 240px;max-width:420px;
+  min-height:44px;background:#f3f4f6;border:1px solid transparent;border-radius:10px;padding:0 14px}
+.ot2-search:focus-within{background:#fff;border-color:#0a0a0a}
+.ot2-search input{border:0;outline:0;background:transparent;width:100%;font-size:16px;font-weight:500}
+.ot2-nota{margin:0 0 12px;font-size:.8rem;color:#6b7280;font-weight:600;
+  display:flex;align-items:center;gap:7px}
+.ot2-nota b{color:#0a0a0a}
 
-.hero-grid{display:grid;grid-template-columns:1.3fr .95fr;gap:52px;align-items:end;margin-top:50px}
-.kicker{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-d);font-size:11px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;color:var(--ilus-red-2)}
-.kicker::before{content:"";width:24px;height:2px;background:var(--ilus-red)}
-.hero h1{font-family:var(--font-hero);font-weight:400;text-transform:uppercase;font-size:clamp(46px,6.6vw,80px);line-height:.9;letter-spacing:.5px;margin-top:12px}
-/* El acento del titular es el punto rojo del logotipo ("ILUS."), no un
-   "2.0": Daniel pidió que el "2.0" viva SOLO en el sidebar, para
-   distinguir los dos módulos mientras conviven. Dentro del módulo esto
-   es, simplemente, Órdenes de Trabajo. */
-.hero h1 .punto{color:var(--ilus-red)}
-.hero .sub{margin-top:16px;max-width:56ch;font-size:15.5px;line-height:1.55;color:var(--ink-soft);font-weight:500}
-.hero .sub b{color:#fff;font-weight:700}
-.hero .sub .num-ej{font-family:var(--font-d);font-weight:800;letter-spacing:.04em;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:6px;padding:1px 7px 2px}
-.beta-pill{display:inline-flex;align-items:center;gap:7px;margin-top:18px;font-size:11px;font-weight:700;color:var(--ink-faint);border:1px dashed rgba(255,255,255,.25);border-radius:99px;padding:6px 13px}
-.beta-pill i{color:var(--warn)}
+/* ── Selector de vista ─────────────────────────────────────────────── */
+.ot2-vistas{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.ot2-v{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 16px;
+  border-radius:10px;border:1px solid var(--ot-line);background:#fff;color:#6b7280;
+  font-weight:800;font-size:.84rem;text-decoration:none;transition:all .16s}
+.ot2-v:hover{color:#0a0a0a;border-color:#c7cbd1}
+.ot2-v.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 
-.sep-panel{position:relative;z-index:1;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.13);border-radius:16px;padding:20px 22px 18px;backdrop-filter:blur(6px)}
-.sep-panel .lbl{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.26em;text-transform:uppercase;color:var(--ink-faint)}
-.sep-panel .lbl i{color:var(--ilus-red-2);font-size:13px}
-.sep-top{display:flex;align-items:baseline;gap:13px;margin-top:8px}
-.sep-top .big{font-family:var(--font-hero);font-weight:400;font-size:64px;line-height:.85}
-.sep-top .what{font-size:13.5px;font-weight:600;color:var(--ink-soft);line-height:1.3;padding-bottom:6px}
-.sep-top .what b{color:#fff}
-.ratio{display:flex;height:11px;border-radius:99px;overflow:hidden;margin-top:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09)}
-.ratio .hum{background:linear-gradient(90deg,var(--ilus-red),var(--ilus-red-2))}
-.ratio .aut{flex:1;background:repeating-linear-gradient(115deg,rgba(255,255,255,.22) 0 5px,rgba(255,255,255,.06) 5px 10px)}
-.ratio-leg{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;font-weight:600;color:var(--ink-soft)}
-.ratio-leg .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.ratio-leg .sw.r{background:var(--ilus-red)}
-.ratio-leg .sw.g{background:repeating-linear-gradient(115deg,rgba(255,255,255,.5) 0 2px,rgba(255,255,255,.12) 2px 4px)}
-.sep-div{height:1px;background:rgba(255,255,255,.09);margin:14px 0 12px}
-.sep-auto{display:flex;align-items:center;gap:11px}
-.sep-auto .robot{width:36px;height:36px;flex:0 0 auto;border-radius:10px;display:grid;place-items:center;font-size:17px;color:#e4e4e7;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.28)}
-.sep-auto .n{font-family:var(--font-d);font-weight:800;font-size:26px;line-height:1}
-.sep-auto .d{font-size:11.5px;color:var(--ink-soft);line-height:1.35;font-weight:500}
-.sep-auto .d b{color:#fff}
-.btn-ver-auto{margin-top:14px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;border-radius:var(--r-md);background:transparent;color:#fff;border:1.5px dashed rgba(255,255,255,.32);font-family:var(--font-d);font-weight:700;font-size:14.5px;letter-spacing:.07em;text-transform:uppercase;transition:border-color .2s,background .2s}
-.btn-ver-auto:hover{border-color:rgba(255,255,255,.7);background:rgba(255,255,255,.05)}
-.btn-ver-auto.activo{border-style:solid;border-color:var(--ilus-red);background:rgba(220,38,38,.14)}
+/* ══════════════ TABLA (vista por defecto) ══════════════
+   Daniel: "en la tabla, al posicionarse encima, se ve el detalle". El
+   detalle NO es un tooltip flotante: es una segunda línea que se despliega
+   dentro de la misma fila, así no tapa nada y se puede leer con calma. */
+.ot2-tabla-wrap{background:#fff;border:1px solid var(--ot-line);border-radius:11px;
+  overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.ot2-scroll{overflow-x:auto}
+.ot2-tabla{width:100%;border-collapse:collapse;min-width:900px}
+.ot2-tabla thead th{background:#0a0a0a;color:#fff;font-size:.68rem;font-weight:800;
+  letter-spacing:.09em;text-transform:uppercase;text-align:left;padding:12px 14px;white-space:nowrap}
+.ot2-tabla tbody tr{--c:#6b7280;border-bottom:1px solid var(--ot-line);
+  cursor:pointer;transition:background .14s}
+.ot2-tabla tbody tr:hover{background:#fafbfc}
+.ot2-tabla td{padding:11px 14px;font-size:.87rem;vertical-align:middle}
+.ot2-tabla td:first-child{border-left:4px solid var(--c)}
+tr.f-pend{--c:var(--ot-pend)} tr.f-ejec{--c:var(--ot-ejec)}
+tr.f-comp{--c:var(--ot-comp)} tr.f-cerr{--c:var(--ot-cerr)}
+tr.f-cancel{--c:var(--ot-cancel)}
+.ot2-num{font-weight:900;font-size:.95rem;letter-spacing:.02em;color:#0a0a0a;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.ot2-num small{display:block;font-size:.62rem;color:#9ca3af;letter-spacing:.1em;font-weight:700}
+.ot2-cli{font-weight:700;color:#0a0a0a;max-width:280px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ot2-tipo{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.04em;color:#475569;background:#f3f4f6;
+  border-radius:6px;padding:3px 8px;white-space:nowrap}
+.ot2-tipo i{color:var(--ilus-red,#dc2626)}
+.ot2-est{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.03em;color:var(--c);background:#fff;
+  border:1.5px solid var(--c);border-radius:999px;padding:4px 11px;white-space:nowrap}
+tr.f-cancel .ot2-est{text-decoration:line-through}
+.ot2-tec{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.ot2-av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+  background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:800;flex:none;
+  box-shadow:0 0 0 2px var(--ilus-red,#dc2626)}
+.ot2-av.sin{background:#fff;color:#c7cbd1;border:1.5px dashed #d1d5db;box-shadow:none}
+.ot2-prog{display:flex;align-items:center;gap:8px;min-width:120px}
+.ot2-prog .bar{flex:1;height:6px;border-radius:99px;background:#eef0f2;overflow:hidden}
+.ot2-prog .bar i{display:block;height:100%;background:var(--c);border-radius:99px}
+.ot2-prog .pc{font-size:.72rem;font-weight:800;color:#6b7280;font-variant-numeric:tabular-nums}
+.ot2-abrir{display:inline-flex;align-items:center;gap:5px;background:#0a0a0a;color:#fff;
+  border-radius:8px;padding:7px 12px;font-size:.74rem;font-weight:800;
+  text-transform:uppercase;letter-spacing:.03em;text-decoration:none;white-space:nowrap;
+  transition:background .14s}
+tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 
-/* ══════════════════ TARJETA MONTADA ══════════════════ */
-.board-wrap{margin-top:-112px;padding-bottom:64px}
-.board{background:var(--ilus-white);border-radius:var(--r-lg);border:1px solid rgba(10,10,10,.06);box-shadow:var(--shadow-card);overflow:hidden}
+/* El detalle que aparece al pasar por encima */
+.ot2-det{display:none;background:#fbfcfd}
+.ot2-tabla tbody tr:hover + .ot2-det,
+.ot2-det:hover{display:table-row}
+.ot2-det td{padding:0 14px 13px;border-left:4px solid var(--c)}
+.ot2-det-in{display:flex;gap:22px;flex-wrap:wrap;padding:11px 14px;background:#fff;
+  border:1px dashed #dfe3e8;border-radius:9px}
+.ot2-det-it{display:flex;flex-direction:column;gap:2px;min-width:120px}
+.ot2-det-it .k{font-size:.62rem;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:#9ca3af}
+.ot2-det-it .v{font-size:.83rem;font-weight:700;color:#0a0a0a}
 
-.err-banner{display:flex;align-items:center;gap:12px;background:#fef2f2;border-bottom:1px solid #fecaca;color:#991b1b;padding:14px 26px;font-size:13.5px;font-weight:600}
+/* ══════════════ KANBAN — 4 columnas, tarjeta que se mueve ══════════ */
+.ot2-kan-wrap{overflow-x:auto;padding-bottom:8px}
+.ot2-kan{display:flex;gap:12px;align-items:flex-start;min-width:min-content}
+.ot2-col{--c:#6b7280;flex:0 0 290px;width:290px;background:#f7f8fa;
+  border:1px solid var(--ot-line);border-radius:12px;display:flex;flex-direction:column;
+  max-height:70vh;transition:background .15s,box-shadow .15s}
+.ot2-col.drop{background:#fff;box-shadow:inset 0 0 0 2px var(--c)}
+.ot2-col-h{display:flex;align-items:center;gap:8px;padding:13px 14px;
+  border-bottom:2px solid var(--c);background:#fff;border-radius:12px 12px 0 0}
+.ot2-col-h .p{width:9px;height:9px;border-radius:50%;background:var(--c);flex:none}
+.ot2-col-h .t{font-weight:900;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:#0a0a0a}
+.ot2-col-h .n{margin-left:auto;background:var(--c);color:#fff;border-radius:999px;
+  padding:2px 10px;font-size:.72rem;font-weight:900;font-variant-numeric:tabular-nums}
+.ot2-col-b{padding:10px;display:flex;flex-direction:column;gap:9px;overflow-y:auto}
+.c-pend{--c:var(--ot-pend)} .c-ejec{--c:var(--ot-ejec)}
+.c-comp{--c:var(--ot-comp)} .c-cerr{--c:var(--ot-cerr)}
+.ot2-card{background:#fff;border:1px solid var(--ot-line);border-left:3px solid var(--c);
+  border-radius:9px;padding:11px 12px;text-decoration:none;display:block;cursor:grab;
+  box-shadow:0 1px 3px rgba(10,10,10,.05);transition:transform .14s,box-shadow .14s}
+.ot2-card:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(10,10,10,.12)}
+.ot2-card:active{cursor:grabbing}
+.ot2-card.arrastrando{opacity:.35;transform:scale(.97) rotate(-1.5deg)}
+.ot2-card .r1{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ot2-card .nu{font-weight:900;font-size:.84rem;color:#0a0a0a;font-variant-numeric:tabular-nums}
+.ot2-card .ic{color:var(--c)}
+.ot2-card .cl{margin-top:4px;font-size:.79rem;font-weight:600;color:#4b5563;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ot2-card .r2{margin-top:9px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ot2-card .mini{width:22px;height:22px;border-radius:50%;background:#0a0a0a;color:#fff;
+  display:grid;place-items:center;font-size:.58rem;font-weight:800;flex:none}
+.ot2-card .mini.sin{background:#fff;border:1.5px dashed #d1d5db;color:#c7cbd1}
+.ot2-card .pc{font-size:.7rem;font-weight:900;color:var(--c);font-variant-numeric:tabular-nums}
+.ot2-col-vacio{padding:26px 10px;text-align:center;font-size:.78rem;color:#c7cbd1;font-weight:700}
+.ot2-col-mas{padding:8px;text-align:center;font-size:.72rem;color:#6b7280;font-weight:700}
 
-.tabs{display:flex;align-items:center;gap:8px;padding:18px 26px 0;border-bottom:1px solid var(--line)}
-.tab{display:inline-flex;align-items:center;gap:9px;padding:11px 6px 15px;margin-right:16px;font-family:var(--font-d);font-weight:800;font-size:18px;letter-spacing:.03em;text-transform:uppercase;color:var(--ilus-black);position:relative}
-.tab .ct{font-size:12.5px;font-weight:800;color:#fff;background:var(--ilus-black);border-radius:99px;padding:2px 9px}
-.tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;background:var(--ilus-red);border-radius:3px 3px 0 0}
-.tab.active i{color:var(--ilus-red)}
-.tab.ghost{align-self:center;margin:0 0 9px;padding:8px 15px;border-radius:99px;border:1.5px dashed #d4d4d8;color:var(--muted);font-size:14.5px;font-weight:700;transition:border-color .2s,color .2s,background .2s}
-.tab.ghost .ct{background:var(--muted-bg);color:var(--muted)}
-.tab.ghost:hover,.tab.ghost.active{border-color:var(--ilus-black);color:var(--ilus-black);background:#fafafa}
-.tab.ghost.active .ct{background:var(--ilus-red);color:#fff}
-.tabs-note{margin-left:auto;align-self:center;padding-bottom:9px;font-size:11.5px;color:var(--muted);font-weight:500;text-align:right;max-width:28ch;line-height:1.35}
-.tabs-note i{color:var(--warn);margin-right:4px}
+/* ══════════════ CALENDARIO ══════════════ */
+.ot2-cal-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:12px}
+.ot2-cal-mes{font-weight:900;font-size:1.1rem;min-width:190px;text-align:center;
+  text-transform:uppercase;letter-spacing:.04em}
+.ot2-cal-b{width:42px;height:42px;border-radius:50%;border:1px solid var(--ot-line);
+  background:#fff;display:inline-flex;align-items:center;justify-content:center;color:#0a0a0a}
+.ot2-cal-b:hover{border-color:#0a0a0a}
+.ot2-cal{background:#fff;border:1px solid var(--ot-line);border-radius:11px;padding:14px}
+.ot2-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.ot2-dow div{text-align:center;font-size:.66rem;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:#9ca3af;padding:4px 0}
+.ot2-sem{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.ot2-dia{min-height:100px;background:#fafbfc;border:1px solid var(--ot-line);
+  border-radius:9px;padding:6px;display:flex;flex-direction:column;gap:4px;overflow:hidden}
+.ot2-dia.hoy{border-color:var(--ilus-red,#dc2626);box-shadow:inset 0 0 0 1px var(--ilus-red,#dc2626)}
+.ot2-dia.off{background:transparent;border-color:transparent}
+.ot2-dia .d{font-size:.72rem;font-weight:800;color:#6b7280}
+.ot2-dia.hoy .d{color:var(--ilus-red,#dc2626)}
+.ot2-ch{display:block;font-size:.66rem;font-weight:700;padding:3px 6px;border-radius:5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+.ot2-ch.f-pend{background:var(--ot-pend-bg);color:#1d4ed8}
+.ot2-ch.f-ejec{background:var(--ot-ejec-bg);color:#991b1b}
+.ot2-ch.f-comp{background:var(--ot-comp-bg);color:#166534}
+.ot2-ch.f-cerr{background:var(--ot-cerr-bg);color:#374151}
+.ot2-ch.f-cancel{background:var(--ot-ejec-bg);color:#991b1b;text-decoration:line-through}
+.ot2-mas{font-size:.6rem;font-weight:800;color:#9ca3af;padding:0 2px}
 
-/* ── scoreboard: 5 contadores por fase, clicables ── */
-.scoreboard{display:grid;grid-template-columns:repeat(5,1fr);background:repeating-linear-gradient(-45deg,rgba(255,255,255,.02) 0 2px,transparent 2px 16px),var(--ilus-black)}
-.tile{--tc:#9ca3af;position:relative;padding:18px 20px 15px;border-right:1px solid rgba(255,255,255,.08);cursor:pointer;transition:background .15s}
-.tile:last-child{border-right:none}
-.tile:hover{background:rgba(255,255,255,.055)}
-.tile .num{font-family:var(--font-d);font-weight:900;font-size:36px;line-height:1;color:#fff}
-.tile .lbl{display:flex;align-items:center;gap:7px;margin-top:5px;font-size:10.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:#9ca3af;white-space:nowrap}
-.tile .lbl i{font-size:11px}
-.tile::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--tc);opacity:.28;transition:opacity .15s}
-.tile:hover::after{opacity:.7}
-.tile.active{background:rgba(220,38,38,.10)}
-.tile.active::after{opacity:1}
-.tile.active .lbl{color:#e5e7eb}
-.t-ejec{--tc:var(--ilus-red)} .t-prog{--tc:var(--info)} .t-aprob{--tc:var(--warn)} .t-comp{--tc:var(--ok)} .t-cerr{--tc:#9ca3af}
-.live-dot{position:relative;display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ilus-red)}
-.live-dot::after{content:"";position:absolute;inset:-3px;border-radius:50%;border:2px solid var(--ilus-red);animation:pulse-dot 1.7s ease-out infinite}
+/* ── Pie de paginación (patrón Etiquetas, REGLA #4.3) ──────────────── */
+.ot2-pie{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 16px;
+  border-top:1px solid var(--ot-line);font-size:.83rem;color:#6b7280;font-weight:600}
+.ot2-pie b{color:#0a0a0a}
+.ot2-pp{display:inline-flex;gap:4px;border:1px solid var(--ot-line);border-radius:999px;
+  padding:4px;background:#fff}
+.ot2-pp a{min-width:36px;min-height:36px;display:inline-flex;align-items:center;
+  justify-content:center;border-radius:999px;font-size:.78rem;font-weight:800;
+  color:#6b7280;text-decoration:none}
+.ot2-pp a.on{background:#0a0a0a;color:#fff}
+.ot2-nav{margin-left:auto;display:flex;align-items:center;gap:8px}
+.ot2-nb{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:8px 16px;
+  border-radius:999px;border:1px solid var(--ot-line);background:#fff;color:#0a0a0a;
+  font-size:.82rem;font-weight:800;text-decoration:none}
+.ot2-nb:hover{border-color:#0a0a0a}
+.ot2-nb.off{opacity:.4;pointer-events:none}
 
-/* ── toolbar: buscador + filtro activo (REAL) ── */
-.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 26px}
-.search{display:flex;align-items:center;gap:9px;flex:1 1 260px;max-width:420px;min-height:44px;background:var(--muted-bg);border:1px solid transparent;border-radius:var(--r-md);padding:0 15px;transition:border-color .2s,background .2s}
-.search:focus-within{background:#fff;border-color:var(--ilus-black)}
-.search i{color:var(--muted)}
-.search input{border:none;outline:none;background:transparent;width:100%;font-family:var(--font-b);font-size:16px;font-weight:500;color:var(--ilus-black)}
-.search input::placeholder{color:#a1a1aa}
-.btn-soft{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:7px 15px;border-radius:99px;font-size:13px;font-weight:700;color:var(--ilus-black);background:#fff;border:1px solid #e4e4e7;transition:border-color .16s}
-.btn-soft:hover{border-color:var(--ilus-black)}
-.filtro-activo{margin:0 26px 14px;font-size:.8rem;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:7px}
-.filtro-activo i{color:var(--info)}
-.filtro-activo b{color:var(--ilus-black)}
+.ot2-vacio{padding:60px 24px;text-align:center}
+.ot2-vacio i{font-size:2.9rem;color:#d7dae0;display:block;margin-bottom:12px}
+.ot2-vacio h5{font-weight:800;margin-bottom:5px}
+.ot2-vacio p{color:#6b7280;font-size:.86rem;margin:0}
 
-/* ══════════════════ FICHAS (una por OT) ══════════════════ */
-.grid-ot{display:grid;grid-template-columns:132px minmax(220px,1.6fr) 198px minmax(160px,1fr) 92px 116px;gap:16px;align-items:center}
-.thead{padding:16px 26px 10px;background:#f9fafb;border-bottom:1px solid var(--line)}
-.thead span{font-family:var(--font-d);font-weight:700;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:#a1a1aa}
-.fichas{display:flex;flex-direction:column;gap:11px;padding:14px;background:#f2f3f5}
-
-.ficha{--st:var(--muted);--st-bg:var(--muted-bg);position:relative;padding:16px 20px 16px 24px;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 1px 3px rgba(10,10,10,.06);transition:transform .18s,box-shadow .18s,border-color .18s;cursor:pointer}
-.ficha::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--st);border-radius:11px 0 0 11px;transition:width .18s}
-.ficha:hover{transform:translateY(-2px);border-color:#d1d5db;box-shadow:0 16px 34px rgba(10,10,10,.13),0 6px 16px rgba(220,38,38,.08)}
-.ficha:hover::before{width:8px}
-
-.c-ot .serie{font-family:var(--font-d);font-weight:600;font-size:12.5px;letter-spacing:1.5px;color:#9ca3af}
-.c-ot .numero{font-family:var(--font-d);font-weight:800;font-size:29px;line-height:1;color:var(--ink);letter-spacing:.3px}
-.c-ot .numero.sinot{color:#a1a1aa;font-size:22px}
-.chip-tipo{display:inline-flex;align-items:center;gap:5px;margin-top:7px;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#475569;border:1px solid var(--line);border-radius:5px;padding:2.5px 7px;background:#fafafa;white-space:nowrap}
-.chip-tipo i{color:var(--ilus-red);font-size:10.5px}
-
-.c-cli .nombre{font-size:15.5px;font-weight:700;color:var(--ink);line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.c-cli .detalle{margin-top:4px;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-.stamp{position:relative;display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:56px;padding:8px 12px 8px 13px;background:var(--st-bg);border-left:3px solid var(--st);clip-path:var(--chamfer-sm)}
-.stamp .st-label{display:flex;align-items:center;gap:7px;font-family:var(--font-d);font-weight:800;font-size:16.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--st);line-height:1}
-.stamp .st-label i{font-size:14px}
-.stamp .st-sub{font-size:10.5px;font-weight:600;color:#475569;opacity:.8}
-.st-ejec .stamp{--st:var(--ilus-red);--st-bg:#fee2e2}
-.st-prog .stamp{--st:var(--info);--st-bg:var(--info-bg)}
-.st-aprob .stamp{--st:#b45309;--st-bg:var(--warn-bg)}
-.st-comp .stamp{--st:var(--ok);--st-bg:var(--ok-bg)}
-.st-cerr .stamp{--st:#4b5563;--st-bg:var(--muted-bg)}
-.st-cancel .stamp{--st:var(--ilus-red);--st-bg:#fee2e2}
-.st-cancel .st-label{text-decoration:line-through}
-.ficha.st-ejec::before{background:var(--ilus-red)} .ficha.st-prog::before{background:var(--info)} .ficha.st-aprob::before{background:#b45309} .ficha.st-comp::before{background:var(--ok)} .ficha.st-cerr::before{background:#4b5563} .ficha.st-cancel::before{background:var(--ilus-red)}
-
-.c-tec{display:flex;align-items:center;gap:10px;min-width:0}
-.avatar{flex:none;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--ilus-black);color:#fff;font-family:var(--font-d);font-weight:700;font-size:13.5px;letter-spacing:.5px;box-shadow:0 0 0 2px var(--ilus-red)}
-.avatar.sin{background:#fff;color:#a1a1aa;box-shadow:none;border:1.5px dashed #d1d5db;font-size:15px}
-.c-tec .tn{font-size:13px;font-weight:700;color:var(--ink);line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-.c-av{display:flex;flex-direction:column;align-items:center;gap:3px}
-.ring{position:relative;width:52px;height:52px}
-.ring svg{width:52px;height:52px;transform:rotate(-90deg)}
-.ring .track{fill:none;stroke:#e5e7eb;stroke-width:5}
-.ring .bar{fill:none;stroke:var(--st,var(--ilus-red));stroke-width:5;stroke-linecap:round;stroke-dasharray:163.36;animation:ringfill .9s cubic-bezier(.2,.7,.25,1) .3s both}
-.ring .pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-d);font-weight:800;font-size:14.5px;color:var(--ink)}
-.c-av .tareas{font-size:10px;font-weight:600;color:var(--muted);white-space:nowrap}
-
-.c-go{display:flex;justify-content:flex-end}
-.btn-abrir{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-d);font-weight:800;font-size:13.5px;letter-spacing:.05em;text-transform:uppercase;color:#fff;background:var(--ilus-black);border:none;cursor:pointer;padding:9px 13px;clip-path:var(--chamfer-sm);transition:background .15s,transform .15s;white-space:nowrap}
-.btn-abrir i{font-size:12px;transition:transform .15s}
-.ficha:hover .btn-abrir{background:var(--ilus-red)}
-.ficha:hover .btn-abrir i{transform:translateX(3px)}
-
-/* ── paginación (patrón Etiquetas, REGLA #4.3) ── */
-.pager{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 26px 20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);font-weight:500}
-.pager .count b{color:var(--ilus-black);font-weight:700}
-.pp-group{display:inline-flex;align-items:center;gap:6px;border:1px solid #e4e4e7;border-radius:99px;padding:4px;background:#fff}
-.pp-group a{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px;border-radius:99px;font-size:12.5px;font-weight:700;color:var(--muted)}
-@media (max-width:640px){.pp-group a{min-width:40px;min-height:40px}}
-.pp-group a.on{background:var(--ilus-black);color:#fff}
-.pp-group a:hover:not(.on){color:var(--ilus-black)}
-.pager-nav{margin-left:auto;display:flex;align-items:center;gap:8px}
-.pbtn{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:7px 16px;border-radius:99px;border:1px solid #e4e4e7;background:#fff;font-size:13px;font-weight:700;color:var(--ilus-black);transition:border-color .16s}
-.pbtn:hover{border-color:var(--ilus-black)}
-.pbtn.disabled{opacity:.4;pointer-events:none}
-.pcur{font-family:var(--font-d);font-weight:800;font-size:15px;letter-spacing:.03em;padding:0 8px;text-transform:uppercase}
-.pcur b{color:var(--ilus-red)}
-
-.vacio{padding:66px 30px;text-align:center}
-.vacio i{font-size:3.1rem;color:#d4d4d8;display:block;margin-bottom:14px}
-.vacio h3{font-family:var(--font-d);font-weight:800;font-size:1.25rem;color:var(--ilus-black);margin:0 0 6px}
-.vacio p{color:var(--muted);font-size:.88rem;margin:0}
-
-.foot{text-align:center;padding:0 26px 40px;font-size:12px;color:#a1a1aa;font-weight:500}
-.foot b{color:var(--muted)}
-
-/* ── selector de vista: Tarjeta / Tabla / Kanban / Calendario ── */
-.vista-switch{display:flex;align-items:center;gap:6px;padding:14px 26px 0;flex-wrap:wrap}
-.vs-btn{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:7px 14px;border-radius:9px;font-family:var(--font-d);font-weight:700;font-size:13.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
-.vs-btn i{font-size:14px}
-.vs-btn:hover{background:var(--muted-bg);color:var(--ilus-black)}
-.vs-btn.active{background:var(--ilus-black);color:#fff}
-
-/* ══════════════════ VISTA TABLA (densa) ══════════════════ */
-.tabla-wrap{overflow-x:auto;padding:0 14px 14px;background:#f2f3f5}
-.ot-table{width:100%;border-collapse:separate;border-spacing:0 8px}
-.ot-table thead th{font-family:var(--font-d);font-weight:700;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#a1a1aa;text-align:left;padding:0 14px 6px}
-.ot-table tbody tr{--st:var(--muted);background:#fff;box-shadow:0 1px 3px rgba(10,10,10,.06);cursor:pointer;transition:transform .12s,box-shadow .12s}
-.ot-table tbody tr:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(10,10,10,.1)}
-.ot-table td{padding:12px 14px;font-size:13.5px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);white-space:nowrap}
-.ot-table td:first-child{border-left:4px solid var(--st);border-radius:9px 0 0 9px}
-.ot-table td:last-child{border-right:1px solid var(--line);border-radius:0 9px 9px 0;text-align:right}
-.ot-table .td-num{font-family:var(--font-d);font-weight:800;font-size:16px}
-.ot-table .td-num small{display:block;font-weight:600;font-size:10px;color:#9ca3af;letter-spacing:1px}
-.ot-table .td-cli{font-weight:700;max-width:220px;overflow:hidden;text-overflow:ellipsis}
-.ot-table .td-cli small{display:block;font-weight:500;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
-.ot-table .td-estado{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:var(--st);text-transform:uppercase}
-.ot-table .td-tec{display:flex;align-items:center;gap:8px}
-.ot-table .avatar{width:28px;height:28px;font-size:11px}
-.ot-table tr.st-ejec{--st:var(--ilus-red)} .ot-table tr.st-prog{--st:var(--info)} .ot-table tr.st-aprob{--st:#b45309} .ot-table tr.st-comp{--st:var(--ok)} .ot-table tr.st-cerr{--st:#4b5563} .ot-table tr.st-cancel{--st:var(--ilus-red)}
-.tbl-abrir{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-d);font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#fff;background:var(--ilus-black);border-radius:7px;padding:6px 10px}
-
-/* ══════════════════ VISTA KANBAN ══════════════════ */
-.kanban-wrap{overflow-x:auto;padding:16px 14px 22px;background:#f2f3f5}
-.kanban-board{display:flex;gap:14px;align-items:flex-start;min-width:min-content}
-.kcol{--st:var(--muted);flex:0 0 272px;width:272px;background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:0 1px 3px rgba(10,10,10,.06);display:flex;flex-direction:column;max-height:74vh}
-.kcol-head{display:flex;align-items:center;gap:8px;padding:13px 14px;border-bottom:2px solid var(--st)}
-.kcol-dot{width:9px;height:9px;border-radius:50%;background:var(--st);flex:none}
-.kcol-label{font-family:var(--font-d);font-weight:800;font-size:14px;letter-spacing:.02em;text-transform:uppercase;color:var(--ilus-black)}
-.kcol-count{margin-left:auto;font-size:12px;font-weight:800;color:#fff;background:var(--st);border-radius:99px;padding:2px 9px}
-.kcol-body{padding:10px;display:flex;flex-direction:column;gap:9px;overflow-y:auto}
-.kcol-ejec{--st:var(--ilus-red)} .kcol-prog{--st:var(--info)} .kcol-aprob{--st:#b45309} .kcol-comp{--st:var(--ok)} .kcol-cerr{--st:#4b5563}
-.kcard{display:block;background:#fafafa;border:1px solid var(--line);border-left:3px solid var(--st);border-radius:9px;padding:10px 12px;transition:transform .12s,box-shadow .12s,background .12s}
-.kcard:hover{background:#fff;transform:translateY(-1px);box-shadow:0 6px 16px rgba(10,10,10,.1)}
-.kcard-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.kcard-num{font-family:var(--font-d);font-weight:800;font-size:14px}
-.kcard-tipo{color:var(--st);font-size:12px}
-.kcard-cli{margin-top:4px;font-size:12.5px;font-weight:600;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kcard-foot{margin-top:8px;display:flex;align-items:center;justify-content:space-between}
-.kcard-av{width:22px;height:22px;border-radius:50%;background:var(--ilus-black);color:#fff;display:grid;place-items:center;font-size:9.5px;font-weight:700;font-family:var(--font-d);flex:none}
-.kcard-av.sin{background:#fff;border:1.5px dashed #d1d5db;color:#a1a1aa}
-.kcard-pct{font-size:11px;font-weight:800;color:var(--st)}
-.kcol-mas{padding:8px 6px;text-align:center;font-size:11px;font-weight:600;color:var(--muted)}
-.kcol-vacio{padding:24px 10px;text-align:center;font-size:12px;color:#c4c4c8;font-weight:600}
-@media (max-width:900px){.vs-kanban{display:none}}
-
-/* ══════════════════ VISTA CALENDARIO ══════════════════ */
-.cal-nav{display:flex;align-items:center;justify-content:center;gap:18px;padding:18px 26px 6px}
-.cal-mes{font-family:var(--font-hero);font-size:26px;letter-spacing:.5px;min-width:220px;text-align:center}
-.cal-navbtn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:99px;border:1px solid #e4e4e7;background:#fff;color:var(--ilus-black)}
-.cal-navbtn:hover{border-color:var(--ilus-black)}
-.cal-grid{padding:10px 26px 26px}
-.cal-dow-row{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
-.cal-dow{text-align:center;font-family:var(--font-d);font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#a1a1aa;padding:4px 0}
-.cal-week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
-.cal-day{min-height:104px;background:#fafafa;border:1px solid var(--line);border-radius:9px;padding:6px;display:flex;flex-direction:column;gap:4px;overflow:hidden}
-.cal-day.hoy{border-color:var(--ilus-red);box-shadow:inset 0 0 0 1px var(--ilus-red)}
-.cal-day-off{background:transparent;border-color:transparent}
-.cal-daynum{font-family:var(--font-d);font-weight:700;font-size:12.5px;color:var(--muted)}
-.cal-day.hoy .cal-daynum{color:var(--ilus-red);font-weight:800}
-.cal-chip{display:block;font-size:10.5px;font-weight:700;padding:3px 6px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cal-chip.st-ejec{background:#fee2e2;color:#991b1b}
-.cal-chip.st-prog{background:var(--info-bg);color:var(--info-tx)}
-.cal-chip.st-aprob{background:var(--warn-bg);color:var(--warn-tx)}
-.cal-chip.st-comp{background:var(--ok-bg);color:#166534}
-.cal-chip.st-cerr{background:var(--muted-bg);color:#374151}
-.cal-chip.st-cancel{background:#fee2e2;color:#991b1b;text-decoration:line-through}
-.cal-mas{font-size:9.5px;font-weight:700;color:var(--muted);padding:0 2px}
-
-/* ══════════════════ RESPONSIVE ══════════════════ */
-@media (max-width:1180px){
-  .grid-ot{grid-template-columns:116px minmax(190px,1.5fr) 178px 132px 78px 98px;gap:12px}
-  .c-ot .numero{font-size:25px}
-  .stamp .st-label{font-size:14.5px}
-}
-@media (max-width:1024px){
-  .thead{display:none}
-  .grid-ot{grid-template-columns:1fr auto;grid-template-areas:"ot estado" "cli cli" "tec avance" "acc acc";gap:12px 16px;align-items:start}
-  .c-ot{grid-area:ot} .c-cli{grid-area:cli;border-top:1px dashed var(--line);padding-top:11px}
-  .c-est{grid-area:estado;align-self:center} .c-tec{grid-area:tec;align-self:center}
-  .c-av{grid-area:avance;flex-direction:row;gap:9px}
-  .c-go{grid-area:acc;border-top:1px dashed var(--line);padding-top:11px}
-  .btn-abrir{width:100%;justify-content:center;min-height:44px}
-  .scoreboard{grid-template-columns:repeat(3,1fr)}
-  .tile{border-bottom:1px solid rgba(255,255,255,.08)}
-}
-@media (max-width:960px){
-  .hero-grid{grid-template-columns:1fr;gap:32px;align-items:start}
-  .sep-panel{max-width:480px}
-  .tabs-note{display:none}
-}
 @media (max-width:640px){
-  .shell{padding:0 15px}
-  .hero{padding-bottom:126px}
-  .board-wrap{margin-top:-96px}
-  .crumb{display:none}
-  .scoreboard{grid-template-columns:repeat(2,1fr)}
-  .tile .num{font-size:30px}
-  .btn-accion .tx{display:none}
-  .btn-accion{padding:8px;gap:0}
-  .btn-salir span{display:none}
-  .pager{justify-content:center}
-  .pager-nav{margin-left:0;width:100%;justify-content:center}
-  .fichas{padding:10px;gap:9px}
-  .ficha{padding:15px 15px 15px 20px}
-  .vs-btn{min-height:44px}
-  .vs-btn span{display:none}
-  .cal-day{min-height:74px;padding:4px}
-  .cal-mes{font-size:20px;min-width:160px}
-  .kcol{flex-basis:238px;width:238px}
-  /* En una celda de ~44px un chip de texto queda ilegible y recortado
-     (medido: fuente 9px y desbordando). En móvil el chip pasa a ser un
-     punto de color -- se ve la CARGA del día y su estado, y el detalle
-     se consulta desde Tarjetas/Tabla, que sí son legibles en teléfono. */
-  .cal-day{flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:3px}
-  .cal-daynum{width:100%}
-  .cal-chip{width:7px;height:7px;padding:0;border-radius:50%;font-size:0;color:transparent;overflow:visible}
-  .cal-chip.st-ejec{background:var(--ilus-red)}
-  .cal-chip.st-prog{background:var(--info)}
-  .cal-chip.st-aprob{background:var(--warn)}
-  .cal-chip.st-comp{background:var(--ok)}
-  .cal-chip.st-cerr{background:#9ca3af}
-  .cal-chip.st-cancel{background:#fca5a5}
-  .cal-mas{font-size:9px}
-}
-@media (max-width:420px){
-  .hero h1{font-size:54px}
-  .sep-top .big{font-size:52px}
-  .brand img{height:26px}
-  .cal-grid{padding:6px 10px 20px}
-  .cal-dow-row,.cal-week{gap:3px}
+  .ot2-kpis{grid-template-columns:repeat(2,1fr)}
+  .ot2-v span{display:none}
+  .ot2-nav{margin-left:0;width:100%;justify-content:center}
+  .ot2-pie{justify-content:center}
+  .ot2-dia{min-height:64px}
+  .ot2-ch{font-size:0;padding:0;width:7px;height:7px;border-radius:50%;display:inline-block}
+  .ot2-col{flex-basis:250px;width:250px}
 }
 </style>
-</head>
-<body>
 
-<header class="hero">
-  <div class="shell">
+<div class="ot2">
 
-    <nav class="topbar rise d1">
-      <a class="brand" href="{{ url_for('mant_index') }}" aria-label="ILUS Fitness">
-        <picture>
-          <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
-          <img src="{{ url_for('static', filename='Logo_optimized.png') }}" alt="ILUS"
-               width="112" height="32" decoding="async" fetchpriority="high">
-        </picture>
+  {# ── Header: mismo .page-header global del resto del módulo ──────── #}
+  <div class="page-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4><i class="bi bi-clipboard2-pulse-fill me-2"></i>Órdenes de Trabajo</h4>
+      <div class="sub">
+        {{ conteo_reales }} creadas por personas · {{ conteo_automaticas }} automáticas ·
+        módulo en marcha blanca
+      </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('mant_plantillas_page') }}" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-ui-checks me-1"></i>Plantillas
       </a>
-      <div class="crumb">Mantenciones <i class="bi bi-chevron-right" style="font-size:10px"></i> <b>Órdenes de Trabajo</b></div>
-      <div class="top-actions">
-        <a class="btn-accion" href="{{ url_for('mant_plantillas_page') }}" aria-label="Plantillas de checklist">
-          <span class="ic"><i class="bi bi-ui-checks"></i></span>
-          <span class="tx"><strong>Plantillas</strong><small>Checklists de mantención</small></span>
-        </a>
-        {# Abre el modal potente YA EXISTENTE (#modalOTOrigen en
-           /mantenciones/ots) -- ver DOMContentLoaded en ots_list.html. #}
-        <a class="btn-accion acento" href="{{ url_for('mant_ots_list') }}?abrir_generar_ot=1" aria-label="Generar Orden de Trabajo">
-          <span class="ic"><i class="bi bi-plus-lg"></i></span>
-          <span class="tx"><strong>Generar OT</strong><small>Cliente · Ticket · Cotización · Interno</small></span>
-        </a>
-        <a class="btn-salir" href="{{ url_for('mant_index') }}"><i class="bi bi-box-arrow-left"></i><span>Salir</span></a>
-      </div>
-    </nav>
-
-    <div class="hero-grid">
-      <div class="rise d2">
-        <span class="kicker">Centro de control operativo</span>
-        <h1>Órdenes<br>de trabajo<span class="punto">.</span></h1>
-        <p class="sub">
-          Solo las órdenes <b>creadas por una persona</b> — las que llevan número
-          <span class="num-ej">OT-2026-·····</span> — viven en esta vista.
-          Las generadas por el sistema quedaron <b>separadas</b>, a un clic, sin mezclarse.
-        </p>
-        <div class="beta-pill"><i class="bi bi-flask-fill"></i> Beta — visible solo para Super Administrador</div>
-      </div>
-
-      <aside class="sep-panel rise d3" aria-label="Separación entre órdenes reales y automáticas">
-        <div class="lbl"><i class="bi bi-person-check-fill"></i> Creadas por personas</div>
-        <div class="sep-top">
-          <div class="big">{{ conteo_reales }}</div>
-          <div class="what"><b>OT reales</b><br>con número asignado</div>
-        </div>
-        {% set total_corte = (conteo_reales + conteo_automaticas) or 1 %}
-        {% set pct_hum = ((conteo_reales / total_corte) * 100) | round(0, 'floor') | int %}
-        <div class="ratio" role="img" aria-label="{{ pct_hum }} por ciento humanas">
-          <div class="hum" style="width:{{ pct_hum }}%"></div>
-          <div class="aut"></div>
-        </div>
-        <div class="ratio-leg">
-          <span><span class="sw r"></span>Humanas · {{ pct_hum }}%</span>
-          <span><span class="sw g"></span>Automáticas · {{ 100 - pct_hum }}%</span>
-        </div>
-        <div class="sep-div"></div>
-        <div class="sep-auto">
-          <span class="robot"><i class="bi bi-robot"></i></span>
-          <span class="n">{{ conteo_automaticas }}</span>
-          <span class="d"><b>automáticas separadas</b> de esta vista<br>visitas sin número de OT</span>
-        </div>
-        <a class="btn-ver-auto {{ 'activo' if origen == 'automaticas' }}"
-           href="{{ url_for('ot2_panel', origen='automaticas' if origen == 'reales' else 'reales', vista=vista) }}">
-          {% if origen == 'reales' %}Ver automáticas <i class="bi bi-arrow-right"></i>
-          {% else %}<i class="bi bi-arrow-left"></i> Volver a las reales{% endif %}
-        </a>
-      </aside>
+      {# Reporte: por ahora reusa la vista Tabla con todo el universo, que es
+         lo que se puede imprimir hoy con datos reales. El reporte formal
+         (Excel/PDF por técnico y por estado) queda para la etapa de
+         reportabilidad que Daniel pidió — no se inventa un botón que no
+         hace lo que promete. #}
+      <a href="{{ url_for('ot2_panel', origen=origen, vista='tabla', per_page=100) }}"
+         class="btn btn-sm btn-outline-light" title="Ver todas en una tabla para imprimir">
+        <i class="bi bi-file-earmark-text me-1"></i>Reporte
+      </a>
+      <button type="button" class="btn btn-sm btn-light fw-bold" onclick="ot2AbrirGenerar()">
+        <i class="bi bi-plus-lg me-1"></i>Generar OT
+      </button>
     </div>
   </div>
-</header>
 
-<main class="board-wrap">
-  <div class="shell">
-    <section class="board rise d4">
-
-      {% if error %}
-      <div class="err-banner">
-        <i class="bi bi-exclamation-triangle-fill"></i>
-        No se pudo cargar la información completa. El detalle quedó en el registro del servidor.
-      </div>
-      {% endif %}
-
-      <nav class="tabs" aria-label="Origen de las órdenes">
-        <a class="tab {{ 'active' if origen == 'reales' }}" href="{{ url_for('ot2_panel', origen='reales', vista=vista, q=q or None) }}"
-           {{ 'aria-current="page"' | safe if origen == 'reales' }}>
-          <i class="bi bi-person-fill"></i> OT reales <span class="ct">{{ conteo_reales }}</span>
-        </a>
-        <a class="tab ghost {{ 'active' if origen == 'automaticas' }}" href="{{ url_for('ot2_panel', origen='automaticas', vista=vista, q=q or None) }}">
-          <i class="bi bi-robot"></i> Automáticas <span class="ct">{{ conteo_automaticas }}</span>
-        </a>
-        <p class="tabs-note">
-          <i class="bi bi-info-circle-fill"></i>
-          Las automáticas las genera el Plan Anual, el cron nocturno o el agente de sugerencias.
-        </p>
-      </nav>
-
-      {# Selector de vista (Daniel, 19-08-2026: "quiero verlas como tabla,
-         como tarjeta, Kanban, y un posible calendario... tipo Trello").
-         Kanban va oculto en el switcher de móvil (columnas lado a lado no
-         funcionan en pantalla chica) -- confirmado con Daniel; el backend
-         igual la sirve si alguien llega por un link directo. #}
-      <nav class="vista-switch" aria-label="Tipo de vista">
-        <a class="vs-btn {{ 'active' if vista=='tarjeta' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tarjeta', q=q or None, fase=fase or None) }}">
-          <i class="bi bi-grid-3x3-gap-fill"></i><span>Tarjetas</span>
-        </a>
-        <a class="vs-btn {{ 'active' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None) }}">
-          <i class="bi bi-table"></i><span>Tabla</span>
-        </a>
-        <a class="vs-btn vs-kanban {{ 'active' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None) }}">
-          <i class="bi bi-kanban-fill"></i><span>Kanban</span>
-        </a>
-        <a class="vs-btn {{ 'active' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None) }}">
-          <i class="bi bi-calendar3"></i><span>Calendario</span>
-        </a>
-      </nav>
-
-      {# Scoreboard: 5 fases, clicables como filtro (REGLA #4.3: un
-         segundo clic sobre el mismo filtro lo QUITA, no lo repite). La
-         fase solo existe como filtro en Tabla/Tarjeta (en Kanban ES la
-         columna, en Calendario el color del chip ya la distingue) -- por
-         eso un clic aquí siempre aterriza en una de esas dos, nunca se
-         queda "filtrando" un Kanban/Calendario donde no aplicaría. #}
-      {% set vista_lista = vista if vista in ('tabla','tarjeta') else 'tarjeta' %}
-      <div class="scoreboard">
-        <a class="tile t-ejec {{ 'active' if fase=='ejec' }}"
-           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='ejec' else 'ejec') }}">
-          <div class="num">{{ kpis.ejec }}</div>
-          <div class="lbl">{% if kpis.ejec %}<span class="live-dot"></span>{% endif %} En ejecución</div>
-        </a>
-        <a class="tile t-prog {{ 'active' if fase=='prog' }}"
-           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='prog' else 'prog') }}">
-          <div class="num">{{ kpis.prog }}</div><div class="lbl">Programadas</div>
-        </a>
-        <a class="tile t-aprob {{ 'active' if fase=='aprob' }}"
-           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='aprob' else 'aprob') }}">
-          <div class="num">{{ kpis.aprob }}</div><div class="lbl">Por aprobar</div>
-        </a>
-        <a class="tile t-comp {{ 'active' if fase=='comp' }}"
-           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='comp' else 'comp') }}">
-          <div class="num">{{ kpis.comp }}</div><div class="lbl">Completadas</div>
-        </a>
-        <a class="tile t-cerr {{ 'active' if fase=='cerr' }}"
-           href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='cerr' else 'cerr') }}">
-          <div class="num">{{ kpis.cerr }}</div><div class="lbl">Cerradas</div>
-        </a>
-      </div>
-
-      <form method="get" class="toolbar">
-        <input type="hidden" name="origen" value="{{ origen }}">
-        <input type="hidden" name="vista" value="{{ vista }}">
-        {% if fase %}<input type="hidden" name="fase" value="{{ fase }}">{% endif %}
-        {% if vista == 'calendario' and cal_mes_actual %}<input type="hidden" name="mes" value="{{ cal_mes_actual }}">{% endif %}
-        <div class="search">
-          <i class="bi bi-search"></i>
-          <input type="search" name="q" value="{{ q }}" placeholder="Buscar por N° OT, cliente o técnico…" aria-label="Buscar órdenes">
-        </div>
-        <button class="btn-soft" type="submit"><i class="bi bi-funnel"></i> Buscar</button>
-        {% if q or fase %}
-        <a class="btn-soft" href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}"><i class="bi bi-x-lg"></i> Limpiar</a>
-        {% endif %}
-      </form>
-
-      {% if q or fase %}
-      <p class="filtro-activo">
-        <i class="bi bi-info-circle-fill"></i>
-        {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'ejec':'En ejecución','prog':'Programadas','aprob':'Por aprobar','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}
-      </p>
-      {% endif %}
-
-      {% if vista in ('tarjeta', 'tabla') %}
-        {% if filas %}
-          {% if vista == 'tarjeta' %}
-          <div class="thead grid-ot" aria-hidden="true">
-            <span>N° OT</span><span>Cliente · Trabajo</span><span>Estado</span>
-            <span>Técnico</span><span>Avance</span><span></span>
-          </div>
-
-          <div class="fichas">
-            {% for f in filas %}
-            <a class="ficha {{ f.estado_class }} grid-ot" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
-              <div class="c-ot">
-                {% if f.numero_ot %}
-                  <div class="serie">OT-{{ f.numero_prefijo }}</div>
-                  <div class="numero">{{ f.numero_sufijo }}</div>
-                {% else %}
-                  <div class="serie">Automática</div>
-                  <div class="numero sinot">VS-{{ '%05d'|format(f.id) }}</div>
-                {% endif %}
-                <span class="chip-tipo"><i class="bi {{ f.tipo_icon }}"></i> {{ f.tipo_label }}</span>
-              </div>
-              <div class="c-cli">
-                <div class="nombre">{{ f.razon_social or 'Trabajo interno' }}</div>
-                {% if f.titulo %}<div class="detalle">{{ f.titulo }}</div>{% endif %}
-              </div>
-              <div class="c-est">
-                <div class="stamp">
-                  <div class="st-label">
-                    {% if f.estado_en_vivo %}<span class="live-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
-                    {{ f.estado_label }}
-                  </div>
-                  {% if f.estado_sub %}<div class="st-sub">{{ f.estado_sub }}</div>{% endif %}
-                </div>
-              </div>
-              <div class="c-tec">
-                {% if f.tecnico_ini %}<span class="avatar">{{ f.tecnico_ini }}</span>{% else %}<span class="avatar sin"><i class="bi bi-person-plus"></i></span>{% endif %}
-                <span class="tn">{{ f.tecnico_nombre or 'Por asignar' }}</span>
-              </div>
-              <div class="c-av">
-                <div class="ring">
-                  <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="26"/><circle class="bar" cx="32" cy="32" r="26" style="stroke-dashoffset:{{ f.ring_offset }}"/></svg>
-                  <div class="pct">{{ f.check_pct }}</div>
-                </div>
-                <div class="tareas">{{ f.n_completas }}/{{ f.n_tareas }} tareas</div>
-              </div>
-              <div class="c-go">
-                <span class="btn-abrir">Abrir <i class="bi bi-arrow-right"></i></span>
-              </div>
-            </a>
-            {% endfor %}
-          </div>
-          {% else %}
-          <div class="tabla-wrap">
-            <table class="ot-table">
-              <thead>
-                <tr><th>N° OT</th><th>Cliente · Trabajo</th><th>Estado</th><th>Técnico</th><th>Avance</th><th></th></tr>
-              </thead>
-              <tbody>
-                {% for f in filas %}
-                <tr class="{{ f.estado_class }}" onclick="location.href='{{ url_for('mant_ot_ficha', vid=f.id) }}'">
-                  <td>
-                    <span class="td-num">
-                      {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
-                      {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
-                    </span>
-                  </td>
-                  <td>
-                    <div class="td-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
-                    <small>{{ f.tipo_label }}{% if f.titulo %} · {{ f.titulo }}{% endif %}</small>
-                  </td>
-                  <td>
-                    <span class="td-estado">
-                      {% if f.estado_en_vivo %}<span class="live-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
-                      {{ f.estado_label }}
-                    </span>
-                  </td>
-                  <td>
-                    <div class="td-tec">
-                      {% if f.tecnico_ini %}<span class="avatar">{{ f.tecnico_ini }}</span>{% else %}<span class="avatar sin"><i class="bi bi-person-plus"></i></span>{% endif %}
-                      {{ f.tecnico_nombre or 'Por asignar' }}
-                    </div>
-                  </td>
-                  <td>{{ f.n_completas }}/{{ f.n_tareas }} · {{ f.check_pct }}%</td>
-                  <td><a class="tbl-abrir" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a></td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          {% endif %}
-
-          <footer class="pager">
-            <span class="count">
-              Mostrando <b>{{ ((page-1)*per_page + 1) }}–{{ [(page*per_page), total_filtrado] | min }}</b>
-              de <b>{{ total_filtrado }}</b>
-            </span>
-            <div class="pp-group">
-              {% for opt in per_page_opciones %}
-              <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None) }}">{{ opt }}</a>
-              {% endfor %}
-            </div>
-            <div class="pager-nav">
-              <a class="pbtn {{ 'disabled' if page <= 1 }}"
-                 href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None) if page > 1 else '#' }}">
-                <i class="bi bi-chevron-left"></i> Anterior
-              </a>
-              <span class="pcur">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
-              <a class="pbtn {{ 'disabled' if page >= total_paginas }}"
-                 href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None) if page < total_paginas else '#' }}">
-                Siguiente <i class="bi bi-chevron-right"></i>
-              </a>
-            </div>
-          </footer>
-
-        {% else %}
-        <div class="vacio">
-          <i class="bi bi-inbox"></i>
-          {% if q or fase %}
-          <h3>Sin resultados para este filtro</h3>
-          <p>Prueba con otro texto o quita el filtro de estado.</p>
-          {% else %}
-          <h3>{% if origen == 'reales' %}Ninguna OT real todavía{% else %}Ninguna automática todavía{% endif %}</h3>
-          <p>No hay órdenes que coincidan con esta vista.</p>
-          {% endif %}
-        </div>
-        {% endif %}
-
-      {% elif vista == 'kanban' %}
-      <div class="kanban-wrap">
-        <div class="kanban-board">
-          {% for col in kanban_cols %}
-          <div class="kcol kcol-{{ col.clave }}">
-            <div class="kcol-head">
-              <span class="kcol-dot"></span>
-              <span class="kcol-label">{{ col.label }}</span>
-              <span class="kcol-count">{{ col.total }}</span>
-            </div>
-            <div class="kcol-body">
-              {% for f in col.filas %}
-              <a class="kcard" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
-                <div class="kcard-top">
-                  <span class="kcard-num">{% if f.numero_ot %}OT-{{ f.numero_sufijo }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}</span>
-                  <span class="kcard-tipo"><i class="bi {{ f.tipo_icon }}"></i></span>
-                </div>
-                <div class="kcard-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
-                <div class="kcard-foot">
-                  {% if f.tecnico_ini %}<span class="kcard-av">{{ f.tecnico_ini }}</span>{% else %}<span class="kcard-av sin"><i class="bi bi-person"></i></span>{% endif %}
-                  <span class="kcard-pct">{{ f.check_pct }}%</span>
-                </div>
-              </a>
-              {% endfor %}
-              {% if not col.filas %}<div class="kcol-vacio">Sin OT aquí</div>{% endif %}
-              {% if col.recortado %}<div class="kcol-mas">+{{ col.recortado }} más — usa la vista Tabla para verlas todas</div>{% endif %}
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-
-      {% elif vista == 'calendario' %}
-      <div class="cal-nav">
-        <a class="cal-navbtn" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_ant) }}" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></a>
-        <span class="cal-mes">{{ cal_mes_label }}</span>
-        <a class="cal-navbtn" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_sig) }}" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></a>
-      </div>
-      <div class="cal-grid">
-        <div class="cal-dow-row">
-          {% for d in cal_dow %}<div class="cal-dow">{{ d }}</div>{% endfor %}
-        </div>
-        {% for semana in cal_semanas %}
-        <div class="cal-week">
-          {% for celda in semana %}
-            {% if celda %}
-            <div class="cal-day {{ 'hoy' if celda.es_hoy }}">
-              <span class="cal-daynum">{{ celda.num }}</span>
-              {% for f in celda.filas %}
-              <a class="cal-chip {{ f.estado_class }}" href="{{ url_for('mant_ot_ficha', vid=f.id) }}"
-                 title="{{ f.razon_social or 'Trabajo interno' }} · {{ f.estado_label }}">
-                {% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ (f.razon_social or 'Interno')[:14] }}
-              </a>
-              {% endfor %}
-              {% if celda.recortado %}<div class="cal-mas">+{{ celda.recortado }} más</div>{% endif %}
-            </div>
-            {% else %}
-            <div class="cal-day cal-day-off"></div>
-            {% endif %}
-          {% endfor %}
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
-    </section>
-
-    <p class="foot"><b>ILUS Fitness</b> · Órdenes de Trabajo · módulo de prueba</p>
+  {% if error %}
+  <div class="alert alert-danger d-flex align-items-center gap-2 py-2">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    No se pudo cargar la información completa. El detalle quedó en el registro del servidor.
   </div>
-</main>
+  {% endif %}
 
-</body>
-</html>
+  {# ── KPIs por fase (clic = filtrar, segundo clic = quitar) ───────── #}
+  {% set vista_lista = vista if vista in ('tabla','tarjeta') else 'tabla' %}
+  <div class="ot2-kpis">
+    <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='pend' else 'pend') }}">
+      <span class="num">{{ kpis.pend }}</span><span class="lbl">Pendientes</span>
+    </a>
+    <a class="ot2-kpi k-ejec {{ 'on' if fase=='ejec' }}"
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='ejec' else 'ejec') }}">
+      <span class="num">{{ kpis.ejec }}</span>
+      <span class="lbl">{% if kpis.ejec %}<span class="ot2-dot"></span>{% endif %}En ejecución</span>
+    </a>
+    <a class="ot2-kpi k-comp {{ 'on' if fase=='comp' }}"
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='comp' else 'comp') }}">
+      <span class="num">{{ kpis.comp }}</span><span class="lbl">Completadas</span>
+    </a>
+    <a class="ot2-kpi k-cerr {{ 'on' if fase=='cerr' }}"
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='cerr' else 'cerr') }}">
+      <span class="num">{{ kpis.cerr }}</span><span class="lbl">Cerradas</span>
+    </a>
+  </div>
+
+  {# ── Origen + buscador ───────────────────────────────────────────── #}
+  <form method="get" class="ot2-bar">
+    <input type="hidden" name="vista" value="{{ vista }}">
+    {% if fase %}<input type="hidden" name="fase" value="{{ fase }}">{% endif %}
+    {% if vista == 'calendario' and cal_mes_actual %}<input type="hidden" name="mes" value="{{ cal_mes_actual }}">{% endif %}
+    <input type="hidden" name="origen" value="{{ origen }}">
+
+    <a class="ot2-chip {{ 'on' if origen == 'reales' }}"
+       href="{{ url_for('ot2_panel', origen='reales', vista=vista, q=q or None) }}">
+      <i class="bi bi-person-fill"></i> Creadas por personas <span class="n">{{ conteo_reales }}</span>
+    </a>
+    <a class="ot2-chip {{ 'on' if origen == 'automaticas' }}"
+       href="{{ url_for('ot2_panel', origen='automaticas', vista=vista, q=q or None) }}">
+      <i class="bi bi-robot"></i> Automáticas <span class="n">{{ conteo_automaticas }}</span>
+    </a>
+
+    <div class="ot2-search">
+      <i class="bi bi-search text-muted"></i>
+      <input type="search" name="q" value="{{ q }}"
+             placeholder="Buscar por N° OT, cliente o técnico…" aria-label="Buscar órdenes">
+    </div>
+    <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
+      <i class="bi bi-funnel me-1"></i>Buscar
+    </button>
+    {% if q or fase %}
+    <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
+      <i class="bi bi-x-lg me-1"></i>Limpiar
+    </a>
+    {% endif %}
+  </form>
+
+  {% if q or fase %}
+  <p class="ot2-nota">
+    <i class="bi bi-info-circle-fill text-primary"></i>
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}
+  </p>
+  {% endif %}
+
+  {# ── Selector de vista ───────────────────────────────────────────── #}
+  <nav class="ot2-vistas" aria-label="Tipo de vista">
+    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None) }}">
+      <i class="bi bi-table"></i><span>Tabla</span></a>
+    <a class="ot2-v {{ 'on' if vista=='tarjeta' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tarjeta', q=q or None, fase=fase or None) }}">
+      <i class="bi bi-grid-3x3-gap-fill"></i><span>Tarjetas</span></a>
+    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None) }}">
+      <i class="bi bi-kanban-fill"></i><span>Kanban</span></a>
+    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None) }}">
+      <i class="bi bi-calendar3"></i><span>Calendario</span></a>
+  </nav>
+
+  {# ══════════════════ TABLA ══════════════════ #}
+  {% if vista in ('tabla', 'tarjeta') %}
+    {% if filas %}
+    <div class="ot2-tabla-wrap">
+      <div class="ot2-scroll">
+        <table class="ot2-tabla">
+          <thead>
+            <tr>
+              <th>N° OT</th><th>Cliente</th><th>Tipo</th><th>Estado</th>
+              <th>Técnico</th><th>Fecha</th><th>Avance</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in filas %}
+            <tr class="f-{{ f.estado_fase or 'cancel' }}" onclick="location.href='{{ url_for('mant_ot_ficha', vid=f.id) }}'">
+              <td>
+                <span class="ot2-num">
+                  {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
+                  {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
+                </span>
+              </td>
+              <td><div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div></td>
+              <td><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
+              <td>
+                <span class="ot2-est">
+                  {% if f.estado_en_vivo %}<span class="ot2-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
+                  {{ f.estado_label }}
+                </span>
+              </td>
+              <td>
+                <div class="ot2-tec">
+                  {% if f.tecnico_ini %}<span class="ot2-av">{{ f.tecnico_ini }}</span>
+                  {% else %}<span class="ot2-av sin"><i class="bi bi-person"></i></span>{% endif %}
+                  <span>{{ f.tecnico_nombre or 'Sin asignar' }}</span>
+                </div>
+              </td>
+              <td style="white-space:nowrap">{{ f.fecha_dia }}</td>
+              <td>
+                <div class="ot2-prog">
+                  <span class="bar"><i style="width:{{ f.check_pct }}%"></i></span>
+                  <span class="pc">{{ f.n_completas }}/{{ f.n_tareas }}</span>
+                </div>
+              </td>
+              <td style="text-align:right">
+                <a class="ot2-abrir" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a>
+              </td>
+            </tr>
+            {# El detalle que se despliega al pasar por encima #}
+            <tr class="ot2-det f-{{ f.estado_fase or 'cancel' }}">
+              <td colspan="8">
+                <div class="ot2-det-in">
+                  <div class="ot2-det-it"><span class="k">Trabajo</span>
+                    <span class="v">{{ f.titulo or '—' }}</span></div>
+                  <div class="ot2-det-it"><span class="k">Situación</span>
+                    <span class="v">{{ f.estado_sub or '—' }}</span></div>
+                  <div class="ot2-det-it"><span class="k">Programada</span>
+                    <span class="v">{{ f.fecha_dow }} {{ f.fecha_dia }}</span></div>
+                  <div class="ot2-det-it"><span class="k">Checklist</span>
+                    <span class="v">{{ f.n_completas }} de {{ f.n_tareas }} · {{ f.check_pct }}%</span></div>
+                  <div class="ot2-det-it"><span class="k">Técnico</span>
+                    <span class="v">{{ f.tecnico_nombre or 'Sin asignar' }}</span></div>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="ot2-pie">
+        <span>Mostrando <b>{{ ((page-1)*per_page + 1) }}–{{ [(page*per_page), total_filtrado] | min }}</b> de <b>{{ total_filtrado }}</b></span>
+        <div class="ot2-pp">
+          {% for opt in per_page_opciones %}
+          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None) }}">{{ opt }}</a>
+          {% endfor %}
+        </div>
+        <div class="ot2-nav">
+          <a class="ot2-nb {{ 'off' if page <= 1 }}"
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None) if page > 1 else '#' }}">
+            <i class="bi bi-chevron-left"></i> Anterior</a>
+          <span style="font-weight:800">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
+          <a class="ot2-nb {{ 'off' if page >= total_paginas }}"
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None) if page < total_paginas else '#' }}">
+            Siguiente <i class="bi bi-chevron-right"></i></a>
+        </div>
+      </footer>
+    </div>
+    {% else %}
+    <div class="ot2-tabla-wrap"><div class="ot2-vacio">
+      <i class="bi bi-inbox"></i>
+      {% if q or fase %}
+      <h5>Sin resultados para este filtro</h5><p>Prueba con otro texto o quita el filtro.</p>
+      {% else %}
+      <h5>{% if origen == 'reales' %}Ninguna orden creada por personas todavía{% else %}Ninguna automática todavía{% endif %}</h5>
+      <p>Usa «Generar OT» para crear la primera.</p>
+      {% endif %}
+    </div></div>
+    {% endif %}
+
+  {# ══════════════════ KANBAN ══════════════════ #}
+  {% elif vista == 'kanban' %}
+  <div class="ot2-kan-wrap">
+    <div class="ot2-kan">
+      {% for col in kanban_cols %}
+      <section class="ot2-col c-{{ col.clave }}" data-fase="{{ col.clave }}">
+        <header class="ot2-col-h">
+          <span class="p"></span><span class="t">{{ col.label }}</span>
+          <span class="n">{{ col.total }}</span>
+        </header>
+        <div class="ot2-col-b">
+          {% for f in col.filas %}
+          <a class="ot2-card" draggable="true" data-vid="{{ f.id }}"
+             href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+            <div class="r1">
+              <span class="nu">{% if f.numero_ot %}OT-{{ f.numero_sufijo }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}</span>
+              <span class="ic"><i class="bi {{ f.tipo_icon }}"></i></span>
+            </div>
+            <div class="cl">{{ f.razon_social or 'Trabajo interno' }}</div>
+            <div class="r2">
+              {% if f.tecnico_ini %}<span class="mini">{{ f.tecnico_ini }}</span>
+              {% else %}<span class="mini sin"><i class="bi bi-person"></i></span>{% endif %}
+              <span class="pc">{{ f.check_pct }}%</span>
+            </div>
+          </a>
+          {% endfor %}
+          {% if not col.filas %}<div class="ot2-col-vacio">Sin órdenes aquí</div>{% endif %}
+          {% if col.recortado %}<div class="ot2-col-mas">+{{ col.recortado }} más — velas en la Tabla</div>{% endif %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ══════════════════ CALENDARIO ══════════════════ #}
+  {% elif vista == 'calendario' %}
+  <div class="ot2-cal-nav">
+    <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_ant) }}" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></a>
+    <span class="ot2-cal-mes">{{ cal_mes_label }}</span>
+    <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_sig) }}" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></a>
+  </div>
+  <div class="ot2-cal">
+    <div class="ot2-dow">{% for d in cal_dow %}<div>{{ d }}</div>{% endfor %}</div>
+    {% for semana in cal_semanas %}
+    <div class="ot2-sem">
+      {% for celda in semana %}
+        {% if celda %}
+        <div class="ot2-dia {{ 'hoy' if celda.es_hoy }}">
+          <span class="d">{{ celda.num }}</span>
+          {% for f in celda.filas %}
+          <a class="ot2-ch f-{{ f.estado_fase or 'cancel' }}" href="{{ url_for('mant_ot_ficha', vid=f.id) }}"
+             title="{{ f.razon_social or 'Trabajo interno' }} · {{ f.estado_label }}">
+            {% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ (f.razon_social or 'Interno')[:14] }}
+          </a>
+          {% endfor %}
+          {% if celda.recortado %}<div class="ot2-mas">+{{ celda.recortado }} más</div>{% endif %}
+        </div>
+        {% else %}<div class="ot2-dia off"></div>{% endif %}
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Generar OT ────────────────────────────────────────────────────────
+   El motor propio (POST /ot/api/crear) ya está en producción y probado.
+   El modal de este módulo se está construyendo; mientras tanto el botón
+   lleva al selector de origen que ya existe, para no dejarlo muerto. */
+function ot2AbrirGenerar(){
+  location.href = "{{ url_for('mant_ots_list') }}?abrir_generar_ot=1";
+}
+
+/* ── Kanban: la tarjeta se mueve de verdad al arrastrarla ─────────────
+   Daniel: "cuando lo arrastre, quiero ver la tarjeta moviéndose".
+   El movimiento visual es real (la tarjeta se levanta, la columna
+   destino se ilumina y la tarjeta queda donde la sueltas).
+   Lo que NO hace todavía: guardar el cambio de estado. Cambiar el estado
+   de una OT tiene reglas que Daniel aún no definió (¿quién puede?, ¿se
+   puede volver atrás?, ¿qué exige cerrar?), y adivinarlas sería
+   justamente el tipo de suposición que pidió evitar. Por eso al soltar
+   avisa en vez de escribir en la base. */
+(function(){
+  var arrastrada = null;
+
+  document.addEventListener('dragstart', function(e){
+    var c = e.target.closest ? e.target.closest('.ot2-card') : null;
+    if (!c) return;
+    arrastrada = c;
+    c.classList.add('arrastrando');
+    try { e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', c.dataset.vid || ''); } catch(_){}
+  });
+
+  document.addEventListener('dragend', function(){
+    if (arrastrada) arrastrada.classList.remove('arrastrando');
+    document.querySelectorAll('.ot2-col.drop').forEach(function(x){ x.classList.remove('drop'); });
+    arrastrada = null;
+  });
+
+  document.addEventListener('dragover', function(e){
+    var col = e.target.closest ? e.target.closest('.ot2-col') : null;
+    if (!col || !arrastrada) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
+    document.querySelectorAll('.ot2-col.drop').forEach(function(x){
+      if (x !== col) x.classList.remove('drop');
+    });
+    col.classList.add('drop');
+  });
+
+  document.addEventListener('drop', function(e){
+    var col = e.target.closest ? e.target.closest('.ot2-col') : null;
+    if (!col || !arrastrada) return;
+    e.preventDefault();
+    var origen = arrastrada.closest('.ot2-col');
+    col.classList.remove('drop');
+    if (origen === col) return;
+
+    // Movimiento visual real: la tarjeta queda donde la soltaste.
+    col.querySelector('.ot2-col-b').appendChild(arrastrada);
+    var vacio = col.querySelector('.ot2-col-vacio');
+    if (vacio) vacio.remove();
+
+    var destino = col.querySelector('.ot2-col-h .t');
+    var num = arrastrada.querySelector('.nu');
+    if (window.ilusToast) {
+      ilusToast('Movida a « ' + (destino ? destino.textContent.trim() : '') +
+                ' » solo en pantalla — el cambio de estado todavía no se guarda.',
+                {type:'warning'});
+    }
+    if (num) num.style.opacity = '.75';
+  });
+
+  // Arrastrar no debe abrir la ficha
+  document.addEventListener('click', function(e){
+    var c = e.target.closest ? e.target.closest('.ot2-card') : null;
+    if (c && c.classList.contains('arrastrando')) e.preventDefault();
+  });
+})();
+</script>
+{% endblock %}

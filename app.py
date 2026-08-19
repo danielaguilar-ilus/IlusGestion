@@ -70837,17 +70837,31 @@ _OT2_TIPO_ICONS = {
 # 'comp' y 'cerr' quedan SEPARADOS a propósito -- son etapas distintas
 # (completada = el técnico terminó; cerrada = las 3 firmas + facturación
 # quedaron OK). Mezclarlas escondería justo lo que Daniel pidió ver.
+#  CUATRO fases, no cinco (Daniel, 19-08-2026, mirando el Kanban en vivo:
+#  "quiero que estén pendiente unos cuatro estados: pendiente, en
+#  ejecución, completadas y cerradas"). El detalle fino del estado real
+#  no se pierde -- sigue mostrándose en el sello de cada fila; lo que se
+#  agrupa es el TABLERO, para que quepa y se lea.
+#
+#  Dónde cae cada cosa y por qué:
+#   pend  — todo lo que todavía no arranca (creada/programada/asignada/
+#           reagendada).
+#   ejec  — el técnico está en sitio.
+#   comp  — el técnico YA TERMINÓ pero la OT no está cerrada: incluye las
+#           firmadas y las que esperan aprobación, información o un
+#           repuesto. Trabajo hecho, papeleo pendiente.
+#   cerr  — cerrada de verdad (las 3 firmas + facturación ok).
 _OT2_ESTADO_META = {
-    "creada":               ("Creada",              "st-prog",   "bi-plus-circle",           "prog"),
-    "programada":           ("Programada",          "st-prog",   "bi-calendar2-event",       "prog"),
-    "asignada":             ("Asignada",            "st-prog",   "bi-person-check",          "prog"),
-    "reagendada":           ("Reagendada",          "st-prog",   "bi-calendar2-week",        "prog"),
+    "creada":               ("Creada",              "st-pend",   "bi-plus-circle",           "pend"),
+    "programada":           ("Programada",          "st-pend",   "bi-calendar2-event",       "pend"),
+    "asignada":             ("Asignada",            "st-pend",   "bi-person-check",          "pend"),
+    "reagendada":           ("Reagendada",          "st-pend",   "bi-calendar2-week",        "pend"),
     "en_curso":             ("En ejecución",        "st-ejec",   "bi-lightning-charge-fill", "ejec"),
     "en_ejecucion":         ("En ejecución",        "st-ejec",   "bi-lightning-charge-fill", "ejec"),
-    "firmada_tecnico":      ("Firmada técnico",     "st-aprob",  "bi-pen",                   "aprob"),
-    "pendiente_info":       ("Falta información",   "st-aprob",  "bi-question-circle",       "aprob"),
-    "pendiente_repuesto":   ("Falta repuesto",      "st-aprob",  "bi-box-seam",              "aprob"),
-    "pendiente_aprobacion": ("Por aprobar",         "st-aprob",  "bi-hourglass-split",        "aprob"),
+    "firmada_tecnico":      ("Firmada técnico",     "st-comp",   "bi-pen",                   "comp"),
+    "pendiente_info":       ("Falta información",   "st-comp",   "bi-question-circle",       "comp"),
+    "pendiente_repuesto":   ("Falta repuesto",      "st-comp",   "bi-box-seam",              "comp"),
+    "pendiente_aprobacion": ("Por aprobar",         "st-comp",   "bi-hourglass-split",        "comp"),
     "completada":           ("Completada",          "st-comp",   "bi-check-circle-fill",     "comp"),
     "cerrada":              ("Cerrada",             "st-cerr",   "bi-lock-fill",              "cerr"),
     "cancelada":            ("Cancelada",           "st-cancel", "bi-x-circle",               None),
@@ -70863,10 +70877,12 @@ _OT2_PER_PAGE_OPCIONES = (10, 25, 50, 100)
 # el MISMO universo de filas (origen + búsqueda); lo único que cambia es
 # cómo se agrupan. Kanban queda oculto del selector en móvil (columnas
 # lado a lado no funcionan en pantalla chica) -- confirmado con Daniel.
-_OT2_VISTAS = ("tarjeta", "tabla", "kanban", "calendario")
-_OT2_FASES = ("ejec", "prog", "aprob", "comp", "cerr")
+#  La TABLA es la vista por defecto (Daniel, 19-08: "dejándola en primera
+#  instancia por defecto, igual a esa tabla que tenemos").
+_OT2_VISTAS = ("tabla", "tarjeta", "kanban", "calendario")
+_OT2_FASES = ("pend", "ejec", "comp", "cerr")
 _OT2_FASE_LABELS = {
-    "ejec": "En ejecución", "prog": "Programadas", "aprob": "Por aprobar",
+    "pend": "Pendientes", "ejec": "En ejecución",
     "comp": "Completadas", "cerr": "Cerradas",
 }
 _OT2_FASE_A_ESTADOS = {
@@ -71008,9 +71024,9 @@ def ot2_panel():
     import calendar as _calmod
 
     origen = "automaticas" if request.args.get("origen") == "automaticas" else "reales"
-    vista = request.args.get("vista") or "tarjeta"
+    vista = request.args.get("vista") or "tabla"
     if vista not in _OT2_VISTAS:
-        vista = "tarjeta"
+        vista = "tabla"
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (TypeError, ValueError):
