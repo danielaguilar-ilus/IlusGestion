@@ -268,7 +268,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
          class="btn btn-sm btn-outline-light" title="Ver todas en una tabla para imprimir">
         <i class="bi bi-file-earmark-text me-1"></i>Reporte
       </a>
-      <button type="button" class="btn btn-sm btn-light fw-bold" onclick="ot2AbrirGenerar()">
+      <button type="button" class="btn btn-sm btn-light fw-bold" onclick="OT2C.abrir()">
         <i class="bi bi-plus-lg me-1"></i>Generar OT
       </button>
     </div>
@@ -521,15 +521,13 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 {% endblock %}
 
 {% block scripts %}
-<script>
-/* ── Generar OT ────────────────────────────────────────────────────────
-   El motor propio (POST /ot/api/crear) ya está en producción y probado.
-   El modal de este módulo se está construyendo; mientras tanto el botón
-   lleva al selector de origen que ya existe, para no dejarlo muerto. */
-function ot2AbrirGenerar(){
-  location.href = "{{ url_for('mant_ots_list') }}?abrir_generar_ot=1";
-}
 
+{# Modal de creación PROPIO de este módulo (namespace OT2C, endpoint
+   /ot/api/crear). No es el de Tickets: si mañana se borra aquel, este
+   sigue funcionando — que es justo lo que Daniel pidió. #}
+{% include "ot2/_modal_crear.html" %}
+
+<script>
 /* ── Kanban: la tarjeta se mueve de verdad al arrastrarla ─────────────
    Daniel: "cuando lo arrastre, quiero ver la tarjeta moviéndose".
    El movimiento visual es real (la tarjeta se levanta, la columna

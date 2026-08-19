@@ -1,0 +1,639 @@
+{#
+  ══════════════════════════════════════════════════════════════════════
+  OT 2.0 · MODAL DE CREACIÓN — independiente del modal viejo
+  ══════════════════════════════════════════════════════════════════════
+  Daniel (19-08-2026): "dos módulos independientes, pero conectados a la
+  misma base de datos" · "quiero que se continúe así [por modal]".
+
+  Este partial NO reutiliza templates/tickets/_modal_generar_ot.html ni su
+  JS (_TKOT). Es código nuevo, con su propio namespace (OT2C) y su propio
+  endpoint (POST /ot/api/crear). Si mañana se borra el modal viejo, esto
+  sigue funcionando.
+
+  Vive dentro de base.html, así que hereda Bootstrap, Bootstrap Icons,
+  ilus_ui.js (ilusToast/ilusConfirm — REGLA #1: nada de alert nativo) y
+  el wrapper global que inyecta X-CSRF-Token en todo fetch.
+  ══════════════════════════════════════════════════════════════════════
+#}
+<style>
+.o2m .modal-dialog{max-width:1080px}
+.o2m .modal-content{border:0;border-radius:16px;overflow:hidden}
+.o2m-head{background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
+  padding:18px 24px;display:flex;align-items:center;gap:14px;
+  border-bottom:3px solid var(--ilus-red,#dc2626)}
+.o2m-head h5{margin:0;font-weight:800;letter-spacing:.01em}
+.o2m-head .sub{font-size:.78rem;color:rgba(255,255,255,.62);margin-top:2px}
+.o2m-head .x{margin-left:auto;background:transparent;border:0;color:rgba(255,255,255,.7);font-size:1.4rem;line-height:1}
+.o2m-head .x:hover{color:#fff}
+
+/* Riel de pasos: círculo rojo → verde al completarse (patrón /retiros/solicitar) */
+.o2m-riel{display:flex;gap:6px;padding:14px 24px;background:#fafbfc;
+  border-bottom:1px solid #eaecf0;overflow-x:auto}
+.o2m-p{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;
+  font-size:.76rem;font-weight:800;color:#9ca3af;white-space:nowrap;cursor:pointer;
+  background:transparent;border:0}
+.o2m-p .c{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
+  background:#e5e7eb;color:#9ca3af;font-size:.72rem;font-weight:900;transition:all .2s}
+.o2m-p.on{color:#0a0a0a}
+.o2m-p.on .c{background:var(--ilus-red,#dc2626);color:#fff;
+  box-shadow:0 0 0 4px rgba(220,38,38,.16)}
+.o2m-p.ok .c{background:#16a34a;color:#fff}
+.o2m-p.ok{color:#16a34a}
+
+.o2m-body{padding:22px 24px;min-height:330px;max-height:60vh;overflow-y:auto}
+.o2m-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;
+  align-items:center;gap:10px;background:#fafbfc}
+.o2m-foot .sp{margin-left:auto}
+.o2m h6.t{font-weight:800;margin-bottom:4px}
+.o2m p.d{color:#6b7280;font-size:.85rem;margin-bottom:16px}
+
+/* Origen y tipos: tarjetas elegibles */
+.o2m-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:10px}
+.o2m-op{border:1.5px solid #e5e7eb;border-radius:11px;padding:13px;background:#fff;
+  text-align:left;cursor:pointer;transition:all .16s;min-height:44px}
+.o2m-op:hover{border-color:#c7cbd1;transform:translateY(-1px);
+  box-shadow:0 6px 16px rgba(10,10,10,.07)}
+.o2m-op.sel{border-color:var(--ilus-red,#dc2626);background:#fff5f5;
+  box-shadow:0 0 0 1px var(--ilus-red,#dc2626)}
+.o2m-op .ic{font-size:1.3rem;color:var(--ilus-red,#dc2626);display:block;margin-bottom:6px}
+.o2m-op .n{font-weight:800;font-size:.87rem;color:#0a0a0a;display:block}
+.o2m-op .l{font-size:.72rem;color:#6b7280;line-height:1.35;display:block;margin-top:3px}
+
+.o2m-lista{border:1px solid #eaecf0;border-radius:10px;max-height:250px;overflow-y:auto}
+.o2m-it{display:flex;align-items:center;gap:11px;padding:11px 13px;border-bottom:1px solid #f3f4f6;
+  cursor:pointer;transition:background .13s}
+.o2m-it:last-child{border-bottom:0}
+.o2m-it:hover{background:#fafbfc}
+.o2m-it.sel{background:#fff5f5}
+.o2m-it .nm{font-weight:700;font-size:.87rem}
+.o2m-it .mt{font-size:.74rem;color:#6b7280}
+.o2m-chk{width:20px;height:20px;border-radius:5px;border:1.5px solid #d1d5db;
+  display:grid;place-items:center;flex:none;color:transparent;font-size:.7rem}
+.o2m-it.sel .o2m-chk{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff}
+
+.o2m-eq{border:1px solid #eaecf0;border-radius:10px;padding:12px;margin-bottom:9px;background:#fff}
+.o2m-eq.ok{border-color:#bbf7d0;background:#f7fef9}
+.o2m-eq .hd{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.o2m-eq .hd .nm{font-weight:700;font-size:.87rem;flex:1}
+
+.o2m-aviso{background:#fff8e1;border:1px solid #fcd34d;border-radius:9px;
+  padding:11px 13px;font-size:.82rem;color:#92400e;font-weight:600;margin-top:12px}
+.o2m-aviso ul{margin:6px 0 0;padding-left:18px}
+.o2m-err{background:#fef2f2;border:1px solid #fecaca;border-radius:9px;
+  padding:11px 13px;font-size:.85rem;color:#991b1b;font-weight:700;margin-bottom:14px}
+.o2m-res{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.o2m-res .b{background:#fafbfc;border:1px solid #eaecf0;border-radius:10px;padding:12px}
+.o2m-res .b .k{font-size:.66rem;font-weight:800;letter-spacing:.07em;
+  text-transform:uppercase;color:#9ca3af;display:block}
+.o2m-res .b .v{font-weight:700;font-size:.9rem;color:#0a0a0a;margin-top:3px;display:block}
+.o2m label.fl{font-size:.76rem;font-weight:800;color:#374151;margin-bottom:4px;display:block}
+.o2m input.form-control,.o2m select.form-select,.o2m textarea.form-control{font-size:16px}
+@media (max-width:640px){
+  .o2m .modal-dialog{margin:0;max-width:100%}
+  .o2m .modal-content{border-radius:0;min-height:100dvh}
+  .o2m-body{max-height:none}
+  .o2m-grid{grid-template-columns:1fr 1fr}
+}
+</style>
+
+<div class="modal fade o2m" id="ot2ModalCrear" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="o2m-head">
+        <i class="bi bi-clipboard2-plus-fill" style="font-size:1.5rem;color:var(--ilus-red,#dc2626)"></i>
+        <div>
+          <h5>Generar Orden de Trabajo</h5>
+          <div class="sub" id="o2mSub">¿De dónde nace esta OT?</div>
+        </div>
+        <button type="button" class="x" data-bs-dismiss="modal" aria-label="Cerrar">&times;</button>
+      </div>
+
+      <div class="o2m-riel" id="o2mRiel"></div>
+
+      <div class="o2m-body" id="o2mBody"></div>
+
+      <div class="o2m-foot">
+        <button type="button" class="btn btn-outline-secondary btn-sm px-3"
+                style="min-height:44px" id="o2mAtras">
+          <i class="bi bi-chevron-left me-1"></i>Atrás
+        </button>
+        <span class="sp"></span>
+        <span id="o2mHint" class="text-muted" style="font-size:.78rem;font-weight:600"></span>
+        <button type="button" class="btn btn-dark btn-sm px-4" style="min-height:44px" id="o2mSig">
+          Siguiente<i class="bi bi-chevron-right ms-1"></i>
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   OT2C — motor del modal de creación de OT 2.0
+   Namespace propio. No comparte una sola línea con _TKOT (el modal viejo).
+   ══════════════════════════════════════════════════════════════════════ */
+window.OT2C = (function(){
+
+  /* Los 13 tipos que Daniel confirmó el 19-08-2026, con la leyenda que
+     pidió ("una pequeña leyenda abajo de lo que puede hacer").
+     - Sin 'garantia' ni 'repuesto': "la garantía yo la sacaría de ahí" y
+       "repuesto no sé por qué hacer una OT de repuesto". Siguen existiendo
+       en la base para las OT históricas; simplemente no se ofrecen acá.
+     - El levantamiento son DOS entradas distintas: la asignada y la de
+       descubrimiento. Daniel: "hay una que es muy importante, que es
+       donde el técnico lo hace por descubrimiento; eso es tremendamente
+       potente, no lo excluyas". */
+  var TIPOS = [
+    {v:'instalacion',       n:'Instalación',            i:'bi-tools',              l:'Montar equipos nuevos donde el cliente'},
+    {v:'preventiva',        n:'Mantención preventiva',  i:'bi-shield-check',       l:'Mantención programada del plan'},
+    {v:'correctiva',        n:'Mantención correctiva',  i:'bi-wrench-adjustable',  l:'Reparar una falla reportada'},
+    {v:'visita_tecnica',    n:'Visita técnica',         i:'bi-clipboard2-pulse',   l:'Ir a revisar y diagnosticar en terreno'},
+    {v:'inspeccion',        n:'Inspección',             i:'bi-search',             l:'Revisar estado sin intervenir'},
+    {v:'levantamiento',     n:'Levantamiento asignado', i:'bi-list-check',         l:'Registrar los equipos que ya sabemos que tiene'},
+    {v:'levantamiento',     n:'Levantamiento por descubrimiento', i:'bi-binoculars',
+     l:'El técnico levanta en terreno lo que encuentre', descubrimiento:true},
+    {v:'cambio_equipo',     n:'Cambio de equipo',       i:'bi-arrow-left-right',   l:'Retirar uno y dejar otro en su lugar'},
+    {v:'movimiento_equipos',n:'Movimiento de equipos',  i:'bi-arrows-move',        l:'Trasladar máquinas dentro del recinto'},
+    {v:'desinstalacion',    n:'Desinstalación',         i:'bi-box-arrow-up',       l:'Retirar equipos del lugar'},
+    {v:'capacitacion',      n:'Capacitación',           i:'bi-mortarboard',        l:'Enseñar el uso de los equipos', interno:true},
+    {v:'revision_interna',  n:'Trabajo de bodega',      i:'bi-building',           l:'Armado, piolas y trabajo interno', interno:true},
+    {v:'control_calidad',   n:'Control de calidad',     i:'bi-patch-check',        l:'Revisar productos en bodega', interno:true}
+  ];
+
+  var ORIGENES = [
+    {v:'cliente',   n:'Cliente existente', i:'bi-building-check', l:'Busca una ficha ya registrada'},
+    {v:'ticket',    n:'Ticket',            i:'bi-ticket-detailed', l:'Nace de un ticket de servicio técnico'},
+    {v:'cotizacion',n:'Cotización',        i:'bi-file-earmark-text', l:'Desde una cotización del sistema'},
+    {v:'documento', n:'Factura o boleta',  i:'bi-receipt',        l:'Búscala por folio o cliente en el ERP'},
+    {v:'interno',   n:'Trabajo interno',   i:'bi-clipboard2-check', l:'Bodega o capacitación — sin cliente'}
+  ];
+
+  var S = {};   // estado del formulario
+  var paso = 0, modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
+
+  function reset(){
+    S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
+         descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
+         equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
+         ticket_id:null};
+    paso = 0;
+  }
+
+  function esInterno(){ return S.origen === 'interno' ||
+    (S.tipo && (TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno); }
+
+  /* Los pasos cambian según el origen: un trabajo interno no tiene cliente
+     ni datos de acceso al lugar (Daniel: "si es interna, no debería existir
+     esta"). */
+  function pasos(){
+    var p = [{k:'origen', n:'Origen'}, {k:'tipo', n:'Tipo'}];
+    if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
+    p.push({k:'detalle', n:'Detalle'});
+    p.push({k:'agenda',  n:'Agenda'});
+    p.push({k:'tecnicos',n:'Técnicos'});
+    p.push({k:'equipos', n:esInterno() ? 'Checklist' : 'Equipos'});
+    p.push({k:'revisar', n:'Revisar'});
+    return p;
+  }
+
+  function completo(k){
+    switch(k){
+      case 'origen':   return !!S.origen;
+      case 'tipo':     return !!S.tipo;
+      case 'cliente':  return !!S.cliente;
+      case 'detalle':  return true;                       // el título se autogenera
+      case 'agenda':   return !!S.fecha;
+      case 'tecnicos': return true;                       // asignar después es válido
+      case 'equipos':
+        if (esInterno()) return !!S.plantilla_suelta;
+        return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; })
+               && S.acceso.ascensor !== null && S.acceso.estacionamiento !== null;
+      default: return false;
+    }
+  }
+
+  function riel(){
+    var ps = pasos();
+    document.getElementById('o2mRiel').innerHTML = ps.map(function(p,i){
+      var cls = i===paso ? 'on' : (completo(p.k) ? 'ok' : '');
+      var ico = completo(p.k) && i!==paso ? '<i class="bi bi-check-lg"></i>' : (i+1);
+      return '<button type="button" class="o2m-p '+cls+'" onclick="OT2C.ir('+i+')">'+
+             '<span class="c">'+ico+'</span>'+p.n+'</button>';
+    }).join('');
+  }
+
+  function ir(i){
+    var ps = pasos();
+    if (i < 0 || i >= ps.length) return;
+    // Solo deja saltar hacia adelante si lo anterior está completo
+    if (i > paso) { for (var k=paso; k<i; k++) if (!completo(ps[k].k)) return; }
+    paso = i; pintar();
+  }
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  /* ── Pintado de cada paso ──────────────────────────────────────────── */
+  function pintar(){
+    riel();
+    var ps = pasos(), k = ps[paso].k, b = document.getElementById('o2mBody');
+    document.getElementById('o2mAtras').style.visibility = paso===0 ? 'hidden' : 'visible';
+    var sig = document.getElementById('o2mSig');
+    sig.innerHTML = (k==='revisar')
+      ? '<i class="bi bi-check-lg me-1"></i>Crear orden'
+      : 'Siguiente<i class="bi bi-chevron-right ms-1"></i>';
+    sig.className = (k==='revisar') ? 'btn btn-danger btn-sm px-4 fw-bold' : 'btn btn-dark btn-sm px-4';
+    document.getElementById('o2mHint').textContent = completo(k) ? '' : 'Completa este paso para seguir';
+
+    if (k==='origen')   return pintarOrigen(b);
+    if (k==='tipo')     return pintarTipo(b);
+    if (k==='cliente')  return pintarCliente(b);
+    if (k==='detalle')  return pintarDetalle(b);
+    if (k==='agenda')   return pintarAgenda(b);
+    if (k==='tecnicos') return pintarTecnicos(b);
+    if (k==='equipos')  return pintarEquipos(b);
+    if (k==='revisar')  return pintarRevisar(b);
+  }
+
+  function pintarOrigen(b){
+    document.getElementById('o2mSub').textContent = '¿De dónde nace esta OT?';
+    b.innerHTML = '<h6 class="t">Origen de la orden</h6>'+
+      '<p class="d">De dónde sale el trabajo. Define si lleva cliente y qué datos vienen ya cargados.</p>'+
+      '<div class="o2m-grid">'+ ORIGENES.map(function(o){
+        return '<button type="button" class="o2m-op '+(S.origen===o.v?'sel':'')+'" onclick="OT2C.setOrigen(\''+o.v+'\')">'+
+          '<i class="bi '+o.i+' ic"></i><span class="n">'+o.n+'</span><span class="l">'+o.l+'</span></button>';
+      }).join('') +'</div>'+
+      (S.origen && S.origen!=='cliente' && S.origen!=='interno'
+        ? '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
+          'Por ahora este origen se trabaja eligiendo el cliente a mano en el paso siguiente. '+
+          'La búsqueda por ticket, cotización y documento del ERP se conecta en la próxima etapa.</div>'
+        : '');
+  }
+
+  function pintarTipo(b){
+    document.getElementById('o2mSub').textContent = '¿Qué trabajo es?';
+    var lista = S.origen==='interno' ? TIPOS.filter(function(t){return t.interno;}) : TIPOS;
+    b.innerHTML = '<h6 class="t">Tipo de orden de trabajo</h6>'+
+      '<p class="d">Define el checklist, si alimenta la ficha del cliente y qué se le exige al cerrar.</p>'+
+      '<div class="o2m-grid">'+ lista.map(function(t,i){
+        var sel = (S.tipo===t.v && !!S.descubrimiento === !!t.descubrimiento);
+        return '<button type="button" class="o2m-op '+(sel?'sel':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
+          '<i class="bi '+t.i+' ic"></i><span class="n">'+t.n+'</span><span class="l">'+t.l+'</span></button>';
+      }).join('') +'</div>';
+  }
+
+  function pintarCliente(b){
+    document.getElementById('o2mSub').textContent = '¿Para qué cliente?';
+    b.innerHTML = '<h6 class="t">Cliente</h6>'+
+      '<p class="d">Busca por razón social o RUT. Si no tiene ficha todavía, créala primero en Clientes.</p>'+
+      '<div class="input-group mb-3"><span class="input-group-text"><i class="bi bi-search"></i></span>'+
+      '<input class="form-control" id="o2mCliQ" placeholder="Ej: Sportlife o 76.123.456-7" '+
+      'oninput="OT2C.buscarCli(this.value)" autocomplete="off"></div>'+
+      '<div id="o2mCliRes" class="o2m-lista"></div>'+
+      (S.cliente ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
+        '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado: <b>'+esc(S.cliente.nombre)+'</b></div>' : '');
+    setTimeout(function(){ var i=document.getElementById('o2mCliQ'); if(i) i.focus(); }, 120);
+  }
+
+  function pintarDetalle(b){
+    document.getElementById('o2mSub').textContent = 'Detalle del trabajo';
+    b.innerHTML = '<h6 class="t">¿Qué hay que hacer?</h6>'+
+      '<p class="d">Si dejas el título vacío se arma solo con el tipo y la fecha.</p>'+
+      '<label class="fl">Título</label>'+
+      '<input class="form-control mb-3" id="o2mTit" value="'+esc(S.titulo)+'" maxlength="200" '+
+      'placeholder="Ej: Instalación sala de musculación" oninput="OT2C.S.titulo=this.value">'+
+      '<label class="fl">Descripción</label>'+
+      '<textarea class="form-control" id="o2mDesc" rows="4" maxlength="2000" '+
+      'placeholder="Contexto para el técnico: qué se espera, qué llevar, con quién coordinar…" '+
+      'oninput="OT2C.S.descripcion=this.value">'+esc(S.descripcion)+'</textarea>';
+  }
+
+  function pintarAgenda(b){
+    document.getElementById('o2mSub').textContent = '¿Cuándo se hace?';
+    b.innerHTML = '<h6 class="t">Agenda</h6>'+
+      '<p class="d">La jornada es de 08:00 a 17:00, con colación de 13:00 a 14:00. '+
+      'Puedes salirte de ese horario: no se bloquea, solo se avisa.</p>'+
+      '<div class="row g-3">'+
+        '<div class="col-md-4"><label class="fl">Fecha programada *</label>'+
+        '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
+        'onchange="OT2C.S.fecha=this.value; OT2C.avisosAgenda()"></div>'+
+        '<div class="col-md-4"><label class="fl">Hora inicio</label>'+
+        '<input type="time" class="form-control" value="'+esc(S.hini)+'" '+
+        'onchange="OT2C.S.hini=this.value; OT2C.avisosAgenda()"></div>'+
+        '<div class="col-md-4"><label class="fl">Hora término</label>'+
+        '<input type="time" class="form-control" value="'+esc(S.hfin)+'" '+
+        'onchange="OT2C.S.hfin=this.value; OT2C.avisosAgenda()"></div>'+
+      '</div><div id="o2mAvisos"></div>';
+    avisosAgenda();
+  }
+
+  /* Mismos umbrales que valida el backend, para que el usuario vea el
+     aviso antes de mandar y no se lleve la sorpresa después. */
+  function avisosAgenda(){
+    var c = document.getElementById('o2mAvisos'); if (!c) return;
+    var a = [];
+    if (S.hini && S.hini < '08:00') a.push('Empieza antes de las 08:00, fuera de la jornada.');
+    if (S.hfin && S.hfin > '17:00') a.push('Termina después de las 17:00: es jornada extendida.');
+    if (S.hini && S.hfin && S.hini < '14:00' && S.hfin > '13:00') a.push('Cruza la colación (13:00–14:00).');
+    if (S.fecha){ var d = new Date(S.fecha+'T12:00:00').getDay();
+      if (d===0 || d===6) a.push('Cae en fin de semana, cuando no hay operación.'); }
+    c.innerHTML = a.length
+      ? '<div class="o2m-aviso"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
+        'Se puede agendar igual, pero ojo:<ul>'+a.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'
+      : '';
+  }
+
+  function pintarTecnicos(b){
+    document.getElementById('o2mSub').textContent = '¿Quién lo hace?';
+    b.innerHTML = '<h6 class="t">Técnicos asignados</h6>'+
+      '<p class="d">Puedes dejarlo sin asignar y decidirlo después. El primero que marques queda como líder.</p>'+
+      '<div id="o2mTecList" class="o2m-lista"><div class="p-3 text-muted small">Cargando…</div></div>';
+    fetch('/mantenciones/api/tecnicos', {credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        cacheTec = Array.isArray(j) ? j : (j.tecnicos || []);
+        var c = document.getElementById('o2mTecList'); if(!c) return;
+        if (!cacheTec.length){ c.innerHTML = '<div class="p-3 text-muted small">No hay técnicos cargados.</div>'; return; }
+        c.innerHTML = cacheTec.map(function(t){
+          var sel = S.tecnicos.indexOf(t.id) >= 0;
+          return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.tecTog('+t.id+')">'+
+            '<span class="o2m-chk"><i class="bi bi-check-lg"></i></span>'+
+            '<span style="flex:1"><span class="nm">'+esc(t.nombre)+'</span>'+
+            '<span class="mt d-block">'+esc(t.especialidad || t.nivel || 'Técnico')+
+            (t.es_externo ? ' · externo' : '')+
+            (S.lider===t.id ? ' · <b>líder</b>' : '')+'</span></span></div>';
+        }).join('');
+      })
+      .catch(function(){ var c=document.getElementById('o2mTecList');
+        if(c) c.innerHTML='<div class="p-3 text-danger small">No se pudo cargar la lista de técnicos.</div>'; });
+  }
+
+  function pintarEquipos(b){
+    if (esInterno()) return pintarChecklistSuelto(b);
+    document.getElementById('o2mSub').textContent = 'Equipos y acceso al lugar';
+    b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
+      '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
+      '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>'+
+      '<h6 class="t mt-4">Acceso al lugar</h6>'+
+      '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
+      '<div class="row g-3">'+
+        '<div class="col-md-3"><label class="fl">¿Tiene ascensor? *</label>'+
+        '<select class="form-select" onchange="OT2C.setAcc(\'ascensor\',this.value)">'+
+        '<option value="">Elige…</option>'+
+        '<option value="1" '+(S.acceso.ascensor===1?'selected':'')+'>Sí</option>'+
+        '<option value="0" '+(S.acceso.ascensor===0?'selected':'')+'>No</option></select></div>'+
+        '<div class="col-md-3"><label class="fl">¿Hay estacionamiento? *</label>'+
+        '<select class="form-select" onchange="OT2C.setAcc(\'estacionamiento\',this.value)">'+
+        '<option value="">Elige…</option>'+
+        '<option value="1" '+(S.acceso.estacionamiento===1?'selected':'')+'>Sí</option>'+
+        '<option value="0" '+(S.acceso.estacionamiento===0?'selected':'')+'>No</option></select></div>'+
+        '<div class="col-md-2"><label class="fl">Piso</label>'+
+        '<input type="number" class="form-control" min="-5" max="30" value="'+esc(S.acceso.piso)+'" '+
+        'placeholder="Opc." oninput="OT2C.S.acceso.piso=this.value"></div>'+
+        '<div class="col-md-4"><label class="fl">Notas de acceso</label>'+
+        '<input class="form-control" maxlength="500" value="'+esc(S.acceso.notas)+'" '+
+        'placeholder="Opcional" oninput="OT2C.S.acceso.notas=this.value"></div>'+
+      '</div>';
+    cargarEquipos();
+  }
+
+  function cargarEquipos(){
+    Promise.all([
+      fetch('/mantenciones/api/clientes/'+S.cliente.id+'/maquinas-list', {credentials:'same-origin'}).then(function(r){return r.json();}),
+      cachePlant.length ? Promise.resolve({plantillas:cachePlant})
+                        : fetch('/mantenciones/api/plantillas', {credentials:'same-origin'}).then(function(r){return r.json();})
+    ]).then(function(res){
+      cacheEquipos = Array.isArray(res[0]) ? res[0] : (res[0].maquinas || []);
+      cachePlant   = (res[1].plantillas || []).filter(function(p){ return p.activa; });
+      pintarListaEquipos();
+    }).catch(function(){
+      var c=document.getElementById('o2mEqList');
+      if(c) c.innerHTML='<div class="text-danger small">No se pudieron cargar los equipos del cliente.</div>';
+    });
+  }
+
+  function pintarListaEquipos(){
+    var c = document.getElementById('o2mEqList'); if(!c) return;
+    if (!cacheEquipos.length){
+      c.innerHTML = '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
+        'Un levantamiento por descubrimiento sirve justo para eso.</div>'; return;
+    }
+    var ops = cachePlant.map(function(p){
+      return '<option value="'+p.id+'">'+esc(p.nombre)+'</option>'; }).join('');
+    c.innerHTML = cacheEquipos.map(function(m){
+      var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
+      return '<div class="o2m-eq '+(sel && sel.plantilla_id ? 'ok':'')+'">'+
+        '<div class="hd"><span class="o2m-chk" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
+        (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span>'+
+        '<span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
+        (m.sku ? '<span class="mt text-muted small">'+esc(m.sku)+'</span>' : '')+'</div>'+
+        (sel ? '<select class="form-select form-select-sm" onchange="OT2C.eqPlant('+m.id+',this.value)">'+
+               '<option value="">Elige el checklist…</option>'+ops+'</select>' : '')+
+        '</div>';
+    }).join('');
+    // Repintar el <select> con el valor ya elegido
+    S.equipos.forEach(function(e){
+      if (!e.plantilla_id) return;
+      var sels = c.querySelectorAll('select');
+      for (var i=0;i<sels.length;i++){
+        if (sels[i].getAttribute('onchange').indexOf('('+e.maquina_id+',')>=0) sels[i].value = e.plantilla_id;
+      }
+    });
+  }
+
+  function pintarChecklistSuelto(b){
+    document.getElementById('o2mSub').textContent = 'Checklist del trabajo';
+    b.innerHTML = '<h6 class="t">Checklist</h6>'+
+      '<p class="d">El trabajo interno no lleva equipos del cliente, pero sí necesita su checklist.</p>'+
+      '<select class="form-select" id="o2mPlantSuelta" onchange="OT2C.S.plantilla_suelta=this.value">'+
+      '<option value="">Cargando…</option></select>';
+    fetch('/mantenciones/api/plantillas', {credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        cachePlant = (j.plantillas||[]).filter(function(p){return p.activa;});
+        var s = document.getElementById('o2mPlantSuelta'); if(!s) return;
+        s.innerHTML = '<option value="">Elige el checklist…</option>'+
+          cachePlant.map(function(p){ return '<option value="'+p.id+'" '+
+            (S.plantilla_suelta==p.id?'selected':'')+'>'+esc(p.nombre)+'</option>'; }).join('');
+      });
+  }
+
+  function pintarRevisar(b){
+    document.getElementById('o2mSub').textContent = 'Revisa antes de crear';
+    var t = TIPOS.find(function(x){ return x.v===S.tipo && !!x.descubrimiento === !!S.descubrimiento; }) || {};
+    var nTec = S.tecnicos.length;
+    b.innerHTML = '<h6 class="t">Resumen</h6><p class="d">Si algo no calza, vuelve al paso con un clic en el riel de arriba.</p>'+
+      '<div id="o2mErr"></div>'+
+      '<div class="o2m-res">'+
+        card('Tipo', t.n || S.tipo) +
+        card('Cliente', esInterno() ? 'Trabajo interno (sin cliente)' : (S.cliente ? S.cliente.nombre : '—')) +
+        card('Programada', S.fecha ? (S.fecha + ' · ' + S.hini + '–' + S.hfin) : '—') +
+        card('Técnicos', nTec ? (nTec + (nTec===1?' asignado':' asignados')) : 'Sin asignar') +
+        card('Equipos', esInterno() ? '—' : (S.equipos.length + ' con checklist')) +
+        card('Acceso', esInterno() ? '—' :
+             ((S.acceso.ascensor?'Con ascensor':'Sin ascensor') + ' · ' +
+              (S.acceso.estacionamiento?'con estacionamiento':'sin estacionamiento') +
+              (S.acceso.piso!==''?(' · piso '+S.acceso.piso):''))) +
+      '</div>';
+    function card(k,v){ return '<div class="b"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
+  }
+
+  /* ── Acciones ─────────────────────────────────────────────────────── */
+  function setOrigen(v){
+    S.origen = v;
+    if (v==='interno'){ S.cliente=null; if(S.tipo && !(TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno) S.tipo=null; }
+    pintar();
+  }
+  function setTipo(i){
+    var t = TIPOS[i]; S.tipo = t.v; S.descubrimiento = !!t.descubrimiento;
+    if (t.interno) S.origen = 'interno';
+    pintar();
+  }
+  function setAcc(k,v){ S.acceso[k] = v==='' ? null : parseInt(v); riel();
+    document.getElementById('o2mHint').textContent = completo('equipos')?'':'Completa este paso para seguir'; }
+  function tecTog(id){
+    var i = S.tecnicos.indexOf(id);
+    if (i>=0){ S.tecnicos.splice(i,1); if (S.lider===id) S.lider = S.tecnicos[0]||null; }
+    else { S.tecnicos.push(id); if (!S.lider) S.lider = id; }
+    pintarTecnicos(document.getElementById('o2mBody'));
+  }
+  function eqTog(mid){
+    var i = S.equipos.findIndex(function(e){ return e.maquina_id===mid; });
+    if (i>=0) S.equipos.splice(i,1); else S.equipos.push({maquina_id:mid, plantilla_id:null});
+    pintarListaEquipos(); riel();
+  }
+  function eqPlant(mid, pid){
+    var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
+    if (e) e.plantilla_id = pid ? parseInt(pid) : null;
+    pintarListaEquipos(); riel();
+  }
+
+  var tBusca = null;
+  function buscarCli(q){
+    clearTimeout(tBusca);
+    if (!q || q.length < 2){ document.getElementById('o2mCliRes').innerHTML=''; return; }
+    tBusca = setTimeout(function(){
+      fetch('/mantenciones/api/clientes/autocomplete?q='+encodeURIComponent(q), {credentials:'same-origin'})
+        .then(function(r){return r.json();})
+        .then(function(j){
+          var arr = (Array.isArray(j)?j:(j.clientes||[])).filter(function(c){ return c.id; });
+          var c = document.getElementById('o2mCliRes'); if(!c) return;
+          c.innerHTML = arr.length ? arr.map(function(x){
+            return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+
+              esc(x.razon_social||x.nombre).replace(/'/g,"\\'")+'\')">'+
+              '<i class="bi bi-building text-muted"></i><span style="flex:1">'+
+              '<span class="nm">'+esc(x.razon_social||x.nombre)+'</span>'+
+              '<span class="mt d-block">'+esc(x.rut||'')+'</span></span></div>';
+          }).join('') : '<div class="p-3 text-muted small">Sin resultados con ficha en Mantenciones.</div>';
+        });
+    }, 260);
+  }
+  function setCli(id, nombre){ S.cliente = {id:id, nombre:nombre}; S.equipos=[]; pintar(); }
+
+  function crear(){
+    var body = {
+      tipo_ot: S.tipo, descubrimiento: S.descubrimiento,
+      cliente_id: esInterno() ? null : (S.cliente ? S.cliente.id : null),
+      titulo: S.titulo, descripcion: S.descripcion,
+      fecha_programada: S.fecha, hora_inicio: S.hini, hora_fin: S.hfin,
+      tecnico_user_ids: S.tecnicos, tecnico_lider_id: S.lider,
+      equipos: esInterno() ? [] : S.equipos,
+      plantilla_id: esInterno() ? S.plantilla_suelta : null,
+      acceso: esInterno() ? {} : S.acceso,
+      ticket_id: S.ticket_id
+    };
+    var sig = document.getElementById('o2mSig');
+    sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+
+    fetch('/ot/api/crear', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        sig.disabled = false;
+        if (!res.j.ok){
+          sig.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear orden';
+          var e = document.getElementById('o2mErr');
+          if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
+            esc(res.j.error || 'No se pudo crear la orden.')+'</div>';
+          return;
+        }
+        if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
+        location.href = res.j.ot_url;
+      })
+      .catch(function(){
+        sig.disabled = false;
+        sig.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear orden';
+        var e = document.getElementById('o2mErr');
+        if (e) e.innerHTML = '<div class="o2m-err">Se cortó la conexión. Intenta de nuevo.</div>';
+      });
+  }
+
+  /* ── API PÚBLICA — un solo modal para todos los contextos ───────────
+     Daniel (19-08-2026): "necesito que sea un modal genérico, para
+     ahorrar código, un mismo modal con diferentes opciones, porque eso
+     lo vamos a instalar también en tickets, en las cotizaciones... yo
+     puedo llamar una orden de trabajo desde cotizaciones, desde la ficha
+     de cliente, desde ticket".
+
+     Se incluye el partial en la página y se abre con el contexto que ya
+     se conoce; los pasos que quedan resueltos se saltan solos.
+
+       OT2C.abrir()                                  → desde cero
+       OT2C.abrir({origen:'cliente', cliente:{id:26, nombre:'Gimnasio X'}})
+       OT2C.abrir({origen:'ticket', ticket_id:70,
+                   cliente:{id:26, nombre:'Gimnasio X'}, tipo:'instalacion'})
+       OT2C.abrir({origen:'interno'})                → sin cliente
+       OT2C.abrir({origen:'cotizacion', cliente:{...}, titulo:'…'})
+
+     Todo `opts` es opcional. Lo que no venga, se pregunta. */
+  function abrir(opts){
+    reset();
+    opts = opts || {};
+    if (opts.origen)     S.origen     = opts.origen;
+    if (opts.cliente)    S.cliente    = opts.cliente;
+    if (opts.ticket_id)  S.ticket_id  = opts.ticket_id;
+    if (opts.titulo)     S.titulo     = opts.titulo;
+    if (opts.descripcion) S.descripcion = opts.descripcion;
+    if (opts.fecha)      S.fecha      = opts.fecha;
+    if (opts.tipo){
+      var t = TIPOS.find(function(x){
+        return x.v === opts.tipo && !!x.descubrimiento === !!opts.descubrimiento; });
+      if (t){ S.tipo = t.v; S.descubrimiento = !!t.descubrimiento; }
+    }
+
+    // Arranca en el primer paso que todavía falta, en vez de obligar a
+    // pasar por pantallas ya resueltas por el contexto.
+    var ps = pasos();
+    paso = 0;
+    for (var i = 0; i < ps.length - 1; i++){
+      if (completo(ps[i].k)) paso = i + 1; else break;
+    }
+
+    modal = modal || new bootstrap.Modal(document.getElementById('ot2ModalCrear'));
+    pintar(); modal.show();
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var a = document.getElementById('o2mAtras'), s = document.getElementById('o2mSig');
+    if (a) a.onclick = function(){ ir(paso-1); };
+    if (s) s.onclick = function(){
+      var ps = pasos();
+      if (ps[paso].k === 'revisar') return crear();
+      if (!completo(ps[paso].k)){
+        if (window.ilusToast) ilusToast('Completa este paso para seguir', {type:'warning'});
+        return;
+      }
+      ir(paso+1);
+    };
+    if (new URLSearchParams(location.search).get('crear') === '1') abrir();
+  });
+
+  return {abrir:abrir, ir:ir, setOrigen:setOrigen, setTipo:setTipo, setAcc:setAcc,
+          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli,
+          setCli:setCli, avisosAgenda:avisosAgenda, S:S};
+})();
+</script>
