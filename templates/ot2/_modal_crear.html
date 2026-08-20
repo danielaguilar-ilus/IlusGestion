@@ -517,10 +517,20 @@ window.OT2C = (function(){
       var av = document.getElementById('o2fAvisoSinFicha');
       if (av) av.style.display = (v === 'interno') ? 'none' : '';
 
-      if (modal) modal.hide();
-      setTimeout(function(){
+      // Encadenado de modales: hay que ESPERAR a que el primero termine de
+      // cerrarse. Bootstrap quita su backdrop en 'hidden.bs.modal', no al
+      // llamar hide(); abrir el segundo antes deja DOS fondos oscuros
+      // superpuestos y la pantalla se ve sucia (detectado probando en vivo).
+      var abrirForm = function(){
         (window.__o2fModal = window.__o2fModal || new bootstrap.Modal(form)).show();
-      }, 220);
+      };
+      if (modal){
+        var el = document.getElementById('ot2ModalCrear');
+        el.addEventListener('hidden.bs.modal', abrirForm, {once:true});
+        modal.hide();
+      } else {
+        abrirForm();
+      }
       return;
     }
     pintar();
