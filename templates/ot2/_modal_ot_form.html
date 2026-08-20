@@ -72,7 +72,7 @@
             <div class="d-flex gap-2 align-items-end">
               <div class="flex-grow-1">
                 <label class="form-label small fw-semibold">Tipo *</label>
-                <select id="otTipo" class="form-select form-select-sm">
+                <select id="o2f_otTipo" class="form-select form-select-sm">
                   <option value="levantamiento">Levantamiento de ficha</option>
                   <option value="instalacion">Instalación</option>
                   <option value="preventiva">Mantención preventiva</option>
@@ -102,20 +102,20 @@
               </button>
               {% endif %}
             </div>
-            <div id="otTipoDescripcion" class="small text-muted mt-2" style="font-size:.78rem">
+            <div id="o2f_otTipoDescripcion" class="small text-muted mt-2" style="font-size:.78rem">
               <i class="bi bi-info-circle me-1"></i>
               Levantamiento de ficha: documentación visual de cada equipo. Se aplica
               automáticamente la plantilla estándar a todos los equipos seleccionados.
             </div>
             {# Checklist que quedará asociado a la OT — lo pinta o2fPintarPlantilla() #}
-            <div id="otPlantillaInfo" class="small mt-2"></div>
+            <div id="o2f_otPlantillaInfo" class="small mt-2"></div>
             {# Referencia de solo lectura cuando esta OT nace de una cotización
                (origen "Cotización" del selector de /mantenciones/ots) — la
                llena _tkotMostrarRefCotizacion() (static/tickets_ficha.js) si
                la URL trae ?cotizacion_id=. Elemento APARTE de otPlantillaInfo
                a propósito: ese otro div lo pisa o2fPintarPlantilla() cada vez
                que cambia el tipo, y esta referencia debe sobrevivir a eso. #}
-            <div id="otCotizacionRef" class="small mt-2" style="display:none"></div>
+            <div id="o2f_otCotizacionRef" class="small mt-2" style="display:none"></div>
 
             {# FIX 2026-08-11 (Daniel, probando en vivo): el selector de
                plantilla del Paso 1 ("Tarea 4", 2026-08-10) quedaba duplicado
@@ -126,7 +126,7 @@
                necesita en el futuro, solo se retiró este selector duplicado. #}
 
             {# ── Modalidad del levantamiento: idéntica a Mantenciones ── #}
-            <div id="otModoLevWrap" style="display:none">
+            <div id="o2f_otModoLevWrap" style="display:none">
               <div class="small fw-bold mt-3" style="color:#0f172a">
                 <i class="bi bi-signpost-split me-1" style="color:#dc2626"></i>Modalidad del levantamiento
               </div>
@@ -159,10 +159,10 @@
             </div>
 
             {# ── Garantía (cualquier tipo excepto levantamiento) ── #}
-            <div class="mt-2 p-2 rounded border" id="otGarantiaWrap" style="background:#f8fafc;display:none">
+            <div class="mt-2 p-2 rounded border" id="o2f_otGarantiaWrap" style="background:#f8fafc;display:none">
               <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="otAplicaGarantia" role="switch">
-                <label class="form-check-label small fw-semibold" for="otAplicaGarantia">
+                <input class="form-check-input" type="checkbox" id="o2f_otAplicaGarantia" role="switch">
+                <label class="form-check-label small fw-semibold" for="o2f_otAplicaGarantia">
                   <i class="bi bi-shield-check me-1 text-success"></i>
                   ¿Aplica garantía? <span class="text-muted">(sin cargo al cliente)</span>
                 </label>
@@ -524,7 +524,7 @@
                 Equipos declarados en este ticket. Cada uno puede tener varias plantillas.
               </small>
               <div style="display:flex;gap:6px;flex-shrink:0">
-                <button class="btn btn-sm btn-outline-secondary" id="btnLevToggleTodos">
+                <button class="btn btn-sm btn-outline-secondary" id="o2f_btnLevToggleTodos">
                   <i class="bi bi-check2-square me-1"></i>Marcar todos
                 </button>
               </div>
@@ -587,7 +587,7 @@
                     <i class="bi bi-x-lg me-1"></i>No
                   </button>
                 </div>
-                <input type="hidden" id="acceso_ascensor" name="acceso_ascensor" value="">
+                <input type="hidden" id="o2f_acceso_ascensor" name="acceso_ascensor" value="">
               </div>
               <div class="col-md-6">
                 <label class="form-label small fw-semibold d-block mb-2">
@@ -603,13 +603,13 @@
                     <i class="bi bi-x-lg me-1"></i>No
                   </button>
                 </div>
-                <input type="hidden" id="acceso_estacionamiento" name="acceso_estacionamiento" value="">
+                <input type="hidden" id="o2f_acceso_estacionamiento" name="acceso_estacionamiento" value="">
               </div>
               <div class="col-md-6">
                 <label class="form-label small fw-semibold">
                   <i class="bi bi-layers text-primary me-1"></i>Piso / nivel
                 </label>
-                <input type="text" id="acceso_piso" name="acceso_piso"
+                <input type="text" id="o2f_acceso_piso" name="acceso_piso"
                        class="form-control form-control-sm" maxlength="50"
                        placeholder="Ej: piso 3, subterráneo 1">
               </div>
@@ -617,7 +617,7 @@
                 <label class="form-label small fw-semibold">
                   <i class="bi bi-journal-text text-primary me-1"></i>Notas adicionales de acceso
                 </label>
-                <textarea id="acceso_notas" name="acceso_notas"
+                <textarea id="o2f_acceso_notas" name="acceso_notas"
                           class="form-control form-control-sm" rows="2" maxlength="2000"
                           placeholder="Ej: timbre 102, código del portón 1234, llamar al guardia 30 min antes, etc."></textarea>
                 <small class="text-muted d-block mt-1" style="font-size:.72rem">
@@ -712,14 +712,17 @@
 
       <div class="modal-footer" style="background:#fff;border-top:1px solid #e5e7eb;
                                        padding:13px 20px;gap:9px">
-        <span class="text-muted" style="font-size:.76rem;font-weight:600;margin-right:auto">
-          <i class="bi bi-eye me-1"></i>Vista previa — todavía no guarda nada
+        <span class="text-muted" style="font-size:.76rem;font-weight:600;margin-right:auto"
+              id="o2fPie">
+          <i class="bi bi-shield-check me-1"></i>Crea la OT de verdad
         </span>
         <button type="button" class="btn btn-outline-secondary" style="min-height:44px"
                 data-bs-dismiss="modal">
           <i class="bi bi-x-lg me-1"></i>Cancelar
         </button>
-        <button type="button" class="btn btn-danger fw-bold px-4" style="min-height:44px" disabled>
+        <button type="button" class="btn btn-danger fw-bold px-4" style="min-height:44px"
+                id="o2fBtnCrear" onclick="O2F.crear()" disabled
+                title="Faltan pasos por completar">
           <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
         </button>
       </div>

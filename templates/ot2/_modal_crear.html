@@ -500,6 +500,18 @@ window.OT2C = (function(){
     S.origen = v;
     if (v==='interno'){ S.cliente=null; if(S.tipo && !(TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno) S.tipo=null; }
 
+    // Salvo el trabajo interno, todos los orígenes necesitan cliente: se
+    // pide ANTES de abrir el formulario grande, para que este ya nazca con
+    // los datos y los equipos cargados (Daniel: "que traiga los productos
+    // del ticket / de la ficha / de la cotización, y los datos del cliente
+    // también"). Al elegirlo, setCli() abre el formulario.
+    if (v !== 'interno' && !S.cliente){
+      paso = pasos().findIndex(function(p){ return p.k === 'cliente'; });
+      if (paso < 0) paso = 1;
+      pintar();
+      return;
+    }
+
     var form = document.getElementById('ot2ModalForm');
     if (form){
       var sub = document.getElementById('o2fSubtitulo');
@@ -522,6 +534,10 @@ window.OT2C = (function(){
       // llamar hide(); abrir el segundo antes deja DOS fondos oscuros
       // superpuestos y la pantalla se ve sucia (detectado probando en vivo).
       var abrirForm = function(){
+        // Arranca el motor del formulario con el contexto ya elegido:
+        // carga cliente, sus equipos con foto/marca/serie, técnicos y
+        // plantillas, y enciende el semáforo de pasos.
+        if (window.O2F) O2F.iniciar({origen:S.origen, cliente:S.cliente, ticket_id:S.ticket_id});
         (window.__o2fModal = window.__o2fModal || new bootstrap.Modal(form)).show();
       };
       if (modal){
@@ -579,7 +595,12 @@ window.OT2C = (function(){
         });
     }, 260);
   }
-  function setCli(id, nombre){ S.cliente = {id:id, nombre:nombre}; S.equipos=[]; pintar(); }
+  /* Elegido el cliente, se pasa al formulario grande ya con su contexto. */
+  function setCli(id, nombre){
+    S.cliente = {id:id, nombre:nombre};
+    S.equipos = [];
+    setOrigen(S.origen || 'cliente');
+  }
 
   function crear(){
     var body = {
