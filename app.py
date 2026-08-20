@@ -70991,7 +70991,7 @@ def _ot2_enriquecer_fila(f, hoy):
 
 
 @app.route("/ot/")
-@_require_superadmin
+@_mant_required
 def ot2_panel():
     """OT 2.0 · BETA solo superadmin — panel de OT reales, 4 vistas.
 
@@ -71527,7 +71527,7 @@ def _ot2_err(mensaje, codigo, http=400, **extra):
 
 
 @app.route("/ot/api/cliente/<int:cid>")
-@_require_superadmin
+@_mant_required
 def ot2_api_cliente(cid):
     """Datos del cliente que el formulario de OT necesita al abrirse.
 
@@ -71587,7 +71587,7 @@ def ot2_api_cliente(cid):
 
 
 @app.route("/ot/api/crear", methods=["POST"])
-@_require_superadmin
+@_mant_required
 def ot2_api_crear():
     """Crea una Orden de Trabajo — flujo NUEVO, sin pasar por el núcleo viejo.
 

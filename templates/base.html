@@ -666,10 +666,13 @@
     </a>
     {# OT 2.0 (Daniel, 18/19-08-2026): módulo en construcción por
        estrangulamiento -- vive en paralelo al de arriba, que sigue
-       intacto (REGLA #4.2). "Modalidad de prueba donde solamente el
-       superadministrador pueda ver este módulo" -- gate propio, no el
-       de permissions.mantenciones del bloque completo. #}
-    {% if permissions.superadmin %}
+       intacto (REGLA #4.2).
+       2026-08-20: el beta se abre al equipo de Mantenciones -- Daniel:
+       "desbloquea las órdenes de trabajo 2.0 para que las pueda ver
+       Aarón, me va a ayudar a probar hoy". Ya está dentro del bloque
+       permissions.mantenciones, así que basta con quitar el gate propio
+       de superadmin. /ot/diagnostico SIGUE siendo solo superadmin: es
+       auditoría interna, no una pantalla de trabajo. #}
     <a href="{{ url_for('ot2_panel') }}"
        class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico'] %} active{% endif %}"
        style="display:flex;align-items:center;gap:8px">
@@ -678,7 +681,6 @@
                    background:var(--ilus-red,#dc2626);color:#fff;border-radius:999px;
                    padding:1px 7px;line-height:1.5">BETA</span>
     </a>
-    {% endif %}
     {# ── Taller (2026-07-29, Daniel: "Servicio Técnico está muy largo, se
        tiene que contraer") — agrupa lo de apoyo al taller (plantillas de
        checklist, proveedores/repuestos, técnicos) detrás de un segundo
