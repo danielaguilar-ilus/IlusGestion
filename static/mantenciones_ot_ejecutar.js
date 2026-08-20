@@ -2164,6 +2164,7 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
   const seccionDatosHtml = `
     <div class="captura-section">
       <h6 class="ttl"><i class="bi bi-pencil-fill"></i>Datos del equipo</h6>
+      ${serieSugHtml}
       <div class="cap-form-grid">
         <div class="cap-field">
           <label for="cap-serie">Serial / N° Serie</label>
@@ -2173,7 +2174,6 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
             maxlength="100" ${readonly ? 'readonly' : ''}
             onblur="_capFieldBlur(${mid}, 'serie', this.value)">
           <div class="save-status" id="cap-st-serie"></div>
-          ${serieSugHtml}
         </div>
         <div class="cap-field">
           <label for="cap-marca">Marca</label>
