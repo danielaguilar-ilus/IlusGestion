@@ -208,7 +208,14 @@
     <table class="man-tabla trx-table">
       <thead>
         <tr>
-          {% if is_superadmin %}
+          {# 2026-08-19 (Daniel: "que Alison pueda eliminar pedidos y
+             manifiestos que no tengan la trazabilidad comprometida...
+             modificable desde los roles"): antes esta columna solo se
+             mostraba al superadministrador. Ahora también a quien tenga el
+             flag granular tr_eliminar (matriz /admin/roles, módulo
+             "transporte" -> acción "eliminar"). El backend sigue siendo la
+             guarda real -- esto solo evita mostrar un checkbox que rebotaría. #}
+          {% if is_superadmin or permissions.tr_eliminar %}
           <th class="man-th-chk"><input type="checkbox" id="manChkTodos" title="Seleccionar todos los visibles" onclick="manToggleSeleccionarTodo(this.checked)"></th>
           {% endif %}
           <th>Correlativo</th>
@@ -256,7 +263,7 @@
           {% set estado_visual_label, estado_visual_class, estado_visual_ico = m.estado, estado_class, estado_ico %}
         {% endif %}
         <tr id="man-row-{{ m.id }}" class="{{ _row_accent }}">
-          {% if is_superadmin %}
+          {% if is_superadmin or permissions.tr_eliminar %}
           <td data-label="" class="man-th-chk">
             <input type="checkbox" class="man-chk-fila" data-id="{{ m.id }}" onchange="manToggleSeleccion({{ m.id }}, this.checked)">
           </td>
@@ -355,7 +362,16 @@
                   <i class="bi bi-file-earmark-pdf"></i> Etiquetas PDF
                 </a>
                 {% endif %}
-                {% if is_superadmin %}
+                {# 2026-08-19 (Daniel: "que Alison pueda eliminar pedidos y
+                   manifiestos que no tengan la trazabilidad comprometida...
+                   modificable desde los roles"): antes este link solo se
+                   mostraba al superadministrador. Ahora también a quien
+                   tenga el flag granular tr_eliminar (matriz /admin/roles).
+                   El backend (tr_manifiesto_eliminar) decide de verdad si
+                   se puede borrar según si el manifiesto ya tiene actividad
+                   real -- si Alison intenta borrar uno activo, el 403/409
+                   que ya maneja eliminarManifiesto() se lo explica. #}
+                {% if is_superadmin or permissions.tr_eliminar %}
                 {# BUG REAL (2026-08-12, Daniel: "le doy a los 3 puntos y no
                    lo elimina" -- sin ningún error visible). CAUSA REAL:
                    |tojson envuelve el correlativo en comillas DOBLES
@@ -567,7 +583,11 @@
   </div>
 </div>
 
-{% if is_superadmin %}
+{# 2026-08-19: mismo criterio que el checkbox y el link "Eliminar
+   manifiesto" de arriba -- sin este contenedor, manRenderBarraSeleccion()
+   no tiene dónde pintar la barra y el borrado masivo queda mudo aunque el
+   checkbox sí se muestre. #}
+{% if is_superadmin or permissions.tr_eliminar %}
 <div id="manBarraSeleccion" class="man-barra-sel" style="display:none;"></div>
 {% endif %}
 
