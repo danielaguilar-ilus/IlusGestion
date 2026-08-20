@@ -2056,6 +2056,36 @@ function _tkotLeerEquiposDesdeDOM(){
   });
 }
 
+/* Equipos del cliente POR API.
+   En Tickets el modal vivía dentro de la ficha del cliente, así que leer
+   los equipos del DOM alcanzaba. En OT 2.0 el modal se abre desde /ot/,
+   donde esa ficha no está renderizada: el lector de DOM devolvía [] y el
+   Paso 5 decía "este cliente no tiene equipos" aunque tuviera 24.
+   Trae además foto, marca, modelo, serie y estado, que es la información
+   que Daniel pidió ver al elegir cada equipo. */
+async function _o2fCargarEquiposCliente(cid){
+  if (!cid) return [];
+  try {
+    const r = await fetch('/mantenciones/api/clientes/' + cid + '/maquinas-list',
+                          {credentials:'same-origin'});
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j : (j.maquinas || j.items || []);
+    return arr.map(function(m){
+      return {
+        id: m.id, maquina_id: m.id,
+        nombre: m.nombre || m.modelo || ('Equipo #' + m.id),
+        sku: m.sku || '', serie: m.numero_serie || m.serie || '',
+        marca: m.marca || '', modelo: m.modelo || '',
+        foto_url: m.foto_url || '', estado: m.estado || '',
+        aplica: true
+      };
+    });
+  } catch (e) {
+    console.warn('[O2F] equipos del cliente:', e);
+    return [];
+  }
+}
+
 // ── Paso 5: equipos DEL TICKET (no del DOM de una ficha) ──
 function o2fRenderEquipos(){
   const tbody = document.getElementById('o2fLevSelectTbody');
@@ -2595,7 +2625,13 @@ document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async 
   // Modo cliente: los equipos salen del DOM de la ficha (ya renderizado),
   // no de un ticket. Se lee ANTES de o2fRenderEquipos()/o2fAplicarForzadoInstalacion()
   // más abajo, que son los que efectivamente pintan el Paso 5.
-  if (_TKOT_MODO_CLIENTE) equiposCache = _tkotLeerEquiposDesdeDOM();
+  // Modo cliente: los equipos salen de la API del cliente. El lector de
+  // DOM solo sirve cuando el modal vive DENTRO de la ficha (Tickets); en
+  // /ot/ esa ficha no esta renderizada y devolvia lista vacia.
+  if (_TKOT_MODO_CLIENTE) {
+    equiposCache = _tkotLeerEquiposDesdeDOM();
+    if (!equiposCache.length && CID) equiposCache = await _o2fCargarEquiposCliente(CID);
+  }
 
   await _tkotResolverCliente();
   await _tkotCargarPlantillas();
