@@ -71517,6 +71517,38 @@ _OT2_JORNADA_INI, _OT2_JORNADA_FIN = "08:00", "17:00"
 _OT2_COLACION_INI, _OT2_COLACION_FIN = "13:00", "14:00"
 
 
+def _ot2_plantilla_estandar(tipo_ot):
+    """Checklist por defecto de un tipo de OT — resolución PROPIA de OT 2.0.
+
+    No reutiliza `_plantilla_estandar_para_tipo` a propósito: esa vive en la
+    cadena del núcleo viejo y este módulo tiene que poder sobrevivir a que
+    se borre (Daniel: "dos módulos independientes sobre la misma base").
+    El criterio es el mismo y sale de un aprendizaje real: se EXIGE que la
+    plantilla tenga ítems —una vacía deja al técnico con una OT sin nada
+    que hacer— y entre varias gana la de sistema, luego la que más ítems
+    tenga.
+
+    Devuelve el id o None.
+    """
+    tipo_ot = (tipo_ot or "").strip().lower()
+    if not tipo_ot:
+        return None
+    try:
+        row = mysql_fetchone(
+            "SELECT p.id, COUNT(i.id) AS n "
+            "  FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.tipo_visita = %s AND COALESCE(p.activa, 1) = 1 "
+            " GROUP BY p.id "
+            " ORDER BY COALESCE(p.es_sistema, 0) DESC, n DESC, p.id ASC "
+            " LIMIT 1",
+            (tipo_ot,))
+        return (row or {}).get("id")
+    except Exception as e:
+        print(f"[ot2_plantilla_estandar] {tipo_ot}: {e}", flush=True)
+        return None
+
+
 def _ot2_err(mensaje, codigo, http=400, **extra):
     """Respuesta de error uniforme: mensaje amigable para la pantalla,
     código estable para el JS. El detalle técnico va al log, nunca al
@@ -71686,32 +71718,73 @@ def ot2_api_crear():
     #    Daniel 2026-08-13: "no quiero nada automático, todo lo debe
     #    escoger el usuario y si no escoge no lo debe dejar avanzar".
     #    Acá se valida ANTES de crear nada, no se rellena después.
+    # LEVANTAMIENTO — los dos modos que definió Daniel (19/20-08-2026):
+    #   · "con equipos": trae los equipos del origen (ficha, ticket o
+    #     cotización) y el técnico los documenta.
+    #   · "por descubrimiento": la OT nace SIN equipos a propósito -- el
+    #     técnico levanta en terreno lo que encuentre. Daniel: "que borre
+    #     las máquinas del modal, y la OT se adapte solamente para que el
+    #     técnico agregue los equipos".
+    # En ambos el checklist NO se elige por equipo: es el mismo para todos
+    # (la plantilla estándar del levantamiento). Por eso este tipo tiene su
+    # propio camino y no pasa por el gate de "una plantilla por equipo".
+    es_levantamiento = (tipo_ot == "levantamiento")
+    descubrimiento = bool(d.get("descubrimiento")) and es_levantamiento
+
     equipos_in = d.get("equipos") or []
     equipos = []
     for e in equipos_in:
         try:
             mid = int(e.get("maquina_id"))
-            pid = int(e.get("plantilla_id"))
         except (TypeError, ValueError):
-            return _ot2_err(
-                "Cada equipo necesita su checklist elegido.",
-                "PLANTILLA_REQUERIDA")
+            return _ot2_err("Uno de los equipos no es válido.", "EQUIPO_INVALIDO")
+        pid = e.get("plantilla_id")
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            if not es_levantamiento:
+                return _ot2_err(
+                    "Cada equipo necesita su checklist elegido.",
+                    "PLANTILLA_REQUERIDA")
+            pid = None      # el levantamiento resuelve su plantilla abajo
         equipos.append({"maquina_id": mid, "plantilla_id": pid})
 
-    if not equipos and not es_interna:
+    # Un descubrimiento sin equipos es lo NORMAL, no un error.
+    if descubrimiento:
+        equipos = []
+    elif not equipos and not es_interna:
         return _ot2_err(
             "Agrega al menos un equipo a la orden.", "SIN_EQUIPOS")
 
-    # Trabajo interno sin equipos: necesita al menos una plantilla suelta
-    # para no nacer con checklist vacío (una OT sin tareas es una OT que
-    # nadie puede ejecutar ni cerrar).
+    # Plantilla que se usa cuando no se eligió una por equipo: en el
+    # levantamiento es la estándar del tipo; en trabajo interno la elige el
+    # usuario. Una OT sin tareas no se puede ejecutar ni cerrar, así que
+    # siempre tiene que quedar alguna.
     plantilla_suelta = d.get("plantilla_id")
-    if not equipos:
-        try:
-            plantilla_suelta = int(plantilla_suelta)
-        except (TypeError, ValueError):
+    try:
+        plantilla_suelta = int(plantilla_suelta)
+    except (TypeError, ValueError):
+        plantilla_suelta = None
+
+    if es_levantamiento and not plantilla_suelta:
+        plantilla_suelta = _ot2_plantilla_estandar("levantamiento")
+        if not plantilla_suelta:
             return _ot2_err(
-                "Elige el checklist de trabajo.", "PLANTILLA_REQUERIDA")
+                "No hay un checklist de levantamiento configurado. "
+                "Crea uno en Plantillas antes de generar esta orden.",
+                "PLANTILLA_NO_CONFIGURADA")
+
+    if not equipos and not plantilla_suelta:
+        return _ot2_err(
+            "Elige el checklist de trabajo.", "PLANTILLA_REQUERIDA")
+
+    # En el levantamiento, los equipos que no traen plantilla propia usan
+    # la estándar -- es el comportamiento que el modal promete en pantalla
+    # ("se aplica automáticamente la plantilla estándar").
+    if es_levantamiento:
+        for e in equipos:
+            if not e["plantilla_id"]:
+                e["plantilla_id"] = plantilla_suelta
 
     # Todas las plantillas referidas tienen que existir y estar activas.
     _pids = sorted({e["plantilla_id"] for e in equipos} |
@@ -71795,6 +71868,42 @@ def ot2_api_crear():
              current_username()))
         vid = cur.lastrowid
 
+        # ── El levantamiento, y SOLO el levantamiento, crea su registro ──
+        # Sin esta fila el técnico no tiene dónde guardar lo que captura en
+        # terreno: mant_levantamiento_items.levantamiento_id es NOT NULL, y
+        # además la pantalla de ejecución esconde el botón de capturar
+        # cuando la OT no tiene levantamiento_id. Una OT de levantamiento
+        # sin esto llega al gimnasio sin forma de trabajarla.
+        #
+        # Es el ÚNICO caso en que este motor toca mant_levantamientos: la
+        # regla de Daniel es "las reglas del levantamiento solamente
+        # aplican para el levantamiento". Ningún otro tipo pasa por acá.
+        if es_levantamiento:
+            _modalidad = "descubrimiento" if descubrimiento else "ficha"
+            try:
+                cur.execute(
+                    "INSERT INTO mant_levantamientos "
+                    "  (cliente_id, tecnico, titulo, notas, estado, "
+                    "   created_by, visita_id, modalidad_captura) "
+                    "VALUES (%s,%s,%s,%s,'en_curso',%s,%s,%s)",
+                    (cliente_id, (tecnico_nombre or current_username() or "técnico")[:190],
+                     titulo[:200], descripcion, current_username() or "sistema",
+                     vid, _modalidad))
+            except Exception:
+                # Bases donde modalidad_captura todavía no existe
+                # (_ensure_lev_modalidad_captura_col aún no corrió).
+                cur.execute(
+                    "INSERT INTO mant_levantamientos "
+                    "  (cliente_id, tecnico, titulo, notas, estado, "
+                    "   created_by, visita_id) "
+                    "VALUES (%s,%s,%s,%s,'en_curso',%s,%s)",
+                    (cliente_id, (tecnico_nombre or current_username() or "técnico")[:190],
+                     titulo[:200], descripcion, current_username() or "sistema", vid))
+            _lev_id = cur.lastrowid
+            # Vínculo en los dos sentidos, como el flujo que ya funcionaba.
+            cur.execute("UPDATE mant_visitas SET levantamiento_id=%s WHERE id=%s",
+                        (_lev_id, vid))
+
         # Técnicos asignados (N:N)
         for tid in tec_ids:
             cur.execute(
@@ -71805,8 +71914,14 @@ def ot2_api_crear():
 
         # Checklist: se copian los items de la plantilla elegida, por equipo.
         n_tareas, orden = 0, 0
-        _destinos = ([(e["maquina_id"], e["plantilla_id"]) for e in equipos]
-                     or [(None, plantilla_suelta)])
+        # En descubrimiento NO se crean tareas de entrada: no hay equipos
+        # todavía y una tarea sin maquina_id no dibuja tarjeta en la
+        # pantalla del técnico -- nadie podría verla ni trabajarla.
+        if descubrimiento:
+            _destinos = []
+        else:
+            _destinos = ([(e["maquina_id"], e["plantilla_id"]) for e in equipos]
+                         or [(None, plantilla_suelta)])
         for mid, pid in _destinos:
             cur.execute(
                 "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
@@ -71836,7 +71951,13 @@ def ot2_api_crear():
                 n_tareas += 1
 
         # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
-        if n_tareas == 0:
+        # EXCEPCIÓN, el levantamiento por descubrimiento: ahí el trabajo no
+        # es marcar un checklist sino LEVANTAR los equipos en terreno, y
+        # esos items van a mant_levantamiento_items (creado arriba), no a
+        # mant_visita_tareas. Sus tareas se generan cuando el técnico
+        # agrega cada equipo. Exigirle checklist de entrada dejaría la
+        # modalidad imposible de usar.
+        if n_tareas == 0 and not descubrimiento:
             conn.rollback()
             return _ot2_err(
                 "El checklist elegido no tiene tareas.", "CHECKLIST_VACIO")
