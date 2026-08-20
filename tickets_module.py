@@ -10062,16 +10062,18 @@ def register_tickets_routes(app, ctx):
                                  max_segundos=None, incluir_taa=False,
                                  oldest_first=False):
         # incluir_taa (Daniel, 2026-08-20 -- migracion Triple A) NACE EN
-        # False: reconocer el backlog historico de Triple A es una decision
-        # deliberada, no algo que deba activarse solo porque un usuario
-        # cualquiera abrio la bandeja. El autopoll (dispara automatico cada
-        # vez que alguien mira Tickets, SIN chequeo de rol) llama a esta
-        # funcion con los defaults -- sin este flag, apenas se despliegue
-        # este cambio, el backlog completo de Triple A empezaria a entrar
-        # solo, con notificar="cada" (una campanita por correo) y sin el
-        # candado de superadmin + vista previa que existe justamente para
-        # decisiones de este tamaño. Solo tk_api_mail_recuperar (el barrido
-        # controlado, superadmin, dry_run primero) pasa incluir_taa=True.
+        # False EN ESTA FUNCION porque reconocer el backlog historico de
+        # Triple A era, al principio, una decision deliberada que no debia
+        # activarse sola. El barrido historico completo (566 correos, dos
+        # pasadas de punta a punta) ya corrio esa misma noche sin errores y
+        # con el guardia de antiguedad probado -- por eso el autopoll y el
+        # cron (mas abajo) YA pasan incluir_taa=True explicito: una
+        # respuesta nueva a un ticket migrado entra sola, sin que alguien
+        # tenga que acordarse de correr "Recuperar correos" a mano. Lo que
+        # sigue reservado al barrido controlado (superadmin, dry_run
+        # primero) es el formato NATIVO viejo cuando el id NO resuelve a
+        # ningun ticket (ver _tk_taa_autocrear_ticket) y cualquier ventana
+        # mayor a la del autopoll.
         #
         # oldest_first: en un barrido HISTORICO se quieren los correos MAS
         # VIEJOS primero (los de Triple A que se busca rescatar); el
@@ -10120,6 +10122,7 @@ def register_tickets_routes(app, ctx):
         user, pwd = _tk_imap_creds()
         resumen = {"ok": True, "candidatos": 0, "ingresados": 0, "duplicados": 0,
                    "sin_ticket": 0, "sin_numero": 0, "propios": 0, "adjuntos": 0,
+                   "auto_creados": 0,
                    "errores": 0, "vistos": 0, "dry_run": bool(dry_run),
                    "dias": int(dias), "truncado": False, "parcial": False}
         _t_fin = (time.monotonic() + float(max_segundos)) if max_segundos else None
@@ -10291,14 +10294,61 @@ def register_tickets_routes(app, ctx):
                     if clase == "sin_ticket_taa":
                         # El asunto SI es del sistema viejo de Triple A, pero
                         # su id no resolvio a ningun ticket importado
-                        # (legacy_taa_id sin mapear). Se reusa el balde
-                        # "sin_ticket" -- semanticamente es lo mismo: "es
-                        # nuestro, pero no encontramos el ticket".
-                        resumen["sin_ticket"] += 1
-                        _fila("sin_ticket", numero,
-                              "Asunto del sistema Triple A: su id no tiene "
-                              "ticket importado asociado (revisar la migración).")
-                        continue
+                        # (legacy_taa_id sin mapear). Antes esto solo se
+                        # reportaba como brecha ("sin_ticket"). Desde
+                        # 2026-08-20 (Daniel, caso real: Aaron crea el
+                        # ticket 771 DIRECTO en Triple A durante la marcha
+                        # blanca -- nunca paso por el CSV, no habia fila en
+                        # ILUS donde colgarle el correo) se AUTO-CREA el
+                        # ticket la primera vez que llega un correo de un id
+                        # nuevo. Nace con notif_pausada=1 (mismo candado que
+                        # la migracion original) y sin asignado_a: no
+                        # dispara ningun correo saliente hasta que alguien
+                        # lo asigne dentro de ILUS.
+                        _tid_taa = int(numero.split("-", 1)[1])
+                        if dry_run:
+                            resumen["auto_creados"] += 1
+                            _fila("auto_crear", numero,
+                                  f"El ticket {numero} no existe: se creará "
+                                  f"automáticamente con los datos de este "
+                                  f"correo.")
+                            continue
+                        _nombre_taa = (from_nombre or from_email
+                                       or "Cliente Triple A")[:150]
+                        _nota_taa = (
+                            f"Ticket creado automáticamente al recibir un "
+                            f"correo de Triple A (id {_tid_taa}) que no "
+                            f"tenía ticket importado. Completar RUT / "
+                            f"empresa / producto a mano.")
+                        try:
+                            mysql_execute(
+                                "INSERT IGNORE INTO tk_tickets "
+                                "(numero_ticket, legacy_taa_id, origen, "
+                                " estado, prioridad, email, "
+                                " email_cliente_real, notif_pausada, "
+                                " nombre_contacto, notas_internas, "
+                                " created_by) "
+                                "VALUES (%s,%s,'backoffice','open','media',"
+                                "        %s,%s,1,%s,%s,%s)",
+                                (numero, _tid_taa, from_email or None,
+                                 from_email or None, _nombre_taa, _nota_taa,
+                                 "sistema-correo-triplea"))
+                        except Exception as _e_autocrear:
+                            resumen["errores"] += 1
+                            _fila("error", numero,
+                                  f"No se pudo crear el ticket "
+                                  f"automáticamente: {_e_autocrear}")
+                            continue
+                        resumen["auto_creados"] += 1
+                        _fila("auto_creado", numero,
+                              f"Ticket {numero} creado automáticamente "
+                              f"desde este correo.")
+                        # A propósito NO se corta el flujo aquí: sigue de
+                        # largo hacia el bloque de "candidato" de más abajo
+                        # para adjuntar ESTE mismo correo como el primer
+                        # mensaje real del ticket recién creado (mismo
+                        # camino de dedup / adjuntos / notificación que
+                        # cualquier otro candidato -- un solo camino, no dos).
                     if clase == "propio":
                         resumen["propios"] += 1
                         _fila("propio", numero,
@@ -10615,7 +10665,7 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": True, "skipped": True})
         try:
             _TK_MAIL_POLL["ts"] = time.monotonic()
-            resumen = _tk_leer_correo_entrante()
+            resumen = _tk_leer_correo_entrante(incluir_taa=True)
         finally:
             _TK_MAIL_POLL["lock"].release()
         # Drenado de respaldo de la cola de correo en background (2026-07-19):
@@ -10707,7 +10757,7 @@ def register_tickets_routes(app, ctx):
         def _correr():
             try:
                 with app.app_context():
-                    r = _tk_leer_correo_entrante()
+                    r = _tk_leer_correo_entrante(incluir_taa=True)
                     if r.get("ingresados"):
                         print(f"[tk_mail_autopoll] {r}", flush=True)
             except Exception as _e:
