@@ -10132,7 +10132,16 @@ def register_tickets_routes(app, ctx):
         d = datetime.now(timezone.utc) - timedelta(days=max(1, int(dias)))
         desde_imap = f"{d.day:02d}-{_MES[d.month - 1]}-{d.year}"
         try:
-            M = imaplib.IMAP4_SSL(_tk_imap_host(), 993)
+            # 2026-08-20 -- timeout de SOCKET explicito (descubierto en vivo:
+            # un barrido con incluir_taa=True quedo colgado mas de 3 minutos
+            # sin resolver ni fallar). Sin esto, imaplib usa el timeout por
+            # defecto del socket de Python -- que es NINGUNO (bloqueo
+            # indefinido) -- asi que un problema de red a mitad de conexion,
+            # login o SEARCH deja el request colgado para siempre, ocupando
+            # un worker de Cloud Run sin limite. max_segundos (el presupuesto
+            # de reloj del barrido) NO protege esto: solo se chequea ENTRE
+            # correos del loop, nunca durante estas llamadas bloqueantes.
+            M = imaplib.IMAP4_SSL(_tk_imap_host(), 993, timeout=30)
             M.login(user, pwd)
             M.select("INBOX", readonly=True)  # readonly: JAMAS tocar el buzon
         except Exception as _e:
