@@ -31,6 +31,23 @@
 var TID = null;   // id del ticket de origen, o null
 var CID = null;   // id del cliente con ficha, o null
 
+/* Constantes que en el original venia inyectadas por el template de
+   Tickets y que el renombrado por regex no podia resolver (van en
+   MAYUSCULAS con guion bajo, fuera del patron \btkot). Sin ellas el
+   listener show.bs.modal moria con ReferenceError y el calendario nunca
+   llegaba a inicializarse.
+
+   _TKOT_MODO_CLIENTE se recalcula en cada apertura (ver O2F.iniciar), no
+   se congela al cargar el archivo: en OT 2.0 el mismo modal sirve para
+   un origen con ticket y para uno sin el. */
+var _TKOT_MODO_CLIENTE = true;
+
+/* Rol de gestion: en Tickets lo inyectaba el template para decidir si el
+   usuario puede reprogramar o reasignar OT ajenas desde la linea de
+   tiempo. Aca el modulo entero esta detras de @_require_superadmin, asi
+   que quien llega tiene ese permiso. */
+var _TKOT_ROL_GESTION = true;
+
 const _O2F = {
   cid: null,               // cliente_id resuelto por RUT en mant_clientes (null = sin ficha)
   clienteResuelto: false,
@@ -3266,6 +3283,10 @@ window.O2F = {
     opts = opts || {};
     TID = opts.ticket_id || null;
     CID = (opts.cliente && opts.cliente.id) || null;
+    // Sin ticket => modo cliente. Se recalcula en CADA apertura porque el
+    // mismo modal sirve para los dos casos (a diferencia del original, que
+    // lo fijaba una vez segun la pagina).
+    _TKOT_MODO_CLIENTE = (TID === null);
     _O2F.cid = CID;
     _O2F.clienteResuelto = !!CID;
     _O2F.origen = opts.origen || 'cliente';
