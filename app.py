@@ -71513,6 +71513,99 @@ def _ensure_ot_tipos_enum():
     return False
 
 
+# Centros de costo (Daniel, 20-08-2026): "saber si va a un centro de costo
+# — Logística, Comercial o SSTT". Es lo que permite responder cuánto costó
+# el servicio técnico en el mes y cuánto se regaló en garantías.
+_OT2_CENTROS_COSTO = (
+    ("sstt",      "Servicio Técnico"),
+    ("logistica", "Logística"),
+    ("comercial", "Comercial"),
+)
+
+# Línea de servicio del ERP que corresponde a cada tipo de OT. Es el mismo
+# patrón de ZZENVIO en Transporte: el cobro viene DENTRO del documento, no
+# como documento aparte. Se LEE del ERP, nunca se escribe (REGLA #4.1).
+_OT2_LINEA_ZZ = {
+    "instalacion":       "ZZINSTALACION",
+    "preventiva":        "ZZMANTENCION",
+    "correctiva":        "ZZMANTENCION",
+    "visita_tecnica":    "ZZVISITA",
+    "visita_correctiva": "ZZVISITA",
+}
+
+
+def _ensure_ot_finanzas_cols():
+    """Columnas del paso de FINANZAS en mant_visitas — SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1.
+
+    La mayoría del terreno ya existía (costo, modalidad_cobro,
+    estado_facturacion, garantia_aplica, garantia_motivo, factura_tido,
+    factura_nudo). Acá se agrega lo que faltaba para cerrar el control
+    que pidió Daniel:
+
+      centro_costo   — Logística / Comercial / SSTT. Sin esto no se puede
+                       responder "cuánto gastó servicio técnico este mes".
+      zz_codigo      — qué línea del ERP cubre el trabajo (ZZINSTALACION,
+                       ZZMANTENCION…). Se guarda el código usado, no solo
+                       el monto, para poder auditar de dónde salió.
+      zz_monto       — el monto de esa línea, leído del documento.
+      finanzas_at /  — cuándo y quién declaró. La declaración es
+      finanzas_por     REVERSIBLE ("podemos retractarnos y volver a
+                       confirmar"), así que interesa el último estado y
+                       quién lo dejó así.
+    """
+    _cols = [
+        ("centro_costo",  "VARCHAR(20) NULL COMMENT 'sstt|logistica|comercial'"),
+        ("zz_codigo",     "VARCHAR(30) NULL COMMENT 'Linea de servicio del ERP que cubre la OT'"),
+        ("zz_monto",      "INT NULL COMMENT 'Monto de la linea ZZ, leido del documento'"),
+        ("finanzas_at",   "DATETIME NULL COMMENT 'Cuando se declaro la parte financiera'"),
+        ("finanzas_por",  "VARCHAR(190) NULL"),
+    ]
+    for _nombre, _ddl in _cols:
+        try:
+            _r = mysql_fetchone(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+                "   AND COLUMN_NAME=%s", (_nombre,))
+            if not _r:
+                mysql_execute(f"ALTER TABLE mant_visitas ADD COLUMN {_nombre} {_ddl}")
+                print(f"[ensure_ot_finanzas] +{_nombre}", flush=True)
+        except Exception as e:
+            print(f"[ensure_ot_finanzas] {_nombre}: {e}", flush=True)
+
+
+def _ot2_finanzas_estado(v):
+    """¿La OT tiene resuelta su parte financiera? Devuelve (ok, faltan).
+
+    LA REGLA, dictada por Daniel el 20-08-2026:
+      · Al CREAR la OT es opcional -- no traba el agendamiento.
+      · Al pedir la FIRMA es obligatoria.
+      · La garantía ANULA la exigencia de documento: "si activamos el
+        toggle de garantía, eso puede anular la declaración de documentos".
+        Son excluyentes -- o va cubierto, o va con documento.
+      · El centro de costo se exige SIEMPRE, garantía incluida: justamente
+        una garantía hay que poder imputarla a alguien.
+
+    Es solo lectura: no decide, informa. Quien decide es el gate de firma.
+    """
+    faltan = []
+    if not (v.get("centro_costo") or "").strip():
+        faltan.append("centro de costo")
+
+    if v.get("garantia_aplica"):
+        # Cubierto por garantía: no se le pide documento, pero sí el
+        # motivo -- una garantía sin explicación no se puede defender
+        # después ante el cliente ni ante contabilidad.
+        if not (v.get("garantia_motivo") or "").strip():
+            faltan.append("motivo de la garantía")
+    else:
+        tiene_doc = bool((v.get("factura_nudo") or "").strip())
+        if not tiene_doc:
+            faltan.append("número de factura, boleta o nota de venta")
+
+    return (not faltan), faltan
+
+
 def _ensure_ot_acceso_cols():
     """Columnas de ACCESO AL LUGAR en mant_visitas — SIEMPRE, incluso con
     ILUS_SKIP_MIGRATIONS=1 (por eso es un _ensure_ y no una migración
@@ -71730,6 +71823,119 @@ def ot2_api_cliente_crear():
         "mensaje": "Ficha creada como prospecto"
                    + (f" por {_motivo_txt}." if _motivo_txt else "."),
     })
+
+
+@app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
+@_mant_required
+def ot2_api_finanzas(vid):
+    """Parte financiera de una OT — declarar, consultar y RETRACTARSE.
+
+    Daniel (20-08-2026): "al principio que sea opcional en el modal, pero
+    al solicitar la firma debe ir de manera obligatoria… y al terminar
+    podemos retractarnos y volver a confirmar esta información".
+
+    Por eso el mismo endpoint sirve para declarar y para deshacer: se
+    vuelve a mandar con otros valores y listo. No hay un "confirmar" que
+    congele nada.
+
+    GARANTÍA Y DOCUMENTO SON EXCLUYENTES: activar la garantía limpia el
+    documento, porque "el toggle de garantía puede anular la declaración
+    de documentos". Se hace en el servidor, no solo en la pantalla, para
+    que no queden OT con las dos cosas puestas.
+    """
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, tipo, costo, centro_costo, zz_codigo, zz_monto, "
+        "       garantia_aplica, garantia_motivo, factura_tido, factura_nudo, "
+        "       estado_facturacion, finanzas_at, finanzas_por "
+        "  FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
+
+    if request.method == "GET":
+        ok, faltan = _ot2_finanzas_estado(v)
+        return jsonify({
+            "ok": True, "finanzas": v, "completa": ok, "faltan": faltan,
+            "centros": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO],
+            "linea_zz_sugerida": _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower()),
+        })
+
+    d = request.get_json(silent=True) or {}
+
+    centro = (d.get("centro_costo") or "").strip().lower() or None
+    if centro and centro not in [c for c, _ in _OT2_CENTROS_COSTO]:
+        return _ot2_err("Ese centro de costo no existe.", "CENTRO_INVALIDO")
+
+    garantia = bool(d.get("garantia_aplica"))
+    motivo = (d.get("garantia_motivo") or "").strip()[:500] or None
+
+    # Excluyentes: la garantía anula el documento.
+    if garantia:
+        f_tido, f_nudo = None, None
+        if not motivo:
+            return _ot2_err(
+                "Para declarar garantía hay que decir por qué.",
+                "GARANTIA_SIN_MOTIVO")
+    else:
+        f_tido = (d.get("factura_tido") or "").strip()[:5].upper() or None
+        f_nudo = (d.get("factura_nudo") or "").strip()[:20] or None
+        motivo = None
+
+    try:
+        costo = int(d.get("costo")) if str(d.get("costo") or "").strip() else None
+    except (TypeError, ValueError):
+        return _ot2_err("El monto no es válido.", "MONTO_INVALIDO")
+    try:
+        zz_monto = int(d.get("zz_monto")) if str(d.get("zz_monto") or "").strip() else None
+    except (TypeError, ValueError):
+        return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
+
+    zz_cod = (d.get("zz_codigo") or "").strip().upper()[:30] or None
+    # Si no lo indican, se sugiere la línea que corresponde al tipo.
+    if not zz_cod and not garantia:
+        zz_cod = _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())
+
+    # estado_facturacion se deriva, no se pide: la pantalla no debería
+    # tener que saber el vocabulario interno del pipeline comercial.
+    if garantia:
+        estado_fact = "no_aplica"
+    elif f_nudo and (f_tido or "").upper() in ("NVV", "NVI"):
+        estado_fact = "con_nota_venta"
+    elif f_nudo:
+        estado_fact = "facturado"
+    else:
+        estado_fact = v.get("estado_facturacion") or "sin_cotizar"
+
+    try:
+        mysql_execute(
+            "UPDATE mant_visitas SET "
+            "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
+            "  garantia_aplica=%s, garantia_motivo=%s, "
+            "  factura_tido=%s, factura_nudo=%s, estado_facturacion=%s, "
+            "  finanzas_at=NOW(), finanzas_por=%s "
+            " WHERE id=%s",
+            (centro, zz_cod, zz_monto, costo,
+             1 if garantia else 0, motivo, f_tido, f_nudo, estado_fact,
+             current_username(), vid))
+    except Exception as e:
+        print(f"[ot2_finanzas] vid={vid}: {e}", flush=True)
+        return _ot2_err("No pudimos guardar la información financiera.",
+                        "ERROR_INTERNO", http=500)
+
+    try:
+        _mant_log("visita", vid, "finanzas_declaradas",
+                  f"centro={centro or '—'} · "
+                  + (f"GARANTÍA: {motivo[:80]}" if garantia
+                     else f"doc={f_tido or ''}{f_nudo or '—'}")
+                  + (f" · {zz_cod}" if zz_cod else ""))
+    except Exception:
+        pass
+
+    v2 = mysql_fetchone(
+        "SELECT centro_costo, garantia_aplica, garantia_motivo, "
+        "       factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    ok, faltan = _ot2_finanzas_estado(v2)
+    return jsonify({"ok": True, "completa": ok, "faltan": faltan,
+                    "estado_facturacion": estado_fact})
 
 
 @app.route("/ot/api/crear", methods=["POST"])
@@ -98589,6 +98795,14 @@ try:
         _ensure_ot_acceso_cols()
 except Exception as _ensure_acc_err:
     print(f"[ILUS][WARN] _ensure_ot_acceso_cols: {_ensure_acc_err}", flush=True)
+
+# Paso de finanzas de la OT (centro de costo, línea ZZ, monto),
+# Daniel 2026-08-20 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_ot_finanzas_cols()
+except Exception as _ensure_fin_err:
+    print(f"[ILUS][WARN] _ensure_ot_finanzas_cols: {_ensure_fin_err}", flush=True)
 
 # Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
 # 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
