@@ -10623,6 +10623,374 @@ def register_tickets_routes(app, ctx):
                           flush=True)
         return resumen
 
+    # ═══════════════════════════════════════════════════════════════════
+    #  RESPALDO DE CORREOS SALIENTES (carpeta Enviados/Sent) — 2026-08-20
+    #
+    #  Daniel (voz a texto, textual): "ademas de traer en la bandeja de
+    #  salida o enviados debemos tener ese respaldo en el sistema nuestro".
+    #  Quiere que el sistema TAMBIEN lea Enviados del mismo buzon, no solo
+    #  INBOX, para que quede un respaldo completo de lo que salio -- sea
+    #  que el staff respondio con el boton propio de ILUS, sea que
+    #  respondio directo desde Gmail/el sistema viejo de Triple A.
+    #
+    #  EL HUECO REAL: tk_api_responder_cliente YA registra su propio envio
+    #  en tk_mensajes al momento de mandarlo (ver _tk_log ahi mismo, mas
+    #  arriba en este archivo) -- cuando el staff responde DESDE ILUS, no
+    #  hay hueco. El hueco es cuando alguien responde a un cliente POR
+    #  FUERA de ILUS: directo desde el webmail de Gmail, o desde el
+    #  sistema de Triple A si este manda por el mismo SMTP durante la
+    #  marcha blanca. Esos correos NUNCA tocan _tk_log, asi que hoy son
+    #  invisibles en el hilo del ticket aunque el cliente SI recibio la
+    #  respuesta.
+    #
+    #  NO se toca _send_ilus_email (~26 llamadores en TODO el proyecto,
+    #  radio de impacto demasiado grande para esta noche) para que capture
+    #  su propio Message-ID al enviar. En su lugar, este barrido hace un
+    #  DEDUP HEURISTICO (ver _tk_ya_registrado_como_respuesta) contra lo
+    #  que tk_api_responder_cliente YA guardo, deliberadamente conservador:
+    #  prefiere saltarse algun mensaje raro (falso positivo) antes que
+    #  arriesgar duplicar el hilo de un cliente real.
+    # ═══════════════════════════════════════════════════════════════════
+    _TK_SENT_FLAG = "\\Sent"
+    # Formato de una linea de respuesta IMAP LIST, ej:
+    #   (\HasNoChildren \Sent) "/" "[Gmail]/Sent Mail"
+    # El nombre puede venir entre comillas (casi siempre, por el espacio
+    # del nombre real) o sin ellas -- ambos casos se manejan abajo.
+    _TK_IMAP_LIST_RE = re.compile(
+        r'^\((?P<flags>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$')
+    # Ventana de tolerancia del dedup heuristico (ver mas abajo): un correo
+    # de Enviados y la fila que tk_api_responder_cliente ya guardo para el
+    # MISMO ticket, dentro de este rango, se consideran "el mismo envio".
+    _TK_DEDUP_HEUR_VENTANA_MIN = 3
+
+    def _tk_imap_carpeta_especial(M, flag):
+        """Busca la carpeta cuyos flags de M.list() incluyan `flag` (RFC
+        6154, extension SPECIAL-USE) -- ej. "\\Sent". NUNCA adivina el
+        nombre: la carpeta de Enviados se llama distinto segun el idioma
+        configurado en la cuenta ("[Gmail]/Sent Mail" en ingles,
+        "[Gmail]/Correo enviado" en espanol, etc; hardcodear un string
+        rompe apenas alguien cambie el idioma de la cuenta o el
+        proveedor). Gmail anuncia estos flags directo en LIST, no hace
+        falta XLIST ni ningun parametro especial.
+
+        Devuelve el nombre de la carpeta (str) o None si no se pudo
+        determinar -- el llamador SIEMPRE debe degradar con gracia
+        (loguear, no reventar), igual que el resto de este modulo."""
+        try:
+            typ, data = M.list()
+        except Exception as _e:
+            print(f"[tk_mail_sent] no se pudo listar carpetas IMAP: {_e}", flush=True)
+            return None
+        if typ != "OK" or not data:
+            return None
+        flag_norm = flag.strip().lower()
+        for entry in data:
+            if not entry:
+                continue
+            try:
+                texto = (entry.decode("utf-8", "replace")
+                         if isinstance(entry, (bytes, bytearray)) else str(entry))
+            except Exception:
+                continue
+            m = _TK_IMAP_LIST_RE.match(texto)
+            if not m:
+                continue
+            flags = (m.group("flags") or "").split()
+            if not any(f.strip().lower() == flag_norm for f in flags):
+                continue
+            nombre = (m.group("name") or "").strip()
+            if len(nombre) >= 2 and nombre.startswith('"') and nombre.endswith('"'):
+                nombre = nombre[1:-1]
+            return nombre or None
+        return None
+
+    def _tk_normalizar_para_dedup(texto):
+        """Texto comparable: sin tags HTML (el wrapper de marca del correo
+        de Enviados trae HTML; lo que guardo tk_api_responder_cliente es
+        texto plano sanitizado), sin entidades, sin espacios repetidos, en
+        minuscula. Solo para COMPARAR -- nunca se guarda ni se muestra."""
+        if not texto:
+            return ""
+        sin_tags = re.sub(r"<[^>]+>", " ", texto)
+        try:
+            sin_tags = _html_mod.unescape(sin_tags)
+        except Exception:
+            pass
+        return re.sub(r"\s+", " ", sin_tags).strip().lower()
+
+    def _tk_ya_registrado_como_respuesta(ticket_id, cuerpo_enviado, msg_date):
+        """Dedup HEURISTICO (no por Message-ID): ¿este correo de Enviados
+        es el MISMO envio que tk_api_responder_cliente ya registro en
+        tk_mensajes al momento de mandarlo?
+
+        Sin este chequeo, TODA respuesta mandada desde el boton de ILUS
+        quedaria DUPLICADA en el hilo del cliente -- una vez por el boton
+        (tk_api_responder_cliente, en el momento del envio), otra por
+        este barrido (encontrando ese mismo correo ya salido en Enviados).
+
+        Deliberadamente CONSERVADOR: compara contra cualquier mensaje
+        saliente ya guardado en ESE ticket (tipo='mensaje', es_interno=0)
+        dentro de una ventana corta de tiempo alrededor de la fecha REAL
+        del correo (created_at, no message_date -- tk_api_responder_
+        cliente no pasa message_date, ver su _tk_log ahi mismo) cuyo
+        contenido se superponga. Prefiere saltarse algun mensaje raro
+        (falso positivo, correo perdido del respaldo) antes que arriesgar
+        tocar _send_ilus_email (~26 llamadores en todo el proyecto) para
+        capturar el Message-ID exacto en el momento del envio.
+
+        Sin fecha real del correo (Date ilegible), no hay ventana
+        confiable que comparar: se asume que NO esta duplicado -- mejor
+        un duplicado raro que perder un correo real por falta de fecha."""
+        if not msg_date:
+            return False
+        desde = msg_date - timedelta(minutes=_TK_DEDUP_HEUR_VENTANA_MIN)
+        hasta = msg_date + timedelta(minutes=_TK_DEDUP_HEUR_VENTANA_MIN)
+        try:
+            candidatos = mysql_fetchall(
+                "SELECT contenido FROM tk_mensajes WHERE ticket_id=%s "
+                "AND tipo='mensaje' AND es_interno=0 "
+                "AND created_at BETWEEN %s AND %s",
+                (ticket_id, desde, hasta)) or []
+        except Exception as _e:
+            print(f"[tk_mail_sent] dedup heuristico no se pudo consultar: {_e}",
+                  flush=True)
+            return False
+        texto_nuevo = _tk_normalizar_para_dedup(cuerpo_enviado)
+        if not texto_nuevo:
+            return False
+        for fila in candidatos:
+            texto_guardado = _tk_normalizar_para_dedup(fila.get("contenido") or "")
+            if texto_guardado and (texto_nuevo in texto_guardado
+                                    or texto_guardado in texto_nuevo):
+                return True
+        return False
+
+    def _tk_leer_correo_enviado(dias=60, max_correos=50, dry_run=False,
+                                 detalle=False, max_segundos=None):
+        """Barrido de la carpeta ENVIADOS/SENT del mismo buzon -- respaldo
+        de lo que SALIO, ver el bloque de comentarios grande arriba de
+        esta funcion (pedido textual de Daniel + el hueco real que cubre).
+
+        DIFERENCIAS DELIBERADAS con _tk_leer_correo_entrante (que lee
+        INBOX -- correos que ENTRAN):
+          - NO auto-crea tickets si el numero no resuelve a ninguno
+            existente: un correo SALIENTE sobre un ticket que no existe
+            es mas probablemente correspondencia vieja/no relacionada que
+            un caso nuevo -- no vale la pena el riesgo de un ticket
+            fantasma (a diferencia del Inbox, donde SI se auto-crea para
+            un id nuevo de Triple A -- ver 'sin_ticket_taa' mas arriba).
+          - NO reconoce el formato NATIVO viejo de Triple A ("ILUS |
+            Ticket - ID: N"): ese es el asunto que Triple A le pone a SUS
+            correos salientes, no a los NUESTROS -- aca se buscan correos
+            que NOSOTROS mandamos. Reutiliza los MISMOS objetos regex
+            compilados que usa _tk_clasificar_correo (_TK_NUM_TICKET_RE /
+            _TK_TAA_NUM_RE) para que un cambio de patron no desincronice
+            los dos barridos -- pero NO se puede reusar la funcion
+            _tk_clasificar_correo entera: su distincion propio/candidato
+            se basa en comparar el remitente contra nuestro propio buzon,
+            y en Enviados el remitente SIEMPRE es nuestro buzon (asi que
+            todo clasificaria como 'propio' y nada se procesaria).
+          - NO llama _tk_reabrir_si_cerrado ni toca notif_pausada: una
+            respuesta saliente no debe reabrir nada ni afectar la pausa
+            de notificaciones -- esas son decisiones que el staff ya toma
+            directo en la UI del ticket.
+          - Dedup ADICIONAL por contenido/fecha (heuristico, ver
+            _tk_ya_registrado_como_respuesta) ademas del dedup normal por
+            Message-ID -- necesario porque una respuesta mandada desde
+            ILUS ya quedo registrada por otro camino (tk_api_responder_
+            cliente) antes de que este barrido la vuelva a encontrar aca.
+
+        Mismas reglas innegociables que el barrido de Inbox: SOLO LECTURA
+        (select readonly=True, BODY.PEEK siempre), nunca lanza (todo
+        error -> resumen), dry_run=True no escribe absolutamente nada.
+
+        Resumen con CLAVES PROPIAS (no las de _tk_leer_correo_entrante,
+        para no confundir en logs/UI que vienen de barridos distintos):
+        vistos, capturados, duplicados, ya_registrados,
+        omitidos_sin_ticket, errores, ok, dry_run, carpeta."""
+        resumen = {"ok": True, "vistos": 0, "capturados": 0, "duplicados": 0,
+                   "ya_registrados": 0, "omitidos_sin_ticket": 0, "errores": 0,
+                   "dry_run": bool(dry_run), "dias": int(dias),
+                   "carpeta": None, "truncado": False, "parcial": False}
+        filas = [] if detalle else None
+        if detalle:
+            resumen["detalle"] = filas
+        user, pwd = _tk_imap_creds()
+        if not (user and pwd):
+            resumen["ok"] = False
+            resumen["error"] = "Sin credenciales de correo configuradas (Comunicaciones)."
+            return resumen
+        _t_fin = (time.monotonic() + float(max_segundos)) if max_segundos else None
+        _MES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+        d = datetime.now(timezone.utc) - timedelta(days=max(1, int(dias)))
+        desde_imap = f"{d.day:02d}-{_MES[d.month - 1]}-{d.year}"
+        try:
+            M = imaplib.IMAP4_SSL(_tk_imap_host(), 993, timeout=30)
+            M.login(user, pwd)
+        except Exception as _e:
+            print(f"[tk_mail_sent] no se pudo conectar a IMAP: {_e}", flush=True)
+            resumen["ok"] = False
+            resumen["error"] = f"IMAP no disponible: {_e}"
+            return resumen
+        try:
+            carpeta = _tk_imap_carpeta_especial(M, _TK_SENT_FLAG)
+            if not carpeta:
+                print("[tk_mail_sent] no se encontro la carpeta de Enviados via "
+                      "SPECIAL-USE (\\Sent); se omite este respaldo (degradado, "
+                      "no rompe el resto del barrido de correo)", flush=True)
+                resumen["ok"] = False
+                resumen["error"] = ("No se encontro la carpeta de Enviados (el "
+                                     "servidor no anuncio la extension SPECIAL-USE).")
+                return resumen
+            resumen["carpeta"] = carpeta
+            # readonly=True: JAMAS tocar Enviados tampoco (mismo principio que
+            # INBOX). Se cita entre comillas -- imaplib NO cita automatico y
+            # el nombre real casi siempre trae espacios/corchetes.
+            M.select(f'"{carpeta}"', readonly=True)
+
+            def _buscar_imap(criterio):
+                try:
+                    return M.search(None, criterio)
+                except imaplib.IMAP4.error as _e_srch:
+                    print(f"[tk_mail_sent] busqueda IMAP rechazada: {_e_srch}",
+                          flush=True)
+                    return ("BAD", None)
+
+            typ, data = _buscar_imap(
+                f'(SINCE {desde_imap} OR SUBJECT "TK-" SUBJECT "TAA-")')
+            if typ != "OK":
+                err = f"El servidor de correo rechazo la busqueda IMAP ({typ})."
+                resumen["ok"] = False
+                resumen["error"] = err
+                return resumen
+            todos = (data[0].split() if data and data[0] else [])
+            ids = todos[-max_correos:]
+            resumen["vistos"] = len(ids)
+            resumen["truncado"] = len(todos) > len(ids)
+            if resumen["truncado"]:
+                resumen["truncado_total"] = len(todos)
+
+            for mid in ids:
+                if _t_fin is not None and time.monotonic() > _t_fin:
+                    resumen["parcial"] = True
+                    print("[tk_mail_sent] barrido cortado por presupuesto de "
+                          "tiempo; reintentar retoma donde quedó", flush=True)
+                    break
+                try:
+                    typ, msgdata = M.fetch(mid, "(BODY.PEEK[HEADER])")
+                    raw = msgdata[0][1] if msgdata and msgdata[0] else None
+                    if not raw:
+                        continue
+                    msg = _email_mod.message_from_bytes(raw)
+                    subject = str(make_header(decode_header(msg.get("Subject", "") or "")))
+                    # Solo el formato PROPIO (TK-AAAA-NNNNN) y el YA MIGRADO
+                    # (TAA-N) -- ver el porque en el docstring de la funcion.
+                    numero = None
+                    m_num = _TK_NUM_TICKET_RE.search(subject or "")
+                    if m_num:
+                        numero = m_num.group(0).upper()
+                    else:
+                        m_taa = _TK_TAA_NUM_RE.search(subject or "")
+                        if m_taa:
+                            numero = m_taa.group(0).upper()
+                    if not numero:
+                        continue  # no es nuestro: ni se cuenta ni se lista
+                    from_nombre, from_email = parseaddr(
+                        str(make_header(decode_header(msg.get("From", "") or ""))))
+                    from_email = (from_email or "").strip().lower()
+                    msg_date = None
+                    try:
+                        _dt = parsedate_to_datetime(msg.get("Date", ""))
+                        if _dt is not None:
+                            msg_date = (_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                                        if _dt.tzinfo else _dt)
+                    except Exception:
+                        msg_date = None
+
+                    def _fila(estado, nota=""):
+                        if filas is None:
+                            return
+                        filas.append({
+                            "estado": estado, "fecha": _fmt_dt(msg_date) or "",
+                            "de": (from_nombre or "").strip()[:120],
+                            "correo": from_email[:190], "asunto": subject[:200],
+                            "numero": numero or "", "nota": nota,
+                        })
+
+                    ticket = mysql_fetchone(
+                        "SELECT id, numero_ticket FROM tk_tickets WHERE numero_ticket=%s",
+                        (numero,))
+                    if not ticket:
+                        resumen["omitidos_sin_ticket"] += 1
+                        _fila("sin_ticket", f"No existe el ticket {numero}; a "
+                              "diferencia del Inbox, Enviados NO auto-crea.")
+                        continue
+                    message_id = (msg.get("Message-ID") or "").strip()[:255]
+                    if not message_id:
+                        import hashlib
+                        raw_hash = raw
+                        try:
+                            _t2, _md2 = M.fetch(mid, "(BODY.PEEK[])")
+                            raw_hash = (_md2[0][1] if _md2 and _md2[0] else raw) or raw
+                        except Exception:
+                            raw_hash = raw
+                        message_id = "sin-id-sent-" + hashlib.sha1(raw_hash).hexdigest()[:40]
+                    if mysql_fetchone(
+                            "SELECT message_id FROM tk_mail_ingeridos WHERE message_id=%s",
+                            (message_id,)):
+                        resumen["duplicados"] += 1
+                        _fila("ya_ingerido", "Ya esta registrado (mismo Message-ID).")
+                        continue
+                    # Cuerpo completo SOLO ahora -- el dedup heuristico
+                    # necesita el TEXTO para comparar, no solo la cabecera.
+                    typ, msgdata = M.fetch(mid, "(BODY.PEEK[])")
+                    raw_completo = (msgdata[0][1] if msgdata and msgdata[0] else None)
+                    if not raw_completo:
+                        resumen["errores"] += 1
+                        continue
+                    msg_completo = _email_mod.message_from_bytes(raw_completo)
+                    cuerpo = _tk_extraer_cuerpo_mail(msg_completo) or "(Mensaje sin texto)"
+                    if _tk_ya_registrado_como_respuesta(ticket["id"], cuerpo, msg_date):
+                        resumen["ya_registrados"] += 1
+                        _fila("ya_registrado", "Ya esta en el hilo -- lo registro "
+                              "tk_api_responder_cliente al enviarlo desde ILUS.")
+                        continue
+                    if dry_run:
+                        resumen["capturados"] += 1
+                        _fila("nuevo", f"Se va a agregar al hilo de {numero} como "
+                              "respaldo de respuesta saliente.")
+                        continue
+                    remitente = (from_nombre or from_email or "ILUS")[:190]
+                    _tk_log(ticket["id"], "mensaje", cuerpo[:20000], usuario=remitente,
+                            es_interno=False, message_date=msg_date,
+                            metadata={"via": "email_enviados", "message_id": message_id,
+                                      "from": from_email, "subject": subject[:300]})
+                    mysql_execute(
+                        "INSERT IGNORE INTO tk_mail_ingeridos "
+                        "(message_id, ticket_id, from_email, subject) VALUES (%s,%s,%s,%s)",
+                        (message_id, ticket["id"], from_email[:190], subject[:300]))
+                    resumen["capturados"] += 1
+                    _fila("nuevo", f"Agregado al hilo de {numero} como respaldo "
+                          "de respuesta saliente.")
+                    print(f"[tk_mail_sent] respaldo de respuesta saliente de "
+                          f"{from_email} agregado a {numero}", flush=True)
+                except Exception as _em:
+                    resumen["errores"] += 1
+                    print(f"[tk_mail_sent] error procesando correo: {_em}", flush=True)
+        except Exception as _e_barrido:
+            print(f"[tk_mail_sent] barrido abortado: {_e_barrido}", flush=True)
+            resumen["ok"] = False
+            resumen["error"] = f"Fallo el barrido de Enviados: {_e_barrido}"
+        finally:
+            try:
+                M.logout()
+            except Exception:
+                pass
+        return resumen
+
+    ctx["_tk_leer_correo_enviado"] = _tk_leer_correo_enviado  # visible para diagnostico
+
     # Endpoint para Cloud Scheduler (token) o disparo manual (admin logueado)
     # Autorizacion (2026-07-18, Daniel: "la llave debe vivir EN EL SISTEMA" --
     # sin acceso a DNS/infra para setear una env var nueva en Cloud Run):
@@ -10666,6 +11034,16 @@ def register_tickets_routes(app, ctx):
         try:
             _TK_MAIL_POLL["ts"] = time.monotonic()
             resumen = _tk_leer_correo_entrante(incluir_taa=True)
+            # Respaldo de Enviados (Daniel, 2026-08-20): mismo lock (un solo
+            # login IMAP a la vez, la carpeta ya se cerro con logout() antes
+            # de llegar aca), pasada SEPARADA con su propio resumen -- un
+            # fallo leyendo Enviados NO debe tumbar el cron de Inbox, que es
+            # la parte critica de este endpoint.
+            try:
+                resumen["enviados"] = _tk_leer_correo_enviado()
+            except Exception as _e_env:
+                print(f"[tk_cron_leer_correo] _tk_leer_correo_enviado: {_e_env}", flush=True)
+                resumen["enviados"] = {"ok": False, "error": str(_e_env)}
         finally:
             _TK_MAIL_POLL["lock"].release()
         # Drenado de respaldo de la cola de correo en background (2026-07-19):
@@ -10760,6 +11138,16 @@ def register_tickets_routes(app, ctx):
                     r = _tk_leer_correo_entrante(incluir_taa=True)
                     if r.get("ingresados"):
                         print(f"[tk_mail_autopoll] {r}", flush=True)
+                    # Respaldo de Enviados (Daniel, 2026-08-20): pasada
+                    # SEPARADA, en su propio try -- si falla, el autopoll de
+                    # Inbox (lo critico: correos de CLIENTES) ya corrio bien
+                    # y no debe verse afectado.
+                    try:
+                        r_env = _tk_leer_correo_enviado()
+                        if r_env.get("capturados"):
+                            print(f"[tk_mail_autopoll_enviados] {r_env}", flush=True)
+                    except Exception as _e_env:
+                        print(f"[tk_mail_autopoll_enviados] error: {_e_env}", flush=True)
             except Exception as _e:
                 print(f"[tk_mail_autopoll] error: {_e}", flush=True)
             finally:
@@ -10885,6 +11273,21 @@ def register_tickets_routes(app, ctx):
                 # antes de que Cloud Run corte, preferimos devolver un
                 # resultado parcial y decirlo. Reintentar es seguro (dedup).
                 max_segundos=(60 if dry_run else 150))
+            # Respaldo de Enviados (Daniel, 2026-08-20): misma vista previa/
+            # corrida real, mismos dias/max_correos/dry_run que pidio quien
+            # llama -- pero SIEMPRE en su propia clave (resumen["enviados"]),
+            # nunca mezclado con los contadores de Inbox, para que quede
+            # claro que trae cada carpeta. Un fallo aca NO tumba la
+            # vista previa/ingesta de Inbox, que es la parte critica de
+            # este endpoint.
+            try:
+                resumen["enviados"] = _tk_leer_correo_enviado(
+                    dias=dias, max_correos=max_correos, dry_run=dry_run,
+                    detalle=True, max_segundos=(30 if dry_run else 90))
+            except Exception as _e_env:
+                print(f"[tk_api_mail_recuperar] enviados CRASH: {_e_env}", flush=True)
+                resumen["enviados"] = {"ok": False,
+                                        "error": "Error interno al leer Enviados."}
         except Exception as _e:
             print(f"[tk_api_mail_recuperar] CRASH: {_e}", flush=True)
             return jsonify({"ok": False, "error": "Error interno al leer el buzón.",
@@ -10895,9 +11298,10 @@ def register_tickets_routes(app, ctx):
         if not resumen.get("ok"):
             return jsonify(resumen), 200   # error legible, el front lo muestra
         try:
+            _n_env = (resumen.get("enviados") or {}).get("capturados")
             _audit("tk_mail_recuperar" + ("_preview" if dry_run else ""),
                    target_type="tk_mail_ingeridos",
-                   target_id=f"dias={dias};n={resumen.get('ingresados')}")
+                   target_id=f"dias={dias};n={resumen.get('ingresados')};n_enviados={_n_env}")
         except Exception:
             pass
         return jsonify(resumen)
