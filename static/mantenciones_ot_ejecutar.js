@@ -2032,7 +2032,10 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
                <div>Puedes actualizar marca/modelo/datos si los conoces.
                  Los cambios quedan registrados en el historial de esta OT
                  y como sugerencia para la ficha del equipo -- fuera de un
-                 Levantamiento, ILUS no la actualiza automáticamente.</div>
+                 Levantamiento, ILUS no la actualiza automáticamente.
+                 <b>El N° de serie sí</b>: si la ficha no tenía uno de
+                 fábrica, el que escribas se aplica al equipo y es el que
+                 usa la etiqueta de garantía.</div>
              </div>
            </div>`);
 
@@ -2117,13 +2120,47 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
   // y marca con CATÁLOGO (datalist /api/marcas: seed + casa + ERP read-only)
   // sin bloquear texto libre.
   const serieSug = (!e.serie && e.serie_sugerida) ? String(e.serie_sugerida) : '';
-  const serieSugHtml = (serieSug && !readonly) ? `
+
+  // 2026-08-20 (encargo de Daniel sobre el N° de serie). Tres estados, no
+  // uno. Antes solo existía "la ficha no tiene serie → sugerir una", y ese
+  // caso NUNCA ocurría: medido ese día, 179 de 179 equipos ya traían serie
+  // genérica, así que este bloque estaba muerto en producción y el 0% de
+  // los equipos terminaba con la serie de fábrica.
+  //   a) el equipo NO lleva serie individual  → se dice por qué y no se insiste
+  //   b) la ficha está vacía                  → se ofrece el genérico (como antes)
+  //   c) la ficha trae un genérico            → se invita a poner el de la placa
+  // Los tres son informativos: ninguno bloquea nada (Daniel: "sería ilógico
+  // bloquearlo, porque si no lo declaramos como humanos siempre estará
+  // sugerido"). El campo nunca queda vacío, así que exigirlo no aportaría.
+  const _serieLleva  = (e.serie_lleva_individual !== false);
+  const _serieMotivo = String(e.serie_no_aplica_motivo || '');
+  const _serieProv   = (e.serie_es_provisoria === true);
+  let serieSugHtml = '';
+  if (!readonly && !_serieLleva && _serieMotivo){
+    serieSugHtml = `
+      <div class="cap-serie-sug" id="capSerieSugWrap"
+           style="background:#f3f4f6;border-color:#d1d5db;color:#4b5563">
+        <i class="bi bi-info-circle-fill" style="color:#6b7280"></i>
+        Este equipo no necesita N° de serie propio: ${_escapeHtml(_serieMotivo)}
+      </div>`;
+  } else if (serieSug && !readonly){
+    serieSugHtml = `
       <div class="cap-serie-sug" id="capSerieSugWrap">
         <i class="bi bi-lightbulb-fill"></i>
         Serie sugerida: <b>${_escapeHtml(serieSug)}</b>
         <button type="button" class="cap-serie-sug-btn"
                 onclick="_capUsarSerieSugerida(${mid}, '${_escapeAttr(serieSug)}')">Usar</button>
-      </div>` : '';
+      </div>`;
+  } else if (!readonly && _serieProv && (e.serie || '').trim()){
+    serieSugHtml = `
+      <div class="cap-serie-sug" id="capSerieSugWrap"
+           style="background:linear-gradient(135deg,#fff8e1,#fef3c7);border-color:#fcd34d;color:#92400e">
+        <i class="bi bi-upc-scan" style="color:#d97706"></i>
+        <span><b>${_escapeHtml(String(e.serie).trim())}</b> es un número interno de ILUS.
+        Si la máquina tiene placa, escribe acá el del fabricante: queda en la ficha
+        y es el que va a la etiqueta de garantía.</span>
+      </div>`;
+  }
   const seccionDatosHtml = `
     <div class="captura-section">
       <h6 class="ttl"><i class="bi bi-pencil-fill"></i>Datos del equipo</h6>

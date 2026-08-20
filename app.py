@@ -59914,6 +59914,61 @@ def _serie_es_provisoria(serie):
     return bool(_RE_SERIE_GENERADA.match(s))
 
 
+def _equipo_lleva_serie_individual(maq):
+    """¿A ESTE equipo tiene sentido pedirle un N° de serie propio?
+
+    2026-08-20, encargo de Daniel: *"aplícale inteligencia si ves que no
+    corresponde"*. Nace de un hallazgo medido ese día: el 16% de las
+    "máquinas" con ficha son accesorios — colchonetas de yoga, bandas
+    elásticas, cuerdas de tríceps, pelotas Bosu, correas de tobillo — y
+    cada una tiene su número de serie individual. Una colchoneta no lleva
+    placa, y pedirle serie (o lubricación, o mediciones eléctricas) es lo
+    mismo que trabó la OT-2026-00058.
+
+    Returns: (bool, motivo_legible) — el motivo se muestra al técnico, así
+    que se escribe para una persona, no para un log.
+
+    🔴 Por diseño responde SÍ ante la duda. Un equipo sin clasificar sigue
+    pidiendo serie: es preferible preguntar de más que dejar sin
+    identificar una máquina que después necesite garantía.
+
+    Las 4 señales ya existen en la base — NO hace falta ninguna columna
+    nueva, y por lo tanto ningún cambio de esquema (ILUS_SKIP_MIGRATIONS=1
+    en producción hace que agregar columnas sea caro y frágil).
+    """
+    m = maq or {}
+
+    if (m.get("estado") or "activo").strip().lower() == "baja":
+        return False, "El equipo está dado de baja."
+
+    _apl = m.get("aplica_mantencion")
+    if _apl is not None and str(_apl).strip() in ("0", "False", "false"):
+        return False, "Marcado como 'sin mantención' en la ficha del cliente."
+
+    try:
+        _cant = int(m.get("cantidad") or 1)
+    except (TypeError, ValueError):
+        _cant = 1
+    if _cant > 1:
+        return False, (f"La ficha agrupa {_cant} unidades: un solo número de "
+                       f"serie no identificaría a ninguna en particular.")
+
+    # Clasificación del Catálogo por SKU. Reusa _inc_clasificacion_sku, que
+    # ya traduce cat_clases_producto.modelo_precio: 'fijo' = piso/accesorio
+    # repetible, 'horas' = equipo. Es el mismo puente SKU→clase que usa
+    # Incidencias; no se crea taxonomía nueva (Daniel, 2026-08-03: "las
+    # tablas se deben reusar").
+    try:
+        _clas = _inc_clasificacion_sku(m.get("sku") or "")
+    except Exception:
+        _clas = {"repetible": None, "clase_nombre": None}
+    if _clas.get("repetible") is True:
+        return False, (f"Es un {(_clas.get('clase_nombre') or 'accesorio').lower()}: "
+                       f"se cuenta por cantidad, no por unidad.")
+
+    return True, ""
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/maquinas", methods=["POST"])
 @_mant_required
 def mant_maquina_add(cid):
@@ -93282,7 +93337,31 @@ def mant_maquina_ficha_tecnica_json(mid):
     # F-LEV 2026-06-10 (Daniel): si el equipo NO tiene N° de serie, SUGERIR la
     # serie ILUS que se generaría (la "que ya viene de cuando se crea el
     # producto"). El técnico la acepta con un click en el modal de captura.
-    if not (eq.get("serie") or "").strip():
+    #
+    # 2026-08-20 — se agregan tres datos NUEVOS al lado, sin tocar el
+    # contrato de `serie_sugerida`: sigue siendo string o None porque el
+    # modal hace String(e.serie_sugerida) y lo graba tal cual con un click
+    # (static/mantenciones_ot_ejecutar.js). Devolver otra cosa acá escribiría
+    # basura en el campo que alimenta la etiqueta de garantía.
+    #
+    # Por qué hacían falta: medido ese día, 179 de 179 equipos ya tenían
+    # serie genérica, así que la condición "si NO tiene serie" era falsa
+    # siempre y este bloque nunca corría. El banner existía y no se veía
+    # nunca. Lo que falta no es rellenar un vacío: es poder REEMPLAZAR el
+    # genérico por el de la placa, que es lo que Daniel pidió.
+    _serie_actual = (eq.get("serie") or "").strip()
+    try:
+        _lleva_serie, _motivo_no_serie = _equipo_lleva_serie_individual(eq)
+    except Exception:
+        # Ante cualquier problema, asumimos que SÍ lleva: es preferible
+        # preguntar de más que dejar una máquina sin identificar. Y nunca
+        # a costa de tumbar la ficha con el técnico en terreno.
+        _lleva_serie, _motivo_no_serie = True, ""
+    eq["serie_lleva_individual"] = bool(_lleva_serie)
+    eq["serie_no_aplica_motivo"] = _motivo_no_serie or ""
+    eq["serie_es_provisoria"] = _serie_es_provisoria(_serie_actual)
+
+    if _lleva_serie and not _serie_actual:
         try:
             eq["serie_sugerida"] = _generar_serie_ilus(cliente_id, eq.get("sku") or "")
         except Exception:
