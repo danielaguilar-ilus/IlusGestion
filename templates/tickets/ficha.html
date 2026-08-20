@@ -63,9 +63,21 @@
 
         <!-- Vista compacta con edición campo por campo: cada dato tiene su propio
              ícono de lápiz — clic convierte SOLO esa fila en un input inline
-             (blur/Enter guarda con PATCH de ese campo, Escape cancela). -->
+             (blur/Enter guarda con PATCH de ese campo, Escape cancela).
+             2026-08-20: se completa el cableado de la cabecera "premium" que
+             ya existía en tickets_ficha.css desde el 2026-07-14 (avatar con
+             iniciales en degradado + chips de RUT/tipo) pero nunca se había
+             conectado al HTML/JS — quedaba CSS huérfano. Mismos IDs de
+             siempre para el nombre (#idCompactoNombre) y el grid
+             (#idCompactoDatos); se agregan #idCompactoAvatar/#idCompactoChips. -->
         <div id="idVistaCompacta">
-          <div class="tk-id-nombre" id="idCompactoNombre">—</div>
+          <div class="tk-id-head">
+            <div class="tk-id-avatar" id="idCompactoAvatar">?</div>
+            <div class="tk-id-headtxt">
+              <div class="tk-id-nombre" id="idCompactoNombre">—</div>
+              <div class="tk-id-headchips" id="idCompactoChips"></div>
+            </div>
+          </div>
           <dl class="tk-dl" id="idCompactoDatos"></dl>
           <!-- 2026-07-14: los campos SIN dato se agrupan acá, colapsados tras el
                botón "Ver campos vacíos (N)" — siguen siendo editables con el

@@ -1114,8 +1114,30 @@ function tkIdFilaHtml(campo, t){
     + '<i class="bi bi-pencil-fill tk-edit-pencil" data-field="'+campo.key+'" title="Editar '+esc(campo.label)+'"></i>'
     + '</dd>';
 }
+// Iniciales para el avatar de la cabecera: 2 letras si hay nombre/empresa
+// (primera + última palabra), "?" si el ticket todavía no tiene ningún
+// dato de cliente (ej. los creados manualmente antes de que llegue el
+// primer correo -- ver _tk_import_desde_taa). No inventa iniciales de la
+// nada: mejor un signo de pregunta honesto que unas letras sin sentido.
+function tkIdIniciales(t){
+  const base = (t.empresa || t.nombre_contacto || '').trim();
+  if(!base) return '?';
+  const partes = base.split(/\s+/).filter(Boolean);
+  if(partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
+  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+}
 function renderIdentificacionCompacta(t){
-  document.getElementById('idCompactoNombre').textContent = t.empresa || t.nombre_contacto || 'Sin nombre registrado';
+  const nombre = t.empresa || t.nombre_contacto || 'Sin nombre registrado';
+  document.getElementById('idCompactoNombre').textContent = nombre;
+  const avatar = document.getElementById('idCompactoAvatar');
+  if(avatar) avatar.textContent = tkIdIniciales(t);
+  const chipsWrap = document.getElementById('idCompactoChips');
+  if(chipsWrap){
+    const chips = [];
+    if(t.rut) chips.push('<span class="tk-id-chip"><i class="bi bi-person-badge"></i>'+esc(t.rut)+'</span>');
+    if(t.tipo) chips.push('<span class="tk-id-chip"><i class="bi bi-tag"></i>'+esc(TIPO_LABEL[t.tipo]||t.tipo)+'</span>');
+    chipsWrap.innerHTML = chips.join('');
+  }
   const dl = document.getElementById('idCompactoDatos');
   const dlVacios = document.getElementById('idCompactoVacios');
   const btnVacios = document.getElementById('idVaciosBtn');
@@ -1146,8 +1168,12 @@ function renderIdentificacionCompacta(t){
   document.querySelectorAll('#idVistaCompacta .tk-edit-pencil').forEach(function(p){
     p.addEventListener('click', function(){ tkIdEmpezarEdicion(p.dataset.field); });
   });
-  const badge = document.getElementById('idCompactoTipoBadge');
-  if(t.tipo){ badge.style.display='inline-block'; badge.textContent = TIPO_LABEL[t.tipo]||t.tipo; } else badge.style.display='none';
+  // 2026-08-20: el tipo ahora se muestra como chip en la cabecera premium
+  // (arriba, junto al RUT) -- se deja de duplicar acá abajo para no
+  // repetir el mismo dato dos veces en la misma tarjeta. El elemento
+  // #idCompactoTipoBadge sigue existiendo en el HTML (Regla #4.2, nada se
+  // borra) simplemente ya no se puebla, igual que cualquier ticket sin
+  // tipo se comportaba antes.
 }
 (function(){
   const btn = document.getElementById('idVaciosBtn');
