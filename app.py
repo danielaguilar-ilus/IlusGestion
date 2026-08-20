@@ -4182,6 +4182,17 @@ PERMS_KEYS = (
     # definitivo, que se queda exclusivo de superadmin+confirm_text
     # (Regla #5, no se toca).
     "cat_eliminar",
+    # tr_eliminar — flag del módulo Transporte (aditivo 2026-08-19, Daniel:
+    # "que Alison pueda eliminar pedidos y manifiestos que no tengan la
+    # trazabilidad comprometida... dejalo modificable para controlar
+    # siempre desde el front para modificar en los roles"). MISMO patrón
+    # exacto que cat_eliminar: el gate real (tr_manifiesto_eliminar,
+    # tr_manifiestos_bulk_eliminar) sigue aceptando "superadmin" también
+    # vía OR, y NINGUNO de los dos flags puede saltarse la guarda de
+    # trazabilidad comprometida (courier/POD) -- ese caso sigue exclusivo
+    # de superadmin+confirm_text, sin excepción. tr_eliminar solo abre la
+    # puerta para lo que NUNCA tocó a un courier ni tiene entrega firmada.
+    "tr_eliminar",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4324,6 +4335,7 @@ def _build_perms_from_matrix(role):
     # puramente aditivo, el gate real (_catalogo_eliminar_required en
     # catalogo_module.py) sigue aceptando "superadmin" también vía OR.
     base["cat_eliminar"]  = bool(cat.get("eliminar"))
+    base["tr_eliminar"]   = bool(tra.get("eliminar"))
 
     base["superadmin"] = False
     return base
@@ -12137,7 +12149,7 @@ PERMISSIONS_MATRIX = {
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
-                       "acciones":["ver","cubicador","asignar","manifiestos","couriers"]},
+                       "acciones":["ver","cubicador","asignar","manifiestos","couriers","eliminar"]},
     "comunicaciones": {"label":"Comunicaciones", "icon":"bi-chat-dots",
                        "acciones":["ver","configurar","enviar","plantillas","kill_switch"]},
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
@@ -12197,6 +12209,7 @@ PERMISSIONS_META = {
         "asignar":     {"label": "Asignar y Cotizar", "tipo": "submodulo", "icon": "bi-clipboard-check"},
         "manifiestos": {"label": "Manifiestos",       "tipo": "submodulo", "icon": "bi-file-earmark-text"},
         "couriers":    {"label": "Couriers / tarifas","tipo": "submodulo", "icon": "bi-cash-coin"},
+        "eliminar":    {"label": "Eliminar manifiestos y pedidos", "tipo": "bloqueo", "icon": "bi-trash"},
     },
     "comunicaciones": {
         "ver":         {"label": "Ver historial",         "tipo": "submodulo", "icon": "bi-chat-dots"},
@@ -29766,10 +29779,22 @@ def tr_manifiesto_eliminar(mid):
     la prueba de entrega de cada documento sobreviven intactos aunque se
     suelte su fila de manifiesto. Los documentos vuelven a "Pendiente" y se
     pueden re-agrupar en un manifiesto nuevo.
-    """
-    if not bool(g.permissions.get("superadmin")):
-        return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar manifiestos."}), 403
 
+    FIX 2026-08-19 (Daniel: "que Alison pueda eliminar pedidos y manifiestos
+    que no tengan la trazabilidad comprometida... dejalo modificable para
+    controlar siempre desde el front para modificar en los roles"). Antes
+    esta ruta exigía superadmin de forma incondicional, incluso para un
+    manifiesto vacío recién creado por error. Ahora el permiso depende de
+    si el manifiesto YA tiene actividad real:
+      - SIN actividad  → cualquiera con el flag granular g.permissions
+        ['tr_eliminar'] (matriz /admin/roles, módulo "transporte" -> acción
+        "eliminar", aditivo, nace en False para todos los roles hasta que
+        Daniel lo prenda -- mismo patrón que 'cat_eliminar' del Catálogo,
+        2026-07-21) o superadmin puede borrar directo.
+      - CON actividad  → sigue exclusivo de superadmin + confirm_text, sin
+        excepción. tr_eliminar NUNCA salta esta guarda -- borrar algo que ya
+        salió con un courier o tiene entrega firmada sigue siendo grave.
+    """
     m = mysql_fetchone(
         "SELECT id, correlativo, eliminado FROM transport_manifests WHERE id=%s", (mid,))
     if not m:
@@ -29779,35 +29804,39 @@ def tr_manifiesto_eliminar(mid):
 
     # ── GUARDA DE TRAZABILIDAD (Daniel 2026-07-25): "si ya hay un compromiso
     # de trazabilidad, el manifiesto ya no se puede borrar, a menos que sea
-    # el superadministrador". El superadmin SIEMPRE puede — pero si el
-    # manifiesto ya tiene actividad real (se subió a un courier o hay prueba
-    # de entrega firmada), exige escribir el correlativo para confirmar, en
-    # vez de un solo clic. Mismo patrón que un hard-delete con confirm_text
-    # (REGLA #5), aplicado acá porque soft-delete + actividad real es
-    # igual de sensible.
-    activo = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM transport_manifest_items "
-        "WHERE manifest_id=%s AND (tracking_number IS NOT NULL "
-        "OR simpliroute_visit_id IS NOT NULL)", (mid,))
-    tiene_courier = bool(activo and activo.get("n"))
-    tiene_pod = mysql_fetchone(
-        "SELECT COUNT(*) AS n FROM transport_delivery_proof dp "
-        "JOIN transport_manifest_items mi ON mi.commitment_id = dp.commitment_id "
-        "WHERE mi.manifest_id=%s", (mid,))
-    tiene_pod = bool(tiene_pod and tiene_pod.get("n"))
+    # el superadministrador". Reusa el mismo motor de solo lectura que ya
+    # usa _tr_manifiesto_guard_actividad (agregar/quitar items) -- Regla
+    # #4.2: no duplicar la consulta en un tercer lugar.
+    from logistica_cotizaciones import _lc_manifiesto_tiene_actividad
+    tiene_actividad, motivo = _lc_manifiesto_tiene_actividad(mid)
+    es_superadmin = bool(g.permissions.get("superadmin"))
 
-    if tiene_courier or tiene_pod:
+    if tiene_actividad:
+        if not es_superadmin:
+            return jsonify({
+                "ok": False,
+                "error": f"Este manifiesto {motivo}: solo un superadministrador puede eliminarlo.",
+            }), 403
+        # El superadmin SIEMPRE puede — pero exige escribir el correlativo
+        # para confirmar, en vez de un solo clic. Mismo patrón que un
+        # hard-delete con confirm_text (REGLA #5), aplicado acá porque
+        # soft-delete + actividad real es igual de sensible.
         body = request.get_json(silent=True) or {}
         confirm_text = (body.get("confirm_text") or "").strip()
         if confirm_text != (m.get("correlativo") or ""):
-            motivo = ("tiene prueba de entrega firmada" if tiene_pod
-                       else "ya se subió a un courier")
             return jsonify({
                 "ok": False,
                 "requiere_confirmacion": True,
                 "correlativo": m.get("correlativo"),
                 "error": f"Este manifiesto {motivo}. Escribe \"{m.get('correlativo')}\" para confirmar la eliminación.",
             }), 409
+    elif not (es_superadmin or bool(g.permissions.get("tr_eliminar"))):
+        return jsonify({
+            "ok": False,
+            "error": "No tienes permiso para eliminar manifiestos. Pide que un "
+                     "superadministrador te habilite \"Eliminar manifiestos y "
+                     "pedidos\" en Usuarios y roles.",
+        }), 403
 
     try:
         conn = get_db()
@@ -29839,15 +29868,29 @@ def tr_manifiestos_bulk_eliminar():
     de la marcha blanca de agosto, quiere poder limpiar él mismo los
     manifiestos de PRUEBA (varios a la vez, con checkbox) sin pedírmelo uno
     por uno. Mismo patrón que el borrado individual (`tr_manifiesto_eliminar`):
-    solo superadmin, soft-delete real (`eliminado=1`), nunca DROP de la fila,
-    y respeta la misma guarda de trazabilidad — si un manifiesto ya tiene
-    actividad real con un courier o prueba de entrega firmada, se omite del
-    lote en vez de exigir escribir el correlativo (impráctico en un borrado
-    masivo); el resultado indica cuántos se omitieron para que Daniel los
-    revise uno por uno si de verdad quiere borrarlos.
+    soft-delete real (`eliminado=1`), nunca DROP de la fila, y respeta la
+    misma guarda de trazabilidad — si un manifiesto ya tiene actividad real
+    con un courier o prueba de entrega firmada, se omite del lote en vez de
+    exigir escribir el correlativo (impráctico en un borrado masivo); el
+    resultado indica cuántos se omitieron para que Daniel los revise uno por
+    uno si de verdad quiere borrarlos.
+
+    FIX 2026-08-19 (Daniel: "que Alison pueda eliminar pedidos y manifiestos
+    que no tengan la trazabilidad comprometida"). Antes el endpoint completo
+    era superadmin-only. Ahora acepta también g.permissions['tr_eliminar']
+    (matriz /admin/roles, módulo "transporte" -> acción "eliminar") -- pero
+    el comportamiento de fondo NO cambia para nadie: un manifiesto con
+    actividad real se sigue omitiendo del lote sin excepción, sea quien sea
+    quien lo dispare. superadmin nunca pudo forzar un borrado masivo de algo
+    activo (tenía que ir uno por uno con confirm_text) y sigue sin poder.
     """
-    if not bool(g.permissions.get("superadmin")):
-        return jsonify({"ok": False, "error": "Solo un superadministrador puede eliminar manifiestos."}), 403
+    if not bool(g.permissions.get("superadmin") or g.permissions.get("tr_eliminar")):
+        return jsonify({
+            "ok": False,
+            "error": "No tienes permiso para eliminar manifiestos. Pide que un "
+                     "superadministrador te habilite \"Eliminar manifiestos y "
+                     "pedidos\" en Usuarios y roles.",
+        }), 403
 
     body = request.get_json(silent=True) or {}
     ids_in = body.get("ids") or []
@@ -29868,21 +29911,15 @@ def tr_manifiestos_bulk_eliminar():
     if not rows:
         return jsonify({"ok": False, "error": "Ninguno de esos manifiestos existe o ya estaba eliminado"}), 404
 
+    # Reusa el mismo motor de solo lectura que el borrado individual y que
+    # _tr_manifiesto_guard_actividad -- Regla #4.2: no duplicar la consulta
+    # de "tiene actividad" en un cuarto lugar del archivo.
+    from logistica_cotizaciones import _lc_manifiesto_tiene_actividad
     eliminados = []
     omitidos = 0
     for r in rows:
-        rid = r["id"]
-        activo = mysql_fetchone(
-            "SELECT COUNT(*) AS n FROM transport_manifest_items "
-            "WHERE manifest_id=%s AND (tracking_number IS NOT NULL "
-            "OR simpliroute_visit_id IS NOT NULL)", (rid,))
-        tiene_courier = bool(activo and activo.get("n"))
-        tiene_pod = mysql_fetchone(
-            "SELECT COUNT(*) AS n FROM transport_delivery_proof dp "
-            "JOIN transport_manifest_items mi ON mi.commitment_id = dp.commitment_id "
-            "WHERE mi.manifest_id=%s", (rid,))
-        tiene_pod = bool(tiene_pod and tiene_pod.get("n"))
-        if tiene_courier or tiene_pod:
+        tiene_actividad, _motivo = _lc_manifiesto_tiene_actividad(r["id"])
+        if tiene_actividad:
             omitidos += 1
             continue
         eliminados.append(r)
