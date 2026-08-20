@@ -9419,6 +9419,16 @@ def register_tickets_routes(app, ctx):
     #  (3) dedup por Message-ID en tk_mail_ingeridos.
     # ═══════════════════════════════════════════════════════════════════
     _TK_NUM_TICKET_RE = re.compile(r"TK-\d{4}-\d{5}", re.I)
+    # 2026-08-20 (Daniel — migración desde Triple A, proveedor que
+    # desarrolló el sistema anterior de tickets): sus correos ya enviados a
+    # clientes usan el asunto "ILUS | Ticket - ID: <n>", donde <n> es el
+    # `id` interno de tk_tickets (verificado en vivo: ID 754 real, con toda
+    # la conversación del cliente — Triple A leía/escribía DIRECTO sobre
+    # nuestra propia tabla, no una numeración aparte de ellos). Al dar de
+    # baja su sistema, los hilos de correo YA ABIERTOS con clientes deben
+    # seguir resolviendo al ticket correcto -- si no, esas conversaciones
+    # se pierden en el cambio de proveedor.
+    _TK_TAA_SUBJECT_RE = re.compile(r"ILUS\s*\|\s*Ticket\s*-\s*ID:\s*(\d+)", re.I)
     # Marcadores tipicos donde empieza la cola citada de una respuesta
     # (Gmail/Outlook es/en). Todo lo que siga se descarta del mensaje.
     _TK_QUOTE_RE = re.compile(
@@ -9584,9 +9594,37 @@ def register_tickets_routes(app, ctx):
         exactamente el tipo de desincronización que ya nos costó 12 días de
         tickets perdidos. Un solo criterio, un solo lugar."""
         m = _TK_NUM_TICKET_RE.search(subject or "")
-        if not m:
+        numero = m.group(0).upper() if m else None
+        if not numero:
+            # Formato viejo de Triple A ("ILUS | Ticket - ID: 754"): se
+            # resuelve el id crudo al numero_ticket real, para que TODO lo
+            # que sigue (dedup, INSERT del mensaje, etc.) trabaje exactamente
+            # igual que con el formato propio -- un solo camino, no dos.
+            m_taa = _TK_TAA_SUBJECT_RE.search(subject or "")
+            if m_taa:
+                try:
+                    _tid_taa = int(m_taa.group(1))
+                    # OJO: se busca por legacy_taa_id, NO por id.
+                    # El numero del asunto es el id INTERNO DE TRIPLE A, que
+                    # es otro sistema: sus tickets se importaron por CSV y su
+                    # id original quedo en legacy_taa_id (UNIQUE), mientras
+                    # que el id de tk_tickets es nuestro correlativo propio.
+                    # Verificado con un caso real: el correo "ID: 754" (de
+                    # Gonzalo, rechazando una cotizacion) NO es el ticket
+                    # id=754 de ILUS (de Leandro Varela, por un cable de
+                    # fuerza) -- ese lleva legacy_taa_id=567. Resolver por id
+                    # habria pegado la respuesta de un cliente en el ticket de
+                    # OTRO cliente, en silencio.
+                    _row_taa = mysql_fetchone(
+                        "SELECT numero_ticket FROM tk_tickets WHERE legacy_taa_id=%s",
+                        (_tid_taa,)
+                    )
+                    if _row_taa and _row_taa.get("numero_ticket"):
+                        numero = _row_taa["numero_ticket"].upper()
+                except Exception as _e_taa:
+                    print(f"[tk_mail][taa_subject] {_e_taa}", flush=True)
+        if not numero:
             return "sin_numero", None
-        numero = m.group(0).upper()
         fe = (from_email or "").strip().lower()
         propio = (
             not fe
@@ -9923,7 +9961,21 @@ def register_tickets_routes(app, ctx):
         try:
             # Gmail tokeniza la busqueda (encuentra "TK-2026-..." aunque el
             # SUBJECT sea aproximado); el regex de abajo es el filtro REAL.
-            typ, data = M.search(None, f'(SINCE {desde_imap} SUBJECT "TK-")')
+            #
+            # 2026-08-20 — Se agrega el asunto del sistema de Triple A
+            # ("ILUS | Ticket - ID: 754"), que NO contiene "TK-": con el
+            # filtro anterior el servidor ni siquiera devolvia esos correos,
+            # asi que reconocerlos mas abajo no habria servido de nada. La
+            # sintaxis IMAP de OR es prefija: OR <clave1> <clave2>, o sea
+            # "SINCE fecha AND (SUBJECT 'TK-' OR SUBJECT 'Ticket - ID:')".
+            _busqueda = f'(SINCE {desde_imap} OR SUBJECT "TK-" SUBJECT "Ticket - ID:")'
+            typ, data = M.search(None, _busqueda)
+            if typ != "OK":
+                # Red de seguridad: si algun servidor no digiere el OR, se
+                # vuelve al filtro historico en vez de quedarse sin leer nada.
+                print(f"[tk_mail] busqueda con OR rechazada ({typ}); "
+                      f"se usa el filtro simple", flush=True)
+                typ, data = M.search(None, f'(SINCE {desde_imap} SUBJECT "TK-")')
             todos = (data[0].split() if data and data[0] else [])
             ids = todos[-max_correos:]
             resumen["vistos"] = len(ids)
