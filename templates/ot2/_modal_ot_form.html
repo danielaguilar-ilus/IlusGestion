@@ -1,25 +1,34 @@
 {#
   ══════════════════════════════════════════════════════════════════════
-  OT 2.0 · FORMULARIO DE GENERAR OT — RÉPLICA INDEPENDIENTE
+  OT 2.0 · FORMULARIO DE GENERAR OT — COPIA INDEPENDIENTE Y VIVA
   ══════════════════════════════════════════════════════════════════════
-  Daniel (19-08-2026), viendo el modal viejo: "quiero que me crees un
-  modal idéntico al que está allí, exactamente igual, pero independiente…
-  replícale todo SIN QUE NADA HAGA NADA para yo irte explicando".
+  Daniel (19-08-2026): "copio lo exacto como funciona ahora y avancemos
+  creando... con código nuevo, pero copiando las buenas costumbres que ya
+  tenían" · "este modal quiero estandarizarlo para ahorrar código y que
+  siempre lo llamemos, pero tiene que venir como una función, adaptarse a
+  las diferencias de origen y de tipo".
 
-  QUÉ ES ESTO: la copia visual fiel de templates/tickets/_modal_generar_ot.html
-  (sus 7 pasos), como continuación del selector de origen de OT 2.0.
+  QUÉ ES: copia fiel de los 7 pasos de templates/tickets/_modal_generar_ot.html
+  CON toda su interactividad — calendario del mes con carga por día, línea
+  de tiempo del día, choque de agenda, sugerir horario, modalidad del
+  levantamiento y semáforo de pasos. La lógica vive en static/ot2_form.js.
 
-  🔴 TODAVÍA NO HACE NADA, a propósito. Se le quitó TODA la interactividad
-  (onclick / onchange / oninput) y no hay JS de lógica detrás. Es una
-  maqueta viva para que Daniel explique paso por paso qué debe hacer cada
-  cosa antes de conectarla. No llama a ningún endpoint ni guarda nada.
+  INDEPENDENCIA (el punto del encargo):
+  - Estilos  → static/ot2_modal_form.css   (copia propia)
+  - Lógica   → static/ot2_form.js          (copia propia, namespace O2F)
+  - Escribe  → POST /ot/api/crear          (motor propio de OT 2.0)
+  Si mañana se borra el modal viejo y su JS, esto sigue funcionando.
 
-  INDEPENDENCIA:
-  - Estilos: static/ot2_modal_form.css — copia propia, no el CSS del
-    modal viejo. Si mañana se borra aquel, este sigue viéndose igual.
-  - Identificadores: todo el namespace pasó de "tkot*" y "lev*" a
-    "o2f*" y "o2fLev*", así que los dos modales pueden convivir en una
-    misma página sin pisarse los ids.
+  CÓMO SE LLAMA, desde cualquier página:
+      O2F.iniciar({origen:'ticket', ticket_id:70, cliente:{id:26, nombre:'…'}})
+      O2F.iniciar({origen:'interno'})
+  Lo que no venga en el contexto, el formulario lo pide.
+
+  DIFERENCIAS DELIBERADAS con el original:
+  - "Instalación" va PRIMERA en el tipo (Daniel: "siempre debe estar de
+    primero la instalación") — es el trabajo más frecuente.
+  - "Garantía" y "Repuesto" salieron de la oferta: la garantía es un
+    atributo de cobro, no un tipo de trabajo.
   ══════════════════════════════════════════════════════════════════════
 #}
 
@@ -43,15 +52,12 @@
 
       <div class="modal-body" style="background:#f8fafc;padding:18px 20px">
 
-        {# Aviso de cliente sin ficha — mismo lugar que en el modal viejo.
-           Se muestra o se oculta desde fuera; hoy queda visible para que
-           Daniel lo vea al explicar. #}
         <div class="alert alert-warning d-flex gap-2 py-2" id="o2fAvisoSinFicha"
-             style="font-size:.84rem">
+             style="font-size:.84rem;display:none">
           <i class="bi bi-exclamation-triangle-fill"></i>
-          <div>Este cliente todavía no tiene ficha en Mantenciones. No hay equipos
-            "de la ficha" que elegir — se incluirán <u>todos</u> los equipos declarados
-            en este ticket, tal cual quedaron registrados aquí.</div>
+          <div>Este cliente todavía no tiene ficha en Mantenciones. Se incluirán
+            <u>todos</u> los equipos declarados en el origen, tal cual quedaron
+            registrados.</div>
         </div>
 
 <div class="lev-step-card" id="o2fStep1">
@@ -72,9 +78,10 @@
             <div class="d-flex gap-2 align-items-end">
               <div class="flex-grow-1">
                 <label class="form-label small fw-semibold">Tipo *</label>
-                <select id="o2f_otTipo" class="form-select form-select-sm">
-                  <option value="levantamiento">Levantamiento de ficha</option>
+                <select id="o2f_otTipo" class="form-select form-select-sm" onchange="o2fTipoChange()">
                   <option value="instalacion">Instalación</option>
+                  <option value="levantamiento">Levantamiento de ficha</option>
+                  
                   <option value="preventiva">Mantención preventiva</option>
                   <option value="visita_tecnica">Visita técnica</option>
                   <option value="correctiva">Mantención correctiva</option>
@@ -84,11 +91,9 @@
                      (el backend ya aceptaba estos 8 tipos hace varios commits,
                      pero nunca eran seleccionables desde acá). Mismo orden:
                      los 6 de siempre primero, estos al final. #}
-                  <option value="garantia">Garantía</option>
                   <option value="cambio_equipo">Cambio de equipo</option>
                   <option value="desinstalacion">Desinstalación</option>
                   <option value="capacitacion">Capacitación</option>
-                  <option value="repuesto">Repuesto</option>
                   <option value="revision_interna">Trabajo de bodega</option>
                   <option value="visita_correctiva">Visita correctiva</option>
                   <option value="control_calidad">Control de Calidad</option>
@@ -96,7 +101,7 @@
               </div>
               {% if permissions.superadmin %}
               <button type="button" class="btn btn-sm btn-outline-secondary"
-                     
+                      onclick="o2fAbrirCrearTipoOT()"
                       title="Crear un tipo personalizado de OT">
                 <i class="bi bi-plus-lg me-1"></i>Nuevo tipo
               </button>
@@ -112,7 +117,7 @@
             {# Referencia de solo lectura cuando esta OT nace de una cotización
                (origen "Cotización" del selector de /mantenciones/ots) — la
                llena _tkotMostrarRefCotizacion() (static/tickets_ficha.js) si
-               la URL trae ?cotizacion_id=. Elemento APARTE de otPlantillaInfo
+               la URL trae ?cotizacion_id=. Elemento APARTE de o2f_otPlantillaInfo
                a propósito: ese otro div lo pisa o2fPintarPlantilla() cada vez
                que cambia el tipo, y esta referencia debe sobrevivir a eso. #}
             <div id="o2f_otCotizacionRef" class="small mt-2" style="display:none"></div>
@@ -133,7 +138,7 @@
               <div class="lev-modo-grid">
                 {# Sin `on` de fábrica: la modalidad NO viene preseleccionada.
                    Manda el desplegable de arriba (Daniel 2026-08-06). #}
-                <div class="lev-modo-card" id="o2fLevModoEquipos">
+                <div class="lev-modo-card" id="o2fLevModoEquipos" onclick="o2fModoSet('equipos')">
                   <div class="chk"><i class="bi bi-check-lg"></i></div>
                   <div class="ico">📋</div>
                   <div class="tit">Con equipos del ticket</div>
@@ -141,7 +146,7 @@
                     técnico debe documentar.</div>
                   <span class="tag" style="background:#f3f4f6;color:#374151">CLÁSICO</span>
                 </div>
-                <div class="lev-modo-card" id="o2fLevModoDescubrir">
+                <div class="lev-modo-card" id="o2fLevModoDescubrir" onclick="o2fModoSet('descubrimiento')">
                   <div class="chk"><i class="bi bi-check-lg"></i></div>
                   <div class="ico">🔭</div>
                   <div class="tit">Descubrimiento en terreno</div>
@@ -230,11 +235,11 @@
                 </label>
                 <div class="d-flex gap-2 align-items-start">
                   <select id="o2fLevContactoSel" class="form-select form-select-sm" style="flex:1"
-                         >
+                          onchange="o2fContactoChange()">
                     <option value="">— Cargando contactos… —</option>
                   </select>
                   <button type="button" class="btn btn-sm btn-outline-secondary"
-                          title="Ingresar manualmente">
+                          onclick="o2fToggleContactoManual()" title="Ingresar manualmente">
                     <i class="bi bi-pencil"></i>
                   </button>
                 </div>
@@ -347,24 +352,24 @@
             </div>
           </div>
           <div class="lev-step-body">
-            <div id="o2fLevCalWarnChoque" class="tkcal-choque-alert" style="display:none"></div>
+            <div id="o2fLevCalWarnChoque" class="o2fcal-choque-alert" style="display:none"></div>
 
             {# Control fino: fecha + horario. El calendario manda para el DÍA. #}
             <div class="tksched-inputs">
               <div>
-                <label class="form-label small fw-semibold" for="levFechaProg">Fecha programada *</label>
+                <label class="form-label small fw-semibold" for="o2fLevFechaProg">Fecha programada *</label>
                 <input type="date" id="o2fLevFechaProg" class="form-control form-control-sm" required
-                      >
+                       onchange="o2fFechaProgChange()">
               </div>
               <div>
-                <label class="form-label small fw-semibold" for="levHoraIni">Hora inicio</label>
+                <label class="form-label small fw-semibold" for="o2fLevHoraIni">Hora inicio</label>
                 <input type="time" id="o2fLevHoraIni" class="form-control form-control-sm" value="09:00"
-                      >
+                       oninput="o2fHoraInput()" onchange="o2fHoraInput()">
               </div>
               <div>
-                <label class="form-label small fw-semibold" for="levHoraFin">Hora término</label>
+                <label class="form-label small fw-semibold" for="o2fLevHoraFin">Hora término</label>
                 <input type="time" id="o2fLevHoraFin" class="form-control form-control-sm" value="13:00"
-                      >
+                       oninput="o2fHoraInput()" onchange="o2fHoraInput()">
               </div>
             </div>
             {# Chips de duración (2026-07-19): 1 tap para extender la OT a N
@@ -377,17 +382,17 @@
                (allá con _LEV_MODAL en vez de _TKOT). #}
             <div class="lev-dur-row" id="o2fLevDurChips" role="group" aria-label="Duración de la visita">
               <span class="lev-dur-lbl">Duración:</span>
-              <button type="button" class="lev-dur-chip act" data-n="1" aria-pressed="true" >1 día</button>
-              <button type="button" class="lev-dur-chip"     data-n="2" aria-pressed="false">2 días</button>
-              <button type="button" class="lev-dur-chip"     data-n="3" aria-pressed="false">3 días</button>
-              <button type="button" class="lev-dur-chip"     data-n="5" aria-pressed="false">5 días</button>
-              <button type="button" class="lev-dur-chip"     data-n="otro" aria-pressed="false">Otro…</button>
+              <button type="button" class="lev-dur-chip act" data-n="1" aria-pressed="true"  onclick="levDurSet(1)">1 día</button>
+              <button type="button" class="lev-dur-chip"     data-n="2" aria-pressed="false" onclick="levDurSet(2)">2 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="3" aria-pressed="false" onclick="levDurSet(3)">3 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="5" aria-pressed="false" onclick="levDurSet(5)">5 días</button>
+              <button type="button" class="lev-dur-chip"     data-n="otro" aria-pressed="false" onclick="levDurOtro()">Otro…</button>
               <span class="lev-dur-hasta" id="o2fLevDurHasta"></span>
             </div>
             <div class="form-check form-switch mt-2">
               <input class="form-check-input" type="checkbox" id="o2fLevRangoDias"
-                    >
-              <label class="form-check-label small" for="levRangoDias">
+                     onchange="document.getElementById('o2fLevFechaFinWrap').style.display = this.checked ? '' : 'none'; o2fRangoChange();">
+              <label class="form-check-label small" for="o2fLevRangoDias">
                 ¿Se extenderá más de un día?
               </label>
             </div>
@@ -397,19 +402,19 @@
               </div>
               <div class="row g-2">
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold" for="levFechaFin">Fecha término *</label>
+                  <label class="form-label small fw-semibold" for="o2fLevFechaFin">Fecha término *</label>
                   <input type="date" id="o2fLevFechaFin" class="form-control form-control-sm"
-                        >
+                         oninput="o2fRangoChange()" onchange="o2fRangoChange()">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold" for="levHoraIniFin">Hora inicio (último día)</label>
+                  <label class="form-label small fw-semibold" for="o2fLevHoraIniFin">Hora inicio (último día)</label>
                   <input type="time" id="o2fLevHoraIniFin" class="form-control form-control-sm" value="09:00"
-                        >
+                         oninput="o2fdayRenderMine()" onchange="o2fdayRenderMine()">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label small fw-semibold" for="levHoraFinFin">Hora término (último día)</label>
+                  <label class="form-label small fw-semibold" for="o2fLevHoraFinFin">Hora término (último día)</label>
                   <input type="time" id="o2fLevHoraFinFin" class="form-control form-control-sm" value="13:00"
-                        >
+                         oninput="o2fdayRenderMine()" onchange="o2fdayRenderMine()">
                 </div>
               </div>
               <small class="text-muted d-block mt-2" style="font-size:.72rem">
@@ -422,23 +427,23 @@
             <div class="tksched">
               {# Col A — mini-calendario del mes #}
               <div class="tksched-col">
-                <div class="tkcal-toolbar">
-                  <button type="button" class="tkcal-navbtn" aria-label="Mes anterior">
+                <div class="o2fcal-toolbar">
+                  <button type="button" class="o2fcal-navbtn" onclick="o2fCalMes(-1)" aria-label="Mes anterior">
                     <i class="bi bi-chevron-left"></i>
                   </button>
-                  <div class="tkcal-titulo" id="o2fLevCalTitulo">—</div>
-                  <button type="button" class="tkcal-navbtn" aria-label="Mes siguiente">
+                  <div class="o2fcal-titulo" id="o2fLevCalTitulo">—</div>
+                  <button type="button" class="o2fcal-navbtn" onclick="o2fCalMes(1)" aria-label="Mes siguiente">
                     <i class="bi bi-chevron-right"></i>
                   </button>
-                  <button type="button" class="tkcal-hoy">Hoy</button>
+                  <button type="button" class="o2fcal-hoy" onclick="o2fCalHoy()">Hoy</button>
                 </div>
-                <div class="tkcal-dow">
+                <div class="o2fcal-dow">
                   <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
                 </div>
-                <div class="tkcal-grid" id="o2fLevCalGrid">
+                <div class="o2fcal-grid" id="o2fLevCalGrid">
                   <div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div>
                 </div>
-                <div class="tkcal-leyenda">
+                <div class="o2fcal-leyenda">
                   <span><i class="k" style="background:#dc2626"></i>Día seleccionado</span>
                   <span><i class="k" style="background:#fff;border:1px solid #dc2626"></i>Hoy</span>
                   <span><i class="k" style="background:#f8fafc;border:1px solid #e5e7eb"></i>Fin de semana</span>
@@ -446,46 +451,46 @@
                 {# Fallback conservado (REGLA #4.2): la lista textual del día
                    sigue existiendo en el DOM; la info visible ahora vive en
                    la línea de tiempo. #}
-                <div class="tkcal-detalle" id="o2fLevCalDetalle" style="display:none"></div>
+                <div class="o2fcal-detalle" id="o2fLevCalDetalle" style="display:none"></div>
               </div>
 
               {# Col B — línea de tiempo del día #}
               <div class="tksched-col">
-                <div class="tkday-head">
-                  <span class="tkday-navd">
-                    <button type="button" id="o2fLevDayPrev" aria-label="Día anterior">
+                <div class="o2fday-head">
+                  <span class="o2fday-navd">
+                    <button type="button" id="o2fLevDayPrev" onclick="o2fdayPaso(-1)" aria-label="Día anterior">
                       <i class="bi bi-chevron-left"></i>
                     </button>
-                    <button type="button" id="o2fLevDayNext" aria-label="Día siguiente">
+                    <button type="button" id="o2fLevDayNext" onclick="o2fdayPaso(1)" aria-label="Día siguiente">
                       <i class="bi bi-chevron-right"></i>
                     </button>
                   </span>
-                  <span class="tkday-fecha" id="o2fLevDayFecha">—</span>
-                  <span class="tkday-cnt" id="o2fLevDayCnt" style="display:none"></span>
-                  <span class="tkday-chip-rango" id="o2fLevDayChipRango" style="display:none"></span>
+                  <span class="o2fday-fecha" id="o2fLevDayFecha">—</span>
+                  <span class="o2fday-cnt" id="o2fLevDayCnt" style="display:none"></span>
+                  <span class="o2fday-chip-rango" id="o2fLevDayChipRango" style="display:none"></span>
                   {# ── §4A "Sugerir próximo horario libre" (propuesta Fable): busca en el
                      día mirado y, si está lleno, hasta 14 días hacia adelante — ver
-                     tkdaySugerirHueco()/_tkdayCalcularHueco() más abajo. Cero backend
+                     o2fdaySugerirHueco()/_tkdayCalcularHueco() más abajo. Cero backend
                      nuevo, solo lee _TKOT.cal.cache. #}
-                  <button type="button" id="o2fLevDaySugerirBtn" class="tkday-sugerir-btn"
-                         
+                  <button type="button" id="o2fLevDaySugerirBtn" class="o2fday-sugerir-btn"
+                          onclick="o2fdaySugerirHueco()"
                           title="Busca el próximo horario libre para los técnicos seleccionados">
                     <i class="bi bi-stars" aria-hidden="true"></i>Sugerir horario
                   </button>
-                  <span class="tkday-legend">
+                  <span class="o2fday-legend">
                     <span><i class="k ag"></i>Agendada</span>
                     <span><i class="k mine"></i>Tu OT</span>
                   </span>
                 </div>
-                <div class="tkday-scroll" id="o2fLevDayScroll">
-                  <div class="tkday-inner" id="o2fLevDayInner">
+                <div class="o2fday-scroll" id="o2fLevDayScroll">
+                  <div class="o2fday-inner" id="o2fLevDayInner">
                     <div id="o2fLevDayGutter"></div>
-                    <div class="tkday-canvas" id="o2fLevDayCanvas">
+                    <div class="o2fday-canvas" id="o2fLevDayCanvas">
                       <div id="o2fLevDayRejilla"></div>
                       <div id="o2fLevDayNow"></div>
                       <div id="o2fLevDayBlks"></div>
-                      <div class="tkday-blk mine" id="o2fLevDayMine" style="display:none"></div>
-                      <div class="tkday-ghost" id="o2fLevDayGhost" style="display:none"></div>
+                      <div class="o2fday-blk mine" id="o2fLevDayMine" style="display:none"></div>
+                      <div class="o2fday-ghost" id="o2fLevDayGhost" style="display:none"></div>
                     </div>
                   </div>
                 </div>
@@ -524,7 +529,7 @@
                 Equipos declarados en este ticket. Cada uno puede tener varias plantillas.
               </small>
               <div style="display:flex;gap:6px;flex-shrink:0">
-                <button class="btn btn-sm btn-outline-secondary" id="o2f_btnLevToggleTodos">
+                <button class="btn btn-sm btn-outline-secondary" id="o2f_btnLevToggleTodos" onclick="o2fToggleTodos()">
                   <i class="bi bi-check2-square me-1"></i>Marcar todos
                 </button>
               </div>
@@ -578,38 +583,38 @@
                   <i class="bi bi-building text-primary me-1"></i>¿Tiene ascensor?
                 </label>
                 <div class="lev-yn-group" role="group" aria-label="¿Tiene ascensor?">
-                  <button type="button" class="lev-yn-btn yes" data-target="acceso_ascensor" data-val="1"
-                         >
+                  <button type="button" class="lev-yn-btn yes" data-target="o2f_acceso_ascensor" data-val="1"
+                          onclick="o2fSetAccesoYN(this)">
                     <i class="bi bi-check-lg me-1"></i>Sí
                   </button>
-                  <button type="button" class="lev-yn-btn no" data-target="acceso_ascensor" data-val="0"
-                         >
+                  <button type="button" class="lev-yn-btn no" data-target="o2f_acceso_ascensor" data-val="0"
+                          onclick="o2fSetAccesoYN(this)">
                     <i class="bi bi-x-lg me-1"></i>No
                   </button>
                 </div>
-                <input type="hidden" id="o2f_acceso_ascensor" name="acceso_ascensor" value="">
+                <input type="hidden" id="o2f_acceso_ascensor" name="o2f_acceso_ascensor" value="">
               </div>
               <div class="col-md-6">
                 <label class="form-label small fw-semibold d-block mb-2">
                   <i class="bi bi-p-square text-primary me-1"></i>¿Hay estacionamiento?
                 </label>
                 <div class="lev-yn-group" role="group" aria-label="¿Hay estacionamiento?">
-                  <button type="button" class="lev-yn-btn yes" data-target="acceso_estacionamiento" data-val="1"
-                         >
+                  <button type="button" class="lev-yn-btn yes" data-target="o2f_acceso_estacionamiento" data-val="1"
+                          onclick="o2fSetAccesoYN(this)">
                     <i class="bi bi-check-lg me-1"></i>Sí
                   </button>
-                  <button type="button" class="lev-yn-btn no" data-target="acceso_estacionamiento" data-val="0"
-                         >
+                  <button type="button" class="lev-yn-btn no" data-target="o2f_acceso_estacionamiento" data-val="0"
+                          onclick="o2fSetAccesoYN(this)">
                     <i class="bi bi-x-lg me-1"></i>No
                   </button>
                 </div>
-                <input type="hidden" id="o2f_acceso_estacionamiento" name="acceso_estacionamiento" value="">
+                <input type="hidden" id="o2f_acceso_estacionamiento" name="o2f_acceso_estacionamiento" value="">
               </div>
               <div class="col-md-6">
                 <label class="form-label small fw-semibold">
                   <i class="bi bi-layers text-primary me-1"></i>Piso / nivel
                 </label>
-                <input type="text" id="o2f_acceso_piso" name="acceso_piso"
+                <input type="text" id="o2f_acceso_piso" name="o2f_acceso_piso"
                        class="form-control form-control-sm" maxlength="50"
                        placeholder="Ej: piso 3, subterráneo 1">
               </div>
@@ -617,7 +622,7 @@
                 <label class="form-label small fw-semibold">
                   <i class="bi bi-journal-text text-primary me-1"></i>Notas adicionales de acceso
                 </label>
-                <textarea id="o2f_acceso_notas" name="acceso_notas"
+                <textarea id="o2f_acceso_notas" name="o2f_acceso_notas"
                           class="form-control form-control-sm" rows="2" maxlength="2000"
                           placeholder="Ej: timbre 102, código del portón 1234, llamar al guardia 30 min antes, etc."></textarea>
                 <small class="text-muted d-block mt-1" style="font-size:.72rem">
@@ -650,9 +655,9 @@
           <div class="lev-step-body">
             <input type="file" id="o2fLevAdjInput" multiple style="display:none"
                    accept="image/*,application/pdf,video/*,audio/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
-                  >
+                   onchange="o2fAdjFiles(this.files)">
             <div class="lev-adj-zone" id="o2fLevAdjZone"
-                
+                 onclick="document.getElementById('o2fLevAdjInput').click()"
                  ondragover="event.preventDefault(); this.classList.add('dragover')"
                  ondragleave="this.classList.remove('dragover')"
                  ondrop="event.preventDefault(); this.classList.remove('dragover'); o2fAdjFiles(event.dataTransfer.files)">
@@ -671,32 +676,32 @@
               <label class="lev-adj-pill-input" style="background:#fee2e2;border-color:#fca5a5;color:#dc2626">
                 <i class="bi bi-file-earmark-pdf-fill"></i> PDF
                 <input type="file" accept="application/pdf" multiple style="display:none"
-                      >
+                       onchange="o2fAdjFiles(this.files); this.value='';">
               </label>
               <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
                 <i class="bi bi-camera-fill"></i> Foto (cámara)
                 <input type="file" accept="image/*" capture="environment" style="display:none"
-                      >
+                       onchange="o2fAdjFiles(this.files); this.value='';">
               </label>
               <label class="lev-adj-pill-input" style="background:#dcfce7;border-color:#86efac;color:#16a34a">
                 <i class="bi bi-images"></i> Galería
                 <input type="file" accept="image/*" multiple style="display:none"
-                      >
+                       onchange="o2fAdjFiles(this.files); this.value='';">
               </label>
               <label class="lev-adj-pill-input" style="background:#dbeafe;border-color:#93c5fd;color:#1e40af">
                 <i class="bi bi-camera-video-fill"></i> Video
                 <input type="file" accept="video/*" capture="environment" style="display:none"
-                      >
+                       onchange="o2fAdjFiles(this.files); this.value='';">
               </label>
               <label class="lev-adj-pill-input" style="background:#f3e8ff;border-color:#d8b4fe;color:#7c3aed">
                 <i class="bi bi-mic-fill"></i> Audio
                 <input type="file" accept="audio/*" capture style="display:none"
-                      >
+                       onchange="o2fAdjFiles(this.files); this.value='';">
               </label>
               <label class="lev-adj-pill-input" style="background:#fef3c7;border-color:#fcd34d;color:#a16207">
                 <i class="bi bi-file-earmark-text-fill"></i> Documento
                 <input type="file" accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt" multiple style="display:none"
-                      >
+                       onchange="o2fAdjFiles(this.files); this.value='';">
               </label>
             </div>
 
@@ -714,15 +719,14 @@
                                        padding:13px 20px;gap:9px">
         <span class="text-muted" style="font-size:.76rem;font-weight:600;margin-right:auto"
               id="o2fPie">
-          <i class="bi bi-shield-check me-1"></i>Crea la OT de verdad
+          <i class="bi bi-shield-check me-1"></i>Se crea en Órdenes de Trabajo
         </span>
         <button type="button" class="btn btn-outline-secondary" style="min-height:44px"
                 data-bs-dismiss="modal">
           <i class="bi bi-x-lg me-1"></i>Cancelar
         </button>
         <button type="button" class="btn btn-danger fw-bold px-4" style="min-height:44px"
-                id="o2fBtnCrear" onclick="O2F.crear()" disabled
-                title="Faltan pasos por completar">
+                id="o2fBtnCrear" onclick="o2fGenerar()">
           <i class="bi bi-clipboard2-plus me-1"></i>Generar OT
         </button>
       </div>
