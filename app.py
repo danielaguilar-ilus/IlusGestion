@@ -74453,6 +74453,55 @@ def mant_ot_ejecutar(vid):
     plantillas_por_maquina = {str(k): v for k, v in plantillas_por_maquina.items()}
     stats_por_maquina = {str(k): v for k, v in stats_por_maquina.items()}
 
+    # ════════════════════════════════════════════════════════════════
+    # FIX 2026-08-20 — UNA sola fuente para "qué tareas cuentan".
+    # Caso OT-2026-00058 Vitacura (Daniel: "sigue solicitando las 36
+    # tareas y no la firma").
+    #
+    # `equipos` ya excluye los dados de baja (query de arriba). Pero
+    # `plantillas_por_maquina` se arma desde las TAREAS, sin ese filtro,
+    # así que arrastraba las de equipos que la pantalla no dibuja. Y esa
+    # estructura es la que alimenta TODOS los contadores de la vista:
+    #   · 3 bloques Jinja distintos en ot_ejecutar.html (hero `nsh`,
+    #     stepper `_stg`, stats globales `ns`)
+    #   · _calcCtxGlobal() y _pendientesPorEquipo() en el JS
+    # Seis copias de la misma cuenta. Resultado real: la OT mostraba
+    # "473/509 obligatorias" y "36 equipos con algo pendiente" sobre
+    # tarjetas que no existían en la pantalla, sin forma de marcarlas.
+    #
+    # Parchear los seis lugares solo garantiza que aparezca un séptimo.
+    # Se corta en el ORIGEN: si el equipo no está en `equipos`, sus
+    # tareas no viajan al template. Todo lo que cuente sobre esta
+    # estructura queda correcto por construcción, hoy y mañana.
+    #
+    # ⚠️ La clave '0' (tareas huérfanas, sin maquina_id) SE CONSERVA:
+    # _pendientesPorEquipo las lista por título — caso OT-2026-00056,
+    # donde el nombre del equipo vivía solo en el título de la tarea.
+    #
+    # Esto NO borra ni oculta datos (REGLA #4.2): las tareas siguen en
+    # mant_visita_tareas, la validación de cierre las informa como aviso
+    # (_ot_tareas_excluidas_por_baja) y vuelven a pedirse solas si el
+    # equipo se restaura desde la papelera del cliente.
+    # ════════════════════════════════════════════════════════════════
+    _ppm_fuera = {
+        k: v for k, v in plantillas_por_maquina.items()
+        if k != "0" and k not in equipos_idx
+    }
+    if _ppm_fuera:
+        plantillas_por_maquina = {
+            k: v for k, v in plantillas_por_maquina.items()
+            if k == "0" or k in equipos_idx
+        }
+        for _k in _ppm_fuera:
+            stats_por_maquina.pop(_k, None)
+        try:
+            _n_t = sum(len(p.get("tareas") or []) for pls in _ppm_fuera.values() for p in pls)
+            print(f"[ot_ejecutar] vid={vid}: {len(_ppm_fuera)} equipo(s) sin tarjeta "
+                  f"({_n_t} tareas) fuera de los contadores — ids={sorted(_ppm_fuera)}",
+                  flush=True)
+        except Exception:
+            pass
+
     # Datos para concurrencia multitécnico (Parte 3): id del user actual
     # (filtrar locks propios en frontend) y flag is_admin (override del lock).
     _user_id_actual = u.get("id") or 0
