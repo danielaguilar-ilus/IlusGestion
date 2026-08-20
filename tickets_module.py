@@ -10223,11 +10223,21 @@ def register_tickets_routes(app, ctx):
                           "reintentar retoma donde quedó", flush=True)
                     break
                 try:
-                    # VISTA PREVIA: solo la cabecera. Basta para decidir (de
-                    # quién, qué asunto, qué ticket, si ya está) y evita
-                    # bajarse adjuntos de 20 MB de decenas de correos.
-                    typ, msgdata = M.fetch(
-                        mid, "(BODY.PEEK[HEADER])" if dry_run else "(BODY.PEEK[])")
+                    # 2026-08-20 -- SIEMPRE solo la cabecera en este primer
+                    # fetch (antes era el cuerpo COMPLETO cuando no era
+                    # dry_run). Basta para decidir de quién, qué asunto, qué
+                    # ticket y -- lo importante -- si el correo YA ESTA
+                    # ingerido, porque Message-ID es un header, no hace
+                    # falta el cuerpo para eso. Descubierto en vivo corriendo
+                    # el barrido historico real: los correos "propio" /
+                    # "sin_numero" / YA INGERIDOS nunca entran a
+                    # tk_mail_ingeridos con este criterio (dedup solo marca
+                    # los que SI se guardan), asi que en un reintento se
+                    # volvian a bajar ENTEROS, con adjuntos, una y otra vez
+                    # -- un peaje fijo que se paga en cada pasada. El cuerpo
+                    # completo se baja mas abajo, en un SEGUNDO fetch, SOLO
+                    # para el correo que de verdad se va a ingresar.
+                    typ, msgdata = M.fetch(mid, "(BODY.PEEK[HEADER])")
                     raw = msgdata[0][1] if msgdata and msgdata[0] else None
                     if not raw:
                         continue
@@ -10308,12 +10318,11 @@ def register_tickets_routes(app, ctx):
                         # correo entero SOLO en este caso raro.
                         import hashlib
                         raw_hash = raw
-                        if dry_run:
-                            try:
-                                _t2, _md2 = M.fetch(mid, "(BODY.PEEK[])")
-                                raw_hash = (_md2[0][1] if _md2 and _md2[0] else raw) or raw
-                            except Exception:
-                                raw_hash = raw
+                        try:
+                            _t2, _md2 = M.fetch(mid, "(BODY.PEEK[])")
+                            raw_hash = (_md2[0][1] if _md2 and _md2[0] else raw) or raw
+                        except Exception:
+                            raw_hash = raw
                         message_id = "sin-id-" + hashlib.sha1(raw_hash).hexdigest()[:40]
                     if mysql_fetchone(
                             "SELECT message_id FROM tk_mail_ingeridos WHERE message_id=%s",
@@ -10331,6 +10340,16 @@ def register_tickets_routes(app, ctx):
                                          or msg_date > mas_reciente["at"]):
                             mas_reciente["at"], mas_reciente["num"] = msg_date, numero
                         continue
+                    # Recien aca (candidato NUEVO, se va a ingresar de verdad)
+                    # se baja el cuerpo completo con adjuntos. Hasta este punto
+                    # `msg` solo tenia la cabecera -- evita pagar la descarga
+                    # completa de correos que terminan siendo duplicados.
+                    typ, msgdata = M.fetch(mid, "(BODY.PEEK[])")
+                    raw_completo = (msgdata[0][1] if msgdata and msgdata[0] else None)
+                    if not raw_completo:
+                        resumen["errores"] += 1
+                        continue
+                    msg = _email_mod.message_from_bytes(raw_completo)
                     cuerpo = _tk_extraer_cuerpo_mail(msg) or "(Mensaje sin texto)"
                     remitente = (from_nombre or ticket.get("nombre_contacto")
                                  or from_email or "Cliente")[:190]
