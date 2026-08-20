@@ -54,6 +54,15 @@ var _TKOT_ROL_GESTION = true;
 var ticketActual = null;   // ticket de origen ya cargado, si lo hay
 var equiposCache = [];     // equipos leidos del contexto (ficha o ticket)
 
+/* DATA: en Tickets era una global que inyectaba el template con los datos
+   del cliente (direccion y comuna, que el Paso 2 usa para prellenar la
+   direccion de la visita). Aca se llena por API antes de abrir el modal
+   -- ver O2F.iniciar() y GET /ot/api/cliente/<cid> -- para que el mismo
+   formulario sirva desde cualquier pagina.
+   Arranca como objeto vacio y NO null: el codigo copiado lee DATA.x
+   directo, sin guard. */
+var DATA = {};
+
 /* Escape de HTML — en el original es un helper global del modulo de
    Tickets (tickets_ficha.js:120). Se replica aca porque lo usan 78
    llamadas de este archivo para armar filas por innerHTML. */
@@ -3319,9 +3328,14 @@ Object.assign(window, {
 
 /* ── API publica del modulo ───────────────────────────────────────────── */
 window.O2F = {
-  /* Abre el formulario ya con su contexto resuelto.
+  /* Fija el contexto y trae los datos del cliente ANTES de abrir.
        O2F.iniciar({origen:'ticket', ticket_id:70, cliente:{id:26,nombre:'...'}})
-     Lo que no venga queda en null y el formulario lo pide. */
+     Devuelve una promesa: quien abre el modal deberia esperarla para que
+     el Paso 2 nazca con la direccion ya puesta.
+
+     La carga real del formulario (equipos, plantillas, tecnicos,
+     calendario) la dispara el listener 'show.bs.modal' del propio modal
+     -- igual que en el original. Aca solo se prepara el terreno. */
   iniciar: function (opts) {
     opts = opts || {};
     TID = opts.ticket_id || null;
@@ -3333,14 +3347,43 @@ window.O2F = {
     _O2F.cid = CID;
     _O2F.clienteResuelto = !!CID;
     _O2F.origen = opts.origen || 'cliente';
-    try {
-      if (typeof o2fInit === 'function') return o2fInit();
-      if (typeof o2fAbrir === 'function') return o2fAbrir();
-    } catch (e) {
-      console.error('[O2F] iniciar:', e);
-    }
+    DATA = {};                     // se rellena abajo si hay cliente
+    _O2F.calidadFicha = null;
+
+    if (!CID) return Promise.resolve(null);
+
+    return fetch('/ot/api/cliente/' + CID, { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) return null;
+        DATA = j.cliente || {};
+        _O2F.calidadFicha = j.calidad || null;
+        _o2fPintarCalidadFicha();
+        return j;
+      })
+      .catch(function (e) {
+        console.warn('[O2F] datos del cliente:', e);
+        return null;
+      });
   },
   estado: function () { return _O2F; }
 };
+
+/* Avisa qué le falta a la ficha del cliente ANTES de agendar. Daniel pidió
+   ver "la calidad de información": no un puntaje, sino qué falta, que es
+   lo accionable — si no hay dirección ni teléfono, el técnico llega a
+   ciegas. No bloquea: informa. */
+function _o2fPintarCalidadFicha() {
+  var box = document.getElementById('o2fAvisoSinFicha');
+  if (!box) return;
+  var q = _O2F.calidadFicha;
+  if (!q || q.completa) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML =
+    '<i class="bi bi-exclamation-triangle-fill"></i>' +
+    '<div>A la ficha de <b>' + esc(DATA.razon_social || 'este cliente') +
+    '</b> le falta: <b>' + q.faltan.map(esc).join('</b>, <b>') + '</b>. ' +
+    'Puedes agendar igual, pero el técnico va a llegar sin ese dato.</div>';
+}
 
 })();

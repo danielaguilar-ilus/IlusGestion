@@ -71526,6 +71526,66 @@ def _ot2_err(mensaje, codigo, http=400, **extra):
     return jsonify(payload), http
 
 
+@app.route("/ot/api/cliente/<int:cid>")
+@_require_superadmin
+def ot2_api_cliente(cid):
+    """Datos del cliente que el formulario de OT necesita al abrirse.
+
+    Daniel (19-08-2026): "cuando genero una OT y lo intento asignar, no me
+    trae los datos del cliente; necesito que traiga los datos del cliente
+    [y] la calidad de información".
+
+    El modal viejo recibía esto de una variable global `DATA` que inyectaba
+    el template de Tickets. Acá se sirve por API para que el mismo modal
+    funcione desde cualquier página (ficha, ticket, cotización) sin
+    depender de qué template lo esté renderizando.
+
+    Incluye una CALIDAD DE INFORMACIÓN honesta: qué le falta a esta ficha
+    para poder trabajarla bien. No inventa un puntaje: enumera lo que está
+    vacío, que es lo accionable.
+    """
+    c = mysql_fetchone(
+        "SELECT id, razon_social, rut, direccion, comuna, "
+        "       contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
+        "       email_empresa, estado "
+        "  FROM mant_clientes WHERE id=%s", (cid,))
+    if not c:
+        return jsonify({"ok": False, "error": "No encontramos ese cliente."}), 404
+
+    faltan = []
+    if not (c.get("direccion") or "").strip():       faltan.append("dirección")
+    if not (c.get("comuna") or "").strip():          faltan.append("comuna")
+    if not (c.get("contacto_nombre") or "").strip(): faltan.append("contacto en sitio")
+    if not (c.get("contacto_tel") or "").strip():    faltan.append("teléfono de contacto")
+    if not ((c.get("contacto_email") or c.get("email_empresa") or "").strip()):
+        faltan.append("correo")
+
+    n_eq = int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_maquinas WHERE cliente_id=%s", (cid,)
+    ) or {}).get("n") or 0)
+    if n_eq == 0:
+        faltan.append("equipos en la ficha")
+
+    return jsonify({
+        "ok": True,
+        "cliente": {
+            "id": c["id"],
+            "razon_social": c.get("razon_social") or "",
+            "rut": c.get("rut") or "",
+            "cliente_direccion": c.get("direccion") or "",
+            "cliente_comuna": c.get("comuna") or "",
+            "contacto_nombre": c.get("contacto_nombre") or "",
+            "contacto_cargo": c.get("contacto_cargo") or "",
+            "contacto_tel": c.get("contacto_tel") or "",
+            "contacto_email": (c.get("contacto_email") or c.get("email_empresa") or ""),
+            "estado": c.get("estado") or "",
+            "n_equipos": n_eq,
+        },
+        # Lo que le falta a la ficha para trabajarla sin sorpresas en terreno.
+        "calidad": {"completa": not faltan, "faltan": faltan},
+    })
+
+
 @app.route("/ot/api/crear", methods=["POST"])
 @_require_superadmin
 def ot2_api_crear():

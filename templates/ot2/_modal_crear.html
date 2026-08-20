@@ -534,11 +534,18 @@ window.OT2C = (function(){
       // llamar hide(); abrir el segundo antes deja DOS fondos oscuros
       // superpuestos y la pantalla se ve sucia (detectado probando en vivo).
       var abrirForm = function(){
-        // Arranca el motor del formulario con el contexto ya elegido:
-        // carga cliente, sus equipos con foto/marca/serie, técnicos y
-        // plantillas, y enciende el semáforo de pasos.
-        if (window.O2F) O2F.iniciar({origen:S.origen, cliente:S.cliente, ticket_id:S.ticket_id});
-        (window.__o2fModal = window.__o2fModal || new bootstrap.Modal(form)).show();
+        // O2F.iniciar() trae los datos del cliente (dirección, comuna,
+        // contacto) y la calidad de su ficha. Se ESPERA antes de abrir:
+        // si no, el Paso 2 nace sin dirección y el aviso de datos
+        // faltantes aparece tarde.
+        var mostrar = function(){
+          (window.__o2fModal = window.__o2fModal || new bootstrap.Modal(form)).show();
+        };
+        if (window.O2F){
+          var p = O2F.iniciar({origen:S.origen, cliente:S.cliente, ticket_id:S.ticket_id});
+          if (p && typeof p.then === 'function') return p.then(mostrar, mostrar);
+        }
+        mostrar();
       };
       if (modal){
         var el = document.getElementById('ot2ModalCrear');
