@@ -2995,7 +2995,10 @@ async function o2fGenerar(){
                   ? null : (payload.acceso_estacionamiento === '1' || payload.acceso_estacionamiento === 1),
         piso: payload.acceso_piso,
         notas: payload.acceso_notas
-      }
+      },
+      // Paso 8, opcional: si no se declaro nada van todos en null y el
+      // backend simplemente no los escribe.
+      finanzas: (typeof o2fFinPayload === 'function' ? o2fFinPayload() : null)
     };
     const _tkotUrl = '/ot/api/crear';
     let d;
@@ -3335,12 +3338,120 @@ if (TID !== null) _tkProgramarAutoRefresh();
 
 
 
+
+/* ══════════════════════════════════════════════════════════════════════
+   PASO 8 · FINANZAS
+   ══════════════════════════════════════════════════════════════════════
+   Daniel (20-08-2026): opcional al crear, OBLIGATORIO al pedir la firma,
+   y reversible. La garantia ANULA la declaracion de documentos -- aca se
+   refleja escondiendo el bloque, y el servidor ademas lo fuerza, para que
+   no queden OT con las dos cosas puestas.
+   ══════════════════════════════════════════════════════════════════════ */
+var _o2fCentroCosto = null;
+
+/* Linea de servicio del ERP que corresponde a cada tipo. El cobro viene
+   DENTRO del documento, no como documento aparte. */
+var _O2F_LINEA_ZZ = {
+  instalacion: 'ZZINSTALACION',
+  preventiva: 'ZZMANTENCION',
+  correctiva: 'ZZMANTENCION',
+  visita_tecnica: 'ZZVISITA',
+  visita_correctiva: 'ZZVISITA'
+};
+
+function o2fFinToggleGarantia() {
+  var sw = document.getElementById('o2fFinGarantia');
+  var doc = document.getElementById('o2fFinDocBox');
+  var gar = document.getElementById('o2fFinGarBox');
+  if (!sw) return;
+  var on = sw.checked;
+  if (doc) doc.style.display = on ? 'none' : '';
+  if (gar) gar.style.display = on ? '' : 'none';
+  // Al cubrir por garantia se limpia el documento: son excluyentes.
+  if (on) {
+    ['o2fFinTido', 'o2fFinNudo', 'o2fFinMonto'].forEach(function (id) {
+      var el = document.getElementById(id); if (el) el.value = '';
+    });
+  }
+  o2fFinRefrescar();
+}
+
+function o2fFinSetCentro(cc) {
+  _o2fCentroCosto = cc;
+  var cont = document.getElementById('o2fFinCentro');
+  if (!cont) return;
+  cont.querySelectorAll('.o2f-cc').forEach(function (b) {
+    var on = b.dataset.cc === cc;
+    b.classList.toggle('btn-danger', on);
+    b.classList.toggle('btn-outline-secondary', !on);
+  });
+  o2fFinRefrescar();
+}
+
+/* El paso se pinta verde cuando queda completo, aunque no sea obligatorio
+   todavia: da la señal de que ya no hay nada pendiente ahi. */
+function o2fFinRefrescar() {
+  var card = document.getElementById('o2fStep8');
+  if (!card) return;
+  var sw = document.getElementById('o2fFinGarantia');
+  var completo = !!_o2fCentroCosto && (
+    (sw && sw.checked)
+      ? !!(document.getElementById('o2fFinGarMotivo') || {}).value
+      : !!(document.getElementById('o2fFinNudo') || {}).value
+  );
+  card.classList.toggle('is-complete', completo);
+}
+
+/* Sugiere la linea ZZ segun el tipo elegido en el Paso 1, sin pisar lo
+   que el usuario haya escrito a mano. */
+function o2fFinSugerirZZ() {
+  var tipo = (document.getElementById('o2f_otTipo') || {}).value;
+  var zz = document.getElementById('o2fFinZZ');
+  if (!zz || zz.value.trim()) return;
+  zz.placeholder = _O2F_LINEA_ZZ[tipo] || 'ZZ…';
+}
+
+/* Lo que se manda al crear. Todo opcional en esta etapa. */
+function o2fFinPayload() {
+  var sw = document.getElementById('o2fFinGarantia');
+  var g = !!(sw && sw.checked);
+  var v = function (id) { return ((document.getElementById(id) || {}).value || '').trim(); };
+  var tipo = (document.getElementById('o2f_otTipo') || {}).value;
+  return {
+    centro_costo: _o2fCentroCosto || null,
+    garantia_aplica: g,
+    garantia_motivo: g ? v('o2fFinGarMotivo') : null,
+    factura_tido: g ? null : (v('o2fFinTido') || null),
+    factura_nudo: g ? null : (v('o2fFinNudo') || null),
+    zz_codigo: g ? null : (v('o2fFinZZ') || _O2F_LINEA_ZZ[tipo] || null),
+    zz_monto: g ? null : (v('o2fFinMonto') || null)
+  };
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var sw = document.getElementById('o2fFinGarantia');
+  if (sw) sw.addEventListener('change', o2fFinToggleGarantia);
+  var cont = document.getElementById('o2fFinCentro');
+  if (cont) cont.querySelectorAll('.o2f-cc').forEach(function (b) {
+    b.addEventListener('click', function () { o2fFinSetCentro(b.dataset.cc); });
+  });
+  ['o2fFinNudo', 'o2fFinGarMotivo'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', o2fFinRefrescar);
+  });
+  var t = document.getElementById('o2f_otTipo');
+  if (t) t.addEventListener('change', o2fFinSugerirZZ);
+});
+
+
 /* ── Puente al scope global ───────────────────────────────────────────
    El HTML llama a estos handlers desde atributos onclick/onchange, que
    se resuelven contra window y NO ven el interior de este IIFE. En el
    original no hacia falta porque tickets_ficha.js no esta encapsulado.
    Se exportan solo los que el template realmente usa. */
 Object.assign(window, {
+  o2fFinToggleGarantia,
+  o2fFinSetCentro,
   levDurOtro,
   levDurSet,
   o2fAbrirCrearTipoOT,

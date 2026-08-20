@@ -71600,7 +71600,12 @@ def _ot2_finanzas_estado(v):
     if not (v.get("centro_costo") or "").strip():
         faltan.append("centro de costo")
 
-    if v.get("garantia_aplica"):
+    # OJO: mant_visitas NO tiene una columna `garantia_aplica` -- esa vive
+    # en mant_reportes. Acá la garantía se expresa con modalidad_cobro y
+    # cubierto_por, que es el vocabulario real de la tabla.
+    _es_garantia = ((v.get("modalidad_cobro") or "").lower() == "garantia"
+                    or (v.get("cubierto_por") or "").lower() == "garantia")
+    if _es_garantia:
         # Cubierto por garantía: no se le pide documento, pero sí el
         # motivo -- una garantía sin explicación no se puede defender
         # después ante el cliente ni ante contabilidad.
@@ -71853,7 +71858,8 @@ def ot2_api_finanzas(vid):
     """
     v = mysql_fetchone(
         "SELECT id, numero_ot, tipo, costo, centro_costo, zz_codigo, zz_monto, "
-        "       garantia_aplica, garantia_motivo, factura_tido, factura_nudo, "
+        "       modalidad_cobro, cubierto_por, garantia_motivo, "
+        "       factura_tido, factura_nudo, "
         "       estado_facturacion, finanzas_at, finanzas_por "
         "  FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
@@ -71917,12 +71923,14 @@ def ot2_api_finanzas(vid):
         mysql_execute(
             "UPDATE mant_visitas SET "
             "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
-            "  garantia_aplica=%s, garantia_motivo=%s, "
+            "  modalidad_cobro=%s, cubierto_por=%s, garantia_motivo=%s, "
             "  factura_tido=%s, factura_nudo=%s, estado_facturacion=%s, "
             "  finanzas_at=NOW(), finanzas_por=%s "
             " WHERE id=%s",
             (centro, zz_cod, zz_monto, costo,
-             1 if garantia else 0, motivo, f_tido, f_nudo, estado_fact,
+             'garantia' if garantia else 'pagado',
+             'garantia' if garantia else 'cliente',
+             motivo, f_tido, f_nudo, estado_fact,
              current_username(), vid))
     except Exception as e:
         print(f"[ot2_finanzas] vid={vid}: {e}", flush=True)
@@ -71939,7 +71947,7 @@ def ot2_api_finanzas(vid):
         pass
 
     v2 = mysql_fetchone(
-        "SELECT centro_costo, garantia_aplica, garantia_motivo, "
+        "SELECT centro_costo, modalidad_cobro, garantia_motivo, "
         "       factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (vid,)) or {}
     ok, faltan = _ot2_finanzas_estado(v2)
     return jsonify({"ok": True, "completa": ok, "faltan": faltan,

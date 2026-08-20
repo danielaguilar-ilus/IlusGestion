@@ -713,6 +713,111 @@
             </small>
           </div>
         </div>
+
+        {# ─── Paso 8: FINANZAS ───────────────────────────────────────────
+           Daniel (20-08-2026): "al principio que sea opcional en el modal,
+           pero al solicitar la firma debe ir de manera obligatoria".
+           Por eso nace .is-optional: no bloquea "Generar OT". Lo que sí
+           bloquea es pedir la firma sin esto declarado. Es reversible. #}
+        <div class="lev-step-card is-optional" id="o2fStep8">
+          <div class="lev-step-header">
+            <div class="lev-step-circle-wrap">
+              <div class="lev-step-circle-label">Paso 8</div>
+              <div class="lev-step-num">
+                <span class="lev-step-num-text">8</span>
+                <i class="bi bi-check-lg lev-step-check"></i>
+              </div>
+            </div>
+            <div class="lev-step-titles">
+              <div class="lev-step-title">Finanzas
+                <span class="badge bg-secondary ms-1"
+                      style="font-size:.6rem;vertical-align:middle">OPCIONAL AHORA</span></div>
+              <div class="lev-step-sub">Cómo se cubre este trabajo — se puede completar después</div>
+            </div>
+          </div>
+          <div class="lev-step-body">
+
+            <div class="alert alert-light border d-flex gap-2 py-2 mb-3" style="font-size:.78rem">
+              <i class="bi bi-info-circle-fill text-primary"></i>
+              <div>Puedes dejarlo para después: <b>al pedir la firma será obligatorio</b>
+                declarar si va con garantía o con documento.</div>
+            </div>
+
+            <div class="d-flex align-items-center gap-2 p-2 rounded mb-3"
+                 style="background:#fff8e1;border:1px solid #fcd34d">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" role="switch"
+                       id="o2fFinGarantia" style="width:2.6em;height:1.35em;cursor:pointer">
+              </div>
+              <label for="o2fFinGarantia" style="cursor:pointer;flex:1">
+                <span class="fw-bold" style="color:#92400e">Cubierto por garantía</span>
+                <small class="d-block text-muted" style="font-size:.72rem">
+                  Al activarlo, esta OT no lleva documento de cobro
+                </small>
+              </label>
+            </div>
+
+            <div id="o2fFinDocBox">
+              <div class="row g-2">
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">Tipo de documento</label>
+                  <select class="form-select form-select-sm" id="o2fFinTido">
+                    <option value="">Sin declarar</option>
+                    <option value="FCV">Factura</option>
+                    <option value="BLV">Boleta</option>
+                    <option value="NVV">Nota de venta</option>
+                    <option value="NVI">Nota de venta interna</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">N° del documento</label>
+                  <input class="form-control form-control-sm" id="o2fFinNudo"
+                         placeholder="Ej: 12345" maxlength="20">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">Línea de servicio</label>
+                  <input class="form-control form-control-sm" id="o2fFinZZ"
+                         placeholder="ZZINSTALACION" maxlength="30">
+                  <small class="text-muted" style="font-size:.68rem">Se sugiere según el tipo</small>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">Monto del servicio</label>
+                  <input type="number" class="form-control form-control-sm" id="o2fFinMonto"
+                         placeholder="0" min="0">
+                </div>
+              </div>
+            </div>
+
+            <div id="o2fFinGarBox" style="display:none">
+              <label class="form-label small fw-semibold">¿Por qué va en garantía? *</label>
+              <input class="form-control form-control-sm" id="o2fFinGarMotivo" maxlength="500"
+                     placeholder="Ej: falla de fábrica dentro del periodo de garantía">
+              <small class="text-muted" style="font-size:.7rem">
+                Queda registrado: es lo que permite defender después por qué no se cobró.
+              </small>
+            </div>
+
+            <hr class="my-3">
+
+            <label class="form-label small fw-semibold">Centro de costo</label>
+            <div class="d-flex gap-2 flex-wrap" id="o2fFinCentro">
+              <button type="button" class="btn btn-sm btn-outline-secondary o2f-cc"
+                      data-cc="sstt" style="min-height:40px">
+                <i class="bi bi-tools me-1"></i>Servicio Técnico</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary o2f-cc"
+                      data-cc="logistica" style="min-height:40px">
+                <i class="bi bi-truck me-1"></i>Logística</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary o2f-cc"
+                      data-cc="comercial" style="min-height:40px">
+                <i class="bi bi-graph-up-arrow me-1"></i>Comercial</button>
+            </div>
+            <small class="text-muted d-block mt-2" style="font-size:.72rem">
+              <i class="bi bi-info-circle me-1"></i>
+              A quién se le carga este trabajo. Se pide siempre — también en garantía,
+              justamente para saber cuánto se está cubriendo y con cargo a quién.
+            </small>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer" style="background:#fff;border-top:1px solid #e5e7eb;
