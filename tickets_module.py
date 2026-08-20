@@ -9725,8 +9725,10 @@ def register_tickets_routes(app, ctx):
                           nuestro correo", es "es nuestro pero no lo pudimos
                           ubicar", y esconderlo sería mentirle a Daniel sobre
                           cuántos correos de la migración realmente entraron.
-          'propio'     -> lo mandamos nosotros, es un rebote o viene de un
-                          buzón no-reply: nunca se ingresa como mensaje de
+          'propio'     -> lo mandamos nosotros, es un rebote, viene de un
+                          buzón no-reply/postmaster, o es del STAFF de
+                          Triple A (@triplea.cl, el proveedor -- no un
+                          cliente): nunca se ingresa como mensaje de
                           cliente (si no, el hilo se llenaría de eco).
           'candidato'  -> es respuesta de un cliente a un ticket nuestro.
 
@@ -9801,6 +9803,8 @@ def register_tickets_routes(app, ctx):
             or "mailer-daemon" in fe
             or "noreply" in fe
             or "no-reply" in fe
+            or fe.startswith("postmaster@")
+            or fe.endswith("@triplea.cl")
         )
         return ("propio" if propio else "candidato"), numero
 

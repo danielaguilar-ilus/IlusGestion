@@ -135,6 +135,8 @@ def clasificar(subject, from_email, user_email, incluir_taa=False):
         or "mailer-daemon" in fe
         or "noreply" in fe
         or "no-reply" in fe
+        or fe.startswith("postmaster@")
+        or fe.endswith("@triplea.cl")
     )
     return ("propio" if propio else "candidato"), numero
 
@@ -222,10 +224,24 @@ for fe, etiqueta in [
     ("mailer-daemon@googlemail.com", "rebote de Gmail"),
     ("no-reply@algunservicio.com", "remitente no-reply"),
     ("", "sin remitente"),
+    ("postmaster@uddcl.onmicrosoft.com", "postmaster (visto en vivo 2026-08-20)"),
+    ("cristian.poblete@triplea.cl", "staff de Triple A, no un cliente (visto en vivo)"),
 ]:
     clase, _ = clasificar("ILUS | Ticket - ID: 754", fe, BUZON, incluir_taa=True)
     check(clase == "propio",
           f"formato Triple A desde {etiqueta} -> propio (no se duplica el hilo)")
+
+print("\n4b. postmaster@/@triplea.cl NO excluyen a un cliente real por error")
+# El check es por substring/dominio exacto -- un cliente real cuyo correo
+# solo CONTIENE la palabra no debe caer en 'propio' por accidente.
+clase, _ = clasificar("ILUS | Ticket - ID: 754", "postmasterco@gmail.com", BUZON, incluir_taa=True)
+check(clase == "candidato",
+      "un correo que solo contiene 'postmaster' como parte del nombre de "
+      "usuario (no la cuenta de sistema) sigue siendo candidato")
+clase, _ = clasificar("ILUS | Ticket - ID: 754", "contacto@notriplea.cl", BUZON, incluir_taa=True)
+check(clase == "candidato",
+      "el corte es por dominio exacto (@triplea.cl al final): un dominio "
+      "parecido no cae en 'propio' por error")
 
 print("\n5. Casos que NO deben resolver a ningun ticket")
 NEGATIVOS = [
@@ -271,6 +287,12 @@ check("legacy_taa_id=%s" in fuente,
 check("incluir_taa" in fuente,
       "el formato NATIVO viejo de Triple A es opt-in (incluir_taa) -- el "
       "autopoll automatico NUNCA lo activa por su cuenta")
+check('fe.startswith("postmaster@")' in fuente,
+      "postmaster@ (local-part exacto, RFC 2142) clasifica como 'propio' "
+      "(visto en vivo colandose como si fuera un cliente real)")
+check('fe.endswith("@triplea.cl")' in fuente,
+      "el staff de Triple A (@triplea.cl) clasifica como 'propio', no como "
+      "cliente (visto en vivo: cristian.poblete@triplea.cl)")
 
 print("\n7. El servidor IMAP DEVUELVE los correos de Triple A")
 # Sin esto, todo lo anterior es inutil: el filtro de busqueda corre en el
