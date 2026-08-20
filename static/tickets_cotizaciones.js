@@ -1043,6 +1043,81 @@ async function _cotWizAgregarEquiposFicha(){
   await _cotWizAgregarMaquinasComoItems(seleccionadas);
 }
 
+// ── Paso 2: "Ingresar manual" -- Daniel (2026-08-20, voz a texto):
+//    "dejar manual el ingreso de ítem a las cotizaciones... donde yo
+//    digite el SKU, descripción, cantidad y precio". Los otros tres
+//    caminos (documento ERP, bodega, ficha) siempre resuelven contra un
+//    catálogo real; este es el escape hatch para lo que no está ahí
+//    (ej. un cobro puntual sin SKU en Random todavía). El ítem se
+//    agrega con la MISMA forma que los demás (sku/nombre/qty/
+//    clase_producto) para que el resto del wizard (clasificación,
+//    precios, guardado) no tenga que distinguir su origen -- salvo que
+//    el precio nace en `precio_manual` en vez de calculado, igual que
+//    cualquier línea donde el usuario ya escribe un precio a mano. ──
+function cotWizAbrirManual(){
+  const panel = document.getElementById('cotWizManualPanel');
+  if (!panel) return;
+  const yaAbierto = panel.style.display !== 'none' && panel.innerHTML.trim() !== '';
+  if (yaAbierto){ _cotWizCerrarManual(); return; }
+  _cotWizCerrarEquiposFicha();
+  _cotWizRenderManualPanel();
+}
+function _cotWizCerrarManual(){
+  const panel = document.getElementById('cotWizManualPanel');
+  if (panel){ panel.style.display = 'none'; panel.innerHTML = ''; }
+}
+function _cotWizRenderManualPanel(){
+  const panel = document.getElementById('cotWizManualPanel');
+  if (!panel) return;
+  panel.innerHTML =
+    '<div class="cot-wiz-manual-box">' +
+      '<div class="cot-wiz-manual-head"><span>Ítem manual</span>' +
+        '<button type="button" class="cot-wiz-manual-close" onclick="_cotWizCerrarManual()"><i class="bi bi-x-lg"></i></button></div>' +
+      '<div class="cot-wiz-manual-grid">' +
+        '<div><label>SKU <span class="text-muted">(opcional)</span></label>' +
+          '<input type="text" id="cotWizManualSku" class="form-control form-control-sm" placeholder="Ej: MAN-001"></div>' +
+        '<div class="cot-wiz-manual-desc"><label>Descripción</label>' +
+          '<input type="text" id="cotWizManualNombre" class="form-control form-control-sm" placeholder="Qué se está cobrando" autofocus></div>' +
+        '<div><label>Cantidad</label>' +
+          '<input type="number" id="cotWizManualQty" class="form-control form-control-sm" min="1" step="1" value="1"></div>' +
+        '<div><label>Precio unitario</label>' +
+          '<input type="number" id="cotWizManualPrecio" class="form-control form-control-sm" min="0" step="1" placeholder="$"></div>' +
+      '</div>' +
+      '<div class="cot-wiz-manual-foot">' +
+        '<button type="button" class="btn btn-sm fw-bold" style="background:#0a0a0a;color:#fff;border-radius:8px;padding:8px 16px;" ' +
+          'onclick="_cotWizAgregarManual()"><i class="bi bi-plus-lg me-1"></i>Agregar a la cotización</button>' +
+      '</div>' +
+    '</div>';
+  panel.style.display = '';
+  const first = document.getElementById('cotWizManualNombre');
+  if (first) first.focus();
+}
+async function _cotWizAgregarManual(){
+  if (!_WIZ) return;
+  const nombre = (document.getElementById('cotWizManualNombre').value || '').trim();
+  const sku = (document.getElementById('cotWizManualSku').value || '').trim();
+  const qtyRaw = parseInt(document.getElementById('cotWizManualQty').value, 10);
+  const qty = (isNaN(qtyRaw) || qtyRaw < 1) ? 1 : qtyRaw;
+  const precioRaw = (document.getElementById('cotWizManualPrecio').value || '').replace(/\D/g, '');
+  if (!nombre){
+    ilusToast('Escribe una descripción para el ítem', {type:'warning'});
+    return;
+  }
+  const nuevo = {
+    sku: sku, nombre: nombre, qty: qty,
+    tido: null, koen: null, clase_producto: null,
+    // precio_manual nace del valor tecleado -- null (sin override) si el
+    // campo quedó vacío, igual que cualquier línea sin precio manual.
+    precio_manual: (precioRaw === '') ? null : Math.max(parseInt(precioRaw, 10) || 0, 0),
+  };
+  _WIZ.items = _WIZ.items.concat([nuevo]);
+  _cotWizCerrarManual();
+  await cotWizClasificar();
+  await cotWizRender();
+  await cotWizPrecios();
+  ilusToast('✓ Ítem manual agregado', {type:'success'});
+}
+
 async function cotWizClasificar(){
   if (!_WIZ || !_WIZ.items.length) return;
   try{
@@ -1089,7 +1164,14 @@ async function cotWizRender(){
       '<td><select class="cot-rev-select' + (it.clase_producto ? '' : ' sin-clasificar') + '" data-i="' + i + '" onchange="cotWizClase(' + i + ', this)">' +
         '<option value="">Sin clasificar</option>' + opts + '</select></td>' +
       '<td class="cot-wiz-pu-cell"><input type="number" min="0" step="1" class="cot-rev-pu-input' + (accesorio ? ' accesorio-bloqueado' : '') + '" data-i="' + i + '" '
-        + (accesorio ? 'value="0" disabled readonly title="Accesorio no cobrable: queda en la OT para foto y observación"' : 'placeholder="auto" title="Precio base unitario — la ruta se muestra debajo" onchange="cotWizPrecioManual(' + i + ', this.value)"') + '>'
+        + (accesorio ? 'value="0" disabled readonly title="Accesorio no cobrable: queda en la OT para foto y observación"'
+          // 2026-08-20: restaura el precio_manual ya escrito -- sin esto,
+          // CUALQUIER re-render (agregar otro ítem, cambiar cantidad de
+          // otra fila) dejaba este input visualmente vacío aunque el
+          // total ya lo estuviera calculando bien por debajo (el dato
+          // vivía en _WIZ.items[i].precio_manual, solo no se pintaba).
+          : 'placeholder="auto"' + (it.precio_manual != null ? ' value="' + _cotEsc(it.precio_manual) + '"' : '')
+            + ' title="Precio base unitario — la ruta se muestra debajo" onchange="cotWizPrecioManual(' + i + ', this.value)"') + '>'
         + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">' + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable' : '') + '</div></td>' +
       '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
       '<td><button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button></td>' +

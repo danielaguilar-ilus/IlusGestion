@@ -298,6 +298,24 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-wiz-eqficha-item input{width:18px;height:18px;accent-color:#16a34a;flex-shrink:0;}
 .cot-wiz-eqficha-item small{color:#4d7c0f;font-family:'JetBrains Mono',monospace;}
 .cot-wiz-eqficha-foot{padding:8px 12px 12px;}
+
+/* ══ Paso 2 — "Ingresar manual" (sub-panel inline, Daniel 2026-08-20:
+   SKU/descripción/cantidad/precio tecleados a mano). Mismo patrón visual
+   que .cot-wiz-eqficha-* de arriba, tono neutro (negro/gris) en vez de
+   verde -- no es "traer de la ficha", es un ítem que no vive en ningún
+   catálogo. ══ */
+.cot-wiz-manual-box{border:1.5px solid #d1d5db;background:#f9fafb;border-radius:12px;overflow:hidden;}
+.cot-wiz-manual-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;
+  font-size:.78rem;font-weight:800;color:#111827;border-bottom:1px solid #e5e7eb;}
+.cot-wiz-manual-close{border:none;background:transparent;color:#111827;width:26px;height:26px;border-radius:7px;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+.cot-wiz-manual-close:hover{background:#e5e7eb;}
+.cot-wiz-manual-grid{display:grid;grid-template-columns:1fr 2fr 1fr 1fr;gap:10px;padding:12px;}
+.cot-wiz-manual-grid label{display:block;font-size:.68rem;font-weight:800;color:#6b7280;
+  text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px;}
+.cot-wiz-manual-desc{grid-column:span 1;}
+.cot-wiz-manual-foot{padding:0 12px 12px;display:flex;justify-content:flex-end;}
+@media (max-width:640px){ .cot-wiz-manual-grid{grid-template-columns:1fr 1fr;} }
 /* Giro del ícono del chip UF mientras refresca (no existe un keyframe
    'spin' global en el proyecto -- se declara acá). */
 @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}

@@ -477,9 +477,25 @@
                 background:#f0fdf4;color:#16a34a;border:1.5px solid #16a34a;border-radius:9px;padding:9px 16px;"
                 onclick="cotWizAbrirEquiposFicha()">
           <i class="bi bi-hdd-stack me-1"></i>Traer equipos de la ficha</button>
+        {# 2026-08-20 (Daniel, voz a texto): "dejar manual el ingreso de
+           ítem a las cotizaciones... donde yo digite el SKU, descripción,
+           cantidad y precio". Los tres caminos de arriba (documento ERP,
+           bodega, ficha) siempre resuelven el ítem contra un catálogo
+           real -- no hay forma de cargar algo que no está ahí (ej. un
+           cobro puntual, un ítem que todavía no tiene SKU en Random).
+           Panel inline (mismo patrón que #cotWizEquiposFichaPanel, no un
+           modal encima del modal -- el wizard ya es "un solo scroll, sin
+           pestañas"). El precio tecleado usa el MISMO precio_manual que
+           ya existe por línea (Daniel 2026-07-22) -- no es un campo
+           nuevo, es la misma pieza reusada desde el origen del ítem. #}
+        <button type="button" id="btnCotWizManual" class="btn btn-sm fw-bold"
+                style="background:#fff;color:#0a0a0a;border:1.5px solid #0a0a0a;border-radius:9px;padding:9px 16px;"
+                onclick="cotWizAbrirManual()">
+          <i class="bi bi-pencil-square me-1"></i>Ingresar manual</button>
         <span class="text-muted" id="cotWizPaso2Hint" style="font-size:.74rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
       </div>
       <div id="cotWizEquiposFichaPanel" style="display:none;margin:0 0 4px;"></div>
+      <div id="cotWizManualPanel" style="display:none;margin:0 0 4px;"></div>
       <div class="cot-rev-tabla-wrap">
         <table class="cot-rev-tabla" style="min-width:700px;">
           <thead>
