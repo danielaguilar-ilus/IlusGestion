@@ -410,7 +410,7 @@
           <div class="tkrec-f">
             <label for="tkRecDias">Días hacia atrás</label>
             <input type="number" id="tkRecDias" class="form-control form-control-sm"
-                   value="20" min="1" max="120" step="1">
+                   value="20" min="1" max="200" step="1">
             <small>20 días cubre del 24-jul al 5-ago con margen.</small>
           </div>
           <div class="tkrec-f">
@@ -420,11 +420,42 @@
               <option value="200" selected>200</option>
               <option value="400">400</option>
             </select>
-            <small>Si el buzón trae más, se avisa y se revisan los más recientes.</small>
+            <small id="tkRecMaxHint">Si el buzón trae más, se avisa y se revisan los más recientes.</small>
           </div>
           <div class="tkrec-f tkrec-f-btn">
             <button class="btn btn-sm btn-ilus-outline" id="tkRecBtnPreview">
               <i class="bi bi-eye me-1"></i>Ver qué va a pasar</button>
+          </div>
+        </div>
+
+        {# 2026-08-20 (Daniel — migración Triple A): "necesito que hagas un
+           levantamiento para traer todas las conversaciones". Estos dos
+           controles nacen APAGADOS a propósito: reconocer el formato viejo
+           de Triple A puede reabrir tickets cerrados hace meses, así que es
+           una decisión que Daniel toma acá cada vez, no un default. #}
+        <div class="tkrec-form" style="margin-top:-4px">
+          <div class="tkrec-f" style="flex:1 1 100%">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="tkRecIncluirTaa">
+              <label class="form-check-label" for="tkRecIncluirTaa">
+                Incluir el sistema viejo de Triple A
+                (asuntos "ILUS | Ticket - ID: N")
+              </label>
+            </div>
+            <small>Para rescatar las conversaciones históricas de los tickets migrados.
+              Los correos de más de 15 días de antigüedad se ingresan al hilo pero
+              <strong>no reabren</strong> un ticket ya cerrado ni lo suben en la bandeja.</small>
+          </div>
+          <div class="tkrec-f" style="flex:1 1 100%">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="tkRecOldestFirst">
+              <label class="form-check-label" for="tkRecOldestFirst">
+                Empezar por los correos más viejos
+              </label>
+            </div>
+            <small>Recomendado junto con la casilla de arriba: si el buzón trae más
+              correos que el máximo elegido, revisa primero los más antiguos
+              (los que se busca rescatar) en vez de los más recientes.</small>
           </div>
         </div>
 
@@ -608,6 +639,8 @@ window.TK_LIST_DATA = {
   });
 
   var elDias   = document.getElementById('tkRecDias');
+  var elIncluirTaa   = document.getElementById('tkRecIncluirTaa');
+  var elOldestFirst  = document.getElementById('tkRecOldestFirst');
   var elMax    = document.getElementById('tkRecMax');
   var btnPrev  = document.getElementById('tkRecBtnPreview');
   var btnIng   = document.getElementById('tkRecBtnIngestar');
@@ -746,7 +779,9 @@ window.TK_LIST_DATA = {
       body: JSON.stringify({
         dias: parseInt(elDias.value, 10) || 20,
         max_correos: parseInt(elMax.value, 10) || 200,
-        dry_run: !!dryRun
+        dry_run: !!dryRun,
+        incluir_taa: !!(elIncluirTaa && elIncluirTaa.checked),
+        oldest_first: !!(elOldestFirst && elOldestFirst.checked)
       })
     });
     boton.innerHTML = htmlPrev;

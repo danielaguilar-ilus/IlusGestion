@@ -9539,14 +9539,30 @@ def register_tickets_routes(app, ctx):
     _TK_NUM_TICKET_RE = re.compile(r"TK-\d{4}-\d{5}", re.I)
     # 2026-08-20 (Daniel — migración desde Triple A, proveedor que
     # desarrolló el sistema anterior de tickets): sus correos ya enviados a
-    # clientes usan el asunto "ILUS | Ticket - ID: <n>", donde <n> es el
-    # `id` interno de tk_tickets (verificado en vivo: ID 754 real, con toda
-    # la conversación del cliente — Triple A leía/escribía DIRECTO sobre
-    # nuestra propia tabla, no una numeración aparte de ellos). Al dar de
-    # baja su sistema, los hilos de correo YA ABIERTOS con clientes deben
+    # clientes usan el asunto "ILUS | Ticket - ID: <n>", donde <n> es el id
+    # INTERNO DE TRIPLE A (otro sistema, numeración propia). En ILUS ese id
+    # vive en tk_tickets.legacy_taa_id (UNIQUE), NUNCA en tk_tickets.id --
+    # la resolución se hace por legacy_taa_id; ver el detalle y el caso
+    # verificado (ID 754 de Triple A = Gonzalo; nuestro id=754 = Leandro
+    # Varela, legacy_taa_id=567) en _tk_clasificar_correo más abajo. Al dar
+    # de baja su sistema, los hilos de correo YA ABIERTOS con clientes deben
     # seguir resolviendo al ticket correcto -- si no, esas conversaciones
     # se pierden en el cambio de proveedor.
-    _TK_TAA_SUBJECT_RE = re.compile(r"ILUS\s*\|\s*Ticket\s*-\s*ID:\s*(\d+)", re.I)
+    #
+    # El guion es opcional y acepta las variantes tipograficas que Outlook/
+    # clientes de correo a veces sustituyen al citar un asunto (en dash "–",
+    # em dash "—"), ademas del ASCII "-" y el caso sin guion.
+    _TK_TAA_SUBJECT_RE = re.compile(r"ILUS\s*\|\s*Ticket\s*[-–—]?\s*ID:\s*(\d+)", re.I)
+    # 2026-08-20: los tickets YA migrados quedan con numero_ticket="TAA-<n>"
+    # (ver _tk_import_desde_taa) y ESE es el numero que sale en el asunto de
+    # cualquier correo NUEVO que ILUS le mande al cliente sobre ese ticket
+    # (la salvaguarda de asunto de _tk_notificar_lifecycle/_tk_notificar_
+    # asignacion/tk_api_responder_cliente siempre inyecta numero_ticket). Sin
+    # este patron, la conversacion VIVA de un ticket migrado quedaria ciega
+    # apenas el cliente respondiera el primer correo nuevo -- que es
+    # justamente el flujo que se espera que siga funcionando tras la
+    # migracion, no un caso raro.
+    _TK_TAA_NUM_RE = re.compile(r"\bTAA-\d+\b", re.I)
     # Marcadores tipicos donde empieza la cola citada de una respuesta
     # (Gmail/Outlook es/en). Todo lo que siga se descarta del mensaje.
     _TK_QUOTE_RE = re.compile(
@@ -9694,12 +9710,21 @@ def register_tickets_routes(app, ctx):
         crudo = re.sub(r"\n{3,}", "\n\n", plano.strip())
         return crudo[:4000]
 
-    def _tk_clasificar_correo(subject, from_email, user_email):
-        """Decide qué se hace con un correo del buzón. Función PURA.
+    def _tk_clasificar_correo(subject, from_email, user_email, incluir_taa=False):
+        """Decide qué se hace con un correo del buzón. Función PURA (salvo el
+        SELECT de resolución del formato viejo de Triple A, ver abajo).
 
         Devuelve (estado, numero_ticket):
-          'sin_numero' -> el asunto no trae un TK-AAAA-NNNNN nuestro
-                          (ej. "TK FRESHDESK", promociones con "TK-").
+          'sin_numero' -> el asunto no trae ningún número de ticket
+                          reconocible (ej. "TK FRESHDESK", promociones).
+          'sin_ticket_taa' -> el asunto SÍ es del sistema viejo de Triple A,
+                          pero su id no resuelve a ningún ticket importado
+                          (legacy_taa_id sin mapear, o fallo de BD al
+                          consultarlo). A diferencia de 'sin_numero', esto
+                          SE CUENTA y SE LISTA en el barrido -- no es "no es
+                          nuestro correo", es "es nuestro pero no lo pudimos
+                          ubicar", y esconderlo sería mentirle a Daniel sobre
+                          cuántos correos de la migración realmente entraron.
           'propio'     -> lo mandamos nosotros, es un rebote o viene de un
                           buzón no-reply: nunca se ingresa como mensaje de
                           cliente (si no, el hilo se llenaría de eco).
@@ -9710,37 +9735,63 @@ def register_tickets_routes(app, ctx):
         función. Si cada uno tuviera su propia copia del criterio, la vista
         previa podría prometer una cosa y la ingesta hacer otra — que es
         exactamente el tipo de desincronización que ya nos costó 12 días de
-        tickets perdidos. Un solo criterio, un solo lugar."""
+        tickets perdidos. Un solo criterio, un solo lugar.
+
+        incluir_taa (2026-08-20): si es False, NI SIQUIERA SE INTENTA el
+        formato nativo viejo de Triple A ("ILUS | Ticket - ID: N", resuelto
+        por legacy_taa_id) -- ese es el que puede resucitar un ticket
+        cerrado hace meses y solo debe correr dentro del barrido histórico
+        controlado (superadmin + vista previa). El formato "TAA-N" SÍ se
+        reconoce SIEMPRE, incluir_taa o no: es el numero_ticket real y
+        definitivo de un ticket YA migrado -- la conversación que sigue
+        viva después de la migración (alguien responde un correo NUEVO que
+        ILUS mandó hoy sobre un ticket TAA-754) tiene que seguir
+        funcionando en el camino normal, no solo durante un barrido puntual."""
         m = _TK_NUM_TICKET_RE.search(subject or "")
         numero = m.group(0).upper() if m else None
         if not numero:
-            # Formato viejo de Triple A ("ILUS | Ticket - ID: 754"): se
-            # resuelve el id crudo al numero_ticket real, para que TODO lo
-            # que sigue (dedup, INSERT del mensaje, etc.) trabaje exactamente
-            # igual que con el formato propio -- un solo camino, no dos.
+            m_taa_num = _TK_TAA_NUM_RE.search(subject or "")
+            if m_taa_num:
+                numero = m_taa_num.group(0).upper()
+        if not numero and incluir_taa:
+            # Formato viejo NATIVO de Triple A ("ILUS | Ticket - ID: 754"):
+            # se resuelve el id crudo al numero_ticket real, para que TODO
+            # lo que sigue (dedup, INSERT del mensaje, etc.) trabaje
+            # exactamente igual que con el formato propio -- un solo
+            # camino, no dos.
             m_taa = _TK_TAA_SUBJECT_RE.search(subject or "")
             if m_taa:
-                try:
-                    _tid_taa = int(m_taa.group(1))
-                    # OJO: se busca por legacy_taa_id, NO por id.
-                    # El numero del asunto es el id INTERNO DE TRIPLE A, que
-                    # es otro sistema: sus tickets se importaron por CSV y su
-                    # id original quedo en legacy_taa_id (UNIQUE), mientras
-                    # que el id de tk_tickets es nuestro correlativo propio.
-                    # Verificado con un caso real: el correo "ID: 754" (de
-                    # Gonzalo, rechazando una cotizacion) NO es el ticket
-                    # id=754 de ILUS (de Leandro Varela, por un cable de
-                    # fuerza) -- ese lleva legacy_taa_id=567. Resolver por id
-                    # habria pegado la respuesta de un cliente en el ticket de
-                    # OTRO cliente, en silencio.
-                    _row_taa = mysql_fetchone(
-                        "SELECT numero_ticket FROM tk_tickets WHERE legacy_taa_id=%s",
-                        (_tid_taa,)
-                    )
-                    if _row_taa and _row_taa.get("numero_ticket"):
-                        numero = _row_taa["numero_ticket"].upper()
-                except Exception as _e_taa:
-                    print(f"[tk_mail][taa_subject] {_e_taa}", flush=True)
+                _tid_taa = int(m_taa.group(1))
+                # OJO: se busca por legacy_taa_id, NO por id.
+                # El numero del asunto es el id INTERNO DE TRIPLE A, que
+                # es otro sistema: sus tickets se importaron por CSV y su
+                # id original quedo en legacy_taa_id (UNIQUE), mientras
+                # que el id de tk_tickets es nuestro correlativo propio.
+                # Verificado con un caso real: el correo "ID: 754" (de
+                # Gonzalo, rechazando una cotizacion) NO es el ticket
+                # id=754 de ILUS (de Leandro Varela, por un cable de
+                # fuerza) -- ese lleva legacy_taa_id=567. Resolver por id
+                # habria pegado la respuesta de un cliente en el ticket de
+                # OTRO cliente, en silencio.
+                #
+                # 2026-08-20: este SELECT ya NO se traga en un try/except
+                # propio. Un fallo de BD ahora sube tal cual al llamador
+                # (_tk_leer_correo_entrante, que sí lo cuenta en
+                # resumen["errores"]) -- antes caía en el mismo except local
+                # y quedaba INDISTINGUIBLE de "el asunto no es nuestro",
+                # perdiendo el correo en silencio sin que nada lo avisara.
+                _row_taa = mysql_fetchone(
+                    "SELECT numero_ticket FROM tk_tickets WHERE legacy_taa_id=%s",
+                    (_tid_taa,)
+                )
+                if _row_taa and _row_taa.get("numero_ticket"):
+                    numero = _row_taa["numero_ticket"].upper()
+                else:
+                    # El asunto SI es de Triple A pero su id no resolvió a
+                    # ningún ticket importado: no es basura ajena, es
+                    # nuestro y no lo pudimos ubicar. Se distingue de
+                    # 'sin_numero' para que el barrido lo cuente y lo liste.
+                    return "sin_ticket_taa", f"TAA-{_tid_taa}"
         if not numero:
             return "sin_numero", None
         fe = (from_email or "").strip().lower()
@@ -10004,7 +10055,24 @@ def register_tickets_routes(app, ctx):
 
     def _tk_leer_correo_entrante(dias=60, max_correos=50, dry_run=False,
                                  detalle=False, notificar="cada",
-                                 max_segundos=None):
+                                 max_segundos=None, incluir_taa=False,
+                                 oldest_first=False):
+        # incluir_taa (Daniel, 2026-08-20 -- migracion Triple A) NACE EN
+        # False: reconocer el backlog historico de Triple A es una decision
+        # deliberada, no algo que deba activarse solo porque un usuario
+        # cualquiera abrio la bandeja. El autopoll (dispara automatico cada
+        # vez que alguien mira Tickets, SIN chequeo de rol) llama a esta
+        # funcion con los defaults -- sin este flag, apenas se despliegue
+        # este cambio, el backlog completo de Triple A empezaria a entrar
+        # solo, con notificar="cada" (una campanita por correo) y sin el
+        # candado de superadmin + vista previa que existe justamente para
+        # decisiones de este tamaño. Solo tk_api_mail_recuperar (el barrido
+        # controlado, superadmin, dry_run primero) pasa incluir_taa=True.
+        #
+        # oldest_first: en un barrido HISTORICO se quieren los correos MAS
+        # VIEJOS primero (los de Triple A que se busca rescatar); el
+        # autopoll normal sigue queriendo los mas recientes (comportamiento
+        # de siempre). Ver el uso en `ids = ...` mas abajo.
         """Barrido del buzon de soporte: ubica respuestas por numero de
         ticket en el asunto y las ingresa como mensajes del cliente.
         Devuelve resumen dict. Nunca lanza (errores -> resumen).
@@ -10047,9 +10115,9 @@ def register_tickets_routes(app, ctx):
         ingresar (linea ~6150) y el INSERT es ademas IGNORE."""
         user, pwd = _tk_imap_creds()
         resumen = {"ok": True, "candidatos": 0, "ingresados": 0, "duplicados": 0,
-                   "sin_ticket": 0, "propios": 0, "adjuntos": 0, "errores": 0,
-                   "vistos": 0, "dry_run": bool(dry_run), "dias": int(dias),
-                   "truncado": False, "parcial": False}
+                   "sin_ticket": 0, "sin_numero": 0, "propios": 0, "adjuntos": 0,
+                   "errores": 0, "vistos": 0, "dry_run": bool(dry_run),
+                   "dias": int(dias), "truncado": False, "parcial": False}
         _t_fin = (time.monotonic() + float(max_segundos)) if max_segundos else None
         filas = [] if detalle else None
         if detalle:
@@ -10078,30 +10146,66 @@ def register_tickets_routes(app, ctx):
         ingeridos_detalle = []
         try:
             # Gmail tokeniza la busqueda (encuentra "TK-2026-..." aunque el
-            # SUBJECT sea aproximado); el regex de abajo es el filtro REAL.
+            # SUBJECT sea aproximado); el regex de _tk_clasificar_correo es
+            # el filtro REAL, esto solo decide que trae el SERVIDOR.
             #
-            # 2026-08-20 — Se agrega el asunto del sistema de Triple A
-            # ("ILUS | Ticket - ID: 754"), que NO contiene "TK-": con el
-            # filtro anterior el servidor ni siquiera devolvia esos correos,
-            # asi que reconocerlos mas abajo no habria servido de nada. La
-            # sintaxis IMAP de OR es prefija: OR <clave1> <clave2>, o sea
-            # "SINCE fecha AND (SUBJECT 'TK-' OR SUBJECT 'Ticket - ID:')".
-            _busqueda = f'(SINCE {desde_imap} OR SUBJECT "TK-" SUBJECT "Ticket - ID:")'
-            typ, data = M.search(None, _busqueda)
+            # 2026-08-20 — "TAA-" (numero_ticket real de un ticket YA
+            # migrado) SIEMPRE se busca: es el formato de la conversacion
+            # VIVA de esos 749 tickets, no del backlog historico, y tiene
+            # que funcionar en el camino normal (autopoll incluido), no solo
+            # durante un barrido puntual. "Ticket - ID:" (el asunto NATIVO
+            # viejo de Triple A, el que puede resucitar un ticket cerrado)
+            # solo se agrega cuando incluir_taa=True -- ver el comentario
+            # grande en la firma de la funcion. La sintaxis IMAP de OR es
+            # BINARIA y PREFIJA: 3 terminos necesitan 2 "OR" anidados.
+            if incluir_taa:
+                _busqueda = (f'(SINCE {desde_imap} OR OR SUBJECT "TK-" '
+                             f'SUBJECT "TAA-" SUBJECT "Ticket - ID:")')
+            else:
+                _busqueda = f'(SINCE {desde_imap} OR SUBJECT "TK-" SUBJECT "TAA-")'
+
+            def _buscar_imap(criterio):
+                # imaplib LANZA imaplib.IMAP4.error cuando el servidor
+                # responde BAD (sintaxis de SEARCH no reconocida) -- NO
+                # devuelve typ="BAD" como un valor normal. Solo un "NO"
+                # (comando entendido pero fallido) vuelve como tupla. Sin
+                # este try/except, un servidor que rechace la sintaxis OR
+                # hace que la excepcion se escape de TODA la funcion,
+                # contradiciendo su propio docstring ("Nunca lanza") y
+                # dejando el latido de salud en VERDE (ya se registro
+                # _tk_salud_registrar(True) arriba, antes del search).
+                try:
+                    return M.search(None, criterio)
+                except imaplib.IMAP4.error as _e_srch:
+                    print(f"[tk_mail] busqueda IMAP rechazada: {_e_srch}", flush=True)
+                    return ("BAD", None)
+
+            typ, data = _buscar_imap(_busqueda)
             if typ != "OK":
                 # Red de seguridad: si algun servidor no digiere el OR, se
-                # vuelve al filtro historico en vez de quedarse sin leer nada.
+                # vuelve al filtro historico simple en vez de quedarse sin
+                # leer nada.
                 print(f"[tk_mail] busqueda con OR rechazada ({typ}); "
                       f"se usa el filtro simple", flush=True)
-                typ, data = M.search(None, f'(SINCE {desde_imap} SUBJECT "TK-")')
+                typ, data = _buscar_imap(f'(SINCE {desde_imap} SUBJECT "TK-")')
+            if typ != "OK":
+                err = f"El servidor de correo rechazo la busqueda IMAP ({typ})."
+                _tk_salud_registrar(False, error=err)
+                resumen["ok"] = False
+                resumen["error"] = err
+                return resumen
             todos = (data[0].split() if data and data[0] else [])
-            ids = todos[-max_correos:]
+            # 2026-08-20: IMAP SEARCH devuelve los ids en orden ASCENDENTE
+            # (mas viejo primero). El autopoll/cron normal quiere los MAS
+            # RECIENTES (todos[-max:], como siempre); un barrido HISTORICO
+            # (oldest_first=True, ver tk_api_mail_recuperar) quiere
+            # justamente los mas viejos -- son los que se busca rescatar, y
+            # tomar los mas nuevos primero los descartaba sistematicamente
+            # cada vez que el total superaba max_correos.
+            ids = todos[:max_correos] if oldest_first else todos[-max_correos:]
             resumen["vistos"] = len(ids)
             resumen["truncado"] = len(todos) > len(ids)
             if resumen["truncado"]:
-                # Los que se dejan fuera son los MÁS VIEJOS (ids[-max:]). En un
-                # barrido de recuperación eso es justo lo que se quiere
-                # rescatar, así que se avisa en vez de callarlo.
                 resumen["truncado_total"] = len(todos)
             for mid in ids:
                 if _t_fin is not None and time.monotonic() > _t_fin:
@@ -10145,10 +10249,32 @@ def register_tickets_routes(app, ctx):
                             "nota": nota,
                         })
 
-                    clase, numero = _tk_clasificar_correo(subject, from_email, user)
+                    clase, numero = _tk_clasificar_correo(
+                        subject, from_email, user, incluir_taa=incluir_taa)
                     if clase == "sin_numero":
-                        # "TK FRESHDESK" y similares: no son nuestros. No se
-                        # listan siquiera — no es correo de tickets.
+                        # "TK FRESHDESK" y similares: no son nuestros.
+                        #
+                        # 2026-08-20: SI se cuenta y SI se lista (antes no
+                        # hacia ninguna de las dos cosas). En un barrido de
+                        # hasta 400 correos, "3 por ingresar" sin ningun
+                        # numero que diga cuantos NO se reconocieron es
+                        # indistinguible de "no habia nada" -- y es
+                        # justamente la vista previa la que Daniel usa para
+                        # decidir si el barrido esta listo para correr.
+                        resumen["sin_numero"] += 1
+                        _fila("sin_numero", None,
+                              "El asunto no trae un numero de ticket reconocible.")
+                        continue
+                    if clase == "sin_ticket_taa":
+                        # El asunto SI es del sistema viejo de Triple A, pero
+                        # su id no resolvio a ningun ticket importado
+                        # (legacy_taa_id sin mapear). Se reusa el balde
+                        # "sin_ticket" -- semanticamente es lo mismo: "es
+                        # nuestro, pero no encontramos el ticket".
+                        resumen["sin_ticket"] += 1
+                        _fila("sin_ticket", numero,
+                              "Asunto del sistema Triple A: su id no tiene "
+                              "ticket importado asociado (revisar la migración).")
                         continue
                     if clase == "propio":
                         resumen["propios"] += 1
@@ -10301,9 +10427,35 @@ def register_tickets_routes(app, ctx):
                     # cliente respondio por correo a un ticket resolved/
                     # closed/cancelado -> reabrelo automaticamente (ver
                     # _tk_reabrir_si_cerrado).
-                    _tk_reabrir_si_cerrado(ticket["id"], ticket.get("estado"))
-                    mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s",
-                                  (ticket["id"],))
+                    #
+                    # 2026-08-20 -- GUARDIA POR ANTIGUEDAD (migracion Triple
+                    # A): la continuidad es para una respuesta VIVA, no para
+                    # un correo de hace meses que entra recien porque HOY se
+                    # amplio el reconocimiento de asuntos. Sin esto, el
+                    # barrido historico de los ~279 correos de Triple A
+                    # reabriria en masa tickets cerrados/resueltos, con SLA
+                    # vencido falso (el reloj usa created_at, la fecha
+                    # historica del CSV) y saltando al tope de la bandeja.
+                    # msg_date ya esta en scope (fecha real del header Date).
+                    _correo_reciente = (
+                        msg_date is None
+                        or (datetime.now(timezone.utc).replace(tzinfo=None) - msg_date)
+                        <= timedelta(days=_TK_REABRIR_DIAS_MAX)
+                    )
+                    if _correo_reciente:
+                        _tk_reabrir_si_cerrado(ticket["id"], ticket.get("estado"))
+                        mysql_execute(
+                            "UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s",
+                            (ticket["id"],))
+                    else:
+                        # Se ingiere igual (el mensaje del cliente no se
+                        # pierde), pero NO se reabre ni se sube en la
+                        # bandeja. `updated_at=updated_at` evita el ON
+                        # UPDATE CURRENT_TIMESTAMP de la columna (mismo
+                        # truco que ya usa tk_api_marcar_leido).
+                        mysql_execute(
+                            "UPDATE tk_tickets SET updated_at=updated_at WHERE id=%s",
+                            (ticket["id"],))
                     resumen["ingresados"] += 1
                     ingeridos_detalle.append((numero, ticket["id"]))
                     if msg_date and (mas_reciente["at"] is None
@@ -10344,6 +10496,22 @@ def register_tickets_routes(app, ctx):
                 except Exception as _em:
                     resumen["errores"] += 1
                     print(f"[tk_mail] error procesando correo: {_em}", flush=True)
+        except Exception as _e_barrido:
+            # 2026-08-20: red de seguridad de ultimo nivel. Sin este except,
+            # cualquier fallo NO previsto dentro del bloque (ej. un
+            # imaplib.IMAP4.abort por corte de conexion a mitad del barrido)
+            # se escapaba de la funcion entera, contradiciendo su propio
+            # docstring ("Nunca lanza: errores -> resumen") y dejando el
+            # latido de salud en VERDE (_tk_salud_registrar(True) ya corrio
+            # mas arriba, apenas se conecto). Con esto, el semaforo pasa a
+            # rojo de verdad cuando el barrido realmente se cae.
+            print(f"[tk_mail] barrido abortado: {_e_barrido}", flush=True)
+            try:
+                _tk_salud_registrar(False, error=str(_e_barrido))
+            except Exception:
+                pass
+            resumen["ok"] = False
+            resumen["error"] = f"Fallo el barrido del buzon: {_e_barrido}"
         finally:
             try:
                 M.logout()
@@ -10582,6 +10750,11 @@ def register_tickets_routes(app, ctx):
     # cuantos correos EXISTEN, no cuantos se piden.
     _TK_REC_DIAS_MAX = 200        # tope duro de la ventana
     _TK_REC_MAX_CORREOS = 400     # tope duro de correos por pasada
+    # 2026-08-20: un correo mas viejo que esto NO reabre un ticket
+    # cerrado/resuelto ni lo sube en la bandeja (updated_at). El mensaje SI
+    # se ingiere igual -- solo se deja de tratar como "el cliente esta
+    # respondiendo ahora mismo". Ver el uso en _tk_leer_correo_entrante.
+    _TK_REABRIR_DIAS_MAX = 15
 
     @app.route("/tickets/api/mail/recuperar", methods=["POST"])
     @_tickets_required
@@ -10602,6 +10775,16 @@ def register_tickets_routes(app, ctx):
             max_correos = 200
         max_correos = max(1, min(_TK_REC_MAX_CORREOS, max_correos))
         dry_run = bool(d.get("dry_run", True))   # por defecto, MIRAR
+        # 2026-08-20 (Daniel — migracion Triple A): AMBOS nacen en False.
+        # incluir_taa=True es lo que activa el reconocimiento del formato
+        # nativo viejo de Triple A ("ILUS | Ticket - ID: N") -- el unico
+        # camino de ESTE endpoint (superadmin + dry_run por defecto) que
+        # puede tocar el backlog historico; el autopoll/cron nunca lo activa.
+        # oldest_first=True prioriza los correos MAS VIEJOS del buzon (los
+        # que un barrido historico busca rescatar) en vez de los mas
+        # recientes de siempre.
+        incluir_taa = bool(d.get("incluir_taa", False))
+        oldest_first = bool(d.get("oldest_first", False))
 
         # Mismo lock que el autopoll y el cron: un solo login IMAP a la vez.
         # Con blocking=False el barrido de recuperación fallaría seguido (el
@@ -10615,6 +10798,7 @@ def register_tickets_routes(app, ctx):
             resumen = _tk_leer_correo_entrante(
                 dias=dias, max_correos=max_correos, dry_run=dry_run,
                 detalle=True, notificar="resumen",
+                incluir_taa=incluir_taa, oldest_first=oldest_first,
                 # Presupuesto de reloj menor que el timeout de la request:
                 # antes de que Cloud Run corte, preferimos devolver un
                 # resultado parcial y decirlo. Reintentar es seguro (dedup).
