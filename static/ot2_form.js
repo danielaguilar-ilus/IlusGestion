@@ -48,6 +48,21 @@ var _TKOT_MODO_CLIENTE = true;
    que quien llega tiene ese permiso. */
 var _TKOT_ROL_GESTION = true;
 
+/* Estas tres vivian a nivel de pagina en static/tickets_ficha.js y el
+   copiado no las trajo (estan fuera del bloque del modal). En 'use strict'
+   leerlas sin declarar lanza ReferenceError y mata el arranque entero. */
+var ticketActual = null;   // ticket de origen ya cargado, si lo hay
+var equiposCache = [];     // equipos leidos del contexto (ficha o ticket)
+
+/* Escape de HTML — en el original es un helper global del modulo de
+   Tickets (tickets_ficha.js:120). Se replica aca porque lo usan 78
+   llamadas de este archivo para armar filas por innerHTML. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
 const _O2F = {
   cid: null,               // cliente_id resuelto por RUT en mant_clientes (null = sin ficha)
   clienteResuelto: false,
@@ -2843,7 +2858,7 @@ async function o2fGenerar(){
     if(_O2F.eqPlantillas[key] && _O2F.eqPlantillas[key].size > 0) plantillasPorEq[key] = Array.from(_O2F.eqPlantillas[key]);
   });
 
-  const btn = document.getElementById('btnLevIniciar');
+  const btn = document.getElementById('o2fBtnCrear');
   const btnHTMLOrig = btn.innerHTML;
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando OT…';
   try{
@@ -3273,6 +3288,34 @@ function _tkProgramarAutoRefresh(){
 // 2026-08-10: sin ticket que refrescar en modo cliente.
 if (TID !== null) _tkProgramarAutoRefresh();
 
+
+
+/* ── Puente al scope global ───────────────────────────────────────────
+   El HTML llama a estos handlers desde atributos onclick/onchange, que
+   se resuelven contra window y NO ven el interior de este IIFE. En el
+   original no hacia falta porque tickets_ficha.js no esta encapsulado.
+   Se exportan solo los que el template realmente usa. */
+Object.assign(window, {
+  levDurOtro,
+  levDurSet,
+  o2fAbrirCrearTipoOT,
+  o2fAdjFiles,
+  o2fCalHoy,
+  o2fCalMes,
+  o2fContactoChange,
+  o2fFechaProgChange,
+  o2fGenerar,
+  o2fHoraInput,
+  o2fModoSet,
+  o2fRangoChange,
+  o2fSetAccesoYN,
+  o2fTipoChange,
+  o2fToggleContactoManual,
+  o2fToggleTodos,
+  o2fdayPaso,
+  o2fdayRenderMine,
+  o2fdaySugerirHueco
+});
 
 /* ── API publica del modulo ───────────────────────────────────────────── */
 window.O2F = {
