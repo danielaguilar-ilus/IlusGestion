@@ -59879,6 +59879,41 @@ def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
     return f"{base}-{seq}"
 
 
+# Formatos de serie que el SISTEMA generó (no vienen de la placa del
+# fabricante). Son tres porque se agregaron en momentos distintos:
+#   1. {RUT}-{SKU4}-{n}  → _generar_serie_ilus, el canónico
+#   2. LEV-{lev_id}-{item_id} → fallback de _lev_materializar_equipos_nuevos
+#   3. LEV{VID}-{seq}    → _levdSerieSugerida, generado en el NAVEGADOR
+#      (static/mantenciones_ot_ejecutar.js). Este es el que produjo el bug
+#      de 2026-08-08: "LEV230-019" repetido en 15 de 18 equipos, impreso
+#      como N° de serie de fábrica en el PDF que firma el cliente.
+_RE_SERIE_GENERADA = re.compile(
+    r"^(?:\d{7,9}-[A-Za-z0-9]{1,6}-\d+|LEV-?\d+-\d+)$", re.I
+)
+
+
+def _serie_es_provisoria(serie):
+    """¿Esta serie es un relleno del sistema, o vino de la placa del equipo?
+
+    2026-08-20. Es la pregunta que hay que responder ANTES de escribir una
+    serie en la ficha: una serie de fabricante NO se pisa nunca; una
+    provisoria sí se puede reemplazar por la real.
+
+    Provisoria = vacía · placeholder humano ('no aplica', 's/n', 'sin
+    serie'…) · o generada por el sistema en cualquiera de sus 3 formatos.
+
+    Reusa _LEV_SERIE_PLACEHOLDERS (app.py ~54309) con su MISMO normalizador
+    en vez de redeclarar la lista: son 16 valores que ya se mantienen en un
+    solo lugar.
+    """
+    s = (serie or "").strip()
+    if not s:
+        return True
+    if re.sub(r"[^a-z0-9]", "", s.lower()) in _LEV_SERIE_PLACEHOLDERS:
+        return True
+    return bool(_RE_SERIE_GENERADA.match(s))
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/maquinas", methods=["POST"])
 @_mant_required
 def mant_maquina_add(cid):
@@ -74740,6 +74775,82 @@ def mant_ot_equipo_datos(vid, mid):
         if _escribe_ficha:
             mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
         else:
+            # ══════════════════════════════════════════════════════════
+            # EXCEPCIÓN AUTORIZADA POR DANIEL (2026-08-20) — SOLO `serie`.
+            #
+            # Medido en producción ese día: de 179 equipos tomados al azar,
+            # 179 tenían serie GENÉRICA del sistema y CERO la de fábrica.
+            # La causa no era que los técnicos no la escribieran: fuera de
+            # un levantamiento el dato caía acá, se desviaba a sugerencia y
+            # la ficha nunca cambiaba -- mientras el modal mostraba
+            # "✓ Guardado". El número de serie alimenta las ETIQUETAS DE
+            # GARANTÍA, así que ese silencio vaciaba el motivo de negocio.
+            #
+            # Daniel autorizó explícitamente: "Sí, pero sin pisar lo ya
+            # registrado". Por eso las dos condiciones de abajo:
+            #   · la ficha solo se escribe si su serie actual es PROVISORIA
+            #     (vacía, placeholder o generada por el sistema). Una serie
+            #     de fabricante ya registrada NO se toca jamás: sigue yendo
+            #     a sugerencia para revisión humana, como hoy.
+            #   · y solo si lo nuevo APORTA: una serie real siempre; una
+            #     provisoria únicamente cuando la ficha está del todo vacía.
+            #     Cambiar un genérico por otro genérico no es información.
+            #
+            # El resto de los campos (marca, modelo, voltaje…) NO cambia de
+            # comportamiento: siguen yendo a sugerencia. El alcance es el
+            # que Daniel autorizó, ni un campo más.
+            # ══════════════════════════════════════════════════════════
+            _campos_ot = dict(zip([s.split('=')[0] for s in sets], vals[:-1]))
+            _serie_nueva = (_campos_ot.get("serie") or "").strip()[:100]
+            _serie_actual = (valores_antes.get("serie") or "").strip()
+            _serie_a_ficha = False
+            if (_serie_nueva
+                    and _serie_nueva != _serie_actual
+                    and _serie_es_provisoria(_serie_actual)
+                    and (not _serie_es_provisoria(_serie_nueva) or not _serie_actual)):
+                try:
+                    _cid_maq = (valores_antes.get("cliente_id")
+                                or _v_ficha.get("cliente_id"))
+                    _conn_s = get_mysql()
+                    try:
+                        with _conn_s.cursor() as _cur_s:
+                            _cur_s.execute(
+                                "UPDATE mant_maquinas SET serie=%s WHERE id=%s",
+                                (_serie_nueva, mid))
+                            # Auditoría dedicada, mismo formato que usa
+                            # mant_maquina_actualizar_serie (el camino
+                            # canónico) para que el historial de la ficha
+                            # muestre los dos orígenes igual.
+                            try:
+                                _cur_s.execute(
+                                    "INSERT INTO mant_maquina_audit "
+                                    "  (maquina_id, cliente_id, campo, valor_antes, "
+                                    "   valor_nuevo, motivo, usuario) "
+                                    "VALUES (%s,%s,'serie',%s,%s,%s,%s)",
+                                    (mid, _cid_maq, _serie_actual, _serie_nueva,
+                                     f"Capturada en terreno · OT #{vid}",
+                                     current_username()))
+                            except Exception:
+                                # mant_maquina_audit puede no existir en prod
+                                # (su CREATE vive en el bloque que
+                                # ILUS_SKIP_MIGRATIONS=1 se salta). Perder la
+                                # auditoría no puede costar el dato.
+                                pass
+                        _conn_s.commit()
+                        _serie_a_ficha = True
+                    finally:
+                        _conn_s.close()
+                    _mant_log("maquina", mid, "serie_cambiada",
+                              f"'{_serie_actual}' → '{_serie_nueva}'. "
+                              f"Capturada en terreno durante la OT #{vid}.")
+                except Exception as _e_serie:
+                    # Duplicate entry (uq_cliente_serie) u otro problema: el
+                    # dato NO se pierde -- cae a la sugerencia de más abajo,
+                    # que es el comportamiento que ya existía.
+                    _serie_a_ficha = False
+                    print(f"[ot_equipo_datos] serie->ficha mid={mid} vid={vid} "
+                          f"no aplicada: {_e_serie}", flush=True)
+
             # PASO 5c: fuera de un levantamiento, el dato NO se descarta ni
             # se rechaza con 403/400 -- el modal autoguarda campo por campo
             # con cola secuencial y reintento; un error ahí deja al técnico
@@ -74748,9 +74859,11 @@ def mant_ot_equipo_datos(vid, mid):
             # acciones automáticas, solo sugiere"). `last_visita_id` se
             # excluye del cuerpo -- no es un dato de ficha, es trazabilidad
             # interna sin valor para quien revise la sugerencia.
+            # 2026-08-20: si la serie YA se escribió arriba, se excluye para
+            # no pedir a un humano que apruebe algo que ya está aplicado.
             _campos_prop = {
                 k: v for k, v in zip([s.split('=')[0] for s in sets], vals[:-1])
-                if k != "last_visita_id"
+                if k != "last_visita_id" and not (k == "serie" and _serie_a_ficha)
             }
             if _campos_prop:
                 try:
