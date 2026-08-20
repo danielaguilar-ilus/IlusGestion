@@ -78986,6 +78986,53 @@ def mant_visita_tarea_update(vid, tid):
                 vals.append(int(d.get(f)) if d.get(f) else None)
             except (TypeError, ValueError):
                 continue
+    # `requiere_foto` — quitar/poner la exigencia de evidencia fotográfica.
+    #
+    # 2026-08-20 (Daniel, caso OT-2026-00058 Deportes Vitacura): la OT quedó
+    # trabada por 24 tareas "Lubricación y Engrase" y "Mediciones Eléctricas
+    # (V / A)" con foto obligatoria sobre 10 equipos de FUERZA — racks de
+    # mancuernas, GHD, Half Rack, Split Squat Stand. No tienen motor ni
+    # enchufe: la foto pedida no existe y ninguna de las 24 la tenía en toda
+    # la OT. Es la plantilla de cardio aplicada a equipos de musculación (la
+    # raíz que resuelve "plantillas por clasificación de producto").
+    #
+    # 🔴 NO es un campo libre: apagar la exigencia de fotos es justamente el
+    # control de calidad del servicio. Por eso va con gate de rol
+    # (supervisor/ejecutivo/admin — nunca el técnico, que es el auditado) y
+    # SIEMPRE deja registro en mant_logs con el motivo. Un técnico que no
+    # quiere fotografiar no puede quitarse la exigencia solo.
+    if "requiere_foto" in d:
+        if not _puede_ot_accion(vid, "metadata"):
+            return jsonify({
+                "ok": False,
+                "error": "Cambiar la exigencia de foto requiere permiso de "
+                         "supervisor. Pídelo a quien coordina el servicio."
+            }), 403
+        try:
+            _rf = 1 if int(d.get("requiere_foto") or 0) else 0
+        except Exception:
+            _rf = 1 if d.get("requiere_foto") else 0
+        _motivo = (d.get("motivo") or "").strip()[:400]
+        if not _rf and not _motivo:
+            return jsonify({
+                "ok": False,
+                "error": "Para quitar la foto obligatoria hay que decir por "
+                         "qué (ej: la tarea no aplica a este equipo)."
+            }), 400
+        fields.append("requiere_foto=%s")
+        vals.append(_rf)
+        try:
+            mysql_execute(
+                "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+                "VALUES ('visita', %s, %s, %s, %s)",
+                (vid,
+                 "foto_obligatoria_off" if not _rf else "foto_obligatoria_on",
+                 f"Tarea ID {tid} — {_motivo or 'sin motivo'}",
+                 user)
+            )
+        except Exception:
+            pass
+
     # Soporte para `completada` directo (modo técnico — vista ejecutar):
     # se setea junto con completada_at y completada_por.
     if "completada" in d:
