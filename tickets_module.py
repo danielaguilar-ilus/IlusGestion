@@ -10571,7 +10571,16 @@ def register_tickets_routes(app, ctx):
     #  aviso masivo. Solo escribe en la BD de ILUS y deja UNA campanita de
     #  resumen (notificar="resumen").
     # ═══════════════════════════════════════════════════════════════════
-    _TK_REC_DIAS_MAX = 120        # tope duro de la ventana
+    # 2026-08-20 (Daniel — migracion Triple A): "necesito que hagas un
+    # levantamiento para traer todas las conversaciones". La actividad de
+    # los 749 tickets importados abarca 187 dias (13-feb a 19-ago-2026); el
+    # tope anterior de 120 se quedaba corto y dejaba afuera justo los
+    # tickets mas antiguos, que son los que mas necesitan el rescate. Sube
+    # a 200 para cubrir todo el historico con margen. El buzon completo
+    # ronda ~279 correos (bien por debajo de _TK_REC_MAX_CORREOS), asi que
+    # ampliar la ventana no dispara de mas: el limite real sigue siendo
+    # cuantos correos EXISTEN, no cuantos se piden.
+    _TK_REC_DIAS_MAX = 200        # tope duro de la ventana
     _TK_REC_MAX_CORREOS = 400     # tope duro de correos por pasada
 
     @app.route("/tickets/api/mail/recuperar", methods=["POST"])
