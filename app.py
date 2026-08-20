@@ -93653,6 +93653,19 @@ def mant_maquina_ficha_tecnica_json(mid):
         "sku": eq.get("sku") or "",
         "serie": eq.get("serie") or "",
         "serie_actual": eq.get("serie") or "",
+        # 2026-08-20 — el bloque que calcula estos 4 valores escribía sobre
+        # `eq`, pero lo que viaja al navegador es este `out_eq`, armado
+        # campo por campo. Por eso `serie_sugerida` (2026-06-10) llevaba
+        # meses calculándose y NUNCA llegaba al modal: el banner "Serie
+        # sugerida · Usar" existía en el JS y no podía aparecer jamás.
+        # Detectado al verificar en producción, no en revisión de código.
+        # `serie_sugerida` va como string o None a propósito: el modal hace
+        # String(...) y lo graba con un click en el campo que alimenta la
+        # etiqueta de garantía.
+        "serie_sugerida": eq.get("serie_sugerida"),
+        "serie_lleva_individual": eq.get("serie_lleva_individual", True),
+        "serie_no_aplica_motivo": eq.get("serie_no_aplica_motivo") or "",
+        "serie_es_provisoria": eq.get("serie_es_provisoria", False),
         "marca": eq.get("marca") or "",
         "modelo": eq.get("modelo") or "",
         "anio_fabricacion": eq.get("anio_fabricacion"),
