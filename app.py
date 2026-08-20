@@ -52161,10 +52161,18 @@ def init_mantenciones_tables():
                 # 7 valores del modelo Fracttal agregados en la migración de
                 # arriba (visita_tecnica, visita_correctiva, cambio_equipo,
                 # desinstalacion, capacitacion, repuesto, revision_interna).
-                # Este MODIFY es el ÚLTIMO que corre sobre esta columna en el
-                # boot, así que SÍ preserva los valores existentes (antes no
-                # los listaba y los pisaba con solo 7 → bug confirmado
+                # Este MODIFY es el ÚLTIMO que corre sobre esta columna DENTRO
+                # de este bloque de migraciones condicionales (antes no
+                # listaba estos 7 valores y los pisaba → bug confirmado
                 # auditoría 2026-07-18: crear OT de tipo Fracttal fallaba 500).
+                # ⚠️ OJO: esta lista NO incluye valores agregados DESPUÉS
+                # (ej. 'control_calidad', 'movimiento_equipos') — un MODIFY
+                # nuevo que no los liste también los pisaría. Además, TODO
+                # este bloque de migraciones se salta en producción con
+                # ILUS_SKIP_MIGRATIONS=1: la fuente de verdad real del ENUM
+                # es _ensure_ot_tipos_enum() (más abajo en este archivo),
+                # que corre siempre al arrancar y no depende de este MODIFY
+                # ni de su orden.
                 "ALTER TABLE mant_visitas MODIFY COLUMN tipo "
                 "  ENUM('preventiva','correctiva','garantia','inspeccion',"
                 "       'levantamiento','instalacion','retroactiva',"
