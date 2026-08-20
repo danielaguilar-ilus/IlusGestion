@@ -138,10 +138,10 @@ function o2fContactoChange(){
   const v = sel.value;
   if(v === '__manual'){
     box.style.display = '';
-    document.getElementById('o2fLevContactoNombre').value = '';
-    document.getElementById('o2fLevContactoCargo').value = '';
-    document.getElementById('o2fLevContactoTel').value = '';
-    document.getElementById('o2fLevContactoEmail').value = '';
+    (document.getElementById('o2fLevContactoNombre')||{}).value = '';
+    (document.getElementById('o2fLevContactoCargo')||{}).value = '';
+    (document.getElementById('o2fLevContactoTel')||{}).value = '';
+    (document.getElementById('o2fLevContactoEmail')||{}).value = '';
     sel.dataset.origen = 'manual';
   } else if(v === ''){
     box.style.display = 'none';
@@ -151,10 +151,10 @@ function o2fContactoChange(){
     const c = _O2F.contactos.lista[idx];
     if(c){
       box.style.display = '';
-      document.getElementById('o2fLevContactoNombre').value = c.nombre || '';
-      document.getElementById('o2fLevContactoCargo').value = c.cargo || '';
-      document.getElementById('o2fLevContactoTel').value = c.tel || '';
-      document.getElementById('o2fLevContactoEmail').value = c.email || '';
+      (document.getElementById('o2fLevContactoNombre')||{}).value = c.nombre || '';
+      (document.getElementById('o2fLevContactoCargo')||{}).value = c.cargo || '';
+      (document.getElementById('o2fLevContactoTel')||{}).value = c.tel || '';
+      (document.getElementById('o2fLevContactoEmail')||{}).value = c.email || '';
       sel.dataset.origen = c.origen || 'principal';
     }
   }
@@ -202,7 +202,7 @@ function o2fRenderTecnicos(){
     box.innerHTML = '<div class="alert alert-warning py-2 mb-0 small w-100">'
       + '<i class="bi bi-exclamation-triangle me-1"></i>No hay técnicos activos. '
       + 'Solicita a un administrador que cree un usuario con rol "Técnico".</div>';
-    document.getElementById('o2fLevTecCount').textContent = '0';
+    (document.getElementById('o2fLevTecCount')||{}).textContent = '0';
     return;
   }
   const fechaProg = document.getElementById('o2fLevFechaProg')?.value || '';
@@ -214,7 +214,7 @@ function o2fRenderTecnicos(){
       + 'onclick="o2fToggleTecnico('+t.id+')"><i class="bi '+icon+' me-1"></i>'+esc(t.nombre || t.email || ('Téc #'+t.id))
       + _tkotTecCargaChip(t.id, fechaProg) + '</span>';
   }).join('');
-  document.getElementById('o2fLevTecCount').textContent = String(_O2F.tecnicosSel.size);
+  (document.getElementById('o2fLevTecCount')||{}).textContent = String(_O2F.tecnicosSel.size);
 }
 
 // ── §4B "Carga del día por técnico, donde se decide": mini-contador de OTs
@@ -568,9 +568,9 @@ function _levReanclarFin(){
   const p = v.split('-');
   const d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
   d.setDate(d.getDate() + (n - 1));   // días CORRIDOS, findes incluidos
-  document.getElementById('o2fLevFechaFin').value = _levFmtYMD(d);
-  document.getElementById('o2fLevRangoDias').checked = true;
-  document.getElementById('o2fLevFechaFinWrap').style.display = '';
+  (document.getElementById('o2fLevFechaFin')||{}).value = _levFmtYMD(d);
+  (document.getElementById('o2fLevRangoDias')||{}).checked = true;
+  (document.getElementById('o2fLevFechaFinWrap')||{}).style.display = '';
 }
 
 // Tap en un chip numérico [1|2|3|5].
@@ -583,12 +583,12 @@ function levDurSet(n){
   _O2F.durN = n;
   if(n <= 1){
     chk.checked = false; wrap.style.display = 'none';
-    document.getElementById('o2fLevFechaFin').value = '';
+    (document.getElementById('o2fLevFechaFin')||{}).value = '';
   } else {
     _levReanclarFin();
     if(veniaDe1){   // heredar horas SOLO al abrir el rango, nunca entre chips N→M (P3)
-      document.getElementById('o2fLevHoraIniFin').value = document.getElementById('o2fLevHoraIni').value || '09:00';
-      document.getElementById('o2fLevHoraFinFin').value = document.getElementById('o2fLevHoraFin').value || '13:00';
+      (document.getElementById('o2fLevHoraIniFin')||{}).value = (document.getElementById('o2fLevHoraIni')||{}).value || '09:00';
+      (document.getElementById('o2fLevHoraFinFin')||{}).value = (document.getElementById('o2fLevHoraFin')||{}).value || '13:00';
     }
   }
   o2fRangoChange();               // reusa pill + "Día X de N" + o2fdayRenderMine + levChipsRefresh
@@ -598,8 +598,8 @@ function levDurSet(n){
 // Tap en "Otro…": abre el panel ámbar existente para que el usuario tipee
 // la fecha de término a mano. No fuerza ninguna duración.
 function levDurOtro(){
-  document.getElementById('o2fLevRangoDias').checked = true;
-  document.getElementById('o2fLevFechaFinWrap').style.display = '';
+  (document.getElementById('o2fLevRangoDias')||{}).checked = true;
+  (document.getElementById('o2fLevFechaFinWrap')||{}).style.display = '';
   _O2F.durN = 'otro';
   o2fRangoChange();
   document.getElementById('o2fLevFechaFin').focus();
@@ -1121,8 +1121,8 @@ function o2fdaySlotClick(ev){
     o2fCalClicDia(_O2F.day.fecha);
   }
 
-  document.getElementById('o2fLevHoraIni').value = _tkdayHHMM(min);
-  document.getElementById('o2fLevHoraFin').value = _tkdayHHMM(finMin);
+  (document.getElementById('o2fLevHoraIni')||{}).value = _tkdayHHMM(min);
+  (document.getElementById('o2fLevHoraFin')||{}).value = _tkdayHHMM(finMin);
   o2fHoraInput();   // repinta "Tu OT" (transición CSS existente) + dispara el choque con debounce
 
   // Feedback visual -- sin toast (pedido explícito): pulso breve del marco
@@ -1841,8 +1841,8 @@ async function o2fdaySugerirHueco(){
     }
 
     await _tkdayIrADia(encontrado.fecha);
-    document.getElementById('o2fLevHoraIni').value = encontrado.hora;
-    document.getElementById('o2fLevHoraFin').value = _tkdayHHMM(_tkdayToMin(encontrado.hora) + durMin);
+    (document.getElementById('o2fLevHoraIni')||{}).value = encontrado.hora;
+    (document.getElementById('o2fLevHoraFin')||{}).value = _tkdayHHMM(_tkdayToMin(encontrado.hora) + durMin);
     o2fHoraInput();   // repinta "Tu OT" en su nueva posición + dispara el choque (debería salir limpio)
 
     const mine = document.getElementById('o2fLevDayMine');
@@ -2038,7 +2038,7 @@ function o2fRenderEquipos(){
     tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">'
       + (_TKOT_MODO_CLIENTE ? 'Este cliente no tiene equipos registrados todavía.' : 'Este ticket no tiene equipos declarados.')
       + '</td></tr>';
-    document.getElementById('o2fLevEqCount').textContent = '0';
+    (document.getElementById('o2fLevEqCount')||{}).textContent = '0';
     return;
   }
   const forzado = _O2F.forzarTodosEquipos;
@@ -2122,7 +2122,7 @@ const _TKOT_TIPOS_FUERZAN_CLIENTE_NUEVO = [
 ];
 function o2fAplicarForzadoInstalacion(){
   const tipo = document.getElementById('o2f_otTipo')?.value;
-  const warn = document.getElementById('o2fSinFichaWarn');
+  const warn = document.getElementById('o2fAvisoSinFicha');
   const debeForzar = _TKOT_TIPOS_FUERZAN_CLIENTE_NUEVO.indexOf(tipo) !== -1
     && _O2F.clienteResuelto && !_O2F.cid && (equiposCache||[]).length > 0;
   if(warn) warn.style.display = (_O2F.clienteResuelto && !_O2F.cid) ? '' : 'none';
@@ -2549,7 +2549,7 @@ async function _tkotSugerirDiaPreferido(fechaPresetExplicita){
 document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async function(){
   const tbody = document.getElementById('o2fLevSelectTbody');
   tbody.innerHTML = '<tr><td colspan="3" class="text-muted small text-center py-3">Cargando…</td></tr>';
-  document.getElementById('o2fSinFichaWarn').style.display = 'none';
+  (document.getElementById('o2fAvisoSinFicha')||{}).style.display = 'none';
 
   // Modo cliente: los equipos salen del DOM de la ficha (ya renderizado),
   // no de un ticket. Se lee ANTES de o2fRenderEquipos()/o2fAplicarForzadoInstalacion()
@@ -2571,11 +2571,11 @@ document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async 
     // lo llene (mismo comportamiento que tenía el modal viejo
     // #modalLevSelector, que tampoco prellenaba estos 3 campos).
     const t = ticketActual || {};
-    document.getElementById('o2fLevContactoSel').value = '__manual';
+    (document.getElementById('o2fLevContactoSel')||{}).value = '__manual';
     o2fContactoChange();
-    document.getElementById('o2fLevContactoNombre').value = t.nombre_contacto || '';
-    document.getElementById('o2fLevContactoTel').value = t.phone || '';
-    document.getElementById('o2fLevContactoEmail').value = t.email || '';
+    (document.getElementById('o2fLevContactoNombre')||{}).value = t.nombre_contacto || '';
+    (document.getElementById('o2fLevContactoTel')||{}).value = t.phone || '';
+    (document.getElementById('o2fLevContactoEmail')||{}).value = t.email || '';
   }
 
   // Tipo de OT: en modo ticket siempre 'levantamiento'. En modo cliente,
@@ -2644,17 +2644,17 @@ document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async 
   const _fechaPreset = (_TKOT_MODO_CLIENTE && _O2F.pendingFechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(_O2F.pendingFechaPreset))
     ? _O2F.pendingFechaPreset : null;
   const _fechaDef = _fechaPreset || _hoyStr;
-  document.getElementById('o2fLevFechaProg').value = _fechaDef;
-  document.getElementById('o2fLevFechaFin').value = '';
-  document.getElementById('o2fLevRangoDias').checked = false;
-  document.getElementById('o2fLevFechaFinWrap').style.display = 'none';
-  document.getElementById('o2fLevHoraIni').value = '09:00';
-  document.getElementById('o2fLevHoraFin').value = '13:00';
+  (document.getElementById('o2fLevFechaProg')||{}).value = _fechaDef;
+  (document.getElementById('o2fLevFechaFin')||{}).value = '';
+  (document.getElementById('o2fLevRangoDias')||{}).checked = false;
+  (document.getElementById('o2fLevFechaFinWrap')||{}).style.display = 'none';
+  (document.getElementById('o2fLevHoraIni')||{}).value = '09:00';
+  (document.getElementById('o2fLevHoraFin')||{}).value = '13:00';
   // Chips de duración (2026-07-19, P9): el reset original NO limpiaba las
   // horas del "último día" del rango -- quedaban con el valor de la OT
   // anterior. Aditivo, no quita nada (REGLA #4.2).
-  document.getElementById('o2fLevHoraIniFin').value = '09:00';
-  document.getElementById('o2fLevHoraFinFin').value = '13:00';
+  (document.getElementById('o2fLevHoraIniFin')||{}).value = '09:00';
+  (document.getElementById('o2fLevHoraFinFin')||{}).value = '13:00';
   _O2F.durN = 1;
   if (typeof levChipsRefresh === 'function') levChipsRefresh();
   // Presets consumidos -- se limpian para no "pegarse" en la próxima
@@ -2687,7 +2687,7 @@ document.getElementById('ot2ModalForm').addEventListener('show.bs.modal', async 
     _O2F.tecnicosDisponibles = Array.isArray(d) ? d : (d.tecnicos || []);
     o2fRenderTecnicos();
   }catch(e){
-    document.getElementById('o2fLevTecnicosBox').innerHTML = '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
+    (document.getElementById('o2fLevTecnicosBox')||{}).innerHTML = '<span class="text-danger small">⚠ No se pudieron cargar los técnicos</span>';
   }
 
   // Estado inicial de los 7 pasos (2026-08-12): se calcula al final, con
@@ -2779,15 +2779,15 @@ async function o2fGenerar(){
     return;
   }
 
-  const fechaProg = document.getElementById('o2fLevFechaProg').value;
+  const fechaProg = (document.getElementById('o2fLevFechaProg')||{}).value;
   if(!fechaProg){ ilusToast('Indica la fecha programada', {type:'warning'}); return; }
-  const horaIni = document.getElementById('o2fLevHoraIni').value || '';
-  const horaFin = document.getElementById('o2fLevHoraFin').value || '';
+  const horaIni = (document.getElementById('o2fLevHoraIni')||{}).value || '';
+  const horaFin = (document.getElementById('o2fLevHoraFin')||{}).value || '';
   if(horaIni && horaFin && horaIni >= horaFin){ ilusToast('La hora de término debe ser posterior a la de inicio', {type:'warning'}); return; }
-  const usaRango = document.getElementById('o2fLevRangoDias').checked;
+  const usaRango = (document.getElementById('o2fLevRangoDias')||{}).checked;
   let fechaFin = '';
   if(usaRango){
-    fechaFin = document.getElementById('o2fLevFechaFin').value;
+    fechaFin = (document.getElementById('o2fLevFechaFin')||{}).value;
     if(!fechaFin){ ilusToast('Indica la fecha de término', {type:'warning'}); return; }
     if(fechaFin < fechaProg){ ilusToast('La fecha de término no puede ser anterior a la de inicio', {type:'warning'}); return; }
   }
@@ -2838,8 +2838,8 @@ async function o2fGenerar(){
     const payload = {
       ticket_id: TID,
       cliente_id: _O2F.cid,
-      titulo: document.getElementById('o2fLevSelectTitulo').value.trim(),
-      notas: document.getElementById('o2fLevSelectNotas').value.trim(),
+      titulo: (document.getElementById('o2fLevSelectTitulo')||{}).value.trim(),
+      notas: (document.getElementById('o2fLevSelectNotas')||{}).value.trim(),
       equipo_ids: equipoIds,
       equipos_ticket: equiposTicket,
       descubrimiento: esDescubrimiento,
