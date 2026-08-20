@@ -590,15 +590,38 @@ window.OT2C = (function(){
       fetch('/mantenciones/api/clientes/autocomplete?q='+encodeURIComponent(q), {credentials:'same-origin'})
         .then(function(r){return r.json();})
         .then(function(j){
-          var arr = (Array.isArray(j)?j:(j.clientes||[])).filter(function(c){ return c.id; });
+          /* Se muestran TODOS los resultados, tengan ficha o no.
+             Daniel (20-08): "que me indique si el cliente no tiene una
+             ficha y pregunte crearla… sobre todo las instalaciones, pasan
+             muy frecuente". Antes se filtraban los que no tenían ficha y
+             el usuario veía "sin resultados" para un cliente que SÍ existe
+             en el ERP — y no tenía cómo seguir. */
+          var arr = (Array.isArray(j)?j:(j.clientes||[]));
           var c = document.getElementById('o2mCliRes'); if(!c) return;
-          c.innerHTML = arr.length ? arr.map(function(x){
-            return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+
-              esc(x.razon_social||x.nombre).replace(/'/g,"\\'")+'\')">'+
-              '<i class="bi bi-building text-muted"></i><span style="flex:1">'+
-              '<span class="nm">'+esc(x.razon_social||x.nombre)+'</span>'+
-              '<span class="mt d-block">'+esc(x.rut||'')+'</span></span></div>';
-          }).join('') : '<div class="p-3 text-muted small">Sin resultados con ficha en Mantenciones.</div>';
+          if (!arr.length){
+            c.innerHTML = '<div class="p-3 text-muted small">Sin resultados. '+
+              'Puedes crear la ficha desde Clientes.</div>';
+            return;
+          }
+          c.innerHTML = arr.map(function(x){
+            var nom = esc(x.razon_social||x.nombre||'');
+            var nomJs = String(x.razon_social||x.nombre||'').replace(/'/g,"\\'");
+            var rut = esc(x.rut||'');
+            if (x.id){
+              return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+esc(nomJs)+'\')">'+
+                '<i class="bi bi-building text-muted"></i><span style="flex:1">'+
+                '<span class="nm">'+nom+'</span>'+
+                '<span class="mt d-block">'+rut+' · con ficha</span></span></div>';
+            }
+            /* Sin ficha: se ofrece crearla, diciendo por qué se crea. */
+            return '<div class="o2m-it" style="background:#fffbeb" '+
+              'onclick="OT2C.crearFicha(\''+esc(nomJs)+'\',\''+rut+'\')">'+
+              '<i class="bi bi-person-plus-fill" style="color:#b45309"></i>'+
+              '<span style="flex:1"><span class="nm">'+nom+'</span>'+
+              '<span class="mt d-block" style="color:#b45309">'+
+              (rut ? rut+' · ' : '')+'sin ficha — toca para crearla</span></span>'+
+              '<i class="bi bi-plus-circle" style="color:#b45309"></i></div>';
+          }).join('');
         });
     }, 260);
   }
@@ -607,6 +630,44 @@ window.OT2C = (function(){
     S.cliente = {id:id, nombre:nombre};
     S.equipos = [];
     setOrigen(S.origen || 'cliente');
+  }
+
+  /* Cliente sin ficha: se crea al vuelo, diciendo POR QUÉ se crea.
+     Daniel: "que la ficha sea creada con el motivo de la orden de trabajo,
+     bien instalación o una mantención". Nace como PROSPECTO, que es lo que
+     después permite ofrecerle mantenciones.
+     Se confirma una sola vez; de ahí en adelante el flujo sigue sin más
+     preguntas. */
+  async function crearFicha(nombre, rut){
+    var tipoTxt = '';
+    if (S.tipo){
+      var t = TIPOS.find(function(x){ return x.v === S.tipo; });
+      tipoTxt = t ? t.n : S.tipo;
+    }
+    var ok = true;
+    if (window.ilusConfirm){
+      ok = await ilusConfirm({
+        title: 'Crear ficha del cliente',
+        message: '«' + nombre + '» todavía no tiene ficha en Mantenciones.',
+        sub: '¿La creamos ahora' + (tipoTxt ? ' por esta ' + tipoTxt.toLowerCase() : '') +
+             '? Queda como prospecto y podrás completarla después.',
+        okLabel: 'Crear ficha', cancelLabel: 'Cancelar',
+      });
+    }
+    if (!ok) return;
+
+    var r = await fetch('/ot/api/cliente', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({razon_social:nombre, rut:rut, motivo:S.tipo || ''})
+    }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+
+    if (!r.ok || !r.cliente){
+      if (window.ilusToast) ilusToast(r.error || 'No pudimos crear la ficha.', {type:'error'});
+      return;
+    }
+    if (window.ilusToast) ilusToast('✓ ' + (r.mensaje || 'Ficha creada'), {type:'success'});
+    setCli(r.cliente.id, r.cliente.razon_social);
   }
 
   function crear(){
@@ -722,6 +783,6 @@ window.OT2C = (function(){
 
   return {abrir:abrir, abrirWizard:abrirWizard, ir:ir, setOrigen:setOrigen, setTipo:setTipo, setAcc:setAcc,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli,
-          setCli:setCli, avisosAgenda:avisosAgenda, S:S};
+          setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, S:S};
 })();
 </script>

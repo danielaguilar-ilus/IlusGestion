@@ -71618,6 +71618,83 @@ def ot2_api_cliente(cid):
     })
 
 
+@app.route("/ot/api/cliente", methods=["POST"])
+@_mant_required
+def ot2_api_cliente_crear():
+    """Crea la ficha de un cliente que todavía no la tiene, desde el flujo
+    de una OT.
+
+    Daniel (20-08-2026): "si el cliente no tiene una ficha, que me indique
+    y pregunte crearla, para que la ficha sea creada con el motivo de la
+    orden de trabajo — bien instalación o una mantención… Trabájalo muy
+    bien, sobre todo las instalaciones, pasan muy frecuente".
+
+    Nace como **prospecto**, igual que la ficha que ya crea el flujo de
+    Tickets (tickets_module.py ~7062): es un cliente real pero todavía sin
+    contrato, y ese estado es justo lo que permite ofrecerle mantenciones
+    después — el modelo de negocio que Daniel quiere aprovechar.
+
+    Ficha MÍNIMA y editable: razón social, RUT y lo que se sepa del
+    contacto y la dirección. Nada se inventa.
+    """
+    d = request.get_json(silent=True) or {}
+    razon = (d.get("razon_social") or "").strip()[:200]
+    if not razon:
+        return _ot2_err("Falta la razón social del cliente.", "RAZON_REQUERIDA")
+
+    rut = (d.get("rut") or "").strip()[:20] or None
+    motivo = (d.get("motivo") or "").strip().lower()   # tipo de OT que la origina
+
+    # Si ya existe una ficha con ese RUT, se devuelve esa en vez de duplicar.
+    if rut:
+        ya = mysql_fetchone(
+            "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1", (rut,))
+        if ya:
+            return jsonify({"ok": True, "creado": False,
+                            "cliente": {"id": ya["id"], "razon_social": ya["razon_social"]},
+                            "mensaje": "Ese RUT ya tenía ficha; se usará la existente."})
+
+    _motivo_txt = _TIPO_OT_LABEL.get(motivo, motivo.replace("_", " ").title()) if motivo else ""
+    try:
+        mysql_execute(
+            "INSERT INTO mant_clientes "
+            "  (razon_social, rut, contacto_nombre, contacto_tel, contacto_email, "
+            "   direccion, comuna, estado, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'prospecto',%s)",
+            (razon, rut,
+             (d.get("contacto_nombre") or "").strip()[:200] or None,
+             (d.get("contacto_tel") or "").strip()[:50] or None,
+             (d.get("contacto_email") or "").strip()[:200] or None,
+             (d.get("direccion") or "").strip()[:400] or None,
+             (d.get("comuna") or "").strip()[:100] or None,
+             current_username() or "sistema"))
+        row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}
+        cid = row.get("id")
+        if not cid:
+            return _ot2_err("No pudimos crear la ficha.", "ERROR_INTERNO", http=500)
+    except Exception as e:
+        print(f"[ot2_cliente_crear] {e}", flush=True)
+        return _ot2_err("No pudimos crear la ficha del cliente.",
+                        "ERROR_INTERNO", http=500)
+
+    # Queda el rastro de POR QUÉ nació esta ficha — dentro de un año nadie
+    # se acuerda de que salió de una instalación.
+    try:
+        _mant_log("cliente", cid, "creado",
+                  f"Ficha creada desde OT 2.0"
+                  + (f" · motivo: {_motivo_txt}" if _motivo_txt else "")
+                  + " · queda como prospecto")
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True, "creado": True,
+        "cliente": {"id": cid, "razon_social": razon},
+        "mensaje": "Ficha creada como prospecto"
+                   + (f" por {_motivo_txt}." if _motivo_txt else "."),
+    })
+
+
 @app.route("/ot/api/crear", methods=["POST"])
 @_mant_required
 def ot2_api_crear():
