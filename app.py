@@ -66795,8 +66795,14 @@ def _ot_es_levantamiento(v):
 
 
 def _ot_tarea_no_trabajable_sql(alias=""):
-    """Tarea sin maquina_id = sin tarjeta en pantalla = imposible de trabajar.
+    """Tarea que no dibuja tarjeta en pantalla = imposible de trabajar.
 
+    Regla de fondo (una sola, dos causas): si el técnico NO puede ver la
+    tarjeta del equipo, no puede abrir la tarea, ni fotografiarla, ni
+    marcarla. Exigirla para cerrar es un candado sin llave — la OT queda
+    trabada haga lo que haga quien esté en terreno.
+
+    CAUSA 1 · tarea sin maquina_id (huérfana)
     PASO 1 del plan "el levantamiento es un tipo más" (2026-08-12): antes
     este filtro solo se aplicaba `if es_levantamiento`, como si el problema
     de las tareas huérfanas fuera exclusivo del levantamiento. No lo es —
@@ -66804,12 +66810,66 @@ def _ot_tarea_no_trabajable_sql(alias=""):
     el técnico no puede abrirla, fotografiarla ni marcarla sin importar el
     tipo. Por eso este helper se usa SIEMPRE, incondicional al tipo.
 
+    CAUSA 2 · la máquina está dada de baja (o ya no existe)
+    FIX 2026-08-20 (Daniel, caso OT-2026-00058 Deportes Vitacura: "esas 36
+    tareas no sé de dónde las sacaste!!!"). Diagnóstico real medido en
+    producción: 4 trotadoras (ids 6444-6447, series 65206047-0905-1 a -4)
+    fueron dadas de baja. mant_ot_ejecutar filtra los equipos de baja al
+    armar la pantalla (FIX 2026-05-16) — correcto, un equipo de baja no se
+    trabaja. Pero el validador de cierre contaba mant_visita_tareas SIN ese
+    filtro, así que las 44 tareas de esos 4 equipos seguían exigiéndose
+    mientras sus tarjetas ya no se dibujaban. Daniel veía 7 trotadoras
+    completas en pantalla y el contador le decía 36 obligatorias pendientes:
+    las dos cifras eran ciertas y ninguna se podía conciliar a mano.
+
+    La condición se ancla al MISMO criterio que usa la pantalla para dibujar
+    (`COALESCE(estado,'activo') <> 'baja'`), no a una lista de causas — si
+    mañana la pantalla deja de dibujar por otro motivo, el lugar a tocar es
+    uno solo y los dos quedan alineados por construcción.
+
+    Las tareas NO se borran ni se marcan (REGLA #4.2): siguen existiendo,
+    visibles y auditables. Solo dejan de ser un candado infranqueable. El
+    cierre además informa cuántas se excluyeron así — ver
+    `_ot_tareas_excluidas_por_baja()`, para que "la OT cerró" nunca sea una
+    forma silenciosa de saltarse trabajo dando de baja un equipo.
+
     El `alias` es OBLIGATORIO cuando la consulta hace JOIN con otra tabla
     que TAMBIÉN tiene columna `maquina_id` (ej. mant_visita_fotos) — sin el
     alias correcto la columna queda ambigua → MySQL error 1052 → 500 en el
-    cierre de TODA OT, no solo levantamiento.
+    cierre de TODA OT, no solo levantamiento. El subquery usa su propio
+    alias `_mmx` por la misma razón: varias de estas consultas ya hacen
+    JOIN con mant_maquinas como `m`.
     """
-    return f" AND {alias}maquina_id IS NOT NULL "
+    return (
+        f" AND {alias}maquina_id IS NOT NULL "
+        f" AND EXISTS (SELECT 1 FROM mant_maquinas _mmx "
+        f"              WHERE _mmx.id = {alias}maquina_id "
+        f"                AND COALESCE(_mmx.estado,'activo') <> 'baja') "
+    )
+
+
+def _ot_tareas_excluidas_por_baja(vid):
+    """Cuántas tareas de la OT no se exigen porque su equipo está de baja.
+
+    Existe para que la exclusión sea VISIBLE, no silenciosa: el cierre la
+    informa como aviso (nunca como bloqueo). Sin esto, dar de baja un equipo
+    sería una forma tranquila de hacer desaparecer trabajo pendiente sin que
+    quede rastro en la pantalla de cierre.
+    """
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, COUNT(DISTINCT t.maquina_id) AS equipos "
+            "  FROM mant_visita_tareas t "
+            " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL "
+            "   AND COALESCE(t.completada,0)=0 "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_maquinas _mmx "
+            "                    WHERE _mmx.id = t.maquina_id "
+            "                      AND COALESCE(_mmx.estado,'activo') <> 'baja')",
+            (vid,)
+        ) or {}
+        return int(r.get("n") or 0), int(r.get("equipos") or 0)
+    except Exception:
+        return 0, 0
 
 
 def _ot_maquinas_excluidas_cierre(vid):
@@ -67092,15 +67152,33 @@ def _ot_validar_cierre(vid):
             # por un problema de infraestructura. Se registra y se sigue.
             print(f"[_ot_validar_cierre][min_fotos] {_fot_e}", flush=True)
 
+    # Aviso (NUNCA bloqueo) de las tareas que quedaron fuera del conteo por
+    # tener el equipo dado de baja — ver _ot_tarea_no_trabajable_sql(). Van
+    # en `avisos` y no en `razones` a propósito: `razones` es la lista de lo
+    # que impide cerrar, y esto no impide nada; solo deja constancia de que
+    # la OT cerró con trabajo no ejecutado sobre equipos retirados.
+    _n_baja, _eq_baja = _ot_tareas_excluidas_por_baja(vid)
+    avisos = []
+    if _n_baja:
+        avisos.append(
+            f"{_n_baja} tarea(s) de {_eq_baja} equipo(s) dados de baja no se "
+            f"exigen para cerrar: sus tarjetas ya no se dibujan en la OT, "
+            f"así que nadie puede marcarlas. Si el equipo sigue en la sala, "
+            f"restáuralo desde la papelera del cliente y vuelven a pedirse."
+        )
+
     return {
         "puede_cerrar": len(razones) == 0,
         "razones": razones,
+        "avisos": avisos,
         "total_tareas": total,
         "tareas_completadas": done,
         "tareas_sin_foto": len(tareas_sin_foto),
         "tiene_diagnostico": bool((v.get("diagnostico") or "").strip()),
         "firmas_ok": all([v.get("firma_cliente_url"), v.get("firma_tecnico_url"), v.get("firma_supervisor_url")]),
         "equipos_excluidos": len(excluir_maquinas),
+        "tareas_excluidas_baja": _n_baja,
+        "equipos_baja": _eq_baja,
         "fotos_ot": n_fotos_ot,
         "min_fotos_ot": _min_fotos,
     }
