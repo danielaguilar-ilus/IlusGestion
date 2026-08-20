@@ -1308,6 +1308,27 @@ def register_tickets_routes(app, ctx):
         # comuna/region (ya soportados). Columna propia para no perderlo.
         if "codigo_postal" not in existentes:
             alters.append("ADD COLUMN codigo_postal VARCHAR(20) NULL")
+        # 2026-08-20 (Daniel — migracion Triple A): "no trae el correo del
+        # cliente" + "detener el primer correo automatico cuando se asigna
+        # un ticket... que la comunicacion no empiece hasta que se asigne".
+        #
+        # Los 749 tickets importados guardaban el correo REAL del cliente
+        # solo como texto suelto en notas_internas (_TAA_EMAIL_PRUEBAS
+        # ocupaba el campo `email` a proposito, para que ningun correo de
+        # PRUEBA se le fuera a un cliente real durante la migracion). Eso
+        # es correcto como salvaguarda, pero deja el dato invisible en la
+        # UI. Se separa en dos campos:
+        #   · email_cliente_real: el correo real, SOLO para mostrarlo.
+        #   · notif_pausada: si esta en 1, _tk_notificar_lifecycle salta el
+        #     envio (igual deja registro). Nace en 1 para TODO ticket
+        #     importado (backfill mas abajo) y se apaga solo cuando alguien
+        #     asigna el ticket por primera vez -- asi el `email` real se
+        #     puede restaurar sin arriesgar mandarle un correo automatico a
+        #     un cliente real esta misma noche.
+        if "email_cliente_real" not in existentes:
+            alters.append("ADD COLUMN email_cliente_real VARCHAR(190) NULL")
+        if "notif_pausada" not in existentes:
+            alters.append("ADD COLUMN notif_pausada TINYINT(1) NOT NULL DEFAULT 0")
         for a in alters:
             try:
                 mysql_execute(f"ALTER TABLE tk_tickets {a}")
@@ -1336,6 +1357,62 @@ def register_tickets_routes(app, ctx):
             )
         except Exception as _e:
             print(f"[ILUS][WARN] ALTER tk_tickets MODIFY tipo (tipos internos bodega): {_e}", flush=True)
+
+    _TAA_NOTAS_EMAIL_RE = re.compile(r"Email original del cliente:\s*([^\s|]+@[^\s|]+)", re.I)
+
+    def _ensure_tk_taa_email_backfill():
+        """Repara los 749 tickets YA importados ANTES de este cambio
+        (Daniel, 2026-08-20: "no trae el correo del cliente").
+
+        Esos 749 se insertaron con el correo de PRUEBA de Daniel en `email`
+        (salvaguarda vieja, antes de que existiera notif_pausada) y el
+        correo real solo como texto suelto en notas_internas ("Email
+        original del cliente: x@y.cl"). _tk_import_desde_taa YA quedó
+        corregido para las importaciones NUEVAS (guarda el real directo);
+        esta función es el backfill de una sola vez para las que ya
+        estaban mal antes de la corrección.
+
+        Idempotente por construcción: solo toca legacy_taa_id IS NOT NULL
+        AND email_cliente_real IS NULL, así que una fila ya backfillada
+        (o ya importada por la versión nueva) nunca se vuelve a tocar --
+        no hay marcador aparte que mantener.
+        """
+        try:
+            filas = mysql_fetchall(
+                "SELECT id, notas_internas FROM tk_tickets "
+                " WHERE legacy_taa_id IS NOT NULL AND email_cliente_real IS NULL "
+                "   AND notas_internas IS NOT NULL"
+            ) or []
+        except Exception as _e:
+            print(f"[ILUS][WARN] _ensure_tk_taa_email_backfill (lectura): {_e}", flush=True)
+            return
+        if not filas:
+            return
+        actualizados = 0
+        for f in filas:
+            m = _TAA_NOTAS_EMAIL_RE.search(f.get("notas_internas") or "")
+            correo = (m.group(1).strip().rstrip(".,;") if m else "")
+            try:
+                if correo:
+                    mysql_execute(
+                        "UPDATE tk_tickets SET email_cliente_real=%s, email=%s, "
+                        "       notif_pausada=1 WHERE id=%s",
+                        (correo, correo, f["id"]))
+                else:
+                    # Sin correo en las notas (fila rara / export incompleto):
+                    # se marca igual como "revisado" con string vacío para no
+                    # reintentar el regex en cada boot, y se pausa lo mismo
+                    # por prudencia (mejor pausado de más que un correo mal
+                    # enviado).
+                    mysql_execute(
+                        "UPDATE tk_tickets SET email_cliente_real='', notif_pausada=1 "
+                        "WHERE id=%s", (f["id"],))
+                actualizados += 1
+            except Exception as _e2:
+                print(f"[ILUS][WARN] _ensure_tk_taa_email_backfill id={f['id']}: {_e2}", flush=True)
+        if actualizados:
+            print(f"[ILUS] Correo real restaurado en {actualizados} ticket(s) de Triple A "
+                  f"(comunicación pausada hasta que se asignen).", flush=True)
 
     def _ensure_tk_mensajes_columns():
         """Migracion aditiva por columnas (patron _ensure_transporte_columns):
@@ -1988,6 +2065,7 @@ def register_tickets_routes(app, ctx):
             if _n_rutas:
                 print(f"[ILUS] Rutas nacionales importadas: {_n_rutas}", flush=True)
             _ensure_tk_tickets_columns()
+            _ensure_tk_taa_email_backfill()
             _ensure_tk_mensajes_columns()
             _ensure_tk_ticket_equipos_garantia_columns()
             _ensure_tk_tickets_visita_link()
@@ -5437,6 +5515,22 @@ def register_tickets_routes(app, ctx):
             _tk_log(tid, "asignacion",
                     f"Asignado a: {d.get('asignado_a') or '(sin asignar)'}", usuario=user,
                     metadata={"campo": "asignado_a", "antes": prev["asignado_a"], "nuevo": d.get("asignado_a")})
+            # 2026-08-20 (Daniel — migracion Triple A): "detener el primer
+            # correo automatico... que la comunicacion no empiece hasta que
+            # se asigne". Los tickets importados nacen con notif_pausada=1
+            # (_tk_notificar_lifecycle no le manda nada al cliente todavia,
+            # para no duplicar avisos mientras Triple A sigue vivo en la
+            # marcha blanca). La PRIMERA vez que alguien asigna el ticket
+            # dentro de ILUS, se reanuda -- es la señal de que el equipo ya
+            # esta trabajando el caso acá de verdad.
+            if (d.get("asignado_a") or "").strip() and not (prev.get("asignado_a") or "").strip():
+                try:
+                    mysql_execute(
+                        "UPDATE tk_tickets SET notif_pausada=0 WHERE id=%s AND notif_pausada=1",
+                        (tid,))
+                except Exception as _e_reanudar:
+                    print(f"[tk_api_update] no se pudo reanudar notif_pausada tid={tid}: {_e_reanudar}",
+                          flush=True)
             # Notificacion de asignacion (aditivo 2026-07-12) -- campana +
             # correo al usuario recien asignado. Nunca debe romper el
             # guardado del ticket (try/except, mismo patron defensivo que
@@ -5679,8 +5773,24 @@ def register_tickets_routes(app, ctx):
         if not _send_ilus_email or estado_slug not in _TK_LIFECYCLE_DEFAULTS:
             return
         t = mysql_fetchone(
-            "SELECT numero_ticket, email, empresa, nombre_contacto FROM tk_tickets WHERE id=%s", (tid,))
+            "SELECT numero_ticket, email, empresa, nombre_contacto, "
+            "       COALESCE(notif_pausada,0) AS notif_pausada "
+            "  FROM tk_tickets WHERE id=%s", (tid,))
         if not t or not (t.get("email") or "").strip():
+            return
+        # 2026-08-20 (Daniel — migracion Triple A): "que la comunicacion no
+        # empiece hasta que se asigne". Ticket importado y aun sin asignar
+        # en ILUS -- NO se le manda nada al cliente todavia (se evita
+        # duplicar avisos mientras el sistema de Triple A sigue vivo en la
+        # marcha blanca). Queda registrado en Actividad igual, para que no
+        # se pierda que "aca hubiera correspondido avisar".
+        if int(t.get("notif_pausada") or 0) == 1:
+            try:
+                _tk_log(tid, "notif_pausada",
+                        f"Aviso de '{estado_slug}' NO enviado: comunicacion "
+                        "pausada hasta que se asigne el ticket (migracion Triple A).")
+            except Exception:
+                pass
             return
         to_email = t["email"].strip()
         numero = t.get("numero_ticket") or f"#{tid}"
@@ -8761,12 +8871,12 @@ def register_tickets_routes(app, ctx):
     #  IMPORTADOR CSV TRIPLE A — "la migracion" que pidio Daniel:
     #  trae los tickets historicos del sistema Triple A (Reporte Tickets
     #  + Reporte SLA exportados en CSV con ';'). Idempotente por
-    #  legacy_taa_id (UNIQUE). El email de contacto queda en
-    #  daniel.aguilar@sphs.cl (editable) para que los correos de PRUEBA
-    #  le lleguen a el y JAMAS a clientes reales; el email original se
-    #  conserva en notas_internas.
+    #  legacy_taa_id (UNIQUE). El email real del cliente se guarda directo
+    #  (email + email_cliente_real) -- es seguro porque el ticket nace con
+    #  notif_pausada=1 y este INSERT no dispara ningun envio: nada le llega
+    #  a un cliente real hasta que alguien lo asigne dentro de ILUS (ver
+    #  _tk_notificar_lifecycle mas abajo).
     # ─────────────────────────────────────────────────────────────────
-    _TAA_EMAIL_PRUEBAS = "daniel.aguilar@sphs.cl"
     _TAA_ESTADO = {
         "resuelto": "resolved", "cerrado": "closed", "en curso": "in_progress",
         "abierto": "open", "pendiente": "pending", "ot generada": "ot_generated",
@@ -8884,10 +8994,11 @@ def register_tickets_routes(app, ctx):
                             "INSERT IGNORE INTO tk_tickets "
                             "(numero_ticket, legacy_taa_id, origen, estado, tipo, es_garantia, "
                             " prioridad, descripcion, rut, empresa, nombre_contacto, phone, "
-                            " email, region_nombre, comuna_nombre, direccion, asignado_a, "
+                            " email, email_cliente_real, notif_pausada, "
+                            " region_nombre, comuna_nombre, direccion, asignado_a, "
                             " producto, marca, sku, notas_internas, created_by, created_at, "
                             " updated_at, resuelto_at) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,'media',%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                            "VALUES (%s,%s,%s,%s,%s,%s,'media',%s,%s,%s,%s,%s,%s,%s,1,%s,%s,%s,"
                             "        %s,%s,%s,%s,%s,%s,COALESCE(%s,NOW()),COALESCE(%s,NOW()),%s)",
                             (
                                 f"TAA-{taa_id}", taa_id, origen, estado, tipo, es_garantia,
@@ -8896,7 +9007,14 @@ def register_tickets_routes(app, ctx):
                                 (r.get("Empresa") or "").strip()[:150] or None,
                                 (r.get("Nombre Contacto") or "").strip()[:150] or None,
                                 (r.get("Teléfono") or r.get("Telefono") or "").strip()[:20] or None,
-                                _TAA_EMAIL_PRUEBAS,
+                                # 2026-08-20 (Daniel: "no trae el correo del
+                                # cliente"): se guarda el correo REAL directo.
+                                # Es seguro porque notif_pausada nace en 1 (2
+                                # placeholders mas arriba) -- este INSERT no
+                                # dispara ningun envio, y _tk_notificar_lifecycle
+                                # respeta la pausa hasta que alguien asigne el
+                                # ticket dentro de ILUS.
+                                email_orig or None, email_orig or None,
                                 (r.get("Región") or r.get("Region") or "").strip()[:120] or None,
                                 (r.get("Comuna") or "").strip()[:120] or None,
                                 (r.get("Dirección") or r.get("Direccion") or "").strip()[:255] or None,
