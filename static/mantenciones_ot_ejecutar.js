@@ -3359,17 +3359,28 @@ function _calcCtxGlobal(){
     // (_ot_validar_cierre R1/R3 y el gate de firma) para que el número de la
     // pantalla y el del servidor nunca vuelvan a divergir.
     //
-    // PASO 1f (2026-08-12, plan "el levantamiento es un tipo más"): el
-    // criterio YA NO es "ES_LEVANTAMIENTO" (incondicional al tipo, como en
-    // el backend) NI "ausencia en EQUIPOS_IDX" — EQUIPOS_IDX se construye
-    // filtrando equipos con estado != 'baja' (ver app.py, query de
-    // `equipos` en ot_ejecutar), así que un equipo dado de baja con tareas
-    // obligatorias pendientes también cae fuera de EQUIPOS_IDX sin ser
-    // huérfano: con el criterio viejo, el técnico vería "todo listo" en
-    // pantalla y el servidor lo bloquearía igual al firmar. El criterio
-    // correcto es la propia clave que el código ya usa para "sin máquina":
-    // midStr === '0' (ver `mid = t.get("maquina_id") or 0` en app.py).
+    // PASO 1f (2026-08-12): el criterio dejó de ser "ES_LEVANTAMIENTO" para
+    // ser incondicional al tipo, igual que el backend. Correcto y vigente.
     if (midStr === '0') return;
+
+    // 2026-08-20 — CORRECCIÓN de la otra mitad del PASO 1f, caso
+    // OT-2026-00058 Vitacura (Daniel: "sigue solicitando las 36 tareas").
+    //
+    // Aquel día se detectó que un equipo DADO DE BAJA con tareas obligatorias
+    // pendientes cae fuera de EQUIPOS_IDX sin ser huérfano, y que por eso la
+    // pantalla decía "todo listo" mientras el servidor bloqueaba la firma. La
+    // conclusión de entonces fue hacer que la pantalla TAMBIÉN las contara,
+    // para que ambos números coincidieran. Coincidían, sí — pero en el número
+    // equivocado: dejaban al técnico mirando "faltan 36 obligatorias" sin
+    // NINGUNA tarjeta donde marcarlas, porque un equipo de baja no se dibuja.
+    // Vitacura quedó así: 593/593 hechas y la firma bloqueada igual.
+    //
+    // El servidor ya no las exige (ver _ot_tarea_no_trabajable_sql en app.py),
+    // así que acá se alinea en la dirección correcta: lo que no tiene tarjeta
+    // no cuenta. EQUIPOS_IDX ES "lo que la pantalla dibuja" — usarlo como
+    // criterio mantiene los dos lados atados por construcción, sin duplicar
+    // la regla de "estado != baja" en el frontend.
+    if (typeof EQUIPOS_IDX !== 'undefined' && EQUIPOS_IDX && !EQUIPOS_IDX[midStr]) return;
     pls.forEach(p => {
       total += p.total;
       completas += p.completas;
@@ -3401,6 +3412,16 @@ function _pendientesPorEquipo(){
     if (_excluir) return;
 
     const eq = (EQUIPOS_IDX || {})[midStr];
+
+    // 2026-08-20 (OT-2026-00058 Vitacura): un equipo SIN tarjeta pero CON
+    // maquina_id real es un equipo dado de baja — no es una tarea huerfana.
+    // Sus tareas no se cuentan (ver _calcCtxGlobal) y por lo tanto tampoco se
+    // listan aca. Sin este corte, las 36 obligatorias de 4 trotadoras de baja
+    // entraban por la rama de huerfanas de abajo, que empuja UNA entrada POR
+    // TAREA: el resumen decia "36 equipos con algo pendiente" cuando eran 4
+    // equipos, ninguno visible en pantalla.
+    if (!eq && midStr !== '0') return;
+
     // maquina_id 0/NULL = tareas HUERFANAS (no ligadas a ningun equipo). Caso
     // real OT-2026-00056: 18 tareas obligatorias con el nombre del equipo solo
     // en el titulo ("Inspeccion: <equipo>") y sin FK. Agrupar todas bajo
