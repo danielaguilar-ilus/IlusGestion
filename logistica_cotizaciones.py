@@ -505,7 +505,7 @@ def _ensure_transport_cotiz_tables():
               comuna_resuelta              VARCHAR(100) NULL,
               costo_courier                INT NOT NULL DEFAULT 0,
 
-              margen_pct                    DECIMAL(5,2) NOT NULL DEFAULT 30.00,
+              margen_pct                    DECIMAL(5,2) NOT NULL DEFAULT 0.00,
               margen_monto                  INT NOT NULL DEFAULT 0,
               subtotal_items                 INT NOT NULL DEFAULT 0,
               descuento_pct                  DECIMAL(5,2) NOT NULL DEFAULT 0,
@@ -566,7 +566,7 @@ def _ensure_transport_cotiz_tables():
               volumen_cm3                      DECIMAL(14,2) NOT NULL DEFAULT 0,
 
               costo_courier_prorrateo           INT NOT NULL DEFAULT 0,
-              margen_pct_aplicado                DECIMAL(5,2) NOT NULL DEFAULT 30.00,
+              margen_pct_aplicado                DECIMAL(5,2) NOT NULL DEFAULT 0.00,
               margen_monto                        INT NOT NULL DEFAULT 0,
               descuento_pct                        DECIMAL(5,2) NOT NULL DEFAULT 0,
               subtotal                              INT NOT NULL DEFAULT 0,
@@ -615,7 +615,7 @@ def _ensure_transport_cotiz_tables():
     # comparte con tk_settings.cotiz_ultimo_correlativo (series independientes,
     # ver docstring del modulo).
     if mysql_fetchone:
-        for _clave, _valor in (("margen_pct", "30"), ("descuento_pct_default", "0"),
+        for _clave, _valor in (("margen_pct", "0"), ("descuento_pct_default", "0"),
                                ("iva_pct_default", "19"), ("ultimo_correlativo", "0")):
             try:
                 mysql_execute(
@@ -666,7 +666,7 @@ def _lc_settings():
         if callable(mysql_fetchall) else []
     m = {r["clave"]: r["valor"] for r in rows}
     return {
-        "margen_pct": _pct(m.get("margen_pct"), 30.0),
+        "margen_pct": _pct(m.get("margen_pct"), 0.0),
         "descuento_pct_default": _pct(m.get("descuento_pct_default"), 0.0),
         "iva_pct_default": _pct(m.get("iva_pct_default"), 19.0),
     }
@@ -937,7 +937,7 @@ def _lc_calcular_totales(items, costo_courier, margen_pct_global, descuento_pct_
     iguales. El redondeo se ajusta en la ÚLTIMA línea para que la suma
     cuadre EXACTO con costo_courier (nunca se pierden ni sobran pesos)."""
     costo_courier = _money(costo_courier)
-    margen_pct_global = _pct(margen_pct_global, 30.0)
+    margen_pct_global = _pct(margen_pct_global, 0.0)
     descuento_pct_global = _pct(descuento_pct_global, 0.0)
     iva_pct = _pct(iva_pct, 19.0)
 
@@ -2072,7 +2072,7 @@ def register_logistica_cotizaciones(app, ctx=None):
         if _lc_items_editables(cot):
             sets, params = [], []
             if "margen_pct" in body:
-                sets.append("margen_pct=%s"); params.append(_pct(body.get("margen_pct"), 30.0))
+                sets.append("margen_pct=%s"); params.append(_pct(body.get("margen_pct"), 0.0))
             if "descuento_pct" in body:
                 sets.append("descuento_pct=%s"); params.append(_pct(body.get("descuento_pct"), 0.0))
             if "iva_pct" in body:
