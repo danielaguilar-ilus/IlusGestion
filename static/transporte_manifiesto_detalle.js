@@ -3806,3 +3806,130 @@ async function enviarManifiestoFirmaCorreo() {
 // 2026-07-29: funciones de "Agregar factura" (abrirAgregarFactura/agBuscar/
 // agAgregar) ELIMINADAS con autorizacion explicita de Daniel — el flujo
 // oficial para agregar facturas es Asignar y Cotizar (cubicador) o el Monitor.
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Mandar la carga al courier — 2026-08-20
+   ───────────────────────────────────────────────────────────────────────
+   Por que existe: medido contra la API real, de las visitas que ILUS crea
+   por integracion 0 de 15 se entregaron; de las que el courier carga con SU
+   Excel, 7 de 11 si. La carga que mandamos por API queda fuera de su flujo
+   de trabajo y nadie le avisa que llego. Este boton usa el canal que SI
+   entrega: le manda el mismo Excel que el ya trabaja.
+
+   El WhatsApp NO se manda solo: se abre con el mensaje escrito y Alison
+   decide. Mandar algo a nombre de la empresa a un tercero es una accion
+   deliberada de una persona.
+   ═══════════════════════════════════════════════════════════════════════ */
+async function avisarAlCourier(){
+  var btn = document.getElementById('btnAvisarCourier');
+  var htmlOrig = btn ? btn.innerHTML : '';
+
+  try {
+    if (typeof ilusConfirm !== 'function') {
+      throw new Error('El cuadro de confirmación no cargó todavía — recarga la página (F5).');
+    }
+    var previa = await _acPedir(true);
+    if (!previa) return;
+
+    var lineas = [
+      previa.n_docs + ' pedido(s) · ' + previa.n_bultos + ' bulto(s) · ' + previa.fecha,
+    ];
+    if (previa.email_courier) {
+      lineas.push('Se le manda el Excel por correo a <strong>' + _srEsc(previa.email_courier) + '</strong>.');
+    } else {
+      lineas.push('<strong>Ojo:</strong> no hay correo guardado de este courier — no se podrá mandar el Excel.');
+    }
+    if (previa.link_whatsapp) {
+      lineas.push('Después se abre WhatsApp con el mensaje escrito, para que tú lo mandes.');
+    }
+
+    var ok = await ilusConfirm({
+      title: 'Mandar la carga a ' + previa.courier,
+      message: '¿Le mandamos este manifiesto?',
+      sub: lineas.join('<br>'),
+      subHtml: true,
+      okLabel: 'Mandar', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Mandando…';
+    }
+    var d = await _acPedir(false);
+    if (btn) { btn.disabled = false; btn.innerHTML = htmlOrig; }
+    if (!d) return;
+
+    // El correo primero, y sin adornos: si no salio, se dice.
+    if (d.correo_enviado) {
+      ilusToast('✓ Excel enviado a ' + (d.email_courier || d.courier), { type: 'success' });
+    } else if (d.email_courier) {
+      ilusToast('El correo NO salió — revisa el aviso', { type: 'warning' });
+    }
+
+    if ((d.avisos || []).length) {
+      await ilusAlert({
+        title: 'Antes de cerrar, lee esto',
+        message: d.avisos.join('\n\n'),
+        type: 'warning',
+      });
+    }
+
+    // El WhatsApp queda SIEMPRE como salida, incluso si el correo fallo.
+    if (d.link_whatsapp) {
+      var mandarWa = await ilusConfirm({
+        title: 'Avisarle por WhatsApp',
+        message: '¿Abrimos WhatsApp con el mensaje listo?',
+        sub: '<pre style="white-space:pre-wrap;font-size:.8rem;margin:0">'
+           + _srEsc(d.texto_whatsapp || '') + '</pre>',
+        subHtml: true,
+        okLabel: 'Abrir WhatsApp', cancelLabel: 'Ahora no',
+      });
+      if (mandarWa) window.open(d.link_whatsapp, '_blank');
+    }
+  } catch (e) {
+    console.error('[avisarAlCourier]', e);
+    if (btn) { btn.disabled = false; btn.innerHTML = htmlOrig; }
+    try {
+      await ilusAlert({ title: 'No se pudo mandar',
+                        message: e.message || 'Error de conexión', type: 'error' });
+    } catch (_e2) { /* el console.error de arriba es lo que queda */ }
+  }
+}
+
+/* Una sola funcion para los dos llamados (vista previa y envio real): asi no
+   se pueden desalinear los parametros entre lo que se muestra y lo que pasa.
+
+   OJO con el doble envio: esta funcion hace UNA sola llamada. Una version
+   anterior tenia un fallback que reintentaba con otra URL -- si la primera
+   hubiera funcionado, el courier habria recibido el correo DOS veces. */
+function _acManifiestoId(){
+  if (window.MFD && MFD.mid) return MFD.mid;
+  var m = location.pathname.match(/\/manifiestos\/(\d+)/);
+  return m ? m[1] : null;
+}
+
+async function _acPedir(soloPreview){
+  var mid = _acManifiestoId();
+  if (!mid) {
+    ilusToast('No se pudo identificar el manifiesto', { type: 'error' });
+    return null;
+  }
+  var d;
+  try {
+    var r = await fetch('/transporte/api/manifiestos/' + mid + '/avisar-courier', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ solo_preview: !!soloPreview }),
+    });
+    d = await r.json();
+  } catch (e) {
+    ilusToast('Sin conexión', { type: 'error' });
+    return null;
+  }
+  if (!d || !d.ok) {
+    ilusToast((d && d.error) || 'No se pudo preparar el envío', { type: 'error' });
+    return null;
+  }
+  return d;
+}

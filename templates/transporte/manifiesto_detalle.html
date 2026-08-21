@@ -182,6 +182,22 @@
             title="{{ 'Todas las facturas ya están subidas a SimpliRoute. Puedes volver a presionarlo si agregas facturas nuevas.' if _todos_subidos_sr else 'Sube todas las facturas de este manifiesto a SimpliRoute como visitas, para que el transportista solo asigne la ruta' }}">
       <i class="bi {{ 'bi-check-circle-fill' if _todos_subidos_sr else 'bi-geo-alt-fill' }} me-1"></i>{{ 'Ya subido a SimpliRoute' if _todos_subidos_sr else 'Subir a SimpliRoute' }}
     </button>
+    {# ── Mandar la carga al courier (2026-08-20) ──────────────────────────
+       Medido contra la API: de las visitas que ILUS crea por integración,
+       0 de 15 se entregaron; de las que el courier carga con SU Excel, 7 de
+       11 sí. La carga que mandamos por API queda fuera de su flujo y nadie
+       le avisa que llegó.
+
+       Este botón usa el canal que SÍ entrega: le manda por correo el MISMO
+       Excel que él ya trabaja, y deja listo un WhatsApp para que Alison se
+       lo avise. No reemplaza "Subir a SimpliRoute" (REGLA #4.2) — convive.
+       Va en rojo de marca porque HOY es el camino que hace llegar la carga. #}
+    <button class="btn btn-sm fw-bold" id="btnAvisarCourier"
+            style="background:var(--ilus-red,#dc2626);border:none;color:#fff"
+            onclick="avisarAlCourier()"
+            title="Le manda al courier el Excel de este manifiesto por correo y te deja listo el WhatsApp para avisarle">
+      <i class="bi bi-send-fill me-1"></i>Mandar la carga a {{ manifiesto.courier }}
+    </button>
     {% endif %}
     {% if es_fedex %}
     {# Botón premium destacado: imprimir TODAS las etiquetas FedEx del manifiesto.
