@@ -39860,6 +39860,190 @@ def tr_simpliroute_diagnostico():
     return jsonify({"ok": True, "couriers": out})
 
 
+@app.route("/transporte/api/diagnostico/simpliroute/flota", methods=["GET"])
+@_tr_required
+def tr_simpliroute_diagnostico_flota():
+    """SOLO LECTURA. Por que el Router del courier no toma las visitas de ILUS.
+
+    2026-08-20. Sintoma medido en produccion: las visitas SI se crean (27 vivas
+    en la cuenta de Felca), pero NADIE las planifica nunca. Se rescataron 25 al
+    19-ago y al dia siguiente seguian en 'pending' sin chofer. En cambio, las
+    visitas que el propio Felca carga por Excel SI se rutean y se entregan.
+
+    La hipotesis a confirmar o descartar: en SimpliRoute el optimizador solo
+    asigna una visita a un vehiculo que tenga TODAS las habilidades que la
+    visita exige. El Excel que Felca usa manda la COMUNA en la columna
+    "Habilidades requeridas"; la API de ILUS no manda `skills_required`. Si los
+    vehiculos de Rafael estan configurados por zona, las visitas de ILUS
+    quedarian fuera de toda ruta -- exactamente el sintoma.
+
+    Este endpoint NO escribe nada. Solo hace GET a la API del courier para
+    responder tres preguntas que ILUS nunca se hizo:
+      1. Que vehiculos tiene la cuenta y que habilidades/capacidades declaran.
+      2. Como se ve una visita que SI se ruteo, comparada con una de ILUS.
+      3. Que habilidades usan de verdad las visitas del courier.
+
+    Query params:
+      courier : clave del courier (default "felca")
+      fecha   : YYYY-MM-DD a inspeccionar (default hoy Chile)
+
+    Permiso: superadmin. Expone datos internos de la cuenta de un tercero
+    (patentes, nombres de chofer), no es para operacion diaria.
+    """
+    import simpliroute_client as _src
+
+    if not bool(g.permissions.get("superadmin")):
+        return jsonify({"ok": False,
+                        "error": "Solo un superadministrador puede ver el diagnostico de flota."}), 403
+
+    clave = (request.args.get("courier") or "felca").strip().lower()
+    env_var = SIMPLIROUTE_TOKENS_ENV.get(clave)
+    if not env_var:
+        return jsonify({"ok": False,
+                        "error": f"Courier desconocido: {clave}. "
+                                 f"Validos: {', '.join(sorted(SIMPLIROUTE_TOKENS_ENV))}"}), 400
+    token = (os.environ.get(env_var) or "").strip()
+    if not token:
+        return jsonify({"ok": False, "error": f"Falta {env_var} en el entorno."}), 503
+
+    fecha = (request.args.get("fecha") or "").strip() or _now_chile().date().isoformat()
+
+    out = {"ok": True, "courier": clave, "fecha": fecha, "hoy": _now_chile().date().isoformat()}
+
+    # ── 1. LA FLOTA. Aca esta la respuesta: que exige cada vehiculo. ──────
+    rv = _simpliroute_request("GET", "/v1/routes/vehicles/", token, timeout=25)
+    if not rv.get("ok"):
+        out["vehiculos_error"] = rv.get("error") or "no se pudo leer la flota"
+        out["vehiculos"] = []
+    else:
+        data = rv.get("data")
+        flota = data if isinstance(data, list) else (data or {}).get("results") or []
+        vehiculos = []
+        for v in flota:
+            if not isinstance(v, dict):
+                continue
+            vehiculos.append({
+                "id":         v.get("id"),
+                "nombre":     v.get("name") or v.get("license_plate"),
+                "patente":    v.get("license_plate"),
+                # ESTO es lo que decide si una visita entra o no a su ruta.
+                "skills":     v.get("skills") or v.get("skills_required") or [],
+                "capacidad":   v.get("capacity"),
+                "capacidad_2": v.get("capacity_2"),
+                "capacidad_3": v.get("capacity_3"),
+                "inicia":     v.get("shift_start") or v.get("start_time"),
+                "termina":    v.get("shift_end") or v.get("end_time"),
+                "activo":     v.get("is_active", v.get("active")),
+            })
+        out["vehiculos"] = vehiculos
+        out["n_vehiculos"] = len(vehiculos)
+        # El dato que decide todo: la flota exige habilidades, si o no.
+        _skills_flota = set()
+        for v in vehiculos:
+            for sk in (v.get("skills") or []):
+                _skills_flota.add(str(sk))
+        out["skills_de_la_flota"] = sorted(_skills_flota)
+        out["la_flota_exige_habilidades"] = bool(_skills_flota)
+
+    # ── 2. LAS VISITAS DEL DIA, separadas por quien las creo ──────────────
+    # ILUS guarda el visit_id de todo lo que sube: lo que este en la cuenta y
+    # NO este en nuestra tabla, lo cargo el courier por su cuenta (Excel).
+    rvis = _simpliroute_request("GET", f"{_src.EP_VISITS}?planned_date={fecha}",
+                                token, timeout=45)
+    if not rvis.get("ok"):
+        out["visitas_error"] = rvis.get("error") or "no se pudo leer las visitas"
+        return jsonify(out)
+
+    data = rvis.get("data")
+    visitas = data if isinstance(data, list) else (data or {}).get("results") or []
+
+    ids_ilus = set()
+    try:
+        filas = mysql_fetchall(
+            "SELECT NULLIF(TRIM(simpliroute_visit_id), '') AS vid "
+            "FROM transport_manifest_items "
+            "WHERE NULLIF(TRIM(simpliroute_visit_id), '') IS NOT NULL") or []
+        ids_ilus = {str(f["vid"]).strip() for f in filas if f.get("vid")}
+    except Exception as e:
+        out["aviso_bd"] = f"No se pudo leer los visit_id de ILUS: {type(e).__name__}"
+
+    def _resumen(v):
+        """Los campos que deciden si el optimizador la puede asignar."""
+        ruta = v.get("route") if isinstance(v.get("route"), dict) else None
+        return {
+            "id":            str(v.get("id") or ""),
+            "title":         v.get("title"),
+            "reference":     v.get("reference"),
+            "status":        v.get("status"),
+            "planned_date":  v.get("planned_date"),
+            # ── los sospechosos ──
+            "skills_required": v.get("skills_required") or [],
+            "load":            v.get("load"),
+            "load_2":          v.get("load_2"),
+            "load_3":          v.get("load_3"),
+            "window_start":    v.get("window_start"),
+            "window_end":      v.get("window_end"),
+            "duration":        v.get("duration"),
+            "priority":        v.get("priority"),
+            "tags":            v.get("tags") or [],
+            "lat":             v.get("latitude"),
+            "lng":             v.get("longitude"),
+            "direccion":       v.get("address"),
+            # ── el veredicto: la tomo alguien? ──
+            "tiene_ruta":      bool(ruta),
+            "chofer":          (ruta or {}).get("driver_name"),
+        }
+
+    de_ilus, del_courier = [], []
+    for v in visitas:
+        if not isinstance(v, dict):
+            continue
+        r = _resumen(v)
+        (de_ilus if r["id"] in ids_ilus else del_courier).append(r)
+
+    def _stats(lista):
+        con_ruta = [x for x in lista if x["tiene_ruta"]]
+        con_skills = [x for x in lista if x["skills_required"]]
+        return {
+            "total": len(lista),
+            "con_ruta_asignada": len(con_ruta),
+            "sin_ruta": len(lista) - len(con_ruta),
+            "declaran_skills": len(con_skills),
+            "skills_usadas": sorted({str(sk) for x in lista for sk in (x["skills_required"] or [])}),
+            "estados": {e: sum(1 for x in lista if x["status"] == e)
+                        for e in sorted({x["status"] for x in lista if x.get("status")})},
+        }
+
+    out["creadas_por_ILUS"]    = _stats(de_ilus)
+    out["creadas_por_COURIER"] = _stats(del_courier)
+    out["muestra_ILUS"]        = de_ilus[:5]
+    out["muestra_COURIER"]     = del_courier[:5]
+
+    # ── 3. EL VEREDICTO, en una linea legible ────────────────────────────
+    a, b = out["creadas_por_ILUS"], out["creadas_por_COURIER"]
+    pistas = []
+    if out.get("la_flota_exige_habilidades") and a["total"] and not a["declaran_skills"]:
+        pistas.append(
+            "La flota exige habilidades (" + ", ".join(out["skills_de_la_flota"][:6]) +
+            ") y NINGUNA visita de ILUS declara skills_required. "
+            "El optimizador no puede asignarlas a ningun vehiculo.")
+    if b["total"] and b["declaran_skills"] and a["total"] and not a["declaran_skills"]:
+        pistas.append(
+            "Las visitas que carga el propio courier SI declaran habilidades "
+            "(" + ", ".join(b["skills_usadas"][:6]) + ") y las de ILUS no. "
+            "Esa es la diferencia entre las que se rutean y las que no.")
+    if a["total"] and not a["con_ruta_asignada"] and b["con_ruta_asignada"]:
+        pistas.append(
+            f"En {fecha}: {b['con_ruta_asignada']} de {b['total']} visitas del courier "
+            f"tienen ruta, y 0 de {a['total']} de ILUS.")
+    if not pistas:
+        pistas.append("Sin diferencia evidente en este dia. Probar otra fecha "
+                      "con entregas reales del courier.")
+    out["veredicto"] = pistas
+
+    return jsonify(out)
+
+
 @app.route("/transporte/api/manifiestos/<int:mid>/subir-simpliroute", methods=["POST"])
 @_tr_required
 def tr_manifiesto_subir_simpliroute(mid):
