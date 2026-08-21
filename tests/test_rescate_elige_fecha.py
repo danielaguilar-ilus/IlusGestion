@@ -180,7 +180,7 @@ class TestSiguenLasProtecciones(unittest.TestCase):
         cls.src = _cuerpo("tr_simpliroute_rescatar_congeladas")
 
     def test_sigue_revalidando_contra_la_api_antes_del_patch(self):
-        self.assertIn("_sr_visita_sin_planificar(v)", self.src)
+        self.assertIn("_sr_visita_sin_entregar(v)", self.src)
         self.assertLess(self.src.index("'GET'"), self.src.index("'PATCH'"))
 
     def test_sigue_exigiendo_item_ids(self):

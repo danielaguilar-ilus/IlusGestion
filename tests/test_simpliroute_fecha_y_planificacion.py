@@ -151,24 +151,30 @@ class TestSeAvisaCuandoLaFechaCambia(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════
 #  2. El criterio de "sin planificar" vive en UN solo lugar
 # ══════════════════════════════════════════════════════════════════════
-class TestCriterioSinPlanificar(unittest.TestCase):
+class TestCriterioSinEntregar(unittest.TestCase):
+    """Renombrado 2026-08-20: el criterio dejo de mirar `route`.
+    Medido contra la API, las visitas ENTREGADAS de esta cuenta tambien
+    vienen sin `route` -- el courier no usa el modulo de rutas. Ver
+    tests/test_simpliroute_estado_real.py."""
 
     @classmethod
     def setUpClass(cls):
         # staticmethod: sin esto Python trata la funcion guardada como
         # atributo de clase como un METODO y le pasa self -> TypeError.
-        cls.fn = staticmethod(_ejecutable("_sr_visita_sin_planificar"))
+        cls.fn = staticmethod(_ejecutable("_sr_visita_sin_entregar"))
 
     def test_pending_sin_ruta_es_una_visita_congelada(self):
         # El caso real de FCV 11286.
         self.assertTrue(self.fn({"status": "pending", "route": None}))
         self.assertTrue(self.fn({"status": "pending"}))
 
-    def test_pending_con_ruta_asignada_NO_se_toca(self):
-        # El despachador ya la planifico: moverle la fecha seria peor que
-        # el bug original.
-        self.assertFalse(self.fn({"status": "pending",
-                                  "route": {"driver_name": "Rafael"}}))
+    def test_pending_con_ruta_TAMBIEN_cuenta_como_sin_entregar(self):
+        """CAMBIO DELIBERADO 2026-08-20. Antes se excluia: se asumia que
+        tener `route` significaba "el despachador ya la planifico". Medido
+        contra la API: en esta cuenta las ENTREGADAS vienen sin `route`, asi
+        que ese campo no distingue nada. Tener ruta no es haber entregado."""
+        self.assertTrue(self.fn({"status": "pending",
+                                 "route": {"driver_name": "Rafael"}}))
 
     def test_los_estados_en_que_el_courier_ya_la_tomo_no_se_tocan(self):
         for estado in ("on_its_way", "completed", "failed", "partial", "canceled"):
@@ -206,7 +212,7 @@ class TestListadoNoModificaNada(unittest.TestCase):
                              f"el listado solo consulta, nunca {metodo}")
 
     def test_usa_el_criterio_compartido(self):
-        self.assertIn("_sr_visita_sin_planificar(v)", self.src)
+        self.assertIn("_sr_visita_sin_entregar(v)", self.src)
 
     def test_marca_cuales_quedaron_en_un_dia_vencido(self):
         self.assertIn("vencida", self.src)
@@ -230,7 +236,7 @@ class TestRescateEsConservador(unittest.TestCase):
         """Entre que se lista y que se aprieta el boton pueden pasar minutos.
         Si el despachador planifico la visita en ese rato, moverla seria
         sabotear su ruta."""
-        self.assertIn("_sr_visita_sin_planificar(v)", self.src)
+        self.assertIn("_sr_visita_sin_entregar(v)", self.src)
         # El GET de revalidacion tiene que ir ANTES del PATCH.
         self.assertLess(self.src.index("'GET'"), self.src.index("'PATCH'"))
 
