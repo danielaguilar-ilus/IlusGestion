@@ -866,6 +866,43 @@ def _pw_pdf(html: str, **kwargs) -> bytes:
     return result_box["data"]
 
 
+@app.template_filter('wa_link')
+def wa_link_filter(tel, texto=""):
+    """Deep-link de WhatsApp a partir de un teléfono en CUALQUIER formato.
+
+    🔴 FIX 2026-08-21 (Daniel: "necesito que funcione el envío de la OT por
+    WhatsApp"). El botón de WhatsApp de la OT armaba el número a mano en el
+    template:
+
+        wa.me/{{ tel | replace('+','') | replace(' ','') | replace('-','') }}
+
+    Eso limpia tres caracteres y **nunca antepone el código de país**. Un
+    contacto guardado como "9 1234 5678" o "912345678" -- el formato normal
+    en Chile -- producía `wa.me/912345678`, sin el 56, y WhatsApp responde
+    que el número no existe. Paréntesis o puntos tampoco se limpiaban.
+
+    Lo peor es que el normalizador correcto YA existía:
+    validar_telefono_chileno() devuelve +56XXXXXXXXX y acepta móvil y fijo.
+    El template lo ignoraba y reimplementaba mal la misma regla, en dos
+    lugares distintos. Acá vive una sola vez.
+
+    Devuelve None si el teléfono no sirve, para que el template pueda
+    esconder el botón en vez de ofrecer un enlace que falla. Un botón que
+    lleva a "este número no existe" es peor que no tener botón.
+    """
+    try:
+        ok, norm = validar_telefono_chileno(tel)
+    except Exception:
+        return None
+    if not ok:
+        return None
+    numero = norm.lstrip("+")
+    if not texto:
+        return f"https://wa.me/{numero}"
+    from urllib.parse import quote as _q
+    return f"https://wa.me/{numero}?text={_q(texto)}"
+
+
 @app.template_filter('cotiz_estado')
 def cotiz_estado_filter(value):
     """Traduce el estado de una cotización a texto para una persona.

@@ -204,9 +204,19 @@
         <a href="tel:{{ visita.contacto_tel }}" class="cbtn call">
           <i class="bi bi-telephone-fill"></i><span>Llamar</span>
         </a>
-        <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}" target="_blank" class="cbtn wa">
+        {# 2026-08-21: el numero lo arma el filtro `wa_link`, que usa
+           validar_telefono_chileno(). Antes se limpiaba a mano con tres
+           replace y NUNCA se anteponia el codigo de pais: un contacto
+           "9 1234 5678" daba wa.me/912345678 y WhatsApp decia que el
+           numero no existe. Si el telefono no sirve, el filtro devuelve
+           None y el boton no se dibuja -- mejor sin boton que con uno que
+           falla. #}
+        {% set _wa = visita.contacto_tel | wa_link %}
+        {% if _wa %}
+        <a href="{{ _wa }}" target="_blank" rel="noopener" class="cbtn wa">
           <i class="bi bi-whatsapp"></i><span>WhatsApp</span>
         </a>
+        {% endif %}
         {% endif %}
         {% if visita.contacto_email %}
         <a href="mailto:{{ visita.contacto_email }}" class="cbtn mail">
@@ -542,10 +552,13 @@
         <a href="tel:{{ visita.contacto_tel }}" class="tx-btn-foto" style="background:#dcfce7;border-color:#16a34a;color:#15803d">
           <i class="bi bi-telephone-fill"></i> Llamar
         </a>
-        <a href="https://wa.me/{{ visita.contacto_tel | replace('+','') | replace(' ','') | replace('-','') }}"
-           target="_blank" class="tx-btn-foto" style="background:#25d366;border-color:#25d366;color:#fff">
+        {% set _wa2 = visita.contacto_tel | wa_link %}
+        {% if _wa2 %}
+        <a href="{{ _wa2 }}"
+           target="_blank" rel="noopener" class="tx-btn-foto" style="background:#25d366;border-color:#25d366;color:#fff">
           <i class="bi bi-whatsapp"></i> WhatsApp
         </a>
+        {% endif %}
         {% endif %}
         {% if visita.contacto_email %}
         <a href="mailto:{{ visita.contacto_email }}" class="tx-btn-foto" style="background:#dbeafe;border-color:#3b82f6;color:#1e40af">
