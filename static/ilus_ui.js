@@ -338,12 +338,70 @@
       const inputEl = overlay.querySelector('.ilus-prompt-input');
       setTimeout(() => { inputEl.focus(); inputEl.select && inputEl.select(); }, 200);
 
+      // ── Validación en vivo (2026-08-21, Daniel) ──────────────────────
+      // "cuando agregas el número no te hace esa validación del teléfono
+      // chileno... si anotas una letra debería estar bloqueado".
+      // Dos piezas opcionales, ninguna cambia el comportamiento de los
+      // ilusPrompt que ya existen:
+      //   · sanitize(v) -> limpia mientras se escribe (bloquea lo que no
+      //     corresponde en el momento, no después de apretar Aceptar).
+      //   · validate(v) -> {ok, valor, error}. Si falla, el modal NO se
+      //     cierra y muestra el motivo abajo del campo.
+      const _sanitize = typeof opts.sanitize === 'function' ? opts.sanitize : null;
+      const _validate = typeof opts.validate === 'function' ? opts.validate : null;
+      let _errEl = null;
+      function _mostrarError(msg){
+        if (!_errEl){
+          _errEl = document.createElement('div');
+          _errEl.style.cssText = 'margin-top:7px;font-size:.8rem;font-weight:600;'
+            + 'color:#b91c1c;display:flex;align-items:center;gap:6px';
+          inputEl.parentNode.insertBefore(_errEl, inputEl.nextSibling);
+        }
+        _errEl.innerHTML = '<i class="bi bi-exclamation-circle-fill"></i>'
+          + '<span></span>';
+        _errEl.querySelector('span').textContent = msg;
+        inputEl.style.borderColor = '#dc2626';
+      }
+      function _limpiarError(){
+        if (_errEl) _errEl.remove();
+        _errEl = null;
+        inputEl.style.borderColor = '';
+      }
+      if (_sanitize){
+        inputEl.addEventListener('input', () => {
+          const pos = inputEl.selectionStart;
+          const antes = inputEl.value;
+          const limpio = _sanitize(antes);
+          if (limpio !== antes){
+            inputEl.value = limpio;
+            // Si se quitó algo, el cursor no debe saltar al final.
+            try { inputEl.setSelectionRange(pos - (antes.length - limpio.length),
+                                            pos - (antes.length - limpio.length)); } catch(_){}
+          }
+          _limpiarError();
+        });
+      }
+
       function done(ok){
         const val = ok ? inputEl.value : null;
         if (ok && required && (!val || !val.trim())){
-          inputEl.style.borderColor = '#dc2626';
+          _mostrarError('Este campo es obligatorio.');
           inputEl.focus();
           return;
+        }
+        if (ok && _validate && val && val.trim()){
+          const r = _validate(val);
+          if (r && r.ok === false){
+            _mostrarError(r.error || 'El valor no es válido.');
+            inputEl.focus();
+            return;
+          }
+          // El validador puede devolver el valor ya normalizado.
+          if (r && r.ok && r.valor != null){
+            overlay.classList.remove('show');
+            setTimeout(() => { overlay.remove(); resolve(r.valor); }, 160);
+            return;
+          }
         }
         overlay.classList.remove('show');
         setTimeout(() => { overlay.remove(); resolve(ok ? val : null); }, 160);
@@ -664,6 +722,62 @@
   global.ilusGmapsDisponible = function(){
     return !!(window.google && window.google.maps && window.google.maps.places);
   };
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  TELÉFONO CHILENO — limpiar mientras se escribe + validar al aceptar
+  // ══════════════════════════════════════════════════════════════════════
+  //  2026-08-21 (Daniel): "cuando agregas el número no te hace esa
+  //  validación del teléfono chileno... si anotas una letra, obviamente,
+  //  debería estar bloqueado. Eso yo creo que con un validador inteligente".
+  //
+  //  Pensado para usarse junto en ilusPrompt:
+  //      sanitize: ilusTelSanitize,
+  //      validate: ilusTelChileno,
+  //
+  //  ⚠️ La AUTORIDAD sigue siendo el servidor (validar_telefono_chileno en
+  //  app.py). Esto es para que el técnico vea el error EN EL MOMENTO, con
+  //  el cliente al lado, en vez de apretar Enviar y recibir un rechazo.
+  //  Si algún día cambia la regla del lado del servidor, hay que mirar acá
+  //  también — es el precio de validar sin ida y vuelta a la red.
+  // ══════════════════════════════════════════════════════════════════════
+
+  //  Deja escribir SOLO lo que puede formar parte de un teléfono. Bloquea
+  //  letras al tipear (no después). Permite espacios, guiones y paréntesis
+  //  mientras se escribe: son cómodos y se descartan al normalizar.
+  function ilusTelSanitize(v){
+    let s = String(v == null ? '' : v).replace(/[^\d+()\s.-]/g, '');
+    // El '+' solo tiene sentido al principio y una sola vez.
+    s = s.replace(/(?!^)\+/g, '');
+    return s.slice(0, 20);
+  }
+
+  //  Devuelve {ok:true, valor:'+56XXXXXXXXX'} o {ok:false, error:'...'}.
+  //  Acepta lo que la gente realmente escribe: +56 9 1234 5678, 912345678,
+  //  9 1234 5678, 56912345678, (9) 1234-5678, y fijos con código de área.
+  function ilusTelChileno(v){
+    const crudo = String(v == null ? '' : v).trim();
+    if (!crudo) return {ok:false, error:'Escribe el teléfono.'};
+    if (/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(crudo)){
+      return {ok:false, error:'El teléfono no puede tener letras.'};
+    }
+    let d = crudo.replace(/[^\d]/g, '');
+    if (!d) return {ok:false, error:'Escribe el teléfono.'};
+    if (d.startsWith('56')) d = d.slice(2);          // ya traía el país
+    else if (d.startsWith('0')) d = d.replace(/^0+/, '');
+    if (d.length === 8) d = '9' + d;                 // móvil sin el 9
+    if (d.length !== 9){
+      return {ok:false, error:(d.length < 9
+        ? `Faltan dígitos (van ${d.length} de 9). Ej: 9 1234 5678`
+        : `Sobran dígitos (van ${d.length} de 9). Ej: 9 1234 5678`)};
+    }
+    if (!/^[2-9]/.test(d)){
+      return {ok:false, error:'Un número chileno no empieza con ese dígito.'};
+    }
+    return {ok:true, valor:'+56' + d};
+  }
+
+  global.ilusTelSanitize = ilusTelSanitize;
+  global.ilusTelChileno  = ilusTelChileno;
 
   // ════════════════════════════════════════════════════════════════
   //  SHIM GLOBAL — window.alert() → ilusToast/ilusAlert

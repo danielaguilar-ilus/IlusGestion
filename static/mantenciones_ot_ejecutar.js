@@ -5819,11 +5819,19 @@ async function enviarFirmaRemota(){
 async function enviarFirmaWhatsApp(){
   let tel = (typeof VISITA_CONTACTO_TEL !== 'undefined' && VISITA_CONTACTO_TEL) || '';
   if (!tel){
+    // 2026-08-21 (Daniel): valida teléfono chileno EN EL MOMENTO y bloquea
+    // letras al escribir, en vez de dejar que el servidor lo rechace
+    // después. `defaultValue` trae el teléfono del cliente como sugerencia
+    // -- editable, no impuesto.
     tel = await ilusPrompt({
       title: 'Enviar firma por WhatsApp',
-      message: 'Teléfono del cliente (con o sin +56):',
+      message: 'Teléfono del cliente:',
       sub: 'La OT no tiene un teléfono de contacto cargado — escríbelo para generar el link.',
       placeholder: '+56 9 1234 5678', required: true,
+      inputType: 'tel',
+      defaultValue: (typeof CLIENTE_TEL_SUGERIDO !== 'undefined' && CLIENTE_TEL_SUGERIDO) || '',
+      sanitize: (typeof ilusTelSanitize === 'function') ? ilusTelSanitize : null,
+      validate: (typeof ilusTelChileno === 'function') ? ilusTelChileno : null,
     });
     if (!tel) return;
   }

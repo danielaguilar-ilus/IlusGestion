@@ -414,9 +414,14 @@ async function otdCompartirWa(){
       if (win) win.close();
       tel = await ilusPrompt({
         title:'Enviar la OT al cliente',
-        message:'Teléfono del cliente (con o sin +56):',
-        sub:'Esta OT no tiene teléfono de contacto cargado.',
-        placeholder:'+56 9 1234 5678', required:true });
+        message:'Teléfono del cliente:',
+        sub: d.telefono_sugerido
+             ? 'Esta OT no tiene teléfono cargado. Te propongo el del cliente — puedes cambiarlo.'
+             : 'Esta OT no tiene teléfono de contacto cargado.',
+        placeholder:'+56 9 1234 5678', required:true, inputType:'tel',
+        defaultValue: d.telefono_sugerido || '',
+        sanitize: (typeof ilusTelSanitize === 'function') ? ilusTelSanitize : null,
+        validate: (typeof ilusTelChileno === 'function') ? ilusTelChileno : null });
       if (!tel){ if(btn){btn.dataset.busy='0';btn.style.opacity='';} return; }
       const win2 = window.open('', '_blank');
       const r1 = await fetch('/mantenciones/api/visitas/{{ v.id }}/compartir-wa', {

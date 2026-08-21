@@ -79831,7 +79831,22 @@ def mant_ot_compartir_wa(vid):
 
     telefono = (d.get("telefono") or "").strip()[:40] or (v.get("contacto_tel") or "")
     if not telefono:
-        return jsonify({"ok": False, "error": "TELEFONO_FALTA"}), 400
+        # 2026-08-21 (Daniel): "sugeriría que colocara ahí el número de la
+        # persona a quien le quieres enviar el link, como sugerencia. Si no,
+        # lo puedes cambiar". Si la OT no trae teléfono, se propone el del
+        # CLIENTE -- primero el del contacto, si no el de la empresa. Es una
+        # propuesta editable, nunca se manda solo.
+        _sug = ""
+        try:
+            _c = mysql_fetchone(
+                "SELECT c.contacto_tel, c.tel_empresa FROM mant_visitas v "
+                "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+                " WHERE v.id=%s", (vid,)) or {}
+            _sug = (_c.get("contacto_tel") or _c.get("tel_empresa") or "").strip()
+        except Exception:
+            _sug = ""
+        return jsonify({"ok": False, "error": "TELEFONO_FALTA",
+                        "telefono_sugerido": _sug}), 400
     _tel_ok, tel_norm = validar_telefono_chileno(telefono)
     if not _tel_ok:
         return jsonify({"ok": False, "error": tel_norm}), 400
