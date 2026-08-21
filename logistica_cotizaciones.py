@@ -2601,7 +2601,27 @@ def register_logistica_cotizaciones(app, ctx=None):
                     r["valida_hasta"] = str(r["valida_hasta"])
                 cotizaciones.append(r)
 
-            return render_template("transporte/cotizaciones.html", cotizaciones=cotizaciones)
+            # ── Indicadores financieros (Daniel 20-08-2026) ────────────
+            # MISMO cálculo que el panel de SSTT (cotiz_kpis.py): "cuánto
+            # cotizamos, cuánto se aprobó y cuánto ganamos" tiene que dar
+            # lo mismo mirado desde cualquiera de los dos cotizadores.
+            # Acá el costo es una sola columna (el flete del courier); en
+            # SSTT son dos (técnico + ruta). Por eso la expresión la pone
+            # el caller y no está escrita dentro del módulo compartido.
+            # 🔴 Con margen_pct en 0 (política vigente) el indicador va a
+            # mostrar 0% — es información, no un error.
+            from cotiz_kpis import cotiz_kpis, COTIZ_PERIODOS
+            _periodo = (request.args.get("periodo") or "mes").strip().lower()
+            _mysql_fetchone = _h("mysql_fetchone")
+            _kpis = cotiz_kpis(
+                _mysql_fetchone, "transport_cotizaciones",
+                "COALESCE(costo_courier,0)",
+                periodo=_periodo,
+            )
+            return render_template(
+                "transporte/cotizaciones.html", cotizaciones=cotizaciones,
+                kpis=_kpis, periodos=COTIZ_PERIODOS, dpto="Logística",
+                base_url="/transporte/cotizaciones", q=q, estado=estado)
 
         @app.route("/transporte/cotizaciones/<int:cid>/detalle-calculo")
         @_tr_required

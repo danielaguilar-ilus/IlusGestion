@@ -3938,8 +3938,26 @@ def register_tickets_routes(app, ctx):
         # uf_info_chip: SOLO para el texto visible del chip (Regla #6, fecha
         # dd/mm/yyyy) -- uf_info (ISO) sigue intacto para uf_total de cada fila.
         uf_info_chip = dict(uf_info, fecha=_uf_fecha_cl(uf_info.get("fecha"))) if uf_info else None
+
+        # ── Indicadores financieros (Daniel 20-08-2026) ────────────────
+        # El cálculo vive en cotiz_kpis.py, COMPARTIDO con el panel de
+        # Logística: "cuánto cotizamos, cuánto se aprobó y cuánto ganamos"
+        # tiene que dar lo mismo mirado desde cualquiera de los dos.
+        # El costo de SSTT son dos columnas (técnico + ruta); en Logística
+        # es costo_courier. Por eso la expresión la pone el caller.
+        from cotiz_kpis import cotiz_kpis, COTIZ_PERIODOS
+        _periodo = (request.args.get("periodo") or "mes").strip().lower()
+        _kpis = cotiz_kpis(
+            mysql_fetchone, "tk_cotizaciones",
+            "COALESCE(costo_tecnico,0)+COALESCE(costo_ruta,0)",
+            periodo=_periodo,
+            where_extra="COALESCE(eliminada,0)=0",
+        )
         return render_template("tickets/cotizaciones.html",
-                                cotizaciones=filas, uf_info=uf_info_chip)
+                                cotizaciones=filas, uf_info=uf_info_chip,
+                                kpis=_kpis, periodos=COTIZ_PERIODOS,
+                                dpto="Servicio Técnico",
+                                base_url=url_for("tk_cotizaciones_list"))
 
     # ─────────────────────────────────────────────────────────────────
     #  API — crear cotizacion en borrador desde el modal ERP compartido

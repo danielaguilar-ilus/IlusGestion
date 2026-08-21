@@ -3,6 +3,7 @@
 
 {% block head_extra %}
 <link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='cotiz_kpis.css') }}" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -178,6 +179,11 @@
 </div>
 
 {% if cotizaciones %}
+{# Indicadores financieros del departamento (Daniel, 20-08-2026).
+   MISMO partial y MISMO cálculo que el panel de SSTT: estandarizar
+   es que los dos cotizadores respondan igual, no que se parezcan. #}
+{% include "_partials/cotiz_kpis.html" %}
+
 <div class="trc-filtros">
   <input type="text" id="trcFiltroTexto" class="form-control form-control-sm" placeholder="Buscar por número, empresa o RUT…"
          oninput="trcFiltrarLista()" style="max-width:320px;">

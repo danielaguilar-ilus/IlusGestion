@@ -1,0 +1,95 @@
+{#
+  ══════════════════════════════════════════════════════════════════════
+  INDICADORES FINANCIEROS DE COTIZACIONES — partial compartido
+  ══════════════════════════════════════════════════════════════════════
+  Daniel (20-08-2026): *"a ese panel le hace falta vida, hagamos algo
+  espectacular pero no tan llamativo, pero que contenga indicadores
+  financieros, períodos, filtros y buscadores, indicadores asociados a cada
+  Dpto SSTT y Logística"* + *"Standariza el de logística y SSTT"*.
+
+  UN SOLO archivo para los DOS cotizadores (COT- de SSTT y CTR- de
+  Logística). Los números los calcula `cotiz_kpis.py`, también compartido:
+  si el margen se calcula distinto en cada panel, un día dan cifras
+  distintas para la misma pregunta.
+
+  "Espectacular pero no tan llamativo": la jerarquía la da el TAMAÑO y el
+  orden, no el color. Un solo acento por tarjeta, fondo blanco, y el color
+  solo donde significa algo (verde = aprobado, ámbar = esperando respuesta).
+
+  PARÁMETROS
+    kpis      dict de cotiz_kpis()
+    dpto      'SSTT' | 'Logística'  (solo rótulo)
+    base_url  endpoint para los links de período/estado
+    q, estado filtros vigentes, para conservarlos al cambiar de período
+  ══════════════════════════════════════════════════════════════════════
+#}
+{% set _mon = k_moneda if k_moneda is defined else '$' %}
+
+<div class="ck">
+  <div class="ck-head">
+    <div class="ck-title">
+      <i class="bi bi-graph-up-arrow"></i>
+      <span>Indicadores · <b>{{ dpto }}</b></span>
+    </div>
+    <nav class="ck-per" aria-label="Período">
+      {% for clave, label in periodos %}
+        <a class="ck-p {{ 'on' if kpis.periodo == clave }}"
+           href="{{ base_url }}?periodo={{ clave }}{% if q %}&q={{ q|urlencode }}{% endif %}{% if estado %}&estado={{ estado|urlencode }}{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+
+  <div class="ck-grid">
+    {# 1 · Cotizado en el período — el volumen de trabajo #}
+    <div class="ck-c c-cot">
+      <span class="k"><i class="bi bi-file-earmark-text-fill"></i>Cotizado</span>
+      <b class="v">{{ _mon }}{{ '{:,.0f}'.format(kpis.monto).replace(',','.') }}</b>
+      <span class="s">{{ kpis.n }} cotizacion{{ '' if kpis.n == 1 else 'es' }}</span>
+    </div>
+
+    {# 2 · Aprobado — lo que efectivamente se vendió #}
+    <div class="ck-c c-apr">
+      <span class="k"><i class="bi bi-check-circle-fill"></i>Aprobado</span>
+      <b class="v">{{ _mon }}{{ '{:,.0f}'.format(kpis.monto_aprob).replace(',','.') }}</b>
+      <span class="s">{{ kpis.n_aprob }} aprobada{{ '' if kpis.n_aprob == 1 else 's' }}</span>
+    </div>
+
+    {# 3 · Margen sobre lo aprobado.
+         Daniel: "estamos trabajando con 0 margen... igual deja el indicador".
+         Con margen 0 esto muestra 0% -- y eso ES la información: deja ver en
+         pantalla que se está cotizando a costo, en vez de esconderlo. #}
+    <div class="ck-c c-mar {{ 'is-cero' if kpis.margen_aprob_pct == 0 }}">
+      <span class="k"><i class="bi bi-cash-coin"></i>Margen aprobado</span>
+      <b class="v">{{ _mon }}{{ '{:,.0f}'.format(kpis.margen_aprob).replace(',','.') }}</b>
+      <span class="s">
+        {% if kpis.margen_aprob_pct == 0 %}
+          <i class="bi bi-info-circle"></i> se está cotizando a costo
+        {% else %}
+          {{ kpis.margen_aprob_pct }}% sobre lo aprobado
+        {% endif %}
+      </span>
+    </div>
+
+    {# 4 · Esperando respuesta — la plata que está en la cancha del cliente #}
+    <div class="ck-c c-esp">
+      <span class="k"><i class="bi bi-hourglass-split"></i>Esperando respuesta</span>
+      <b class="v">{{ _mon }}{{ '{:,.0f}'.format(kpis.monto_env).replace(',','.') }}</b>
+      <span class="s">{{ kpis.n_env }} enviada{{ '' if kpis.n_env == 1 else 's' }}
+        {%- if kpis.n_draft %} · {{ kpis.n_draft }} en borrador{% endif %}</span>
+    </div>
+
+    {# 5 · Conversión — solo si alguien ya decidió.
+         Sin cotizaciones resueltas no se muestra un 0% que parecería
+         "vendemos nada" cuando en realidad es "todavía nadie respondió". #}
+    <div class="ck-c c-conv">
+      <span class="k"><i class="bi bi-trophy-fill"></i>Conversión</span>
+      {% if kpis.conversion is none %}
+        <b class="v na">—</b>
+        <span class="s">nada resuelto aún</span>
+      {% else %}
+        <b class="v">{{ kpis.conversion }}%</b>
+        <span class="s">{{ kpis.n_aprob }} de {{ kpis.decididas }} resueltas</span>
+      {% endif %}
+    </div>
+  </div>
+</div>

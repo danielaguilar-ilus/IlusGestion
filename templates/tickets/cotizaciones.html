@@ -2,6 +2,7 @@
 {% block title %}Cotizaciones — ILUS{% endblock %}
 {% block head_extra %}
 <link rel="stylesheet" href="{{ url_for('static', filename='tickets_cotizaciones.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='cotiz_kpis.css') }}">
 {% endblock %}
 {% block content %}
 
@@ -68,6 +69,12 @@
   </div>
 </div>
 
+{# Indicadores financieros del departamento (Daniel, 20-08-2026).
+   Va ANTES del `{% if cotizaciones %}` a propósito: el período puede no
+   tener cotizaciones y los KPIs igual tienen que poder decir "0", en vez
+   de desaparecer y dejar la pantalla muda. #}
+{% include "_partials/cotiz_kpis.html" %}
+
 {% if cotizaciones %}
 {# Filtro rápido client-side de la tabla (número/empresa/RUT + estado). #}
 <div class="cot-lista-filtros">
@@ -113,7 +120,7 @@
           <td data-label="Número"><span class="tk-num">{{ c.numero_cotizacion or ('#' ~ c.id) }}</span></td>
           <td data-label="Cliente"><strong>{{ c.empresa or c.rut or 'Sin cliente' }}</strong></td>
           <td data-label="Estado" style="white-space:nowrap;">
-            <span class="tk-badge cb-{{ c.estado }}">{{ c.estado }}</span>
+            <span class="tk-badge cb-{{ c.estado }}">{{ c.estado | cotiz_estado }}</span>
             {% if c.vencida %}<span class="tk-badge cb-vencida" title="La validez ya pasó">Vencida</span>{% endif %}
             {% if c.editada_post_aprobacion %}<i class="bi bi-pencil-fill" style="color:#f59e0b;font-size:.8rem;" title="Editada después de aprobarse — revisa el historial"></i>{% endif %}
           </td>

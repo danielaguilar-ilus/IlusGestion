@@ -866,6 +866,24 @@ def _pw_pdf(html: str, **kwargs) -> bytes:
     return result_box["data"]
 
 
+@app.template_filter('cotiz_estado')
+def cotiz_estado_filter(value):
+    """Traduce el estado de una cotización a texto para una persona.
+
+    2026-08-20. Los dos cotizadores (SSTT y Logística) comparten el MISMO
+    ENUM ('draft','sent','approved','rejected','expired'), pero el panel de
+    SSTT imprimía el valor crudo: en pantalla se leía **"DRAFT"**, en
+    inglés, contra la regla del proyecto de que nada visible va en inglés.
+    Logística sí traducía, con su propia tabla. Dos tablas para el mismo
+    ENUM es justamente lo que "estandarizar" viene a terminar.
+
+    La traducción vive en cotiz_kpis.COTIZ_ESTADOS, junto al cálculo de los
+    indicadores, y se expone acá para que cualquier template la use igual.
+    """
+    from cotiz_kpis import cotiz_estado_meta
+    return cotiz_estado_meta(value)[0]
+
+
 @app.template_filter('from_json')
 def from_json_filter(value):
     """Parsea un string JSON almacenado en DB; devuelve lista/dict o []."""

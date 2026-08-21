@@ -1,0 +1,73 @@
+/* ══════════════════════════════════════════════════════════════════════
+   INDICADORES DE COTIZACIONES — hoja compartida (SSTT + Logística)
+   ══════════════════════════════════════════════════════════════════════
+   Daniel (20-08-2026): "hagamos algo espectacular pero no tan llamativo".
+   La lectura la da la JERARQUÍA (tamaño y orden), no el color: fondo
+   blanco, cifra grande, y color solo donde significa algo — verde lo
+   aprobado, ámbar lo que espera respuesta del cliente.
+
+   Un solo archivo para los dos paneles: si cada uno trae su copia, un día
+   se ven distintos y "estandarizar" dura una semana.
+   ══════════════════════════════════════════════════════════════════════ */
+.ck{--ck-line:#eaecf0;background:#fff;border:1px solid var(--ck-line);
+  border-radius:12px;padding:14px 16px 16px;margin-bottom:14px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04)}
+
+.ck-head{display:flex;align-items:center;justify-content:space-between;
+  gap:12px;flex-wrap:wrap;margin-bottom:13px}
+.ck-title{display:flex;align-items:center;gap:8px;font-size:.74rem;
+  font-weight:900;letter-spacing:.09em;text-transform:uppercase;color:#6b7280}
+.ck-title i{color:var(--ilus-red,#dc2626);font-size:.95rem}
+.ck-title b{color:#0a0a0a}
+
+/* Selector de período — chips, no <select> (patrón ILUS) */
+.ck-per{display:flex;gap:4px;flex-wrap:wrap}
+.ck-p{display:inline-flex;align-items:center;min-height:32px;padding:5px 12px;
+  border-radius:8px;border:1px solid var(--ck-line);background:#fff;
+  color:#6b7280;font-weight:700;font-size:.76rem;text-decoration:none;
+  transition:all .15s;white-space:nowrap}
+.ck-p:hover{color:#0a0a0a;border-color:#c7cbd1}
+.ck-p.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+
+.ck-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:10px}
+
+.ck-c{--c:#6b7280;position:relative;background:#fff;border:1px solid var(--ck-line);
+  border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:3px;
+  overflow:hidden;transition:transform .16s,box-shadow .16s,border-color .16s}
+.ck-c::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:var(--c);opacity:.55;transition:opacity .16s}
+.ck-c:hover{transform:translateY(-2px);border-color:#d7dae0;
+  box-shadow:0 8px 20px -10px rgba(10,10,10,.22)}
+.ck-c:hover::after{opacity:1}
+.ck-c .k{display:flex;align-items:center;gap:6px;font-size:.66rem;font-weight:800;
+  letter-spacing:.07em;text-transform:uppercase;color:#6b7280}
+.ck-c .k i{color:var(--c);font-size:.82rem}
+.ck-c .v{font-size:1.5rem;font-weight:900;line-height:1.05;color:#0a0a0a;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ck-c .v.na{color:#c7cbd1}
+.ck-c .s{font-size:.7rem;color:#9ca3af;font-weight:600;
+  display:flex;align-items:center;gap:4px}
+
+.c-cot{--c:#3b82f6}
+.c-apr{--c:#16a34a}
+.c-apr .v{color:#15803d}
+.c-mar{--c:#8b5cf6}
+.c-esp{--c:#f59e0b}
+.c-conv{--c:#dc2626}
+
+/* Margen 0: no es un error ni una alarma -- es la política actual. Se
+   señala en gris informativo, no en rojo de peligro. */
+.c-mar.is-cero{--c:#9ca3af}
+.c-mar.is-cero .v{color:#6b7280}
+.c-mar.is-cero .s{color:#6b7280}
+
+@media (prefers-reduced-motion:reduce){
+  .ck-c:hover{transform:none}
+}
+@media (max-width:640px){
+  .ck{padding:12px}
+  .ck-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+  .ck-c .v{font-size:1.28rem}
+  .ck-head{align-items:flex-start;flex-direction:column;gap:9px}
+  .ck-per{width:100%;overflow-x:auto;padding-bottom:2px}
+}
