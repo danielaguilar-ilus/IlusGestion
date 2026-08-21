@@ -88427,8 +88427,44 @@ def repstock_buscar_modelos():
     return jsonify({"ok": True, "productos": [dict(r) for r in rows]})
 
 
+def _repuestos_sondeo_required(view):
+    """Gate del sondeo de repuestos: quien trabaja OT **o** cotizaciones.
+
+    2026-08-20. El sondeo nació sirviendo solo al módulo de Repuestos, con
+    `@_mant_required` (permiso `mantenciones` o superadmin). Ahora también
+    lo usa el ítem manual de Cotizaciones, que corre bajo el gate de
+    Tickets — un ejecutivo con solo `tk_es_ejecutivo` recibía 403 al pulsar
+    el botón, antes siquiera de poder buscar.
+
+    Es EXACTAMENTE el mismo tropiezo que ya se corrigió en
+    catalogo_module.py con "Agregar de Bodega 02" (ver el comentario ahí):
+    una búsqueda de SOLO LECTURA gateada como si escribiera.
+
+    Este gate es la UNIÓN de los dos, así que **no le quita acceso a nadie**
+    que hoy lo tenga. Los flags `tk_*` son los mismos que acepta
+    `_tickets_required` (tickets_module.py ~2097) — vive anidado ahí y no se
+    puede importar; si allá se agrega un flag nuevo, hay que reflejarlo acá.
+
+    Sigue siendo SELECT puro contra el ERP vía `_random_sql_query`
+    (REGLA #4.1 intacta): no expone nada más que SKU, descripción y stock.
+    """
+    @wraps(view)
+    def wrapped(*a, **k):
+        perms = g.get("permissions") or {}
+        if not (perms.get("mantenciones")
+                or perms.get("tk_ver")
+                or perms.get("tk_es_tecnico")
+                or perms.get("tk_es_ejecutivo")
+                or perms.get("superadmin")):
+            return jsonify({"ok": False,
+                            "error": "No tienes permiso para consultar bodega."}), 403
+        return view(*a, **k)
+    return wrapped
+
+
 @app.route("/mantenciones/api/repuestos-stock/sondeo-erp", methods=["GET"])
-@_mant_required
+@app.route("/tickets/api/repuestos/bodega18", methods=["GET"])
+@_repuestos_sondeo_required
 def repstock_sondeo_erp():
     """Sondeo de stock de repuestos en la BODEGA 18 del ERP Random.
 

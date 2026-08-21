@@ -1083,6 +1083,29 @@ function _cotWizRenderManualPanel(){
         '<div><label>Precio unitario</label>' +
           '<input type="number" id="cotWizManualPrecio" class="form-control form-control-sm" min="0" step="1" placeholder="$"></div>' +
       '</div>' +
+      /* Buscador de BODEGA 18 (repuestos del ERP Random).
+         Daniel (20-08-2026): "un botón bien colorido que me conecta a la
+         bodega 18 para poder solicitar, sustituyendo el SKU y la
+         descripción, pudiendo buscar por nombre y SKU".
+         Es el MISMO comportamiento que ya pidió en agosto para el módulo
+         de Repuestos, así que consume el MISMO endpoint (bodega 18 en vivo,
+         SELECT puro — REGLA #4.1) en vez de duplicar la consulta. */
+      '<div class="cot-b18">' +
+        '<button type="button" class="cot-b18-btn" onclick="_cotB18Abrir()">' +
+          '<i class="bi bi-box-seam-fill"></i>Buscar repuesto en Bodega 18' +
+        '</button>' +
+        '<span class="cot-b18-hint">Trae el SKU y la descripción desde el ERP</span>' +
+      '</div>' +
+      '<div id="cotB18Box" class="cot-b18-box" style="display:none">' +
+        '<div class="cot-b18-search">' +
+          '<i class="bi bi-search"></i>' +
+          '<input type="text" id="cotB18Q" placeholder="Nombre o SKU del repuesto — mín. 2 letras" ' +
+            'oninput="_cotB18Buscar()" autocomplete="off">' +
+          '<button type="button" class="cot-b18-x" onclick="_cotB18Cerrar()" ' +
+            'aria-label="Cerrar buscador"><i class="bi bi-x-lg"></i></button>' +
+        '</div>' +
+        '<div id="cotB18Res" class="cot-b18-res"></div>' +
+      '</div>' +
       '<div class="cot-wiz-manual-foot">' +
         '<button type="button" class="btn btn-sm fw-bold" style="background:#0a0a0a;color:#fff;border-radius:8px;padding:8px 16px;" ' +
           'onclick="_cotWizAgregarManual()"><i class="bi bi-plus-lg me-1"></i>Agregar a la cotización</button>' +
@@ -1092,6 +1115,107 @@ function _cotWizRenderManualPanel(){
   const first = document.getElementById('cotWizManualNombre');
   if (first) first.focus();
 }
+/* ══════════════════════════════════════════════════════════════════════
+   BODEGA 18 — buscador de repuestos para el ítem manual
+   ══════════════════════════════════════════════════════════════════════
+   Daniel (20-08-2026). La bodega 18 del ERP Random ES la de Repuestos
+   (app.py: REPUESTOS_BODEGA_ERP, configurable por env porque "Random puede
+   renumerar bodegas sin avisar").
+
+   Reusa /tickets/api/repuestos/bodega18 — la MISMA vista que ya servía al
+   módulo de Repuestos desde agosto, ahora con un gate que suma a quien
+   trabaja cotizaciones. No se duplicó la consulta al ERP: una sola query,
+   un solo lugar donde arreglarla.
+   ══════════════════════════════════════════════════════════════════════ */
+let _COT_B18_T = null;      // debounce
+let _COT_B18_SEQ = 0;       // descarta respuestas viejas que llegan tarde
+
+function _cotB18Abrir(){
+  const box = document.getElementById('cotB18Box');
+  if (!box) return;
+  box.style.display = '';
+  const q = document.getElementById('cotB18Q');
+  if (q){ q.focus(); if (q.value.trim().length >= 2) _cotB18Buscar(); }
+}
+function _cotB18Cerrar(){
+  const box = document.getElementById('cotB18Box');
+  if (box) box.style.display = 'none';
+}
+
+function _cotB18Buscar(){
+  const inp = document.getElementById('cotB18Q');
+  const res = document.getElementById('cotB18Res');
+  if (!inp || !res) return;
+  const q = (inp.value || '').trim();
+  clearTimeout(_COT_B18_T);
+  if (q.length < 2){
+    res.innerHTML = '<div class="cot-b18-msg">Escribe al menos 2 letras.</div>';
+    return;
+  }
+  res.innerHTML = '<div class="cot-b18-msg"><span class="cot-b18-spin"></span>Consultando bodega 18…</div>';
+  const mi = ++_COT_B18_SEQ;
+  _COT_B18_T = setTimeout(async () => {
+    let d = null;
+    try {
+      const r = await fetch('/tickets/api/repuestos/bodega18?q=' + encodeURIComponent(q));
+      d = await r.json();
+      if (!r.ok && r.status === 403) d = {ok:false, error:'No tienes permiso para consultar bodega.'};
+    } catch (e) {
+      d = {ok:false, error:'Sin conexión con el ERP.'};
+    }
+    // Si mientras tanto se escribió otra cosa, esta respuesta ya no sirve.
+    if (mi !== _COT_B18_SEQ) return;
+    if (!d || !d.ok){
+      res.innerHTML = '<div class="cot-b18-msg err"><i class="bi bi-exclamation-triangle-fill"></i>' +
+        _cotEsc(d && d.error ? d.error : 'No se pudo consultar el ERP.') + '</div>';
+      return;
+    }
+    const ps = d.productos || [];
+    if (!ps.length){
+      res.innerHTML = '<div class="cot-b18-msg">Sin resultados en bodega 18 para «' + _cotEsc(q) + '».</div>';
+      return;
+    }
+    res.innerHTML = ps.map((p, i) => {
+      const hay = Number(p.cantidad || 0);
+      // El stock se informa, NUNCA bloquea: se puede cotizar algo que hay
+      // que pedir. Solo cambia el color para que se vea de una.
+      const cls = hay > 0 ? 'hay' : 'sin';
+      const txt = hay > 0 ? (hay + ' en bodega') : 'sin stock';
+      _COT_B18_CACHE[i] = p;
+      return '<button type="button" class="cot-b18-item" onclick="_cotB18Elegir(' + i + ')">' +
+        '<span class="sk">' + _cotEsc(p.sku || '—') + '</span>' +
+        '<span class="ds">' + _cotEsc(p.descripcion || 'Sin descripción') + '</span>' +
+        '<span class="st ' + cls + '">' + txt + '</span>' +
+      '</button>';
+    }).join('');
+  }, 320);
+}
+
+const _COT_B18_CACHE = {};
+
+function _cotB18Elegir(i){
+  const p = _COT_B18_CACHE[i];
+  if (!p) return;
+  const sku = document.getElementById('cotWizManualSku');
+  const nom = document.getElementById('cotWizManualNombre');
+  // Sustituye SKU y descripción, que es literalmente lo pedido.
+  if (sku){ sku.value = p.sku || ''; sku.style.background = '#dcfce7'; }
+  if (nom){ nom.value = p.descripcion || ''; nom.style.background = '#dcfce7'; }
+  _cotB18Cerrar();
+  // El precio NO se rellena solo: lo que trae el ERP es COSTO, no precio de
+  // venta. Autocompletarlo cotizaría al cliente a precio de costo.
+  const pr = document.getElementById('cotWizManualPrecio');
+  if (pr && !pr.value) pr.focus();
+  if (typeof ilusToast === 'function'){
+    ilusToast('✓ ' + (p.sku || 'Repuesto') + ' traído de bodega 18', {type:'success'});
+  }
+}
+
+/* (no se define _cotEsc acá: ya existe más abajo en este mismo archivo y
+   hace exactamente lo mismo. Declararla dos veces "funciona" -- la última
+   gana -- pero deja dos escapadores que pueden divergir. Se usa la que ya
+   estaba.) */
+
 async function _cotWizAgregarManual(){
   if (!_WIZ) return;
   const nombre = (document.getElementById('cotWizManualNombre').value || '').trim();
