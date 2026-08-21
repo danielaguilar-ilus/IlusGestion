@@ -79734,6 +79734,128 @@ def mant_visita_pdf(vid):
 #     claro de qué le falta.
 # ═════════════════════════════════════════════════════════════════════
 
+@app.route("/ot-firmada/<token>")
+def ot_publica_firmada(token):
+    """La OT firmada, abierta por el CLIENTE sin cuenta ILUS.
+
+    Daniel (2026-08-21): "necesito que funcione el envío de la OT por
+    WhatsApp"; eligió mandar *un enlace para ver la OT firmada*.
+
+    El PDF de la OT vive en /mantenciones/ot/<vid>/pdf, detrás de
+    @_mant_required + @_ot_can_view: un cliente NUNCA puede abrirlo. Por eso
+    hace falta esta puerta pública -- y por eso NO se toca la otra: quien
+    tiene cuenta sigue entrando por donde siempre.
+
+    Reutiliza al 100% lo que ya existe, sin duplicar nada:
+      · el token HMAC de la firma remota (_ot_firma_token), sin estado en BD
+        y con expiración, el mismo que ya se manda por correo/WhatsApp;
+      · _ot_pdf_context() y el MISMO template del PDF. Si mañana cambia el
+        documento, cambia en los dos lados solo.
+
+    Diferencia deliberada con /firmar-ot/<token>: ahí el cliente FIRMA; acá
+    solo LEE lo que ya firmó. Es la constancia del trabajo, que es lo que
+    sirve para respaldar la factura.
+    """
+    vid = _ot_firma_token_validar(token)
+    if not vid:
+        # Sin detalles: un token vencido y uno inventado dan el mismo
+        # mensaje, para no confirmarle a nadie qué OT existe.
+        return render_template_string(
+            "<!doctype html><html lang=es><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<title>Enlace no disponible — ILUS Fitness</title>"
+            "<div style=\"font-family:system-ui,sans-serif;max-width:520px;margin:18vh auto;"
+            "padding:0 24px;text-align:center;color:#0a0a0a\">"
+            "<div style='font-size:2.4rem'>🔒</div>"
+            "<h1 style='font-size:1.25rem;margin:12px 0 8px'>Este enlace ya no está disponible</h1>"
+            "<p style='color:#6b7280;font-size:.95rem;line-height:1.5'>Puede haber vencido. "
+            "Pídele a tu contacto en ILUS Fitness que te envíe uno nuevo.</p></div></html>"), 410
+
+    ctx, status, razones = _ot_pdf_context(vid)
+    if status != "ok":
+        # La OT existe pero todavía no está cerrada con sus firmas. No se
+        # muestra a medias: sería entregarle al cliente un documento que
+        # todavía puede cambiar.
+        return render_template_string(
+            "<!doctype html><html lang=es><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<title>Orden de trabajo en curso — ILUS Fitness</title>"
+            "<div style=\"font-family:system-ui,sans-serif;max-width:520px;margin:18vh auto;"
+            "padding:0 24px;text-align:center;color:#0a0a0a\">"
+            "<div style='font-size:2.4rem'>🛠️</div>"
+            "<h1 style='font-size:1.25rem;margin:12px 0 8px'>Esta orden todavía está en curso</h1>"
+            "<p style='color:#6b7280;font-size:.95rem;line-height:1.5'>Cuando quede cerrada y "
+            "firmada vas a poder verla acá mismo con este enlace.</p></div></html>"), 409
+
+    _tpl_pdf = ("mantenciones/ot_pdf_levantamiento.html"
+                if _ot_es_levantamiento(ctx["visita"]) and ctx.get("lev_items")
+                else "mantenciones/ot_pdf.html")
+    return render_template(_tpl_pdf, **ctx)
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/compartir-wa", methods=["POST"])
+@_mant_required
+@_ot_can_view
+def mant_ot_compartir_wa(vid):
+    """Arma el deep-link de WhatsApp para mandarle al cliente su OT firmada.
+
+    Daniel eligió botón APARTE del cierre: si WhatsApp falla, la OT igual
+    quedó cerrada y firmada. Compartir nunca puede deshacer trabajo hecho.
+
+    NO envía nada por su cuenta: devuelve el link y el técnico aprieta
+    enviar en su propio WhatsApp. Sin Twilio ni WhatsApp Business (Daniel,
+    2026-08-21: "no quiero nada de twilio" — ya costó US$20 y no sirve sin
+    Business API).
+    """
+    d = request.get_json(silent=True) or {}
+    v = mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_realizada, "
+        "       v.fecha_programada, v.contacto_tel, "
+        "       c.razon_social, COALESCE(au.nombre, au.username) AS tecnico_nombre "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+
+    # Solo se comparte lo que ya está firmado: mandar una OT a medias deja
+    # al cliente con un documento que todavía puede cambiar.
+    _, _status, _razones = _ot_pdf_context(vid)
+    if _status != "ok":
+        return jsonify({
+            "ok": False,
+            "error": ("La OT todavía no está cerrada con sus firmas, así que "
+                      "aún no hay documento que mandar. " + " ".join(_razones or []))
+        }), 400
+
+    telefono = (d.get("telefono") or "").strip()[:40] or (v.get("contacto_tel") or "")
+    if not telefono:
+        return jsonify({"ok": False, "error": "TELEFONO_FALTA"}), 400
+    _tel_ok, tel_norm = validar_telefono_chileno(telefono)
+    if not _tel_ok:
+        return jsonify({"ok": False, "error": tel_norm}), 400
+
+    link = url_for("ot_publica_firmada", token=_ot_firma_token(vid), _external=True)
+    _fecha = v.get("fecha_realizada") or v.get("fecha_programada")
+    _fecha_txt = chile_fmt_filter(_fecha, "%d/%m/%Y") if _fecha else ""
+    _num = v.get("numero_ot") or f"OT #{vid}"
+
+    mensaje = (
+        f"Hola, te comparto la orden de trabajo *{_num}* de {ILUS_BRAND}, ya firmada.\n\n"
+        f"Cliente: {v.get('razon_social') or ''}\n"
+        f"Trabajo: {_TIPO_OT_LABEL.get(v.get('tipo'), (v.get('tipo') or '').replace('_',' ').title())}\n"
+        + (f"Fecha: {_fecha_txt}\n" if _fecha_txt else "")
+        + (f"Técnico: {v.get('tecnico_nombre')}\n" if v.get("tecnico_nombre") else "")
+        + f"\nVer la OT firmada: {link}"
+    )
+    from urllib.parse import quote as _url_quote
+    _mant_log("visita", vid, "ot_compartida_wa",
+              f"Link de la OT firmada generado para {tel_norm} por {current_username()}.")
+    return jsonify({"ok": True, "link": link,
+                    "wa_link": f"https://wa.me/{tel_norm.lstrip('+')}?text={_url_quote(mensaje)}"})
+
+
 @app.route("/mantenciones/ot/<int:vid>/pdf")
 @_mant_required
 @_ot_can_view

@@ -226,6 +226,14 @@
       <i class="bi bi-tools"></i> Ejecutar la OT</a>
     <a class="otd-btn" href="{{ url_for('mant_ot_ficha', vid=v.id) }}">
       <i class="bi bi-file-earmark-text"></i> Ficha completa</a>
+    {# Compartir la OT firmada — SEPARADO del cierre a propósito (Daniel,
+       21-08): si WhatsApp falla, la OT igual quedó cerrada y firmada.
+       Solo aparece cuando ya hay documento que mandar. #}
+    {% if v.estado in ('completada','cerrada') %}
+    <button type="button" class="otd-btn" id="otdBtnWa" onclick="otdCompartirWa()"
+            style="background:#25d366;border-color:#25d366;color:#fff">
+      <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
+    {% endif %}
     {% if v.cliente_id %}
     <a class="otd-btn" href="{{ url_for('mant_ficha', cid=v.cliente_id) }}">
       <i class="bi bi-building"></i> Cliente</a>
@@ -384,4 +392,60 @@
     </div>
   </div>
 </div>
+
+<script>
+/* Compartir la OT firmada por WhatsApp (Daniel, 21-08-2026).
+   Abre la ventana ANTES del fetch: si se abre después, Safari/iOS y
+   navegadores estrictos la bloquean por haber perdido la activación del
+   click. Es el mismo patrón ya probado en enviarFirmaWhatsApp(). */
+async function otdCompartirWa(){
+  const btn = document.getElementById('otdBtnWa');
+  if (btn && btn.dataset.busy === '1') return;   // anti doble click
+  if (btn){ btn.dataset.busy = '1'; btn.style.opacity = '.6'; }
+  const win = window.open('', '_blank');
+  try {
+    let tel = '';
+    const r0 = await fetch('/mantenciones/api/visitas/{{ v.id }}/compartir-wa', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({})
+    });
+    let d = await r0.json().catch(()=>({}));
+    if (!d.ok && d.error === 'TELEFONO_FALTA'){
+      if (win) win.close();
+      tel = await ilusPrompt({
+        title:'Enviar la OT al cliente',
+        message:'Teléfono del cliente (con o sin +56):',
+        sub:'Esta OT no tiene teléfono de contacto cargado.',
+        placeholder:'+56 9 1234 5678', required:true });
+      if (!tel){ if(btn){btn.dataset.busy='0';btn.style.opacity='';} return; }
+      const win2 = window.open('', '_blank');
+      const r1 = await fetch('/mantenciones/api/visitas/{{ v.id }}/compartir-wa', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({telefono: tel}) });
+      d = await r1.json().catch(()=>({}));
+      if (d.ok && d.wa_link){ if (win2) win2.location.href = d.wa_link; }
+      else { if (win2) win2.close();
+        await ilusAlert({title:'No se pudo', message:d.error||'Error', type:'error'}); }
+      if(btn){btn.dataset.busy='0';btn.style.opacity='';}
+      return;
+    }
+    if (!d.ok){
+      if (win) win.close();
+      await ilusAlert({title:'No se pudo enviar', message:d.error||'Error', type:'error'});
+    } else if (win){
+      win.location.href = d.wa_link;
+      ilusToast('✓ Abriendo WhatsApp con la OT firmada…', {type:'success'});
+    } else {
+      await ilusAlert({title:'Link generado',
+        message:'El navegador bloqueó la ventana. Copia este enlace:',
+        sub:d.wa_link, type:'warning'});
+    }
+  } catch(e){
+    if (win) win.close();
+    await ilusAlert({title:'Error de red', message:e.message, type:'error'});
+  } finally {
+    if (btn){ btn.dataset.busy = '0'; btn.style.opacity = ''; }
+  }
+}
+</script>
 {% endblock %}
