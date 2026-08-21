@@ -96758,6 +96758,68 @@ def _ensure_plantillas_estandar_seed():
              (7, "Rango de movimiento completo y simétrico", "Ambos lados en equipos duales", "sino", 1, 0, None, None, None, None),
              (8, "Observación de carga y movimiento", "", "texto", 0, 0, None, None, None, None),
          ]),
+        # ══════════════════════════════════════════════════════════════
+        # RETIRO / RESCATE DE EQUIPOS A BODEGA (Daniel, 2026-08-21)
+        # ══════════════════════════════════════════════════════════════
+        # Caso real que la motiva: "rescatar una trotadora, retirar 2
+        # bicicletas de la misma instalación y trasladar todo a bodega".
+        # Deliberadamente NO se escribe para ese caso: sirve para retiro
+        # parcial, recuperación por término de contrato y cambio de
+        # ubicación. La cantidad de equipos la pone la OT, no la plantilla.
+        #
+        # 🔴 La pieza clave es el ítem "RESULTADO DEL RETIRO", de tipo
+        # `lista`: resuelve los cuatro desenlaces que pidió Daniel
+        # (retirado / no retirado / no encontrado / rechazado por cliente)
+        # SIN una línea de código nueva, porque el checklist se instancia
+        # una vez POR EQUIPO. Así la bicicleta 2 puede quedar "Rechazado
+        # por cliente" mientras las otras dos salen retiradas, y la OT
+        # refleja la ejecución parcial de verdad.
+        #
+        # El cierre parcial ya está resuelto aguas abajo: un equipo marcado
+        # saltado/falla_detectada no bloquea el cierre y exige motivo de
+        # 10+ caracteres (_ot_maquinas_excluidas_cierre).
+        #
+        # `serie` y `estado_capturado` van con target_field para que lo que
+        # el técnico lee en terreno alimente la ficha del equipo.
+        # ⚠️ Hoy ese puente solo actúa en OT de tipo levantamiento — por eso
+        # la ubicación en bodega todavía NO se escribe sola. Es el trabajo
+        # que sigue, y está declarado así a propósito para no prometer en la
+        # plantilla algo que el motor aún no hace.
+        ("Retiro / Rescate de equipos a bodega", "otro",
+         "Un checklist por equipo para retirarlo desde la instalación del cliente y "
+         "llevarlo a bodega. Cada equipo lleva su propio resultado, así que la OT "
+         "admite retiros parciales. Reutilizable para término de contrato, rescate y "
+         "cambio de ubicación.",
+         # 🔴 familia_checklist es un ENUM CERRADO: instalacion, preventiva,
+         # correctivo, desinstalacion, capacitacion, registro_productos,
+         # operacional_interno, rendiciones, control_calidad, otro.
+         # "retiro" NO existe ahí -- verificado contra el CREATE TABLE antes
+         # de sembrar (REGLA #5). Un retiro ES una desinstalación desde el
+         # punto de vista del trabajo, así que va en esa familia en vez de
+         # ampliar el ENUM por un sinónimo.
+         "desinstalacion", "todas",
+         [
+             (1, "Llegada al lugar", "Confirma que estás en la instalación del cliente.",
+              "gps", 1, 0, None, None, None, None),
+             (2, "Foto general del lugar", "El espacio antes de mover nada.",
+              "foto", 1, 1, None, None, None, None),
+             (3, "N° de serie del equipo",
+              "Lee la placa. Si la ficha ya trae una, confirma que coincide.",
+              "texto", 1, 0, None, None, None, None),
+             (4, "Foto del equipo ANTES de retirar", "Cómo estaba y dónde estaba.",
+              "foto", 1, 1, None, None, None, None),
+             (5, "Estado del equipo al retirar", "Con qué condición se lo lleva.",
+              "lista", 1, 0, None, None, None,
+              '["Operativo","Operativo con observaciones","Fuera de servicio","Dañado","Requiere diagnóstico","Otro"]'),
+             (6, "RESULTADO DEL RETIRO", "Lo que realmente pasó con ESTE equipo.",
+              "lista", 1, 0, None, None, None,
+              '["Retirado","No retirado","No encontrado","Rechazado por cliente","Pendiente"]'),
+             (7, "Foto del equipo cargado en el vehículo", "Evidencia de que salió del lugar.",
+              "foto", 1, 1, None, None, None, None),
+             (8, "Observaciones del retiro",
+              "Accesorios que van, piezas faltantes, o por qué no se pudo retirar.",
+              "texto", 0, 0, None, None, None, None),
+         ]),
     ]
     creadas = []
     for _seed_row in _seeds:
