@@ -163,6 +163,11 @@ function setView(v){
   document.getElementById('view-' + v).classList.add('active');
   _state.view = v;
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  // 2026-08-21: este es el ÚNICO punto donde cambia la vista, así que es
+  // el lugar correcto para refrescar el botón principal -- su rótulo
+  // depende del paso del flujo (ver _txFirmarEtiqueta). Ponerlo en cada
+  // goTo* sería repetir la misma regla en cuatro sitios.
+  try { actualizarLockFirmar(_calcCtxGlobal()); } catch (_) {}
 }
 
 function goToMaquinas(){
@@ -228,6 +233,27 @@ function abrirResumenOFirma(){
   const ctx = _calcCtxGlobal();
   const esDescubrimientoPuro = ES_LEVANTAMIENTO && (typeof EQUIPOS !== 'undefined') && EQUIPOS.length === 0;
   if (esDescubrimientoPuro || ctx.total === 0){
+    abrirModalFirma();
+    return;
+  }
+  // 🔴 FIX 2026-08-21 (Daniel: "el botón Completar y firmar OT no está
+  // funcionando"). Y era cierto, aunque el código no lanzaba ningún error.
+  //
+  // Medido en la OT-2026-00058 con la página recién cargada: el click SÍ
+  // cambiaba la vista de 'maquinas' a 'resumen'... y ahí moría. El resumen
+  // mide ~3.100px porque lista los 60 equipos, así que su botón "Confirmar
+  // y pasar a firma" quedaba a 4.108px — fuera de la pantalla — mientras
+  // setView() mandaba el scroll ARRIBA del todo, o sea al punto más lejano
+  // del único control que continúa el flujo.
+  // Y al segundo click no ocurría absolutamente nada: ya estabas en
+  // 'resumen', así que goToResumen() re-navegaba a donde ya estabas. Un
+  // no-op silencioso, sin excepción y sin feedback: exactamente lo que se
+  // ve como "el botón no hace nada".
+  //
+  // La regla que faltaba: este botón es el motor del flujo, y un motor
+  // nunca puede quedarse en el mismo punto. Si ya estás en el resumen, ya
+  // revisaste — el siguiente paso es firmar.
+  if (_state.view === 'resumen'){
     abrirModalFirma();
     return;
   }
@@ -3566,6 +3592,16 @@ function _actualizarPanelCierre(oblTot, oblComp){
 //  Argumento: ctx = {total, completas, oblTot, oblComp}
 //  (compat: si llega como 2 args sueltos, los normalizamos).
 // ════════════════════════════════════════════════════════
+// Rotulo del boton principal segun el paso del flujo en que estas.
+// 2026-08-21: nace con el fix del boton "Completar y firmar OT", que
+// navegaba al resumen sin decirlo y al segundo click no hacia nada.
+function _txFirmarEtiqueta(textoBase){
+  const enResumen = (typeof _state !== 'undefined' && _state.view === 'resumen');
+  const ico   = enResumen ? 'bi-pen-fill' : 'bi-list-check';
+  const texto = enResumen ? 'Firmar con el cliente' : textoBase;
+  return `<i class="bi ${ico}"></i> <span id="btnFirmarLabel">${texto}</span>`;
+}
+
 function actualizarLockFirmar(ctxOrTotal, completas){
   // Backwards-compat: algunos callers viejos pasaban (total, completas) sueltos.
   let ctx;
@@ -3701,8 +3737,8 @@ function actualizarLockFirmar(ctxOrTotal, completas){
   if (opcPend > 0){
     btn.disabled = false;
     btn.dataset.locked = '0';
-    btn.innerHTML = `<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">` +
-      `Firmar OT (${opcPend} opcional${opcPend>1?'es':''} pendiente${opcPend>1?'s':''})</span>`;
+    btn.innerHTML = _txFirmarEtiqueta(
+      `Firmar OT (${opcPend} opcional${opcPend>1?'es':''} pendiente${opcPend>1?'s':''})`);
     btn.style.background = 'linear-gradient(135deg,#f59e0b,#d97706)';
     if (hint){
       hint.innerHTML = `Puedes firmar igual: las obligatorias están listas. ${hintCounters}`;
@@ -3714,7 +3750,11 @@ function actualizarLockFirmar(ctxOrTotal, completas){
   // Caso 4: TODO OK
   btn.disabled = false;
   btn.dataset.locked = '0';
-  btn.innerHTML = '<i class="bi bi-pen-fill"></i> <span id="btnFirmarLabel">Completar y firmar OT</span>';
+  // 2026-08-21: el rotulo dice lo que el boton HACE en este punto del
+  // flujo. Estando en 'resumen' el click abre la firma; antes lleva al
+  // resumen a revisar. Un boton que promete "firmar" y en realidad navega
+  // es lo que hacia sentir que "no funciona".
+  btn.innerHTML = _txFirmarEtiqueta('Completar y firmar OT');
   btn.style.background = 'linear-gradient(135deg,#15803d,#16a34a)';
   if (hint){
     hint.innerHTML = `Todas las tareas listas. ${hintCounters}`;
