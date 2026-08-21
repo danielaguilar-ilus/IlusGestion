@@ -1,0 +1,387 @@
+{% extends "base.html" %}
+{% block title %}{{ v.numero_ot or 'OT' }} — ILUS Fitness{% endblock %}
+
+{#
+  ══════════════════════════════════════════════════════════════════════
+  OT 2.0 · FICHA DE LA ORDEN — vista de MANDO (Daniel, 20-08-2026)
+  ══════════════════════════════════════════════════════════════════════
+  Hasta hoy el panel de OT 2.0 abría `mant_ot_ficha` y al primer click te
+  sacaba del módulo. Daniel: "quiero trabajar la vista cuando le doy click
+  a cada tarjeta, no quiero que maneje el anterior... que visualice las
+  cosas dentro de la OT".
+
+  LO QUE PIDIÓ, literal, y dónde está resuelto:
+   · "el header que tenemos definido por default"  -> .page-header + sidebar
+     (hereda base.html). Ver [[feedback_pantallas_internas_con_sidebar]].
+   · "mantener la información arriba... y el fondo negro" -> .otd-hero.
+     OJO: el hero NEGRO que rechazó en agosto era el del PANEL (una lista
+     no necesita portada). Acá sí lo pidió: una OT concreta SÍ tiene una
+     identidad que mostrar.
+   · "el recorrido de la OT"          -> .otd-track, dentro del mismo bloque
+     negro. Va ahí y NO repetido abajo: "no veo por qué tener otro tracking
+     abajo del equipo, checklist y firmas".
+   · "más color a los íconos, dinamismo" -> cada dato de cabecera lleva su
+     ícono con color propio; el hito actual late; las barras se llenan al
+     entrar.
+   · "para no darles scroll, a menos que hayan más máquinas" -> el layout
+     cabe en pantalla; lo ÚNICO que crece es la caja de equipos, y crece
+     dentro de sí misma (REGLA #4.3 / feedback_scroll_contenido_no_pagina).
+
+  ESTA PANTALLA NO EJECUTA. Marcar tareas, subir fotos y firmar siguen en
+  /mantenciones/ot/<id>/ejecutar, a un botón de distancia. Duplicar esa
+  pantalla sería fabricar otra copia de reglas que después se desincroniza
+  — es exactamente lo que costó el bug del contador de obligatorias.
+  ══════════════════════════════════════════════════════════════════════
+#}
+
+{% block content %}
+<style>
+.otd{
+  --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
+  --line:#eaecf0; --ink:#0a0a0a;
+}
+
+/* ══ HERO NEGRO — identidad + datos + recorrido, todo en un bloque ══ */
+.otd-hero{position:relative;background:var(--ink);border-radius:14px;
+  padding:22px 24px 18px;overflow:hidden;margin-bottom:16px;
+  box-shadow:0 10px 30px -14px rgba(10,10,10,.55)}
+.otd-hero::before{content:"";position:absolute;inset:0;
+  background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.035) 0 1px,transparent 1px 12px);
+  pointer-events:none}
+.otd-hero::after{content:"";position:absolute;top:-60%;right:-10%;width:520px;height:520px;
+  background:radial-gradient(circle,var(--halo,rgba(220,38,38,.30)) 0%,transparent 62%);
+  pointer-events:none}
+.otd-hero.h-comp{--halo:rgba(22,163,74,.28)}
+.otd-hero.h-cerr{--halo:rgba(107,114,128,.22)}
+.otd-hero.h-pend{--halo:rgba(59,130,246,.26)}
+.otd-hero > *{position:relative;z-index:1}
+
+.otd-top{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:18px;flex-wrap:wrap}
+.otd-tipo{display:inline-flex;align-items:center;gap:6px;font-size:.66rem;font-weight:900;
+  letter-spacing:.12em;text-transform:uppercase;color:#fff;background:var(--ilus-red,#dc2626);
+  border-radius:6px;padding:4px 10px;margin-bottom:8px}
+.otd-num{font-family:'Barlow Condensed',system-ui,sans-serif;font-size:2.6rem;font-weight:900;
+  color:#fff;line-height:.95;letter-spacing:-.01em;margin:0}
+.otd-cli{color:#fff;font-weight:800;font-size:1.02rem;margin:6px 0 2px}
+.otd-dir{color:#a1a1aa;font-size:.83rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.otd-dir i{color:var(--ilus-red,#dc2626)}
+
+/* Sello de estado — el dato estrella, no un chip chico */
+.otd-sello{display:inline-flex;align-items:center;gap:10px;background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:10px 16px}
+.otd-sello .ico{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+  background:var(--c,#6b7280);color:#fff;font-size:1.05rem;flex:none}
+.otd-sello .txt{display:flex;flex-direction:column;line-height:1.15}
+.otd-sello .k{font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:#a1a1aa;font-weight:800}
+.otd-sello .v{font-size:.95rem;font-weight:900;color:#fff;letter-spacing:.01em}
+.s-pend{--c:var(--pend)} .s-ejec{--c:var(--ejec)} .s-comp{--c:var(--comp)} .s-cerr{--c:var(--cerr)}
+.s-ejec .ico{animation:otdPulse 1.9s ease-out infinite}
+@keyframes otdPulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}
+  70%{box-shadow:0 0 0 11px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+
+/* Datos de cabecera — íconos con color propio */
+.otd-datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+  gap:10px;margin:16px 0 4px}
+.otd-d{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.09);
+  border-radius:10px;padding:9px 12px;display:flex;align-items:center;gap:9px;
+  transition:background .16s,border-color .16s}
+.otd-d:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2)}
+.otd-d i{font-size:1rem;flex:none;color:var(--dc,#a1a1aa)}
+.otd-d .in{display:flex;flex-direction:column;min-width:0}
+.otd-d .k{font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:#8b8b93;font-weight:800}
+.otd-d .v{font-size:.86rem;font-weight:800;color:#fff;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.d-fec{--dc:#60a5fa} .d-hor{--dc:#c084fc} .d-tec{--dc:#4ade80}
+.d-eq{--dc:#fbbf24}  .d-fot{--dc:#f472b6} .d-ava{--dc:#dc2626}
+
+/* ══ RECORRIDO — dentro del hero, una sola vez en la página ══ */
+.otd-track{display:flex;align-items:flex-start;gap:0;margin-top:16px;
+  padding-top:15px;border-top:1px solid rgba(255,255,255,.1)}
+.otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;
+  position:relative;text-align:center;min-width:0}
+.otd-h::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:2px;
+  background:rgba(255,255,255,.14)}
+.otd-h:first-child::before{display:none}
+.otd-h.ok::before{background:var(--comp)}
+.otd-h .p{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(255,255,255,.09);border:2px solid rgba(255,255,255,.18);
+  color:#71717a;font-size:.82rem;z-index:1;transition:transform .2s}
+.otd-h.ok .p{background:var(--comp);border-color:var(--comp);color:#fff}
+.otd-h.now .p{background:var(--ejec);border-color:var(--ejec);color:#fff;
+  animation:otdPulse 1.9s ease-out infinite}
+.otd-h:hover .p{transform:scale(1.12)}
+.otd-h .l{font-size:.66rem;font-weight:800;color:#a1a1aa;letter-spacing:.02em}
+.otd-h.ok .l,.otd-h.now .l{color:#fff}
+.otd-h .t{font-size:.6rem;color:#71717a;font-variant-numeric:tabular-nums}
+
+/* ══ GRILLA PRINCIPAL ══ */
+.otd-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start}
+@media (max-width:980px){.otd-grid{grid-template-columns:1fr}}
+
+.otd-card{background:#fff;border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 4px rgba(0,0,0,.04);overflow:hidden}
+.otd-card > h3{margin:0;padding:12px 16px;font-size:.72rem;font-weight:900;
+  letter-spacing:.1em;text-transform:uppercase;color:#6b7280;
+  border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.otd-card > h3 i{color:var(--ilus-red,#dc2626);font-size:.9rem}
+.otd-card > h3 .n{margin-left:auto;font-size:.7rem;color:#9ca3af;font-weight:800}
+
+/* Equipos — lo ÚNICO que scrollea, y dentro de su caja */
+.otd-eqs{max-height:min(56vh,520px);overflow-y:auto}
+.otd-eq{display:flex;align-items:center;gap:11px;padding:10px 16px;
+  border-bottom:1px solid #f4f5f7;transition:background .14s}
+.otd-eq:last-child{border-bottom:0}
+.otd-eq:hover{background:#fafbfc}
+.otd-eq .th{width:38px;height:38px;border-radius:8px;object-fit:cover;background:#f3f4f6;
+  flex:none;display:grid;place-items:center;color:#c7cbd1;font-size:1rem}
+.otd-eq .nm{flex:1;min-width:0}
+.otd-eq .nm b{display:block;font-size:.85rem;color:#0a0a0a;font-weight:700;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.otd-eq .nm small{font-size:.68rem;color:#9ca3af;font-variant-numeric:tabular-nums}
+.otd-eq .bar{width:74px;height:6px;border-radius:99px;background:#eef0f3;overflow:hidden;flex:none}
+.otd-eq .bar i{display:block;height:100%;border-radius:99px;background:var(--bc,#16a34a);
+  width:0;animation:otdFill .7s cubic-bezier(.2,.7,.3,1) forwards}
+@keyframes otdFill{to{width:var(--w,0%)}}
+.otd-eq .sel{font-size:.63rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;
+  border-radius:99px;padding:3px 9px;white-space:nowrap;flex:none;min-width:74px;text-align:center}
+.eq-ok{background:#dcfce7;color:#15803d} .eq-go{background:#fee2e2;color:#b91c1c}
+.eq-pend{background:#f3f4f6;color:#6b7280} .eq-warn{background:#fff8e1;color:#a16207}
+.otd-vacio{padding:26px 16px;text-align:center;color:#9ca3af;font-size:.85rem}
+
+/* Avance global */
+.otd-av{padding:14px 16px}
+.otd-av-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
+.otd-av-top b{font-size:1.9rem;font-weight:900;color:#0a0a0a;line-height:1;
+  font-variant-numeric:tabular-nums}
+.otd-av-top span{font-size:.74rem;color:#6b7280;font-weight:700}
+.otd-av-bar{height:9px;border-radius:99px;background:#eef0f3;overflow:hidden}
+.otd-av-bar i{display:block;height:100%;border-radius:99px;
+  background:linear-gradient(90deg,#dc2626,#f97316);width:0;
+  animation:otdFill .9s cubic-bezier(.2,.7,.3,1) forwards}
+.otd-av-bar.full i{background:linear-gradient(90deg,#16a34a,#4ade80)}
+
+/* Firmas */
+.otd-fir{display:flex;flex-direction:column}
+.otd-f{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #f4f5f7}
+.otd-f:last-child{border-bottom:0}
+.otd-f .ic{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+  font-size:.82rem;flex:none}
+.otd-f.si .ic{background:#dcfce7;color:#15803d}
+.otd-f.no .ic{background:#f3f4f6;color:#9ca3af}
+.otd-f .in{flex:1;min-width:0}
+.otd-f .in b{display:block;font-size:.8rem;color:#0a0a0a}
+.otd-f .in small{font-size:.68rem;color:#9ca3af}
+.otd-f .st{font-size:.64rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em}
+.otd-f.si .st{color:#15803d} .otd-f.no .st{color:#9ca3af}
+
+/* Dinero */
+.otd-din{padding:13px 16px;display:flex;flex-direction:column;gap:8px}
+.otd-din .row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.82rem}
+.otd-din .row span{color:#6b7280;font-weight:600}
+.otd-din .row b{color:#0a0a0a;font-weight:800;text-align:right}
+.otd-warn{display:flex;align-items:flex-start;gap:8px;background:#fff8e1;border:1px solid #fcd34d;
+  color:#92400e;border-radius:9px;padding:9px 11px;font-size:.78rem;font-weight:600}
+.otd-warn i{color:#d97706;margin-top:1px}
+
+/* Acciones */
+.otd-acts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.otd-btn{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:9px 17px;
+  border-radius:10px;font-weight:800;font-size:.85rem;text-decoration:none;border:1px solid var(--line);
+  background:#fff;color:#374151;transition:transform .16s,box-shadow .16s,border-color .16s}
+.otd-btn:hover{transform:translateY(-1px);border-color:#c7cbd1;color:#0a0a0a;
+  box-shadow:0 6px 16px -8px rgba(10,10,10,.3)}
+.otd-btn.pri{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff}
+.otd-btn.pri:hover{color:#fff;box-shadow:0 8px 20px -8px rgba(220,38,38,.7)}
+.otd-btn i{font-size:.95rem}
+
+@media (prefers-reduced-motion:reduce){
+  .otd-eq .bar i,.otd-av-bar i{animation:none;width:var(--w,0%)}
+  .s-ejec .ico,.otd-h.now .p{animation:none}
+}
+@media (max-width:640px){
+  .otd-num{font-size:2.1rem}
+  .otd-track{overflow-x:auto;padding-bottom:4px}
+  .otd-h{min-width:74px}
+}
+</style>
+
+<div class="ot2 otd">
+
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1 class="page-title">
+        <i class="bi bi-clipboard2-pulse-fill"></i>
+        {{ v.numero_ot or ('OT #' ~ v.id) }}
+      </h1>
+      <p class="page-subtitle">{{ v.tipo_label }} · {{ v.razon_social or 'Sin cliente' }}</p>
+    </div>
+  </div>
+
+  {# ── Acciones ─────────────────────────────────────────────────────── #}
+  <div class="otd-acts">
+    <a class="otd-btn" href="{{ url_for('ot2_panel') }}">
+      <i class="bi bi-arrow-left"></i> Volver al panel</a>
+    <a class="otd-btn pri" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
+      <i class="bi bi-tools"></i> Ejecutar la OT</a>
+    <a class="otd-btn" href="{{ url_for('mant_ot_ficha', vid=v.id) }}">
+      <i class="bi bi-file-earmark-text"></i> Ficha completa</a>
+    {% if v.cliente_id %}
+    <a class="otd-btn" href="{{ url_for('mant_ficha', cid=v.cliente_id) }}">
+      <i class="bi bi-building"></i> Cliente</a>
+    {% endif %}
+  </div>
+
+  {# ══ HERO: identidad + datos + recorrido ══ #}
+  <div class="otd-hero h-{{ v.estado_fase or 'pend' }}">
+    <div class="otd-top">
+      <div>
+        <span class="otd-tipo"><i class="bi {{ v.tipo_icon }}"></i>{{ v.tipo_label }}</span>
+        <h2 class="otd-num">{{ v.numero_ot or ('OT #' ~ v.id) }}</h2>
+        <p class="otd-cli">{{ v.razon_social or 'Sin cliente asignado' }}</p>
+        <div class="otd-dir">
+          {% if v.cliente_direccion %}
+            <i class="bi bi-geo-alt-fill"></i>
+            <span>{{ v.cliente_direccion }}{% if v.cliente_comuna %}, {{ v.cliente_comuna }}{% endif %}</span>
+          {% endif %}
+          {% if v.cliente_rut %}<span>· RUT {{ v.cliente_rut | rut_fmt }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="otd-sello s-{{ v.estado_fase or 'pend' }}">
+        <div class="ico"><i class="bi {{ v.estado_icon or 'bi-circle' }}"></i></div>
+        <div class="txt">
+          <span class="k">Estado</span>
+          <span class="v">{{ v.estado_label or (v.estado or '—') }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="otd-datos">
+      <div class="otd-d d-fec"><i class="bi bi-calendar3"></i>
+        <div class="in"><span class="k">Agendada</span>
+          <span class="v">{{ v.fecha_dia }}{% if v.fecha_dow %} · {{ v.fecha_dow }}{% endif %}</span></div></div>
+      <div class="otd-d d-hor"><i class="bi bi-clock-fill"></i>
+        <div class="in"><span class="k">Horario</span>
+          <span class="v">{{ (v.hora_inicio | string)[:5] if v.hora_inicio else '—' }}</span></div></div>
+      <div class="otd-d d-tec"><i class="bi bi-person-badge-fill"></i>
+        <div class="in"><span class="k">Técnico</span>
+          <span class="v">{{ v.tecnico_nombre or 'Sin asignar' }}</span></div></div>
+      <div class="otd-d d-eq"><i class="bi bi-boxes"></i>
+        <div class="in"><span class="k">Equipos</span>
+          <span class="v">{{ kpis.equipos_listos }}/{{ kpis.equipos }}</span></div></div>
+      <div class="otd-d d-fot"><i class="bi bi-camera-fill"></i>
+        <div class="in"><span class="k">Fotos</span>
+          <span class="v">{{ kpis.fotos }}</span></div></div>
+      <div class="otd-d d-ava"><i class="bi bi-check2-square"></i>
+        <div class="in"><span class="k">Obligatorias</span>
+          <span class="v">{{ kpis.obl_ok }}/{{ kpis.obl }}</span></div></div>
+    </div>
+
+    {# Recorrido — UNA sola vez en toda la página #}
+    <div class="otd-track">
+      {% for h in hitos %}
+      <div class="otd-h {{ 'ok' if h.hecho }} {{ 'now' if h.actual }}"
+           title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}">
+        <div class="p"><i class="bi {{ h.icono }}"></i></div>
+        <span class="l">{{ h.label }}</span>
+        <span class="t">{{ h.cuando or '—' }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ══ GRILLA ══ #}
+  <div class="otd-grid">
+
+    {# ── Equipos ── #}
+    <div class="otd-card">
+      <h3><i class="bi bi-boxes"></i> Equipos de la OT
+        <span class="n">{{ kpis.equipos }}</span></h3>
+      {% if equipos %}
+      <div class="otd-eqs">
+        {% for e in equipos %}
+        <div class="otd-eq">
+          {% if e.foto_url %}
+            <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
+          {% else %}
+            <span class="th"><i class="bi bi-image"></i></span>
+          {% endif %}
+          <div class="nm">
+            <b>{{ e.nombre or ('Equipo #' ~ e.id) }}</b>
+            <small>{% if e.serie %}S/N {{ e.serie }}{% endif %}
+              {%- if e.n_tareas %} · {{ e.n_ok }}/{{ e.n_tareas }} tareas{% endif %}</small>
+          </div>
+          <span class="bar"><i style="--w:{{ e.pct }}%"></i></span>
+          <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="otd-vacio">
+        <i class="bi bi-inbox" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+        Esta OT todavía no tiene equipos asignados.
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Columna derecha ── #}
+    <div style="display:flex;flex-direction:column;gap:14px">
+
+      <div class="otd-card">
+        <h3><i class="bi bi-graph-up-arrow"></i> Avance del trabajo</h3>
+        <div class="otd-av">
+          <div class="otd-av-top">
+            <b>{{ kpis.pct }}%</b>
+            <span>{{ kpis.obl_ok }} de {{ kpis.obl }} obligatorias</span>
+          </div>
+          <div class="otd-av-bar {{ 'full' if kpis.pct >= 100 }}">
+            <i style="--w:{{ kpis.pct }}%"></i>
+          </div>
+          <div class="otd-av-top" style="margin:10px 0 0">
+            <span>Checklist completo</span>
+            <b style="font-size:.95rem">{{ kpis.tareas_ok }}/{{ kpis.tareas }}</b>
+          </div>
+        </div>
+      </div>
+
+      <div class="otd-card">
+        <h3><i class="bi bi-vector-pen"></i> Firmas</h3>
+        <div class="otd-fir">
+          {% for f in firmas %}
+          <div class="otd-f {{ 'si' if f.url else 'no' }}">
+            <span class="ic"><i class="bi {{ 'bi-check-lg' if f.url else 'bi-dash-lg' }}"></i></span>
+            <div class="in">
+              <b>{{ f.rol }}</b>
+              <small>{{ f.nombre or ('Firmado ' ~ f.cuando) if f.url else 'Pendiente' }}</small>
+            </div>
+            <span class="st">{{ 'Firmada' if f.url else 'Falta' }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="otd-card">
+        <h3><i class="bi bi-cash-coin"></i> Cobro</h3>
+        <div class="otd-din">
+          <div class="row"><span>Modalidad</span>
+            <b>{{ (v.modalidad_cobro or 'sin declarar') | replace('_',' ') | title }}</b></div>
+          <div class="row"><span>Centro de costo</span>
+            <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
+          {% if v.factura_nudo %}
+          <div class="row"><span>Documento</span>
+            <b>{{ v.factura_tido or 'DOC' }} {{ v.factura_nudo }}</b></div>
+          {% endif %}
+          {% if finanzas and finanzas.faltan %}
+          <div class="otd-warn">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div>Falta declarar antes de pedir la firma:
+              {{ finanzas.faltan | join(', ') }}.</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -71092,7 +71092,13 @@ _OT2_PER_PAGE_OPCIONES = (10, 25, 50, 100)
 # lado a lado no funcionan en pantalla chica) -- confirmado con Daniel.
 #  La TABLA es la vista por defecto (Daniel, 19-08: "dejándola en primera
 #  instancia por defecto, igual a esa tabla que tenemos").
-_OT2_VISTAS = ("tabla", "tarjeta", "kanban", "calendario")
+# 2026-08-20 (Daniel): fuera "tarjeta". El template renderizaba la MISMA
+# tabla para 'tabla' y 'tarjeta' (`if vista in ('tabla','tarjeta')`), así
+# que el botón cambiaba la URL y nada más -- "cuando lo cambio a tabla y
+# tarjeta no hace nada". Nunca se implementó como vista propia. Una vista
+# vieja que caiga acá con ?vista=tarjeta degrada a 'tabla', que es
+# exactamente lo que veía antes.
+_OT2_VISTAS = ("tabla", "kanban", "calendario")
 _OT2_FASES = ("pend", "ejec", "comp", "cerr")
 _OT2_FASE_LABELS = {
     "pend": "Pendientes", "ejec": "En ejecución",
@@ -71867,6 +71873,154 @@ def _ot2_err(mensaje, codigo, http=400, **extra):
     payload = {"ok": False, "error": mensaje, "codigo": codigo}
     payload.update(extra)
     return jsonify(payload), http
+
+
+_OT2_HITOS = (
+    # (clave, etiqueta, icono, columna_timestamp)
+    ("creada",  "Creada",     "bi-plus-circle-fill",     "created_at"),
+    ("ruta",    "En ruta",    "bi-truck",                "ruta_iniciada_at"),
+    ("sitio",   "En sitio",   "bi-geo-alt-fill",         "hora_real_inicio"),
+    ("firmada", "Firmada",    "bi-vector-pen",           "firma_cliente_at"),
+    ("cerrada", "Cerrada",    "bi-flag-fill",            "cerrada_at"),
+)
+
+
+@app.route("/ot/<int:vid>")
+@_mant_required
+@_ot_can_view
+def ot2_detalle(vid):
+    """Ficha de una OT dentro de OT 2.0 — la vista de GESTIÓN.
+
+    Daniel (2026-08-20): *"lo que quiero trabajar es la vista cuando le doy
+    clic a cada tarjeta, no quiero que maneje el anterior… este endpoint
+    cambiarlo para que visualice las cosas fuera de mantención, sino dentro
+    de la OT"*. Hasta hoy el panel de OT 2.0 abría `mant_ot_ficha`, o sea
+    se salía del módulo al primer click.
+
+    Qué es y qué NO es: esto es la vista de MANDO — responde "¿cómo va esta
+    OT?" de un vistazo. La EJECUCIÓN (marcar tareas, subir fotos, firmar)
+    sigue viviendo en /mantenciones/ot/<id>/ejecutar y se alcanza con un
+    botón. No se duplica esa pantalla: duplicarla sería fabricar la sexta
+    copia de reglas que ya nos costó caro (ver el contador de obligatorias).
+
+    Sin scroll salvo que haya muchas máquinas (Daniel: *"para no darles
+    scroll, a menos que hayan más máquinas"*) — por eso la grilla de
+    equipos es lo único que crece, y lo hace dentro de su propia caja.
+    """
+    v = mysql_fetchone(
+        "SELECT v.*, c.razon_social, c.rut AS cliente_rut, "
+        "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
+        # OJO: en mant_clientes el teléfono/correo del contacto son
+        # `contacto_tel` / `contacto_email` (NO `telefono`/`email`, que no
+        # existen). El de la empresa vive aparte en `tel_empresa`.
+        "       c.contacto_nombre, c.contacto_tel, c.contacto_email, "
+        "       c.tel_empresa, "
+        "       COALESCE(au.nombre, au.username) AS tecnico_nombre "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+        " WHERE v.id=%s", (vid,))
+    if not v:
+        flash("Esa OT no existe.", "warning")
+        return redirect(url_for("ot2_panel"))
+    v = dict(v)
+
+    hoy = date.today()
+    _ot2_enriquecer_fila(v, hoy)
+
+    # ── Equipos con su avance ──────────────────────────────────────────
+    # MISMO criterio que la pantalla de ejecución (tareas ∪ equipos de la
+    # OT, sin los dados de baja): si acá apareciera un equipo que allá no
+    # se dibuja, volveríamos a tener dos pantallas contando distinto.
+    equipos = mysql_fetchall(
+        "SELECT m.id, m.nombre, m.sku, m.serie, m.marca, m.foto_url, "
+        "       COALESCE(t.n, 0) AS n_tareas, COALESCE(t.ok, 0) AS n_ok, "
+        "       ve.estado_revision, ve.diagnostico_estado "
+        "  FROM mant_maquinas m "
+        "  LEFT JOIN ( "
+        "       SELECT maquina_id, COUNT(*) AS n, "
+        "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS ok "
+        "         FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id IS NOT NULL "
+        "        GROUP BY maquina_id "
+        "  ) t ON t.maquina_id = m.id "
+        "  LEFT JOIN mant_visita_equipos ve ON ve.maquina_id = m.id AND ve.visita_id=%s "
+        " WHERE COALESCE(m.estado,'activo') <> 'baja' "
+        "   AND (t.maquina_id IS NOT NULL OR ve.maquina_id IS NOT NULL) "
+        " ORDER BY m.nombre LIMIT 200",
+        (vid, vid)
+    ) or []
+    equipos = [dict(e) for e in equipos]
+    for e in equipos:
+        n, ok = int(e.get("n_tareas") or 0), int(e.get("n_ok") or 0)
+        e["pct"] = int(round(ok * 100.0 / n)) if n else 0
+        _rev = (e.get("estado_revision") or "").lower()
+        if _rev in ("saltado", "falla_detectada"):
+            e["sello"], e["sello_cls"] = (
+                "Saltado" if _rev == "saltado" else "Con falla"), "eq-warn"
+        elif n and ok >= n:
+            e["sello"], e["sello_cls"] = "Listo", "eq-ok"
+        elif ok:
+            e["sello"], e["sello_cls"] = "En curso", "eq-go"
+        else:
+            e["sello"], e["sello_cls"] = "Pendiente", "eq-pend"
+
+    # ── Recorrido de la OT ─────────────────────────────────────────────
+    hitos = []
+    for clave, label, icono, col in _OT2_HITOS:
+        ts = v.get(col)
+        hitos.append({
+            "clave": clave, "label": label, "icono": icono,
+            "ts": ts,
+            "cuando": chile_fmt_filter(ts, "%d/%m %H:%M") if ts else "",
+            "hecho": bool(ts),
+        })
+    # El primer hito sin timestamp es "el que viene ahora" — se marca para
+    # que la línea muestre dónde está parada la OT, no solo lo ya ocurrido.
+    for h in hitos:
+        if not h["hecho"]:
+            h["actual"] = True
+            break
+
+    # ── Cifras de cabecera ─────────────────────────────────────────────
+    _tar = mysql_fetchone(
+        "SELECT COUNT(*) AS n, "
+        "       SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS ok, "
+        "       SUM(CASE WHEN obligatoria=1 THEN 1 ELSE 0 END) AS obl, "
+        "       SUM(CASE WHEN obligatoria=1 AND completada=1 THEN 1 ELSE 0 END) AS obl_ok "
+        "  FROM mant_visita_tareas WHERE visita_id=%s", (vid,)) or {}
+    _fotos = mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_visita_fotos WHERE visita_id=%s", (vid,)) or {}
+    _obl = int(_tar.get("obl") or 0)
+    _obl_ok = int(_tar.get("obl_ok") or 0)
+    kpis = {
+        "equipos": len(equipos),
+        "tareas": int(_tar.get("n") or 0),
+        "tareas_ok": int(_tar.get("ok") or 0),
+        "obl": _obl, "obl_ok": _obl_ok,
+        "pct": int(round(_obl_ok * 100.0 / _obl)) if _obl else 0,
+        "fotos": int(_fotos.get("n") or 0),
+        "equipos_listos": sum(1 for e in equipos if e["sello_cls"] == "eq-ok"),
+    }
+
+    firmas = [
+        {"rol": "Técnico",    "url": v.get("firma_tecnico_url"),
+         "nombre": v.get("firma_tecnico_nombre"), "at": v.get("firma_tecnico_at")},
+        {"rol": "Cliente",    "url": v.get("firma_cliente_url"),
+         "nombre": v.get("firma_cliente_nombre"), "at": v.get("firma_cliente_at")},
+        {"rol": "Supervisor", "url": v.get("firma_supervisor_url"),
+         "nombre": v.get("firma_supervisor_nombre"), "at": v.get("firma_supervisor_at")},
+    ]
+    for f in firmas:
+        f["cuando"] = chile_fmt_filter(f["at"], "%d/%m/%Y %H:%M") if f.get("at") else ""
+
+    # OJO: _ot2_finanzas_estado devuelve una TUPLA (ok, faltan), no un dict.
+    _fin_ok, _fin_faltan = _ot2_finanzas_estado(v)
+
+    return render_template(
+        "ot2/detalle.html",
+        v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
+        finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
+    )
 
 
 @app.route("/ot/api/cliente/<int:cid>")

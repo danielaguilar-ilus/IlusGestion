@@ -302,7 +302,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {% endif %}
 
   {# ── KPIs por fase (clic = filtrar, segundo clic = quitar) ───────── #}
-  {% set vista_lista = vista if vista in ('tabla','tarjeta') else 'tabla' %}
+  {% set vista_lista = 'tabla' %}
   <div class="ot2-kpis">
     <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='pend' else 'pend') }}">
@@ -387,8 +387,12 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   <nav class="ot2-vistas" aria-label="Tipo de vista">
     <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None) }}">
       <i class="bi bi-table"></i><span>Tabla</span></a>
-    <a class="ot2-v {{ 'on' if vista=='tarjeta' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tarjeta', q=q or None, fase=fase or None) }}">
-      <i class="bi bi-grid-3x3-gap-fill"></i><span>Tarjetas</span></a>
+    {# 2026-08-20 (Daniel): la vista "Tarjetas" se quitó a pedido suyo --
+       "cuando lo cambio a tabla y tarjeta no hace nada". Y era cierto: el
+       bloque de abajo decía `if vista in ('tabla','tarjeta')`, así que
+       Tarjetas renderizaba EXACTAMENTE la tabla. Nunca se implementó como
+       vista propia; existía solo el botón. Se elimina el botón en vez de
+       dejar una opción que promete algo que no ocurre. #}
     <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None) }}">
       <i class="bi bi-kanban-fill"></i><span>Kanban</span></a>
     <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None) }}">
@@ -396,7 +400,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   </nav>
 
   {# ══════════════════ TABLA ══════════════════ #}
-  {% if vista in ('tabla', 'tarjeta') %}
+  {% if vista == 'tabla' %}
     {% if filas %}
     <div class="ot2-tabla-wrap">
       <div class="ot2-scroll">
@@ -428,7 +432,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
           </thead>
           <tbody>
             {% for f in filas %}
-            <tr class="f-{{ f.estado_fase or 'cancel' }}" onclick="location.href='{{ url_for('mant_ot_ficha', vid=f.id) }}'">
+            <tr class="f-{{ f.estado_fase or 'cancel' }}" onclick="location.href='{{ url_for('ot2_detalle', vid=f.id) }}'">
               <td>
                 <span class="ot2-num">
                   {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
@@ -458,7 +462,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 </div>
               </td>
               <td style="text-align:right">
-                <a class="ot2-abrir" href="{{ url_for('mant_ot_ficha', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a>
+                <a class="ot2-abrir" href="{{ url_for('ot2_detalle', vid=f.id) }}">Abrir <i class="bi bi-arrow-right"></i></a>
               </td>
             </tr>
             {# El detalle que se despliega al pasar por encima. Cada dato
@@ -533,7 +537,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
         <div class="ot2-col-b">
           {% for f in col.filas %}
           <a class="ot2-card" draggable="true" data-vid="{{ f.id }}"
-             href="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+             href="{{ url_for('ot2_detalle', vid=f.id) }}">
             <div class="r1">
               <span class="nu">{% if f.numero_ot %}OT-{{ f.numero_sufijo }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}</span>
               <span class="ic"><i class="bi {{ f.tipo_icon }}"></i></span>
@@ -587,7 +591,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 data-ini="{{ f.tecnico_ini or '' }}"
                 data-av="{{ f.n_completas }}/{{ f.n_tareas }} · {{ f.check_pct }}%"
                 data-sub="{{ f.estado_sub or '' }}"
-                data-url="{{ url_for('mant_ot_ficha', vid=f.id) }}">
+                data-url="{{ url_for('ot2_detalle', vid=f.id) }}">
             {% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ (f.razon_social or 'Interno')[:14] }}
           </span>
           {% endfor %}
