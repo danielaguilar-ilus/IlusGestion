@@ -40389,24 +40389,64 @@ def tr_item_simpliroute_reprogramar(item_id):
     return jsonify({"ok": True, "visit_id": vid, "fecha": fecha})
 
 
-def _sr_visita_sin_planificar(v):
-    """¿Esta visita está creada pero nadie la metió todavía en una ruta?
+def _sr_visita_sin_entregar(v):
+    """¿Esta visita sigue sin entregarse? (antes: _sr_visita_sin_planificar)
 
-    2026-08-18. Criterio en UN solo lugar: lo usan el listado de congeladas
-    y el rescate, y si se separan uno podría mover una visita que el otro
-    considera intocable.
+    CORRECCIÓN 2026-08-20, con medición contra la API real. El criterio
+    anterior era "pending Y sin `route`", asumiendo que `route` aparece
+    cuando el despachador asigna la visita a un vehículo. Medido en la
+    cuenta de Felca ese día: de 7 visitas ENTREGADAS (status 'completed'),
+    las 7 vienen con `route` en null. Felca no usa el módulo Router --
+    marca las entregas directo desde la aplicación del chofer.
 
-    'pending' es el estado con que nace toda visita creada por API. El
-    despachador la asigna a un vehículo y ahí aparece `route` (un dict con
-    driver_name -- misma lectura que ya hace tr_compromiso_trazabilidad; NO
-    hay campo `driver` en la raíz). Cualquier otro estado (on_its_way,
-    completed, failed, partial) significa que el courier YA la tomó.
+    O sea que `route` no distingue nada en esta cuenta, y el criterio viejo
+    marcaba como "congelada" CADA entrega normal que todavía no ocurría.
+    Una herramienta que grita por todo se aprende a ignorar.
+
+    El criterio honesto es el estado, y nada más: 'pending' significa que el
+    courier todavía no la tocó. Cualquier otro estado (on_its_way, completed,
+    failed, partial, canceled) significa que ya pasó algo con ella.
+
+    Lo que convierte a una visita pendiente en un PROBLEMA no es este
+    predicado -- es que su día ya pasó. Eso lo decide quien llama (ver
+    `vencida` en tr_simpliroute_visitas_congeladas).
     """
     if not isinstance(v, dict):
         return False
-    if (v.get("status") or "").strip().lower() != "pending":
-        return False
-    return not isinstance(v.get("route"), dict)
+    return (v.get("status") or "").strip().lower() == "pending"
+
+
+def _sr_quien_creo_la_visita(referencia):
+    """'ILUS' | 'COURIER' | 'DESCONOCIDO' — según el FORMATO de la reference.
+
+    2026-08-20, el hallazgo que explica todo. Medido contra la API real sobre
+    los días 13, 14, 19 y 20 de agosto en la cuenta de Felca:
+
+        reference con prefijo   (FCV-11303, BLV-23140)  -> la creó ILUS
+            0 entregadas, 15 pendientes
+        reference número pelado (11281, 23069)           -> la cargó Felca
+            7 entregadas, 4 pendientes
+
+    NINGUNA visita creada por ILUS se ha entregado jamás. Las entregas que el
+    sistema registraba como éxito eran visitas del propio courier que ILUS
+    adoptó después (_simpliroute_reconciliar_huerfanos las busca por
+    reference y les escribe el visit_id en transport_manifest_items).
+
+    ⚠️ POR ESO no sirve preguntarle a la base "¿es nuestra?": tener el
+    visit_id guardado NO significa que la creamos nosotros. El único dato que
+    lo distingue es el formato de la reference, porque el Excel del courier
+    pone el nudo pelado en "Id de referencia" y build_visit_payload arma
+    "TIDO-NUDO".
+    """
+    ref = (referencia or "").strip()
+    if not ref:
+        return "DESCONOCIDO"
+    import re as _re
+    if _re.match(r"^[A-Za-z]{2,4}-", ref):
+        return "ILUS"
+    if ref.replace("0", "").strip().isdigit() or ref.isdigit():
+        return "COURIER"
+    return "DESCONOCIDO"
 
 
 @app.route("/transporte/api/simpliroute/visitas-congeladas", methods=["GET"])
@@ -40468,7 +40508,7 @@ def tr_simpliroute_visitas_congeladas():
             sin_respuesta += 1
             continue
         v = r.get("data")
-        if not _sr_visita_sin_planificar(v):
+        if not _sr_visita_sin_entregar(v):
             continue
 
         pd = (v.get("planned_date") or "").strip()
@@ -40491,15 +40531,26 @@ def tr_simpliroute_visitas_congeladas():
             # día que ya pasó: ese es el caso grave, el tablero ya cerró.
             "dias_en_el_pasado": dias_atras,
             "vencida": bool(dias_atras is not None and dias_atras > 0),
+            # Quien la creo, segun el FORMATO de la reference (2026-08-20).
+            # Es el dato que explica el caso entero: las visitas con prefijo
+            # (nuestras) no se entregan nunca; las de numero pelado (que carga
+            # el courier) si. Ver _sr_quien_creo_la_visita.
+            "origen": _sr_quien_creo_la_visita(v.get("reference")),
+            "reference": (v.get("reference") or "").strip(),
         })
 
     vencidas = sum(1 for c in congeladas if c["vencida"])
+    de_ilus = sum(1 for c in congeladas if c["origen"] == "ILUS")
     if not congeladas:
-        resumen = "Ninguna visita quedó sin planificar."
+        resumen = "Todos los pedidos activos ya fueron entregados o el courier los tomó."
     else:
-        resumen = f"{len(congeladas)} visita(s) creadas por ILUS siguen sin planificar"
+        # 2026-08-20: se dejo de decir "sin planificar". En esta cuenta el
+        # courier no usa el modulo de rutas -- entrega directo desde la app --
+        # asi que "planificada" no significa nada aca. Lo que si significa
+        # algo es: sigue sin entregarse, y su dia ya paso.
+        resumen = f"{len(congeladas)} pedido(s) siguen sin entregar"
         if vencidas:
-            resumen += f", {vencidas} de ellas con la fecha ya vencida"
+            resumen += f", {vencidas} con la fecha ya vencida"
         resumen += "."
 
     return jsonify({
@@ -40510,6 +40561,8 @@ def tr_simpliroute_visitas_congeladas():
         "congeladas": congeladas,
         "total_congeladas": len(congeladas),
         "total_vencidas": vencidas,
+        "total_creadas_por_ILUS": de_ilus,
+        "total_cargadas_por_COURIER": len(congeladas) - de_ilus,
         "dias_ventana": dias,
         "tope_alcanzado": len(filas) >= 100,
         "resumen": resumen,
@@ -40561,10 +40614,14 @@ def tr_simpliroute_rescatar_congeladas():
     Rescatar "a hoy" a las 19:30 no sirve de nada: el tablero del despachador
     ya cerró y la visita amanece vencida de nuevo.
 
-    Deliberadamente ACOTADO: solo toca visitas que (a) están en 'pending',
-    (b) no tienen chofer asignado y (c) su fecha YA VENCIÓ. Una visita
-    programada a futuro, o que el courier ya tomó, no se toca nunca -- mover
-    la fecha de algo que el despachador ya planificó sería peor que el bug.
+    Deliberadamente ACOTADO: solo toca visitas que (a) siguen en 'pending' y
+    (b) su fecha YA VENCIÓ. Una visita programada a futuro, o que el courier
+    ya tomó (cualquier estado distinto de 'pending'), no se toca nunca.
+
+    2026-08-20: se quitó "no tienen chofer asignado" de este criterio. Medido
+    contra la API, en la cuenta de Felca las visitas ENTREGADAS también vienen
+    sin `route` -- el courier no usa el módulo de rutas, marca la entrega
+    directo desde la app. Ese campo no distinguía nada acá.
 
     Cada reprogramación queda en la trazabilidad del item.
     """
@@ -40615,7 +40672,7 @@ def tr_simpliroute_rescatar_congeladas():
                                "error": "No se pudo leer la visita en SimpliRoute."})
             continue
         v = rv.get("data") if isinstance(rv.get("data"), dict) else {}
-        if not _sr_visita_sin_planificar(v):
+        if not _sr_visita_sin_entregar(v):
             _estado = (v.get("status") or "—").strip() or "—"
             resultados.append({"item_id": iid, "doc": doc, "ok": False,
                                "error": f"Ya no está libre (estado '{_estado}') "
