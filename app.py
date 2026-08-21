@@ -71986,12 +71986,21 @@ def ot2_detalle(vid):
             break
 
     # ── Cifras de cabecera ─────────────────────────────────────────────
+    # 🔴 El filtro _ot_tarea_no_trabajable_sql() NO es opcional acá.
+    # Sin él esta pantalla sería la SÉPTIMA copia del contador de
+    # obligatorias con el criterio viejo -- y se notó al primer render:
+    # mostraba "473/509" mientras la pantalla de ejecución, el validador y
+    # el gate de firma decían 473/473. Las 36 de diferencia son de equipos
+    # dados de baja, que no se dibujan en ninguna parte y por lo tanto
+    # nadie puede completar (caso OT-2026-00058).
+    # La regla vive en UN solo lugar; acá se llama, no se reimplementa.
     _tar = mysql_fetchone(
         "SELECT COUNT(*) AS n, "
         "       SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS ok, "
         "       SUM(CASE WHEN obligatoria=1 THEN 1 ELSE 0 END) AS obl, "
         "       SUM(CASE WHEN obligatoria=1 AND completada=1 THEN 1 ELSE 0 END) AS obl_ok "
-        "  FROM mant_visita_tareas WHERE visita_id=%s", (vid,)) or {}
+        "  FROM mant_visita_tareas WHERE visita_id=%s"
+        + _ot_tarea_no_trabajable_sql(), (vid,)) or {}
     _fotos = mysql_fetchone(
         "SELECT COUNT(*) AS n FROM mant_visita_fotos WHERE visita_id=%s", (vid,)) or {}
     _obl = int(_tar.get("obl") or 0)
