@@ -71925,7 +71925,11 @@ def ot2_detalle(vid):
         return redirect(url_for("ot2_panel"))
     v = dict(v)
 
-    hoy = date.today()
+    # `date` NO está importado a nivel de módulo (app.py:12 solo trae
+    # datetime/timedelta/timezone). Y la fecha tiene que ser la de Chile,
+    # no la del contenedor en UTC — si no, después de las 21:00 una OT de
+    # hoy se rotularía "mañana" (REGLA #6).
+    hoy = _now_chile().date()
     _ot2_enriquecer_fila(v, hoy)
 
     # ── Equipos con su avance ──────────────────────────────────────────
