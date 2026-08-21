@@ -482,10 +482,16 @@ function _renderAccionesRapidasYObs(mid){
   const esLevantamientoTipo = (VISITA_TIPO === 'levantamiento');
   const accionesHtml = (readonly || esLevantamientoTipo) ? '' : `
     <div class="eq-acciones-rapidas">
-      <button type="button" class="eq-accion-btn warn"
-              onclick="abrirModalSaltarEquipo(${mid})">
-        <i class="bi bi-skip-forward-fill"></i>Saltar equipo
-      </button>
+      ${/* 2026-08-20 (Daniel): "quita el de saltar equipo". Se retira el
+           BOTÓN, no la función: abrirModalSaltarEquipo(), su modal y el
+           endpoint /saltar siguen intactos, así que volver a mostrarlo es
+           una línea (REGLA #4.2).
+           Verificado antes de quitarlo que no deja a nadie sin salida:
+           "Reportar falla" excluye el equipo del cierre igual que saltar
+           -- _ot_maquinas_excluidas_cierre() cuenta 'saltado' Y
+           'falla_detectada'. Sin esa comprobación, quitar el botón habría
+           dejado un equipo intrabajable sin forma de sacarlo de la OT,
+           que es justo el candado que arreglamos hoy. */ ''}
       <button type="button" class="eq-accion-btn danger"
               onclick="abrirModalFallaEquipo(${mid})">
         <i class="bi bi-exclamation-triangle-fill"></i>Reportar falla
