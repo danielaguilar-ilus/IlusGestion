@@ -581,6 +581,62 @@ def register_catalogo_routes(app, ctx):
         except Exception as _e_accesorio:
             print(f"[ILUS][WARN] normalizar tarifa accesorio: {_e_accesorio}", flush=True)
 
+        # ══════════════════════════════════════════════════════════════
+        # "REPUESTO" — la categoría que RESPETA el precio que se escribe
+        # ══════════════════════════════════════════════════════════════
+        # Daniel (20-08-2026): *"agrégame en la clasificación repuesto,
+        # donde respeta el valor que le ingreso; si dejo sin clasificar no
+        # me deja avanzar, y si le coloco cualquier otro me recalcula lo
+        # que declaré. Créame un valor de repuesto que deje el valor que
+        # estipulo o ingreso a mano"*.
+        #
+        # El problema real: un repuesto no tiene tarifa de mano de obra --
+        # su precio es lo que cuesta la pieza, y eso lo sabe la persona que
+        # cotiza, no una tabla de horas×técnicos. Sin categoría el ítem
+        # quedaba en $0 y trababa; con cualquier otra, el motor recalculaba
+        # sobre la tarifa y pisaba el valor escrito.
+        #
+        # Se apoya en lo que YA existe (no se inventa un mecanismo nuevo):
+        #   · precio_fijo = 0  -> nunca entra al cálculo horas×técnicos,
+        #     así que jamás "recalcula" nada.
+        #   · precio_manual del ítem MANDA sobre la tarifa (motor de
+        #     cotizaciones, tickets_module) -> el valor escrito es el que
+        #     queda.
+        # 🔴 Y NO se agrega a _TK_COTIZ_CLASES_NO_COBRABLES: ahí está
+        # "accesorio", que fuerza $0 y descarta el precio_manual. Un
+        # repuesto SÍ se cobra -- meterlo en ese conjunto lo dejaría
+        # gratis, que es el error opuesto y más caro.
+        try:
+            _rep = mysql_fetchone(
+                "SELECT id FROM cat_clases_producto WHERE slug='repuesto' LIMIT 1")
+            if not _rep:
+                mysql_execute(
+                    "INSERT INTO cat_clases_producto "
+                    "(slug, nombre, modelo_precio, orden, created_by, updated_by) "
+                    "VALUES ('repuesto','Repuesto','fijo',95,'sistema','sistema')")
+                _rep = mysql_fetchone(
+                    "SELECT id FROM cat_clases_producto WHERE slug='repuesto' LIMIT 1")
+            if _rep:
+                # modelo_precio='fijo' -> la UI de /catalogo/clases muestra
+                # el bloque de precio unitario, no el de horas/técnicos.
+                mysql_execute(
+                    "UPDATE cat_clases_producto SET modelo_precio='fijo' WHERE id=%s",
+                    (_rep["id"],))
+                for _tipo_rep in _CAT_TIPOS_SERVICIO_TARIFA:
+                    # precio_fijo=0 es el ANCLA del comportamiento: existe
+                    # tarifa (así el ítem no queda sin categoría válida y
+                    # deja avanzar), pero vale 0, así que lo único que
+                    # puede fijar el precio es lo que se escriba a mano.
+                    mysql_execute(
+                        "INSERT INTO cat_clase_producto_tarifas "
+                        "(clase_id, tipo_servicio, horas, tecnicos, precio_piso, precio_fijo, updated_by) "
+                        "VALUES (%s,%s,NULL,NULL,NULL,0,'sistema') "
+                        "ON DUPLICATE KEY UPDATE horas=NULL, tecnicos=NULL, "
+                        "precio_piso=NULL, precio_fijo=0, updated_by='sistema'",
+                        (_rep["id"], _tipo_rep))
+        except Exception as _e_rep:
+            print(f"[ILUS][WARN] seed categoria repuesto: {_e_rep}", flush=True)
+
         # Backfill de modelo_precio (2026-07-30): cualquier categoría que YA
         # tenga un precio_fijo cargado en algún tipo_servicio (ej. "Pisos")
         # se marca 'fijo' automáticamente -- así la UI simplificada (ver

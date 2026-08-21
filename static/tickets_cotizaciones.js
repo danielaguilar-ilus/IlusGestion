@@ -1229,7 +1229,16 @@ async function _cotWizAgregarManual(){
   }
   const nuevo = {
     sku: sku, nombre: nombre, qty: qty,
-    tido: null, koen: null, clase_producto: null,
+    tido: null, koen: null,
+    // 2026-08-20 (Daniel): el item manual nace como "repuesto", NO sin
+    // clasificar. Sin clase el motor no encuentra tarifa, el item queda en
+    // $0 y la cotizacion no avanza -- "si dejo sin clasificar no me deja
+    // avanzar". Y con cualquier otra clase el motor recalcula sobre su
+    // tarifa y pisa lo que se escribio -- "me recalcula lo que declare".
+    // "repuesto" existe justamente para esto: precio_fijo=0 en catalogo, asi
+    // que nunca calcula nada por su cuenta y el precio_manual de la linea es
+    // el que manda. Se puede cambiar despues desde la tabla de items.
+    clase_producto: 'repuesto',
     // precio_manual nace del valor tecleado -- null (sin override) si el
     // campo quedó vacío, igual que cualquier línea sin precio manual.
     precio_manual: (precioRaw === '') ? null : Math.max(parseInt(precioRaw, 10) || 0, 0),
