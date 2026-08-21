@@ -39994,18 +39994,31 @@ def tr_simpliroute_diagnostico_flota():
             "chofer":          (ruta or {}).get("driver_name"),
         }
 
+    # CORRECCION 2026-08-20: clasificar por el FORMATO de la reference, no
+    # por si el visit_id esta en nuestra base. Tener el visit_id guardado NO
+    # significa que la creamos: _simpliroute_reconciliar_huerfanos ADOPTA las
+    # visitas que carga el courier (las busca por reference y les escribe el
+    # visit_id). Con el criterio viejo, las entregas de Felca se contaban como
+    # nuestras y el diagnostico mostraba a ILUS mucho mejor de lo que esta --
+    # justo el error que este endpoint existe para no cometer.
     de_ilus, del_courier = [], []
     for v in visitas:
         if not isinstance(v, dict):
             continue
         r = _resumen(v)
-        (de_ilus if r["id"] in ids_ilus else del_courier).append(r)
+        r["origen"] = _sr_quien_creo_la_visita(v.get("reference"))
+        # `adoptada`: la cargo el courier y despues ILUS la reconocio como
+        # suya. Se conserva el dato (REGLA #4.2) pero ya no decide el bucket.
+        r["adoptada_por_ILUS"] = r["id"] in ids_ilus
+        (de_ilus if r["origen"] == "ILUS" else del_courier).append(r)
 
     def _stats(lista):
         con_ruta = [x for x in lista if x["tiene_ruta"]]
         con_skills = [x for x in lista if x["skills_required"]]
         return {
             "total": len(lista),
+            "entregadas": sum(1 for x in lista if x.get("status") == "completed"),
+            "adoptadas_por_ILUS": sum(1 for x in lista if x.get("adoptada_por_ILUS")),
             "con_ruta_asignada": len(con_ruta),
             "sin_ruta": len(lista) - len(con_ruta),
             "declaran_skills": len(con_skills),
@@ -40940,7 +40953,235 @@ a:hover{{text-decoration:underline}}</style></head><body>
 </div></body></html>""", 500)
 
 
-def _tr_manifiesto_export_impl(mid):
+@app.route("/transporte/api/manifiestos/<int:mid>/avisar-courier", methods=["POST"])
+@_tr_required
+def tr_manifiesto_avisar_courier(mid):
+    """Le manda al courier el Excel del manifiesto -- el canal que SI entrega.
+
+    ════════════════════════════════════════════════════════════════════
+    POR QUE EXISTE ESTE BOTON (2026-08-20)
+    ════════════════════════════════════════════════════════════════════
+    Medido contra la API real de SimpliRoute, cuenta de Felca, sobre los dias
+    13, 14, 19 y 20 de agosto:
+
+        visitas creadas por ILUS (reference "FCV-11303")
+            0 entregadas, 15 pendientes
+        visitas cargadas por el courier con SU Excel (reference "11281")
+            7 entregadas, 4 pendientes
+
+    NINGUNA visita creada por ILUS se entrego jamas. Las entregas que el
+    sistema registraba como exito eran del propio courier, adoptadas despues
+    por la reconciliacion. Alison lo venia diciendo hace semanas: "aun no
+    sube nada a transportes felca".
+
+    La causa NO es el payload -- se descartaron con evidencia la conexion, la
+    fecha, las habilidades y el peso. Es que la carga que mandamos por
+    integracion queda FUERA del flujo de trabajo del courier: el trabaja desde
+    el Excel que el mismo sube, y nadie le avisa que llegaron visitas por API.
+
+    Este endpoint cierra ese hueco por el unico camino con entregas
+    comprobadas: le manda EL MISMO Excel que el ya usa, adjunto al correo, y
+    le arma a Alison un mensaje de WhatsApp listo para enviar.
+
+    NO reemplaza la subida por API (REGLA #4.2: ese boton sigue donde estaba).
+    Son dos canales; este es el que hoy funciona.
+
+    ════════════════════════════════════════════════════════════════════
+    LO QUE NO HACE
+    ════════════════════════════════════════════════════════════════════
+    NO manda el WhatsApp solo. Devuelve el link `wa.me` y Alison decide. Un
+    mensaje a nombre de la empresa hacia un tercero es una accion deliberada
+    de una persona, no el efecto colateral de un clic.
+
+    Y NUNCA declara enviado un correo que no salio: si la llave de paso del
+    modulo esta cerrada (marcha blanca), lo dice explicitamente y deja el
+    WhatsApp igual disponible.
+
+    Body opcional: {"solo_preview": true} -> arma todo y NO manda el correo.
+    """
+    man = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not man:
+        return jsonify({"ok": False, "error": "Manifiesto no encontrado."}), 404
+
+    courier = (man.get("courier") or "").strip()
+    if not courier:
+        return jsonify({"ok": False,
+                        "error": "El manifiesto no tiene courier asignado."}), 400
+
+    body = request.get_json(silent=True) or {}
+    solo_preview = bool(body.get("solo_preview"))
+
+    # ── Datos de contacto del courier ────────────────────────────────
+    c = mysql_fetchone(
+        "SELECT nombre, contacto, telefono, email FROM transport_couriers "
+        "WHERE LOWER(nombre)=LOWER(%s) LIMIT 1", (courier,)) or {}
+    email_courier = (c.get("email") or "").strip()
+    telefono      = (c.get("telefono") or "").strip()
+    contacto      = (c.get("contacto") or "").strip()
+
+    # ── Que se le manda: los items del manifiesto ────────────────────
+    items = mysql_fetchall("""
+        SELECT COALESCE(cm.n_bultos, 1) AS n_bultos
+          FROM transport_manifest_items mi
+          LEFT JOIN transport_commitments cm ON cm.id = mi.commitment_id
+         WHERE mi.manifest_id = %s
+    """, (mid,)) or []
+    n_docs = len(items)
+    n_bultos = sum(int(i.get("n_bultos") or 1) for i in items)
+    if not n_docs:
+        return jsonify({"ok": False,
+                        "error": "Este manifiesto no tiene pedidos que mandar."}), 400
+
+    _f = man.get("fecha")
+    fecha_label = (_f.strftime("%d/%m/%Y") if hasattr(_f, "strftime")
+                   else _now_chile().date().strftime("%d/%m/%Y"))
+    correlativo = man.get("correlativo") or f"MAN-{mid}"
+
+    # ── El mensaje y el link de WhatsApp (siempre, aunque el correo falle) ──
+    texto = _tr_texto_aviso_courier(
+        courier=courier, correlativo=correlativo, n_docs=n_docs,
+        n_bultos=n_bultos, fecha_label=fecha_label, contacto=contacto or None)
+    link_wa = _tr_link_whatsapp(telefono, texto)
+
+    resp = {
+        "ok": True,
+        "courier": courier,
+        "contacto": contacto or None,
+        "n_docs": n_docs,
+        "n_bultos": n_bultos,
+        "fecha": fecha_label,
+        "texto_whatsapp": texto,
+        "link_whatsapp": link_wa,
+        "telefono": telefono or None,
+        "email_courier": email_courier or None,
+        "avisos": [],
+    }
+    if not link_wa and telefono:
+        resp["avisos"].append(
+            f"El teléfono guardado de {courier} («{telefono}») no sirve para "
+            f"WhatsApp. Corrígelo en Couriers.")
+    elif not telefono:
+        resp["avisos"].append(
+            f"{courier} no tiene teléfono guardado. Agrégalo en Couriers para "
+            f"poder avisarle por WhatsApp.")
+
+    if solo_preview:
+        resp["correo_enviado"] = False
+        resp["avisos"].append("Vista previa: no se mandó ningún correo.")
+        return jsonify(resp)
+
+    # ── El Excel: EL MISMO que el courier ya trabaja ─────────────────
+    if not email_courier:
+        resp["correo_enviado"] = False
+        resp["avisos"].append(
+            f"{courier} no tiene correo guardado, así que no se pudo mandar el "
+            f"Excel. Agrégalo en Couriers, o baja el archivo con «Exportar "
+            f"carga masiva» y mándalo tú.")
+        return jsonify(resp)
+
+    try:
+        adjunto = _tr_manifiesto_export_impl(mid, devolver_bytes=True)
+    except Exception as e:
+        print(f"[avisar_courier] mid={mid}: no se pudo generar el Excel: {e}",
+              flush=True)
+        adjunto = None
+    if not isinstance(adjunto, tuple):
+        resp["correo_enviado"] = False
+        resp["avisos"].append(
+            "No se pudo generar el Excel del manifiesto. Prueba con «Exportar "
+            "carga masiva»; si eso también falla, avísale a Daniel.")
+        return jsonify(resp)
+
+    xlsx_bytes, xlsx_nombre = adjunto
+    cuerpo = (
+        f"<p>Hola{(' ' + contacto) if contacto else ''},</p>"
+        f"<p>Va la carga del manifiesto <strong>{correlativo}</strong>: "
+        f"<strong>{n_docs}</strong> pedido(s), <strong>{n_bultos}</strong> "
+        f"bulto(s), para el <strong>{fecha_label}</strong>.</p>"
+        f"<p>Adjuntamos el Excel con el formato de SimpliRoute para que lo "
+        f"subas directamente.</p>"
+    )
+    enviado = False
+    try:
+        enviado = _send_ilus_email(
+            email_courier,
+            _brand_subject(f"Carga para retirar — {correlativo}"),
+            cuerpo,
+            evento="manifiesto_avisar_courier",
+            modulo="transporte",
+            attachments=[(xlsx_nombre, xlsx_bytes,
+                          "application/vnd.openxmlformats-officedocument."
+                          "spreadsheetml.sheet")],
+        )
+    except Exception as e:
+        print(f"[avisar_courier] mid={mid}: fallo el envio: {e}", flush=True)
+        enviado = False
+
+    resp["correo_enviado"] = bool(enviado)
+    if enviado:
+        _tr_log("manifest", mid, "manifiesto enviado al courier",
+                f"Excel {xlsx_nombre} enviado a {email_courier} "
+                f"({n_docs} doc, {n_bultos} bultos) por {current_username()}")
+    else:
+        # Nunca un verde sobre un correo que no salio.
+        resp["avisos"].append(
+            f"El correo a {courier} NO salió — puede ser que el canal del "
+            f"módulo Transporte esté apagado. Manda el Excel por WhatsApp con "
+            f"«Exportar carga masiva», o avísale a Daniel.")
+    return jsonify(resp)
+
+
+def _tr_texto_aviso_courier(*, courier, correlativo, n_docs, n_bultos, fecha_label,
+                            contacto=None):
+    """Mensaje para mandarle al courier por WhatsApp. Funcion PURA.
+
+    2026-08-20. Nace del hallazgo de esta noche: medido contra la API, NINGUNA
+    visita creada por ILUS se entrego jamas (0 de 15), mientras que las que el
+    courier carga con su propio Excel si (7 de 11). No es un problema de
+    payload: es que la carga que mandamos por integracion queda fuera del
+    flujo de trabajo del courier y el no se entera de que llego.
+
+    Este texto cierra ese hueco por el canal que el courier SI lee. Va con el
+    Excel adjunto en el correo -- el mismo formato que el ya trabaja.
+
+    REGLA #11: firma de marca, no el correo personal del operador.
+    """
+    partes = [f"🔧 {ILUS_BRAND} · Carga lista para retirar"]
+    if contacto:
+        partes.append(f"Hola {contacto},")
+    partes.append(
+        f"Te dejamos {n_docs} pedido(s) — {n_bultos} bulto(s) — para el "
+        f"{fecha_label}.")
+    partes.append(f"Manifiesto {correlativo}.")
+    partes.append("Te mandamos el Excel al correo para que lo subas a SimpliRoute.")
+    partes.append(f"— {ILUS_BRAND}")
+    return "\n\n".join(partes)
+
+
+def _tr_link_whatsapp(telefono, texto):
+    """https://wa.me/<fono>?text=<texto> — o None si el fono no sirve.
+
+    Se abre en el navegador de Alison con el mensaje ya escrito; ella decide
+    si lo manda. NO se manda nada solo: mandar en nombre de la empresa a un
+    tercero es una accion deliberada de una persona, no un efecto colateral
+    de apretar un boton.
+    """
+    import re as _re
+    import urllib.parse as _up
+
+    fono = _re.sub(r"[^0-9]", "", str(telefono or ""))
+    if not fono:
+        return None
+    if len(fono) == 9 and fono.startswith("9"):
+        fono = "56" + fono              # celular chileno sin codigo de pais
+    elif len(fono) == 8:
+        fono = "569" + fono
+    if len(fono) < 11:
+        return None
+    return "https://wa.me/" + fono + "?text=" + _up.quote(texto or "")
+
+
+def _tr_manifiesto_export_impl(mid, *, devolver_bytes=False):
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment
@@ -41269,6 +41510,12 @@ def _tr_manifiesto_export_impl(mid):
         _fname = f"{_courier_clean}_{_stamp}.xlsx"
     else:
         _fname = f"{safe_corr}_{formato}.xlsx"
+    # 2026-08-20: mismo archivo, dos destinos. `devolver_bytes` lo pide el
+    # boton "Mandar la carga al courier", que necesita adjuntarlo a un correo
+    # en vez de bajarlo al navegador. Es EL MISMO Excel que el courier ya
+    # usa y que demostradamente si se rutea -- no una variante nueva.
+    if devolver_bytes:
+        return buf.getvalue(), _fname
     return send_file(
         buf,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
