@@ -384,6 +384,9 @@ function renderResumen(){
       </button>
     </div>
   `;
+  // Pinta el indicador con lo que YA hay guardado. Sin esto el tecnico no
+  // sabe si su diagnostico alcanza hasta que toca el campo.
+  try { if (typeof _otDiagInput === 'function') _otDiagInput(); } catch(_){}
 }
 
 function renderCrumbs(){
