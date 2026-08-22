@@ -24121,6 +24121,53 @@ def tr_diagnostico_saldo_sin_guia():
                      "nota": "LIMIT 500 -- si n==500 el universo real puede ser mayor."})
 
 
+@app.route("/transporte/api/diagnostico/commitment")
+@login_required
+def tr_diagnostico_commitment():
+    """READ-ONLY (2026-08-22): valor REAL y crudo de transport_commitments
+    para un documento puntual (tido+nudo). Se creó para verificar en vivo
+    si zz_envio/zz_skus realmente quedan persistidos tras _tr_fetch_from_erp
+    -- MAN-2026-0049 seguia reconsultando al ERP identicamente en cargas
+    sucesivas incluso despues del fix de PR #175 (zz_envio_raw), lo que
+    sugiere que la escritura no esta siendo vista por la siguiente lectura
+    (sospecha: snapshot REPEATABLE READ de una conexion pooleada que nunca
+    hace commit/rollback en medio -- mismo patron ya documentado en el bug
+    de numero_ticket/cotizacion/ot volviendo None).
+
+    Pide ?tido=FCV&nudo=11338 (puede repetirse el par varias veces, ej.
+    ?tido=FCV&nudo=11338&tido=BLV&nudo=23214). No escribe nada.
+    """
+    tidos = request.args.getlist("tido")
+    nudos = request.args.getlist("nudo")
+    if not tidos or len(tidos) != len(nudos):
+        return jsonify({"ok": False, "error": "pasa pares tido=..&nudo=.. (misma cantidad de cada uno)"}), 400
+    out = []
+    for tido, nudo in zip(tidos, nudos):
+        variantes = _nudo_variants(nudo) if "_nudo_variants" in globals() else [nudo, nudo.zfill(10)]
+        fila = None
+        for nv in variantes:
+            fila = mysql_fetchone(
+                "SELECT id, tido, nudo, zz_envio, zz_skus, clasificacion, "
+                "erp_synced_at, updated_at "
+                "FROM transport_commitments WHERE tido=%s AND nudo=%s",
+                (tido, nv))
+            if fila:
+                break
+        out.append({
+            "tido": tido, "nudo": nudo,
+            "encontrado": bool(fila),
+            "commitment_id": fila.get("id") if fila else None,
+            "nudo_real_en_bd": fila.get("nudo") if fila else None,
+            "zz_envio": fila.get("zz_envio") if fila else None,
+            "zz_envio_es_null": (fila.get("zz_envio") is None) if fila else None,
+            "zz_skus": fila.get("zz_skus") if fila else None,
+            "clasificacion": fila.get("clasificacion") if fila else None,
+            "erp_synced_at": fila["erp_synced_at"].isoformat() if fila and fila.get("erp_synced_at") else None,
+            "updated_at": fila["updated_at"].isoformat() if fila and fila.get("updated_at") else None,
+        })
+    return jsonify({"ok": True, "leido_at": _now_chile().isoformat(), "items": out})
+
+
 @app.route("/transporte/api/diagnostico/huerfanas")
 @login_required
 def tr_diagnostico_huerfanas():
