@@ -73889,6 +73889,96 @@ _TAREA_TARGET_FIELDS = (
 )
 
 
+def _ot_dato_a_ficha(mid, campo, valor, vid=None, motivo=""):
+    """Lleva UN dato capturado en terreno a la ficha del equipo — SIN pasar
+    por el levantamiento.
+
+    ══════════════════════════════════════════════════════════════════════
+    Daniel (2026-08-21): *"cuando genero una solicitud, viene una línea y se
+    destapa un levantamiento… queda todavía vivo el código de agregar
+    equipo"*.
+    ══════════════════════════════════════════════════════════════════════
+    Tenía razón, y esta función es la respuesta a esa molestia concreta.
+
+    Hasta hoy el ÚNICO camino para que un dato de la OT llegara a
+    `mant_maquinas` era espejarlo a `mant_levantamiento_items` y esperar a
+    que la proyección lo volcara al aprobar. O sea: **para actualizar una
+    ficha, la OT tenía que ser un levantamiento**. En una instalación o en
+    un retiro el técnico escribía el dato, veía "✓ Guardado", y la ficha no
+    cambiaba nunca. Eso ya nos costó que 179 de 179 equipos tuvieran serie
+    genérica en vez de la de fábrica.
+
+    Acá el dato va DIRECTO a la ficha. El levantamiento conserva su camino
+    intacto (espejo + proyección al aprobar): no se toca el bloque FROZEN,
+    solo deja de ser la única puerta.
+
+    🔴 REGLA: nunca pisa un dato ya cargado. Escribe si la ficha tiene el
+    campo vacío, y en el caso de `serie` además si lo que hay es provisorio
+    (ver _serie_es_provisoria) — que es exactamente lo que Daniel autorizó:
+    *"sí, pero sin pisar lo ya registrado"*.
+
+    Returns: True si escribió, False si no había nada que hacer o falló.
+    """
+    campo = (campo or "").strip().lower()
+    if campo not in _OT_FICHA_CAMPOS_DIRECTOS:
+        return False
+    nuevo = ("" if valor is None else str(valor)).strip()
+    if not nuevo:
+        return False
+    nuevo = nuevo[:_OT_FICHA_CAMPOS_DIRECTOS[campo]]
+
+    try:
+        row = mysql_fetchone(
+            f"SELECT cliente_id, `{campo}` AS actual FROM mant_maquinas WHERE id=%s",
+            (mid,))
+        if not row:
+            return False
+        actual = ("" if row.get("actual") is None else str(row["actual"])).strip()
+
+        if campo == "serie":
+            # La serie sí tiene noción de "provisoria": un genérico del
+            # sistema se puede reemplazar por el de la placa, pero una serie
+            # de fabricante no se pisa jamás.
+            if not _serie_es_provisoria(actual):
+                return False
+            if _serie_es_provisoria(nuevo) and actual:
+                return False   # cambiar un genérico por otro no es información
+        elif actual:
+            # Para el resto: si ya hay algo cargado, se respeta. Lo que
+            # capture la OT queda igual en la tarea y en el historial; acá
+            # solo se completa lo que está vacío.
+            return False
+        if nuevo == actual:
+            return False
+
+        mysql_execute(f"UPDATE mant_maquinas SET `{campo}`=%s WHERE id=%s", (nuevo, mid))
+        try:
+            mysql_execute(
+                "INSERT INTO mant_maquina_audit "
+                "  (maquina_id, cliente_id, campo, valor_antes, valor_nuevo, motivo, usuario) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (mid, row.get("cliente_id"), campo, actual, nuevo,
+                 (motivo or (f"Capturado en terreno · OT #{vid}" if vid else "Capturado en terreno"))[:400],
+                 current_username()))
+        except Exception:
+            # mant_maquina_audit puede no existir en prod (su CREATE vive en
+            # el bloque que ILUS_SKIP_MIGRATIONS=1 se salta). Perder la
+            # auditoría no puede costar el dato.
+            pass
+        return True
+    except Exception as e:
+        print(f"[ot_dato_a_ficha] mid={mid} campo={campo} vid={vid}: {e}", flush=True)
+        return False
+
+
+# Campo → largo máximo. Solo campos de TEXTO de la ficha: los numéricos y de
+# estado tienen sus propias validaciones aguas arriba y no pasan por acá.
+_OT_FICHA_CAMPOS_DIRECTOS = {
+    "serie": 100, "marca": 120, "modelo": 120, "voltaje": 40,
+    "ubicacion_sala": 200, "estado_capturado": 40, "observaciones": 5000,
+}
+
+
 def _validar_item_plantilla(d):
     """Normaliza y valida un item de plantilla. Devuelve dict listo para INSERT
     o (None, error_str)."""
@@ -75541,80 +75631,35 @@ def mant_ot_equipo_datos(vid, mid):
             mysql_execute(f"UPDATE mant_maquinas SET {','.join(sets)} WHERE id=%s", tuple(vals))
         else:
             # ══════════════════════════════════════════════════════════
-            # EXCEPCIÓN AUTORIZADA POR DANIEL (2026-08-20) — SOLO `serie`.
-            #
-            # Medido en producción ese día: de 179 equipos tomados al azar,
-            # 179 tenían serie GENÉRICA del sistema y CERO la de fábrica.
-            # La causa no era que los técnicos no la escribieran: fuera de
-            # un levantamiento el dato caía acá, se desviaba a sugerencia y
-            # la ficha nunca cambiaba -- mientras el modal mostraba
-            # "✓ Guardado". El número de serie alimenta las ETIQUETAS DE
-            # GARANTÍA, así que ese silencio vaciaba el motivo de negocio.
-            #
-            # Daniel autorizó explícitamente: "Sí, pero sin pisar lo ya
-            # registrado". Por eso las dos condiciones de abajo:
-            #   · la ficha solo se escribe si su serie actual es PROVISORIA
-            #     (vacía, placeholder o generada por el sistema). Una serie
-            #     de fabricante ya registrada NO se toca jamás: sigue yendo
-            #     a sugerencia para revisión humana, como hoy.
-            #   · y solo si lo nuevo APORTA: una serie real siempre; una
-            #     provisoria únicamente cuando la ficha está del todo vacía.
-            #     Cambiar un genérico por otro genérico no es información.
-            #
-            # El resto de los campos (marca, modelo, voltaje…) NO cambia de
-            # comportamiento: siguen yendo a sugerencia. El alcance es el
-            # que Daniel autorizó, ni un campo más.
+            # Los datos capturados en terreno VAN A LA FICHA del equipo
             # ══════════════════════════════════════════════════════════
+            # 2026-08-20 esto se abrió solo para `serie`, con ~50 líneas de
+            # UPDATE + auditoría escritas acá. 2026-08-21 (Daniel: "viene
+            # una línea y se destapa un levantamiento... queda vivo el
+            # código de agregar equipo") se generaliza y se unifica:
+            # ahora TODOS los campos capturados llegan a la ficha, y la
+            # regla vive en _ot_dato_a_ficha() -- el MISMO lugar que usa el
+            # bridge de target_field. Una regla, un lugar.
+            #
+            # La regla no cambió, solo dejó de estar duplicada: completa lo
+            # que está vacío y NO pisa un dato ya cargado (para `serie`,
+            # además, un genérico del sistema sí se reemplaza por el de la
+            # placa). Es lo que Daniel autorizó: "sí, pero sin pisar lo ya
+            # registrado".
+            #
+            # Lo que NO se aplicó sigue yendo a sugerencia, más abajo: el
+            # dato nunca se pierde.
             _campos_ot = dict(zip([s.split('=')[0] for s in sets], vals[:-1]))
-            _serie_nueva = (_campos_ot.get("serie") or "").strip()[:100]
-            _serie_actual = (valores_antes.get("serie") or "").strip()
-            _serie_a_ficha = False
-            if (_serie_nueva
-                    and _serie_nueva != _serie_actual
-                    and _serie_es_provisoria(_serie_actual)
-                    and (not _serie_es_provisoria(_serie_nueva) or not _serie_actual)):
+            _aplicados = set()
+            for _campo_f, _valor_f in _campos_ot.items():
+                if _campo_f == "last_visita_id":
+                    continue
                 try:
-                    _cid_maq = (valores_antes.get("cliente_id")
-                                or _v_ficha.get("cliente_id"))
-                    _conn_s = get_mysql()
-                    try:
-                        with _conn_s.cursor() as _cur_s:
-                            _cur_s.execute(
-                                "UPDATE mant_maquinas SET serie=%s WHERE id=%s",
-                                (_serie_nueva, mid))
-                            # Auditoría dedicada, mismo formato que usa
-                            # mant_maquina_actualizar_serie (el camino
-                            # canónico) para que el historial de la ficha
-                            # muestre los dos orígenes igual.
-                            try:
-                                _cur_s.execute(
-                                    "INSERT INTO mant_maquina_audit "
-                                    "  (maquina_id, cliente_id, campo, valor_antes, "
-                                    "   valor_nuevo, motivo, usuario) "
-                                    "VALUES (%s,%s,'serie',%s,%s,%s,%s)",
-                                    (mid, _cid_maq, _serie_actual, _serie_nueva,
-                                     f"Capturada en terreno · OT #{vid}",
-                                     current_username()))
-                            except Exception:
-                                # mant_maquina_audit puede no existir en prod
-                                # (su CREATE vive en el bloque que
-                                # ILUS_SKIP_MIGRATIONS=1 se salta). Perder la
-                                # auditoría no puede costar el dato.
-                                pass
-                        _conn_s.commit()
-                        _serie_a_ficha = True
-                    finally:
-                        _conn_s.close()
-                    _mant_log("maquina", mid, "serie_cambiada",
-                              f"'{_serie_actual}' → '{_serie_nueva}'. "
-                              f"Capturada en terreno durante la OT #{vid}.")
-                except Exception as _e_serie:
-                    # Duplicate entry (uq_cliente_serie) u otro problema: el
-                    # dato NO se pierde -- cae a la sugerencia de más abajo,
-                    # que es el comportamiento que ya existía.
-                    _serie_a_ficha = False
-                    print(f"[ot_equipo_datos] serie->ficha mid={mid} vid={vid} "
-                          f"no aplicada: {_e_serie}", flush=True)
+                    if _ot_dato_a_ficha(mid, _campo_f, _valor_f, vid=vid):
+                        _aplicados.add(_campo_f)
+                except Exception as _e_daf:
+                    print(f"[ot_equipo_datos] {_campo_f}->ficha mid={mid} vid={vid}: {_e_daf}",
+                          flush=True)
 
             # PASO 5c: fuera de un levantamiento, el dato NO se descarta ni
             # se rechaza con 403/400 -- el modal autoguarda campo por campo
@@ -75627,8 +75672,8 @@ def mant_ot_equipo_datos(vid, mid):
             # 2026-08-20: si la serie YA se escribió arriba, se excluye para
             # no pedir a un humano que apruebe algo que ya está aplicado.
             _campos_prop = {
-                k: v for k, v in zip([s.split('=')[0] for s in sets], vals[:-1])
-                if k != "last_visita_id" and not (k == "serie" and _serie_a_ficha)
+                k: v for k, v in _campos_ot.items()
+                if k != "last_visita_id" and k not in _aplicados
             }
             if _campos_prop:
                 try:
@@ -78775,6 +78820,21 @@ def mant_visita_tarea_respuesta(vid, tid):
                             "SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
                         if (_v_tgt.get("tipo") or "").lower() == "levantamiento":
                             _mirror_ot_equipo_a_levantamiento(vid, _mid_t, {_tgt: _raw})
+                        else:
+                            # 2026-08-21 (Daniel: "viene una línea y se
+                            # destapa un levantamiento… queda vivo el código
+                            # de agregar equipo").
+                            # Antes esto era un callejón: si la OT no era
+                            # levantamiento, el dato que el técnico acababa
+                            # de capturar SE PERDÍA -- no había otra puerta a
+                            # la ficha que el espejo al levantamiento.
+                            # Ahora va directo, con la misma regla que Daniel
+                            # aprobó para la serie: completa lo vacío y no
+                            # pisa un dato ya cargado.
+                            # El levantamiento conserva su camino intacto
+                            # (arriba): esto no lo toca, solo deja de ser la
+                            # única salida.
+                            _ot_dato_a_ficha(_mid_t, _tgt, _raw, vid=vid)
         except Exception as _e_bridge:
             print(f"[tarea_respuesta bridge target_field] vid={vid} tid={tid}: {_e_bridge}", flush=True)
         # Releer version actualizada para devolver al frontend
