@@ -21924,6 +21924,21 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
                     )
                 except Exception:
                     pass  # columna garantizada por _ensure_transporte_columns; no fatal
+                # 2026-08-22: marca "se leyó de verdad y no tiene NINGUNA línea
+                # ZZ" -- distinto de zz_skus/zz_envio (que se quedan NULL para
+                # siempre en este caso, porque no hay nada que compactar ni
+                # ningún monto que confirmar). Sin esta marca, un documento así
+                # nunca activa ninguna guarda de convergencia en
+                # tr_manifiesto_detalle y se reconsulta al ERP en cada carga,
+                # sin fin (caso real: MAN-2026-0049, 4 documentos, ~4.6-4.8s).
+                if sin_zz_lines:
+                    try:
+                        cur.execute(
+                            "UPDATE transport_commitments SET zz_sin_lineas_confirmado_at=NOW() WHERE id=%s",
+                            (comm_id,)
+                        )
+                    except Exception:
+                        pass  # columna garantizada por _ensure_transporte_columns; no fatal
             else:
                 print(f"[tr_fetch] {tido}/{nudo_canonico} vino sin líneas — "
                       f"no se toca zz_envio (lectura sospechosa)", flush=True)
@@ -29117,6 +29132,13 @@ def tr_manifiesto_detalle(mid):
                        -- _tr_fetch_from_erp.
                        c.zz_envio                       AS zz_envio_raw,
                        c.zz_skus,
+                       -- 2026-08-22: marca "el ERP respondio y NO tiene
+                       -- ninguna linea ZZ" -- ver comentario largo en
+                       -- _tr_fetch_from_erp. Distinto de zz_envio_raw/
+                       -- zz_skus (ambos se quedan NULL para siempre en
+                       -- este caso porque no hay nada que confirmar en
+                       -- ellos especificamente).
+                       c.zz_sin_lineas_confirmado_at,
                        COALESCE(c.costo_courier, 0)     AS costo_courier,
                        c.autorizado_por, c.motivo_envio,
                        COALESCE(c.es_garantia, 0)       AS es_garantia,
@@ -29199,7 +29221,16 @@ def tr_manifiesto_detalle(mid):
             # zz_envio_raw es NULL solo cuando de verdad no se sabe -- una
             # vez que el ERP confirma el monto (aunque sea $0), no hay nada
             # más que recuperar.
+            # 2026-08-22: tercera guarda -- documentos donde el ERP respondio
+            # de verdad (lectura confiable) pero NO tiene NINGUNA linea ZZ (ni
+            # envio, ni instalacion, ni retiro). Para estos, zz_envio_raw Y
+            # zz_skus se quedan NULL para siempre (no hay nada que confirmar
+            # en ninguno de los dos), asi que ni esta guarda ni la de arriba
+            # se activaban nunca -- se reconsultaba al ERP en cada carga, sin
+            # fin (caso real: MAN-2026-0049, 4 documentos, ~4.6-4.8s medidos).
+            _confirmado_sin_lineas_zz = bool(it.get("zz_sin_lineas_confirmado_at"))
             if it.get("zz_envio_raw") is None and not _ya_sabemos_que_no_cobra \
+                    and not _confirmado_sin_lineas_zz \
                     and it.get("tido") and it.get("nudo"):
                 if _heals_zz_hechos >= _MAX_HEAL_ZZ_PER_LOAD:
                     continue
@@ -95603,6 +95634,20 @@ def _ensure_transporte_columns():
         # cambian al releerlo) y siempre se releerían los mismos.
         # Ver _tr_clasificar_fila_financiera / _tr_finanzas_auditar.
         "finanzas_revisado_at": "DATETIME NULL",
+        # 2026-08-22 (Daniel, MAN-2026-0049 tardaba ~6s): documentos que el
+        # ERP devuelve SIN ninguna línea ZZ (ni envío ni instalación ni
+        # retiro) -- no es que "cobren $0", es que no tienen NINGÚN
+        # servicio asociado. zz_skus se queda NULL para siempre en este
+        # caso (no hay nada que compactar), así que _ya_sabemos_que_no_cobra
+        # (que exige zz_skus no vacío) nunca se activa, y zz_envio también
+        # se queda NULL para siempre (no hay línea de envío que confirme un
+        # monto). El resultado: se reconsulta al ERP en cada carga, sin fin
+        # -- 4 documentos así explican los ~4.6-4.8s medidos en logs de
+        # Cloud Run para este manifiesto. Este timestamp es la MARCA
+        # explícita de "se leyeron líneas reales del ERP y NINGUNA es de
+        # servicio" -- se escribe SOLO cuando la lectura fue confiable
+        # (raw_lineas no vino vacío), nunca en una lectura sospechosa.
+        "zz_sin_lineas_confirmado_at": "DATETIME NULL",
     }
     existing = {
         (r.get("COLUMN_NAME") or "").lower()
