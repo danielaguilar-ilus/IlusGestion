@@ -73963,6 +73963,14 @@ def _ot_dato_a_ficha(mid, campo, valor, vid=None, motivo=""):
             return False
 
         mysql_execute(f"UPDATE mant_maquinas SET `{campo}`=%s WHERE id=%s", (nuevo, mid))
+        # La ficha cachea 60s. Sin esto el técnico captura un dato, la ficha
+        # ya cambió en la base, y él sigue viendo el valor viejo hasta un
+        # minuto -- que se lee como "no se guardó" y lo hace escribirlo de
+        # nuevo. El invalidador ya existía; lo que faltaba era llamarlo acá.
+        try:
+            _ft_cache_invalidar(mid)
+        except Exception:
+            pass
         try:
             mysql_execute(
                 "INSERT INTO mant_maquina_audit "

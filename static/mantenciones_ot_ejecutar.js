@@ -1059,12 +1059,16 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       const _curTxt = (valor && valor.texto) ? String(valor.texto) : '';
       const _curLen = _curTxt.trim().length;
       // ── 2026-05-19 (Daniel) — Detectar inputs que piden serial/N° serie.
-      //    Si la OT es levantamiento Y el título sugiere serial, mostramos
-      //    un banner azul con "Sugerir serial registrado" que precarga el
-      //    valor actual de mant_maquinas.serie (al guardar pisa la ficha).
+      //    Muestra el serial que HOY tiene la ficha, para que el técnico
+      //    compare con la placa que está mirando.
+      //    2026-08-21: dejó de exigir ES_LEVANTAMIENTO. La serie capturada
+      //    ahora llega a la ficha desde CUALQUIER tipo de OT (ver
+      //    _ot_dato_a_ficha en app.py), así que esconder este aviso fuera
+      //    del levantamiento dejaba al técnico de una instalación sin saber
+      //    que lo que escribe alimenta la ficha del equipo.
       const _esSerialInput = _esCampoSerial(t.titulo || '');
       let _serialBannerHtml = '';
-      if (ES_LEVANTAMIENTO && _esSerialInput && mid){
+      if (_esSerialInput && mid){
         const eq = EQUIPOS_IDX[String(mid)] || {};
         const serieReg = (eq.serie || '').trim();
         _serialBannerHtml = `<div class="tx-serial-aviso">
@@ -1199,9 +1203,12 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       // según lo que elija el técnico en el sheet.
       // ────────────────────────────────────────────────────────────
       // ── 2026-05-19 (Daniel) — Aviso visual: foto va a la ficha técnica.
-      //    Solo se muestra en OTs tipo levantamiento, justo arriba del botón
-      //    para que el técnico entienda que NO es solo evidencia de la OT.
-      const _fotoAvisoHtml = (ES_LEVANTAMIENTO && mid)
+      //    2026-08-21: dejó de exigir ES_LEVANTAMIENTO. Las fotos de
+      //    instalación, preventiva e inspección TAMBIÉN llegan a la galería
+      //    del equipo (la ficha las une desde mant_visita_fotos), así que el
+      //    aviso era correcto en más casos de los que se mostraba: el
+      //    técnico creía que su foto era solo evidencia de la OT.
+      const _fotoAvisoHtml = (mid)
         ? `<div class="tx-foto-aviso-ficha" role="status">
             <i class="bi bi-camera-fill"></i>
             <div>Esta foto se asignará a la <strong>ficha técnica del equipo</strong>
