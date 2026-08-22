@@ -67718,7 +67718,17 @@ def _ot_validar_cierre(vid):
     # Mismo criterio de huérfanas que R1 (ver comentario largo allá): una tarea
     # sin maquina_id no tiene tarjeta en pantalla, así que el técnico no tiene
     # NINGUNA forma de subirle la foto. Exigírsela lo deja trabado sin salida.
-    if excluir_maquinas:
+    #
+    # 🔴 FIX 2026-08-22: era la ÚNICA de las 5 reglas sin try/except. Su
+    # consulta hace LEFT JOIN + GROUP BY + HAVING; si falla (pool saturado,
+    # timeout), la excepción subía y reventaba con 500 la validación
+    # COMPLETA — el técnico ni siquiera podía VER qué le faltaba. R5, que
+    # cuenta fotos, ya fallaba a favor del técnico desde que se escribió.
+    # Acá se iguala el criterio: si no se puede comprobar, no se inventa un
+    # bloqueo, pero queda en el log para que no pase inadvertido.
+    tareas_sin_foto = []
+    try:
+      if excluir_maquinas:
         _ph = ",".join(["%s"] * len(excluir_maquinas))
         tareas_sin_foto = mysql_fetchall(
             "SELECT t.id, t.titulo "
@@ -67731,7 +67741,7 @@ def _ot_validar_cierre(vid):
             "HAVING COUNT(f.id) = 0",
             (vid, *list(excluir_maquinas))
         ) or []
-    else:
+      else:
         tareas_sin_foto = mysql_fetchall(
             "SELECT t.id, t.titulo "
             "FROM mant_visita_tareas t "
@@ -67742,6 +67752,11 @@ def _ot_validar_cierre(vid):
             "HAVING COUNT(f.id) = 0",
             (vid,)
         ) or []
+    except Exception as _e_r3:
+        print(f"[validar_cierre][R3] vid={vid} no se pudo verificar fotos "
+              f"por tarea: {_e_r3}", flush=True)
+        tareas_sin_foto = []
+
     if tareas_sin_foto:
         nombres = [t.get("titulo") or f"#{t['id']}" for t in tareas_sin_foto[:5]]
         suf = "" if len(tareas_sin_foto) <= 5 else f" y {len(tareas_sin_foto)-5} más"
@@ -83757,10 +83772,32 @@ def _reglas_cargar(force=False):
         return _REGLAS_CACHE
     out = {k: _reglas_cast(spec[0], spec[1]) for k, spec in _REGLAS_DEFAULTS.items()}
     try:
-        for r in (mysql_fetchall("SELECT clave, valor, tipo_dato FROM mant_reglas_negocio") or []):
-            out[r["clave"]] = _reglas_cast(r.get("valor"), r.get("tipo_dato") or "string")
-    except Exception:
-        pass
+        _filas_reglas = mysql_fetchall(
+            "SELECT clave, valor, tipo_dato FROM mant_reglas_negocio")
+    except Exception as _e_reglas:
+        # 🔴 FIX 2026-08-22. Antes era `except Exception: pass` y el
+        # resultado se cacheaba IGUAL: un hipo de MySQL dejaba los DEFAULTS
+        # como verdad, pisando lo que Daniel había configurado, sin una sola
+        # línea de log.
+        #
+        # Por qué importa: `ot_factura_gate_activo` viene por defecto en "1"
+        # (ENCENDIDO) y es el candado que hoy detiene el cierre de 13 OT
+        # reales. Si Daniel lo apaga para dar holgura y esta lectura falla,
+        # el candado se RE-ARMA SOLO y en silencio, con un supervisor
+        # intentando cerrar una OT cuyo trabajo en terreno ya terminó. Es la
+        # misma forma del bug de la OT-58: bloqueo sin explicación ni rastro.
+        #
+        # Ahora, si no se pudo leer: NO se cachea. Se devuelve lo último
+        # bueno si existe, y la próxima llamada vuelve a intentar. Es
+        # preferible reintentar que congelar una mentira.
+        print(f"[reglas] no se pudieron leer de la BD: {_e_reglas}", flush=True)
+        return _REGLAS_CACHE if _REGLAS_CACHE is not None else out
+    if _filas_reglas is None:
+        # mysql_fetchall devolvió None (pool caído). Mismo criterio.
+        print("[reglas] la BD no respondió; se conserva lo último conocido", flush=True)
+        return _REGLAS_CACHE if _REGLAS_CACHE is not None else out
+    for r in _filas_reglas:
+        out[r["clave"]] = _reglas_cast(r.get("valor"), r.get("tipo_dato") or "string")
     _REGLAS_CACHE = out
     return out
 
