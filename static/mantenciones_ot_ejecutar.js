@@ -2064,17 +2064,15 @@ function _renderFichaTecnicaModalBody(data, fotosData, midParam){
              </div>
            </div>`
         : `<div class="lev-banner-ficha" role="status"
-                style="background:linear-gradient(135deg,#dbeafe,#bfdbfe);border-color:#93c5fd;color:#1e3a8a">
-             <i class="bi bi-pencil-square" style="color:#3b82f6"></i>
+                style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);border-color:#86efac;color:#14532d">
+             <i class="bi bi-clipboard-check-fill" style="color:#16a34a"></i>
              <div>
-               <strong>Edición rápida del equipo</strong>
-               <div>Puedes actualizar marca/modelo/datos si los conoces.
-                 Los cambios quedan registrados en el historial de esta OT
-                 y como sugerencia para la ficha del equipo -- fuera de un
-                 Levantamiento, ILUS no la actualiza automáticamente.
-                 <b>El N° de serie sí</b>: si la ficha no tenía uno de
-                 fábrica, el que escribas se aplica al equipo y es el que
-                 usa la etiqueta de garantía.</div>
+               <strong>Lo que anotes queda en la ficha del equipo</strong>
+               <div>Marca, modelo, N° de serie, ubicación y observaciones se
+                 aplican a la <strong>ficha permanente</strong> apenas los
+                 escribes. Solo se completa lo que está en blanco: un dato ya
+                 cargado no se pisa, y si difiere queda como sugerencia para
+                 revisar.</div>
              </div>
            </div>`);
 
