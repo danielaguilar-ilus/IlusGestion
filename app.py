@@ -77541,6 +77541,58 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url="", notificar_tecnico
                     print(f"[notif-pend][interna-tec] vid={vid} dest={d_dest.get('id')}: {_e_nt}",
                           flush=True)
 
+            # ── CORREO al técnico (2026-08-21, Daniel) ────────────────────
+            # "necesito que, si vamos a manejar tecnología así, podamos
+            # controlar cuándo y cómo lo firmó... que por último le avise al
+            # técnico: oye, el cliente acaba de realizar la firma".
+            #
+            # El aviso al técnico existía desde el 12-08 pero SOLO como
+            # campana del header: si el técnico no tiene la app abierta -- que
+            # en terreno es casi siempre -- no se enteraba de nada. El
+            # supervisor sí recibía correo. Esta es la mitad que faltaba.
+            #
+            # Reutiliza el MISMO template oficial y el MISMO _send_ilus_email
+            # que ya usa el aviso al supervisor: no se inventa un canal nuevo.
+            # Va aparte del bucle de `destinos` a propósito, porque el mensaje
+            # es otro -- al supervisor se le pide firmar, al técnico se le
+            # avisa que ya firmaron.
+            _fecha_firma = _now_chile().strftime("%d/%m/%Y a las %H:%M")
+            for d_dest in destinos_tecnicos:
+                _u_tec = (d_dest.get("username") or "").strip()
+                if not (_u_tec and "@" in _u_tec and "." in _u_tec.split("@")[-1]):
+                    continue   # el username no es un correo: nada que enviar
+                try:
+                    _cuerpo_mail_tec = _ilus_email_html(
+                        titulo="El cliente firmó tu OT",
+                        subtitulo=f"{numero_ot} · {razon}",
+                        saludo=(d_dest.get("nombre") or "equipo ILUS"),
+                        parrafos=[
+                            f"<strong>{razon}</strong> acaba de firmar la orden de "
+                            f"trabajo <strong>{numero_ot}</strong>.",
+                            "Queda pendiente la aprobación del supervisor para cerrarla. "
+                            "No necesitas hacer nada más, pero puedes revisarla acá.",
+                        ],
+                        btn_primario_txt="Ver la OT",
+                        btn_primario_url=link_ot,
+                        info_lineas=[
+                            ("", "Cliente", razon),
+                            ("", "Firmada", _fecha_firma),
+                            ("", "OT", numero_ot),
+                        ],
+                    )
+                    _send_ilus_email(
+                        _u_tec, _brand_subject(f"{numero_ot}: el cliente firmó conforme"),
+                        _cuerpo_mail_tec,
+                        evento="ot_firmada_cliente",
+                        modulo="mantenciones",
+                        asincrono=True,
+                    )
+                except Exception as _e_mt:
+                    # Que no salga el correo NO puede tumbar el resto del
+                    # aviso: la campana ya se insertó más arriba.
+                    print(f"[notif-pend][email-tec] vid={vid} dest={_u_tec}: {_e_mt}",
+                          flush=True)
+
             # 2026-05-21: subject + WA usan marca editable desde /comunicaciones
             subject = _brand_subject(f"{numero_ot} esperando tu firma de aprobación")
             wa_template = (
@@ -79791,6 +79843,39 @@ def ot_publica_firmada(token):
                 if _ot_es_levantamiento(ctx["visita"]) and ctx.get("lev_items")
                 else "mantenciones/ot_pdf.html")
     return render_template(_tpl_pdf, **ctx)
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/firma-estado", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def mant_ot_firma_estado(vid):
+    """¿Ya firmó el cliente? Consulta LIVIANA, pensada para preguntar cada
+    pocos segundos desde la pantalla del técnico.
+
+    Daniel (2026-08-21): "es él el que tiene que hacer seguimiento de que el
+    cliente firme... que por último le avise al técnico: oye, el cliente
+    acaba de realizar la firma".
+
+    El correo cubre al técnico que cerró la app. Esto cubre el caso más
+    común y más incómodo: el técnico ahí parado, mirando el teléfono,
+    esperando a que el cliente termine de firmar en el suyo.
+
+    Devuelve lo mínimo a propósito -- 3 campos y ningún JOIN. Si esto
+    creciera, dejaría de servir para consultarse seguido.
+    """
+    v = mysql_fetchone(
+        "SELECT estado, firma_cliente_url, firma_cliente_nombre, firma_cliente_at "
+        "  FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    _at = v.get("firma_cliente_at")
+    return jsonify({
+        "ok": True,
+        "firmada": bool(v.get("firma_cliente_url")),
+        "estado": v.get("estado"),
+        "nombre": (v.get("firma_cliente_nombre") or "").strip(),
+        "cuando": chile_fmt_filter(_at, "%d/%m %H:%M") if _at else "",
+    })
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/compartir-wa", methods=["POST"])

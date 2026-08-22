@@ -7528,3 +7528,86 @@ async function declararGarantia(){
 
   syncSide();
 })();
+
+/* ══════════════════════════════════════════════════════════════════════
+   AVISO EN VIVO: "el cliente acaba de firmar"
+   ══════════════════════════════════════════════════════════════════════
+   Daniel (2026-08-21): "es él el que tiene que hacer seguimiento de que el
+   cliente firme... que por último le avise al técnico: oye, el cliente
+   acaba de realizar la firma".
+
+   El correo (backend) cubre al técnico que ya cerró la app. Esto cubre el
+   caso más común: el técnico parado al lado del cliente, mirando su
+   teléfono, esperando que el otro termine de firmar.
+
+   Tres decisiones para que esto no sea un problema en terreno:
+   · Solo arranca si la OT está esperando la firma del cliente. En
+     cualquier otro estado no consulta NADA — un técnico con la OT abierta
+     todo el día no gasta datos ni batería por gusto.
+   · Se detiene solo: al firmar, a los 20 minutos, o si la pestaña deja de
+     verse (vuelve al primer plano y retoma).
+   · Es una consulta de 3 campos sin JOIN, no la validación completa de
+     cierre — esa es cara y no está hecha para llamarse seguido.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  var _fwTimer = null, _fwHasta = 0, _fwYaAvisado = false;
+  var INTERVALO_MS = 12000;          // 12s: rápido para la persona, suave para la red
+  var VENTANA_MS   = 20 * 60 * 1000; // 20 min y se rinde solo
+
+  function _fwEstadosQueEsperanFirma(){
+    // El cliente firma DESPUÉS del técnico. Si la OT no llegó a ese punto,
+    // no hay nada que esperar.
+    return ['firmada_tecnico', 'en_ejecucion', 'en_curso'];
+  }
+
+  function _fwDetener(){
+    if (_fwTimer){ clearInterval(_fwTimer); _fwTimer = null; }
+  }
+
+  async function _fwConsultar(){
+    if (Date.now() > _fwHasta){ _fwDetener(); return; }
+    if (document.hidden) return;              // pestaña oculta: no gastar
+    try {
+      const r = await fetch('/mantenciones/api/visitas/' + VID + '/firma-estado');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d || !d.ok || !d.firmada || _fwYaAvisado) return;
+
+      _fwYaAvisado = true;
+      _fwDetener();
+
+      const quien = d.nombre ? (' ' + d.nombre) : '';
+      if (typeof ilusAlert === 'function'){
+        await ilusAlert({
+          title: '✍️ El cliente firmó',
+          message: 'El cliente' + quien + ' acaba de firmar esta OT'
+                   + (d.cuando ? (' (' + d.cuando + ')') : '') + '.',
+          sub: 'Queda pendiente la aprobación del supervisor para cerrarla.',
+          type: 'success',
+        });
+      }
+      // La pantalla tiene que reflejar lo que pasó, no solo avisarlo: si el
+      // técnico se queda mirando una OT que dice "esperando firma" cuando ya
+      // está firmada, el aviso genera más dudas de las que resuelve.
+      setTimeout(function(){ location.reload(); }, 600);
+    } catch(_){ /* sin red: se reintenta en el próximo ciclo */ }
+  }
+
+  function _fwArrancar(){
+    if (typeof VID === 'undefined' || typeof VISITA_ESTADO === 'undefined') return;
+    if (_fwEstadosQueEsperanFirma().indexOf(VISITA_ESTADO) === -1) return;
+    _fwHasta = Date.now() + VENTANA_MS;
+    _fwDetener();
+    _fwTimer = setInterval(_fwConsultar, INTERVALO_MS);
+  }
+
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && _fwTimer) _fwConsultar();   // volvió: mira al tiro
+  });
+
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', _fwArrancar);
+  } else {
+    _fwArrancar();
+  }
+})();
