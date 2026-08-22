@@ -29142,7 +29142,17 @@ def tr_manifiesto_detalle(mid):
             # no existe, y nunca dejaría de intentarlo.
             _skus_doc = (it.get("zz_skus") or "").upper()
             _ya_sabemos_que_no_cobra = bool(_skus_doc) and "ZZENVIO" not in _skus_doc
-            if (not it.get("zz_envio")) and not _ya_sabemos_que_no_cobra \
+            # 2026-08-22: se compara contra zz_envio_raw (NULL-preserving),
+            # NUNCA zz_envio (coalesced a 0 en el SELECT de arriba). "not 0"
+            # es True en Python -- un documento con ZZENVIO confirmado por
+            # el ERP en $0 real (ver zz_envio_solo/tiene_linea_envio en
+            # _tr_fetch_from_erp, que ya distingue "no cobra" de "cobra
+            # $0" al escribir) se trataba igual que uno nunca consultado, y
+            # se reconsultaba al ERP en cada carga de la ficha, sin fin.
+            # zz_envio_raw es NULL solo cuando de verdad no se sabe -- una
+            # vez que el ERP confirma el monto (aunque sea $0), no hay nada
+            # más que recuperar.
+            if it.get("zz_envio_raw") is None and not _ya_sabemos_que_no_cobra \
                     and it.get("tido") and it.get("nudo"):
                 if _heals_zz_hechos >= _MAX_HEAL_ZZ_PER_LOAD:
                     continue
