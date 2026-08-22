@@ -21835,12 +21835,18 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            # 2026-08-21: zz_skus se agrega aca para que la guarda
+            # "_ya_sabemos_que_no_cobra" de tr_manifiesto_detalle pueda
+            # converger. Antes solo la llenaba el sync masivo del cron; un
+            # documento sanado por esta via individual nunca la activaba y
+            # se re-consultaba al ERP en cada carga de la pagina, sin fin.
+            zz_skus_str = ",".join(sorted(set(skus_upper))) if skus_upper else None
             cur.execute("""
                 INSERT INTO transport_commitments
                   (tido,nudo,endo,fecha_emision,fecha_entrega,cliente_nombre,cliente_rut,
                    comuna,direccion,telefono,email,valor_neto,valor_bruto,costo_zz,
-                   tiene_saldo,guia_numero,clasificacion,erp_synced_at,created_by,updated_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,%s)
+                   tiene_saldo,guia_numero,clasificacion,zz_skus,erp_synced_at,created_by,updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,%s)
                 ON DUPLICATE KEY UPDATE
                   fecha_emision=VALUES(fecha_emision), fecha_entrega=VALUES(fecha_entrega),
                   -- FIX 2026-07-31 (Daniel, en vivo: la 22719 pasó a mostrar
@@ -21867,7 +21873,12 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
                   -- llega se actualiza; pero si esta corrida no lo trae, se
                   -- conserva el que estaba en vez de borrarlo.
                   guia_numero=IF(VALUES(guia_numero) IS NULL OR VALUES(guia_numero)='', guia_numero, VALUES(guia_numero)),
-                  clasificacion=VALUES(clasificacion), erp_synced_at=NOW(),
+                  clasificacion=VALUES(clasificacion),
+                  -- Igual que el sync masivo: si esta corrida no trae SKUs
+                  -- (documento sin lineas, o el ERP no las devolvio), se
+                  -- conserva lo que ya habia en vez de borrarlo.
+                  zz_skus=IF(VALUES(zz_skus) IS NULL OR VALUES(zz_skus)='', zz_skus, VALUES(zz_skus)),
+                  erp_synced_at=NOW(),
                   updated_by=VALUES(updated_by)
             """, (
                 tido, nudo_canonico, endo, fecha_em, fecha_ent,
@@ -21875,7 +21886,7 @@ def _tr_fetch_from_erp(tido, nudo, capturar_guia=True):
                 comuna,
                 direccion, telefono, email,
                 valor_neto, valor_bruto,
-                costo_zz, tiene_saldo, guia_numero, clasificacion,
+                costo_zz, tiene_saldo, guia_numero, clasificacion, zz_skus_str,
                 current_username(), current_username(),
                 ERP_NO_CLIENT,
             ))
