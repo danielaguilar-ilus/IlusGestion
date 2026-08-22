@@ -79949,6 +79949,62 @@ def ot_publica_firmada(token):
     return render_template(_tpl_pdf, **ctx)
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/diagnostico", methods=["POST"])
+@_mant_required
+@_tecnico_owns_visita
+def mant_ot_diagnostico_guardar(vid):
+    """El técnico escribe el diagnóstico de la OT. Autoguardado, sin cerrar.
+
+    ══════════════════════════════════════════════════════════════════════
+    LA LLAVE QUE FALTABA (2026-08-22)
+    ══════════════════════════════════════════════════════════════════════
+    R2 de `_ot_validar_cierre` exige un diagnóstico de 20+ caracteres. Medido
+    en producción: **14 de 14 OT a punto de cerrarse no lo tienen. El 100%.**
+
+    No es descuido del equipo: era IMPOSIBLE de cumplir. El único input de
+    `mant_visitas.diagnostico` vivía en la ficha legacy (solo alcanzable con
+    ?legacy=1). Por API tampoco: el campo está en el `allowed` del PUT de
+    metadata, y ese endpoint nunca deja pasar a un técnico. La única otra
+    puerta era /cerrar, que lo acepta pero CIERRA la OT en el mismo acto.
+
+    Por eso este endpoint existe antes de encender ninguna regla: primero la
+    llave, después el candado. Encender R2 sin esto habría fabricado 14
+    candados sin salida de una vez — la forma exacta del bug de la OT-58.
+
+    `@_tecnico_owns_visita` a propósito: el diagnóstico lo escribe QUIEN HIZO
+    EL TRABAJO. Un supervisor no puede inventarlo por él, y por eso tampoco
+    tiene sentido exigirlo recién en la aprobación.
+    """
+    d = request.get_json(silent=True) or {}
+    diag = (d.get("diagnostico") or "").strip()[:5000]
+
+    v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada."}), 404
+    # Una OT ya cerrada no se reescribe: su diagnóstico es parte del
+    # documento que el cliente firmó.
+    if (v.get("estado") or "") in ("cerrada", "anulada", "cancelada"):
+        return jsonify({"ok": False,
+                        "error": "La OT ya está cerrada: su diagnóstico no se modifica."}), 400
+
+    try:
+        mysql_execute("UPDATE mant_visitas SET diagnostico=%s WHERE id=%s", (diag, vid))
+    except Exception as e:
+        print(f"[ot_diagnostico] vid={vid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar. Reintenta."}), 500
+
+    # Se registra solo cuando pasa a estar completo, no en cada tecla del
+    # autoguardado: si no, el historial de la OT se llena de ruido.
+    if len(diag) >= 20:
+        try:
+            _mant_log("visita", vid, "diagnostico_guardado",
+                      f"{len(diag)} caracteres por {current_username()}.")
+        except Exception:
+            pass
+
+    return jsonify({"ok": True, "largo": len(diag), "suficiente": len(diag) >= 20})
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firma-estado", methods=["GET"])
 @_mant_required
 @_ot_can_view

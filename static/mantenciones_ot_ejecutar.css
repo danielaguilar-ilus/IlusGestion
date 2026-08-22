@@ -2709,3 +2709,23 @@
   .tx-tab-btn{font-size:.74rem;padding:10px 4px;gap:5px}
   .tx-foto-tile{width:76px;height:76px}
 }
+
+/* ── Diagnóstico de la OT, en el Resumen (2026-08-22) ─────────────────
+   La regla de cierre lo exige desde hace meses y no había dónde
+   escribirlo. Va con el mismo lenguaje visual del resto del resumen. */
+.resumen-diag{background:#fff;border:1px solid #eaecf0;border-radius:12px;
+  padding:14px 16px;margin:12px 0}
+.resumen-diag label{display:flex;align-items:center;gap:7px;font-size:.72rem;
+  font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;
+  margin-bottom:8px}
+.resumen-diag label i{color:var(--ilus-red,#dc2626)}
+.resumen-diag .req{margin-left:auto;font-size:.66rem;font-weight:800;
+  letter-spacing:.02em;text-transform:none;color:#b45309;
+  background:#fff8e1;border-radius:99px;padding:2px 9px}
+.resumen-diag .req.ok{color:#15803d;background:#dcfce7}
+.resumen-diag textarea{width:100%;border:1.5px solid #e5e7eb;border-radius:9px;
+  padding:10px 12px;font-size:16px;font-family:inherit;color:#0a0a0a;
+  resize:vertical;min-height:76px;outline:none;transition:border-color .14s,box-shadow .14s}
+.resumen-diag textarea:focus{border-color:#0a0a0a;box-shadow:0 0 0 3px rgba(10,10,10,.07)}
+.resumen-diag-pie{display:flex;justify-content:flex-end;margin-top:6px;
+  font-size:.72rem;font-weight:600;min-height:16px}

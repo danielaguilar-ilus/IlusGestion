@@ -358,6 +358,26 @@ function renderResumen(){
       <div class="resumen-stat${nNovedad ? ' warn' : ''}"><span class="v">${FOTOS_COUNT}</span><span class="k">Fotos</span></div>
     </div>
     <div class="resumen-eqlist">${rowsHtml}</div>
+    ${/* DIAGNOSTICO DE LA OT (2026-08-22).
+         Va aca, en el Resumen, porque es el momento en que el tecnico ya
+         recorrio todo y esta por llamar al cliente a firmar: es cuando
+         puede resumir que paso.
+         Existe porque la regla R2 lo exige desde hace meses y NO HABIA
+         DONDE ESCRIBIRLO -- medido: 14 de 14 OT a punto de cerrar no lo
+         tienen. El unico input vivia en la ficha legacy. Primero la llave,
+         despues el candado. */ ''}
+    <div class="resumen-diag" id="resumenDiagWrap">
+      <label for="otDiagnostico">
+        <i class="bi bi-journal-text"></i> Diagnostico de la visita
+        <span class="req" id="otDiagReq"></span>
+      </label>
+      <textarea id="otDiagnostico" rows="3" maxlength="5000"
+        placeholder="Que se encontro y que se hizo. Lo lee el cliente en el informe."
+        oninput="_otDiagInput()" onblur="_otDiagGuardar()">${_escapeHtml(VISITA_DIAGNOSTICO || '')}</textarea>
+      <div class="resumen-diag-pie">
+        <span id="otDiagEstado"></span>
+      </div>
+    </div>
     <div class="resumen-cta-wrap">
       <button type="button" class="resumen-cta" onclick="abrirModalFirma()">
         <i class="bi bi-pen-fill"></i> Confirmar y pasar a firma
@@ -7615,4 +7635,66 @@ async function declararGarantia(){
   } else {
     _fwArrancar();
   }
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   DIAGNOSTICO DE LA OT — autoguardado
+   ══════════════════════════════════════════════════════════════════════
+   Existe porque la regla de cierre lo exige desde hace meses y no habia
+   donde escribirlo: medido en produccion, 14 de 14 OT a punto de cerrarse
+   no lo tenian. El unico input vivia en la ficha legacy, y por API el
+   campo estaba detras de un permiso que el tecnico no tiene.
+
+   Guarda al dejar el campo (blur) y con un respiro de 1,2s mientras se
+   escribe, igual que el resto de los autoguardados de esta pantalla. No
+   bloquea nada por si solo: informa cuanto falta para el minimo de 20
+   caracteres que pide la regla.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  var _diagT = null, _diagUltimo = null;
+
+  function _pinta(txt, color){
+    var e = document.getElementById('otDiagEstado');
+    if (e){ e.textContent = txt; e.style.color = color || '#9ca3af'; }
+  }
+
+  window._otDiagInput = function(){
+    var t = document.getElementById('otDiagnostico');
+    if (!t) return;
+    var n = (t.value || '').trim().length;
+    var req = document.getElementById('otDiagReq');
+    if (req){
+      req.textContent = n >= 20 ? 'listo' : ('faltan ' + (20 - n));
+      req.className = 'req' + (n >= 20 ? ' ok' : '');
+    }
+    clearTimeout(_diagT);
+    _diagT = setTimeout(window._otDiagGuardar, 1200);
+  };
+
+  window._otDiagGuardar = async function(){
+    var t = document.getElementById('otDiagnostico');
+    if (!t) return;
+    var val = (t.value || '').trim();
+    if (val === _diagUltimo) return;          // nada cambio: no molestar al servidor
+    clearTimeout(_diagT);
+    _pinta('Guardando...', '#9ca3af');
+    try {
+      var r = await fetch('/mantenciones/api/visitas/' + VID + '/diagnostico', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({diagnostico: val})
+      });
+      var d = await r.json().catch(function(){ return {}; });
+      if (r.ok && d.ok){
+        _diagUltimo = val;
+        _pinta(d.suficiente ? '\u2713 Guardado' : '\u2713 Guardado (aun corto para el cierre)',
+               d.suficiente ? '#15803d' : '#b45309');
+      } else {
+        _pinta(d.error || 'No se pudo guardar', '#b91c1c');
+      }
+    } catch(e){
+      // Sin red: el texto NO se pierde, sigue en pantalla y se reintenta
+      // al proximo blur. Nunca se borra lo que el tecnico escribio.
+      _pinta('Sin conexion — se reintenta al salir del campo', '#b45309');
+    }
+  };
 })();

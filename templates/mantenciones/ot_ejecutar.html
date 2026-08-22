@@ -2825,6 +2825,9 @@
 // ════════════════════════════════════════════════════════
 const VID = {{ visita.id }};
 const VISITA_ESTADO = "{{ visita.estado }}";
+/* 2026-08-22: el diagnostico de la OT necesita viajar al front para
+   poder EDITARLO en el Resumen. Antes solo se leia en la ficha legacy. */
+const VISITA_DIAGNOSTICO = {{ (visita.diagnostico or "") | tojson }};
 // 2026-08-12 (Daniel, "potenciar la firma") — teléfono del contacto para
 // ofrecer el canal WhatsApp (link wa.me) al enviar la firma remota. Queda
 // en '' (string vacío, falsy) si la OT no tiene contacto_tel cargado; el
