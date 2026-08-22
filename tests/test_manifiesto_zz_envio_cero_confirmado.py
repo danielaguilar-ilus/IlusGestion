@@ -121,11 +121,6 @@ class TestNoSeTocoNadaMasEnElArchivo(unittest.TestCase):
             capture_output=True, text=True, check=True, encoding="utf-8")
         cls.tree_main = ast.parse(remoto.stdout)
 
-    def test_tr_fetch_from_erp_identico_a_main(self):
-        self.assertEqual(
-            _fuente("_tr_fetch_from_erp", self.tree_local),
-            _fuente("_tr_fetch_from_erp", self.tree_main))
-
     def test_tr_bulk_sync_erp_mysql_identico_a_main(self):
         self.assertEqual(
             _fuente("_tr_bulk_sync_erp_mysql", self.tree_local),
@@ -136,14 +131,16 @@ class TestNoSeTocoNadaMasEnElArchivo(unittest.TestCase):
             _fuente("_transporte_scheduler_loop", self.tree_local),
             _fuente("_transporte_scheduler_loop", self.tree_main))
 
-    def test_solo_una_funcion_cambio_en_todo_app_py(self):
-        funcs_local = {n.name: ast.unparse(n) for n in ast.walk(self.tree_local)
-                       if isinstance(n, ast.FunctionDef)}
-        funcs_main = {n.name: ast.unparse(n) for n in ast.walk(self.tree_main)
-                      if isinstance(n, ast.FunctionDef)}
-        cambiadas = [nombre for nombre, src in funcs_local.items()
-                     if nombre in funcs_main and funcs_main[nombre] != src]
-        self.assertEqual(cambiadas, ["tr_manifiesto_detalle"])
+    # NOTA 2026-08-22: aca existia un test "test_solo_una_funcion_cambio_en_
+    # todo_app_py" que asumia que tr_manifiesto_detalle seria SIEMPRE la
+    # unica funcion distinta de origin/main -- eso solo era cierto en el
+    # instante exacto del PR #175. En cuanto un PR legitimo posterior
+    # (ej. #177, zz_sin_lineas_confirmado_at) vuelve a tocar
+    # _tr_fetch_from_erp -- una funcion que SI se espera que seguir
+    # evolucionando, a diferencia del cron -- ese test se rompe sin que
+    # haya ningun bug real. Lo que de verdad importa (que el cron nunca se
+    # toque) ya lo cubren los 2 tests de arriba; ese es el invariante
+    # permanente, no "nada mas en 92k lineas cambio nunca".
 
 
 if __name__ == "__main__":
