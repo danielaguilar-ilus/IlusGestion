@@ -42043,7 +42043,12 @@ def tr_manifiesto_despacho_estado(mid):
         pedidos.append({
             "item_id": iid,
             "commitment_id": it.get("commitment_id"),
-            "doc": f"{it.get('tido') or ''} {it.get('nudo') or ''}".strip(),
+            # _doc_label quita los ceros de relleno del ERP ("0000011329" ->
+            # "11329"). Pedido de Daniel el 05-08: "la factura tiene cualquier
+            # cero, sería ideal que no tuviera". Se reusa el helper que ya
+            # existe para que esta pantalla diga el número igual que el resto
+            # de la app, y no aparezca un formato nuevo.
+            "doc": _doc_label(it.get("tido"), it.get("nudo")),
             "cliente": it.get("cliente_nombre") or "—",
             "comuna": it.get("comuna") or "—",
             "n_bultos": int(it.get("n_bultos") or 1),

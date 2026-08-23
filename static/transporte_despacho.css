@@ -264,7 +264,10 @@
   font-weight: 700;
   color: #374151;
   cursor: pointer;
-  min-height: 36px;
+  /* 44px, no 36: son botones que se tocan con el dedo (REGLA #3, Apple HIG).
+     Medido en un viewport real de 385px daban 36px -- el mismo defecto que
+     Daniel detectó en el panel de visitas congeladas (PR #166). */
+  min-height: 44px;
 }
 
 .dsp-chip:hover { border-color: #9ca3af; }
