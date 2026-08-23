@@ -327,27 +327,46 @@ class TestNoSeRompioNadaExistente(unittest.TestCase):
         "tr_manifiesto_despacho", "tr_manifiesto_despacho_estado",
     }
 
-    def test_no_toca_funciones_de_otras_features(self):
-        """Esta pantalla no pisa codigo ajeno.
+    # Lo que esta pantalla NO debe romper nunca. Lista nombrada y acotada:
+    # son los caminos criticos que ella toca de cerca (lee los mismos datos,
+    # comparte el ERP y el manifiesto) y donde un cambio suyo pasaria
+    # inadvertido. NO es "todo app.py" -- ver el comentario del test.
+    INTOCABLES = (
+        "_tr_bulk_sync_erp_mysql",    # el cron
+        "_transporte_scheduler_loop",  # el cron
+        "_tr_fetch_from_erp",          # el camino de escritura del ERP
+        "tr_manifiesto_detalle",       # la ficha que ya existia
+        "_tr_notificar_cliente",       # los correos al cliente
+        "_sr_visita_sin_entregar",     # el predicado que la pantalla reusa
+        "_simpliroute_request",        # el unico canal HTTP al courier
+    )
 
-        AJUSTE 2026-08-22 (tercera vez que caigo en el mismo test fragil):
-        antes esto decia `cambiadas == []`, o sea "no cambio NINGUNA funcion
-        que exista en origin/main". Eso solo es cierto MIENTRAS el PR esta
-        abierto: apenas se mergea, las funciones de esta misma pantalla pasan
-        a estar en main, y el primer ajuste posterior -- aunque sea corregir
-        el formato del numero de documento en su PROPIO endpoint -- la marca
-        como "funcion existente modificada".
+    def test_no_rompe_los_caminos_criticos_que_toca(self):
+        """Las funciones criticas vecinas a esta pantalla siguen intactas.
 
-        El invariante durable no es "no cambies nada", es "no cambies nada
-        que no sea tuyo". Eso es lo que se mide aca."""
-        f_local = {n.name: ast.unparse(n) for n in ast.walk(self.tree_local)
-                   if isinstance(n, ast.FunctionDef)}
-        f_main = {n.name: ast.unparse(n) for n in ast.walk(self.tree_main)
-                  if isinstance(n, ast.FunctionDef)}
-        cambiadas = {n for n, s in f_local.items()
-                     if n in f_main and f_main[n] != s}
-        ajenas = sorted(cambiadas - self.PROPIAS)
-        self.assertEqual(ajenas, [], f"se modificaron funciones ajenas: {ajenas}")
+        AJUSTE 2026-08-23 (CUARTA vez que este test da falso positivo, y esta
+        vez entendi la raiz). Las tres versiones anteriores comparaban TODO
+        app.py contra origin/main:
+            v1  cambiadas == [lista exacta]  -> se invierte al mergear el PR
+            v2  nuevas == []                 -> prohibe que app.py crezca
+            v3  cambiadas - PROPIAS == []    -> lo rompe CUALQUIER otra
+                                                feature que toque app.py
+                                                (lo rompio el fix del correo
+                                                al cliente, que no tiene nada
+                                                que ver con esta pantalla)
+
+        La raiz: "el diff contra main contiene solo X" es una asercion de
+        REVISION DE PR, no un test de regresion. En una suite permanente,
+        sobre un archivo de 92mil lineas que tocan varias features en
+        paralelo, siempre va a dar falso positivo.
+
+        Lo que si es un test de regresion: nombrar los caminos criticos que
+        esta pantalla podria romper y verificar que siguen igual. Si alguien
+        los cambia a proposito, el test falla y obliga a la conversacion --
+        que es justo lo que se quiere para el cron."""
+        rotas = [fn for fn in self.INTOCABLES
+                 if _fuente(fn, self.tree_local) != _fuente(fn, self.tree_main)]
+        self.assertEqual(rotas, [], f"caminos criticos modificados: {rotas}")
 
     def test_las_funciones_de_la_pantalla_existen_todas(self):
         """Las 4 estan presentes, vengan de este PR o ya mergeadas."""

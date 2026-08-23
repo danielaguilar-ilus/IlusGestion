@@ -40349,9 +40349,35 @@ def tr_manifiesto_subir_simpliroute(mid):
         if not x.get("ok"):
             continue
         try:
+            # ── notify_cliente=False (2026-08-23, decisión de Daniel) ──────
+            # El estado interno SÍ pasa a 'Entregado a transporte' (el item
+            # quedó delegado al courier y el tablero lo tiene que reflejar),
+            # pero al cliente NO se le avisa en este punto.
+            #
+            # POR QUÉ. El correo de ese estado le dice al cliente:
+            #   "Tu pedido ya salió de nuestras instalaciones y quedó en
+            #    camino a ti."
+            # Crear la visita en SimpliRoute NO significa nada de eso. Medido
+            # contra la API real el 20-08-2026 sobre los días 13, 14, 19 y 20:
+            # de 15 visitas creadas por ILUS, CERO se entregaron jamás — el
+            # despachador del courier puede no meterlas nunca en una ruta y la
+            # carga sigue en bodega. Le estábamos prometiendo al cliente un
+            # movimiento que no ocurrió.
+            #
+            # Con FedEx es distinto y por eso FedEx NO se toca (ver
+            # app.py:32937 y :33082): ahí el aviso se dispara al generar la
+            # etiqueta, y eso sí significa que FedEx ya tiene el envío en su
+            # sistema (status OC = Order Created).
+            #
+            # El cliente NO queda en silencio: el poller de SimpliRoute corre
+            # cada 10 min por Cloud Scheduler y avisa cuando el estado avanza
+            # de verdad -- 'En ruta' cuando el chofer va en camino
+            # (on_its_way), 'Entregado' al completarse. Ver
+            # _simpliroute_poll_batch, que ya manda con notify_cliente=True
+            # para los avances frescos del día.
             _tr_apply_carrier_status(x["item_id"], 'Entregado a transporte', fuente='sistema',
                                      comentario='Visita creada en SimpliRoute',
-                                     notify_cliente=True)
+                                     notify_cliente=False)
         except Exception as _e_sr_ev:
             print(f"[tr_event sr_subida] item={x.get('item_id')}: {_e_sr_ev}", flush=True)
 
