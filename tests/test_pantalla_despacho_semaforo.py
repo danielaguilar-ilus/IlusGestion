@@ -138,6 +138,15 @@ class TestNuncaVerdeSinPrueba(unittest.TestCase):
         fragmento = self.src[i:i + 320]
         self.assertIn("Subida no es lo mismo que despachada", fragmento)
 
+    def test_el_numero_de_documento_va_sin_ceros_de_relleno(self):
+        """Pedido de Daniel (05-08): "la factura tiene cualquier cero, seria
+        ideal que no tuviera". Se reusa _doc_label, el helper que ya existe,
+        en vez de concatenar tido+nudo crudo -- asi esta pantalla dice el
+        numero igual que el resto de la app ("FCV 11329", no
+        "FCV 0000011329")."""
+        self.assertIn("_doc_label(", self.src)
+        self.assertNotIn("'doc': f'{it.get(", self.src)
+
     def test_el_paso6_solo_verde_con_Entregado(self):
         i = self.src.index("n_entregados = sum(")
         fragmento = self.src[i:i + 160]
@@ -273,6 +282,15 @@ class TestCssMobileYAccesibilidad(unittest.TestCase):
         """REGLA #3, Apple HIG."""
         self.assertIn("min-height: 44px", self.css)
 
+    def test_los_chips_de_filtro_tambien_son_44px(self):
+        """Medido en un viewport real de 385px daban 36px. Los chips se tocan
+        con el dedo igual que cualquier boton -- mismo defecto que Daniel
+        detecto en el panel de visitas congeladas (PR #166)."""
+        i = self.css.index(".dsp-chip {")
+        bloque = self.css[i:self.css.index("}", i)]
+        self.assertIn("min-height: 44px", bloque)
+        self.assertNotIn("min-height: 36px", bloque)
+
     def test_tiene_bloque_mobile(self):
         self.assertIn("@media (max-width: 767px)", self.css)
 
@@ -302,25 +320,41 @@ class TestNoSeRompioNadaExistente(unittest.TestCase):
             capture_output=True, text=True, check=True, encoding="utf-8")
         cls.tree_main = ast.parse(remoto.stdout)
 
-    def test_no_cambio_ninguna_funcion_existente(self):
-        """Esta pantalla es 100% ADITIVA: solo agrega funciones nuevas."""
+    # Las 4 funciones que SON esta pantalla. Tocarlas es su propio trabajo;
+    # tocar cualquier otra cosa de app.py no lo es.
+    PROPIAS = {
+        "_dsp_estado_courier_es", "_dsp_peor",
+        "tr_manifiesto_despacho", "tr_manifiesto_despacho_estado",
+    }
+
+    def test_no_toca_funciones_de_otras_features(self):
+        """Esta pantalla no pisa codigo ajeno.
+
+        AJUSTE 2026-08-22 (tercera vez que caigo en el mismo test fragil):
+        antes esto decia `cambiadas == []`, o sea "no cambio NINGUNA funcion
+        que exista en origin/main". Eso solo es cierto MIENTRAS el PR esta
+        abierto: apenas se mergea, las funciones de esta misma pantalla pasan
+        a estar en main, y el primer ajuste posterior -- aunque sea corregir
+        el formato del numero de documento en su PROPIO endpoint -- la marca
+        como "funcion existente modificada".
+
+        El invariante durable no es "no cambies nada", es "no cambies nada
+        que no sea tuyo". Eso es lo que se mide aca."""
         f_local = {n.name: ast.unparse(n) for n in ast.walk(self.tree_local)
                    if isinstance(n, ast.FunctionDef)}
         f_main = {n.name: ast.unparse(n) for n in ast.walk(self.tree_main)
                   if isinstance(n, ast.FunctionDef)}
-        cambiadas = sorted(n for n, s in f_local.items()
-                            if n in f_main and f_main[n] != s)
-        self.assertEqual(cambiadas, [], f"se modificaron funciones existentes: {cambiadas}")
+        cambiadas = {n for n, s in f_local.items()
+                     if n in f_main and f_main[n] != s}
+        ajenas = sorted(cambiadas - self.PROPIAS)
+        self.assertEqual(ajenas, [], f"se modificaron funciones ajenas: {ajenas}")
 
-    def test_las_funciones_nuevas_son_las_esperadas(self):
+    def test_las_funciones_de_la_pantalla_existen_todas(self):
+        """Las 4 estan presentes, vengan de este PR o ya mergeadas."""
         f_local = {n.name for n in ast.walk(self.tree_local)
                    if isinstance(n, ast.FunctionDef)}
-        f_main = {n.name for n in ast.walk(self.tree_main)
-                  if isinstance(n, ast.FunctionDef)}
-        self.assertEqual(
-            sorted(f_local - f_main),
-            ["_dsp_estado_courier_es", "_dsp_peor",
-             "tr_manifiesto_despacho", "tr_manifiesto_despacho_estado"])
+        faltan = sorted(self.PROPIAS - f_local)
+        self.assertEqual(faltan, [], f"faltan funciones de la pantalla: {faltan}")
 
     def test_el_cron_sigue_intacto(self):
         for fn in ("_tr_bulk_sync_erp_mysql", "_transporte_scheduler_loop"):
