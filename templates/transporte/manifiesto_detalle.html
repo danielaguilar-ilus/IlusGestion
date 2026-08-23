@@ -182,6 +182,20 @@
             title="{{ 'Todas las facturas ya están subidas a SimpliRoute. Puedes volver a presionarlo si agregas facturas nuevas.' if _todos_subidos_sr else 'Sube todas las facturas de este manifiesto a SimpliRoute como visitas, para que el transportista solo asigne la ruta' }}">
       <i class="bi {{ 'bi-check-circle-fill' if _todos_subidos_sr else 'bi-geo-alt-fill' }} me-1"></i>{{ 'Ya subido a SimpliRoute' if _todos_subidos_sr else 'Subir a SimpliRoute' }}
     </button>
+    {# ── Ver el despacho paso a paso (2026-08-22) ─────────────────────────
+       Pantalla nueva con los 6 pasos y su semáforo. Existe porque el botón
+       de arriba dice "Ya subido a SimpliRoute" con un check verde, y subido
+       NO es entregado: medido contra la API el 20-08, de 15 visitas creadas
+       por ILUS ninguna se entregó. El paso que falta (que el courier la meta
+       en una ruta) hoy es invisible; ahí se ve.
+
+       ADITIVO: no reemplaza ni modifica ningún botón existente (REGLA #4.2). #}
+    <a class="btn btn-sm fw-bold" id="btnVerDespacho"
+       href="{{ url_for('tr_manifiesto_despacho', mid=manifiesto.id) }}"
+       style="background:#0a0a0a;border:none;color:#fff"
+       title="Ver los 6 pasos del despacho con su semáforo: qué está listo, qué está esperando al courier y qué está trabado">
+      <i class="bi bi-list-ol me-1"></i>Ver despacho paso a paso
+    </a>
     {# ── Mandar la carga al courier (2026-08-20) ──────────────────────────
        Medido contra la API: de las visitas que ILUS crea por integración,
        0 de 15 se entregaron; de las que el courier carga con SU Excel, 7 de

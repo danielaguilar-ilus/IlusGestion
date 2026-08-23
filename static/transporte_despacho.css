@@ -1,0 +1,373 @@
+/* ══════════════════════════════════════════════════════════════════════
+   Pantalla "Despacho al courier" — pasos numerados con semáforo.
+   2026-08-22. Pedido de Daniel: "enumerado y con semáforo", con la
+   referencia visual de /retiros (.step-circle rojo→verde con pulso).
+
+   Los círculos son GRANDES a propósito: Daniel pidió que se lean bien
+   ("para personas más ciegas"), mismo criterio que retiros_internal_detail.css.
+
+   El color NUNCA va solo: cada estado lleva glifo + texto. Un semáforo que
+   solo cambia de color no sirve para quien no distingue rojo de verde.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.dsp-page {
+  --dsp-red:    #dc2626;
+  --dsp-green:  #16a34a;
+  --dsp-amber:  #f59e0b;
+  --dsp-gray:   #6b7280;
+  --dsp-ok-bg:     #dcfce7;
+  --dsp-wait-bg:   #fff8e1;
+  --dsp-fail-bg:   #fee2e2;
+  --dsp-todo-bg:   #f3f4f6;
+  --dsp-line:   #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 32px;
+}
+
+.dsp-card {
+  background: #fff;
+  border: 1px solid var(--dsp-line);
+  border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .04);
+}
+
+.dsp-h2 {
+  font-size: .82rem;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--dsp-gray);
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Franja de semáforo ─────────────────────────────────────────── */
+.dsp-sem-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.dsp-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--dsp-gray);
+}
+
+.dsp-count b { font-size: 1.15rem; font-weight: 800; }
+.dsp-count.is-ok      { color: var(--dsp-green); }
+.dsp-count.is-wait    { color: var(--dsp-amber); }
+.dsp-count.is-fail    { color: var(--dsp-red); }
+.dsp-count.is-unknown { color: var(--dsp-gray); }
+
+.dsp-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--dsp-todo-bg);
+  margin-bottom: 14px;
+}
+
+.dsp-bar span { display: block; height: 100%; }
+.dsp-bar .seg-ok      { background: var(--dsp-green); }
+.dsp-bar .seg-wait    { background: var(--dsp-amber); }
+.dsp-bar .seg-fail    { background: var(--dsp-red); }
+.dsp-bar .seg-unknown { background: repeating-linear-gradient(45deg,#d1d5db,#d1d5db 4px,#e5e7eb 4px,#e5e7eb 8px); }
+.dsp-bar .seg-todo    { background: var(--dsp-todo-bg); }
+
+.dsp-verdict {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 700;
+  line-height: 1.45;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.dsp-verdict.is-ok      { color: var(--dsp-green); }
+.dsp-verdict.is-wait    { color: #b45309; }
+.dsp-verdict.is-fail    { color: var(--dsp-red); }
+.dsp-verdict.is-unknown { color: var(--dsp-gray); }
+
+/* ── Riel de 6 pasos ────────────────────────────────────────────── */
+.dsp-rail {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 20px;
+}
+
+.dsp-rail-step {
+  flex: 1 1 0;
+  min-width: 96px;
+  text-align: center;
+  position: relative;
+}
+
+/* La línea que une los pasos: va DETRÁS del círculo. */
+.dsp-rail-step::before {
+  content: "";
+  position: absolute;
+  top: 22px;
+  left: -50%;
+  width: 100%;
+  height: 3px;
+  background: var(--dsp-line);
+  z-index: 0;
+}
+
+.dsp-rail-step:first-child::before { display: none; }
+
+.dsp-rail-num {
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+  color: #9ca3af;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.dsp-circle {
+  position: relative;
+  z-index: 1;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  margin: 0 auto 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  font-weight: 800;
+  border: 3px solid var(--dsp-line);
+  background: #fff;
+  color: #9ca3af;
+}
+
+.dsp-circle.is-ok      { border-color: var(--dsp-green); background: var(--dsp-ok-bg);   color: var(--dsp-green); }
+.dsp-circle.is-wait    { border-color: var(--dsp-amber); background: var(--dsp-wait-bg); color: #b45309; }
+.dsp-circle.is-fail    { border-color: var(--dsp-red);   background: var(--dsp-fail-bg); color: var(--dsp-red); }
+.dsp-circle.is-todo    { opacity: .55; }
+.dsp-circle.is-unknown { border-style: dashed; border-color: var(--dsp-gray); color: var(--dsp-gray); }
+
+/* is-now = "te toca a ti". Es el único que pulsa: si pulsara todo, no
+   destacaría nada. Se respeta prefers-reduced-motion más abajo. */
+.dsp-circle.is-now {
+  border-color: var(--dsp-red);
+  background: var(--dsp-red);
+  color: #fff;
+  animation: dsp-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes dsp-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, .55); }
+  50%      { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+}
+
+.dsp-rail-name {
+  font-size: .74rem;
+  font-weight: 700;
+  color: #374151;
+  line-height: 1.25;
+  padding: 0 2px;
+}
+
+.dsp-rail-count {
+  font-size: .7rem;
+  color: var(--dsp-gray);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Tarjetas de paso (el detalle largo) ────────────────────────── */
+.dsp-steps { display: flex; flex-direction: column; gap: 12px; }
+
+.dsp-step {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--dsp-line);
+  border-left: 5px solid var(--dsp-line);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.dsp-step.is-ok      { border-left-color: var(--dsp-green); }
+.dsp-step.is-wait    { border-left-color: var(--dsp-amber); background: #fffdf7; }
+.dsp-step.is-fail    { border-left-color: var(--dsp-red);   background: #fffafa; }
+.dsp-step.is-now     { border-left-color: var(--dsp-red);   background: #fff5f5; }
+.dsp-step.is-unknown { border-left-color: var(--dsp-gray); border-left-style: dashed; }
+.dsp-step.is-todo    { opacity: .68; }
+
+.dsp-step-body { flex: 1; min-width: 0; }
+
+.dsp-step-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.dsp-step-title { font-weight: 800; font-size: .98rem; color: #111827; }
+
+.dsp-badge {
+  font-size: .74rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.dsp-badge.is-ok      { background: var(--dsp-ok-bg);   color: #15803d; }
+.dsp-badge.is-wait    { background: var(--dsp-wait-bg); color: #b45309; }
+.dsp-badge.is-fail    { background: var(--dsp-fail-bg); color: #b91c1c; }
+.dsp-badge.is-now     { background: var(--dsp-red);     color: #fff; }
+.dsp-badge.is-unknown { background: var(--dsp-todo-bg); color: var(--dsp-gray); border: 1px dashed #9ca3af; }
+.dsp-badge.is-todo    { background: var(--dsp-todo-bg); color: var(--dsp-gray); }
+
+.dsp-step-sub    { font-size: .84rem; color: var(--dsp-gray); line-height: 1.5; margin-bottom: 5px; }
+.dsp-step-detail { font-size: .88rem; color: #374151; line-height: 1.55; }
+
+/* ── Chips de filtro ────────────────────────────────────────────── */
+.dsp-listhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.dsp-listhead .dsp-h2 { margin: 0; }
+.dsp-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+
+.dsp-chip {
+  border: 1px solid var(--dsp-line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: .8rem;
+  font-weight: 700;
+  color: #374151;
+  cursor: pointer;
+  min-height: 36px;
+}
+
+.dsp-chip:hover { border-color: #9ca3af; }
+.dsp-chip.active { background: #111827; border-color: #111827; color: #fff; }
+
+/* ── Tarjeta de pedido ──────────────────────────────────────────── */
+.dsp-pedidos { display: flex; flex-direction: column; gap: 10px; }
+
+.dsp-pedido {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  border: 1px solid var(--dsp-line);
+  border-left: 5px solid var(--dsp-line);
+  border-radius: 11px;
+  background: #fff;
+}
+
+.dsp-pedido.is-ok      { border-left-color: var(--dsp-green); }
+.dsp-pedido.is-wait    { border-left-color: var(--dsp-amber); }
+.dsp-pedido.is-fail    { border-left-color: var(--dsp-red); background: #fffafa; }
+.dsp-pedido.is-unknown { border-left-color: var(--dsp-gray); border-left-style: dashed; }
+.dsp-pedido.is-todo    { border-left-color: #d1d5db; }
+
+.dsp-ped-main { flex: 1 1 260px; min-width: 0; }
+.dsp-ped-doc  { font-weight: 800; font-size: .94rem; color: #111827; }
+
+.dsp-ped-cli {
+  font-size: .84rem;
+  color: var(--dsp-gray);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-ped-est { font-size: .84rem; font-weight: 700; margin-top: 3px; }
+.dsp-ped-est.is-ok      { color: var(--dsp-green); }
+.dsp-ped-est.is-wait    { color: #b45309; }
+.dsp-ped-est.is-fail    { color: var(--dsp-red); }
+.dsp-ped-est.is-unknown { color: var(--dsp-gray); }
+.dsp-ped-est.is-todo    { color: var(--dsp-gray); }
+
+.dsp-ped-det { font-size: .8rem; color: var(--dsp-gray); margin-top: 2px; line-height: 1.45; }
+
+/* Los 6 puntitos: el resumen visual del pedido de un vistazo. */
+.dsp-dots { display: flex; gap: 6px; flex: 0 0 auto; }
+
+.dsp-dot {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid var(--dsp-line);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .56rem;
+  font-weight: 800;
+  color: transparent;
+}
+
+.dsp-dot.is-ok      { border-color: var(--dsp-green); background: var(--dsp-green); color: #fff; }
+.dsp-dot.is-wait    { border-color: var(--dsp-amber); background: var(--dsp-amber); color: #fff; }
+.dsp-dot.is-fail    { border-color: var(--dsp-red);   background: var(--dsp-red);   color: #fff; }
+.dsp-dot.is-now     { border-color: var(--dsp-red);   background: var(--dsp-red);   color: #fff; }
+.dsp-dot.is-unknown { border-style: dashed; border-color: var(--dsp-gray); color: var(--dsp-gray); }
+.dsp-dot.is-todo    { opacity: .5; }
+
+.dsp-empty { color: var(--dsp-gray); font-size: .9rem; text-align: center; padding: 26px 0; margin: 0; }
+
+/* ── Botones ────────────────────────────────────────────────────── */
+.dsp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;           /* Apple HIG — REGLA #3 */
+  padding: 0 16px;
+  border-radius: 9px;
+  font-size: .86rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.dsp-btn-ghost { background: #fff; border-color: var(--dsp-line); color: #374151; }
+.dsp-btn-ghost:hover { border-color: #9ca3af; }
+.dsp-btn[disabled] { opacity: .55; cursor: default; }
+
+/* ── Mobile (REGLA #3) ──────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .dsp-card { padding: 16px 14px; border-radius: 12px; }
+  .dsp-rail { gap: 0; }
+  .dsp-rail-step { min-width: 76px; }
+  .dsp-circle { width: 38px; height: 38px; font-size: 1rem; }
+  .dsp-rail-step::before { top: 19px; }
+  .dsp-rail-name { font-size: .66rem; }
+  .dsp-sem-counts { gap: 12px; }
+  .dsp-pedido { gap: 10px; }
+  .dsp-dots { order: 3; width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsp-circle.is-now { animation: none; box-shadow: 0 0 0 4px rgba(220, 38, 38, .3); }
+}
