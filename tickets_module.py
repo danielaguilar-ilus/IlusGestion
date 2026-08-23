@@ -10425,6 +10425,21 @@ def register_tickets_routes(app, ctx):
                     cuerpo = _tk_extraer_cuerpo_mail(msg) or "(Mensaje sin texto)"
                     remitente = (from_nombre or ticket.get("nombre_contacto")
                                  or from_email or "Cliente")[:190]
+                    # Ticket que nace SIN datos de cliente (ej. auto-creado
+                    # a mano antes de que llegara el correo, o un id de
+                    # Triple A resuelto sin CSV detrás) se completa con lo
+                    # que trae ESTE correo, la primera vez. COALESCE+NULLIF
+                    # no pisa un dato que ya exista -- si el ticket ya tiene
+                    # email/nombre, esta UPDATE es un no-op.
+                    if from_email:
+                        mysql_execute(
+                            "UPDATE tk_tickets SET "
+                            " email=COALESCE(NULLIF(email,''), %s), "
+                            " email_cliente_real=COALESCE(NULLIF(email_cliente_real,''), %s), "
+                            " nombre_contacto=COALESCE(NULLIF(nombre_contacto,''), %s) "
+                            "WHERE id=%s",
+                            (from_email[:150], from_email[:190],
+                             (from_nombre or from_email)[:150], ticket["id"]))
                     # ── Adjuntos: SE REVISAN ANTES de guardar el mensaje ──
                     # Auditoría 2026-08-05: antes, un adjunto que no pasaba el
                     # filtro (extensión no permitida, más de MAX_ADJUNTO_MB, o
