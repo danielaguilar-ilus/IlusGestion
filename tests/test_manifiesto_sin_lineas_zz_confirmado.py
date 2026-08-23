@@ -184,19 +184,38 @@ class TestNoSeTocoNadaMasEnElArchivo(unittest.TestCase):
             _fuente("_transporte_scheduler_loop", self.tree_local),
             _fuente("_transporte_scheduler_loop", self.tree_main))
 
-    def test_solo_las_4_funciones_esperadas_cambiaron(self):
+    def test_no_se_piso_ninguna_funcion_fuera_del_alcance(self):
+        """Ninguna funcion AJENA a este arreglo quedo modificada respecto de
+        origin/main.
+
+        AJUSTE 2026-08-22 (segunda vez que este test da un falso positivo).
+        Nacio como una igualdad exacta: `cambiadas == [las 4 funciones]` y
+        `nuevas == []`. Las dos mitades eran inestables por razones opuestas:
+
+          · `nuevas == []` exigia que app.py no volviera a crecer nunca --
+            lo rompio la pantalla de despacho con semaforo, sin ningun defecto.
+          · la igualdad exacta de `cambiadas` solo vale MIENTRAS el PR esta
+            abierto: una vez mergeado, esas 4 funciones ya son parte de
+            origin/main y la lista pasa a estar vacia. El test se invertia
+            solo al mergear.
+
+        Lo que SI es cierto siempre, antes y despues del merge: nada fuera de
+        la lista permitida puede aparecer como modificado. Eso es lo que se
+        mide aca. Que el cron quede intacto lo cubren los 2 tests de arriba,
+        con igualdad exacta -- ahi si corresponde ser tajante."""
+        permitidas = {
+            "_ensure_transporte_columns", "_fetch_items",
+            "_tr_fetch_from_erp", "tr_manifiesto_detalle",
+        }
         funcs_local = {n.name: ast.unparse(n) for n in ast.walk(self.tree_local)
                        if isinstance(n, ast.FunctionDef)}
         funcs_main = {n.name: ast.unparse(n) for n in ast.walk(self.tree_main)
                       if isinstance(n, ast.FunctionDef)}
-        cambiadas = sorted(nombre for nombre, src in funcs_local.items()
-                            if nombre in funcs_main and funcs_main[nombre] != src)
-        nuevas = sorted(nombre for nombre in funcs_local if nombre not in funcs_main)
-        self.assertEqual(nuevas, [])
+        cambiadas = {nombre for nombre, src in funcs_local.items()
+                     if nombre in funcs_main and funcs_main[nombre] != src}
         self.assertEqual(
-            cambiadas,
-            ["_ensure_transporte_columns", "_fetch_items",
-             "_tr_fetch_from_erp", "tr_manifiesto_detalle"])
+            sorted(cambiadas - permitidas), [],
+            "se modificaron funciones fuera del alcance de este arreglo")
 
 
 if __name__ == "__main__":

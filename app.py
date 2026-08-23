@@ -41660,6 +41660,472 @@ def _tr_manifiesto_export_impl(mid, *, devolver_bytes=False):
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  PANTALLA "DESPACHO AL COURIER" — pasos numerados con semáforo
+#  (2026-08-22, pedido de Daniel: "enumerado y con semáforo, indicando que
+#   todo está bien según los pasos que vas haciendo", como en Retiros)
+#
+#  REGLA DE ORO de esta pantalla: un paso solo se pinta VERDE cuando ILUS
+#  puede demostrar la condición con un dato. Si no se pudo comprobar, se
+#  pinta "sin comprobar" — JAMÁS verde. El caso que motivó todo esto: durante
+#  meses la ficha decía "Ya subido a SimpliRoute" con un check verde, y
+#  medido contra la API real el 20-08-2026, de 15 visitas creadas por ILUS
+#  CERO se entregaron nunca. "Subida" no es "despachada": son dos pasos
+#  distintos y acá se muestran separados (paso 4 vs paso 5).
+#
+#  100% ADITIVO: no se modifica ninguna ruta, endpoint ni botón existente.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Después de esta hora, subir al courier ya no alcanza su tablero del día.
+# (hora Chile; mismo criterio que usa el rescate de visitas congeladas)
+SR_HORA_CORTE_SUBIDA_H = 16
+# A partir de esta hora, una visita que sigue sin ruta ya es un problema:
+# el despachador del courier no la va a tomar hoy.
+SR_HORA_LIMITE_PLANIFICACION_H = 17
+
+# Estados crudos de SimpliRoute → castellano (REGLA #6/#0: nunca sale una
+# palabra en inglés a pantalla).
+_SR_ESTADO_ES = {
+    "pending":     "Sin planificar",
+    "on_its_way":  "En ruta",
+    "in_progress": "En ruta",
+    "completed":   "Entregada",
+    "failed":      "No se pudo entregar",
+    "partial":     "Entregada en parte",
+    "canceled":    "Cancelada por el courier",
+    "cancelled":   "Cancelada por el courier",
+}
+
+
+def _dsp_estado_courier_es(status_crudo):
+    """Traduce el status de SimpliRoute. Si es uno que no conocemos, se
+    devuelve tal cual pero marcado -- mejor mostrar algo raro que mentir."""
+    s = (status_crudo or "").strip().lower()
+    if not s:
+        return "Sin dato"
+    return _SR_ESTADO_ES.get(s, f"Estado no reconocido ({s})")
+
+
+def _dsp_peor(estados):
+    """El PEOR estado de una lista. El manifiesto completo siempre toma el
+    peor de sus pedidos: 4 verdes y 3 trabados NO es un manifiesto verde."""
+    for e in ("trabado", "sin_comprobar", "esperando", "ahora", "pendiente", "ok"):
+        if e in estados:
+            return e
+    return "pendiente"
+
+
+@app.route("/transporte/manifiestos/<int:mid>/despacho")
+@_tr_required
+def tr_manifiesto_despacho(mid):
+    """Pantalla de pasos + semáforo para el despacho al courier."""
+    man = mysql_fetchone(
+        "SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not man or man.get("eliminado"):
+        flash("Manifiesto no encontrado", "danger")
+        return redirect(url_for("tr_manifiestos"))
+    return render_template("transporte/manifiesto_despacho.html", manifiesto=man)
+
+
+@app.route("/transporte/api/manifiestos/<int:mid>/despacho/estado")
+@_tr_required
+def tr_manifiesto_despacho_estado(mid):
+    """SOLO LECTURA. Estado de los 6 pasos del despacho.
+
+    ?live=0  → todo sale de MySQL, rápido. El paso 5 vuelve "sin_comprobar"
+               (no se inventa: si no preguntamos, no sabemos).
+    ?live=1  → además consulta cada visita a SimpliRoute para resolver el
+               paso 5 de verdad. Reusa _simpliroute_request y
+               _sr_visita_sin_entregar -- no abre otro canal HTTP.
+
+    No escribe nada, ni en MySQL ni en el ERP ni en SimpliRoute.
+    """
+    import simpliroute_client as _src
+    import datetime as _dt
+
+    live = (request.args.get("live") or "0").strip() == "1"
+
+    man = mysql_fetchone("SELECT * FROM transport_manifests WHERE id=%s", (mid,))
+    if not man or man.get("eliminado"):
+        return jsonify({"ok": False, "error": "Manifiesto no encontrado"}), 404
+
+    ahora = _now_chile()
+    hoy = ahora.date()
+    corte_pasado = ahora.hour >= SR_HORA_CORTE_SUBIDA_H
+
+    courier = (man.get("courier") or "").strip()
+    integra = _simpliroute_courier_integra(courier)
+    token = _simpliroute_token_for_courier(courier) if integra else None
+
+    fila_courier = mysql_fetchone(
+        "SELECT nombre, contacto, telefono, email, logo_url "
+        "FROM transport_couriers WHERE LOWER(TRIM(nombre))=LOWER(TRIM(%s)) LIMIT 1",
+        (courier,)) or {}
+
+    items = mysql_fetchall("""
+        SELECT mi.id AS item_id, mi.commitment_id, mi.estado_entrega,
+               mi.simpliroute_visit_id, mi.simpliroute_error,
+               mi.simpliroute_synced_at,
+               mi.master_tracking_number, mi.tracking_number,
+               c.tido, c.nudo, c.cliente_nombre, c.comuna, c.direccion,
+               c.telefono, c.email,
+               COALESCE(c.n_bultos, 1) AS n_bultos
+        FROM transport_manifest_items mi
+        JOIN transport_commitments c ON c.id = mi.commitment_id
+        WHERE mi.manifest_id=%s
+        ORDER BY mi.orden, mi.id
+    """, (mid,)) or []
+
+    total = len(items)
+    n_bultos_total = sum(int(i.get("n_bultos") or 1) for i in items)
+
+    # ── PASO 1 · Carga lista ────────────────────────────────────────────
+    sin_bultos = [i for i in items if not i.get("n_bultos")]
+    if total == 0:
+        p1 = ("trabado", "Sin facturas",
+              "Este manifiesto todavía no tiene facturas. Agrega al menos una "
+              "antes de subir al courier.")
+    elif sin_bultos:
+        p1 = ("esperando", f"{len(sin_bultos)} sin bultos",
+              f"Hay {len(sin_bultos)} factura(s) sin bultos declarados. Se van a "
+              f"subir como 1 bulto cada una. Si son más, corrígelo antes de subir.")
+    else:
+        p1 = ("ok", f"{total} facturas · {n_bultos_total} bultos",
+              "Listo. La carga está completa.")
+
+    # ── PASO 2 · Transportista y fecha ──────────────────────────────────
+    fecha_man = man.get("fecha")
+    fecha_man_label = fecha_man.strftime("%d/%m/%Y") if fecha_man else "—"
+    if not integra:
+        p2 = ("trabado", "Otro camino",
+              f"{courier or 'Este transportista'} no rutea con SimpliRoute. Para "
+              f"este transportista el camino es descargar el Excel y mandárselo "
+              f"por correo.")
+    elif not token:
+        p2 = ("trabado", "Sin conexión",
+              f"No podemos entrar a la cuenta de {courier}: falta la clave de "
+              f"acceso en el servidor. Avísale a Daniel. Mientras tanto, usa "
+              f"«Exportar carga masiva».")
+    elif corte_pasado:
+        p2 = ("esperando", "Ya cerró el día",
+              f"Son las {ahora.strftime('%H:%M')}. El tablero de hoy de {courier} "
+              f"ya cerró: si subes ahora, la carga recién se va a ver mañana. "
+              f"Conviene programarla para el próximo día hábil.")
+    elif fecha_man and fecha_man != hoy:
+        p2 = ("esperando", "Revisa la fecha",
+              f"El manifiesto es del {fecha_man_label} y hoy es "
+              f"{hoy.strftime('%d/%m/%Y')}. La visita se crea con la fecha de HOY, "
+              f"porque hoy es el día en que le entregas la carga al transportista. "
+              f"Una fecha que ya pasó queda invisible en su tablero.")
+    else:
+        p2 = ("ok", courier or "—",
+              f"La visita se va a crear con fecha de hoy, {hoy.strftime('%d/%m/%Y')}.")
+
+    # ── PASO 3 · Datos de entrega ───────────────────────────────────────
+    sin_dir = [i for i in items
+               if not (i.get("direccion") or "").strip()
+               or not (i.get("comuna") or "").strip()]
+    sin_tel = [i for i in items if not (i.get("telefono") or "").strip()]
+    if total == 0:
+        p3 = ("pendiente", "—", "Primero agrega facturas.")
+    elif sin_dir:
+        p3 = ("trabado", f"{len(sin_dir)} sin dirección",
+              f"{len(sin_dir)} factura(s) no tienen dirección o comuna. Esas no se "
+              f"van a subir: el courier no puede rutear un destino sin dirección.")
+    elif sin_tel:
+        p3 = ("esperando", f"{len(sin_tel)} sin teléfono",
+              f"A {len(sin_tel)} factura(s) les falta el teléfono. Si el chofer no "
+              f"encuentra el lugar, no va a tener a quién llamar.")
+    else:
+        p3 = ("ok", f"{total} de {total} con dirección",
+              "Todas tienen dirección, comuna y contacto.")
+
+    # ── PASO 4 · Subida al courier ──────────────────────────────────────
+    subidos = [i for i in items if (i.get("simpliroute_visit_id") or "").strip()]
+    con_error = [i for i in items if (i.get("simpliroute_error") or "").strip()]
+    n_sub = len(subidos)
+    if total == 0:
+        p4 = ("pendiente", "—", "Primero agrega facturas.")
+    elif con_error:
+        p4 = ("trabado", f"{len(con_error)} con error",
+              f"{len(con_error)} factura(s) no se pudieron subir. Revisa el detalle "
+              f"de cada una más abajo y reintenta.")
+    elif n_sub == 0:
+        _listo_para_subir = p1[0] == "ok" and p2[0] in ("ok", "esperando") and p3[0] != "trabado"
+        p4 = ("ahora" if _listo_para_subir else "pendiente", "Pendiente",
+              f"Todavía no subes nada. Cuando aprietes el botón, ILUS crea una "
+              f"visita por factura en la cuenta de {courier}.")
+    elif n_sub < total:
+        p4 = ("esperando", f"Subidas {n_sub} de {total}",
+              f"Se subieron {n_sub} de {total}. Faltan {total - n_sub}.")
+    else:
+        p4 = ("ok", f"Subidas {total} de {total}",
+              f"Las {total} visitas existen en la cuenta de {courier}. "
+              f"Subida no es lo mismo que despachada: falta el paso 5.")
+
+    # ── PASO 5 · El courier la planificó (el que hoy es invisible) ──────
+    # Solo se resuelve de verdad con live=1. Sin consultar, es "sin_comprobar".
+    por_item_p5 = {}
+    sin_respuesta = 0
+    if live and token and subidos:
+        for it in subidos:
+            vid = (it.get("simpliroute_visit_id") or "").strip()
+            r = _simpliroute_request("GET", f"{_src.EP_VISITS}{vid}/", token, timeout=15)
+            if not r.get("ok"):
+                sin_respuesta += 1
+                por_item_p5[it["item_id"]] = {
+                    "estado": "sin_comprobar", "consultada_ok": False,
+                    "estado_courier": "No pudimos preguntarle a " + (courier or "el courier"),
+                    "planificada": None, "chofer": None,
+                    "planned_date": None, "planned_date_label": None,
+                    "dias_vencida": 0,
+                }
+                continue
+            v = r.get("data") or {}
+            sin_entregar = _sr_visita_sin_entregar(v)
+            pd_raw = (v.get("planned_date") or "").strip()
+            pd = None
+            try:
+                pd = _dt.date.fromisoformat(pd_raw) if pd_raw else None
+            except Exception:
+                pd = None
+            dias_vencida = (hoy - pd).days if (pd and pd < hoy) else 0
+            ruta = v.get("route") if isinstance(v.get("route"), dict) else None
+            chofer = (ruta or {}).get("driver_name") or None
+
+            if not sin_entregar:
+                est = "ok"
+            elif dias_vencida > 0:
+                est = "trabado"
+            elif ahora.hour >= SR_HORA_LIMITE_PLANIFICACION_H:
+                est = "trabado"
+            else:
+                est = "esperando"
+
+            por_item_p5[it["item_id"]] = {
+                "estado": est, "consultada_ok": True,
+                "estado_courier": _dsp_estado_courier_es(v.get("status")),
+                "planificada": (not sin_entregar) or bool(chofer),
+                "chofer": chofer,
+                "planned_date": pd.isoformat() if pd else None,
+                "planned_date_label": pd.strftime("%d/%m/%Y") if pd else None,
+                "dias_vencida": dias_vencida,
+            }
+
+    if total == 0:
+        p5 = ("pendiente", "—", "Primero agrega facturas.")
+    elif n_sub == 0:
+        p5 = ("pendiente", "—", "Todavía no hay visitas creadas.")
+    elif not live:
+        p5 = ("sin_comprobar", "Sin comprobar",
+              "No le hemos preguntado a " + (courier or "el courier") + " todavía. "
+              "Aprieta «Comprobar ahora».")
+    else:
+        _ests = [v["estado"] for v in por_item_p5.values()]
+        _peor5 = _dsp_peor(_ests) if _ests else "sin_comprobar"
+        _n_trab = sum(1 for e in _ests if e == "trabado")
+        _n_ok5 = sum(1 for e in _ests if e == "ok")
+        if _peor5 == "trabado":
+            p5 = ("trabado", f"{_n_trab} trabadas",
+                  f"{_n_trab} visita(s) siguen sin que nadie de {courier} las meta "
+                  f"en una ruta. Este paso NO lo hace ILUS: lo hace el despachador "
+                  f"del courier.")
+        elif _peor5 == "sin_comprobar":
+            p5 = ("sin_comprobar", f"{sin_respuesta} sin respuesta",
+                  f"No pudimos comprobar {sin_respuesta} visita(s). No sabemos si "
+                  f"{courier} las tomó.")
+        elif _peor5 == "esperando":
+            p5 = ("esperando", f"{_n_ok5} de {n_sub} con ruta",
+                  f"Esperando que {courier} las planifique. Todavía dentro de lo normal.")
+        else:
+            p5 = ("ok", f"{_n_ok5} de {n_sub} con ruta",
+                  f"{courier} ya las metió en ruta.")
+
+    # ── PASO 6 · Entregada al cliente ───────────────────────────────────
+    n_entregados = sum(1 for i in items if (i.get("estado_entrega") or "") == "Entregado")
+    n_problema = sum(1 for i in items
+                     if (i.get("estado_entrega") or "") in ("Problema", "Entrega fallida"))
+    if total == 0:
+        p6 = ("pendiente", "—", "Primero agrega facturas.")
+    elif n_problema:
+        p6 = ("trabado", f"{n_problema} con problema",
+              f"{n_problema} entrega(s) fallaron o tienen un problema reportado.")
+    elif n_entregados == total:
+        p6 = ("ok", f"{total} de {total} entregadas",
+              "Manifiesto completo: todos los pedidos llegaron al cliente.")
+    elif n_entregados:
+        p6 = ("esperando", f"{n_entregados} de {total} entregadas",
+              f"Van {n_entregados} de {total}.")
+    else:
+        p6 = ("pendiente", "Sin entregas aún",
+              "Ninguna entrega confirmada todavía.")
+
+    _defs = [
+        (1, "carga",        "Carga lista en bodega",
+         "Las facturas que van en este despacho, con sus bultos contados.", p1),
+        (2, "courier",      "Transportista y fecha",
+         "A quién le entregas la carga y con qué fecha aparece en su tablero.", p2),
+        (3, "datos",        "Datos de entrega completos",
+         "Dirección, comuna y un teléfono. Sin eso el courier no puede rutear.", p3),
+        (4, "subida",       "Subida al courier",
+         "Crea la visita de cada factura en la cuenta del courier.", p4),
+        (5, "planificada",  "El courier la planificó",
+         "Este paso NO lo hace ILUS. Lo hace el despachador del courier cuando "
+         "mete la visita en la ruta de un chofer. Hasta que eso pase, la carga "
+         "no sale de bodega.", p5),
+        (6, "entregada",    "Entregada al cliente",
+         "El chofer marcó la entrega y quedó la firma o la foto.", p6),
+    ]
+    pasos = [{"n": n, "clave": clave, "titulo": tit, "subtitulo": sub,
+              "estado": est[0], "badge": est[1], "detalle": est[2]}
+             for (n, clave, tit, sub, est) in _defs]
+
+    # ── Estado por pedido ───────────────────────────────────────────────
+    pedidos = []
+    for it in items:
+        iid = it["item_id"]
+        _sub_ok = bool((it.get("simpliroute_visit_id") or "").strip())
+        _err = (it.get("simpliroute_error") or "").strip()
+        _ee = (it.get("estado_entrega") or "")
+        _falta_dir = (not (it.get("direccion") or "").strip()
+                      or not (it.get("comuna") or "").strip())
+
+        e1 = "ok" if it.get("n_bultos") else "esperando"
+        e2 = p2[0]
+        e3 = "trabado" if _falta_dir else ("esperando" if not (it.get("telefono") or "").strip() else "ok")
+        if _err:
+            e4 = "trabado"
+        elif _sub_ok:
+            e4 = "ok"
+        else:
+            e4 = "pendiente"
+        v5 = por_item_p5.get(iid)
+        e5 = v5["estado"] if v5 else ("pendiente" if not _sub_ok else "sin_comprobar")
+        if _ee == "Entregado":
+            e6 = "ok"
+        elif _ee in ("Problema", "Entrega fallida"):
+            e6 = "trabado"
+        elif _ee in ("En ruta", "Entregado a transporte"):
+            e6 = "esperando"
+        else:
+            e6 = "pendiente"
+
+        _mapa = {1: e1, 2: e2, 3: e3, 4: e4, 5: e5, 6: e6}
+        # El paso ACTUAL es el primero que no está ok; si todos ok, es el 6.
+        _actual = next((k for k in range(1, 7) if _mapa[k] != "ok"), 6)
+        _estado_pedido = _dsp_peor(list(_mapa.values()))
+
+        if _err:
+            titular = "No se pudo subir"
+            detalle = _err[:300]
+        elif v5 and v5["estado"] == "trabado":
+            _d = v5.get("dias_vencida") or 0
+            titular = f"Esperando a {courier}" + (f" · {_d} día(s)" if _d else "")
+            detalle = ("La visita está creada pero nadie la metió en una ruta"
+                       + (f", y su fecha ({v5['planned_date_label']}) ya pasó."
+                          if v5.get("planned_date_label") and _d else "."))
+        elif v5 and v5["estado"] == "sin_comprobar":
+            titular = "Sin comprobar"
+            detalle = f"No pudimos preguntarle a {courier} por esta visita."
+        elif _falta_dir:
+            titular = "Falta la dirección"
+            detalle = "Sin dirección o comuna, esta factura no se puede subir."
+        elif _ee == "Entregado":
+            titular = "Entregada"
+            detalle = "El cliente ya la recibió."
+        elif _sub_ok:
+            titular = "Subida, esperando ruta"
+            detalle = f"La visita existe en {courier}. Falta que la planifiquen."
+        else:
+            titular = "Lista para subir"
+            detalle = "Todavía no se crea la visita en el courier."
+
+        pedidos.append({
+            "item_id": iid,
+            "commitment_id": it.get("commitment_id"),
+            "doc": f"{it.get('tido') or ''} {it.get('nudo') or ''}".strip(),
+            "cliente": it.get("cliente_nombre") or "—",
+            "comuna": it.get("comuna") or "—",
+            "n_bultos": int(it.get("n_bultos") or 1),
+            "paso_actual": _actual,
+            "estado": _estado_pedido,
+            "pasos": {str(k): v for k, v in _mapa.items()},
+            "titular": titular,
+            "detalle": detalle,
+            "visita": v5,
+        })
+
+    resumen = {
+        "ok":            sum(1 for p in pedidos if p["estado"] == "ok"),
+        "esperando":     sum(1 for p in pedidos if p["estado"] in ("esperando", "ahora")),
+        "trabados":      sum(1 for p in pedidos if p["estado"] == "trabado"),
+        "sin_comprobar": sum(1 for p in pedidos if p["estado"] == "sin_comprobar"),
+        "pendientes":    sum(1 for p in pedidos if p["estado"] == "pendiente"),
+    }
+    _peor_global = _dsp_peor([p["estado"] for p in pedidos]) if pedidos else "pendiente"
+    _peor_paso = next((p["n"] for p in pasos if p["estado"] == _peor_global), None)
+
+    # El veredicto NUNCA es verde por "se crearon N visitas sin errores".
+    if resumen["trabados"]:
+        _nom = next((p["titulo"] for p in pasos if p["n"] == _peor_paso), "")
+        veredicto = {
+            "estado": "trabado",
+            "texto": f"{resumen['trabados']} de {total} pedidos están trabados"
+                     + (f" en el paso {_peor_paso} — {_nom}." if _peor_paso else "."),
+        }
+    elif resumen["sin_comprobar"]:
+        veredicto = {
+            "estado": "sin_comprobar",
+            "texto": f"No pudimos comprobar {resumen['sin_comprobar']} de {total} "
+                     f"pedidos. No sabemos si {courier} los tomó.",
+        }
+    elif resumen["esperando"]:
+        veredicto = {
+            "estado": "esperando",
+            "texto": f"{resumen['esperando']} de {total} pedidos están esperando "
+                     f"que {courier} los planifique.",
+        }
+    elif total and n_entregados == total:
+        veredicto = {"estado": "ok",
+                     "texto": f"Manifiesto completo: los {total} pedidos llegaron al cliente."}
+    elif total and resumen["ok"] == total:
+        veredicto = {"estado": "ok",
+                     "texto": f"Los {total} pedidos ya tienen chofer asignado en {courier}."}
+    else:
+        veredicto = {"estado": "pendiente",
+                     "texto": "Todavía no arranca el despacho de este manifiesto."}
+
+    return jsonify({
+        "ok": True,
+        "live": live,
+        "hoy": hoy.isoformat(),
+        "hoy_label": hoy.strftime("%d/%m/%Y"),
+        "hora_chile": ahora.strftime("%H:%M"),
+        "corte_pasado": corte_pasado,
+        "courier": {
+            "nombre": courier or "—",
+            "integra": bool(integra),
+            "token_ok": bool(token),
+            "telefono": (fila_courier.get("telefono") or "").strip() or None,
+            "contacto": (fila_courier.get("contacto") or "").strip() or None,
+            "email": (fila_courier.get("email") or "").strip() or None,
+        },
+        "manifiesto": {
+            "id": mid,
+            "correlativo": man.get("correlativo") or f"#{mid}",
+            "fecha": fecha_man.isoformat() if fecha_man else None,
+            "fecha_label": fecha_man_label,
+            "n_items": total,
+            "n_bultos": n_bultos_total,
+        },
+        "pasos": pasos,
+        "pedidos": pedidos,
+        "resumen": resumen,
+        "veredicto": veredicto,
+        "sin_respuesta": sin_respuesta,
+    })
+
+
 # ── MANIFIESTOS: asignar compromiso desde drag-drop ──────────────────────────
 
 @app.route("/transporte/api/manifiestos/asignar", methods=["POST"])

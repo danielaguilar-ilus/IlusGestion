@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Despacho {{ manifiesto.correlativo }} — ILUS Fitness{% endblock %}
+{% block head_extra %}
+<link href="{{ url_for('static', filename='transporte_despacho.css') }}" rel="stylesheet">
+{# Design System compartido de TRANSPORTE (.trx-hero, .trx-crumb, .trx-back).
+   Va DESPUES del css propio para que el estandar gane donde ambos definen lo mismo. #}
+<link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="dsp-page" data-mid="{{ manifiesto.id }}">
+
+  {# ── Cabecera: mismo patron .trx-hero que manifiestos.html / couriers.html ── #}
+  <div class="trx-hero">
+    <div class="trx-hero-main">
+      <a href="{{ url_for('tr_manifiesto_detalle', mid=manifiesto.id) }}" class="trx-back"
+         title="Volver al manifiesto" aria-label="Volver al manifiesto">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <div class="trx-hero-ico"><i class="bi bi-truck"></i></div>
+      <div>
+        <div class="trx-crumb">
+          <a href="{{ url_for('transporte_index') }}">Transporte</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_manifiestos') }}">Manifiestos</a>
+          <span class="sep">›</span>
+          <a href="{{ url_for('tr_manifiesto_detalle', mid=manifiesto.id) }}">{{ manifiesto.correlativo }}</a>
+          <span class="sep">›</span>
+          <span>Despacho</span>
+        </div>
+        <h1>Despacho al courier</h1>
+        <div class="trx-hero-sub" id="dspSubtitulo">Cargando…</div>
+      </div>
+    </div>
+    <div class="trx-hero-actions">
+      <button type="button" class="dsp-btn dsp-btn-ghost" id="dspBtnComprobar">
+        <i class="bi bi-arrow-clockwise"></i> Comprobar ahora
+      </button>
+    </div>
+  </div>
+
+  {# ── Franja de semaforo del manifiesto completo ── #}
+  <section class="dsp-card dsp-sem" id="dspSem" aria-live="polite">
+    <div class="dsp-sem-counts" id="dspCounts">
+      <span class="dsp-count is-ok"><i class="bi bi-check-circle-fill"></i> <b>—</b> listas</span>
+      <span class="dsp-count is-wait"><i class="bi bi-clock-fill"></i> <b>—</b> esperando</span>
+      <span class="dsp-count is-fail"><i class="bi bi-x-circle-fill"></i> <b>—</b> trabadas</span>
+      <span class="dsp-count is-unknown"><i class="bi bi-question-circle-fill"></i> <b>—</b> sin comprobar</span>
+    </div>
+    <div class="dsp-bar" id="dspBar" role="img" aria-label="Avance del despacho"></div>
+    <p class="dsp-verdict" id="dspVerdict">Cargando el estado del despacho…</p>
+  </section>
+
+  {# ── Riel de los 6 pasos ── #}
+  <section class="dsp-card">
+    <h2 class="dsp-h2"><i class="bi bi-list-ol"></i> Los 6 pasos del despacho</h2>
+    <div class="dsp-rail" id="dspRail"></div>
+    <div class="dsp-steps" id="dspSteps"></div>
+  </section>
+
+  {# ── Lista de pedidos ── #}
+  <section class="dsp-card">
+    <div class="dsp-listhead">
+      <h2 class="dsp-h2"><i class="bi bi-box-seam"></i> Pedido por pedido</h2>
+      <div class="dsp-chips" id="dspChips" role="group" aria-label="Filtrar pedidos"></div>
+    </div>
+    <div class="dsp-pedidos" id="dspPedidos">
+      <p class="dsp-empty">Cargando…</p>
+    </div>
+  </section>
+
+</div>
+
+<script src="{{ url_for('static', filename='transporte_despacho.js') }}"></script>
+{% endblock %}
