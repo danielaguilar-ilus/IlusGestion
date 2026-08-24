@@ -17042,7 +17042,7 @@ def cubicador_export_excel():
     # ── Fila de encabezados de columna ───────────────────────────────
     hdr_row = row_offset
     cols = ["SKU", "Descripción ERP", "Doc.", "Cant", "Bultos",
-            "Kg/u", "PV/u", "Vol cm³/u", "Predom/u", "Total Predom", "Tipo"]
+            "Kg/u", "PV/u", "Vol m³/u", "Predom/u", "Total Predom", "Tipo"]
     for ci, h in enumerate(cols, 1):
         _hdr_cell(ws.cell(row=hdr_row, column=ci), h)
     ws.row_dimensions[hdr_row].height = 20
@@ -17057,6 +17057,15 @@ def cubicador_export_excel():
             f"{headers[0].get('tido','')} {headers[0].get('nudo_display', headers[0].get('nudo',''))}"
             if headers else ""
         )
+        # 2026-08-24 (Daniel, comparando esta misma fila contra la pantalla):
+        # el volumen se guarda internamente en cm³ (vol_u/vol_tot), igual que
+        # siempre -- lo que cambia acá es SOLO cómo se escribe al Excel. La
+        # web ya convierte a m³ antes de mostrar (fm3_filter, app.py:1201:
+        # cm³/1_000_000, 3 decimales). El Excel escribía el cm³ crudo bajo el
+        # encabezado "Vol cm³/u": mismo dato, unidad distinta, y confundía al
+        # comparar ambos lado a lado. Se aplica la MISMA conversión acá para
+        # que Excel y pantalla digan siempre el mismo número.
+        vol_u_m3 = (l["vol_u"] / 1_000_000.0) if l["tiene_bultos"] else None
         vals = [
             l["sku"],
             l["descripcion_erp"],
@@ -17065,7 +17074,7 @@ def cubicador_export_excel():
             l["total_bultos"] if l["tiene_ficha"] else "s/f",
             l["peso_kg_u"]  if l["tiene_bultos"] else None,
             l["peso_vol_u"] if l["tiene_bultos"] else None,
-            l["vol_u"]      if l["tiene_bultos"] else None,
+            vol_u_m3,
             l["pred_u"]     if l["tiene_bultos"] else None,
             l["pred_tot"]   if l["tiene_bultos"] else None,
             ("kg" if l["peso_kg_u"] >= l["peso_vol_u"] else "pv") if l["tiene_bultos"] else None,
@@ -17078,8 +17087,13 @@ def cubicador_export_excel():
                 horizontal="center" if ci in (3, 4, 5, 11) else ("right" if ci >= 6 else "left"),
                 vertical="center",
             )
-            if ci in (6, 7, 8, 9, 10) and val is not None:
+            if ci in (6, 7, 9, 10) and val is not None:
                 cell.number_format = "#,##0.0"
+            elif ci == 8 and val is not None:
+                # m³ es un número mucho más chico que el cm³ que reemplaza
+                # (0,212 vs 211.992) -- con 1 decimal redondearía a 0,2 y se
+                # perdería la precisión. 3 decimales, igual que fm3_filter.
+                cell.number_format = "#,##0.000"
 
     # ── Fila de totales ──────────────────────────────────────────────
     tr = row_offset + len(lineas)
@@ -17090,9 +17104,18 @@ def cubicador_export_excel():
 
     totales = {
         4: int(sum(l["cantidad"]     for l in lineas)),
+        # 2026-08-24 (Daniel: "no debe haber diferencias entre el Excel y la
+        # pantalla"): faltaba el total de Bultos -- la columna 5 nunca
+        # estuvo en este dict, así que la fila TOTALES la dejaba en blanco
+        # mientras la pantalla sí mostraba 171 (suma sin condición, igual
+        # que hace el template en total_bultos -- ver
+        # templates/cubicador/index.html:418). Mismo criterio acá.
+        5: int(sum(l["total_bultos"] for l in lineas)),
         6: sum(l["peso_kg_tot"]      for l in lineas),
         7: sum(l["peso_vol_tot"]     for l in lineas),
-        8: sum(l["vol_tot"]          for l in lineas),
+        # vol_tot sigue en cm³ en el dato interno; se convierte a m³ SOLO al
+        # escribirlo, igual que en las filas de detalle de arriba.
+        8: sum(l["vol_tot"]          for l in lineas) / 1_000_000.0,
         10: sum(l["pred_tot"]        for l in lineas),
     }
     for ci in range(1, 12):
@@ -17101,8 +17124,10 @@ def cubicador_export_excel():
         if ci in totales:
             cell.value = totales[ci]
             cell.font  = Font(bold=True, color=("CC0000" if ci == 10 else "FFFFFF"), size=9)
-            cell.alignment = Alignment(horizontal="center" if ci == 4 else "right")
-            if ci != 4:
+            cell.alignment = Alignment(horizontal="center" if ci in (4, 5) else "right")
+            if ci == 8:
+                cell.number_format = "#,##0.000"   # mismos 3 decimales que la fila de detalle
+            elif ci not in (4, 5):
                 cell.number_format = "#,##0.0"
 
     # ── Anchos de columna ────────────────────────────────────────────
