@@ -17140,12 +17140,19 @@ def cubicador_export_excel():
     wb.save(buf)
     buf.seek(0)
 
-    fname = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs) + ".xlsx"
+    # 2026-08-24 (Daniel: Juan importa 9 documentos y a él el archivo le baja
+    # sin nombre reconocible -- "Windows le llama archivo"): con 9+ documentos
+    # "cubicador_VD..._VD....xlsx" pasa de 80 caracteres, y el corte fname[:80]
+    # caía DENTRO de ".xlsx", dejando el archivo sin extensión. Se recorta la
+    # lista de documentos, nunca la extensión, para que siempre quede intacta.
+    _ext = ".xlsx"
+    _base = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs)
+    fname = _base[:80 - len(_ext)] + _ext
     return send_file(
         buf,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
-        download_name=fname[:80],
+        download_name=fname,
     )
 
 
@@ -17463,12 +17470,16 @@ tbody tr:nth-child(even){{background:#fafafa}}
         page_format="A4",
         margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
     )
-    fname = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs) + ".pdf"
+    # Mismo criterio que en el Excel: recortar la lista de documentos, nunca
+    # la extensión (ver comentario en cubicador_export_excel más arriba).
+    _ext = ".pdf"
+    _base = "cubicador_" + "_".join(f"{t}{n}" for t, n in docs)
+    fname = _base[:80 - len(_ext)] + _ext
     return send_file(
         _BytesIO(pdf_bytes),
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=fname[:80],
+        download_name=fname,
     )
 
 
