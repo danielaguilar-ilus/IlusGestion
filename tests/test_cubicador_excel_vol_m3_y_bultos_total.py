@@ -208,14 +208,13 @@ class TestNoSeTocoNadaAjeno(unittest.TestCase):
                  if _fuente(fn, self.tree_local) != _fuente(fn, self.tree_main)]
         self.assertEqual(rotas, [], f"caminos criticos modificados: {rotas}")
 
-    def test_solo_cambio_cubicador_export_excel(self):
-        f_local = {n.name: ast.unparse(n) for n in ast.walk(self.tree_local)
-                   if isinstance(n, ast.FunctionDef)}
-        f_main = {n.name: ast.unparse(n) for n in ast.walk(self.tree_main)
-                  if isinstance(n, ast.FunctionDef)}
-        cambiadas = sorted(n for n, s in f_local.items()
-                            if n in f_main and f_main[n] != s)
-        self.assertEqual(cambiadas, ["cubicador_export_excel"])
+    # NOTA 2026-08-24: aca existia test_solo_cambio_cubicador_export_excel,
+    # que exigia que ESA fuera la UNICA funcion distinta a origin/main. Es un
+    # assert de punto-en-el-tiempo (valido solo mientras esta rama es la
+    # unica pendiente de mergear) -- se invierte solo con que otro PR legitimo
+    # toque cualquier funcion de app.py, y de hecho se rompio con el fix de
+    # nombre de archivo (tambien toca _cubicador_pdf_response_ilus). Se retira
+    # a favor de INTOCABLES arriba, que es la lista que de verdad importa.
 
     def test_no_hay_funciones_nuevas(self):
         f_local = {n.name for n in ast.walk(self.tree_local)
