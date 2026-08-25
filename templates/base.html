@@ -713,8 +713,15 @@
          class="sidebar-link{% if request.endpoint == 'repuestos_hub_list' %} active{% endif %}">
         <i class="bi bi-gear-wide-connected"></i><span>Repuestos</span>
       </a>
+      {# 2026-08-25: repstock_etiquetas/repuestos_print_labels (PDF y vista
+         previa de etiquetas de repuestos) sumados acá -- sin esto ninguna
+         de las dos marcaba el link activo, el acordeón no encontraba
+         sección activa, y por defecto restauraba la última abierta en
+         localStorage (Etiquetas, en el caso real de Daniel) -- daba la
+         impresión de que Repuestos estaba "mezclado" con Etiquetas cuando
+         en realidad eran plantillas/rutas totalmente separadas. #}
       <a href="{{ url_for('repuestos_bodega_list') }}"
-         class="sidebar-link{% if request.endpoint == 'repuestos_bodega_list' %} active{% endif %}">
+         class="sidebar-link{% if request.endpoint in ['repuestos_bodega_list', 'repstock_etiquetas', 'repuestos_print_labels'] %} active{% endif %}">
         <i class="bi bi-box-seam"></i><span>Bodega de Repuestos</span>
       </a>
       {% if not is_tecnico %}
