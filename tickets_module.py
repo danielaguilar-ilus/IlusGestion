@@ -4558,7 +4558,8 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Cotización no encontrada"}), 404
         items = mysql_fetchall(
             "SELECT id, erp_kopr AS sku, descripcion AS nombre, cantidad AS qty, clase_producto, "
-            "       precio_manual, precio_unitario, erp_tido AS tido, erp_nudo AS nudo, vaneli_original "
+            "       precio_manual, precio_unitario, erp_tido AS tido, erp_nudo AS nudo, vaneli_original, "
+            "       item_tipo "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
         def _iso(v):
@@ -4614,6 +4615,33 @@ def register_tickets_routes(app, ctx):
             (like, like, like)
         ) or []
         return jsonify({"ok": True, "cotizaciones": [dict(r) for r in rows]})
+
+    @app.route("/tickets/api/catalogo/buscar", methods=["GET"])
+    @_tickets_required
+    def tk_api_catalogo_buscar():
+        """Búsqueda liviana del CATÁLOGO MAESTRO (cat_productos) por SKU o
+        descripción -- 2026-08-25 (Daniel, dictado): "los chicos requieren
+        de ingresar un producto de manera manual... con búsqueda por SKU y
+        Descripción". Distinta de /catalogo/api/erp/bodega-buscar (que
+        busca en el ERP) y de /catalogo/api/productos (paginado, filtrado a
+        productos "trabajados" y gateado a _catalogo_required -- un
+        técnico con solo permisos de Tickets recibiría un 403 ahí). Esta
+        ruta vive en Tickets, gateada por _tickets_required (acepta
+        mantenciones/superadmin Y los flags tk_ver/tk_es_tecnico/
+        tk_es_ejecutivo), y no filtra por "trabajado" -- cualquier producto
+        del catálogo debe aparecer. Solo lectura."""
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "items": []})
+        like = f"%{q}%"
+        rows = mysql_fetchall(
+            "SELECT id, sku, nombre, familia "
+            "FROM cat_productos "
+            "WHERE COALESCE(activo,1)=1 AND (sku LIKE %s OR nombre LIKE %s) "
+            "ORDER BY nombre LIMIT 30",
+            (like, like)
+        ) or []
+        return jsonify({"ok": True, "items": [dict(r) for r in rows]})
 
     @app.route("/tickets/api/cotizaciones/<int:cid>/actualizar", methods=["POST"])
     @_tickets_required
@@ -7550,6 +7578,50 @@ def register_tickets_routes(app, ctx):
                          "seleccion_aplicada": bool(seleccion), "motor": via})
 
     # ─────────────────────────────────────────────────────────────────
+    #  API — agregar equipos a un ticket YA EXISTENTE SIN documento ERP de
+    #  respaldo (2026-08-25, Daniel: "que podamos agregar productos del
+    #  maestro y además... llamar a las cotizaciones del sistema interno").
+    #  Las líneas vienen del Catálogo maestro (cat_productos, sin
+    #  documento asociado) o de una cotización interna (tk_cotizaciones,
+    #  que tampoco es un documento ERP) -- por eso NO pasan por
+    #  _tk_fetch_doc_lineas ni tocan tk_ticket_documentos, a diferencia de
+    #  equipos-desde-documento arriba. documento_garantia queda NULL (no
+    #  hay documento real detrás -- si más adelante se necesita, se
+    #  agrega ahí, no acá).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/tickets/<int:tid>/equipos-manual", methods=["POST"])
+    @_tickets_required
+    def tk_api_equipos_manual(tid):
+        if not mysql_fetchone("SELECT id FROM tk_tickets WHERE id=%s", (tid,)):
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        d = request.get_json(silent=True) or {}
+        lineas = d.get("lineas") or []
+        if not isinstance(lineas, list) or not lineas:
+            return jsonify({"ok": False, "error": "Sin líneas para agregar"}), 400
+
+        agregados = 0
+        for ln in lineas[:100]:
+            sku = str((ln or {}).get("sku") or "").strip()[:100]
+            nombre = str((ln or {}).get("nombre") or "").strip()[:300]
+            if not (sku or nombre):
+                continue
+            try:
+                cant = max(1, int(round(float((ln or {}).get("cantidad") or 1))))
+            except Exception:
+                cant = 1
+            try:
+                mysql_execute(
+                    "INSERT IGNORE INTO tk_ticket_equipos (ticket_id, erp_kopr, nombre, sku, cantidad) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (tid, sku or None, nombre or "Equipo", sku or None, cant))
+                agregados += 1
+            except Exception as _e:
+                print(f"[tk_equipos_manual] equipo no insertado tid={tid} sku={sku}: {_e}", flush=True)
+
+        _tk_log(tid, "otro", f"{agregados} equipo(s) agregado(s) manualmente (catálogo/cotización interna)")
+        return jsonify({"ok": True, "agregados": agregados})
+
+    # ─────────────────────────────────────────────────────────────────
     #  API — adjuntos (subida a GCS via /f/<key>)
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/tickets/<int:tid>/adjuntos", methods=["POST"])
@@ -7707,6 +7779,26 @@ def register_tickets_routes(app, ctx):
                 # formato "TIDO-NUDO" que el resto de los flujos ERP).
                 ln["_doc_garantia"] = f"{tido}-{nudo}"[:150]
                 todas_lineas.append(ln)
+
+        # 2026-08-25 (Daniel: "agregar productos del maestro y... llamar a
+        # las cotizaciones del sistema interno"): líneas elegidas en el
+        # modal desde el Catálogo maestro o una cotización interna, SIN
+        # documento ERP de respaldo -- se suman igual al ticket, solo que
+        # sin documento_garantia (no hay documento real detrás). El ticket
+        # sigue necesitando al menos UN documento real para tener cliente/
+        # rut/dirección (chequeo de primero is None más abajo, sin cambios).
+        lineas_manual = d.get("lineas_manual") or []
+        if isinstance(lineas_manual, list):
+            for ln in lineas_manual[:100]:
+                sku = str((ln or {}).get("sku") or "").strip()[:100]
+                nombre = str((ln or {}).get("nombre") or "").strip()[:300]
+                if not (sku or nombre):
+                    continue
+                try:
+                    cant = max(1, int(round(float((ln or {}).get("cantidad") or 1))))
+                except Exception:
+                    cant = 1
+                todas_lineas.append({"sku": sku, "nombre": nombre, "cantidad": cant, "_doc_garantia": None})
 
         if primero is None:
             return jsonify({"ok": False, "error": "Ningún documento fue encontrado en el ERP"}), 200

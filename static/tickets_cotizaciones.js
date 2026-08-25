@@ -944,8 +944,15 @@ function cotWizFuenteDocumento(){
   if (!btn) return;
   btn.addEventListener('click', function(){
     if (btn.disabled) return;
+    // 2026-08-25: se agrega tabs explícito (antes no tenía) para que las
+    // pestañas nuevas "Catálogo"/"Cotización interna" (agregadas al modal
+    // para Tickets) no aparezcan acá -- este botón es específicamente
+    // "asignar DESDE UN DOCUMENTO", buscar dentro de otra cotización
+    // mientras se arma esta no tiene sentido. Mismo criterio que el resto
+    // de los llamados de este archivo, que ya scopeaban tabs.
     tkaOpen({
       mode: 'seleccionar',
+      tabs: ['doc', 'cli'],
       onSeleccionar: async function(items, header){
         await _cotWizAsignarDesdeDocumento(items, header);
       }

@@ -554,8 +554,15 @@ function _repatRenderProveedor(proveedorId){
 const btnRepBuscarErp = document.getElementById('btnRepBuscarErp');
 if (btnRepBuscarErp){
   btnRepBuscarErp.addEventListener('click', function(){
+    // 2026-08-25: tabs explícito (antes no tenía) para que las pestañas
+    // nuevas "Catálogo"/"Cotización interna" (agregadas al modal para
+    // Tickets, sin documento ERP detrás) no aparezcan acá -- este flujo
+    // es específicamente "buscar EN EL ERP" para crear un repuesto vía
+    // /mantenciones/api/repuestos/desde-erp, que espera datos reales del
+    // ERP (tido/nudo) por cada ítem.
     tkaOpen({
       mode: 'seleccionar',
+      tabs: ['doc', 'cli'],
       onSeleccionar: async function(items){
         if (!items || !items.length) return;
         let d;

@@ -618,8 +618,11 @@
     <button type="button" class="tka-tab" role="tab" id="tkaTabDeclarado" onclick="tkaSetTab('declarado')">
       <i class="bi bi-clipboard-check"></i><span>Declarado en el ticket</span>
     </button>
-    <button type="button" class="tka-tab tka-tab-disabled" role="tab" id="tkaTabCotizacion" onclick="tkaSetTab('cotizacion')" title="En construcción">
+    <button type="button" class="tka-tab" role="tab" id="tkaTabCotizacion" onclick="tkaSetTab('cotizacion')">
       <i class="bi bi-calculator"></i><span>Cotización interna</span>
+    </button>
+    <button type="button" class="tka-tab" role="tab" id="tkaTabCatalogo" onclick="tkaSetTab('catalogo')">
+      <i class="bi bi-tag"></i><span>Catálogo</span>
     </button>
     <button type="button" class="tka-tab" role="tab" id="tkaTabBodega" onclick="tkaSetTab('bodega')" style="display:none">
       <i class="bi bi-boxes"></i><span>Productos</span>
@@ -693,10 +696,48 @@
       </div>
     </div>
     <div id="tkaPanelCotizacion" class="tka-panel" style="display:none">
-      <div class="tka-empty">
-        <i class="bi bi-cone-striped tka-empty-icon"></i>
-        <h6>Cotización interna — en construcción</h6>
-        <p>El módulo de cotizaciones internas (tk_cotizaciones) está en construcción. Por ahora esta fuente no está disponible — vuelve pronto.</p>
+      <div class="tka-mod-hint">
+        <i class="bi bi-calculator"></i>
+        <div>Busca una <strong>cotización interna</strong> por número, empresa o RUT. Elige una para ver y seleccionar sus productos.</div>
+      </div>
+      <div class="tka-search-row">
+        <input id="tkaCotizacionQ" type="search" placeholder="N° de cotización, empresa o RUT… (mín. 2 caracteres)" autocomplete="off" oninput="_tkaCotizacionOnInput()">
+        <button type="button" class="tka-btn-search" id="tkaCotizacionBtn" onclick="tkaBuscarCotizaciones()">
+          <i class="bi bi-search"></i><span>Buscar</span>
+        </button>
+      </div>
+      <div id="tkaCotizacionListaResult">
+        <div class="tka-empty">
+          <i class="bi bi-calculator tka-empty-icon"></i>
+          <h6>Buscar cotización interna</h6>
+          <p>Escribe al menos 2 caracteres del número, empresa o RUT.</p>
+        </div>
+      </div>
+      <div id="tkaCotizacionItemsWrap" style="display:none">
+        <button type="button" class="tka-btn-search" style="margin-bottom:12px" onclick="_tkaCotizacionVolverLista()">
+          <i class="bi bi-arrow-left"></i><span>Volver a la búsqueda</span>
+        </button>
+        <div id="tkaCotizacionItemsResult"></div>
+      </div>
+    </div>
+    <div id="tkaPanelCatalogo" class="tka-panel" style="display:none">
+      <div class="tka-mod-hint">
+        <i class="bi bi-tag"></i>
+        <div>Busca en el <strong>Catálogo de Productos</strong> (el maestro) por SKU o nombre, para agregar un producto que no viene en ningún documento.</div>
+      </div>
+      <div class="tka-search-row">
+        <input id="tkaCatalogoQ" type="search" placeholder="SKU o nombre… (mín. 2 caracteres)" autocomplete="off" oninput="_tkaCatalogoOnInput()">
+        <button type="button" class="tka-btn-search" id="tkaCatalogoBtn" onclick="tkaBuscarPorCatalogo()">
+          <i class="bi bi-search"></i><span>Buscar</span>
+        </button>
+      </div>
+      <div id="tkaCatalogoSeleccion" class="tka-bodega-sel" style="display:none"></div>
+      <div id="tkaCatalogoResult">
+        <div class="tka-empty">
+          <i class="bi bi-tag tka-empty-icon"></i>
+          <h6>Buscar producto en el Catálogo</h6>
+          <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
+        </div>
       </div>
     </div>
     <div id="tkaPanelBodega" class="tka-panel" style="display:none">
@@ -794,14 +835,26 @@ const _TKA = {
   selDoc: new Map(),
   selCli: new Map(),
   selBodega: new Map(),
+  // 2026-08-25 (Daniel: "agregar productos del maestro y... llamar a las
+  // cotizaciones del sistema interno"): selCatalogo espeja selBodega
+  // (mismo patrón: acumula entre búsquedas, key=sku); selCotizacion
+  // acumula ítems elegidos de UNA O VARIAS cotizaciones, key="cid:itemId".
+  selCatalogo: new Map(),
+  selCotizacion: new Map(),
   loaded: { docHeader: null, cliQuery: null },
   ctx: { mode: 'crear', ticketId: null, onDone: null, onSeleccionar: null, onSeleccionarEntidad: null, tabs: null },
   _liveTimer: null,
   _bodegaDebounce: null,
   _ticketDebounce: null,
   _fichaDebounce: null,
+  _catalogoDebounce: null,
+  _cotizacionDebounce: null,
   _ticketItems: [],
   _fichaItems: [],
+  _catalogoItems: [],
+  _cotizacionLista: [],
+  _cotizacionItems: [],
+  _cotizacionActual: null,
   _ticketLoaded: false,
   _fichaLoaded: false,
   ultimoMotivoSinSaldo: '',
@@ -880,6 +933,8 @@ function _tkaResetEstado(){
   _TKA.selDoc.clear();
   _TKA.selCli.clear();
   _TKA.selBodega.clear();
+  _TKA.selCatalogo.clear();
+  _TKA.selCotizacion.clear();
   _TKA.loaded.docHeader = null;
   _TKA.loaded.cliQuery = null;
   _TKA.tab = 'doc';
@@ -897,6 +952,10 @@ function _tkaResetEstado(){
   if (inpTicket) inpTicket.value = '';
   const inpFicha = document.getElementById('tkaFichaQ');
   if (inpFicha) inpFicha.value = '';
+  const inpCatalogo = document.getElementById('tkaCatalogoQ');
+  if (inpCatalogo) inpCatalogo.value = '';
+  const inpCotizacion = document.getElementById('tkaCotizacionQ');
+  if (inpCotizacion) inpCotizacion.value = '';
 
   const docRes = document.getElementById('tkaDocResult');
   if (docRes){
@@ -924,9 +983,35 @@ function _tkaResetEstado(){
   }
   const bodegaSel = document.getElementById('tkaBodegaSeleccion');
   if (bodegaSel){ bodegaSel.style.display = 'none'; bodegaSel.innerHTML = ''; }
+  const catalogoRes = document.getElementById('tkaCatalogoResult');
+  if (catalogoRes){
+    catalogoRes.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-tag tka-empty-icon"></i>
+      <h6>Buscar producto en el Catálogo</h6>
+      <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
+    </div>`;
+  }
+  const catalogoSel = document.getElementById('tkaCatalogoSeleccion');
+  if (catalogoSel){ catalogoSel.style.display = 'none'; catalogoSel.innerHTML = ''; }
+  const cotizacionListaRes = document.getElementById('tkaCotizacionListaResult');
+  if (cotizacionListaRes){
+    cotizacionListaRes.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-calculator tka-empty-icon"></i>
+      <h6>Buscar cotización interna</h6>
+      <p>Escribe al menos 2 caracteres del número, empresa o RUT.</p>
+    </div>`;
+  }
+  const cotizacionItemsWrap = document.getElementById('tkaCotizacionItemsWrap');
+  if (cotizacionItemsWrap) cotizacionItemsWrap.style.display = 'none';
+  const cotizacionListaWrap = document.getElementById('tkaCotizacionListaResult');
+  if (cotizacionListaWrap) cotizacionListaWrap.style.display = '';
   _TKA._bodegaItems = [];
   _TKA._ticketItems = [];
   _TKA._fichaItems = [];
+  _TKA._catalogoItems = [];
+  _TKA._cotizacionLista = [];
+  _TKA._cotizacionItems = [];
+  _TKA._cotizacionActual = null;
   _TKA._ticketLoaded = false;
   _TKA._fichaLoaded = false;
 
@@ -951,6 +1036,7 @@ function _tkaResetEstado(){
   const tabCli = document.getElementById('tkaTabCli');
   const tabDeclarado = document.getElementById('tkaTabDeclarado');
   const tabCotizacion = document.getElementById('tkaTabCotizacion');
+  const tabCatalogo = document.getElementById('tkaTabCatalogo');
   const tabBodega = document.getElementById('tkaTabBodega');
   const tabTicket = document.getElementById('tkaTabTicket');
   const tabFicha = document.getElementById('tkaTabFicha');
@@ -958,6 +1044,7 @@ function _tkaResetEstado(){
   const panelCli = document.getElementById('tkaPanelCli');
   const panelDeclarado = document.getElementById('tkaPanelDeclarado');
   const panelCotizacion = document.getElementById('tkaPanelCotizacion');
+  const panelCatalogo = document.getElementById('tkaPanelCatalogo');
   const panelBodega = document.getElementById('tkaPanelBodega');
   const panelTicket = document.getElementById('tkaPanelTicket');
   const panelFicha = document.getElementById('tkaPanelFicha');
@@ -965,6 +1052,7 @@ function _tkaResetEstado(){
   if (tabCli) tabCli.classList.remove('is-active');
   if (tabDeclarado) tabDeclarado.classList.remove('is-active');
   if (tabCotizacion) tabCotizacion.classList.remove('is-active');
+  if (tabCatalogo) tabCatalogo.classList.remove('is-active');
   if (tabBodega) tabBodega.classList.remove('is-active');
   if (tabTicket) tabTicket.classList.remove('is-active');
   if (tabFicha) tabFicha.classList.remove('is-active');
@@ -972,6 +1060,7 @@ function _tkaResetEstado(){
   if (panelCli) panelCli.style.display = 'none';
   if (panelDeclarado) panelDeclarado.style.display = 'none';
   if (panelCotizacion) panelCotizacion.style.display = 'none';
+  if (panelCatalogo) panelCatalogo.style.display = 'none';
   if (panelBodega) panelBodega.style.display = 'none';
   if (panelTicket) panelTicket.style.display = 'none';
   if (panelFicha) panelFicha.style.display = 'none';
@@ -980,6 +1069,8 @@ function _tkaResetEstado(){
   if (_TKA._bodegaDebounce){ clearTimeout(_TKA._bodegaDebounce); _TKA._bodegaDebounce = null; }
   if (_TKA._ticketDebounce){ clearTimeout(_TKA._ticketDebounce); _TKA._ticketDebounce = null; }
   if (_TKA._fichaDebounce){ clearTimeout(_TKA._fichaDebounce); _TKA._fichaDebounce = null; }
+  if (_TKA._catalogoDebounce){ clearTimeout(_TKA._catalogoDebounce); _TKA._catalogoDebounce = null; }
+  if (_TKA._cotizacionDebounce){ clearTimeout(_TKA._cotizacionDebounce); _TKA._cotizacionDebounce = null; }
   try{ tkaUpdateCounter(); }catch(_){}
 }
 
@@ -1002,7 +1093,7 @@ function _tkaResetEstado(){
 function _tkaApplyTabsFilter(){
   const map = {
     doc: 'tkaTabDoc', cli: 'tkaTabCli', declarado: 'tkaTabDeclarado',
-    cotizacion: 'tkaTabCotizacion', bodega: 'tkaTabBodega',
+    cotizacion: 'tkaTabCotizacion', catalogo: 'tkaTabCatalogo', bodega: 'tkaTabBodega',
     ticket: 'tkaTabTicket', ficha: 'tkaTabFicha',
   };
   const tabs = _TKA.ctx.tabs;
@@ -1153,6 +1244,7 @@ function tkaSetTab(tab){
   document.getElementById('tkaTabCli').classList.toggle('is-active', tab === 'cli');
   document.getElementById('tkaTabDeclarado').classList.toggle('is-active', tab === 'declarado');
   document.getElementById('tkaTabCotizacion').classList.toggle('is-active', tab === 'cotizacion');
+  document.getElementById('tkaTabCatalogo').classList.toggle('is-active', tab === 'catalogo');
   document.getElementById('tkaTabBodega').classList.toggle('is-active', tab === 'bodega');
   document.getElementById('tkaTabTicket').classList.toggle('is-active', tab === 'ticket');
   document.getElementById('tkaTabFicha').classList.toggle('is-active', tab === 'ficha');
@@ -1160,6 +1252,7 @@ function tkaSetTab(tab){
   document.getElementById('tkaPanelCli').style.display = tab === 'cli' ? '' : 'none';
   document.getElementById('tkaPanelDeclarado').style.display = tab === 'declarado' ? '' : 'none';
   document.getElementById('tkaPanelCotizacion').style.display = tab === 'cotizacion' ? '' : 'none';
+  document.getElementById('tkaPanelCatalogo').style.display = tab === 'catalogo' ? '' : 'none';
   document.getElementById('tkaPanelBodega').style.display = tab === 'bodega' ? '' : 'none';
   document.getElementById('tkaPanelTicket').style.display = tab === 'ticket' ? '' : 'none';
   document.getElementById('tkaPanelFicha').style.display = tab === 'ficha' ? '' : 'none';
@@ -2082,6 +2175,272 @@ function _tkaQuitarBodegaSel(sku){
 }
 
 // ──────────────────────────────────────────────────────────────
+// TAB "CATÁLOGO" (2026-08-25, Daniel: "los chicos requieren de ingresar
+// un producto de manera manual... búsqueda por SKU y Descripción... del
+// maestro"). Clon 1:1 del patrón de Bodega 02 arriba (mismo debounce,
+// mismo Map acumulativo keyed por sku, misma franja de seleccionados) --
+// solo cambia el endpoint: cat_productos (el catálogo maestro) en vez
+// del ERP. Sin stock/semáforo porque el catálogo maestro no lleva stock.
+// ──────────────────────────────────────────────────────────────
+function _tkaCatalogoOnInput(){
+  if (_TKA._catalogoDebounce) clearTimeout(_TKA._catalogoDebounce);
+  _TKA._catalogoDebounce = setTimeout(() => tkaBuscarPorCatalogo(), 300);
+}
+let _tkaCatalogoReqToken = 0;
+async function tkaBuscarPorCatalogo(){
+  const inp = document.getElementById('tkaCatalogoQ');
+  const q = (inp && inp.value || '').trim();
+  const cont = document.getElementById('tkaCatalogoResult');
+  if (!cont) return;
+  const myToken = ++_tkaCatalogoReqToken;
+  if (q.length < 2){
+    cont.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-tag tka-empty-icon"></i>
+      <h6>Buscar producto en el Catálogo</h6>
+      <p>Escribe al menos 2 caracteres del SKU o nombre del producto.</p>
+    </div>`;
+    return;
+  }
+  cont.innerHTML = _tkaSkel();
+  try{
+    const d = await _tkaFetchJsonSafe(`/tickets/api/catalogo/buscar?q=${encodeURIComponent(q)}`);
+    if (myToken !== _tkaCatalogoReqToken) return;
+    if (!d.ok){
+      cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(d.error || 'Error al buscar')}</div>`;
+      return;
+    }
+    const items = d.items || [];
+    if (!items.length){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-search tka-empty-icon"></i>
+        <h6>Sin resultados</h6>
+        <p>No se encontraron productos en el Catálogo para "${_tkaEsc(q)}".</p>
+      </div>`;
+      return;
+    }
+    let html = '<div class="tka-results">';
+    items.forEach((it, idx) => {
+      const key = it.sku || ('cat-' + it.id);
+      const isSel = _TKA.selCatalogo.has(key);
+      html += `<div class="tka-bod-card${isSel ? ' is-selected' : ''}" data-catalogo-idx="${idx}" onclick="tkaToggleLineaCatalogo(${idx})" style="animation-delay:${Math.min(idx * 30, 300)}ms">
+        <div class="tka-chk${isSel ? ' is-checked' : ''}"><i class="bi bi-check-lg"></i></div>
+        <div class="tka-bod-thumb"><i class="bi bi-tag-fill"></i></div>
+        <div class="tka-bod-info">
+          <div class="tka-bod-nombre">${_tkaEsc(it.nombre)}</div>
+          <div class="tka-bod-meta"><span class="tka-bod-sku">${_tkaEsc(it.sku || 's/SKU')}</span>${it.familia ? `<span>${_tkaEsc(it.familia)}</span>` : ''}</div>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+    if (myToken !== _tkaCatalogoReqToken) return;
+    cont.innerHTML = html;
+    _TKA._catalogoItems = items;
+    _tkaRenderCatalogoSeleccion();
+  }catch(e){
+    if (myToken !== _tkaCatalogoReqToken) return;
+    cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
+  }
+}
+function tkaToggleLineaCatalogo(idx){
+  const items = _TKA._catalogoItems || [];
+  const it = items[idx];
+  if (!it) return;
+  const key = it.sku || ('cat-' + it.id);
+  const row = document.querySelector(`#tkaCatalogoResult [data-catalogo-idx="${idx}"]`);
+  const chk = row ? row.querySelector('.tka-chk') : null;
+  if (_TKA.selCatalogo.has(key)){
+    _TKA.selCatalogo.delete(key);
+    if (row) row.classList.remove('is-selected');
+    if (chk) chk.classList.remove('is-checked');
+  } else {
+    _TKA.selCatalogo.set(key, {
+      tido: null, nudo: null,
+      sku: it.sku || '', nombre: it.nombre, qty: 1,
+      saldo: null, marcada_sin_saldo: false, motivo_sin_saldo: '',
+    });
+    if (row) row.classList.add('is-selected');
+    if (chk) chk.classList.add('is-checked');
+  }
+  _tkaRenderCatalogoSeleccion();
+  tkaUpdateCounter();
+}
+function _tkaRenderCatalogoSeleccion(){
+  const cont = document.getElementById('tkaCatalogoSeleccion');
+  if (!cont) return;
+  const sel = [..._TKA.selCatalogo.values()];
+  if (!sel.length){
+    cont.style.display = 'none';
+    cont.innerHTML = '';
+    return;
+  }
+  cont.style.display = '';
+  cont.innerHTML = `<div class="tka-bodega-sel-label"><i class="bi bi-check2-square"></i>Productos seleccionados (${sel.length})</div>
+    <div class="tka-bodega-sel-chips">${sel.map(it => `<span class="tka-bodega-sel-chip">${_tkaEsc(it.nombre)}
+        <button type="button" data-sku="${_tkaEsc(it.sku)}" onclick="_tkaQuitarCatalogoSel(this.dataset.sku)" title="Quitar de la selección"><i class="bi bi-x-lg"></i></button>
+      </span>`).join('')}</div>`;
+}
+function _tkaQuitarCatalogoSel(sku){
+  if (!sku) return;
+  _TKA.selCatalogo.delete(sku);
+  const items = _TKA._catalogoItems || [];
+  const idx = items.findIndex(it => (it.sku || ('cat-' + it.id)) === sku);
+  if (idx !== -1){
+    const row = document.querySelector(`#tkaCatalogoResult [data-catalogo-idx="${idx}"]`);
+    if (row){
+      row.classList.remove('is-selected');
+      const chk = row.querySelector('.tka-chk');
+      if (chk) chk.classList.remove('is-checked');
+    }
+  }
+  _tkaRenderCatalogoSeleccion();
+  tkaUpdateCounter();
+}
+
+// ──────────────────────────────────────────────────────────────
+// TAB "COTIZACIÓN INTERNA" (2026-08-25, Daniel: "llamar a las
+// cotizaciones internas de nuestra página, para así poder realizar la
+// ronda completa con cobertura"). Dos etapas: (1) buscar y elegir UNA
+// cotización (mismo endpoint que ya usa el selector de origen de
+// "Generar OT" en /mantenciones/ots), (2) ver y seleccionar sus ítems
+// tipo "producto" (se excluyen servicio/ruta/otro -- no son equipos).
+// La selección se ACUMULA igual que Bodega/Catálogo: se puede elegir
+// ítems de MÁS de una cotización antes de "Asociar".
+// ──────────────────────────────────────────────────────────────
+function _tkaCotizacionOnInput(){
+  if (_TKA._cotizacionDebounce) clearTimeout(_TKA._cotizacionDebounce);
+  _TKA._cotizacionDebounce = setTimeout(() => tkaBuscarCotizaciones(), 300);
+}
+let _tkaCotizacionReqToken = 0;
+async function tkaBuscarCotizaciones(){
+  const inp = document.getElementById('tkaCotizacionQ');
+  const q = (inp && inp.value || '').trim();
+  const cont = document.getElementById('tkaCotizacionListaResult');
+  if (!cont) return;
+  const myToken = ++_tkaCotizacionReqToken;
+  if (q.length < 2){
+    cont.innerHTML = `<div class="tka-empty">
+      <i class="bi bi-calculator tka-empty-icon"></i>
+      <h6>Buscar cotización interna</h6>
+      <p>Escribe al menos 2 caracteres del número, empresa o RUT.</p>
+    </div>`;
+    return;
+  }
+  cont.innerHTML = _tkaSkel();
+  try{
+    const d = await _tkaFetchJsonSafe(`/tickets/api/cotizaciones/buscar?q=${encodeURIComponent(q)}`);
+    if (myToken !== _tkaCotizacionReqToken) return;
+    if (!d.ok){
+      cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(d.error || 'Error al buscar')}</div>`;
+      return;
+    }
+    const cots = d.cotizaciones || [];
+    if (!cots.length){
+      cont.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-search tka-empty-icon"></i>
+        <h6>Sin resultados</h6>
+        <p>No se encontraron cotizaciones para "${_tkaEsc(q)}".</p>
+      </div>`;
+      return;
+    }
+    _TKA._cotizacionLista = cots;
+    const estadoLabel = { draft:'Borrador', sent:'Enviada', approved:'Aprobada', rejected:'Rechazada', expired:'Vencida' };
+    let html = '<div class="tka-results">';
+    cots.forEach((c, idx) => {
+      html += `<div class="tka-bod-card" data-cot-idx="${idx}" onclick="_tkaCotizacionElegir(${idx})">
+        <div class="tka-bod-thumb"><i class="bi bi-calculator"></i></div>
+        <div class="tka-bod-info">
+          <div class="tka-bod-nombre">${_tkaEsc(c.numero_cotizacion || ('Cotización #' + c.id))} — ${_tkaEsc(c.empresa || 'Sin empresa')}</div>
+          <div class="tka-bod-meta"><span class="tka-bod-sku">${_tkaEsc(c.rut || 's/RUT')}</span><span>${_tkaEsc(estadoLabel[c.estado] || c.estado || '')}</span></div>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+    if (myToken !== _tkaCotizacionReqToken) return;
+    cont.innerHTML = html;
+  }catch(e){
+    if (myToken !== _tkaCotizacionReqToken) return;
+    cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
+  }
+}
+async function _tkaCotizacionElegir(idx){
+  const c = (_TKA._cotizacionLista || [])[idx];
+  if (!c) return;
+  _TKA._cotizacionActual = c;
+  const itemsWrap = document.getElementById('tkaCotizacionItemsWrap');
+  const listaRes = document.getElementById('tkaCotizacionListaResult');
+  const itemsRes = document.getElementById('tkaCotizacionItemsResult');
+  if (listaRes) listaRes.style.display = 'none';
+  if (itemsWrap) itemsWrap.style.display = '';
+  if (itemsRes) itemsRes.innerHTML = _tkaSkel();
+  try{
+    const d = await _tkaFetchJsonSafe(`/tickets/api/cotizaciones/${c.id}`);
+    if (!d.ok){
+      if (itemsRes) itemsRes.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(d.error || 'No se pudo cargar la cotización')}</div>`;
+      return;
+    }
+    // Solo ítems tipo "producto" -- servicio/ruta/otro no son equipos que
+    // se puedan declarar en un ticket (mismo criterio que "Por documento"
+    // excluye líneas ZZ, ver _tk_filtrar_lineas_seleccion).
+    const items = (d.items || []).filter(it => !it.item_tipo || it.item_tipo === 'producto');
+    _TKA._cotizacionItems = items;
+    if (!items.length){
+      if (itemsRes) itemsRes.innerHTML = `<div class="tka-empty">
+        <i class="bi bi-inbox tka-empty-icon"></i>
+        <h6>Sin productos</h6>
+        <p>Esta cotización no tiene ítems de tipo producto para agregar.</p>
+      </div>`;
+      return;
+    }
+    let html = `<div class="tka-mod-hint" style="margin-bottom:10px"><i class="bi bi-calculator"></i><div><strong>${_tkaEsc(c.numero_cotizacion || ('#' + c.id))}</strong> — ${_tkaEsc(c.empresa || 'Sin empresa')}</div></div><div class="tka-results">`;
+    items.forEach((it, i) => {
+      const key = `${c.id}:${it.id}`;
+      const isSel = _TKA.selCotizacion.has(key);
+      html += `<div class="tka-bod-card${isSel ? ' is-selected' : ''}" data-cotitem-idx="${i}" onclick="tkaToggleLineaCotizacion(${i})">
+        <div class="tka-chk${isSel ? ' is-checked' : ''}"><i class="bi bi-check-lg"></i></div>
+        <div class="tka-bod-thumb"><i class="bi bi-box-seam"></i></div>
+        <div class="tka-bod-info">
+          <div class="tka-bod-nombre">${_tkaEsc(it.nombre)}</div>
+          <div class="tka-bod-meta"><span class="tka-bod-sku">${_tkaEsc(it.sku || 's/SKU')}</span><span>${it.qty || 1} u.</span></div>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+    if (itemsRes) itemsRes.innerHTML = html;
+  }catch(e){
+    if (itemsRes) itemsRes.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
+  }
+}
+function _tkaCotizacionVolverLista(){
+  const itemsWrap = document.getElementById('tkaCotizacionItemsWrap');
+  const listaRes = document.getElementById('tkaCotizacionListaResult');
+  if (itemsWrap) itemsWrap.style.display = 'none';
+  if (listaRes) listaRes.style.display = '';
+}
+function tkaToggleLineaCotizacion(i){
+  const c = _TKA._cotizacionActual;
+  const items = _TKA._cotizacionItems || [];
+  const it = items[i];
+  if (!c || !it) return;
+  const key = `${c.id}:${it.id}`;
+  const row = document.querySelector(`#tkaCotizacionItemsResult [data-cotitem-idx="${i}"]`);
+  const chk = row ? row.querySelector('.tka-chk') : null;
+  if (_TKA.selCotizacion.has(key)){
+    _TKA.selCotizacion.delete(key);
+    if (row) row.classList.remove('is-selected');
+    if (chk) chk.classList.remove('is-checked');
+  } else {
+    _TKA.selCotizacion.set(key, {
+      tido: null, nudo: null,
+      sku: it.sku || '', nombre: it.nombre, qty: it.qty || 1,
+      saldo: null, marcada_sin_saldo: false, motivo_sin_saldo: '',
+    });
+    if (row) row.classList.add('is-selected');
+    if (chk) chk.classList.add('is-checked');
+  }
+  tkaUpdateCounter();
+}
+
+// ──────────────────────────────────────────────────────────────
 // TAB "POR TICKET" (2026-07-25, Cotizaciones -- Daniel: "quiero ver la
 // lista de los tickets, con un buscador"). Lista por defecto al abrir la
 // pestaña (ver tkaSetTab) + debounce ~300ms en cada tecla, mismo patrón
@@ -2263,7 +2622,8 @@ async function tkaSeleccionarFicha(idx){
 }
 
 function tkaUpdateCounter(){
-  const allSel = [..._TKA.selDoc.values(), ..._TKA.selCli.values(), ..._TKA.selBodega.values()].filter(it => (it.qty || 0) > 0);
+  const allSel = [..._TKA.selDoc.values(), ..._TKA.selCli.values(), ..._TKA.selBodega.values(),
+                  ..._TKA.selCatalogo.values(), ..._TKA.selCotizacion.values()].filter(it => (it.qty || 0) > 0);
   const n = allSel.length;
   const pill = document.getElementById('tkaCounterPill');
   if (pill){
@@ -2311,7 +2671,8 @@ async function tkaAsociarSeleccion(){
       marcada_sin_saldo: !!it.marcada_sin_saldo, motivo_sin_saldo: it.motivo_sin_saldo || '' });
   });
 
-  if (docsToAdd.size === 0 && _TKA.selBodega.size === 0){
+  if (docsToAdd.size === 0 && _TKA.selBodega.size === 0
+      && _TKA.selCatalogo.size === 0 && _TKA.selCotizacion.size === 0){
     ilusToast('Selecciona al menos un producto con cantidad mayor a 0', { type:'warning' });
     return;
   }
@@ -2343,6 +2704,24 @@ async function tkaAsociarSeleccion(){
         marcada_sin_saldo: false, motivo_sin_saldo: '',
       });
     });
+    // 2026-08-25: mismo tratamiento que selBodega -- sin documento ERP
+    // detrás, así que tido/nudo van null.
+    _TKA.selCatalogo.forEach(it => {
+      if ((it.qty || 0) <= 0) return;
+      items.push({
+        tido: null, nudo: null,
+        sku: it.sku, nombre: it.nombre, qty: it.qty,
+        marcada_sin_saldo: false, motivo_sin_saldo: '',
+      });
+    });
+    _TKA.selCotizacion.forEach(it => {
+      if ((it.qty || 0) <= 0) return;
+      items.push({
+        tido: null, nudo: null,
+        sku: it.sku, nombre: it.nombre, qty: it.qty,
+        marcada_sin_saldo: false, motivo_sin_saldo: '',
+      });
+    });
     if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
     tkaClose();
     if (_TKA.ctx.onSeleccionar){
@@ -2365,12 +2744,26 @@ async function tkaAsociarSeleccion(){
       lineas: dv.lineas.map(l => ({ sku: l.sku, cantidad: l.qty, nombre: l.nombre,
         marcada_sin_saldo: l.marcada_sin_saldo, motivo_sin_saldo: l.motivo_sin_saldo })),
     }));
+    if (documentos.length === 0 && (_TKA.selCatalogo.size > 0 || _TKA.selCotizacion.size > 0)){
+      // 2026-08-25: crear un ticket NUEVO exige al menos un documento real
+      // (de ahí sale cliente/rut/dirección) -- productos del Catálogo o de
+      // una cotización interna, solos, no alcanzan para eso. Se avisa acá
+      // en vez de mandar un POST que el backend igual va a rechazar.
+      ilusToast('Para crear un ticket nuevo, primero busca un documento o cliente (pestaña "Por documento" o "Por RUT/nombre") -- los productos del Catálogo/Cotización se agregan junto con ese documento.', { type:'warning', duration:6000 });
+      if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
+      return;
+    }
+    // 2026-08-25: productos del Catálogo/Cotización interna se agregan
+    // JUNTO con el documento que sí resuelve el cliente del ticket.
+    const lineasManual = [];
+    _TKA.selCatalogo.forEach(it => { if ((it.qty || 0) > 0) lineasManual.push({ sku: it.sku, nombre: it.nombre, cantidad: it.qty }); });
+    _TKA.selCotizacion.forEach(it => { if ((it.qty || 0) > 0) lineasManual.push({ sku: it.sku, nombre: it.nombre, cantidad: it.qty }); });
     const etiquetas = documentos.map(dv => `${dv.tido}-${dv.nudo}`).join(', ');
     try{
       const d = await _tkaFetchJsonSafe('/tickets/api/tickets/desde-documento', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          documentos, tipo: 'tech_support',
+          documentos, lineas_manual: lineasManual, tipo: 'tech_support',
           descripcion: 'Ticket generado desde documento ERP ' + etiquetas,
         })
       });
@@ -2392,6 +2785,25 @@ async function tkaAsociarSeleccion(){
   // mode === 'agregar' → un POST por documento (el endpoint solo acepta uno a la vez)
   let okN = 0, errN = 0;
   const errList = [];
+  // 2026-08-25: productos del Catálogo/Cotización interna no tienen
+  // documento ERP detrás -- van en un POST aparte a equipos-manual, no al
+  // loop por documento de abajo.
+  const lineasManual = [];
+  _TKA.selCatalogo.forEach(it => { if ((it.qty || 0) > 0) lineasManual.push({ sku: it.sku, nombre: it.nombre, cantidad: it.qty }); });
+  _TKA.selCotizacion.forEach(it => { if ((it.qty || 0) > 0) lineasManual.push({ sku: it.sku, nombre: it.nombre, cantidad: it.qty }); });
+  if (lineasManual.length > 0){
+    try{
+      const d = await _tkaFetchJsonSafe(`/tickets/api/tickets/${_TKA.ctx.ticketId}/equipos-manual`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lineas: lineasManual })
+      });
+      if (d.ok) okN++;
+      else { errN++; errList.push({ label: 'Catálogo/Cotización', motivo: (d.error || 'Error desconocido').toString().substring(0,140) }); }
+    }catch(e){
+      errN++;
+      errList.push({ label: 'Catálogo/Cotización', motivo: 'Sin conexión: ' + (e.message || 'error de red') });
+    }
+  }
   for (const [, info] of docsToAdd){
     const label = `${info.tido} ${info.nudo}`;
     try{
@@ -2417,7 +2829,11 @@ async function tkaAsociarSeleccion(){
   if (btn){ btn.disabled = false; btn.innerHTML = _origBtn; }
 
   if (okN){
-    let msg = `✓ ${okN} documento${okN===1?'':'s'} procesado${okN===1?'':'s'}`;
+    // 2026-08-25: okN ya no cuenta solo documentos ERP -- también suma la
+    // tanda de productos manuales (Catálogo/Cotización interna), así que
+    // el mensaje pasó de "documento" a "origen" para no mentirle al
+    // usuario cuando lo único procesado fue esa tanda manual.
+    let msg = `✓ ${okN} origen${okN===1?'':'es'} procesado${okN===1?'':'s'}`;
     if (errN) msg += ` · ${errN} con error`;
     ilusToast(msg, { type:'success', duration:5000 });
     if (errN){
