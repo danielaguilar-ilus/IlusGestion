@@ -468,6 +468,31 @@
                 <div id="rbUbicacionSeleccionada" class="mt-1"></div>
               </div>
             </div>
+            {# 2026-08-25 (Daniel): medidas físicas + peso, para que se
+               impriman en la etiqueta igual que en Etiquetas/Catálogo.
+               Todo opcional -- un repuesto sin estos datos no queda roto,
+               ni en el modal ni en la etiqueta (ver repuesto_label_standalone.html). #}
+            <div class="row g-3 mt-1">
+              <div class="col-12">
+                <label class="form-label small fw-semibold">Medidas y peso <span class="text-muted fw-normal">(opcional — se imprimen en la etiqueta)</span></label>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Largo <span class="text-muted fw-normal">(cm)</span></label>
+                <input type="number" class="form-control" id="rbLargo" min="0" step="0.1" placeholder="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Ancho <span class="text-muted fw-normal">(cm)</span></label>
+                <input type="number" class="form-control" id="rbAncho" min="0" step="0.1" placeholder="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Alto <span class="text-muted fw-normal">(cm)</span></label>
+                <input type="number" class="form-control" id="rbAlto" min="0" step="0.1" placeholder="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Peso <span class="text-muted fw-normal">(kg)</span></label>
+                <input type="number" class="form-control" id="rbPesoKg" min="0" step="0.1" placeholder="0">
+              </div>
+            </div>
           </div>
         </section>
 
@@ -862,6 +887,10 @@ function rbAbrirNuevo(mantenerContexto){
   document.getElementById('rbSku').placeholder = 'REP-MARCA-0001 al guardar';
   ['rbDescripcion','rbCodigoFabricante','rbNotas'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rbCantidad').value = '';
+  // Medidas físicas: SIEMPRE se limpian, incluso con mantenerContexto --
+  // a diferencia de marca/ubicación/stock mínimo (mismo estante), el
+  // largo/ancho/alto/peso son propios de CADA repuesto, no del estante.
+  ['rbLargo','rbAncho','rbAlto','rbPesoKg'].forEach(id => document.getElementById(id).value = '');
   rbCostoSet('');
   rbCerrarSondeo();
   if (!mantenerContexto){
@@ -891,6 +920,10 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbDescripcion').value = r.descripcion || '';
   document.getElementById('rbCantidad').value = r.cantidad != null ? r.cantidad : '';
   document.getElementById('rbStockMinimo').value = r.stock_minimo != null ? r.stock_minimo : 1;
+  document.getElementById('rbLargo').value = r.largo != null ? r.largo : '';
+  document.getElementById('rbAncho').value = r.ancho != null ? r.ancho : '';
+  document.getElementById('rbAlto').value = r.alto != null ? r.alto : '';
+  document.getElementById('rbPesoKg').value = r.peso_kg != null ? r.peso_kg : '';
   rbCostoSet(r.costo_unitario || '');
   rbCerrarSondeo();
   rbSetMarca(r.marca_id || null, r.marca_nombre || '');
@@ -963,6 +996,10 @@ async function rbGuardar(crearOtro){
     proveedor_id: document.getElementById('rbProveedor').value || null,
     codigo_fabricante: document.getElementById('rbCodigoFabricante').value.trim(),
     notas: document.getElementById('rbNotas').value.trim(),
+    largo: document.getElementById('rbLargo').value || null,
+    ancho: document.getElementById('rbAncho').value || null,
+    alto: document.getElementById('rbAlto').value || null,
+    peso_kg: document.getElementById('rbPesoKg').value || null,
     cliente_id: document.getElementById('rbClienteId').value || null,
     ticket_id: document.getElementById('rbTicketId').value || null,
     sku_erp: id ? undefined : RB_SKU_ERP_ELEGIDO,   // solo aplica al crear, el backend lo ignora si viene en un PUT

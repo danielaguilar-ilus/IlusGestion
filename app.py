@@ -90108,6 +90108,21 @@ def repuestos_bodega_list():
     )
 
 
+def _repstock_dim_float(v):
+    """Convierte una medida física (largo/ancho/alto/peso_kg) a float o
+    None -- NUNCA lanza ni tumba la request completa (2026-08-25, a
+    diferencia de cantidad/costo_unitario/stock_minimo que sí son
+    obligatorios). Vacío, no-numérico o negativo -> se guarda NULL, no
+    error 400: un repuesto sin estos datos sigue siendo válido."""
+    if v in (None, "", "null"):
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if v >= 0 else None
+
+
 @app.route("/mantenciones/api/repuestos-stock", methods=["POST"])
 @_mant_required
 def repstock_crear():
@@ -90180,6 +90195,10 @@ def repstock_crear():
             "stock_minimo": stock_minimo,
             "cliente_id": cliente_id, "ticket_id": ticket_id,
             "notas": (d.get("notas") or "").strip() or None,
+            "largo": _repstock_dim_float(d.get("largo")),
+            "ancho": _repstock_dim_float(d.get("ancho")),
+            "alto": _repstock_dim_float(d.get("alto")),
+            "peso_kg": _repstock_dim_float(d.get("peso_kg")),
             "created_by": current_username(),
         }
         cols = list(fields.keys())
@@ -90214,7 +90233,7 @@ def repstock_editar(rid):
             return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
     allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id", "proveedor_id",
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
-               "cliente_id", "ticket_id"]
+               "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg"]
     sets, vals = [], []
     for f in allowed:
         if f in d:
@@ -90224,6 +90243,12 @@ def repstock_editar(rid):
                     v = float(v) if v not in (None, "", "null") else None
                 except (TypeError, ValueError):
                     return jsonify({"ok": False, "error": f"'{f}' debe ser numérico"}), 400
+            elif f in ("largo", "ancho", "alto", "peso_kg"):
+                # Medidas físicas opcionales (2026-08-25): a diferencia de
+                # cantidad/costo/stock_minimo de arriba, un valor inválido
+                # o vacío NUNCA tumba el guardado completo -- se persiste
+                # NULL y sigue.
+                v = _repstock_dim_float(v)
             elif v in ("", "null"):
                 v = None
             sets.append(f"{f}=%s"); vals.append(v)
@@ -91021,6 +91046,7 @@ def repstock_etiquetas():
     ph = ",".join(["%s"] * len(ids))
     rows = mysql_fetchall(
         f"SELECT r.sku, r.descripcion, r.codigo_fabricante, "
+        f"       r.largo, r.ancho, r.alto, r.peso_kg, "
         f"       u.codigo AS ubicacion_codigo, m.nombre AS marca_nombre "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
@@ -99682,6 +99708,43 @@ def _ensure_repuestos_bodega_tables():
             )
     except Exception as e:
         print(f"[ensure_repuestos_stock] ALTER cliente_id/ticket_id/proveedor_id: {e}", flush=True)
+
+    # 2026-08-25 (Daniel): medidas físicas (largo/ancho/alto en cm) y peso
+    # bruto (Kg) para reflejarlas en la etiqueta de la bodega de repuestos,
+    # igual que ya hace Etiquetas/Catálogo -- ALTER idempotente, mismo
+    # patrón que el bloque de arriba (cliente_id/ticket_id/proveedor_id).
+    # Todas NULL: un repuesto ya cargado hoy no tiene estos datos y no debe
+    # romperse ni en la UI ni en la etiqueta impresa.
+    try:
+        _existing_repstock_dim_cols = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_repuestos_stock'"
+            ) or [])
+        }
+        if "largo" not in _existing_repstock_dim_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN largo DECIMAL(10,2) NULL "
+                "COMMENT 'Largo en cm, opcional -- para la etiqueta física' AFTER foto_url"
+            )
+        if "ancho" not in _existing_repstock_dim_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN ancho DECIMAL(10,2) NULL "
+                "COMMENT 'Ancho en cm, opcional -- para la etiqueta física' AFTER largo"
+            )
+        if "alto" not in _existing_repstock_dim_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN alto DECIMAL(10,2) NULL "
+                "COMMENT 'Alto en cm, opcional -- para la etiqueta física' AFTER ancho"
+            )
+        if "peso_kg" not in _existing_repstock_dim_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN peso_kg DECIMAL(8,2) NULL "
+                "COMMENT 'Peso bruto en Kg, opcional -- para la etiqueta física' AFTER alto"
+            )
+    except Exception as e:
+        print(f"[ensure_repuestos_stock] ALTER largo/ancho/alto/peso_kg: {e}", flush=True)
 
     try:
         mysql_execute("""

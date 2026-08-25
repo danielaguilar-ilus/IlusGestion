@@ -109,6 +109,33 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
   padding: .5mm 1.5mm;
   white-space: nowrap;
 }
+.rl-dims {
+  display: flex;
+  flex-wrap: wrap;
+  gap: {{ '.6mm 2.2mm' if label_format.key == '100x50' else '1mm 3mm' }};
+  margin-top: {{ '.6mm' if label_format.key == '100x50' else '1.3mm' }};
+  font-size: {{ '2mm' if label_format.key == '100x50' else '2.8mm' }};
+  color: #333;
+}
+.rl-dim-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .5mm;
+  white-space: nowrap;
+}
+.rl-dim-icon {
+  font-family: "Segoe UI Symbol", Arial, sans-serif;
+  font-weight: 900;
+  font-size: {{ '2.2mm' if label_format.key == '100x50' else '3mm' }};
+  line-height: 1;
+}
+.rl-dim-label {
+  font-weight: 800;
+  color: #0a0a0a;
+}
+.rl-dim-value {
+  font-weight: 600;
+}
 .rl-barcode-wrap {
   padding: {{ '0 3mm 1.3mm' if label_format.key == '100x50' else '0 4mm 2.5mm' }};
   flex: 0 0 auto;
@@ -139,6 +166,21 @@ html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvet
       {% if r.ubicacion_codigo %}<span class="rl-ubicacion">{{ r.ubicacion_codigo }}</span>{% else %}<span></span>{% endif %}
       {% if r.codigo_fabricante %}<span>OEM: {{ r.codigo_fabricante }}</span>{% endif %}
     </div>
+    {# Medidas físicas + peso (2026-08-25) -- espeja label_standalone.html
+       (Largo/Alto/Ancho en cm + Peso Bruto en KG), pero la mayoría de los
+       repuestos HOY no tiene estos datos cargados: si NINGUNO de los 4
+       existe, el bloque entero se omite (etiqueta igual a como se veía
+       antes, sin huecos ni "None"). Si al menos uno existe, se muestra
+       solo lo que hay -- nunca un campo vacío o roto. #}
+    {% set tiene_medidas = r.largo or r.ancho or r.alto or r.peso_kg %}
+    {% if tiene_medidas %}
+    <div class="rl-dims">
+      {% if r.largo %}<span class="rl-dim-item"><span class="rl-dim-icon">&#8596;</span><span class="rl-dim-label">Largo:</span><span class="rl-dim-value">{{ '%.1f'|format(r.largo|float) }} cm</span></span>{% endif %}
+      {% if r.ancho %}<span class="rl-dim-item"><span class="rl-dim-icon">&#9634;</span><span class="rl-dim-label">Ancho:</span><span class="rl-dim-value">{{ '%.1f'|format(r.ancho|float) }} cm</span></span>{% endif %}
+      {% if r.alto %}<span class="rl-dim-item"><span class="rl-dim-icon">&#8597;</span><span class="rl-dim-label">Alto:</span><span class="rl-dim-value">{{ '%.1f'|format(r.alto|float) }} cm</span></span>{% endif %}
+      {% if r.peso_kg %}<span class="rl-dim-item"><span class="rl-dim-icon">&#9873;</span><span class="rl-dim-label">Peso:</span><span class="rl-dim-value">{{ '%.1f'|format(r.peso_kg|float) }} kg</span></span>{% endif %}
+    </div>
+    {% endif %}
   </div>
   <div class="rl-barcode-wrap">
     <svg class="barcode" data-code="{{ r.sku }}" style="width:100%"></svg>
