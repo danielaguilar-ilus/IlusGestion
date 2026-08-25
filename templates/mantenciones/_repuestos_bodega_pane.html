@@ -370,8 +370,8 @@
          igual antes de llegar al <tr>. #}
       <td class="text-nowrap" onclick="event.stopPropagation()">
         <div class="dropdown">
-          <button class="btn btn-sm btn-outline-dark" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Acciones">
-            <i class="bi bi-three-dots-vertical"></i>
+          <button class="btn btn-sm btn-dark d-inline-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Acciones">
+            Acciones<i class="bi bi-chevron-down" style="font-size:.65rem"></i>
           </button>
           <ul class="dropdown-menu dropdown-menu-end shadow-sm">
             <li><button type="button" class="dropdown-item" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})'>
@@ -519,6 +519,10 @@
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Peso <span class="text-muted fw-normal">(kg)</span></label>
                 <input type="number" class="form-control" id="rbPesoKg" min="0" step="0.1" placeholder="0">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Bultos</label>
+                <input type="number" class="form-control" id="rbBultos" min="1" step="1" placeholder="1">
               </div>
             </div>
           </div>
@@ -918,7 +922,7 @@ function rbAbrirNuevo(mantenerContexto){
   // Medidas físicas: SIEMPRE se limpian, incluso con mantenerContexto --
   // a diferencia de marca/ubicación/stock mínimo (mismo estante), el
   // largo/ancho/alto/peso son propios de CADA repuesto, no del estante.
-  ['rbLargo','rbAncho','rbAlto','rbPesoKg'].forEach(id => document.getElementById(id).value = '');
+  ['rbLargo','rbAncho','rbAlto','rbPesoKg','rbBultos'].forEach(id => document.getElementById(id).value = '');
   rbCostoSet('');
   rbCerrarSondeo();
   if (!mantenerContexto){
@@ -952,6 +956,7 @@ function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbAncho').value = r.ancho != null ? r.ancho : '';
   document.getElementById('rbAlto').value = r.alto != null ? r.alto : '';
   document.getElementById('rbPesoKg').value = r.peso_kg != null ? r.peso_kg : '';
+  document.getElementById('rbBultos').value = r.bultos != null ? r.bultos : '';
   rbCostoSet(r.costo_unitario || '');
   rbCerrarSondeo();
   rbSetMarca(r.marca_id || null, r.marca_nombre || '');
@@ -1028,6 +1033,7 @@ async function rbGuardar(crearOtro){
     ancho: document.getElementById('rbAncho').value || null,
     alto: document.getElementById('rbAlto').value || null,
     peso_kg: document.getElementById('rbPesoKg').value || null,
+    bultos: document.getElementById('rbBultos').value || null,
     cliente_id: document.getElementById('rbClienteId').value || null,
     ticket_id: document.getElementById('rbTicketId').value || null,
     sku_erp: id ? undefined : RB_SKU_ERP_ELEGIDO,   // solo aplica al crear, el backend lo ignora si viene en un PUT
@@ -1084,12 +1090,12 @@ async function rbEliminar(id, sku){
 }
 
 function rbImprimirUno(id){
-  window.open('/repuestos/bodega/etiquetas?ids=' + id, '_blank');
+  window.open('/repuestos/bodega/imprimir?ids=' + id, '_blank');
 }
 function rbImprimirEtiquetas(){
   const ids = [...document.querySelectorAll('.rb-row-check:checked')].map(el => el.value);
   if (!ids.length) return;
-  window.open('/repuestos/bodega/etiquetas?ids=' + ids.join(','), '_blank');
+  window.open('/repuestos/bodega/imprimir?ids=' + ids.join(','), '_blank');
 }
 
 // ── Marca: typeahead conectado al ERP (MAEPR.MRPR vía sync backend) ──

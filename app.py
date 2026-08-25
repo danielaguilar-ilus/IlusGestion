@@ -90123,6 +90123,20 @@ def _repstock_dim_float(v):
     return v if v >= 0 else None
 
 
+def _repstock_bultos_int(v):
+    """Igual que _repstock_dim_float pero para bultos (entero, mínimo 1) --
+    2026-08-25 (2, Daniel: "además de pedir las medidas, el peso y el
+    bulto"). Vacío/invalido/menor a 1 -> None (la etiqueta ya asume 1
+    bulto por defecto cuando el dato no está cargado)."""
+    if v in (None, "", "null"):
+        return None
+    try:
+        v = int(float(v))
+    except (TypeError, ValueError):
+        return None
+    return v if v >= 1 else None
+
+
 @app.route("/mantenciones/api/repuestos-stock", methods=["POST"])
 @_mant_required
 def repstock_crear():
@@ -90199,6 +90213,7 @@ def repstock_crear():
             "ancho": _repstock_dim_float(d.get("ancho")),
             "alto": _repstock_dim_float(d.get("alto")),
             "peso_kg": _repstock_dim_float(d.get("peso_kg")),
+            "bultos": _repstock_bultos_int(d.get("bultos")),
             "created_by": current_username(),
         }
         cols = list(fields.keys())
@@ -90233,7 +90248,7 @@ def repstock_editar(rid):
             return jsonify({"ok": False, "error": "La descripción no puede quedar vacía"}), 400
     allowed = ["descripcion", "cantidad", "ubicacion_id", "marca_id", "proveedor_id",
                "costo_unitario", "codigo_fabricante", "stock_minimo", "notas",
-               "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg"]
+               "cliente_id", "ticket_id", "largo", "ancho", "alto", "peso_kg", "bultos"]
     sets, vals = [], []
     for f in allowed:
         if f in d:
@@ -90249,6 +90264,8 @@ def repstock_editar(rid):
                 # o vacío NUNCA tumba el guardado completo -- se persiste
                 # NULL y sigue.
                 v = _repstock_dim_float(v)
+            elif f == "bultos":
+                v = _repstock_bultos_int(v)
             elif v in ("", "null"):
                 v = None
             sets.append(f"{f}=%s"); vals.append(v)
@@ -91046,7 +91063,7 @@ def repstock_etiquetas():
     ph = ",".join(["%s"] * len(ids))
     rows = mysql_fetchall(
         f"SELECT r.sku, r.descripcion, r.codigo_fabricante, "
-        f"       r.largo, r.ancho, r.alto, r.peso_kg, "
+        f"       r.largo, r.ancho, r.alto, r.peso_kg, r.bultos, "
         f"       u.codigo AS ubicacion_codigo, m.nombre AS marca_nombre "
         f"  FROM mant_repuestos_stock r "
         f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
@@ -91075,8 +91092,59 @@ def repstock_etiquetas():
     )
     resp = make_response(pdf_bytes)
     resp.headers["Content-Type"] = "application/pdf"
-    resp.headers["Content-Disposition"] = "inline; filename=etiquetas-repuestos.pdf"
+    # download=1 (2026-08-25, botón "Descargar PDF" de la vista previa,
+    # mismo patrón que labels_pdf_preview del módulo de Catálogo) -> fuerza
+    # attachment; sin el parámetro sigue abriendo inline como siempre.
+    disposition = "attachment" if request.args.get("download") == "1" else "inline"
+    resp.headers["Content-Disposition"] = f"{disposition}; filename=etiquetas-repuestos.pdf"
     return resp
+
+
+@app.route("/repuestos/bodega/imprimir")
+@_mant_required
+def repuestos_print_labels():
+    """Vista previa de impresión de etiquetas de repuestos -- mismo patrón
+    UX que print_labels.html (Etiquetas/Catálogo): toolbar + vista previa
+    HTML en vivo + panel de tamaño/acciones (2026-08-25, Daniel: "quiero...
+    que actue como el modulo de etiquetas"). A diferencia de aquel, acá se
+    imprime una LISTA de repuestos distintos por id (no los bultos de UN
+    producto), así que no hay concepto de "copias por bulto" -- cada
+    repuesto imprime 1 etiqueta. El PDF real lo sigue generando
+    repstock_etiquetas() (mismo pipeline Playwright de siempre); esta vista
+    solo arma la previsualización y apunta los botones a esa misma ruta."""
+    ids_raw = (request.args.get("ids") or "").strip()
+    ids = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+    if not ids:
+        flash("Selecciona al menos un repuesto para imprimir etiquetas.", "warning")
+        return redirect(url_for("repuestos_bodega_list"))
+    fmt = request.args.get("fmt") or "100x150"
+    label_format = _label_format(fmt)
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT r.id, r.sku, r.descripcion, r.codigo_fabricante, "
+        f"       r.largo, r.ancho, r.alto, r.peso_kg, r.bultos, "
+        f"       u.codigo AS ubicacion_codigo, m.nombre AS marca_nombre "
+        f"  FROM mant_repuestos_stock r "
+        f"  LEFT JOIN mant_repuestos_ubicaciones u ON u.id = r.ubicacion_id "
+        f"  LEFT JOIN mant_repuestos_marcas m ON m.id = r.marca_id "
+        f" WHERE r.id IN ({ph}) ORDER BY r.sku",
+        tuple(ids)
+    ) or []
+    if not rows:
+        flash("Repuestos no encontrados.", "danger")
+        return redirect(url_for("repuestos_bodega_list"))
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    rows = [dict(r) for r in rows]
+    ids_csv = ",".join(str(r["id"]) for r in rows)
+    response = make_response(render_template(
+        "repuesto_print_labels.html",
+        repuestos=rows, fecha=fecha,
+        fmt=label_format["key"], label_format=label_format,
+        logo_url=_logo_data_url(), ids_csv=ids_csv,
+    ))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route("/mantenciones/api/repuestos-stock/exportar-excel")
@@ -99743,8 +99811,18 @@ def _ensure_repuestos_bodega_tables():
                 "ALTER TABLE mant_repuestos_stock ADD COLUMN peso_kg DECIMAL(8,2) NULL "
                 "COMMENT 'Peso bruto en Kg, opcional -- para la etiqueta física' AFTER alto"
             )
+        # 2026-08-25 (2, Daniel: "además de pedir las medidas, el peso y el
+        # bulto"): cuántos bultos trae este repuesto -- se imprime como
+        # "Bulto 1 de N" en la etiqueta, mismo lenguaje que la etiqueta de
+        # Productos/Catálogo. NULL/1 = comportamiento de siempre (un solo
+        # bulto), no rompe nada de lo ya cargado.
+        if "bultos" not in _existing_repstock_dim_cols:
+            mysql_execute(
+                "ALTER TABLE mant_repuestos_stock ADD COLUMN bultos INT NULL "
+                "COMMENT 'Cantidad de bultos físicos, opcional -- para la etiqueta física' AFTER peso_kg"
+            )
     except Exception as e:
-        print(f"[ensure_repuestos_stock] ALTER largo/ancho/alto/peso_kg: {e}", flush=True)
+        print(f"[ensure_repuestos_stock] ALTER largo/ancho/alto/peso_kg/bultos: {e}", flush=True)
 
     try:
         mysql_execute("""

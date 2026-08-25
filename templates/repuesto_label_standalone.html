@@ -2,211 +2,570 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Etiquetas de repuestos</title>
 <style>
-@page { size: {{ label_format.w }} {{ label_format.h }}; margin: 0; }
-*, *::before, *::after { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-html, body { margin: 0; padding: 0; background: #fff; font-family: Arial, Helvetica, sans-serif; }
+:root {
+  --label-w: {{ label_format.w }};
+  --label-h: {{ label_format.h }};
+}
 
-.rl-label {
-  width: {{ label_format.w }};
-  height: {{ label_format.h }};
-  display: flex;
-  flex-direction: column;
+@page {
+  size: {{ label_format.w }} {{ label_format.h }};
+  margin: 0;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+html,
+body {
+  width: var(--label-w);
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: #fff;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Mismo esqueleto premium que templates/label_standalone.html (módulo
+   Etiquetas/Catálogo -- 2026-08-25, Daniel: "quiero el modelo potente
+   que le hicimos a etiquetas"), con UNA fila extra (.marca-row) para la
+   marca del fabricante del repuesto, que no existe en el label de
+   producto. NO es el mismo archivo -- label_standalone.html sigue
+   BLINDADO e intacto; esto es un clon adaptado, no una edición de aquel. */
+.label {
+  width: var(--label-w);
+  height: var(--label-h);
+  display: grid;
+  grid-template-rows: var(--hdr-h) var(--marca-h) var(--meta-h) var(--prod-h) minmax(0, 1fr) var(--stripe-h);
   overflow: hidden;
   position: relative;
   background: #fff;
-  border: .3mm solid #0a0a0a;
-  color: #0a0a0a;
+  border: var(--label-border) solid #000;
+  border-radius: 0;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
   page-break-after: always;
   break-after: page;
+  isolation: isolate;
 }
-.rl-label:last-child { page-break-after: auto; break-after: auto; }
 
-.rl-head {
-  background: #0a0a0a;
+.label:last-child {
+  page-break-after: auto;
+  break-after: auto;
+}
+
+.label-head {
+  display: grid;
+  grid-template-columns: 44% 1px minmax(0, 1fr);
+  align-items: stretch;
+  background: #000;
+  color: #fff;
+}
+
+.rep-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--brand-pad-y) 1mm var(--brand-pad-bottom);
+  overflow: hidden;
+  text-align: center;
+  line-height: .88;
+}
+
+.rep-brand strong {
+  display: block;
+  font-size: var(--brand-size);
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.rep-brand span {
+  display: block;
+  margin-top: var(--brand-sub-gap);
+  color: #fff;
+  font-size: var(--brand-sub-size);
+  font-weight: 800;
+  letter-spacing: var(--brand-sub-spacing);
+}
+
+.brand-sep {
+  align-self: center;
+  width: .34mm;
+  height: 62%;
+  background: #fff;
+}
+
+.ilus-brand {
   display: flex;
   align-items: center;
-  gap: {{ '1.5mm' if label_format.key == '100x50' else '2.5mm' }};
-  padding: {{ '1mm 3mm' if label_format.key == '100x50' else '2mm 4mm' }};
-  flex: 0 0 auto;
-}
-.rl-head img {
-  height: {{ '5mm' if label_format.key == '100x50' else '8mm' }};
-  display: block;
-  object-fit: contain;
-}
-.rl-head-txt {
-  color: #fff;
-  font-weight: 900;
-  letter-spacing: .04em;
-  font-size: {{ '2mm' if label_format.key == '100x50' else '2.8mm' }};
-  line-height: 1.1;
-  border-left: .3mm solid #dc2626;
-  padding-left: {{ '1.5mm' if label_format.key == '100x50' else '2.5mm' }};
-}
-.rl-head-txt small {
-  display: block;
-  font-weight: 600;
-  color: #f3c9c9;
-  font-size: {{ '1.5mm' if label_format.key == '100x50' else '2mm' }};
-  letter-spacing: .06em;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 .6mm;
+  overflow: hidden;
 }
 
-.rl-marca {
+.ilus-logo {
+  max-width: 104%;
+  max-height: 112%;
+  display: block;
+  object-fit: contain;
+  transform: translateY(var(--ilus-lift)) scale(var(--ilus-scale));
+  filter: grayscale(1) brightness(0) invert(1);
+  image-rendering: crisp-edges;
+}
+
+.marca-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   background: #dc2626;
   color: #fff;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: .05em;
-  text-align: center;
-  padding: {{ '.8mm 2mm' if label_format.key == '100x50' else '1.3mm 3mm' }};
-  font-size: {{ '2.6mm' if label_format.key == '100x50' else '3.8mm' }};
-  flex: 0 0 auto;
+  letter-spacing: .04em;
+  font-size: var(--marca-size);
+  border-bottom: .32mm solid #000;
+  overflow: hidden;
+  white-space: nowrap;
 }
-.rl-marca.rl-marca-vacio {
+
+.marca-row.marca-row-vacio {
   background: #6b7280;
 }
 
-.rl-body {
-  flex: 1;
+.meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .85fr) minmax(0, .45fr);
+  align-items: center;
+  border-bottom: .32mm solid #000;
+  background: #fff;
+  font-size: var(--meta-size);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.meta-cell {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-sm);
+  min-width: 0;
+  padding: 0 var(--cell-pad);
+  border-right: .24mm solid #aaa;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.meta-cell:last-child {
+  border-right: 0;
+}
+
+.box-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: 0 0 auto;
+}
+
+.product-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: .45mm var(--pad-x);
+  border-bottom: .32mm solid #000;
+  overflow: hidden;
+}
+
+.product-name {
+  display: -webkit-box;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(var(--prod-h) - .7mm);
+  text-align: center;
+  overflow: hidden;
+  color: #000;
+  font-size: var(--product-size);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1.02;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-decoration: none;
+}
+
+.label-body {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr) var(--date-rail-w);
+  min-height: 0;
+}
+
+.dims {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: {{ '1.5mm 3mm' if label_format.key == '100x50' else '3mm 4mm' }};
-  min-height: 0;
-}
-.rl-sku {
-  font-family: ui-monospace, "Courier New", monospace;
-  font-weight: 900;
-  font-size: {{ '5mm' if label_format.key == '100x50' else '8mm' }};
-  line-height: 1.05;
-  word-break: break-all;
-}
-.rl-desc {
-  font-size: {{ '2.4mm' if label_format.key == '100x50' else '3.6mm' }};
-  line-height: 1.15;
-  margin-top: {{ '.7mm' if label_format.key == '100x50' else '1.3mm' }};
+  gap: var(--dim-gap);
+  padding: 0 var(--pad-x);
+  border-right: .32mm solid #000;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: {{ '2' if label_format.key == '100x50' else '3' }};
-  -webkit-box-orient: vertical;
 }
-.rl-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 2mm;
-  margin-top: {{ '.7mm' if label_format.key == '100x50' else '1.8mm' }};
-  font-size: {{ '2mm' if label_format.key == '100x50' else '2.8mm' }};
-  color: #333;
-}
-.rl-ubicacion {
-  font-weight: 800;
-  background: #f3f4f6;
-  border: .25mm solid #0a0a0a;
-  border-radius: 1mm;
-  padding: .5mm 1.5mm;
-  white-space: nowrap;
-}
-.rl-dims {
-  display: flex;
-  flex-wrap: wrap;
-  gap: {{ '.6mm 2.2mm' if label_format.key == '100x50' else '1mm 3mm' }};
-  margin-top: {{ '.6mm' if label_format.key == '100x50' else '1.3mm' }};
-  font-size: {{ '2mm' if label_format.key == '100x50' else '2.8mm' }};
-  color: #333;
-}
-.rl-dim-item {
-  display: inline-flex;
+
+.dim-item {
+  display: grid;
+  grid-template-columns: var(--dim-icon-w) var(--dim-label-w) minmax(var(--dim-value-w), 1fr);
   align-items: baseline;
-  gap: .5mm;
+  column-gap: var(--gap-sm);
+  min-width: 0;
+  color: #000;
+  font-size: var(--dim-size);
+  line-height: 1;
   white-space: nowrap;
 }
-.rl-dim-icon {
+
+.dim-icon {
+  font-size: var(--dim-icon-size);
+  line-height: 1;
+  text-align: center;
   font-family: "Segoe UI Symbol", Arial, sans-serif;
   font-weight: 900;
-  font-size: {{ '2.2mm' if label_format.key == '100x50' else '3mm' }};
+}
+
+.dim-label {
+  overflow: visible;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.dim-value {
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 850;
+  text-overflow: ellipsis;
+}
+
+.sku-box {
+  align-self: end;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: var(--sku-h);
+  border: .28mm solid #000;
+  background: #fff;
+}
+
+.sku-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--sku-title-h);
+  background: #000;
+  color: #fff;
+  font-size: var(--sku-title-size);
+  font-weight: 900;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.sku-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: .35mm 1mm;
+  overflow: hidden;
+  color: #000;
+  background: #fff;
+  font-size: var(--sku-size);
+  font-weight: 950;
   line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.rl-dim-label {
-  font-weight: 800;
-  color: #0a0a0a;
+
+.barcode-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: var(--barcode-gap);
+  min-width: 0;
+  padding: var(--barcode-pad-y) 1.5mm .9mm;
+  overflow: hidden;
 }
-.rl-dim-value {
-  font-weight: 600;
+
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
 }
-.rl-barcode-wrap {
-  padding: {{ '0 3mm 1.3mm' if label_format.key == '100x50' else '0 4mm 2.5mm' }};
-  flex: 0 0 auto;
+
+.barcode {
+  width: var(--barcode-w);
+  height: var(--barcode-h);
+  max-height: var(--barcode-h);
 }
-.rl-fecha {
-  font-size: {{ '1.7mm' if label_format.key == '100x50' else '2.2mm' }};
-  color: #888;
-  padding: 0 {{ '3mm' if label_format.key == '100x50' else '4mm' }} {{ '1mm' if label_format.key == '100x50' else '1.8mm' }};
-  flex: 0 0 auto;
+
+.date-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: .24mm solid #000;
+  background: #fff;
+  overflow: hidden;
+}
+
+.date-rail span {
+  display: block;
+  font-size: var(--date-size);
+  font-weight: 750;
+  line-height: 1;
+  transform: rotate(-90deg);
+  white-space: nowrap;
+}
+
+/* Mismo control de rollback que label_standalone.html: franjas
+   inferiores ocultas por defecto (Daniel, 2026-05-13). Cambiar
+   --label-footer-stripes a 1 para reactivarlas en TODAS las etiquetas
+   del proyecto -- este archivo sigue la misma convención a propósito. */
+:root {
+  --label-footer-stripes: 0;
+}
+
+.hazard-stripe {
+  display: var(--hazard-display, none);
+  background: repeating-linear-gradient(135deg, #000 0 3.2mm, #fff 3.2mm 5.8mm);
+  border-top: calc(.32mm * var(--label-footer-stripes)) solid #000;
+}
+:root {
+  --hazard-display: none;
+}
+
+.label-150x100 {
+  --label-border: .38mm;
+  --hdr-h: 24mm;
+  --marca-h: 7mm;
+  --meta-h: 10mm;
+  --prod-h: 18mm;
+  --stripe-h: calc(8mm * var(--label-footer-stripes));
+  --pad-x: 4mm;
+  --cell-pad: 1.5mm;
+  --gap-sm: 1.1mm;
+  --brand-size: 6.4mm;
+  --brand-sub-size: 2.45mm;
+  --brand-sub-spacing: .9mm;
+  --brand-sub-gap: 1mm;
+  --brand-pad-y: 2.4mm;
+  --brand-pad-bottom: 1.8mm;
+  --ilus-scale: 1.25;
+  --ilus-lift: -1.85mm;
+  --marca-size: 4.2mm;
+  --meta-size: 3.9mm;
+  --product-size: 7mm;
+  --icon-size: 5mm;
+  --dim-icon-w: 6mm;
+  --dim-label-w: 11mm;
+  --dim-value-w: 16mm;
+  --dim-icon-size: 5mm;
+  --dim-size: 3.5mm;
+  --dim-gap: 2.2mm;
+  --barcode-pad-y: 1.2mm;
+  --barcode-gap: 2mm;
+  --barcode-w: 98%;
+  --barcode-h: 16mm;
+  --sku-h: 16mm;
+  --sku-title-h: 5mm;
+  --sku-title-size: 3mm;
+  --sku-size: 8mm;
+  --date-size: 2.8mm;
+  --date-rail-w: 5mm;
+}
+
+.label-100x50 {
+  --label-border: .28mm;
+  --hdr-h: 11.5mm;
+  --marca-h: 4mm;
+  --meta-h: 5.5mm;
+  --prod-h: 8mm;
+  --stripe-h: calc(4mm * var(--label-footer-stripes));
+  --pad-x: 1.8mm;
+  --cell-pad: .7mm;
+  --gap-sm: .42mm;
+  --brand-size: 3.1mm;
+  --brand-sub-size: 1.22mm;
+  --brand-sub-spacing: .32mm;
+  --brand-sub-gap: .35mm;
+  --ilus-scale: 1.32;
+  --ilus-lift: -.7mm;
+  --brand-pad-y: .85mm;
+  --brand-pad-bottom: .5mm;
+  --marca-size: 2.6mm;
+  --meta-size: 2mm;
+  --product-size: 3.3mm;
+  --icon-size: 2.7mm;
+  --dim-icon-w: 3mm;
+  --dim-label-w: 5.9mm;
+  --dim-value-w: 8mm;
+  --dim-icon-size: 2.5mm;
+  --dim-size: 1.8mm;
+  --dim-gap: .95mm;
+  --barcode-pad-y: .3mm;
+  --barcode-gap: .4mm;
+  --barcode-w: 94%;
+  --barcode-h: 7.2mm;
+  --sku-h: 9.2mm;
+  --sku-title-h: 2.8mm;
+  --sku-title-size: 1.35mm;
+  --sku-size: 4.1mm;
+  --date-size: 1.45mm;
+  --date-rail-w: 3mm;
 }
 </style>
 </head>
 <body>
-
+{% set format_key = fmt or label_format.key %}
+{% set logo_src = logo_url or url_for('static', filename='Logo.png') %}
 {% for r in repuestos %}
-<article class="rl-label">
-  <div class="rl-head">
-    {% if logo_url %}<img src="{{ logo_url }}" alt="ILUS">{% endif %}
-    {# Marca comercial, no razón social: la etiqueta la lee una persona en
-       bodega, no es un documento tributario (REGLA #0 de CLAUDE.md). #}
-    <div class="rl-head-txt">BODEGA DE REPUESTOS<small>ILUS FITNESS</small></div>
-  </div>
-  <div class="rl-marca {{ 'rl-marca-vacio' if not r.marca_nombre else '' }}">{{ r.marca_nombre or 'SIN MARCA' }}</div>
-  <div class="rl-body">
-    <div class="rl-sku">{{ r.sku }}</div>
-    <div class="rl-desc">{{ r.descripcion }}</div>
-    <div class="rl-meta">
-      {% if r.ubicacion_codigo %}<span class="rl-ubicacion">{{ r.ubicacion_codigo }}</span>{% else %}<span></span>{% endif %}
-      {% if r.codigo_fabricante %}<span>OEM: {{ r.codigo_fabricante }}</span>{% endif %}
+  <article class="label label-{{ format_key }}">
+    <header class="label-head">
+      <div class="rep-brand">
+        <strong>BODEGA</strong>
+        <strong>REPUESTOS</strong>
+        {# Marca comercial, no razón social -- la etiqueta la lee una
+           persona en bodega, no es un documento tributario (REGLA #0). #}
+        <span>ILUS FITNESS</span>
+      </div>
+      <div class="brand-sep"></div>
+      <div class="ilus-brand">
+        <img class="ilus-logo" src="{{ logo_src }}" alt="ILUS">
+      </div>
+    </header>
+
+    {# Marca del FABRICANTE del repuesto (ej. SKF, Technogym) -- no
+       confundir con la marca ILUS de arriba. Fila propia porque no
+       existe en el label de producto que copiamos. #}
+    <div class="marca-row {{ 'marca-row-vacio' if not r.marca_nombre else '' }}">{{ r.marca_nombre or 'SIN MARCA' }}</div>
+
+    <div class="meta-row">
+      <div class="meta-cell">
+        <svg class="box-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M21 8l-9-5-9 5 9 5 9-5z"></path>
+          <path d="M3 8v8l9 5 9-5V8"></path>
+          <path d="M12 13v8"></path>
+        </svg>
+        <span>Bulto 1 de {{ r.bultos or 1 }}</span>
+      </div>
+      <div class="meta-cell"><span>Peso bruto</span></div>
+      <div class="meta-cell"><span>{{ '%.1f'|format(r.peso_kg|float) ~ ' KG' if r.peso_kg else '—' }}</span></div>
     </div>
-    {# Medidas físicas + peso (2026-08-25) -- espeja label_standalone.html
-       (Largo/Alto/Ancho en cm + Peso Bruto en KG), pero la mayoría de los
-       repuestos HOY no tiene estos datos cargados: si NINGUNO de los 4
-       existe, el bloque entero se omite (etiqueta igual a como se veía
-       antes, sin huecos ni "None"). Si al menos uno existe, se muestra
-       solo lo que hay -- nunca un campo vacío o roto. #}
-    {% set tiene_medidas = r.largo or r.ancho or r.alto or r.peso_kg %}
-    {% if tiene_medidas %}
-    <div class="rl-dims">
-      {% if r.largo %}<span class="rl-dim-item"><span class="rl-dim-icon">&#8596;</span><span class="rl-dim-label">Largo:</span><span class="rl-dim-value">{{ '%.1f'|format(r.largo|float) }} cm</span></span>{% endif %}
-      {% if r.ancho %}<span class="rl-dim-item"><span class="rl-dim-icon">&#9634;</span><span class="rl-dim-label">Ancho:</span><span class="rl-dim-value">{{ '%.1f'|format(r.ancho|float) }} cm</span></span>{% endif %}
-      {% if r.alto %}<span class="rl-dim-item"><span class="rl-dim-icon">&#8597;</span><span class="rl-dim-label">Alto:</span><span class="rl-dim-value">{{ '%.1f'|format(r.alto|float) }} cm</span></span>{% endif %}
-      {% if r.peso_kg %}<span class="rl-dim-item"><span class="rl-dim-icon">&#9873;</span><span class="rl-dim-label">Peso:</span><span class="rl-dim-value">{{ '%.1f'|format(r.peso_kg|float) }} kg</span></span>{% endif %}
+
+    <div class="product-row">
+      <span class="product-name">{{ r.descripcion }}</span>
     </div>
-    {% endif %}
-  </div>
-  <div class="rl-barcode-wrap">
-    <svg class="barcode" data-code="{{ r.sku }}" style="width:100%"></svg>
-  </div>
-  <div class="rl-fecha">{{ fecha }}</div>
-</article>
+
+    <div class="label-body">
+      <div class="dims">
+        {% if r.largo %}<div class="dim-item"><span class="dim-icon">&#8596;</span><span class="dim-label">Largo:</span><span class="dim-value">{{ '%.0f'|format(r.largo|float) }} cm</span></div>{% endif %}
+        {% if r.alto %}<div class="dim-item"><span class="dim-icon">&#8597;</span><span class="dim-label">Alto:</span><span class="dim-value">{{ '%.0f'|format(r.alto|float) }} cm</span></div>{% endif %}
+        {% if r.ancho %}<div class="dim-item"><span class="dim-icon">&#9634;</span><span class="dim-label">Ancho:</span><span class="dim-value">{{ '%.0f'|format(r.ancho|float) }} cm</span></div>{% endif %}
+        {% if r.ubicacion_codigo or r.codigo_fabricante %}
+        <div class="dim-item">
+          <span class="dim-icon">&#9873;</span><span class="dim-label">Ubic:</span>
+          <span class="dim-value">{% if r.ubicacion_codigo %}{{ r.ubicacion_codigo }}{% endif %}{% if r.ubicacion_codigo and r.codigo_fabricante %} · {% endif %}{% if r.codigo_fabricante %}OEM {{ r.codigo_fabricante }}{% endif %}</span>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="barcode-panel">
+        <div class="barcode-wrap">
+          <svg class="barcode" id="barcode-{{ loop.index0 }}" data-code="{{ r.sku }}"></svg>
+        </div>
+        <div class="sku-box">
+          <div class="sku-title">Codigo / SKU</div>
+          <div class="sku-value">{{ r.sku }}</div>
+        </div>
+      </div>
+
+      <div class="date-rail"><span>{{ fecha }}</span></div>
+    </div>
+
+    <div class="hazard-stripe"></div>
+  </article>
 {% endfor %}
 
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  const formatKey = "{{ label_format.key }}";
-  document.querySelectorAll(".barcode").forEach(function (barcode) {
+  const formatKey = "{{ format_key }}";
+
+  function fitText(el, minPx) {
+    if (!el) return;
+    let size = parseFloat(getComputedStyle(el).fontSize) || 14;
+    el.style.fontSize = size + "px";
+    for (let i = 0; i < 80; i += 1) {
+      const tooWide = el.scrollWidth > el.clientWidth;
+      const tooTall = el.scrollHeight > el.clientHeight;
+      if ((!tooWide && !tooTall) || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function fitTextToBox(el, maxPx, minPx) {
+    if (!el) return;
+    let size = maxPx;
+    el.style.fontSize = size + "px";
+    el.style.lineHeight = "1.02";
+    for (let i = 0; i < 120; i += 1) {
+      const tooTall = el.scrollHeight > el.clientHeight + 1;
+      if (!tooTall || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function renderBarcode(barcode) {
     const code = barcode.dataset.code || "";
-    const wrap = barcode.closest(".rl-barcode-wrap");
+    const wrap = barcode.closest(".barcode-wrap");
     const wrapWidth = wrap ? wrap.clientWidth : 140;
     const density = formatKey === "100x50" ? 11.5 : 9.4;
     const maxWidth = formatKey === "100x50" ? 1.75 : 2.35;
     const lineWidth = Math.max(0.7, Math.min(maxWidth, wrapWidth / Math.max(code.length * density, 1)));
-    const height = formatKey === "100x50" ? 20 : 36;
+    const height = formatKey === "100x50" ? 27 : 50;
+
     JsBarcode(barcode, code, {
-      format: "CODE128", displayValue: false,
-      lineColor: "#000", background: "#fff",
-      width: lineWidth, height: height, margin: 0
+      format: "CODE128",
+      displayValue: false,
+      lineColor: "#000",
+      background: "#fff",
+      width: lineWidth,
+      height,
+      margin: 0
     });
     barcode.dataset.rendered = "1";
+  }
+
+  document.querySelectorAll(".barcode").forEach((barcode) => {
+    renderBarcode(barcode);
+  });
+
+  document.querySelectorAll(".product-name").forEach((el) => {
+    fitTextToBox(el, formatKey === "100x50" ? 12 : 46, formatKey === "100x50" ? 6 : 12);
+  });
+
+  document.querySelectorAll(".sku-value").forEach((el) => {
+    fitText(el, formatKey === "100x50" ? 9 : 16);
   });
 });
 </script>
