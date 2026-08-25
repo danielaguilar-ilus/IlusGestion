@@ -114,8 +114,14 @@
             title="Revisar el buzón de soporte hacia atrás y recuperar respuestas de clientes que no entraron como mensaje del ticket">
       <i class="bi bi-envelope-arrow-down me-1"></i>Recuperar correos</button>
     {% endif %}
-    <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket desde un documento del ERP (factura, boleta, guía, etc.)">
-      <i class="bi bi-file-earmark-text me-1"></i>Desde documento ERP</button>
+    {# 2026-08-25 (Daniel: "cambiarle el nombre al boton ya que no es solo
+       de documentos si no que trae productos de todos lados"): el modal
+       que abre este boton ya no busca SOLO documentos del ERP -- ahora
+       también trae productos por RUT/nombre, del Catálogo maestro y de
+       cotizaciones internas (ver _tka_modal.html). El nombre viejo
+       ("Desde documento ERP") quedó chico frente a eso. #}
+    <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket buscando productos por documento ERP, RUT/nombre, Catálogo o una cotización interna">
+      <i class="bi bi-search me-1"></i>Buscar productos</button>
     <button class="btn btn-ilus trx-btn-primary" data-bs-toggle="modal" data-bs-target="#ntModal">
       <i class="bi bi-plus-lg me-1"></i>Nuevo Ticket</button>
   </div>

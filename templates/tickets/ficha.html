@@ -135,8 +135,10 @@
               <i class="bi bi-box-arrow-up-right ms-1"></i>
             </a>
           </div>
-          <button class="btn btn-sm btn-ilus-outline" id="btnEqDesdeDoc">
-            <i class="bi bi-file-earmark-arrow-down me-1"></i>Asignar desde documento</button>
+          {# 2026-08-25 (Daniel: mismo cambio que btnDesdeDoc en tickets/list.html
+             -- el modal ya no busca solo documentos del ERP). #}
+          <button class="btn btn-sm btn-ilus-outline" id="btnEqDesdeDoc" title="Agregar equipos buscando por documento ERP, RUT/nombre, Catálogo o una cotización interna">
+            <i class="bi bi-search me-1"></i>Buscar productos</button>
         </div>
         <!-- 2026-07-15 (Daniel: "el documento está arriba, debería estar en una
              columna"): el bloque de Documentos ERP del ticket (#listaDocs) se

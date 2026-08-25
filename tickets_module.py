@@ -4634,12 +4634,26 @@ def register_tickets_routes(app, ctx):
         if len(q) < 2:
             return jsonify({"ok": True, "items": []})
         like = f"%{q}%"
+        starts = f"{q}%"
+        # 2026-08-25 (Daniel: "en el catalogo solo trae repuestos"): con
+        # ORDER BY nombre puro, una búsqueda genérica puede quedar dominada
+        # por SKUs/nombres de repuestos que alfabéticamente caen antes que
+        # la máquina real dentro del LIMIT -- el WHERE nunca excluyó
+        # máquinas (confirmado: "Keiser"/"bicicleta" sí las traían), pero
+        # se perdían en la página. Se prioriza SKU exacto > empieza con >
+        # resto, y se sube el límite -- sin filtrar ningún tipo de producto,
+        # el maestro sigue trayendo de todos lados (máquinas Y repuestos).
         rows = mysql_fetchall(
             "SELECT id, sku, nombre, familia "
             "FROM cat_productos "
             "WHERE COALESCE(activo,1)=1 AND (sku LIKE %s OR nombre LIKE %s) "
-            "ORDER BY nombre LIMIT 30",
-            (like, like)
+            "ORDER BY "
+            "  CASE WHEN sku=%s THEN 0 "
+            "       WHEN sku LIKE %s THEN 1 "
+            "       WHEN nombre LIKE %s THEN 2 "
+            "       ELSE 3 END, "
+            "  nombre LIMIT 50",
+            (like, like, q, starts, starts)
         ) or []
         return jsonify({"ok": True, "items": [dict(r) for r in rows]})
 
