@@ -357,8 +357,8 @@
     <div class="tb-sub">{{ items|length }} ítem(s) · Emitida el {{ cot.fecha_emision }} · Total ${{ clp(cot.total) }}</div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    {% if modo_visor and cot.id %}
-    <a class="tb-btn" href="/tickets/cotizaciones/{{ cot.id }}/pdf?descargar=1" target="_blank" rel="noopener"
+    {% if modo_visor and pdf_url %}
+    <a class="tb-btn" href="{{ pdf_url }}" target="_blank" rel="noopener"
        style="text-decoration:none;">
       <span style="font-size:13pt;line-height:1">⬇</span> Descargar PDF
     </a>

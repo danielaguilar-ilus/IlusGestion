@@ -1268,6 +1268,12 @@ def _lc_cotizacion_pdf_ctx(cid):
         "mostrar_col_documento": mostrar_col_documento,
     }
     ctx_pdf["logo_b64"] = _lc_cotiz_logo_b64()
+    # BUG REAL (2026-08-25, ver el mismo comentario en
+    # tickets_module.py::_tk_cotizacion_pdf_ctx): el botón "Descargar PDF"
+    # del template compartido apuntaba SIEMPRE a la ruta de Tickets. Acá se
+    # arma la URL real de Logística para que el botón nunca vuelva a cruzar
+    # con la tabla de Servicio Técnico.
+    ctx_pdf["pdf_url"] = f"/transporte/cotizaciones/{cid}/pdf?descargar=1"
     return (ctx_pdf, cot)
 
 

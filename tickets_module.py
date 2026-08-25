@@ -3537,6 +3537,17 @@ def register_tickets_routes(app, ctx):
             "mostrar_col_documento": mostrar_col_documento,
         }
         ctx_pdf["logo_b64"] = _tk_cotiz_logo_b64()
+        # BUG REAL (2026-08-25, Daniel: "los módulos se están cruzando"): el
+        # botón "Descargar PDF" del template compartido tenía la ruta de
+        # Tickets HARDCODEADA. logistica_cotizaciones.py reusa este MISMO
+        # template para sus propias cotizaciones (numeración CTR-, tabla
+        # transport_cotizaciones) -- al verla, el botón igual apuntaba a
+        # /tickets/cotizaciones/<id>/pdf, que es OTRA tabla (tk_cotizaciones)
+        # con su propio espacio de ids. Con suerte el id coincidía con una
+        # cotización de Servicio Técnico distinta -- Daniel bajaba COT-000049
+        # (Concepción, instalación) en vez de CTR-000052 (Maipú, productos).
+        # Cada módulo ahora arma su propia URL absoluta.
+        ctx_pdf["pdf_url"] = f"/tickets/cotizaciones/{cid}/pdf?descargar=1"
         return (ctx_pdf, cot)
 
     def _tk_cotizacion_pdf_bytes(cid):
