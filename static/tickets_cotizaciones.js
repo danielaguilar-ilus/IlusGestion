@@ -960,17 +960,24 @@ function cotWizFuenteDocumento(){
   });
 })();
 
-// ── Paso 2: "Agregar de Bodega 02" -- entrada PRINCIPAL de productos para
+// ── Paso 2: "Agregar producto" -- entrada PRINCIPAL de productos para
 //    cualquier origen que no sea 'documento'/'ticket' (Daniel 2026-07-23).
-//    Los ítems de bodega llegan con tido:null/nudo:null (el modal ya lo
-//    tolera -- ver _tka_modal.html tkaAsociarSeleccion, selBodega). ──
+//    Los ítems de bodega/catálogo llegan con tido:null/nudo:null (el
+//    modal ya lo tolera -- ver _tka_modal.html tkaAsociarSeleccion,
+//    selBodega/selCatalogo). 2026-08-25 (Daniel, en vivo: "cuando
+//    presiono aca aun me sale la bodega 18 quiero el maestro de
+//    productos"): antes solo mostraba la pestaña "Productos" (ERP,
+//    Bodega 02 -- lo que Daniel llamaba "bodega 18"). Se agrega
+//    "catalogo" (cat_productos, el maestro) como pestaña PRINCIPAL
+//    -- Bodega ERP se mantiene disponible como alternativa, no se quita
+//    (Regla #4.2). ──
 (function(){
   const btn = document.getElementById('btnCotWizBodega');
   if (!btn) return;
   btn.addEventListener('click', function(){
     tkaOpen({
       mode: 'seleccionar',
-      tabs: ['bodega'],
+      tabs: ['catalogo', 'bodega'],
       onSeleccionar: async function(items){
         if (!_WIZ || !items || !items.length) return;
         const nuevos = items.map(function(it){
