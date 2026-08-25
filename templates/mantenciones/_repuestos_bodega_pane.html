@@ -355,9 +355,37 @@
         {% if r.ticket_numero %}<span class="rb-chip" style="background:#fef3c7;color:#92400e">{{ r.ticket_numero }}</span>{% endif %}
         {% if not r.cliente_nombre and not r.ticket_numero %}<span class="text-muted" style="font-size:.78rem">—</span>{% endif %}
       </td>
+      {# Dropdown "Acciones" -- clon 1:1 del patrón ya usado en
+         templates/retiros/internal_dashboard.html:830-851 (mismo botón
+         data-bs-toggle="dropdown" con bi-three-dots-vertical + <ul
+         dropdown-menu dropdown-menu-end shadow-sm>). El popper "fixed" es
+         obligatorio acá: .rb-table-wrap corta con overflow:hidden y
+         .rb-table-scroll con overflow-y:auto en desktop (ver reglas arriba
+         en este mismo archivo) -- sin esto el menú quedaría recortado
+         contra el borde de la tabla. El onclick="event.stopPropagation()"
+         ya vivía en este <td> (evita disparar el onclick de la fila que
+         abre rbAbrirEditar) y sigue cubriendo TODO lo de adentro, dropdown
+         incluido: Bootstrap/Popper solo reposiciona con CSS, no saca el
+         <ul> del DOM del <td>, así que el burbujeo del click se detiene
+         igual antes de llegar al <tr>. #}
       <td class="text-nowrap" onclick="event.stopPropagation()">
-        <button type="button" class="btn btn-sm btn-outline-dark" onclick="rbImprimirUno({{ r.id }})" title="Imprimir etiqueta"><i class="bi bi-tag"></i></button>
-        <button type="button" class="btn btn-sm btn-outline-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')" title="Desactivar"><i class="bi bi-trash"></i></button>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-dark" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Acciones">
+            <i class="bi bi-three-dots-vertical"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+            <li><button type="button" class="dropdown-item" onclick='rbAbrirEditar({{ r|tojson }}, {{ (modelos_por_repuesto.get(r.id, []))|tojson }}, {{ rfotos|tojson }})'>
+              <i class="bi bi-pencil me-1 text-primary"></i>Editar
+            </button></li>
+            <li><button type="button" class="dropdown-item" onclick="rbImprimirUno({{ r.id }})">
+              <i class="bi bi-tag me-1"></i>Imprimir etiqueta
+            </button></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><button type="button" class="dropdown-item text-danger" onclick="rbEliminar({{ r.id }}, '{{ r.sku }}')">
+              <i class="bi bi-trash me-1"></i>Eliminar
+            </button></li>
+          </ul>
+        </div>
       </td>
     </tr>
     {% endfor %}
