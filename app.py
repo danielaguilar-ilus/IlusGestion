@@ -11592,6 +11592,15 @@ def _integraciones_estado():
             "base_url": "api.shipit.cl",
         },
         {
+            "clave": "clickex", "nombre": "Clickex (courier local)",
+            "proposito": "Tarifas ya negociadas por comuna, cotizacion y consulta de estado "
+                         "(pedido de Daniel, 2026-08-25). Creacion de envio real construida "
+                         "pero sin boton en vivo todavia -- ver _clickex_request en app.py.",
+            "configurado": bool(CLICKEX_API_KEY and CLICKEX_API_USERNAME and CLICKEX_API_PASSWORD),
+            "env_vars": ["CLICKEX_API_KEY", "CLICKEX_API_USERNAME", "CLICKEX_API_PASSWORD"],
+            "base_url": "clickex.cl/apiv3",
+        },
+        {
             "clave": "checkwms", "nombre": "CheckWMS",
             "proposito": "Trazabilidad de bodega por código UA (Unidad de Armado) -- autocompleta Incidencias.",
             "configurado": bool(CHECKWMS_CONFIG.get("uid_ins") and CHECKWMS_CONFIG.get("uid_erp")),
@@ -19987,6 +19996,64 @@ def api_asignar_cotizar_couriers():
         except Exception as _e_shipit_comuna:
             print(f"[shipit] error resolviendo comunas: {_e_shipit_comuna}", flush=True)
 
+    # 2026-08-25 (Clickex): mismo cuidado que con Shipit arriba -- lee la
+    # tarifa cacheada (clickex_tarifas, vía MySQL/Flask) ACÁ, en el hilo del
+    # request, ANTES de entrar al ThreadPoolExecutor. Adentro del pool NO
+    # hay contexto de aplicación Flask (el bug real de Shipit, documentado
+    # arriba) así que _clickex_cotizacion_dict solo lee esta variable
+    # capturada por closure -- no vuelve a tocar MySQL.
+    #
+    # A propósito NO se llama a _clickex_sync_tarifas() (que sí golpea la
+    # API en vivo) en cada cotización: eso agregaría latencia de red al
+    # flujo interactivo del operador por un precio que casi no cambia. La
+    # sincronización en vivo la disparan los Excel de tarifas (pedido
+    # explícito de Daniel: "que me entregue la tarifa que obtenga la API")
+    # y el diagnóstico admin (?accion=sync_tarifas) -- acá se lee la caché
+    # que esos dos ya mantienen fresca.
+    _clickex_es_activo = any(
+        'clickex' in _ttar._strip(c['nombre'] or '').lower() for c in couriers
+    )
+    _clickex_tarifa_resultado = _clickex_tarifa_comuna(comuna) if _clickex_es_activo else None
+
+    def _clickex_cotizacion_dict(cid, nombre, logo):
+        import clickex_client as _clc
+
+        problemas = _clc.verificar_restricciones(peso_fact)
+        if problemas:
+            return {
+                "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                "tiene_cobertura": False, "fuente": "restriccion_clickex",
+                "mensaje": " · ".join(problemas),
+                "trace": {"bracket": None, "bracket_upper": None,
+                          "formula": " · ".join(problemas),
+                          "fuente": "restriccion_clickex", "validado": False,
+                          "advertencias": problemas,
+                          "json_brackets_disponibles": [], "peso_usado": peso_fact,
+                          "comuna_db": None},
+            }
+
+        if not _clickex_tarifa_resultado:
+            return _no_cobertura_dict(cid, nombre, logo)
+
+        precio = round(_clickex_tarifa_resultado["costo_neto"] or 0)
+        sla = _clickex_tarifa_resultado.get("sla_dias")
+        formula = f"Clickex API (matriz negociada): {comuna} = ${precio:,}".replace(",", ".")
+
+        return {
+            "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+            "tiene_cobertura": True, "fuente": "api_clickex",
+            "precio": precio, "moneda": "CLP",
+            "tiempo_transito": f"{sla} día(s)" if sla else "—",
+            "servicio": "Standard (vía Clickex)",
+            "subtotal": precio, "desglose": None, "mensaje": None,
+            "trace": {
+                "bracket": "Clickex API", "bracket_upper": None, "formula": formula,
+                "fuente": "api_clickex", "validado": False,
+                "advertencias": [], "json_brackets_disponibles": [],
+                "peso_usado": peso_fact, "comuna_db": comuna,
+            },
+        }
+
     def _shipit_cotizacion_dict(cid, nombre, logo):
         import shipit_client as _shc
 
@@ -20097,8 +20164,9 @@ def api_asignar_cotizar_couriers():
     def _cotizar_uno(c):
         cid       = c['id']
         nombre    = c['nombre'] or ''
-        is_fedex  = ('fedex' in _ttar._strip(nombre).lower())
-        is_shipit = ('shipit' in _ttar._strip(nombre).lower())
+        is_fedex   = ('fedex' in _ttar._strip(nombre).lower())
+        is_shipit  = ('shipit' in _ttar._strip(nombre).lower())
+        is_clickex = ('clickex' in _ttar._strip(nombre).lower())
         logo      = c.get('logo_url') or c.get('logo_square_url')
 
         if is_shipit:
@@ -20114,9 +20182,22 @@ def api_asignar_cotizar_couriers():
             d["_slug"] = "shipit"
             return d
 
+        if is_clickex:
+            try:
+                d = _clickex_cotizacion_dict(cid, nombre, logo)
+            except Exception as ex_each:
+                print(f"[cotizar courier {nombre}] error: {ex_each}", flush=True)
+                d = {
+                    "courier_id": cid, "courier_nombre": nombre, "logo_url": logo,
+                    "tiene_cobertura": False, "fuente": "error",
+                    "mensaje": "Error al cotizar",
+                }
+            d["_slug"] = "clickex"
+            return d
+
         slug = 'fedex_directo' if is_fedex else _ttar.slug_para_courier(nombre)
 
-        if slug not in ('felca', 'milling', 'clickex', 'fedex_directo'):
+        if slug not in ('felca', 'milling', 'fedex_directo'):
             return None
 
         try:
@@ -39976,6 +40057,256 @@ def tr_shipit_direccion():
                         "error_codigo": "INTERNAL_CRASH"}), 500
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  Integración Clickex (2026-08-25) -- API real compartida por el
+#  ejecutivo (MBM). Mismo patrón que Shipit arriba: módulo puro
+#  (clickex_client.py) + esta capa de red + caché en BD de la matriz de
+#  tarifas ya negociada.
+#
+#  Pedido de Daniel (vía chat, 2026-08-24): "instalemos y activemos
+#  Clickex con la API... que se pueda cotizar, se pueda llamar a crear un
+#  pedido, se pueda consultar los estados y se pueda traer los precios".
+#  Límite confirmado: 25 kg (sin límite de dimensiones -- a diferencia de
+#  Shipit, ver clickex_client.MAX_PESO_KG).
+#
+#  ⚠️ Fase 1 (esta): cotizar (matriz de tarifas), traer precios y
+#  consultar estado -- todo READ-ONLY sobre la API de Clickex. La
+#  creación de envío real (POST /shipmentsAdd) queda CONSTRUIDA en
+#  clickex_client.build_shipment_payload() / parse_shipment_response() y
+#  con su capa de red lista acá abajo, pero SIN ningún botón que la
+#  dispare todavía -- ni siquiera Shipit (más madura) tiene esa pieza en
+#  producción. Crear un envío real cuesta dinero y despacha un courier de
+#  verdad: se conecta a un flujo real recién cuando Daniel lo confirme
+#  viendo la app despierto, no en una corrida nocturna sin supervisión.
+#
+#  Credenciales: GitHub Secrets → env.yaml → Cloud Run (Regla #4), ya
+#  inyectadas en deploy.yml. Auth por x-api-key (todos los endpoints) +
+#  username/password (matriz de tarifas y creación de envío).
+# ══════════════════════════════════════════════════════════════════════
+CLICKEX_API_USERNAME = os.environ.get("CLICKEX_API_USERNAME", "").strip()
+CLICKEX_API_PASSWORD = os.environ.get("CLICKEX_API_PASSWORD", "").strip()
+CLICKEX_API_KEY = os.environ.get("CLICKEX_API_KEY", "").strip()
+
+
+def _clickex_request(method, path, *, payload=None, headers_extra=None, timeout=20):
+    """Llamada HTTP a Clickex. NUNCA lanza: siempre devuelve dict con `ok`.
+
+    Mismo contrato defensivo que _shipit_request/_simpliroute_request. Los
+    endpoints que exigen username/password (matriz de tarifas, crear envío)
+    los agregan vía `headers_extra`; tracking solo necesita la api key.
+    """
+    import requests as _req
+    import clickex_client as _clc
+
+    if not CLICKEX_API_KEY:
+        return {"ok": False, "status": 0,
+                "error": "Clickex no está configurado (falta CLICKEX_API_KEY)."}
+    url = _clc.BASE_URL + path
+    headers = {"Content-Type": "application/json", "x-api-key": CLICKEX_API_KEY}
+    if headers_extra:
+        headers.update(headers_extra)
+    try:
+        resp = _req.request(method, url, headers=headers, json=payload, timeout=timeout)
+    except Exception as e:
+        return {"ok": False, "status": 0,
+                "error": f"No se pudo conectar con Clickex: {type(e).__name__}"}
+    try:
+        body = resp.json()
+    except Exception:
+        body = resp.text
+    if resp.status_code >= 400:
+        return {"ok": False, "status": resp.status_code,
+                "error": _clc.extract_error_message(resp.status_code, body),
+                "raw": body}
+    return {"ok": True, "status": resp.status_code, "data": body}
+
+
+def _clickex_seller_headers():
+    """Headers username/password para los endpoints que identifican al
+    seller (matriz de tarifas, crear envío). Vacío si no están configurados
+    -- _clickex_request ya valida CLICKEX_API_KEY por separado."""
+    if not (CLICKEX_API_USERNAME and CLICKEX_API_PASSWORD):
+        return None
+    return {"username": CLICKEX_API_USERNAME, "password": CLICKEX_API_PASSWORD}
+
+
+def _ensure_clickex_tarifas_table():
+    """Caché local de GET /sellerShipmentMatrixCosts -- tabla NUEVA, se crea
+    SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1 (mismo gotcha documentado en
+    _ensure_shipit_comunas_table: init_transporte_tables() no corre en prod).
+
+    Por qué existe: la matriz trae ~37 filas y no cambia seguido -- cachear
+    evita golpear la API en cada descarga de Excel/cotización.
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clickex_tarifas (
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    comuna              VARCHAR(120) NOT NULL,
+                    comuna_normalizada  VARCHAR(120) NOT NULL,
+                    sla_dias            INT,
+                    costo_neto          DECIMAL(10,2),
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_comuna_normalizada (comuna_normalizada),
+                    INDEX idx_comuna (comuna)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    except Exception as e:
+        print(f"[clickex] no se pudo crear clickex_tarifas: {e}", flush=True)
+    finally:
+        conn.close()
+
+
+def _clickex_sync_tarifas():
+    """Trae GET /sellerShipmentMatrixCosts y guarda/actualiza clickex_tarifas
+    (UPSERT por comuna_normalizada). READ-ONLY sobre Clickex. Nunca lanza --
+    devuelve {ok, n, error}."""
+    import clickex_client as _clc
+    headers = _clickex_seller_headers()
+    if not headers:
+        return {"ok": False, "n": 0,
+                "error": "Clickex no está configurado (falta CLICKEX_API_USERNAME/CLICKEX_API_PASSWORD)."}
+    r = _clickex_request("GET", _clc.EP_MATRIX_COSTS, headers_extra=headers)
+    if not r.get("ok"):
+        return {"ok": False, "n": 0, "error": r.get("error")}
+    tarifas = _clc.parse_matrix_costs_response(r.get("data"))
+    if not tarifas:
+        return {"ok": False, "n": 0,
+                "error": "Respuesta inesperada de Clickex (se esperaba una lista de tarifas)."}
+    conn = get_mysql()
+    n = 0
+    try:
+        with conn.cursor() as cur:
+            for t in tarifas:
+                cur.execute(
+                    "INSERT INTO clickex_tarifas (comuna, comuna_normalizada, sla_dias, costo_neto) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE comuna=VALUES(comuna), sla_dias=VALUES(sla_dias), "
+                    "costo_neto=VALUES(costo_neto)",
+                    (t["comuna"], t["comuna_normalizada"], t["sla_dias"], t["costo_neto"])
+                )
+                n += 1
+        conn.commit()
+    except Exception as e:
+        return {"ok": False, "n": n, "error": f"Error guardando tarifas: {e}"}
+    return {"ok": True, "n": n, "error": None}
+
+
+def _clickex_tarifa_comuna(nombre_comuna):
+    """Tarifa de Clickex para una comuna (del ERP o de la bodega ILUS).
+
+    Lee de la caché local clickex_tarifas (poblada por _clickex_sync_tarifas).
+    Devuelve dict {comuna, sla_dias, costo_neto} o None si no hay cobertura
+    cacheada. Nunca lanza.
+    """
+    import clickex_client as _clc
+    target = _clc.normalizar_comuna(nombre_comuna)
+    if not target:
+        return None
+    try:
+        row = mysql_fetchone(
+            "SELECT comuna, sla_dias, costo_neto FROM clickex_tarifas "
+            "WHERE comuna_normalizada = %s",
+            (target,)
+        )
+    except Exception as e:
+        print(f"[clickex] error leyendo clickex_tarifas: {e}", flush=True)
+        return None
+    if not row:
+        return None
+    return {"comuna": row["comuna"], "sla_dias": row["sla_dias"],
+            "costo_neto": float(row["costo_neto"]) if row["costo_neto"] is not None else None}
+
+
+def _ensure_clickex_limite_peso():
+    """Fija el tope de 25 kg confirmado por Daniel (2026-08-24) en la ficha
+    del courier Clickex -- SOLO la primera vez (no pisa si alguien ya lo
+    editó a mano), mismo criterio que _ensure_shipit_courier(). La fila del
+    courier "Clickex" ya existe desde antes (sembrada en _defaults más
+    arriba en este archivo) -- acá solo se actualiza el límite de peso.
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE transport_couriers SET peso_max_bulto=25, peso_max_guia=25 "
+                "WHERE LOWER(nombre)='clickex' AND peso_max_bulto=0 AND peso_max_guia=0"
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[clickex] no se pudo fijar el limite de peso: {e}", flush=True)
+    finally:
+        conn.close()
+
+
+@app.route("/transporte/api/diagnostico/clickex", methods=["GET", "POST"])
+@login_required
+def tr_diagnostico_clickex():
+    """Diagnóstico admin de la integración Clickex (Fase 1: tarifas + tracking).
+
+    GET  -> estado de configuración + cuántas comunas hay cacheadas.
+    POST -> sincroniza tarifas (?accion=sync_tarifas), cotiza de prueba
+            (?accion=cotizar con body {comuna, peso_kg}) o consulta un
+            tracking real (?accion=tracking con body {tracking}).
+    Mismo patrón que /transporte/api/diagnostico/shipit -- admin/superadmin.
+    """
+    if not (g.permissions.get("superadmin") or g.permissions.get("admin")):
+        return jsonify({"error": "Solo admin/superadmin"}), 403
+
+    import clickex_client as _clc
+
+    if request.method == "GET":
+        try:
+            n_comunas = (mysql_fetchone("SELECT COUNT(*) AS n FROM clickex_tarifas") or {}).get("n", 0)
+        except Exception:
+            n_comunas = 0
+        return jsonify({
+            "ok": True,
+            "configurado": bool(CLICKEX_API_KEY and CLICKEX_API_USERNAME and CLICKEX_API_PASSWORD),
+            "comunas_cacheadas": n_comunas,
+            "restricciones": {"max_peso_kg": _clc.MAX_PESO_KG},
+        })
+
+    accion = (request.args.get("accion") or "").strip()
+    if accion == "sync_tarifas":
+        r = _clickex_sync_tarifas()
+        return jsonify(r), (200 if r.get("ok") else 502)
+
+    if accion == "cotizar":
+        data = request.get_json(silent=True) or {}
+        comuna_destino = (data.get("comuna") or "").strip()
+        peso_kg = data.get("peso_kg")
+        if not comuna_destino:
+            return jsonify({"error": "Falta 'comuna'"}), 400
+
+        problemas = _clc.verificar_restricciones(peso_kg) if peso_kg else []
+        if problemas:
+            return jsonify({"ok": True, "cotizable": False, "restricciones": problemas, "tarifa": None})
+
+        tarifa = _clickex_tarifa_comuna(comuna_destino)
+        if not tarifa:
+            return jsonify({"ok": True, "cotizable": False,
+                            "restricciones": [f"Clickex no tiene cobertura cacheada para {comuna_destino} "
+                                               f"(corre 'sync_tarifas' primero si es una comuna nueva)."],
+                            "tarifa": None})
+        return jsonify({"ok": True, "cotizable": True, "restricciones": [], "tarifa": tarifa})
+
+    if accion == "tracking":
+        data = request.get_json(silent=True) or {}
+        tracking = (data.get("tracking") or "").strip()
+        if not tracking:
+            return jsonify({"error": "Falta 'tracking'"}), 400
+        r = _clickex_request("GET", _clc.EP_TRACKING.format(tracking=tracking))
+        if not r.get("ok"):
+            return jsonify({"ok": False, "error": r.get("error")}), (r.get("status") or 502)
+        return jsonify({"ok": True, "resultado": _clc.parse_tracking_response(r["data"])})
+
+    return jsonify({"error": "accion inválida (sync_tarifas | cotizar | tracking)"}), 400
+
+
 def _tr_manifiesto_items_simpliroute(mid):
     """Items del manifiesto con lo que necesita SimpliRoute.
 
@@ -44265,6 +44596,52 @@ def _sh_llenar_hoja_tarifario_shipit(ws, nombre, red_fill, blanco_font, pesos=No
     return huvo_datos
 
 
+def _clx_llenar_hoja_tarifario_clickex(ws, nombre, red_fill, blanco_font):
+    """Llena `ws` con la matriz de tarifas de Clickex, traída EN VIVO desde
+    su API (pedido de Daniel, 2026-08-25: "necesito que en la plantilla del
+    courier, cuando consulte de bajar el Excel, necesito que me entregue la
+    tarifa que obtenga la API"). A diferencia de Shipit (que cotiza por
+    envío simulando pesos), Clickex ya tiene una matriz de tarifas
+    PRE-NEGOCIADA por comuna -- no hace falta simular nada, se vuelca la
+    matriz completa tal como la devuelve GET /sellerShipmentMatrixCosts.
+
+    Devuelve True si escribió filas, False si no se pudo traer nada (mismo
+    contrato que _sh_llenar_hoja_tarifario_shipit, para que el llamador
+    decida si vale la pena dejar la hoja).
+    """
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    sync = _clickex_sync_tarifas()
+    if not sync.get("ok"):
+        return False
+
+    tarifas = mysql_fetchall(
+        "SELECT comuna, sla_dias, costo_neto FROM clickex_tarifas ORDER BY comuna"
+    ) or []
+    if not tarifas:
+        return False
+
+    ws.cell(1, 1, f"Lista de precios — {nombre}").font = Font(bold=True, size=14)
+    ws.cell(2, 1, f"Traído en vivo desde la API de Clickex el "
+                  f"{chile_fmt_filter(datetime.now(), '%d/%m/%Y %H:%M')}")
+    ws.cell(3, 1, "Tarifa plana pre-negociada por comuna (matriz del seller autenticado).")
+    enc = ["Comuna", "SLA (días)", "Tarifa neta"]
+    for ci, h in enumerate(enc, 1):
+        c = ws.cell(5, ci, h)
+        c.font, c.fill = blanco_font, red_fill
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    for ri, t in enumerate(tarifas, 6):
+        ws.cell(ri, 1, _xlsx_cell(t["comuna"]))
+        ws.cell(ri, 2, t["sla_dias"])
+        celda = ws.cell(ri, 3, float(t["costo_neto"]) if t["costo_neto"] is not None else None)
+        celda.number_format = '$#,##0'
+    ws.freeze_panes = "A6"
+    for ci in range(1, len(enc) + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 24 if ci == 1 else 14
+    return True
+
+
 @app.route("/transporte/couriers/export", methods=["GET"])
 @_tr_required
 def transporte_couriers_export():
@@ -44299,6 +44676,16 @@ def transporte_couriers_export():
                     wb.remove(ws)
             except Exception as e:
                 print(f"[couriers export] Shipit en vivo falló: {e}", flush=True)
+                wb.remove(ws)
+            continue
+
+        if "clickex" in (c['nombre'] or "").lower():
+            ws = wb.create_sheet(title=c['nombre'][:31])
+            try:
+                if not _clx_llenar_hoja_tarifario_clickex(ws, c['nombre'], RED_FILL, WHITE_FONT):
+                    wb.remove(ws)
+            except Exception as e:
+                print(f"[couriers export] Clickex en vivo falló: {e}", flush=True)
                 wb.remove(ws)
             continue
 
@@ -44394,6 +44781,7 @@ def tr_tarifario_de_un_courier_xlsx(cid):
         return jsonify({"error": "Ese courier no existe."}), 404
     nombre = courier["nombre"] or "Courier"
     es_shipit = "shipit" in nombre.lower()
+    es_clickex = "clickex" in nombre.lower()
 
     wb = openpyxl.Workbook()
     RED = PatternFill("solid", fgColor="CC0000")
@@ -44428,6 +44816,13 @@ def tr_tarifario_de_un_courier_xlsx(cid):
         if not _sh_llenar_hoja_tarifario_shipit(ws, nombre, RED, BLANCO, pesos=pesos, limite=limite):
             return jsonify({"error": "No se pudo cotizar Shipit: sin comunas con historial "
                                       "o sin respuesta de su API. Intenta de nuevo."}), 404
+    elif es_clickex:
+        # Matriz pre-negociada por comuna, traída en vivo -- no hay pesos ni
+        # límite que pedir por query string (a diferencia de Shipit, que
+        # cotiza por envío simulado). Ver _clx_llenar_hoja_tarifario_clickex.
+        if not _clx_llenar_hoja_tarifario_clickex(ws, nombre, RED, BLANCO):
+            return jsonify({"error": "No se pudo traer la tarifa de Clickex desde su API. "
+                                      "Intenta de nuevo en unos segundos."}), 404
     else:
         filas = mysql_fetchall(
             "SELECT codigo, sucursal, comuna, zona, region, dias_transito, dias_entrega, precios_json "
@@ -45016,6 +45411,14 @@ def tr_tarifario_comparado_xlsx():
         except Exception:
             pass
 
+    # Clickex, igual que Shipit, se cotiza en vivo (2026-08-25, pedido de
+    # Daniel) -- pero a diferencia de Shipit su matriz es plana por comuna
+    # (sin tramos de peso), así que basta sincronizarla UNA vez acá, fuera
+    # de los hilos, y leerla de la caché en el loop de abajo. Si el sync
+    # falla, el bloque de abajo hace fallback silencioso a _ttar.cotizar
+    # (la tabla estática vieja) para no dejar la columna vacía.
+    _clickex_en_vivo = _clickex_sync_tarifas().get("ok", False)
+
     # Los commune_id de Shipit también se resuelven acá, en el hilo del
     # request, por el mismo motivo.
     origen_id, _ = _shipit_commune_id(_tr_sender_cfg().get("city") or "Quilicura")
@@ -45091,6 +45494,10 @@ def tr_tarifario_comparado_xlsx():
             sh = shipit_res.get((comuna, peso))
             precios = {}
             for slug, nombre in SLUGS:
+                if slug == "clickex" and _clickex_en_vivo:
+                    t = _clickex_tarifa_comuna(comuna)
+                    precios[nombre] = round(t["costo_neto"]) if t and t.get("costo_neto") is not None else None
+                    continue
                 try:
                     r = _ttar.cotizar(slug, comuna, peso, 0)
                 except Exception:
@@ -101197,6 +101604,14 @@ try:
     _ensure_shipit_courier()
 except Exception as _ensure_shipit_err:
     print(f"[ILUS][WARN] siembra Shipit: {_ensure_shipit_err}", flush=True)
+
+# Clickex (2026-08-25, pedido de Daniel vía chat) — tabla de tarifas +
+# límite de peso de la ficha — SIEMPRE, incluso skip-migrations.
+try:
+    _ensure_clickex_tarifas_table()
+    _ensure_clickex_limite_peso()
+except Exception as _ensure_clickex_err:
+    print(f"[ILUS][WARN] siembra Clickex: {_ensure_clickex_err}", flush=True)
 
 # Poller SimpliRoute (2026-07-24) — se arranca ACÁ, al final del módulo, y no
 # junto a su definición: el loop usa _simpliroute_token_for_courier /
