@@ -40102,7 +40102,17 @@ def _clickex_request(method, path, *, payload=None, headers_extra=None, timeout=
         return {"ok": False, "status": 0,
                 "error": "Clickex no está configurado (falta CLICKEX_API_KEY)."}
     url = _clc.BASE_URL + path
-    headers = {"Content-Type": "application/json", "x-api-key": CLICKEX_API_KEY}
+    # BUG REAL (2026-08-25, verificado con curl vs requests desde este mismo
+    # equipo Y desde Cloud Run en produccion): el servidor de Clickex (o un
+    # WAF delante) corta la conexion en seco -- "RemoteDisconnected" -- ante
+    # el User-Agent por defecto de la libreria requests
+    # ("python-requests/X.X.X"), pero responde 200 normal a curl. Se manda
+    # un User-Agent explicito que no delate la libreria HTTP.
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": CLICKEX_API_KEY,
+        "User-Agent": "ILUS-Fitness/1.0 (+https://ilusfitness.com)",
+    }
     if headers_extra:
         headers.update(headers_extra)
     try:
