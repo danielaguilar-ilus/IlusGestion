@@ -76,6 +76,17 @@ class TestClickexWiring(unittest.TestCase):
         self.assertIn("try:", src)
         self.assertIn("except Exception", src)
 
+    def test_clickex_request_manda_user_agent_explicito(self):
+        """BUG REAL (2026-08-25): Clickex (o un WAF delante) corta la
+        conexion en seco ante el User-Agent por defecto de la libreria
+        requests ("python-requests/X.X.X") -- verificado con curl vs
+        requests desde este equipo Y desde Cloud Run en produccion, mismo
+        resultado los dos: curl 200, requests sin User-Agent propio
+        RemoteDisconnected. Si el header 'User-Agent' desaparece de los
+        headers de _clickex_request, el bug vuelve."""
+        src = _fuente("_clickex_request", self.tree_local)
+        self.assertIn("User-Agent", src)
+
     def test_credenciales_vienen_de_env_no_hardcodeadas(self):
         # Regla #4: jamas hardcodear credenciales.
         self.assertIn('CLICKEX_API_KEY = os.environ.get("CLICKEX_API_KEY"',
