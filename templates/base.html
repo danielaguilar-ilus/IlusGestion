@@ -1122,6 +1122,28 @@ document.addEventListener('DOMContentLoaded', function(){
         btn.classList.add('sg-open');
         box.classList.add('sg-open');
       }
+      // 2026-08-25 (Daniel, en vivo: "no quiero que se vaya a etiquetas"):
+      // este subgrupo (Taller/Configuración) vive DENTRO de "Servicio
+      // Técnico", que es solo una etiqueta de sección -- no está anidado
+      // en ningún acordeón principal (.sg-toggle: Etiquetas/Clientes/
+      // Retiros/Transporte/Ajustes). Son dos sistemas de acordeón
+      // independientes (ver el IIFE de arriba). Si el link activo real
+      // está ACÁ (ej. Bodega de Repuestos), el acordeón principal no lo
+      // sabe -- su propio auto-abrir busca dentro de .sg-items, que este
+      // subgrupo no toca -- así que cae a su fallback de localStorage y
+      // puede quedar mostrando la última sección que se abrió a mano
+      // (Etiquetas, en el caso real de Daniel) al mismo tiempo que este
+      // subgrupo correcto también se abre. Con un active confirmado ACÁ,
+      // cerramos el acordeón principal a la fuerza para que no quede la
+      // sensación de estar "adentro" de otro módulo.
+      if (hasActive) {
+        document.querySelectorAll('.sg-toggle').forEach(function (topBtn) {
+          topBtn.classList.remove('sg-open');
+          var topBox = document.getElementById('sg-' + topBtn.dataset.sg);
+          if (topBox) topBox.classList.remove('sg-open');
+        });
+        try { localStorage.removeItem('ilus_sg_open'); } catch(e4) {}
+      }
     });
   })();
 })();
