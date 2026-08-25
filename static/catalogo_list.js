@@ -49,6 +49,14 @@ const CAN_CARGAR_PIOLAS = window.CAT_LIST_DATA.canCargarPiolas;
 // archivar/soft-delete (botón "Eliminar producto" del footer de la ficha) --
 // el hard-delete definitivo sigue exclusivo de IS_SUPERADMIN, sin cambios.
 const CAN_ELIMINAR_CATALOGO = window.CAT_LIST_DATA.canEliminarCatalogo;
+// 2026-08-25 (Daniel, dictado): vio a un técnico descargar un manual y lo
+// consideró delicado -- flag granular nuevo (matriz /admin/roles, módulo
+// "catalogo" -> acción "descargar_manual"). Nace en False para todos los
+// roles hasta que Daniel lo prenda; superadmin siempre lo tiene. Gatea
+// SOLO el botón "Descargar" (guarda el PDF en el equipo) -- "Ver" (visor
+// embebido, catvAbrir) sigue abierto a cualquiera con acceso al módulo,
+// y desde ahí se puede imprimir directo con el visor del navegador.
+const CAN_DESCARGAR_MANUAL = window.CAT_LIST_DATA.canDescargarManual;
 const MAX_FOTOS = 10;
 const MAX_PIOLAS = 10;  // 2026-07-21 (Daniel): vuelve a 10 (ver MAX_PIOLAS_POR_PRODUCTO en catalogo_module.py)
 let _catTimer = null;
@@ -720,20 +728,34 @@ async function catfCargar(){
   // Manual
   const manualWrap = document.getElementById('catfManualWrap');
   if(d.manual && d.manual.tiene){
+    // 2026-08-25 (Daniel, dictado): vio a un técnico descargar el manual y
+    // lo consideró delicado -- "Descargar" ahora es CAN_DESCARGAR_MANUAL
+    // (permiso editable en /admin/roles), no un botón fijo para todos.
+    // "Ver" sigue abierto: el visor embebido (catvAbrir) deja imprimir
+    // directo desde la pantalla sin bajar el archivo. "Quitar" se alinea
+    // con IS_SUPERADMIN, mismo permiso que ya exige el backend (DELETE es
+    // _catalogo_admin_required) -- antes se mostraba a cualquiera y solo
+    // el backend lo bloqueaba con un 403 confuso.
+    const btnDescargarManual = CAN_DESCARGAR_MANUAL
+      ? '<a class="btn btn-sm btn-outline-secondary" href="/catalogo/api/productos/'+catfProductoId+'/manual/descargar?download=1">'
+        + '<i class="bi bi-download me-1"></i>Descargar</a>'
+      : '';
+    const btnQuitarManual = IS_SUPERADMIN
+      ? '<button type="button" class="btn btn-sm btn-outline-danger" id="catfManualQuitar">'
+        + '<i class="bi bi-trash me-1"></i>Quitar</button>'
+      : '';
     manualWrap.innerHTML = '<div class="catf-manual-box">'
       + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
       + '<div class="info"><div class="nm">'+esc(d.manual.nombre||'manual.pdf')+'</div>'
       +   '<div class="sz">'+esc(fmtKb(d.manual.size_kb))+'</div></div>'
       + '<button type="button" class="btn btn-sm btn-outline-primary" id="catfManualVer">'
       +   '<i class="bi bi-eye me-1"></i>Ver</button>'
-      + '<a class="btn btn-sm btn-outline-secondary" href="/catalogo/api/productos/'+catfProductoId+'/manual/descargar">'
-      +   '<i class="bi bi-download me-1"></i>Descargar</a>'
+      + btnDescargarManual
       + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualEnviar">'
       +   '<i class="bi bi-envelope me-1"></i>Enviar por correo</button>'
       + '<button type="button" class="btn btn-sm btn-outline-secondary" id="catfManualReemplazar">'
       +   '<i class="bi bi-arrow-repeat me-1"></i>Reemplazar</button>'
-      + '<button type="button" class="btn btn-sm btn-outline-danger" id="catfManualQuitar">'
-      +   '<i class="bi bi-trash me-1"></i>Quitar</button>'
+      + btnQuitarManual
       + '</div>';
     document.getElementById('catfManualVer').addEventListener('click', function(){
       catvAbrir('/catalogo/api/productos/'+catfProductoId+'/manual/descargar', d.manual.nombre||'manual.pdf');
@@ -742,7 +764,9 @@ async function catfCargar(){
     document.getElementById('catfManualReemplazar').addEventListener('click', function(){
       document.getElementById('catfManualInput').click();
     });
-    document.getElementById('catfManualQuitar').addEventListener('click', catfQuitarManual);
+    if(IS_SUPERADMIN){
+      document.getElementById('catfManualQuitar').addEventListener('click', catfQuitarManual);
+    }
   } else {
     manualWrap.innerHTML = '<div class="catf-drop" id="catfManualDrop">'
       + '<i class="bi bi-file-earmark-arrow-up"></i>'
@@ -1416,7 +1440,13 @@ window.catvAbrir = async function(url, nombre){
   _catvAbortCtrl = new AbortController();
   document.getElementById('catvNombre').textContent = nombre || 'Manual';
   document.getElementById('catvSub').textContent = '';
-  document.getElementById('catvBtnDescargar').href = url;
+  // 2026-08-25: el botón "Descargar" del propio visor sigue el mismo
+  // permiso que el resto (CAN_DESCARGAR_MANUAL) -- ver comentario junto a
+  // su declaración arriba. Con el permiso, agrega ?download=1 para que el
+  // backend entregue el PDF como attachment (ver catalogo_module.py).
+  const btnDescargar = document.getElementById('catvBtnDescargar');
+  btnDescargar.style.display = CAN_DESCARGAR_MANUAL ? '' : 'none';
+  btnDescargar.href = CAN_DESCARGAR_MANUAL ? (url + (url.includes('?') ? '&' : '?') + 'download=1') : '#';
   const body = document.getElementById('catvBody');
   body.innerHTML = '<div class="text-white-50"><span class="spinner-border spinner-border-sm me-2"></span>Cargando PDF…</div>';
   catvModal.show();
@@ -1430,7 +1460,8 @@ window.catvAbrir = async function(url, nombre){
     body.innerHTML = '<iframe class="catv-frame" src="'+_catvBlobUrl+'" title="'+esc(nombre||'Manual')+'"></iframe>';
   }catch(e){
     if(myToken !== _catvReqToken) return; // abortado a propósito, no mostrar error
-    body.innerHTML = '<div class="text-white-50 text-center p-4">No se pudo cargar la vista previa. Usa "Descargar".</div>';
+    body.innerHTML = '<div class="text-white-50 text-center p-4">No se pudo cargar la vista previa'
+      + (CAN_DESCARGAR_MANUAL ? '. Usa "Descargar".' : '. Intenta de nuevo o avisa a un administrador.') + '</div>';
   }
 };
 catvModalEl.addEventListener('hidden.bs.modal', function(){
@@ -1449,13 +1480,22 @@ function catfRenderManualesMulti(manuales){
   if(!manuales || !manuales.length){ section.style.display = 'none'; wrap.innerHTML = ''; return; }
   section.style.display = '';
   wrap.innerHTML = manuales.map(function(m){
+    // 2026-08-25: mismo criterio que el manual único (ver comentario en
+    // catfCargar) -- Descargar = CAN_DESCARGAR_MANUAL, Quitar =
+    // IS_SUPERADMIN (alineado con el gate real del backend), Ver siempre.
+    const btnDescargar = CAN_DESCARGAR_MANUAL
+      ? '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'?download=1" title="Descargar"><i class="bi bi-download"></i></a>'
+      : '';
+    const btnQuitar = IS_SUPERADMIN
+      ? '<button type="button" class="btn btn-sm btn-outline-danger" title="Quitar" onclick="catfQuitarManualMulti('+m.id+')"><i class="bi bi-trash"></i></button>'
+      : '';
     return '<div class="catw-manual-item catv-manual-item" data-manual-id="'+m.id+'">'
       + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
       + '<div class="nm">'+esc(m.nombre)+'</div>'
       + '<button type="button" class="btn btn-sm btn-outline-primary ver" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
-      + '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'" title="Descargar"><i class="bi bi-download"></i></a>'
+      + btnDescargar
       + '<button type="button" class="btn btn-sm btn-outline-secondary" title="Enviar por correo" data-enviar-id="'+m.id+'" data-enviar-nombre="'+esc(m.nombre)+'"><i class="bi bi-envelope"></i></button>'
-      + '<button type="button" class="btn btn-sm btn-outline-danger" title="Quitar" onclick="catfQuitarManualMulti('+m.id+')"><i class="bi bi-trash"></i></button>'
+      + btnQuitar
       + '</div>';
   }).join('');
   wrap.querySelectorAll('[data-ver-url]').forEach(function(btn){
@@ -1783,11 +1823,16 @@ function catwRenderManuales(){
       const btnDel = IS_SUPERADMIN
         ? '<button type="button" class="btn btn-sm btn-outline-danger" onclick="catwEliminarManual('+m.id+')"><i class="bi bi-trash"></i></button>'
         : '';
+      // 2026-08-25: descargar (guardar el PDF) es un permiso aparte de
+      // ver -- ver CAN_DESCARGAR_MANUAL arriba. "Ver" nunca se oculta.
+      const btnDescargar = CAN_DESCARGAR_MANUAL
+        ? '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'?download=1"><i class="bi bi-download"></i></a>'
+        : '';
       return '<div class="catw-manual-item" data-manual-id="'+m.id+'">'
         + '<i class="bi bi-file-earmark-pdf-fill ic"></i>'
         + '<div class="nm">'+esc(m.nombre)+'</div>'
         + '<button type="button" class="btn btn-sm btn-outline-primary" title="Ver" data-ver-url="'+esc(m.url)+'" data-ver-nombre="'+esc(m.nombre)+'"><i class="bi bi-eye"></i></button>'
-        + '<a class="btn btn-sm btn-outline-secondary" href="'+esc(m.url)+'"><i class="bi bi-download"></i></a>'
+        + btnDescargar
         + btnDel
         + '</div>';
     }).join('');
@@ -1800,11 +1845,14 @@ function catwRenderManuales(){
   const drop = document.getElementById('catwManualDrop');
   const hint = document.getElementById('catwManualHint');
   const aviso = document.getElementById('catwManualAviso');
-  // 2026-07-14: subir manual (POST) es _catalogo_admin_required (solo
-  // superadmin) -- para roles ampliados se oculta el dropzone entero y se
-  // muestra el aviso en su lugar, en vez de dejarlos subir y recibir un
-  // 403 silencioso.
-  if(!IS_SUPERADMIN){
+  // 2026-07-23: subir manual (POST) es _catalogo_producto_write_required
+  // (mantenciones o superadmin) -- para roles SIN ninguno de los dos se
+  // oculta el dropzone entero y se muestra el aviso en su lugar, en vez de
+  // dejarlos subir y recibir un 403 silencioso. (Corregido 2026-08-25: acá
+  // decía IS_SUPERADMIN y le escondía el dropzone a un técnico que el
+  // backend sí habría aceptado -- Daniel: "es importante que el usuario
+  // suba lo que son los manuales".)
+  if(!CAN_CARGAR_PIOLAS){
     drop.style.display = 'none';
     aviso.style.display = '';
   } else if(catwManuales.length >= MAX_MANUALES_WIZ){

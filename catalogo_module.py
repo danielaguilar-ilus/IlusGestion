@@ -827,6 +827,22 @@ def register_catalogo_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
+    def _manual_permite_descarga():
+        """2026-08-25 (Daniel, dictado): vio a un técnico entrar con su
+        propio perfil y DESCARGAR el manual de un producto, y lo consideró
+        delicado -- pidió dejar la descarga (no la vista) como permiso
+        editable en la matriz de roles. True si superadmin O el flag
+        granular g.permissions['cat_manual_descargar'] (matriz /admin/roles,
+        módulo "catalogo" -> acción "descargar_manual", aditivo, nace en
+        False para todos los roles hasta que Daniel lo prenda). NO gatea
+        VER el manual -- eso sigue abierto a cualquiera con
+        _catalogo_required (mantenciones o superadmin): el visor embebido
+        (catvAbrir, iframe con blob URL) ya no depende de este flag, y
+        desde ahí el usuario puede imprimir directo con el visor del
+        navegador sin bajar el archivo a su equipo."""
+        perms = g.get("permissions") or {}
+        return bool(perms.get("superadmin") or perms.get("cat_manual_descargar"))
+
     def _catalogo_producto_write_required(view):
         """2026-07-23 (Daniel, dictado): "ya es momento de que este módulo,
         el técnico pueda llamar a un producto nuevo y agregar las medidas de
@@ -1805,8 +1821,16 @@ def register_catalogo_routes(app, ctx):
             print(f"[cat_descargar_manual] error pid={pid}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo leer el manual"}), 500
         nombre = p.get("manual_pdf_nombre") or "manual.pdf"
+        quiere_bajar = request.args.get("download") == "1"
+        if quiere_bajar and not _manual_permite_descarga():
+            return jsonify({
+                "ok": False,
+                "error": "No tienes permiso para descargar manuales. Puedes verlos e imprimirlos desde la pantalla.",
+                "error_codigo": "SIN_PERMISO_MANUAL_DESCARGAR",
+            }), 403
+        disposition = "attachment" if quiere_bajar else "inline"
         resp = Response(data, mimetype="application/pdf")
-        resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        resp.headers["Content-Disposition"] = f'{disposition}; filename="{nombre}"'
         return resp
 
     # ─────────────────────────────────────────────────────────────────
@@ -2303,8 +2327,16 @@ def register_catalogo_routes(app, ctx):
             print(f"[cat_manuales_descargar] error pid={pid} manual={manual_id}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo leer el manual"}), 500
         nombre = m.get("nombre_archivo") or "manual.pdf"
+        quiere_bajar = request.args.get("download") == "1"
+        if quiere_bajar and not _manual_permite_descarga():
+            return jsonify({
+                "ok": False,
+                "error": "No tienes permiso para descargar manuales. Puedes verlos e imprimirlos desde la pantalla.",
+                "error_codigo": "SIN_PERMISO_MANUAL_DESCARGAR",
+            }), 403
+        disposition = "attachment" if quiere_bajar else "inline"
         resp = Response(data, mimetype="application/pdf")
-        resp.headers["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        resp.headers["Content-Disposition"] = f'{disposition}; filename="{nombre}"'
         return resp
 
     # ─────────────────────────────────────────────────────────────────

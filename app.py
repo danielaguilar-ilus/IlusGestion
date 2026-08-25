@@ -4237,6 +4237,17 @@ PERMS_KEYS = (
     # definitivo, que se queda exclusivo de superadmin+confirm_text
     # (Regla #5, no se toca).
     "cat_eliminar",
+    # cat_manual_descargar — flag del módulo Catálogo de Productos (aditivo
+    # 2026-08-25, Daniel: vio a un técnico entrar a su perfil y descargar
+    # el manual de un producto, lo consideró delicado, y pidió "dejarlo
+    # editable en la edición de roles"). MISMO patrón que cat_eliminar: el
+    # gate real (catalogo_module.py, rutas .../manual/descargar) sigue
+    # aceptando "superadmin" también vía OR. Solo gatea la DESCARGA
+    # (Content-Disposition: attachment) -- VER el manual en pantalla
+    # (visor embebido + imprimir desde ahí) sigue abierto a cualquiera con
+    # _catalogo_required (mantenciones o superadmin), sin cambios; nace en
+    # False para todos los roles hasta que Daniel lo prenda por rol.
+    "cat_manual_descargar",
     # tr_eliminar — flag del módulo Transporte (aditivo 2026-08-19, Daniel:
     # "que Alison pueda eliminar pedidos y manifiestos que no tengan la
     # trazabilidad comprometida... dejalo modificable para controlar
@@ -4390,6 +4401,7 @@ def _build_perms_from_matrix(role):
     # puramente aditivo, el gate real (_catalogo_eliminar_required en
     # catalogo_module.py) sigue aceptando "superadmin" también vía OR.
     base["cat_eliminar"]  = bool(cat.get("eliminar"))
+    base["cat_manual_descargar"] = bool(cat.get("descargar_manual"))
     base["tr_eliminar"]   = bool(tra.get("eliminar"))
 
     base["superadmin"] = False
@@ -12235,8 +12247,11 @@ PERMISSIONS_MATRIX = {
     # Ningún rol tiene fila hoy → nace en False para todos salvo superadmin
     # (ver get_role_permissions()); el hard-delete definitivo NO usa este
     # flag, sigue exclusivo de superadmin+confirm_text (Regla #5).
+    # descargar_manual — aditivo 2026-08-25 (ver comentario junto a
+    # cat_manual_descargar en PERMS_KEYS). Ver el manual en pantalla NO
+    # pasa por esta matriz, sigue abierto a todo _catalogo_required.
     "catalogo":       {"label":"Catálogo de Productos", "icon":"bi-box-seam",
-                       "acciones":["eliminar"]},
+                       "acciones":["eliminar", "descargar_manual"]},
 }
 
 # Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
@@ -12296,6 +12311,7 @@ PERMISSIONS_META = {
     },
     "catalogo": {
         "eliminar": {"label": "Eliminar producto (archivar)", "tipo": "bloqueo", "icon": "bi-trash"},
+        "descargar_manual": {"label": "Descargar manuales (PDF)", "tipo": "bloqueo", "icon": "bi-download"},
     },
 }
 

@@ -381,7 +381,7 @@
             <div class="t2" id="catwManualHint">Hasta 25 MB · máximo 5 manuales</div>
           </div>
           <div id="catwManualAviso" class="text-muted small" style="display:none;">
-            <i class="bi bi-info-circle me-1"></i>Solo el superadministrador puede subir o quitar manuales.
+            <i class="bi bi-info-circle me-1"></i>No tienes permiso para subir manuales.
           </div>
           <input type="file" id="catwManualInput" accept="application/pdf" hidden>
         </div>
@@ -407,7 +407,8 @@
 window.CAT_LIST_DATA = {
   isSuperadmin: {{ 'true' if permissions.superadmin else 'false' }},
   canCargarPiolas: {{ 'true' if (permissions.mantenciones or permissions.superadmin) else 'false' }},
-  canEliminarCatalogo: {{ 'true' if (permissions.cat_eliminar or permissions.superadmin) else 'false' }}
+  canEliminarCatalogo: {{ 'true' if (permissions.cat_eliminar or permissions.superadmin) else 'false' }},
+  canDescargarManual: {{ 'true' if (permissions.cat_manual_descargar or permissions.superadmin) else 'false' }}
 };
 </script>
 <script defer src="{{ url_for('static', filename='catalogo_list.js') }}"></script>
