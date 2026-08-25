@@ -5316,6 +5316,48 @@ async function tkotGenerar(){
           payload.cliente_id_confirmado = c0.id;
           continue;
         }
+        // 2026-08-25 (Daniel, en vivo: "se me estan duplicando los
+        // clientes... no quiero generar otra vez el cliente no avanza
+        // solo mata el proceso"): antes, si el candidato sugerido no era
+        // el correcto (o no había ninguno -- el match automático es solo
+        // RUT exacto / RUT sin DV / nombre parecido), la única salida era
+        // "crear cliente nuevo" (duplica una ficha que sí existe, solo
+        // que con datos que no calzaron) o cancelar en silencio (mata el
+        // proceso sin avisar ni dar otra opción). Ahora se ofrece buscar
+        // manualmente por RUT o razón social ANTES de preguntar si crear
+        // uno nuevo -- mismo autocomplete que ya usa el selector de
+        // origen de "Generar OT" en ots_list.html.
+        const busq = await ilusPrompt({
+          title: 'Buscar cliente existente',
+          message: (c0 ? 'Ese candidato no era el correcto. ' : '') + 'Busca por RUT o razón social antes de crear uno nuevo:',
+          placeholder: 'Ej: 76123456 o Sportlife (déjalo vacío para omitir)',
+        });
+        if(busq && busq.trim().length >= 2){
+          let encontrados = [];
+          try{
+            const rb = await fetch('/mantenciones/api/clientes/autocomplete?q=' + encodeURIComponent(busq.trim()));
+            encontrados = ((await rb.json()) || []).filter(c => c.origen === 'local' && c.id);
+          }catch(e){ /* sin conexión: sigue abajo al flujo de crear/cancelar */ }
+          if(encontrados.length){
+            const primero = encontrados[0];
+            const usarBuscado = await ilusConfirm({
+              title: 'Cliente encontrado',
+              message: 'Encontramos <strong>' + esc(primero.razon_social || 'Cliente') + '</strong>'
+                + (primero.rut ? ' · RUT ' + esc(primero.rut) : '') + '.'
+                + (encontrados.length > 1 ? '<br><span style="font-size:.85rem;color:#6b7280">Hay ' + (encontrados.length - 1) + ' resultado(s) más -- afina la búsqueda si no es este.</span>' : ''),
+              messageHtml: true,
+              sub: '¿Usar este cliente para la OT?',
+              okLabel: 'Usar este cliente', cancelLabel: 'No es este',
+              type: 'question',
+            });
+            if(usarBuscado){
+              payload.cliente_id_confirmado = primero.id;
+              continue;
+            }
+          } else {
+            ilusToast('Sin resultados para "' + busq.trim() + '"', {type:'warning'});
+          }
+        }
         const crear = await ilusConfirm({
           title: 'Crear cliente nuevo',
           message: 'No hay ficha para <strong>' + esc(cn.razon_social_ticket || 'este cliente') + '</strong>'
@@ -5325,7 +5367,12 @@ async function tkotGenerar(){
           okLabel: 'Sí, crear cliente', cancelLabel: 'Cancelar',
           type: 'question',
         });
-        if(!crear) return;
+        if(!crear){
+          // 2026-08-25: antes moría acá sin ningún aviso -- ahora al
+          // menos queda claro que la OT no se generó y por qué.
+          ilusToast('No se generó la OT: no se eligió ni creó un cliente', {type:'warning'});
+          return;
+        }
         payload.forzar_crear_cliente = true;
         continue;
       }
