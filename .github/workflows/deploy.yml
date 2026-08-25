@@ -173,6 +173,12 @@ jobs:
           # codigo — los secrets quedan listos para cuando se construya.
           SHIPIT_API_TOKEN:               ${{ secrets.SHIPIT_API_TOKEN }}
           SHIPIT_API_EMAIL:               ${{ secrets.SHIPIT_API_EMAIL }}
+          # Clickex (2026-08-25) — courier local, API compartida por su
+          # ejecutivo (MBM). Auth por x-api-key + username/password (headers
+          # separados, no la contraseña del panel web).
+          CLICKEX_API_USERNAME:           ${{ secrets.CLICKEX_API_USERNAME }}
+          CLICKEX_API_PASSWORD:           ${{ secrets.CLICKEX_API_PASSWORD }}
+          CLICKEX_API_KEY:                ${{ secrets.CLICKEX_API_KEY }}
         run: |
           # Heredoc: el contenido NO aparece en los logs de Actions
           cat > /tmp/env.yaml <<'EOF_ENV_YAML'
@@ -182,7 +188,7 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|SIMPLIROUTE_WEBHOOK_SECRET|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|SIMPLIROUTE_WEBHOOK_SECRET|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL|CLICKEX_API_USERNAME|CLICKEX_API_PASSWORD|CLICKEX_API_KEY):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
@@ -213,6 +219,10 @@ jobs:
           echo "Credenciales Shipit:"
           append_env SHIPIT_API_TOKEN              "$SHIPIT_API_TOKEN"
           append_env SHIPIT_API_EMAIL              "$SHIPIT_API_EMAIL"
+          echo "Credenciales Clickex:"
+          append_env CLICKEX_API_USERNAME          "$CLICKEX_API_USERNAME"
+          append_env CLICKEX_API_PASSWORD          "$CLICKEX_API_PASSWORD"
+          append_env CLICKEX_API_KEY               "$CLICKEX_API_KEY"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)
