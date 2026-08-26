@@ -17165,15 +17165,67 @@ def cubicador_export_excel():
     # gerente vía Roberto: "no le da el detalle de los bultos... en el
     # excel en otra hoja pueda dar el detalle de los bultos") ──────────
     # La hoja 1 solo trae el TOTAL de bultos por SKU (columna "Bultos",
-    # ej. 6). Esta hoja expande esa cantidad en una fila POR BULTO
-    # individual -- Bulto 1 de 6, Bulto 2 de 6, etc. -- con el mismo peso/
-    # volumen por unidad que ya calcula la hoja 1 (ILUS no registra una
-    # medida distinta por caja física, todas las cajas de un mismo SKU
-    # comparten la ficha logística). Nunca modifica `lineas`/`ws` de la
-    # hoja 1 -- es enteramente aditiva, la hoja BLINDADA de arriba queda
-    # intacta.
+    # ej. 5). Esta hoja expande esa cantidad en una fila POR BULTO
+    # individual -- Bulto 1 de 5, Bulto 2 de 5, etc.
+    #
+    # FIX 2026-08-26, mismo día (Daniel detectó EN VIVO, con capturas, con
+    # el SKU real 1121100989 "ILUS Optimal Dual Pulldown/Row" de la VD
+    # 10218): la primera versión de esta hoja repetía l["peso_kg_u"] /
+    # l["peso_vol_u"] / vol_u_m3 -- que son el TOTAL de la ficha completa
+    # sumado sobre TODOS sus bultos, no una medida por caja (ver
+    # sku_data_map más arriba: "COALESCE(SUM(b.peso), 0) AS peso_total")
+    # -- IDÉNTICO en cada fila "Bulto N de M". Esto no solo mostraba el
+    # mismo número repetido: la suma de la columna Kg de la hoja 2 daba
+    # peso_kg_u × N (5× el peso real en un producto de 5 bultos) en vez
+    # de peso_kg_u una sola vez. Palabras de Daniel: "No cuadra
+    # matemáticamente y esa información está en el sistema... la idea de
+    # esto es tener el mayor detalle de cuánto mide el producto en Alto,
+    # largo y ancho además de los kilos".
+    #
+    # Esa información real SÍ está en el sistema: la tabla `app_bultos`
+    # (BULTOS_TABLE, CREATE TABLE ~línea 2861: product_id, bulto_num,
+    # largo, ancho, alto, peso) -- la MISMA tabla que alimenta el modal
+    # "Detalle por bulto" de la ficha de producto (templates/
+    # product_detail.html, ruta /products/<id>, get_full() -> enrich())
+    # con columnas Bulto | Largo | Ancho | Alto | Peso | Peso Vol. Se lee
+    # acá con el mismo criterio: peso_vol de cada bulto vía calc_pv()
+    # (línea ~4152: largo*ancho*alto/4000, la misma fórmula de siempre) --
+    # verificado contra los 5 bultos reales que Daniel mostró (75 + 93 +
+    # 37.5 + 37.5 + 37.5 = 280.5 kg), que cuadra EXACTO con "Kg/u" de la
+    # hoja 1 y con el header "280.50 kg PESO BRUTO" del modal. La
+    # matemática agregada siempre estuvo bien -- lo que faltaba era leer
+    # el detalle real en vez de repetir el agregado.
+    #
+    # Los bulto_num se muestran TAL CUAL están en la base -- pueden tener
+    # huecos (ej. 1, 2, 4, 5, 6 sin el 3): save_bultos_mysql (línea
+    # ~6503) solo inserta una fila si el operador cargó al menos una
+    # medida > 0 para ese índice; un bulto dejado en blanco al editar la
+    # ficha simplemente no se guarda. Un salto real en la numeración es
+    # un dato legítimo de la ficha, no un bug de esta hoja -- no se
+    # rellena ni se renumera.
+    #
+    # Alcance deliberado: igual que las columnas "Kg/u"/"PV/u"/"Bultos"
+    # de la hoja 1 (que tampoco multiplican por cantidad), esta hoja
+    # muestra los bultos de UNA unidad de venta por línea, sin
+    # multiplicar por bultos_equivalentes/cantidad. Repetir el bloque de
+    # bultos una vez por cada unidad física vendida es un cambio de
+    # alcance distinto, a proponer aparte si Daniel lo pide.
+    #
+    # Fallback (ficha con bultos pero sin filas recuperables en
+    # `app_bultos` -- en la práctica no debería activarse nunca, porque
+    # total_bultos/peso_kg_u/peso_vol_u/vol_u YA son agregados SQL
+    # calculados sobre esas mismas filas en sku_data_map más arriba; se
+    # deja por robustez ante una condición de carrera entre esa query y
+    # ésta): se repite el promedio de la ficha como en la primera
+    # versión, pero SIEMPRE marcado en la columna "Origen" como estimado,
+    # con relleno ámbar de advertencia (#FFF8E1, paleta ILUS) y con
+    # Largo/Ancho/Alto en blanco -- nunca se inventan medidas que no
+    # existen.
+    #
+    # Nunca modifica `lineas`/`ws` de la hoja 1 -- es enteramente aditiva,
+    # la hoja BLINDADA de arriba queda intacta.
     ws2 = wb.create_sheet("Detalle de Bultos")
-    ws2.merge_cells("A1:G1")
+    ws2.merge_cells("A1:K1")
     c2 = ws2["A1"]
     c2.value = "DETALLE DE BULTOS — " + title_text.split("·", 1)[-1].strip()
     c2.font = Font(bold=True, size=13, color="FFFFFF")
@@ -17181,11 +17233,30 @@ def cubicador_export_excel():
     c2.alignment = Alignment(horizontal="center", vertical="center")
     ws2.row_dimensions[1].height = 28
 
-    cols2 = ["SKU", "Descripción ERP", "Doc.", "Bulto", "Kg", "PV", "Vol m³"]
+    cols2 = ["SKU", "Descripción ERP", "Doc.", "Bulto", "Largo cm", "Ancho cm",
+             "Alto cm", "Kg", "PV", "Vol m³", "Origen"]
     hdr_row2 = 2
     for ci, h in enumerate(cols2, 1):
         _hdr_cell(ws2.cell(row=hdr_row2, column=ci), h)
     ws2.row_dimensions[hdr_row2].height = 20
+
+    # Batch: el detalle real de TODAS las fichas con bultos de este
+    # export, en 1 sola query (mismo patrón que sku_data_map más arriba:
+    # WHERE product_id IN (...), nunca 1 query por SKU).
+    app_ids_con_bultos = sorted({
+        l["app_id"] for l in lineas if l.get("tiene_bultos") and l.get("app_id")
+    })
+    bultos_reales_por_app_id = {}
+    if app_ids_con_bultos:
+        ph_ids = ",".join(["%s"] * len(app_ids_con_bultos))
+        filas_reales = mysql_fetchall(
+            f"SELECT product_id, bulto_num, largo, ancho, alto, peso "
+            f"FROM `{BULTOS_TABLE}` WHERE product_id IN ({ph_ids}) "
+            f"ORDER BY product_id, bulto_num",
+            tuple(app_ids_con_bultos),
+        ) or []
+        for fb in filas_reales:
+            bultos_reales_por_app_id.setdefault(fb["product_id"], []).append(fb)
 
     ri2 = hdr_row2 + 1
     tot_kg_bultos = tot_pv_bultos = tot_vol_bultos = 0.0
@@ -17199,29 +17270,53 @@ def cubicador_export_excel():
             f"{headers[0].get('tido','')} {headers[0].get('nudo_display', headers[0].get('nudo',''))}"
             if headers else ""
         )
-        vol_u_m3 = l["vol_u"] / 1_000_000.0
-        for n in range(1, n_bultos + 1):
-            bg = LGRAY if ri2 % 2 == 0 else "FFFFFF"
+        reales = bultos_reales_por_app_id.get(l.get("app_id")) or []
+        if reales:
+            filas_bulto = [{
+                "bulto_num": fb["bulto_num"],
+                "largo": float(fb["largo"]), "ancho": float(fb["ancho"]), "alto": float(fb["alto"]),
+                "peso": float(fb["peso"]),
+                "peso_vol": calc_pv(fb["largo"], fb["ancho"], fb["alto"]),
+                "vol_m3": float(fb["largo"]) * float(fb["ancho"]) * float(fb["alto"]) / 1_000_000.0,
+                "origen": "Real",
+            } for fb in reales]
+        else:
+            # Fallback defensivo -- ver comentario arriba, no debería pasar.
+            filas_bulto = [{
+                "bulto_num": n, "largo": None, "ancho": None, "alto": None,
+                "peso": l["peso_kg_u"], "peso_vol": l["peso_vol_u"],
+                "vol_m3": l["vol_u"] / 1_000_000.0,
+                "origen": "Estimado (sin detalle por bulto)",
+            } for n in range(1, n_bultos + 1)]
+
+        n_reales = len(filas_bulto)
+        for fbu in filas_bulto:
+            es_real = fbu["origen"] == "Real"
+            bg = "FFF8E1" if not es_real else (LGRAY if ri2 % 2 == 0 else "FFFFFF")
             vals2 = [
                 l["sku"], l["descripcion_erp"], doc_ref_val,
-                f"Bulto {n} de {n_bultos}",
-                l["peso_kg_u"], l["peso_vol_u"], vol_u_m3,
+                f"Bulto {fbu['bulto_num']} de {n_reales}",
+                fbu["largo"], fbu["ancho"], fbu["alto"],
+                fbu["peso"], fbu["peso_vol"], fbu["vol_m3"],
+                fbu["origen"],
             ]
             for ci, val in enumerate(vals2, 1):
                 cell = ws2.cell(row=ri2, column=ci, value=val)
                 cell.fill = PatternFill("solid", fgColor=bg)
-                cell.font = Font(size=9)
+                cell.font = Font(size=9, italic=(not es_real))
                 cell.alignment = Alignment(
-                    horizontal="center" if ci == 4 else ("right" if ci >= 5 else "left"),
+                    horizontal="center" if ci in (4, 11) else ("right" if ci >= 5 else "left"),
                     vertical="center",
                 )
-                if ci in (5, 6):
-                    cell.number_format = "#,##0.0"
-                elif ci == 7:
+                if ci in (5, 6, 7) and val is not None:
+                    cell.number_format = "#,##0"
+                elif ci in (8, 9) and val is not None:
+                    cell.number_format = "#,##0.00"
+                elif ci == 10 and val is not None:
                     cell.number_format = "#,##0.000"
-            tot_kg_bultos += l["peso_kg_u"]
-            tot_pv_bultos += l["peso_vol_u"]
-            tot_vol_bultos += vol_u_m3
+            tot_kg_bultos  += fbu["peso"]     or 0
+            tot_pv_bultos  += fbu["peso_vol"] or 0
+            tot_vol_bultos += fbu["vol_m3"]   or 0
             ri2 += 1
 
     tr2 = ri2
@@ -17229,17 +17324,17 @@ def cubicador_export_excel():
     ws2.cell(row=tr2, column=1, value="TOTALES").font = Font(bold=True, color="FFFFFF", size=9)
     ws2.cell(row=tr2, column=1).fill = PatternFill("solid", fgColor=BLACK)
     ws2.cell(row=tr2, column=1).alignment = Alignment(horizontal="right")
-    totales2 = {5: tot_kg_bultos, 6: tot_pv_bultos, 7: tot_vol_bultos}
-    for ci in range(1, 8):
+    totales2 = {8: tot_kg_bultos, 9: tot_pv_bultos, 10: tot_vol_bultos}
+    for ci in range(1, 12):
         cell = ws2.cell(row=tr2, column=ci)
         cell.fill = PatternFill("solid", fgColor=BLACK)
         if ci in totales2:
             cell.value = totales2[ci]
             cell.font = Font(bold=True, color="FFFFFF", size=9)
             cell.alignment = Alignment(horizontal="right")
-            cell.number_format = "#,##0.000" if ci == 7 else "#,##0.0"
+            cell.number_format = "#,##0.000" if ci == 10 else "#,##0.00"
 
-    for ci, w in enumerate([14, 42, 18, 16, 10, 10, 12], 1):
+    for ci, w in enumerate([14, 42, 18, 16, 9, 9, 9, 10, 10, 12, 24], 1):
         ws2.column_dimensions[get_column_letter(ci)].width = w
     ws2.freeze_panes = f"A{hdr_row2 + 1}"
 
