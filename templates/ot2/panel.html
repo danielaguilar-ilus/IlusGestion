@@ -231,6 +231,41 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-ch.f-cancel{background:var(--ot-ejec-bg);color:#991b1b;text-decoration:line-through}
 .ot2-mas{font-size:.6rem;font-weight:800;color:#9ca3af;padding:0 2px}
 
+/* ── Centro de Control: ticket, prioridad, interno/externo, salud/SLA
+   (Daniel, brief 2026-08-25). Mismo lenguaje visual que .dp/.ot2-est ya
+   usan -- pastillas de color, no un sistema nuevo. ────────────────── */
+.ot2-tk{display:inline-flex;align-items:center;gap:4px;font-size:.66rem;font-weight:800;
+  color:#6b21a8;background:#f3e8ff;border-radius:6px;padding:2px 7px;white-space:nowrap}
+.ot2-tec-tipo{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;
+  padding:1px 6px;border-radius:999px;white-space:nowrap}
+.ot2-tec-tipo.interno{background:#dbeafe;color:#1d4ed8}
+.ot2-tec-tipo.externo{background:#fff8e1;color:#92400e}
+.dp-pr-urgente{background:#fee2e2;color:#991b1b}
+.dp-pr-alta   {background:#ffedd5;color:#9a3412}
+.dp-pr-media  {background:#f3f4f6;color:#4b5563}
+.dp-pr-baja   {background:#f3f4f6;color:#9ca3af}
+.dp-sl-ok {background:#dcfce7;color:#166534}
+.dp-sl-hoy{background:#fff8e1;color:#92400e}
+.dp-sl-mal{background:#fee2e2;color:#991b1b}
+
+/* ── Equipo hoy: capacidad por técnico, integrada al calendario (Daniel,
+   en vivo: "puede vivir dentro del calendario y no como módulo del
+   sidebar" -- respuesta directa a la pregunta sobre "Mi día"). ──────── #}
+.ot2-eq{background:#fff;border:1px solid var(--ot-line);border-radius:11px;
+  padding:14px 16px;margin-bottom:14px}
+.ot2-eq-tit{font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;
+  color:#6b7280;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.ot2-eq-lista{display:flex;flex-wrap:wrap;gap:8px}
+.ot2-eq-pers{display:flex;align-items:center;gap:8px;background:#fafbfc;
+  border:1px solid var(--ot-line);border-radius:999px;padding:5px 12px 5px 5px}
+.ot2-eq-pers .av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+  background:#0a0a0a;color:#fff;font-size:.62rem;font-weight:800;flex:none}
+.ot2-eq-pers .av.sin{background:#fff;border:1.5px dashed #d1d5db;color:#c7cbd1}
+.ot2-eq-pers .nom{font-size:.78rem;font-weight:700;color:#0a0a0a;white-space:nowrap}
+.ot2-eq-pers .n{font-size:.68rem;font-weight:800;color:#6b7280;white-space:nowrap}
+.ot2-eq-pers.en-ejec{border-color:var(--ot-ejec)}
+.ot2-eq-vacio{font-size:.82rem;color:#9ca3af;font-weight:600}
+
 /* ── Pie de paginación (patrón Etiquetas, REGLA #4.3) ──────────────── */
 .ot2-pie{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 16px;
   border-top:1px solid var(--ot-line);font-size:.83rem;color:#6b7280;font-weight:600}
@@ -438,6 +473,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
                   {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
                 </span>
+                {% if f.numero_ticket %}<span class="ot2-tk" title="Ticket de origen"><i class="bi bi-ticket-perforated-fill"></i>{{ f.numero_ticket }}</span>{% endif %}
               </td>
               <td><div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div></td>
               <td><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
@@ -452,6 +488,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   {% if f.tecnico_ini %}<span class="ot2-av">{{ f.tecnico_ini }}</span>
                   {% else %}<span class="ot2-av sin"><i class="bi bi-person"></i></span>{% endif %}
                   <span>{{ f.tecnico_nombre or 'Sin asignar' }}</span>
+                  {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
                 </div>
               </td>
               <td style="white-space:nowrap">{{ f.fecha_dia }}</td>
@@ -473,6 +510,12 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 <div class="ot2-det-in">
                   <span class="dp dp-trab"><i class="bi bi-card-text"></i>
                     <b>{{ f.titulo or 'Sin título' }}</b></span>
+                  {% if f.prioridad_label %}
+                  <span class="dp dp-{{ f.prioridad_class }}"><i class="bi {{ f.prioridad_icon }}"></i>{{ f.prioridad_label }}</span>
+                  {% endif %}
+                  {% if f.salud_label %}
+                  <span class="dp dp-{{ f.salud_class }}"><i class="bi {{ f.salud_icon }}"></i>{{ f.salud_label }}</span>
+                  {% endif %}
                   {% if f.estado_sub %}
                   <span class="dp dp-sit"><i class="bi bi-activity"></i>{{ f.estado_sub }}</span>
                   {% endif %}
@@ -542,11 +585,18 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
               <span class="nu">{% if f.numero_ot %}OT-{{ f.numero_sufijo }}{% else %}VS-{{ '%05d'|format(f.id) }}{% endif %}</span>
               <span class="ic"><i class="bi {{ f.tipo_icon }}"></i></span>
             </div>
+            {% if f.numero_ticket or f.salud_label %}
+            <div class="r1" style="margin-top:4px">
+              {% if f.numero_ticket %}<span class="ot2-tk" title="Ticket de origen"><i class="bi bi-ticket-perforated-fill"></i>{{ f.numero_ticket }}</span>{% endif %}
+              {% if f.salud_label %}<span class="dp dp-{{ f.salud_class }}" style="padding:2px 7px;font-size:.6rem"><i class="bi {{ f.salud_icon }}"></i>{{ f.salud_label }}</span>{% endif %}
+            </div>
+            {% endif %}
             <div class="cl">{{ f.razon_social or 'Trabajo interno' }}</div>
             <div class="r2">
               {% if f.tecnico_ini %}<span class="mini">{{ f.tecnico_ini }}</span>
               {% else %}<span class="mini sin"><i class="bi bi-person"></i></span>{% endif %}
-              <span class="pc">{{ f.check_pct }}%</span>
+              {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
+              <span class="pc" style="margin-left:auto">{{ f.check_pct }}%</span>
             </div>
           </a>
           {% endfor %}
@@ -560,6 +610,30 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 
   {# ══════════════════ CALENDARIO ══════════════════ #}
   {% elif vista == 'calendario' %}
+
+  {# "Equipo hoy" -- capacidad por técnico solo para la fecha real de hoy,
+     integrada acá (Daniel, en vivo 2026-08-25: "puede vivir dentro del
+     calendario y no como módulo del sidebar"). Solo aparece cuando el mes
+     mostrado incluye la fecha de hoy -- si Daniel navega a otro mes no hay
+     "hoy" que mostrar. #}
+  {% if equipo_hoy %}
+  <div class="ot2-eq">
+    <div class="ot2-eq-tit"><i class="bi bi-people-fill"></i>Equipo hoy</div>
+    <div class="ot2-eq-lista">
+      {% for p in equipo_hoy %}
+      <div class="ot2-eq-pers {{ 'en-ejec' if p.en_ejec }}">
+        {% if p.ini %}<span class="av">{{ p.ini }}</span>{% else %}<span class="av sin"><i class="bi bi-person"></i></span>{% endif %}
+        <span class="nom">{{ p.nombre }}</span>
+        {% if p.tipo %}<span class="ot2-tec-tipo {{ p.tipo }}">{{ 'Ext' if p.tipo == 'externo' else 'Int' }}</span>{% endif %}
+        <span class="n">{{ p.total }} OT{{ 's' if p.total != 1 }}{% if p.en_ejec %} · {{ p.en_ejec }} en curso{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% elif es_mes_actual %}
+  <div class="ot2-eq"><div class="ot2-eq-vacio"><i class="bi bi-people me-1"></i>Sin OT agendadas hoy</div></div>
+  {% endif %}
+
   <div class="ot2-cal-nav">
     <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_ant) }}" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></a>
     <span class="ot2-cal-mes">{{ cal_mes_label }}</span>
@@ -576,10 +650,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
            quién es la OT, quién es el técnico asignado". Con más de 4
            trabajos en el día, el modal es además la única forma de verlos
            todos sin que la celda reviente. #}
+        {# 2026-08-25 (Daniel, brief "Centro de Control", caso de estrés "100
+           OT en un día"): data-full lleva TODAS las filas del día, sin el
+           tope de _OT2_CAL_CAP_DIA que sí aplica a los chips visibles de
+           la celda (celda.filas) -- el modal ya no depende de leer los
+           chips ya renderizados, así que deja de perder las que sobran
+           del tope. Ver _ot2_fila_modal_lean() en app.py. #}
         <div class="ot2-dia {{ 'hoy' if celda.es_hoy }}" style="cursor:pointer"
              onclick="OT2D.abrir(this)"
-             data-dia="{{ celda.num }}" data-total="{{ celda.filas|length + celda.recortado }}"
-             data-ots='{{ celda.filas | map(attribute="id") | list | tojson }}'>
+             data-dia="{{ celda.num }}" data-total="{{ celda.filas_modal|length }}"
+             data-full='{{ celda.filas_modal | tojson }}'>
           <span class="d">{{ celda.num }}</span>
           {% for f in celda.filas %}
           <span class="ot2-ch f-{{ f.estado_fase or 'cancel' }}"
@@ -665,28 +745,39 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    no hace una consulta más al servidor. */
 window.OT2D = (function(){
   var m = null;
+  function esc(s){ return (s==null?'':String(s))
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  // 2026-08-25 (Daniel, brief "Centro de Control", caso de estrés "100 OT
+  // en un día"): ya NO lee los chips renderizados en la celda (esos
+  // siguen topados a 4 a propósito, para que la celda no reviente) --
+  // lee data-full, un JSON con TODAS las filas del día que el backend
+  // arma sin tope (ver _ot2_fila_modal_lean en app.py). Por eso este
+  // modal aguanta cualquier cantidad, no solo las 4 primeras.
   function abrir(celda){
-    var chips = celda.querySelectorAll('.ot2-ch');
-    if (!chips.length) return;                       // día vacío: no molesta
-    var dia = celda.dataset.dia, total = celda.dataset.total;
+    var filas;
+    try { filas = JSON.parse(celda.dataset.full || '[]'); } catch(e) { filas = []; }
+    if (!filas.length) return;                       // día vacío: no molesta
+    var dia = celda.dataset.dia, total = filas.length;
     document.getElementById('ot2DiaTit').textContent = 'Día ' + dia;
     document.getElementById('ot2DiaSub').textContent =
-      total + (total === '1' ? ' orden agendada' : ' órdenes agendadas') +
-      (chips.length < total ? ' · se listan las ' + chips.length + ' primeras' : '');
+      total + (total === 1 ? ' orden agendada' : ' órdenes agendadas');
     var html = '';
-    chips.forEach(function(c){
-      var d = c.dataset;
-      html += '<a class="o2d f-'+d.fase+'" href="'+d.url+'">'+
-        '<span class="nu">'+d.ot+'</span>'+
+    filas.forEach(function(d){
+      html += '<a class="o2d f-'+esc(d.fase)+'" href="'+esc(d.url)+'">'+
+        '<span class="nu">'+esc(d.ot)+(d.ticket ? '<br><span class="ot2-tk" style="margin-top:3px"><i class="bi bi-ticket-perforated-fill"></i>'+esc(d.ticket)+'</span>' : '')+'</span>'+
         '<span style="flex:1;min-width:0">'+
-          '<span class="cl d-block text-truncate">'+d.cli+'</span>'+
-          '<span class="mt">'+d.tipo+(d.sub ? ' · '+d.sub : '')+'</span></span>'+
-        (d.ini ? '<span class="tc">'+d.ini+'</span>'
+          '<span class="cl d-block text-truncate">'+esc(d.cli)+'</span>'+
+          '<span class="mt">'+esc(d.tipo)+(d.sub ? ' · '+esc(d.sub) : '')+'</span>'+
+          (d.prioridad ? ' <span class="dp dp-'+esc(d.prioridad_class)+'" style="padding:1px 7px;font-size:.62rem">'+esc(d.prioridad)+'</span>' : '')+
+          (d.salud ? ' <span class="dp dp-'+esc(d.salud_class)+'" style="padding:1px 7px;font-size:.62rem">'+esc(d.salud)+'</span>' : '')+
+        '</span>'+
+        (d.ini ? '<span class="tc">'+esc(d.ini)+'</span>'
                : '<span class="tc sin"><i class="bi bi-person"></i></span>')+
         '<span style="min-width:96px">'+
-          '<span class="mt d-block">'+d.tec+'</span>'+
-          '<span class="mt">'+d.av+'</span></span>'+
-        '<span class="es">'+d.estado+'</span>'+
+          '<span class="mt d-block">'+esc(d.tec)+(d.tec_tipo ? ' <span class="ot2-tec-tipo '+esc(d.tec_tipo)+'">'+(d.tec_tipo === 'externo' ? 'Ext' : 'Int')+'</span>' : '')+'</span>'+
+          '<span class="mt">'+esc(d.av)+'</span></span>'+
+        '<span class="es">'+esc(d.estado)+'</span>'+
         '<i class="bi bi-arrow-right text-muted"></i></a>';
     });
     document.getElementById('ot2DiaBody').innerHTML = html;

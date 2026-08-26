@@ -72703,6 +72703,15 @@ _OT2_ESTADO_META = {
     "cancelada":            ("Cancelada",           "st-cancel", "bi-x-circle",               None),
     "anulada":              ("Anulada",             "st-cancel", "bi-slash-circle",           None),
 }
+# Prioridad de la OT (columna v.prioridad, ya existía pero ninguna vista
+# de lista la mostraba -- solo la ficha individual). Daniel, 2026-08-25
+# (brief "Centro de Control"): visible en tabla/kanban/calendario.
+_OT2_PRIORIDAD_META = {
+    "urgente": ("Urgente", "pr-urgente", "bi-exclamation-octagon-fill"),
+    "alta":    ("Alta",    "pr-alta",    "bi-exclamation-triangle-fill"),
+    "media":   ("Media",   "pr-media",   "bi-dash-circle"),
+    "baja":    ("Baja",    "pr-baja",    "bi-arrow-down-circle"),
+}
 _OT2_DOW_ES = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 _OT2_MESES_ES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
                   "agosto", "septiembre", "octubre", "noviembre", "diciembre")
@@ -72741,9 +72750,10 @@ _OT2_KANBAN_CAP_COL = 40
 _OT2_CAL_CAP_DIA = 4
 
 _OT2_SELECT_FILAS = (
-    "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, "
+    "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
     "       v.fecha_programada, v.cliente_id, c.razon_social, "
-    "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+    "       COALESCE(au.nombre, au.username) AS tecnico_nombre, au.role AS tecnico_role, "
+    "       tk.numero_ticket, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas, "
     "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at "
@@ -72824,12 +72834,99 @@ def _ot2_enriquecer_fila(f, hoy):
 
     f["tecnico_ini"] = _ot2_iniciales(f.get("tecnico_nombre"))
 
+    # Interno/externo (Daniel, brief "Centro de Control", sección 4): la
+    # auditoría encontró 3 fuentes sin cruzar (app_users.role,
+    # mant_tecnicos_externos, mant_visitas.proveedor_tipo) -- se usa
+    # app_users.role por ser la más confiable (login real del técnico),
+    # sin agregar tabla nueva ni duplicar dato.
+    role = f.get("tecnico_role")
+    if not f.get("tecnico_nombre"):
+        f["tecnico_tipo"] = None
+    elif role == "tecnico_externo":
+        f["tecnico_tipo"] = "externo"
+    else:
+        f["tecnico_tipo"] = "interno"
+
+    prio = f.get("prioridad")
+    meta_prio = _OT2_PRIORIDAD_META.get(prio)
+    if meta_prio:
+        f["prioridad_label"], f["prioridad_class"], f["prioridad_icon"] = meta_prio
+    else:
+        f["prioridad_label"], f["prioridad_class"], f["prioridad_icon"] = None, None, None
+
     nt, nc = f.get("n_tareas") or 0, f.get("n_completas") or 0
     f["check_pct"] = round(nc * 100 / nt) if nt else 0
     f["check_done"] = bool(nt and nc >= nt)
     # Anillo SVG: circunferencia real para r=26 es 2*pi*26=163.36.
     # offset=0 -> anillo lleno; offset=163.36 -> anillo vacío.
     f["ring_offset"] = round(163.36 * (1 - f["check_pct"] / 100), 1)
+
+    _ot2_calcular_salud(f, hoy)
+
+
+# Salud/SLA de la OT: "programada -> cerrada" (Daniel, 2026-08-25, brief
+# "Centro de Control" -- respuesta directa a la pregunta de qué mide el
+# SLA). Para OT ya cerradas: si se cerró el mismo día programado o antes
+# -> en tiempo; si se cerró después -> fuera de SLA. Para OT sin cerrar:
+# si la fecha programada ya pasó -> atrasada (mismo criterio que el cron
+# nocturno _mant_revisar_visitas_atrasadas, app.py ~26839, pero AMPLIADO
+# a las 4 estados de la fase "pend"+"ejec" -- el cron original solo
+# miraba estado='programada' y subcontaba creada/asignada/reagendada/
+# en_curso). Nunca se inventa un valor: None si no aplica (OT futura,
+# cancelada/anulada, o sin fecha).
+_OT2_SALUD_META = {
+    "en_tiempo": ("En tiempo",    "sl-ok",   "bi-check-circle-fill"),
+    "hoy":       ("Vence hoy",    "sl-hoy",  "bi-clock-fill"),
+    "atrasada":  ("Atrasada",     "sl-mal",  "bi-exclamation-triangle-fill"),
+    "fuera_sla": ("Fuera de SLA", "sl-mal",  "bi-exclamation-octagon-fill"),
+}
+def _ot2_calcular_salud(f, hoy):
+    fp = f.get("fecha_programada")
+    fase = f.get("estado_fase")
+    if not fp or not hasattr(fp, "isoformat") or fase is None:
+        f["salud"] = None
+        return
+    if fase == "cerr":
+        cerr_at = f.get("cerrada_at")
+        cerr_dia = cerr_at.date() if (cerr_at and hasattr(cerr_at, "date")) else None
+        clave = "en_tiempo" if (cerr_dia and cerr_dia <= fp) else ("fuera_sla" if cerr_dia else None)
+    elif fase in ("pend", "ejec"):
+        clave = "atrasada" if fp < hoy else ("hoy" if fp == hoy else None)
+    else:
+        clave = None
+    if clave:
+        f["salud_label"], f["salud_class"], f["salud_icon"] = _OT2_SALUD_META[clave]
+    else:
+        f["salud_label"], f["salud_class"], f["salud_icon"] = None, None, None
+    f["salud"] = clave
+
+
+def _ot2_fila_modal_lean(f):
+    """Subconjunto liviano y 100% serializable de una fila -- a diferencia
+    de celda['filas'] (topada a _OT2_CAL_CAP_DIA para la celda visual del
+    calendario), esta versión SIN tope viaja completa al navegador como
+    JSON para que el modal de "Agenda del día" pueda mostrar cualquier
+    cantidad de OT ese día. Daniel, brief "Centro de Control": el caso
+    "100 OT en un día" no debe perder las que sobran del tope de 4."""
+    ot_label = f"OT-{f['numero_prefijo']}-{f['numero_sufijo']}" if f.get("numero_ot") else f"VS-{f['id']:05d}"
+    return {
+        "ot": ot_label,
+        "ticket": f.get("numero_ticket"),
+        "cli": f.get("razon_social") or "Trabajo interno",
+        "tipo": f.get("tipo_label"),
+        "estado": f.get("estado_label"),
+        "fase": f.get("estado_fase") or "cancel",
+        "tec": f.get("tecnico_nombre") or "Sin asignar",
+        "ini": f.get("tecnico_ini") or "",
+        "tec_tipo": f.get("tecnico_tipo"),
+        "av": f"{f.get('n_completas', 0)}/{f.get('n_tareas', 0)} · {f.get('check_pct', 0)}%",
+        "sub": f.get("estado_sub") or "",
+        "prioridad": f.get("prioridad_label"),
+        "prioridad_class": f.get("prioridad_class"),
+        "salud": f.get("salud_label"),
+        "salud_class": f.get("salud_class"),
+        "url": url_for("ot2_detalle", vid=f["id"]),
+    }
 
 
 @app.route("/ot/")
@@ -72926,6 +73023,8 @@ def ot2_panel():
     conteo_reales = conteo_automaticas = total_paginas = total_filtrado = 0
     kanban_cols = []
     cal_semanas, cal_mes_label, cal_mes_ant, cal_mes_sig, cal_mes_actual = [], "", "", "", ""
+    equipo_hoy = []
+    es_mes_actual = False
     hoy = None
     where_origen = (
         "v.numero_ot IS NOT NULL AND TRIM(v.numero_ot) <> ''" if origen == "reales"
@@ -72981,10 +73080,17 @@ def ot2_panel():
         # JOINs comunes a todas las consultas -- SIN WHERE, para poder
         # anteponer el JOIN de `tar` sin que el WHERE quede en medio (SQL
         # inválido si el WHERE va antes que todos los JOIN).
+        # tk: JOIN al ticket que originó esta OT, si vino de uno (Daniel,
+        # brief "Centro de Control": "EL NÚMERO DE TICKET DEBE SER
+        # VISIBLE"). El vínculo real es tk_tickets.visita_id -> mant_visitas.id
+        # (al revés de lo intuitivo -- no hay columna ticket_id en
+        # mant_visitas), con índice único de por medio (uq_tk_tickets_visita,
+        # tickets_module.py:1492), así que el JOIN es barato.
         _joins_comunes = (
             "  FROM mant_visitas v "
             "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
             "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
+            "  LEFT JOIN tk_tickets    tk ON tk.visita_id = v.id "
         )
         _where_completo = f" WHERE {where_origen} {where_extra_sql} "
 
@@ -73088,10 +73194,47 @@ def ot2_panel():
                     "es_hoy": (hoy.year == cal_anio and hoy.month == cal_mes_num and hoy.day == d),
                     "filas": dia_filas[:_OT2_CAL_CAP_DIA],
                     "recortado": max(0, len(dia_filas) - _OT2_CAL_CAP_DIA),
+                    # SIN tope -- ver _ot2_fila_modal_lean. Esto es lo que
+                    # arregla el modal de día topado a 4 (brief "Centro de
+                    # Control", caso de estrés "100 OT en un día").
+                    "filas_modal": [_ot2_fila_modal_lean(f) for f in dia_filas],
                 })
             while len(celdas) % 7 != 0:
                 celdas.append(None)
             cal_semanas = [celdas[i:i + 7] for i in range(0, len(celdas), 7)]
+
+            # "Equipo hoy" (Daniel, brief "Centro de Control", sección 8 +
+            # respuesta en vivo: "puede vivir dentro del calendario y no
+            # como módulo del sidebar") -- carga por técnico SOLO para hoy,
+            # separado interno/externo. Se arma en Python sobre filas_cal
+            # (ya traída para el mes completo) filtrando a la fecha real de
+            # hoy -- sin query nueva. Solo tiene sentido cuando el mes
+            # mostrado incluye la fecha de hoy (si Daniel navega a otro
+            # mes, no hay "hoy" que mostrar).
+            equipo_hoy = []
+            es_mes_actual = (cal_anio == hoy.year and cal_mes_num == hoy.month)
+            if es_mes_actual:
+                por_tecnico = {}
+                for f in filas_cal:
+                    if f.get("fecha_programada") != hoy:
+                        continue
+                    nombre = f.get("tecnico_nombre") or "Sin asignar"
+                    ent = por_tecnico.setdefault(nombre, {
+                        "nombre": nombre, "tipo": f.get("tecnico_tipo"),
+                        "ini": f.get("tecnico_ini"), "total": 0,
+                        "en_ejec": 0, "completadas": 0,
+                    })
+                    ent["total"] += 1
+                    if f.get("estado_fase") == "ejec":
+                        ent["en_ejec"] += 1
+                    elif f.get("estado_fase") in ("comp", "cerr"):
+                        ent["completadas"] += 1
+                # Sin asignar al final, el resto por cantidad de OT hoy (a
+                # quién le conviene mirarle la agenda primero).
+                equipo_hoy = sorted(
+                    por_tecnico.values(),
+                    key=lambda e: (e["nombre"] == "Sin asignar", -e["total"])
+                )
 
     except Exception as e:
         error = str(e)[:300]
@@ -73130,6 +73273,7 @@ def ot2_panel():
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
         cal_dow=("L", "M", "M", "J", "V", "S", "D"),
+        equipo_hoy=equipo_hoy, es_mes_actual=es_mes_actual,
     )
 
 
