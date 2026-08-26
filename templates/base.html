@@ -590,10 +590,14 @@
        Ninguna ruta /mantenciones/* se elimina — solo se reorganizan los
        enlaces del sidebar (Regla #4.2). Orden: SIEMPRE alfabético. #}
     {% if permissions.mantenciones %}
-    <a href="{{ url_for('calendario_hub') }}"
-       class="sidebar-link{% if request.endpoint == 'calendario_hub' %} active{% endif %}">
-      <i class="bi bi-calendar3"></i><span>Calendario</span>
-    </a>
+    {# 2026-08-26 (Daniel, pedido explícito: "que los dos calendarios sean
+       uno... y después reducir el menú del sidebar"): el link "Calendario"
+       se quita del menú porque el calendario vive ahora DENTRO de Órdenes
+       de Trabajo 2.0 (vista Calendario). La ruta /calendario sigue viva y
+       redirige allá (calendario_hub en app.py); /mantenciones/calendario
+       también sigue intacta (Regla #4.2 -- nada se borra, solo se
+       desenlaza del menú). El "Calendario" de Retiros de más abajo
+       (pickup_calendar) es OTRO módulo y no se toca. #}
     <a href="{{ url_for('cat_list') }}"
        class="sidebar-link{% if request.endpoint == 'cat_list' %} active{% endif %}">
       <i class="bi bi-box-seam"></i><span>Catálogo de Productos</span>
