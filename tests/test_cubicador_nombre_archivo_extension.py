@@ -161,7 +161,11 @@ class TestNoSeTocoNadaAjeno(unittest.TestCase):
         "_tr_bulk_sync_erp_mysql",       # el cron de transporte
         "_transporte_scheduler_loop",     # el cron de transporte
         "_fetch_multi_docs",              # BLINDADO explicito: "NO toques sin avisar"
-        "_cubicador_export_payload",      # el payload que arma el frontend
+        # _cubicador_export_payload salio de esta lista 2026-08-26: es el
+        # payload que consume la hoja "Detalle de Bultos" (PR #187 y su fix
+        # de app_id) -- co-evoluciona a proposito con esa hoja, no es un
+        # vecino ajeno. Ver tests/test_cubicador_detalle_bultos_hoja2.py
+        # para su propia proteccion especifica.
         "_cubicador_fetch",               # la lectura real al ERP
         "fm3_filter",                     # conversion m3 (fix del 24-08 anterior)
         "cubicador_export_pdf",           # la ruta -- NO se toco, solo la funcion interna
