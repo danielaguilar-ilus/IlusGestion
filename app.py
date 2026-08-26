@@ -17161,6 +17161,88 @@ def cubicador_export_excel():
 
     ws.freeze_panes = f"A{hdr_row + 1}"
 
+    # ── Hoja 2: Detalle de Bultos (2026-08-26, pedido de Daniel para el
+    # gerente vía Roberto: "no le da el detalle de los bultos... en el
+    # excel en otra hoja pueda dar el detalle de los bultos") ──────────
+    # La hoja 1 solo trae el TOTAL de bultos por SKU (columna "Bultos",
+    # ej. 6). Esta hoja expande esa cantidad en una fila POR BULTO
+    # individual -- Bulto 1 de 6, Bulto 2 de 6, etc. -- con el mismo peso/
+    # volumen por unidad que ya calcula la hoja 1 (ILUS no registra una
+    # medida distinta por caja física, todas las cajas de un mismo SKU
+    # comparten la ficha logística). Nunca modifica `lineas`/`ws` de la
+    # hoja 1 -- es enteramente aditiva, la hoja BLINDADA de arriba queda
+    # intacta.
+    ws2 = wb.create_sheet("Detalle de Bultos")
+    ws2.merge_cells("A1:G1")
+    c2 = ws2["A1"]
+    c2.value = "DETALLE DE BULTOS — " + title_text.split("·", 1)[-1].strip()
+    c2.font = Font(bold=True, size=13, color="FFFFFF")
+    c2.fill = PatternFill("solid", fgColor=BLACK)
+    c2.alignment = Alignment(horizontal="center", vertical="center")
+    ws2.row_dimensions[1].height = 28
+
+    cols2 = ["SKU", "Descripción ERP", "Doc.", "Bulto", "Kg", "PV", "Vol m³"]
+    hdr_row2 = 2
+    for ci, h in enumerate(cols2, 1):
+        _hdr_cell(ws2.cell(row=hdr_row2, column=ci), h)
+    ws2.row_dimensions[hdr_row2].height = 20
+
+    ri2 = hdr_row2 + 1
+    tot_kg_bultos = tot_pv_bultos = tot_vol_bultos = 0.0
+    for l in lineas:
+        if not l["tiene_bultos"]:
+            continue  # "s/f" en la hoja 1 -- sin ficha no hay peso que detallar
+        n_bultos = int(round(l["total_bultos"] or 0))
+        if n_bultos <= 0:
+            continue
+        doc_ref_val = l.get("doc_ref") or (
+            f"{headers[0].get('tido','')} {headers[0].get('nudo_display', headers[0].get('nudo',''))}"
+            if headers else ""
+        )
+        vol_u_m3 = l["vol_u"] / 1_000_000.0
+        for n in range(1, n_bultos + 1):
+            bg = LGRAY if ri2 % 2 == 0 else "FFFFFF"
+            vals2 = [
+                l["sku"], l["descripcion_erp"], doc_ref_val,
+                f"Bulto {n} de {n_bultos}",
+                l["peso_kg_u"], l["peso_vol_u"], vol_u_m3,
+            ]
+            for ci, val in enumerate(vals2, 1):
+                cell = ws2.cell(row=ri2, column=ci, value=val)
+                cell.fill = PatternFill("solid", fgColor=bg)
+                cell.font = Font(size=9)
+                cell.alignment = Alignment(
+                    horizontal="center" if ci == 4 else ("right" if ci >= 5 else "left"),
+                    vertical="center",
+                )
+                if ci in (5, 6):
+                    cell.number_format = "#,##0.0"
+                elif ci == 7:
+                    cell.number_format = "#,##0.000"
+            tot_kg_bultos += l["peso_kg_u"]
+            tot_pv_bultos += l["peso_vol_u"]
+            tot_vol_bultos += vol_u_m3
+            ri2 += 1
+
+    tr2 = ri2
+    ws2.merge_cells(f"A{tr2}:D{tr2}")
+    ws2.cell(row=tr2, column=1, value="TOTALES").font = Font(bold=True, color="FFFFFF", size=9)
+    ws2.cell(row=tr2, column=1).fill = PatternFill("solid", fgColor=BLACK)
+    ws2.cell(row=tr2, column=1).alignment = Alignment(horizontal="right")
+    totales2 = {5: tot_kg_bultos, 6: tot_pv_bultos, 7: tot_vol_bultos}
+    for ci in range(1, 8):
+        cell = ws2.cell(row=tr2, column=ci)
+        cell.fill = PatternFill("solid", fgColor=BLACK)
+        if ci in totales2:
+            cell.value = totales2[ci]
+            cell.font = Font(bold=True, color="FFFFFF", size=9)
+            cell.alignment = Alignment(horizontal="right")
+            cell.number_format = "#,##0.000" if ci == 7 else "#,##0.0"
+
+    for ci, w in enumerate([14, 42, 18, 16, 10, 10, 12], 1):
+        ws2.column_dimensions[get_column_letter(ci)].width = w
+    ws2.freeze_panes = f"A{hdr_row2 + 1}"
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
