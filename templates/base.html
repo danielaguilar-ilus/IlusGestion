@@ -879,6 +879,13 @@
          class="sidebar-link{% if request.endpoint == 'admin_integraciones' %} active{% endif %}">
         <i class="bi bi-plug"></i><span>Integraciones</span>
       </a>
+      {# Pantallas del monitor de oficina (modo TV), Daniel 2026-08-26.
+         Emitir/revocar el enlace de un televisor es configuración, no
+         operación diaria — por eso vive acá y solo lo ve superadmin. #}
+      <a href="{{ url_for('admin_pantallas') }}"
+         class="sidebar-link{% if request.endpoint and request.endpoint.startswith('admin_pantallas') %} active{% endif %}">
+        <i class="bi bi-tv"></i><span>Pantallas (monitor)</span>
+      </a>
       {# Fichas de producto que no cumplen las reglas de Etiquetas (caso
          BBV9.0, ago-2026). Solo lectura: lista y explica, no corrige. #}
       <a href="{{ url_for('admin_fichas_incompletas') }}"

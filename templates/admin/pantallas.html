@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Pantallas del monitor — ILUS Fitness{% endblock %}
+{% block content %}
+<style>
+  .pt-hero{
+    background:
+      radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.16), transparent 45%),
+      linear-gradient(135deg,#0a0a0a,#161616 60%,#0a0a0a);
+    border-bottom:4px solid var(--ilus-red,#e60000);
+    border-radius:18px 18px 0 0;
+    padding:26px 28px;color:#fff;position:relative;overflow:hidden;
+  }
+  .pt-hero h1{font-size:1.5rem;font-weight:900;margin:0;letter-spacing:-.02em;}
+  .pt-hero p{margin:6px 0 0;color:#d1d5db;font-size:.9rem;max-width:64ch;}
+  .pt-wrap{background:#fff;border:1px solid #eaecf0;border-top:0;
+           border-radius:0 0 18px 18px;padding:24px 28px;}
+
+  .pt-card{
+    background:#fff;border:1px solid #eaecf0;border-radius:14px;
+    padding:18px 20px;margin-bottom:14px;
+    box-shadow:0 1px 4px rgba(0,0,0,.04);
+  }
+  .pt-card.is-off{opacity:.55;background:#fafafa;}
+  .pt-nombre{font-weight:800;font-size:1.05rem;margin:0;}
+
+  .pt-pill{
+    display:inline-flex;align-items:center;gap:5px;
+    padding:3px 11px;border-radius:50px;
+    font-size:.66rem;font-weight:800;letter-spacing:.03em;white-space:nowrap;
+  }
+  .pt-on{background:#dcfce7;color:#166534;}
+  .pt-off{background:#f3f4f6;color:#6b7280;}
+  .pt-wait{background:#fff8e1;color:#b45309;}
+  .pt-live{background:#dbeafe;color:#1d4ed8;}
+
+  .pt-url{
+    font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:.8rem;
+    background:#f8f9fa;border:1px solid #e5e7eb;border-radius:10px;
+    padding:10px 12px;word-break:break-all;flex:1;min-width:0;
+    user-select:all;
+  }
+  .pt-meta{font-size:.76rem;color:#6b7280;}
+  .pt-meta b{color:#374151;font-weight:700;}
+
+  .pt-aviso{
+    background:#fff8e1;border:1px solid #fde68a;border-radius:12px;
+    padding:14px 16px;font-size:.86rem;color:#78350f;margin-bottom:20px;
+  }
+  .pt-aviso b{color:#92400e;}
+
+  .pt-empty{
+    text-align:center;padding:56px 24px;border:2px dashed #e5e7eb;
+    border-radius:14px;background:#fafafa;color:#6b7280;
+  }
+  .pt-empty i{font-size:2.8rem;opacity:.25;display:block;margin-bottom:12px;}
+
+  .btn, .pt-acciones .btn{min-height:38px;}
+  @media (max-width:640px){
+    .pt-hero,.pt-wrap{padding-left:16px;padding-right:16px;}
+    .pt-acciones{width:100%;}
+    .pt-acciones .btn{flex:1;}
+  }
+</style>
+
+<div class="pt-hero">
+  <h1><i class="bi bi-tv me-2"></i>Pantallas del monitor</h1>
+  <p>Cada pantalla tiene su propio enlace. El enlace se ata al primer navegador
+     que lo abre, así que aunque alguien lo reenvíe, en otro aparato no funciona.</p>
+</div>
+
+<div class="pt-wrap">
+
+  <div class="pt-aviso">
+    <b>Importante:</b> abre el enlace <b>primero en el televisor</b>, no en tu
+    computador. La pantalla queda amarrada al primer navegador que la abra.
+    Si te equivocas, usa <b>Re-emparejar</b> y vuelve a intentarlo — el enlace
+    no cambia.
+  </div>
+
+  {# ── Crear ───────────────────────────────────────────────────────── #}
+  <form method="post" action="{{ url_for('admin_pantallas_nueva') }}"
+        class="d-flex gap-2 flex-wrap align-items-end mb-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="flex-grow-1" style="min-width:220px">
+      <label class="form-label small fw-bold mb-1">Nombre de la pantalla</label>
+      <input type="text" name="nombre" class="form-control" maxlength="120"
+             placeholder="Ej: TV Oficina" required>
+    </div>
+    <button type="submit" class="btn btn-danger fw-bold px-4">
+      <i class="bi bi-plus-lg me-1"></i>Crear pantalla
+    </button>
+  </form>
+
+  {# ── Listado ─────────────────────────────────────────────────────── #}
+  {% if not pantallas %}
+    <div class="pt-empty">
+      <i class="bi bi-tv"></i>
+      <div class="fw-bold mb-1">Todavía no hay pantallas</div>
+      <div class="small">Crea la primera con el formulario de arriba.</div>
+    </div>
+  {% endif %}
+
+  {% for p in pantallas %}
+  {% set url_tv = url_for('ot_tv_monitor', token=p.token, _external=True) %}
+  <div class="pt-card {% if not p.activo %}is-off{% endif %}">
+
+    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+      <div>
+        <p class="pt-nombre">{{ p.nombre }}</p>
+        <div class="d-flex gap-2 flex-wrap mt-1">
+          {% if p.activo %}
+            <span class="pt-pill pt-on"><i class="bi bi-check-circle-fill"></i>Activa</span>
+          {% else %}
+            <span class="pt-pill pt-off"><i class="bi bi-slash-circle"></i>Revocada</span>
+          {% endif %}
+
+          {% if p.device_id %}
+            <span class="pt-pill pt-live"><i class="bi bi-link-45deg"></i>Amarrada a un aparato</span>
+          {% else %}
+            <span class="pt-pill pt-wait"><i class="bi bi-hourglass-split"></i>Esperando al televisor</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if p.activo %}
+      <div class="d-flex gap-2 pt-acciones">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                onclick="ptCopiar('{{ url_tv }}')">
+          <i class="bi bi-clipboard me-1"></i>Copiar enlace
+        </button>
+        <form method="post" class="d-inline"
+              action="{{ url_for('admin_pantallas_reemparejar', pid=p.id) }}"
+              onsubmit="return ptConfirmar(event, this, 'reemparejar', '{{ p.nombre|e }}')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-warning">
+            <i class="bi bi-arrow-repeat me-1"></i>Re-emparejar
+          </button>
+        </form>
+        <form method="post" class="d-inline"
+              action="{{ url_for('admin_pantallas_revocar', pid=p.id) }}"
+              onsubmit="return ptConfirmar(event, this, 'revocar', '{{ p.nombre|e }}')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger">
+            <i class="bi bi-x-circle me-1"></i>Revocar
+          </button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if p.activo %}
+    <div class="d-flex gap-2 align-items-center mb-2">
+      <span class="pt-url">{{ url_tv }}</span>
+    </div>
+    {% endif %}
+
+    <div class="pt-meta d-flex gap-3 flex-wrap">
+      {% if p.last_seen_at %}
+        <span>Última señal: <b>{{ p.last_seen_at | chile_fmt }}</b></span>
+      {% else %}
+        <span>Última señal: <b>nunca se ha abierto</b></span>
+      {% endif %}
+      {% if p.device_bound_at %}
+        <span>Amarrada el <b>{{ p.device_bound_at | chile_fmt }}</b></span>
+      {% endif %}
+      <span>Creada por <b>{{ p.created_by or '—' }}</b>
+            {% if p.created_at %}el {{ p.created_at | chile_fmt('%d/%m/%Y') }}{% endif %}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+  // REGLA #1: nada de confirm()/alert() nativos.
+  async function ptCopiar(url){
+    try{
+      await navigator.clipboard.writeText(url);
+      ilusToast('✓ Enlace copiado', {type:'success'});
+    }catch(e){
+      ilusToast('No se pudo copiar. Selecciona el enlace y cópialo a mano.',
+                {type:'warning'});
+    }
+  }
+
+  function ptConfirmar(ev, form, accion, nombre){
+    if (form.dataset.ok === '1') return true;   // ya confirmado, deja pasar
+    ev.preventDefault();
+    const textos = {
+      revocar: {
+        title: 'Revocar pantalla',
+        message: '¿Dejar sin efecto el enlace de "' + nombre + '"?',
+        sub: 'El televisor dejará de mostrar el monitor de inmediato. ' +
+             'Tendrás que crear una pantalla nueva para volver a usarlo.',
+        okLabel: 'Revocar', danger: true,
+      },
+      reemparejar: {
+        title: 'Re-emparejar pantalla',
+        message: '¿Soltar el aparato al que está amarrada "' + nombre + '"?',
+        sub: 'El enlace NO cambia. El próximo navegador que lo abra queda ' +
+             'amarrado — asegúrate de abrirlo en el televisor.',
+        okLabel: 'Re-emparejar', danger: false,
+      },
+    }[accion];
+    ilusConfirm({...textos, cancelLabel:'Cancelar'}).then(function(ok){
+      if(!ok) return;
+      form.dataset.ok = '1';
+      form.submit();
+    });
+    return false;
+  }
+</script>
+{% endblock %}

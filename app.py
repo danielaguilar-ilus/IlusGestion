@@ -4237,6 +4237,14 @@ PERMS_KEYS = (
     # definitivo, que se queda exclusivo de superadmin+confirm_text
     # (Regla #5, no se toca).
     "cat_eliminar",
+    # mant_ot_interna — permiso para crear una OT de trabajo interno (bodega,
+    # capacitación, control de calidad) SIN cliente. Aditivo 2026-08-26.
+    # La regla histórica bloqueaba a TODO técnico ("el trabajo de bodega lo
+    # agenda supervisor+"). Daniel necesita que Heiser levante las suyas,
+    # pero decidiendo él quién puede — no abriéndolo a todos los técnicos.
+    # El gate (`_puede_crear_ot_interna`) sigue dejando pasar a los roles de
+    # gestión vía OR, así que este flag solo puede SUMAR acceso.
+    "mant_ot_interna",
     # cat_manual_descargar — flag del módulo Catálogo de Productos (aditivo
     # 2026-08-25, Daniel: vio a un técnico entrar a su perfil y descargar
     # el manual de un producto, lo consideró delicado, y pidió "dejarlo
@@ -4349,6 +4357,10 @@ def _build_perms_from_matrix(role):
     )
     base["retiros"]        = bool(ret.get("ver"))
     base["mantenciones"]   = bool(man.get("ver"))
+    # Crear OT de trabajo interno sin cliente (aditivo 2026-08-26). Ver el
+    # comentario de "mant_ot_interna" en PERMS_KEYS: el gate real deja pasar
+    # igual a los roles de gestión, así que esto solo suma.
+    base["mant_ot_interna"] = bool(man.get("ot_interna"))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -12219,9 +12231,17 @@ PERMISSIONS_MATRIX = {
     #   Removidos: contratos, ai, reportes, repuestos, tecnicos, levantamiento.
     #   Eran chips que no bloqueaban nada — solo ruido en la matriz.
     #   Si se necesita granular en el futuro, agregar aquí + validar en endpoints.
+    #     ot_interna  = crear OT de trabajo interno (bodega, capacitación,
+    #                   control de calidad) SIN cliente. Aditivo 2026-08-26:
+    #                   la regla histórica era "lo agenda supervisor+, nunca
+    #                   el propio técnico", pero Daniel necesita que Heiser
+    #                   (técnico de bodega) levante las suyas. En vez de
+    #                   invertir la regla para TODOS los técnicos, se abre
+    #                   por permiso: Daniel decide quién desde /admin/roles.
     "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
                        "acciones":["ver","crear","editar","eliminar",
-                                   "calendario","ots","cotizaciones"]},
+                                   "calendario","ots","cotizaciones",
+                                   "ot_interna"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12274,6 +12294,8 @@ PERMISSIONS_META = {
         "calendario":   {"label": "Calendario de visitas","tipo": "submodulo", "icon": "bi-calendar"},
         "ots":          {"label": "Órdenes de Trabajo",   "tipo": "submodulo", "icon": "bi-card-checklist"},
         "cotizaciones": {"label": "Cotizaciones",         "tipo": "submodulo", "icon": "bi-currency-dollar"},
+        "ot_interna":   {"label": "Crear OT de trabajo interno (bodega)",
+                         "tipo": "submodulo", "icon": "bi-box-seam"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
     },
     "retiros": {
@@ -50183,6 +50205,35 @@ def _es_rol_tecnico(user=None):
     return _rol_familia(role) == "tecnico"
 
 
+def _puede_crear_ot_interna(user=None):
+    """¿Puede este usuario levantar una OT de trabajo interno (sin cliente)?
+
+    ÚNICA fuente de verdad de esa pregunta — la usan el núcleo legado
+    (`_mant_visita_crear_core`) y el motor de OT 2.0 (`ot2_api_crear`), para
+    que la regla no viva en dos lugares que se puedan desincronizar.
+
+    Historia (importa para no revertirlo por error):
+    la regla original de Daniel era "el trabajo de bodega lo agenda
+    supervisor+, NUNCA el propio técnico", implementada como un bloqueo
+    plano a toda la familia 'tecnico'. El 2026-08-26 Daniel pidió lo
+    contrario para UNA persona: *"que el técnico pueda crear OT, pero yo voy
+    a decidir quién. En este minuto quiero que solamente Heiser se cree su
+    propia OT, ya que él es el técnico de bodega"*.
+
+    Por eso NO se invirtió la regla global: los roles de gestión siguen
+    pasando siempre, y un técnico pasa solo si su rol tiene marcado
+    Mantenciones → "Crear OT de trabajo interno (bodega)" en /admin/roles.
+    Así Daniel abre y cierra el permiso por rol sin tocar código nunca más.
+    """
+    if not _es_rol_tecnico(user):
+        return True          # gestión (admin/supervisor/ejecutivo/superadmin)
+    try:
+        perms = getattr(g, "permissions", None) or {}
+        return bool(perms.get("mant_ot_interna"))
+    except Exception:
+        return False         # fail-closed: ante la duda, no deja crear
+
+
 def _no_tecnico(view):
     """Decorador: bloquea el acceso a usuarios con role='tecnico'.
 
@@ -72146,7 +72197,12 @@ def _mant_visita_crear_core(d):
     # reusando _es_rol_tecnico(), la MISMA función que usa el decorador
     # @_no_tecnico — para que la regla se cumpla sin importar por cuál de los
     # dos endpoints entró la petición, sin reimplementar la comparación.
-    if _cliente_opcional and _es_rol_tecnico():
+    # ACTUALIZADO 2026-08-26: el bloqueo dejó de ser plano a toda la familia
+    # 'tecnico'. Ahora pasa por `_puede_crear_ot_interna()`, que deja entrar
+    # a gestión igual que antes y además a los técnicos cuyo ROL tenga el
+    # permiso encendido (caso Heiser, técnico de bodega). Ver el docstring
+    # de esa función: la regla vive en un solo lugar.
+    if _cliente_opcional and not _puede_crear_ot_interna():
         return {"error": "No tienes permiso para crear una OT de trabajo interno."}, 403
 
     # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
@@ -74439,6 +74495,15 @@ def ot2_api_crear():
         return _ot2_err("Ese tipo de orden de trabajo no existe.", "TIPO_INVALIDO")
 
     es_interna = _tipo_es_trabajo_interno(tipo_ot)
+    # 🔐 2026-08-26: este motor NUNCA había validado quién puede crear una OT
+    # de trabajo interno — el núcleo legado sí lo hacía, pero OT 2.0 se saltó
+    # esa regla. Mientras el formulario bloqueaba el paso el hueco no se veía;
+    # al desbloquearlo para Heiser habría quedado abierto para TODOS los
+    # técnicos. Misma función que usa el núcleo viejo, una sola regla.
+    if es_interna and not _puede_crear_ot_interna():
+        return _ot2_err(
+            "No tienes permiso para crear una OT de trabajo interno.",
+            "SIN_PERMISO_OT_INTERNA", http=403)
 
     # ── 2. CLIENTE — obligatorio salvo trabajo interno ─────────────────
     #    Daniel: "si es interna, tiene que estar a nombre de la empresa, o
@@ -74645,6 +74710,70 @@ def ot2_api_crear():
         ticket_id = None
     tarea_tipo = _tarea_tipo_seguro(tipo_ot)
 
+    # ── 7.b FINANZAS DEL PASO 8 ────────────────────────────────────────
+    # BUG 2026-08-26 (auditoría OT 2.0): el wizard SÍ manda este bloque
+    # (`o2fFinPayload()` en static/ot2_form.js), pero esta función nunca lo
+    # leía y el INSERT no incluía las columnas — el centro de costo que
+    # Daniel elegía en el paso 8 se perdía en silencio en TODAS las OT.
+    # El endpoint que sí lo persiste (/ot/api/finanzas/<vid>) no tenía
+    # ningún llamador en el repo, así que no había vía alterna.
+    #
+    # Se valida acá, ANTES de abrir la transacción, igual que el resto:
+    # "si algo falta, la OT no se empieza a crear a medias".
+    _fin = d.get("finanzas") or {}
+    if not isinstance(_fin, dict):
+        _fin = {}
+    _fin_centro = (_fin.get("centro_costo") or "").strip().lower() or None
+    if _fin_centro and _fin_centro not in [c for c, _ in _OT2_CENTROS_COSTO]:
+        return _ot2_err("Ese centro de costo no existe.", "CENTRO_INVALIDO")
+    # Daniel 2026-08-26: por defecto Servicio Técnico. El centro sirve para
+    # rendir el dinero que se pierde por decisiones que NO son de SSTT
+    # (convenios de Comercial, costos de Logística) — sin un valor por
+    # defecto todo quedaba en NULL y no se podía atribuir nada.
+    _fin_centro = _fin_centro or "sstt"
+
+    _fin_gar = bool(_fin.get("garantia_aplica"))
+    _fin_motivo = (_fin.get("garantia_motivo") or "").strip()[:500] or None
+    # Garantía y documento son EXCLUYENTES (misma regla que ot2_api_finanzas).
+    if _fin_gar:
+        _fin_tido, _fin_nudo = None, None
+    else:
+        _fin_tido = (_fin.get("factura_tido") or "").strip()[:5].upper() or None
+        _fin_nudo = (_fin.get("factura_nudo") or "").strip()[:20] or None
+        _fin_motivo = None
+    try:
+        _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
+    except (TypeError, ValueError):
+        return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
+    _fin_zzc = (_fin.get("zz_codigo") or "").strip().upper()[:30] or None
+    if not _fin_zzc and not _fin_gar:
+        # Sugerencia por tipo: instalación → ZZINSTALACION, mantención →
+        # ZZMANTENCION (Daniel 2026-08-26).
+        _fin_zzc = _OT2_LINEA_ZZ.get(tipo_ot)
+    if _fin_gar:
+        _fin_estado_fact = "no_aplica"
+    elif _fin_nudo and (_fin_tido or "").upper() in ("NVV", "NVI"):
+        _fin_estado_fact = "con_nota_venta"
+    elif _fin_nudo:
+        _fin_estado_fact = "facturado"
+    elif es_interna:
+        # Trabajo de bodega/capacitación: no hay a quién facturarle.
+        _fin_estado_fact = "no_aplica"
+    else:
+        _fin_estado_fact = "sin_cotizar"
+    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm)
+
+    # Modalidad de cobro: una OT interna NO nace cobrable al cliente
+    # (`pagado` significa "facturable", no "ya pagado" — ver el comentario
+    # de la columna). Sin esto, el trabajo de bodega entraba al pipeline
+    # comercial como si hubiera que cobrárselo a alguien.
+    if _fin_gar:
+        _fin_modalidad, _fin_cubierto = "garantia", "garantia"
+    elif es_interna:
+        _fin_modalidad, _fin_cubierto = "interno", "contrato"
+    else:
+        _fin_modalidad, _fin_cubierto = "pagado", "cliente"
+
     # ── 8. ESCRITURA — una sola transacción ────────────────────────────
     conn = None
     try:
@@ -74659,11 +74788,21 @@ def ot2_api_crear():
             "  (numero_ot, cliente_id, titulo, descripcion, fecha_programada, "
             "   hora_inicio, hora_fin, tipo, estado, tecnico, tecnico_user_id, "
             "   acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas, "
-            "   created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,%s)",
+            "   centro_costo, zz_codigo, zz_monto, modalidad_cobro, cubierto_por, "
+            "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
+            "   finanzas_at, finanzas_por, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
+            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (numero_ot, cliente_id, titulo, descripcion, _f,
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
              acc_asc, acc_est, acc_piso, acc_notas,
+             _fin_centro, _fin_zzc, _fin_zzm,
+             _fin_modalidad, _fin_cubierto,
+             _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
+             # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
+             # conversión a hora Chile es cosa de la vista).
+             datetime.utcnow() if _fin_declarada else None,
+             current_username() if _fin_declarada else None,
              current_username()))
         vid = cur.lastrowid
 
@@ -74802,6 +74941,639 @@ def ot2_api_crear():
         "ot_url": url_for("mant_ot_ficha", vid=vid),
         "n_tareas": n_tareas, "avisos": avisos,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  MONITOR DE OFICINA — modo TV (Daniel, 2026-08-26)
+#
+#  Un televisor de 40" en la oficina muestra, sin que nadie lo toque, qué
+#  está haciendo cada técnico hoy y cómo viene la carga de los próximos
+#  días. Las jefaturas entran en la mañana y lo leen a 3 metros.
+#
+#  SEGURIDAD — por qué token en BD y NO firma sin estado (HMAC):
+#  el HMAC de `_ot_firma_token` es IRREVOCABLE por diseño; invalidarlo
+#  exigiría rotar FLASK_SECRET_KEY y cerrar la sesión de toda la empresa.
+#  Acá se clona el patrón de `/t/<token>` (tracking público de transporte,
+#  ver `_tr_ensure_public_token`): fila en BD, revocable con activo=0.
+#
+#  Además el token se ATA AL DISPOSITIVO en la primera visita (confianza
+#  en el primer uso): se guarda un `device_id` y se deja una cookie de un
+#  año. Si el enlace se reenvía por WhatsApp, en otro navegador da 404.
+#  Re-emparejar un televisor nuevo = poner device_id en NULL, sin cambiar
+#  la URL.
+#
+#  ⚠️ NUNCA iniciar sesión en el navegador del televisor: el cierre por
+#  inactividad (`before_request`) no exceptúa rutas públicas y mandaría
+#  la pantalla a /login.
+# ══════════════════════════════════════════════════════════════════════
+
+_OT_TV_COOKIE     = "ilus_tv"
+_OT_TV_RL_MAX     = 60        # peticiones por minuto y por token
+_OT_TV_RL_WINDOW  = 60.0
+_OT_TV_RL: dict   = {}
+_OT_TV_CACHE: dict = {}       # token → {payload, ts}
+_OT_TV_TTL        = 6.0       # < que el latido de 8s: dos pantallas no
+                              # consultan la BD dos veces
+_OT_TV_DIAS_PROX  = 4         # días futuros en la franja inferior
+
+
+def _ensure_ot_pantallas():
+    """Tabla de pantallas del monitor (modo TV). Idempotente.
+
+    Molde de columnas: `{RESETS_TABLE}` (token único + ciclo de vida) más
+    las columnas de invitación de `mant_tecnicos_externos`. Se revoca con
+    activo=0 (convención del proyecto, nunca DELETE — preserva historial).
+    """
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ot_pantallas (
+                    id               INT AUTO_INCREMENT PRIMARY KEY,
+                    nombre           VARCHAR(120) NOT NULL,
+                    token            VARCHAR(60) NOT NULL UNIQUE,
+                    activo           TINYINT(1) NOT NULL DEFAULT 1,
+                    device_id        VARCHAR(120) NULL
+                                     COMMENT 'Se fija en la primera visita (confianza en primer uso)',
+                    device_bound_at  DATETIME NULL,
+                    last_seen_at     DATETIME NULL,
+                    last_ip          VARCHAR(64) NULL,
+                    created_by       VARCHAR(190),
+                    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_tvtok (token),
+                    INDEX idx_tvact (activo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _ot_tv_rate_ok(token):
+    """Límite por token: 60 peticiones/min. Mismo patrón que el tracking
+    público (`_track_rate_ok`)."""
+    import time as _time
+    now = _time.time()
+    cutoff = now - _OT_TV_RL_WINDOW
+    bucket = [t for t in (_OT_TV_RL.get(token) or []) if t >= cutoff]
+    if len(bucket) >= _OT_TV_RL_MAX:
+        _OT_TV_RL[token] = bucket
+        return False
+    bucket.append(now)
+    _OT_TV_RL[token] = bucket
+    return True
+
+
+def _ot_tv_token_valido(token):
+    """Validación barata del formato ANTES de tocar la base (evita queries
+    con basura). Igual que `/t/<token>`."""
+    return bool(token) and 16 <= len(token) <= 80 \
+        and re.match(r"^[A-Za-z0-9_\-]+$", token) is not None
+
+
+def _ot_tv_pantalla(token):
+    """Fila de la pantalla activa, o None. Fail-closed."""
+    if not _ot_tv_token_valido(token):
+        return None
+    try:
+        return mysql_fetchone(
+            "SELECT id, nombre, token, activo, device_id "
+            "  FROM ot_pantallas WHERE token=%s AND activo=1", (token,))
+    except Exception as e:
+        print(f"[ot_tv] lookup: {e}", flush=True)
+        return None
+
+
+def _ot_tv_device_ok(row):
+    """Confianza en el primer uso: ata la pantalla al navegador del TV.
+
+    Devuelve (ok, device_id_a_setear). Si la fila todavía no tiene
+    `device_id`, se genera uno y se pide al caller que deje la cookie.
+    Si ya lo tiene, se compara con la cookie en tiempo constante: sin
+    cookie o distinta → False (la URL sola no sirve en otro aparato).
+    """
+    import hmac as _hmac
+    cookie = (request.cookies.get(_OT_TV_COOKIE) or "").strip()
+    guardado = (row.get("device_id") or "").strip()
+    if not guardado:
+        nuevo = cookie or secrets.token_urlsafe(24)
+        try:
+            mysql_execute(
+                "UPDATE ot_pantallas SET device_id=%s, device_bound_at=NOW() "
+                " WHERE id=%s AND (device_id IS NULL OR device_id='')",
+                (nuevo, row["id"]))
+        except Exception as e:
+            print(f"[ot_tv] bind: {e}", flush=True)
+            return False, None
+        return True, nuevo
+    if cookie and _hmac.compare_digest(cookie, guardado):
+        return True, None
+    return False, None
+
+
+def _ot_tv_marcar_visto(pid):
+    """Último acceso de la pantalla — para saber si el televisor sigue vivo."""
+    try:
+        mysql_execute(
+            "UPDATE ot_pantallas SET last_seen_at=NOW(), last_ip=%s WHERE id=%s",
+            ((request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64], pid))
+    except Exception:
+        pass
+
+
+def _ot_tv_hhmm(v):
+    """TIME de MySQL → 'HH:MM'. pymysql puede devolver timedelta o time."""
+    if v is None:
+        return None
+    try:
+        if hasattr(v, "total_seconds"):          # timedelta
+            tot = int(v.total_seconds())
+            return f"{tot // 3600:02d}:{(tot % 3600) // 60:02d}"
+        return f"{v.hour:02d}:{v.minute:02d}"    # time / datetime
+    except Exception:
+        return None
+
+
+def _ot_tv_iso(dt_utc):
+    """DATETIME de MySQL (UTC naive, REGLA #6) → ISO 8601 con offset Chile.
+    El navegador lo usa para el cronómetro de tiempo transcurrido."""
+    if not dt_utc:
+        return None
+    try:
+        from datetime import timezone as _tzu
+        d = dt_utc
+        if getattr(d, "tzinfo", None) is None:
+            d = d.replace(tzinfo=_tzu.utc)
+        return d.astimezone(_TZ_CL).isoformat()
+    except Exception:
+        return None
+
+
+_OT_TV_SELECT = (
+    "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, "
+    "       v.hora_inicio, v.hora_fin, v.hora_real_inicio, v.direccion_visita, "
+    "       c.razon_social, c.direccion AS cliente_direccion, "
+    "       c.comuna AS cliente_comuna, "
+    "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+    "       au.role AS tecnico_role, te.id AS tecnico_proveedor_id, "
+    "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
+    "       COALESCE(tar.n_completas, 0) AS n_completas "
+    "  FROM mant_visitas v "
+    "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
+    "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
+    "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
+)
+
+# Estados en curso: 'en_curso' y 'en_ejecucion' son SINÓNIMOS (compat
+# legacy/nuevo). Usar solo uno pierde OTs.
+_OT_TV_EN_CURSO   = ("en_curso", "en_ejecucion")
+_OT_TV_TERMINADAS = ("completada", "cerrada")
+_OT_TV_MUERTAS    = ("cancelada", "anulada")
+
+
+def _ot_tv_huella():
+    """Huella barata del rango visible: si no cambió, el televisor no pide
+    nada más. Una sola consulta indexada (idx_fecha) de milisegundos —
+    esto es lo que hace que el monitor no cueste plata."""
+    hoy = _now_chile().date()
+    fin = hoy + timedelta(days=_OT_TV_DIAS_PROX)
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n, MAX(updated_at) AS m "
+            "  FROM mant_visitas WHERE fecha_programada BETWEEN %s AND %s",
+            (hoy, fin)) or {}
+        return f"{r.get('n') or 0}:{r.get('m') or ''}"
+    except Exception as e:
+        print(f"[ot_tv] huella: {e}", flush=True)
+        return "err"
+
+
+def _ot_tv_datos():
+    """Payload del monitor: hoy agrupado por persona + próximos días.
+
+    ⚠️ Pantalla pública: NUNCA montos, costos ni márgenes (mismo criterio
+    que el resto de las vistas públicas del proyecto).
+    """
+    ahora = _now_chile()
+    hoy = ahora.date()
+    fin = hoy + timedelta(days=_OT_TV_DIAS_PROX)
+
+    filas = mysql_fetchall(
+        _OT_TV_SELECT + _OT2_JOIN_TAREAS +
+        " WHERE v.fecha_programada BETWEEN %s AND %s "
+        "   AND v.estado NOT IN ('cancelada','anulada') "
+        " ORDER BY v.hora_inicio ASC, v.numero_ot ASC",
+        (hoy, fin)) or []
+
+    # Todos los técnicos activos, para poder mostrar "Disponible" a quien
+    # hoy no tiene carga (decisión de Daniel: el equipo se ve completo).
+    try:
+        tecnicos = mysql_fetchall(
+            "SELECT au.id, COALESCE(au.nombre, au.username) AS nombre, "
+            "       au.role, te.id AS proveedor_id "
+            "  FROM app_users au "
+            "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
+            " WHERE au.active=1 AND LOWER(au.role) LIKE 'tecnico%' "
+            " ORDER BY nombre") or []
+    except Exception as e:
+        print(f"[ot_tv] tecnicos: {e}", flush=True)
+        tecnicos = []
+
+    personas, orden = {}, []
+    for t in tecnicos:
+        externo = bool(t.get("proveedor_id")) or \
+            (t.get("role") or "").lower() == "tecnico_externo"
+        personas[t["id"]] = {
+            "nombre": t["nombre"], "iniciales": _ot2_iniciales(t["nombre"]),
+            "externo": externo, "bloques": [], "actual": None,
+            "total_ot": 0, "terminadas": 0,
+        }
+        orden.append(t["id"])
+
+    resumen = {"total": 0, "en_ejecucion": 0, "completadas": 0,
+               "pendientes": 0, "atrasadas": 0}
+    proximos_cnt, hora_ahora = {}, ahora.strftime("%H:%M")
+
+    for f in filas:
+        fecha = f.get("fecha_programada")
+        estado = (f.get("estado") or "").lower()
+        if fecha != hoy:
+            proximos_cnt[fecha] = proximos_cnt.get(fecha, 0) + 1
+            continue
+
+        resumen["total"] += 1
+        n_t = int(f.get("n_tareas") or 0)
+        n_c = int(f.get("n_completas") or 0)
+        pct = int(round(n_c * 100.0 / n_t)) if n_t else 0
+        h_ini = _ot_tv_hhmm(f.get("hora_inicio"))
+        en_curso = estado in _OT_TV_EN_CURSO
+        terminada = estado in _OT_TV_TERMINADAS
+        # Atrasada: debía haber partido y sigue sin partir.
+        atrasada = (not en_curso and not terminada
+                    and bool(h_ini) and h_ini < hora_ahora)
+
+        if en_curso:
+            resumen["en_ejecucion"] += 1
+        elif terminada:
+            resumen["completadas"] += 1
+        else:
+            resumen["pendientes"] += 1
+        if atrasada:
+            resumen["atrasadas"] += 1
+
+        dir_txt = " · ".join([p for p in (
+            (f.get("direccion_visita") or f.get("cliente_direccion") or "").strip(),
+            (f.get("cliente_comuna") or "").strip()) if p])
+
+        bloque = {
+            "numero": f.get("numero_ot") or f"#{f.get('id')}",
+            "cliente": (f.get("razon_social") or "Trabajo interno")[:44],
+            "ini": h_ini, "fin": _ot_tv_hhmm(f.get("hora_fin")),
+            "estado": ("ejecutando" if en_curso else
+                       "terminado" if terminada else
+                       "atrasado" if atrasada else "pendiente"),
+            "avance_pct": pct,
+        }
+
+        tid = f.get("tec_id")
+        if tid not in personas:
+            # Técnico sin ficha activa (dado de baja, o rol cambiado) pero
+            # con OT asignada hoy: se muestra igual, no se esconde trabajo.
+            nom = f.get("tecnico_nombre") or "Sin asignar"
+            personas[tid] = {
+                "nombre": nom, "iniciales": _ot2_iniciales(nom),
+                "externo": bool(f.get("tecnico_proveedor_id")),
+                "bloques": [], "actual": None, "total_ot": 0, "terminadas": 0,
+            }
+            orden.append(tid)
+
+        p = personas[tid]
+        p["bloques"].append(bloque)
+        p["total_ot"] += 1
+        if terminada:
+            p["terminadas"] += 1
+        if en_curso and not p["actual"]:
+            p["actual"] = {
+                "numero": bloque["numero"],
+                "cliente": f.get("razon_social") or "Trabajo interno",
+                "direccion": dir_txt,
+                "tipo": _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(),
+                                           (f.get("tipo") or "").replace("_", " ").title()),
+                "inicio_iso": _ot_tv_iso(f.get("hora_real_inicio")),
+                "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+            }
+        elif not p["actual"] and not terminada:
+            # Todavía no parte: se muestra lo próximo que le toca.
+            p["actual"] = {
+                "numero": bloque["numero"],
+                "cliente": f.get("razon_social") or "Trabajo interno",
+                "direccion": dir_txt, "tipo": None, "inicio_iso": None,
+                "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+            }
+
+    grupos = {"interno": [], "externo": []}
+    for tid in orden:
+        p = personas.get(tid)
+        if not p:
+            continue
+        if any(b["estado"] == "ejecutando" for b in p["bloques"]):
+            est = "ejecutando"
+        elif any(b["estado"] == "atrasado" for b in p["bloques"]):
+            est = "atrasado"
+        elif p["total_ot"] and p["terminadas"] == p["total_ot"]:
+            est = "terminado"
+        elif p["total_ot"]:
+            est = "pendiente"
+        else:
+            est = "disponible"
+        act = p["actual"] or {}
+        grupos["externo" if p["externo"] else "interno"].append({
+            "nombre": p["nombre"], "iniciales": p["iniciales"], "estado": est,
+            "cliente": act.get("cliente"), "direccion": act.get("direccion"),
+            "avance_pct": act.get("avance_pct") or 0,
+            "tareas_ok": act.get("tareas_ok") or 0,
+            "tareas_total": act.get("tareas_total") or 0,
+            "inicio_iso": act.get("inicio_iso"),
+            "total_ot": p["total_ot"], "bloques": p["bloques"],
+        })
+
+    _DIAS = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes",
+             "Sábado", "Domingo")
+    _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+              "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+    proximos = []
+    for i in range(1, _OT_TV_DIAS_PROX + 1):
+        d = hoy + timedelta(days=i)
+        proximos.append({
+            "dia_label": f"{_DIAS[d.weekday()]} {d.day}",
+            "total": proximos_cnt.get(d, 0),
+            "detalle": ("Sin trabajos" if not proximos_cnt.get(d)
+                        else f"{proximos_cnt[d]} OT programada"
+                        + ("s" if proximos_cnt[d] != 1 else "")),
+        })
+
+    return {
+        "ok": True,
+        "generado_iso": ahora.isoformat(),
+        "hoy_label": f"{_DIAS[hoy.weekday()]} {hoy.day} de {_MESES[hoy.month - 1]}",
+        "jornada": {"ini": _OT2_JORNADA_INI, "fin": _OT2_JORNADA_FIN},
+        "resumen": resumen,
+        "grupos": [
+            {"tipo": "interno", "titulo": "Internos", "personas": grupos["interno"]},
+            {"tipo": "externo", "titulo": "Externos", "personas": grupos["externo"]},
+        ],
+        "proximos": proximos,
+    }
+
+
+def _ot_tv_guard(token):
+    """Puerta común de las 3 rutas del monitor: formato → pantalla activa →
+    dispositivo atado. Devuelve (row, device_a_setear) o (None, None)."""
+    row = _ot_tv_pantalla(token)
+    if not row:
+        return None, None
+    ok, nuevo = _ot_tv_device_ok(row)
+    if not ok:
+        print(f"[ot_tv][SEGURIDAD] token válido con dispositivo distinto "
+              f"(pantalla={row.get('nombre')}, path={request.path})", flush=True)
+        return None, None
+    return row, nuevo
+
+
+def _ot_tv_cookie(resp, device_id):
+    """Deja la cookie del dispositivo por un año. Mismos flags que la
+    cookie `ilus_dev` del login."""
+    if not device_id:
+        return resp
+    try:
+        resp.set_cookie(_OT_TV_COOKIE, device_id, max_age=60 * 60 * 24 * 365,
+                        httponly=True, samesite="Lax",
+                        secure=bool(app.config.get("SESSION_COOKIE_SECURE")))
+    except Exception:
+        pass
+    return resp
+
+
+@app.route("/tv/<token>")
+def ot_tv_monitor(token):
+    """Monitor de oficina — pantalla pública SIN login, solo lectura.
+
+    Sin decorador a propósito: el proyecto no tiene gate de login global,
+    una ruta sin decorador ya es pública. Al ser GET tampoco necesita
+    entrar en `_CSRF_EXEMPT_PREFIXES`.
+    """
+    row, nuevo = _ot_tv_guard(token)
+    if not row:
+        abort(404)
+    _ot_tv_marcar_visto(row["id"])
+    resp = make_response(render_template(
+        "ot2/monitor_tv.html",
+        datos=_ot_tv_datos(),
+        status_url=url_for("ot_tv_status", token=token),
+        datos_url=url_for("ot_tv_datos", token=token),
+        pantalla=row.get("nombre") or "Monitor",
+    ))
+    return _ot_tv_cookie(resp, nuevo)
+
+
+@app.route("/tv/<token>/status")
+def ot_tv_status(token):
+    """Latido: solo la huella. Si no cambió, el televisor no pide nada más."""
+    if not _ot_tv_token_valido(token):
+        return jsonify({"ok": False, "error": "invalid_token"}), 400
+    if not _ot_tv_rate_ok(token):
+        return jsonify({"ok": False, "error": "rate_limited",
+                        "retry_after": int(_OT_TV_RL_WINDOW)}), 429
+    row, nuevo = _ot_tv_guard(token)
+    if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    _ot_tv_marcar_visto(row["id"])
+    return _ot_tv_cookie(
+        make_response(jsonify({"ok": True, "huella": _ot_tv_huella()})), nuevo)
+
+
+@app.route("/tv/<token>/datos")
+def ot_tv_datos(token):
+    """Tablero completo. Solo se pide cuando la huella cambió.
+
+    Caché en memoria compartida por token (TTL < latido): si hay dos
+    pantallas, la segunda no vuelve a consultar la base.
+    """
+    if not _ot_tv_token_valido(token):
+        return jsonify({"ok": False, "error": "invalid_token"}), 400
+    if not _ot_tv_rate_ok(token):
+        return jsonify({"ok": False, "error": "rate_limited",
+                        "retry_after": int(_OT_TV_RL_WINDOW)}), 429
+    row, nuevo = _ot_tv_guard(token)
+    if not row:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    import time as _time
+    ent = _OT_TV_CACHE.get("payload")
+    if ent and (_time.time() - ent["ts"]) < _OT_TV_TTL:
+        payload = ent["payload"]
+    else:
+        payload = _ot_tv_datos()
+        _OT_TV_CACHE["payload"] = {"payload": payload, "ts": _time.time()}
+    _ot_tv_marcar_visto(row["id"])
+    return _ot_tv_cookie(make_response(jsonify(payload)), nuevo)
+
+
+@app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
+@_mant_required
+def ot2_api_lineas_zz(tido, nudo):
+    """Líneas ZZ de un documento del ERP — para valorizar la OT sin tipear.
+
+    Daniel (26-08-2026): *"puedas extraer el ZZ instalación o el ZZ
+    mantención, o cualquier item raro por si se inventan uno, para extraer
+    el cobro del servicio"*. Por eso NO se filtra por una lista blanca de
+    códigos: se devuelve TODA línea cuyo SKU empiece con `ZZ`, y se marca
+    cuál es la sugerida según el tipo de OT (instalación → ZZINSTALACION,
+    preventiva/correctiva → ZZMANTENCION). Si mañana Random inventa
+    `ZZARMADO`, aparece igual y se puede elegir.
+
+    Solo lectura sobre el ERP (REGLA #4.1): reusa `_mant_erp_doc_cached`,
+    que ya cachea 5 min y pasa por `_cubicador_fetch`.
+
+    Multidocumento: el frontend llama una vez por documento y une las
+    listas — el orden lo decide quien está creando la OT.
+    """
+    tido = (tido or "").strip().upper()[:5]
+    nudo = (nudo or "").strip()[:20]
+    if not tido or not nudo:
+        return _ot2_err("Falta el tipo o el número del documento.", "DOC_INCOMPLETO")
+
+    tipo_ot = (request.args.get("tipo_ot") or "").strip().lower()
+    sugerido = _OT2_LINEA_ZZ.get(tipo_ot)
+
+    try:
+        header, lineas = _mant_erp_doc_cached(tido, nudo)
+    except Exception as e:
+        print(f"[ot2_lineas_zz] {tido} {nudo}: {e}", flush=True)
+        return _ot2_err("No pudimos consultar el documento en Random.",
+                        "ERP_ERROR", http=502)
+    if not header:
+        return _ot2_err(f"No encontramos el documento {tido} {nudo} en Random.",
+                        "DOC_NO_ENCONTRADO", http=404)
+
+    zz = []
+    for ln in (lineas or []):
+        sku = (ln.get("sku") or "").strip().upper()
+        if not sku.startswith("ZZ"):
+            continue
+        try:
+            # VATOLI (bruto) manda; VANELI (neto) es el respaldo — mismo
+            # criterio que _mant_erp_doc_montos, para no tener dos verdades.
+            monto = int(round(float(ln.get("VATOLI") or ln.get("VANELI")
+                                    or ln.get("valor") or 0)))
+        except (TypeError, ValueError):
+            monto = 0
+        zz.append({
+            "sku": sku,
+            "descripcion": (ln.get("descripcion") or ln.get("nombre")
+                            or ln.get("DEEN") or "").strip()[:180],
+            "monto": monto,
+            "sugerida": bool(sugerido and sku == sugerido),
+        })
+
+    # La sugerida primero, después por monto de mayor a menor: lo más
+    # probable queda arriba sin esconder el resto.
+    zz.sort(key=lambda x: (not x["sugerida"], -x["monto"]))
+
+    return jsonify({
+        "ok": True, "tido": tido, "nudo": nudo,
+        "cliente": (header.get("cliente") or header.get("razon_social") or ""),
+        "lineas_zz": zz,
+        "sugerido": sugerido,
+        "total_lineas": len(lineas or []),
+    })
+
+
+# ── Panel de administración de pantallas ─────────────────────────────
+#  Emitir la URL de un televisor es configuración, no operación diaria:
+#  por eso superadmin. Es el primer panel de revocación de tokens del
+#  proyecto (hoy /t/<token> y /firma-retiro/<token> son revocables en
+#  teoría pero no tienen botón) — sirve de molde para los demás.
+
+@app.route("/admin/pantallas", methods=["GET"])
+@require_permission("superadmin")
+def admin_pantallas():
+    """Pantallas del monitor de oficina: crear, revocar, re-emparejar."""
+    try:
+        _ensure_ot_pantallas()
+        rows = mysql_fetchall(
+            "SELECT id, nombre, token, activo, device_id, device_bound_at, "
+            "       last_seen_at, last_ip, created_by, created_at "
+            "  FROM ot_pantallas ORDER BY activo DESC, id DESC") or []
+    except Exception as e:
+        print(f"[admin_pantallas] {e}", flush=True)
+        flash("No pudimos leer las pantallas.", "danger")
+        rows = []
+    return render_template("admin/pantallas.html",
+                           pantallas=[dict(r) for r in rows])
+
+
+@app.route("/admin/pantallas/nueva", methods=["POST"])
+@require_permission("superadmin")
+def admin_pantallas_nueva():
+    """Crea una pantalla y su URL única.
+
+    El token nace sin dispositivo: se ata al primer navegador que abra la
+    URL (confianza en el primer uso). Por eso hay que abrirla PRIMERO en
+    el televisor, no en el computador — si se abre acá, queda atada acá.
+    """
+    nombre = (request.form.get("nombre") or "").strip()[:120]
+    if not nombre:
+        flash("Ponle un nombre a la pantalla (ej: TV Recepción).", "warning")
+        return redirect(url_for("admin_pantallas"))
+    token = secrets.token_urlsafe(30)[:40]
+    try:
+        _ensure_ot_pantallas()
+        mysql_execute(
+            "INSERT INTO ot_pantallas (nombre, token, created_by) VALUES (%s,%s,%s)",
+            (nombre, token, current_username()))
+        _mant_log("sistema", 0, "pantalla_tv_creada", f"{nombre}")
+        flash(f'Pantalla "{nombre}" creada. Abre su enlace PRIMERO en el '
+              f'televisor: queda atada al primer navegador que lo use.', "success")
+    except Exception as e:
+        print(f"[admin_pantallas_nueva] {e}", flush=True)
+        flash("No pudimos crear la pantalla.", "danger")
+    return redirect(url_for("admin_pantallas"))
+
+
+@app.route("/admin/pantallas/<int:pid>/revocar", methods=["POST"])
+@require_permission("superadmin")
+def admin_pantallas_revocar(pid):
+    """Mata el enlace al instante. Soft-delete (activo=0), convención del
+    proyecto: preserva el historial de la pantalla."""
+    try:
+        row = mysql_fetchone("SELECT nombre FROM ot_pantallas WHERE id=%s", (pid,))
+        mysql_execute("UPDATE ot_pantallas SET activo=0 WHERE id=%s", (pid,))
+        _mant_log("sistema", 0, "pantalla_tv_revocada",
+                  f"{(row or {}).get('nombre') or pid}")
+        flash("Pantalla revocada. Su enlace dejó de funcionar.", "success")
+    except Exception as e:
+        print(f"[admin_pantallas_revocar] {e}", flush=True)
+        flash("No pudimos revocar la pantalla.", "danger")
+    return redirect(url_for("admin_pantallas"))
+
+
+@app.route("/admin/pantallas/<int:pid>/reemparejar", methods=["POST"])
+@require_permission("superadmin")
+def admin_pantallas_reemparejar(pid):
+    """Suelta el dispositivo sin cambiar la URL — para cambiar de televisor
+    o si la pantalla quedó atada al navegador equivocado."""
+    try:
+        mysql_execute(
+            "UPDATE ot_pantallas SET device_id=NULL, device_bound_at=NULL "
+            " WHERE id=%s", (pid,))
+        _mant_log("sistema", 0, "pantalla_tv_reemparejada", str(pid))
+        flash("Listo. El próximo navegador que abra el enlace queda atado.",
+              "success")
+    except Exception as e:
+        print(f"[admin_pantallas_reemparejar] {e}", flush=True)
+        flash("No pudimos re-emparejar la pantalla.", "danger")
+    return redirect(url_for("admin_pantallas"))
 
 
 @app.route("/mantenciones/ots")
@@ -102142,6 +102914,15 @@ try:
         _ensure_mant_visita_equipos_diagnostico_cols()
 except Exception as _ensure_diag_err:
     print(f"[ILUS][WARN] _ensure_mant_visita_equipos_diagnostico_cols: {_ensure_diag_err}", flush=True)
+
+# Pantallas del monitor de oficina (modo TV), Daniel 2026-08-26 —
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1: sin la tabla, /tv/<token>
+# y /admin/pantallas quedan muertos en producción.
+try:
+    with app.app_context():
+        _ensure_ot_pantallas()
+except Exception as _ensure_tv_err:
+    print(f"[ILUS][WARN] _ensure_ot_pantallas: {_ensure_tv_err}", flush=True)
 
 # CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía

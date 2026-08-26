@@ -2492,6 +2492,25 @@ async function _tkotSubirAdjuntos(vid){
 // Los pasos 6 y 7 nacen con .is-optional (punteado gris) desde el HTML;
 // si el usuario los llena pasan a verde, si los vacía vuelven a punteado.
 // CERO cambio funcional: esto no valida, no bloquea y no toca el submit.
+// ── Trabajo interno (bodega / capacitación / control de calidad) ──────
+// BUG 2026-08-26: este formulario guardaba `_O2F.origen` y NUNCA lo volvía
+// a leer, así que una OT interna igual exigía equipo, dirección y contacto
+// en sitio -- las tres cosas sin sentido para el técnico de bodega, y las
+// tres bloqueaban la creación. El backend sí sabía tratarlas (cliente_id
+// NULL, sin acceso, sin equipos); el que no dejaba pasar era el front.
+//
+// Los tipos coinciden con los marcados `interno:true` en el selector de
+// origen (_modal_crear.html). La fuente de verdad real es la tabla
+// mant_categoria_tipo_map del backend, que valida de nuevo al crear -- esto
+// es solo para no pedirle al usuario datos que no corresponden.
+const O2F_TIPOS_INTERNOS = ['revision_interna', 'capacitacion', 'control_calidad'];
+
+function _o2fEsInterno(){
+  if (_O2F && _O2F.origen === 'interno') return true;
+  const tipo = ((document.getElementById('o2f_otTipo') || {}).value || '').trim();
+  return O2F_TIPOS_INTERNOS.indexOf(tipo) !== -1;
+}
+
 const TKOT_STEP_RULES = {
   1: function(){
     const tipo = (document.getElementById('o2f_otTipo') || {}).value || '';
@@ -2503,6 +2522,9 @@ const TKOT_STEP_RULES = {
   },
   2: function(){
     const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
+    // Trabajo interno: no hay cliente que reciba al técnico, así que basta
+    // el título (qué se va a hacer). Ver _o2fEsInterno().
+    if(_o2fEsInterno()) return !!val('o2fLevSelectTitulo');
     return !!(val('o2fLevSelectTitulo') && val('o2fLevDireccion') && val('o2fLevContactoNombre'));
   },
   // 2026-08-13: Paso 3 y 4 se invirtieron en el HTML (Técnicos ahora va
@@ -2516,6 +2538,8 @@ const TKOT_STEP_RULES = {
   },
   5: function(){
     const tipo = (document.getElementById('o2f_otTipo') || {}).value || '';
+    // Trabajo interno: sin cliente no hay equipos que elegir.
+    if(_o2fEsInterno()) return true;
     if(tipo === 'levantamiento' && _O2F.modo === 'descubrimiento') return true;
     // Instalación sin ficha (forzarTodosEquipos) pinta los checkbox como
     // "checked disabled" -> igual entran en este conteo, sin caso especial.
@@ -2590,6 +2614,9 @@ function _tkotFechaProgHintEl(){
 async function _tkotSugerirDiaPreferido(fechaPresetExplicita){
   const hintEl = _tkotFechaProgHintEl();
   if (hintEl){ hintEl.style.display = 'none'; hintEl.innerHTML = ''; }
+  // Sin ficha de cliente (trabajo interno) no hay día preferido que sugerir:
+  // sin esta guarda se pedía /clientes/null/dia-preferido en cada OT interna.
+  if (!CID) return;
   try{
     const r = await fetch('/mantenciones/api/clientes/' + CID + '/dia-preferido');
     if (!r.ok) return;
@@ -2819,8 +2846,9 @@ async function o2fGenerar(){
     ? eqs.map(function(e){ return _tkotEqKey(e); })
     : Array.from(document.querySelectorAll('.lev-eq-chk:checked')).map(function(c){ return c.dataset.key; });
 
+  const esInterno = _o2fEsInterno();
   let esDescubrimiento = (tipoSel === 'levantamiento' && _O2F.modo === 'descubrimiento');
-  if(!keysMarcados.length && !esDescubrimiento){
+  if(!keysMarcados.length && !esDescubrimiento && !esInterno){
     if(tipoSel !== 'levantamiento'){ ilusToast('Selecciona al menos un equipo', {type:'warning'}); return; }
     const okDesc = await ilusConfirm({
       title: 'Levantamiento de descubrimiento',
@@ -2869,10 +2897,13 @@ async function o2fGenerar(){
     if(fechaFin < fechaProg){ ilusToast('La fecha de término no puede ser anterior a la de inicio', {type:'warning'}); return; }
   }
 
+  // Trabajo interno (bodega/capacitación): no hay dirección de cliente ni
+  // contacto que reciba al técnico -- el trabajo es acá adentro. Exigirlos
+  // era lo que dejaba a Heiser sin poder levantar sus propias OT.
   const dirVal = (document.getElementById('o2fLevDireccion')?.value || '').trim();
-  if(!dirVal){ ilusToast('Indica la dirección de la visita', {type:'warning'}); document.getElementById('o2fLevDireccion')?.focus(); return; }
+  if(!dirVal && !esInterno){ ilusToast('Indica la dirección de la visita', {type:'warning'}); document.getElementById('o2fLevDireccion')?.focus(); return; }
   const contactoNombre = (document.getElementById('o2fLevContactoNombre')?.value || '').trim();
-  if(!contactoNombre){ ilusToast('Indica el contacto que recibirá al técnico en sitio', {type:'warning'}); document.getElementById('o2fLevContactoSel')?.focus(); return; }
+  if(!contactoNombre && !esInterno){ ilusToast('Indica el contacto que recibirá al técnico en sitio', {type:'warning'}); document.getElementById('o2fLevContactoSel')?.focus(); return; }
 
   const tecnicoIds = Array.from(_O2F.tecnicosSel);
   if(!tecnicoIds.length){
