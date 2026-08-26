@@ -4240,7 +4240,7 @@ PERMS_KEYS = (
     # mant_ot_interna — permiso para crear una OT de trabajo interno (bodega,
     # capacitación, control de calidad) SIN cliente. Aditivo 2026-08-26.
     # La regla histórica bloqueaba a TODO técnico ("el trabajo de bodega lo
-    # agenda supervisor+"). Daniel necesita que Heiser levante las suyas,
+    # agenda supervisor+"). Daniel necesita que Jaizer levante las suyas,
     # pero decidiendo él quién puede — no abriéndolo a todos los técnicos.
     # El gate (`_puede_crear_ot_interna`) sigue dejando pasar a los roles de
     # gestión vía OR, así que este flag solo puede SUMAR acceso.
@@ -12234,7 +12234,7 @@ PERMISSIONS_MATRIX = {
     #     ot_interna  = crear OT de trabajo interno (bodega, capacitación,
     #                   control de calidad) SIN cliente. Aditivo 2026-08-26:
     #                   la regla histórica era "lo agenda supervisor+, nunca
-    #                   el propio técnico", pero Daniel necesita que Heiser
+    #                   el propio técnico", pero Daniel necesita que Jaizer
     #                   (técnico de bodega) levante las suyas. En vez de
     #                   invertir la regla para TODOS los técnicos, se abre
     #                   por permiso: Daniel decide quién desde /admin/roles.
@@ -50217,7 +50217,7 @@ def _puede_crear_ot_interna(user=None):
     supervisor+, NUNCA el propio técnico", implementada como un bloqueo
     plano a toda la familia 'tecnico'. El 2026-08-26 Daniel pidió lo
     contrario para UNA persona: *"que el técnico pueda crear OT, pero yo voy
-    a decidir quién. En este minuto quiero que solamente Heiser se cree su
+    a decidir quién. En este minuto quiero que solamente Jaizer se cree su
     propia OT, ya que él es el técnico de bodega"*.
 
     Por eso NO se invirtió la regla global: los roles de gestión siguen
@@ -72200,7 +72200,7 @@ def _mant_visita_crear_core(d):
     # ACTUALIZADO 2026-08-26: el bloqueo dejó de ser plano a toda la familia
     # 'tecnico'. Ahora pasa por `_puede_crear_ot_interna()`, que deja entrar
     # a gestión igual que antes y además a los técnicos cuyo ROL tenga el
-    # permiso encendido (caso Heiser, técnico de bodega). Ver el docstring
+    # permiso encendido (caso Jaizer, técnico de bodega). Ver el docstring
     # de esa función: la regla vive en un solo lugar.
     if _cliente_opcional and not _puede_crear_ot_interna():
         return {"error": "No tienes permiso para crear una OT de trabajo interno."}, 403
@@ -74498,7 +74498,7 @@ def ot2_api_crear():
     # 🔐 2026-08-26: este motor NUNCA había validado quién puede crear una OT
     # de trabajo interno — el núcleo legado sí lo hacía, pero OT 2.0 se saltó
     # esa regla. Mientras el formulario bloqueaba el paso el hueco no se veía;
-    # al desbloquearlo para Heiser habría quedado abierto para TODOS los
+    # al desbloquearlo para Jaizer habría quedado abierto para TODOS los
     # técnicos. Misma función que usa el núcleo viejo, una sola regla.
     if es_interna and not _puede_crear_ot_interna():
         return _ot2_err(
@@ -75004,6 +75004,22 @@ def _ensure_ot_pantallas():
                     INDEX idx_tvact (activo)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # Mando a distancia del televisor (Daniel 2026-08-26: "es para
+            # controlar el monitor de la oficina, ¿se podrá?"). La orden viaja
+            # montada en el latido que YA existe: el televisor pregunta cada 8s
+            # si cambió algo, y de paso se lleva la orden pendiente. Cero
+            # conexión nueva, cero costo -- a cambio de hasta 8s de demora,
+            # que es el precio de haberlo hecho gratis.
+            for _sql in (
+                "ALTER TABLE ot_pantallas ADD COLUMN comando VARCHAR(60) NULL "
+                "  COMMENT 'congelar|reanudar|destacar:<nombre>|pagina:<n>|refrescar'",
+                "ALTER TABLE ot_pantallas ADD COLUMN comando_at DATETIME NULL",
+                "ALTER TABLE ot_pantallas ADD COLUMN comando_por VARCHAR(190) NULL",
+            ):
+                try:
+                    cur.execute(_sql)
+                except Exception:
+                    pass      # ya existe — idempotente (REGLA #9)
         conn.commit()
     finally:
         conn.close()
@@ -75037,11 +75053,40 @@ def _ot_tv_pantalla(token):
         return None
     try:
         return mysql_fetchone(
-            "SELECT id, nombre, token, activo, device_id "
+            "SELECT id, nombre, token, activo, device_id, comando, comando_at "
             "  FROM ot_pantallas WHERE token=%s AND activo=1", (token,))
     except Exception as e:
         print(f"[ot_tv] lookup: {e}", flush=True)
         return None
+
+
+# Órdenes que el televisor sabe obedecer. Lista blanca: lo que no esté acá
+# se rechaza, para que nadie pueda mandarle texto arbitrario a la pantalla.
+_OT_TV_COMANDOS = ("congelar", "reanudar", "refrescar", "destacar", "pagina")
+_OT_TV_COMANDO_TTL = 900     # 15 min: una orden vieja no revive sola si el
+                             # televisor estuvo apagado toda la noche
+
+
+def _ot_tv_comando_vigente(row):
+    """Devuelve la orden pendiente si sigue vigente, o None.
+
+    Se descarta sola pasado el TTL: si el televisor se apagó con una orden
+    de "congelar" puesta, al volver arranca normal en vez de quedarse
+    pegado en una vista de ayer.
+    """
+    cmd = (row.get("comando") or "").strip()
+    if not cmd:
+        return None
+    at = row.get("comando_at")
+    if at:
+        try:
+            from datetime import timezone as _tzu
+            _at = at if getattr(at, "tzinfo", None) else at.replace(tzinfo=_tzu.utc)
+            if (datetime.now(_tzu.utc) - _at).total_seconds() > _OT_TV_COMANDO_TTL:
+                return None
+        except Exception:
+            pass
+    return cmd
 
 
 def _ot_tv_device_ok(row):
@@ -75405,8 +75450,79 @@ def ot_tv_status(token):
     if not row:
         return jsonify({"ok": False, "error": "not_found"}), 404
     _ot_tv_marcar_visto(row["id"])
-    return _ot_tv_cookie(
-        make_response(jsonify({"ok": True, "huella": _ot_tv_huella()})), nuevo)
+    # La orden del mando a distancia viaja montada en el latido — ver el
+    # comentario de la migración. `intervalo_ms` le dice al televisor que
+    # acelere a 3s mientras haya una orden pendiente: cuando Daniel está
+    # dirigiendo desde su computador, 8s de espera se sienten eternos.
+    _cmd = _ot_tv_comando_vigente(row)
+    return _ot_tv_cookie(make_response(jsonify({
+        "ok": True,
+        "huella": _ot_tv_huella(),
+        "comando": _cmd,
+        "intervalo_ms": 3000 if _cmd else None,
+    })), nuevo)
+
+
+@app.route("/ot/api/monitor/comando", methods=["POST"])
+@_mant_required
+@_require_superadmin
+def ot2_monitor_comando():
+    """Manda una orden al televisor desde la pantalla de control.
+
+    Daniel (26-08-2026): *"es para controlar el monitor de la oficina, ¿se
+    podrá?"*. Sí — y sin conexión nueva: la orden se guarda en la fila de la
+    pantalla y el televisor se la lleva en el latido que ya hacía. El costo
+    es hasta 8 segundos de demora (3 mientras haya orden pendiente), que es
+    exactamente el precio de que el monitor no cueste plata.
+
+    Body: {pantalla_id, comando, valor?}
+    """
+    d = request.get_json(silent=True) or {}
+    cmd = (d.get("comando") or "").strip().lower()
+    if cmd not in _OT_TV_COMANDOS:
+        return _ot2_err("Esa orden no existe.", "COMANDO_INVALIDO")
+    valor = (d.get("valor") or "").strip()[:40]
+    # destacar/pagina llevan argumento; el resto no.
+    full = f"{cmd}:{valor}" if (cmd in ("destacar", "pagina") and valor) else cmd
+
+    try:
+        pid = int(d.get("pantalla_id") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    try:
+        if pid:
+            mysql_execute(
+                "UPDATE ot_pantallas SET comando=%s, comando_at=NOW(), comando_por=%s "
+                " WHERE id=%s AND activo=1", (full, current_username(), pid))
+        else:
+            # Sin pantalla elegida: la orden va a TODAS las activas. Es lo que
+            # se quiere en la práctica — hoy hay un solo televisor.
+            mysql_execute(
+                "UPDATE ot_pantallas SET comando=%s, comando_at=NOW(), comando_por=%s "
+                " WHERE activo=1", (full, current_username()))
+    except Exception as e:
+        print(f"[ot_tv] comando: {e}", flush=True)
+        return _ot2_err("No pudimos enviar la orden al televisor.",
+                        "ERROR_INTERNO", http=500)
+    return jsonify({"ok": True, "comando": full,
+                    "aviso": "El televisor la aplica en unos segundos."})
+
+
+@app.route("/ot/api/monitor/pantallas", methods=["GET"])
+@_mant_required
+@_require_superadmin
+def ot2_monitor_pantallas():
+    """Pantallas activas y si están vivas — para elegir a cuál mandar la orden."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT id, nombre, last_seen_at, comando FROM ot_pantallas "
+            " WHERE activo=1 ORDER BY nombre") or []
+    except Exception:
+        rows = []
+    return jsonify({"ok": True, "pantallas": [
+        {"id": r["id"], "nombre": r["nombre"],
+         "ultima_senal": _ot_tv_iso(r.get("last_seen_at")),
+         "comando": r.get("comando")} for r in rows]})
 
 
 @app.route("/tv/<token>/datos")
