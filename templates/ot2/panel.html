@@ -231,6 +231,59 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-ch.f-cancel{background:var(--ot-ejec-bg);color:#991b1b;text-decoration:line-through}
 .ot2-mas{font-size:.6rem;font-weight:800;color:#9ca3af;padding:0 2px}
 
+/* ── Calendario + panel lateral (2026-08-26, fusión de calendarios:
+   Daniel, "que los dos calendarios sean uno y bien potente"). La grilla
+   ocupa la columna ancha; a la derecha viven Resumen de hoy, Próximas OT
+   y la leyenda de estados -- el trío que el calendario viejo tenía y que
+   acá faltaba. En pantallas angostas el panel fluye debajo. ──────────── */
+.ot2-cal-layout{display:grid;grid-template-columns:minmax(0,1fr) 296px;gap:14px;align-items:start}
+@media (max-width:991px){.ot2-cal-layout{grid-template-columns:minmax(0,1fr)}}
+.ot2-side{display:flex;flex-direction:column;gap:14px}
+.ot2-sc{background:#fff;border:1px solid var(--ot-line);border-radius:11px;
+  padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.ot2-sc-tit{font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;
+  color:#6b7280;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.ot2-sc-tit i{color:var(--ilus-red,#dc2626)}
+/* Punto de color por fase -- lo comparten "Próximas OT" y la leyenda */
+.ot2-dotf{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none;background:#9ca3af}
+.ot2-dotf.f-pend{background:var(--ot-pend)}
+.ot2-dotf.f-ejec{background:var(--ot-ejec)}
+.ot2-dotf.f-comp{background:var(--ot-comp)}
+.ot2-dotf.f-cerr{background:var(--ot-cerr)}
+.ot2-dotf.f-cancel{background:var(--ot-cancel)}
+/* Resumen de hoy: 4 mini-KPIs en 2x2, mismo lenguaje de los KPI grandes */
+.ot2-sd{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ot2-sd-kpi{background:#fafbfc;border:1px solid var(--ot-line);border-radius:9px;
+  padding:10px 12px;text-align:center}
+.ot2-sd-kpi .n{font-size:1.45rem;font-weight:900;line-height:1;color:#0a0a0a;
+  font-variant-numeric:tabular-nums}
+.ot2-sd-kpi .l{font-size:.6rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.05em;color:#6b7280;margin-top:4px}
+.ot2-sd-kpi.k-p .n{color:var(--ot-pend)}
+.ot2-sd-kpi.k-e .n{color:var(--ot-ejec)}
+.ot2-sd-kpi.k-c .n{color:var(--ot-comp)}
+/* Próximas OT: filas compactas clicables, como el calendario viejo */
+.ot2-nx{display:flex;gap:9px;padding:9px 0;border-top:1px solid #f3f4f6;
+  text-decoration:none;align-items:flex-start}
+.ot2-nx:first-of-type{border-top:0;padding-top:2px}
+.ot2-nx:last-of-type{padding-bottom:2px}
+.ot2-nx .ot2-dotf{margin-top:5px}
+.ot2-nx .bd{flex:1;min-width:0}
+.ot2-nx .cl{display:block;font-size:.8rem;font-weight:800;color:#0a0a0a;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .14s}
+.ot2-nx:hover .cl{color:var(--ilus-red,#dc2626)}
+.ot2-nx .mt{display:block;font-size:.7rem;color:#6b7280;margin-top:1px}
+.ot2-nx .nu{font-size:.68rem;font-weight:900;color:#9ca3af;
+  font-variant-numeric:tabular-nums;white-space:nowrap;margin-top:2px}
+.ot2-nx-vacio{font-size:.78rem;color:#9ca3af;font-weight:600;padding:4px 0}
+/* Leyenda de estados por fase */
+.ot2-leg{display:flex;flex-direction:column;gap:8px}
+.ot2-leg-i{display:flex;align-items:flex-start;gap:8px;font-size:.78rem;
+  font-weight:700;color:#374151;line-height:1.35}
+.ot2-leg-i .ot2-dotf{margin-top:3px;border-radius:3px;width:10px;height:10px}
+.ot2-leg-i small{display:block;font-size:.66rem;color:#9ca3af;font-weight:600}
+.ot2-leg-i.cancel > span > span{text-decoration:line-through}
+
 /* ── Centro de Control: ticket, prioridad, interno/externo, salud/SLA
    (Daniel, brief 2026-08-25). Mismo lenguaje visual que .dp/.ot2-est ya
    usan -- pastillas de color, no un sistema nuevo. ────────────────── */
@@ -634,12 +687,18 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   <div class="ot2-eq"><div class="ot2-eq-vacio"><i class="bi bi-people me-1"></i>Sin OT agendadas hoy</div></div>
   {% endif %}
 
+  {# ── Grilla del mes + panel lateral (2026-08-26, fusión de calendarios:
+     el Resumen del día / Próximas visitas / leyenda del calendario viejo,
+     adaptados a fases de OT). data-mes alimenta el título del modal de
+     día ("Miércoles 26 de agosto" en vez de "Día 26"). ─────────────── #}
+  <div class="ot2-cal-layout">
+  <div class="ot2-cal-main">
   <div class="ot2-cal-nav">
     <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_ant) }}" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></a>
     <span class="ot2-cal-mes">{{ cal_mes_label }}</span>
     <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_sig) }}" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></a>
   </div>
-  <div class="ot2-cal">
+  <div class="ot2-cal" data-mes="{{ cal_mes_actual }}">
     <div class="ot2-dow">{% for d in cal_dow %}<div>{{ d }}</div>{% endfor %}</div>
     {% for semana in cal_semanas %}
     <div class="ot2-sem">
@@ -682,6 +741,62 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     </div>
     {% endfor %}
   </div>
+  </div>{# /ot2-cal-main #}
+
+  {# ── Panel lateral: lo bueno del calendario viejo, en lenguaje OT 2.0 ── #}
+  <aside class="ot2-side">
+
+    {# Resumen de HOY -- solo cuando el mes visible incluye la fecha de
+       hoy, mismo criterio que "Equipo hoy". #}
+    {% if resumen_hoy %}
+    <div class="ot2-sc">
+      <div class="ot2-sc-tit"><i class="bi bi-calendar-day-fill"></i>Resumen de hoy</div>
+      <div class="ot2-sd">
+        <div class="ot2-sd-kpi"><div class="n">{{ resumen_hoy.total }}</div><div class="l">OT hoy</div></div>
+        <div class="ot2-sd-kpi k-p"><div class="n">{{ resumen_hoy.pend }}</div><div class="l">Pendientes</div></div>
+        <div class="ot2-sd-kpi k-e"><div class="n">{{ resumen_hoy.ejec }}</div><div class="l">En ejecución</div></div>
+        <div class="ot2-sd-kpi k-c"><div class="n">{{ resumen_hoy.comp }}</div><div class="l">Completadas</div></div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Próximas OT -- las 5 más cercanas desde hoy, sin el corte del mes
+       visible (viene de su propia consulta en ot2_panel). #}
+    <div class="ot2-sc">
+      <div class="ot2-sc-tit"><i class="bi bi-clock-history"></i>Próximas OT</div>
+      {% for p in proximas %}
+      <a class="ot2-nx" href="{{ url_for('ot2_detalle', vid=p.id) }}">
+        <span class="ot2-dotf f-{{ p.estado_fase or 'cancel' }}"></span>
+        <span class="bd">
+          <span class="cl">{{ p.razon_social or 'Trabajo interno' }}</span>
+          <span class="mt">{{ p.fecha_dow }} {{ p.fecha_dia }}{% if p.hora_hhmm %} · {{ p.hora_hhmm }}{% endif %} · {{ p.tipo_label }}</span>
+          <span class="mt"><i class="bi bi-person"></i> {{ p.tecnico_nombre or 'Sin asignar' }}{% if p.tecnico_tipo %} <span class="ot2-tec-tipo {{ p.tecnico_tipo }}">{{ 'Ext' if p.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}</span>
+        </span>
+        <span class="nu">{% if p.numero_ot %}{{ p.numero_sufijo }}{% else %}VS-{{ p.id }}{% endif %}</span>
+      </a>
+      {% else %}
+      <div class="ot2-nx-vacio"><i class="bi bi-check2-circle me-1"></i>Sin OT próximas agendadas</div>
+      {% endfor %}
+    </div>
+
+    {# Leyenda de colores -- fases con sus estados finos, misma agrupación
+       de _OT2_ESTADO_META que usan KPIs y Kanban. #}
+    <div class="ot2-sc">
+      <div class="ot2-sc-tit"><i class="bi bi-palette-fill"></i>Colores del calendario</div>
+      <div class="ot2-leg">
+        {% for l in cal_leyenda %}
+        <div class="ot2-leg-i {{ 'cancel' if l.clave == 'cancel' }}">
+          <span class="ot2-dotf f-{{ l.clave }}"></span>
+          <span><span>{{ l.label }}</span>
+            {% if l.estados %}<small>{{ l.estados | join(' · ') }}</small>{% endif %}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+  </aside>
+  </div>{# /ot2-cal-layout #}
   {% endif %}
 
 </div>
@@ -723,31 +838,107 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   </div>
 </div>
 <style>
-.o2d{--c:#6b7280;display:flex;align-items:center;gap:13px;padding:13px;border:1px solid #eaecf0;
-  border-left:4px solid var(--c);border-radius:10px;margin-bottom:9px;background:#fff;
-  text-decoration:none;transition:transform .14s,box-shadow .14s}
-.o2d:hover{transform:translateX(3px);box-shadow:0 8px 18px rgba(10,10,10,.1)}
-.o2d.f-pend{--c:#3b82f6} .o2d.f-ejec{--c:#dc2626} .o2d.f-comp{--c:#16a34a}
-.o2d.f-cerr{--c:#4b5563} .o2d.f-cancel{--c:#dc2626}
-.o2d .nu{font-weight:900;font-size:.92rem;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums}
-.o2d .cl{font-weight:700;font-size:.88rem;color:#0a0a0a}
-.o2d .mt{font-size:.76rem;color:#6b7280}
-.o2d .es{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
-  color:var(--c);border:1.5px solid var(--c);border-radius:999px;padding:3px 10px;white-space:nowrap}
-.o2d .tc{width:32px;height:32px;border-radius:50%;background:#0a0a0a;color:#fff;
-  display:grid;place-items:center;font-size:.68rem;font-weight:800;flex:none;
+/* ── Modal "Agenda del día" v2 (2026-08-26, fusión de calendarios): cada
+   OT es una TARJETA expandible. La fila resume (N°, cliente, técnico,
+   estado); el clic la abre y muestra la ficha completa al estilo del
+   modal "Detalle de visita" del calendario viejo -- grid de datos con
+   micro-etiquetas + botón "Abrir OT / Gestionar" -- sumando lo que el
+   viejo no tenía: ticket de origen, prioridad, salud/SLA, interno/
+   externo. Arriba, mini-KPIs del día (como el drill-down viejo). */
+.o2d-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.o2d-kpi{background:#fafbfc;border:1px solid #eaecf0;border-radius:9px;padding:9px 10px;text-align:center}
+.o2d-kpi .n{font-size:1.35rem;font-weight:900;line-height:1;color:#0a0a0a;font-variant-numeric:tabular-nums}
+.o2d-kpi .l{font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-top:3px}
+.o2d-kpi.k-e .n{color:#dc2626}
+.o2d-kpi.k-c .n{color:#16a34a}
+
+.o2d-card{--c:#6b7280;border:1px solid #eaecf0;border-left:4px solid var(--c);
+  border-radius:10px;margin-bottom:9px;background:#fff;overflow:hidden;
+  transition:box-shadow .14s}
+.o2d-card:hover{box-shadow:0 8px 18px rgba(10,10,10,.08)}
+.o2d-card.f-pend{--c:#3b82f6} .o2d-card.f-ejec{--c:#dc2626} .o2d-card.f-comp{--c:#16a34a}
+.o2d-card.f-cerr{--c:#4b5563} .o2d-card.f-cancel{--c:#dc2626}
+
+.o2d-row{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;
+  padding:12px 13px;background:transparent;border:0;text-align:left;cursor:pointer}
+.o2d-row .nu{font-weight:900;font-size:.9rem;color:#0a0a0a;white-space:nowrap;font-variant-numeric:tabular-nums}
+.o2d-row .bd{flex:1;min-width:0}
+.o2d-row .cl{display:block;font-weight:800;font-size:.87rem;color:#0a0a0a;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.o2d-row .mt{display:block;font-size:.74rem;color:#6b7280;margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.o2d-row .pl{display:flex;gap:5px;flex:none;align-items:center}
+.o2d-row .tc{width:32px;height:32px;border-radius:50%;background:#0a0a0a;color:#fff;
+  display:grid;place-items:center;font-size:.66rem;font-weight:800;flex:none;
   box-shadow:0 0 0 2px var(--ilus-red,#dc2626)}
-.o2d .tc.sin{background:#fff;color:#c7cbd1;border:1.5px dashed #d1d5db;box-shadow:none}
+.o2d-row .tc.sin{background:#fff;color:#c7cbd1;border:1.5px dashed #d1d5db;box-shadow:none}
+.o2d-row .es{font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--c);border:1.5px solid var(--c);border-radius:999px;padding:3px 10px;
+  white-space:nowrap;display:inline-flex;align-items:center;gap:5px;flex:none}
+.o2d-card.f-cancel .es{text-decoration:line-through}
+.o2d-row .cv{color:#9ca3af;transition:transform .18s;flex:none}
+.o2d-card.abierta .cv{transform:rotate(180deg)}
+
+.o2d-det{display:none;border-top:1px solid #f0f2f4;background:#fbfcfd;padding:14px 15px}
+.o2d-card.abierta .o2d-det{display:block}
+.o2d-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px}
+.o2d-it.full{grid-column:1 / -1}
+.o2d-lbl{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+  color:#9ca3af;margin-bottom:3px;display:flex;align-items:center;gap:5px}
+.o2d-lbl i{color:var(--ilus-red,#dc2626)}
+.o2d-val{font-size:.88rem;font-weight:600;color:#0f172a;line-height:1.4}
+.o2d-bar{display:flex;align-items:center;gap:8px}
+.o2d-bar .b{flex:1;height:6px;border-radius:99px;background:#e9ecef;overflow:hidden;min-width:60px}
+.o2d-bar .b i{display:block;height:100%;background:var(--c);border-radius:99px}
+.o2d-bar .p{font-size:.74rem;font-weight:800;color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap}
+.o2d-foot{display:flex;justify-content:flex-end;margin-top:14px}
+.o2d-abrir{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:9px 18px;
+  border-radius:9px;background:linear-gradient(135deg,#0a0a0a,#2a0d0d);color:#fff;
+  font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;
+  text-decoration:none;transition:transform .14s,box-shadow .14s}
+.o2d-abrir:hover{color:#fff;transform:translateY(-1px);box-shadow:0 8px 18px rgba(220,38,38,.35)}
+
+@media (max-width:576px){
+  .o2d-kpis{grid-template-columns:repeat(2,1fr)}
+  .o2d-grid{grid-template-columns:1fr}
+  /* En pantalla chica la fila se queda con lo esencial: el color del
+     borde ya dice la fase y el detalle expandido trae el estado entero. */
+  .o2d-row .es, .o2d-row .pl{display:none}
+}
 </style>
 
 <script>
 /* Agenda del día del calendario. Lee los datos que ya vienen en el DOM —
-   no hace una consulta más al servidor. */
+   no hace una consulta más al servidor.
+   v2 (2026-08-26, fusión de calendarios): cada OT es una tarjeta
+   expandible con la ficha completa adentro (grid estilo "Detalle de
+   visita" del calendario viejo + ticket/prioridad/salud/interno-externo
+   que el viejo no tenía) y botón "Abrir OT / Gestionar". Daniel,
+   2026-07-12 sobre el modal viejo: "necesito algo informativo... no es
+   que lo va a abrir directo" — por eso el clic en la fila DESPLIEGA la
+   ficha, y recién el botón navega. */
 window.OT2D = (function(){
   var m = null;
+  var DOW = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  var MESES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+               'agosto','septiembre','octubre','noviembre','diciembre'];
   function esc(s){ return (s==null?'':String(s))
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  // Pastilla de color (mismas clases .dp del resto del módulo)
+  function pill(cls, icono, txt, mini){
+    if (!txt) return '';
+    return '<span class="dp dp-'+esc(cls)+'"'+
+      (mini ? ' style="padding:2px 8px;font-size:.62rem"' : ' style="padding:3px 10px;font-size:.72rem"')+'>'+
+      (icono ? '<i class="bi '+esc(icono)+'"></i>' : '')+esc(txt)+'</span>';
+  }
+  // Un dato del grid de la ficha (micro-etiqueta + valor). `valorHtml`
+  // llega YA escapado por quien lo arma.
+  function item(icono, lbl, valorHtml, full){
+    return '<div class="o2d-it'+(full ? ' full' : '')+'">'+
+      '<div class="o2d-lbl"><i class="bi '+icono+'"></i>'+lbl+'</div>'+
+      '<div class="o2d-val">'+valorHtml+'</div></div>';
+  }
   // 2026-08-25 (Daniel, brief "Centro de Control", caso de estrés "100 OT
   // en un día"): ya NO lee los chips renderizados en la celda (esos
   // siguen topados a 4 a propósito, para que la celda no reviente) --
@@ -758,33 +949,112 @@ window.OT2D = (function(){
     var filas;
     try { filas = JSON.parse(celda.dataset.full || '[]'); } catch(e) { filas = []; }
     if (!filas.length) return;                       // día vacío: no molesta
-    var dia = celda.dataset.dia, total = filas.length;
-    document.getElementById('ot2DiaTit').textContent = 'Día ' + dia;
-    document.getElementById('ot2DiaSub').textContent =
-      total + (total === 1 ? ' orden agendada' : ' órdenes agendadas');
-    var html = '';
+    var dia = parseInt(celda.dataset.dia, 10) || 0;
+    var total = filas.length;
+
+    // Título con día de semana real ("Miércoles 26 de agosto") — el mes
+    // visible viaja en data-mes de la grilla (formato YYYY-MM).
+    var cal = celda.closest('.ot2-cal');
+    var mes = (cal && cal.dataset && cal.dataset.mes) ? cal.dataset.mes : '';
+    var tit = 'Día ' + dia;
+    if (/^\d{4}-\d{2}$/.test(mes)) {
+      var fRef = new Date(parseInt(mes.slice(0, 4), 10), parseInt(mes.slice(5, 7), 10) - 1, dia);
+      tit = DOW[fRef.getDay()] + ' ' + dia + ' de ' + MESES[fRef.getMonth()];
+    }
+
+    // Mini-resumen del día (como el drill-down del calendario viejo)
+    var nEjec = 0, nComp = 0, tecs = {};
     filas.forEach(function(d){
-      html += '<a class="o2d f-'+esc(d.fase)+'" href="'+esc(d.url)+'">'+
-        '<span class="nu">'+esc(d.ot)+(d.ticket ? '<br><span class="ot2-tk" style="margin-top:3px"><i class="bi bi-ticket-perforated-fill"></i>'+esc(d.ticket)+'</span>' : '')+'</span>'+
-        '<span style="flex:1;min-width:0">'+
-          '<span class="cl d-block text-truncate">'+esc(d.cli)+'</span>'+
-          '<span class="mt">'+esc(d.tipo)+(d.sub ? ' · '+esc(d.sub) : '')+'</span>'+
-          (d.prioridad ? ' <span class="dp dp-'+esc(d.prioridad_class)+'" style="padding:1px 7px;font-size:.62rem">'+esc(d.prioridad)+'</span>' : '')+
-          (d.salud ? ' <span class="dp dp-'+esc(d.salud_class)+'" style="padding:1px 7px;font-size:.62rem">'+esc(d.salud)+'</span>' : '')+
-        '</span>'+
-        (d.ini ? '<span class="tc">'+esc(d.ini)+'</span>'
-               : '<span class="tc sin"><i class="bi bi-person"></i></span>')+
-        '<span style="min-width:96px">'+
-          '<span class="mt d-block">'+esc(d.tec)+(d.tec_tipo ? ' <span class="ot2-tec-tipo '+esc(d.tec_tipo)+'">'+(d.tec_tipo === 'externo' ? 'Ext' : 'Int')+'</span>' : '')+'</span>'+
-          '<span class="mt">'+esc(d.av)+'</span></span>'+
-        '<span class="es">'+esc(d.estado)+'</span>'+
-        '<i class="bi bi-arrow-right text-muted"></i></a>';
+      if (d.fase === 'ejec') nEjec++;
+      if (d.fase === 'comp' || d.fase === 'cerr') nComp++;
+      if (d.tec && d.tec !== 'Sin asignar') tecs[d.tec] = 1;
     });
+    var nTecs = Object.keys(tecs).length;
+
+    document.getElementById('ot2DiaTit').textContent = tit;
+    document.getElementById('ot2DiaSub').textContent =
+      total + (total === 1 ? ' orden agendada' : ' órdenes agendadas') +
+      (nTecs ? ' · ' + nTecs + (nTecs === 1 ? ' técnico' : ' técnicos') + ' en terreno' : '');
+
+    var html = '<div class="o2d-kpis">'+
+      '<div class="o2d-kpi"><div class="n">'+total+'</div><div class="l">Órdenes</div></div>'+
+      '<div class="o2d-kpi k-e"><div class="n">'+nEjec+'</div><div class="l">En ejecución</div></div>'+
+      '<div class="o2d-kpi k-c"><div class="n">'+nComp+'</div><div class="l">Completadas</div></div>'+
+      '<div class="o2d-kpi"><div class="n">'+nTecs+'</div><div class="l">Técnicos</div></div>'+
+      '</div>';
+
+    filas.forEach(function(d){
+      var meta = [d.tipo, d.hora ? d.hora + ' h' : null, d.sub || null]
+                   .filter(function(x){ return !!x; }).join(' · ');
+      var esPrioAlta = (d.prioridad_class === 'pr-urgente' || d.prioridad_class === 'pr-alta');
+      var pct = parseInt(d.pct, 10) || 0;
+
+      // ── Fila resumen (el clic despliega la ficha) ──
+      html += '<div class="o2d-card f-'+esc(d.fase)+'"'+(total === 1 ? ' data-auto="1"' : '')+'>'+
+        // aria-expanded arranca sincronizado con la apertura automática de
+        // abajo (total===1 despliega la ficha sola) -- si no, un lector de
+        // pantalla anuncia "contraída" mientras se ve ya desplegada.
+        '<button type="button" class="o2d-row" onclick="OT2D.toggle(this)" aria-expanded="'+(total === 1 ? 'true' : 'false')+'">'+
+          '<span class="nu">'+esc(d.ot)+
+            (d.ticket ? '<br><span class="ot2-tk" style="margin-top:3px"><i class="bi bi-ticket-perforated-fill"></i>'+esc(d.ticket)+'</span>' : '')+
+          '</span>'+
+          '<span class="bd">'+
+            '<span class="cl">'+esc(d.cli)+'</span>'+
+            '<span class="mt">'+esc(meta)+'</span>'+
+          '</span>'+
+          '<span class="pl">'+
+            (esPrioAlta ? pill(d.prioridad_class, d.prioridad_icon, d.prioridad, true) : '')+
+            (d.salud ? pill(d.salud_class, d.salud_icon, d.salud, true) : '')+
+          '</span>'+
+          (d.ini ? '<span class="tc" title="'+esc(d.tec)+'">'+esc(d.ini)+'</span>'
+                 : '<span class="tc sin" title="Sin asignar"><i class="bi bi-person"></i></span>')+
+          '<span class="es">'+
+            (d.en_vivo ? '<span class="ot2-dot"></span>'
+                       : (d.estado_icon ? '<i class="bi '+esc(d.estado_icon)+'"></i>' : ''))+
+            esc(d.estado)+'</span>'+
+          '<i class="bi bi-chevron-down cv"></i>'+
+        '</button>'+
+
+        // ── Ficha completa (estilo "Detalle de visita" del viejo) ──
+        '<div class="o2d-det"><div class="o2d-grid">'+
+          item('bi-building', 'Cliente', esc(d.cli), false)+
+          item('bi-tag', 'Tipo', (d.tipo_icon ? '<i class="bi '+esc(d.tipo_icon)+'" style="color:var(--ilus-red,#dc2626)"></i> ' : '')+esc(d.tipo || '—'), false)+
+          item('bi-clock', 'Hora agendada', d.hora ? esc(d.hora)+' h' : '<span style="color:#9ca3af">Sin hora definida</span>', false)+
+          item('bi-person-fill', 'Técnico asignado',
+            esc(d.tec)+(d.tec_tipo ? ' <span class="ot2-tec-tipo '+esc(d.tec_tipo)+'">'+(d.tec_tipo === 'externo' ? 'Externo' : 'Interno')+'</span>' : ''), false)+
+          item('bi-flag-fill', 'Prioridad',
+            d.prioridad ? pill(d.prioridad_class, d.prioridad_icon, d.prioridad, false) : '<span style="color:#9ca3af">—</span>', false)+
+          item('bi-heart-pulse', 'Salud / SLA',
+            d.salud ? pill(d.salud_class, d.salud_icon, d.salud, false) : '<span style="color:#9ca3af">—</span>', false)+
+          item('bi-check2-square', 'Avance del checklist',
+            '<span class="o2d-bar"><span class="b"><i style="width:'+pct+'%"></i></span><span class="p">'+esc(d.av)+'</span></span>', false)+
+          (d.sub ? item('bi-activity', 'Situación', esc(d.sub), false) : '')+
+          (d.ticket ? item('bi-ticket-perforated-fill', 'Ticket de origen',
+            '<span class="ot2-tk"><i class="bi bi-ticket-perforated-fill"></i>'+esc(d.ticket)+'</span>', false) : '')+
+          (d.dir ? item('bi-geo-alt-fill', 'Dirección', esc(d.dir), true) : '')+
+          (d.titulo ? item('bi-card-text', 'Título / Motivo', esc(d.titulo), true) : '')+
+        '</div>'+
+        '<div class="o2d-foot">'+
+          '<a class="o2d-abrir" href="'+esc(d.url)+'">'+
+            '<i class="bi bi-clipboard2-pulse"></i>Abrir OT / Gestionar<i class="bi bi-arrow-right"></i></a>'+
+        '</div>'+
+        '</div></div>';
+    });
+
     document.getElementById('ot2DiaBody').innerHTML = html;
+    // Con una sola OT en el día, la ficha llega ya desplegada.
+    var auto = document.querySelector('#ot2DiaBody .o2d-card[data-auto="1"]');
+    if (auto) auto.classList.add('abierta');
     m = m || new bootstrap.Modal(document.getElementById('ot2ModalDia'));
     m.show();
   }
-  return {abrir:abrir};
+  function toggle(btn){
+    var card = btn.closest('.o2d-card');
+    if (!card) return;
+    card.classList.toggle('abierta');
+    btn.setAttribute('aria-expanded', card.classList.contains('abierta') ? 'true' : 'false');
+  }
+  return {abrir: abrir, toggle: toggle};
 })();
 </script>
 

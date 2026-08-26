@@ -59268,13 +59268,22 @@ def plantillas_hub():
 @_mant_required
 @_no_tecnico
 def calendario_hub():
-    """2026-07-12 (Daniel): "el calendario tiene que ver un calendario, no
-    una lista". La v1 (lista agrupada por fecha) se reemplaza por el
-    calendario COMPLETO real (semana/mes con drill-down por día) que ya
-    existe en Mantenciones -- mismo patron de reuso que Clientes/OTs/
-    Plantillas (return directo a la vista real, sin reconstruirla).
-    Regla #4.2: /mantenciones/calendario sigue viva sin cambios."""
-    return mant_calendario()
+    """2026-08-26 (Daniel): "que los dos calendarios sean uno y bien
+    potente". El calendario de OT 2.0 (/ot/?vista=calendario) absorbió lo
+    bueno del viejo (modal de detalle pulido, Resumen del día, Próximas
+    OT, leyenda de colores) y suma lo que el viejo no tenía (ticket de
+    origen, prioridad, salud/SLA, interno/externo, Equipo hoy) -- así que
+    la URL vieja ahora lleva allá. Se REDIRIGE en vez de hacer `return
+    ot2_panel()` porque ot2_panel lee `vista` de request.args: un return
+    directo la dejaría en 'tabla'.
+    Regla #4.2: mant_calendario() y /mantenciones/calendario siguen vivos
+    sin cambios (los usa el botón directo del selector de vistas de
+    /mantenciones/ots -- ese iframe embed se sacó el 2026-05-22 por el bug
+    de "efecto espejo", ver templates/mantenciones/ots_list.html).
+
+    Historia: 2026-07-12 esta ruta pasó de lista a `return
+    mant_calendario()` (el calendario completo de Mantenciones)."""
+    return redirect(url_for("ot2_panel", vista="calendario"))
 
 
 @app.route("/cotizaciones")
@@ -72939,8 +72948,10 @@ _OT2_CAL_CAP_DIA = 4
 
 _OT2_SELECT_FILAS = (
     "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
-    "       v.fecha_programada, v.cliente_id, c.razon_social, "
+    "       v.fecha_programada, v.hora_inicio, v.cliente_id, c.razon_social, "
+    "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, au.role AS tecnico_role, "
+    "       te.id AS tecnico_proveedor_id, "
     "       tk.numero_ticket, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas, "
@@ -73027,13 +73038,34 @@ def _ot2_enriquecer_fila(f, hoy):
     # mant_tecnicos_externos, mant_visitas.proveedor_tipo) -- se usa
     # app_users.role por ser la más confiable (login real del técnico),
     # sin agregar tabla nueva ni duplicar dato.
+    # 2026-08-26 (fusión de calendarios): se SUMA el cruce duro a
+    # mant_tecnicos_externos.user_id (tecnico_proveedor_id, ver el JOIN
+    # `te` en ot2_panel). Si el técnico está vinculado a un proveedor
+    # externo, es externo aunque su role diga otra cosa -- el vínculo solo
+    # se crea por el flujo de invitación de proveedores, nunca al revés.
+    # proveedor_tipo de mant_visitas NO se usa: es un campo de finanzas
+    # (ver nota en app.py ~77774), no clasifica al técnico.
     role = f.get("tecnico_role")
     if not f.get("tecnico_nombre"):
         f["tecnico_tipo"] = None
-    elif role == "tecnico_externo":
+    elif role == "tecnico_externo" or f.get("tecnico_proveedor_id"):
         f["tecnico_tipo"] = "externo"
     else:
         f["tecnico_tipo"] = "interno"
+
+    # Hora agendada (TIME de MySQL llega como timedelta, no como time) --
+    # se normaliza a "HH:MM" para el modal de día y "Próximas OT".
+    hi = f.get("hora_inicio")
+    if hi is None:
+        f["hora_hhmm"] = None
+    elif hasattr(hi, "strftime"):
+        f["hora_hhmm"] = hi.strftime("%H:%M")
+    else:
+        try:
+            _seg = int(hi.total_seconds())
+            f["hora_hhmm"] = f"{_seg // 3600:02d}:{(_seg % 3600) // 60:02d}"
+        except (AttributeError, TypeError, ValueError):
+            f["hora_hhmm"] = None
 
     prio = f.get("prioridad")
     meta_prio = _OT2_PRIORIDAD_META.get(prio)
@@ -73097,22 +73129,38 @@ def _ot2_fila_modal_lean(f):
     cantidad de OT ese día. Daniel, brief "Centro de Control": el caso
     "100 OT en un día" no debe perder las que sobran del tope de 4."""
     ot_label = f"OT-{f['numero_prefijo']}-{f['numero_sufijo']}" if f.get("numero_ot") else f"VS-{f['id']:05d}"
+    # Dirección del cliente: calle + comuna en una sola línea (mismo dato
+    # que muestra el modal "Detalle de visita" del calendario viejo).
+    dir_partes = [p.strip() for p in (f.get("cliente_direccion"), f.get("cliente_comuna")) if p and str(p).strip()]
     return {
         "ot": ot_label,
         "ticket": f.get("numero_ticket"),
         "cli": f.get("razon_social") or "Trabajo interno",
         "tipo": f.get("tipo_label"),
+        "tipo_icon": f.get("tipo_icon"),
         "estado": f.get("estado_label"),
+        "estado_icon": f.get("estado_icon"),
+        "en_vivo": bool(f.get("estado_en_vivo")),
         "fase": f.get("estado_fase") or "cancel",
         "tec": f.get("tecnico_nombre") or "Sin asignar",
         "ini": f.get("tecnico_ini") or "",
         "tec_tipo": f.get("tecnico_tipo"),
         "av": f"{f.get('n_completas', 0)}/{f.get('n_tareas', 0)} · {f.get('check_pct', 0)}%",
+        "pct": f.get("check_pct", 0),
+        "n_t": f.get("n_tareas", 0),
+        "n_c": f.get("n_completas", 0),
         "sub": f.get("estado_sub") or "",
         "prioridad": f.get("prioridad_label"),
         "prioridad_class": f.get("prioridad_class"),
+        "prioridad_icon": f.get("prioridad_icon"),
         "salud": f.get("salud_label"),
         "salud_class": f.get("salud_class"),
+        "salud_icon": f.get("salud_icon"),
+        # Campos del modal viejo "Detalle de visita" que el nuevo también
+        # muestra (2026-08-26, fusión de calendarios):
+        "titulo": f.get("titulo") or "",
+        "hora": f.get("hora_hhmm") or "",
+        "dir": " · ".join(dir_partes),
         "url": url_for("ot2_detalle", vid=f["id"]),
     }
 
@@ -73120,13 +73168,21 @@ def _ot2_fila_modal_lean(f):
 @app.route("/ot/")
 @_mant_required
 def ot2_panel():
-    """OT 2.0 · BETA solo superadmin — panel de OT reales, 4 vistas.
+    """OT 2.0 · panel de OT reales, 4 vistas.
 
     Daniel (18-08-2026, antes de dormir): "modalidad de prueba donde
     solamente el superadministrador pueda ver este módulo... hagamos una
     tabla donde visualicemos las órdenes de trabajo, y solo eso... vamos a
     reestructurar todo de ahí para adelante... utilicemos la información
     que ya existe."
+
+    CORRECCIÓN 2026-08-26 (auditoría fusión de calendarios): el título de
+    esta docstring decía "BETA solo superadmin", pero eso NUNCA fue cierto
+    en el control de acceso real -- @_mant_required exige solo el permiso
+    genérico 'mantenciones', que también tienen supervisor/ejecutivo/
+    técnico (ver _legacy_permission_set). Lo que sí filtra por rol es
+    _mant_calendario_role_where(), agregado recién a este panel -- cada
+    rol ve sus propias filas, igual que en /calendario y /mantenciones/ots.
 
     Daniel (19-08-2026): "quiero verlas como tabla, como tarjeta, Kanban,
     y un posible calendario... algo bien potente, tipo Trello". Las 4
@@ -73213,6 +73269,11 @@ def ot2_panel():
     cal_semanas, cal_mes_label, cal_mes_ant, cal_mes_sig, cal_mes_actual = [], "", "", "", ""
     equipo_hoy = []
     es_mes_actual = False
+    # Panel lateral del calendario (2026-08-26, fusión con el calendario
+    # viejo): resumen del día de HOY, próximas OT y leyenda de fases.
+    resumen_hoy = None
+    proximas = []
+    cal_leyenda = []
     hoy = None
     where_origen = (
         "v.numero_ot IS NOT NULL AND TRIM(v.numero_ot) <> ''" if origen == "reales"
@@ -73250,6 +73311,26 @@ def ot2_panel():
         extra_params.extend(_OT2_FASE_A_ESTADOS[fase])
     where_extra_sql = (" AND " + " AND ".join(extra_where)) if extra_where else ""
 
+    # SEGURIDAD 2026-08-26 (auditoria de la fusion de calendarios): este
+    # panel quedo con el MISMO agujero que _mant_calendario_role_where()
+    # tapo en /calendario tras la brecha de Aaron Urbina (2026-05-22) --
+    # un tecnico o ejecutivo veia OT ajenas. Aca nunca se habia aplicado
+    # ese filtro (el docstring de arriba decia "BETA solo superadmin" pero
+    # @_mant_required deja pasar a cualquiera con el permiso generico
+    # 'mantenciones', que tecnico y ejecutivo SI tienen). Al redirigir
+    # /calendario -> aqui y sacar el link viejo del sidebar, este panel
+    # paso a ser el UNICO calendario que ve un tecnico -- sin este filtro,
+    # veria cliente, direccion y tecnico asignado de TODA la empresa.
+    # Se reutiliza la MISMA funcion que ya protege /calendario (Regla #5,
+    # una sola fuente de verdad) y se agrega SIEMPRE al final de la cadena
+    # SQL + al final de la tupla de params correspondiente, para no
+    # desincronizar el orden de los %s con sus valores.
+    _role_where_sql, _role_where_params = _mant_calendario_role_where()
+    where_extra_sql_q += _role_where_sql
+    extra_params_q = list(extra_params_q) + list(_role_where_params)
+    where_extra_sql += _role_where_sql
+    extra_params = list(extra_params) + list(_role_where_params)
+
     try:
         hoy = _dt.date.today()
 
@@ -73274,10 +73355,20 @@ def ot2_panel():
         # (al revés de lo intuitivo -- no hay columna ticket_id en
         # mant_visitas), con índice único de por medio (uq_tk_tickets_visita,
         # tickets_module.py:1492), así que el JOIN es barato.
+        # te: cruce DURO técnico -> proveedor externo (2026-08-26, fusión de
+        # calendarios). mant_tecnicos_externos.user_id es FK UNIQUE a
+        # app_users (se llena en /registro-tecnico-externo al usar la
+        # invitación), así que el LEFT JOIN no multiplica filas. Cubre el
+        # caso real de Daniel: un técnico proveedor cuyo app_users.role
+        # quedó distinto de 'tecnico_externo' (ej. Rafael Naranjo salía
+        # como interno) -- si está vinculado acá, ES externo, mande lo que
+        # mande el role. NO se cruza mant_tecnicos.es_externo: esa tabla no
+        # tiene FK a app_users y cruzar por nombre sería frágil.
         _joins_comunes = (
             "  FROM mant_visitas v "
             "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
             "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
+            "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
             "  LEFT JOIN tk_tickets    tk ON tk.visita_id = v.id "
         )
         _where_completo = f" WHERE {where_origen} {where_extra_sql} "
@@ -73424,6 +73515,68 @@ def ot2_panel():
                     key=lambda e: (e["nombre"] == "Sin asignar", -e["total"])
                 )
 
+            # ── Panel lateral (2026-08-26, fusión de calendarios: el
+            #    "Resumen del día" / "Próximas visitas" del calendario
+            #    viejo, adaptado a fases de OT). ──────────────────────
+            # Resumen de HOY: se arma sobre filas_cal (ya en memoria) y
+            # solo cuando el mes mostrado incluye la fecha de hoy -- mismo
+            # criterio que "Equipo hoy": si Daniel navega a otro mes, no
+            # hay "hoy" que resumir.
+            if es_mes_actual:
+                # Excluye cancelada/anulada del total -- mismo criterio que
+                # "Próximas OT" (línea de abajo). Sin esto, una OT cancelada
+                # agendada para hoy sumaba a "total" pero no caía en
+                # ninguna de las 3 categorías de al lado (estado_fase=None
+                # para esos dos estados en _OT2_ESTADO_META), y el widget
+                # mostraba un total que no cuadraba con pend+ejec+comp.
+                _de_hoy = [
+                    f for f in filas_cal
+                    if f.get("fecha_programada") == hoy
+                    and f.get("estado") not in ("cancelada", "anulada")
+                ]
+                resumen_hoy = {
+                    "total": len(_de_hoy),
+                    "pend": sum(1 for f in _de_hoy if f.get("estado_fase") == "pend"),
+                    "ejec": sum(1 for f in _de_hoy if f.get("estado_fase") == "ejec"),
+                    "comp": sum(1 for f in _de_hoy if f.get("estado_fase") in ("comp", "cerr")),
+                }
+
+            # Próximas OT: las 5 más cercanas desde hoy, SIN el corte del
+            # mes visible (si hoy es fin de mes, las de la próxima semana
+            # igual aparecen). Excluye solo canceladas/anuladas -- mismo
+            # criterio que el calendario viejo.
+            filas_prox = mysql_fetchall(
+                _OT2_SELECT_FILAS + _joins_comunes + _OT2_JOIN_TAREAS +
+                f" WHERE {where_origen} {where_extra_sql_q} "
+                "  AND v.fecha_programada >= %s "
+                "  AND v.estado NOT IN ('cancelada','anulada') "
+                " ORDER BY v.fecha_programada ASC, v.hora_inicio ASC, v.id ASC "
+                " LIMIT 5",
+                tuple(extra_params_q) + (hoy,)
+            ) or []
+            proximas = [dict(f) for f in filas_prox]
+            for f in proximas:
+                _ot2_enriquecer_fila(f, hoy)
+
+            # Leyenda de colores: las 4 fases + cancelada, con sus estados
+            # finos como subtítulo (la misma agrupación de _OT2_ESTADO_META
+            # que ya usan KPIs y Kanban -- 1 regla, 1 lugar).
+            for _clave in _OT2_FASES:
+                _vistos, _unicos = set(), []
+                for _k in _OT2_FASE_A_ESTADOS[_clave]:
+                    _lbl = _OT2_ESTADO_META[_k][0]
+                    if _lbl not in _vistos and _lbl != _OT2_FASE_LABELS[_clave]:
+                        _vistos.add(_lbl)
+                        _unicos.append(_lbl)
+                cal_leyenda.append({
+                    "clave": _clave,
+                    "label": _OT2_FASE_LABELS[_clave],
+                    "estados": _unicos,
+                })
+            cal_leyenda.append({
+                "clave": "cancel", "label": "Cancelada / Anulada", "estados": [],
+            })
+
     except Exception as e:
         error = str(e)[:300]
         print(f"[ot2_panel] {e}", flush=True)
@@ -73462,6 +73615,7 @@ def ot2_panel():
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
         cal_dow=("L", "M", "M", "J", "V", "S", "D"),
         equipo_hoy=equipo_hoy, es_mes_actual=es_mes_actual,
+        resumen_hoy=resumen_hoy, proximas=proximas, cal_leyenda=cal_leyenda,
     )
 
 
