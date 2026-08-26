@@ -59171,7 +59171,9 @@ def calendario_hub():
     ot2_panel()` porque ot2_panel lee `vista` de request.args: un return
     directo la dejaría en 'tabla'.
     Regla #4.2: mant_calendario() y /mantenciones/calendario siguen vivos
-    sin cambios (los usa el iframe embed de /mantenciones/ots).
+    sin cambios (los usa el botón directo del selector de vistas de
+    /mantenciones/ots -- ese iframe embed se sacó el 2026-05-22 por el bug
+    de "efecto espejo", ver templates/mantenciones/ots_list.html).
 
     Historia: 2026-07-12 esta ruta pasó de lista a `return
     mant_calendario()` (el calendario completo de Mantenciones)."""
@@ -73060,13 +73062,21 @@ def _ot2_fila_modal_lean(f):
 @app.route("/ot/")
 @_mant_required
 def ot2_panel():
-    """OT 2.0 · BETA solo superadmin — panel de OT reales, 4 vistas.
+    """OT 2.0 · panel de OT reales, 4 vistas.
 
     Daniel (18-08-2026, antes de dormir): "modalidad de prueba donde
     solamente el superadministrador pueda ver este módulo... hagamos una
     tabla donde visualicemos las órdenes de trabajo, y solo eso... vamos a
     reestructurar todo de ahí para adelante... utilicemos la información
     que ya existe."
+
+    CORRECCIÓN 2026-08-26 (auditoría fusión de calendarios): el título de
+    esta docstring decía "BETA solo superadmin", pero eso NUNCA fue cierto
+    en el control de acceso real -- @_mant_required exige solo el permiso
+    genérico 'mantenciones', que también tienen supervisor/ejecutivo/
+    técnico (ver _legacy_permission_set). Lo que sí filtra por rol es
+    _mant_calendario_role_where(), agregado recién a este panel -- cada
+    rol ve sus propias filas, igual que en /calendario y /mantenciones/ots.
 
     Daniel (19-08-2026): "quiero verlas como tabla, como tarjeta, Kanban,
     y un posible calendario... algo bien potente, tipo Trello". Las 4
@@ -73194,6 +73204,26 @@ def ot2_panel():
         extra_where.append(f"v.estado IN ({_ph})")
         extra_params.extend(_OT2_FASE_A_ESTADOS[fase])
     where_extra_sql = (" AND " + " AND ".join(extra_where)) if extra_where else ""
+
+    # SEGURIDAD 2026-08-26 (auditoria de la fusion de calendarios): este
+    # panel quedo con el MISMO agujero que _mant_calendario_role_where()
+    # tapo en /calendario tras la brecha de Aaron Urbina (2026-05-22) --
+    # un tecnico o ejecutivo veia OT ajenas. Aca nunca se habia aplicado
+    # ese filtro (el docstring de arriba decia "BETA solo superadmin" pero
+    # @_mant_required deja pasar a cualquiera con el permiso generico
+    # 'mantenciones', que tecnico y ejecutivo SI tienen). Al redirigir
+    # /calendario -> aqui y sacar el link viejo del sidebar, este panel
+    # paso a ser el UNICO calendario que ve un tecnico -- sin este filtro,
+    # veria cliente, direccion y tecnico asignado de TODA la empresa.
+    # Se reutiliza la MISMA funcion que ya protege /calendario (Regla #5,
+    # una sola fuente de verdad) y se agrega SIEMPRE al final de la cadena
+    # SQL + al final de la tupla de params correspondiente, para no
+    # desincronizar el orden de los %s con sus valores.
+    _role_where_sql, _role_where_params = _mant_calendario_role_where()
+    where_extra_sql_q += _role_where_sql
+    extra_params_q = list(extra_params_q) + list(_role_where_params)
+    where_extra_sql += _role_where_sql
+    extra_params = list(extra_params) + list(_role_where_params)
 
     try:
         hoy = _dt.date.today()
@@ -73387,7 +73417,17 @@ def ot2_panel():
             # criterio que "Equipo hoy": si Daniel navega a otro mes, no
             # hay "hoy" que resumir.
             if es_mes_actual:
-                _de_hoy = [f for f in filas_cal if f.get("fecha_programada") == hoy]
+                # Excluye cancelada/anulada del total -- mismo criterio que
+                # "Próximas OT" (línea de abajo). Sin esto, una OT cancelada
+                # agendada para hoy sumaba a "total" pero no caía en
+                # ninguna de las 3 categorías de al lado (estado_fase=None
+                # para esos dos estados en _OT2_ESTADO_META), y el widget
+                # mostraba un total que no cuadraba con pend+ejec+comp.
+                _de_hoy = [
+                    f for f in filas_cal
+                    if f.get("fecha_programada") == hoy
+                    and f.get("estado") not in ("cancelada", "anulada")
+                ]
                 resumen_hoy = {
                     "total": len(_de_hoy),
                     "pend": sum(1 for f in _de_hoy if f.get("estado_fase") == "pend"),

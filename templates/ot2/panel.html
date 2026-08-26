@@ -991,7 +991,10 @@ window.OT2D = (function(){
 
       // ── Fila resumen (el clic despliega la ficha) ──
       html += '<div class="o2d-card f-'+esc(d.fase)+'"'+(total === 1 ? ' data-auto="1"' : '')+'>'+
-        '<button type="button" class="o2d-row" onclick="OT2D.toggle(this)" aria-expanded="false">'+
+        // aria-expanded arranca sincronizado con la apertura automática de
+        // abajo (total===1 despliega la ficha sola) -- si no, un lector de
+        // pantalla anuncia "contraída" mientras se ve ya desplegada.
+        '<button type="button" class="o2d-row" onclick="OT2D.toggle(this)" aria-expanded="'+(total === 1 ? 'true' : 'false')+'">'+
           '<span class="nu">'+esc(d.ot)+
             (d.ticket ? '<br><span class="ot2-tk" style="margin-top:3px"><i class="bi bi-ticket-perforated-fill"></i>'+esc(d.ticket)+'</span>' : '')+
           '</span>'+
