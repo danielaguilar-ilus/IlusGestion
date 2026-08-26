@@ -75419,6 +75419,378 @@ def ot_tv_datos(token):
     return _ot_tv_cookie(make_response(jsonify(payload)), nuevo)
 
 
+def _ot2_filtros_export(args):
+    """WHERE + params + descripción legible de los filtros del panel OT 2.0.
+
+    ⚠️ DEUDA CONOCIDA (2026-08-26): `ot2_panel` arma su WHERE inline y no usa
+    esta función. Lo correcto sería extraerlo allá y que ambos consuman una
+    sola fuente (como hace `_tk_list_where` con el listado de tickets y sus
+    reportes CSV) — se dejó para después a propósito, porque `ot2_panel` es
+    la pantalla que Daniel usa a diario y refactorizarla la misma semana del
+    lanzamiento del monitor era riesgo innecesario.
+    Mientras tanto: si se agrega un filtro al panel, agregarlo TAMBIÉN acá.
+
+    🔴 Incluye SIEMPRE `_mant_calendario_role_where()`. Sin eso el Excel se
+    convierte en la puerta de atrás de la brecha que ese filtro tapa — y peor
+    que una pantalla, porque el archivo sale del sistema.
+    """
+    where, params, desc = [], [], []
+
+    origen = (args.get("origen") or "reales").strip().lower()
+    if origen == "automaticas":
+        where.append("(v.numero_ot IS NULL OR TRIM(v.numero_ot) = '')")
+        desc.append("automáticas")
+    else:
+        origen = "reales"
+        where.append("v.numero_ot IS NOT NULL AND TRIM(v.numero_ot) <> ''")
+
+    q = (args.get("q") or "").strip()[:120]
+    if q:
+        like = f"%{q}%"
+        where.append("(v.numero_ot LIKE %s OR v.titulo LIKE %s "
+                     " OR c.razon_social LIKE %s OR au.nombre LIKE %s)")
+        params += [like, like, like, like]
+        desc.append(f'búsqueda "{q}"')
+
+    f_tipo = (args.get("tipo") or "").strip().lower()
+    if f_tipo and f_tipo in _OT_TIPOS_VALIDOS:
+        where.append("v.tipo = %s")
+        params.append(f_tipo)
+        desc.append(_TIPO_OT_LABEL.get(f_tipo, f_tipo))
+
+    f_tec = (args.get("tecnico") or "").strip()
+    if f_tec:
+        try:
+            where.append("v.tecnico_user_id = %s")
+            params.append(int(f_tec))
+            desc.append("un técnico")
+        except (TypeError, ValueError):
+            pass
+
+    fase = (args.get("fase") or "").strip().lower()
+    if fase and fase in _OT2_FASES:
+        estados = _OT2_FASE_A_ESTADOS.get(fase) or ()
+        if estados:
+            where.append("v.estado IN (" + ",".join(["%s"] * len(estados)) + ")")
+            params += list(estados)
+            desc.append(_OT2_FASE_LABELS.get(fase, fase))
+
+    sql = " WHERE " + " AND ".join(where) if where else ""
+    role_sql, role_params = _mant_calendario_role_where()
+    sql += role_sql
+    params += list(role_params)
+    return sql, params, desc, origen
+
+
+_OT2_EXPORT_LIMIT = 10000     # techo de protección, igual que los CSV de tickets
+
+
+@app.route("/ot/reporte.xlsx", methods=["GET"])
+@_mant_required
+def ot2_reporte_xlsx():
+    """Reporte Excel de las OT con los filtros que están activos en pantalla.
+
+    Daniel (26-08-2026): *"algo potente con datos realmente buenos"*, con una
+    hoja por centro de costo para rendir el dinero que se pierde por
+    decisiones que NO son de Servicio Técnico.
+
+    Gate: `@_mant_required` (el mismo del panel), NO `@_no_tecnico` — un
+    técnico puede bajar LO SUYO, porque `_mant_calendario_role_where()` ya
+    acota las filas a las que le corresponden. El permiso por rol para
+    restringir la descarga se agrega cuando Daniel lo pida (hoy: solo él la usa).
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(url_for("ot2_panel"))
+
+    where_sql, params, filtros_desc, origen = _ot2_filtros_export(request.args)
+
+    _sql_reporte = (
+        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
+        "       v.fecha_programada, v.fecha_realizada, v.hora_inicio, "
+        "       v.direccion_visita, v.costo, v.centro_costo, v.zz_codigo, "
+        "       v.zz_monto, v.modalidad_cobro, v.cubierto_por, "
+        "       v.estado_facturacion, v.factura_tido, v.factura_nudo, "
+        "       v.created_by, v.created_at, v.cerrada_at, "
+        "       c.razon_social, c.rut AS cliente_rut, "
+        "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
+        "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
+        "       au.role AS tecnico_role, te.id AS tecnico_proveedor_id, "
+        "       tk.numero_ticket, "
+        "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
+        "       COALESCE(tar.n_completas, 0) AS n_completas "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
+        "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
+        "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
+        "  LEFT JOIN tk_tickets    tk ON tk.visita_id = v.id "
+    )
+    try:
+        rows = mysql_fetchall(
+            _sql_reporte + _OT2_JOIN_TAREAS + where_sql
+            + " ORDER BY v.fecha_programada DESC, v.numero_ot DESC LIMIT %s",
+            tuple(params) + (_OT2_EXPORT_LIMIT,)) or []
+    except Exception as e:
+        print(f"[ot2_reporte_xlsx] query: {e}", flush=True)
+        flash("No pudimos generar el reporte.", "danger")
+        return redirect(url_for("ot2_panel"))
+
+    _now = _now_chile()
+    fecha_gen = _now.strftime("%d/%m/%Y %H:%M")
+    alcance = (" · ".join(filtros_desc)) if filtros_desc else "todas las OT"
+
+    BLACK, LGRAY, AMBER, GREENL, REDL, BLUEL = \
+        "0A0A0A", "F5F5F5", "FFF8E1", "DCFCE7", "FEE2E2", "DBEAFE"
+    thin = Side(style="thin", color="E5E7EB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _hdr(cell, val):
+        cell.value = val
+        cell.font = Font(bold=True, color="FFFFFF", size=9)
+        cell.fill = PatternFill("solid", fgColor=BLACK)
+        cell.alignment = Alignment(horizontal="center", vertical="center",
+                                   wrap_text=True)
+        cell.border = border
+
+    def _d(v):
+        """DATE/TIME puro: sin conversión de zona (no la tiene)."""
+        try:
+            return v.strftime("%d/%m/%Y") if v else ""
+        except Exception:
+            return ""
+
+    def _dt_cl(v):
+        """DATETIME en UTC → hora Chile (REGLA #6). NO usar _d() acá: escribiría
+        UTC crudo y rompería la regla."""
+        try:
+            return chile_fmt_filter(v) if v else ""
+        except Exception:
+            return ""
+
+    wb = openpyxl.Workbook()
+
+    # ── Hoja 1: OT ────────────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "OT"
+    headers = ["N° OT", "Ticket", "Cliente", "RUT", "Comuna", "Dirección",
+               "Título", "Tipo", "Prioridad", "Estado", "Fase", "Técnico",
+               "Int/Ext", "Fecha programada", "Hora", "Fecha realizada",
+               "Tareas", "% avance", "Centro de costo", "Línea ZZ",
+               "Monto ZZ", "Costo", "Cobertura", "Estado facturación",
+               "Documento", "Creada por", "Creada", "Cerrada",
+               "Observaciones (revisar)"]
+    NCOLS = len(headers)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
+    tcell = ws.cell(row=1, column=1,
+                    value=f"ILUS Fitness · Órdenes de Trabajo  —  {alcance}"
+                          f"  —  generado {fecha_gen}")
+    tcell.font = Font(bold=True, size=13, color="FFFFFF")
+    tcell.fill = PatternFill("solid", fgColor=BLACK)
+    ws.row_dimensions[1].height = 26
+    for ci, h in enumerate(headers, 1):
+        _hdr(ws.cell(row=2, column=ci), h)
+    ws.row_dimensions[2].height = 30
+
+    hoy = _now.date()
+    por_tecnico, por_centro = {}, {}
+    r = 3
+    for f in rows:
+        estado = (f.get("estado") or "").lower()
+        meta = _OT2_ESTADO_META.get(estado) or {}
+        fase = meta.get("fase") or ""
+        n_t = int(f.get("n_tareas") or 0)
+        n_c = int(f.get("n_completas") or 0)
+        pct = int(round(n_c * 100.0 / n_t)) if n_t else 0
+        externo = bool(f.get("tecnico_proveedor_id")) or \
+            (f.get("tecnico_role") or "").lower() == "tecnico_externo"
+        tec = f.get("tecnico_nombre") or "— sin asignar —"
+
+        # Banderas de calidad de dato: lo que hay que ir a revisar.
+        obs = []
+        if not f.get("tecnico_nombre"):
+            obs.append("Sin técnico asignado")
+        if not f.get("fecha_programada"):
+            obs.append("Sin fecha programada")
+        elif (f.get("fecha_programada") < hoy
+              and estado not in ("cerrada", "completada", "cancelada", "anulada")):
+            obs.append("Programada vencida sin cerrar")
+        if n_t and n_c < n_t and estado in ("cerrada", "completada"):
+            obs.append("Cerrada con tareas incompletas")
+        if not f.get("centro_costo"):
+            obs.append("Sin centro de costo")
+        if not f.get("numero_ticket"):
+            obs.append("Sin ticket de origen")
+
+        vals = [
+            f.get("numero_ot") or "", f.get("numero_ticket") or "",
+            f.get("razon_social") or "", f.get("cliente_rut") or "",
+            f.get("cliente_comuna") or "",
+            (f.get("direccion_visita") or f.get("cliente_direccion") or ""),
+            f.get("titulo") or "",
+            _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(), f.get("tipo") or ""),
+            f.get("prioridad") or "", meta.get("label") or estado,
+            _OT2_FASE_LABELS.get(fase, fase), tec,
+            "Externo" if externo else "Interno",
+            _d(f.get("fecha_programada")), _ot_tv_hhmm(f.get("hora_inicio")) or "",
+            _d(f.get("fecha_realizada")), f"{n_c}/{n_t}" if n_t else "",
+            pct, f.get("centro_costo") or "", f.get("zz_codigo") or "",
+            float(f.get("zz_monto")) if f.get("zz_monto") is not None else None,
+            float(f.get("costo")) if f.get("costo") is not None else None,
+            f.get("cubierto_por") or "", f.get("estado_facturacion") or "",
+            ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip(),
+            f.get("created_by") or "", _dt_cl(f.get("created_at")),
+            _dt_cl(f.get("cerrada_at")), " · ".join(obs),
+        ]
+
+        bg = LGRAY if r % 2 == 0 else "FFFFFF"
+        for ci, val in enumerate(vals, 1):
+            cell = ws.cell(row=r, column=ci, value=val)
+            cell.font = Font(size=9, bold=(ci == 1))
+            cell.alignment = Alignment(
+                horizontal="center" if ci in (1, 2, 13, 14, 15, 16, 17, 18) else "left",
+                vertical="center", wrap_text=(ci in (6, 7, NCOLS)))
+            cell.border = border
+            fill = bg
+            if ci == 11:      # semáforo por fase, reusando el mapa del panel
+                fill = {"pend": AMBER, "ejec": BLUEL, "comp": GREENL,
+                        "cerr": LGRAY}.get(fase, bg)
+            elif ci == NCOLS and obs:
+                fill = AMBER
+            cell.fill = PatternFill("solid", fgColor=fill)
+            if ci in (21, 22) and val is not None:
+                cell.number_format = '"$"#,##0'
+        r += 1
+
+        # Agregados en Python — sin consultas extra.
+        k = (tec, "Externo" if externo else "Interno")
+        a = por_tecnico.setdefault(k, {"total": 0, "cerradas": 0, "abiertas": 0,
+                                       "tareas_ok": 0, "tareas_tot": 0, "monto": 0.0})
+        a["total"] += 1
+        a["tareas_ok"] += n_c
+        a["tareas_tot"] += n_t
+        a["monto"] += float(f.get("zz_monto") or f.get("costo") or 0)
+        if estado in ("cerrada", "completada"):
+            a["cerradas"] += 1
+        else:
+            a["abiertas"] += 1
+
+        cc = f.get("centro_costo") or "(sin centro)"
+        b = por_centro.setdefault(cc, {"total": 0, "monto": 0.0, "garantia": 0})
+        b["total"] += 1
+        b["monto"] += float(f.get("zz_monto") or f.get("costo") or 0)
+        if (f.get("cubierto_por") or "").lower() == "garantia":
+            b["garantia"] += 1
+
+    widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
+              9, 9, 16, 16, 13, 13, 12, 17, 16, 16, 16, 16, 40]
+    for ci, w in enumerate(widths[:NCOLS], 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.freeze_panes = "C3"
+    ws.auto_filter.ref = f"A2:{get_column_letter(NCOLS)}{max(2, r - 1)}"
+
+    # ── Hoja 2: Por técnico ───────────────────────────────────────────
+    ws2 = wb.create_sheet("Por técnico")
+    h2 = ["Técnico", "Tipo", "OT totales", "Cerradas", "Abiertas",
+          "Tareas hechas", "Tareas totales", "% avance", "Monto asociado"]
+    for ci, h in enumerate(h2, 1):
+        _hdr(ws2.cell(row=1, column=ci), h)
+    r2 = 2
+    for (tec, tipo), a in sorted(por_tecnico.items(), key=lambda x: -x[1]["total"]):
+        pct = int(round(a["tareas_ok"] * 100.0 / a["tareas_tot"])) if a["tareas_tot"] else 0
+        for ci, val in enumerate([tec, tipo, a["total"], a["cerradas"], a["abiertas"],
+                                  a["tareas_ok"], a["tareas_tot"], pct, a["monto"]], 1):
+            c = ws2.cell(row=r2, column=ci, value=val)
+            c.font = Font(size=9)
+            c.border = border
+            c.fill = PatternFill("solid", fgColor=LGRAY if r2 % 2 == 0 else "FFFFFF")
+            if ci == 9:
+                c.number_format = '"$"#,##0'
+        r2 += 1
+    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16], 1):
+        ws2.column_dimensions[get_column_letter(ci)].width = w
+    ws2.freeze_panes = "A2"
+
+    # ── Hoja 3: Por centro de costo ───────────────────────────────────
+    # La que sustenta el informe de Daniel: cuánto se va en trabajos que NO
+    # son atribuibles a Servicio Técnico (convenios de Comercial, Logística).
+    ws3 = wb.create_sheet("Por centro de costo")
+    _LBL_CC = dict(_OT2_CENTROS_COSTO)
+    h3 = ["Centro de costo", "OT", "Monto asociado", "En garantía"]
+    for ci, h in enumerate(h3, 1):
+        _hdr(ws3.cell(row=1, column=ci), h)
+    r3 = 2
+    for cc, b in sorted(por_centro.items(), key=lambda x: -x[1]["monto"]):
+        for ci, val in enumerate([_LBL_CC.get(cc, cc), b["total"],
+                                  b["monto"], b["garantia"]], 1):
+            c = ws3.cell(row=r3, column=ci, value=val)
+            c.font = Font(size=9, bold=(ci == 1))
+            c.border = border
+            c.fill = PatternFill("solid", fgColor=(
+                REDL if cc == "(sin centro)" else
+                LGRAY if r3 % 2 == 0 else "FFFFFF"))
+            if ci == 3:
+                c.number_format = '"$"#,##0'
+        r3 += 1
+    for ci, w in enumerate([26, 10, 18, 13], 1):
+        ws3.column_dimensions[get_column_letter(ci)].width = w
+
+    # ── Hoja 4: Resumen ───────────────────────────────────────────────
+    ws4 = wb.create_sheet("Resumen")
+    filas_res = [
+        ("— Alcance —", ""),
+        ("Filtros aplicados", alcance),
+        ("Origen", "OT reales" if origen == "reales" else "Automáticas"),
+        ("Generado", fecha_gen),
+        ("OT en el reporte", len(rows)),
+        ("", ""),
+        ("— Por fase —", ""),
+    ]
+    for fase_k, fase_lbl in _OT2_FASE_LABELS.items():
+        n = sum(1 for f in rows
+                if (_OT2_ESTADO_META.get((f.get("estado") or "").lower())
+                    or {}).get("fase") == fase_k)
+        filas_res.append((fase_lbl, n))
+    filas_res += [("", ""), ("— Calidad de dato —", "")]
+    filas_res.append(("Sin técnico asignado",
+                      sum(1 for f in rows if not f.get("tecnico_nombre"))))
+    filas_res.append(("Sin centro de costo",
+                      sum(1 for f in rows if not f.get("centro_costo"))))
+    filas_res.append(("Sin ticket de origen",
+                      sum(1 for f in rows if not f.get("numero_ticket"))))
+    if len(rows) >= _OT2_EXPORT_LIMIT:
+        filas_res += [("", ""), ("⚠ Tope alcanzado",
+                                 f"El reporte se cortó en {_OT2_EXPORT_LIMIT} "
+                                 f"filas. Filtra para ver el resto.")]
+    for i, (k, v) in enumerate(filas_res, 1):
+        ck = ws4.cell(row=i, column=1, value=k)
+        cv = ws4.cell(row=i, column=2, value=v)
+        es_sep = str(k).startswith("—") or str(k).startswith("⚠")
+        ck.font = Font(size=10, bold=True,
+                       color="DC2626" if es_sep else "374151")
+        cv.font = Font(size=10)
+    ws4.column_dimensions["A"].width = 30
+    ws4.column_dimensions["B"].width = 46
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    try:
+        _mant_log("visita", 0, "reporte_ot_xlsx",
+                  f"{len(rows)} OT exportadas a Excel ({alcance})")
+    except Exception:
+        pass
+    fname = f"ILUS_OT_{_now.strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True, download_name=fname)
+
+
 @app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
 @_mant_required
 def ot2_api_lineas_zz(tido, nudo):

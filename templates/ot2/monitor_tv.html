@@ -1,0 +1,1331 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor Servicio Técnico — ILUS Fitness</title>
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+  <style>
+    /* ════════════════════════════════════════════════════════════════
+       MONITOR TV — SERVICIO TÉCNICO ILUS FITNESS
+       Pantalla de 40" (1920×1080) siempre encendida en oficina.
+       Se lee a 3 metros: sin scroll, sin mouse, sin teclado.
+
+       Lenguaje visual: el mismo del formulario público de Retiros
+       (static/retiros_public_request.css) — tokens, header oscuro
+       premium con malla técnica + glow rojo, Bebas Neue + Inter.
+       ════════════════════════════════════════════════════════════════ */
+    :root{
+      --ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a;--ink-2:#161616;
+      --gray-1:#f3f4f6;--gray-2:#e5e7eb;--gray-3:#9ca3af;--gray-4:#374151;
+      --red-500:#dc2626;--red-600:#c81e1e;--red-700:#a60000;
+      --green-500:#16a34a;--green-400:#22c55e;--green-050:#dcfce7;
+      --amber-500:#f59e0b;
+      --blue-500:#3b82f6;--blue-400:#60a5fa;--blue-300:#93c5fd;
+      --shadow-lg: 0 1px 0 rgba(255,255,255,.7) inset, 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+      --shadow-red: 0 10px 28px -6px rgba(220,38,38,.42);
+      --r-sm:10px;--r-md:14px;--r-lg:18px;--r-xl:24px;
+      --display:'Bebas Neue','Arial Narrow','Inter',sans-serif;
+      --ease-spring: cubic-bezier(.34,1.56,.64,1);
+      --ease-out: cubic-bezier(.22,1,.36,1);
+
+      /* Geometría de las franjas — compartida entre header de grupo y filas
+         para que la regla horaria quede EXACTAMENTE alineada con la línea
+         de tiempo de cada persona. */
+      --col-left:380px;   /* identidad: avatar + nombre + cliente          */
+      --col-mid:120px;    /* avance: % grande + barra                      */
+      --col-gap:20px;
+      --row-h:72px;       /* la fija el JS según cuánta gente hay          */
+    }
+
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{width:100%;height:100%;overflow:hidden;background:#050505}
+    body{
+      font-family:'Inter','Segoe UI',Arial,sans-serif;
+      -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+      color:#fff;
+      /* Cifras siempre tabulares: el reloj, los %, los contadores no "bailan" */
+      font-variant-numeric:tabular-nums;
+    }
+
+    /* ── Escenario 1920×1080 fijo. Si el navegador NO está exactamente a
+         1080p (ej: Daniel previsualizando en su laptop), el JS lo escala
+         proporcionalmente para que igual se vea completo. En el TV real
+         la escala es 1 y nada cambia. ── */
+    #stage{
+      position:fixed;left:50%;top:50%;
+      width:1920px;height:1080px;
+      transform:translate(-50%,-50%) scale(var(--esc,1));
+      transform-origin:center center;
+      display:flex;flex-direction:column;
+      overflow:hidden;
+      /* La receta del header oscuro premium de Retiros (.form-head),
+         extendida a todo el lienzo: glow rojo arriba a la derecha +
+         gradiente diagonal negro→casi negro→negro. */
+      background:
+        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.14) 0%, transparent 45%),
+        radial-gradient(90% 110% at 0% 100%, rgba(220,38,38,.06) 0%, transparent 55%),
+        linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+    }
+    /* Malla técnica finísima + vignette — misma textura "engineered" del
+       hero de Retiros. Da profundidad sin ruido. */
+    #stage::before{
+      content:'';position:absolute;inset:0;pointer-events:none;z-index:0;
+      background:
+        linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px) 0 0/ 46px 46px,
+        linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px) 0 0/ 46px 46px;
+      -webkit-mask-image:radial-gradient(ellipse 95% 85% at 50% 30%, #000 30%, transparent 100%);
+              mask-image:radial-gradient(ellipse 95% 85% at 50% 30%, #000 30%, transparent 100%);
+    }
+    /* Glow rojo de esquina (como .form-head::after, escalado a TV) */
+    #stage::after{
+      content:'';position:absolute;right:-160px;top:-160px;width:520px;height:520px;
+      background:radial-gradient(circle, rgba(220,38,38,.20) 0%, transparent 70%);
+      pointer-events:none;z-index:0;
+    }
+    #stage > *{position:relative;z-index:1}
+
+    /* ════════════════════════════════════════════════════════════════
+       BARRA SUPERIOR — logo · fecha · KPIs · reloj
+       ════════════════════════════════════════════════════════════════ */
+    .tv-top{
+      height:104px;flex:0 0 104px;
+      display:grid;grid-template-columns:auto 1fr auto;align-items:center;
+      gap:30px;padding:0 30px;
+      border-bottom:1px solid rgba(255,255,255,.07);
+      position:relative;
+    }
+    /* Hairline rojo — firma ILUS bajo la barra (patrón .mini-bar::after) */
+    .tv-top::after{
+      content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;
+      background:linear-gradient(90deg,transparent,rgba(230,0,0,.75),transparent);
+    }
+    .tv-brand{display:flex;align-items:center;gap:20px}
+    /* Recorte del logo (el PNG trae aire negro alrededor — mismo truco
+       overflow:hidden + scale del hero de Retiros) */
+    .brand-logo-wrap{
+      width:196px;height:66px;overflow:hidden;flex-shrink:0;
+      filter:drop-shadow(0 6px 18px rgba(230,0,0,.28));
+    }
+    .brand-logo{
+      height:100%;width:auto;object-fit:cover;object-position:center center;
+      transform:scale(1.85);transform-origin:left center;display:block;
+    }
+    .brand-sep{width:1px;height:52px;background:rgba(255,255,255,.12)}
+    .brand-txt h1{
+      font-family:var(--display);font-weight:400;font-size:30px;line-height:.95;
+      letter-spacing:.03em;color:#fff;
+    }
+    .brand-txt small{
+      display:block;font-size:14px;font-weight:700;color:var(--gray-3);
+      letter-spacing:.08em;text-transform:uppercase;margin-top:5px;
+    }
+
+    .tv-date{text-align:center;min-width:0}
+    .tv-date .date-kicker{
+      font-size:15px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;
+      color:#fca5a5;display:inline-flex;align-items:center;gap:10px;
+    }
+    .tv-date .date-kicker::before,
+    .tv-date .date-kicker::after{
+      content:'';width:34px;height:2px;border-radius:2px;
+      background:linear-gradient(90deg,transparent,var(--red-500));
+    }
+    .tv-date .date-kicker::after{background:linear-gradient(90deg,var(--red-500),transparent)}
+    .tv-date .date-big{
+      font-family:var(--display);font-size:52px;line-height:1;color:#fff;
+      letter-spacing:.02em;text-transform:uppercase;margin-top:4px;
+      text-shadow:0 2px 24px rgba(0,0,0,.5);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+
+    .tv-right{display:flex;align-items:center;gap:8px}
+    .kpi{padding:0 20px;text-align:center;position:relative}
+    .kpi + .kpi::before{
+      content:'';position:absolute;left:0;top:14%;bottom:14%;width:1px;
+      background:rgba(255,255,255,.09);
+    }
+    .kpi b{
+      font-family:var(--display);font-weight:400;font-size:44px;line-height:.9;display:block;
+    }
+    .kpi span{
+      display:block;font-size:14px;font-weight:700;letter-spacing:.09em;
+      text-transform:uppercase;color:var(--gray-3);margin-top:4px;
+    }
+    .kpi.k-ejec b{color:#4ade80;text-shadow:0 0 22px rgba(34,197,94,.45)}
+    .kpi.k-comp b{color:var(--blue-300)}
+    .kpi.k-pend b{color:#e5e7eb}
+    .kpi.k-atra b{color:#f87171}
+    /* Cuando hay atrasadas > 0, el número respira en rojo — llama la vista */
+    .kpi.k-atra.alerta b{
+      color:#fca5a5;text-shadow:0 0 20px rgba(220,38,38,.7);
+      animation:kpiAlerta 2.6s ease-in-out infinite;
+    }
+    @keyframes kpiAlerta{
+      0%,100%{text-shadow:0 0 12px rgba(220,38,38,.45)}
+      50%{text-shadow:0 0 26px rgba(220,38,38,.9)}
+    }
+    @keyframes kpiPop{0%{transform:scale(1.28)}100%{transform:scale(1)}}
+    .kpi b.pop{animation:kpiPop .5s var(--ease-spring)}
+
+    .tv-clock-box{margin-left:26px;text-align:right;padding-left:26px;position:relative}
+    .tv-clock-box::before{
+      content:'';position:absolute;left:0;top:10%;bottom:10%;width:1px;
+      background:rgba(255,255,255,.09);
+    }
+    .tv-clock{
+      font-family:var(--display);font-weight:400;font-size:76px;line-height:.88;color:#fff;
+      letter-spacing:.02em;text-shadow:0 2px 28px rgba(0,0,0,.55);
+      min-width:170px;
+    }
+    .tv-live{
+      display:inline-flex;align-items:center;gap:8px;margin-top:5px;
+      font-size:14px;font-weight:800;letter-spacing:.14em;color:#86efac;
+    }
+    .tv-live i{
+      width:9px;height:9px;border-radius:50%;background:var(--green-400);
+      box-shadow:0 0 10px rgba(34,197,94,.9);
+      animation:liveDot 2.6s ease-in-out infinite;
+    }
+    @keyframes liveDot{0%,100%{opacity:1}50%{opacity:.45}}
+
+    /* ════════════════════════════════════════════════════════════════
+       CUERPO — grupos INTERNOS / EXTERNOS con franjas por persona
+       ════════════════════════════════════════════════════════════════ */
+    .tv-main{
+      flex:1;min-height:0;
+      display:flex;flex-direction:column;justify-content:center;gap:16px;
+      padding:16px 30px 12px;
+      transition:opacity .28s var(--ease-out), transform .28s var(--ease-out);
+    }
+    /* Fundido para la rotación de páginas (cuando hay más de 14 personas) */
+    .tv-main.page-fade{opacity:0;transform:translateY(10px)}
+
+    .grupo{
+      background:rgba(255,255,255,.028);
+      border:1px solid rgba(255,255,255,.075);
+      border-radius:var(--r-lg);
+      padding:12px 22px 12px;
+      box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px -18px rgba(0,0,0,.55);
+    }
+
+    /* ── Cabecera de grupo: título + contador + REGLA HORARIA ── */
+    .grupo-head{
+      display:grid;grid-template-columns:var(--col-left) var(--col-mid) 1fr;
+      column-gap:var(--col-gap);align-items:end;
+      height:42px;margin-bottom:6px;
+    }
+    .gh-title{display:flex;align-items:center;gap:14px;min-width:0}
+    .gh-bar{
+      width:6px;height:30px;border-radius:4px;flex-shrink:0;
+      background:linear-gradient(180deg,var(--ilus-red),var(--ilus-red-dk));
+      box-shadow:0 0 14px rgba(230,0,0,.5);
+    }
+    .gh-title h2{
+      font-family:var(--display);font-weight:400;font-size:34px;line-height:.9;
+      letter-spacing:.04em;color:#fff;text-transform:uppercase;
+      white-space:nowrap;
+    }
+    .gh-count{
+      font-size:14px;font-weight:800;color:var(--gray-3);
+      background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+      border-radius:50px;padding:4px 12px;letter-spacing:.05em;white-space:nowrap;
+    }
+    .gh-mid{
+      font-size:14px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+      color:rgba(156,163,175,.55);text-align:center;padding-bottom:4px;
+    }
+    .gh-ruler{position:relative;height:100%}
+    .rt-lbl{
+      position:absolute;bottom:2px;transform:translateX(-50%);
+      font-size:14px;font-weight:600;color:var(--gray-3);white-space:nowrap;
+    }
+    .rt-lbl.primero{transform:none}
+    .rt-lbl.ultimo{transform:translateX(-100%)}
+    /* Chip rojo con la hora actual, montado sobre la regla */
+    .now-chip{
+      position:absolute;bottom:0;transform:translateX(-50%);z-index:7;
+      background:linear-gradient(160deg,#ff2d2d 0%,var(--ilus-red) 60%,#b30000 100%);
+      color:#fff;font-size:14px;font-weight:900;letter-spacing:.03em;
+      padding:3px 10px;border-radius:7px;white-space:nowrap;
+      box-shadow:0 6px 16px -4px rgba(230,0,0,.6), 0 1px 0 rgba(255,255,255,.25) inset;
+    }
+
+    /* ── Zona de filas: overlays de grilla + línea de AHORA ── */
+    .grupo-rows{position:relative}
+    .tl-under,.tl-nowline{
+      position:absolute;top:0;bottom:0;
+      left:calc(var(--col-left) + var(--col-mid) + (var(--col-gap) * 2));
+      right:0;pointer-events:none;
+    }
+    .tl-under{z-index:0}
+    .tl-nowline{z-index:6}
+    .tl-hline{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.055)}
+    /* Zona "sobre hora" (después del fin de jornada): rayado rojo tenue */
+    .tl-ot{
+      position:absolute;top:0;bottom:0;
+      border-left:1px dashed rgba(230,0,0,.4);
+      background:repeating-linear-gradient(135deg, rgba(220,38,38,.055) 0 9px, transparent 9px 18px);
+    }
+    .nl-line{
+      position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;
+      background:linear-gradient(180deg,var(--ilus-red) 0%, rgba(230,0,0,.28) 100%);
+      box-shadow:0 0 12px rgba(230,0,0,.75);
+    }
+
+    .rows-inner{position:relative;z-index:1}
+    .grupo-empty{
+      height:var(--row-h);display:flex;align-items:center;gap:12px;
+      color:var(--gray-3);font-size:16px;font-weight:600;font-style:italic;
+    }
+    .grupo-empty::before{
+      content:'';width:10px;height:10px;border-radius:50%;
+      background:rgba(156,163,175,.4);flex-shrink:0;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       FRANJA POR PERSONA
+       ════════════════════════════════════════════════════════════════ */
+    .p-row{
+      display:grid;grid-template-columns:var(--col-left) var(--col-mid) 1fr;
+      column-gap:var(--col-gap);align-items:center;
+      height:var(--row-h);position:relative;
+      padding-left:14px;
+      transition:opacity .3s var(--ease-out);
+    }
+    .p-row + .p-row, .p-row + .grupo-empty, .grupo-empty + .p-row{
+      border-top:1px solid rgba(255,255,255,.05);
+    }
+    /* Barra de acento por estado, al filo izquierdo de la franja */
+    .p-row::before{
+      content:'';position:absolute;left:0;top:18%;bottom:18%;width:4px;border-radius:3px;
+      background:rgba(255,255,255,.1);
+      transition:background .4s;
+    }
+    .p-row.saliendo{opacity:0}
+
+    /* Entrada escalonada solo al encender la pantalla (no en cada refresh) */
+    body.boot .p-row{animation:rowIn .55s var(--ease-out) both;animation-delay:calc(var(--i,0)*45ms)}
+    @keyframes rowIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+
+    /* ── Columna identidad ── */
+    .p-id{display:flex;align-items:center;gap:14px;min-width:0}
+    .p-avatar{
+      width:var(--avatar,50px);height:var(--avatar,50px);border-radius:50%;flex-shrink:0;
+      display:flex;align-items:center;justify-content:center;
+      font-family:var(--display);font-weight:400;font-size:calc(var(--avatar,50px)*.42);
+      letter-spacing:.04em;color:#fff;
+      background:linear-gradient(150deg,#1f1f22 0%,#101012 100%);
+      box-shadow:0 0 0 2px rgba(156,163,175,.35), 0 6px 14px -4px rgba(0,0,0,.6);
+      transition:box-shadow .4s;
+    }
+    .p-idtxt{min-width:0;flex:1}
+    .p-line1{display:flex;align-items:center;gap:12px;min-width:0}
+    .p-nombre{
+      font-size:var(--fs-nombre,26px);font-weight:800;letter-spacing:-.015em;color:#fff;
+      line-height:1.12;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .p-badge{
+      flex-shrink:0;display:inline-flex;align-items:center;gap:7px;
+      font-size:var(--fs-badge,14px);font-weight:800;letter-spacing:.07em;text-transform:uppercase;
+      padding:3px 11px;border-radius:50px;border:1px solid transparent;white-space:nowrap;
+    }
+    .p-badge i{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+    .p-line2{
+      margin-top:2px;font-size:var(--fs-sub,15px);font-weight:600;color:var(--gray-3);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;
+    }
+    .p-line2 .p-cliente{color:#d1d5db;font-weight:700}
+
+    /* ── Columna avance ── */
+    .p-avance{min-width:0}
+    .av-top{display:flex;align-items:baseline;gap:8px;justify-content:flex-start}
+    .av-pct{
+      font-family:var(--display);font-weight:400;font-size:var(--fs-pct,38px);line-height:.9;
+      color:#e5e7eb;letter-spacing:.01em;
+    }
+    .av-elapsed{
+      font-size:14px;font-weight:800;color:#86efac;letter-spacing:.02em;white-space:nowrap;
+    }
+    .av-bar{
+      margin-top:6px;height:6px;border-radius:50px;overflow:hidden;
+      background:rgba(255,255,255,.09);
+      box-shadow:inset 0 1px 2px rgba(0,0,0,.4);
+    }
+    .av-bar i{
+      display:block;height:100%;width:0;border-radius:50px;
+      background:linear-gradient(90deg,#6b7280,#9ca3af);
+      transition:width .7s var(--ease-out), background .4s;
+    }
+    .av-tareas{margin-top:4px;font-size:14px;font-weight:600;color:var(--gray-3);white-space:nowrap}
+
+    /* ── Columna línea de tiempo ── */
+    .p-tl{position:relative;height:100%;min-width:0}
+    .tl-vacio{
+      position:absolute;left:14px;top:50%;transform:translateY(-50%);
+      font-size:14px;font-weight:600;font-style:italic;color:rgba(156,163,175,.55);
+      white-space:nowrap;
+    }
+    .tl-bloque{
+      position:absolute;top:15%;bottom:15%;border-radius:9px;
+      display:flex;flex-direction:column;justify-content:center;gap:1px;
+      padding:0 12px;overflow:hidden;
+      border:1px solid transparent;
+      transition:left .6s var(--ease-out), width .6s var(--ease-out);
+    }
+    .b-cliente{
+      font-size:var(--fs-bloque,15px);font-weight:800;letter-spacing:-.01em;color:#fff;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;
+    }
+    .b-horas{font-size:14px;font-weight:600;opacity:.75;color:#fff;white-space:nowrap;line-height:1.1}
+    .b-prog{
+      position:absolute;left:0;bottom:0;height:3px;width:0;
+      background:rgba(255,255,255,.6);border-radius:0 3px 3px 0;
+      transition:width .7s var(--ease-out);
+    }
+    /* Bloques angostos: primero pierden las horas, luego el texto */
+    .tl-bloque.b-narrow .b-horas{display:none}
+    .tl-bloque.b-tiny .b-cliente,.tl-bloque.b-tiny .b-horas{display:none}
+    .tl-bloque.b-tiny{padding:0}
+
+    /* ════════ ESTADOS — semánticos, separados del rojo de marca ════════ */
+
+    /* EJECUTANDO — verde. Es lo ÚNICO que late en la pantalla. */
+    .estado-ejecutando::before{background:linear-gradient(180deg,#22c55e,#15803d)}
+    .estado-ejecutando .p-avatar{
+      box-shadow:0 0 0 2px var(--green-400), 0 0 18px rgba(34,197,94,.4);
+      animation:aliento 2.8s ease-in-out infinite;
+    }
+    .estado-ejecutando .p-badge{
+      background:rgba(22,163,74,.15);border-color:rgba(34,197,94,.5);color:#86efac;
+    }
+    .estado-ejecutando .p-badge i{
+      background:var(--green-400);position:relative;
+      box-shadow:0 0 8px rgba(34,197,94,.9);
+      animation:liveDot 2.2s ease-in-out infinite;
+    }
+    .estado-ejecutando .av-pct{color:#4ade80;text-shadow:0 0 16px rgba(34,197,94,.35)}
+    .estado-ejecutando .av-bar i{background:linear-gradient(90deg,#16a34a,#4ade80)}
+    @keyframes aliento{
+      0%,100%{box-shadow:0 0 0 2px var(--green-400), 0 0 10px rgba(34,197,94,.28)}
+      50%{box-shadow:0 0 0 2px var(--green-400), 0 0 24px rgba(34,197,94,.55)}
+    }
+
+    /* DISPONIBLE — gris tranquilo. Es información, no un reproche. */
+    .estado-disponible::before{background:rgba(156,163,175,.35)}
+    .estado-disponible .p-badge{
+      background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16);color:#d1d5db;
+    }
+    .estado-disponible .p-badge i{background:var(--gray-3)}
+    .estado-disponible .av-pct{color:rgba(156,163,175,.6)}
+    .estado-disponible .p-nombre{color:#e5e7eb}
+
+    /* ATRASADO — rojo/ámbar, exige la mirada */
+    .estado-atrasado::before{
+      background:linear-gradient(180deg,var(--amber-500),var(--red-500));
+      animation:acentoAtraso 2.2s ease-in-out infinite;
+    }
+    .estado-atrasado .p-avatar{box-shadow:0 0 0 2px var(--red-500), 0 0 16px rgba(220,38,38,.45)}
+    .estado-atrasado .p-badge{
+      background:rgba(220,38,38,.18);border-color:rgba(245,158,11,.6);color:#fecaca;
+    }
+    .estado-atrasado .p-badge i{
+      background:var(--amber-500);box-shadow:0 0 8px rgba(245,158,11,.9);
+      animation:liveDot 1.6s ease-in-out infinite;
+    }
+    .estado-atrasado .av-pct{color:#f87171}
+    .estado-atrasado .av-bar i{background:linear-gradient(90deg,var(--red-500),var(--amber-500))}
+    @keyframes acentoAtraso{0%,100%{opacity:.7}50%{opacity:1}}
+
+    /* TERMINADO — azul apagado, jornada cumplida */
+    .estado-terminado::before{background:rgba(96,165,250,.5)}
+    .estado-terminado .p-avatar{box-shadow:0 0 0 2px rgba(96,165,250,.55), 0 6px 14px -4px rgba(0,0,0,.6)}
+    .estado-terminado .p-badge{
+      background:rgba(59,130,246,.13);border-color:rgba(96,165,250,.4);color:var(--blue-300);
+    }
+    .estado-terminado .p-badge i{background:var(--blue-400)}
+    .estado-terminado .av-pct{color:var(--blue-300)}
+    .estado-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),var(--blue-400))}
+
+    /* ── Bloques de OT en la línea de tiempo ── */
+    .tl-bloque.b-ejecutando{
+      background:linear-gradient(160deg,#17a94f 0%,#0d6e35 100%);
+      border-color:rgba(74,222,128,.55);
+      box-shadow:0 6px 16px -4px rgba(22,163,74,.45), 0 1px 0 rgba(255,255,255,.22) inset;
+      animation:bloqueVivo 2.8s ease-in-out infinite;
+      z-index:2;
+    }
+    @keyframes bloqueVivo{
+      0%,100%{box-shadow:0 6px 14px -4px rgba(22,163,74,.4), 0 1px 0 rgba(255,255,255,.22) inset}
+      50%{box-shadow:0 6px 24px -2px rgba(34,197,94,.7), 0 1px 0 rgba(255,255,255,.22) inset}
+    }
+    .tl-bloque.b-pendiente{
+      background:rgba(255,255,255,.05);
+      border:1.5px dashed rgba(255,255,255,.28);
+    }
+    .tl-bloque.b-pendiente .b-cliente{color:#d1d5db;font-weight:700}
+    .tl-bloque.b-pendiente .b-horas{color:var(--gray-3)}
+    .tl-bloque.b-terminado{
+      background:rgba(59,130,246,.14);
+      border-color:rgba(96,165,250,.4);
+    }
+    .tl-bloque.b-terminado .b-cliente{color:var(--blue-300)}
+    .tl-bloque.b-terminado .b-cliente::before{content:'✓ ';font-weight:900}
+    .tl-bloque.b-terminado .b-horas{color:rgba(147,197,253,.7)}
+    .tl-bloque.b-atrasado{
+      background:repeating-linear-gradient(135deg,#b91c1c 0 10px,#9c1616 10px 20px);
+      border:1.5px solid rgba(245,158,11,.75);
+      box-shadow:0 6px 18px -4px rgba(220,38,38,.55);
+      animation:bloqueAtraso 2.2s ease-in-out infinite;
+      z-index:2;
+    }
+    @keyframes bloqueAtraso{
+      0%,100%{box-shadow:0 6px 14px -4px rgba(220,38,38,.45)}
+      50%{box-shadow:0 6px 24px -2px rgba(245,158,11,.6)}
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       FRANJA INFERIOR — próximos días + meta (página / conexión / hora)
+       ════════════════════════════════════════════════════════════════ */
+    .tv-bottom{
+      flex:0 0 96px;margin:0 30px 18px;
+      background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));
+      border:1px solid rgba(255,255,255,.075);
+      border-radius:var(--r-lg);
+      display:flex;align-items:stretch;overflow:hidden;position:relative;
+      box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px -18px rgba(0,0,0,.55);
+    }
+    .tv-bottom::before{
+      content:'';position:absolute;left:0;right:0;top:0;height:2px;
+      background:linear-gradient(90deg,transparent,rgba(220,38,38,.6),transparent);
+    }
+    .tvb-label{
+      flex:0 0 156px;display:flex;flex-direction:column;justify-content:center;
+      padding-left:26px;position:relative;
+    }
+    .tvb-label::before{
+      content:'';position:absolute;left:0;top:22%;bottom:22%;width:5px;border-radius:0 4px 4px 0;
+      background:linear-gradient(180deg,var(--ilus-red),var(--ilus-red-dk));
+      box-shadow:0 0 12px rgba(230,0,0,.5);
+    }
+    .tvb-label b{
+      font-family:var(--display);font-weight:400;font-size:26px;line-height:.95;
+      letter-spacing:.05em;color:#fff;
+    }
+    .tvb-label small{font-size:14px;font-weight:700;color:var(--gray-3);letter-spacing:.06em;text-transform:uppercase;margin-top:4px}
+    .tvb-days{flex:1;display:flex;align-items:stretch;min-width:0}
+    .tvb-day{
+      flex:1;display:flex;align-items:center;gap:18px;padding:0 24px;
+      border-left:1px solid rgba(255,255,255,.07);min-width:0;
+    }
+    .tvb-num-box{text-align:center;flex-shrink:0}
+    .tvb-num{
+      font-family:var(--display);font-weight:400;font-size:48px;line-height:.85;display:block;
+      /* Número con degradado rojo vivo — receta .stat-num de Retiros */
+      background:linear-gradient(180deg,#ff3838 0%,var(--ilus-red) 70%,#b30000 100%);
+      -webkit-background-clip:text;background-clip:text;
+      -webkit-text-fill-color:transparent;color:var(--ilus-red);
+      filter:drop-shadow(0 4px 14px rgba(230,0,0,.35));
+    }
+    .tvb-num-box small{
+      display:block;font-size:14px;font-weight:800;letter-spacing:.12em;
+      color:var(--gray-3);text-transform:uppercase;margin-top:2px;
+    }
+    .tvb-info{min-width:0}
+    .tvb-dia{
+      font-family:var(--display);font-weight:400;font-size:27px;line-height:.95;color:#fff;
+      letter-spacing:.03em;text-transform:uppercase;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .tvb-det{
+      font-size:15px;font-weight:600;color:var(--gray-3);margin-top:4px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .tvb-days .tvb-vacio{
+      flex:1;display:flex;align-items:center;justify-content:center;
+      color:var(--gray-3);font-size:16px;font-weight:600;font-style:italic;
+      border-left:1px solid rgba(255,255,255,.07);
+    }
+    .tvb-meta{
+      flex:0 0 252px;border-left:1px solid rgba(255,255,255,.07);
+      display:flex;flex-direction:column;justify-content:center;align-items:flex-end;
+      gap:7px;padding-right:26px;
+    }
+    .page-dots{display:none;align-items:center;gap:8px}
+    .page-dots.visible{display:inline-flex}
+    .page-dots i{
+      width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.18);
+      transition:background .3s, box-shadow .3s;
+    }
+    .page-dots i.on{background:var(--ilus-red);box-shadow:0 0 10px rgba(230,0,0,.7)}
+    .page-dots span{font-size:14px;font-weight:700;color:var(--gray-3);margin-left:4px;letter-spacing:.04em}
+    .meta-updated{font-size:14px;font-weight:600;color:var(--gray-3);letter-spacing:.02em}
+    .meta-updated b{color:#d1d5db;font-weight:800}
+
+    /* ── Indicador discreto de conexión (aparece solo si algo falla) ── */
+    .offline-pill{
+      position:absolute;right:34px;bottom:126px;z-index:50;
+      display:flex;align-items:center;gap:10px;
+      background:rgba(20,14,4,.92);border:1px solid rgba(245,158,11,.55);
+      color:#fcd34d;font-size:15px;font-weight:700;letter-spacing:.02em;
+      padding:10px 18px;border-radius:50px;
+      box-shadow:0 14px 30px -8px rgba(0,0,0,.7);
+      opacity:0;transform:translateY(8px);pointer-events:none;
+      transition:opacity .4s var(--ease-out), transform .4s var(--ease-out);
+    }
+    .offline-pill.visible{opacity:1;transform:none}
+    .offline-pill i{
+      width:10px;height:10px;border-radius:50%;background:var(--amber-500);
+      box-shadow:0 0 10px rgba(245,158,11,.9);flex-shrink:0;
+      animation:liveDot 1.4s ease-in-out infinite;
+    }
+    .offline-pill.ok{border-color:rgba(34,197,94,.55);color:#86efac}
+    .offline-pill.ok i{background:var(--green-400);box-shadow:0 0 10px rgba(34,197,94,.9);animation:none}
+
+    /* Página completamente vacía (sin técnicos) */
+    .main-vacio{
+      flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+      color:var(--gray-3);
+    }
+    .main-vacio b{font-family:var(--display);font-weight:400;font-size:40px;letter-spacing:.04em;color:#e5e7eb}
+    .main-vacio span{font-size:17px;font-weight:600}
+
+    /* Entrada del encendido para barras superior/inferior */
+    body.boot .tv-top{animation:rowIn .5s var(--ease-out) both}
+    body.boot .tv-bottom{animation:rowIn .55s .25s var(--ease-out) both}
+
+    /* ════════════════════════════════════════════════════════════════
+       DENSIDAD — el JS mide cuánta gente hay y elige la talla.
+       Con 6-8 personas la fila es generosa (xl); con 14, compacta (sm)
+       pero jamás bajo 14px de texto.
+       ════════════════════════════════════════════════════════════════ */
+    #stage{--fs-nombre:26px;--fs-sub:15px;--fs-pct:38px;--avatar:50px;--fs-bloque:15px;--fs-badge:14px}
+    #stage[data-densidad="xl"]{--fs-nombre:29px;--fs-sub:16px;--fs-pct:44px;--avatar:56px;--fs-bloque:16px;--fs-badge:15px}
+    #stage[data-densidad="md"]{--fs-nombre:22px;--fs-sub:15px;--fs-pct:32px;--avatar:44px;--fs-bloque:14px}
+    #stage[data-densidad="sm"]{--fs-nombre:19px;--fs-sub:14px;--fs-pct:27px;--avatar:38px;--fs-bloque:14px}
+    /* En densidades apretadas se sacrifica lo secundario, nunca lo esencial */
+    #stage[data-densidad="md"] .av-tareas,
+    #stage[data-densidad="sm"] .av-tareas,
+    #stage[data-densidad="sm"] .b-horas{display:none}
+    #stage[data-densidad="sm"] .tl-bloque{border-radius:7px;padding:0 9px}
+    #stage[data-densidad="sm"] .p-line2{margin-top:0}
+
+    /* ── Accesibilidad: sin movimiento si el sistema lo pide ── */
+    @media (prefers-reduced-motion: reduce){
+      *,*::before,*::after{animation:none !important;transition:none !important}
+    }
+  </style>
+</head>
+<body class="boot">
+  <div id="stage">
+
+    <!-- ══════════════ BARRA SUPERIOR ══════════════ -->
+    <header class="tv-top">
+      <div class="tv-brand">
+        <div class="brand-logo-wrap">
+          <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS Fitness" class="brand-logo" decoding="async">
+        </div>
+        <div class="brand-sep"></div>
+        <div class="brand-txt">
+          <h1>Monitor de operaciones</h1>
+          <small>Servicio Técnico · ILUS Fitness</small>
+        </div>
+      </div>
+
+      <div class="tv-date">
+        <span class="date-kicker">Programación del día · <span id="kickerTotal">0</span> OT</span>
+        <div class="date-big" id="dateBig">—</div>
+      </div>
+
+      <div class="tv-right">
+        <div class="kpi k-ejec"><b id="kpiEjec">0</b><span>En ejecución</span></div>
+        <div class="kpi k-comp"><b id="kpiComp">0</b><span>Completadas</span></div>
+        <div class="kpi k-pend"><b id="kpiPend">0</b><span>Pendientes</span></div>
+        <div class="kpi k-atra" id="kpiAtraBox"><b id="kpiAtra">0</b><span>Atrasadas</span></div>
+        <div class="tv-clock-box">
+          <div class="tv-clock" id="tvClock">--:--</div>
+          <span class="tv-live"><i></i>EN VIVO</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ══════════════ CUERPO (grupos + franjas, lo pinta el JS) ══════════════ -->
+    <main class="tv-main" id="tvMain"></main>
+
+    <!-- ══════════════ FRANJA INFERIOR ══════════════ -->
+    <footer class="tv-bottom">
+      <div class="tvb-label">
+        <b>Próximos días</b>
+        <small>Carga programada</small>
+      </div>
+      <div class="tvb-days" id="tvbDays"></div>
+      <div class="tvb-meta">
+        <div class="page-dots" id="pageDots"></div>
+        <div class="meta-updated">Datos actualizados <b id="metaHora">--:--</b></div>
+      </div>
+    </footer>
+
+    <!-- Indicador discreto de conexión — solo aparece si un fetch falla -->
+    <div class="offline-pill" id="offlinePill"><i></i><span id="offlineTxt">Sin conexión · reintentando</span></div>
+  </div>
+
+  <script>
+  /* ════════════════════════════════════════════════════════════════════
+     MONITOR TV — lógica de pantalla
+     · Pinta TODO desde el JSON `DATOS` (mismo contrato que /datos_url).
+     · Latido: consulta status_url; si la huella cambió, trae el JSON
+       completo y REPINTA EN EL SITIO (sin borrar el DOM → sin parpadeo).
+     · Cadencia según hora de Chile: 8 s en jornada hábil, 1 h de tarde,
+       2 h de noche y fines de semana.
+     ════════════════════════════════════════════════════════════════════ */
+  'use strict';
+
+  const DATOS_INICIALES = {{ (datos or {}) | tojson }};
+  const STATUS_URL = {{ (status_url or '') | tojson }};
+  const DATOS_URL  = {{ (datos_url  or '') | tojson }};
+
+  const TZ = 'America/Santiago';
+  const MAX_POR_PAGINA = 14;       // franjas máximas legibles a 3 metros
+  const ROTACION_MS = 20000;       // rotación de página si hay más gente
+
+  /* Constantes de geometría — DEBEN calzar con el CSS de .grupo/.grupo-head */
+  const ALTO_HEAD_GRUPO = 48;      // head 42 + margen 6
+  const PAD_V_GRUPO = 26;          // padding vertical del .grupo (12 + 12) + borde
+  const GAP_GRUPOS = 16;
+  const PAD_V_MAIN = 28;           // padding vertical del .tv-main (16 + 12)
+
+  const $ = (sel, raiz) => (raiz || document).querySelector(sel);
+
+  const state = {
+    datos: null,
+    huella: null,
+    esc: { t0: 480, t1: 1080 },    // escala temporal global (minutos)
+    pages: [],
+    page: 0,
+    offline: false,
+    timerRotacion: null,
+    timerOkPill: null,
+  };
+
+  /* ─────────────────────────── utilidades ─────────────────────────── */
+
+  function el(tag, cls){
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    return n;
+  }
+
+  /* "09:30" → 570 minutos. null si no parsea. */
+  function hm(str){
+    if (typeof str !== 'string') return null;
+    const m = str.match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    return (+m[1]) * 60 + (+m[2]);
+  }
+
+  /* Fecha "ahora" trasladada a hora de Chile (el TV está en Santiago,
+     pero lo calculamos explícito por si alguien abre el link desde otra
+     zona horaria — REGLA #6 del proyecto: todo se muestra hora Chile). */
+  function ahoraChile(){
+    return new Date(new Date().toLocaleString('en-US', { timeZone: TZ }));
+  }
+
+  const fmtHora = new Intl.DateTimeFormat('es-CL', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
+
+  function horaChileHHMM(fecha){
+    return fmtHora.format(fecha || new Date()).replace('.', ':');
+  }
+
+  /* Fallback si el servidor no mandó hoy_label */
+  function fechaHoyLabel(){
+    const f = ahoraChile();
+    const dias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+    const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    return dias[f.getDay()] + ' ' + f.getDate() + ' de ' + meses[f.getMonth()];
+  }
+
+  /* Normaliza estados a los 4 semánticos conocidos */
+  function estadoNorm(e, fallback){
+    const s = String(e || '').toLowerCase().trim();
+    if (s === 'ejecutando' || s === 'en_ejecucion' || s === 'en ejecución') return 'ejecutando';
+    if (s === 'disponible' || s === 'libre') return 'disponible';
+    if (s === 'atrasado' || s === 'atrasada') return 'atrasado';
+    if (s === 'terminado' || s === 'terminada' || s === 'completado' || s === 'completada') return 'terminado';
+    return fallback;
+  }
+
+  const BADGE_TXT = {
+    ejecutando: 'En ejecución',
+    disponible: 'Disponible',
+    atrasado:   'Atrasado',
+    terminado:  'Terminado',
+  };
+
+  function setTexto(nodo, txt){
+    // Solo tocar el DOM si el valor cambió — evita repaints inútiles
+    if (nodo && nodo.textContent !== String(txt)) nodo.textContent = String(txt);
+  }
+
+  /* Sincroniza una lista de nodos hijos contra items, reusando nodos por
+     clave (update-in-place). Los nodos ajenos (overlays, notas) no se tocan
+     porque solo administra los que él mismo creó (registrados en el mapa). */
+  function syncList(cont, items, keyOf, crear, actualizar){
+    if (!cont.__mapa) cont.__mapa = new Map();
+    const mapa = cont.__mapa;
+    const vistos = new Set();
+    let anterior = null;
+
+    items.forEach((item, idx) => {
+      const k = keyOf(item);
+      vistos.add(k);
+      let nodo = mapa.get(k);
+      if (!nodo){
+        nodo = crear(item, idx);
+        mapa.set(k, nodo);
+        // insertar en orden
+        if (anterior && anterior.nextSibling) cont.insertBefore(nodo, anterior.nextSibling);
+        else cont.appendChild(nodo);
+      } else {
+        // reubicar si el orden cambió
+        const ref = anterior ? anterior.nextSibling : cont.firstChild;
+        if (nodo !== ref) cont.insertBefore(nodo, ref);
+      }
+      actualizar(nodo, item, idx);
+      anterior = nodo;
+    });
+
+    // retirar los que ya no están, con fundido corto
+    mapa.forEach((nodo, k) => {
+      if (!vistos.has(k)){
+        mapa.delete(k);
+        nodo.classList.add('saliendo');
+        setTimeout(() => { if (nodo.parentNode) nodo.parentNode.removeChild(nodo); }, 320);
+      }
+    });
+  }
+
+  /* ─────────────────────── escala temporal global ─────────────────────── */
+
+  function calcularEscala(datos){
+    const jor = datos.jornada || {};
+    const t0 = hm(jor.ini) != null ? hm(jor.ini) : 480;      // 08:00
+    let tMax = hm(jor.fin) != null ? hm(jor.fin) : 1020;     // 17:00
+    (datos.grupos || []).forEach(g => (g.personas || []).forEach(p =>
+      (p.bloques || []).forEach(b => {
+        const f = hm(b.fin);
+        if (f != null && f > tMax) tMax = f;
+      })
+    ));
+    let t1 = Math.ceil(tMax / 60) * 60;                      // redondear a la hora
+    if (t1 <= t0) t1 = t0 + 540;
+    state.esc = { t0, t1, fin: hm(jor.fin) != null ? hm(jor.fin) : 1020 };
+  }
+
+  function posPct(min){
+    const { t0, t1 } = state.esc;
+    return Math.max(0, Math.min(100, (min - t0) / (t1 - t0) * 100));
+  }
+
+  /* ───────────────────────── barra superior ───────────────────────── */
+
+  function bumpKpi(nodo, valor){
+    const v = String(valor != null ? valor : 0);
+    if (nodo.textContent !== v){
+      nodo.textContent = v;
+      nodo.classList.remove('pop');
+      void nodo.offsetWidth;   // reinicia la animación
+      nodo.classList.add('pop');
+    }
+  }
+
+  function renderTop(datos){
+    const r = datos.resumen || {};
+    bumpKpi($('#kpiEjec'), r.en_ejecucion);
+    bumpKpi($('#kpiComp'), r.completadas);
+    bumpKpi($('#kpiPend'), r.pendientes);
+    bumpKpi($('#kpiAtra'), r.atrasadas);
+    $('#kpiAtraBox').classList.toggle('alerta', (r.atrasadas || 0) > 0);
+    setTexto($('#kickerTotal'), r.total != null ? r.total : 0);
+    setTexto($('#dateBig'), datos.hoy_label || fechaHoyLabel());
+
+    if (datos.generado_iso){
+      const g = new Date(datos.generado_iso);
+      if (!isNaN(g)) setTexto($('#metaHora'), horaChileHHMM(g));
+    }
+  }
+
+  /* ─────────────────────────── paginación ─────────────────────────── */
+
+  function construirPaginas(datos){
+    const grupos = datos.grupos || [];
+    const unidades = [];
+    grupos.forEach((g, gi) => {
+      const ps = g.personas || [];
+      if (!ps.length) unidades.push({ gi, vacio: true });
+      else ps.forEach(p => unidades.push({ gi, p }));
+    });
+
+    const pags = [];
+    for (let i = 0; i < unidades.length; i += MAX_POR_PAGINA){
+      const trozo = unidades.slice(i, i + MAX_POR_PAGINA);
+      const pagina = [];
+      trozo.forEach(u => {
+        let g = pagina.find(x => x.gi === u.gi);
+        if (!g){
+          const orig = grupos[u.gi] || {};
+          g = {
+            gi: u.gi,
+            tipo: orig.tipo || ('g' + u.gi),
+            titulo: orig.titulo || '',
+            totalGrupo: (orig.personas || []).length,
+            personas: [],
+            vacio: false,
+          };
+          pagina.push(g);
+        }
+        if (u.vacio) g.vacio = true;
+        else g.personas.push(u.p);
+      });
+      pags.push(pagina);
+    }
+    if (!pags.length) pags.push([]);
+    state.pages = pags;
+    if (state.page >= pags.length) state.page = 0;
+  }
+
+  function filasDePagina(pagina){
+    return pagina.reduce((acc, g) => acc + Math.max(g.personas.length, 1), 0);
+  }
+
+  /* Densidad: mide el alto real disponible y fija --row-h + talla de letra */
+  function ajustarDensidad(pagina){
+    const stage = $('#stage');
+    const main = $('#tvMain');
+    const filas = Math.max(filasDePagina(pagina), 1);
+    const nG = Math.max(pagina.length, 1);
+    const disponible = main.clientHeight - PAD_V_MAIN
+      - nG * (ALTO_HEAD_GRUPO + PAD_V_GRUPO) - (nG - 1) * GAP_GRUPOS;
+    const rowH = Math.max(48, Math.min(108, Math.floor(disponible / filas)));
+    stage.style.setProperty('--row-h', rowH + 'px');
+    stage.dataset.densidad = rowH >= 88 ? 'xl' : rowH >= 72 ? 'lg' : rowH >= 58 ? 'md' : 'sm';
+  }
+
+  /* ───────────────────── grupos, regla y overlays ───────────────────── */
+
+  function construirRegla(nodoRuler){
+    nodoRuler.innerHTML = '';
+    const { t0, t1 } = state.esc;
+    for (let m = Math.ceil(t0 / 60) * 60; m <= t1; m += 60){
+      const lbl = el('span', 'rt-lbl');
+      if (m === t0) lbl.classList.add('primero');
+      if (m === t1) lbl.classList.add('ultimo');
+      lbl.style.left = posPct(m) + '%';
+      lbl.textContent = String(Math.floor(m / 60)).padStart(2, '0') + ':00';
+      nodoRuler.appendChild(lbl);
+    }
+    const chip = el('span', 'now-chip');
+    chip.hidden = true;
+    nodoRuler.appendChild(chip);
+  }
+
+  function construirUnder(nodoUnder){
+    nodoUnder.innerHTML = '';
+    const { t0, t1, fin } = state.esc;
+    for (let m = Math.ceil(t0 / 60) * 60; m <= t1; m += 60){
+      const li = el('i', 'tl-hline');
+      li.style.left = posPct(m) + '%';
+      nodoUnder.appendChild(li);
+    }
+    // zona "sobre hora" después del fin de jornada
+    if (fin < t1){
+      const ot = el('i', 'tl-ot');
+      ot.style.left = posPct(fin) + '%';
+      ot.style.right = '0';
+      nodoUnder.appendChild(ot);
+    }
+  }
+
+  function crearGrupo(){
+    const sec = el('section', 'grupo');
+    sec.innerHTML =
+      '<div class="grupo-head">' +
+        '<div class="gh-title"><span class="gh-bar"></span><h2></h2><span class="gh-count"></span></div>' +
+        '<div class="gh-mid">Avance</div>' +
+        '<div class="gh-ruler"></div>' +
+      '</div>' +
+      '<div class="grupo-rows">' +
+        '<div class="tl-under"></div>' +
+        '<div class="rows-inner"></div>' +
+        '<div class="tl-nowline"><span class="nl-line" hidden></span></div>' +
+      '</div>';
+    return sec;
+  }
+
+  function actualizarGrupo(sec, g){
+    setTexto($('.gh-title h2', sec), g.titulo || (g.tipo === 'externo' ? 'Externos' : 'Internos'));
+    setTexto($('.gh-count', sec), g.totalGrupo === 1 ? '1 técnico' : g.totalGrupo + ' técnicos');
+
+    // regla y grilla solo se reconstruyen si la escala temporal cambió
+    const claveEsc = state.esc.t0 + '-' + state.esc.t1 + '-' + state.esc.fin;
+    if (sec.dataset.esc !== claveEsc){
+      sec.dataset.esc = claveEsc;
+      construirRegla($('.gh-ruler', sec));
+      construirUnder($('.tl-under', sec));
+    }
+
+    const inner = $('.rows-inner', sec);
+
+    // nota de grupo vacío (persistente, fuera del sync de filas)
+    let nota = $('.grupo-empty', inner);
+    if (g.vacio && !g.personas.length){
+      if (!nota){
+        nota = el('div', 'grupo-empty');
+        nota.textContent = 'Sin técnicos con agenda para hoy';
+        inner.appendChild(nota);
+      }
+      nota.hidden = false;
+    } else if (nota){
+      nota.hidden = true;
+    }
+
+    syncList(
+      inner,
+      g.personas,
+      p => (p.nombre || '¿?'),
+      crearFila,
+      actualizarFila
+    );
+  }
+
+  /* ───────────────────────── franja por persona ───────────────────────── */
+
+  function crearFila(p, idx){
+    const row = el('div', 'p-row');
+    row.style.setProperty('--i', idx);
+    row.innerHTML =
+      '<div class="p-id">' +
+        '<div class="p-avatar"></div>' +
+        '<div class="p-idtxt">' +
+          '<div class="p-line1"><span class="p-nombre"></span><span class="p-badge"><i></i><b class="badge-txt"></b></span></div>' +
+          '<div class="p-line2"><span class="p-cliente"></span><span class="p-dir"></span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="p-avance">' +
+        '<div class="av-top"><span class="av-pct"></span><span class="av-elapsed"></span></div>' +
+        '<div class="av-bar"><i></i></div>' +
+        '<div class="av-tareas"></div>' +
+      '</div>' +
+      '<div class="p-tl"><span class="tl-vacio" hidden>Sin carga asignada hoy</span></div>';
+    return row;
+  }
+
+  function inicialesDe(p){
+    if (p.iniciales) return String(p.iniciales).slice(0, 3).toUpperCase();
+    return String(p.nombre || '?').split(/\s+/).map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
+  }
+
+  function actualizarFila(row, p){
+    const est = estadoNorm(p.estado, 'disponible');
+    const claseBase = 'p-row estado-' + est;
+    if (row.className !== claseBase && !row.classList.contains('saliendo')) row.className = claseBase;
+
+    setTexto($('.p-avatar', row), inicialesDe(p));
+    setTexto($('.p-nombre', row), p.nombre || '—');
+    setTexto($('.badge-txt', row), BADGE_TXT[est] || est);
+
+    // Cliente + dirección (línea 2). Disponible sin cliente → línea vacía y calma.
+    const cli = $('.p-cliente', row), dir = $('.p-dir', row);
+    setTexto(cli, p.cliente || '');
+    setTexto(dir, (p.cliente && p.direccion) ? (' · ' + p.direccion) : (p.direccion || ''));
+
+    // Avance
+    const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || (p.bloques || []).length > 0;
+    const pct = Math.max(0, Math.min(100, Math.round(p.avance_pct || 0)));
+    setTexto($('.av-pct', row), tieneCarga ? pct + '%' : '—');
+    $('.av-bar i', row).style.width = tieneCarga ? pct + '%' : '0%';
+    setTexto($('.av-tareas', row), (p.tareas_total || 0) > 0 ? (p.tareas_ok || 0) + '/' + p.tareas_total + ' tareas' : '');
+
+    // Tiempo transcurrido — lo calcula el ticker local a partir de inicio_iso
+    const elapsed = $('.av-elapsed', row);
+    if (est === 'ejecutando' && p.inicio_iso){
+      elapsed.dataset.ini = p.inicio_iso;
+      pintarElapsed(elapsed);
+    } else {
+      delete elapsed.dataset.ini;
+      setTexto(elapsed, '');
+    }
+
+    // Línea de tiempo de la jornada
+    const tl = $('.p-tl', row);
+    const bloques = p.bloques || [];
+    $('.tl-vacio', tl).hidden = bloques.length > 0;
+
+    syncList(
+      tl,
+      bloques,
+      b => (b.numero || (b.cliente || '') + '|' + (b.ini || '')),
+      crearBloque,
+      actualizarBloque
+    );
+  }
+
+  function crearBloque(){
+    const b = el('div', 'tl-bloque');
+    b.innerHTML = '<span class="b-cliente"></span><span class="b-horas"></span><i class="b-prog"></i>';
+    return b;
+  }
+
+  function actualizarBloque(nodo, b){
+    const est = estadoNorm(b.estado, 'pendiente');
+    const ini = hm(b.ini), fin = hm(b.fin);
+    const li = posPct(ini != null ? ini : state.esc.t0);
+    const lf = posPct(fin != null ? fin : (ini != null ? ini + 60 : state.esc.t0 + 60));
+    const w = Math.max(0.8, lf - li);
+
+    const clase = 'tl-bloque b-' + est + (w < 4.5 ? ' b-tiny' : (w < 9 ? ' b-narrow' : ''));
+    if (nodo.className !== clase) nodo.className = clase;
+    nodo.style.left = li + '%';
+    nodo.style.width = w + '%';
+
+    setTexto($('.b-cliente', nodo), b.cliente || b.numero || '');
+    setTexto($('.b-horas', nodo), (b.ini || '') + '–' + (b.fin || ''));
+    $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
+    nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.cliente || '');
+  }
+
+  /* ────────────────────────── próximos días ────────────────────────── */
+
+  function renderProximos(datos){
+    const cont = $('#tvbDays');
+    const dias = (datos.proximos || []).slice(0, 4);
+    if (!dias.length){
+      cont.__mapa = new Map();
+      cont.innerHTML = '<div class="tvb-vacio">Sin OT programadas para los próximos días</div>';
+      return;
+    }
+    if ($('.tvb-vacio', cont)) { cont.innerHTML = ''; cont.__mapa = new Map(); }
+    syncList(
+      cont,
+      dias,
+      d => d.dia_label || '',
+      () => {
+        const c = el('div', 'tvb-day');
+        c.innerHTML =
+          '<div class="tvb-num-box"><span class="tvb-num"></span><small>OT</small></div>' +
+          '<div class="tvb-info"><div class="tvb-dia"></div><div class="tvb-det"></div></div>';
+        return c;
+      },
+      (c, d) => {
+        setTexto($('.tvb-num', c), d.total != null ? d.total : 0);
+        setTexto($('.tvb-dia', c), d.dia_label || '');
+        setTexto($('.tvb-det', c), d.detalle || '');
+      }
+    );
+  }
+
+  /* ─────────────────── página actual + indicador ─────────────────── */
+
+  function renderPagina(){
+    const main = $('#tvMain');
+    const pagina = state.pages[state.page] || [];
+
+    if (!pagina.length){
+      main.__mapa = new Map();
+      main.innerHTML =
+        '<div class="main-vacio"><b>Sin técnicos con agenda hoy</b>' +
+        '<span>Cuando se programen OT aparecerán aquí automáticamente.</span></div>';
+      return;
+    }
+    const vacioPrevio = $('.main-vacio', main);
+    if (vacioPrevio){ main.innerHTML = ''; main.__mapa = new Map(); }
+
+    ajustarDensidad(pagina);
+
+    syncList(
+      main,
+      pagina,
+      g => g.tipo + '|' + g.gi,
+      crearGrupo,
+      actualizarGrupo
+    );
+    actualizarAhora();
+  }
+
+  function renderDots(){
+    const dots = $('#pageDots');
+    const n = state.pages.length;
+    if (n <= 1){
+      dots.classList.remove('visible');
+      dots.innerHTML = '';
+      return;
+    }
+    dots.classList.add('visible');
+    let html = '';
+    for (let i = 0; i < n; i++) html += '<i class="' + (i === state.page ? 'on' : '') + '"></i>';
+    html += '<span>Página ' + (state.page + 1) + ' de ' + n + '</span>';
+    dots.innerHTML = html;
+  }
+
+  function programarRotacion(){
+    if (state.timerRotacion){ clearInterval(state.timerRotacion); state.timerRotacion = null; }
+    if (state.pages.length <= 1) return;
+    state.timerRotacion = setInterval(() => {
+      state.page = (state.page + 1) % state.pages.length;
+      const main = $('#tvMain');
+      main.classList.add('page-fade');
+      setTimeout(() => {
+        renderPagina();
+        renderDots();
+        main.classList.remove('page-fade');
+      }, 300);
+    }, ROTACION_MS);
+  }
+
+  /* ─────────────────────── repintado completo ─────────────────────── */
+
+  function renderAll(datos){
+    if (!datos || typeof datos !== 'object') return;
+    state.datos = datos;
+    calcularEscala(datos);
+    renderTop(datos);
+    construirPaginas(datos);
+    renderPagina();
+    renderDots();
+    renderProximos(datos);
+    programarRotacion();
+  }
+
+  /* ───────────────── ticker local (1 s): reloj, ahora, tiempos ───────────────── */
+
+  function actualizarAhora(){
+    const ch = ahoraChile();
+    const min = ch.getHours() * 60 + ch.getMinutes() + ch.getSeconds() / 60;
+    const visible = min >= state.esc.t0 - 15 && min <= state.esc.t1 + 15;
+    const left = posPct(min) + '%';
+    const hhmm = horaChileHHMM();
+
+    document.querySelectorAll('.tl-nowline .nl-line').forEach(l => {
+      l.hidden = !visible;
+      if (visible) l.style.left = left;
+    });
+    document.querySelectorAll('.now-chip').forEach(c => {
+      c.hidden = !visible;
+      if (visible){ c.style.left = left; setTexto(c, hhmm); }
+    });
+  }
+
+  function pintarElapsed(nodo){
+    const iso = nodo.dataset.ini;
+    if (!iso) return;
+    const t = new Date(iso);
+    if (isNaN(t)) return;
+    let mins = Math.max(0, Math.floor((Date.now() - t.getTime()) / 60000));
+    const h = Math.floor(mins / 60), m = mins % 60;
+    setTexto(nodo, h > 0 ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm');
+  }
+
+  function tick(){
+    setTexto($('#tvClock'), horaChileHHMM());
+    actualizarAhora();
+    document.querySelectorAll('.av-elapsed[data-ini]').forEach(pintarElapsed);
+  }
+
+  /* ─────────────────────── latido de actualización ───────────────────────
+     8 s en horario hábil (L-V 08-17 Chile) · 1 h de 17-22 hábil · 2 h resto.
+     Si un fetch falla NO se rompe nada: pill discreta + reintento acotado
+     a 60 s como máximo (una pantalla muerta frente a la gerencia es el
+     peor resultado posible). */
+
+  function cadenciaMs(){
+    const ch = ahoraChile();
+    const dia = ch.getDay();            // 0 dom … 6 sáb
+    const hora = ch.getHours();
+    const habil = dia >= 1 && dia <= 5;
+    if (habil && hora >= 8 && hora < 17) return 8000;
+    if (habil && hora >= 17 && hora < 22) return 3600000;
+    return 7200000;
+  }
+
+  function setOffline(mal){
+    const pill = $('#offlinePill');
+    const txt = $('#offlineTxt');
+    if (mal){
+      if (state.timerOkPill){ clearTimeout(state.timerOkPill); state.timerOkPill = null; }
+      state.offline = true;
+      pill.classList.remove('ok');
+      setTexto(txt, 'Sin conexión · reintentando');
+      pill.classList.add('visible');
+    } else if (state.offline){
+      // veníamos caídos → mostrar recuperación 4 s y desaparecer
+      state.offline = false;
+      pill.classList.add('ok');
+      setTexto(txt, 'Conexión restablecida');
+      state.timerOkPill = setTimeout(() => pill.classList.remove('visible'), 4000);
+    }
+  }
+
+  async function fetchJson(url){
+    const ctl = new AbortController();
+    const to = setTimeout(() => ctl.abort(), 12000);
+    try{
+      const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } finally {
+      clearTimeout(to);
+    }
+  }
+
+  async function latido(){
+    try{
+      const st = await fetchJson(STATUS_URL);
+      if (!st || st.ok !== true) throw new Error('status sin ok');
+      setOffline(false);
+      if (st.huella !== state.huella){
+        state.huella = st.huella;
+        const datos = await fetchJson(DATOS_URL);
+        renderAll(datos);
+      }
+    } catch (e){
+      setOffline(true);
+    } finally {
+      const base = cadenciaMs();
+      // caídos: reintentar pronto aunque la franja diga 1-2 horas
+      setTimeout(latido, state.offline ? Math.min(base, 60000) : base);
+    }
+  }
+
+  /* ─────────────── escala del escenario a la ventana real ─────────────── */
+
+  function escalarStage(){
+    let esc = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    // Defensa: si el navegador aún no reporta tamaño (arranque del TV,
+    // pestaña oculta), no colapsar la pantalla a escala 0.
+    if (!isFinite(esc) || esc <= 0) esc = 1;
+    $('#stage').style.setProperty('--esc', String(esc));
+  }
+
+  /* ─────────────────────────── arranque ─────────────────────────── */
+
+  document.addEventListener('DOMContentLoaded', () => {
+    escalarStage();
+    window.addEventListener('resize', escalarStage);
+
+    renderAll(DATOS_INICIALES);
+    tick();
+    setInterval(tick, 1000);
+
+    // La animación de encendido corre una sola vez
+    setTimeout(() => document.body.classList.remove('boot'), 2000);
+
+    if (STATUS_URL && DATOS_URL){
+      setTimeout(latido, cadenciaMs());
+    }
+  });
+  </script>
+</body>
+</html>

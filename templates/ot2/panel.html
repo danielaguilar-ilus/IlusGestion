@@ -367,14 +367,15 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <a href="{{ url_for('mant_plantillas_page') }}" class="btn btn-sm btn-outline-light">
         <i class="bi bi-ui-checks me-1"></i>Plantillas
       </a>
-      {# Reporte: por ahora reusa la vista Tabla con todo el universo, que es
-         lo que se puede imprimir hoy con datos reales. El reporte formal
-         (Excel/PDF por técnico y por estado) queda para la etapa de
-         reportabilidad que Daniel pidió — no se inventa un botón que no
-         hace lo que promete. #}
-      <a href="{{ url_for('ot2_panel', origen=origen, vista='tabla', per_page=100) }}"
-         class="btn btn-sm btn-outline-light" title="Ver todas en una tabla para imprimir">
-        <i class="bi bi-file-earmark-text me-1"></i>Reporte
+      {# Reporte Excel — 2026-08-26. Antes este botón solo llevaba a la vista
+         Tabla (no generaba archivo); el comentario viejo decía que el
+         reporte formal "por técnico y por estado" quedaba pendiente. Ya
+         existe: 4 hojas (OT, Por técnico, Por centro de costo, Resumen) y
+         respeta los filtros que están activos en pantalla. #}
+      <a href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}"
+         class="btn btn-sm btn-outline-light"
+         title="Descargar Excel con las OT del filtro actual">
+        <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </a>
       <button type="button" class="btn btn-sm btn-light fw-bold" onclick="OT2C.abrir()">
         <i class="bi bi-plus-lg me-1"></i>Generar OT
