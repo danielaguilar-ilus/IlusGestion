@@ -75168,13 +75168,18 @@ def _ot_tv_datos():
     # Todos los técnicos activos, para poder mostrar "Disponible" a quien
     # hoy no tiene carga (decisión de Daniel: el equipo se ve completo).
     try:
+        # El patrón va como PARÁMETRO, no literal: con 'tecnico%' dentro del
+        # SQL el conector interpreta el % como marcador de formato y revienta
+        # con "not enough arguments for format string" (pasó en producción el
+        # 2026-08-26: la consulta fallaba entera, nadie salía como disponible
+        # y los externos aparecían como internos por el camino de respaldo).
         tecnicos = mysql_fetchall(
             "SELECT au.id, COALESCE(au.nombre, au.username) AS nombre, "
             "       au.role, te.id AS proveedor_id "
             "  FROM app_users au "
             "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
-            " WHERE au.active=1 AND LOWER(au.role) LIKE 'tecnico%' "
-            " ORDER BY nombre") or []
+            " WHERE au.active=1 AND LOWER(au.role) LIKE %s "
+            " ORDER BY nombre", ("tecnico%",)) or []
     except Exception as e:
         print(f"[ot_tv] tecnicos: {e}", flush=True)
         tecnicos = []
@@ -75204,12 +75209,19 @@ def _ot_tv_datos():
         resumen["total"] += 1
         n_t = int(f.get("n_tareas") or 0)
         n_c = int(f.get("n_completas") or 0)
-        pct = int(round(n_c * 100.0 / n_t)) if n_t else 0
+        # Solo 100% si de verdad está todo hecho: con round(), 671 de 672
+        # tareas mostraba "100%" y la pantalla mentía sobre el avance.
+        pct = (100 if (n_t and n_c >= n_t)
+               else int(n_c * 100.0 / n_t) if n_t else 0)
         h_ini = _ot_tv_hhmm(f.get("hora_inicio"))
         en_curso = estado in _OT_TV_EN_CURSO
         terminada = estado in _OT_TV_TERMINADAS
-        # Atrasada: debía haber partido y sigue sin partir.
-        atrasada = (not en_curso and not terminada
+        # Atrasada: debía haber partido y sigue sin partir. Si el trabajo ya
+        # está 100% hecho pero la OT no se ha cerrado formalmente, NO es un
+        # atraso del técnico — es un cierre pendiente. Marcarlo en rojo en el
+        # televisor señalaría a alguien que ya hizo su pega.
+        trabajo_listo = bool(n_t) and n_c >= n_t
+        atrasada = (not en_curso and not terminada and not trabajo_listo
                     and bool(h_ini) and h_ini < hora_ahora)
 
         if en_curso:
@@ -75242,7 +75254,12 @@ def _ot_tv_datos():
             nom = f.get("tecnico_nombre") or "Sin asignar"
             personas[tid] = {
                 "nombre": nom, "iniciales": _ot2_iniciales(nom),
-                "externo": bool(f.get("tecnico_proveedor_id")),
+                # Mismo criterio que el listado de técnicos: el vínculo con
+                # el proveedor manda, pero el ROL también decide. Mirar solo
+                # el proveedor dejaba a Rafael Naranjo (rol tecnico_externo,
+                # sin ficha de proveedor) apareciendo entre los internos.
+                "externo": (bool(f.get("tecnico_proveedor_id"))
+                            or (f.get("tecnico_role") or "").lower() == "tecnico_externo"),
                 "bloques": [], "actual": None, "total_ot": 0, "terminadas": 0,
             }
             orden.append(tid)
