@@ -71068,9 +71068,13 @@ def mant_ots_borrar_batch():
 
 @app.route("/mantenciones/api/visitas/<int:vid>/cotizacion", methods=["POST"])
 @_mant_required
+@_ot_can_metadata
 def mant_visita_ligar_cotizacion(vid):
     """Liga una cotización ERP Random a la visita.
     Body: {tido: 'COV'|'NVV', nudo: string}. Valida con _cubicador_fetch.
+
+    🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_metadata — cualquier usuario con
+    permiso "mantenciones" podía ligar documentos ERP a una OT ajena.
     """
     d = request.get_json(silent=True) or {}
     tido = (d.get("tido") or "").strip().upper()
@@ -71119,9 +71123,13 @@ def mant_visita_ligar_cotizacion(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/oc", methods=["POST"])
 @_mant_required
+@_ot_can_metadata
 def mant_visita_ligar_oc(vid):
     """Registra la OC del cliente.
     Body: {numero, fecha: 'YYYY-MM-DD', archivo_url}
+
+    🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_metadata (mismo hallazgo que
+    mant_visita_ligar_cotizacion).
     """
     from datetime import datetime as _dtm
     d = request.get_json(silent=True) or {}
@@ -71159,9 +71167,13 @@ def mant_visita_ligar_oc(vid):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/factura", methods=["POST"])
 @_mant_required
+@_ot_can_metadata
 def mant_visita_ligar_factura(vid):
     """Liga la factura final (FCV/BLV) a la visita.
     Body: {tido, nudo}. Valida con _cubicador_fetch.
+
+    🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_metadata (mismo hallazgo que
+    mant_visita_ligar_cotizacion).
     """
     d = request.get_json(silent=True) or {}
     tido = (d.get("tido") or "").strip().upper()
@@ -74284,8 +74296,15 @@ def ot2_api_cliente_crear():
 
 @app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
 @_mant_required
+@_ot_can_metadata
 def ot2_api_finanzas(vid):
     """Parte financiera de una OT — declarar, consultar y RETRACTARSE.
+
+    🔐 SEGURIDAD 2026-08-26 (Daniel — auditoría OT 2.0): faltaba @_ot_can_metadata.
+    Cualquier usuario con permiso "mantenciones" (incluido técnico) podía leer
+    Y ESCRIBIR costo/garantía/factura de una OT ajena. Este comentario ya
+    decía "mismo gate que editar metadata" (ver mant_ot_ejecutar) pero nunca
+    se había aplicado de verdad.
 
     Daniel (20-08-2026): "al principio que sea opcional en el modal, pero
     al solicitar la firma debe ir de manera obligatoria… y al terminar
@@ -79477,10 +79496,16 @@ def _is_aprobador(user=None):
 
 @app.route("/mantenciones/api/visitas/<int:vid>/resumen", methods=["GET"])
 @_mant_required
+@_ot_can_view
 def mant_visita_resumen(vid):
     """Resumen liviano de la OT para la revisión rápida del supervisor:
     qué se hizo (tareas, fotos, equipos), observaciones del técnico y su firma.
-    Permite revisar SIN abrir la OT completa."""
+    Permite revisar SIN abrir la OT completa.
+
+    🔐 SEGURIDAD 2026-08-26 (Daniel — auditoría OT 2.0): faltaba @_ot_can_view.
+    Cualquier usuario con permiso "mantenciones" (incluido técnico) podía ver
+    cliente/técnico/observaciones de una OT ajena. Mismo patrón que la brecha
+    de mayo 2026."""
     # LEFT JOIN (era INNER) 2026-08-10: OT de Trabajo de bodega
     # (tipo='revision_interna') puede tener cliente_id NULL — con INNER esta
     # OT "desaparecía" del resumen aunque existiera.
@@ -88963,8 +88988,13 @@ def _informe_postservicio_html(visita, cliente, equipos, analisis, auto_print=Tr
 
 @app.route("/mantenciones/api/visitas/<int:vid>/informe-postservicio", methods=["GET"])
 @_mant_required
+@_ot_can_view
 def mant_informe_postservicio(vid):
-    """Informe post-servicio de una visita realizada (Agente determinista). Imprimible → PDF."""
+    """Informe post-servicio de una visita realizada (Agente determinista). Imprimible → PDF.
+
+    🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_view — exponía datos personales
+    del cliente (RUT, dirección, contacto) de cualquier OT a cualquier usuario
+    con permiso "mantenciones"."""
     v = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut, c.direccion, c.comuna, c.contacto_nombre "
         "FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
@@ -95265,10 +95295,19 @@ def mant_lev_cerrar(lid):
           auditable final del modelo Fracttal).
        d. diagnostico auto-generado con resumen del levantamiento.
        e. cerrada_por = usuario actual, cerrada_at = NOW().
+
+    🔐 SEGURIDAD 2026-08-26 (Daniel — auditoría OT 2.0): faltaba
+    `_lev_puede_accion` — a diferencia de sus rutas hermanas (GET/PATCH/DELETE
+    en mant_lev_detalle, POST /items en mant_lev_item_crear), este endpoint
+    solo tenía @_mant_required: cualquier usuario con permiso "mantenciones"
+    podía cerrar el levantamiento (y su OT espejo) de otro técnico adivinando
+    el id. Mismo patrón que el IDOR de mayo 2026, ver `_lev_puede_accion`.
     """
     lev = mysql_fetchone("SELECT * FROM mant_levantamientos WHERE id=%s", (lid,))
     if not lev:
         return jsonify({"ok": False, "error": "No encontrado"}), 404
+    if not _lev_puede_accion(lid, "ejecutar", lev_row=lev):
+        return _lev_403_response("ejecutar")
     if lev["estado"] == "cerrado":
         return jsonify({"ok": False, "error": "Ya estaba cerrado"}), 400
 
