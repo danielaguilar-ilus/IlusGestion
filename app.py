@@ -75419,6 +75419,54 @@ def ot_tv_datos(token):
     return _ot_tv_cookie(make_response(jsonify(payload)), nuevo)
 
 
+@app.route("/ot/monitor", methods=["GET"])
+@_mant_required
+@_require_superadmin
+def ot2_monitor_control():
+    """El mismo tablero del televisor, pero DENTRO de la app y con sesión.
+
+    Daniel (26-08-2026): *"¿dónde vivirá este monitor en caso que quiera
+    tomar el control, para disertar?"*. El televisor es solo exhibición (no
+    tiene mouse); esta es su copia operable, para proyectarla o explicarla
+    desde el computador cuando la jefatura pregunta.
+
+    Reusa EXACTAMENTE la misma plantilla y el mismo payload — si el diseño
+    del televisor cambia, esta cambia sola. Lo único distinto es de dónde
+    saca los datos: acá va por sesión (`@_mant_required` + superadmin), no
+    por el token del aparato.
+    """
+    return render_template(
+        "ot2/monitor_tv.html",
+        datos=_ot_tv_datos(),
+        status_url=url_for("ot2_monitor_status"),
+        datos_url=url_for("ot2_monitor_datos"),
+        pantalla="Control",
+    )
+
+
+@app.route("/ot/api/monitor/status", methods=["GET"])
+@_mant_required
+@_require_superadmin
+def ot2_monitor_status():
+    """Latido de la pantalla de control (misma huella que el televisor)."""
+    return jsonify({"ok": True, "huella": _ot_tv_huella()})
+
+
+@app.route("/ot/api/monitor/datos", methods=["GET"])
+@_mant_required
+@_require_superadmin
+def ot2_monitor_datos():
+    """Tablero completo para la pantalla de control. Comparte la caché con
+    el televisor: si ambos están abiertos, la base se consulta una vez."""
+    import time as _time
+    ent = _OT_TV_CACHE.get("payload")
+    if ent and (_time.time() - ent["ts"]) < _OT_TV_TTL:
+        return jsonify(ent["payload"])
+    payload = _ot_tv_datos()
+    _OT_TV_CACHE["payload"] = {"payload": payload, "ts": _time.time()}
+    return jsonify(payload)
+
+
 def _ot2_filtros_export(args):
     """WHERE + params + descripción legible de los filtros del panel OT 2.0.
 
