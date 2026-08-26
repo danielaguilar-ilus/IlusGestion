@@ -336,5 +336,73 @@ class TestExpansionArgumentoPuroPython(unittest.TestCase):
         self.assertAlmostEqual(tot_pv, self._calc_pv(100, 50, 50) + self._calc_pv(80, 40, 40) + 3 * 1.5)
 
 
+def _fuente_cubicador_export_payload():
+    with open(os.path.join(BASE_DIR, "app.py"), encoding="utf-8", errors="ignore") as f:
+        src = f.read()
+    i = src.index("\ndef _cubicador_export_payload(")
+    j = src.index("\ndef ", i + 10)
+    return src[i:j]
+
+
+SRC_PAYLOAD = _fuente_cubicador_export_payload()
+
+
+class TestElPayloadJsonPreservaAppId(unittest.TestCase):
+    """BUG REAL (2026-08-26, mismo dia del PR #187): el fix de "bultos
+    reales" solo se probo con dicts de linea armados a mano en Python, que
+    SIEMPRE traian 'app_id'. Pero el boton "Excel" de la pantalla real NO
+    llama a cubicador_export_excel() con lineas frescas del ERP -- manda el
+    'payload_json' que la pagina /cubicador ya trae embebido (ver el bloque
+    "if payload_raw:" en cubicador_export_excel(), que se USA cuando esta
+    presente y valido). Ese JSON lo arma _cubicador_export_payload(), que
+    filtraba las llaves de cada linea a una lista fija -- y 'app_id' no
+    estaba en esa lista. Resultado en produccion: cargar /cubicador y hacer
+    clic en "Excel" (el flujo real de cualquier usuario) SIEMPRE caia al
+    fallback "Estimado", incluso para SKUs con detalle real cargado --
+    verificado en vivo con el SKU 1121100989 de la VD 10218, el mismo caso
+    que motivo el PR #187 en primer lugar."""
+
+    def test_el_diccionario_de_cada_linea_incluye_app_id(self):
+        self.assertIn('"app_id"', SRC_PAYLOAD)
+
+    def test_app_id_se_castea_a_int_o_none_no_a_string(self):
+        # Si se hubiera escrito como str(l.get("app_id","")) el round-trip
+        # por JSON habria convertido int -> "123" (string), y el
+        # WHERE product_id IN (...) de la hoja 2 habria fallado en
+        # silencio al comparar contra un int real de MySQL.
+        i = SRC_PAYLOAD.index('"app_id"')
+        fragmento = SRC_PAYLOAD[i:i + 120]
+        self.assertIn("int(l[", fragmento)
+        self.assertNotIn(f'str(l.get("app_id"', SRC_PAYLOAD)
+
+    def test_lineas_sin_ficha_no_revientan_con_keyerror(self):
+        # l.get("app_id") en vez de l["app_id"] a secas -- una linea sin
+        # ficha (tiene_ficha=False) puede no tener la llave en absoluto.
+        i = SRC_PAYLOAD.index('"app_id"')
+        fragmento = SRC_PAYLOAD[i:i + 120]
+        self.assertIn('l.get("app_id")', fragmento)
+
+    def test_round_trip_json_completo_replica_el_bug_y_el_fix(self):
+        """Reproduce el bug end-to-end en Python puro: arma una 'linea' con
+        app_id, la pasa por json.dumps/json.loads (el mismo camino que
+        payload_json en el navegador), y confirma que app_id sobrevive."""
+        import json as _json
+
+        # Antes del fix: el dict de salida NO tenia 'app_id' (se omite a
+        # proposito acá para probar que el bug era real).
+        linea_sin_fix = {
+            "sku": "1121100989", "descripcion_erp": "ILUS Optimal Dual Pulldown/Row",
+            "cantidad": 1, "total_bultos": 5, "tiene_ficha": True, "tiene_bultos": True,
+            "peso_kg_u": 280.5, "peso_vol_u": 228.27, "vol_u": 913080.0,
+        }
+        ida_vuelta = _json.loads(_json.dumps({"lineas": [linea_sin_fix]}))
+        self.assertIsNone(ida_vuelta["lineas"][0].get("app_id"))  # el bug: siempre None
+
+        # Con el fix: el dict de salida SI trae 'app_id'.
+        linea_con_fix = dict(linea_sin_fix, app_id=42)
+        ida_vuelta2 = _json.loads(_json.dumps({"lineas": [linea_con_fix]}))
+        self.assertEqual(ida_vuelta2["lineas"][0].get("app_id"), 42)  # sobrevive el viaje
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16857,6 +16857,17 @@ def _cubicador_export_payload(headers, lineas, docs):
         "lineas": [
             {
                 "sku": str(l.get("sku", "")),
+                # BUG REAL (2026-08-26, mismo día del PR #187 "bultos
+                # reales"): faltaba acá -- el botón "Excel" de la pantalla
+                # normal manda ESTE payload_json (ya serializado por el
+                # navegador), no vuelve a golpear el ERP. Sin app_id en el
+                # JSON, cubicador_export_excel() nunca podía cruzar contra
+                # `app_bultos` para el detalle real por bulto y SIEMPRE caía
+                # al fallback "Estimado" -- verificado en vivo con el SKU
+                # 1121100989 de la VD 10218 (el mismo caso que motivó el
+                # PR #187), que en producción seguía mostrando "Estimado"
+                # pese a tener 5 bultos reales cargados.
+                "app_id": int(l["app_id"]) if l.get("app_id") else None,
                 "descripcion_erp": str(l.get("descripcion_erp", "")),
                 "cantidad": _cubicador_num(l.get("cantidad")),
                 "total_bultos": int(_cubicador_num(l.get("total_bultos"))),
