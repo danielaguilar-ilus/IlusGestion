@@ -727,6 +727,10 @@
     }
     .tl-bloque.b-pendiente .b-cliente{color:#cbd5e1;font-weight:800}
     .tl-bloque.b-pendiente .b-horas{color:#8b93a3}
+    /* Gris discreto, no el blanco brillante por defecto -- pendiente ya es
+       el estado "en calma" de la pantalla (mismo criterio que "disponible"
+       en la fila del técnico); el avance se ve sin competir por atención. */
+    .tl-bloque.b-pendiente .b-prog{background:rgba(148,163,184,.55)}
     /* TERMINADO — verde de trabajo cumplido (Daniel 2026-08-27: "las OT
        completadas deben pasar a verdes... algo profesional y bonito, que no
        sea una puñalada para los ojos"). Antes era azul y se confundía con
@@ -745,8 +749,9 @@
       content:'✓ ';font-weight:900;color:#4ade80;
     }
     .tl-bloque.b-terminado .b-horas{color:rgba(134,239,172,.70)}
-    /* Barra de avance al 100%: se completa entera, en el mismo verde. */
-    .tl-bloque.b-terminado .b-prog{background:rgba(74,222,128,.55);width:100%}
+    /* El ancho lo decide siempre el JS con el avance_pct real (ver
+       actualizarBloque) -- acá solo el color para este estado. */
+    .tl-bloque.b-terminado .b-prog{background:rgba(74,222,128,.55)}
     /* Bloque atrasado: ámbar contenido, sin rayado ni pulso (ver nota
        del estado). El color avisa; la insignia de la fila lo nombra. */
     .tl-bloque.b-atrasado{
@@ -1725,7 +1730,15 @@
     const _md = (b.dias_total && b.dias_total > 1)
       ? ('Día ' + b.dia_n + ' de ' + b.dias_total + ' · ') : '';
     setTexto($('.b-horas', nodo), _md + _ot + _tipo + (b.ini || '') + '–' + (b.fin || ''));
-    $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
+    // 2026-08-27 (Daniel: "sería bueno ver algún tipo de avance también en
+    // las burbujas"). Antes solo se pintaba con la OT "ejecutando" — en
+    // cualquier otro estado el ancho se forzaba a 0%, así que una OT
+    // "pendiente" con checklist 2/2 (como la 136) no mostraba nada. El dato
+    // ya viaja en el payload para TODOS los estados; ahora se pinta
+    // siempre, y el color de cada estado (blanco neutro / ámbar / verde) ya
+    // lo resuelve el CSS de `.b-prog` por clase — acá solo se decide el
+    // ancho real.
+    $('.b-prog', nodo).style.width = Math.max(0, Math.min(100, b.avance_pct || 0)) + '%';
     nodo.title = (b.numero ? b.numero + ' · ' : '')
                + (b.cliente ? b.cliente + ' · ' : '')
                + (b.documento ? b.documento + ' · ' : '')
