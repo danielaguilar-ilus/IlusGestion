@@ -178,6 +178,26 @@
       text-shadow:0 2px 24px rgba(0,0,0,.5);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
+    /* Navegación por días — SOLO en la pantalla de control (INTERACTIVO).
+       2026-08-27 (Daniel: "necesito ir ayer, a ver qué pasó... esa es la
+       idea del monitor"). El televisor de la pared nunca muestra esto. */
+    .date-nav-row{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:4px}
+    .date-nav-row .date-big{margin-top:0}
+    .date-nav-btn{
+      background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
+      color:#fff;width:34px;height:34px;border-radius:10px;flex:none;
+      font-size:20px;line-height:1;cursor:pointer;transition:background .15s,transform .15s;
+      display:grid;place-items:center;
+    }
+    .date-nav-btn:hover{background:rgba(255,255,255,.16);transform:translateY(-1px)}
+    .date-nav-btn:active{transform:translateY(0)}
+    .date-nav-btn:disabled{opacity:.3;cursor:default;transform:none}
+    .date-hoy-btn{
+      display:block;margin:6px auto 0;background:transparent;border:1px solid var(--red-500);
+      color:#fca5a5;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+      padding:3px 12px;border-radius:99px;cursor:pointer;transition:background .15s;
+    }
+    .date-hoy-btn:hover{background:rgba(220,38,38,.18)}
 
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
@@ -863,7 +883,12 @@
 
       <div class="tv-date">
         <span class="date-kicker">Programación del día · <span id="kickerTotal">0</span> OT</span>
-        <div class="date-big" id="dateBig">—</div>
+        <div class="date-nav-row">
+          <button type="button" class="date-nav-btn" id="btnDiaAnt" hidden aria-label="Día anterior">‹</button>
+          <div class="date-big" id="dateBig">—</div>
+          <button type="button" class="date-nav-btn" id="btnDiaSig" hidden aria-label="Día siguiente">›</button>
+        </div>
+        <button type="button" class="date-hoy-btn" id="btnDiaHoy" hidden>Volver a hoy</button>
       </div>
 
       <div class="tv-right">
@@ -944,6 +969,11 @@
     timerOkPill: null,
     modalAbierto: false,     // con el modal abierto NADA se repinta debajo
     datosPendientes: null,   // datos que llegaron mientras el modal estaba abierto
+    // Navegación por días (solo INTERACTIVO) — hoyReal se fija UNA vez al
+    // cargar, con la fecha que mandó el servidor al render inicial.
+    hoyReal: (DATOS_INICIALES && DATOS_INICIALES.fecha) || null,
+    fechaVista: null, fechaAnt: null, fechaSig: null,
+    pausadoPorNavegacion: false,
   };
 
   /* ─────────────────────────── utilidades ─────────────────────────── */
@@ -1640,6 +1670,39 @@
     renderDots();
     renderProximos(datos);
     programarRotacion();
+    actualizarNavFecha(datos);
+  }
+
+  /* ── Navegación por días — SOLO pantalla de control (Daniel 2026-08-27:
+     "necesito ir ayer, a ver qué pasó... esa es la idea del monitor").
+     El televisor público nunca llama a nada de esto. ── */
+  function actualizarNavFecha(datos){
+    if (!INTERACTIVO) return;
+    state.fechaVista = datos.fecha || null;
+    state.fechaAnt = datos.fecha_ant || null;
+    state.fechaSig = datos.fecha_sig || null;
+    const esHoy = datos.es_hoy !== false;
+    const hoyBtn = $('#btnDiaHoy');
+    if (hoyBtn) hoyBtn.hidden = esHoy;
+  }
+
+  async function cargarFecha(fechaISO){
+    if (!fechaISO || !DATOS_URL) return;
+    try{
+      const sep = DATOS_URL.includes('?') ? '&' : '?';
+      const datos = await fetchJson(DATOS_URL + sep + 'fecha=' + encodeURIComponent(fechaISO));
+      state.pausadoPorNavegacion = (fechaISO !== state.hoyReal);
+      renderAll(datos);
+      setOffline(false);
+    } catch(e){
+      setOffline(true);
+    }
+  }
+
+  function volverAHoy(){
+    state.pausadoPorNavegacion = false;
+    state.huella = null;   // fuerza a latido() a repintar en el próximo tick
+    cargarFecha(state.hoyReal);
   }
 
   /* ───────────────── ticker local (1 s): reloj, ahora, tiempos ───────────────── */
@@ -1728,6 +1791,14 @@
   }
 
   async function latido(){
+    // Mientras se navega a otro día, el latido automático queda en pausa —
+    // no tiene sentido "detectar cambios" de un día que no es hoy, y evita
+    // que un repintado automático le quite de las manos a Daniel el día
+    // que está mirando. Se reanuda solo con volverAHoy().
+    if (state.pausadoPorNavegacion){
+      setTimeout(latido, 2000);
+      return;
+    }
     try{
       const st = await fetchJson(STATUS_URL);
       if (!st || st.ok !== true) throw new Error('status sin ok');
@@ -1783,6 +1854,21 @@
       document.addEventListener('keydown', (ev) => {
         if (ev.key === 'Escape') cerrarModal();
       });
+
+      // Navegación por días (solo pantalla de control) — botones ‹ › y
+      // "Volver a hoy". El televisor público nunca ve estos botones
+      // (quedan `hidden` porque este bloque completo no corre si
+      // INTERACTIVO es false).
+      const btnAnt = $('#btnDiaAnt'), btnSig = $('#btnDiaSig'), btnHoy = $('#btnDiaHoy');
+      if (btnAnt) btnAnt.hidden = false;
+      if (btnSig) btnSig.hidden = false;
+      if (btnAnt) btnAnt.addEventListener('click', () => {
+        if (state.fechaAnt) cargarFecha(state.fechaAnt);
+      });
+      if (btnSig) btnSig.addEventListener('click', () => {
+        if (state.fechaSig) cargarFecha(state.fechaSig);
+      });
+      if (btnHoy) btnHoy.addEventListener('click', volverAHoy);
     }
 
     // La animación de encendido corre una sola vez

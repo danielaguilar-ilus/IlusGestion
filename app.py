@@ -50548,22 +50548,22 @@ def _puede_ot_accion(vid, accion, user=None):
                   f"-> DENIED (cliente firmó / OT en cierre — solo superadmin edita)", flush=True)
             return False
         # (2) Ventana de corrección: el técnico firmó pero el cliente NO.
-        #     2026-06-12 (Daniel, estilo Fracttal): el TÉCNICO ASIGNADO sigue
-        #     editando (corregir fotos, tareas, equipos cruzados) HASTA que
-        #     firme el cliente. También corrigen ejecutivo SSTT / supervisor /
-        #     admin. TODO cambio post-firma deja evidencia en mant_logs
+        #     2026-06-12 (Daniel, estilo Fracttal): originalmente el TÉCNICO
+        #     ASIGNADO seguía editando hasta que firmara el cliente.
+        #     🔒 REVERTIDO 2026-08-27 (Daniel, explícito): "cuando firma el
+        #     técnico, se bloquea la OT para él" — a partir de ahora la firma
+        #     del técnico es su candado inmediato, sin ventana de corrección
+        #     posterior. Gestión (ejecutivo SSTT/supervisor/admin) SÍ
+        #     conserva la ventana — es quien revisa antes de mandar a firmar
+        #     al cliente. TODO cambio post-firma deja evidencia en mant_logs
         #     (ver _ot_evidencia_post_firma) para amparar al técnico.
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
                       f"-> ALLOWED (ventana de corrección post-firma técnico)", flush=True)
                 return True
-            if role == "tecnico" and es_tecnico_asignado:
-                print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
-                      f"-> ALLOWED (técnico asignado corrige hasta firma del cliente)", flush=True)
-                return True
             print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
-                  f"-> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
+                  f"-> DENIED (técnico queda bloqueado apenas firma; solo gestión corrige)", flush=True)
             return False
         # (3) Estado de trabajo normal (sin firma del técnico): SOLO técnico
         #     asignado/colaborador. El rol manda (defense in depth: aunque un
@@ -50597,17 +50597,15 @@ def _puede_ot_accion(vid, accion, user=None):
         if ot_sellada:
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (OT sellada por firma del cliente/cierre)", flush=True)
             return False
-        # Ventana de corrección (técnico ya firmó, cliente NO): el técnico
-        # asignado SIGUE configurando (2026-06-12, estilo Fracttal) igual que
-        # ejecutivo SSTT / supervisor / admin. Evidencia en mant_logs.
+        # Ventana de corrección (técnico ya firmó, cliente NO): gestión
+        # (ejecutivo SSTT / supervisor / admin) sigue configurando.
+        # 🔒 REVERTIDO 2026-08-27 (Daniel, explícito): el técnico YA NO
+        # conserva esta ventana — su firma es candado inmediato para él.
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (ventana de corrección)", flush=True)
                 return True
-            if role == "tecnico" and es_tecnico_asignado:
-                print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (técnico asignado, ventana de corrección)", flush=True)
-                return True
-            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (técnico bloqueado apenas firma; solo gestión corrige)", flush=True)
             return False
         if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
@@ -68969,6 +68967,84 @@ def _ot_maquinas_excluidas_cierre(vid):
     return excluir_maquinas
 
 
+def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
+    """R2 (diagnóstico ≥20 caracteres) + R3 (foto por tarea con
+    requiere_foto=1). Devuelve una lista de razones bloqueantes (vacía si
+    pasa). Exime OT tipo levantamiento (mismo criterio de siempre — su
+    diagnóstico se autogenera al cerrar).
+
+    2026-08-27 (Daniel, explícito: "sí es necesario... necesitamos
+    diagnosticar los equipos... que tomamos las fotos necesarias"): se
+    extrae de `_ot_validar_cierre` (R1-R5, que sigue intacta para el cierre
+    legacy) para poder exigir ESTAS DOS reglas en la firma del TÉCNICO
+    (`firmar-revision`), no en la aprobación del supervisor — es la lección
+    ya aprendida del caso OT-58: el candado debe vivir donde el técnico
+    todavía puede resolverlo él mismo, antes de irse del sitio. No incluye
+    R1 (checklist, ya exigido aparte en firmar-revision) ni R4 (firmas,
+    no aplica todavía en ese punto del flujo).
+    """
+    v = mysql_fetchone(
+        "SELECT tipo, diagnostico, levantamiento_id, cliente_id "
+        "  FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return ["OT no encontrada"]
+
+    razones = []
+    es_levantamiento = _ot_es_levantamiento(v)
+    if excluir_maquinas is None:
+        excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
+
+    if not es_levantamiento:
+        diag = (v.get("diagnostico") or "").strip()
+        if len(diag) < 20:
+            razones.append(
+                "Diagnóstico obligatorio: debe explicar qué se hizo "
+                "(mínimo 20 caracteres) antes de firmar."
+            )
+
+    tareas_sin_foto = []
+    try:
+        if excluir_maquinas:
+            _ph = ",".join(["%s"] * len(excluir_maquinas))
+            tareas_sin_foto = mysql_fetchall(
+                "SELECT t.id, t.titulo "
+                "FROM mant_visita_tareas t "
+                "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+                f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
+                f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
+                + _ot_tarea_no_trabajable_sql("t.") +
+                "GROUP BY t.id, t.titulo "
+                "HAVING COUNT(f.id) = 0",
+                (vid, *list(excluir_maquinas))
+            ) or []
+        else:
+            tareas_sin_foto = mysql_fetchall(
+                "SELECT t.id, t.titulo "
+                "FROM mant_visita_tareas t "
+                "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
+                "WHERE t.visita_id=%s AND t.requiere_foto=1 "
+                + _ot_tarea_no_trabajable_sql("t.") +
+                "GROUP BY t.id, t.titulo "
+                "HAVING COUNT(f.id) = 0",
+                (vid,)
+            ) or []
+    except Exception as _e_r3:
+        # FAIL-OPEN deliberado (mismo criterio que R3/R5 en _ot_validar_cierre,
+        # fix 2026-08-22): un problema de infraestructura no debe trabar al
+        # técnico en terreno.
+        print(f"[_ot_validar_diagnostico_y_fotos][R3] vid={vid}: {_e_r3}", flush=True)
+        tareas_sin_foto = []
+
+    if tareas_sin_foto:
+        nombres = [t.get("titulo") or f"#{t['id']}" for t in tareas_sin_foto[:5]]
+        suf = "" if len(tareas_sin_foto) <= 5 else f" y {len(tareas_sin_foto)-5} más"
+        razones.append(
+            f"Falta foto en {len(tareas_sin_foto)} tarea(s): {', '.join(nombres)}{suf}"
+        )
+
+    return razones
+
+
 def _ot_validar_cierre(vid):
     """FASE 5 — Validación de cierre auditable de OT con 4 reglas que el
     usuario aprobó. Devuelve dict con resultado:
@@ -75381,14 +75457,22 @@ def _ot_tv_huella():
         return "err"
 
 
-def _ot_tv_datos():
-    """Payload del monitor: hoy agrupado por persona + próximos días.
+def _ot_tv_datos(fecha=None):
+    """Payload del monitor: un día agrupado por persona + próximos días.
 
     ⚠️ Pantalla pública: NUNCA montos, costos ni márgenes (mismo criterio
     que el resto de las vistas públicas del proyecto).
+
+    `fecha` (2026-08-27, Daniel: "necesito ir ayer, a ver qué pasó... esa
+    es la idea del monitor"): día a mostrar, por defecto HOY. Ojo — el
+    televisor público (`ot_tv_datos`) SIEMPRE llama esta función sin
+    argumento (nunca lee query params), así que para él nada cambia; el
+    parámetro solo lo usa la pantalla de control (`ot2_monitor_datos`).
     """
     ahora = _now_chile()
-    hoy = ahora.date()
+    hoy_real = ahora.date()
+    hoy = fecha or hoy_real
+    es_hoy_real = (hoy == hoy_real)
     fin = hoy + timedelta(days=_OT_TV_DIAS_PROX)
 
     filas = mysql_fetchall(
@@ -75453,9 +75537,14 @@ def _ot_tv_datos():
         # está 100% hecho pero la OT no se ha cerrado formalmente, NO es un
         # atraso del técnico — es un cierre pendiente. Marcarlo en rojo en el
         # televisor señalaría a alguien que ya hizo su pega.
+        # 🔒 FIX 2026-08-27 (navegación por días): esta comparación usa la
+        # HORA REAL del reloj — solo tiene sentido si `hoy` es de verdad hoy.
+        # Sin este guard, navegar a un día pasado marcaba TODO como atrasado
+        # (cualquier hora ya pasó) y uno futuro NUNCA (la hora de hoy es
+        # siempre "menor" que la de mañana a las 9am si son las 22:00 hoy).
         trabajo_listo = bool(n_t) and n_c >= n_t
-        atrasada = (not en_curso and not terminada and not trabajo_listo
-                    and bool(h_ini) and h_ini < hora_ahora)
+        atrasada = (es_hoy_real and not en_curso and not terminada
+                    and not trabajo_listo and bool(h_ini) and h_ini < hora_ahora)
 
         if en_curso:
             resumen["en_ejecucion"] += 1
@@ -75581,6 +75670,10 @@ def _ot_tv_datos():
     return {
         "ok": True,
         "generado_iso": ahora.isoformat(),
+        "fecha": hoy.isoformat(),
+        "es_hoy": es_hoy_real,
+        "fecha_ant": (hoy - timedelta(days=1)).isoformat(),
+        "fecha_sig": (hoy + timedelta(days=1)).isoformat(),
         "hoy_label": f"{_DIAS[hoy.weekday()]} {hoy.day} de {_MESES[hoy.month - 1]}",
         "jornada": {"ini": _OT2_JORNADA_INI, "fin": _OT2_JORNADA_FIN},
         "resumen": resumen,
@@ -75803,14 +75896,36 @@ def ot2_monitor_status():
 @_require_superadmin
 def ot2_monitor_datos():
     """Tablero completo para la pantalla de control. Comparte la caché con
-    el televisor: si ambos están abiertos, la base se consulta una vez."""
-    import time as _time
-    ent = _OT_TV_CACHE.get("payload")
-    if ent and (_time.time() - ent["ts"]) < _OT_TV_TTL:
-        return jsonify(ent["payload"])
-    payload = _ot_tv_datos()
-    _OT_TV_CACHE["payload"] = {"payload": payload, "ts": _time.time()}
-    return jsonify(payload)
+    el televisor SOLO cuando se pide el día de hoy: si ambos están
+    abiertos, la base se consulta una vez.
+
+    `?fecha=YYYY-MM-DD` (2026-08-27, Daniel: "necesito ir ayer... o tener
+    una vista semanal"): navega a otro día. 🔴 A propósito NO se guarda en
+    `_OT_TV_CACHE` — esa caché es una única llave global compartida con el
+    televisor público de la pared; si un día distinto quedara ahí, el
+    televisor podría mostrárselo a cualquiera dentro de la ventana de 6s.
+    Consultar sin caché en la navegación por días es más simple y más
+    seguro que separar la caché por fecha para un uso que no es de alta
+    frecuencia (nadie navega días 8 veces por segundo).
+    """
+    _fecha_q = (request.args.get("fecha") or "").strip()
+    _fecha_dt = None
+    if _fecha_q:
+        try:
+            _fecha_dt = datetime.strptime(_fecha_q, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"ok": False, "error": "Fecha inválida (usa YYYY-MM-DD)."}), 400
+
+    if _fecha_dt is None or _fecha_dt == _now_chile().date():
+        import time as _time
+        ent = _OT_TV_CACHE.get("payload")
+        if ent and (_time.time() - ent["ts"]) < _OT_TV_TTL:
+            return jsonify(ent["payload"])
+        payload = _ot_tv_datos()
+        _OT_TV_CACHE["payload"] = {"payload": payload, "ts": _time.time()}
+        return jsonify(payload)
+
+    return jsonify(_ot_tv_datos(fecha=_fecha_dt))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -80194,6 +80309,22 @@ def mant_ot_firmar_revision(vid):
                           "tarea(s) obligatoria(s) sin completar ni justificar."),
                 "error_codigo": "TAREAS_PENDIENTES",
                 "faltantes": faltantes,
+            }), 400
+
+        # 🔒 FIX 2026-08-27 (Daniel, explícito: "sí es necesario... un
+        # documento que prueba que hicimos el servicio correctamente...
+        # necesitamos un diagnóstico oficial"): el checklist (arriba) ya
+        # bloqueaba; diagnóstico y fotos por tarea NO — un técnico podía
+        # firmar sin haber escrito nada. Se exige acá, en SU firma, porque
+        # es el único punto del flujo donde todavía puede corregirlo él
+        # mismo antes de irse del sitio (ver _ot_validar_diagnostico_y_fotos).
+        _razones_calidad = _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas)
+        if _razones_calidad:
+            return jsonify({
+                "ok": False,
+                "error": _razones_calidad[0],
+                "error_codigo": "DIAGNOSTICO_O_FOTOS_FALTANTES",
+                "faltantes": _razones_calidad,
             }), 400
 
         u = getattr(g, "user", None) or {}
