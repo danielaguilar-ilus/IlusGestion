@@ -372,7 +372,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
          reporte formal "por técnico y por estado" quedaba pendiente. Ya
          existe: 4 hojas (OT, Por técnico, Por centro de costo, Resumen) y
          respeta los filtros que están activos en pantalla. #}
-      <a href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}"
+      <a href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}"
          class="btn btn-sm btn-outline-light"
          title="Descargar Excel con las OT del filtro actual">
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
@@ -408,20 +408,20 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {% set vista_lista = 'tabla' %}
   <div class="ot2-kpis">
     <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='pend' else 'pend') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='pend' else 'pend') }}">
       <span class="num">{{ kpis.pend }}</span><span class="lbl">Pendientes</span>
     </a>
     <a class="ot2-kpi k-ejec {{ 'on' if fase=='ejec' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='ejec' else 'ejec') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='ejec' else 'ejec') }}">
       <span class="num">{{ kpis.ejec }}</span>
       <span class="lbl">{% if kpis.ejec %}<span class="ot2-dot"></span>{% endif %}En ejecución</span>
     </a>
     <a class="ot2-kpi k-comp {{ 'on' if fase=='comp' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='comp' else 'comp') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='comp' else 'comp') }}">
       <span class="num">{{ kpis.comp }}</span><span class="lbl">Completadas</span>
     </a>
     <a class="ot2-kpi k-cerr {{ 'on' if fase=='cerr' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, fase=None if fase=='cerr' else 'cerr') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, fase=None if fase=='cerr' else 'cerr') }}">
       <span class="num">{{ kpis.cerr }}</span><span class="lbl">Cerradas</span>
     </a>
   </div>
@@ -463,6 +463,17 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
       <option value="{{ tid }}" {{ 'selected' if f_tec == tid }}>{{ n }}</option>
       {% endfor %}
     </select>
+    {# Trabajo interno (Daniel 2026-08-27: "quiero que filtre las tareas
+       internas... debo potenciar las tareas de Jaizer Araujo"). El
+       desplegable de tipo no alcanzaba: un trabajo interno puede ser
+       bodega, pero también capacitación o control de calidad sin cliente.
+       Usa el mismo criterio que `_ot_es_interna()` en el backend. #}
+    <select name="interna" class="form-select form-select-sm" style="min-height:44px;max-width:190px"
+            onchange="this.form.submit()" aria-label="Filtrar trabajo interno">
+      <option value="">Internas y de cliente</option>
+      <option value="1" {{ 'selected' if f_interna == '1' }}>Solo trabajo interno</option>
+      <option value="0" {{ 'selected' if f_interna == '0' }}>Solo de cliente</option>
+    </select>
 
     {# El orden viaja en el formulario para no perderse al buscar #}
     <input type="hidden" name="orden" value="{{ orden }}">
@@ -471,7 +482,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
       <i class="bi bi-funnel me-1"></i>Buscar
     </button>
-    {% if q or fase or f_tipo or f_tec %}
+    {% if q or fase or f_tipo or f_tec or f_interna %}
     <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
       <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -479,16 +490,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% endif %}
   </form>
 
-  {% if q or fase or f_tipo or f_tec %}
+  {% if q or fase or f_tipo or f_tec or f_interna %}
   <p class="ot2-nota">
     <i class="bi bi-info-circle-fill text-primary"></i>
-    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}
   </p>
   {% endif %}
 
   {# ── Selector de vista ───────────────────────────────────────────── #}
   <nav class="ot2-vistas" aria-label="Tipo de vista">
-    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None) }}">
       <i class="bi bi-table"></i><span>Tabla</span></a>
     {# 2026-08-20 (Daniel): la vista "Tarjetas" se quitó a pedido suyo --
        "cuando lo cambio a tabla y tarjeta no hace nada". Y era cierto: el
@@ -496,9 +507,9 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
        Tarjetas renderizaba EXACTAMENTE la tabla. Nunca se implementó como
        vista propia; existía solo el botón. Se elimina el botón en vez de
        dejar una opción que promete algo que no ocurre. #}
-    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None) }}">
       <i class="bi bi-kanban-fill"></i><span>Kanban</span></a>
-    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None) }}">
       <i class="bi bi-calendar3"></i><span>Calendario</span></a>
   </nav>
 
@@ -518,6 +529,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
               <a class="ot2-th {{ 'act' if act }}"
                  href="{{ url_for('ot2_panel', origen=origen, vista=vista, q=q or None,
                                   fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None,
+                                  interna=f_interna or None,
                                   per_page=per_page, orden=col,
                                   dir=('asc' if act and dir=='desc' else 'desc')) }}">
                 {{ label }}

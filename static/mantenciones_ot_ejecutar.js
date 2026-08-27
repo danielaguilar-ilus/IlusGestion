@@ -6330,7 +6330,19 @@ function levdRender(){
 }
 
 function _levdSerieSugerida(){
-  return `LEV${VID}-${String(_levdSeq).padStart(3,'0')}`;
+  // 🔧 FIX 2026-08-27 (Daniel, OT-2026-00136: "me trató como levantamiento").
+  // Este modal ("Agregar equipo") también se le muestra a gestión
+  // (admin/supervisor) sobre OT que NO son levantamiento -- ver el `or not
+  // es_tecnico` en ot_ejecutar.html. Antes la serie sugerida SIEMPRE llevaba
+  // el prefijo "LEV", así que un equipo agregado a una correctiva/
+  // instalación quedaba con una serie que afirmaba "vengo de un
+  // levantamiento" sin serlo. Ahora el prefijo dice la verdad: LEV solo
+  // cuando la OT de verdad es un levantamiento; PEND (pendiente de serie
+  // real) en cualquier otro caso. Ambos formatos son "provisorios" para
+  // _serie_es_provisoria() en el backend (app.py:_RE_SERIE_GENERADA), así
+  // que se siguen pudiendo reemplazar después por la serie real de fábrica.
+  const _prefijo = (typeof ES_LEVANTAMIENTO !== 'undefined' && ES_LEVANTAMIENTO) ? 'LEV' : 'PEND';
+  return `${_prefijo}${VID}-${String(_levdSeq).padStart(3,'0')}`;
 }
 
 // ══════════════════════════════════════════════════════════════════════

@@ -424,6 +424,22 @@
               <input type="date" id="otReagFecha" class="form-control form-control-sm"
                      value="{{ visita.fecha_programada }}" style="max-width:170px">
             </div>
+            {# 🔧 FIX 2026-08-27 (Daniel: "se podrá editar la fecha de término
+               también, ya que cayó una OT medio atravesada"). Hasta ahora
+               esta caja solo movía `fecha_programada` — una OT de varios
+               días (ej. 01-09 al 04-09) no tenía forma de corregir su
+               término si quedaba mal, salvo tocando la base directo. El
+               backend ya acepta `fecha_fin` (mant_visita_update, allowed
+               list) desde siempre; solo faltaba el campo acá. Vacío = OT de
+               un solo día (no se manda el campo, no se toca lo que hubiera). #}
+            <div>
+              <label class="form-label small fw-semibold mb-1">
+                Término <span class="text-muted fw-normal">(si son varios días)</span>
+              </label>
+              <input type="date" id="otReagFechaFin" class="form-control form-control-sm"
+                     value="{{ visita.fecha_fin if visita.fecha_fin and visita.fecha_fin != visita.fecha_programada else '' }}"
+                     style="max-width:170px">
+            </div>
             <div>
               <label class="form-label small fw-semibold mb-1">Desde</label>
               <input type="time" id="otReagIni" class="form-control form-control-sm"
@@ -3161,13 +3177,21 @@ window.otCerrarReagendar = function(){
   if (box) box.style.display = 'none';
 };
 window.otConfirmarReagendar = async function(){
-  const f   = document.getElementById('otReagFecha');
-  const hi  = document.getElementById('otReagIni');
-  const hf  = document.getElementById('otReagFin');
+  const f     = document.getElementById('otReagFecha');
+  const fFin  = document.getElementById('otReagFechaFin');
+  const hi    = document.getElementById('otReagIni');
+  const hf    = document.getElementById('otReagFin');
   if (!f) return;
   const fecha = (f.value || '').trim();
   if (!fecha){
     ilusToast('Elige una fecha.', {type: 'warning'});
+    return;
+  }
+  // Fecha de término del TRAMO (OT de varios días) — separada de la hora.
+  // Vacía = OT de un solo día, no se manda el campo.
+  const fechaFin = (fFin && fFin.value) ? fFin.value.trim() : null;
+  if (fechaFin && fechaFin < fecha){
+    ilusToast('La fecha de término no puede ser anterior a la fecha de inicio.', {type: 'warning'});
     return;
   }
   const ini = (hi && hi.value) ? hi.value : null;
@@ -3179,6 +3203,10 @@ window.otConfirmarReagendar = async function(){
     return;
   }
   const body = {fecha_programada: fecha};
+  // Explícito incluso vacío: permite BORRAR una fecha de término que
+  // quedó mal puesta (la OT "atravesada" que reportó Daniel), volviendo la
+  // OT a un solo día en vez de dejar un tramo viejo sin forma de quitarlo.
+  body.fecha_fin = fechaFin || fecha;
   if (ini) body.hora_inicio = ini;
   if (fin) body.hora_fin = fin;
   // Motivo de la desviación: no se guarda como campo de la OT, viaja solo
