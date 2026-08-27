@@ -269,6 +269,10 @@
     .cd-ot .h{font-weight:800;color:#9ca3af;flex:none;font-variant-numeric:tabular-nums}
     .cd-ot .tk{font-size:10px;font-weight:800;color:#a78bfa;flex:none;
       background:rgba(139,92,246,.14);border-radius:4px;padding:0 5px}
+    /* "2/4" = día 2 de una OT de 4 jornadas (OT-133) */
+    .cd-ot .md{font-size:10px;font-weight:900;color:#60a5fa;flex:none;
+      background:rgba(59,130,246,.16);border-radius:4px;padding:0 5px;
+      font-variant-numeric:tabular-nums}
     .cd-ot .c{font-weight:700;color:#e5e7eb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .cd-ot .t{margin-left:auto;font-size:10px;font-weight:800;color:#fca5a5;
       text-transform:uppercase;white-space:nowrap;flex:none}
@@ -1647,7 +1651,11 @@
     const _tipo = b.tipo ? b.tipo + ' · ' : '';
     const _ref = b.documento ? (b.documento + ' · ')
                              : (b.ticket ? b.ticket + ' · ' : '');
-    setTexto($('.b-horas', nodo), _ref + _tipo + (b.ini || '') + '–' + (b.fin || ''));
+    // OT de varios días: se dice qué jornada es, para que no parezca
+    // duplicada ni atrasada (caso OT-133, del 01-09 al 04-09).
+    const _md = (b.dias_total && b.dias_total > 1)
+      ? ('Día ' + b.dia_n + ' de ' + b.dias_total + ' · ') : '';
+    setTexto($('.b-horas', nodo), _md + _ref + _tipo + (b.ini || '') + '–' + (b.fin || ''));
     $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
     nodo.title = (b.numero ? b.numero + ' · ' : '')
                + (b.cliente ? b.cliente + ' · ' : '')
@@ -2025,10 +2033,14 @@
         if (!esMes){
           html += '<div class="cd-ots">';
           (d.ots || []).forEach(o => {
+            const md = (o.dias_total && o.dias_total > 1)
+              ? '<span class="md">' + o.dia_n + '/' + o.dias_total + '</span>' : '';
             html += '<div class="cd-ot e-' + esc(o.estado) + '" title="' +
                 esc((o.numero || '') + (o.ticket ? ' · Ticket ' + o.ticket : '') +
+                    (o.dias_total > 1 ? ` · Día ${o.dia_n} de ${o.dias_total}` : '') +
                     ' · ' + (o.tecnico || '')) + '">' +
               (o.ini ? '<span class="h">' + esc(o.ini) + '</span>' : '') +
+              md +
               (o.ticket ? '<span class="tk">' + esc(o.ticket) + '</span>' : '') +
               '<span class="c">' + esc(o.cliente) + '</span>' +
               (o.tipo ? '<span class="t">' + esc(o.tipo) + '</span>' : '') +

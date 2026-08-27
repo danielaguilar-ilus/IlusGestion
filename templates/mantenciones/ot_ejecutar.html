@@ -402,18 +402,20 @@
           {{ visita.fecha_programada | chile_fmt('%d/%m/%Y') }}
           {% if visita.hora_inicio %} · {{ (visita.hora_inicio | string)[:5] }}{% endif %}
           {% if visita.hora_fin %}–{{ (visita.hora_fin | string)[:5] }}{% endif %}
-          {# Daniel 2026-08-27: "quiero moverlas solo yo como super admin".
-             Ojo: `_es_superadmin` se define recién en la línea ~1980 de esta
-             plantilla, después de este bloque, así que acá va la fuente
-             directa (`permissions.superadmin`). #}
-          {% if permissions.superadmin %}
+          {# Daniel 2026-08-27: primero pidió "quiero moverlas solo yo como
+             super admin" y horas después lo abrió: "necesito que TODOS
+             puedan editar las fechas y horas, no solo yo". Se usa
+             `puede_metadata`, que es el mismo permiso que el backend exige
+             en el PUT (@_ot_can_metadata: gestión sí, técnico nunca) — así
+             el botón aparece exactamente donde la acción va a funcionar. #}
+          {% if puede_metadata %}
           <button type="button" class="btn btn-sm btn-link p-0 ms-2" style="font-size:.75rem;text-decoration:none"
                   onclick="otAbrirReagendar()">
             <i class="bi bi-calendar-event"></i> Reagendar
           </button>
           {% endif %}
         </div>
-        {% if permissions.superadmin %}
+        {% if puede_metadata %}
         <div id="otReagendarBox" style="display:none;grid-column:1 / -1;background:#f9fafb;
              border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-top:2px">
           <div class="d-flex gap-2 flex-wrap align-items-end">

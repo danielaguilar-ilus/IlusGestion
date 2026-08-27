@@ -75474,7 +75474,11 @@ _OT_TV_RL: dict   = {}
 _OT_TV_CACHE: dict = {}       # token → {payload, ts}
 _OT_TV_TTL        = 6.0       # < que el latido de 8s: dos pantallas no
                               # consultan la BD dos veces
-_OT_TV_DIAS_PROX  = 4         # días futuros en la franja inferior
+_OT_TV_DIAS_PROX  = 7         # días futuros en la franja inferior
+# 2026-08-27 (Daniel: la OT-2026-00133 del 01-09 no aparecía). Con 4 días,
+# estando a 27-ago la franja llegaba hasta el 31 y una OT del 1 de
+# septiembre quedaba invisible. Con 7 se ve la semana completa por delante,
+# que es el horizonte con el que se planifica.
 
 
 def _ensure_ot_pantallas():
@@ -75737,12 +75741,20 @@ def _ot_tv_datos(fecha=None):
     es_hoy_real = (hoy == hoy_real)
     fin = hoy + timedelta(days=_OT_TV_DIAS_PROX)
 
+    # 🔧 FIX 2026-08-27 (Daniel: "la OT de Rafael Naranjo N° 133, esa para
+    # los días 01-09 hasta 04-09, no se ve en el monitor"). Antes esto
+    # filtraba SOLO por `fecha_programada`, así que una OT de varios días
+    # aparecía únicamente en su día de INICIO: al pararse en el 2, 3 o 4 de
+    # septiembre, la OT existía pero el monitor decía que no había nada.
+    # Ahora se cruza por SOLAPE de rangos — la OT entra si su tramo
+    # [inicio, término] toca el rango que se está mirando.
     filas = mysql_fetchall(
         _OT_TV_SELECT + _OT2_JOIN_TAREAS +
-        " WHERE v.fecha_programada BETWEEN %s AND %s "
+        " WHERE v.fecha_programada <= %s "
+        "   AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s "
         "   AND v.estado NOT IN ('cancelada','anulada') "
         " ORDER BY v.hora_inicio ASC, v.numero_ot ASC",
-        (hoy, fin)) or []
+        (fin, hoy)) or []
 
     # Todos los técnicos activos, para poder mostrar "Disponible" a quien
     # hoy no tiene carga (decisión de Daniel: el equipo se ve completo).
@@ -75800,9 +75812,21 @@ def _ot_tv_datos(fecha=None):
 
     for f in filas:
         fecha = f.get("fecha_programada")
+        # Tramo real que ocupa la OT. Una de varios días (ej. la 133, del
+        # 01-09 al 04-09) pertenece a TODOS esos días, no solo al primero.
+        fecha_hasta = f.get("fecha_fin") or fecha
+        if fecha_hasta and fecha and fecha_hasta < fecha:
+            fecha_hasta = fecha          # dato malo: no invertir el tramo
         estado = (f.get("estado") or "").lower()
-        if fecha != hoy:
-            proximos_cnt[fecha] = proximos_cnt.get(fecha, 0) + 1
+
+        if not (fecha and fecha <= hoy <= fecha_hasta):
+            # No toca el día que se está mirando: cuenta para la franja de
+            # próximos días, en CADA jornada futura que ocupe.
+            _d = max(fecha, hoy + timedelta(days=1)) if fecha else None
+            while _d and _d <= fecha_hasta and _d <= fin:
+                if _d > hoy:
+                    proximos_cnt[_d] = proximos_cnt.get(_d, 0) + 1
+                _d += timedelta(days=1)
             continue
 
         resumen["total"] += 1
@@ -75880,6 +75904,11 @@ def _ot_tv_datos(fecha=None):
             "cliente": cliente_txt[:44],
             "ticket": f.get("numero_ticket") or None,
             "documento": _doc or None,
+            # OT de varios días: se indica qué jornada de cuántas es esta,
+            # para que en el televisor se entienda que no está atrasada ni
+            # duplicada — es la misma OT que sigue en curso (OT-133).
+            "dia_n": ((hoy - fecha).days + 1) if fecha_hasta > fecha else None,
+            "dias_total": ((fecha_hasta - fecha).days + 1) if fecha_hasta > fecha else None,
             "ini": h_ini, "fin": _ot_tv_hhmm(f.get("hora_fin")),
             "estado": ("ejecutando" if en_curso else
                        "terminado" if terminada else
@@ -76047,12 +76076,15 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
         ant = desde - timedelta(days=7)
         sig = desde + timedelta(days=7)
 
+    # Mismo criterio de SOLAPE que la vista de día: una OT de varios días
+    # entra si su tramo toca la semana/mes que se está mirando.
     filas = mysql_fetchall(
         _OT_TV_SELECT + _OT2_JOIN_TAREAS +
-        " WHERE v.fecha_programada BETWEEN %s AND %s "
+        " WHERE v.fecha_programada <= %s "
+        "   AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s "
         "   AND v.estado NOT IN ('cancelada','anulada') "
         " ORDER BY v.fecha_programada ASC, v.hora_inicio ASC, v.numero_ot ASC",
-        (desde, hasta)) or []
+        (hasta, desde)) or []
 
     por_dia, resumen = {}, {"total": 0, "en_ejecucion": 0, "completadas": 0,
                             "pendientes": 0, "atrasadas": 0}
@@ -76096,42 +76128,60 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
         if atrasada:
             resumen["atrasadas"] += 1
 
-        d = por_dia.setdefault(fecha_f, {
-            "total": 0, "completadas": 0, "en_ejecucion": 0,
-            "pendientes": 0, "atrasadas": 0, "ots": [],
-        })
-        d["total"] += 1
-        if en_curso:
-            d["en_ejecucion"] += 1
-        elif terminada:
-            d["completadas"] += 1
-        else:
-            d["pendientes"] += 1
-        if atrasada:
-            d["atrasadas"] += 1
+        # Mismo respaldo de nombre que la vista de día: si la ficha tiene
+        # el nombre provisorio "Cliente ticket #NNNN", se usa la empresa
+        # real que escribió quien abrió el ticket.
+        _cn = (f.get("razon_social") or "").strip()
+        if (not _cn) or re.match(r"^cliente\s+ticket\s*#?\d*$", _cn, re.I):
+            _cn = (f.get("ticket_empresa") or "").strip() or _cn
 
-        if len(d["ots"]) < 12:      # techo por día: la tarjeta no es un listado
-            # Mismo respaldo de nombre que la vista de día: si la ficha tiene
-            # el nombre provisorio "Cliente ticket #NNNN", se usa la empresa
-            # real que escribió quien abrió el ticket.
-            _cn = (f.get("razon_social") or "").strip()
-            if (not _cn) or re.match(r"^cliente\s+ticket\s*#?\d*$", _cn, re.I):
-                _cn = (f.get("ticket_empresa") or "").strip() or _cn
-            d["ots"].append({
-                "vid": f.get("id"),
-                "numero": f.get("numero_ot") or f"#{f.get('id')}",
-                "cliente": (_cn or "Trabajo interno")[:38],
-                "ticket": f.get("numero_ticket") or None,
-                "tipo": _TIPO_OT_LABEL.get(
-                    (f.get("tipo") or "").lower(),
-                    (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo"),
-                "tecnico": f.get("tecnico_nombre") or "Sin asignar",
-                "ini": h_ini,
-                "estado": ("ejecutando" if en_curso else
-                           "terminado" if terminada else
-                           "atrasado" if atrasada else "pendiente"),
-                "avance_pct": pct,
+        # 🔧 FIX 2026-08-27 (OT-2026-00133, del 01-09 al 04-09): una OT de
+        # varios días ocupa TODOS esos días en el calendario, no solo el
+        # primero. Se recorta al rango visible para no salirse de la
+        # semana/mes que se está mirando.
+        _fin_f = f.get("fecha_fin") or fecha_f
+        if _fin_f < fecha_f:
+            _fin_f = fecha_f            # dato malo: no invertir el tramo
+        _dia = max(fecha_f, desde)
+        _tope = min(_fin_f, hasta)
+        _multi = (_fin_f > fecha_f)
+        while _dia <= _tope:
+            d = por_dia.setdefault(_dia, {
+                "total": 0, "completadas": 0, "en_ejecucion": 0,
+                "pendientes": 0, "atrasadas": 0, "ots": [],
             })
+            d["total"] += 1
+            if en_curso:
+                d["en_ejecucion"] += 1
+            elif terminada:
+                d["completadas"] += 1
+            else:
+                d["pendientes"] += 1
+            if atrasada:
+                d["atrasadas"] += 1
+
+            if len(d["ots"]) < 12:   # techo por día: la tarjeta no es un listado
+                d["ots"].append({
+                    "vid": f.get("id"),
+                    "numero": f.get("numero_ot") or f"#{f.get('id')}",
+                    "cliente": (_cn or "Trabajo interno")[:38],
+                    "ticket": f.get("numero_ticket") or None,
+                    "tipo": _TIPO_OT_LABEL.get(
+                        (f.get("tipo") or "").lower(),
+                        (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo"),
+                    "tecnico": f.get("tecnico_nombre") or "Sin asignar",
+                    # En una OT de varios días, la hora de inicio solo aplica
+                    # al primero — en los siguientes confundiría.
+                    "ini": h_ini if _dia == fecha_f else None,
+                    "multidia": _multi,
+                    "dia_n": (_dia - fecha_f).days + 1 if _multi else None,
+                    "dias_total": (_fin_f - fecha_f).days + 1 if _multi else None,
+                    "estado": ("ejecutando" if en_curso else
+                               "terminado" if terminada else
+                               "atrasado" if atrasada else "pendiente"),
+                    "avance_pct": pct,
+                })
+            _dia += timedelta(days=1)
 
     dias = []
     cur = desde
@@ -76359,10 +76409,15 @@ def ot2_monitor_control():
         # pregunta "¿qué es eso que estoy viendo?".
         interactivo=True,
         # 2026-08-27 (Daniel: "necesito poder editar las OT" desde el
-        # monitor). Habilita los botones de correr días / abrir la OT en el
-        # modal. El backend igual valida cada PUT — esto solo evita mostrar
-        # botones que después van a rechazar. El televisor nunca lo recibe.
-        puede_editar=bool((g.get("permissions") or {}).get("superadmin")),
+        # monitor, y después: "necesito que TODOS puedan editar las fechas y
+        # horas, no solo yo"). Se alinea con lo que el backend ya acepta:
+        # `_ot_can_metadata` deja reagendar a la familia de gestión
+        # (admin/supervisor/ejecutivo), no solo superadmin — antes el botón
+        # se escondía para Aarón y Víctor aunque el PUT los habría dejado.
+        # Quien llegó hasta acá ya pasó `_require_gestion_monitor`, que
+        # excluye a los técnicos; el PUT valida igual, esto solo decide si
+        # se dibuja el botón. El televisor nunca lo recibe.
+        puede_editar=True,
     )
 
 
