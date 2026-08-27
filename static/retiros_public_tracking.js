@@ -426,7 +426,7 @@
       const btn = document.getElementById('ctaMailSoporte');
       if (!btn) return;
       btn.addEventListener('click', () => {
-        const mail = btn.dataset.mail || 'servicio.tecnico@ilusfitness.com';
+        const mail = btn.dataset.mail || 'soportetec@sphs.cl';
         try {
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(mail)

@@ -41,10 +41,10 @@ Configurar en Railway → Settings → Variables:
     ILUS_BRAND_NAME         (ej: "ILUS Fitness")
     ILUS_BRAND_FROM_NAME    (ej: "ILUS")           — visible en "De:"
     ILUS_BRAND_FROM_EMAIL   (ej: no-reply@ilusfitness.com)
-    ILUS_BRAND_REPLY_TO     (ej: servicio.tecnico@ilusfitness.com)
+    ILUS_BRAND_REPLY_TO     (ej: soportetec@sphs.cl)
     ILUS_BRAND_WA_NAME      (ej: "ILUS")           — prefijo WhatsApp/SMS
     ILUS_BRAND_SUPPORT_URL  (ej: https://ilusfitness.com/soporte)
-    ILUS_BRAND_SUPPORT_EMAIL(ej: servicio.tecnico@ilusfitness.com)
+    ILUS_BRAND_SUPPORT_EMAIL(ej: soportetec@sphs.cl)
 
 DESARROLLO LOCAL
 ================

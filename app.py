@@ -12469,6 +12469,81 @@ def admin_roles():
     )
 
 
+@app.route("/admin/tecnicos-clasificacion")
+@require_permission("admin")
+def admin_tecnicos_clasificacion():
+    """Interno vs Externo de cada técnico — QUÉ ve el sistema y POR QUÉ.
+
+    2026-08-27. Daniel pidió 3 veces que Daniel Pulgar e Isabel Milling
+    dejaran de salir entre los INTERNOS del monitor, y las 3 veces le
+    respondí que cambiara roles a mano — sin poder decirle exactamente
+    cuál, porque desde el código no se ve el dato real. Esta pantalla
+    existe para cortar ese ida y vuelta: muestra, técnico por técnico, el
+    rol guardado, si tiene ficha de proveedor externo y con qué nombre
+    calza, y el veredicto final con su motivo. Desde acá se corrige en un
+    clic, sin depender de nadie.
+
+    Usa EXACTAMENTE el mismo criterio que `_ot_tv_datos` para clasificar
+    (rol `tecnico_externo*` o ficha en `mant_tecnicos_externos`), así que
+    lo que se ve acá es lo que va a mostrar el monitor — no una segunda
+    lógica que se pueda desincronizar.
+    """
+    filas = []
+    try:
+        rows = mysql_fetchall(
+            "SELECT au.id, au.username, COALESCE(au.nombre, au.username) AS nombre, "
+            "       au.role, au.active, "
+            "       te.id            AS prov_por_id, "
+            "       te.razon_social  AS prov_por_id_nombre, "
+            "       ten.id           AS prov_por_nombre, "
+            "       ten.razon_social AS prov_por_nombre_rs "
+            "  FROM app_users au "
+            "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
+            "  LEFT JOIN mant_tecnicos_externos ten "
+            "         ON ten.user_id IS NULL "
+            "        AND LOWER(TRIM(COALESCE(au.nombre, au.username))) IN ( "
+            "              LOWER(TRIM(ten.razon_social)), "
+            "              LOWER(TRIM(ten.contacto_nombre)) ) "
+            " WHERE LOWER(au.role) LIKE %s "
+            " ORDER BY au.active DESC, nombre", ("tecnico%",)) or []
+    except Exception as e:
+        print(f"[admin_tec_clasif] {e}", flush=True)
+        rows = []
+
+    for r in rows:
+        rol = (r.get("role") or "").lower()
+        por_rol = rol.startswith("tecnico_externo")
+        por_id = bool(r.get("prov_por_id"))
+        por_nombre = bool(r.get("prov_por_nombre"))
+        externo = por_rol or por_id or por_nombre
+        if por_rol:
+            motivo = f"Su rol es «{r.get('role')}»"
+        elif por_id:
+            motivo = ("Tiene ficha de proveedor enlazada: "
+                      f"{r.get('prov_por_id_nombre') or '—'}")
+        elif por_nombre:
+            motivo = ("Su nombre calza con el proveedor "
+                      f"«{r.get('prov_por_nombre_rs') or '—'}» (ficha sin enlazar)")
+        else:
+            motivo = f"Su rol es «{r.get('role')}» y no tiene ficha de proveedor"
+        filas.append({**r, "externo": externo, "motivo": motivo})
+
+    # Roles realmente existentes, para no ofrecer uno que el PUT rechace.
+    try:
+        _rr = mysql_fetchall(
+            "SELECT slug FROM roles_dinamicos WHERE activo=1 AND slug LIKE %s "
+            " ORDER BY slug", ("tecnico%",)) or []
+        roles_tecnicos = [x["slug"] for x in _rr]
+    except Exception:
+        roles_tecnicos = []
+    for _r in ("tecnico", "tecnico_externo"):
+        if _r not in roles_tecnicos:
+            roles_tecnicos.append(_r)
+
+    return render_template("admin/tecnicos_clasificacion.html",
+                           filas=filas, roles_tecnicos=sorted(roles_tecnicos))
+
+
 @app.route("/admin/roles/<int:uid>", methods=["PUT"])
 @require_permission("admin")
 def admin_roles_update(uid):
@@ -72921,6 +72996,22 @@ def mant_visita_update(vid):
     # (antes quedaba registrado como "actualizada" sin decir qué cambió).
     _mod_prev_audit = None
     _estado_prev_audit = None
+    # 2026-08-27 (Daniel: "quiero ir monitoreando las OT... agregar que pasó
+    # a otro día por cualquier desviación"). Mover una fecha SIN dejar rastro
+    # de por qué hace imposible medir después cuánto se corre la agenda y por
+    # qué causa. Se captura la fecha anterior para poder anotar el salto real
+    # en la bitácora, no solo un genérico "actualizada".
+    _fecha_prev_audit = None
+    _hora_prev_audit = None
+    if "fecha_programada" in d or "hora_inicio" in d:
+        try:
+            _prev_f = mysql_fetchone(
+                "SELECT fecha_programada, hora_inicio FROM mant_visitas WHERE id=%s",
+                (vid,)) or {}
+            _fecha_prev_audit = _prev_f.get("fecha_programada")
+            _hora_prev_audit = _prev_f.get("hora_inicio")
+        except Exception:
+            pass
     if "modalidad_cobro" in d or "estado" in d:
         try:
             _prev_aud = mysql_fetchone(
@@ -72942,6 +73033,25 @@ def mant_visita_update(vid):
         # detalla el cambio de modalidad y de estado, que son los dos campos
         # con consecuencia económica y de cierre.
         _detalle_upd = []
+        # Reagendamiento: queda el salto exacto + el motivo declarado, para
+        # poder responder después "¿cuántas OT se corrieron y por qué?".
+        if "fecha_programada" in d and _fecha_prev_audit is not None:
+            _f_new = str(d.get("fecha_programada") or "")[:10]
+            _f_old = str(_fecha_prev_audit or "")[:10]
+            if _f_new and _f_new != _f_old:
+                try:
+                    _f_old_txt = datetime.strptime(_f_old, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    _f_new_txt = datetime.strptime(_f_new, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    _dias = (datetime.strptime(_f_new, "%Y-%m-%d")
+                             - datetime.strptime(_f_old, "%Y-%m-%d")).days
+                    _salto = (f" ({_dias:+d} día" + ("s" if abs(_dias) != 1 else "") + ")")
+                except Exception:
+                    _f_old_txt, _f_new_txt, _salto = _f_old or "—", _f_new, ""
+                _txt = f"REAGENDADA: {_f_old_txt} → {_f_new_txt}{_salto}"
+                _mot_dev = (d.get("motivo_cambio") or "").strip()[:300]
+                if _mot_dev:
+                    _txt += f" · motivo: {_mot_dev}"
+                _detalle_upd.append(_txt)
         if "modalidad_cobro" in d and _mod_prev_audit is not None:
             if (d.get("modalidad_cobro") or "") != (_mod_prev_audit or ""):
                 _detalle_upd.append(
@@ -87756,7 +87866,7 @@ def _reporte_informe_pdf_bytes(rep, cliente):
         "legal": "Sport and Health Solutions SPA",
         "rut":   ILUS_RUT,
         "web":   "www.ilusfitness.com",
-        "email": "servicio.tecnico@ilusfitness.com",
+        "email": "soportetec@sphs.cl",
     }
     try:
         hoy = _now_chile_str("%d/%m/%Y %H:%M")

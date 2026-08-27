@@ -412,6 +412,20 @@ quien firma sin tocar código.
 
 ### Variables de entorno (Railway → Settings → Variables)
 
+### 📮 El correo de soporte es **soportetec@sphs.cl** (regla, 2026-08-27)
+
+Pedido explícito de Daniel: *"como regla el correo es soportetec@sphs.cl"*.
+
+Reemplaza a `servicio.tecnico@ilusfitness.com`, que aparecía en 15 lugares
+(footers de PDF, seguimiento público de retiros y transporte, anexo de
+servicios, defaults de `config.py`). **Todo correo visible para una persona
+—cliente, proveedor o técnico— usa soportetec@sphs.cl.**
+
+⚠️ Ojo con la REGLA #0: el dominio `@sphs.cl` NO es un descuido de marca —
+es el dominio real de correo de la empresa (igual que `daniel.aguilar@sphs.cl`
+y `contacto@sphs.cl`). No "corregirlo" a `@ilusfitness.com`: ese dominio no
+tiene DNS de correo verificado (ver REGLA #13) y los mensajes no llegarían.
+
 Todas son **opcionales** — si no se setean, hay defaults sensatos:
 
 | Variable                  | Default                                  | Para qué sirve                          |
@@ -419,14 +433,14 @@ Todas son **opcionales** — si no se setean, hay defaults sensatos:
 | `ILUS_BRAND_NAME`         | `ILUS Fitness`                           | Nombre legal completo (footer email)     |
 | `ILUS_BRAND_FROM_NAME`    | `ILUS`                                   | Visible en cabecera "De:" del email      |
 | `ILUS_BRAND_FROM_EMAIL`   | `no-reply@ilusfitness.com`               | Dirección remitente (no-reply genérico)  |
-| `ILUS_BRAND_REPLY_TO`     | `servicio.tecnico@ilusfitness.com`       | Buzón donde caen respuestas reales       |
+| `ILUS_BRAND_REPLY_TO`     | `soportetec@sphs.cl`       | Buzón donde caen respuestas reales       |
 | `ILUS_BRAND_WA_NAME`      | `ILUS`                                   | Prefijo de WhatsApp/SMS (`🔧 ILUS · …`)  |
-| `ILUS_BRAND_SUPPORT_EMAIL`| `servicio.tecnico@ilusfitness.com`       | Email en footer "Para soporte: …"        |
+| `ILUS_BRAND_SUPPORT_EMAIL`| `soportetec@sphs.cl`       | Email en footer "Para soporte: …"        |
 | `ILUS_BRAND_SUPPORT_URL`  | `https://ilusfitness.com/soporte`        | URL portal soporte (footer)              |
 
 **Cómo aparece para el destinatario:**
 
-- **Email:** `De: ILUS <no-reply@ilusfitness.com>` · `Reply-To: servicio.tecnico@ilusfitness.com`
+- **Email:** `De: ILUS <no-reply@ilusfitness.com>` · `Reply-To: soportetec@sphs.cl`
   Asunto: `ILUS · Cambio seguro de contraseña`
 - **WhatsApp/SMS:** comienza con `🔧 ILUS · {tema}` y termina con `— ILUS Fitness`
 

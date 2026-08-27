@@ -432,13 +432,36 @@
               <input type="time" id="otReagFin" class="form-control form-control-sm"
                      value="{{ (visita.hora_fin | string)[:5] if visita.hora_fin else '' }}" style="max-width:120px">
             </div>
+          </div>
+          {# Daniel 2026-08-27: "quiero ir monitoreando las OT... agregar que
+             pasó a otro día por cualquier desviación". Mover la fecha sin
+             decir por qué hace imposible medir después cuánto se corre la
+             agenda y por qué causa. #}
+          <div class="mt-2">
+            <label class="form-label small fw-semibold mb-1">
+              ¿Por qué se mueve? <span class="text-muted fw-normal">(queda en el historial)</span>
+            </label>
+            <input type="text" id="otReagMotivo" class="form-control form-control-sm"
+                   maxlength="300" list="otReagMotivosComunes"
+                   placeholder="Ej: el cliente no tenía el gimnasio disponible">
+            <datalist id="otReagMotivosComunes">
+              <option value="El cliente pidió otra fecha"></option>
+              <option value="El cliente no estaba / no dio acceso"></option>
+              <option value="Falta un repuesto"></option>
+              <option value="El técnico no alcanzó ese día"></option>
+              <option value="Se priorizó otra emergencia"></option>
+              <option value="Problema de transporte"></option>
+            </datalist>
+          </div>
+          <div class="d-flex gap-2 mt-2">
             <button type="button" class="btn btn-sm btn-danger" onclick="otConfirmarReagendar()">
               <i class="bi bi-check2 me-1"></i>Guardar
             </button>
             <button type="button" class="btn btn-sm btn-light" onclick="otCerrarReagendar()">Cancelar</button>
           </div>
           <div class="small text-muted mt-2" style="font-size:.72rem">
-            Queda registrado en el historial de la OT con tu usuario.
+            Queda registrado en el historial de la OT con tu usuario, con la
+            fecha anterior y cuántos días se movió.
           </div>
         </div>
         {% endif %}
@@ -3156,6 +3179,10 @@ window.otConfirmarReagendar = async function(){
   const body = {fecha_programada: fecha};
   if (ini) body.hora_inicio = ini;
   if (fin) body.hora_fin = fin;
+  // Motivo de la desviación: no se guarda como campo de la OT, viaja solo
+  // para quedar escrito en la bitácora junto al salto de fechas.
+  const mot = document.getElementById('otReagMotivo');
+  if (mot && mot.value.trim()) body.motivo_cambio = mot.value.trim();
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
       method: 'PUT',

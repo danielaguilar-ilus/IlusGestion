@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Técnicos: interno o externo — ILUS Fitness{% endblock %}
+
+{#
+  ══════════════════════════════════════════════════════════════════════
+  CLASIFICACIÓN DE TÉCNICOS — interno vs externo, con el POR QUÉ
+  ══════════════════════════════════════════════════════════════════════
+  Daniel pidió 3 veces que Daniel Pulgar e Isabel Milling salieran de los
+  INTERNOS del monitor, y las 3 veces la respuesta fue "cámbiales el rol"
+  sin poder decirle cuál ni por qué — desde el código no se ve el dato
+  real. Esta pantalla corta ese ida y vuelta: muestra el veredicto del
+  sistema, su motivo, y deja corregirlo en un clic.
+
+  Usa el MISMO criterio que `_ot_tv_datos` (rol tecnico_externo* o ficha
+  en mant_tecnicos_externos), así que lo que se ve acá es exactamente lo
+  que va a mostrar el monitor.
+  ══════════════════════════════════════════════════════════════════════
+#}
+
+{% block content %}
+<style>
+.tcl-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;
+  box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.tcl-tabla{width:100%;border-collapse:collapse;font-size:.88rem}
+.tcl-tabla th{background:#f9fafb;text-align:left;padding:11px 14px;font-size:.7rem;
+  font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;
+  border-bottom:1px solid #e5e7eb;white-space:nowrap}
+.tcl-tabla td{padding:12px 14px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.tcl-tabla tr:last-child td{border-bottom:0}
+.tcl-tabla tr.inactivo{opacity:.5}
+.tcl-nombre{font-weight:800;color:#0a0a0a}
+.tcl-user{font-size:.74rem;color:#9ca3af}
+.tcl-rol{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;
+  background:#f3f4f6;border-radius:6px;padding:2px 8px;color:#374151}
+.tcl-sello{display:inline-flex;align-items:center;gap:6px;font-size:.7rem;font-weight:900;
+  text-transform:uppercase;letter-spacing:.05em;border-radius:99px;padding:4px 11px}
+.tcl-int{background:#dbeafe;color:#1e40af}
+.tcl-ext{background:#fef3c7;color:#92400e}
+.tcl-motivo{font-size:.78rem;color:#6b7280;max-width:340px}
+.tcl-acc select{font-size:.8rem;padding:5px 8px;border:1px solid #d1d5db;border-radius:8px;
+  min-height:36px}
+.tcl-nota{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:10px;
+  padding:12px 14px;font-size:.85rem;margin-bottom:16px;line-height:1.5}
+.tcl-nota b{color:#1e40af}
+@media (max-width:820px){
+  .tcl-tabla thead{display:none}
+  .tcl-tabla tr{display:block;border-bottom:1px solid #e5e7eb;padding:10px 0}
+  .tcl-tabla td{display:flex;justify-content:space-between;gap:12px;border:0;padding:5px 14px}
+  .tcl-tabla td::before{content:attr(data-l);font-size:.68rem;font-weight:900;
+    text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;flex:none}
+  .tcl-motivo{max-width:none;text-align:right}
+}
+</style>
+
+<div class="page-header">
+  <div class="page-header-content">
+    <a class="d-inline-flex align-items-center gap-1 mb-1"
+       href="{{ url_for('admin_roles') }}"
+       style="font-size:.78rem;font-weight:700;opacity:.85;text-decoration:none">
+      <i class="bi bi-arrow-left"></i> Volver a roles
+    </a>
+    <h1 class="page-title"><i class="bi bi-people-fill"></i> Técnicos: interno o externo</h1>
+    <p class="page-subtitle">Cómo los clasifica el monitor de operaciones — y por qué</p>
+  </div>
+</div>
+
+<div class="tcl-nota">
+  <b>Para qué sirve esta pantalla.</b> El monitor separa a los técnicos en
+  <b>Internos</b> y <b>Externos</b>. Alguien cuenta como externo si su rol es
+  <code>tecnico_externo</code> <b>o</b> si tiene ficha de proveedor registrada.
+  Acá ves cuál de las dos cosas aplica en cada caso; si alguien está mal
+  clasificado, cámbiale el rol y el monitor lo reubica de inmediato.
+</div>
+
+<div class="tcl-card">
+  <table class="tcl-tabla">
+    <thead>
+      <tr>
+        <th>Técnico</th>
+        <th>Rol guardado</th>
+        <th>El monitor lo muestra como</th>
+        <th>Por qué</th>
+        <th>Cambiar a</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in filas %}
+      <tr class="{{ '' if f.active else 'inactivo' }}">
+        <td data-l="Técnico">
+          <div class="tcl-nombre">{{ f.nombre }}{% if not f.active %} (inactivo){% endif %}</div>
+          <div class="tcl-user">{{ f.username }}</div>
+        </td>
+        <td data-l="Rol"><span class="tcl-rol">{{ f.role }}</span></td>
+        <td data-l="Se muestra como">
+          {% if f.externo %}
+            <span class="tcl-sello tcl-ext"><i class="bi bi-box-arrow-up-right"></i> Externo</span>
+          {% else %}
+            <span class="tcl-sello tcl-int"><i class="bi bi-house-door-fill"></i> Interno</span>
+          {% endif %}
+        </td>
+        <td data-l="Por qué"><div class="tcl-motivo">{{ f.motivo }}</div></td>
+        <td data-l="Cambiar a" class="tcl-acc">
+          <select onchange="tclCambiar({{ f.id }}, this.value, this)"
+                  data-actual="{{ f.role }}">
+            {% for r in roles_tecnicos %}
+            <option value="{{ r }}" {{ 'selected' if r == f.role }}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:30px">
+        No hay usuarios con rol de técnico.
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function tclCambiar(uid, nuevoRol, sel){
+  const actual = sel.dataset.actual;
+  if (nuevoRol === actual) return;
+  const fila = sel.closest('tr');
+  const nombre = fila ? (fila.querySelector('.tcl-nombre')||{}).textContent : 'este técnico';
+  const ok = await ilusConfirm({
+    title: 'Cambiar rol del técnico',
+    message: `¿Cambiar a ${(nombre||'').trim()} de «${actual}» a «${nuevoRol}»?`,
+    sub: 'El monitor lo reubica de inmediato. La persona verá sus permisos '
+       + 'actualizados en su próxima navegación, sin cerrar sesión.',
+    okLabel: 'Sí, cambiar', cancelLabel: 'Cancelar',
+  });
+  if (!ok){ sel.value = actual; return; }
+  sel.disabled = true;
+  try {
+    const r = await fetch(`/admin/roles/${uid}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role: nuevoRol}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error){
+      ilusToast(d.error || 'No se pudo cambiar el rol.', {type: 'error'});
+      sel.value = actual;
+      return;
+    }
+    ilusToast('✓ Rol actualizado', {type: 'success'});
+    setTimeout(() => location.reload(), 700);
+  } catch(e){
+    ilusToast('Error de conexión al cambiar el rol.', {type: 'error'});
+    sel.value = actual;
+  } finally {
+    sel.disabled = false;
+  }
+}
+</script>
+{% endblock %}
