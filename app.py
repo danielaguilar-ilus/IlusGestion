@@ -75333,10 +75333,21 @@ def _ot_tv_datos():
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
             }
 
+    # Daniel cambió de opinión el 26-ago al ver la pantalla real: primero
+    # pidió mostrar a todos marcados como "Disponible", pero con 5 técnicos
+    # sin carga el televisor se llenaba de filas vacías y el trabajo real
+    # quedaba arrinconado abajo. Ahora se OCULTAN los que no tienen nada hoy
+    # — pero NO se pierde el dato: se cuentan aparte y el encabezado del
+    # grupo dice cuántos hay disponibles. La pantalla gana espacio para lo
+    # que importa sin dejar de informar quién está libre.
     grupos = {"interno": [], "externo": []}
+    disponibles = {"interno": 0, "externo": 0}
     for tid in orden:
         p = personas.get(tid)
         if not p:
+            continue
+        if not p["total_ot"]:
+            disponibles["externo" if p["externo"] else "interno"] += 1
             continue
         if any(b["estado"] == "ejecutando" for b in p["bloques"]):
             est = "ejecutando"
@@ -75381,8 +75392,10 @@ def _ot_tv_datos():
         "jornada": {"ini": _OT2_JORNADA_INI, "fin": _OT2_JORNADA_FIN},
         "resumen": resumen,
         "grupos": [
-            {"tipo": "interno", "titulo": "Internos", "personas": grupos["interno"]},
-            {"tipo": "externo", "titulo": "Externos", "personas": grupos["externo"]},
+            {"tipo": "interno", "titulo": "Internos",
+             "personas": grupos["interno"], "disponibles": disponibles["interno"]},
+            {"tipo": "externo", "titulo": "Externos",
+             "personas": grupos["externo"], "disponibles": disponibles["externo"]},
         ],
         "proximos": proximos,
     }
