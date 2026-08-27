@@ -74170,11 +74170,20 @@ def _ot2_err(mensaje, codigo, http=400, **extra):
 
 _OT2_HITOS = (
     # (clave, etiqueta, icono, columna_timestamp)
-    ("creada",  "Creada",     "bi-plus-circle-fill",     "created_at"),
-    ("ruta",    "En ruta",    "bi-truck",                "ruta_iniciada_at"),
-    ("sitio",   "En sitio",   "bi-geo-alt-fill",         "hora_real_inicio"),
-    ("firmada", "Firmada",    "bi-vector-pen",           "firma_cliente_at"),
-    ("cerrada", "Cerrada",    "bi-flag-fill",            "cerrada_at"),
+    # 🔴 FIX 2026-08-26 (Daniel: "el tracking que tenía el código anterior
+    # estaba mejor... tráelo o mejóralos"): el recorrido viejo de 5 hitos
+    # dependía de ruta_iniciada_at/hora_real_inicio para "en ruta"/"en
+    # sitio" — columnas del geofence, que está OFF por defecto (ver
+    # ot_geofence_fedex) y por eso casi nunca se llenan en OT reales. Se
+    # reemplazan por las 3 firmas reales del proceso (técnico → cliente →
+    # supervisor), que SIEMPRE se llenan en el flujo real y son justo lo
+    # que Daniel más cuida — más informativo y más fiable que antes.
+    ("creada",     "Creada",            "bi-plus-circle-fill", "created_at"),
+    ("ejecutando", "Ejecutando",        "bi-tools",            "hora_real_inicio"),
+    ("f_tecnico",  "Firma técnico",     "bi-person-check-fill", "firma_tecnico_at"),
+    ("f_cliente",  "Firma cliente",     "bi-vector-pen",       "firma_cliente_at"),
+    ("aprobada",   "Aprobada",          "bi-patch-check-fill", "firma_supervisor_at"),
+    ("cerrada",    "Cerrada",           "bi-flag-fill",        "cerrada_at"),
 )
 
 
@@ -81960,6 +81969,23 @@ def mant_ot_asociar_factura(vid):
         " WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+
+    # 🔒 FIX 2026-08-26 (Daniel — brecha real, OT cerrada por Aaron seguía
+    # aceptando cambios de documento/monto): esta ruta solo bloqueaba a
+    # técnicos (@_no_tecnico) y nunca revisaba `estado`. El modal que expone
+    # el botón solo se renderiza con estado='pendiente_aprobacion', pero el
+    # servidor no repetía ese candado — una pestaña vieja abierta (o
+    # cualquier llamada directa) seguía escribiendo `factura_tido/nudo/
+    # monto/costo` sobre una OT ya cerrada. Mismo criterio que ya usa
+    # 'cobertura' en _puede_ot_accion (declarar garantía tampoco se puede
+    # después de cerrada) — se reusa esa misma acción semántica en vez de
+    # inventar una regla paralela.
+    if not _puede_ot_accion(vid, "cobertura"):
+        return jsonify({
+            "ok": False,
+            "error": "Esta orden de trabajo ya está cerrada — no se puede "
+                     "modificar su documento o monto.",
+        }), 403
 
     # Consulta al ERP — SOLO lectura, SQL Server primero (REGLA #4.1).
     doc, _fuente, _respondio, _erp_err = _erp_doc_lookup(tipo, numero)

@@ -41,6 +41,12 @@
   --line:#eaecf0; --ink:#0a0a0a;
 }
 
+/* Volver al panel — dentro del page-header (Daniel 26-ago: "como lo
+   hemos hecho siempre"), no como botón suelto debajo. */
+.otd-back{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;
+  font-weight:700;margin-bottom:6px;opacity:.85;text-decoration:none}
+.otd-back:hover{opacity:1;text-decoration:underline}
+
 /* ══ HERO NEGRO — identidad + datos + recorrido, todo en un bloque ══ */
 .otd-hero{position:relative;background:var(--ink);border-radius:14px;
   padding:22px 24px 18px;overflow:hidden;margin-bottom:16px;
@@ -61,9 +67,10 @@
 .otd-tipo{display:inline-flex;align-items:center;gap:6px;font-size:.66rem;font-weight:900;
   letter-spacing:.12em;text-transform:uppercase;color:#fff;background:var(--ilus-red,#dc2626);
   border-radius:6px;padding:4px 10px;margin-bottom:8px}
-.otd-num{font-family:'Barlow Condensed',system-ui,sans-serif;font-size:2.6rem;font-weight:900;
-  color:#fff;line-height:.95;letter-spacing:-.01em;margin:0}
-.otd-cli{color:#fff;font-weight:800;font-size:1.02rem;margin:6px 0 2px}
+.otd-num{font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.55rem;font-weight:800;
+  color:#a1a1aa;line-height:1;letter-spacing:.02em;margin:0}
+.otd-cli{color:#fff;font-weight:900;font-size:1.7rem;line-height:1.08;margin:3px 0 4px;
+  font-family:'Barlow Condensed',system-ui,sans-serif;letter-spacing:-.01em}
 .otd-dir{color:#a1a1aa;font-size:.83rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .otd-dir i{color:var(--ilus-red,#dc2626)}
 
@@ -95,25 +102,48 @@
 .d-fec{--dc:#60a5fa} .d-hor{--dc:#c084fc} .d-tec{--dc:#4ade80}
 .d-eq{--dc:#fbbf24}  .d-fot{--dc:#f472b6} .d-ava{--dc:#dc2626}
 
-/* ══ RECORRIDO — dentro del hero, una sola vez en la página ══ */
+/* ══ RECORRIDO — dentro del hero, una sola vez en la página ══
+   2026-08-26 (Daniel: "el tracking es lo que tiene que impactar... el
+   dinamismo, la palpitancia, la transición, todo eso cuenta") — se le
+   agrega transición suave a los cambios de color/línea (antes eran
+   instantáneos) y el "replay" de entrada + ticker en vivo se hacen en JS
+   (otdRecorridoReplay / actualizarOtdTimes), mismo espíritu que el
+   recorrido de Transporte que a Daniel "le encanta". #}
 .otd-track{display:flex;align-items:flex-start;gap:0;margin-top:16px;
   padding-top:15px;border-top:1px solid rgba(255,255,255,.1)}
 .otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;
   position:relative;text-align:center;min-width:0}
 .otd-h::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:2px;
-  background:rgba(255,255,255,.14)}
+  background:rgba(255,255,255,.14);transition:background-color .5s ease}
 .otd-h:first-child::before{display:none}
 .otd-h.ok::before{background:var(--comp)}
 .otd-h .p{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;
   background:rgba(255,255,255,.09);border:2px solid rgba(255,255,255,.18);
-  color:#71717a;font-size:.82rem;z-index:1;transition:transform .2s}
+  color:#71717a;font-size:.82rem;z-index:1;
+  transition:transform .2s,background-color .4s ease,border-color .4s ease,color .4s ease}
 .otd-h.ok .p{background:var(--comp);border-color:var(--comp);color:#fff}
 .otd-h.now .p{background:var(--ejec);border-color:var(--ejec);color:#fff;
   animation:otdPulse 1.9s ease-out infinite}
 .otd-h:hover .p{transform:scale(1.12)}
-.otd-h .l{font-size:.66rem;font-weight:800;color:#a1a1aa;letter-spacing:.02em}
-.otd-h.ok .l,.otd-h.now .l{color:#fff}
+.otd-h .l{font-size:.66rem;font-weight:800;color:#a1a1aa;letter-spacing:.02em;
+  transition:color .4s ease}
+.otd-h.ok .l{color:var(--comp)}
+.otd-h.now .l{color:#fff}
 .otd-h .t{font-size:.6rem;color:#71717a;font-variant-numeric:tabular-nums}
+.otd-h .ago{display:inline-block;margin-top:2px;padding:1px 7px;border-radius:99px;
+  font-size:.56rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase}
+.otd-h.ok .ago{background:rgba(22,163,74,.18);color:#4ade80}
+.otd-h.now .ago{background:rgba(220,38,38,.22);color:#fca5a5}
+
+/* Resumen del recorrido — tiempo total + paso actual con pulso */
+.otd-track-sum{display:flex;align-items:center;gap:14px;margin-top:12px;
+  padding-top:11px;border-top:1px dashed rgba(255,255,255,.12);
+  font-size:.74rem;color:#a1a1aa;flex-wrap:wrap}
+.otd-track-sum b{color:#fff;font-variant-numeric:tabular-nums}
+.otd-track-sum .now-tag{display:inline-flex;align-items:center;gap:6px;
+  color:#fca5a5;font-weight:800}
+.otd-pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--ejec);
+  animation:otdPulse 1.6s ease-out infinite}
 
 /* ══ GRILLA PRINCIPAL ══ */
 .otd-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start}
@@ -197,7 +227,7 @@
 
 @media (prefers-reduced-motion:reduce){
   .otd-eq .bar i,.otd-av-bar i{animation:none;width:var(--w,0%)}
-  .s-ejec .ico,.otd-h.now .p{animation:none}
+  .s-ejec .ico,.otd-h.now .p,.otd-pulse-dot{animation:none}
 }
 @media (max-width:640px){
   .otd-num{font-size:2.1rem}
@@ -210,6 +240,8 @@
 
   <div class="page-header">
     <div class="page-header-content">
+      <a class="otd-back" href="{{ url_for('ot2_panel') }}">
+        <i class="bi bi-arrow-left"></i> Volver al panel</a>
       <h1 class="page-title">
         <i class="bi bi-clipboard2-pulse-fill"></i>
         {{ v.numero_ot or ('OT #' ~ v.id) }}
@@ -220,8 +252,6 @@
 
   {# ── Acciones ─────────────────────────────────────────────────────── #}
   <div class="otd-acts">
-    <a class="otd-btn" href="{{ url_for('ot2_panel') }}">
-      <i class="bi bi-arrow-left"></i> Volver al panel</a>
     <a class="otd-btn pri" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
       <i class="bi bi-tools"></i> Ejecutar la OT</a>
     <a class="otd-btn" href="{{ url_for('mant_ot_ficha', vid=v.id) }}">
@@ -286,15 +316,24 @@
     </div>
 
     {# Recorrido — UNA sola vez en toda la página #}
-    <div class="otd-track">
+    <div class="otd-track" id="otdTrack">
       {% for h in hitos %}
       <div class="otd-h {{ 'ok' if h.hecho }} {{ 'now' if h.actual }}"
+           data-key="{{ h.clave }}" data-ts="{{ h.ts or '' }}"
            title="{{ h.label }}{% if h.cuando %} · {{ h.cuando }}{% endif %}">
         <div class="p"><i class="bi {{ h.icono }}"></i></div>
         <span class="l">{{ h.label }}</span>
-        <span class="t">{{ h.cuando or '—' }}</span>
+        <span class="t" data-ts-iso="{{ h.ts or '' }}">{{ h.cuando or '—' }}</span>
       </div>
       {% endfor %}
+    </div>
+    <div class="otd-track-sum" id="otdTrackSum">
+      <span><i class="bi bi-stopwatch-fill"></i> <b id="otdElapsed">—</b></span>
+      {% if hitos and not hitos[-1].hecho %}
+      <span class="now-tag"><span class="otd-pulse-dot"></span> <span id="otdCurrentLabel">En curso…</span></span>
+      {% else %}
+      <span class="now-tag" style="color:#4ade80"><i class="bi bi-check-circle-fill"></i> Completada</span>
+      {% endif %}
     </div>
   </div>
 
@@ -452,5 +491,103 @@ async function otdCompartirWa(){
     if (btn){ btn.dataset.busy = '0'; btn.style.opacity = ''; }
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   RECORRIDO — "hace X" en vivo + replay de entrada.
+   2026-08-26 (Daniel: "el tracking es lo que tiene que impactar... el
+   dinamismo, la palpitancia, la transición, todo eso cuenta"). Mismo
+   espíritu que el pipeline de ot_ejecutar.html/mant_ot_ejecutar (que a
+   Daniel "le fascinó"), reescrito para las clases propias .otd-h/.otd-track
+   de OT 2.0 — no depende del JS de la pantalla vieja.
+   ══════════════════════════════════════════════════════════════ */
+function _otdHumanizeAgo(ts){
+  if (!ts) return '';
+  let d;
+  try {
+    const norm = ts.replace(' ', 'T');
+    d = new Date(norm.endsWith('Z') || norm.includes('+') ? norm : norm + 'Z');
+    if (isNaN(d.getTime())) return '';
+  } catch(_e){ return ''; }
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) return 'En segundos';
+  const secs = Math.floor(diffMs / 1000);
+  if (secs < 60) return 'Hace ' + secs + 's';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return 'Hace ' + mins + ' min';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24){
+    const restoMin = mins % 60;
+    return restoMin ? `Hace ${hrs}h ${restoMin}m` : `Hace ${hrs}h`;
+  }
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `Hace ${days}d`;
+  return d.toLocaleDateString('es-CL');
+}
+
+function actualizarOtdTimes(){
+  document.querySelectorAll('#otdTrack .otd-h .t[data-ts-iso]').forEach(el => {
+    const ts = el.getAttribute('data-ts-iso');
+    if (!ts) return;
+    const ago = _otdHumanizeAgo(ts);
+    if (!ago) return;
+    const step = el.closest('.otd-h');
+    let chip = step ? step.querySelector('.ago') : null;
+    if (!chip && step){
+      chip = document.createElement('span');
+      chip.className = 'ago';
+      el.insertAdjacentElement('afterend', chip);
+    }
+    if (chip) chip.textContent = ago;
+  });
+
+  const first = document.querySelector('#otdTrack .otd-h[data-key="creada"]');
+  const lastDone = document.querySelector('#otdTrack .otd-h.ok[data-key="cerrada"]');
+  const elapsedEl = document.getElementById('otdElapsed');
+  if (elapsedEl && first){
+    const tStart = first.getAttribute('data-ts');
+    if (tStart){
+      try {
+        const norm = (s) => { const n = s.replace(' ', 'T'); return new Date(n.endsWith('Z') || n.includes('+') ? n : n + 'Z'); };
+        const dStart = norm(tStart);
+        const tEnd = lastDone ? lastDone.getAttribute('data-ts') : null;
+        const dEnd = tEnd ? norm(tEnd) : new Date();
+        const diffMs = dEnd.getTime() - dStart.getTime();
+        if (diffMs >= 0){
+          const mins = Math.floor(diffMs / 60000);
+          const txt = mins < 60 ? `${mins} min` : `${Math.floor(mins/60)}h ${mins%60}m`;
+          elapsedEl.textContent = (tEnd ? 'Cerrada en ' : 'Iniciada hace ') + txt;
+        }
+      } catch(_e){ /* deja el guion por defecto */ }
+    }
+  }
+
+  const currLbl = document.getElementById('otdCurrentLabel');
+  if (currLbl){
+    const currentStep = document.querySelector('#otdTrack .otd-h.now');
+    const lblEl = currentStep ? currentStep.querySelector('.l') : null;
+    if (lblEl) currLbl.textContent = lblEl.textContent.trim();
+  }
+}
+
+function otdRecorridoReplay(){
+  const steps = Array.from(document.querySelectorAll('#otdTrack .otd-h'));
+  if (!steps.length) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const targets = steps.map(el => ({ ok: el.classList.contains('ok'), now: el.classList.contains('now') }));
+  steps.forEach(el => el.classList.remove('ok', 'now'));
+  const STEP_MS = 240;
+  steps.forEach((el, i) => {
+    setTimeout(() => {
+      if (targets[i].ok) el.classList.add('ok');
+      if (targets[i].now) el.classList.add('now');
+    }, 180 + i * STEP_MS);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  actualizarOtdTimes();
+  setInterval(actualizarOtdTimes, 60_000);
+  otdRecorridoReplay();
+});
 </script>
 {% endblock %}
