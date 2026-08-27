@@ -50523,6 +50523,20 @@ def _puede_ot_accion(vid, accion, user=None):
     ot_sellada     = firma_cli or estado_ot in ("pendiente_aprobacion", "completada", "cerrada")
     ot_en_ventana  = (not ot_sellada) and (firma_tec or estado_ot == "firmada_tecnico")
 
+    # 🔒 FIX 2026-08-26 (auditoría de esta noche): el candado del Anexo de
+    # Servicios ("no puede realizar el trabajo, ni siquiera vería la OT...
+    # se le desbloquea cuando firme") solo estaba metido dentro de la rama
+    # 'ver' (más abajo). 'ejecutar'/'configurar'/'firmar_cliente' NUNCA lo
+    # revisaban — un técnico que conociera el vid de su propia OT podía
+    # saltarse la pantalla y accionar directo (responder tareas, subir
+    # fotos, firmar) con el anexo del proveedor todavía sin firmar. Se
+    # levanta UNA vez acá, antes de cualquier rama, para cubrirlas todas
+    # de punto — la próxima acción que se agregue lo hereda gratis.
+    if role == "tecnico" and es_tecnico_asignado and _anexo_bloquea_ot(vid):
+        print(f"[PERM] vid={vid} action={accion} role={role_raw}->{role} user={username} "
+              f"-> DENIED (anexo de servicios sin firmar)", flush=True)
+        return False
+
     # ── EJECUTAR ─────────────────────────────────────────────────
     # responder tareas, subir fotos, firmar técnico, iniciar/cerrar OT,
     # corregir datos de equipo.
@@ -50751,17 +50765,9 @@ def _puede_ot_accion(vid, accion, user=None):
         if es_creador:
             return True
         if es_tecnico_asignado:
-            # 🔴 2026-08-26 (Daniel): el proveedor no debe ver la OT hasta
-            # firmar el Anexo de Servicios — "no puede realizar el trabajo,
-            # ni siquiera vería la OT... se le desbloquea cuando firme".
-            # Va MÁS ALLÁ del candado de `mant_visita_iniciar` (que solo
-            # bloqueaba EMPEZAR): esto oculta la ficha completa. Solo aplica
-            # al técnico asignado — no a un creador/gestión viendo su propia
-            # OT por otro motivo.
-            if role == "tecnico" and _anexo_bloquea_ot(vid):
-                print(f"[PERM] vid={vid} action=ver role={role_raw}->{role} user={username} "
-                      f"-> DENIED (anexo de servicios sin firmar)", flush=True)
-                return False
+            # El candado del Anexo de Servicios ya se revisó UNA vez, arriba
+            # de todas las ramas (ver el bloque justo antes de "EJECUTAR") —
+            # si el técnico llegó hasta acá es porque ya lo pasó.
             return True
         return False
 
@@ -74508,15 +74514,27 @@ def ot2_api_cliente_crear():
 
 @app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
 @_mant_required
-@_ot_can_metadata
+@_ot_can_cobertura
 def ot2_api_finanzas(vid):
     """Parte financiera de una OT — declarar, consultar y RETRACTARSE.
 
-    🔐 SEGURIDAD 2026-08-26 (Daniel — auditoría OT 2.0): faltaba @_ot_can_metadata.
+    🔐 SEGURIDAD 2026-08-26 (Daniel — auditoría OT 2.0): faltaba un gate.
     Cualquier usuario con permiso "mantenciones" (incluido técnico) podía leer
     Y ESCRIBIR costo/garantía/factura de una OT ajena. Este comentario ya
     decía "mismo gate que editar metadata" (ver mant_ot_ejecutar) pero nunca
     se había aplicado de verdad.
+
+    🔒 FIX 2026-08-26 (auditoría de esta misma noche, segunda pasada):
+    se cambió `@_ot_can_metadata` por `@_ot_can_cobertura`. `metadata`
+    sella apenas firma el CLIENTE (antes de la firma del supervisor) y NO
+    cubre 'cancelada'/'anulada' (`ot_sellada` en `_puede_ot_accion` solo
+    mira firma_cliente/pendiente_aprobacion/completada/cerrada) — más
+    estricto de lo que Daniel pidió esta noche ("una vez firmada por el
+    supervisor... o estado completada/cerrada/cancelada/anulada") Y con un
+    hueco real en dos estados. `cobertura` ya cubre exactamente esos 4
+    estados y deja la ventana abierta hasta el cierre real — mismo gate
+    que ya se usó en `mant_ot_asociar_factura` esta misma noche, para no
+    tener dos reglas de negocio distintas para el mismo dinero.
 
     Daniel (20-08-2026): "al principio que sea opcional en el modal, pero
     al solicitar la firma debe ir de manera obligatoria… y al terminar
@@ -74594,14 +74612,23 @@ def ot2_api_finanzas(vid):
     else:
         estado_fact = v.get("estado_facturacion") or "sin_cotizar"
 
+    # 🔒 FIX 2026-08-26 (auditoría de esta noche — concurrencia): mismo
+    # patrón que `mant_ot_asociar_factura` — la condición de estado vive
+    # DENTRO del UPDATE (no en el SELECT de arriba) y se revisa rowcount,
+    # para que dos escrituras casi simultáneas (o una que llega tarde tras
+    # el cierre) no se pisen en silencio. superadmin excluido a propósito.
+    _u_req = getattr(g, "user", None) or {}
+    _es_superadmin_req = (_u_req.get("role") or "").lower() == "superadmin"
+    _where_lock = "" if _es_superadmin_req else (
+        " AND estado NOT IN ('completada','cerrada','cancelada','anulada')")
     try:
-        mysql_execute(
+        _n_upd = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  centro_costo=%s, zz_codigo=%s, zz_monto=%s, costo=COALESCE(%s, costo), "
             "  modalidad_cobro=%s, cubierto_por=%s, garantia_motivo=%s, "
             "  factura_tido=%s, factura_nudo=%s, estado_facturacion=%s, "
             "  finanzas_at=NOW(), finanzas_por=%s "
-            " WHERE id=%s",
+            " WHERE id=%s" + _where_lock,
             (centro, zz_cod, zz_monto, costo,
              'garantia' if garantia else 'pagado',
              'garantia' if garantia else 'cliente',
@@ -74611,6 +74638,11 @@ def ot2_api_finanzas(vid):
         print(f"[ot2_finanzas] vid={vid}: {e}", flush=True)
         return _ot2_err("No pudimos guardar la información financiera.",
                         "ERROR_INTERNO", http=500)
+
+    if _n_upd == 0:
+        return _ot2_err(
+            "Esta orden de trabajo ya está cerrada — no se puede modificar "
+            "su información financiera.", "CONFLICTO_CONCURRENCIA", http=409)
 
     try:
         _mant_log("visita", vid, "finanzas_declaradas",
@@ -82030,8 +82062,22 @@ def mant_ot_asociar_factura(vid):
     # La nota de venta NO marca la OT como facturada: queda en su propio
     # estado para que Cobranza pueda encontrar lo que falta convertir.
     _estado_fact = "con_nota_venta" if _es_nota_venta else "facturado"
+
+    # 🔒 FIX 2026-08-26 (auditoría de esta noche — concurrencia): el chequeo
+    # de _puede_ot_accion de arriba pasa ANTES de la consulta al ERP
+    # (_erp_doc_lookup, latencia de red no acotada). Si en esa ventana otra
+    # sesión cierra la OT, el UPDATE de abajo la escribía igual porque su
+    # WHERE nunca repetía la condición de estado. Ahora la condición vive
+    # DENTRO del UPDATE (no en un SELECT previo) y se revisa rowcount — el
+    # mismo patrón que ya prueba `_next_ot_number_atomic` para correlativos,
+    # aplicado acá a una transición de estado. superadmin excluido a
+    # propósito (candado maestro, ya pasó _puede_ot_accion arriba).
+    _u_req = getattr(g, "user", None) or {}
+    _es_superadmin_req = (_u_req.get("role") or "").lower() == "superadmin"
+    _where_lock = "" if _es_superadmin_req else (
+        " AND estado NOT IN ('completada','cerrada','cancelada','anulada')")
     try:
-        mysql_execute(
+        _n_upd = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
             "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
             "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
@@ -82041,7 +82087,7 @@ def mant_ot_asociar_factura(vid):
             # está vacía: un monto cargado a mano no se pisa con el del ERP.
             "  costo=COALESCE(NULLIF(costo,0), %s), "
             "  estado_facturacion=%s "
-            " WHERE id=%s",
+            " WHERE id=%s" + _where_lock,
             (tipo, numero[:20], rut_fact[:20] or None, _monto,
              1 if analisis["match"] else 0, justif or None,
              current_username(), _monto, _estado_fact, vid))
@@ -82050,16 +82096,25 @@ def mant_ot_asociar_factura(vid):
         # igual queda amarrada al documento (que es lo que destraba la firma).
         print(f"[asociar-factura] UPDATE con estado={_estado_fact} falló vid={vid}: "
               f"{_e_up} — reintento sin el estado nuevo", flush=True)
-        mysql_execute(
+        _n_upd = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
             "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
             "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
             "  factura_rut_justif=%s, factura_asociada_por=%s, "
             "  costo=COALESCE(NULLIF(costo,0), %s) "
-            " WHERE id=%s",
+            " WHERE id=%s" + _where_lock,
             (tipo, numero[:20], rut_fact[:20] or None, _monto,
              1 if analisis["match"] else 0, justif or None,
              current_username(), _monto, vid))
+
+    if _n_upd == 0:
+        return jsonify({
+            "ok": False, "error_codigo": "CONFLICTO_CONCURRENCIA",
+            "error": "Esta orden de trabajo cambió de estado mientras se "
+                     "consultaba el documento en el ERP — revisa su estado "
+                     "actual e inténtalo de nuevo.",
+        }), 409
+
     _mant_log("visita", vid, "factura_asociada",
               f"{tipo} {numero} · ${_monto or 0:,.0f} · "
               + ("NOTA DE VENTA (aún facturable) · " if _es_nota_venta else "")
