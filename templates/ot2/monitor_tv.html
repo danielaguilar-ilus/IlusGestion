@@ -597,11 +597,25 @@
       border:1.5px solid transparent;
       transition:left .6s var(--ease-out), width .6s var(--ease-out);
     }
+    /* Acabado de la burbuja (Daniel 2026-08-27: "deben quedar
+       espectaculares... profesional y bonito, que no sea una puñalada para
+       los ojos"). El truco es dar VOLUMEN, no brillo: una luz de 1px arriba
+       y una sombra suave abajo hacen que se despegue del lienzo oscuro sin
+       subir el contraste ni un punto. */
+    .tl-bloque{
+      box-shadow:0 2px 8px -3px rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.07) inset;
+    }
     .b-cliente{
       font-size:var(--fs-bloque,16px);font-weight:800;letter-spacing:-.01em;color:#fff;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;
+      /* Sombra de texto mínima: mantiene el nombre legible a 3 m sobre
+         cualquiera de los cuatro fondos, sin engordar la letra. */
+      text-shadow:0 1px 2px rgba(0,0,0,.35);
     }
-    .b-horas{font-size:14px;font-weight:700;color:rgba(255,255,255,.85);white-space:nowrap;line-height:1.1}
+    .b-horas{
+      font-size:14px;font-weight:700;color:rgba(255,255,255,.85);
+      white-space:nowrap;line-height:1.1;overflow:hidden;text-overflow:ellipsis;
+    }
     .b-prog{
       position:absolute;left:0;bottom:0;height:3px;width:0;
       background:rgba(255,255,255,.75);border-radius:0 3px 3px 0;
@@ -669,15 +683,19 @@
     .estado-atrasado .av-pct{color:#fbbf24}
     .estado-atrasado .av-bar i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
 
-    /* TERMINADO — azul sereno, jornada cumplida */
-    .estado-terminado::before{background:rgba(96,165,250,.75)}
-    .estado-terminado .p-avatar{box-shadow:0 0 0 2.5px rgba(96,165,250,.6), 0 8px 16px -6px rgba(0,0,0,.6)}
+    /* TERMINADO — verde de jornada cumplida (Daniel 2026-08-27). Antes era
+       azul; el azul leía como "informativo", no como "logrado". Va en el
+       mismo verde apagado que los bloques terminados, para que la fila y su
+       burbuja cuenten la misma historia. Sigue siendo más tenue que
+       EJECUTANDO: lo que está pasando ahora manda sobre lo ya resuelto. */
+    .estado-terminado::before{background:rgba(74,222,128,.62)}
+    .estado-terminado .p-avatar{box-shadow:0 0 0 2.5px rgba(74,222,128,.5), 0 8px 16px -6px rgba(0,0,0,.6)}
     .estado-terminado .p-badge{
-      background:rgba(59,130,246,.13);border-color:rgba(96,165,250,.42);color:#93c5fd;
+      background:rgba(22,163,74,.16);border-color:rgba(74,222,128,.4);color:#86efac;
     }
-    .estado-terminado .p-badge i{background:#60a5fa}
-    .estado-terminado .av-pct{color:#60a5fa}
-    .estado-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),#60a5fa)}
+    .estado-terminado .p-badge i{background:#4ade80}
+    .estado-terminado .av-pct{color:#4ade80}
+    .estado-terminado .av-bar i{background:linear-gradient(90deg,#15803d,#4ade80)}
 
     /* ── Bloques de OT en la línea de tiempo ──
        El de EJECUCIÓN es el único sólido, saturado y con latido; los
@@ -699,13 +717,26 @@
     }
     .tl-bloque.b-pendiente .b-cliente{color:#cbd5e1;font-weight:800}
     .tl-bloque.b-pendiente .b-horas{color:#8b93a3}
+    /* TERMINADO — verde de trabajo cumplido (Daniel 2026-08-27: "las OT
+       completadas deben pasar a verdes... algo profesional y bonito, que no
+       sea una puñalada para los ojos"). Antes era azul y se confundía con
+       "informativo". Es verde, pero DELIBERADAMENTE apagado: el verde vivo
+       y con latido queda reservado a lo que está pasando AHORA — si los dos
+       brillan igual, la pantalla deja de decir dónde mirar. Acá el verde
+       significa "listo, ya no requiere atención": presente pero en calma.
+       El check ✓ hace el resto del trabajo sin subir el brillo. */
     .tl-bloque.b-terminado{
-      background:rgba(59,130,246,.13);
-      border-color:rgba(96,165,250,.38);
+      background:linear-gradient(160deg,rgba(22,163,74,.20) 0%,rgba(21,128,61,.13) 100%);
+      border-color:rgba(74,222,128,.34);
+      box-shadow:0 1px 0 rgba(255,255,255,.06) inset;
     }
-    .tl-bloque.b-terminado .b-cliente{color:#93c5fd}
-    .tl-bloque.b-terminado .b-cliente::before{content:'✓ ';font-weight:900}
-    .tl-bloque.b-terminado .b-horas{color:rgba(147,197,253,.72)}
+    .tl-bloque.b-terminado .b-cliente{color:#86efac}
+    .tl-bloque.b-terminado .b-cliente::before{
+      content:'✓ ';font-weight:900;color:#4ade80;
+    }
+    .tl-bloque.b-terminado .b-horas{color:rgba(134,239,172,.70)}
+    /* Barra de avance al 100%: se completa entera, en el mismo verde. */
+    .tl-bloque.b-terminado .b-prog{background:rgba(74,222,128,.55);width:100%}
     /* Bloque atrasado: ámbar contenido, sin rayado ni pulso (ver nota
        del estado). El color avisa; la insignia de la fila lo nombra. */
     .tl-bloque.b-atrasado{

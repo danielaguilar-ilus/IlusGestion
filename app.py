@@ -73724,6 +73724,11 @@ def ot2_panel():
         f_tec = int(request.args.get("tecnico") or 0) or None
     except (TypeError, ValueError):
         f_tec = None
+    # `interna`: "1" solo trabajo interno, "0" solo trabajo de cliente,
+    # vacío = todo (2026-08-27, para poder ver de un clic lo de Jaizer).
+    f_interna = (request.args.get("interna") or "").strip()
+    if f_interna not in ("0", "1"):
+        f_interna = ""
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -73784,6 +73789,20 @@ def ot2_panel():
     if f_tec:
         extra_where_q.append("v.tecnico_user_id = %s")
         extra_params_q.append(f_tec)
+    # ── Trabajo INTERNO (2026-08-27, Daniel: "quiero que filtre las tareas
+    #    internas... debo potenciar las tareas de Jaizer Araujo") ──
+    # El desplegable de tipo no alcanzaba: un trabajo interno puede ser
+    # 'revision_interna' (bodega) pero TAMBIÉN capacitación o control de
+    # calidad sin cliente. Se usa el mismo criterio de `_ot_es_interna()`
+    # (app.py ~80738) para no tener dos definiciones que se desincronicen:
+    # modalidad 'interno' O tipo 'revision_interna' O sin cliente.
+    _INTERNA_SQL = ("(LOWER(COALESCE(v.modalidad_cobro,'')) = 'interno' "
+                    " OR v.tipo = 'revision_interna' "
+                    " OR v.cliente_id IS NULL)")
+    if f_interna == "1":
+        extra_where_q.append(_INTERNA_SQL)
+    elif f_interna == "0":
+        extra_where_q.append("NOT " + _INTERNA_SQL)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -74092,6 +74111,7 @@ def ot2_panel():
         per_page_opciones=_OT2_PER_PAGE_OPCIONES, error=error,
         kanban_cols=kanban_cols,
         orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
+        f_interna=f_interna,
         tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
@@ -77040,6 +77060,18 @@ def _ot2_filtros_export(args):
             where.append("v.estado IN (" + ",".join(["%s"] * len(estados)) + ")")
             params += list(estados)
             desc.append(_OT2_FASE_LABELS.get(fase, fase))
+
+    # Trabajo interno (2026-08-27) — mismo criterio que `_ot_es_interna()` y
+    # que el filtro del panel. El propio docstring de arriba avisa: "si se
+    # agrega un filtro al panel, agregarlo TAMBIÉN acá", porque el Excel
+    # arma su WHERE por separado.
+    f_interna = (args.get("interna") or "").strip()
+    if f_interna in ("0", "1"):
+        _int_sql = ("(LOWER(COALESCE(v.modalidad_cobro,'')) = 'interno' "
+                    " OR v.tipo = 'revision_interna' "
+                    " OR v.cliente_id IS NULL)")
+        where.append(_int_sql if f_interna == "1" else ("NOT " + _int_sql))
+        desc.append("solo trabajo interno" if f_interna == "1" else "solo de cliente")
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
