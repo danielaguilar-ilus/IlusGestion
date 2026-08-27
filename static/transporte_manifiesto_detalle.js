@@ -287,22 +287,50 @@ async function abrirTrazabilidadItemGenerico(cid) {
   });
 }
 
-async function quitarItem(mid, itemId) {
-  const ok = await ilusConfirm({
-    title: 'Quitar factura del manifiesto',
-    message: '¿Quitar esta factura del manifiesto?',
-    sub: 'El compromiso volverá a estar disponible para asignar.',
-    okLabel: 'Sí, quitar', danger: true,
-  });
-  if (!ok) return;
-  fetch('/transporte/manifiestos/' + mid + '/items/' + itemId, {method:'DELETE'})
+async function quitarItem(mid, itemId, confirmado) {
+  if (!confirmado) {
+    const ok = await ilusConfirm({
+      title: 'Quitar factura del manifiesto',
+      message: '¿Quitar esta factura del manifiesto?',
+      sub: 'El compromiso volverá a estar disponible para asignar.',
+      okLabel: 'Sí, quitar', danger: true,
+    });
+    if (!ok) return;
+  }
+  const body = confirmado ? JSON.stringify({confirmado: true}) : undefined;
+  const headers = confirmado ? {'Content-Type': 'application/json'} : undefined;
+  fetch('/transporte/manifiestos/' + mid + '/items/' + itemId, {method:'DELETE', body, headers})
     .then(function(r){ return r.json(); })
-    .then(function(d) {
+    .then(async function(d) {
       if (d.ok) {
-        if (window.ilusToast) ilusToast('✓ Factura quitada · actualizando montos…', { type: 'success' });
+        if (d.aviso) {
+          // 2026-08-27 (regla acordada 22-08): copia duplicada quitada -- la
+          // etiqueta/OT propia de ESTA copia NO se anula sola en FedEx.
+          await ilusAlert({
+            title: 'Factura quitada — revisa el courier',
+            message: d.aviso,
+            type: 'warning',
+          });
+        } else if (window.ilusToast) {
+          ilusToast('✓ Factura quitada · actualizando montos…', { type: 'success' });
+        }
         // Recargar para que TODOS los montos (cobrado, costo, margen, bultos,
         // KPIs y la columna costo_total) queden recalculados sin desfase.
-        setTimeout(function(){ window.location.reload(); }, 600);
+        setTimeout(function(){ window.location.reload(); }, d.aviso ? 0 : 600);
+      } else if (d.requiere_confirmacion) {
+        // REGLA 2026-08-22/27: esta copia es un duplicado sin movimiento --
+        // la entrega real ya está registrada en otro manifiesto. Se muestra
+        // dónde, cuándo y con qué tracking antes de dejar confirmar.
+        const okDup = await ilusConfirm({
+          title: 'Factura duplicada — ya fue entregada en otro manifiesto',
+          message: d.error,
+          sub: 'Manifiesto real: <strong>' + (d.duplicada_manifiesto || '—') + '</strong><br>'
+               + 'Entregada: ' + (d.duplicada_fecha || '—') + '<br>'
+               + 'Tracking real: ' + (d.duplicada_tracking || '—'),
+          subHtml: true,
+          okLabel: 'Sí, quitar esta copia duplicada', danger: true,
+        });
+        if (okDup) quitarItem(mid, itemId, true);
       } else {
         if (window.ilusToast) ilusToast(d.error || 'No se pudo quitar', { type: 'error' });
       }

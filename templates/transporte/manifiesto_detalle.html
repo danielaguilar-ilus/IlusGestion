@@ -870,11 +870,17 @@
                 {% endif %}
               {% endif %}
             {% endif %}
+            {# 2026-08-27 (Daniel: "que Alison pueda borrar facturas que no
+               tengan movimiento y manifiestos"): si esta copia es un
+               duplicado ya ENTREGADO de verdad en otro manifiesto, el
+               candado de arriba se puede destrabar para quien tenga permiso
+               -- si no, sigue bloqueado sin excepción (REGLA #4.2). #}
+            {% set _puede_quitar_duplicada = _en_gestion_courier and item.get('duplicada_entregada_en_otro') and (is_superadmin or permissions.tr_eliminar) %}
             <button class="btn btn-sm btn-outline-danger mfd-act-btn"
-                    {% if _en_gestion_courier %}
-                    disabled title="Bloqueado: esta factura ya está en gestión con el courier (OT/visita creada). No se puede quitar del manifiesto."
+                    {% if _en_gestion_courier and not _puede_quitar_duplicada %}
+                    disabled title="{% if item.get('duplicada_entregada_en_otro') %}Factura duplicada: ya fue entregada en otro manifiesto. Pide que un superadministrador te habilite Eliminar manifiestos y pedidos en Usuarios y roles para poder quitar esta copia.{% else %}Bloqueado: esta factura ya está en gestión con el courier (OT/visita creada). No se puede quitar del manifiesto.{% endif %}"
                     {% else %}
-                    title="Quitar del manifiesto" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})"
+                    title="{% if _puede_quitar_duplicada %}Factura duplicada: ya fue entregada en otro manifiesto. Quitar esta copia.{% else %}Quitar del manifiesto{% endif %}" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})"
                     {% endif %}>
               <i class="bi bi-trash3"></i>
             </button>
@@ -1047,11 +1053,12 @@
             <i class="bi bi-link-45deg"></i>
           </button>
           {% endif %}
+          {% set _puede_quitar_duplicada = _en_gestion_courier and item.get('duplicada_entregada_en_otro') and (is_superadmin or permissions.tr_eliminar) %}
           <button class="btn btn-sm btn-outline-danger mfd-act-btn"
-                  {% if _en_gestion_courier %}
-                  disabled title="Bloqueado: ya está en gestión con el courier"
+                  {% if _en_gestion_courier and not _puede_quitar_duplicada %}
+                  disabled title="{% if item.get('duplicada_entregada_en_otro') %}Factura duplicada: ya fue entregada en otro manifiesto. Pide que un superadministrador te habilite Eliminar manifiestos y pedidos en Usuarios y roles.{% else %}Bloqueado: ya está en gestión con el courier{% endif %}"
                   {% else %}
-                  onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})"
+                  title="{% if _puede_quitar_duplicada %}Factura duplicada: ya fue entregada en otro manifiesto. Quitar esta copia.{% else %}Quitar del manifiesto{% endif %}" onclick="quitarItem({{ manifiesto.id }}, {{ item.id }})"
                   {% endif %}>
             <i class="bi bi-trash3"></i>
           </button>
