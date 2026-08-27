@@ -1415,6 +1415,15 @@
   function asegurarCard(main){
     let card = $('.cal-card', main);
     if (!card){
+      // 🔧 FIX 2026-08-27 (Daniel: "paso a semana y vuelvo a día, la semana
+      // se queda arriba... está seleccionado día pero actúa como semana y
+      // día a la vez"). renderRango() (vista Semana/Mes) reemplaza #tvMain
+      // entero con un .cal-grid; esta función solo miraba si YA había una
+      // .cal-card, no si había restos de OTRA vista — así que el .cal-grid
+      // viejo se quedaba y la tarjeta de Día se agregaba AL LADO, no en su
+      // lugar. Limpiar antes de montar es lo que la garantiza como LA única
+      // vista visible, sin importar de cuál se venga.
+      main.innerHTML = '';
       card = el('section', 'cal-card');
       card.innerHTML =
         '<div class="cal-head">' +
