@@ -80199,6 +80199,21 @@ def mant_ot_firmar_revision(vid):
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
 
+        # 🔒 FIX 2026-08-27 (auditoría — concurrencia): esta ruta nunca
+        # revisaba si firma_tecnico_url ya existía. Un doble-tap, un
+        # reintento de red, o una pestaña vieja podían volver a firmar y
+        # reescribir la firma/estado incluso si, mientras se subía a
+        # Cloudinary, la OT ya había avanzado. Fail-fast ANTES de la subida
+        # (evita el gasto de red si ya está firmada) — el candado real de
+        # todos modos vive en el WHERE del UPDATE de abajo.
+        _v_chk = mysql_fetchone(
+            "SELECT firma_tecnico_url FROM mant_visitas WHERE id=%s", (vid,))
+        if _v_chk and _v_chk.get("firma_tecnico_url"):
+            return jsonify({
+                "ok": False, "error_codigo": "YA_FIRMADA_TECNICO",
+                "error": "Esta OT ya tiene firma del técnico registrada.",
+            }), 409
+
         # ── Subir firma del técnico a Cloudinary (data URL → URL corta) ──
         firma_tec_url = _subir_firma_cloudinary(firma_tec, vid, "tecnico")
 
@@ -80219,14 +80234,24 @@ def mant_ot_firmar_revision(vid):
             "SELECT modalidad_cobro, tipo, cliente_id FROM mant_visitas WHERE id=%s", (vid,))
         _es_int = _ot_es_interna(_v_int)
         _estado_post_firma = "pendiente_aprobacion" if _es_int else "firmada_tecnico"
-        mysql_execute(
+        # 🔒 Candado real: la condición vive DENTRO del UPDATE, no solo en el
+        # chequeo de arriba — si dos requests pasaron el chequeo casi juntos
+        # (la subida a Cloudinary tarda segundos, no milisegundos), solo el
+        # primero que llega a escribir gana; el segundo encuentra 0 filas.
+        _n_firma = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  firma_tecnico_url=%s, firma_tecnico_user_id=%s, "
             "  firma_tecnico_nombre=%s, firma_tecnico_at=NOW(), "
             "  estado=%s "
-            " WHERE id=%s",
+            " WHERE id=%s AND firma_tecnico_url IS NULL",
             (firma_tec_url, uid, nombre_tec, _estado_post_firma, vid)
         )
+        if _n_firma == 0:
+            return jsonify({
+                "ok": False, "error_codigo": "YA_FIRMADA_TECNICO",
+                "error": "Esta OT ya quedó firmada por el técnico (otra "
+                         "pestaña o intento se adelantó).",
+            }), 409
         # Marcar levantamiento como cerrado si la OT tenía uno (la captura de
         # datos del equipo ya terminó; las correcciones de la ventana editan
         # mant_visita_equipos/mant_maquinas directamente, no dependen de esto).
@@ -80357,13 +80382,27 @@ def mant_ot_firmar_cliente(vid):
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
         firma_cli_url = _subir_firma_cloudinary(firma_cli, vid, "cliente")
-        mysql_execute(
+        # 🔒 FIX 2026-08-27 (auditoría — concurrencia): el chequeo de arriba
+        # (estado/firma_tecnico/firma_cliente) corre ANTES de subir a
+        # Cloudinary; el UPDATE nunca repetía esa condición. Doble-submit del
+        # mismo dispositivo, o técnico+gestión firmando casi a la vez, podían
+        # pasar ambos el chequeo y el segundo en escribir pisaba al primero
+        # en silencio (y además insertaba una SEGUNDA fila en
+        # mant_ot_signatures, que no tiene UNIQUE). Ahora la condición vive
+        # en el WHERE y se revisa rowcount.
+        _n_firma_cli = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  firma_cliente_url=%s, firma_cliente_nombre=%s, firma_cliente_at=NOW(), "
             "  estado='pendiente_aprobacion' "
-            " WHERE id=%s",
+            " WHERE id=%s AND estado='firmada_tecnico' AND firma_cliente_url IS NULL",
             (firma_cli_url, nombre_cli, vid)
         )
+        if _n_firma_cli == 0:
+            return jsonify({
+                "ok": False, "error_codigo": "YA_FIRMADA_CLIENTE",
+                "error": "Esta OT ya avanzó (otra pestaña o intento se "
+                         "adelantó) — recarga para ver el estado actual.",
+            }), 409
         # ── Registro de identidad del firmante cliente (Fase 2 + trazabilidad) ──
         try:
             _ua = (request.headers.get("User-Agent") or "")[:400]
@@ -81658,14 +81697,27 @@ def mant_ot_aprobar_cierre(vid):
         # ── BUG FIX 2026-05-17 — Subir firma supervisor a Cloudinary ──
         # Misma lógica que firmar-revision: data URL → URL pública corta.
         firma_sup_url = _subir_firma_cloudinary(firma_sup, vid, "supervisor") if firma_sup else None
-        mysql_execute(
+        # 🔒 FIX 2026-08-27 (auditoría — concurrencia): el chequeo de estado
+        # de arriba corre antes de subir la firma a Cloudinary; el UPDATE no
+        # repetía la condición. Un doble-click en "Firmar y cerrar OT" (o dos
+        # supervisores casi simultáneos) podían pasar ambos el chequeo, subir
+        # ambos su firma, y el segundo en escribir pisaba cerrada_por/firma_
+        # supervisor del primero — y ambos disparaban la promoción de
+        # levantamiento y el correo de cierre por duplicado.
+        _n_aprob = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  estado='cerrada', cerrada_at=NOW(), cerrada_por=%s, "
             "  firma_supervisor_url=%s, firma_supervisor_user_id=%s, "
             "  firma_supervisor_nombre=%s, firma_supervisor_at=NOW() "
-            " WHERE id=%s",
+            " WHERE id=%s AND estado IN ('pendiente_aprobacion','completada')",
             (current_username() or 'supervisor', firma_sup_url, uid, firma_sup_nombre, vid)
         )
+        if _n_aprob == 0:
+            return jsonify({
+                "ok": False, "error_codigo": "CONFLICTO_CONCURRENCIA",
+                "error": "Esta OT ya fue cerrada o rechazada por otra "
+                         "sesión — recarga para ver el estado actual.",
+            }), 409
         try: _mant_log("visita", vid, "aprobada_supervisor",
                        f"{current_username()}{' · ' + comentario if comentario else ''}")
         except Exception: pass
@@ -82165,16 +82217,31 @@ def mant_ot_rechazar_cierre(vid):
             "error": f"Solo se pueden rechazar OTs firmadas pendientes de cierre (actual: {v.get('estado')})",
         }), 400
     try:
+        # 🔒 FIX 2026-08-27 (auditoría — concurrencia): mismo defecto que
+        # aprobar-cierre, y encima en carrera CONTRA aprobar-cierre — dos
+        # supervisores casi simultáneos (uno aprueba, otro rechaza) podían
+        # pasar cada uno su propio chequeo antes de que cualquiera escribiera,
+        # y el que ganaba en MySQL decidía el resultado real mientras AMBOS
+        # veían en pantalla el resultado que ELLOS pidieron. La condición de
+        # estado ahora vive en el WHERE — si aprobar-cierre ya ganó la
+        # carrera, este UPDATE encuentra 0 filas y avisa el conflicto real.
         # Volver a 'programada' y LIMPIAR ambas firmas (técnico y cliente):
         # el técnico rehace y se vuelve a firmar todo el flujo desde cero.
-        mysql_execute(
+        _n_rech = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET "
             "  estado='programada', "
             "  firma_tecnico_url=NULL, firma_tecnico_user_id=NULL, firma_tecnico_at=NULL, "
             "  firma_cliente_url=NULL, firma_cliente_nombre=NULL, firma_cliente_at=NULL "
-            " WHERE id=%s",
+            " WHERE id=%s AND estado IN ('pendiente_aprobacion','firmada_tecnico')",
             (vid,)
         )
+        if _n_rech == 0:
+            return jsonify({
+                "ok": False, "error_codigo": "CONFLICTO_CONCURRENCIA",
+                "error": "Esta OT ya cambió de estado (probablemente otra "
+                         "sesión ya la aprobó o rechazó) — recarga para ver "
+                         "el estado actual.",
+            }), 409
         try: _mant_log("visita", vid, "rechazada_supervisor",
                        f"{current_username()} · motivo: {motivo}")
         except Exception: pass
