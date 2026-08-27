@@ -29582,7 +29582,22 @@ def tr_manifiesto_detalle(mid):
                          WHERE e.commitment_id = mi.commitment_id
                            AND e.estado = 'Entregado') AS entregado_evt_at,
                        (SELECT COUNT(*) FROM transport_manifest_items mi2
-                         WHERE mi2.commitment_id = mi.commitment_id) AS n_despachos
+                         WHERE mi2.commitment_id = mi.commitment_id) AS n_despachos,
+                       -- 2026-08-27 (Daniel: "que Alison pueda borrar facturas
+                       -- que no tengan movimiento"): misma factura repetida en
+                       -- otro manifiesto y YA entregada ahí de verdad -- esta
+                       -- copia es un duplicado sin movimiento real. Mismo
+                       -- criterio exacto que la guarda de tr_quitar_item(),
+                       -- calculado en lote acá para poder habilitar el botón
+                       -- "Quitar" en la vista (si no, queda bloqueado en el
+                       -- HTML y el permiso nuevo nunca se alcanza a usar).
+                       (SELECT 1 FROM transport_manifest_items mi3
+                          JOIN transport_manifests m3 ON m3.id = mi3.manifest_id
+                         WHERE mi3.commitment_id = mi.commitment_id
+                           AND mi3.id != mi.id
+                           AND mi3.estado_entrega = 'Entregado'
+                           AND (m3.eliminado = 0 OR m3.eliminado IS NULL)
+                         LIMIT 1) AS duplicada_entregada_en_otro
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
@@ -31767,13 +31782,80 @@ def tr_quitar_item(mid, item_id):
     # OTs", una OT ya creada A MANO en el portal FedEx) quedaba SIN
     # protección: se podía quitar del manifiesto una factura que ya tenía
     # tracking real asignado. Se agrega al mismo candado.
+    _aviso_duplicado = None
     if info and (info.get("master_tracking_number") or info.get("tracking_number")
                  or info.get("simpliroute_visit_id")):
-        return jsonify({
-            "ok": False,
-            "error": "Esta factura ya está en gestión con el courier (OT/visita creada) "
-                     "y no se puede quitar del manifiesto.",
-        }), 409
+        # REGLA ACORDADA CON DANIEL (2026-08-22, "vamos afinando"; pedido de
+        # nuevo 2026-08-27: "que Alison pueda borrar facturas que no tengan
+        # movimiento"). El candado de arriba mira SOLO esta copia -- pero la
+        # misma factura (mismo commitment_id) puede estar repetida en varios
+        # manifiestos (badge "N despachos"). Si YA se entregó de verdad en
+        # OTRO manifiesto, esta copia es un duplicado que nunca se va a
+        # despachar -- bloquearla para siempre solo ensucia el Monitor.
+        duplicada = mysql_fetchone(
+            "SELECT m2.id AS manifest_id, m2.correlativo, "
+            "       mi2.master_tracking_number, mi2.tracking_number, "
+            "       c2.delivered_at "
+            "FROM transport_manifest_items mi2 "
+            "JOIN transport_manifests m2    ON m2.id = mi2.manifest_id "
+            "JOIN transport_commitments c2  ON c2.id = mi2.commitment_id "
+            "WHERE mi2.commitment_id = %s AND mi2.id != %s "
+            "  AND mi2.estado_entrega = 'Entregado' "
+            "  AND (m2.eliminado = 0 OR m2.eliminado IS NULL) "
+            "ORDER BY mi2.id DESC LIMIT 1",
+            (info["commitment_id"], item_id)
+        )
+        if not duplicada:
+            # Caso general: sigue en gestión activa con el courier, sin una
+            # copia entregada en otro lado -- el candado de siempre aplica
+            # sin excepción (REGLA #4.2: no relajar lo que no se acordó).
+            return jsonify({
+                "ok": False,
+                "error": "Esta factura ya está en gestión con el courier (OT/visita creada) "
+                         "y no se puede quitar del manifiesto.",
+            }), 409
+
+        # Es un duplicado sin movimiento real: la entrega de verdad ya pasó
+        # en otro manifiesto. Permiso: Alison y Daniel (operador o superior)
+        # -- mismo flag granular que ya gobierna borrar manifiestos completos
+        # (tr_eliminar, /admin/roles -> Transporte -> "Eliminar manifiestos y
+        # pedidos"), para no multiplicar permisos por una variante del mismo
+        # gesto de limpieza.
+        if not (g.permissions.get("superadmin") or g.permissions.get("tr_eliminar")):
+            return jsonify({
+                "ok": False,
+                "error": "No tienes permiso para quitar facturas duplicadas de un manifiesto. "
+                         "Pide que un superadministrador te habilite \"Eliminar manifiestos y "
+                         "pedidos\" en Usuarios y roles.",
+            }), 403
+
+        body = request.get_json(silent=True) or {}
+        _fecha_ent = duplicada.get("delivered_at")
+        _fecha_txt = chile_fmt_filter(_fecha_ent, "%d/%m/%Y %H:%M") if _fecha_ent else "fecha no registrada"
+        _tracking_dup = duplicada.get("master_tracking_number") or duplicada.get("tracking_number") or "—"
+        if not body.get("confirmado"):
+            return jsonify({
+                "ok": False,
+                "requiere_confirmacion": True,
+                "duplicada_manifiesto": duplicada.get("correlativo"),
+                "duplicada_manifiesto_id": duplicada.get("manifest_id"),
+                "duplicada_fecha": _fecha_txt,
+                "duplicada_tracking": _tracking_dup,
+                "error": f"Esta factura ya fue ENTREGADA en el manifiesto "
+                         f"{duplicada.get('correlativo')} el {_fecha_txt} (tracking {_tracking_dup}). "
+                         f"Esta es una copia duplicada que quedó sin despachar en este manifiesto.",
+            }), 409
+
+        # Confirmado: se quita esta copia, pero la etiqueta/OT propia de ESTA
+        # copia NO se anula sola en FedEx -- "nada irreversible sin decisión
+        # humana" (memoria del 22-08). Se avisa con el tracking para que se
+        # anule a mano si no se va a usar.
+        _tracking_propio = info.get("master_tracking_number") or info.get("tracking_number")
+        if _tracking_propio:
+            _aviso_duplicado = (
+                f"Esta copia tenía el tracking {_tracking_propio} — si no se va a usar, "
+                f"anúlalo manualmente en FedEx (no se cancela automáticamente)."
+            )
 
     # FIX 2026-07-26 — antes de borrar el item, si ya tenía una visita creada
     # en SimpliRoute, hay que borrarla ALLÁ también. Si no, al re-preparar el
@@ -31820,6 +31902,8 @@ def tr_quitar_item(mid, item_id):
     if _visit_id_borrado:
         detalle += (f" · visita SimpliRoute {_visit_id_borrado} "
                     f"{'borrada' if _simpliroute_borrado_ok else 'NO se pudo borrar (revisar manual)'}")
+    if _aviso_duplicado:
+        detalle += " · COPIA DUPLICADA (la entrega real ya está registrada en otro manifiesto)"
     _tr_log("manifest", mid, "factura quitada", detalle)
 
     conn = get_db()
@@ -31841,8 +31925,9 @@ def tr_quitar_item(mid, item_id):
         "total_items": (_tot.get("total_items") if _tot else None),
         "costo_total": float(_tot.get("costo_total") or 0) if _tot else None,
     }
-    if _aviso:
-        resp["aviso"] = _aviso
+    _avisos_finales = [a for a in (_aviso, _aviso_duplicado) if a]
+    if _avisos_finales:
+        resp["aviso"] = " ".join(_avisos_finales)
     return jsonify(resp)
 
 
