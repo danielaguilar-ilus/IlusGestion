@@ -75630,7 +75630,13 @@ _OT_TV_SELECT = (
     # Ticket de origen (2026-08-27, Daniel: "necesito que diga el ticket y
     # el nombre del cliente"). Vínculo 1:1 vía tk_tickets.visita_id, el
     # mismo que ya usa el calendario de mantenciones (app.py:67757).
-    "       tk.numero_ticket, "
+    # `tk.empresa` es el nombre REAL que escribió quien abrió el ticket:
+    # sirve de respaldo cuando la ficha del cliente quedó con el nombre
+    # provisorio "Cliente ticket #NNNN" (Daniel, captura del 27-08).
+    "       tk.numero_ticket, tk.empresa AS ticket_empresa, "
+    # Documento del ERP asociado (NVI/NVV) — Daniel: "tal vez nro de
+    # documento". Es el dato que identifica la instalación en el ERP.
+    "       v.documento_erp_tido, v.documento_erp_nudo, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, te.id AS tecnico_proveedor_id, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
@@ -75796,10 +75802,37 @@ def _ot_tv_datos(fecha=None):
         tipo_label = _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(),
                                          (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo")
 
+        # Nombre del cliente REAL. Cuando la OT nace de un ticket cuyo
+        # cliente todavía no tenía ficha, se crea una con el nombre
+        # provisorio "Cliente ticket #NNNN" — inútil en una pantalla que se
+        # mira de lejos (Daniel, 27-08: "dice ticket, debe decir el nombre
+        # de cliente"). Si detectamos ese placeholder, se usa la empresa que
+        # escribió quien abrió el ticket, que sí es el nombre de verdad.
+        _cli_nom = (f.get("razon_social") or "").strip()
+        if (not _cli_nom) or re.match(r"^cliente\s+ticket\s*#?\d*$", _cli_nom, re.I):
+            _cli_nom = (f.get("ticket_empresa") or "").strip() or _cli_nom
+        cliente_txt = _cli_nom or "Trabajo interno"
+
+        # Documento del ERP (NVI/NVV) si la OT lo tiene declarado.
+        _doc = ""
+        if (f.get("documento_erp_nudo") or "").strip():
+            _doc = ((f.get("documento_erp_tido") or "DOC").strip() + " "
+                    + str(f.get("documento_erp_nudo")).strip())
+
         bloque = {
+            # `vid`/`fecha` (2026-08-27): los usa la pantalla de CONTROL para
+            # abrir o correr la OT desde el propio modal del monitor. El
+            # televisor recibe los mismos campos pero no los usa nunca — es
+            # el id interno de la visita, no un dato sensible (el payload
+            # público ya trae número, cliente y horario).
+            "vid": f.get("id"),
+            "fecha": (f.get("fecha_programada").isoformat()
+                      if hasattr(f.get("fecha_programada"), "isoformat")
+                      else str(f.get("fecha_programada") or "")[:10]),
             "numero": f.get("numero_ot") or f"#{f.get('id')}",
-            "cliente": (f.get("razon_social") or "Trabajo interno")[:44],
+            "cliente": cliente_txt[:44],
             "ticket": f.get("numero_ticket") or None,
+            "documento": _doc or None,
             "ini": h_ini, "fin": _ot_tv_hhmm(f.get("hora_fin")),
             "estado": ("ejecutando" if en_curso else
                        "terminado" if terminada else
@@ -75832,7 +75865,7 @@ def _ot_tv_datos(fecha=None):
         if en_curso and not p["actual"]:
             p["actual"] = {
                 "numero": bloque["numero"],
-                "cliente": f.get("razon_social") or "Trabajo interno",
+                "cliente": cliente_txt,
                 "direccion": dir_txt, "tipo": tipo_label,
                 "inicio_iso": _ot_tv_iso(f.get("hora_real_inicio")),
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
@@ -75843,7 +75876,7 @@ def _ot_tv_datos(fecha=None):
             # muestra acá, no solo cuando ya está en ejecución.
             p["actual"] = {
                 "numero": bloque["numero"],
-                "cliente": f.get("razon_social") or "Trabajo interno",
+                "cliente": cliente_txt,
                 "direccion": dir_txt, "tipo": tipo_label, "inicio_iso": None,
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
             }
@@ -76026,9 +76059,16 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
             d["atrasadas"] += 1
 
         if len(d["ots"]) < 12:      # techo por día: la tarjeta no es un listado
+            # Mismo respaldo de nombre que la vista de día: si la ficha tiene
+            # el nombre provisorio "Cliente ticket #NNNN", se usa la empresa
+            # real que escribió quien abrió el ticket.
+            _cn = (f.get("razon_social") or "").strip()
+            if (not _cn) or re.match(r"^cliente\s+ticket\s*#?\d*$", _cn, re.I):
+                _cn = (f.get("ticket_empresa") or "").strip() or _cn
             d["ots"].append({
+                "vid": f.get("id"),
                 "numero": f.get("numero_ot") or f"#{f.get('id')}",
-                "cliente": (f.get("razon_social") or "Trabajo interno")[:38],
+                "cliente": (_cn or "Trabajo interno")[:38],
                 "ticket": f.get("numero_ticket") or None,
                 "tipo": _TIPO_OT_LABEL.get(
                     (f.get("tipo") or "").lower(),
@@ -76266,6 +76306,11 @@ def ot2_monitor_control():
         # bloque y abrir el detalle para explicarlo cuando la jefatura
         # pregunta "¿qué es eso que estoy viendo?".
         interactivo=True,
+        # 2026-08-27 (Daniel: "necesito poder editar las OT" desde el
+        # monitor). Habilita los botones de correr días / abrir la OT en el
+        # modal. El backend igual valida cada PUT — esto solo evita mostrar
+        # botones que después van a rechazar. El televisor nunca lo recibe.
+        puede_editar=bool((g.get("permissions") or {}).get("superadmin")),
     )
 
 

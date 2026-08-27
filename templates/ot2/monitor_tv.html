@@ -592,6 +592,12 @@
       background:rgba(255,255,255,.75);border-radius:0 3px 3px 0;
       transition:width .7s var(--ease-out);
     }
+    /* Varias OT solapadas en la misma hora: cada una en su carril, con
+       menos alto — se compacta el contenido para no perder el cliente. */
+    .tl-bloque.b-compacto{padding:0 9px;gap:0;justify-content:center}
+    .tl-bloque.b-compacto .b-cliente{font-size:calc(var(--fs-bloque,16px) * .82);line-height:1.15}
+    .tl-bloque.b-compacto .b-horas{font-size:12px;line-height:1.1}
+
     /* Bloques angostos: primero pierden las horas, luego el texto */
     .tl-bloque.b-narrow .b-horas{display:none}
     .tl-bloque.b-tiny .b-cliente,.tl-bloque.b-tiny .b-horas{display:none}
@@ -911,6 +917,23 @@
     .tvm-ot.o-atrasado::before{background:var(--amber-500)}
     .tvm-ot.o-atrasado .tvm-ot-chip{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fbbf24}
     .tvm-ot.o-atrasado .av-bar i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
+    /* Acciones por OT dentro del modal (solo pantalla de control) */
+    .tvm-ot-acc{display:flex;align-items:center;gap:7px;margin-top:12px;flex-wrap:wrap;
+      padding-top:11px;border-top:1px solid var(--line-1)}
+    .tvm-ot-acc button{
+      cursor:pointer;border:1px solid var(--line-2);background:rgba(255,255,255,.05);
+      color:var(--txt-2);border-radius:9px;padding:6px 13px;font-size:14px;font-weight:800;
+      transition:background .15s,color .15s,border-color .15s;
+    }
+    .tvm-ot-acc button:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3)}
+    .tvm-ot-acc button:disabled{opacity:.45;cursor:default}
+    .tvm-ot-abrir{
+      margin-left:auto;text-decoration:none;color:#fca5a5;font-size:14px;font-weight:800;
+      padding:6px 13px;border-radius:9px;border:1px solid rgba(220,38,38,.45);
+      transition:background .15s;
+    }
+    .tvm-ot-abrir:hover{background:rgba(220,38,38,.18);color:#fff}
+
     .tvm-foot{
       flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:14px;
       padding:14px 26px;border-top:1.5px solid var(--line-1);background:rgba(255,255,255,.02);
@@ -1050,6 +1073,9 @@
   /* true solo en /ot/monitor (computador de Daniel): habilita clics y el
      modal de detalle. En /tv/<token> es false y la pantalla queda inerte. */
   const INTERACTIVO = {{ (interactivo or false) | tojson }};
+  /* Botones de editar la OT desde el modal (correr días / abrir). Solo la
+     pantalla de control lo recibe en true; el televisor jamás. */
+  const PUEDE_EDITAR = {{ (puede_editar or false) | tojson }};
 
   const TZ = 'America/Santiago';
   const MAX_POR_PAGINA = 14;       // franjas máximas legibles a 3 metros
@@ -1500,6 +1526,14 @@
     const bloques = p.bloques || [];
     $('.tl-vacio', tl).hidden = bloques.length > 0;
 
+    // 🔧 FIX 2026-08-27 (Daniel, captura real: dos OT del mismo técnico a la
+    // MISMA hora se dibujaban una ENCIMA de la otra y el texto quedaba
+    // ilegible — "Naw Training Lab Spa" e "Inversiones Rjcp Spa" superpuestas
+    // a las 09:00-13:00). Antes cada bloque se posicionaba solo por su
+    // horario, sin mirar a los demás. Ahora se reparten en carriles: los que
+    // se pisan comparten el alto de la fila en vez de taparse.
+    repartirCarriles(bloques);
+
     syncList(
       tl,
       bloques,
@@ -1507,6 +1541,35 @@
       crearBloque,
       actualizarBloque
     );
+  }
+
+  /* Asigna a cada bloque el carril donde debe dibujarse. Dos bloques que se
+     solapan en el tiempo nunca comparten carril; los que no se pisan, sí
+     (para no desperdiciar alto). Escribe `__lane` y `__lanes` en el bloque. */
+  function repartirCarriles(bloques){
+    if (!bloques || !bloques.length) return;
+    const conMin = bloques.map(b => {
+      const ini = hm(b.ini);
+      const fin = hm(b.fin);
+      return {
+        b,
+        ini: ini != null ? ini : state.esc.t0,
+        fin: fin != null ? fin : ((ini != null ? ini : state.esc.t0) + 60),
+      };
+    }).sort((x, y) => x.ini - y.ini || x.fin - y.fin);
+
+    const finPorCarril = [];   // último minuto ocupado en cada carril
+    conMin.forEach(item => {
+      let carril = finPorCarril.findIndex(f => f <= item.ini);
+      if (carril === -1){ carril = finPorCarril.length; }
+      finPorCarril[carril] = item.fin;
+      item.b.__lane = carril;
+    });
+    const total = Math.max(1, finPorCarril.length);
+    bloques.forEach(b => {
+      b.__lanes = total;
+      if (b.__lane == null) b.__lane = 0;
+    });
   }
 
   /* Clave estable de un bloque — la usan el sync y el foco del modal */
@@ -1536,22 +1599,47 @@
     const lf = posPct(fin != null ? fin : (ini != null ? ini + 60 : state.esc.t0 + 60));
     const w = Math.max(0.8, lf - li);
 
-    const clase = 'tl-bloque b-' + est + (w < 4.5 ? ' b-tiny' : (w < 9 ? ' b-narrow' : ''));
+    const lanes = Math.max(1, b.__lanes || 1);
+    const lane = Math.min(lanes - 1, Math.max(0, b.__lane || 0));
+    // Con 2+ OT solapadas la burbuja pierde alto: se compacta el contenido
+    // para que el nombre del cliente siga siendo legible a distancia.
+    const clase = 'tl-bloque b-' + est
+      + (w < 4.5 ? ' b-tiny' : (w < 9 ? ' b-narrow' : ''))
+      + (lanes > 1 ? ' b-compacto' : '');
     if (nodo.className !== clase) nodo.className = clase;
     nodo.style.left = li + '%';
     nodo.style.width = w + '%';
+    // Reparto vertical: cada carril ocupa su franja, con un hilo de aire
+    // entre medio. Con un solo carril, se deja el alto de siempre.
+    if (lanes > 1){
+      const alto = 78 / lanes;                 // % del alto útil de la fila
+      nodo.style.top    = (11 + lane * (alto + 2)) + '%';
+      nodo.style.bottom = 'auto';
+      nodo.style.height = alto + '%';
+    } else {
+      nodo.style.top = ''; nodo.style.bottom = ''; nodo.style.height = '';
+    }
 
     setTexto($('.b-cliente', nodo), b.cliente || b.numero || '');
     // 2026-08-27 (Daniel: "la instalación debería decirla en la burbuja de
     // trabajo"): el tipo va en la MISMA línea de las horas — la burbuja se
     // angosta según la duración, y .b-narrow/.b-tiny ya esconden esta línea
     // cuando no cabe, así que no rompe los bloques cortos.
+    // 2026-08-27 (Daniel: "dice ticket, debe decir el nombre de cliente si
+    // es instalación y tal vez nro de documento"). El cliente ya manda en la
+    // primera línea; acá se prioriza el DOCUMENTO del ERP —el identificador
+    // real de una instalación— y el ticket queda de respaldo cuando no hay
+    // documento declarado todavía.
     const _tipo = b.tipo ? b.tipo + ' · ' : '';
-    const _tk = b.ticket ? b.ticket + ' · ' : '';
-    setTexto($('.b-horas', nodo), _tk + _tipo + (b.ini || '') + '–' + (b.fin || ''));
+    const _ref = b.documento ? (b.documento + ' · ')
+                             : (b.ticket ? b.ticket + ' · ' : '');
+    setTexto($('.b-horas', nodo), _ref + _tipo + (b.ini || '') + '–' + (b.fin || ''));
     $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
-    nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.ticket ? 'Ticket ' + b.ticket + ' · ' : '') +
-                 (b.tipo ? b.tipo + ' · ' : '') + (b.cliente || '');
+    nodo.title = (b.numero ? b.numero + ' · ' : '')
+               + (b.cliente ? b.cliente + ' · ' : '')
+               + (b.documento ? b.documento + ' · ' : '')
+               + (b.ticket ? 'Ticket ' + b.ticket + ' · ' : '')
+               + (b.tipo || '');
   }
 
   /* ─────────────── modal de detalle (solo modo interactivo) ───────────────
@@ -1673,6 +1761,29 @@
       av.innerHTML = '<div class="av-bar"><i style="width:' + bpct + '%"></i></div><b>' + bpct + '% avance</b>';
       ot.appendChild(av);
 
+      // ── Acciones (2026-08-27, Daniel: "necesito poder editar las OT" /
+      // "las fechas agregarle un día más o varios"). Solo con permiso de
+      // gestión — el backend igual valida, esto solo evita mostrar botones
+      // que van a rechazar. Correr días es lo más frecuente en terreno:
+      // un clic, sin escribir fechas a mano.
+      if (PUEDE_EDITAR && b.vid){
+        const acc = el('div', 'tvm-ot-acc');
+        acc.innerHTML =
+          '<button type="button" data-d="1">+1 día</button>' +
+          '<button type="button" data-d="2">+2</button>' +
+          '<button type="button" data-d="7">+1 semana</button>' +
+          '<button type="button" data-d="-1">−1 día</button>' +
+          '<a class="tvm-ot-abrir" target="_blank" rel="noopener" ' +
+          '   href="/mantenciones/ot/' + b.vid + '/ejecutar">Abrir OT ↗</a>';
+        acc.querySelectorAll('button[data-d]').forEach(btn => {
+          btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            correrDias(b, parseInt(btn.dataset.d, 10), btn);
+          });
+        });
+        ot.appendChild(acc);
+      }
+
       lista.appendChild(ot);
       if (esFoco) nodoFoco = ot;
     });
@@ -1681,6 +1792,48 @@
     m.hidden = false;
     if (nodoFoco) nodoFoco.scrollIntoView({ block: 'center' });
     else lista.scrollTop = 0;
+  }
+
+  /* Correr una OT N días desde su fecha actual. Daniel 2026-08-27: "las
+     fechas agregarle un día más o varios" — en terreno lo que pasa es que
+     algo se corre, no que se elija una fecha nueva desde cero. Queda
+     registrado en la bitácora con el motivo, igual que el Reagendar de la
+     ficha (motivo_cambio). */
+  async function correrDias(b, dias, btn){
+    if (!b || !b.vid || !dias) return;
+    const base = (b.fecha || state.fechaVista || state.hoyReal);
+    const nueva = diaVecino(base, dias);
+    if (!nueva){ return; }
+    const txt = dias > 0 ? ('+' + dias + ' día' + (dias > 1 ? 's' : ''))
+                         : (dias + ' día' + (dias < -1 ? 's' : ''));
+    const [y, m2, d2] = nueva.split('-');
+    if (!confirm(`Mover ${b.numero || 'esta OT'} (${b.cliente || ''})\n`
+               + `${txt} → ${d2}/${m2}/${y}\n\nQueda registrado en el historial.`)) return;
+    if (btn){ btn.disabled = true; btn.textContent = '…'; }
+    try{
+      const csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+      const r = await fetch('/mantenciones/api/visitas/' + b.vid, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+        body: JSON.stringify({
+          fecha_programada: nueva,
+          motivo_cambio: 'Movida ' + txt + ' desde el monitor de operaciones',
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false || j.error){
+        alert(j.error || 'No se pudo mover la OT.');
+        if (btn){ btn.disabled = false; }
+        return;
+      }
+      cerrarModal();
+      state.huella = null;             // fuerza refresco en el próximo latido
+      cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia');
+    } catch(e){
+      alert('Error de conexión al mover la OT.');
+      if (btn){ btn.disabled = false; }
+    }
   }
 
   function cerrarModal(){
