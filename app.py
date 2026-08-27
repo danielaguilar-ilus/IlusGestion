@@ -7093,6 +7093,13 @@ def inject_globals():
         # Flag global para todos los templates: True si el usuario es 'tecnico' (solo lectura).
         # Permite ocultar botones de edición/creación/borrado sin tocar cada template.
         "is_tecnico":   (_role == "tecnico"),
+        # 2026-08-27: versión NORMALIZADA de lo anterior. `is_tecnico`
+        # compara el string exacto, así que NO reconoce 'tecnico_externo'
+        # ni 'tecnico_jr' — la misma clase de bug que se endureció en el
+        # backend con `_no_tecnico` (2026-08-09). Este usa `_rol_familia()`,
+        # igual que la matriz de permisos real. No se toca `is_tecnico`
+        # para no cambiarle el comportamiento a las plantillas que ya lo usan.
+        "es_tecnico":   _es_rol_tecnico(),
         # 2026-06-09 (Daniel): roles de gestión (admin/supervisor/ejecutivo/
         # superadmin) pueden editar y REAGENDAR visitas. Usado por el modal
         # del calendario para habilitar campos + botón Guardar. Espejo exacto
@@ -50366,6 +50373,15 @@ def _require_gestion_monitor(view):
     Es seguro abrirlo: este tablero jamás incluye montos, costos ni
     márgenes — se diseñó así desde el inicio porque el mismo payload
     alimenta el televisor público de la oficina (ver `_ot_tv_datos`).
+
+    ⚠️ La regla NO es una lista de familias cerrada, a propósito. Los roles
+    de este proyecto son DINÁMICOS (Daniel los crea en /admin/roles), así
+    que uno como 'operaciones' o 'jefe_taller' no cae en ninguna familia
+    conocida — `_rol_familia` devuelve el slug tal cual — y quedaría
+    afuera aunque su dueño sí gestione OTs. Por eso la regla real es:
+    **cualquiera que ya tenga el permiso `mantenciones` y NO sea técnico**.
+    Si esa persona ya puede abrir las OT del módulo, ver el tablero (que
+    muestra estrictamente MENOS información) no le agrega ningún acceso.
     """
     @wraps(view)
     def wrapped(*a, **kw):
@@ -50376,6 +50392,9 @@ def _require_gestion_monitor(view):
         familia = _rol_familia((g.user.get("role") or "").lower())
         if perms.get("superadmin") or familia in ("superadmin", "admin",
                                                   "supervisor", "ejecutivo"):
+            return view(*a, **kw)
+        # Rol dinámico de gestión (no técnico) con acceso al módulo.
+        if perms.get("mantenciones") and familia != "tecnico":
             return view(*a, **kw)
         # AJAX (el latido y los datos del monitor) espera JSON, no un redirect.
         if (request.path.startswith("/ot/api/")

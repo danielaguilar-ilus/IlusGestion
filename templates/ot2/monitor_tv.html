@@ -271,6 +271,16 @@
        viendo hoy — confundía como si la navegación no respondiera. */
     .date-nav-btn[hidden],.date-hoy-btn[hidden],.vista-sw[hidden]{display:none}
 
+    /* Pantalla completa — discreto por diseño: apenas se insinúa hasta que
+       el mouse pasa cerca. En el televisor ni siquiera existe. */
+    .fs-btn{
+      background:none;border:0;color:#4b5563;padding:6px;margin-left:2px;
+      border-radius:8px;cursor:pointer;display:grid;place-items:center;
+      opacity:.35;transition:opacity .2s,color .2s,background .2s;
+    }
+    .fs-btn:hover{opacity:1;color:#e5e7eb;background:rgba(255,255,255,.08)}
+    .fs-btn[hidden]{display:none}
+
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
     .kpi + .kpi::before{
@@ -984,6 +994,15 @@
           <div class="tv-clock" id="tvClock">--:--</div>
           <span class="tv-live"><i></i>EN VIVO</span>
         </div>
+        {# Pantalla completa — "bien piolita y sutil" (Daniel 27-08): casi
+           invisible hasta que se pasa el mouse por encima. #}
+        <button type="button" class="fs-btn" id="btnFullscreen" hidden
+                title="Pantalla completa (F)" aria-label="Pantalla completa">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+               stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/>
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -2110,6 +2129,26 @@
       const btnAnt = $('#btnDiaAnt'), btnSig = $('#btnDiaSig'), btnHoy = $('#btnDiaHoy');
       if (btnAnt) btnAnt.hidden = false;
       if (btnSig) btnSig.hidden = false;
+
+      // Pantalla completa (botón discreto + tecla F). Solo en la pantalla
+      // de control: el televisor ya arranca a pantalla completa solo.
+      const fsBtn = $('#btnFullscreen');
+      const toggleFS = () => {
+        try{
+          if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+          else document.exitFullscreen();
+        } catch(_e){ /* navegador que no lo permite: no romper nada */ }
+      };
+      if (fsBtn){
+        fsBtn.hidden = false;
+        fsBtn.addEventListener('click', toggleFS);
+      }
+      document.addEventListener('keydown', (ev) => {
+        // Solo si no se está escribiendo en un campo.
+        const t = ev.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (ev.key === 'f' || ev.key === 'F') toggleFS();
+      });
 
       // Selector Día / Semana / Mes
       const sw = $('#vistaSw');

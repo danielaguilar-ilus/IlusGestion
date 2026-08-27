@@ -390,11 +390,58 @@
         {% endif %}
         {% if visita.fecha_programada %}
         <div class="k">Fecha</div>
+        {# 2026-08-27 (Daniel: "no tiene ningún lápiz para cambiar la OT",
+           "necesito cambiar la fecha de una OT urgente"). Antes había que
+           salir a /mantenciones/ots y buscar la OT en el listado solo para
+           mover una fecha. Se clona el patrón de "Reasignar técnico" que ya
+           vive dos campos más abajo — mismo endpoint (PUT de la visita),
+           mismo gate (`puede_metadata`), misma caja desplegable.
+           La fecha además se muestra en formato Chile (REGLA #6): antes
+           salía cruda como "2026-08-26". #}
         <div class="v">
-          {{ visita.fecha_programada }}
-          {% if visita.hora_inicio %} · {{ visita.hora_inicio }}{% endif %}
-          {% if visita.hora_fin %}–{{ visita.hora_fin }}{% endif %}
+          {{ visita.fecha_programada | chile_fmt('%d/%m/%Y') }}
+          {% if visita.hora_inicio %} · {{ (visita.hora_inicio | string)[:5] }}{% endif %}
+          {% if visita.hora_fin %}–{{ (visita.hora_fin | string)[:5] }}{% endif %}
+          {# Daniel 2026-08-27: "quiero moverlas solo yo como super admin".
+             Ojo: `_es_superadmin` se define recién en la línea ~1980 de esta
+             plantilla, después de este bloque, así que acá va la fuente
+             directa (`permissions.superadmin`). #}
+          {% if permissions.superadmin %}
+          <button type="button" class="btn btn-sm btn-link p-0 ms-2" style="font-size:.75rem;text-decoration:none"
+                  onclick="otAbrirReagendar()">
+            <i class="bi bi-calendar-event"></i> Reagendar
+          </button>
+          {% endif %}
         </div>
+        {% if permissions.superadmin %}
+        <div id="otReagendarBox" style="display:none;grid-column:1 / -1;background:#f9fafb;
+             border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-top:2px">
+          <div class="d-flex gap-2 flex-wrap align-items-end">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Fecha</label>
+              <input type="date" id="otReagFecha" class="form-control form-control-sm"
+                     value="{{ visita.fecha_programada }}" style="max-width:170px">
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Desde</label>
+              <input type="time" id="otReagIni" class="form-control form-control-sm"
+                     value="{{ (visita.hora_inicio | string)[:5] if visita.hora_inicio else '' }}" style="max-width:120px">
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Hasta</label>
+              <input type="time" id="otReagFin" class="form-control form-control-sm"
+                     value="{{ (visita.hora_fin | string)[:5] if visita.hora_fin else '' }}" style="max-width:120px">
+            </div>
+            <button type="button" class="btn btn-sm btn-danger" onclick="otConfirmarReagendar()">
+              <i class="bi bi-check2 me-1"></i>Guardar
+            </button>
+            <button type="button" class="btn btn-sm btn-light" onclick="otCerrarReagendar()">Cancelar</button>
+          </div>
+          <div class="small text-muted mt-2" style="font-size:.72rem">
+            Queda registrado en el historial de la OT con tu usuario.
+          </div>
+        </div>
+        {% endif %}
         {% endif %}
         {% if visita.fecha_fin and visita.fecha_fin != visita.fecha_programada %}
         <div class="k">Fecha término</div>
@@ -3069,6 +3116,61 @@ window.otConfirmarReasignarTecnico = async function(){
     }
   } catch (e){
     ilusToast('Error de conexión al reasignar el técnico.', {type: 'error'});
+  }
+};
+
+// ════════════════════════════════════════════════════════
+//  REAGENDAR (2026-08-27, Daniel: "no tiene ningún lápiz para cambiar
+//  la OT" / "necesito cambiar la fecha de una OT urgente"). Mismo
+//  endpoint y mismo gate que reasignar técnico — el backend
+//  (@_ot_can_metadata) decide si esta persona puede o no.
+// ════════════════════════════════════════════════════════
+window.otAbrirReagendar = function(){
+  const box = document.getElementById('otReagendarBox');
+  if (!box) return;
+  box.style.display = 'block';
+  box.scrollIntoView({behavior: 'smooth', block: 'center'});
+};
+window.otCerrarReagendar = function(){
+  const box = document.getElementById('otReagendarBox');
+  if (box) box.style.display = 'none';
+};
+window.otConfirmarReagendar = async function(){
+  const f   = document.getElementById('otReagFecha');
+  const hi  = document.getElementById('otReagIni');
+  const hf  = document.getElementById('otReagFin');
+  if (!f) return;
+  const fecha = (f.value || '').trim();
+  if (!fecha){
+    ilusToast('Elige una fecha.', {type: 'warning'});
+    return;
+  }
+  const ini = (hi && hi.value) ? hi.value : null;
+  const fin = (hf && hf.value) ? hf.value : null;
+  // Coherencia mínima: no dejar guardar un rango invertido — el backend
+  // no lo valida y quedaría una OT que "termina antes de empezar".
+  if (ini && fin && fin <= ini){
+    ilusToast('La hora de término debe ser posterior a la de inicio.', {type: 'warning'});
+    return;
+  }
+  const body = {fecha_programada: fecha};
+  if (ini) body.hora_inicio = ini;
+  if (fin) body.hora_fin = fin;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ OT reagendada', {type: 'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo reagendar la OT.', {type: 'error'});
+    }
+  } catch (e){
+    ilusToast('Error de conexión al reagendar.', {type: 'error'});
   }
 };
 </script>
