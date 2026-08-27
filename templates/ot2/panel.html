@@ -378,8 +378,13 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </a>
       {# La copia operable del monitor de oficina, para disertar desde el
-         computador mientras el televisor lo muestra solo (Daniel 26-08). #}
-      {% if permissions.superadmin %}
+         computador mientras el televisor lo muestra solo (Daniel 26-08).
+         2026-08-27: abierto a la familia de GESTIÓN (Daniel: "que Víctor
+         pueda ver el monitor"). Se reusa `puede_gestionar_visitas`, que ya
+         calcula esa misma familia con _rol_familia() — misma regla que el
+         decorador @_require_gestion_monitor del backend, para que el botón
+         no aparezca donde la ruta después va a rechazar. #}
+      {% if puede_gestionar_visitas %}
       <a href="{{ url_for('ot2_monitor_control') }}" target="_blank"
          class="btn btn-sm btn-outline-light"
          title="Abrir el tablero del monitor de oficina en pantalla completa">

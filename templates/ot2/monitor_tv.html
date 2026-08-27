@@ -256,6 +256,8 @@
     .cd-ot.e-terminado{border-left-color:#60a5fa}
     .cd-ot.e-atrasado{border-left-color:var(--amber-500)}
     .cd-ot .h{font-weight:800;color:#9ca3af;flex:none;font-variant-numeric:tabular-nums}
+    .cd-ot .tk{font-size:10px;font-weight:800;color:#a78bfa;flex:none;
+      background:rgba(139,92,246,.14);border-radius:4px;padding:0 5px}
     .cd-ot .c{font-weight:700;color:#e5e7eb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .cd-ot .t{margin-left:auto;font-size:10px;font-weight:800;color:#fca5a5;
       text-transform:uppercase;white-space:nowrap;flex:none}
@@ -1522,9 +1524,11 @@
     // angosta según la duración, y .b-narrow/.b-tiny ya esconden esta línea
     // cuando no cabe, así que no rompe los bloques cortos.
     const _tipo = b.tipo ? b.tipo + ' · ' : '';
-    setTexto($('.b-horas', nodo), _tipo + (b.ini || '') + '–' + (b.fin || ''));
+    const _tk = b.ticket ? b.ticket + ' · ' : '';
+    setTexto($('.b-horas', nodo), _tk + _tipo + (b.ini || '') + '–' + (b.fin || ''));
     $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
-    nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.tipo ? b.tipo + ' · ' : '') + (b.cliente || '');
+    nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.ticket ? 'Ticket ' + b.ticket + ' · ' : '') +
+                 (b.tipo ? b.tipo + ' · ' : '') + (b.cliente || '');
   }
 
   /* ─────────────── modal de detalle (solo modo interactivo) ───────────────
@@ -1810,8 +1814,11 @@
         if (!esMes){
           html += '<div class="cd-ots">';
           (d.ots || []).forEach(o => {
-            html += '<div class="cd-ot e-' + esc(o.estado) + '">' +
+            html += '<div class="cd-ot e-' + esc(o.estado) + '" title="' +
+                esc((o.numero || '') + (o.ticket ? ' · Ticket ' + o.ticket : '') +
+                    ' · ' + (o.tecnico || '')) + '">' +
               (o.ini ? '<span class="h">' + esc(o.ini) + '</span>' : '') +
+              (o.ticket ? '<span class="tk">' + esc(o.ticket) + '</span>' : '') +
               '<span class="c">' + esc(o.cliente) + '</span>' +
               (o.tipo ? '<span class="t">' + esc(o.tipo) + '</span>' : '') +
             '</div>';

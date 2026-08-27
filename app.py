@@ -50350,6 +50350,45 @@ def _rol_familia(role):
     return r  # fallback: usar el slug tal cual
 
 
+def _require_gestion_monitor(view):
+    """Puerta del MONITOR de operaciones (pantalla de control).
+
+    2026-08-27 (Daniel, explícito: "que Víctor pueda ver el monitor"):
+    antes era `@_require_superadmin`, o sea solo Daniel. Se abre a la
+    familia de GESTIÓN (admin · supervisor · ejecutivo · superadmin), que
+    es justo quien necesita ver cómo viene el día: Aarón, Víctor y Juan
+    Pablo levantan y gestionan las OT.
+
+    Deliberadamente NO se abre a la familia 'tecnico': el monitor muestra
+    la carga de TODO el equipo, y la regla del proyecto es que un técnico
+    solo ve lo suyo (ver `_puede_ot_accion`, acción 'ver').
+
+    Es seguro abrirlo: este tablero jamás incluye montos, costos ni
+    márgenes — se diseñó así desde el inicio porque el mismo payload
+    alimenta el televisor público de la oficina (ver `_ot_tv_datos`).
+    """
+    @wraps(view)
+    def wrapped(*a, **kw):
+        if not g.user:
+            flash("Inicia sesión para continuar.", "warning")
+            return redirect(url_for("login", next=request.path))
+        perms = g.get("permissions") or {}
+        familia = _rol_familia((g.user.get("role") or "").lower())
+        if perms.get("superadmin") or familia in ("superadmin", "admin",
+                                                  "supervisor", "ejecutivo"):
+            return view(*a, **kw)
+        # AJAX (el latido y los datos del monitor) espera JSON, no un redirect.
+        if (request.path.startswith("/ot/api/")
+                or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")):
+            return jsonify({"ok": False,
+                            "error": "No tienes acceso al monitor de operaciones."}), 403
+        flash("El monitor de operaciones es para jefaturas y ejecutivos "
+              "de Servicio Técnico.", "warning")
+        return redirect(url_for("index"))
+    return wrapped
+
+
 def _puede_ot_accion(vid, accion, user=None):
     """Devuelve True si `user` puede ejecutar la `accion` sobre la OT `vid`.
 
@@ -75459,12 +75498,17 @@ _OT_TV_SELECT = (
     "       v.hora_inicio, v.hora_fin, v.hora_real_inicio, v.direccion_visita, "
     "       c.razon_social, c.direccion AS cliente_direccion, "
     "       c.comuna AS cliente_comuna, "
+    # Ticket de origen (2026-08-27, Daniel: "necesito que diga el ticket y
+    # el nombre del cliente"). Vínculo 1:1 vía tk_tickets.visita_id, el
+    # mismo que ya usa el calendario de mantenciones (app.py:67757).
+    "       tk.numero_ticket, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, te.id AS tecnico_proveedor_id, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas "
     "  FROM mant_visitas v "
     "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
+    "  LEFT JOIN tk_tickets    tk ON tk.visita_id = v.id "
     "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
     "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
 )
@@ -75526,11 +75570,29 @@ def _ot_tv_datos(fecha=None):
         # con "not enough arguments for format string" (pasó en producción el
         # 2026-08-26: la consulta fallaba entera, nadie salía como disponible
         # y los externos aparecían como internos por el camino de respaldo).
+        # 🔧 FIX 2026-08-27 (Daniel, 3ª vez que lo pide: "Daniel Pulgar e
+        # Isabel Milling son externos... sepáralos ya te lo he pedido varias
+        # veces"). Antes esto SOLO miraba `te.user_id = au.id` y el rol.
+        # Isabel Milling y Daniel Pulgar SÍ están registrados como
+        # proveedores en mant_tecnicos_externos (de ahí salen sus Anexos
+        # N°135 y N°155), pero su cuenta de app_users nunca quedó ENLAZADA
+        # a esa ficha (user_id NULL) — así que el JOIN no encontraba nada y
+        # caían entre los internos. Ahora también se cruza por NOMBRE
+        # (razón social o contacto del proveedor): si alguien está
+        # registrado como proveedor externo, es externo, aunque el enlace
+        # técnico falte. Sigue siendo dato real de la base, no una lista
+        # escrita a mano.
         tecnicos = mysql_fetchall(
             "SELECT au.id, COALESCE(au.nombre, au.username) AS nombre, "
-            "       au.role, te.id AS proveedor_id "
+            "       au.role, "
+            "       COALESCE(te.id, ten.id) AS proveedor_id "
             "  FROM app_users au "
-            "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
+            "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
+            "  LEFT JOIN mant_tecnicos_externos ten "
+            "         ON ten.user_id IS NULL "
+            "        AND LOWER(TRIM(COALESCE(au.nombre, au.username))) IN ( "
+            "              LOWER(TRIM(ten.razon_social)), "
+            "              LOWER(TRIM(ten.contacto_nombre)) ) "
             " WHERE au.active=1 AND LOWER(au.role) LIKE %s "
             " ORDER BY nombre", ("tecnico%",)) or []
     except Exception as e:
@@ -75539,8 +75601,10 @@ def _ot_tv_datos(fecha=None):
 
     personas, orden = {}, []
     for t in tecnicos:
-        externo = bool(t.get("proveedor_id")) or \
-            (t.get("role") or "").lower() == "tecnico_externo"
+        # Externo si: tiene ficha de proveedor (enlazada o cruzada por
+        # nombre, ver la query de arriba) O su rol es tecnico_externo*.
+        externo = (bool(t.get("proveedor_id"))
+                   or (t.get("role") or "").lower().startswith("tecnico_externo"))
         personas[t["id"]] = {
             "nombre": t["nombre"], "iniciales": _ot2_iniciales(t["nombre"]),
             "externo": externo, "bloques": [], "actual": None,
@@ -75606,6 +75670,7 @@ def _ot_tv_datos(fecha=None):
         bloque = {
             "numero": f.get("numero_ot") or f"#{f.get('id')}",
             "cliente": (f.get("razon_social") or "Trabajo interno")[:44],
+            "ticket": f.get("numero_ticket") or None,
             "ini": h_ini, "fin": _ot_tv_hhmm(f.get("hora_fin")),
             "estado": ("ejecutando" if en_curso else
                        "terminado" if terminada else
@@ -75625,7 +75690,7 @@ def _ot_tv_datos(fecha=None):
                 # el proveedor dejaba a Rafael Naranjo (rol tecnico_externo,
                 # sin ficha de proveedor) apareciendo entre los internos.
                 "externo": (bool(f.get("tecnico_proveedor_id"))
-                            or (f.get("tecnico_role") or "").lower() == "tecnico_externo"),
+                            or (f.get("tecnico_role") or "").lower().startswith("tecnico_externo")),
                 "bloques": [], "actual": None, "total_ot": 0, "terminadas": 0,
             }
             orden.append(tid)
@@ -75835,6 +75900,7 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
             d["ots"].append({
                 "numero": f.get("numero_ot") or f"#{f.get('id')}",
                 "cliente": (f.get("razon_social") or "Trabajo interno")[:38],
+                "ticket": f.get("numero_ticket") or None,
                 "tipo": _TIPO_OT_LABEL.get(
                     (f.get("tipo") or "").lower(),
                     (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo"),
@@ -76047,7 +76113,7 @@ def ot_tv_datos(token):
 
 @app.route("/ot/monitor", methods=["GET"])
 @_mant_required
-@_require_superadmin
+@_require_gestion_monitor
 def ot2_monitor_control():
     """El mismo tablero del televisor, pero DENTRO de la app y con sesión.
 
@@ -76076,7 +76142,7 @@ def ot2_monitor_control():
 
 @app.route("/ot/api/monitor/status", methods=["GET"])
 @_mant_required
-@_require_superadmin
+@_require_gestion_monitor
 def ot2_monitor_status():
     """Latido de la pantalla de control (misma huella que el televisor)."""
     return jsonify({"ok": True, "huella": _ot_tv_huella()})
@@ -76084,7 +76150,7 @@ def ot2_monitor_status():
 
 @app.route("/ot/api/monitor/datos", methods=["GET"])
 @_mant_required
-@_require_superadmin
+@_require_gestion_monitor
 def ot2_monitor_datos():
     """Tablero completo para la pantalla de control. Comparte la caché con
     el televisor SOLO cuando se pide el día de hoy: si ambos están
