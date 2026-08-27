@@ -346,6 +346,25 @@
     letter-spacing: .04em; display: block;
     margin-bottom: 1px;
   }
+  /* Diagnóstico por máquina (Daniel 26-ago: "muy importante") — verde
+     aprobado, rojo cuando hay observación o falla que revisar. */
+  .eq-card .eq-diag {
+    background: var(--ilus-bg);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 8.5pt; line-height: 1.4;
+    color: var(--ilus-ink);
+    border-left: 3px solid #16a34a;
+    margin-bottom: 6px;
+  }
+  .eq-card .eq-diag.warn { border-left-color: var(--ilus-red); }
+  .eq-card .eq-diag .lbl {
+    font-weight: 800; color: #16a34a;
+    font-size: 7.5pt; text-transform: uppercase;
+    letter-spacing: .04em; display: block;
+    margin-bottom: 1px;
+  }
+  .eq-card .eq-diag.warn .lbl { color: var(--ilus-red); }
   .eq-card .eq-thumbs {
     display: flex; gap: 4px; flex-wrap: wrap;
   }
@@ -897,6 +916,17 @@
           {% if e.serie %}{% if e.sku %} · {% endif %}<b>Serie:</b> {{ e.serie }}{% endif %}
           {% if e.marca %}<br><b>Marca/Modelo:</b> {{ e.marca }}{% if e.modelo %} {{ e.modelo }}{% endif %}{% endif %}
         </div>
+        {% if e.diagnostico_estado %}
+        <div class="eq-diag {{ 'warn' if e.diagnostico_estado in ('observacion','falla') }}">
+          <span class="lbl">Diagnóstico —
+            {%- if e.diagnostico_estado == 'aprobado' %} Aprobado
+            {%- elif e.diagnostico_estado == 'falla' %} Falla
+            {%- elif e.diagnostico_estado == 'observacion' %} Observación
+            {%- else %} {{ e.diagnostico_estado }}
+            {%- endif %}</span>
+          {{ e.diagnostico_texto or 'Sin detalle adicional.' }}
+        </div>
+        {% endif %}
         {% if e.observaciones %}
         <div class="eq-obs">
           <span class="lbl">Observación:</span>
@@ -976,6 +1006,17 @@
           {% if e.serie %}{% if e.sku %} · {% endif %}<b>Serie:</b> {{ e.serie }}{% endif %}
           {% if e.marca %}<br><b>Marca/Modelo:</b> {{ e.marca }}{% if e.modelo %} {{ e.modelo }}{% endif %}{% endif %}
         </div>
+        {% if e.diagnostico_estado %}
+        <div class="eq-diag {{ 'warn' if e.diagnostico_estado in ('observacion','falla') }}">
+          <span class="lbl">Diagnóstico —
+            {%- if e.diagnostico_estado == 'aprobado' %} Aprobado
+            {%- elif e.diagnostico_estado == 'falla' %} Falla
+            {%- elif e.diagnostico_estado == 'observacion' %} Observación
+            {%- else %} {{ e.diagnostico_estado }}
+            {%- endif %}</span>
+          {{ e.diagnostico_texto or 'Sin detalle adicional.' }}
+        </div>
+        {% endif %}
         {% if e.observaciones %}
         <div class="eq-obs">
           <span class="lbl">Observación:</span>
@@ -1105,11 +1146,17 @@
   {# ── 2 columnas: Observaciones + Evidencia general ── #}
   <div class="col-2">
     <div>
-      <div class="sec-title">Observaciones generales</div>
+      <div class="sec-title">Diagnóstico general de la OT</div>
       <div class="obs-gen">
-        <span class="lbl">Comentarios</span>
-        {{ visita.observaciones or visita.diagnostico or 'Trabajo completado exitosamente. Sin observaciones adicionales.' }}
+        <span class="lbl">Diagnóstico</span>
+        {{ visita.diagnostico or 'Sin diagnóstico registrado.' }}
       </div>
+      {% if visita.observaciones %}
+      <div class="obs-gen" style="margin-top:6px">
+        <span class="lbl">Observaciones</span>
+        {{ visita.observaciones }}
+      </div>
+      {% endif %}
     </div>
     <div>
       <div class="sec-title">Evidencia general</div>
@@ -1254,11 +1301,17 @@
 
   <div class="col-2">
     <div>
-      <div class="sec-title">Observaciones generales</div>
+      <div class="sec-title">Diagnóstico general de la OT</div>
       <div class="obs-gen">
-        <span class="lbl">Comentarios</span>
-        {{ visita.observaciones or visita.diagnostico or 'Trabajo completado exitosamente. Sin observaciones adicionales.' }}
+        <span class="lbl">Diagnóstico</span>
+        {{ visita.diagnostico or 'Sin diagnóstico registrado.' }}
       </div>
+      {% if visita.observaciones %}
+      <div class="obs-gen" style="margin-top:6px">
+        <span class="lbl">Observaciones</span>
+        {{ visita.observaciones }}
+      </div>
+      {% endif %}
     </div>
     <div>
       <div class="sec-title">Evidencia general</div>

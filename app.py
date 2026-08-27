@@ -82890,12 +82890,23 @@ def _ot_pdf_context(vid, embed_images=False):
         return None, "incompleto", razones
 
     # ── Equipos (distinct via tareas) ────────────────────────────────
+    # 🔧 FIX 2026-08-26 (Daniel — "muy importante": diagnóstico por máquina
+    # y diagnóstico general en el documento final). El diagnóstico por
+    # equipo vive en `mant_visita_equipos` (diagnostico_estado/texto,
+    # capturado hoy vía 3 botones Aprobado/Observación/Falla en la Vista 2
+    # de ot_ejecutar.html) — esta query solo leía `mant_maquinas`, así que
+    # nunca llegaba al PDF por más que el técnico lo hubiera completado.
+    # LEFT JOIN (no INNER): un equipo sin fila en mant_visita_equipos
+    # todavía debe listarse, solo sin diagnóstico.
     equipos = mysql_fetchall(
         "SELECT DISTINCT m.id, m.nombre, m.sku, m.serie, m.foto_url, "
         "       m.marca, m.modelo, m.anio_fabricacion, m.voltaje, "
-        "       m.ubicacion_sala, m.estado_capturado, m.observaciones "
+        "       m.ubicacion_sala, m.estado_capturado, m.observaciones, "
+        "       ve.diagnostico_estado, ve.diagnostico_texto "
         "  FROM mant_visita_tareas vt "
         "  JOIN mant_maquinas m ON m.id = vt.maquina_id "
+        "  LEFT JOIN mant_visita_equipos ve "
+        "         ON ve.visita_id = vt.visita_id AND ve.maquina_id = m.id "
         " WHERE vt.visita_id=%s AND vt.maquina_id IS NOT NULL "
         "   AND COALESCE(m.estado,'activo') != 'baja' "
         " ORDER BY m.nombre",
