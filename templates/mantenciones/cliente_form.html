@@ -34,24 +34,35 @@
             </select>
           </div>
           {# ── Tipo de cliente: contrato comercial ─────────────────
-             mant_clientes.tipo_cliente ENUM('mantencion','arriendo','leasing')
+             mant_clientes.tipo_cliente
+             ENUM('mantencion','arriendo','leasing','instalacion','prospecto')
              default 'mantencion'. Define el tipo de relación contractual,
-             se usa para filtrar el listado y para reportes comerciales. #}
+             se usa para filtrar el listado y para reportes comerciales.
+             2026-08-27: el ENUM se amplió a 5 valores el 12-jul, pero este
+             selector se quedó con 3 — no había forma de marcar Instalación
+             ni Prospecto desde el formulario, y el filtro "Instalación" del
+             listado mostraba 0 clientes. #}
           <div class="col-6 col-md-4">
             <label class="form-label fw-semibold">
               Tipo de cliente
               <i class="bi bi-info-circle text-muted ms-1" style="font-size:.78rem"
-                 title="Define el tipo de contrato comercial. Mantención = servicio técnico recurrente · Arriendo = uso temporal del equipo · Leasing = arriendo con opción de compra."></i>
+                 title="Define el tipo de relación comercial. Mantención = servicio técnico recurrente · Instalación = se le instalaron equipos · Arriendo = uso temporal del equipo · Leasing = arriendo con opción de compra · Prospecto = todavía no se define."></i>
             </label>
             <select name="tipo_cliente" class="form-select" required>
               <option value="mantencion" {% if not cliente or cliente.tipo_cliente == 'mantencion' %}selected{% endif %}>
                 Mantención
+              </option>
+              <option value="instalacion" {% if cliente and cliente.tipo_cliente == 'instalacion' %}selected{% endif %}>
+                Instalación
               </option>
               <option value="arriendo" {% if cliente and cliente.tipo_cliente == 'arriendo' %}selected{% endif %}>
                 Arriendo
               </option>
               <option value="leasing" {% if cliente and cliente.tipo_cliente == 'leasing' %}selected{% endif %}>
                 Leasing
+              </option>
+              <option value="prospecto" {% if cliente and cliente.tipo_cliente == 'prospecto' %}selected{% endif %}>
+                Prospecto
               </option>
             </select>
             <small class="text-muted" style="font-size:.72rem">Define el tipo de contrato comercial</small>

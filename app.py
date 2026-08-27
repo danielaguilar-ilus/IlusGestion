@@ -59199,6 +59199,15 @@ def mant_cliente_nuevo():
                     except (TypeError, ValueError): _lng = None
                     _placeid = (d.get("direccion_place_id") or "").strip()[:200] or None
 
+                    # Tipo de cliente elegido en el formulario. Se valida
+                    # contra el MISMO ENUM que el PUT de edición (ver
+                    # ~línea 61328) — un valor inventado se descarta y cae
+                    # al default, en vez de reventar el INSERT completo.
+                    _tipo_cliente_nuevo = str(d.get("tipo_cliente") or "").strip().lower()
+                    if _tipo_cliente_nuevo not in ("mantencion", "arriendo", "leasing",
+                                                   "instalacion", "prospecto"):
+                        _tipo_cliente_nuevo = "mantencion"
+
                     cur.execute(
                         """INSERT INTO mant_clientes
                            (razon_social, rut,
@@ -59208,14 +59217,14 @@ def mant_cliente_nuevo():
                             direccion, direccion_lat, direccion_lng, direccion_place_id,
                             comuna, ciudad, region, giro,
                             notas, notas_confidenciales,
-                            estado, created_by, updated_by)
+                            estado, tipo_cliente, created_by, updated_by)
                            VALUES (%s,%s, %s,%s,
                                    %s,%s,%s,%s,
                                    %s,%s,%s,%s,
                                    %s,%s,%s,%s,
                                    %s,%s,%s,%s,
                                    %s,%s,
-                                   %s,%s,%s)""",
+                                   %s,%s,%s,%s)""",
                         (razon, rut_norm,
                          emails_norm["email_empresa"], tel_empresa,
                          (d.get("contacto_nombre") or "").strip()[:200],
@@ -59233,6 +59242,18 @@ def mant_cliente_nuevo():
                          (d.get("notas")     or "").strip(),
                          (d.get("notas_confidenciales") or "").strip(),
                          (d.get("estado") or "activo"),
+                         # 🔧 FIX 2026-08-27 (hallazgo de la verificación):
+                         # el formulario PIDE `tipo_cliente` como campo
+                         # obligatorio (cliente_form.html) pero este INSERT
+                         # nunca lo guardaba — lo que el usuario elegía
+                         # (Arriendo / Leasing / Instalación) se descartaba
+                         # en silencio y la ficha nacía siempre como
+                         # 'mantencion'. Es el mismo síntoma que Daniel
+                         # reportó, en el creador que MÁS se usa. Se valida
+                         # contra el ENUM real igual que hace el PUT de
+                         # edición (app.py ~61318) para no reventar con un
+                         # valor inventado.
+                         _tipo_cliente_nuevo,
                          current_username(), current_username())
                     )
                     cid = cur.lastrowid
@@ -75649,14 +75670,29 @@ _OT_TV_SELECT = (
     # documento". Es el dato que identifica la instalación en el ERP.
     "       v.documento_erp_tido, v.documento_erp_nudo, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
-    "       au.role AS tecnico_role, te.id AS tecnico_proveedor_id, "
+    "       au.role AS tecnico_role, "
+    # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
+    # `te.id`, o sea el cruce por `user_id`. Ese es EXACTAMENTE el JOIN que
+    # NO encuentra a Isabel Milling ni a Daniel Pulgar (sus fichas de
+    # proveedor tienen user_id NULL) — el mismo bug que Daniel reportó tres
+    # veces. La lista principal de técnicos ya cruzaba también por NOMBRE,
+    # pero este camino de respaldo no, así que en cuanto un técnico caía acá
+    # (rol cambiado, cuenta inactiva, o la query de técnicos fallando como
+    # pasó el 26-ago) volvían a salir entre los INTERNOS. Ahora los dos
+    # caminos usan el mismo criterio.
+    "       COALESCE(te.id, ten.id) AS tecnico_proveedor_id, "
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas "
     "  FROM mant_visitas v "
     "  LEFT JOIN mant_clientes c  ON c.id = v.cliente_id "
     "  LEFT JOIN tk_tickets    tk ON tk.visita_id = v.id "
     "  LEFT JOIN app_users     au ON au.id = v.tecnico_user_id "
-    "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
+    "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
+    "  LEFT JOIN mant_tecnicos_externos ten "
+    "         ON ten.user_id IS NULL "
+    "        AND LOWER(TRIM(COALESCE(au.nombre, au.username))) IN ( "
+    "              LOWER(TRIM(ten.razon_social)), "
+    "              LOWER(TRIM(ten.contacto_nombre)) ) "
 )
 
 # Estados en curso: 'en_curso' y 'en_ejecucion' son SINÓNIMOS (compat
@@ -76037,8 +76073,13 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
         trabajo_listo = bool(n_t) and n_c >= n_t
         # "Atrasada" solo tiene sentido comparando con el reloj real: un día
         # que YA pasó y no se cerró está atrasado; uno futuro nunca lo está.
+        # 🔧 FIX 2026-08-27 (hallazgo de la verificación): la rama del día
+        # pasado NO excluía `en_curso`, así que una OT que quedó abierta de
+        # ayer se contaba a la vez en "en ejecución" Y en "atrasadas" — la
+        # tarjeta del día decía "1 OT" arriba y sus chips sumaban 2. La
+        # vista de día sí lo excluía; ahora las dos usan el mismo criterio.
         if fecha_f < hoy_real:
-            atrasada = not terminada and not trabajo_listo
+            atrasada = not en_curso and not terminada and not trabajo_listo
         elif fecha_f == hoy_real:
             atrasada = (not en_curso and not terminada and not trabajo_listo
                         and bool(h_ini) and h_ini < hora_ahora)

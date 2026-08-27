@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Monitor Servicio Técnico — ILUS Fitness</title>
   <meta name="theme-color" content="#0a0a0c">
+  {# 🔴 FIX 2026-08-27 (hallazgo de la verificación): esta plantilla es
+     STANDALONE — no hereda de base.html, así que no tenía el meta del token
+     CSRF ni el wrapper de fetch que lo inyecta. Los botones de "correr días"
+     mandaban el token VACÍO y el servidor rechazaba TODOS los intentos con
+     403 "CSRF token inválido": la función estaba muerta al 100%.
+     Va condicionado a `interactivo` A PROPÓSITO: en el televisor público
+     `csrf_token()` crearía sesión y cookie para cada visitante anónimo. #}
+  {% if interactivo %}<meta name="csrf-token" content="{{ csrf_token() }}">
+  {# REGLA #1: nada de alert()/confirm() grises del navegador. Se carga el
+     helper de ILUS SOLO acá — el televisor no debe cargar JS de más. #}
+  <script src="{{ url_for('static', filename='ilus_ui.js') }}" defer></script>{% endif %}
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1551,11 +1562,14 @@
     const conMin = bloques.map(b => {
       const ini = hm(b.ini);
       const fin = hm(b.fin);
-      return {
-        b,
-        ini: ini != null ? ini : state.esc.t0,
-        fin: fin != null ? fin : ((ini != null ? ini : state.esc.t0) + 60),
-      };
+      const i = ini != null ? ini : state.esc.t0;
+      let f = fin != null ? fin : (i + 60);
+      // 🔧 FIX 2026-08-27 (hallazgo de la verificación): un `fin` ANTERIOR
+      // al `ini` (dato malo en la base) pasaba tal cual, y el carril se
+      // marcaba como libre desde un minuto anterior al inicio — dos OT
+      // volvían a dibujarse ENCIMA, justo el bug que esto arregla.
+      if (f <= i) f = i + 60;
+      return { b, ini: i, fin: f };
     }).sort((x, y) => x.ini - y.ini || x.fin - y.fin);
 
     const finPorCarril = [];   // último minuto ocupado en cada carril
@@ -1807,8 +1821,20 @@
     const txt = dias > 0 ? ('+' + dias + ' día' + (dias > 1 ? 's' : ''))
                          : (dias + ' día' + (dias < -1 ? 's' : ''));
     const [y, m2, d2] = nueva.split('-');
-    if (!confirm(`Mover ${b.numero || 'esta OT'} (${b.cliente || ''})\n`
-               + `${txt} → ${d2}/${m2}/${y}\n\nQueda registrado en el historial.`)) return;
+    // REGLA #1: modal de ILUS, no el popup gris del navegador.
+    const ok = (typeof ilusConfirm === 'function')
+      ? await ilusConfirm({
+          title: 'Mover la orden de trabajo',
+          message: `${b.numero || 'Esta OT'} — ${b.cliente || ''}`,
+          sub: `${txt} → <strong>${d2}/${m2}/${y}</strong>. Queda registrado en el historial con tu usuario.`,
+          subHtml: true,
+          okLabel: 'Sí, mover', cancelLabel: 'Cancelar',
+        })
+      : confirm(`Mover ${b.numero || 'esta OT'}: ${txt} → ${d2}/${m2}/${y}`);
+    if (!ok) return;
+    // Se guarda el texto original: si falla, hay que restaurarlo — si no,
+    // los botones quedan todos en "…" y ya no se distingue +1 de +2.
+    const _txtBtn = btn ? btn.textContent : '';
     if (btn){ btn.disabled = true; btn.textContent = '…'; }
     try{
       const csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
@@ -1823,16 +1849,25 @@
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false || j.error){
-        alert(j.error || 'No se pudo mover la OT.');
-        if (btn){ btn.disabled = false; }
+        const msg = j.error || 'No se pudo mover la OT.';
+        if (typeof ilusToast === 'function') ilusToast(msg, {type: 'error'});
+        else alert(msg);
+        if (btn){ btn.disabled = false; btn.textContent = _txtBtn; }
         return;
       }
+      if (typeof ilusToast === 'function') ilusToast('✓ OT movida a ' + d2 + '/' + m2, {type: 'success'});
       cerrarModal();
       state.huella = null;             // fuerza refresco en el próximo latido
+      // Se espera un pelo más que el TTL de la caché compartida (6 s): sin
+      // esto, el refresco inmediato puede leer el payload viejo y la OT
+      // parece seguir en el día de origen — "apreté y no pasó nada".
+      setTimeout(() => cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia'), 6500);
       cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia');
     } catch(e){
-      alert('Error de conexión al mover la OT.');
-      if (btn){ btn.disabled = false; }
+      const msg = 'Error de conexión al mover la OT.';
+      if (typeof ilusToast === 'function') ilusToast(msg, {type: 'error'});
+      else alert(msg);
+      if (btn){ btn.disabled = false; btn.textContent = _txtBtn; }
     }
   }
 

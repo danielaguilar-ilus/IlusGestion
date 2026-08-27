@@ -7095,12 +7095,37 @@ def register_tickets_routes(app, ctx):
                 _dom = _mail.split("@")[-1].strip().lower() if "@" in _mail else ""
                 # Se descartan los correos personales: su dominio no dice nada
                 # del cliente. Con uno corporativo, el dominio ES el nombre.
-                _genericos = {"gmail.com", "hotmail.com", "outlook.com", "yahoo.com",
-                              "yahoo.es", "live.cl", "live.com", "icloud.com",
-                              "hotmail.cl", "gmail.cl", "outlook.cl"}
+                _genericos = {
+                    # Correo personal
+                    "gmail.com", "hotmail.com", "outlook.com", "yahoo.com",
+                    "yahoo.es", "live.cl", "live.com", "icloud.com",
+                    "hotmail.cl", "hotmail.es", "gmail.cl", "outlook.cl",
+                    "me.com", "protonmail.com", "aol.com",
+                    # Proveedores de internet chilenos — la gente los usa como
+                    # correo personal, el dominio no identifica a ninguna empresa.
+                    "vtr.net", "terra.cl", "movistar.cl", "entelchile.net",
+                    "tie.cl", "123.cl", "mi.cl",
+                    # 🔴 DOMINIOS PROPIOS DE ILUS. No es hipotético: los tickets
+                    # migrados de Triple A quedaron con el correo de PRUEBA de
+                    # Daniel en la columna `email` (ver ~línea 1313), y el
+                    # backfill solo lo reemplazó donde encontró otro correo en
+                    # las notas. Sin esto, uno de esos tickets sin empresa ni
+                    # contacto crearía una ficha de cliente llamada "Sphs".
+                    "sphs.cl", "ilusfitness.com",
+                }
                 if _dom and _dom not in _genericos:
                     _base = _dom.split(".")[0].replace("-", " ").strip()
-                    if _base:
+                    # Prefijos que son del servidor de correo, no del cliente:
+                    # "mail.empresa.cl" daría "Mail", "correo.uc.cl" daría
+                    # "Correo" — nombres absurdos para una ficha de cliente.
+                    if _base in ("mail", "correo", "webmail", "email", "smtp", "mx"):
+                        _partes = _dom.split(".")
+                        _base = _partes[1] if len(_partes) > 2 else ""
+                    # Mínimo 3 letras: bases como "b" o "vtr" no son un nombre
+                    # y además ENVENENAN la búsqueda de duplicados de más
+                    # abajo (razon_social LIKE %...%), que con 1-2 letras
+                    # sugeriría clientes al azar como "posible ficha existente".
+                    if _base and len(_base) >= 3:
                         razon_social_ticket = _base.title()[:200]
             if not razon_social_ticket:
                 razon_social_ticket = f"Cliente ticket #{tid}"
