@@ -15822,8 +15822,14 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
     #
     # Cambio: prefijo todas las columnas con AS (E_*, OB_*, EN_*) para
     # evitar colisiones; los lectores abajo usan esos aliases.
+    # 🔴 FIX 2026-08-27: TOP 1 aquí es lo que hacía inútil el re-ranking en
+    # Python de más abajo -- con solo 1 fila permitida, SQL Server ya
+    # decidió (sin ORDER BY) cuál de las variantes del IN(...) devolver
+    # antes de que _elegir_fila_mas_especifica() pudiera opinar. TOP 20
+    # sigue siendo una sola consulta indexada (NUDO/TIDO), no un table
+    # scan -- el volumen real de coincidencias por variante es bajísimo.
     _HEADER_JOIN_SQL = """
-        SELECT TOP 1
+        SELECT TOP 20
             e.IDMAEEDO,
             LTRIM(RTRIM(e.EMPRESA))             AS E_EMPRESA,
             LTRIM(RTRIM(e.TIDO))                AS E_TIDO,
@@ -15875,15 +15881,40 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
         f"AND LTRIM(RTRIM(e.NUDO)) IN ({_ph_nudos})"
     )
 
+    # 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente — asoció el
+    # "hallazgo" equivocado a la OT antes de que esto se detectara). Con
+    # `max_rows=1` y el IN(...) de todas las variantes juntas (optimización
+    # 2026-05-31), el servidor SQL puede devolver CUALQUIERA de las filas
+    # que calcen -- sin ORDER BY, no hay garantía de que sea la variante
+    # más específica. Caso real: nudo_candidatos para "VD00010460" incluye
+    # TAMBIÉN "00010460" y "0000010460" SIN el prefijo "VD" (fallback para
+    # cuando el usuario no escribió prefijo) -- y en el ERP existe otro
+    # documento NVV completamente distinto con ese NUDO sin prefijo. El
+    # motor trajo ese otro documento (FCV $31.060, RUT distinto) en vez de
+    # la nota de venta real ($3.311.734, RUT del cliente). Asociar el
+    # documento equivocado a una OT es un error financiero/de auditoría,
+    # no cosmético.
+    # Se pide más de 1 fila y se RE-RANKEA en Python por el orden de
+    # prioridad de `nudo_candidatos` (que ya viene de más específico a
+    # menos específico) -- se sigue pagando UN solo round-trip, pero ahora
+    # sí se prefiere determinísticamente la variante más específica.
+    def _elegir_fila_mas_especifica(_rows):
+        if not _rows:
+            return None
+        if len(_rows) == 1:
+            return _rows[0]
+        _prioridad = {v: i for i, v in enumerate(nudo_candidatos)}
+        return min(_rows, key=lambda r: _prioridad.get((r.get("E_NUDO") or "").strip(), len(nudo_candidatos)))
+
     t_hdr = time.time()
     try:
         rows = _random_sql_query(
             _HEADER_JOIN_SQL_IN,
             ('01', erp_tido, *nudo_candidatos),
-            max_rows=1,
+            max_rows=20,
         )
         if rows:
-            header_row = rows[0]
+            header_row = _elegir_fila_mas_especifica(rows)
             matched_nudo = (header_row.get("E_NUDO") or "").strip()
             empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
             diag["nudo_tried"] = nudo_candidatos[:]
@@ -15912,10 +15943,10 @@ def _cubicador_fetch_doc_via_sql(tido, nudo):
             rows = _random_sql_query(
                 _HEADER_JOIN_SQL_IN_NO_EMP,
                 (erp_tido, *nudo_candidatos),
-                max_rows=1,
+                max_rows=20,
             )
             if rows:
-                header_row = rows[0]
+                header_row = _elegir_fila_mas_especifica(rows)
                 matched_nudo = (header_row.get("E_NUDO") or "").strip()
                 empresa_real = (header_row.get("E_EMPRESA") or "01").strip() or "01"
                 diag["match_nudo"] = matched_nudo
@@ -72488,7 +72519,15 @@ _OT_TIPOS_SIN_GARANTIA = ("levantamiento",)
 # 2026-08-19). La nota de venta entró con el mismo peso que la factura;
 # se separa en su propia tupla porque aún puede facturarse después y por
 # eso no marca la OT como 'facturado'.
-_OT_DOCS_NOTA_VENTA = ("NVV", "NVI")
+# 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente): "VD" y "WEB"
+# faltaban acá -- el desplegable de ot_ejecutar.html nunca podía ofrecerlos
+# de verdad porque este whitelist los reemplazaba en silencio por "FCV" antes
+# de siquiera intentar la búsqueda (ver mant_ot_asociar_factura: "if tipo not
+# in _OT_DOCS_CIERRE: tipo = 'FCV'"). Son notas de venta directa/web: el ERP
+# las guarda con TIDO=NVV pero el NUDO lleva el canal de origen incrustado
+# como prefijo (erp_engine.TIDO_NUDO_MAP) -- "NVV" + un número plano nunca
+# las va a encontrar.
+_OT_DOCS_NOTA_VENTA = ("NVV", "NVI", "VD", "WEB")
 _OT_DOCS_CIERRE = ("FCV", "FCE", "BLV", "BLE") + _OT_DOCS_NOTA_VENTA
 
 
@@ -82909,7 +82948,17 @@ def mant_ot_asociar_factura(vid):
         _monto = float(doc.get("valor_bruto") or 0) or None
     except (TypeError, ValueError):
         _monto = None
-    fact = {"tipo": tipo, "numero": numero, "rut": rut_fact,
+    # 🔴 FIX 2026-08-27 (mismo caso Vitacura): lo que se GUARDA debe ser la
+    # clave REAL de MAEEDO (TIDO/NUDO), no el atajo que escribió el usuario.
+    # "VD"+"10460" no es buscable después -- el ERP tiene TIDO='NVV' y
+    # NUDO='VD00010460'. Sin esto, la OT quedaría amarrada a un número que
+    # ni el propio sistema puede volver a encontrar (PDF, saldos, auditoría).
+    if tipo in erp_engine.TIDO_NUDO_MAP:
+        _tipo_real, _nudo_fn = erp_engine.TIDO_NUDO_MAP[tipo]
+        _numero_real = _nudo_fn(numero)
+    else:
+        _tipo_real, _numero_real = tipo, numero
+    fact = {"tipo": _tipo_real, "numero": _numero_real, "rut": rut_fact,
             "nombre": doc.get("cliente_nombre") or "",
             "monto": _monto, "fecha": str(doc.get("fecha") or "")[:10]}
 
@@ -82953,7 +83002,7 @@ def mant_ot_asociar_factura(vid):
             "  costo=COALESCE(NULLIF(costo,0), %s), "
             "  estado_facturacion=%s "
             " WHERE id=%s" + _where_lock,
-            (tipo, numero[:20], rut_fact[:20] or None, _monto,
+            (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
              1 if analisis["match"] else 0, justif or None,
              current_username(), _monto, _estado_fact, vid))
     except Exception as _e_up:
@@ -82968,7 +83017,7 @@ def mant_ot_asociar_factura(vid):
             "  factura_rut_justif=%s, factura_asociada_por=%s, "
             "  costo=COALESCE(NULLIF(costo,0), %s) "
             " WHERE id=%s" + _where_lock,
-            (tipo, numero[:20], rut_fact[:20] or None, _monto,
+            (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
              1 if analisis["match"] else 0, justif or None,
              current_username(), _monto, vid))
 

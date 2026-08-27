@@ -2665,6 +2665,18 @@
                 <optgroup label="Nota de venta (facturable después)">
                   <option value="NVV">NVV — Nota de venta</option>
                   <option value="NVI">NVI — Nota de venta instalación</option>
+                  {# 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente).
+                     El documento impreso dice "Nro.: VD00010460" -- el ERP
+                     guarda TODA nota de venta directa como TIDO=NVV, pero el
+                     NUDO lleva el canal de origen incrustado como prefijo
+                     (VD = directa, WEB = venta web), no como digito plano.
+                     Sin esta opcion, seleccionar "NVV" y escribir "10460" NO
+                     podia encontrar nunca este documento -- el motor sabe
+                     construir "VD00010460" (erp_engine.TIDO_NUDO_MAP), pero
+                     solo lo hace si el tipo elegido es literalmente "VD"/
+                     "WEB", y esa opcion no existia en este desplegable. #}
+                  <option value="VD">VD — Nota de venta directa (Nro. VDxxxxxxxx)</option>
+                  <option value="WEB">WEB — Nota de venta web (Nro. WEBxxxxxxx)</option>
                 </optgroup>
               </select>
             </div>
