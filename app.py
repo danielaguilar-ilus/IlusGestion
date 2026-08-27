@@ -75855,7 +75855,16 @@ def _ot_tv_iso(dt_utc):
 
 
 _OT_TV_SELECT = (
-    "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, "
+    # 🔴 FIX 2026-08-27 (Daniel/Aarón: la OT-2026-00133, 01-09 al 04-09, no
+    # se veía en ningún día de su rango). Causa real: el fix de esta misma
+    # mañana para OT de varios días leía `f.get("fecha_fin")` en Python, pero
+    # esta consulta NUNCA seleccionaba `v.fecha_fin` — la lógica de rango
+    # siempre recibía None y colapsaba toda OT a un solo día, aunque el WHERE
+    # de más abajo (que sí compara fecha_fin en SQL crudo) admitiera
+    # correctamente la fila. `ast.parse` no detecta esto (REGLA #9): el
+    # nombre de columna es válido en Python, el error solo existe en
+    # runtime contra esta lista de columnas.
+    "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.fecha_fin, "
     "       v.hora_inicio, v.hora_fin, v.hora_real_inicio, v.direccion_visita, "
     "       c.razon_social, c.direccion AS cliente_direccion, "
     "       c.comuna AS cliente_comuna, "
@@ -76105,6 +76114,13 @@ def _ot_tv_datos(fecha=None):
             # duplicada — es la misma OT que sigue en curso (OT-133).
             "dia_n": ((hoy - fecha).days + 1) if fecha_hasta > fecha else None,
             "dias_total": ((fecha_hasta - fecha).days + 1) if fecha_hasta > fecha else None,
+            # Fechas reales del tramo (no solo el conteo relativo) — las
+            # necesita "correr días" del monitor para mover el rango ENTERO
+            # de una OT multi-día, no solo su inicio (ver correrDias() en
+            # monitor_tv.html: sin esto, +1 día dejaba fecha_fin atrás de
+            # fecha_programada y la OT colapsaba a un solo día).
+            "fecha_inicio_real": fecha.isoformat(),
+            "fecha_fin_real": fecha_hasta.isoformat() if fecha_hasta > fecha else None,
             "ini": h_ini, "fin": _ot_tv_hhmm(f.get("hora_fin")),
             "estado": ("ejecutando" if en_curso else
                        "terminado" if terminada else

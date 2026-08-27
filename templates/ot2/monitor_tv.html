@@ -173,16 +173,29 @@
     }
 
     .tv-date{text-align:center;min-width:0}
+    /* 🔴 FIX 2026-08-27 (Daniel: "se ve horrible... se ve como comido"). El
+       texto real es "Programación del día · 6 OT" -- tres nodos (texto,
+       el <span> del contador, más texto). Con `display:inline-flex` +
+       `gap:10px`, CADA hijo del contenedor recibe el mismo hueco de 10px
+       entre sí -- incluidas las DOS rayitas decorativas (::before/::after,
+       que en flex también cuentan como hijos) Y los tres trozos de texto
+       entre ellas. El resultado: huecos parejos de 10px metidos DENTRO de
+       la frase (entre "día ·" y "6", entre "6" y "OT"), como si le
+       faltaran letras -- de ahí el "se ve comido". Se saca el `gap` del
+       contenedor y el espacio de 10px se le da SOLO a cada rayita como
+       margen propio, para que el texto en sí fluya de corrido, como una
+       frase normal, y las rayitas sigan teniendo su respiro. */
     .tv-date .date-kicker{
       font-size:15px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;
-      color:#fca5a5;display:inline-flex;align-items:center;gap:10px;
+      color:#fca5a5;display:inline-flex;align-items:center;
     }
     .tv-date .date-kicker::before,
     .tv-date .date-kicker::after{
-      content:'';width:34px;height:2px;border-radius:2px;
+      content:'';width:34px;height:2px;border-radius:2px;flex:none;
       background:linear-gradient(90deg,transparent,var(--red-500));
     }
-    .tv-date .date-kicker::after{background:linear-gradient(90deg,var(--red-500),transparent)}
+    .tv-date .date-kicker::before{margin-right:10px}
+    .tv-date .date-kicker::after{margin-left:10px;background:linear-gradient(90deg,var(--red-500),transparent)}
     .tv-date .date-big{
       font-family:var(--display);font-size:52px;line-height:1;color:#fff;
       letter-spacing:.02em;text-transform:uppercase;margin-top:4px;
@@ -1905,22 +1918,34 @@
      ficha (motivo_cambio). */
   async function correrDias(b, dias, btn){
     if (!b || !b.vid || !dias) return;
-    const base = (b.fecha || state.fechaVista || state.hoyReal);
+    // 🔴 FIX 2026-08-27 (Daniel/Aarón, OT-2026-00133: "quiero que el
+    // monitor se vea todos los días del 01 al 04... correr el día y que
+    // siga la OT"). Antes esto solo movía `fecha_programada` — en una OT de
+    // varios días, la fecha de término se quedaba atrás del nuevo inicio y
+    // el rango completo colapsaba a un solo día. Ahora, si la OT tiene
+    // tramo real (fecha_inicio_real/fecha_fin_real, agregados en
+    // _ot_tv_datos), se mueven LAS DOS por el mismo delta — el largo del
+    // tramo se preserva, no solo su punto de partida.
+    const base = (b.fecha_inicio_real || b.fecha || state.fechaVista || state.hoyReal);
     const nueva = diaVecino(base, dias);
     if (!nueva){ return; }
+    const esMultidia = !!(b.fecha_fin_real && b.fecha_fin_real !== base);
+    const nuevaFin = esMultidia ? diaVecino(b.fecha_fin_real, dias) : null;
     const txt = dias > 0 ? ('+' + dias + ' día' + (dias > 1 ? 's' : ''))
                          : (dias + ' día' + (dias < -1 ? 's' : ''));
     const [y, m2, d2] = nueva.split('-');
+    const _subRango = esMultidia && nuevaFin
+      ? ` (todo el tramo, hasta ${nuevaFin.split('-').reverse().join('/')})` : '';
     // REGLA #1: modal de ILUS, no el popup gris del navegador.
     const ok = (typeof ilusConfirm === 'function')
       ? await ilusConfirm({
           title: 'Mover la orden de trabajo',
           message: `${b.numero || 'Esta OT'} — ${b.cliente || ''}`,
-          sub: `${txt} → <strong>${d2}/${m2}/${y}</strong>. Queda registrado en el historial con tu usuario.`,
+          sub: `${txt} → <strong>${d2}/${m2}/${y}</strong>${_subRango}. Queda registrado en el historial con tu usuario.`,
           subHtml: true,
           okLabel: 'Sí, mover', cancelLabel: 'Cancelar',
         })
-      : confirm(`Mover ${b.numero || 'esta OT'}: ${txt} → ${d2}/${m2}/${y}`);
+      : confirm(`Mover ${b.numero || 'esta OT'}: ${txt} → ${d2}/${m2}/${y}${_subRango}`);
     if (!ok) return;
     // Se guarda el texto original: si falla, hay que restaurarlo — si no,
     // los botones quedan todos en "…" y ya no se distingue +1 de +2.
@@ -1928,14 +1953,16 @@
     if (btn){ btn.disabled = true; btn.textContent = '…'; }
     try{
       const csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+      const _body = {
+        fecha_programada: nueva,
+        motivo_cambio: 'Movida ' + txt + ' desde el monitor de operaciones' + _subRango,
+      };
+      if (nuevaFin) _body.fecha_fin = nuevaFin;
       const r = await fetch('/mantenciones/api/visitas/' + b.vid, {
         method: 'PUT',
         credentials: 'same-origin',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
-        body: JSON.stringify({
-          fecha_programada: nueva,
-          motivo_cambio: 'Movida ' + txt + ' desde el monitor de operaciones',
-        }),
+        body: JSON.stringify(_body),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false || j.error){
