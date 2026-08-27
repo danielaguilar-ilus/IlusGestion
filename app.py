@@ -75480,13 +75480,11 @@ def _ot_tv_datos():
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
             }
 
-    # Daniel cambió de opinión el 26-ago al ver la pantalla real: primero
-    # pidió mostrar a todos marcados como "Disponible", pero con 5 técnicos
-    # sin carga el televisor se llenaba de filas vacías y el trabajo real
-    # quedaba arrinconado abajo. Ahora se OCULTAN los que no tienen nada hoy
-    # — pero NO se pierde el dato: se cuentan aparte y el encabezado del
-    # grupo dice cuántos hay disponibles. La pantalla gana espacio para lo
-    # que importa sin dejar de informar quién está libre.
+    # Daniel primero pidió ocultar a quien no tenía carga hoy (la pantalla
+    # se llenaba de filas vacías) y luego, el mismo 26-ago al ver el
+    # televisor real con pocos técnicos con pega, pidió lo contrario:
+    # "colóquemos, pues, para rellenar el espacio" — mostrarlos de vuelta
+    # como "Disponible" en vez de solo contarlos en el encabezado.
     grupos = {"interno": [], "externo": []}
     disponibles = {"interno": 0, "externo": 0}
     for tid in orden:
@@ -75494,7 +75492,14 @@ def _ot_tv_datos():
         if not p:
             continue
         if not p["total_ot"]:
-            disponibles["externo" if p["externo"] else "interno"] += 1
+            grupo = "externo" if p["externo"] else "interno"
+            disponibles[grupo] += 1
+            grupos[grupo].append({
+                "nombre": p["nombre"], "iniciales": p["iniciales"],
+                "estado": "disponible", "cliente": None, "direccion": None,
+                "avance_pct": 0, "tareas_ok": 0, "tareas_total": 0,
+                "inicio_iso": None, "total_ot": 0, "bloques": [],
+            })
             continue
         if any(b["estado"] == "ejecutando" for b in p["bloques"]):
             est = "ejecutando"
