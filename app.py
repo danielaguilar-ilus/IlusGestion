@@ -73145,6 +73145,13 @@ def mant_visita_update(vid):
         d["documento_erp_tido"] = (str(d.get("documento_erp_tido") or "").strip()[:10]) or None
     if "documento_erp_nudo" in d:
         d["documento_erp_nudo"] = (str(d.get("documento_erp_nudo") or "").strip()[:20]) or None
+    # Mismo gate @_ot_can_metadata que el documento ERP de arriba — un valor
+    # fuera de _OT2_CENTROS_COSTO se descarta en vez de guardar basura que
+    # el resto del sistema (reportes, informe de pérdidas por área) no
+    # reconocería.
+    if "centro_costo" in d:
+        _cc = (str(d.get("centro_costo") or "").strip().lower())
+        d["centro_costo"] = _cc if _cc in dict(_OT2_CENTROS_COSTO) else None
     allowed = ["titulo","fecha_programada","fecha_fin","fecha_realizada","hora_inicio","hora_fin",
                "tecnico","tecnico_user_id","tipo","estado","descripcion","observaciones",
                "costo","contrato_id",
@@ -73155,7 +73162,14 @@ def mant_visita_update(vid):
                # Finanzas (margen por servicio)
                "costo_proveedor","proveedor_tipo","proveedor_nombre",
                # Documento ERP de origen (NVI/NVV), solo administrativo
-               "documento_erp_tido","documento_erp_nudo"]
+               "documento_erp_tido","documento_erp_nudo",
+               # 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente:
+               # "falta declarar centro de costo" bloqueaba la firma y NO
+               # había forma de declararlo salvo al CREAR la OT). Mismas 3
+               # opciones que el wizard de creación (_OT2_CENTROS_COSTO) —
+               # se valida abajo contra esa misma lista para no guardar un
+               # valor que el resto del sistema no reconoce.
+               "centro_costo"]
     # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
     # reprogramar el término de una OT multi-día desde el mini-formulario
     # inline del popover (antes solo se podía fijar al CREAR la OT).

@@ -565,6 +565,22 @@
                  maxlength="200" placeholder="Ej: Instalaciones XYZ"
                  value="{{ visita.proveedor_nombre or '' }}">
         </div>
+        {# 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente): el
+           gate de firma exige "centro de costo" ("Falta declarar antes de
+           pedir la firma: centro de costo...") pero esta pantalla no tenía
+           NINGÚN campo para declararlo -- solo existía en el wizard de
+           creación (ot2_form.js), así que una OT que naciera sin él (o
+           creada antes de que existiera el requisito) quedaba sin forma de
+           cerrarse. Mismas 3 opciones que el wizard (_OT2_CENTROS_COSTO). #}
+        <div class="col-6">
+          <label class="form-label small fw-semibold mb-1">Centro de costo</label>
+          <select id="finCentroCosto" class="form-select form-select-sm">
+            <option value="">— Sin definir —</option>
+            <option value="sstt" {% if visita.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
+            <option value="logistica" {% if visita.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
+            <option value="comercial" {% if visita.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+          </select>
+        </div>
       </div>
       {# ─── Documento ERP asociado (NVI/NVV) — Daniel 2026-08-08: "al
          documento de la OT se le tiene que asociar... el administrativo...
@@ -3102,6 +3118,7 @@ const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
       proveedor_nombre: document.getElementById('finProveedorNombre').value.trim(),
       documento_erp_tido: document.getElementById('finDocErpTido').value || '',
       documento_erp_nudo: document.getElementById('finDocErpNudo').value.trim(),
+      centro_costo: document.getElementById('finCentroCosto').value || '',
     };
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
