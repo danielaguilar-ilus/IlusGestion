@@ -1695,7 +1695,7 @@
       renderAll(datos);
       setOffline(false);
     } catch(e){
-      setOffline(true);
+      setOffline(true, e && e.sesionExpirada ? 'sesion' : 'red');
     }
   }
 
@@ -1760,14 +1760,22 @@
     return 7200000;
   }
 
-  function setOffline(mal){
+  function setOffline(mal, motivo){
     const pill = $('#offlinePill');
     const txt = $('#offlineTxt');
     if (mal){
       if (state.timerOkPill){ clearTimeout(state.timerOkPill); state.timerOkPill = null; }
       state.offline = true;
       pill.classList.remove('ok');
-      setTexto(txt, 'Sin conexión · reintentando');
+      // 🔧 FIX 2026-08-27 (Daniel — captura real: la pantalla de control
+      // quedó en "Sin conexión" cuando en realidad la SESIÓN había expirado
+      // (cierre por inactividad). fetch() sigue la redirección a /login en
+      // silencio, trae 200 + HTML de login, y "reintentando" nunca se
+      // arregla solo porque no es un problema de red — hay que recargar e
+      // iniciar sesión de nuevo. Se distingue el mensaje para no confundir.
+      setTexto(txt, motivo === 'sesion'
+        ? 'Sesión expirada — recarga esta pantalla'
+        : 'Sin conexión · reintentando');
       pill.classList.add('visible');
     } else if (state.offline){
       // veníamos caídos → mostrar recuperación 4 s y desaparecer
@@ -1783,6 +1791,14 @@
     const to = setTimeout(() => ctl.abort(), 12000);
     try{
       const r = await fetch(url, { cache: 'no-store', signal: ctl.signal });
+      // Sesión expirada: el navegador ya siguió la redirección a /login y
+      // trae 200 + HTML (no JSON). r.ok es true, así que hay que detectarlo
+      // aparte ANTES de intentar parsear como JSON.
+      if (r.redirected && /\/login(\?|$)/.test(r.url)){
+        const err = new Error('sesion_expirada');
+        err.sesionExpirada = true;
+        throw err;
+      }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return await r.json();
     } finally {
@@ -1812,7 +1828,7 @@
         else renderAll(datos);
       }
     } catch (e){
-      setOffline(true);
+      setOffline(true, e && e.sesionExpirada ? 'sesion' : 'red');
     } finally {
       const base = cadenciaMs();
       // caídos: reintentar pronto aunque la franja diga 1-2 horas
