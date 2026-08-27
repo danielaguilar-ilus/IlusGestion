@@ -91,53 +91,47 @@
   .sheet:last-child { page-break-after: auto; }
 
   /* ───── Header banda ───── */
+  /* ───── Header — mismo formato que el PDF de cotizaciones (Daniel
+     2026-08-27: "hazlo igual al de cotizaciones") — banda negra a sangre,
+     logo dual SPHS+ILUS, franja roja/negra debajo. Referencia real:
+     tickets_module.py header_tpl (~línea 3608), no la vista previa. ───── */
   .head {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 12px;
-    align-items: center;
-    padding-bottom: 8px;
+    background: var(--ilus-black);
+    margin: -12mm -14mm 0;
+    padding: 5mm 14mm;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  .head .logo {
-    display: flex; align-items: center; justify-content: flex-start; gap: 8px;
-    height: 64px;
+  .head .logo { display: flex; align-items: center; gap: 5mm; }
+  .head .logo .logo-shs-box {
+    height: 20mm; background: #fff; border-radius: 1mm;
+    box-sizing: border-box; padding: 1.2mm 2.4mm;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  .head .logo img { max-width: 90px; max-height: 100%; object-fit: contain; }
+  .head .logo .logo-shs-box img { height: 17.6mm; width: auto; object-fit: contain; display: block; }
+  .head .logo img.logo-ilus { height: 17.6mm; max-width: 67.2mm; object-fit: contain; }
   .head .logo .logo-fallback {
-    font-weight: 900; color: var(--ilus-red);
-    font-size: 14pt; letter-spacing: .04em;
+    font-weight: 900; color: #fff;
+    font-size: 18pt; letter-spacing: .02em;
   }
-  .head .center { text-align: center; }
-  .head .center h1 {
-    margin: 0; font-size: 17pt; font-weight: 900;
-    color: var(--ilus-black); letter-spacing: -.01em;
+  .head .logo .logo-fallback b { color: var(--ilus-red); }
+  .head .right { text-align: right; flex: none; }
+  .head .right .doc-tipo {
+    font-size: 12pt; font-weight: 800; color: #fff; letter-spacing: -.01em;
   }
-  .head .center .sub {
-    color: var(--ilus-mute); font-size: 9pt;
-    margin-top: 1px; letter-spacing: .02em;
-  }
-  .head .right { text-align: right; }
   .head .right .otn {
-    font-size: 13pt; font-weight: 900; color: var(--ilus-black);
-    letter-spacing: -.01em;
+    font-size: 15pt; font-weight: 900; color: var(--ilus-red);
+    line-height: 1.2; letter-spacing: -.01em;
   }
-  .head .right .otn b { color: var(--ilus-red); }
-  .badge-estado {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: var(--ilus-ok-bg); color: #15803d;
-    font-weight: 800; font-size: 8pt;
-    padding: 4px 10px; border-radius: 50px;
-    margin-top: 4px;
-    letter-spacing: .03em;
-  }
-  .badge-estado::before {
-    content: '✓'; font-size: 9pt; font-weight: 900;
+  .head .right .doc-meta {
+    font-size: 7.5pt; color: #9ca3af; margin-top: 1px;
   }
   .head-sep {
-    height: 3px;
-    background: linear-gradient(90deg, var(--ilus-red) 0%, var(--ilus-red) 60%, #fca5a5 100%);
-    border-radius: 2px;
-    margin: 4px 0 12px;
+    height: 2mm;
+    margin: 0 -14mm 12px;
+    background: linear-gradient(90deg, var(--ilus-red) 0 25%, var(--ilus-black) 25% 100%);
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 
   /* ───── Sección título "subrayado" ───── */
@@ -603,43 +597,22 @@
   }
 
   /* ───── Footer ───── */
+  /* ───── Footer — mismo formato que cotizaciones: barra angosta con
+     borde rojo arriba, marca a la izquierda, N°/página a la derecha
+     (referencia real: tickets_module.py footer_tpl, ~línea 3582). ───── */
   .foot {
     position: absolute;
     left: 14mm; right: 14mm;
     bottom: 8mm;
-    border-top: 1px solid var(--ilus-line);
-    padding-top: 6px;
-  }
-  .foot-cta {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 6px;
-    margin-bottom: 6px;
-  }
-  .foot-cta .fc {
-    background: var(--ilus-bg);
-    border: 1px solid var(--ilus-line);
-    border-radius: 50px;
-    padding: 4px 10px;
-    font-size: 7.5pt;
-    text-align: center;
-    color: var(--ilus-ink);
-    font-weight: 600;
-    display: flex; align-items: center; justify-content: center;
-    gap: 4px;
-  }
-  .foot-cta .fc .ico {
-    width: 14px; height: 14px;
-    background: var(--ilus-red); color: #fff;
-    border-radius: 50%;
-    font-weight: 900; font-size: 8pt;
-    display: inline-flex; align-items: center; justify-content: center;
+    border-top: 1.5px solid var(--ilus-red);
+    padding-top: 5px;
   }
   .foot-info {
     display: flex; justify-content: space-between; align-items: center;
     font-size: 7pt;
     color: var(--ilus-mute);
   }
+  .foot-info b { color: var(--ilus-black); }
   .foot-info .pg {
     font-weight: 800; color: var(--ilus-black);
   }
@@ -672,6 +645,14 @@
 
   @media (max-width: 768px) {
     .sheet { width: auto; padding: 8mm 6mm 12mm; min-height: auto; }
+    /* El header/franja a sangre cancelan el padding del .sheet con
+       márgenes negativos — deben coincidir con el padding de ESTE
+       breakpoint (8mm/6mm), no con el de escritorio (12mm/14mm). */
+    .head { margin: -8mm -6mm 0; padding: 4mm 6mm; flex-wrap: wrap; }
+    .head-sep { margin: 0 -6mm 12px; }
+    .head .logo { gap: 3mm; }
+    .head .right .doc-tipo { font-size: 10pt; }
+    .head .right .otn { font-size: 13pt; }
     .info-3col, .logist-4, .firmas, .col-2, .resumen-4 { grid-template-columns: 1fr; }
     .eq-card { grid-template-columns: 1fr; }
     .eq-card .eq-foto { width: 100%; height: 180px; }
@@ -704,40 +685,35 @@
 <div class="head">
   <div class="logo">
     {% if logo_shs_url %}
-      <img src="{{ logo_shs_url }}" alt="SPHS">
+      <div class="logo-shs-box"><img src="{{ logo_shs_url }}" alt="SPHS"></div>
     {% endif %}
     {% if logo_b64 %}
-      <img src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS">
+      <img class="logo-ilus" src="data:image/png;base64,{{ logo_b64 }}" alt="ILUS">
     {% else %}
-      <div class="logo-fallback">ILUS<span style="color:#0a0a0a">.</span></div>
+      <div class="logo-fallback">ILUS<b>.</b></div>
     {% endif %}
   </div>
-  <div class="center">
-    <h1>Orden de Trabajo</h1>
-    <div class="sub">Reporte técnico digital</div>
-  </div>
   <div class="right">
-    <div class="otn">N° <b>{{ visita.numero_ot or visita.id }}</b></div>
-    <span class="badge-estado">{{ (visita.estado or 'cerrada')|replace('_',' ')|title }}</span>
+    <div class="doc-tipo">ORDEN DE TRABAJO</div>
+    <div class="otn">N° {{ visita.numero_ot or visita.id }}</div>
+    <div class="doc-meta">
+      {% if visita.cerrada_at %}CERRADA EL {{ visita.cerrada_at | chile_fmt('%d-%m-%y') }}
+      {% else %}{{ (visita.estado or 'cerrada')|replace('_',' ')|upper }}{% endif %}
+    </div>
   </div>
 </div>
 <div class="head-sep"></div>
 {% endmacro %}
 
-{# ════════════ Macro: footer de página ════════════ #}
+{# ════════════ Macro: footer de página — mismo formato que cotizaciones ════════════ #}
 {% macro footer_block(pg, total_pg, continua=false) %}
 <div class="foot">
   {% if continua %}
   <div class="foot-continua">Continúa en la siguiente página</div>
   {% endif %}
-  <div class="foot-cta">
-    <div class="fc"><span class="ico">w</span>www.ilusfitness.com</div>
-    <div class="fc"><span class="ico">☎</span>+56 2 3276 4600</div>
-    <div class="fc"><span class="ico">✉</span>servicio.tecnico@ilusfitness.com</div>
-  </div>
   <div class="foot-info">
-    <span>ILUS Fitness · Documento generado el {{ generated_at }}</span>
-    <span class="pg">Página {{ pg }} de {{ total_pg }}</span>
+    <span><b>ILUS Fitness</b> · www.ilusfitness.com · servicio.tecnico@ilusfitness.com</span>
+    <span>OT <b>{{ visita.numero_ot or visita.id }}</b> · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
   </div>
 </div>
 {% endmacro %}
