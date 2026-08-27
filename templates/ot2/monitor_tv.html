@@ -348,6 +348,11 @@
       animation:liveDot 2.6s ease-in-out infinite;
     }
     @keyframes liveDot{0%,100%{opacity:1}50%{opacity:.45}}
+    /* Corte real (fetch fallando / sesión expirada) — NUNCA por una brecha
+       larga sin cambios en el negocio, que es sana. */
+    .tv-live.is-stale{opacity:.4}
+    .tv-live.is-stale i{animation:none;opacity:.4;box-shadow:none}
+    .meta-fresh{color:var(--txt-4);font-weight:600;margin-left:4px}
 
     /* ════════════════════════════════════════════════════════════════
        CUERPO — LA TARJETA-CALENDARIO (la estrella de la pantalla)
@@ -1070,7 +1075,7 @@
         <div class="kpi k-atra" id="kpiAtraBox"><b id="kpiAtra">0</b><span>Atrasadas</span></div>
         <div class="tv-clock-box">
           <div class="tv-clock" id="tvClock">--:--</div>
-          <span class="tv-live"><i></i>EN VIVO</span>
+          <span class="tv-live" id="tvLive"><i></i>EN VIVO</span>
         </div>
         {# Pantalla completa — "bien piolita y sutil" (Daniel 27-08): casi
            invisible hasta que se pasa el mouse por encima. #}
@@ -1096,7 +1101,17 @@
       <div class="tvb-days" id="tvbDays"></div>
       <div class="tvb-meta">
         <div class="page-dots" id="pageDots"></div>
-        <div class="meta-updated">Datos actualizados <b id="metaHora">--:--</b></div>
+        {# 2026-08-27 (Daniel: "diría que su última actualización fue hace
+           más de 8 min pero el reloj sigue corriendo... sería bueno que el
+           monitor funcione como reloj"). El reloj grande YA es un ticker
+           independiente que no depende de esto — lo que confundía era este
+           texto: "actualizado" sonaba a "último chequeo", cuando en verdad
+           es "último CAMBIO real detectado" (huella de mant_visitas). Si
+           nada cambia en 10-15 min, el sistema sigue preguntando cada 8s y
+           confirmando "sin novedad" — sano, no congelado. #}
+        <div class="meta-updated">Último cambio detectado <b id="metaHora">--:--</b>
+          <small id="metaFresh" class="meta-fresh"></small>
+        </div>
       </div>
     </footer>
 
@@ -1305,7 +1320,12 @@
 
     if (datos.generado_iso){
       const g = new Date(datos.generado_iso);
-      if (!isNaN(g)) setTexto($('#metaHora'), horaChileHHMM(g));
+      if (!isNaN(g)){
+        setTexto($('#metaHora'), horaChileHHMM(g));
+        // Guardado para que pintarFrescuraMeta() calcule "hace Xm" en vivo,
+        // tiqueteando junto con el reloj — no solo cuando llega un fetch.
+        state.ultimoCambioIso = datos.generado_iso;
+      }
     }
   }
 
@@ -2236,7 +2256,19 @@
   function tick(){
     setTexto($('#tvClock'), horaChileHHMM());
     actualizarAhora();
+    pintarFrescuraMeta();
     document.querySelectorAll('.av-elapsed[data-ini]').forEach(pintarElapsed);
+  }
+
+  // "· hace Xm sin cambios" junto al último cambio detectado — tiquetea con
+  // el reloj (cada 1s), no con el latido (cada 8s-2h). Deja claro que una
+  // brecha larga significa "nada cambió en el negocio", no "se congeló".
+  function pintarFrescuraMeta(){
+    const nodo = $('#metaFresh');
+    if (!nodo || !state.ultimoCambioIso) return;
+    const ms = Date.now() - new Date(state.ultimoCambioIso).getTime();
+    const mins = Math.max(0, Math.floor(ms / 60000));
+    setTexto(nodo, mins < 1 ? '· recién' : `· hace ${mins} min sin cambios`);
   }
 
   /* ─────────────────────── latido de actualización ───────────────────────
@@ -2258,10 +2290,14 @@
   function setOffline(mal, motivo){
     const pill = $('#offlinePill');
     const txt = $('#offlineTxt');
+    const live = $('#tvLive');
     if (mal){
       if (state.timerOkPill){ clearTimeout(state.timerOkPill); state.timerOkPill = null; }
       state.offline = true;
       pill.classList.remove('ok');
+      // "EN VIVO" se atenúa SOLO en un corte real (fetch fallando o sesión
+      // expirada) — nunca por una brecha larga sin cambios, que es sana.
+      if (live) live.classList.add('is-stale');
       // 🔧 FIX 2026-08-27 (Daniel — captura real: la pantalla de control
       // quedó en "Sin conexión" cuando en realidad la SESIÓN había expirado
       // (cierre por inactividad). fetch() sigue la redirección a /login en
@@ -2275,6 +2311,7 @@
     } else if (state.offline){
       // veníamos caídos → mostrar recuperación 4 s y desaparecer
       state.offline = false;
+      if (live) live.classList.remove('is-stale');
       pill.classList.add('ok');
       setTexto(txt, 'Conexión restablecida');
       state.timerOkPill = setTimeout(() => pill.classList.remove('visible'), 4000);
@@ -2307,7 +2344,7 @@
     // que un repintado automático le quite de las manos a Daniel el día
     // que está mirando. Se reanuda solo con volverAHoy().
     if (state.pausadoPorNavegacion){
-      setTimeout(latido, 2000);
+      state.timerLatido = setTimeout(latido, 2000);
       return;
     }
     try{
@@ -2327,7 +2364,7 @@
     } finally {
       const base = cadenciaMs();
       // caídos: reintentar pronto aunque la franja diga 1-2 horas
-      setTimeout(latido, state.offline ? Math.min(base, 60000) : base);
+      state.timerLatido = setTimeout(latido, state.offline ? Math.min(base, 60000) : base);
     }
   }
 
@@ -2444,8 +2481,28 @@
     // La animación de encendido corre una sola vez
     setTimeout(() => document.body.classList.remove('boot'), 2000);
 
+    // 🔧 FIX 2026-08-27 (hallazgo del agente de investigación del reloj):
+    // Chrome atenúa los timers (setTimeout/setInterval) de una pestaña en
+    // segundo plano — si la pantalla de control queda minimizada un rato,
+    // el próximo latido puede demorar más de lo que la cadencia dice. Al
+    // volver a primer plano se resincroniza de inmediato, sin esperar el
+    // ciclo normal. El televisor de la pared nunca se minimiza, así que
+    // esto es defensa solo para la pantalla de control.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible'){
+        tick();
+        if (STATUS_URL && DATOS_URL && !state.pausadoPorNavegacion){
+          // Sin esto, la cadena de setTimeout que ya venía corriendo (aunque
+          // atenuada de fondo) sigue viva EN PARALELO a la que arranca acá
+          // — cada minimizar/restaurar sumaría una cadena más de latidos.
+          if (state.timerLatido) clearTimeout(state.timerLatido);
+          latido();
+        }
+      }
+    });
+
     if (STATUS_URL && DATOS_URL){
-      setTimeout(latido, cadenciaMs());
+      state.timerLatido = setTimeout(latido, cadenciaMs());
     }
   });
   </script>
