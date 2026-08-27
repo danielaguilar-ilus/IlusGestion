@@ -196,6 +196,13 @@
     }
     .tv-date .date-kicker::before{margin-right:10px}
     .tv-date .date-kicker::after{margin-left:10px;background:linear-gradient(90deg,var(--red-500),transparent)}
+    /* El `letter-spacing:.18em` del contenedor no se aplica de forma
+       confiable en el borde de un <span> hijo (el navegador puede recortar
+       el espacio "final" de un texto justo antes de que abra otro elemento
+       inline) -- por eso "· 8 OT" seguía viéndose pegado aun después de
+       sacar el `gap`. Se le da un margen explícito al número, que no
+       depende de esa mecánica frágil. */
+    #kickerTotal{margin:0 .15em}
     .tv-date .date-big{
       font-family:var(--display);font-size:52px;line-height:1;color:#fff;
       letter-spacing:.02em;text-transform:uppercase;margin-top:4px;
