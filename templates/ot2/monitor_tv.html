@@ -202,7 +202,10 @@
        inline) -- por eso "· 8 OT" seguía viéndose pegado aun después de
        sacar el `gap`. Se le da un margen explícito al número, que no
        depende de esa mecánica frágil. */
-    #kickerTotal{margin:0 .15em}
+    /* .15em (2.25px con este tamaño de fuente) resultó invisible en la
+       pantalla real — se sube a .4em (6px) para que el hueco de verdad
+       se note, en vez de seguir leyéndose pegado. */
+    #kickerTotal{margin:0 .4em}
     .tv-date .date-big{
       font-family:var(--display);font-size:52px;line-height:1;color:#fff;
       letter-spacing:.02em;text-transform:uppercase;margin-top:4px;
