@@ -93365,6 +93365,34 @@ def mant_proveedores_repuesto_page():
     return render_template("mantenciones/proveedores.html", proveedores=[dict(r) for r in rows])
 
 
+@app.route("/repuestos/ubicaciones")
+@_mant_required
+def repuestos_ubicaciones_page():
+    """Repositorio de ubicaciones físicas de la Bodega de Repuestos
+    (2026-08-27, Daniel: "un botón que nos lleve a las ubicaciones, para
+    tener un repositorio... y crearla desde allí").
+
+    Sin @_no_tecnico a propósito: crear una ubicación ya era una acción de
+    técnico (se hacía "a mano durante el levantamiento", ver
+    repstock_ubicacion_crear) — esta pantalla solo le da un lugar fijo a
+    esa misma acción, no le suma un permiso nuevo. Desactivar sigue
+    restringido (repstock_ubicacion_eliminar ya tiene @_no_tecnico).
+
+    "Ocupada" se calcula EN VIVO contando mant_repuestos_stock activo, en
+    vez de guardarse como columna aparte — así nunca puede desincronizarse
+    del dato real (a diferencia del maestro de ubicaciones de CheckWMS,
+    que sí la guarda como flag, pensado para su propio proceso de
+    actualización masiva por bodega grande)."""
+    rows = mysql_fetchall(
+        "SELECT u.*, COUNT(s.id) AS n_repuestos "
+        "  FROM mant_repuestos_ubicaciones u "
+        "  LEFT JOIN mant_repuestos_stock s ON s.ubicacion_id = u.id AND s.activo=1 "
+        " GROUP BY u.id ORDER BY u.activo DESC, u.codigo"
+    ) or []
+    return render_template("mantenciones/repuestos_ubicaciones.html",
+                            ubicaciones=[dict(r) for r in rows])
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  BODEGA DE REPUESTOS — inventario físico real (2026-08-07, Daniel)
 #  Distinto de mant_repuestos (seguimiento comercial arriba). Ver
@@ -93861,6 +93889,9 @@ def repstock_marca_eliminar(mid):
     return jsonify({"ok": True})
 
 
+_REPSTOCK_UBIC_TIPOS = ("estante", "gaveta", "piso", "rack", "contenedor", "otro")
+
+
 @app.route("/mantenciones/api/repuestos-stock/ubicaciones", methods=["POST"])
 @_mant_required
 def repstock_ubicacion_crear():
@@ -93869,12 +93900,14 @@ def repstock_ubicacion_crear():
     if not codigo:
         return jsonify({"ok": False, "error": "Código de ubicación obligatorio"}), 400
     nombre = (d.get("nombre") or "").strip()[:200] or None
+    tipo = (d.get("tipo") or "").strip().lower()
+    tipo = tipo if tipo in _REPSTOCK_UBIC_TIPOS else None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO mant_repuestos_ubicaciones (codigo, nombre) VALUES (%s,%s)",
-                (codigo, nombre)
+                "INSERT INTO mant_repuestos_ubicaciones (codigo, nombre, tipo) VALUES (%s,%s,%s)",
+                (codigo, nombre, tipo)
             )
             new_id = cur.lastrowid
         conn.commit()
@@ -93886,7 +93919,55 @@ def repstock_ubicacion_crear():
         return jsonify({"ok": False, "error": "No se pudo crear la ubicación."}), 400
     finally:
         conn.close()
-    return jsonify({"ok": True, "id": new_id, "codigo": codigo, "nombre": nombre})
+    return jsonify({"ok": True, "id": new_id, "codigo": codigo, "nombre": nombre, "tipo": tipo})
+
+
+@app.route("/mantenciones/api/repuestos-stock/ubicaciones/<int:uid>", methods=["PUT"])
+@_mant_required
+def repstock_ubicacion_editar(uid):
+    """Editar código/nombre/tipo — un error de tipeo en terreno debe poder
+    corregirse sin desactivar y crear una ficha nueva (que perdería el
+    conteo de repuestos ya asociados a esa ubicación)."""
+    ubi = mysql_fetchone("SELECT id FROM mant_repuestos_ubicaciones WHERE id=%s", (uid,))
+    if not ubi:
+        return jsonify({"ok": False, "error": "Ubicación no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    codigo = (d.get("codigo") or "").strip()[:60]
+    if not codigo:
+        return jsonify({"ok": False, "error": "Código de ubicación obligatorio"}), 400
+    nombre = (d.get("nombre") or "").strip()[:200] or None
+    tipo = (d.get("tipo") or "").strip().lower()
+    tipo = tipo if tipo in _REPSTOCK_UBIC_TIPOS else None
+    try:
+        mysql_execute(
+            "UPDATE mant_repuestos_ubicaciones SET codigo=%s, nombre=%s, tipo=%s WHERE id=%s",
+            (codigo, nombre, tipo, uid)
+        )
+    except Exception as e:
+        if "Duplicate" in str(e):
+            return jsonify({"ok": False, "error": f"Ya existe la ubicación '{codigo}'"}), 400
+        print(f"[repstock_ubicacion_editar] ERROR: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la ubicación."}), 400
+    _mant_log("repuesto_ubicacion", uid, "editar", codigo)
+    return jsonify({"ok": True, "id": uid, "codigo": codigo, "nombre": nombre, "tipo": tipo})
+
+
+@app.route("/mantenciones/api/repuestos-stock/ubicaciones/<int:uid>/reactivar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def repstock_ubicacion_reactivar(uid):
+    """Vuelve a habilitar una ubicación desactivada. Sin esto, una
+    desactivada por error quedaba perdida para siempre — el código único
+    impide recrearla con el mismo nombre (Regla #5, mismo criterio que
+    /mantenciones/api/maquinas/<id>/restaurar)."""
+    ubi = mysql_fetchone(
+        "SELECT codigo FROM mant_repuestos_ubicaciones WHERE id=%s", (uid,))
+    if not ubi:
+        return jsonify({"ok": False, "error": "Ubicación no encontrada"}), 404
+    mysql_execute(
+        "UPDATE mant_repuestos_ubicaciones SET activo=1 WHERE id=%s", (uid,))
+    _mant_log("repuesto_ubicacion", uid, "reactivar", ubi.get("codigo") or "")
+    return jsonify({"ok": True})
 
 
 @app.route("/mantenciones/api/repuestos-stock/marcas", methods=["POST"])
@@ -103205,6 +103286,21 @@ def _ensure_repuestos_bodega_tables():
         """)
     except Exception as e:
         print(f"[ensure_repuestos_stock] mant_repuestos_ubicaciones: {e}", flush=True)
+
+    # 2026-08-27 (Daniel: repositorio de ubicaciones, "copiar las buenas
+    # prácticas" del maestro de ubicaciones de CheckWMS). De ese modelo se
+    # toma SOLO `tipo` (Estante/Gaveta/Piso/etc.) — el resto (dimensiones,
+    # rotación, ocupada) es para slotting automático de una bodega grande;
+    # acá "ocupada" se calcula en vivo contando mant_repuestos_stock, no se
+    # duplica como columna que podría desincronizarse.
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_repuestos_ubicaciones ADD COLUMN tipo VARCHAR(30) NULL "
+            "COMMENT 'Estante/Gaveta/Piso/Rack/Otro' AFTER codigo"
+        )
+    except Exception as e:
+        if "Duplicate column" not in str(e):
+            print(f"[ensure_repuestos_stock] ALTER mant_repuestos_ubicaciones.tipo: {e}", flush=True)
 
     try:
         mysql_execute("""

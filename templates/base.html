@@ -743,6 +743,14 @@
          class="sidebar-link{% if request.endpoint in ['repuestos_bodega_list', 'repstock_etiquetas', 'repuestos_print_labels'] %} active{% endif %}">
         <i class="bi bi-box-seam"></i><span>Bodega de Repuestos</span>
       </a>
+      {# 2026-08-27 (Daniel: "un botón que nos lleve a las ubicaciones,
+         para tener un repositorio"). Mismo criterio de visibilidad que
+         Repuestos/Bodega de arriba: crear una ubicación ya era una acción
+         de técnico en terreno, esto solo le da un lugar fijo. #}
+      <a href="{{ url_for('repuestos_ubicaciones_page') }}"
+         class="sidebar-link{% if request.endpoint == 'repuestos_ubicaciones_page' %} active{% endif %}">
+        <i class="bi bi-geo-alt-fill"></i><span>Ubicaciones</span>
+      </a>
       {% if not is_tecnico %}
       <a href="{{ url_for('mant_tecnicos_externos_index') }}"
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">

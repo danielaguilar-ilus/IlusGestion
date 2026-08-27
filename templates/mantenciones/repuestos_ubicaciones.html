@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Ubicaciones de la Bodega de Repuestos — ILUS{% endblock %}
+{% block content %}
+<style>
+.ubi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.ubi-card{
+  background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px 20px;
+  box-shadow:0 1px 3px rgba(15,23,42,.06);transition:.18s;position:relative;
+}
+.ubi-card:hover{box-shadow:0 8px 22px -8px rgba(220,38,38,.24);border-color:#f3c9c9}
+.ubi-card.inactiva{opacity:.55;background:#f9fafb}
+.ubi-codigo{font-weight:900;font-size:1.15rem;color:#0a0a0a;font-family:'JetBrains Mono',monospace}
+.ubi-tipo{
+  display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:800;
+  padding:3px 10px;border-radius:50px;background:#f3f4f6;color:#4b5563;text-transform:uppercase;
+  letter-spacing:.03em;margin-left:8px;vertical-align:middle;
+}
+.ubi-nombre{font-size:.88rem;color:#6b7280;margin-top:6px;min-height:1.2em}
+.ubi-count{
+  display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:800;
+  color:#166534;background:#dcfce7;padding:4px 12px;border-radius:50px;margin-top:12px;
+}
+.ubi-count.vacia{color:#9ca3af;background:#f3f4f6}
+.ubi-actions{position:absolute;top:14px;right:14px;display:flex;gap:4px}
+.ubi-actions button{
+  border:none;background:transparent;color:#9ca3af;width:28px;height:28px;border-radius:8px;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:.15s;
+}
+.ubi-actions button:hover{background:#f3f4f6;color:#374151}
+.ubi-actions .ubi-act-reactivar:hover{background:#dcfce7;color:#166534}
+.ubi-actions .ubi-act-eliminar:hover{background:#fee2e2;color:#991b1b}
+.ubi-badge-inactiva{font-size:.66rem;font-weight:800;color:#9ca3af;text-transform:uppercase;
+  letter-spacing:.03em;display:block;margin-top:4px}
+.ubi-empty{padding:60px 20px;text-align:center;color:#9ca3af}
+#modalUbicacion .modal-header{background:#0a0a0a;color:#fff;border-radius:.5rem .5rem 0 0}
+#modalUbicacion .btn-close{filter:invert(1)}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-geo-alt-fill me-2"></i>Ubicaciones — Bodega de Repuestos</h4>
+    <div class="sub">Dónde vive físicamente cada repuesto — estante, gaveta, piso. Repositorio único, se usa al guardar stock.</div>
+  </div>
+  <button class="btn btn-sm btn-danger" type="button" onclick="ubiAbrirNuevo()">
+    <i class="bi bi-plus-lg me-1"></i>Nueva ubicación</button>
+</div>
+
+{% if ubicaciones %}
+<div class="ubi-grid">
+  {% for u in ubicaciones %}
+  <div class="ubi-card {{ '' if u.activo else 'inactiva' }}">
+    <div class="ubi-actions">
+      <button type="button" title="Editar" onclick="ubiAbrirEditar({{ u.id }}, '{{ u.codigo|e }}', '{{ u.nombre or ''|e }}', '{{ u.tipo or '' }}')">
+        <i class="bi bi-pencil"></i></button>
+      {% if u.activo %}
+      <button type="button" class="ubi-act-eliminar" title="Desactivar" onclick="ubiEliminar({{ u.id }}, '{{ u.codigo|e }}')">
+        <i class="bi bi-x-lg"></i></button>
+      {% else %}
+      <button type="button" class="ubi-act-reactivar" title="Reactivar" onclick="ubiReactivar({{ u.id }}, '{{ u.codigo|e }}')">
+        <i class="bi bi-arrow-counterclockwise"></i></button>
+      {% endif %}
+    </div>
+    <div>
+      <span class="ubi-codigo">{{ u.codigo }}</span>
+      {% if u.tipo %}<span class="ubi-tipo">{{ u.tipo }}</span>{% endif %}
+    </div>
+    <div class="ubi-nombre">{{ u.nombre or '' }}</div>
+    {% if u.n_repuestos %}
+    <span class="ubi-count"><i class="bi bi-box-seam-fill"></i>{{ u.n_repuestos }} repuesto{{ 's' if u.n_repuestos != 1 else '' }} guardado{{ 's' if u.n_repuestos != 1 else '' }}</span>
+    {% else %}
+    <span class="ubi-count vacia"><i class="bi bi-box"></i>Vacía</span>
+    {% endif %}
+    {% if not u.activo %}<span class="ubi-badge-inactiva">Desactivada</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="ubi-empty">
+  <i class="bi bi-geo-alt" style="font-size:2.5rem;opacity:.3"></i>
+  <div class="mt-2">Aún no hay ubicaciones registradas.</div>
+</div>
+{% endif %}
+
+<!-- Modal crear/editar -->
+<div class="modal fade" id="modalUbicacion" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalUbicacionTitulo"><i class="bi bi-geo-alt-fill me-2"></i>Nueva ubicación</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ubiId">
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Código *</label>
+          <input type="text" class="form-control" id="ubiCodigo" placeholder="Ej: A-01-03" style="font-size:16px" required>
+          <div class="form-text">Estante-fila-casillero, o el criterio que uses en bodega.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Tipo</label>
+          <select class="form-select" id="ubiTipo" style="font-size:16px">
+            <option value="">— Sin definir —</option>
+            <option value="estante">Estante</option>
+            <option value="gaveta">Gaveta</option>
+            <option value="piso">Piso</option>
+            <option value="rack">Rack</option>
+            <option value="contenedor">Contenedor</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small fw-bold">Descripción</label>
+          <input type="text" class="form-control" id="ubiNombre" placeholder="Ej: cerca de la puerta, repisa del medio" style="font-size:16px">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-danger" id="btnUbiGuardar" onclick="ubiGuardar()">
+          <i class="bi bi-check-lg me-1"></i>Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _ubiModal;
+document.addEventListener('DOMContentLoaded', function(){
+  _ubiModal = new bootstrap.Modal(document.getElementById('modalUbicacion'));
+});
+
+function ubiAbrirNuevo(){
+  document.getElementById('modalUbicacionTitulo').innerHTML = '<i class="bi bi-geo-alt-fill me-2"></i>Nueva ubicación';
+  document.getElementById('ubiId').value = '';
+  document.getElementById('ubiCodigo').value = '';
+  document.getElementById('ubiTipo').value = '';
+  document.getElementById('ubiNombre').value = '';
+  (_ubiModal || new bootstrap.Modal(document.getElementById('modalUbicacion'))).show();
+}
+
+function ubiAbrirEditar(id, codigo, nombre, tipo){
+  document.getElementById('modalUbicacionTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar ubicación';
+  document.getElementById('ubiId').value = id;
+  document.getElementById('ubiCodigo').value = codigo || '';
+  document.getElementById('ubiTipo').value = tipo || '';
+  document.getElementById('ubiNombre').value = nombre || '';
+  (_ubiModal || new bootstrap.Modal(document.getElementById('modalUbicacion'))).show();
+}
+
+async function ubiGuardar(){
+  const id = document.getElementById('ubiId').value;
+  const codigo = document.getElementById('ubiCodigo').value.trim();
+  if (!codigo){ ilusToast('El código de la ubicación es obligatorio', {type:'warning'}); return; }
+  const payload = {
+    codigo: codigo,
+    tipo: document.getElementById('ubiTipo').value,
+    nombre: document.getElementById('ubiNombre').value.trim(),
+  };
+  const url = id ? `/mantenciones/api/repuestos-stock/ubicaciones/${id}` : '/mantenciones/api/repuestos-stock/ubicaciones';
+  const method = id ? 'PUT' : 'POST';
+  const btn = document.getElementById('btnUbiGuardar');
+  btn.disabled = true;
+  let d;
+  try{
+    const r = await fetch(url, {
+      method: method,
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify(payload)
+    });
+    d = await r.json();
+  }catch(e){
+    btn.disabled = false;
+    ilusToast('Sin conexión: no se pudo guardar', {type:'error'});
+    return;
+  }
+  btn.disabled = false;
+  if (!d.ok){ ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
+  ilusToast('✓ Ubicación guardada', {type:'success'});
+  (_ubiModal || bootstrap.Modal.getInstance(document.getElementById('modalUbicacion'))).hide();
+  setTimeout(()=> location.reload(), 500);
+}
+
+async function ubiEliminar(id, codigo){
+  const ok = await ilusConfirm({
+    title: 'Desactivar ubicación',
+    message: `¿Desactivar «${codigo}»?`,
+    sub: 'Se puede reactivar después. Si tiene repuestos guardados, no se dejará desactivar.',
+    okLabel: 'Sí, desactivar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try{
+    const r = await fetch(`/mantenciones/api/repuestos-stock/ubicaciones/${id}`, {
+      method: 'DELETE', headers: {'X-Requested-With':'XMLHttpRequest'},
+    });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo desactivar', {type:'error'}); return; }
+    ilusToast('✓ Ubicación desactivada', {type:'success'});
+    setTimeout(()=> location.reload(), 500);
+  }catch(e){ ilusToast('Sin conexión: no se pudo desactivar', {type:'error'}); }
+}
+
+async function ubiReactivar(id, codigo){
+  try{
+    const r = await fetch(`/mantenciones/api/repuestos-stock/ubicaciones/${id}/reactivar`, {
+      method: 'POST', headers: {'X-Requested-With':'XMLHttpRequest'},
+    });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo reactivar', {type:'error'}); return; }
+    ilusToast('✓ «' + codigo + '» reactivada', {type:'success'});
+    setTimeout(()=> location.reload(), 500);
+  }catch(e){ ilusToast('Sin conexión: no se pudo reactivar', {type:'error'}); }
+}
+</script>
+{% endblock %}
