@@ -68786,6 +68786,60 @@ def mant_visita_iniciar(vid):
     return jsonify({"ok": True, "estado": "en_curso"})
 
 
+# 🔧 FIX 2026-08-27 (Daniel: "trabajé la OT 136 a mi nombre y aún dice
+# atrasado"). Investigado con evidencia real: `/iniciar` (el ÚNICO código
+# que pasa la OT a 'en_curso') es INALCANZABLE desde el flujo real del
+# celular — ot_ejecutar.html/mantenciones_ot_ejecutar.js nunca lo llaman;
+# el único caller vivo es el tablero Kanban de la lista vieja, que no es la
+# vista por defecto y a la que un técnico nunca entra desde un link directo.
+# Consecuencia real medida: Daniel trabajó el checklist completo (2/2, 100%)
+# sin que el estado se moviera nunca de 'programada' — el monitor lo marcó
+# "atrasado" mientras trabajaba y jamás "ejecutando".
+#
+# Se marca en_curso sola en la primera tarea que el técnico completa de
+# verdad — es la señal más simple e inequívoca de "ya está trabajando esto".
+# BEST-EFFORT a propósito: reusa los mismos candados de `/iniciar` (ventana
+# horaria, Anexo sin firmar) pero si alguno bloquearía, simplemente no hace
+# nada -- jamás debe impedir marcar una tarea, que es la acción real del
+# usuario. Cualquier excepción se traga y se loguea; nunca debe reventar el
+# toggle que la llama.
+def _ot_marcar_en_curso_si_corresponde(vid):
+    try:
+        v = _ot_visita_basic(vid)
+        if not v or v.get("estado") != "programada":
+            return
+        _permitido, _ = _ot_dentro_ventana_horario(v)
+        if not _permitido or _anexo_bloquea_ot(vid):
+            return
+        filas = mysql_execute_returning_rowcount(
+            "UPDATE mant_visitas "
+            "   SET estado='en_curso', "
+            "       hora_real_inicio=COALESCE(hora_real_inicio, NOW()) "
+            " WHERE id=%s AND estado='programada'",
+            (vid,)
+        )
+        if not filas:
+            return   # alguien más ya la movió de estado entre el SELECT y acá
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+            "VALUES ('visita', %s, 'iniciada', %s, %s)",
+            (vid, "OT pasada a en_curso automáticamente (primera tarea marcada)",
+             current_username())
+        )
+        try:
+            _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
+            if _tk_set_estado_automatico:
+                _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
+                if _tk_row:
+                    _tk_set_estado_automatico(
+                        _tk_row["id"], "ot_in_progress",
+                        "Técnico inició la OT en terreno", visita_id=vid)
+        except Exception as _e_tk:
+            print(f"[_ot_marcar_en_curso_si_corresponde] sync ticket vid={vid}: {_e_tk}", flush=True)
+    except Exception as e:
+        print(f"[_ot_marcar_en_curso_si_corresponde] vid={vid}: {e}", flush=True)
+
+
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar", methods=["POST"])
 @_mant_required
 def mant_visita_firmar(vid):
@@ -84767,6 +84821,11 @@ def mant_visita_tarea_update(vid, tid):
         if not row:
             return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
         new_state = 0 if row["completada"] else 1
+        if new_state:
+            # Ver el porqué en _ot_marcar_en_curso_si_corresponde (arriba de
+            # mant_visita_iniciar): sin esto, la OT nunca sale de
+            # 'programada' aunque el técnico esté trabajándola de verdad.
+            _ot_marcar_en_curso_si_corresponde(vid)
         mysql_execute(
             "UPDATE mant_visita_tareas "
             "   SET completada=%s, "
