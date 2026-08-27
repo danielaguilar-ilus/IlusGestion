@@ -74413,10 +74413,46 @@ def ot2_detalle(vid):
     # OJO: _ot2_finanzas_estado devuelve una TUPLA (ok, faltan), no un dict.
     _fin_ok, _fin_faltan = _ot2_finanzas_estado(v)
 
+    # ── Evidencia — pestaña nueva (Daniel 27-ago: "los técnicos no sabían
+    # que podían dejar evidencia... buscar la mejor manera de mostrarlo").
+    # El dato ya se sube desde hace tiempo (mant_visita_fotos); lo que
+    # faltaba era una pantalla que lo hiciera visible y explorable.
+    fotos = mysql_fetchall(
+        "SELECT f.id, f.archivo_path, f.cloudinary_url, f.tipo_foto, f.descripcion, "
+        "       f.tomada_por, f.tomada_at, f.maquina_id, m.nombre AS maquina_nombre "
+        "  FROM mant_visita_fotos f "
+        "  LEFT JOIN mant_maquinas m ON m.id = f.maquina_id "
+        " WHERE f.visita_id=%s "
+        " ORDER BY f.tomada_at DESC LIMIT 300",
+        (vid,)
+    ) or []
+    fotos = [dict(f) for f in fotos]
+    for f in fotos:
+        # Mismo criterio que el resto del proyecto: cloudinary_url tiene
+        # prioridad sobre archivo_path (ver app.py:94593).
+        f["url"] = f.get("cloudinary_url") or (
+            f"/static/uploads/mantenciones/{f['archivo_path']}" if f.get("archivo_path") else "")
+        f["cuando"] = chile_fmt_filter(f.get("tomada_at"), "%d/%m %H:%M") if f.get("tomada_at") else ""
+
+    # ── Documentos — pestaña nueva: el Anexo de Servicios del proveedor
+    # vive aquí, visible SOLO para gestión (nunca técnico — regla explícita
+    # del Anexo, Capa 6.2).
+    anexo = None
+    _u_det = getattr(g, "user", None) or {}
+    _role_det = _rol_familia((_u_det.get("role") or "").lower())
+    if _role_det != "tecnico":
+        anexo = mysql_fetchone(
+            "SELECT id, numero, estado, proveedor_nombre, firmante_nombre, "
+            "       firmado_at, enviado_at "
+            "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1",
+            (vid,)
+        )
+
     return render_template(
         "ot2/detalle.html",
         v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
+        fotos=fotos, anexo=anexo,
     )
 
 

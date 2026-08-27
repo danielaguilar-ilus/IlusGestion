@@ -145,6 +145,48 @@
 .otd-pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--ejec);
   animation:otdPulse 1.6s ease-out infinite}
 
+/* ══ PESTAÑAS — Información / Evidencia / Documentos ══
+   2026-08-27 (Daniel: "los técnicos no sabían que podían dejar
+   evidencia... buscar la mejor manera de mostrarlo"). El dato ya existía;
+   lo que faltaba era una pestaña que lo hiciera visible y explorable. */
+.otd-tabs{display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--line);
+  overflow-x:auto}
+.otd-tab{display:inline-flex;align-items:center;gap:7px;background:none;border:0;
+  padding:10px 4px;margin-right:14px;font-size:.82rem;font-weight:800;color:#9ca3af;
+  cursor:pointer;white-space:nowrap;position:relative;transition:color .15s}
+.otd-tab i{font-size:.95rem}
+.otd-tab .cnt{background:#f3f4f6;color:#6b7280;border-radius:99px;padding:1px 8px;
+  font-size:.7rem;font-weight:800}
+.otd-tab:hover{color:#374151}
+.otd-tab.on{color:var(--ilus-red,#dc2626)}
+.otd-tab.on .cnt{background:#fee2e2;color:var(--ilus-red,#dc2626)}
+.otd-tab.on::after{content:"";position:absolute;left:0;right:14px;bottom:-1px;height:2px;
+  background:var(--ilus-red,#dc2626);border-radius:2px}
+.otd-tabpanel{display:none}
+.otd-tabpanel.on{display:block}
+
+/* Evidencia — galería de fotos reales de la visita */
+.otd-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;
+  padding:14px 16px}
+.otd-ev-item{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#fafbfc}
+.otd-ev-item img{width:100%;height:120px;object-fit:cover;display:block;background:#f3f4f6}
+.otd-ev-item .meta{padding:7px 9px}
+.otd-ev-item .tipo{font-size:.62rem;font-weight:900;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--ilus-red,#dc2626)}
+.otd-ev-item .desc{font-size:.72rem;color:#374151;margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.otd-ev-item .who{font-size:.66rem;color:#9ca3af;margin-top:4px}
+
+/* Documentos — Anexo de Servicios */
+.otd-doc-card{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:14px 16px;
+  border:1px solid var(--line);border-radius:10px}
+.otd-doc-card .ic{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;
+  font-size:1.3rem;flex:none}
+.doc-firmado .ic{background:#dcfce7;color:#15803d}
+.doc-pend .ic{background:#fff8e1;color:#a16207}
+.otd-doc-card .in b{display:block;font-size:.88rem;color:#0a0a0a}
+.otd-doc-card .in small{font-size:.74rem;color:#6b7280}
+
 /* ══ GRILLA PRINCIPAL ══ */
 .otd-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start}
 @media (max-width:980px){.otd-grid{grid-template-columns:1fr}}
@@ -337,7 +379,20 @@
     </div>
   </div>
 
-  {# ══ GRILLA ══ #}
+  {# ══ PESTAÑAS ══ #}
+  <div class="otd-tabs" id="otdTabs">
+    <button type="button" class="otd-tab on" data-tab="info">
+      <i class="bi bi-clipboard2-data"></i> Información</button>
+    <button type="button" class="otd-tab" data-tab="evidencia">
+      <i class="bi bi-camera-fill"></i> Evidencia <span class="cnt">{{ fotos|length }}</span></button>
+    {% if anexo %}
+    <button type="button" class="otd-tab" data-tab="documentos">
+      <i class="bi bi-file-earmark-lock2-fill"></i> Documentos <span class="cnt">1</span></button>
+    {% endif %}
+  </div>
+
+  {# ══ INFORMACIÓN (grilla original) ══ #}
+  <div class="otd-tabpanel on" data-tab="info">
   <div class="otd-grid">
 
     {# ── Equipos ── #}
@@ -430,9 +485,76 @@
 
     </div>
   </div>
+  </div>
+  {# ══ /INFORMACIÓN ══ #}
+
+  {# ══ EVIDENCIA ══ #}
+  <div class="otd-tabpanel" data-tab="evidencia">
+    <div class="otd-card">
+      <h3><i class="bi bi-camera-fill"></i> Evidencia fotográfica
+        <span class="n">{{ fotos|length }}</span></h3>
+      {% if fotos %}
+      <div class="otd-ev-grid">
+        {% for f in fotos %}
+        <div class="otd-ev-item">
+          {% if f.url %}
+            <img src="{{ f.url }}" alt="" loading="lazy">
+          {% else %}
+            <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
+              <i class="bi bi-image" style="font-size:1.6rem"></i></div>
+          {% endif %}
+          <div class="meta">
+            <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
+            {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
+            <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="otd-vacio">
+        <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+        Todavía no hay fotos subidas a esta OT.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ══ DOCUMENTOS — Anexo de Servicios (solo visible si existe uno) ══ #}
+  {% if anexo %}
+  <div class="otd-tabpanel" data-tab="documentos">
+    <div class="otd-card">
+      <h3><i class="bi bi-file-earmark-lock2-fill"></i> Anexo de Servicios</h3>
+      <div class="otd-doc-card {{ 'doc-firmado' if anexo.estado == 'firmado' else 'doc-pend' }}">
+        <div class="ic"><i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i></div>
+        <div class="in">
+          <b>Anexo N° {{ anexo.numero }} — {{ anexo.proveedor_nombre }}</b>
+          {% if anexo.estado == 'firmado' %}
+          <small>Firmado por {{ anexo.firmante_nombre or anexo.proveedor_nombre }}{% if anexo.firmado_at %} · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}</small>
+          {% else %}
+          <small>{{ anexo.estado | title }}{% if anexo.enviado_at %} · enviado {{ anexo.enviado_at | chile_fmt('%d/%m/%Y') }}{% endif %} — el proveedor todavía no puede trabajar esta OT</small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 <script>
+/* Pestañas Información / Evidencia / Documentos (2026-08-27). */
+document.addEventListener('DOMContentLoaded', () => {
+  const tabs = document.getElementById('otdTabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.otd-tab');
+    if (!btn) return;
+    const key = btn.dataset.tab;
+    tabs.querySelectorAll('.otd-tab').forEach(b => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('.otd-tabpanel').forEach(p => p.classList.toggle('on', p.dataset.tab === key));
+  });
+});
+
 /* Compartir la OT firmada por WhatsApp (Daniel, 21-08-2026).
    Abre la ventana ANTES del fetch: si se abre después, Safari/iOS y
    navegadores estrictos la bloquean por haber perdido la activación del
