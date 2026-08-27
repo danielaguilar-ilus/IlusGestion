@@ -68589,25 +68589,38 @@ def _ot_dentro_ventana_horario(v):
     if not h_ini and not h_fin:
         return True, None    # día correcto, sin horario declarado -> todo el día
 
-    tol = timedelta(minutes=_OT_VENTANA_TOLERANCIA_MIN)
+    # Margen configurable (regla `ot_ventana_tolerancia_min`, ver
+    # _REGLAS_DEFAULTS). En 0 se desactiva el corte por HORA y solo manda el
+    # control por DÍA de arriba — que es lo que de verdad pidió Daniel:
+    # "que solamente se realicen durante el horario y el día". Llegar tarde
+    # es normal en terreno; trabajar OTRO día no.
+    try:
+        _tol_min = int((_reglas_cargar() or {}).get("ot_ventana_tolerancia_min",
+                                                    _OT_VENTANA_TOLERANCIA_MIN))
+    except Exception:
+        _tol_min = _OT_VENTANA_TOLERANCIA_MIN
+    if _tol_min <= 0:
+        return True, None
+
+    tol = timedelta(minutes=_tol_min)
     # Los límites de horario solo aplican en el primer/último día del rango
     # (una OT de varios días no debe exigir "hora_inicio" el día 2).
     if h_ini and hoy == fecha_prog:
         limite_ini = datetime.combine(hoy, h_ini) - tol
         if ahora.replace(tzinfo=None) < limite_ini:
             return False, (
-                f"Esta OT parte a las {h_ini.strftime('%H:%M')} "
-                f"(con {_OT_VENTANA_TOLERANCIA_MIN} min de margen). Todavía es "
-                f"muy temprano.")
+                f"Esta OT parte a las {h_ini.strftime('%H:%M')} y todavía es "
+                f"muy temprano (el margen es de {_tol_min} min). Si hay que "
+                f"adelantarla, pide que le cambien la hora.")
     ref_fin_hora = h_fin or h_ini
     if ref_fin_hora and hoy == fecha_fin:
         limite_fin = datetime.combine(hoy, ref_fin_hora) + tol
         if ahora.replace(tzinfo=None) > limite_fin:
             return False, (
-                f"Esta OT tenía como horario hasta las "
-                f"{ref_fin_hora.strftime('%H:%M')} "
-                f"(con {_OT_VENTANA_TOLERANCIA_MIN} min de margen) y ya pasó. "
-                f"Si sigue vigente, pide que la reprogramen.")
+                f"Esta OT tenía horario hasta las "
+                f"{ref_fin_hora.strftime('%H:%M')} y ya pasó el margen de "
+                f"{_tol_min} min. Si la vas a hacer igual, pide que le "
+                f"ajusten la hora — así queda registrado el cambio real.")
     return True, None
 
 
@@ -88191,6 +88204,17 @@ _REGLAS_DEFAULTS = {
     #    OT de levantamiento con fotos de equipos SÍ cumple aunque su
     #    checklist no tenga fotos. Ponerla en 0 la desactiva sin deploy. ──
     "ot_min_fotos_cierre": ("1", "int", "terreno", "Mínimo de fotos para poder cerrar una OT (0 = sin exigencia)", "fotos"),
+    # ── Ventana horaria para INICIAR una OT (2026-08-27) ──────────────
+    # Nació el 26-ago con 60 min fijos, y al día siguiente Lenin no pudo
+    # empezar la OT-2026-00132 por estar fuera de esa ventana. Daniel:
+    # "actualmente estamos muy estrictos". La realidad de terreno es que
+    # llegar tarde es lo normal (tráfico, el trabajo anterior se alargó, el
+    # cliente no abre) y bloquear a alguien que YA ESTÁ en el sitio listo
+    # para trabajar hace daño, no control. Se sube el margen a 4 horas y
+    # queda configurable desde /mantenciones/configuracion, sin deploy.
+    # En 0 se desactiva el corte por HORA — el control por DÍA se mantiene
+    # siempre (esa era la intención real: que no se trabaje otro día).
+    "ot_ventana_tolerancia_min": ("240", "int", "terreno", "Margen en minutos para iniciar una OT fuera de su horario (0 = sin control de hora; el control por día se mantiene)", "reloj"),
 }
 _REGLAS_CACHE = None
 
