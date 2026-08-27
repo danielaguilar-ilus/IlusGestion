@@ -264,7 +264,12 @@
       border-left:2.5px solid #4b5563;
     }
     .cd-ot.e-ejecutando{border-left-color:var(--green-400)}
-    .cd-ot.e-terminado{border-left-color:#60a5fa}
+    /* Terminado en verde (Daniel 2026-08-27) — esta vista (semana/mes) tiene
+       su PROPIA definición de color, separada de las burbujas del día; se
+       había quedado en azul cuando la de día ya se corrigió. Un tono más
+       apagado que "ejecutando" para no competir con lo que está pasando
+       ahora mismo. */
+    .cd-ot.e-terminado{border-left-color:#4ade80}
     .cd-ot.e-atrasado{border-left-color:var(--amber-500)}
     .cd-ot .h{font-weight:800;color:#9ca3af;flex:none;font-variant-numeric:tabular-nums}
     .cd-ot .tk{font-size:10px;font-weight:800;color:#a78bfa;flex:none;
