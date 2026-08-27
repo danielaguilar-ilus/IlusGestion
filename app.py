@@ -75732,6 +75732,152 @@ def _ot_tv_datos(fecha=None):
     }
 
 
+_OT_TV_DIAS_SEM = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+_OT_TV_MESES_LG = ("enero", "febrero", "marzo", "abril", "mayo", "junio",
+                   "julio", "agosto", "septiembre", "octubre", "noviembre",
+                   "diciembre")
+
+
+def _ot_tv_datos_rango(fecha=None, vista="semana"):
+    """Vista de SEMANA o MES del monitor — un cuadro por día, no por técnico.
+
+    Daniel lo pidió varias veces (26 y 27-ago): *"tener una vista semanal,
+    a ver cómo vienen las OT, qué viene terminado y qué no"* — la pregunta
+    que responde no es "¿qué hace cada técnico ahora?" (esa es la vista de
+    día) sino "¿cómo viene la carga y qué va quedando cerrado?".
+
+    Devuelve el MISMO contrato base que `_ot_tv_datos` para lo que comparten
+    (ok/fecha/es_hoy/resumen), más `dias[]` con el detalle por jornada.
+    """
+    ahora = _now_chile()
+    hoy_real = ahora.date()
+    ancla = fecha or hoy_real
+
+    if vista == "mes":
+        desde = ancla.replace(day=1)
+        # Primer día del mes siguiente, menos un día = último del actual.
+        _sig_mes = (desde.replace(day=28) + timedelta(days=4)).replace(day=1)
+        hasta = _sig_mes - timedelta(days=1)
+        titulo = f"{_OT_TV_MESES_LG[ancla.month - 1].capitalize()} {ancla.year}"
+        ant = (desde - timedelta(days=1)).replace(day=1)
+        sig = _sig_mes
+    else:  # semana
+        desde = ancla - timedelta(days=ancla.weekday())      # lunes
+        hasta = desde + timedelta(days=6)                    # domingo
+        if desde.month == hasta.month:
+            titulo = (f"{desde.day} al {hasta.day} de "
+                      f"{_OT_TV_MESES_LG[desde.month - 1]}")
+        else:
+            titulo = (f"{desde.day} {_OT_TV_MESES_LG[desde.month - 1][:3]} — "
+                      f"{hasta.day} {_OT_TV_MESES_LG[hasta.month - 1][:3]}")
+        ant = desde - timedelta(days=7)
+        sig = desde + timedelta(days=7)
+
+    filas = mysql_fetchall(
+        _OT_TV_SELECT + _OT2_JOIN_TAREAS +
+        " WHERE v.fecha_programada BETWEEN %s AND %s "
+        "   AND v.estado NOT IN ('cancelada','anulada') "
+        " ORDER BY v.fecha_programada ASC, v.hora_inicio ASC, v.numero_ot ASC",
+        (desde, hasta)) or []
+
+    por_dia, resumen = {}, {"total": 0, "en_ejecucion": 0, "completadas": 0,
+                            "pendientes": 0, "atrasadas": 0}
+    hora_ahora = ahora.strftime("%H:%M")
+
+    for f in filas:
+        fecha_f = f.get("fecha_programada")
+        if not fecha_f:
+            continue
+        estado = (f.get("estado") or "").lower()
+        n_t = int(f.get("n_tareas") or 0)
+        n_c = int(f.get("n_completas") or 0)
+        pct = (100 if (n_t and n_c >= n_t)
+               else int(n_c * 100.0 / n_t) if n_t else 0)
+        h_ini = _ot_tv_hhmm(f.get("hora_inicio"))
+        en_curso = estado in _OT_TV_EN_CURSO
+        terminada = estado in _OT_TV_TERMINADAS
+        trabajo_listo = bool(n_t) and n_c >= n_t
+        # "Atrasada" solo tiene sentido comparando con el reloj real: un día
+        # que YA pasó y no se cerró está atrasado; uno futuro nunca lo está.
+        if fecha_f < hoy_real:
+            atrasada = not terminada and not trabajo_listo
+        elif fecha_f == hoy_real:
+            atrasada = (not en_curso and not terminada and not trabajo_listo
+                        and bool(h_ini) and h_ini < hora_ahora)
+        else:
+            atrasada = False
+
+        resumen["total"] += 1
+        if en_curso:
+            resumen["en_ejecucion"] += 1
+        elif terminada:
+            resumen["completadas"] += 1
+        else:
+            resumen["pendientes"] += 1
+        if atrasada:
+            resumen["atrasadas"] += 1
+
+        d = por_dia.setdefault(fecha_f, {
+            "total": 0, "completadas": 0, "en_ejecucion": 0,
+            "pendientes": 0, "atrasadas": 0, "ots": [],
+        })
+        d["total"] += 1
+        if en_curso:
+            d["en_ejecucion"] += 1
+        elif terminada:
+            d["completadas"] += 1
+        else:
+            d["pendientes"] += 1
+        if atrasada:
+            d["atrasadas"] += 1
+
+        if len(d["ots"]) < 12:      # techo por día: la tarjeta no es un listado
+            d["ots"].append({
+                "numero": f.get("numero_ot") or f"#{f.get('id')}",
+                "cliente": (f.get("razon_social") or "Trabajo interno")[:38],
+                "tipo": _TIPO_OT_LABEL.get(
+                    (f.get("tipo") or "").lower(),
+                    (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo"),
+                "tecnico": f.get("tecnico_nombre") or "Sin asignar",
+                "ini": h_ini,
+                "estado": ("ejecutando" if en_curso else
+                           "terminado" if terminada else
+                           "atrasado" if atrasada else "pendiente"),
+                "avance_pct": pct,
+            })
+
+    dias = []
+    cur = desde
+    while cur <= hasta:
+        base = por_dia.get(cur) or {
+            "total": 0, "completadas": 0, "en_ejecucion": 0,
+            "pendientes": 0, "atrasadas": 0, "ots": [],
+        }
+        dias.append({
+            **base,
+            "fecha": cur.isoformat(),
+            "dia_sem": _OT_TV_DIAS_SEM[cur.weekday()],
+            "dia_num": cur.day,
+            "es_hoy": (cur == hoy_real),
+            "es_finde": cur.weekday() >= 5,
+            "ocultas": max(0, base["total"] - len(base["ots"])),
+        })
+        cur += timedelta(days=1)
+
+    return {
+        "ok": True,
+        "vista": vista,
+        "generado_iso": ahora.isoformat(),
+        "fecha": ancla.isoformat(),
+        "es_hoy": (desde <= hoy_real <= hasta),
+        "fecha_ant": ant.isoformat(),
+        "fecha_sig": sig.isoformat(),
+        "hoy_label": titulo,
+        "resumen": resumen,
+        "dias": dias,
+    }
+
+
 def _ot_tv_guard(token):
     """Puerta común de las 3 rutas del monitor: formato → pantalla activa →
     dispositivo atado. Devuelve (row, device_a_setear) o (None, None)."""
@@ -75960,6 +76106,13 @@ def ot2_monitor_datos():
             _fecha_dt = datetime.strptime(_fecha_q, "%Y-%m-%d").date()
         except ValueError:
             return jsonify({"ok": False, "error": "Fecha inválida (usa YYYY-MM-DD)."}), 400
+
+    # `?vista=semana|mes` (2026-08-27, Daniel: "tener una vista semanal, a
+    # ver cómo vienen las OT, qué viene terminado y qué no"). Nunca se
+    # cachea: el televisor comparte esa llave y solo entiende la vista día.
+    _vista = (request.args.get("vista") or "dia").strip().lower()
+    if _vista in ("semana", "mes"):
+        return jsonify(_ot_tv_datos_rango(fecha=_fecha_dt, vista=_vista))
 
     if _fecha_dt is None or _fecha_dt == _now_chile().date():
         import time as _time

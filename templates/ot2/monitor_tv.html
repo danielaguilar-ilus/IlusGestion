@@ -203,13 +203,71 @@
       padding:3px 12px;border-radius:99px;cursor:pointer;transition:background .15s;
     }
     .date-hoy-btn:hover{background:rgba(220,38,38,.18)}
+
+    /* Selector Día / Semana / Mes — solo pantalla de control */
+    .vista-sw{display:inline-flex;gap:2px;background:rgba(255,255,255,.07);
+      border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:2px;margin-left:10px}
+    .vista-sw button{
+      background:none;border:0;color:#9ca3af;font-size:11px;font-weight:800;
+      letter-spacing:.06em;text-transform:uppercase;padding:4px 11px;border-radius:8px;
+      cursor:pointer;transition:background .15s,color .15s;
+    }
+    .vista-sw button:hover{color:#e5e7eb}
+    .vista-sw button.on{background:var(--red-500);color:#fff}
+
+    /* ══ Vista SEMANA / MES — un cuadro por día ══
+       2026-08-27 (Daniel: "tener una vista semanal, a ver cómo vienen las
+       OT, qué viene terminado y qué no"). Responde una pregunta distinta a
+       la vista de día: no "¿qué hace cada técnico ahora?" sino "¿cómo viene
+       la carga y qué va quedando cerrado?". */
+    .cal-grid{
+      display:grid;gap:10px;padding:4px;height:100%;
+      grid-template-columns:repeat(7,minmax(0,1fr));
+      align-content:start;overflow-y:auto;
+    }
+    .cal-grid.mes{grid-auto-rows:minmax(96px,1fr)}
+    .cal-dia{
+      background:var(--panel,rgba(255,255,255,.03));
+      border:1px solid rgba(255,255,255,.09);border-radius:12px;
+      padding:9px 10px;display:flex;flex-direction:column;gap:6px;min-height:0;
+      transition:border-color .2s,background .2s;
+    }
+    .cal-dia.finde{background:rgba(255,255,255,.015);border-color:rgba(255,255,255,.05)}
+    .cal-dia.hoy{border-color:var(--red-500);box-shadow:0 0 0 1px var(--red-500) inset}
+    .cal-dia.vacio{opacity:.45}
+    .cd-head{display:flex;align-items:baseline;gap:7px;flex:none}
+    .cd-dow{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9ca3af}
+    .cd-num{font-family:var(--display);font-size:26px;line-height:1;color:#fff}
+    .cal-dia.hoy .cd-num{color:#fca5a5}
+    .cd-tot{margin-left:auto;font-size:11px;font-weight:800;color:#6b7280}
+    .cd-chips{display:flex;flex-wrap:wrap;gap:4px;flex:none}
+    .cd-chip{font-size:10px;font-weight:800;padding:1px 7px;border-radius:99px;letter-spacing:.03em}
+    .cd-chip.ok{background:rgba(34,197,94,.16);color:#86efac}
+    .cd-chip.ej{background:rgba(34,197,94,.22);color:#4ade80}
+    .cd-chip.pe{background:rgba(255,255,255,.07);color:#9ca3af}
+    .cd-chip.at{background:rgba(245,158,11,.16);color:#fbbf24}
+    .cd-ots{display:flex;flex-direction:column;gap:4px;overflow:hidden;min-height:0}
+    .cd-ot{
+      display:flex;align-items:center;gap:6px;font-size:11.5px;line-height:1.25;
+      padding:3px 6px;border-radius:6px;background:rgba(255,255,255,.04);
+      border-left:2.5px solid #4b5563;
+    }
+    .cd-ot.e-ejecutando{border-left-color:var(--green-400)}
+    .cd-ot.e-terminado{border-left-color:#60a5fa}
+    .cd-ot.e-atrasado{border-left-color:var(--amber-500)}
+    .cd-ot .h{font-weight:800;color:#9ca3af;flex:none;font-variant-numeric:tabular-nums}
+    .cd-ot .c{font-weight:700;color:#e5e7eb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .cd-ot .t{margin-left:auto;font-size:10px;font-weight:800;color:#fca5a5;
+      text-transform:uppercase;white-space:nowrap;flex:none}
+    .cd-mas{font-size:10.5px;font-weight:700;color:#6b7280;padding-left:6px}
+    .cd-libre{font-size:11px;font-style:italic;color:#4b5563;padding:2px 0}
     /* 🔒 FIX 2026-08-27 (Daniel: "las flechas... no me deja navegar" —
        causa real): [hidden] y .date-nav-btn/.date-hoy-btn tienen la MISMA
        especificidad CSS; por venir después en la hoja, "display:grid"/
        "display:block" le ganaban al [hidden] del navegador y el botón
        "Volver a hoy" quedaba SIEMPRE visible, aunque ya se estuviera
        viendo hoy — confundía como si la navegación no respondiera. */
-    .date-nav-btn[hidden],.date-hoy-btn[hidden]{display:none}
+    .date-nav-btn[hidden],.date-hoy-btn[hidden],.vista-sw[hidden]{display:none}
 
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
@@ -905,7 +963,14 @@
           <div class="date-big" id="dateBig">—</div>
           <button type="button" class="date-nav-btn" id="btnDiaSig" hidden aria-label="Día siguiente">›</button>
         </div>
-        <button type="button" class="date-hoy-btn" id="btnDiaHoy" hidden>Volver a hoy</button>
+        <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:5px">
+          <button type="button" class="date-hoy-btn" id="btnDiaHoy" hidden>Volver a hoy</button>
+          <div class="vista-sw" id="vistaSw" hidden>
+            <button type="button" data-vista="dia" class="on">Día</button>
+            <button type="button" data-vista="semana">Semana</button>
+            <button type="button" data-vista="mes">Mes</button>
+          </div>
+        </div>
       </div>
 
       <div class="tv-right">
@@ -991,6 +1056,7 @@
     hoyReal: (DATOS_INICIALES && DATOS_INICIALES.fecha) || null,
     fechaVista: null, fechaAnt: null, fechaSig: null,
     pausadoPorNavegacion: false,
+    vista: 'dia',            // dia | semana | mes (solo pantalla de control)
   };
 
   /* ─────────────────────────── utilidades ─────────────────────────── */
@@ -1451,9 +1517,14 @@
     nodo.style.width = w + '%';
 
     setTexto($('.b-cliente', nodo), b.cliente || b.numero || '');
-    setTexto($('.b-horas', nodo), (b.ini || '') + '–' + (b.fin || ''));
+    // 2026-08-27 (Daniel: "la instalación debería decirla en la burbuja de
+    // trabajo"): el tipo va en la MISMA línea de las horas — la burbuja se
+    // angosta según la duración, y .b-narrow/.b-tiny ya esconden esta línea
+    // cuando no cabe, así que no rompe los bloques cortos.
+    const _tipo = b.tipo ? b.tipo + ' · ' : '';
+    setTexto($('.b-horas', nodo), _tipo + (b.ini || '') + '–' + (b.fin || ''));
     $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
-    nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.cliente || '');
+    nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.tipo ? b.tipo + ' · ' : '') + (b.cliente || '');
   }
 
   /* ─────────────── modal de detalle (solo modo interactivo) ───────────────
@@ -1708,9 +1779,81 @@
 
   /* ─────────────────────── repintado completo ─────────────────────── */
 
+  /* ── Vista SEMANA / MES: un cuadro por día ── */
+  function renderRango(datos){
+    const main = $('#tvMain');
+    const dias = datos.dias || [];
+    const esMes = datos.vista === 'mes';
+    let html = '<div class="cal-grid' + (esMes ? ' mes' : '') + '">';
+    // En el mes, el primer día se alinea a su columna real de la semana.
+    if (esMes && dias.length){
+      const primero = new Date(dias[0].fecha + 'T12:00:00');
+      const hueco = (primero.getDay() + 6) % 7;   // lunes = 0
+      for (let i = 0; i < hueco; i++) html += '<div></div>';
+    }
+    dias.forEach(d => {
+      const cls = 'cal-dia' + (d.es_hoy ? ' hoy' : '') +
+                  (d.es_finde ? ' finde' : '') + (d.total ? '' : ' vacio');
+      html += '<div class="' + cls + '">' +
+        '<div class="cd-head">' +
+          '<span class="cd-dow">' + esc(d.dia_sem) + '</span>' +
+          '<span class="cd-num">' + d.dia_num + '</span>' +
+          (d.total ? '<span class="cd-tot">' + d.total + ' OT</span>' : '') +
+        '</div>';
+      if (d.total){
+        html += '<div class="cd-chips">' +
+          (d.completadas ? '<span class="cd-chip ok">' + d.completadas + ' listas</span>' : '') +
+          (d.en_ejecucion ? '<span class="cd-chip ej">' + d.en_ejecucion + ' en curso</span>' : '') +
+          (d.pendientes ? '<span class="cd-chip pe">' + d.pendientes + ' pend.</span>' : '') +
+          (d.atrasadas ? '<span class="cd-chip at">' + d.atrasadas + ' atras.</span>' : '') +
+        '</div>';
+        if (!esMes){
+          html += '<div class="cd-ots">';
+          (d.ots || []).forEach(o => {
+            html += '<div class="cd-ot e-' + esc(o.estado) + '">' +
+              (o.ini ? '<span class="h">' + esc(o.ini) + '</span>' : '') +
+              '<span class="c">' + esc(o.cliente) + '</span>' +
+              (o.tipo ? '<span class="t">' + esc(o.tipo) + '</span>' : '') +
+            '</div>';
+          });
+          if (d.ocultas) html += '<div class="cd-mas">+' + d.ocultas + ' más</div>';
+          html += '</div>';
+        }
+      } else {
+        html += '<div class="cd-libre">Sin trabajos</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    main.innerHTML = html;
+  }
+
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function renderAll(datos){
     if (!datos || typeof datos !== 'object') return;
     state.datos = datos;
+
+    // Vista semana/mes: contrato distinto (dias[] en vez de grupos[]).
+    if (datos.vista === 'semana' || datos.vista === 'mes'){
+      actualizarNavFecha(datos);
+      renderTop(datos);
+      renderRango(datos);
+      $('#pageDots').classList.remove('visible');
+      if (state.timerRotacion){ clearInterval(state.timerRotacion); state.timerRotacion = null; }
+      return;
+    }
+    // 🔒 FIX 2026-08-27 (Daniel: "no puedo navegar entre días", 3ª vez):
+    // esto estaba de ÚLTIMO. Si cualquier paso del pintado de abajo
+    // lanzaba una excepción, state.fechaAnt/fechaSig nunca se cargaban y
+    // las flechas quedaban MUDAS — sin error visible, porque el handler
+    // hace `if (state.fechaAnt)` y salía en silencio. Va primero: las
+    // fechas de navegación no dependen de que la grilla pinte bien.
+    actualizarNavFecha(datos);
     calcularEscala(datos);
     renderTop(datos);
     construirPaginas(datos);
@@ -1718,7 +1861,19 @@
     renderDots();
     renderProximos(datos);
     programarRotacion();
-    actualizarNavFecha(datos);
+  }
+
+  /* Día vecino calculado en el navegador — red de seguridad para que las
+     flechas SIEMPRE respondan, aunque el servidor no haya mandado
+     fecha_ant/fecha_sig (payload viejo en caché, error parcial, etc.). */
+  function diaVecino(iso, delta){
+    const base = (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) ? iso : null;
+    const d = base ? new Date(base + 'T12:00:00') : new Date();
+    if (isNaN(d)) return null;
+    d.setDate(d.getDate() + delta);
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
   }
 
   /* ── Navegación por días — SOLO pantalla de control (Daniel 2026-08-27:
@@ -1734,12 +1889,17 @@
     if (hoyBtn) hoyBtn.hidden = esHoy;
   }
 
-  async function cargarFecha(fechaISO){
+  async function cargarFecha(fechaISO, vista){
     if (!fechaISO || !DATOS_URL) return;
+    const v = vista || state.vista || 'dia';
     try{
       const sep = DATOS_URL.includes('?') ? '&' : '?';
-      const datos = await fetchJson(DATOS_URL + sep + 'fecha=' + encodeURIComponent(fechaISO));
-      state.pausadoPorNavegacion = (fechaISO !== state.hoyReal);
+      let url = DATOS_URL + sep + 'fecha=' + encodeURIComponent(fechaISO);
+      if (v !== 'dia') url += '&vista=' + encodeURIComponent(v);
+      const datos = await fetchJson(url);
+      state.vista = v;
+      // El latido automático solo tiene sentido mirando HOY en vista de día.
+      state.pausadoPorNavegacion = (fechaISO !== state.hoyReal) || (v !== 'dia');
       renderAll(datos);
       setOffline(false);
     } catch(e){
@@ -1748,9 +1908,17 @@
   }
 
   function volverAHoy(){
+    state.vista = 'dia';
     state.pausadoPorNavegacion = false;
     state.huella = null;   // fuerza a latido() a repintar en el próximo tick
-    cargarFecha(state.hoyReal);
+    marcarVistaActiva('dia');
+    cargarFecha(state.hoyReal, 'dia');
+  }
+
+  function marcarVistaActiva(v){
+    const sw = $('#vistaSw');
+    if (!sw) return;
+    sw.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.vista === v));
   }
 
   /* ───────────────── ticker local (1 s): reloj, ahora, tiempos ───────────────── */
@@ -1935,11 +2103,26 @@
       const btnAnt = $('#btnDiaAnt'), btnSig = $('#btnDiaSig'), btnHoy = $('#btnDiaHoy');
       if (btnAnt) btnAnt.hidden = false;
       if (btnSig) btnSig.hidden = false;
+
+      // Selector Día / Semana / Mes
+      const sw = $('#vistaSw');
+      if (sw){
+        sw.hidden = false;
+        sw.addEventListener('click', (ev) => {
+          const b = ev.target.closest('button[data-vista]');
+          if (!b) return;
+          const v = b.dataset.vista;
+          marcarVistaActiva(v);
+          cargarFecha(state.fechaVista || state.hoyReal, v);
+        });
+      }
+      // Con red de seguridad: si el servidor no mandó fecha_ant/fecha_sig,
+      // se calcula acá — la flecha NUNCA queda muda.
       if (btnAnt) btnAnt.addEventListener('click', () => {
-        if (state.fechaAnt) cargarFecha(state.fechaAnt);
+        cargarFecha(state.fechaAnt || diaVecino(state.fechaVista || state.hoyReal, -1));
       });
       if (btnSig) btnSig.addEventListener('click', () => {
-        if (state.fechaSig) cargarFecha(state.fechaSig);
+        cargarFecha(state.fechaSig || diaVecino(state.fechaVista || state.hoyReal, +1));
       });
       if (btnHoy) btnHoy.addEventListener('click', volverAHoy);
     }
