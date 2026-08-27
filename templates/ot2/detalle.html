@@ -462,6 +462,20 @@
         </div>
       </div>
 
+      {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
+         técnica externa: "le está saliendo centro de costos, sus costos,
+         la parte financiera, la factura... eso no es para que ella la
+         vea"). Esta tarjeta no tenía NINGÚN filtro de rol -- cualquiera
+         que abriera /ot/<id> la veía, técnico incluido. El proceso real
+         de un técnico es: firma él → se manda a firmar al cliente → se le
+         avisa cuando el cliente firma → ahí se libera. Nunca ve
+         modalidad de cobro, centro de costo ni documento asociado — eso
+         es exclusivamente de gestión (Aarón/admin/supervisor), igual que
+         ya está resuelto en /mantenciones/ot/<id>/ejecutar (card
+         "Finanzas de la OT", gate puede_metadata). `es_tecnico` ya vive
+         en el contexto global (inject_globals), no hace falta pasarlo
+         desde ot2_detalle(). #}
+      {% if not es_tecnico %}
       <div class="otd-card">
         <h3><i class="bi bi-cash-coin"></i> Cobro</h3>
         <div class="otd-din">
@@ -482,6 +496,7 @@
           {% endif %}
         </div>
       </div>
+      {% endif %}
 
     </div>
   </div>
