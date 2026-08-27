@@ -74752,18 +74752,29 @@ def ot2_api_cliente_crear():
             })
 
     _motivo_txt = _TIPO_OT_LABEL.get(motivo, motivo.replace("_", " ").title()) if motivo else ""
+    # 🔧 FIX 2026-08-27 (Daniel: "no sé si son mantenciones o instalación...
+    # hay que crearlo según la necesidad de la OT"). Igual que en el flujo de
+    # Tickets: sin declarar `tipo_cliente`, TODA ficha nueva caía en el
+    # default 'mantencion' y el filtro "Instalación" mostraba 0 clientes.
+    _tipo_cli = "mantencion"
+    if motivo == "instalacion":
+        _tipo_cli = "instalacion"
+    elif motivo in ("levantamiento", "inspeccion", "control_calidad",
+                    "capacitacion", "visita_tecnica"):
+        _tipo_cli = "prospecto"
     try:
         mysql_execute(
             "INSERT INTO mant_clientes "
             "  (razon_social, rut, contacto_nombre, contacto_tel, contacto_email, "
-            "   direccion, comuna, estado, created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'prospecto',%s)",
+            "   direccion, comuna, estado, tipo_cliente, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'prospecto',%s,%s)",
             (razon, rut,
              (d.get("contacto_nombre") or "").strip()[:200] or None,
              (d.get("contacto_tel") or "").strip()[:50] or None,
              (d.get("contacto_email") or "").strip()[:200] or None,
              (d.get("direccion") or "").strip()[:400] or None,
              (d.get("comuna") or "").strip()[:100] or None,
+             _tipo_cli,
              current_username() or "sistema"))
         row = mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}
         cid = row.get("id")

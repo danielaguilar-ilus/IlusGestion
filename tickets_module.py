@@ -7078,7 +7078,32 @@ def register_tickets_routes(app, ctx):
         if not cliente_id:
             rut_ticket = (t.get("rut") or "").strip()
             rut_norm = (normalizar_rut(rut_ticket) if normalizar_rut else rut_ticket) or None
-            razon_social_ticket = (t.get("empresa") or "").strip()[:200] or f"Cliente ticket #{tid}"
+            # 🔧 FIX 2026-08-27 (Daniel, urgente — captura de /clientes con
+            # "Cliente ticket #2074" y "#2085"): antes, si el ticket venía
+            # SIN empresa, la ficha nacía con ese nombre provisorio y quedaba
+            # así para siempre en la base de clientes. Ahora hay una cadena
+            # de respaldos con datos que el ticket SÍ trae:
+            #   1. empresa (lo ideal)
+            #   2. nombre del contacto — mejor "Jaime Errázuriz" que "#2074"
+            #   3. dominio del correo — jerrazuriz@maserrazuriz.cl → Maserrazuriz
+            # y solo si no hay NADA, el provisorio numerado.
+            razon_social_ticket = (t.get("empresa") or "").strip()[:200]
+            if not razon_social_ticket:
+                razon_social_ticket = (t.get("nombre_contacto") or "").strip()[:200]
+            if not razon_social_ticket:
+                _mail = (t.get("email") or "").strip()
+                _dom = _mail.split("@")[-1].strip().lower() if "@" in _mail else ""
+                # Se descartan los correos personales: su dominio no dice nada
+                # del cliente. Con uno corporativo, el dominio ES el nombre.
+                _genericos = {"gmail.com", "hotmail.com", "outlook.com", "yahoo.com",
+                              "yahoo.es", "live.cl", "live.com", "icloud.com",
+                              "hotmail.cl", "gmail.cl", "outlook.cl"}
+                if _dom and _dom not in _genericos:
+                    _base = _dom.split(".")[0].replace("-", " ").strip()
+                    if _base:
+                        razon_social_ticket = _base.title()[:200]
+            if not razon_social_ticket:
+                razon_social_ticket = f"Cliente ticket #{tid}"
             match = mysql_fetchone(
                 "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1",
                 (rut_norm,)) if rut_norm else None
@@ -7129,11 +7154,25 @@ def register_tickets_routes(app, ctx):
                 #    es NOT NULL/FK -- se crea una ficha MINIMA
                 #    (razon_social+rut+contacto+direccion, tomado del propio
                 #    ticket), editable despues desde la ficha normal. ──
+                # 🔧 FIX 2026-08-27 (Daniel: "no sé si son mantenciones o
+                # instalación... hay que crearlo según la necesidad de la
+                # OT"). El INSERT no declaraba `tipo_cliente`, así que TODA
+                # ficha nacida de un ticket caía en el default 'mantencion'
+                # — por eso el filtro "Instalación" mostraba 0. Ahora se
+                # deriva del tipo de OT que se está generando.
+                _tipo_cli = "mantencion"
+                if tipo_ot == "instalacion":
+                    _tipo_cli = "instalacion"
+                elif tipo_ot in ("levantamiento", "inspeccion", "control_calidad",
+                                 "capacitacion", "visita_tecnica"):
+                    # Todavía no se sabe qué relación comercial será: queda
+                    # como prospecto en vez de inventar "mantención".
+                    _tipo_cli = "prospecto"
                 mysql_execute(
                     "INSERT INTO mant_clientes "
                     "(razon_social, rut, contacto_nombre, contacto_tel, contacto_email, "
-                    " direccion, comuna, region, estado, created_by) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'prospecto',%s)",
+                    " direccion, comuna, region, estado, tipo_cliente, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'prospecto',%s,%s)",
                     (razon_social_ticket, rut_norm,
                      (t.get("nombre_contacto") or "").strip()[:200] or None,
                      (t.get("phone") or "").strip()[:50] or None,
@@ -7141,6 +7180,7 @@ def register_tickets_routes(app, ctx):
                      (t.get("direccion") or "").strip()[:400] or None,
                      (t.get("comuna_nombre") or "").strip()[:100] or None,
                      (t.get("region_nombre") or "").strip()[:100] or None,
+                     _tipo_cli,
                      current_username() or "sistema")
                 )
                 _cli_new = mysql_fetchone("SELECT LAST_INSERT_ID() AS id")
