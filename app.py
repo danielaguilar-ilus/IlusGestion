@@ -62005,15 +62005,25 @@ def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
 
 
 # Formatos de serie que el SISTEMA generó (no vienen de la placa del
-# fabricante). Son tres porque se agregaron en momentos distintos:
+# fabricante). Son cuatro porque se agregaron en momentos distintos:
 #   1. {RUT}-{SKU4}-{n}  → _generar_serie_ilus, el canónico
 #   2. LEV-{lev_id}-{item_id} → fallback de _lev_materializar_equipos_nuevos
 #   3. LEV{VID}-{seq}    → _levdSerieSugerida, generado en el NAVEGADOR
-#      (static/mantenciones_ot_ejecutar.js). Este es el que produjo el bug
-#      de 2026-08-08: "LEV230-019" repetido en 15 de 18 equipos, impreso
-#      como N° de serie de fábrica en el PDF que firma el cliente.
+#      (static/mantenciones_ot_ejecutar.js) SOLO cuando la OT es de verdad
+#      un levantamiento. Este es el que produjo el bug de 2026-08-08:
+#      "LEV230-019" repetido en 15 de 18 equipos, impreso como N° de serie
+#      de fábrica en el PDF que firma el cliente.
+#   4. PEND{VID}-{seq}   → mismo generador, MISMA función, pero para cuando
+#      quien agrega el equipo es gestión (admin/supervisor) sobre una OT
+#      que NO es levantamiento (instalación/correctiva/preventiva) — el
+#      botón "Agregar equipo" también se les muestra a ellos ahí (ver
+#      ot_ejecutar.html: `_es_lev_ot or not es_tecnico`). Antes esa serie
+#      SIEMPRE salía con el prefijo "LEV", así que un equipo agregado a una
+#      OT correctiva quedaba con una serie que decía "vengo de un
+#      levantamiento" sin ser cierto — la confusión real que reportó Daniel
+#      el 2026-08-27 con la OT-2026-00136 ("me trató como levantamiento").
 _RE_SERIE_GENERADA = re.compile(
-    r"^(?:\d{7,9}-[A-Za-z0-9]{1,6}-\d+|LEV-?\d+-\d+)$", re.I
+    r"^(?:\d{7,9}-[A-Za-z0-9]{1,6}-\d+|LEV-?\d+-\d+|PEND\d+-\d+)$", re.I
 )
 
 
