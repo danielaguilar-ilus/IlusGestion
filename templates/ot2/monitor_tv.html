@@ -198,6 +198,13 @@
       padding:3px 12px;border-radius:99px;cursor:pointer;transition:background .15s;
     }
     .date-hoy-btn:hover{background:rgba(220,38,38,.18)}
+    /* 🔒 FIX 2026-08-27 (Daniel: "las flechas... no me deja navegar" —
+       causa real): [hidden] y .date-nav-btn/.date-hoy-btn tienen la MISMA
+       especificidad CSS; por venir después en la hoja, "display:grid"/
+       "display:block" le ganaban al [hidden] del navegador y el botón
+       "Volver a hoy" quedaba SIEMPRE visible, aunque ya se estuviera
+       viendo hoy — confundía como si la navegación no respondiera. */
+    .date-nav-btn[hidden],.date-hoy-btn[hidden]{display:none}
 
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
