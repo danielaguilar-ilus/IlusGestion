@@ -8494,9 +8494,20 @@ def register_tickets_routes(app, ctx):
 
         # Equipos activos (para el botón "Traer equipos de la ficha" del
         # Paso 2 -- Daniel: agregarlos como ítems sku/nombre/cantidad).
+        # 2026-08-27 (Daniel: "quisiera que me reconociera los equipos que
+        # están bajo el concepto de Plan, ya que si trae todo entonces es
+        # más desorden"). Antes esto traía TODOS los equipos activos sin
+        # distinguir — con clientes de cientos de equipos (una OT real
+        # llegó a 124), el checklist de "traer equipos" se volvía
+        # imposible de usar para encontrar el que de verdad hay que
+        # cotizar. Se suma `en_plan` (mant_maquinas.aplica_mantencion, el
+        # mismo toggle "Poner en plan"/"Quitar del plan" de la ficha del
+        # cliente) para que el front separe: lo normal es cotizar equipos
+        # QUE NO están cubiertos por el plan de mantención — esos ya están
+        # pagados dentro del contrato.
         try:
             maquinas_rows = mysql_fetchall(
-                "SELECT id, sku, nombre, serie, cantidad FROM mant_maquinas "
+                "SELECT id, sku, nombre, serie, cantidad, aplica_mantencion FROM mant_maquinas "
                 " WHERE cliente_id=%s AND estado='activo' ORDER BY nombre", (cid,)) or []
         except Exception as _e:
             print(f"[tk_cliente_ficha_resumen] maquinas cid={cid}: {_e}", flush=True)
@@ -8504,6 +8515,7 @@ def register_tickets_routes(app, ctx):
         maquinas = [{
             "id": m["id"], "sku": m.get("sku") or "", "nombre": m.get("nombre") or "",
             "serie": m.get("serie") or "", "cantidad": m.get("cantidad") or 1,
+            "en_plan": bool(m["aplica_mantencion"]) if m.get("aplica_mantencion") is not None else True,
         } for m in maquinas_rows]
 
         return jsonify({

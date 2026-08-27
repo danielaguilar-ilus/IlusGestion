@@ -298,6 +298,16 @@ table.cot-rev-tabla tr:last-child td{border-bottom:none;}
 .cot-wiz-eqficha-item input{width:18px;height:18px;accent-color:#16a34a;flex-shrink:0;}
 .cot-wiz-eqficha-item small{color:#4d7c0f;font-family:'JetBrains Mono',monospace;}
 .cot-wiz-eqficha-foot{padding:8px 12px 12px;}
+/* Equipos ya cubiertos por el Plan de mantención (Daniel 2026-08-27):
+   colapsados aparte para no competir con lo que sí hay que cotizar, pero
+   a un clic -- nada se oculta de verdad. */
+.cot-wiz-eqficha-plan{border-top:1px solid #bbf7d0;padding:0 12px;}
+.cot-wiz-eqficha-plan summary{font-size:.74rem;font-weight:700;color:#4d7c0f;
+  padding:7px 0;cursor:pointer;list-style:none;display:flex;align-items:center;gap:5px;}
+.cot-wiz-eqficha-plan summary::before{content:'▸';font-size:.7rem;transition:transform .15s;}
+.cot-wiz-eqficha-plan[open] summary::before{transform:rotate(90deg);}
+.cot-wiz-eqficha-plan summary::-webkit-details-marker{display:none;}
+.cot-wiz-eqficha-plan .cot-wiz-eqficha-list{padding-top:0;}
 
 /* ══ Paso 2 — "Ingresar manual" (sub-panel inline, Daniel 2026-08-20:
    SKU/descripción/cantidad/precio tecleados a mano). Mismo patrón visual

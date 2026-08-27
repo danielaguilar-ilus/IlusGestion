@@ -1013,16 +1013,37 @@ function _cotWizRenderEquiposFichaPanel(){
   if (!panel || !_WIZ) return;
   const maquinas = _WIZ.fichaMaquinas || [];
   if (!maquinas.length){ panel.style.display = 'none'; panel.innerHTML = ''; return; }
+  // 2026-08-27 (Daniel: "que me reconociera los equipos que están bajo el
+  // concepto de Plan, ya que si trae todo entonces es más desorden"). Los
+  // equipos YA cubiertos por el plan de mantención (mant_maquinas.
+  // aplica_mantencion, el mismo toggle "Poner en plan" de la ficha) casi
+  // nunca son lo que hay que cotizar -- ya están pagados dentro del
+  // contrato. Se separan en dos listas: la de "para cotizar" abierta y
+  // marcable de entrada, y la del plan COLAPSADA aparte -- sigue
+  // disponible con un clic (nada se oculta de verdad, Regla #4.2), pero
+  // ya no compite por espacio con lo que sí hay que revisar.
+  const itemHtml = function(m, i){
+    return '<label class="cot-wiz-eqficha-item"><input type="checkbox" data-i="' + i + '">' +
+      '<span>' + _cotEsc(m.nombre || m.sku || 'Equipo') +
+      (m.serie ? ' <small>(' + _cotEsc(m.serie) + ')</small>' : '') + '</span></label>';
+  };
+  const fueraPlan = [], enPlan = [];
+  maquinas.forEach(function(m, i){ (m.en_plan ? enPlan : fueraPlan).push(i); });
+  const listaPrincipal = (fueraPlan.length ? fueraPlan : maquinas.map(function(_,i){return i;}));
   panel.innerHTML = '<div class="cot-wiz-eqficha-box">' +
     '<div class="cot-wiz-eqficha-head"><span>Equipos activos de la ficha (' + maquinas.length + ')</span>' +
       '<button type="button" class="cot-wiz-eqficha-close" onclick="_cotWizCerrarEquiposFicha()"><i class="bi bi-x-lg"></i></button></div>' +
     '<div class="cot-wiz-eqficha-list">' +
-      maquinas.map(function(m, i){
-        return '<label class="cot-wiz-eqficha-item"><input type="checkbox" data-i="' + i + '">' +
-          '<span>' + _cotEsc(m.nombre || m.sku || 'Equipo') +
-          (m.serie ? ' <small>(' + _cotEsc(m.serie) + ')</small>' : '') + '</span></label>';
-      }).join('') +
+      listaPrincipal.map(function(i){ return itemHtml(maquinas[i], i); }).join('') +
     '</div>' +
+    (fueraPlan.length && enPlan.length ? (
+      '<details class="cot-wiz-eqficha-plan">' +
+        '<summary>' + enPlan.length + ' equipo(s) más — ya están en el Plan de mantención</summary>' +
+        '<div class="cot-wiz-eqficha-list">' +
+          enPlan.map(function(i){ return itemHtml(maquinas[i], i); }).join('') +
+        '</div>' +
+      '</details>'
+    ) : '') +
     '<div class="cot-wiz-eqficha-foot">' +
       '<button type="button" class="btn btn-sm fw-bold" style="background:#16a34a;color:#fff;border-radius:8px;padding:8px 16px;" ' +
         'onclick="_cotWizAgregarEquiposFicha()"><i class="bi bi-plus-lg me-1"></i>Agregar seleccionados</button>' +
@@ -2341,11 +2362,25 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
       if (!_tienePlanVigente){
         ilusToast('Este cliente no tiene un plan/contrato vigente — agrega los equipos manualmente con "Traer equipos de la ficha" si corresponde', {type:'warning'});
       } else {
-        // Reemplazo (no concat) cuando el usuario ya confirmó arriba: vaciar
-        // primero para que el helper (que concatena, lo correcto para el panel
-        // de checkboxes) termine reemplazando en este camino.
-        if (_reemplazarFicha) _WIZ.items = [];
-        await _cotWizAgregarMaquinasComoItems(_WIZ.fichaMaquinas);
+        // 🔧 FIX 2026-08-27 (Daniel: "que me reconociera los equipos que
+        // están bajo el concepto de Plan"). El comentario de arriba (2026-
+        // 07-23) ya dejaba anotado el hueco: "lo único que separa equipos
+        // del plan de cualquier máquina activa es que el cliente TENGA un
+        // plan vigente" -- con eso, un cliente con contrato agregaba TODOS
+        // sus equipos activos (en plan o no), justo el desorden que Daniel
+        // reportó. Ahora que el backend manda `en_plan` por equipo
+        // (mant_maquinas.aplica_mantencion), se filtra a los que de verdad
+        // están en el plan -- que es lo que esta ruta siempre quiso hacer.
+        const _eqDelPlan = _WIZ.fichaMaquinas.filter(function(m){ return m.en_plan; });
+        if (!_eqDelPlan.length){
+          ilusToast('Este cliente tiene plan vigente, pero ningún equipo activo está marcado "en plan" — agrégalos manualmente con "Traer equipos de la ficha" si corresponde', {type:'warning'});
+        } else {
+          // Reemplazo (no concat) cuando el usuario ya confirmó arriba: vaciar
+          // primero para que el helper (que concatena, lo correcto para el panel
+          // de checkboxes) termine reemplazando en este camino.
+          if (_reemplazarFicha) _WIZ.items = [];
+          await _cotWizAgregarMaquinasComoItems(_eqDelPlan);
+        }
       }
     }
   }catch(e){ ilusToast('Error de conexión al cargar el cliente', {type:'error'}); }
