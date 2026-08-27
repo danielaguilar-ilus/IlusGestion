@@ -4,50 +4,65 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Monitor Servicio Técnico — ILUS Fitness</title>
-  <meta name="theme-color" content="#f5f5f6">
+  <meta name="theme-color" content="#0a0a0c">
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
     /* ════════════════════════════════════════════════════════════════
-       MONITOR TV — SERVICIO TÉCNICO ILUS FITNESS  ·  v2 tema claro
+       MONITOR TV — SERVICIO TÉCNICO ILUS FITNESS  ·  v3 oscuro profundo
        Pantalla de 40" (1920×1080) siempre encendida en oficina.
        Se lee a 3 metros: sin scroll, sin mouse, sin teclado.
 
-       Rediseño pedido por Daniel (2026-08-26):
+       v3 (2026-08-26, viendo el TV real): Daniel pidió volver al fondo
+       negro — pero NO el negro plano de la v1. Esta versión construye
+       la profundidad que se pidió desde el encargo original:
+       · Lienzo oscuro con CAPAS: viñeta, glow rojo de marca, luz fría
+         cenital y una malla técnica apenas visible — nunca negro sólido.
+       · Las tarjetas FLOTAN: superficie un escalón más clara que el
+         fondo, filo de luz arriba y sombra negra honda debajo.
+       · Jerarquía de brillo: EJECUTANDO es lo único saturado y lo
+         único que late; el resto se retrae en capas translúcidas.
+
+       Lo que se CONSERVA de la ronda clara (no negociable):
        1. Nombres GRANDES y COMPLETOS — jamás cortados con "…".
           El nombre va solo en su línea, en Bebas condensada, y un
           ajustador JS baja la talla (piso 15px) si un nombre larguísimo
           no cabe: se achica, nunca se recorta.
-       2. Fondo CLARO — el lado claro de Retiros (gradiente #f7f7f8→
-          #f3f4f6, tarjetas blancas, sombras suaves). El negro queda
-          solo en la banda superior, como el .form-head de Retiros.
-       3. El calendario es la ESTRELLA — una sola gran tarjeta blanca
-          con regla horaria única, bandas de hora alternadas, lavado
-          gris de "lo ya transcurrido" y UNA línea roja de AHORA que
+       2. "Atrasado" SOBRIO (ámbar atenuado, sin rayado ni pulso) y
+          "Disponible" tranquilo (gris sereno): informan, no acusan.
+       3. El calendario es la ESTRELLA — una sola gran tarjeta con
+          regla horaria única, bandas de hora alternadas, lavado
+          de "lo ya transcurrido" y UNA línea roja de AHORA que
           cruza toda la jornada de arriba a abajo.
        ════════════════════════════════════════════════════════════════ */
     :root{
-      --ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a;--ink-2:#111827;
+      --ilus-red:#e60000;--ilus-red-dk:#a60000;
+      /* "Tinta": en el tema oscuro la tinta es CLARA sobre lienzo negro */
+      --ink:#f4f6f9;--ink-2:#e7eaf0;
       --gray-1:#f3f4f6;--gray-2:#e5e7eb;--gray-3:#9ca3af;--gray-4:#374151;
       --red-500:#dc2626;--red-600:#c81e1e;--red-700:#a60000;
       --green-700:#166534;--green-600:#15803d;--green-500:#16a34a;--green-400:#22c55e;--green-050:#dcfce7;
       --amber-500:#f59e0b;
       --blue-700:#1d4ed8;--blue-600:#2563eb;--blue-500:#3b82f6;--blue-300:#93c5fd;--blue-050:#dbeafe;
-      /* Sombras del sistema claro de Retiros */
-      --shadow-sm: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
-      --shadow-md: 0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
-      --shadow-lg: 0 1px 0 rgba(255,255,255,.7) inset, 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+      /* Superficies: el lienzo es lo más hondo; cada tarjeta flota un
+         escalón más clara (en oscuro, la elevación se dibuja con LUZ) */
+      --surf-1:#14171e;
+      /* Sombras de elevación sobre fondo oscuro: filo de luz arriba
+         (la luz cenital define el volumen) + negro profundo debajo */
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.5);
+      --shadow-md: 0 10px 26px -10px rgba(0,0,0,.65);
+      --shadow-lg: 0 1px 0 rgba(255,255,255,.055) inset, 0 12px 32px -14px rgba(0,0,0,.7), 0 40px 90px -24px rgba(0,0,0,.85);
       --r-sm:10px;--r-md:14px;--r-lg:18px;--r-xl:24px;
       --display:'Bebas Neue','Arial Narrow','Inter',sans-serif;
       --ease-spring: cubic-bezier(.34,1.56,.64,1);
       --ease-out: cubic-bezier(.22,1,.36,1);
 
-      /* Líneas y textos del lienzo claro */
-      --line-1:#eef0f3;      /* hairlines entre filas                   */
-      --line-2:#e5e7eb;      /* bordes de tarjeta y grilla horaria      */
-      --txt-2:#374151;--txt-3:#6b7280;--txt-4:#94a3b8;
+      /* Líneas y textos del lienzo oscuro */
+      --line-1:rgba(255,255,255,.055); /* hairlines entre filas             */
+      --line-2:rgba(255,255,255,.10);  /* bordes de tarjeta y grilla horaria */
+      --txt-2:#c9cfda;--txt-3:#98a0af;--txt-4:#717a8a;
 
       /* Geometría de las franjas — compartida entre la regla horaria y
          las filas para que TODO quede alineado al píxel:
@@ -60,7 +75,7 @@
     }
 
     *{box-sizing:border-box;margin:0;padding:0}
-    html,body{width:100%;height:100%;overflow:hidden;background:#dcdee1}
+    html,body{width:100%;height:100%;overflow:hidden;background:#060708}
     body{
       font-family:'Inter','Segoe UI',Arial,sans-serif;
       -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
@@ -80,17 +95,23 @@
       transform-origin:center center;
       display:flex;flex-direction:column;
       overflow:hidden;
-      /* Lienzo CLARO premium de Retiros: gris cálido casi blanco con una
-         insinuación de luz cenital y un acento rojo apenas perceptible. */
+      /* Lienzo OSCURO con profundidad real — nunca un negro plano:
+         viñeta que hunde los bordes + glow rojo de marca arriba a la
+         derecha + luz fría cenital + malla técnica apenas visible +
+         gradiente base azulado-negro. Las tarjetas flotan sobre esto. */
       background:
-        radial-gradient(1200px 520px at 88% -6%, rgba(220,38,38,.05) 0%, transparent 60%),
-        radial-gradient(900px 480px at 6% 2%, rgba(10,10,10,.035) 0%, transparent 55%),
-        linear-gradient(180deg, #f7f7f8 0%, #f3f4f6 100%);
+        radial-gradient(120% 95% at 50% 38%, transparent 58%, rgba(0,0,0,.5) 100%),
+        radial-gradient(1150px 560px at 88% -8%, rgba(220,38,38,.11) 0%, transparent 60%),
+        radial-gradient(950px 520px at 8% -6%, rgba(96,165,250,.055) 0%, transparent 55%),
+        linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px) 0 0/100% 44px,
+        linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px) 0 0/44px 100%,
+        linear-gradient(180deg, #10131a 0%, #0b0d12 55%, #080a0e 100%);
     }
 
     /* ════════════════════════════════════════════════════════════════
-       BARRA SUPERIOR — la única banda oscura (receta .form-head de
-       Retiros): negro con glow rojo + scanlines + filo rojo inferior.
+       BARRA SUPERIOR — receta .form-head de Retiros: negro con glow
+       rojo + scanlines + filo rojo inferior. Sobre el lienzo oscuro se
+       distingue por ser MÁS negra que el fondo y por su filo rojo.
        El logo ILUS (blanco sobre negro) vive aquí y se lee perfecto.
        ════════════════════════════════════════════════════════════════ */
     .tv-top{
@@ -99,10 +120,10 @@
       gap:30px;padding:0 30px;
       color:#fff;position:relative;overflow:hidden;
       background:
-        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.16) 0%, transparent 45%),
-        linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.18) 0%, transparent 45%),
+        linear-gradient(135deg,#050506 0%, #111114 60%, #050506 100%);
       border-bottom:3px solid var(--ilus-red);
-      box-shadow:0 14px 34px -18px rgba(10,10,10,.45);
+      box-shadow:0 18px 44px -16px rgba(0,0,0,.85);
     }
     /* Scanlines sutiles hacia la derecha — textura del .form-head */
     .tv-top::before{
@@ -204,8 +225,9 @@
 
     /* ════════════════════════════════════════════════════════════════
        CUERPO — LA TARJETA-CALENDARIO (la estrella de la pantalla)
-       Una sola gran hoja blanca con: regla horaria única arriba,
-       bandas de hora alternadas, lavado de horas ya transcurridas,
+       Una sola gran hoja oscura ELEVADA — más clara que el lienzo, con
+       filo de luz arriba y sombra honda — con: regla horaria única
+       arriba, bandas de hora alternadas, lavado de horas transcurridas,
        divisores de grupo y UNA línea roja de AHORA que cruza todo.
        ════════════════════════════════════════════════════════════════ */
     .tv-main{
@@ -218,8 +240,10 @@
     .tv-main.page-fade{opacity:0;transform:translateY(10px)}
 
     .cal-card{
-      background:#fff;
-      border:1.5px solid var(--line-2);
+      /* La tarjeta FLOTA: superficie un escalón más clara que el lienzo,
+         con leve gradiente cenital (más luz arriba) y sombra negra honda */
+      background:linear-gradient(180deg,#181c24 0%, var(--surf-1) 42%, #10131a 100%);
+      border:1px solid var(--line-2);
       border-radius:var(--r-lg);
       box-shadow:var(--shadow-lg);
       overflow:hidden;position:relative;
@@ -237,23 +261,23 @@
       display:grid;grid-template-columns:var(--col-left) var(--col-mid) 1fr;
       column-gap:var(--col-gap);align-items:end;
       padding:0 var(--card-px) 7px;
-      background:linear-gradient(180deg,#fbfbfc 0%,#f5f6f7 100%);
+      background:linear-gradient(180deg,rgba(255,255,255,.05) 0%,rgba(255,255,255,.015) 100%);
       border-bottom:1.5px solid var(--line-2);
       position:relative;z-index:2;
     }
     .ch-lbl{
       font-size:14px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
-      color:var(--txt-4);
+      color:var(--txt-3);
     }
     .ch-ruler{position:relative;height:100%}
     .rt-lbl{
       position:absolute;bottom:5px;transform:translateX(-50%);
-      font-size:15px;font-weight:700;color:#64748b;white-space:nowrap;
+      font-size:15px;font-weight:700;color:var(--txt-3);white-space:nowrap;
     }
     .rt-lbl.primero{transform:none}
     .rt-lbl.ultimo{transform:translateX(-100%)}
-    /* Horas después del fin de jornada (sobre hora) — en rojo */
-    .rt-lbl.rt-ot{color:var(--red-500)}
+    /* Horas después del fin de jornada (sobre hora) — en rojo claro */
+    .rt-lbl.rt-ot{color:#f87171}
     /* Chip rojo con la hora actual, montado sobre la regla — cabeza de
        la línea de AHORA */
     .now-chip{
@@ -283,27 +307,28 @@
     .cal-past{z-index:0}
     .cal-nowline{z-index:6}
     /* Bandas de hora alternadas — dan al calendario textura de agenda */
-    .cu-band{position:absolute;top:0;bottom:0;background:rgba(15,23,42,.03)}
-    .cu-hline{position:absolute;top:0;bottom:0;width:1px;background:var(--line-2)}
+    .cu-band{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.028)}
+    .cu-hline{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.07)}
     /* Zona "sobre hora" (después del fin de jornada): rayado rojo tenue */
     .cu-ot{
       position:absolute;top:0;bottom:0;
-      border-left:1.5px dashed rgba(220,38,38,.5);
-      background:repeating-linear-gradient(135deg, rgba(220,38,38,.06) 0 10px, transparent 10px 20px);
+      border-left:1.5px dashed rgba(248,113,113,.45);
+      background:repeating-linear-gradient(135deg, rgba(220,38,38,.10) 0 10px, transparent 10px 20px);
     }
-    /* Lavado gris de lo YA transcurrido — su borde derecho ES el ahora.
-       Va bajo las filas: atenúa el lienzo, nunca los bloques de OT. */
+    /* Lavado hundido de lo YA transcurrido — su borde derecho ES el
+       ahora. Va bajo las filas: oscurece el lienzo (lo pasado se apaga),
+       nunca los bloques de OT. */
     .cal-past{
       width:0;
-      background:linear-gradient(90deg, rgba(15,23,42,.028) 0%, rgba(15,23,42,.055) 100%);
-      border-right:1px solid rgba(220,38,38,.15);
+      background:linear-gradient(90deg, rgba(0,0,0,.20) 0%, rgba(0,0,0,.40) 100%);
+      border-right:1px solid rgba(220,38,38,.28);
       transition:width 1s linear;
     }
-    /* La línea de AHORA — protagonista: cruza TODA la tarjeta */
+    /* La línea de AHORA — protagonista: cruza TODA la tarjeta y brilla */
     .nl-line{
       position:absolute;top:0;bottom:0;width:3px;margin-left:-1.5px;
-      background:linear-gradient(180deg,#ff1a1a 0%, var(--red-500) 55%, rgba(220,38,38,.35) 100%);
-      box-shadow:0 0 0 1.5px rgba(255,255,255,.65), 0 2px 16px rgba(220,38,38,.5);
+      background:linear-gradient(180deg,#ff2626 0%, var(--red-500) 55%, rgba(220,38,38,.4) 100%);
+      box-shadow:0 0 0 1px rgba(255,255,255,.22), 0 0 18px rgba(255,26,26,.55), 0 2px 26px rgba(220,38,38,.45);
     }
     /* Puntita triangular bajo el chip de hora */
     .nl-line::before{
@@ -317,7 +342,7 @@
     .u-gh{
       height:44px;display:flex;align-items:center;gap:14px;
       padding:0 var(--card-px);position:relative;
-      background:linear-gradient(90deg,rgba(246,247,248,.94) 0%, rgba(251,251,252,.86) 60%, rgba(251,251,252,.55) 100%);
+      background:linear-gradient(90deg,rgba(255,255,255,.055) 0%, rgba(255,255,255,.03) 55%, rgba(255,255,255,.012) 100%);
       border-top:1px solid var(--line-1);border-bottom:1px solid var(--line-1);
       transition:opacity .3s var(--ease-out);
     }
@@ -332,7 +357,7 @@
     }
     .u-gh .gh-count{
       font-size:14px;font-weight:800;color:var(--txt-3);
-      background:#fff;border:1px solid var(--line-2);
+      background:rgba(255,255,255,.06);border:1px solid var(--line-2);
       border-radius:50px;padding:3px 12px;letter-spacing:.05em;white-space:nowrap;
       box-shadow:var(--shadow-sm);
     }
@@ -346,7 +371,7 @@
     }
     .u-empty::before{
       content:'';width:10px;height:10px;border-radius:50%;
-      background:#cbd5e1;flex-shrink:0;
+      background:#3c4453;flex-shrink:0;
     }
 
     /* ════════════════════════════════════════════════════════════════
@@ -365,7 +390,7 @@
     /* Barra de acento por estado, al filo izquierdo de la tarjeta */
     .u-p::before{
       content:'';position:absolute;left:0;top:16%;bottom:16%;width:5px;border-radius:0 4px 4px 0;
-      background:#d1d5db;
+      background:#3c4453;
       transition:background .4s;
     }
     .saliendo{opacity:0}
@@ -381,8 +406,8 @@
       display:flex;align-items:center;justify-content:center;
       font-family:var(--display);font-weight:400;font-size:calc(var(--avatar,52px)*.44);
       letter-spacing:.04em;color:#fff;
-      background:linear-gradient(150deg,#1b1b1e 0%,#0a0a0a 100%);
-      box-shadow:0 0 0 2.5px #cbd5e1, 0 8px 16px -6px rgba(15,23,42,.35);
+      background:linear-gradient(150deg,#262a33 0%,#121419 100%);
+      box-shadow:0 0 0 2.5px #454e5e, 0 8px 16px -6px rgba(0,0,0,.6);
       transition:box-shadow .4s;
     }
     .p-idtxt{min-width:0;flex:1}
@@ -409,7 +434,7 @@
       min-width:0;font-size:var(--fs-sub,15px);font-weight:600;color:var(--txt-3);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;
     }
-    .p-sub .p-cliente{color:var(--gray-4);font-weight:800}
+    .p-sub .p-cliente{color:#d6dbe4;font-weight:800}
 
     /* ── Columna avance ── */
     .p-av{min-width:0}
@@ -419,18 +444,18 @@
       color:var(--txt-2);letter-spacing:.01em;
     }
     .av-elapsed{
-      font-size:14px;font-weight:800;color:var(--green-600);letter-spacing:.02em;white-space:nowrap;
-      background:var(--green-050);border-radius:20px;padding:2px 9px;
+      font-size:14px;font-weight:800;color:#4ade80;letter-spacing:.02em;white-space:nowrap;
+      background:rgba(34,197,94,.14);border-radius:20px;padding:2px 9px;
     }
     .av-elapsed:empty{display:none}
     .av-bar{
       margin-top:6px;height:7px;border-radius:50px;overflow:hidden;
-      background:var(--gray-1);
-      box-shadow:inset 0 1px 2px rgba(15,23,42,.12);
+      background:rgba(255,255,255,.09);
+      box-shadow:inset 0 1px 3px rgba(0,0,0,.55);
     }
     .av-bar i{
       display:block;height:100%;width:0;border-radius:50px;
-      background:linear-gradient(90deg,#9ca3af,#6b7280);
+      background:linear-gradient(90deg,#5b6472,#7d8798);
       transition:width .7s var(--ease-out), background .4s;
     }
     .av-tareas{margin-top:4px;font-size:14px;font-weight:700;color:var(--txt-3);white-space:nowrap}
@@ -464,113 +489,118 @@
     .tl-bloque.b-tiny .b-cliente,.tl-bloque.b-tiny .b-horas{display:none}
     .tl-bloque.b-tiny{padding:0}
 
-    /* ════════ ESTADOS — recalibrados para fondo claro (contraste TV) ════════ */
+    /* ════════ ESTADOS — recalibrados para lienzo oscuro (TV a 3 m).
+       Jerarquía de brillo: EJECUTANDO es lo único saturado y lo único
+       que late; el resto se retrae en capas translúcidas. ════════ */
 
-    /* EJECUTANDO — verde sólido oscuro. Es lo ÚNICO que late. */
+    /* EJECUTANDO — verde vivo. Es lo ÚNICO que late. */
     .estado-ejecutando::before{background:linear-gradient(180deg,var(--green-400),var(--green-600))}
     .estado-ejecutando .p-avatar{
-      box-shadow:0 0 0 3px var(--green-500), 0 0 20px rgba(34,197,94,.45);
+      box-shadow:0 0 0 3px var(--green-500), 0 0 22px rgba(34,197,94,.5);
       animation:aliento 2.8s ease-in-out infinite;
     }
     .estado-ejecutando .p-badge{
-      background:var(--green-050);border-color:#86efac;color:var(--green-700);
+      background:rgba(34,197,94,.14);border-color:rgba(74,222,128,.5);color:#86efac;
     }
     .estado-ejecutando .p-badge i{
-      background:var(--green-500);
+      background:var(--green-400);
       box-shadow:0 0 8px rgba(34,197,94,.9);
       animation:liveDot 2.2s ease-in-out infinite;
     }
-    .estado-ejecutando .av-pct{color:var(--green-600)}
+    .estado-ejecutando .av-pct{color:#4ade80}
     .estado-ejecutando .av-bar i{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
     @keyframes aliento{
-      0%,100%{box-shadow:0 0 0 3px var(--green-500), 0 0 10px rgba(34,197,94,.3)}
-      50%{box-shadow:0 0 0 3px var(--green-500), 0 0 26px rgba(34,197,94,.6)}
+      0%,100%{box-shadow:0 0 0 3px var(--green-500), 0 0 10px rgba(34,197,94,.35)}
+      50%{box-shadow:0 0 0 3px var(--green-500), 0 0 30px rgba(34,197,94,.7)}
     }
 
     /* DISPONIBLE — gris tranquilo. Es información, no un reproche. */
-    .estado-disponible::before{background:#cbd5e1}
+    .estado-disponible::before{background:#3c4453}
     .estado-disponible .p-badge{
-      background:var(--gray-1);border-color:#d1d5db;color:#4b5563;
+      background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.16);color:#9ca3af;
     }
-    .estado-disponible .p-badge i{background:var(--gray-3)}
+    .estado-disponible .p-badge i{background:#6b7280}
     .estado-disponible .av-pct{color:var(--txt-4)}
 
     /* ATRASADO — ámbar SOBRIO. Daniel (2026-08-26): "que diga atrasado
        pero está bien" — el atraso casi nunca es culpa del técnico
        (tráfico, cliente que no abre, repuesto que no llegó). Se informa
        con claridad, sin pulso ni alarma: se nota si uno lo busca,
-       no grita desde la pared. Mismo criterio que "disponible". */
+       no grita desde la pared. Sobre oscuro: ámbar ATENUADO (capa
+       translúcida), jamás un neón. Mismo criterio que "disponible". */
     .estado-atrasado::before{background:var(--amber-500)}
-    .estado-atrasado .p-avatar{box-shadow:0 0 0 2.5px #fbbf24, 0 8px 16px -6px rgba(15,23,42,.35)}
+    .estado-atrasado .p-avatar{box-shadow:0 0 0 2.5px rgba(245,158,11,.65), 0 8px 16px -6px rgba(0,0,0,.6)}
     .estado-atrasado .p-badge{
-      background:#fef3c7;border-color:#fcd34d;color:#92400e;
+      background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fbbf24;
     }
     .estado-atrasado .p-badge i{background:var(--amber-500)}
-    .estado-atrasado .av-pct{color:#b45309}
-    .estado-atrasado .av-bar i{background:linear-gradient(90deg,var(--amber-500),#fbbf24)}
+    .estado-atrasado .av-pct{color:#fbbf24}
+    .estado-atrasado .av-bar i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
 
     /* TERMINADO — azul sereno, jornada cumplida */
-    .estado-terminado::before{background:var(--blue-300)}
-    .estado-terminado .p-avatar{box-shadow:0 0 0 2.5px var(--blue-300), 0 8px 16px -6px rgba(15,23,42,.35)}
+    .estado-terminado::before{background:rgba(96,165,250,.75)}
+    .estado-terminado .p-avatar{box-shadow:0 0 0 2.5px rgba(96,165,250,.6), 0 8px 16px -6px rgba(0,0,0,.6)}
     .estado-terminado .p-badge{
-      background:var(--blue-050);border-color:var(--blue-300);color:#1e40af;
+      background:rgba(59,130,246,.13);border-color:rgba(96,165,250,.42);color:#93c5fd;
     }
-    .estado-terminado .p-badge i{background:var(--blue-500)}
-    .estado-terminado .av-pct{color:var(--blue-600)}
+    .estado-terminado .p-badge i{background:#60a5fa}
+    .estado-terminado .av-pct{color:#60a5fa}
     .estado-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),#60a5fa)}
 
-    /* ── Bloques de OT en la línea de tiempo ── */
+    /* ── Bloques de OT en la línea de tiempo ──
+       El de EJECUCIÓN es el único sólido, saturado y con latido; los
+       demás son capas translúcidas que se retraen para no competir. */
     .tl-bloque.b-ejecutando{
-      background:linear-gradient(160deg,#16a34a 0%,#0f7a37 100%);
-      border-color:#0d6e31;
-      box-shadow:0 8px 20px -6px rgba(22,163,74,.55), 0 1px 0 rgba(255,255,255,.25) inset;
+      background:linear-gradient(160deg,#1db054 0%,#0e8a3e 100%);
+      border-color:#22c55e;
+      box-shadow:0 10px 24px -6px rgba(22,163,74,.6), 0 1px 0 rgba(255,255,255,.28) inset;
       animation:bloqueVivo 2.8s ease-in-out infinite;
       z-index:2;
     }
     @keyframes bloqueVivo{
-      0%,100%{box-shadow:0 6px 16px -6px rgba(22,163,74,.45), 0 1px 0 rgba(255,255,255,.25) inset}
-      50%{box-shadow:0 8px 26px -4px rgba(34,197,94,.65), 0 1px 0 rgba(255,255,255,.25) inset}
+      0%,100%{box-shadow:0 8px 18px -6px rgba(22,163,74,.5), 0 1px 0 rgba(255,255,255,.28) inset}
+      50%{box-shadow:0 10px 30px -4px rgba(34,197,94,.75), 0 1px 0 rgba(255,255,255,.28) inset}
     }
     .tl-bloque.b-pendiente{
-      background:#f8fafc;
-      border:1.5px dashed #94a3b8;
+      background:rgba(255,255,255,.035);
+      border:1.5px dashed rgba(148,163,184,.55);
     }
-    .tl-bloque.b-pendiente .b-cliente{color:#334155;font-weight:800}
-    .tl-bloque.b-pendiente .b-horas{color:#64748b}
+    .tl-bloque.b-pendiente .b-cliente{color:#cbd5e1;font-weight:800}
+    .tl-bloque.b-pendiente .b-horas{color:#8b93a3}
     .tl-bloque.b-terminado{
-      background:#eff6ff;
-      border-color:#bfdbfe;
+      background:rgba(59,130,246,.13);
+      border-color:rgba(96,165,250,.38);
     }
-    .tl-bloque.b-terminado .b-cliente{color:var(--blue-700)}
+    .tl-bloque.b-terminado .b-cliente{color:#93c5fd}
     .tl-bloque.b-terminado .b-cliente::before{content:'✓ ';font-weight:900}
-    .tl-bloque.b-terminado .b-horas{color:rgba(37,99,235,.75)}
+    .tl-bloque.b-terminado .b-horas{color:rgba(147,197,253,.72)}
     /* Bloque atrasado: ámbar contenido, sin rayado ni pulso (ver nota
        del estado). El color avisa; la insignia de la fila lo nombra. */
     .tl-bloque.b-atrasado{
-      background:#fef3c7;
-      border:1.5px solid var(--amber-500);
+      background:rgba(245,158,11,.16);
+      border:1.5px solid rgba(245,158,11,.55);
       z-index:2;
     }
-    .tl-bloque.b-atrasado .b-cliente{color:#92400e}
-    .tl-bloque.b-atrasado .b-horas{color:#b45309}
-    .tl-bloque.b-atrasado .b-prog{background:rgba(180,83,9,.55)}
+    .tl-bloque.b-atrasado .b-cliente{color:#fcd34d}
+    .tl-bloque.b-atrasado .b-horas{color:#fbbf24}
+    .tl-bloque.b-atrasado .b-prog{background:rgba(252,211,77,.6)}
 
     /* ════════════════════════════════════════════════════════════════
        FRANJA INFERIOR — próximos días + meta (página / conexión / hora)
-       Tarjeta blanca hermana del calendario.
+       Tarjeta oscura hermana del calendario: misma superficie elevada.
        ════════════════════════════════════════════════════════════════ */
     .tv-bottom{
       flex:0 0 96px;margin:0 26px 16px;
-      background:#fff;
-      border:1.5px solid var(--line-2);
+      background:linear-gradient(180deg,#171b22 0%, var(--surf-1) 55%, #10131a 100%);
+      border:1px solid var(--line-2);
       border-radius:var(--r-lg);
       display:flex;align-items:stretch;overflow:hidden;position:relative;
-      box-shadow:var(--shadow-md);
+      box-shadow:0 1px 0 rgba(255,255,255,.05) inset, var(--shadow-md);
     }
     .tvb-label{
       flex:0 0 168px;display:flex;flex-direction:column;justify-content:center;
       padding-left:26px;position:relative;
-      background:linear-gradient(90deg,#fafafa,#fff);
+      background:linear-gradient(90deg,rgba(255,255,255,.04),transparent);
     }
     .tvb-label::before{
       content:'';position:absolute;left:0;top:20%;bottom:20%;width:5px;border-radius:0 4px 4px 0;
@@ -590,12 +620,13 @@
     .tvb-num-box{text-align:center;flex-shrink:0}
     .tvb-num{
       font-family:var(--display);font-weight:400;font-size:48px;line-height:.85;display:block;
-      /* Número con degradado rojo vivo — receta .stat-num de Retiros
-         (nació para fondo claro, aquí luce como corresponde) */
-      background:linear-gradient(180deg,#ff3838 0%,var(--ilus-red) 70%,#b30000 100%);
+      /* Número con degradado rojo vivo — receta .stat-num de Retiros,
+         con el tope más claro y glow más presente para leerse a 3 m
+         sobre el lienzo oscuro */
+      background:linear-gradient(180deg,#ff5a5a 0%,#ff1f1f 55%,#c40000 100%);
       -webkit-background-clip:text;background-clip:text;
-      -webkit-text-fill-color:transparent;color:var(--ilus-red);
-      filter:drop-shadow(0 4px 14px rgba(230,0,0,.25));
+      -webkit-text-fill-color:transparent;color:#ff3838;
+      filter:drop-shadow(0 4px 16px rgba(230,0,0,.4));
     }
     .tvb-num-box small{
       display:block;font-size:14px;font-weight:800;letter-spacing:.12em;
@@ -624,7 +655,7 @@
     .page-dots{display:none;align-items:center;gap:8px}
     .page-dots.visible{display:inline-flex}
     .page-dots i{
-      width:10px;height:10px;border-radius:50%;background:#d1d5db;
+      width:10px;height:10px;border-radius:50%;background:#3c4453;
       transition:background .3s, box-shadow .3s;
     }
     .page-dots i.on{background:var(--ilus-red);box-shadow:0 0 10px rgba(230,0,0,.45)}
@@ -636,8 +667,8 @@
     .offline-pill{
       position:absolute;right:34px;bottom:124px;z-index:50;
       display:flex;align-items:center;gap:10px;
-      background:rgba(255,255,255,.97);border:1.5px solid rgba(245,158,11,.6);
-      color:#92400e;font-size:15px;font-weight:800;letter-spacing:.02em;
+      background:rgba(21,24,31,.97);border:1.5px solid rgba(245,158,11,.55);
+      color:#fbbf24;font-size:15px;font-weight:800;letter-spacing:.02em;
       padding:10px 18px;border-radius:50px;
       box-shadow:var(--shadow-md);
       opacity:0;transform:translateY(8px);pointer-events:none;
@@ -649,7 +680,7 @@
       box-shadow:0 0 10px rgba(245,158,11,.9);flex-shrink:0;
       animation:liveDot 1.4s ease-in-out infinite;
     }
-    .offline-pill.ok{border-color:rgba(34,197,94,.6);color:var(--green-700)}
+    .offline-pill.ok{border-color:rgba(34,197,94,.55);color:#86efac}
     .offline-pill.ok i{background:var(--green-400);box-shadow:0 0 10px rgba(34,197,94,.9);animation:none}
 
     /* Página completamente vacía (sin técnicos) */
@@ -668,13 +699,13 @@
        disertar frente a la jefatura.
        ════════════════════════════════════════════════════════════════ */
     body.interactivo .u-p{cursor:pointer}
-    body.interactivo .u-p:hover{background:linear-gradient(90deg,rgba(15,23,42,.045),rgba(15,23,42,.015) 60%,transparent)}
+    body.interactivo .u-p:hover{background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.02) 60%,transparent)}
     body.interactivo .u-p:hover::before{width:7px}
     body.interactivo .tl-bloque{cursor:pointer}
-    body.interactivo .tl-bloque:hover{box-shadow:0 0 0 2.5px rgba(220,38,38,.4), var(--shadow-md)}
+    body.interactivo .tl-bloque:hover{box-shadow:0 0 0 2.5px rgba(220,38,38,.55), var(--shadow-md)}
 
-    /* ── Modal de detalle — mismo mundo visual (tarjeta clara + banda
-         oscura de cabecera, receta .form-head). Vive DENTRO de #stage
+    /* ── Modal de detalle — mismo mundo visual (tarjeta oscura elevada
+         + banda de cabecera receta .form-head). Vive DENTRO de #stage
          para heredar la escala del televisor/preview. ── */
     .tvm{
       position:absolute;inset:0;z-index:80;
@@ -683,14 +714,15 @@
     .tvm[hidden]{display:none}
     .tvm-back{
       position:absolute;inset:0;
-      background:rgba(10,10,10,.45);
+      background:rgba(0,0,0,.62);
       backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
     }
     .tvm-card{
       position:relative;width:900px;max-width:92%;max-height:86%;
       display:flex;flex-direction:column;
-      background:#fff;border:1.5px solid var(--line-2);border-radius:var(--r-xl);
-      box-shadow:0 40px 90px -20px rgba(10,10,10,.55), var(--shadow-lg);
+      background:linear-gradient(180deg,#191d25 0%, var(--surf-1) 50%, #11141b 100%);
+      border:1px solid var(--line-2);border-radius:var(--r-xl);
+      box-shadow:0 50px 110px -24px rgba(0,0,0,.9), var(--shadow-lg);
       overflow:hidden;
       animation:tvmIn .3s var(--ease-spring) both;
     }
@@ -722,7 +754,7 @@
     .tvm-stats{
       flex-shrink:0;display:flex;align-items:center;gap:22px;
       padding:16px 26px;border-bottom:1.5px solid var(--line-1);
-      background:linear-gradient(180deg,#fbfbfc,#fff);
+      background:linear-gradient(180deg,rgba(255,255,255,.035),transparent);
     }
     .tvm-card .av-pct{font-size:56px}
     .tvm-stats .av-bar{flex:1;height:9px;margin-top:0}
@@ -733,13 +765,13 @@
     }
     .tvm-lista .tvm-nada{font-size:16px;font-weight:600;font-style:italic;color:var(--txt-3);padding:12px 4px}
     .tvm-ot{
-      position:relative;border:1.5px solid var(--gray-2);border-radius:var(--r-md);
-      background:#fff;padding:14px 18px 14px 22px;box-shadow:var(--shadow-sm);
+      position:relative;border:1px solid var(--line-2);border-radius:var(--r-md);
+      background:rgba(255,255,255,.03);padding:14px 18px 14px 22px;box-shadow:var(--shadow-sm);
     }
     /* barra de acento por estado, como las franjas del calendario */
     .tvm-ot::before{
       content:'';position:absolute;left:0;top:10px;bottom:10px;width:5px;border-radius:0 4px 4px 0;
-      background:#d1d5db;
+      background:#3c4453;
     }
     /* OT enfocada (se llegó con clic en su bloque): marco rojo ILUS */
     .tvm-ot.foco{border-color:rgba(220,38,38,.55);box-shadow:0 0 0 4px rgba(220,38,38,.14), var(--shadow-md)}
@@ -758,19 +790,19 @@
     .tvm-ot-av b{font-size:15px;font-weight:800;color:var(--txt-2);white-space:nowrap}
     /* Colores por estado del bloque — misma paleta sobria del calendario */
     .tvm-ot.o-ejecutando::before{background:linear-gradient(180deg,var(--green-400),var(--green-600))}
-    .tvm-ot.o-ejecutando .tvm-ot-chip{background:var(--green-050);border-color:#86efac;color:var(--green-700)}
+    .tvm-ot.o-ejecutando .tvm-ot-chip{background:rgba(34,197,94,.14);border-color:rgba(74,222,128,.5);color:#86efac}
     .tvm-ot.o-ejecutando .av-bar i{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
     .tvm-ot.o-pendiente::before{background:#94a3b8}
-    .tvm-ot.o-pendiente .tvm-ot-chip{background:var(--gray-1);border-color:#d1d5db;color:#4b5563}
-    .tvm-ot.o-terminado::before{background:var(--blue-300)}
-    .tvm-ot.o-terminado .tvm-ot-chip{background:var(--blue-050);border-color:var(--blue-300);color:#1e40af}
+    .tvm-ot.o-pendiente .tvm-ot-chip{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.16);color:#9ca3af}
+    .tvm-ot.o-terminado::before{background:rgba(96,165,250,.75)}
+    .tvm-ot.o-terminado .tvm-ot-chip{background:rgba(59,130,246,.13);border-color:rgba(96,165,250,.42);color:#93c5fd}
     .tvm-ot.o-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),#60a5fa)}
     .tvm-ot.o-atrasado::before{background:var(--amber-500)}
-    .tvm-ot.o-atrasado .tvm-ot-chip{background:#fef3c7;border-color:#fcd34d;color:#92400e}
-    .tvm-ot.o-atrasado .av-bar i{background:linear-gradient(90deg,var(--amber-500),#fbbf24)}
+    .tvm-ot.o-atrasado .tvm-ot-chip{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fbbf24}
+    .tvm-ot.o-atrasado .av-bar i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
     .tvm-foot{
       flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:14px;
-      padding:14px 26px;border-top:1.5px solid var(--line-1);background:#fafafa;
+      padding:14px 26px;border-top:1.5px solid var(--line-1);background:rgba(255,255,255,.02);
     }
     .tvm-foot span{font-size:14px;font-weight:600;color:var(--txt-4)}
     .tvm-cerrar{

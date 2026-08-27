@@ -1,0 +1,1517 @@
+{#-
+  ════════════════════════════════════════════════════════════════════
+  ANEXO DE SERVICIOS — FIRMA PÚBLICA DE PROVEEDOR EXTERNO
+  ════════════════════════════════════════════════════════════════════
+  Página pública y AUTOCONTENIDA (sin base.html): el proveedor la abre
+  desde un link enviado por correo/WhatsApp, normalmente en su celular,
+  lee el Anexo completo y lo firma con evidencia de calidad probatoria.
+
+  Contrato de datos que espera del backend (Jinja):
+    valido      : bool   — false ⇒ pantalla "enlace no disponible"
+    ya_firmado  : bool   — true  ⇒ documento sellado, sin formulario
+    anexo       : { numero, fecha, proveedor_nombre, proveedor_rut,
+                    objetivo_servicio, cliente_nombre,
+                    precio_items: [{concepto, monto}],
+                    fecha_inicio, fecha_termino,
+                    niveles_servicio, hitos_pago, alcance_servicio }
+    firma       : { firmante_nombre, firmante_rut, firmado_en }  (solo si ya_firmado)
+    submit_url  : string — destino del POST al firmar
+    csrf_token  : string — va como campo oculto del <form>
+
+  El guardado real de la firma lo conecta el backend: ver el bloque
+  "ENGANCHE BACKEND" dentro del <script> al final del archivo.
+-#}
+{#- Macro: formatea un monto como pesos chilenos → $174.000 -#}
+{% macro clp(v) -%}${{ "{:,.0f}".format(v|float).replace(",", ".") }}{%- endmacro %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a0a0a">
+<title>{% if valido %}Anexo de Servicios N° {{ anexo.numero }}{% else %}Firma de Anexo{% endif %} · ILUS Fitness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+{#- Inter = UI · Bebas Neue = display de marca · Lora = cuerpo del contrato (serif con gravedad legal) -#}
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  /* ════════════════════════════════════════════════════════════════
+     TOKENS — mismos del lenguaje visual ILUS (retiros_public_request)
+     ════════════════════════════════════════════════════════════════ */
+  :root{
+    --ilus-red:#dc2626; --ilus-red-dk:#a60000; --ink:#0a0a0a; --ink-2:#161616;
+    --gray-1:#f3f4f6; --gray-2:#e5e7eb; --gray-3:#9ca3af; --gray-4:#374151;
+    --green-500:#16a34a; --green-050:#dcfce7; --amber-500:#f59e0b;
+    --ring:0 0 0 4px rgba(220,38,38,.16);
+    --shadow-sm:0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+    --shadow-md:0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
+    --shadow-lg:0 1px 0 rgba(255,255,255,.7) inset, 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
+    --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:24px;
+    --display:'Bebas Neue','Inter',sans-serif;
+    --serif:'Lora',Georgia,'Times New Roman',serif;
+    --ease-spring:cubic-bezier(.34,1.56,.64,1);
+    --ease-out:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;color:#111827;
+    font-family:'Inter','Segoe UI',Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    /* Lienzo gris cálido con leve luz cenital y acento rojo apenas insinuado */
+    background:
+      radial-gradient(1100px 480px at 90% -6%, rgba(220,38,38,.05) 0%, transparent 60%),
+      radial-gradient(800px 420px at 4% 2%, rgba(10,10,10,.035) 0%, transparent 55%),
+      linear-gradient(180deg,#f7f7f8 0%,#f3f4f6 100%);
+    background-attachment:fixed;
+  }
+  /* iOS: background fijo provoca repaints por scroll */
+  @supports (-webkit-touch-callout:none){ body{background-attachment:scroll} }
+  ::selection{background:rgba(220,38,38,.18);color:#0a0a0a}
+
+  /* ── Barra superior de marca ── */
+  .topbar{
+    background:linear-gradient(90deg,#000 0%,#0a0a0a 50%,#000 100%);
+    color:#fff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;
+    gap:12px;position:relative;
+  }
+  .topbar::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(220,38,38,.65),transparent)}
+  .topbar .brand{display:flex;align-items:baseline;gap:7px;text-decoration:none;color:#fff}
+  .topbar .brand .b-mark{font-family:var(--display);font-size:1.5rem;letter-spacing:.04em;line-height:1}
+  .topbar .brand .b-mark span{color:var(--ilus-red)}
+  .topbar .brand .b-sub{font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#9ca3af}
+  .topbar .doc-tag{
+    display:inline-flex;align-items:center;gap:7px;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);
+    border-radius:50px;padding:6px 14px;font-size:.7rem;font-weight:800;
+    letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
+  }
+  .topbar .doc-tag svg{width:13px;height:13px;flex-shrink:0}
+  @media(max-width:480px){ .topbar .doc-tag{display:none} }
+
+  .wrap{max-width:860px;margin:0 auto;padding:26px 16px 60px}
+  @media(min-width:768px){ .wrap{padding:40px 22px 80px} }
+
+  /* ════════════════════════════════════════════════════════════════
+     CABECERA DEL DOCUMENTO — dark con hairline rojo
+     ════════════════════════════════════════════════════════════════ */
+  .doc-head{
+    background:
+      radial-gradient(120% 150% at 100% 0%, rgba(220,38,38,.16) 0%, transparent 45%),
+      linear-gradient(135deg,#0a0a0a 0%,#161616 60%,#0a0a0a 100%);
+    color:#fff;border-radius:var(--r-xl) var(--r-xl) 0 0;
+    border-bottom:4px solid var(--ilus-red);
+    padding:30px 26px 26px;position:relative;overflow:hidden;
+  }
+  .doc-head::before{
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px) 0 0/44px 44px,
+      linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px) 0 0/44px 44px;
+    -webkit-mask-image:radial-gradient(ellipse 90% 90% at 60% 20%, #000 30%, transparent 100%);
+            mask-image:radial-gradient(ellipse 90% 90% at 60% 20%, #000 30%, transparent 100%);
+  }
+  .doc-head .dh-top{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;position:relative;z-index:1;flex-wrap:wrap}
+  .doc-head .dh-kicker{
+    font-size:.68rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#9ca3af;
+    display:flex;align-items:center;gap:9px;margin-bottom:10px;
+  }
+  .doc-head .dh-kicker::before{content:'';width:22px;height:2px;border-radius:2px;
+    background:linear-gradient(90deg,var(--ilus-red),#ff5a5a)}
+  .doc-head h1{
+    margin:0;font-family:var(--display);font-weight:400;
+    font-size:clamp(2.3rem,7vw,3.6rem);line-height:.92;letter-spacing:.015em;
+    text-shadow:0 2px 22px rgba(0,0,0,.45);
+  }
+  .doc-head h1 .num{color:#ff4d4d}
+  .doc-head .dh-sub{margin:10px 0 0;color:#cbd5e1;font-size:.88rem;line-height:1.55;max-width:520px}
+  .doc-head .dh-sub strong{color:#fff}
+  /* chip de estado del documento */
+  .estado-chip{
+    display:inline-flex;align-items:center;gap:8px;flex-shrink:0;
+    border-radius:50px;padding:9px 16px;font-size:.72rem;font-weight:800;
+    letter-spacing:.06em;text-transform:uppercase;position:relative;z-index:1;
+  }
+  .estado-chip .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .estado-chip.pendiente{
+    background:rgba(245,158,11,.14);color:#fcd34d;border:1px solid rgba(245,158,11,.4);
+  }
+  .estado-chip.pendiente .dot{background:#f59e0b;animation:chipPulse 1.8s ease-in-out infinite}
+  .estado-chip.firmado{
+    background:rgba(22,163,74,.16);color:#86efac;border:1px solid rgba(22,163,74,.45);
+  }
+  .estado-chip.firmado .dot{background:#22c55e}
+  @keyframes chipPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.45);opacity:.45}}
+  .doc-head .dh-meta{
+    display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:18px;position:relative;z-index:1;
+    font-size:.78rem;color:#9ca3af;
+  }
+  .doc-head .dh-meta b{color:#e5e7eb;font-weight:700}
+
+  /* ════════════════════════════════════════════════════════════════
+     EL PAPEL — documento contractual, tipografía serif, protagonista
+     ════════════════════════════════════════════════════════════════ */
+  .paper{
+    background:#fff;border:1px solid rgba(229,231,235,.9);border-top:none;
+    border-radius:0 0 var(--r-xl) var(--r-xl);
+    box-shadow:var(--shadow-lg);
+    padding:34px 26px 30px;position:relative;overflow:hidden;
+  }
+  @media(min-width:768px){ .paper{padding:46px 54px 40px} }
+  .paper .contrato{
+    font-family:var(--serif);font-size:1.02rem;line-height:1.75;color:#1f2937;
+  }
+  .paper .contrato p{margin:0 0 14px}
+  .paper .contrato .partes{
+    font-size:1.02rem;color:#111827;
+    border-left:3px solid var(--ilus-red);padding:2px 0 2px 16px;margin-bottom:26px;
+  }
+  .paper .contrato .partes strong{font-weight:700}
+
+  /* Cláusula: rótulo ordinal en sans + cuerpo serif */
+  .clausula{margin:0 0 24px;padding-top:6px}
+  .clausula .cl-titulo{
+    font-family:'Inter',sans-serif;font-size:.78rem;font-weight:900;
+    letter-spacing:.13em;text-transform:uppercase;color:#0a0a0a;
+    display:flex;align-items:baseline;gap:10px;margin-bottom:9px;
+    border-bottom:1px solid #f3f4f6;padding-bottom:7px;
+  }
+  .clausula .cl-titulo .ord{
+    color:var(--ilus-red);font-family:var(--display);font-size:1.02rem;
+    letter-spacing:.06em;min-width:74px;
+  }
+  .clausula .cl-cuerpo{color:#1f2937}
+  .clausula .cl-cuerpo .cliente-final{
+    display:inline-flex;align-items:center;gap:7px;margin-top:6px;
+    font-family:'Inter',sans-serif;font-size:.82rem;font-weight:700;color:#374151;
+    background:#f9fafb;border:1px solid var(--gray-2);border-radius:50px;padding:6px 14px;
+  }
+  .clausula .cl-cuerpo .cliente-final b{color:#0a0a0a;font-weight:800}
+
+  /* Tabla de precios */
+  .precio-tabla{width:100%;border-collapse:collapse;margin:4px 0 8px;font-family:'Inter',sans-serif}
+  .precio-tabla th{
+    text-align:left;font-size:.68rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+    color:#6b7280;padding:8px 12px;border-bottom:2px solid var(--gray-2);
+  }
+  .precio-tabla th:last-child,.precio-tabla td:last-child{text-align:right}
+  .precio-tabla td{
+    padding:12px;font-size:.94rem;border-bottom:1px solid #f3f4f6;color:#1f2937;
+  }
+  .precio-tabla td.monto{font-weight:800;font-variant-numeric:tabular-nums;color:#0a0a0a;white-space:nowrap}
+  .precio-tabla tr.total td{
+    border-bottom:none;border-top:2px solid #0a0a0a;padding-top:14px;
+    font-weight:900;color:#0a0a0a;font-size:1rem;
+  }
+  .precio-tabla tr.total td.monto{font-size:1.16rem;color:var(--ilus-red)}
+  .precio-nota{font-family:'Inter',sans-serif;font-size:.74rem;color:#6b7280;margin:6px 0 0}
+
+  /* Duración: dos mini tarjetas Inicio/Término */
+  .duracion-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;font-family:'Inter',sans-serif}
+  @media(max-width:420px){ .duracion-grid{grid-template-columns:1fr} }
+  .duracion-card{
+    background:#f9fafb;border:1.5px solid var(--gray-2);border-radius:var(--r-sm);
+    padding:13px 16px;display:flex;align-items:center;gap:12px;
+  }
+  .duracion-card .ic{
+    width:36px;height:36px;border-radius:10px;flex-shrink:0;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,var(--ink-2) 0%,var(--ink) 100%);
+  }
+  .duracion-card .ic svg{width:17px;height:17px}
+  .duracion-card small{display:block;font-size:.66rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9ca3af}
+  .duracion-card b{font-size:.98rem;font-weight:800;color:#0a0a0a;font-variant-numeric:tabular-nums}
+
+  /* Espacio reservado / estampado de la firma al pie del documento */
+  .firma-pie{
+    margin-top:30px;padding-top:20px;border-top:1px dashed #d1d5db;
+    font-family:'Inter',sans-serif;
+  }
+  .firma-pie .fp-label{font-size:.68rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#9ca3af;margin-bottom:10px}
+  .firma-pie .fp-placeholder{
+    border:1.5px dashed #d1d5db;border-radius:var(--r-sm);background:#fafafa;
+    padding:18px 16px;font-size:.82rem;color:#9ca3af;text-align:center;line-height:1.5;
+  }
+  .firma-pie .fp-firmada{
+    border:1.5px solid #86efac;border-radius:var(--r-sm);
+    background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%);
+    padding:16px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  }
+  .firma-pie .fp-firmada .fp-check{
+    width:40px;height:40px;border-radius:12px;flex-shrink:0;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+    box-shadow:0 8px 18px -6px rgba(22,163,74,.5);
+  }
+  .firma-pie .fp-firmada .fp-check svg{width:20px;height:20px}
+  .firma-pie .fp-firmada .fp-datos{flex:1;min-width:180px}
+  .firma-pie .fp-firmada .fp-datos b{display:block;font-size:.96rem;color:#0a0a0a;font-weight:800}
+  .firma-pie .fp-firmada .fp-datos span{font-size:.78rem;color:#4b5563}
+
+  /* Timbre "FIRMADO" sobre el papel (solo ya_firmado) */
+  .stamp{
+    position:absolute;top:26px;right:20px;z-index:2;pointer-events:none;
+    font-family:var(--display);font-size:1.5rem;letter-spacing:.14em;color:#15803d;
+    border:3px solid #16a34a;border-radius:8px;padding:4px 14px 2px;
+    transform:rotate(-8deg);opacity:.85;
+    background:rgba(240,253,244,.85);
+    box-shadow:0 2px 8px rgba(22,163,74,.2);
+  }
+  @media(min-width:768px){ .stamp{top:38px;right:44px;font-size:1.8rem} }
+
+  /* ════════════════════════════════════════════════════════════════
+     SELLO SUPERIOR "DOCUMENTO FIRMADO" (estado ya_firmado)
+     ════════════════════════════════════════════════════════════════ */
+  .sello-firmado{
+    background:
+      radial-gradient(120% 160% at 0% 0%, rgba(34,197,94,.16) 0%, transparent 55%),
+      linear-gradient(135deg,#0a0a0a 0%,#101b12 100%);
+    color:#fff;border-radius:var(--r-lg);border-left:5px solid #16a34a;
+    padding:22px 24px;margin:22px 0 0;display:flex;gap:16px;align-items:flex-start;
+    box-shadow:0 14px 32px -12px rgba(0,0,0,.45);
+  }
+  .sello-firmado .sf-icon{
+    width:46px;height:46px;border-radius:13px;flex-shrink:0;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+    box-shadow:0 10px 22px -6px rgba(22,163,74,.55);
+  }
+  .sello-firmado .sf-icon svg{width:23px;height:23px}
+  .sello-firmado h2{margin:0;font-size:1.08rem;font-weight:900;letter-spacing:-.01em}
+  .sello-firmado .sf-fecha{color:#86efac;font-weight:800}
+  .sello-firmado p{margin:6px 0 0;font-size:.83rem;color:#cbd5e1;line-height:1.55}
+
+  /* ════════════════════════════════════════════════════════════════
+     PANEL DE EVIDENCIA — visible ANTES de firmar
+     ════════════════════════════════════════════════════════════════ */
+  .evidencia{
+    background:
+      radial-gradient(120% 160% at 100% 0%, rgba(220,38,38,.13) 0%, transparent 50%),
+      linear-gradient(135deg,#0a0a0a 0%,#161616 100%);
+    color:#fff;border-radius:var(--r-lg);border-left:5px solid var(--ilus-red);
+    padding:24px;margin:26px 0 0;
+    box-shadow:0 14px 32px -12px rgba(0,0,0,.45);
+  }
+  @media(min-width:768px){ .evidencia{padding:28px 30px} }
+  .evidencia .ev-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+  .evidencia .ev-shield{
+    width:44px;height:44px;border-radius:13px;flex-shrink:0;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,var(--ilus-red) 0%,#a60000 100%);
+    box-shadow:0 10px 22px -6px rgba(220,38,38,.5);
+  }
+  .evidencia .ev-shield svg{width:22px;height:22px}
+  .evidencia h2{margin:0;font-size:1.05rem;font-weight:900;letter-spacing:-.01em}
+  .evidencia .ev-intro{margin:5px 0 0;font-size:.83rem;color:#cbd5e1;line-height:1.6;max-width:560px}
+  .evidencia .ev-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:6px}
+  @media(min-width:640px){ .evidencia .ev-grid{grid-template-columns:1fr 1fr} }
+  .ev-item{
+    background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+    border-radius:var(--r-sm);padding:13px 15px;display:flex;gap:12px;align-items:flex-start;
+  }
+  .ev-item .ev-ic{
+    width:32px;height:32px;border-radius:9px;flex-shrink:0;color:#fca5a5;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(220,38,38,.14);border:1px solid rgba(220,38,38,.3);
+  }
+  .ev-item .ev-ic svg{width:16px;height:16px}
+  .ev-item small{display:block;font-size:.64rem;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:#9ca3af;margin-bottom:3px}
+  .ev-item .ev-val{font-size:.86rem;font-weight:700;color:#f3f4f6;line-height:1.45;word-break:break-word}
+  .ev-item .ev-val.mono{
+    font-family:'SFMono-Regular',Consolas,'Courier New',monospace;
+    font-size:.72rem;font-weight:500;color:#d1d5db;letter-spacing:.02em;
+  }
+  .evidencia .ev-footer{
+    margin-top:14px;padding-top:13px;border-top:1px solid rgba(255,255,255,.08);
+    font-size:.76rem;color:#9ca3af;line-height:1.6;display:flex;gap:9px;align-items:flex-start;
+  }
+  .evidencia .ev-footer svg{width:14px;height:14px;flex-shrink:0;margin-top:2px;color:#86efac}
+
+  /* ════════════════════════════════════════════════════════════════
+     FORMULARIO DE FIRMA — pasos numerados estilo /retiros/solicitar
+     ════════════════════════════════════════════════════════════════ */
+  .firma-zone{margin-top:26px}
+  .step-section{
+    margin:0 0 18px;padding:22px 20px;background:#fff;
+    border:1.5px solid var(--gray-2);border-radius:var(--r-md);
+    box-shadow:var(--shadow-sm);position:relative;overflow:hidden;
+    transition:border-color .3s,background .3s,box-shadow .3s;
+  }
+  @media(min-width:768px){ .step-section{padding:26px 28px} }
+  .step-section::before{
+    content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+    background:linear-gradient(180deg,var(--ilus-red),#a60000);
+    opacity:0;transform:scaleY(.4);transform-origin:top;
+    transition:opacity .3s,transform .35s var(--ease-out);
+  }
+  .step-section:hover{border-color:#d1d5db;box-shadow:var(--shadow-md)}
+  .step-section:hover::before{opacity:.5;transform:scaleY(1)}
+  .step-section.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+  .step-section.is-complete::before{background:linear-gradient(180deg,#16a34a,#15803d);opacity:1;transform:scaleY(1)}
+  .step-header{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+  .step-circle{
+    width:46px;height:46px;border-radius:14px;color:#fff;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--display);font-size:1.5rem;letter-spacing:.02em;
+    background:linear-gradient(150deg,var(--ilus-red) 0%,#a60000 100%);
+    box-shadow:0 10px 22px -6px rgba(220,38,38,.5), 0 1px 0 rgba(255,255,255,.25) inset;
+    transition:all .35s var(--ease-spring);position:relative;
+  }
+  .step-section.is-complete .step-circle{
+    background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+    box-shadow:0 10px 22px -6px rgba(22,163,74,.5), 0 1px 0 rgba(255,255,255,.3) inset;
+    transform:scale(1.04);
+  }
+  .step-circle .step-check{display:none;font-family:'Inter';font-size:1.3rem;font-weight:900}
+  .step-section.is-complete .step-circle .step-num-text{display:none}
+  .step-section.is-complete .step-circle .step-check{display:block}
+  .step-titles{flex:1;min-width:0;padding-top:2px}
+  .step-titles h3{margin:0;font-size:1.14rem;font-weight:900;color:#0a0a0a;letter-spacing:-.02em;line-height:1.2}
+  .step-titles .step-sub{margin:5px 0 0;font-size:.83rem;color:#6b7280;line-height:1.5;max-width:560px}
+
+  /* Inputs */
+  .campo{margin-bottom:14px}
+  .campo:last-child{margin-bottom:0}
+  .campo label{
+    display:flex;align-items:center;gap:5px;font-size:.8rem;font-weight:800;
+    color:#0a0a0a;letter-spacing:-.005em;margin-bottom:6px;
+  }
+  .campo label .req{color:var(--ilus-red);font-weight:900}
+  .campo input[type=text]{
+    width:100%;font-size:16px; /* 16px = anti auto-zoom iOS */
+    padding:12px 14px;border:1.5px solid #e5e7eb;border-radius:var(--r-sm);
+    color:#111827;background:#fff;font-family:'Inter',sans-serif;
+    transition:border-color .16s var(--ease-out),box-shadow .16s var(--ease-out),background-color .16s;
+    -webkit-appearance:none;appearance:none;
+  }
+  .campo input[type=text]::placeholder{color:#aeb4bd}
+  .campo input[type=text]:hover:not(:focus){border-color:#cbd5e1}
+  .campo input[type=text]:focus{border-color:var(--ilus-red);box-shadow:var(--ring);outline:none}
+  .campo input.field-valid{border-color:#16a34a;background:#f0fdf4}
+  .campo input.field-invalid{border-color:#dc2626;background:#fef2f2}
+  .campo .ayuda{font-size:.72rem;color:#6b7280;margin-top:5px;line-height:1.45}
+  .campo .error-msg{display:none;font-size:.74rem;color:var(--ilus-red);margin-top:5px;font-weight:700}
+  .campo .error-msg.show{display:block}
+  .campos-grid{display:grid;grid-template-columns:1fr;gap:0 14px}
+  @media(min-width:640px){ .campos-grid{grid-template-columns:1.4fr 1fr} }
+
+  /* ── Declaración (checkbox custom, patrón declaracion-box) ── */
+  .declaracion-box{
+    background:linear-gradient(135deg,#fff5f5 0%,#ffe8e8 100%);
+    border:2px solid #fecaca;border-radius:var(--r-md);padding:18px 20px;
+    position:relative;overflow:hidden;
+    transition:background .25s var(--ease-out),border-color .25s;
+  }
+  .declaracion-box::before{
+    content:'';position:absolute;left:0;top:0;bottom:0;width:5px;
+    background:linear-gradient(180deg,var(--ilus-red),#a60000);transition:background .25s;
+  }
+  .declaracion-box.checked{
+    background:linear-gradient(135deg,#dcfce7 0%,#bbf7d0 100%);border-color:#86efac;
+  }
+  .declaracion-box.checked::before{background:#16a34a}
+  .declaracion-label{display:flex;align-items:flex-start;gap:14px;cursor:pointer;margin:0;width:100%}
+  .dec-check{position:relative;flex-shrink:0;margin-top:2px}
+  .dec-check input[type=checkbox]{
+    position:absolute;opacity:0;width:28px;height:28px;cursor:pointer;z-index:2;margin:0;
+  }
+  .dec-check-mark{
+    width:28px;height:28px;border-radius:8px;background:#fff;border:2.5px solid var(--ilus-red);
+    display:flex;align-items:center;justify-content:center;color:transparent;
+    transition:all .2s;
+  }
+  .dec-check-mark svg{width:15px;height:15px}
+  .dec-check input:checked + .dec-check-mark{
+    background:#16a34a;border-color:#16a34a;color:#fff;transform:scale(1.05);
+  }
+  .dec-text{flex:1}
+  .dec-text strong{display:block;font-size:.94rem;color:#0a0a0a;font-weight:900;letter-spacing:-.01em}
+  .declaracion-box.checked .dec-text strong{color:#166534}
+  .dec-text span{display:block;font-size:.8rem;color:#6b7280;line-height:1.55;margin-top:4px}
+
+  /* ── Canvas de firma manuscrita ── */
+  .canvas-wrap{
+    position:relative;border:2px dashed #d1d5db;border-radius:var(--r-md);
+    background:#fff;overflow:hidden;
+    transition:border-color .25s,box-shadow .25s;
+  }
+  .canvas-wrap.has-stroke{border-style:solid;border-color:#86efac;box-shadow:0 6px 16px -6px rgba(22,163,74,.25)}
+  #firmaCanvas{
+    display:block;width:100%;height:200px;
+    touch-action:none; /* clave: el dedo dibuja, no scrollea */
+    -webkit-user-select:none;user-select:none;cursor:crosshair;
+  }
+  @media(min-width:768px){ #firmaCanvas{height:220px} }
+  /* Línea base con la X, como en un contrato de papel */
+  .canvas-wrap::after{
+    content:'';position:absolute;left:9%;right:9%;bottom:44px;height:1.5px;
+    background:#e5e7eb;pointer-events:none;
+  }
+  .canvas-hint{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:6px;pointer-events:none;color:#c4c9d0;transition:opacity .3s;
+  }
+  .canvas-hint svg{width:30px;height:30px}
+  .canvas-hint span{font-size:.82rem;font-weight:700}
+  .canvas-wrap.has-stroke .canvas-hint{opacity:0}
+  .canvas-x{
+    position:absolute;left:5%;bottom:34px;font-family:var(--serif);
+    font-size:1.25rem;color:#9ca3af;pointer-events:none;font-style:italic;
+  }
+  .canvas-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .canvas-tools .nota{font-size:.72rem;color:#6b7280;line-height:1.45;flex:1;min-width:200px}
+  .btn-borrar{
+    display:inline-flex;align-items:center;gap:7px;min-height:44px;
+    background:#fff;border:1.5px solid #e5e7eb;border-radius:var(--r-sm);
+    padding:10px 18px;font-size:.84rem;font-weight:800;color:#374151;cursor:pointer;
+    font-family:'Inter',sans-serif;
+    transition:border-color .18s,color .18s,background .18s,transform .18s var(--ease-out);
+  }
+  .btn-borrar:hover{border-color:var(--ilus-red);color:var(--ilus-red);background:#fff5f5}
+  .btn-borrar:active{transform:scale(.97)}
+  .btn-borrar svg{width:15px;height:15px}
+  .btn-borrar:disabled{opacity:.45;cursor:not-allowed}
+
+  /* ── Botón final Firmar ── */
+  .submit-btn{
+    background:linear-gradient(180deg,#f10000 0%,var(--ilus-red) 45%,#b30000 100%);
+    color:#fff;font-weight:900;font-size:1.08rem;padding:17px 28px;min-height:56px;
+    border:none;border-radius:var(--r-md);width:100%;
+    display:flex;align-items:center;justify-content:center;gap:10px;
+    box-shadow:0 16px 32px -8px rgba(230,0,0,.5), inset 0 1px 0 rgba(255,255,255,.22), inset 0 -2px 0 rgba(0,0,0,.12);
+    transition:transform .2s var(--ease-out),box-shadow .25s var(--ease-out),background .2s,opacity .2s;
+    cursor:pointer;letter-spacing:.04em;margin-top:20px;text-transform:uppercase;
+    font-family:'Inter',sans-serif;position:relative;overflow:hidden;
+  }
+  .submit-btn svg{width:20px;height:20px;flex-shrink:0}
+  .submit-btn::before{
+    content:'';position:absolute;inset:0;
+    background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.25) 50%,transparent 70%);
+    transform:translateX(-100%);transition:transform .6s cubic-bezier(.4,0,.2,1);
+  }
+  .submit-btn:hover:not(:disabled){
+    background:linear-gradient(180deg,var(--ilus-red-dk) 0%,#960000 100%);
+    transform:translateY(-2px);
+    box-shadow:0 22px 40px rgba(230,0,0,.45), inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .submit-btn:hover:not(:disabled)::before{transform:translateX(100%)}
+  .submit-btn:active:not(:disabled){transform:translateY(0)}
+  .submit-btn:disabled{
+    background:linear-gradient(180deg,#d1d5db 0%,#9ca3af 100%);
+    box-shadow:var(--shadow-sm);cursor:not-allowed;opacity:.85;
+  }
+  .submit-btn.is-loading{pointer-events:none}
+  .submit-btn.is-loading .btn-label,.submit-btn.is-loading>svg{display:none}
+  .submit-dots{display:none;align-items:center;gap:6px}
+  .submit-btn.is-loading .submit-dots{display:inline-flex}
+  .submit-dots span{width:7px;height:7px;border-radius:50%;background:#fff;animation:dotPulse 1.2s ease-in-out infinite}
+  .submit-dots span:nth-child(2){animation-delay:.2s}
+  .submit-dots span:nth-child(3){animation-delay:.4s}
+  @keyframes dotPulse{0%,80%,100%{transform:scale(.45);opacity:.4}40%{transform:scale(1);opacity:1}}
+  /* qué falta para habilitar el botón */
+  .falta-nota{
+    margin-top:10px;text-align:center;font-size:.76rem;color:#6b7280;line-height:1.5;
+    min-height:1.2em;
+  }
+  .falta-nota b{color:#374151}
+  .candado-legal{
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    margin:16px auto 0;width:fit-content;max-width:100%;
+    background:#f9fafb;border:1px solid #eef0f2;border-radius:50px;
+    padding:9px 18px;font-size:.72rem;color:#6b7280;text-align:center;
+  }
+  .candado-legal svg{width:13px;height:13px;flex-shrink:0;color:#16a34a}
+
+  /* ════════════════════════════════════════════════════════════════
+     MODAL DE CONFIRMACIÓN (propio — jamás confirm() nativo)
+     ════════════════════════════════════════════════════════════════ */
+  .modal-overlay{
+    position:fixed;inset:0;z-index:1000;
+    background:rgba(10,10,10,.55);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    display:flex;align-items:center;justify-content:center;padding:16px;
+    opacity:0;pointer-events:none;transition:opacity .25s ease-out;
+  }
+  .modal-overlay.active{opacity:1;pointer-events:auto}
+  .modal-card{
+    background:#fff;border-radius:var(--r-lg);max-width:440px;width:100%;
+    box-shadow:0 40px 90px -20px rgba(0,0,0,.5);
+    padding:26px 24px 22px;position:relative;
+    transform:scale(.94) translateY(14px);transition:transform .3s var(--ease-spring);
+    max-height:calc(100dvh - 32px);overflow-y:auto;
+  }
+  .modal-overlay.active .modal-card{transform:none}
+  .modal-card h4{
+    margin:0 0 4px;font-size:1.12rem;font-weight:900;color:#0a0a0a;letter-spacing:-.015em;
+    display:flex;align-items:center;gap:10px;
+  }
+  .modal-card h4 .m-ic{
+    width:36px;height:36px;border-radius:11px;flex-shrink:0;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,var(--ilus-red) 0%,#a60000 100%);
+    box-shadow:0 8px 18px -6px rgba(220,38,38,.5);
+  }
+  .modal-card h4 .m-ic svg{width:18px;height:18px}
+  .modal-card .m-sub{font-size:.82rem;color:#6b7280;margin:8px 0 14px;line-height:1.55}
+  .modal-resumen{border:1.5px solid var(--gray-2);border-radius:var(--r-sm);overflow:hidden;margin-bottom:14px}
+  .modal-resumen .mr-row{
+    display:flex;justify-content:space-between;gap:12px;padding:10px 14px;
+    font-size:.82rem;border-bottom:1px solid #f3f4f6;
+  }
+  .modal-resumen .mr-row:last-child{border-bottom:none}
+  .modal-resumen .mr-row small{color:#6b7280;font-weight:700;flex-shrink:0}
+  .modal-resumen .mr-row b{color:#0a0a0a;font-weight:800;text-align:right;word-break:break-word}
+  .modal-firma-prev{
+    border:1.5px solid var(--gray-2);border-radius:var(--r-sm);background:#fafafa;
+    padding:8px;margin-bottom:14px;text-align:center;
+  }
+  .modal-firma-prev img{max-width:100%;max-height:90px;display:inline-block}
+  .modal-firma-prev small{display:block;font-size:.64rem;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:#9ca3af;margin-bottom:4px}
+  .modal-aviso{
+    display:flex;gap:9px;align-items:flex-start;font-size:.74rem;color:#78350f;line-height:1.5;
+    background:#fff8e1;border:1px solid #fde68a;border-radius:var(--r-sm);padding:10px 12px;margin-bottom:16px;
+  }
+  .modal-aviso svg{width:15px;height:15px;flex-shrink:0;margin-top:1px;color:#f59e0b}
+  .modal-btns{display:flex;gap:10px}
+  .modal-btns .btn-sec{
+    flex:1;min-height:48px;background:#fff;border:1.5px solid #e5e7eb;border-radius:var(--r-sm);
+    font-size:.9rem;font-weight:800;color:#374151;cursor:pointer;font-family:'Inter',sans-serif;
+    transition:border-color .18s,background .18s;
+  }
+  .modal-btns .btn-sec:hover{border-color:#0a0a0a;background:#f9fafb}
+  .modal-btns .btn-pri{
+    flex:1.4;min-height:48px;border:none;border-radius:var(--r-sm);cursor:pointer;
+    background:linear-gradient(180deg,#f10000 0%,var(--ilus-red) 45%,#b30000 100%);
+    color:#fff;font-size:.9rem;font-weight:900;letter-spacing:.03em;font-family:'Inter',sans-serif;
+    box-shadow:0 10px 22px -6px rgba(230,0,0,.5);
+    transition:transform .18s var(--ease-out),box-shadow .2s,background .2s;
+  }
+  .modal-btns .btn-pri:hover{transform:translateY(-1px);background:linear-gradient(180deg,var(--ilus-red-dk) 0%,#960000 100%)}
+  .modal-btns .btn-pri:active{transform:scale(.97)}
+
+  /* ════════════════════════════════════════════════════════════════
+     PANTALLA ENLACE NO DISPONIBLE (valido == false)
+     ════════════════════════════════════════════════════════════════ */
+  .invalido-wrap{
+    min-height:calc(100dvh - 120px);display:flex;align-items:center;justify-content:center;
+    padding:30px 16px;
+  }
+  .invalido-card{
+    background:#fff;border:1px solid rgba(229,231,235,.9);border-radius:var(--r-xl);
+    box-shadow:var(--shadow-lg);max-width:460px;width:100%;
+    padding:44px 30px 36px;text-align:center;position:relative;overflow:hidden;
+  }
+  .invalido-card::before{
+    content:'';position:absolute;left:0;right:0;top:0;height:4px;
+    background:linear-gradient(90deg,var(--ilus-red),#a60000);
+  }
+  .invalido-card .inv-ic{
+    width:74px;height:74px;border-radius:22px;margin:0 auto 20px;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(150deg,var(--ink-2) 0%,var(--ink) 100%);
+    box-shadow:0 16px 34px -10px rgba(0,0,0,.4);
+  }
+  .invalido-card .inv-ic svg{width:34px;height:34px}
+  .invalido-card h1{margin:0 0 10px;font-size:1.35rem;font-weight:900;color:#0a0a0a;letter-spacing:-.02em}
+  .invalido-card p{margin:0 0 8px;font-size:.9rem;color:#4b5563;line-height:1.65}
+  .invalido-card .inv-motivos{
+    text-align:left;background:#f9fafb;border:1px solid var(--gray-2);border-radius:var(--r-sm);
+    padding:14px 16px;margin:18px 0;font-size:.82rem;color:#4b5563;
+  }
+  .invalido-card .inv-motivos b{display:block;color:#0a0a0a;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px}
+  .invalido-card .inv-motivos ul{margin:0;padding-left:18px;line-height:1.7}
+  .invalido-card .inv-contacto{
+    font-size:.8rem;color:#6b7280;margin-top:14px;line-height:1.6;
+  }
+  .invalido-card .inv-contacto a{color:var(--ilus-red);font-weight:800;text-decoration:none;border-bottom:1.5px solid rgba(220,38,38,.35)}
+
+  /* ── Footer legal ── */
+  .footer{
+    text-align:center;padding:26px 18px 34px;color:#9ca3af;font-size:.72rem;line-height:1.7;
+  }
+  .footer b{color:#6b7280}
+  .footer .f-brand{font-family:var(--display);font-size:1.05rem;letter-spacing:.05em;color:#374151}
+  .footer .f-brand span{color:var(--ilus-red)}
+
+  /* ── Impresión: el documento limpio, sin cromo de la página ── */
+  @media print{
+    body{background:#fff}
+    .topbar,.evidencia,.firma-zone,.footer,.modal-overlay{display:none !important}
+    .doc-head{border-radius:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .paper{box-shadow:none;border-radius:0;border:none}
+    .wrap{padding:0;max-width:100%}
+  }
+
+  /* ── Accesibilidad: reduced motion ── */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+
+  <!-- ── Barra de marca ─────────────────────────────────────────── -->
+  <header class="topbar">
+    <span class="brand">
+      <span class="b-mark">ILUS<span>.</span></span>
+      <span class="b-sub">Fitness</span>
+    </span>
+    <span class="doc-tag">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v5c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V6l8-4z"/></svg>
+      Documento contractual
+    </span>
+  </header>
+
+{% if not valido %}
+  <!-- ════════════════════════════════════════════════════════════
+       ESTADO: ENLACE NO DISPONIBLE — sin exponer datos del anexo
+       ════════════════════════════════════════════════════════════ -->
+  <div class="invalido-wrap">
+    <div class="invalido-card">
+      <div class="inv-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4" fill="currentColor" stroke="none"/></svg>
+      </div>
+      <h1>Este enlace ya no está disponible</h1>
+      <p>El enlace de firma que abriste dejó de estar activo, por lo que no es posible mostrar el documento ni firmarlo desde aquí.</p>
+      <div class="inv-motivos">
+        <b>Posibles motivos</b>
+        <ul>
+          <li>El anexo ya fue firmado con otro enlace.</li>
+          <li>El enlace venció por seguridad.</li>
+          <li>El servicio asociado cambió de estado.</li>
+        </ul>
+      </div>
+      <p class="inv-contacto">
+        Si crees que se trata de un error, contacta a tu coordinador de ILUS Fitness
+        para que te reenvíe un enlace vigente:<br>
+        <a href="mailto:servicio.tecnico@ilusfitness.com">servicio.tecnico@ilusfitness.com</a>
+      </p>
+    </div>
+  </div>
+
+{% else %}
+  <main class="wrap">
+
+    {% if ya_firmado %}
+    <!-- ── Sello superior: documento ya firmado ── -->
+    <section class="sello-firmado" aria-label="Documento firmado">
+      <div class="sf-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v5c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V6l8-4z"/><path d="M8.5 12l2.5 2.5 4.5-4.5"/></svg>
+      </div>
+      <div>
+        <h2>Documento firmado el <span class="sf-fecha">{{ firma.firmado_en }}</span></h2>
+        <p>
+          Firmado por <strong style="color:#fff">{{ firma.firmante_nombre }}</strong> (RUT {{ firma.firmante_rut }}).
+          Este documento quedó sellado junto a su evidencia de firma y <strong style="color:#fff">ya no admite modificaciones</strong>.
+          Conserva este enlace como comprobante.
+        </p>
+      </div>
+    </section>
+    <div style="height:22px"></div>
+    {% endif %}
+
+    <!-- ════════════════════════════════════════════════════════════
+         CABECERA DEL ANEXO
+         ════════════════════════════════════════════════════════════ -->
+    <section class="doc-head">
+      <div class="dh-top">
+        <div>
+          <div class="dh-kicker">Contrato Marco de Prestación de Servicios</div>
+          <h1>Anexo de Servicios <span class="num">N° {{ anexo.numero }}</span></h1>
+          <p class="dh-sub">
+            Documento contractual entre <strong>ILUS Fitness</strong> y el proveedor
+            <strong>{{ anexo.proveedor_nombre }}</strong>.
+            {% if ya_firmado %}Copia firmada — solo lectura.{% else %}Léelo completo antes de firmar.{% endif %}
+          </p>
+        </div>
+        {% if ya_firmado %}
+        <span class="estado-chip firmado"><span class="dot"></span> Firmado</span>
+        {% else %}
+        <span class="estado-chip pendiente"><span class="dot"></span> Pendiente de firma</span>
+        {% endif %}
+      </div>
+      <div class="dh-meta">
+        <span>Fecha de emisión: <b>{{ anexo.fecha }}</b></span>
+        <span>Proveedor: <b>{{ anexo.proveedor_nombre }}</b></span>
+        <span>RUT: <b>{{ anexo.proveedor_rut }}</b></span>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════
+         EL DOCUMENTO — completo, legible, protagonista
+         El contenido de #docLegal es la base de la huella SHA-256.
+         ════════════════════════════════════════════════════════════ -->
+    <section class="paper">
+      {% if ya_firmado %}<div class="stamp" aria-hidden="true">Firmado</div>{% endif %}
+
+      <div class="contrato" id="docLegal">
+        {#- Razón social obligatoria en documentos con efecto legal (REGLA #0):
+            la marca es ILUS Fitness, la entidad que contrata es la SPA. -#}
+        <p class="partes">
+          El presente Anexo de Servicios forma parte integrante del Contrato Marco de
+          Prestación de Servicios suscrito entre <strong>Sport and Health Solutions SPA</strong>
+          (ILUS Fitness), RUT 76.996.964-0, en adelante «ILUS», y
+          <strong>{{ anexo.proveedor_nombre }}</strong>, RUT {{ anexo.proveedor_rut }},
+          en adelante «el Proveedor», y tiene por objeto describir los servicios,
+          condiciones, precio y alcance que se prestarán.
+        </p>
+
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Primero</span> Objetivo del servicio</div>
+          <div class="cl-cuerpo">
+            <p>{{ anexo.objetivo_servicio }}</p>
+            <span class="cliente-final">Cliente final del servicio: <b>{{ anexo.cliente_nombre }}</b></span>
+          </div>
+        </div>
+
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Segundo</span> Precio</div>
+          <div class="cl-cuerpo">
+            <table class="precio-tabla">
+              <thead>
+                <tr><th>Concepto</th><th>Monto neto</th></tr>
+              </thead>
+              <tbody>
+                {% for item in anexo.precio_items %}
+                <tr>
+                  <td>{{ item.concepto }}</td>
+                  <td class="monto">{{ clp(item.monto) }}</td>
+                </tr>
+                {% endfor %}
+                <tr class="total">
+                  <td>Total neto</td>
+                  <td class="monto">{{ clp(anexo.precio_items | sum(attribute='monto')) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="precio-nota">Los valores indicados son netos y no incluyen IVA.</p>
+          </div>
+        </div>
+
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Tercero</span> Duración del servicio</div>
+          <div class="cl-cuerpo">
+            <div class="duracion-grid">
+              <div class="duracion-card">
+                <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15l2 2 4-4"/></svg></span>
+                <span><small>Inicio del servicio</small><b>{{ anexo.fecha_inicio }}</b></span>
+              </div>
+              <div class="duracion-card">
+                <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9.5 14.5l5 5M14.5 14.5l-5 5" transform="translate(0,-2.5)"/></svg></span>
+                <span><small>Término del servicio</small><b>{{ anexo.fecha_termino }}</b></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Cuarto</span> Niveles de servicio</div>
+          <div class="cl-cuerpo"><p>{{ anexo.niveles_servicio }}</p></div>
+        </div>
+
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Quinto</span> Hitos de pago</div>
+          <div class="cl-cuerpo"><p>{{ anexo.hitos_pago }}</p></div>
+        </div>
+
+        <div class="clausula">
+          <div class="cl-titulo"><span class="ord">Sexto</span> Alcance del servicio</div>
+          <div class="cl-cuerpo"><p>{{ anexo.alcance_servicio }}</p></div>
+        </div>
+      </div>
+
+      <!-- Pie de firma dentro del documento -->
+      <div class="firma-pie">
+        <div class="fp-label">Firma del proveedor</div>
+        {% if ya_firmado %}
+        <div class="fp-firmada">
+          <span class="fp-check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+          </span>
+          <span class="fp-datos">
+            <b>{{ firma.firmante_nombre }}</b>
+            <span>RUT {{ firma.firmante_rut }} · Firmado electrónicamente el {{ firma.firmado_en }}</span>
+          </span>
+        </div>
+        {% else %}
+        <div class="fp-placeholder">
+          Espacio reservado. La firma manuscrita y los datos del firmante se estamparán aquí
+          al completar el proceso de firma que está más abajo.
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    {% if not ya_firmado %}
+    <!-- ════════════════════════════════════════════════════════════
+         PANEL DE EVIDENCIA — transparencia ANTES de firmar
+         ════════════════════════════════════════════════════════════ -->
+    <section class="evidencia" aria-label="Evidencia que se registrará con la firma">
+      <div class="ev-head">
+        <span class="ev-shield">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v5c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V6l8-4z"/><path d="M8.5 12l2.5 2.5 4.5-4.5"/></svg>
+        </span>
+        <div>
+          <h2>Evidencia de esta firma</h2>
+          <p class="ev-intro">
+            Al firmar quedará registrado, junto a tu firma: la hora exacta, tu dispositivo,
+            tu dirección IP y una huella única de este documento — así ambas partes pueden
+            verificar después que se firmó exactamente esto.
+          </p>
+        </div>
+      </div>
+      <div class="ev-grid">
+        <div class="ev-item">
+          <span class="ev-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></span>
+          <div>
+            <small>Fecha y hora (Chile)</small>
+            <!-- Reloj en vivo — aria-hidden para no saturar lectores de pantalla -->
+            <div class="ev-val" id="evReloj" aria-hidden="true">—</div>
+          </div>
+        </div>
+        <div class="ev-item">
+          <span class="ev-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M11 17.5h2"/></svg></span>
+          <div>
+            <small>Tu dispositivo</small>
+            <div class="ev-val" id="evDispositivo">—</div>
+          </div>
+        </div>
+        <div class="ev-item">
+          <span class="ev-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3.5 12h17M12 3.5c2.6 2.4 3.8 5.4 3.8 8.5s-1.2 6.1-3.8 8.5c-2.6-2.4-3.8-5.4-3.8-8.5s1.2-6.1 3.8-8.5z"/></svg></span>
+          <div>
+            <small>Dirección IP</small>
+            <div class="ev-val">Se registra en el servidor al momento de firmar</div>
+          </div>
+        </div>
+        <div class="ev-item">
+          <span class="ev-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11.5a5 5 0 0 1 10 0c0 3-1 5.5-2 7.5M9.5 13c0 2.5-.7 4.7-1.7 6.5M12 11.5c0 3.8-.8 6.7-1.8 8.9M14.6 15.5c-.3 1.6-.8 3.1-1.4 4.4"/><path d="M4.5 9a8 8 0 0 1 15 0"/></svg></span>
+          <div>
+            <small>Huella del documento (SHA-256)</small>
+            <div class="ev-val mono" id="evHuella">Calculando…</div>
+          </div>
+        </div>
+      </div>
+      <div class="ev-footer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v5c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V6l8-4z"/><path d="M8.5 12l2.5 2.5 4.5-4.5"/></svg>
+        <span>
+          Esta evidencia protege a ambas partes: permite acreditar qué documento se firmó,
+          quién lo firmó, cuándo y desde dónde. No se registra nada más de tu dispositivo.
+        </span>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════════
+         PROCESO DE FIRMA — 3 pasos
+         ════════════════════════════════════════════════════════════ -->
+    <form class="firma-zone" id="formFirma" method="POST" action="{{ submit_url }}" novalidate>
+      <!-- CSRF como campo oculto del form (contrato con el backend) -->
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <!-- Campos ocultos que llena el JS justo antes de enviar -->
+      <input type="hidden" name="firmante_nombre" id="hNombre">
+      <input type="hidden" name="firmante_rut" id="hRut">
+      <input type="hidden" name="firma_png" id="hFirmaPng">
+      <input type="hidden" name="doc_hash" id="hDocHash">
+      <input type="hidden" name="firmado_en_iso" id="hFirmadoEn">
+      <input type="hidden" name="dispositivo" id="hDispositivo">
+      <input type="hidden" name="declaracion_aceptada" id="hDeclaracion" value="0">
+
+      <!-- ── PASO 1 · Identidad del firmante ── -->
+      <section class="step-section" id="paso1">
+        <div class="step-header">
+          <span class="step-circle" aria-hidden="true">
+            <span class="step-num-text">1</span><span class="step-check">✓</span>
+          </span>
+          <div class="step-titles">
+            <h3>¿Quién firma?</h3>
+            <p class="step-sub">
+              Datos de la persona que firma en representación de
+              <strong>{{ anexo.proveedor_nombre }}</strong>. Si firma otra persona
+              de la empresa, corrige los campos.
+            </p>
+          </div>
+        </div>
+        <div class="campos-grid">
+          <div class="campo">
+            <label for="inpNombre">Nombre completo <span class="req">*</span></label>
+            <input type="text" id="inpNombre" value="{{ anexo.proveedor_nombre }}"
+                   placeholder="Ej: Isabel Milling" autocomplete="name" autocapitalize="words" maxlength="120">
+            <div class="error-msg" id="errNombre">Ingresa el nombre completo de quien firma.</div>
+          </div>
+          <div class="campo">
+            <label for="inpRut">RUT <span class="req">*</span></label>
+            <input type="text" id="inpRut" value="{{ anexo.proveedor_rut }}"
+                   placeholder="12.345.678-9" inputmode="text" autocomplete="off" maxlength="12">
+            <div class="ayuda">Con dígito verificador. Se formatea solo.</div>
+            <div class="error-msg" id="errRut">El RUT no es válido — revisa el dígito verificador.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── PASO 2 · Declaración de lectura y aceptación ── -->
+      <section class="step-section" id="paso2">
+        <div class="step-header">
+          <span class="step-circle" aria-hidden="true">
+            <span class="step-num-text">2</span><span class="step-check">✓</span>
+          </span>
+          <div class="step-titles">
+            <h3>Declaración</h3>
+            <p class="step-sub">Confirma que leíste el documento completo y aceptas sus términos.</p>
+          </div>
+        </div>
+        <div class="declaracion-box" id="declaracionBox">
+          <label class="declaracion-label" for="chkDeclara">
+            <span class="dec-check">
+              <input type="checkbox" id="chkDeclara">
+              <span class="dec-check-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+              </span>
+            </span>
+            <span class="dec-text">
+              <strong>He leído y acepto los términos de este Anexo de Servicios N° {{ anexo.numero }}</strong>
+              <span>
+                Declaro que leí el documento completo, que los datos del firmante son correctos
+                y que estoy facultado para firmar en representación del Proveedor.
+              </span>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <!-- ── PASO 3 · Firma manuscrita ── -->
+      <section class="step-section" id="paso3">
+        <div class="step-header">
+          <span class="step-circle" aria-hidden="true">
+            <span class="step-num-text">3</span><span class="step-check">✓</span>
+          </span>
+          <div class="step-titles">
+            <h3>Tu firma</h3>
+            <p class="step-sub">Dibuja tu firma con el dedo o el mouse, como lo harías en papel.</p>
+          </div>
+        </div>
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="firmaCanvas" aria-label="Área para dibujar la firma manuscrita"></canvas>
+          <div class="canvas-hint" id="canvasHint" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4.5l5 5L8 21H3v-5L14.5 4.5z"/><path d="M12.5 6.5l5 5"/></svg>
+            <span>Firma aquí</span>
+          </div>
+          <span class="canvas-x" aria-hidden="true">&#10005;</span>
+        </div>
+        <div class="canvas-tools">
+          <p class="nota">
+            Esta firma manuscrita digitalizada se incorporará al documento junto a la
+            evidencia indicada arriba.
+          </p>
+          <button type="button" class="btn-borrar" id="btnBorrar" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6m3 0l-.8 13.2A2 2 0 0 1 16.2 21H7.8a2 2 0 0 1-2-1.8L5 6"/></svg>
+            Borrar y volver a firmar
+          </button>
+        </div>
+      </section>
+
+      <!-- ── Botón final ── -->
+      <button type="button" class="submit-btn" id="btnFirmar" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4.5l5 5L8 21H3v-5L14.5 4.5z"/><path d="M12.5 6.5l5 5"/></svg>
+        <span class="btn-label">Firmar Anexo N° {{ anexo.numero }}</span>
+        <span class="submit-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
+      <p class="falta-nota" id="faltaNota" aria-live="polite"></p>
+      <p class="candado-legal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        Al firmar, el documento queda sellado con su evidencia y no admite modificaciones.
+      </p>
+    </form>
+
+    <!-- ════════════════════════════════════════════════════════════
+         MODAL DE CONFIRMACIÓN (propio, nada de confirm() nativo)
+         ════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modalConfirm" role="dialog" aria-modal="true" aria-labelledby="modalTitulo" hidden>
+      <div class="modal-card">
+        <h4 id="modalTitulo">
+          <span class="m-ic">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4.5l5 5L8 21H3v-5L14.5 4.5z"/><path d="M12.5 6.5l5 5"/></svg>
+          </span>
+          Confirmar firma
+        </h4>
+        <p class="m-sub">
+          Estás a punto de firmar el <strong>Anexo de Servicios N° {{ anexo.numero }}</strong>.
+          Revisa que todo esté correcto:
+        </p>
+        <div class="modal-firma-prev">
+          <small>Tu firma</small>
+          <img id="modalFirmaImg" alt="Vista previa de la firma dibujada">
+        </div>
+        <div class="modal-resumen">
+          <div class="mr-row"><small>Firmante</small><b id="modalNombre">—</b></div>
+          <div class="mr-row"><small>RUT</small><b id="modalRut">—</b></div>
+          <div class="mr-row"><small>Fecha y hora</small><b id="modalFecha">—</b></div>
+        </div>
+        <div class="modal-aviso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18.2v.1"/></svg>
+          <span>Al confirmar se registrará la evidencia indicada y la firma no podrá deshacerse.</span>
+        </div>
+        <div class="modal-btns">
+          <button type="button" class="btn-sec" id="btnModalVolver">Volver</button>
+          <button type="button" class="btn-pri" id="btnModalConfirmar">Sí, firmar</button>
+        </div>
+      </div>
+    </div>
+    {% endif %}{# /not ya_firmado #}
+
+  </main>
+{% endif %}{# /valido #}
+
+  <!-- ── Footer legal ─────────────────────────────────────────────── -->
+  <footer class="footer">
+    <div class="f-brand">ILUS<span>.</span> Fitness</div>
+    Sport and Health Solutions SPA · RUT 76.996.964-0<br>
+    Documento gestionado electrónicamente · Soporte:
+    <b>servicio.tecnico@ilusfitness.com</b>
+  </footer>
+
+{% if valido and not ya_firmado %}
+<script>
+(function(){
+  'use strict';
+
+  /* ══════════════════════════════════════════════════════════════
+     ENGANCHE BACKEND — cómo conectar el guardado real de la firma
+     ══════════════════════════════════════════════════════════════
+     Cuando el proveedor confirma en el modal, esta página:
+
+     1) Llena los campos ocultos del <form id="formFirma">:
+          csrf_token           (ya viene renderizado por Jinja)
+          firmante_nombre      nombre completo tal como lo escribió
+          firmante_rut         RUT formateado (12.345.678-9), DV validado
+          firma_png            dataURL PNG del trazo (fondo blanco)
+          doc_hash             SHA-256 hex del texto de #docLegal
+          firmado_en_iso       instante del click en ISO-8601 (con offset)
+          dispositivo          navigator.userAgent completo
+          declaracion_aceptada "1"
+
+     2) Dispara en `document` el CustomEvent 'anexo:firmado' con
+          detail = { firmaDataUrl, nombre, rut, docHash, firmadoEnISO, dispositivo }
+
+     3) Si existe window.onAnexoFirmado, la llama y NO envía el form:
+          window.onAnexoFirmado(firmaDataUrl, nombre, rut)
+        → esa función queda a cargo de persistir (fetch a submit_url con
+          X-CSRFToken, redirección, manejo de errores, etc.). El botón ya
+          quedó en estado "Firmando…"; si el guardado falla, llamar a
+          window.anexoFirmaReset() para reactivar el formulario.
+
+     4) Si NO existe window.onAnexoFirmado, hace el POST tradicional del
+        <form> a {{ submit_url }} con los campos del punto 1.
+     ══════════════════════════════════════════════════════════════ */
+
+  // ── Referencias del DOM ──────────────────────────────────────
+  var inpNombre   = document.getElementById('inpNombre');
+  var inpRut      = document.getElementById('inpRut');
+  var errNombre   = document.getElementById('errNombre');
+  var errRut      = document.getElementById('errRut');
+  var chkDeclara  = document.getElementById('chkDeclara');
+  var declBox     = document.getElementById('declaracionBox');
+  var canvas      = document.getElementById('firmaCanvas');
+  var canvasWrap  = document.getElementById('canvasWrap');
+  var btnBorrar   = document.getElementById('btnBorrar');
+  var btnFirmar   = document.getElementById('btnFirmar');
+  var faltaNota   = document.getElementById('faltaNota');
+  var form        = document.getElementById('formFirma');
+  var modal       = document.getElementById('modalConfirm');
+  var paso1 = document.getElementById('paso1');
+  var paso2 = document.getElementById('paso2');
+  var paso3 = document.getElementById('paso3');
+
+  var docHashHex = '';   // huella SHA-256 del documento (se calcula al cargar)
+
+  // ── Utilidades RUT chileno ───────────────────────────────────
+  function rutLimpiar(v){ return (v || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+
+  // Formatea 123456789 → 12.345.678-9 mientras se escribe
+  function rutFormatear(v){
+    v = rutLimpiar(v);
+    if (v.length < 2) return v;
+    var cuerpo = v.slice(0, -1), dv = v.slice(-1), out = '', c = 0;
+    for (var i = cuerpo.length - 1; i >= 0; i--){
+      out = cuerpo[i] + out;
+      c++;
+      if (c % 3 === 0 && i > 0) out = '.' + out;
+    }
+    return out + '-' + dv;
+  }
+
+  // Valida el dígito verificador con módulo 11
+  function rutValido(v){
+    v = rutLimpiar(v);
+    if (v.length < 7 || v.length > 9) return false;
+    var cuerpo = v.slice(0, -1), dv = v.slice(-1);
+    if (!/^\d+$/.test(cuerpo)) return false;
+    var suma = 0, mult = 2;
+    for (var i = cuerpo.length - 1; i >= 0; i--){
+      suma += parseInt(cuerpo[i], 10) * mult;
+      mult = (mult === 7) ? 2 : mult + 1;
+    }
+    var resto = 11 - (suma % 11);
+    var dvCalc = (resto === 11) ? '0' : (resto === 10) ? 'K' : String(resto);
+    return dvCalc === dv;
+  }
+
+  // ── Evidencia: reloj en vivo (hora de Chile) ─────────────────
+  var fmtChile = null;
+  try {
+    fmtChile = new Intl.DateTimeFormat('es-CL', {
+      timeZone: 'America/Santiago',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+  } catch (e) { /* navegador sin soporte de timeZone: cae al reloj local */ }
+
+  function horaChile(){
+    var d = new Date();
+    if (fmtChile){
+      // es-CL entrega "26-08-2026, 21:40:12" → lo pasamos a "26/08/2026 21:40:12"
+      return fmtChile.format(d).replace(/-/g, '/').replace(',', '');
+    }
+    return d.toLocaleString();
+  }
+  var evReloj = document.getElementById('evReloj');
+  function tick(){ evReloj.textContent = horaChile() + ' hrs'; }
+  tick();
+  setInterval(tick, 1000);
+
+  // ── Evidencia: resumen amigable del dispositivo ──────────────
+  function resumenDispositivo(){
+    var ua = navigator.userAgent || '';
+    var so = 'Equipo';
+    if (/Android/i.test(ua)) so = 'Android';
+    else if (/iPhone|iPad|iPod/i.test(ua)) so = 'iOS';
+    else if (/Windows/i.test(ua)) so = 'Windows';
+    else if (/Mac OS/i.test(ua)) so = 'macOS';
+    else if (/Linux/i.test(ua)) so = 'Linux';
+    var nav_ = 'navegador';
+    if (/Edg\//.test(ua)) nav_ = 'Edge';
+    else if (/OPR\/|Opera/.test(ua)) nav_ = 'Opera';
+    else if (/SamsungBrowser/i.test(ua)) nav_ = 'Samsung Internet';
+    else if (/Firefox\//.test(ua)) nav_ = 'Firefox';
+    else if (/Chrome\//.test(ua)) nav_ = 'Chrome';
+    else if (/Safari\//.test(ua)) nav_ = 'Safari';
+    var tipo = (/Mobi|Android|iPhone/i.test(ua)) ? 'Móvil' : 'Escritorio';
+    return tipo + ' · ' + so + ' · ' + nav_;
+  }
+  document.getElementById('evDispositivo').textContent = resumenDispositivo();
+
+  // ── Evidencia: huella SHA-256 del documento exacto ───────────
+  // Se hashea el texto visible de #docLegal (normalizando espacios) para
+  // que el firmante vea la huella de LO QUE está leyendo. El backend puede
+  // recalcularla server-side y compararla con el campo doc_hash.
+  function calcularHuella(){
+    var evHuella = document.getElementById('evHuella');
+    try {
+      var texto = document.getElementById('docLegal').innerText.replace(/\s+/g, ' ').trim();
+      var datos = new TextEncoder().encode(texto);
+      crypto.subtle.digest('SHA-256', datos).then(function(buf){
+        var bytes = new Uint8Array(buf), hex = '';
+        for (var i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+        docHashHex = hex;
+        // Se muestra agrupada de a 8 para que sea legible
+        evHuella.textContent = (hex.match(/.{1,8}/g) || [hex]).join(' ');
+      }).catch(function(){ huellaFallback(evHuella); });
+    } catch (e) { huellaFallback(evHuella); }
+  }
+  function huellaFallback(el){
+    // crypto.subtle exige contexto seguro (https). Si no está disponible,
+    // la huella la calcula y registra el servidor al firmar.
+    el.textContent = 'Se calculará y registrará en el servidor al firmar';
+  }
+  calcularHuella();
+
+  /* ══════════════════════════════════════════════════════════════
+     CANVAS DE FIRMA
+     Los trazos se guardan como arreglos de puntos (coordenadas CSS)
+     para poder redibujar tras un resize o giro del teléfono sin
+     perder la firma. Dibujo suavizado con curvas por punto medio.
+     ══════════════════════════════════════════════════════════════ */
+  var ctx = null;
+  var trazos = [];        // [[{x,y}, ...], ...] — todos los trazos
+  var trazoActual = null; // el trazo en curso
+  var hayFirma = false;
+
+  function prepararCanvas(){
+    var dpr = Math.max(1, window.devicePixelRatio || 1);
+    var rect = canvas.getBoundingClientRect();
+    canvas.width  = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 2.4;
+    redibujar();
+  }
+
+  function dibujarTrazo(pts){
+    if (!pts.length) return;
+    if (pts.length < 3){
+      // Punto o trazo muy corto: un círculo pequeño
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, 1.4, 0, Math.PI * 2);
+      ctx.fillStyle = '#111827';
+      ctx.fill();
+      if (pts.length === 2){
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        ctx.lineTo(pts[1].x, pts[1].y);
+        ctx.stroke();
+      }
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length - 1; i++){
+      var mx = (pts[i].x + pts[i + 1].x) / 2;
+      var my = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    }
+    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ctx.stroke();
+  }
+
+  function redibujar(){
+    var rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    for (var i = 0; i < trazos.length; i++) dibujarTrazo(trazos[i]);
+    if (trazoActual) dibujarTrazo(trazoActual);
+  }
+
+  function puntoDesdeEvento(ev){
+    var rect = canvas.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  }
+
+  canvas.addEventListener('pointerdown', function(ev){
+    ev.preventDefault();
+    canvas.setPointerCapture(ev.pointerId);
+    trazoActual = [puntoDesdeEvento(ev)];
+    redibujar();
+  });
+  canvas.addEventListener('pointermove', function(ev){
+    if (!trazoActual) return;
+    ev.preventDefault();
+    trazoActual.push(puntoDesdeEvento(ev));
+    redibujar();
+  });
+  function terminarTrazo(ev){
+    if (!trazoActual) return;
+    if (trazoActual.length > 1 || trazos.length > 0 || trazoActual.length === 1){
+      trazos.push(trazoActual);
+    }
+    trazoActual = null;
+    hayFirma = trazos.some(function(t){ return t.length > 1; });
+    canvasWrap.classList.toggle('has-stroke', hayFirma || trazos.length > 0);
+    redibujar();
+    actualizarUI();
+  }
+  canvas.addEventListener('pointerup', terminarTrazo);
+  canvas.addEventListener('pointercancel', terminarTrazo);
+
+  btnBorrar.addEventListener('click', function(){
+    trazos = [];
+    trazoActual = null;
+    hayFirma = false;
+    canvasWrap.classList.remove('has-stroke');
+    redibujar();
+    actualizarUI();
+  });
+
+  // Redibuja sin perder la firma al girar el teléfono / redimensionar
+  var resizeTimer = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(prepararCanvas, 150);
+  });
+  prepararCanvas();
+
+  // Exporta la firma como PNG con fondo blanco (el canvas es transparente)
+  function firmaComoDataUrl(){
+    var tmp = document.createElement('canvas');
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    var tctx = tmp.getContext('2d');
+    tctx.fillStyle = '#ffffff';
+    tctx.fillRect(0, 0, tmp.width, tmp.height);
+    tctx.drawImage(canvas, 0, 0);
+    return tmp.toDataURL('image/png');
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     VALIDACIÓN + ESTADO DE LOS PASOS
+     El botón final solo se habilita con: nombre, RUT válido,
+     declaración marcada y un trazo en el canvas.
+     ══════════════════════════════════════════════════════════════ */
+  function nombreOk(){ return inpNombre.value.trim().length >= 5; }
+  function rutOk(){ return rutValido(inpRut.value); }
+
+  function actualizarUI(){
+    var okNombre = nombreOk();
+    var okRut = rutOk();
+    var okDecl = chkDeclara.checked;
+    var okFirma = hayFirma;
+
+    // Paso 1: identidad
+    paso1.classList.toggle('is-complete', okNombre && okRut);
+    // Paso 2: declaración
+    paso2.classList.toggle('is-complete', okDecl);
+    declBox.classList.toggle('checked', okDecl);
+    // Paso 3: firma dibujada
+    paso3.classList.toggle('is-complete', okFirma);
+    btnBorrar.disabled = !okFirma;
+
+    var listo = okNombre && okRut && okDecl && okFirma;
+    btnFirmar.disabled = !listo;
+
+    // Nota "te falta…" bajo el botón
+    if (listo){
+      faltaNota.innerHTML = '';
+    } else {
+      var faltan = [];
+      if (!okNombre) faltan.push('el nombre completo');
+      if (!okRut) faltan.push('un RUT válido');
+      if (!okDecl) faltan.push('aceptar la declaración');
+      if (!okFirma) faltan.push('dibujar tu firma');
+      faltaNota.innerHTML = 'Para habilitar la firma falta: <b>' + faltan.join(' · ') + '</b>';
+    }
+  }
+
+  // Validación visual en vivo de los campos (verde/rojo solo tras tocar)
+  inpNombre.addEventListener('input', function(){
+    inpNombre.classList.toggle('field-valid', nombreOk());
+    inpNombre.classList.remove('field-invalid');
+    errNombre.classList.remove('show');
+    actualizarUI();
+  });
+  inpNombre.addEventListener('blur', function(){
+    var ok = nombreOk();
+    inpNombre.classList.toggle('field-invalid', !ok);
+    errNombre.classList.toggle('show', !ok);
+  });
+  inpRut.addEventListener('input', function(){
+    var pos = inpRut.value.length;
+    inpRut.value = rutFormatear(inpRut.value);
+    void pos; // el RUT se reformatea completo; el cursor queda al final (aceptable en móvil)
+    inpRut.classList.toggle('field-valid', rutOk());
+    inpRut.classList.remove('field-invalid');
+    errRut.classList.remove('show');
+    actualizarUI();
+  });
+  inpRut.addEventListener('blur', function(){
+    var ok = rutOk();
+    inpRut.classList.toggle('field-invalid', !ok);
+    errRut.classList.toggle('show', !ok);
+  });
+  chkDeclara.addEventListener('change', actualizarUI);
+
+  // Prellenar formato del RUT que vino del servidor y validar estado inicial
+  inpRut.value = rutFormatear(inpRut.value);
+  if (nombreOk()) inpNombre.classList.add('field-valid');
+  if (rutOk()) inpRut.classList.add('field-valid');
+  actualizarUI();
+
+  /* ══════════════════════════════════════════════════════════════
+     MODAL DE CONFIRMACIÓN + ENVÍO
+     ══════════════════════════════════════════════════════════════ */
+  var btnVolver = document.getElementById('btnModalVolver');
+  var btnConfirmar = document.getElementById('btnModalConfirmar');
+
+  function abrirModal(){
+    document.getElementById('modalFirmaImg').src = firmaComoDataUrl();
+    document.getElementById('modalNombre').textContent = inpNombre.value.trim();
+    document.getElementById('modalRut').textContent = inpRut.value;
+    document.getElementById('modalFecha').textContent = horaChile() + ' hrs (Chile)';
+    modal.hidden = false;
+    // doble rAF para que la transición de opacidad corra tras el display
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      modal.classList.add('active');
+      btnConfirmar.focus();
+    }); });
+  }
+  function cerrarModal(){
+    modal.classList.remove('active');
+    setTimeout(function(){ modal.hidden = true; }, 260);
+    btnFirmar.focus();
+  }
+
+  btnFirmar.addEventListener('click', function(){
+    if (btnFirmar.disabled) return;
+    abrirModal();
+  });
+  btnVolver.addEventListener('click', cerrarModal);
+  modal.addEventListener('click', function(ev){
+    if (ev.target === modal) cerrarModal();  // click fuera de la tarjeta
+  });
+  document.addEventListener('keydown', function(ev){
+    if (ev.key === 'Escape' && !modal.hidden) cerrarModal();
+  });
+
+  // Permite al backend reactivar el formulario si su guardado falla
+  window.anexoFirmaReset = function(){
+    btnFirmar.classList.remove('is-loading');
+    btnFirmar.disabled = false;
+    actualizarUI();
+  };
+
+  btnConfirmar.addEventListener('click', function(){
+    var nombre = inpNombre.value.trim();
+    var rut = inpRut.value;
+    var firmaDataUrl = firmaComoDataUrl();
+    var firmadoEnISO = (function(){
+      // ISO-8601 local con offset (ej: 2026-08-26T21:40:12-04:00)
+      var d = new Date(), off = -d.getTimezoneOffset();
+      var s = off >= 0 ? '+' : '-', a = Math.abs(off);
+      function p(n){ return String(n).padStart(2, '0'); }
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+             'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) +
+             s + p(Math.floor(a / 60)) + ':' + p(a % 60);
+    })();
+
+    // 1) Llenar los campos ocultos del form
+    document.getElementById('hNombre').value = nombre;
+    document.getElementById('hRut').value = rut;
+    document.getElementById('hFirmaPng').value = firmaDataUrl;
+    document.getElementById('hDocHash').value = docHashHex;
+    document.getElementById('hFirmadoEn').value = firmadoEnISO;
+    document.getElementById('hDispositivo').value = navigator.userAgent || '';
+    document.getElementById('hDeclaracion').value = '1';
+
+    // Estado visual: firmando…
+    cerrarModal();
+    btnFirmar.classList.add('is-loading');
+    btnFirmar.disabled = true;
+
+    // 2) Evento para quien quiera escuchar
+    try {
+      document.dispatchEvent(new CustomEvent('anexo:firmado', {
+        detail: {
+          firmaDataUrl: firmaDataUrl,
+          nombre: nombre,
+          rut: rut,
+          docHash: docHashHex,
+          firmadoEnISO: firmadoEnISO,
+          dispositivo: navigator.userAgent || ''
+        }
+      }));
+    } catch (e) { /* CustomEvent no soportado: sin efecto */ }
+
+    // 3) Callback del backend, o 4) POST tradicional del form
+    if (typeof window.onAnexoFirmado === 'function'){
+      window.onAnexoFirmado(firmaDataUrl, nombre, rut);
+    } else {
+      form.submit();
+    }
+  });
+
+})();
+</script>
+{% endif %}
+</body>
+</html>

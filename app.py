@@ -5317,6 +5317,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/webhooks/",               # alias plural
     "/t/",                      # tracking público de transporte (token URL)
     "/firmar-ot/",              # firma remota pública de OT (token HMAC)
+    "/firmar-anexo/",           # firma pública del proveedor (Anexo de Servicios)
     "/seguimiento",             # módulo público de seguimiento (lookup factura+RUT)
     "/transporte/cron/",        # cron jobs (auth por X-Cron-Token)
     "/transporte/webhook/",     # webhooks de couriers (auth por secreto propio)
@@ -50750,6 +50751,17 @@ def _puede_ot_accion(vid, accion, user=None):
         if es_creador:
             return True
         if es_tecnico_asignado:
+            # 🔴 2026-08-26 (Daniel): el proveedor no debe ver la OT hasta
+            # firmar el Anexo de Servicios — "no puede realizar el trabajo,
+            # ni siquiera vería la OT... se le desbloquea cuando firme".
+            # Va MÁS ALLÁ del candado de `mant_visita_iniciar` (que solo
+            # bloqueaba EMPEZAR): esto oculta la ficha completa. Solo aplica
+            # al técnico asignado — no a un creador/gestión viendo su propia
+            # OT por otro motivo.
+            if role == "tecnico" and _anexo_bloquea_ot(vid):
+                print(f"[PERM] vid={vid} action=ver role={role_raw}->{role} user={username} "
+                      f"-> DENIED (anexo de servicios sin firmar)", flush=True)
+                return False
             return True
         return False
 
@@ -68340,10 +68352,91 @@ def _ot_visita_basic(vid):
     """Lee la OT con campos necesarios para validar permisos de acción."""
     return mysql_fetchone(
         "SELECT id, estado, tecnico_user_id, created_by, "
-        "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url "
+        "       firma_cliente_url, firma_tecnico_url, firma_supervisor_url, "
+        "       fecha_programada, fecha_fin, hora_inicio, hora_fin "
         "  FROM mant_visitas WHERE id=%s",
         (vid,)
     )
+
+
+# 🔴 CANDADO DE VENTANA HORARIA (Daniel 2026-08-26): "quisiera establecer un
+# bloqueo a las OT... para que solamente se realicen durante el horario y el
+# día que se va a realizar. Esto es medio delicado, revísalo 5 veces."
+#
+# Tolerancia confirmada por Daniel: 60 minutos antes y después de la hora
+# programada. Este es el candado exacto que la auditoría de Fase 0 encontró
+# ausente: "ningún endpoint valida fecha/hora antes de iniciar, ni siquiera
+# se trae de la base" — ahora sí se trae (ver `_ot_visita_basic` arriba) y
+# sí se valida, en HORA CHILE (nunca UTC crudo — ese fue justo el riesgo
+# que la propia auditoría marcó como pendiente de confirmar).
+_OT_VENTANA_TOLERANCIA_MIN = 60
+
+
+def _ot_dentro_ventana_horario(v):
+    """¿Puede iniciarse esta OT AHORA, según su fecha/hora programada?
+
+    Revisado con calma (no es una validación trivial):
+    1. Sin `fecha_programada` → no bloquea (no hay contra qué comparar;
+       fail-open aquí es correcto, no fail-closed — una OT mal cargada sin
+       fecha no debe dejar a un técnico sin poder trabajar nunca).
+    2. Rango de días: hoy debe estar entre `fecha_programada` y
+       `fecha_fin` (si no hay fecha_fin, el rango es de un solo día).
+    3. Si el día es válido pero NO hay hora_inicio/hora_fin cargada, se
+       permite todo el día (no se inventa una ventana que nadie declaró).
+    4. Si hay horario, se exige estar dentro de
+       [hora_inicio - tolerancia, hora_fin + tolerancia]. Sin hora_fin, el
+       límite superior es hora_inicio + tolerancia (una visita puntual, no
+       un rango).
+    5. TODO en hora Chile (`_now_chile()`), nunca `date.today()`/`CURDATE()`
+       crudos — esos son UTC en este proyecto (REGLA #6) y adelantarían el
+       corte hasta 3-4 horas antes de la medianoche real en Chile.
+
+    Devuelve (permitido: bool, motivo: str|None).
+    """
+    fecha_prog = v.get("fecha_programada")
+    if not fecha_prog:
+        return True, None
+
+    ahora = _now_chile()
+    hoy = ahora.date()
+    fecha_fin = v.get("fecha_fin") or fecha_prog
+
+    if hoy < fecha_prog:
+        return False, (
+            f"Esta OT está programada para el {fecha_prog.strftime('%d/%m/%Y')}"
+            + (f" al {fecha_fin.strftime('%d/%m/%Y')}" if fecha_fin != fecha_prog else "")
+            + ". Todavía no llega la fecha.")
+    if hoy > fecha_fin:
+        return False, (
+            f"Esta OT estaba programada para el "
+            f"{'del ' + fecha_prog.strftime('%d/%m/%Y') + ' al ' if fecha_fin != fecha_prog else ''}"
+            f"{fecha_fin.strftime('%d/%m/%Y')} y ya pasó. Pide que la reprogramen "
+            f"si todavía hay que hacerla.")
+
+    h_ini, h_fin = v.get("hora_inicio"), v.get("hora_fin")
+    if not h_ini and not h_fin:
+        return True, None    # día correcto, sin horario declarado -> todo el día
+
+    tol = timedelta(minutes=_OT_VENTANA_TOLERANCIA_MIN)
+    # Los límites de horario solo aplican en el primer/último día del rango
+    # (una OT de varios días no debe exigir "hora_inicio" el día 2).
+    if h_ini and hoy == fecha_prog:
+        limite_ini = datetime.combine(hoy, h_ini) - tol
+        if ahora.replace(tzinfo=None) < limite_ini:
+            return False, (
+                f"Esta OT parte a las {h_ini.strftime('%H:%M')} "
+                f"(con {_OT_VENTANA_TOLERANCIA_MIN} min de margen). Todavía es "
+                f"muy temprano.")
+    ref_fin_hora = h_fin or h_ini
+    if ref_fin_hora and hoy == fecha_fin:
+        limite_fin = datetime.combine(hoy, ref_fin_hora) + tol
+        if ahora.replace(tzinfo=None) > limite_fin:
+            return False, (
+                f"Esta OT tenía como horario hasta las "
+                f"{ref_fin_hora.strftime('%H:%M')} "
+                f"(con {_OT_VENTANA_TOLERANCIA_MIN} min de margen) y ya pasó. "
+                f"Si sigue vigente, pide que la reprogramen.")
+    return True, None
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/iniciar", methods=["POST"])
@@ -68370,6 +68463,29 @@ def mant_visita_iniciar(vid):
         _u = getattr(g, "user", None) or {}
         if (_u.get("role") or "").lower() != "superadmin":
             return jsonify({"ok": False, "error": "Esta OT no tiene técnico asignado todavía. Pide al supervisor que asigne uno."}), 400
+
+    # 🔴 CANDADO DE VENTANA HORARIA (Daniel 2026-08-26, ver el docstring
+    # completo de `_ot_dentro_ventana_horario`). superadmin pasa igual —
+    # misma excepción que los dos candados vecinos de esta función.
+    _permitido, _motivo_ventana = _ot_dentro_ventana_horario(v)
+    if not _permitido and (getattr(g, "user", None) or {}).get("role", "").lower() != "superadmin":
+        return jsonify({"ok": False, "error_codigo": "FUERA_DE_VENTANA",
+                        "error": _motivo_ventana}), 400
+
+    # 🔴 CANDADO DEL ANEXO (Daniel 2026-08-26): "si no fue firmado, no puede
+    # realizar el trabajo". Único punto de bloqueo real -- exactamente el
+    # mismo candado que ya existe arriba para "sin técnico asignado", no un
+    # segundo mecanismo que se pueda desincronizar. superadmin puede pasar
+    # igual (misma excepción que el candado de técnico asignado, arriba).
+    _anexo_pend = _anexo_bloquea_ot(vid)
+    if _anexo_pend and (getattr(g, "user", None) or {}).get("role", "").lower() != "superadmin":
+        return jsonify({
+            "ok": False, "error_codigo": "ANEXO_SIN_FIRMAR",
+            "error": f"El Anexo de Servicios N° {_anexo_pend} de esta OT todavía no "
+                     f"está firmado por el proveedor. No se puede iniciar el trabajo "
+                     f"hasta que firme.",
+        }), 400
+
     mysql_execute(
         "UPDATE mant_visitas "
         "   SET estado='en_curso', "
@@ -74300,14 +74416,45 @@ def ot2_api_cliente_crear():
     rut = (d.get("rut") or "").strip()[:20] or None
     motivo = (d.get("motivo") or "").strip().lower()   # tipo de OT que la origina
 
-    # Si ya existe una ficha con ese RUT, se devuelve esa en vez de duplicar.
-    if rut:
+    # 🔍 DEDUP INTELIGENTE (Daniel 2026-08-26): "que sea inteligente que se dé
+    # cuenta cuando ya está creado... o cuándo no existe y tiene que crearlo".
+    # Antes esto comparaba `rut=%s` literal — '76.996.964-0' y '76996964-0' y
+    # '769969640' son EL MISMO cliente pero no matcheaban entre sí, así que
+    # una instalación con el RUT escrito distinto igual creaba un duplicado.
+    # `_rut_cuerpo()` es la misma normalización que ya usa el cruce con el
+    # ERP Random (ver su docstring) — una sola forma de comparar RUTs en
+    # todo el proyecto, no una nueva.
+    cuerpo = _rut_cuerpo(rut) if rut else ""
+    if cuerpo:
         ya = mysql_fetchone(
-            "SELECT id, razon_social FROM mant_clientes WHERE rut=%s LIMIT 1", (rut,))
+            "SELECT id, razon_social, rut FROM mant_clientes "
+            " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') "
+            "       LIKE CONCAT(%s, '%%') "
+            " ORDER BY (estado='activo') DESC, id ASC LIMIT 1",
+            (cuerpo,))
         if ya:
-            return jsonify({"ok": True, "creado": False,
-                            "cliente": {"id": ya["id"], "razon_social": ya["razon_social"]},
-                            "mensaje": "Ese RUT ya tenía ficha; se usará la existente."})
+            return jsonify({
+                "ok": True, "creado": False,
+                "cliente": {"id": ya["id"], "razon_social": ya["razon_social"]},
+                "mensaje": f'Ya existe una ficha para este RUT ({ya["razon_social"]}) '
+                           f'— se usará esa, no se crea otra.',
+            })
+
+    # Sin RUT: la única red de seguridad razonable es el nombre EXACTO (sin
+    # mayúsculas/espacios de más). Match difuso por nombre queda fuera a
+    # propósito — "Gimnasio Sur" y "Gimnasio Sur 2" son clientes distintos,
+    # y fusionarlos mal es peor que crear una ficha de más.
+    if not cuerpo:
+        ya_nombre = mysql_fetchone(
+            "SELECT id, razon_social FROM mant_clientes "
+            " WHERE LOWER(TRIM(razon_social))=LOWER(TRIM(%s)) LIMIT 1", (razon,))
+        if ya_nombre:
+            return jsonify({
+                "ok": True, "creado": False,
+                "cliente": {"id": ya_nombre["id"], "razon_social": ya_nombre["razon_social"]},
+                "mensaje": f'Ya existe "{ya_nombre["razon_social"]}" con ese mismo nombre '
+                           f'— se usará esa ficha.',
+            })
 
     _motivo_txt = _TIPO_OT_LABEL.get(motivo, motivo.replace("_", " ").title()) if motivo else ""
     try:
@@ -75618,6 +75765,491 @@ def ot2_monitor_datos():
     payload = _ot_tv_datos()
     _OT_TV_CACHE["payload"] = {"payload": payload, "ts": _time.time()}
     return jsonify(payload)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  ANEXO DE SERVICIOS — firma del PROVEEDOR EXTERNO antes de ejecutar
+#  (Daniel, 2026-08-26)
+#
+#  No es la firma del cliente al cerrar la OT (eso ya existe, mant_ot_
+#  signatures). Este es un documento distinto: el proveedor externo firma
+#  ANTES de ejecutar, aceptando precio y condiciones. Modelo real: los dos
+#  anexos que Daniel compartió (N°135 Isabel Milling, N°155 Daniel Pulgar).
+#
+#  🔴 Bloqueo duro pedido explícitamente: "si no fue firmado, no puede
+#  realizar el trabajo" — se aplica en mant_visita_iniciar, el mismo
+#  candado que ya existe para "sin técnico asignado no se puede iniciar".
+#
+#  ⚖️ Validez legal: NO se afirma que esto sea una Firma Electrónica
+#  Avanzada (eso exige un proveedor acreditado, decisión de negocio/legal
+#  pendiente). Lo que SÍ hace este motor es capturar evidencia de calidad
+#  probatoria para una firma electrónica simple (Ley 19.799): hash SHA-256
+#  del documento EXACTO que se mostró (si el contenido cambia después de
+#  firmado, el hash ya no calza — eso es lo que hace la firma verificable),
+#  sello de tiempo, IP y dispositivo del firmante, y una bitácora de cada
+#  evento (creado, enviado, visto, firmado/rechazado).
+# ══════════════════════════════════════════════════════════════════════
+
+def _ensure_mant_anexos():
+    """Tabla de anexos + su secuencia de correlativo. Idempotente."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_anexo_secuencia (
+                    anio INT PRIMARY KEY,
+                    n    INT NOT NULL DEFAULT 0
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mant_anexos (
+                    id                 INT AUTO_INCREMENT PRIMARY KEY,
+                    numero             INT NOT NULL,
+                    ot_id              INT NULL COMMENT 'mant_visitas.id que este anexo habilita',
+                    tecnico_externo_id INT NULL COMMENT 'mant_tecnicos_externos.id, si aplica',
+                    proveedor_nombre   VARCHAR(200) NOT NULL,
+                    proveedor_rut      VARCHAR(20)  NULL,
+                    cliente_nombre     VARCHAR(200) NULL COMMENT 'a quien se le presta el servicio',
+                    objetivo_servicio  TEXT NOT NULL,
+                    precio_items_json  TEXT NOT NULL COMMENT '[{concepto,monto}], JSON',
+                    fecha_inicio       DATE NULL,
+                    fecha_termino      DATE NULL,
+                    niveles_servicio   TEXT NULL,
+                    hitos_pago         TEXT NULL,
+                    alcance_servicio   TEXT NULL,
+                    estado             ENUM('borrador','enviado','visto','firmado',
+                                            'rechazado','vencido','anulado')
+                                       NOT NULL DEFAULT 'borrador',
+                    token              VARCHAR(60) NULL UNIQUE,
+                    token_expira_at    DATETIME NULL,
+                    documento_hash     VARCHAR(64) NULL COMMENT 'SHA-256 servidor, sobre los DATOS estructurados (precio/fechas/proveedor) -- detecta si se edita el anexo después de firmado',
+                    documento_hash_cliente VARCHAR(64) NULL COMMENT 'SHA-256 calculado en el navegador sobre el TEXTO EXACTO que el firmante leyó (crypto.subtle) -- evidencia de qué documento vio, no solo qué datos tenía',
+                    firmado_en_cliente VARCHAR(60) NULL COMMENT 'timestamp que el navegador del firmante declaró -- informativo; el oficial es firmado_at (NOW() del servidor)',
+                    firmante_nombre    VARCHAR(200) NULL,
+                    firmante_rut       VARCHAR(20)  NULL,
+                    firma_url          LONGTEXT NULL,
+                    firmado_at         DATETIME NULL,
+                    firmado_ip         VARCHAR(64)  NULL,
+                    firmado_user_agent VARCHAR(400) NULL,
+                    rechazo_motivo     TEXT NULL,
+                    enviado_at         DATETIME NULL,
+                    enviado_por        VARCHAR(190) NULL,
+                    created_by         VARCHAR(190),
+                    created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
+                                       ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ot_id) REFERENCES mant_visitas(id) ON DELETE SET NULL,
+                    INDEX idx_anx_ot (ot_id),
+                    INDEX idx_anx_token (token),
+                    INDEX idx_anx_estado (estado)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _next_anexo_numero_atomic(conn=None):
+    """Correlativo atómico del anexo — MISMO mecanismo que `_next_ot_number_atomic`
+    (row-lock de InnoDB vía INSERT...ON DUPLICATE KEY, no un SELECT MAX() bajo
+    snapshot). Reusar la técnica ya probada, no inventar una nueva."""
+    year = datetime.now().year
+    own_conn = conn is None
+    c = conn if conn is not None else get_mysql()
+    try:
+        with c.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_anexo_secuencia (anio, n) VALUES (%s, LAST_INSERT_ID(1)) "
+                "ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)", (year,))
+            cur.execute("SELECT LAST_INSERT_ID() AS n")
+            row = cur.fetchone()
+            numero = row[0] if isinstance(row, (tuple, list)) else row["n"]
+        if own_conn:
+            c.commit()
+        return int(numero)
+    finally:
+        if own_conn:
+            c.close()
+
+
+def _anexo_render_canonico(a):
+    """Texto canónico del anexo — EXACTAMENTE lo que el firmante vio y lo que
+    se hashea. Cambiar este formato después de que existan anexos firmados
+    invalidaría la verificación de los viejos: si algún día hace falta
+    cambiarlo, versionar el formato, no reescribirlo en el sitio."""
+    items = a.get("precio_items") or []
+    precio_txt = " - ".join(
+        f"${int(it.get('monto') or 0):,}".replace(",", ".") + f" ({it.get('concepto','')})"
+        for it in items) or "—"
+    return (
+        f"ANEXO DE SERVICIOS N° {a['numero']}\n"
+        f"Proveedor: {a.get('proveedor_nombre','')} (RUT {a.get('proveedor_rut') or '—'})\n"
+        f"Cliente: {a.get('cliente_nombre') or '—'}\n"
+        f"Objetivo del Servicio: {a.get('objetivo_servicio','')}\n"
+        f"Precio: {precio_txt} Neto.\n"
+        f"Duración del Servicio: Inicio {a.get('fecha_inicio') or '—'} / "
+        f"Término {a.get('fecha_termino') or '—'}\n"
+        f"Niveles de Servicio: {a.get('niveles_servicio') or ''}\n"
+        f"Hitos de Pago: {a.get('hitos_pago') or ''}\n"
+        f"Alcance del Servicio: {a.get('alcance_servicio') or ''}\n"
+    )
+
+
+def _anexo_hash(a):
+    import hashlib as _hl
+    return _hl.sha256(_anexo_render_canonico(a).encode("utf-8")).hexdigest()
+
+
+_ANEXO_NIVELES_DEFECTO = (
+    "El servicio debe cumplir con grado de calidad, rapidez y eficacia con "
+    "el que se atienden y resuelven las solicitudes de nuestros clientes."
+)
+_ANEXO_HITOS_DEFECTO = (
+    "Una vez realizados los servicios, se debe llenar la OT con la respectiva "
+    "firma del cliente; posteriormente se emitirá documentación para el pago "
+    "del servicio."
+)
+_ANEXO_ALCANCE_DEFECTO = (
+    "Se debe entregar el trabajo en perfectas condiciones, garantizando la "
+    "conformidad del cliente. Se asumen penalizaciones monetarias por "
+    "incumplimiento del servicio y el principio de reportabilidad tanto para "
+    "el inicio del trabajo como para el término."
+)
+
+
+def _anexo_dict(row):
+    """Fila de mant_anexos → dict con precio_items ya decodificado."""
+    import json as _json
+    d = dict(row)
+    try:
+        d["precio_items"] = _json.loads(d.get("precio_items_json") or "[]")
+    except Exception:
+        d["precio_items"] = []
+    return d
+
+
+@app.route("/ot/<int:vid>/anexos", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_anexos_list(vid):
+    """Anexos ligados a esta OT — para la ficha administrativa.
+
+    Visible solo para gestión (el decorador @_ot_can_view ya excluye a un
+    técnico no asignado; el candado de "solo administración, nunca técnico"
+    que pidió Daniel se aplica acá explícitamente, porque un TÉCNICO
+    asignado SÍ pasa @_ot_can_view — ver la propia OT es distinto de ver
+    las condiciones comerciales que se pactaron con el proveedor)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    rows = mysql_fetchall(
+        "SELECT id, numero, estado, proveedor_nombre, token, token_expira_at, "
+        "       firmado_at, enviado_at, created_at "
+        "  FROM mant_anexos WHERE ot_id=%s ORDER BY numero DESC", (vid,)) or []
+    return jsonify({"ok": True, "anexos": [dict(r) for r in rows]})
+
+
+@app.route("/ot/api/anexos", methods=["POST"])
+@_mant_required
+def ot2_api_anexo_crear():
+    """Crea un anexo en borrador. No envía nada todavía."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    d = request.get_json(silent=True) or {}
+    proveedor = (d.get("proveedor_nombre") or "").strip()[:200]
+    if not proveedor:
+        return _ot2_err("Falta el nombre del proveedor.", "PROVEEDOR_REQUERIDO")
+    objetivo = (d.get("objetivo_servicio") or "").strip()
+    if not objetivo:
+        return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")
+    items = d.get("precio_items") or []
+    if not isinstance(items, list) or not items:
+        return _ot2_err("Agrega al menos un ítem de precio.", "PRECIO_REQUERIDO")
+    try:
+        items = [{"concepto": str(it.get("concepto") or "")[:120],
+                  "monto": int(it.get("monto") or 0)} for it in items]
+    except (TypeError, ValueError):
+        return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
+
+    vid = d.get("ot_id")
+    try:
+        vid = int(vid) if vid else None
+    except (TypeError, ValueError):
+        vid = None
+
+    import json as _json
+    try:
+        conn = get_mysql()
+        conn.autocommit(False)
+        cur = conn.cursor()
+        numero = _next_anexo_numero_atomic(conn)
+        cur.execute(
+            "INSERT INTO mant_anexos "
+            "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
+            "   cliente_nombre, objetivo_servicio, precio_items_json, "
+            "   fecha_inicio, fecha_termino, niveles_servicio, hitos_pago, "
+            "   alcance_servicio, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (numero, vid, d.get("tecnico_externo_id") or None,
+             proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
+             (d.get("cliente_nombre") or "").strip()[:200] or None,
+             objetivo, _json.dumps(items),
+             d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
+             (d.get("niveles_servicio") or "").strip() or _ANEXO_NIVELES_DEFECTO,
+             (d.get("hitos_pago") or "").strip() or _ANEXO_HITOS_DEFECTO,
+             (d.get("alcance_servicio") or "").strip() or _ANEXO_ALCANCE_DEFECTO,
+             current_username()))
+        aid = cur.lastrowid
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        print(f"[anexo_crear] {e}", flush=True)
+        return _ot2_err("No pudimos crear el anexo.", "ERROR_INTERNO", http=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    try:
+        _mant_log("anexo", aid, "creado", f"N°{numero} · {proveedor}"
+                  + (f" · OT {vid}" if vid else ""))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "anexo_id": aid, "numero": numero})
+
+
+@app.route("/ot/api/anexos/<int:aid>/enviar", methods=["POST"])
+@_mant_required
+def ot2_api_anexo_enviar(aid):
+    """Genera el token y envía el enlace de firma al proveedor.
+
+    Canal: correo siempre; WhatsApp opcional vía deep-link (mismo patrón
+    honesto que la firma remota de OT — el servidor NO envía WhatsApp por
+    su cuenta, arma el link y quien lo manda es una persona)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
+    if not a:
+        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
+    if a["estado"] not in ("borrador",):
+        return jsonify({"ok": False, "error": f"Este anexo ya está en estado "
+                        f"'{a['estado']}' — no se puede reenviar así."}), 400
+
+    d = request.get_json(silent=True) or {}
+    email_destino = (d.get("email") or "").strip()[:200]
+    telefono = (d.get("telefono") or "").strip()
+
+    token = secrets.token_urlsafe(30)[:40]
+    expira = datetime.utcnow() + timedelta(days=15)
+    try:
+        mysql_execute(
+            "UPDATE mant_anexos SET token=%s, token_expira_at=%s, estado='enviado', "
+            "  enviado_at=NOW(), enviado_por=%s WHERE id=%s",
+            (token, expira, current_username(), aid))
+    except Exception as e:
+        print(f"[anexo_enviar] {e}", flush=True)
+        return _ot2_err("No pudimos generar el enlace.", "ERROR_INTERNO", http=500)
+
+    # 🔔 Daniel 2026-08-26: "notificar por correo que se creó una nueva OT
+    # para el técnico, y adjunto tiene que ir el link para que firme el
+    # anexo... si eso no [pasa] no puede realizar el trabajo, ni siquiera
+    # vería la OT". Un solo correo cumple las dos cosas: avisa la OT nueva
+    # Y trae el link que la desbloquea — no dos correos separados que se
+    # puedan desincronizar. Los datos de la OT son opcionales (un anexo
+    # puede no estar ligado a una OT todavía) para no romper ese caso.
+    _ot_ctx = ""
+    if a.get("ot_id"):
+        try:
+            _v = mysql_fetchone(
+                "SELECT v.numero_ot, v.titulo, c.razon_social "
+                "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+                " WHERE v.id=%s", (a["ot_id"],))
+        except Exception:
+            _v = None
+        if _v:
+            _ot_ctx = (f"<p>Se te asignó la orden de trabajo "
+                       f"<b>{_v.get('numero_ot') or ('#' + str(a['ot_id']))}</b>"
+                       + (f" — {_v['titulo']}" if _v.get("titulo") else "")
+                       + (f" (cliente: {_v['razon_social']})" if _v.get("razon_social") else "")
+                       + ".</p>")
+
+    link = url_for("ot2_anexo_firma_publica", token=token, _external=True)
+    enviado_correo = False
+    if email_destino:
+        try:
+            _send_ilus_email(
+                email_destino,
+                _brand_subject(f"Nueva orden de trabajo — firma el Anexo N° {a['numero']}"),
+                f"<p>Hola,</p>"
+                f"{_ot_ctx}"
+                f"<p><b>Antes de poder empezar</b> necesitamos que revises y firmes "
+                f"el Anexo de Servicios N° {a['numero']} con las condiciones del trabajo. "
+                f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
+                f'<p><a href="{link}">Revisar y firmar el Anexo N° {a["numero"]}</a></p>'
+                f"<p>El enlace vence en 15 días.</p>")
+            enviado_correo = True
+        except Exception as e:
+            print(f"[anexo_enviar] correo: {e}", flush=True)
+
+    wa_link = None
+    if telefono:
+        import urllib.parse as _up
+        msg = (f"🔧 ILUS · Anexo de Servicios N° {a['numero']}\n\n"
+               f"Antes de iniciar el trabajo, necesitamos que revises y firmes "
+               f"el anexo:\n{link}\n\n— ILUS Fitness")
+        wa_link = f"https://wa.me/{re.sub(r'[^0-9]', '', telefono)}?text={_up.quote(msg)}"
+
+    try:
+        _mant_log("anexo", aid, "enviado",
+                  f"correo={'sí' if enviado_correo else 'no'} · wa_link={'sí' if wa_link else 'no'}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "link": link, "correo_enviado": enviado_correo,
+                    "whatsapp_link": wa_link})
+
+
+def _anexo_fecha_d(v):
+    """DATE de mant_anexos → dd/mm/aaaa (REGLA #6). Son columnas DATE puras,
+    sin zona horaria que convertir — mismo criterio que el resto del
+    proyecto para este tipo de campo (ver `_d()` en el reporte Excel)."""
+    try:
+        return v.strftime("%d/%m/%Y") if v else "—"
+    except Exception:
+        return "—"
+
+
+def _anexo_publico_payload(a):
+    return {
+        "numero": a["numero"],
+        "fecha": chile_fmt_filter(a.get("created_at"), "%d/%m/%Y") if a.get("created_at") else "—",
+        "proveedor_nombre": a.get("proveedor_nombre") or "",
+        "proveedor_rut": a.get("proveedor_rut") or "",
+        "objetivo_servicio": a.get("objetivo_servicio") or "",
+        "cliente_nombre": a.get("cliente_nombre") or "",
+        "precio_items": a.get("precio_items") or [],
+        "fecha_inicio": _anexo_fecha_d(a.get("fecha_inicio")),
+        "fecha_termino": _anexo_fecha_d(a.get("fecha_termino")),
+        "niveles_servicio": a.get("niveles_servicio") or "",
+        "hitos_pago": a.get("hitos_pago") or "",
+        "alcance_servicio": a.get("alcance_servicio") or "",
+    }
+
+
+@app.route("/firmar-anexo/<token>", methods=["GET"])
+def ot2_anexo_firma_publica(token):
+    """Página pública (sin login) donde el proveedor lee y firma el anexo."""
+    if not _ot_tv_token_valido(token):
+        return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False)
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE token=%s", (token,))
+    if not a:
+        return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False)
+    a = _anexo_dict(a)
+    vencido = a.get("token_expira_at") and datetime.utcnow() > a["token_expira_at"]
+    if vencido and a["estado"] not in ("firmado",):
+        return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False)
+
+    if a["estado"] == "firmado":
+        return render_template(
+            "ot2/anexo_firma.html", valido=True, ya_firmado=True,
+            anexo=_anexo_publico_payload(a),
+            firma={"firmante_nombre": a.get("firmante_nombre"),
+                   "firmante_rut": a.get("firmante_rut"),
+                   "firmado_en": chile_fmt_filter(a.get("firmado_at")) if a.get("firmado_at") else ""})
+
+    if a["estado"] == "enviado":
+        try:
+            mysql_execute("UPDATE mant_anexos SET estado='visto' WHERE id=%s AND estado='enviado'",
+                         (a["id"],))
+        except Exception:
+            pass
+    return render_template(
+        "ot2/anexo_firma.html", valido=True, ya_firmado=False,
+        anexo=_anexo_publico_payload(a),
+        submit_url=url_for("ot2_anexo_firma_submit", token=token))
+
+
+@app.route("/firmar-anexo/<token>", methods=["POST"])
+def ot2_anexo_firma_submit(token):
+    """El proveedor firma. Token-gated, sin login (mismo patrón que /firmar-ot/).
+
+    La página (`ot2/anexo_firma.html`) manda un POST de FORMULARIO normal
+    (progressive enhancement: funciona incluso si algo del JS de captura
+    falla) con estos campos exactos: firmante_nombre, firmante_rut,
+    firma_png (dataURL), doc_hash (SHA-256 calculado en el navegador sobre
+    el texto que el firmante realmente leyó), firmado_en_iso, dispositivo,
+    declaracion_aceptada.
+    """
+    if not _ot_tv_token_valido(token):
+        return jsonify({"ok": False, "error": "Enlace inválido."}), 400
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE token=%s", (token,))
+    if not a:
+        return jsonify({"ok": False, "error": "Enlace inválido."}), 404
+    if a["estado"] == "firmado":
+        return jsonify({"ok": False, "error": "Este anexo ya fue firmado."}), 400
+    if a.get("token_expira_at") and datetime.utcnow() > a["token_expira_at"]:
+        return jsonify({"ok": False, "error": "El enlace venció."}), 400
+
+    d = request.form or {}
+    nombre = (d.get("firmante_nombre") or "").strip()[:200]
+    rut = (d.get("firmante_rut") or "").strip()[:20]
+    firma_data_url = d.get("firma_png") or ""
+    hash_cliente = (d.get("doc_hash") or "").strip()[:64]
+    firmado_cliente = (d.get("firmado_en_iso") or "").strip()[:60]
+    dispositivo = (d.get("dispositivo") or "").strip()[:200]
+    if not str(d.get("declaracion_aceptada") or "").strip():
+        return jsonify({"ok": False, "error": "Falta aceptar la declaración del anexo."}), 400
+    if not nombre or not rut:
+        return jsonify({"ok": False, "error": "Falta nombre o RUT de quien firma."}), 400
+    if not firma_data_url.startswith("data:"):
+        return jsonify({"ok": False, "error": "Falta la firma."}), 400
+
+    a_full = _anexo_dict(a)
+    # Dos huellas con propósito distinto -- no son redundantes:
+    # `doc_hash` (servidor) = "estos DATOS no cambiaron desde que se firmó".
+    # `hash_cliente` (navegador) = "el firmante vio y firmó ESTE texto exacto".
+    doc_hash = _anexo_hash(a_full)
+    firma_url = _subir_firma_storage(firma_data_url, a["id"], "proveedor_anexo")
+    ip = ((request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+          or request.remote_addr or "")[:64]
+    ua = (request.headers.get("User-Agent") or "")[:400]
+
+    try:
+        mysql_execute(
+            "UPDATE mant_anexos SET estado='firmado', documento_hash=%s, "
+            "  documento_hash_cliente=%s, firmado_en_cliente=%s, "
+            "  firmante_nombre=%s, firmante_rut=%s, firma_url=%s, "
+            "  firmado_at=NOW(), firmado_ip=%s, firmado_user_agent=%s "
+            " WHERE id=%s AND estado IN ('enviado','visto')",
+            (doc_hash, hash_cliente or None, firmado_cliente or None,
+             nombre, rut, firma_url, ip, ua, a["id"]))
+    except Exception as e:
+        print(f"[anexo_firmar] {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos guardar la firma."}), 500
+
+    try:
+        _mant_log("anexo", a["id"], "firmado",
+                  f"{nombre} ({rut}) · hash_srv={doc_hash[:12]}… · "
+                  f"hash_cli={(hash_cliente or '—')[:12]} · ip={ip} · {dispositivo}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "mensaje": "Anexo firmado correctamente."})
+
+
+def _anexo_bloquea_ot(vid):
+    """¿Hay un anexo ligado a esta OT que todavía no está firmado?
+
+    Única fuente de verdad para el candado de `mant_visita_iniciar`. Un
+    anexo en 'borrador' (nunca se envió) NO bloquea — recién bloquea desde
+    que se manda a firmar, que es cuando existe un compromiso real
+    pendiente con el proveedor."""
+    try:
+        row = mysql_fetchone(
+            "SELECT numero FROM mant_anexos WHERE ot_id=%s "
+            "  AND estado IN ('enviado','visto') LIMIT 1", (vid,))
+        return row["numero"] if row else None
+    except Exception as e:
+        print(f"[anexo_bloquea] {e}", flush=True)
+        return None    # fail-open a propósito: un error de BD acá no debe
+                        # dejar a TODOS los técnicos sin poder trabajar.
 
 
 def _ot2_filtros_export(args):
@@ -103496,6 +104128,16 @@ try:
         _ensure_ot_pantallas()
 except Exception as _ensure_tv_err:
     print(f"[ILUS][WARN] _ensure_ot_pantallas: {_ensure_tv_err}", flush=True)
+
+# Anexos de servicio para proveedor externo (firma previa a ejecutar),
+# Daniel 2026-08-26 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1: sin la
+# tabla, /firmar-anexo/<token> y el candado de mant_visita_iniciar quedan
+# muertos en producción.
+try:
+    with app.app_context():
+        _ensure_mant_anexos()
+except Exception as _ensure_anx_err:
+    print(f"[ILUS][WARN] _ensure_mant_anexos: {_ensure_anx_err}", flush=True)
 
 # CRÍTICO: plantillas ESTÁNDAR (incl. 'Levantamiento fotográfico estándar')
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Sin esto la tabla queda vacía
