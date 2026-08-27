@@ -280,6 +280,10 @@
     }
     .fs-btn:hover{opacity:1;color:#e5e7eb;background:rgba(255,255,255,.08)}
     .fs-btn[hidden]{display:none}
+    /* Ya en pantalla completa: se apaga aún más, para no competir con el
+       tablero — pero sigue ahí para poder salir. */
+    .fs-btn.is-full{opacity:.22}
+    .fs-btn.is-full:hover{opacity:1}
 
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
@@ -2104,6 +2108,41 @@
     // puede tumbar el resto del arranque.
     try { renderAll(DATOS_INICIALES); }
     catch(e){ console.error('[monitor] renderAll inicial falló:', e); }
+
+    // ── Pantalla completa — TAMBIÉN en el televisor ──
+    // 2026-08-27 (Daniel: "aún no veo el botón de pantalla completa para la
+    // tele, es necesario un botón no un atajo"). Estaba dentro del bloque
+    // INTERACTIVO, que solo corre en la pantalla de control — por eso en el
+    // televisor no aparecía nunca. Va acá, fuera de ese bloque: el TV es
+    // justamente donde más se necesita, porque se abre una vez y se deja.
+    const fsBtn = $('#btnFullscreen');
+    const toggleFS = () => {
+      try{
+        if (!document.fullscreenElement){
+          const p = document.documentElement.requestFullscreen();
+          if (p && p.catch) p.catch(() => {});
+        } else {
+          const p = document.exitFullscreen();
+          if (p && p.catch) p.catch(() => {});
+        }
+      } catch(_e){ /* navegador que no lo permite: no romper nada */ }
+    };
+    if (fsBtn){
+      fsBtn.hidden = false;
+      fsBtn.addEventListener('click', toggleFS);
+      // El ícono cambia al entrar/salir para que se entienda qué hace.
+      document.addEventListener('fullscreenchange', () => {
+        const full = !!document.fullscreenElement;
+        fsBtn.title = full ? 'Salir de pantalla completa (F)' : 'Pantalla completa (F)';
+        fsBtn.classList.toggle('is-full', full);
+      });
+    }
+    document.addEventListener('keydown', (ev) => {
+      const t = ev.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (ev.key === 'f' || ev.key === 'F') toggleFS();
+    });
+
     tick();
     setInterval(tick, 1000);
 
@@ -2129,26 +2168,6 @@
       const btnAnt = $('#btnDiaAnt'), btnSig = $('#btnDiaSig'), btnHoy = $('#btnDiaHoy');
       if (btnAnt) btnAnt.hidden = false;
       if (btnSig) btnSig.hidden = false;
-
-      // Pantalla completa (botón discreto + tecla F). Solo en la pantalla
-      // de control: el televisor ya arranca a pantalla completa solo.
-      const fsBtn = $('#btnFullscreen');
-      const toggleFS = () => {
-        try{
-          if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-          else document.exitFullscreen();
-        } catch(_e){ /* navegador que no lo permite: no romper nada */ }
-      };
-      if (fsBtn){
-        fsBtn.hidden = false;
-        fsBtn.addEventListener('click', toggleFS);
-      }
-      document.addEventListener('keydown', (ev) => {
-        // Solo si no se está escribiendo en un campo.
-        const t = ev.target;
-        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-        if (ev.key === 'f' || ev.key === 'F') toggleFS();
-      });
 
       // Selector Día / Semana / Mes
       const sw = $('#vistaSw');
