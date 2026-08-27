@@ -1309,6 +1309,28 @@
     return String(p.nombre || '?').split(/\s+/).map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
   }
 
+  /* 2026-08-27 (Daniel: "acá lo veo en blanco y negro, ponle color pero
+     no tanto"): el gris del avatar es igual para TODOS, sin importar el
+     estado -- con casi todo el equipo "Disponible" hoy (gris a propósito,
+     ver comentario de .estado-disponible más abajo) la pantalla entera
+     lee monocroma. Se le da identidad a cada persona con un tinte suave y
+     fijo (por nombre, no por estado — no compite con el semáforo real de
+     ejecutando/atrasado/terminado), en la MISMA paleta de marca. */
+  const AVATAR_TINTS = [
+    'linear-gradient(150deg,#4c1d1d 0%,#1a0a0a 100%)',   // rojo apagado
+    'linear-gradient(150deg,#1e3a5f 0%,#0a1420 100%)',   // azul apagado
+    'linear-gradient(150deg,#3d3210 0%,#1a1608 100%)',   // ámbar apagado
+    'linear-gradient(150deg,#1f3d2e 0%,#0a1a12 100%)',   // verde apagado
+    'linear-gradient(150deg,#3a1f4d 0%,#160a1e 100%)',   // púrpura apagado
+    'linear-gradient(150deg,#2a2a45 0%,#0e0e1c 100%)',   // índigo apagado
+  ];
+  function tintAvatar(nombre){
+    const s = String(nombre || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return AVATAR_TINTS[h % AVATAR_TINTS.length];
+  }
+
   /* Garantiza el NOMBRE COMPLETO: si a la talla de la densidad no cabe,
      baja la letra de a 1px (piso 15px). Se achica, JAMÁS se corta con "…".
      Cachea por texto+densidad para no medir en cada latido. */
@@ -1331,7 +1353,9 @@
     const claseBase = 'u-p estado-' + est;
     if (row.className !== claseBase && !row.classList.contains('saliendo')) row.className = claseBase;
 
-    setTexto($('.p-avatar', row), inicialesDe(p));
+    const avatarEl = $('.p-avatar', row);
+    setTexto(avatarEl, inicialesDe(p));
+    if (avatarEl) avatarEl.style.background = tintAvatar(p.nombre);
     const nom = $('.p-nombre', row);
     setTexto(nom, p.nombre || '—');
     ajustarNombre(nom, p.nombre || '—');
@@ -1466,7 +1490,9 @@
     const card = $('.tvm-card', m);
     card.className = 'tvm-card estado-' + est;   // hereda la paleta del estado
 
-    setTexto($('.p-avatar', card), inicialesDe(p));
+    const avatarModal = $('.p-avatar', card);
+    setTexto(avatarModal, inicialesDe(p));
+    if (avatarModal) avatarModal.style.background = tintAvatar(p.nombre);
     setTexto($('.tvm-nombre', card), p.nombre || '—');
     setTexto($('.badge-txt', card), BADGE_TXT[est] || est);
 
