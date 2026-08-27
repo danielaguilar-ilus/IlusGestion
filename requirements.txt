@@ -38,3 +38,5 @@ twilio>=9.10.0
 pymssql>=2.3.0
 # Cifrado Fernet de la firma canvas del retiro de transporte (ver _tr_firma_cipher, app.py)
 cryptography>=42.0.0
+# Codigos QR del sello de servicio (SVG puro, no requiere Pillow) -- 2026-08-26
+qrcode>=7.4.2

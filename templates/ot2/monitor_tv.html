@@ -4,50 +4,67 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Monitor Servicio Técnico — ILUS Fitness</title>
-  <meta name="theme-color" content="#0a0a0a">
+  <meta name="theme-color" content="#f5f5f6">
   <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
     /* ════════════════════════════════════════════════════════════════
-       MONITOR TV — SERVICIO TÉCNICO ILUS FITNESS
+       MONITOR TV — SERVICIO TÉCNICO ILUS FITNESS  ·  v2 tema claro
        Pantalla de 40" (1920×1080) siempre encendida en oficina.
        Se lee a 3 metros: sin scroll, sin mouse, sin teclado.
 
-       Lenguaje visual: el mismo del formulario público de Retiros
-       (static/retiros_public_request.css) — tokens, header oscuro
-       premium con malla técnica + glow rojo, Bebas Neue + Inter.
+       Rediseño pedido por Daniel (2026-08-26):
+       1. Nombres GRANDES y COMPLETOS — jamás cortados con "…".
+          El nombre va solo en su línea, en Bebas condensada, y un
+          ajustador JS baja la talla (piso 15px) si un nombre larguísimo
+          no cabe: se achica, nunca se recorta.
+       2. Fondo CLARO — el lado claro de Retiros (gradiente #f7f7f8→
+          #f3f4f6, tarjetas blancas, sombras suaves). El negro queda
+          solo en la banda superior, como el .form-head de Retiros.
+       3. El calendario es la ESTRELLA — una sola gran tarjeta blanca
+          con regla horaria única, bandas de hora alternadas, lavado
+          gris de "lo ya transcurrido" y UNA línea roja de AHORA que
+          cruza toda la jornada de arriba a abajo.
        ════════════════════════════════════════════════════════════════ */
     :root{
-      --ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a;--ink-2:#161616;
+      --ilus-red:#e60000;--ilus-red-dk:#a60000;--ink:#0a0a0a;--ink-2:#111827;
       --gray-1:#f3f4f6;--gray-2:#e5e7eb;--gray-3:#9ca3af;--gray-4:#374151;
       --red-500:#dc2626;--red-600:#c81e1e;--red-700:#a60000;
-      --green-500:#16a34a;--green-400:#22c55e;--green-050:#dcfce7;
+      --green-700:#166534;--green-600:#15803d;--green-500:#16a34a;--green-400:#22c55e;--green-050:#dcfce7;
       --amber-500:#f59e0b;
-      --blue-500:#3b82f6;--blue-400:#60a5fa;--blue-300:#93c5fd;
+      --blue-700:#1d4ed8;--blue-600:#2563eb;--blue-500:#3b82f6;--blue-300:#93c5fd;--blue-050:#dbeafe;
+      /* Sombras del sistema claro de Retiros */
+      --shadow-sm: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+      --shadow-md: 0 4px 8px -2px rgba(15,23,42,.08), 0 12px 24px -8px rgba(15,23,42,.10);
       --shadow-lg: 0 1px 0 rgba(255,255,255,.7) inset, 0 2px 4px rgba(15,23,42,.05), 0 24px 60px -14px rgba(15,23,42,.22);
-      --shadow-red: 0 10px 28px -6px rgba(220,38,38,.42);
       --r-sm:10px;--r-md:14px;--r-lg:18px;--r-xl:24px;
       --display:'Bebas Neue','Arial Narrow','Inter',sans-serif;
       --ease-spring: cubic-bezier(.34,1.56,.64,1);
       --ease-out: cubic-bezier(.22,1,.36,1);
 
-      /* Geometría de las franjas — compartida entre header de grupo y filas
-         para que la regla horaria quede EXACTAMENTE alineada con la línea
-         de tiempo de cada persona. */
-      --col-left:380px;   /* identidad: avatar + nombre + cliente          */
-      --col-mid:120px;    /* avance: % grande + barra                      */
-      --col-gap:20px;
-      --row-h:72px;       /* la fija el JS según cuánta gente hay          */
+      /* Líneas y textos del lienzo claro */
+      --line-1:#eef0f3;      /* hairlines entre filas                   */
+      --line-2:#e5e7eb;      /* bordes de tarjeta y grilla horaria      */
+      --txt-2:#374151;--txt-3:#6b7280;--txt-4:#94a3b8;
+
+      /* Geometría de las franjas — compartida entre la regla horaria y
+         las filas para que TODO quede alineado al píxel:
+         columnas = identidad | avance | línea de tiempo. */
+      --col-left:500px;   /* identidad: avatar + NOMBRE COMPLETO grande */
+      --col-mid:130px;    /* avance: % grande + barra                   */
+      --col-gap:18px;
+      --card-px:22px;     /* padding horizontal interno de la tarjeta   */
+      --row-h:72px;       /* la fija el JS según cuánta gente hay       */
     }
 
     *{box-sizing:border-box;margin:0;padding:0}
-    html,body{width:100%;height:100%;overflow:hidden;background:#050505}
+    html,body{width:100%;height:100%;overflow:hidden;background:#dcdee1}
     body{
       font-family:'Inter','Segoe UI',Arial,sans-serif;
       -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
-      color:#fff;
+      color:var(--ink);
       /* Cifras siempre tabulares: el reloj, los %, los contadores no "bailan" */
       font-variant-numeric:tabular-nums;
     }
@@ -63,47 +80,45 @@
       transform-origin:center center;
       display:flex;flex-direction:column;
       overflow:hidden;
-      /* La receta del header oscuro premium de Retiros (.form-head),
-         extendida a todo el lienzo: glow rojo arriba a la derecha +
-         gradiente diagonal negro→casi negro→negro. */
+      /* Lienzo CLARO premium de Retiros: gris cálido casi blanco con una
+         insinuación de luz cenital y un acento rojo apenas perceptible. */
       background:
-        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.14) 0%, transparent 45%),
-        radial-gradient(90% 110% at 0% 100%, rgba(220,38,38,.06) 0%, transparent 55%),
-        linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+        radial-gradient(1200px 520px at 88% -6%, rgba(220,38,38,.05) 0%, transparent 60%),
+        radial-gradient(900px 480px at 6% 2%, rgba(10,10,10,.035) 0%, transparent 55%),
+        linear-gradient(180deg, #f7f7f8 0%, #f3f4f6 100%);
     }
-    /* Malla técnica finísima + vignette — misma textura "engineered" del
-       hero de Retiros. Da profundidad sin ruido. */
-    #stage::before{
-      content:'';position:absolute;inset:0;pointer-events:none;z-index:0;
-      background:
-        linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px) 0 0/ 46px 46px,
-        linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px) 0 0/ 46px 46px;
-      -webkit-mask-image:radial-gradient(ellipse 95% 85% at 50% 30%, #000 30%, transparent 100%);
-              mask-image:radial-gradient(ellipse 95% 85% at 50% 30%, #000 30%, transparent 100%);
-    }
-    /* Glow rojo de esquina (como .form-head::after, escalado a TV) */
-    #stage::after{
-      content:'';position:absolute;right:-160px;top:-160px;width:520px;height:520px;
-      background:radial-gradient(circle, rgba(220,38,38,.20) 0%, transparent 70%);
-      pointer-events:none;z-index:0;
-    }
-    #stage > *{position:relative;z-index:1}
 
     /* ════════════════════════════════════════════════════════════════
-       BARRA SUPERIOR — logo · fecha · KPIs · reloj
+       BARRA SUPERIOR — la única banda oscura (receta .form-head de
+       Retiros): negro con glow rojo + scanlines + filo rojo inferior.
+       El logo ILUS (blanco sobre negro) vive aquí y se lee perfecto.
        ════════════════════════════════════════════════════════════════ */
     .tv-top{
       height:104px;flex:0 0 104px;
       display:grid;grid-template-columns:auto 1fr auto;align-items:center;
       gap:30px;padding:0 30px;
-      border-bottom:1px solid rgba(255,255,255,.07);
-      position:relative;
+      color:#fff;position:relative;overflow:hidden;
+      background:
+        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.16) 0%, transparent 45%),
+        linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+      border-bottom:3px solid var(--ilus-red);
+      box-shadow:0 14px 34px -18px rgba(10,10,10,.45);
     }
-    /* Hairline rojo — firma ILUS bajo la barra (patrón .mini-bar::after) */
+    /* Scanlines sutiles hacia la derecha — textura del .form-head */
+    .tv-top::before{
+      content:'';position:absolute;inset:0;pointer-events:none;
+      background:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px) 0 0/100% 38px;
+      -webkit-mask-image:linear-gradient(90deg,transparent,#000 60%);
+              mask-image:linear-gradient(90deg,transparent,#000 60%);
+    }
+    /* Glow rojo de esquina (como .form-head::after) */
     .tv-top::after{
-      content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;
-      background:linear-gradient(90deg,transparent,rgba(230,0,0,.75),transparent);
+      content:'';position:absolute;right:-90px;top:-120px;width:340px;height:340px;
+      background:radial-gradient(circle, rgba(220,38,38,.24) 0%, transparent 70%);
+      pointer-events:none;
     }
+    .tv-top > *{position:relative;z-index:1}
+
     .tv-brand{display:flex;align-items:center;gap:20px}
     /* Recorte del logo (el PNG trae aire negro alrededor — mismo truco
        overflow:hidden + scale del hero de Retiros) */
@@ -115,7 +130,7 @@
       height:100%;width:auto;object-fit:cover;object-position:center center;
       transform:scale(1.85);transform-origin:left center;display:block;
     }
-    .brand-sep{width:1px;height:52px;background:rgba(255,255,255,.12)}
+    .brand-sep{width:1px;height:52px;background:rgba(255,255,255,.14)}
     .brand-txt h1{
       font-family:var(--display);font-weight:400;font-size:30px;line-height:.95;
       letter-spacing:.03em;color:#fff;
@@ -159,16 +174,10 @@
     .kpi.k-ejec b{color:#4ade80;text-shadow:0 0 22px rgba(34,197,94,.45)}
     .kpi.k-comp b{color:var(--blue-300)}
     .kpi.k-pend b{color:#e5e7eb}
-    .kpi.k-atra b{color:#f87171}
-    /* Cuando hay atrasadas > 0, el número respira en rojo — llama la vista */
-    .kpi.k-atra.alerta b{
-      color:#fca5a5;text-shadow:0 0 20px rgba(220,38,38,.7);
-      animation:kpiAlerta 2.6s ease-in-out infinite;
-    }
-    @keyframes kpiAlerta{
-      0%,100%{text-shadow:0 0 12px rgba(220,38,38,.45)}
-      50%{text-shadow:0 0 26px rgba(220,38,38,.9)}
-    }
+    .kpi.k-atra b{color:#fbbf24}
+    /* Con atrasadas > 0 el número solo gana un leve realce — SIN pulso.
+       Daniel (2026-08-26): "No tan expresivo en malas noticias". */
+    .kpi.k-atra.alerta b{color:#fcd34d;text-shadow:0 0 14px rgba(245,158,11,.35)}
     @keyframes kpiPop{0%{transform:scale(1.28)}100%{transform:scale(1)}}
     .kpi b.pop{animation:kpiPop .5s var(--ease-spring)}
 
@@ -194,197 +203,260 @@
     @keyframes liveDot{0%,100%{opacity:1}50%{opacity:.45}}
 
     /* ════════════════════════════════════════════════════════════════
-       CUERPO — grupos INTERNOS / EXTERNOS con franjas por persona
+       CUERPO — LA TARJETA-CALENDARIO (la estrella de la pantalla)
+       Una sola gran hoja blanca con: regla horaria única arriba,
+       bandas de hora alternadas, lavado de horas ya transcurridas,
+       divisores de grupo y UNA línea roja de AHORA que cruza todo.
        ════════════════════════════════════════════════════════════════ */
     .tv-main{
       flex:1;min-height:0;
-      display:flex;flex-direction:column;justify-content:center;gap:16px;
-      padding:16px 30px 12px;
+      display:flex;flex-direction:column;justify-content:center;
+      padding:14px 26px 12px;
       transition:opacity .28s var(--ease-out), transform .28s var(--ease-out);
     }
     /* Fundido para la rotación de páginas (cuando hay más de 14 personas) */
     .tv-main.page-fade{opacity:0;transform:translateY(10px)}
 
-    .grupo{
-      background:rgba(255,255,255,.028);
-      border:1px solid rgba(255,255,255,.075);
+    .cal-card{
+      background:#fff;
+      border:1.5px solid var(--line-2);
       border-radius:var(--r-lg);
-      padding:12px 22px 12px;
-      box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px -18px rgba(0,0,0,.55);
+      box-shadow:var(--shadow-lg);
+      overflow:hidden;position:relative;
+    }
+    /* Filo rojo superior — firma ILUS de la tarjeta protagonista */
+    .cal-card::before{
+      content:'';position:absolute;left:0;right:0;top:0;height:3px;z-index:9;
+      background:linear-gradient(90deg,var(--ilus-red),#ff4d4d 40%,var(--ilus-red-dk));
     }
 
-    /* ── Cabecera de grupo: título + contador + REGLA HORARIA ── */
-    .grupo-head{
+    /* ── Cabecera de la tarjeta: rótulos de columnas + REGLA HORARIA ──
+         Misma grilla de columnas que las filas → alineación al píxel. */
+    .cal-head{
+      height:46px;
       display:grid;grid-template-columns:var(--col-left) var(--col-mid) 1fr;
       column-gap:var(--col-gap);align-items:end;
-      height:42px;margin-bottom:6px;
+      padding:0 var(--card-px) 7px;
+      background:linear-gradient(180deg,#fbfbfc 0%,#f5f6f7 100%);
+      border-bottom:1.5px solid var(--line-2);
+      position:relative;z-index:2;
     }
-    .gh-title{display:flex;align-items:center;gap:14px;min-width:0}
-    .gh-bar{
-      width:6px;height:30px;border-radius:4px;flex-shrink:0;
-      background:linear-gradient(180deg,var(--ilus-red),var(--ilus-red-dk));
-      box-shadow:0 0 14px rgba(230,0,0,.5);
+    .ch-lbl{
+      font-size:14px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+      color:var(--txt-4);
     }
-    .gh-title h2{
-      font-family:var(--display);font-weight:400;font-size:34px;line-height:.9;
-      letter-spacing:.04em;color:#fff;text-transform:uppercase;
-      white-space:nowrap;
-    }
-    .gh-count{
-      font-size:14px;font-weight:800;color:var(--gray-3);
-      background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
-      border-radius:50px;padding:4px 12px;letter-spacing:.05em;white-space:nowrap;
-    }
-    .gh-mid{
-      font-size:14px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
-      color:rgba(156,163,175,.55);text-align:center;padding-bottom:4px;
-    }
-    .gh-ruler{position:relative;height:100%}
+    .ch-ruler{position:relative;height:100%}
     .rt-lbl{
-      position:absolute;bottom:2px;transform:translateX(-50%);
-      font-size:14px;font-weight:600;color:var(--gray-3);white-space:nowrap;
+      position:absolute;bottom:5px;transform:translateX(-50%);
+      font-size:15px;font-weight:700;color:#64748b;white-space:nowrap;
     }
     .rt-lbl.primero{transform:none}
     .rt-lbl.ultimo{transform:translateX(-100%)}
-    /* Chip rojo con la hora actual, montado sobre la regla */
+    /* Horas después del fin de jornada (sobre hora) — en rojo */
+    .rt-lbl.rt-ot{color:var(--red-500)}
+    /* Chip rojo con la hora actual, montado sobre la regla — cabeza de
+       la línea de AHORA */
     .now-chip{
-      position:absolute;bottom:0;transform:translateX(-50%);z-index:7;
+      position:absolute;bottom:3px;transform:translateX(-50%);z-index:8;
+      display:inline-flex;align-items:center;gap:7px;
       background:linear-gradient(160deg,#ff2d2d 0%,var(--ilus-red) 60%,#b30000 100%);
-      color:#fff;font-size:14px;font-weight:900;letter-spacing:.03em;
-      padding:3px 10px;border-radius:7px;white-space:nowrap;
-      box-shadow:0 6px 16px -4px rgba(230,0,0,.6), 0 1px 0 rgba(255,255,255,.25) inset;
+      color:#fff;font-size:15px;font-weight:900;letter-spacing:.03em;
+      padding:4px 12px;border-radius:8px;white-space:nowrap;
+      box-shadow:0 8px 20px -4px rgba(230,0,0,.55), 0 1px 0 rgba(255,255,255,.3) inset;
+    }
+    .now-chip::before{
+      content:'';width:8px;height:8px;border-radius:50%;background:#fff;flex-shrink:0;
+      box-shadow:0 0 8px rgba(255,255,255,.9);
+      animation:liveDot 2.2s ease-in-out infinite;
     }
 
-    /* ── Zona de filas: overlays de grilla + línea de AHORA ── */
-    .grupo-rows{position:relative}
-    .tl-under,.tl-nowline{
+    /* ── Cuerpo de la tarjeta: overlays + filas ── */
+    .cal-body{position:relative;padding:4px 0 10px}
+    /* Los tres overlays comparten el rectángulo EXACTO de la columna de
+       línea de tiempo (misma cuenta que las columnas de la grilla). */
+    .cal-under,.cal-past,.cal-nowline{
       position:absolute;top:0;bottom:0;
-      left:calc(var(--col-left) + var(--col-mid) + (var(--col-gap) * 2));
-      right:0;pointer-events:none;
+      left:calc(var(--card-px) + var(--col-left) + var(--col-mid) + (var(--col-gap) * 2));
+      right:var(--card-px);pointer-events:none;
     }
-    .tl-under{z-index:0}
-    .tl-nowline{z-index:6}
-    .tl-hline{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.055)}
+    .cal-under{z-index:0}
+    .cal-past{z-index:0}
+    .cal-nowline{z-index:6}
+    /* Bandas de hora alternadas — dan al calendario textura de agenda */
+    .cu-band{position:absolute;top:0;bottom:0;background:rgba(15,23,42,.03)}
+    .cu-hline{position:absolute;top:0;bottom:0;width:1px;background:var(--line-2)}
     /* Zona "sobre hora" (después del fin de jornada): rayado rojo tenue */
-    .tl-ot{
+    .cu-ot{
       position:absolute;top:0;bottom:0;
-      border-left:1px dashed rgba(230,0,0,.4);
-      background:repeating-linear-gradient(135deg, rgba(220,38,38,.055) 0 9px, transparent 9px 18px);
+      border-left:1.5px dashed rgba(220,38,38,.5);
+      background:repeating-linear-gradient(135deg, rgba(220,38,38,.06) 0 10px, transparent 10px 20px);
     }
+    /* Lavado gris de lo YA transcurrido — su borde derecho ES el ahora.
+       Va bajo las filas: atenúa el lienzo, nunca los bloques de OT. */
+    .cal-past{
+      width:0;
+      background:linear-gradient(90deg, rgba(15,23,42,.028) 0%, rgba(15,23,42,.055) 100%);
+      border-right:1px solid rgba(220,38,38,.15);
+      transition:width 1s linear;
+    }
+    /* La línea de AHORA — protagonista: cruza TODA la tarjeta */
     .nl-line{
-      position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;
-      background:linear-gradient(180deg,var(--ilus-red) 0%, rgba(230,0,0,.28) 100%);
-      box-shadow:0 0 12px rgba(230,0,0,.75);
+      position:absolute;top:0;bottom:0;width:3px;margin-left:-1.5px;
+      background:linear-gradient(180deg,#ff1a1a 0%, var(--red-500) 55%, rgba(220,38,38,.35) 100%);
+      box-shadow:0 0 0 1.5px rgba(255,255,255,.65), 0 2px 16px rgba(220,38,38,.5);
+    }
+    /* Puntita triangular bajo el chip de hora */
+    .nl-line::before{
+      content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);
+      border:7px solid transparent;border-top:8px solid var(--ilus-red);
     }
 
-    .rows-inner{position:relative;z-index:1}
-    .grupo-empty{
-      height:var(--row-h);display:flex;align-items:center;gap:12px;
-      color:var(--gray-3);font-size:16px;font-weight:600;font-style:italic;
+    .cal-rows{position:relative;z-index:1}
+
+    /* ── Divisor de grupo (Internos / Externos) dentro del calendario ── */
+    .u-gh{
+      height:44px;display:flex;align-items:center;gap:14px;
+      padding:0 var(--card-px);position:relative;
+      background:linear-gradient(90deg,rgba(246,247,248,.94) 0%, rgba(251,251,252,.86) 60%, rgba(251,251,252,.55) 100%);
+      border-top:1px solid var(--line-1);border-bottom:1px solid var(--line-1);
+      transition:opacity .3s var(--ease-out);
     }
-    .grupo-empty::before{
+    .u-gh::before{
+      content:'';position:absolute;left:0;top:8px;bottom:8px;width:5px;border-radius:0 4px 4px 0;
+      background:linear-gradient(180deg,var(--ilus-red),var(--ilus-red-dk));
+      box-shadow:0 4px 10px -2px rgba(230,0,0,.4);
+    }
+    .u-gh h2{
+      font-family:var(--display);font-weight:400;font-size:27px;line-height:.9;
+      letter-spacing:.05em;color:var(--ink);text-transform:uppercase;white-space:nowrap;
+    }
+    .u-gh .gh-count{
+      font-size:14px;font-weight:800;color:var(--txt-3);
+      background:#fff;border:1px solid var(--line-2);
+      border-radius:50px;padding:3px 12px;letter-spacing:.05em;white-space:nowrap;
+      box-shadow:var(--shadow-sm);
+    }
+
+    /* Grupo sin gente: nota tranquila */
+    .u-empty{
+      height:var(--row-h);display:flex;align-items:center;gap:12px;
+      padding:0 var(--card-px);
+      color:var(--txt-3);font-size:16px;font-weight:600;font-style:italic;
+      transition:opacity .3s var(--ease-out);
+    }
+    .u-empty::before{
       content:'';width:10px;height:10px;border-radius:50%;
-      background:rgba(156,163,175,.4);flex-shrink:0;
+      background:#cbd5e1;flex-shrink:0;
     }
 
     /* ════════════════════════════════════════════════════════════════
        FRANJA POR PERSONA
+       Identidad rediseñada: el NOMBRE va SOLO en su línea, en Bebas
+       condensada — grande, entero, sin puntos suspensivos.
        ════════════════════════════════════════════════════════════════ */
-    .p-row{
+    .u-p{
       display:grid;grid-template-columns:var(--col-left) var(--col-mid) 1fr;
       column-gap:var(--col-gap);align-items:center;
       height:var(--row-h);position:relative;
-      padding-left:14px;
+      padding:0 var(--card-px);
       transition:opacity .3s var(--ease-out);
     }
-    .p-row + .p-row, .p-row + .grupo-empty, .grupo-empty + .p-row{
-      border-top:1px solid rgba(255,255,255,.05);
-    }
-    /* Barra de acento por estado, al filo izquierdo de la franja */
-    .p-row::before{
-      content:'';position:absolute;left:0;top:18%;bottom:18%;width:4px;border-radius:3px;
-      background:rgba(255,255,255,.1);
+    .u-p + .u-p, .u-p + .u-empty, .u-empty + .u-p{border-top:1px solid var(--line-1)}
+    /* Barra de acento por estado, al filo izquierdo de la tarjeta */
+    .u-p::before{
+      content:'';position:absolute;left:0;top:16%;bottom:16%;width:5px;border-radius:0 4px 4px 0;
+      background:#d1d5db;
       transition:background .4s;
     }
-    .p-row.saliendo{opacity:0}
+    .saliendo{opacity:0}
 
     /* Entrada escalonada solo al encender la pantalla (no en cada refresh) */
-    body.boot .p-row{animation:rowIn .55s var(--ease-out) both;animation-delay:calc(var(--i,0)*45ms)}
+    body.boot .u-p, body.boot .u-gh{animation:rowIn .55s var(--ease-out) both;animation-delay:calc(var(--i,0)*45ms)}
     @keyframes rowIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 
     /* ── Columna identidad ── */
     .p-id{display:flex;align-items:center;gap:14px;min-width:0}
     .p-avatar{
-      width:var(--avatar,50px);height:var(--avatar,50px);border-radius:50%;flex-shrink:0;
+      width:var(--avatar,52px);height:var(--avatar,52px);border-radius:14px;flex-shrink:0;
       display:flex;align-items:center;justify-content:center;
-      font-family:var(--display);font-weight:400;font-size:calc(var(--avatar,50px)*.42);
+      font-family:var(--display);font-weight:400;font-size:calc(var(--avatar,52px)*.44);
       letter-spacing:.04em;color:#fff;
-      background:linear-gradient(150deg,#1f1f22 0%,#101012 100%);
-      box-shadow:0 0 0 2px rgba(156,163,175,.35), 0 6px 14px -4px rgba(0,0,0,.6);
+      background:linear-gradient(150deg,#1b1b1e 0%,#0a0a0a 100%);
+      box-shadow:0 0 0 2.5px #cbd5e1, 0 8px 16px -6px rgba(15,23,42,.35);
       transition:box-shadow .4s;
     }
     .p-idtxt{min-width:0;flex:1}
-    .p-line1{display:flex;align-items:center;gap:12px;min-width:0}
+    /* EL NOMBRE — protagonista de la fila. Bebas condensada, negro puro,
+       una línea completa para él solo. El JS garantiza que quepa ENTERO
+       (baja la talla, jamás recorta). Sin ellipsis a propósito. */
     .p-nombre{
-      font-size:var(--fs-nombre,26px);font-weight:800;letter-spacing:-.015em;color:#fff;
-      line-height:1.12;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      display:block;
+      font-family:var(--display);font-weight:400;
+      font-size:var(--fs-nombre,34px);line-height:.95;
+      letter-spacing:.015em;color:var(--ink);
+      white-space:nowrap;overflow:hidden;
+    }
+    .p-line2{
+      margin-top:3px;display:flex;align-items:center;gap:9px;min-width:0;
     }
     .p-badge{
       flex-shrink:0;display:inline-flex;align-items:center;gap:7px;
-      font-size:var(--fs-badge,14px);font-weight:800;letter-spacing:.07em;text-transform:uppercase;
-      padding:3px 11px;border-radius:50px;border:1px solid transparent;white-space:nowrap;
+      font-size:var(--fs-badge,14px);font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+      padding:2px 10px;border-radius:50px;border:1.5px solid transparent;white-space:nowrap;
     }
     .p-badge i{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-    .p-line2{
-      margin-top:2px;font-size:var(--fs-sub,15px);font-weight:600;color:var(--gray-3);
+    .p-sub{
+      min-width:0;font-size:var(--fs-sub,15px);font-weight:600;color:var(--txt-3);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;
     }
-    .p-line2 .p-cliente{color:#d1d5db;font-weight:700}
+    .p-sub .p-cliente{color:var(--gray-4);font-weight:800}
 
     /* ── Columna avance ── */
-    .p-avance{min-width:0}
+    .p-av{min-width:0}
     .av-top{display:flex;align-items:baseline;gap:8px;justify-content:flex-start}
     .av-pct{
-      font-family:var(--display);font-weight:400;font-size:var(--fs-pct,38px);line-height:.9;
-      color:#e5e7eb;letter-spacing:.01em;
+      font-family:var(--display);font-weight:400;font-size:var(--fs-pct,40px);line-height:.9;
+      color:var(--txt-2);letter-spacing:.01em;
     }
     .av-elapsed{
-      font-size:14px;font-weight:800;color:#86efac;letter-spacing:.02em;white-space:nowrap;
+      font-size:14px;font-weight:800;color:var(--green-600);letter-spacing:.02em;white-space:nowrap;
+      background:var(--green-050);border-radius:20px;padding:2px 9px;
     }
+    .av-elapsed:empty{display:none}
     .av-bar{
-      margin-top:6px;height:6px;border-radius:50px;overflow:hidden;
-      background:rgba(255,255,255,.09);
-      box-shadow:inset 0 1px 2px rgba(0,0,0,.4);
+      margin-top:6px;height:7px;border-radius:50px;overflow:hidden;
+      background:var(--gray-1);
+      box-shadow:inset 0 1px 2px rgba(15,23,42,.12);
     }
     .av-bar i{
       display:block;height:100%;width:0;border-radius:50px;
-      background:linear-gradient(90deg,#6b7280,#9ca3af);
+      background:linear-gradient(90deg,#9ca3af,#6b7280);
       transition:width .7s var(--ease-out), background .4s;
     }
-    .av-tareas{margin-top:4px;font-size:14px;font-weight:600;color:var(--gray-3);white-space:nowrap}
+    .av-tareas{margin-top:4px;font-size:14px;font-weight:700;color:var(--txt-3);white-space:nowrap}
 
     /* ── Columna línea de tiempo ── */
     .p-tl{position:relative;height:100%;min-width:0}
     .tl-vacio{
       position:absolute;left:14px;top:50%;transform:translateY(-50%);
-      font-size:14px;font-weight:600;font-style:italic;color:rgba(156,163,175,.55);
+      font-size:14px;font-weight:600;font-style:italic;color:var(--txt-4);
       white-space:nowrap;
     }
     .tl-bloque{
-      position:absolute;top:15%;bottom:15%;border-radius:9px;
+      position:absolute;top:11%;bottom:11%;border-radius:10px;
       display:flex;flex-direction:column;justify-content:center;gap:1px;
       padding:0 12px;overflow:hidden;
-      border:1px solid transparent;
+      border:1.5px solid transparent;
       transition:left .6s var(--ease-out), width .6s var(--ease-out);
     }
     .b-cliente{
-      font-size:var(--fs-bloque,15px);font-weight:800;letter-spacing:-.01em;color:#fff;
+      font-size:var(--fs-bloque,16px);font-weight:800;letter-spacing:-.01em;color:#fff;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2;
     }
-    .b-horas{font-size:14px;font-weight:600;opacity:.75;color:#fff;white-space:nowrap;line-height:1.1}
+    .b-horas{font-size:14px;font-weight:700;color:rgba(255,255,255,.85);white-space:nowrap;line-height:1.1}
     .b-prog{
       position:absolute;left:0;bottom:0;height:3px;width:0;
-      background:rgba(255,255,255,.6);border-radius:0 3px 3px 0;
+      background:rgba(255,255,255,.75);border-radius:0 3px 3px 0;
       transition:width .7s var(--ease-out);
     }
     /* Bloques angostos: primero pierden las horas, luego el texto */
@@ -392,188 +464,182 @@
     .tl-bloque.b-tiny .b-cliente,.tl-bloque.b-tiny .b-horas{display:none}
     .tl-bloque.b-tiny{padding:0}
 
-    /* ════════ ESTADOS — semánticos, separados del rojo de marca ════════ */
+    /* ════════ ESTADOS — recalibrados para fondo claro (contraste TV) ════════ */
 
-    /* EJECUTANDO — verde. Es lo ÚNICO que late en la pantalla. */
-    .estado-ejecutando::before{background:linear-gradient(180deg,#22c55e,#15803d)}
+    /* EJECUTANDO — verde sólido oscuro. Es lo ÚNICO que late. */
+    .estado-ejecutando::before{background:linear-gradient(180deg,var(--green-400),var(--green-600))}
     .estado-ejecutando .p-avatar{
-      box-shadow:0 0 0 2px var(--green-400), 0 0 18px rgba(34,197,94,.4);
+      box-shadow:0 0 0 3px var(--green-500), 0 0 20px rgba(34,197,94,.45);
       animation:aliento 2.8s ease-in-out infinite;
     }
     .estado-ejecutando .p-badge{
-      background:rgba(22,163,74,.15);border-color:rgba(34,197,94,.5);color:#86efac;
+      background:var(--green-050);border-color:#86efac;color:var(--green-700);
     }
     .estado-ejecutando .p-badge i{
-      background:var(--green-400);position:relative;
+      background:var(--green-500);
       box-shadow:0 0 8px rgba(34,197,94,.9);
       animation:liveDot 2.2s ease-in-out infinite;
     }
-    .estado-ejecutando .av-pct{color:#4ade80;text-shadow:0 0 16px rgba(34,197,94,.35)}
-    .estado-ejecutando .av-bar i{background:linear-gradient(90deg,#16a34a,#4ade80)}
+    .estado-ejecutando .av-pct{color:var(--green-600)}
+    .estado-ejecutando .av-bar i{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
     @keyframes aliento{
-      0%,100%{box-shadow:0 0 0 2px var(--green-400), 0 0 10px rgba(34,197,94,.28)}
-      50%{box-shadow:0 0 0 2px var(--green-400), 0 0 24px rgba(34,197,94,.55)}
+      0%,100%{box-shadow:0 0 0 3px var(--green-500), 0 0 10px rgba(34,197,94,.3)}
+      50%{box-shadow:0 0 0 3px var(--green-500), 0 0 26px rgba(34,197,94,.6)}
     }
 
     /* DISPONIBLE — gris tranquilo. Es información, no un reproche. */
-    .estado-disponible::before{background:rgba(156,163,175,.35)}
+    .estado-disponible::before{background:#cbd5e1}
     .estado-disponible .p-badge{
-      background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16);color:#d1d5db;
+      background:var(--gray-1);border-color:#d1d5db;color:#4b5563;
     }
     .estado-disponible .p-badge i{background:var(--gray-3)}
-    .estado-disponible .av-pct{color:rgba(156,163,175,.6)}
-    .estado-disponible .p-nombre{color:#e5e7eb}
+    .estado-disponible .av-pct{color:var(--txt-4)}
 
-    /* ATRASADO — rojo/ámbar, exige la mirada */
-    .estado-atrasado::before{
-      background:linear-gradient(180deg,var(--amber-500),var(--red-500));
-      animation:acentoAtraso 2.2s ease-in-out infinite;
-    }
-    .estado-atrasado .p-avatar{box-shadow:0 0 0 2px var(--red-500), 0 0 16px rgba(220,38,38,.45)}
+    /* ATRASADO — ámbar SOBRIO. Daniel (2026-08-26): "que diga atrasado
+       pero está bien" — el atraso casi nunca es culpa del técnico
+       (tráfico, cliente que no abre, repuesto que no llegó). Se informa
+       con claridad, sin pulso ni alarma: se nota si uno lo busca,
+       no grita desde la pared. Mismo criterio que "disponible". */
+    .estado-atrasado::before{background:var(--amber-500)}
+    .estado-atrasado .p-avatar{box-shadow:0 0 0 2.5px #fbbf24, 0 8px 16px -6px rgba(15,23,42,.35)}
     .estado-atrasado .p-badge{
-      background:rgba(220,38,38,.18);border-color:rgba(245,158,11,.6);color:#fecaca;
+      background:#fef3c7;border-color:#fcd34d;color:#92400e;
     }
-    .estado-atrasado .p-badge i{
-      background:var(--amber-500);box-shadow:0 0 8px rgba(245,158,11,.9);
-      animation:liveDot 1.6s ease-in-out infinite;
-    }
-    .estado-atrasado .av-pct{color:#f87171}
-    .estado-atrasado .av-bar i{background:linear-gradient(90deg,var(--red-500),var(--amber-500))}
-    @keyframes acentoAtraso{0%,100%{opacity:.7}50%{opacity:1}}
+    .estado-atrasado .p-badge i{background:var(--amber-500)}
+    .estado-atrasado .av-pct{color:#b45309}
+    .estado-atrasado .av-bar i{background:linear-gradient(90deg,var(--amber-500),#fbbf24)}
 
-    /* TERMINADO — azul apagado, jornada cumplida */
-    .estado-terminado::before{background:rgba(96,165,250,.5)}
-    .estado-terminado .p-avatar{box-shadow:0 0 0 2px rgba(96,165,250,.55), 0 6px 14px -4px rgba(0,0,0,.6)}
+    /* TERMINADO — azul sereno, jornada cumplida */
+    .estado-terminado::before{background:var(--blue-300)}
+    .estado-terminado .p-avatar{box-shadow:0 0 0 2.5px var(--blue-300), 0 8px 16px -6px rgba(15,23,42,.35)}
     .estado-terminado .p-badge{
-      background:rgba(59,130,246,.13);border-color:rgba(96,165,250,.4);color:var(--blue-300);
+      background:var(--blue-050);border-color:var(--blue-300);color:#1e40af;
     }
-    .estado-terminado .p-badge i{background:var(--blue-400)}
-    .estado-terminado .av-pct{color:var(--blue-300)}
-    .estado-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),var(--blue-400))}
+    .estado-terminado .p-badge i{background:var(--blue-500)}
+    .estado-terminado .av-pct{color:var(--blue-600)}
+    .estado-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),#60a5fa)}
 
     /* ── Bloques de OT en la línea de tiempo ── */
     .tl-bloque.b-ejecutando{
-      background:linear-gradient(160deg,#17a94f 0%,#0d6e35 100%);
-      border-color:rgba(74,222,128,.55);
-      box-shadow:0 6px 16px -4px rgba(22,163,74,.45), 0 1px 0 rgba(255,255,255,.22) inset;
+      background:linear-gradient(160deg,#16a34a 0%,#0f7a37 100%);
+      border-color:#0d6e31;
+      box-shadow:0 8px 20px -6px rgba(22,163,74,.55), 0 1px 0 rgba(255,255,255,.25) inset;
       animation:bloqueVivo 2.8s ease-in-out infinite;
       z-index:2;
     }
     @keyframes bloqueVivo{
-      0%,100%{box-shadow:0 6px 14px -4px rgba(22,163,74,.4), 0 1px 0 rgba(255,255,255,.22) inset}
-      50%{box-shadow:0 6px 24px -2px rgba(34,197,94,.7), 0 1px 0 rgba(255,255,255,.22) inset}
+      0%,100%{box-shadow:0 6px 16px -6px rgba(22,163,74,.45), 0 1px 0 rgba(255,255,255,.25) inset}
+      50%{box-shadow:0 8px 26px -4px rgba(34,197,94,.65), 0 1px 0 rgba(255,255,255,.25) inset}
     }
     .tl-bloque.b-pendiente{
-      background:rgba(255,255,255,.05);
-      border:1.5px dashed rgba(255,255,255,.28);
+      background:#f8fafc;
+      border:1.5px dashed #94a3b8;
     }
-    .tl-bloque.b-pendiente .b-cliente{color:#d1d5db;font-weight:700}
-    .tl-bloque.b-pendiente .b-horas{color:var(--gray-3)}
+    .tl-bloque.b-pendiente .b-cliente{color:#334155;font-weight:800}
+    .tl-bloque.b-pendiente .b-horas{color:#64748b}
     .tl-bloque.b-terminado{
-      background:rgba(59,130,246,.14);
-      border-color:rgba(96,165,250,.4);
+      background:#eff6ff;
+      border-color:#bfdbfe;
     }
-    .tl-bloque.b-terminado .b-cliente{color:var(--blue-300)}
+    .tl-bloque.b-terminado .b-cliente{color:var(--blue-700)}
     .tl-bloque.b-terminado .b-cliente::before{content:'✓ ';font-weight:900}
-    .tl-bloque.b-terminado .b-horas{color:rgba(147,197,253,.7)}
+    .tl-bloque.b-terminado .b-horas{color:rgba(37,99,235,.75)}
+    /* Bloque atrasado: ámbar contenido, sin rayado ni pulso (ver nota
+       del estado). El color avisa; la insignia de la fila lo nombra. */
     .tl-bloque.b-atrasado{
-      background:repeating-linear-gradient(135deg,#b91c1c 0 10px,#9c1616 10px 20px);
-      border:1.5px solid rgba(245,158,11,.75);
-      box-shadow:0 6px 18px -4px rgba(220,38,38,.55);
-      animation:bloqueAtraso 2.2s ease-in-out infinite;
+      background:#fef3c7;
+      border:1.5px solid var(--amber-500);
       z-index:2;
     }
-    @keyframes bloqueAtraso{
-      0%,100%{box-shadow:0 6px 14px -4px rgba(220,38,38,.45)}
-      50%{box-shadow:0 6px 24px -2px rgba(245,158,11,.6)}
-    }
+    .tl-bloque.b-atrasado .b-cliente{color:#92400e}
+    .tl-bloque.b-atrasado .b-horas{color:#b45309}
+    .tl-bloque.b-atrasado .b-prog{background:rgba(180,83,9,.55)}
 
     /* ════════════════════════════════════════════════════════════════
        FRANJA INFERIOR — próximos días + meta (página / conexión / hora)
+       Tarjeta blanca hermana del calendario.
        ════════════════════════════════════════════════════════════════ */
     .tv-bottom{
-      flex:0 0 96px;margin:0 30px 18px;
-      background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));
-      border:1px solid rgba(255,255,255,.075);
+      flex:0 0 96px;margin:0 26px 16px;
+      background:#fff;
+      border:1.5px solid var(--line-2);
       border-radius:var(--r-lg);
       display:flex;align-items:stretch;overflow:hidden;position:relative;
-      box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px -18px rgba(0,0,0,.55);
-    }
-    .tv-bottom::before{
-      content:'';position:absolute;left:0;right:0;top:0;height:2px;
-      background:linear-gradient(90deg,transparent,rgba(220,38,38,.6),transparent);
+      box-shadow:var(--shadow-md);
     }
     .tvb-label{
-      flex:0 0 156px;display:flex;flex-direction:column;justify-content:center;
+      flex:0 0 168px;display:flex;flex-direction:column;justify-content:center;
       padding-left:26px;position:relative;
+      background:linear-gradient(90deg,#fafafa,#fff);
     }
     .tvb-label::before{
-      content:'';position:absolute;left:0;top:22%;bottom:22%;width:5px;border-radius:0 4px 4px 0;
+      content:'';position:absolute;left:0;top:20%;bottom:20%;width:5px;border-radius:0 4px 4px 0;
       background:linear-gradient(180deg,var(--ilus-red),var(--ilus-red-dk));
-      box-shadow:0 0 12px rgba(230,0,0,.5);
+      box-shadow:0 4px 12px -2px rgba(230,0,0,.4);
     }
     .tvb-label b{
       font-family:var(--display);font-weight:400;font-size:26px;line-height:.95;
-      letter-spacing:.05em;color:#fff;
+      letter-spacing:.05em;color:var(--ink);
     }
-    .tvb-label small{font-size:14px;font-weight:700;color:var(--gray-3);letter-spacing:.06em;text-transform:uppercase;margin-top:4px}
+    .tvb-label small{font-size:14px;font-weight:700;color:var(--txt-3);letter-spacing:.06em;text-transform:uppercase;margin-top:4px}
     .tvb-days{flex:1;display:flex;align-items:stretch;min-width:0}
     .tvb-day{
       flex:1;display:flex;align-items:center;gap:18px;padding:0 24px;
-      border-left:1px solid rgba(255,255,255,.07);min-width:0;
+      border-left:1px solid var(--line-1);min-width:0;
     }
     .tvb-num-box{text-align:center;flex-shrink:0}
     .tvb-num{
       font-family:var(--display);font-weight:400;font-size:48px;line-height:.85;display:block;
-      /* Número con degradado rojo vivo — receta .stat-num de Retiros */
+      /* Número con degradado rojo vivo — receta .stat-num de Retiros
+         (nació para fondo claro, aquí luce como corresponde) */
       background:linear-gradient(180deg,#ff3838 0%,var(--ilus-red) 70%,#b30000 100%);
       -webkit-background-clip:text;background-clip:text;
       -webkit-text-fill-color:transparent;color:var(--ilus-red);
-      filter:drop-shadow(0 4px 14px rgba(230,0,0,.35));
+      filter:drop-shadow(0 4px 14px rgba(230,0,0,.25));
     }
     .tvb-num-box small{
       display:block;font-size:14px;font-weight:800;letter-spacing:.12em;
-      color:var(--gray-3);text-transform:uppercase;margin-top:2px;
+      color:var(--txt-4);text-transform:uppercase;margin-top:2px;
     }
     .tvb-info{min-width:0}
     .tvb-dia{
-      font-family:var(--display);font-weight:400;font-size:27px;line-height:.95;color:#fff;
+      font-family:var(--display);font-weight:400;font-size:27px;line-height:.95;color:var(--ink);
       letter-spacing:.03em;text-transform:uppercase;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
     .tvb-det{
-      font-size:15px;font-weight:600;color:var(--gray-3);margin-top:4px;
+      font-size:15px;font-weight:600;color:var(--txt-3);margin-top:4px;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
     .tvb-days .tvb-vacio{
       flex:1;display:flex;align-items:center;justify-content:center;
-      color:var(--gray-3);font-size:16px;font-weight:600;font-style:italic;
-      border-left:1px solid rgba(255,255,255,.07);
+      color:var(--txt-3);font-size:16px;font-weight:600;font-style:italic;
+      border-left:1px solid var(--line-1);
     }
     .tvb-meta{
-      flex:0 0 252px;border-left:1px solid rgba(255,255,255,.07);
+      flex:0 0 252px;border-left:1px solid var(--line-1);
       display:flex;flex-direction:column;justify-content:center;align-items:flex-end;
       gap:7px;padding-right:26px;
     }
     .page-dots{display:none;align-items:center;gap:8px}
     .page-dots.visible{display:inline-flex}
     .page-dots i{
-      width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.18);
+      width:10px;height:10px;border-radius:50%;background:#d1d5db;
       transition:background .3s, box-shadow .3s;
     }
-    .page-dots i.on{background:var(--ilus-red);box-shadow:0 0 10px rgba(230,0,0,.7)}
-    .page-dots span{font-size:14px;font-weight:700;color:var(--gray-3);margin-left:4px;letter-spacing:.04em}
-    .meta-updated{font-size:14px;font-weight:600;color:var(--gray-3);letter-spacing:.02em}
-    .meta-updated b{color:#d1d5db;font-weight:800}
+    .page-dots i.on{background:var(--ilus-red);box-shadow:0 0 10px rgba(230,0,0,.45)}
+    .page-dots span{font-size:14px;font-weight:700;color:var(--txt-3);margin-left:4px;letter-spacing:.04em}
+    .meta-updated{font-size:14px;font-weight:600;color:var(--txt-3);letter-spacing:.02em}
+    .meta-updated b{color:var(--ink-2);font-weight:800}
 
     /* ── Indicador discreto de conexión (aparece solo si algo falla) ── */
     .offline-pill{
-      position:absolute;right:34px;bottom:126px;z-index:50;
+      position:absolute;right:34px;bottom:124px;z-index:50;
       display:flex;align-items:center;gap:10px;
-      background:rgba(20,14,4,.92);border:1px solid rgba(245,158,11,.55);
-      color:#fcd34d;font-size:15px;font-weight:700;letter-spacing:.02em;
+      background:rgba(255,255,255,.97);border:1.5px solid rgba(245,158,11,.6);
+      color:#92400e;font-size:15px;font-weight:800;letter-spacing:.02em;
       padding:10px 18px;border-radius:50px;
-      box-shadow:0 14px 30px -8px rgba(0,0,0,.7);
+      box-shadow:var(--shadow-md);
       opacity:0;transform:translateY(8px);pointer-events:none;
       transition:opacity .4s var(--ease-out), transform .4s var(--ease-out);
     }
@@ -583,16 +649,139 @@
       box-shadow:0 0 10px rgba(245,158,11,.9);flex-shrink:0;
       animation:liveDot 1.4s ease-in-out infinite;
     }
-    .offline-pill.ok{border-color:rgba(34,197,94,.55);color:#86efac}
+    .offline-pill.ok{border-color:rgba(34,197,94,.6);color:var(--green-700)}
     .offline-pill.ok i{background:var(--green-400);box-shadow:0 0 10px rgba(34,197,94,.9);animation:none}
 
     /* Página completamente vacía (sin técnicos) */
     .main-vacio{
       flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
-      color:var(--gray-3);
+      color:var(--txt-3);
     }
-    .main-vacio b{font-family:var(--display);font-weight:400;font-size:40px;letter-spacing:.04em;color:#e5e7eb}
+    .main-vacio b{font-family:var(--display);font-weight:400;font-size:40px;letter-spacing:.04em;color:var(--ink-2)}
     .main-vacio span{font-size:17px;font-weight:600}
+
+    /* ════════════════════════════════════════════════════════════════
+       MODO INTERACTIVO (solo /ot/monitor, computador de Daniel)
+       La plantilla recibe `interactivo`: en el televisor (false) NADA de
+       esto existe — ni cursor, ni hover, ni listeners. En el computador
+       (true) cada franja y cada bloque abren un modal de detalle para
+       disertar frente a la jefatura.
+       ════════════════════════════════════════════════════════════════ */
+    body.interactivo .u-p{cursor:pointer}
+    body.interactivo .u-p:hover{background:linear-gradient(90deg,rgba(15,23,42,.045),rgba(15,23,42,.015) 60%,transparent)}
+    body.interactivo .u-p:hover::before{width:7px}
+    body.interactivo .tl-bloque{cursor:pointer}
+    body.interactivo .tl-bloque:hover{box-shadow:0 0 0 2.5px rgba(220,38,38,.4), var(--shadow-md)}
+
+    /* ── Modal de detalle — mismo mundo visual (tarjeta clara + banda
+         oscura de cabecera, receta .form-head). Vive DENTRO de #stage
+         para heredar la escala del televisor/preview. ── */
+    .tvm{
+      position:absolute;inset:0;z-index:80;
+      display:flex;align-items:center;justify-content:center;
+    }
+    .tvm[hidden]{display:none}
+    .tvm-back{
+      position:absolute;inset:0;
+      background:rgba(10,10,10,.45);
+      backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+    }
+    .tvm-card{
+      position:relative;width:900px;max-width:92%;max-height:86%;
+      display:flex;flex-direction:column;
+      background:#fff;border:1.5px solid var(--line-2);border-radius:var(--r-xl);
+      box-shadow:0 40px 90px -20px rgba(10,10,10,.55), var(--shadow-lg);
+      overflow:hidden;
+      animation:tvmIn .3s var(--ease-spring) both;
+    }
+    @keyframes tvmIn{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
+    .tvm-head{
+      flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:18px;
+      padding:20px 26px;color:#fff;position:relative;overflow:hidden;
+      background:
+        radial-gradient(120% 140% at 100% 0%, rgba(220,38,38,.16) 0%, transparent 45%),
+        linear-gradient(135deg,#0a0a0a 0%, #161616 60%, #0a0a0a 100%);
+      border-bottom:3px solid var(--ilus-red);
+    }
+    .tvm-head > *{position:relative;z-index:1}
+    .tvm-id{display:flex;align-items:center;gap:16px;min-width:0}
+    .tvm-nombre{
+      font-family:var(--display);font-weight:400;font-size:38px;line-height:.95;
+      letter-spacing:.02em;color:#fff;
+    }
+    .tvm-sub{display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap}
+    .tvm-meta{font-size:15px;font-weight:600;color:#cbd5e1}
+    .tvm-x{
+      flex-shrink:0;width:44px;height:44px;border-radius:12px;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.22);
+      color:#fff;font-size:19px;font-weight:800;line-height:1;
+      transition:background .2s, border-color .2s, transform .2s var(--ease-out);
+    }
+    .tvm-x:hover{background:rgba(220,38,38,.85);border-color:transparent;transform:scale(1.05)}
+    .tvm-stats{
+      flex-shrink:0;display:flex;align-items:center;gap:22px;
+      padding:16px 26px;border-bottom:1.5px solid var(--line-1);
+      background:linear-gradient(180deg,#fbfbfc,#fff);
+    }
+    .tvm-card .av-pct{font-size:56px}
+    .tvm-stats .av-bar{flex:1;height:9px;margin-top:0}
+    .tvm-stats .tvm-tareas{font-size:15px;font-weight:800;color:var(--txt-3);white-space:nowrap}
+    .tvm-lista{
+      flex:1;min-height:0;overflow-y:auto;
+      padding:18px 26px;display:flex;flex-direction:column;gap:12px;
+    }
+    .tvm-lista .tvm-nada{font-size:16px;font-weight:600;font-style:italic;color:var(--txt-3);padding:12px 4px}
+    .tvm-ot{
+      position:relative;border:1.5px solid var(--gray-2);border-radius:var(--r-md);
+      background:#fff;padding:14px 18px 14px 22px;box-shadow:var(--shadow-sm);
+    }
+    /* barra de acento por estado, como las franjas del calendario */
+    .tvm-ot::before{
+      content:'';position:absolute;left:0;top:10px;bottom:10px;width:5px;border-radius:0 4px 4px 0;
+      background:#d1d5db;
+    }
+    /* OT enfocada (se llegó con clic en su bloque): marco rojo ILUS */
+    .tvm-ot.foco{border-color:rgba(220,38,38,.55);box-shadow:0 0 0 4px rgba(220,38,38,.14), var(--shadow-md)}
+    .tvm-ot-l1{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .tvm-ot-num{font-size:16px;font-weight:800;color:var(--ink-2);letter-spacing:.01em}
+    .tvm-ot-chip{
+      display:inline-flex;align-items:center;gap:6px;
+      font-size:14px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+      padding:2px 10px;border-radius:50px;border:1.5px solid transparent;
+    }
+    .tvm-ot-horas{margin-left:auto;font-size:16px;font-weight:800;color:var(--txt-2);white-space:nowrap}
+    .tvm-ot-cli{margin-top:6px;font-size:19px;font-weight:800;color:var(--ink);letter-spacing:-.01em}
+    .tvm-ot-dir{margin-top:2px;font-size:15px;font-weight:600;color:var(--txt-3)}
+    .tvm-ot-av{display:flex;align-items:center;gap:12px;margin-top:10px}
+    .tvm-ot-av .av-bar{flex:1;height:7px;margin-top:0}
+    .tvm-ot-av b{font-size:15px;font-weight:800;color:var(--txt-2);white-space:nowrap}
+    /* Colores por estado del bloque — misma paleta sobria del calendario */
+    .tvm-ot.o-ejecutando::before{background:linear-gradient(180deg,var(--green-400),var(--green-600))}
+    .tvm-ot.o-ejecutando .tvm-ot-chip{background:var(--green-050);border-color:#86efac;color:var(--green-700)}
+    .tvm-ot.o-ejecutando .av-bar i{background:linear-gradient(90deg,var(--green-500),var(--green-400))}
+    .tvm-ot.o-pendiente::before{background:#94a3b8}
+    .tvm-ot.o-pendiente .tvm-ot-chip{background:var(--gray-1);border-color:#d1d5db;color:#4b5563}
+    .tvm-ot.o-terminado::before{background:var(--blue-300)}
+    .tvm-ot.o-terminado .tvm-ot-chip{background:var(--blue-050);border-color:var(--blue-300);color:#1e40af}
+    .tvm-ot.o-terminado .av-bar i{background:linear-gradient(90deg,var(--blue-500),#60a5fa)}
+    .tvm-ot.o-atrasado::before{background:var(--amber-500)}
+    .tvm-ot.o-atrasado .tvm-ot-chip{background:#fef3c7;border-color:#fcd34d;color:#92400e}
+    .tvm-ot.o-atrasado .av-bar i{background:linear-gradient(90deg,var(--amber-500),#fbbf24)}
+    .tvm-foot{
+      flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:14px;
+      padding:14px 26px;border-top:1.5px solid var(--line-1);background:#fafafa;
+    }
+    .tvm-foot span{font-size:14px;font-weight:600;color:var(--txt-4)}
+    .tvm-cerrar{
+      cursor:pointer;border:none;border-radius:12px;padding:11px 26px;
+      font-family:'Inter',sans-serif;font-size:15px;font-weight:800;letter-spacing:.02em;color:#fff;
+      background:linear-gradient(180deg,var(--ilus-red) 0%,#c10000 100%);
+      box-shadow:0 10px 22px -6px rgba(230,0,0,.5), 0 1px 0 rgba(255,255,255,.22) inset;
+      transition:transform .2s var(--ease-out), box-shadow .25s var(--ease-out);
+    }
+    .tvm-cerrar:hover{transform:translateY(-1px);box-shadow:0 14px 28px -6px rgba(230,0,0,.6)}
+    .tvm-cerrar:active{transform:scale(.97)}
 
     /* Entrada del encendido para barras superior/inferior */
     body.boot .tv-top{animation:rowIn .5s var(--ease-out) both}
@@ -603,16 +792,20 @@
        Con 6-8 personas la fila es generosa (xl); con 14, compacta (sm)
        pero jamás bajo 14px de texto.
        ════════════════════════════════════════════════════════════════ */
-    #stage{--fs-nombre:26px;--fs-sub:15px;--fs-pct:38px;--avatar:50px;--fs-bloque:15px;--fs-badge:14px}
-    #stage[data-densidad="xl"]{--fs-nombre:29px;--fs-sub:16px;--fs-pct:44px;--avatar:56px;--fs-bloque:16px;--fs-badge:15px}
-    #stage[data-densidad="md"]{--fs-nombre:22px;--fs-sub:15px;--fs-pct:32px;--avatar:44px;--fs-bloque:14px}
-    #stage[data-densidad="sm"]{--fs-nombre:19px;--fs-sub:14px;--fs-pct:27px;--avatar:38px;--fs-bloque:14px}
+    #stage{--fs-nombre:34px;--fs-sub:15px;--fs-pct:40px;--avatar:52px;--fs-bloque:16px;--fs-badge:14px}
+    #stage[data-densidad="xl"]{--fs-nombre:38px;--fs-sub:16px;--fs-pct:46px;--avatar:58px;--fs-bloque:17px;--fs-badge:15px}
+    #stage[data-densidad="md"]{--fs-nombre:29px;--fs-sub:15px;--fs-pct:34px;--avatar:46px;--fs-bloque:15px}
+    #stage[data-densidad="sm"]{--fs-nombre:25px;--fs-sub:14px;--fs-pct:28px;--avatar:40px;--fs-bloque:14px}
     /* En densidades apretadas se sacrifica lo secundario, nunca lo esencial */
     #stage[data-densidad="md"] .av-tareas,
     #stage[data-densidad="sm"] .av-tareas,
+    #stage[data-densidad="sm"] .p-dir,
     #stage[data-densidad="sm"] .b-horas{display:none}
     #stage[data-densidad="sm"] .tl-bloque{border-radius:7px;padding:0 9px}
-    #stage[data-densidad="sm"] .p-line2{margin-top:0}
+    #stage[data-densidad="sm"] .p-line2{margin-top:1px}
+    #stage[data-densidad="sm"] .p-badge{padding:1px 8px}
+    #stage[data-densidad="sm"] .u-gh{height:40px}
+    #stage[data-densidad="sm"] .u-gh h2{font-size:24px}
 
     /* ── Accesibilidad: sin movimiento si el sistema lo pide ── */
     @media (prefers-reduced-motion: reduce){
@@ -620,10 +813,10 @@
     }
   </style>
 </head>
-<body class="boot">
+<body class="boot{% if interactivo %} interactivo{% endif %}">
   <div id="stage">
 
-    <!-- ══════════════ BARRA SUPERIOR ══════════════ -->
+    <!-- ══════════════ BARRA SUPERIOR (única banda oscura) ══════════════ -->
     <header class="tv-top">
       <div class="tv-brand">
         <div class="brand-logo-wrap">
@@ -653,7 +846,7 @@
       </div>
     </header>
 
-    <!-- ══════════════ CUERPO (grupos + franjas, lo pinta el JS) ══════════════ -->
+    <!-- ══════════ CUERPO (la tarjeta-calendario, la pinta el JS) ══════════ -->
     <main class="tv-main" id="tvMain"></main>
 
     <!-- ══════════════ FRANJA INFERIOR ══════════════ -->
@@ -681,22 +874,30 @@
        completo y REPINTA EN EL SITIO (sin borrar el DOM → sin parpadeo).
      · Cadencia según hora de Chile: 8 s en jornada hábil, 1 h de tarde,
        2 h de noche y fines de semana.
+     · v2: el cuerpo es UNA tarjeta-calendario por página — regla horaria
+       única + overlays compartidos + filas planas (divisores de grupo y
+       personas) sincronizadas por clave.
      ════════════════════════════════════════════════════════════════════ */
   'use strict';
 
   const DATOS_INICIALES = {{ (datos or {}) | tojson }};
   const STATUS_URL = {{ (status_url or '') | tojson }};
   const DATOS_URL  = {{ (datos_url  or '') | tojson }};
+  /* true solo en /ot/monitor (computador de Daniel): habilita clics y el
+     modal de detalle. En /tv/<token> es false y la pantalla queda inerte. */
+  const INTERACTIVO = {{ (interactivo or false) | tojson }};
 
   const TZ = 'America/Santiago';
   const MAX_POR_PAGINA = 14;       // franjas máximas legibles a 3 metros
   const ROTACION_MS = 20000;       // rotación de página si hay más gente
 
-  /* Constantes de geometría — DEBEN calzar con el CSS de .grupo/.grupo-head */
-  const ALTO_HEAD_GRUPO = 48;      // head 42 + margen 6
-  const PAD_V_GRUPO = 26;          // padding vertical del .grupo (12 + 12) + borde
-  const GAP_GRUPOS = 16;
-  const PAD_V_MAIN = 28;           // padding vertical del .tv-main (16 + 12)
+  /* Constantes de geometría — DEBEN calzar con el CSS de la tarjeta:
+     .cal-head (46) + borde .cal-card (1.5×2) + padding .cal-body (4+10). */
+  const ALTO_RULER = 46;
+  const BORDE_CARD = 3;
+  const PAD_V_CARD = 14;
+  const ALTO_GH = 44;              // divisor de grupo .u-gh
+  const PAD_V_MAIN = 26;           // padding vertical del .tv-main (14 + 12)
 
   const $ = (sel, raiz) => (raiz || document).querySelector(sel);
 
@@ -709,6 +910,8 @@
     offline: false,
     timerRotacion: null,
     timerOkPill: null,
+    modalAbierto: false,     // con el modal abierto NADA se repinta debajo
+    datosPendientes: null,   // datos que llegaron mientras el modal estaba abierto
   };
 
   /* ─────────────────────────── utilidades ─────────────────────────── */
@@ -763,6 +966,7 @@
     disponible: 'Disponible',
     atrasado:   'Atrasado',
     terminado:  'Terminado',
+    pendiente:  'Pendiente',   // solo lo usan los bloques/modal, no las personas
   };
 
   function setTexto(nodo, txt){
@@ -908,21 +1112,22 @@
     const filas = Math.max(filasDePagina(pagina), 1);
     const nG = Math.max(pagina.length, 1);
     const disponible = main.clientHeight - PAD_V_MAIN
-      - nG * (ALTO_HEAD_GRUPO + PAD_V_GRUPO) - (nG - 1) * GAP_GRUPOS;
-    const rowH = Math.max(48, Math.min(108, Math.floor(disponible / filas)));
+      - ALTO_RULER - BORDE_CARD - PAD_V_CARD - nG * ALTO_GH;
+    const rowH = Math.max(46, Math.min(112, Math.floor(disponible / filas)));
     stage.style.setProperty('--row-h', rowH + 'px');
     stage.dataset.densidad = rowH >= 88 ? 'xl' : rowH >= 72 ? 'lg' : rowH >= 58 ? 'md' : 'sm';
   }
 
-  /* ───────────────────── grupos, regla y overlays ───────────────────── */
+  /* ──────────────── tarjeta-calendario: regla y overlays ──────────────── */
 
   function construirRegla(nodoRuler){
     nodoRuler.innerHTML = '';
-    const { t0, t1 } = state.esc;
+    const { t0, t1, fin } = state.esc;
     for (let m = Math.ceil(t0 / 60) * 60; m <= t1; m += 60){
       const lbl = el('span', 'rt-lbl');
       if (m === t0) lbl.classList.add('primero');
       if (m === t1) lbl.classList.add('ultimo');
+      if (m > fin) lbl.classList.add('rt-ot');   // horas sobre jornada → rojo
       lbl.style.left = posPct(m) + '%';
       lbl.textContent = String(Math.floor(m / 60)).padStart(2, '0') + ':00';
       nodoRuler.appendChild(lbl);
@@ -935,91 +1140,105 @@
   function construirUnder(nodoUnder){
     nodoUnder.innerHTML = '';
     const { t0, t1, fin } = state.esc;
+    // Bandas alternadas por hora — la textura de agenda del calendario
+    for (let m = Math.ceil(t0 / 60) * 60, i = 0; m < t1; m += 60, i++){
+      if (i % 2 === 0){
+        const band = el('i', 'cu-band');
+        band.style.left = posPct(m) + '%';
+        band.style.width = (posPct(Math.min(m + 60, t1)) - posPct(m)) + '%';
+        nodoUnder.appendChild(band);
+      }
+    }
+    // Líneas verticales por hora
     for (let m = Math.ceil(t0 / 60) * 60; m <= t1; m += 60){
-      const li = el('i', 'tl-hline');
+      const li = el('i', 'cu-hline');
       li.style.left = posPct(m) + '%';
       nodoUnder.appendChild(li);
     }
-    // zona "sobre hora" después del fin de jornada
+    // Zona "sobre hora" después del fin de jornada
     if (fin < t1){
-      const ot = el('i', 'tl-ot');
+      const ot = el('i', 'cu-ot');
       ot.style.left = posPct(fin) + '%';
       ot.style.right = '0';
       nodoUnder.appendChild(ot);
     }
   }
 
-  function crearGrupo(){
-    const sec = el('section', 'grupo');
-    sec.innerHTML =
-      '<div class="grupo-head">' +
-        '<div class="gh-title"><span class="gh-bar"></span><h2></h2><span class="gh-count"></span></div>' +
-        '<div class="gh-mid">Avance</div>' +
-        '<div class="gh-ruler"></div>' +
-      '</div>' +
-      '<div class="grupo-rows">' +
-        '<div class="tl-under"></div>' +
-        '<div class="rows-inner"></div>' +
-        '<div class="tl-nowline"><span class="nl-line" hidden></span></div>' +
-      '</div>';
-    return sec;
+  /* Asegura que exista LA tarjeta-calendario dentro de #tvMain */
+  function asegurarCard(main){
+    let card = $('.cal-card', main);
+    if (!card){
+      card = el('section', 'cal-card');
+      card.innerHTML =
+        '<div class="cal-head">' +
+          '<span class="ch-lbl">Técnico</span>' +
+          '<span class="ch-lbl">Avance</span>' +
+          '<div class="ch-ruler"></div>' +
+        '</div>' +
+        '<div class="cal-body">' +
+          '<div class="cal-under"></div>' +
+          '<div class="cal-past"></div>' +
+          '<div class="cal-rows"></div>' +
+          '<div class="cal-nowline"><span class="nl-line" hidden></span></div>' +
+        '</div>';
+      main.appendChild(card);
+    }
+    return card;
   }
 
-  function actualizarGrupo(sec, g){
-    setTexto($('.gh-title h2', sec), g.titulo || (g.tipo === 'externo' ? 'Externos' : 'Internos'));
-    setTexto($('.gh-count', sec), g.totalGrupo === 1 ? '1 técnico' : g.totalGrupo + ' técnicos');
+  /* ─────────── unidades de la tarjeta: divisor de grupo / persona ─────────── */
 
-    // regla y grilla solo se reconstruyen si la escala temporal cambió
-    const claveEsc = state.esc.t0 + '-' + state.esc.t1 + '-' + state.esc.fin;
-    if (sec.dataset.esc !== claveEsc){
-      sec.dataset.esc = claveEsc;
-      construirRegla($('.gh-ruler', sec));
-      construirUnder($('.tl-under', sec));
+  function crearUnidad(u, idx){
+    if (u.kind === 'gh'){
+      const gh = el('div', 'u-gh');
+      gh.style.setProperty('--i', idx);
+      gh.innerHTML = '<h2></h2><span class="gh-count"></span>';
+      return gh;
     }
-
-    const inner = $('.rows-inner', sec);
-
-    // nota de grupo vacío (persistente, fuera del sync de filas)
-    let nota = $('.grupo-empty', inner);
-    if (g.vacio && !g.personas.length){
-      if (!nota){
-        nota = el('div', 'grupo-empty');
-        nota.textContent = 'Sin técnicos con agenda para hoy';
-        inner.appendChild(nota);
-      }
-      nota.hidden = false;
-    } else if (nota){
-      nota.hidden = true;
+    if (u.kind === 'empty'){
+      const nota = el('div', 'u-empty');
+      nota.textContent = 'Sin técnicos con agenda para hoy';
+      return nota;
     }
+    return crearFila(u.p, idx);
+  }
 
-    syncList(
-      inner,
-      g.personas,
-      p => (p.nombre || '¿?'),
-      crearFila,
-      actualizarFila
-    );
+  function actualizarUnidad(nodo, u){
+    if (u.kind === 'gh'){
+      setTexto($('h2', nodo), u.g.titulo || (u.g.tipo === 'externo' ? 'Externos' : 'Internos'));
+      setTexto($('.gh-count', nodo), u.g.totalGrupo === 1 ? '1 técnico' : u.g.totalGrupo + ' técnicos');
+      return;
+    }
+    if (u.kind === 'empty') return;
+    actualizarFila(nodo, u.p);
   }
 
   /* ───────────────────────── franja por persona ───────────────────────── */
 
   function crearFila(p, idx){
-    const row = el('div', 'p-row');
+    const row = el('div', 'u-p');
     row.style.setProperty('--i', idx);
     row.innerHTML =
       '<div class="p-id">' +
         '<div class="p-avatar"></div>' +
         '<div class="p-idtxt">' +
-          '<div class="p-line1"><span class="p-nombre"></span><span class="p-badge"><i></i><b class="badge-txt"></b></span></div>' +
-          '<div class="p-line2"><span class="p-cliente"></span><span class="p-dir"></span></div>' +
+          '<span class="p-nombre"></span>' +
+          '<div class="p-line2">' +
+            '<span class="p-badge"><i></i><b class="badge-txt"></b></span>' +
+            '<span class="p-sub"><span class="p-cliente"></span><span class="p-dir"></span></span>' +
+          '</div>' +
         '</div>' +
       '</div>' +
-      '<div class="p-avance">' +
+      '<div class="p-av">' +
         '<div class="av-top"><span class="av-pct"></span><span class="av-elapsed"></span></div>' +
         '<div class="av-bar"><i></i></div>' +
         '<div class="av-tareas"></div>' +
       '</div>' +
       '<div class="p-tl"><span class="tl-vacio" hidden>Sin carga asignada hoy</span></div>';
+    // Modo interactivo: la franja completa abre el modal de la persona
+    if (INTERACTIVO){
+      row.addEventListener('click', () => { if (row.__p) abrirModal(row.__p, null); });
+    }
     return row;
   }
 
@@ -1028,13 +1247,32 @@
     return String(p.nombre || '?').split(/\s+/).map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
   }
 
+  /* Garantiza el NOMBRE COMPLETO: si a la talla de la densidad no cabe,
+     baja la letra de a 1px (piso 15px). Se achica, JAMÁS se corta con "…".
+     Cachea por texto+densidad para no medir en cada latido. */
+  function ajustarNombre(nodo, texto){
+    const clave = texto + '|' + ($('#stage').dataset.densidad || '') ;
+    if (nodo.dataset.fit === clave) return;
+    nodo.dataset.fit = clave;
+    nodo.style.fontSize = '';                     // vuelve a la talla de la densidad
+    let fs = parseFloat(getComputedStyle(nodo).fontSize) || 34;
+    let tope = 25;                                // válvula anti-bucle
+    while (nodo.scrollWidth > nodo.clientWidth && fs > 15 && tope--){
+      fs -= 1;
+      nodo.style.fontSize = fs + 'px';
+    }
+  }
+
   function actualizarFila(row, p){
+    row.__p = p;   // referencia viva para el clic del modo interactivo
     const est = estadoNorm(p.estado, 'disponible');
-    const claseBase = 'p-row estado-' + est;
+    const claseBase = 'u-p estado-' + est;
     if (row.className !== claseBase && !row.classList.contains('saliendo')) row.className = claseBase;
 
     setTexto($('.p-avatar', row), inicialesDe(p));
-    setTexto($('.p-nombre', row), p.nombre || '—');
+    const nom = $('.p-nombre', row);
+    setTexto(nom, p.nombre || '—');
+    ajustarNombre(nom, p.nombre || '—');
     setTexto($('.badge-txt', row), BADGE_TXT[est] || est);
 
     // Cliente + dirección (línea 2). Disponible sin cliente → línea vacía y calma.
@@ -1067,19 +1305,33 @@
     syncList(
       tl,
       bloques,
-      b => (b.numero || (b.cliente || '') + '|' + (b.ini || '')),
+      claveBloque,
       crearBloque,
       actualizarBloque
     );
   }
 
+  /* Clave estable de un bloque — la usan el sync y el foco del modal */
+  function claveBloque(b){
+    return b.numero || (b.cliente || '') + '|' + (b.ini || '');
+  }
+
   function crearBloque(){
     const b = el('div', 'tl-bloque');
     b.innerHTML = '<span class="b-cliente"></span><span class="b-horas"></span><i class="b-prog"></i>';
+    // Modo interactivo: el bloque abre el modal ENFOCADO en esa OT
+    if (INTERACTIVO){
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();   // que no dispare también el clic de la franja
+        const row = b.closest('.u-p');
+        if (row && row.__p && b.__b) abrirModal(row.__p, claveBloque(b.__b));
+      });
+    }
     return b;
   }
 
   function actualizarBloque(nodo, b){
+    nodo.__b = b;   // referencia viva para el clic del modo interactivo
     const est = estadoNorm(b.estado, 'pendiente');
     const ini = hm(b.ini), fin = hm(b.fin);
     const li = posPct(ini != null ? ini : state.esc.t0);
@@ -1095,6 +1347,145 @@
     setTexto($('.b-horas', nodo), (b.ini || '') + '–' + (b.fin || ''));
     $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
     nodo.title = (b.numero ? b.numero + ' · ' : '') + (b.cliente || '');
+  }
+
+  /* ─────────────── modal de detalle (solo modo interactivo) ───────────────
+     Daniel toma el control desde su computador y explora una persona o una
+     OT puntual mientras diserta. Mientras el modal está abierto, el
+     repintado automático y la rotación de páginas quedan EN PAUSA para que
+     la pantalla no se mueva debajo de su explicación; lo que llegue en ese
+     rato se aplica recién al cerrar. */
+
+  function asegurarModal(){
+    let m = $('#tvModal');
+    if (m) return m;
+    m = el('div', 'tvm');
+    m.id = 'tvModal';
+    m.hidden = true;
+    m.innerHTML =
+      '<div class="tvm-back"></div>' +
+      '<div class="tvm-card" role="dialog" aria-modal="true" aria-label="Detalle del técnico">' +
+        '<header class="tvm-head">' +
+          '<div class="tvm-id">' +
+            '<div class="p-avatar" style="--avatar:64px"></div>' +
+            '<div class="tvm-idtxt">' +
+              '<h3 class="tvm-nombre"></h3>' +
+              '<div class="tvm-sub"><span class="p-badge"><i></i><b class="badge-txt"></b></span><span class="tvm-meta"></span></div>' +
+            '</div>' +
+          '</div>' +
+          '<button class="tvm-x" type="button" aria-label="Cerrar detalle">✕</button>' +
+        '</header>' +
+        '<div class="tvm-stats">' +
+          '<span class="av-pct"></span>' +
+          '<div class="av-bar"><i></i></div>' +
+          '<span class="tvm-tareas"></span>' +
+          '<span class="av-elapsed"></span>' +
+        '</div>' +
+        '<div class="tvm-lista"></div>' +
+        '<footer class="tvm-foot">' +
+          '<span>Esc o clic afuera para cerrar</span>' +
+          '<button class="tvm-cerrar" type="button">Cerrar</button>' +
+        '</footer>' +
+      '</div>';
+    $('#stage').appendChild(m);
+    // Cierres: botón ✕, botón Cerrar y clic fuera de la tarjeta
+    $('.tvm-x', m).addEventListener('click', cerrarModal);
+    $('.tvm-cerrar', m).addEventListener('click', cerrarModal);
+    m.addEventListener('click', (ev) => {
+      if (!ev.target.closest('.tvm-card')) cerrarModal();
+    });
+    return m;
+  }
+
+  function abrirModal(p, focoKey){
+    if (!INTERACTIVO || !p) return;
+    const m = asegurarModal();
+    const est = estadoNorm(p.estado, 'disponible');
+    const card = $('.tvm-card', m);
+    card.className = 'tvm-card estado-' + est;   // hereda la paleta del estado
+
+    setTexto($('.p-avatar', card), inicialesDe(p));
+    setTexto($('.tvm-nombre', card), p.nombre || '—');
+    setTexto($('.badge-txt', card), BADGE_TXT[est] || est);
+
+    const bloques = p.bloques || [];
+    const partes = [];
+    partes.push(bloques.length === 1 ? '1 OT hoy' : bloques.length + ' OT hoy');
+    if (p.cliente) partes.push('Ahora: ' + p.cliente);
+    setTexto($('.tvm-meta', card), partes.join(' · '));
+
+    // Estadística de avance del día
+    const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || bloques.length > 0;
+    const pct = Math.max(0, Math.min(100, Math.round(p.avance_pct || 0)));
+    setTexto($('.tvm-stats .av-pct', card), tieneCarga ? pct + '%' : '—');
+    $('.tvm-stats .av-bar i', card).style.width = tieneCarga ? pct + '%' : '0%';
+    setTexto($('.tvm-tareas', card), (p.tareas_total || 0) > 0
+      ? (p.tareas_ok || 0) + '/' + p.tareas_total + ' tareas del día'
+      : 'Sin tareas registradas');
+    const elapsed = $('.tvm-stats .av-elapsed', card);
+    if (est === 'ejecutando' && p.inicio_iso){
+      elapsed.dataset.ini = p.inicio_iso;
+      pintarElapsed(elapsed);
+    } else {
+      delete elapsed.dataset.ini;
+      setTexto(elapsed, '');
+    }
+
+    // Lista de OT del día — todo sale del mismo contrato (bloques[])
+    const lista = $('.tvm-lista', card);
+    lista.innerHTML = '';
+    if (!bloques.length){
+      lista.innerHTML = '<div class="tvm-nada">Sin OT asignadas hoy — disponible para programar.</div>';
+    }
+    let nodoFoco = null;
+    bloques.forEach(b => {
+      const be = estadoNorm(b.estado, 'pendiente');
+      const ot = el('div', 'tvm-ot o-' + be);
+      const esFoco = focoKey != null && claveBloque(b) === focoKey;
+      if (esFoco) ot.classList.add('foco');
+
+      const l1 = el('div', 'tvm-ot-l1');
+      const num = el('b', 'tvm-ot-num'); num.textContent = b.numero || 'OT sin número';
+      const chip = el('span', 'tvm-ot-chip'); chip.textContent = BADGE_TXT[be] || be;
+      const horas = el('span', 'tvm-ot-horas'); horas.textContent = (b.ini || '—') + ' – ' + (b.fin || '—');
+      l1.appendChild(num); l1.appendChild(chip); l1.appendChild(horas);
+      ot.appendChild(l1);
+
+      const cli = el('div', 'tvm-ot-cli'); cli.textContent = b.cliente || '—';
+      ot.appendChild(cli);
+      // La dirección viene a nivel de persona (su cliente actual): solo se
+      // muestra en la OT que corresponde — no se inventa para las demás.
+      if (p.direccion && b.cliente && b.cliente === p.cliente){
+        const dir = el('div', 'tvm-ot-dir'); dir.textContent = p.direccion;
+        ot.appendChild(dir);
+      }
+
+      const av = el('div', 'tvm-ot-av');
+      const bpct = Math.max(0, Math.min(100, Math.round(b.avance_pct || (be === 'terminado' ? 100 : 0))));
+      av.innerHTML = '<div class="av-bar"><i style="width:' + bpct + '%"></i></div><b>' + bpct + '% avance</b>';
+      ot.appendChild(av);
+
+      lista.appendChild(ot);
+      if (esFoco) nodoFoco = ot;
+    });
+
+    state.modalAbierto = true;
+    m.hidden = false;
+    if (nodoFoco) nodoFoco.scrollIntoView({ block: 'center' });
+    else lista.scrollTop = 0;
+  }
+
+  function cerrarModal(){
+    const m = $('#tvModal');
+    if (!m || m.hidden) return;
+    m.hidden = true;
+    state.modalAbierto = false;
+    // Aplicar recién ahora lo que llegó mientras Daniel disertaba
+    if (state.datosPendientes){
+      const datos = state.datosPendientes;
+      state.datosPendientes = null;
+      renderAll(datos);
+    }
   }
 
   /* ────────────────────────── próximos días ────────────────────────── */
@@ -1134,23 +1525,41 @@
     const pagina = state.pages[state.page] || [];
 
     if (!pagina.length){
-      main.__mapa = new Map();
       main.innerHTML =
         '<div class="main-vacio"><b>Sin técnicos con agenda hoy</b>' +
         '<span>Cuando se programen OT aparecerán aquí automáticamente.</span></div>';
       return;
     }
-    const vacioPrevio = $('.main-vacio', main);
-    if (vacioPrevio){ main.innerHTML = ''; main.__mapa = new Map(); }
+    if ($('.main-vacio', main)) main.innerHTML = '';
 
+    const card = asegurarCard(main);
     ajustarDensidad(pagina);
 
+    // Regla y grilla solo se reconstruyen si la escala temporal cambió
+    const claveEsc = state.esc.t0 + '-' + state.esc.t1 + '-' + state.esc.fin;
+    if (card.dataset.esc !== claveEsc){
+      card.dataset.esc = claveEsc;
+      construirRegla($('.ch-ruler', card));
+      construirUnder($('.cal-under', card));
+    }
+
+    // Lista PLANA de unidades: divisor de grupo → sus personas (o nota vacía)
+    const unidades = [];
+    pagina.forEach(g => {
+      unidades.push({ kind: 'gh', key: 'gh|' + g.gi, g });
+      if (g.vacio && !g.personas.length){
+        unidades.push({ kind: 'empty', key: 'empty|' + g.gi });
+      } else {
+        g.personas.forEach(p => unidades.push({ kind: 'p', key: 'p|' + g.gi + '|' + (p.nombre || '¿?'), p }));
+      }
+    });
+
     syncList(
-      main,
-      pagina,
-      g => g.tipo + '|' + g.gi,
-      crearGrupo,
-      actualizarGrupo
+      $('.cal-rows', card),
+      unidades,
+      u => u.key,
+      crearUnidad,
+      actualizarUnidad
     );
     actualizarAhora();
   }
@@ -1174,6 +1583,8 @@
     if (state.timerRotacion){ clearInterval(state.timerRotacion); state.timerRotacion = null; }
     if (state.pages.length <= 1) return;
     state.timerRotacion = setInterval(() => {
+      // Con el modal abierto la página no rota — Daniel está disertando
+      if (state.modalAbierto) return;
       state.page = (state.page + 1) % state.pages.length;
       const main = $('#tvMain');
       main.classList.add('page-fade');
@@ -1208,13 +1619,17 @@
     const left = posPct(min) + '%';
     const hhmm = horaChileHHMM();
 
-    document.querySelectorAll('.tl-nowline .nl-line').forEach(l => {
+    document.querySelectorAll('.cal-nowline .nl-line').forEach(l => {
       l.hidden = !visible;
       if (visible) l.style.left = left;
     });
     document.querySelectorAll('.now-chip').forEach(c => {
       c.hidden = !visible;
       if (visible){ c.style.left = left; setTexto(c, hhmm); }
+    });
+    // Lavado de "lo ya transcurrido": su borde derecho es el ahora
+    document.querySelectorAll('.cal-past').forEach(p => {
+      p.style.width = (min >= state.esc.t0 ? posPct(min) : 0) + '%';
     });
   }
 
@@ -1288,7 +1703,10 @@
       if (st.huella !== state.huella){
         state.huella = st.huella;
         const datos = await fetchJson(DATOS_URL);
-        renderAll(datos);
+        // Con el modal abierto NO se repinta debajo de la explicación de
+        // Daniel: los datos quedan en espera y se aplican al cerrar.
+        if (state.modalAbierto) state.datosPendientes = datos;
+        else renderAll(datos);
       }
     } catch (e){
       setOffline(true);
@@ -1318,6 +1736,22 @@
     renderAll(DATOS_INICIALES);
     tick();
     setInterval(tick, 1000);
+
+    // Cuando la webfont (Bebas) termina de cargar cambian las métricas:
+    // se invalida el ajuste de nombres y se recalcula una vez.
+    if (document.fonts && document.fonts.ready){
+      document.fonts.ready.then(() => {
+        document.querySelectorAll('.p-nombre').forEach(n => { delete n.dataset.fit; });
+        if (state.datos) renderPagina();
+      });
+    }
+
+    // Modo interactivo: Escape cierra el modal desde cualquier parte
+    if (INTERACTIVO){
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') cerrarModal();
+      });
+    }
 
     // La animación de encendido corre una sola vez
     setTimeout(() => document.body.classList.remove('boot'), 2000);

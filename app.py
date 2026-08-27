@@ -75434,6 +75434,9 @@ def ot_tv_monitor(token):
         status_url=url_for("ot_tv_status", token=token),
         datos_url=url_for("ot_tv_datos", token=token),
         pantalla=row.get("nombre") or "Monitor",
+        # El televisor NO es interactivo: no tiene mouse. Nada clicable,
+        # ningún hover — es una pantalla colgada en la pared.
+        interactivo=False,
     ))
     return _ot_tv_cookie(resp, nuevo)
 
@@ -75574,6 +75577,10 @@ def ot2_monitor_control():
         status_url=url_for("ot2_monitor_status"),
         datos_url=url_for("ot2_monitor_datos"),
         pantalla="Control",
+        # Acá SÍ hay mouse: Daniel puede hacer clic en una persona o en un
+        # bloque y abrir el detalle para explicarlo cuando la jefatura
+        # pregunta "¿qué es eso que estoy viendo?".
+        interactivo=True,
     )
 
 

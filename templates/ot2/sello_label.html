@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sello de servicio — ILUS Fitness</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   SELLO DE SERVICIO ILUS — 30 × 50 mm (vertical)
+
+   Daniel, 2026-08-26. NO es una etiqueta informativa de mantención: es
+   el sello que se pega en un punto definido del equipo para detectar si
+   un TERCERO lo intervino ("cualquier manipulación externa anula esta
+   garantía"). La parte que se autodestruye al despegarla es del MATERIAL
+   (vinilo tipo VOID) — el software aporta el folio único, el QR y el
+   registro.
+
+   Clon del patrón ya usado dos veces en el proyecto
+   (label_standalone.html y repuesto_label_standalone.html): @page con el
+   tamaño exacto, print-color-adjust exacto y CSS propio. Esos dos archivos
+   quedan INTACTOS -- esto es un clon adaptado, no una edición de aquellos.
+   ══════════════════════════════════════════════════════════════════ */
+
+:root{
+  --w: 30mm;
+  --h: 50mm;
+  --rojo:#dc2626;
+  --tinta:#0a0a0a;
+  --gris:#6b7280;
+  --linea:#c9ccd1;
+}
+
+@page { size: 30mm 50mm; margin: 0; }
+
+*,*::before,*::after{
+  box-sizing:border-box;
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+}
+
+html,body{ margin:0; padding:0; background:#e9ebee; }
+body{ font-family:Arial,Helvetica,sans-serif; color:var(--tinta); }
+
+/* Hoja de trabajo en pantalla: varias etiquetas para revisar antes de
+   imprimir. Al imprimir, cada una ocupa su propia página de 30×50. */
+.hoja{
+  display:flex; flex-wrap:wrap; gap:8mm;
+  padding:10mm; justify-content:flex-start;
+}
+
+.sello{
+  width:var(--w); height:var(--h);
+  background:#fff;
+  border:.35mm solid var(--tinta);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  page-break-after:always; break-after:page;
+  box-shadow:0 2px 10px rgba(0,0,0,.14);   /* solo pantalla */
+}
+
+/* ── Banda superior ─────────────────────────────────────────────── */
+.s-top{
+  background:var(--tinta); color:#fff;
+  text-align:center;
+  padding:1.1mm .8mm .9mm;
+  font-size:2.5mm; font-weight:900;
+  letter-spacing:.02em; line-height:1.05;
+  text-transform:uppercase;
+}
+
+/* ── Logo sobre banda plateada (como el modelo de Daniel) ───────── */
+.s-logo{
+  background:linear-gradient(135deg,#d8dade 0%,#f2f3f5 28%,#c9ccd1 55%,#eef0f2 78%,#d3d6da 100%);
+  border-bottom:.3mm solid var(--linea);
+  padding:1.4mm 0;
+  display:flex; align-items:center; justify-content:center;
+}
+.s-logo img{ height:6.2mm; width:auto; display:block; }
+
+/* ── Cuerpo ─────────────────────────────────────────────────────── */
+.s-body{
+  flex:1; display:flex; flex-direction:column;
+  padding:1.3mm 1.5mm 1.1mm;
+  gap:.85mm;
+}
+
+.s-campo{ font-size:2.1mm; font-weight:700; line-height:1.25; }
+.s-campo .val{ font-weight:400; }
+/* Línea para escribir a mano cuando la etiqueta va en blanco */
+.s-linea{
+  display:inline-block; min-width:11mm;
+  border-bottom:.25mm solid var(--tinta);
+  margin-left:.4mm;
+}
+
+.s-tipos{ font-size:2.1mm; font-weight:700; line-height:1.3; }
+.s-tipos .op{ font-weight:400; white-space:nowrap; }
+.s-marca{
+  display:inline-block; width:1.7mm; height:1.7mm;
+  border:.25mm solid var(--tinta); border-radius:50%;
+  vertical-align:-.2mm; margin-right:.3mm;
+}
+.s-marca.on{ background:var(--tinta); }
+
+.s-garantia{
+  font-size:2.05mm; font-weight:700; line-height:1.25;
+  margin-top:.2mm;
+}
+
+/* ── Bloque QR ──────────────────────────────────────────────────── */
+.s-qr{
+  display:flex; gap:1.3mm; align-items:flex-start;
+  margin-top:.3mm;
+}
+.s-qr-img{ width:11mm; height:11mm; flex:none; }
+.s-qr-img svg{ width:100%; height:100%; display:block; }
+.s-qr-txt{ font-size:1.95mm; line-height:1.2; }
+.s-qr-txt b{ font-weight:700; }
+.s-qr-txt .fino{ color:var(--gris); font-size:1.8mm; }
+
+/* ── Advertencias ───────────────────────────────────────────────── */
+.s-imp{
+  margin-top:auto;
+  border-top:.25mm solid var(--linea);
+  padding-top:.8mm;
+  font-size:1.8mm; line-height:1.22;
+}
+.s-imp .tit{ font-weight:900; }
+.s-imp ul{ margin:.3mm 0 0; padding-left:2.2mm; }
+.s-imp li{ margin-bottom:.25mm; }
+.s-imp .anula{ color:var(--rojo); font-weight:700; }
+
+/* Folio: es lo que hace verificable el sello (que nadie lo reemplace) */
+.s-folio{
+  text-align:center;
+  font-family:"Courier New",monospace;
+  font-size:1.85mm; font-weight:700;
+  letter-spacing:.06em;
+  padding:.5mm 0 .6mm;
+  border-top:.25mm solid var(--linea);
+  color:var(--tinta);
+}
+
+/* ── Barra de acciones (nunca se imprime) ───────────────────────── */
+.barra{
+  position:sticky; top:0; z-index:5;
+  background:var(--tinta); color:#fff;
+  padding:10px 16px; display:flex; gap:12px;
+  align-items:center; flex-wrap:wrap;
+  font-family:Arial,Helvetica,sans-serif; font-size:13px;
+}
+.barra b{ font-size:14px; }
+.barra .sep{ flex:1; }
+.barra button{
+  background:var(--rojo); color:#fff; border:0;
+  padding:9px 18px; border-radius:8px;
+  font-weight:800; cursor:pointer; font-size:13px;
+  min-height:38px;
+}
+.barra button:hover{ background:#b91c1c; }
+.barra .nota{ color:#c9ccd1; font-size:12px; }
+
+@media print{
+  html,body{ background:#fff; }
+  .barra{ display:none !important; }
+  .hoja{ padding:0; gap:0; display:block; }
+  .sello{ box-shadow:none; border:0; margin:0; }
+}
+</style>
+</head>
+<body>
+
+<div class="barra">
+  <b>Sello de servicio · 30 × 50 mm</b>
+  <span class="nota">
+    {% if ot %}Datos de la {{ ot.numero_ot or 'OT' }}{% else %}En blanco, para llenar a mano{% endif %}
+    · {{ sellos|length }} etiqueta{{ 's' if sellos|length != 1 }}
+  </span>
+  <span class="sep"></span>
+  <span class="nota">Imprime en vinilo inviolable (tipo VOID) para que deje evidencia al despegarse</span>
+  <button type="button" onclick="window.print()">Imprimir</button>
+</div>
+
+<div class="hoja">
+{% for s in sellos %}
+  <div class="sello">
+
+    <div class="s-top">Servicio realizado por</div>
+
+    <div class="s-logo">
+      <img src="{{ url_for('static', filename='Logo.png') }}" alt="ILUS Fitness">
+    </div>
+
+    <div class="s-body">
+
+      <div class="s-campo">
+        Fecha de atención:
+        {% if s.fecha %}<span class="val">{{ s.fecha }}</span>
+        {% else %}<span class="s-linea"></span>{% endif %}
+      </div>
+
+      <div class="s-tipos">
+        Tipo de servicio:<br>
+        <span class="op"><span class="s-marca {{ 'on' if s.tipo == 'instalacion' }}"></span>Instalación</span>
+        <span class="op"><span class="s-marca {{ 'on' if s.tipo == 'mantencion' }}"></span>Mantención</span><br>
+        <span class="op"><span class="s-marca {{ 'on' if s.tipo == 'reparacion' }}"></span>Reparación</span>
+      </div>
+
+      <div class="s-campo">
+        Técnico:
+        {% if s.tecnico %}<span class="val">{{ s.tecnico }}</span>
+        {% else %}<span class="s-linea" style="min-width:14mm"></span>{% endif %}
+      </div>
+
+      <div class="s-garantia">
+        Este equipo ha sido intervenido por ILUS y cuenta con garantía técnica
+        por {{ dias_garantia }} días corridos.
+      </div>
+
+      <div class="s-qr">
+        <div class="s-qr-img">{{ s.qr_svg|safe }}</div>
+        <div class="s-qr-txt">
+          <b>Escanea el código</b> y genera un ticket con tu solicitud.
+          <div class="fino">Disponible 24/7 · Respuesta en 1-2 días hábiles</div>
+        </div>
+      </div>
+
+      <div class="s-imp">
+        <span class="tit">Importante:</span>
+        <ul>
+          <li>Solo se atienden reclamos del servicio realizado.</li>
+          <li class="anula">Cualquier manipulación externa anula esta garantía.</li>
+        </ul>
+      </div>
+
+    </div>
+
+    <div class="s-folio">{{ s.folio }}</div>
+  </div>
+{% endfor %}
+</div>
+
+</body>
+</html>
