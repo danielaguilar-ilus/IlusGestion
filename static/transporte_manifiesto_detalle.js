@@ -318,17 +318,25 @@ async function quitarItem(mid, itemId, confirmado) {
         // KPIs y la columna costo_total) queden recalculados sin desfase.
         setTimeout(function(){ window.location.reload(); }, d.aviso ? 0 : 600);
       } else if (d.requiere_confirmacion) {
-        // REGLA 2026-08-22/27: esta copia es un duplicado sin movimiento --
-        // la entrega real ya está registrada en otro manifiesto. Se muestra
-        // dónde, cuándo y con qué tracking antes de dejar confirmar.
+        // REGLA 2026-08-22/27 (ampliada 27-08: "no son duplicados, quiero
+        // que ella pueda dejar limpio"): esta misma factura también existe
+        // en otro manifiesto activo -- puede estar entregada ahí (dato más
+        // fuerte, se muestra la fecha) o simplemente repetida sin entregar
+        // todavía (se muestra su estado actual). Se muestra antes de dejar
+        // confirmar cuál copia es la otra.
+        const otraEsEntregada = !!d.duplicada_ya_entregada;
         const okDup = await ilusConfirm({
-          title: 'Factura duplicada — ya fue entregada en otro manifiesto',
+          title: otraEsEntregada
+            ? 'Factura duplicada — ya fue entregada en otro manifiesto'
+            : 'Factura repetida en otro manifiesto',
           message: d.error,
-          sub: 'Manifiesto real: <strong>' + (d.duplicada_manifiesto || '—') + '</strong><br>'
-               + 'Entregada: ' + (d.duplicada_fecha || '—') + '<br>'
-               + 'Tracking real: ' + (d.duplicada_tracking || '—'),
+          sub: 'Manifiesto: <strong>' + (d.duplicada_manifiesto || '—') + '</strong><br>'
+               + (otraEsEntregada
+                    ? 'Entregada: ' + (d.duplicada_fecha || '—') + '<br>'
+                    : 'Estado ahí: ' + (d.duplicada_estado || '—') + '<br>')
+               + 'Tracking: ' + (d.duplicada_tracking || '—'),
           subHtml: true,
-          okLabel: 'Sí, quitar esta copia duplicada', danger: true,
+          okLabel: 'Sí, quitar esta copia', danger: true,
         });
         if (okDup) quitarItem(mid, itemId, true);
       } else {

@@ -29584,20 +29584,23 @@ def tr_manifiesto_detalle(mid):
                        (SELECT COUNT(*) FROM transport_manifest_items mi2
                          WHERE mi2.commitment_id = mi.commitment_id) AS n_despachos,
                        -- 2026-08-27 (Daniel: "que Alison pueda borrar facturas
-                       -- que no tengan movimiento"): misma factura repetida en
-                       -- otro manifiesto y YA entregada ahí de verdad -- esta
-                       -- copia es un duplicado sin movimiento real. Mismo
-                       -- criterio exacto que la guarda de tr_quitar_item(),
-                       -- calculado en lote acá para poder habilitar el botón
-                       -- "Quitar" en la vista (si no, queda bloqueado en el
-                       -- HTML y el permiso nuevo nunca se alcanza a usar).
+                       -- que no tengan movimiento"; ampliado el mismo día --
+                       -- "no son duplicados, quiero que ella pueda dejar
+                       -- limpio, se ensució mucho los manifiestos"): misma
+                       -- factura repetida en OTRO manifiesto activo, sin
+                       -- importar si esa otra copia ya se entregó o no --
+                       -- son 2 copias del mismo documento y se puede elegir
+                       -- cual dejar. Mismo criterio exacto que la guarda de
+                       -- tr_quitar_item(), calculado en lote acá para poder
+                       -- habilitar el botón "Quitar" en la vista (si no,
+                       -- queda bloqueado en el HTML y el permiso nuevo nunca
+                       -- se alcanza a usar).
                        (SELECT 1 FROM transport_manifest_items mi3
                           JOIN transport_manifests m3 ON m3.id = mi3.manifest_id
                          WHERE mi3.commitment_id = mi.commitment_id
                            AND mi3.id != mi.id
-                           AND mi3.estado_entrega = 'Entregado'
                            AND (m3.eliminado = 0 OR m3.eliminado IS NULL)
-                         LIMIT 1) AS duplicada_entregada_en_otro
+                         LIMIT 1) AS duplicada_en_otro_manifiesto
                 FROM transport_manifest_items mi
                 JOIN transport_commitments c ON c.id = mi.commitment_id
                 WHERE mi.manifest_id=%s
@@ -31783,31 +31786,36 @@ def tr_quitar_item(mid, item_id):
     # protección: se podía quitar del manifiesto una factura que ya tenía
     # tracking real asignado. Se agrega al mismo candado.
     _aviso_duplicado = None
+    _duplicado_detalle_log = None
     if info and (info.get("master_tracking_number") or info.get("tracking_number")
                  or info.get("simpliroute_visit_id")):
         # REGLA ACORDADA CON DANIEL (2026-08-22, "vamos afinando"; pedido de
         # nuevo 2026-08-27: "que Alison pueda borrar facturas que no tengan
-        # movimiento"). El candado de arriba mira SOLO esta copia -- pero la
-        # misma factura (mismo commitment_id) puede estar repetida en varios
-        # manifiestos (badge "N despachos"). Si YA se entregó de verdad en
-        # OTRO manifiesto, esta copia es un duplicado que nunca se va a
-        # despachar -- bloquearla para siempre solo ensucia el Monitor.
+        # movimiento"; ampliado el mismo día -- "no son duplicados, quiero
+        # que ella pueda dejar limpio, se ensució mucho los manifiestos": no
+        # hace falta que la otra copia YA esté entregada, alcanza con que la
+        # misma factura esté repetida en OTRO manifiesto activo). El candado
+        # de arriba mira SOLO esta copia -- pero la misma factura (mismo
+        # commitment_id) puede estar repetida en varios manifiestos (badge
+        # "N despachos"). Si existe en otro manifiesto no eliminado, esta
+        # copia es prescindible -- se puede elegir cuál de las dos dejar.
+        # Si hay una copia YA entregada, se prioriza mostrar esa (es la más
+        # útil para decidir); si no, se muestra la más reciente igual.
         duplicada = mysql_fetchone(
             "SELECT m2.id AS manifest_id, m2.correlativo, "
             "       mi2.master_tracking_number, mi2.tracking_number, "
-            "       c2.delivered_at "
+            "       mi2.estado_entrega, c2.delivered_at "
             "FROM transport_manifest_items mi2 "
             "JOIN transport_manifests m2    ON m2.id = mi2.manifest_id "
             "JOIN transport_commitments c2  ON c2.id = mi2.commitment_id "
             "WHERE mi2.commitment_id = %s AND mi2.id != %s "
-            "  AND mi2.estado_entrega = 'Entregado' "
             "  AND (m2.eliminado = 0 OR m2.eliminado IS NULL) "
-            "ORDER BY mi2.id DESC LIMIT 1",
+            "ORDER BY (mi2.estado_entrega = 'Entregado') DESC, mi2.id DESC LIMIT 1",
             (info["commitment_id"], item_id)
         )
         if not duplicada:
-            # Caso general: sigue en gestión activa con el courier, sin una
-            # copia entregada en otro lado -- el candado de siempre aplica
+            # Caso general: sigue en gestión activa con el courier, sin otra
+            # copia en ningún otro manifiesto -- el candado de siempre aplica
             # sin excepción (REGLA #4.2: no relajar lo que no se acordó).
             return jsonify({
                 "ok": False,
@@ -31815,12 +31823,12 @@ def tr_quitar_item(mid, item_id):
                          "y no se puede quitar del manifiesto.",
             }), 409
 
-        # Es un duplicado sin movimiento real: la entrega de verdad ya pasó
-        # en otro manifiesto. Permiso: Alison y Daniel (operador o superior)
-        # -- mismo flag granular que ya gobierna borrar manifiestos completos
-        # (tr_eliminar, /admin/roles -> Transporte -> "Eliminar manifiestos y
-        # pedidos"), para no multiplicar permisos por una variante del mismo
-        # gesto de limpieza.
+        # Hay otra copia de la misma factura en otro manifiesto activo.
+        # Permiso: Alison y Daniel (operador o superior) -- mismo flag
+        # granular que ya gobierna borrar manifiestos completos (tr_eliminar,
+        # /admin/roles -> Transporte -> "Eliminar manifiestos y pedidos"),
+        # para no multiplicar permisos por una variante del mismo gesto de
+        # limpieza.
         if not (g.permissions.get("superadmin") or g.permissions.get("tr_eliminar")):
             return jsonify({
                 "ok": False,
@@ -31830,20 +31838,31 @@ def tr_quitar_item(mid, item_id):
             }), 403
 
         body = request.get_json(silent=True) or {}
+        _ya_entregada_en_otro = (duplicada.get("estado_entrega") == "Entregado")
         _fecha_ent = duplicada.get("delivered_at")
         _fecha_txt = chile_fmt_filter(_fecha_ent, "%d/%m/%Y %H:%M") if _fecha_ent else "fecha no registrada"
         _tracking_dup = duplicada.get("master_tracking_number") or duplicada.get("tracking_number") or "—"
+        _estado_dup = duplicada.get("estado_entrega") or "Pendiente"
+        if _ya_entregada_en_otro:
+            _msg_duplicada = (f"Esta factura ya fue ENTREGADA en el manifiesto "
+                               f"{duplicada.get('correlativo')} el {_fecha_txt} (tracking {_tracking_dup}). "
+                               f"Esta es una copia duplicada que quedó sin despachar en este manifiesto.")
+        else:
+            _msg_duplicada = (f"Esta factura también está en el manifiesto "
+                               f"{duplicada.get('correlativo')} (estado: {_estado_dup}, "
+                               f"tracking {_tracking_dup}). Son dos copias del mismo documento — "
+                               f"puedes quitar esta copia y dejar la otra activa.")
         if not body.get("confirmado"):
             return jsonify({
                 "ok": False,
                 "requiere_confirmacion": True,
                 "duplicada_manifiesto": duplicada.get("correlativo"),
                 "duplicada_manifiesto_id": duplicada.get("manifest_id"),
-                "duplicada_fecha": _fecha_txt,
+                "duplicada_fecha": _fecha_txt if _ya_entregada_en_otro else "",
+                "duplicada_estado": _estado_dup,
+                "duplicada_ya_entregada": _ya_entregada_en_otro,
                 "duplicada_tracking": _tracking_dup,
-                "error": f"Esta factura ya fue ENTREGADA en el manifiesto "
-                         f"{duplicada.get('correlativo')} el {_fecha_txt} (tracking {_tracking_dup}). "
-                         f"Esta es una copia duplicada que quedó sin despachar en este manifiesto.",
+                "error": _msg_duplicada,
             }), 409
 
         # Confirmado: se quita esta copia, pero la etiqueta/OT propia de ESTA
@@ -31856,6 +31875,12 @@ def tr_quitar_item(mid, item_id):
                 f"Esta copia tenía el tracking {_tracking_propio} — si no se va a usar, "
                 f"anúlalo manualmente en FedEx (no se cancela automáticamente)."
             )
+        _duplicado_detalle_log = (
+            f"COPIA DUPLICADA (la entrega real ya está registrada en otro manifiesto)"
+            if _ya_entregada_en_otro else
+            f"COPIA DUPLICADA (repetida en manifiesto {duplicada.get('correlativo')}, "
+            f"estado ahí: {_estado_dup})"
+        )
 
     # FIX 2026-07-26 — antes de borrar el item, si ya tenía una visita creada
     # en SimpliRoute, hay que borrarla ALLÁ también. Si no, al re-preparar el
@@ -31902,8 +31927,8 @@ def tr_quitar_item(mid, item_id):
     if _visit_id_borrado:
         detalle += (f" · visita SimpliRoute {_visit_id_borrado} "
                     f"{'borrada' if _simpliroute_borrado_ok else 'NO se pudo borrar (revisar manual)'}")
-    if _aviso_duplicado:
-        detalle += " · COPIA DUPLICADA (la entrega real ya está registrada en otro manifiesto)"
+    if _duplicado_detalle_log:
+        detalle += f" · {_duplicado_detalle_log}"
     _tr_log("manifest", mid, "factura quitada", detalle)
 
     conn = get_db()
@@ -62005,25 +62030,15 @@ def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
 
 
 # Formatos de serie que el SISTEMA generó (no vienen de la placa del
-# fabricante). Son cuatro porque se agregaron en momentos distintos:
+# fabricante). Son tres porque se agregaron en momentos distintos:
 #   1. {RUT}-{SKU4}-{n}  → _generar_serie_ilus, el canónico
 #   2. LEV-{lev_id}-{item_id} → fallback de _lev_materializar_equipos_nuevos
 #   3. LEV{VID}-{seq}    → _levdSerieSugerida, generado en el NAVEGADOR
-#      (static/mantenciones_ot_ejecutar.js) SOLO cuando la OT es de verdad
-#      un levantamiento. Este es el que produjo el bug de 2026-08-08:
-#      "LEV230-019" repetido en 15 de 18 equipos, impreso como N° de serie
-#      de fábrica en el PDF que firma el cliente.
-#   4. PEND{VID}-{seq}   → mismo generador, MISMA función, pero para cuando
-#      quien agrega el equipo es gestión (admin/supervisor) sobre una OT
-#      que NO es levantamiento (instalación/correctiva/preventiva) — el
-#      botón "Agregar equipo" también se les muestra a ellos ahí (ver
-#      ot_ejecutar.html: `_es_lev_ot or not es_tecnico`). Antes esa serie
-#      SIEMPRE salía con el prefijo "LEV", así que un equipo agregado a una
-#      OT correctiva quedaba con una serie que decía "vengo de un
-#      levantamiento" sin ser cierto — la confusión real que reportó Daniel
-#      el 2026-08-27 con la OT-2026-00136 ("me trató como levantamiento").
+#      (static/mantenciones_ot_ejecutar.js). Este es el que produjo el bug
+#      de 2026-08-08: "LEV230-019" repetido en 15 de 18 equipos, impreso
+#      como N° de serie de fábrica en el PDF que firma el cliente.
 _RE_SERIE_GENERADA = re.compile(
-    r"^(?:\d{7,9}-[A-Za-z0-9]{1,6}-\d+|LEV-?\d+-\d+|PEND\d+-\d+)$", re.I
+    r"^(?:\d{7,9}-[A-Za-z0-9]{1,6}-\d+|LEV-?\d+-\d+)$", re.I
 )
 
 
@@ -68796,60 +68811,6 @@ def mant_visita_iniciar(vid):
     return jsonify({"ok": True, "estado": "en_curso"})
 
 
-# 🔧 FIX 2026-08-27 (Daniel: "trabajé la OT 136 a mi nombre y aún dice
-# atrasado"). Investigado con evidencia real: `/iniciar` (el ÚNICO código
-# que pasa la OT a 'en_curso') es INALCANZABLE desde el flujo real del
-# celular — ot_ejecutar.html/mantenciones_ot_ejecutar.js nunca lo llaman;
-# el único caller vivo es el tablero Kanban de la lista vieja, que no es la
-# vista por defecto y a la que un técnico nunca entra desde un link directo.
-# Consecuencia real medida: Daniel trabajó el checklist completo (2/2, 100%)
-# sin que el estado se moviera nunca de 'programada' — el monitor lo marcó
-# "atrasado" mientras trabajaba y jamás "ejecutando".
-#
-# Se marca en_curso sola en la primera tarea que el técnico completa de
-# verdad — es la señal más simple e inequívoca de "ya está trabajando esto".
-# BEST-EFFORT a propósito: reusa los mismos candados de `/iniciar` (ventana
-# horaria, Anexo sin firmar) pero si alguno bloquearía, simplemente no hace
-# nada -- jamás debe impedir marcar una tarea, que es la acción real del
-# usuario. Cualquier excepción se traga y se loguea; nunca debe reventar el
-# toggle que la llama.
-def _ot_marcar_en_curso_si_corresponde(vid):
-    try:
-        v = _ot_visita_basic(vid)
-        if not v or v.get("estado") != "programada":
-            return
-        _permitido, _ = _ot_dentro_ventana_horario(v)
-        if not _permitido or _anexo_bloquea_ot(vid):
-            return
-        filas = mysql_execute_returning_rowcount(
-            "UPDATE mant_visitas "
-            "   SET estado='en_curso', "
-            "       hora_real_inicio=COALESCE(hora_real_inicio, NOW()) "
-            " WHERE id=%s AND estado='programada'",
-            (vid,)
-        )
-        if not filas:
-            return   # alguien más ya la movió de estado entre el SELECT y acá
-        mysql_execute(
-            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
-            "VALUES ('visita', %s, 'iniciada', %s, %s)",
-            (vid, "OT pasada a en_curso automáticamente (primera tarea marcada)",
-             current_username())
-        )
-        try:
-            _tk_set_estado_automatico = globals().get("_tk_set_estado_automatico")
-            if _tk_set_estado_automatico:
-                _tk_row = mysql_fetchone("SELECT id FROM tk_tickets WHERE visita_id=%s", (vid,))
-                if _tk_row:
-                    _tk_set_estado_automatico(
-                        _tk_row["id"], "ot_in_progress",
-                        "Técnico inició la OT en terreno", visita_id=vid)
-        except Exception as _e_tk:
-            print(f"[_ot_marcar_en_curso_si_corresponde] sync ticket vid={vid}: {_e_tk}", flush=True)
-    except Exception as e:
-        print(f"[_ot_marcar_en_curso_si_corresponde] vid={vid}: {e}", flush=True)
-
-
 @app.route("/mantenciones/api/visitas/<int:vid>/firmar", methods=["POST"])
 @_mant_required
 def mant_visita_firmar(vid):
@@ -73873,11 +73834,6 @@ def ot2_panel():
         f_tec = int(request.args.get("tecnico") or 0) or None
     except (TypeError, ValueError):
         f_tec = None
-    # `interna`: "1" solo trabajo interno, "0" solo trabajo de cliente,
-    # vacío = todo (2026-08-27, para poder ver de un clic lo de Jaizer).
-    f_interna = (request.args.get("interna") or "").strip()
-    if f_interna not in ("0", "1"):
-        f_interna = ""
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -73938,20 +73894,6 @@ def ot2_panel():
     if f_tec:
         extra_where_q.append("v.tecnico_user_id = %s")
         extra_params_q.append(f_tec)
-    # ── Trabajo INTERNO (2026-08-27, Daniel: "quiero que filtre las tareas
-    #    internas... debo potenciar las tareas de Jaizer Araujo") ──
-    # El desplegable de tipo no alcanzaba: un trabajo interno puede ser
-    # 'revision_interna' (bodega) pero TAMBIÉN capacitación o control de
-    # calidad sin cliente. Se usa el mismo criterio de `_ot_es_interna()`
-    # (app.py ~80738) para no tener dos definiciones que se desincronicen:
-    # modalidad 'interno' O tipo 'revision_interna' O sin cliente.
-    _INTERNA_SQL = ("(LOWER(COALESCE(v.modalidad_cobro,'')) = 'interno' "
-                    " OR v.tipo = 'revision_interna' "
-                    " OR v.cliente_id IS NULL)")
-    if f_interna == "1":
-        extra_where_q.append(_INTERNA_SQL)
-    elif f_interna == "0":
-        extra_where_q.append("NOT " + _INTERNA_SQL)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -74260,7 +74202,6 @@ def ot2_panel():
         per_page_opciones=_OT2_PER_PAGE_OPCIONES, error=error,
         kanban_cols=kanban_cols,
         orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
-        f_interna=f_interna,
         tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
@@ -75855,16 +75796,7 @@ def _ot_tv_iso(dt_utc):
 
 
 _OT_TV_SELECT = (
-    # 🔴 FIX 2026-08-27 (Daniel/Aarón: la OT-2026-00133, 01-09 al 04-09, no
-    # se veía en ningún día de su rango). Causa real: el fix de esta misma
-    # mañana para OT de varios días leía `f.get("fecha_fin")` en Python, pero
-    # esta consulta NUNCA seleccionaba `v.fecha_fin` — la lógica de rango
-    # siempre recibía None y colapsaba toda OT a un solo día, aunque el WHERE
-    # de más abajo (que sí compara fecha_fin en SQL crudo) admitiera
-    # correctamente la fila. `ast.parse` no detecta esto (REGLA #9): el
-    # nombre de columna es válido en Python, el error solo existe en
-    # runtime contra esta lista de columnas.
-    "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.fecha_fin, "
+    "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, "
     "       v.hora_inicio, v.hora_fin, v.hora_real_inicio, v.direccion_visita, "
     "       c.razon_social, c.direccion AS cliente_direccion, "
     "       c.comuna AS cliente_comuna, "
@@ -76114,13 +76046,6 @@ def _ot_tv_datos(fecha=None):
             # duplicada — es la misma OT que sigue en curso (OT-133).
             "dia_n": ((hoy - fecha).days + 1) if fecha_hasta > fecha else None,
             "dias_total": ((fecha_hasta - fecha).days + 1) if fecha_hasta > fecha else None,
-            # Fechas reales del tramo (no solo el conteo relativo) — las
-            # necesita "correr días" del monitor para mover el rango ENTERO
-            # de una OT multi-día, no solo su inicio (ver correrDias() en
-            # monitor_tv.html: sin esto, +1 día dejaba fecha_fin atrás de
-            # fecha_programada y la OT colapsaba a un solo día).
-            "fecha_inicio_real": fecha.isoformat(),
-            "fecha_fin_real": fecha_hasta.isoformat() if fecha_hasta > fecha else None,
             "ini": h_ini, "fin": _ot_tv_hhmm(f.get("hora_fin")),
             "estado": ("ejecutando" if en_curso else
                        "terminado" if terminada else
@@ -77225,18 +77150,6 @@ def _ot2_filtros_export(args):
             where.append("v.estado IN (" + ",".join(["%s"] * len(estados)) + ")")
             params += list(estados)
             desc.append(_OT2_FASE_LABELS.get(fase, fase))
-
-    # Trabajo interno (2026-08-27) — mismo criterio que `_ot_es_interna()` y
-    # que el filtro del panel. El propio docstring de arriba avisa: "si se
-    # agrega un filtro al panel, agregarlo TAMBIÉN acá", porque el Excel
-    # arma su WHERE por separado.
-    f_interna = (args.get("interna") or "").strip()
-    if f_interna in ("0", "1"):
-        _int_sql = ("(LOWER(COALESCE(v.modalidad_cobro,'')) = 'interno' "
-                    " OR v.tipo = 'revision_interna' "
-                    " OR v.cliente_id IS NULL)")
-        where.append(_int_sql if f_interna == "1" else ("NOT " + _int_sql))
-        desc.append("solo trabajo interno" if f_interna == "1" else "solo de cliente")
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
@@ -84847,11 +84760,6 @@ def mant_visita_tarea_update(vid, tid):
         if not row:
             return jsonify({"ok": False, "error": "Tarea no encontrada"}), 404
         new_state = 0 if row["completada"] else 1
-        if new_state:
-            # Ver el porqué en _ot_marcar_en_curso_si_corresponde (arriba de
-            # mant_visita_iniciar): sin esto, la OT nunca sale de
-            # 'programada' aunque el técnico esté trabajándola de verdad.
-            _ot_marcar_en_curso_si_corresponde(vid)
         mysql_execute(
             "UPDATE mant_visita_tareas "
             "   SET completada=%s, "

@@ -63,14 +63,29 @@ JS_QUITAR = _cuerpo_quitar_item_js()
 
 
 class TestElCandadoOriginalSigueVigenteSinDuplicado(unittest.TestCase):
-    """Si NO hay una copia entregada en otro manifiesto, el candado de
+    """Si NO hay NINGUNA otra copia en ningún otro manifiesto, el candado de
     siempre bloquea igual -- no se relaja lo que no se acordó."""
 
     def test_sin_duplicada_sigue_devolviendo_el_error_de_siempre(self):
         self.assertIn("Esta factura ya está en gestión con el courier", SRC)
 
-    def test_la_consulta_de_duplicada_exige_estado_entregado(self):
-        self.assertIn("estado_entrega = 'Entregado'", SRC)
+    def test_la_consulta_de_duplicada_ya_no_exige_estado_entregado(self):
+        # AMPLIADO 2026-08-27 (Daniel: "no son duplicados, quiero que ella
+        # pueda dejar limpio, se ensució mucho los manifiestos"): antes se
+        # exigia que la otra copia estuviera 'Entregado' -- ahora alcanza con
+        # que exista en otro manifiesto activo, sin importar su estado. La
+        # condicion NO puede aparecer en la clausula WHERE (i < i_order).
+        i_where = SRC.index("WHERE mi2.commitment_id = %s AND mi2.id != %s")
+        i_order = SRC.index("ORDER BY", i_where)
+        clausula_where = SRC[i_where:i_order]
+        self.assertNotIn("estado_entrega", clausula_where)
+
+    def test_pero_prioriza_mostrar_la_copia_entregada_si_existe(self):
+        # Si hay una entregada Y una pendiente, se prefiere mostrar la
+        # entregada (dato mas util para decidir) -- eso vive en el ORDER BY,
+        # no en el WHERE.
+        i_order = SRC.index("ORDER BY (mi2.estado_entrega = 'Entregado') DESC")
+        self.assertGreater(i_order, 0)
 
     def test_la_consulta_de_duplicada_excluye_manifiestos_eliminados(self):
         self.assertIn("m2.eliminado = 0", SRC)
@@ -81,8 +96,8 @@ class TestElCandadoOriginalSigueVigenteSinDuplicado(unittest.TestCase):
 
 class TestPermisoParaQuitarDuplicada(unittest.TestCase):
     def test_exige_superadmin_o_tr_eliminar(self):
-        i = SRC.index("Es un duplicado sin movimiento real")
-        fragmento = SRC[i:i + 800]
+        i = SRC.index('if not (g.permissions.get("superadmin")')
+        fragmento = SRC[i:i + 200]
         self.assertIn('g.permissions.get("superadmin")', fragmento)
         self.assertIn('g.permissions.get("tr_eliminar")', fragmento)
 
@@ -128,6 +143,35 @@ class TestConfirmacionPreviaConLosDatosReales(unittest.TestCase):
     def test_usa_chile_fmt_para_la_fecha_no_iso_crudo(self):
         # REGLA #6: ninguna fecha se muestra en formato ISO crudo.
         self.assertIn("chile_fmt_filter(_fecha_ent", SRC)
+
+
+class TestFuncionaTambienConCopiaNoEntregadaTodavia(unittest.TestCase):
+    """AMPLIADO 2026-08-27 (Daniel, mismo día que el pedido original: "no son
+    duplicados, quiero que ella pueda dejar limpio, se ensució mucho los
+    manifiestos"): la otra copia no tiene por qué estar ENTREGADA -- alcanza
+    con que exista en otro manifiesto activo para poder elegir cuál dejar."""
+
+    def test_distingue_si_la_otra_copia_ya_se_entrego_o_no(self):
+        self.assertIn("_ya_entregada_en_otro = (duplicada.get(\"estado_entrega\") == \"Entregado\")", SRC)
+
+    def test_el_mensaje_no_miente_diciendo_entregada_si_no_lo_esta(self):
+        i = SRC.index("else:")
+        i_msg = SRC.index("_msg_duplicada = (f\"Esta factura también está", i)
+        self.assertGreater(i_msg, 0, "falta el mensaje para el caso 'repetida pero no entregada'")
+        fragmento = SRC[i_msg:i_msg + 300]
+        self.assertIn("Son dos copias del mismo documento", fragmento)
+
+    def test_la_respuesta_incluye_el_estado_real_de_la_otra_copia(self):
+        i = SRC.index("if not body.get(\"confirmado\"):")
+        fragmento = SRC[i:i + 800]
+        self.assertIn("duplicada_estado", fragmento)
+        self.assertIn("duplicada_ya_entregada", fragmento)
+
+    def test_la_fecha_queda_vacia_cuando_no_esta_entregada(self):
+        # No se inventa una fecha de entrega que no existe (REGLA #6 al reves:
+        # mejor nada que un dato falso).
+        i = SRC.index('"duplicada_fecha": _fecha_txt if _ya_entregada_en_otro else')
+        self.assertGreater(i, 0)
 
 
 class TestElFedexNoSeAnulaSolo(unittest.TestCase):

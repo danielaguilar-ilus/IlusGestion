@@ -51,21 +51,23 @@ class TestQueryBatchDeDuplicados(unittest.TestCase):
     _fetch_items(), no una consulta por item (evita N+1 en manifiestos
     grandes)."""
 
-    def test_agrega_la_columna_duplicada_entregada_en_otro(self):
-        self.assertIn("AS duplicada_entregada_en_otro", SRC)
+    def test_agrega_la_columna_duplicada_en_otro_manifiesto(self):
+        self.assertIn("AS duplicada_en_otro_manifiesto", SRC)
 
     def test_usa_el_mismo_criterio_que_tr_quitar_item(self):
-        # Mismas 3 condiciones que la guarda real en tr_quitar_item(): estado
-        # Entregado, manifiesto no eliminado, y excluye la propia copia.
-        i = SRC.index("AS duplicada_entregada_en_otro")
+        # Mismas 2 condiciones que la guarda real en tr_quitar_item(): excluye
+        # la propia copia y manifiestos eliminados. AMPLIADO 2026-08-27 (Daniel:
+        # "no son duplicados, quiero que ella pueda dejar limpio"): ya NO exige
+        # estado_entrega = 'Entregado' -- cualquier otra copia activa cuenta.
+        i = SRC.index("AS duplicada_en_otro_manifiesto")
         fragmento = SRC[max(0, i - 500):i]
         self.assertIn("mi3.id != mi.id", fragmento)
-        self.assertIn("mi3.estado_entrega = 'Entregado'", fragmento)
         self.assertIn("m3.eliminado = 0", fragmento)
+        self.assertNotIn("estado_entrega", fragmento)
 
     def test_esta_dentro_de_fetch_items_no_en_otra_funcion(self):
         i_fetch = SRC.index("def _fetch_items():")
-        i_col = SRC.index("AS duplicada_entregada_en_otro")
+        i_col = SRC.index("AS duplicada_en_otro_manifiesto")
         i_fin_fetch = SRC.index("items = _fetch_items()")
         self.assertLess(i_fetch, i_col)
         self.assertLess(i_col, i_fin_fetch)
@@ -95,7 +97,7 @@ class TestElBotonSeHabilitaParaDuplicadasConPermiso(unittest.TestCase):
 
     def test_la_condicion_exige_duplicada_y_permiso(self):
         for frag in self._fragmentos_boton_quitar():
-            self.assertIn("item.get('duplicada_entregada_en_otro')", frag)
+            self.assertIn("item.get('duplicada_en_otro_manifiesto')", frag)
             self.assertIn("is_superadmin", frag)
             self.assertIn("permissions.tr_eliminar", frag)
 
@@ -117,11 +119,11 @@ class TestElBotonSeHabilitaParaDuplicadasConPermiso(unittest.TestCase):
         """REGLA #4.2: si NO hay duplicada entregada en otro lado, el
         candado de siempre se mantiene -- no se toca el caso general."""
         for frag in self._fragmentos_boton_quitar():
-            # _puede_quitar_duplicada es False si duplicada_entregada_en_otro
+            # _puede_quitar_duplicada es False si duplicada_en_otro_manifiesto
             # es None/False -- el 'and' en la definicion garantiza esto,
             # verificado en la propia condicion de habilitacion.
             self.assertIn(
-                "_en_gestion_courier and item.get('duplicada_entregada_en_otro') and",
+                "_en_gestion_courier and item.get('duplicada_en_otro_manifiesto') and",
                 frag)
 
 
@@ -154,7 +156,7 @@ class TestRenderReal(unittest.TestCase):
                 tpl,
                 en_gestion=en_gestion,
                 manifiesto={"id": 77},
-                item={"id": 501, "duplicada_entregada_en_otro": 1 if duplicada else None},
+                item={"id": 501, "duplicada_en_otro_manifiesto": 1 if duplicada else None},
                 is_superadmin=False,
                 permissions={"tr_eliminar": tiene_permiso},
             )
