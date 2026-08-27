@@ -75595,6 +75595,14 @@ def _ot_tv_datos(fecha=None):
             (f.get("direccion_visita") or f.get("cliente_direccion") or "").strip(),
             (f.get("cliente_comuna") or "").strip()) if p])
 
+        # 2026-08-27 (Daniel: "quisiera saber qué van a hacer, si es una
+        # instalación, una mantención, una visita... todo eso necesito que
+        # lo capturemos"): el tipo ya se guarda y ya se consulta (v.tipo),
+        # pero no llegaba al bloque del timeline ni al "próximo trabajo" de
+        # quien aún no parte — ahí quedaba hardcodeado a None.
+        tipo_label = _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(),
+                                         (f.get("tipo") or "").replace("_", " ").title() or "Sin tipo")
+
         bloque = {
             "numero": f.get("numero_ot") or f"#{f.get('id')}",
             "cliente": (f.get("razon_social") or "Trabajo interno")[:44],
@@ -75602,7 +75610,7 @@ def _ot_tv_datos(fecha=None):
             "estado": ("ejecutando" if en_curso else
                        "terminado" if terminada else
                        "atrasado" if atrasada else "pendiente"),
-            "avance_pct": pct,
+            "avance_pct": pct, "tipo": tipo_label,
         }
 
         tid = f.get("tec_id")
@@ -75631,18 +75639,18 @@ def _ot_tv_datos(fecha=None):
             p["actual"] = {
                 "numero": bloque["numero"],
                 "cliente": f.get("razon_social") or "Trabajo interno",
-                "direccion": dir_txt,
-                "tipo": _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(),
-                                           (f.get("tipo") or "").replace("_", " ").title()),
+                "direccion": dir_txt, "tipo": tipo_label,
                 "inicio_iso": _ot_tv_iso(f.get("hora_real_inicio")),
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
             }
         elif not p["actual"] and not terminada:
-            # Todavía no parte: se muestra lo próximo que le toca.
+            # Todavía no parte: se muestra lo próximo que le toca — el tipo
+            # SÍ se conoce de antemano (viene agendado), así que también se
+            # muestra acá, no solo cuando ya está en ejecución.
             p["actual"] = {
                 "numero": bloque["numero"],
                 "cliente": f.get("razon_social") or "Trabajo interno",
-                "direccion": dir_txt, "tipo": None, "inicio_iso": None,
+                "direccion": dir_txt, "tipo": tipo_label, "inicio_iso": None,
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
             }
 
@@ -75681,6 +75689,7 @@ def _ot_tv_datos(fecha=None):
         grupos["externo" if p["externo"] else "interno"].append({
             "nombre": p["nombre"], "iniciales": p["iniciales"], "estado": est,
             "cliente": act.get("cliente"), "direccion": act.get("direccion"),
+            "tipo": act.get("tipo"),
             "avance_pct": act.get("avance_pct") or 0,
             "tareas_ok": act.get("tareas_ok") or 0,
             "tareas_total": act.get("tareas_total") or 0,

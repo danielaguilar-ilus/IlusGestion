@@ -182,7 +182,12 @@
        2026-08-27 (Daniel: "necesito ir ayer, a ver qué pasó... esa es la
        idea del monitor"). El televisor de la pared nunca muestra esto. */
     .date-nav-row{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:4px}
-    .date-nav-row .date-big{margin-top:0}
+    /* 🔒 FIX 2026-08-27 (Daniel: "se está cortando el veintisiete de
+       agosto"): con las flechas ocupando espacio a los lados, el mismo
+       tamaño de letra de 52px (pensado para el televisor sin flechas) ya
+       no entraba y el CSS de .date-big (white-space:nowrap + ellipsis) lo
+       cortaba. Se achica solo en este contexto (pantalla de control). */
+    .date-nav-row .date-big{margin-top:0;font-size:36px;max-width:420px}
     .date-nav-btn{
       background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
       color:#fff;width:34px;height:34px;border-radius:10px;flex:none;
@@ -462,6 +467,8 @@
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;
     }
     .p-sub .p-cliente{color:#d6dbe4;font-weight:800}
+    .p-sub .p-tipo{color:#fca5a5;font-weight:800;text-transform:uppercase;
+      font-size:.85em;letter-spacing:.03em}
 
     /* ── Columna avance ── */
     .p-av{min-width:0}
@@ -541,12 +548,15 @@
       50%{box-shadow:0 0 0 3px var(--green-500), 0 0 30px rgba(34,197,94,.7)}
     }
 
-    /* DISPONIBLE — gris tranquilo. Es información, no un reproche. */
-    .estado-disponible::before{background:#3c4453}
+    /* DISPONIBLE — verde apagado (Daniel 2026-08-27: "tal vez el
+       disponible, dejarlo en verde"). Sin pulso ni brillo: ese lenguaje
+       queda reservado a EJECUTANDO, para no confundir "libre para
+       trabajar" con "trabajando ahora mismo". */
+    .estado-disponible::before{background:#15803d}
     .estado-disponible .p-badge{
-      background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.16);color:#9ca3af;
+      background:rgba(34,197,94,.12);border-color:rgba(74,222,128,.35);color:#86efac;
     }
-    .estado-disponible .p-badge i{background:#6b7280}
+    .estado-disponible .p-badge i{background:#4ade80}
     .estado-disponible .av-pct{color:var(--txt-4)}
 
     /* ATRASADO — ámbar SOBRIO. Daniel (2026-08-26): "que diga atrasado
@@ -1294,7 +1304,7 @@
           '<span class="p-nombre"></span>' +
           '<div class="p-line2">' +
             '<span class="p-badge"><i></i><b class="badge-txt"></b></span>' +
-            '<span class="p-sub"><span class="p-cliente"></span><span class="p-dir"></span></span>' +
+            '<span class="p-sub"><span class="p-tipo"></span><span class="p-cliente"></span><span class="p-dir"></span></span>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -1368,8 +1378,12 @@
     ajustarNombre(nom, p.nombre || '—');
     setTexto($('.badge-txt', row), BADGE_TXT[est] || est);
 
-    // Cliente + dirección (línea 2). Disponible sin cliente → línea vacía y calma.
-    const cli = $('.p-cliente', row), dir = $('.p-dir', row);
+    // Tipo + cliente + dirección (línea 2). Disponible sin cliente → línea
+    // vacía y calma. 2026-08-27 (Daniel: "quisiera saber qué van a hacer,
+    // si es una instalación, una mantención, una visita... todo eso
+    // necesito que lo capturemos") — el tipo va primero, es lo que pidió ver.
+    const tipoEl = $('.p-tipo', row), cli = $('.p-cliente', row), dir = $('.p-dir', row);
+    setTexto(tipoEl, p.tipo ? (p.tipo + (p.cliente ? ' · ' : '')) : '');
     setTexto(cli, p.cliente || '');
     setTexto(dir, (p.cliente && p.direccion) ? (' · ' + p.direccion) : (p.direccion || ''));
 
@@ -1506,6 +1520,7 @@
     const bloques = p.bloques || [];
     const partes = [];
     partes.push(bloques.length === 1 ? '1 OT hoy' : bloques.length + ' OT hoy');
+    if (p.tipo) partes.push(p.tipo);
     if (p.cliente) partes.push('Ahora: ' + p.cliente);
     setTexto($('.tvm-meta', card), partes.join(' · '));
 
@@ -1885,7 +1900,16 @@
     escalarStage();
     window.addEventListener('resize', escalarStage);
 
-    renderAll(DATOS_INICIALES);
+    // 🔒 FIX 2026-08-27 (Daniel: "no puedo acceder a los trabajos para ver
+    // el detalle... tampoco puedo navegar en los días"): si renderAll()
+    // lanzaba una excepción por cualquier motivo, TODO el resto de este
+    // callback (incluido el bloque INTERACTIVO de abajo, que conecta Escape
+    // y los botones de navegación) se cortaba en seco y nunca se ejecutaba
+    // — el modal y las flechas quedaban sin ningún listener conectado,
+    // aunque se vieran en pantalla. Ahora un fallo en el primer pintado no
+    // puede tumbar el resto del arranque.
+    try { renderAll(DATOS_INICIALES); }
+    catch(e){ console.error('[monitor] renderAll inicial falló:', e); }
     tick();
     setInterval(tick, 1000);
 
