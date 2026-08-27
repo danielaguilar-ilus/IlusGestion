@@ -699,11 +699,26 @@
       <i class="bi bi-chevron-right sg-chevron"></i>
     </button>
     <div class="sg-subitems" id="sgsub-st-taller">
-      {% if current_user and current_user.role != 'tecnico' %}
+      {# 2026-08-27 (Daniel: "libera a Lenin que pueda editar las
+         plantillas"). El backend de /mantenciones/api/plantillas (crear/
+         editar/eliminar) solo exige el permiso genérico "mantenciones"
+         (@_mant_required) — que Lenin ya tiene como técnico, igual que
+         cualquier otro. El único candado real era este link, oculto con
+         una comparación literal de rol ("tecnico" exacto). Se abre para
+         Lenin por id (16, estable si cambia de nombre), sin tocar su rol
+         — así no se le mueve nada de la clasificación interno/externo ni
+         de sus otros permisos. Si Daniel pide lo mismo para otro técnico,
+         sumar su id a la tupla en vez de abrirlo a todos. #}
+      {% if current_user and (current_user.role != 'tecnico' or current_user.id == 16) %}
       <a href="{{ url_for('mant_plantillas_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
         <i class="bi bi-list-check"></i><span>Plantillas</span>
       </a>
+      {% endif %}
+      {# Proveedores queda con el candado original — Daniel pidió
+         plantillas para Lenin, no proveedores; no se abren las dos por
+         compartir antes el mismo "if". #}
+      {% if current_user and current_user.role != 'tecnico' %}
       <a href="{{ url_for('mant_proveedores_repuesto_page') }}"
          class="sidebar-link{% if request.endpoint == 'mant_proveedores_repuesto_page' %} active{% endif %}">
         <i class="bi bi-truck"></i><span>Proveedores</span>
