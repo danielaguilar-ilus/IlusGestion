@@ -4335,6 +4335,73 @@ function _grabCalidadConstraints(quality){
   return base;
 }
 
+// 🔧 FIX 2026-08-27 (Daniel: "necesito que coloques grabar de la cámara o
+// de la galería"). Mismo patrón que abrirSheetFoto() para fotos: el
+// técnico elige entre grabar ahora (cámara en vivo, in-app) o subir un
+// video que ya tenía guardado en el teléfono.
+async function abrirOpcionesVideo(){
+  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion' || !PUEDE_EJECUTAR_FLAG){
+    ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
+    return;
+  }
+  if (typeof ilusActionSheet !== 'function'){
+    // Fallback defensivo si ilus_ui.js no cargó por alguna razón
+    abrirGrabador();
+    return;
+  }
+  const choice = await ilusActionSheet({
+    title: '🎥 Evidencia de video',
+    message: 'Elige cómo quieres agregar el video',
+    options: [
+      { label: 'Grabar ahora',       icon: 'bi-record-circle-fill', value: 'grabar',  style: 'dark' },
+      { label: 'Elegir de galería',  icon: 'bi-images',             value: 'galeria', style: 'secondary' },
+    ],
+  });
+  if (!choice) return;  // canceló
+  if (choice === 'grabar'){
+    abrirGrabador();
+  } else {
+    const inp = document.getElementById('videoGaleria');
+    try { inp.value = ''; } catch(e){}
+    inp.click();
+  }
+}
+
+// Sube directo un video YA EXISTENTE (elegido de galería) -- mismo endpoint
+// que grabSubir(), sin pasar por el grabador in-app ni por un Blob de
+// MediaRecorder: el backend (mant_visita_grabacion_video) ya acepta
+// cualquier archivo de video genérico bajo el campo "video".
+async function subirVideoGaleria(inputEl){
+  const file = inputEl.files && inputEl.files[0];
+  if (!file) return;
+  if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion' || !PUEDE_EJECUTAR_FLAG){
+    ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
+    return;
+  }
+  if (file.size > 100 * 1024 * 1024){
+    await ilusAlert({
+      title: 'Video demasiado grande',
+      message: `El video pesa ${(file.size/(1024*1024)).toFixed(1)} MB. Máximo: 100 MB.`,
+      type: 'warning',
+    });
+    return;
+  }
+  ilusToast('Subiendo video…', { type: 'info' });
+  const fd = new FormData();
+  fd.append('video', file, file.name || `video_v${VID}_${Date.now()}.mp4`);
+  try {
+    const d = await _uploadConProgreso(`/mantenciones/api/visitas/${VID}/grabacion`, fd, null);
+    if (d.ok){
+      ilusToast('✓ Video subido a la OT', { type:'success' });
+      cargarAdjuntos();
+    } else {
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+    }
+  } catch(e){
+    ilusToast('Error de red al subir el video', { type:'error' });
+  }
+}
+
 async function abrirGrabador(){
   if (VISITA_ESTADO === 'cerrada' || VISITA_ESTADO === 'pendiente_aprobacion' || !PUEDE_EJECUTAR_FLAG){
     ilusToast('OT bloqueada · no se pueden subir más adjuntos', { type:'warning' });
