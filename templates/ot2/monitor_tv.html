@@ -1648,14 +1648,18 @@
     // primera línea; acá se prioriza el DOCUMENTO del ERP —el identificador
     // real de una instalación— y el ticket queda de respaldo cuando no hay
     // documento declarado todavía.
+    // Leyenda de la burbuja (Daniel 2026-08-27): "que diga cliente, N° de
+    // OT, si es instalación y horario". El cliente ya va en la línea de
+    // arriba (.b-cliente); acá van los otros tres, en ese orden. El
+    // documento del ERP y el ticket pasan al tooltip: son útiles al
+    // consultar, pero de lejos compiten con lo que sí se lee a 3 metros.
+    const _ot = b.numero ? b.numero + ' · ' : '';
     const _tipo = b.tipo ? b.tipo + ' · ' : '';
-    const _ref = b.documento ? (b.documento + ' · ')
-                             : (b.ticket ? b.ticket + ' · ' : '');
     // OT de varios días: se dice qué jornada es, para que no parezca
     // duplicada ni atrasada (caso OT-133, del 01-09 al 04-09).
     const _md = (b.dias_total && b.dias_total > 1)
       ? ('Día ' + b.dia_n + ' de ' + b.dias_total + ' · ') : '';
-    setTexto($('.b-horas', nodo), _md + _ref + _tipo + (b.ini || '') + '–' + (b.fin || ''));
+    setTexto($('.b-horas', nodo), _md + _ot + _tipo + (b.ini || '') + '–' + (b.fin || ''));
     $('.b-prog', nodo).style.width = (est === 'ejecutando' ? Math.max(0, Math.min(100, b.avance_pct || 0)) : 0) + '%';
     nodo.title = (b.numero ? b.numero + ' · ' : '')
                + (b.cliente ? b.cliente + ' · ' : '')

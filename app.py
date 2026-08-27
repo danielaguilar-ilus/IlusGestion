@@ -50681,22 +50681,31 @@ def _puede_ot_accion(vid, accion, user=None):
                   f"-> DENIED (cliente firmó / OT en cierre — solo superadmin edita)", flush=True)
             return False
         # (2) Ventana de corrección: el técnico firmó pero el cliente NO.
-        #     2026-06-12 (Daniel, estilo Fracttal): originalmente el TÉCNICO
-        #     ASIGNADO seguía editando hasta que firmara el cliente.
-        #     🔒 REVERTIDO 2026-08-27 (Daniel, explícito): "cuando firma el
-        #     técnico, se bloquea la OT para él" — a partir de ahora la firma
-        #     del técnico es su candado inmediato, sin ventana de corrección
-        #     posterior. Gestión (ejecutivo SSTT/supervisor/admin) SÍ
-        #     conserva la ventana — es quien revisa antes de mandar a firmar
-        #     al cliente. TODO cambio post-firma deja evidencia en mant_logs
+        #     2026-06-12 (Daniel, estilo Fracttal): el TÉCNICO ASIGNADO sigue
+        #     editando (corregir fotos, tareas, equipos cruzados) HASTA que
+        #     firme el cliente. También corrigen ejecutivo SSTT / supervisor /
+        #     admin. TODO cambio post-firma deja evidencia en mant_logs
         #     (ver _ot_evidencia_post_firma) para amparar al técnico.
+        #
+        #     ⚠️ HISTORIA — no volver a cerrarlo sin medir el costo real:
+        #     el 27-ago por la mañana Daniel pidió quitarle esta ventana al
+        #     técnico ("cuando firma el técnico, se bloquea la OT para él").
+        #     Ese mismo día Lenin quedó trabado en la OT-2026-00132 y Daniel
+        #     lo revirtió: "devuélvele la ventana de corrección a Lenin...
+        #     actualmente estamos muy estrictos". El técnico está en terreno
+        #     y es quien puede arreglar su propio error en el momento; el
+        #     candado duro sigue siendo la firma del CLIENTE (ot_sellada).
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
                       f"-> ALLOWED (ventana de corrección post-firma técnico)", flush=True)
                 return True
+            if role == "tecnico" and es_tecnico_asignado:
+                print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
+                      f"-> ALLOWED (técnico asignado corrige hasta firma del cliente)", flush=True)
+                return True
             print(f"[PERM] vid={vid} action=ejecutar role={role_raw}->{role} user={username} "
-                  f"-> DENIED (técnico queda bloqueado apenas firma; solo gestión corrige)", flush=True)
+                  f"-> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
             return False
         # (3) Estado de trabajo normal (sin firma del técnico): SOLO técnico
         #     asignado/colaborador. El rol manda (defense in depth: aunque un
@@ -50730,15 +50739,20 @@ def _puede_ot_accion(vid, accion, user=None):
         if ot_sellada:
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (OT sellada por firma del cliente/cierre)", flush=True)
             return False
-        # Ventana de corrección (técnico ya firmó, cliente NO): gestión
-        # (ejecutivo SSTT / supervisor / admin) sigue configurando.
-        # 🔒 REVERTIDO 2026-08-27 (Daniel, explícito): el técnico YA NO
-        # conserva esta ventana — su firma es candado inmediato para él.
+        # Ventana de corrección (técnico ya firmó, cliente NO): el técnico
+        # asignado SIGUE configurando (2026-06-12, estilo Fracttal) igual que
+        # ejecutivo SSTT / supervisor / admin. Evidencia en mant_logs.
+        # Ver la nota histórica en la rama 'ejecutar': el 27-ago se cerró
+        # esta ventana al técnico y se revirtió el mismo día (caso Lenin,
+        # OT-2026-00132) — "actualmente estamos muy estrictos".
         if ot_en_ventana:
             if role in ("admin", "supervisor", "ejecutivo"):
                 print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (ventana de corrección)", flush=True)
                 return True
-            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (técnico bloqueado apenas firma; solo gestión corrige)", flush=True)
+            if role == "tecnico" and es_tecnico_asignado:
+                print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (técnico asignado, ventana de corrección)", flush=True)
+                return True
+            print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> DENIED (ventana de corrección: solo técnico asignado o gestión)", flush=True)
             return False
         if role in ("admin", "supervisor"):
             print(f"[PERM] vid={vid} action=configurar role={role_raw}->{role} user={username} -> ALLOWED (rol global)", flush=True)
