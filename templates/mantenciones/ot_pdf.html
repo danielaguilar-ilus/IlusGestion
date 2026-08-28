@@ -8,7 +8,7 @@
    en el PDF descargado. En el navegador normal es inofensivo. #}
 {% if base_url %}<base href="{{ base_url }}">{% endif %}
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OT {{ visita.numero_ot or visita.id }} — Reporte técnico ILUS</title>
+<title>{{ visita.numero_ot or ('OT-' ~ visita.id) }} — Reporte técnico ILUS</title>
 <style>
   /* ════════════════════════════════════════════════════════════
      PDF ILUS — Orden de Trabajo (impresión + preview pantalla)
@@ -29,7 +29,7 @@
   }
 
   @page {
-    size: A4;
+    size: letter;
     margin: 0;
   }
 
@@ -668,7 +668,7 @@
 <div class="toolbar no-print">
   <div class="tb-left">
     <div>
-      <div class="tb-title">OT {{ visita.numero_ot or ('VS-' ~ visita.id) }} — {{ visita.razon_social }}</div>
+      <div class="tb-title">{{ visita.numero_ot or ('VS-' ~ visita.id) }} — {{ visita.razon_social }}</div>
       <div class="tb-sub">Reporte técnico digital · {{ equipos|length }} equipo(s) · {{ tareas|length }} tarea(s) · Generado {{ generated_at }}</div>
     </div>
   </div>
@@ -713,7 +713,7 @@
   {% endif %}
   <div class="foot-info">
     <span><b>ILUS Fitness</b> · www.ilusfitness.com · soportetec@sphs.cl</span>
-    <span>OT <b>{{ visita.numero_ot or visita.id }}</b> · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
+    <span><b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b> · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
   </div>
 </div>
 {% endmacro %}

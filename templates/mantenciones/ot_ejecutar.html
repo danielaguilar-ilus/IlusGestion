@@ -517,6 +517,21 @@
           </div>
         </div>
         {% endif %}
+        {% if tecnicos_extra %}
+        <div class="k">Colaboradores</div>
+        <div class="v">
+          {% for t in tecnicos_extra %}
+          <span class="badge bg-light text-dark border me-1 mb-1" style="font-weight:600">
+            {{ t.nombre }}
+            {% if puede_metadata %}
+            <button type="button" class="btn-close btn-close-sm ms-1" style="font-size:.55rem"
+                    title="Quitar de esta OT"
+                    onclick="otQuitarTecnicoExtra({{ t.vt_id }}, '{{ t.nombre|e }}')"></button>
+            {% endif %}
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
         {% endif %}
         {% if visita.observaciones %}
         <div class="k">Observaciones</div>
@@ -3203,6 +3218,31 @@ window.otConfirmarReasignarTecnico = async function(){
     }
   } catch (e){
     ilusToast('Error de conexión al reasignar el técnico.', {type: 'error'});
+  }
+};
+
+// 2026-08-27 (Daniel, caso OT-2026-00058): quitar un técnico COLABORADOR
+// que quedó registrado sin haber participado. No toca al técnico principal.
+window.otQuitarTecnicoExtra = async function(vtId, nombre){
+  const ok = await ilusConfirm({
+    title: 'Quitar técnico',
+    message: `¿Quitar a ${nombre} de esta OT?`,
+    sub: 'Deja de figurar como técnico involucrado en esta orden de trabajo.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/tecnicos/${vtId}`, {method: 'DELETE'});
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ Técnico removido', {type: 'success'});
+      setTimeout(() => location.reload(), 500);
+    } else {
+      ilusToast(j.error || 'No se pudo quitar el técnico.', {type: 'error'});
+    }
+  } catch (e){
+    ilusToast('Error de conexión al quitar el técnico.', {type: 'error'});
   }
 };
 

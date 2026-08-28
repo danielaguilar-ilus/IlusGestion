@@ -60,7 +60,18 @@
     }
   }
 
+  // 2026-08-27 (Daniel): "dejar ese logo como un logo estandarizado de
+  // espera" -- el anillo rojo ILUS (window.ilusLoader, static/ilus_ui.js)
+  // ya es el loader que usa Asignar y Cotizar al buscar en el ERP. Este
+  // modal tenía su PROPIA barra negra con logo estático: dos loaders
+  // distintos para la misma acción de "esperar". Si ilusLoader está
+  // disponible (siempre, se carga en base.html) se usa ese; el markup
+  // propio de pdf_modal.html queda como fallback si algún día no cargara.
   function _showLoading(els, msg) {
+    if (window.ilusLoader) {
+      window.ilusLoader.show({ text: msg || DEFAULT_LOADING_MSG });
+      return;
+    }
     if (!els.loading) return;
     if (els.loadingMsg) els.loadingMsg.textContent = msg || DEFAULT_LOADING_MSG;
     els.loading.classList.add('show');
@@ -68,6 +79,9 @@
   }
 
   function _hideLoading(els) {
+    if (window.ilusLoader) {
+      window.ilusLoader.hide();
+    }
     if (!els.loading) return;
     els.loading.classList.remove('show');
     els.loading.setAttribute('aria-hidden', 'true');

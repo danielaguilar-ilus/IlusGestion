@@ -63264,6 +63264,43 @@ def mant_tecnicos_list_api():
     return jsonify([dict(r) for r in rows])
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/tecnicos/<int:vt_id>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def mant_visita_tecnico_quitar(vid, vt_id):
+    """Quita un técnico COLABORADOR (mant_visita_tecnicos) de una OT.
+
+    2026-08-27 (Daniel, caso OT-2026-00058): Lenin Urbina apareció como
+    técnico involucrado en una OT de Isabel Milling sin haber participado.
+    Hasta hoy no existía forma de sacarlo -- mant_visita_tecnicos solo
+    tenía INSERT en todo el código, nunca un DELETE. Esto NO toca al
+    técnico PRINCIPAL (visita.tecnico_user_id): para eso ya existe
+    "Reasignar" en la propia OT. Esto es solo para la lista de
+    colaboradores/extra que se arma aparte (ver _ot_pdf_context).
+
+    Gate @_no_tecnico a propósito: es una corrección administrativa sobre
+    quién queda registrado como responsable de un trabajo, no una acción
+    de ejecución en terreno.
+    """
+    row = mysql_fetchone(
+        "SELECT id FROM mant_visita_tecnicos WHERE id=%s AND visita_id=%s",
+        (vt_id, vid)
+    )
+    if not row:
+        return jsonify({"ok": False, "error": "Registro no encontrado"}), 404
+    try:
+        mysql_execute(
+            "DELETE FROM mant_visita_tecnicos WHERE id=%s AND visita_id=%s",
+            (vt_id, vid)
+        )
+        _mant_log("visita", vid, "tecnico_quitado",
+                  f"Técnico colaborador (vt_id={vt_id}) removido por {current_username()}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"[mant_visita_tecnico_quitar] vid={vid} vt_id={vt_id}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo quitar el técnico"}), 500
+
+
 # ══════════════════════════════════════════════════════════════════════
 # EJECUTIVO ASIGNADO — responsable de comunicarse con el cliente (2026-07-11)
 # ══════════════════════════════════════════════════════════════════════
@@ -79668,6 +79705,25 @@ def mant_ot_ejecutar(vid):
     ) or []
     equipos = [dict(e) for e in equipos]
 
+    # ── Técnicos colaboradores (mant_visita_tecnicos) — 2026-08-27 ──────
+    # Mismo criterio que _ot_pdf_context (excluye al principal). Se agrega
+    # acá (antes solo vivía en el PDF) para poder ofrecer "Quitar" a
+    # supervisor+ sin tener que ir al PDF a enterarse de quién más figura.
+    tecnicos_extra = []
+    try:
+        _tec_extra_rows = mysql_fetchall(
+            "SELECT vt.id AS vt_id, COALESCE(u.nombre, u.username, t.nombre) AS nombre "
+            "  FROM mant_visita_tecnicos vt "
+            "  LEFT JOIN mant_tecnicos t ON t.id = vt.tecnico_id "
+            "  LEFT JOIN app_users u    ON u.id = vt.tecnico_user_id "
+            " WHERE vt.visita_id=%s "
+            "   AND (u.id IS NULL OR u.id != %s)",
+            (vid, visita.get("tecnico_user_id") or 0)
+        ) or []
+        tecnicos_extra = [dict(t) for t in _tec_extra_rows if t.get("nombre")]
+    except Exception as _e_tex:
+        print(f"[ot_ejecutar] tecnicos_extra error: {_e_tex}", flush=True)
+
     # 2026-05-22 (OT 2026-00004 Vitacura) — Detección de OT vacía /
     # huérfana. Si hay tareas pero todas tienen maquina_id NULL, no
     # aparecen equipos en la vista. Pasamos un flag al template para
@@ -79980,6 +80036,7 @@ def mant_ot_ejecutar(vid):
         tareas_huerfanas=_tareas_huerf_v,
         puede_metadata=puede_metadata_flag,
         puede_cobertura=puede_cobertura_flag,
+        tecnicos_extra=tecnicos_extra,
     )
 
 
@@ -84419,9 +84476,12 @@ def mant_visita_pdf(vid):
     html = render_template(_tpl_pdf, **ctx)
 
     # PDF
+    # 2026-08-27 (Daniel): hojas carta para la OT clásica (no la de
+    # levantamiento, que define su propio @page A4 y no se tocó).
+    _pdf_formato = "A4" if _es_informe_lev else "Letter"
     try:
         pdf_bytes = _pw_pdf(
-            html, page_format="A4", margin={
+            html, page_format=_pdf_formato, margin={
                 "top": "15mm", "bottom": "15mm",
                 "left": "12mm", "right": "12mm",
             },
