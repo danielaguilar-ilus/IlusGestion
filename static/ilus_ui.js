@@ -163,19 +163,33 @@
     // robe el foco al input.
     //
     // FIX 2026-08-28 (Daniel, en vivo -- "Producto sin saldo disponible"
-    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal): ahí
-    // no había ningún modal Bootstrap, así que este overlay caía en
-    // document.body -- hermano de #tkaBackdrop/#tkaModal, ambos con más
-    // z-index (1085/1086) que pierden contra los 99999 de .ilus-overlay
-    // SOLO si compiten en el mismo contexto de apilamiento. #tkaModal tiene
-    // `transform` propio (para su animación) -- eso lo vuelve "contenedor"
-    // de cualquier position:fixed agregado DENTRO (queda recortado a su
-    // propio cuadro, con overflow:hidden, en vez de ocupar el viewport).
-    // #tkaBackdrop no tiene transform: agregar el overlay ahí lo deja del
-    // tamaño de la pantalla Y le permite "escapar" a competir por z-index
-    // en la raíz del documento, donde 99999 sí gana. Por eso se prioriza el
-    // backdrop de tka, nunca el modal de tka mismo.
-    (document.querySelector('.tka-backdrop.is-open') || document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal).
+    //
+    // Primer intento (el mismo día, MAL -- corregido acá): pensé que el
+    // problema era que #tkaModal tiene `transform` propio y por eso
+    // "atrapaba" al overlay si se insertaba DENTRO de él, así que prioricé
+    // insertar dentro de #tkaBackdrop en su lugar. Verificado EN VIVO con
+    // el navegador real (no solo leyendo código) que esto NO alcanzaba:
+    // #tkaBackdrop es `position:fixed` CON `z-index:1085` explícito, y esa
+    // combinación por sí sola -- sin necesidad de ningún transform -- ya
+    // crea su PROPIO contexto de apilamiento. Cualquier hijo que se le
+    // agregue, sin importar su propio z-index (hasta 99999), queda
+    // atrapado adentro: todo el subárbol de #tkaBackdrop se pinta como UNA
+    // sola unidad en la posición 1085, y pierde contra el hermano
+    // #tkaModal (1086) -- exactamente igual de invisible que insertarlo
+    // dentro de #tkaModal. Confirmado insertando el overlay a mano en
+    // document.body durante el diagnóstico: ahí SÍ se ve, porque
+    // document.body no es ningún contexto de apilamiento (no tiene
+    // position/z-index propios) y dentro de él SÍ gana el z-index de
+    // .ilus-overlay contra el de #tkaBackdrop/#tkaModal.
+    //
+    // Moraleja para el próximo que toque esto: "tiene transform" NO es la
+    // pregunta correcta para saber si un hijo position:fixed queda
+    // atrapado al pintarse -- CUALQUIER ancestro que ya sea, por sí mismo,
+    // un contexto de apilamiento (position+z-index explícito, opacity<1,
+    // transform, filter, etc.) atrapa a sus hijos para efectos de PINTADO,
+    // no solo para el tamaño/posición del position:fixed.
+    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     return overlay;
   }
@@ -349,19 +363,33 @@
     // robe el foco al input.
     //
     // FIX 2026-08-28 (Daniel, en vivo -- "Producto sin saldo disponible"
-    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal): ahí
-    // no había ningún modal Bootstrap, así que este overlay caía en
-    // document.body -- hermano de #tkaBackdrop/#tkaModal, ambos con más
-    // z-index (1085/1086) que pierden contra los 99999 de .ilus-overlay
-    // SOLO si compiten en el mismo contexto de apilamiento. #tkaModal tiene
-    // `transform` propio (para su animación) -- eso lo vuelve "contenedor"
-    // de cualquier position:fixed agregado DENTRO (queda recortado a su
-    // propio cuadro, con overflow:hidden, en vez de ocupar el viewport).
-    // #tkaBackdrop no tiene transform: agregar el overlay ahí lo deja del
-    // tamaño de la pantalla Y le permite "escapar" a competir por z-index
-    // en la raíz del documento, donde 99999 sí gana. Por eso se prioriza el
-    // backdrop de tka, nunca el modal de tka mismo.
-    (document.querySelector('.tka-backdrop.is-open') || document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal).
+    //
+    // Primer intento (el mismo día, MAL -- corregido acá): pensé que el
+    // problema era que #tkaModal tiene `transform` propio y por eso
+    // "atrapaba" al overlay si se insertaba DENTRO de él, así que prioricé
+    // insertar dentro de #tkaBackdrop en su lugar. Verificado EN VIVO con
+    // el navegador real (no solo leyendo código) que esto NO alcanzaba:
+    // #tkaBackdrop es `position:fixed` CON `z-index:1085` explícito, y esa
+    // combinación por sí sola -- sin necesidad de ningún transform -- ya
+    // crea su PROPIO contexto de apilamiento. Cualquier hijo que se le
+    // agregue, sin importar su propio z-index (hasta 99999), queda
+    // atrapado adentro: todo el subárbol de #tkaBackdrop se pinta como UNA
+    // sola unidad en la posición 1085, y pierde contra el hermano
+    // #tkaModal (1086) -- exactamente igual de invisible que insertarlo
+    // dentro de #tkaModal. Confirmado insertando el overlay a mano en
+    // document.body durante el diagnóstico: ahí SÍ se ve, porque
+    // document.body no es ningún contexto de apilamiento (no tiene
+    // position/z-index propios) y dentro de él SÍ gana el z-index de
+    // .ilus-overlay contra el de #tkaBackdrop/#tkaModal.
+    //
+    // Moraleja para el próximo que toque esto: "tiene transform" NO es la
+    // pregunta correcta para saber si un hijo position:fixed queda
+    // atrapado al pintarse -- CUALQUIER ancestro que ya sea, por sí mismo,
+    // un contexto de apilamiento (position+z-index explícito, opacity<1,
+    // transform, filter, etc.) atrapa a sus hijos para efectos de PINTADO,
+    // no solo para el tamaño/posición del position:fixed.
+    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
       const inputEl = overlay.querySelector('.ilus-prompt-input');
       setTimeout(() => { inputEl.focus(); inputEl.select && inputEl.select(); }, 200);
@@ -594,19 +622,33 @@
     // robe el foco al input.
     //
     // FIX 2026-08-28 (Daniel, en vivo -- "Producto sin saldo disponible"
-    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal): ahí
-    // no había ningún modal Bootstrap, así que este overlay caía en
-    // document.body -- hermano de #tkaBackdrop/#tkaModal, ambos con más
-    // z-index (1085/1086) que pierden contra los 99999 de .ilus-overlay
-    // SOLO si compiten en el mismo contexto de apilamiento. #tkaModal tiene
-    // `transform` propio (para su animación) -- eso lo vuelve "contenedor"
-    // de cualquier position:fixed agregado DENTRO (queda recortado a su
-    // propio cuadro, con overflow:hidden, en vez de ocupar el viewport).
-    // #tkaBackdrop no tiene transform: agregar el overlay ahí lo deja del
-    // tamaño de la pantalla Y le permite "escapar" a competir por z-index
-    // en la raíz del documento, donde 99999 sí gana. Por eso se prioriza el
-    // backdrop de tka, nunca el modal de tka mismo.
-    (document.querySelector('.tka-backdrop.is-open') || document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal).
+    //
+    // Primer intento (el mismo día, MAL -- corregido acá): pensé que el
+    // problema era que #tkaModal tiene `transform` propio y por eso
+    // "atrapaba" al overlay si se insertaba DENTRO de él, así que prioricé
+    // insertar dentro de #tkaBackdrop en su lugar. Verificado EN VIVO con
+    // el navegador real (no solo leyendo código) que esto NO alcanzaba:
+    // #tkaBackdrop es `position:fixed` CON `z-index:1085` explícito, y esa
+    // combinación por sí sola -- sin necesidad de ningún transform -- ya
+    // crea su PROPIO contexto de apilamiento. Cualquier hijo que se le
+    // agregue, sin importar su propio z-index (hasta 99999), queda
+    // atrapado adentro: todo el subárbol de #tkaBackdrop se pinta como UNA
+    // sola unidad en la posición 1085, y pierde contra el hermano
+    // #tkaModal (1086) -- exactamente igual de invisible que insertarlo
+    // dentro de #tkaModal. Confirmado insertando el overlay a mano en
+    // document.body durante el diagnóstico: ahí SÍ se ve, porque
+    // document.body no es ningún contexto de apilamiento (no tiene
+    // position/z-index propios) y dentro de él SÍ gana el z-index de
+    // .ilus-overlay contra el de #tkaBackdrop/#tkaModal.
+    //
+    // Moraleja para el próximo que toque esto: "tiene transform" NO es la
+    // pregunta correcta para saber si un hijo position:fixed queda
+    // atrapado al pintarse -- CUALQUIER ancestro que ya sea, por sí mismo,
+    // un contexto de apilamiento (position+z-index explícito, opacity<1,
+    // transform, filter, etc.) atrapa a sus hijos para efectos de PINTADO,
+    // no solo para el tamaño/posición del position:fixed.
+    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
 
       function done(val){
