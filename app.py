@@ -82673,7 +82673,8 @@ def mant_ot_aprobar_cierre(vid):
     v = mysql_fetchone(
         # cliente_id incluido (2026-08-10) — ver comentario igual en
         # _ot_validar_cierre sobre por qué _ot_es_interna lo necesita.
-        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id FROM mant_visitas WHERE id=%s",
+        # centro_costo incluido (2026-08-27) — ver gate SIN_CENTRO_COSTO abajo.
+        "SELECT estado, modalidad_cobro, factura_nudo, cliente_id, centro_costo FROM mant_visitas WHERE id=%s",
         (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -82705,6 +82706,22 @@ def mant_ot_aprobar_cierre(vid):
             "error_codigo": "SIN_FACTURA",
             "error": "Esta OT es cobrable y aún NO tiene factura asociada. "
                      "Asocia la factura (o marca la OT como garantía) antes de firmar el cierre.",
+        }), 400
+    # 🔒 FIX 2026-08-27 (Daniel, autorizado explícitamente esta noche —
+    # "endurece el candado de cierre"): el centro de costo se exige SIEMPRE
+    # al cerrar, garantía incluida ("una garantía también hay que poder
+    # imputarla a alguien" -- misma regla que ya documenta
+    # _ot2_finanzas_estado, que hasta hoy solo informaba y nunca bloqueaba).
+    # Mismo kill-switch que el gate de factura de arriba (ot_factura_gate_
+    # activo) -- si esto traba a alguien de madrugada, Daniel lo apaga desde
+    # /mantenciones/configuracion sin necesitar un deploy. Trabajo interno
+    # queda exento, igual que el gate de factura.
+    if (_gate_on and not _ot_es_interna(v)
+            and not (v.get("centro_costo") or "").strip()):
+        return jsonify({
+            "ok": False,
+            "error_codigo": "SIN_CENTRO_COSTO",
+            "error": "Falta declarar el centro de costo de esta OT antes de firmar el cierre.",
         }), 400
     # En trabajo INTERNO la firma del administrativo que revisa es la ÚNICA
     # contraparte del técnico (no hay cliente). Daniel 2026-08-08: "que un
