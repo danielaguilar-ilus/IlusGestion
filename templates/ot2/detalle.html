@@ -362,6 +362,19 @@
 .otd-wk-go{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.78rem;
   font-weight:800;color:var(--ilus-red,#dc2626);text-decoration:none}
 .otd-wk-go:hover{text-decoration:underline}
+/* 2026-08-28 (Daniel): plantilla por equipo + cambiarla */
+.otd-wk-plant{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb}
+.otd-wk-plant > .k{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;
+  color:#9ca3af;font-weight:800;margin-bottom:4px}
+.otd-wk-plant-row{display:flex;align-items:center;justify-content:space-between;
+  gap:8px;padding:5px 0;font-size:.82rem}
+.otd-wk-plant-row .nm{font-weight:700;color:#0a0a0a}
+.otd-wk-plant-btn{display:inline-flex;align-items:center;gap:4px;background:#f3f4f6;
+  border:1px solid #d1d5db;border-radius:7px;padding:4px 10px;font-size:.72rem;
+  font-weight:800;color:#374151;cursor:pointer;min-height:30px}
+.otd-wk-plant-btn:hover{background:#e5e7eb;border-color:#9ca3af}
+.otd-wk-plant-lock{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;
+  font-weight:700;color:#9ca3af}
 
 /* Documentos — Anexo de Servicios */
 .otd-doc-card{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:14px 16px;
@@ -926,6 +939,34 @@
             {% if e.observacion_tecnico %}
             <div class="otd-wk-note">Observación del técnico: {{ e.observacion_tecnico }}</div>
             {% endif %}
+            {# 🆕 2026-08-28 (Daniel): "no veo qué plantilla tienen los
+               equipos... quiero poder cambiarlas". Un equipo puede tener
+               más de una plantilla (grupo por plantilla_id) -- se lista
+               cada una con su propio botón. El botón solo aparece si el
+               grupo está SIN EDITAR (`sin_editar`, calculado en el
+               backend) -- cambiar una plantilla con respuestas ya
+               guardadas borraría trabajo real, el backend lo rechaza igual
+               pero mejor no ofrecer un botón que va a fallar seguro. #}
+            {% if e.plantillas %}
+            <div class="otd-wk-plant">
+              <div class="k">Plantilla{{ 's' if e.plantillas|length > 1 }}</div>
+              {% for pg in e.plantillas %}
+              <div class="otd-wk-plant-row">
+                <span class="nm">{{ pg.plantilla_nombre }}</span>
+                {% if puede_metadata %}
+                  {% if pg.sin_editar %}
+                  <button type="button" class="otd-wk-plant-btn"
+                          onclick="otdCambiarPlantilla({{ e.id }}, {{ pg.plantilla_id }})">
+                    <i class="bi bi-arrow-repeat"></i> Cambiar</button>
+                  {% else %}
+                  <span class="otd-wk-plant-lock" title="Ya tiene respuestas guardadas -- no se puede cambiar sin perder ese trabajo">
+                    <i class="bi bi-lock-fill"></i> Con respuestas</span>
+                  {% endif %}
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
             {# Honesto (revisión de código 27-ago): el link SIEMPRE manda al
                inicio de /ejecutar -- mant_ot_ejecutar.html arma sus tarjetas
                de equipo por JS (PLANTILLAS_POR_MAQUINA) y no tiene anchors
@@ -1074,6 +1115,11 @@
 {% endif %}
 
 <script>
+// 2026-08-28 (Daniel): lista de plantillas activas para el selector de
+// "cambiar plantilla" del tab Trabajo -- sin filtrar por tipo/clasificación
+// a propósito ("de momento déjalas libres").
+const PLANTILLAS_TODAS = {{ plantillas_todas | tojson }};
+
 /* Pestañas Información / Trabajo / Evidencia / Documentos (2026-08-27). */
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.getElementById('otdTabs');
@@ -1347,6 +1393,53 @@ window.otdConfirmarReasignar = async function(){
     }
   } catch(e){
     ilusToast('Error de conexión al reasignar el técnico.', {type:'error'});
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   CAMBIAR PLANTILLA de un equipo (2026-08-28, Daniel: "quiero ver qué
+   plantillas tienen los equipos... para tener la opción de cambiarlas").
+   Sheet con TODAS las plantillas activas (sin filtrar por tipo/clasi-
+   ficación, pedido explícito de "déjalas libres"). El backend igual
+   rechaza si el grupo ya tiene respuestas guardadas -- acá solo se
+   confirma antes de mandar, para no sorprender con un reemplazo silencioso.
+   ══════════════════════════════════════════════════════════════ */
+window.otdCambiarPlantilla = async function(mid, pidActual){
+  const opciones = PLANTILLAS_TODAS
+    .filter(p => p.id !== pidActual)
+    .map(p => ({ label: p.nombre, value: String(p.id) }));
+  if (!opciones.length){
+    ilusToast('No hay otra plantilla activa para elegir.', {type:'warning'});
+    return;
+  }
+  const elegido = await ilusActionSheet({
+    title: 'Cambiar plantilla',
+    message: 'Elige la nueva plantilla para este equipo',
+    options: opciones,
+  });
+  if (!elegido) return;
+  const ok = await ilusConfirm({
+    title: 'Reemplazar checklist',
+    message: 'Esto borra las tareas actuales de este equipo (sin respuestas guardadas) y las reemplaza por las de la nueva plantilla.',
+    sub: 'No se puede deshacer.',
+    okLabel: 'Reemplazar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/{{ v.id }}/equipo/${mid}/plantilla`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ plantilla_id_actual: pidActual, plantilla_id_nuevo: parseInt(elegido, 10) }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast(`✓ Plantilla cambiada (${j.tareas_creadas} tarea(s))`, {type:'success'});
+      setTimeout(() => location.reload(), 700);
+    } else {
+      ilusToast(j.error || 'No se pudo cambiar la plantilla.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al cambiar la plantilla.', {type:'error'});
   }
 };
 

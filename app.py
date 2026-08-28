@@ -74867,6 +74867,47 @@ def ot2_detalle(vid):
         else:
             e["sello"], e["sello_cls"] = "Pendiente", "eq-pend"
 
+    # 🆕 2026-08-28 (Daniel): "no veo qué plantilla tienen los equipos...
+    # quiero poder cambiarlas". Un equipo puede tener MÁS de una plantilla
+    # aplicada (ej. una de instalación + una de accesorios) -- se agrupa
+    # por (maquina_id, plantilla_id), no se asume una sola. `sin_editar`
+    # ya viene calculado acá (evita que el template tenga que decidir con
+    # qué criterio mostrar el botón de cambiar).
+    try:
+        _pg_rows = mysql_fetchall(
+            "SELECT t.maquina_id, t.plantilla_id, "
+            "       COALESCE(p.nombre, 'Plantilla eliminada') AS plantilla_nombre, "
+            "       SUM(CASE WHEN t.completada=1 OR t.valor_json IS NOT NULL "
+            "                THEN 1 ELSE 0 END) AS n_editadas "
+            "  FROM mant_visita_tareas t "
+            "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
+            " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL AND t.plantilla_id IS NOT NULL "
+            " GROUP BY t.maquina_id, t.plantilla_id, p.nombre",
+            (vid,)
+        ) or []
+        _plant_por_eq = {}
+        for _pg in _pg_rows:
+            _plant_por_eq.setdefault(_pg["maquina_id"], []).append({
+                "plantilla_id": _pg["plantilla_id"],
+                "plantilla_nombre": _pg["plantilla_nombre"],
+                "sin_editar": int(_pg.get("n_editadas") or 0) == 0,
+            })
+        for e in equipos:
+            e["plantillas"] = _plant_por_eq.get(e["id"], [])
+    except Exception as _e_pg:
+        print(f"[ot2_detalle] plantillas por equipo vid={vid}: {_e_pg}", flush=True)
+        for e in equipos:
+            e["plantillas"] = []
+
+    # Lista de plantillas activas para el selector de "cambiar plantilla"
+    # -- SIN filtrar por tipo/clasificación (Daniel, 2026-08-28: "de
+    # momento déjalas libres, quiero ver las plantillas... para tener la
+    # opción de cambiarlas"). Es intencionalmente permisivo por ahora.
+    plantillas_todas = mysql_fetchall(
+        "SELECT id, nombre, tipo_visita FROM mant_tarea_plantillas "
+        " WHERE activa=1 ORDER BY nombre"
+    ) or []
+
     # ── Recorrido de la OT ─────────────────────────────────────────────
     hitos = []
     for clave, label, icono, col in _OT2_HITOS:
@@ -74992,6 +75033,7 @@ def ot2_detalle(vid):
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         hito_actual=hito_actual, hito_siguiente=hito_siguiente,
+        plantillas_todas=plantillas_todas,
         # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
         # (el motor de firma ya existía desde anoche, commit e007c43; lo que
         # faltaba era el formulario). Los 3 textos "fijos" del documento real
@@ -80693,6 +80735,54 @@ def mant_ot_ejecutar(vid):
         puede_cobertura=puede_cobertura_flag,
         tecnicos_extra=tecnicos_extra,
     )
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/plantilla", methods=["PUT"])
+@_mant_required
+def mant_ot_equipo_cambiar_plantilla(vid, mid):
+    """Reasigna la plantilla de un equipo dentro de una OT (2026-08-28).
+
+    Daniel: "quiero ver qué plantillas tienen los equipos... para tener la
+    opción de cambiarlas... de momento déjalas libres" -- por eso NO se
+    filtra por tipo/clasificación acá, cualquier plantilla activa sirve.
+
+    Mismo gate que reagendar/reasignar técnico (`metadata`): es una acción
+    de GESTIÓN sobre cómo quedó armada la OT, no de ejecución en terreno.
+
+    Body: {plantilla_id_actual, plantilla_id_nuevo}. Si el grupo (equipo x
+    plantilla_id_actual) ya tiene alguna respuesta guardada, se rechaza --
+    cambiar la plantilla ahí borraría trabajo real del técnico.
+    """
+    if not _puede_ot_accion(vid, "metadata"):
+        return jsonify({"ok": False, "error": "No tienes permiso para reasignar plantillas en esta OT."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        pid_actual = int(d.get("plantilla_id_actual"))
+        pid_nuevo = int(d.get("plantilla_id_nuevo"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Faltan las plantillas (actual y nueva)."}), 400
+    if pid_actual == pid_nuevo:
+        return jsonify({"ok": False, "error": "Elige una plantilla distinta a la actual."}), 400
+    _pn = mysql_fetchone("SELECT id FROM mant_tarea_plantillas WHERE id=%s AND activa=1", (pid_nuevo,))
+    if not _pn:
+        return jsonify({"ok": False, "error": "Esa plantilla no existe o está inactiva."}), 404
+    if not _grupo_ot_sin_editar(vid, mid, pid_actual):
+        return jsonify({
+            "ok": False, "error_codigo": "GRUPO_CON_RESPUESTAS",
+            "error": "Este equipo ya tiene respuestas guardadas con la plantilla actual "
+                     "-- no se puede reemplazar sin perder ese trabajo.",
+        }), 409
+    try:
+        n = _sincronizar_grupo_desde_plantilla(vid, mid, pid_nuevo, pid_actual=pid_actual)
+    except Exception as e:
+        print(f"[cambiar_plantilla] vid={vid} mid={mid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo reasignar la plantilla."}), 500
+    try:
+        _mant_log("visita", vid, "plantilla_reasignada",
+                  f"equipo#{mid}: plantilla {pid_actual} -> {pid_nuevo} ({n} tareas) por {current_username()}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "tareas_creadas": n})
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/equipo/<int:mid>/datos", methods=["PATCH"])
