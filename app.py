@@ -76779,6 +76779,13 @@ def _ot_tv_datos(fecha=None):
             "cliente": cliente_txt[:44],
             "ticket": f.get("numero_ticket") or None,
             "documento": _doc or None,
+            # 🆕 2026-08-28 (Daniel: "que en esa burbuja me diga... la
+            # comuna, al menos la comuna") -- el dato YA se traía en
+            # _OT_TV_SELECT (c.comuna AS cliente_comuna) para armar
+            # `dir_txt` más abajo, pero nunca viajaba al bloque del
+            # timeline. Sin dirección completa a propósito (pantalla
+            # pública, se ve de lejos): solo la comuna, que es lo que pidió.
+            "comuna": (f.get("cliente_comuna") or "").strip() or None,
             # 🔧 FIX 2026-08-27 (OT-2026-00133 volvía a "desaparecer" al
             # navegar a su 2°/3°/4° día): `correrDias()` en monitor_tv.html
             # YA traía escrita la lógica de mover fecha_programada Y

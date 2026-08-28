@@ -714,7 +714,16 @@
     }
     .b-horas{
       font-size:14px;font-weight:700;color:rgba(255,255,255,.85);
-      white-space:nowrap;line-height:1.1;overflow:hidden;text-overflow:ellipsis;
+      line-height:1.15;overflow:hidden;
+      /* 🔧 2026-08-28 (Daniel: "que mantenga un ajuste de texto para que
+         se vea todo el texto... si se pierde, ni modo"). Antes era una sola
+         línea con "…" al primer corte -- con documento y comuna sumados al
+         texto (ver actualizarBloque) casi nunca alcanzaba. Ahora envuelve
+         hasta 2 líneas (clamp webkit, el motor de la TV es Chromium) y solo
+         si ni así cabe se corta limpio por el overflow:hidden del bloque --
+         sin "…" a media palabra. */
+      white-space:normal;
+      display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
     }
     .b-prog{
       position:absolute;left:0;bottom:0;height:3px;width:0;
@@ -829,10 +838,31 @@
        brillan igual, la pantalla deja de decir dónde mirar. Acá el verde
        significa "listo, ya no requiere atención": presente pero en calma.
        El check ✓ hace el resto del trabajo sin subir el brillo. */
+    /* 🔧 2026-08-28 (Daniel: "el verde sutil me gusta más... se podría
+       hacer que llegue la palpitancia a este verde transparente y que se
+       coloque verde así completo"). Antes era estático a propósito (ver
+       nota de arriba) -- ahora respira DENTRO de su propia familia de verde
+       apagado, sin saltar nunca al verde saturado de EJECUTANDO: sube de
+       intensidad en el mismo tono y vuelve, más lento que el latido de
+       "ahora mismo" para que se note que es un ritmo distinto (logrado,
+       no urgente). */
     .tl-bloque.b-terminado{
       background:linear-gradient(160deg,rgba(22,163,74,.20) 0%,rgba(21,128,61,.13) 100%);
       border-color:rgba(74,222,128,.34);
-      box-shadow:0 1px 0 rgba(255,255,255,.06) inset;
+      box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 rgba(74,222,128,0);
+      animation:bloqueTerminadoVivo 3.6s ease-in-out infinite;
+    }
+    @keyframes bloqueTerminadoVivo{
+      0%,100%{
+        background:linear-gradient(160deg,rgba(22,163,74,.20) 0%,rgba(21,128,61,.13) 100%);
+        border-color:rgba(74,222,128,.34);
+        box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 0 0 rgba(74,222,128,0);
+      }
+      50%{
+        background:linear-gradient(160deg,rgba(22,163,74,.34) 0%,rgba(21,128,61,.24) 100%);
+        border-color:rgba(74,222,128,.62);
+        box-shadow:0 1px 0 rgba(255,255,255,.10) inset, 0 0 14px rgba(74,222,128,.5);
+      }
     }
     .tl-bloque.b-terminado .b-cliente{color:#86efac}
     .tl-bloque.b-terminado .b-cliente::before{
@@ -1913,18 +1943,23 @@
     // primera línea; acá se prioriza el DOCUMENTO del ERP —el identificador
     // real de una instalación— y el ticket queda de respaldo cuando no hay
     // documento declarado todavía.
-    // Leyenda de la burbuja (Daniel 2026-08-27): "que diga cliente, N° de
-    // OT, si es instalación y horario". El cliente ya va en la línea de
-    // arriba (.b-cliente); acá van los otros tres, en ese orden. El
-    // documento del ERP y el ticket pasan al tooltip: son útiles al
-    // consultar, pero de lejos compiten con lo que sí se lee a 3 metros.
+    // 🔧 2026-08-28 (Daniel, vuelve sobre el pedido anterior: "que en esa
+    // burbuja me diga el número de documento, la comuna... si es el
+    // servicio, la OT y el horario"). El 27-08 el documento se había
+    // sacado de la vista para no competir a 3 metros -- hoy pide
+    // explícitamente traerlo de vuelta junto con la comuna. Ahora que
+    // `.b-horas` envuelve en 2 líneas (ver CSS) hay espacio real para
+    // sumarlos sin perder lo que ya iba: comuna y documento primero (lo
+    // nuevo), después OT/tipo/horario (lo que ya pedía antes).
+    const _comuna = b.comuna ? b.comuna + ' · ' : '';
+    const _doc = b.documento ? b.documento + ' · ' : '';
     const _ot = b.numero ? b.numero + ' · ' : '';
     const _tipo = b.tipo ? b.tipo + ' · ' : '';
     // OT de varios días: se dice qué jornada es, para que no parezca
     // duplicada ni atrasada (caso OT-133, del 01-09 al 04-09).
     const _md = (b.dias_total && b.dias_total > 1)
       ? ('Día ' + b.dia_n + ' de ' + b.dias_total + ' · ') : '';
-    setTexto($('.b-horas', nodo), _md + _ot + _tipo + (b.ini || '') + '–' + (b.fin || ''));
+    setTexto($('.b-horas', nodo), _comuna + _doc + _md + _ot + _tipo + (b.ini || '') + '–' + (b.fin || ''));
     // 2026-08-27 (Daniel: "sería bueno ver algún tipo de avance también en
     // las burbujas"). Antes solo se pintaba con la OT "ejecutando" — en
     // cualquier otro estado el ancho se forzaba a 0%, así que una OT
