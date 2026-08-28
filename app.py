@@ -83277,22 +83277,35 @@ def mant_visita_tarea_respuesta(vid, tid):
         if len(v) < _min_chars:
             completar = False
     elif tipo == "numero":
-        try:
-            n = float(valor) if valor not in (None, "") else None
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "error": "Valor numérico inválido"}), 400
-        if n is None:
-            completar = False
-            valor_norm = {"numero": None}
+        # 🔧 FIX 2026-08-27 (auditoría de plantillas — queja real de Isabel
+        # Milling: le pedía "Voltaje" en equipos que no llevan electrónica,
+        # como racks o bancos, y el campo numérico puro no le dejaba avanzar
+        # sin inventar un valor). La ficha del equipo (mant_maquinas.voltaje)
+        # ya contempla 'no_aplica' desde siempre -- el ítem de checklist que
+        # alimenta ese mismo dato nunca ofreció esa opción. Mismo patrón que
+        # 'sino' ya usa para su "N/A": es una respuesta COMPLETA y válida,
+        # no un valor faltante.
+        _v_raw = str(valor).strip().lower() if valor is not None else ""
+        if _v_raw in ("na", "n/a", "no_aplica", "no aplica"):
+            valor_norm = {"numero": None, "na": True}
+            error = None
         else:
-            valor_norm = {"numero": n}
-            # Validar rango si aplica
-            rmin = tar.get("rango_min")
-            rmax = tar.get("rango_max")
-            if rmin is not None and n < float(rmin):
-                error = f"Fuera de rango: mínimo {rmin}"
-            if rmax is not None and n > float(rmax):
-                error = f"Fuera de rango: máximo {rmax}"
+            try:
+                n = float(valor) if valor not in (None, "") else None
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "Valor numérico inválido"}), 400
+            if n is None:
+                completar = False
+                valor_norm = {"numero": None}
+            else:
+                valor_norm = {"numero": n}
+                # Validar rango si aplica
+                rmin = tar.get("rango_min")
+                rmax = tar.get("rango_max")
+                if rmin is not None and n < float(rmin):
+                    error = f"Fuera de rango: mínimo {rmin}"
+                if rmax is not None and n > float(rmax):
+                    error = f"Fuera de rango: máximo {rmax}"
     elif tipo == "sino":
         v = str(valor or "").lower()
         if v not in ("si", "sí", "no", "na", "n/a"):
@@ -89341,8 +89354,19 @@ def _intel_es_admin():
 
 @app.route("/mantenciones/api/clientes/<int:cid>/inteligencia", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_intel_panel(cid):
-    """Diagnóstico del Agente (determinista, sin IA). Caché fresco si existe; ?force=1 recalcula."""
+    """Diagnóstico del Agente (determinista, sin IA). Caché fresco si existe; ?force=1 recalcula.
+
+    🔴 FIX 2026-08-27 (auditoría de seguridad): faltaba @_no_tecnico --
+    devuelve margen/costo_proveedor por cada visita (_cliente_inteligencia,
+    más abajo), mismo tipo de dato que ya se corrigió hoy en la OT. El
+    endpoint hermano de escritura (recalcular) SÍ tenía el candado; a este
+    GET, que es justo el que expone el dato, se le había olvidado. La
+    página que lo consume (templates/mantenciones/ficha.html) ya estaba
+    protegida -- la fuga era solo golpeando la URL de la API directo con
+    una sesión de técnico válida.
+    """
     try:
         R = _reglas_cargar()
         if request.args.get("force") != "1":

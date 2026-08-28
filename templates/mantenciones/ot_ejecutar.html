@@ -3037,7 +3037,15 @@ const VISITA_HORA_INICIO_RAW = "{{ visita.hora_real_inicio or visita.llego_al_si
 const VISITA_NUMERO_OT = {{ (visita.numero_ot or ('OT #' ~ visita.id)) | tojson }};
 // 2026-08-19 (Daniel) — valorización de la visita: se propone como monto por
 // defecto al declarar garantía ("siempre calcular el monto para control").
-const VISITA_COSTO = {{ (visita.costo | float) if visita.costo else 0 }};
+// FIX 2026-08-27 (auditoría de seguridad): este bloque de script no tenía
+// ninguna condición de rol alrededor -- el precio cobrado al cliente
+// viajaba en texto plano al navegador de CUALQUIER usuario que abriera
+// esta pantalla, técnico incluido, aunque la UI nunca lo mostrara (solo se
+// usa como valor sugerido al declarar garantía, función ya gateada
+// visualmente). El dato ya había cruzado la red antes de esa gate. Mismo
+// puede_metadata que ya protege la card "Finanzas de la OT" en esta misma
+// página.
+const VISITA_COSTO = {{ (visita.costo | float) if (visita.costo and puede_metadata) else 0 }};
 
 // ─── Concurrencia multitécnico (Parte 3 - anti duplicación) ───
 // Lock TTL: si una tarea está locked_at < 10 min, otros técnicos ven badge

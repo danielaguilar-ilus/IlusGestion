@@ -951,7 +951,13 @@
             <span class="pill"><strong>N° OT:</strong> {{ visita.numero_ot or 'VS-' ~ '%05d'|format(visita.id) }}</span>
             <span class="pill"><strong>Tipo:</strong> {{ visita.tipo|tipo_ot_label }}</span>
             <span class="pill"><strong>Estado:</strong> {{ visita.estado|title }}</span>
-            {% if visita.costo %}<span class="pill"><strong>Costo:</strong> ${{ visita.costo|round|int }}</span>{% endif %}
+            {# 🔴 FIX 2026-08-27 (auditoría de seguridad, misma clase de fuga
+               que ot2/detalle.html hoy): sin ningún filtro de rol, un
+               técnico asignado a la OT que llegara aquí vía ?legacy=1
+               (mant_ot_ficha redirige a mant_ot_ejecutar salvo ese query
+               param) veía el precio cobrado al cliente. `es_tecnico` ya
+               vive en el contexto global (inject_globals). #}
+            {% if visita.costo and not es_tecnico %}<span class="pill"><strong>Costo:</strong> ${{ visita.costo|round|int }}</span>{% endif %}
           </div>
           {% if visita.descripcion %}<div class="mt-2"><strong>Descripción:</strong><br>{{ visita.descripcion }}</div>{% endif %}
           {% if visita.observaciones %}<div class="mt-2"><strong>Observaciones:</strong><br>{{ visita.observaciones }}</div>{% endif %}

@@ -1141,18 +1141,31 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       </div>`;
       break;
     }
-    case 'numero':
+    case 'numero': {
+      // FIX 2026-08-27 (auditoría de plantillas — queja real de Isabel
+      // Milling: "Voltaje" obligatorio en equipos que no llevan
+      // electrónica, como racks o bancos). mant_maquinas.voltaje ya
+      // contempla 'no_aplica' desde siempre; este ítem de checklist nunca
+      // ofreció esa opción, así que el técnico no podía avanzar sin
+      // inventar un número. Mismo patrón visual que 'sino' (pill N/A),
+      // respaldado por el backend (mant_visita_tarea_respuesta acepta
+      // "na" para tipo 'numero' desde hoy).
+      const _esNA = !!(valor && valor.na === true);
       ctrlHtml = `<div class="ctrl d-flex gap-2 align-items-center">
-        <input type="number" style="flex:1" placeholder="0"
-          value="${valor.numero !== undefined && valor.numero !== null ? valor.numero : ''}"
+        <input type="number" id="numero-input-${t.id}" style="flex:1" placeholder="0"
+          value="${(!_esNA && valor.numero !== undefined && valor.numero !== null) ? valor.numero : ''}"
           ${t.rango_min != null ? 'min="' + t.rango_min + '"' : ''}
           ${t.rango_max != null ? 'max="' + t.rango_max + '"' : ''}
-          ${bloqueada ? 'disabled' : ''}
+          ${(bloqueada || _esNA) ? 'disabled' : ''}
           onblur="guardarResp(${t.id}, parseFloat(this.value), ${mid}, ${pid})">
         ${t.unidad ? `<span class="text-muted small fw-bold">${_escapeHtml(t.unidad)}</span>` : ''}
+        <button type="button" class="tx-btn-pill ${_esNA ? 'active' : ''}" style="flex:none"
+          ${bloqueada ? 'disabled' : ''}
+          onclick="_toggleNumeroNA(${t.id}, ${mid}, ${pid}, this)">N/A</button>
       </div>
       ${t.rango_min != null || t.rango_max != null ? `<small class="text-muted">Rango: ${t.rango_min ?? '—'} a ${t.rango_max ?? '—'} ${t.unidad || ''}</small>` : ''}`;
       break;
+    }
     case 'sino':
       ctrlHtml = `<div class="ctrl tx-btn-group">
         <button type="button" class="tx-btn-pill success ${valor.valor === 'si' ? 'active' : ''}"
@@ -2558,6 +2571,22 @@ async function guardarResp(tid, valor, mid, pid){
       ilusToast('Error: ' + (d.error || '?'), { type:'error' });
     }
   } catch(e){ ilusToast('Error de red', { type:'error' }); }
+}
+
+// FIX 2026-08-27 (queja de Isabel Milling): alterna "N/A" en una tarea
+// numérica (ej. Voltaje en un equipo sin componente eléctrico). Al
+// activarlo, deshabilita el input y lo vacía visualmente; al desactivarlo,
+// limpia la respuesta (vuelve a "sin responder", no inventa un 0) y
+// reactiva el input para que el técnico escriba el valor real.
+async function _toggleNumeroNA(tid, mid, pid, btn){
+  const activando = !btn.classList.contains('active');
+  await guardarResp(tid, activando ? 'na' : '', mid, pid);
+  const input = document.getElementById('numero-input-' + tid);
+  btn.classList.toggle('active', activando);
+  if (input){
+    input.disabled = activando;
+    if (activando) input.value = '';
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
