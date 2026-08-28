@@ -134,7 +134,17 @@
     border:.8px solid var(--gris-b); padding:1.6mm 1.8mm; font-size:8.8px;
     vertical-align:top;
   }
-  table.inv tr{ page-break-inside:avoid; break-inside:avoid; }
+  {# 🔧 FIX 2026-08-28 (Daniel: "ahorrar los espacios"): antes cada <tr> tenía
+     page-break-inside:avoid. Con 40 equipos cuyas Observaciones (anomalías +
+     observaciones del técnico, datos reales que NO se recortan) llenan 5-8
+     líneas, una fila que no cabía se empujaba ENTERA a la página siguiente y
+     dejaba huecos de hasta media página en blanco. Ahora la fila puede
+     continuar en la página siguiente (el thead negro se repite arriba gracias
+     a table-header-group, así que la continuación queda igual de legible) —
+     es lo que hacen los reportes tabulares profesionales. Medido con una
+     réplica fiel de la OT-2026-00032 (40 equipos, textos de largo real):
+     mismas páginas, cero huecos al pie de la tabla. #}
+  table.inv tr{ page-break-inside:auto; break-inside:auto; }
   table.inv tbody tr:nth-child(even) td{ background:#f9fafb; }
   .eq-nom{ font-weight:700; }
   .eq-sku{ font-size:7.6px; color:var(--gris-t); }
@@ -172,12 +182,27 @@
         las fotografías y observaciones") — un bloque por equipo con el
         registro fotográfico COMPLETO y el texto íntegro, sin recortes. ── */
   .anexo{ margin-top:3mm; }
+  {# 🔧 FIX 2026-08-28 (Daniel: "ahorrar los espacios"): el bloque de cada
+     equipo era ATÓMICO (page-break-inside:avoid). Un bloque con 2-3 filas de
+     fotos mide 110-160mm: cuando no cabía en lo que quedaba de página se iba
+     entero a la siguiente y el anexo quedaba con páginas al 76-91% de uso
+     (medido con PyMuPDF sobre una réplica fiel de la OT-2026-00032, 40
+     equipos / ~63 fotos). Ahora
+     el bloque puede continuar en la página siguiente, con protecciones para
+     que nada se vea cortado: el título del equipo no queda huérfano
+     (break-after:avoid en .an-head), los cuadros de daño/observación no se
+     parten, y cada foto+leyenda es atómica (break-inside:avoid en figure).
+     Bonus: un equipo con MUCHÍSIMAS fotos (bloque más alto que una página
+     entera) antes obligaba a Chromium a partirlo "a la fuerza" en cualquier
+     parte — ahora parte limpio entre filas de fotos. #}
   .an-eq{
     border:1px solid var(--gris-b); border-left:1.4mm solid var(--negro);
     border-radius:5px; margin-bottom:3mm; padding:2.4mm 2.8mm;
-    page-break-inside:avoid; break-inside:avoid; background:#fff;
+    background:#fff;
   }
-  .an-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:3mm; }
+  .an-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:3mm;
+            page-break-after:avoid; break-after:avoid; }
+  .an-dano, .an-obs{ page-break-inside:avoid; break-inside:avoid; }
   .an-tit{ font-weight:800; font-size:9.6px; }
   .an-meta{ font-size:7.8px; color:var(--gris-t); margin-top:.6mm; }
   .an-dano{
@@ -189,9 +214,18 @@
     margin-top:1.4mm; font-size:8.6px; color:#1f2937; background:#f9fafb;
     border:1px solid #e5e7eb; border-radius:4px; padding:1.4mm 2mm; white-space:pre-wrap;
   }
-  .an-fotos{ display:flex; flex-wrap:wrap; gap:2.4mm; margin-top:2.2mm; }
+  {# 🔧 FIX 2026-08-28: grid en vez de flex+wrap. Mismo look (3 columnas, mismo
+     gap), pero grid fragmenta de forma PREDECIBLE entre filas al cruzar de
+     página — flex-wrap con page-break es comportamiento conocido-frágil en
+     Chromium. Necesario ahora que .an-eq puede continuar en la página
+     siguiente (ver arriba). #}
+  {# break-before:avoid: que el corte de página no caiga justo entre el título
+     del equipo y su primera fila de fotos (título huérfano al pie de página);
+     si la primera fila no cabe, el bloque entero pasa a la página siguiente. #}
+  .an-fotos{ display:grid; grid-template-columns:repeat(3, 1fr); gap:2.4mm; margin-top:2.2mm;
+             page-break-before:avoid; break-before:avoid; }
   .an-fotos figure{
-    width:calc((100% - 4.8mm) / 3); margin:0; page-break-inside:avoid; break-inside:avoid;
+    width:auto; margin:0; page-break-inside:avoid; break-inside:avoid;
   }
   .an-fotos img{
     width:100%; height:40mm; object-fit:cover; display:block; background:#f3f4f6;
@@ -212,7 +246,24 @@
     page-break-inside:avoid; break-inside:avoid;
   }
 
+  {# 🔧 FIX 2026-08-28 (Daniel: "que no se sobrepongan las fotos"): el header/
+     footer NATIVOS de Chromium (mant_visita_pdf → _ot_pdf_header_footer_native)
+     se pintan DENTRO del margen de la página. Medido con PyMuPDF sobre el PDF
+     real: la barra negra del header ocupa hasta los 22.2mm desde el borde.
+     El detalle clave (verificado con A/B controlado): cuando la plantilla trae
+     un @page{margin}, Chromium usa ESE margen para maquetar el contenido e
+     IGNORA el margin del page.pdf() de Playwright (22/16mm) — con el margin
+     viejo de 12mm el contenido arrancaba en 12mm y el header le caía ENCIMA
+     en TODAS las páginas: thead tapado, filas "rebanadas" y la franja superior
+     de las fotos del anexo cubierta por la barra negra. Por eso el margen va
+     acá (24mm > 22.2mm del header, 16mm para el pie) y NO se debe "limpiar"
+     de vuelta a 12mm. La vista HTML del navegador (Ctrl+P, sin header nativo)
+     conserva los 12mm de siempre vía el flag native_header_footer. #}
+  {% if native_header_footer %}
+  @page{ size:A4; margin:24mm 12mm 16mm; }
+  {% else %}
   @page{ size:A4; margin:12mm; }
+  {% endif %}
   @media print{
     html,body{ background:#fff; }
     .doc{ width:auto; min-height:0; margin:0; padding:0; box-shadow:none; }

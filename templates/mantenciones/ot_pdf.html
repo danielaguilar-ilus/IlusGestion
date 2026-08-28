@@ -28,9 +28,23 @@
     --ilus-ok-bg: #dcfce7;
   }
 
+  {# 🔧 FIX 2026-08-28 (misma causa raíz que en ot_pdf_levantamiento.html,
+     ver el comentario largo ahí): en el PDF real (Playwright) el header
+     nativo de Chromium se pinta hasta los 22.2mm del borde superior, y
+     Chromium maqueta el contenido usando ESTE @page margin (ignora el
+     margin de page.pdf()). Con margin:0 el contenido arrancaba en 0mm y el
+     header nativo TAPABA la franja superior de todas las páginas (y el pie
+     nativo, la inferior). 24mm arriba / 16mm abajo despejan ambos; los
+     laterales quedan en 0 porque .sheet ya trae su padding lateral y la
+     banda .head va a sangre. La vista navegador (Ctrl+P, sin header nativo)
+     conserva el margin:0 de siempre. #}
   @page {
     size: letter;
+    {% if native_header_footer %}
+    margin: 24mm 0 16mm;
+    {% else %}
     margin: 0;
+    {% endif %}
   }
 
   * { box-sizing: border-box; }
