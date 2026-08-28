@@ -47,6 +47,14 @@
   .pl-card.is-vacia{border-color:#fcd34d;background:linear-gradient(180deg,#fff8e1 0%,#fff 62%)}
   .pl-card .badge-vacia{background:#fff8e1;color:#92400e;border:1px solid #fcd34d;
                         padding:3px 8px;border-radius:50px;font-weight:700}
+  /* Checklist escrito por el sistema (autorrelleno/matriz de clases,
+     28-08-2026), todavía sin el visto bueno de un técnico real -- azul
+     info (REGLA #2), a propósito distinto del ámbar "Sin checklist": acá
+     SÍ hay contenido, solo falta que alguien con el equipo en las manos
+     lo confirme o corrija. Desaparece solo (revisar_tecnico pasa a 0) en
+     cuanto alguien la abre y la guarda desde este mismo editor. */
+  .pl-card .badge-auto{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;
+                        padding:3px 8px;border-radius:50px;font-weight:700}
   .pl-alert{background:#fff8e1;border:1px solid #fcd34d;border-left:4px solid #f59e0b;
             border-radius:12px;padding:14px 16px;margin-bottom:14px}
   .pl-alert-head{display:flex;align-items:flex-start;gap:10px}
@@ -765,6 +773,7 @@ function renderPlantillas(){
         <span class="badge-tipo">${escHtml(TIPOS_VISITA_LABEL[p.tipo_visita] || p.tipo_visita)}</span>
         <span class="badge-items"><i class="bi bi-check2-circle me-1"></i>${p.items_count} item${p.items_count!==1?'s':''}</span>
         ${vacia ? '<span class="badge-vacia"><i class="bi bi-exclamation-triangle-fill me-1"></i>Sin checklist</span>' : ''}
+        ${p.revisar_tecnico ? '<span class="badge-auto" title="Este checklist lo redactó el sistema (no un técnico ILUS todavía) -- ábrelo, corrígelo si hace falta y guárdalo para marcarlo como revisado."><i class="bi bi-robot me-1"></i>Autogenerada · revisar</span>' : ''}
         ${p.tiempo_estimado_min ? '<span class="badge-tipo">⏱ '+p.tiempo_estimado_min+' min</span>' : ''}
       </div>
     </div>`;

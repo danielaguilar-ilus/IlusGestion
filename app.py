@@ -79638,6 +79638,7 @@ def mant_plantillas_listar():
             "created_by": r.get("created_by") or "",
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "es_default": bool(default_plantilla_id) and r["id"] == default_plantilla_id,
+            "revisar_tecnico": bool(r.get("revisar_tecnico")),
         } for r in rows],
         "total": len(rows),
         "default_plantilla_id": default_plantilla_id,
@@ -80169,7 +80170,8 @@ def mant_plantilla_actualizar(pid):
                 "UPDATE mant_tarea_plantillas SET "
                 " nombre=%s, descripcion=%s, tipo_visita=%s, "
                 " tiempo_estimado_min=%s, activa=%s, "
-                " familia_checklist=%s, familia_activo=%s, categoria_admin=%s "
+                " familia_checklist=%s, familia_activo=%s, categoria_admin=%s, "
+                " revisar_tecnico=0 "
                 "WHERE id=%s",
                 (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, cat_admin, pid)
             )
@@ -105368,6 +105370,35 @@ def _ensure_mant_logs_entidad_varchar():
     return False
 
 
+def _ensure_col_revisar_tecnico():
+    """Columna `revisar_tecnico` en mant_tarea_plantillas -- 3 estados:
+    NULL (nunca tocada por un seed automático -- plantilla humana de
+    siempre, la UI no muestra nada), 1 (su contenido lo escribió un seed
+    automático -- ilusfitness.com/experiencia genérica, no un técnico de
+    ILUS -- y todavía nadie de verdad la revisó) y 0 (un humano ya la
+    abrió y guardó desde el editor -- `mant_plantilla_actualizar` la deja
+    en 0 sin importar cuánto haya cambiado, porque abrir+guardar YA ES la
+    revisión que se pedía).
+
+    Daniel 2026-08-28: "se identificaron las que vienen automáticas para
+    que Lenin sepa qué debe modificar para dejar OK" -- sin esta marca no
+    hay forma de distinguir un checklist redactado por un técnico real de
+    uno que el sistema completó solo para que la matriz quedara cuadrada.
+
+    Por qué NULL y no arrancar en 0: si arrancara en 0, "ya revisada" y
+    "nunca fue automática" serían indistinguibles -- el backfill de abajo
+    necesita poder decir "esta fila específica viene de un seed" sin
+    tocar (ni de casualidad) una plantilla que Daniel escribió a mano
+    hace meses. Llamar a esta función es barato y seguro repetirlo --
+    mismo patrón defensivo que el resto de los `_ensure_*` de este archivo."""
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_tarea_plantillas ADD COLUMN revisar_tecnico "
+            "TINYINT(1) NULL DEFAULT NULL")
+    except Exception:
+        pass
+
+
 def _ensure_plantillas_autorrelleno():
     """Rellena con su checklist las plantillas de clasificación que HOY están
     vacías. SIEMPRE corre (incluso con ILUS_SKIP_MIGRATIONS=1), igual que
@@ -105413,6 +105444,7 @@ def _ensure_plantillas_autorrelleno():
     # donde mant_logs.entidad siguiera siendo el ENUM viejo, el log se perdería
     # en silencio (ver la función). No afecta al relleno en sí.
     _ensure_mant_logs_entidad_varchar()
+    _ensure_col_revisar_tecnico()
     try:
         # ── Paso previo (barato): ¿queda algo por hacer? En régimen normal
         # esta función hace 2 SELECT por cold start y ni un solo INSERT.
@@ -105494,6 +105526,9 @@ def _ensure_plantillas_autorrelleno():
                             "VALUES (%s,%s,%s,%s,%s,%s,%s)",
                             (pid, orden_base + i, titulo, descripcion, tipo_r,
                              oblig, req_foto))
+                    cur.execute(
+                        "UPDATE mant_tarea_plantillas SET revisar_tecnico=1 "
+                        "WHERE id=%s AND revisar_tecnico IS NULL", (pid,))
                 conn.commit()
             finally:
                 conn.close()
@@ -105575,6 +105610,7 @@ def _ensure_plantillas_matriz_clases():
     Devuelve la lista "<nombre> · <categoría>" de lo que creó (para
     logging -- nunca lanza)."""
     creadas = []
+    _ensure_col_revisar_tecnico()
     try:
         _clases_rows = mysql_fetchall(
             "SELECT nombre FROM cat_clases_producto WHERE activo=1") or []
@@ -105609,8 +105645,8 @@ def _ensure_plantillas_matriz_clases():
                     cur.execute(
                         "INSERT IGNORE INTO mant_tarea_plantillas "
                         "(nombre, descripcion, tipo_visita, familia_checklist, familia_activo, "
-                        " categoria_admin, activa, es_sistema, created_by) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,1,1,'seed')",
+                        " categoria_admin, activa, es_sistema, created_by, revisar_tecnico) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,1,1,'seed',1)",
                         (nombre, descripcion, tipo_visita, familia_checklist,
                          familia_activo, categoria)
                     )
@@ -109253,6 +109289,58 @@ try:
               f"{', '.join(_autorrelleno_out.get('nombres') or [])}", flush=True)
 except Exception as _ensure_autorrelleno_err:
     print(f"[ILUS][WARN] _ensure_plantillas_autorrelleno: {_ensure_autorrelleno_err}", flush=True)
+
+
+def _ensure_marcar_revision_tecnica_28ago():
+    """Backfill de `revisar_tecnico=1` para las 41 plantillas que
+    _ensure_plantillas_autorrelleno() y _ensure_plantillas_matriz_clases()
+    YA crearon/llenaron en un arranque anterior de HOY (28-08-2026), antes
+    de que existiera la columna -- por eso esos dos `_ensure_*` no las
+    pudieron marcar en su propio momento de escritura (su guardia normal
+    es "sólo si sigo vacía/sólo si no existo todavía", que en este boot ya
+    no es cierto para ninguna de las 41).
+
+    Identificación 100% determinística, sin adivinar:
+      - Las 19 de autorrelleno: exactamente los pares (nombre, categoría)
+        de _PLANTILLAS_AUTORRELLENO_SEED -- la misma lista que ya usa esa
+        función para saber qué le pertenece.
+      - Las 22 de la matriz: TODA `categoria_admin='visitas'` (la fila
+        entera no existía antes de hoy -- 0 de 19, ver la auditoría en el
+        docstring de _ensure_plantillas_matriz_clases -- así que no hay
+        riesgo de marcar una plantilla vieja) + las 3 de instalación por
+        nombre exacto (Trotadora Motorizada/No Motorizada/Repuesto).
+
+    Guardia `AND revisar_tecnico IS NULL`: corre en cada arranque pero solo
+    tiene efecto una vez por fila -- en cuanto alguien la revisa desde el
+    editor (mant_plantilla_actualizar la deja en 0), un reboot posterior
+    de esta función jamás la vuelve a marcar."""
+    try:
+        _ensure_col_revisar_tecnico()
+        n = 0
+        for s in _PLANTILLAS_AUTORRELLENO_SEED:
+            n += mysql_execute_returning_rowcount(
+                "UPDATE mant_tarea_plantillas SET revisar_tecnico=1 "
+                "WHERE nombre=%s AND categoria_admin=%s AND revisar_tecnico IS NULL",
+                (s["clase"], s["categoria"]))
+        n += mysql_execute_returning_rowcount(
+            "UPDATE mant_tarea_plantillas SET revisar_tecnico=1 "
+            "WHERE categoria_admin='visitas' AND revisar_tecnico IS NULL")
+        for _nombre_inst in ("Trotadora Motorizada", "Trotadora No Motorizada", "Repuesto"):
+            n += mysql_execute_returning_rowcount(
+                "UPDATE mant_tarea_plantillas SET revisar_tecnico=1 "
+                "WHERE nombre=%s AND categoria_admin='instalacion' AND revisar_tecnico IS NULL",
+                (_nombre_inst,))
+        if n:
+            print(f"[ILUS] revisar_tecnico marcado en {n} plantilla(s) (backfill 28-ago)", flush=True)
+    except Exception as e:
+        print(f"[ILUS][WARN] _ensure_marcar_revision_tecnica_28ago: {e}", flush=True)
+
+
+try:
+    with app.app_context():
+        _ensure_marcar_revision_tecnica_28ago()
+except Exception as _ensure_marcar_revision_err:
+    print(f"[ILUS][WARN] _ensure_marcar_revision_tecnica_28ago (fuera de contexto): {_ensure_marcar_revision_err}", flush=True)
 
 # CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
 try:
