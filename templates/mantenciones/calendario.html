@@ -1474,6 +1474,11 @@ function abrirVisitaModal(vid){
   const ev = calEventos.find(e => e.id === vid);
   if (!ev) return;
   document.getElementById('vi_id').value = vid;
+  // 🆕 2026-08-28: el backend ahora exige `confirm_text` == número de OT
+  // para eliminar (REGLA #5) -- se guarda acá para que eliminarVisita()
+  // lo use al armar el ilusPrompt. Mismo fallback 'V-<id>' que usa el
+  // backend cuando la OT no tiene numero_ot (mant_visita_del).
+  document.getElementById('vi_id').dataset.numeroOt = ev.numero_ot || ('V-' + ev.id);
   document.getElementById('vi_cliente').value = ev.cliente.id;
   document.getElementById('vi_tipo').value = ev.tipo || 'preventiva';
   document.getElementById('vi_titulo').value = ev.title || '';
@@ -1654,18 +1659,37 @@ async function guardarVisita(){
 }
 
 async function eliminarVisita(){
-  const vid = document.getElementById('vi_id').value;
+  const viEl = document.getElementById('vi_id');
+  const vid = viEl.value;
   if (!vid) return;
-  const ok = await ilusConfirm({
-    title:'Eliminar visita', message:'¿Eliminar esta visita?',
-    sub:'Esta acción no se puede deshacer.', danger:true, okLabel:'Eliminar',
+  // 🆕 2026-08-28: el backend ahora exige `confirm_text` == número de OT
+  // (REGLA #5 -- hard-delete). El número se guardó en el dataset al abrir
+  // el modal (ver abrirVisitaModal()). Se reemplaza el ilusConfirm simple
+  // por ilusPrompt, mismo patrón que static/mant_ficha.js y el botón
+  // "Eliminar OT" de OT 2.0.
+  const numero = viEl.dataset.numeroOt || ('V-' + vid);
+  const texto = await ilusPrompt({
+    title: 'Eliminar visita',
+    message: 'Esta acción no se puede deshacer. Para confirmar, escribe el número de la OT:',
+    sub: 'Escribe exactamente: <strong>' + numero.replace(/</g, '&lt;') + '</strong>',
+    subHtml: true,
+    placeholder: numero,
+    required: true,
+    type: 'danger',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    validate: (val) => (val.trim().toLowerCase() === numero.toLowerCase())
+      ? {ok:true, valor: val.trim()}
+      : {ok:false, error: 'No coincide con "' + numero + '".'},
   });
-  if (!ok) return;
+  if (texto === null) return;
   const btn = document.getElementById('btnEliminarVisita');
   const original = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Eliminando…'; }
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+    const r = await fetch(`/mantenciones/api/visitas/${vid}`, {
+      method:'DELETE', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text: texto}),
+    });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok){
       ilusToast('Error: '+(d.error||'no se pudo eliminar'), { type:'error' }); return;
