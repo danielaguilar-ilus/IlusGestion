@@ -161,7 +161,21 @@
     // Bootstrap abierto, el overlay se agrega COMO HIJO de ese modal en vez
     // de document.body, para que el trap lo considere "adentro" y no le
     // robe el foco al input.
-    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    //
+    // FIX 2026-08-28 (Daniel, en vivo -- "Producto sin saldo disponible"
+    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal): ahí
+    // no había ningún modal Bootstrap, así que este overlay caía en
+    // document.body -- hermano de #tkaBackdrop/#tkaModal, ambos con más
+    // z-index (1085/1086) que pierden contra los 99999 de .ilus-overlay
+    // SOLO si compiten en el mismo contexto de apilamiento. #tkaModal tiene
+    // `transform` propio (para su animación) -- eso lo vuelve "contenedor"
+    // de cualquier position:fixed agregado DENTRO (queda recortado a su
+    // propio cuadro, con overflow:hidden, en vez de ocupar el viewport).
+    // #tkaBackdrop no tiene transform: agregar el overlay ahí lo deja del
+    // tamaño de la pantalla Y le permite "escapar" a competir por z-index
+    // en la raíz del documento, donde 99999 sí gana. Por eso se prioriza el
+    // backdrop de tka, nunca el modal de tka mismo.
+    (document.querySelector('.tka-backdrop.is-open') || document.querySelector('.modal.show') || document.body).appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     return overlay;
   }
@@ -333,7 +347,21 @@
     // Bootstrap abierto, el overlay se agrega COMO HIJO de ese modal en vez
     // de document.body, para que el trap lo considere "adentro" y no le
     // robe el foco al input.
-    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    //
+    // FIX 2026-08-28 (Daniel, en vivo -- "Producto sin saldo disponible"
+    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal): ahí
+    // no había ningún modal Bootstrap, así que este overlay caía en
+    // document.body -- hermano de #tkaBackdrop/#tkaModal, ambos con más
+    // z-index (1085/1086) que pierden contra los 99999 de .ilus-overlay
+    // SOLO si compiten en el mismo contexto de apilamiento. #tkaModal tiene
+    // `transform` propio (para su animación) -- eso lo vuelve "contenedor"
+    // de cualquier position:fixed agregado DENTRO (queda recortado a su
+    // propio cuadro, con overflow:hidden, en vez de ocupar el viewport).
+    // #tkaBackdrop no tiene transform: agregar el overlay ahí lo deja del
+    // tamaño de la pantalla Y le permite "escapar" a competir por z-index
+    // en la raíz del documento, donde 99999 sí gana. Por eso se prioriza el
+    // backdrop de tka, nunca el modal de tka mismo.
+    (document.querySelector('.tka-backdrop.is-open') || document.querySelector('.modal.show') || document.body).appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
       const inputEl = overlay.querySelector('.ilus-prompt-input');
       setTimeout(() => { inputEl.focus(); inputEl.select && inputEl.select(); }, 200);
@@ -564,7 +592,21 @@
     // Bootstrap abierto, el overlay se agrega COMO HIJO de ese modal en vez
     // de document.body, para que el trap lo considere "adentro" y no le
     // robe el foco al input.
-    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    //
+    // FIX 2026-08-28 (Daniel, en vivo -- "Producto sin saldo disponible"
+    // saliendo DETRÁS de la Búsqueda avanzada de productos, #tkaModal): ahí
+    // no había ningún modal Bootstrap, así que este overlay caía en
+    // document.body -- hermano de #tkaBackdrop/#tkaModal, ambos con más
+    // z-index (1085/1086) que pierden contra los 99999 de .ilus-overlay
+    // SOLO si compiten en el mismo contexto de apilamiento. #tkaModal tiene
+    // `transform` propio (para su animación) -- eso lo vuelve "contenedor"
+    // de cualquier position:fixed agregado DENTRO (queda recortado a su
+    // propio cuadro, con overflow:hidden, en vez de ocupar el viewport).
+    // #tkaBackdrop no tiene transform: agregar el overlay ahí lo deja del
+    // tamaño de la pantalla Y le permite "escapar" a competir por z-index
+    // en la raíz del documento, donde 99999 sí gana. Por eso se prioriza el
+    // backdrop de tka, nunca el modal de tka mismo.
+    (document.querySelector('.tka-backdrop.is-open') || document.querySelector('.modal.show') || document.body).appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
 
       function done(val){
