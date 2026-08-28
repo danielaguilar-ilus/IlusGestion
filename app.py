@@ -74846,8 +74846,12 @@ def ot2_detalle(vid):
     for f in fotos:
         # Mismo criterio que el resto del proyecto: cloudinary_url tiene
         # prioridad sobre archivo_path (ver app.py:94593).
+        # FIX 2026-08-27: archivo_path YA trae el prefijo "uploads/
+        # mantenciones/" (ver mant_visita_fotos_subir) -- anteponerlo de
+        # nuevo duplicaba el segmento y la imagen daba 404 siempre que la
+        # foto hubiera caído al respaldo de filesystem en vez de GCS.
         f["url"] = f.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{f['archivo_path']}" if f.get("archivo_path") else "")
+            f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
         f["cuando"] = chile_fmt_filter(f.get("tomada_at"), "%d/%m %H:%M") if f.get("tomada_at") else ""
 
     # ── Documentos — pestaña nueva: el Anexo de Servicios del proveedor
@@ -79842,8 +79846,15 @@ def mant_ot_ejecutar(vid):
     fotos = [dict(f) for f in fotos]
     # Normalizar URL preferida (Cloudinary > local)
     for f in fotos:
+        # FIX 2026-08-27 (Daniel — "no puedo entrar a ver la foto"):
+        # archivo_path YA incluye "uploads/mantenciones/" (ver
+        # mant_visita_fotos_subir) -- anteponerlo de nuevo duplicaba el
+        # segmento y la <img> de esta misma pantalla daba 404 (icono roto)
+        # para cualquier foto que hubiera caído al respaldo de filesystem
+        # en vez de Google Cloud Storage. No era un problema de permisos:
+        # pasaba para CUALQUIER usuario, la URL estaba mal armada.
         f["url"] = f.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{f['archivo_path']}"
+            f"/static/{f['archivo_path']}"
             if f.get("archivo_path") else ""
         )
     # 2026-08-18 (OT-2026-00097) — versión JSON-safe para el frontend
@@ -80732,8 +80743,12 @@ def mant_ot_equipo_fotos_list(vid, mid):
             (vid, mid)
         ) or []
         for r in rows:
+            # FIX 2026-08-27: archivo_path YA trae "uploads/mantenciones/"
+            # (mant_visita_fotos_subir) -- anteponerlo de nuevo duplicaba
+            # el segmento y rompía la imagen (404) para cualquier foto que
+            # hubiera caído al respaldo de filesystem en vez de GCS.
             url = r.get("cloudinary_url") or (
-                f"/static/uploads/mantenciones/{r['archivo_path']}"
+                f"/static/{r['archivo_path']}"
                 if r.get("archivo_path") else ""
             )
             if not url:
@@ -80761,8 +80776,10 @@ def mant_ot_equipo_fotos_list(vid, mid):
             (mid,)
         ) or []
         for r in rows:
+            # Mismo fix de doble prefijo que arriba (mant_maquina_fotos
+            # también guarda archivo_path con el prefijo incluido).
             url = r.get("cloudinary_url") or (
-                f"/static/uploads/mantenciones/{r['archivo_path']}"
+                f"/static/{r['archivo_path']}"
                 if r.get("archivo_path") else ""
             )
             if not url:
@@ -85769,8 +85786,12 @@ def mant_maquina_fotos_get(mid):
     ) or []
     out = []
     for r in rows:
+        # FIX 2026-08-27: archivo_path YA trae "uploads/mantenciones/"
+        # (mant_maquina_fotos_subir) -- anteponerlo de nuevo duplicaba el
+        # segmento y rompía la imagen (404) para cualquier foto que hubiera
+        # caído al respaldo de filesystem en vez de Google Cloud Storage.
         url = r.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else ""
+            f"/static/{r['archivo_path']}" if r.get("archivo_path") else ""
         )
         if not url:
             continue
@@ -95479,7 +95500,10 @@ def mant_cliente_evidencias(cid):
             ((cid, maquina_id) if maquina_id else (cid,))
         ) or []
         for r in rows_vf:
-            url = r.get("cloudinary_url") or (f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else "")
+            # FIX 2026-08-27: archivo_path YA trae "uploads/mantenciones/"
+            # -- anteponerlo de nuevo duplicaba el segmento y rompía (404)
+            # la foto para cualquiera que la abriera desde este timeline.
+            url = r.get("cloudinary_url") or (f"/static/{r['archivo_path']}" if r.get("archivo_path") else "")
             if not url: continue
             fotos.append({
                 "id": r["id"],
@@ -95518,7 +95542,9 @@ def mant_cliente_evidencias(cid):
         sql_mf += " ORDER BY mf.created_at DESC LIMIT 500"
         rows_mf = mysql_fetchall(sql_mf, tuple(params_mf)) or []
         for r in rows_mf:
-            url = r.get("cloudinary_url") or (f"/static/uploads/mantenciones/{r['archivo_path']}" if r.get("archivo_path") else "")
+            # Mismo fix de doble prefijo (mant_maquina_fotos también guarda
+            # archivo_path con el prefijo ya incluido).
+            url = r.get("cloudinary_url") or (f"/static/{r['archivo_path']}" if r.get("archivo_path") else "")
             if not url: continue
             fotos.append({
                 "id": r["id"],
@@ -98915,8 +98941,14 @@ def mant_maquina_ficha(mid):
             " ORDER BY tomada_at DESC LIMIT 200", (mid,)) or []
     fotos, _vistas = [], set()
     for r in fotos_rows:
+        # FIX 2026-08-27: archivo_path YA trae "uploads/mantenciones/"
+        # (mant_visita_fotos_subir / mant_maquina_fotos_subir) --
+        # anteponerlo de nuevo duplicaba el segmento y rompía (404) la
+        # imagen para cualquier foto que hubiera caído al respaldo de
+        # filesystem en vez de GCS. Mismo bug replicado en varios lugares
+        # del archivo (ver mant_maquina_ficha_tecnica_json más abajo).
         url = r.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{r['archivo_path']}"
+            f"/static/{r['archivo_path']}"
             if r.get("archivo_path") else ""
         )
         if not url or url in _vistas:
@@ -99373,25 +99405,68 @@ def mant_maquina_ficha_tecnica_json(mid):
         except Exception:
             eq["serie_sugerida"] = None
 
-    # ── 1. Fotos galería (mant_maquina_fotos) ──────────────────────
+    # ── 1. Fotos galería: mant_maquina_fotos (promovidas) UNION
+    #    mant_visita_fotos (tomadas en CUALQUIER OT, promovida o no) ──
+    # FIX 2026-08-27 (Daniel: "las fotos que tengan se puede asignar afuera
+    # en la parte de fotografía del equipo"): esta sección SOLO leía
+    # mant_maquina_fotos, que se puebla recién cuando se PROMUEVE un
+    # levantamiento al cerrar la OT (_promover_levantamiento_a_maquina).
+    # Una foto tomada durante una OT en curso -- o una OT que nunca fue un
+    # levantamiento -- vive en mant_visita_fotos y nunca llegaba acá, aunque
+    # el propio tab que consume este JSON (_ftRenderFotos en mant_ficha.js)
+    # promete: "cuando un técnico capture fotos del equipo en una OT...
+    # aparecerán aquí". Se aplica el MISMO patrón ya probado en
+    # mant_maquina_ficha (arriba en este archivo, ~línea 98896, corregido
+    # 2026-08-19 por esta misma causa) -- se REUSA la consulta en vez de
+    # reescribir la lógica o duplicar filas en otra tabla (más seguro: no
+    # hay que decidir qué pasa si la foto original se borra).
     # ORDER BY tomada_at (existe desde la migración inicial). NO usamos
     # created_at porque puede no estar poblado en filas viejas.
-    fotos_rows = mysql_fetchall(
+    _sql_ft_fotos = (
         "SELECT id, archivo_path, cloudinary_url, descripcion, tipo_foto, "
         "       tomada_por, tomada_at, visita_origen, levantamiento_id "
         "  FROM mant_maquina_fotos WHERE maquina_id=%s "
-        " ORDER BY tomada_at DESC LIMIT 50",
-        (mid,)
-    ) or []
+        "UNION ALL "
+        "SELECT id, archivo_path, cloudinary_url, descripcion, tipo_foto, "
+        "       tomada_por, tomada_at, visita_id AS visita_origen, "
+        "       NULL AS levantamiento_id "
+        "  FROM mant_visita_fotos "
+        " WHERE maquina_id=%s AND COALESCE(cloudinary_url, archivo_path, '') <> '' "
+        " ORDER BY tomada_at DESC LIMIT 50"
+    )
+    try:
+        fotos_rows = mysql_fetchall(_sql_ft_fotos, (mid, mid)) or []
+    except Exception as _e_ft_fotos:
+        # Degradación segura: si mant_visita_fotos.cloudinary_url no existe
+        # todavía en este ambiente (columna agregada por un ALTER
+        # condicional que ILUS_SKIP_MIGRATIONS=1 salta, ver app.py:50720),
+        # la ficha NO se cae -- vuelve al comportamiento anterior (solo la
+        # galería ya promovida).
+        print(f"[ficha_tecnica_json] galeria union mid={mid}: {_e_ft_fotos}", flush=True)
+        fotos_rows = mysql_fetchall(
+            "SELECT id, archivo_path, cloudinary_url, descripcion, tipo_foto, "
+            "       tomada_por, tomada_at, visita_origen, levantamiento_id "
+            "  FROM mant_maquina_fotos WHERE maquina_id=%s "
+            " ORDER BY tomada_at DESC LIMIT 50",
+            (mid,)
+        ) or []
     fotos_galeria = []
+    _ft_fotos_vistas = set()
     foto_principal_url = (eq.get("foto_url") or "").strip()
     for r in fotos_rows:
+        # FIX 2026-08-27: archivo_path YA incluye el prefijo "uploads/
+        # mantenciones/" (así lo guardan mant_visita_fotos_subir y
+        # mant_maquina_fotos_subir) -- anteponerlo de nuevo duplicaba el
+        # segmento y la URL resultante siempre daba 404 (imagen rota) para
+        # cualquier foto que hubiera caído al respaldo de filesystem en vez
+        # de Google Cloud Storage.
         url = r.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{r['archivo_path']}"
+            f"/static/{r['archivo_path']}"
             if r.get("archivo_path") else ""
         )
-        if not url:
-            continue
+        if not url or url in _ft_fotos_vistas:
+            continue  # la misma foto puede estar promovida Y en la visita
+        _ft_fotos_vistas.add(url)
         # Para la primera (más reciente) que tenga visita_origen, marcamos
         # como referencia para la "última foto del último levantamiento"
         if not foto_principal_url and url:
