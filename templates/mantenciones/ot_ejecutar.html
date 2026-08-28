@@ -566,6 +566,22 @@
                    value="{{ visita.costo_proveedor or '' }}">
           </div>
         </div>
+        {# 2026-08-27 (Daniel): "vamos a agregar al valor de la factura el
+           costo de despacho... no va a ser obligatorio, pero se podrá
+           agregar" -- estrategia para poder identificar dónde el margen
+           real permite bajar precios. Columna propia (costo_despacho),
+           separada de costo_proveedor a propósito -- ver comentario en
+           el ALTER TABLE (app.py, _ensure_intel_cols): más adelante esto
+           se concilia contra una factura de proveedor de transporte. #}
+        <div class="col-6">
+          <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text">$</span>
+            <input type="number" id="finCostoDespacho" class="form-control" min="0" step="1000"
+                   placeholder="0"
+                   value="{{ visita.costo_despacho or '' }}">
+          </div>
+        </div>
         <div class="col-6">
           <label class="form-label small fw-semibold mb-1">Tipo</label>
           <select id="finProveedorTipo" class="form-select form-select-sm">
@@ -630,6 +646,20 @@
         <button type="button" class="btn btn-danger btn-sm" onclick="guardarFinanzasOT()">
           <i class="bi bi-check-lg me-1"></i>Guardar
         </button>
+      </div>
+      {# 2026-08-27 (Daniel): "si hay pérdida, la sugerencia del centro de
+         costo... será asignado a cualquier centro de costo en caso de que
+         no sea imputable a servicio técnico". Es una SUGERENCIA informativa
+         -- nunca cambia el select solo, y nunca bloquea guardar. Quien
+         cierra la OT decide si la pérdida es realmente de SSTT (ej. el
+         técnico rehizo un trabajo gratis) o de otra área. #}
+      <div id="finMargenWarn" style="display:none;margin-top:8px;
+           background:#fff8e1;border:1px solid #f59e0b;border-radius:8px;
+           padding:8px 12px;font-size:.82rem;color:#92400e;
+           align-items:flex-start;gap:8px">
+        <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>
+        <span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico,
+          considera asignarla a Logística o Comercial arriba.</span>
       </div>
     </div>
     {% endif %}
@@ -3102,33 +3132,51 @@ const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
 (function(){
   const elCosto = document.getElementById('finCosto');
   const elCostoProv = document.getElementById('finCostoProveedor');
+  const elCostoDespacho = document.getElementById('finCostoDespacho');
   const elTipo = document.getElementById('finProveedorTipo');
   const elNombreWrap = document.getElementById('wrapFinProveedorNombre');
   const elMargen = document.getElementById('finMargen');
   const elMargenPct = document.getElementById('finMargenPct');
+  const elMargenWarn = document.getElementById('finMargenWarn');
   if (!elCosto) return; // card no renderizada (sin permiso)
 
   function fmtCLP(n){
     return '$' + Math.round(n).toLocaleString('es-CL');
   }
 
+  // 2026-08-27 (Daniel): "eso va a dar un total de OT [costo proveedor +
+  // despacho], y eso se suma con el servicio... total que deberá ser
+  // comparado con lo que fue cobrado por ILUS". El despacho es opcional
+  // (0 si no se declara) pero SIEMPRE entra al costo total cuando existe.
   function recalcular(){
     const precio = parseFloat(elCosto.value || 0) || 0;
     const costoProv = parseFloat(elCostoProv.value || 0) || 0;
-    if (!precio && !costoProv){
+    const costoDespacho = parseFloat((elCostoDespacho && elCostoDespacho.value) || 0) || 0;
+    const costoTotal = costoProv + costoDespacho;
+    if (!precio && !costoTotal){
       elMargen.textContent = '—';
       elMargenPct.textContent = '—';
       elMargen.style.color = '';
       elMargenPct.style.color = '';
+      if (elMargenWarn) elMargenWarn.style.display = 'none';
       return;
     }
-    const margen = precio - costoProv;
+    const margen = precio - costoTotal;
     const pct = precio > 0 ? (margen / precio * 100) : 0;
     elMargen.textContent = fmtCLP(margen);
     elMargenPct.textContent = pct.toFixed(1) + '%';
     const color = margen < 0 ? '#dc2626' : '#16a34a';
     elMargen.style.color = color;
     elMargenPct.style.color = color;
+    // Sugerencia de centro de costo (informativa, nunca cambia el select
+    // ni bloquea guardar) -- solo si además hoy dice "Servicio Técnico" o
+    // no se ha elegido nada, que es cuando la sugerencia aporta algo.
+    if (elMargenWarn){
+      const cc = document.getElementById('finCentroCosto');
+      const ccVal = cc ? cc.value : '';
+      const avisar = margen < 0 && (ccVal === '' || ccVal === 'sstt');
+      elMargenWarn.style.display = avisar ? 'flex' : 'none';
+    }
   }
 
   function toggleNombreProveedor(){
@@ -3138,7 +3186,10 @@ const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
 
   elCosto.addEventListener('input', recalcular);
   elCostoProv.addEventListener('input', recalcular);
+  if (elCostoDespacho) elCostoDespacho.addEventListener('input', recalcular);
   elTipo.addEventListener('change', toggleNombreProveedor);
+  const elCentroCosto = document.getElementById('finCentroCosto');
+  if (elCentroCosto) elCentroCosto.addEventListener('change', recalcular);
   toggleNombreProveedor();
   recalcular();
 
@@ -3146,6 +3197,7 @@ const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
     const body = {
       costo: parseFloat(elCosto.value || 0) || 0,
       costo_proveedor: parseFloat(elCostoProv.value || 0) || 0,
+      costo_despacho: parseFloat((elCostoDespacho && elCostoDespacho.value) || 0) || 0,
       proveedor_tipo: elTipo.value || '',
       proveedor_nombre: document.getElementById('finProveedorNombre').value.trim(),
       documento_erp_tido: document.getElementById('finDocErpTido').value || '',

@@ -73218,6 +73218,13 @@ def mant_visita_update(vid):
             d["costo_proveedor"] = max(0.0, float(d.get("costo_proveedor") or 0)) or None
         except (TypeError, ValueError):
             d["costo_proveedor"] = None
+    # 2026-08-27 (Daniel): costo de despacho, opcional -- mismo criterio de
+    # validacion que costo_proveedor (nunca negativo, vacio => NULL, no 0).
+    if "costo_despacho" in d:
+        try:
+            d["costo_despacho"] = max(0.0, float(d.get("costo_despacho") or 0)) or None
+        except (TypeError, ValueError):
+            d["costo_despacho"] = None
     if "proveedor_nombre" in d:
         d["proveedor_nombre"] = (str(d.get("proveedor_nombre") or "").strip()[:200]) or None
     # Documento ERP asociado (NVI/NVV) — Daniel 2026-08-08: "al documento de
@@ -73246,7 +73253,7 @@ def mant_visita_update(vid):
                # Garantía transversal (mapeada desde garantia_aplica)
                "cubierto_por","estado_facturacion","garantia_motivo",
                # Finanzas (margen por servicio)
-               "costo_proveedor","proveedor_tipo","proveedor_nombre",
+               "costo_proveedor","proveedor_tipo","proveedor_nombre","costo_despacho",
                # Documento ERP de origen (NVI/NVV), solo administrativo
                "documento_erp_tido","documento_erp_nudo",
                # 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente:
@@ -103042,6 +103049,17 @@ def _ensure_mant_intel_tables():
             mysql_execute("ALTER TABLE mant_visitas ADD COLUMN proveedor_nombre VARCHAR(200) NULL "
                           "COMMENT 'Nombre del proveedor externo (si aplica)'")
             faltaron.append("mant_visitas.proveedor_nombre")
+        # 2026-08-27 (Daniel): costo de despacho, OPCIONAL, separado del costo
+        # del proveedor/técnico -- estrategia para poder bajar precios donde
+        # el margen lo permita. Columna propia (no un campo genérico "otros
+        # costos") a propósito: Daniel ya adelantó que más adelante esto se
+        # va a conciliar contra una factura de PROVEEDOR de transporte -- si
+        # quedara mezclado con costo_proveedor no habría forma de separar
+        # cuánto es del técnico y cuánto del despacho al reconciliar.
+        if "costo_despacho" not in ex_v:
+            mysql_execute("ALTER TABLE mant_visitas ADD COLUMN costo_despacho DECIMAL(12,2) NULL "
+                          "COMMENT 'Costo de despacho/envio, opcional, aparte del costo del proveedor/tecnico'")
+            faltaron.append("mant_visitas.costo_despacho")
     except Exception as e:
         print(f"[ensure_intel] finanzas visitas: {e}", flush=True)
     # 2026-07-12 (Daniel) — LIMPIEZA: un agente de un workflow anterior se
