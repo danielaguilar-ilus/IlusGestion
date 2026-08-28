@@ -1633,14 +1633,17 @@
     ajustarNombre(nom, p.nombre || '—');
     setTexto($('.badge-txt', row), BADGE_TXT[est] || est);
 
-    // Tipo + cliente + dirección (línea 2). Disponible sin cliente → línea
-    // vacía y calma. 2026-08-27 (Daniel: "quisiera saber qué van a hacer,
-    // si es una instalación, una mantención, una visita... todo eso
-    // necesito que lo capturemos") — el tipo va primero, es lo que pidió ver.
-    const tipoEl = $('.p-tipo', row), cli = $('.p-cliente', row), dir = $('.p-dir', row);
-    setTexto(tipoEl, p.tipo ? (p.tipo + (p.cliente ? ' · ' : '')) : '');
-    setTexto(cli, p.cliente || '');
-    setTexto(dir, (p.cliente && p.direccion) ? (' · ' + p.direccion) : (p.direccion || ''));
+    // 2026-08-27 (Daniel, revirtiendo en la misma noche su propio pedido de
+    // más arriba): "mantención correctiva o preventiva o el nombre del
+    // cliente no debería ir allí" -- el tipo de OT y el cliente dejan de
+    // mostrarse bajo el nombre del técnico. Se deja SOLO la dirección (no
+    // pidió sacarla). El cliente sigue disponible donde SÍ lo pidió hoy
+    // mismo: la burbuja de la línea de tiempo (.b-cliente, ver más abajo)
+    // -- por eso `p.cliente` no se borra del modelo, solo deja de pintarse
+    // en esta línea.
+    setTexto($('.p-tipo', row), '');
+    setTexto($('.p-cliente', row), '');
+    setTexto($('.p-dir', row), p.direccion || '');
 
     // Avance
     const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || (p.bloques || []).length > 0;
