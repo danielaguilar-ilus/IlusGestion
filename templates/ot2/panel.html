@@ -147,10 +147,14 @@ tr.f-cancel .ot2-est{text-decoration:line-through}
   transition:background .14s}
 tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 
-/* El detalle que aparece al pasar por encima */
+/* 2026-08-28 (Daniel): "no me gusta ese efecto del hover del mouse,
+   mejor quítalo" -- la fila de detalle ya no se despliega al pasar el
+   mouse por encima. Se deja SIEMPRE oculta (display:none) en vez de
+   borrar la fila del HTML: la información (título, prioridad, salud,
+   tareas) queda intacta en el documento por si más adelante se decide
+   mostrarla de otra forma (ej. un clic aparte), simplemente hoy nadie
+   la ve. */
 .ot2-det{display:none;background:#fbfcfd}
-.ot2-tabla tbody tr:hover + .ot2-det,
-.ot2-det:hover{display:table-row}
 .ot2-det td{padding:0 14px 13px;border-left:4px solid var(--c)}
 .ot2-det-in{display:flex;gap:8px;flex-wrap:wrap;padding:11px 13px;
   background:linear-gradient(180deg,#fff,#fafbfc);
