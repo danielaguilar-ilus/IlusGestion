@@ -1171,6 +1171,14 @@
         </div>
         <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:5px">
           <button type="button" class="date-hoy-btn" id="btnDiaHoy" hidden>Volver a hoy</button>
+          {# 2026-08-28 (Daniel: "con el monitor quisiera agregarle un botón
+             de actualización"): el latido automático (8s en horario hábil)
+             ya refresca solo, pero solo cuando la huella cambió -- y solo
+             la pantalla de control puede pedir un repintado a demanda (el
+             televisor no tiene mouse). Mismo estilo que "Volver a hoy",
+             mismo gate INTERACTIVO. #}
+          <button type="button" class="date-hoy-btn" id="btnActualizar" hidden title="Forzar actualización ahora">
+            <i class="bi bi-arrow-clockwise"></i> Actualizar</button>
           <div class="vista-sw" id="vistaSw" hidden>
             <button type="button" data-vista="dia" class="on">Día</button>
             <button type="button" data-vista="semana">Semana</button>
@@ -2428,6 +2436,24 @@
     cargarFecha(state.hoyReal, 'dia');
   }
 
+  /* Botón "Actualizar" (2026-08-28, Daniel): pide los datos DE INMEDIATO,
+     sin esperar el próximo latido ni depender de que la huella haya
+     cambiado -- útil justo después de reagendar/reasignar algo desde otra
+     pestaña y querer verlo reflejado ya, sin esperar los 8s del latido.
+     Reusa cargarFecha() con el día/vista que se está mirando ahora mismo
+     (no fuerza volver a hoy) -- misma función que ya usan ‹/›/Semana/Mes,
+     un solo camino para pedir datos frescos. */
+  async function actualizarManual(){
+    const btn = $('#btnActualizar');
+    if (btn) btn.disabled = true;
+    try{
+      state.huella = null;   // por si el próximo latido llega antes de que el usuario suelte el click
+      await cargarFecha(state.fechaVista || state.hoyReal, state.vista || 'dia');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function marcarVistaActiva(v){
     const sw = $('#vistaSw');
     if (!sw) return;
@@ -2762,6 +2788,11 @@
       const btnAnt = $('#btnDiaAnt'), btnSig = $('#btnDiaSig'), btnHoy = $('#btnDiaHoy');
       if (btnAnt) btnAnt.hidden = false;
       if (btnSig) btnSig.hidden = false;
+      const btnAct = $('#btnActualizar');
+      if (btnAct){
+        btnAct.hidden = false;
+        btnAct.addEventListener('click', actualizarManual);
+      }
 
       // Selector Día / Semana / Mes
       const sw = $('#vistaSw');
