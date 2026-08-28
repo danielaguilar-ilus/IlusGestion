@@ -371,12 +371,53 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
          Tabla (no generaba archivo); el comentario viejo decía que el
          reporte formal "por técnico y por estado" quedaba pendiente. Ya
          existe: 4 hojas (OT, Por técnico, Por centro de costo, Resumen) y
-         respeta los filtros que están activos en pantalla. #}
-      <a href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}"
+         respeta los filtros que están activos en pantalla.
+
+         2026-08-27 (Daniel, de noche): "que sepa dónde van las cosas...
+         qué OT están comprometidas con centros de costo diferentes a
+         servicio técnico". El Excel ya sumó costo proveedor/despacho +
+         margen (`ot2_reporte_xlsx`, app.py) y ahora lleva `@_no_tecnico`
+         porque esas columnas son la misma clase de dato financiero que
+         hoy se corrigió 3 veces para que NUNCA llegue a un técnico -- el
+         botón se oculta acá para no mostrar un link que el backend va a
+         rechazar (mismo patrón que el botón "Monitor" de al lado).
+         Se agrega un segundo acceso directo pre-filtrado (`cc=no_sstt`)
+         más un selector de período (Todo / Mes actual, `periodo=mes`)
+         que ajusta ambos links sin recargar la página. #}
+      {% if not es_tecnico %}
+      <select id="ot2RepPeriodo" class="form-select form-select-sm" style="width:auto"
+              title="Período del reporte Excel">
+        <option value="">Período: todo</option>
+        <option value="mes">Período: mes actual</option>
+      </select>
+      <a id="ot2RepGeneral"
+         href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}"
          class="btn btn-sm btn-outline-light"
          title="Descargar Excel con las OT del filtro actual">
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </a>
+      <a id="ot2RepCC"
+         href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}&cc=no_sstt"
+         class="btn btn-sm btn-outline-warning"
+         title="Solo OT con centro de costo Logística, Comercial o sin definir — cuánto dinero está comprometido fuera de Servicio Técnico">
+        <i class="bi bi-cash-stack me-1"></i>Fuera de Servicio Técnico
+      </a>
+      <script>
+      (function(){
+        var sel = document.getElementById('ot2RepPeriodo');
+        var a1  = document.getElementById('ot2RepGeneral');
+        var a2  = document.getElementById('ot2RepCC');
+        if (!sel || !a1 || !a2) return;
+        var base1 = a1.getAttribute('href');
+        var base2 = a2.getAttribute('href');
+        sel.addEventListener('change', function(){
+          var p = sel.value ? ('&periodo=' + encodeURIComponent(sel.value)) : '';
+          a1.setAttribute('href', base1 + p);
+          a2.setAttribute('href', base2 + p);
+        });
+      })();
+      </script>
+      {% endif %}
       {# La copia operable del monitor de oficina, para disertar desde el
          computador mientras el televisor lo muestra solo (Daniel 26-08).
          2026-08-27: abierto a GESTIÓN (Daniel: "que Víctor pueda ver el
