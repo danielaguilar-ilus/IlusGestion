@@ -17,9 +17,15 @@
      OJO: el hero NEGRO que rechazó en agosto era el del PANEL (una lista
      no necesita portada). Acá sí lo pidió: una OT concreta SÍ tiene una
      identidad que mostrar.
-   · "el recorrido de la OT"          -> .otd-track, dentro del mismo bloque
-     negro. Va ahí y NO repetido abajo: "no veo por qué tener otro tracking
-     abajo del equipo, checklist y firmas".
+   · "el recorrido de la OT"          -> .otd-track. UBICACIÓN 2026-08-27:
+     Daniel compartió una referencia visual con el recorrido en una
+     tarjeta CLARA aparte, bajo el hero negro ("RECORRIDO DE LA OT" /
+     "Seguimiento en tiempo real"), contraste con la identidad oscura de
+     arriba -- se movió `.otd-track`/`.otd-track-sum` fuera de `.otd-hero`
+     a `.otd-track-card` (mismo HTML/JS de siempre, #otdTrack intacto,
+     solo cambió la piel de color de oscura a clara). Sigue habiendo UNA
+     sola vez en la página, sigue sin repetirse abajo del equipo/checklist/
+     firmas -- eso no cambió.
    · "más color a los íconos, dinamismo" -> cada dato de cabecera lleva su
      ícono con color propio; el hito actual late; las barras se llenan al
      entrar.
@@ -27,10 +33,27 @@
      cabe en pantalla; lo ÚNICO que crece es la caja de equipos, y crece
      dentro de sí misma (REGLA #4.3 / feedback_scroll_contenido_no_pagina).
 
+  2026-08-27 (misma noche, ampliación del alcance): Daniel pidió que esta
+  vista fuera "tan completa como las órdenes de trabajo normales"
+  (ot_ejecutar.html) -- se sumó Reagendar/Reasignar (mismo endpoint PUT
+  /mantenciones/api/visitas/<vid>, gate `puede_metadata`), la card
+  "Contraparte en sitio" (v.contacto_* -- OJO, son columnas de la VISITA,
+  no del cliente, ver el alias `cli_contacto_*` en `ot2_detalle()`), un
+  control para subir evidencia (cámara/galería) en la pestaña Evidencia,
+  el gate `not es_tecnico` explícito en Documentos, y una pestaña nueva
+  "Trabajo" de solo lectura pensada para el técnico. Se encontró y corrigió
+  además un bug real preexistente: el comentario CSS de "RECORRIDO" cerraba
+  con el cierre de Jinja en vez del cierre de CSS real, así que TODO
+  `.otd-track`/`.otd-h` llevaba comentado desde el 26-ago -- el tracker
+  nunca tuvo su color/pulso puesto en producción. Ver el comentario
+  detallado junto a `.otd-track-card` más abajo.
+
   ESTA PANTALLA NO EJECUTA. Marcar tareas, subir fotos y firmar siguen en
   /mantenciones/ot/<id>/ejecutar, a un botón de distancia. Duplicar esa
   pantalla sería fabricar otra copia de reglas que después se desincroniza
-  — es exactamente lo que costó el bug del contador de obligatorias.
+  — es exactamente lo que costó el bug del contador de obligatorias. La
+  pestaña "Trabajo" nueva respeta esto: es de solo lectura, con un botón
+  "Ejecutar" que manda a esa misma pantalla.
   ══════════════════════════════════════════════════════════════════════
 #}
 
@@ -87,7 +110,11 @@
 @keyframes otdPulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}
   70%{box-shadow:0 0 0 11px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
 
-/* Datos de cabecera — íconos con color propio */
+/* Datos de cabecera — íconos con color propio.
+   2026-08-27 (referencia de Daniel): "valor arriba en grande, etiqueta
+   abajo chica" -- se logra con column-reverse SIN tocar el HTML de cada
+   chip (el DOM sigue label-antes-que-valor, mejor para lectores de
+   pantalla; solo se invierte el orden VISUAL). */
 .otd-datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
   gap:10px;margin:16px 0 4px}
 .otd-d{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.09);
@@ -95,53 +122,158 @@
   transition:background .16s,border-color .16s}
 .otd-d:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2)}
 .otd-d i{font-size:1rem;flex:none;color:var(--dc,#a1a1aa)}
-.otd-d .in{display:flex;flex-direction:column;min-width:0}
+.otd-d .in{display:flex;flex-direction:column-reverse;min-width:0}
 .otd-d .k{font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:#8b8b93;font-weight:800}
 .otd-d .v{font-size:.86rem;font-weight:800;color:#fff;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .d-fec{--dc:#60a5fa} .d-hor{--dc:#c084fc} .d-tec{--dc:#4ade80}
 .d-eq{--dc:#fbbf24}  .d-fot{--dc:#f472b6} .d-ava{--dc:#dc2626}
+.d-con{--dc:#22d3ee} .d-auto{--dc:#4ade80}
 
-/* ══ RECORRIDO — dentro del hero, una sola vez en la página ══
+/* 🔴 FIX (visto en preview): los chips con botón "Reagendar"/"Reasignar"
+   NO pueden heredar el nowrap+ellipsis de `.otd-d .v` -- el botón quedaba
+   CORTADO por la elipsis, invisible e inaccesible. Clase aparte para los
+   2 chips que llevan acción, en vez de tocar los otros 7 que sí quieren
+   truncar limpio. */
+.otd-d.has-edit{align-items:flex-start}
+.otd-d.has-edit .v{white-space:normal;overflow:visible;text-overflow:clip;
+  display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;line-height:1.3}
+
+/* Lápiz Reagendar/Reasignar — inline junto al valor del chip (mismo
+   patrón que ot_ejecutar.html, adaptado a fondo oscuro). Solo se dibuja
+   si `puede_metadata` — el backend (@_ot_can_metadata) es quien manda,
+   esto solo evita mostrar un botón que igual rebotaría. */
+.otd-d .edit{display:inline-flex;align-items:center;gap:3px;
+  background:none;border:0;color:#fca5a5;font-size:.66rem;font-weight:800;
+  cursor:pointer;padding:2px 0;text-decoration:none;white-space:nowrap;min-height:24px}
+.otd-d .edit:hover{color:#fff;text-decoration:underline}
+
+/* Caja de edición (Reagendar / Reasignar) — versión OSCURA de la caja
+   gris que ya existe en ot_ejecutar.html, para que flote bien sobre el
+   hero negro. Los inputs/selects de Bootstrap se dejan con su fondo
+   claro de siempre: leen como una tarjetita flotando sobre lo oscuro,
+   mismo lenguaje que ya usan los modales 2027 del proyecto. */
+.otd-editbox{display:none;background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.14);border-radius:12px;
+  padding:12px 14px;margin:4px 0 2px}
+.otd-editbox label{color:#d4d4d8;font-size:.72rem;font-weight:700;margin-bottom:4px;display:block}
+.otd-editbox .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.otd-editbox .actions{display:flex;gap:8px;margin-top:10px}
+.otd-editbox .hint{color:#9ca3af;font-size:.7rem;margin-top:8px}
+
+/* Panel "Estado operativo" — glow + texto grande, junto al sello.
+   2026-08-27, referencia visual de Daniel: ícono con glow pulsante +
+   "ESTADO OPERATIVO" chico arriba + estado en vivo grande + hint del
+   siguiente hito. Usa azul info (REGLA #2) en vez del cian del mockup
+   para quedarse dentro de la paleta oficial del proyecto. */
+.otd-estop{display:flex;align-items:center;gap:12px;background:rgba(59,130,246,.09);
+  border:1px solid rgba(96,165,250,.28);border-radius:12px;padding:10px 16px;
+  min-width:0}
+.otd-estop .ico{width:40px;height:40px;border-radius:50%;flex:none;
+  display:grid;place-items:center;background:rgba(59,130,246,.22);color:#93c5fd;
+  font-size:1.1rem;animation:otdGlow 2.4s ease-in-out infinite}
+@keyframes otdGlow{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.45)}
+  50%{box-shadow:0 0 0 9px rgba(59,130,246,0)}}
+.otd-estop .txt{min-width:0;flex:1}
+.otd-estop .k{font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;
+  color:#93c5fd;font-weight:800;display:flex;align-items:center;gap:5px}
+.otd-estop .k .dot{width:6px;height:6px;border-radius:50%;background:#60a5fa}
+.otd-estop .v{font-size:1.05rem;font-weight:900;color:#fff;letter-spacing:.02em;
+  text-transform:uppercase;line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.otd-estop .sig{font-size:.7rem;color:#a1a1aa;margin-top:1px}
+
+/* Fila de acciones rápidas del hero — Llamar/WhatsApp/Correo de la
+   contraparte + botón principal verde (Daniel: "un botón de acción
+   principal en verde"). Solo aparece si hay datos de contraparte. */
+.otd-qa{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.otd-qabtn{display:inline-flex;align-items:center;gap:7px;min-height:44px;
+  padding:8px 14px;border-radius:9px;font-weight:800;font-size:.78rem;
+  text-decoration:none;border:1px solid rgba(255,255,255,.16);
+  background:rgba(255,255,255,.06);color:#e5e7eb;transition:transform .15s,background .15s}
+.otd-qabtn:hover{transform:translateY(-1px);color:#fff;background:rgba(255,255,255,.12)}
+.otd-qabtn.wa{background:#25d366;border-color:#25d366;color:#fff}
+.otd-qabtn.call{background:rgba(22,163,74,.18);border-color:rgba(74,222,128,.4);color:#86efac}
+.otd-qabtn.mail{background:rgba(59,130,246,.18);border-color:rgba(96,165,250,.4);color:#93c5fd}
+.otd-qabtn.pri{background:#16a34a;border-color:#16a34a;color:#fff;margin-left:auto}
+.otd-qabtn.pri:hover{color:#fff;box-shadow:0 8px 18px -8px rgba(22,163,74,.7)}
+
+/* Variante CLARA de los botones rápidos -- para la card "Contraparte en
+   sitio" (fondo blanco), que reusa el mismo dato/patrón que el hero pero
+   NO puede compartir clase con `.otd-qabtn`: ese hover (texto blanco +
+   fondo translúcido) se vuelve invisible sobre blanco. */
+.otd-lbtn{display:inline-flex;align-items:center;gap:7px;min-height:44px;
+  padding:8px 14px;border-radius:9px;font-weight:800;font-size:.78rem;
+  text-decoration:none;border:1px solid transparent;transition:transform .15s,filter .15s}
+.otd-lbtn:hover{transform:translateY(-1px);filter:brightness(.96)}
+.otd-lbtn.call{background:#dcfce7;color:#15803d;border-color:#16a34a}
+.otd-lbtn.wa{background:#25d366;color:#fff;border-color:#25d366}
+.otd-lbtn.mail{background:#dbeafe;color:#1e40af;border-color:#3b82f6}
+
+/* ══ RECORRIDO — tarjeta CLARA aparte, bajo el hero ══
+   2026-08-27 (referencia visual de Daniel): "tarjeta MÁS CLARA -- contraste
+   con la oscura de arriba". Antes vivía DENTRO del hero negro; se traslada
+   a su propia card para separar "identidad de la OT" de "seguimiento en
+   vivo", tal como la referencia. Es el MISMO HTML/JS de siempre (#otdTrack,
+   .otd-h, otdRecorridoReplay/actualizarOtdTimes) -- lo único que cambia acá
+   es la piel de color, de textos claros sobre negro a textos oscuros sobre
+   blanco. El dinamismo (pulso, transición, "hace X") queda intacto.
    2026-08-26 (Daniel: "el tracking es lo que tiene que impactar... el
-   dinamismo, la palpitancia, la transición, todo eso cuenta") — se le
-   agrega transición suave a los cambios de color/línea (antes eran
-   instantáneos) y el "replay" de entrada + ticker en vivo se hacen en JS
-   (otdRecorridoReplay / actualizarOtdTimes), mismo espíritu que el
-   recorrido de Transporte que a Daniel "le encanta". #}
-.otd-track{display:flex;align-items:flex-start;gap:0;margin-top:16px;
-  padding-top:15px;border-top:1px solid rgba(255,255,255,.1)}
+   dinamismo, la palpitancia, la transición, todo eso cuenta").
+   🔴 BUG RAÍZ ENCONTRADO Y CORREGIDO 2026-08-27: este comentario CSS
+   cerraba con el cierre de comentario de JINJA en vez del cierre de
+   comentario CSS real (un asterisco seguido de barra). Un comentario CSS
+   que no cierra con SU propio símbolo de cierre nunca termina -- sigue
+   comiendo código hasta el próximo símbolo de cierre real que encuentre,
+   que resultaba ser el del comentario siguiente (Resumen del recorrido).
+   Consecuencia real: TODO el tracker (círculos, colores, pulso, hover)
+   quedaba silenciosamente comentado y nunca se aplicaba -- exactamente
+   el síntoma que reportó Daniel (se ve como texto gris plano, sin color
+   vivo ni animación). El HTML y el JS siempre estuvieron bien; el
+   recorrido nunca tuvo su piel puesta.
+   OJO al editar este bloque: por lo mismo, no escribir el símbolo de
+   cierre de comentario CSS suelto dentro de la prosa de un comentario. */
+.otd-track-card{background:#fff;border:1px solid var(--line);border-radius:12px;
+  padding:16px 20px 14px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+.otd-track-card .ttl-row{display:flex;align-items:baseline;justify-content:space-between;
+  gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.otd-track-card .ttl-row h3{margin:0;font-size:.76rem;font-weight:900;letter-spacing:.09em;
+  text-transform:uppercase;color:#0a0a0a;display:flex;align-items:center;gap:8px}
+.otd-track-card .ttl-row h3 i{color:var(--ilus-red,#dc2626);font-size:.9rem}
+.otd-track-card .ttl-row .sub{font-size:.72rem;color:#9ca3af;font-weight:700}
+
+.otd-track{display:flex;align-items:flex-start;gap:0}
 .otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;
   position:relative;text-align:center;min-width:0}
 .otd-h::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:2px;
-  background:rgba(255,255,255,.14);transition:background-color .5s ease}
+  background:#e5e7eb;transition:background-color .5s ease}
 .otd-h:first-child::before{display:none}
 .otd-h.ok::before{background:var(--comp)}
 .otd-h .p{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;
-  background:rgba(255,255,255,.09);border:2px solid rgba(255,255,255,.18);
-  color:#71717a;font-size:.82rem;z-index:1;
+  background:#f3f4f6;border:2px solid #e5e7eb;
+  color:#9ca3af;font-size:.82rem;z-index:1;
   transition:transform .2s,background-color .4s ease,border-color .4s ease,color .4s ease}
 .otd-h.ok .p{background:var(--comp);border-color:var(--comp);color:#fff}
 .otd-h.now .p{background:var(--ejec);border-color:var(--ejec);color:#fff;
   animation:otdPulse 1.9s ease-out infinite}
 .otd-h:hover .p{transform:scale(1.12)}
-.otd-h .l{font-size:.66rem;font-weight:800;color:#a1a1aa;letter-spacing:.02em;
+.otd-h .l{font-size:.66rem;font-weight:800;color:#6b7280;letter-spacing:.02em;
   transition:color .4s ease}
 .otd-h.ok .l{color:var(--comp)}
-.otd-h.now .l{color:#fff}
-.otd-h .t{font-size:.6rem;color:#71717a;font-variant-numeric:tabular-nums}
+.otd-h.now .l{color:#0a0a0a}
+.otd-h .t{font-size:.6rem;color:#9ca3af;font-variant-numeric:tabular-nums}
 .otd-h .ago{display:inline-block;margin-top:2px;padding:1px 7px;border-radius:99px;
   font-size:.56rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase}
-.otd-h.ok .ago{background:rgba(22,163,74,.18);color:#4ade80}
-.otd-h.now .ago{background:rgba(220,38,38,.22);color:#fca5a5}
+.otd-h.ok .ago{background:#dcfce7;color:#15803d}
+.otd-h.now .ago{background:#fee2e2;color:#b91c1c}
 
 /* Resumen del recorrido — tiempo total + paso actual con pulso */
 .otd-track-sum{display:flex;align-items:center;gap:14px;margin-top:12px;
-  padding-top:11px;border-top:1px dashed rgba(255,255,255,.12);
-  font-size:.74rem;color:#a1a1aa;flex-wrap:wrap}
-.otd-track-sum b{color:#fff;font-variant-numeric:tabular-nums}
+  padding-top:11px;border-top:1px dashed var(--line);
+  font-size:.74rem;color:#6b7280;flex-wrap:wrap}
+.otd-track-sum b{color:#0a0a0a;font-variant-numeric:tabular-nums}
 .otd-track-sum .now-tag{display:inline-flex;align-items:center;gap:6px;
-  color:#fca5a5;font-weight:800}
+  color:var(--ejec);font-weight:800}
 .otd-pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--ejec);
   animation:otdPulse 1.6s ease-out infinite}
 
@@ -176,6 +308,60 @@
 .otd-ev-item .desc{font-size:.72rem;color:#374151;margin-top:2px;
   overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .otd-ev-item .who{font-size:.66rem;color:#9ca3af;margin-top:4px}
+
+/* 🆕 2026-08-27 (Daniel: "los técnicos no sabían que podían dejar
+   evidencia"): la pestaña Evidencia era 100% de solo lectura -- ahora
+   suma un botón que abre cámara o galería, MISMO patrón que ya se probó
+   esta noche en ot_ejecutar.html (ilusActionSheet + inputs ocultos), y el
+   MISMO endpoint /fotos/subir (tipo_foto=general, sin tarea_id) -- esta
+   pantalla es otra vista de la misma OT, comparte mant_visita_fotos. */
+.otd-ev-add{display:flex;align-items:center;gap:12px;margin:14px 16px 0;
+  background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:12px 14px}
+.otd-ev-add .tx{flex:1;min-width:0}
+.otd-ev-add .tx b{display:block;font-size:.86rem;color:#0f172a}
+.otd-ev-add .tx small{font-size:.72rem;color:#6b7280}
+.otd-ev-btn{display:inline-flex;align-items:center;gap:7px;min-height:44px;
+  padding:0 16px;border-radius:10px;font-weight:800;font-size:.82rem;border:0;
+  cursor:pointer;flex:none;background:#0a0a0a;color:#fff;
+  border-left:3px solid var(--ilus-red,#dc2626);
+  box-shadow:0 3px 10px rgba(220,38,38,.25)}
+.otd-ev-btn:hover{opacity:.92}
+.otd-ev-btn:disabled{opacity:.55;cursor:not-allowed}
+.otd-ev-btn i{color:var(--ilus-red,#dc2626)}
+
+/* ══ TRABAJO — vista de solo lectura pensada para el técnico ══
+   2026-08-27 (Daniel: "una forma inteligente, mostrar los equipos...
+   pensando en la mirada del técnico"). Usa <details>/<summary> nativos:
+   cero JS para expandir/contraer, funciona igual en cualquier celular. */
+.otd-wk-list{display:flex;flex-direction:column;gap:10px;padding:14px 16px}
+.otd-wk-item{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+.otd-wk-item summary{list-style:none;cursor:pointer;padding:11px 14px;
+  display:flex;align-items:center;gap:11px;user-select:none}
+.otd-wk-item summary::-webkit-details-marker{display:none}
+.otd-wk-item summary .chev{margin-left:auto;color:#9ca3af;transition:transform .2s;flex:none}
+.otd-wk-item[open] summary .chev{transform:rotate(90deg)}
+.otd-wk-item .th{width:40px;height:40px;border-radius:8px;object-fit:cover;background:#f3f4f6;
+  flex:none;display:grid;place-items:center;color:#c7cbd1;font-size:1rem}
+.otd-wk-item .nm{flex:1;min-width:0}
+.otd-wk-item .nm b{display:block;font-size:.88rem;color:#0a0a0a;font-weight:700;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.otd-wk-item .nm small{font-size:.7rem;color:#9ca3af}
+/* Mismo pill que .otd-eq .sel (tamaño/forma) -- se declara aparte porque
+   este <span class="sel"> vive dentro de <summary>, no de .otd-eq. Los
+   colores por estado (.eq-ok/.eq-go/.eq-pend/.eq-warn) son reglas
+   standalone y ya se aplican solos. */
+.otd-wk-item .sel{font-size:.63rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;
+  border-radius:99px;padding:3px 9px;white-space:nowrap;flex:none;min-width:74px;text-align:center}
+.otd-wk-body{padding:2px 16px 14px;border-top:1px solid #f4f5f7}
+.otd-wk-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0}
+.otd-wk-kv .k{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;font-weight:800}
+.otd-wk-kv .v{font-size:.82rem;color:#0a0a0a;font-weight:700}
+.otd-wk-note{background:#fff8e1;border:1px solid #fcd34d;color:#92400e;border-radius:9px;
+  padding:9px 11px;font-size:.78rem;margin-top:4px;white-space:pre-wrap}
+.otd-wk-note.falla{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.otd-wk-go{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.78rem;
+  font-weight:800;color:var(--ilus-red,#dc2626);text-decoration:none}
+.otd-wk-go:hover{text-decoration:underline}
 
 /* Documentos — Anexo de Servicios */
 .otd-doc-card{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:14px 16px;
@@ -275,6 +461,15 @@
   .otd-num{font-size:2.1rem}
   .otd-track{overflow-x:auto;padding-bottom:4px}
   .otd-h{min-width:74px}
+  /* Mobile-first (REGLA #3): el panel de estado y las acciones rápidas
+     pasan a ocupar el ancho completo en vez de competir por espacio con
+     la identidad de la OT. */
+  .otd-top{flex-direction:column;align-items:stretch}
+  .otd-estop{width:100%}
+  .otd-qabtn.pri{margin-left:0;width:100%;justify-content:center}
+  .otd-editbox .row{flex-direction:column;align-items:stretch}
+  .otd-editbox .row > div{width:100%}
+  .otd-editbox select, .otd-editbox input{width:100%}
 }
 </style>
 
@@ -312,7 +507,7 @@
     {% endif %}
   </div>
 
-  {# ══ HERO: identidad + datos + recorrido ══ #}
+  {# ══ HERO: identidad + estado operativo + datos + acciones rápidas ══ #}
   <div class="otd-hero h-{{ v.estado_fase or 'pend' }}">
     <div class="otd-top">
       <div>
@@ -334,18 +529,42 @@
           <span class="v">{{ v.estado_label or (v.estado or '—') }}</span>
         </div>
       </div>
+      {# 🆕 Panel "Estado operativo" -- referencia visual de Daniel 27-ago:
+         ícono con glow + estado EN VIVO grande + qué viene después. Usa el
+         hito ACTUAL calculado en el backend (mismo dato del recorrido de
+         abajo, no se inventa nada nuevo). #}
+      <div class="otd-estop">
+        <div class="ico"><i class="bi {{ (hito_actual.icono if hito_actual else 'bi-check-circle-fill') }}"></i></div>
+        <div class="txt">
+          <span class="k"><span class="dot"></span> Estado operativo</span>
+          <span class="v">{{ hito_actual.label if hito_actual else 'Completada' }}</span>
+          {% if hito_siguiente %}
+          <div class="sig">Siguiente hito: {{ hito_siguiente.label }}</div>
+          {% else %}
+          <div class="sig">{{ 'Sin pasos pendientes en el recorrido.' if hito_actual else 'Todos los hitos del recorrido están cerrados.' }}</div>
+          {% endif %}
+        </div>
+      </div>
     </div>
 
     <div class="otd-datos">
-      <div class="otd-d d-fec"><i class="bi bi-calendar3"></i>
+      <div class="otd-d d-fec{{ ' has-edit' if puede_metadata }}"><i class="bi bi-calendar3"></i>
         <div class="in"><span class="k">Agendada</span>
-          <span class="v">{{ v.fecha_dia }}{% if v.fecha_dow %} · {{ v.fecha_dow }}{% endif %}</span></div></div>
+          <span class="v"><span>{{ v.fecha_dia }}{% if v.fecha_dow %} · {{ v.fecha_dow }}{% endif %}</span>
+          {% if puede_metadata %}
+          <button type="button" class="edit" onclick="otdAbrirReagendar()">
+            <i class="bi bi-calendar-event"></i> Reagendar</button>
+          {% endif %}</span></div></div>
       <div class="otd-d d-hor"><i class="bi bi-clock-fill"></i>
         <div class="in"><span class="k">Horario</span>
           <span class="v">{{ (v.hora_inicio | string)[:5] if v.hora_inicio else '—' }}</span></div></div>
-      <div class="otd-d d-tec"><i class="bi bi-person-badge-fill"></i>
+      <div class="otd-d d-tec{{ ' has-edit' if puede_metadata }}"><i class="bi bi-person-badge-fill"></i>
         <div class="in"><span class="k">Técnico</span>
-          <span class="v">{{ v.tecnico_nombre or 'Sin asignar' }}</span></div></div>
+          <span class="v"><span>{{ v.tecnico_nombre or 'Sin asignar' }}</span>
+          {% if puede_metadata %}
+          <button type="button" class="edit" onclick="otdAbrirReasignar()">
+            <i class="bi bi-person-gear"></i> {{ 'Reasignar' if v.tecnico_nombre else 'Asignar' }}</button>
+          {% endif %}</span></div></div>
       <div class="otd-d d-eq"><i class="bi bi-boxes"></i>
         <div class="in"><span class="k">Equipos</span>
           <span class="v">{{ kpis.equipos_listos }}/{{ kpis.equipos }}</span></div></div>
@@ -355,9 +574,107 @@
       <div class="otd-d d-ava"><i class="bi bi-check2-square"></i>
         <div class="in"><span class="k">Obligatorias</span>
           <span class="v">{{ kpis.obl_ok }}/{{ kpis.obl }}</span></div></div>
+      {# 🆕 Autoguardado -- todo lo que se toca en Ejecutar (tareas, fotos,
+         firmas) ya se guarda de inmediato contra el backend; este chip solo
+         lo hace VISIBLE, no agrega comportamiento nuevo. #}
+      <div class="otd-d d-auto"><i class="bi bi-cloud-check-fill"></i>
+        <div class="in"><span class="k">Autoguardado</span>
+          <span class="v" style="color:#4ade80">● Activo</span></div></div>
+      {% if v.contacto_nombre %}
+      <div class="otd-d d-con"><i class="bi bi-person-vcard-fill"></i>
+        <div class="in"><span class="k">Contraparte</span>
+          <span class="v">{{ v.contacto_nombre }}{% if v.contacto_cargo %} · {{ v.contacto_cargo }}{% endif %}</span></div></div>
+      {% endif %}
     </div>
 
-    {# Recorrido — UNA sola vez en toda la página #}
+    {# ── Caja Reagendar (oculta -- misma acción/endpoint que ot_ejecutar.html) ── #}
+    {% if puede_metadata %}
+    <div class="otd-editbox" id="otdReagendarBox">
+      <div class="row">
+        <div>
+          <label>Fecha</label>
+          <input type="date" id="otdReagFecha" class="form-control form-control-sm"
+                 value="{{ v.fecha_programada }}" style="max-width:170px">
+        </div>
+        <div>
+          <label>Término <span style="opacity:.7;font-weight:500">(si son varios días)</span></label>
+          <input type="date" id="otdReagFechaFin" class="form-control form-control-sm"
+                 value="{{ v.fecha_fin if v.fecha_fin and v.fecha_fin != v.fecha_programada else '' }}"
+                 style="max-width:170px">
+        </div>
+        <div>
+          <label>Desde</label>
+          <input type="time" id="otdReagIni" class="form-control form-control-sm"
+                 value="{{ (v.hora_inicio | string)[:5] if v.hora_inicio else '' }}" style="max-width:120px">
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="time" id="otdReagFin" class="form-control form-control-sm"
+                 value="{{ (v.hora_fin | string)[:5] if v.hora_fin else '' }}" style="max-width:120px">
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label>¿Por qué se mueve? <span style="opacity:.7;font-weight:500">(queda en el historial)</span></label>
+        <input type="text" id="otdReagMotivo" class="form-control form-control-sm" maxlength="300"
+               list="otdReagMotivosComunes" placeholder="Ej: el cliente no tenía el gimnasio disponible">
+        <datalist id="otdReagMotivosComunes">
+          <option value="El cliente pidió otra fecha"></option>
+          <option value="El cliente no estaba / no dio acceso"></option>
+          <option value="Falta un repuesto"></option>
+          <option value="El técnico no alcanzó ese día"></option>
+          <option value="Se priorizó otra emergencia"></option>
+          <option value="Problema de transporte"></option>
+        </datalist>
+      </div>
+      <div class="actions">
+        <button type="button" class="otd-btn pri" onclick="otdConfirmarReagendar()">
+          <i class="bi bi-check2"></i> Guardar</button>
+        <button type="button" class="otd-btn" onclick="otdCerrarReagendar()">Cancelar</button>
+      </div>
+      <div class="hint">Queda registrado en el historial de la OT con tu usuario, la fecha anterior y cuántos días se movió.</div>
+    </div>
+
+    {# ── Caja Reasignar técnico ── #}
+    <div class="otd-editbox" id="otdReasignarBox">
+      <div class="row">
+        <select id="otdReasignarSelect" class="form-select form-select-sm" style="max-width:260px">
+          <option value="">Cargando técnicos…</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button type="button" class="otd-btn pri" onclick="otdConfirmarReasignar()">
+          <i class="bi bi-check2"></i> Guardar</button>
+        <button type="button" class="otd-btn" onclick="otdCerrarReasignar()">Cancelar</button>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Acciones rápidas: contraparte (Llamar/WhatsApp/Correo) + CTA verde ── #}
+    <div class="otd-qa">
+      {% if v.contacto_tel %}
+      <a class="otd-qabtn call" href="tel:{{ v.contacto_tel }}">
+        <i class="bi bi-telephone-fill"></i> Llamar</a>
+      {% set _wa_ot = v.contacto_tel | wa_link %}
+      {% if _wa_ot %}
+      <a class="otd-qabtn wa" href="{{ _wa_ot }}" target="_blank" rel="noopener">
+        <i class="bi bi-whatsapp"></i> WhatsApp</a>
+      {% endif %}
+      {% endif %}
+      {% if v.contacto_email %}
+      <a class="otd-qabtn mail" href="mailto:{{ v.contacto_email }}">
+        <i class="bi bi-envelope-fill"></i> Correo</a>
+      {% endif %}
+      <a class="otd-qabtn pri" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
+        <i class="bi bi-tools"></i> Ejecutar la OT</a>
+    </div>
+  </div>
+
+  {# ══ RECORRIDO — tarjeta clara aparte, bajo el hero (referencia de Daniel) ══ #}
+  <div class="otd-track-card">
+    <div class="ttl-row">
+      <h3><i class="bi bi-signpost-split-fill"></i> Recorrido de la OT</h3>
+      <span class="sub">Seguimiento en tiempo real</span>
+    </div>
     <div class="otd-track" id="otdTrack">
       {% for h in hitos %}
       <div class="otd-h {{ 'ok' if h.hecho }} {{ 'now' if h.actual }}"
@@ -374,7 +691,7 @@
       {% if hitos and not hitos[-1].hecho %}
       <span class="now-tag"><span class="otd-pulse-dot"></span> <span id="otdCurrentLabel">En curso…</span></span>
       {% else %}
-      <span class="now-tag" style="color:#4ade80"><i class="bi bi-check-circle-fill"></i> Completada</span>
+      <span class="now-tag" style="color:#16a34a"><i class="bi bi-check-circle-fill"></i> Completada</span>
       {% endif %}
     </div>
   </div>
@@ -383,9 +700,11 @@
   <div class="otd-tabs" id="otdTabs">
     <button type="button" class="otd-tab on" data-tab="info">
       <i class="bi bi-clipboard2-data"></i> Información</button>
+    <button type="button" class="otd-tab" data-tab="trabajo">
+      <i class="bi bi-wrench-adjustable-circle-fill"></i> Trabajo <span class="cnt">{{ kpis.equipos }}</span></button>
     <button type="button" class="otd-tab" data-tab="evidencia">
       <i class="bi bi-camera-fill"></i> Evidencia <span class="cnt">{{ fotos|length }}</span></button>
-    {% if anexo %}
+    {% if anexo and not es_tecnico %}
     <button type="button" class="otd-tab" data-tab="documentos">
       <i class="bi bi-file-earmark-lock2-fill"></i> Documentos <span class="cnt">1</span></button>
     {% endif %}
@@ -462,6 +781,48 @@
         </div>
       </div>
 
+      {# 🆕 Contraparte en sitio -- mismo dato/card que ya existe y está
+         probada en ot_ejecutar.html ("Contraparte en sitio"), adaptada al
+         lenguaje visual de esta pantalla. Usa v.contacto_* (columnas
+         PROPIAS de mant_visitas, ver el alias cli_contacto_* de arriba
+         para no confundirlas con el contacto registrado en la ficha del
+         cliente). #}
+      {% if v.contacto_nombre %}
+      <div class="otd-card">
+        <h3><i class="bi bi-person-vcard-fill"></i> Contraparte en sitio</h3>
+        <div class="otd-din">
+          <div class="row"><span>Nombre</span><b>{{ v.contacto_nombre }}</b></div>
+          {% if v.contacto_cargo %}
+          <div class="row"><span>Cargo</span><b>{{ v.contacto_cargo }}</b></div>
+          {% endif %}
+          {% if v.contacto_tel %}
+          <div class="row"><span>Teléfono</span><b>{{ v.contacto_tel | tel_chile_fmt }}</b></div>
+          {% endif %}
+          {% if v.contacto_email %}
+          <div class="row"><span>Email</span>
+            <b><a href="mailto:{{ v.contacto_email }}" style="color:var(--ilus-red,#dc2626)">{{ v.contacto_email }}</a></b></div>
+          {% endif %}
+        </div>
+        {% if v.contacto_tel or v.contacto_email %}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 14px">
+          {% if v.contacto_tel %}
+          <a href="tel:{{ v.contacto_tel }}" class="otd-lbtn call">
+            <i class="bi bi-telephone-fill"></i> Llamar</a>
+          {% set _wa3 = v.contacto_tel | wa_link %}
+          {% if _wa3 %}
+          <a href="{{ _wa3 }}" target="_blank" rel="noopener" class="otd-lbtn wa">
+            <i class="bi bi-whatsapp"></i> WhatsApp</a>
+          {% endif %}
+          {% endif %}
+          {% if v.contacto_email %}
+          <a href="mailto:{{ v.contacto_email }}" class="otd-lbtn mail">
+            <i class="bi bi-envelope-fill"></i> Email</a>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
       {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
          técnica externa: "le está saliendo centro de costos, sus costos,
          la parte financiera, la factura... eso no es para que ella la
@@ -503,13 +864,116 @@
   </div>
   {# ══ /INFORMACIÓN ══ #}
 
+  {# ══ TRABAJO — solo lectura, pensada para la mirada del técnico ══
+     2026-08-27 (Daniel: "una forma inteligente, mostrar los equipos...
+     pensando en la mirada del técnico"). Es MÁS detalle que la card
+     "Equipos de la OT" de arriba (diagnóstico, observación, obligatorias
+     por equipo) pero sigue siendo de solo lectura: marcar tareas, subir
+     fotos y firmar SIGUEN viviendo únicamente en /mantenciones/ot/<id>/
+     ejecutar (mant_visita_tarea_respuesta) -- duplicar esa escritura acá
+     sería tener dos lugares que puedan responder la misma tarea. #}
+  <div class="otd-tabpanel" data-tab="trabajo">
+    <div class="otd-card">
+      <h3><i class="bi bi-wrench-adjustable-circle-fill"></i> Equipos — detalle de trabajo
+        <span class="n">{{ kpis.equipos }}</span></h3>
+      {% if equipos %}
+      <div class="otd-wk-list">
+        {% for e in equipos %}
+        <details class="otd-wk-item">
+          <summary>
+            {% if e.foto_url %}
+              <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
+            {% else %}
+              <span class="th"><i class="bi bi-image"></i></span>
+            {% endif %}
+            <div class="nm">
+              <b>{{ e.nombre or ('Equipo #' ~ e.id) }}</b>
+              <small>{% if e.serie %}S/N {{ e.serie }} · {% endif %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias</small>
+            </div>
+            <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
+            <i class="bi bi-chevron-right chev"></i>
+          </summary>
+          <div class="otd-wk-body">
+            <div class="otd-wk-kv">
+              {% if e.sku %}<div><div class="k">SKU</div><div class="v">{{ e.sku }}</div></div>{% endif %}
+              {% if e.marca %}<div><div class="k">Marca</div><div class="v">{{ e.marca }}</div></div>{% endif %}
+              <div><div class="k">Checklist</div><div class="v">{{ e.n_ok }}/{{ e.n_tareas }} tareas</div></div>
+              <div><div class="k">Obligatorias</div>
+                <div class="v" style="{{ 'color:#b91c1c' if e.n_obl_falta else 'color:#15803d' }}">
+                  {{ e.n_obl_ok }}/{{ e.n_obl }}{% if e.n_obl_falta %} · faltan {{ e.n_obl_falta }}{% endif %}</div></div>
+              {% if e.estado_revision_label %}
+              <div><div class="k">Última revisión</div><div class="v">{{ e.estado_revision_label }}</div></div>
+              {% endif %}
+              {% if e.diagnostico_label %}
+              <div><div class="k">Diagnóstico</div><div class="v">{{ e.diagnostico_label }}</div></div>
+              {% endif %}
+              {% if e.revisado_at %}
+              <div><div class="k">Revisado</div><div class="v">{{ e.revisado_at | chile_fmt('%d/%m %H:%M') }}{% if e.revisado_por %} · {{ e.revisado_por }}{% endif %}</div></div>
+              {% endif %}
+            </div>
+            {% if e.razon_saltado %}
+            <div class="otd-wk-note">Saltado — motivo: {{ e.razon_saltado | replace('_',' ') | title }}</div>
+            {% endif %}
+            {% if e.diagnostico_texto %}
+            <div class="otd-wk-note {{ 'falla' if e.diagnostico_estado == 'falla' }}">{{ e.diagnostico_texto }}</div>
+            {% endif %}
+            {% if e.observacion_tecnico %}
+            <div class="otd-wk-note">Observación del técnico: {{ e.observacion_tecnico }}</div>
+            {% endif %}
+            {# Honesto (revisión de código 27-ago): el link SIEMPRE manda al
+               inicio de /ejecutar -- mant_ot_ejecutar.html arma sus tarjetas
+               de equipo por JS (PLANTILLAS_POR_MAQUINA) y no tiene anchors
+               ni ?maquina_id para hacer scroll a UNA en particular. Mejor
+               decir "Ejecutar la OT" (cierto) que "Ejecutar este equipo"
+               (implica un salto que no existe). #}
+            <a class="otd-wk-go" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
+              <i class="bi bi-tools"></i> Ejecutar la OT</a>
+          </div>
+        </details>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="otd-vacio">
+        <i class="bi bi-inbox" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+        Esta OT todavía no tiene equipos asignados.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {# ══ /TRABAJO ══ #}
+
   {# ══ EVIDENCIA ══ #}
   <div class="otd-tabpanel" data-tab="evidencia">
     <div class="otd-card">
       <h3><i class="bi bi-camera-fill"></i> Evidencia fotográfica
-        <span class="n">{{ fotos|length }}</span></h3>
-      {% if fotos %}
-      <div class="otd-ev-grid">
+        <span class="n" id="otdEvCount">{{ fotos|length }}</span></h3>
+      {# 🆕 2026-08-27: antes esta pestaña era 100% de solo lectura -- Daniel
+         pidió agregar cómo subir foto (cámara o galería), mismo patrón e
+         idéntico endpoint que ya usa ot_ejecutar.html para fotos generales
+         de la OT (sin tarea_id -- tipo_foto=general).
+         Gate `puede_ejecutar` (revisión de código 27-ago): el endpoint
+         /fotos/subir está protegido por @_tecnico_owns_visita -- SOLO
+         superadmin + el técnico asignado pueden usarlo. Esta pantalla
+         también la abren admin/supervisor/ejecutivo (@_ot_can_view, más
+         permisivo) -- sin este gate el botón se dibujaba para gente que
+         el backend iba a rechazar con 403 al primer click, igual que se
+         cuidó con Reagendar/Reasignar (puede_metadata) más arriba. #}
+      {% if puede_ejecutar %}
+      <div class="otd-ev-add">
+        <div class="tx">
+          <b>¿Falta evidencia?</b>
+          <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
+        </div>
+        <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
+          <i class="bi bi-camera-fill"></i> Agregar foto
+        </button>
+        <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
+               style="display:none" onchange="otdSubirFoto(this)">
+        <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
+               style="display:none" onchange="otdSubirFoto(this)">
+      </div>
+      {% endif %}
+      <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
         {% for f in fotos %}
         <div class="otd-ev-item">
           {% if f.url %}
@@ -526,17 +990,21 @@
         </div>
         {% endfor %}
       </div>
-      {% else %}
-      <div class="otd-vacio">
+      <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
         <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
         Todavía no hay fotos subidas a esta OT.
       </div>
-      {% endif %}
     </div>
   </div>
 
-  {# ══ DOCUMENTOS — Anexo de Servicios (solo visible si existe uno) ══ #}
-  {% if anexo %}
+  {# ══ DOCUMENTOS — Anexo de Servicios (solo visible si existe uno) ══
+     🔒 2026-08-27 (pedido explícito de Daniel): mismo criterio que la
+     card "Cobro" -- `not es_tecnico`, SIN agregar ninguna restricción
+     extra ("los mismos jefes van a firmarlo, así que no ocultemos mucho").
+     El backend YA se salta la query de `anexo` para técnico (queda None),
+     este `and not es_tecnico` es defensa en profundidad + deja la regla
+     legible acá mismo, sin depender de saber cómo se armó la vista. #}
+  {% if anexo and not es_tecnico %}
   <div class="otd-tabpanel" data-tab="documentos">
     <div class="otd-card">
       <h3><i class="bi bi-file-earmark-lock2-fill"></i> Anexo de Servicios</h3>
@@ -557,7 +1025,7 @@
 </div>
 
 <script>
-/* Pestañas Información / Evidencia / Documentos (2026-08-27). */
+/* Pestañas Información / Trabajo / Evidencia / Documentos (2026-08-27). */
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.getElementById('otdTabs');
   if (!tabs) return;
@@ -726,5 +1194,195 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(actualizarOtdTimes, 60_000);
   otdRecorridoReplay();
 });
+
+/* ══════════════════════════════════════════════════════════════
+   REAGENDAR / REASIGNAR TÉCNICO — mismo endpoint y mismo gate que
+   ot_ejecutar.html (@_ot_can_metadata sobre el PUT de la visita). Se
+   clona la lógica tal cual, solo con los ids propios de esta pantalla
+   (otd*) para no chocar si algún día ambas vistas conviven en el DOM.
+   2026-08-27, pedido explícito de Daniel: "no tiene ningún lápiz para
+   cambiar la OT" / "necesito cambiar la fecha de una OT urgente".
+   ══════════════════════════════════════════════════════════════ */
+window.otdAbrirReagendar = function(){
+  const box = document.getElementById('otdReagendarBox');
+  if (!box) return;
+  document.getElementById('otdReasignarBox')?.style && (document.getElementById('otdReasignarBox').style.display = 'none');
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+};
+window.otdCerrarReagendar = function(){
+  const box = document.getElementById('otdReagendarBox');
+  if (box) box.style.display = 'none';
+};
+window.otdConfirmarReagendar = async function(){
+  const f    = document.getElementById('otdReagFecha');
+  const fFin = document.getElementById('otdReagFechaFin');
+  const hi   = document.getElementById('otdReagIni');
+  const hf   = document.getElementById('otdReagFin');
+  if (!f) return;
+  const fecha = (f.value || '').trim();
+  if (!fecha){ ilusToast('Elige una fecha.', {type:'warning'}); return; }
+  const fechaFin = (fFin && fFin.value) ? fFin.value.trim() : null;
+  if (fechaFin && fechaFin < fecha){
+    ilusToast('La fecha de término no puede ser anterior a la fecha de inicio.', {type:'warning'});
+    return;
+  }
+  const ini = (hi && hi.value) ? hi.value : null;
+  const fin = (hf && hf.value) ? hf.value : null;
+  if (ini && fin && fin <= ini){
+    ilusToast('La hora de término debe ser posterior a la de inicio.', {type:'warning'});
+    return;
+  }
+  const body = {fecha_programada: fecha, fecha_fin: fechaFin || fecha};
+  if (ini) body.hora_inicio = ini;
+  if (fin) body.hora_fin = fin;
+  const mot = document.getElementById('otdReagMotivo');
+  if (mot && mot.value.trim()) body.motivo_cambio = mot.value.trim();
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ OT reagendada', {type:'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo reagendar la OT.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al reagendar.', {type:'error'});
+  }
+};
+
+let _otdTecnicosCache = null;
+window.otdAbrirReasignar = async function(){
+  const box = document.getElementById('otdReasignarBox');
+  if (!box) return;
+  document.getElementById('otdReagendarBox')?.style && (document.getElementById('otdReagendarBox').style.display = 'none');
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+  if (!_otdTecnicosCache){
+    try {
+      const r = await fetch('/mantenciones/api/tecnicos');
+      _otdTecnicosCache = await r.json();
+    } catch(e){ _otdTecnicosCache = []; }
+  }
+  const sel = document.getElementById('otdReasignarSelect');
+  if (!sel) return;
+  const curUid = {{ (v.tecnico_user_id or 'null') }};
+  const opts = ['<option value="">— Sin asignar —</option>'].concat(
+    (_otdTecnicosCache || []).map(t =>
+      `<option value="${t.id}" ${String(t.id) === String(curUid) ? 'selected' : ''}>${(t.nombre || ('Téc ' + t.id)).replace(/</g, '&lt;')}</option>`)
+  ).join('');
+  sel.innerHTML = opts;
+};
+window.otdCerrarReasignar = function(){
+  const box = document.getElementById('otdReasignarBox');
+  if (box) box.style.display = 'none';
+};
+window.otdConfirmarReasignar = async function(){
+  const sel = document.getElementById('otdReasignarSelect');
+  if (!sel) return;
+  const tid = sel.value;
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tecnico_user_id: tid ? parseInt(tid, 10) : null}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ Técnico reasignado', {type:'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo reasignar el técnico.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al reasignar el técnico.', {type:'error'});
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   EVIDENCIA — subir foto general (cámara o galería).
+   2026-08-27 (Daniel: "los técnicos no sabían que podían dejar
+   evidencia"). Mismo endpoint que ot_ejecutar.html (/fotos/subir), sin
+   tarea_id ni maquina_id -- una foto GENERAL de la OT, tipo_foto=general.
+   No se reimplementa la compresión/HEIC/retry de ot_ejecutar.html (esa
+   pantalla la ejecuta un técnico en terreno con mala señal muy seguido;
+   acá el caso de uso es puntual) -- si a futuro se vuelve un problema
+   real, esa lógica ya existe en mantenciones_ot_ejecutar.js para portar.
+   ══════════════════════════════════════════════════════════════ */
+async function otdAbrirSheetFoto(){
+  if (typeof ilusActionSheet !== 'function'){
+    document.getElementById('otdFotoGal')?.click();
+    return;
+  }
+  const choice = await ilusActionSheet({
+    title: '📷 Agregar foto',
+    message: 'Elige cómo quieres agregar la foto',
+    options: [
+      { label:'Tomar foto con cámara', icon:'bi-camera-fill', value:'camara',  style:'dark' },
+      { label:'Elegir de galería',      icon:'bi-images',      value:'galeria', style:'secondary' },
+    ],
+  });
+  if (!choice) return;
+  const inp = document.getElementById(choice === 'camara' ? 'otdFotoCam' : 'otdFotoGal');
+  if (!inp) return;
+  try { inp.value = ''; } catch(e){}
+  inp.click();
+}
+
+async function otdSubirFoto(input){
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  if (file.size > 20 * 1024 * 1024){
+    ilusToast(`Foto demasiado grande (${(file.size/(1024*1024)).toFixed(2)} MB). Máx 20 MB.`, {type:'warning'});
+    return;
+  }
+  const btn = document.getElementById('otdEvBtn');
+  if (btn){ btn.disabled = true; }
+  const toastSub = ilusToast('Subiendo foto…', {type:'info', duration:6000});
+  try {
+    const fd = new FormData();
+    fd.append('foto', file);
+    fd.append('tipo_foto', 'general');
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}/fotos/subir', {method:'POST', body: fd});
+    const j = await r.json().catch(() => ({}));
+    if (toastSub && toastSub.close) toastSub.close();
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo subir la foto.', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Foto subida', {type:'success'});
+    const url = j.url || (j.fotos && j.fotos[0] && j.fotos[0].url);
+    if (url){
+      const grid = document.getElementById('otdEvGrid');
+      const empty = document.getElementById('otdEvEmpty');
+      if (empty) empty.classList.add('d-none');
+      if (grid){
+        grid.classList.remove('d-none');
+        const div = document.createElement('div');
+        div.className = 'otd-ev-item';
+        div.innerHTML = `<img src="${url}" alt="" loading="lazy">
+          <div class="meta">
+            <div class="tipo">General</div>
+            <div class="who">Recién subida</div>
+          </div>`;
+        grid.prepend(div);
+      }
+    }
+    // Contadores -- pestaña Evidencia y encabezado de la card.
+    ['otdEvCount'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = String((parseInt(el.textContent, 10) || 0) + 1);
+    });
+    const tabCnt = document.querySelector('.otd-tab[data-tab="evidencia"] .cnt');
+    if (tabCnt) tabCnt.textContent = String((parseInt(tabCnt.textContent, 10) || 0) + 1);
+  } catch(e){
+    if (toastSub && toastSub.close) toastSub.close();
+    ilusToast('Error de red al subir la foto.', {type:'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 </script>
 {% endblock %}
