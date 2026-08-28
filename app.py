@@ -77334,6 +77334,57 @@ def _ot2_filtros_export(args):
             params += list(estados)
             desc.append(_OT2_FASE_LABELS.get(fase, fase))
 
+    # ── Centro de costo (Daniel, 27-08-2026): "qué OT están comprometidas
+    # con centros de costo diferentes a Servicio Técnico". `cc=no_sstt` es
+    # el segmento que le importa -- Logística, Comercial o SIN DEFINIR (un
+    # centro sin definir tampoco es atribuible a SSTT por defecto). También
+    # se admite un centro puntual (`cc=logistica`) para el que quiera mirar
+    # uno solo.
+    cc_filtro = (args.get("cc") or "").strip().lower()
+    if cc_filtro == "no_sstt":
+        where.append("(v.centro_costo IN ('logistica','comercial') OR v.centro_costo IS NULL)")
+        desc.append("fuera de Servicio Técnico")
+    elif cc_filtro in dict(_OT2_CENTROS_COSTO):
+        where.append("v.centro_costo = %s")
+        params.append(cc_filtro)
+        desc.append(dict(_OT2_CENTROS_COSTO).get(cc_filtro, cc_filtro))
+
+    # ── Rango de fechas (Daniel, 27-08-2026): sobre v.fecha_programada,
+    # igual que la columna que ya se muestra y ordena en la hoja "OT".
+    # `desde`/`hasta` (YYYY-MM-DD) mandan si vienen; si no, `periodo=mes`
+    # acota al mes en curso (hora Chile). Sin ninguno de los dos: TODO el
+    # histórico -- el comportamiento de siempre, para no romper el botón
+    # "Reporte Excel" que ya está en producción sin este parámetro.
+    desde_s = (args.get("desde") or "").strip()
+    hasta_s = (args.get("hasta") or "").strip()
+    periodo = (args.get("periodo") or "").strip().lower()
+    _desde = _hasta = None
+    if desde_s or hasta_s:
+        try:
+            if desde_s:
+                _desde = datetime.strptime(desde_s, "%Y-%m-%d").date()
+            if hasta_s:
+                _hasta = datetime.strptime(hasta_s, "%Y-%m-%d").date()
+        except ValueError:
+            _desde = _hasta = None
+    elif periodo == "mes":
+        _hoy_cl = _now_chile().date()
+        _desde = _hoy_cl.replace(day=1)
+        _hasta = _hoy_cl
+    if _desde:
+        where.append("v.fecha_programada >= %s")
+        params.append(_desde)
+    if _hasta:
+        where.append("v.fecha_programada <= %s")
+        params.append(_hasta)
+    if _desde or _hasta:
+        if _desde and _hasta:
+            desc.append(f"{_desde.strftime('%d/%m/%Y')}–{_hasta.strftime('%d/%m/%Y')}")
+        elif _desde:
+            desc.append(f"desde {_desde.strftime('%d/%m/%Y')}")
+        else:
+            desc.append(f"hasta {_hasta.strftime('%d/%m/%Y')}")
+
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
     sql += role_sql
@@ -77346,6 +77397,7 @@ _OT2_EXPORT_LIMIT = 10000     # techo de protección, igual que los CSV de ticke
 
 @app.route("/ot/reporte.xlsx", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def ot2_reporte_xlsx():
     """Reporte Excel de las OT con los filtros que están activos en pantalla.
 
@@ -77353,10 +77405,18 @@ def ot2_reporte_xlsx():
     hoja por centro de costo para rendir el dinero que se pierde por
     decisiones que NO son de Servicio Técnico.
 
-    Gate: `@_mant_required` (el mismo del panel), NO `@_no_tecnico` — un
-    técnico puede bajar LO SUYO, porque `_mant_calendario_role_where()` ya
-    acota las filas a las que le corresponden. El permiso por rol para
-    restringir la descarga se agrega cuando Daniel lo pida (hoy: solo él la usa).
+    🔒 FIX 2026-08-27 (mismo hallazgo de la auditoría de finanzas de esta
+    noche — ot_ficha.html:954, VISITA_COSTO, mant_intel_panel): este reporte
+    llevaba `v.costo` (precio cobrado al cliente) y, desde hoy, también
+    `costo_proveedor`/`costo_despacho`/margen — el mismo dato que en la
+    pantalla de la OT solo se muestra si `puede_metadata`, NUNCA a un
+    técnico. El comentario viejo decía "NO @_no_tecnico, un técnico puede
+    bajar LO SUYO" porque `_mant_calendario_role_where()` ya acota las
+    filas — pero acotar FILAS no basta cuando la fuga es de COLUMNAS
+    financieras dentro de esas mismas filas. Se agrega `@_no_tecnico`,
+    igual criterio que el resto de los endpoints financieros de esta noche.
+    El botón "Reporte Excel" del panel se oculta a técnico en el template
+    para no mostrar un link que el backend va a rechazar.
     """
     try:
         import openpyxl
@@ -77375,6 +77435,7 @@ def ot2_reporte_xlsx():
         "       v.direccion_visita, v.costo, v.centro_costo, v.zz_codigo, "
         "       v.zz_monto, v.modalidad_cobro, v.cubierto_por, "
         "       v.estado_facturacion, v.factura_tido, v.factura_nudo, "
+        "       v.costo_proveedor, v.costo_despacho, "
         "       v.created_by, v.created_at, v.cerrada_at, "
         "       c.razon_social, c.rut AS cliente_rut, "
         "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
@@ -77440,7 +77501,15 @@ def ot2_reporte_xlsx():
                "Título", "Tipo", "Prioridad", "Estado", "Fase", "Técnico",
                "Int/Ext", "Fecha programada", "Hora", "Fecha realizada",
                "Tareas", "% avance", "Centro de costo", "Línea ZZ",
-               "Monto ZZ", "Costo", "Cobertura", "Estado facturación",
+               "Monto ZZ", "Costo",
+               # 2026-08-27 (Daniel): "que sepa dónde van las cosas... qué OT
+               # están comprometidas con centros de costo diferentes a
+               # Servicio Técnico" -- costo proveedor + costo despacho
+               # (campo nuevo de esta noche) + margen, misma fórmula que
+               # `recalcular()` en ot_ejecutar.html: margen = costo -
+               # (costo_proveedor + costo_despacho).
+               "Costo proveedor", "Costo despacho", "Margen", "% margen",
+               "Cobertura", "Estado facturación",
                "Documento", "Creada por", "Creada", "Cerrada",
                "Observaciones (revisar)"]
     NCOLS = len(headers)
@@ -77456,12 +77525,31 @@ def ot2_reporte_xlsx():
     ws.row_dimensions[2].height = 30
 
     hoy = _now.date()
+    # Se adelanta acá (antes vivía solo en la Hoja 3) para mostrar la
+    # etiqueta legible ("Servicio Técnico") en la Hoja 1 también, en vez
+    # del código crudo ("sstt") que mostraba antes.
+    _LBL_CC = dict(_OT2_CENTROS_COSTO)
     por_tecnico, por_centro = {}, {}
+    # Totales globales para la hoja "Resumen" (Daniel, 27-08-2026): "cuánto
+    # dinero total está fuera de Servicio Técnico". "sstt" es el único
+    # centro que Daniel SÍ considera propio de Servicio Técnico -- vacío/
+    # NULL cuenta como "fuera" porque tampoco es atribuible por defecto.
+    fin_tot = {"cobrado": 0.0, "proveedor": 0.0, "despacho": 0.0, "margen": 0.0,
+               "no_sstt_ot": 0, "no_sstt_cobrado": 0.0, "no_sstt_margen": 0.0}
     r = 3
     for f in rows:
         estado = (f.get("estado") or "").lower()
-        meta = _OT2_ESTADO_META.get(estado) or {}
-        fase = meta.get("fase") or ""
+        # 🔧 FIX 2026-08-27: _OT2_ESTADO_META guarda TUPLAS (label, css_class,
+        # icon, fase) -- ver el patrón real en `ot2_panel` línea ~73745
+        # (`f["estado_label"], ..., f["estado_fase"] = meta`). Este reporte
+        # lo trataba como dict (`meta.get(...)`), lo que reventaba con
+        # AttributeError apenas llegaba una fila con estado real -- nunca
+        # se había probado con datos, solo con `rows` vacío.
+        _meta_t = _OT2_ESTADO_META.get(estado)
+        if _meta_t:
+            estado_label, fase = _meta_t[0], (_meta_t[3] or "")
+        else:
+            estado_label, fase = (estado or "—"), ""
         n_t = int(f.get("n_tareas") or 0)
         n_c = int(f.get("n_completas") or 0)
         pct = int(round(n_c * 100.0 / n_t)) if n_t else 0
@@ -77485,6 +77573,33 @@ def ot2_reporte_xlsx():
         if not f.get("numero_ticket"):
             obs.append("Sin ticket de origen")
 
+        # Margen = costo (precio cliente) - (costo_proveedor + costo_despacho).
+        # Misma fórmula que `recalcular()` en ot_ejecutar.html (2026-08-27).
+        # "—" solo cuando NO hay ningún dato financiero declarado; si hay
+        # costo proveedor/despacho pero no precio, el margen igual se
+        # calcula (da negativo) porque eso también es información real: un
+        # trabajo con costo pero sin cobro declarado.
+        _tiene_finanzas = (f.get("costo") is not None
+                            or f.get("costo_proveedor") is not None
+                            or f.get("costo_despacho") is not None)
+        _precio = float(f.get("costo") or 0)
+        _cprov = float(f.get("costo_proveedor") or 0)
+        _cdesp = float(f.get("costo_despacho") or 0)
+        margen = margen_pct = None
+        if _tiene_finanzas:
+            margen = _precio - (_cprov + _cdesp)
+            margen_pct = (margen / _precio * 100.0) if _precio > 0 else None
+            fin_tot["cobrado"] += _precio
+            fin_tot["proveedor"] += _cprov
+            fin_tot["despacho"] += _cdesp
+            fin_tot["margen"] += margen
+            if (f.get("centro_costo") or "") != "sstt":
+                fin_tot["no_sstt_ot"] += 1
+                fin_tot["no_sstt_cobrado"] += _precio
+                fin_tot["no_sstt_margen"] += margen
+            if margen < 0:
+                obs.append("Margen negativo")
+
         vals = [
             f.get("numero_ot") or "", f.get("numero_ticket") or "",
             f.get("razon_social") or "", f.get("cliente_rut") or "",
@@ -77492,14 +77607,19 @@ def ot2_reporte_xlsx():
             (f.get("direccion_visita") or f.get("cliente_direccion") or ""),
             f.get("titulo") or "",
             _TIPO_OT_LABEL.get((f.get("tipo") or "").lower(), f.get("tipo") or ""),
-            f.get("prioridad") or "", meta.get("label") or estado,
+            f.get("prioridad") or "", estado_label,
             _OT2_FASE_LABELS.get(fase, fase), tec,
             "Externo" if externo else "Interno",
             _d(f.get("fecha_programada")), _ot_tv_hhmm(f.get("hora_inicio")) or "",
             _d(f.get("fecha_realizada")), f"{n_c}/{n_t}" if n_t else "",
-            pct, f.get("centro_costo") or "", f.get("zz_codigo") or "",
+            pct, _LBL_CC.get(f.get("centro_costo"), f.get("centro_costo") or ""),
+            f.get("zz_codigo") or "",
             float(f.get("zz_monto")) if f.get("zz_monto") is not None else None,
             float(f.get("costo")) if f.get("costo") is not None else None,
+            (float(f.get("costo_proveedor")) if f.get("costo_proveedor") is not None else None),
+            (float(f.get("costo_despacho")) if f.get("costo_despacho") is not None else None),
+            margen,
+            (round(margen_pct, 1) if margen_pct is not None else None),
             f.get("cubierto_por") or "", f.get("estado_facturacion") or "",
             ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip(),
             f.get("created_by") or "", _dt_cl(f.get("created_at")),
@@ -77521,32 +77641,48 @@ def ot2_reporte_xlsx():
             elif ci == NCOLS and obs:
                 fill = AMBER
             cell.fill = PatternFill("solid", fgColor=fill)
-            if ci in (21, 22) and val is not None:
+            if ci in (21, 22, 23, 24, 25) and val is not None:
                 cell.number_format = '"$"#,##0'
+                if ci == 25 and val < 0:   # Margen negativo — salta a la vista
+                    cell.fill = PatternFill("solid", fgColor=REDL)
+                    cell.font = Font(size=9, bold=True, color="DC2626")
+            elif ci == 26 and val is not None:
+                cell.number_format = '0.0"%"'
         r += 1
 
-        # Agregados en Python — sin consultas extra.
+        # Agregados en Python — sin consultas extra. Reusa _cprov/_cdesp ya
+        # calculados arriba para el margen (evita divergencia entre hojas).
         k = (tec, "Externo" if externo else "Interno")
         a = por_tecnico.setdefault(k, {"total": 0, "cerradas": 0, "abiertas": 0,
-                                       "tareas_ok": 0, "tareas_tot": 0, "monto": 0.0})
+                                       "tareas_ok": 0, "tareas_tot": 0, "monto": 0.0,
+                                       "margen": 0.0})
         a["total"] += 1
         a["tareas_ok"] += n_c
         a["tareas_tot"] += n_t
         a["monto"] += float(f.get("zz_monto") or f.get("costo") or 0)
+        if margen is not None:
+            a["margen"] += margen
         if estado in ("cerrada", "completada"):
             a["cerradas"] += 1
         else:
             a["abiertas"] += 1
 
         cc = f.get("centro_costo") or "(sin centro)"
-        b = por_centro.setdefault(cc, {"total": 0, "monto": 0.0, "garantia": 0})
+        b = por_centro.setdefault(cc, {"total": 0, "monto": 0.0, "garantia": 0,
+                                       "costo_proveedor": 0.0, "costo_despacho": 0.0,
+                                       "margen": 0.0, "con_margen": 0})
         b["total"] += 1
         b["monto"] += float(f.get("zz_monto") or f.get("costo") or 0)
+        b["costo_proveedor"] += _cprov
+        b["costo_despacho"] += _cdesp
+        if margen is not None:
+            b["margen"] += margen
+            b["con_margen"] += 1
         if (f.get("cubierto_por") or "").lower() == "garantia":
             b["garantia"] += 1
 
     widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
-              9, 9, 16, 16, 13, 13, 12, 17, 16, 16, 16, 16, 40]
+              9, 9, 16, 16, 13, 13, 14, 14, 14, 11, 12, 17, 16, 16, 16, 16, 40]
     for ci, w in enumerate(widths[:NCOLS], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "C3"
@@ -77555,48 +77691,78 @@ def ot2_reporte_xlsx():
     # ── Hoja 2: Por técnico ───────────────────────────────────────────
     ws2 = wb.create_sheet("Por técnico")
     h2 = ["Técnico", "Tipo", "OT totales", "Cerradas", "Abiertas",
-          "Tareas hechas", "Tareas totales", "% avance", "Monto asociado"]
+          "Tareas hechas", "Tareas totales", "% avance", "Monto asociado",
+          "Margen"]
     for ci, h in enumerate(h2, 1):
         _hdr(ws2.cell(row=1, column=ci), h)
     r2 = 2
     for (tec, tipo), a in sorted(por_tecnico.items(), key=lambda x: -x[1]["total"]):
         pct = int(round(a["tareas_ok"] * 100.0 / a["tareas_tot"])) if a["tareas_tot"] else 0
         for ci, val in enumerate([tec, tipo, a["total"], a["cerradas"], a["abiertas"],
-                                  a["tareas_ok"], a["tareas_tot"], pct, a["monto"]], 1):
+                                  a["tareas_ok"], a["tareas_tot"], pct, a["monto"],
+                                  a["margen"]], 1):
             c = ws2.cell(row=r2, column=ci, value=val)
             c.font = Font(size=9)
             c.border = border
             c.fill = PatternFill("solid", fgColor=LGRAY if r2 % 2 == 0 else "FFFFFF")
-            if ci == 9:
+            if ci in (9, 10):
                 c.number_format = '"$"#,##0'
         r2 += 1
-    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16], 1):
+    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16, 16], 1):
         ws2.column_dimensions[get_column_letter(ci)].width = w
     ws2.freeze_panes = "A2"
 
     # ── Hoja 3: Por centro de costo ───────────────────────────────────
     # La que sustenta el informe de Daniel: cuánto se va en trabajos que NO
     # son atribuibles a Servicio Técnico (convenios de Comercial, Logística).
+    # 2026-08-27: se agregan costo proveedor/despacho + margen (mismos
+    # campos nuevos de esta noche) y una fila de totales "fuera de SSTT"
+    # -- la pregunta exacta de Daniel: "cuánto dinero hay en juego".
     ws3 = wb.create_sheet("Por centro de costo")
-    _LBL_CC = dict(_OT2_CENTROS_COSTO)
-    h3 = ["Centro de costo", "OT", "Monto asociado", "En garantía"]
+    h3 = ["Centro de costo", "OT", "Monto asociado (cobrado)",
+          "Costo proveedor", "Costo despacho", "Margen total", "En garantía"]
     for ci, h in enumerate(h3, 1):
         _hdr(ws3.cell(row=1, column=ci), h)
     r3 = 2
+    _fuera_sstt = {"total": 0, "monto": 0.0, "costo_proveedor": 0.0,
+                   "costo_despacho": 0.0, "margen": 0.0, "garantia": 0}
     for cc, b in sorted(por_centro.items(), key=lambda x: -x[1]["monto"]):
-        for ci, val in enumerate([_LBL_CC.get(cc, cc), b["total"],
-                                  b["monto"], b["garantia"]], 1):
+        for ci, val in enumerate([_LBL_CC.get(cc, cc), b["total"], b["monto"],
+                                  b["costo_proveedor"], b["costo_despacho"],
+                                  b["margen"], b["garantia"]], 1):
             c = ws3.cell(row=r3, column=ci, value=val)
             c.font = Font(size=9, bold=(ci == 1))
             c.border = border
             c.fill = PatternFill("solid", fgColor=(
                 REDL if cc == "(sin centro)" else
                 LGRAY if r3 % 2 == 0 else "FFFFFF"))
-            if ci == 3:
+            if ci in (3, 4, 5, 6):
                 c.number_format = '"$"#,##0'
         r3 += 1
-    for ci, w in enumerate([26, 10, 18, 13], 1):
+        # "sstt" (o vacío ya normalizado a "(sin centro)") queda excluido:
+        # es justo lo que Daniel SÍ considera Servicio Técnico.
+        if cc != "sstt":
+            _fuera_sstt["total"] += b["total"]
+            _fuera_sstt["monto"] += b["monto"]
+            _fuera_sstt["costo_proveedor"] += b["costo_proveedor"]
+            _fuera_sstt["costo_despacho"] += b["costo_despacho"]
+            _fuera_sstt["margen"] += b["margen"]
+            _fuera_sstt["garantia"] += b["garantia"]
+    r3 += 1
+    for ci, val in enumerate(
+        ["TOTAL fuera de Servicio Técnico", _fuera_sstt["total"],
+         _fuera_sstt["monto"], _fuera_sstt["costo_proveedor"],
+         _fuera_sstt["costo_despacho"], _fuera_sstt["margen"],
+         _fuera_sstt["garantia"]], 1):
+        c = ws3.cell(row=r3, column=ci, value=val)
+        c.font = Font(size=10, bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="DC2626")
+        c.border = border
+        if ci in (3, 4, 5, 6):
+            c.number_format = '"$"#,##0'
+    for ci, w in enumerate([30, 10, 18, 16, 16, 14, 13], 1):
         ws3.column_dimensions[get_column_letter(ci)].width = w
+    ws3.freeze_panes = "A2"
 
     # ── Hoja 4: Resumen ───────────────────────────────────────────────
     ws4 = wb.create_sheet("Resumen")
@@ -77610,9 +77776,10 @@ def ot2_reporte_xlsx():
         ("— Por fase —", ""),
     ]
     for fase_k, fase_lbl in _OT2_FASE_LABELS.items():
+        # Mismo fix de tupla-no-dict que en la Hoja 1 (arriba): índice [3].
         n = sum(1 for f in rows
-                if (_OT2_ESTADO_META.get((f.get("estado") or "").lower())
-                    or {}).get("fase") == fase_k)
+                if ((_OT2_ESTADO_META.get((f.get("estado") or "").lower())
+                     or (None, None, None, None))[3]) == fase_k)
         filas_res.append((fase_lbl, n))
     filas_res += [("", ""), ("— Calidad de dato —", "")]
     filas_res.append(("Sin técnico asignado",
@@ -77621,18 +77788,42 @@ def ot2_reporte_xlsx():
                       sum(1 for f in rows if not f.get("centro_costo"))))
     filas_res.append(("Sin ticket de origen",
                       sum(1 for f in rows if not f.get("numero_ticket"))))
+    # 2026-08-27 (Daniel): "si yo pregunto mañana o bajo un reporte, quiero
+    # saber qué OT están comprometidas con centros de costo diferentes a
+    # servicio técnico... yo me estaría armando un buen reporte" -- este es
+    # el bloque que responde exactamente esa pregunta en una sola mirada.
+    _pct_no_sstt = (fin_tot["no_sstt_cobrado"] / fin_tot["cobrado"] * 100.0
+                    ) if fin_tot["cobrado"] else 0.0
+    filas_res += [("", ""), ("— Finanzas —", "")]
+    filas_res.append(("Monto cobrado total", fin_tot["cobrado"], True))
+    filas_res.append(("Costo proveedor total", fin_tot["proveedor"], True))
+    filas_res.append(("Costo despacho total", fin_tot["despacho"], True))
+    filas_res.append(("Margen total", fin_tot["margen"], True))
+    filas_res += [("", ""), ("— Fuera de Servicio Técnico —", "")]
+    filas_res.append(("OT con centro Logística/Comercial/sin definir",
+                      fin_tot["no_sstt_ot"]))
+    filas_res.append(("Monto cobrado fuera de SSTT", fin_tot["no_sstt_cobrado"], True))
+    filas_res.append(("Margen fuera de SSTT", fin_tot["no_sstt_margen"], True))
+    filas_res.append(("% del monto cobrado que es fuera de SSTT",
+                      f"{_pct_no_sstt:.1f}%"))
     if len(rows) >= _OT2_EXPORT_LIMIT:
         filas_res += [("", ""), ("⚠ Tope alcanzado",
                                  f"El reporte se cortó en {_OT2_EXPORT_LIMIT} "
                                  f"filas. Filtra para ver el resto.")]
-    for i, (k, v) in enumerate(filas_res, 1):
+    for i, fila in enumerate(filas_res, 1):
+        k, v = fila[0], fila[1]
+        es_moneda = len(fila) > 2 and fila[2]
         ck = ws4.cell(row=i, column=1, value=k)
         cv = ws4.cell(row=i, column=2, value=v)
         es_sep = str(k).startswith("—") or str(k).startswith("⚠")
         ck.font = Font(size=10, bold=True,
                        color="DC2626" if es_sep else "374151")
-        cv.font = Font(size=10)
-    ws4.column_dimensions["A"].width = 30
+        cv.font = Font(size=10, bold=(k == "Margen fuera de SSTT" and isinstance(v, (int, float)) and v < 0))
+        if es_moneda:
+            cv.number_format = '"$"#,##0'
+            if isinstance(v, (int, float)) and v < 0:
+                cv.font = Font(size=10, bold=True, color="DC2626")
+    ws4.column_dimensions["A"].width = 38
     ws4.column_dimensions["B"].width = 46
 
     buf = BytesIO()
