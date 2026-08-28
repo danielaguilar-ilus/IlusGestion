@@ -75140,23 +75140,41 @@ def ot2_detalle(vid):
             "cuando": chile_fmt_filter(ts, "%d/%m %H:%M") if ts else "",
             "hecho": bool(ts),
         })
-    # El primer hito sin timestamp es "el que viene ahora" — se marca para
-    # que la línea muestre dónde está parada la OT, no solo lo ya ocurrido.
-    for h in hitos:
-        if not h["hecho"]:
-            h["actual"] = True
-            break
+    # 🔴 FIX 2026-08-28 (OT-2026-00119: recorrido mostraba TODO cerrado
+    # hace 2 días -- técnico, cliente, aprobada y cerrada con fecha real --
+    # pero "Estado operativo" seguía diciendo "EJECUTANDO / Siguiente hito:
+    # Firma técnico"). Causa: "el primer hito SIN timestamp" no es lo mismo
+    # que "dónde está parada la OT" -- el hito "ejecutando" cuelga de
+    # `hora_real_inicio`, una columna que no todas las OT llenan (depende
+    # de un flujo de "marcar inicio" que no siempre se dispara), así que
+    # aunque la OT ya tuviera firma_tecnico_at/firma_cliente_at/etc. reales
+    # (hitos MÁS ADELANTE sí "hechos"), el viejo criterio se detenía en el
+    # primer hueco intermedio y lo marcaba como "actual" para siempre.
+    # Ahora "actual" es el que sigue al ÚLTIMO hito con timestamp real --
+    # un hueco en el medio ya no puede hacer retroceder el estado.
+    _idx_ultimo_hecho = -1
+    for _i, h in enumerate(hitos):
+        if h["hecho"]:
+            _idx_ultimo_hecho = _i
+    if 0 <= _idx_ultimo_hecho < len(hitos) - 1:
+        hitos[_idx_ultimo_hecho + 1]["actual"] = True
 
     # 🆕 2026-08-27 — panel "Estado operativo" del hero (referencia visual
     # de Daniel): el hito ACTUAL es el estado operativo en vivo; el
     # SIGUIENTE (si queda alguno) es el hint de qué viene. Se calcula acá
     # y no en Jinja para no repetir el mismo `for` dos veces en el template.
+    # Si TODOS los hitos ya están hechos (_idx_ultimo_hecho es el último de
+    # la lista), no queda ningún "actual" pendiente -- se usa el último
+    # hito real (normalmente "Cerrada") como estado operativo, en vez del
+    # texto genérico "Completada" que no dice en qué quedó la OT.
     hito_actual = next((h for h in hitos if h.get("actual")), None)
     hito_siguiente = None
     if hito_actual:
         _idx = hitos.index(hito_actual)
         if _idx + 1 < len(hitos):
             hito_siguiente = hitos[_idx + 1]
+    elif _idx_ultimo_hecho >= 0:
+        hito_actual = hitos[_idx_ultimo_hecho]
 
     # ── Cifras de cabecera ─────────────────────────────────────────────
     # 🔴 El filtro _ot_tarea_no_trabajable_sql() NO es opcional acá.
@@ -82418,9 +82436,15 @@ def mant_ot_firmar_revision(vid):
         # mismo antes de irse del sitio (ver _ot_validar_diagnostico_y_fotos).
         _razones_calidad = _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas)
         if _razones_calidad:
+            # 🔴 FIX 2026-08-28 (Isabel, en terreno, OT-2026-00120): el modal
+            # mostraba la MISMA frase dos veces. Causa: con una sola razón,
+            # "error" (título) y "faltantes" (detalle) quedaban con idéntico
+            # texto -- el frontend pinta ambos (message + sub). Se separa en
+            # título genérico + detalle, igual que el bloque de tareas
+            # pendientes de arriba (TAREAS_PENDIENTES), que nunca tuvo este bug.
             return jsonify({
                 "ok": False,
-                "error": _razones_calidad[0],
+                "error": "No puedes firmar esta OT todavía: falta diagnóstico y/o fotos obligatorias.",
                 "error_codigo": "DIAGNOSTICO_O_FOTOS_FALTANTES",
                 "faltantes": _razones_calidad,
             }), 400
