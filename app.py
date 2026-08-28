@@ -75747,6 +75747,32 @@ def ot2_api_crear():
                 "Crea uno en Plantillas antes de generar esta orden.",
                 "PLANTILLA_NO_CONFIGURADA")
 
+    # ── 5.a1 CHECKLIST DE TRABAJO INTERNO (28-08-2026) ──────────────────
+    # Daniel: la "Plantilla de checklist" de bodega/capacitación/control de
+    # calidad debe conectarse sola según el tipo elegido. El selector del
+    # wizard (_modal_crear.html, cargarPlantillasInterno) ya filtra las
+    # opciones vía GET /mantenciones/api/plantillas?tipo_ot=<tipo> (misma
+    # tabla mant_categoria_tipo_map que ya decide "¿esto es trabajo
+    # interno?" en _tipo_es_trabajo_interno) — pero un ID puede llegar
+    # manipulado, así que se revalida acá que la plantilla elegida sea
+    # REALMENTE de la categoría 'trabajo_interno' (o sin categoría asignada
+    # todavía). Mismo criterio de "nunca cruzar categorías" que ya aplica
+    # _plantilla_por_clasificacion_sku para no dejar que un checklist de
+    # bodega termine en la OT de un cliente, ni al revés. Es un checklist
+    # a nivel de OT completa (equipos=[] siempre en trabajo interno), así
+    # que reusa el mismo mecanismo `plantilla_suelta` de más abajo — SIN
+    # bloquear la creación si no viene ninguna (es opcional, ver el
+    # comentario de completo('equipos') en el frontend).
+    if es_interna and plantilla_suelta:
+        _cat_pl_row = mysql_fetchone(
+            "SELECT categoria_admin FROM mant_tarea_plantillas WHERE id=%s",
+            (plantilla_suelta,))
+        _cat_pl = (_cat_pl_row or {}).get("categoria_admin")
+        if _cat_pl and _cat_pl != "trabajo_interno":
+            return _ot2_err(
+                "Ese checklist no corresponde a trabajo interno.",
+                "PLANTILLA_CATEGORIA_INVALIDA")
+
     # ── 5.b TAREAS MANUALES (sin plantilla) ─────────────────────────────
     # Daniel (26-08-2026, corrección OT 2.0): "Capacitación/Control de
     # calidad" ahora arman su trabajo con productos del catálogo o tareas

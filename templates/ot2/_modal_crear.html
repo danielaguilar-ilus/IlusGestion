@@ -59,6 +59,26 @@
   por si se retoman) -- solo se dejó de invocarlos automáticamente, porque
   sin eso ninguna de las secciones que Daniel pidió pulir (Tipo, Trabajo
   interno, etc.) era alcanzable en el uso normal.
+
+  ── PLANTILLA DE CHECKLIST EN TRABAJO INTERNO (2026-08-28) ─────────────
+  Daniel: "Lo primero que pediremos es el trabajo a realizar en la: Tipo
+  de trabajo interno / Título de la OT / Descripción-notas (opcional) /
+  Agenda / Plantilla de checklist. Las plantillas deberán conectarse a la
+  plantilla de trabajos y así alimentarse automáticas, así Jaizer podrá
+  tener una buena calidad de flujo de trabajos con OT". De esos 5 campos,
+  los primeros 4 YA existían (Tipo, Título/Descripción, Agenda son
+  secciones propias del formulario); lo único que faltaba era el selector
+  de checklist. Se agregó a la sección "Trabajo" (antes "Evidencia" para
+  revision_interna) de los 3 tipos interno, reusando el endpoint que YA
+  filtra plantillas por categoría administrativa según el tipo de OT
+  (GET /mantenciones/api/plantillas?tipo_ot=<tipo>, ver
+  cargarPlantillasInterno) -- NO se creó un endpoint nuevo. Se auto-
+  preselecciona sola cuando hay una única plantilla disponible para el
+  tipo elegido. Es un COMPLEMENTO, no un reemplazo: para revision_interna
+  la observación+fotos sigue siendo obligatoria igual que antes (REGLA
+  #4.2 -- Daniel no pidió quitar eso), y el checklist nunca bloquea la
+  creación si todavía no existe ninguna plantilla para ese tipo (ver el
+  comentario en completo('equipos')).
   ══════════════════════════════════════════════════════════════════════
 #}
 <style>
@@ -287,6 +307,11 @@ window.OT2C = (function(){
   var anclaActiva = null;
   var modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
   var scrollObs = null;
+  // 28-08-2026: plantillas de checklist para "trabajo interno" (bodega,
+  // capacitación, control de calidad) -- filtradas por categoría según el
+  // tipo elegido (ver cargarPlantillasInterno). cachePlantInternoTipo guarda
+  // para QUÉ tipo se cargó la lista, así un cambio de tipo dispara refetch.
+  var cachePlantInterno = [], cachePlantInternoTipo = null, cachePlantInternoCargando = false;
 
   function reset(){
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
@@ -301,9 +326,18 @@ window.OT2C = (function(){
          // con productos del catálogo o tareas sueltas (sin plantilla) en
          // vez de un checklist único.
          tareas_manuales:[],
-         // 26-08-2026: Trabajo de bodega -- observación + fotos, reemplaza
-         // por completo el checklist/catálogo de equipos para este tipo.
+         // 26-08-2026: Trabajo de bodega -- observación + fotos.
          bodega_obs:'', bodega_fotos:[],
+         // 28-08-2026 (Daniel: "las plantillas deberán conectarse a la
+         // plantilla de trabajos y así alimentarse automáticas, así Jaizer
+         // podrá tener una buena calidad de flujo de trabajos con OT"):
+         // checklist de trabajo interno, a nivel de OT completa (no por
+         // equipo -- bodega no tiene equipos de cliente). Se auto-sugiere
+         // según el tipo elegido (ver cargarPlantillasInterno) pero NUNCA
+         // reemplaza observación+fotos de "Trabajo de bodega": es un
+         // complemento opcional, nunca bloquea la creación si todavía no
+         // existe ninguna plantilla para ese tipo.
+         plantilla_id_interno:null,
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -323,7 +357,11 @@ window.OT2C = (function(){
     p.push({k:'detalle', n:'Detalle'});
     p.push({k:'agenda',  n:'Agenda'});
     p.push({k:'tecnicos',n:'Técnicos'});
-    p.push({k:'equipos', n: S.tipo==='revision_interna' ? 'Evidencia' : (esInterno() ? 'Trabajo' : 'Equipos')});
+    // 28-08-2026: "Evidencia" pasó a "Trabajo" para revision_interna --
+    // desde que esta sección también elige el checklist (no solo sube
+    // fotos), la etiqueta vieja quedaba corta. Con eso los 3 tipos de
+    // trabajo interno comparten la misma etiqueta de ancla.
+    p.push({k:'equipos', n: esInterno() ? 'Trabajo' : 'Equipos'});
     p.push({k:'revisar', n:'Revisar'});
     return p;
   }
@@ -339,6 +377,16 @@ window.OT2C = (function(){
       case 'tecnicos': return true;                       // asignar después es válido
       case 'equipos':
         // 26-08-2026: "Trabajo interno" ya no es un solo criterio genérico.
+        // 28-08-2026: plantilla_id_interno (checklist de trabajo interno)
+        // se deja DELIBERADAMENTE fuera de esta validación -- no siempre
+        // existe una plantilla para el tipo elegido todavía (cachePlantInterno
+        // puede llegar vacío) y exigirla dejaría la OT imposible de crear en
+        // ese caso. Es un complemento que se auto-sugiere solo, nunca un
+        // requisito -- misma filosofía que el backend en
+        // _plantilla_estandar_para_tipo ("la plantilla NUNCA bloquea la
+        // creación de la OT"). Si Daniel pide más adelante que sí sea
+        // obligatoria cuando SÍ hay opciones disponibles, agregar acá:
+        // `&& (!cachePlantInterno.length || !!S.plantilla_id_interno)`.
         if (S.tipo === 'revision_interna')
           return !!(S.bodega_obs && S.bodega_obs.trim()) && S.bodega_fotos.length > 0;
         if (esInterno())
@@ -713,7 +761,10 @@ window.OT2C = (function(){
      como ya preveía su propio comentario "NULL si tarea manual"). */
   function pintarTrabajoInterno(b){
     b.innerHTML = '<h6 class="t">Productos y tareas</h6>'+
-      '<p class="d">Agrega al menos un producto del catálogo o describe una tarea manual.</p>'+
+      '<p class="d">Agrega al menos un producto del catálogo o describe una tarea manual. '+
+      'Si existe un checklist para este tipo de trabajo, se conecta solo abajo.</p>'+
+      '<label class="fl">Plantilla de checklist (opcional)</label>'+
+      '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
       '<div class="d-flex gap-2 mb-2 flex-wrap">'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
       '<i class="bi bi-tag me-1"></i>Producto del catálogo</button>'+
@@ -721,6 +772,88 @@ window.OT2C = (function(){
       '<i class="bi bi-plus-lg me-1"></i>Tarea manual</button></div>'+
       '<div class="o2m-lista" id="o2mTareasList"></div>';
     pintarTareasManuales();
+    cargarPlantillasInterno();
+  }
+
+  /* ── Plantilla de checklist para trabajo interno (28-08-2026) ────────
+     Daniel: "las plantillas deberán conectarse a la plantilla de trabajos
+     y así alimentarse automáticas, así Jaizer podrá tener una buena
+     calidad de flujo de trabajos con OT". Reusa el endpoint que YA existe
+     y YA filtra por categoría administrativa según el tipo de OT
+     (GET /mantenciones/api/plantillas?tipo_ot=<tipo>, ver app.py
+     mant_plantillas_listar -- resuelve la categoría vía
+     mant_categoria_tipo_map, la misma tabla que ya decide "¿este tipo es
+     trabajo interno?" en _tipo_es_trabajo_interno). No se creó un
+     endpoint nuevo: hubiera sido duplicar exactamente esa consulta.
+
+     Autoconexión: si para el tipo elegido existe UNA sola plantilla
+     activa (con al menos 1 ítem), se preselecciona sola -- eso es toda la
+     "magia" que pidió Daniel. Si hay varias, Jaizer elige. Si no hay
+     ninguna todavía, se avisa mostrando dónde crearla, SIN bloquear nada:
+     misma filosofía que _plantilla_estandar_para_tipo en el backend
+     ("la plantilla NUNCA bloquea la creación de la OT"). Por esta razón
+     completo('equipos') NO exige plantilla_id_interno -- ver ese comentario. */
+  function cargarPlantillasInterno(){
+    var tipoActual = S.tipo;
+    if (!tipoActual) return;
+    // Ya se cargó para este mismo tipo (p.ej. se volvió a pintar la sección
+    // sin cambiar el tipo) -- se repinta con lo que ya hay, sin red de vuelta.
+    if (cachePlantInternoTipo === tipoActual && !cachePlantInternoCargando){
+      pintarPlantillaInternoSelect();
+      return;
+    }
+    cachePlantInternoCargando = true;
+    pintarPlantillaInternoSelect();
+    fetch('/mantenciones/api/plantillas?tipo_ot='+encodeURIComponent(tipoActual)+'&activa=1',
+          {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (S.tipo !== tipoActual) return;   // el usuario ya cambió de tipo
+        cachePlantInternoCargando = false;
+        cachePlantInternoTipo = tipoActual;
+        // Solo plantillas con ítems reales -- una vacía deja al técnico sin
+        // nada que marcar (mismo estándar que _plantilla_estandar_para_tipo).
+        cachePlantInterno = (j.plantillas || []).filter(function(p){ return (p.items_count||0) > 0; });
+        if (!S.plantilla_id_interno && cachePlantInterno.length === 1){
+          S.plantilla_id_interno = cachePlantInterno[0].id;
+        }
+        pintarPlantillaInternoSelect();
+      })
+      .catch(function(){
+        if (S.tipo !== tipoActual) return;
+        cachePlantInternoCargando = false;
+        cachePlantInterno = [];
+        pintarPlantillaInternoSelect();
+      });
+  }
+
+  function pintarPlantillaInternoSelect(){
+    var c = document.getElementById('o2mPlantInternoWrap'); if (!c) return;
+    if (cachePlantInternoCargando){
+      c.innerHTML = '<div class="text-muted small">Buscando plantillas de checklist…</div>';
+      return;
+    }
+    if (!cachePlantInterno.length){
+      c.innerHTML = '<div class="o2m-aviso" style="background:#f3f4f6;border-color:#e5e7eb;color:#4b5563">'+
+        '<i class="bi bi-info-circle-fill me-1"></i>Todavía no hay checklist para este tipo de trabajo interno. '+
+        'Puedes seguir sin checklist, o crear uno en '+
+        '<a href="/mantenciones/plantillas" target="_blank" rel="noopener">Plantillas</a>.</div>';
+      return;
+    }
+    var ops = '<option value="">Sin checklist (solo con lo de arriba)</option>' +
+      cachePlantInterno.map(function(p){
+        return '<option value="'+p.id+'" '+(S.plantilla_id_interno===p.id?'selected':'')+'>'+
+          esc(p.nombre)+' ('+p.items_count+' ítem'+(p.items_count===1?'':'s')+')</option>';
+      }).join('');
+    var sugerida = cachePlantInterno.length===1 && S.plantilla_id_interno===cachePlantInterno[0].id;
+    c.innerHTML = '<select class="form-select" id="o2mPlantInterno" onchange="OT2C.setPlantillaInterno(this.value)">'+ops+'</select>'+
+      (sugerida ? '<small class="text-muted d-block mt-1" style="font-size:.72rem">'+
+        '<i class="bi bi-magic me-1"></i>Sugerida automáticamente para este tipo de trabajo.</small>' : '');
+  }
+
+  function setPlantillaInterno(v){
+    S.plantilla_id_interno = v ? parseInt(v) : null;
+    refrescarAnclas();
   }
   function pintarTareasManuales(){
     var c = document.getElementById('o2mTareasList'); if(!c) return;
@@ -782,8 +915,11 @@ window.OT2C = (function(){
      "que soporte cinco mil, cincuenta mil" no tiene ningún select que
      pueda degradar con el volumen). */
   function pintarBodegaEvidencia(b){
-    b.innerHTML = '<h6 class="t">Evidencia del trabajo</h6>'+
-      '<p class="d">Trabajo de bodega no usa checklist: basta con describir qué se hizo y dejar fotos.</p>'+
+    b.innerHTML = '<h6 class="t">Trabajo de bodega</h6>'+
+      '<p class="d">Si hay un checklist para este tipo de trabajo se sugiere solo abajo. '+
+      'De igual forma, describe qué se hizo y deja fotos de evidencia.</p>'+
+      '<label class="fl">Plantilla de checklist</label>'+
+      '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
       '<label class="fl">¿Qué se hizo? *</label>'+
       '<textarea class="form-control mb-3" id="o2mBodegaObs" rows="3" maxlength="1000" '+
       'placeholder="Ej: Se pegó la baranda de la sala 2 y se instalaron las pizarras del pasillo." '+
@@ -795,6 +931,7 @@ window.OT2C = (function(){
       '<i class="bi bi-camera-fill me-1"></i>Toca para tomar o subir fotos</div>'+
       '<div class="o2m-foto-grid" id="o2mBodegaFotoGrid"></div>';
     pintarBodegaFotos();
+    cargarPlantillasInterno();
   }
   function bodegaFotoAdd(files){
     for (var i=0;i<files.length;i++){
@@ -825,6 +962,12 @@ window.OT2C = (function(){
     if (S.tipo === 'revision_interna') eqTxt = S.bodega_fotos.length + ' foto(s) de evidencia';
     else if (esInterno()) eqTxt = S.tareas_manuales.length + ' producto(s)/tarea(s)';
     else eqTxt = S.equipos.length + ' con checklist';
+    // 28-08-2026: el checklist de trabajo interno es un dato aparte del
+    // conteo de arriba (aplica a la OT completa, no a un producto/foto).
+    if (esInterno() && S.plantilla_id_interno){
+      var _pInt = cachePlantInterno.find(function(p){ return p.id === S.plantilla_id_interno; });
+      eqTxt += ' · checklist: ' + (_pInt ? _pInt.nombre : ('#'+S.plantilla_id_interno));
+    }
     b.innerHTML = '<h6 class="t">Resumen</h6><p class="d">Si algo no calza, toca el ancla correspondiente arriba.</p>'+
       '<div id="o2mErr"></div>'+
       '<div class="o2m-res">'+
@@ -966,6 +1109,9 @@ window.OT2C = (function(){
   function setTipo(i){
     var t = TIPOS[i]; S.tipo = t.v; S.descubrimiento = !!t.descubrimiento;
     if (t.interno) S.origen = 'interno';
+    // La plantilla de checklist sugerida es POR TIPO -- si el tipo cambia,
+    // una plantilla elegida para el tipo anterior ya no aplica (28-08-2026).
+    S.plantilla_id_interno = null;
     // Elegir tipo puede cambiar qué pide "Cliente" (aparece/desaparece) y
     // qué muestra "Equipos" (bodega/producto-o-tarea/normal) -- se
     // reconstruye el formulario completo para no dejar secciones a medio
@@ -1119,7 +1265,11 @@ window.OT2C = (function(){
       fecha_programada: S.fecha, hora_inicio: S.hini, hora_fin: S.hfin,
       tecnico_user_ids: S.tecnicos, tecnico_lider_id: S.lider,
       equipos: esInterno() ? [] : S.equipos,
-      plantilla_id: null,
+      // 28-08-2026: trabajo interno manda su checklist (si eligió uno) por
+      // este mismo campo -- el backend YA sabe aplicar una plantilla suelta
+      // con maquina_id NULL cuando no hay equipos (ot2_api_crear, rama
+      // `elif plantilla_suelta`), es el mismo mecanismo que usa levantamiento.
+      plantilla_id: esInterno() ? (S.plantilla_id_interno || null) : null,
       acceso: esInterno() ? {} : S.acceso,
       ticket_id: S.ticket_id
     };
@@ -1268,6 +1418,7 @@ window.OT2C = (function(){
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
-          quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar};
+          quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
+          setPlantillaInterno:setPlantillaInterno};
 })();
 </script>
