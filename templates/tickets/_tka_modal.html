@@ -858,7 +858,48 @@ const _TKA = {
   _ticketLoaded: false,
   _fichaLoaded: false,
   ultimoMotivoSinSaldo: '',
+  // 2026-08-28: modales Bootstrap (bootstrap.Modal) que quedaron con el
+  // foco desactivado mientras tka está abierto -- ver _tkaSuspenderFocusTrapsAjenos().
+  _focusTrapsPausados: [],
 };
+
+// FIX 2026-08-28 (Daniel, OT 2.0 -- "al aparecer el modal no me deja
+// escribir el nro de factura"): tka se abre como elementos HERMANOS de
+// cualquier modal Bootstrap que lo invoque (ej. #ot2ModalCrear en
+// templates/ot2/_modal_crear.html) -- nunca como descendiente suyo. Desde
+// Bootstrap 5.2, cada modal shown activa un FocusTrap que, en CADA
+// 'focusin' del documento, si el target no está contenido en el propio
+// modal, le devuelve el foco a la fuerza (ver bootstrap.bundle.js,
+// Modal._initializeFocusTrap / FocusTrap._handleFocusin). Como
+// #tkaDocNudo/#tkaCliQ/etc. son hermanos, NO descendientes, de
+// #ot2ModalCrear, cada intento de tipear le devolvía el foco al modal de
+// fondo antes de que el navegador registrara la tecla -- el input se veía
+// normal pero era literalmente imposible escribir en él.
+//
+// _focustrap es una propiedad PRIVADA de bootstrap.Modal (no hay API
+// pública para pausarla), así que el acceso va con try/catch y
+// feature-detection: si una futura versión de Bootstrap cambia su nombre
+// interno, esto simplemente no hace nada (fail-safe) en vez de reventar.
+function _tkaSuspenderFocusTrapsAjenos(){
+  _TKA._focusTrapsPausados = [];
+  if (typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
+  document.querySelectorAll('.modal.show').forEach(function(modalEl){
+    try{
+      var inst = bootstrap.Modal.getInstance(modalEl);
+      var trap = inst && inst._focustrap;
+      if (trap && typeof trap.deactivate === 'function' && typeof trap.activate === 'function'){
+        trap.deactivate();
+        _TKA._focusTrapsPausados.push(trap);
+      }
+    }catch(_e){ /* fail-safe: si la API interna cambió, no bloqueamos tka */ }
+  });
+}
+function _tkaReanudarFocusTrapsAjenos(){
+  (_TKA._focusTrapsPausados || []).forEach(function(trap){
+    try{ trap.activate(); }catch(_e){}
+  });
+  _TKA._focusTrapsPausados = [];
+}
 
 // Daniel 2026-07-12: "si hay mucho equipo sin saldo... dame la oportunidad
 // de que yo pueda transmitir todo ese mensaje a todos los equipos" -- pero
@@ -1189,6 +1230,7 @@ function tkaOpen(opts){
   bd.setAttribute('aria-hidden', 'false');
   md.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
+  _tkaSuspenderFocusTrapsAjenos();
 
   setTimeout(()=>{
     if (_TKA.tab === 'doc'){
@@ -1222,6 +1264,9 @@ function tkaClose(){
   document.getElementById('tkaModal').setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
   if (_TKA._liveTimer){ clearInterval(_TKA._liveTimer); _TKA._liveTimer = null; }
+  // Devuelve el foco al modal Bootstrap de fondo (ej. #ot2ModalCrear) que
+  // haya quedado abierto -- ver _tkaSuspenderFocusTrapsAjenos() en tkaOpen().
+  _tkaReanudarFocusTrapsAjenos();
 }
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && _TKA.open) tkaClose();
