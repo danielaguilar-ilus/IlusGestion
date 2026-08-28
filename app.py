@@ -78978,6 +78978,95 @@ _OT_FICHA_CAMPOS_DIRECTOS = {
 }
 
 
+def _grupo_ot_sin_editar(vid, mid, pid):
+    """¿El grupo (equipo x plantilla) de esta OT NO tiene ninguna respuesta
+    guardada todavía? True = seguro reemplazar sus tareas sin perder nada
+    (ni una respuesta, ni una foto -- una tarea con foto subida siempre
+    quedó con completada=1 o valor_json poblado antes de eso, así que este
+    único chequeo alcanza).
+
+    2026-08-28 (Daniel): "si yo hago cambios en las plantillas, que las OT
+    nuevas o pendientes sin edición puedan cambiar, menos las antiguas que
+    ya están guardadas". Es el mismo criterio en los dos lugares que lo
+    usan: re-sincronizar al guardar la plantilla, y reasignar la plantilla
+    de un equipo a mano."""
+    if mid is None:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND plantilla_id=%s AND maquina_id IS NULL "
+            "   AND (completada=1 OR valor_json IS NOT NULL)",
+            (vid, pid))
+    else:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND plantilla_id=%s AND maquina_id=%s "
+            "   AND (completada=1 OR valor_json IS NOT NULL)",
+            (vid, pid, mid))
+    return int((row or {}).get("n") or 0) == 0
+
+
+def _sincronizar_grupo_desde_plantilla(vid, mid, pid_destino, pid_actual=None):
+    """Reemplaza las tareas de un grupo (equipo x plantilla) de una OT por
+    las que HOY tiene `pid_destino` -- mismo INSERT que ot2_api_crear usa al
+    nacer la OT, para no tener una segunda receta que diverja con el
+    tiempo. El caller es responsable de haber confirmado con
+    `_grupo_ot_sin_editar` que el grupo VIEJO no tiene nada que perder --
+    esta función no lo revisa de nuevo (evita dos consultas iguales
+    seguidas cuando ya se llamó antes para decidir si procede).
+
+    `pid_actual` distinto de `pid_destino` = REASIGNAR (el técnico/gestión
+    elige una plantilla distinta para ese equipo). Iguales (o `pid_actual`
+    omitido) = RE-SINCRONIZAR (la plantilla de siempre cambió de contenido,
+    se refresca con lo que tiene ahora).
+
+    Devuelve la cantidad de tareas nuevas creadas."""
+    pid_actual = pid_actual if pid_actual is not None else pid_destino
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            v = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+            tarea_tipo = v.get("tipo") or "preventiva"
+            if mid is None:
+                cur.execute(
+                    "DELETE FROM mant_visita_tareas WHERE visita_id=%s AND plantilla_id=%s AND maquina_id IS NULL",
+                    (vid, pid_actual))
+            else:
+                cur.execute(
+                    "DELETE FROM mant_visita_tareas WHERE visita_id=%s AND plantilla_id=%s AND maquina_id=%s",
+                    (vid, pid_actual, mid))
+            cur.execute(
+                "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
+                "       requiere_foto, unidad, rango_min, rango_max, "
+                "       opciones_lista_json, target_field "
+                "  FROM mant_tarea_plantilla_items "
+                " WHERE plantilla_id=%s ORDER BY orden, id", (pid_destino,))
+            items = cur.fetchall()
+            cur.execute("SELECT COALESCE(MAX(orden),0) AS m FROM mant_visita_tareas WHERE visita_id=%s", (vid,))
+            orden = int((cur.fetchone() or {}).get("m") or 0)
+            n = 0
+            for it in items:
+                orden += 1
+                cur.execute(
+                    "INSERT INTO mant_visita_tareas "
+                    "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
+                    "   maquina_id, tipo_respuesta, target_field, obligatoria, "
+                    "   requiere_foto, unidad, rango_min, rango_max, "
+                    "   opciones_lista_json, estado_trabajo, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                    "        'pendiente',%s)",
+                    (vid, pid_destino, orden, (it.get("titulo") or "")[:300],
+                     it.get("descripcion"), tarea_tipo, mid,
+                     it.get("tipo_respuesta") or "check", it.get("target_field"),
+                     it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                     it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
+                     it.get("opciones_lista_json"), current_username()))
+                n += 1
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def _validar_item_plantilla(d):
     """Normaliza y valida un item de plantilla. Devuelve dict listo para INSERT
     o (None, error_str)."""
@@ -79432,7 +79521,13 @@ def mant_plantilla_crear():
 @_mant_required
 def mant_plantilla_actualizar(pid):
     """Actualiza la plantilla (header) y REEMPLAZA todos los items.
-    Las OTs ya creadas con esta plantilla NO se ven afectadas (snapshot lógico).
+
+    2026-08-28 (Daniel, cambio de regla explícito): las OT que YA tienen
+    alguna respuesta guardada quedan intactas (snapshot lógico, como
+    siempre) -- pero las que usan esta plantilla y todavía nadie empezó a
+    responder se RE-SINCRONIZAN con el contenido nuevo, para poder iterar
+    un checklist y ver el resultado en OT reales sin tener que recrearlas
+    a mano. Ver `_grupo_ot_sin_editar`/`_sincronizar_grupo_desde_plantilla`.
     """
     plant = mysql_fetchone("SELECT id, es_sistema FROM mant_tarea_plantillas WHERE id=%s", (pid,))
     if not plant:
@@ -79495,7 +79590,44 @@ def mant_plantilla_actualizar(pid):
         try:
             _mant_log("plantilla", pid, "actualizada", f"{nombre} ({len(items_norm)} items)")
         except Exception: pass
-        return jsonify({"ok": True, "id": pid, "items_count": len(items_norm)})
+
+        # 🆕 2026-08-28 (Daniel): "si edito una plantilla, las OT nuevas o
+        # pendientes sin edición deben cambiar -- las que ya están
+        # guardadas, no". Antes esta ruta era un snapshot puro: editar la
+        # plantilla NUNCA tocaba una OT ya creada, sin excepción (así queda
+        # documentado arriba). Ahora, todo grupo (equipo x plantilla) que
+        # use ESTA plantilla y que ningún técnico haya empezado a responder
+        # se re-crea con el contenido recién guardado. Best-effort a
+        # propósito: un fallo acá no debe hacer perder la plantilla ya
+        # guardada arriba (eso ya está confirmado con conn.commit()).
+        _sync_n_grupos = 0
+        _sync_n_tareas = 0
+        try:
+            _grupos = mysql_fetchall(
+                "SELECT DISTINCT visita_id, maquina_id FROM mant_visita_tareas "
+                " WHERE plantilla_id=%s", (pid,)) or []
+            # Techo de seguridad: una plantilla muy usada (ej. la
+            # mantención preventiva estándar) podría tener miles de OT
+            # asociadas -- no perder tiempo de request en algo que además
+            # no es lo que Daniel pidió (plantillas EN AJUSTE activo, no
+            # las de uso masivo ya estables).
+            for g in _grupos[:500]:
+                _vid_g, _mid_g = g.get("visita_id"), g.get("maquina_id")
+                if not _vid_g:
+                    continue
+                if not _grupo_ot_sin_editar(_vid_g, _mid_g, pid):
+                    continue
+                _n = _sincronizar_grupo_desde_plantilla(_vid_g, _mid_g, pid)
+                _sync_n_grupos += 1
+                _sync_n_tareas += _n
+            if len(_grupos) > 500:
+                print(f"[plantilla_actualizar] pid={pid}: {len(_grupos)} grupos, "
+                      f"se sincronizaron solo los primeros 500", flush=True)
+        except Exception as _e_sync:
+            print(f"[plantilla_actualizar] re-sync pid={pid}: {_e_sync}", flush=True)
+
+        return jsonify({"ok": True, "id": pid, "items_count": len(items_norm),
+                         "ots_sincronizadas": _sync_n_grupos, "tareas_recreadas": _sync_n_tareas})
     finally:
         conn.close()
 

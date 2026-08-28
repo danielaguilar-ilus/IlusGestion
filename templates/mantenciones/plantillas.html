@@ -660,6 +660,13 @@ function actualizarItem(idx, campo, valor){
   _items[idx][campo] = valor;
   // Si cambia el tipo, ocultar/mostrar campos
   if (campo === 'tipo_respuesta'){
+    // 2026-08-28 (Daniel): al elegir "Número de serie" en un ítem recién
+    // agregado (sin título/descripción todavía), sugerir el texto estándar
+    // -- sigue siendo editable, no se pisa si el usuario ya escribió algo.
+    if (valor === 'serie'){
+      if (!_items[idx].titulo || !_items[idx].titulo.trim()) _items[idx].titulo = 'Número de serie';
+      if (!_items[idx].descripcion || !_items[idx].descripcion.trim()) _items[idx].descripcion = 'Número de serie del producto';
+    }
     renderItems();
   }
 }
