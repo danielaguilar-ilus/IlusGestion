@@ -74992,6 +74992,17 @@ def ot2_detalle(vid):
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         hito_actual=hito_actual, hito_siguiente=hito_siguiente,
+        # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
+        # (el motor de firma ya existía desde anoche, commit e007c43; lo que
+        # faltaba era el formulario). Los 3 textos "fijos" del documento real
+        # (mismo texto en los dos .docx de referencia que compartió Daniel)
+        # se pasan al modal para que el borrador salga pre-llenado y editable,
+        # en vez de duplicar estas constantes dentro del template.
+        anexo_defaults={
+            "niveles": _ANEXO_NIVELES_DEFECTO,
+            "hitos": _ANEXO_HITOS_DEFECTO,
+            "alcance": _ANEXO_ALCANCE_DEFECTO,
+        },
     )
 
 
@@ -77294,6 +77305,71 @@ def _anexo_publico_payload(a):
         "hitos_pago": a.get("hitos_pago") or "",
         "alcance_servicio": a.get("alcance_servicio") or "",
     }
+
+
+def _anexo_precio_texto(items):
+    """Mismo formato que usa `_anexo_render_canonico` (no se toca esa función
+    -- es la base del hash de verificación, y ya puede haber anexos firmados
+    en producción que dependen de su salida exacta). Esta es una copia
+    aislada, solo para el documento imprimible/PDF, donde cambiar el texto
+    no invalida ninguna firma ya hecha."""
+    items = items or []
+    return " - ".join(
+        f"${int(it.get('monto') or 0):,}".replace(",", ".") + f" ({it.get('concepto','')})"
+        for it in items) or "—"
+
+
+@app.route("/ot/api/anexos/<int:aid>/pdf", methods=["GET"])
+@_mant_required
+def ot2_api_anexo_pdf(aid):
+    """Descarga el Anexo en PDF con fidelidad al Word real que Daniel firma
+    hoy con los proveedores (Isabel Milling, Daniel Pulgar): fecha arriba a
+    la derecha, título centrado, párrafos justificados Objetivo/Precio/
+    Duración/Niveles/Hitos/Alcance, firma al pie -- MISMO layout, no una
+    interpretación libre (pedido explícito de Daniel, 2026-08-26 noche).
+
+    Ojo: esto NO reemplaza `anexo_firma.html` (esa sigue siendo la
+    experiencia de FIRMA del proveedor, diseñada con Fable -- no se toca).
+    Este PDF es el documento para archivo/contabilidad, generado con el
+    mismo motor Playwright que ya usa el resto del proyecto (_pw_pdf)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (aid,))
+    if not a:
+        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
+    a = _anexo_dict(a)
+    payload = _anexo_publico_payload(a)
+    firma = None
+    if a.get("estado") == "firmado":
+        firma = {
+            "firmante_nombre": a.get("firmante_nombre") or a.get("proveedor_nombre"),
+            "firmante_rut": a.get("firmante_rut") or a.get("proveedor_rut"),
+            "firma_url": a.get("firma_url"),
+            "firmado_en": chile_fmt_filter(a.get("firmado_at"), "%d/%m/%Y %H:%M") if a.get("firmado_at") else "",
+        }
+    html = render_template(
+        "ot2/anexo_documento.html",
+        anexo=payload,
+        precio_txt=_anexo_precio_texto(payload.get("precio_items")),
+        firma=firma,
+        generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
+    )
+    try:
+        data = _pw_pdf(html, page_format="Letter",
+                        margin={"top": "18mm", "right": "20mm", "bottom": "18mm", "left": "20mm"})
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}", 503)
+    except Exception as e:
+        print(f"[anexo_pdf] {e}", flush=True)
+        return ("No pudimos generar el PDF del anexo.", 500)
+
+    try:
+        _mant_log("anexo", aid, "pdf_descargado", f"N°{a['numero']}")
+    except Exception:
+        pass
+    fname = f"anexo-servicios-{a['numero']}.pdf"
+    return Response(data, mimetype="application/pdf",
+                     headers={"Content-Disposition": f'inline; filename="{fname}"'})
 
 
 @app.route("/firmar-anexo/<token>", methods=["GET"])

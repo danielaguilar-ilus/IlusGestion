@@ -1,0 +1,518 @@
+{#
+  ══════════════════════════════════════════════════════════════════════
+  OT 2.0 · MODAL "ANEXO DE SERVICIOS" — crear + enviar a firmar
+  ══════════════════════════════════════════════════════════════════════
+  🔓 2026-08-27 (Daniel, esta noche, repetido varias veces): el motor de
+  firma del proveedor externo (mant_anexos, /firmar-anexo/<token>,
+  anexo_firma.html) se construyó anoche (commit e007c43) pero no existía
+  NINGÚN botón en ninguna pantalla para crear o enviar un anexo. Este
+  modal es esa puerta de entrada. Namespace propio `OT2ANX` — no comparte
+  código con `OT2C` (_modal_crear.html), aunque reusa el mismo lenguaje
+  visual (cabecera oscura + acento rojo, ver `.o2m-head` allá / `.oax-head`
+  acá).
+
+  Dos fases dentro del mismo modal, sin recargar la página entre medio:
+    FASE "crear"  -- formulario completo (proveedor, servicio, precio por
+                     ítem, duración, condiciones estándar editables) ->
+                     POST /ot/api/anexos (ya existe, sin tocar).
+    FASE "enviar" -- correo/teléfono destino -> POST /ot/api/anexos/<id>/
+                     enviar (ya existe, sin tocar). Devuelve el link y,
+                     si hay teléfono, un wa_link ya armado por el backend
+                     (deep-link honesto, el servidor no manda WhatsApp por
+                     su cuenta) -- se muestra un botón "Abrir WhatsApp".
+
+  Si se abre desde un anexo en 'borrador' ya existente (quedó creado pero
+  nunca se envió), `OT2ANX.abrirEnviar(id)` salta directo a la fase
+  "enviar" sin repetir el formulario completo.
+
+  Al cerrar el modal DESPUÉS de haber creado un anexo, se recarga la
+  página -- es la forma más simple de que la pestaña Documentos refleje
+  el nuevo estado sin duplicar el render de la tarjeta acá.
+  ══════════════════════════════════════════════════════════════════════
+#}
+<style>
+.oax .modal-dialog{max-width:640px}
+.oax .modal-content{border:0;border-radius:16px;overflow:hidden}
+.oax-head{background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
+  padding:18px 24px;display:flex;align-items:center;gap:14px;
+  border-bottom:3px solid var(--ilus-red,#dc2626)}
+.oax-head > i{font-size:1.5rem;color:var(--ilus-red,#dc2626);flex:none}
+.oax-head h5{margin:0;font-weight:800;letter-spacing:.01em}
+.oax-head .sub{font-size:.78rem;color:rgba(255,255,255,.62);margin-top:2px}
+.oax-head .x{margin-left:auto;background:transparent;border:0;color:rgba(255,255,255,.7);
+  font-size:1.4rem;line-height:1;padding:6px}
+.oax-head .x:hover{color:#fff}
+
+.oax-body{padding:22px 24px;max-height:64vh;overflow-y:auto}
+.oax-sec{padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid #f1f3f5}
+.oax-sec:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
+.oax label.fl{font-size:.76rem;font-weight:800;color:#374151;margin-bottom:4px;display:block}
+.oax input.form-control,.oax select.form-select,.oax textarea.form-control{font-size:16px}
+
+.oax-item{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.oax-item input:first-child{flex:1.5;min-width:0}
+.oax-item input.monto{flex:1;max-width:150px}
+.oax-item-del{width:40px;height:40px;min-height:40px;border-radius:8px;border:1px solid #fecaca;
+  background:#fef2f2;color:#dc2626;flex:none;display:grid;place-items:center;cursor:pointer}
+.oax-item-del:hover{background:#fee2e2}
+.oax-total{text-align:right;font-weight:800;font-size:.92rem;color:#0a0a0a;margin-top:8px}
+
+.oax-toggle{background:transparent;border:0;padding:0;font-size:.8rem;font-weight:800;
+  color:#374151;display:flex;align-items:center;gap:6px;min-height:44px;cursor:pointer}
+.oax-toggle i{transition:transform .2s ease}
+.oax-toggle.on i{transform:rotate(90deg)}
+
+.oax-check{display:flex;align-items:center;gap:8px;margin-top:10px;min-height:44px}
+.oax-check input{width:18px;height:18px}
+.oax-check label{font-size:.8rem;color:#374151;margin:0}
+
+.oax-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;align-items:center;
+  gap:10px;background:#fafbfc;flex-wrap:wrap}
+.oax-foot .sp{margin-left:auto}
+.oax-foot .btn{min-height:44px}
+
+.oax-ok{display:flex;align-items:center;gap:10px;background:#dcfce7;color:#15803d;
+  border-radius:10px;padding:11px 13px;font-weight:700;font-size:.85rem;margin-bottom:16px}
+.oax-ok i{font-size:1.2rem;flex:none}
+.oax-link-row{display:flex;gap:8px}
+.oax-link-row input{font-size:.78rem;font-family:monospace}
+
+@media (max-width:640px){
+  .oax .modal-dialog{margin:0;max-width:100%}
+  .oax .modal-content{border-radius:0;min-height:100dvh}
+  .oax-body{max-height:none}
+}
+</style>
+
+<div class="modal fade oax" id="oaxModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="oax-head">
+        <i class="bi bi-file-earmark-lock2-fill"></i>
+        <div>
+          <h5>Anexo de Servicios</h5>
+          <div class="sub" id="oaxSub">El proveedor no puede trabajar la OT hasta firmarlo.</div>
+        </div>
+        <button type="button" class="x" data-bs-dismiss="modal" aria-label="Cerrar">&times;</button>
+      </div>
+
+      {# ═══ FASE 1 — CREAR ═══ #}
+      <div class="oax-body" id="oaxBodyCrear">
+
+        <div class="oax-sec">
+          <label class="fl">Proveedor externo</label>
+          <select class="form-select form-select-sm" id="oaxProveedorSel" onchange="OT2ANX.onProveedorChange()">
+            <option value="">Cargando proveedores…</option>
+          </select>
+          <div class="oax-check">
+            <input type="checkbox" id="oaxProveedorManual" onchange="OT2ANX.toggleManual()">
+            <label for="oaxProveedorManual">Proveedor nuevo, no está en la lista</label>
+          </div>
+          <div id="oaxProveedorManualBox" style="display:none;margin-top:10px">
+            <div class="row g-2">
+              <div class="col-6"><label class="fl">Nombre / Razón social</label>
+                <input class="form-control form-control-sm" id="oaxManNombre"></div>
+              <div class="col-6"><label class="fl">RUT</label>
+                <input class="form-control form-control-sm" id="oaxManRut"></div>
+              <div class="col-6"><label class="fl">Correo de contacto</label>
+                <input type="email" class="form-control form-control-sm" id="oaxManEmail"></div>
+              <div class="col-6"><label class="fl">Teléfono</label>
+                <input class="form-control form-control-sm" id="oaxManTel"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="oax-sec">
+          <label class="fl">Objetivo del servicio</label>
+          <textarea class="form-control form-control-sm" id="oaxObjetivo" rows="2" maxlength="600"
+                    oninput="OT2ANX.setObjetivo(this.value)"></textarea>
+        </div>
+
+        <div class="oax-sec">
+          <label class="fl">Precio, por concepto (neto)</label>
+          <div id="oaxItems"></div>
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="OT2ANX.agregarItem()">
+            <i class="bi bi-plus-lg"></i> Agregar ítem</button>
+          <div class="oax-total" id="oaxTotal">Total neto: $0</div>
+        </div>
+
+        <div class="oax-sec">
+          <div class="row g-2">
+            <div class="col-6"><label class="fl">Inicio del servicio</label>
+              <input type="date" class="form-control form-control-sm" id="oaxFechaIni"
+                     oninput="OT2ANX.setFecha('inicio', this.value)"></div>
+            <div class="col-6"><label class="fl">Término del servicio</label>
+              <input type="date" class="form-control form-control-sm" id="oaxFechaFin"
+                     oninput="OT2ANX.setFecha('termino', this.value)"></div>
+          </div>
+        </div>
+
+        <div class="oax-sec">
+          <button type="button" class="oax-toggle" id="oaxCondToggle" onclick="OT2ANX.toggleCondiciones()">
+            <i class="bi bi-chevron-right"></i> Condiciones estándar del servicio (editable)
+          </button>
+          <div id="oaxCondBox" style="display:none;margin-top:10px">
+            <label class="fl">Niveles de Servicio</label>
+            <textarea class="form-control form-control-sm" id="oaxNiveles" rows="2"
+                      oninput="OT2ANX.setCond('niveles_servicio', this.value)"></textarea>
+            <label class="fl" style="margin-top:10px">Hitos de Pago</label>
+            <textarea class="form-control form-control-sm" id="oaxHitos" rows="2"
+                      oninput="OT2ANX.setCond('hitos_pago', this.value)"></textarea>
+            <label class="fl" style="margin-top:10px">Alcance del Servicio</label>
+            <textarea class="form-control form-control-sm" id="oaxAlcance" rows="3"
+                      oninput="OT2ANX.setCond('alcance_servicio', this.value)"></textarea>
+          </div>
+        </div>
+
+      </div>
+
+      {# ═══ FASE 2 — ENVIAR ═══ #}
+      <div class="oax-body" id="oaxBodyEnviar" style="display:none">
+        <div class="oax-sec">
+          <div class="oax-ok"><i class="bi bi-check-circle-fill"></i>
+            Anexo N° <b id="oaxNumeroCreado">—</b> creado como borrador.</div>
+          <label class="fl">Correo del proveedor</label>
+          <input type="email" class="form-control form-control-sm" id="oaxEmailDestino"
+                 placeholder="correo@proveedor.cl">
+          <label class="fl" style="margin-top:10px">Teléfono <span style="font-weight:500;opacity:.7">(opcional, para WhatsApp)</span></label>
+          <input class="form-control form-control-sm" id="oaxTelDestino" placeholder="+56 9 ...">
+        </div>
+        <div class="oax-sec" id="oaxResultadoBox" style="display:none">
+          <div class="oax-ok"><i class="bi bi-send-check-fill"></i> Enlace de firma listo.</div>
+          <label class="fl">Link de firma</label>
+          <div class="oax-link-row">
+            <input class="form-control form-control-sm" id="oaxLinkFinal" readonly onclick="this.select()">
+          </div>
+        </div>
+      </div>
+
+      {# ═══ PIES — uno por fase ═══ #}
+      <div class="oax-foot" id="oaxFootCrear">
+        <button type="button" class="btn btn-outline-secondary btn-sm px-3" data-bs-dismiss="modal">Cancelar</button>
+        <span class="sp"></span>
+        <button type="button" class="btn btn-danger btn-sm px-4 fw-bold" id="oaxBtnCrear" onclick="OT2ANX.crear()">
+          <i class="bi bi-check-lg me-1"></i>Crear Anexo</button>
+      </div>
+      <div class="oax-foot" id="oaxFootEnviar" style="display:none">
+        <button type="button" class="btn btn-outline-secondary btn-sm px-3" data-bs-dismiss="modal">Enviar más tarde</button>
+        <span class="sp"></span>
+        <button type="button" class="btn btn-danger btn-sm px-4 fw-bold" id="oaxBtnEnviar" onclick="OT2ANX.enviar()">
+          <i class="bi bi-send-fill me-1"></i>Enviar al proveedor</button>
+      </div>
+      <div class="oax-foot" id="oaxFootListo" style="display:none">
+        <button type="button" class="btn btn-outline-secondary btn-sm px-3" onclick="OT2ANX.copiarLink()">
+          <i class="bi bi-clipboard me-1"></i>Copiar link</button>
+        <a class="btn btn-outline-success btn-sm px-3" id="oaxBtnWa" style="display:none" target="_blank" rel="noopener">
+          <i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp</a>
+        <span class="sp"></span>
+        <button type="button" class="btn btn-danger btn-sm px-4 fw-bold" data-bs-dismiss="modal">Listo</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   OT2ANX — motor del modal "Anexo de Servicios"
+   ══════════════════════════════════════════════════════════════════════ */
+window.OT2ANX = (function(){
+  var S = null;          // estado del anexo en construcción (fase crear)
+  var proveedores = [];  // cache de /mantenciones/api/tecnicos-externos
+  var aid = null;        // id del anexo ya creado -- gatilla el reload al cerrar
+  var lastLink = '';
+  var creadoAlgo = false;
+
+  /* Defaults servidos por ot2_detalle() -- MISMO texto que ya usa el
+     backend al crear un anexo sin estos campos (_ANEXO_*_DEFECTO), para
+     que lo que se ve acá sea lo que realmente va a quedar guardado. */
+  var DEF_NIVELES = {{ anexo_defaults.niveles | tojson }};
+  var DEF_HITOS   = {{ anexo_defaults.hitos | tojson }};
+  var DEF_ALCANCE = {{ anexo_defaults.alcance | tojson }};
+  var DEF_CLIENTE = {{ (v.razon_social or '') | tojson }};
+  var DEF_FECHA_INI = {{ (v.fecha_programada or '') | tojson }};
+  var DEF_FECHA_FIN = {{ (v.fecha_fin or v.fecha_programada or '') | tojson }};
+  var OT_ID = {{ v.id }};
+
+  function resetCrear(){
+    S = {
+      ot_id: OT_ID,
+      tecnico_externo_id: null,
+      proveedor_nombre: '', proveedor_rut: '', email: '', tel: '',
+      objetivo_servicio: DEF_CLIENTE ? ('Ejecutar servicio para el cliente ' + DEF_CLIENTE + '.') : '',
+      cliente_nombre: DEF_CLIENTE,
+      items: [{concepto:'', monto:''}],
+      fecha_inicio: DEF_FECHA_INI, fecha_termino: DEF_FECHA_FIN,
+      niveles_servicio: DEF_NIVELES, hitos_pago: DEF_HITOS, alcance_servicio: DEF_ALCANCE,
+    };
+    aid = null; lastLink = ''; creadoAlgo = false;
+  }
+
+  /* Solo dos fases reales de FORMULARIO ("crear"/"enviar"); el tercer pie
+     ("listo", tras un envío exitoso) lo activa `enviar()` directamente,
+     no pasa por acá -- evita la combinatoria de un tercer estado en esta
+     función. */
+  function fase(nombre){
+    document.getElementById('oaxBodyCrear').style.display  = (nombre === 'crear')  ? '' : 'none';
+    document.getElementById('oaxBodyEnviar').style.display = (nombre === 'enviar') ? '' : 'none';
+    document.getElementById('oaxFootCrear').style.display  = (nombre === 'crear')  ? 'flex' : 'none';
+    document.getElementById('oaxFootEnviar').style.display = (nombre === 'enviar') ? 'flex' : 'none';
+    document.getElementById('oaxFootListo').style.display  = 'none';
+    var sub = document.getElementById('oaxSub');
+    if (sub) sub.textContent = (nombre === 'crear')
+      ? 'El proveedor no puede trabajar la OT hasta firmarlo.'
+      : 'Envía el link de firma al proveedor.';
+  }
+
+  function pintarForm(){
+    document.getElementById('oaxObjetivo').value = S.objetivo_servicio;
+    document.getElementById('oaxFechaIni').value = S.fecha_inicio || '';
+    document.getElementById('oaxFechaFin').value = S.fecha_termino || '';
+    document.getElementById('oaxNiveles').value = S.niveles_servicio;
+    document.getElementById('oaxHitos').value = S.hitos_pago;
+    document.getElementById('oaxAlcance').value = S.alcance_servicio;
+    document.getElementById('oaxProveedorManual').checked = false;
+    document.getElementById('oaxProveedorManualBox').style.display = 'none';
+    ['oaxManNombre','oaxManRut','oaxManEmail','oaxManTel'].forEach(id => document.getElementById(id).value = '');
+    var condBox = document.getElementById('oaxCondBox');
+    condBox.style.display = 'none';
+    document.getElementById('oaxCondToggle').classList.remove('on');
+    pintarItems();
+  }
+
+  function pintarItems(){
+    var wrap = document.getElementById('oaxItems');
+    wrap.innerHTML = S.items.map((it, i) => `
+      <div class="oax-item">
+        <input class="form-control form-control-sm" placeholder="Concepto (ej: Instalación)"
+               value="${(it.concepto||'').replace(/"/g,'&quot;')}"
+               oninput="OT2ANX.setItemConcepto(${i}, this.value)">
+        <input type="number" min="0" step="1" class="form-control form-control-sm monto" placeholder="Monto"
+               value="${it.monto||''}" oninput="OT2ANX.setItemMonto(${i}, this.value)">
+        <button type="button" class="oax-item-del" onclick="OT2ANX.quitarItem(${i})" aria-label="Quitar ítem">
+          <i class="bi bi-trash"></i></button>
+      </div>`).join('');
+    actualizarTotal();
+  }
+
+  function actualizarTotal(){
+    var total = S.items.reduce((acc, it) => acc + (Number(it.monto) || 0), 0);
+    document.getElementById('oaxTotal').textContent =
+      'Total neto: $' + total.toLocaleString('es-CL');
+  }
+
+  async function cargarProveedores(){
+    var sel = document.getElementById('oaxProveedorSel');
+    sel.innerHTML = '<option value="">Cargando proveedores…</option>';
+    try {
+      const r = await fetch('/mantenciones/api/tecnicos-externos?activos=1');
+      proveedores = await r.json();
+      if (!Array.isArray(proveedores)) proveedores = [];
+    } catch(e){ proveedores = []; }
+    if (!proveedores.length){
+      sel.innerHTML = '<option value="">— No hay proveedores registrados —</option>';
+      document.getElementById('oaxProveedorManual').checked = true;
+      toggleManual();
+      return;
+    }
+    sel.innerHTML = ['<option value="">— Selecciona un proveedor —</option>']
+      .concat(proveedores.map(p =>
+        `<option value="${p.id}">${(p.razon_social || ('Proveedor ' + p.id)).replace(/</g,'&lt;')}</option>`))
+      .join('');
+  }
+
+  function onProveedorChange(){
+    var id = document.getElementById('oaxProveedorSel').value;
+    var p = (proveedores || []).find(x => String(x.id) === String(id));
+    if (p){
+      S.tecnico_externo_id = p.id;
+      S.proveedor_nombre = p.razon_social || '';
+      S.proveedor_rut = p.rut_empresa || '';
+      S.email = p.contacto_email || '';
+      S.tel = p.contacto_tel || '';
+    } else {
+      S.tecnico_externo_id = null;
+    }
+  }
+
+  function toggleManual(){
+    var on = document.getElementById('oaxProveedorManual').checked;
+    document.getElementById('oaxProveedorManualBox').style.display = on ? '' : 'none';
+    document.getElementById('oaxProveedorSel').disabled = on;
+  }
+
+  function toggleCondiciones(){
+    var box = document.getElementById('oaxCondBox');
+    var btn = document.getElementById('oaxCondToggle');
+    var abrir = box.style.display === 'none';
+    box.style.display = abrir ? '' : 'none';
+    btn.classList.toggle('on', abrir);
+  }
+
+  function setObjetivo(v){ S.objetivo_servicio = v; }
+  function setFecha(cual, v){ if (cual === 'inicio') S.fecha_inicio = v; else S.fecha_termino = v; }
+  function setCond(campo, v){ S[campo] = v; }
+  function setItemConcepto(i, v){ if (S.items[i]) S.items[i].concepto = v; }
+  function setItemMonto(i, v){ if (S.items[i]){ S.items[i].monto = v; actualizarTotal(); } }
+  function agregarItem(){ S.items.push({concepto:'', monto:''}); pintarItems(); }
+  function quitarItem(i){
+    if (S.items.length <= 1){ S.items[i] = {concepto:'', monto:''}; }
+    else { S.items.splice(i, 1); }
+    pintarItems();
+  }
+
+  async function abrir(vid){
+    resetCrear();
+    var modalEl = document.getElementById('oaxModal');
+    var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    fase('crear');
+    pintarForm();
+    cargarProveedores();
+  }
+
+  function abrirEnviar(anexoId){
+    aid = anexoId; creadoAlgo = false;   // ya existía -- no gatilla el "se creó algo nuevo" en el toast, pero SÍ recarga al cerrar si se envía
+    document.getElementById('oaxNumeroCreado').textContent = '—';
+    document.getElementById('oaxEmailDestino').value = '';
+    document.getElementById('oaxTelDestino').value = '';
+    document.getElementById('oaxResultadoBox').style.display = 'none';
+    var modalEl = document.getElementById('oaxModal');
+    var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    fase('enviar');
+    document.getElementById('oaxFootEnviar').style.display = 'flex';
+  }
+
+  async function crear(){
+    if (document.getElementById('oaxProveedorManual').checked){
+      S.proveedor_nombre = document.getElementById('oaxManNombre').value.trim();
+      S.proveedor_rut = document.getElementById('oaxManRut').value.trim();
+      S.email = document.getElementById('oaxManEmail').value.trim();
+      S.tel = document.getElementById('oaxManTel').value.trim();
+      S.tecnico_externo_id = null;
+    }
+    if (!S.proveedor_nombre){
+      ilusToast('Falta el nombre del proveedor.', {type:'warning'});
+      return;
+    }
+    if (!S.objetivo_servicio || !S.objetivo_servicio.trim()){
+      ilusToast('Falta el objetivo del servicio.', {type:'warning'});
+      return;
+    }
+    var items = (S.items || [])
+      .filter(it => (it.concepto || '').trim() || Number(it.monto) > 0)
+      .map(it => ({concepto: (it.concepto || '').trim(), monto: Math.round(Number(it.monto) || 0)}));
+    if (!items.length || !items.some(it => it.monto > 0)){
+      ilusToast('Agrega al menos un ítem de precio con monto.', {type:'warning'});
+      return;
+    }
+
+    var btn = document.getElementById('oaxBtnCrear');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/ot/api/anexos', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          ot_id: S.ot_id, tecnico_externo_id: S.tecnico_externo_id,
+          proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
+          cliente_nombre: S.cliente_nombre, objetivo_servicio: S.objetivo_servicio,
+          precio_items: items,
+          fecha_inicio: S.fecha_inicio || null, fecha_termino: S.fecha_termino || null,
+          niveles_servicio: S.niveles_servicio, hitos_pago: S.hitos_pago,
+          alcance_servicio: S.alcance_servicio,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok){
+        ilusToast(j.error || 'No se pudo crear el anexo.', {type:'error'});
+        return;
+      }
+      aid = j.anexo_id; creadoAlgo = true;
+      document.getElementById('oaxNumeroCreado').textContent = j.numero;
+      document.getElementById('oaxEmailDestino').value = S.email || '';
+      document.getElementById('oaxTelDestino').value = S.tel || '';
+      document.getElementById('oaxResultadoBox').style.display = 'none';
+      fase('enviar');
+      document.getElementById('oaxFootEnviar').style.display = 'flex';
+      ilusToast('✓ Anexo N° ' + j.numero + ' creado', {type:'success'});
+    } catch(e){
+      ilusToast('Error de conexión al crear el anexo.', {type:'error'});
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function enviar(){
+    var email = document.getElementById('oaxEmailDestino').value.trim();
+    var tel = document.getElementById('oaxTelDestino').value.trim();
+    if (!email && !tel){
+      const ok = await ilusConfirm({
+        title: 'Sin correo ni teléfono',
+        message: 'No pusiste correo ni teléfono de contacto. El anexo va a quedar enviado, pero vas a tener que compartir el link tú mismo.',
+        okLabel: 'Enviar igual', cancelLabel: 'Volver', danger: false,
+      });
+      if (!ok) return;
+    }
+    var btn = document.getElementById('oaxBtnEnviar');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/ot/api/anexos/' + aid + '/enviar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: email, telefono: tel}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok){
+        ilusToast(j.error || 'No se pudo enviar el anexo.', {type:'error'});
+        return;
+      }
+      lastLink = j.link || '';
+      document.getElementById('oaxLinkFinal').value = lastLink;
+      document.getElementById('oaxResultadoBox').style.display = '';
+      document.getElementById('oaxFootEnviar').style.display = 'none';
+      document.getElementById('oaxFootListo').style.display = 'flex';
+      var waBtn = document.getElementById('oaxBtnWa');
+      if (j.whatsapp_link){ waBtn.href = j.whatsapp_link; waBtn.style.display = ''; }
+      else { waBtn.style.display = 'none'; }
+      creadoAlgo = true;
+      ilusToast(j.correo_enviado ? '✓ Correo enviado al proveedor' : 'Anexo enviado — comparte el link tú mismo', {type:'success'});
+    } catch(e){
+      ilusToast('Error de conexión al enviar el anexo.', {type:'error'});
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function copiarLink(){
+    if (!lastLink) return;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(lastLink)
+        .then(() => ilusToast('Link copiado', {type:'success'}))
+        .catch(() => ilusToast('No se pudo copiar. Selecciónalo manualmente.', {type:'warning'}));
+    } else {
+      var inp = document.getElementById('oaxLinkFinal');
+      inp.select();
+      ilusToast('Selecciona y copia el link manualmente.', {type:'info'});
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    var modalEl = document.getElementById('oaxModal');
+    if (!modalEl) return;
+    modalEl.addEventListener('hidden.bs.modal', () => {
+      // Recarga solo si esta sesión del modal realmente creó o envió algo --
+      // así la pestaña Documentos queda al día sin duplicar el render de la
+      // tarjeta acá. Cancelar sin crear nada no recarga.
+      if (creadoAlgo) location.reload();
+    });
+  });
+
+  return {
+    abrir, abrirEnviar, crear, enviar, copiarLink,
+    onProveedorChange, toggleManual, toggleCondiciones,
+    setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
+    agregarItem, quitarItem,
+  };
+})();
+</script>

@@ -704,9 +704,15 @@
       <i class="bi bi-wrench-adjustable-circle-fill"></i> Trabajo <span class="cnt">{{ kpis.equipos }}</span></button>
     <button type="button" class="otd-tab" data-tab="evidencia">
       <i class="bi bi-camera-fill"></i> Evidencia <span class="cnt">{{ fotos|length }}</span></button>
-    {% if anexo and not es_tecnico %}
+    {# 🔓 2026-08-27: antes esta pestaña solo se dibujaba si YA existía un
+       anexo -- la puerta de entrada para CREARLO nunca aparecía en
+       ninguna pantalla (Daniel, esta noche, repetido varias veces). Ahora
+       vive para toda gestión (mismo gate `not es_tecnico`, sin agregar
+       restricción nueva) y el contenido resuelve los 3 casos: sin anexo
+       todavía, anexo activo, o anexo que necesita reemplazo. #}
+    {% if not es_tecnico %}
     <button type="button" class="otd-tab" data-tab="documentos">
-      <i class="bi bi-file-earmark-lock2-fill"></i> Documentos <span class="cnt">1</span></button>
+      <i class="bi bi-file-earmark-lock2-fill"></i> Documentos{% if anexo %} <span class="cnt">1</span>{% endif %}</button>
     {% endif %}
   </div>
 
@@ -997,32 +1003,75 @@
     </div>
   </div>
 
-  {# ══ DOCUMENTOS — Anexo de Servicios (solo visible si existe uno) ══
-     🔒 2026-08-27 (pedido explícito de Daniel): mismo criterio que la
-     card "Cobro" -- `not es_tecnico`, SIN agregar ninguna restricción
-     extra ("los mismos jefes van a firmarlo, así que no ocultemos mucho").
-     El backend YA se salta la query de `anexo` para técnico (queda None),
-     este `and not es_tecnico` es defensa en profundidad + deja la regla
-     legible acá mismo, sin depender de saber cómo se armó la vista. #}
-  {% if anexo and not es_tecnico %}
+  {# ══ DOCUMENTOS — Anexo de Servicios ══
+     🔓 2026-08-27 (Daniel, esta noche, repetido varias veces): "el motor
+     de firma existe pero no hay ningún botón para crear o enviar un
+     anexo". El backend YA existía desde anoche (ot2_api_anexo_crear /
+     ot2_api_anexo_enviar, commit e007c43) -- lo que faltaba era ESTA
+     pantalla. Mismo gate que la card "Cobro" -- `not es_tecnico`, SIN
+     restricción nueva ("los mismos jefes van a firmarlo, así que no
+     ocultemos mucho"). Resuelve 3 casos: sin anexo todavía (CTA crear),
+     anexo activo (tarjeta ya existente, intacta) y anexo que ya no sirve
+     -- rechazado/vencido/anulado -- (se ve el histórico + CTA de
+     reemplazo). El botón de crear/reemplazar abre `_modal_anexo.html`
+     (OT2ANX), incluido al final de este archivo. #}
+  {% if not es_tecnico %}
   <div class="otd-tabpanel" data-tab="documentos">
     <div class="otd-card">
       <h3><i class="bi bi-file-earmark-lock2-fill"></i> Anexo de Servicios</h3>
+
+      {% if anexo %}
       <div class="otd-doc-card {{ 'doc-firmado' if anexo.estado == 'firmado' else 'doc-pend' }}">
         <div class="ic"><i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i></div>
         <div class="in">
           <b>Anexo N° {{ anexo.numero }} — {{ anexo.proveedor_nombre }}</b>
           {% if anexo.estado == 'firmado' %}
           <small>Firmado por {{ anexo.firmante_nombre or anexo.proveedor_nombre }}{% if anexo.firmado_at %} · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}</small>
+          {% elif anexo.estado in ('rechazado','vencido','anulado') %}
+          <small>{{ anexo.estado | title }} — este anexo ya no habilita el trabajo</small>
           {% else %}
           <small>{{ anexo.estado | title }}{% if anexo.enviado_at %} · enviado {{ anexo.enviado_at | chile_fmt('%d/%m/%Y') }}{% endif %} — el proveedor todavía no puede trabajar esta OT</small>
           {% endif %}
         </div>
       </div>
+      <div class="otd-ev-add" style="margin-top:0">
+        {% if anexo.estado == 'borrador' %}
+        <div class="tx"><b>Este anexo quedó sin enviar</b>
+          <small>Se creó pero el proveedor todavía no recibió el link de firma.</small></div>
+        <button type="button" class="otd-ev-btn" onclick="OT2ANX.abrirEnviar({{ anexo.id }})">
+          <i class="bi bi-send-fill"></i> Enviar ahora</button>
+        {% elif anexo.estado in ('rechazado','vencido','anulado') %}
+        <div class="tx"><b>¿Necesitas un anexo nuevo?</b>
+          <small>El anterior ya no habilita el trabajo — crea uno de reemplazo.</small></div>
+        <button type="button" class="otd-ev-btn" onclick="OT2ANX.abrir({{ v.id }})">
+          <i class="bi bi-file-earmark-plus-fill"></i> Crear nuevo anexo</button>
+        {% else %}
+        <div class="tx"><b>Documento del anexo</b>
+          <small>Descárgalo en el mismo formato del Word que firman los proveedores.</small></div>
+        <a class="otd-ev-btn" href="{{ url_for('ot2_api_anexo_pdf', aid=anexo.id) }}" target="_blank" rel="noopener">
+          <i class="bi bi-file-earmark-pdf-fill"></i> Descargar PDF</a>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="otd-ev-add" style="margin-top:0">
+        <div class="tx"><b>Todavía no hay Anexo de Servicios</b>
+          <small>Sin este documento firmado por el proveedor, la OT queda bloqueada para él en cuanto se envíe.</small></div>
+        <button type="button" class="otd-ev-btn" onclick="OT2ANX.abrir({{ v.id }})">
+          <i class="bi bi-file-earmark-plus-fill"></i> Crear Anexo</button>
+      </div>
+      <div class="otd-vacio">
+        <i class="bi bi-file-earmark-lock2" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+        Crea el anexo con el proveedor externo antes de que empiece a trabajar esta OT.
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endif %}
 </div>
+
+{% if not es_tecnico %}
+  {% include "ot2/_modal_anexo.html" %}
+{% endif %}
 
 <script>
 /* Pestañas Información / Trabajo / Evidencia / Documentos (2026-08-27). */
