@@ -861,6 +861,7 @@ const _TKA = {
   // 2026-08-28: modales Bootstrap (bootstrap.Modal) que quedaron con el
   // foco desactivado mientras tka está abierto -- ver _tkaSuspenderFocusTrapsAjenos().
   _focusTrapsPausados: [],
+  _focusGuardInterval: null,
 };
 
 // FIX 2026-08-28 (Daniel, OT 2.0 -- "al aparecer el modal no me deja
@@ -880,21 +881,41 @@ const _TKA = {
 // pública para pausarla), así que el acceso va con try/catch y
 // feature-detection: si una futura versión de Bootstrap cambia su nombre
 // interno, esto simplemente no hace nada (fail-safe) en vez de reventar.
+//
+// FIX 2026-08-28-b (encontrado al verificar el fix anterior EN VIVO contra
+// producción, con Claude en Chrome, sesión real de Daniel): un solo
+// `deactivate()` al abrir tka NO bastaba -- si `#ot2ModalCrear` todavía no
+// había terminado su transición de entrada (`shown.bs.modal` puede disparar
+// bastante después de que la clase `.show` ya está puesta), Bootstrap
+// reactivaba el FocusTrap DESPUÉS de nuestro deactivate(), y el bug volvía
+// a ocurrir de forma intermitente (dependía de cuán rápido el usuario
+// pasara de "Generar OT" a "Factura o boleta"). Verificado en vivo:
+// `trap._isActive` volvía a `true` sin que nada de nuestro código lo
+// pidiera. Solución robusta: mientras tka esté abierto, reafirmar el
+// deactivate() en un intervalo corto -- no depende de adivinar CUÁL evento
+// de Bootstrap lo reactiva, solo se asegura de que, sea cual sea la causa,
+// nunca se quede activo más de ~150ms.
 function _tkaSuspenderFocusTrapsAjenos(){
   _TKA._focusTrapsPausados = [];
+  if (_TKA._focusGuardInterval){ clearInterval(_TKA._focusGuardInterval); _TKA._focusGuardInterval = null; }
   if (typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
-  document.querySelectorAll('.modal.show').forEach(function(modalEl){
-    try{
-      var inst = bootstrap.Modal.getInstance(modalEl);
-      var trap = inst && inst._focustrap;
-      if (trap && typeof trap.deactivate === 'function' && typeof trap.activate === 'function'){
-        trap.deactivate();
-        _TKA._focusTrapsPausados.push(trap);
-      }
-    }catch(_e){ /* fail-safe: si la API interna cambió, no bloqueamos tka */ }
-  });
+  function pausarTodos(){
+    document.querySelectorAll('.modal.show').forEach(function(modalEl){
+      try{
+        var inst = bootstrap.Modal.getInstance(modalEl);
+        var trap = inst && inst._focustrap;
+        if (trap && typeof trap.deactivate === 'function' && typeof trap.activate === 'function'){
+          if (trap._isActive) trap.deactivate();
+          if (_TKA._focusTrapsPausados.indexOf(trap) === -1) _TKA._focusTrapsPausados.push(trap);
+        }
+      }catch(_e){ /* fail-safe: si la API interna cambió, no bloqueamos tka */ }
+    });
+  }
+  pausarTodos();
+  _TKA._focusGuardInterval = setInterval(pausarTodos, 150);
 }
 function _tkaReanudarFocusTrapsAjenos(){
+  if (_TKA._focusGuardInterval){ clearInterval(_TKA._focusGuardInterval); _TKA._focusGuardInterval = null; }
   (_TKA._focusTrapsPausados || []).forEach(function(trap){
     try{ trap.activate(); }catch(_e){}
   });
