@@ -78,7 +78,17 @@
       /* Geometría de las franjas — compartida entre la regla horaria y
          las filas para que TODO quede alineado al píxel:
          columnas = identidad | avance | línea de tiempo. */
-      --col-left:500px;   /* identidad: avatar + NOMBRE COMPLETO grande */
+      /* 🔧 FIX 2026-08-27 (Daniel, captura real: "quisiera agrandar más el
+         horario, sacando por lo menos la dirección... para que nombres
+         como centro deportivo se puedan ver completos"). La dirección
+         dejó de pintarse en esta fila (ver actualizarFila más abajo —
+         mismo patrón que el tipo/cliente que ya se habían retirado antes
+         esta noche), así que la columna de identidad ya no necesita el
+         ancho que pedía esa línea. De 500px a 360px: el nombre del técnico
+         sigue cabiendo completo sin achicarse en casos normales (el
+         ajustador ajustarNombre() ya cubre los nombres largos, igual que
+         antes) y esos ~140px pasan directo a la columna de horario. */
+      --col-left:360px;   /* identidad: avatar + NOMBRE COMPLETO grande */
       --col-mid:130px;    /* avance: % grande + barra                   */
       --col-gap:18px;
       --card-px:22px;     /* padding horizontal interno de la tarjeta   */
@@ -431,6 +441,21 @@
       content:'';position:absolute;left:0;right:0;top:0;height:3px;z-index:9;
       background:linear-gradient(90deg,var(--ilus-red),#ff4d4d 40%,var(--ilus-red-dk));
     }
+
+    /* 🔧 FIX 2026-08-27 (Daniel: "que se vea bien separadita, como una
+       tablita... columnas bien diferenciadas: Nombres | Avance | Horario").
+       Antes las 3 zonas solo se distinguían por el espacio entre ellas —
+       ahora una línea vertical fina cruza TODA la tarjeta (cabecera +
+       filas) justo en el medio de cada gutter, para que se lea como una
+       tabla de verdad y no solo "un área que creció". Van como hijos
+       directos de `.cal-card` (no de una fila) para atravesar TODA la
+       tarjeta de un tirón, igual que la línea de AHORA. */
+    .cal-col-divisor{
+      position:absolute;top:3px;bottom:0;width:1px;z-index:3;pointer-events:none;
+      background:linear-gradient(180deg,transparent 0%,var(--line-2) 8%,var(--line-2) 96%,transparent 100%);
+    }
+    .cal-col-divisor.d1{ left:calc(var(--card-px) + var(--col-left) + (var(--col-gap) / 2)); }
+    .cal-col-divisor.d2{ left:calc(var(--card-px) + var(--col-left) + var(--col-gap) + var(--col-mid) + (var(--col-gap) / 2)); }
 
     /* ── Cabecera de la tarjeta: rótulos de columnas + REGLA HORARIA ──
          Misma grilla de columnas que las filas → alineación al píxel. */
@@ -905,6 +930,22 @@
     .page-dots span{font-size:14px;font-weight:700;color:var(--txt-3);margin-left:4px;letter-spacing:.04em}
     .meta-updated{font-size:14px;font-weight:600;color:var(--txt-3);letter-spacing:.02em}
     .meta-updated b{color:var(--ink-2);font-weight:800}
+    /* 🔧 FIX 2026-08-27 (congelamiento reportado DESPUÉS del watchdog de
+       esta noche): esta bolita late en cada latido() EXITOSO -- ver
+       marcarChequeoVivo() en el JS -- para que "hace N min sin cambios" se
+       lea como "sigo preguntando y todo tranquilo", no como evidencia de
+       que la pantalla se congeló. Reposo discreto (mismo verde que
+       EN VIVO); el blip es la señal real, no el punto en sí. */
+    .chk-dot{
+      display:inline-block;width:7px;height:7px;border-radius:50%;
+      background:#4ade80;margin-right:7px;vertical-align:middle;
+      opacity:.5;transition:opacity .2s;
+    }
+    .chk-dot.blip{ animation:chkBlip 1.1s ease-out; }
+    @keyframes chkBlip{
+      0%{ opacity:1; box-shadow:0 0 0 0 rgba(74,222,128,.65); transform:scale(1.4); }
+      100%{ opacity:.5; box-shadow:0 0 0 8px rgba(74,222,128,0); transform:scale(1); }
+    }
 
     /* ── Indicador discreto de conexión (aparece solo si algo falla) ── */
     .offline-pill{
@@ -1179,7 +1220,15 @@
            es "último CAMBIO real detectado" (huella de mant_visitas). Si
            nada cambia en 10-15 min, el sistema sigue preguntando cada 8s y
            confirmando "sin novedad" — sano, no congelado. #}
-        <div class="meta-updated">Último cambio detectado <b id="metaHora">--:--</b>
+        <div class="meta-updated">
+          {# 🔧 FIX 2026-08-27 (Daniel volvió a reportar "se detiene" la
+             MISMA noche que se desplegó el watchdog): investigado a fondo
+             -- ver el comentario de `marcarChequeoVivo()` en el JS. Este
+             puntito titila en CADA latido exitoso, haya o no cambios de
+             negocio, para que se vea sin leer nada que la pantalla sigue
+             preguntando de verdad cada 8s. #}
+          <i class="chk-dot" id="chkDot" title="Late en cada chequeo real al servidor"></i>
+          Último cambio detectado <b id="metaHora">--:--</b>
           <small id="metaFresh" class="meta-fresh"></small>
         </div>
       </div>
@@ -1551,7 +1600,12 @@
           '<div class="cal-past"></div>' +
           '<div class="cal-rows"></div>' +
           '<div class="cal-nowline"><span class="nl-line" hidden></span></div>' +
-        '</div>';
+        '</div>' +
+        // "tablita" (Daniel 2026-08-27): línea vertical fina que cruza TODA
+        // la tarjeta entre Nombres|Avance y entre Avance|Horario — ver
+        // .cal-col-divisor en el CSS.
+        '<span class="cal-col-divisor d1"></span>' +
+        '<span class="cal-col-divisor d2"></span>';
       main.appendChild(card);
     }
     return card;
@@ -1656,6 +1710,32 @@
     }
   }
 
+  /* Mismo truco que ajustarNombre(), reusado para el CLIENTE dentro de la
+     burbuja de la línea de tiempo (Daniel 2026-08-27, captura real:
+     "Juan D...", "Invers...", "Impor..." cortados -- "me gustaría que se
+     pueda ver el nombre completo a simple vista... algo que se autoajuste,
+     dale con inteligencia"). El piso es más bajo (11px, contra 15px del
+     nombre del técnico) porque la burbuja es MUCHO más angosta que la
+     columna de identidad -- por debajo de eso ya no se lee ni de cerca, así
+     que en una OT muy corta (30-60 min) es aceptable que el CSS recorte con
+     "…" como última red de seguridad (ver .b-cliente, text-overflow:
+     ellipsis sigue puesto). El ancho de la burbuja es un % calculado por
+     actualizarBloque (nunca cambia por sí solo entre latidos si el horario
+     de la OT no cambió), así que se cachea junto con la densidad para no
+     medir de más. */
+  function ajustarTextoBloque(nodo, texto, anchoPct){
+    const clave = texto + '|' + Math.round(anchoPct * 4) + '|' + ($('#stage').dataset.densidad || '');
+    if (nodo.dataset.fit === clave) return;
+    nodo.dataset.fit = clave;
+    nodo.style.fontSize = '';
+    let fs = parseFloat(getComputedStyle(nodo).fontSize) || 16;
+    let tope = 20;
+    while (nodo.scrollWidth > nodo.clientWidth && fs > 11 && tope--){
+      fs -= 1;
+      nodo.style.fontSize = fs + 'px';
+    }
+  }
+
   function actualizarFila(row, p){
     row.__p = p;   // referencia viva para el clic del modo interactivo
     const est = estadoNorm(p.estado, 'disponible');
@@ -1673,14 +1753,19 @@
     // 2026-08-27 (Daniel, revirtiendo en la misma noche su propio pedido de
     // más arriba): "mantención correctiva o preventiva o el nombre del
     // cliente no debería ir allí" -- el tipo de OT y el cliente dejan de
-    // mostrarse bajo el nombre del técnico. Se deja SOLO la dirección (no
-    // pidió sacarla). El cliente sigue disponible donde SÍ lo pidió hoy
-    // mismo: la burbuja de la línea de tiempo (.b-cliente, ver más abajo)
-    // -- por eso `p.cliente` no se borra del modelo, solo deja de pintarse
-    // en esta línea.
+    // mostrarse bajo el nombre del técnico. El cliente sigue disponible
+    // donde SÍ lo pidió hoy mismo: la burbuja de la línea de tiempo
+    // (.b-cliente, ver más abajo) -- por eso `p.cliente` no se borra del
+    // modelo, solo deja de pintarse en esta línea.
+    // 🔧 FIX 2026-08-27 (mismo patrón, captura real más tarde): "quisiera
+    // agrandar más el horario, sacando por lo menos la dirección". Ahora la
+    // dirección TAMPOCO se pinta acá -- el dato sigue viajando en `p` (se ve
+    // completo en el modal de detalle al hacer clic, ver abrirModal) y el
+    // ancho que liberaba pasa a la columna de horario (--col-left más
+    // angosto, ver el CSS de la variable).
     setTexto($('.p-tipo', row), '');
     setTexto($('.p-cliente', row), '');
-    setTexto($('.p-dir', row), p.direccion || '');
+    setTexto($('.p-dir', row), '');
 
     // Avance
     const tieneCarga = (p.total_ot || 0) > 0 || (p.tareas_total || 0) > 0 || (p.bloques || []).length > 0;
@@ -1801,7 +1886,16 @@
       nodo.style.top = ''; nodo.style.bottom = ''; nodo.style.height = '';
     }
 
-    setTexto($('.b-cliente', nodo), b.cliente || b.numero || '');
+    const _clienteTxt = b.cliente || b.numero || '';
+    const _clienteNodo = $('.b-cliente', nodo);
+    setTexto(_clienteNodo, _clienteTxt);
+    // 🔧 FIX 2026-08-27 (Daniel, captura real: nombres cortados "Juan D...",
+    // "Invers...", "Impor..."): antes esto dependía SOLO del CSS
+    // (text-overflow:ellipsis) para no desbordar. Ahora, igual que el
+    // nombre del técnico (ver ajustarNombre), primero se intenta achicar la
+    // letra -- el corte con "…" queda como último recurso para bloques
+    // demasiado angostos incluso al piso mínimo.
+    ajustarTextoBloque(_clienteNodo, _clienteTxt, w);
     // 2026-08-27 (Daniel: "la instalación debería decirla en la burbuja de
     // trabajo"): el tipo va en la MISMA línea de las horas — la burbuja se
     // angosta según la duración, y .b-narrow/.b-tiny ya esconden esta línea
@@ -2391,6 +2485,32 @@
     setTexto(nodo, mins < 1 ? '· recién' : `· hace ${mins} min sin cambios`);
   }
 
+  /* 🔧 FIX 2026-08-27 -- percepción, no lógica (Daniel reportó "se detiene"
+     la MISMA noche que se desplegó vigilarLatido()). Investigado a fondo:
+     - El watchdog SÍ llegó a producción (confirmado: el commit está en
+       origin/main y hay corridas de GitHub Actions "Deploy to Cloud Run"
+       EXITOSAS de commits posteriores que lo incluyen).
+     - El piso de 90s (ver umbralWatchdogMs) es real: en horario hábil, un
+       cuelgue puede tardar hasta 90-105s en autorepararse -- suficiente
+       para que alguien mirando la pantalla en ese momento vea la sensación
+       de "esto no se mueve", aunque el sistema se cure solo después.
+     - La captura que mandó Daniel como prueba del problema es justo la
+       etiqueta "· hace N min sin cambios" -- diseñada ESTA MISMA noche para
+       tranquilizar ("nada cambió en el negocio"), pero que se lee al revés
+       si no hay ninguna señal de que el chequeo sigue vivo.
+     Esta función es la respuesta a ese tercer punto: un puntito que titila
+     en cada latido() EXITOSO (llame o no a repintar datos) -- ver su único
+     call site en latido(). Si algún día DEJA de titilar cada ~8s en
+     horario hábil, eso sí es la señal real de que algo se cayó -- no el
+     texto "sin cambios" por sí solo. */
+  function marcarChequeoVivo(){
+    const dot = $('#chkDot');
+    if (!dot) return;
+    dot.classList.remove('blip');
+    void dot.offsetWidth;     // fuerza reflow: reinicia la animación aunque se repita clavado cada 8s
+    dot.classList.add('blip');
+  }
+
   /* ─────────────────────── latido de actualización ───────────────────────
      8 s en horario hábil (L-V 08-17 Chile) · 1 h de 17-22 hábil · 2 h resto.
      Si un fetch falla NO se rompe nada: pill discreta + reintento acotado
@@ -2426,10 +2546,26 @@
      cadena que está vigilando.
      Umbral generoso a propósito ("bastante más que los 8s esperados"): un
      ciclo puede hacer hasta 2 fetch seguidos (status + datos) cerca de su
-     tope de 12s cada uno -- ~24s de un ciclo LEGÍTIMO lento -- por eso el
-     piso de 90s, para no recargar por una demora normal de red/ERP. */
+     tope de 12s cada uno -- ~24s de un ciclo LEGÍTIMO lento.
+     🔧 FIX 2026-08-27 (Daniel reportó "se detiene" DESPUÉS de que este
+     watchdog ya estaba en producción -- confirmado con evidencia de git/
+     GitHub Actions, no es que el fix no haya llegado). El piso ÚNICO de
+     90s se pensó mirando el caso de NOCHE (cadencia de 1-2h, donde 3x esa
+     cadencia son horas -- ahí sí hace falta un piso bajo y fijo). Pero ese
+     MISMO piso también regía de DÍA, donde la cadencia real es 8s: un
+     cuelgue en horario hábil -- justo cuando Daniel está mirando la
+     pantalla -- podía tardar hasta 90-105s en autorepararse. Eso alcanza
+     para que alguien viendo el TV en ese momento sienta "esto no se
+     mueve", aunque el sistema se cure solo después. Con la cadencia real
+     de 8s, un ciclo lento pero LEGÍTIMO tope en ~24-30s (2 fetch de 12s);
+     45s deja margen de sobra sin acercarse a los 90-105s de antes. Fuera
+     de horario hábil se mantiene el piso viejo de 90s -- ahí nadie está
+     mirando, así que conviene seguir siendo conservador para no recargar
+     de más por una demora normal de red/ERP. */
   function umbralWatchdogMs(){
-    return Math.max(cadenciaMs() * 3, 90000);
+    const cad = cadenciaMs();
+    if (cad <= 8000) return Math.max(cad * 5, 45000);   // horario hábil: reacciona bastante antes
+    return Math.max(cad * 3, 90000);                     // fuera de horario: sigue conservador
   }
 
   function vigilarLatido(){
@@ -2516,6 +2652,7 @@
       const st = await fetchJson(STATUS_URL);
       if (!st || st.ok !== true) throw new Error('status sin ok');
       setOffline(false);
+      marcarChequeoVivo();   // late acá SIEMPRE que el chequeo respondió bien
       if (st.huella !== state.huella){
         state.huella = st.huella;
         const datos = await fetchJson(DATOS_URL);
@@ -2597,11 +2734,17 @@
     tick();
     setInterval(tick, 1000);
 
-    // Cuando la webfont (Bebas) termina de cargar cambian las métricas:
-    // se invalida el ajuste de nombres y se recalcula una vez.
+    // Cuando la webfont (Bebas/Inter) termina de cargar cambian las
+    // métricas: se invalida el ajuste de nombres y se recalcula una vez.
+    // 🔧 FIX 2026-08-27: esto ya cubría el nombre del técnico (Bebas) pero
+    // no el CLIENTE dentro de la burbuja (.b-cliente, autoajuste nuevo de
+    // hoy) -- ese texto usa Inter en negrita (800), que también hace swap
+    // de fuente al cargar. Sin invalidarlo acá, un ajuste medido con la
+    // fuente de respaldo (antes de que Inter cargara) podía quedar pegado
+    // con una talla equivocada para el resto de la sesión.
     if (document.fonts && document.fonts.ready){
       document.fonts.ready.then(() => {
-        document.querySelectorAll('.p-nombre').forEach(n => { delete n.dataset.fit; });
+        document.querySelectorAll('.p-nombre, .b-cliente').forEach(n => { delete n.dataset.fit; });
         if (state.datos) renderPagina();
       });
     }
