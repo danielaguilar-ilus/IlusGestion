@@ -76491,6 +76491,41 @@ def _ot_tv_datos(fecha=None):
         " ORDER BY v.hora_inicio ASC, v.numero_ot ASC",
         (fin, hoy)) or []
 
+    # 🔧 FIX 2026-08-28 (Daniel: "Becker no aparece con tareas en el
+    # monitor" — recién agregado como técnico COLABORADOR de una OT vía
+    # el nuevo botón "Agregar técnico" de OT 2.0, mant_visita_tecnicos).
+    # Este payload SIEMPRE agrupó por el técnico PRINCIPAL
+    # (v.tecnico_user_id / au.id AS tec_id) -- nunca miró
+    # mant_visita_tecnicos, así que un colaborador quedaba sin ninguna OT
+    # bajo su nombre aunque el sistema sí lo tuviera asignado. Se trae en
+    # bloque (1 sola query, no una por fila) qué colaboradores tiene cada
+    # OT visible, para poder mostrarle el mismo bloque de trabajo tanto al
+    # principal como a cada colaborador más abajo.
+    colaboradores_por_visita = {}
+    _vids = [f.get("id") for f in filas if f.get("id")]
+    if _vids:
+        try:
+            _ph = ",".join(["%s"] * len(_vids))
+            _colab_rows = mysql_fetchall(
+                "SELECT vt.visita_id, au.id AS tec_id, "
+                "       COALESCE(au.nombre, au.username) AS nombre, au.role, "
+                "       COALESCE(te.id, ten.id) AS proveedor_id "
+                "  FROM mant_visita_tecnicos vt "
+                "  JOIN app_users au ON au.id = vt.tecnico_user_id "
+                "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
+                "  LEFT JOIN mant_tecnicos_externos ten "
+                "         ON ten.user_id IS NULL "
+                "        AND LOWER(TRIM(COALESCE(au.nombre, au.username))) IN ( "
+                "              LOWER(TRIM(ten.razon_social)), "
+                "              LOWER(TRIM(ten.contacto_nombre))) "
+                f" WHERE vt.visita_id IN ({_ph}) AND au.active=1",
+                tuple(_vids)
+            ) or []
+            for r in _colab_rows:
+                colaboradores_por_visita.setdefault(r["visita_id"], []).append(r)
+        except Exception as e:
+            print(f"[ot_tv] colaboradores_por_visita: {e}", flush=True)
+
     # Todos los técnicos activos, para poder mostrar "Disponible" a quien
     # hoy no tiene carga (decisión de Daniel: el equipo se ve completo).
     try:
@@ -76708,6 +76743,44 @@ def _ot_tv_datos(fecha=None):
                 "direccion": dir_txt, "tipo": tipo_label, "inicio_iso": None,
                 "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
             }
+
+        # 🔧 FIX 2026-08-28 (colaboradores en el monitor, ver comentario en
+        # colaboradores_por_visita más arriba): el MISMO bloque se agrega
+        # también a cada técnico colaborador de esta OT -- no cuenta de
+        # nuevo en `resumen` (eso es a nivel de OT, no de persona), pero sí
+        # debe aparecer en su propia fila del monitor igual que al
+        # principal, con el mismo criterio de "actual"/"próximo".
+        for _colab in colaboradores_por_visita.get(f.get("id"), []):
+            _ctid = _colab.get("tec_id")
+            if not _ctid or _ctid == tid:
+                continue   # ya es el principal, no duplicar
+            if _ctid not in personas:
+                _cnom = _colab.get("nombre") or "Sin asignar"
+                personas[_ctid] = {
+                    "nombre": _cnom, "iniciales": _ot2_iniciales(_cnom),
+                    "externo": (bool(_colab.get("proveedor_id"))
+                                or (_colab.get("role") or "").lower().startswith("tecnico_externo")),
+                    "bloques": [], "actual": None, "total_ot": 0, "terminadas": 0,
+                }
+                orden.append(_ctid)
+            pc = personas[_ctid]
+            pc["bloques"].append(bloque)
+            pc["total_ot"] += 1
+            if terminada:
+                pc["terminadas"] += 1
+            if en_curso and not pc["actual"]:
+                pc["actual"] = {
+                    "numero": bloque["numero"], "cliente": cliente_txt,
+                    "direccion": dir_txt, "tipo": tipo_label,
+                    "inicio_iso": _ot_tv_iso(f.get("hora_real_inicio")),
+                    "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+                }
+            elif not pc["actual"] and not terminada:
+                pc["actual"] = {
+                    "numero": bloque["numero"], "cliente": cliente_txt,
+                    "direccion": dir_txt, "tipo": tipo_label, "inicio_iso": None,
+                    "avance_pct": pct, "tareas_ok": n_c, "tareas_total": n_t,
+                }
 
     # Daniel primero pidió ocultar a quien no tenía carga hoy (la pantalla
     # se llenaba de filas vacías) y luego, el mismo 26-ago al ver el
