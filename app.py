@@ -104008,6 +104008,406 @@ def _ensure_plantilla_repuesto():
         return None
 
 
+def _ensure_plantillas_matriz_clases():
+    """Completa los huecos REALES de la matriz clasificación x categoría en
+    mant_tarea_plantillas (Daniel, 28-08-2026, encargo por voz): "quiero que
+    la clasificación en mantenciones, instalaciones y visitas técnicas...
+    vivan en las plantillas y estén comunicadas... no las veo cuadradas".
+
+    Medido en producción el mismo día (19 clases activas de
+    cat_clases_producto x 3 categorías administrativas = 57 slots):
+      - instalacion: 12 completas, 4 vacías, 3 SIN NINGUNA plantilla.
+      - mantencion:  4 completas, 15 vacías, 0 sin plantilla -- fuera del
+        alcance de esta función (otro agente trabaja en paralelo sobre esas
+        15 vacías con _ensure_plantillas_autorrelleno(); esta función NUNCA
+        toca una plantilla que ya existe, así que no hay pisada posible).
+      - visitas: LA FILA ENTERA NO EXISTÍA (0 de 19). Había 17 plantillas
+        "Visita técnica · <Clase>" pero con un nombre que
+        _plantilla_por_clasificacion_sku() jamás podía encontrar -- esa
+        función busca el nombre EXACTO de la clase, sin ningún prefijo.
+        Estaban rotas de nacimiento y además vacías (1 ítem); Daniel pidió
+        borrarlas hoy mismo.
+
+    Esta función SOLO llena esos 22 huecos (3 de instalación + 19 de
+    visitas) con checklists reales y ESPECÍFICOS por tipo de equipo --
+    nunca genéricos ni copiados entre clases distintas (Daniel, 2026-08-12:
+    "no le voy a hacer una verificación a una trotadora como a una
+    bicicleta"). Jamás toca una plantilla que ya existe -- puramente
+    aditivo (REGLA #4.2 de CLAUDE.md).
+
+    Por qué el `nombre` que se inserta es EXACTO al de la clase, sin
+    prefijos: _plantilla_por_clasificacion_sku() hace
+    `p.nombre = cat_clases_producto.nombre` -- esa igualdad literal es la
+    "llave que conecta clasificación con plantilla" que pidió Daniel. Con
+    categoria_admin en su propia columna (índice único compuesto
+    uq_plant_nombre_cat, ver _ensure_plantillas_estandar_seed), la misma
+    clase puede tener 1 plantilla por cada una de las 3 categorías sin
+    chocar entre sí.
+
+    Lee `cat_clases_producto` EN VIVO (WHERE activo=1) en vez de asumir una
+    lista fija en Python: si alguna de las 22 clases de abajo fue
+    desactivada o renombrada, esta función deja de crearle nada -- mismo
+    respeto por activo=1 que cualquier otro consumidor del catálogo. El
+    checklist de cada clase está escrito a mano mirando el equipo real
+    (catálogo ilusfitness.com) -- si mañana aparece una clasificación nueva
+    que no está en el diccionario de abajo, la función NO le inventa un
+    checklist genérico (Daniel fue explícito: nada de ítems copiados entre
+    equipos distintos): queda como el próximo hueco a llenar a mano, mismo
+    criterio que ya usa _ensure_plantilla_repuesto para "Repuesto".
+
+    SIEMPRE corre, incluso con ILUS_SKIP_MIGRATIONS=1. Idempotente por
+    (nombre, categoria_admin) -- mismo patrón EXACTO que
+    _ensure_plantilla_repuesto (SELECT previo + INSERT IGNORE + chequeo de
+    lastrowid para el caso de cold-start concurrente). Registra en
+    mant_logs (vía el propio print, igual que el resto de estos _ensure_*)
+    cada plantilla creada.
+
+    Devuelve la lista "<nombre> · <categoría>" de lo que creó (para
+    logging -- nunca lanza)."""
+    creadas = []
+    try:
+        _clases_rows = mysql_fetchall(
+            "SELECT nombre FROM cat_clases_producto WHERE activo=1") or []
+    except Exception as e:
+        print(f"[ensure_plantillas_matriz] leer cat_clases_producto falló: {e}", flush=True)
+        return creadas
+    clases_activas = {(r.get("nombre") or "").strip() for r in _clases_rows if r.get("nombre")}
+
+    def _crear_matriz(nombre, categoria, tipo_visita, familia_checklist,
+                       familia_activo, descripcion, items):
+        """INSERT idempotente de 1 plantilla + sus ítems. NUNCA pisa una
+        fila existente (SELECT previo) y sobrevive a un cold-start
+        concurrente (INSERT IGNORE + chequeo de lastrowid) -- igual que
+        _ensure_plantilla_repuesto."""
+        if nombre not in clases_activas:
+            print(f"[ensure_plantillas_matriz] '{nombre}' ya no está activa en "
+                  f"cat_clases_producto -- se omite (categoría {categoria})", flush=True)
+            return
+        try:
+            ya = mysql_fetchone(
+                "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin=%s LIMIT 1",
+                (nombre, categoria))
+            if ya:
+                return
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    # INSERT IGNORE: si otra instancia (cold start concurrente)
+                    # ya insertó este (nombre, categoria) entre el SELECT de
+                    # arriba y este INSERT, el UNIQUE KEY uq_plant_nombre_cat
+                    # descarta esta fila sin lanzar error.
+                    cur.execute(
+                        "INSERT IGNORE INTO mant_tarea_plantillas "
+                        "(nombre, descripcion, tipo_visita, familia_checklist, familia_activo, "
+                        " categoria_admin, activa, es_sistema, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,1,1,'seed')",
+                        (nombre, descripcion, tipo_visita, familia_checklist,
+                         familia_activo, categoria)
+                    )
+                    plant_id = cur.lastrowid
+                    if not plant_id:
+                        # Perdió la carrera: otra instancia ya la insertó.
+                        conn.commit()
+                        return
+                    for it in items:
+                        (orden, titulo, descripcion_it, tipo_r, oblig, req_foto,
+                         unidad, rmin, rmax, opciones_json) = it
+                        cur.execute(
+                            "INSERT INTO mant_tarea_plantilla_items "
+                            "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                            " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (plant_id, orden, titulo, descripcion_it, tipo_r,
+                             oblig, req_foto, unidad, rmin, rmax, opciones_json)
+                        )
+                conn.commit()
+                creadas.append(f"{nombre} · {categoria}")
+                print(f"[ensure_plantillas_matriz] creada '{nombre}' "
+                      f"(categoria={categoria})", flush=True)
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[ensure_plantillas_matriz] '{nombre}' ({categoria}) falló: {e}", flush=True)
+
+    # Opciones de la tarea "Diagnóstico y recomendación" -- comunes a las
+    # 19 plantillas de visita, resuelven el desenlace real de la visita sin
+    # necesidad de más ítems (mismo criterio que "RESULTADO DEL RETIRO" en
+    # la plantilla de Retiro/Rescate, más arriba en este archivo).
+    _DIAG_OPCIONES = ('["Reparar en terreno","Requiere repuesto",'
+                       '"Requiere reemplazo del equipo","Sin falla detectada",'
+                       '"Retirar de servicio"]')
+
+    def _items_visita(especificos):
+        """Arma la lista completa de ítems de una visita técnica: cabecera
+        fija (llegada, serie, falla reportada) + ítems ESPECÍFICOS del
+        equipo (lo que de verdad distingue una visita de otra) + cierre
+        fijo (foto de la falla, ¿puede seguir operando?, diagnóstico y
+        recomendación, observación libre). `especificos` es una lista de
+        tuplas (titulo, descripcion, tipo_respuesta, obligatoria,
+        requiere_foto) -- se usan 1 a 3 para no pasar de las 10 tareas que
+        Daniel puso como tope ("con 10 tareas como máximo estamos ok")."""
+        items = [
+            (1, "Llegada al lugar", "Confirma que estás en la dirección del cliente",
+             "gps", 1, 0, None, None, None, None),
+            (2, "N° de serie del equipo", "", "texto", 1, 0, None, None, None, None),
+            (3, "Falla reportada por el cliente",
+             "Lo que el cliente indicó al agendar la visita", "texto", 1, 0,
+             None, None, None, None),
+        ]
+        orden = 4
+        for (titulo, desc, tipo, oblig, req_foto) in especificos:
+            items.append((orden, titulo, desc, tipo, oblig, req_foto, None, None, None, None))
+            orden += 1
+        items.append((orden, "Foto de la falla o daño detectado", "", "foto", 1, 1,
+                       None, None, None, None))
+        orden += 1
+        items.append((orden, "¿Puede seguir operando con seguridad?", "", "sino", 1, 0,
+                       None, None, None, None))
+        orden += 1
+        items.append((orden, "Diagnóstico y recomendación", "", "lista", 1, 0,
+                       None, None, None, _DIAG_OPCIONES))
+        orden += 1
+        items.append((orden, "Observaciones adicionales", "", "texto", 0, 0,
+                       None, None, None, None))
+        return items
+
+    def _desc_visita(nombre_clase):
+        return (f"Visita técnica de diagnóstico para '{nombre_clase}': confirma la falla "
+                f"reportada por el cliente, evalúa el estado y la seguridad del equipo, y "
+                f"deja la recomendación (reparar en terreno, requiere repuesto o "
+                f"reemplazo). No es un checklist de instalación ni de mantención.")
+
+    # ═══════════════════════ INSTALACIÓN — 3 huecos ═══════════════════════
+    _crear_matriz(
+        "Trotadora Motorizada", "instalacion", "instalacion", "instalacion", "trotadoras",
+        "Instalación de trotadora motorizada: conexión eléctrica, nivelación, "
+        "calibración de banda y prueba de motor/consola antes de entregar el "
+        "equipo al cliente.",
+        [
+            (1, "N° de serie del equipo", "", "texto", 1, 0, None, None, None, None),
+            (2, "Ubicación del equipo", "Espacio libre alrededor y nivel de piso",
+             "check", 1, 0, None, None, None, None),
+            (3, "Conexión eléctrica y puesta a tierra",
+             "Enchufe dedicado, sin extensiones ni tomas compartidas",
+             "verificacion", 1, 0, None, None, None, None),
+            (4, "Chequeo y apriete de pernos", "", "check", 1, 0, None, None, None, None),
+            (5, "Nivelación del equipo", "", "verificacion", 1, 0, None, None, None, None),
+            (6, "Calibración y centrado de la banda",
+             "Banda pareja, sin rozar los costados", "verificacion", 1, 0,
+             None, None, None, None),
+            (7, "Prueba de funcionamiento del motor y consola",
+             "Velocidades e inclinación en todo su rango", "verificacion", 1, 0,
+             None, None, None, None),
+            (8, "Estado de pintura y tapices", "", "check", 0, 0, None, None, None, None),
+            (9, "Foto del equipo por sus 4 lados", "", "foto", 1, 1, None, None, None, None),
+            (10, "Comentarios adicionales", "", "texto", 0, 0, None, None, None, None),
+        ])
+    _crear_matriz(
+        "Trotadora No Motorizada", "instalacion", "instalacion", "instalacion", "trotadoras",
+        "Instalación de trotadora no motorizada (banda autopropulsada): "
+        "nivelación, calibración de banda y sistema de frenado antes de "
+        "entregar el equipo. Sin motor ni consola eléctrica -- no aplica "
+        "conexión eléctrica.",
+        [
+            (1, "N° de serie del equipo", "", "texto", 1, 0, None, None, None, None),
+            (2, "Ubicación del equipo", "", "check", 1, 0, None, None, None, None),
+            (3, "Chequeo y apriete de pernos", "", "check", 1, 0, None, None, None, None),
+            (4, "Nivelación del equipo", "", "verificacion", 1, 0, None, None, None, None),
+            (5, "Calibración y centrado de la banda",
+             "Ajuste manual del rodillo; banda pareja y sin rozar",
+             "verificacion", 1, 0, None, None, None, None),
+            (6, "Sistema de frenado o resistencia",
+             "Magnético o mecánico, según el modelo", "verificacion", 1, 0,
+             None, None, None, None),
+            (7, "Estado de pintura y tapices", "", "check", 0, 0, None, None, None, None),
+            (8, "Prueba de funcionamiento del equipo",
+             "La banda gira libre y pareja al caminar/correr", "verificacion", 1, 0,
+             None, None, None, None),
+            (9, "Foto del equipo por sus 4 lados", "", "foto", 1, 1, None, None, None, None),
+            (10, "Comentarios adicionales", "", "texto", 0, 0, None, None, None, None),
+        ])
+    _crear_matriz(
+        "Repuesto", "instalacion", "instalacion", "instalacion", "otros",
+        "Instalación de un repuesto (clasificación de catálogo 'Repuesto') "
+        "como parte de una OT de instalación: compatibilidad, fijación y "
+        "prueba de funcionamiento. Distinta de la plantilla 'Repuesto' de "
+        "categoría mantención (ver _ensure_plantilla_repuesto) -- misma "
+        "clase, checklist propio por categoría.",
+        [
+            (1, "N° de serie o código del repuesto", "", "texto", 1, 0, None, None, None, None),
+            (2, "Equipo y ubicación donde se instala", "", "texto", 1, 0, None, None, None, None),
+            (3, "Estado del repuesto al recibir",
+             "Sin daños, corrosión ni piezas faltantes", "verificacion", 1, 0,
+             None, None, None, None),
+            (4, "Compatibilidad con el equipo",
+             "Confirma que corresponde al modelo/serie intervenido", "sino", 1, 0,
+             None, None, None, None),
+            (5, "Chequeo y apriete de la fijación", "", "check", 1, 0, None, None, None, None),
+            (6, "Prueba de funcionamiento tras la instalación", "", "verificacion", 1, 0,
+             None, None, None, None),
+            (7, "Foto del repuesto instalado", "", "foto", 1, 1, None, None, None, None),
+            (8, "Comentarios adicionales", "", "texto", 0, 0, None, None, None, None),
+        ])
+
+    # ═════════════════════════ VISITAS — 19 huecos ═════════════════════════
+    # Una visita técnica NO instala ni mantiene: va a DIAGNOSTICAR un equipo
+    # que el cliente reportó con problema, para después cotizar la
+    # reparación. familia_activo clasifica el equipo real (consultado en
+    # ilusfitness.com) -- las máquinas con stack+cable (selectorizadores,
+    # duales, Booty Builder) van todas a 'selectorizado' por compartir el
+    # mismo mecanismo crítico de seguridad (cable de acero + poleas).
+    _crear_matriz(
+        "Selectorizador de pesos", "visitas", "inspeccion", "otro", "selectorizado",
+        _desc_visita("Selectorizador de pesos"),
+        _items_visita([
+            ("Stack de pesos y pin selector",
+             "Placas completas y numeradas; pin con cordel, sin juego",
+             "verificacion", 1, 0),
+            ("Cable de acero y poleas",
+             "Deshilache, deslizamiento o giro con ruido", "verificacion", 1, 1),
+        ]))
+    _crear_matriz(
+        "Selectorizador de pesos (4 estaciones)", "visitas", "inspeccion", "otro", "selectorizado",
+        _desc_visita("Selectorizador de pesos (4 estaciones)"),
+        _items_visita([
+            ("Stack de pesos y pin selector de cada estación", "", "verificacion", 1, 0),
+            ("Cables de acero y poleas de las 4 estaciones", "", "verificacion", 1, 1),
+        ]))
+    _crear_matriz(
+        "Bicicleta", "visitas", "inspeccion", "otro", "bicicletas",
+        _desc_visita("Bicicleta"),
+        _items_visita([
+            ("Sistema de resistencia y freno",
+             "Magnético o a fricción, según el modelo", "verificacion", 1, 0),
+            ("Pedalier, correa/cadena y rodamientos", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Trotadora Motorizada", "visitas", "inspeccion", "otro", "trotadoras",
+        _desc_visita("Trotadora Motorizada"),
+        _items_visita([
+            ("Motor y correa de transmisión",
+             "Ruido anormal, sobrecalentamiento, correa floja", "verificacion", 1, 0),
+            ("Banda de caminar",
+             "Desgaste, centrado, deslizamiento al pisar", "verificacion", 1, 0),
+            ("Consola electrónica y velocidades/inclinación",
+             "Encendido, sensores, cambios de velocidad e inclinación",
+             "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Bancos plano / ajustable", "visitas", "inspeccion", "otro", "bancos",
+        _desc_visita("Bancos plano / ajustable"),
+        _items_visita([
+            ("Mecanismo de ajuste de respaldo y asiento", "", "verificacion", 1, 0),
+            ("Tapiz y espuma", "Cortes, rasgados, hundimiento", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Bancos Olímpicos", "visitas", "inspeccion", "otro", "bancos",
+        _desc_visita("Bancos Olímpicos"),
+        _items_visita([
+            ("Soportes o ganchos para barra",
+             "Desgaste, fisuras, seguridad del enganche", "verificacion", 1, 0),
+            ("Estructura y estabilidad del banco", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Rack de accesorios", "visitas", "inspeccion", "otro", "racks_estructuras",
+        _desc_visita("Rack de accesorios"),
+        _items_visita([
+            ("Ganchos y soportes de accesorios",
+             "Firmeza, desgaste, deformación", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Rack Básico", "visitas", "inspeccion", "otro", "racks_estructuras",
+        _desc_visita("Rack Básico"),
+        _items_visita([
+            ("Estructura, soldaduras y pintura", "", "verificacion", 1, 0),
+            ("Pines de seguridad y ajuste de altura", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Rack Intermedio", "visitas", "inspeccion", "otro", "racks_estructuras",
+        _desc_visita("Rack Intermedio"),
+        _items_visita([
+            ("J-cups y pines de ajuste de altura", "", "verificacion", 1, 0),
+            ("Barra de dominadas y anclajes", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Repuesto", "visitas", "inspeccion", "otro", "otros",
+        _desc_visita("Repuesto"),
+        _items_visita([
+            ("Componente o repuesto con la falla", "", "texto", 1, 0),
+            ("Causa probable del desgaste o falla", "", "texto", 0, 0),
+        ]))
+    _crear_matriz(
+        "Rack Avanzados", "visitas", "inspeccion", "otro", "racks_estructuras",
+        _desc_visita("Rack Avanzados"),
+        _items_visita([
+            ("Estructura, uniones y anclaje al piso", "", "verificacion", 1, 0),
+            ("Sistema de poleas o accesorios adicionales",
+             "Si el equipo incluye poleas o accesorios acoplados", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Rack Pro", "visitas", "inspeccion", "otro", "racks_estructuras",
+        _desc_visita("Rack Pro"),
+        _items_visita([
+            ("Estructura, uniones y anclaje al piso", "", "verificacion", 1, 0),
+            ("Sistema de poleas / cable crossover",
+             "Si el equipo incluye módulo de poleas", "verificacion", 1, 1),
+        ]))
+    _crear_matriz(
+        "Dual Cable Lite", "visitas", "inspeccion", "otro", "selectorizado",
+        _desc_visita("Dual Cable Lite"),
+        _items_visita([
+            ("Cables de acero y poleas de ambas columnas",
+             "Deshilache, deslizamiento, giro con ruido", "verificacion", 1, 1),
+            ("Selector de peso y topes de cada columna", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Dual cable Cross", "visitas", "inspeccion", "otro", "selectorizado",
+        _desc_visita("Dual cable Cross"),
+        _items_visita([
+            ("Cables de acero y poleas de ambos brazos",
+             "Deshilache, deslizamiento, giro con ruido", "verificacion", 1, 1),
+            ("Ajuste de altura y giro de los brazos", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Dual Pulley Drax", "visitas", "inspeccion", "otro", "selectorizado",
+        _desc_visita("Dual Pulley Drax"),
+        _items_visita([
+            ("Cables de acero y sistema de poleas",
+             "Deshilache, deslizamiento, giro con ruido", "verificacion", 1, 1),
+            ("Selector de peso y recorrido del carro", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Booty Builder P", "visitas", "inspeccion", "otro", "selectorizado",
+        _desc_visita("Booty Builder P"),
+        _items_visita([
+            ("Almohadilla y mecanismo de ajuste", "", "verificacion", 1, 0),
+            ("Sistema de carga (placas o pin selector)", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Pisos", "visitas", "inspeccion", "otro", "otros",
+        _desc_visita("Pisos"),
+        _items_visita([
+            ("Uniones y desniveles entre piezas", "", "verificacion", 1, 0),
+        ]))
+    _crear_matriz(
+        "Accesorios", "visitas", "inspeccion", "otro", "accesorios",
+        _desc_visita("Accesorios"),
+        _items_visita([
+            ("Estado del accesorio", "Grietas, desgaste, corrosión", "verificacion", 1, 0),
+            ("Pieza completa, sin partes faltantes", "", "sino", 1, 0),
+        ]))
+    _crear_matriz(
+        "Trotadora No Motorizada", "visitas", "inspeccion", "otro", "trotadoras",
+        _desc_visita("Trotadora No Motorizada"),
+        _items_visita([
+            ("Banda de caminar y rodillos", "", "verificacion", 1, 0),
+            ("Sistema de frenado o resistencia",
+             "Magnético o mecánico, según el modelo", "verificacion", 1, 0),
+        ]))
+
+    return creadas
+
+
 def _ensure_lev_items_doc_col():
     """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
@@ -107294,6 +107694,24 @@ try:
         print(f"[ILUS] Plantilla 'Repuesto' sembrada (skip-migrations): id={_pid_repuesto}", flush=True)
 except Exception as _ensure_repuesto_err:
     print(f"[ILUS][WARN] _ensure_plantilla_repuesto: {_ensure_repuesto_err}", flush=True)
+
+# CRÍTICO: matriz clasificación x categoría SIEMPRE (incluso skip-migrations)
+# -- Daniel 2026-08-28: "quiero que la clasificación en mantenciones,
+# instalaciones y visitas técnicas... vivan en las plantillas y estén
+# comunicadas... no las veo cuadradas". Llena los 22 huecos reales (3 de
+# instalación + toda la fila de visitas, que no existía) con checklists
+# específicos por tipo de equipo. Puramente aditivo -- nunca toca una
+# plantilla existente, así que corre sin pisar el trabajo de
+# _ensure_plantilla_repuesto (arriba) ni el de _ensure_plantillas_
+# autorrelleno (otro agente, en paralelo, sobre las plantillas vacías).
+try:
+    with app.app_context():
+        _plant_matriz_creadas = _ensure_plantillas_matriz_clases()
+    if _plant_matriz_creadas:
+        print(f"[ILUS] Matriz clasificación x categoría sembrada (skip-migrations): "
+              f"{_plant_matriz_creadas}", flush=True)
+except Exception as _ensure_matriz_err:
+    print(f"[ILUS][WARN] _ensure_plantillas_matriz_clases: {_ensure_matriz_err}", flush=True)
 
 # CRÍTICO: nombres de plantilla sin el prefijo "<Categoría> · " (Daniel
 # 2026-08-13) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Corre después
