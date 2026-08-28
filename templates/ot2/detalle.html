@@ -466,6 +466,30 @@
 .otd-btn.pri:hover{color:#fff;box-shadow:0 8px 20px -8px rgba(220,38,38,.7)}
 .otd-btn i{font-size:.95rem}
 
+/* Equipo técnico — colaboradores además del principal (mant_visita_tecnicos).
+   2026-08-28, Daniel: "que se agreguen multitécnicos... quiero agregar la OT
+   a los técnicos". Vive junto al chip "Técnico" (mismo hero oscuro) para que
+   el conjunto se lea como una sola función de "equipo técnico de la OT". */
+.otd-team{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.09);
+  border-radius:10px;padding:10px 12px;margin:4px 0 2px;display:flex;
+  align-items:center;gap:10px;flex-wrap:wrap}
+.otd-team .k{font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;
+  color:#8b8b93;font-weight:800;display:flex;align-items:center;gap:6px;flex:none}
+.otd-team .k i{color:#4ade80;font-size:.95rem}
+.otd-team .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:1;min-width:0}
+.otd-tec-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.09);
+  border:1px solid rgba(255,255,255,.16);border-radius:99px;padding:5px 6px 5px 12px;
+  font-size:.76rem;font-weight:800;color:#e5e7eb}
+.otd-tec-chip .rm{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;
+  background:rgba(255,255,255,.08);border:0;color:#fca5a5;cursor:pointer;font-size:.68rem;
+  transition:background .15s,color .15s}
+.otd-tec-chip .rm:hover{background:#dc2626;color:#fff}
+.otd-tec-add{display:inline-flex;align-items:center;gap:6px;background:none;
+  border:1px dashed rgba(255,255,255,.28);border-radius:99px;padding:5px 14px;
+  min-height:32px;color:#a1a1aa;font-size:.76rem;font-weight:800;cursor:pointer;
+  transition:border-color .15s,color .15s}
+.otd-tec-add:hover{border-color:#4ade80;color:#4ade80}
+
 @media (prefers-reduced-motion:reduce){
   .otd-eq .bar i,.otd-av-bar i{animation:none;width:var(--w,0%)}
   .s-ejec .ico,.otd-h.now .p,.otd-pulse-dot{animation:none}
@@ -599,6 +623,34 @@
           <span class="v">{{ v.contacto_nombre }}{% if v.contacto_cargo %} · {{ v.contacto_cargo }}{% endif %}</span></div></div>
       {% endif %}
     </div>
+
+    {# ── Equipo técnico: colaboradores además del principal ──────────────
+       2026-08-28, Daniel: "que se agreguen multitécnicos... quiero agregar
+       la OT a los técnicos". El técnico PRINCIPAL se edita arriba con
+       "Reasignar" (chip Técnico); acá se SUMAN/QUITAN colaboradores
+       (mant_visita_tecnicos) sin tocar al principal -- mismo endpoint DELETE
+       que ya existía (2026-08-27) + el POST nuevo de hoy. #}
+    {% if tecnicos_colaboradores or puede_metadata %}
+    <div class="otd-team">
+      <div class="k"><i class="bi bi-people-fill"></i> Equipo técnico</div>
+      <div class="chips">
+        {% for t in tecnicos_colaboradores %}
+        <span class="otd-tec-chip">
+          {{ t.nombre }}
+          {% if puede_metadata %}
+          <button type="button" class="rm" title="Quitar de esta OT"
+                  onclick="otdQuitarColaborador({{ t.vt_id }}, '{{ t.nombre|e }}')">
+            <i class="bi bi-x-lg"></i></button>
+          {% endif %}
+        </span>
+        {% endfor %}
+        {% if puede_metadata %}
+        <button type="button" class="otd-tec-add" onclick="otdAgregarColaborador()">
+          <i class="bi bi-plus-lg"></i> Agregar técnico</button>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
 
     {# ── Caja Reagendar (oculta -- misma acción/endpoint que ot_ejecutar.html) ── #}
     {% if puede_metadata %}
@@ -1120,6 +1172,11 @@
 // a propósito ("de momento déjalas libres").
 const PLANTILLAS_TODAS = {{ plantillas_todas | tojson }};
 
+// 2026-08-28 (Daniel): uids de los técnicos COLABORADORES ya sumados a esta
+// OT (aparte del principal) -- se usa para que el picker de "Agregar
+// técnico" no vuelva a ofrecer a alguien que ya figura en el equipo.
+const OT_COLABORADORES_UIDS = {{ (tecnicos_colaboradores | map(attribute='tecnico_user_id') | list) | tojson }};
+
 /* Pestañas Información / Trabajo / Evidencia / Documentos (2026-08-27). */
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.getElementById('otdTabs');
@@ -1440,6 +1497,76 @@ window.otdCambiarPlantilla = async function(mid, pidActual){
     }
   } catch(e){
     ilusToast('Error de conexión al cambiar la plantilla.', {type:'error'});
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════
+   EQUIPO TÉCNICO — agregar/quitar COLABORADORES (mant_visita_tecnicos).
+   NO toca al técnico PRINCIPAL (eso es otdConfirmarReasignar, arriba) --
+   esto SUMA gente adicional al mismo trabajo. 2026-08-28, Daniel: "que se
+   agreguen multitécnicos... quiero agregar la OT a los técnicos". Reusa
+   el mismo caché de /api/tecnicos que ya llena el picker de Reasignar, y
+   el mismo patrón de ilusActionSheet que otdCambiarPlantilla.
+   ══════════════════════════════════════════════════════════════ */
+window.otdAgregarColaborador = async function(){
+  if (!_otdTecnicosCache){
+    try {
+      const r = await fetch('/mantenciones/api/tecnicos');
+      _otdTecnicosCache = await r.json();
+    } catch(e){ _otdTecnicosCache = []; }
+  }
+  const curUid = {{ (v.tecnico_user_id or 'null') }};
+  const yaUids = new Set((OT_COLABORADORES_UIDS || []).map(String));
+  const opciones = (_otdTecnicosCache || [])
+    .filter(t => String(t.id) !== String(curUid) && !yaUids.has(String(t.id)))
+    .map(t => ({ label: t.nombre || ('Téc ' + t.id), value: String(t.id) }));
+  if (!opciones.length){
+    ilusToast('No hay más técnicos disponibles para agregar.', {type:'warning'});
+    return;
+  }
+  const elegido = await ilusActionSheet({
+    title: 'Agregar técnico',
+    message: 'Elige el técnico colaborador a sumar a esta OT',
+    options: opciones,
+  });
+  if (!elegido) return;
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}/tecnicos', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ tecnico_user_id: parseInt(elegido, 10) }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast(`✓ ${j.nombre || 'Técnico'} agregado a la OT`, {type:'success'});
+      setTimeout(() => location.reload(), 600);
+    } else {
+      ilusToast(j.error || 'No se pudo agregar el técnico.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al agregar el técnico.', {type:'error'});
+  }
+};
+
+window.otdQuitarColaborador = async function(vtId, nombre){
+  const ok = await ilusConfirm({
+    title: 'Quitar técnico',
+    message: `¿Quitar a ${nombre} de esta OT?`,
+    sub: 'Deja de figurar como técnico involucrado en esta orden de trabajo.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/{{ v.id }}/tecnicos/${vtId}`, {method: 'DELETE'});
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      ilusToast('✓ Técnico removido', {type: 'success'});
+      setTimeout(() => location.reload(), 500);
+    } else {
+      ilusToast(j.error || 'No se pudo quitar el técnico.', {type: 'error'});
+    }
+  } catch (e){
+    ilusToast('Error de conexión al quitar el técnico.', {type: 'error'});
   }
 };
 

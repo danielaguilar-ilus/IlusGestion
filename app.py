@@ -63350,6 +63350,86 @@ def mant_visita_tecnico_quitar(vid, vt_id):
         return jsonify({"ok": False, "error": "No se pudo quitar el técnico"}), 500
 
 
+@app.route("/mantenciones/api/visitas/<int:vid>/tecnicos", methods=["POST"])
+@_mant_required
+@_ot_can_metadata
+def mant_visita_tecnico_agregar(vid):
+    """Agrega un técnico COLABORADOR (mant_visita_tecnicos) a una OT, SIN
+    reemplazar al técnico PRINCIPAL (mant_visitas.tecnico_user_id).
+
+    2026-08-28 (Daniel: "quiero agregar la OT a los técnicos... que se
+    agreguen multitécnicos"). mant_visita_tecnicos hasta hoy solo se
+    poblaba al CREAR la visita (flujo multi-equipo/Levantamiento, ver
+    app.py ~63203) o se vaciaba con el DELETE de arriba (2026-08-27) --
+    no existía forma de SUMAR un colaborador después, desde la ficha de
+    una OT ya creada.
+
+    Mismo gate que reagendar/reasignar/cambiar-plantilla (@_ot_can_metadata,
+    matriz de _puede_ot_accion): solo gestión (superadmin/admin/supervisor/
+    ejecutivo), nunca técnico -- esto es una corrección administrativa de
+    quién queda registrado, no una acción de ejecución en terreno.
+
+    Body esperado: {"tecnico_user_id": <int>} (app_users.id, mismo id que
+    devuelve /mantenciones/api/tecnicos). tecnico_id (legacy, mant_tecnicos)
+    se deja NULL a propósito -- es el mismo patrón que usa el resto del
+    código nuevo (ver INSERT de app.py ~63206).
+    """
+    d = request.get_json(silent=True) or {}
+    try:
+        tuid = int(d.get("tecnico_user_id") or 0)
+    except (TypeError, ValueError):
+        tuid = 0
+    if not tuid:
+        return jsonify({"ok": False, "error": "Falta indicar el técnico a agregar."}), 400
+
+    u = mysql_fetchone(
+        "SELECT id, COALESCE(nombre, username) AS nombre FROM app_users "
+        " WHERE id=%s AND role LIKE %s AND active=1",
+        (tuid, "tecnico%")
+    )
+    if not u:
+        return jsonify({"ok": False, "error": "Ese técnico no existe o está inactivo."}), 400
+
+    visita = mysql_fetchone("SELECT tecnico_user_id FROM mant_visitas WHERE id=%s", (vid,))
+    if not visita:
+        return jsonify({"ok": False, "error": "Esa OT no existe."}), 404
+
+    # No duplicar: ni como principal, ni como colaborador ya agregado.
+    if visita.get("tecnico_user_id") == tuid:
+        return jsonify({
+            "ok": False,
+            "error": f"{u['nombre']} ya es el técnico principal de esta OT.",
+            "error_codigo": "TECNICO_YA_PRINCIPAL",
+        }), 409
+    ya = mysql_fetchone(
+        "SELECT id FROM mant_visita_tecnicos WHERE visita_id=%s AND tecnico_user_id=%s",
+        (vid, tuid)
+    )
+    if ya:
+        return jsonify({
+            "ok": False,
+            "error": f"{u['nombre']} ya está agregado a esta OT.",
+            "error_codigo": "TECNICO_YA_AGREGADO",
+        }), 409
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_visita_tecnicos (visita_id, tecnico_id, tecnico_user_id, rol) "
+                "VALUES (%s, NULL, %s, 'tecnico')",
+                (vid, tuid)
+            )
+            vt_id = cur.lastrowid
+        conn.commit()
+        _mant_log("visita", vid, "tecnico_agregado",
+                  f"Técnico colaborador agregado: {u['nombre']} (uid={tuid}) por {current_username()}")
+        return jsonify({"ok": True, "vt_id": vt_id, "nombre": u["nombre"]})
+    except Exception as e:
+        print(f"[mant_visita_tecnico_agregar] vid={vid} tuid={tuid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo agregar el técnico"}), 500
+
+
 # ══════════════════════════════════════════════════════════════════════
 # EJECUTIVO ASIGNADO — responsable de comunicarse con el cliente (2026-07-11)
 # ══════════════════════════════════════════════════════════════════════
@@ -74908,6 +74988,30 @@ def ot2_detalle(vid):
         " WHERE activa=1 ORDER BY nombre"
     ) or []
 
+    # ── Técnicos colaboradores (mant_visita_tecnicos) — 2026-08-28 ──────
+    # Mismo criterio que mant_ot_ejecutar (app.py ~80398): excluye al
+    # PRINCIPAL (v.tecnico_user_id), que se gestiona aparte con "Reasignar".
+    # Daniel: "que se agreguen multitécnicos... quiero agregar la OT a los
+    # técnicos" — hasta hoy esta ficha solo mostraba/editaba UN técnico.
+    # tecnico_user_id se incluye (no solo el nombre) para que el picker de
+    # "Agregar técnico" en el JS pueda excluir a quien ya está sumado sin
+    # tener que adivinar por nombre (dos técnicos podrían llamarse igual).
+    tecnicos_colaboradores = []
+    try:
+        _tec_col_rows = mysql_fetchall(
+            "SELECT vt.id AS vt_id, vt.tecnico_user_id, "
+            "       COALESCE(u.nombre, u.username, t.nombre) AS nombre "
+            "  FROM mant_visita_tecnicos vt "
+            "  LEFT JOIN mant_tecnicos t ON t.id = vt.tecnico_id "
+            "  LEFT JOIN app_users u    ON u.id = vt.tecnico_user_id "
+            " WHERE vt.visita_id=%s "
+            "   AND (u.id IS NULL OR u.id != %s)",
+            (vid, v.get("tecnico_user_id") or 0)
+        ) or []
+        tecnicos_colaboradores = [dict(t) for t in _tec_col_rows if t.get("nombre")]
+    except Exception as _e_tc:
+        print(f"[ot2_detalle] tecnicos_colaboradores vid={vid}: {_e_tc}", flush=True)
+
     # ── Recorrido de la OT ─────────────────────────────────────────────
     hitos = []
     for clave, label, icono, col in _OT2_HITOS:
@@ -75034,6 +75138,7 @@ def ot2_detalle(vid):
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         hito_actual=hito_actual, hito_siguiente=hito_siguiente,
         plantillas_todas=plantillas_todas,
+        tecnicos_colaboradores=tecnicos_colaboradores,
         # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
         # (el motor de firma ya existía desde anoche, commit e007c43; lo que
         # faltaba era el formulario). Los 3 textos "fijos" del documento real
