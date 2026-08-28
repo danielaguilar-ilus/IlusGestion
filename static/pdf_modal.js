@@ -87,6 +87,103 @@
     els.loading.setAttribute('aria-hidden', 'true');
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // 2026-08-27 (Daniel): "cuando presionemos Descargar, poner una barra
+  // de progreso... con un look bien profesional" + reportó que la
+  // descarga de una OT grande (60 equipos/637 tareas) directamente daba
+  // error. Antes "Descargar" era un <a href download> puro: el navegador
+  // navegaba a la URL sin que este JS se enterara de nada -- si el
+  // servidor tardaba, fallaba o daba timeout, no había forma de avisar
+  // (por eso "no sé si se descargó" era literal: no había ninguna señal).
+  // Ahora se intercepta el click, se hace fetch() al mismo endpoint, y:
+  //   - mientras espera, anima una barra de progreso ASINTÓTICA (sube
+  //     rápido al principio y frena acercándose al 90%, sin llegar nunca
+  //     ahí hasta que la respuesta real llegue) -- mismo truco que usa
+  //     cualquier barra "de mentira" cuando no hay forma real de saber
+  //     el % de un PDF generándose server-side (no hay Content-Length
+  //     útil: el tiempo lo domina el render en el servidor, no la
+  //     transferencia).
+  //   - si la respuesta fallara (timeout, 500, etc.) se avisa con un
+  //     error CLARO en vez de que el usuario se quede sin saber qué pasó.
+  //   - si funciona, se arma un Blob y se dispara la descarga a mano --
+  //     más confiable que el atributo `download` solo (que en algunos
+  //     navegadores no fuerza "Guardar como" si la respuesta no trae
+  //     Content-Disposition:attachment).
+  // ────────────────────────────────────────────────────────────────────
+  const PROGRESS_STAGES = [
+    { atMs: 0,     texto: 'Generando el documento…' },
+    { atMs: 2500,  texto: 'Incrustando fotos y firmas…' },
+    { atMs: 9000,  texto: 'Maquetando páginas…' },
+    { atMs: 22000, texto: 'Esto puede tardar un poco más (documento grande)…' },
+  ];
+
+  function _descargarConProgreso(url, downloadName) {
+    if (!window.ilusLoader) {
+      // Sin ilusLoader no hay forma de mostrar progreso -- cae al
+      // comportamiento simple de siempre (abrir la URL tal cual).
+      global.open(url, '_blank', 'noopener');
+      return;
+    }
+    const t0 = Date.now();
+    let pct = 6;
+    let ultimaEtapa = -1;
+    window.ilusLoader.show({ text: PROGRESS_STAGES[0].texto, progress: pct });
+
+    const tick = setInterval(function () {
+      const transcurrido = Date.now() - t0;
+      // Sube rápido al inicio, frena cerca del 90% -- nunca lo alcanza
+      // hasta que la descarga real termine (ver más abajo).
+      pct += (90 - pct) * 0.07;
+      window.ilusLoader.progress(pct);
+      for (let i = PROGRESS_STAGES.length - 1; i >= 0; i--) {
+        if (transcurrido >= PROGRESS_STAGES[i].atMs && i !== ultimaEtapa) {
+          window.ilusLoader.text(PROGRESS_STAGES[i].texto);
+          ultimaEtapa = i;
+          break;
+        }
+      }
+    }, 400);
+
+    fetch(url)
+      .then(function (r) {
+        clearInterval(tick);
+        if (!r.ok) {
+          return r.text().catch(function () { return ''; }).then(function (body) {
+            throw new Error('HTTP ' + r.status + (body ? ': ' + body.slice(0, 200) : ''));
+          });
+        }
+        return r.blob();
+      })
+      .then(function (blob) {
+        window.ilusLoader.progress(100);
+        window.ilusLoader.text('¡Listo!');
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = downloadName || 'documento.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 4000);
+        setTimeout(function () { window.ilusLoader.hide(); }, 500);
+      })
+      .catch(function (err) {
+        clearInterval(tick);
+        window.ilusLoader.hide();
+        console.error('[pdf_modal] descarga falló:', err);
+        if (typeof ilusAlert === 'function') {
+          ilusAlert({
+            title: 'No se pudo descargar',
+            message: 'El documento no se generó a tiempo o el servidor devolvió un error.',
+            sub: 'Si el documento es muy grande (muchos equipos/fotos), puede necesitar más tiempo. Intenta de nuevo o avisa a soporte si se repite.',
+            type: 'error',
+          });
+        } else {
+          alert('No se pudo descargar el documento.');
+        }
+      });
+  }
+
   function openPdf(url, opts) {
     if (!url) return;
     opts = opts || {};
@@ -112,12 +209,14 @@
     if (els.openLink) els.openLink.href = openHref;
     if (els.downloadLink) {
       els.downloadLink.href = downloadHref;
-      // Fuerza "Guardar como" en el navegador aunque el endpoint responda
-      // inline (ej: PDF de OT vía Playwright, sin
-      // Content-Disposition:attachment). Siempre same-origin en ILUS, así
-      // que el atributo download es seguro y no rompe el nombre de
-      // archivo que ya sugiera el servidor.
+      // El href/download nativos quedan como fallback (clic derecho →
+      // "Guardar enlace como", o si el usuario abre en pestaña nueva).
+      // El click normal lo intercepta _descargarConProgreso vía fetch+blob
+      // (ver más abajo) para poder mostrar la barra de progreso y avisar
+      // si falla -- un <a download> plano no da ninguna señal de ninguna
+      // de las dos cosas.
       els.downloadLink.setAttribute('download', opts.downloadName || '');
+      els.downloadLink.dataset.downloadName = opts.downloadName || '';
     }
 
     _showLoading(els, opts.loadingMessage);
@@ -188,6 +287,16 @@
     });
 
     if (els.printBtn) els.printBtn.addEventListener('click', printPdf);
+
+    if (els.downloadLink) {
+      els.downloadLink.addEventListener('click', function (ev) {
+        // Ctrl/Cmd/middle-click: dejar el comportamiento nativo del navegador
+        // (abrir en pestaña nueva, etc.) -- solo se intercepta el clic normal.
+        if (ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+        ev.preventDefault();
+        _descargarConProgreso(this.href, this.dataset.downloadName);
+      });
+    }
 
     // Delegado (compat legacy Etiquetas + cualquier trigger futuro,
     // incluso si se agrega al DOM después de este DOMContentLoaded).
