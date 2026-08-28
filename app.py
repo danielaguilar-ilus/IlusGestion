@@ -85615,6 +85615,14 @@ def _ot_pdf_header_footer_native(ctx):
     numero_ot = str(visita.get("numero_ot") or f"OT-{visita.get('id') or ''}")
     numero_ot = _html.escape(numero_ot)
     doc_tipo = _html.escape(ctx.get("pdf_titulo_doc") or "ORDEN DE TRABAJO")
+    # 🆕 2026-08-28 (Daniel: "ojalá pueda tener el nombre del cliente y el
+    # N° de la OT... un formato estándar como el del sistema pero que se
+    # vea bien"): el header nativo traía el N° de OT pero NUNCA el cliente
+    # -- razon_social SÍ viene en el SELECT de `visita` (_ot_pdf_context,
+    # join a mant_clientes), simplemente no se usaba acá. Trabajo interno
+    # (bodega/capacitación) no tiene cliente -- mismo fallback que ya usa
+    # el resto del proyecto para ese caso (_ot_tv_datos, _cli_nom).
+    cliente_nombre = _html.escape((visita.get("razon_social") or "").strip() or "Trabajo interno")
     logo_b64 = ctx.get("logo_b64") or ""
     logo_shs_url = ctx.get("logo_shs_url") or ""
 
@@ -85640,11 +85648,14 @@ def _ot_pdf_header_footer_native(ctx):
         '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
         f'<div style="display:flex;align-items:center;gap:3mm;">'
         f'{_shs_logo_html}{_ilus_logo_html}</div>'
-        '<div style="text-align:right;">'
+        '<div style="text-align:right;max-width:100mm;min-width:0;overflow:hidden;">'
         f'<div style="font-size:10px;font-weight:800;color:#ffffff;'
         f'letter-spacing:-.01em;">{doc_tipo}</div>'
         f'<div style="font-size:13px;font-weight:900;color:#dc2626;'
         f'line-height:1.15;">N&#176; {numero_ot}</div>'
+        f'<div style="font-size:8.5px;font-weight:700;color:#e5e7eb;'
+        'line-height:1.2;margin-top:.5mm;white-space:nowrap;overflow:hidden;'
+        f'text-overflow:ellipsis;">{cliente_nombre}</div>'
         '</div></div>'
         '<div style="height:1.4mm;background:linear-gradient(90deg,#dc2626 0 25%,'
         '#0a0a0a 25% 100%);-webkit-print-color-adjust:exact;'
@@ -85658,7 +85669,7 @@ def _ot_pdf_header_footer_native(ctx):
         'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
         '<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
         'soportetec@sphs.cl</span>'
-        f'<span><b style="color:#0a0a0a">{numero_ot}</b> · Página '
+        f'<span><b style="color:#0a0a0a">{numero_ot}</b> · {cliente_nombre} · Página '
         '<span class="pageNumber"></span> de <span class="totalPages"></span></span>'
         '</div>'
     )
