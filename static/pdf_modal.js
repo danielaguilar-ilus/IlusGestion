@@ -152,6 +152,21 @@
             throw new Error('HTTP ' + r.status + (body ? ': ' + body.slice(0, 200) : ''));
           });
         }
+        // 2026-08-27: cuando el servidor no logra generar el PDF a tiempo
+        // (documento muy grande) o Chromium no está disponible, algunos
+        // endpoints (ej. mant_visita_pdf) responden 200 con el HTML
+        // imprimible de respaldo en vez de un error -- a propósito, para
+        // que la OT "siempre se pueda ver". Si se descarga tal cual como
+        // ".pdf" el archivo queda inservible (es HTML con otra extensión).
+        // Se detecta por Content-Type y se trata como fallo de descarga,
+        // pero sin dejar al usuario con las manos vacías: se abre igual
+        // en pestaña nueva (ahí SÍ puede verlo/imprimirlo con Ctrl+P).
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (ct.indexOf('application/pdf') === -1) {
+          const err = new Error('El servidor devolvió el documento en HTML, no pudo generar el PDF a tiempo.');
+          err.fallbackNoPdf = true;
+          throw err;
+        }
         return r.blob();
       })
       .then(function (blob) {
@@ -171,6 +186,18 @@
         clearInterval(tick);
         window.ilusLoader.hide();
         console.error('[pdf_modal] descarga falló:', err);
+        if (err && err.fallbackNoPdf) {
+          global.open(url, '_blank', 'noopener');
+          if (typeof ilusAlert === 'function') {
+            ilusAlert({
+              title: 'El PDF no se pudo generar a tiempo',
+              message: 'Te abrimos el documento en una pestaña nueva -- desde ahí puedes verlo e imprimirlo (Ctrl/Cmd+P → Guardar como PDF).',
+              sub: 'Es el mismo contenido; el generador automático no alcanzó a terminar. Reintenta más tarde si necesitas el PDF directo.',
+              type: 'warning',
+            });
+          }
+          return;
+        }
         if (typeof ilusAlert === 'function') {
           ilusAlert({
             title: 'No se pudo descargar',
