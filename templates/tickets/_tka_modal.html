@@ -1279,6 +1279,18 @@ function tkaClose(){
       document.activeElement.blur();
     }
   }catch(_){}
+  // 2026-08-28 (Daniel, en vivo: "cuando cierro el modal se ve el
+  // mensaje"): si el usuario cierra la Búsqueda avanzada mientras un
+  // ilusPrompt/ilusConfirm ("Producto sin saldo disponible", etc.) sigue
+  // pendiente de respuesta, ese overlay NO es descendiente de #tkaModal/
+  // #tkaBackdrop (ilus_ui.js lo agrega como hijo suelto de document.body
+  // -- ver el fix de hoy en static/ilus_ui.js sobre por qué tiene que ser
+  // así para que se vea encima) -- así que ocultar tka no lo oculta a él,
+  // y quedaba huérfano flotando en pantalla. Se limpia acá explícitamente
+  // al cerrar tka; la Promise de ese ilusPrompt queda sin resolver para
+  // siempre, pero nada la sigue esperando una vez que el usuario decidió
+  // cerrar el buscador completo.
+  document.querySelectorAll('.ilus-overlay').forEach(o => o.remove());
   document.getElementById('tkaBackdrop').classList.remove('is-open');
   document.getElementById('tkaModal').classList.remove('is-open');
   document.getElementById('tkaBackdrop').setAttribute('aria-hidden', 'true');
