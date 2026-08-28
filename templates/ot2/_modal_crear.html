@@ -740,7 +740,13 @@ window.OT2C = (function(){
         '<span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
         (m.sku ? '<span class="mt text-muted small">'+esc(m.sku)+'</span>' : '')+'</div>'+
         (sel ? '<select class="form-select form-select-sm" onchange="OT2C.eqPlant('+m.id+',this.value)">'+
-               '<option value="">Elige el checklist…</option>'+ops+'</select>' : '')+
+               '<option value="">Elige el checklist…</option>'+ops+'</select>'+
+               // 28-08-2026: badge de "sugerida sola" -- ver sugerirPlantillaEquipo.
+               // Solo se muestra mientras el valor elegido sigue siendo el que
+               // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
+               (sel.plantilla_sugerida ? '<small class="text-muted d-block mt-1" style="font-size:.72rem">'+
+                 '<i class="bi bi-magic me-1"></i>Sugerida automáticamente por el tipo de equipo.</small>' : '')
+             : '')+
         '</div>';
     }).join('');
     // Repintar el <select> con el valor ya elegido
@@ -1139,13 +1145,51 @@ window.OT2C = (function(){
   }
   function eqTog(mid){
     var i = S.equipos.findIndex(function(e){ return e.maquina_id===mid; });
-    if (i>=0) S.equipos.splice(i,1); else S.equipos.push({maquina_id:mid, plantilla_id:null});
+    if (i>=0) S.equipos.splice(i,1);
+    else {
+      S.equipos.push({maquina_id:mid, plantilla_id:null, plantilla_sugerida:false});
+      sugerirPlantillaEquipo(mid);
+    }
     pintarListaEquipos(); refrescarAnclas();
   }
   function eqPlant(mid, pid){
     var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
-    if (e) e.plantilla_id = pid ? parseInt(pid) : null;
+    if (e){ e.plantilla_id = pid ? parseInt(pid) : null; e.plantilla_sugerida = false; }
     pintarListaEquipos(); refrescarAnclas();
+  }
+
+  /* ── Auto-sugerencia de checklist por clasificación real del equipo
+     (2026-08-28) ──────────────────────────────────────────────────────
+     Daniel, verificado en vivo: de 19 clases de producto activas, 18 ya
+     tienen una plantilla con su nombre exacto -- la infraestructura estaba
+     lista, solo faltaba conectarla acá. Al marcar un equipo se pregunta al
+     backend (_plantilla_por_clasificacion_sku, vía GET /mantenciones/api/
+     plantillas/sugerida-por-sku) si existe un checklist que le corresponda
+     por su CLASIFICACIÓN REAL de catálogo -- no por el tipo de OT a ciegas.
+     Si la hay, se preselecciona sola en el <select> del equipo; SIEMPRE
+     queda la opción de cambiarla a mano (mismo criterio que
+     cargarPlantillasInterno). Equipo sin sku, sin clase, o sin plantilla
+     para esa clase todavía -> sin sugerencia, comportamiento manual de
+     siempre. NUNCA bloquea nada. Cubre cualquier origen de la OT (ficha,
+     ticket, factura/boleta): la sugerencia se dispara por el EQUIPO real
+     que se marca, no por de dónde vino la orden. */
+  function sugerirPlantillaEquipo(mid){
+    var m = cacheEquipos.find(function(x){ return x.id===mid; });
+    if (!m || !m.sku || !S.tipo) return;
+    fetch('/mantenciones/api/plantillas/sugerida-por-sku?sku='+encodeURIComponent(m.sku)+
+          '&tipo_ot='+encodeURIComponent(S.tipo), {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j || !j.plantilla_id) return;
+        var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
+        // El equipo pudo desmarcarse o el usuario ya eligió a mano mientras
+        // la consulta viajaba -- en ese caso NO se pisa nada.
+        if (!e || e.plantilla_id) return;
+        e.plantilla_id = j.plantilla_id;
+        e.plantilla_sugerida = true;
+        pintarListaEquipos(); refrescarAnclas();
+      })
+      .catch(function(){ /* sin sugerencia -- se elige a mano, como siempre */ });
   }
 
   var tBusca = null;
