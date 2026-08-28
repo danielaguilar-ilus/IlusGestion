@@ -877,6 +877,13 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    sigue funcionando — que es justo lo que Daniel pidió. #}
 {% include "ot2/_modal_crear.html" %}
 
+{# Buscador avanzado de documentos ERP COMPARTIDO (namespace _TKA/tkaOpen) --
+   el mismo componente que ya usan Tickets/Repuestos/Cotizaciones/Cubicador.
+   Lo usa el origen "Factura o boleta" del modal de arriba (ver setOrigen/
+   _o2mAbrirBusquedaDocumento en ot2/_modal_crear.html). Solo lectura contra
+   el ERP Random (REGLA #4.1) -- ver templates/tickets/_tka_modal.html. #}
+{% include "tickets/_tka_modal.html" %}
+
 {# Réplica INDEPENDIENTE del formulario grande de OT (7 pasos). Todavía no
    hace nada: es la maqueta que Daniel va a ir explicando paso por paso
    antes de conectarla. Se abre desde el selector de origen. #}

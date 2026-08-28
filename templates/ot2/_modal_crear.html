@@ -13,6 +13,52 @@
   Vive dentro de base.html, así que hereda Bootstrap, Bootstrap Icons,
   ilus_ui.js (ilusToast/ilusConfirm — REGLA #1: nada de alert nativo) y
   el wrapper global que inyecta X-CSRF-Token en todo fetch.
+
+  ── REDISEÑO 2026-08-27 (corrección sobre el rediseño del 2026-08-26) ──
+  Daniel probó el riel horizontal de pasos que se había armado el día
+  anterior y no le gustó: "acuérdate de eliminar la enumeración que tienes
+  arriba... así enumerado por pestaña como que no me gustó mucho" + "yo lo
+  que quiero es que se seleccione el origen de dónde viene y después entre
+  al modal completo. Los pasos que estén dentro del modal o que le den
+  scroll" + "puedes agregarle anclas al modal, que se vea un poco más
+  atractivo".
+
+  Estructura NUEVA de dos fases:
+    FASE "origen"  — pantalla propia (sin cambios): 5 tarjetas grandes.
+    FASE "form"    — UN SOLO formulario largo con scroll. Tipo, Cliente
+                     (si aplica), Detalle, Agenda, Técnicos, Equipos/
+                     Trabajo/Evidencia y Revisar son SECCIONES dentro del
+                     mismo scroll — TODAS están en el DOM a la vez, nada
+                     de "Siguiente"/"Atrás" entre ellas. El riel de arriba
+                     (mismo lenguaje visual: círculo rojo→verde con check)
+                     pasó de ser PAGINACIÓN a ser un NAV DE ANCLAS: clic o
+                     scroll llevan a la sección, nunca bloquean.
+    completo(k) se mantiene (marca el check verde de cada ancla) y gatilla
+    la validación final al presionar "Crear orden" (ya no gatilla el
+    avance entre pasos, porque ya no hay pasos que avanzar).
+
+  BUG REAL encontrado y corregido de paso: varios campos (Título,
+  Descripción, Fecha, Horas, Piso, Notas de acceso) escribían con
+  `oninput="OT2C.S.titulo=this.value"` -- pero `OT2C.S` es una FOTO del
+  objeto `S` tomada una sola vez, al cargar la página (antes de la primera
+  llamada a reset()). Como reset() REASIGNA `S = {...}` en cada apertura
+  del modal, `OT2C.S` quedaba apuntando a un objeto huérfano: esos campos
+  nunca llegaban al `S` real que usa crear(). En particular `S.fecha`
+  jamás se actualizaba, así que "Agenda" nunca quedaba completo() y el
+  wizard no se podía terminar por ahí -- posible explicación de por qué en
+  la práctica el flujo real pasaba por el modal viejo (_modal_ot_form.html)
+  en vez de este. Ahora todos los campos usan funciones setter propias
+  (setTitulo/setDescripcion/setFecha/setHora/setAccesoTexto/setBodegaObs)
+  que sí tocan el `S` vivo.
+
+  DECISIÓN DE ALCANCE: se retira el "hijack" a #ot2ModalForm (la réplica
+  O2F, que según sus propios comentarios "todavía no hace nada... mientras
+  se define cuál de los dos se queda"). Ahora CUALQUIER origen entra
+  siempre al formulario propio de este archivo. No se borra ni
+  _modal_ot_form.html ni static/ot2_form.js (siguen incluidos, íntegros,
+  por si se retoman) -- solo se dejó de invocarlos automáticamente, porque
+  sin eso ninguna de las secciones que Daniel pidió pulir (Tipo, Trabajo
+  interno, etc.) era alcanzable en el uso normal.
   ══════════════════════════════════════════════════════════════════════
 #}
 <style>
@@ -26,21 +72,70 @@
 .o2m-head .x{margin-left:auto;background:transparent;border:0;color:rgba(255,255,255,.7);font-size:1.4rem;line-height:1}
 .o2m-head .x:hover{color:#fff}
 
-/* Riel de pasos: círculo rojo → verde al completarse (patrón /retiros/solicitar) */
-.o2m-riel{display:flex;gap:6px;padding:14px 24px;background:#fafbfc;
-  border-bottom:1px solid #eaecf0;overflow-x:auto}
-.o2m-p{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;
-  font-size:.76rem;font-weight:800;color:#9ca3af;white-space:nowrap;cursor:pointer;
-  background:transparent;border:0}
-.o2m-p .c{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
-  background:#e5e7eb;color:#9ca3af;font-size:.72rem;font-weight:900;transition:all .2s}
-.o2m-p.on{color:#0a0a0a}
-.o2m-p.on .c{background:var(--ilus-red,#dc2626);color:#fff;
-  box-shadow:0 0 0 4px rgba(220,38,38,.16)}
-.o2m-p.ok .c{background:#16a34a;color:#fff}
-.o2m-p.ok{color:#16a34a}
+/* ── Cascarón de la fase "form": nav de anclas + cuerpo con scroll ────
+   Sidebar a la izquierda en desktop, fila horizontal pegajosa en mobile
+   (ambos son hermanos FUERA de .o2m-body, así que ninguno de los dos
+   necesita position:sticky: solo .o2m-body scrollea, el nav simplemente
+   no está adentro). */
+.o2m-shell{display:flex;flex:1;min-height:0}
+.o2m-shell.hide{display:none}
+@media (max-width:767.98px){ .o2m-shell{flex-direction:column} }
 
-.o2m-body{padding:22px 24px;min-height:330px;max-height:60vh;overflow-y:auto}
+/* ── Nav de anclas — círculo rojo(actual)/verde(check)/gris(pendiente),
+   MISMO lenguaje visual que .lev-step-num (static/ot2_modal_form.css) y
+   .step-circle (retiros_public_request.css), pero como navegación pura:
+   nunca bloquea, solo hace scrollIntoView. Sin números — Daniel: "esa
+   enumeración... no me gustó" — un dot vacío es "pendiente", un check es
+   "completo", nunca un "paso 3 de 8". */
+.o2m-riel{display:flex;background:#fafbfc}
+@media (min-width:768px){
+  .o2m-riel{flex-direction:column;width:172px;flex:0 0 172px;padding:18px 12px;
+    border-right:1px solid #eaecf0;gap:2px;max-height:60vh;overflow-y:auto}
+}
+@media (max-width:767.98px){
+  .o2m-riel{flex-direction:row;padding:10px 8px;border-bottom:1px solid #eaecf0;
+    overflow-x:auto;overflow-y:hidden;gap:0}
+}
+.o2m-step{display:flex;align-items:center;gap:10px;background:transparent;border:0;
+  cursor:pointer;padding:6px 4px;min-height:44px;border-radius:9px;transition:background .15s}
+.o2m-step:hover{background:#f1f3f5}
+@media (max-width:767.98px){
+  .o2m-step{flex-direction:column;gap:4px;min-width:30px;padding:2px 0 4px;border-radius:0}
+  .o2m-step:hover{background:transparent}
+}
+.o2m-line{background:#e2e5ea;border-radius:2px;transition:background .35s ease;flex-shrink:0}
+@media (min-width:768px){ .o2m-line{width:2px;height:14px;margin-left:15px} }
+@media (max-width:767.98px){ .o2m-line{height:2px;flex:1 1 14px;min-width:8px;margin-top:13px;max-width:20px} }
+.o2m-line.ok{background:#16a34a}
+.o2m-circle{width:30px;height:30px;border-radius:50%;background:#e5e7eb;color:transparent;
+  display:grid;place-items:center;font-size:.86rem;font-weight:900;flex-shrink:0;
+  position:relative;border:2px solid #fff;box-shadow:0 1px 2px rgba(15,23,42,.08);
+  transition:background .35s cubic-bezier(.34,1.56,.64,1),box-shadow .35s cubic-bezier(.34,1.56,.64,1),
+             transform .35s cubic-bezier(.34,1.56,.64,1)}
+.o2m-step.on .o2m-circle{background:var(--ilus-red,#dc2626);transform:scale(1.08);
+  box-shadow:0 4px 12px rgba(220,38,38,.40),0 0 0 4px rgba(220,38,38,.14)}
+.o2m-step.on .o2m-circle::after{content:'';position:absolute;inset:-5px;border-radius:50%;
+  border:2px solid rgba(220,38,38,.55);animation:o2mRielPulse 2.2s ease-in-out infinite}
+.o2m-step.ok .o2m-circle{background:#16a34a;color:#fff;box-shadow:0 3px 10px rgba(22,163,74,.35)}
+@keyframes o2mRielPulse{0%{transform:scale(.85);opacity:.75}75%{transform:scale(1.4);opacity:0}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.o2m-step.on .o2m-circle::after{animation:none}}
+.o2m-label{font-size:.78rem;font-weight:800;letter-spacing:.01em;color:#9ca3af;
+  line-height:1.2;transition:color .25s ease;white-space:nowrap}
+@media (max-width:767.98px){
+  .o2m-label{font-size:.62rem;max-width:60px;overflow:hidden;text-overflow:ellipsis;display:none}
+  .o2m-step.on .o2m-label{display:block}
+}
+.o2m-step.on .o2m-label{color:#0a0a0a}
+.o2m-step.ok .o2m-label{color:#16a34a}
+
+.o2m-body{padding:22px 24px;min-height:330px;max-height:60vh;overflow-y:auto;flex:1;min-width:0}
+/* Fase "origen": sin nav de anclas, el body ocupa todo el ancho */
+.o2m-body.solo{max-width:none}
+
+/* ── Secciones del formulario único (fase "form") ─────────────────── */
+.o2m-sec{padding-bottom:26px;margin-bottom:22px;border-bottom:1px solid #f1f3f5;scroll-margin-top:10px}
+.o2m-sec:last-child{border-bottom:0;margin-bottom:0;padding-bottom:4px}
+
 .o2m-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;
   align-items:center;gap:10px;background:#fafbfc}
 .o2m-foot .sp{margin-left:auto}
@@ -88,6 +183,19 @@
 .o2m-res .b .v{font-weight:700;font-size:.9rem;color:#0a0a0a;margin-top:3px;display:block}
 .o2m label.fl{font-size:.76rem;font-weight:800;color:#374151;margin-bottom:4px;display:block}
 .o2m input.form-control,.o2m select.form-select,.o2m textarea.form-control{font-size:16px}
+
+/* ── Trabajo de bodega: dropzone de fotos ──────────────────────────── */
+.o2m-foto-zone{border:1.5px dashed #d1d5db;border-radius:11px;padding:18px;text-align:center;
+  color:#6b7280;font-weight:700;font-size:.86rem;cursor:pointer;transition:all .16s;min-height:44px}
+.o2m-foto-zone:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626);background:#fff8f8}
+.o2m-foto-grid{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}
+.o2m-foto-thumb{position:relative;width:78px;height:78px;border-radius:9px;overflow:hidden;
+  border:1px solid #e5e7eb;background:#f3f4f6}
+.o2m-foto-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.o2m-foto-thumb button{position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:50%;
+  border:0;background:rgba(10,10,10,.7);color:#fff;font-size:.7rem;display:grid;place-items:center;cursor:pointer}
+.o2m-foto-thumb button:hover{background:var(--ilus-red,#dc2626)}
+
 @media (max-width:640px){
   .o2m .modal-dialog{margin:0;max-width:100%}
   .o2m .modal-content{border-radius:0;min-height:100dvh}
@@ -109,9 +217,10 @@
         <button type="button" class="x" data-bs-dismiss="modal" aria-label="Cerrar">&times;</button>
       </div>
 
-      <div class="o2m-riel" id="o2mRiel"></div>
-
-      <div class="o2m-body" id="o2mBody"></div>
+      <div class="o2m-shell" id="o2mShell">
+        <nav class="o2m-riel" id="o2mRiel" style="display:none"></nav>
+        <div class="o2m-body" id="o2mBody"></div>
+      </div>
 
       <div class="o2m-foot">
         <button type="button" class="btn btn-outline-secondary btn-sm px-3"
@@ -120,8 +229,8 @@
         </button>
         <span class="sp"></span>
         <span id="o2mHint" class="text-muted" style="font-size:.78rem;font-weight:600"></span>
-        <button type="button" class="btn btn-dark btn-sm px-4" style="min-height:44px" id="o2mSig">
-          Siguiente<i class="bi bi-chevron-right ms-1"></i>
+        <button type="button" class="btn btn-danger btn-sm px-4 fw-bold" style="min-height:44px;display:none" id="o2mSig">
+          <i class="bi bi-check-lg me-1"></i>Crear orden
         </button>
       </div>
 
@@ -144,7 +253,10 @@ window.OT2C = (function(){
      - El levantamiento son DOS entradas distintas: la asignada y la de
        descubrimiento. Daniel: "hay una que es muy importante, que es
        donde el técnico lo hace por descubrimiento; eso es tremendamente
-       potente, no lo excluyas". */
+       potente, no lo excluyas".
+     - 2026-08-27: Daniel, mirando esta misma grilla: "van a ser más de una
+       docena, porque ahora vamos a empezar a trabajar con eso" -- de ahí
+       el buscador arriba de la grilla (ver pintarTipo/pintarTipoGrid). */
   var TIPOS = [
     {v:'instalacion',       n:'Instalación',            i:'bi-tools',              l:'Montar equipos nuevos donde el cliente'},
     {v:'preventiva',        n:'Mantención preventiva',  i:'bi-shield-check',       l:'Mantención programada del plan'},
@@ -171,97 +283,188 @@ window.OT2C = (function(){
   ];
 
   var S = {};   // estado del formulario
-  var paso = 0, modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
+  var fase = 'origen';   // 'origen' → pantalla de origen. 'form' → formulario único con scroll.
+  var anclaActiva = null;
+  var modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
+  var scrollObs = null;
 
   function reset(){
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
-         ticket_id:null, visto:{}};
-    paso = 0;
+         ticket_id:null,
+         // Origen "Factura o boleta": documento ERP de donde salió el
+         // cliente (trazabilidad, ver crear()) y sus líneas de producto
+         // (sugerencia informativa en la sección Equipos).
+         doc_origen:null, doc_lineas:[],
+         // 26-08-2026: Capacitación/Control de calidad arman su trabajo
+         // con productos del catálogo o tareas sueltas (sin plantilla) en
+         // vez de un checklist único.
+         tareas_manuales:[],
+         // 26-08-2026: Trabajo de bodega -- observación + fotos, reemplaza
+         // por completo el checklist/catálogo de equipos para este tipo.
+         bodega_obs:'', bodega_fotos:[],
+         _tipoFiltro:''};
+    fase = 'origen';
+    anclaActiva = null;
   }
 
   function esInterno(){ return S.origen === 'interno' ||
     (S.tipo && (TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno); }
 
-  /* Los pasos cambian según el origen: un trabajo interno no tiene cliente
-     ni datos de acceso al lugar (Daniel: "si es interna, no debería existir
-     esta"). */
+  /* Secciones del formulario único (fase "form"). "Origen" YA NO vive acá
+     -- es una pantalla propia, aparte (ver pintar()). Un trabajo interno
+     no tiene cliente ni datos de acceso al lugar (Daniel: "si es interna,
+     no debería existir esta"). La etiqueta de "equipos" cambia según el
+     tipo para que el ancla ya anticipe qué se va a pedir ahí. */
   function pasos(){
-    var p = [{k:'origen', n:'Origen'}, {k:'tipo', n:'Tipo'}];
+    var p = [{k:'tipo', n:'Tipo'}];
     if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
     p.push({k:'detalle', n:'Detalle'});
     p.push({k:'agenda',  n:'Agenda'});
     p.push({k:'tecnicos',n:'Técnicos'});
-    p.push({k:'equipos', n:esInterno() ? 'Checklist' : 'Equipos'});
+    p.push({k:'equipos', n: S.tipo==='revision_interna' ? 'Evidencia' : (esInterno() ? 'Trabajo' : 'Equipos')});
     p.push({k:'revisar', n:'Revisar'});
     return p;
   }
 
+  /* completo(k) ya NO gatilla el avance (no hay pasos que avanzar) -- solo
+     decide el check verde de cada ancla y la validación final al crear. */
   function completo(k){
     switch(k){
-      case 'origen':   return !!S.origen;
       case 'tipo':     return !!S.tipo;
       case 'cliente':  return !!S.cliente;
       case 'detalle':  return true;                       // el título se autogenera
       case 'agenda':   return !!S.fecha;
       case 'tecnicos': return true;                       // asignar después es válido
       case 'equipos':
-        if (esInterno()) return !!S.plantilla_suelta;
+        // 26-08-2026: "Trabajo interno" ya no es un solo criterio genérico.
+        if (S.tipo === 'revision_interna')
+          return !!(S.bodega_obs && S.bodega_obs.trim()) && S.bodega_fotos.length > 0;
+        if (esInterno())
+          return S.tareas_manuales.length > 0;
         return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; })
                && S.acceso.ascensor !== null && S.acceso.estacionamiento !== null;
       default: return false;
     }
   }
 
-  /* El verde solo aparece en pasos que YA SE VISITARON y quedaron
-     completos. Sin esta condición, "Detalle" y "Técnicos" nacían en verde
-     —porque son válidos vacíos— y daban a entender que ya estaban hechos
-     sin que nadie los hubiera mirado. */
-  function riel(){
-    var ps = pasos();
-    document.getElementById('o2mRiel').innerHTML = ps.map(function(p,i){
-      var listo = S.visto[p.k] && completo(p.k);
-      var cls = i===paso ? 'on' : (listo ? 'ok' : '');
-      var ico = (listo && i!==paso) ? '<i class="bi bi-check-lg"></i>' : (i+1);
-      return '<button type="button" class="o2m-p '+cls+'" onclick="OT2C.ir('+i+')">'+
-             '<span class="c">'+ico+'</span>'+p.n+'</button>';
-    }).join('');
-  }
-
-  function ir(i){
-    var ps = pasos();
-    if (i < 0 || i >= ps.length) return;
-    // Solo deja saltar hacia adelante si lo anterior está completo
-    if (i > paso) { for (var k=paso; k<i; k++) if (!completo(ps[k].k)) return; }
-    paso = i; pintar();
-  }
-
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-  /* ── Pintado de cada paso ──────────────────────────────────────────── */
-  function pintar(){
-    var ps0 = pasos();
-    if (ps0[paso]) S.visto[ps0[paso].k] = true;   // este paso ya se miró
-    riel();
-    var ps = pasos(), k = ps[paso].k, b = document.getElementById('o2mBody');
-    document.getElementById('o2mAtras').style.visibility = paso===0 ? 'hidden' : 'visible';
-    var sig = document.getElementById('o2mSig');
-    sig.innerHTML = (k==='revisar')
-      ? '<i class="bi bi-check-lg me-1"></i>Crear orden'
-      : 'Siguiente<i class="bi bi-chevron-right ms-1"></i>';
-    sig.className = (k==='revisar') ? 'btn btn-danger btn-sm px-4 fw-bold' : 'btn btn-dark btn-sm px-4';
-    document.getElementById('o2mHint').textContent = completo(k) ? '' : 'Completa este paso para seguir';
+  /* ── Nav de anclas: solo dibuja/actualiza el riel, nunca el contenido.
+     Se llama después de CUALQUIER cambio que afecte un check verde. ────── */
+  function pintarAnclas(){
+    var nav = document.getElementById('o2mRiel');
+    if (!nav) return;
+    if (fase !== 'form'){ nav.style.display = 'none'; return; }
+    nav.style.display = '';
+    var ps = pasos();
+    nav.innerHTML = ps.map(function(p,i){
+      var listo = completo(p.k);
+      var activo = (p.k === anclaActiva);
+      var cls = (activo?'on ':'') + (listo?'ok':'');
+      var ico = listo ? '<i class="bi bi-check-lg"></i>' : '';
+      var linea = i>0 ? '<span class="o2m-line '+(completo(ps[i-1].k)?'ok':'')+'"></span>' : '';
+      return linea + '<button type="button" class="o2m-step '+cls+'" onclick="OT2C.irAncla(\''+p.k+'\')" title="'+esc(p.n)+'">'+
+             '<span class="o2m-circle">'+ico+'</span><span class="o2m-label">'+esc(p.n)+'</span></button>';
+    }).join('');
+  }
+  // Alias corto reusado por handlers inline generados en varias funciones.
+  function refrescarAnclas(){ pintarAnclas(); }
 
-    if (k==='origen')   return pintarOrigen(b);
-    if (k==='tipo')     return pintarTipo(b);
-    if (k==='cliente')  return pintarCliente(b);
-    if (k==='detalle')  return pintarDetalle(b);
-    if (k==='agenda')   return pintarAgenda(b);
-    if (k==='tecnicos') return pintarTecnicos(b);
-    if (k==='equipos')  return pintarEquipos(b);
-    if (k==='revisar')  return pintarRevisar(b);
+  /* Clic en un ancla: scroll suave a la sección. NUNCA bloquea -- Daniel:
+     "no como paginación que bloquea avanzar". */
+  function irAncla(k){
+    if (k === 'origen'){ irAOrigen(); return; }
+    var el = document.getElementById('o2mSec-'+k);
+    if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  function irAOrigen(){
+    fase = 'origen';
+    anclaActiva = null;
+    pintar();
+  }
+
+  /* ── Scrollspy simple: qué sección está más arriba del viewport visible
+     manda el ancla "activa" (resaltada), sin bloquear nada. ──────────── */
+  function setupScrollspy(){
+    if (scrollObs){ try{ scrollObs.disconnect(); }catch(_){} scrollObs = null; }
+    if (!('IntersectionObserver' in window)) return;
+    var body = document.getElementById('o2mBody');
+    if (!body) return;
+    scrollObs = new IntersectionObserver(function(entries){
+      var visibles = entries.filter(function(e){ return e.isIntersecting; })
+        .sort(function(a,b){ return a.boundingClientRect.top - b.boundingClientRect.top; });
+      if (!visibles.length) return;
+      var k = visibles[0].target.id.replace('o2mSec-', '');
+      if (k !== anclaActiva){ anclaActiva = k; pintarAnclas(); }
+    }, {root: body, rootMargin: '0px 0px -70% 0px', threshold: 0});
+    body.querySelectorAll('.o2m-sec').forEach(function(sec){ scrollObs.observe(sec); });
+  }
+
+  /* ── Pintado maestro ──────────────────────────────────────────────── */
+  function pintar(){
+    var atras = document.getElementById('o2mAtras'), sig = document.getElementById('o2mSig');
+    var shell = document.getElementById('o2mShell'), body = document.getElementById('o2mBody');
+
+    if (fase !== 'form'){
+      atras.style.visibility = 'hidden';
+      sig.style.display = 'none';
+      document.getElementById('o2mHint').textContent = '';
+      document.getElementById('o2mRiel').style.display = 'none';
+      body.className = 'o2m-body solo';
+      return pintarOrigen(body);
+    }
+
+    atras.style.visibility = 'visible';
+    sig.style.display = '';
+    body.className = 'o2m-body';
+    document.getElementById('o2mSub').textContent = 'Completa lo que necesites — puedes moverte libremente';
+    return pintarFormulario();
+  }
+
+  /* Construye TODAS las secciones del formulario largo de una sola vez y
+     pinta cada una en su propio contenedor -- así cada pintarX() puede
+     re-renderizarse sola después (p.ej. al tildar un técnico) sin volver
+     a construir el DOM entero ni perder la posición del scroll. */
+  function pintarFormulario(){
+    var ps = pasos();
+    var body = document.getElementById('o2mBody');
+    body.innerHTML = ps.map(function(p){
+      return '<section class="o2m-sec" id="o2mSec-'+p.k+'"><div id="o2mSec-'+p.k+'-b"></div></section>';
+    }).join('');
+    ps.forEach(function(p){
+      var b = document.getElementById('o2mSec-'+p.k+'-b');
+      if (!b) return;
+      if (p.k==='tipo')     pintarTipo(b);
+      if (p.k==='cliente')  pintarCliente(b);
+      if (p.k==='detalle')  pintarDetalle(b);
+      if (p.k==='agenda')   pintarAgenda(b);
+      if (p.k==='tecnicos') pintarTecnicos(b);
+      if (p.k==='equipos')  pintarEquipos(b);
+      if (p.k==='revisar')  pintarRevisar(b);
+    });
+    pintarAnclas();
+    setupScrollspy();
+  }
+
+  /* Re-pinta solo la sección `k` (su propio contenedor) + refresca anclas.
+     Uso: cuando cambia algo que solo afecta a ESA sección (p.ej. elegir
+     tipo puede además cambiar qué muestra "equipos", así que ese caso
+     refresca dos secciones -- ver setTipo()). */
+  function repintarSeccion(k){
+    var b = document.getElementById('o2mSec-'+k+'-b');
+    if (!b) return;
+    if (k==='tipo')     pintarTipo(b);
+    if (k==='cliente')  pintarCliente(b);
+    if (k==='detalle')  pintarDetalle(b);
+    if (k==='agenda')   pintarAgenda(b);
+    if (k==='tecnicos') pintarTecnicos(b);
+    if (k==='equipos')  pintarEquipos(b);
+    if (k==='revisar')  pintarRevisar(b);
+    pintarAnclas();
   }
 
   function pintarOrigen(b){
@@ -272,27 +475,48 @@ window.OT2C = (function(){
         return '<button type="button" class="o2m-op '+(S.origen===o.v?'sel':'')+'" onclick="OT2C.setOrigen(\''+o.v+'\')">'+
           '<i class="bi '+o.i+' ic"></i><span class="n">'+o.n+'</span><span class="l">'+o.l+'</span></button>';
       }).join('') +'</div>'+
-      (S.origen && S.origen!=='cliente' && S.origen!=='interno'
+      // "Factura o boleta" ya está conectado (ver setOrigen/_o2mAbrirBusquedaDocumento):
+      // abre el buscador ERP real y de ahí sale el cliente solo. El aviso de
+      // "esto todavía no hace nada" queda SOLO para ticket/cotización, que
+      // Daniel no pidió conectar hoy.
+      (S.origen && S.origen!=='cliente' && S.origen!=='interno' && S.origen!=='documento'
         ? '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
-          'Por ahora este origen se trabaja eligiendo el cliente a mano en el paso siguiente. '+
-          'La búsqueda por ticket, cotización y documento del ERP se conecta en la próxima etapa.</div>'
+          'Por ahora este origen se trabaja eligiendo el cliente a mano dentro del formulario. '+
+          'La búsqueda por ticket y cotización se conecta en la próxima etapa.</div>'
         : '');
   }
 
+  /* 2026-08-27 (Daniel: "van a ser más de una docena"): buscador ARRIBA de
+     la grilla. El input vive fuera de pintarTipoGrid() a propósito -- si
+     se re-pintara junto con la grilla en cada tecla, el campo perdería el
+     foco a cada letra. */
   function pintarTipo(b){
-    document.getElementById('o2mSub').textContent = '¿Qué trabajo es?';
-    var lista = S.origen==='interno' ? TIPOS.filter(function(t){return t.interno;}) : TIPOS;
+    var lista0 = S.origen==='interno' ? TIPOS.filter(function(t){return t.interno;}) : TIPOS;
     b.innerHTML = '<h6 class="t">Tipo de orden de trabajo</h6>'+
       '<p class="d">Define el checklist, si alimenta la ficha del cliente y qué se le exige al cerrar.</p>'+
-      '<div class="o2m-grid">'+ lista.map(function(t,i){
-        var sel = (S.tipo===t.v && !!S.descubrimiento === !!t.descubrimiento);
-        return '<button type="button" class="o2m-op '+(sel?'sel':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
-          '<i class="bi '+t.i+' ic"></i><span class="n">'+t.n+'</span><span class="l">'+t.l+'</span></button>';
-      }).join('') +'</div>';
+      (lista0.length > 6
+        ? '<div class="input-group mb-3"><span class="input-group-text"><i class="bi bi-search"></i></span>'+
+          '<input class="form-control" id="o2mTipoQ" placeholder="Buscar tipo… (ej: instalación, bodega)" '+
+          'value="'+esc(S._tipoFiltro)+'" oninput="OT2C.filtrarTipo(this.value)" autocomplete="off"></div>'
+        : '')+
+      '<div class="o2m-grid" id="o2mTipoGrid"></div>';
+    pintarTipoGrid();
   }
+  function pintarTipoGrid(){
+    var g = document.getElementById('o2mTipoGrid'); if (!g) return;
+    var lista = S.origen==='interno' ? TIPOS.filter(function(t){return t.interno;}) : TIPOS;
+    var q = (S._tipoFiltro||'').trim().toLowerCase();
+    if (q) lista = lista.filter(function(t){
+      return t.n.toLowerCase().indexOf(q)>=0 || (t.l||'').toLowerCase().indexOf(q)>=0; });
+    g.innerHTML = lista.length ? lista.map(function(t){
+      var sel = (S.tipo===t.v && !!S.descubrimiento === !!t.descubrimiento);
+      return '<button type="button" class="o2m-op '+(sel?'sel':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
+        '<i class="bi '+t.i+' ic"></i><span class="n">'+t.n+'</span><span class="l">'+t.l+'</span></button>';
+    }).join('') : '<div class="text-muted small" style="grid-column:1/-1">Sin resultados para "'+esc(S._tipoFiltro)+'".</div>';
+  }
+  function filtrarTipo(v){ S._tipoFiltro = v; pintarTipoGrid(); }
 
   function pintarCliente(b){
-    document.getElementById('o2mSub').textContent = '¿Para qué cliente?';
     b.innerHTML = '<h6 class="t">Cliente</h6>'+
       '<p class="d">Busca por razón social o RUT. Si no tiene ficha todavía, créala primero en Clientes.</p>'+
       '<div class="input-group mb-3"><span class="input-group-text"><i class="bi bi-search"></i></span>'+
@@ -300,38 +524,51 @@ window.OT2C = (function(){
       'oninput="OT2C.buscarCli(this.value)" autocomplete="off"></div>'+
       '<div id="o2mCliRes" class="o2m-lista"></div>'+
       (S.cliente ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
-        '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado: <b>'+esc(S.cliente.nombre)+'</b></div>' : '');
-    setTimeout(function(){ var i=document.getElementById('o2mCliQ'); if(i) i.focus(); }, 120);
+        '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado: <b>'+esc(S.cliente.nombre)+'</b>'+
+        (S.doc_origen ? ' · resuelto desde el documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+'</b>' : '')+
+        '</div>' : '');
   }
 
   function pintarDetalle(b){
-    document.getElementById('o2mSub').textContent = 'Detalle del trabajo';
     b.innerHTML = '<h6 class="t">¿Qué hay que hacer?</h6>'+
       '<p class="d">Si dejas el título vacío se arma solo con el tipo y la fecha.</p>'+
       '<label class="fl">Título</label>'+
       '<input class="form-control mb-3" id="o2mTit" value="'+esc(S.titulo)+'" maxlength="200" '+
-      'placeholder="Ej: Instalación sala de musculación" oninput="OT2C.S.titulo=this.value">'+
+      'placeholder="Ej: Instalación sala de musculación" oninput="OT2C.setTitulo(this.value)">'+
       '<label class="fl">Descripción</label>'+
-      '<textarea class="form-control" id="o2mDesc" rows="4" maxlength="2000" '+
+      '<textarea class="form-control mb-3" id="o2mDesc" rows="4" maxlength="2000" '+
       'placeholder="Contexto para el técnico: qué se espera, qué llevar, con quién coordinar…" '+
-      'oninput="OT2C.S.descripcion=this.value">'+esc(S.descripcion)+'</textarea>';
+      'oninput="OT2C.setDescripcion(this.value)">'+esc(S.descripcion)+'</textarea>'+
+      // 2026-08-27 (Daniel: "Capacitación... debe poder asociarse a una
+      // nota de venta interna, documento interno, opcional"): reusa el
+      // mismo S.doc_origen que ya alimenta factura_tido/factura_nudo en
+      // crear() -- una nota de venta interna (NVI) es, para efectos de
+      // trazabilidad en Finanzas, el mismo tipo de referencia que una
+      // factura/boleta, solo que se escribe a mano en vez de buscarla en
+      // el ERP (no amerita todo el buscador para un dato opcional).
+      (S.tipo === 'capacitacion'
+        ? '<label class="fl">N° de nota de venta interna (opcional)</label>'+
+          '<input class="form-control" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
+          'value="'+esc((S.doc_origen && S.doc_origen.tido==='NVI') ? S.doc_origen.nudo : '')+'" '+
+          'oninput="OT2C.setNotaVentaInterna(this.value)">'+
+          '<small class="text-muted d-block mt-1" style="font-size:.72rem">Queda registrada en la OT (Finanzas) como nota de venta interna NVI.</small>'
+        : '');
   }
 
   function pintarAgenda(b){
-    document.getElementById('o2mSub').textContent = '¿Cuándo se hace?';
     b.innerHTML = '<h6 class="t">Agenda</h6>'+
       '<p class="d">La jornada es de 08:00 a 17:00, con colación de 13:00 a 14:00. '+
       'Puedes salirte de ese horario: no se bloquea, solo se avisa.</p>'+
       '<div class="row g-3">'+
         '<div class="col-md-4"><label class="fl">Fecha programada *</label>'+
         '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
-        'onchange="OT2C.S.fecha=this.value; OT2C.avisosAgenda()"></div>'+
+        'onchange="OT2C.setFecha(this.value)"></div>'+
         '<div class="col-md-4"><label class="fl">Hora inicio</label>'+
         '<input type="time" class="form-control" value="'+esc(S.hini)+'" '+
-        'onchange="OT2C.S.hini=this.value; OT2C.avisosAgenda()"></div>'+
+        'onchange="OT2C.setHora(\'hini\',this.value)"></div>'+
         '<div class="col-md-4"><label class="fl">Hora término</label>'+
         '<input type="time" class="form-control" value="'+esc(S.hfin)+'" '+
-        'onchange="OT2C.S.hfin=this.value; OT2C.avisosAgenda()"></div>'+
+        'onchange="OT2C.setHora(\'hfin\',this.value)"></div>'+
       '</div><div id="o2mAvisos"></div>';
     avisosAgenda();
   }
@@ -353,7 +590,6 @@ window.OT2C = (function(){
   }
 
   function pintarTecnicos(b){
-    document.getElementById('o2mSub').textContent = '¿Quién lo hace?';
     b.innerHTML = '<h6 class="t">Técnicos asignados</h6>'+
       '<p class="d">Puedes dejarlo sin asignar y decidirlo después. El primero que marques queda como líder.</p>'+
       '<div id="o2mTecList" class="o2m-lista"><div class="p-3 text-muted small">Cargando…</div></div>';
@@ -377,11 +613,30 @@ window.OT2C = (function(){
         if(c) c.innerHTML='<div class="p-3 text-danger small">No se pudo cargar la lista de técnicos.</div>'; });
   }
 
+  /* 26-08-2026: "Trabajo interno" dejó de ser un único camino (elegir UNA
+     plantilla). Ahora ramifica en tres UI distintas según el tipo:
+       · revision_interna (Trabajo de bodega) → pintarBodegaEvidencia()
+       · capacitacion / control_calidad        → pintarTrabajoInterno()
+       · cualquier otro tipo (normal, con cliente) → equipos + acceso, igual que siempre */
   function pintarEquipos(b){
-    if (esInterno()) return pintarChecklistSuelto(b);
-    document.getElementById('o2mSub').textContent = 'Equipos y acceso al lugar';
+    if (S.tipo === 'revision_interna') return pintarBodegaEvidencia(b);
+    if (esInterno()) return pintarTrabajoInterno(b);
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
       '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
+      // Origen "Factura o boleta": las líneas del documento son solo una
+      // REFERENCIA — no crean equipos automáticamente en la ficha (eso
+      // exige matchear SKU contra la clasificación del catálogo, un paso
+      // que no se resuelve acá). Si el equipo ya existe en la ficha del
+      // cliente, aparece abajo igual; si no, hay que darlo de alta primero.
+      (S.doc_origen && S.doc_lineas && S.doc_lineas.length
+        ? '<div class="o2m-aviso" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a8a">'+
+          '<i class="bi bi-receipt me-1"></i>El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+
+          '</b> trae estos productos. Si alguno no aparece en la lista de abajo, primero hay que '+
+          'agregarlo como equipo en la ficha del cliente:'+
+          '<ul>'+S.doc_lineas.map(function(l){
+            return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
+          }).join('')+'</ul></div>'
+        : '')+
       '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>'+
       '<h6 class="t mt-4">Acceso al lugar</h6>'+
       '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
@@ -398,10 +653,10 @@ window.OT2C = (function(){
         '<option value="0" '+(S.acceso.estacionamiento===0?'selected':'')+'>No</option></select></div>'+
         '<div class="col-md-2"><label class="fl">Piso</label>'+
         '<input type="number" class="form-control" min="-5" max="30" value="'+esc(S.acceso.piso)+'" '+
-        'placeholder="Opc." oninput="OT2C.S.acceso.piso=this.value"></div>'+
+        'placeholder="Opc." oninput="OT2C.setAccesoTexto(\'piso\',this.value)"></div>'+
         '<div class="col-md-4"><label class="fl">Notas de acceso</label>'+
         '<input class="form-control" maxlength="500" value="'+esc(S.acceso.notas)+'" '+
-        'placeholder="Opcional" oninput="OT2C.S.acceso.notas=this.value"></div>'+
+        'placeholder="Opcional" oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
       '</div>';
     cargarEquipos();
   }
@@ -450,35 +705,135 @@ window.OT2C = (function(){
     });
   }
 
-  function pintarChecklistSuelto(b){
-    document.getElementById('o2mSub').textContent = 'Checklist del trabajo';
-    b.innerHTML = '<h6 class="t">Checklist</h6>'+
-      '<p class="d">El trabajo interno no lleva equipos del cliente, pero sí necesita su checklist.</p>'+
-      '<select class="form-select" id="o2mPlantSuelta" onchange="OT2C.S.plantilla_suelta=this.value">'+
-      '<option value="">Cargando…</option></select>';
-    fetch('/mantenciones/api/plantillas', {credentials:'same-origin'})
-      .then(function(r){return r.json();})
-      .then(function(j){
-        cachePlant = (j.plantillas||[]).filter(function(p){return p.activa;});
-        var s = document.getElementById('o2mPlantSuelta'); if(!s) return;
-        s.innerHTML = '<option value="">Elige el checklist…</option>'+
-          cachePlant.map(function(p){ return '<option value="'+p.id+'" '+
-            (S.plantilla_suelta==p.id?'selected':'')+'>'+esc(p.nombre)+'</option>'; }).join('');
-      });
+  /* Capacitación / Control de calidad (26-08-2026): en vez de elegir UNA
+     plantilla fija, se arma la lista de trabajo con productos del
+     Catálogo (tkaOpen) y/o tareas manuales descritas a mano. Cada entrada
+     se guarda como {titulo, descripcion} -- el backend las crea como
+     tareas SIN plantilla (mant_visita_tareas.plantilla_id queda NULL, tal
+     como ya preveía su propio comentario "NULL si tarea manual"). */
+  function pintarTrabajoInterno(b){
+    b.innerHTML = '<h6 class="t">Productos y tareas</h6>'+
+      '<p class="d">Agrega al menos un producto del catálogo o describe una tarea manual.</p>'+
+      '<div class="d-flex gap-2 mb-2 flex-wrap">'+
+      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
+      '<i class="bi bi-tag me-1"></i>Producto del catálogo</button>'+
+      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
+      '<i class="bi bi-plus-lg me-1"></i>Tarea manual</button></div>'+
+      '<div class="o2m-lista" id="o2mTareasList"></div>';
+    pintarTareasManuales();
+  }
+  function pintarTareasManuales(){
+    var c = document.getElementById('o2mTareasList'); if(!c) return;
+    if (!S.tareas_manuales.length){
+      c.innerHTML = '<div class="p-3 text-muted small">Sin productos ni tareas agregadas todavía.</div>';
+      return;
+    }
+    c.innerHTML = S.tareas_manuales.map(function(tm,i){
+      return '<div class="o2m-it"><i class="bi bi-check2-square text-muted"></i>'+
+        '<span style="flex:1" class="nm">'+esc(tm.titulo)+'</span>'+
+        '<button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
+        'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></div>';
+    }).join('');
+  }
+  function abrirProductoCatalogo(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de catálogo no está disponible en esta pantalla.', {type:'error'});
+      return;
+    }
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['catalogo'],
+      onSeleccionar: function(items){
+        (items||[]).forEach(function(it){
+          if (!it || !it.sku) return;
+          S.tareas_manuales.push({
+            titulo: 'Producto: ' + it.sku + (it.nombre ? (' — ' + it.nombre) : '') + (it.qty ? (' × ' + it.qty) : ''),
+            descripcion: ''
+          });
+        });
+        pintarTareasManuales();
+        refrescarAnclas();
+      }
+    });
+  }
+  async function agregarTareaManual(){
+    var texto = await ilusPrompt({
+      title: 'Tarea manual',
+      message: 'Describe la tarea (ej: "Pegar baranda sala 2")',
+      placeholder: 'Ej: Armar repisa de bodega',
+      required: true,
+    });
+    if (!texto) return;
+    S.tareas_manuales.push({titulo: texto.slice(0,300), descripcion:''});
+    pintarTareasManuales();
+    refrescarAnclas();
+  }
+  function quitarTareaManual(i){
+    S.tareas_manuales.splice(i,1);
+    pintarTareasManuales();
+    refrescarAnclas();
+  }
+
+  /* Trabajo de bodega (26-08-2026, Daniel: "hoy mandaron a pegar una
+     baranda, después a pegar unas pizarras" -- tareas cortas, no
+     equipos de catálogo). Reemplaza POR COMPLETO el checklist/catálogo:
+     mínimo observación + 1 foto. Sin selects de historial (nada que
+     paginar acá -- solo texto + fotos, así que la exigencia de Daniel de
+     "que soporte cinco mil, cincuenta mil" no tiene ningún select que
+     pueda degradar con el volumen). */
+  function pintarBodegaEvidencia(b){
+    b.innerHTML = '<h6 class="t">Evidencia del trabajo</h6>'+
+      '<p class="d">Trabajo de bodega no usa checklist: basta con describir qué se hizo y dejar fotos.</p>'+
+      '<label class="fl">¿Qué se hizo? *</label>'+
+      '<textarea class="form-control mb-3" id="o2mBodegaObs" rows="3" maxlength="1000" '+
+      'placeholder="Ej: Se pegó la baranda de la sala 2 y se instalaron las pizarras del pasillo." '+
+      'oninput="OT2C.setBodegaObs(this.value)">'+esc(S.bodega_obs)+'</textarea>'+
+      '<label class="fl">Fotos de evidencia *</label>'+
+      '<div class="o2m-foto-zone" onclick="document.getElementById(\'o2mBodegaFotoInput\').click()">'+
+      '<input type="file" id="o2mBodegaFotoInput" accept="image/*" capture="environment" multiple style="display:none" '+
+      'onchange="OT2C.bodegaFotoAdd(this.files); this.value=\'\';">'+
+      '<i class="bi bi-camera-fill me-1"></i>Toca para tomar o subir fotos</div>'+
+      '<div class="o2m-foto-grid" id="o2mBodegaFotoGrid"></div>';
+    pintarBodegaFotos();
+  }
+  function bodegaFotoAdd(files){
+    for (var i=0;i<files.length;i++){
+      var f = files[i];
+      if (f && /^image\//.test(f.type)) S.bodega_fotos.push(f);
+    }
+    pintarBodegaFotos();
+    refrescarAnclas();
+  }
+  function bodegaFotoQuitar(i){
+    S.bodega_fotos.splice(i,1);
+    pintarBodegaFotos();
+    refrescarAnclas();
+  }
+  function pintarBodegaFotos(){
+    var g = document.getElementById('o2mBodegaFotoGrid'); if (!g) return;
+    g.innerHTML = S.bodega_fotos.length ? S.bodega_fotos.map(function(f,i){
+      var url = URL.createObjectURL(f);
+      return '<div class="o2m-foto-thumb"><img src="'+url+'" alt="Foto '+(i+1)+'">'+
+        '<button type="button" onclick="OT2C.bodegaFotoQuitar('+i+')" title="Quitar"><i class="bi bi-x-lg"></i></button></div>';
+    }).join('') : '<div class="text-muted small">Sin fotos todavía.</div>';
   }
 
   function pintarRevisar(b){
-    document.getElementById('o2mSub').textContent = 'Revisa antes de crear';
     var t = TIPOS.find(function(x){ return x.v===S.tipo && !!x.descubrimiento === !!S.descubrimiento; }) || {};
     var nTec = S.tecnicos.length;
-    b.innerHTML = '<h6 class="t">Resumen</h6><p class="d">Si algo no calza, vuelve al paso con un clic en el riel de arriba.</p>'+
+    var eqTxt = '—';
+    if (S.tipo === 'revision_interna') eqTxt = S.bodega_fotos.length + ' foto(s) de evidencia';
+    else if (esInterno()) eqTxt = S.tareas_manuales.length + ' producto(s)/tarea(s)';
+    else eqTxt = S.equipos.length + ' con checklist';
+    b.innerHTML = '<h6 class="t">Resumen</h6><p class="d">Si algo no calza, toca el ancla correspondiente arriba.</p>'+
       '<div id="o2mErr"></div>'+
       '<div class="o2m-res">'+
         card('Tipo', t.n || S.tipo) +
         card('Cliente', esInterno() ? 'Trabajo interno (sin cliente)' : (S.cliente ? S.cliente.nombre : '—')) +
+        (S.doc_origen ? card('Documento origen', S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '') +
         card('Programada', S.fecha ? (S.fecha + ' · ' + S.hini + '–' + S.hfin) : '—') +
         card('Técnicos', nTec ? (nTec + (nTec===1?' asignado':' asignados')) : 'Sin asignar') +
-        card('Equipos', esInterno() ? '—' : (S.equipos.length + ' con checklist')) +
+        card('Trabajo', eqTxt) +
         card('Acceso', esInterno() ? '—' :
              ((S.acceso.ascensor?'Con ascensor':'Sin ascensor') + ' · ' +
               (S.acceso.estacionamiento?'con estacionamiento':'sin estacionamiento') +
@@ -488,104 +843,169 @@ window.OT2C = (function(){
   }
 
   /* ── Acciones ─────────────────────────────────────────────────────── */
-  /* Al elegir el origen se abre la RÉPLICA del formulario grande de OT
-     (templates/ot2/_modal_ot_form.html) — que es el paso siguiente que
-     Daniel quiere revisar. Esa réplica todavía no hace nada: es la
-     maqueta que él va a ir explicando.
-
-     El wizard corto de este mismo archivo sigue vivo y funcionando
-     (crea OT de verdad contra /ot/api/crear); queda accesible con
-     OT2C.abrirWizard() mientras se define cuál de los dos se queda. */
   function setOrigen(v){
     S.origen = v;
+    // El documento de origen solo tiene sentido mientras el origen siga
+    // siendo "documento" -- si el usuario cambia de idea y elige otro
+    // origen, no debe arrastrarse una referencia a un documento ajeno.
+    if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; }
     if (v==='interno'){ S.cliente=null; if(S.tipo && !(TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno) S.tipo=null; }
 
-    // Salvo el trabajo interno, todos los orígenes necesitan cliente: se
-    // pide ANTES de abrir el formulario grande, para que este ya nazca con
-    // los datos y los equipos cargados (Daniel: "que traiga los productos
-    // del ticket / de la ficha / de la cotización, y los datos del cliente
-    // también"). Al elegirlo, setCli() abre el formulario.
-    if (v !== 'interno' && !S.cliente){
-      paso = pasos().findIndex(function(p){ return p.k === 'cliente'; });
-      if (paso < 0) paso = 1;
+    // "Factura o boleta": en vez de pedir el cliente a mano, se abre el
+    // buscador ERP compartido (el mismo de Tickets/Repuestos/Cotizaciones,
+    // templates/tickets/_tka_modal.html) por tipo+número o por RUT/nombre.
+    // Al encontrar el documento, _o2mDocumentoSeleccionado() resuelve el
+    // cliente (ficha existente o nueva) y entra al formulario -- por eso
+    // este branch corre ANTES de entrar a la fase "form".
+    if (v === 'documento' && !S.cliente){
+      _o2mAbrirBusquedaDocumento();
+      return;
+    }
+
+    // Cualquier otro origen entra directo al formulario único con scroll.
+    // "Cliente" es una SECCIÓN más ahí adentro (si el origen la necesita),
+    // no un paso bloqueante aparte -- se busca/crea igual que siempre,
+    // solo que ahora conviviendo con el resto del formulario.
+    fase = 'form';
+    anclaActiva = null;
+    pintar();
+  }
+
+  /* Abre el buscador avanzado de documentos ERP (compartido con Tickets/
+     Repuestos/Cotizaciones) para el origen "Factura o boleta". Solo lectura
+     contra el ERP Random (REGLA #4.1) -- mode:'seleccionar' no llama NINGÚN
+     endpoint propio de Tickets, solo devuelve la selección del usuario.
+     Requiere que la página que incluye este modal también incluya
+     templates/tickets/_tka_modal.html (ver templates/ot2/panel.html). */
+  function _o2mAbrirBusquedaDocumento(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de documentos ERP no está disponible en esta pantalla.', {type:'error'});
+      pintar();
+      return;
+    }
+    // Refleja "Factura o boleta" como seleccionado en la grilla ANTES de
+    // abrir el buscador (si el usuario cancela, vuelve a ver esto en vez
+    // del estado anterior). No se oculta este modal: _tka_modal.html tiene
+    // z-index 1085/1086 a propósito para flotar ENCIMA de cualquier wizard
+    // (mismo patrón ya usado en templates/tickets/cotizaciones.html).
+    pintar();
+
+    // tkaClose() limpia document.body.style.overflow al cerrarse, sin saber
+    // que este modal (Bootstrap) sigue abierto detrás -- sin esto, la
+    // página quedaría con scroll habilitado de fondo hasta que el usuario
+    // cierre también este modal. Se observa el propio cierre de tka (clase
+    // 'is-open') para devolverle el scroll-lock a este modal si sigue
+    // mostrándose, cubriendo tanto "eligió un documento" como "canceló".
+    var tkaEl = document.getElementById('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          var propio = document.getElementById('ot2ModalCrear');
+          if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+    }
+
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['doc', 'cli'],
+      onSeleccionar: _o2mDocumentoSeleccionado
+    });
+  }
+
+  /* Con el documento elegido, el ERP entrega cliente (RUT/razón social) y
+     líneas de producto. Se resuelve el cliente reusando el MISMO endpoint
+     que ya usa crearFicha() (/ot/api/cliente): si ya existe una ficha con
+     ese RUT la reutiliza, si no la crea como prospecto -- cero lógica de
+     dedup nueva. El documento (tido/nudo) queda guardado para trazar la OT
+     (ver crear(), reusa factura_tido/factura_nudo -- el mismo campo que ya
+     existe para el Paso de Finanzas, no una columna inventada). */
+  async function _o2mDocumentoSeleccionado(items, header){
+    if (!header || !header.rut || !header.cliente){
+      if (window.ilusToast) ilusToast('El documento no trajo datos de cliente identificables.', {type:'warning'});
+      pintar();
+      return;
+    }
+    if (window.ilusToast) ilusToast('Buscando la ficha del cliente…', {type:'info'});
+
+    var r = await fetch('/ot/api/cliente', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        razon_social: header.cliente || '',
+        rut: header.rut || '',
+        motivo: S.tipo || '',
+        contacto_tel: header.telefono || '',
+        contacto_email: header.email || '',
+        direccion: header.direccion || '',
+        comuna: header.comuna || ''
+      })
+    }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+
+    if (!r.ok || !r.cliente){
+      if (window.ilusToast) ilusToast(r.error || 'No pudimos identificar al cliente de ese documento.', {type:'error'});
       pintar();
       return;
     }
 
-    var form = document.getElementById('ot2ModalForm');
-    if (form){
-      var sub = document.getElementById('o2fSubtitulo');
-      if (sub){
-        var textos = {
-          cliente:   'Crea una OT para un cliente con ficha en Mantenciones.',
-          ticket:    'Crea una OT desde este ticket. El técnico la gestionará desde el módulo "Órdenes de Trabajo".',
-          cotizacion:'Crea una OT desde una cotización del sistema.',
-          documento: 'Crea una OT desde una factura o boleta del ERP.',
-          interno:   'Trabajo interno de bodega — esta OT no lleva cliente.'
-        };
-        sub.textContent = textos[v] || textos.cliente;
-      }
-      // El aviso de "sin ficha" solo tiene sentido cuando hay cliente.
-      var av = document.getElementById('o2fAvisoSinFicha');
-      if (av) av.style.display = (v === 'interno') ? 'none' : '';
+    S.doc_origen = (header.tido && header.nudo) ? {tido:header.tido, nudo:header.nudo} : null;
+    // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
+    // servicio) -- quedan como referencia informativa en la sección Equipos.
+    S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; }) : [];
 
-      // Encadenado de modales: hay que ESPERAR a que el primero termine de
-      // cerrarse. Bootstrap quita su backdrop en 'hidden.bs.modal', no al
-      // llamar hide(); abrir el segundo antes deja DOS fondos oscuros
-      // superpuestos y la pantalla se ve sucia (detectado probando en vivo).
-      var abrirForm = function(){
-        // O2F.iniciar() trae los datos del cliente (dirección, comuna,
-        // contacto) y la calidad de su ficha. Se ESPERA antes de abrir:
-        // si no, el Paso 2 nace sin dirección y el aviso de datos
-        // faltantes aparece tarde.
-        var mostrar = function(){
-          (window.__o2fModal = window.__o2fModal || new bootstrap.Modal(form)).show();
-        };
-        if (window.O2F){
-          var p = O2F.iniciar({origen:S.origen, cliente:S.cliente, ticket_id:S.ticket_id});
-          if (p && typeof p.then === 'function') return p.then(mostrar, mostrar);
-        }
-        mostrar();
-      };
-      if (modal){
-        var el = document.getElementById('ot2ModalCrear');
-        el.addEventListener('hidden.bs.modal', abrirForm, {once:true});
-        modal.hide();
-      } else {
-        abrirForm();
-      }
-      return;
+    if (window.ilusToast){
+      ilusToast('✓ ' + (r.creado ? 'Ficha creada: ' : 'Cliente encontrado: ') + r.cliente.razon_social, {type:'success'});
     }
-    pintar();
+    // Mismo camino que elegir el cliente a mano: setCli() setea S.cliente y
+    // entra al formulario único.
+    setCli(r.cliente.id, r.cliente.razon_social);
   }
+
   function setTipo(i){
     var t = TIPOS[i]; S.tipo = t.v; S.descubrimiento = !!t.descubrimiento;
     if (t.interno) S.origen = 'interno';
-    pintar();
+    // Elegir tipo puede cambiar qué pide "Cliente" (aparece/desaparece) y
+    // qué muestra "Equipos" (bodega/producto-o-tarea/normal) -- se
+    // reconstruye el formulario completo para no dejar secciones a medio
+    // armar. Si el usuario ya estaba en fase "form" esto solo reordena
+    // contenido, no lo saca del formulario.
+    if (fase === 'form') pintarFormulario(); else pintar();
   }
-  function setAcc(k,v){ S.acceso[k] = v==='' ? null : parseInt(v); riel();
-    document.getElementById('o2mHint').textContent = completo('equipos')?'':'Completa este paso para seguir'; }
+  function setAcc(k,v){ S.acceso[k] = v==='' ? null : parseInt(v); refrescarAnclas(); }
+  function setAccesoTexto(k,v){ S.acceso[k] = v; }
+  function setTitulo(v){ S.titulo = v; }
+  function setDescripcion(v){ S.descripcion = v; }
+  function setNotaVentaInterna(v){
+    var nudo = String(v||'').trim();
+    S.doc_origen = nudo ? {tido:'NVI', nudo:nudo} : null;
+  }
+  function setFecha(v){ S.fecha = v; avisosAgenda(); refrescarAnclas(); }
+  function setHora(campo, v){ S[campo] = v; avisosAgenda(); }
+  function setBodegaObs(v){ S.bodega_obs = v; }
+
   function tecTog(id){
     var i = S.tecnicos.indexOf(id);
     if (i>=0){ S.tecnicos.splice(i,1); if (S.lider===id) S.lider = S.tecnicos[0]||null; }
     else { S.tecnicos.push(id); if (!S.lider) S.lider = id; }
-    pintarTecnicos(document.getElementById('o2mBody'));
+    pintarTecnicos(document.getElementById('o2mSec-tecnicos-b'));
   }
   function eqTog(mid){
     var i = S.equipos.findIndex(function(e){ return e.maquina_id===mid; });
     if (i>=0) S.equipos.splice(i,1); else S.equipos.push({maquina_id:mid, plantilla_id:null});
-    pintarListaEquipos(); riel();
+    pintarListaEquipos(); refrescarAnclas();
   }
   function eqPlant(mid, pid){
     var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
     if (e) e.plantilla_id = pid ? parseInt(pid) : null;
-    pintarListaEquipos(); riel();
+    pintarListaEquipos(); refrescarAnclas();
   }
 
   var tBusca = null;
   function buscarCli(q){
     clearTimeout(tBusca);
-    if (!q || q.length < 2){ document.getElementById('o2mCliRes').innerHTML=''; return; }
+    if (!q || q.length < 2){ var r0=document.getElementById('o2mCliRes'); if(r0) r0.innerHTML=''; return; }
     tBusca = setTimeout(function(){
       fetch('/mantenciones/api/clientes/autocomplete?q='+encodeURIComponent(q), {credentials:'same-origin'})
         .then(function(r){return r.json();})
@@ -625,11 +1045,14 @@ window.OT2C = (function(){
         });
     }, 260);
   }
-  /* Elegido el cliente, se pasa al formulario grande ya con su contexto. */
+  /* Elegido el cliente, se refresca la sección Cliente + Equipos (los
+     equipos dependen de qué cliente es) y las anclas. */
   function setCli(id, nombre){
     S.cliente = {id:id, nombre:nombre};
     S.equipos = [];
-    setOrigen(S.origen || 'cliente');
+    if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
+    repintarSeccion('cliente');
+    repintarSeccion('equipos');
   }
 
   /* Cliente sin ficha: se crea al vuelo, diciendo POR QUÉ se crea.
@@ -670,7 +1093,25 @@ window.OT2C = (function(){
     setCli(r.cliente.id, r.cliente.razon_social);
   }
 
+  /* Valida TODAS las secciones antes de crear (ya no hay pasos que
+     bloqueen el avance, así que la validación se concentra acá). Si algo
+     falta, avisa y lleva al ancla correspondiente en vez de dejar que el
+     backend lo rechace a ciegas. */
+  function validarTodo(){
+    var ps = pasos();
+    for (var i=0;i<ps.length;i++){
+      if (ps[i].k === 'revisar') continue;
+      if (!completo(ps[i].k)){
+        if (window.ilusToast) ilusToast('Falta completar "'+ps[i].n+'"', {type:'warning'});
+        irAncla(ps[i].k);
+        return false;
+      }
+    }
+    return true;
+  }
+
   function crear(){
+    if (!validarTodo()) return;
     var body = {
       tipo_ot: S.tipo, descubrimiento: S.descubrimiento,
       cliente_id: esInterno() ? null : (S.cliente ? S.cliente.id : null),
@@ -678,11 +1119,35 @@ window.OT2C = (function(){
       fecha_programada: S.fecha, hora_inicio: S.hini, hora_fin: S.hfin,
       tecnico_user_ids: S.tecnicos, tecnico_lider_id: S.lider,
       equipos: esInterno() ? [] : S.equipos,
-      plantilla_id: esInterno() ? S.plantilla_suelta : null,
+      plantilla_id: null,
       acceso: esInterno() ? {} : S.acceso,
       ticket_id: S.ticket_id
     };
+    // 26-08-2026: Capacitación/Control de calidad -> productos/tareas
+    // sueltas. Trabajo de bodega -> UNA tarea con la observación completa.
+    // Mismo mecanismo del backend (tareas_manuales, plantilla_id NULL).
+    if (esInterno()){
+      if (S.tipo === 'revision_interna'){
+        var obs = (S.bodega_obs||'').trim();
+        body.tareas_manuales = obs ? [{titulo:'Trabajo de bodega', descripcion:obs}] : [];
+      } else {
+        body.tareas_manuales = S.tareas_manuales.slice();
+      }
+    }
+    // Trazabilidad del origen "Factura o boleta" / nota de venta interna
+    // de Capacitación: reusa el mismo campo que ya existe para el Paso de
+    // Finanzas (factura_tido/factura_nudo, ot2_api_crear) -- no se inventa
+    // una columna nueva. El backend además usa esto para dejar
+    // estado_facturacion="facturado" de una vez, así que SOLO se manda si
+    // el documento es realmente una venta (FCV/BLV/NVV/NVI/WEB) -- una
+    // Guía de Despacho o una Cotización (GDV/COV) sirven para encontrar al
+    // cliente, pero marcarlas como "facturado" sería un dato falso.
+    if (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo &&
+        ['FCV','BLV','NVV','NVI','WEB'].indexOf(S.doc_origen.tido) >= 0){
+      body.finanzas = { factura_tido: S.doc_origen.tido, factura_nudo: S.doc_origen.nudo };
+    }
     var sig = document.getElementById('o2mSig');
+    var _origSig = sig.innerHTML;
     sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
 
     fetch('/ot/api/crear', {
@@ -691,23 +1156,51 @@ window.OT2C = (function(){
       body: JSON.stringify(body)
     }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
       .then(function(res){
-        sig.disabled = false;
         if (!res.j.ok){
-          sig.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear orden';
+          sig.disabled = false; sig.innerHTML = _origSig;
           var e = document.getElementById('o2mErr');
           if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
             esc(res.j.error || 'No se pudo crear la orden.')+'</div>';
+          irAncla('revisar');
           return;
         }
         if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
-        location.href = res.j.ot_url;
+        // Trabajo de bodega: la evidencia se sube DESPUÉS de crear la OT
+        // (necesita el visita_id). Vía dedicada (no "ejecutar") porque
+        // quien crea la OT normalmente NO es el técnico asignado todavía
+        // -- ver mant_visita_fotos_subir_inicial (app.py). Si algo falla
+        // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
+        if (S.tipo === 'revision_interna' && S.bodega_fotos.length){
+          _subirEvidenciaBodega(res.j.visita_id).finally(function(){
+            location.href = res.j.ot_url;
+          });
+        } else {
+          location.href = res.j.ot_url;
+        }
       })
       .catch(function(){
-        sig.disabled = false;
-        sig.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear orden';
+        sig.disabled = false; sig.innerHTML = _origSig;
         var e = document.getElementById('o2mErr');
         if (e) e.innerHTML = '<div class="o2m-err">Se cortó la conexión. Intenta de nuevo.</div>';
       });
+  }
+
+  async function _subirEvidenciaBodega(vid){
+    try{
+      var fd = new FormData();
+      S.bodega_fotos.forEach(function(f){ fd.append('foto', f); });
+      fd.append('tipo_foto', 'general');
+      fd.append('descripcion', (S.bodega_obs||'').slice(0,500));
+      var r = await fetch('/mantenciones/api/visitas/'+vid+'/fotos/subir-inicial', {
+        method:'POST', credentials:'same-origin', body: fd
+      }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+      if (!r.ok && window.ilusToast){
+        ilusToast('La OT se creó, pero las fotos no se subieron automáticamente. '+
+          'Súbelas desde el detalle de la OT.', {type:'warning', duration:6000});
+      }
+    }catch(_){
+      if (window.ilusToast) ilusToast('La OT se creó, pero hubo un problema subiendo las fotos.', {type:'warning'});
+    }
   }
 
   /* ── API PÚBLICA — un solo modal para todos los contextos ───────────
@@ -718,7 +1211,8 @@ window.OT2C = (function(){
      de cliente, desde ticket".
 
      Se incluye el partial en la página y se abre con el contexto que ya
-     se conoce; los pasos que quedan resueltos se saltan solos.
+     se conoce; si ya se sabe el origen (y el cliente, si corresponde) se
+     entra directo al formulario -- si no, se pregunta el origen primero.
 
        OT2C.abrir()                                  → desde cero
        OT2C.abrir({origen:'cliente', cliente:{id:26, nombre:'Gimnasio X'}})
@@ -743,13 +1237,9 @@ window.OT2C = (function(){
       if (t){ S.tipo = t.v; S.descubrimiento = !!t.descubrimiento; }
     }
 
-    // Arranca en el primer paso que todavía falta, en vez de obligar a
-    // pasar por pantallas ya resueltas por el contexto.
-    var ps = pasos();
-    paso = 0;
-    for (var i = 0; i < ps.length - 1; i++){
-      if (completo(ps[i].k)) paso = i + 1; else break;
-    }
+    // Si ya se sabe el origen (y el cliente, cuando corresponde), se salta
+    // la pantalla de Origen y se entra directo al formulario único.
+    fase = (S.origen && (S.origen==='interno' || S.cliente)) ? 'form' : 'origen';
 
     modal = modal || new bootstrap.Modal(document.getElementById('ot2ModalCrear'));
     pintar(); modal.show();
@@ -757,32 +1247,27 @@ window.OT2C = (function(){
 
   document.addEventListener('DOMContentLoaded', function(){
     var a = document.getElementById('o2mAtras'), s = document.getElementById('o2mSig');
-    if (a) a.onclick = function(){ ir(paso-1); };
-    if (s) s.onclick = function(){
-      var ps = pasos();
-      if (ps[paso].k === 'revisar') return crear();
-      if (!completo(ps[paso].k)){
-        if (window.ilusToast) ilusToast('Completa este paso para seguir', {type:'warning'});
-        return;
-      }
-      ir(paso+1);
-    };
+    // "Atrás" en la fase "form" vuelve a elegir el origen (Daniel: "Origen
+    // se mantiene como pantalla propia"). En la pantalla de Origen no hay
+    // nada antes -- el botón queda oculto (ver pintar()).
+    if (a) a.onclick = function(){ if (fase === 'form') irAOrigen(); };
+    if (s) s.onclick = function(){ crear(); };
     if (new URLSearchParams(location.search).get('crear') === '1') abrir();
   });
 
-  /* Wizard corto, el que SÍ crea OT de verdad contra /ot/api/crear.
-     Queda accesible mientras se decide cuál de los dos flujos se queda:
-     OT2C.abrirWizard() desde la consola o desde un botón futuro. */
-  function abrirWizard(opts){
-    var form = document.getElementById('ot2ModalForm');
-    var tmp = form && form.id;
-    if (form) form.id = '__ot2FormOculto';   // que setOrigen no lo encuentre
-    abrir(opts);
-    if (form) setTimeout(function(){ form.id = tmp; }, 50);
-  }
+  /* Alias histórico: hasta el 2026-08-26 esto defendía el "wizard corto"
+     contra el hijack automático a #ot2ModalForm (la réplica O2F). Ese
+     hijack se retiró (ver comentario de cabecera) -- abrir() YA ES el
+     único camino, así que abrirWizard() queda como alias por compatibilidad
+     con quien lo haya llamado antes. */
+  function abrirWizard(opts){ abrir(opts); }
 
-  return {abrir:abrir, abrirWizard:abrirWizard, ir:ir, setOrigen:setOrigen, setTipo:setTipo, setAcc:setAcc,
-          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli,
-          setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, S:S};
+  return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, setOrigen:setOrigen, setTipo:setTipo,
+          setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
+          setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
+          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli, filtrarTipo:filtrarTipo,
+          setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
+          abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
+          quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar};
 })();
 </script>
