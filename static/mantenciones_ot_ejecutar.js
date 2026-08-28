@@ -7347,15 +7347,47 @@ async function factAsociar(){
       return;
     }
     if (typeof ilusToast === 'function'){
-      ilusToast('✓ Factura asociada — ya puedes firmar el cierre', { type:'success' });
+      ilusToast('✓ Documento asociado — ya puedes firmar el cierre', { type:'success' });
     }
-    setTimeout(() => window.location.reload(), 900);
+    // 🔧 FIX 2026-08-28 (Daniel, urgente: "cuando... consultas una nota de
+    // venta, este se cierra cuando actualiza el dato y lo guardas... quiero
+    // que se mantenga y alimentar el formulario de manera inteligente").
+    // Acá había un `window.location.reload()`: recargaba TODA la página, lo
+    // que en la práctica cierra el modal de firma -- había que reabrirlo a
+    // mano para poder firmar el cierre. Ahora se reemplaza el bloque
+    // "factGate" (falta documento) por el mismo resumen de solo-lectura que
+    // ya se ve al recargar (mismos datos, devueltos por este mismo POST),
+    // sin salir del modal.
+    _factRenderAsociado(d.factura);
   } catch(_e){
     err.textContent = 'Error de conexión con el servidor.';
   } finally {
     btn.disabled = false;
     btn.innerHTML = orig;
   }
+}
+
+// Reemplaza en vivo el bloque "falta documento" (#factGate) por el resumen
+// de solo-lectura del documento recién asociado -- mismo markup que ya
+// renderiza el servidor cuando la OT recarga con visita.factura_nudo lleno
+// (ver ot_ejecutar.html, rama `{% if ... and visita.factura_nudo %}`), para
+// que el técnico/Aaron pueda seguir directo a firmar sin perder el modal.
+// Si por lo que sea el bloque no existe (DOM inesperado), se cae al
+// comportamiento anterior (reload) en vez de dejar el modal en un estado raro.
+function _factRenderAsociado(f){
+  const gate = _factEl('factGate');
+  if (!gate || !f){ setTimeout(() => window.location.reload(), 900); return; }
+  const esNV = (f.tipo === 'NVV' || f.tipo === 'NVI');
+  const montoTxt = (f.monto || f.monto === 0)
+    ? ' · $' + Math.round(f.monto).toLocaleString('es-CL') : '';
+  const div = document.createElement('div');
+  div.id = 'factGate';
+  div.className = 'alert py-2 small mb-3';
+  div.style.cssText = 'background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a';
+  div.innerHTML =
+    `<i class="bi bi-receipt me-1"></i><strong>${esNV ? 'Nota de venta asociada' : 'Documento asociado'}:</strong> ` +
+    `${f.tipo || 'FCV'} N° ${f.numero || ''}${montoTxt}`;
+  gate.replaceWith(div);
 }
 
 // ═════════════════════════════════════════════════════════════
