@@ -78432,7 +78432,7 @@ def mant_plantillas_page():
 # Tipos de respuesta permitidos (cualquier valor fuera de esta lista se rechaza)
 _TAREA_TIPOS_RESPUESTA = (
     "check", "texto", "sino", "numero", "verificacion",
-    "gps", "lista", "fecha_hora", "foto",
+    "gps", "lista", "fecha_hora", "foto", "serie",
 )
 _PLANT_TIPO_VISITA = (
     "preventiva", "correctiva", "garantia", "levantamiento",
@@ -79797,6 +79797,26 @@ def mant_ot_ejecutar(vid):
         (vid, vid)
     ) or []
     equipos = [dict(e) for e in equipos]
+
+    # ── Número de serie: sugerencia por equipo (2026-08-27) ─────────────
+    # Mismo cálculo que ya usa mant_maquina_ficha_tecnica_json para el modal
+    # de Ficha Técnica -- se agrega ACÁ TAMBIÉN (antes solo vivía ahí) para
+    # que el nuevo tipo de checklist 'serie' pueda ofrecer auto/manual/N-A
+    # sin pedirle al frontend una consulta aparte por cada equipo.
+    for _eq_s in equipos:
+        _serie_actual_s = (_eq_s.get("serie") or "").strip()
+        try:
+            _lleva_s, _motivo_s = _equipo_lleva_serie_individual(_eq_s)
+        except Exception:
+            _lleva_s, _motivo_s = True, ""   # ante la duda, sí pide serie
+        _eq_s["serie_lleva_individual"] = bool(_lleva_s)
+        _eq_s["serie_no_aplica_motivo"] = _motivo_s or ""
+        _eq_s["serie_sugerida"] = None
+        if _lleva_s and not _serie_actual_s:
+            try:
+                _eq_s["serie_sugerida"] = _generar_serie_ilus(visita.get("cliente_id"), _eq_s.get("sku") or "")
+            except Exception:
+                _eq_s["serie_sugerida"] = None
 
     # ── Técnicos colaboradores (mant_visita_tecnicos) — 2026-08-27 ──────
     # Mismo criterio que _ot_pdf_context (excluye al principal). Se agrega
@@ -83486,6 +83506,34 @@ def mant_visita_tarea_respuesta(vid, tid):
                     error = f"Fuera de rango: mínimo {rmin}"
                 if rmax is not None and n > float(rmax):
                     error = f"Fuera de rango: máximo {rmax}"
+    elif tipo == "serie":
+        # 🆕 2026-08-27 (Daniel — objeto "Número de serie" para checklist):
+        # tres estados posibles, igual que ya vive en el modal de Ficha
+        # Técnica (ver _equipo_lleva_serie_individual/_generar_serie_ilus):
+        # auto (usa la sugerida), manual (la de la placa del fabricante), o
+        # N/A (el equipo no lleva serie individual -- accesorio/repetible).
+        # El frontend manda el MISMO string sea cual sea el origen del
+        # valor (typeado a mano o "Usar sugerida") -- no hace falta que el
+        # backend distinga cómo se eligió, solo qué queda guardado.
+        _v_raw = str(valor).strip() if valor is not None else ""
+        if _v_raw.lower() in ("na", "n/a", "no_aplica", "no aplica"):
+            valor_norm = {"serie": None, "na": True}
+        else:
+            v = _v_raw[:100]
+            if not v:
+                completar = False
+                valor_norm = {"serie": None}
+            else:
+                valor_norm = {"serie": v}
+                # Escribe a la ficha permanente del equipo con la MISMA regla
+                # ya probada de _ot_dato_a_ficha: nunca pisa una serie real,
+                # solo completa vacío o reemplaza un genérico ILUS provisorio.
+                _mid_serie = tar.get("maquina_id")
+                if _mid_serie:
+                    try:
+                        _ot_dato_a_ficha(_mid_serie, "serie", v, vid=vid)
+                    except Exception as _e_serie_ficha:
+                        print(f"[tarea_respuesta serie] tid={tid} mid={_mid_serie}: {_e_serie_ficha}", flush=True)
     elif tipo == "sino":
         v = str(valor or "").lower()
         if v not in ("si", "sí", "no", "na", "n/a"):
@@ -103079,6 +103127,37 @@ def _ensure_mant_intel_tables():
             faltaron.append("mant_visitas.costo_despacho")
     except Exception as e:
         print(f"[ensure_intel] finanzas visitas: {e}", flush=True)
+    # 2026-08-27 (Daniel — objeto "Número de serie" para checklist de
+    # plantillas): amplía el ENUM tipo_respuesta con 'serie' en las dos
+    # tablas que lo usan. El CREATE TABLE de más abajo en este archivo ya
+    # declara el ENUM completo para instalaciones nuevas; en producción
+    # (ILUS_SKIP_MIGRATIONS=1) esas tablas ya existen, así que hace falta
+    # este MODIFY COLUMN explícito para que el valor nuevo sea aceptado.
+    # MODIFY con el mismo ENUM ampliado es idempotente y no borra filas ni
+    # datos existentes (mismo patrón ya usado para mant_visitas.tipo).
+    try:
+        _r_tr1 = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_tarea_plantilla_items' "
+            "   AND COLUMN_NAME='tipo_respuesta'")
+        if _r_tr1 and "'serie'" not in (_r_tr1.get("COLUMN_TYPE") or ""):
+            mysql_execute(
+                "ALTER TABLE mant_tarea_plantilla_items MODIFY COLUMN tipo_respuesta "
+                "ENUM('check','texto','sino','numero','verificacion','gps','lista',"
+                "'fecha_hora','foto','serie') DEFAULT 'check'")
+            faltaron.append("mant_tarea_plantilla_items.tipo_respuesta+serie")
+        _r_tr2 = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_tareas' "
+            "   AND COLUMN_NAME='tipo_respuesta'")
+        if _r_tr2 and "'serie'" not in (_r_tr2.get("COLUMN_TYPE") or ""):
+            mysql_execute(
+                "ALTER TABLE mant_visita_tareas MODIFY COLUMN tipo_respuesta "
+                "ENUM('check','texto','sino','numero','verificacion','gps','lista',"
+                "'fecha_hora','foto','serie') DEFAULT 'check'")
+            faltaron.append("mant_visita_tareas.tipo_respuesta+serie")
+    except Exception as e:
+        print(f"[ensure_intel] tipo_respuesta+serie: {e}", flush=True)
     # 2026-07-12 (Daniel) — LIMPIEZA: un agente de un workflow anterior se
     # conecto SIN autorizacion directo a la BD de produccion (bypaseando la
     # app) y creo rep_proveedores/rep_solicitudes con datos de prueba

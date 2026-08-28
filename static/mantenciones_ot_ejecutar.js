@@ -1166,6 +1166,49 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       ${t.rango_min != null || t.rango_max != null ? `<small class="text-muted">Rango: ${t.rango_min ?? '—'} a ${t.rango_max ?? '—'} ${t.unidad || ''}</small>` : ''}`;
       break;
     }
+    case 'serie': {
+      // 🆕 2026-08-27 (objeto "Número de serie" para checklist de
+      // plantillas, encargo de Daniel). Tres estados, mismo criterio ya
+      // probado en el modal de Ficha Técnica (_equipo_lleva_serie_
+      // individual/_generar_serie_ilus, ver EQUIPOS_IDX -- se calcula acá
+      // también desde esta noche, no hace falta pedirlo aparte):
+      //   a) el equipo NO lleva serie individual → se explica por qué y
+      //      no se insiste (banner gris, igual que en la Ficha Técnica).
+      //   b) hay una sugerida (genérica ILUS) y el input está vacío → se
+      //      ofrece con un botón "Usar sugerida".
+      //   c) N/A manual: el técnico puede marcarlo igual aunque el
+      //      algoritmo diga que sí lleva serie -- el técnico en terreno ve
+      //      el equipo real, el algoritmo no.
+      const eq = (mid ? (EQUIPOS_IDX[String(mid)] || {}) : {});
+      const _srLleva  = (eq.serie_lleva_individual !== false);
+      const _srMotivo = String(eq.serie_no_aplica_motivo || '');
+      const _srSug    = String(eq.serie_sugerida || '');
+      const _esNA     = !!(valor && valor.na === true);
+      const _curVal   = (!_esNA && valor && valor.serie) ? String(valor.serie) : String(eq.serie || '').trim();
+      let _srBanner = '';
+      if (!_srLleva && _srMotivo && !_esNA){
+        _srBanner = `<div class="tx-serial-aviso">
+          <i class="bi bi-info-circle-fill"></i>
+          <div class="meta">Este equipo no necesita N° de serie propio: ${_escapeHtml(_srMotivo)}</div>
+        </div>`;
+      }
+      ctrlHtml = `<div class="ctrl">
+        ${_srBanner}
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <input type="text" id="serie-input-${t.id}" style="flex:1;min-width:160px" placeholder="N° de serie"
+            value="${_escapeAttr(_curVal)}"
+            ${(bloqueada || _esNA) ? 'disabled' : ''}
+            onblur="_guardarSerie(${t.id}, ${mid}, ${pid}, this.value)">
+          ${(_srSug && !_esNA) ? `<button type="button" class="tx-btn-pill" ${bloqueada ? 'disabled' : ''}
+            onclick="_usarSerieSugerida(${t.id}, ${mid}, ${pid}, '${_escapeAttr(_srSug)}')">
+            <i class="bi bi-lightbulb-fill"></i> Usar sugerida</button>` : ''}
+          <button type="button" class="tx-btn-pill ${_esNA ? 'active' : ''}" style="flex:none"
+            ${bloqueada ? 'disabled' : ''}
+            onclick="_toggleSerieNA(${t.id}, ${mid}, ${pid}, this)">N/A</button>
+        </div>
+      </div>`;
+      break;
+    }
     case 'sino':
       ctrlHtml = `<div class="ctrl tx-btn-group">
         <button type="button" class="tx-btn-pill success ${valor.valor === 'si' ? 'active' : ''}"
@@ -2582,6 +2625,31 @@ async function _toggleNumeroNA(tid, mid, pid, btn){
   const activando = !btn.classList.contains('active');
   await guardarResp(tid, activando ? 'na' : '', mid, pid);
   const input = document.getElementById('numero-input-' + tid);
+  btn.classList.toggle('active', activando);
+  if (input){
+    input.disabled = activando;
+    if (activando) input.value = '';
+  }
+}
+
+// 🆕 2026-08-27 — objeto "Número de serie" del checklist (auto/manual/N-A).
+// El blur en vacío no manda nada: no tiene sentido "borrar" una serie con
+// un blur accidental, y el backend igual deja la tarea sin completar si
+// llega vacía -- mejor no generar tráfico de red para un no-cambio.
+function _guardarSerie(tid, mid, pid, valorInput){
+  const v = (valorInput || '').trim();
+  if (!v) return;
+  guardarResp(tid, v, mid, pid);
+}
+function _usarSerieSugerida(tid, mid, pid, sugerida){
+  const input = document.getElementById('serie-input-' + tid);
+  if (input) input.value = sugerida;
+  guardarResp(tid, sugerida, mid, pid);
+}
+async function _toggleSerieNA(tid, mid, pid, btn){
+  const activando = !btn.classList.contains('active');
+  await guardarResp(tid, activando ? 'na' : '', mid, pid);
+  const input = document.getElementById('serie-input-' + tid);
   btn.classList.toggle('active', activando);
   if (input){
     input.disabled = activando;
