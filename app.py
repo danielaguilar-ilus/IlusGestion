@@ -31822,9 +31822,27 @@ def tr_agregar_item(mid):
 @app.route("/transporte/manifiestos/<int:mid>/items/<int:item_id>", methods=["DELETE"])
 @_tr_required
 def tr_quitar_item(mid, item_id):
-    _bloqueo, _aviso = _tr_manifiesto_guard_actividad(mid)
-    if _bloqueo:
-        return _bloqueo
+    # FIX 2026-08-27 (Daniel, mismo día del pedido de Alison: "ella quiere
+    # también eliminar los que no tengan gestión con el transporte"). Antes
+    # esta función abría con _tr_manifiesto_guard_actividad(mid), que mira si
+    # el MANIFIESTO tiene actividad en CUALQUIERA de sus documentos -- no en
+    # el que se está quitando. Eso bloqueaba (solo superadmin) hasta quitar
+    # una factura sin ningún tracking propio, con tal de que OTRA factura del
+    # mismo manifiesto ya estuviera en curso con el courier. Y de paso tapaba
+    # por completo la ruta de "quitar duplicada" de más abajo (tr_eliminar
+    # nunca llegaba a evaluarse: el guard cortaba antes, con 403).
+    #
+    # El riesgo real que ese guard quería evitar -- desincronizar el
+    # seguimiento que ya ve el cliente -- ya está cubierto, factura por
+    # factura, por los candados de MÁS ABAJO en esta misma función: estado
+    # terminal (no se puede "des-entregar"), tracking propio + sin duplicada
+    # en otro lado (bloqueado sin excepción), y tracking propio + duplicada
+    # confirmada (tr_eliminar/superadmin con confirmación). Un guard aparte a
+    # nivel de TODO el manifiesto es redundante para "quitar" -- sigue
+    # aplicando tal cual a "agregar" (tr_agregar_item, tr_asignar_a_manifiesto,
+    # tr_lineas_pendientes_enviar_manifiesto), que es un riesgo distinto
+    # (sumar documentos a un manifiesto ya despachado) y no se toca acá.
+    _aviso = None
     # Capturar datos del item ANTES de borrar, para una trazabilidad legible
     # (qué factura, de qué cliente, cuánto flete, cuántos bultos se quitaron).
     info = mysql_fetchone(
