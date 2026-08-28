@@ -75992,6 +75992,23 @@ _OT_TV_EN_CURSO   = ("en_curso", "en_ejecucion")
 _OT_TV_TERMINADAS = ("completada", "cerrada")
 _OT_TV_MUERTAS    = ("cancelada", "anulada")
 
+# 🔒 FUENTE ÚNICA DE VERDAD — SOLAPE de rango (2026-08-27, Daniel: "que
+# quede resuelto DE RAÍZ, no otro parche"). El bug de la OT-2026-00133
+# (Club de Golf Sport Francés, 638 tareas) se corrigió TRES VECES por
+# separado esta misma noche -- huella, vista Día, vista Semana/Mes -- cada
+# una escribiendo A MANO la misma condición de "¿esta fecha X cae dentro
+# del tramo [fecha_programada, fecha_fin] de la OT?" (fecha_fin NULL =
+# OT de un solo día). Si el día de HOY cae en el tramo, la OT cuenta para
+# ese día -- NUNCA comparar `fecha_programada = %s` a secas, eso es
+# exactamente lo que hacía desaparecer una OT de varios días al navegar a
+# su segundo/tercer/cuarto día. TODO lugar nuevo que necesite esta pregunta
+# reusa esta constante -- así no vuelve a haber un cuarto lugar sin el fix.
+_OT_TV_WHERE_SOLAPE = (
+    "v.fecha_programada <= %s "
+    "AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s "
+    "AND v.estado NOT IN ('cancelada','anulada')"
+)
+
 
 def _ot_tv_huella():
     """Huella barata del rango visible: si no cambió, el televisor no pide
@@ -76011,15 +76028,13 @@ def _ot_tv_huella():
 
 
 def _ot_tv_dia_tiene_ots(fecha):
-    """¿Hay alguna OT que toque este día? Mismo criterio de SOLAPE de rango
-    que usa `_ot_tv_datos` para su consulta principal (una OT de varios días
-    cuenta en cualquier día de su tramo, no solo en el de inicio)."""
+    """¿Hay alguna OT que toque este día? Usa `_OT_TV_WHERE_SOLAPE` -- la
+    MISMA condición de rango que `_ot_tv_datos`/`_ot_tv_datos_rango` (una OT
+    de varios días cuenta en cualquier día de su tramo, no solo en el de
+    inicio). No se copia a mano: es la fuente única de verdad."""
     try:
         row = mysql_fetchone(
-            "SELECT 1 FROM mant_visitas "
-            " WHERE fecha_programada <= %s "
-            "   AND COALESCE(fecha_fin, fecha_programada) >= %s "
-            "   AND estado NOT IN ('cancelada','anulada') LIMIT 1",
+            f"SELECT 1 FROM mant_visitas v WHERE {_OT_TV_WHERE_SOLAPE} LIMIT 1",
             (fecha, fecha)
         )
         return bool(row)
@@ -76066,13 +76081,12 @@ def _ot_tv_datos(fecha=None):
     # filtraba SOLO por `fecha_programada`, así que una OT de varios días
     # aparecía únicamente en su día de INICIO: al pararse en el 2, 3 o 4 de
     # septiembre, la OT existía pero el monitor decía que no había nada.
-    # Ahora se cruza por SOLAPE de rangos — la OT entra si su tramo
-    # [inicio, término] toca el rango que se está mirando.
+    # Ahora se cruza por SOLAPE de rangos (`_OT_TV_WHERE_SOLAPE`, fuente
+    # única -- ver su comentario) — la OT entra si su tramo [inicio,
+    # término] toca el rango que se está mirando.
     filas = mysql_fetchall(
         _OT_TV_SELECT + _OT2_JOIN_TAREAS +
-        " WHERE v.fecha_programada <= %s "
-        "   AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s "
-        "   AND v.estado NOT IN ('cancelada','anulada') "
+        f" WHERE {_OT_TV_WHERE_SOLAPE} "
         " ORDER BY v.hora_inicio ASC, v.numero_ot ASC",
         (fin, hoy)) or []
 
@@ -76224,6 +76238,23 @@ def _ot_tv_datos(fecha=None):
             "cliente": cliente_txt[:44],
             "ticket": f.get("numero_ticket") or None,
             "documento": _doc or None,
+            # 🔧 FIX 2026-08-27 (OT-2026-00133 volvía a "desaparecer" al
+            # navegar a su 2°/3°/4° día): `correrDias()` en monitor_tv.html
+            # YA traía escrita la lógica de mover fecha_programada Y
+            # fecha_fin juntas al correr una OT de varios días -- si solo se
+            # mueve el inicio, el fin se queda atrás y el tramo colapsa o se
+            # INVIERTE en la base de datos (fecha_programada > fecha_fin),
+            # que es EXACTAMENTE lo que hace que el solape de más abajo deje
+            # de encontrar la OT en los días siguientes. Pero ese JS leía
+            # `b.fecha_inicio_real` / `b.fecha_fin_real`, campos que este
+            # payload NUNCA mandó -- el "fix" quedó escrito pero muerto, y
+            # el botón "correr días" seguía moviendo solo el inicio pese a
+            # que el comentario decía lo contrario. Se agregan acá los dos
+            # campos reales para que esa lógica exista de verdad.
+            "fecha_inicio_real": (fecha.isoformat() if hasattr(fecha, "isoformat")
+                                   else str(fecha or "")[:10]),
+            "fecha_fin_real": (fecha_hasta.isoformat() if hasattr(fecha_hasta, "isoformat")
+                                else str(fecha_hasta or "")[:10]),
             # OT de varios días: se indica qué jornada de cuántas es esta,
             # para que en el televisor se entienda que no está atrasada ni
             # duplicada — es la misma OT que sigue en curso (OT-133).
@@ -76396,13 +76427,12 @@ def _ot_tv_datos_rango(fecha=None, vista="semana"):
         ant = desde - timedelta(days=7)
         sig = desde + timedelta(days=7)
 
-    # Mismo criterio de SOLAPE que la vista de día: una OT de varios días
-    # entra si su tramo toca la semana/mes que se está mirando.
+    # Mismo criterio de SOLAPE que la vista de día -- `_OT_TV_WHERE_SOLAPE`,
+    # fuente única (ver su comentario): una OT de varios días entra si su
+    # tramo toca la semana/mes que se está mirando.
     filas = mysql_fetchall(
         _OT_TV_SELECT + _OT2_JOIN_TAREAS +
-        " WHERE v.fecha_programada <= %s "
-        "   AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s "
-        "   AND v.estado NOT IN ('cancelada','anulada') "
+        f" WHERE {_OT_TV_WHERE_SOLAPE} "
         " ORDER BY v.fecha_programada ASC, v.hora_inicio ASC, v.numero_ot ASC",
         (hasta, desde)) or []
 
