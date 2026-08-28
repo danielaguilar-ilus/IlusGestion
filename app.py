@@ -76003,6 +76003,39 @@ def _ot_tv_huella():
         return "err"
 
 
+def _ot_tv_dia_tiene_ots(fecha):
+    """¿Hay alguna OT que toque este día? Mismo criterio de SOLAPE de rango
+    que usa `_ot_tv_datos` para su consulta principal (una OT de varios días
+    cuenta en cualquier día de su tramo, no solo en el de inicio)."""
+    try:
+        row = mysql_fetchone(
+            "SELECT 1 FROM mant_visitas "
+            " WHERE fecha_programada <= %s "
+            "   AND COALESCE(fecha_fin, fecha_programada) >= %s "
+            "   AND estado NOT IN ('cancelada','anulada') LIMIT 1",
+            (fecha, fecha)
+        )
+        return bool(row)
+    except Exception as e:
+        print(f"[ot_tv] dia_tiene_ots: {e}", flush=True)
+        return True   # ante la duda, NO saltar el día (fail-safe: es mejor
+                       # mostrar un domingo vacío que esconder uno con OT real)
+
+
+def _ot_tv_dia_vecino(fecha, delta):
+    """Día vecino (±1) para las flechas ‹/› del monitor, saltándose un
+    domingo VACÍO. 2026-08-27 (Daniel): "quería saltarme sí o sí los
+    domingos que no se trabaja, a menos que haya una OT asignada, eso sí
+    puede pasar" -- ILUS no opera domingo, pero si por excepción alguien
+    quedó agendado ese día, la navegación no lo debe esconder. Un solo
+    salto de 7 días entre domingos hace que UN chequeo alcance siempre
+    (nunca hace falta saltar dos veces seguidas)."""
+    candidata = fecha + timedelta(days=delta)
+    if candidata.weekday() == 6 and not _ot_tv_dia_tiene_ots(candidata):
+        candidata = candidata + timedelta(days=delta)
+    return candidata
+
+
 def _ot_tv_datos(fecha=None):
     """Payload del monitor: un día agrupado por persona + próximos días.
 
@@ -76300,8 +76333,8 @@ def _ot_tv_datos(fecha=None):
         "generado_iso": ahora.isoformat(),
         "fecha": hoy.isoformat(),
         "es_hoy": es_hoy_real,
-        "fecha_ant": (hoy - timedelta(days=1)).isoformat(),
-        "fecha_sig": (hoy + timedelta(days=1)).isoformat(),
+        "fecha_ant": _ot_tv_dia_vecino(hoy, -1).isoformat(),
+        "fecha_sig": _ot_tv_dia_vecino(hoy, 1).isoformat(),
         "hoy_label": f"{_DIAS[hoy.weekday()]} {hoy.day} de {_MESES[hoy.month - 1]}",
         "jornada": {"ini": _OT2_JORNADA_INI, "fin": _OT2_JORNADA_FIN},
         "resumen": resumen,

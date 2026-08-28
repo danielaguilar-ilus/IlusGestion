@@ -493,6 +493,24 @@
       border-left:1.5px dashed rgba(248,113,113,.45);
       background:repeating-linear-gradient(135deg, rgba(220,38,38,.10) 0 10px, transparent 10px 20px);
     }
+    /* 🍽️ Colación 13:00-14:00 (2026-08-27, Daniel: "marcar de 1 a 2 como
+       hora de colación... por ahora solo marquémoslo"). Puramente visual
+       -- ninguna OT queda bloqueada de agendarse ahí ("puede pasar de
+       largo"), es solo la referencia para cuando haya que coordinarla.
+       Ámbar (REGLA #2: color de advertencia), no rojo -- no es un error
+       como la zona sobre-jornada, es un aviso informativo. */
+    .cu-colacion{
+      position:absolute;top:0;bottom:0;
+      border-left:1.5px dashed rgba(245,158,11,.5);
+      border-right:1.5px dashed rgba(245,158,11,.5);
+      background:repeating-linear-gradient(135deg, rgba(245,158,11,.12) 0 10px, transparent 10px 20px);
+    }
+    .cu-colacion-lbl{
+      position:absolute;top:6px;transform:translateX(-50%);
+      font-family:var(--display);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+      color:#fcd34d;background:rgba(10,10,10,.6);border:1px solid rgba(245,158,11,.35);
+      padding:2px 9px;border-radius:5px;white-space:nowrap;pointer-events:none;
+    }
     /* Lavado hundido de lo YA transcurrido — su borde derecho ES el
        ahora. Va bajo las filas: oscurece el lienzo (lo pasado se apaga),
        nunca los bloques de OT. */
@@ -1486,6 +1504,25 @@
       ot.style.left = posPct(fin) + '%';
       ot.style.right = '0';
       nodoUnder.appendChild(ot);
+    }
+    // 🍽️ Colación 13:00-14:00 (2026-08-27, Daniel) — ver estilos .cu-colacion.
+    // Solo se dibuja si la ventana visible [t0,t1] realmente toca ese tramo
+    // (si algún día la jornada cambiara y ya no cruzara el mediodía, esto
+    // no dibuja nada en vez de una franja fuera de rango).
+    const COLACION_INI = 13 * 60, COLACION_FIN = 14 * 60;
+    if (COLACION_FIN > t0 && COLACION_INI < t1){
+      const desde = Math.max(COLACION_INI, t0), hasta = Math.min(COLACION_FIN, t1);
+      const pctIni = posPct(desde), pctFin = posPct(hasta);
+      const col = el('i', 'cu-colacion');
+      col.style.left = pctIni + '%';
+      col.style.width = (pctFin - pctIni) + '%';
+      nodoUnder.appendChild(col);
+      if ((hasta - desde) >= 30){   // franja muy angosta (vista recortada) → sin texto, no cabría
+        const lbl = el('span', 'cu-colacion-lbl');
+        lbl.textContent = 'Colación';
+        lbl.style.left = ((pctIni + pctFin) / 2) + '%';
+        nodoUnder.appendChild(lbl);
+      }
     }
   }
 
