@@ -74769,7 +74769,18 @@ def ot2_detalle(vid):
         # OJO: en mant_clientes el teléfono/correo del contacto son
         # `contacto_tel` / `contacto_email` (NO `telefono`/`email`, que no
         # existen). El de la empresa vive aparte en `tel_empresa`.
-        "       c.contacto_nombre, c.contacto_tel, c.contacto_email, "
+        # 🔴 FIX 2026-08-27: estos van ALIASEADOS a cli_contacto_* -- v.*
+        # YA trae sus PROPIAS columnas contacto_nombre/cargo/tel/email
+        # (la contraparte QUE RECIBE AL TÉCNICO EN ESTA VISITA, ver ALTER
+        # en app.py ~52857). Sin alias, MySQL devuelve dos columnas con el
+        # mismo nombre y pymysql se queda con la ÚLTIMA -- la del cliente
+        # pisaba silenciosamente la de la visita (mismo bug que ya se
+        # había resuelto para mant_ot_ejecutar con cli_contacto/
+        # cli_contacto_tel, ver app.py ~79440). Nadie lo notó acá porque
+        # esta pantalla todavía no leía contacto_* de la visita.
+        "       c.contacto_nombre AS cli_contacto_nombre, "
+        "       c.contacto_tel AS cli_contacto_tel, "
+        "       c.contacto_email AS cli_contacto_email, "
         "       c.tel_empresa, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre "
         "  FROM mant_visitas v "
@@ -74780,6 +74791,21 @@ def ot2_detalle(vid):
         flash("Esa OT no existe.", "warning")
         return redirect(url_for("ot2_panel"))
     v = dict(v)
+
+    # Mismo gate que /mantenciones/ot/<id>/ejecutar (puede_metadata_flag):
+    # gestión (superadmin/admin/supervisor/ejecutivo) puede reagendar y
+    # reasignar técnico desde acá; técnico NUNCA (backend re-valida con
+    # @_ot_can_metadata en el PUT, esto solo decide si se dibuja el botón).
+    puede_metadata = _puede_ot_accion(vid, "metadata")
+
+    # 🔴 FIX (revisión de código 27-ago): el botón "Agregar foto" de la
+    # pestaña Evidencia postea a /fotos/subir, que está protegido por
+    # @_tecnico_owns_visita -- SOLO superadmin + el técnico asignado
+    # pueden "ejecutar" (ver matriz en _puede_ot_accion). Esta pantalla se
+    # abre también a admin/supervisor/ejecutivo (@_ot_can_view, más
+    # permisivo), así que sin este gate el botón se dibujaba para gente
+    # que el backend iba a rechazar con 403 al primer click.
+    puede_ejecutar = _puede_ot_accion(vid, "ejecutar")
 
     # `date` NO está importado a nivel de módulo (app.py:12 solo trae
     # datetime/timedelta/timezone). Y la fecha tiene que ser la de Chile,
@@ -74792,14 +74818,23 @@ def ot2_detalle(vid):
     # MISMO criterio que la pantalla de ejecución (tareas ∪ equipos de la
     # OT, sin los dados de baja): si acá apareciera un equipo que allá no
     # se dibuja, volveríamos a tener dos pantallas contando distinto.
+    # 🆕 2026-08-27 (pestaña "Trabajo", pensada para la mirada del técnico
+    # -- Daniel: "una forma inteligente, mostrar los equipos"): además de
+    # lo que ya usaba la card "Equipos de la OT", se suman los campos de
+    # diagnóstico/observación y el desglose de OBLIGATORIAS por equipo
+    # (antes solo existía el total agregado en `kpis`, no por máquina).
     equipos = mysql_fetchall(
         "SELECT m.id, m.nombre, m.sku, m.serie, m.marca, m.foto_url, "
         "       COALESCE(t.n, 0) AS n_tareas, COALESCE(t.ok, 0) AS n_ok, "
-        "       ve.estado_revision, ve.diagnostico_estado "
+        "       COALESCE(t.obl, 0) AS n_obl, COALESCE(t.obl_ok, 0) AS n_obl_ok, "
+        "       ve.estado_revision, ve.diagnostico_estado, ve.diagnostico_texto, "
+        "       ve.observacion_tecnico, ve.razon_saltado, ve.revisado_at, ve.revisado_por "
         "  FROM mant_maquinas m "
         "  LEFT JOIN ( "
         "       SELECT maquina_id, COUNT(*) AS n, "
-        "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS ok "
+        "              SUM(CASE WHEN completada=1 THEN 1 ELSE 0 END) AS ok, "
+        "              SUM(CASE WHEN obligatoria=1 THEN 1 ELSE 0 END) AS obl, "
+        "              SUM(CASE WHEN obligatoria=1 AND completada=1 THEN 1 ELSE 0 END) AS obl_ok "
         "         FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id IS NOT NULL "
         "        GROUP BY maquina_id "
         "  ) t ON t.maquina_id = m.id "
@@ -74810,10 +74845,18 @@ def ot2_detalle(vid):
         (vid, vid)
     ) or []
     equipos = [dict(e) for e in equipos]
+    _REV_LABEL = {"verificado": "Verificado", "con_cambios": "Con cambios",
+                  "saltado": "Saltado", "falla_detectada": "Con falla"}
+    _DIAG_LABEL = {"aprobado": "Aprobado", "observacion": "Con observación", "falla": "Con falla"}
     for e in equipos:
         n, ok = int(e.get("n_tareas") or 0), int(e.get("n_ok") or 0)
         e["pct"] = int(round(ok * 100.0 / n)) if n else 0
+        e["n_obl"] = int(e.get("n_obl") or 0)
+        e["n_obl_ok"] = int(e.get("n_obl_ok") or 0)
+        e["n_obl_falta"] = max(0, e["n_obl"] - e["n_obl_ok"])
         _rev = (e.get("estado_revision") or "").lower()
+        e["estado_revision_label"] = _REV_LABEL.get(_rev, "")
+        e["diagnostico_label"] = _DIAG_LABEL.get((e.get("diagnostico_estado") or "").lower(), "")
         if _rev in ("saltado", "falla_detectada"):
             e["sello"], e["sello_cls"] = (
                 "Saltado" if _rev == "saltado" else "Con falla"), "eq-warn"
@@ -74840,6 +74883,17 @@ def ot2_detalle(vid):
         if not h["hecho"]:
             h["actual"] = True
             break
+
+    # 🆕 2026-08-27 — panel "Estado operativo" del hero (referencia visual
+    # de Daniel): el hito ACTUAL es el estado operativo en vivo; el
+    # SIGUIENTE (si queda alguno) es el hint de qué viene. Se calcula acá
+    # y no en Jinja para no repetir el mismo `for` dos veces en el template.
+    hito_actual = next((h for h in hitos if h.get("actual")), None)
+    hito_siguiente = None
+    if hito_actual:
+        _idx = hitos.index(hito_actual)
+        if _idx + 1 < len(hitos):
+            hito_siguiente = hitos[_idx + 1]
 
     # ── Cifras de cabecera ─────────────────────────────────────────────
     # 🔴 El filtro _ot_tarea_no_trabajable_sql() NO es opcional acá.
@@ -74912,7 +74966,14 @@ def ot2_detalle(vid):
 
     # ── Documentos — pestaña nueva: el Anexo de Servicios del proveedor
     # vive aquí, visible SOLO para gestión (nunca técnico — regla explícita
-    # del Anexo, Capa 6.2).
+    # del Anexo, Capa 6.2). El query ya se salta por completo para técnico
+    # (queda `anexo=None`); el template AL MENOS repite el gate con
+    # `not es_tecnico` (2026-08-27, pedido explícito de Daniel) por el
+    # mismo motivo que la card Cobro: que la condición sea legible ahí
+    # mismo, sin depender de que quien lea el template sepa que el dato
+    # nunca llegó. Daniel fue explícito en que este gate NO debe ser más
+    # estricto que "no técnico": los jefes (admin/supervisor/ejecutivo)
+    # firman este mismo anexo, así que conservan acceso sin fricción.
     anexo = None
     _u_det = getattr(g, "user", None) or {}
     _role_det = _rol_familia((_u_det.get("role") or "").lower())
@@ -74929,6 +74990,8 @@ def ot2_detalle(vid):
         v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
         fotos=fotos, anexo=anexo,
+        puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
+        hito_actual=hito_actual, hito_siguiente=hito_siguiente,
     )
 
 
