@@ -30,7 +30,20 @@
 
   @page {
     size: letter;
+    {% if native_header_footer %}
+    /* 🔧 FIX 2026-08-28 (Daniel: "el PDF se comporta de manera distinta"):
+       en Chromium el margin de @page tiene PRECEDENCIA sobre el margin que
+       pasa page.pdf() -- con `margin: 0` acá, los milímetros pedidos por
+       mant_visita_pdf se ignoraban y el header/footer NATIVO quedaba
+       ENCIMA del contenido en todas las páginas (verificado renderizando
+       el PDF real). Estos valores deben calzar con los de mant_visita_pdf:
+       36mm arriba (header grande de ~32mm + aire), 16mm abajo (footer),
+       0 a los lados (la banda negra sale a sangre; el margen lateral real
+       lo simula .sheet con su padding de 14mm). */
+    margin: 36mm 0mm 16mm;
+    {% else %}
     margin: 0;
+    {% endif %}
   }
 
   * { box-sizing: border-box; }
@@ -126,6 +139,15 @@
   }
   .head .right .doc-meta {
     font-size: 7.5pt; color: #9ca3af; margin-top: 1px;
+  }
+  /* Nombre del cliente en el header (2026-08-28, mismo pedido de Daniel que
+     sumó el cliente al header nativo del PDF descargado: "ojalá pueda tener
+     el nombre del cliente y el N° de la OT"). El ellipsis evita que un
+     nombre kilométrico se meta encima de los logos. */
+  .head .right .doc-cliente {
+    font-size: 8.5pt; font-weight: 700; color: #e5e7eb;
+    margin-top: .5mm; max-width: 100mm;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .head-sep {
     height: 2mm;
@@ -642,6 +664,18 @@
       padding: 12mm 14mm 14mm;
     }
   }
+  {% if native_header_footer %}
+  /* Camino Playwright (header/footer nativos, 2026-08-28): la identidad de
+     arriba ya la pone el header nativo dentro del margen de 36mm -- los
+     12mm de padding-top de .sheet acá serían aire doble solo en la primera
+     hoja física de cada grupo (las de continuación arrancan pegadas al
+     margen). Se baja a 4mm para que todas queden parejas. El Ctrl+P de la
+     vista previa (sin native_header_footer) no entra por acá y conserva
+     sus 12mm de siempre. */
+  @media print {
+    .sheet { padding-top: 4mm; }
+  }
+  {% endif %}
 
   @media (max-width: 768px) {
     .sheet { width: auto; padding: 8mm 6mm 12mm; min-height: auto; }
@@ -709,6 +743,9 @@
       {% if visita.cerrada_at %}CERRADA EL {{ visita.cerrada_at | chile_fmt('%d-%m-%y') }}
       {% else %}{{ (visita.estado or 'cerrada')|replace('_',' ')|upper }}{% endif %}
     </div>
+    {# Cliente en el header (2026-08-28) -- espejo del header NATIVO del PDF
+       descargado, para que vista previa y descarga digan lo mismo. #}
+    <div class="doc-cliente">{{ (visita.razon_social or '')|trim or 'Trabajo interno' }}</div>
   </div>
 </div>
 <div class="head-sep"></div>
@@ -728,7 +765,9 @@
   {% endif %}
   <div class="foot-info">
     <span><b>ILUS Fitness</b> · www.ilusfitness.com · soportetec@sphs.cl</span>
-    <span><b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b> · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
+    {# Cliente también en el footer (2026-08-28) -- espejo del footer nativo.
+       truncate(48): un nombre kilométrico hacía saltar el pie a 2 líneas. #}
+    <span><b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b> · {{ ((visita.razon_social or '')|trim or 'Trabajo interno')|truncate(48, true, '…') }} · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
   </div>
 </div>
 {% endif %}
