@@ -74812,6 +74812,19 @@ def _ot2_finanzas_estado(v):
     if not (v.get("centro_costo") or "").strip():
         faltan.append("centro de costo")
 
+    # 2026-08-28 (Daniel: "esto no se cobra, ya que son trabajos internos
+    # de la Bodega"): un trabajo interno JAMÁS tiene documento ni garantía
+    # -- no hay a quién facturarle ni de quién cubrir. Pedirle "factura,
+    # boleta o nota de venta" a una OT de bodega es exigir algo que nunca
+    # va a existir. Lo único que corresponde es un costo ESTIMADO, solo
+    # para valorización interna (informativo -- ver _ot2_api_crear), y ni
+    # siquiera eso bloquea: es un "falta" más en la lista, igual que el
+    # resto de esta función (de solo lectura, no decide nada).
+    if _ot_es_interna(v):
+        if v.get("costo") in (None, ""):
+            faltan.append("costo estimado (referencial, no se factura)")
+        return (not faltan), faltan
+
     # OJO: mant_visitas NO tiene una columna `garantia_aplica` -- esa vive
     # en mant_reportes. Acá la garantía se expresa con modalidad_cobro y
     # cubierto_por, que es el vocabulario real de la tabla.
@@ -75939,6 +75952,20 @@ def ot2_api_crear():
         _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
+    # 2026-08-28 (Daniel, trabajo interno de bodega: "debería hacer un
+    # cálculo o por lo menos pedir los costos... solo para valorizarlo,
+    # esto no se cobra"): reusa la columna `costo` genérica de mant_visitas
+    # (preexistente, sin semántica de facturación) -- NUNCA zz_monto/
+    # zz_codigo, que están atados a una línea real del ERP y a un documento
+    # que un trabajo de bodega no tiene. Es un estimado de referencia, no
+    # un cobro: no participa de estado_facturacion ni de garantía.
+    try:
+        _fin_costo_int = (float(_fin.get("costo_interno"))
+                           if str(_fin.get("costo_interno") or "").strip() else None)
+        if _fin_costo_int is not None and _fin_costo_int < 0:
+            _fin_costo_int = None
+    except (TypeError, ValueError):
+        return _ot2_err("El costo estimado no es válido.", "COSTO_INTERNO_INVALIDO")
     _fin_zzc = (_fin.get("zz_codigo") or "").strip().upper()[:30] or None
     if not _fin_zzc and not _fin_gar:
         # Sugerencia por tipo: instalación → ZZINSTALACION, mantención →
@@ -75955,7 +75982,7 @@ def ot2_api_crear():
         _fin_estado_fact = "no_aplica"
     else:
         _fin_estado_fact = "sin_cotizar"
-    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm)
+    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int)
 
     # Modalidad de cobro: una OT interna NO nace cobrable al cliente
     # (`pagado` significa "facturable", no "ya pagado" — ver el comentario
@@ -75982,15 +76009,15 @@ def ot2_api_crear():
             "  (numero_ot, cliente_id, titulo, descripcion, fecha_programada, "
             "   hora_inicio, hora_fin, tipo, estado, tecnico, tecnico_user_id, "
             "   acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas, "
-            "   centro_costo, zz_codigo, zz_monto, modalidad_cobro, cubierto_por, "
+            "   centro_costo, zz_codigo, zz_monto, costo, modalidad_cobro, cubierto_por, "
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
-            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (numero_ot, cliente_id, titulo, descripcion, _f,
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
              acc_asc, acc_est, acc_piso, acc_notas,
-             _fin_centro, _fin_zzc, _fin_zzm,
+             _fin_centro, _fin_zzc, _fin_zzm, _fin_costo_int,
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
@@ -81283,6 +81310,14 @@ def mant_ot_ejecutar(vid):
                          in ("admin", "supervisor", "ejecutivo", "superadmin")),
         es_superadmin=es_superadmin_flag,
         es_tecnico=es_tecnico_flag,
+        # 2026-08-28 (Daniel: "al ser trabajo interno no debería llevar
+        # Cliente, no debería llevar la firma del Cliente") -- ya exento en
+        # el backend (_ot_validar_cierre R4), pero la pantalla igual
+        # dibujaba la tarjeta/botón de firma del cliente para una OT de
+        # bodega sin cliente al que pedírsela. _ot_es_interna(visita) es la
+        # MISMA función que ya usa el gate de cierre -- una sola definición
+        # de "qué es trabajo interno" para backend y frontend.
+        es_interna=_ot_es_interna(visita),
         # 2026-05-22 (OT 2026-00004 Vitacura) — flags para el panel
         # "Configurar OT": solo aparece al creador/admin/supervisor y
         # cuando la OT no tiene equipos asociados (huérfana).

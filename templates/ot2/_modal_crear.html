@@ -338,6 +338,12 @@ window.OT2C = (function(){
          // complemento opcional, nunca bloquea la creación si todavía no
          // existe ninguna plantilla para ese tipo.
          plantilla_id_interno:null,
+         // 28-08-2026 (Daniel: "debería hacer un cálculo o por lo menos
+         // pedir los costos... solo para valorizarlo, esto no se cobra"):
+         // estimado de referencia para trabajo interno -- NUNCA se factura,
+         // solo alimenta el reporte de costos por centro (ver 2.2/2.3 en
+         // el plan). Vive junto al resto de "finanzas" al enviar (crear()).
+         costo_interno:'',
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -776,7 +782,8 @@ window.OT2C = (function(){
       '<i class="bi bi-tag me-1"></i>Producto del catálogo</button>'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
       '<i class="bi bi-plus-lg me-1"></i>Tarea manual</button></div>'+
-      '<div class="o2m-lista" id="o2mTareasList"></div>';
+      '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
+      _htmlCostoInterno();
     pintarTareasManuales();
     cargarPlantillasInterno();
   }
@@ -920,6 +927,22 @@ window.OT2C = (function(){
      paginar acá -- solo texto + fotos, así que la exigencia de Daniel de
      "que soporte cinco mil, cincuenta mil" no tiene ningún select que
      pueda degradar con el volumen). */
+  /* 28-08-2026 (Daniel): costo REFERENCIAL de un trabajo interno -- para
+     valorizarlo en los reportes de centro de costo, nunca para cobrarlo.
+     Mismo bloque en los 2 caminos de trabajo interno (bodega y
+     capacitación/control de calidad) -- una sola definición del texto de
+     advertencia para que no diverja entre ambos. */
+  function _htmlCostoInterno(){
+    return '<label class="fl">Costo estimado (opcional)</label>'+
+      '<div class="input-group mb-1" style="max-width:220px">'+
+      '<span class="input-group-text">$</span>'+
+      '<input type="number" class="form-control" id="o2mCostoInterno" min="0" step="1" '+
+      'value="'+esc(S.costo_interno)+'" placeholder="Ej: 15000" '+
+      'oninput="OT2C.setCostoInterno(this.value)"></div>'+
+      '<small class="text-muted d-block mb-3" style="font-size:.72rem">'+
+      '<i class="bi bi-info-circle me-1"></i>Solo para valorización interna (informe de costos por centro) -- '+
+      'este trabajo no se factura ni se cobra.</small>';
+  }
   function pintarBodegaEvidencia(b){
     b.innerHTML = '<h6 class="t">Trabajo de bodega</h6>'+
       '<p class="d">Si hay un checklist para este tipo de trabajo se sugiere solo abajo. '+
@@ -935,7 +958,8 @@ window.OT2C = (function(){
       '<input type="file" id="o2mBodegaFotoInput" accept="image/*" capture="environment" multiple style="display:none" '+
       'onchange="OT2C.bodegaFotoAdd(this.files); this.value=\'\';">'+
       '<i class="bi bi-camera-fill me-1"></i>Toca para tomar o subir fotos</div>'+
-      '<div class="o2m-foto-grid" id="o2mBodegaFotoGrid"></div>';
+      '<div class="o2m-foto-grid mb-3" id="o2mBodegaFotoGrid"></div>'+
+      _htmlCostoInterno();
     pintarBodegaFotos();
     cargarPlantillasInterno();
   }
@@ -987,6 +1011,10 @@ window.OT2C = (function(){
              ((S.acceso.ascensor?'Con ascensor':'Sin ascensor') + ' · ' +
               (S.acceso.estacionamiento?'con estacionamiento':'sin estacionamiento') +
               (S.acceso.piso!==''?(' · piso '+S.acceso.piso):''))) +
+        (esInterno() ? card('Costo estimado',
+           String(S.costo_interno||'').trim() !== ''
+             ? ('$'+S.costo_interno+' (referencial, no se factura)')
+             : 'Sin declarar') : '') +
       '</div>';
     function card(k,v){ return '<div class="b"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
   }
@@ -1136,6 +1164,7 @@ window.OT2C = (function(){
   function setFecha(v){ S.fecha = v; avisosAgenda(); refrescarAnclas(); }
   function setHora(campo, v){ S[campo] = v; avisosAgenda(); }
   function setBodegaObs(v){ S.bodega_obs = v; }
+  function setCostoInterno(v){ S.costo_interno = v; }
 
   function tecTog(id){
     var i = S.tecnicos.indexOf(id);
@@ -1340,6 +1369,12 @@ window.OT2C = (function(){
         ['FCV','BLV','NVV','NVI','WEB'].indexOf(S.doc_origen.tido) >= 0){
       body.finanzas = { factura_tido: S.doc_origen.tido, factura_nudo: S.doc_origen.nudo };
     }
+    // 28-08-2026: costo referencial de trabajo interno -- independiente del
+    // bloque de arriba (un trabajo de bodega nunca tiene doc_origen).
+    if (esInterno() && String(S.costo_interno||'').trim() !== ''){
+      body.finanzas = body.finanzas || {};
+      body.finanzas.costo_interno = S.costo_interno;
+    }
     var sig = document.getElementById('o2mSig');
     var _origSig = sig.innerHTML;
     sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
@@ -1463,6 +1498,6 @@ window.OT2C = (function(){
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
           quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
-          setPlantillaInterno:setPlantillaInterno};
+          setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno};
 })();
 </script>

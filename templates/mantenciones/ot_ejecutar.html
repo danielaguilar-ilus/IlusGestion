@@ -1138,7 +1138,13 @@
       </h5>
       <div class="row g-2">
         {# ── Técnico ── #}
-        <div class="col-12 col-sm-4">
+        {# 2026-08-28 (Daniel: "al ser trabajo interno... no debería llevar
+           la firma del Cliente"): en una OT de bodega esa columna iba a
+           quedar "Pendiente" para siempre -- no hay cliente al que
+           pedirle nada. col-sm-4 (3 columnas) pasa a col-sm-6 (2) cuando
+           es interna, para que Técnico/Responsable ocupen el espacio que
+           dejó Cliente en vez de verse descuadrados. #}
+        <div class="col-12 {{ 'col-sm-6' if es_interna else 'col-sm-4' }}">
           <div style="height:100%;border:1.5px solid {{ '#16a34a' if visita.firma_tecnico_url else '#e2e8f0' }};
                       background:{{ '#f0fdf4' if visita.firma_tecnico_url else '#f8fafc' }};
                       border-radius:10px;padding:10px;text-align:center">
@@ -1156,7 +1162,8 @@
             {% endif %}
           </div>
         </div>
-        {# ── Cliente ── #}
+        {# ── Cliente (no aplica a trabajo interno -- no hay a quién firmarle) ── #}
+        {% if not es_interna %}
         <div class="col-12 col-sm-4">
           <div style="height:100%;border:1.5px solid {{ '#16a34a' if visita.firma_cliente_url else '#e2e8f0' }};
                       background:{{ '#f0fdf4' if visita.firma_cliente_url else '#f8fafc' }};
@@ -1175,8 +1182,9 @@
             {% endif %}
           </div>
         </div>
+        {% endif %}
         {# ── Responsable (supervisor / ejecutivo SSTT que certifica el cierre) ── #}
-        <div class="col-12 col-sm-4">
+        <div class="col-12 {{ 'col-sm-6' if es_interna else 'col-sm-4' }}">
           <div style="height:100%;border:1.5px solid {{ '#16a34a' if visita.firma_supervisor_url else '#e2e8f0' }};
                       background:{{ '#f0fdf4' if visita.firma_supervisor_url else '#f8fafc' }};
                       border-radius:10px;padding:10px;text-align:center">
