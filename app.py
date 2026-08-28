@@ -76211,6 +76211,16 @@ def _ot_tv_iso(dt_utc):
 
 _OT_TV_SELECT = (
     "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, "
+    # 🔴 FIX 2026-08-28 (OT-2026-00133 seguía desapareciendo del 2°/3°/4° día
+    # PESE al fix de anoche): `_OT_TV_WHERE_SOLAPE` sí usa v.fecha_fin en el
+    # WHERE (por eso la fila se sigue trayendo), pero esta lista de columnas
+    # NUNCA la seleccionaba -- así que en Python `f.get("fecha_fin")` daba
+    # siempre None, `fecha_hasta` colapsaba a `fecha_programada`, y el
+    # bucketing por día (línea ~76420) trataba a TODA OT multi-día como si
+    # terminara el mismo día que empieza. El WHERE estaba bien; faltaba esta
+    # columna en el SELECT que lo acompaña -- un cuarto lugar con el mismo
+    # supuesto roto que los tres de anoche.
+    "       v.fecha_fin, "
     "       v.hora_inicio, v.hora_fin, v.hora_real_inicio, v.direccion_visita, "
     "       c.razon_social, c.direccion AS cliente_direccion, "
     "       c.comuna AS cliente_comuna, "
