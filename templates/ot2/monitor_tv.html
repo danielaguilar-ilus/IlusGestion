@@ -126,7 +126,18 @@
        El logo ILUS (blanco sobre negro) vive aquí y se lee perfecto.
        ════════════════════════════════════════════════════════════════ */
     .tv-top{
-      height:104px;flex:0 0 104px;
+      /* 🔧 FIX 2026-08-27 (Daniel, captura real: el pill rojo "DÍA" quedaba
+         encima del "08:00" de la regla horaria). Medido en el navegador
+         (getBoundingClientRect): con los controles de navegación de fecha
+         + el selector Día/Semana/Mes visibles (pantalla de control), el
+         contenido de .tv-date pedía 112px de alto, pero esta franja solo
+         reservaba 104px con overflow:hidden -- lo que no cabía terminaba
+         empujando/recortándose justo al borde de la regla horaria de abajo.
+         104px además ya no alcanzaba para el logo agrandado (ver
+         .brand-logo-wrap). Se sube a 136px con margen de sobra a propósito
+         -- no un ajuste al pixel que se rompa de nuevo con "MIÉRCOLES" o un
+         mes de nombre largo. */
+      height:136px;flex:0 0 136px;
       display:grid;grid-template-columns:auto 1fr auto;align-items:center;
       gap:30px;padding:0 30px;
       color:#fff;position:relative;overflow:hidden;
@@ -153,16 +164,22 @@
 
     .tv-brand{display:flex;align-items:center;gap:20px}
     /* Recorte del logo (el PNG trae aire negro alrededor — mismo truco
-       overflow:hidden + scale del hero de Retiros) */
+       overflow:hidden + scale del hero de Retiros).
+       🔧 FIX 2026-08-27 (Daniel, viendo el TV real: "el logo se ve muy
+       chico, hazlo más grande"): +33% en ambas dimensiones (mantiene la
+       proporción 196:66 del recorte original, así que `transform:scale`
+       de abajo -- que es relativo al alto del cuadro, no un px fijo --
+       encuadra EXACTAMENTE el mismo trozo del PNG, solo que más grande). */
     .brand-logo-wrap{
-      width:196px;height:66px;overflow:hidden;flex-shrink:0;
+      width:261px;height:88px;overflow:hidden;flex-shrink:0;
       filter:drop-shadow(0 6px 18px rgba(230,0,0,.28));
     }
     .brand-logo{
       height:100%;width:auto;object-fit:cover;object-position:center center;
       transform:scale(1.85);transform-origin:left center;display:block;
     }
-    .brand-sep{width:1px;height:52px;background:rgba(255,255,255,.14)}
+    /* Separador un poco más alto para no verse enano junto al logo nuevo */
+    .brand-sep{width:1px;height:66px;background:rgba(255,255,255,.14)}
     .brand-txt h1{
       font-family:var(--display);font-weight:400;font-size:30px;line-height:.95;
       letter-spacing:.03em;color:#fff;
@@ -389,6 +406,13 @@
       display:flex;flex-direction:column;justify-content:center;
       padding:14px 26px 12px;
       transition:opacity .28s var(--ease-out), transform .28s var(--ease-out);
+      /* 🔧 FIX 2026-08-27: sin esto, si algún día hay tanta gente que ni el
+         --row-h mínimo de ajustarDensidad() entra en el alto disponible, la
+         tarjeta-calendario (centrada con justify-content:center) se sale
+         PAREJO por arriba y por abajo -- por arriba, justo encima del
+         header. Con overflow:hidden el peor caso es una tarjeta recortada
+         arriba/abajo (visible, entendible), nunca una tapada con la otra. */
+      overflow:hidden;
     }
     /* Fundido para la rotación de páginas (cuando hay más de 14 personas) */
     .tv-main.page-fade{opacity:0;transform:translateY(10px)}
@@ -1202,6 +1226,12 @@
     fechaVista: null, fechaAnt: null, fechaSig: null,
     pausadoPorNavegacion: false,
     vista: 'dia',            // dia | semana | mes (solo pantalla de control)
+    // 🛡️ Marca de vida de la cadena de latido() -- la usa vigilarLatido()
+    // para notar si dejó de avanzar (ver esa función más abajo). Arranca
+    // en "ahora" para que el vigía no sospeche antes de que el primer
+    // latido real tenga oportunidad de correr (de noche puede demorar
+    // hasta 2h en llegar).
+    ultimoLatidoAt: Date.now(),
   };
 
   /* ─────────────────────────── utilidades ─────────────────────────── */
@@ -2337,6 +2367,42 @@
     return 7200000;
   }
 
+  /* 🛡️ WATCHDOG del latido (2026-08-27, Daniel: el TV real lleva horas
+     encendido y "se queda dormido" -- deja de refrescar solo, sin que él
+     haga nada ni se vea ningún error).
+     La cadena de setTimeout(latido, ...) YA se defiende sola de un fetch
+     que FALLA (try/catch/finally siempre agenda el próximo latido, pase lo
+     que pase) -- lo que NO cubre es un fetch que queda COLGADO sin llegar
+     a resolver NI a rechazar (un cuelgue de red que el AbortController de
+     12s no logra destrabar, algo más probable tras miles de ciclos de 8s
+     corriendo horas seguidas). En ese caso la función se congela en el
+     `await`, el `finally` que agenda el SIGUIENTE latido nunca se ejecuta,
+     y la cadena muere sin ninguna excepción que loguear.
+     La pantalla de control tiene una red de contención para esto
+     (visibilitychange, más abajo): al volver de segundo plano relanza el
+     latido a mano. Pero el televisor de la pared NUNCA cambia de pestaña
+     ni pierde el foco -- ese evento simplemente no le llega -- así que
+     necesita su PROPIO reloj de guardia, uno que no dependa de la misma
+     cadena que está vigilando.
+     Umbral generoso a propósito ("bastante más que los 8s esperados"): un
+     ciclo puede hacer hasta 2 fetch seguidos (status + datos) cerca de su
+     tope de 12s cada uno -- ~24s de un ciclo LEGÍTIMO lento -- por eso el
+     piso de 90s, para no recargar por una demora normal de red/ERP. */
+  function umbralWatchdogMs(){
+    return Math.max(cadenciaMs() * 3, 90000);
+  }
+
+  function vigilarLatido(){
+    setInterval(() => {
+      const inactivoMs = Date.now() - state.ultimoLatidoAt;
+      if (inactivoMs > umbralWatchdogMs()){
+        console.warn('[monitor] el latido lleva ' + Math.round(inactivoMs / 1000) +
+          's sin avanzar (cadena de setTimeout detenida) -- recargando para recuperar la pantalla.');
+        location.reload();
+      }
+    }, 15000);
+  }
+
   function setOffline(mal, motivo){
     const pill = $('#offlinePill');
     const txt = $('#offlineTxt');
@@ -2389,6 +2455,15 @@
   }
 
   async function latido(){
+    // 🛡️ Marca de vida PRIMERO, antes de cualquier `return`/`await` de
+    // abajo -- vigilarLatido() (ver más abajo) la usa para saber si esta
+    // cadena de setTimeout sigue avanzando. Tiene que quedar registrada
+    // apenas el timer DISPARA, no al final: si un fetch se cuelga sin
+    // resolver ni rechazar (el AbortController de 12s no siempre logra
+    // destrabar un cuelgue de red), la función se queda parada en el
+    // `await` de más abajo PARA SIEMPRE y el `finally` que agenda el
+    // PRÓXIMO latido nunca llega a correr -- la cadena muere en silencio.
+    state.ultimoLatidoAt = Date.now();
     // Mientras se navega a otro día, el latido automático queda en pausa —
     // no tiene sentido "detectar cambios" de un día que no es hoy, y evita
     // que un repintado automático le quite de las manos a Daniel el día
@@ -2553,6 +2628,7 @@
 
     if (STATUS_URL && DATOS_URL){
       state.timerLatido = setTimeout(latido, cadenciaMs());
+      vigilarLatido();
     }
   });
   </script>
