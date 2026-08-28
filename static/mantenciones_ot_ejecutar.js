@@ -7442,6 +7442,86 @@ async function declararGarantia(){
   }
 }
 
+/* Reversa de declararGarantia() (Daniel, 28-08-2026, urgente: "no me deja
+   quitar la garantía y seleccionar una factura"). El endpoint /cobertura
+   ya aceptaba garantia_aplica:false desde que se construyó (19-08) -- se
+   mapea a "servicio pagado" vía _mapear_garantia_a_cobertura en el backend
+   -- pero el modal de firma nunca ofreció el botón para pedirlo. Al
+   recargar, esta OT cae en la rama "factGate" (sin garantía ni factura) y
+   ahí aparece el buscador de documentos ERP normal. */
+async function quitarGarantia(){
+  const motivo = await ilusPrompt({
+    title: 'Quitar cobertura de garantía',
+    message: '¿Por qué esta visita vuelve a cobrarse (o a control normal)?',
+    sub: 'Queda registrado con tu usuario y fecha. Mínimo 10 caracteres. Después de esto podrás asociar la factura o boleta correspondiente.',
+    placeholder: 'Ej: se confirmó con el cliente que sí corresponde cobro',
+    required: true,
+    multiline: true,
+    okLabel: 'Continuar',
+  });
+  if (!motivo) return;
+  if (motivo.trim().length < 10){
+    ilusToast('El motivo debe tener al menos 10 caracteres.', { type:'warning' });
+    return;
+  }
+  const ok = await ilusConfirm({
+    title: 'Quitar garantía',
+    message: 'Esta OT dejará de estar cubierta por garantía y volverá a pedir un documento de cobro (factura/boleta/nota de venta) para poder cerrarse.',
+    okLabel: 'Sí, quitar garantía', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const btn = document.getElementById('quitarGarBtn');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/cobertura`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ garantia_aplica: false, motivo: motivo.trim() }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo quitar la garantía');
+    ilusToast('✓ Garantía quitada — ahora puedes asociar una factura', { type:'success' });
+    setTimeout(() => window.location.reload(), 900);
+  } catch(e){
+    console.error('[quitarGarantia]', e);
+    ilusToast(e.message || 'No se pudo quitar la garantía', { type:'error' });
+    if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+/* Centro de costo desde el propio modal de firma (Daniel, 28-08-2026,
+   urgente: "el centro de costo, al menos déjame seleccionarlo porque
+   falta pero no me da la opción"). Mismo campo y mismo endpoint que ya
+   usa guardarFinanzasOT() en la card "Finanzas" de esta pantalla -- acá
+   se manda SOLO centro_costo, sin tocar costo/proveedor/documento ERP,
+   para no pisar en silencio algo que el usuario no vino a cambiar. */
+async function guardarCentroCostoModal(){
+  const sel = document.getElementById('modalCentroCosto');
+  const valor = sel ? sel.value : '';
+  if (!valor){
+    ilusToast('Elige un centro de costo antes de guardar.', { type:'warning' });
+    return;
+  }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ centro_costo: valor }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo guardar el centro de costo');
+    ilusToast('✓ Centro de costo guardado', { type:'success' });
+    setTimeout(() => window.location.reload(), 700);
+  } catch(e){
+    console.error('[guardarCentroCostoModal]', e);
+    ilusToast(e.message || 'No se pudo guardar el centro de costo', { type:'error' });
+  }
+}
+
 /* ---- (limite del <script> original en el template) ---- */
 
 (function(){

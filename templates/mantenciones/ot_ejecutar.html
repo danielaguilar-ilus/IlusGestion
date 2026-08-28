@@ -2697,8 +2697,58 @@
           <i class="bi bi-shield-fill-check me-1"></i>
           <strong>Cobertura: {{ 'GARANTÍA' if _mod_cobro == 'garantia' else 'SIN COSTO' }}.</strong>
           Esta OT no requiere factura para cerrarse.
+          {# 🔧 FIX 2026-08-28 (Daniel, urgente: "no me deja quitar la
+             garantía y seleccionar una factura"): esta rama era de solo
+             lectura -- una vez declarada la garantía no había forma de
+             volver atrás desde este modal (había que salir, buscar otra
+             pantalla, o nunca). El endpoint /cobertura YA acepta
+             garantia_aplica:false (revierte a servicio pagado) desde que
+             se construyó el 19-08 -- solo faltaba el botón. Mismo gate
+             `puede_cobertura` que "Declarar como garantía" en la rama de
+             abajo: nunca técnico, solo hasta antes de cerrar. #}
+          {% if puede_cobertura %}
+          <div class="mt-2 pt-2" style="border-top:1px dashed #86efac">
+            <button type="button" class="btn btn-sm fw-bold" id="quitarGarBtn"
+                    style="background:#fff;color:#166534;border:1.5px solid #16a34a"
+                    onclick="quitarGarantia()">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Quitar cobertura y asociar factura
+            </button>
+          </div>
+          {% endif %}
         </div>
-        {% elif visita.factura_nudo %}
+        {% endif %}
+
+        {# 🔧 FIX 2026-08-28 (Daniel, urgente: "el centro de costo, al menos
+           déjame seleccionarlo porque falta pero no me da la opción").
+           Ya existía un selector de centro de costo en la card "Finanzas"
+           de esta misma pantalla (guardarFinanzasOT(), más abajo) -- pero
+           NO estaba visible desde este modal de firma, que es justo donde
+           Daniel se da cuenta de que falta. Mismo PUT que usa esa card
+           (/mantenciones/api/visitas/<vid>, campo centro_costo), gateado
+           igual (@_ot_can_metadata) -- solo se guarda ESTE campo, sin
+           tocar el resto de los datos financieros. #}
+        {% if puede_metadata and not visita.centro_costo %}
+        <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
+          <div class="fw-bold small mb-2" style="color:#92400e">
+            <i class="bi bi-tag-fill me-1"></i>Falta el centro de costo
+          </div>
+          <div class="d-flex gap-2 flex-wrap align-items-end">
+            <div style="flex:1;min-width:160px">
+              <select id="modalCentroCosto" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="sstt">Servicio Técnico</option>
+                <option value="logistica">Logística</option>
+                <option value="comercial">Comercial</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="guardarCentroCostoModal()">
+              <i class="bi bi-check-lg me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if _mod_cobro not in ('garantia', 'sin_costo') and visita.factura_nudo %}
         <div class="alert py-2 small mb-3" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
           <i class="bi bi-receipt me-1"></i>
           <strong>{{ 'Nota de venta asociada' if visita.factura_tido in ('NVV','NVI') else 'Factura asociada' }}:</strong>
