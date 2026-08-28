@@ -75418,7 +75418,30 @@ def ot2_api_crear():
                 "Crea uno en Plantillas antes de generar esta orden.",
                 "PLANTILLA_NO_CONFIGURADA")
 
-    if not equipos and not plantilla_suelta:
+    # ── 5.b TAREAS MANUALES (sin plantilla) ─────────────────────────────
+    # Daniel (26-08-2026, corrección OT 2.0): "Capacitación/Control de
+    # calidad" ahora arman su trabajo con productos del catálogo o tareas
+    # sueltas en vez de elegir SIEMPRE una plantilla, y "Trabajo de bodega"
+    # (ej. "pegar una baranda") pasó a describirse en texto libre — ninguno
+    # de los dos casos tiene un checklist de verdad detrás.
+    # mant_visita_tareas.plantilla_id ya nace NULL-able con el comentario
+    # "NULL si tarea manual" (migración previa, nunca usado desde acá) —
+    # se reusa ese mismo campo, no se crea columna nueva.
+    tareas_manuales_in = d.get("tareas_manuales") or []
+    tareas_manuales = []
+    if isinstance(tareas_manuales_in, list):
+        for _tm in tareas_manuales_in[:50]:
+            if not isinstance(_tm, dict):
+                continue
+            _tm_titulo = (_tm.get("titulo") or "").strip()[:300]
+            if not _tm_titulo:
+                continue
+            tareas_manuales.append({
+                "titulo": _tm_titulo,
+                "descripcion": (_tm.get("descripcion") or "").strip()[:2000] or None,
+            })
+
+    if not equipos and not plantilla_suelta and not tareas_manuales:
         return _ot2_err(
             "Elige el checklist de trabajo.", "PLANTILLA_REQUERIDA")
 
@@ -75637,9 +75660,14 @@ def ot2_api_crear():
         # pantalla del técnico -- nadie podría verla ni trabajarla.
         if descubrimiento:
             _destinos = []
+        elif equipos:
+            _destinos = [(e["maquina_id"], e["plantilla_id"]) for e in equipos]
+        elif plantilla_suelta:
+            _destinos = [(None, plantilla_suelta)]
         else:
-            _destinos = ([(e["maquina_id"], e["plantilla_id"]) for e in equipos]
-                         or [(None, plantilla_suelta)])
+            # Ni equipos ni plantilla: el trabajo se describe con
+            # tareas_manuales (ver más abajo) -- no hay plantilla que copiar.
+            _destinos = []
         for mid, pid in _destinos:
             cur.execute(
                 "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
@@ -75667,6 +75695,21 @@ def ot2_api_crear():
                      it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
                      it.get("opciones_lista_json"), current_username()))
                 n_tareas += 1
+
+        # Tareas MANUALES (sin plantilla, plantilla_id queda NULL): productos
+        # del catálogo o tareas sueltas para Capacitación/Control de calidad,
+        # y la observación de Trabajo de bodega (una sola tarea con el texto
+        # completo). Mismo mant_visita_tareas de siempre, columna ya prevista.
+        for _tm in tareas_manuales:
+            orden += 1
+            cur.execute(
+                "INSERT INTO mant_visita_tareas "
+                "  (visita_id, orden, titulo, descripcion, tipo, "
+                "   tipo_respuesta, obligatoria, estado_trabajo, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,'check',1,'pendiente',%s)",
+                (vid, orden, _tm["titulo"], _tm["descripcion"], tarea_tipo,
+                 current_username()))
+            n_tareas += 1
 
         # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
         # EXCEPCIÓN, el levantamiento por descubrimiento: ahí el trabajo no
@@ -85390,7 +85433,67 @@ def mant_visita_fotos_get(vid):
 @_mant_required
 @_tecnico_owns_visita
 def mant_visita_fotos_subir(vid):
-    """Sube una o varias fotos a la OT.
+    """Sube una o varias fotos a la OT (ejecución: técnico asignado o superadmin).
+
+    La implementación real vive en `_mant_visita_fotos_subir_impl` — este
+    wrapper solo aplica el gate de EJECUCIÓN (`_tecnico_owns_visita`). Ver
+    `mant_visita_fotos_subir_inicial` para el mismo guardado con el gate de
+    CREACIÓN (evidencia inicial de Trabajo de bodega, 26-08-2026).
+    """
+    return _mant_visita_fotos_subir_impl(vid)
+
+
+def _visita_creador_o_puede_crear_ot(vid, user=None):
+    """Gate para adjuntar evidencia al CREAR una OT (distinto de "ejecutar").
+
+    Daniel (26-08-2026, Trabajo de bodega): la observación + fotos se suben
+    al momento de crear la OT, y quien crea una OT normalmente NO es el
+    técnico asignado todavía (o no hay ninguno) — `_tecnico_owns_visita`
+    (permiso de EJECUCIÓN) los bloquearía a todos salvo superadmin. Este
+    gate usa la misma familia de roles que ya puede CREAR órdenes de
+    trabajo (ver matriz en `_puede_ot_accion`), o el propio creador de esa
+    visita puntual — nunca "cualquiera con acceso a mantenciones".
+    """
+    u = user or getattr(g, "user", None) or {}
+    role = _rol_familia((u.get("role") or "").lower())
+    if role in ("superadmin", "admin", "supervisor", "ejecutivo"):
+        return True
+    v = mysql_fetchone("SELECT created_by FROM mant_visitas WHERE id=%s", (vid,))
+    return bool(v and (v.get("created_by") or "") == (u.get("username") or ""))
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/fotos/subir-inicial", methods=["POST"])
+@_mant_required
+def mant_visita_fotos_subir_inicial(vid):
+    """Evidencia inicial al CREAR una OT de Trabajo de bodega (26-08-2026).
+
+    Mismo guardado robusto (Cloudinary + fallback filesystem) que
+    `mant_visita_fotos_subir`, pero gateado por "puede crear OT" en vez de
+    "técnico asignado" — ver `_visita_creador_o_puede_crear_ot`. Acotado a
+    OTs de bodega recién creadas (tipo='revision_interna',
+    estado='programada') para no abrir una puerta general de "subir fotos a
+    cualquier OT" fuera del flujo de ejecución normal.
+    """
+    v = mysql_fetchone(
+        "SELECT tipo, estado, created_by FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
+    if v.get("tipo") != "revision_interna":
+        return jsonify({"ok": False,
+                         "error": "Esta vía es solo para OT de Trabajo de bodega."}), 403
+    if v.get("estado") != "programada":
+        return jsonify({"ok": False,
+                         "error": "Esta OT ya no está recién creada; sube evidencia desde su detalle."}), 403
+    if not _visita_creador_o_puede_crear_ot(vid):
+        return jsonify({"ok": False, "error": "No tienes permiso para esta acción."}), 403
+    return _mant_visita_fotos_subir_impl(vid)
+
+
+def _mant_visita_fotos_subir_impl(vid):
+    """Implementación real de "subir fotos a una OT" — compartida por el
+    endpoint de EJECUCIÓN (`mant_visita_fotos_subir`, técnico asignado) y el
+    de CREACIÓN (`mant_visita_fotos_subir_inicial`, evidencia de Trabajo de
+    bodega). El gate de permisos vive en cada wrapper, no acá.
 
     PERSISTENCIA ROBUSTA (2026-05-17): primero intenta Cloudinary
     (persistente, sobrevive deploys) y cae a filesystem solo si
