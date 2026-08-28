@@ -86238,7 +86238,14 @@ def mant_visita_pdf(vid):
     print(f"[ot_pdf] vid={vid} PDF OK en {time.time()-_t0_pdf:.1f}s "
           f"({len(pdf_bytes)//1024} KB)", flush=True)
 
-    fname = f"OT_{ctx['visita'].get('numero_ot') or vid}.pdf"
+    # 2026-08-28 (Daniel: "quiero que salga N. y Cliente... se veria mas
+    # elegante" -- mismo patron que ya usa el PDF de cotizaciones,
+    # tickets_module.py "Cotizacion_{numero}_{empresa}.pdf"): trabajo
+    # interno no tiene cliente (razon_social queda NULL, LEFT JOIN), en
+    # ese caso el nombre se queda solo con el numero, igual que antes.
+    _pdf_num = ctx["visita"].get("numero_ot") or vid
+    _pdf_cli = (ctx["visita"].get("razon_social") or "").strip()
+    fname = (f"OT_{_pdf_num}_{_pdf_cli}.pdf" if _pdf_cli else f"OT_{_pdf_num}.pdf").replace(" ", "_")
     return send_file(
         io.BytesIO(pdf_bytes), mimetype="application/pdf",
         as_attachment=False, download_name=fname,
