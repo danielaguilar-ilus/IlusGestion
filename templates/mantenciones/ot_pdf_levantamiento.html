@@ -249,18 +249,20 @@
   {# 🔧 FIX 2026-08-28 (Daniel: "que no se sobrepongan las fotos"): el header/
      footer NATIVOS de Chromium (mant_visita_pdf → _ot_pdf_header_footer_native)
      se pintan DENTRO del margen de la página. Medido con PyMuPDF sobre el PDF
-     real: la barra negra del header ocupa hasta los 22.2mm desde el borde.
-     El detalle clave (verificado con A/B controlado): cuando la plantilla trae
-     un @page{margin}, Chromium usa ESE margen para maquetar el contenido e
-     IGNORA el margin del page.pdf() de Playwright (22/16mm) — con el margin
-     viejo de 12mm el contenido arrancaba en 12mm y el header le caía ENCIMA
-     en TODAS las páginas: thead tapado, filas "rebanadas" y la franja superior
-     de las fotos del anexo cubierta por la barra negra. Por eso el margen va
-     acá (24mm > 22.2mm del header, 16mm para el pie) y NO se debe "limpiar"
-     de vuelta a 12mm. La vista HTML del navegador (Ctrl+P, sin header nativo)
-     conserva los 12mm de siempre vía el flag native_header_footer. #}
+     real: el header (barra negra con logos SPHS+ILUS + línea roja/negra)
+     arranca fijo a 5.3mm del borde y con los logos de producción llega hasta
+     ~26mm. El detalle clave (verificado con A/B controlado): cuando la
+     plantilla trae un @page{margin}, Chromium usa ESE margen para maquetar el
+     contenido e IGNORA el margin del page.pdf() de Playwright (22/16mm) — con
+     el margin viejo de 12mm el contenido arrancaba en 12mm y el header le
+     caía ENCIMA en TODAS las páginas: thead tapado, filas "rebanadas" y la
+     franja superior de las fotos del anexo cubierta por la barra negra. Por
+     eso el margen va acá (28mm > 26mm del header, 16mm para el pie) y NO se
+     debe "limpiar" de vuelta a 12mm. La vista HTML del navegador (Ctrl+P,
+     sin header nativo) conserva los 12mm de siempre vía el flag
+     native_header_footer. #}
   {% if native_header_footer %}
-  @page{ size:A4; margin:24mm 12mm 16mm; }
+  @page{ size:A4; margin:28mm 12mm 16mm; }
   {% else %}
   @page{ size:A4; margin:12mm; }
   {% endif %}
