@@ -82,6 +82,13 @@
   ══════════════════════════════════════════════════════════════════════
 #}
 <style>
+/* Tokens locales del paso "Agenda" (calendario + línea de tiempo, ver más
+   abajo junto a pintarAgenda). Declarados sobre .o2m (raíz del modal) en
+   vez de usar var(--ot-line) etc. de templates/ot2/panel.html: esos son
+   tokens de PÁGINA (scope .ot2, definidos ahí), y este modal es
+   independiente/autocontenido (ver comentario de cabecera) -- no debe
+   depender de que panel.html esté cargado en la misma página. */
+.o2m{ --o2m-line:#eaecf0; }
 .o2m .modal-dialog{max-width:1080px}
 .o2m .modal-content{border:0;border-radius:16px;overflow:hidden}
 .o2m-head{background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
@@ -222,6 +229,172 @@
   .o2m-body{max-height:none}
   .o2m-grid{grid-template-columns:1fr 1fr}
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   PASO "AGENDA" — mini-calendario del mes + línea de tiempo del día
+   ══════════════════════════════════════════════════════════════════════
+   Portado de templates/tickets/_modal_generar_ot.html (Paso 4) +
+   static/tickets_ficha.css (.tkcal-, .tkday-, .tksched) -- Daniel: quiere
+   ESE calendario, tal cual, dentro de este wizard, para poder retirar las
+   OT normales. Ids/clases renombrados con el prefijo o2m para no chocar
+   con los lev, tkcal-, tkday- del modal de Tickets si ambas plantillas
+   alguna vez conviven en la misma página (no debería, pero cuesta cero).
+
+   CORRECCIÓN DE Daniel (llegó a mitad del port, antes de escribir el
+   HTML/CSS -- ver reporte final): "debe quedar como la del calendario
+   general" -- la Col A (mini-mes) se reviste con el lenguaje visual de
+   .ot2-cal- y .ot2-ch de templates/ot2/panel.html (vista=calendario: fondo
+   claro, botones de mes circulares, chips de color POR FASE de la OT) en
+   vez del estilo oscuro-denso original de Tickets. Clonado con prefijo
+   o2m, NO se reutiliza .ot2-cal-* directo (ver tokens --o2m-line arriba):
+   este modal debe seguir autocontenido aunque panel.html cambie.
+   La Col B (línea de tiempo) no tiene equivalente en el calendario
+   general -- conserva el lenguaje visual original (bloque por técnico,
+   con choque), solo con bordes/radios/tipografía armonizados con la Col A
+   rediseñada, para que no se vean como dos widgets pegados con cinta.
+   ══════════════════════════════════════════════════════════════════════ */
+.o2m-sched{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;
+  background:#fff;border:1px solid var(--o2m-line);border-radius:11px;padding:14px;margin-top:14px}
+@media (max-width:1199.98px){ .o2m-sched{grid-template-columns:260px 1fr;gap:12px} }
+@media (max-width:767.98px){ .o2m-sched{grid-template-columns:1fr;gap:14px;padding:12px} }
+.o2m-sched-col{min-width:0}
+
+/* ── Col A: mini-calendario, piel de .ot2-cal y .ot2-ch (panel.html) ──── */
+.o2m-cal-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.o2m-cal-navbtn{width:32px;height:32px;border-radius:50%;border:1px solid var(--o2m-line);
+  background:#fff;color:#0a0a0a;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;flex-shrink:0;transition:border-color .15s,transform .15s}
+.o2m-cal-navbtn:hover{border-color:#0a0a0a;transform:scale(1.06)}
+.o2m-cal-titulo{flex:1;text-align:center;font-weight:900;font-size:.84rem;color:#0a0a0a;
+  text-transform:uppercase;letter-spacing:.04em}
+.o2m-cal-hoy{border:1px solid var(--o2m-line);background:#fff;color:#6b7280;border-radius:50px;
+  padding:3px 12px;font-size:.72rem;font-weight:800;cursor:pointer;flex-shrink:0;
+  transition:border-color .15s,color .15s}
+.o2m-cal-hoy:hover{border-color:#0a0a0a;color:#0a0a0a}
+.o2m-cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.o2m-cal-dow span{text-align:center;font-size:.6rem;font-weight:800;color:#9ca3af;
+  text-transform:uppercase;letter-spacing:.04em}
+.o2m-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.o2m-cal-day{position:relative;aspect-ratio:1/1;min-height:38px;border-radius:8px;
+  border:1px solid var(--o2m-line);background:#fafbfc;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  transition:border-color .15s,background .15s,transform .15s;outline-offset:1px}
+.o2m-cal-day:hover{background:#fff;border-color:#c7cbd1;transform:translateY(-1px)}
+.o2m-cal-day.blank{visibility:hidden;pointer-events:none}
+.o2m-cal-day .num{font-size:.74rem;font-weight:800;color:#374151;line-height:1}
+.o2m-cal-day.finde{background:#f4f5f7}
+.o2m-cal-day.hoy{border-color:var(--ilus-red,#dc2626)}
+.o2m-cal-day.hoy .num{color:var(--ilus-red,#dc2626)}
+.o2m-cal-day.sel{background:#0a0a0a;border-color:#0a0a0a}
+.o2m-cal-day.sel .num{color:#fff}
+.o2m-cal-day.vista:not(.sel){box-shadow:0 0 0 2px var(--ilus-red,#dc2626) inset}
+.o2m-cal-day .cnt{position:absolute;top:2px;right:3px;background:#94a3b8;color:#fff;
+  font-size:.5rem;font-weight:800;border-radius:50px;min-width:13px;height:13px;
+  padding:0 3px;display:flex;align-items:center;justify-content:center;line-height:1}
+.o2m-cal-day .cnt.amb{background:#f59e0b}
+.o2m-cal-day .cnt.roj{background:var(--ilus-red,#dc2626)}
+.o2m-cal-day .dots{display:flex;align-items:center;justify-content:center;gap:2px;margin-top:1px}
+.o2m-cal-day .dots em{width:5px;height:5px;border-radius:50%;display:block;flex-shrink:0}
+.o2m-cal-day .dots b{font-size:.5rem;font-weight:800;color:#9ca3af;line-height:1}
+.o2m-cal-leyenda{display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:10px;
+  font-size:.66rem;color:#6b7280;font-weight:700}
+.o2m-cal-leyenda span{display:inline-flex;align-items:center;gap:5px}
+.o2m-cal-leyenda i.k{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}
+@media (min-width:768px){ .o2m-cal-day{min-height:40px} }
+
+/* ── Col B: línea de tiempo del día -- esqueleto de .tkday-* original,
+   bordes/radios/línea armonizados con la Col A (var(--o2m-line), radius
+   7-9px en vez de los 8-10px del original, mismo espíritu). ──────────── */
+.o2m-day-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.o2m-day-fecha{font-weight:900;font-size:.86rem;color:#0a0a0a;text-transform:capitalize}
+.o2m-day-cnt{background:#fee2e2;color:#991b1b;border-radius:50px;padding:2px 10px;font-size:.66rem;font-weight:800}
+.o2m-day-navd{display:inline-flex;gap:4px}
+.o2m-day-navd button{width:26px;height:26px;border-radius:50%;border:1px solid var(--o2m-line);background:#fff;
+  color:#0a0a0a;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.o2m-day-navd button:hover{border-color:#0a0a0a}
+.o2m-day-navd button:disabled{opacity:.35;cursor:not-allowed}
+.o2m-day-sugerir-btn{border:1px solid var(--o2m-line);background:#fff;color:#6b7280;border-radius:50px;
+  padding:4px 12px;font-size:.7rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.o2m-day-sugerir-btn:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626)}
+.o2m-day-sugerir-btn:disabled{opacity:.55;cursor:wait}
+.o2m-day-legend{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:.66rem;color:#6b7280;font-weight:700}
+.o2m-day-legend span{display:inline-flex;align-items:center;gap:5px}
+.o2m-day-legend i.k{width:11px;height:11px;border-radius:3px;display:inline-block;flex-shrink:0}
+.o2m-day-legend i.k.ag{background:#f8fafc;border:1px solid #cbd5e1;border-left:3px solid #475569}
+.o2m-day-legend i.k.mine{background:rgba(220,38,38,.12);border:2px dashed var(--ilus-red,#dc2626)}
+@media (max-width:575.98px){ .o2m-day-legend{margin-left:0;width:100%} }
+
+.o2m-day-scroll{position:relative;height:360px;overflow-y:auto;overflow-x:hidden;background:#fff;
+  border:1px solid var(--o2m-line);border-radius:9px}
+@media (max-width:767.98px){ .o2m-day-scroll{height:300px} }
+.o2m-day-scroll.sin-dia{opacity:.6}
+.o2m-day-inner{position:relative;height:576px}
+.o2m-day-canvas{position:relative;height:576px;margin-left:44px;cursor:copy}
+.o2m-day-hline{position:absolute;left:0;right:0;height:0;border-top:1px solid #f1f3f5;pointer-events:none}
+.o2m-day-hline.half{border-top:1px dashed #f6f7f9}
+.o2m-day-hlbl{position:absolute;left:0;width:44px;text-align:right;padding-right:7px;
+  font-size:.62rem;color:#9ca3af;font-weight:700;transform:translateY(-50%)}
+.o2m-day-now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--ilus-red,#dc2626);z-index:3}
+.o2m-day-now::before{content:'';position:absolute;left:-4px;top:-4px;width:8px;height:8px;
+  border-radius:50%;background:var(--ilus-red,#dc2626)}
+
+.o2m-day-blk{position:absolute;border-radius:7px;padding:3px 8px;cursor:default;background:#fff;
+  border:1px solid #e5e7eb;border-left-width:3px;overflow:hidden;box-sizing:border-box}
+.o2m-day-blk .l1{display:flex;align-items:center;gap:6px;min-width:0}
+.o2m-day-blk .hora{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.62rem;font-weight:700;flex-shrink:0}
+.o2m-day-blk .who{font-size:.72rem;font-weight:800;color:#0a0a0a;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;min-width:0}
+.o2m-day-blk .otnum{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.58rem;font-weight:700;color:#6b7280}
+.o2m-day-blk.blk-sm{padding:2px 8px}
+.o2m-day-blk.blk-xs{padding:1px 6px;line-height:1.1;font-size:.6rem}
+.o2m-day-blk.blk-xs .who{font-size:.6rem}
+.o2m-day-blk.est-done{opacity:.55}
+.o2m-day-blk.est-curso{border-left-style:double;border-left-width:4px}
+.o2m-day-blk.est-cancel{opacity:.35}
+.o2m-day-blk.est-cancel .who{text-decoration:line-through}
+.o2m-day-blk.sin-fin{border-right-style:dashed;border-right-width:2px}
+.o2m-day-blk.clamp-top::before{content:'▲';font-size:.5rem;position:absolute;top:1px;right:4px;color:#9ca3af}
+.o2m-day-blk.clamp-bot::after{content:'▼';font-size:.5rem;position:absolute;bottom:1px;right:4px;color:#9ca3af}
+.o2m-day-blk.en-choque{box-shadow:0 0 0 2px var(--ilus-red,#dc2626)}
+.o2m-day-blk.blk-mas{background:#f3f4f6;border-color:#e5e7eb;border-left-color:#9ca3af}
+.o2m-day-blk.blk-mas .who{color:#6b7280}
+@media (max-width:767.98px){ .o2m-day-blk{min-height:22px} }
+
+.o2m-day-blk.mine{left:0;width:100%;z-index:5;cursor:default;pointer-events:none;
+  background:rgba(220,38,38,.06);border:2px dashed var(--ilus-red,#dc2626);border-radius:8px;
+  transition:top .22s cubic-bezier(.34,1.56,.64,1),height .22s cubic-bezier(.34,1.56,.64,1)}
+.o2m-day-blk.mine .mine-tag{position:absolute;top:-9px;left:8px;display:inline-flex;align-items:center;gap:3px;
+  background:var(--ilus-red,#dc2626);color:#fff;font-size:.6rem;font-weight:800;border-radius:50px;
+  padding:2px 9px;white-space:nowrap;box-shadow:0 2px 6px rgba(220,38,38,.35)}
+.o2m-day-blk.mine .mine-body{position:relative;overflow:hidden;height:100%;padding-top:6px;
+  display:flex;flex-direction:column;gap:2px;justify-content:center}
+.o2m-day-blk.mine.tag-dentro .mine-tag{top:2px}
+.o2m-day-blk.mine .mine-wm{position:absolute;right:6px;bottom:-4px;font-size:2rem;line-height:1;
+  color:var(--ilus-red,#dc2626);opacity:.10}
+.o2m-day-blk.mine .mine-dur{display:flex;align-items:center;gap:5px;font-size:.74rem;font-weight:800;color:#7f1d1d}
+.o2m-day-blk.mine .mine-dur i{font-size:.66rem;opacity:.85}
+.o2m-day-blk.mine .mine-tec{display:flex;align-items:center;gap:4px;font-size:.62rem;font-weight:700;color:#7f1d1d}
+.o2m-day-blk.mine .mine-tec.pendiente{color:#9a6a1f}
+.o2m-day-blk.mine .mine-tec i{font-size:.6rem;flex-shrink:0}
+.o2m-day-blk.mine.choque{border-style:dashed;border-color:#b91c1c}
+.o2m-day-blk.mine.choque .mine-tag{background:#b91c1c}
+.o2m-day-blk.mine.choque .mine-tag::before{content:'⚠ '}
+@keyframes o2mDayFlash{
+  0%{box-shadow:0 0 0 0 rgba(220,38,38,.6)}
+  55%{box-shadow:0 0 0 9px rgba(220,38,38,0)}
+  100%{box-shadow:0 8px 18px -6px rgba(220,38,38,.35)}
+}
+.o2m-day-blk.mine.flash{animation:o2mDayFlash .6s cubic-bezier(.22,1,.36,1)}
+@media (prefers-reduced-motion:reduce){
+  .o2m-day-blk.mine{transition:none}
+  .o2m-day-blk.mine.flash{animation:none}
+}
+
+.o2m-day-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1}
+.o2m-day-ghost > i{font-size:1.3rem;color:#cbd5e1}
+.o2m-day-ghost .g1{font-size:.76rem;font-weight:700;color:#9ca3af;margin-top:4px}
+.o2m-day-ghost .g2{font-size:.68rem;color:#c4c9d0;margin-top:2px}
+.o2m-day-ghost .g-btn{pointer-events:auto;margin-top:8px}
 </style>
 
 <div class="modal fade o2m" id="ot2ModalCrear" tabindex="-1" aria-hidden="true">
@@ -618,13 +791,82 @@ window.OT2C = (function(){
         '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
         'onchange="OT2C.setFecha(this.value)"></div>'+
         '<div class="col-md-4"><label class="fl">Hora inicio</label>'+
-        '<input type="time" class="form-control" value="'+esc(S.hini)+'" '+
-        'onchange="OT2C.setHora(\'hini\',this.value)"></div>'+
+        '<input type="time" class="form-control" id="o2mHoraIni" value="'+esc(S.hini)+'" '+
+        'oninput="OT2C.setHora(\'hini\',this.value)" onchange="OT2C.setHora(\'hini\',this.value)"></div>'+
         '<div class="col-md-4"><label class="fl">Hora término</label>'+
-        '<input type="time" class="form-control" value="'+esc(S.hfin)+'" '+
-        'onchange="OT2C.setHora(\'hfin\',this.value)"></div>'+
-      '</div><div id="o2mAvisos"></div>';
+        '<input type="time" class="form-control" id="o2mHoraFin" value="'+esc(S.hfin)+'" '+
+        'oninput="OT2C.setHora(\'hfin\',this.value)" onchange="OT2C.setHora(\'hfin\',this.value)"></div>'+
+      '</div><div id="o2mAvisos"></div>'+
+      // Choque de horario (§ más abajo, o2mChequearChoque): banner reusando
+      // el mismo lenguaje de error que el resto del modal (.o2m-err).
+      '<div id="o2mChoqueWarn" class="o2m-err" style="display:none;margin-top:12px"></div>'+
+      // Dos superficies sincronizadas -- Col A elige el DÍA (mini-mes con
+      // la piel del calendario general de /ot/?vista=calendario, pedido
+      // de Daniel), Col B elige/ajusta la HORA viendo qué técnicos ya
+      // están ocupados ese día. Portado de static/tickets_ficha.js
+      // (_TKOT.cal/_TKOT.day) -- funciones o2mCal*/o2mDay* más abajo en
+      // este mismo script. Los bloques de OTs ajenas son informativos
+      // (aria-label), no clicables: ver/reprogramar/reasignar/cancelar
+      // OTRA OT desde acá queda deliberadamente fuera de alcance.
+      '<div class="o2m-sched">'+
+        '<div class="o2m-sched-col">'+
+          '<div class="o2m-cal-toolbar">'+
+            '<button type="button" class="o2m-cal-navbtn" onclick="OT2C.o2mCalMes(-1)" aria-label="Mes anterior">'+
+            '<i class="bi bi-chevron-left"></i></button>'+
+            '<div class="o2m-cal-titulo" id="o2mCalTitulo">—</div>'+
+            '<button type="button" class="o2m-cal-navbtn" onclick="OT2C.o2mCalMes(1)" aria-label="Mes siguiente">'+
+            '<i class="bi bi-chevron-right"></i></button>'+
+            '<button type="button" class="o2m-cal-hoy" onclick="OT2C.o2mCalHoy()">Hoy</button>'+
+          '</div>'+
+          '<div class="o2m-cal-dow"><span>L</span><span>M</span><span>M</span><span>J</span>'+
+          '<span>V</span><span>S</span><span>D</span></div>'+
+          '<div class="o2m-cal-grid" id="o2mCalGrid">'+
+          '<div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando calendario…</div></div>'+
+          '<div class="o2m-cal-leyenda">'+
+          '<span><i class="k" style="background:#0a0a0a"></i>Día seleccionado</span>'+
+          '<span><i class="k" style="background:#fff;border:1px solid var(--ilus-red,#dc2626)"></i>Hoy</span>'+
+          '</div>'+
+        '</div>'+
+        '<div class="o2m-sched-col">'+
+          '<div class="o2m-day-head">'+
+            '<span class="o2m-day-navd">'+
+              '<button type="button" id="o2mDayPrev" onclick="OT2C.o2mDayPaso(-1)" aria-label="Día anterior">'+
+              '<i class="bi bi-chevron-left"></i></button>'+
+              '<button type="button" id="o2mDayNext" onclick="OT2C.o2mDayPaso(1)" aria-label="Día siguiente">'+
+              '<i class="bi bi-chevron-right"></i></button>'+
+            '</span>'+
+            '<span class="o2m-day-fecha" id="o2mDayFecha">—</span>'+
+            '<span class="o2m-day-cnt" id="o2mDayCnt" style="display:none"></span>'+
+            '<button type="button" id="o2mDaySugerirBtn" class="o2m-day-sugerir-btn" onclick="OT2C.o2mDaySugerirHueco()" '+
+            'title="Busca el próximo horario libre para los técnicos seleccionados">'+
+            '<i class="bi bi-stars" aria-hidden="true"></i>Sugerir horario</button>'+
+            '<span class="o2m-day-legend"><span><i class="k ag"></i>Agendada</span>'+
+            '<span><i class="k mine"></i>Tu OT</span></span>'+
+          '</div>'+
+          '<div class="o2m-day-scroll" id="o2mDayScroll">'+
+            '<div class="o2m-day-inner" id="o2mDayInner">'+
+              '<div id="o2mDayGutter"></div>'+
+              '<div class="o2m-day-canvas" id="o2mDayCanvas">'+
+                '<div id="o2mDayRejilla"></div>'+
+                '<div id="o2mDayNow"></div>'+
+                '<div id="o2mDayBlks"></div>'+
+                '<div class="o2m-day-blk mine" id="o2mDayMine" style="display:none"></div>'+
+                '<div class="o2m-day-ghost" id="o2mDayGhost" style="display:none"></div>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+          '<small class="text-muted d-block mt-2" style="font-size:.72rem">'+
+          '<i class="bi bi-info-circle me-1"></i>Toca un espacio libre para fijar el horario de tu OT. '+
+          'Los bloques de color son OTs de otros técnicos ese día.</small>'+
+        '</div>'+
+      '</div>';
     avisosAgenda();
+    o2mCalInit();
+    // El canvas se reconstruye entero en cada pintarAgenda() (innerHTML
+    // nuevo) -- el listener se re-liga cada vez, no hay riesgo de
+    // duplicarlo ni de listeners huérfanos sobre nodos ya descartados.
+    var _o2mCanvasEl = document.getElementById('o2mDayCanvas');
+    if (_o2mCanvasEl) _o2mCanvasEl.addEventListener('click', o2mDaySlotClick);
   }
 
   /* Mismos umbrales que valida el backend, para que el usuario vea el
@@ -641,6 +883,847 @@ window.OT2C = (function(){
       ? '<div class="o2m-aviso"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
         'Se puede agendar igual, pero ojo:<ul>'+a.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'
       : '';
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     CALENDARIO EMBEBIDO DEL PASO "AGENDA" (mini-mes + línea de tiempo del
+     día) + choque de horario en vivo. Portado de static/tickets_ficha.js
+     (_TKOT.cal, _TKOT.day, funciones tkotCal.../tkday...) -- mismo backend SIN
+     cambios (GET /mantenciones/api/calendario/mes/<anio>/<mes> y GET
+     /mantenciones/api/calendario/choque), pero leyendo/escribiendo
+     S.fecha/S.hini/S.hfin/S.tecnicos (el mismo estado que ya lee crear())
+     en vez de _TKOT.* -- acá no hay "estado propio" del calendario aparte
+     de la vista (mes que se mira, día que se mira, caché, choque).
+
+     QUÉ NO SE PORTÓ (alcance explícito):
+     · Chips de duración [1|2|3|5|Otro] + toggle "¿Se extenderá más de un
+       día?" del modal de Tickets -- ese modal manda un rango fecha_fin/
+       hora_fin_fin que el backend de OT2 (/ot/api/crear) NO recibe hoy
+       (ver crear(): solo fecha_programada/hora_inicio/hora_fin). Una UI
+       de rango sin backend que la reciba sería un adorno que no hace
+       nada al guardar -- se deja fuera hasta que OT2 soporte visitas
+       multi-día.
+     · Clic en un bloque de OTRO técnico para ver/reprogramar/reasignar/
+       cancelar esa OT (tkdayVerBloque y su cadena de popover) -- es una
+       capacidad más grande y de más riesgo (escribe sobre OTs ajenas) que
+       no hace falta para "elegir horario de la OT que estoy creando". Los
+       bloques quedan puramente informativos (aria-label con el detalle):
+       no son clicables, no hay botón fantasma que no responda.
+
+     COL A (mini-calendario): pedido explícito de Daniel tras ver
+     /ot/?vista=calendario ("debe quedar como la del calendario general")
+     -- piel clara de .ot2-cal- y .ot2-ch de panel.html (fondo blanco,
+     botones circulares, chips de color POR FASE de la OT en vez de por
+     técnico) en vez del estilo oscuro-denso original de Tickets. Clonado
+     con prefijo o2m -- no se reutiliza .ot2-cal-* directo -- para que
+     este archivo siga autocontenido aunque panel.html cambie.
+     COL B (línea de tiempo): sin equivalente en el calendario general --
+     conserva el lenguaje visual original (bloque por técnico, con
+     choque), solo con bordes/radios/línea armonizados con la Col A.
+     ════════════════════════════════════════════════════════════════════ */
+  var o2mCal = { anio:null, mes:null, cache:{}, error:{}, diaSel:null };
+  var o2mDay = { fecha:null, rejilla:false, choque:false, choqueFecha:null, choqueKeys:null, visitas:[] };
+  var _o2mChoqueToken = 0, _o2mChoqueTimer = null, _o2mFlashToken = 0;
+
+  var O2M_CAL_MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+    'agosto','septiembre','octubre','noviembre','diciembre'];
+  var O2M_CAL_UMBRAL_AMBAR = 3, O2M_CAL_UMBRAL_ROJO = 5;   // carga total del día (mini-calendario)
+
+  // Fase de la OT según su estado real (mant_visitas.estado) -- MISMA
+  // tabla que _OT2_ESTADO_META en app.py (4ta posición de cada tupla),
+  // usada acá solo para colorear el punto de cada OT en el día (Col A).
+  // Cualquier estado no listado (o cancelada/anulada) cae en 'cancel',
+  // igual que el fallback `estado_fase or 'cancel'` del backend/template.
+  var O2M_ESTADO_FASE = {
+    creada:'pend', programada:'pend', asignada:'pend', reagendada:'pend',
+    en_curso:'ejec', en_ejecucion:'ejec',
+    firmada_tecnico:'comp', pendiente_info:'comp', pendiente_repuesto:'comp',
+    pendiente_aprobacion:'comp', completada:'comp',
+    cerrada:'cerr', cancelada:'cancel', anulada:'cancel'
+  };
+  var O2M_FASE_COLOR = { pend:'#3b82f6', ejec:'#dc2626', comp:'#16a34a', cerr:'#4b5563', cancel:'#dc2626' };
+  function _o2mFaseColor(estado){
+    var f = O2M_ESTADO_FASE[String(estado||'').toLowerCase()] || 'cancel';
+    return O2M_FASE_COLOR[f];
+  }
+
+  function _o2mCalKey(a,m){ return a+'-'+String(m).padStart(2,'0'); }
+
+  // Normaliza la respuesta de /mantenciones/api/calendario/mes/<a>/<m> a
+  // { "YYYY-MM-DD": [visitas] }. El contrato real hoy es dias={fecha:{visitas:[...]}}
+  // pero se tolera también dias=[] y visitas=[] sueltas (mismo criterio
+  // defensivo del origen, _tkotCalNormalizarMes en tickets_ficha.js).
+  function _o2mCalNormalizarMes(d){
+    var mapa = {};
+    if (!d) return mapa;
+    if (d.dias && !Array.isArray(d.dias) && typeof d.dias === 'object'){
+      Object.keys(d.dias).forEach(function(f){
+        var dd = d.dias[f];
+        mapa[f] = Array.isArray(dd) ? dd : (dd && dd.visitas) || [];
+      });
+    } else if (Array.isArray(d.dias)){
+      d.dias.forEach(function(dd){ if (dd && dd.fecha) mapa[dd.fecha] = dd.visitas || []; });
+    } else if (Array.isArray(d.visitas)){
+      d.visitas.forEach(function(v){
+        var f = v.fecha_programada || v.fecha; if (!f) return;
+        if (!mapa[f]) mapa[f] = []; mapa[f].push(v);
+      });
+    }
+    return mapa;
+  }
+
+  function o2mCalCargarMes(){
+    var a = o2mCal.anio, m = o2mCal.mes;
+    var titEl = document.getElementById('o2mCalTitulo');
+    if (titEl) titEl.textContent = (O2M_CAL_MES_ES[m-1]||'')+' '+a;
+    var key = _o2mCalKey(a,m);
+    if (o2mCal.cache[key]){
+      o2mCalRenderGrid();
+      if (o2mCal.diaSel && o2mCal.diaSel.slice(0,7)===key) o2mDayRender(o2mCal.diaSel, {silencio:true});
+      return Promise.resolve();
+    }
+    var grid = document.getElementById('o2mCalGrid');
+    if (grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">Cargando…</div>';
+    return fetch('/mantenciones/api/calendario/mes/'+a+'/'+m, {credentials:'same-origin'})
+      .then(function(r){ if (!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(function(d){
+        o2mCal.cache[key] = _o2mCalNormalizarMes(d);
+        delete o2mCal.error[key];
+        o2mCalRenderGrid();
+        if (o2mCal.diaSel && o2mCal.diaSel.slice(0,7)===key) o2mDayRender(o2mCal.diaSel, {silencio:true});
+      })
+      .catch(function(e){
+        console.warn('o2m calendario mes:', e);
+        o2mCal.cache[key] = {};
+        o2mCal.error[key] = true;
+        if (grid) grid.innerHTML = '<div class="text-muted small text-center py-3" style="grid-column:1/-1">'+
+          '<i class="bi bi-calendar-x me-1"></i>No se pudo cargar el calendario de este mes.</div>';
+        o2mDayRender(o2mCal.diaSel, {silencio:true});
+      });
+  }
+
+  function o2mCalReintentar(){
+    delete o2mCal.cache[_o2mCalKey(o2mCal.anio, o2mCal.mes)];
+    delete o2mCal.error[_o2mCalKey(o2mCal.anio, o2mCal.mes)];
+    o2mCalCargarMes();
+  }
+
+  function o2mCalMes(delta){
+    var m = o2mCal.mes + delta, a = o2mCal.anio;
+    if (m > 12){ m = 1; a++; } else if (m < 1){ m = 12; a--; }
+    o2mCal.anio = a; o2mCal.mes = m;
+    o2mCalCargarMes();
+  }
+
+  function o2mCalHoy(){
+    var hoy = new Date();
+    o2mCal.anio = hoy.getFullYear(); o2mCal.mes = hoy.getMonth()+1;
+    o2mCalCargarMes().then(function(){
+      var f = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
+      o2mCalClicDia(f);
+    });
+  }
+
+  function o2mCalRenderGrid(){
+    var a = o2mCal.anio, m = o2mCal.mes;
+    var mapa = o2mCal.cache[_o2mCalKey(a,m)] || {};
+    var grid = document.getElementById('o2mCalGrid');
+    if (!grid) return;
+    var primerDia = new Date(a, m-1, 1);
+    var nDias = new Date(a, m, 0).getDate();
+    var offset = primerDia.getDay() - 1; if (offset < 0) offset = 6;
+    var hoy = new Date();
+    var hoyStr = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
+    var fechaProg = S.fecha || '';
+    var html = '';
+    for (var i=0;i<offset;i++) html += '<div class="o2m-cal-day blank"></div>';
+    for (var dia=1; dia<=nDias; dia++){
+      var fecha = a+'-'+String(m).padStart(2,'0')+'-'+String(dia).padStart(2,'0');
+      var visitas = mapa[fecha] || [];
+      var dow = new Date(a, m-1, dia).getDay();
+      var clases = ['o2m-cal-day'];
+      if (dow===0 || dow===6) clases.push('finde');
+      if (fecha===hoyStr) clases.push('hoy');
+      if (fecha===fechaProg) clases.push('sel');
+      if (fecha===o2mCal.diaSel && fecha!==fechaProg) clases.push('vista');
+      var dots = '';
+      if (visitas.length){
+        dots = '<span class="dots">'+visitas.slice(0,3).map(function(v){
+          return '<em style="background:'+_o2mFaseColor(v.estado)+'"></em>';
+        }).join('') + (visitas.length>3 ? '<b>+'+(visitas.length-3)+'</b>' : '') + '</span>';
+      }
+      var cntCls = visitas.length>=O2M_CAL_UMBRAL_ROJO ? 'roj' : (visitas.length>=O2M_CAL_UMBRAL_AMBAR ? 'amb' : '');
+      html += '<div class="'+clases.join(' ')+'" onclick="OT2C.o2mCalClicDia(\''+fecha+'\')" '+
+        'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.o2mCalClicDia(\''+fecha+'\');}" '+
+        'role="button" tabindex="0" '+
+        'aria-label="'+esc(fecha+' — '+(visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas'))+'">'+
+        '<span class="num">'+dia+'</span>'+
+        (visitas.length ? '<span class="cnt '+cntCls+'">'+visitas.length+'</span>' : '')+
+        dots+'</div>';
+    }
+    grid.innerHTML = html;
+  }
+
+  // Clic en un día del mini-calendario: el calendario MANDA para el día --
+  // setea #o2mFecha y dispara su 'change' para que setFecha() reaccione
+  // exactamente igual que si el usuario hubiera tipeado la fecha (mismo
+  // truco que tkotCalClicDia en el modal de Tickets).
+  function o2mCalClicDia(fecha){
+    var fp = document.getElementById('o2mFecha');
+    if (!fp){ o2mCalSelDia(fecha); return; }
+    fp.value = fecha;
+    fp.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+
+  function o2mCalSelDia(fecha, opts){
+    opts = opts || {};
+    o2mCal.diaSel = fecha;
+    o2mCalRenderGrid();
+    o2mDayRender(fecha, {scroll: !opts.silencio});
+  }
+
+  // Se llama cada vez que se (re)pinta el paso Agenda -- S puede traer ya
+  // una fecha elegida (reabrir el wizard, cambiar de tipo) y pintarAgenda()
+  // reconstruye el DOM del calendario entero cada vez, así que el estado
+  // de vista (mes, día mirado, caché) se resetea acá para no quedar
+  // apuntando a nodos que ya no existen (incluye o2mDay.rejilla=false:
+  // sin este reset, la rejilla de horas NO se redibujaría en un segundo
+  // montaje porque el flag seguiría en true de la vez anterior).
+  function o2mCalInit(){
+    var fp = S.fecha || '';
+    var base = fp ? new Date(fp+'T00:00:00') : new Date();
+    o2mCal.anio = base.getFullYear();
+    o2mCal.mes = base.getMonth()+1;
+    o2mCal.diaSel = null;
+    o2mCal.cache = {};
+    o2mCal.error = {};
+    o2mDay.fecha = null;
+    o2mDay.rejilla = false;
+    o2mDay.choque = false;
+    o2mDay.choqueFecha = null;
+    o2mDay.choqueKeys = null;
+    o2mDay.visitas = [];
+    var warn = document.getElementById('o2mChoqueWarn');
+    if (warn) warn.style.display = 'none';
+    o2mDayRender(null, {silencio:true});
+    o2mCalCargarMes().then(function(){
+      if (fp) o2mCalSelDia(fp, {silencio:true});
+    });
+  }
+
+  // ── Línea de tiempo del día (Col B) -- geometría idéntica al original:
+  //    jornada 08:00-20:00 pintada a 0.8px/min (48px/hora). ──────────────
+  var O2M_DAY_START = 8*60, O2M_DAY_END = 20*60, O2M_DAY_PXMIN = 0.8;
+  var O2M_DAY_H = (O2M_DAY_END - O2M_DAY_START) * O2M_DAY_PXMIN;
+  var O2M_DAY_MINH = 18;
+  var O2M_DAY_MINDUR = O2M_DAY_MINH / O2M_DAY_PXMIN;
+  var O2M_DAY_DOW_LARGO = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+
+  // Paleta determinista por técnico (mismo criterio que el modal de
+  // Tickets): el rojo queda reservado para "Tu OT" y el choque.
+  var O2M_DAY_PALETA = [
+    ['#3b82f6','#eff6ff'], ['#8b5cf6','#f5f3ff'], ['#0891b2','#ecfeff'], ['#16a34a','#f0fdf4'],
+    ['#d97706','#fffbeb'], ['#db2777','#fdf2f8'], ['#475569','#f8fafc'], ['#b45309','#fef3c7']
+  ];
+  function _o2mDayColor(tid){
+    var n = parseInt(tid,10); if (isNaN(n)) n = 0;
+    return O2M_DAY_PALETA[((n%8)+8)%8];
+  }
+  var O2M_DAY_TIPO_ICONOS = {
+    preventiva:'bi-shield-check', correctiva:'bi-tools', instalacion:'bi-box-seam',
+    inspeccion:'bi-search', levantamiento:'bi-clipboard2', visita_tecnica:'bi-person-gear',
+    garantia:'bi-award', capacitacion:'bi-mortarboard', repuesto:'bi-gear',
+    revision_interna:'bi-clipboard-check', cambio_equipo:'bi-arrow-repeat',
+    desinstalacion:'bi-box-arrow-up', visita_correctiva:'bi-tools',
+    movimiento_equipos:'bi-arrows-move', control_calidad:'bi-patch-check'
+  };
+  function _o2mDayIconoTipo(tipo){ return O2M_DAY_TIPO_ICONOS[String(tipo||'').toLowerCase()] || 'bi-clipboard-data'; }
+
+  function _o2mDayToMin(hhmm){
+    var p = String(hhmm==null?'':hhmm).split(':');
+    var h = parseInt(p[0],10); if (isNaN(h)) return null;
+    var m = parseInt(p[1],10);
+    return h*60 + (isNaN(m)?0:m);
+  }
+  function _o2mDayHHMM(min){ return String(Math.floor(min/60)).padStart(2,'0')+':'+String(min%60).padStart(2,'0'); }
+  function _o2mDayGeom(hi, hf){
+    var iniRaw = _o2mDayToMin(hi);
+    if (iniRaw===null) return null;
+    var finRaw = _o2mDayToMin(hf);
+    var sinFin = (finRaw===null || finRaw<=iniRaw);
+    if (sinFin) finRaw = iniRaw;
+    var clampTop = iniRaw < O2M_DAY_START;
+    var clampBot = finRaw > O2M_DAY_END;
+    var ini = Math.min(Math.max(iniRaw, O2M_DAY_START), O2M_DAY_END);
+    var fin = Math.min(Math.max(finRaw, O2M_DAY_START), O2M_DAY_END);
+    var top = (ini - O2M_DAY_START) * O2M_DAY_PXMIN;
+    var height = Math.max((fin-ini)*O2M_DAY_PXMIN, O2M_DAY_MINH);
+    if (top < 0) top = 0;
+    if (top+height > O2M_DAY_H) top = Math.max(0, O2M_DAY_H - height);
+    var finLay = Math.max(finRaw, iniRaw + O2M_DAY_MINDUR);
+    return {iniRaw:iniRaw, finRaw:finRaw, finLay:finLay, top:top, height:height,
+            sinFin:sinFin, clampTop:clampTop, clampBot:clampBot};
+  }
+  function _o2mDayClase(h){
+    if (h>=64) return 'blk-lg';
+    if (h>=40) return 'blk-md';
+    if (h>=24) return 'blk-sm';
+    return 'blk-xs';
+  }
+  function _o2mDayIniciales(nombre){
+    var ps = String(nombre||'').trim().split(/\s+/).filter(Boolean);
+    if (!ps.length) return '—';
+    return (ps[0].charAt(0) + (ps[1]?ps[1].charAt(0):'')).toUpperCase();
+  }
+  function _o2mDayFechaLarga(f){
+    var p = String(f||'').split('-');
+    if (p.length!==3) return f||'—';
+    var d = new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+    return O2M_DAY_DOW_LARGO[d.getDay()]+' '+p[2]+'/'+p[1]+'/'+p[0];
+  }
+  function _o2mDayVisitaKey(v){
+    if (v==null) return '';
+    if (v.visita_id!=null) return String(v.visita_id);
+    if (v.id!=null) return String(v.id);
+    return 'n:'+String(v.numero_ot||'');
+  }
+  function _o2mDayHoyStr(){
+    var h = new Date();
+    return h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
+  }
+
+  // ── Algoritmo de columnas tipo Google Calendar (idéntico al original):
+  //    agrupa por solape, reparte en columnas greedy, colapsa 5ta+ en un
+  //    bloque resumen "+N más". _finLay = fin EFECTIVO ya pintado (nunca
+  //    menor que la duración mínima), para que dos bloques sin hora_fin a
+  //    la misma hora no queden exactamente uno encima del otro. ──────────
+  function _o2mFinLay(it){ return it.finLay!=null ? it.finLay : Math.max(it.fin, it.ini+O2M_DAY_MINDUR); }
+  function _o2mDayLayout(items){
+    var arr = items.slice().sort(function(a,b){ return (a.ini-b.ini) || (_o2mFinLay(b)-_o2mFinLay(a)); });
+    var out = []; var i = 0;
+    while (i < arr.length){
+      var j = i, maxFin = _o2mFinLay(arr[i]);
+      while (j+1 < arr.length && arr[j+1].ini < maxFin){
+        j++; if (_o2mFinLay(arr[j]) > maxFin) maxFin = _o2mFinLay(arr[j]);
+      }
+      var cluster = arr.slice(i, j+1);
+      var colEnds = [];
+      cluster.forEach(function(it){
+        var col = -1;
+        for (var c=0;c<colEnds.length;c++){ if (colEnds[c] <= it.ini){ col = c; break; } }
+        if (col===-1){ col = colEnds.length; colEnds.push(_o2mFinLay(it)); }
+        else colEnds[col] = _o2mFinLay(it);
+        it.col = col;
+      });
+      var n = colEnds.length;
+      if (n > 4){
+        var over = cluster.filter(function(it){ return it.col>=3; });
+        cluster.forEach(function(it){ if (it.col<3){ it.nCols=4; out.push(it); } });
+        out.push({
+          grupo: over.map(function(it){ return it.idx; }),
+          ini: Math.min.apply(null, over.map(function(it){ return it.ini; })),
+          fin: Math.max.apply(null, over.map(function(it){ return it.fin; })),
+          col:3, nCols:4
+        });
+      } else {
+        cluster.forEach(function(it){ it.nCols = n; out.push(it); });
+      }
+      i = j+1;
+    }
+    return out;
+  }
+
+  function _o2mDayRejilla(){
+    if (o2mDay.rejilla) return;
+    var rej = document.getElementById('o2mDayRejilla');
+    var gut = document.getElementById('o2mDayGutter');
+    if (!rej || !gut) return;
+    var r='', g='';
+    for (var h=8; h<=20; h++){
+      var y = (h-8)*48;
+      r += '<div class="o2m-day-hline" style="top:'+y+'px"></div>';
+      if (h<20) r += '<div class="o2m-day-hline half" style="top:'+(y+24)+'px"></div>';
+      g += '<div class="o2m-day-hlbl" style="top:'+(y-7)+'px">'+String(h).padStart(2,'0')+':00</div>';
+    }
+    rej.innerHTML = r; gut.innerHTML = g;
+    o2mDay.rejilla = true;
+  }
+
+  function _o2mDayNow(fecha){
+    var el = document.getElementById('o2mDayNow');
+    if (!el) return;
+    if (!fecha || fecha!==_o2mDayHoyStr()){ el.innerHTML=''; return; }
+    var n = new Date();
+    var min = n.getHours()*60 + n.getMinutes();
+    if (min<O2M_DAY_START || min>O2M_DAY_END){ el.innerHTML=''; return; }
+    el.innerHTML = '<div class="o2m-day-now" style="top:'+((min-O2M_DAY_START)*O2M_DAY_PXMIN)+'px" '+
+      'aria-label="Ahora: '+_o2mDayHHMM(min)+'"></div>';
+  }
+
+  function _o2mDayInner(cls, o){
+    var chk = o.done
+      ? '<i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:.7rem;flex-shrink:0" aria-hidden="true"></i>'
+      : '';
+    var numChip = o.num ? '<div><span class="otnum">'+esc(o.num)+'</span></div>' : '';
+    var icoTipo = '<i class="bi '+_o2mDayIconoTipo(o.tipo)+' me-1" style="font-size:.85em;flex-shrink:0" aria-hidden="true"></i>';
+    if (cls==='blk-lg'){
+      return '<div class="l1"><span class="hora" style="color:'+o.borde+'">'+esc(o.rango)+'</span>'+chk+'</div>'+
+        '<div class="who">'+icoTipo+esc(o.who)+'</div>'+numChip;
+    }
+    if (cls==='blk-md'){
+      return '<div class="l1" style="justify-content:space-between"><span class="who">'+icoTipo+esc(o.who)+'</span>'+
+        '<span class="hora" style="color:'+o.borde+'">'+esc(o.rango)+'</span>'+chk+'</div>'+numChip;
+    }
+    if (cls==='blk-sm'){
+      return '<div class="l1" style="justify-content:space-between"><span class="who">'+esc(o.who)+'</span>'+
+        '<span class="hora" style="color:'+o.borde+'">'+esc(o.hi)+'</span>'+chk+'</div>';
+    }
+    return '<div class="l1" style="justify-content:space-between"><span class="who">'+esc(o.ini2)+'</span>'+
+      '<span class="hora" style="color:'+o.borde+'">'+esc(o.hi)+'</span></div>';
+  }
+
+  function _o2mDayGhostSync(){
+    var ghost = document.getElementById('o2mDayGhost');
+    var scroll = document.getElementById('o2mDayScroll');
+    var mine = document.getElementById('o2mDayMine');
+    if (!ghost || !scroll) return;
+    var fecha = o2mDay.fecha;
+    var hayBloques = (o2mDay.visitas||[]).length > 0;
+    var hayMine = !!(mine && mine.style.display !== 'none');
+    scroll.classList.toggle('sin-dia', !fecha);
+    var key = fecha ? fecha.slice(0,7) : null;
+    if (fecha && o2mCal.error[key]){
+      ghost.innerHTML = '<i class="bi bi-calendar-x" style="color:#fca5a5"></i>'+
+        '<div class="g1">No se pudo cargar la agenda de este mes</div>'+
+        '<div class="g-btn"><button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.o2mCalReintentar()">'+
+        '<i class="bi bi-arrow-clockwise me-1"></i>Reintentar</button></div>';
+      ghost.style.display = ''; return;
+    }
+    if (!fecha){
+      ghost.innerHTML = '<i class="bi bi-hand-index-thumb" style="color:#cbd5e1"></i>'+
+        '<div class="g1">Toca un día en el calendario</div>'+
+        '<div class="g2">Ahí verás quién está agendado y podrás ubicar tu OT</div>';
+      ghost.style.display = ''; return;
+    }
+    if (!hayBloques && !hayMine){
+      ghost.innerHTML = '<i class="bi bi-calendar-check" style="color:#86efac"></i>'+
+        '<div class="g1">Día libre — sin OTs agendadas</div>'+
+        '<div class="g2">Tu OT se dibujará aquí al elegir horario</div>';
+      ghost.style.display = ''; return;
+    }
+    ghost.style.display = 'none';
+  }
+
+  function o2mDayRender(fecha, opts){
+    opts = opts || {};
+    var canvas = document.getElementById('o2mDayCanvas');
+    var blks = document.getElementById('o2mDayBlks');
+    if (!canvas || !blks) return;
+    _o2mDayRejilla();
+    o2mDay.fecha = fecha || null;
+
+    var elF = document.getElementById('o2mDayFecha');
+    var elC = document.getElementById('o2mDayCnt');
+    var key = fecha ? _o2mCalKey(parseInt(fecha.slice(0,4),10), parseInt(fecha.slice(5,7),10)) : null;
+    var mapa = key ? (o2mCal.cache[key] || {}) : {};
+    var visitas = fecha ? (mapa[fecha] || []) : [];
+    o2mDay.visitas = visitas;
+    if (elF) elF.textContent = fecha ? _o2mDayFechaLarga(fecha) : '—';
+    if (elC){
+      if (fecha && visitas.length){
+        elC.textContent = visitas.length + (visitas.length===1 ? ' OT' : ' OTs');
+        elC.style.display = '';
+      } else elC.style.display = 'none';
+    }
+    var prevB = document.getElementById('o2mDayPrev'), nextB = document.getElementById('o2mDayNext');
+    if (prevB) prevB.disabled = !fecha;
+    if (nextB) nextB.disabled = !fecha;
+
+    var items = [];
+    visitas.forEach(function(v, idx){
+      var g = _o2mDayGeom(v.hora_inicio, v.hora_fin);
+      if (!g) return;
+      items.push({idx:idx, ini:g.iniRaw, fin:g.finRaw, finLay:g.finLay, g:g, v:v});
+    });
+    var puestos = _o2mDayLayout(items);
+    var choqueKeys = o2mDay.choqueKeys;
+    var aplicaChoque = !!(choqueKeys && o2mDay.choqueFecha && o2mDay.choqueFecha===fecha);
+    var html = '';
+    puestos.forEach(function(p){
+      var w = 'calc('+(100/p.nCols)+'% - 4px)';
+      var l = (p.col*(100/p.nCols))+'%';
+      if (p.grupo){
+        var gg = _o2mDayGeom(_o2mDayHHMM(p.ini), _o2mDayHHMM(p.fin));
+        var h = gg ? gg.height : 18;
+        html += '<div class="o2m-day-blk blk-mas '+_o2mDayClase(h)+'" '+
+          'style="top:'+(gg?gg.top:0)+'px;height:'+h+'px;left:'+l+';width:'+w+';'+
+          'border-color:#e5e7eb;border-left-color:#9ca3af" '+
+          'aria-label="'+esc('+'+p.grupo.length+' OTs más en esta franja')+'">'+
+          '<div class="l1"><span class="who">+'+p.grupo.length+' más</span></div></div>';
+        return;
+      }
+      var v = p.v, g = p.g;
+      var pal = _o2mDayColor(v.tecnico_id);
+      var who = v.tecnico_nombre || v.tecnico || 'Sin técnico asignado';
+      var num = v.numero_ot || (v.visita_id!=null ? ('OT #'+v.visita_id) : '');
+      var hi = v.hora_inicio || '--';
+      var hf = v.hora_fin || '';
+      var est = String(v.estado||'').toLowerCase();
+      var done = (est==='completada' || est==='cerrada');
+      var cls = _o2mDayClase(g.height);
+      var extra = [];
+      if (done) extra.push('est-done');
+      if (est==='en_curso') extra.push('est-curso');
+      if (est==='cancelada') extra.push('est-cancel');
+      if (g.sinFin) extra.push('sin-fin');
+      if (g.clampTop) extra.push('clamp-top');
+      if (g.clampBot) extra.push('clamp-bot');
+      if (aplicaChoque && choqueKeys.has(_o2mDayVisitaKey(v))) extra.push('en-choque');
+      var aria = who+' · '+hi+(hf?' a '+hf:'')+(num?' · '+num:'')+
+        (v.cliente_nombre?' · '+v.cliente_nombre:'')+(est?' · '+est:'');
+      // Bloque puramente informativo -- sin onclick/role/tabindex a
+      // propósito (ver nota de alcance arriba: gestionar una OT ajena
+      // queda fuera). El aria-label sigue llevando todo el detalle.
+      html += '<div class="o2m-day-blk '+cls+' '+extra.join(' ')+'" data-idx="'+p.idx+'" '+
+        'style="top:'+g.top+'px;height:'+g.height+'px;left:'+l+';width:'+w+';'+
+        'border-color:'+pal[0]+';border-left-color:'+pal[0]+';background:'+pal[1]+'" '+
+        'aria-label="'+esc(aria)+'">'+
+        _o2mDayInner(cls, {borde:pal[0], who:who, num:num, hi:hi, tipo:v.tipo,
+          rango: hi+(hf?'–'+hf:''), ini2:_o2mDayIniciales(who), done:done})+
+        '</div>';
+    });
+    blks.innerHTML = html;
+    _o2mDayNow(fecha);
+    o2mDayRenderMine();
+    _o2mDayAutoScroll();
+  }
+
+  // ── Clic/tap en una zona VACÍA de la línea de tiempo fija el horario de
+  //    "Tu OT" ahí mismo (snap a 30 min). Si se está mirando un día
+  //    distinto al programado (flechas ‹›), el calendario "manda" primero
+  //    -- mismo mecanismo que un clic real en el mini-calendario. ────────
+  function o2mDaySlotClick(ev){
+    if (ev.target.closest('.o2m-day-blk')) return;
+    if (ev.target.closest('.g-btn')) return;
+    if (!o2mDay.fecha) return;
+    var canvas = document.getElementById('o2mDayCanvas');
+    if (!canvas) return;
+    var rect = canvas.getBoundingClientRect();
+    var y = ev.clientY - rect.top;
+    var min = O2M_DAY_START + (y/O2M_DAY_PXMIN);
+    min = Math.floor(min/30)*30;
+    min = Math.max(O2M_DAY_START, Math.min(min, O2M_DAY_END-30));
+
+    var iniActual = _o2mDayToMin(S.hini);
+    var finActual = _o2mDayToMin(S.hfin);
+    var dur = (iniActual!=null && finActual!=null) ? (finActual-iniActual) : 0;
+    if (!(dur>0)) dur = 60;
+    var finMin = Math.min(min+dur, O2M_DAY_END);
+
+    if (o2mDay.fecha !== S.fecha) o2mCalClicDia(o2mDay.fecha);
+
+    var hi = _o2mDayHHMM(min), hf = _o2mDayHHMM(finMin);
+    var elIni = document.getElementById('o2mHoraIni'), elFin = document.getElementById('o2mHoraFin');
+    if (elIni) elIni.value = hi;
+    if (elFin) elFin.value = hf;
+    setHora('hini', hi);
+    setHora('hfin', hf);
+
+    // Feedback visual -- sin toast (mismo criterio del original): pulso
+    // breve del marco de "Tu OT". Token propio para que un segundo clic
+    // mientras el primer pulso sigue activo no lo corte antes de tiempo.
+    var mine = document.getElementById('o2mDayMine');
+    if (mine){
+      var miToken = ++_o2mFlashToken;
+      mine.classList.remove('flash');
+      void mine.offsetWidth;
+      mine.classList.add('flash');
+      setTimeout(function(){ if (miToken===_o2mFlashToken) mine.classList.remove('flash'); }, 650);
+    }
+  }
+
+  // ── El bloque de "Tu OT" -- se dibuja EN VIVO: cada input de hora solo
+  //    mueve style.top/height del MISMO nodo (transición CSS lo desliza). ──
+  function o2mDayRenderMine(){
+    var mine = document.getElementById('o2mDayMine');
+    if (!mine) return;
+    var vista = o2mDay.fecha;
+    var fechaProg = S.fecha || '';
+    var hi = '', hf = '', dibujar = false;
+    if (vista && fechaProg && vista===fechaProg){
+      hi = S.hini || ''; hf = S.hfin || ''; dibujar = true;
+    }
+    var g = dibujar ? _o2mDayGeom(hi, hf) : null;
+    if (!g){ mine.style.display = 'none'; _o2mDayGhostSync(); return; }
+
+    var cls = _o2mDayClase(g.height);
+    var extra = ['mine', cls];
+    if (g.sinFin) extra.push('sin-fin');
+    if (g.clampTop) extra.push('clamp-top');
+    if (g.clampBot) extra.push('clamp-bot');
+    if (o2mDay.choque && o2mDay.choqueFecha===vista) extra.push('choque');
+    if (g.top < 12) extra.push('tag-dentro');
+    if (mine.classList.contains('flash')) extra.push('flash');
+    mine.className = 'o2m-day-blk ' + extra.join(' ');
+    mine.style.display = '';
+    mine.style.top = g.top+'px';
+    mine.style.height = g.height+'px';
+
+    var nTec = (S.tecnicos||[]).length;
+    var rangoTxt = (hi||'--') + (hf && !g.sinFin ? '–'+hf : '');
+    var _dmin = 0;
+    if (!g.sinFin && hi && hf && hi.indexOf(':')>0 && hf.indexOf(':')>0){
+      var _pa = hi.split(':'), _pb = hf.split(':');
+      _dmin = (parseInt(_pb[0],10)*60+parseInt(_pb[1],10)) - (parseInt(_pa[0],10)*60+parseInt(_pa[1],10));
+    }
+    var _durTxt = '';
+    if (_dmin > 0){ var _h = Math.floor(_dmin/60), _m = _dmin%60;
+      _durTxt = (_h?_h+' h':'') + (_h&&_m?' ':'') + (_m?_m+' min':''); }
+    var _tecPend = nTec===0;
+    var _tecTxt = _tecPend ? 'Asigna técnico en el paso Técnicos' : (nTec+(nTec===1?' técnico':' técnicos'));
+    var _tecIco = _tecPend ? 'bi-person-plus' : 'bi-person-check-fill';
+    var _durLine = _durTxt ? '<div class="mine-dur"><i class="bi bi-clock-history"></i>'+esc(_durTxt)+'</div>' : '';
+    var _tecLine = '<div class="mine-tec'+(_tecPend?' pendiente':'')+'"><i class="bi '+_tecIco+'"></i>'+esc(_tecTxt)+'</div>';
+    var _H = g.height || 0;
+    var _body = '';
+    if (_H >= 48){ _body = '<i class="bi bi-calendar2-check mine-wm" aria-hidden="true"></i>'+_durLine+_tecLine; }
+    else if (_H >= 28){ _body = _tecLine; }
+    mine.innerHTML = '<span class="mine-tag"><i class="bi bi-geo-alt-fill" style="font-size:.5rem"></i>Tu OT · '+esc(rangoTxt)+'</span>'+
+      '<div class="mine-body">'+_body+'</div>';
+    _o2mDayGhostSync();
+  }
+
+  function _o2mDayAutoScroll(){
+    var scroll = document.getElementById('o2mDayScroll');
+    var mine = document.getElementById('o2mDayMine');
+    if (!scroll) return;
+    var target = 48;
+    if (mine && mine.style.display !== 'none') target = (parseFloat(mine.style.top)||0) - 40;
+    scroll.scrollTop = Math.max(0, target);
+  }
+
+  // ── Repinta SOLO las clases de choque (sin reconstruir el día) tras la
+  //    respuesta de /mantenciones/api/calendario/choque. ─────────────────
+  function o2mDayAplicarChoque(){
+    var blks = document.getElementById('o2mDayBlks');
+    if (!blks) return;
+    var keys = o2mDay.choqueKeys;
+    var aplica = !!(keys && o2mDay.choqueFecha && o2mDay.choqueFecha===o2mDay.fecha);
+    var visitas = o2mDay.visitas || [];
+    blks.querySelectorAll('.o2m-day-blk[data-idx]').forEach(function(el){
+      var v = visitas[parseInt(el.dataset.idx,10)];
+      el.classList.toggle('en-choque', !!(aplica && v && keys.has(_o2mDayVisitaKey(v))));
+    });
+    o2mDayRenderMine();
+  }
+
+  // ── Flechas ‹› del día: recorren el día que muestra la línea de tiempo
+  //    SIN tocar S.fecha -- permite espiar el día siguiente antes de decidir. ──
+  function o2mDayPaso(delta){
+    var base = o2mDay.fecha || S.fecha || '';
+    if (!base) return;
+    var p = base.split('-');
+    var d = new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+    d.setDate(d.getDate()+delta);
+    var f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    var y = d.getFullYear(), m = d.getMonth()+1;
+    o2mCal.diaSel = f;
+    if (y!==o2mCal.anio || m!==o2mCal.mes){
+      o2mCal.anio = y; o2mCal.mes = m;
+      o2mCalCargarMes();
+    } else {
+      o2mCalRenderGrid();
+      o2mDayRender(f, {silencio:true});
+    }
+  }
+
+  // ── Choque de horario EN VIVO -- se consulta por CADA técnico
+  //    seleccionado (S.tecnicos) para dar visibilidad completa sin
+  //    bloquear: es un aviso, no un gate. Debounce 500ms. ─────────────────
+  function o2mChequearChoqueDebounced(){
+    if (_o2mChoqueTimer) clearTimeout(_o2mChoqueTimer);
+    _o2mChoqueTimer = setTimeout(o2mChequearChoque, 500);
+  }
+  function o2mChequearChoque(){
+    var warn = document.getElementById('o2mChoqueWarn');
+    if (!warn) return;
+    var fecha = S.fecha || '';
+    var horaIni = S.hini || '';
+    var horaFin = S.hfin || '';
+    var tecnicoIds = (S.tecnicos || []).slice();
+    if (!fecha || !tecnicoIds.length){
+      warn.style.display = 'none';
+      o2mDay.choque = false; o2mDay.choqueFecha = null; o2mDay.choqueKeys = null;
+      o2mDayAplicarChoque();
+      return;
+    }
+    var idNombre = {};
+    (cacheTec || []).forEach(function(t){ idNombre[t.id] = t.nombre || ('Téc #'+t.id); });
+    var miToken = ++_o2mChoqueToken;
+    var peticiones = tecnicoIds.map(function(tid){
+      var qs = new URLSearchParams({tecnico_id:String(tid), fecha:fecha});
+      if (horaIni) qs.set('hora_ini', horaIni);
+      if (horaFin) qs.set('hora_fin', horaFin);
+      return fetch('/mantenciones/api/calendario/choque?'+qs.toString(), {credentials:'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){ return {tid:tid, d:d}; })
+        .catch(function(){ return {tid:tid, d:null}; });
+    });
+    Promise.all(peticiones).then(function(resultados){
+      if (miToken !== _o2mChoqueToken) return;   // respuesta obsoleta: el usuario siguió cambiando algo
+      var mensajes = [];
+      var choqueKeys = new Set();
+      resultados.forEach(function(res){
+        var d = res.d;
+        // Contrato real: { tecnicos:[{tecnico_id, tecnico_nombre, choque, visitas_choque:[...]}] }
+        // -- 1 tecnico_id por request, así que el técnico buscado va en tecnicos[0] (o se busca por id).
+        var lista = (d && Array.isArray(d.tecnicos)) ? d.tecnicos : [];
+        var entry = lista.find(function(t){ return String(t.tecnico_id)===String(res.tid); }) || lista[0];
+        if (!entry || !entry.choque) return;
+        var nombre = entry.tecnico_nombre || idNombre[res.tid] || 'El técnico';
+        var visitas = entry.visitas_choque || [];
+        visitas.forEach(function(v){ choqueKeys.add(_o2mDayVisitaKey(v)); });
+        var detalle = visitas.map(function(v){
+          return (v.numero_ot || ('OT #'+v.visita_id)) + ' de ' + (v.hora_inicio||'--') + ' a ' + (v.hora_fin||'--');
+        }).join(', ');
+        mensajes.push('<b>'+esc(nombre)+'</b> ya tiene una visita agendada este día'+(detalle?' ('+esc(detalle)+')':'')+'.');
+      });
+      if (mensajes.length){
+        warn.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>'+mensajes.join('<br>')+
+          '<div style="margin-top:8px"><button type="button" class="btn btn-sm btn-outline-danger" onclick="OT2C.o2mDaySugerirHueco()">'+
+          '<i class="bi bi-stars me-1"></i>Buscar hueco libre</button></div>';
+        warn.style.display = '';
+      } else {
+        warn.style.display = 'none';
+      }
+      o2mDay.choque = mensajes.length > 0;
+      o2mDay.choqueFecha = fecha;
+      o2mDay.choqueKeys = choqueKeys;
+      o2mDayAplicarChoque();
+    }).catch(function(e){ console.warn('o2m choque:', e); });
+  }
+
+  // ── "Sugerir horario" (chip de cabecera + botón del banner de choque) --
+  //    busca el primer hueco libre desde el día mirado hasta 14 días hacia
+  //    adelante, para los técnicos seleccionados. Cero backend nuevo:
+  //    solo lee el mismo caché del mes que ya llena o2mCalCargarMes(). ────
+  function _o2mDayAsegurarMesCache(anio, mes){
+    var key = _o2mCalKey(anio, mes);
+    if (o2mCal.cache[key]) return Promise.resolve(o2mCal.cache[key]);
+    return fetch('/mantenciones/api/calendario/mes/'+anio+'/'+mes, {credentials:'same-origin'})
+      .then(function(r){ if (!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(function(d){
+        o2mCal.cache[key] = _o2mCalNormalizarMes(d);
+        delete o2mCal.error[key];
+        return o2mCal.cache[key];
+      })
+      .catch(function(e){
+        console.warn('o2m sugerir - cache mes:', e);
+        o2mCal.cache[key] = o2mCal.cache[key] || {};
+        o2mCal.error[key] = true;
+        return o2mCal.cache[key];
+      });
+  }
+  function _o2mDayCalcularHueco(fecha, durMin, tecnicoIds){
+    var key = _o2mCalKey(parseInt(fecha.slice(0,4),10), parseInt(fecha.slice(5,7),10));
+    var mapa = o2mCal.cache[key] || {};
+    var visitas = mapa[fecha] || [];
+    var filtro = (Array.isArray(tecnicoIds) && tecnicoIds.length) ? new Set(tecnicoIds.map(String)) : null;
+    var ocupados = [];
+    visitas.forEach(function(v){
+      if (String(v.estado||'').toLowerCase()==='cancelada') return;
+      if (filtro && !filtro.has(String(v.tecnico_id))) return;
+      var ini = _o2mDayToMin(v.hora_inicio);
+      if (ini===null) return;
+      var fin = _o2mDayToMin(v.hora_fin);
+      if (fin===null || fin<=ini) fin = ini + O2M_DAY_MINDUR;
+      ocupados.push([ini, fin]);
+    });
+    ocupados.sort(function(a,b){ return a[0]-b[0]; });
+    var fusion = [];
+    ocupados.forEach(function(iv){
+      var last = fusion[fusion.length-1];
+      if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
+      else fusion.push(iv.slice());
+    });
+    var candidato = 9*60;
+    if (fecha === _o2mDayHoyStr()){
+      var ahora = new Date();
+      var nowMin = ahora.getHours()*60 + ahora.getMinutes() + 30;
+      nowMin = Math.ceil(nowMin/30)*30;
+      candidato = Math.max(candidato, nowMin);
+    }
+    var finLim = 20*60;
+    for (; candidato+durMin <= finLim; candidato += 30){
+      var finCand = candidato+durMin;
+      var choca = fusion.some(function(iv){ return iv[0]<finCand && candidato<iv[1]; });
+      if (!choca) return _o2mDayHHMM(candidato);
+    }
+    return null;
+  }
+  async function _o2mDayBuscarHuecoRango(fechaInicio, durMin, tecnicoIds, maxDias){
+    var p = fechaInicio.split('-').map(function(s){ return parseInt(s,10); });
+    var d = new Date(p[0], p[1]-1, p[2]);
+    for (var i=0; i<=maxDias; i++){
+      var f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      await _o2mDayAsegurarMesCache(d.getFullYear(), d.getMonth()+1);
+      var hora = _o2mDayCalcularHueco(f, durMin, tecnicoIds);
+      if (hora) return {fecha:f, hora:hora};
+      d.setDate(d.getDate()+1);
+    }
+    return null;
+  }
+  // Selecciona `fecha` como si el usuario hubiera hecho clic en el
+  // mini-calendario, pero AWAIT-eable (necesario para esperar a que el
+  // mes/día queden pintados antes de fijar las horas encontradas).
+  async function _o2mDayIrADia(fecha){
+    var fp = document.getElementById('o2mFecha');
+    if (fp) fp.value = fecha;
+    var y = parseInt(fecha.slice(0,4),10), m = parseInt(fecha.slice(5,7),10);
+    if (y && m && (y!==o2mCal.anio || m!==o2mCal.mes)){
+      o2mCal.anio = y; o2mCal.mes = m;
+      await o2mCalCargarMes();
+    }
+    S.fecha = fecha;
+    o2mCalSelDia(fecha, {silencio:true});
+    refrescarAnclas();
+  }
+  async function o2mDaySugerirHueco(){
+    var btn = document.getElementById('o2mDaySugerirBtn');
+    var original = btn ? btn.innerHTML : null;
+    if (btn){ btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>Buscando…'; }
+    try{
+      var iniActual = _o2mDayToMin(S.hini);
+      var finActual = _o2mDayToMin(S.hfin);
+      var durMin = (iniActual!=null && finActual!=null && finActual>iniActual) ? (finActual-iniActual) : 60;
+      var tecnicoIds = (S.tecnicos || []).slice();
+      var fechaBase = o2mDay.fecha || S.fecha || _o2mDayHoyStr();
+
+      var encontrado = await _o2mDayBuscarHuecoRango(fechaBase, durMin, tecnicoIds, 14);
+      if (!encontrado){
+        if (window.ilusToast) ilusToast('Sin huecos en los próximos 14 días para ese equipo de técnicos', {type:'warning'});
+        return;
+      }
+      await _o2mDayIrADia(encontrado.fecha);
+      var hf = _o2mDayHHMM(_o2mDayToMin(encontrado.hora) + durMin);
+      var elIni = document.getElementById('o2mHoraIni'), elFin = document.getElementById('o2mHoraFin');
+      if (elIni) elIni.value = encontrado.hora;
+      if (elFin) elFin.value = hf;
+      setHora('hini', encontrado.hora);
+      setHora('hfin', hf);
+      var mine = document.getElementById('o2mDayMine');
+      if (mine){
+        mine.classList.remove('flash');
+        void mine.offsetWidth;
+        mine.classList.add('flash');
+        setTimeout(function(){ mine.classList.remove('flash'); }, 650);
+      }
+    }catch(e){
+      console.warn('o2m sugerir hueco:', e);
+      if (window.ilusToast) ilusToast('No se pudo calcular un horario sugerido', {type:'error'});
+    }finally{
+      if (btn){ btn.disabled = false; btn.innerHTML = original; }
+    }
   }
 
   function pintarTecnicos(b){
@@ -1161,8 +2244,34 @@ window.OT2C = (function(){
     var nudo = String(v||'').trim();
     S.doc_origen = nudo ? {tido:'NVI', nudo:nudo} : null;
   }
-  function setFecha(v){ S.fecha = v; avisosAgenda(); refrescarAnclas(); }
-  function setHora(campo, v){ S[campo] = v; avisosAgenda(); }
+  function setFecha(v){
+    S.fecha = v; avisosAgenda(); refrescarAnclas();
+    // Mini-calendario del paso Agenda: sigue la fecha del input, tipeada a
+    // mano o fijada por un clic en el propio calendario (o2mCalClicDia
+    // dispara el 'change' de #o2mFecha, que termina llamando acá mismo --
+    // mismo mecanismo que tkotFechaProgChange() en el modal de Tickets).
+    if (v){
+      var y = parseInt(v.slice(0,4),10), m = parseInt(v.slice(5,7),10);
+      if (y && m && (y!==o2mCal.anio || m!==o2mCal.mes)){
+        o2mCal.anio = y; o2mCal.mes = m;
+        o2mCalCargarMes().then(function(){ o2mCalSelDia(v, {silencio:true}); });
+      } else {
+        o2mCalSelDia(v, {silencio:true});
+      }
+    } else {
+      o2mCal.diaSel = null;
+      o2mCalRenderGrid();
+      o2mDayRender(null, {silencio:true});
+    }
+    o2mChequearChoqueDebounced();
+  }
+  function setHora(campo, v){
+    S[campo] = v; avisosAgenda();
+    // El bloque "Tu OT" de la línea de tiempo se mueve EN VIVO y el
+    // choque se re-chequea (debounced) con cada cambio de hora.
+    o2mDayRenderMine();
+    o2mChequearChoqueDebounced();
+  }
   function setBodegaObs(v){ S.bodega_obs = v; }
   function setCostoInterno(v){ S.costo_interno = v; }
 
@@ -1171,6 +2280,10 @@ window.OT2C = (function(){
     if (i>=0){ S.tecnicos.splice(i,1); if (S.lider===id) S.lider = S.tecnicos[0]||null; }
     else { S.tecnicos.push(id); if (!S.lider) S.lider = id; }
     pintarTecnicos(document.getElementById('o2mSec-tecnicos-b'));
+    // El bloque "Tu OT" del paso Agenda muestra el conteo de técnicos, y
+    // el choque de horario depende de quién quedó seleccionado.
+    o2mDayRenderMine();
+    o2mChequearChoqueDebounced();
   }
   function eqTog(mid){
     var i = S.equipos.findIndex(function(e){ return e.maquina_id===mid; });
@@ -1498,6 +2611,9 @@ window.OT2C = (function(){
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
           quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
-          setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno};
+          setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
+          o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
+          o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
+          o2mDaySugerirHueco:o2mDaySugerirHueco};
 })();
 </script>
