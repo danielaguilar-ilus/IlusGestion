@@ -311,7 +311,24 @@
   .obs-box .o-text { font-size: 9pt; line-height: 1.45; }
   .obs-box .o-text b { color: var(--ilus-red); }
 
-  /* ───── Equipos cards grandes ───── */
+  /* ───── Equipos cards grandes ─────
+     .eq-card-wrap envuelve a .eq-card SOLO para darle al badge .eq-idx
+     (position:absolute, offset negativo) espacio dentro de una caja que
+     no se salga de sus propios bordes. Chromium headless no respeta de
+     forma confiable page-break-inside:avoid en contenedores display:grid
+     -- si .eq-card se llega a partir entre dos paginas fisicas, cualquier
+     hijo cuyo borde caiga justo en el corte se imprime partido (visto:
+     el circulo rojo del badge cortado a la mitad, ver memoria
+     ot_pdf_badge_cortado_salto_pagina). Con el wrapper conteniendo el
+     offset negativo, el badge queda geometricamente DENTRO de la caja
+     que lleva page-break-inside:avoid, sin cambiar el diseño visual. */
+  .eq-card-wrap {
+    padding-top: 10px;
+    padding-left: 10px;
+    margin-bottom: 10px;
+    page-break-inside: avoid;
+  }
+  .eq-card-wrap .eq-card { margin-bottom: 0; }
   .eq-card {
     background: #fff;
     border: 1px solid var(--ilus-line);
@@ -943,6 +960,7 @@
     {% set idx = loop.index %}
     {% set _fotos = eq_fotos_idx.get(e.id, []) %}
     {% set _checks = eq_check_resumen.get(e.id, []) %}
+    <div class="eq-card-wrap">
     <div class="eq-card">
       <div class="eq-idx">{{ idx }}</div>
       <div class="eq-foto">
@@ -1001,6 +1019,7 @@
         {% endif %}
       </div>
     </div>
+    </div>
   {% endfor %}
   <div class="eq-counter">
     {{ paginas_equipos[0]|length }} de {{ equipos|length }} equipo{{ 's' if equipos|length != 1 }}
@@ -1033,6 +1052,7 @@
     {% set idx = _start + loop.index %}
     {% set _fotos = eq_fotos_idx.get(e.id, []) %}
     {% set _checks = eq_check_resumen.get(e.id, []) %}
+    <div class="eq-card-wrap">
     <div class="eq-card">
       <div class="eq-idx">{{ idx }}</div>
       <div class="eq-foto">
@@ -1090,6 +1110,7 @@
           </div>
         {% endif %}
       </div>
+    </div>
     </div>
   {% endfor %}
   <div class="eq-counter">
