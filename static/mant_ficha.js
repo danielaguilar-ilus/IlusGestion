@@ -724,6 +724,12 @@ function _viSetGarantia(aplica) {
 }
 function editarVisita(v) {
   document.getElementById('vi_id').value = v.id;
+  // 🆕 2026-08-28: guardamos el número de OT en el dataset (no hay input
+  // visible para esto) -- lo usa eliminarVisita() para armar el texto que
+  // debe escribir el usuario al confirmar el hard-delete (REGLA #5).
+  // Mismo fallback que usa el backend cuando la OT no tiene numero_ot:
+  // `v_info.get("numero_ot") or f"V-{vid}"` en mant_visita_del.
+  document.getElementById('vi_id').dataset.numeroOt = v.numero_ot || ('V-' + v.id);
   document.getElementById('modalVisitaTitulo').innerHTML = '<i class="bi bi-calendar-check me-2"></i>Editar visita';
   document.getElementById('vi_titulo').value = v.titulo || '';
   document.getElementById('vi_tipo').value = v.tipo || 'preventiva';
@@ -809,17 +815,32 @@ async function eqToggleMantencion(mid, swEl) {
   }
 }
 
-async function eliminarVisitaFromTabla(vid, titulo) {
-  const ok = await ilusConfirm({
+async function eliminarVisitaFromTabla(vid, titulo, numeroOt) {
+  // 🆕 2026-08-28: el backend ahora exige `confirm_text` == número de OT
+  // (REGLA #5 -- hard-delete). Se reemplaza el ilusConfirm simple por
+  // ilusPrompt pidiendo que se escriba el número exacto, mismo patrón que
+  // el borrado de clientes/manifiestos y el nuevo botón "Eliminar OT" de
+  // OT 2.0 (templates/ot2/detalle.html).
+  const numero = numeroOt || ('V-' + vid);
+  const texto = await ilusPrompt({
     title: 'Eliminar visita',
-    message: `¿Eliminar la visita "${titulo}"?`,
-    sub: 'Esta acción no se puede deshacer.',
+    message: `¿Eliminar la visita "${titulo}"? Esta acción no se puede deshacer.`,
+    sub: 'Para confirmar, escribe exactamente: <strong>' + numero.replace(/</g, '&lt;') + '</strong>',
+    subHtml: true,
+    placeholder: numero,
+    required: true,
+    type: 'danger',
     okLabel: 'Eliminar', cancelLabel: 'Cancelar',
-    danger: true,
+    validate: (val) => (val.trim().toLowerCase() === numero.toLowerCase())
+      ? {ok:true, valor: val.trim()}
+      : {ok:false, error: 'No coincide con "' + numero + '".'},
   });
-  if (!ok) return;
+  if (texto === null) return;
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+    const r = await fetch(`/mantenciones/api/visitas/${vid}`, {
+      method:'DELETE', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text: texto}),
+    });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok) {
       ilusToast('Error: ' + (d.error || 'no se pudo eliminar'), { type:'error' });
@@ -5086,21 +5107,38 @@ async function guardarVisita() {
 }
 
 async function eliminarVisita() {
-  const vid = document.getElementById('vi_id').value;
+  const viEl = document.getElementById('vi_id');
+  const vid = viEl.value;
   if (!vid) return;
-  const ok = await ilusConfirm({
+  // 🆕 2026-08-28: el backend ahora exige `confirm_text` == número de OT
+  // (REGLA #5 -- hard-delete). El número se guardó en el dataset al abrir
+  // el modal (ver editarVisita()); mismo fallback 'V-<id>' que usa el backend
+  // cuando la OT no tiene numero_ot.
+  const numero = viEl.dataset.numeroOt || ('V-' + vid);
+  const texto = await ilusPrompt({
     title: 'Eliminar visita',
-    message: '¿Eliminar esta visita?',
-    sub: 'No se puede deshacer.',
-    okLabel: 'Eliminar', danger: true,
+    message: 'Esta acción no se puede deshacer. Para confirmar, escribe el número de la OT:',
+    sub: 'Escribe exactamente: <strong>' + numero.replace(/</g, '&lt;') + '</strong>',
+    subHtml: true,
+    placeholder: numero,
+    required: true,
+    type: 'danger',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    validate: (val) => (val.trim().toLowerCase() === numero.toLowerCase())
+      ? {ok:true, valor: val.trim()}
+      : {ok:false, error: 'No coincide con "' + numero + '".'},
   });
-  if (!ok) return;
-  const r = await fetch(`/mantenciones/api/visitas/${vid}`, { method:'DELETE' });
+  if (texto === null) return;
+  const r = await fetch(`/mantenciones/api/visitas/${vid}`, {
+    method:'DELETE', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({confirm_text: texto}),
+  });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     location.reload();
   } else {
-    ilusToast('Error al eliminar la visita', { type:'error' });
+    const d = await r.json().catch(() => ({}));
+    ilusToast(d.error || 'Error al eliminar la visita', { type:'error' });
   }
 }
 

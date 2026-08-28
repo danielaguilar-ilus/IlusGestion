@@ -50698,17 +50698,32 @@ def _puede_ot_accion(vid, accion, user=None):
     ejecutar     │   ✓      │   ✗    │   ✗     │   ✗     │ ✓(asign)  │  ✗
     metadata     │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← gestión edita/reagenda (06-09)
     editar       │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← (Daniel 2026-06-09)
-    eliminar     │   ✓      │   ✗    │   ✗     │   ✗     │   ✗       │  ✗
+    eliminar     │   ✓      │  ✗¹    │  ✗¹     │  ✗¹     │  ✗¹       │  ✗  ← configurable por rol (28-08)
     aprobar      │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← ejecutivo firma
     firmar_creador│  ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← como supervisor
     cobertura    │   ✓      │   ✓    │   ✓     │   ✓     │   ✗       │  ✗  ← garantía, hasta antes de cerrar (19-08)
     ─────────────┴──────────┴────────┴─────────┴─────────┴───────────┴───────
 
+    ¹ eliminar: SIEMPRE ✓ para el rol que tenga encendido, en /admin/roles
+      → módulo "Mantenciones", el checkbox "Eliminar OT / cliente"
+      (PERMISSIONS_META["mantenciones"]["eliminar"]). Nace en OFF para
+      TODOS los roles no-superadmin -- Daniel debe prenderlo a propósito
+      por rol. Ver la rama 'eliminar' más abajo.
+
     Decisión final 2026-05-22 (Daniel):
       - El ejecutivo SSTT (Aaron) ES el supervisor en el flujo de 3 firmas
         (cliente + técnico + supervisor). Sin su firma la OT no cierra.
-      - Sigue SIN poder editar metadata ni eliminar OTs. La firma es su
-        compromiso de revisión, no de modificación.
+      - Sigue SIN poder editar metadata. La firma es su compromiso de
+        revisión, no de modificación.
+
+    Decisión 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un
+    botón para eliminarlas y agrega eso por el front en los roles"):
+      - Eliminar deja de ser un privilegio ETERNO de superadmin y pasa a
+        ser configurable por rol (ver nota ¹ arriba). superadmin sigue
+        pasando siempre por la regla absoluta, sin depender de la matriz.
+      - Mismo patrón aditivo que cat_eliminar/tr_eliminar: el flag solo
+        puede SUMAR acceso, nunca quitarlo, y el hard-delete sigue
+        exigiendo `confirm_text` (REGLA #5) en `mant_visita_del`.
 
     Responsabilidades por firma (procedimiento interno ILUS):
       Técnico        → "Presté el servicio sin detalles ni problemas."
@@ -50990,14 +51005,49 @@ def _puede_ot_accion(vid, accion, user=None):
         return False
 
     # ── ELIMINAR ────────────────────────────────────────────────
-    # 🔒 Solo superadmin. Ni siquiera admin (que sí puede editar) puede
-    # borrar definitivamente. Para "cancelar" una OT mal creada, el admin
-    # debe usar PUT estado='cancelada' (conserva historial). Esto matchea
-    # la regla actual de `mant_visita_del` (línea 36422).
+    # 🔒 Hasta 2026-08-27: solo superadmin, sin excepción -- ni admin (que
+    # sí puede editar) podía borrar definitivamente. Para "cancelar" una
+    # OT mal creada, la vía normal sigue siendo PUT estado='cancelada'
+    # (conserva historial).
+    #
+    # 🆕 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un
+    # botón para eliminarlas y agrega eso por el front en los roles"): el
+    # privilegio deja de ser un candado eterno de superadmin y pasa a ser
+    # CONFIGURABLE por rol desde /admin/roles → módulo Mantenciones →
+    # checkbox "Eliminar OT / cliente" (mismo patrón aditivo que
+    # cat_eliminar/tr_eliminar: solo puede SUMAR acceso, nunca quitarlo).
+    #
+    # Se consulta con `has_role_permission()` -- consulta directa a
+    # rol_permisos por (rol_slug, modulo, accion) -- en vez de leer
+    # `g.permissions` o `permission_set()`, por DOS motivos:
+    #   1. Esta función puede evaluar el permiso de un `user` que NO es
+    #      necesariamente `g.user` (viene por parámetro) -- `g.permissions`
+    #      reflejaría el rol de quien esté logueado en ESTE request, no
+    #      el del `user` que se está evaluando.
+    #   2. `permission_set()` cae a `_legacy_permission_set()` cuando el
+    #      rol nunca tuvo fila en rol_permisos, y ese fallback legado trae
+    #      "admin": {"delete": True} de arrastre (pensado para "eliminar
+    #      producto" del catálogo viejo) -- hubiera abierto la puerta a
+    #      TODO admin sin que Daniel tocara nada en /admin/roles.
+    #      `has_role_permission()` no tiene ese fallback: sin fila
+    #      explícita, es False. Nace en OFF para todos los roles.
     if accion == "eliminar":
+        try:
+            _tiene_permiso_eliminar_ot = has_role_permission(
+                role_raw, "mantenciones", "eliminar"
+            )
+        except Exception as e:
+            print(f"[SECURITY] _puede_ot_accion error consultando permiso "
+                  f"eliminar vid={vid} role={role_raw}: {e}", flush=True)
+            _tiene_permiso_eliminar_ot = False
+        if _tiene_permiso_eliminar_ot:
+            print(f"[PERM] vid={vid} action=eliminar role={role_raw}->{role} user={username} "
+                  f"-> ALLOWED (permiso de matriz 'Eliminar OT / cliente')", flush=True)
+            return True
         # superadmin ya pasó por la regla absoluta arriba; aquí solo
-        # llegamos si role != superadmin → DENIED.
-        print(f"[PERM] vid={vid} action=eliminar role={role_raw}->{role} user={username} -> DENIED (solo superadmin)", flush=True)
+        # llegamos si role != superadmin y sin el flag de matriz → DENIED.
+        print(f"[PERM] vid={vid} action=eliminar role={role_raw}->{role} user={username} "
+              f"-> DENIED (solo superadmin o rol con el permiso de matriz habilitado)", flush=True)
         return False
 
     # ── CREAR (chequeo sin vid, ver `_puede_crear_ot()`) ───────
@@ -51131,8 +51181,15 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
                    "ejecutivo puedes crear OTs pero no modificarlas — pide "
                    "el cambio al administrador.")
         elif accion == "eliminar":
-            msg = ("Solo el superadministrador puede eliminar definitivamente "
-                   "una OT. Para anularla usa estado='cancelada' (PUT).")
+            # 🆕 2026-08-28: ya no es exclusivo de superadmin -- ver
+            # `_puede_ot_accion('eliminar')` (checkbox de matriz "Eliminar
+            # OT / cliente"). El mensaje ya no promete "solo superadmin"
+            # porque puede ser falso para un rol al que Daniel le prendió
+            # el flag y que igual cae acá por otro motivo (ej. OT sellada).
+            msg = ("No tienes permiso para eliminar esta OT. Se requiere ser "
+                   "superadministrador o tener habilitado el permiso "
+                   "'Eliminar OT / cliente' en /admin/roles. Para anularla "
+                   "sin borrarla, usa estado='cancelada' (PUT).")
         elif accion == "configurar":
             msg = ("Solo el creador, administrador o técnico asignado "
                    "puede aplicar plantilla o agregar tareas a esta OT.")
@@ -51459,11 +51516,14 @@ _ot_can_editar = _ot_can_metadata
 def _ot_can_eliminar(view_func):
     """Decorador para DELETE de visita.
 
-    🔒 Solo superadmin. Para cancelar una OT mal creada, usar PUT
-    estado='cancelada' (conserva el historial). Esta regla es la misma
-    que ya aplicaba `mant_visita_del` inline; ahora está centralizada
-    en `_puede_ot_accion(vid, 'eliminar', u)` para que la matriz sea
-    coherente y testeable.
+    🔒 superadmin SIEMPRE puede. Otros roles pueden SOLO si Daniel les
+    prendió el checkbox "Eliminar OT / cliente" en /admin/roles (módulo
+    Mantenciones) -- configurable desde 2026-08-28, antes era candado
+    eterno de superadmin. Para cancelar una OT mal creada sin borrarla,
+    usar PUT estado='cancelada' (conserva el historial). La regla vive
+    centralizada en `_puede_ot_accion(vid, 'eliminar', u)` -- este
+    decorador es la ÚNICA fuente de verdad para el endpoint DELETE (el
+    cuerpo de `mant_visita_del` ya NO repite el chequeo).
     """
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
@@ -73486,33 +73546,68 @@ def mant_visita_update(vid):
 @_mant_required
 @_ot_can_eliminar
 def mant_visita_del(vid):
-    # 🔐 SEGURIDAD 2026-05-22 (Daniel): el DELETE de OT es STRICT.
-    # Solo superadmin puede eliminar definitivamente (validado por
-    # @_ot_can_eliminar → matriz `_puede_ot_accion('eliminar')`).
-    # Admin puede EDITAR (PUT) pero NO eliminar; ejecutivo no puede
-    # ninguna de las dos. Si quieren cancelar una OT mal creada, deben
-    # usar PUT estado='cancelada' (conserva historial).
-    # Mantenemos chequeo defensivo redundante (defense in depth):
-    _u = getattr(g, "user", None) or {}
-    _role = (_u.get("role") or "").lower()
-    if _role != "superadmin":
-        print(
-            f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intento DELETE "
-            f"vid={vid} sin permiso (role={_role})",
-            flush=True
-        )
-        return jsonify({
-            "ok": False,
-            "error": "Solo el superadministrador puede eliminar una OT. "
-                     "Si necesitas cancelarla, usa el botón 'Cancelar OT' "
-                     "que cambia el estado pero conserva el historial.",
-            "error_codigo": "OT_DELETE_RESTRINGIDO",
-        }), 403
-    # Capturar info ANTES de borrar para el log y para encontrar levantamiento asociado
+    # 🔐 SEGURIDAD 2026-05-22 (Daniel), actualizado 2026-08-28: el DELETE
+    # de OT pasa SIEMPRE por @_ot_can_eliminar → `_puede_ot_accion('eliminar')`
+    # ANTES de que este cuerpo se ejecute (el decorador ya cortó el flujo con
+    # un 403 propio si no corresponde) -- superadmin siempre pasa, otros
+    # roles solo si Daniel les prendió el checkbox "Eliminar OT / cliente"
+    # en /admin/roles. El chequeo redundante inline (`if _role != "superadmin"`)
+    # que vivía acá se ELIMINÓ porque quedó incoherente con la matriz: iba a
+    # seguir bloqueando a un rol recién habilitado por Daniel aunque el
+    # decorador ya lo hubiera dejado pasar. El decorador es ahora la ÚNICA
+    # fuente de verdad para este endpoint (1 regla, 1 lugar).
+    #
+    # Capturar info ANTES de borrar: para el log, para encontrar el
+    # levantamiento asociado y para exigir `confirm_text` (REGLA #5 —
+    # hard-delete siempre exige que el usuario escriba algo que lo
+    # identifique; acá el número de OT, mismo patrón que
+    # `mant_cliente_delete` con razón social/RUT).
     v_info = mysql_fetchone(
         "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id "
         "  FROM mant_visitas WHERE id=%s", (vid,)
     )
+    if not v_info:
+        return jsonify({
+            "ok": False,
+            "error": "La OT no existe o ya fue eliminada.",
+            "error_codigo": "OT_NO_ENCONTRADA",
+        }), 404
+
+    numero_ot = v_info.get("numero_ot") or f"V-{vid}"
+    d = request.get_json(silent=True) or {}
+    confirm = (d.get("confirm_text") or "").strip().lower()
+    # 🔒 REGLA #5 -- hard-delete exige confirm_text. Cuando la OT SÍ tiene
+    # numero_ot no hay ambigüedad: se exige ese valor exacto. Cuando NO lo
+    # tiene (visitas viejas pre-numeración), distintas pantallas del
+    # sistema ya muestran fallbacks DISTINTOS entre sí para el mismo caso
+    # ("V-134" en el log de esta misma función, "VS-134" en ots_list.html,
+    # "VS-00134" zero-padded en calendario.html/ot2/panel.html) -- para no
+    # romper ninguno de esos frontends ya existentes, acá se acepta
+    # cualquiera de esas variantes conocidas (nunca el numero_ot real
+    # cuando SÍ existe: ahí sigue siendo estricto y único).
+    _tiene_numero_real = bool(v_info.get("numero_ot"))
+    if _tiene_numero_real:
+        _validos = {numero_ot.strip().lower()}
+    else:
+        _validos = {
+            f"v-{vid}".lower(),
+            f"vs-{vid}".lower(),
+            f"vs-{vid:05d}".lower(),
+        }
+    if confirm not in _validos:
+        _u = getattr(g, "user", None) or {}
+        print(
+            f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intento DELETE "
+            f"vid={vid} con confirm_text no coincidente",
+            flush=True
+        )
+        return jsonify({
+            "ok": False,
+            "error": f"Para confirmar, escribe exactamente el número de OT: {numero_ot}",
+            "expected": numero_ot,
+            "error_codigo": "CONFIRM_TEXT_NO_COINCIDE",
+        }), 400
+
     # FIX 2026-08-10 (OT-2026-00042): antes solo miraba v_info.levantamiento_id
     # (campo forward) — si el link era solo reverse, el levantamiento quedaba
     # huérfano al borrar la OT (bloqueando la creación de nuevos levantamientos
@@ -73537,10 +73632,8 @@ def mant_visita_del(vid):
                     print(f"[visita_del] sync levantamiento falló: {_e_sync}", flush=True)
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
-        if v_info:
-            ot = v_info.get("numero_ot") or f"V-{vid}"
-            _mant_log("visita", vid, "eliminada", f"{ot} — {v_info.get('titulo') or ''}")
-            _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{ot}")
+        _mant_log("visita", vid, "eliminada", f"{numero_ot} — {v_info.get('titulo') or ''}")
+        _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{numero_ot}")
         return jsonify({"ok": True})
     finally:
         conn.close()
@@ -74887,6 +74980,13 @@ def ot2_detalle(vid):
     # que el backend iba a rechazar con 403 al primer click.
     puede_ejecutar = _puede_ot_accion(vid, "ejecutar")
 
+    # 🆕 2026-08-28 (Daniel: botón para eliminar la OT desde el front,
+    # configurable por rol vía /admin/roles): decide si se dibuja el botón
+    # "Eliminar OT" en la barra de acciones. El backend re-valida con
+    # @_ot_can_eliminar en el DELETE -- esto solo evita mostrarle el botón
+    # a quien igual recibiría un 403 (defensa en profundidad real, no solo UI).
+    puede_eliminar = _puede_ot_accion(vid, "eliminar")
+
     # `date` NO está importado a nivel de módulo (app.py:12 solo trae
     # datetime/timedelta/timezone). Y la fecha tiene que ser la de Chile,
     # no la del contenedor en UTC — si no, después de las 21:00 una OT de
@@ -75136,6 +75236,7 @@ def ot2_detalle(vid):
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
+        puede_eliminar=puede_eliminar,
         hito_actual=hito_actual, hito_siguiente=hito_siguiente,
         plantillas_todas=plantillas_todas,
         tecnicos_colaboradores=tecnicos_colaboradores,

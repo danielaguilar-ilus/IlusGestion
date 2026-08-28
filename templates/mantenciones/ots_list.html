@@ -1912,7 +1912,13 @@ async function eliminarOTRapido(otId, numeroOt) {
   }
 
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${otId}`, { method: 'DELETE' });
+    // 🆕 2026-08-28: el backend ahora exige `confirm_text` en el body
+    // (REGLA #5) -- esta pantalla ya pedía el N° de OT escrito arriba,
+    // solo faltaba mandarlo. `confirm2` es justo ese texto ya validado.
+    const r = await fetch(`/mantenciones/api/visitas/${otId}`, {
+      method: 'DELETE', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text: confirm2}),
+    });
     const d = await r.json();
     if (!r.ok || !d.ok) {
       ilusToast('Error al eliminar: ' + (d.error || 'desconocido'), { type: 'error' });

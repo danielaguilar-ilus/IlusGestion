@@ -3177,7 +3177,11 @@
             <button class="btn btn-xs btn-outline-secondary ms-1" onclick='editarVisita({{ v|tojson }})' title="Editar">
               <i class="bi bi-pencil"></i>
             </button>
-            <button class="btn btn-xs btn-outline-danger ms-1" onclick="eliminarVisitaFromTabla({{ v.id }}, '{{ (v.titulo or v.tipo or 'visita')|replace("'", "\\'") }}')" title="Eliminar">
+            {# 🆕 2026-08-28: 3er argumento con el número de OT -- el backend
+               ahora exige `confirm_text` (REGLA #5) para el hard-delete;
+               eliminarVisitaFromTabla() lo pide con ilusPrompt antes de
+               llamar al DELETE (ver static/mant_ficha.js). #}
+            <button class="btn btn-xs btn-outline-danger ms-1" onclick="eliminarVisitaFromTabla({{ v.id }}, '{{ (v.titulo or v.tipo or 'visita')|replace("'", "\\'") }}', '{{ (v.numero_ot or '')|replace("'", "\\'") }}')" title="Eliminar">
               <i class="bi bi-trash"></i>
             </button>
             {% endif %}

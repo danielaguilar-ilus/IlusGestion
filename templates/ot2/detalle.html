@@ -465,6 +465,18 @@
 .otd-btn.pri{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff}
 .otd-btn.pri:hover{color:#fff;box-shadow:0 8px 20px -8px rgba(220,38,38,.7)}
 .otd-btn i{font-size:.95rem}
+/* 🆕 2026-08-28 -- botón "Eliminar OT" (configurable por rol, ver
+   puede_eliminar). Mismo tamaño/forma que .otd-btn pero en rojo peligro
+   de borde+texto (NO relleno sólido, para no competir visualmente con
+   "Ejecutar la OT" que ya usa .pri) -- se activa el relleno solo al pasar
+   el mouse, como último aviso antes de hacer clic. */
+.otd-btn.danger{border-color:rgba(220,38,38,.35);color:var(--ilus-red,#dc2626);
+  background:#fff;margin-left:auto}
+.otd-btn.danger:hover{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff;
+  box-shadow:0 8px 20px -8px rgba(220,38,38,.7)}
+@media (max-width:640px){
+  .otd-btn.danger{margin-left:0}
+}
 
 /* Equipo técnico — colaboradores además del principal (mant_visita_tecnicos).
    2026-08-28, Daniel: "que se agreguen multitécnicos... quiero agregar la OT
@@ -541,6 +553,15 @@
     {% if v.cliente_id %}
     <a class="otd-btn" href="{{ url_for('mant_ficha', cid=v.cliente_id) }}">
       <i class="bi bi-building"></i> Cliente</a>
+    {% endif %}
+    {# 🆕 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un botón
+       para eliminarlas y agrega eso por el front en los roles") -- visible
+       SOLO si el rol tiene el permiso (superadmin siempre, o el flag de
+       matriz "Eliminar OT / cliente"). El backend revalida igual con
+       @_ot_can_eliminar -- esto solo evita mostrar un botón que rebotaría. #}
+    {% if puede_eliminar %}
+    <button type="button" class="otd-btn danger" onclick="otdEliminarOT()">
+      <i class="bi bi-trash3"></i> Eliminar OT</button>
     {% endif %}
   </div>
 
@@ -1189,6 +1210,61 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.otd-tabpanel').forEach(p => p.classList.toggle('on', p.dataset.tab === key));
   });
 });
+
+/* Eliminar OT definitivamente (Daniel, 28-08-2026: "podemos eliminar la OT
+   134 o ponerme un botón para eliminarlas y agrega eso por el front en los
+   roles"). Hard-delete real -- exige escribir el número de OT tal cual se
+   muestra (REGLA #5 de CLAUDE.md, mismo patrón que el borrado de
+   manifiestos/clientes). El botón solo se dibuja si `puede_eliminar`
+   (superadmin o rol con el flag de matriz habilitado), pero el backend
+   revalida igual con @_ot_can_eliminar -- defensa en profundidad real,
+   NUNCA solo del lado del front. Usa ilusPrompt (REGLA #1: nunca
+   confirm()/prompt() nativos). */
+async function otdEliminarOT(){
+  const numeroOt = {{ (v.numero_ot or ('V-' ~ v.id)) | tojson }};
+  const texto = await ilusPrompt({
+    title: 'Eliminar OT definitivamente',
+    message: 'Esta acción no se puede deshacer. Para confirmar, escribe el número de la OT:',
+    sub: 'Escribe exactamente: <strong>' + numeroOt.replace(/</g, '&lt;') + '</strong>',
+    subHtml: true,
+    placeholder: numeroOt,
+    required: true,
+    type: 'danger',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    validate: (val) => (val.trim().toLowerCase() === numeroOt.toLowerCase())
+      ? {ok:true, valor: val.trim()}
+      : {ok:false, error: 'No coincide con "' + numeroOt + '".'},
+  });
+  if (texto === null) return;   // canceló
+  try {
+    const r = await fetch('/mantenciones/api/visitas/{{ v.id }}', {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm_text: texto}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok){
+      await ilusAlert({
+        title: 'OT eliminada',
+        message: 'La OT ' + numeroOt + ' fue eliminada definitivamente.',
+        type: 'success',
+      });
+      window.location.href = '{{ url_for("ot2_panel") }}';
+    } else {
+      await ilusAlert({
+        title: 'No se pudo eliminar',
+        message: d.error || 'Ocurrió un error al eliminar la OT.',
+        type: (r.status === 403 || r.status === 400) ? 'danger' : 'error',
+      });
+    }
+  } catch(e){
+    await ilusAlert({
+      title: 'Error de conexión',
+      message: 'No se pudo eliminar la OT. Intenta de nuevo.',
+      type: 'error',
+    });
+  }
+}
 
 /* Compartir la OT firmada por WhatsApp (Daniel, 21-08-2026).
    Abre la ventana ANTES del fetch: si se abre después, Safari/iOS y
