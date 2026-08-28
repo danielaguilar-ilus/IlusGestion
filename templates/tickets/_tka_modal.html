@@ -928,7 +928,22 @@ function _tkaReanudarFocusTrapsAjenos(){
 // a proposito (no un default silencioso). Por eso siempre se confirma,
 // nunca se reutiliza el motivo sin que el usuario lo apruebe explicitamente
 // para ESE equipo puntual.
-async function _tkaPedirMotivoSinSaldo(nombre){
+// 2026-08-28 (Daniel, en vivo, sobre el botón "Seleccionar/deseleccionar
+// todo" nuevo): "si le digo usar el mismo motivo, yo pienso que podría
+// funcionar para todos de ahí abajo" -- distinto del click uno-por-uno
+// (donde el diseño de 2026-07-12, arriba, sigue vigente a propósito:
+// SIEMPRE confirmar, para no reusar un motivo sin que el usuario lo
+// apruebe para ESE equipo puntual). `autoReuse=true` es SOLO para el
+// flujo de selección masiva: una vez que el usuario aprobó reusar el
+// motivo para el primer producto sin saldo del lote, el resto ya no
+// vuelve a preguntar -- se aplica directo. Sigue siendo editable
+// individualmente después: destildar y volver a tildar una fila puntual
+// vuelve a pedir su propio motivo (autoReuse no aplica fuera de este
+// flujo masivo).
+async function _tkaPedirMotivoSinSaldo(nombre, autoReuse){
+  if (autoReuse && _TKA.ultimoMotivoSinSaldo){
+    return _TKA.ultimoMotivoSinSaldo;
+  }
   if (_TKA.ultimoMotivoSinSaldo){
     const reusar = await ilusConfirm({
       title: 'Producto sin saldo disponible',
@@ -1884,7 +1899,10 @@ async function tkaToggleAllCli(idx){
   for (const inp of inputs){
     if (inp.checked === marcarTodo) continue;
     inp.checked = marcarTodo;
-    await tkaToggleLineaCli(inp);
+    // autoReuse=true: el primer producto sin saldo del lote pregunta el
+    // motivo como siempre; del segundo en adelante ya no vuelve a
+    // preguntar "¿reusar?" -- lo aplica directo (pedido de Daniel).
+    await tkaToggleLineaCli(inp, false, true);
     // Si el usuario canceló el motivo de una línea sin saldo, tkaToggleLineaCli
     // ya la dejó destildada -- no se fuerza a seguir preguntando el resto en
     // silencio, pero tampoco se aborta el resto de la selección.
@@ -2002,7 +2020,7 @@ async function tkaToggleDocCli(idx){
     body.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
   }
 }
-async function tkaToggleLineaCli(inp, silent){
+async function tkaToggleLineaCli(inp, silent, autoReuse){
   const chkBox = inp.closest('.tka-chk');
   const row = inp.closest('.tka-line');
   const key = inp.dataset.lineKey;
@@ -2012,7 +2030,10 @@ async function tkaToggleLineaCli(inp, silent){
   if (inp.checked && isZero && !silent){
     // Mismo criterio que tkaToggleLineaDoc: justificación obligatoria, con
     // opción de reutilizar el mismo motivo (_tkaPedirMotivoSinSaldo).
-    motivo = await _tkaPedirMotivoSinSaldo(nombre);
+    // autoReuse (solo desde tkaToggleAllCli): ver comentario en
+    // _tkaPedirMotivoSinSaldo -- no repite la pregunta de "¿reusar?" en
+    // cada producto de una selección masiva.
+    motivo = await _tkaPedirMotivoSinSaldo(nombre, autoReuse);
     if (!motivo){ inp.checked = false; return; }
     const qtyInpZ = document.querySelector(`input.ln-qty-input[data-line-key="${key}"]`);
     if (qtyInpZ && parseFloat(qtyInpZ.value || 0) === 0) qtyInpZ.value = 1;

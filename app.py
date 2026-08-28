@@ -75130,10 +75130,19 @@ def ot2_detalle(vid):
     # -- SIN filtrar por tipo/clasificación (Daniel, 2026-08-28: "de
     # momento déjalas libres, quiero ver las plantillas... para tener la
     # opción de cambiarlas"). Es intencionalmente permisivo por ahora.
+    # 🔴 FIX 2026-08-28: Daniel reportó "no me deja cambiar la plantilla"
+    # -- el sheet mostraba TODAS las plantillas activas (de instalación,
+    # mantención, visitas...) en una sola lista sin ningún orden, así que
+    # para una OT de instalación las opciones útiles quedaban perdidas
+    # entre decenas de plantillas de mantención. Se sigue sin filtrar
+    # (nada se quita, REGLA #4.2), pero ahora se manda `categoria_admin`
+    # para que el frontend pueda ordenar/agrupar mostrando primero las de
+    # la categoría de esta OT.
     plantillas_todas = mysql_fetchall(
-        "SELECT id, nombre, tipo_visita FROM mant_tarea_plantillas "
+        "SELECT id, nombre, tipo_visita, categoria_admin FROM mant_tarea_plantillas "
         " WHERE activa=1 ORDER BY nombre"
     ) or []
+    categoria_ot_actual = _categoria_admin_para_tipo(v.get("tipo"))
 
     # ── Técnicos colaboradores (mant_visita_tecnicos) — 2026-08-28 ──────
     # Mismo criterio que mant_ot_ejecutar (app.py ~80398): excluye al
@@ -75304,6 +75313,7 @@ def ot2_detalle(vid):
         puede_eliminar=puede_eliminar,
         hito_actual=hito_actual, hito_siguiente=hito_siguiente,
         plantillas_todas=plantillas_todas,
+        categoria_ot_actual=categoria_ot_actual,
         tecnicos_colaboradores=tecnicos_colaboradores,
         # 🆕 2026-08-27 — puerta de entrada para CREAR el Anexo de Servicios
         # (el motor de firma ya existía desde anoche, commit e007c43; lo que

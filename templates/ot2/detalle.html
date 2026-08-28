@@ -1192,6 +1192,11 @@
 // "cambiar plantilla" del tab Trabajo -- sin filtrar por tipo/clasificación
 // a propósito ("de momento déjalas libres").
 const PLANTILLAS_TODAS = {{ plantillas_todas | tojson }};
+// Categoría administrativa de ESTA OT (instalacion/mantencion/visitas/...)
+// -- se usa solo para ORDENAR el selector de "cambiar plantilla" (las de
+// la propia categoría primero), nunca para filtrar/quitar opciones.
+const CATEGORIA_OT_ACTUAL = {{ categoria_ot_actual | tojson }};
+const _CAT_ADMIN_LABEL = {instalacion:'Instalación', mantencion:'Mantención', visitas:'Visitas', trabajo_interno:'Interno'};
 
 // 2026-08-28 (Daniel): uids de los técnicos COLABORADORES ya sumados a esta
 // OT (aparte del principal) -- se usa para que el picker de "Agregar
@@ -1538,9 +1543,22 @@ window.otdConfirmarReasignar = async function(){
    confirma antes de mandar, para no sorprender con un reemplazo silencioso.
    ══════════════════════════════════════════════════════════════ */
 window.otdCambiarPlantilla = async function(mid, pidActual){
-  const opciones = PLANTILLAS_TODAS
-    .filter(p => p.id !== pidActual)
-    .map(p => ({ label: p.nombre, value: String(p.id) }));
+  // 🔴 FIX 2026-08-28 (Daniel: "no me deja cambiar la plantilla" -- la lista
+  // mostraba TODAS las plantillas activas revueltas, y para una OT de
+  // instalación las opciones útiles quedaban perdidas entre decenas de
+  // plantillas de mantención). Sigue sin filtrar nada (REGLA #4.2, "déjalas
+  // libres" sigue de pie) -- solo ordena primero las de la categoría de
+  // ESTA OT, y marca con una etiqueta las de otra categoría para que se
+  // entienda por qué aparecen ahí.
+  const propia = [], otras = [];
+  PLANTILLAS_TODAS.filter(p => p.id !== pidActual).forEach(p => {
+    (p.categoria_admin === CATEGORIA_OT_ACTUAL ? propia : otras).push(p);
+  });
+  const opciones = propia.map(p => ({ label: p.nombre, value: String(p.id) }))
+    .concat(otras.map(p => ({
+      label: (_CAT_ADMIN_LABEL[p.categoria_admin] || p.categoria_admin || 'Otra') + ' · ' + p.nombre,
+      value: String(p.id),
+    })));
   if (!opciones.length){
     ilusToast('No hay otra plantilla activa para elegir.', {type:'warning'});
     return;
