@@ -85698,7 +85698,7 @@ def _ot_pdf_context(vid, embed_images=False):
     return ctx, "ok", []
 
 
-def _ot_pdf_header_footer_native(ctx):
+def _ot_pdf_header_footer_native(ctx, grande=False):
     """Header/footer NATIVOS de Playwright para el PDF real de la OT
     (`display_header_footer` + `header_template`/`footer_template`).
 
@@ -85718,10 +85718,22 @@ def _ot_pdf_header_footer_native(ctx):
     color -- sin eso Chromium descarta el fondo negro al imprimir (bug real
     ya visto y corregido en esa misma función el 2026-07-24).
 
-    Se usa para ot_pdf.html Y para ot_pdf_levantamiento.html (este último
-    hoy solo tiene un encabezado/pie ÚNICOS al principio/final del documento
-    completo -- cero identificación en las páginas físicas del medio; se
-    deja intacto y esto se suma encima, no lo reemplaza).
+    `grande` (2026-08-28, Daniel: "el PDF se comporta de manera distinta" --
+    mostró la vista previa de la OT-2026-00119, que le gusta, contra el PDF
+    descargado, que salía con un header compacto DISTINTO):
+
+    - grande=True → OT clásica (ot_pdf.html): réplica 1:1 del header/footer
+      INCRUSTADO que Daniel aprobó en la vista previa (macro header_block:
+      logos SPHS+ILUS a 17.6mm, "ORDEN DE TRABAJO" + N° en rojo grande +
+      estado "CERRADA EL dd-mm-aa", franja roja/negra de 2mm), más el nombre
+      del cliente que Daniel pidió el 2026-08-28. Mide ~32mm de alto → exige
+      margin.top 36mm en el caller (misma disciplina "si agrando el header,
+      subo el margen" de _tk_cotizacion_pdf_bytes, que usa exactamente esas
+      medidas desde 2026-07-24).
+    - grande=False → informe de levantamiento (ot_pdf_levantamiento.html):
+      versión compacta SIN CAMBIOS (cabe en los 22mm de margin.top que ese
+      template usa hoy; otro frente de trabajo está sobre ese archivo ahora
+      mismo y no se le mueve el piso).
 
     Devuelve (header_html, footer_html).
     """
@@ -85737,9 +85749,90 @@ def _ot_pdf_header_footer_native(ctx):
     # join a mant_clientes), simplemente no se usaba acá. Trabajo interno
     # (bodega/capacitación) no tiene cliente -- mismo fallback que ya usa
     # el resto del proyecto para ese caso (_ot_tv_datos, _cli_nom).
-    cliente_nombre = _html.escape((visita.get("razon_social") or "").strip() or "Trabajo interno")
+    _cliente_raw = (visita.get("razon_social") or "").strip() or "Trabajo interno"
+    cliente_nombre = _html.escape(_cliente_raw)
+    # Para el FOOTER el nombre se capa en Python (no con CSS): el "Página X
+    # de Y" va al FINAL del mismo span y un ellipsis CSS cortaría justo los
+    # números de página con un nombre kilométrico -- verificado con un
+    # nombre de 125 caracteres, que además hacía saltar el pie a 2 líneas.
+    # Se capa ANTES de escapar para no partir un &amp; a la mitad.
+    cliente_footer = _html.escape(
+        _cliente_raw[:48].rstrip() + "…" if len(_cliente_raw) > 48 else _cliente_raw)
     logo_b64 = ctx.get("logo_b64") or ""
     logo_shs_url = ctx.get("logo_shs_url") or ""
+
+    # Línea de estado -- MISMO criterio que el header incrustado de
+    # ot_pdf.html (macro header_block): manda cerrada_at; si no hay, el
+    # estado tal cual. chile_fmt_filter es el mismo filtro `chile_fmt` que
+    # usa el template (hora Chile, REGLA #6).
+    try:
+        if visita.get("cerrada_at"):
+            estado_str = "CERRADA EL " + chile_fmt_filter(visita["cerrada_at"], "%d-%m-%y")
+        else:
+            estado_str = str(visita.get("estado") or "cerrada").replace("_", " ").upper()
+    except Exception:
+        estado_str = ""
+    estado_str = _html.escape(estado_str)
+
+    if grande:
+        # Medidas calcadas del header incrustado aprobado (ot_pdf.html
+        # `.head`, que a su vez replica el PDF de cotizaciones): caja SPHS
+        # 20mm (logo 17.6mm), espartano ILUS 17.6mm/67.2mm, banda con
+        # padding 5mm/14mm (14mm = el padding lateral de `.sheet`, para que
+        # texto del header y contenido queden alineados), franja de 2mm.
+        # Tipografía en px equivalente a los pt del incrustado (12pt→16px,
+        # 15pt→20px, 7.5pt→10px): los header templates de Chromium imprimen
+        # el px CSS a tamaño real, verificado midiendo el PDF renderizado.
+        _ilus_logo_html = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            'style="height:17.6mm;max-width:67.2mm;object-fit:contain;">'
+            if logo_b64 else
+            '<span style="font-weight:900;font-size:25.6px;color:#ffffff;'
+            'letter-spacing:.02em;">ILUS<span style="color:#dc2626;">.</span></span>'
+        )
+        _shs_logo_html = (
+            '<div style="height:20mm;background:#ffffff;border-radius:1mm;'
+            'box-sizing:border-box;padding:1.2mm 2.4mm;display:flex;align-items:center;'
+            f'justify-content:center;"><img src="{logo_shs_url}" '
+            'style="height:17.6mm;width:auto;object-fit:contain;"></div>'
+            if logo_shs_url else ""
+        )
+        header_html = (
+            '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
+            '<div style="background:#0a0a0a;padding:5mm 14mm;box-sizing:border-box;'
+            'display:flex;justify-content:space-between;align-items:center;'
+            '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
+            f'<div style="display:flex;align-items:center;gap:5mm;">'
+            f'{_shs_logo_html}{_ilus_logo_html}</div>'
+            '<div style="text-align:right;max-width:100mm;min-width:0;overflow:hidden;">'
+            f'<div style="font-size:16px;font-weight:800;color:#ffffff;'
+            f'letter-spacing:-.01em;">{doc_tipo}</div>'
+            f'<div style="font-size:20px;font-weight:900;color:#dc2626;'
+            f'line-height:1.2;letter-spacing:-.01em;">N&#176; {numero_ot}</div>'
+            f'<div style="font-size:10px;color:#9ca3af;margin-top:1px;">{estado_str}</div>'
+            # min-width:0 + overflow + ellipsis: nombre de cliente kilométrico
+            # NUNCA se solapa con los logos (se corta con "…") -- verificado
+            # con nombres extremos, no deshacer al reestilizar.
+            f'<div style="font-size:11px;font-weight:700;color:#e5e7eb;'
+            'line-height:1.2;margin-top:.5mm;white-space:nowrap;overflow:hidden;'
+            f'text-overflow:ellipsis;">{cliente_nombre}</div>'
+            '</div></div>'
+            '<div style="height:2mm;background:linear-gradient(90deg,#dc2626 0 25%,'
+            '#0a0a0a 25% 100%);-webkit-print-color-adjust:exact;'
+            'print-color-adjust:exact;"></div>'
+            '</div>'
+        )
+        footer_html = (
+            '<div style="width:100%;font-size:9px;font-family:Arial,Helvetica,sans-serif;'
+            'color:#6b7280;padding:3px 14mm 0;box-sizing:border-box;display:flex;'
+            'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
+            '<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
+            'soportetec@sphs.cl</span>'
+            f'<span><b style="color:#0a0a0a">{numero_ot}</b> · {cliente_footer} · Página '
+            '<span class="pageNumber"></span> de <span class="totalPages"></span></span>'
+            '</div>'
+        )
+        return header_html, footer_html
 
     _ilus_logo_html = (
         f'<img src="data:image/png;base64,{logo_b64}" '
@@ -85892,21 +85985,40 @@ def mant_visita_pdf(vid):
     # no tiene NINGÚN identificador repetido (solo un encabezado/pie único al
     # principio/final del documento completo) -- esto se agrega ENCIMA, sin
     # tocar ese encabezado/pie propio.
-    _hdr_tpl, _ftr_tpl = _ot_pdf_header_footer_native(ctx)
-    # Margen top/bottom subido (antes 15/15mm) para dejarle espacio real a
-    # esas barras -- verificado renderizando un PDF de prueba con Playwright
-    # (ver reporte): a 15mm el header nuevo tapaba la primera línea del
-    # contenido. left/right SIN TOCAR (12mm, igual que siempre): tanto
-    # .sheet (ot_pdf.html) como .doc (ot_pdf_levantamiento.html) ya simulan
-    # su propio margen lateral con padding CSS interno -- cambiar el margen
-    # real de Playwright ahí no aporta nada y arriesga el ancho fijo de
-    # `.doc` (210mm) en el informe de levantamiento.
+    # 🔧 FIX 2026-08-28 parte 2 (Daniel: "el PDF se comporta de manera
+    # distinta" -- mostró la vista previa de la OT-2026-00119, que aprueba,
+    # contra el PDF descargado). Dos cosas, verificadas renderizando el PDF
+    # real con Playwright + fitz (ver harness en el reporte de la sesión):
+    #
+    # 1) SOLAPAMIENTO: ot_pdf.html declara `@page { margin: 0 }` (necesario
+    #    para que el Ctrl+P de la vista previa salga a sangre) y en Chromium
+    #    el margen CSS de @page tiene PRECEDENCIA sobre el `margin` de
+    #    page.pdf() -- los 22mm que se pasaban acá nunca se aplicaron: el
+    #    header nativo tapaba las primeras líneas de CADA página y el footer
+    #    pisaba las últimas. El template ahora declara su @page con estos
+    #    mismos valores cuando native_header_footer=True (fuente única del
+    #    margen real: el template; lo de acá queda como respaldo coherente).
+    #
+    # 2) ESTÉTICA: la OT clásica usa el header/footer nativo GRANDE --
+    #    réplica del header incrustado que Daniel aprobó en la vista previa
+    #    (logos 17.6mm, N° rojo grande, estado, cliente). Mide ~32mm → top
+    #    36mm, misma disciplina de _tk_cotizacion_pdf_bytes ("si agrando el
+    #    header, subo el margen"). left/right 0: el margen lateral real lo
+    #    simula `.sheet` con su padding de 14mm, y así la banda negra sale
+    #    a sangre igual que en la vista previa.
+    #
+    # El informe de levantamiento conserva EXACTAMENTE los márgenes y el
+    # header compacto de antes (ese template define su propio @page y otro
+    # frente de trabajo está sobre él ahora mismo -- no se le mueve nada).
+    _hdr_tpl, _ftr_tpl = _ot_pdf_header_footer_native(ctx, grande=(not _es_informe_lev))
+    _pdf_margin = (
+        {"top": "22mm", "bottom": "16mm", "left": "12mm", "right": "12mm"}
+        if _es_informe_lev else
+        {"top": "36mm", "bottom": "16mm", "left": "0mm", "right": "0mm"}
+    )
     try:
         pdf_bytes = _pw_pdf(
-            html, page_format=_pdf_formato, margin={
-                "top": "22mm", "bottom": "16mm",
-                "left": "12mm", "right": "12mm",
-            },
+            html, page_format=_pdf_formato, margin=_pdf_margin,
             header_template=_hdr_tpl, footer_template=_ftr_tpl,
             # 2026-07-10: con embed_images=True las fotos ya vienen como
             # data-URI dentro del HTML (sin red que esperar) — timeout
