@@ -242,7 +242,17 @@
                  no se podia filtrar por tipo de trabajo. #}
               <div class="col-12 col-md-6">
                 <label class="form-label small fw-semibold">Tipo de trabajo (familia)</label>
-                <select id="ePFamiliaChecklist" class="form-select form-select-sm">
+                {# 28-08-2026 (Daniel, por voz: "algo bien asociado al sistema,
+                   rápido, enumerado y con formato"): familia_checklist dejó de
+                   ser un ENUM cerrado -- ver _ensure_familias_checklist_editable
+                   en app.py. Estas 10 opciones (las mismas 9 de siempre + "Sin
+                   clasificar") se dejan HARDCODEADAS acá como fallback -- si el
+                   fetch de cargarFamiliasChecklist() falla, el selector sigue
+                   funcionando exactamente igual que antes de esta tarea (nada se
+                   quita, REGLA #4.2). cargarFamiliasChecklist() solo AGREGA las
+                   familias nuevas que Daniel haya creado, antes de la opción
+                   "+ Nueva familia…". #}
+                <select id="ePFamiliaChecklist" class="form-select form-select-sm" onchange="onFamiliaChecklistChange(this)">
                   <option value="otro">— Sin clasificar —</option>
                   <option value="instalacion">📦 Instalación</option>
                   <option value="preventiva">🔧 Mant. preventiva</option>
@@ -253,6 +263,7 @@
                   <option value="operacional_interno">⚙ Operacional interno</option>
                   <option value="rendiciones">💰 Rendiciones</option>
                   <option value="control_calidad">🔎 Control de calidad</option>
+                  <option value="__nueva__">➕ Nueva familia…</option>
                 </select>
               </div>
               <div class="col-12 col-md-6">
@@ -402,6 +413,84 @@ let _editId = null;
 let _items = [];
 let _searchTimer = null;
 let _modal = null;
+
+// ═══════════════════════════════════════════════════════════════════
+// FAMILIAS DE CHECKLIST EDITABLES (Daniel, 28-08-2026, por voz: "algo bien
+// asociado al sistema, rápido, enumerado y con formato"). familia_checklist
+// dejó de ser un ENUM cerrado -- ver _ensure_familias_checklist_editable /
+// mant_familias_checklist en app.py. El <select id="ePFamiliaChecklist">
+// nace con las 10 opciones fijas de siempre (fallback si este fetch falla,
+// REGLA #4.2: nada se quita) y esta función solo AGREGA las familias nuevas
+// que ya existan en la tabla, antes de la opción "+ Nueva familia…".
+// ═══════════════════════════════════════════════════════════════════
+let _familiasChecklist = [];
+
+async function cargarFamiliasChecklist(){
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/familias', {credentials:'same-origin'});
+    const j = await r.json();
+    if (!j || !j.ok || !Array.isArray(j.familias)) return;
+    _familiasChecklist = j.familias;
+    const sel = document.getElementById('ePFamiliaChecklist');
+    if (!sel) return;
+    j.familias.forEach(f => _asegurarOpcionFamilia(f.slug, f.nombre));
+  } catch(e){ /* se queda con las 10 familias fijas -- nunca bloquea el editor */ }
+}
+
+// Agrega la opción al <select> si todavía no existe (por slug). Se usa tanto
+// al precargar la lista completa como defensivamente en cargarDetalle(), por
+// si una plantilla ya usa una familia recién creada por otra sesión antes de
+// que este fetch alcance a resolver.
+function _asegurarOpcionFamilia(slug, nombre){
+  if (!slug) return;
+  const sel = document.getElementById('ePFamiliaChecklist');
+  if (!sel) return;
+  const existe = Array.prototype.some.call(sel.options, o => o.value === slug);
+  if (existe) return;
+  const op = document.createElement('option');
+  op.value = slug;
+  op.textContent = nombre || slug;
+  const nuevaOpt = sel.querySelector('option[value="__nueva__"]');
+  if (nuevaOpt) sel.insertBefore(op, nuevaOpt); else sel.appendChild(op);
+}
+
+// Handler del <select> de familia: cualquier valor normal solo se recuerda
+// (para poder volver atrás si el usuario abre "+ Nueva familia…" y cancela).
+// "__nueva__" dispara el flujo de creación -- SIEMPRE con ilusPrompt, NUNCA
+// prompt() nativo (REGLA #1 de CLAUDE.md).
+async function onFamiliaChecklistChange(sel){
+  if (sel.value !== '__nueva__'){
+    sel.dataset.prev = sel.value;
+    return;
+  }
+  const anterior = sel.dataset.prev || 'otro';
+  const nombre = await ilusPrompt({
+    title: 'Nueva familia de trabajo',
+    message: 'Nombre del tipo de trabajo (ej. "Auditoría de stock")',
+    placeholder: 'Ej: Auditoría de stock',
+    required: true,
+  });
+  if (!nombre){ sel.value = anterior; return; }
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/familias', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({nombre})
+    });
+    const j = await r.json();
+    if (!j || !j.ok){
+      if (typeof ilusToast === 'function') ilusToast(j && j.error ? j.error : 'No se pudo crear la familia', {type:'error'});
+      sel.value = anterior; return;
+    }
+    _familiasChecklist.push({slug: j.slug, nombre: j.nombre});
+    _asegurarOpcionFamilia(j.slug, j.nombre);
+    sel.value = j.slug;
+    sel.dataset.prev = j.slug;
+    if (typeof ilusToast === 'function') ilusToast('Familia "'+j.nombre+'" creada', {type:'success'});
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red: no se pudo crear la familia', {type:'error'});
+    sel.value = anterior;
+  }
+}
 
 function escHtml(s){
   return String(s||'').replace(/[&<>"']/g, ch =>
@@ -567,7 +656,8 @@ function abrirEditor(pid){
   document.getElementById('ePDesc').value = '';
   document.getElementById('ePTipo').value = 'preventiva';
   document.getElementById('ePTiempo').value = '';
-  document.getElementById('ePFamiliaChecklist').value = 'otro';
+  { const _selFam = document.getElementById('ePFamiliaChecklist');
+    _selFam.value = 'otro'; _selFam.dataset.prev = 'otro'; }
   document.getElementById('ePFamiliaActivo').value = 'todas';
   document.getElementById('ePActiva').checked = true;
   document.getElementById('ePEsSistemaNota').style.display = 'none';
@@ -592,7 +682,10 @@ async function cargarDetalle(pid){
     document.getElementById('ePDesc').value = p.descripcion || '';
     document.getElementById('ePTipo').value = p.tipo_visita || 'preventiva';
     document.getElementById('ePTiempo').value = p.tiempo_estimado_min || '';
-    document.getElementById('ePFamiliaChecklist').value = p.familia_checklist || 'otro';
+    { const _famSlug = p.familia_checklist || 'otro';
+      _asegurarOpcionFamilia(_famSlug); // defensivo: por si cargarFamiliasChecklist() aún no resolvió
+      const _selFam = document.getElementById('ePFamiliaChecklist');
+      _selFam.value = _famSlug; _selFam.dataset.prev = _famSlug; }
     document.getElementById('ePFamiliaActivo').value = p.familia_activo || 'todas';
     document.getElementById('ePActiva').checked = p.activa !== false;
     document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
@@ -880,6 +973,7 @@ async function eliminarPlantilla(){
 document.addEventListener('DOMContentLoaded', () => {
   renderTabs();       // pinta las pestañas de inmediato (contadores en 0) para que no salte el layout
   cargarPlantillas(); // y luego las recalcula con los datos reales
+  cargarFamiliasChecklist(); // 28-08-2026: agrega familias custom al selector (aditivo, ver arriba)
 });
 </script>
 {% endblock %}

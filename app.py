@@ -79198,13 +79198,36 @@ _PLANT_TIPO_VISITA = (
     "preventiva", "correctiva", "garantia", "levantamiento",
     "inspeccion", "instalacion", "otro",
 )
-# Familia de TRABAJO de la plantilla ("tipo de trabajo" para Daniel). Debe
-# coincidir con el ENUM de mant_tarea_plantillas.familia_checklist.
+# Familia de TRABAJO de la plantilla ("tipo de trabajo" para Daniel).
+# 28-08-2026: familia_checklist DEJÓ de ser un ENUM cerrado -- ver
+# _ensure_familias_checklist_editable() y la tabla mant_familias_checklist.
+# Esta tupla queda como SEED/FALLBACK (los 10 valores que ya traía el ENUM
+# hasta hoy): _familias_checklist_slugs() es la fuente de verdad real y
+# recurre a esta lista solo si la tabla todavía no existe o falla la
+# consulta -- nunca deja al sistema sin ninguna familia válida.
 _PLANT_FAMILIA_CHECKLIST = (
     "instalacion", "preventiva", "correctivo", "desinstalacion",
     "capacitacion", "registro_productos", "operacional_interno",
     "rendiciones", "control_calidad", "otro",
 )
+
+
+def _familias_checklist_slugs():
+    """Slugs válidos hoy para mant_tarea_plantillas.familia_checklist --
+    tabla editable mant_familias_checklist (Daniel, 28-08-2026: poder
+    agregar un "tipo de trabajo" nuevo sin tocar código), con fallback al
+    seed fijo _PLANT_FAMILIA_CHECKLIST si la tabla no existe todavía o la
+    consulta falla. Se usa para validar en vez de una lista cerrada, tanto
+    al crear/editar una plantilla como al filtrar el listado."""
+    try:
+        rows = mysql_fetchall("SELECT slug FROM mant_familias_checklist") or []
+        if rows:
+            return {r["slug"] for r in rows}
+    except Exception as e:
+        print(f"[familias_checklist_slugs] falló: {e}", flush=True)
+    return set(_PLANT_FAMILIA_CHECKLIST)
+
+
 # Familia de MÁQUINA a la que aplica la plantilla.
 _PLANT_FAMILIA_ACTIVO = (
     "cardio", "selectorizado", "carga_libre", "racks_estructuras",
@@ -79523,11 +79546,14 @@ def mant_plantillas_listar():
     if fcat in _PLANT_CATEGORIAS_ADMIN:
         where.append("categoria_admin=%s"); params.append(fcat)
     # FASE 3: filtros nuevos
+    # 28-08-2026: valida contra la tabla editable (_familias_checklist_slugs)
+    # en vez de una lista cerrada aparte -- antes esta lista ni siquiera
+    # incluía 'control_calidad' (ya en el ENUM desde 2026-08-10), así que
+    # filtrar por esa familia nunca traía resultados. Con la tabla como
+    # fuente de verdad, cualquier familia nueva que Daniel agregue desde el
+    # editor también queda filtrable de una.
     fchk = (request.args.get("familia_checklist") or "").strip().lower()
-    _FAM_CHK_OK = ("instalacion","preventiva","correctivo","desinstalacion",
-                   "capacitacion","registro_productos","operacional_interno",
-                   "rendiciones","otro")
-    if fchk in _FAM_CHK_OK:
+    if fchk in _familias_checklist_slugs():
         where.append("familia_checklist=%s"); params.append(fchk)
     fact = (request.args.get("familia_activo") or "").strip().lower()
     _FAM_ACT_OK = ("cardio","selectorizado","carga_libre","racks_estructuras",
@@ -79581,6 +79607,89 @@ def mant_plantillas_listar():
         "default_plantilla_id": default_plantilla_id,
         "categoria_resuelta": categoria_resuelta,
     })
+
+
+def _slugify_familia_checklist(texto):
+    """slug ascii_minusculas_con_guion_bajo, máx 60 chars -- mismo criterio
+    que _cat_slugify (catalogo_module.py, para las clases de producto
+    editables) así una familia de checklist nueva se ve consistente con el
+    resto del proyecto. No se importa desde catalogo_module porque esa
+    función vive anidada dentro de register_catalogo_routes(); se replica
+    acá en vez de exponerla, es una función chica y sin estado."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
+    t = t.strip().lower()
+    out, prev_us = [], False
+    for ch in t:
+        if ch.isalnum():
+            out.append(ch); prev_us = False
+        elif not prev_us:
+            out.append("_"); prev_us = True
+    return "".join(out).strip("_")[:60]
+
+
+@app.route("/mantenciones/api/plantillas/familias", methods=["GET"])
+@_mant_required
+def mant_familias_checklist_listar():
+    """Familias de trabajo (checklist) disponibles hoy -- alimenta el
+    <select> "Tipo de trabajo (familia)" del editor de plantillas
+    (plantillas.html) y la opción "+ Nueva familia…" que agrega una sin
+    tocar código (Daniel, 28-08-2026). Mismo criterio de fallback que
+    _familias_checklist_slugs(): si la tabla aún no existe, se devuelven
+    las familias fijas de siempre para que el selector nunca quede vacío."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT slug, nombre FROM mant_familias_checklist ORDER BY orden, nombre") or []
+    except Exception as e:
+        print(f"[familias_checklist_listar] falló: {e}", flush=True)
+        rows = []
+    if not rows:
+        rows = [{"slug": s, "nombre": s} for s in _PLANT_FAMILIA_CHECKLIST]
+    return jsonify({"ok": True, "familias": rows})
+
+
+@app.route("/mantenciones/api/plantillas/familias", methods=["POST"])
+@_mant_required
+def mant_familias_checklist_crear():
+    """Agrega una familia de trabajo (checklist) nueva sin tocar código.
+
+    Daniel (28-08-2026, por voz): quiere poder agregar un "tipo de trabajo"
+    nuevo "rápido, enumerado y con formato" desde el propio editor de
+    plantillas. Antes de esto, familia_checklist era un ENUM cerrado --
+    agregar un valor exigía un ALTER TABLE hecho por un desarrollador.
+
+    Body: {nombre}. Devuelve {ok, slug, nombre} para que el frontend agregue
+    la opción al <select> sin recargar la página. Mismo patrón que
+    POST /catalogo/api/clases (cat_clases_producto, clases de producto
+    editables): slugify + INSERT en una tabla chica en vez de tocar un ENUM.
+    """
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:120]
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta el nombre de la familia"}), 400
+    slug = _slugify_familia_checklist(nombre)
+    if not slug:
+        return jsonify({"ok": False, "error": "Nombre inválido"}), 400
+    try:
+        existe = mysql_fetchone(
+            "SELECT slug FROM mant_familias_checklist WHERE slug=%s", (slug,))
+        if existe:
+            return jsonify({"ok": False, "error": "Ya existe una familia equivalente"}), 409
+        _max = mysql_fetchone(
+            "SELECT COALESCE(MAX(orden),0) AS m FROM mant_familias_checklist") or {}
+        orden = int(_max.get("m") or 0) + 10
+        mysql_execute(
+            "INSERT INTO mant_familias_checklist (slug, nombre, orden, created_by) "
+            "VALUES (%s,%s,%s,%s)",
+            (slug, nombre, orden, current_username() or "sistema"))
+    except Exception as e:
+        print(f"[familias_checklist_crear] error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear la familia"}), 500
+    try:
+        _mant_log("familia_checklist", 0, "creada", f"{nombre} ({slug})")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "slug": slug, "nombre": nombre})
 
 
 @app.route("/mantenciones/api/diagnostico/cobertura-clasificacion", methods=["GET"])
@@ -79823,8 +79932,12 @@ def mant_plantilla_crear():
     # nunca las mandaba -> toda plantilla creada quedaba 'otro'/'todas' y no se
     # podia segmentar por tipo de trabajo. Se validan contra la lista blanca
     # para no depender del ENUM (un valor invalido se guardaria como '').
+    # 28-08-2026: la lista blanca ahora es mant_familias_checklist (editable
+    # desde el propio editor, ver POST /mantenciones/api/plantillas/familias)
+    # en vez de la tupla fija -- así una familia recién creada por Daniel
+    # también se puede usar de inmediato al guardar la plantilla.
     fam_chk = (d.get("familia_checklist") or "").strip().lower()
-    if fam_chk not in _PLANT_FAMILIA_CHECKLIST:
+    if fam_chk not in _familias_checklist_slugs():
         fam_chk = "otro"
     fam_act = (d.get("familia_activo") or "").strip().lower()
     if fam_act not in _PLANT_FAMILIA_ACTIVO:
@@ -79901,8 +80014,10 @@ def mant_plantilla_actualizar(pid):
     try: tiempo = int(tiempo) if tiempo not in (None, "") else None
     except Exception: tiempo = None
     activa = 1 if d.get("activa", True) else 0
+    # 28-08-2026: idem crear -- valida contra mant_familias_checklist, no
+    # contra la tupla fija (ver mant_plantilla_crear).
     fam_chk = (d.get("familia_checklist") or "").strip().lower()
-    if fam_chk not in _PLANT_FAMILIA_CHECKLIST:
+    if fam_chk not in _familias_checklist_slugs():
         fam_chk = "otro"
     fam_act = (d.get("familia_activo") or "").strip().lower()
     if fam_act not in _PLANT_FAMILIA_ACTIVO:
@@ -97728,6 +97843,46 @@ def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
     return _plantilla_por_clasificacion_sku(row.get("sku") if row else None, tipo_ot)
 
 
+@app.route("/mantenciones/api/plantillas/sugerida-por-sku", methods=["GET"])
+@_mant_required
+def mant_plantilla_sugerida_por_sku():
+    """Auto-conexión de checklist en el wizard de OT 2.0 (Daniel, 28-08-2026:
+    "las plantillas deberán conectarse... así alimentarse automáticas").
+
+    ?sku=<sku del equipo>&tipo_ot=<tipo de la OT en curso>
+
+    Wrapper HTTP delgado de _plantilla_por_clasificacion_sku -- toda la
+    regla de negocio (SKU -> cat_productos.clase_producto ->
+    cat_clases_producto.nombre -> mant_tarea_plantillas por nombre exacto +
+    categoria_admin) ya vive ahí y en _mant_lev_crear_ot_core (levantamiento).
+    Este endpoint es la primera vez que ese cruce se expone para uso
+    INTERACTIVO: _modal_crear.html lo llama apenas se marca un equipo en el
+    paso "Equipos" (ver eqTog/sugerirPlantillaEquipo) para PRESELECCIONAR el
+    <select> de checklist -- dejando SIEMPRE la opción de cambiarlo a mano
+    (mismo criterio que ya se aplicó al selector de checklist de trabajo
+    interno, cargarPlantillasInterno). NUNCA es un error "sin sugerencia":
+    null es una respuesta legítima y el caller cae solo al comportamiento
+    manual de siempre.
+    """
+    sku = (request.args.get("sku") or "").strip()
+    tipo_ot = (request.args.get("tipo_ot") or "").strip().lower()
+    if not sku or not tipo_ot:
+        return jsonify({"ok": True, "plantilla_id": None, "plantilla_nombre": None})
+    try:
+        pid = _plantilla_por_clasificacion_sku(sku, tipo_ot)
+    except Exception as e:
+        print(f"[plantilla_sugerida_por_sku] sku={sku!r} tipo_ot={tipo_ot!r} falló: {e}", flush=True)
+        return jsonify({"ok": True, "plantilla_id": None, "plantilla_nombre": None})
+    nombre = None
+    if pid:
+        try:
+            row = mysql_fetchone("SELECT nombre FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+            nombre = row.get("nombre") if row else None
+        except Exception as e:
+            print(f"[plantilla_sugerida_por_sku] leer nombre de plantilla {pid} falló: {e}", flush=True)
+    return jsonify({"ok": True, "plantilla_id": pid, "plantilla_nombre": nombre})
+
+
 def _tarea_respaldo_texto(tipo_ot, nombre_equipo):
     """(titulo, descripcion) de la tarea de respaldo por equipo."""
     nombre_equipo = (nombre_equipo or 'equipo')[:240]
@@ -103659,6 +103814,200 @@ def _ensure_categoria_admin_plantillas():
     return out
 
 
+# Slugs + nombres + orden con que se SIEMBRA mant_familias_checklist la
+# primera vez -- son EXACTAMENTE los 10 valores que ya traía el ENUM
+# familia_checklist (9 familias de trabajo + 'otro' como catch-all sin
+# clasificar), en el mismo orden y con las mismas etiquetas que ya se
+# mostraban en plantillas.html (#ePFamiliaChecklist) antes de esta tarea.
+# Es aditivo a propósito: ninguna plantilla existente cambia de familia.
+_FAMILIAS_CHECKLIST_SEED = [
+    ("instalacion",         "📦 Instalación",          10),
+    ("preventiva",          "🔧 Mant. preventiva",     20),
+    ("correctivo",          "🔨 Correctivo",           30),
+    ("desinstalacion",      "📤 Desinstalación",       40),
+    ("capacitacion",        "🎓 Capacitación",         50),
+    ("registro_productos",  "📋 Registro productos",   60),
+    ("operacional_interno", "⚙ Operacional interno",   70),
+    ("rendiciones",         "💰 Rendiciones",          80),
+    ("control_calidad",     "🔎 Control de calidad",   90),
+    ("otro",                "— Sin clasificar —",      999),
+]
+
+
+def _ensure_familias_checklist_editable():
+    """Convierte 'familia_checklist' de ENUM cerrado a algo que Daniel puede
+    ampliar sin tocar código -- mismo patrón que ya se usó para
+    categoria_admin (Tarea 1, 2026-08-10, ver _ensure_categoria_admin_plantillas
+    arriba): en vez de tocar el ENUM cada vez que aparece un "tipo de
+    trabajo" nuevo, se crea una tabla chica editable
+    (mant_familias_checklist) y la columna deja de ser ENUM -- pasa a
+    VARCHAR(60), validada en Python contra la tabla (_familias_checklist_slugs)
+    en vez de contra una lista cerrada de la base de datos.
+
+    Daniel (28-08-2026, por voz): quiere poder agregar una familia nueva
+    "rápido, enumerado y con formato" desde el propio editor de plantillas,
+    sin pedirle a un desarrollador que toque el ENUM.
+
+    SIEMPRE corre, incluso con ILUS_SKIP_MIGRATIONS=1 (mismo criterio que el
+    resto de los `_ensure_*` de este bloque) -- sin esto, en prod el ENUM
+    seguiría cerrado para siempre.
+
+    Pasos:
+      1. Tabla mant_familias_checklist, sembrada (INSERT IGNORE, idempotente
+         por slug) con las 10 familias que YA existían en el ENUM -- mismos
+         slugs, aditivo, no rompe ninguna plantilla existente.
+      2. Columna familia_checklist: SOLO si hoy sigue siendo ENUM (se
+         verifica el tipo real contra information_schema.COLUMNS ANTES de
+         tocarla, mismo patrón que el resto de las migraciones de columna de
+         este archivo -- REGLA #5), se convierte a VARCHAR(60) NOT NULL
+         DEFAULT 'otro'. MySQL preserva el valor de texto de cada fila al
+         convertir ENUM->VARCHAR (es la misma representación de cadena
+         subyacente) -- no hay pérdida ni corrupción de datos existentes.
+         Si ya es VARCHAR (deploy posterior, o corrida repetida), no hace
+         nada -- ALTER TABLE no se ejecuta dos veces de gratis.
+    """
+    out = {"tabla": False, "seed": [], "columna_convertida": False}
+    # 1. Tabla editable + seed.
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_familias_checklist (
+                slug        VARCHAR(60) PRIMARY KEY,
+                nombre      VARCHAR(120) NOT NULL,
+                orden       INT DEFAULT 0,
+                created_by  VARCHAR(190),
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        out["tabla"] = True
+    except Exception as e_tbl:
+        print(f"[ensure_familias_checklist] CREATE TABLE falló: {e_tbl}", flush=True)
+        return out
+    for slug, nombre, orden in _FAMILIAS_CHECKLIST_SEED:
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_familias_checklist (slug, nombre, orden, created_by) "
+                "VALUES (%s,%s,%s,'seed')",
+                (slug, nombre, orden))
+            out["seed"].append(slug)
+        except Exception as e_seed:
+            print(f"[ensure_familias_checklist] seed '{slug}' falló: {e_seed}", flush=True)
+
+    # 2. familia_checklist: ENUM -> VARCHAR(60), solo si todavía es ENUM.
+    try:
+        col = mysql_fetchone(
+            "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_tarea_plantillas' "
+            "  AND COLUMN_NAME='familia_checklist'")
+        if col and (col.get("DATA_TYPE") or "").lower() == "enum":
+            mysql_execute(
+                "ALTER TABLE mant_tarea_plantillas MODIFY COLUMN familia_checklist "
+                "VARCHAR(60) NOT NULL DEFAULT 'otro' "
+                "COMMENT 'Tipo de trabajo -- validado contra mant_familias_checklist.slug "
+                "(editable, ya no es ENUM cerrado, 2026-08-28)'")
+            out["columna_convertida"] = True
+            print("[ensure_familias_checklist] familia_checklist convertida "
+                  "de ENUM a VARCHAR(60)", flush=True)
+    except Exception as e_col:
+        print(f"[ensure_familias_checklist] convertir columna falló: {e_col}", flush=True)
+    return out
+
+
+def _ensure_plantilla_repuesto():
+    """Plantilla "Repuesto" (Daniel, 28-08-2026 -- auditoría de cobertura de
+    clasificación): de las 19 clases de producto activas en el catálogo
+    (cat_clases_producto), 18 ya tenían al menos una mant_tarea_plantillas
+    con su nombre EXACTO -- la única que faltaba es "Repuesto" (slug
+    'repuesto', sembrada en catalogo_module.py ~línea 610). Sin esta
+    plantilla, _plantilla_por_clasificacion_sku() nunca puede auto-conectar
+    el checklist de un equipo clasificado como repuesto -- cae siempre al
+    respaldo genérico (_plantilla_estandar_para_tipo), que sigue siendo un
+    comportamiento válido, solo que no el ideal.
+
+    categoria_admin='mantencion' (punto de partida, reclasificable sin tocar
+    código desde el propio editor de /mantenciones/plantillas -- selector
+    "Categoría"): un repuesto casi siempre se cambia durante una visita de
+    mantención correctiva/preventiva. Se descartó 'trabajo_interno' aunque
+    _PLANT_CATEGORIA_TIPO_SEED mapea tipo_ot='repuesto' a esa categoría,
+    porque ESE tipo de OT es historia muerta -- Daniel lo sacó del wizard el
+    19-08-2026 ("repuesto no sé por qué hacer una OT de repuesto", ver
+    _modal_crear.html TIPOS): sigue existiendo solo para OTs viejas, nadie
+    puede crear una desde la pantalla hoy, así que nunca dispararía esta
+    plantilla en la práctica. 'mantencion' sí es un tipo_ot vivo y es donde
+    un repuesto real aparece con más frecuencia.
+
+    SIEMPRE corre (incluso con ILUS_SKIP_MIGRATIONS=1). Idempotente por
+    (nombre, categoria_admin) -- mismo criterio que el resto de las
+    plantillas de clasificación (UNIQUE KEY uq_plant_nombre_cat, ya
+    garantizada por _ensure_plantillas_estandar_seed). Debe correr DESPUÉS
+    de _ensure_categoria_admin_plantillas() (la columna categoria_admin
+    tiene que existir) -- ver orden de llamada al final del archivo.
+
+    Devuelve el id de la plantilla si la creó, o None si ya existía o falló
+    (nunca lanza)."""
+    nombre = "Repuesto"
+    categoria = "mantencion"
+    try:
+        ya = mysql_fetchone(
+            "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin=%s LIMIT 1",
+            (nombre, categoria))
+        if ya:
+            return None
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                # INSERT IGNORE: si otra instancia (cold start concurrente)
+                # ya la insertó entre el SELECT de arriba y este INSERT, el
+                # UNIQUE KEY uq_plant_nombre_cat descarta esta fila sin error.
+                cur.execute(
+                    "INSERT IGNORE INTO mant_tarea_plantillas "
+                    "(nombre, descripcion, tipo_visita, familia_checklist, familia_activo, "
+                    " categoria_admin, activa, es_sistema, created_by) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,1,1,'seed')",
+                    (nombre,
+                     "Verificación al entregar/instalar un repuesto (clasificación de "
+                     "catálogo 'Repuesto'). Punto de partida -- ajustar el checklist y la "
+                     "categoría según el uso real.",
+                     "correctiva", "correctivo", "todas", categoria)
+                )
+                plant_id = cur.lastrowid
+                if not plant_id:
+                    # Perdió la carrera: otra instancia ya la insertó.
+                    conn.commit()
+                    return None
+                items = [
+                    (1, "Estado del repuesto",
+                     "Sin daños, corrosión ni piezas faltantes al recibirlo/instalarlo.",
+                     "verificacion", 1, 1, None, None, None, None),
+                    (2, "Compatibilidad con el equipo",
+                     "Confirma que el repuesto corresponde al modelo/serie del equipo intervenido.",
+                     "sino", 1, 0, None, None, None, None),
+                    (3, "Cantidad entregada", "", "numero", 1, 0, "u.", "0", None, None),
+                    (4, "Observaciones del repuesto",
+                     "Detalle libre (proveedor, lote, garantía, etc.)",
+                     "texto", 0, 0, None, None, None, None),
+                ]
+                for it in items:
+                    (orden, titulo, descripcion_it, tipo_r, oblig, req_foto,
+                     unidad, rmin, rmax, opciones_json) = it
+                    cur.execute(
+                        "INSERT INTO mant_tarea_plantilla_items "
+                        "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                        " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (plant_id, orden, titulo, descripcion_it, tipo_r,
+                         oblig, req_foto, unidad, rmin, rmax, opciones_json)
+                    )
+            conn.commit()
+            print(f"[ensure_plantilla_repuesto] creada 'Repuesto' "
+                  f"(id={plant_id}, categoria={categoria})", flush=True)
+            return plant_id
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[ensure_plantilla_repuesto] falló: {e}", flush=True)
+        return None
+
+
 def _ensure_lev_items_doc_col():
     """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
@@ -106917,6 +107266,34 @@ try:
               f"{_cat_admin_out['seed']}", flush=True)
 except Exception as _ensure_cat_err:
     print(f"[ILUS][WARN] _ensure_categoria_admin_plantillas: {_ensure_cat_err}", flush=True)
+
+# CRÍTICO: familias de checklist editables SIEMPRE (incluso skip-migrations)
+# -- Daniel 2026-08-28: agregar un "tipo de trabajo" nuevo sin tocar código.
+# Convierte mant_tarea_plantillas.familia_checklist de ENUM cerrado a
+# VARCHAR(60) validado contra mant_familias_checklist (mismo patrón que
+# categoria_admin/Tarea 1, arriba). Corre DESPUÉS de categoria_admin porque
+# ambas tocan la misma tabla y así queda una sola secuencia de ALTERs clara.
+try:
+    with app.app_context():
+        _fam_chk_out = _ensure_familias_checklist_editable()
+    if _fam_chk_out.get("columna_convertida"):
+        print("[ILUS] familia_checklist convertida de ENUM a VARCHAR "
+              "(skip-migrations)", flush=True)
+except Exception as _ensure_fam_chk_err:
+    print(f"[ILUS][WARN] _ensure_familias_checklist_editable: {_ensure_fam_chk_err}", flush=True)
+
+# CRÍTICO: plantilla "Repuesto" SIEMPRE (incluso skip-migrations) -- Daniel
+# 2026-08-28, auditoría de cobertura de clasificación: de 19 clases de
+# producto activas, era la ÚNICA sin ninguna mant_tarea_plantillas con su
+# nombre exacto. Corre después de categoria_admin (columna ya garantizada
+# arriba) porque esta plantilla fija su categoria_admin al crearse.
+try:
+    with app.app_context():
+        _pid_repuesto = _ensure_plantilla_repuesto()
+    if _pid_repuesto:
+        print(f"[ILUS] Plantilla 'Repuesto' sembrada (skip-migrations): id={_pid_repuesto}", flush=True)
+except Exception as _ensure_repuesto_err:
+    print(f"[ILUS][WARN] _ensure_plantilla_repuesto: {_ensure_repuesto_err}", flush=True)
 
 # CRÍTICO: nombres de plantilla sin el prefijo "<Categoría> · " (Daniel
 # 2026-08-13) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Corre después
