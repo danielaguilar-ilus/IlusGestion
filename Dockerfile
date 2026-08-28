@@ -94,7 +94,23 @@ ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
 # Mismo arranque que el Procfile original (gunicorn app:app).
+#
+# --timeout 90→240 (2026-08-27, OT-2026-00058 -- Daniel: "no se está
+# descargando la orden de trabajo" en la OT más grande que ha pasado por el
+# sistema, 60 equipos/637 tareas). Si el worker no responde dentro de este
+# plazo, gunicorn lo mata a mitad de camino -- eso se ve desde el navegador
+# como "no se descarga nada", sin ningún error visible. 90s ya era un margen
+# apretado incluso para el caso mediano (OT-39, 19 equipos/54 fotos, que
+# necesitaba action_timeout=60s solo para el set_content() de Playwright,
+# dejando ~20s para el resto). Con documentos grandes se sube el timeout
+# interno de generación de PDF a juego (ver action_timeout/queue_timeout en
+# mant_visita_pdf, app.py) -- este --timeout de gunicorn tiene que quedar
+# CÓMODO por encima de esos valores, y AUN ASÍ por debajo del timeout de
+# Cloud Run (--timeout 300 en .github/workflows/deploy.yml) para que sea
+# gunicorn el que corte primero (respuesta HTML de repliegue) y no Cloud Run
+# (que devuelve un 504 sin nada útil). Cadena: Cloud Run(300) > gunicorn(240)
+# > queue_timeout PDF grande(220) > action_timeout PDF grande(150) + margen.
 CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --worker-class gthread \
-    --timeout 90 --graceful-timeout 30 --keep-alive 30 --max-requests 5000 \
+    --timeout 240 --graceful-timeout 30 --keep-alive 30 --max-requests 5000 \
     --max-requests-jitter 500 --access-logfile - --error-logfile - app:app
 

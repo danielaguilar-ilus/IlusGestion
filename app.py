@@ -848,18 +848,32 @@ def _pw_worker_kick():
         _PW_WORKER["started"] = True
 
 
-def _pw_pdf(html: str, **kwargs) -> bytes:
+def _pw_pdf(html: str, *, queue_timeout: int = 90, **kwargs) -> bytes:
     """API pública sin cambios (mismos args por keyword, mismas
     excepciones) -- delega la generación real al hilo dedicado
     _pw_worker_loop vía cola. Ver docstring de la sección arriba para
     el porqué. action_timeout interno ya cubre el caso lento (default
     45s); el timeout de acá es solo una red de seguridad extra por si
-    el hilo dedicado quedara colgado por completo."""
+    el hilo dedicado quedara colgado por completo.
+
+    queue_timeout (segundos, default 90 -- IDÉNTICO al valor de siempre,
+    ningún caller existente cambia de comportamiento): 🔧 FIX 2026-08-27
+    (OT-2026-00058, 60 equipos/637 tareas). Antes este valor estaba
+    hardcodeado a 90 sin relación con `action_timeout` -- un caller podía
+    pedir action_timeout=60000 (60s) para page.set_content() y aun así
+    quedar cortado a los 90s totales, dejando ~30s para wait_for_images +
+    page.pdf() (que NO tiene timeout propio). Con documentos grandes eso se
+    agota y el error que se ve/loguea es un TimeoutError genérico de este
+    método en vez de dejar que Playwright complete o falle con su propio
+    mensaje. Documentos excepcionalmente grandes deben pasar un
+    queue_timeout mayor JUNTO con un action_timeout mayor (ver
+    mant_visita_pdf) -- nunca solo uno de los dos.
+    """
     _pw_worker_kick()
     result_box = {}
     done_event = threading.Event()
     _pw_job_queue.put((html, kwargs, result_box, done_event))
-    if not done_event.wait(timeout=90):
+    if not done_event.wait(timeout=queue_timeout):
         raise TimeoutError("Generación de PDF: el motor no respondió a tiempo.")
     if "error" in result_box:
         raise result_box["error"]
@@ -1490,6 +1504,25 @@ def _img_resize_bytes(file_obj, max_dim=1600, quality=82):
         return raw, (getattr(file_obj, "content_type", None) or "application/octet-stream")
 
 
+# 2026-08-27 (OT-2026-00058, Vitacura — 60 equipos/637 tareas, la OT más
+# grande que ha pasado por el sistema; Daniel: "no se está descargando la
+# orden de trabajo" + "mejorar la velocidad de descarga"). Las fotos YA se
+# comprimen a máx. 1600px/calidad 82 al subirlas (_img_resize_bytes dentro
+# de _gcs_upload_like_cloudinary), pero en el PDF cada foto se imprime en
+# una celda de ~62mm x 40mm (.an-fotos img / .eq-thumbs img en
+# ot_pdf_levantamiento.html / ot_pdf.html) — incluso a 300 DPI (calidad de
+# impresión alta) eso son ~730x470px. Con una OT de 60 equipos y el anexo
+# de levantamiento imprimiendo TODAS las fotos por equipo sin tope (a
+# propósito, pedido de Daniel 2026-07-10: "todos los equipos, todas sus
+# fotos... sin truncar" — NO se toca esa cantidad), cada foto embebida muy
+# por encima de su tamaño real de impresión multiplica innecesariamente el
+# HTML que Chromium tiene que parsear/decodificar/imprimir. _PDF_EMBED_MIN_BYTES
+# evita reprocesar firmas/thumbnails ya chicos (re-comprimir una firma no
+# ahorra nada y arriesga su transparencia si es PNG).
+_PDF_EMBED_MAX_DIM = 900            # px lado mayor -- sobra con margen para 300 DPI
+_PDF_EMBED_MIN_BYTES = 150 * 1024   # bajo esto, no vale la pena reprocesar
+
+
 def _img_a_data_uri(url, cache=None):
     """Convierte una URL de imagen /f/<key> (GCS) a data-URI embebida.
 
@@ -1519,6 +1552,22 @@ def _img_a_data_uri(url, cache=None):
                 ext = ("." + key.rsplit(".", 1)[1].lower()) if "." in key else ""
                 ct = {".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                       ".png": "image/png", ".gif": "image/gif"}.get(ext, "image/jpeg")
+                # Re-comprimir SOLO para este PDF -- el original en GCS queda
+                # intacto (nada se pierde, ninguna foto se descarta). Si
+                # _img_resize_bytes falla por lo que sea (Pillow, imagen
+                # corrupta), devuelve un content-type genérico que rompería el
+                # <img> -- por eso solo se acepta el resultado si es un tipo de
+                # imagen reconocido; si no, se sigue con los bytes originales
+                # tal como se hacía antes de este cambio (mismo comportamiento
+                # de siempre, cero riesgo de foto rota).
+                if len(data) > _PDF_EMBED_MIN_BYTES:
+                    try:
+                        _rdata, _rct = _img_resize_bytes(
+                            data, max_dim=_PDF_EMBED_MAX_DIM, quality=78)
+                        if _rct in ("image/jpeg", "image/png"):
+                            data, ct = _rdata, _rct
+                    except Exception as _e_resize:
+                        print(f"[_img_a_data_uri] resize {url}: {_e_resize}", flush=True)
                 import base64 as _b64
                 out = f"data:{ct};base64,{_b64.b64encode(data).decode('ascii')}"
         except Exception as _e_datauri:
@@ -84287,6 +84336,7 @@ def _ot_pdf_context(vid, embed_images=False):
         # contexto: reduce el tiempo de descarga a lo que tarda la más lenta
         # en vez de la suma de todas.
         try:
+            _t0_prefetch = time.time()
             _urls_unicas = set()
             for _campo in ("firma_tecnico_url", "firma_cliente_url", "firma_supervisor_url"):
                 if visita.get(_campo):
@@ -84310,9 +84360,19 @@ def _ot_pdf_context(vid, embed_images=False):
                         _urls_unicas.add(_f["cloudinary_url"])
             if _urls_unicas:
                 from concurrent.futures import ThreadPoolExecutor as _TPE
-                with _TPE(max_workers=8) as _pool:
+                # 2026-08-27 (OT-2026-00058, 60 equipos): 8→16 workers. Es
+                # trabajo de red (GCS), no de CPU -- más hilos acortan el
+                # tiempo total cuando hay muchas fotos únicas, sin costo real
+                # para documentos chicos (un pool de 16 con 10 URLs no usa
+                # los cupos de más).
+                with _TPE(max_workers=16) as _pool:
                     for _u, _du in _pool.map(lambda u: (u, _img_a_data_uri(u)), _urls_unicas):
                         _cache[_u] = _du
+            # MEDIR antes de arreglar (OT-2026-00058): deja evidencia real en
+            # los logs de cuánto pesa el prefetch para documentos grandes --
+            # sin esto, ajustar timeouts es puro tanteo.
+            print(f"[ot_pdf_ctx] vid={vid} prefetch {len(_urls_unicas)} foto(s) única(s) "
+                  f"en {time.time()-_t0_prefetch:.1f}s", flush=True)
         except Exception as _e_prefetch:
             print(f"[ot_pdf_ctx] prefetch paralelo fotos vid={vid}: {_e_prefetch}", flush=True)
         for _campo in ("firma_tecnico_url", "firma_cliente_url", "firma_supervisor_url"):
@@ -84473,12 +84533,43 @@ def mant_visita_pdf(vid):
     _es_informe_lev = bool(_ot_es_levantamiento(ctx["visita"]) and ctx.get("lev_items"))
     _tpl_pdf = ("mantenciones/ot_pdf_levantamiento.html" if _es_informe_lev
                 else "mantenciones/ot_pdf.html")
+    _t0_render = time.time()
     html = render_template(_tpl_pdf, **ctx)
+    _t_render = time.time() - _t0_render
+
+    # 🔧 FIX 2026-08-27 (OT-2026-00058, Vitacura -- 60 equipos/637 tareas, la
+    # OT más grande que ha pasado por el sistema; Daniel: "no se está
+    # descargando la orden de trabajo" + "mejorar la velocidad de descarga").
+    # El caso que motivó action_timeout=60000 (OT-39, 19 equipos/54 fotos)
+    # es UN ORDEN DE MAGNITUD más chico que este. En vez de subir el timeout
+    # para TODAS las OT (arriesga esconder problemas reales en documentos
+    # normales), se detecta el caso grande por tamaño real del documento y
+    # se le da más tiempo SOLO a ese -- las OT normales (equipos<=25 y
+    # tareas<=200, que cubre con margen el caso de 19/54 ya conocido) siguen
+    # con los mismos 60s / mismo timeout externo (90s) de siempre, cero
+    # cambio de comportamiento.
+    # Los umbrales (25 equipos / 200 tareas) son una ESTIMACIÓN a partir del
+    # código (no se pudo medir contra producción -- sin credenciales de BD
+    # en este entorno): separan con margen el caso conocido-bueno (19) del
+    # caso que falla (60), pero no están calibrados con datos reales. El
+    # log de abajo deja evidencia real para la próxima vez.
+    _n_equipos = len(ctx.get("equipos") or [])
+    _n_tareas = ctx.get("chk_total") or len(ctx.get("tareas") or [])
+    _n_fotos_checklist = len(ctx.get("fotos") or [])
+    _es_doc_grande = _n_equipos > 25 or _n_tareas > 200
+    _action_timeout_ms = 150000 if _es_doc_grande else 60000
+    _pw_extra_kwargs = {"queue_timeout": 220} if _es_doc_grande else {}
+
+    print(f"[ot_pdf] vid={vid} tpl={_tpl_pdf.rsplit('/',1)[-1]} "
+          f"equipos={_n_equipos} tareas={_n_tareas} fotos_checklist={_n_fotos_checklist} "
+          f"grande={_es_doc_grande} action_timeout={_action_timeout_ms}ms "
+          f"render_html={_t_render:.1f}s len_html={len(html)}", flush=True)
 
     # PDF
     # 2026-08-27 (Daniel): hojas carta para la OT clásica (no la de
     # levantamiento, que define su propio @page A4 y no se tocó).
     _pdf_formato = "A4" if _es_informe_lev else "Letter"
+    _t0_pdf = time.time()
     try:
         pdf_bytes = _pw_pdf(
             html, page_format=_pdf_formato, margin={
@@ -84495,18 +84586,28 @@ def mant_visita_pdf(vid):
             # de set_content()/page.pdf() default (45s) puede no alcanzar con
             # informes de levantamiento muy grandes (muchas fotos base64) —
             # se sube a 60s solo en este endpoint (el de mayor volumen de
-            # imágenes por documento de toda la app).
-            action_timeout=60000,
+            # imágenes por documento de toda la app). 2026-08-27: para
+            # documentos EXCEPCIONALMENTE grandes (ver _es_doc_grande arriba)
+            # se sube más todavía, junto con queue_timeout (antes ese límite
+            # externo estaba fijo en 90s sin relación con action_timeout --
+            # ver fix en _pw_pdf).
+            action_timeout=_action_timeout_ms,
+            **_pw_extra_kwargs,
         )
     except PDFEngineUnavailable:
         # FIX 2026-06-02: Chromium no disponible → servir el HTML imprimible (mismo
         # documento; el usuario hace "Guardar como PDF" desde el navegador). Antes
         # devolvía 503 y la OT "no se visualizaba". Ahora SIEMPRE se puede ver.
-        print("[ot_pdf] Playwright no disponible → fallback a HTML imprimible", flush=True)
+        print(f"[ot_pdf] vid={vid} Playwright no disponible tras {time.time()-_t0_pdf:.1f}s "
+              f"→ fallback a HTML imprimible", flush=True)
         return html
     except Exception as e:
-        print(f"[ot_pdf] err: {e} → fallback a HTML imprimible", flush=True)
+        print(f"[ot_pdf] vid={vid} err tras {time.time()-_t0_pdf:.1f}s: {e} "
+              f"→ fallback a HTML imprimible", flush=True)
         return html
+
+    print(f"[ot_pdf] vid={vid} PDF OK en {time.time()-_t0_pdf:.1f}s "
+          f"({len(pdf_bytes)//1024} KB)", flush=True)
 
     fname = f"OT_{ctx['visita'].get('numero_ot') or vid}.pdf"
     return send_file(
