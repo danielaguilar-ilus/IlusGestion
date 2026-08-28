@@ -79609,6 +79609,96 @@ def mant_plantillas_listar():
     })
 
 
+# Categorías de plantilla que SE ESPERAN para cada clasificación de producto.
+# Son las dos que el técnico usa en terreno frente a un equipo: se instala y
+# después se le hace mantención. 'visitas' y 'trabajo_interno' quedan fuera a
+# propósito -- no dependen del tipo de máquina, así que no son un "hueco".
+_COBERTURA_CATEGORIAS_ESPERADAS = ("instalacion", "mantencion")
+
+
+@app.route("/mantenciones/api/plantillas/cobertura-clases", methods=["GET"])
+@_mant_required
+def mant_plantillas_cobertura_clases():
+    """Clasificaciones de producto ACTIVAS que NO tienen checklist.
+
+    Daniel (28-08-2026): *"si crean una clasificación nueva esta debe figurar
+    en las plantillas y generar una alerta"*.
+
+    Hasta hoy, crear una clase de producto en /catalogo/clases
+    (cat_clases_producto, POST /catalogo/api/clases) no producía ningún efecto
+    en el módulo de plantillas: la clase nacía sin checklist y nadie se
+    enteraba hasta que una OT de un equipo de esa clase caía al checklist
+    genérico. Este endpoint es el que alimenta el banner de alerta de
+    /mantenciones/plantillas.
+
+    El cruce clase -> plantilla es por NOMBRE (normalizado con
+    _plant_texto_norm: sin acentos, sin puntuación, sin mayúsculas), que es la
+    misma convención con la que ya se conectan hoy las plantillas de
+    clasificación. Solo cuentan como cobertura las plantillas ACTIVAS: una
+    plantilla desactivada no le sirve al técnico, así que sigue siendo hueco.
+
+    Respuesta:
+        {ok, total_clases, total_huecos, total_faltantes,
+         categorias: {slug: label},
+         huecos: [{clase_id, clase, faltan:[slug], faltan_label:[...], tiene:[...]}]}
+
+    Es de solo lectura y nunca falla con 500: si alguna tabla no está
+    disponible, devuelve `disponible: false` con la lista vacía para que el
+    banner simplemente no aparezca (nunca rompe la pantalla de plantillas).
+    """
+    cats = _COBERTURA_CATEGORIAS_ESPERADAS
+    vacio = {"ok": True, "disponible": False, "total_clases": 0,
+             "total_huecos": 0, "total_faltantes": 0,
+             "categorias": {k: _PLANT_CATEGORIA_LABEL.get(k, k) for k in cats},
+             "huecos": []}
+    try:
+        clases = mysql_fetchall(
+            "SELECT id, nombre FROM cat_clases_producto "
+            " WHERE activo=1 ORDER BY orden, nombre") or []
+        plantillas = mysql_fetchall(
+            "SELECT nombre, categoria_admin FROM mant_tarea_plantillas "
+            " WHERE activa=1") or []
+    except Exception as e:
+        print(f"[plantillas_cobertura_clases] consulta falló: {e}", flush=True)
+        return jsonify(vacio)
+
+    # nombre_normalizado -> {categorias que ya tienen plantilla activa}
+    cobertura = {}
+    for p in plantillas:
+        clave = _plant_texto_norm(p.get("nombre"))
+        if not clave:
+            continue
+        cobertura.setdefault(clave, set()).add(
+            (p.get("categoria_admin") or "").strip().lower())
+
+    huecos, total_faltantes = [], 0
+    for c in clases:
+        nombre = (c.get("nombre") or "").strip()
+        if not nombre:
+            continue
+        ya = cobertura.get(_plant_texto_norm(nombre), set())
+        faltan = [k for k in cats if k not in ya]
+        if not faltan:
+            continue
+        total_faltantes += len(faltan)
+        huecos.append({
+            "clase_id": int(c["id"]),
+            "clase": nombre,
+            "faltan": faltan,
+            "faltan_label": [_PLANT_CATEGORIA_LABEL.get(k, k) for k in faltan],
+            "tiene": [k for k in cats if k in ya],
+        })
+    return jsonify({
+        "ok": True,
+        "disponible": True,
+        "total_clases": len(clases),
+        "total_huecos": len(huecos),
+        "total_faltantes": total_faltantes,
+        "categorias": {k: _PLANT_CATEGORIA_LABEL.get(k, k) for k in cats},
+        "huecos": huecos,
+    })
+
+
 def _slugify_familia_checklist(texto):
     """slug ascii_minusculas_con_guion_bajo, máx 60 chars -- mismo criterio
     que _cat_slugify (catalogo_module.py, para las clases de producto
@@ -104008,6 +104098,1274 @@ def _ensure_plantilla_repuesto():
         return None
 
 
+# ═════════════════════════════════════════════════════════════════════
+# AUTORRELLENO DE CHECKLISTS VACÍOS (Daniel, 28-08-2026)
+#
+# Daniel, viendo /mantenciones/plantillas: muchas plantillas de clasificación
+# existían solo como cascarón -- creadas con el nombre de la clase de producto
+# y nada más adentro (o a lo sumo el ítem "N° de serie del equipo"). Una OT
+# que cae en una de esas plantillas le muestra al técnico un checklist vacío,
+# que es exactamente el problema que el módulo venía a resolver.
+#
+# Estos checklists los redactaron especialistas por tipo de equipo siguiendo
+# el estilo REAL que ya usaban las plantillas buenas del sistema, y ese estilo
+# es distinto según la categoría -- se respeta tal cual, no se uniforma:
+#   • instalacion: frases nominales, sin viñeta ("Nivelación del equipo"),
+#     describen el acto de montar y dejar operativo el equipo.
+#   • mantencion:  arrancan con viñeta "• " y verbo ("• Verificar transmisión
+#     y componentes móviles."), tipo_respuesta 'verificacion', casi todas
+#     obligatorias.
+#
+# Regla de Daniel: máximo 10 ítems por plantilla ("yo pienso que con 10 tareas
+# como máximo estamos ok"). Ninguna entrada de este seed pasa de 10.
+#
+# NO se usa el tipo de respuesta 'serie' en ningún ítem: Daniel pidió
+# explícitamente no tocarlo todavía porque aún no lo ha probado en terreno.
+# ═════════════════════════════════════════════════════════════════════
+# Estructura: (orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto)
+_PLANTILLAS_AUTORRELLENO_SEED = (
+    {
+        "plantilla_id": 47,
+        "clase": "Dual Cable Lite",
+        "categoria": "instalacion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie de fábrica de la estación de poleas (placa "
+             "en la torre o en el marco base).",
+             "texto", 1, 0),
+            (2, "Ubicación del equipo",
+             "Marcar la posición final del equipo dentro del recinto del cliente.",
+             "gps", 0, 0),
+            (3, "Chequeo y apriete de pernos de estructura y unión de torres",
+             "Apretar a torque los pernos del marco, la base y la unión entre ambas "
+             "torres. Sin holguras ni pernos faltantes.",
+             "check", 1, 0),
+            (4, "Nivelación y estabilidad del equipo",
+             "Regular los niveladores hasta que el equipo apoye firme y no se balancee. "
+             "Al ser autosoportante y de brazos largos, el desnivel genera balanceo y "
+             "desgaste desparejo del cable.",
+             "check", 1, 0),
+            (5, "Estado de cables de acero, terminales y recorrido por poleas",
+             "Revisar todo el recorrido del cable: terminales y prensas firmes, sin "
+             "hilos cortados, dobleces ni óxido. El cable debe correr centrado en la "
+             "garganta de cada polea. Un cable con hilos rotos se retira, no se repara.",
+             "verificacion", 1, 1),
+            (6, "Giro libre de poleas y rodamientos",
+             "Cada polea swivel debe girar libre, sin ruido, trabas ni juego lateral.",
+             "check", 0, 0),
+            (7, "Bloqueo y contrapeso de los brazos giratorios",
+             "Verificar que el pin de bloqueo engrane a fondo en cada posición vertical "
+             "y horizontal, y que el brazo no caiga solo al liberarlo.",
+             "verificacion", 1, 0),
+            (8, "Recorrido de pilas de peso, pin selector y topes de goma",
+             "Varillas guía limpias y lubricadas, recorrido completo sin trabas ni "
+             "roces, pin selector entra y sale en todas las placas, topes de goma "
+             "presentes. Cubre-pesas sin holguras que permitan atrapamiento de dedos.",
+             "check", 0, 0),
+            (9, "Prueba de funcionamiento de ambas torres con sus accesorios",
+             "Probar carga en las dos pilas de peso con manillas y accesorios montados, "
+             "revisando mosquetones, ganchos y puntos de anclaje. Recorrido suave, sin "
+             "saltos ni roce del cable.",
+             "check", 1, 0),
+            (10, "Foto del equipo por sus 4 lados y comentarios adicionales",
+             "Registro fotográfico del equipo instalado y operativo desde sus cuatro "
+             "lados.",
+             "foto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 64,
+        "clase": "Dual Cable Lite",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie de fábrica que viene en la placa de la "
+             "torre. Si la placa no existe o está ilegible, indicarlo en los "
+             "comentarios finales.",
+             "texto", 1, 0),
+            (2, "• Verificar cables de acero, terminales y prensas en todo su recorrido.",
+             "Recorrer los dos cables completos buscando hilos cortados, dobleces "
+             "(kinks), óxido, aplastamiento o estiramiento, con foco en el paso por las "
+             "poleas y en los terminales/prensas. Regla ILUS: un cable con hilos "
+             "cortados o kink se retira, no se repara.",
+             "verificacion", 1, 1),
+            (3, "• Verificar poleas, rodamientos y asiento del cable en la garganta.",
+             "Girar cada polea a mano: debe girar libre, sin ruido ni juego lateral. "
+             "Confirmar que el cable corre centrado en la garganta y que ninguna polea "
+             "está trizada o desgastada.",
+             "verificacion", 1, 0),
+            (4, "• Verificar brazos giratorios, pin de bloqueo y contrapeso.",
+             "Comprobar el giro vertical y horizontal de ambos brazos, que el pin de "
+             "bloqueo engrane a fondo en cada posición y que el brazo no caiga solo al "
+             "liberarlo (contrapeso sano). Un pin mal engranado deja caer el brazo bajo "
+             "carga.",
+             "verificacion", 1, 0),
+            (5, "• Verificar pila de pesas, varillas guía, pin selector y carcasas.",
+             "Revisar las dos pilas de 95,2 kg: recorrido sin trabas ni golpes, "
+             "varillas guía derechas y limpias, pin selector que entra y traba en todas "
+             "las placas, topes de goma completos y carcasas cubre-pesas sin holguras "
+             "ni bordes que atrapen dedos.",
+             "verificacion", 1, 0),
+            (6, "• Verificar pernos de estructura, unión de torres y nivelación.",
+             "Apretar a torque los pernos de la estructura y de la unión entre torres. "
+             "Al ser un equipo autosoportante de brazos largos, confirmar que no se "
+             "balancea y corregir la nivelación si apoya desparejo (el desnivel "
+             "desgasta el cable de forma despareja).",
+             "verificacion", 1, 0),
+            (7, "• Verificar mosquetones, ganchos y accesorios de agarre.",
+             "Revisar mosquetones, ganchos y puntos de anclaje: seguro que cierra, sin "
+             "deformación ni desgaste. Inspeccionar manillas, cuerdas y demás "
+             "accesorios en uso y retirar los que estén dañados.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y lubricación de varillas guía y partes móviles.",
+             "Limpiar varillas guía y estructura, y lubricar según indicación de "
+             "fábrica. No lubricar el cable de acero ni la garganta de las poleas.",
+             "check", 1, 0),
+            (9, "• Registrar diagnóstico y estado final.",
+             "Describir hallazgos, repuestos usados o requeridos y si el equipo queda "
+             "operativo, operativo con observación o fuera de servicio.",
+             "texto", 0, 0),
+            (10, "• Registrar las fotos necesarias",
+             "Fotos del equipo terminado y de cualquier hallazgo relevante (cable, "
+             "polea, brazo o carcasa dañada).",
+             "foto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 48,
+        "clase": "Dual cable Cross",
+        "categoria": "instalacion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el numero de serie de fabrica tal como viene en la placa o "
+             "etiqueta del equipo. Si la placa no es legible, indicarlo en comentarios.",
+             "texto", 1, 0),
+            (2, "Ubicacion del equipo",
+             "Marcar la ubicacion donde queda instalado el equipo dentro de las "
+             "dependencias del cliente.",
+             "gps", 0, 0),
+            (3, "Chequeo y apriete de pernos de estructura y union de las torres",
+             "Apretar a torque todos los pernos de la estructura, en especial los de "
+             "union entre las dos torres y los de la base. Sin pernos faltantes ni "
+             "golillas sueltas.",
+             "check", 1, 0),
+            (4, "Nivelacion y estabilidad del equipo",
+             "El equipo es autosoportante y no se ancla al piso: regular los "
+             "niveladores hasta que todos los apoyos toquen y no exista balanceo al "
+             "aplicar carga en los brazos.",
+             "check", 1, 0),
+            (5, "Estado de los cables de acero, terminales y giro libre de las poleas",
+             "Revisar todo el recorrido del cable, con foco en terminales/prensas y en "
+             "el paso por cada polea. Las poleas swivel deben girar libres, sin ruido y "
+             "con el cable centrado en la garganta. Cable con hilos cortados, dobleces "
+             "u oxido se retira, no se repara.",
+             "check", 1, 1),
+            (6, "Bloqueo y contrapeso de los brazos giratorios",
+             "Verificar que el pin de bloqueo engrane firme en cada posicion, vertical "
+             "y horizontal, y que el brazo se sostenga por su contrapeso sin caer solo "
+             "al liberarlo.",
+             "check", 1, 0),
+            (7, "Recorrido de las pilas de pesas, pin selector y cubre-pesas",
+             "Varillas guia limpias y lubricadas, recorrido completo sin trabas ni "
+             "roces, pin selector entrando en todas las placas, topes de goma presentes "
+             "y carcasas cubre-pesas sin holguras que permitan atrapamiento de dedos.",
+             "check", 1, 0),
+            (8, "Montaje de accesorios y prueba de funcionamiento con carga en ambas torres",
+             "Instalar manillas, cuerdas y mosquetones en sus anclajes y probar cada "
+             "torre por separado con carga real recorriendo todo el rango: sin saltos "
+             "del cable, sin roces y con retorno suave.",
+             "check", 1, 0),
+            (9, "Foto del equipo por sus 4 lados",
+             "Registrar el equipo instalado desde sus cuatro lados, mostrando ambas "
+             "torres y la ubicacion final.",
+             "foto", 1, 0),
+            (10, "Comentarios adicionales",
+             "Observaciones, piezas faltantes, condiciones del recinto o cualquier "
+             "punto pendiente que el cliente deba conocer.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 65,
+        "clase": "Dual cable Cross",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar cables de acero, terminales y recorrido por poleas.",
+             "Revisar todo el largo de ambos cables, con foco en las prensas/terminales "
+             "y en el paso por la garganta de las poleas. Hilos cortados, dobleces "
+             "(kinks), oxido o estiramiento: el cable se retira, no se repara.",
+             "verificacion", 1, 1),
+            (2, "• Verificar poleas swivel y rodamientos.",
+             "Cada polea debe girar libre, sin ruido ni juego lateral, y con el cable "
+             "centrado en la garganta. Revisar tambien el giro del swivel en las poleas "
+             "ajustables.",
+             "verificacion", 1, 0),
+            (3, "• Verificar brazos giratorios: pin de bloqueo y contrapeso.",
+             "Probar el enganche del pin en cada altura de las dos torres y confirmar "
+             "que el contrapeso sostiene el brazo: liberado, el brazo no debe caer "
+             "solo. Revisar giro vertical y horizontal sin roce.",
+             "verificacion", 1, 0),
+            (4, "• Verificar pilas de pesas, varillas guia, pin selector y topes.",
+             "Las dos pilas de 95,2 kg deben subir y bajar sin trabas ni golpes. "
+             "Revisar varillas guia limpias y rectas, pin selector que entra a fondo, y "
+             "topes de goma completos y sin resecar.",
+             "verificacion", 1, 0),
+            (5, "• Verificar apriete de pernos de estructura y union de torres.",
+             "Reapretar a torque los pernos de la estructura, la union entre las dos "
+             "torres y los anclajes de poleas y brazos. Reportar pernos faltantes, "
+             "pasados de rosca o con corrosion.",
+             "verificacion", 1, 0),
+            (6, "• Verificar nivelacion y estabilidad del equipo.",
+             "Al ser autosoportante y de brazos largos, cualquier desnivel genera "
+             "balanceo y desgaste desparejo del cable. Ajustar los niveladores hasta "
+             "que las cuatro bases apoyen firmes en el piso.",
+             "verificacion", 1, 0),
+            (7, "• Verificar mosquetones, accesorios y carcasas cubre-pesas.",
+             "Revisar mosquetones, ganchos, manillas y cuerdas, y sus puntos de "
+             "anclaje: sin deformacion, seguro operativo y costuras sanas. Las carcasas "
+             "deben quedar sin holguras ni bordes que permitan atrapamiento de dedos.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y lubricacion de varillas guia y puntos moviles.",
+             "Limpiar y lubricar las varillas guia de ambas pilas y los ejes de brazos "
+             "y poleas. No lubricar el cable de acero ni la zona de agarre de los "
+             "accesorios.",
+             "check", 1, 0),
+            (9, "N° de serie del equipo",
+             "Registrar el numero de serie de fabrica indicado en la placa del equipo. "
+             "Si la placa no existe o esta ilegible, indicarlo aqui.",
+             "texto", 1, 0),
+            (10, "• Registrar las fotos necesarias del equipo",
+             "Fotos del equipo completo y de cualquier hallazgo relevante (cable, "
+             "polea, pin de brazo o perno en mal estado).",
+             "foto", 0, 1),
+        ),
+    },
+    {
+        "plantilla_id": 49,
+        "clase": "Dual Pulley Drax",
+        "categoria": "instalacion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el numero de serie de fabrica de la placa de la torre. Si el "
+             "equipo no trae placa legible, dejarlo indicado en comentarios.",
+             "texto", 1, 0),
+            (2, "Ubicacion del equipo",
+             "Marcar la posicion final del equipo dentro del recinto (sala, piso y "
+             "sector).",
+             "gps", 0, 0),
+            (3, "Chequeo y apriete de pernos de estructura y union de torres",
+             "Apretar a torque los pernos del marco, la base y la union entre las dos "
+             "torres. El equipo no se ancla al piso: toda la rigidez depende de estas "
+             "uniones.",
+             "check", 1, 0),
+            (4, "Nivelacion y estabilidad del equipo",
+             "Nivelar con los reguladores de la base hasta que todas las patas apoyen. "
+             "Al ser autosoportante y de brazos largos, el desnivel genera balanceo y "
+             "desgaste desparejo del cable.",
+             "check", 1, 0),
+            (5, "Estado de cables de acero, terminales y giro de poleas",
+             "Revisar el cable en todo su recorrido, con foco en los terminales/prensas "
+             "y en el paso por las poleas. Las poleas deben girar libres, sin ruido y "
+             "con el cable centrado en la garganta. Cable con hilos cortados, dobleces "
+             "u oxido se cambia, no se repara.",
+             "check", 1, 1),
+            (6, "Bloqueo y contrapeso de los brazos giratorios",
+             "Probar el pin de bloqueo en todas las posiciones (vertical y horizontal) "
+             "y confirmar que engrane a fondo. Con el pin liberado, el brazo debe "
+             "quedar sostenido por su contrapeso y no caer solo.",
+             "check", 1, 0),
+            (7, "Recorrido de las pilas de pesas, pin selector y carcasas",
+             "Limpiar y lubricar las varillas guia, verificar recorrido completo sin "
+             "trabas en ambas pilas, pin selector que entre a fondo, topes de goma "
+             "presentes y carcasas cubre-pesas sin holguras ni bordes que atrapen los "
+             "dedos.",
+             "check", 1, 0),
+            (8, "Prueba de funcionamiento de ambas torres con los accesorios",
+             "Ejecutar recorridos completos en las dos poleas con manillas y cuerdas "
+             "montadas, revisando mosquetones, ganchos y puntos de anclaje. Si el "
+             "cliente consulta por el peso, explicar que la relacion de poleas hace que "
+             "la carga efectiva sea menor a la marcada en las placas.",
+             "check", 1, 0),
+            (9, "Foto del equipo por sus 4 lados",
+             "Registrar el equipo ya instalado desde sus cuatro costados, mas un "
+             "acercamiento a la zona de poleas y terminales de cable.",
+             "foto", 0, 1),
+            (10, "Comentarios adicionales",
+             "Observaciones, pendientes, accesorios faltantes o cualquier detalle "
+             "informado al cliente durante la entrega.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 66,
+        "clase": "Dual Pulley Drax",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie de la placa del equipo. Si la placa no está "
+             "o no es legible, dejarlo indicado en el diagnóstico final.",
+             "texto", 1, 0),
+            (2, "• Verificar cables de acero, terminales y prensas en todo su recorrido.",
+             "Recorrer ambos cables buscando hilos cortados, dobleces (kinks), óxido o "
+             "estiramiento, con foco en el paso por las poleas y en los terminales. Un "
+             "cable con hilos cortados o doblez se retira, no se repara.",
+             "verificacion", 1, 1),
+            (3, "• Verificar poleas, rodamientos y centrado del cable en la garganta.",
+             "Accionar ambas torres en todo el recorrido: las poleas deben girar "
+             "libres, sin ruido ni juego, y el cable debe correr centrado en la "
+             "garganta, sin rozar la carcasa ni salirse de la polea.",
+             "verificacion", 1, 0),
+            (4, "• Verificar pin de bloqueo y contrapeso de los brazos giratorios.",
+             "Probar el giro vertical y horizontal de ambos brazos: el pin debe "
+             "engranar firme en cada posición y el brazo no debe caer solo al "
+             "liberarlo. Si cae, el contrapeso está fuera de servicio y el equipo no "
+             "puede quedar operativo.",
+             "verificacion", 1, 0),
+            (5, "• Verificar pilas de pesas, varillas guía, pin selector y topes de goma.",
+             "Recorrido completo de ambas pilas sin trabas ni golpes; varillas rectas y "
+             "limpias, pin selector que entre y salga sin forzar en todas las placas, "
+             "topes de goma sin deformación ni faltantes.",
+             "verificacion", 1, 0),
+            (6, "• Verificar apriete de pernos, nivelación y estabilidad de las torres.",
+             "Apretar a torque los pernos de estructura y de unión entre torres. El "
+             "equipo es autosoportante: corregir la nivelación hasta que no se balancee "
+             "al traccionar con los brazos extendidos.",
+             "verificacion", 1, 0),
+            (7, "• Verificar mosquetones, ganchos, accesorios y carcasas cubre-pesas.",
+             "Mosquetones y ganchos sin deformación y con seguro operativo; manillas y "
+             "cuerdas sin desgaste en costuras ni anclajes. Carcasas sin holguras ni "
+             "bordes que permitan atrapamiento de dedos.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y lubricación de varillas guía y puntos de giro.",
+             "Limpiar las varillas guía y lubricar según especificación, además de los "
+             "puntos de giro de los brazos. No lubricar los cables de acero ni la "
+             "garganta de las poleas.",
+             "check", 1, 0),
+            (9, "• Registrar las fotos necesarias del equipo y de los cables.",
+             "Fotos generales de ambas torres y detalle de cualquier hallazgo: cable "
+             "dañado, polea con juego, perno suelto o accesorio en mal estado.",
+             "foto", 0, 1),
+            (10, "• Registrar diagnóstico y estado final.",
+             "Estado en que queda el equipo, repuestos utilizados, cables o accesorios "
+             "retirados de servicio y lo que queda pendiente para una próxima visita.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 59,
+        "clase": "Rack de accesorios",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar soldaduras de bandejas, brazos y cuñas.",
+             "Revisar cordón por cordón en bandejas, brazos y cuñas buscando fisuras, "
+             "deformación o desprendimiento por carga repetida. Ante una soldadura "
+             "fisurada, descargar ese nivel de inmediato.",
+             "verificacion", 1, 1),
+            (2, "• Verificar pernos de unión y apriete de la estructura.",
+             "Revisar y apretar los pernos de unión de columnas, bandejas y travesaños. "
+             "Anotar pernos faltantes o pasados de hilo para su reposición.",
+             "verificacion", 1, 0),
+            (3, "• Verificar estabilidad y nivelación de la base.",
+             "Comprobar que los cuatro pies apoyen completos en el piso y que el rack "
+             "no se balancee estando cargado. Corregir con niveladores o calzas.",
+             "verificacion", 1, 0),
+            (4, "• Verificar anclaje a muro o piso, o ruedas y frenos según el modelo.",
+             "En racks murales o de gran altura, revisar tarugos y pernos de anclaje y "
+             "que no haya juego contra el muro. En la jaula de almacenamiento móvil, "
+             "revisar ruedas, giro libre y que los frenos bloqueen.",
+             "verificacion", 1, 0),
+            (5, "• Verificar distribución de la carga y capacidad máxima por nivel.",
+             "Confirmar que el peso mayor quede en los niveles bajos y que ningún nivel "
+             "exceda su capacidad. El vuelco por carga desbalanceada es el principal "
+             "riesgo de este equipo.",
+             "verificacion", 1, 0),
+            (6, "• Verificar protectores de goma, pintura y óxido.",
+             "Revisar que bandejas, cuñas y pines tengan sus protectores completos "
+             "(evitan que la pieza resbale o se raye) y el estado de pintura y óxido en "
+             "la base y los puntos de contacto.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza de bandejas, cuñas y base.",
+             "Retirar polvo, magnesio y residuos de bandejas, cuñas y base. Este equipo "
+             "no lleva lubricación, salvo las ruedas y frenos de los modelos móviles.",
+             "check", 1, 0),
+            (8, "N° de serie del equipo",
+             "Registrar el número de serie o el código de la placa del rack. Si el "
+             "equipo no trae placa de fábrica, dejarlo indicado en los comentarios.",
+             "texto", 0, 0),
+            (9, "• Registrar diagnóstico y estado final.",
+             "Describir hallazgos, piezas cambiadas, repuestos pendientes y si el rack "
+             "queda operativo o con carga restringida.",
+             "texto", 0, 0),
+            (10, "• Registrar fotos del rack completo y de los puntos críticos.",
+             "Foto general del rack cargado y de las zonas revisadas: soldaduras, "
+             "anclaje o ruedas, y cualquier daño detectado.",
+             "foto", 0, 1),
+        ),
+    },
+    {
+        "plantilla_id": 60,
+        "clase": "Rack Basico",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el numero de serie o codigo de identificacion del rack. Si la "
+             "estructura no trae placa, anotar el codigo interno ILUS o dejar vacio.",
+             "texto", 0, 0),
+            (2, "• Verificar soldaduras de bandejas, brazos y cunas.",
+             "Revisar cada cordon de soldadura de bandejas, brazos y cunas buscando "
+             "fisuras, deformacion o desprendimiento por carga repetida. Revisar "
+             "tambien pintura saltada y oxido en la base y puntos de contacto, que "
+             "suelen ser el primer aviso de una soldadura trabajando.",
+             "verificacion", 1, 1),
+            (3, "• Verificar apriete de pernos de union de la estructura.",
+             "Apretar los pernos que unen columnas, travesanos y bandejas. Reportar "
+             "pernos faltantes, cortados o con hilo pasado; un rack cargado no se deja "
+             "en servicio con union floja.",
+             "verificacion", 1, 0),
+            (4, "• Verificar estabilidad, nivelacion y apoyo de los cuatro pies.",
+             "Comprobar que los cuatro pies apoyan completos en el piso y que el rack "
+             "no baila al empujarlo. Nivelar con los reguladores o suplementos segun "
+             "corresponda.",
+             "verificacion", 1, 0),
+            (5, "• Verificar anclaje a pared o piso (si aplica).",
+             "En modelos murales o de gran altura, revisar que los tarugos y pernos de "
+             "anclaje esten firmes y sin arrancamiento del muro. Si el modelo no lleva "
+             "anclaje, marcar como no aplica.",
+             "verificacion", 1, 0),
+            (6, "• Verificar protectores de goma y topes de bandejas y cunas.",
+             "Revisar que esten todos los protectores de goma o plastico de bandejas, "
+             "cunas y pines. Un protector faltante o roto deja que la mancuerna o el "
+             "disco resbale y caiga al piso o al pie del usuario.",
+             "verificacion", 1, 0),
+            (7, "• Verificar ruedas y frenos en modelos moviles (si aplica).",
+             "En la jaula de almacenamiento movil u otros modelos con ruedas, revisar "
+             "giro libre, fijacion de la rueda al chasis y que los frenos bloqueen de "
+             "verdad con el rack cargado. Si el modelo es fijo, marcar como no aplica.",
+             "verificacion", 1, 0),
+            (8, "• Verificar distribucion de la carga y capacidad maxima por nivel.",
+             "Confirmar que el peso este repartido y que los niveles altos no queden "
+             "mas cargados que los bajos, y que no se exceda la capacidad por nivel. Es "
+             "la causa numero uno de vuelco: nadie recalcula el centro de gravedad al "
+             "cargar a mano.",
+             "verificacion", 1, 0),
+            (9, "• Registrar las fotos necesarias",
+             "Fotos del rack completo y de cualquier hallazgo relevante: soldadura "
+             "fisurada, protector faltante, oxido o anclaje suelto.",
+             "foto", 0, 0),
+            (10, "• Registrar diagnostico y estado final.",
+             "Resumen del estado del rack, trabajos realizados, repuestos usados y "
+             "recomendaciones al cliente (por ejemplo, redistribuir carga o anclar a "
+             "muro).",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 61,
+        "clase": "Rack Intermedio",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar soldaduras de bandejas, brazos y cuñas.",
+             "Revisar cordones de soldadura en bandejas, brazos y cuñas buscando "
+             "fisuras, deformación o desprendimiento por carga repetida. Si hay fisura, "
+             "el nivel afectado se descarga y se marca fuera de uso.",
+             "verificacion", 1, 1),
+            (2, "• Verificar apriete de pernos de unión de la estructura.",
+             "Reapretar los pernos que unen columnas, travesaños y bandejas. Registrar "
+             "si falta algún perno o si alguno gira en falso por hilo pasado.",
+             "verificacion", 1, 0),
+            (3, "• Verificar nivelación, apoyo de los cuatro pies y anclaje.",
+             "Confirmar que los cuatro pies apoyan completos en el piso y que el rack "
+             "no se mece. En modelos murales o de gran altura, revisar además el "
+             "anclaje a pared o piso y su apriete.",
+             "verificacion", 1, 0),
+            (4, "• Verificar protectores de goma de bandejas y cuñas.",
+             "Revisar que estén todos los protectores de goma o plástico y que no estén "
+             "cortados ni sueltos. Sin protector la pieza resbala o se raya y puede "
+             "caer al piso.",
+             "verificacion", 1, 0),
+            (5, "• Verificar distribución de la carga y capacidad máxima por nivel.",
+             "Confirmar que el peso esté repartido, que los niveles superiores no "
+             "queden más cargados que los inferiores y que no se exceda la capacidad "
+             "por nivel. Es el riesgo principal de volcamiento del rack.",
+             "verificacion", 1, 0),
+            (6, "• Verificar estado de pintura y óxido en base y puntos de contacto.",
+             "Revisar la base, los pies y los apoyos donde roza el material buscando "
+             "pintura saltada u óxido. Es donde primero se debilita la estructura.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza general del rack.",
+             "Limpiar bandejas, cuñas y estructura. No requiere lubricación: el equipo "
+             "no tiene partes móviles.",
+             "check", 1, 0),
+            (8, "N° de serie del equipo",
+             "Registrar el número de serie de fábrica del rack tal como viene en la "
+             "placa o etiqueta. Si no tiene placa legible, indicarlo en el comentario "
+             "final.",
+             "texto", 1, 0),
+            (9, "• Registrar diagnóstico y estado final.",
+             "Describir hallazgos, piezas reemplazadas y si el rack queda operativo, "
+             "operativo con observación o fuera de servicio.",
+             "texto", 0, 0),
+            (10, "• Registrar las fotos necesarias",
+             "Fotos del rack cargado y de cualquier hallazgo relevante (soldadura, "
+             "protector faltante, óxido).",
+             "foto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 62,
+        "clase": "Rack Avanzados",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar estructura y soldaduras de bandejas, brazos y cuñas.",
+             "Revisar los cordones de soldadura de bandejas, brazos y cuñas buscando "
+             "fisuras, deformación o desprendimiento por carga repetida. Es la falla "
+             "que termina con una pieza en el piso o en el pie del usuario.",
+             "verificacion", 1, 1),
+            (2, "• Verificar apriete de pernos de unión de la estructura.",
+             "Apretar los pernos de columnas, travesaños y bandejas. Reponer los que "
+             "falten o estén pasados de rosca. Registrar si se cambió alguno.",
+             "verificacion", 1, 0),
+            (3, "• Verificar estabilidad, nivelación y anclaje a pared o piso.",
+             "Confirmar apoyo completo de los cuatro pies, equipo a nivel y sin "
+             "balanceo. En modelos murales o de gran altura, revisar que el anclaje "
+             "esté firme y sin señales de arrancamiento.",
+             "verificacion", 1, 0),
+            (4, "• Verificar protectores de goma o plástico de bandejas, cuñas y pines.",
+             "Revisar que estén completos y en buen estado. Un protector faltante hace "
+             "que la pieza resbale o raye el equipo. Anotar los que se repusieron.",
+             "verificacion", 1, 0),
+            (5, "• Verificar ruedas y frenos en los modelos móviles (si aplica).",
+             "Solo para Jaula de Almacenamiento Móvil u otros racks con ruedas: giro "
+             "libre, sin juego, y frenos que sujeten con el equipo cargado. Si el rack "
+             "es fijo, marcar como no aplica.",
+             "verificacion", 1, 0),
+            (6, "• Verificar distribución de la carga y capacidad máxima por nivel.",
+             "Confirmar que lo más pesado quede abajo y que ningún nivel supere la "
+             "capacidad máxima. El vuelco por carga desbalanceada es el riesgo "
+             "principal de este equipo: nadie recalcula el centro de gravedad al "
+             "cargarlo a mano.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza y revisar pintura y puntos de óxido.",
+             "Limpiar estructura y bandejas, y revisar pintura y óxido sobre todo en la "
+             "base y los puntos de contacto. Este equipo no tiene partes móviles ni "
+             "electrónica: no corresponde lubricar ni medir nada eléctrico.",
+             "check", 1, 0),
+            (8, "N° de serie del equipo",
+             "Serie o código del rack si el equipo trae placa. Muchos racks de "
+             "almacenamiento no la tienen: en ese caso indicar \"sin serie\" y continuar.",
+             "texto", 0, 0),
+            (9, "• Registrar diagnóstico y estado final.",
+             "Estado general al terminar, piezas repuestas o pendientes, y "
+             "observaciones para la próxima visita.",
+             "texto", 0, 0),
+            (10, "• Registrar las fotos necesarias.",
+             "Fotos del rack cargado, de la zona de anclaje o de los pies de apoyo, y "
+             "de cualquier hallazgo (fisura, óxido, protector faltante).",
+             "foto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 63,
+        "clase": "Rack Pro",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar soldaduras de bandejas, brazos y cuñas.",
+             "Revisar cordones de soldadura de bandejas, brazos, cuñas y uniones a la "
+             "columna buscando fisuras, deformación o desprendimiento por carga "
+             "repetida. Cualquier fisura obliga a bajar la carga de ese nivel antes de "
+             "retirarse.",
+             "verificacion", 1, 0),
+            (2, "• Verificar pernos de unión de la estructura y su apriete.",
+             "Recorrer todos los pernos de unión de columnas, travesaños y bandejas. "
+             "Reapretar los sueltos y registrar los faltantes, barridos o con tuerca "
+             "corrida.",
+             "verificacion", 1, 0),
+            (3, "• Verificar estabilidad, nivelación y apoyo de los cuatro pies.",
+             "Comprobar que los cuatro pies apoyen completos en el piso y que el rack "
+             "no bailee al empujarlo. Es el punto de mayor riesgo: un rack desnivelado "
+             "o con un pie en el aire se vuelca al cargar el nivel superior.",
+             "verificacion", 1, 1),
+            (4, "• Verificar anclaje a muro o piso, o ruedas y frenos si el rack es móvil.",
+             "En racks murales o de gran altura, revisar tarugos, pernos de anclaje y "
+             "que el muro no esté fisurado ni el anclaje arrancado. En modelos móviles "
+             "(jaula de almacenamiento), revisar ruedas, giro libre y que los frenos "
+             "bloqueen de verdad. Marcar no aplica si el rack es de piso libre y sin "
+             "ruedas.",
+             "verificacion", 0, 0),
+            (5, "• Verificar protectores de goma de bandejas, cuñas y pines.",
+             "Revisar que estén todos los protectores de goma o plástico de bandejas, "
+             "cuñas y pines. Sin protector la mancuerna o el disco resbala y cae al "
+             "piso o al pie del usuario, además de rayar la pieza y el rack.",
+             "verificacion", 1, 0),
+            (6, "• Verificar distribución de la carga y capacidad máxima por nivel.",
+             "Comprobar que el peso esté repartido y que las piezas más pesadas vayan "
+             "en los niveles bajos, sin exceder la capacidad por nivel. Corregir en el "
+             "momento la carga desbalanceada y avisar al cliente cómo debe quedar.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza y revisar pintura y oxidación de la base.",
+             "Limpiar bandejas, cuñas y estructura, y revisar el estado de la pintura y "
+             "los puntos de óxido, sobre todo en la base y en los apoyos donde se "
+             "acumula humedad.",
+             "check", 1, 0),
+            (8, "• Registrar diagnóstico y estado final.",
+             "Describir hallazgos, piezas cambiadas, repuestos pendientes y en qué "
+             "condición queda el rack operativo. Campo libre.",
+             "texto", 0, 0),
+            (9, "N° de serie del equipo",
+             "Anotar el número de serie de la placa o del adhesivo del rack. Si el rack "
+             "no trae placa de serie, escribir \"sin serie\" para dejarlo registrado.",
+             "texto", 0, 0),
+            (10, "• Registrar las fotos necesarias del rack y sus fijaciones.",
+             "Adjuntar fotos del rack cargado, de las soldaduras o pernos observados y "
+             "del anclaje o las ruedas, según lo que corresponda al modelo.",
+             "foto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 57,
+        "clase": "Bancos plano / ajustable",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar pin retractil y escalera de perforaciones del respaldo.",
+             "Punto de seguridad numero uno del banco ajustable: el pin debe entrar a "
+             "fondo, volver solo por accion del resorte y no estar doblado ni "
+             "desgastado. Probar el enganche en TODAS las posiciones del respaldo y del "
+             "asiento, y revisar que las perforaciones no esten ovaladas o elongadas "
+             "por uso.",
+             "verificacion", 1, 1),
+            (2, "• Verificar bisagra, eje de pivote y juego lateral del respaldo.",
+             "Mover el respaldo en todo su recorrido buscando juego lateral, bujes "
+             "gastados o pernos del pivote sueltos. El respaldo no debe bailar de lado "
+             "con el banco en posicion inclinada.",
+             "verificacion", 1, 0),
+            (3, "• Verificar apriete de pernos estructurales y uniones del chasis.",
+             "Reapretar la union columna-base y la union respaldo-chasis. Comprobar que "
+             "no falten pernos ni golillas y que ninguno gire en vacio por rosca "
+             "pasada.",
+             "verificacion", 1, 0),
+            (4, "• Verificar tapiz, espuma y su fijacion a la tabla base.",
+             "Buscar roturas, costuras abiertas o espuma expuesta. Revisar tambien los "
+             "tornillos que fijan el tapiz a la tabla: si la tabla esta partida los "
+             "tornillos se zafan y el tapiz se mueve con el usuario encima.",
+             "verificacion", 1, 0),
+            (5, "• Verificar nivelacion, tapones de goma y ruedas de traslado.",
+             "El banco no debe balancearse con carga. Revisar que no falten tapones de "
+             "goma en las patas (si faltan, el banco baila y raya el piso) y que las "
+             "ruedas traseras NO toquen el piso en posicion de uso. Comprobar el mango "
+             "frontal de traslado.",
+             "verificacion", 1, 0),
+            (6, "• Verificar estructura, soldaduras y estado de pintura.",
+             "Inspeccionar fisuras en soldaduras, oxidacion y pintura saltada en marco, "
+             "patas y brazo del respaldo, con foco en las zonas que reciben la carga.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza y lubricacion del mecanismo de regulacion.",
+             "Limpiar la escalera de posiciones y lubricar pin, resorte y eje de "
+             "pivote. Retirar el exceso de lubricante para no manchar el tapiz.",
+             "check", 1, 0),
+            (8, "N° de serie del equipo",
+             "Registrar el numero de serie de la placa del banco. Si el equipo no trae "
+             "placa de fabrica, indicarlo aqui.",
+             "texto", 0, 0),
+            (9, "• Registrar diagnostico, observaciones y repuestos requeridos.",
+             "Estado final del banco, fallas que quedaron pendientes y repuestos por "
+             "cotizar (pin de regulacion, tapiz, tapones de goma, ruedas).",
+             "texto", 0, 0),
+            (10, "• Registrar las fotos del equipo y de las fallas detectadas.",
+             "Fotos generales del banco y primeros planos de cualquier hallazgo: tapiz "
+             "roto, perforaciones ovaladas, soldadura con fisura, tapon de goma "
+             "faltante.",
+             "foto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 58,
+        "clase": "Bancos Olimpicos",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie de fábrica del banco (placa o etiqueta en el "
+             "chasis). Si la placa está ilegible o no existe, indicarlo explícitamente "
+             "en vez de dejarlo vacío.",
+             "texto", 1, 0),
+            (2, "• Verificar pin retráctil y escalera de perforaciones del respaldo.",
+             "Punto de seguridad número uno del banco. El pin debe entrar a fondo en "
+             "cada posición, devolverse solo por acción del resorte y no estar doblado "
+             "ni desgastado. Revisar que las perforaciones no estén ovaladas o "
+             "elongadas por uso: si lo están, el pin ya no sujeta y el respaldo puede "
+             "colapsar con el usuario acostado sosteniendo mancuernas.",
+             "verificacion", 1, 1),
+            (3, "• Verificar bisagra y eje de pivote del respaldo.",
+             "Revisar juego lateral del respaldo, bujes gastados y pernos del pivote "
+             "sueltos. El respaldo no debe moverse de lado a lado al tomarlo por los "
+             "bordes.",
+             "verificacion", 1, 0),
+            (4, "• Verificar apriete de pernos estructurales y estado de soldaduras.",
+             "Reapretar la unión columna-base y la unión respaldo-chasis. Revisar "
+             "soldaduras en busca de fisuras, oxidación o pintura saltada que indique "
+             "movimiento de la estructura.",
+             "verificacion", 1, 0),
+            (5, "• Verificar tapiz, espuma y fijación a la tabla base.",
+             "Revisar roturas, costuras abiertas y espuma expuesta. Verificar también "
+             "los pernos o tornillos que fijan el tapiz a la tabla base: la tabla se "
+             "parte con el uso y los tornillos se zafan, dejando el tapiz suelto.",
+             "verificacion", 1, 0),
+            (6, "• Verificar tapones de goma, nivelación y estabilidad con carga.",
+             "Confirmar que estén todos los tapones o topes de goma de las patas. Si "
+             "falta alguno, el banco baila y raya el piso. Probar que no se balancee al "
+             "apoyar peso en los extremos del tapiz.",
+             "verificacion", 1, 0),
+            (7, "• Verificar ruedas traseras y mango de traslado (si aplica).",
+             "En los modelos con ruedas, comprobar que giren libres y que NO toquen el "
+             "piso en posición de uso. Revisar el mango frontal de traslado y su "
+             "apriete. Si el modelo no tiene ruedas ni mango, marcar como no aplica.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y lubricación de puntos de pivote.",
+             "Limpiar tapiz y estructura con producto no abrasivo. Lubricar el eje de "
+             "pivote del respaldo y el mecanismo del pin retráctil, sin dejar exceso "
+             "que ensucie el tapiz o el piso.",
+             "check", 1, 0),
+            (9, "• Registrar las fotos necesarias del equipo.",
+             "Adjuntar fotos del banco por sus 4 lados y de cualquier daño detectado "
+             "(tapiz roto, perforaciones ovaladas, patas sin tapón) que requiera "
+             "repuesto o cotización.",
+             "foto", 0, 0),
+            (10, "• Registrar diagnóstico y estado final.",
+             "Describir el estado en que queda el banco, los repuestos que necesita y "
+             "si queda operativo o debe salir de servicio. Campo libre.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 55,
+        "clase": "Bicicleta",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie de la placa del equipo. Si la placa está "
+             "ilegible o no existe, dejarlo indicado en el diagnóstico final.",
+             "texto", 0, 0),
+            (2, "• Verificar fijaciones, estructura y nivelación.",
+             "Revisar pernos del marco en V, soldaduras y estado de pintura y tapices. "
+             "Regular los 4 niveladores hasta que la bicicleta no se balancee en el "
+             "piso.",
+             "verificacion", 1, 0),
+            (3, "• Verificar volante de inercia, eje y rodamientos.",
+             "Hacer girar el volante y comprobar juego lateral, ruido de rodamientos y "
+             "que no roce la carcasa ni el marco.",
+             "verificacion", 1, 0),
+            (4, "• Verificar sistema de resistencia y freno de emergencia.",
+             "Recorrer la manilla de tensión de mínimo a máximo comprobando el cambio "
+             "real de resistencia, y verificar que al empujarla hacia abajo el volante "
+             "se detiene en seco. Es el principal punto de seguridad del equipo.",
+             "verificacion", 1, 0),
+            (5, "• Verificar transmisión, bielas y pedales.",
+             "Revisar tensión, alineación y desgaste de la correa o cadena (engrasar la "
+             "cadena si aplica), apriete de las bielas al eje, rosca sin barrer y "
+             "correas o calas de sujeción del pie.",
+             "verificacion", 1, 1),
+            (6, "• Verificar asiento, manubrio y perillas de regulación.",
+             "Comprobar que las perillas y pop-pins aprieten de verdad y que el pin "
+             "quede calzado en el agujero, y que los tubos no tengan juego en todo el "
+             "rango de altura y profundidad.",
+             "verificacion", 1, 0),
+            (7, "• Verificar consola a pilas y sensores de pedaleo (si aplica).",
+             "Revisar pilas, lectura de RPM, velocidad y distancia, y emparejamiento "
+             "Bluetooth donde exista. El equipo no tiene enchufe: no corresponde "
+             "ninguna medición eléctrica.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y lubricación.",
+             "Limpiar estructura, volante y tapices, y lubricar los puntos móviles "
+             "según el manual del equipo.",
+             "check", 1, 0),
+            (9, "• Registrar las fotos necesarias.",
+             "Fotos del equipo por sus 4 lados y de cualquier daño o pieza desgastada "
+             "detectada durante la mantención.",
+             "foto", 0, 0),
+            (10, "• Registrar diagnóstico y estado final.",
+             "Anotar el diagnóstico, el estado en que queda el equipo y los repuestos "
+             "que se deban cotizar.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 67,
+        "clase": "Booty Builder P",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar cinturón de seguridad, costuras y hebilla.",
+             "Revisar el cinturón acolchado que retiene la carga sobre la cadera: "
+             "costuras completas sin hilos cortados, acolchado sin roturas y hebilla "
+             "que cierre y trabe con firmeza. Si el cierre no traba o la costura cede, "
+             "el equipo no queda operativo.",
+             "verificacion", 1, 1),
+            (2, "• Verificar mangas portadiscos, collarines y anclajes de bandas.",
+             "Comprobar que las mangas o pivotes de discos estén rectos, firmes y sin "
+             "desgaste, que los collarines de seguridad aprieten de verdad y que los "
+             "anclajes para bandas elásticas no tengan fisuras ni bordes cortantes.",
+             "verificacion", 1, 0),
+            (3, "• Verificar carro del asiento, rodillos y riel de deslizamiento.",
+             "Recorrer el carro en todo su rango: debe correr suave y silencioso, sin "
+             "juego lateral ni saltos. Revisar que el riel esté recto, limpio y sin "
+             "golpes, y que los rodillos no tengan planos ni ruido de cojinete.",
+             "verificacion", 1, 0),
+            (4, "• Verificar pop-pin de regulación y bloqueo del asiento.",
+             "Probar cada posición del pop-pin: debe entrar a fondo y dejar el asiento "
+             "bloqueado sin movimiento. Un pin a medio entrar deja que el carro se "
+             "desplace con el usuario ya cargado.",
+             "verificacion", 1, 0),
+            (5, "• Verificar tapicería del asiento y del pad de cadera.",
+             "Revisar forro y espuma del asiento y del rodillo o pad de cadera: sin "
+             "roturas, sin espuma expuesta y sin costuras abiertas. Confirmar además "
+             "que el pad quede firme en su soporte y no gire.",
+             "verificacion", 1, 0),
+            (6, "• Verificar pernería, plataforma de pies y estabilidad del equipo.",
+             "Repasar el apriete de la pernería de estructura y armado, confirmar que "
+             "la plataforma elevada de pies esté fija, nivelada y con su superficie "
+             "antideslizante en buen estado, y que el equipo apoye sin balanceo. "
+             "Revisar topes de goma y ruedas de transporte.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza y lubricación del riel y partes móviles.",
+             "Limpiar estructura, riel y plataforma, y lubricar el riel del carro y los "
+             "puntos móviles según lo indicado por el fabricante. No lubricar la "
+             "tapicería, el cinturón ni las zonas de agarre.",
+             "check", 1, 0),
+            (8, "N° de serie del equipo",
+             "Registrar el número de serie de la placa del equipo. Si la placa no está "
+             "visible o está ilegible, anotar el código interno ILUS y dejarlo indicado "
+             "en los comentarios.",
+             "texto", 1, 0),
+            (9, "• Registrar las fotos necesarias del equipo.",
+             "Adjuntar foto del equipo completo y detalles del carro del asiento, las "
+             "mangas portadiscos y la plataforma de pies, con el equipo ya terminado.",
+             "foto", 0, 1),
+            (10, "• Registrar diagnóstico, repuestos y estado final.",
+             "Anotar el estado en que queda el equipo, las fallas detectadas, los "
+             "repuestos requeridos (cinturón, pop-pin, rodillos, tapicería, collarines) "
+             "y si queda operativo o fuera de servicio.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 54,
+        "clase": "Selectorizador de pesos (4 estaciones)",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie de fábrica que viene en la placa o etiqueta "
+             "de la estructura. Si el equipo no la trae, dejarlo indicado en los "
+             "comentarios finales.",
+             "texto", 1, 0),
+            (2, "• Verificar cables de acero, terminales y prensacables de las 4 estaciones.",
+             "Recorrer cada cable de extremo a extremo, con foco en los terminales y "
+             "prensacables: sin hilos cortados, sin deshilachado ni deformación. Un "
+             "cable dañado se reemplaza, no se repara: es el modo de falla con riesgo "
+             "de lesión grave.",
+             "verificacion", 1, 1),
+            (3, "• Verificar poleas, rodamientos y tensión del cable en cada estación.",
+             "Cada polea debe girar libre, sin ruido, sin planos ni ranura desgastada. "
+             "Confirmar que el cable corre dentro del canal (no saltado) y que el "
+             "tensor deja el cable sin holgura con la carga en reposo.",
+             "verificacion", 1, 0),
+            (4, "• Verificar torre de placas, varillas guía y topes de goma del fondo.",
+             "Placas sin trizaduras, sin roce ni ruido, con recorrido suave de subida y "
+             "bajada. Varillas guía rectas y limpias. Topes amortiguadores del fondo "
+             "presentes y sin desintegrar.",
+             "verificacion", 1, 0),
+            (5, "• Verificar pin selector, su cordel y la carcasa de protección del stack.",
+             "El pin debe estar presente en las 4 estaciones, completo, con su cordel o "
+             "cadena, y entrar a fondo en la placa. La carcasa o protección lateral "
+             "debe estar instalada y sin fisuras: es lo que impide el atrapamiento de "
+             "dedos entre placas.",
+             "verificacion", 1, 0),
+            (6, "• Verificar pernería de estructura, anclajes y nivelación del equipo.",
+             "Apretar pernos de estructura, base y anclajes: se sueltan por los miles "
+             "de ciclos de carga. Comprobar que el equipo no se balancea sobre el piso "
+             "con carga aplicada.",
+             "verificacion", 1, 0),
+            (7, "• Verificar tapices, pads de contacto y palancas de ajuste (pop-pin).",
+             "Tapices y pads sin roturas ni espuma expuesta, bien fijados. Palancas y "
+             "pop-pin de regulación con bloqueo firme en todas sus posiciones.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y lubricación seca de varillas guía y poleas.",
+             "Limpiar estructura, torre y varillas. Aplicar lubricación seca ligera en "
+             "las varillas guía; nunca grasa pesada, porque atrapa polvo y termina "
+             "rayando el recorrido de las placas.",
+             "check", 1, 0),
+            (9, "• Registrar las fotos necesarias del equipo y de los cables.",
+             "Foto general del equipo y un detalle de los cables y terminales de cada "
+             "estación, además de cualquier daño encontrado.",
+             "foto", 0, 0),
+            (10, "• Registrar diagnóstico y estado final.",
+             "Diagnóstico, repuestos requeridos y estado en que queda el equipo. Si "
+             "alguna de las 4 estaciones queda fuera de servicio, dejarlo escrito aquí.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 69,
+        "clase": "Pisos",
+        "categoria": "mantencion",
+        "items": (
+            (1, "• Verificar juntas y encaje entre palmetas.",
+             "Recorrer las juntas puzzle / interlock: dientes completamente insertados, "
+             "sin separaciones, palmetas montadas ni bordes levantados. Es la falla mas "
+             "frecuente del pavimento y la que genera tropiezos.",
+             "verificacion", 1, 1),
+            (2, "• Verificar nivelacion y ausencia de resaltes.",
+             "Comprobar que no queden desniveles ni resaltes entre palmetas contiguas "
+             "ni contra el radier. Marcar toda diferencia mayor a 3 mm por riesgo de "
+             "tropiezo.",
+             "verificacion", 1, 0),
+            (3, "• Verificar desgaste de la superficie en zonas de alto impacto.",
+             "Revisar peso libre, plataformas y zona de mancuernas: hundimientos, "
+             "cortes, deformaciones o goma disgregada. La foto sirve para comparar el "
+             "avance del desgaste con la proxima visita.",
+             "verificacion", 1, 1),
+            (4, "• Verificar perimetro, cortes y encuentros con muros y bases de racks.",
+             "Revisar holguras, cortes abiertos o palmetas desplazadas contra muros, "
+             "columnas, bases de racks y umbrales de puerta.",
+             "verificacion", 1, 0),
+            (5, "• Verificar humedad y estado de la base bajo el pavimento.",
+             "Levantar palmetas en puntos de muestra (zonas frias, cercanas a muros o "
+             "con olor) y revisar humedad ascendente, suciedad o base despareja bajo la "
+             "goma.",
+             "verificacion", 1, 0),
+            (6, "• Verificar plataformas de levantamiento y crash pads (si aplica).",
+             "Comprobar apoyo completo sobre la base sin balanceo, anclaje o insercion "
+             "correcta en el rack, y estado de la madera y de la goma de impacto.",
+             "verificacion", 1, 0),
+            (7, "• Realizar limpieza y reasentado de palmetas sueltas.",
+             "Limpiar la superficie segun el material, retirar residuos de las juntas y "
+             "reasentar o refijar las palmetas sueltas con adhesivo o cinta de union "
+             "donde corresponda.",
+             "check", 1, 0),
+            (8, "N° de serie del equipo",
+             "Codigo o identificador del pavimento segun la ficha (lote, partida o "
+             "SKU). Si el piso no lo tiene, indicar el recinto o la zona atendida.",
+             "texto", 0, 0),
+            (9, "• Registrar las fotos necesarias",
+             "Vista general del pano mas el detalle de cada punto observado: juntas "
+             "abiertas, desgaste, humedad o palmetas a reemplazar.",
+             "foto", 0, 0),
+            (10, "• Registrar diagnostico y estado final.",
+             "m2 revisados, cantidad de palmetas reasentadas o por reemplazar, y si el "
+             "pavimento queda operativo o requiere una intervencion mayor.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 87,
+        "clase": "Accesorios",
+        "categoria": "instalacion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registrar el número de serie o código de identificación del rack. Si el "
+             "equipo no trae placa, indicar el SKU con que se despachó.",
+             "texto", 1, 0),
+            (2, "Ubicación del equipo",
+             "Marcar la ubicación exacta dentro del recinto donde queda montado el "
+             "rack.",
+             "gps", 0, 0),
+            (3, "Chequeo y apriete de pernos de la estructura",
+             "Apretar todos los pernos de unión entre columnas, bandejas y brazos. No "
+             "dejar ninguno solo presentado ni a medio torque.",
+             "check", 1, 0),
+            (4, "Revisión de soldaduras de bandejas, brazos y cuñas",
+             "Inspección visual de cada punto soldado que recibe carga, buscando "
+             "fisuras, poros o deformación por golpe de transporte.",
+             "check", 0, 0),
+            (5, "Nivelación de la base y bloqueo de frenos en modelos móviles",
+             "Los cuatro pies deben apoyar completos en el piso, sin hamaqueo. En la "
+             "Jaula de Almacenamiento Móvil, dejar los frenos bloqueados.",
+             "check", 0, 0),
+            (6, "Anclaje a pared o piso según el modelo",
+             "Aplica a racks murales o de gran altura. Confirmar que el tarugo o perno "
+             "sea el adecuado para el muro y dejar foto del anclaje instalado. Si el "
+             "modelo no lleva anclaje, dejar el ítem sin marcar.",
+             "check", 0, 1),
+            (7, "Estado de protectores de goma de bandejas y cuñas",
+             "Ningún apoyo debe quedar sin su protector: sin goma la pieza resbala, "
+             "raya el equipo y puede caer al piso o al pie del usuario.",
+             "check", 0, 0),
+            (8, "Prueba de estabilidad con carga distribuida",
+             "Cargar el rack con los accesorios del cliente respetando la capacidad "
+             "máxima por nivel y dejando el peso mayor abajo. Comprobar que no se "
+             "levante ni se incline al retirar una pieza.",
+             "check", 1, 0),
+            (9, "Foto del equipo por sus 4 lados",
+             "Registrar el rack ya montado, cargado y en su ubicación final.",
+             "foto", 0, 1),
+            (10, "Comentarios adicionales",
+             "Observaciones de la instalación: faltantes, daños de transporte, "
+             "condición del piso o del muro, o puntos que el cliente deba resolver.",
+             "texto", 0, 0),
+        ),
+    },
+    {
+        "plantilla_id": 88,
+        "clase": "Accesorios",
+        "categoria": "mantencion",
+        "items": (
+            (1, "N° de serie del equipo",
+             "Registra el número de serie o código de identificación del rack. Si la "
+             "estructura no trae placa, anota el código interno ILUS o indica \"sin "
+             "serie\".",
+             "texto", 0, 0),
+            (2, "• Verificar soldaduras de bandejas, brazos y cuñas.",
+             "Revisa punto por punto buscando fisuras, deformación o desprendimiento "
+             "por carga repetida. Una bandeja con soldadura fisurada deja caer el peso "
+             "al piso: ante la duda se descarga ese nivel y se reporta.",
+             "verificacion", 1, 1),
+            (3, "• Verificar pernos de unión y apriete de la estructura.",
+             "Recorre todos los pernos que unen montantes, bandejas y brazos. Aprieta "
+             "los sueltos y anota los faltantes o barridos para reposición.",
+             "verificacion", 1, 0),
+            (4, "• Verificar estabilidad, nivelación y apoyo de los cuatro pies.",
+             "Empuja la estructura cargada: no debe bambolearse. Confirma que los "
+             "cuatro pies apoyen completos en el piso y nivela si alguno queda en el "
+             "aire.",
+             "verificacion", 1, 0),
+            (5, "• Verificar anclaje a muro o piso, y ruedas y frenos en modelos móviles.",
+             "En racks de pared o de gran altura revisa que tarugos y pernos de anclaje "
+             "estén firmes y sin holgura. En la jaula móvil revisa ruedas, ejes y que "
+             "los frenos sostengan el equipo cargado. Marca no aplica si el modelo no "
+             "lo lleva.",
+             "verificacion", 1, 0),
+            (6, "• Verificar protectores de goma de bandejas, cuñas y pines.",
+             "Confirma que ningún apoyo esté sin su protector: sin goma la pieza "
+             "resbala, raya el equipo o cae al piso. Anota los protectores faltantes.",
+             "verificacion", 1, 0),
+            (7, "• Verificar distribución de carga y capacidad máxima por nivel.",
+             "Revisa que el peso quede repartido y las piezas más pesadas abajo. La "
+             "carga desbalanceada o el exceso en un nivel superior es la causa "
+             "principal de vuelco: corrígela e informa al cliente si se supera la "
+             "capacidad.",
+             "verificacion", 1, 0),
+            (8, "• Realizar limpieza y verificar estado de pintura y oxidación.",
+             "Limpia la estructura y revisa pintura saltada u óxido, sobre todo en la "
+             "base y en los puntos de contacto con discos, barras y mancuernas.",
+             "check", 1, 0),
+            (9, "• Registrar diagnóstico y estado final.",
+             "Describe lo encontrado, lo corregido en terreno y lo que queda pendiente: "
+             "piezas por reponer, anclaje por reforzar, recomendación de carga al "
+             "cliente.",
+             "texto", 0, 0),
+            (10, "• Registrar las fotos necesarias",
+             "Foto del rack completo y de cada hallazgo relevante: soldadura fisurada, "
+             "protector faltante, óxido en la base o carga mal distribuida.",
+             "foto", 0, 1),
+        ),
+    },
+)
+
+
+def _plant_texto_norm(txt):
+    """Normaliza un texto para COMPARARLO (nunca para guardarlo): sin
+    acentos, sin viñetas, sin puntuación, en minúsculas y con los espacios
+    colapsados. Se usa en dos lugares que necesitan el mismo criterio:
+
+      • _ensure_plantillas_autorrelleno(): decidir si un ítem del seed YA
+        existe en la plantilla (típicamente "N° de serie del equipo", que
+        muchas plantillas vacías ya traían) para no duplicarlo.
+      • _mant_plantillas_cobertura_clases(): cruzar el nombre de una clase
+        de producto contra el nombre de la plantilla.
+
+    "• Verificar cables de acero." y "Verificar cables de acero" caen en la
+    misma clave; "N° de serie del equipo" queda como "n de serie del equipo".
+    """
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(txt or "")).encode("ascii", "ignore").decode("ascii")
+    s = "".join(ch if ch.isalnum() else " " for ch in s.lower())
+    return " ".join(s.split())
+
+
+def _ensure_mant_logs_entidad_varchar():
+    """Garantiza que mant_logs.entidad sea VARCHAR y no el ENUM original de 4
+    valores ('cliente','maquina','contrato','visita'), SIEMPRE -- incluso con
+    ILUS_SKIP_MIGRATIONS=1.
+
+    La conversión ya existía (app.py ~52130), pero vive en la lista de
+    migraciones NORMALES, que es exactamente la que NO corre en producción con
+    skip-migrations. Si el ALTER nunca alcanzó a correr en un ambiente, todo
+    log con una entidad nueva ('sistema', 'plantilla', ...) muere con el error
+    1265 de MySQL -- y como _mant_log() se traga las excepciones a propósito,
+    se pierde EN SILENCIO. Ese es justo el caso de esta tarea: la auditoría
+    del autorrelleno usa entidad='plantilla'.
+
+    MODIFY COLUMN a VARCHAR(40) ENSANCHA: preserva todas las filas existentes
+    y no puede truncar nada (el ENUM más largo mide 9 caracteres). Solo se
+    ejecuta si la columna todavía es ENUM, así que en régimen normal esta
+    función es un SELECT a information_schema y nada más."""
+    try:
+        col = mysql_fetchone(
+            "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_logs' "
+            "   AND COLUMN_NAME='entidad'")
+        if col and (col.get("DATA_TYPE") or "").lower() == "enum":
+            mysql_execute(
+                "ALTER TABLE mant_logs MODIFY COLUMN entidad VARCHAR(40) NOT NULL "
+                "COMMENT 'Entidad auditada -- VARCHAR, no ENUM: admite valores "
+                "nuevos (sistema, plantilla, ...) sin ALTER'")
+            print("[ensure_mant_logs_entidad] entidad convertida de ENUM a VARCHAR(40)",
+                  flush=True)
+            return True
+    except Exception as e:
+        print(f"[ensure_mant_logs_entidad] {e}", flush=True)
+    return False
+
+
+def _ensure_plantillas_autorrelleno():
+    """Rellena con su checklist las plantillas de clasificación que HOY están
+    vacías. SIEMPRE corre (incluso con ILUS_SKIP_MIGRATIONS=1), igual que
+    _ensure_plantilla_repuesto() -- ver el bloque de datos de arriba para el
+    porqué y para el criterio de estilo por categoría.
+
+    ── IDEMPOTENCIA: tres candados, en este orden ────────────────────────
+    1. **Solo toca plantillas con <= 2 ítems.** Ese es el umbral de "vacía":
+       las plantillas afectadas hoy tienen 0 ítems o solo el "N° de serie del
+       equipo" suelto. Si alguien (Daniel, un técnico, un supervisor) ya le
+       escribió un checklist de verdad, esta función NO la toca JAMÁS -- el
+       trabajo humano manda por sobre el seed (REGLA #4.2).
+    2. **Un ítem cuyo título ya existe no se vuelve a insertar.** Se compara
+       normalizado (_plant_texto_norm), así el "N° de serie del equipo" que
+       la plantilla ya traía se conserva tal cual está -- con su descripción,
+       su orden y su configuración -- en vez de quedar duplicado.
+    3. **mant_logs como marca de agua.** Una plantilla ya autorrellenada
+       queda registrada con accion='autorrelleno_checklist' y nunca vuelve a
+       entrar, ni siquiera si después le vacían los ítems a mano. Mismo
+       espíritu que _ensure_flujo_levantamiento_modificado_log().
+
+    ── ORDEN de los ítems ────────────────────────────────────────────────
+    Los ítems nuevos se numeran a partir del `orden` más alto que ya tenga la
+    plantilla, conservando entre ellos el orden que definió el especialista.
+    Concretamente: si la plantilla ya traía "N° de serie del equipo" en el
+    orden 1, los 9 ítems restantes entran como 2..10. El ítem existente NO se
+    renumera ni se reescribe (candado 2), aunque el seed lo hubiera puesto en
+    otra posición -- se prefiere no pisar un dato que ya está guardado.
+
+    ── RESOLUCIÓN de la plantilla ────────────────────────────────────────
+    Se busca por (nombre = clase, categoria_admin = categoria), que es la
+    UNIQUE KEY uq_plant_nombre_cat y el mismo criterio del resto de las
+    plantillas de clasificación. El `plantilla_id` del seed se usa solo como
+    respaldo y ADEMÁS exige que el nombre coincida: los ids de producción
+    pueden no ser los mismos que los del ambiente donde se redactó el seed, y
+    escribirle 10 ítems a la plantilla equivocada sería mucho peor que no
+    escribir ninguno.
+
+    Devuelve dict con el resumen {"plantillas": N, "items": M}. Nunca lanza.
+    """
+    resumen = {"plantillas": 0, "items": 0, "nombres": []}
+    # La auditoría de abajo usa entidad='plantilla': sin esto, en un ambiente
+    # donde mant_logs.entidad siguiera siendo el ENUM viejo, el log se perdería
+    # en silencio (ver la función). No afecta al relleno en sí.
+    _ensure_mant_logs_entidad_varchar()
+    try:
+        # ── Paso previo (barato): ¿queda algo por hacer? En régimen normal
+        # esta función hace 2 SELECT por cold start y ni un solo INSERT.
+        nombres = sorted({s["clase"] for s in _PLANTILLAS_AUTORRELLENO_SEED})
+        ids = sorted({s["plantilla_id"] for s in _PLANTILLAS_AUTORRELLENO_SEED})
+        ph_nom = ",".join(["%s"] * len(nombres))
+        ph_ids = ",".join(["%s"] * len(ids))
+        filas = mysql_fetchall(
+            f"""SELECT p.id, p.nombre, p.categoria_admin,
+                       COALESCE(it.cnt, 0) AS items_count
+                  FROM mant_tarea_plantillas p
+                  LEFT JOIN (SELECT plantilla_id, COUNT(*) AS cnt
+                               FROM mant_tarea_plantilla_items
+                              GROUP BY plantilla_id) it ON it.plantilla_id = p.id
+                 WHERE p.nombre IN ({ph_nom}) OR p.id IN ({ph_ids})""",
+            tuple(nombres) + tuple(ids)) or []
+        # Índices en memoria: por (nombre_normalizado, categoria) y por id.
+        por_nombre_cat, por_id = {}, {}
+        for f in filas:
+            clave = (_plant_texto_norm(f.get("nombre")),
+                     (f.get("categoria_admin") or "").strip().lower())
+            por_nombre_cat.setdefault(clave, f)
+            por_id[int(f["id"])] = f
+        # Candado 3: plantillas ya autorrellenadas en un arranque anterior.
+        ya_hechas = set()
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT DISTINCT entidad_id FROM mant_logs "
+                    " WHERE entidad='plantilla' AND accion='autorrelleno_checklist'") or []):
+                ya_hechas.add(int(r["entidad_id"]))
+        except Exception as e_log:
+            # Sin la marca de agua seguimos: los candados 1 y 2 ya evitan
+            # duplicar nada. Solo se pierde la protección extra.
+            print(f"[ensure_plantillas_autorrelleno] leer marcas previas falló: {e_log}", flush=True)
+    except Exception as e_pre:
+        print(f"[ensure_plantillas_autorrelleno] sondeo inicial falló: {e_pre}", flush=True)
+        return resumen
+
+    for spec in _PLANTILLAS_AUTORRELLENO_SEED:
+        clase = spec["clase"]
+        categoria = spec["categoria"]
+        try:
+            fila = por_nombre_cat.get((_plant_texto_norm(clase), categoria))
+            if not fila:
+                # Respaldo por id -- solo si además el nombre calza (ver docstring).
+                cand = por_id.get(int(spec["plantilla_id"]))
+                if cand and _plant_texto_norm(cand.get("nombre")) == _plant_texto_norm(clase):
+                    fila = cand
+            if not fila:
+                # La plantilla no existe en este ambiente: no se crea acá.
+                # Crearla es decisión de Daniel desde la pantalla (el banner de
+                # cobertura de clases se la ofrece), no de un seed silencioso.
+                continue
+            pid = int(fila["id"])
+            if pid in ya_hechas:
+                continue
+            if int(fila.get("items_count") or 0) > 2:
+                continue  # Candado 1: ya tiene checklist de verdad -- no se toca.
+
+            existentes = mysql_fetchall(
+                "SELECT titulo, orden FROM mant_tarea_plantilla_items WHERE plantilla_id=%s",
+                (pid,)) or []
+            titulos_ya = {_plant_texto_norm(e.get("titulo")) for e in existentes}
+            orden_base = max([int(e.get("orden") or 0) for e in existentes] + [0])
+            pendientes = [it for it in spec["items"]
+                          if _plant_texto_norm(it[1]) not in titulos_ya]
+            if not pendientes:
+                continue
+
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    for i, it in enumerate(pendientes, start=1):
+                        _orden, titulo, descripcion, tipo_r, oblig, req_foto = it
+                        cur.execute(
+                            "INSERT INTO mant_tarea_plantilla_items "
+                            "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                            " obligatoria, requiere_foto) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (pid, orden_base + i, titulo, descripcion, tipo_r,
+                             oblig, req_foto))
+                conn.commit()
+            finally:
+                conn.close()
+
+            resumen["plantillas"] += 1
+            resumen["items"] += len(pendientes)
+            resumen["nombres"].append(f"{clase} ({categoria})")
+            # Auditoría: queda con el NOMBRE de la plantilla, como pidió Daniel.
+            _mant_log(
+                "plantilla", pid, "autorrelleno_checklist",
+                f"Checklist autorrellenado por el sistema: '{fila.get('nombre')}' "
+                f"(categoría {categoria}) pasó de {int(fila.get('items_count') or 0)} "
+                f"a {int(fila.get('items_count') or 0) + len(pendientes)} ítems. "
+                f"{len(pendientes)} ítem(s) insertado(s) desde "
+                f"_PLANTILLAS_AUTORRELLENO_SEED (Daniel 28-08-2026, plantillas de "
+                f"clasificación que estaban vacías). Los ítems que ya existían no "
+                f"se tocaron.")
+            print(f"[ensure_plantillas_autorrelleno] '{fila.get('nombre')}' "
+                  f"({categoria}, id={pid}): +{len(pendientes)} ítems", flush=True)
+        except Exception as e_item:
+            # Una plantilla que falla no frena a las demás.
+            print(f"[ensure_plantillas_autorrelleno] '{clase}' ({categoria}) falló: "
+                  f"{e_item}", flush=True)
+    return resumen
+
+
 def _ensure_lev_items_doc_col():
     """Garantiza mant_levantamiento_items.doc_origen SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El técnico puede asociar el equipo descubierto
@@ -107307,6 +108665,24 @@ try:
               f"{_renombradas_plant}", flush=True)
 except Exception as _ensure_renom_err:
     print(f"[ILUS][WARN] _ensure_plantillas_nombre_sin_prefijo: {_ensure_renom_err}", flush=True)
+
+# CRÍTICO: autorrelleno de los checklists que estaban VACÍOS (Daniel
+# 28-08-2026) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Va DESPUÉS de
+# _ensure_plantillas_nombre_sin_prefijo() a propósito: el seed resuelve cada
+# plantilla por su nombre EXACTO (= nombre de la clase de producto), así que
+# si corriera antes del renombrado, una plantilla que todavía se llamara
+# "Mantención · Bicicleta" no calzaría con la clase "Bicicleta" y se saltaría
+# en silencio. En régimen normal esta llamada hace 2 SELECT y ningún INSERT.
+try:
+    with app.app_context():
+        _autorrelleno_out = _ensure_plantillas_autorrelleno()
+    if _autorrelleno_out.get("plantillas"):
+        print(f"[ILUS] Checklists autorrellenados (skip-migrations): "
+              f"{_autorrelleno_out['plantillas']} plantillas / "
+              f"{_autorrelleno_out['items']} ítems -> "
+              f"{', '.join(_autorrelleno_out.get('nombres') or [])}", flush=True)
+except Exception as _ensure_autorrelleno_err:
+    print(f"[ILUS][WARN] _ensure_plantillas_autorrelleno: {_ensure_autorrelleno_err}", flush=True)
 
 # CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
 try:
