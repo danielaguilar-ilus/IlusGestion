@@ -81067,6 +81067,17 @@ def mant_ot_equipo_cambiar_plantilla(vid, mid):
     Body: {plantilla_id_actual, plantilla_id_nuevo}. Si el grupo (equipo x
     plantilla_id_actual) ya tiene alguna respuesta guardada, se rechaza --
     cambiar la plantilla ahí borraría trabajo real del técnico.
+
+    🔧 2026-08-28 (Daniel, caso OT-2026-00120: 2 equipos con la plantilla
+    genérica de instalación y 10/12 obligatorias YA marcadas, pero la
+    clasificación real de esos equipos en el catálogo tenía su propia
+    plantilla -- "deshacer lo que se hizo y dejarlas con las plantillas
+    automáticas"). Se agrega `forzar:true` -- SOLO superadmin, exige
+    `motivo` -- para saltar el candado de "grupo con respuestas" a
+    propósito, cuando Daniel decide explícitamente que la plantilla
+    correcta vale más que las respuestas ya guardadas. Sin `forzar`, el
+    comportamiento para todos los demás roles/casos sigue exactamente
+    igual (409 si hay respuestas).
     """
     if not _puede_ot_accion(vid, "metadata"):
         return jsonify({"ok": False, "error": "No tienes permiso para reasignar plantillas en esta OT."}), 403
@@ -81081,20 +81092,26 @@ def mant_ot_equipo_cambiar_plantilla(vid, mid):
     _pn = mysql_fetchone("SELECT id FROM mant_tarea_plantillas WHERE id=%s AND activa=1", (pid_nuevo,))
     if not _pn:
         return jsonify({"ok": False, "error": "Esa plantilla no existe o está inactiva."}), 404
+    _u_role = ((getattr(g, "user", None) or {}).get("role") or "").lower()
+    _forzar = bool(d.get("forzar")) and _u_role == "superadmin"
+    _motivo_forzado = (d.get("motivo") or "").strip()[:400]
     if not _grupo_ot_sin_editar(vid, mid, pid_actual):
-        return jsonify({
-            "ok": False, "error_codigo": "GRUPO_CON_RESPUESTAS",
-            "error": "Este equipo ya tiene respuestas guardadas con la plantilla actual "
-                     "-- no se puede reemplazar sin perder ese trabajo.",
-        }), 409
+        if not (_forzar and _motivo_forzado):
+            return jsonify({
+                "ok": False, "error_codigo": "GRUPO_CON_RESPUESTAS",
+                "error": "Este equipo ya tiene respuestas guardadas con la plantilla actual "
+                         "-- no se puede reemplazar sin perder ese trabajo.",
+            }), 409
     try:
         n = _sincronizar_grupo_desde_plantilla(vid, mid, pid_nuevo, pid_actual=pid_actual)
     except Exception as e:
         print(f"[cambiar_plantilla] vid={vid} mid={mid}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo reasignar la plantilla."}), 500
     try:
-        _mant_log("visita", vid, "plantilla_reasignada",
-                  f"equipo#{mid}: plantilla {pid_actual} -> {pid_nuevo} ({n} tareas) por {current_username()}")
+        _detalle_log = f"equipo#{mid}: plantilla {pid_actual} -> {pid_nuevo} ({n} tareas) por {current_username()}"
+        if _forzar:
+            _detalle_log += f" [FORZADO, con respuestas previas -- motivo: {_motivo_forzado}]"
+        _mant_log("visita", vid, "plantilla_reasignada", _detalle_log)
     except Exception:
         pass
     return jsonify({"ok": True, "tareas_creadas": n})
