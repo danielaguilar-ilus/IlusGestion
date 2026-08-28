@@ -26,19 +26,52 @@
 .o2m-head .x{margin-left:auto;background:transparent;border:0;color:rgba(255,255,255,.7);font-size:1.4rem;line-height:1}
 .o2m-head .x:hover{color:#fff}
 
-/* Riel de pasos: círculo rojo → verde al completarse (patrón /retiros/solicitar) */
-.o2m-riel{display:flex;gap:6px;padding:14px 24px;background:#fafbfc;
-  border-bottom:1px solid #eaecf0;overflow-x:auto}
-.o2m-p{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;
-  font-size:.76rem;font-weight:800;color:#9ca3af;white-space:nowrap;cursor:pointer;
-  background:transparent;border:0}
-.o2m-p .c{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;
-  background:#e5e7eb;color:#9ca3af;font-size:.72rem;font-weight:900;transition:all .2s}
-.o2m-p.on{color:#0a0a0a}
-.o2m-p.on .c{background:var(--ilus-red,#dc2626);color:#fff;
-  box-shadow:0 0 0 4px rgba(220,38,38,.16)}
-.o2m-p.ok .c{background:#16a34a;color:#fff}
-.o2m-p.ok{color:#16a34a}
+/* Riel de pasos — stepper horizontal CONECTADO (rediseño 2026-08-27,
+   Daniel: "no me gusta esa enumeración que tiene arriba"). Mismo lenguaje
+   visual que el resto del proyecto usa para pasos (.lev-step-num en
+   static/ot2_modal_form.css, .step-circle en retiros_public_request.css):
+   círculo rojo → verde con check al completarse, con un anillo que pulsa
+   en el paso ACTUAL — acá adaptado a un riel compacto y conectado por
+   líneas (no tarjetas verticales grandes, que no caben 6-8 en una fila).
+   Los pasos siguen siendo dinámicos (pasos() cambia según el origen) y el
+   click sigue yendo a OT2C.ir(i) — cero cambio de lógica, solo la piel. */
+.o2m-riel{display:flex;align-items:flex-start;padding:16px 22px 12px;
+  background:#fafbfc;border-bottom:1px solid #eaecf0;overflow-x:auto;overflow-y:hidden}
+.o2m-step{display:flex;flex-direction:column;align-items:center;gap:6px;
+  flex:1 1 0;min-width:46px;min-height:44px;padding:2px 2px 6px;
+  background:transparent;border:0;cursor:pointer;position:relative}
+.o2m-line{flex:1 1 16px;min-width:10px;max-width:64px;height:2px;margin-top:16px;
+  background:#e2e5ea;border-radius:2px;transition:background .35s ease}
+.o2m-line.ok{background:#16a34a}
+.o2m-circle{width:32px;height:32px;border-radius:50%;background:#e5e7eb;color:#9ca3af;
+  display:grid;place-items:center;font-size:.82rem;font-weight:900;flex-shrink:0;
+  position:relative;border:2px solid #fff;box-shadow:0 1px 2px rgba(15,23,42,.08);
+  transition:background .35s cubic-bezier(.34,1.56,.64,1),color .3s ease,
+             box-shadow .35s cubic-bezier(.34,1.56,.64,1),transform .35s cubic-bezier(.34,1.56,.64,1)}
+.o2m-step.on .o2m-circle{background:var(--ilus-red,#dc2626);color:#fff;transform:scale(1.08);
+  box-shadow:0 4px 12px rgba(220,38,38,.40),0 0 0 4px rgba(220,38,38,.14)}
+.o2m-step.on .o2m-circle::after{content:'';position:absolute;inset:-5px;border-radius:50%;
+  border:2px solid rgba(220,38,38,.55);animation:o2mRielPulse 2.2s ease-in-out infinite}
+.o2m-step.ok .o2m-circle{background:#16a34a;color:#fff;box-shadow:0 3px 10px rgba(22,163,74,.35)}
+@keyframes o2mRielPulse{0%{transform:scale(.85);opacity:.75}75%{transform:scale(1.4);opacity:0}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.o2m-step.on .o2m-circle::after{animation:none}}
+.o2m-label{font-size:.66rem;font-weight:800;letter-spacing:.02em;color:#9ca3af;
+  text-align:center;line-height:1.2;transition:color .25s ease;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:88px}
+.o2m-step.on .o2m-label{color:#0a0a0a}
+.o2m-step.ok .o2m-label{color:#16a34a}
+@media (max-width:640px){
+  .o2m-riel{padding:12px 10px 10px}
+  .o2m-step{min-width:30px;padding:2px 0 4px}
+  .o2m-circle{width:26px;height:26px;font-size:.72rem}
+  .o2m-line{margin-top:13px;max-width:22px}
+  /* Con 6-8 pasos no cabe texto bajo cada círculo en <400px: se muestra
+     SOLO la etiqueta del paso actual (el resto igual se identifica por el
+     círculo rojo/verde/gris) — el subtítulo #o2mSub arriba del riel ya
+     repite el nombre del paso completo. */
+  .o2m-label{display:none;font-size:.6rem;max-width:64px}
+  .o2m-step.on .o2m-label{display:block}
+}
 
 .o2m-body{padding:22px 24px;min-height:330px;max-height:60vh;overflow-y:auto}
 .o2m-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;
@@ -177,7 +210,11 @@ window.OT2C = (function(){
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
-         ticket_id:null, visto:{}};
+         ticket_id:null, visto:{},
+         // Origen "Factura o boleta": documento ERP de donde salió el
+         // cliente (trazabilidad, ver crear()) y sus líneas de producto
+         // (sugerencia informativa en el paso Equipos, ver pintarEquipos).
+         doc_origen:null, doc_lineas:[]};
     paso = 0;
   }
 
@@ -224,8 +261,11 @@ window.OT2C = (function(){
       var listo = S.visto[p.k] && completo(p.k);
       var cls = i===paso ? 'on' : (listo ? 'ok' : '');
       var ico = (listo && i!==paso) ? '<i class="bi bi-check-lg"></i>' : (i+1);
-      return '<button type="button" class="o2m-p '+cls+'" onclick="OT2C.ir('+i+')">'+
-             '<span class="c">'+ico+'</span>'+p.n+'</button>';
+      // Conector entre círculos: verde si el paso ANTERIOR ya quedó listo.
+      var prevListo = i>0 && S.visto[ps[i-1].k] && completo(ps[i-1].k);
+      var linea = i>0 ? '<span class="o2m-line '+(prevListo?'ok':'')+'"></span>' : '';
+      return linea + '<button type="button" class="o2m-step '+cls+'" onclick="OT2C.ir('+i+')" title="'+esc(p.n)+'">'+
+             '<span class="o2m-circle">'+ico+'</span><span class="o2m-label">'+esc(p.n)+'</span></button>';
     }).join('');
   }
 
@@ -272,10 +312,14 @@ window.OT2C = (function(){
         return '<button type="button" class="o2m-op '+(S.origen===o.v?'sel':'')+'" onclick="OT2C.setOrigen(\''+o.v+'\')">'+
           '<i class="bi '+o.i+' ic"></i><span class="n">'+o.n+'</span><span class="l">'+o.l+'</span></button>';
       }).join('') +'</div>'+
-      (S.origen && S.origen!=='cliente' && S.origen!=='interno'
+      // "Factura o boleta" ya está conectado (ver setOrigen/_o2mAbrirBusquedaDocumento):
+      // abre el buscador ERP real y de ahí sale el cliente solo. El aviso de
+      // "esto todavía no hace nada" queda SOLO para ticket/cotización, que
+      // Daniel no pidió conectar hoy.
+      (S.origen && S.origen!=='cliente' && S.origen!=='interno' && S.origen!=='documento'
         ? '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
           'Por ahora este origen se trabaja eligiendo el cliente a mano en el paso siguiente. '+
-          'La búsqueda por ticket, cotización y documento del ERP se conecta en la próxima etapa.</div>'
+          'La búsqueda por ticket y cotización se conecta en la próxima etapa.</div>'
         : '');
   }
 
@@ -300,7 +344,9 @@ window.OT2C = (function(){
       'oninput="OT2C.buscarCli(this.value)" autocomplete="off"></div>'+
       '<div id="o2mCliRes" class="o2m-lista"></div>'+
       (S.cliente ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
-        '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado: <b>'+esc(S.cliente.nombre)+'</b></div>' : '');
+        '<i class="bi bi-check-circle-fill me-1"></i>Seleccionado: <b>'+esc(S.cliente.nombre)+'</b>'+
+        (S.doc_origen ? ' · resuelto desde el documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+'</b>' : '')+
+        '</div>' : '');
     setTimeout(function(){ var i=document.getElementById('o2mCliQ'); if(i) i.focus(); }, 120);
   }
 
@@ -382,6 +428,20 @@ window.OT2C = (function(){
     document.getElementById('o2mSub').textContent = 'Equipos y acceso al lugar';
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
       '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
+      // Origen "Factura o boleta": las líneas del documento son solo una
+      // REFERENCIA — no crean equipos automáticamente en la ficha (eso
+      // exige matchear SKU contra la clasificación del catálogo, un paso
+      // que no se resuelve acá). Si el equipo ya existe en la ficha del
+      // cliente, aparece abajo igual; si no, hay que darlo de alta primero.
+      (S.doc_origen && S.doc_lineas && S.doc_lineas.length
+        ? '<div class="o2m-aviso" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a8a">'+
+          '<i class="bi bi-receipt me-1"></i>El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+
+          '</b> trae estos productos. Si alguno no aparece en la lista de abajo, primero hay que '+
+          'agregarlo como equipo en la ficha del cliente:'+
+          '<ul>'+S.doc_lineas.map(function(l){
+            return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
+          }).join('')+'</ul></div>'
+        : '')+
       '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>'+
       '<h6 class="t mt-4">Acceso al lugar</h6>'+
       '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
@@ -476,6 +536,7 @@ window.OT2C = (function(){
       '<div class="o2m-res">'+
         card('Tipo', t.n || S.tipo) +
         card('Cliente', esInterno() ? 'Trabajo interno (sin cliente)' : (S.cliente ? S.cliente.nombre : '—')) +
+        (S.doc_origen ? card('Documento origen', S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '') +
         card('Programada', S.fecha ? (S.fecha + ' · ' + S.hini + '–' + S.hfin) : '—') +
         card('Técnicos', nTec ? (nTec + (nTec===1?' asignado':' asignados')) : 'Sin asignar') +
         card('Equipos', esInterno() ? '—' : (S.equipos.length + ' con checklist')) +
@@ -498,7 +559,23 @@ window.OT2C = (function(){
      OT2C.abrirWizard() mientras se define cuál de los dos se queda. */
   function setOrigen(v){
     S.origen = v;
+    // El documento de origen solo tiene sentido mientras el origen siga
+    // siendo "documento" -- si el usuario cambia de idea y elige otro
+    // origen, no debe arrastrarse una referencia a un documento ajeno.
+    if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; }
     if (v==='interno'){ S.cliente=null; if(S.tipo && !(TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno) S.tipo=null; }
+
+    // "Factura o boleta": en vez de pedir el cliente a mano, se abre el
+    // buscador ERP compartido (el mismo de Tickets/Repuestos/Cotizaciones,
+    // templates/tickets/_tka_modal.html) por tipo+número o por RUT/nombre.
+    // Al encontrar el documento, _o2mDocumentoSeleccionado() resuelve el
+    // cliente (ficha existente o nueva) y retoma el flujo normal via
+    // setCli() -- por eso este branch corre ANTES del genérico de abajo,
+    // que es el que usan "Cliente existente"/"Ticket"/"Cotización".
+    if (v === 'documento' && !S.cliente){
+      _o2mAbrirBusquedaDocumento();
+      return;
+    }
 
     // Salvo el trabajo interno, todos los orígenes necesitan cliente: se
     // pide ANTES de abrir el formulario grande, para que este ya nazca con
@@ -558,6 +635,99 @@ window.OT2C = (function(){
     }
     pintar();
   }
+  /* Abre el buscador avanzado de documentos ERP (compartido con Tickets/
+     Repuestos/Cotizaciones) para el origen "Factura o boleta". Solo lectura
+     contra el ERP Random (REGLA #4.1) -- mode:'seleccionar' no llama NINGÚN
+     endpoint propio de Tickets, solo devuelve la selección del usuario.
+     Requiere que la página que incluye este modal también incluya
+     templates/tickets/_tka_modal.html (ver templates/ot2/panel.html). */
+  function _o2mAbrirBusquedaDocumento(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de documentos ERP no está disponible en esta pantalla.', {type:'error'});
+      pintar();
+      return;
+    }
+    // Refleja "Factura o boleta" como seleccionado en el riel/grid ANTES de
+    // abrir el buscador (si el usuario cancela, vuelve a ver esto en vez
+    // del estado anterior). No se oculta este modal: _tka_modal.html tiene
+    // z-index 1085/1086 a propósito para flotar ENCIMA de cualquier wizard
+    // (mismo patrón ya usado en templates/tickets/cotizaciones.html).
+    pintar();
+
+    // tkaClose() limpia document.body.style.overflow al cerrarse, sin saber
+    // que este modal (Bootstrap) sigue abierto detrás -- sin esto, la
+    // página quedaría con scroll habilitado de fondo hasta que el usuario
+    // cierre también este modal. Se observa el propio cierre de tka (clase
+    // 'is-open') para devolverle el scroll-lock a este modal si sigue
+    // mostrándose, cubriendo tanto "eligió un documento" como "canceló".
+    var tkaEl = document.getElementById('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          var propio = document.getElementById('ot2ModalCrear');
+          if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+    }
+
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['doc', 'cli'],
+      onSeleccionar: _o2mDocumentoSeleccionado
+    });
+  }
+
+  /* Con el documento elegido, el ERP entrega cliente (RUT/razón social) y
+     líneas de producto. Se resuelve el cliente reusando el MISMO endpoint
+     que ya usa crearFicha() (/ot/api/cliente): si ya existe una ficha con
+     ese RUT la reutiliza, si no la crea como prospecto -- cero lógica de
+     dedup nueva. El documento (tido/nudo) queda guardado para trazar la OT
+     (ver crear(), reusa factura_tido/factura_nudo -- el mismo campo que ya
+     existe para el Paso de Finanzas, no una columna inventada). */
+  async function _o2mDocumentoSeleccionado(items, header){
+    if (!header || !header.rut || !header.cliente){
+      if (window.ilusToast) ilusToast('El documento no trajo datos de cliente identificables.', {type:'warning'});
+      pintar();
+      return;
+    }
+    if (window.ilusToast) ilusToast('Buscando la ficha del cliente…', {type:'info'});
+
+    var r = await fetch('/ot/api/cliente', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        razon_social: header.cliente || '',
+        rut: header.rut || '',
+        motivo: S.tipo || '',
+        contacto_tel: header.telefono || '',
+        contacto_email: header.email || '',
+        direccion: header.direccion || '',
+        comuna: header.comuna || ''
+      })
+    }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+
+    if (!r.ok || !r.cliente){
+      if (window.ilusToast) ilusToast(r.error || 'No pudimos identificar al cliente de ese documento.', {type:'error'});
+      pintar();
+      return;
+    }
+
+    S.doc_origen = (header.tido && header.nudo) ? {tido:header.tido, nudo:header.nudo} : null;
+    // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
+    // servicio) -- quedan como referencia informativa en el paso Equipos.
+    S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; }) : [];
+
+    if (window.ilusToast){
+      ilusToast('✓ ' + (r.creado ? 'Ficha creada: ' : 'Cliente encontrado: ') + r.cliente.razon_social, {type:'success'});
+    }
+    // Mismo camino que elegir el cliente a mano: setCli() setea S.cliente y
+    // vuelve a llamar setOrigen('documento'), que esta vez (con S.cliente
+    // ya puesto) sigue el flujo normal en vez de reabrir el buscador.
+    setCli(r.cliente.id, r.cliente.razon_social);
+  }
+
   function setTipo(i){
     var t = TIPOS[i]; S.tipo = t.v; S.descubrimiento = !!t.descubrimiento;
     if (t.interno) S.origen = 'interno';
@@ -682,6 +852,18 @@ window.OT2C = (function(){
       acceso: esInterno() ? {} : S.acceso,
       ticket_id: S.ticket_id
     };
+    // Trazabilidad del origen "Factura o boleta": reusa el mismo campo que
+    // ya existe para el Paso de Finanzas (factura_tido/factura_nudo,
+    // ot2_api_crear ~L75521) -- no se inventa una columna nueva. El backend
+    // además usa esto para dejar estado_facturacion="facturado" de una vez,
+    // así que SOLO se manda si el documento es realmente una venta (FCV/
+    // BLV/NVV/NVI/WEB) -- una Guía de Despacho o una Cotización (GDV/COV)
+    // sirven para encontrar al cliente, pero marcarlas como "facturado"
+    // sería un dato falso en Finanzas.
+    if (!esInterno() && S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo &&
+        ['FCV','BLV','NVV','NVI','WEB'].indexOf(S.doc_origen.tido) >= 0){
+      body.finanzas = { factura_tido: S.doc_origen.tido, factura_nudo: S.doc_origen.nudo };
+    }
     var sig = document.getElementById('o2mSig');
     sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
 
