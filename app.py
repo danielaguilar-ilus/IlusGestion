@@ -81669,7 +81669,7 @@ def _ot_firma_equipos_detalle(vid, v):
             fotos_idx = {}
             for f in fotos:
                 url = f.get("cloudinary_url") or (
-                    f"/static/uploads/mantenciones/{f['archivo_path']}"
+                    f"/static/{f['archivo_path']}"
                     if f.get("archivo_path") else "")
                 if url:
                     fotos_idx.setdefault(f["maquina_id"], []).append(url)
@@ -84063,7 +84063,7 @@ def _ot_pdf_context(vid, embed_images=False):
     for f in fotos_raw:
         d = dict(f)
         url = d.get("cloudinary_url") or (
-            f"/static/uploads/mantenciones/{d['archivo_path']}"
+            f"/static/{d['archivo_path']}"
             if d.get("archivo_path") else ""
         )
         if not url:
@@ -85930,6 +85930,11 @@ def mant_maquina_fotos_subir(mid):
     descripcion = (request.form.get("descripcion") or "").strip()[:500]
     user = current_username()
 
+    # PERSISTENCIA ROBUSTA (mismo patrón que mant_visita_fotos_subir):
+    # primero intenta Google Cloud Storage (sobrevive deploys de Cloud Run),
+    # cae a filesystem solo si GCS falla o no está disponible.
+    cloud_ok = _gcs_ready()
+
     saved = 0
     errors = []
     for i, f in enumerate(files):
@@ -85939,25 +85944,53 @@ def mant_maquina_fotos_subir(mid):
         if err:
             errors.append(err)
             continue
-        mq_dir = os.path.join(MANT_FOTOS_DIR, f"m{mid}")
-        os.makedirs(mq_dir, exist_ok=True)
-        fname = f"m{mid}_{int(time.time())}_{i}_{secure_filename(f.filename)}"
-        fpath = os.path.join(mq_dir, fname)
-        try:
-            f.save(fpath)
-        except Exception as e:
-            errors.append(f"Error guardando {f.filename}: {e}")
-            continue
+
+        cld_url = None
+        cld_public_id = None
+        archivo_path = None
+
+        if cloud_ok:
+            try:
+                f.stream.seek(0)
+                result = _uploader_upload(
+                    f,
+                    folder=f"ilus/maquina_fotos/m{mid}",
+                    public_id=f"m{mid}_{int(time.time())}_{i}",
+                    resource_type="image",
+                )
+                cld_url = result.get("secure_url")
+                cld_public_id = result.get("public_id")
+            except Exception as e_cld:
+                print(f"[mant_maquina_fotos_subir mid={mid}] GCS FAIL para "
+                      f"{f.filename!r}: {e_cld}", flush=True)
+                errors.append(f"Almacenamiento: {str(e_cld)[:100]}")
+                # Continúa al fallback filesystem
+
+        if not cld_url:
+            try:
+                f.stream.seek(0)
+                mq_dir = os.path.join(MANT_FOTOS_DIR, f"m{mid}")
+                os.makedirs(mq_dir, exist_ok=True)
+                fname = f"m{mid}_{int(time.time())}_{i}_{secure_filename(f.filename)}"
+                fpath = os.path.join(mq_dir, fname)
+                f.save(fpath)
+                archivo_path = f"uploads/mantenciones/m{mid}/{fname}"
+            except Exception as e:
+                errors.append(f"Error guardando {f.filename}: {e}")
+                continue
+
         try:
             mysql_execute(
                 "INSERT INTO mant_maquina_fotos "
-                "(maquina_id, archivo_path, archivo_nombre, tipo_foto, descripcion, tomada_por) "
-                "VALUES (%s,%s,%s,%s,%s,%s)",
+                "(maquina_id, archivo_path, archivo_nombre, tipo_foto, descripcion, "
+                " tomada_por, cloudinary_url, cloudinary_public_id) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     mid,
-                    f"uploads/mantenciones/m{mid}/{fname}",
+                    archivo_path or "",
                     f.filename[:300],
-                    tipo_foto, descripcion or None, user
+                    tipo_foto, descripcion or None, user,
+                    cld_url, cld_public_id,
                 )
             )
             saved += 1
