@@ -1342,7 +1342,15 @@ async function cotWizRender(){
             + ' title="Precio base unitario — la ruta se muestra debajo" onchange="cotWizPrecioManual(' + i + ', this.value)"') + '>'
         + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">' + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable' : '') + '</div></td>' +
       '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
-      '<td><button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button></td>' +
+      // 2026-08-28 (Daniel, causa raíz de OT-2026-00125: "que no se
+      // eliminen productos, a menos que sea el superadministrador"): sin
+      // el botón, un ítem "Sin clasificar" ya no tiene escapatoria -- el
+      // aviso "Faltan N por clasificar" (más abajo, antes de crear) sigue
+      // bloqueando el guardado, así que ahora SÍ obliga a clasificar
+      // (aunque sea como Accesorio) en vez de borrar la línea entera.
+      '<td>' + (window.PUEDE_ELIMINAR_ITEM_COTIZ
+        ? '<button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button>'
+        : '<span class="text-muted" style="font-size:.75rem" title="Solo el superadministrador puede quitar productos de una cotización -- clasifícalo (o decláralo Accesorio) en vez de borrarlo"><i class="bi bi-lock-fill"></i></span>') + '</td>' +
     '</tr>';
   }).join('');
   _WIZ.items.forEach(function(it, i){

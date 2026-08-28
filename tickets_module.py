@@ -4770,6 +4770,51 @@ def register_tickets_routes(app, ctx):
                 except Exception:
                     pass
 
+        # 🔒 2026-08-28 (Daniel, en vivo, tras encontrar la causa raíz de
+        # OT-2026-00125 -- 8 de 16 equipos sin plantilla automática porque
+        # quedaron "sin clasificar" y alguien borró la línea en vez de
+        # clasificarla): "ahora que no se eliminen productos, a menos que
+        # sea el superadministrador... déjala de momento solo para mí".
+        # A diferencia de la guardia de abajo (solo ítems con documento
+        # real), ÉSTA cubre CUALQUIER ítem -- incluidos los agregados a
+        # mano o desde el catálogo, que no tienen documento del que salir
+        # "sin declarar" pero igual pueden quedar "sin clasificar" y ser
+        # borrados para esquivar el aviso de "Faltan N por clasificar".
+        # Flag aditivo (cotiz_eliminar_item, PERMS_KEYS) -- nace en False
+        # para todos salvo superadmin hasta que Daniel lo prenda por rol
+        # desde /admin/roles.
+        _perms_actualizar = g.get("permissions") or {}
+        if not (_perms_actualizar.get("superadmin") or _perms_actualizar.get("cotiz_eliminar_item")):
+            try:
+                _items_todos_antes = mysql_fetchall(
+                    "SELECT erp_kopr, descripcion FROM tk_cotizacion_items WHERE cotizacion_id=%s",
+                    (cid,)) or []
+            except Exception as _e_guard_all:
+                print(f"[tk_api_cotizacion_actualizar] guardia anti-borrado (todos) no pudo leer items previos: {_e_guard_all}", flush=True)
+                _items_todos_antes = []
+            if len(items) < len(_items_todos_antes):
+                def _clave_simple(sku, desc):
+                    return ((sku or "").strip().upper(), (desc or "").strip().lower())
+                _claves_nuevas_simple = set()
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    _claves_nuevas_simple.add(_clave_simple(it.get("sku"), it.get("nombre")))
+                _faltantes_todos = [it for it in _items_todos_antes
+                                     if _clave_simple(it.get("erp_kopr"), it.get("descripcion"))
+                                     not in _claves_nuevas_simple]
+                if _faltantes_todos:
+                    _nombres_todos = ", ".join((it.get("descripcion") or it.get("erp_kopr") or "producto")
+                                                for it in _faltantes_todos[:5])
+                    return jsonify({
+                        "ok": False,
+                        "error": (f"No tienes permiso para quitar productos de una cotización: "
+                                  f"{_nombres_todos}. Si no corresponde clasificarlo o cobrarlo, "
+                                  f"decláralo como \"Accesorio\" en vez de eliminarlo -- pídele a un "
+                                  f"superadministrador que lo quite si de verdad no corresponde."),
+                        "error_codigo": "SIN_PERMISO_ELIMINAR_ITEM",
+                    }), 403
+
         # 🔒 2026-08-28 (Daniel, medida de seguridad explícita: "están
         # borrando los productos sin declararlo como accesorio para que no
         # se coticen"): una línea que vino de un documento REAL del ERP

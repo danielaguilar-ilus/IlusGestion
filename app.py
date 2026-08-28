@@ -4316,6 +4316,19 @@ PERMS_KEYS = (
     # de superadmin+confirm_text, sin excepción. tr_eliminar solo abre la
     # puerta para lo que NUNCA tocó a un courier ni tiene entrega firmada.
     "tr_eliminar",
+    # cotiz_eliminar_item — flag del módulo Cotizaciones (aditivo 2026-08-28,
+    # Daniel en vivo, tras encontrar la causa raíz de OT-2026-00125: "estos
+    # gallos [la] eliminan [la línea] en vez de clasificarla... ahora que no
+    # se eliminen productos, a menos que sea el superadministrador... déjala
+    # de momento solo para mí"). Sin el botón "quitar" un ítem sin
+    # clasificar SIGUE bloqueando el guardado (ver el aviso "Faltan N
+    # producto(s) por clasificar" ya existente en tickets_cotizaciones.js) --
+    # antes la gente esquivaba esa validación borrando la línea entera en
+    # vez de clasificarla, que es justo lo que dejó 8 equipos de OT-125 sin
+    # plantilla automática. MISMO patrón que cat_eliminar/tr_eliminar: nace
+    # en False para todos los roles hasta que Daniel lo prenda por rol desde
+    # /admin/roles; superadmin siempre puede vía el OR del gate real.
+    "cotiz_eliminar_item",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4464,6 +4477,7 @@ def _build_perms_from_matrix(role):
     base["cat_eliminar"]  = bool(cat.get("eliminar"))
     base["cat_manual_descargar"] = bool(cat.get("descargar_manual"))
     base["tr_eliminar"]   = bool(tra.get("eliminar"))
+    base["cotiz_eliminar_item"] = bool(man.get("cotizaciones_eliminar_item"))
 
     base["superadmin"] = False
     return base
@@ -12298,7 +12312,7 @@ PERMISSIONS_MATRIX = {
     "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
                        "acciones":["ver","crear","editar","eliminar",
                                    "calendario","ots","cotizaciones",
-                                   "ot_interna"]},
+                                   "ot_interna","cotizaciones_eliminar_item"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12354,6 +12368,8 @@ PERMISSIONS_META = {
         "ot_interna":   {"label": "Crear OT de trabajo interno (bodega)",
                          "tipo": "submodulo", "icon": "bi-box-seam"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
+        "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
+                         "tipo": "bloqueo", "icon": "bi-x-circle"},
     },
     "retiros": {
         "ver":       {"label": "Monitor de retiros",  "tipo": "submodulo", "icon": "bi-eye"},

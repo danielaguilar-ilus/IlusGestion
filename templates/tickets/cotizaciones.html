@@ -622,5 +622,13 @@
 {# Modal compartido de búsqueda ERP (mode:'seleccionar'); NO tocar ese
    archivo -- ya está construido y compartido con catálogo/tickets. #}
 {% include "tickets/_tka_modal.html" %}
+<script>
+  // 2026-08-28 (Daniel: "que no se eliminen productos, a menos que sea el
+  // superadministrador... déjala de momento solo para mí"): gatea el botón
+  // "quitar ítem" del wizard de cotizaciones. Mismo patrón que IS_SUPERADMIN
+  // en static/catalogo_list.js -- flag plano inyectado antes del script,
+  // editable por rol desde /admin/roles (permiso cotiz_eliminar_item).
+  window.PUEDE_ELIMINAR_ITEM_COTIZ = {{ (permissions.superadmin or permissions.cotiz_eliminar_item) | tojson }};
+</script>
 <script defer src="{{ url_for('static', filename='tickets_cotizaciones.js') }}"></script>
 {% endblock %}
