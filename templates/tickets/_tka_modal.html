@@ -1852,6 +1852,32 @@ function tkaRenderCliDocs(docs, modo, fetchMs){
   html += '</div>';
   cont.innerHTML = html;
 }
+// 2026-08-28 (Daniel, en vivo -- "coloca un checkbox donde puedas
+// seleccionar y deseleccionar todos los productos del documento que
+// tenga abierto"): a diferencia de "Seleccionar todas las líneas con
+// saldo" de la pestaña "Por documento" (tkaToggleAllDoc, que a propósito
+// NUNCA marca las sin saldo), este botón es el "caso extremo" que Daniel
+// pidió explícitamente: marca TODO, incluidas las sin saldo -- para eso
+// reutiliza tkaToggleLineaCli línea por línea (secuencial, no en
+// paralelo) para que el flujo de "pedir motivo, ofrecer reusarlo en las
+// siguientes" (_tkaPedirMotivoSinSaldo) siga funcionando exactamente
+// igual que si el usuario las marcara una por una. Es un TOGGLE: si ya
+// están todas marcadas, el mismo botón las desmarca todas.
+async function tkaToggleAllCli(idx){
+  const body = document.getElementById('tkaCliBody-' + idx);
+  if (!body) return;
+  const inputs = Array.from(body.querySelectorAll('input[type="checkbox"][data-line-key]'));
+  if (!inputs.length) return;
+  const marcarTodo = inputs.some(inp => !inp.checked);
+  for (const inp of inputs){
+    if (inp.checked === marcarTodo) continue;
+    inp.checked = marcarTodo;
+    await tkaToggleLineaCli(inp);
+    // Si el usuario canceló el motivo de una línea sin saldo, tkaToggleLineaCli
+    // ya la dejó destildada -- no se fuerza a seguir preguntando el resto en
+    // silencio, pero tampoco se aborta el resto de la selección.
+  }
+}
 async function tkaToggleDocCli(idx){
   const card = document.querySelector(`#tkaCliResult .tka-doc-card[data-cli-idx="${idx}"]`);
   if (!card) return;
@@ -1902,11 +1928,18 @@ async function tkaToggleDocCli(idx){
     }
     let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.78rem;color:#6b7280;flex-wrap:wrap;gap:6px">
       <span>${lineas.length} producto${lineas.length===1?'':'s'} disponibles · selecciona los que corresponden al ticket</span>
-      ${(_TKA.ctx.mode === 'agregar' && !doc.ya_asociado)
-        ? `<button class="tka-doc-add-btn" onclick="tkaAsociarDocCompleto(${idx})">
-            <i class="bi bi-plus-lg"></i>Agregar doc completo
-          </button>`
-        : (doc.ya_asociado ? '<span class="badge-pill lock"><i class="bi bi-shield-lock me-1"></i>Documento ya asociado</span>' : '')}
+      <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ${(_TKA.ctx.mode === 'agregar' && !doc.ya_asociado)
+          ? `<button class="tka-doc-add-btn" onclick="tkaAsociarDocCompleto(${idx})">
+              <i class="bi bi-plus-lg"></i>Agregar doc completo
+            </button>`
+          : (doc.ya_asociado ? '<span class="badge-pill lock"><i class="bi bi-shield-lock me-1"></i>Documento ya asociado</span>' : '')}
+        <button type="button" class="tka-doc-add-btn" style="background:#fff;color:#374151;border:1px solid #d1d5db"
+          title="Caso extremo: marca TODAS las líneas de este documento, incluidas las sin saldo (te pedirá el motivo una sola vez y lo reutiliza para el resto)"
+          onclick="tkaToggleAllCli(${idx})">
+          <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
+        </button>
+      </span>
     </div>`;
     lineas.forEach((l, j) => {
       const sku = (l.sku || '').toUpperCase();
