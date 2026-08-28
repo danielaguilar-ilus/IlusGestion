@@ -1767,7 +1767,15 @@ function cotWizResumen(){
         });
         const d = await r.json();
         if (!d.ok){
-          ilusToast(d.error || 'No se pudo guardar la cotización', {type:'error'});
+          // 2026-08-28: la guardia anti-borrado (ITEM_DOCUMENTO_ELIMINADO)
+          // manda un mensaje largo y accionable -- un toast de 3.5s no
+          // alcanza a leerse. Mensaje explícito con OK, como el resto de
+          // los errores "importantes" del proyecto (REGLA #1/#8).
+          if (d.error_codigo === 'ITEM_DOCUMENTO_ELIMINADO'){
+            await ilusAlert({ title: 'No se puede guardar así', message: d.error, type: 'warning' });
+          } else {
+            ilusToast(d.error || 'No se pudo guardar la cotización', {type:'error'});
+          }
           btnCrear.disabled = false; btnCrear.innerHTML = _orig;
           return;
         }

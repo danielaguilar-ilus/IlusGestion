@@ -4770,6 +4770,65 @@ def register_tickets_routes(app, ctx):
                 except Exception:
                     pass
 
+        # 🔒 2026-08-28 (Daniel, medida de seguridad explícita: "están
+        # borrando los productos sin declararlo como accesorio para que no
+        # se coticen"): una línea que vino de un documento REAL del ERP
+        # (erp_tido+erp_nudo, ambos NOT NULL) no puede desaparecer en
+        # silencio de un guardado -- eso es indistinguible de "se borró
+        # para no cobrarlo". La salida correcta ya existe en el propio
+        # wizard (selector "Accesorio" en cot-rev-select, ver
+        # static/tickets_cotizaciones.js `_cotWizEsAccesorio` -- deja el
+        # ítem en $0 pero lo conserva para foto/descripción en la OT): si
+        # la línea sigue viniendo con el MISMO sku+documento pero
+        # clase_producto='accesorio', se acepta. Si no viene en absoluto,
+        # se rechaza el guardado completo ANTES de tocar la base (mismo
+        # criterio "todas las validaciones antes de escribir" del resto
+        # del proyecto). Ítems SIN documento (agregados a mano o desde
+        # catálogo) no tienen de dónde salir "sin declarar" -- no aplica.
+        try:
+            _items_doc_antes = mysql_fetchall(
+                "SELECT erp_kopr, erp_tido, erp_nudo, descripcion, clase_producto "
+                "  FROM tk_cotizacion_items "
+                " WHERE cotizacion_id=%s AND erp_tido IS NOT NULL AND erp_tido<>'' "
+                "   AND erp_nudo IS NOT NULL AND erp_nudo<>'' "
+                "   AND erp_kopr IS NOT NULL AND erp_kopr<>'' "
+                "   AND COALESCE(clase_producto,'') <> 'accesorio'",
+                (cid,)) or []
+        except Exception as _e_guard:
+            print(f"[tk_api_cotizacion_actualizar] guardia anti-borrado no pudo leer items previos: {_e_guard}", flush=True)
+            _items_doc_antes = []
+        if _items_doc_antes:
+            def _clave_item(sku, tido, nudo):
+                return ((sku or "").strip().upper(), (tido or "").strip().upper(), (nudo or "").strip())
+            _claves_nuevas_ok = set()
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                _sku_it = (it.get("sku") or "").strip()
+                _tido_it = (it.get("tido") or "").strip()
+                _nudo_it = (it.get("nudo") or "").strip()
+                if not (_sku_it and _tido_it and _nudo_it):
+                    continue
+                _clase_it = (it.get("clase_producto") or clases_por_sku.get(_sku_it.upper()) or "")
+                # Se acepta si sigue presente (con o sin cambio de precio) O
+                # si quedó declarada accesorio -- ambos casos son "no se
+                # borró en silencio", que es lo único que esta guardia cuida.
+                _claves_nuevas_ok.add(_clave_item(_sku_it, _tido_it, _nudo_it))
+            _faltantes = [it for it in _items_doc_antes
+                          if _clave_item(it.get("erp_kopr"), it.get("erp_tido"), it.get("erp_nudo"))
+                          not in _claves_nuevas_ok]
+            if _faltantes:
+                _nombres = ", ".join((it.get("descripcion") or it.get("erp_kopr") or "producto") for it in _faltantes[:5])
+                return jsonify({
+                    "ok": False,
+                    "error": (f"No puedes quitar de la cotización productos que vinieron de un documento del ERP: "
+                              f"{_nombres}. Si no corresponde cobrarlos, decláralos como \"Accesorio\" en vez de "
+                              f"eliminarlos -- así quedan en $0 pero siguen viajando a la OT para foto y evidencia "
+                              f"de entrega."),
+                    "error_codigo": "ITEM_DOCUMENTO_ELIMINADO",
+                    "items": [it.get("erp_kopr") for it in _faltantes],
+                }), 409
+
         _estaba_aprobada = (cab.get("estado") == "approved")
         _antes = {"empresa": cab.get("empresa"), "total": cab.get("total"),
                   "tipo_servicio": cab.get("tipo_servicio"),
