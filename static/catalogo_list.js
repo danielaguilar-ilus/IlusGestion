@@ -1683,10 +1683,21 @@ function catwRenderStepper(){
   document.getElementById('catwStepper').innerHTML = CATW_STEPS.map(function(s){
     const cls = s.n < catwStep ? 'done' : (s.n === catwStep ? 'current' : '');
     const inner = s.n < catwStep ? '<i class="bi bi-check-lg"></i>' : s.n;
-    return '<div class="catw-step '+cls+'">'
+    // 2026-08-28 (Daniel: "la encuentro muy rígida, muy estricta, larga" --
+    // basta clasificación O piolas O manual, ver "registrado" OR en
+    // catalogo_module.py desde el 23-jul, pero el wizard seguía obligando
+    // a pasar linealmente por los 4 pasos). Los círculos ahora saltan
+    // directo al paso que se toque -- ya no hace falta "Siguiente" 3 veces
+    // para llegar a Manuales si eso es lo único que se quiere completar.
+    return '<div class="catw-step '+cls+'" onclick="catwIrPaso('+s.n+')" style="cursor:pointer" role="button" tabindex="0">'
       + '<div class="catw-step-circle">'+inner+'</div>'
       + '<div class="catw-step-label">'+s.label+'</div></div>';
   }).join('');
+}
+function catwIrPaso(n){
+  if (n === catwStep) return;
+  catwStep = n;
+  catwMostrarPaso();
 }
 
 function catwMostrarPaso(){
@@ -1720,7 +1731,12 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
     if(!IS_SUPERADMIN){ catwStep = 3; catwMostrarPaso(); return; }
     const familia = document.getElementById('catwFamilia').value.trim();
     const clase = document.getElementById('catwClase').value;
-    if(!familia){ ilusToast('Indica la familia del producto', {type:'warning'}); return; }
+    // 2026-08-28 (Daniel: "obligatoria al menos una -- la clasificación o
+    // las piolas o el manual"): clasificación deja de ser obligatoria PARA
+    // AVANZAR -- basta con una de las tres (mismo criterio OR que ya usa
+    // "registrado" en catalogo_module.py desde el 23-jul). Si de verdad no
+    // hay nada que guardar en este paso, se avanza sin llamar al backend.
+    if(!familia && !clase){ catwStep = 3; catwMostrarPaso(); return; }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
     try{
       const r = await fetch('/catalogo/api/productos/'+catwProductoId, {method:'PATCH',
@@ -1728,21 +1744,22 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
       const d = await r.json();
       btn.disabled = false; btn.innerHTML = original;
       if(!d.ok){ ilusToast(d.error||'No se pudo guardar la familia', {type:'error'}); return; }
-      _catFamilias.add(familia);
+      if (familia) _catFamilias.add(familia);
       catwStep = 3; catwMostrarPaso();
     }catch(e){ btn.disabled = false; btn.innerHTML = original; ilusToast('Sin conexión', {type:'error'}); }
     return;
   }
   if(catwStep === 3){
-    const filas = Array.from(document.querySelectorAll('.catw-piola-row'));
-    for(const fila of filas){
-      const medidaInput = fila.querySelector('.catw-piola-medida');
-      const obsInput = fila.querySelector('.catw-piola-obs');
-      const medida = parseFloat(medidaInput.value);
-      const obs = obsInput.value.trim();
-      if(isNaN(medida) || medida <= 0){ ilusToast('Falta la medida de "'+fila.dataset.label+'"', {type:'warning'}); medidaInput.focus(); return; }
-      if(!obs){ ilusToast('Falta la observación de "'+fila.dataset.label+'"', {type:'warning'}); obsInput.focus(); return; }
-    }
+    // 2026-08-28 (Daniel: "obligatoria al menos una"): una fila de piola a
+    // medio llenar ya NO bloquea avanzar -- se guardan solo las filas
+    // completas (medida Y observación) y las incompletas se ignoran en
+    // silencio, en vez de exigir TODAS antes de dejar pasar al paso 4.
+    const filas = Array.from(document.querySelectorAll('.catw-piola-row')).filter(function(fila){
+      const medida = parseFloat(fila.querySelector('.catw-piola-medida').value);
+      const obs = fila.querySelector('.catw-piola-obs').value.trim();
+      return !isNaN(medida) && medida > 0 && !!obs;
+    });
+    if(!filas.length){ catwStep = 4; catwMostrarPaso(); return; }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
     let _omitidas = 0;
     try{
