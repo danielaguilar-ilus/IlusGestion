@@ -1,6 +1,72 @@
 {% extends "base.html" %}
 {% block title %}{% if user %}Editar usuario{% else %}Nuevo usuario{% endif %} - ILUS{% endblock %}
 
+{# ══════════════════════════════════════════════════════════════════
+   Daniel 2026-08-27: "enumerar los pasos... el correo, el nombre, el
+   telefono opcional y el rol, porque siempre se me olvida cambiar el
+   rol" + "el semaforo, los campos obligatorios, bien intuitivo, como
+   lo de retiro". Reusamos el LENGUAJE VISUAL oficial del círculo
+   rojo→verde con check de /retiros/solicitar (static/retiros_public_
+   request.css, clases .step-circle/.step-num-text/.step-check) pero
+   en tamaño reducido para convivir con el grid de 2 columnas que ya
+   existe (no se toca ese layout, solo se le agrega la numeración).
+   No se importa el CSS de retiros completo (es de la pantalla pública
+   y trae su propia paleta/fuente Bebas Neue no cargada acá) — se
+   replican solo los valores de color/sombra/transición exactos.
+   ══════════════════════════════════════════════════════════════════ #}
+{% block head_extra %}
+<style>
+  .uf-step-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .uf-step-head .form-label{margin-bottom:0}
+  .uf-step-circle{
+    width:30px;height:30px;border-radius:9px;color:#fff;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;font-weight:800;
+    font-size:.95rem;letter-spacing:.02em;position:relative;
+    background:linear-gradient(150deg,var(--ilus-red) 0%,#a60000 100%);
+    box-shadow:0 6px 14px -4px rgba(220,38,38,.45),0 1px 0 rgba(255,255,255,.25) inset;
+    transition:all .35s cubic-bezier(.34,1.56,.64,1);
+  }
+  /* Paso opcional (teléfono) — mismo gris neutro que Retiros usa para su
+     paso "Comentarios" (opcional, nunca bloquea, nunca se ve como error) */
+  .uf-step-circle.is-optional{background:#6b7280;box-shadow:0 6px 14px rgba(107,114,128,.25)}
+  .uf-step-circle.is-complete{
+    background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);
+    box-shadow:0 6px 14px -4px rgba(22,163,74,.5),0 1px 0 rgba(255,255,255,.3) inset;
+    transform:scale(1.06);
+  }
+  .uf-step-circle.is-complete::after{
+    content:'';position:absolute;inset:-4px;border-radius:12px;
+    border:2px solid #16a34a;opacity:.35;animation:ufPulseGreen 1.4s ease-in-out 1;
+  }
+  @keyframes ufPulseGreen{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+  .uf-step-circle .uf-step-check{display:none;font-size:.85rem}
+  .uf-step-circle.is-complete .uf-step-num{display:none}
+  .uf-step-circle.is-complete .uf-step-check{display:block}
+  /* Rol — paso que "siempre se le olvida cambiar": nace en ámbar (color
+     de advertencia oficial ILUS) y late suave hasta que el operador lo
+     toca a propósito; ahí pasa a verde igual que los demás pasos. */
+  .uf-step-circle.is-watch{
+    background:linear-gradient(150deg,#f59e0b 0%,#b45309 100%);
+    box-shadow:0 6px 14px -4px rgba(245,158,11,.5),0 1px 0 rgba(255,255,255,.3) inset;
+    animation:ufAmberBreathe 2.4s ease-in-out infinite;
+  }
+  @keyframes ufAmberBreathe{
+    0%,100%{box-shadow:0 6px 14px -4px rgba(245,158,11,.5),0 1px 0 rgba(255,255,255,.3) inset}
+    50%{box-shadow:0 6px 20px -2px rgba(245,158,11,.8),0 1px 0 rgba(255,255,255,.3) inset}
+  }
+  /* Caja del Rol — más peso visual para que no pase desapercibido */
+  .uf-role-box{padding:14px 16px;border-radius:12px;border:1.5px solid #fcd34d;background:#fff8e1;transition:border-color .3s,background .3s}
+  .uf-role-box.is-confirmed{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%)}
+  .uf-role-hint{font-size:.72rem;color:#92400e;margin-top:7px;display:flex;align-items:center;gap:5px}
+  .uf-role-box.is-confirmed .uf-role-hint{color:#15803d}
+  .uf-role-hint .bi{flex-shrink:0}
+  @media (max-width:480px){
+    .uf-step-circle{width:26px;height:26px;font-size:.85rem;border-radius:8px}
+    .uf-role-box{padding:12px 14px}
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="page-header">
   <div class="d-flex align-items-center gap-3">
@@ -35,10 +101,16 @@
       <div class="row g-3">
 
         <div class="col-md-6">
-          <label class="form-label fw-semibold small">
-            Correo electronico <span style="color:var(--ilus-red)">*</span>
-          </label>
-          <input type="email" name="username" class="form-control"
+          <div class="uf-step-head">
+            <span class="uf-step-circle" id="ufCircle-email">
+              <span class="uf-step-num">1</span>
+              <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <label class="form-label fw-semibold small" for="userEmailInput">
+              Correo electronico <span style="color:var(--ilus-red)">*</span>
+            </label>
+          </div>
+          <input type="email" name="username" id="userEmailInput" class="form-control"
                  value="{{ (fd.username or user.username) if user else fd.get('username','') }}"
                  placeholder="nombre@empresa.cl"
                  autocomplete="email"
@@ -49,19 +121,31 @@
         </div>
 
         <div class="col-md-6">
-          <label class="form-label fw-semibold small">
-            Nombre y apellido <span style="color:var(--ilus-red)">*</span>
-          </label>
-          <input type="text" name="nombre" class="form-control"
+          <div class="uf-step-head">
+            <span class="uf-step-circle" id="ufCircle-nombre">
+              <span class="uf-step-num">2</span>
+              <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <label class="form-label fw-semibold small" for="userNombreInput">
+              Nombre y apellido <span style="color:var(--ilus-red)">*</span>
+            </label>
+          </div>
+          <input type="text" name="nombre" id="userNombreInput" class="form-control"
                  value="{{ (fd.nombre or user.nombre) if user else fd.get('nombre','') }}"
                  placeholder="Ej: Maria Gonzalez"
                  required>
         </div>
 
         <div class="col-md-6">
-          <label class="form-label fw-semibold small">
-            <i class="bi bi-whatsapp me-1 text-success"></i>Teléfono WhatsApp <span class="text-muted">(opcional)</span>
-          </label>
+          <div class="uf-step-head">
+            <span class="uf-step-circle is-optional" id="ufCircle-phone">
+              <span class="uf-step-num">3</span>
+              <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+            </span>
+            <label class="form-label fw-semibold small" for="userPhoneInput">
+              <i class="bi bi-whatsapp me-1 text-success"></i>Teléfono WhatsApp <span class="text-muted">(opcional)</span>
+            </label>
+          </div>
           <div class="input-group">
             <span class="input-group-text" style="background:#f8fafc;font-weight:700;color:#0f172a">+56</span>
             <input type="tel" name="phone" id="userPhoneInput" class="form-control"
@@ -162,29 +246,41 @@
         {% endif %}
 
         <div class="col-md-4">
-          <label class="form-label fw-semibold small">
-            Rol
-            <a href="{{ url_for('admin_roles') }}" class="ms-1 small text-muted text-decoration-none"
-               title="Crear o editar roles">
-              <i class="bi bi-gear"></i>
-            </a>
-          </label>
           {% set current_role = (fd.role or user.role) if user else fd.get('role','editor') %}
-          <select name="role" class="form-select">
-            {% for r in roles %}
-              {# superadmin solo se ofrece a otros superadmins (regla de seguridad) #}
-              {% if r.slug != 'superadmin' or permissions.superadmin %}
-              <option value="{{ r.slug }}"
-                      {% if current_role == r.slug %}selected{% endif %}
-                      data-color="{{ r.color }}">
-                {{ r.nombre }}{% if r.is_system %} · sistema{% endif %}
-              </option>
-              {% endif %}
-            {% endfor %}
-          </select>
-          <div class="form-text" style="font-size:.72rem">
-            Refleja los roles definidos en
-            <a href="{{ url_for('admin_roles') }}">Roles y permisos</a>.
+          <div class="uf-role-box" id="ufRoleBox">
+            <div class="uf-step-head">
+              <span class="uf-step-circle is-watch" id="ufCircle-role">
+                <span class="uf-step-num">4</span>
+                <span class="uf-step-check"><i class="bi bi-check-lg"></i></span>
+              </span>
+              <label class="form-label fw-semibold small" for="userRoleSelect">
+                Rol
+                <a href="{{ url_for('admin_roles') }}" class="ms-1 small text-muted text-decoration-none"
+                   title="Crear o editar roles">
+                  <i class="bi bi-gear"></i>
+                </a>
+              </label>
+            </div>
+            <select name="role" id="userRoleSelect" class="form-select">
+              {% for r in roles %}
+                {# superadmin solo se ofrece a otros superadmins (regla de seguridad) #}
+                {% if r.slug != 'superadmin' or permissions.superadmin %}
+                <option value="{{ r.slug }}"
+                        {% if current_role == r.slug %}selected{% endif %}
+                        data-color="{{ r.color }}">
+                  {{ r.nombre }}{% if r.is_system %} · sistema{% endif %}
+                </option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <div class="form-text" style="font-size:.72rem">
+              Refleja los roles definidos en
+              <a href="{{ url_for('admin_roles') }}">Roles y permisos</a>.
+            </div>
+            <div class="uf-role-hint" id="ufRoleHint">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <span>Revisa el rol antes de guardar — no se te vaya a quedar en el valor por defecto.</span>
+            </div>
           </div>
         </div>
 
@@ -377,5 +473,69 @@ function ilusCopiarResetLink(btn) {
     copiaManual();
   }
 }
+</script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// SEMÁFORO DE PASOS — correo → nombre → teléfono (opcional) → rol
+// Daniel 2026-08-27: enumerar el formulario con el mismo lenguaje
+// visual de /retiros/solicitar (círculo rojo→verde con check) y darle
+// más peso al Rol porque "siempre se me olvida cambiar el rol".
+// No bloquea el submit en ningún caso — es solo guía visual.
+// ══════════════════════════════════════════════════════════════════
+(function(){
+  function emailValido(v){
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || '').trim());
+  }
+
+  function refrescarPasos(){
+    var email = document.getElementById('userEmailInput');
+    var nombre = document.getElementById('userNombreInput');
+    var phone = document.getElementById('userPhoneInput');
+    var cEmail = document.getElementById('ufCircle-email');
+    var cNombre = document.getElementById('ufCircle-nombre');
+    var cPhone = document.getElementById('ufCircle-phone');
+    if (cEmail) cEmail.classList.toggle('is-complete', emailValido(email && email.value));
+    if (cNombre) cNombre.classList.toggle('is-complete', !!(nombre && nombre.value.trim().length >= 3));
+    // Teléfono es opcional: solo se pone verde si quedó un número completo,
+    // pero si está vacío NUNCA se marca como pendiente/error (sigue gris).
+    if (cPhone) cPhone.classList.toggle('is-complete', !!(phone && phone.value.replace(/\D/g, '').length >= 9));
+  }
+
+  // El Rol nace en ámbar (pidiendo revisión) y pasa a verde cuando el
+  // operador lo toca a propósito — así no se le "escapa" en el valor
+  // por defecto sin darse cuenta.
+  function confirmarRol(){
+    var circle = document.getElementById('ufCircle-role');
+    var box = document.getElementById('ufRoleBox');
+    var hint = document.getElementById('ufRoleHint');
+    if (circle) { circle.classList.remove('is-watch'); circle.classList.add('is-complete'); }
+    if (box) box.classList.add('is-confirmed');
+    if (hint) hint.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>Rol revisado.</span>';
+  }
+
+  function initPasos(){
+    var email = document.getElementById('userEmailInput');
+    var nombre = document.getElementById('userNombreInput');
+    var phone = document.getElementById('userPhoneInput');
+    var role = document.getElementById('userRoleSelect');
+    [email, nombre, phone].forEach(function(el){
+      if (!el) return;
+      el.addEventListener('input', refrescarPasos);
+      el.addEventListener('blur', refrescarPasos);
+    });
+    if (role) {
+      role.addEventListener('change', confirmarRol);
+      // Si el valor inicial ya viene distinto de "editor" (edición de un
+      // usuario con rol propio, o reintento de formulario tras un error
+      // donde el operador ya había elegido su rol), se da por confirmado
+      // de entrada en vez de nacer en ámbar sin necesidad.
+      if (role.value && role.value !== 'editor') confirmarRol();
+    }
+    refrescarPasos();
+  }
+
+  document.addEventListener('DOMContentLoaded', initPasos);
+})();
 </script>
 {% endblock %}
