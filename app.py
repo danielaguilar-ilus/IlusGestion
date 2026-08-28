@@ -85221,8 +85221,116 @@ def _ot_pdf_context(vid, embed_images=False):
         "chk_completadas": chk_completadas,
         "chk_pct": chk_pct,
         "ubic_validada": ubic_validada,
+        # 🔧 FIX 2026-08-28 (OT-2026-00058, Vitacura -- 60 equipos/637 tareas:
+        # PDF descargado con "Página X de 21" cuando en realidad tenía 89
+        # páginas físicas, y tramos completos (aprox. pág. 47-85) SIN ningún
+        # header/footer -- ni número de OT, ni marca, ni número de página).
+        # Causa raíz: `paginas_equipos` es una agrupación LÓGICA (2 equipos en
+        # la 1a "página", 3 en las siguientes) que NO tiene relación con
+        # cuántas páginas FÍSICAS ocupa ese grupo una vez que Chromium lo
+        # renderiza -- un grupo con mucho checklist/fotos puede ocupar 4, 5 o
+        # más hojas reales. Como header_block/footer_block viven DENTRO del
+        # flujo normal del HTML (un <div> por "página lógica"), solo el
+        # header aparecía en la 1a hoja física de ese grupo y el footer
+        # (position:absolute bottom respecto al contenedor) en la ÚLTIMA --
+        # las hojas físicas del medio quedaban en blanco de identificación.
+        # Con native_header_footer=True (SOLO para el PDF real vía Playwright,
+        # embed_images ya distingue ese camino de la vista HTML/navegador) el
+        # template se salta el render de esos macros, y mant_visita_pdf usa en
+        # su lugar el mecanismo NATIVO de Chromium (display_header_footer +
+        # header_template/footer_template con <span class="pageNumber">/
+        # <span class="totalPages">), que se repite en TODA página física real
+        # sin que nadie tenga que calcular nada -- mismo patrón ya probado en
+        # producción por tk_cotizacion_pdf (tickets_module.py). La vista HTML
+        # imprimible (mant_ot_pdf_render, embed_images=False) sigue mostrando
+        # el header/footer "manual" de siempre: ahí un contador aproximado
+        # tiene sentido porque el navegador tampoco expone el total real de
+        # páginas al hacer Ctrl+P.
+        "native_header_footer": embed_images,
     }
     return ctx, "ok", []
+
+
+def _ot_pdf_header_footer_native(ctx):
+    """Header/footer NATIVOS de Playwright para el PDF real de la OT
+    (`display_header_footer` + `header_template`/`footer_template`).
+
+    Por qué existe (OT-2026-00058, ver comentario en `_ot_pdf_context`):
+    Chromium repite este HTML en TODA página física real -- a diferencia del
+    header_block/footer_block "manual" incrustado en el HTML del documento,
+    que solo aparece donde el flujo normal del contenido lo deja. Las clases
+    especiales `pageNumber`/`totalPages` las resuelve CHROMIUM por página,
+    nunca se calculan a mano -- así se elimina de raíz el "Página X de 21"
+    con 89 páginas reales.
+
+    Mismo patrón ya probado en producción por `_tk_cotizacion_pdf_bytes`
+    (tickets_module.py, ~línea 3553) -- se reusa la fórmula, no se reinventa:
+    todo estilo va INLINE (el header/footer corre aislado, sin acceso al
+    <style> del documento principal) y `-webkit-print-color-adjust`/
+    `print-color-adjust` van también inline en cada bloque con fondo de
+    color -- sin eso Chromium descarta el fondo negro al imprimir (bug real
+    ya visto y corregido en esa misma función el 2026-07-24).
+
+    Se usa para ot_pdf.html Y para ot_pdf_levantamiento.html (este último
+    hoy solo tiene un encabezado/pie ÚNICOS al principio/final del documento
+    completo -- cero identificación en las páginas físicas del medio; se
+    deja intacto y esto se suma encima, no lo reemplaza).
+
+    Devuelve (header_html, footer_html).
+    """
+    import html as _html
+    visita = ctx.get("visita") or {}
+    numero_ot = str(visita.get("numero_ot") or f"OT-{visita.get('id') or ''}")
+    numero_ot = _html.escape(numero_ot)
+    doc_tipo = _html.escape(ctx.get("pdf_titulo_doc") or "ORDEN DE TRABAJO")
+    logo_b64 = ctx.get("logo_b64") or ""
+    logo_shs_url = ctx.get("logo_shs_url") or ""
+
+    _ilus_logo_html = (
+        f'<img src="data:image/png;base64,{logo_b64}" '
+        'style="height:11mm;max-width:42mm;object-fit:contain;">'
+        if logo_b64 else
+        '<span style="font-weight:900;font-size:15px;color:#ffffff;'
+        'letter-spacing:.02em;">ILUS<span style="color:#dc2626;">.</span></span>'
+    )
+    _shs_logo_html = (
+        '<div style="height:13.4mm;background:#ffffff;border-radius:1mm;'
+        'box-sizing:border-box;padding:1mm 2mm;display:flex;align-items:center;'
+        f'justify-content:center;"><img src="{logo_shs_url}" '
+        'style="height:11mm;width:auto;object-fit:contain;"></div>'
+        if logo_shs_url else ""
+    )
+
+    header_html = (
+        '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
+        '<div style="background:#0a0a0a;padding:3mm 12mm;box-sizing:border-box;'
+        'display:flex;justify-content:space-between;align-items:center;'
+        '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
+        f'<div style="display:flex;align-items:center;gap:3mm;">'
+        f'{_shs_logo_html}{_ilus_logo_html}</div>'
+        '<div style="text-align:right;">'
+        f'<div style="font-size:10px;font-weight:800;color:#ffffff;'
+        f'letter-spacing:-.01em;">{doc_tipo}</div>'
+        f'<div style="font-size:13px;font-weight:900;color:#dc2626;'
+        f'line-height:1.15;">N&#176; {numero_ot}</div>'
+        '</div></div>'
+        '<div style="height:1.4mm;background:linear-gradient(90deg,#dc2626 0 25%,'
+        '#0a0a0a 25% 100%);-webkit-print-color-adjust:exact;'
+        'print-color-adjust:exact;"></div>'
+        '</div>'
+    )
+
+    footer_html = (
+        '<div style="width:100%;font-size:7px;font-family:Arial,Helvetica,sans-serif;'
+        'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
+        'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
+        '<span><b style="color:#0a0a0a">ILUS Fitness</b> · www.ilusfitness.com · '
+        'soportetec@sphs.cl</span>'
+        f'<span><b style="color:#0a0a0a">{numero_ot}</b> · Página '
+        '<span class="pageNumber"></span> de <span class="totalPages"></span></span>'
+        '</div>'
+    )
+    return header_html, footer_html
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/pdf")
@@ -85317,12 +85425,31 @@ def mant_visita_pdf(vid):
     # levantamiento, que define su propio @page A4 y no se tocó).
     _pdf_formato = "A4" if _es_informe_lev else "Letter"
     _t0_pdf = time.time()
+    # 🔧 FIX 2026-08-28 (OT-2026-00058): header/footer NATIVOS de Chromium
+    # (ver _ot_pdf_header_footer_native / "native_header_footer" en
+    # _ot_pdf_context) -- se repiten en TODA página física real, con el
+    # número de página REAL que Chromium resuelve solo. Se usa para los DOS
+    # templates (OT clásica Y informe de levantamiento): la clásica antes
+    # mentía "Página X de 21" con 89 páginas reales; la de levantamiento hoy
+    # no tiene NINGÚN identificador repetido (solo un encabezado/pie único al
+    # principio/final del documento completo) -- esto se agrega ENCIMA, sin
+    # tocar ese encabezado/pie propio.
+    _hdr_tpl, _ftr_tpl = _ot_pdf_header_footer_native(ctx)
+    # Margen top/bottom subido (antes 15/15mm) para dejarle espacio real a
+    # esas barras -- verificado renderizando un PDF de prueba con Playwright
+    # (ver reporte): a 15mm el header nuevo tapaba la primera línea del
+    # contenido. left/right SIN TOCAR (12mm, igual que siempre): tanto
+    # .sheet (ot_pdf.html) como .doc (ot_pdf_levantamiento.html) ya simulan
+    # su propio margen lateral con padding CSS interno -- cambiar el margen
+    # real de Playwright ahí no aporta nada y arriesga el ancho fijo de
+    # `.doc` (210mm) en el informe de levantamiento.
     try:
         pdf_bytes = _pw_pdf(
             html, page_format=_pdf_formato, margin={
-                "top": "15mm", "bottom": "15mm",
+                "top": "22mm", "bottom": "16mm",
                 "left": "12mm", "right": "12mm",
             },
+            header_template=_hdr_tpl, footer_template=_ftr_tpl,
             # 2026-07-10: con embed_images=True las fotos ya vienen como
             # data-URI dentro del HTML (sin red que esperar) — timeout
             # corto de sobra; el wait real anterior (20s) era precisamente

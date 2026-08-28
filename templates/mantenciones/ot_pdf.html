@@ -680,8 +680,17 @@
   </div>
 </div>
 
-{# ════════════ Macro: header de página ════════════ #}
+{# ════════════ Macro: header de página ════════════
+   FIX 2026-08-28 (OT-2026-00058, ver comentario en _ot_pdf_context/
+   _ot_pdf_header_footer_native en app.py): cuando el HTML se genera para
+   Playwright (native_header_footer=True) este bloque NO se imprime -- lo
+   reemplaza el header NATIVO de Chromium, que sí se repite en cada página
+   física real (este <div> solo aparece en la 1a hoja física del grupo de
+   equipos, porque vive dentro del flujo normal del documento). Para la
+   vista HTML/navegador (Ctrl+P, native_header_footer=False/Undefined)
+   sigue intacto -- ahí no hay mecanismo nativo de paginación disponible. #}
 {% macro header_block(pg, total_pg) %}
+{% if not native_header_footer %}
 <div class="head">
   <div class="logo">
     {% if logo_shs_url %}
@@ -703,10 +712,16 @@
   </div>
 </div>
 <div class="head-sep"></div>
+{% endif %}
 {% endmacro %}
 
-{# ════════════ Macro: footer de página — mismo formato que cotizaciones ════════════ #}
+{# ════════════ Macro: footer de página — mismo formato que cotizaciones ════════════
+   Misma razón que header_block: se salta el render con native_header_footer=True
+   (el footer "manual" es position:absolute respecto al <section class="sheet">, así
+   que solo caía en la ÚLTIMA hoja física de ese grupo -- las del medio quedaban sin
+   número de página ni marca; ver bug real documentado arriba). #}
 {% macro footer_block(pg, total_pg, continua=false) %}
+{% if not native_header_footer %}
 <div class="foot">
   {% if continua %}
   <div class="foot-continua">Continúa en la siguiente página</div>
@@ -716,6 +731,7 @@
     <span><b>{{ visita.numero_ot or ('OT-' ~ visita.id) }}</b> · <span class="pg">Página {{ pg }} de {{ total_pg }}</span></span>
   </div>
 </div>
+{% endif %}
 {% endmacro %}
 
 {# Variables auxiliares calculadas en backend:
