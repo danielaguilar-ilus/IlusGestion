@@ -75677,11 +75677,13 @@ def ot2_api_crear():
     if es_interna:
         cliente_id = None  # trabajo interno NUNCA queda colgado de un cliente
 
+    cliente_razon_social = None
     if cliente_id:
         _cli = mysql_fetchone(
             "SELECT id, razon_social FROM mant_clientes WHERE id=%s", (cliente_id,))
         if not _cli:
             return _ot2_err("No encontramos ese cliente.", "CLIENTE_NO_EXISTE", http=404)
+        cliente_razon_social = _cli.get("razon_social")
 
     # ── 3. AGENDA ──────────────────────────────────────────────────────
     fecha_prog = (d.get("fecha_programada") or "").strip()
@@ -75906,9 +75908,13 @@ def ot2_api_crear():
         tecnico_nombre = (_t or {}).get("n")
 
     # ── 7. RESTO DE CAMPOS ─────────────────────────────────────────────
+    # 2026-08-28 (Daniel: "quiero que salga N° y Cliente... se vería más
+    # elegante"): el título automático (cuando el usuario deja el campo
+    # vacío) se arma DESPUÉS de tener numero_ot real -- ver más abajo,
+    # justo después de _next_ot_number_atomic() -- para poder incluirlo.
+    # Acá solo se resuelve el título EXPLÍCITO; el fallback autogenerado
+    # queda pendiente (titulo="") hasta ese punto.
     titulo = (d.get("titulo") or "").strip()[:200]
-    if not titulo:
-        titulo = f"{_TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title())} {_f.strftime('%d/%m/%Y')}"
     descripcion = (d.get("descripcion") or "").strip()[:2000] or None
     ticket_id = d.get("ticket_id")
     try:
@@ -76003,6 +76009,16 @@ def ot2_api_crear():
         cur = conn.cursor()
 
         numero_ot = _next_ot_number_atomic(conn)
+
+        # Título automático (campo vacío): "N° · Cliente" en vez de solo
+        # tipo+fecha -- Daniel, 28-08-2026 ("se vería más elegante"). Recién
+        # acá se conoce numero_ot real. Trabajo interno no tiene cliente
+        # que combinar, así que conserva el formato anterior (tipo+fecha).
+        if not titulo:
+            if cliente_razon_social:
+                titulo = f"{numero_ot} · {cliente_razon_social}"[:200]
+            else:
+                titulo = f"{_TIPO_OT_LABEL.get(tipo_ot, tipo_ot.title())} {_f.strftime('%d/%m/%Y')}"
 
         cur.execute(
             "INSERT INTO mant_visitas "
