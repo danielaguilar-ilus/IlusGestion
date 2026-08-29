@@ -54770,6 +54770,16 @@ def init_mantenciones_tables():
                 "  DEFAULT 'verificado'",
                 "ALTER TABLE mant_visita_equipos ADD COLUMN revisado_at DATETIME NULL",
                 "ALTER TABLE mant_visita_equipos ADD COLUMN revisado_por VARCHAR(190) NULL",
+                # 2026-08-28 (Daniel, misma noche que OT-125): "si no está
+                # gestionado, no lo asigne, solamente déjalo sin clasificar...
+                # si avanza y no tiene clasificación, hay que restringir ese
+                # avance" -- aplica solo a instalación/mantención/visitas (NO
+                # trabajo_interno, confirmado explícito). Columna aparte de
+                # estado_revision (que ya tiene su propio significado de
+                # "resultado de la revisión del técnico") para no mezclar dos
+                # conceptos distintos en el mismo ENUM.
+                "ALTER TABLE mant_visita_equipos ADD COLUMN sin_clasificar "
+                "  TINYINT(1) NOT NULL DEFAULT 0",
                 "ALTER TABLE mant_visita_equipos ADD INDEX idx_visita_estado "
                 "  (visita_id, estado_revision)",
                 "ALTER TABLE mant_visita_equipos ADD INDEX idx_maquina_fecha "
@@ -75077,7 +75087,8 @@ def ot2_detalle(vid):
         "       COALESCE(t.n, 0) AS n_tareas, COALESCE(t.ok, 0) AS n_ok, "
         "       COALESCE(t.obl, 0) AS n_obl, COALESCE(t.obl_ok, 0) AS n_obl_ok, "
         "       ve.estado_revision, ve.diagnostico_estado, ve.diagnostico_texto, "
-        "       ve.observacion_tecnico, ve.razon_saltado, ve.revisado_at, ve.revisado_por "
+        "       ve.observacion_tecnico, ve.razon_saltado, ve.revisado_at, ve.revisado_por, "
+        "       COALESCE(ve.sin_clasificar, 0) AS sin_clasificar "
         "  FROM mant_maquinas m "
         "  LEFT JOIN ( "
         "       SELECT maquina_id, COUNT(*) AS n, "
@@ -75106,7 +75117,9 @@ def ot2_detalle(vid):
         _rev = (e.get("estado_revision") or "").lower()
         e["estado_revision_label"] = _REV_LABEL.get(_rev, "")
         e["diagnostico_label"] = _DIAG_LABEL.get((e.get("diagnostico_estado") or "").lower(), "")
-        if _rev in ("saltado", "falla_detectada"):
+        if int(e.get("sin_clasificar") or 0):
+            e["sello"], e["sello_cls"] = "Sin clasificar", "eq-warn"
+        elif _rev in ("saltado", "falla_detectada"):
             e["sello"], e["sello_cls"] = (
                 "Saltado" if _rev == "saltado" else "Con falla"), "eq-warn"
         elif n and ok >= n:
@@ -82491,6 +82504,30 @@ def mant_ot_firmar_revision(vid):
         return jsonify({"ok": False, "error": "Falta la firma del técnico"}), 400
 
     try:
+        # 🔒 2026-08-28 (Daniel, misma noche que OT-2026-00125): "si avanza y
+        # no tiene clasificación, hay que restringir ese avance". Un equipo
+        # sin_clasificar no tiene checklist (a propósito, ver
+        # _ot_resolver_checklist) así que jamás aparecería en el gate de
+        # tareas pendientes de abajo -- hace falta este chequeo aparte, antes
+        # de cualquier otro, porque no hay nada que el técnico pueda
+        # completar/justificar por su cuenta: la clasificación la resuelve
+        # gestión desde el catálogo/cotizaciones, no desde la ejecución.
+        _sin_clasif = mysql_fetchall(
+            "SELECT m.nombre FROM mant_visita_equipos ve "
+            "  JOIN mant_maquinas m ON m.id = ve.maquina_id "
+            " WHERE ve.visita_id=%s AND ve.sin_clasificar=1 "
+            " ORDER BY m.nombre", (vid,)
+        ) or []
+        if _sin_clasif:
+            return jsonify({
+                "ok": False,
+                "error": ("No puedes firmar esta OT todavía: hay equipos sin "
+                          "clasificar en el catálogo — avisa a gestión para "
+                          "que los clasifique antes de continuar."),
+                "error_codigo": "EQUIPOS_SIN_CLASIFICAR",
+                "faltantes": [r["nombre"] for r in _sin_clasif],
+            }), 400
+
         # ── Gate de cierre (Fase 10) ──────────────────────────────────────
         # Una tarea obligatoria está CUBIERTA si se completó O si su equipo fue
         # omitido/gestionado (estado_revision='saltado' o 'falla_detectada').
@@ -99023,6 +99060,21 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
 
     # 2) Resolver plantilla estándar/por-clasificación SOLO para equipos
     #    CON ficha que el usuario NO seleccionó a mano (ver arriba).
+    # 🔒 2026-08-28 (Daniel, caso OT-2026-00125, misma noche): "si no está
+    # gestionado, no lo asigne, solamente déjalo sin clasificar hasta que
+    # alguien lo clasifique... si avanza y no tiene clasificación, hay que
+    # restringir ese avance". Aplica SOLO a instalación/mantención/visitas
+    # (confirmado explícito: "el trabajo interno no aplica a los demás hasta
+    # el momento") -- para esas categorías, un producto sin clasificar YA NO
+    # cae al checklist genérico de ~30 ítems (eso era lo que dejaba OT-125
+    # con 8 equipos en el checklist equivocado sin ninguna señal de que
+    # faltaba clasificar). En su lugar queda en `equipos_sin_clasificar`
+    # (ver más abajo: se excluye de TODA capa de fallback, incluida la red
+    # de seguridad final, y se marca en mant_visita_equipos para que siga
+    # visible en la OT como "Sin clasificar" en vez de desaparecer.
+    _categoria_gate = _categoria_admin_para_tipo(tipo_ot)
+    _gate_sin_clasificar_activo = _categoria_gate in ("instalacion", "mantencion", "visitas")
+    equipos_sin_clasificar = set()
     resolucion_por_equipo = {}
     try:
         if plantilla_id_override:
@@ -99046,6 +99098,9 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
                 except Exception as e:
                     print(f"[lev_crear] resolver plantilla por clasificación falló "
                           f"para maquina {mid}: {e}", flush=True)
+                if not plant_id and _gate_sin_clasificar_activo:
+                    equipos_sin_clasificar.add(mid)
+                    continue
                 resolucion_por_equipo[mid] = plant_id or _fallback_tipo_ot()
         tiene_plantillas = any(resolucion_por_equipo.values()) or explicitas_con_items
     except Exception as e:
@@ -99062,7 +99117,8 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
         try:
             resolucion = dict(resolucion_por_equipo)
             faltantes = [mid for mid in equipo_ids
-                         if mid not in resolucion and mid not in mids_con_seleccion_valida]
+                         if mid not in resolucion and mid not in mids_con_seleccion_valida
+                         and mid not in equipos_sin_clasificar]
             if faltantes:
                 plant_fallback = plantilla_id_override or _plantilla_estandar_para_tipo(tipo_ot)
                 for mid in faltantes:
@@ -99192,7 +99248,7 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
             vistos_fb = set()
             for m in maquinas:
                 mid = m.get("id")
-                if mid and mid not in vistos_fb:
+                if mid and mid not in vistos_fb and mid not in equipos_sin_clasificar:
                     vistos_fb.add(mid)
                     maqs.append(m)
             maqs.sort(key=lambda m: m["id"])
@@ -99220,6 +99276,26 @@ def _ot_resolver_checklist(cid, visita_id, tipo_ot, tarea_tipo, maquinas, equipo
                     conn_fb.close()
         except Exception as e:
             print(f"[lev_crear] fallback safety-net falló: {e}", flush=True)
+
+    # 8) Equipos deliberadamente sin plantilla (producto sin clasificar,
+    #    ver punto 2 más arriba): sin esto desaparecerían de la OT, porque
+    #    ot2_detalle solo lista equipos con tareas O con fila en
+    #    mant_visita_equipos (ni una cosa ni la otra sin este INSERT).
+    #    ON DUPLICATE por si el equipo ya tenía fila por otro motivo (no se
+    #    pisa estado_revision/observación existentes, solo se prende el flag).
+    if visita_id and equipos_sin_clasificar:
+        try:
+            for mid in equipos_sin_clasificar:
+                mysql_execute(
+                    "INSERT INTO mant_visita_equipos (visita_id, maquina_id, sin_clasificar) "
+                    "VALUES (%s, %s, 1) "
+                    "ON DUPLICATE KEY UPDATE sin_clasificar=1",
+                    (visita_id, mid)
+                )
+            print(f"[lev_crear] {len(equipos_sin_clasificar)} equipo(s) marcados "
+                  f"sin_clasificar (sin checklist genérico) en vid={visita_id}", flush=True)
+        except Exception as e:
+            print(f"[lev_crear] marcar equipos_sin_clasificar falló: {e}", flush=True)
 
     return items_plantilla
 
