@@ -1393,7 +1393,37 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
   const faltaFotoObligatoria = !!(t.requiere_foto && (_fotosIdx()[t.id] || []).length === 0);
   const fotoClass = faltaFotoObligatoria ? ' falta-foto' : '';
 
-  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}${optClass}${fotoClass}"
+  // 2026-08-29 (Daniel: "rojo para que no lo tenga, amarillo por si está
+  // fuera de la zona, y verde si está dentro de 300 metros de la zona").
+  // Semáforo propio de la tarea GPS ("Llegada al lugar"), independiente
+  // del semáforo de verificación (sem-warn/sem-fail, que es para
+  // Aprobado/Alerta/Falla). Reusa la MISMA distancia que ya calcula
+  // _validarRadio() al momento de capturar (Haversine contra
+  // DESTINO_LAT/LNG), pero se recalcula acá en cada render para que el
+  // color sea correcto también después de recargar la página -- el toast
+  // de _validarRadio ya desapareció, esto queda pintado en la tarjeta.
+  let gpsClass = '', gpsFueraBadge = '';
+  if (tipo === 'gps'){
+    const gLat = Number(valor && valor.lat), gLng = Number(valor && valor.lng);
+    if (!isFinite(gLat) || !isFinite(gLng)){
+      gpsClass = ' gps-pendiente';
+    } else if (DESTINO_LAT && DESTINO_LNG){
+      const distM = _distanciaMetros(gLat, gLng, DESTINO_LAT, DESTINO_LNG);
+      if (distM <= RADIO_MAX_METROS){
+        gpsClass = ' gps-ok';
+      } else {
+        gpsClass = ' gps-fuera';
+        gpsFueraBadge = `<span class="tx-badge-gps-fuera">📍 A ${distM}m del cliente</span>`;
+      }
+    } else {
+      // Sin coordenadas de destino conocidas para esta OT -- no se le puede
+      // exigir "zona" al técnico, así que no se penaliza (mismo criterio
+      // que _validarRadio: sin_destino → ok).
+      gpsClass = ' gps-ok';
+    }
+  }
+
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}${optClass}${fotoClass}${gpsClass}"
        id="tar-${t.id}" data-version="${t.version || 0}">
     <div class="ttl">
       ${tno ? `<span class="tno">${tno}</span>` : ''}
@@ -1410,6 +1440,7 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
                   ? '<span class="tx-badge-foto-falta">📷 Falta foto</span>'
                   : '<span class="tx-badge-foto">📷 Foto</span>')
               : ''}
+            ${gpsFueraBadge}
             <span class="tx-badge-tipo">${_escapeHtml(tipo)}</span>
             <span class="nxt-tag">Siguiente</span>
           </span>
@@ -2721,7 +2752,10 @@ function _textoOnBlur(inputEl, tid, mid, pid, minChars){
 //  VALIDACIÓN DE RADIO — distancia entre GPS y destino OT
 //  (Base para bloqueo futuro: <200m del cliente = OK)
 // ════════════════════════════════════════════════════════
-const RADIO_MAX_METROS = 200;   // 200m — futuro: bloquear ejecución si excedido
+// 2026-08-29 (Daniel): "verde si está dentro de trescientos metros de la
+// zona" -- subido de 200 a 300m, único umbral para el toast de advertencia
+// Y para el semáforo visual de la tarea GPS (renderTareaHtml).
+const RADIO_MAX_METROS = 300;   // 300m — futuro: bloquear ejecución si excedido
 const RADIO_BLOQUEO_ACTIVO = false;  // por ahora solo advierte, no bloquea
 
 function _distanciaMetros(lat1, lng1, lat2, lng2){
