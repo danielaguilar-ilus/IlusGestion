@@ -727,9 +727,16 @@ window.OT2C = (function(){
     body.innerHTML = ps.map(function(p){
       return '<section class="o2m-sec" id="o2mSec-'+p.k+'"><div id="o2mSec-'+p.k+'-b"></div></section>';
     }).join('');
+    // 2026-08-29 (bug real encontrado en vivo, ver cargarEquipos): un error
+    // sin capturar en UNA sección (ej. equipos sin cliente todavía) cortaba
+    // el forEach entero -- las secciones SIGUIENTES (Finanzas, Revisar) y
+    // pintarAnclas()/setupScrollspy() de más abajo nunca llegaban a
+    // ejecutarse, sin ningún aviso. Try/catch por sección: una que falla
+    // queda con un aviso visible, pero ya no le impide a las demás pintarse.
     ps.forEach(function(p){
       var b = document.getElementById('o2mSec-'+p.k+'-b');
       if (!b) return;
+      try {
       if (p.k==='tipo')     pintarTipo(b);
       if (p.k==='cliente')  pintarCliente(b);
       if (p.k==='detalle')  pintarDetalle(b);
@@ -738,6 +745,11 @@ window.OT2C = (function(){
       if (p.k==='equipos')  pintarEquipos(b);
       if (p.k==='finanzas') pintarFinanzas(b);
       if (p.k==='revisar')  pintarRevisar(b);
+      } catch(e){
+        console.error('[OT2C] pintarFormulario, sección "'+p.k+'":', e);
+        b.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
+          'Esta sección no se pudo mostrar. Prueba cerrar y reabrir el formulario.</div>';
+      }
     });
     pintarAnclas();
     setupScrollspy();
@@ -750,14 +762,20 @@ window.OT2C = (function(){
   function repintarSeccion(k){
     var b = document.getElementById('o2mSec-'+k+'-b');
     if (!b) return;
-    if (k==='tipo')     pintarTipo(b);
-    if (k==='cliente')  pintarCliente(b);
-    if (k==='detalle')  pintarDetalle(b);
-    if (k==='agenda')   pintarAgenda(b);
-    if (k==='tecnicos') pintarTecnicos(b);
-    if (k==='equipos')  pintarEquipos(b);
-    if (k==='finanzas') pintarFinanzas(b);
-    if (k==='revisar')  pintarRevisar(b);
+    try {
+      if (k==='tipo')     pintarTipo(b);
+      if (k==='cliente')  pintarCliente(b);
+      if (k==='detalle')  pintarDetalle(b);
+      if (k==='agenda')   pintarAgenda(b);
+      if (k==='tecnicos') pintarTecnicos(b);
+      if (k==='equipos')  pintarEquipos(b);
+      if (k==='finanzas') pintarFinanzas(b);
+      if (k==='revisar')  pintarRevisar(b);
+    } catch(e){
+      console.error('[OT2C] repintarSeccion, sección "'+k+'":', e);
+      b.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
+        'Esta sección no se pudo actualizar. Prueba cerrar y reabrir el formulario.</div>';
+    }
     pintarAnclas();
   }
 
@@ -1866,6 +1884,21 @@ window.OT2C = (function(){
   }
 
   function cargarEquipos(){
+    // 2026-08-29 (bug real encontrado en vivo): pintarFormulario() dibuja
+    // TODAS las secciones de una sola pasada apenas se elige el origen --
+    // si el origen es 'cliente' (a diferencia de ticket/cotización/
+    // documento, que sí lo traen precargado), esta función se ejecutaba
+    // ANTES de que exista S.cliente y explotaba leyendo S.cliente.id de un
+    // objeto null. El forEach de pintarFormulario() se cortaba justo ahí,
+    // así que Finanzas/Revisar/el riel de anclas NUNCA llegaban a pintarse
+    // en el primer render -- setCli() sí repinta "equipos" después (por
+    // eso ese cuadro parecía "recuperarse" solo), pero Finanzas y Revisar
+    // quedaban vacíos para siempre, sin ningún aviso.
+    if (!S.cliente){
+      var _c0 = document.getElementById('o2mEqList');
+      if (_c0) _c0.innerHTML = '<div class="text-muted small"><i class="bi bi-arrow-up-circle me-1"></i>Elige un cliente arriba primero.</div>';
+      return;
+    }
     Promise.all([
       fetch('/mantenciones/api/clientes/'+S.cliente.id+'/maquinas-list', {credentials:'same-origin'}).then(function(r){return r.json();}),
       cachePlant.length ? Promise.resolve({plantillas:cachePlant})
