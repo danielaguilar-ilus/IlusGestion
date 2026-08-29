@@ -167,9 +167,58 @@
 /* Fase "origen": sin nav de anclas, el body ocupa todo el ancho */
 .o2m-body.solo{max-width:none}
 
-/* ── Secciones del formulario único (fase "form") ─────────────────── */
-.o2m-sec{padding-bottom:26px;margin-bottom:22px;border-bottom:1px solid #f1f3f5;scroll-margin-top:10px}
-.o2m-sec:last-child{border-bottom:0;margin-bottom:0;padding-bottom:4px}
+/* ── Secciones del formulario único, ahora como TARJETA de paso ──────
+   2026-08-29 (Daniel, viendo el modal viejo de Tickets -- "PASO 5" con
+   círculo rojo enorme: "me gusta más ese modal... clonarlo, pero que sea
+   independiente de ese módulo, pero que se vea así"). Clon INDEPENDIENTE
+   (prefijo o2m propio, sin tocar ni depender de static/modal_generar_ot.css)
+   del patrón .lev-step-* de ese modal (círculo 60px, "PASO N" arriba,
+   verde al completarse con pulso una vez) -- mismo patrón que Retiros,
+   ya establecido como la referencia "premium" del proyecto. Confirmado
+   con Daniel: se clona el ESTILO VISUAL, no la navegación por
+   Siguiente/Atrás -- sigue siendo scroll único con el riel de anclas. */
+.o2m-sec{display:flex;gap:16px;align-items:flex-start;padding:18px;margin-bottom:16px;
+  border-radius:12px;border:1.5px solid #e5e7eb;background:#fff;scroll-margin-top:10px;
+  box-shadow:0 1px 2px rgba(15,23,42,.04);
+  transition:border-color .25s ease,background .3s ease,box-shadow .25s ease}
+.o2m-sec:last-child{margin-bottom:0}
+.o2m-sec.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%);
+  box-shadow:0 1px 3px rgba(22,163,74,.08),0 14px 32px -18px rgba(22,163,74,.28)}
+.o2m-step-circle-wrap{display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0;min-width:64px}
+.o2m-step-circle-label{font-size:.6rem;font-weight:900;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ilus-red,#dc2626);line-height:1;white-space:nowrap;transition:color .25s ease}
+.o2m-sec.is-complete .o2m-step-circle-label{color:#16a34a}
+.o2m-step-circle{position:relative;width:60px;height:60px;border-radius:50%;
+  background:var(--ilus-red,#dc2626);color:#fff;border:3px solid #fff;
+  display:flex;align-items:center;justify-content:center;font-size:1.75rem;font-weight:900;
+  line-height:1;font-variant-numeric:tabular-nums;flex-shrink:0;
+  box-shadow:0 8px 22px rgba(220,38,38,.38),0 0 0 4px rgba(220,38,38,.10);
+  transition:background .3s cubic-bezier(.4,0,.2,1),box-shadow .3s cubic-bezier(.4,0,.2,1),
+             transform .3s cubic-bezier(.4,0,.2,1)}
+.o2m-step-circle .chk{display:none;font-size:1.55rem;line-height:1}
+.o2m-sec.is-complete .o2m-step-circle{background:#16a34a;transform:scale(1.04);
+  box-shadow:0 8px 22px rgba(22,163,74,.38),0 0 0 4px rgba(22,163,74,.12)}
+.o2m-sec.is-complete .o2m-step-circle .num{display:none}
+.o2m-sec.is-complete .o2m-step-circle .chk{display:block}
+/* Anillo que pulsa UNA vez al completarse -- mismo patrón que Retiros y
+   el modal viejo, disparado por JS agregando/quitando .pulse (ver
+   pintarAnclas: no se puede animar por CSS solo sin que el pulso se
+   repita en cada repintado). */
+.o2m-step-circle.pulse::after{content:'';position:absolute;inset:-5px;border-radius:50%;
+  border:2px solid #16a34a;opacity:.35;animation:o2mStepPulseGreen 1.6s ease-in-out 1}
+@keyframes o2mStepPulseGreen{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.22);opacity:0}}
+@media (prefers-reduced-motion:reduce){
+  .o2m-step-circle.pulse::after{animation:none}
+  .o2m-sec.is-complete .o2m-step-circle{transform:none}
+}
+.o2m-step-content{flex:1;min-width:0}
+@media (max-width:575.98px){
+  .o2m-sec{padding:14px;gap:12px}
+  .o2m-step-circle-wrap{min-width:52px}
+  .o2m-step-circle{width:48px;height:48px;font-size:1.4rem}
+  .o2m-step-circle .chk{font-size:1.25rem}
+  .o2m-step-circle-label{font-size:.54rem}
+}
 
 .o2m-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;
   align-items:center;gap:10px;background:#fafbfc}
@@ -490,6 +539,10 @@ window.OT2C = (function(){
 
   var S = {};   // estado del formulario
   var fase = 'origen';   // 'origen' → pantalla de origen. 'form' → formulario único con scroll.
+  // Qué pasos ya estaban "listos" la última vez que se pintaron las anclas
+  // -- para que el pulso verde de la tarjeta (.o2m-step-circle.pulse) se
+  // dispare SOLO al pasar de pendiente a completo, nunca en cada repintado.
+  var _o2mStepCompleteTracked = {};
   var anclaActiva = null;
   var modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
   var scrollObs = null;
@@ -556,6 +609,7 @@ window.OT2C = (function(){
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
+    _o2mStepCompleteTracked = {};
   }
 
   function esInterno(){ return S.origen === 'interno' ||
@@ -671,6 +725,20 @@ window.OT2C = (function(){
       return linea + '<button type="button" class="o2m-step '+cls+'" onclick="OT2C.irAncla(\''+p.k+'\')" title="'+esc(p.n)+'">'+
              '<span class="o2m-circle">'+ico+'</span><span class="o2m-label">'+esc(p.n)+'</span></button>';
     }).join('');
+    // 2026-08-29: además del riel, cada TARJETA de paso (.o2m-sec) recibe
+    // el mismo estado -- pulso UNA sola vez al pasar de pendiente a listo
+    // (no en cada repintado, o el anillo verde parpadearía con cada campo
+    // que se toca en cualquier parte del formulario).
+    ps.forEach(function(p){
+      var sec = document.getElementById('o2mSec-'+p.k);
+      if (!sec) return;
+      var listo = completo(p.k);
+      var eraListo = !!_o2mStepCompleteTracked[p.k];
+      sec.classList.toggle('is-complete', listo);
+      var circ = document.getElementById('o2mCirc-'+p.k);
+      if (circ && listo && !eraListo) circ.classList.add('pulse');
+      _o2mStepCompleteTracked[p.k] = listo;
+    });
   }
   // Alias corto reusado por handlers inline generados en varias funciones.
   function refrescarAnclas(){ pintarAnclas(); }
@@ -734,8 +802,19 @@ window.OT2C = (function(){
   function pintarFormulario(){
     var ps = pasos();
     var body = document.getElementById('o2mBody');
-    body.innerHTML = ps.map(function(p){
-      return '<section class="o2m-sec" id="o2mSec-'+p.k+'"><div id="o2mSec-'+p.k+'-b"></div></section>';
+    // El número de paso es la POSICIÓN real en pasos() (i+1) -- si "Cliente"
+    // no aplica (trabajo interno) o el orden cambia (Técnicos antes de
+    // Agenda, 2026-08-29), el número se recalcula solo, nunca queda fijo.
+    body.innerHTML = ps.map(function(p, i){
+      return '<section class="o2m-sec" id="o2mSec-'+p.k+'">'+
+        '<div class="o2m-step-circle-wrap">'+
+          '<div class="o2m-step-circle-label">Paso '+(i+1)+'</div>'+
+          '<div class="o2m-step-circle" id="o2mCirc-'+p.k+'">'+
+            '<span class="num">'+(i+1)+'</span><i class="bi bi-check-lg chk"></i>'+
+          '</div>'+
+        '</div>'+
+        '<div class="o2m-step-content" id="o2mSec-'+p.k+'-b"></div>'+
+      '</section>';
     }).join('');
     // 2026-08-29 (bug real encontrado en vivo, ver cargarEquipos): un error
     // sin capturar en UNA sección (ej. equipos sin cliente todavía) cortaba
