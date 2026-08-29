@@ -954,6 +954,33 @@
   color:#dc2626;font-weight:700;font-size:.82rem;cursor:pointer;padding:8px 2px;margin-bottom:4px;
 }
 
+/* 2026-08-29 (Daniel: "que al final se habilite un botón para pasar al
+   próximo equipo, de manera automática... también una opción de salir del
+   formulario para seleccionar otro equipo"). Misma familia de CTA que
+   .resumen-cta (mismo tamaño/gesto), pero vive al pie de CADA checklist de
+   equipo (#tareasEquipoNav), no solo en el resumen final. */
+.tx-eqnav{display:flex;flex-direction:column;gap:10px;margin:20px 10px 10px}
+.tx-eqnav-btn{
+  display:flex;align-items:center;justify-content:center;gap:9px;
+  width:100%;min-height:52px;border-radius:14px;cursor:pointer;
+  font-weight:800;font-size:.92rem;letter-spacing:-.01em;text-align:center;
+  transition:transform .12s;
+}
+.tx-eqnav-btn:active{transform:scale(.98)}
+.tx-eqnav-btn b{font-weight:800}
+.tx-eqnav-next{
+  border:none;color:#fff;background:linear-gradient(135deg,#16a34a,#15803d);
+  box-shadow:0 8px 20px -8px rgba(22,163,74,.5);
+}
+.tx-eqnav-fin{
+  border:none;color:#fff;background:linear-gradient(135deg,#dc2626,#b91c1c);
+  box-shadow:0 8px 20px -8px rgba(220,38,38,.5);
+}
+.tx-eqnav-otro{
+  border:1.5px solid #d1d5db;color:#374151;background:#fff;min-height:46px;
+}
+.tx-eqnav-otro:hover{background:#f9fafb;border-color:#9ca3af}
+
 /* Empty / sin tareas — upgrade visual 2026-05-22 */
 .tx-empty{background:#fff;border:1px solid #eaecf0;border-radius:14px;
   padding:48px 20px;text-align:center;color:#6b7280;
@@ -1825,9 +1852,9 @@
   border-radius:0;margin-bottom:0;padding:13px 10px 13px 8px;background:#fff;
   transition:background .2s, border-color .2s;
 }
-.tx-tarea.done{background:#fff;border-color:#e9ecef;border-left-color:#16a34a}
-.tx-tarea.done.sem-warn{border-left-color:#f59e0b}
-.tx-tarea.done.sem-fail{border-left-color:#dc2626}
+.tx-tarea.done{background:#fff;border-color:#e9ecef;border-left-color:#16a34a;box-shadow:inset 0 0 0 1.5px rgba(22,163,74,.32)}
+.tx-tarea.done.sem-warn{border-left-color:#f59e0b;box-shadow:inset 0 0 0 1.5px rgba(245,158,11,.38)}
+.tx-tarea.done.sem-fail{border-left-color:#dc2626;box-shadow:inset 0 0 0 1.5px rgba(220,38,38,.4)}
 .tx-tarea.next{border-left-color:#dc2626;box-shadow:none;background:#fff}
 /* 2026-08-29 (Daniel: "una permite avanzar y otra... tiene que tomar las
    fotos"): tarea con requiere_foto=1 y todavía CERO fotos -- se distingue
@@ -1835,8 +1862,13 @@
    no confundir "falla de inspección" con "falta evidencia fotográfica". Se
    pinta igual si ya está "done" (datos viejos pueden estar marcados
    completos sin foto real -- acá también se avisa, no solo en tareas nuevas). */
-.tx-tarea.falta-foto{border-left-color:#dc2626;background:#fef2f2}
+.tx-tarea.falta-foto{border-left-color:#dc2626;background:#fef2f2;box-shadow:inset 0 0 0 1.5px rgba(220,38,38,.4)}
 .tx-tarea.done.falta-foto{border-left-color:#dc2626}
+/* 2026-08-29 (Daniel: "que te acompañe y te diga que está bien y que está
+   mal, como rodeando hasta los objetos con borde rojo, verde"). El acento
+   de 4px en el borde izquierdo ya existía -- este box-shadow inset lo
+   extiende a un marco completo alrededor de la fila, sin tocar el
+   full-bleed (inset no agrega margen ni cambia el ancho de la fila). */
 .tx-tarea .ttl{align-items:center;gap:11px;margin-bottom:0}
 .tx-tarea .ttl-info{order:1}
 .tx-tarea .ttl-chk{

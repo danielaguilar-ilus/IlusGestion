@@ -954,6 +954,58 @@ function renderTareas(mid, pid){
   const idxSiguiente = grupo.tareas.findIndex(t => !t.completada);
   cont.innerHTML = grupo.tareas.map((t, i) => renderTareaHtml(t, bloqueada, mid, pid, i, i === idxSiguiente)).join('');
   _runHeadSync(grupo);
+  _renderTareasEquipoNav(mid);
+}
+
+// 2026-08-29 (Daniel: "siempre cuando termine, se habilite un botón al
+// final para pasar al próximo equipo, de manera automática... también
+// puede tener una opción de salir del formulario para seleccionar otro
+// equipo en caso de que no sea el mismo orden"). Vive en su propio
+// contenedor (#tareasEquipoNav, HERMANO de #tareasList, no dentro) para
+// no perder scroll/foco de la lista de tareas cada vez que se refresca
+// (se llama de nuevo en cada respuesta guardada, ver _updateProgress).
+//
+// "Siguiente equipo" busca hacia ADELANTE en el orden real de la lista
+// (EQUIPOS, el mismo orden que ve el técnico en Vista 1) el próximo que
+// aún tenga tareas pendientes -- nunca salta hacia atrás. Si el técnico
+// trabaja fuera de ese orden, "Elegir otro equipo" (siempre visible) lo
+// manda de vuelta a la lista completa para tocar el que corresponda.
+function _renderTareasEquipoNav(mid){
+  const cont = document.getElementById('tareasEquipoNav');
+  if (!cont) return;
+  mid = String(mid);
+  const stats = STATS_POR_MAQUINA[mid] || {};
+  const listaIds = (typeof EQUIPOS !== 'undefined' ? EQUIPOS : []).map(e => String(e.id));
+  const idxActual = listaIds.indexOf(mid);
+
+  let proxId = null;
+  for (let k = idxActual + 1; k < listaIds.length; k++){
+    const cand = listaIds[k];
+    if (!(STATS_POR_MAQUINA[cand] || {}).bloqueada){ proxId = cand; break; }
+  }
+
+  const btnOtro = `<button type="button" class="tx-eqnav-btn tx-eqnav-otro" onclick="goToMaquinas()">
+      <i class="bi bi-grid-3x3-gap-fill"></i><span>Elegir otro equipo</span>
+    </button>`;
+
+  let btnAvanzar = '';
+  if (stats.bloqueada){
+    if (proxId){
+      const proxEq = EQUIPOS_IDX[proxId] || {};
+      btnAvanzar = `<button type="button" class="tx-eqnav-btn tx-eqnav-next" onclick="goToPlantillas('${proxId}')">
+          <i class="bi bi-check-circle-fill"></i>
+          <span>Listo aquí — seguir con <b>${_escapeHtml(proxEq.nombre || ('Equipo #' + proxId))}</b></span>
+          <i class="bi bi-arrow-right"></i>
+        </button>`;
+    } else {
+      btnAvanzar = `<button type="button" class="tx-eqnav-btn tx-eqnav-fin" onclick="abrirResumenOFirma()">
+          <i class="bi bi-flag-fill"></i><span>Último equipo listo — ir a firmar</span>
+          <i class="bi bi-arrow-right"></i>
+        </button>`;
+    }
+  }
+
+  cont.innerHTML = `<div class="tx-eqnav">${btnAvanzar}${btnOtro}</div>`;
 }
 
 // ════════════════════════════════════════════════════════
@@ -3579,6 +3631,12 @@ function _updateProgress(mid, pid){
   // faltaba: el observer ya estaba listo para reaccionar a este cambio.
   document.getElementById('tx-eq-card-' + mid)
     ?.classList.toggle('done', STATS_POR_MAQUINA[mid].bloqueada);
+  // 2026-08-29: refresca el botón "Siguiente equipo" en vivo -- si esta
+  // respuesta fue justo la que completó el equipo, el botón debe aparecer
+  // sin que el técnico tenga que recargar ni volver a la lista.
+  if (String(_state.mid) === String(mid) && _state.view === 'tareas'){
+    _renderTareasEquipoNav(mid);
+  }
 
   // Update stats globales
   // 2026-05-18 (Mejora UX firma): además de total/completas globales, sacamos

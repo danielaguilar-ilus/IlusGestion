@@ -1954,7 +1954,19 @@
            Mismo gate original (estado + puede_ejecutar) SIN la exclusión
            de tipo levantamiento de arriba — este toggle se usa justamente
            EN el levantamiento, es un botón distinto de "Saltar equipo". #}
-        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar %}
+        {# 🔧 FIX 2026-08-29 (Daniel: "quiero eliminar el sacarlo del plan,
+           que no lo vea el técnico... solo que dé un argumento si el
+           producto no está y saltárselo"). "Sacar del plan" es una decisión
+           de GESTIÓN (excluir un accesorio de la mantención), no algo que
+           el técnico deba resolver en terreno -- el backend YA lo bloquea
+           para técnico/tecnico_externo (@_no_tecnico en
+           /mantenciones/api/maquinas/<id>/aplica-mantencion, 2026-08-09:
+           "Decisión de gestión, no de terreno"), pero el botón seguía
+           visible para el técnico, que lo veía sin poder usarlo. Su única
+           herramienta en terreno para "este producto no está" sigue siendo
+           "Saltar equipo" (arriba), que ya exige razón + observación de
+           10+ caracteres. #}
+        {% if visita.estado not in ['cerrada','pendiente_aprobacion'] and puede_ejecutar and not es_tecnico %}
         {% set _apl_ot = (eq.aplica_mantencion if eq.aplica_mantencion is not none else 1) %}
         <button type="button" class="eq-action-btn" id="eqAplBtn-{{ eq.id }}"
                 data-aplica="{{ 1 if _apl_ot else 0 }}"
@@ -1965,13 +1977,6 @@
           <i class="bi {{ 'bi-wrench-adjustable' if _apl_ot else 'bi-dash-circle' }}"></i>
         </button>
         {% endif %}
-        {# CTA explícito de escritorio: hace EXACTAMENTE lo mismo que el
-           click en la tarjeta y que el chevrón (goToPlantillas), pero se
-           lee. En móvil sigue mandando el chevrón. #}
-        <button type="button" class="tx-eq-open tx-desk"
-                onclick="event.stopPropagation(); goToPlantillas('{{ eq.id }}')">
-          Abrir checklist <i class="bi bi-arrow-right"></i>
-        </button>
       </div>
       <i class="bi bi-chevron-right eq-arrow"></i>
     </div>
@@ -2009,6 +2014,13 @@
     <div id="tareasList">
       {# Llenado dinámico #}
     </div>
+    {# 2026-08-29 (Daniel: "que al final se habilite un botón para pasar al
+       próximo equipo, de manera automática... también una opción de salir
+       del formulario para seleccionar otro equipo"). Llenado por
+       _renderTareasEquipoNav() en cada renderTareas() -- vive FUERA de
+       #tareasList (que se reescribe completo por cada respuesta) para no
+       perder el estado de scroll/foco de esa lista al recalcular el nav. #}
+    <div id="tareasEquipoNav"></div>
     {# 2026-06-12 (Daniel) — datalist ÚNICO para los campos "Marca" de la
        checklist (combobox de marcas/familias del ERP). Vive FUERA de
        #tareasList (que se re-renderiza por tarea) para conservar el id
