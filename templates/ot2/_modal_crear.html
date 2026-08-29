@@ -134,16 +134,24 @@
 @media (min-width:768px){ .o2m-line{width:2px;height:14px;margin-left:15px} }
 @media (max-width:767.98px){ .o2m-line{height:2px;flex:1 1 14px;min-width:8px;margin-top:13px;max-width:20px} }
 .o2m-line.ok{background:#16a34a}
-.o2m-circle{width:30px;height:30px;border-radius:50%;background:#e5e7eb;color:transparent;
+{# 2026-08-29 (Daniel: "que en verdad valide lo que son los datos
+   necesarios, y ahí se tornen en verde... la silueta verde cuando se
+   aprueba o roja cuando está pendiente o no cumple"): el gris neutro de
+   antes no decía nada -- ahora el círculo nace con una SILUETA roja hueca
+   (fondo apenas teñido, borde rojo) mientras la sección no esté completa,
+   y solo se apaga a verde sólido cuando completo(k) es real. ".on" (la
+   sección que estás mirando) sigue siendo el rojo sólido con pulso de
+   siempre -- son dos señales distintas: "estás aquí" vs "esto falta". #}
+.o2m-circle{width:30px;height:30px;border-radius:50%;background:#fef2f2;color:transparent;
   display:grid;place-items:center;font-size:.86rem;font-weight:900;flex-shrink:0;
-  position:relative;border:2px solid #fff;box-shadow:0 1px 2px rgba(15,23,42,.08);
-  transition:background .35s cubic-bezier(.34,1.56,.64,1),box-shadow .35s cubic-bezier(.34,1.56,.64,1),
-             transform .35s cubic-bezier(.34,1.56,.64,1)}
-.o2m-step.on .o2m-circle{background:var(--ilus-red,#dc2626);transform:scale(1.08);
+  position:relative;border:2px solid #fca5a5;box-shadow:0 1px 2px rgba(15,23,42,.06);
+  transition:background .35s cubic-bezier(.34,1.56,.64,1),border-color .35s ease,
+             box-shadow .35s cubic-bezier(.34,1.56,.64,1),transform .35s cubic-bezier(.34,1.56,.64,1)}
+.o2m-step.on .o2m-circle{background:var(--ilus-red,#dc2626);border-color:#fff;transform:scale(1.08);
   box-shadow:0 4px 12px rgba(220,38,38,.40),0 0 0 4px rgba(220,38,38,.14)}
 .o2m-step.on .o2m-circle::after{content:'';position:absolute;inset:-5px;border-radius:50%;
   border:2px solid rgba(220,38,38,.55);animation:o2mRielPulse 2.2s ease-in-out infinite}
-.o2m-step.ok .o2m-circle{background:#16a34a;color:#fff;box-shadow:0 3px 10px rgba(22,163,74,.35)}
+.o2m-step.ok .o2m-circle{background:#16a34a;border-color:#16a34a;color:#fff;box-shadow:0 3px 10px rgba(22,163,74,.35)}
 @keyframes o2mRielPulse{0%{transform:scale(.85);opacity:.75}75%{transform:scale(1.4);opacity:0}100%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.o2m-step.on .o2m-circle::after{animation:none}}
 .o2m-label{font-size:.78rem;font-weight:800;letter-spacing:.01em;color:#9ca3af;
@@ -171,12 +179,17 @@
 
 /* Origen y tipos: tarjetas elegibles */
 .o2m-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:10px}
+{# 2026-08-29 (Daniel: "más elegante, con tarjetas con profundidad"): antes
+   la tarjeta era plana en reposo (shadow solo aparecía al hover) -- ahora
+   tiene una elevación sutil siempre, que crece al pasar el mouse y se
+   vuelve un glow rojo cuando queda elegida. #}
 .o2m-op{border:1.5px solid #e5e7eb;border-radius:11px;padding:13px;background:#fff;
-  text-align:left;cursor:pointer;transition:all .16s;min-height:44px}
-.o2m-op:hover{border-color:#c7cbd1;transform:translateY(-1px);
-  box-shadow:0 6px 16px rgba(10,10,10,.07)}
+  text-align:left;cursor:pointer;transition:all .16s;min-height:44px;
+  box-shadow:0 1px 3px rgba(15,23,42,.06),0 1px 2px rgba(15,23,42,.04)}
+.o2m-op:hover{border-color:#c7cbd1;transform:translateY(-2px);
+  box-shadow:0 10px 24px rgba(10,10,10,.10)}
 .o2m-op.sel{border-color:var(--ilus-red,#dc2626);background:#fff5f5;
-  box-shadow:0 0 0 1px var(--ilus-red,#dc2626)}
+  box-shadow:0 4px 14px rgba(220,38,38,.18),0 0 0 1px var(--ilus-red,#dc2626)}
 .o2m-op .ic{font-size:1.3rem;color:var(--ilus-red,#dc2626);display:block;margin-bottom:6px}
 .o2m-op .n{font-weight:800;font-size:.87rem;color:#0a0a0a;display:block}
 .o2m-op .l{font-size:.72rem;color:#6b7280;line-height:1.35;display:block;margin-top:3px}
