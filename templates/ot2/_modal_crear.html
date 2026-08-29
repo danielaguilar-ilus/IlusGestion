@@ -2154,7 +2154,14 @@ window.OT2C = (function(){
     if (S.tipo === 'revision_interna') return pintarBodegaEvidencia(b);
     if (esInterno()) return pintarTrabajoInterno(b);
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
-      '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
+      // 2026-08-29 (Daniel, en vivo: "ya tengo seleccionado y sigue en
+      // rojo"): equipos+plantillas listos no bastan -- completo('equipos')
+      // TAMBIÉN exige responder Ascensor/Estacionamiento, que viven más
+      // abajo en esta misma tarjeta, fuera de vista sin hacer scroll.
+      // Verificado en vivo que la lógica es correcta (pasa a verde apenas
+      // se responden) -- lo que faltaba era decirlo acá arriba.
+      '<p class="d">Cada equipo necesita su checklist elegido, y más abajo hay que responder '+
+      'Ascensor/Estacionamiento. Sin eso la orden no avanza.</p>'+
       // Origen "Factura o boleta": las líneas del documento son solo una
       // REFERENCIA — no crean equipos automáticamente en la ficha (eso
       // exige matchear SKU contra la clasificación del catálogo, un paso
