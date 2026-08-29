@@ -267,6 +267,53 @@
 .o2m-eq .hd{display:flex;align-items:center;gap:10px;margin-bottom:9px}
 .o2m-eq .hd .nm{font-weight:700;font-size:.87rem;flex:1}
 
+/* Modificador genérico de ".o2m-chk marcado" -- separado de ".o2m-it.sel
+   .o2m-chk" (esa regla solo aplica dentro de .o2m-it) porque la tabla de
+   Equipos de abajo NO envuelve el checkbox en un .o2m-it. Sin esto, el
+   check blanco quedaba invisible sobre el fondo claro del propio
+   checkbox (bug real detectado al clonar esta tabla, 2026-08-29). */
+.o2m-chk.on{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff}
+
+/* ── Tabla "Equipos y plantillas" del paso Equipos (cliente existente) ──
+   2026-08-29 (Daniel, viendo el paso en vivo): "cuando selecciono el
+   cliente, me trae los productos no muy amigablemente" + "cópiate
+   también ese paso [PASO 5 del modal viejo de Tickets]... que la tabla
+   esta mejor asi que copiala". Clon del ESPÍRITU visual de esa tabla
+   (barra de aviso + "Marcar todos", columnas reales, hint de pie) con
+   clases o2m- PROPIAS -- nunca depende de static/modal_generar_ot.css ni
+   de _modal_generar_ot.html, y con la paleta de este wizard, no los
+   colores del modal viejo. Ver pintarListaEquipos()/eqTogTodos(). */
+.o2m-eq-card{border:1px solid #eaecf0;border-radius:10px;background:#fff;overflow:hidden}
+.o2m-eq-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid #f1f5f9}
+.o2m-eq-toolbar-txt{font-size:.78rem;color:#6b7280;flex:1;min-width:220px}
+.o2m-eq-rut{font-weight:800;color:#0a0a0a}
+.o2m-eq-btn-todos{flex-shrink:0}
+.o2m-eq-tablewrap{overflow:auto;max-height:38vh}
+.o2m-eq-table{width:100%;border-collapse:collapse;font-size:.84rem}
+.o2m-eq-table thead th{position:sticky;top:0;z-index:1;background:#f8fafc;text-align:left;
+  font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;
+  padding:9px 10px;border-bottom:1px solid #eaecf0;white-space:nowrap}
+.o2m-eq-table thead th.chk{width:40px}
+.o2m-eq-table tbody td{padding:9px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+.o2m-eq-table tbody tr:last-child td{border-bottom:0}
+.o2m-eq-table tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--ilus-red,#dc2626)}
+.o2m-eq-table tbody tr.ok td:first-child{box-shadow:inset 3px 0 0 #16a34a}
+.o2m-eq-table tbody tr.ok{background:#f7fef9}
+.o2m-eq-table td.chk{text-align:center}
+.o2m-eq-table .nm{font-weight:700;display:block}
+.o2m-eq-table .sku{font-size:.72rem;color:#9ca3af;display:block;margin-top:1px}
+.o2m-eq-table td.serie{font-size:.8rem;color:#374151;font-variant-numeric:tabular-nums;white-space:nowrap}
+.o2m-eq-table td .muted{color:#c7cbd1}
+.o2m-eq-table select{min-width:190px}
+.o2m-eq-sug{display:block;margin-top:4px;font-size:.7rem;color:#6b7280}
+.o2m-eq-hint{padding:9px 12px;background:#f8fafc;border-top:1px solid #f1f5f9;
+  font-size:.72rem;color:#6b7280}
+@media (max-width:575.98px){
+  .o2m-eq-table{font-size:.78rem}
+  .o2m-eq-table select{min-width:150px}
+}
+
 .o2m-aviso{background:#fff8e1;border:1px solid #fcd34d;border-radius:9px;
   padding:11px 13px;font-size:.82rem;color:#92400e;font-weight:600;margin-top:12px}
 .o2m-aviso ul{margin:6px 0 0;padding-left:18px}
@@ -565,6 +612,11 @@ window.OT2C = (function(){
   var _o2mStepCompleteTracked = {};
   var anclaActiva = null;
   var modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
+  // 2026-08-29: recuerda para QUÉ cliente ya se aplicó la preselección
+  // automática de equipos por "aplica_mantencion" (ver cargarEquipos) --
+  // así un repintado de la sección (p.ej. al cambiar el tipo de OT) no
+  // pisa lo que Daniel ya marcó/desmarcó a mano para ese mismo cliente.
+  var preseleccionEqCliente = null;
   var scrollObs = null;
   // 28-08-2026: plantillas de checklist para "trabajo interno" (bodega,
   // capacitación, control de calidad) -- filtradas por categoría según el
@@ -630,6 +682,7 @@ window.OT2C = (function(){
     fase = 'origen';
     anclaActiva = null;
     _o2mStepCompleteTracked = {};
+    preseleccionEqCliente = null;
   }
 
   function esInterno(){ return S.origen === 'interno' ||
@@ -2039,6 +2092,37 @@ window.OT2C = (function(){
     ]).then(function(res){
       cacheEquipos = Array.isArray(res[0]) ? res[0] : (res[0].maquinas || []);
       cachePlant   = (res[1].plantillas || []).filter(function(p){ return p.activa; });
+      // ── Preselección por "plan de mantención" (2026-08-29) ────────────
+      // Pedido viejo de Daniel retomado: "si estoy seleccionando un
+      // cliente, me tienes que seleccionar los productos del plan... que
+      // si hay algo, me muestre todos los productos, pero que estén
+      // seleccionados solamente los que tienen el plan, y yo pueda
+      // revertir eso desde el modal". HIPÓTESIS con confianza alta, no
+      // 100% confirmada por Daniel en esta tarea: `aplica_mantencion` es
+      // "el plan" -- así lo describe su propio endpoint hermano
+      // (mant_maquina_aplica_mantencion, app.py ~73827: "define si el
+      // equipo entra al plan de mantención [y por lo tanto se cotiza].
+      // Decisión de gestión, no de terreno"). Si más adelante se descubre
+      // que "el plan" es otra cosa, esto se ajusta acá sin tocar nada más.
+      //
+      // Se aplica SOLO la primera vez que se cargan los equipos de ESTE
+      // cliente (preseleccionEqCliente lo recuerda) -- un repintado
+      // posterior de la sección (p.ej. al cambiar el tipo de OT, que
+      // reconstruye todo el formulario) NO debe pisar lo que el usuario
+      // ya marcó/desmarcó a mano, incluido un "desmarcar todos" completo.
+      // De ahí en adelante la selección sigue siendo 100% manual (eqTog) --
+      // esto solo decide el punto de partida, nunca fuerza nada.
+      if (preseleccionEqCliente !== S.cliente.id){
+        preseleccionEqCliente = S.cliente.id;
+        if (!S.equipos.length){
+          cacheEquipos.forEach(function(m){
+            if (m.aplica_mantencion){
+              S.equipos.push({maquina_id:m.id, plantilla_id:null, plantilla_sugerida:false});
+              sugerirPlantillaEquipo(m.id);
+            }
+          });
+        }
+      }
       pintarListaEquipos();
     }).catch(function(){
       var c=document.getElementById('o2mEqList');
@@ -2046,6 +2130,17 @@ window.OT2C = (function(){
     });
   }
 
+  /* 2026-08-29 (Daniel, viendo este paso en vivo): "cuando selecciono el
+     cliente, me trae los productos no muy amigablemente" + "cópiate
+     también ese paso [PASO 5 de templates/tickets/_modal_generar_ot.html]
+     ... que la tabla esta mejor asi que copiala". Se clona el ESPÍRITU
+     visual de esa tabla vieja (barra de aviso + "Marcar todos", columnas
+     Equipo/S-N/Plantilla, hint de pie) con clases o2m- PROPIAS -- clon
+     independiente, nunca depende de static/modal_generar_ot.css ni de
+     _modal_generar_ot.html (mismo criterio de todo este archivo), y con
+     la paleta/tipografía de ESTE wizard, no los colores del modal viejo.
+     También agrega S/N (m.serie) y el RUT del cliente, que antes se
+     recibían del backend pero no se pintaban en ningún lado. */
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
     if (!cacheEquipos.length){
@@ -2054,23 +2149,56 @@ window.OT2C = (function(){
     }
     var ops = cachePlant.map(function(p){
       return '<option value="'+p.id+'">'+esc(p.nombre)+'</option>'; }).join('');
-    c.innerHTML = cacheEquipos.map(function(m){
-      var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
-      return '<div class="o2m-eq '+(sel && sel.plantilla_id ? 'ok':'')+'">'+
-        '<div class="hd"><span class="o2m-chk" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
-        (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span>'+
-        '<span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
-        (m.sku ? '<span class="mt text-muted small">'+esc(m.sku)+'</span>' : '')+'</div>'+
-        (sel ? '<select class="form-select form-select-sm" onchange="OT2C.eqPlant('+m.id+',this.value)">'+
-               '<option value="">Elige el checklist…</option>'+ops+'</select>'+
-               // 28-08-2026: badge de "sugerida sola" -- ver sugerirPlantillaEquipo.
-               // Solo se muestra mientras el valor elegido sigue siendo el que
-               // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
-               (sel.plantilla_sugerida ? '<small class="text-muted d-block mt-1" style="font-size:.72rem">'+
-                 '<i class="bi bi-magic me-1"></i>Sugerida automáticamente por el tipo de equipo.</small>' : '')
-             : '')+
-        '</div>';
-    }).join('');
+    var totalMarcados = cacheEquipos.filter(function(m){
+      return S.equipos.some(function(e){ return e.maquina_id===m.id; });
+    }).length;
+    var todosMarcados = totalMarcados > 0 && totalMarcados === cacheEquipos.length;
+    var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
+
+    c.innerHTML =
+      '<div class="o2m-eq-card">'+
+        '<div class="o2m-eq-toolbar">'+
+          '<div class="o2m-eq-toolbar-txt">'+
+            '<i class="bi bi-info-circle me-1"></i>Equipos de la ficha del cliente'+
+            (rutTxt ? ' · <span class="o2m-eq-rut">RUT '+rutTxt+'</span>' : '')+
+            '. Marca los que el técnico debe atender — cada uno puede tener su propia plantilla.'+
+          '</div>'+
+          '<button type="button" class="btn btn-sm btn-outline-dark o2m-eq-btn-todos" '+
+          'style="min-height:44px" onclick="OT2C.eqTogTodos()">'+
+          (todosMarcados
+            ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
+            : '<i class="bi bi-check2-square me-1"></i>Marcar todos')+
+          '</button>'+
+        '</div>'+
+        '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
+          '<th class="chk"></th><th>Equipo</th><th>S/N</th><th>Plantilla</th>'+
+        '</tr></thead><tbody>'+
+        cacheEquipos.map(function(m){
+          var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
+          var cls = sel ? (sel.plantilla_id ? 'ok' : 'sel') : '';
+          return '<tr class="'+cls+'">'+
+            '<td class="chk"><span class="o2m-chk'+(sel?' on':'')+'" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
+              (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span></td>'+
+            '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
+              (m.sku ? '<span class="sku">'+esc(m.sku)+'</span>' : '')+'</td>'+
+            '<td class="serie">'+(m.serie ? esc(m.serie) : '<span class="muted">—</span>')+'</td>'+
+            '<td>'+(sel
+              ? '<select class="form-select form-select-sm" onchange="OT2C.eqPlant('+m.id+',this.value)">'+
+                '<option value="">Elige el checklist…</option>'+ops+'</select>'+
+                // 28-08-2026: badge de "sugerida sola" -- ver sugerirPlantillaEquipo.
+                // Solo se muestra mientras el valor elegido sigue siendo el que
+                // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
+                (sel.plantilla_sugerida ? '<small class="o2m-eq-sug">'+
+                  '<i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>' : '')
+              : '<span class="muted">—</span>')+
+            '</td>'+
+          '</tr>';
+        }).join('')+
+        '</tbody></table></div>'+
+        '<div class="o2m-eq-hint"><i class="bi bi-lightbulb me-1"></i>'+
+          '<b>Auto:</b> los equipos que están dentro del plan de mantención del cliente ya '+
+          'vienen marcados. Puedes marcar o desmarcar cualquiera libremente.</div>'+
+      '</div>';
     // Repintar el <select> con el valor ya elegido
     S.equipos.forEach(function(e){
       if (!e.plantilla_id) return;
@@ -2079,6 +2207,30 @@ window.OT2C = (function(){
         if (sels[i].getAttribute('onchange').indexOf('('+e.maquina_id+',')>=0) sels[i].value = e.plantilla_id;
       }
     });
+  }
+
+  /* "Marcar todos" (2026-08-29, clon del botón del modal viejo -- ver
+     tkotToggleTodos en static/tickets_ficha.js): si TODOS los equipos ya
+     están marcados, desmarca todos; si no, marca los que falten. Cada
+     equipo recién marcado dispara su propia sugerencia de plantilla
+     (sugerirPlantillaEquipo), igual que si se marcara a mano uno por uno
+     -- no se reimplementa esa lógica, solo se aplica en lote. */
+  function eqTogTodos(){
+    var todosMarcados = cacheEquipos.length > 0 && cacheEquipos.every(function(m){
+      return S.equipos.some(function(e){ return e.maquina_id === m.id; });
+    });
+    if (todosMarcados){
+      S.equipos = [];
+    } else {
+      cacheEquipos.forEach(function(m){
+        if (!S.equipos.some(function(e){ return e.maquina_id === m.id; })){
+          S.equipos.push({maquina_id:m.id, plantilla_id:null, plantilla_sugerida:false});
+          sugerirPlantillaEquipo(m.id);
+        }
+      });
+    }
+    pintarListaEquipos(); refrescarAnclas();
+    _o2mFinEstimar();
   }
 
   /* Capacitación / Control de calidad (26-08-2026): en vez de elegir UNA
@@ -2714,8 +2866,9 @@ window.OT2C = (function(){
       ilusToast('✓ ' + (r.creado ? 'Ficha creada: ' : 'Cliente encontrado: ') + r.cliente.razon_social, {type:'success'});
     }
     // Mismo camino que elegir el cliente a mano: setCli() setea S.cliente y
-    // entra al formulario único.
-    setCli(r.cliente.id, r.cliente.razon_social);
+    // entra al formulario único. header.rut es el RUT que trajo el propio
+    // documento ERP -- ya está a mano, no hace falta otra llamada.
+    setCli(r.cliente.id, r.cliente.razon_social, header.rut);
   }
 
   function setTipo(i){
@@ -2858,7 +3011,7 @@ window.OT2C = (function(){
             var nomJs = String(x.razon_social||x.nombre||'').replace(/'/g,"\\'");
             var rut = esc(x.rut||'');
             if (x.id){
-              return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+esc(nomJs)+'\')">'+
+              return '<div class="o2m-it" onclick="OT2C.setCli('+x.id+',\''+esc(nomJs)+'\',\''+rut+'\')">'+
                 '<i class="bi bi-building text-muted"></i><span style="flex:1">'+
                 '<span class="nm">'+nom+'</span>'+
                 '<span class="mt d-block">'+rut+' · con ficha</span></span></div>';
@@ -2876,9 +3029,16 @@ window.OT2C = (function(){
     }, 260);
   }
   /* Elegido el cliente, se refresca la sección Cliente + Equipos (los
-     equipos dependen de qué cliente es) y las anclas. */
-  function setCli(id, nombre){
-    S.cliente = {id:id, nombre:nombre};
+     equipos dependen de qué cliente es) y las anclas.
+     `rut` (2026-08-29, Daniel viendo el paso Equipos: pidió mostrar el RUT
+     del cliente ahí) es OPCIONAL a propósito -- ya viene disponible sin
+     llamada de red nueva en los 3 callers reales (buscarCli: autocomplete
+     ya trae `rut`; crearFicha: recibe el mismo rut con el que se creó/
+     encontró la ficha; _o2mDocumentoSeleccionado: header.rut del documento
+     ERP). Si algún caller futuro no lo tiene a mano, queda undefined y
+     simplemente no se muestra -- no rompe nada. */
+  function setCli(id, nombre, rut){
+    S.cliente = {id:id, nombre:nombre, rut: rut || ''};
     S.equipos = [];
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
@@ -2920,7 +3080,9 @@ window.OT2C = (function(){
       return;
     }
     if (window.ilusToast) ilusToast('✓ ' + (r.mensaje || 'Ficha creada'), {type:'success'});
-    setCli(r.cliente.id, r.cliente.razon_social);
+    // El rut ya lo teníamos a mano (es el mismo con el que se buscó/creó
+    // la ficha) -- no hace falta pedirlo de nuevo al backend.
+    setCli(r.cliente.id, r.cliente.razon_social, rut);
   }
 
   /* Valida TODAS las secciones antes de crear (ya no hay pasos que
@@ -3153,7 +3315,7 @@ window.OT2C = (function(){
   return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
-          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, buscarCli:buscarCli, filtrarTipo:filtrarTipo,
+          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
           quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
