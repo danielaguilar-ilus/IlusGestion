@@ -415,11 +415,17 @@
   padding:3px 12px;font-size:.72rem;font-weight:800;cursor:pointer;flex-shrink:0;
   transition:border-color .15s,color .15s}
 .o2m-cal-hoy:hover{border-color:#0a0a0a;color:#0a0a0a}
-.o2m-cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+/* minmax(0,1fr) + min-width:0 en la celda: SIN eso, el "automatic minimum
+   size" de un grid item con aspect-ratio se calcula desde su min-height,
+   dando un ancho minimo efectivo de 50px por celda -> 7*50 + 6*4 = 374px,
+   mas de lo que mide la columna del mes -> el grid DESBORDA y la ultima
+   columna (domingo) queda cortada por el borde. Bug real reportado por
+   Daniel 3 veces ("el dia domingo esta montado"), 2026-08-29. */
+.o2m-cal-dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin-bottom:4px}
 .o2m-cal-dow span{text-align:center;font-size:.6rem;font-weight:800;color:#9ca3af;
   text-transform:uppercase;letter-spacing:.04em}
-.o2m-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-.o2m-cal-day{position:relative;aspect-ratio:1/1;min-height:44px;border-radius:9px;
+.o2m-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.o2m-cal-day{position:relative;aspect-ratio:1/1;min-height:40px;min-width:0;border-radius:9px;
   border:1px solid var(--o2m-line);background:#fafbfc;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
   transition:border-color .15s,background .15s,transform .15s,box-shadow .15s;outline-offset:1px}
@@ -451,7 +457,11 @@
   font-size:.66rem;color:#6b7280;font-weight:700}
 .o2m-cal-leyenda span{display:inline-flex;align-items:center;gap:5px}
 .o2m-cal-leyenda i.k{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}
-@media (min-width:768px){ .o2m-cal-day{min-height:50px} }
+@media (min-width:768px){ .o2m-cal-day{min-height:44px} }
+/* Dia ya pasado: no se puede agendar hacia atras (ver o2mCalClicDia). */
+.o2m-cal-day.pasado{opacity:.4;cursor:not-allowed;background:#f8f9fa}
+.o2m-cal-day.pasado:hover{transform:none;border-color:var(--o2m-line);background:#f8f9fa}
+.o2m-cal-day.pasado .num{color:#9ca3af}
 
 /* ── Col B: línea de tiempo del día -- esqueleto de .tkday-* original,
    bordes/radios/línea armonizados con la Col A (var(--o2m-line), radius
@@ -770,7 +780,11 @@ window.OT2C = (function(){
       case 'tipo':     return !!S.tipo;
       case 'cliente':  return !!S.cliente;
       case 'detalle':  return true;                       // el título se autogenera
-      case 'agenda':   return !!S.fecha;
+      // 2026-08-29: la fecha no solo tiene que existir -- no puede estar en
+      // el pasado (ver _o2mHoyStr). Al vivir acá, crear() la bloquea sola
+      // (ya recorre completo() de todos los pasos) y la tarjeta del paso
+      // queda en rojo, sin necesidad de una validación aparte.
+      case 'agenda':   return !!S.fecha && S.fecha >= _o2mHoyStr();
       case 'tecnicos': return true;                       // asignar después es válido
       case 'equipos':
         // 26-08-2026: "Trabajo interno" ya no es un solo criterio genérico.
@@ -1073,7 +1087,7 @@ window.OT2C = (function(){
       '<div class="row g-3">'+
         '<div class="col-md-4"><label class="fl">Fecha programada *</label>'+
         '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
-        'onchange="OT2C.setFecha(this.value)"></div>'+
+        'min="'+_o2mHoyStr()+'" onchange="OT2C.setFecha(this.value)"></div>'+
         '<div class="col-md-4"><label class="fl">Hora inicio</label>'+
         '<input type="time" class="form-control" id="o2mHoraIni" value="'+esc(S.hini)+'" '+
         'oninput="OT2C.setHora(\'hini\',this.value)" onchange="OT2C.setHora(\'hini\',this.value)"></div>'+
@@ -1153,6 +1167,22 @@ window.OT2C = (function(){
     if (_o2mCanvasEl) _o2mCanvasEl.addEventListener('click', o2mDaySlotClick);
   }
 
+  /* Hoy en formato YYYY-MM-DD, hora local del navegador. Se usa como piso
+     duro de la agenda (2026-08-29, Daniel: "necesito que no puedas agendar
+     en el pasado, ya que si tendremos problemas con la gestion de OT, ya
+     que le daremos 60 min para el inicio y 60 min para el final") -- esa
+     ventana de tolerancia al iniciar/cerrar la OT no tiene sentido contra
+     una fecha que ya pasó. Comparar strings YYYY-MM-DD es seguro: mismo
+     largo y orden lexicográfico == orden cronológico. */
+  function _o2mHoyStr(){
+    var h = new Date();
+    return h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
+  }
+  function _o2mHoraAhora(){
+    var h = new Date();
+    return String(h.getHours()).padStart(2,'0')+':'+String(h.getMinutes()).padStart(2,'0');
+  }
+
   /* Mismos umbrales que valida el backend, para que el usuario vea el
      aviso antes de mandar y no se lleve la sorpresa después. */
   function avisosAgenda(){
@@ -1163,10 +1193,21 @@ window.OT2C = (function(){
     if (S.hini && S.hfin && S.hini < '14:00' && S.hfin > '13:00') a.push('Cruza la colación (13:00–14:00).');
     if (S.fecha){ var d = new Date(S.fecha+'T12:00:00').getDay();
       if (d===0 || d===6) a.push('Cae en fin de semana, cuando no hay operación.'); }
-    c.innerHTML = a.length
+    // Hoy + hora de inicio ya pasada: NO bloquea (la OT puede nacer para
+    // "ahora mismo", y la ventana de 60 min de tolerancia al iniciar la
+    // absorbe), pero se avisa -- es justo el caso donde esa ventana ya
+    // está corriendo en contra.
+    if (S.fecha && S.fecha === _o2mHoyStr() && S.hini && S.hini < _o2mHoraAhora())
+      a.push('La hora de inicio ya pasó hoy — el margen de 60 min para iniciar corre desde ya.');
+    var bloqueo = (S.fecha && S.fecha < _o2mHoyStr())
+      ? '<div class="o2m-aviso" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b">'+
+        '<i class="bi bi-slash-circle-fill me-1"></i><b>No se puede agendar en el pasado.</b> '+
+        'Elige hoy o una fecha futura.</div>'
+      : '';
+    c.innerHTML = bloqueo + (a.length
       ? '<div class="o2m-aviso"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
         'Se puede agendar igual, pero ojo:<ul>'+a.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'
-      : '';
+      : '');
   }
 
   /* ════════════════════════════════════════════════════════════════════
@@ -1326,6 +1367,8 @@ window.OT2C = (function(){
       var visitas = mapa[fecha] || [];
       var dow = new Date(a, m-1, dia).getDay();
       var clases = ['o2m-cal-day'];
+      var esPasado = fecha < hoyStr;              // no se agenda hacia atrás
+      if (esPasado) clases.push('pasado');
       if (dow===0 || dow===6) clases.push('finde');
       if (fecha===hoyStr) clases.push('hoy');
       if (fecha===fechaProg) clases.push('sel');
@@ -1337,10 +1380,17 @@ window.OT2C = (function(){
         }).join('') + (visitas.length>3 ? '<b>+'+(visitas.length-3)+'</b>' : '') + '</span>';
       }
       var cntCls = visitas.length>=O2M_CAL_UMBRAL_ROJO ? 'roj' : (visitas.length>=O2M_CAL_UMBRAL_AMBAR ? 'amb' : '');
-      html += '<div class="'+clases.join(' ')+'" onclick="OT2C.o2mCalClicDia(\''+fecha+'\')" '+
-        'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.o2mCalClicDia(\''+fecha+'\');}" '+
-        'role="button" tabindex="0" '+
-        'aria-label="'+esc(fecha+' — '+(visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas'))+'">'+
+      // Un día pasado se sigue DIBUJANDO (con sus OTs, para poder mirar el
+      // historial del mes) pero deja de ser accionable: sin onclick, sin
+      // foco de teclado y anunciado como no disponible.
+      html += '<div class="'+clases.join(' ')+'"'+
+        (esPasado
+          ? ' aria-disabled="true"'
+          : ' onclick="OT2C.o2mCalClicDia(\''+fecha+'\')"'+
+            ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.o2mCalClicDia(\''+fecha+'\');}"'+
+            ' role="button" tabindex="0"')+
+        ' aria-label="'+esc(fecha+' — '+(esPasado ? 'fecha pasada, no se puede agendar' :
+            (visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas')))+'">'+
         '<span class="num">'+dia+'</span>'+
         (visitas.length ? '<span class="cnt '+cntCls+'">'+visitas.length+'</span>' : '')+
         dots+'</div>';
@@ -1353,6 +1403,13 @@ window.OT2C = (function(){
   // exactamente igual que si el usuario hubiera tipeado la fecha (mismo
   // truco que tkotCalClicDia en el modal de Tickets).
   function o2mCalClicDia(fecha){
+    // Guardia real, no solo cosmética: las celdas pasadas ya se dibujan sin
+    // onclick, pero esta función también se llama desde o2mCalInit() (que
+    // arranca en "hoy") y es parte de la API pública del modal.
+    if (fecha < _o2mHoyStr()){
+      if (window.ilusToast) ilusToast('No se puede agendar en el pasado.', {type:'warning'});
+      return;
+    }
     var fp = document.getElementById('o2mFecha');
     if (!fp){ o2mCalSelDia(fecha); return; }
     fp.value = fecha;
