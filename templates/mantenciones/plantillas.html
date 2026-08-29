@@ -1116,7 +1116,10 @@ async function eliminarPlantilla(){
     }
     if (_modal) _modal.hide();
     if (d.desactivada){
-      if (typeof ilusToast === 'function') ilusToast('Plantilla del sistema desactivada', {type:'warning'});
+      const _msg = d.motivo === 'clasificacion'
+        ? 'Viene de una clasificación real del catálogo — se desactivó en vez de eliminar'
+        : 'Plantilla del sistema desactivada';
+      if (typeof ilusToast === 'function') ilusToast(_msg, {type:'warning'});
     } else {
       if (typeof ilusToast === 'function') ilusToast('Plantilla eliminada', {type:'success'});
     }

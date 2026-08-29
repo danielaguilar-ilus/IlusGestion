@@ -79857,6 +79857,19 @@ def mant_plantillas_listar():
         except Exception as _e_def:
             print(f"[plantillas_listar] default para tipo '{tv_raw}' falló: {_e_def}", flush=True)
             default_plantilla_id = None
+    # 2026-08-29 (Daniel: "que sepamos cuáles vienen de clasificación y
+    # cuáles están hechas aparte"): mismo criterio que el candado de borrado
+    # de mant_plantilla_eliminar -- nombre coincide con una clase ACTIVA del
+    # catálogo, en las 3 categorías que dependen de esa auto-conexión. Una
+    # sola consulta (set de nombres), no una por fila.
+    try:
+        _clases_activas = {
+            r["nombre"] for r in
+            (mysql_fetchall("SELECT nombre FROM cat_clases_producto WHERE activo=1") or [])
+        }
+    except Exception as _e_cls:
+        print(f"[plantillas_listar] leer clases activas falló: {_e_cls}", flush=True)
+        _clases_activas = set()
     return jsonify({
         "ok": True,
         "plantillas": [{
@@ -79874,6 +79887,10 @@ def mant_plantillas_listar():
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
             "es_default": bool(default_plantilla_id) and r["id"] == default_plantilla_id,
             "revisar_tecnico": bool(r.get("revisar_tecnico")),
+            "de_clasificacion": (
+                (r.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas")
+                and r["nombre"] in _clases_activas
+            ),
         } for r in rows],
         "total": len(rows),
         "default_plantilla_id": default_plantilla_id,
@@ -80471,16 +80488,41 @@ def mant_plantilla_actualizar(pid):
 @_mant_required
 def mant_plantilla_eliminar(pid):
     """Borra (soft) una plantilla. Las del sistema no se pueden borrar; solo
-    desactivarse (activa=0)."""
-    plant = mysql_fetchone("SELECT id, es_sistema, nombre FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+    desactivarse (activa=0).
+
+    🔒 2026-08-29 (Daniel, mirando la lista de plantillas: "el Booty Builder
+    P viene de la clasificación de productos, entonces de momento
+    bloquearla para que no se puedan eliminar"): además de `es_sistema`
+    (un puñado marcado a mano), CUALQUIER plantilla cuyo nombre coincida
+    con una clasificación real del catálogo (`cat_clases_producto.nombre`)
+    es el checklist que `_plantilla_por_clasificacion_sku` va a buscar
+    exacto por nombre+categoría la próxima vez que alguien clasifique un
+    producto -- borrarla rompe esa auto-conexión en silencio, sin ningún
+    aviso hasta que aparece otra OT con el checklist genérico. Se protege
+    igual que "del sistema": desactivar, nunca borrar. Solo en las 3
+    categorías que Daniel confirmó (instalación/mantención/visitas) --
+    trabajo interno no tiene este vínculo con el catálogo.
+    """
+    plant = mysql_fetchone(
+        "SELECT id, es_sistema, nombre, categoria_admin FROM mant_tarea_plantillas WHERE id=%s",
+        (pid,))
     if not plant:
         return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
-    if plant.get("es_sistema"):
+    _de_clasificacion = False
+    if (plant.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas"):
+        _clasif = mysql_fetchone(
+            "SELECT id FROM cat_clases_producto WHERE nombre=%s AND activo=1",
+            (plant.get("nombre"),))
+        _de_clasificacion = bool(_clasif)
+    if plant.get("es_sistema") or _de_clasificacion:
         # Desactivar en vez de borrar
         mysql_execute("UPDATE mant_tarea_plantillas SET activa=0 WHERE id=%s", (pid,))
         try: _mant_log("plantilla", pid, "desactivada", plant["nombre"])
         except Exception: pass
-        return jsonify({"ok": True, "desactivada": True})
+        return jsonify({
+            "ok": True, "desactivada": True,
+            "motivo": "clasificacion" if (_de_clasificacion and not plant.get("es_sistema")) else "sistema",
+        })
     mysql_execute("DELETE FROM mant_tarea_plantillas WHERE id=%s", (pid,))
     try: _mant_log("plantilla", pid, "eliminada", plant["nombre"])
     except Exception: pass
