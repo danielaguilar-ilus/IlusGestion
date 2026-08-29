@@ -954,6 +954,12 @@ async function cargarDetalle(pid){
     document.getElementById('ePFamiliaActivo').value = p.familia_activo || 'todas';
     document.getElementById('ePActiva').checked = p.activa !== false;
     document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
+    // 29-08-2026: bug real encontrado en vivo -- renderCategoriaCards() solo
+    // pinta la tarjeta activa, nunca sincronizaba el input oculto con el dato
+    // del servidor (solo se llenaba al hacer click). Con la regla del Paso 1
+    // ahora más estricta, esto dejaba SIEMPRE en rojo el Paso 1 de cualquier
+    // plantilla existente al abrirla, aunque su categoría ya estuviera bien.
+    document.getElementById('ePCategoriaAdmin').value = p.categoria_admin || '';
     renderCategoriaCards(p.categoria_admin || '');
     _items = (d.items || []).map(it => ({...it, _uid: _nextUid++}));
     renderItems();
