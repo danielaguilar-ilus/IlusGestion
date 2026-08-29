@@ -292,14 +292,21 @@
 .o2m-eq-tablewrap{overflow:auto;max-height:38vh}
 .o2m-eq-table{width:100%;border-collapse:collapse;font-size:.84rem}
 .o2m-eq-table thead th{position:sticky;top:0;z-index:1;background:#f8fafc;text-align:left;
-  font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;
-  padding:9px 10px;border-bottom:1px solid #eaecf0;white-space:nowrap}
+  font-size:.64rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;
+  padding:6px 10px;border-bottom:1px solid #eaecf0;white-space:nowrap}
 .o2m-eq-table thead th.chk{width:40px}
 .o2m-eq-cat{display:inline-block;font-size:.6rem;font-weight:800;letter-spacing:.03em;
   text-transform:none;color:var(--ilus-red,#dc2626);background:#fee2e2;border-radius:50px;
   padding:1px 8px;margin-left:4px;vertical-align:middle}
-.o2m-eq-table tbody td{padding:9px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
+/* 2026-08-29 (Daniel: "no tienes checklist, colócalo en rojo el producto,
+   como que todo el contorno de la fila... quiero algo sutil"): filas mas
+   bajas (6px en vez de 9px de padding vertical) y la fila SIN checklist
+   elegido (.sel: marcado pero sin plantilla_id) ya no es solo un filito
+   rojo en la primera celda -- toda la fila lleva contorno rojo sutil +
+   fondo tintado, mismo lenguaje que .ok pero en rojo. */
+.o2m-eq-table tbody td{padding:6px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
 .o2m-eq-table tbody tr:last-child td{border-bottom:0}
+.o2m-eq-table tbody tr.sel{background:#fef2f2;box-shadow:inset 0 0 0 1px rgba(220,38,38,.35)}
 .o2m-eq-table tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--ilus-red,#dc2626)}
 .o2m-eq-table tbody tr.ok td:first-child{box-shadow:inset 3px 0 0 #16a34a}
 .o2m-eq-table tbody tr.ok{background:#f7fef9}
@@ -755,6 +762,15 @@ window.OT2C = (function(){
          // cliente_nombre}. El rut se compara contra S.cliente.rut al
          // agregar, no se revalida después.
          doc_extra:[],
+         // 2026-08-29 (Daniel: "no veo la parte para generar el anexo...
+         // ni un correo para colocarlo, para enviarlo"): paso nuevo,
+         // condicional a lider externo (ver pasos()/_liderEsExterno()).
+         // items[] son los mismos conceptos que Finanzas ya declara
+         // (costo proveedor / despacho) -- se sincronizan solos, no se
+         // vuelven a preguntar (ver _o2mAnexoSyncItems()).
+         anexo:{proveedor_nombre:'', proveedor_rut:'', objetivo_servicio:'',
+                fecha_inicio:'', fecha_termino:'', items:[],
+                email_destino:'', telefono:'', enviar_ahora:true},
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -764,6 +780,16 @@ window.OT2C = (function(){
 
   function esInterno(){ return S.origen === 'interno' ||
     (S.tipo && (TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno); }
+
+  /* 2026-08-29 (Daniel: "no veo la parte para generar el anexo... hazlo
+     como paso siete"): el Anexo de Contrato es cosa de PROVEEDOR EXTERNO
+     -- solo tiene sentido como paso cuando el técnico LÍDER ya elegido es
+     externo (mismo criterio que ya usaba el redirect ?abrir_anexo=1). */
+  function _liderEsExterno(){
+    if (!S.lider) return false;
+    var t = cacheTec.find(function(x){ return x.id === S.lider; });
+    return !!(t && t.es_externo);
+  }
 
   /* Qué tipos ofrecer según el origen elegido (2026-08-29, Daniel: "si es
      un cliente existente, lo ideal no es que aparezca instalación...
@@ -809,11 +835,30 @@ window.OT2C = (function(){
     // fotos), la etiqueta vieja quedaba corta. Con eso los 3 tipos de
     // trabajo interno comparten la misma etiqueta de ancla.
     p.push({k:'equipos', n: esInterno() ? 'Trabajo' : 'Equipos'});
+    // 2026-08-29 (Daniel: "mejora el acceso al lugar y separa ese paso del
+    // paso de equipo y el checklist... esa es la logística, no la ates al
+    // formulario de producto"): Ascensor/Estacionamiento vivían pegados al
+    // final de la tarjeta de Equipos -- fuera de vista sin hacer scroll, lo
+    // que ya causó confusión real ("ya tengo seleccionado y sigue en
+    // rojo"). Trabajo interno no visita un domicilio de cliente, así que
+    // no aplica.
+    if (!esInterno()) p.push({k:'acceso', n:'Acceso'});
     // 2026-08-29 (Daniel: "esto siempre esté relacionado a un documento
     // del ERP... a menos que sea garantía. Y también el centro de costo"):
     // trabajo interno no factura a ningún cliente -- ya tiene su propio
     // costo_interno de referencia en "Trabajo", no repite esta sección.
     if (!esInterno()) p.push({k:'finanzas', n:'Finanzas'});
+    // 2026-08-29 (Daniel, insistiendo: "¿dónde y cuándo aparece el anexo de
+    // contrato?... hazlo como paso siete... necesito potenciar este
+    // formulario"): antes el Anexo solo se podía crear DESPUÉS de crear la
+    // OT (redirect ?abrir_anexo=1 a detalle.html, porque _modal_anexo.html
+    // necesita variables de servidor `v`/`anexo_defaults` que solo existen
+    // ahí). POST /ot/api/anexos acepta `ot_id` OPCIONAL -- eso permite
+    // construir el anexo ACÁ, con los datos que el wizard ya tiene
+    // (proveedor = técnico líder, precio = costo del proveedor que ya se
+    // declaró en Finanzas), y crearlo/enviarlo en la misma llamada de
+    // crear() encadenando ambos POST, sin esperar a la pantalla de detalle.
+    if (!esInterno() && _liderEsExterno()) p.push({k:'anexo', n:'Anexo'});
     p.push({k:'revisar', n:'Revisar'});
     return p;
   }
@@ -847,14 +892,22 @@ window.OT2C = (function(){
           return !!(S.bodega_obs && S.bodega_obs.trim()) && S.bodega_fotos.length > 0;
         if (esInterno())
           return S.tareas_manuales.length > 0;
-        return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; })
-               && S.acceso.ascensor !== null && S.acceso.estacionamiento !== null;
+        return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; });
+      // 2026-08-29: separado de 'equipos' -- ver comentario en pasos().
+      case 'acceso':
+        return S.acceso.ascensor !== null && S.acceso.estacionamiento !== null;
       // 2026-08-29 (Daniel): centro de costo SIEMPRE requerido; cobertura
       // es documento O garantía, excluyentes -- garantía exime del
       // documento ("si es garantía, no es necesario [el documento]").
       case 'finanzas':
         return !!S.fin_centro &&
           (S.fin_garantia || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo));
+      // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
+      // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
+      // continuar" (bloquea el trabajo del proveedor en el sistema real).
+      case 'anexo':
+        return !!(S.anexo.proveedor_nombre.trim() && S.anexo.objetivo_servicio.trim() &&
+                  (S.anexo.items||[]).some(function(it){ return it.monto > 0; }));
       default: return false;
     }
   }
@@ -1001,7 +1054,9 @@ window.OT2C = (function(){
       if (p.k==='agenda')   pintarAgenda(b);
       if (p.k==='tecnicos') pintarTecnicos(b);
       if (p.k==='equipos')  pintarEquipos(b);
+      if (p.k==='acceso')   pintarAcceso(b);
       if (p.k==='finanzas') pintarFinanzas(b);
+      if (p.k==='anexo')    pintarAnexo(b);
       if (p.k==='revisar')  pintarRevisar(b);
       } catch(e){
         console.error('[OT2C] pintarFormulario, sección "'+p.k+'":', e);
@@ -1027,7 +1082,9 @@ window.OT2C = (function(){
       if (k==='agenda')   pintarAgenda(b);
       if (k==='tecnicos') pintarTecnicos(b);
       if (k==='equipos')  pintarEquipos(b);
+      if (k==='acceso')   pintarAcceso(b);
       if (k==='finanzas') pintarFinanzas(b);
+      if (k==='anexo')    pintarAnexo(b);
       if (k==='revisar')  pintarRevisar(b);
     } catch(e){
       console.error('[OT2C] repintarSeccion, sección "'+k+'":', e);
@@ -2154,14 +2211,7 @@ window.OT2C = (function(){
     if (S.tipo === 'revision_interna') return pintarBodegaEvidencia(b);
     if (esInterno()) return pintarTrabajoInterno(b);
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
-      // 2026-08-29 (Daniel, en vivo: "ya tengo seleccionado y sigue en
-      // rojo"): equipos+plantillas listos no bastan -- completo('equipos')
-      // TAMBIÉN exige responder Ascensor/Estacionamiento, que viven más
-      // abajo en esta misma tarjeta, fuera de vista sin hacer scroll.
-      // Verificado en vivo que la lógica es correcta (pasa a verde apenas
-      // se responden) -- lo que faltaba era decirlo acá arriba.
-      '<p class="d">Cada equipo necesita su checklist elegido, y más abajo hay que responder '+
-      'Ascensor/Estacionamiento. Sin eso la orden no avanza.</p>'+
+      '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
       // Origen "Factura o boleta": las líneas del documento son solo una
       // REFERENCIA — no crean equipos automáticamente en la ficha (eso
       // exige matchear SKU contra la clasificación del catálogo, un paso
@@ -2176,8 +2226,16 @@ window.OT2C = (function(){
             return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
           }).join('')+'</ul></div>'
         : '')+
-      '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>'+
-      '<h6 class="t mt-4">Acceso al lugar</h6>'+
+      '<div id="o2mEqList"><div class="text-muted small">Cargando equipos…</div></div>';
+    cargarEquipos();
+  }
+
+  /* 2026-08-29 (Daniel: "mejora el acceso al lugar y separa ese paso del
+     paso de equipo y el checklist... esa es la logística, no la ates al
+     formulario de producto"). Paso propio, ver pasos()/completo('acceso').
+     Mismo contenido que antes vivía al final de pintarEquipos(). */
+  function pintarAcceso(b){
+    b.innerHTML = '<h6 class="t">Acceso al lugar</h6>'+
       '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
       '<div class="row g-3">'+
         '<div class="col-md-4"><label class="fl">¿Tiene ascensor? *</label>'+
@@ -2191,7 +2249,6 @@ window.OT2C = (function(){
         '<input class="form-control" maxlength="500" value="'+esc(S.acceso.notas)+'" '+
         'placeholder="Opcional" oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
       '</div>';
-    cargarEquipos();
   }
 
   function cargarEquipos(){
@@ -2887,6 +2944,90 @@ window.OT2C = (function(){
      ya se eligió una línea ZZ, si no el estimado por clasificación -- en
      ese orden, nunca al revés (el documento real siempre manda sobre un
      cálculo teórico). */
+  /* ── Paso "Anexo de Contrato" (2026-08-29) ───────────────────────────
+     Daniel, insistiendo: "¿dónde y cuándo aparece el anexo?... hazlo como
+     paso siete... necesito potenciar este formulario... ni un correo para
+     colocarlo, para enviarlo". Solo aparece si el líder es externo (ver
+     pasos()/_liderEsExterno()). POST /ot/api/anexos acepta ot_id OPCIONAL
+     -- eso permite armar el anexo ACÁ con datos que el wizard ya tiene, y
+     crearlo (+ enviarlo) encadenado a crear() sin esperar a detalle.html. */
+  function _o2mAnexoAutoRellenar(){
+    var a = S.anexo;
+    if (!a.proveedor_nombre.trim() && S.lider){
+      var t = cacheTec.find(function(x){ return x.id === S.lider; });
+      if (t) a.proveedor_nombre = t.nombre || '';
+    }
+    if (!a.objetivo_servicio.trim() && S.tipo){
+      var tInfo = TIPOS.find(function(x){ return x.v === S.tipo; });
+      var cliTxt = S.cliente ? (' al cliente ' + S.cliente.nombre) : '';
+      a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.';
+    }
+    if (!a.fecha_inicio && S.fecha) a.fecha_inicio = S.fecha;
+    if (!a.fecha_termino && S.fecha) a.fecha_termino = S.fecha;
+    // Los ítems de precio son LOS MISMOS que ya se declararon en Finanzas
+    // (costo del proveedor) -- no se vuelven a preguntar, para que nunca
+    // queden dos números distintos por el mismo concepto. Se recalculan
+    // en cada pintado (siguen a Finanzas, no se "congelan").
+    var items = [];
+    var cp = parseFloat(S.fin_costo_proveedor);
+    if (isFinite(cp) && cp > 0) items.push({concepto: S.tipo==='instalacion' ? 'Instalación' : 'Servicio', monto: cp});
+    var cd = parseFloat(S.fin_costo_despacho);
+    if (isFinite(cd) && cd > 0) items.push({concepto: 'Despacho', monto: cd});
+    a.items = items;
+  }
+  function pintarAnexo(b){
+    _o2mAnexoAutoRellenar();
+    var a = S.anexo;
+    var totalItems = a.items.reduce(function(s,it){ return s+it.monto; }, 0);
+    b.innerHTML =
+      '<h6 class="t">Anexo de Contrato</h6>'+
+      '<div class="o2m-aviso" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b">'+
+        '<i class="bi bi-shield-lock-fill me-1"></i><b>'+esc(a.proveedor_nombre||'El proveedor')+
+        '</b> no podrá ver ni iniciar esta OT hasta firmar este anexo.</div>'+
+      '<div class="row g-3 mt-1">'+
+        '<div class="col-md-7"><label class="fl">Proveedor *</label>'+
+        '<input class="form-control" value="'+esc(a.proveedor_nombre)+'" '+
+        'oninput="OT2C.setAnexoCampo(\'proveedor_nombre\',this.value)"></div>'+
+        '<div class="col-md-5"><label class="fl">RUT del proveedor</label>'+
+        '<input class="form-control" value="'+esc(a.proveedor_rut)+'" placeholder="Opcional" '+
+        'oninput="OT2C.setAnexoCampo(\'proveedor_rut\',this.value)"></div>'+
+        '<div class="col-12"><label class="fl">Objetivo del servicio *</label>'+
+        '<textarea class="form-control" rows="2" maxlength="500" '+
+        'oninput="OT2C.setAnexoCampo(\'objetivo_servicio\',this.value)">'+esc(a.objetivo_servicio)+'</textarea></div>'+
+        '<div class="col-md-6"><label class="fl">Fecha inicio</label>'+
+        '<input type="date" class="form-control" value="'+esc(a.fecha_inicio)+'" '+
+        'oninput="OT2C.setAnexoCampo(\'fecha_inicio\',this.value)"></div>'+
+        '<div class="col-md-6"><label class="fl">Fecha término</label>'+
+        '<input type="date" class="form-control" value="'+esc(a.fecha_termino)+'" '+
+        'oninput="OT2C.setAnexoCampo(\'fecha_termino\',this.value)"></div>'+
+      '</div>'+
+      '<div class="o2m-fin-desglose mt-3">'+
+        (a.items.length
+          ? a.items.map(function(it){ return '<div class="fila"><span>'+esc(it.concepto)+'</span>'+
+              '<b>$'+Math.round(it.monto).toLocaleString('es-CL')+'</b></div>'; }).join('') +
+            '<div class="fila total"><span>Total del anexo</span><b>$'+Math.round(totalItems).toLocaleString('es-CL')+'</b></div>'
+          : '<div class="fila"><span class="text-muted">Declara el costo del proveedor en Finanzas para que aparezca acá.</span></div>')+
+      '</div>'+
+      '<label class="fl mt-3">Enviar para firma</label>'+
+      '<div class="row g-2">'+
+        '<div class="col-md-7"><input type="email" class="form-control" value="'+esc(a.email_destino)+'" '+
+        'placeholder="correo@proveedor.cl" oninput="OT2C.setAnexoCampo(\'email_destino\',this.value)"></div>'+
+        '<div class="col-md-5"><input class="form-control" value="'+esc(a.telefono)+'" '+
+        'placeholder="Teléfono (opcional)" oninput="OT2C.setAnexoCampo(\'telefono\',this.value)"></div>'+
+      '</div>'+
+      '<div class="form-check mt-2">'+
+        '<input class="form-check-input" type="checkbox" id="o2mAnexoEnviar" '+(a.enviar_ahora?'checked':'')+' '+
+        'onchange="OT2C.setAnexoCampo(\'enviar_ahora\',this.checked)">'+
+        '<label class="form-check-label small" for="o2mAnexoEnviar">Enviar el anexo apenas se cree la OT '+
+        '(si dejas esto sin marcar, el anexo queda como borrador — lo envías después desde el detalle de la OT).</label>'+
+      '</div>';
+  }
+  function setAnexoCampo(k,v){ S.anexo[k] = v; refrescarAnclas(); }
+
+  /* "Venta" de referencia para el margen: el monto REAL del documento si
+     ya se eligió una línea ZZ, si no el estimado por clasificación -- en
+     ese orden, nunca al revés (el documento real siempre manda sobre un
+     cálculo teórico). */
   function _ventaActual(){
     if (S.fin_zz_monto != null) return S.fin_zz_monto;
     if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null) return S.fin_costo_estimado.total_neto;
@@ -3012,6 +3153,11 @@ window.OT2C = (function(){
         (!esInterno() ? card('Cobertura',
            S.fin_garantia ? 'Garantía' :
            (S.fin_doc ? ('Documento ' + S.fin_doc.tido + ' ' + S.fin_doc.nudo) : 'Sin definir')) : '') +
+        (pasos().some(function(p){ return p.k==='anexo'; }) ? card('Anexo de Contrato',
+           S.anexo.proveedor_nombre.trim()
+             ? (S.anexo.proveedor_nombre + (S.anexo.enviar_ahora && S.anexo.email_destino.trim()
+                 ? (' · se envía a ' + S.anexo.email_destino) : ' · queda como borrador'))
+             : 'Falta completar el paso Anexo') : '') +
       '</div>';
     function card(k,v){ return '<div class="b"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
   }
@@ -3526,32 +3672,73 @@ window.OT2C = (function(){
           return;
         }
         if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
-        // 2026-08-29 (Daniel: "es indispensable... el anexo es indispensable
-        // para continuar"): el Anexo de Contrato (OT2ANX) vive en
-        // templates/ot2/detalle.html -- SU PROPIO partial necesita `v`/
-        // `anexo_defaults`, variables de servidor que solo existen ahí, así
-        // que no se puede pintar dentro de ESTE wizard (nace sin visita_id
-        // todavía). En vez de fingir una integración que no puede existir
-        // acá, se dispara la pantalla real apenas hay una OT de verdad:
-        // si el técnico LÍDER recién elegido es externo, se agrega
-        // ?abrir_anexo=1 a la URL de destino -- detalle.html lo lee una vez
-        // (ver VID/abrir_anexo ahí) y abre OT2ANX.abrir(vid) solo.
-        var _liderFinal = S.lider ? cacheTec.find(function(t){ return t.id === S.lider; }) : null;
+        var vid = res.j.visita_id;
         var _url = res.j.ot_url;
-        if (_liderFinal && _liderFinal.es_externo){
-          _url += (_url.indexOf('?') >= 0 ? '&' : '?') + 'abrir_anexo=1';
-        }
         // Trabajo de bodega: la evidencia se sube DESPUÉS de crear la OT
         // (necesita el visita_id). Vía dedicada (no "ejecutar") porque
         // quien crea la OT normalmente NO es el técnico asignado todavía
         // -- ver mant_visita_fotos_subir_inicial (app.py). Si algo falla
         // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
-        if (S.tipo === 'revision_interna' && S.bodega_fotos.length){
-          _subirEvidenciaBodega(res.j.visita_id).finally(function(){
+        function _o2mIrADetalle(){
+          if (S.tipo === 'revision_interna' && S.bodega_fotos.length){
+            _subirEvidenciaBodega(vid).finally(function(){ location.href = _url; });
+          } else {
             location.href = _url;
+          }
+        }
+        // 2026-08-29 (Daniel, insistiendo: "¿dónde y cuándo aparece el
+        // anexo?... necesito potenciar este formulario... ni un correo para
+        // enviarlo"): el paso "Anexo" (ver pintarAnexo/pasos()) ya recogió
+        // todo lo necesario -- se crea encadenado a la OT recién nacida
+        // (POST /ot/api/anexos acepta ot_id, ver comentario en pasos()), y
+        // si Daniel marcó "enviar apenas se cree", se manda el correo acto
+        // seguido. Cualquier falla acá NUNCA bloquea la navegación a la OT
+        // -- ya existe de verdad, solo se avisa que el anexo quedó pendiente.
+        var _liderFinal = S.lider ? cacheTec.find(function(t){ return t.id === S.lider; }) : null;
+        if (_liderFinal && _liderFinal.es_externo && S.anexo.proveedor_nombre.trim() &&
+            S.anexo.objetivo_servicio.trim() && S.anexo.items.length){
+          fetch('/ot/api/anexos', {
+            method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              ot_id: vid,
+              proveedor_nombre: S.anexo.proveedor_nombre,
+              proveedor_rut: S.anexo.proveedor_rut,
+              objetivo_servicio: S.anexo.objetivo_servicio,
+              precio_items: S.anexo.items,
+              fecha_inicio: S.anexo.fecha_inicio || null,
+              fecha_termino: S.anexo.fecha_termino || null,
+              cliente_nombre: S.cliente ? S.cliente.nombre : null,
+              tecnico_externo_id: _liderFinal.id
+            })
+          }).then(function(r){ return r.json(); }).then(function(ra){
+            if (!ra || !ra.ok){
+              if (window.ilusToast) ilusToast('La OT se creó, pero el Anexo no se pudo generar — créalo desde el detalle de la OT.', {type:'warning', duration:7000});
+              _o2mIrADetalle(); return;
+            }
+            if (S.anexo.enviar_ahora && S.anexo.email_destino.trim()){
+              fetch('/ot/api/anexos/'+ra.anexo_id+'/enviar', {
+                method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({email: S.anexo.email_destino, telefono: S.anexo.telefono})
+              }).then(function(r2){ return r2.json(); }).then(function(rb){
+                if (window.ilusToast) ilusToast(
+                  (rb && rb.ok) ? '✓ Anexo N°'+ra.numero+' enviado a '+S.anexo.email_destino
+                                : 'El anexo se creó, pero no se pudo enviar el correo — envíalo desde el detalle de la OT.',
+                  {type:(rb && rb.ok)?'success':'warning', duration:7000});
+                _o2mIrADetalle();
+              }).catch(function(){
+                if (window.ilusToast) ilusToast('El anexo se creó, pero no se pudo enviar — envíalo desde el detalle de la OT.', {type:'warning', duration:7000});
+                _o2mIrADetalle();
+              });
+            } else {
+              if (window.ilusToast) ilusToast('✓ Anexo N°'+ra.numero+' creado como borrador — envíalo desde el detalle de la OT.', {type:'success'});
+              _o2mIrADetalle();
+            }
+          }).catch(function(){
+            if (window.ilusToast) ilusToast('La OT se creó, pero el Anexo no se pudo generar — créalo desde el detalle de la OT.', {type:'warning', duration:7000});
+            _o2mIrADetalle();
           });
         } else {
-          location.href = _url;
+          _o2mIrADetalle();
         }
       })
       .catch(function(){
@@ -3642,7 +3829,7 @@ window.OT2C = (function(){
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
-          abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra,
+          abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
