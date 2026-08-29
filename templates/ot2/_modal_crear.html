@@ -2843,7 +2843,7 @@ window.OT2C = (function(){
       });
       mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
     }
-    tkaOpen({ mode: 'seleccionar', tabs: ['doc'], onSeleccionar: _o2mFinDocumentoSeleccionado });
+    tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], onSeleccionar: _o2mFinDocumentoSeleccionado });
   }
   function _o2mFinDocumentoSeleccionado(items, header){
     if (!header || !header.tido || !header.nudo){
@@ -2938,7 +2938,7 @@ window.OT2C = (function(){
       });
       mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
     }
-    tkaOpen({ mode: 'seleccionar', tabs: ['doc'], onSeleccionar: _o2mDocExtraSeleccionado });
+    tkaOpen({ mode: 'seleccionar', tabs: ['doc', 'cli'], onSeleccionar: _o2mDocExtraSeleccionado });
   }
   function _o2mDocExtraSeleccionado(items, header){
     if (!header || !header.tido || !header.nudo){

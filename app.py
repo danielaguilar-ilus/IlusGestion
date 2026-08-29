@@ -63492,12 +63492,15 @@ def mant_tecnicos_list_api():
     # HARDCODEADO como literal "0 AS es_externo" desde la migración a
     # app_users de 2026-05-13 -- nunca se le aplicó el mismo fix que
     # ya tiene el Monitor (_ot_tv_datos, app.py ~76858, "3ª vez que lo
-    # pide" 2026-08-27) para exactamente este mismo problema: Isabel
-    # Milling y Daniel Pulgar SÍ están en mant_tecnicos_externos, pero su
-    # app_users.id nunca quedó enlazado (user_id NULL) -- por eso también
-    # se cruza por NOMBRE (razón social o contacto del proveedor) cuando
-    # el enlace directo falta. Mismo query que el Monitor, para no tener
-    # dos criterios distintos de "quién es externo" en el sistema.
+    # pide" 2026-08-27) para exactamente este mismo problema. Se agrega
+    # el mismo cruce por mant_tecnicos_externos que usa el Monitor, MÁS
+    # `au.role='tecnico_externo'` como segunda señal -- porque en
+    # producción mant_tecnicos_externos está VACÍA (nadie llegó a
+    # registrar a Milling/Naranjo/Pulgar con razón social + RUT empresa
+    # ahí) y Daniel SÍ puede marcar el rol desde /admin/roles hoy mismo,
+    # sin datos de facturación. Es un OR aditivo: si algún día se
+    # registran como proveedor completo en mant_tecnicos_externos, ese
+    # cruce sigue funcionando igual; el rol es el atajo mientras tanto.
     sql = ("SELECT au.id, COALESCE(au.nombre, au.username) AS nombre, "
            "       au.cargo AS especialidad, "
            "       'tecnico' AS nivel, "
@@ -63505,7 +63508,8 @@ def mant_tecnicos_list_api():
            "       au.username AS email, "
            "       NULL AS tarifa_visita, "
            "       au.active AS activo, "
-           "       IF(COALESCE(te.id, ten.id) IS NOT NULL, 1, 0) AS es_externo "
+           "       IF(COALESCE(te.id, ten.id) IS NOT NULL "
+           "          OR au.role='tecnico_externo', 1, 0) AS es_externo "
            "  FROM app_users au "
            "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
            "  LEFT JOIN mant_tecnicos_externos ten "
