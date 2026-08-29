@@ -512,6 +512,11 @@ def register_tickets_routes(app, ctx):
     # Resolver de comuna (TABCM) + dirección: mismo motor ya probado que usa
     # el resto de ILUS para direcciones ERP (Regla #4.1: solo SELECT).
     _resolve_comuna_erp = ctx.get("_resolve_comuna_erp")
+    # 2026-08-28 (Daniel, caso OT-2026-00125): al reclasificar un producto
+    # acá mismo (más abajo, "override clase"), re-sincroniza el checklist de
+    # cualquier equipo de ese SKU que siga "en blanco" en una OT abierta --
+    # ver el docstring completo en app.py.
+    _ot_resync_plantillas_por_sku = ctx.get("_ot_resync_plantillas_por_sku") or (lambda *a, **k: 0)
     # 2026-07-12 (Daniel): "los otros [tickets] seguimos teniendo vacia la
     # region... para eso es Google, para separarlo" -- TABCM (arriba) NO
     # trae region, asi que los tickets creados server-side (desde documento
@@ -4170,6 +4175,7 @@ def register_tickets_routes(app, ctx):
                         "UPDATE cat_productos SET clase_producto=%s, updated_by=%s WHERE sku=%s",
                         (override, user, sku_up))
                     clases_por_sku[sku_up] = override
+                    _ot_resync_plantillas_por_sku(sku_up, actor=user)
                 except Exception as _e_override:
                     print(f"[tk_api_cotizacion_desde_erp] override clase sku={sku_up}: {_e_override}", flush=True)
         # Ya no quedan pendientes de clasificar -- el usuario los vio y
@@ -4767,6 +4773,7 @@ def register_tickets_routes(app, ctx):
                     mysql_execute("UPDATE cat_productos SET clase_producto=%s, updated_by=%s WHERE sku=%s",
                                   (override, user, sku_up))
                     clases_por_sku[sku_up] = override
+                    _ot_resync_plantillas_por_sku(sku_up, actor=user)
                 except Exception:
                     pass
 

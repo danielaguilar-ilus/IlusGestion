@@ -135,6 +135,11 @@ def register_catalogo_routes(app, ctx):
     # Regla #6 (hora Chile): mismo patron que tickets_module.py — reusa el
     # chile_fmt del proyecto si esta disponible; si no, cae a zoneinfo local.
     chile_fmt = ctx.get("chile_fmt")
+    # 2026-08-28 (Daniel, caso OT-2026-00125): al reclasificar un producto
+    # desde el wizard del catálogo (cat_api_update, más abajo), re-sincroniza
+    # el checklist de cualquier equipo de ese SKU que siga "en blanco" en una
+    # OT abierta -- ver el docstring completo en app.py.
+    _ot_resync_plantillas_por_sku = ctx.get("_ot_resync_plantillas_por_sku") or (lambda *a, **k: 0)
 
     # ── Dependencias para piolas (auditoria) / sync ERP / correo del manual ──
     _audit = ctx.get("_audit")
@@ -1540,6 +1545,11 @@ def register_catalogo_routes(app, ctx):
                 return jsonify({"ok": False, "error": "Ya existe un producto con ese SKU"}), 409
             print(f"[cat_api_update] error pid={pid}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo actualizar el producto"}), 500
+        if "clase_producto" in d:
+            try:
+                _ot_resync_plantillas_por_sku(prev["sku"], actor=current_username())
+            except Exception as _e_resync:
+                print(f"[cat_api_update] resync plantillas sku={prev['sku']}: {_e_resync}", flush=True)
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>", methods=["DELETE"])

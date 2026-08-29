@@ -98162,6 +98162,72 @@ def _plantilla_por_clasificacion_sku(sku, tipo_ot):
     return int(prow["id"]) if prow else None
 
 
+def _ot_resync_plantillas_por_sku(sku, actor=None):
+    """Cuando cambia la clasificación de un producto, re-sincroniza el
+    checklist de cualquier equipo de ese SKU que todavía esté "en blanco" en
+    una OT que sigue abierta -- Daniel, 2026-08-28 (caso OT-2026-00125):
+    "a medida que vaya haciendo los cambios [de clasificación]... necesito
+    que las plantillas... vayan cambiando... para que se vaya arreglando las
+    órdenes de trabajo". Hasta hoy _plantilla_por_clasificacion_sku solo se
+    consultaba UNA VEZ, al crear el equipo/la OT -- reclasificar el producto
+    después no tenía ningún efecto retroactivo, y esa brecha es justo lo que
+    dejó a OT-125 con 8 equipos en el checklist genérico de 31 ítems pese a
+    que Daniel ya los había clasificado como "Accesorios".
+
+    Nunca toca:
+      - un grupo (equipo x plantilla) con respuestas guardadas
+        (_grupo_ot_sin_editar == False) -- perdería trabajo real del técnico;
+      - una OT sellada (firma del cliente, o estado pendiente_aprobacion/
+        completada/cerrada/cancelada/anulada) -- ese candado es intocable
+        incluso para esto, es el mismo criterio que ot_sellada en
+        _puede_ot_accion.
+    Solo actualiza si la plantilla sugerida HOY es DISTINTA de la ya
+    asignada Y existe (None nunca sobreescribe algo real).
+
+    Se llama DESPUÉS de persistir el UPDATE de cat_productos.clase_producto
+    (nunca antes -- necesita leer la clasificación ya guardada). Solo
+    lectura hasta encontrar algo que corregir; nunca lanza, cualquier error
+    de un equipo puntual no debe tumbar el guardado de la cotización que lo
+    disparó.
+    """
+    sku = (sku or "").strip()
+    if not sku:
+        return 0
+    try:
+        grupos = mysql_fetchall(
+            "SELECT DISTINCT t.visita_id, t.maquina_id, t.plantilla_id, v.tipo "
+            "  FROM mant_visita_tareas t "
+            "  JOIN mant_visitas v ON v.id = t.visita_id "
+            "  JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE m.sku = %s "
+            "   AND t.maquina_id IS NOT NULL AND t.plantilla_id IS NOT NULL "
+            "   AND COALESCE(v.firma_cliente_url,'') = '' "
+            "   AND v.estado NOT IN ('pendiente_aprobacion','completada','cerrada',"
+            "                        'cancelada','anulada')",
+            (sku,)
+        ) or []
+    except Exception as e:
+        print(f"[resync_plantillas] leer equipos de sku={sku!r} falló: {e}", flush=True)
+        return 0
+    corregidos = 0
+    for row in grupos:
+        vid, mid, pid_actual = row["visita_id"], row["maquina_id"], row["plantilla_id"]
+        try:
+            pid_nuevo = _plantilla_por_clasificacion_sku(sku, row.get("tipo"))
+            if not pid_nuevo or pid_nuevo == pid_actual:
+                continue
+            if not _grupo_ot_sin_editar(vid, mid, pid_actual):
+                continue
+            n = _sincronizar_grupo_desde_plantilla(vid, mid, pid_nuevo, pid_actual=pid_actual)
+            corregidos += 1
+            _mant_log("visita", vid, "plantilla_reasignada",
+                      f"equipo#{mid}: plantilla {pid_actual} -> {pid_nuevo} ({n} tarea(s)) "
+                      f"[auto, reclasificación de sku={sku} por {actor or 'sistema'}]")
+        except Exception as e:
+            print(f"[resync_plantillas] vid={vid} mid={mid} sku={sku!r}: {e}", flush=True)
+    return corregidos
+
+
 def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
     """Wrapper de _plantilla_por_clasificacion_sku para cuando solo se tiene
     el id de mant_maquinas a mano (no el sku ya resuelto en memoria). Si el
