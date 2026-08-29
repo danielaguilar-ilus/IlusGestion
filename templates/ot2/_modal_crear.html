@@ -316,6 +316,15 @@
 .o2m-eq-table td.serie{font-size:.8rem;color:#374151;font-variant-numeric:tabular-nums;white-space:nowrap}
 .o2m-eq-table td .muted{color:#c7cbd1}
 .o2m-eq-table select{min-width:190px}
+/* 2026-08-29: selector de plantilla con búsqueda -- ver comboAbrir() en JS
+   para por qué la lista flotante vive en document.body y no acá adentro. */
+.o2m-combo-input{min-width:190px}
+.o2m-combo-list-float{display:none;position:fixed;z-index:100010;background:#fff;
+  border:1px solid #d1d5db;border-radius:8px;box-shadow:0 10px 28px -4px rgba(0,0,0,.25);
+  max-height:240px;overflow-y:auto}
+.o2m-combo-item{padding:7px 12px;font-size:.82rem;cursor:pointer;color:#374151}
+.o2m-combo-item:hover{background:#fef2f2;color:var(--ilus-red,#dc2626)}
+.o2m-combo-empty{padding:8px 12px;font-size:.78rem;color:#9ca3af;font-style:italic}
 .o2m-eq-sug{display:block;margin-top:4px;font-size:.7rem;color:#6b7280}
 .o2m-eq-hint{padding:9px 12px;background:#f8fafc;border-top:1px solid #f1f5f9;
   font-size:.72rem;color:#6b7280}
@@ -2367,8 +2376,6 @@ window.OT2C = (function(){
       c.innerHTML = '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
         'Un levantamiento por descubrimiento sirve justo para eso.</div>'; return;
     }
-    var ops = cachePlant.map(function(p){
-      return '<option value="'+p.id+'">'+esc(p.nombre)+'</option>'; }).join('');
     var totalMarcados = cacheEquipos.filter(function(m){
       return S.equipos.some(function(e){ return e.maquina_id===m.id; });
     }).length;
@@ -2411,8 +2418,12 @@ window.OT2C = (function(){
               'title="'+(enPlan?'Quitar del plan de mantención de este cliente':'Agregar al plan de mantención de este cliente')+'" '+
               'onclick="OT2C.eqTogPlan('+m.id+')"><i class="bi '+(enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></button></td>'+
             '<td>'+(sel
-              ? '<select class="form-select form-select-sm" onchange="OT2C.eqPlant('+m.id+',this.value)">'+
-                '<option value="">Elige el checklist…</option>'+ops+'</select>'+
+              ? '<div class="o2m-combo">'+
+                  '<input type="text" class="form-control form-control-sm o2m-combo-input" '+
+                  'id="o2mComboInp-'+m.id+'" value="'+esc(_o2mPlantNombre(sel.plantilla_id))+'" '+
+                  'placeholder="Buscar checklist…" autocomplete="off" '+
+                  'onfocus="OT2C.comboAbrir('+m.id+')" oninput="OT2C.comboFiltrar('+m.id+',this.value)">'+
+                '</div>'+
                 // 28-08-2026: badge de "sugerida sola" -- ver sugerirPlantillaEquipo.
                 // Solo se muestra mientras el valor elegido sigue siendo el que
                 // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
@@ -3469,6 +3480,74 @@ window.OT2C = (function(){
     // cada vez que cambia (la sección ya está en el DOM, ver pintarFormulario).
     _o2mFinEstimar();
   }
+  /* ── Selector de plantilla con búsqueda (2026-08-29) ─────────────────
+     Daniel, insistiendo (dos veces): "las plantillas... veo un combobox
+     bien ordinario y cuando entro tampoco puedo hacer búsquedas
+     inteligentes... ¿lo puedes completar o tengo que cambiar de modelo?"
+     El filtro por categoría (?tipo_ot=, commit anterior) resolvía CUÁLES
+     plantillas se cargan, pero seguía siendo un <select> nativo -- esto
+     reemplaza el <select> por un input con lista filtrable en vivo.
+
+     La lista flotante se pinta en UN SOLO elemento compartido, appendeado
+     a document.body y posicionado con getBoundingClientRect() del input
+     activo (mismo criterio aprendido con el bug de ilus_ui.js de esta
+     misma noche: cualquier dropdown ABSOLUTO que viva dentro de
+     .o2m-eq-tablewrap, que tiene overflow:auto, se recortaría contra ese
+     borde apenas la fila estuviera cerca del final de la tabla -- vivir
+     en document.body evita el recorte por completo, sin depender de
+     z-index para nada porque no hay contexto de apilamiento de por medio). */
+  function _o2mPlantNombre(pid){
+    if (!pid) return '';
+    var p = cachePlant.find(function(x){ return x.id === pid; });
+    return p ? p.nombre : '';
+  }
+  var _comboListEl = null, _comboMidActivo = null;
+  function _o2mComboEl(){
+    if (_comboListEl) return _comboListEl;
+    _comboListEl = document.createElement('div');
+    _comboListEl.className = 'o2m-combo-list-float';
+    document.body.appendChild(_comboListEl);
+    return _comboListEl;
+  }
+  function comboAbrir(mid){ _comboMidActivo = mid; _o2mComboRenderLista(mid, ''); }
+  function comboFiltrar(mid, texto){ _comboMidActivo = mid; _o2mComboRenderLista(mid, texto); }
+  function _o2mComboRenderLista(mid, filtro){
+    var inp = document.getElementById('o2mComboInp-'+mid);
+    if (!inp) return;
+    var el = _o2mComboEl();
+    var f = String(filtro||'').trim().toLowerCase();
+    var items = cachePlant.filter(function(p){ return !f || p.nombre.toLowerCase().indexOf(f) >= 0; });
+    el.innerHTML = items.length
+      ? items.map(function(p){
+          return '<div class="o2m-combo-item" onmousedown="event.preventDefault();'+
+            'OT2C.comboElegir('+mid+','+p.id+')">'+esc(p.nombre)+'</div>';
+        }).join('')
+      : '<div class="o2m-combo-empty">Sin resultados para "'+esc(filtro)+'".</div>';
+    var r = inp.getBoundingClientRect();
+    el.style.left = Math.round(r.left)+'px';
+    el.style.top = Math.round(r.bottom+3)+'px';
+    el.style.width = Math.max(Math.round(r.width), 220)+'px';
+    el.style.display = 'block';
+  }
+  function comboElegir(mid, pid){
+    _o2mComboCerrar();
+    eqPlant(mid, pid);
+  }
+  function _o2mComboCerrar(){
+    _comboMidActivo = null;
+    if (_comboListEl) _comboListEl.style.display = 'none';
+  }
+  // Un solo listener global (no uno por fila): cierra la lista flotante si
+  // el clic fue fuera del input activo y de la lista misma. Capture:true
+  // en el scroll porque 'scroll' no burbujea -- más simple que reposicionar
+  // en vivo, y de todas formas el usuario puede volver a enfocar el campo.
+  document.addEventListener('mousedown', function(e){
+    if (_comboMidActivo == null) return;
+    if (e.target.closest && (e.target.closest('.o2m-combo-list-float') || e.target.id === 'o2mComboInp-'+_comboMidActivo)) return;
+    _o2mComboCerrar();
+  });
+  document.addEventListener('scroll', function(){ if (_comboMidActivo != null) _o2mComboCerrar(); }, true);
+
   function eqPlant(mid, pid){
     var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
     if (e){ e.plantilla_id = pid ? parseInt(pid) : null; e.plantilla_sugerida = false; }
@@ -3909,6 +3988,7 @@ window.OT2C = (function(){
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
+          comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
