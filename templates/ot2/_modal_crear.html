@@ -3196,6 +3196,13 @@ window.OT2C = (function(){
     if (i>=0){ S.tecnicos.splice(i,1); if (S.lider===id) S.lider = S.tecnicos[0]||null; }
     else { S.tecnicos.push(id); if (!S.lider) S.lider = id; }
     pintarTecnicos(document.getElementById('o2mSec-tecnicos-b'));
+    // 2026-08-29 (bug real, encontrado en vivo por Daniel: "ya tengo
+    // seleccionado y sigue en [ambar]"): faltaba este llamado -- eqTog()
+    // sí lo tenía, tecTog() nunca lo tuvo. Antes era invisible porque
+    // completo('tecnicos') siempre devolvía true (cualquier estado se veía
+    // "listo"); con estadoVisual('tecnicos') dependiendo de si HAY alguien
+    // marcado, la tarjeta se quedaba pegada en el color de antes de elegir.
+    refrescarAnclas();
     // El bloque "Tu OT" del paso Agenda muestra el conteo de técnicos, y
     // el choque de horario depende de quién quedó seleccionado.
     o2mDayRenderMine();
