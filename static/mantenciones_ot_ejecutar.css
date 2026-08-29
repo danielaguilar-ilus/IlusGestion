@@ -1556,7 +1556,8 @@
   .firma-modal .modal-footer .btn{ min-height:48px; font-size:.95rem; }
   /* El modal de aprobación tiene un spacer flexible (.flex-grow-1) que en
      el footer apilado (column-reverse) deja un hueco vacío. Lo colapsamos. */
-  #modalAprobacion .modal-footer > .flex-grow-1{ display:none; }
+  #modalAprobacion .modal-footer > .flex-grow-1,
+  #otfModalAprobacion .modal-footer > .flex-grow-1{ display:none; }
 
   /* Canvas de firma: el ancho manda; alto algo menor en pantallas
      pequeñas para que quepan ambas firmas (técnico + cliente) + footer
