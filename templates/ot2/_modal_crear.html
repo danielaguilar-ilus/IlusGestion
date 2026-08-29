@@ -346,6 +346,14 @@
 .o2m-res .b .k{font-size:.66rem;font-weight:800;letter-spacing:.07em;
   text-transform:uppercase;color:#9ca3af;display:block}
 .o2m-res .b .v{font-weight:700;font-size:.9rem;color:#0a0a0a;margin-top:3px;display:block}
+.o2m-fin-desglose{border:1px solid #eaecf0;border-radius:10px;overflow:hidden;margin-bottom:10px}
+.o2m-fin-desglose .fila{display:flex;justify-content:space-between;gap:10px;padding:8px 12px;
+  font-size:.82rem;border-bottom:1px solid #f1f5f9;background:#fff}
+.o2m-fin-desglose .fila:last-child{border-bottom:0}
+.o2m-fin-desglose .fila span{color:#6b7280}
+.o2m-fin-desglose .fila b{font-variant-numeric:tabular-nums}
+.o2m-fin-desglose .fila.total{background:#f8fafc;font-weight:800}
+.o2m-fin-desglose .fila.total span{color:#374151;font-weight:800}
 .o2m label.fl{font-size:.76rem;font-weight:800;color:#374151;margin-bottom:4px;display:block}
 .o2m input.form-control,.o2m select.form-select,.o2m textarea.form-control{font-size:16px}
 
@@ -2619,15 +2627,15 @@ window.OT2C = (function(){
       // del transporte -- mezclarlos impediría separarlos después.
       '<div class="row g-2 mt-2">'+
         '<div class="col-6">'+
-          '<label class="fl">Costo del proveedor</label>'+
+          '<label class="fl">Costo del proveedor'+(S.tipo==='instalacion'?' (instalación)':'')+'</label>'+
           '<input type="number" class="form-control" min="0" step="1" '+
           'value="'+esc(S.fin_costo_proveedor)+'" placeholder="Lo que le pagamos" '+
           'oninput="OT2C.setFinCostoProveedor(this.value)">'+
         '</div>'+
         '<div class="col-6">'+
-          '<label class="fl">Transporte / despacho</label>'+
+          '<label class="fl">Costo del proveedor por despacho</label>'+
           '<input type="number" class="form-control" min="0" step="1" '+
-          'value="'+esc(S.fin_costo_despacho)+'" placeholder="Si aplica" '+
+          'value="'+esc(S.fin_costo_despacho)+'" placeholder="Si hay despacho, si no déjalo vacío" '+
           'oninput="OT2C.setFinCostoDespacho(this.value)">'+
         '</div>'+
       '</div>'+
@@ -2747,33 +2755,56 @@ window.OT2C = (function(){
     if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null) return S.fin_costo_estimado.total_neto;
     return null;
   }
+  /* 2026-08-29 (Daniel, dictando el desglose exacto que necesita ver acá):
+     "cuanto estoy cobrando... cuanto me cobro el proveedor... si estoy
+     pagando despacho y cuanto me cobro el proveedor por el despacho, y un
+     costo total del proveedor... cuanto cobre yo... cuanto es mi margen
+     peso y cuanto es mi porcentaje de ganancia". Antes solo se mostraba el
+     % -- ahora se ve la cuenta completa, línea por línea, para que no haya
+     que confiar a ciegas en el número final. */
   function _pintarFinMargenDom(){
     var c = document.getElementById('o2mFinMargen'); if (!c) return;
     var costo = parseFloat(S.fin_costo_proveedor);
-    if (!isFinite(costo) || costo < 0){
-      c.innerHTML = '';
-      return;
-    }
+    if (!isFinite(costo) || costo < 0) costo = null;
     var venta = _ventaActual();
     if (venta == null || venta <= 0){
       c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
         'Falta un monto de venta (documento o estimado) para calcular el margen.</div>';
       return;
     }
+    if (costo == null){
+      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+        'Ingresa el costo del proveedor para ver el desglose y el margen.</div>';
+      return;
+    }
     var despacho = parseFloat(S.fin_costo_despacho);
     if (!isFinite(despacho) || despacho < 0) despacho = 0;
+    var costoTotalProveedor = costo + despacho;
     // Misma fórmula que ya usa el reporte de margen real en app.py
-    // (Margen = costo cliente - (costo_proveedor + costo_despacho)) --
-    // no solo el costo del proveedor solo.
-    var margenPct = Math.round((venta - (costo + despacho)) / venta * 100);
+    // (Margen = costo cliente - (costo_proveedor + costo_despacho)).
+    var margenPeso = venta - costoTotalProveedor;
+    var margenPct = Math.round(margenPeso / venta * 100);
     // Informativo nada más -- Daniel: "identificando si hay margen o no da
     // lo mismo, pero estamos autorizados a trabajar sin margen". Nunca
     // bloquea nada, solo avisa con color si el margen es negativo.
-    var color = margenPct < 0 ? '#991b1b' : '#166534';
-    var bg = margenPct < 0 ? '#fef2f2' : '#f0fdf4';
-    c.innerHTML = '<div class="o2m-res"><div class="b" style="background:'+bg+'">'+
-      '<span class="k">Margen estimado</span>'+
-      '<span class="v" style="color:'+color+'">'+margenPct+'%</span></div></div>';
+    var color = margenPeso < 0 ? '#991b1b' : '#166534';
+    var bg = margenPeso < 0 ? '#fef2f2' : '#f0fdf4';
+    function $f(n){ return '$'+Math.round(n).toLocaleString('es-CL'); }
+    c.innerHTML =
+      '<div class="o2m-fin-desglose">'+
+        '<div class="fila"><span>Cuánto cobro (venta)</span><b>'+$f(venta)+'</b></div>'+
+        '<div class="fila"><span>Costo proveedor'+(S.tipo==='instalacion'?' (instalación)':'')+'</span><b>'+$f(costo)+'</b></div>'+
+        (despacho > 0 ? '<div class="fila"><span>Costo proveedor (despacho)</span><b>'+$f(despacho)+'</b></div>' : '')+
+        '<div class="fila total"><span>Costo total del proveedor</span><b>'+$f(costoTotalProveedor)+'</b></div>'+
+      '</div>'+
+      '<div class="o2m-res">'+
+        '<div class="b" style="background:'+bg+'">'+
+          '<span class="k">Margen ($)</span><span class="v" style="color:'+color+'">'+$f(margenPeso)+'</span>'+
+        '</div>'+
+        '<div class="b" style="background:'+bg+'">'+
+          '<span class="k">Margen (%)</span><span class="v" style="color:'+color+'">'+margenPct+'%</span>'+
+        '</div>'+
+      '</div>';
   }
   // Secuencia (no un simple booleano): si el usuario sale y vuelve a
   // "Equipos" y cambia algo mientras la consulta anterior seguía viajando,
@@ -3345,6 +3376,21 @@ window.OT2C = (function(){
           return;
         }
         if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
+        // 2026-08-29 (Daniel: "es indispensable... el anexo es indispensable
+        // para continuar"): el Anexo de Contrato (OT2ANX) vive en
+        // templates/ot2/detalle.html -- SU PROPIO partial necesita `v`/
+        // `anexo_defaults`, variables de servidor que solo existen ahí, así
+        // que no se puede pintar dentro de ESTE wizard (nace sin visita_id
+        // todavía). En vez de fingir una integración que no puede existir
+        // acá, se dispara la pantalla real apenas hay una OT de verdad:
+        // si el técnico LÍDER recién elegido es externo, se agrega
+        // ?abrir_anexo=1 a la URL de destino -- detalle.html lo lee una vez
+        // (ver VID/abrir_anexo ahí) y abre OT2ANX.abrir(vid) solo.
+        var _liderFinal = S.lider ? cacheTec.find(function(t){ return t.id === S.lider; }) : null;
+        var _url = res.j.ot_url;
+        if (_liderFinal && _liderFinal.es_externo){
+          _url += (_url.indexOf('?') >= 0 ? '&' : '?') + 'abrir_anexo=1';
+        }
         // Trabajo de bodega: la evidencia se sube DESPUÉS de crear la OT
         // (necesita el visita_id). Vía dedicada (no "ejecutar") porque
         // quien crea la OT normalmente NO es el técnico asignado todavía
@@ -3352,10 +3398,10 @@ window.OT2C = (function(){
         // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
         if (S.tipo === 'revision_interna' && S.bodega_fotos.length){
           _subirEvidenciaBodega(res.j.visita_id).finally(function(){
-            location.href = res.j.ot_url;
+            location.href = _url;
           });
         } else {
-          location.href = res.j.ot_url;
+          location.href = _url;
         }
       })
       .catch(function(){

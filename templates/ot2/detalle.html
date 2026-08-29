@@ -1296,6 +1296,24 @@
 
 {% if not es_tecnico %}
   {% include "ot2/_modal_anexo.html" %}
+  {% if not anexo %}
+  <script>
+  // 2026-08-29 (Daniel, sobre el wizard de creación: "es indispensable
+  // para continuar"): el Anexo no puede vivir DENTRO de _modal_crear.html
+  // (necesita v.id/anexo_defaults reales de esta página) -- en vez de eso,
+  // el wizard agrega ?abrir_anexo=1 a esta misma URL cuando el técnico
+  // líder elegido es externo y todavía no hay anexo. Se lee UNA vez (no
+  // queda "pegado" al recargar la página después) y abre el flujo real.
+  document.addEventListener('DOMContentLoaded', function(){
+    if (new URLSearchParams(location.search).get('abrir_anexo') === '1' && typeof OT2ANX !== 'undefined'){
+      var url = new URL(location.href);
+      url.searchParams.delete('abrir_anexo');
+      history.replaceState(null, '', url);
+      OT2ANX.abrir({{ v.id }});
+    }
+  });
+  </script>
+  {% endif %}
 {% endif %}
 
 {# ═════════════════════════════════════════════════════════════════════

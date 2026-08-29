@@ -68375,8 +68375,16 @@ def mant_calendario_mes(anio, mes):
             "       COALESCE(t.id, v.tecnico_user_id) AS tecnico_id, "
             "       COALESCE(au.nombre, au.username, t.nombre) AS tecnico_nombre, "
             "       tk.id AS ticket_id, tk.numero_ticket "
+            # 2026-08-29 (Daniel: "el calendario de OT del modal y del
+            # monitor deben ser el mismo"): el panel OT2.0 y el Monitor ya
+            # usan LEFT JOIN a clientes (ven trabajo interno sin cliente).
+            # Este era el unico calendario con JOIN interno -- una OT de
+            # bodega (cliente_id NULL a proposito) desaparecia del mes,
+            # aunque el detector de choque SI la veia (query separada, sin
+            # este join) -- de ahi la incoherencia "el dia se ve libre pero
+            # igual avisa choque".
             "  FROM mant_visitas v "
-            "  JOIN mant_clientes c ON c.id=v.cliente_id "
+            "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN mant_tecnicos t ON t.id=v.tecnico_id "
             "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id "
             "  LEFT JOIN tk_tickets tk ON tk.visita_id=v.id "
