@@ -517,6 +517,17 @@
           transform:translateY(100%);
           transition:transform .22s cubic-bezier(.2,.8,.2,1.05);
           padding-bottom:env(safe-area-inset-bottom, 0);
+          /* FIX 2026-08-28 (bug real, encontrado en vivo con "Cambiar
+             plantilla" -- una OT con 40+ plantillas activas hacia crecer
+             esta tarjeta mas alta que la pantalla; al centrarla (desktop)
+             la mitad de arriba, incluida la primera opcion, quedaba fuera
+             del viewport y era imposible de alcanzar con scroll -- el
+             overlay no scrollea, solo el cuerpo de abajo lo hace ahora.
+             Techo de alto + layout en columna para que SOLO el cuerpo
+             (la lista) scrollee -- titulo y boton Cancelar siempre
+             quedan visibles. */
+          max-height:min(82vh, 640px);
+          display:flex;flex-direction:column;
         }
         .ilus-sheet-overlay.show .ilus-sheet{transform:translateY(0)}
         .ilus-sheet-head{
@@ -535,7 +546,11 @@
         .ilus-sheet-head .sheet-sub{
           color:#94a3b8;font-size:.78rem;margin-top:3px;
         }
-        .ilus-sheet-body{padding:6px 14px 10px}
+        .ilus-sheet-body{
+          padding:6px 14px 10px;
+          overflow-y:auto;flex:1 1 auto;min-height:0;
+        }
+        .ilus-sheet-head,.ilus-sheet-cancel{flex-shrink:0}
         .ilus-sheet-opt{
           display:flex;align-items:center;gap:12px;width:100%;
           padding:14px 16px;border-radius:12px;
