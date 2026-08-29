@@ -873,7 +873,12 @@ window.OT2C = (function(){
     switch(k){
       case 'tipo':     return !!S.tipo;
       case 'cliente':  return !!S.cliente;
-      case 'detalle':  return true;                       // el título se autogenera
+      // 2026-08-29 (Daniel, viendo "fdgnsrn" de prueba: "que al menos
+      // tenga unos 25 caracteres para tener la descripcion exacta de por
+      // que el motivo de la OT"): el título sigue autogenerándose si se
+      // deja vacío (eso no cambió), pero la descripción ahora sí es un
+      // requisito real -- ver O2M_DESC_MIN/setDescripcion().
+      case 'detalle':  return (S.descripcion||'').trim().length >= O2M_DESC_MIN;
       // 2026-08-29: la fecha no solo tiene que existir -- no puede estar en
       // el pasado (ver _o2mHoyStr). Al vivir acá, crear() la bloquea sola
       // (ya recorre completo() de todos los pasos) y la tarjeta del paso
@@ -929,7 +934,10 @@ window.OT2C = (function(){
      reservado para cuando de verdad hay algo escrito/elegido. */
   function estadoVisual(k){
     switch(k){
-      case 'detalle':  return (S.titulo && S.titulo.trim()) ? 'ok' : 'neutro';
+      // 2026-08-29: 'detalle' ya no es un caso especial -- desde que la
+      // descripción tiene un mínimo real (ver completo('detalle')), el
+      // semáforo puede seguir la regla general (ok/pendiente), igual que
+      // tipo/cliente/agenda/equipos/finanzas.
       case 'tecnicos': return (S.tecnicos && S.tecnicos.length > 0) ? 'ok' : 'neutro';
       default:         return completo(k) ? 'ok' : 'pendiente';
     }
@@ -1160,16 +1168,33 @@ window.OT2C = (function(){
         '</div>' : '');
   }
 
+  // 2026-08-29 (Daniel, viendo "fdgnsrn" escrito de prueba en Descripción:
+  // "que al menos tenga unos 25 caracteres para tener la descripcion
+  // exacta de por que el motivo de la OT"): antes esta sección SIEMPRE
+  // se pintaba "completa" (el título se autogenera, y la descripción no
+  // tenía ningún piso) -- ahora la descripción sí es un requisito real,
+  // el título sigue siendo opcional (se sigue autogenerando si se deja
+  // vacío, eso Daniel no lo pidió cambiar).
+  var O2M_DESC_MIN = 25;
   function pintarDetalle(b){
+    var descLen = (S.descripcion||'').trim().length;
+    var descOk = descLen >= O2M_DESC_MIN;
     b.innerHTML = '<h6 class="t">¿Qué hay que hacer?</h6>'+
-      '<p class="d">Si dejas el título vacío se arma solo con el tipo y la fecha.</p>'+
+      '<p class="d">Si dejas el título vacío se arma solo con el tipo y la fecha. '+
+      'La descripción sí es obligatoria — mínimo '+O2M_DESC_MIN+' caracteres, para que quede claro '+
+      'el motivo real de la OT.</p>'+
       '<label class="fl">Título</label>'+
       '<input class="form-control mb-3" id="o2mTit" value="'+esc(S.titulo)+'" maxlength="200" '+
       'placeholder="Ej: Instalación sala de musculación" oninput="OT2C.setTitulo(this.value)">'+
-      '<label class="fl">Descripción</label>'+
-      '<textarea class="form-control mb-3" id="o2mDesc" rows="4" maxlength="2000" '+
+      '<label class="fl">Descripción *</label>'+
+      '<textarea class="form-control'+(descLen>0 && !descOk?' is-invalid':(descOk?' is-valid':''))+'" '+
+      'id="o2mDesc" rows="4" maxlength="2000" minlength="'+O2M_DESC_MIN+'" '+
       'placeholder="Contexto para el técnico: qué se espera, qué llevar, con quién coordinar…" '+
       'oninput="OT2C.setDescripcion(this.value)">'+esc(S.descripcion)+'</textarea>'+
+      '<small class="d-block mt-1" id="o2mDescHint" style="font-size:.72rem;color:'+(descOk?'#16a34a':'#9ca3af')+'">'+
+      (descOk ? '<i class="bi bi-check-circle-fill me-1"></i>'+descLen+' caracteres'
+              : descLen+' / '+O2M_DESC_MIN+' caracteres mínimos')+
+      '</small>'+
       // 2026-08-27 (Daniel: "Capacitación... debe poder asociarse a una
       // nota de venta interna, documento interno, opcional"): reusa el
       // mismo S.doc_origen que ya alimenta factura_tido/factura_nudo en
@@ -3354,7 +3379,24 @@ window.OT2C = (function(){
   }
   function setAccesoTexto(k,v){ S.acceso[k] = v; }
   function setTitulo(v){ S.titulo = v; }
-  function setDescripcion(v){ S.descripcion = v; }
+  // 2026-08-29 (Daniel: "que al menos tenga unos 25 caracteres"): actualiza
+  // el contador/borde a mano en vez de repintar toda la sección -- un
+  // repintado completo en cada tecla le haría perder el foco al textarea
+  // (el cursor saltaría al final o se cerraría el teclado en el celular).
+  function setDescripcion(v){
+    S.descripcion = v;
+    refrescarAnclas();
+    var ta = document.getElementById('o2mDesc'); if (!ta) return;
+    var len = v.trim().length, ok = len >= O2M_DESC_MIN;
+    ta.classList.toggle('is-invalid', len>0 && !ok);
+    ta.classList.toggle('is-valid', ok);
+    var hint = document.getElementById('o2mDescHint');
+    if (hint){
+      hint.style.color = ok ? '#16a34a' : '#9ca3af';
+      hint.innerHTML = ok ? '<i class="bi bi-check-circle-fill me-1"></i>'+len+' caracteres'
+                           : len+' / '+O2M_DESC_MIN+' caracteres mínimos';
+    }
+  }
   function setNotaVentaInterna(v){
     var nudo = String(v||'').trim();
     S.doc_origen = nudo ? {tido:'NVI', nudo:nudo} : null;
@@ -3385,6 +3427,14 @@ window.OT2C = (function(){
     // El bloque "Tu OT" de la línea de tiempo se mueve EN VIVO y el
     // choque se re-chequea (debounced) con cada cambio de hora.
     o2mDayRenderMine();
+    // 2026-08-29 (Daniel: "el horario me tiene que seguir... es como si
+    // fuera mi perrita el horario"): _o2mDayAutoScroll() YA EXISTÍA (se
+    // usaba al navegar de día), pero nunca se llamaba acá -- si el
+    // usuario tecleaba una hora fuera del tramo que la línea de tiempo
+    // tenía scrolleado en ese momento (ej. 19:00 con el scroll todavía en
+    // 09:00-15:00), el bloque "Tu OT" se movía de verdad pero quedaba
+    // fuera de vista, pareciendo que no pasó nada.
+    _o2mDayAutoScroll();
     o2mChequearChoqueDebounced();
   }
   function setBodegaObs(v){ S.bodega_obs = v; }
