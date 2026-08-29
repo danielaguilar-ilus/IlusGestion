@@ -530,6 +530,16 @@ window.OT2C = (function(){
          // solo alimenta el reporte de costos por centro (ver 2.2/2.3 en
          // el plan). Vive junto al resto de "finanzas" al enviar (crear()).
          costo_interno:'',
+         // 2026-08-29 (Daniel: "esto siempre esté relacionado a un
+         // documento del ERP... a menos que sea garantía. Y también el
+         // centro de costo"): sección Finanzas propia, para CUALQUIER OT
+         // con cliente (no interno -- ese ya tiene costo_interno arriba).
+         // fin_doc es DELIBERADAMENTE un campo aparte de doc_origen: ese
+         // otro sirve para RESOLVER EL CLIENTE cuando el origen es
+         // "Factura o boleta"; este es el documento de COBERTURA de
+         // Finanzas, que aplica sin importar de dónde nació la OT.
+         fin_centro:null, fin_garantia:false, fin_garantia_motivo:'',
+         fin_doc:null, fin_costo_estimado:null,
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -577,6 +587,11 @@ window.OT2C = (function(){
     // fotos), la etiqueta vieja quedaba corta. Con eso los 3 tipos de
     // trabajo interno comparten la misma etiqueta de ancla.
     p.push({k:'equipos', n: esInterno() ? 'Trabajo' : 'Equipos'});
+    // 2026-08-29 (Daniel: "esto siempre esté relacionado a un documento
+    // del ERP... a menos que sea garantía. Y también el centro de costo"):
+    // trabajo interno no factura a ningún cliente -- ya tiene su propio
+    // costo_interno de referencia en "Trabajo", no repite esta sección.
+    if (!esInterno()) p.push({k:'finanzas', n:'Finanzas'});
     p.push({k:'revisar', n:'Revisar'});
     return p;
   }
@@ -608,6 +623,12 @@ window.OT2C = (function(){
           return S.tareas_manuales.length > 0;
         return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; })
                && S.acceso.ascensor !== null && S.acceso.estacionamiento !== null;
+      // 2026-08-29 (Daniel): centro de costo SIEMPRE requerido; cobertura
+      // es documento O garantía, excluyentes -- garantía exime del
+      // documento ("si es garantía, no es necesario [el documento]").
+      case 'finanzas':
+        return !!S.fin_centro &&
+          (S.fin_garantia || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo));
       default: return false;
     }
   }
@@ -707,6 +728,7 @@ window.OT2C = (function(){
       if (p.k==='agenda')   pintarAgenda(b);
       if (p.k==='tecnicos') pintarTecnicos(b);
       if (p.k==='equipos')  pintarEquipos(b);
+      if (p.k==='finanzas') pintarFinanzas(b);
       if (p.k==='revisar')  pintarRevisar(b);
     });
     pintarAnclas();
@@ -726,6 +748,7 @@ window.OT2C = (function(){
     if (k==='agenda')   pintarAgenda(b);
     if (k==='tecnicos') pintarTecnicos(b);
     if (k==='equipos')  pintarEquipos(b);
+    if (k==='finanzas') pintarFinanzas(b);
     if (k==='revisar')  pintarRevisar(b);
     pintarAnclas();
   }
@@ -2104,6 +2127,125 @@ window.OT2C = (function(){
     }).join('') : '<div class="text-muted small">Sin fotos todavía.</div>';
   }
 
+  /* ── Sección Finanzas (2026-08-29, Daniel) ───────────────────────────
+     "esto siempre esté relacionado a un documento del ERP... a menos que
+     sea garantía. Y también el centro de costo... en base a los productos
+     que tengas declarado, hagas un cálculo de cuánto costaría el
+     servicio... dame el total neto". No aplica a trabajo interno (ver
+     pasos()) -- ese ya tiene su costo_interno de referencia aparte. */
+  var _OT2M_CENTROS = [
+    {v:'sstt',      n:'Servicio Técnico'},
+    {v:'logistica', n:'Logística'},
+    {v:'comercial', n:'Comercial'}
+  ];
+  function pintarFinanzas(b){
+    var docTxt = (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)
+      ? S.fin_doc.tido + ' ' + S.fin_doc.nudo : null;
+    b.innerHTML =
+      '<h6 class="t">Finanzas</h6>'+
+      '<p class="d">Centro de costo y a qué queda cubierta esta OT: un documento real del ERP, o garantía.</p>'+
+      '<label class="fl">Centro de costo *</label>'+
+      '<div class="o2m-grid mb-3" style="grid-template-columns:repeat(3,minmax(120px,1fr))">'+
+        _OT2M_CENTROS.map(function(c){
+          return '<button type="button" class="o2m-op '+(S.fin_centro===c.v?'sel':'')+'" '+
+            'onclick="OT2C.setFinCentro(\''+c.v+'\')" style="text-align:center;padding:12px 8px">'+
+            '<span class="n">'+c.n+'</span></button>';
+        }).join('') +
+      '</div>'+
+      '<label class="fl">Cobertura *</label>'+
+      '<div class="d-flex gap-2 mb-2">'+
+        '<button type="button" class="btn btn-sm '+(!S.fin_garantia?'btn-dark':'btn-outline-secondary')+'" '+
+          'onclick="OT2C.setFinGarantia(false)"><i class="bi bi-receipt me-1"></i>Documento</button>'+
+        '<button type="button" class="btn btn-sm '+(S.fin_garantia?'btn-dark':'btn-outline-secondary')+'" '+
+          'onclick="OT2C.setFinGarantia(true)"><i class="bi bi-shield-check me-1"></i>Garantía</button>'+
+      '</div>'+
+      (S.fin_garantia
+        ? '<label class="fl">Motivo de la garantía</label>'+
+          '<textarea class="form-control mb-2" rows="2" maxlength="500" '+
+          'placeholder="Por qué queda cubierto sin cobrar…" '+
+          'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'
+        : (docTxt
+            ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
+              '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(docTxt)+'</b>'+
+              ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.limpiarFinDoc()">cambiar</button>'+
+              '</div>'
+            : '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.abrirBusquedaFinDoc()">'+
+              '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'))+
+      '<div id="o2mFinEstimado" class="mt-3"><div class="text-muted small">'+
+      '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>';
+    _o2mFinEstimar();
+  }
+  function setFinCentro(v){ S.fin_centro = v; repintarSeccion('finanzas'); }
+  function setFinGarantia(esGarantia){
+    S.fin_garantia = esGarantia;
+    if (esGarantia) S.fin_doc = null; else S.fin_garantia_motivo = '';
+    repintarSeccion('finanzas');
+  }
+  function setFinGarantiaMotivo(v){ S.fin_garantia_motivo = v; }
+  function limpiarFinDoc(){ S.fin_doc = null; repintarSeccion('finanzas'); }
+  function abrirBusquedaFinDoc(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de documentos ERP no está disponible en esta pantalla.', {type:'error'});
+      return;
+    }
+    // Mismo candado de scroll que _o2mAbrirBusquedaDocumento -- tka_modal
+    // flota por su cuenta (z-index propio), pero al cerrarse libera
+    // document.body.style.overflow sin saber que este wizard sigue abierto.
+    var tkaEl = document.getElementById('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          var propio = document.getElementById('ot2ModalCrear');
+          if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+    }
+    tkaOpen({ mode: 'seleccionar', tabs: ['doc'], onSeleccionar: _o2mFinDocumentoSeleccionado });
+  }
+  function _o2mFinDocumentoSeleccionado(items, header){
+    if (!header || !header.tido || !header.nudo){
+      if (window.ilusToast) ilusToast('Ese resultado no trae un documento identificable.', {type:'warning'});
+      return;
+    }
+    S.fin_doc = {tido: header.tido, nudo: header.nudo};
+    repintarSeccion('finanzas');
+  }
+  // Secuencia (no un simple booleano): si el usuario sale y vuelve a
+  // "Equipos" y cambia algo mientras la consulta anterior seguía viajando,
+  // la respuesta vieja no debe pisar el estimado más nuevo.
+  var _finEstimarSeq = 0;
+  function _o2mFinEstimar(){
+    var seq = ++_finEstimarSeq;
+    var maquinaIds = (S.equipos||[]).map(function(e){ return e.maquina_id; });
+    fetch('/ot/api/estimar-costo', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tipo_ot:S.tipo, maquina_ids:maquinaIds})
+    }).then(function(r){ return r.json(); }).then(function(j){
+      if (seq !== _finEstimarSeq) return;
+      S.fin_costo_estimado = (j && j.ok) ? j : null;
+      _pintarFinEstimadoDom();
+    }).catch(function(){
+      if (seq !== _finEstimarSeq) return;
+      S.fin_costo_estimado = null;
+      _pintarFinEstimadoDom();
+    });
+  }
+  function _pintarFinEstimadoDom(){
+    var c = document.getElementById('o2mFinEstimado'); if (!c) return;
+    var est = S.fin_costo_estimado;
+    if (!est || est.total_neto == null){
+      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+        'Sin estimado disponible para este tipo de OT o estos equipos todavía.</div>';
+      return;
+    }
+    c.innerHTML = '<div class="o2m-res"><div class="b"><span class="k">Estimado (referencia)</span>'+
+      '<span class="v">$'+Math.round(est.total_neto).toLocaleString('es-CL')+'</span></div></div>'+
+      '<small class="text-muted d-block mt-1" style="font-size:.7rem">'+
+      'Calculado según la clasificación de los equipos elegidos — no reemplaza el monto real del documento.</small>';
+  }
+
   function pintarRevisar(b){
     var t = TIPOS.find(function(x){ return x.v===S.tipo && !!x.descubrimiento === !!S.descubrimiento; }) || {};
     var nTec = S.tecnicos.length;
@@ -2134,6 +2276,11 @@ window.OT2C = (function(){
            String(S.costo_interno||'').trim() !== ''
              ? ('$'+S.costo_interno+' (referencial, no se factura)')
              : 'Sin declarar') : '') +
+        (!esInterno() ? card('Centro de costo',
+           (_OT2M_CENTROS.find(function(c){return c.v===S.fin_centro;})||{}).n || 'Sin elegir') : '') +
+        (!esInterno() ? card('Cobertura',
+           S.fin_garantia ? 'Garantía' :
+           (S.fin_doc ? ('Documento ' + S.fin_doc.tido + ' ' + S.fin_doc.nudo) : 'Sin definir')) : '') +
       '</div>';
     function card(k,v){ return '<div class="b"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
   }
@@ -2252,6 +2399,13 @@ window.OT2C = (function(){
     }
 
     S.doc_origen = (header.tido && header.nudo) ? {tido:header.tido, nudo:header.nudo} : null;
+    // 2026-08-29: si además es un documento de venta real, ya cubre el
+    // requisito de la sección Finanzas (documento/garantía) -- sin esto,
+    // crear la OT desde "Factura o boleta" dejaría Finanzas pidiendo
+    // elegir el MISMO documento por segunda vez.
+    if (S.doc_origen && ['FCV','BLV','NVV','NVI','WEB'].indexOf(S.doc_origen.tido) >= 0){
+      S.fin_doc = {tido: S.doc_origen.tido, nudo: S.doc_origen.nudo};
+    }
     // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
     // servicio) -- quedan como referencia informativa en la sección Equipos.
     S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; }) : [];
@@ -2334,6 +2488,9 @@ window.OT2C = (function(){
       sugerirPlantillaEquipo(mid);
     }
     pintarListaEquipos(); refrescarAnclas();
+    // El estimado de Finanzas depende del SET de equipos -- se recalcula
+    // cada vez que cambia (la sección ya está en el DOM, ver pintarFormulario).
+    _o2mFinEstimar();
   }
   function eqPlant(mid, pid){
     var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
@@ -2529,6 +2686,24 @@ window.OT2C = (function(){
       body.finanzas = body.finanzas || {};
       body.finanzas.costo_interno = S.costo_interno;
     }
+    // 2026-08-29 (sección Finanzas, Daniel): centro de costo + cobertura
+    // (documento O garantía, excluyentes -- ya validado en completo()).
+    // fin_doc puede venir de esta misma sección o haberse copiado solo
+    // desde el documento de origen (ver _o2mDocumentoSeleccionado) -- en
+    // cualquier caso es la fuente final, pisa lo que haya puesto el bloque
+    // de doc_origen de más arriba si difieren.
+    if (!esInterno()){
+      body.finanzas = body.finanzas || {};
+      body.finanzas.centro_costo = S.fin_centro || null;
+      if (S.fin_garantia){
+        body.finanzas.garantia_aplica = true;
+        body.finanzas.garantia_motivo = S.fin_garantia_motivo || '';
+        delete body.finanzas.factura_tido; delete body.finanzas.factura_nudo;
+      } else if (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
+        body.finanzas.factura_tido = S.fin_doc.tido;
+        body.finanzas.factura_nudo = S.fin_doc.nudo;
+      }
+    }
     var sig = document.getElementById('o2mSig');
     var _origSig = sig.innerHTML;
     sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
@@ -2653,6 +2828,9 @@ window.OT2C = (function(){
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
           quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
+          setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
+          setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
+          abrirBusquedaFinDoc:abrirBusquedaFinDoc,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco};

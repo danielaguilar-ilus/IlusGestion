@@ -78751,6 +78751,102 @@ def ot2_api_lineas_zz(tido, nudo):
     })
 
 
+# tipo_ot (OT 2.0) -> tipo_servicio de cat_clase_producto_tarifas. Solo los 4
+# que tienen categoría de tarifa real (ver _CAT_TIPOS_SERVICIO_TARIFA en
+# catalogo_module.py); el resto (inspección, levantamiento, cambio de
+# equipo, movimiento de equipos, desinstalación) no tiene tarifa configurada
+# todavía -- el estimador los deja sin monto en vez de inventar un cálculo.
+_OT2_TIPO_A_TIPO_SERVICIO_COSTO = {
+    "instalacion": "instalacion",
+    "preventiva":  "mantencion",
+    "correctiva":  "mantencion",
+    "visita_tecnica": "visita_tecnica",
+}
+
+
+@app.route("/ot/api/estimar-costo", methods=["POST"])
+@_mant_required
+def ot2_api_estimar_costo():
+    """Estimado de costo NETO de la OT según la clasificación real de los
+    equipos elegidos -- Daniel 2026-08-29: "en base a los productos que
+    tengas declarado, hagas un cálculo de cuánto costaría el servicio...
+    dame el total neto, según el servicio que tengamos".
+
+    Reusa el MISMO motor de precio del Cotizador (_tk_cotiz_calcular_item +
+    _tk_cotiz_pricing_config, tickets_module.py) -- ni una fórmula nueva ni
+    una segunda fuente de verdad para lo que cuesta una hora-técnico.
+
+    Es un ESTIMADO informativo, no un documento: cuando la OT ya tiene un
+    documento real asociado (factura/boleta/nota de venta), el monto que
+    manda es el de la línea ZZ real de ese documento
+    (GET /ot/api/lineas-zz/<tido>/<nudo>), no este cálculo.
+
+    Nunca bloquea ni inventa: si el tipo de OT o alguna clasificación no
+    tiene tarifa configurada, esa parte queda fuera del total con aviso
+    (`sin_tarifa`), en vez de forzar un número.
+    """
+    d = request.get_json(silent=True) or {}
+    tipo_ot = (d.get("tipo_ot") or "").strip().lower()
+    tipo_servicio = _OT2_TIPO_A_TIPO_SERVICIO_COSTO.get(tipo_ot)
+    try:
+        maquina_ids = [int(x) for x in (d.get("maquina_ids") or []) if x]
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "IDs de equipo inválidos"}), 400
+    if not tipo_servicio or not maquina_ids:
+        return jsonify({"ok": True, "total_neto": None, "detalle": [], "sin_tarifa": [],
+                         "motivo": "sin_tarifa_para_tipo" if not tipo_servicio else "sin_equipos"})
+
+    placeholders = ",".join(["%s"] * len(maquina_ids))
+    try:
+        rows = mysql_fetchall(
+            f"SELECT cc.slug AS slug, cc.nombre AS nombre "
+            f"  FROM mant_maquinas m "
+            f"  JOIN cat_productos cp ON cp.sku = m.sku "
+            f"  JOIN cat_clases_producto cc ON cc.slug = cp.clase_producto AND cc.activo = 1 "
+            f" WHERE m.id IN ({placeholders})",
+            tuple(maquina_ids)) or []
+    except Exception as e:
+        print(f"[ot2_api_estimar_costo] resolver clases: {e}", flush=True)
+        return jsonify({"ok": True, "total_neto": None, "detalle": [], "sin_tarifa": []})
+
+    conteo, nombres = {}, {}
+    for r in rows:
+        conteo[r["slug"]] = conteo.get(r["slug"], 0) + 1
+        nombres[r["slug"]] = r["nombre"]
+    n_sin_clasificar = len(maquina_ids) - len(rows)
+
+    if not conteo:
+        return jsonify({"ok": True, "total_neto": None, "detalle": [], "sin_tarifa": [],
+                         "n_equipos_sin_clasificar": n_sin_clasificar, "motivo": "sin_clasificacion"})
+
+    try:
+        cfg = _tk_cotiz_pricing_config()
+    except Exception as e:
+        print(f"[ot2_api_estimar_costo] pricing_config: {e}", flush=True)
+        return jsonify({"ok": True, "total_neto": None, "detalle": [], "sin_tarifa": []})
+
+    total, detalle, sin_tarifa = 0, [], []
+    for slug, cant in conteo.items():
+        try:
+            item = _tk_cotiz_calcular_item(slug, tipo_servicio, cant, 0, cfg)
+        except Exception as e:
+            print(f"[ot2_api_estimar_costo] calcular '{slug}': {e}", flush=True)
+            item = None
+        if not item:
+            sin_tarifa.append(nombres.get(slug, slug))
+            continue
+        total += item["total"]
+        detalle.append({"clase": nombres.get(slug, slug), "cantidad": cant, "monto": round(item["total"])})
+
+    return jsonify({
+        "ok": True,
+        "total_neto": round(total) if detalle else None,
+        "detalle": detalle,
+        "sin_tarifa": sin_tarifa,
+        "n_equipos_sin_clasificar": n_sin_clasificar,
+    })
+
+
 # ── Panel de administración de pantallas ─────────────────────────────
 #  Emitir la URL de un televisor es configuración, no operación diaria:
 #  por eso superadmin. Es el primer panel de revocación de tokens del

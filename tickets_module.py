@@ -2445,6 +2445,11 @@ def register_tickets_routes(app, ctx):
             "margen_pct": _f("cotiz_margen_pct", 40.0),
             "iva_pct": _f("cotiz_iva_pct", 19.0),
         }
+    # Visible desde app.py (2026-08-29, estimador de costo del wizard de OT
+    # 2.0: "en base a los productos que tengas declarado, hagas un cálculo
+    # de cuánto costaría el servicio... eso ya lo tenemos") -- mismo motor
+    # de precio que usa el Cotizador, sin duplicar la fórmula.
+    ctx["_tk_cotiz_pricing_config"] = _tk_cotiz_pricing_config
 
     # ─────────────────────────────────────────────────────────────────
     #  Equivalente en UF del Total (2026-07-21, Daniel: "ese valor lo
@@ -2590,6 +2595,7 @@ def register_tickets_routes(app, ctx):
         subtotal = _tk_money_round(precio_unitario * cant)
         total = _tk_money_round(subtotal * (1 - desc / 100.0))
         return {"hh": hh, "precio_unitario": precio_unitario, "subtotal": subtotal, "total": total}
+    ctx["_tk_cotiz_calcular_item"] = _tk_cotiz_calcular_item
 
     def _tk_cotiz_log(cid, accion, detalle=None, user=None):
         """Registra un evento de una cotización en tk_cotizacion_log Y en el
