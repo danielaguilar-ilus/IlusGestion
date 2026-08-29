@@ -73003,6 +73003,13 @@ def _mant_visita_crear_core(d):
     if _cliente_opcional and not _puede_crear_ot_interna():
         return {"error": "No tienes permiso para crear una OT de trabajo interno."}, 403
 
+    # 🔒 2026-08-29 (auditoría Fase 0, OT2-P0-03): mismo hueco que arriba,
+    # espejado -- este núcleo solo bloqueaba al técnico para trabajo interno,
+    # nunca para una OT de cliente (mant_visita_crear vía
+    # /mantenciones/api/visitas). Ver el fix gemelo en ot2_api_crear.
+    if not _cliente_opcional and _es_rol_tecnico():
+        return {"error": "Los técnicos no pueden crear órdenes de trabajo de cliente."}, 403
+
     # Resolver técnico asignado (preferir tecnico_user_id, sino el texto legacy)
     # COMPAT: la API /api/tecnicos ahora devuelve app_users.id en el campo `id`.
     # Si el frontend manda `tecnico_id` (legacy), lo interpretamos como user_id
@@ -73447,6 +73454,23 @@ def mant_visita_update(vid):
                # se valida abajo contra esa misma lista para no guardar un
                # valor que el resto del sistema no reconoce.
                "centro_costo"]
+    # 🔒 2026-08-29 (auditoría Fase 0, OT2-P0-06): este PUT genérico dejaba
+    # escribir CUALQUIER valor de `estado`, incluido 'cerrada' -- un
+    # admin/supervisor/ejecutivo podía cerrar una OT saltándose checklist,
+    # firmas, factura y centro de costo, todo lo que aprobar-cierre exige.
+    # El dropdown real (templates/mantenciones/calendario.html y ficha.html,
+    # <select id="vi_estado">) SOLO ofrece programada/completada/cancelada/
+    # reagendada -- 'cerrada' nunca fue una opción de la UI, así que
+    # bloquearla acá no quita ninguna función real (REGLA #4.2), solo cierra
+    # una vía de escritura directa a la API que nadie usa legítimamente.
+    _ESTADOS_PROTEGIDOS_PUT = {"cerrada", "pendiente_aprobacion", "firmada_tecnico"}
+    if (d.get("estado") or "").strip().lower() in _ESTADOS_PROTEGIDOS_PUT:
+        return jsonify({
+            "ok": False,
+            "error": "Ese estado solo puede alcanzarse firmando/cerrando la OT "
+                     "por el flujo correspondiente, no editando el campo directo.",
+            "error_codigo": "ESTADO_PROTEGIDO",
+        }), 400
     # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
     # reprogramar el término de una OT multi-día desde el mini-formulario
     # inline del popover (antes solo se podía fijar al CREAR la OT).
@@ -75725,6 +75749,19 @@ def ot2_api_crear():
         return _ot2_err(
             "No tienes permiso para crear una OT de trabajo interno.",
             "SIN_PERMISO_OT_INTERNA", http=403)
+
+    # 🔒 2026-08-29 (auditoría Fase 0, OT2-P0-03): este endpoint NUNCA
+    # validaba quién puede crear una OT DE CLIENTE -- solo la rama de
+    # trabajo interno (arriba) tenía gate. Un técnico con `@_mant_required`
+    # podía crear OT completas de cualquier cliente, autoasignarse el
+    # trabajo y declarar garantía/costo. La matriz de permisos ya documenta
+    # "crear OT: técnico ✗" (memoria: "Aarón hace la mayoría, más Víctor y
+    # Juan Pablo. Jaizer solo publica las internas de bodega") -- esto solo
+    # implementa la regla que ya estaba decidida, no inventa una nueva.
+    if not es_interna and _es_rol_tecnico():
+        return _ot2_err(
+            "Los técnicos no pueden crear órdenes de trabajo de cliente.",
+            "SIN_PERMISO_CREAR_OT", http=403)
 
     # ── 2. CLIENTE — obligatorio salvo trabajo interno ─────────────────
     #    Daniel: "si es interna, tiene que estar a nombre de la empresa, o
