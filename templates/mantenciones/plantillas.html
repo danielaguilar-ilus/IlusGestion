@@ -92,6 +92,8 @@
      -- crece/achica junto con el panel, un solo "top:0". ── */
   .pl-sticky-tools{position:sticky;top:0;z-index:6;background:#fff;
                     border-bottom:1px solid #e5e7eb;margin:-14px -14px 12px;padding:12px 14px 0}
+  .pl-copy-panel{padding-bottom:12px;margin-bottom:12px;border-bottom:1px dashed #e5e7eb}
+  .pl-copy-panel select{max-width:420px}
   .pl-add-panel{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding-bottom:12px}
   .pl-add-panel .pl-add-tipo{width:170px;flex:0 0 auto}
   .pl-add-panel .pl-add-titulo{flex:1 1 220px;min-width:180px}
@@ -387,6 +389,25 @@
                lista, "alimenta ficha") se completan después en la tarjeta ya
                agregada, más abajo -- nada se quitó del editor completo. #}
             <div class="pl-sticky-tools">
+              {# Daniel 29-08-2026: "quisiera traer los ítems... de la plantilla
+                 de motorizada de instalación... así me acortaría mucho el
+                 trabajo operacional diario" -- copia ítems de OTRA plantilla ya
+                 existente hacia la que está abierta ahora mismo (se suman al
+                 final, nunca reemplazan lo que ya hay -- lo que sobre se borra
+                 después con la selección múltiple de más abajo). Cubre tanto
+                 "crear la Mantención que falta partiendo de su Instalación" como
+                 el pedido general de duplicar más rápido. #}
+              <div class="pl-copy-panel">
+                <label class="form-label small fw-semibold mb-1" for="copyDesde">
+                  <i class="bi bi-clipboard-check me-1"></i>Copiar ítems desde otra plantilla
+                </label>
+                <div class="d-flex gap-2">
+                  <select id="copyDesde" class="form-select form-select-sm"></select>
+                  <button class="btn btn-sm btn-outline-secondary text-nowrap" onclick="copiarItemsDesde()">
+                    <i class="bi bi-clipboard-plus me-1"></i>Copiar ítems
+                  </button>
+                </div>
+              </div>
               <div class="pl-add-panel">
                 <div class="pl-add-tipo">
                   <label class="form-label small fw-semibold mb-1">Tipo</label>
@@ -691,6 +712,7 @@ async function cargarPlantillas(){
     if (q) _tabActiva = 'todas';
     renderTabs();
     renderPlantillas();
+    poblarCopyDesdeSelect();
   } catch(e){
     _plantillas = [];
     renderTabs();
@@ -913,6 +935,7 @@ function abrirEditor(pid){
   document.getElementById('addTitulo').value = '';
   renderCategoriaCards('');
   renderItems();
+  poblarCopyDesdeSelect();
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
   _modal.show();
   if (pid){
@@ -999,6 +1022,58 @@ function poblarAddTipoSelect(){
   const sel = document.getElementById('addTipo');
   if (!sel) return;
   sel.innerHTML = TIPOS_RESPUESTA.map(t => `<option value="${t.v}">${t.l}</option>`).join('');
+}
+
+// "Copiar ítems desde otra plantilla" (Daniel 29-08-2026): arma el selector
+// con las plantillas que YA tienen contenido, excluyendo la que está abierta
+// ahora mismo (no tiene sentido copiarse a sí misma). Se repuebla cada vez
+// que cambia _plantillas (cargarPlantillas) o cambia _editId (abrirEditor).
+function poblarCopyDesdeSelect(){
+  const sel = document.getElementById('copyDesde');
+  if (!sel) return;
+  const opciones = _plantillas
+    .filter(p => p.id !== _editId && (Number(p.items_count) || 0) > 0)
+    .slice()
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  sel.innerHTML = '<option value="">— Elegir plantilla —</option>' +
+    opciones.map(p => {
+      const cat = PL_CATEGORIAS.find(c => c.key === p.categoria_admin);
+      const catLabel = cat ? cat.label : 'Sin categoría';
+      return `<option value="${p.id}">${escHtml(p.nombre)} — ${escHtml(catLabel)} (${p.items_count} items)</option>`;
+    }).join('');
+}
+
+// Trae los ítems de la plantilla elegida y los SUMA al final de _items --
+// nunca reemplaza lo que ya había escrito (si algo no sirve, se borra con
+// el checkbox de selección múltiple de más abajo, no se pisa en silencio).
+async function copiarItemsDesde(){
+  const sel = document.getElementById('copyDesde');
+  const pid = sel.value;
+  if (!pid) return;
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/' + pid);
+    const d = await r.json();
+    if (!d.ok || !Array.isArray(d.items)){
+      if (typeof ilusToast === 'function') ilusToast('No se pudo leer esa plantilla', {type:'error'});
+      return;
+    }
+    const copiados = d.items.map(it => ({
+      _uid: _nextUid++,
+      titulo: it.titulo || '', descripcion: it.descripcion || '',
+      tipo_respuesta: it.tipo_respuesta || 'check',
+      obligatoria: !!it.obligatoria, requiere_foto: !!it.requiere_foto,
+      unidad: it.unidad || '', rango_min: it.rango_min, rango_max: it.rango_max,
+      opciones_lista: it.opciones_lista || [], target_field: it.target_field || '',
+    }));
+    _items.push(...copiados);
+    sel.value = '';
+    renderItems();
+    if (typeof ilusToast === 'function'){
+      ilusToast(`✓ ${copiados.length} ítem(s) copiados — revísalos y ajusta lo que corresponda`, {type:'success'});
+    }
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red al copiar', {type:'error'});
+  }
 }
 
 // Alta rápida (Daniel 29-08-2026): agrega al final de la lista ("a la cola")
