@@ -1370,6 +1370,7 @@ _GCS_INIT_DONE = False
 #
 #  ⚠️  NO volver a escribir _GCS_INIT_DONE antes de _GCS_BUCKET_OBJ: ese
 #      orden invertido ES el bug.
+_GCS_SIGN_WARN = {"done": False}  # log de "URL firmada no disponible" una sola vez por proceso
 _GCS_INIT_LOCK = threading.Lock()
 _GCS_INIT_FAIL_MONO = 0.0        # time.monotonic() del último fallo de init
 _GCS_RETRY_COOLDOWN_S = 30.0     # tras un fallo, no reintentar antes de esto
@@ -1802,11 +1803,39 @@ def _thumb_key(key, w):
     return f"{base or key}__t{w}.jpg"
 
 
+_RE_FOTO_KEY_VID = [
+    # firma_{tipo}_{vid}_{timestamp}.ext -- ver _subir_firma_storage
+    re.compile(r"^ilus/mantenciones/firmas/firma_\w+_(\d+)_\d+\."),
+    # ilus/visitas/v{vid}/... -- ver _mant_visita_fotos_subir_impl
+    re.compile(r"^ilus/visitas/v(\d+)/"),
+]
+
+
+def _foto_key_vid_sensible(key):
+    """Si `key` es una firma o foto de evidencia de una OT, devuelve su
+    `vid` (int). None si es cualquier otro tipo de archivo (fotos de
+    producto, manuales, etc. -- esos siguen públicos, sin cambios).
+
+    2026-08-29 (auditoría Fase 0, OT2-P0-04): estos dos patrones son
+    EXACTAMENTE los que la auditoría citó como el riesgo real (firmas con
+    valor legal + evidencia fotográfica de domicilios de clientes,
+    servidas hoy sin ningún control de acceso, con claves predecibles).
+    """
+    for rx in _RE_FOTO_KEY_VID:
+        m = rx.match(key)
+        if m:
+            try:
+                return int(m.group(1))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 @app.route("/f/<path:key>")
 def serve_archivo(key):
     """Sirve un archivo desde Google Cloud Storage (fotos, contratos, firmas).
     Reemplaza las URLs públicas de Cloudinary. La app lee de GCS (el bucket NO
-    es público); las keys son no-adivinables → misma seguridad que antes.
+    es público).
 
     ?w=<96|160|320> devuelve una MINIATURA cacheada en GCS.
     Daniel 2026-08-08 ("hay que hacer esto escalable, que si agrego mil
@@ -1816,9 +1845,41 @@ def serve_archivo(key):
     como imagen ROTA mientras bajaban. A 1000 productos serian ~156 MB por
     pagina. Con ?w=96 la misma foto pesa ~6 KB (26x menos).
     La miniatura se genera UNA vez y queda guardada en GCS; las siguientes
-    visitas la sirven directo, sin volver a procesar."""
+    visitas la sirven directo, sin volver a procesar.
+
+    🔒 2026-08-29 (auditoría Fase 0, OT2-P0-04, Daniel: "cierra el hueco de
+    /f/<key> con URLs firmadas de GCS"): antes esta ruta era 100% pública
+    ("las keys son no-adivinables → misma seguridad que antes" -- FALSO
+    para firmas: `firma_{tipo}_{vid}_{timestamp}` con vid secuencial y
+    timestamp en segundos es un espacio de búsqueda pequeño en una jornada
+    laboral). Ahora, SOLO para firmas/fotos de una OT (`vid` extraído de la
+    key, ver _foto_key_vid_sensible): exige sesión con acceso a esa OT
+    (_puede_ot_accion) O un token de firma remota válido para ese mismo vid
+    (?tok=, el mismo HMAC que ya usan /firmar-ot y /ot-firmada -- así el
+    cliente sin cuenta sigue viendo sus propias fotos/firmas). Cualquier
+    otro archivo (fotos de producto, manuales, catálogo) sigue exactamente
+    igual que siempre -- público, sin este candado.
+    """
     import mimetypes
     import hashlib as _hl
+
+    _vid_sensible = _foto_key_vid_sensible(key)
+    if _vid_sensible is not None:
+        _autorizado = False
+        if getattr(g, "user", None):
+            try:
+                _autorizado = _puede_ot_accion(_vid_sensible, "ver")
+            except Exception as e:
+                print(f"[ILUS][/f] error validando permiso vid={_vid_sensible}: {e}", flush=True)
+                _autorizado = False
+        if not _autorizado:
+            _tok = (request.args.get("tok") or "").strip()
+            if _tok and _ot_firma_token_validar(_tok) == _vid_sensible:
+                _autorizado = True
+        if not _autorizado:
+            # Sin detalles del motivo: no hay que confirmarle a un tercero
+            # si el vid existe o si solo le faltó el token correcto.
+            return "No autorizado", 403
 
     # Ancho pedido (solo de la lista blanca; cualquier otro valor se ignora
     # y se sirve el original, que es el comportamiento historico).
@@ -1888,6 +1949,30 @@ def serve_archivo(key):
             # Degradar al original en vez de romper la imagen.
 
     blob = b.blob(key)
+
+    # 🔒 2026-08-29: para el original (no miniatura) de una firma/foto ya
+    # autorizada arriba, preferir una URL FIRMADA de GCS de vida corta en
+    # vez de proxyar los bytes por Cloud Run -- es lo que pidió Daniel
+    # explícitamente ("con URLs firmadas de GCS"), y de paso el archivo
+    # sale directo de Google, sin gastar cómputo/egress de Cloud Run.
+    # Requiere que la cuenta de servicio tenga permiso de auto-firmar
+    # (roles/iam.serviceAccountTokenCreator sobre sí misma) -- si Cloud Run
+    # corre con credenciales por metadata (lo normal, sin llave descargada)
+    # y ese permiso no está otorgado, generate_signed_url lanza. Se degrada
+    # sin ruido al proxy de siempre -- el candado de arriba (autorización)
+    # ya cerró el hueco real aunque la URL firmada todavía no esté activa.
+    if _vid_sensible is not None and _w == 0:
+        try:
+            signed = blob.generate_signed_url(
+                version="v4", expiration=timedelta(minutes=15), method="GET")
+            return redirect(signed, code=302)
+        except Exception as e:
+            if not _GCS_SIGN_WARN["done"]:
+                _GCS_SIGN_WARN["done"] = True
+                print(f"[ILUS][/f] URL firmada no disponible (fallback a proxy) -- "
+                      f"probablemente falta roles/iam.serviceAccountTokenCreator "
+                      f"sobre la propia cuenta de servicio en Cloud Run: {e}", flush=True)
+
     try:
         data = blob.download_as_bytes()
     except Exception:
@@ -82954,7 +83039,7 @@ _OT_FIRMA_EQ_MAX_FOTOS = 4
 _OT_FIRMA_EQ_MAX_EQUIPOS = 20
 
 
-def _ot_firma_foto_thumb(url):
+def _ot_firma_foto_thumb(url, tok=None):
     """URL de miniatura liviana para la página pública de firma.
 
     Solo agrega `?w=160` (miniatura cacheada en GCS, ver `/f/<key>` en
@@ -82962,15 +83047,24 @@ def _ot_firma_foto_thumb(url):
     legacy que aún guardan una URL absoluta de Cloudinary (pre-migración a
     GCS) se sirven tal cual, sin intentar adivinar un parámetro de tamaño
     que ese proveedor no entendería.
+
+    2026-08-29 (auditoría Fase 0, OT2-P0-04): `/f/<key>` ahora exige sesión
+    o `?tok=` válido para fotos/firmas de una OT (ver serve_archivo) -- el
+    cliente que abre esta página pública sin cuenta necesita ese mismo
+    token para poder ver las fotos. Se reusa el token de firma remota, que
+    ya está atado server-side al `vid` exacto (HMAC, con expiración).
     """
     if not url:
         return ""
     if url.startswith("/f/"):
-        return url + "?w=160"
+        thumb = url + "?w=160"
+        if tok:
+            thumb += "&tok=" + tok
+        return thumb
     return url
 
 
-def _ot_firma_equipos_detalle(vid, v):
+def _ot_firma_equipos_detalle(vid, v, token=None):
     """Detalle liviano de equipos + checklist + miniaturas de fotos para la
     página pública de firma (`/firmar-ot/<token>`).
 
@@ -83081,7 +83175,7 @@ def _ot_firma_equipos_detalle(vid, v):
                     "badge_txt": badge_txt, "badge_cls": badge_cls,
                     "notas": notas[:2],
                     "tareas": [], "tareas_total": 0, "tareas_ok": 0, "tareas_extra": 0,
-                    "fotos": [_ot_firma_foto_thumb(u) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
+                    "fotos": [_ot_firma_foto_thumb(u, tok=token) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
                     "fotos_extra": max(0, len(fotos_all) - _OT_FIRMA_EQ_MAX_FOTOS),
                 })
             equipos_extra = max(0, len(lev_items) - _OT_FIRMA_EQ_MAX_EQUIPOS)
@@ -83139,7 +83233,7 @@ def _ot_firma_equipos_detalle(vid, v):
                                for t in t_list[:_OT_FIRMA_EQ_MAX_TAREAS]],
                     "tareas_total": t_total, "tareas_ok": t_ok,
                     "tareas_extra": max(0, t_total - _OT_FIRMA_EQ_MAX_TAREAS),
-                    "fotos": [_ot_firma_foto_thumb(u) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
+                    "fotos": [_ot_firma_foto_thumb(u, tok=token) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
                     "fotos_extra": max(0, len(fotos_all) - _OT_FIRMA_EQ_MAX_FOTOS),
                 })
             equipos_extra = max(0, len(equipos) - _OT_FIRMA_EQ_MAX_EQUIPOS)
@@ -83328,7 +83422,7 @@ def ot_firma_publica(token):
     # no_disponible/invalido) no tiene sentido pagar el costo de esas
     # queries extra. Ver docstring de _ot_firma_equipos_detalle.
     equipos_firma, equipos_firma_extra = (
-        _ot_firma_equipos_detalle(vid, v) if estado == "firmar" else ([], 0)
+        _ot_firma_equipos_detalle(vid, v, token=token) if estado == "firmar" else ([], 0)
     )
     return render_template("mantenciones/firma_publica.html", estado=estado, token=token,
                             ot=v, equipos_firma=equipos_firma, equipos_firma_extra=equipos_firma_extra)
@@ -86440,7 +86534,14 @@ def ot_publica_firmada(token):
             "<p style='color:#6b7280;font-size:.95rem;line-height:1.5'>Puede haber vencido. "
             "Pídele a tu contacto en ILUS Fitness que te envíe uno nuevo.</p></div></html>"), 410
 
-    ctx, status, razones = _ot_pdf_context(vid)
+    # 2026-08-29 (auditoría Fase 0, OT2-P0-04): embed_images=True -- igual
+    # que el PDF real de Playwright -- para que esta página pública NUNCA
+    # dependa de /f/<key> abierto sin sesión. Antes traía las URLs crudas
+    # (firma_cliente_url, firma_tecnico_url, fotos de equipo) y las servía
+    # tal cual en el HTML; ahora vienen ya convertidas a data-URI, leídas
+    # server-side directo de GCS. Bonus: tampoco deja una URL reusable
+    # dando vueltas en el HTML entregado al cliente.
+    ctx, status, razones = _ot_pdf_context(vid, embed_images=True)
     if status != "ok":
         # La OT existe pero todavía no está cerrada con sus firmas. No se
         # muestra a medias: sería entregarle al cliente un documento que
