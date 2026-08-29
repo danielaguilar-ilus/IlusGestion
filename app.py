@@ -76184,6 +76184,32 @@ def ot2_api_crear():
                             if str(_fin.get("costo_despacho") or "").strip() else None) or None
     except (TypeError, ValueError):
         return _ot2_err("El costo de despacho no es válido.", "COSTO_DESPACHO_INVALIDO")
+    # 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan poderse
+    # agregar documentos... es necesario que sea multidocumento las ordenes
+    # de trabajo"). MVP en JSON (ver comentario de la columna y memoria
+    # ot2_anexo_multidocumento_decision) -- documentos ERP que el usuario
+    # asocio a mano desde el wizard, con el rut que traian al momento de
+    # agregarlos (para el aviso de "rut distinto" que ya se resuelve en el
+    # frontend; acá solo se guarda lo que ya vino validado, sin revalidar
+    # contra el ERP de nuevo).
+    _fin_docs_extra_json = None
+    _docs_extra_raw = _fin.get("documentos_extra")
+    if isinstance(_docs_extra_raw, list) and _docs_extra_raw:
+        _docs_limpios = []
+        for _d in _docs_extra_raw[:20]:
+            if not isinstance(_d, dict):
+                continue
+            _tido = str(_d.get("tido") or "").strip().upper()[:10]
+            _nudo = str(_d.get("nudo") or "").strip()[:30]
+            if not _tido or not _nudo:
+                continue
+            _docs_limpios.append({
+                "tido": _tido, "nudo": _nudo,
+                "rut": str(_d.get("rut") or "").strip()[:20],
+                "cliente_nombre": str(_d.get("cliente_nombre") or "").strip()[:200],
+            })
+        if _docs_limpios:
+            _fin_docs_extra_json = json.dumps(_docs_limpios, ensure_ascii=False)
     _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
     _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
     _fin_prov_nombre = (str(_fin.get("proveedor_nombre") or "").strip()[:200]) or None
@@ -76243,10 +76269,12 @@ def ot2_api_crear():
             "   centro_costo, zz_codigo, zz_monto, costo, modalidad_cobro, cubierto_por, "
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
             "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
+            "   documentos_extra, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
+            "        %s,"
             "        %s,%s,%s)",
             (numero_ot, cliente_id, titulo, descripcion, _f,
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
@@ -76255,6 +76283,7 @@ def ot2_api_crear():
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
+             _fin_docs_extra_json,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
              # conversión a hora Chile es cosa de la vista).
              datetime.utcnow() if _fin_declarada else None,
@@ -107268,6 +107297,20 @@ def _ensure_mant_intel_tables():
             mysql_execute("ALTER TABLE mant_visitas ADD COLUMN costo_despacho DECIMAL(12,2) NULL "
                           "COMMENT 'Costo de despacho/envio, opcional, aparte del costo del proveedor/tecnico'")
             faltaron.append("mant_visitas.costo_despacho")
+        # 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan
+        # poderse agregar documentos... es necesario que sea multidocumento
+        # las ordenes de trabajo"). MVP deliberado: JSON simple en vez de una
+        # tabla puente nueva -- el modelo completo (reflejar tambien en los
+        # documentos del cliente, tipificar cada documento) queda pendiente
+        # de diseño (ver memoria ot2_anexo_multidocumento_decision). Esto
+        # solo guarda la lista de documentos ERP que el usuario asocio a
+        # mano desde el wizard, con el RUT que traia cada uno al momento de
+        # agregarlo -- suficiente para el aviso de "rut distinto" que pidio,
+        # sin bloquear el diseño futuro de la tabla puente.
+        if "documentos_extra" not in ex_v:
+            mysql_execute("ALTER TABLE mant_visitas ADD COLUMN documentos_extra JSON NULL "
+                          "COMMENT 'Documentos ERP adicionales asociados a mano desde el wizard (MVP, ver memoria multidocumento)'")
+            faltaron.append("mant_visitas.documentos_extra")
     except Exception as e:
         print(f"[ensure_intel] finanzas visitas: {e}", flush=True)
     # 2026-08-27 (Daniel — objeto "Número de serie" para checklist de
