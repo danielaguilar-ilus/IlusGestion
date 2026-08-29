@@ -309,6 +309,28 @@
 .o2m-eq-sug{display:block;margin-top:4px;font-size:.7rem;color:#6b7280}
 .o2m-eq-hint{padding:9px 12px;background:#f8fafc;border-top:1px solid #f1f5f9;
   font-size:.72rem;color:#6b7280}
+.o2m-eq-noplan{font-size:.68rem;font-weight:700;color:#b45309;background:#fffbeb;
+  border:1px solid #fde68a;border-radius:50px;padding:1px 7px;white-space:nowrap}
+.o2m-eq-table th.plan, .o2m-eq-table td.plan{text-align:center;width:52px}
+.o2m-eq-plan-btn{width:32px;height:32px;border-radius:50%;border:1px solid #e5e7eb;background:#f8fafc;
+  color:#9ca3af;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  font-size:.95rem;transition:background .15s,border-color .15s,color .15s,transform .15s}
+.o2m-eq-plan-btn:hover{transform:scale(1.08);border-color:#c7cbd1}
+.o2m-eq-plan-btn.on{background:#f0fdf4;border-color:#86efac;color:#16a34a}
+
+/* 2026-08-29: toggle con ícono para "Acceso al lugar" (ascensor / */
+/* estacionamiento) -- reemplaza el <select> plano por algo mas vivo. */
+.o2m-acc-toggle{display:flex;gap:8px}
+.o2m-acc-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:10px 8px;border-radius:10px;border:1.5px solid #e5e7eb;background:#fafbfc;
+  color:#9ca3af;cursor:pointer;min-height:44px;font-weight:800;font-size:.78rem;
+  transition:border-color .15s,background .15s,color .15s,transform .15s}
+.o2m-acc-btn i{font-size:1.15rem}
+.o2m-acc-btn:hover{border-color:#c7cbd1;transform:translateY(-1px)}
+.o2m-acc-btn.on{background:#f0fdf4;border-color:#16a34a;color:#16a34a;
+  box-shadow:0 4px 12px -4px rgba(22,163,74,.4);animation:o2mAccPop .25s ease}
+@keyframes o2mAccPop{0%{transform:scale(.92)}60%{transform:scale(1.05)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){ .o2m-acc-btn.on{animation:none} }
 @media (max-width:575.98px){
   .o2m-eq-table{font-size:.78rem}
   .o2m-eq-table select{min-width:150px}
@@ -2049,20 +2071,14 @@ window.OT2C = (function(){
       '<h6 class="t mt-4">Acceso al lugar</h6>'+
       '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
       '<div class="row g-3">'+
-        '<div class="col-md-3"><label class="fl">¿Tiene ascensor? *</label>'+
-        '<select class="form-select" onchange="OT2C.setAcc(\'ascensor\',this.value)">'+
-        '<option value="">Elige…</option>'+
-        '<option value="1" '+(S.acceso.ascensor===1?'selected':'')+'>Sí</option>'+
-        '<option value="0" '+(S.acceso.ascensor===0?'selected':'')+'>No</option></select></div>'+
-        '<div class="col-md-3"><label class="fl">¿Hay estacionamiento? *</label>'+
-        '<select class="form-select" onchange="OT2C.setAcc(\'estacionamiento\',this.value)">'+
-        '<option value="">Elige…</option>'+
-        '<option value="1" '+(S.acceso.estacionamiento===1?'selected':'')+'>Sí</option>'+
-        '<option value="0" '+(S.acceso.estacionamiento===0?'selected':'')+'>No</option></select></div>'+
+        '<div class="col-md-4"><label class="fl">¿Tiene ascensor? *</label>'+
+        _o2mAccToggle('ascensor', S.acceso.ascensor, 'bi-arrow-down-up')+'</div>'+
+        '<div class="col-md-4"><label class="fl">¿Hay estacionamiento? *</label>'+
+        _o2mAccToggle('estacionamiento', S.acceso.estacionamiento, 'bi-p-square')+'</div>'+
         '<div class="col-md-2"><label class="fl">Piso</label>'+
         '<input type="number" class="form-control" min="-5" max="30" value="'+esc(S.acceso.piso)+'" '+
         'placeholder="Opc." oninput="OT2C.setAccesoTexto(\'piso\',this.value)"></div>'+
-        '<div class="col-md-4"><label class="fl">Notas de acceso</label>'+
+        '<div class="col-md-2"><label class="fl">Notas de acceso</label>'+
         '<input class="form-control" maxlength="500" value="'+esc(S.acceso.notas)+'" '+
         'placeholder="Opcional" oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
       '</div>';
@@ -2171,17 +2187,22 @@ window.OT2C = (function(){
           '</button>'+
         '</div>'+
         '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
-          '<th class="chk"></th><th>Equipo</th><th>S/N</th><th>Plantilla</th>'+
+          '<th class="chk"></th><th>Equipo / SKU</th><th class="plan">Plan</th><th>Plantillas extra</th>'+
         '</tr></thead><tbody>'+
         cacheEquipos.map(function(m){
           var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
           var cls = sel ? (sel.plantilla_id ? 'ok' : 'sel') : '';
+          var enPlan = !!m.aplica_mantencion;
           return '<tr class="'+cls+'">'+
             '<td class="chk"><span class="o2m-chk'+(sel?' on':'')+'" style="cursor:pointer" onclick="OT2C.eqTog('+m.id+')">'+
               (sel?'<i class="bi bi-check-lg" style="color:#fff"></i>':'')+'</span></td>'+
-            '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
-              (m.sku ? '<span class="sku">'+esc(m.sku)+'</span>' : '')+'</td>'+
-            '<td class="serie">'+(m.serie ? esc(m.serie) : '<span class="muted">—</span>')+'</td>'+
+            '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+
+              (!enPlan ? ' <span class="o2m-eq-noplan">(sin mantención)</span>' : '')+'</span>'+
+              (m.sku ? '<span class="sku">'+esc(m.sku)+'</span>' : '')+
+              (m.serie ? '<span class="sku">S/N: '+esc(m.serie)+'</span>' : '')+'</td>'+
+            '<td class="plan"><button type="button" class="o2m-eq-plan-btn'+(enPlan?' on':'')+'" '+
+              'title="'+(enPlan?'Quitar del plan de mantención de este cliente':'Agregar al plan de mantención de este cliente')+'" '+
+              'onclick="OT2C.eqTogPlan('+m.id+')"><i class="bi '+(enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></button></td>'+
             '<td>'+(sel
               ? '<select class="form-select form-select-sm" onchange="OT2C.eqPlant('+m.id+',this.value)">'+
                 '<option value="">Elige el checklist…</option>'+ops+'</select>'+
@@ -2190,14 +2211,15 @@ window.OT2C = (function(){
                 // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
                 (sel.plantilla_sugerida ? '<small class="o2m-eq-sug">'+
                   '<i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>' : '')
-              : '<span class="muted">—</span>')+
+              : '<span class="muted"><i class="bi bi-lock-fill me-1"></i>marca el equipo</span>')+
             '</td>'+
           '</tr>';
         }).join('')+
         '</tbody></table></div>'+
         '<div class="o2m-eq-hint"><i class="bi bi-lightbulb me-1"></i>'+
-          '<b>Auto:</b> los equipos que están dentro del plan de mantención del cliente ya '+
-          'vienen marcados. Puedes marcar o desmarcar cualquiera libremente.</div>'+
+          '<b>Auto:</b> los equipos dentro del plan de mantención del cliente ya vienen marcados. '+
+          'Usa el ícono de escudo para agregar o quitar un equipo del plan — el cambio queda '+
+          'guardado en la ficha del cliente para siempre, no solo en esta OT.</div>'+
       '</div>';
     // Repintar el <select> con el valor ya elegido
     S.equipos.forEach(function(e){
@@ -2206,6 +2228,38 @@ window.OT2C = (function(){
       for (var i=0;i<sels.length;i++){
         if (sels[i].getAttribute('onchange').indexOf('('+e.maquina_id+',')>=0) sels[i].value = e.plantilla_id;
       }
+    });
+  }
+
+  /* "Integrar/desintegrar" un equipo del plan de mantención del cliente
+     (2026-08-29, Daniel: "que pueda modificar el plan... y que pueda
+     integrar y desintegrar un plan, en caso de que me haya equivocado...
+     dejarlo automático, los cambios que sean persistentes para siempre").
+     A diferencia del checkbox de la izquierda (que solo decide si el
+     equipo entra a ESTA OT), esto edita `aplica_mantencion` en la FICHA
+     del equipo -- mismo campo/endpoint que ya usa la pantalla de gestión
+     de clientes (mant_maquina_aplica_mantencion, app.py). Optimista en la
+     UI + reversión si el backend falla, para que se sienta instantáneo. */
+  function eqTogPlan(mid){
+    var m = cacheEquipos.find(function(x){ return x.id===mid; });
+    if (!m) return;
+    var antes = !!m.aplica_mantencion;
+    var nuevo = !antes;
+    m.aplica_mantencion = nuevo ? 1 : 0;
+    pintarListaEquipos();
+    fetch('/mantenciones/api/maquinas/'+mid+'/aplica-mantencion', {
+      method:'PUT', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({aplica: nuevo})
+    }).then(function(r){ return r.json(); }).then(function(r){
+      if (!r || !r.ok){
+        m.aplica_mantencion = antes ? 1 : 0; pintarListaEquipos();
+        if (window.ilusToast) ilusToast('No se pudo actualizar el plan de mantención.', {type:'error'});
+      } else if (window.ilusToast){
+        ilusToast(nuevo ? '✓ Equipo agregado al plan de mantención' : '✓ Equipo quitado del plan de mantención', {type:'success'});
+      }
+    }).catch(function(){
+      m.aplica_mantencion = antes ? 1 : 0; pintarListaEquipos();
+      if (window.ilusToast) ilusToast('No se pudo actualizar el plan de mantención.', {type:'error'});
     });
   }
 
@@ -2885,6 +2939,25 @@ window.OT2C = (function(){
     if (fase === 'form') pintarFormulario(); else pintar();
   }
   function setAcc(k,v){ S.acceso[k] = v==='' ? null : parseInt(v); refrescarAnclas(); }
+  /* 2026-08-29 (Daniel: "el acceso al lugar... déjalo con objeto animado,
+     que se ve espectacular, ponle un ascensor, ponle un estacionamiento").
+     Botones con ícono en vez de un <select> plano -- misma pregunta
+     obligatoria (Sí/No, ver completo('equipos')), solo más visual. El
+     toggle de estado activo se hace a mano sobre los 2 botones hermanos
+     (sin repintar toda la sección) para no disparar un refetch de
+     equipos en cada clic -- setAcc() en sí no repinta nada, solo guarda
+     y actualiza el riel/tarjeta. */
+  function _o2mAccToggle(key, val, icon){
+    function btn(v, label){
+      var on = val === v;
+      return '<button type="button" class="o2m-acc-btn'+(on?' on':'')+'" '+
+        'onclick="OT2C.setAcc(\''+key+'\','+v+');'+
+        'this.parentElement.querySelectorAll(\'.o2m-acc-btn\').forEach(b=>b.classList.remove(\'on\'));'+
+        'this.classList.add(\'on\')">'+
+        '<i class="bi '+icon+'"></i><span>'+label+'</span></button>';
+    }
+    return '<div class="o2m-acc-toggle">'+btn(1,'Sí')+btn(0,'No')+'</div>';
+  }
   function setAccesoTexto(k,v){ S.acceso[k] = v; }
   function setTitulo(v){ S.titulo = v; }
   function setDescripcion(v){ S.descripcion = v; }
@@ -3315,7 +3388,7 @@ window.OT2C = (function(){
   return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
-          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, buscarCli:buscarCli, filtrarTipo:filtrarTipo,
+          tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan, buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
           quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
