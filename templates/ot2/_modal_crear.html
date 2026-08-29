@@ -847,7 +847,11 @@ window.OT2C = (function(){
     // del ERP... a menos que sea garantía. Y también el centro de costo"):
     // trabajo interno no factura a ningún cliente -- ya tiene su propio
     // costo_interno de referencia en "Trabajo", no repite esta sección.
-    if (!esInterno()) p.push({k:'finanzas', n:'Finanzas'});
+    // 2026-08-29 (Daniel, viendo el paso en vivo: "mas bien costos que
+    // finanzas, cambia ese nombre"): la clave interna 'finanzas' NO
+    // cambia (es la misma que usan completo()/pintarFormulario()/crear()
+    // y S.fin_* en todo el archivo) -- solo la ETIQUETA visible.
+    if (!esInterno()) p.push({k:'finanzas', n:'Costos'});
     // 2026-08-29 (Daniel, insistiendo: "¿dónde y cuándo aparece el anexo de
     // contrato?... hazlo como paso siete... necesito potenciar este
     // formulario"): antes el Anexo solo se podía crear DESPUÉS de crear la
@@ -1178,7 +1182,7 @@ window.OT2C = (function(){
           '<input class="form-control" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
           'value="'+esc((S.doc_origen && S.doc_origen.tido==='NVI') ? S.doc_origen.nudo : '')+'" '+
           'oninput="OT2C.setNotaVentaInterna(this.value)">'+
-          '<small class="text-muted d-block mt-1" style="font-size:.72rem">Queda registrada en la OT (Finanzas) como nota de venta interna NVI.</small>'
+          '<small class="text-muted d-block mt-1" style="font-size:.72rem">Queda registrada en la OT (Costos) como nota de venta interna NVI.</small>'
         : '');
   }
 
@@ -2700,7 +2704,7 @@ window.OT2C = (function(){
     var docTxt = (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)
       ? S.fin_doc.tido + ' ' + S.fin_doc.nudo : null;
     b.innerHTML =
-      '<h6 class="t">Finanzas</h6>'+
+      '<h6 class="t">Costos</h6>'+
       '<p class="d">Centro de costo, a qué queda cubierta esta OT, y cuánto cuesta de verdad (para medir margen).</p>'+
       '<label class="fl">Centro de costo *</label>'+
       '<div class="o2m-grid mb-3" style="grid-template-columns:repeat(3,minmax(120px,1fr))">'+
@@ -3044,14 +3048,20 @@ window.OT2C = (function(){
     var c = document.getElementById('o2mFinMargen'); if (!c) return;
     var costo = parseFloat(S.fin_costo_proveedor);
     if (!isFinite(costo) || costo < 0) costo = null;
+    // 2026-08-29 (Daniel: "necesito que el argumento salga en frente,
+    // traelo al frente... establece una regla al implementar este modal"):
+    // REGLA para este archivo -- ningun aviso que explique por qué falta
+    // algo va en texto gris chico (.text-muted small); eso ya demostró
+    // perderse de vista más de una vez. Todo mensaje explicativo usa
+    // .o2m-aviso (mismo componente visible del resto del wizard).
     var venta = _ventaActual();
     if (venta == null || venta <= 0){
-      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+      c.innerHTML = '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
         'Falta un monto de venta (documento o estimado) para calcular el margen.</div>';
       return;
     }
     if (costo == null){
-      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+      c.innerHTML = '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
         'Ingresa el costo del proveedor para ver el desglose y el margen.</div>';
       return;
     }
@@ -3108,8 +3118,9 @@ window.OT2C = (function(){
     var c = document.getElementById('o2mFinEstimado'); if (!c) return;
     var est = S.fin_costo_estimado;
     if (!est || est.total_neto == null){
-      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
-        'Sin estimado disponible para este tipo de OT o estos equipos todavía.</div>';
+      c.innerHTML = '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
+        'Sin estimado disponible para este tipo de OT o estos equipos todavía. '+
+        'Puedes seguir con "Buscar documento en el ERP" o ingresar el costo del proveedor a mano.</div>';
       return;
     }
     c.innerHTML = '<div class="o2m-res"><div class="b"><span class="k">Estimado (referencia)</span>'+
@@ -3724,6 +3735,13 @@ window.OT2C = (function(){
                   (rb && rb.ok) ? '✓ Anexo N°'+ra.numero+' enviado a '+S.anexo.email_destino
                                 : 'El anexo se creó, pero no se pudo enviar el correo — envíalo desde el detalle de la OT.',
                   {type:(rb && rb.ok)?'success':'warning', duration:7000});
+                // 2026-08-29 (Daniel: "integra el anexo el envio por mail o
+                // whatsapp"): mismo patrón honesto que ya usa el backend --
+                // arma el link de WhatsApp con el mensaje ya escrito, pero
+                // es una PERSONA quien lo manda (no hay envío automático de
+                // WhatsApp en el proyecto, ver ot2_api_anexo_enviar). Se abre
+                // en pestaña nueva para no perder la navegación al detalle.
+                if (rb && rb.ok && rb.whatsapp_link) window.open(rb.whatsapp_link, '_blank');
                 _o2mIrADetalle();
               }).catch(function(){
                 if (window.ilusToast) ilusToast('El anexo se creó, pero no se pudo enviar — envíalo desde el detalle de la OT.', {type:'warning', duration:7000});
