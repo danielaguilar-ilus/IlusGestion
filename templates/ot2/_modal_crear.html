@@ -184,10 +184,17 @@
 .o2m-sec:last-child{margin-bottom:0}
 .o2m-sec.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%);
   box-shadow:0 1px 3px rgba(22,163,74,.08),0 14px 32px -18px rgba(22,163,74,.28)}
+/* 2026-08-29 noche: tercer estado "neutro" (ambar) -- ver estadoVisual().
+   Para pasos deliberadamente opcionales (detalle/tecnicos) que completo()
+   nunca bloquea, pero que tampoco deberian verse identicos a un paso que
+   el usuario si personalizo. Ambar = "valido, usando el default". */
+.o2m-sec.is-neutral{border-color:#fde68a;background:linear-gradient(180deg,#fffbeb 0%,#fff 55%);
+  box-shadow:0 1px 3px rgba(217,119,6,.08),0 14px 32px -18px rgba(217,119,6,.28)}
 .o2m-step-circle-wrap{display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0;min-width:64px}
 .o2m-step-circle-label{font-size:.6rem;font-weight:900;letter-spacing:.13em;text-transform:uppercase;
   color:var(--ilus-red,#dc2626);line-height:1;white-space:nowrap;transition:color .25s ease}
 .o2m-sec.is-complete .o2m-step-circle-label{color:#16a34a}
+.o2m-sec.is-neutral .o2m-step-circle-label{color:#b45309}
 .o2m-step-circle{position:relative;width:60px;height:60px;border-radius:50%;
   background:var(--ilus-red,#dc2626);color:#fff;border:3px solid #fff;
   display:flex;align-items:center;justify-content:center;font-size:1.75rem;font-weight:900;
@@ -742,6 +749,25 @@ window.OT2C = (function(){
     }
   }
 
+  /* 2026-08-29 noche (Daniel, viendo PASO 3 vacío pero en verde): "ese
+     espacio esta vacio y esta en verde, los objetos tambien deben de
+     verse en rojo amarillo o verde". completo() sigue siendo el gate
+     real de creación (NUNCA cambia de valor acá, ver crear() más abajo) --
+     'detalle' y 'tecnicos' son deliberadamente permisivos (título se
+     autogenera, técnico se puede asignar después), así que completo()
+     correctamente no bloquea. Pero mostrar esas tarjetas IDÉNTICAS a una
+     que el usuario sí llenó es engañoso. Este helper es SOLO para el
+     color de la tarjeta/círculo: agrega un tercer estado "neutro" (ámbar)
+     para "válido, pero todavía usando el default" -- ok/verde queda
+     reservado para cuando de verdad hay algo escrito/elegido. */
+  function estadoVisual(k){
+    switch(k){
+      case 'detalle':  return (S.titulo && S.titulo.trim()) ? 'ok' : 'neutro';
+      case 'tecnicos': return (S.tecnicos && S.tecnicos.length > 0) ? 'ok' : 'neutro';
+      default:         return completo(k) ? 'ok' : 'pendiente';
+    }
+  }
+
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
@@ -764,12 +790,13 @@ window.OT2C = (function(){
     ps.forEach(function(p){
       var sec = document.getElementById('o2mSec-'+p.k);
       if (!sec) return;
-      var listo = completo(p.k);
-      var eraListo = !!_o2mStepCompleteTracked[p.k];
-      sec.classList.toggle('is-complete', listo);
+      var estado = estadoVisual(p.k);           // 'ok' | 'neutro' | 'pendiente'
+      var eraEstado = _o2mStepCompleteTracked[p.k];
+      sec.classList.toggle('is-complete', estado === 'ok');
+      sec.classList.toggle('is-neutral', estado === 'neutro');
       var circ = document.getElementById('o2mCirc-'+p.k);
-      if (circ && listo && !eraListo) circ.classList.add('pulse');
-      _o2mStepCompleteTracked[p.k] = listo;
+      if (circ && estado === 'ok' && eraEstado !== 'ok') circ.classList.add('pulse');
+      _o2mStepCompleteTracked[p.k] = estado;
     });
   }
   // Alias corto reusado por handlers inline generados en varias funciones.
