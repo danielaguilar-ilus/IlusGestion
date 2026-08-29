@@ -1274,79 +1274,24 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       </div>`;
       break;
     case 'foto': {
-      // ── FIX 2026-05-17 v2 — UN solo botón rojo grande + sheet de elección ──
-      // Mobile: 1 botón "Agregar foto" → abre bottom-sheet con 2 opciones
-      // (Cámara / Galería). El técnico decide ahí (ilusActionSheet).
-      // Desktop: zona con drag&drop real (igual que antes).
-      // Los 2 <input type=file> quedan ocultos y se disparan via click()
-      // según lo que elija el técnico en el sheet.
-      // ────────────────────────────────────────────────────────────
-      // ── 2026-05-19 (Daniel) — Aviso visual: foto va a la ficha técnica.
-      //    2026-08-21: dejó de exigir ES_LEVANTAMIENTO. Las fotos de
-      //    instalación, preventiva e inspección TAMBIÉN llegan a la galería
-      //    del equipo (la ficha las une desde mant_visita_fotos), así que el
-      //    aviso era correcto en más casos de los que se mostraba: el
-      //    técnico creía que su foto era solo evidencia de la OT.
-      const _fotoAvisoHtml = (mid)
-        ? `<div class="tx-foto-aviso-ficha" role="status">
-            <i class="bi bi-camera-fill"></i>
-            <div>Esta foto se asignará a la <strong>ficha técnica del equipo</strong>
-              al cerrar la OT.</div>
-          </div>`
-        : '';
-      // Estructura del bloque de foto (2 variantes excluyentes por breakpoint):
-      //   · Desktop (.d-none.d-md-flex) → zona con drag&drop real.
-      //   · Mobile  (.d-md-none)        → UN SOLO botón rojo grande que abre
-      //     el sheet de elección (abrirSheetFoto), + 2 inputs ocultos
-      //     (cámara / galería) que ese sheet dispara via click().
-      ctrlHtml = `<div class="ctrl">
-        ${_fotoAvisoHtml}
-        <label class="tx-btn-foto-zone d-none d-md-flex" id="dropzone-${t.id}"
-          style="cursor:pointer;flex-direction:column;align-items:center;gap:6px;padding:18px;
-          border:2px dashed #cbd5e1;border-radius:11px;background:#fafafa;
-          transition:all .15s"
-          ondragover="event.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fef2f2'"
-          ondragleave="this.style.borderColor='#cbd5e1';this.style.background='#fafafa'"
-          ondrop="event.preventDefault();this.style.borderColor='#cbd5e1';this.style.background='#fafafa';
-            const f=event.dataTransfer.files;if(f&&f.length){const inp=this.querySelector('input');
-            const dt=new DataTransfer();dt.items.add(f[0]);inp.files=dt.files;
-            subirFotoTarea(${t.id}, inp, ${mid}, ${pid});}">
-          <i class="bi bi-camera-plus" style="font-size:1.8rem;color:#dc2626"></i>
-          <div style="font-weight:700;color:#0f172a">Agregar foto</div>
-          <small style="color:#94a3b8">Click o arrastra · JPG/PNG/HEIC</small>
-          <input type="file" accept="image/*,image/heic,image/heif" style="display:none"
-            ${bloqueada ? 'disabled' : ''}
-            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
-        </label>
-
-        <div class="d-md-none">
-          <button type="button" class="ilus-foto-btn-main"
-            ${bloqueada ? 'disabled' : ''}
-            onclick="abrirSheetFoto(${t.id}, ${mid}, ${pid})"
-            style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
-              padding:16px 18px;border-radius:12px;
-              background:linear-gradient(135deg,#dc2626,#b91c1c);
-              color:#fff;font-weight:700;font-size:1rem;
-              min-height:56px;border:none;cursor:pointer;
-              box-shadow:0 4px 12px rgba(220,38,38,.3);
-              transition:transform .1s, box-shadow .15s;">
-            <i class="bi bi-camera-plus-fill" style="font-size:1.3rem"></i>
-            <span>📷 Agregar foto</span>
-          </button>
-          <input type="file" id="fotoCam-${t.id}" accept="image/*,image/heic,image/heif"
-            capture="environment" style="display:none"
-            ${bloqueada ? 'disabled' : ''}
-            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
-          <input type="file" id="fotoGal-${t.id}" accept="image/*,image/heic,image/heif"
-            style="display:none"
-            ${bloqueada ? 'disabled' : ''}
-            onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
-        </div>
-
-        <div id="t-fotos-${t.id}" class="foto-result">${_fotosTareaTilesHtml(t.id, mid, pid)}</div>
-      </div>`;
+      ctrlHtml = _fotoUploadBlockHtml(t, mid, pid, bloqueada);
       break;
     }
+  }
+
+  // 2026-08-29 (Daniel: "que se mantengan las fotos obligatorias y las
+  // opcionales... tiene que tomar las fotos"): requiere_foto y tipo_respuesta
+  // son flags independientes en el editor de plantillas -- una tarea 'check'/
+  // 'sino'/'numero'/etc. puede exigir foto igual que una tipo 'foto', pero
+  // hasta hoy solo el tipo 'foto' traía algún control para adjuntarla. Se
+  // suma el MISMO bloque (ninguna subida nueva, reusa subirFotoTarea) a
+  // cualquier tarea con requiere_foto=1 cuyo tipo no sea ya 'foto' (ese caso
+  // ya lo trae arriba, no se duplica).
+  if (t.requiere_foto && tipo !== 'foto'){
+    ctrlHtml += `<div class="tx-foto-req-extra">
+      <div class="tx-foto-req-lbl"><i class="bi bi-camera-fill me-1"></i>Esta tarea también exige una foto</div>
+      ${_fotoUploadBlockHtml(t, mid, pid, bloqueada)}
+    </div>`;
   }
 
   const isCheckType = (tipo === 'check');
@@ -1389,8 +1334,14 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
   // badge); ahora lo OPCIONAL se distingue desde el inicio con su propio
   // badge + borde punteado — nunca se "exige" algo que no lo es.
   const optClass = (!t.obligatoria) ? ' is-optional' : '';
+  // 2026-08-29 (Daniel: "una permite avanzar y otra... tiene que tomar las
+  // fotos"): rojo real -- no solo un badge informativo -- mientras a esta
+  // tarea le falte la foto que su propia plantilla exige. Se calcula igual
+  // sin importar el tipo_respuesta (ver bloque agregado tras el switch).
+  const faltaFotoObligatoria = !!(t.requiere_foto && (_fotosIdx()[t.id] || []).length === 0);
+  const fotoClass = faltaFotoObligatoria ? ' falta-foto' : '';
 
-  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}${optClass}"
+  return `<div class="tx-tarea${done ? ' done' : ''}${bloqueada ? ' bloqueada' : ''}${nextClass}${semClass}${lockClass}${optClass}${fotoClass}"
        id="tar-${t.id}" data-version="${t.version || 0}">
     <div class="ttl">
       ${tno ? `<span class="tno">${tno}</span>` : ''}
@@ -1402,7 +1353,11 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
         <div class="ttl-text">${_escapeHtml(t.titulo)}
           <span class="ttl-badges">
             ${t.obligatoria ? '<span class="tx-badge-obl">Obligatoria</span>' : '<span class="tx-badge-opt">Opcional</span>'}
-            ${t.requiere_foto ? '<span class="tx-badge-foto">📷 Foto</span>' : ''}
+            ${t.requiere_foto
+              ? (faltaFotoObligatoria
+                  ? '<span class="tx-badge-foto-falta">📷 Falta foto</span>'
+                  : '<span class="tx-badge-foto">📷 Foto</span>')
+              : ''}
             <span class="tx-badge-tipo">${_escapeHtml(tipo)}</span>
             <span class="nxt-tag">Siguiente</span>
           </span>
@@ -2544,9 +2499,19 @@ async function toggleCheck(tid, mid, pid){
   // Encontrar tarea en data
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   const tar = grupo.tareas.find(t => t.id === tid);
+  const newVal = !tar.completada;
+  // 2026-08-29 (Daniel: "una permite avanzar y otra... tiene que tomar las
+  // fotos"): si esta tarea exige foto y todavía no tiene ninguna, no se deja
+  // marcar como completada -- la tarjeta ya se ve en rojo (falta-foto), esto
+  // hace cumplir esa misma regla al intentar avanzar en vez de dejar pasar y
+  // recién enterarse al firmar (el backend igual la bloquea ahí, pero tarde).
+  // Desmarcar (newVal===false) siempre se permite, sin esta validación.
+  if (newVal && tar.requiere_foto && (_fotosIdx()[tid] || []).length === 0){
+    ilusToast('Esta tarea exige una foto — adjúntala abajo antes de marcarla', { type:'warning' });
+    return;
+  }
   // ── Lock + version check (concurrencia multitécnico) ──
   if (!await tomarLockTarea(tid)) return;
-  const newVal = !tar.completada;
   try {
     const r = await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
       method: 'PATCH', headers: {'Content-Type':'application/json'},
@@ -3286,6 +3251,67 @@ function _fotosTareaReadonly(){
           !PUEDE_EJECUTAR_FLAG);
 }
 
+// Bloque completo de "agregar foto" (drag&drop desktop + botón/sheet
+// mobile + tiles ya subidas). Extraído del case 'foto' de renderTareaHtml
+// (2026-08-29) para poder reusarlo TAMBIÉN en tareas que no son de tipo
+// 'foto' pero igual tienen requiere_foto=1 -- una sola fuente de verdad
+// para el marcado, en vez de mantener dos copias que se puedan desalinear.
+function _fotoUploadBlockHtml(t, mid, pid, bloqueada){
+  const _fotoAvisoHtml = (mid)
+    ? `<div class="tx-foto-aviso-ficha" role="status">
+        <i class="bi bi-camera-fill"></i>
+        <div>Esta foto se asignará a la <strong>ficha técnica del equipo</strong>
+          al cerrar la OT.</div>
+      </div>`
+    : '';
+  return `<div class="ctrl">
+    ${_fotoAvisoHtml}
+    <label class="tx-btn-foto-zone d-none d-md-flex" id="dropzone-${t.id}"
+      style="cursor:pointer;flex-direction:column;align-items:center;gap:6px;padding:18px;
+      border:2px dashed #cbd5e1;border-radius:11px;background:#fafafa;
+      transition:all .15s"
+      ondragover="event.preventDefault();this.style.borderColor='#dc2626';this.style.background='#fef2f2'"
+      ondragleave="this.style.borderColor='#cbd5e1';this.style.background='#fafafa'"
+      ondrop="event.preventDefault();this.style.borderColor='#cbd5e1';this.style.background='#fafafa';
+        const f=event.dataTransfer.files;if(f&&f.length){const inp=this.querySelector('input');
+        const dt=new DataTransfer();dt.items.add(f[0]);inp.files=dt.files;
+        subirFotoTarea(${t.id}, inp, ${mid}, ${pid});}">
+      <i class="bi bi-camera-plus" style="font-size:1.8rem;color:#dc2626"></i>
+      <div style="font-weight:700;color:#0f172a">Agregar foto</div>
+      <small style="color:#94a3b8">Click o arrastra · JPG/PNG/HEIC</small>
+      <input type="file" accept="image/*,image/heic,image/heif" style="display:none"
+        ${bloqueada ? 'disabled' : ''}
+        onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+    </label>
+
+    <div class="d-md-none">
+      <button type="button" class="ilus-foto-btn-main"
+        ${bloqueada ? 'disabled' : ''}
+        onclick="abrirSheetFoto(${t.id}, ${mid}, ${pid})"
+        style="width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+          padding:16px 18px;border-radius:12px;
+          background:linear-gradient(135deg,#dc2626,#b91c1c);
+          color:#fff;font-weight:700;font-size:1rem;
+          min-height:56px;border:none;cursor:pointer;
+          box-shadow:0 4px 12px rgba(220,38,38,.3);
+          transition:transform .1s, box-shadow .15s;">
+        <i class="bi bi-camera-plus-fill" style="font-size:1.3rem"></i>
+        <span>📷 Agregar foto</span>
+      </button>
+      <input type="file" id="fotoCam-${t.id}" accept="image/*,image/heic,image/heif"
+        capture="environment" style="display:none"
+        ${bloqueada ? 'disabled' : ''}
+        onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+      <input type="file" id="fotoGal-${t.id}" accept="image/*,image/heic,image/heif"
+        style="display:none"
+        ${bloqueada ? 'disabled' : ''}
+        onchange="subirFotoTarea(${t.id}, this, ${mid}, ${pid})">
+    </div>
+
+    <div id="t-fotos-${t.id}" class="foto-result">${_fotosTareaTilesHtml(t.id, mid, pid)}</div>
+  </div>`;
+}
+
 function _fotosTareaTilesHtml(tid, mid, pid){
   const fotos = _fotosIdx()[tid] || [];
   const ro = _fotosTareaReadonly();
@@ -3303,6 +3329,24 @@ function _fotosTareaTilesHtml(tid, mid, pid){
 function _fotosTareaRepaint(tid, mid, pid){
   const cont = document.getElementById('t-fotos-' + tid);
   if (cont) cont.innerHTML = _fotosTareaTilesHtml(tid, mid, pid);
+}
+
+// Repinta SOLO el borde rojo + badge "Falta foto" de una tarjeta puntual,
+// sin recalcular todo el progreso del grupo (_updateProgress hace eso, y
+// también llama a esto mismo por cada tarjeta -- ver su forEach). Se usa
+// aparte en los caminos que tocan _fotosIdx() sin pasar por _updateProgress
+// (ej. borrar una foto que no alcanza a des-completar la tarea).
+function _fotoReqCardRepaint(tid, t){
+  if (!t || !t.requiere_foto) return;
+  const el = document.getElementById('tar-' + tid);
+  if (!el) return;
+  const faltaFoto = (_fotosIdx()[tid] || []).length === 0;
+  el.classList.toggle('falta-foto', faltaFoto);
+  const badgeFoto = el.querySelector('.tx-badge-foto, .tx-badge-foto-falta');
+  if (badgeFoto){
+    badgeFoto.className = faltaFoto ? 'tx-badge-foto-falta' : 'tx-badge-foto';
+    badgeFoto.textContent = faltaFoto ? '📷 Falta foto' : '📷 Foto';
+  }
 }
 
 async function borrarFotoTarea(tid, fid, mid, pid){
@@ -3324,16 +3368,21 @@ async function borrarFotoTarea(tid, fid, mid, pid){
     const _idx = _fotosIdx();
     _idx[tid] = (_idx[tid] || []).filter(f => String(f.id) !== String(fid));
     _fotosTareaRepaint(tid, mid, pid);
+    const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => String(p.plantilla_id) === String(pid));
+    const tar = grupo && grupo.tareas.find(t => t.id === tid);
     if (j.tarea_descompletada){
       try {
-        const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => String(p.plantilla_id) === String(pid));
-        const tar = grupo && grupo.tareas.find(t => t.id === tid);
-        if (tar){ tar.completada = 0; _updateProgress(mid, pid); }
+        if (tar){ tar.completada = 0; _updateProgress(mid, pid); } // ya repinta falta-foto (ver _fotoReqCardRepaint)
       } catch(eSync){
         console.warn('[borrarFotoTarea] sync progreso local:', eSync);
       }
       ilusToast('✓ Foto eliminada — la tarea volvió a pendiente', { type: 'success' });
     } else {
+      // 2026-08-29: borrar una foto sin des-completar la tarea (quedaban
+      // otras, o el backend no la desmarcó) igual puede dejarla en 0 fotos
+      // si era tipo distinto de 'foto' con requiere_foto=1 -- _updateProgress
+      // no se llama en esta rama, así que se repinta solo esta tarjeta.
+      _fotoReqCardRepaint(tid, tar);
       ilusToast('✓ Foto eliminada', { type: 'success' });
     }
   } catch(e){
@@ -3401,20 +3450,15 @@ async function subirFotoTarea(tid, input, mid, pid){
 
   if (res.ok){
     ilusToast('✓ Foto subida', { type:'success' });
-    try {
-      await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
-        method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ completada: 1 })
-      });
-      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
-      const tar = grupo.tareas.find(t => t.id === tid);
-      if (tar){ tar.completada = 1; _updateProgress(mid, pid); }
-    } catch(e){
-      console.warn('[subirFoto] marcar completada falló:', e);
-    }
     // 2026-08-18: la respuesta ahora trae `fotos:[{id,tarea_id,url}]` — se
     // registran en el índice local para que el tile nuevo nazca con su botón
     // de eliminar (antes se inyectaba un <img> suelto, imborrable sin recargar).
+    // 2026-08-29: este bloque se movió ANTES de _updateProgress (más abajo)
+    // -- _updateProgress ahora también lee _fotosIdx() para decidir si la
+    // tarjeta sigue en rojo por "falta foto", así que el índice tiene que
+    // estar al día ANTES de repintar, no después (si no, el borde se
+    // quedaba rojo un ciclo de más, hasta el próximo cambio que sí disparara
+    // _updateProgress).
     const nuevas = (res.data && Array.isArray(res.data.fotos)) ? res.data.fotos : [];
     const url = (res.data && (res.data.url || res.data.cloudinary_url)) || '';
     if (nuevas.length){
@@ -3430,6 +3474,17 @@ async function subirFotoTarea(tid, input, mid, pid){
       if (cont) cont.innerHTML += `<div class="tx-foto-tile"><img
             src="${_escapeAttr(cloudTx(url, 'card'))}" alt=""
             loading="lazy" decoding="async"></div>`;
+    }
+    try {
+      await fetch(`/mantenciones/api/visitas/${VID}/tareas/${tid}`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ completada: 1 })
+      });
+      const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
+      const tar = grupo.tareas.find(t => t.id === tid);
+      if (tar){ tar.completada = 1; _updateProgress(mid, pid); }
+    } catch(e){
+      console.warn('[subirFoto] marcar completada falló:', e);
     }
     return;
   }
@@ -3479,6 +3534,10 @@ function _updateProgress(mid, pid){
       const _sem = _tareaSemaforo(t);
       el.classList.toggle('sem-warn', _sem === 'warn');
       el.classList.toggle('sem-fail', _sem === 'fail');
+      // 2026-08-29: la tarjeta deja de verse roja apenas la tarea junta la
+      // foto que exige (ver falta-foto en renderTareaHtml/CSS) -- sin esto,
+      // subir la foto no repintaba el borde ni el badge hasta recargar.
+      _fotoReqCardRepaint(tid, t);
       const chk = el.querySelector('.ttl-chk');
       if (chk) chk.innerHTML = _knobIconHtml(t);
     }

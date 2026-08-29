@@ -1829,6 +1829,14 @@
 .tx-tarea.done.sem-warn{border-left-color:#f59e0b}
 .tx-tarea.done.sem-fail{border-left-color:#dc2626}
 .tx-tarea.next{border-left-color:#dc2626;box-shadow:none;background:#fff}
+/* 2026-08-29 (Daniel: "una permite avanzar y otra... tiene que tomar las
+   fotos"): tarea con requiere_foto=1 y todavía CERO fotos -- se distingue
+   del semáforo de verificación (sem-fail/sem-warn, que es otro dato) para
+   no confundir "falla de inspección" con "falta evidencia fotográfica". Se
+   pinta igual si ya está "done" (datos viejos pueden estar marcados
+   completos sin foto real -- acá también se avisa, no solo en tareas nuevas). */
+.tx-tarea.falta-foto{border-left-color:#dc2626;background:#fef2f2}
+.tx-tarea.done.falta-foto{border-left-color:#dc2626}
 .tx-tarea .ttl{align-items:center;gap:11px;margin-bottom:0}
 .tx-tarea .ttl-info{order:1}
 .tx-tarea .ttl-chk{
@@ -1855,7 +1863,16 @@
 .tx-tarea .ttl-badges{display:flex;gap:5px;margin:6px 0 0;flex-wrap:wrap;vertical-align:baseline}
 .tx-tarea .ttl-badges .tx-badge-obl{background:#fee2e2;color:#991b1b}
 .tx-tarea .ttl-badges .tx-badge-foto{background:#dbeafe;color:#1e40af}
+.tx-tarea .ttl-badges .tx-badge-foto-falta{background:#fee2e2;color:#991b1b;font-weight:800}
 .tx-tarea .ttl-badges .tx-badge-tipo{background:#f3f4f6;color:#6b7280}
+/* Bloque de foto agregado a tareas NO-tipo-foto que igual exigen una
+   (requiere_foto y tipo_respuesta son flags independientes en el editor de
+   plantillas). Mismo componente visual que el tipo 'foto' (.ctrl), separado
+   por un borde punteado para que quede claro que es un requisito aparte de
+   la respuesta principal de la tarea. */
+.tx-foto-req-extra{margin-top:10px;padding-top:10px;border-top:1px dashed #fecaca}
+.tx-foto-req-lbl{font-size:.72rem;font-weight:700;color:#991b1b;margin-bottom:6px;
+                  text-transform:uppercase;letter-spacing:.3px}
 /* El carril arranca con línea superior (la lista ES la pantalla) */
 #tareasList{border-top:1.5px solid #e5e7eb}
 #tareasList .tx-empty{border-top:0}
