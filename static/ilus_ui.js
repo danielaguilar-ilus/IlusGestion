@@ -127,6 +127,38 @@
     question:{ icon:'bi-question-circle-fill', color:'#dc2626', bg:'rgba(220,38,38,.18)' },
   };
 
+  // FIX 2026-08-29 (Daniel, en vivo desde el wizard de OT 2.0: "el
+  // argumento sale detrás, posiciónalo en frente"). Reaparición del MISMO
+  // bug de fondo que el FIX 2026-08-28 (ver comentario largo en
+  // buildModal/ilusPrompt/ilusActionSheet, ahora reemplazado por esta
+  // función centralizada) -- pero con una variante que ese fix no cubría:
+  // `document.querySelector('.modal.show')` no distingue CUÁL modal es el
+  // visualmente más arriba cuando hay dos abiertos a la vez (el wizard
+  // Bootstrap `#ot2ModalCrear`, z-index ~1055 por defecto, y ENCIMA de
+  // él `#tkaModal`/`#tkaBackdrop`, el buscador ERP compartido, z-index
+  // 1085/1086 explícito) -- siempre elige el PRIMERO que encuentra en el
+  // DOM (el wizard, más abajo en la pila), nunca al buscador que está
+  // realmente arriba. El resultado: un ilusToast/ilusAlert disparado
+  // mientras el buscador ERP está abierto (ej. "Producto sin saldo
+  // disponible" al elegir una línea, o el aviso de RUT distinto de
+  // Documentos asociados) queda pintado como parte del subárbol del
+  // wizard (1055), y pierde contra el buscador (1086): se ve "detrás".
+  //
+  // Fix: si `#tkaModal` está con `.is-open`, es la capa más alta conocida
+  // de la app -- insertar AHÍ ADENTRO (no en su backdrop hermano, ese es
+  // el error que ya diagnosticó el fix de ayer) hace que el overlay gane
+  // por herencia de contexto de apilamiento (todo el subárbol de #tkaModal
+  // se pinta en 1086, la posición más alta presente), sin pisarle el foco
+  // a nada. Si el buscador NO está abierto, se mantiene tal cual el
+  // comportamiento ya validado: el modal Bootstrap abierto (para que el
+  // focus trap de accesibilidad no le robe el foco a un input), o
+  // document.body si no hay ningún modal.
+  function _ilusOverlayHost(){
+    var tka = document.getElementById('tkaModal');
+    if (tka && tka.classList.contains('is-open')) return tka;
+    return document.querySelector('.modal.show') || document.body;
+  }
+
   function buildModal({title, message, sub, type, buttons, subHtml, messageHtml}){
     ensureStyles();
     const cfg = TYPE_CFG[type] || TYPE_CFG.info;
@@ -189,7 +221,7 @@
     // un contexto de apilamiento (position+z-index explícito, opacity<1,
     // transform, filter, etc.) atrapa a sus hijos para efectos de PINTADO,
     // no solo para el tamaño/posición del position:fixed.
-    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    _ilusOverlayHost().appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     return overlay;
   }
@@ -389,7 +421,7 @@
     // un contexto de apilamiento (position+z-index explícito, opacity<1,
     // transform, filter, etc.) atrapa a sus hijos para efectos de PINTADO,
     // no solo para el tamaño/posición del position:fixed.
-    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    _ilusOverlayHost().appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
       const inputEl = overlay.querySelector('.ilus-prompt-input');
       setTimeout(() => { inputEl.focus(); inputEl.select && inputEl.select(); }, 200);
@@ -663,7 +695,7 @@
     // un contexto de apilamiento (position+z-index explícito, opacity<1,
     // transform, filter, etc.) atrapa a sus hijos para efectos de PINTADO,
     // no solo para el tamaño/posición del position:fixed.
-    (document.querySelector('.modal.show') || document.body).appendChild(overlay);
+    _ilusOverlayHost().appendChild(overlay);
       requestAnimationFrame(() => overlay.classList.add('show'));
 
       function done(val){
