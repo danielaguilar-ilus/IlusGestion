@@ -295,6 +295,9 @@
   font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;
   padding:9px 10px;border-bottom:1px solid #eaecf0;white-space:nowrap}
 .o2m-eq-table thead th.chk{width:40px}
+.o2m-eq-cat{display:inline-block;font-size:.6rem;font-weight:800;letter-spacing:.03em;
+  text-transform:none;color:var(--ilus-red,#dc2626);background:#fee2e2;border-radius:50px;
+  padding:1px 8px;margin-left:4px;vertical-align:middle}
 .o2m-eq-table tbody td{padding:9px 10px;border-bottom:1px solid #f3f4f6;vertical-align:middle}
 .o2m-eq-table tbody tr:last-child td{border-bottom:0}
 .o2m-eq-table tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--ilus-red,#dc2626)}
@@ -671,6 +674,14 @@ window.OT2C = (function(){
   var _o2mStepCompleteTracked = {};
   var anclaActiva = null;
   var modal = null, cacheEquipos = [], cachePlant = [], cacheTec = [];
+  // 2026-08-29 (Daniel: "las plantillas hay varias y no se sabe si es
+  // instalacion, mantencion o visita, ademas excluye las tareas internas"):
+  // recuerda para QUÉ tipo de OT se cargó cachePlant -- si S.tipo cambia
+  // (ej. de preventiva a instalación) hay que refetch filtrado por el
+  // nuevo tipo, no reusar la lista mezclada de antes.
+  var cachePlantTipoOt = null;
+  var cachePlantCategoria = null;
+  var _O2M_CATEGORIA_LABEL = {instalacion:'Instalación', mantencion:'Mantención', visitas:'Visitas', trabajo_interno:'Trabajo interno'};
   // 2026-08-29: recuerda para QUÉ cliente ya se aplicó la preselección
   // automática de equipos por "aplica_mantencion" (ver cargarEquipos) --
   // así un repintado de la sección (p.ej. al cambiar el tipo de OT) no
@@ -2192,13 +2203,22 @@ window.OT2C = (function(){
       if (_c0) _c0.innerHTML = '<div class="text-muted small"><i class="bi bi-arrow-up-circle me-1"></i>Elige un cliente arriba primero.</div>';
       return;
     }
+    // 2026-08-29: ?tipo_ot=S.tipo reusa el filtro "FASE 3 -- selector
+    // inteligente" que /mantenciones/api/plantillas YA implementa
+    // (mant_categoria_tipo_map resuelve instalacion/mantencion/visitas
+    // solo, backend app.py ~79926) -- antes esta pantalla pedía la lista
+    // COMPLETA sin filtro, mezclando instalación/mantención/visitas y
+    // hasta trabajo_interno en un solo <select> gigante.
     Promise.all([
       fetch('/mantenciones/api/clientes/'+S.cliente.id+'/maquinas-list', {credentials:'same-origin'}).then(function(r){return r.json();}),
-      cachePlant.length ? Promise.resolve({plantillas:cachePlant})
-                        : fetch('/mantenciones/api/plantillas', {credentials:'same-origin'}).then(function(r){return r.json();})
+      (cachePlant.length && cachePlantTipoOt === S.tipo) ? Promise.resolve({plantillas:cachePlant})
+                        : fetch('/mantenciones/api/plantillas?activa=1&tipo_ot='+encodeURIComponent(S.tipo||''),
+                                {credentials:'same-origin'}).then(function(r){return r.json();})
     ]).then(function(res){
       cacheEquipos = Array.isArray(res[0]) ? res[0] : (res[0].maquinas || []);
       cachePlant   = (res[1].plantillas || []).filter(function(p){ return p.activa; });
+      cachePlantTipoOt = S.tipo;
+      cachePlantCategoria = res[1].categoria_resuelta || null;
       // ── Preselección por "plan de mantención" (2026-08-29) ────────────
       // Pedido viejo de Daniel retomado: "si estoy seleccionando un
       // cliente, me tienes que seleccionar los productos del plan... que
@@ -2278,7 +2298,10 @@ window.OT2C = (function(){
           '</button>'+
         '</div>'+
         '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
-          '<th class="chk"></th><th>Equipo / SKU</th><th class="plan">Plan</th><th>Plantillas extra</th>'+
+          '<th class="chk"></th><th>Equipo / SKU</th><th class="plan">Plan</th>'+
+          '<th>Plantillas extra'+
+            (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
+          '</th>'+
         '</tr></thead><tbody>'+
         cacheEquipos.map(function(m){
           var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
