@@ -89,7 +89,7 @@
    independiente/autocontenido (ver comentario de cabecera) -- no debe
    depender de que panel.html esté cargado en la misma página. */
 .o2m{ --o2m-line:#eaecf0; }
-.o2m .modal-dialog{max-width:1080px}
+.o2m .modal-dialog{max-width:1360px}
 .o2m .modal-content{border:0;border-radius:16px;overflow:hidden}
 .o2m-head{background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
   padding:18px 24px;display:flex;align-items:center;gap:14px;
@@ -163,7 +163,7 @@
 .o2m-step.on .o2m-label{color:#0a0a0a}
 .o2m-step.ok .o2m-label{color:#16a34a}
 
-.o2m-body{padding:22px 24px;min-height:330px;max-height:60vh;overflow-y:auto;flex:1;min-width:0}
+.o2m-body{padding:22px 28px;min-height:330px;max-height:76vh;overflow-y:auto;flex:1;min-width:0}
 /* Fase "origen": sin nav de anclas, el body ocupa todo el ancho */
 .o2m-body.solo{max-width:none}
 
@@ -315,8 +315,8 @@
    con choque), solo con bordes/radios/tipografía armonizados con la Col A
    rediseñada, para que no se vean como dos widgets pegados con cinta.
    ══════════════════════════════════════════════════════════════════════ */
-.o2m-sched{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;
-  background:#0a0a0a;border:1px solid rgba(255,255,255,.08);border-radius:11px;padding:14px;margin-top:14px;
+.o2m-sched{display:grid;grid-template-columns:340px 1fr;gap:20px;align-items:start;
+  background:#111114;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px;margin-top:14px;
   position:relative;overflow:hidden;
   box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px -20px rgba(0,0,0,.75)}
 .o2m-sched::before{
@@ -333,7 +333,7 @@
   background-size:24px 24px;
   -webkit-mask-image:radial-gradient(circle at 18% 0%,#000 0%,transparent 68%);
   mask-image:radial-gradient(circle at 18% 0%,#000 0%,transparent 68%)}
-@media (max-width:1199.98px){ .o2m-sched{grid-template-columns:260px 1fr;gap:12px} }
+@media (max-width:1199.98px){ .o2m-sched{grid-template-columns:290px 1fr;gap:14px} }
 @media (max-width:767.98px){ .o2m-sched{grid-template-columns:1fr;gap:14px;padding:12px} }
 .o2m-sched-col{min-width:0;position:relative;z-index:1}
 
@@ -353,7 +353,7 @@
 .o2m-cal-dow span{text-align:center;font-size:.6rem;font-weight:800;color:#7d8493;
   text-transform:uppercase;letter-spacing:.04em}
 .o2m-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
-.o2m-cal-day{position:relative;aspect-ratio:1/1;min-height:38px;border-radius:8px;
+.o2m-cal-day{position:relative;aspect-ratio:1/1;min-height:44px;border-radius:9px;
   border:1px solid rgba(255,255,255,.08);background:#17171b;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
   transition:border-color .15s,background .15s,transform .15s,box-shadow .15s;outline-offset:1px}
@@ -389,7 +389,7 @@
   font-size:.66rem;color:#9aa1ad;font-weight:700}
 .o2m-cal-leyenda span{display:inline-flex;align-items:center;gap:5px}
 .o2m-cal-leyenda i.k{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}
-@media (min-width:768px){ .o2m-cal-day{min-height:40px} }
+@media (min-width:768px){ .o2m-cal-day{min-height:50px} }
 
 /* ── Col B: línea de tiempo del día -- tema oscuro "Sala de Control" ──── */
 .o2m-day-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap}
@@ -414,13 +414,13 @@
 .o2m-day-legend i.k.mine{background:rgba(220,38,38,.16);border:2px dashed var(--ilus-red,#dc2626)}
 @media (max-width:575.98px){ .o2m-day-legend{margin-left:0;width:100%} }
 
-.o2m-day-scroll{position:relative;height:360px;overflow-y:auto;overflow-x:hidden;background:#0d0d0f;
+.o2m-day-scroll{position:relative;height:460px;overflow-y:auto;overflow-x:hidden;background:#121215;
   border:1px solid rgba(255,255,255,.08);border-radius:9px}
 .o2m-day-scroll::-webkit-scrollbar{width:9px}
 .o2m-day-scroll::-webkit-scrollbar-track{background:transparent}
 .o2m-day-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:50px}
 .o2m-day-scroll::-webkit-scrollbar-thumb:hover{background:rgba(220,38,38,.5)}
-@media (max-width:767.98px){ .o2m-day-scroll{height:300px} }
+@media (max-width:767.98px){ .o2m-day-scroll{height:360px} }
 .o2m-day-scroll.sin-dia{opacity:.6}
 .o2m-day-inner{position:relative;height:576px}
 .o2m-day-canvas{position:relative;height:576px;margin-left:44px;cursor:copy}
@@ -748,20 +748,15 @@ window.OT2C = (function(){
   /* ── Nav de anclas: solo dibuja/actualiza el riel, nunca el contenido.
      Se llama después de CUALQUIER cambio que afecte un check verde. ────── */
   function pintarAnclas(){
+    // 2026-08-29 noche (Daniel, viendo el modal en vivo): "los pasos
+    // enumerados o el tracking te pedi sacarlo" -- el riel lateral quedaba
+    // redundante con el check verde que ya trae cada tarjeta de paso
+    // (.o2m-step-circle) más abajo, y le restaba ancho/comodidad al
+    // calendario. Se retira el riel; se conserva TODA la lógica de estado
+    // (is-complete + pulso una sola vez) que alimenta las tarjetas.
     var nav = document.getElementById('o2mRiel');
-    if (!nav) return;
-    if (fase !== 'form'){ nav.style.display = 'none'; return; }
-    nav.style.display = '';
+    if (nav) nav.style.display = 'none';
     var ps = pasos();
-    nav.innerHTML = ps.map(function(p,i){
-      var listo = completo(p.k);
-      var activo = (p.k === anclaActiva);
-      var cls = (activo?'on ':'') + (listo?'ok':'');
-      var ico = listo ? '<i class="bi bi-check-lg"></i>' : '';
-      var linea = i>0 ? '<span class="o2m-line '+(completo(ps[i-1].k)?'ok':'')+'"></span>' : '';
-      return linea + '<button type="button" class="o2m-step '+cls+'" onclick="OT2C.irAncla(\''+p.k+'\')" title="'+esc(p.n)+'">'+
-             '<span class="o2m-circle">'+ico+'</span><span class="o2m-label">'+esc(p.n)+'</span></button>';
-    }).join('');
     // 2026-08-29: además del riel, cada TARJETA de paso (.o2m-sec) recibe
     // el mismo estado -- pulso UNA sola vez al pasar de pendiente a listo
     // (no en cada repintado, o el anillo verde parpadearía con cada campo
