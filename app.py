@@ -76157,6 +76157,28 @@ def ot2_api_crear():
             _fin_costo_int = None
     except (TypeError, ValueError):
         return _ot2_err("El costo estimado no es válido.", "COSTO_INTERNO_INVALIDO")
+    # 2026-08-29 (wizard OT 2.0, Daniel: "los costos y lo que nos cobra el
+    # proveedor... % de margen sí o sí"): mant_visitas.costo_proveedor/
+    # proveedor_tipo/proveedor_nombre/costo_despacho ya existen desde
+    # 2026-06-10/2026-08-27 -- son las columnas REALES que ya alimentan el
+    # reporte de margen (_cliente_inteligencia, /mantenciones/finanzas) vía
+    # _mant_visita_crear_core. ot2_api_crear nunca las escribía todavía
+    # (por eso el margen quedaba siempre en blanco para toda OT creada por
+    # este wizard) -- mismo criterio de validación que ese otro caller,
+    # para no tener dos reglas distintas para la misma columna.
+    try:
+        _fin_costo_prov = (max(0.0, float(_fin.get("costo_proveedor")))
+                            if str(_fin.get("costo_proveedor") or "").strip() else None) or None
+    except (TypeError, ValueError):
+        return _ot2_err("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO")
+    try:
+        _fin_costo_desp = (max(0.0, float(_fin.get("costo_despacho")))
+                            if str(_fin.get("costo_despacho") or "").strip() else None) or None
+    except (TypeError, ValueError):
+        return _ot2_err("El costo de despacho no es válido.", "COSTO_DESPACHO_INVALIDO")
+    _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
+    _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
+    _fin_prov_nombre = (str(_fin.get("proveedor_nombre") or "").strip()[:200]) or None
     _fin_zzc = (_fin.get("zz_codigo") or "").strip().upper()[:30] or None
     if not _fin_zzc and not _fin_gar:
         # Sugerencia por tipo: instalación → ZZINSTALACION, mantención →
@@ -76173,7 +76195,7 @@ def ot2_api_crear():
         _fin_estado_fact = "no_aplica"
     else:
         _fin_estado_fact = "sin_cotizar"
-    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int)
+    _fin_declarada = bool(_fin_gar or _fin_nudo or _fin_zzm or _fin_costo_int or _fin_costo_prov)
 
     # Modalidad de cobro: una OT interna NO nace cobrable al cliente
     # (`pagado` significa "facturable", no "ya pagado" — ver el comentario
@@ -76212,15 +76234,19 @@ def ot2_api_crear():
             "   acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas, "
             "   centro_costo, zz_codigo, zz_monto, costo, modalidad_cobro, cubierto_por, "
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
+            "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
-            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "        %s,%s,%s,%s,"
+            "        %s,%s,%s)",
             (numero_ot, cliente_id, titulo, descripcion, _f,
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
              acc_asc, acc_est, acc_piso, acc_notas,
              _fin_centro, _fin_zzc, _fin_zzm, _fin_costo_int,
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
+             _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
              # conversión a hora Chile es cosa de la vista).
              datetime.utcnow() if _fin_declarada else None,

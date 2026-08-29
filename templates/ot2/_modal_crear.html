@@ -547,7 +547,12 @@ window.OT2C = (function(){
          // a mano) y cuánto cobra el proveedor externo por el trabajo,
          // para comparar contra lo que se le cobra al cliente.
          fin_zz_lineas:[], fin_zz_codigo:null, fin_zz_monto:null,
-         fin_costo_proveedor:'',
+         // costo_proveedor/costo_despacho van SEPARADOS a propósito (mismo
+         // criterio que ya usa mant_visitas desde 2026-08-27): más adelante
+         // se van a conciliar contra facturas de proveedores distintos
+         // (técnico vs. transporte) -- mezclarlos impediría separar cuánto
+         // es de cada uno.
+         fin_costo_proveedor:'', fin_costo_despacho:'',
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -588,8 +593,13 @@ window.OT2C = (function(){
     var p = [{k:'tipo', n:'Tipo'}];
     if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
     p.push({k:'detalle', n:'Detalle'});
-    p.push({k:'agenda',  n:'Agenda'});
+    // 2026-08-29 (Daniel: "los técnicos deberán estar antes de la agenda,
+    // para saber qué agenda tienen ellos una vez seleccionados"): Técnicos
+    // primero -- Agenda ya resalta choques de horario de QUIEN esté
+    // marcado en S.tecnicos, así que elegirlos antes hace que ese aviso
+    // tenga sentido desde el primer vistazo al calendario.
     p.push({k:'tecnicos',n:'Técnicos'});
+    p.push({k:'agenda',  n:'Agenda'});
     // 28-08-2026: "Evidencia" pasó a "Trabajo" para revision_interna --
     // desde que esta sección también elige el checklist (no solo sube
     // fotos), la etiqueta vieja quedaba corta. Con eso los 3 tipos de
@@ -1813,22 +1823,26 @@ window.OT2C = (function(){
 
   function pintarTecnicos(b){
     b.innerHTML = '<h6 class="t">Técnicos asignados</h6>'+
-      '<p class="d">Puedes dejarlo sin asignar y decidirlo después. El primero que marques queda como líder.</p>'+
-      '<div id="o2mTecList" class="o2m-lista"><div class="p-3 text-muted small">Cargando…</div></div>';
+      '<p class="d">Puedes dejarlo sin asignar y decidirlo después. El primero que marques queda como líder. '+
+      'Va antes que Agenda para ver el horario ya pensando en ellos.</p>'+
+      '<div id="o2mTecList" class="o2m-grid"><div class="p-3 text-muted small">Cargando…</div></div>';
     fetch('/mantenciones/api/tecnicos', {credentials:'same-origin'})
       .then(function(r){return r.json();})
       .then(function(j){
         cacheTec = Array.isArray(j) ? j : (j.tecnicos || []);
         var c = document.getElementById('o2mTecList'); if(!c) return;
         if (!cacheTec.length){ c.innerHTML = '<div class="p-3 text-muted small">No hay técnicos cargados.</div>'; return; }
+        // 2026-08-29 (Daniel: "que sea horizontal para que ahorremos
+        // espacio de scroll"): mismas tarjetas .o2m-op del Origen/Tipo (una
+        // grilla que fluye y envuelve) en vez de la lista vertical
+        // angosta con scroll -- mismo lenguaje visual, menos alto.
         c.innerHTML = cacheTec.map(function(t){
           var sel = S.tecnicos.indexOf(t.id) >= 0;
-          return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.tecTog('+t.id+')">'+
-            '<span class="o2m-chk"><i class="bi bi-check-lg"></i></span>'+
-            '<span style="flex:1"><span class="nm">'+esc(t.nombre)+'</span>'+
-            '<span class="mt d-block">'+esc(t.especialidad || t.nivel || 'Técnico')+
+          return '<button type="button" class="o2m-op '+(sel?'sel':'')+'" onclick="OT2C.tecTog('+t.id+')">'+
+            '<span class="n">'+(sel?'<i class="bi bi-check-circle-fill me-1"></i>':'')+esc(t.nombre)+'</span>'+
+            '<span class="l">'+esc(t.especialidad || t.nivel || 'Técnico')+
             (t.es_externo ? ' · externo' : '')+
-            (S.lider===t.id ? ' · <b>líder</b>' : '')+'</span></span></div>';
+            (S.lider===t.id ? ' · <b>líder</b>' : '')+'</span></button>';
         }).join('');
       })
       .catch(function(){ var c=document.getElementById('o2mTecList');
@@ -2216,13 +2230,25 @@ window.OT2C = (function(){
       '<div id="o2mFinEstimado" class="mt-3"><div class="text-muted small">'+
       '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>'+
       // 2026-08-29 (Daniel: "los costos y lo que nos cobra el proveedor...
-      // % de margen sí o sí"): lo que ILUS le paga al proveedor externo por
-      // el trabajo (incluye transporte si aplica -- un solo número, no se
-      // desglosa) para comparar contra lo que se le cobra al cliente.
-      '<label class="fl mt-3">Costo del proveedor (lo que le pagamos)</label>'+
-      '<input type="number" class="form-control mb-1" min="0" step="1" style="max-width:220px" '+
-      'value="'+esc(S.fin_costo_proveedor)+'" placeholder="Incluye transporte si aplica" '+
-      'oninput="OT2C.setFinCostoProveedor(this.value)">'+
+      // % de margen sí o sí... además del transporte"): costo_proveedor y
+      // costo_despacho van en columnas SEPARADAS (mismo criterio que ya usa
+      // mant_visitas desde 2026-08-27) porque más adelante se concilian
+      // contra facturas de proveedores distintos -- el del servicio y el
+      // del transporte -- mezclarlos impediría separarlos después.
+      '<div class="row g-2 mt-2">'+
+        '<div class="col-6">'+
+          '<label class="fl">Costo del proveedor</label>'+
+          '<input type="number" class="form-control" min="0" step="1" '+
+          'value="'+esc(S.fin_costo_proveedor)+'" placeholder="Lo que le pagamos" '+
+          'oninput="OT2C.setFinCostoProveedor(this.value)">'+
+        '</div>'+
+        '<div class="col-6">'+
+          '<label class="fl">Transporte / despacho</label>'+
+          '<input type="number" class="form-control" min="0" step="1" '+
+          'value="'+esc(S.fin_costo_despacho)+'" placeholder="Si aplica" '+
+          'oninput="OT2C.setFinCostoDespacho(this.value)">'+
+        '</div>'+
+      '</div>'+
       '<div id="o2mFinMargen" class="mt-2"></div>';
     _o2mFinEstimar();
     if (docTxt) _o2mFinCargarZZ(); else _pintarFinMargenDom();
@@ -2329,6 +2355,7 @@ window.OT2C = (function(){
     _pintarFinZZDom(); _pintarFinMargenDom();
   }
   function setFinCostoProveedor(v){ S.fin_costo_proveedor = v; _pintarFinMargenDom(); }
+  function setFinCostoDespacho(v){ S.fin_costo_despacho = v; _pintarFinMargenDom(); }
   /* "Venta" de referencia para el margen: el monto REAL del documento si
      ya se eligió una línea ZZ, si no el estimado por clasificación -- en
      ese orden, nunca al revés (el documento real siempre manda sobre un
@@ -2351,7 +2378,12 @@ window.OT2C = (function(){
         'Falta un monto de venta (documento o estimado) para calcular el margen.</div>';
       return;
     }
-    var margenPct = Math.round((venta - costo) / venta * 100);
+    var despacho = parseFloat(S.fin_costo_despacho);
+    if (!isFinite(despacho) || despacho < 0) despacho = 0;
+    // Misma fórmula que ya usa el reporte de margen real en app.py
+    // (Margen = costo cliente - (costo_proveedor + costo_despacho)) --
+    // no solo el costo del proveedor solo.
+    var margenPct = Math.round((venta - (costo + despacho)) / venta * 100);
     // Informativo nada más -- Daniel: "identificando si hay margen o no da
     // lo mismo, pero estamos autorizados a trabajar sin margen". Nunca
     // bloquea nada, solo avisa con color si el margen es negativo.
@@ -2858,12 +2890,29 @@ window.OT2C = (function(){
           body.finanzas.zz_monto = S.fin_zz_monto;
         }
       }
-      // 2026-08-29: costo del proveedor externo -- mismo campo genérico
-      // que ya usa trabajo interno (`costo` en mant_visitas, "sin
-      // semántica de facturación"), reusado acá para lo que se le paga al
-      // proveedor. Informativo: nunca se factura al cliente por esto.
+      // 2026-08-29 (correćion sobre la primera versión de esta sección):
+      // costo_proveedor/proveedor_tipo/proveedor_nombre/costo_despacho ya
+      // existen en mant_visitas desde 2026-06-10/2026-08-27 -- son las
+      // columnas REALES que alimenta _mant_visita_crear_core y que ya lee
+      // el reporte de margen (_cliente_inteligencia). La primera versión de
+      // este wizard los reusaba mal (los mandaba como "costo_interno", el
+      // campo genérico de trabajo interno) -- con esto quedan en la columna
+      // que el resto del sistema ya sabe leer.
       if (String(S.fin_costo_proveedor||'').trim() !== ''){
-        body.finanzas.costo_interno = S.fin_costo_proveedor;
+        body.finanzas.costo_proveedor = S.fin_costo_proveedor;
+      }
+      if (String(S.fin_costo_despacho||'').trim() !== ''){
+        body.finanzas.costo_despacho = S.fin_costo_despacho;
+      }
+      // proveedor_tipo/nombre se derivan solos del técnico LÍDER ya elegido
+      // en el paso Técnicos -- no hace falta preguntarlo dos veces (mismo
+      // dato, dos lugares). Si no hay líder todavía, queda sin declarar.
+      if (S.lider){
+        var _liderTec = cacheTec.find(function(t){ return t.id === S.lider; });
+        if (_liderTec){
+          body.finanzas.proveedor_tipo = _liderTec.es_externo ? 'externo' : 'interno';
+          body.finanzas.proveedor_nombre = _liderTec.es_externo ? _liderTec.nombre : '';
+        }
       }
     }
     var sig = document.getElementById('o2mSig');
@@ -2993,7 +3042,7 @@ window.OT2C = (function(){
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
           abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
-          setFinCostoProveedor:setFinCostoProveedor,
+          setFinCostoProveedor:setFinCostoProveedor, setFinCostoDespacho:setFinCostoDespacho,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco};
