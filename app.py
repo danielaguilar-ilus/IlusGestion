@@ -63486,17 +63486,36 @@ def mant_tecnicos_list_api():
     crear/editar visitas se envía como `tecnico_user_id`.
     """
     incluir_inactivos = request.args.get("all") == "1"
-    sql = ("SELECT id, COALESCE(nombre, username) AS nombre, "
-           "       cargo AS especialidad, "
+    # 🔧 FIX 2026-08-29 (Daniel: "el anexo es para los externos: Milling,
+    # Rafa y Pulgar" -- verificado en vivo que este endpoint devolvía
+    # es_externo=0 para los 7 técnicos, sin excepción, porque estaba
+    # HARDCODEADO como literal "0 AS es_externo" desde la migración a
+    # app_users de 2026-05-13 -- nunca se le aplicó el mismo fix que
+    # ya tiene el Monitor (_ot_tv_datos, app.py ~76858, "3ª vez que lo
+    # pide" 2026-08-27) para exactamente este mismo problema: Isabel
+    # Milling y Daniel Pulgar SÍ están en mant_tecnicos_externos, pero su
+    # app_users.id nunca quedó enlazado (user_id NULL) -- por eso también
+    # se cruza por NOMBRE (razón social o contacto del proveedor) cuando
+    # el enlace directo falta. Mismo query que el Monitor, para no tener
+    # dos criterios distintos de "quién es externo" en el sistema.
+    sql = ("SELECT au.id, COALESCE(au.nombre, au.username) AS nombre, "
+           "       au.cargo AS especialidad, "
            "       'tecnico' AS nivel, "
-           "       phone AS telefono, "
-           "       username AS email, "
+           "       au.phone AS telefono, "
+           "       au.username AS email, "
            "       NULL AS tarifa_visita, "
-           "       active AS activo, "
-           "       0 AS es_externo "
-           "  FROM app_users WHERE role LIKE %s")
+           "       au.active AS activo, "
+           "       IF(COALESCE(te.id, ten.id) IS NOT NULL, 1, 0) AS es_externo "
+           "  FROM app_users au "
+           "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
+           "  LEFT JOIN mant_tecnicos_externos ten "
+           "         ON ten.user_id IS NULL "
+           "        AND LOWER(TRIM(COALESCE(au.nombre, au.username))) IN ( "
+           "              LOWER(TRIM(ten.razon_social)), "
+           "              LOWER(TRIM(ten.contacto_nombre)) ) "
+           " WHERE au.role LIKE %s")
     if not incluir_inactivos:
-        sql += " AND active=1"
+        sql += " AND au.active=1"
     sql += " ORDER BY nombre"
     rows = mysql_fetchall(sql, ("tecnico%",)) or []
     return jsonify([dict(r) for r in rows])

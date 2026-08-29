@@ -790,10 +790,14 @@ window.OT2C = (function(){
   function esInterno(){ return S.origen === 'interno' ||
     (S.tipo && (TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno); }
 
-  /* 2026-08-29 (Daniel: "no veo la parte para generar el anexo... hazlo
-     como paso siete"): el Anexo de Contrato es cosa de PROVEEDOR EXTERNO
-     -- solo tiene sentido como paso cuando el técnico LÍDER ya elegido es
-     externo (mismo criterio que ya usaba el redirect ?abrir_anexo=1). */
+  /* 2026-08-29 (Daniel, confirmando: "exacto, el anexo es para los
+     externos: Milling, Rafa y Pulgar"): el criterio SIEMPRE fue correcto
+     (proveedor externo, no técnico interno) -- lo que estaba mal era el
+     DATO: verificado en vivo que /mantenciones/api/tecnicos devolvía
+     es_externo=0 para Isabel Milling, Rafael Naranjo y Daniel Pulgar,
+     los 3 que Daniel acaba de nombrar como externos reales. Se corrige
+     el dato en mant_tecnicos (ver migración en app.py), no la lógica.
+     El criterio sigue siendo "el líder elegido es externo" (pasos()). */
   function _liderEsExterno(){
     if (!S.lider) return false;
     var t = cacheTec.find(function(x){ return x.id === S.lider; });
