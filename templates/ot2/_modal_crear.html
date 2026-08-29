@@ -525,6 +525,29 @@ window.OT2C = (function(){
   function esInterno(){ return S.origen === 'interno' ||
     (S.tipo && (TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno); }
 
+  /* Qué tipos ofrecer según el origen elegido (2026-08-29, Daniel: "si es
+     un cliente existente, lo ideal no es que aparezca instalación...
+     saca la instalación, la capacitación, el trabajo en bodega y control
+     de calidad, porque eso es para trabajo interno").
+     - Los 3 tipos `interno:true` (capacitación/bodega/control de calidad)
+       NUNCA deberían ofrecerse fuera del origen 'interno' -- antes solo se
+       filtraban EN un sentido (interno -> solo esos 3), nunca al revés
+       (los demás orígenes ya mostraban los 13 completos, interno incluido).
+     - "Instalación" se saca SOLO del origen 'cliente': para ticket/
+       cotización/documento sigue disponible y primera en la grilla
+       (Daniel, 19-08-2026: "siempre debe estar de primero la instalación,
+       es el trabajo más frecuente") -- ese origen normalmente es
+       justamente cómo nace un cliente nuevo pidiendo una instalación. */
+  function tipoValidoParaOrigen(t, origen){
+    if (origen === 'interno') return !!t.interno;
+    if (t.interno) return false;
+    if (origen === 'cliente' && t.v === 'instalacion') return false;
+    return true;
+  }
+  function tiposParaOrigen(){
+    return TIPOS.filter(function(t){ return tipoValidoParaOrigen(t, S.origen); });
+  }
+
   /* Secciones del formulario único (fase "form"). "Origen" YA NO vive acá
      -- es una pantalla propia, aparte (ver pintar()). Un trabajo interno
      no tiene cliente ni datos de acceso al lugar (Daniel: "si es interna,
@@ -718,7 +741,7 @@ window.OT2C = (function(){
      se re-pintara junto con la grilla en cada tecla, el campo perdería el
      foco a cada letra. */
   function pintarTipo(b){
-    var lista0 = S.origen==='interno' ? TIPOS.filter(function(t){return t.interno;}) : TIPOS;
+    var lista0 = tiposParaOrigen();
     b.innerHTML = '<h6 class="t">Tipo de orden de trabajo</h6>'+
       '<p class="d">Define el checklist, si alimenta la ficha del cliente y qué se le exige al cerrar.</p>'+
       (lista0.length > 6
@@ -731,7 +754,7 @@ window.OT2C = (function(){
   }
   function pintarTipoGrid(){
     var g = document.getElementById('o2mTipoGrid'); if (!g) return;
-    var lista = S.origen==='interno' ? TIPOS.filter(function(t){return t.interno;}) : TIPOS;
+    var lista = tiposParaOrigen();
     var q = (S._tipoFiltro||'').trim().toLowerCase();
     if (q) lista = lista.filter(function(t){
       return t.n.toLowerCase().indexOf(q)>=0 || (t.l||'').toLowerCase().indexOf(q)>=0; });
@@ -2109,7 +2132,12 @@ window.OT2C = (function(){
     // siendo "documento" -- si el usuario cambia de idea y elige otro
     // origen, no debe arrastrarse una referencia a un documento ajeno.
     if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; }
-    if (v==='interno'){ S.cliente=null; if(S.tipo && !(TIPOS.find(function(t){return t.v===S.tipo;})||{}).interno) S.tipo=null; }
+    if (v==='interno'){ S.cliente=null; }
+    // 2026-08-29: generaliza el chequeo que antes solo corría al entrar a
+    // 'interno' -- si el tipo ya elegido no es válido para el NUEVO origen
+    // (ej. traía 'instalacion' y el usuario retrocede a elegir 'cliente'),
+    // se limpia en vez de quedar seleccionado pero invisible en la grilla.
+    if (S.tipo && !tipoValidoParaOrigen(TIPOS.find(function(t){return t.v===S.tipo;})||{}, v)) S.tipo = null;
 
     // "Factura o boleta": en vez de pedir el cliente a mano, se abre el
     // buscador ERP compartido (el mismo de Tickets/Repuestos/Cotizaciones,
