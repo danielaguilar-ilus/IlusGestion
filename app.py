@@ -98252,6 +98252,77 @@ def _ot_resync_plantillas_por_sku(sku, actor=None):
     return corregidos
 
 
+def _ot_resync_plantillas_masivo(actor=None):
+    """Barrido GLOBAL de _ot_resync_plantillas_por_sku -- Daniel, 2026-08-28
+    (misma noche): "todo lo que tenga ese checklist que no esté gestionado...
+    hay que revisarlo y actualizarlo... lo que esté gestionado ya, nada que
+    ver". No se limita a un SKU recién reclasificado: recorre TODOS los
+    equipos en OT abiertas, sin respuestas guardadas, cuya plantilla
+    asignada hoy ya NO coincide con lo que la clasificación actual del
+    producto resolvería -- exactamente el mismo criterio de seguridad de
+    _ot_resync_plantillas_por_sku (grupo sin editar + OT no sellada +
+    plantilla nueva distinta y existente), solo que sin acotar por SKU.
+
+    Es la versión "corrige TODO lo que ya se pueda corregir hoy" en vez de
+    esperar a que cada producto se reclasifique uno por uno. Devuelve un
+    resumen -- nunca falla completo por un error puntual de un equipo.
+    """
+    try:
+        grupos = mysql_fetchall(
+            "SELECT DISTINCT t.visita_id, t.maquina_id, t.plantilla_id, v.tipo, m.sku "
+            "  FROM mant_visita_tareas t "
+            "  JOIN mant_visitas v ON v.id = t.visita_id "
+            "  JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE t.maquina_id IS NOT NULL AND t.plantilla_id IS NOT NULL "
+            "   AND COALESCE(TRIM(m.sku), '') <> '' "
+            "   AND COALESCE(v.firma_cliente_url,'') = '' "
+            "   AND v.estado NOT IN ('pendiente_aprobacion','completada','cerrada',"
+            "                        'cancelada','anulada')"
+        ) or []
+    except Exception as e:
+        print(f"[resync_plantillas_masivo] leer grupos falló: {e}", flush=True)
+        return {"revisados": 0, "corregidos": 0, "ots_afectadas": [], "error": str(e)}
+
+    corregidos = 0
+    ots_afectadas = set()
+    for row in grupos:
+        vid, mid, pid_actual, sku = row["visita_id"], row["maquina_id"], row["plantilla_id"], row["sku"]
+        try:
+            pid_nuevo = _plantilla_por_clasificacion_sku(sku, row.get("tipo"))
+            if not pid_nuevo or pid_nuevo == pid_actual:
+                continue
+            if not _grupo_ot_sin_editar(vid, mid, pid_actual):
+                continue
+            n = _sincronizar_grupo_desde_plantilla(vid, mid, pid_nuevo, pid_actual=pid_actual)
+            corregidos += 1
+            ots_afectadas.add(vid)
+            _mant_log("visita", vid, "plantilla_reasignada",
+                      f"equipo#{mid}: plantilla {pid_actual} -> {pid_nuevo} ({n} tarea(s)) "
+                      f"[auto, barrido masivo por {actor or 'sistema'}]")
+        except Exception as e:
+            print(f"[resync_plantillas_masivo] vid={vid} mid={mid} sku={sku!r}: {e}", flush=True)
+    return {
+        "revisados": len(grupos),
+        "corregidos": corregidos,
+        "ots_afectadas": sorted(ots_afectadas),
+    }
+
+
+@app.route("/mantenciones/api/plantillas/resync-masivo", methods=["POST"])
+@_mant_required
+def mant_plantillas_resync_masivo():
+    """Endpoint de mantenimiento (superadmin) -- corre el barrido global
+    _ot_resync_plantillas_masivo. Daniel, 2026-08-28: "todo lo que tenga ese
+    checklist que no esté gestionado de instalación completo, hay que
+    revisarlo y actualizarlo". Se deja como endpoint (no un script suelto)
+    para poder repetirlo cuando haga falta sin acceso a servidor.
+    """
+    if ((getattr(g, "user", None) or {}).get("role") or "").lower() != "superadmin":
+        return jsonify({"ok": False, "error": "Solo superadmin."}), 403
+    resumen = _ot_resync_plantillas_masivo(actor=current_username())
+    return jsonify({"ok": True, **resumen})
+
+
 def _plantilla_por_clasificacion_equipo(maquina_id, tipo_ot):
     """Wrapper de _plantilla_por_clasificacion_sku para cuando solo se tiene
     el id de mant_maquinas a mano (no el sku ya resuelto en memoria). Si el
