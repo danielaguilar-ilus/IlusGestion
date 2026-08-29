@@ -322,8 +322,19 @@
     .cd-ot.e-terminado{border-left-color:#4ade80}
     .cd-ot.e-atrasado{border-left-color:var(--amber-500)}
     .cd-ot .h{font-weight:800;color:#9ca3af;flex:none;font-variant-numeric:tabular-nums}
-    .cd-ot .tk{font-size:10px;font-weight:800;color:#a78bfa;flex:none;
-      background:rgba(139,92,246,.14);border-radius:4px;padding:0 5px}
+    /* 🔧 FIX 2026-08-29 (Daniel: "porque se ven los TK, deberían ser solo
+       las OT"): esta vista semana/mes mostraba el N° de TICKET como
+       identificador visible de la fila (.tk, antes aquí) y el N° de OT
+       real solo vivía en el tooltip -- exactamente al revés de la regla
+       del proyecto ("el número de OT siempre debe ser visible... nunca
+       inventes un ticket") y de cómo ya se hace bien en la vista de DÍA
+       (ver actualizarBloque: b.numero es lo visible, b.ticket solo va al
+       title). Se renombra a .n (N° de OT, ahora visible) y el ticket se
+       deja de pintar en el cuerpo de la fila -- sigue disponible en el
+       tooltip, como referencia de origen, nunca como reemplazo. */
+    .cd-ot .n{font-size:10px;font-weight:800;color:#d1d5db;flex:none;
+      background:rgba(255,255,255,.08);border-radius:4px;padding:0 5px;
+      font-variant-numeric:tabular-nums}
     /* "2/4" = día 2 de una OT de 4 jornadas (OT-133) */
     .cd-ot .md{font-size:10px;font-weight:900;color:#60a5fa;flex:none;
       background:rgba(59,130,246,.16);border-radius:4px;padding:0 5px;
@@ -354,6 +365,21 @@
        tablero — pero sigue ahí para poder salir. */
     .fs-btn.is-full{opacity:.22}
     .fs-btn.is-full:hover{opacity:1}
+
+    /* Botón "Actualizar" — 2026-08-29 (Daniel: "déjalo piolita como el
+       full screen"). Antes usaba .date-hoy-btn (píldora roja con borde,
+       pensada para "Volver a hoy", una acción rara). Actualizar es rutina,
+       igual de frecuente que pantalla completa -- mismo lenguaje visual:
+       icono solo, transparente, casi invisible hasta el hover. */
+    .refresh-btn{
+      background:none;border:0;color:#9ca3af;padding:6px;
+      border-radius:8px;cursor:pointer;display:grid;place-items:center;
+      opacity:.4;transition:opacity .2s,color .2s,background .2s,transform .15s;
+    }
+    .refresh-btn:hover{opacity:1;color:#e5e7eb;background:rgba(255,255,255,.08)}
+    .refresh-btn:active{transform:rotate(-25deg)}
+    .refresh-btn:disabled{opacity:.7;cursor:default}
+    .refresh-btn[hidden]{display:none}
 
     .tv-right{display:flex;align-items:center;gap:8px}
     .kpi{padding:0 20px;text-align:center;position:relative}
@@ -1205,10 +1231,13 @@
              de actualización"): el latido automático (8s en horario hábil)
              ya refresca solo, pero solo cuando la huella cambió -- y solo
              la pantalla de control puede pedir un repintado a demanda (el
-             televisor no tiene mouse). Mismo estilo que "Volver a hoy",
-             mismo gate INTERACTIVO. #}
-          <button type="button" class="date-hoy-btn" id="btnActualizar" hidden title="Forzar actualización ahora">
-            <i class="bi bi-arrow-clockwise"></i> Actualizar</button>
+             televisor no tiene mouse). Mismo gate INTERACTIVO que "Volver a
+             hoy". 2026-08-29 (Daniel: "déjalo piolita como el full screen")
+             -- pasó de píldora roja a icono discreto, mismo lenguaje visual
+             que #btnFullscreen (ver .refresh-btn). #}
+          <button type="button" class="refresh-btn" id="btnActualizar" hidden
+                  title="Forzar actualización ahora" aria-label="Actualizar">
+            <i class="bi bi-arrow-clockwise"></i></button>
           <div class="vista-sw" id="vistaSw" hidden>
             <button type="button" data-vista="dia" class="on">Día</button>
             <button type="button" data-vista="semana">Semana</button>
@@ -2367,7 +2396,7 @@
                     ' · ' + (o.tecnico || '')) + '">' +
               (o.ini ? '<span class="h">' + esc(o.ini) + '</span>' : '') +
               md +
-              (o.ticket ? '<span class="tk">' + esc(o.ticket) + '</span>' : '') +
+              (o.numero ? '<span class="n">' + esc(o.numero) + '</span>' : '') +
               '<span class="c">' + esc(o.cliente) + '</span>' +
               (o.tipo ? '<span class="t">' + esc(o.tipo) + '</span>' : '') +
             '</div>';
