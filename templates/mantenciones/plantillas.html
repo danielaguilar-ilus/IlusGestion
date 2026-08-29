@@ -55,6 +55,14 @@
      cuanto alguien la abre y la guarda desde este mismo editor. */
   .pl-card .badge-auto{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;
                         padding:3px 8px;border-radius:50px;font-weight:700}
+  /* "De clasificación" (Daniel 29-08-2026: "quiero que me digas cuáles
+     vienen de la clasificación") -- distinto del badge SISTEMA (ese dice
+     "no se puede borrar"), este dice "está enganchada al catálogo": si
+     alguien cambia esa clasificación en /catalogo/clases, esta plantilla es
+     la que usará _plantilla_por_clasificacion_sku. Verde esmeralda a
+     propósito, ninguno de los otros badges usa ese tono. */
+  .pl-card .badge-clasif{background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;
+                          padding:3px 8px;border-radius:50px;font-weight:700}
   .pl-alert{background:#fff8e1;border:1px solid #fcd34d;border-left:4px solid #f59e0b;
             border-radius:12px;padding:14px 16px;margin-bottom:14px}
   .pl-alert-head{display:flex;align-items:flex-start;gap:10px}
@@ -72,10 +80,32 @@
     .pl-alert-acciones{margin-left:0;width:100%}
     .pl-alert-acciones .btn{flex:1 1 auto}
   }
+  /* ── Agregar ítems sin perder el lugar (Daniel 29-08-2026: "si llevas
+     diez ítems, tienes que subir hasta arriba y agregar uno" — pide que
+     agregar se comporte como un módulo aparte que se queda fijo mientras
+     la lista crece hacia abajo). position:sticky ancla contra el propio
+     scroll del modal (.modal-dialog-scrollable -> .modal-body overflow-y
+     auto), así que al bajar hasta el Paso 2 este panel se queda pegado
+     arriba y la lista de items pasa por debajo, sin que el usuario pierda
+     el formulario de alta. La barra de selección masiva vive DENTRO del
+     mismo contenedor sticky (no uno aparte) para que nunca se superpongan
+     -- crece/achica junto con el panel, un solo "top:0". ── */
+  .pl-sticky-tools{position:sticky;top:0;z-index:6;background:#fff;
+                    border-bottom:1px solid #e5e7eb;margin:-14px -14px 12px;padding:12px 14px 0}
+  .pl-add-panel{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding-bottom:12px}
+  .pl-add-panel .pl-add-tipo{width:170px;flex:0 0 auto}
+  .pl-add-panel .pl-add-titulo{flex:1 1 220px;min-width:180px}
+  .pl-add-panel .pl-add-chks{display:flex;gap:10px;flex-wrap:wrap}
+  .pl-add-panel .pl-add-btn{flex:0 0 auto}
+  .pl-sel-toolbar{display:none;align-items:center;gap:10px;background:#fee2e2;border:1px solid #fecaca;
+                   border-radius:8px;padding:6px 10px;margin-bottom:12px;font-size:.82rem;color:#991b1b;font-weight:600}
+  .pl-sel-toolbar.is-active{display:flex}
   .it-card{background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-bottom:8px;
            transition:background .15s}
   .it-card:hover{background:#f5f5f5}
+  .it-card.is-selected{background:#fef2f2;border-color:#fecaca}
   .it-card .it-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .it-card .it-sel{width:16px;height:16px;flex-shrink:0;cursor:pointer}
   .it-card .it-num{background:#0a0a0a;color:#fff;width:22px;height:22px;border-radius:50%;
                    display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0}
   .it-card .form-control-sm{font-size:.85rem}
@@ -262,7 +292,15 @@
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Tiempo estimado (min)</label>
-                <input type="number" id="ePTiempo" class="form-control form-control-sm" min="0">
+                <input type="number" id="ePTiempo" class="form-control form-control-sm" min="0"
+                       oninput="refrescarPasos()">
+                {# Daniel 29-08-2026: "el tiempo estimado creo que lo tienen en la
+                   clasificación... eso se calcula en la clasificación de productos
+                   de las cotizaciones" -- cuando el nombre de la plantilla coincide
+                   con una clase activa del catálogo, se sugiere acá (horas*60 de
+                   cat_clase_producto_tarifas) sin pisar un valor que el usuario ya
+                   haya escrito. Ver aplicarTarifaSugerida(). #}
+                <div class="small text-muted mt-1" id="ePTiempoHint" style="display:none"></div>
               </div>
 
               {# Tarea 1/3 (2026-08-10): categoria_admin — la PESTAÑA donde vive
@@ -338,10 +376,51 @@
             <div class="pl-step-sub">Qué debe revisar/registrar el técnico</div>
           </div>
           <div class="pl-step-body">
-            <div class="d-flex justify-content-end mb-2">
-              <button class="btn btn-sm btn-outline-primary" onclick="agregarItem()">
-                <i class="bi bi-plus-circle me-1"></i>Agregar item
-              </button>
+            {# Alta rápida FIJA (Daniel 29-08-2026: "si llevas diez ítems,
+               tienes que subir hasta arriba y agregar uno... que se
+               comporte como un módulo independiente, al guardar se manda
+               hacia la cola y el modal se mantiene ahí"). Este panel queda
+               pegado arriba (position:sticky, ver CSS .pl-sticky-tools)
+               mientras la lista de abajo crece -- nunca hay que scrollear
+               para agregar el siguiente item. Cubre el caso común (título +
+               tipo + obligatoria/foto); campos avanzados (rango, opciones de
+               lista, "alimenta ficha") se completan después en la tarjeta ya
+               agregada, más abajo -- nada se quitó del editor completo. #}
+            <div class="pl-sticky-tools">
+              <div class="pl-add-panel">
+                <div class="pl-add-tipo">
+                  <label class="form-label small fw-semibold mb-1">Tipo</label>
+                  <select id="addTipo" class="form-select form-select-sm"></select>
+                </div>
+                <div class="pl-add-titulo">
+                  <label class="form-label small fw-semibold mb-1">Nuevo item</label>
+                  <input type="text" id="addTitulo" class="form-control form-control-sm"
+                         placeholder="Ej: Cambio de aceite" onkeydown="if(event.key==='Enter'){event.preventDefault();agregarItemRapido();}">
+                </div>
+                <div class="pl-add-chks">
+                  <div class="form-check form-check-inline mb-1">
+                    <input class="form-check-input" type="checkbox" id="addObligatoria">
+                    <label class="form-check-label small" for="addObligatoria">Obligatoria</label>
+                  </div>
+                  <div class="form-check form-check-inline mb-1">
+                    <input class="form-check-input" type="checkbox" id="addFoto">
+                    <label class="form-check-label small" for="addFoto">Requiere foto</label>
+                  </div>
+                </div>
+                <div class="pl-add-btn">
+                  <button class="btn btn-sm btn-ilus fw-bold" onclick="agregarItemRapido()">
+                    <i class="bi bi-plus-circle me-1"></i>Agregar a la lista
+                  </button>
+                </div>
+              </div>
+              <div class="pl-sel-toolbar" id="plSelToolbar">
+                <i class="bi bi-check-square-fill"></i>
+                <span id="plSelCount">0 seleccionados</span>
+                <button class="btn btn-sm btn-danger ms-auto" onclick="eliminarSeleccionados()">
+                  <i class="bi bi-trash me-1"></i>Eliminar seleccionados
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="limpiarSeleccion()">Cancelar</button>
+              </div>
             </div>
             <div id="itemsContainer">
               <div class="text-muted text-center py-4 small">
@@ -473,6 +552,13 @@ let _editId = null;
 let _items = [];
 let _searchTimer = null;
 let _modal = null;
+
+// ── Selección múltiple de items (Daniel 29-08-2026: "voy seleccionando,
+// voy leyendo y las selecciono, y voy hacia arriba y elimino") ──────────
+// Por _uid, no por índice: el índice cambia al reordenar o borrar, el _uid
+// asignado en agregarItemRapido()/cargarDetalle() no.
+let _nextUid = 1;
+let _selected = new Set();
 
 // ═══════════════════════════════════════════════════════════════════
 // FAMILIAS DE CHECKLIST EDITABLES (Daniel, 28-08-2026, por voz: "algo bien
@@ -687,6 +773,13 @@ function crearPlantillaParaClase(nombre, categoria){
   if (typeof ilusToast === 'function'){
     ilusToast('Nombre y categoría prellenados — agrega los ítems del checklist', {type:'info'});
   }
+  // La plantilla todavía no existe (recién se está creando desde el
+  // banner), así que no hay cargarDetalle() que traiga la tarifa -- se pide
+  // aparte con el mismo nombre+categoría que se acaba de prellenar.
+  fetch('/mantenciones/api/plantillas/tarifa-sugerida?' + new URLSearchParams({nombre, categoria_admin: categoria}))
+    .then(r => r.json())
+    .then(j => { if (j && j.ok) aplicarTarifaSugerida(j.de_clasificacion, j.tarifa_sugerida_min); })
+    .catch(() => {});
 }
 
 // ── Pestañas ────────────────────────────────────────────────────────
@@ -774,6 +867,7 @@ function renderPlantillas(){
         <span class="badge-items"><i class="bi bi-check2-circle me-1"></i>${p.items_count} item${p.items_count!==1?'s':''}</span>
         ${vacia ? '<span class="badge-vacia"><i class="bi bi-exclamation-triangle-fill me-1"></i>Sin checklist</span>' : ''}
         ${p.revisar_tecnico ? '<span class="badge-auto" title="Este checklist lo redactó el sistema (no un técnico ILUS todavía) -- ábrelo, corrígelo si hace falta y guárdalo para marcarlo como revisado."><i class="bi bi-robot me-1"></i>Autogenerada · revisar</span>' : ''}
+        ${p.de_clasificacion ? '<span class="badge-clasif" title="El nombre de esta plantilla coincide con una clasificación activa de /catalogo/clases: es la que usan los productos de esa clase al crear una OT. Por eso no se puede borrar, solo desactivar."><i class="bi bi-tags-fill me-1"></i>De clasificación</span>' : ''}
         ${p.tiempo_estimado_min ? '<span class="badge-tipo">⏱ '+p.tiempo_estimado_min+' min</span>' : ''}
       </div>
     </div>`;
@@ -803,17 +897,20 @@ function seleccionarCategoriaAdmin(key){
 function abrirEditor(pid){
   _editId = pid || null;
   _items = [];
+  limpiarSeleccion();
   document.getElementById('editorTitulo').textContent = pid ? 'Editar plantilla' : 'Nueva plantilla';
   document.getElementById('btnEliminarPl').style.display = pid ? '' : 'none';
   document.getElementById('ePNombre').value = '';
   document.getElementById('ePDesc').value = '';
   document.getElementById('ePTipo').value = 'preventiva';
   document.getElementById('ePTiempo').value = '';
+  document.getElementById('ePTiempoHint').style.display = 'none';
   { const _selFam = document.getElementById('ePFamiliaChecklist');
     _selFam.value = 'otro'; _selFam.dataset.prev = 'otro'; }
   document.getElementById('ePFamiliaActivo').value = 'todas';
   document.getElementById('ePActiva').checked = true;
   document.getElementById('ePEsSistemaNota').style.display = 'none';
+  document.getElementById('addTitulo').value = '';
   renderCategoriaCards('');
   renderItems();
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
@@ -823,6 +920,21 @@ function abrirEditor(pid){
   } else {
     refrescarPasos();
   }
+}
+
+// Muestra "Sugerido por clasificación: N min" y, si el campo está vacío,
+// lo prellena -- nunca pisa un valor que el usuario ya haya escrito a mano.
+function aplicarTarifaSugerida(deClasificacion, tarifaMin){
+  const hint = document.getElementById('ePTiempoHint');
+  const inp = document.getElementById('ePTiempo');
+  if (!deClasificacion || !tarifaMin){
+    hint.style.display = 'none';
+    return;
+  }
+  if (!inp.value.trim()) inp.value = tarifaMin;
+  hint.style.display = '';
+  hint.innerHTML = `<i class="bi bi-tags-fill me-1" style="color:#059669"></i>Sugerido por la clasificación del producto: ${tarifaMin} min`;
+  refrescarPasos();
 }
 
 async function cargarDetalle(pid){
@@ -843,8 +955,9 @@ async function cargarDetalle(pid){
     document.getElementById('ePActiva').checked = p.activa !== false;
     document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
     renderCategoriaCards(p.categoria_admin || '');
-    _items = (d.items || []).map(it => ({...it}));
+    _items = (d.items || []).map(it => ({...it, _uid: _nextUid++}));
     renderItems();
+    aplicarTarifaSugerida(p.de_clasificacion, p.tarifa_sugerida_min);
     refrescarPasos();
   } catch(e){ alert('Error: '+e.message); }
 }
@@ -853,9 +966,17 @@ async function cargarDetalle(pid){
 // RB_STEP_RULES de Repuestos, ver _repuestos_bodega_pane.html): cada
 // pl-step se pinta verde cuando su regla de "completo" se cumple. Paso 3
 // (Configuración) es opcional, nunca se marca completo por diseño.
+// 29-08-2026 (Daniel: "estoy seleccionando solamente un valor y ya me dejó
+// en verde, necesito tener todo completado"): Paso 1 solo se pintaba verde
+// con nombre+categoría, aunque el resto (tiempo estimado) siguiera vacío.
+// Ahora exige el mismo campo que aplicarTarifaSugerida() puede prellenar
+// solo -- si la plantilla viene de una clasificación con tarifa cargada,
+// el paso se completa automáticamente al traerla; si no, el usuario lo
+// tiene que escribir a mano para ver el check verde.
 const PL_STEP_RULES = {
   1: () => document.getElementById('ePNombre').value.trim().length > 0 &&
-           !!document.getElementById('ePCategoriaAdmin').value,
+           !!document.getElementById('ePCategoriaAdmin').value &&
+           document.getElementById('ePTiempo').value.trim().length > 0,
   2: () => _items.length > 0,
 };
 function refrescarPasos(){
@@ -865,19 +986,34 @@ function refrescarPasos(){
   });
 }
 
-function agregarItem(){
+// Puebla el <select> de tipo del panel de alta rápida con la misma lista de
+// TIPOS_RESPUESTA del editor completo (una sola fuente de verdad, ver
+// tipoOpciones en renderItems()). Se llama una vez al cargar la página.
+function poblarAddTipoSelect(){
+  const sel = document.getElementById('addTipo');
+  if (!sel) return;
+  sel.innerHTML = TIPOS_RESPUESTA.map(t => `<option value="${t.v}">${t.l}</option>`).join('');
+}
+
+// Alta rápida (Daniel 29-08-2026): agrega al final de la lista ("a la cola")
+// sin mover el foco del panel de arriba -- pensado para cargar muchos items
+// seguidos sin scrollear. Los campos avanzados (rango, opciones de lista,
+// "alimenta ficha") se completan después en la tarjeta ya agregada, más
+// abajo -- agregarItemRapido() solo cubre el 90% del caso común.
+function agregarItemRapido(){
+  const tituloInp = document.getElementById('addTitulo');
+  const titulo = tituloInp.value.trim();
+  if (!titulo){ tituloInp.focus(); return; }
   _items.push({
-    titulo:'', descripcion:'', tipo_respuesta:'check',
-    obligatoria:false, requiere_foto:false, unidad:'',
-    rango_min:null, rango_max:null, opciones_lista:[], target_field:''
+    _uid: _nextUid++,
+    titulo, descripcion:'', tipo_respuesta: document.getElementById('addTipo').value || 'check',
+    obligatoria: document.getElementById('addObligatoria').checked,
+    requiere_foto: document.getElementById('addFoto').checked,
+    unidad:'', rango_min:null, rango_max:null, opciones_lista:[], target_field:''
   });
+  tituloInp.value = '';
+  tituloInp.focus();
   renderItems();
-  // Scroll al nuevo y enfocar
-  setTimeout(()=>{
-    const idx = _items.length - 1;
-    const el = document.querySelector(`#item-${idx} input[data-field="titulo"]`);
-    if (el){ el.focus(); el.scrollIntoView({behavior:'smooth', block:'center'}); }
-  }, 50);
 }
 
 async function eliminarItem(idx){
@@ -888,7 +1024,53 @@ async function eliminarItem(idx){
     danger: true,
   });
   if (!ok) return;
+  const it = _items[idx];
+  if (it) _selected.delete(it._uid);
   _items.splice(idx, 1);
+  renderItems();
+}
+
+// ── Selección múltiple + borrado en masa ────────────────────────────
+// Daniel 29-08-2026: "voy seleccionando, voy leyendo y voy a seleccionarlo
+// y voy hacia arriba y elimino" -- checkbox por item + una sola acción de
+// borrado para no repetir el confirm uno por uno.
+function toggleSeleccionItem(uid, checked){
+  if (checked) _selected.add(uid); else _selected.delete(uid);
+  _actualizarToolbarSeleccion();
+  const card = document.getElementById('item-uid-' + uid);
+  if (card) card.classList.toggle('is-selected', checked);
+}
+
+function limpiarSeleccion(){
+  _selected.clear();
+  _actualizarToolbarSeleccion();
+  document.querySelectorAll('#itemsContainer .it-card.is-selected')
+    .forEach(el => el.classList.remove('is-selected'));
+  document.querySelectorAll('#itemsContainer .it-sel')
+    .forEach(el => { el.checked = false; });
+}
+
+function _actualizarToolbarSeleccion(){
+  const bar = document.getElementById('plSelToolbar');
+  if (!bar) return;
+  const n = _selected.size;
+  bar.classList.toggle('is-active', n > 0);
+  const lbl = document.getElementById('plSelCount');
+  if (lbl) lbl.textContent = n + (n === 1 ? ' seleccionado' : ' seleccionados');
+}
+
+async function eliminarSeleccionados(){
+  const n = _selected.size;
+  if (!n) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar items seleccionados',
+    message: `¿Quitar ${n} item${n===1?'':'s'} de la plantilla?`,
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  _items = _items.filter(it => !_selected.has(it._uid));
+  limpiarSeleccion();
   renderItems();
 }
 
@@ -926,7 +1108,7 @@ function renderItems(){
   const cont = document.getElementById('itemsContainer');
   document.getElementById('itCount').textContent = _items.length;
   if (!_items.length){
-    cont.innerHTML = '<div class="text-muted text-center py-4 small">Aún no hay items. Agrega el primero con el botón "Agregar item".</div>';
+    cont.innerHTML = '<div class="text-muted text-center py-4 small">Aún no hay items. Escribe el primero arriba en "Nuevo item" y presiona Enter o "Agregar a la lista".</div>';
     refrescarPasos();
     return;
   }
@@ -948,9 +1130,12 @@ function renderItems(){
     const targetOpciones = TARGET_FIELDS.map(t =>
       `<option value="${t.v}" ${(it.target_field||'')===t.v?'selected':''}>${t.l}</option>`
     ).join('');
+    const _sel = _selected.has(it._uid);
     return `
-      <div class="it-card" id="item-${idx}">
+      <div class="it-card${_sel ? ' is-selected' : ''}" id="item-uid-${it._uid}">
         <div class="it-head">
+          <input type="checkbox" class="it-sel" title="Seleccionar para borrar en masa"
+                 ${_sel ? 'checked' : ''} onchange="toggleSeleccionItem(${it._uid}, this.checked)">
           <div class="it-num">${idx+1}</div>
           <select class="form-select form-select-sm" style="max-width:240px"
                   data-field="tipo_respuesta"
@@ -1133,6 +1318,7 @@ document.addEventListener('DOMContentLoaded', () => {
   cargarPlantillas(); // y luego las recalcula con los datos reales
   cargarFamiliasChecklist(); // 28-08-2026: agrega familias custom al selector (aditivo, ver arriba)
   cargarCoberturaClases();   // 28-08-2026: banner de clasificaciones sin checklist
+  poblarAddTipoSelect();     // 29-08-2026: opciones del panel de alta rápida del Paso 2
 });
 </script>
 {% endblock %}

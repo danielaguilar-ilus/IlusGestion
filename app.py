@@ -80241,6 +80241,58 @@ def mant_plantillas_categorias_actualizar():
     return jsonify({"ok": bool(actualizados) or not errores, "actualizados": actualizados, "errores": errores})
 
 
+# 2026-08-29 (Daniel: "el tiempo estimado creo que lo tienen en la
+# clasificación... eso se calcula en la clasificación de productos de las
+# cotizaciones"): mapea la categoria_admin de una plantilla al tipo_servicio
+# de cat_clase_producto_tarifas -- 'visitas' no tiene tarifa propia de
+# instalación/mantención, así que cae en 'visita_tecnica'.
+_PLANT_CAT_ADMIN_A_TIPO_SERVICIO = {
+    "instalacion": "instalacion",
+    "mantencion": "mantencion",
+    "visitas": "visita_tecnica",
+}
+
+
+def _plantilla_tarifa_sugerida(nombre, categoria_admin):
+    """de_clasificacion + tiempo estimado sugerido (min) para una plantilla,
+    a partir de la clasificación de producto homónima ACTIVA en el catálogo
+    -- mismo criterio de match que mant_plantilla_eliminar/mant_plantillas_listar
+    (nombre exacto + categoria_admin en instalación/mantención/visitas).
+    Reusa _cat_obtener_tarifa_clase (catalogo_module.py, inyectada en este
+    mismo globals() por register_catalogo_routes) en vez de duplicar el
+    cálculo de horas -> minutos."""
+    cat_admin = (categoria_admin or "").strip().lower()
+    tipo_servicio = _PLANT_CAT_ADMIN_A_TIPO_SERVICIO.get(cat_admin)
+    nombre = (nombre or "").strip()
+    if not tipo_servicio or not nombre:
+        return {"de_clasificacion": False, "tarifa_sugerida_min": None}
+    clase = mysql_fetchone(
+        "SELECT slug FROM cat_clases_producto WHERE nombre=%s AND activo=1",
+        (nombre,))
+    if not clase:
+        return {"de_clasificacion": False, "tarifa_sugerida_min": None}
+    tarifa_min = None
+    try:
+        tarifa = _cat_obtener_tarifa_clase(clase["slug"], tipo_servicio)
+        if tarifa and tarifa.get("horas") is not None:
+            tarifa_min = round(tarifa["horas"] * 60)
+    except Exception as _e_tar:
+        print(f"[_plantilla_tarifa_sugerida] '{nombre}'/{cat_admin}: {_e_tar}", flush=True)
+    return {"de_clasificacion": True, "tarifa_sugerida_min": tarifa_min}
+
+
+@app.route("/mantenciones/api/plantillas/tarifa-sugerida", methods=["GET"])
+@_mant_required
+def mant_plantillas_tarifa_sugerida():
+    """?nombre=...&categoria_admin=instalacion|mantencion|visitas
+    Mismo cálculo que mant_plantilla_detalle, pero para cuando la plantilla
+    TODAVÍA no existe -- lo usa crearPlantillaParaClase() (banner de
+    cobertura) para sugerir el tiempo estimado desde el primer tecleo."""
+    out = _plantilla_tarifa_sugerida(
+        request.args.get("nombre"), request.args.get("categoria_admin"))
+    return jsonify({"ok": True, **out})
+
+
 @app.route("/mantenciones/api/plantillas/<int:pid>", methods=["GET"])
 @_mant_required
 def mant_plantilla_detalle(pid):
@@ -80271,6 +80323,7 @@ def mant_plantilla_detalle(pid):
             "opciones_lista": opciones,
             "target_field": it.get("target_field") or "",
         })
+    _tarifa = _plantilla_tarifa_sugerida(plant["nombre"], plant.get("categoria_admin"))
     return jsonify({
         "ok": True,
         "plantilla": {
@@ -80285,6 +80338,8 @@ def mant_plantilla_detalle(pid):
             "es_sistema": bool(plant.get("es_sistema")),
             "created_by": plant.get("created_by") or "",
             "created_at": str(plant["created_at"])[:16] if plant.get("created_at") else "",
+            "de_clasificacion": _tarifa["de_clasificacion"],
+            "tarifa_sugerida_min": _tarifa["tarifa_sugerida_min"],
         },
         "items": out_items,
     })
