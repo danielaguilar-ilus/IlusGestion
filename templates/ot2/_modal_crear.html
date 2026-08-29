@@ -2964,7 +2964,19 @@ window.OT2C = (function(){
     if (!a.objetivo_servicio.trim() && S.tipo){
       var tInfo = TIPOS.find(function(x){ return x.v === S.tipo; });
       var cliTxt = S.cliente ? (' al cliente ' + S.cliente.nombre) : '';
-      a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.';
+      // 2026-08-29 (Daniel: "agregale hasta los productos de ser
+      // necesario"): si ya hay equipos elegidos en el paso Equipos, se
+      // listan por nombre (resueltos contra cacheEquipos, que ya está
+      // cargado para este cliente) -- deja explícito en el propio
+      // documento del anexo SOBRE QUÉ equipos es el servicio, sin
+      // inventar un campo nuevo en el backend (sigue siendo texto libre
+      // dentro de objetivo_servicio, que ya existe).
+      var nombresEq = (S.equipos||[]).map(function(e){
+        var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
+        return m ? (m.nombre || m.modelo || ('Equipo '+m.id)) : null;
+      }).filter(Boolean);
+      var eqTxt = nombresEq.length ? (' Equipos: ' + nombresEq.join(', ') + '.') : '';
+      a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.' + eqTxt;
     }
     if (!a.fecha_inicio && S.fecha) a.fecha_inicio = S.fecha;
     if (!a.fecha_termino && S.fecha) a.fecha_termino = S.fecha;
