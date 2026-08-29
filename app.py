@@ -75034,6 +75034,28 @@ def ot2_detalle(vid):
     # a quien igual recibiría un 403 (defensa en profundidad real, no solo UI).
     puede_eliminar = _puede_ot_accion(vid, "eliminar")
 
+    # 🆕 2026-08-28 (Daniel: "que se pueda realizar la firma... que firme
+    # el técnico, después el cliente, se pueda enviar por WhatsApp o correo,
+    # y que Aaron declare la finanza al aprobar" -- SEGUNDO pedido del mismo
+    # tema hoy, "no hay ningún botón"): mismos 3 flags que ya usa
+    # /mantenciones/ot/<id>/ejecutar (mant_ot_ejecutar, ~línea 80794) para
+    # decidir qué botón de firma/aprobación dibujar. Se recalculan acá en vez
+    # de reusar `puede_metadata`/`puede_ejecutar` porque son acciones
+    # DISTINTAS en la matriz de `_puede_ot_accion` (ver tabla en su
+    # docstring): un ejecutivo tiene metadata=True pero aprobar=True también
+    # (sí aprueba), mientras que cobertura/firmar_cliente son más angostos
+    # que metadata en el tramo posterior a la firma del cliente.
+    puede_aprobar = _puede_ot_accion(vid, "aprobar")
+    puede_firmar_cliente = _puede_ot_accion(vid, "firmar_cliente")
+    puede_cobertura = _puede_ot_accion(vid, "cobertura")
+    # Mismo cálculo que mant_ot_ejecutar (~línea 80814): comparar el
+    # username actual contra created_by (varchar), case-insensitive y trim.
+    _u_firma = getattr(g, "user", None) or {}
+    _creator_username_firma = (v.get("created_by") or "").strip().lower()
+    es_creador = bool(_creator_username_firma) and (
+        _creator_username_firma == (_u_firma.get("username") or "").strip().lower()
+    )
+
     # `date` NO está importado a nivel de módulo (app.py:12 solo trae
     # datetime/timedelta/timezone). Y la fecha tiene que ser la de Chile,
     # no la del contenedor en UTC — si no, después de las 21:00 una OT de
@@ -75311,6 +75333,8 @@ def ot2_detalle(vid):
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
         puede_eliminar=puede_eliminar,
+        puede_aprobar=puede_aprobar, puede_firmar_cliente=puede_firmar_cliente,
+        puede_cobertura=puede_cobertura, es_creador=es_creador,
         hito_actual=hito_actual, hito_siguiente=hito_siguiente,
         plantillas_todas=plantillas_todas,
         categoria_ot_actual=categoria_ot_actual,

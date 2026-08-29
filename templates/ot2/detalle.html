@@ -58,6 +58,17 @@
 #}
 
 {% block content %}
+{# 🆕 2026-08-28 (Daniel, 2do pedido del mismo tema hoy: "que se pueda
+   realizar la firma... que firme el técnico, después el cliente, se pueda
+   enviar por correo o WhatsApp... y que declaren la finanza al aprobar").
+   Se reusa TAL CUAL el CSS ya probado en producción de la pantalla de
+   ejecución (.firma-modal/.firma-banner/.resp-firma-card/.tx-sign-hub/
+   .tx-channel-card, etc.) -- mismo lenguaje visual "premium" que a Daniel
+   ya le gustó ahí, en vez de inventar un sistema de firma nuevo. Es
+   puramente clases con prefijo `tx-`/`firma-`/`resp-firma-` (revisado: no
+   hay selectores globales tipo body/button/.btn/.modal que puedan chocar
+   con el resto de esta pantalla) -- cero riesgo de colisión visual. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ot_ejecutar.css') }}">
 <style>
 .otd{
   --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
@@ -465,6 +476,12 @@
 .otd-btn.pri{background:var(--ilus-red,#dc2626);border-color:transparent;color:#fff}
 .otd-btn.pri:hover{color:#fff;box-shadow:0 8px 20px -8px rgba(220,38,38,.7)}
 .otd-btn i{font-size:.95rem}
+/* 🆕 2026-08-28 -- estado disabled, usado por primera vez en esta pantalla
+   por el botón "Firmar como técnico" (card Firmar y cerrar OT) mientras
+   falten obligatorias. Sin esto el botón se veía IGUAL de clickeable
+   (rojo sólido) estando bloqueado -- confuso para quien no lee el texto. */
+.otd-btn:disabled,.otd-btn.pri:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;transform:none}
+.otd-btn:disabled:hover,.otd-btn.pri:disabled:hover{transform:none;box-shadow:none}
 /* 🆕 2026-08-28 -- botón "Eliminar OT" (configurable por rol, ver
    puede_eliminar). Mismo tamaño/forma que .otd-btn pero en rojo peligro
    de borde+texto (NO relleno sólido, para no competir visualmente con
@@ -501,6 +518,19 @@
   min-height:32px;color:#a1a1aa;font-size:.76rem;font-weight:800;cursor:pointer;
   transition:border-color .15s,color .15s}
 .otd-tec-add:hover{border-color:#4ade80;color:#4ade80}
+
+/* ══ FIRMAR Y CERRAR OT — card nueva 2026-08-28 ══
+   Daniel: "que se pueda realizar la firma... directamente en esta
+   pantalla, sin que me obligue a saltar a la otra". Los 3 estados que NO
+   son un botón de acción (esperando revisión, cerrada, solo lectura) usan
+   este mismo mensaje neutro -- no repetir 3 variantes de caja para lo
+   mismo. El botón/hub de acción real usa `.otd-btn`/`.tx-sign-hub`
+   (ya existentes), esto es solo el texto informativo. */
+.otf-msg{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;
+  font-size:.82rem;font-weight:700}
+.otf-msg.otf-ok{background:#dcfce7;color:#15803d}
+.otf-msg.otf-wait{background:#f3f4f6;color:#6b7280}
+.otf-hint{font-size:.72rem;color:#9ca3af;margin-top:6px;text-align:center}
 
 @media (prefers-reduced-motion:reduce){
   .otd-eq .bar i,.otd-av-bar i{animation:none;width:var(--w,0%)}
@@ -839,6 +869,87 @@
 
     {# ── Columna derecha ── #}
     <div style="display:flex;flex-direction:column;gap:14px">
+
+      {# ══ FIRMAR Y CERRAR OT — 2026-08-28 (Daniel, 2do pedido de hoy) ══
+         "que se pueda realizar la firma... que firme el técnico, después
+         que firme el cliente, que se pueda enviar por correo o WhatsApp...
+         y que declaren la finanza, si es garantía den los argumentos, y
+         que declaren los extras de costo". Hasta hoy esta pantalla no
+         tenía NINGÚN botón de firma -- solo "Ejecutar la OT" que manda a
+         /mantenciones/ot/<id>/ejecutar. Se porta acá el mismo flujo real
+         (mismos endpoints, mismas reglas de negocio -- nada se reimplementa
+         en el backend), con namespace propio `OT2F` e ids con prefijo
+         `otf` para no chocar si esta pantalla y ot_ejecutar.html alguna
+         vez conviven en el DOM (hoy no debería pasar: una manda a la otra
+         con navegación completa, nunca en un iframe).
+         Estados espejo de la barra `.tx-bottom` de ot_ejecutar.html
+         (mismo criterio, sin el geofence de check-in GPS -- eso es propio
+         de la ejecución en terreno, no de esta vista de gestión). #}
+      <div class="otd-card">
+        <h3><i class="bi bi-vector-pen"></i> Firmar y cerrar OT</h3>
+        <div style="padding:14px 16px" id="otfWrap">
+          {% if v.estado == 'cerrada' %}
+            <div class="otf-msg otf-ok"><i class="bi bi-check-circle-fill"></i>
+              OT cerrada{% if v.firma_supervisor_at %} · {{ v.firma_supervisor_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}</div>
+          {% elif v.estado == 'completada' %}
+            <div class="otf-msg otf-ok"><i class="bi bi-check-circle-fill"></i> OT completada</div>
+          {% elif v.estado == 'pendiente_aprobacion' %}
+            {% if puede_aprobar %}
+            <button type="button" class="otd-btn pri" style="width:100%;justify-content:center"
+                    onclick="OT2F.abrirAprobacion()">
+              <i class="bi bi-pen-fill"></i> Firmar y cerrar OT como aprobador</button>
+            <div class="otf-hint">El técnico ya firmó. Falta tu firma para cerrar la OT.</div>
+            {% else %}
+            <div class="otf-msg otf-wait"><i class="bi bi-clock-history"></i>
+              OT firmada — esperando aprobación{% if v.created_by %} de {{ v.created_by }}{% endif %}</div>
+            {% endif %}
+          {% elif v.estado == 'firmada_tecnico' %}
+            {% if is_superadmin %}
+            <button type="button" class="otd-btn" style="width:100%;justify-content:center;margin-bottom:10px"
+                    onclick="OT2F.liberarFirmaTecnico()">
+              <i class="bi bi-arrow-counterclockwise"></i> Liberar firma del técnico (re-firmar)</button>
+            {% endif %}
+            {% if puede_firmar_cliente %}
+            <div class="tx-sign-hub" id="otfSignHub">
+              <div class="tx-sign-hub-head">
+                <i class="bi bi-vector-pen"></i>
+                <div><strong>¿Cómo firma el cliente?</strong>
+                  <span>En persona, o le mandas el link para que firme a distancia.</span></div>
+              </div>
+              <div class="tx-channel-grid">
+                <button type="button" class="tx-channel-card is-presencial" onclick="OT2F.abrirFirmaCliente()">
+                  <span class="tx-channel-ico"><i class="bi bi-person-badge-fill"></i></span>
+                  <span class="tx-channel-txt"><strong>En persona</strong><small>Firma aquí mismo</small></span></button>
+                <button type="button" class="tx-channel-card is-whatsapp" onclick="OT2F.enviarFirmaWhatsApp()">
+                  <span class="tx-channel-ico"><i class="bi bi-whatsapp"></i></span>
+                  <span class="tx-channel-txt"><strong>WhatsApp</strong><small>Le llega el link al tiro</small></span></button>
+                <button type="button" class="tx-channel-card is-correo" onclick="OT2F.enviarFirmaRemota()">
+                  <span class="tx-channel-ico"><i class="bi bi-envelope-paper-fill"></i></span>
+                  <span class="tx-channel-txt"><strong>Correo</strong><small>Envía el link por email</small></span></button>
+              </div>
+              <button type="button" class="tx-sign-hub-both" onclick="OT2F.enviarFirmaAmbos()">
+                <i class="bi bi-send-check-fill"></i> Enviar por WhatsApp y correo a la vez</button>
+            </div>
+            {% else %}
+            <div class="otf-msg otf-wait"><i class="bi bi-clock-history"></i>
+              Técnico firmó — esperando revisión y firma del cliente</div>
+            {% endif %}
+          {% else %}
+            {% if puede_ejecutar %}
+              {% set _obl_falta = kpis.obl - kpis.obl_ok %}
+              <button type="button" class="otd-btn pri" id="otfBtnFirmar" style="width:100%;justify-content:center"
+                      onclick="OT2F.abrirFirmaTecnico()" {{ 'disabled' if _obl_falta > 0 }}>
+                <i class="bi bi-{{ 'lock-fill' if _obl_falta > 0 else 'pen-fill' }}"></i>
+                {{ 'Faltan obligatorias para firmar' if _obl_falta > 0 else 'Firmar como técnico' }}</button>
+              {% if _obl_falta > 0 %}
+              <div class="otf-hint">Faltan {{ _obl_falta }} tarea{{ 's' if _obl_falta != 1 }} obligatoria{{ 's' if _obl_falta != 1 }} — revisa la pestaña Trabajo.</div>
+              {% endif %}
+            {% else %}
+            <div class="otf-msg otf-wait"><i class="bi bi-eye"></i> Solo lectura — no puedes ejecutar esta OT.</div>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
 
       <div class="otd-card">
         <h3><i class="bi bi-graph-up-arrow"></i> Avance del trabajo</h3>
@@ -1185,6 +1296,427 @@
 
 {% if not es_tecnico %}
   {% include "ot2/_modal_anexo.html" %}
+{% endif %}
+
+{# ═════════════════════════════════════════════════════════════════════
+   MODAL: Firma (técnico / cliente) — namespace OT2F, 2026-08-28.
+   Portado de templates/mantenciones/ot_ejecutar.html (mismo diseño, mismos
+   endpoints POST /firmar-revision y /firmar-cliente) -- ids con prefijo
+   `otf` para no chocar con esa pantalla si algún día convivieran en el
+   mismo DOM. La validación de checklist/diagnóstico/fotos NO se duplica
+   acá: vive en el backend (_ot_validar_diagnostico_y_fotos) y ya devuelve
+   el mismo par título/detalle sin repetir texto (fix 2026-08-28).
+   ═════════════════════════════════════════════════════════════════════ #}
+<div class="modal fade firma-modal" id="otfModalFirma" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="firma-banner">
+        <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='favicon_192.png') }}')"></div>
+        <div class="flex-grow-1">
+          <h5 id="otfFirmaModalTitulo"><i class="bi bi-pen-fill me-2"></i>Firma del técnico</h5>
+          <div class="fb-sub">{{ v.numero_ot or ('OT #' ~ v.id) }} · {{ v.razon_social or 'Trabajo interno' }}</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small mb-3" id="otfFirmaModalInfo">
+          <i class="bi bi-info-circle me-1"></i>
+          Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.
+        </div>
+
+        <div class="resp-firma-card">
+          <div class="resp-firma-head">
+            <i class="bi bi-file-earmark-check"></i>
+            Compromisos al firmar esta orden de trabajo
+          </div>
+          <div class="resp-firma-grid">
+            <div class="resp-firma-item">
+              <div class="resp-firma-rol"><i class="bi bi-tools"></i> Técnico</div>
+              <div class="resp-firma-txt">Declaro haber prestado el servicio sin detalles ni problemas pendientes.</div>
+            </div>
+            <div class="resp-firma-item">
+              <div class="resp-firma-rol"><i class="bi bi-person-badge"></i> Cliente</div>
+              <div class="resp-firma-txt">Recibo conforme el trabajo realizado y dejo registro para evitar reclamos posteriores.</div>
+            </div>
+            <div class="resp-firma-item">
+              <div class="resp-firma-rol"><i class="bi bi-shield-check"></i> Supervisor</div>
+              <div class="resp-firma-txt">Reviso y certifico que la orden de trabajo quedó gestionada como corresponde.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4" id="otfFirmaSecTec">
+          <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
+            <i class="bi bi-person-check me-1 text-success"></i>Tu firma (técnico)
+          </label>
+          <input type="text" id="otfFirmaTecNombre" class="form-control mb-2"
+                 readonly
+                 style="background:#f1f5f9;cursor:not-allowed;font-weight:700"
+                 title="Firmas con tu usuario de la sesión — este nombre no se puede cambiar"
+                 value="{{ current_user.nombre if current_user else (v.tecnico_nombre or '') }}">
+          <div class="form-text mb-2" style="margin-top:-4px">
+            <i class="bi bi-shield-lock-fill text-success"></i>
+            Firmas como <strong>{{ current_user.nombre if current_user else 'usuario de la sesión' }}</strong>.
+            El nombre del técnico no se puede modificar.
+          </div>
+          <div class="firma-canvas-wrap" id="wrap-otfCanvasTec">
+            <canvas id="otfCanvasTec" width="800" height="240"></canvas>
+            <div class="firma-placeholder">✍️ Firma aquí con el dedo o lápiz óptico</div>
+          </div>
+          <div class="firma-toolbar">
+            <button type="button" class="firma-tool danger" onclick="OT2F.limpiarFirma('otfCanvasTec')">
+              <i class="bi bi-eraser"></i> Borrar
+            </button>
+            <button type="button" class="firma-tool" onclick="OT2F.undoFirma('otfCanvasTec')">
+              <i class="bi bi-arrow-counterclockwise"></i> Deshacer
+            </button>
+            <div class="firma-color-pick">
+              <div class="firma-color active" style="background:#0f172a" onclick="OT2F.setFirmaColor('otfCanvasTec', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color" style="background:#1e40af" onclick="OT2F.setFirmaColor('otfCanvasTec', '#1e40af', this)" title="Azul"></div>
+              <div class="firma-color" style="background:#dc2626" onclick="OT2F.setFirmaColor('otfCanvasTec', '#dc2626', this)" title="Rojo"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-2" id="otfFirmaSecCli">
+          <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
+            <i class="bi bi-person-badge me-1 text-primary"></i>Firma del cliente (quien recibe)
+          </label>
+          <input type="text" id="otfFirmaCliNombre" class="form-control mb-2"
+                 placeholder="Nombre de quien recibe y firma"
+                 data-sugerido="{{ v.contacto_nombre or '' }}"
+                 value="{{ v.contacto_nombre or '' }}">
+          <div class="form-text mb-2" style="margin-top:-4px">
+            <i class="bi bi-pencil-square text-primary"></i>
+            Si quien recibe no es {{ v.contacto_nombre or 'el contacto agendado' }},
+            <strong>corrige el nombre</strong>: debe firmar quien realmente está presente.
+          </div>
+          <input type="text" id="otfFirmaCliRut" class="form-control mb-2"
+                 placeholder="RUT de quien firma (ej: 12.345.678-9)">
+          <div class="row g-2 mb-1">
+            <div class="col-12 col-sm-6"><input type="text" id="otfFirmaCliCargo" class="form-control form-control-sm" placeholder="Cargo / relación (opcional)" maxlength="120"></div>
+            <div class="col-6 col-sm-3"><input type="text" id="otfFirmaCliTel" class="form-control form-control-sm" placeholder="Teléfono (opc.)" maxlength="40"></div>
+            <div class="col-6 col-sm-3"><input type="email" id="otfFirmaCliEmail" class="form-control form-control-sm" placeholder="Email (opc.)" maxlength="190"></div>
+          </div>
+          <small class="d-block text-muted mb-2" style="font-size:.7rem">
+            <i class="bi bi-info-circle me-1"></i>Si el cliente firma, <b>nombre y RUT del firmante son obligatorios</b>. Sugerimos el contacto, pero cámbialo por quien realmente recibe (encargado, recepción, etc.).
+          </small>
+          <div class="firma-canvas-wrap" id="wrap-otfCanvasCli">
+            <canvas id="otfCanvasCli" width="800" height="240"></canvas>
+            <div class="firma-placeholder">✍️ El cliente firma aquí con el dedo</div>
+          </div>
+          <div class="firma-toolbar">
+            <button type="button" class="firma-tool danger" onclick="OT2F.limpiarFirma('otfCanvasCli')">
+              <i class="bi bi-eraser"></i> Borrar
+            </button>
+            <button type="button" class="firma-tool" onclick="OT2F.undoFirma('otfCanvasCli')">
+              <i class="bi bi-arrow-counterclockwise"></i> Deshacer
+            </button>
+            <div class="firma-color-pick">
+              <div class="firma-color active" style="background:#0f172a" onclick="OT2F.setFirmaColor('otfCanvasCli', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color" style="background:#1e40af" onclick="OT2F.setFirmaColor('otfCanvasCli', '#1e40af', this)" title="Azul"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg me-1"></i>Cancelar
+        </button>
+        <button type="button" class="btn btn-success fw-bold" id="otfBtnFirmarConfirm"
+                onclick="OT2F.enviarFirma()" style="padding:.6rem 1.4rem;font-size:.95rem">
+          <i class="bi bi-check-lg me-1"></i><span id="otfBtnFirmarConfirmLabel">Firmar como técnico</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ═════════════════════════════════════════════════════════════════════
+   MODAL: APROBACIÓN (3ra firma) — namespace OT2F, 2026-08-28.
+   Portado de ot_ejecutar.html, incluye el bloque de finanzas que Daniel
+   agregó ahí mismo hoy (centro de costo inline, quitar garantía) y el
+   candado factura↔OT / garantía. Mismos endpoints: /cobertura,
+   /asociar-factura, /aprobar-cierre, /rechazar-cierre, PUT visita.
+   ═════════════════════════════════════════════════════════════════════ #}
+{% if v.estado == 'pendiente_aprobacion' and puede_aprobar %}
+<div class="modal fade firma-modal" id="otfModalAprobacion" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="firma-banner" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 50%,#15803d 100%)">
+        <div class="fb-logo" style="background-image:url('{{ url_for('static', filename='favicon_192.png') }}')"></div>
+        <div class="flex-grow-1">
+          <h5><i class="bi bi-pen-fill me-2"></i>Firmar y cerrar OT</h5>
+          <div class="fb-sub">{{ v.numero_ot or ('OT #' ~ v.id) }} · {{ v.razon_social or 'Trabajo interno' }}</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert py-2 small mb-3" style="background:#dcfce7;color:#15803d;border:1px solid #16a34a">
+          <i class="bi bi-info-circle me-1"></i>
+          Al firmar, la OT pasa a <strong>"Cerrada"</strong>. Se enviará la confirmación al cliente
+          y el PDF quedará disponible para descarga.
+        </div>
+
+        {% set _mod_cobro = (v.modalidad_cobro or '')|lower %}
+        {% if _mod_cobro in ('garantia', 'sin_costo') %}
+        <div class="alert py-2 small mb-3" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">
+          <i class="bi bi-shield-fill-check me-1"></i>
+          <strong>Cobertura: {{ 'GARANTÍA' if _mod_cobro == 'garantia' else 'SIN COSTO' }}.</strong>
+          Esta OT no requiere factura para cerrarse.
+          {% if puede_cobertura %}
+          <div class="mt-2 pt-2" style="border-top:1px dashed #86efac">
+            <button type="button" class="btn btn-sm fw-bold" id="otfQuitarGarBtn"
+                    style="background:#fff;color:#166534;border:1.5px solid #16a34a"
+                    onclick="OT2F.quitarGarantia()">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Quitar cobertura y asociar factura
+            </button>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% if puede_metadata and not v.centro_costo %}
+        <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
+          <div class="fw-bold small mb-2" style="color:#92400e">
+            <i class="bi bi-tag-fill me-1"></i>Falta el centro de costo
+          </div>
+          <div class="d-flex gap-2 flex-wrap align-items-end">
+            <div style="flex:1;min-width:160px">
+              <select id="otfModalCentroCosto" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="sstt">Servicio Técnico</option>
+                <option value="logistica">Logística</option>
+                <option value="comercial">Comercial</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="OT2F.guardarCentroCosto()">
+              <i class="bi bi-check-lg me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if _mod_cobro not in ('garantia', 'sin_costo') and v.factura_nudo %}
+        <div class="alert py-2 small mb-3" id="otfFactGate" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
+          <i class="bi bi-receipt me-1"></i>
+          <strong>{{ 'Nota de venta asociada' if v.factura_tido in ('NVV','NVI') else 'Documento asociado' }}:</strong>
+          {{ v.factura_tido or 'FCV' }} N° {{ v.factura_nudo }}
+          {% if v.factura_monto %} · ${{ '{:,.0f}'.format(v.factura_monto|float).replace(',', '.') }}{% endif %}
+          {% if v.factura_rut_ok == 0 %}
+          <div class="mt-1" style="color:#92400e"><i class="bi bi-exclamation-triangle-fill me-1"></i>
+            RUT no coincidía — justificado: {{ (v.factura_rut_justif or '')[:180] }}</div>
+          {% endif %}
+        </div>
+        {% else %}
+        <div class="mb-3 p-3" id="otfFactGate" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
+          <div class="fw-bold small mb-1" style="color:#991b1b">
+            <i class="bi bi-lock-fill me-1"></i>Firma bloqueada: OT cobrable sin documento
+          </div>
+          <div class="small mb-2" style="color:#7f1d1d">
+            Asocia el documento del ERP — factura, boleta o nota de venta — para
+            poder firmar el cierre. El RUT debe coincidir con el del cliente
+            ({{ (v.cliente_rut or '—') }}) — si no coincide, deberás explicar por qué.
+          </div>
+          <div class="d-flex gap-2 flex-wrap align-items-end">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Tipo</label>
+              <select id="otfFactTipo" class="form-select form-select-sm" style="width:auto">
+                <optgroup label="Factura / boleta">
+                  <option value="FCV" selected>FCV — Factura</option>
+                  <option value="FCE">FCE — Factura exenta</option>
+                  <option value="BLV">BLV — Boleta</option>
+                </optgroup>
+                <optgroup label="Nota de venta (facturable después)">
+                  <option value="NVV">NVV — Nota de venta</option>
+                  <option value="NVI">NVI — Nota de venta instalación</option>
+                  <option value="VD">VD — Nota de venta directa (Nro. VDxxxxxxxx)</option>
+                  <option value="WEB">WEB — Nota de venta web (Nro. WEBxxxxxxx)</option>
+                </optgroup>
+              </select>
+            </div>
+            <div style="flex:1;min-width:150px">
+              <label class="form-label small fw-semibold mb-1">N° documento</label>
+              <input type="text" id="otfFactNumero" class="form-control form-control-sm" inputmode="numeric" placeholder="Ej: 12456">
+            </div>
+            <button type="button" class="btn btn-sm btn-dark fw-bold" id="otfFactBuscarBtn" onclick="OT2F.factConsultar()">
+              <i class="bi bi-search me-1"></i>Consultar
+            </button>
+          </div>
+          <div id="otfFactPreview" class="mt-2" style="display:none"></div>
+          <div id="otfFactJustifWrap" class="mt-2" style="display:none">
+            <label class="form-label small fw-semibold mb-1" style="color:#92400e">
+              ¿Por qué corresponde esta factura si el RUT no coincide? <span class="text-danger">*</span>
+            </label>
+            <textarea id="otfFactJustif" class="form-control form-control-sm" rows="2"
+                      placeholder="Ej: factura emitida al holding / casa matriz del cliente"></textarea>
+          </div>
+          <button type="button" class="btn btn-sm fw-bold mt-2" id="otfFactAsociarBtn"
+                  style="background:#dc2626;color:#fff;display:none" onclick="OT2F.factAsociar()">
+            <i class="bi bi-link-45deg me-1"></i>Asociar documento a esta OT
+          </button>
+          <div class="small text-danger mt-1" id="otfFactErr" style="min-height:16px"></div>
+
+          {% if puede_cobertura %}
+          <div class="mt-3 pt-3" style="border-top:1px dashed #fecaca">
+            <div class="small fw-semibold mb-1" style="color:#7f1d1d">
+              ¿Esta visita no se le cobra al cliente?
+            </div>
+            <div class="small mb-2" style="color:#991b1b">
+              Declárala como <strong>garantía</strong>: queda cerrable sin factura,
+              con tu nombre y el motivo registrados. Si había un documento de
+              cobro asociado, se anula.
+            </div>
+            <button type="button" class="btn btn-sm fw-bold" id="otfGarBtn"
+                    style="background:#fff;color:#b45309;border:1.5px solid #f59e0b"
+                    onclick="OT2F.declararGarantia()">
+              <i class="bi bi-shield-fill-check me-1"></i>Declarar como garantía
+            </button>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="resp-firma-card">
+          <div class="resp-firma-head">
+            <i class="bi bi-shield-check"></i>
+            Tu firma como supervisor — compromiso formal
+          </div>
+          <div class="resp-firma-grid">
+            <div class="resp-firma-item" style="border-color:#16a34a">
+              <div class="resp-firma-rol" style="color:#15803d"><i class="bi bi-check2-circle"></i> Revisión</div>
+              <div class="resp-firma-txt">Verifiqué que el trabajo del técnico está completo y sin observaciones pendientes.</div>
+            </div>
+            <div class="resp-firma-item" style="border-color:#16a34a">
+              <div class="resp-firma-rol" style="color:#15803d"><i class="bi bi-file-earmark-check"></i> Certificación</div>
+              <div class="resp-firma-txt">Certifico que la orden de trabajo quedó gestionada como corresponde al estándar ILUS.</div>
+            </div>
+            <div class="resp-firma-item" style="border-color:#16a34a">
+              <div class="resp-firma-rol" style="color:#15803d"><i class="bi bi-clipboard-check"></i> Cierre</div>
+              <div class="resp-firma-txt">Al firmar autorizo el cierre del flujo: cliente conforme + técnico declara + supervisor certifica.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-3" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.82rem">
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Cliente</div>
+              <div class="fw-bold">{{ v.razon_social or 'Trabajo interno' }}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Técnico</div>
+              <div class="fw-bold">{{ v.tecnico_nombre or '—' }}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Fecha programada</div>
+              <div class="fw-bold">{{ v.fecha_programada | chile_fmt('%d/%m/%Y') if v.fecha_programada else '—' }}</div>
+            </div>
+            <div>
+              <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px">Firmada por técnico</div>
+              <div class="fw-bold">{{ v.firma_tecnico_at | chile_fmt('%d/%m %H:%M') if v.firma_tecnico_at else '—' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label small fw-bold mb-2" style="color:#0f172a">
+            <i class="bi bi-check2-circle text-success me-1"></i>Firmas ya capturadas
+          </label>
+          <div class="row g-2">
+            <div class="col-6">
+              <div style="border:1.5px solid #16a34a;background:#f0fdf4;border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:.65rem;font-weight:700;color:#15803d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+                  <i class="bi bi-tools me-1"></i>Técnico
+                </div>
+                {% if v.firma_tecnico_url %}
+                  <img src="{{ v.firma_tecnico_url }}" alt="Firma técnico"
+                       style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
+                {% else %}
+                  <div class="text-muted small">Sin firma</div>
+                {% endif %}
+              </div>
+            </div>
+            <div class="col-6">
+              <div style="border:1.5px solid {{ '#16a34a' if v.firma_cliente_url else '#cbd5e1' }};
+                          background:{{ '#f0fdf4' if v.firma_cliente_url else '#f8fafc' }};
+                          border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:.65rem;font-weight:700;
+                            color:{{ '#15803d' if v.firma_cliente_url else '#94a3b8' }};
+                            text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">
+                  <i class="bi bi-person-badge me-1"></i>Cliente
+                </div>
+                {% if v.firma_cliente_url %}
+                  <img src="{{ v.firma_cliente_url }}" alt="Firma cliente"
+                       style="max-width:100%;max-height:60px;background:#fff;border-radius:4px">
+                {% else %}
+                  <div class="text-muted small" style="font-size:.7rem">No capturada en sitio</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label fw-bold mb-2" style="color:#0f172a;font-size:.95rem">
+            <i class="bi bi-shield-check me-1" style="color:#15803d"></i>
+            Firma a nombre de
+            {% if es_creador %}<span class="badge bg-success ms-1" style="font-size:.6rem">CREADOR</span>{% endif %}
+            {% if is_superadmin %}<span class="badge bg-dark ms-1" style="font-size:.6rem">SUPERADMIN</span>{% endif %}
+            {% if permissions.admin and not is_superadmin %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">ADMIN</span>{% endif %}
+          </label>
+          <small class="d-block text-muted mb-2" style="font-size:.72rem">
+            Este nombre quedará estampado en el PDF junto a tu firma. Puedes ajustarlo si prefieres firmar con tu nombre formal.
+          </small>
+          <input type="text" id="otfAprobNombre" class="form-control mb-2"
+                 placeholder="Tu nombre completo"
+                 value="{{ current_user.nombre or current_user.username or '' }}" maxlength="200">
+          <div class="firma-canvas-wrap" id="wrap-otfCanvasAprob">
+            <canvas id="otfCanvasAprob" width="800" height="240"></canvas>
+            <div class="firma-placeholder">✍️ Firma aquí con el dedo, lápiz óptico o mouse</div>
+          </div>
+          <div class="firma-toolbar">
+            <button type="button" class="firma-tool danger" onclick="OT2F.limpiarFirma('otfCanvasAprob')">
+              <i class="bi bi-eraser"></i> Borrar
+            </button>
+            <button type="button" class="firma-tool" onclick="OT2F.undoFirma('otfCanvasAprob')">
+              <i class="bi bi-arrow-counterclockwise"></i> Deshacer
+            </button>
+            <div class="firma-color-pick">
+              <div class="firma-color active" style="background:#0f172a"
+                   onclick="OT2F.setFirmaColor('otfCanvasAprob', '#0f172a', this)" title="Negro"></div>
+              <div class="firma-color" style="background:#1e40af"
+                   onclick="OT2F.setFirmaColor('otfCanvasAprob', '#1e40af', this)" title="Azul"></div>
+              <div class="firma-color" style="background:#dc2626"
+                   onclick="OT2F.setFirmaColor('otfCanvasAprob', '#dc2626', this)" title="Rojo"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="form-label small fw-semibold">Comentario (opcional)</label>
+          <textarea id="otfAprobComentario" class="form-control" rows="2"
+                    placeholder="Observación interna del cierre…"
+                    maxlength="500" style="font-size:.85rem"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#fafafa;border-top:1px solid #e5e7eb;flex-wrap:wrap;gap:6px">
+        <button type="button" class="btn btn-outline-danger fw-bold" id="otfBtnRechazarAprob"
+                onclick="OT2F.rechazarAprobacion()">
+          <i class="bi bi-x-circle me-1"></i>Rechazar y devolver
+        </button>
+        <div class="flex-grow-1"></div>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          <i class="bi bi-arrow-left me-1"></i>Cerrar
+        </button>
+        <button type="button" class="btn btn-success fw-bold" id="otfBtnAprobConfirm"
+                onclick="OT2F.confirmarAprobacion()" style="padding:.6rem 1.4rem;font-size:.95rem">
+          <i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endif %}
 
 <script>
@@ -1747,5 +2279,668 @@ async function otdSubirFoto(input){
     if (btn) btn.disabled = false;
   }
 }
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   OT2F — Firma y cierre de la OT, DENTRO de /ot/<id>.
+   2026-08-28 (Daniel, 2do pedido de hoy sobre lo mismo): "que se pueda
+   realizar la firma... que firme el técnico, después que firme el
+   cliente, que se pueda enviar por correo o WhatsApp... y que declaren la
+   finanza, si es garantía den los argumentos, y que declaren los extras
+   de costo". Namespace propio (mismo patrón que OT2C del wizard de
+   creación y OT2ANX del anexo de servicios) para no chocar con el JS de
+   /mantenciones/ot/<id>/ejecutar si algún día ambas pantallas convivieran
+   en el DOM (hoy no debería pasar -- son navegaciones completas).
+
+   REUTILIZA TAL CUAL los endpoints reales de esa pantalla (firmar-revision,
+   firmar-cliente, enviar-firma-remota, aprobar-cierre, rechazar-cierre,
+   cobertura, asociar-factura, PUT visita) -- CERO lógica de negocio nueva,
+   solo el botón + el manejo de la respuesta. Las 4 funciones de canvas
+   (initCanvas/limpiarFirma/undoFirma/setFirmaColor) son utilidad pura
+   parametrizada por id -- se portan literalmente porque no dependen de
+   nada propio de ot_ejecutar.html.
+   ══════════════════════════════════════════════════════════════════════ */
+const OT2F = (function(){
+  const VID = {{ v.id }};
+  // Costo actual -- mismo gate que ot_ejecutar.html (VISITA_COSTO): solo
+  // viaja al frontend si el usuario tiene permiso de metadata (dato
+  // financiero sensible, un técnico no debe verlo ni en el HTML fuente).
+  const COSTO_ACTUAL = {{ (v.costo | float) if (v.costo and puede_metadata) else 0 }};
+  // Cifras ya calculadas por ot2_detalle() para el resto de la pantalla
+  // (chips "Obligatorias"/"Avance") -- se reusan acá para el aviso suave de
+  // "quedan tareas OPCIONALES sin marcar" antes de abrir la firma del
+  // técnico (mismo criterio que abrirModalFirma() en ot_ejecutar.html, sin
+  // reimplementar el conteo leyendo el DOM del checklist -- esta pantalla
+  // no lo tiene).
+  const K_TAREAS = {{ kpis.tareas | tojson }};
+  const K_TAREAS_OK = {{ kpis.tareas_ok | tojson }};
+  const K_OBL = {{ kpis.obl | tojson }};
+  const K_OBL_OK = {{ kpis.obl_ok | tojson }};
+
+  const _sig = {};
+  let _firmaStage = 'tecnico';
+  let _factPreviewOk = false;
+
+  // ── Canvas de firma — dibujo con undo/color, idéntico a ot_ejecutar.html ──
+  function initCanvas(id){
+    const cv = document.getElementById(id);
+    if (!cv) return;
+    const wrap = document.getElementById('wrap-' + id);
+    const dpr = window.devicePixelRatio || 1;
+    const rect = cv.getBoundingClientRect();
+    cv.width = rect.width * dpr; cv.height = rect.height * dpr;
+    const ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#0f172a';
+    _sig[id] = { ctx, drawing:false, last:null, has:false, color:'#0f172a', wrap, history:[] };
+
+    function pushHistory(){
+      try {
+        _sig[id].history.push(cv.toDataURL('image/png'));
+        if (_sig[id].history.length > 20) _sig[id].history.shift();
+      } catch(e){}
+    }
+    function setHas(){ _sig[id].has = true; if (wrap) wrap.classList.add('has-firma'); }
+    const start = (x,y) => { _sig[id].drawing = true; _sig[id].last = {x,y}; pushHistory(); };
+    const move = (x,y) => {
+      if (!_sig[id].drawing) return;
+      ctx.beginPath(); ctx.moveTo(_sig[id].last.x, _sig[id].last.y); ctx.lineTo(x, y); ctx.stroke();
+      _sig[id].last = {x, y}; setHas();
+    };
+    const end = () => { _sig[id].drawing = false; _sig[id].last = null; };
+    const getXY = (ev) => {
+      const r = cv.getBoundingClientRect();
+      if (ev.touches){ const t = ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
+      return {x:ev.clientX-r.left, y:ev.clientY-r.top};
+    };
+    cv.addEventListener('mousedown', e => { const p = getXY(e); start(p.x, p.y); });
+    cv.addEventListener('mousemove', e => { const p = getXY(e); move(p.x, p.y); });
+    cv.addEventListener('mouseup', end);
+    cv.addEventListener('mouseleave', end);
+    cv.addEventListener('touchstart', e => { e.preventDefault(); const p = getXY(e); start(p.x, p.y); }, { passive:false });
+    cv.addEventListener('touchmove', e => { e.preventDefault(); const p = getXY(e); move(p.x, p.y); }, { passive:false });
+    cv.addEventListener('touchend', end);
+  }
+
+  function limpiarFirma(id){
+    const cv = document.getElementById(id);
+    if (!cv) return;
+    cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+    if (_sig[id]){
+      _sig[id].has = false; _sig[id].history = [];
+      if (_sig[id].wrap) _sig[id].wrap.classList.remove('has-firma');
+    }
+  }
+
+  function undoFirma(id){
+    if (!_sig[id] || !_sig[id].history.length) return;
+    const cv = document.getElementById(id);
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const dataUrl = _sig[id].history.pop();
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width / (window.devicePixelRatio||1), cv.height / (window.devicePixelRatio||1));
+      if (_sig[id].history.length === 0){
+        _sig[id].has = false;
+        if (_sig[id].wrap) _sig[id].wrap.classList.remove('has-firma');
+      }
+    };
+    img.src = dataUrl;
+  }
+
+  function setFirmaColor(id, color, el){
+    if (!_sig[id]) return;
+    _sig[id].color = color; _sig[id].ctx.strokeStyle = color;
+    const wrap = _sig[id].wrap;
+    if (wrap){
+      const toolbar = wrap.nextElementSibling;
+      if (toolbar) toolbar.querySelectorAll('.firma-color').forEach(c => c.classList.remove('active'));
+    }
+    if (el) el.classList.add('active');
+  }
+
+  // ── Etapa técnico / cliente (mismo modal #otfModalFirma para ambas) ──
+  function _firmaSetStage(stage){
+    _firmaStage = stage;
+    const secTec = document.getElementById('otfFirmaSecTec');
+    const secCli = document.getElementById('otfFirmaSecCli');
+    const titulo = document.getElementById('otfFirmaModalTitulo');
+    const info   = document.getElementById('otfFirmaModalInfo');
+    const lbl    = document.getElementById('otfBtnFirmarConfirmLabel');
+    if (stage === 'cliente'){
+      if (secTec) secTec.style.display = 'none';
+      if (secCli) secCli.style.display = '';
+      if (titulo) titulo.innerHTML = '<i class="bi bi-person-badge me-2"></i>Firma del cliente';
+      if (info)   info.innerHTML = '<i class="bi bi-info-circle me-1"></i>Al firmar el cliente, la OT pasa a <strong>"Pendiente de aprobación"</strong> y el contenido queda sellado.';
+      if (lbl)    lbl.textContent = 'Registrar firma del cliente';
+    } else {
+      if (secTec) secTec.style.display = '';
+      if (secCli) secCli.style.display = 'none';
+      if (titulo) titulo.innerHTML = '<i class="bi bi-pen-fill me-2"></i>Firma del técnico';
+      if (info)   info.innerHTML = '<i class="bi bi-info-circle me-1"></i>Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.';
+      if (lbl)    lbl.textContent = 'Firmar como técnico';
+    }
+  }
+
+  async function abrirFirmaTecnico(){
+    const pendTotal = K_TAREAS - K_TAREAS_OK;
+    const pendObl = Math.max(0, K_OBL - K_OBL_OK);
+    const pendOpc = pendTotal - pendObl;
+    if (pendOpc > 0){
+      const ok = await ilusConfirm({
+        title: 'Tareas sin completar',
+        message: `Quedan ${pendOpc} tarea${pendOpc === 1 ? '' : 's'} opcional${pendOpc === 1 ? '' : 'es'} sin registrar.`,
+        sub: 'Podés firmar igual, pero los checklist quedarán incompletos en el informe.',
+        okLabel: 'Firmar de todas formas', cancelLabel: 'Volver al checklist',
+      });
+      if (!ok) return;
+    }
+    _firmaSetStage('tecnico');
+    new bootstrap.Modal(document.getElementById('otfModalFirma')).show();
+    setTimeout(() => initCanvas('otfCanvasTec'), 250);
+  }
+
+  function abrirFirmaCliente(){
+    _firmaSetStage('cliente');
+    new bootstrap.Modal(document.getElementById('otfModalFirma')).show();
+    setTimeout(() => initCanvas('otfCanvasCli'), 250);
+  }
+
+  async function liberarFirmaTecnico(){
+    const ok = await ilusConfirm({
+      title: 'Liberar firma del técnico',
+      message: '¿Liberar la firma del técnico de esta OT?',
+      sub: 'La OT vuelve a edición (en ejecución) y el técnico podrá firmar de nuevo. Queda registrado en la bitácora. Solo superadmin.',
+      okLabel: 'Liberar firma', cancelLabel: 'Cancelar', danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/liberar-firma-tecnico`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok){ await ilusAlert({title:'No se pudo', message:(d.error||'Error'), type:'error'}); return; }
+      ilusToast('✓ Firma del técnico liberada — la OT volvió a edición', {type:'success'});
+      setTimeout(() => location.reload(), 900);
+    } catch(e){ await ilusAlert({title:'Error de red', message:e.message, type:'error'}); }
+  }
+
+  async function enviarFirmaRemota(){
+    const email = await ilusPrompt({
+      title: 'Enviar firma al cliente',
+      message: 'Correo del cliente para enviarle el link de firma:',
+      sub: 'Déjalo vacío para usar el correo registrado del cliente. El link vence en 5 días; al firmar nos avisa a todos.',
+      placeholder: 'cliente@correo.cl', inputType: 'email', required: false,
+    });
+    if (email === null) return;
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ canal:'email', email:(email||'').trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok){ await ilusAlert({title:'No se pudo', message:(d.error||'Error'), type:'error'}); return; }
+      if (d.enviado){
+        await ilusAlert({title:'✅ Link enviado', message:d.mensaje || ('Link de firma enviado a ' + d.email), type:'success'});
+      } else {
+        await ilusAlert({title:'Link generado', message:(d.mensaje||''), sub:(d.link||''), type:'warning'});
+      }
+    } catch(e){ await ilusAlert({title:'Error de red', message:e.message, type:'error'}); }
+  }
+
+  async function enviarFirmaWhatsApp(){
+    let tel = {{ (v.contacto_tel or '') | tojson }};
+    if (!tel){
+      tel = await ilusPrompt({
+        title: 'Enviar firma por WhatsApp',
+        message: 'Teléfono del cliente:',
+        sub: 'La OT no tiene un teléfono de contacto cargado — escríbelo para generar el link.',
+        placeholder: '+56 9 1234 5678', required: true, inputType: 'tel',
+        sanitize: (typeof ilusTelSanitize === 'function') ? ilusTelSanitize : null,
+        validate: (typeof ilusTelChileno === 'function') ? ilusTelChileno : null,
+      });
+      if (!tel) return;
+    }
+    const winRef = window.open('', '_blank');
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ canal:'whatsapp', telefono: tel }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok){
+        if (winRef) winRef.close();
+        await ilusAlert({title:'No se pudo', message:(d.error||'Error'), type:'error'});
+        return;
+      }
+      if (winRef){
+        winRef.location.href = d.wa_link;
+        ilusToast('✓ Abriendo WhatsApp con el link de firma…', {type:'success'});
+      } else {
+        await ilusAlert({title:'Link de WhatsApp generado',
+          message:'El navegador bloqueó la ventana emergente. Abre este link manualmente:',
+          sub:d.wa_link, type:'warning'});
+      }
+    } catch(e){
+      if (winRef) winRef.close();
+      await ilusAlert({title:'Error de red', message:e.message, type:'error'});
+    }
+  }
+
+  async function enviarFirmaAmbos(){
+    let tel = {{ (v.contacto_tel or '') | tojson }};
+    if (!tel){
+      tel = await ilusPrompt({
+        title: 'Enviar firma por ambos canales',
+        message: 'Teléfono del cliente (con o sin +56):',
+        sub: 'Se manda el mismo link de firma por WhatsApp y por correo. Si no hay teléfono, se manda solo por correo.',
+        placeholder: '+56 9 1234 5678', required: false,
+      });
+      if (tel === null) return;
+    }
+    const winRef = tel ? window.open('', '_blank') : null;
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/enviar-firma-remota`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ canal:'ambos', telefono: tel }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok){
+        if (winRef) winRef.close();
+        await ilusAlert({title:'No se pudo', message:(d.error||'Error'), type:'error'});
+        return;
+      }
+      if (winRef && d.wa_link) winRef.location.href = d.wa_link;
+      else if (winRef) winRef.close();
+      await ilusAlert({title:'✅ Firma enviada', message:d.mensaje || 'Listo.', type:'success'});
+    } catch(e){
+      if (winRef) winRef.close();
+      await ilusAlert({title:'Error de red', message:e.message, type:'error'});
+    }
+  }
+
+  async function enviarFirma(){
+    const btn = document.getElementById('otfBtnFirmarConfirm');
+    if (_firmaStage === 'cliente') return _enviarFirmaCliente(btn);
+    if (!_sig.otfCanvasTec || !_sig.otfCanvasTec.has){ ilusToast('Falta tu firma', {type:'warning'}); return; }
+    const firmaTec = document.getElementById('otfCanvasTec').toDataURL('image/png');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-revision`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          firma_tecnico: firmaTec,
+          firma_tecnico_nombre: document.getElementById('otfFirmaTecNombre').value.trim(),
+        }),
+      });
+      const d = await r.json();
+      if (d.ok){
+        bootstrap.Modal.getInstance(document.getElementById('otfModalFirma'))?.hide();
+        await ilusAlert({
+          title: '✅ Técnico firmó',
+          message: 'La OT quedó en revisión. El ejecutivo SSTT puede corregir antes de la firma del cliente.',
+          type: 'success',
+        });
+        setTimeout(() => location.reload(), 600);
+      } else {
+        if (Array.isArray(d.faltantes) && d.faltantes.length){
+          await ilusAlert({
+            title: '🚧 No puedes firmar esta OT todavía',
+            message: d.error || 'Quedan tareas obligatorias sin completar ni justificar.',
+            sub: d.faltantes.join(' · '),
+            type: 'warning', okLabel: 'Entendido',
+          });
+        } else {
+          ilusToast(d.error || 'Error', {type:'error'});
+        }
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="otfBtnFirmarConfirmLabel">Firmar como técnico</span>';
+      }
+    } catch(e){
+      ilusToast('Error de red', {type:'error'});
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="otfBtnFirmarConfirmLabel">Firmar como técnico</span>';
+    }
+  }
+
+  async function _enviarFirmaCliente(btn){
+    const cvCli = document.getElementById('otfCanvasCli');
+    if (!_sig.otfCanvasCli || !_sig.otfCanvasCli.has){ ilusToast('Falta la firma del cliente', {type:'warning'}); return; }
+    const cliNombreEl = document.getElementById('otfFirmaCliNombre');
+    const cliNombre = (cliNombreEl && cliNombreEl.value || '').trim();
+    const cliRut = ((document.getElementById('otfFirmaCliRut') || {}).value || '').trim();
+    if (!cliNombre){ ilusToast('Falta el nombre de quien firma por el cliente', {type:'warning'}); return; }
+    if (cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('Falta el RUT de quien firma (RUT chileno válido)', {type:'warning'}); return; }
+    const firmaCli = cvCli.toDataURL('image/png');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-cliente`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          firma_cliente: firmaCli,
+          firma_cliente_nombre: cliNombre,
+          firma_cliente_rut: cliRut,
+          firma_cliente_cargo: ((document.getElementById('otfFirmaCliCargo') || {}).value || '').trim(),
+          firma_cliente_tel: ((document.getElementById('otfFirmaCliTel') || {}).value || '').trim(),
+          firma_cliente_email: ((document.getElementById('otfFirmaCliEmail') || {}).value || '').trim(),
+          firma_cliente_sugerido_nombre: (cliNombreEl && cliNombreEl.dataset ? (cliNombreEl.dataset.sugerido || '') : ''),
+        }),
+      });
+      const d = await r.json();
+      if (d.ok){
+        bootstrap.Modal.getInstance(document.getElementById('otfModalFirma'))?.hide();
+        await ilusAlert({
+          title: '✅ Cliente firmó',
+          message: 'La OT pasó a aprobación final. El ejecutivo SSTT la cerrará.',
+          type: 'success',
+        });
+        setTimeout(() => location.reload(), 600);
+      } else {
+        ilusToast(d.error || 'Error', {type:'error'});
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="otfBtnFirmarConfirmLabel">Registrar firma del cliente</span>';
+      }
+    } catch(e){
+      ilusToast('Error de red', {type:'error'});
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i><span id="otfBtnFirmarConfirmLabel">Registrar firma del cliente</span>';
+    }
+  }
+
+  // ── Aprobación final (3ra firma) ──
+  function abrirAprobacion(){
+    const modalEl = document.getElementById('otfModalAprobacion');
+    if (!modalEl){ ilusToast('Modal de aprobación no disponible', {type:'error'}); return; }
+    new bootstrap.Modal(modalEl).show();
+    setTimeout(() => initCanvas('otfCanvasAprob'), 250);
+  }
+
+  async function confirmarAprobacion(){
+    const cv = document.getElementById('otfCanvasAprob');
+    if (!_sig.otfCanvasAprob || !_sig.otfCanvasAprob.has){ ilusToast('Falta tu firma como aprobador', {type:'warning'}); return; }
+    const firma = cv.toDataURL('image/png');
+    const nombre = (document.getElementById('otfAprobNombre')?.value || '').trim();
+    const comentario = (document.getElementById('otfAprobComentario')?.value || '').trim();
+    const btn = document.getElementById('otfBtnAprobConfirm');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Cerrando OT…';
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/aprobar-cierre`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ firma_supervisor:firma, firma_supervisor_nombre:nombre, comentario:comentario }),
+      });
+      const d = await r.json();
+      if (d.ok){
+        bootstrap.Modal.getInstance(document.getElementById('otfModalAprobacion'))?.hide();
+        await ilusAlert({
+          title: '✅ OT cerrada', message: 'Firmaste como aprobador. La OT quedó cerrada.',
+          sub: 'El cliente recibirá la confirmación. El PDF ya está disponible.',
+          type: 'success', okLabel: 'Ver OT',
+        });
+        setTimeout(() => location.reload(), 400);
+      } else {
+        ilusToast(d.error || 'Error al cerrar la OT', {type:'error'});
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT';
+      }
+    } catch(e){
+      ilusToast('Error de red al cerrar', {type:'error'});
+      btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT';
+    }
+  }
+
+  async function rechazarAprobacion(){
+    const _modalEl = document.getElementById('otfModalAprobacion');
+    const _bsModal = bootstrap.Modal.getInstance(_modalEl);
+    await new Promise(resolve => {
+      if (_bsModal && (_modalEl||{}).classList && _modalEl.classList.contains('show')){
+        _modalEl.addEventListener('hidden.bs.modal', resolve, {once:true});
+        _bsModal.hide();
+      } else { resolve(); }
+    });
+    const motivo = await ilusPrompt({
+      title: 'Rechazar y devolver al técnico',
+      message: 'Indica el motivo del rechazo:',
+      sub: 'La OT volverá a estado "programada" y el técnico podrá corregir y firmar de nuevo.',
+      placeholder: 'Ej: falta foto del equipo X, diagnóstico no es claro…',
+      required: true, okLabel: 'Rechazar OT', cancelLabel: 'Cancelar',
+    });
+    if (!motivo){ if (_bsModal) _bsModal.show(); return; }
+    const btn = document.getElementById('otfBtnRechazarAprob');
+    if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Rechazando…'; }
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/rechazar-cierre`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ motivo:motivo }),
+      });
+      const d = await r.json();
+      if (d.ok){
+        bootstrap.Modal.getInstance(document.getElementById('otfModalAprobacion'))?.hide();
+        await ilusAlert({
+          title: 'OT devuelta al técnico', message: 'La OT volvió a estado "programada".',
+          sub: 'El técnico deberá corregir y firmar de nuevo.', type: 'warning',
+        });
+        setTimeout(() => location.reload(), 400);
+      } else {
+        ilusToast(d.error || 'Error al rechazar', {type:'error'});
+        if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-x-circle me-1"></i>Rechazar y devolver'; }
+      }
+    } catch(e){
+      ilusToast('Error de red', {type:'error'});
+      if (btn){ btn.disabled = false; btn.innerHTML = '<i class="bi bi-x-circle me-1"></i>Rechazar y devolver'; }
+    }
+  }
+
+  // ── Sello factura↔OT / nota de venta ──
+  function _factEl(id){ return document.getElementById(id); }
+  function _factMonto(m){
+    if (m === null || m === undefined) return '—';
+    try { return '$' + Math.round(m).toLocaleString('es-CL'); } catch(_e){ return '$' + m; }
+  }
+
+  async function factConsultar(){
+    const err = _factEl('otfFactErr'); err.textContent = '';
+    const numero = (_factEl('otfFactNumero').value || '').replace(/\D/g, '');
+    if (!numero){ err.textContent = 'Escribe el número del documento.'; return; }
+    const btn = _factEl('otfFactBuscarBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Consultando ERP…';
+    _factPreviewOk = false;
+    _factEl('otfFactPreview').style.display = 'none';
+    _factEl('otfFactJustifWrap').style.display = 'none';
+    _factEl('otfFactAsociarBtn').style.display = 'none';
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/asociar-factura`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ tipo:_factEl('otfFactTipo').value, numero, confirmar:false }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok){ err.textContent = d.error || 'No se pudo consultar.'; return; }
+      const f = d.factura || {}, a = d.analisis || {};
+      const okRut = !!(a.match);
+      _factEl('otfFactPreview').innerHTML =
+        `<div class="p-2" style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;font-size:.82rem">
+          <div class="fw-bold">${f.tipo} N° ${f.numero} · ${_factMonto(f.monto)} ${f.fecha ? '· ' + f.fecha : ''}</div>
+          <div>${(f.nombre || '—')} · RUT ${(f.rut || '—')}</div>
+          <div class="mt-1 fw-semibold" style="color:${okRut ? '#15803d' : '#b45309'}">
+            <i class="bi ${okRut ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'} me-1"></i>${a.detalle || ''}
+          </div>
+        </div>`;
+      _factEl('otfFactPreview').style.display = '';
+      if (d.requiere_justificacion) _factEl('otfFactJustifWrap').style.display = '';
+      _factEl('otfFactAsociarBtn').style.display = '';
+      _factPreviewOk = true;
+    } catch(_e){
+      err.textContent = 'Error de conexión con el servidor.';
+    } finally {
+      btn.disabled = false; btn.innerHTML = orig;
+    }
+  }
+
+  // 🔧 Nace SIN el bug de "el modal se cierra solo" (ver el mismo fix hoy en
+  // static/mantenciones_ot_ejecutar.js, factAsociar()): en vez de recargar
+  // TODA la página al asociar el documento (lo que en la práctica cierra
+  // este modal), se reemplaza el bloque #otfFactGate por el resumen de
+  // solo-lectura con los mismos datos que devuelve este mismo POST -- el
+  // modal queda abierto y listo para firmar de inmediato.
+  async function factAsociar(){
+    const err = _factEl('otfFactErr'); err.textContent = '';
+    if (!_factPreviewOk){ err.textContent = 'Primero consulta el documento.'; return; }
+    const numero = (_factEl('otfFactNumero').value || '').replace(/\D/g, '');
+    const justif = (_factEl('otfFactJustif') ? _factEl('otfFactJustif').value : '').trim();
+    const btn = _factEl('otfFactAsociarBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Asociando…';
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/asociar-factura`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ tipo:_factEl('otfFactTipo').value, numero, confirmar:true, justificacion:justif }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok){
+        err.textContent = d.error || 'No se pudo asociar.';
+        if (d.error_codigo === 'RUT_NO_COINCIDE') _factEl('otfFactJustifWrap').style.display = '';
+        return;
+      }
+      ilusToast('✓ Documento asociado — ya puedes firmar el cierre', {type:'success'});
+      _factRenderAsociado(d.factura);
+    } catch(_e){
+      err.textContent = 'Error de conexión con el servidor.';
+    } finally {
+      btn.disabled = false; btn.innerHTML = orig;
+    }
+  }
+
+  function _factRenderAsociado(f){
+    const gate = _factEl('otfFactGate');
+    if (!gate || !f){ setTimeout(() => location.reload(), 900); return; }
+    const esNV = (f.tipo === 'NVV' || f.tipo === 'NVI');
+    const montoTxt = (f.monto || f.monto === 0) ? ' · $' + Math.round(f.monto).toLocaleString('es-CL') : '';
+    const div = document.createElement('div');
+    div.id = 'otfFactGate';
+    div.className = 'alert py-2 small mb-3';
+    div.style.cssText = 'background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a';
+    div.innerHTML =
+      `<i class="bi bi-receipt me-1"></i><strong>${esNV ? 'Nota de venta asociada' : 'Documento asociado'}:</strong> ` +
+      `${f.tipo || 'FCV'} N° ${f.numero || ''}${montoTxt}`;
+    gate.replaceWith(div);
+  }
+
+  async function declararGarantia(){
+    const motivo = await ilusPrompt({
+      title: 'Declarar como garantía',
+      message: '¿Por qué esta visita no se le cobra al cliente?',
+      sub: 'Queda registrado con tu usuario y fecha. Mínimo 10 caracteres.',
+      placeholder: 'Ej: falla del equipo dentro del período de garantía del proveedor',
+      required: true, multiline: true, okLabel: 'Continuar',
+    });
+    if (!motivo) return;
+    if (motivo.trim().length < 10){ ilusToast('El motivo debe tener al menos 10 caracteres.', {type:'warning'}); return; }
+    const montoTxt = await ilusPrompt({
+      title: '¿Cuánto vale esta visita?',
+      message: 'Monto en pesos, sin puntos ni símbolos (ej: 85000).',
+      sub: 'No se le cobra al cliente — queda solo para control interno de cuánto se entregó en garantía.',
+      placeholder: 'Ej: 85000', inputType: 'number',
+      defaultValue: (COSTO_ACTUAL > 0) ? String(COSTO_ACTUAL) : '',
+      required: true, okLabel: 'Continuar',
+    });
+    if (montoTxt === null) return;
+    const monto = parseFloat(String(montoTxt).replace(/[^0-9.]/g, ''));
+    if (!monto || monto <= 0){ ilusToast('Indica un monto mayor a 0 para poder controlarlo.', {type:'warning'}); return; }
+    const ok = await ilusConfirm({
+      title: 'Confirmar garantía',
+      message: `Esta OT quedará como GARANTÍA, valorizada en $${monto.toLocaleString('es-CL')}.`,
+      sub: 'Podrá cerrarse sin factura y no se le cobra al cliente. Si tenía un documento de cobro asociado, se anula. Queda todo en el registro de la OT.',
+      okLabel: 'Sí, es garantía', cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+    const btn = document.getElementById('otfGarBtn');
+    const orig = btn ? btn.innerHTML : '';
+    if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…'; }
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/cobertura`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ garantia_aplica:true, motivo:motivo.trim(), monto }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo declarar la garantía');
+      if (d.warning){
+        await ilusAlert({ title:'Garantía no aplicable', message:d.warning, type:'warning' });
+      } else {
+        ilusToast(d.documento_anulado
+          ? `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — documento ${d.documento_anulado} anulado`
+          : `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — ya puedes firmar el cierre`,
+          {type:'success'});
+      }
+      setTimeout(() => location.reload(), 1100);
+    } catch(e){
+      console.error('[OT2F.declararGarantia]', e);
+      const err = document.getElementById('otfFactErr');
+      if (err) err.textContent = e.message || 'No se pudo declarar la garantía';
+      ilusToast(e.message || 'No se pudo declarar la garantía', {type:'error'});
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+    }
+  }
+
+  async function quitarGarantia(){
+    const motivo = await ilusPrompt({
+      title: 'Quitar cobertura de garantía',
+      message: '¿Por qué esta visita vuelve a cobrarse (o a control normal)?',
+      sub: 'Queda registrado con tu usuario y fecha. Mínimo 10 caracteres. Después de esto podrás asociar la factura o boleta correspondiente.',
+      placeholder: 'Ej: se confirmó con el cliente que sí corresponde cobro',
+      required: true, multiline: true, okLabel: 'Continuar',
+    });
+    if (!motivo) return;
+    if (motivo.trim().length < 10){ ilusToast('El motivo debe tener al menos 10 caracteres.', {type:'warning'}); return; }
+    const ok = await ilusConfirm({
+      title: 'Quitar garantía',
+      message: 'Esta OT dejará de estar cubierta por garantía y volverá a pedir un documento de cobro (factura/boleta/nota de venta) para poder cerrarse.',
+      okLabel: 'Sí, quitar garantía', cancelLabel: 'Cancelar', danger: true,
+    });
+    if (!ok) return;
+    const btn = document.getElementById('otfQuitarGarBtn');
+    const orig = btn ? btn.innerHTML : '';
+    if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…'; }
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}/cobertura`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ garantia_aplica:false, motivo:motivo.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo quitar la garantía');
+      ilusToast('✓ Garantía quitada — ahora puedes asociar una factura', {type:'success'});
+      setTimeout(() => location.reload(), 900);
+    } catch(e){
+      console.error('[OT2F.quitarGarantia]', e);
+      ilusToast(e.message || 'No se pudo quitar la garantía', {type:'error'});
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+    }
+  }
+
+  async function guardarCentroCosto(){
+    const sel = document.getElementById('otfModalCentroCosto');
+    const valor = sel ? sel.value : '';
+    if (!valor){ ilusToast('Elige un centro de costo antes de guardar.', {type:'warning'}); return; }
+    try {
+      const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ centro_costo:valor }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo guardar el centro de costo');
+      ilusToast('✓ Centro de costo guardado', {type:'success'});
+      setTimeout(() => location.reload(), 700);
+    } catch(e){
+      console.error('[OT2F.guardarCentroCosto]', e);
+      ilusToast(e.message || 'No se pudo guardar el centro de costo', {type:'error'});
+    }
+  }
+
+  return {
+    abrirFirmaTecnico, abrirFirmaCliente, enviarFirma, liberarFirmaTecnico,
+    enviarFirmaRemota, enviarFirmaWhatsApp, enviarFirmaAmbos,
+    abrirAprobacion, confirmarAprobacion, rechazarAprobacion,
+    factConsultar, factAsociar, declararGarantia, quitarGarantia, guardarCentroCosto,
+    limpiarFirma, undoFirma, setFirmaColor,
+  };
+})();
 </script>
 {% endblock %}
