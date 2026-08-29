@@ -540,6 +540,14 @@ window.OT2C = (function(){
          // Finanzas, que aplica sin importar de dónde nació la OT.
          fin_centro:null, fin_garantia:false, fin_garantia_motivo:'',
          fin_doc:null, fin_costo_estimado:null,
+         // 2026-08-29 (Daniel: "los costos y lo que nos cobra el
+         // proveedor... % de margen sí o sí"): lineas ZZ reales del
+         // documento elegido (fin_zz_lineas, sin filtrar -- puede haber
+         // más de una, ej. servicio + transporte, el usuario elige o suma
+         // a mano) y cuánto cobra el proveedor externo por el trabajo,
+         // para comparar contra lo que se le cobra al cliente.
+         fin_zz_lineas:[], fin_zz_codigo:null, fin_zz_monto:null,
+         fin_costo_proveedor:'',
          _tipoFiltro:''};
     fase = 'origen';
     anclaActiva = null;
@@ -2143,7 +2151,7 @@ window.OT2C = (function(){
       ? S.fin_doc.tido + ' ' + S.fin_doc.nudo : null;
     b.innerHTML =
       '<h6 class="t">Finanzas</h6>'+
-      '<p class="d">Centro de costo y a qué queda cubierta esta OT: un documento real del ERP, o garantía.</p>'+
+      '<p class="d">Centro de costo, a qué queda cubierta esta OT, y cuánto cuesta de verdad (para medir margen).</p>'+
       '<label class="fl">Centro de costo *</label>'+
       '<div class="o2m-grid mb-3" style="grid-template-columns:repeat(3,minmax(120px,1fr))">'+
         _OT2M_CENTROS.map(function(c){
@@ -2168,21 +2176,39 @@ window.OT2C = (function(){
             ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
               '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(docTxt)+'</b>'+
               ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.limpiarFinDoc()">cambiar</button>'+
-              '</div>'
+              '</div>'+
+              '<div id="o2mFinZZ" class="mt-2"></div>'
             : '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.abrirBusquedaFinDoc()">'+
               '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'))+
       '<div id="o2mFinEstimado" class="mt-3"><div class="text-muted small">'+
-      '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>';
+      '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>'+
+      // 2026-08-29 (Daniel: "los costos y lo que nos cobra el proveedor...
+      // % de margen sí o sí"): lo que ILUS le paga al proveedor externo por
+      // el trabajo (incluye transporte si aplica -- un solo número, no se
+      // desglosa) para comparar contra lo que se le cobra al cliente.
+      '<label class="fl mt-3">Costo del proveedor (lo que le pagamos)</label>'+
+      '<input type="number" class="form-control mb-1" min="0" step="1" style="max-width:220px" '+
+      'value="'+esc(S.fin_costo_proveedor)+'" placeholder="Incluye transporte si aplica" '+
+      'oninput="OT2C.setFinCostoProveedor(this.value)">'+
+      '<div id="o2mFinMargen" class="mt-2"></div>';
     _o2mFinEstimar();
+    if (docTxt) _o2mFinCargarZZ(); else _pintarFinMargenDom();
   }
   function setFinCentro(v){ S.fin_centro = v; repintarSeccion('finanzas'); }
   function setFinGarantia(esGarantia){
     S.fin_garantia = esGarantia;
-    if (esGarantia) S.fin_doc = null; else S.fin_garantia_motivo = '';
+    if (esGarantia){
+      S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
+    } else {
+      S.fin_garantia_motivo = '';
+    }
     repintarSeccion('finanzas');
   }
   function setFinGarantiaMotivo(v){ S.fin_garantia_motivo = v; }
-  function limpiarFinDoc(){ S.fin_doc = null; repintarSeccion('finanzas'); }
+  function limpiarFinDoc(){
+    S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
+    repintarSeccion('finanzas');
+  }
   function abrirBusquedaFinDoc(){
     if (typeof tkaOpen !== 'function'){
       if (window.ilusToast) ilusToast('El buscador de documentos ERP no está disponible en esta pantalla.', {type:'error'});
@@ -2210,7 +2236,97 @@ window.OT2C = (function(){
       return;
     }
     S.fin_doc = {tido: header.tido, nudo: header.nudo};
+    S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
     repintarSeccion('finanzas');
+  }
+
+  /* Líneas ZZ reales del documento elegido (2026-08-29, Daniel: "es muy
+     necesario extraer el ZZINSTALACION y ZZMANTENCION o agregar a mano,
+     además del transporte"). Reusa GET /ot/api/lineas-zz, que YA devuelve
+     TODA línea que empiece con ZZ (no solo las dos con nombre) y marca
+     cuál es la sugerida según el tipo de OT -- si el documento trae una
+     línea de transporte con SKU tipo ZZTRANSPORTE, aparece igual en la
+     lista, sin tener que enseñarle nada nuevo al backend. */
+  var _finZZSeq = 0;
+  function _o2mFinCargarZZ(){
+    if (!S.fin_doc) return;
+    var seq = ++_finZZSeq;
+    var c = document.getElementById('o2mFinZZ');
+    if (c) c.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Buscando líneas del documento…</div>';
+    fetch('/ot/api/lineas-zz/'+encodeURIComponent(S.fin_doc.tido)+'/'+encodeURIComponent(S.fin_doc.nudo)+
+          '?tipo_ot='+encodeURIComponent(S.tipo||''), {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (seq !== _finZZSeq) return;
+        S.fin_zz_lineas = (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
+        // Auto-elige la sugerida (o la única que haya) sin pisar una
+        // elección manual ya hecha por el usuario.
+        if (!S.fin_zz_codigo && S.fin_zz_lineas.length){
+          var sug = S.fin_zz_lineas.find(function(l){ return l.sugerida; }) || S.fin_zz_lineas[0];
+          S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto;
+        }
+        _pintarFinZZDom();
+        _pintarFinMargenDom();
+      })
+      .catch(function(){
+        if (seq !== _finZZSeq) return;
+        S.fin_zz_lineas = [];
+        _pintarFinZZDom();
+      });
+  }
+  function _pintarFinZZDom(){
+    var c = document.getElementById('o2mFinZZ'); if (!c) return;
+    if (!S.fin_zz_lineas.length){
+      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+        'El documento no trae líneas de servicio (ZZ...) — puedes ingresar el monto a mano si corresponde.</div>';
+      return;
+    }
+    c.innerHTML = '<label class="fl">Línea de servicio del documento</label>'+
+      S.fin_zz_lineas.map(function(l){
+        var sel = (S.fin_zz_codigo === l.sku);
+        return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.setFinZZ(\''+l.sku+'\','+l.monto+')">'+
+          '<span class="o2m-chk">'+(sel?'<i class="bi bi-check"></i>':'')+'</span>'+
+          '<span style="flex:1"><span class="nm">'+esc(l.sku)+(l.sugerida?' · sugerida':'')+'</span>'+
+          '<span class="mt d-block">'+esc(l.descripcion||'')+'</span></span>'+
+          '<b>$'+Math.round(l.monto).toLocaleString('es-CL')+'</b></div>';
+      }).join('');
+  }
+  function setFinZZ(sku, monto){
+    S.fin_zz_codigo = sku; S.fin_zz_monto = monto;
+    _pintarFinZZDom(); _pintarFinMargenDom();
+  }
+  function setFinCostoProveedor(v){ S.fin_costo_proveedor = v; _pintarFinMargenDom(); }
+  /* "Venta" de referencia para el margen: el monto REAL del documento si
+     ya se eligió una línea ZZ, si no el estimado por clasificación -- en
+     ese orden, nunca al revés (el documento real siempre manda sobre un
+     cálculo teórico). */
+  function _ventaActual(){
+    if (S.fin_zz_monto != null) return S.fin_zz_monto;
+    if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null) return S.fin_costo_estimado.total_neto;
+    return null;
+  }
+  function _pintarFinMargenDom(){
+    var c = document.getElementById('o2mFinMargen'); if (!c) return;
+    var costo = parseFloat(S.fin_costo_proveedor);
+    if (!isFinite(costo) || costo < 0){
+      c.innerHTML = '';
+      return;
+    }
+    var venta = _ventaActual();
+    if (venta == null || venta <= 0){
+      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+        'Falta un monto de venta (documento o estimado) para calcular el margen.</div>';
+      return;
+    }
+    var margenPct = Math.round((venta - costo) / venta * 100);
+    // Informativo nada más -- Daniel: "identificando si hay margen o no da
+    // lo mismo, pero estamos autorizados a trabajar sin margen". Nunca
+    // bloquea nada, solo avisa con color si el margen es negativo.
+    var color = margenPct < 0 ? '#991b1b' : '#166534';
+    var bg = margenPct < 0 ? '#fef2f2' : '#f0fdf4';
+    c.innerHTML = '<div class="o2m-res"><div class="b" style="background:'+bg+'">'+
+      '<span class="k">Margen estimado</span>'+
+      '<span class="v" style="color:'+color+'">'+margenPct+'%</span></div></div>';
   }
   // Secuencia (no un simple booleano): si el usuario sale y vuelve a
   // "Equipos" y cambia algo mientras la consulta anterior seguía viajando,
@@ -2225,11 +2341,11 @@ window.OT2C = (function(){
     }).then(function(r){ return r.json(); }).then(function(j){
       if (seq !== _finEstimarSeq) return;
       S.fin_costo_estimado = (j && j.ok) ? j : null;
-      _pintarFinEstimadoDom();
+      _pintarFinEstimadoDom(); _pintarFinMargenDom();
     }).catch(function(){
       if (seq !== _finEstimarSeq) return;
       S.fin_costo_estimado = null;
-      _pintarFinEstimadoDom();
+      _pintarFinEstimadoDom(); _pintarFinMargenDom();
     });
   }
   function _pintarFinEstimadoDom(){
@@ -2702,6 +2818,19 @@ window.OT2C = (function(){
       } else if (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
         body.finanzas.factura_tido = S.fin_doc.tido;
         body.finanzas.factura_nudo = S.fin_doc.nudo;
+        // Línea ZZ real elegida del documento (2026-08-29) -- solo tiene
+        // sentido junto a un documento, nunca junto a garantía.
+        if (S.fin_zz_codigo && S.fin_zz_monto != null){
+          body.finanzas.zz_codigo = S.fin_zz_codigo;
+          body.finanzas.zz_monto = S.fin_zz_monto;
+        }
+      }
+      // 2026-08-29: costo del proveedor externo -- mismo campo genérico
+      // que ya usa trabajo interno (`costo` en mant_visitas, "sin
+      // semántica de facturación"), reusado acá para lo que se le paga al
+      // proveedor. Informativo: nunca se factura al cliente por esto.
+      if (String(S.fin_costo_proveedor||'').trim() !== ''){
+        body.finanzas.costo_interno = S.fin_costo_proveedor;
       }
     }
     var sig = document.getElementById('o2mSig');
@@ -2830,7 +2959,8 @@ window.OT2C = (function(){
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
-          abrirBusquedaFinDoc:abrirBusquedaFinDoc,
+          abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
+          setFinCostoProveedor:setFinCostoProveedor,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco};
