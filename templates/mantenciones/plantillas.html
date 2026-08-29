@@ -108,9 +108,17 @@
   .pl-add-panel .pl-add-titulo{flex:1 1 220px;min-width:180px}
   .pl-add-panel .pl-add-chks{display:flex;gap:10px;flex-wrap:wrap}
   .pl-add-panel .pl-add-btn{flex:0 0 auto}
-  .pl-sel-toolbar{display:none;align-items:center;gap:10px;background:#fee2e2;border:1px solid #fecaca;
-                   border-radius:8px;padding:6px 10px;margin-bottom:12px;font-size:.82rem;color:#991b1b;font-weight:600}
-  .pl-sel-toolbar.is-active{display:flex}
+  {# El checkbox "Seleccionar todos" queda SIEMPRE visible (fondo neutro);
+     solo el bloque de acciones (contador + Eliminar + Cancelar) se prende
+     en rojo cuando hay >=1 ítem marcado -- así no hace falta marcar uno a
+     mano antes de poder marcarlos todos de golpe. #}
+  .pl-sel-toolbar{display:flex;align-items:center;gap:14px;background:#f9fafb;border:1px solid #e5e7eb;
+                   border-radius:8px;padding:7px 10px;margin-bottom:12px;font-size:.82rem;color:#374151}
+  .pl-sel-toolbar .pl-sel-all-lbl{display:flex;align-items:center;gap:6px;font-weight:600;cursor:pointer;
+                                    user-select:none;white-space:nowrap}
+  .pl-sel-toolbar .pl-sel-all-lbl input{width:16px;height:16px;cursor:pointer}
+  .pl-sel-actions{display:none;align-items:center;gap:10px;margin-left:auto;color:#991b1b;font-weight:600}
+  .pl-sel-actions.is-active{display:flex}
   .it-card{background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-bottom:8px;
            transition:background .15s}
   .it-card:hover{background:#f5f5f5}
@@ -452,13 +460,23 @@
                   </button>
                 </div>
               </div>
+              {# Daniel 29-08-2026: "no puedo seleccionar todos los item...
+                 para eliminar todo de un solo tajo" -- el checkbox "Todos"
+                 queda SIEMPRE visible (no depende de tener algo ya
+                 seleccionado), a diferencia de "Eliminar seleccionados"/
+                 "Cancelar" que solo aparecen con >=1 marcado. #}
               <div class="pl-sel-toolbar" id="plSelToolbar">
-                <i class="bi bi-check-square-fill"></i>
-                <span id="plSelCount">0 seleccionados</span>
-                <button class="btn btn-sm btn-danger ms-auto" onclick="eliminarSeleccionados()">
-                  <i class="bi bi-trash me-1"></i>Eliminar seleccionados
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="limpiarSeleccion()">Cancelar</button>
+                <label class="pl-sel-all-lbl">
+                  <input type="checkbox" id="plSelAllChk" onchange="toggleSeleccionarTodos(this.checked)">
+                  Seleccionar todos
+                </label>
+                <span class="pl-sel-actions" id="plSelActions">
+                  <span id="plSelCount">0 seleccionados</span>
+                  <button class="btn btn-sm btn-danger" onclick="eliminarSeleccionados()">
+                    <i class="bi bi-trash me-1"></i>Eliminar seleccionados
+                  </button>
+                  <button class="btn btn-sm btn-outline-secondary" onclick="limpiarSeleccion()">Cancelar</button>
+                </span>
               </div>
             </div>
             <div id="itemsContainer">
@@ -1217,13 +1235,30 @@ function limpiarSeleccion(){
     .forEach(el => { el.checked = false; });
 }
 
+// Daniel 29-08-2026: "no puedo seleccionar todos los item... para eliminar
+// todo de un solo tajo" -- marca/desmarca TODOS los ítems actuales de una.
+function toggleSeleccionarTodos(checked){
+  if (checked){
+    _items.forEach(it => _selected.add(it._uid));
+  } else {
+    _selected.clear();
+  }
+  renderItems();  // repinta cada checkbox de ítem + la tarjeta .is-selected
+}
+
 function _actualizarToolbarSeleccion(){
-  const bar = document.getElementById('plSelToolbar');
-  if (!bar) return;
-  const n = _selected.size;
-  bar.classList.toggle('is-active', n > 0);
+  const acciones = document.getElementById('plSelActions');
+  if (acciones) acciones.classList.toggle('is-active', _selected.size > 0);
   const lbl = document.getElementById('plSelCount');
-  if (lbl) lbl.textContent = n + (n === 1 ? ' seleccionado' : ' seleccionados');
+  if (lbl) lbl.textContent = _selected.size + (_selected.size === 1 ? ' seleccionado' : ' seleccionados');
+  // El checkbox "Todos" refleja el estado real: marcado si TODO está
+  // seleccionado, a medias (indeterminate) si es solo una parte.
+  const chkTodos = document.getElementById('plSelAllChk');
+  if (chkTodos){
+    const total = _items.length;
+    chkTodos.checked = total > 0 && _selected.size === total;
+    chkTodos.indeterminate = _selected.size > 0 && _selected.size < total;
+  }
 }
 
 async function eliminarSeleccionados(){
@@ -1277,6 +1312,7 @@ function renderItems(){
   if (!_items.length){
     cont.innerHTML = '<div class="text-muted text-center py-4 small">Aún no hay items. Escribe el primero arriba en "Nuevo item" y presiona Enter o "Agregar a la lista".</div>';
     refrescarPasos();
+    _actualizarToolbarSeleccion();
     return;
   }
   // 2026-08-11 (Daniel): "la única OT que rellena la ficha son los
@@ -1374,6 +1410,7 @@ function renderItems(){
       </div>`;
   }).join('');
   refrescarPasos();
+  _actualizarToolbarSeleccion();
 }
 
 async function guardarPlantilla(){
