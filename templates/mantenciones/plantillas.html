@@ -29,7 +29,16 @@
   .pl-card{background:#fff;border:1px solid var(--border,#e5e7eb);border-radius:12px;padding:16px;
            transition:box-shadow .15s, transform .12s;cursor:pointer;position:relative}
   .pl-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.08);transform:translateY(-2px)}
-  .pl-card .pl-name{font-weight:700;font-size:1rem;color:#0f172a;margin-bottom:4px;padding-right:60px}
+  .pl-card .pl-name{font-weight:700;font-size:1rem;color:#0f172a;margin-bottom:4px;padding-right:60px;padding-left:24px}
+  .pl-card .pl-card-sel{position:absolute;top:10px;left:10px;width:18px;height:18px;cursor:pointer;z-index:2}
+  /* Borrado en masa de plantillas ENTERAS desde la grilla (Daniel
+     29-08-2026: "se puede seleccionar con un checkbox y deseleccionar en
+     las plantillas") -- distinto de la selección de ÍTEMS dentro de una
+     plantilla (.pl-sel-toolbar, adentro del editor): esto selecciona
+     tarjetas completas para borrarlas/desactivarlas de una. */
+  .pl-grid-sel-toolbar{display:none;align-items:center;gap:10px;background:#fee2e2;border:1px solid #fecaca;
+                        border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:.85rem;color:#991b1b;font-weight:600}
+  .pl-grid-sel-toolbar.is-active{display:flex}
   .pl-card .pl-desc{font-size:.78rem;color:#6b7280;line-height:1.4;margin-bottom:10px;
                     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .pl-card .pl-meta{display:flex;gap:6px;flex-wrap:wrap;font-size:.7rem}
@@ -241,6 +250,15 @@
    (se combinan con los filtros de arriba: pestaña AND filtros). #}
 <div class="pl-tabs-wrap">
   <div class="pl-tabs" id="plTabs" role="tablist" aria-label="Segmentar plantillas por tipo de trabajo"></div>
+</div>
+
+<div class="pl-grid-sel-toolbar" id="plGridSelToolbar">
+  <i class="bi bi-check-square-fill"></i>
+  <span id="plGridSelCount">0 seleccionadas</span>
+  <button class="btn btn-sm btn-danger ms-auto" onclick="eliminarPlantillasSeleccionadas()">
+    <i class="bi bi-trash me-1"></i>Eliminar seleccionadas
+  </button>
+  <button class="btn btn-sm btn-outline-secondary" onclick="limpiarSeleccionPlantillas()">Cancelar</button>
 </div>
 
 <div id="plantillasList" class="pl-grid">
@@ -569,6 +587,10 @@ let _cobertura = null;        // respuesta de /api/plantillas/cobertura-clases
 let _coberturaAbierta = true;
 
 let _plantillas = [];
+// Selección múltiple de TARJETAS en la grilla, para borrar/desactivar varias
+// plantillas de una (Daniel 29-08-2026) -- distinta de _selected, que es la
+// selección de ítems DENTRO del editor de una sola plantilla.
+let _plSelected = new Set();
 let _editId = null;
 let _items = [];
 let _searchTimer = null;
@@ -881,6 +903,10 @@ function renderPlantillas(){
     return `
     <div class="pl-card ${p.activa ? '' : 'inactive'}${vacia ? ' is-vacia' : ''}" onclick="abrirEditor(${p.id})"
          ${vacia ? 'title="Esta plantilla todavía no tiene checklist: el técnico la abre y no encuentra tareas que completar."' : ''}>
+      <input type="checkbox" class="pl-card-sel" title="Seleccionar para borrar en masa"
+             onclick="event.stopPropagation()"
+             onchange="togglePlantillaSeleccion(${p.id}, this.checked)"
+             ${_plSelected.has(p.id) ? 'checked' : ''}>
       ${p.es_sistema ? '<span class="badge-sys">SISTEMA</span>' : ''}
       <div class="pl-name">${escHtml(p.nombre)}</div>
       ${p.descripcion ? '<div class="pl-desc">'+escHtml(p.descripcion)+'</div>' : ''}
@@ -894,6 +920,66 @@ function renderPlantillas(){
       </div>
     </div>`;
   }).join('');
+}
+
+// ── Selección múltiple de PLANTILLAS ENTERAS en la grilla (Daniel
+// 29-08-2026: "se puede seleccionar con un checkbox y deseleccionar en las
+// plantillas") -- borra/desactiva varias tarjetas de una, reusando el mismo
+// endpoint DELETE de siempre (una llamada por id, no un endpoint bulk
+// nuevo): las protegidas (sistema o de clasificación) se desactivan igual
+// que al borrarlas una por una, solo que en lote. ─────────────────────
+function togglePlantillaSeleccion(pid, checked){
+  if (checked) _plSelected.add(pid); else _plSelected.delete(pid);
+  _actualizarToolbarPlantillas();
+}
+
+function limpiarSeleccionPlantillas(){
+  _plSelected.clear();
+  _actualizarToolbarPlantillas();
+  document.querySelectorAll('#plantillasList .pl-card-sel').forEach(el => { el.checked = false; });
+}
+
+function _actualizarToolbarPlantillas(){
+  const bar = document.getElementById('plGridSelToolbar');
+  if (!bar) return;
+  const n = _plSelected.size;
+  bar.classList.toggle('is-active', n > 0);
+  const lbl = document.getElementById('plGridSelCount');
+  if (lbl) lbl.textContent = n + (n === 1 ? ' seleccionada' : ' seleccionadas');
+}
+
+async function eliminarPlantillasSeleccionadas(){
+  const ids = Array.from(_plSelected);
+  if (!ids.length) return;
+  const ok = await ilusConfirm({
+    title: 'Eliminar plantillas seleccionadas',
+    message: `¿Quitar ${ids.length} plantilla${ids.length===1?'':'s'} del sistema?`,
+    sub: 'Las que vienen del sistema o de una clasificación real del catálogo se desactivan en vez de borrarse -- mismo criterio que al eliminar una sola. Verás el resumen al terminar.',
+    okLabel: 'Eliminar', cancelLabel: 'Cancelar',
+    danger: true,
+  });
+  if (!ok) return;
+  let eliminadas = 0, desactivadas = 0, errores = 0;
+  // Secuencial (no Promise.all): son pocas a la vez y evita mandarle N
+  // DELETE simultáneos al mismo tiempo al backend.
+  for (const pid of ids){
+    try {
+      const r = await fetch(`/mantenciones/api/plantillas/${pid}`, {method:'DELETE'});
+      const d = await r.json();
+      if (!d.ok){ errores++; continue; }
+      if (d.desactivada) desactivadas++; else eliminadas++;
+    } catch(e){ errores++; }
+  }
+  limpiarSeleccionPlantillas();
+  cargarPlantillas();
+  cargarCoberturaClases();  // borrar/desactivar plantillas puede ABRIR huecos
+  const partes = [];
+  if (eliminadas) partes.push(`${eliminadas} eliminada${eliminadas===1?'':'s'}`);
+  if (desactivadas) partes.push(`${desactivadas} desactivada${desactivadas===1?'':'s'} (sistema/clasificación)`);
+  if (errores) partes.push(`${errores} con error`);
+  if (typeof ilusToast === 'function'){
+    ilusToast(partes.join(' · ') || 'Listo', { type: errores ? 'warning' : 'success' });
+  }
 }
 
 // ── Paso 1: tarjetas de categoría (categoria_admin) ─────────────────
