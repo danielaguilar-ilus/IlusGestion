@@ -75177,6 +75177,15 @@ def _ensure_ot_finanzas_cols():
                        ZZMANTENCION…). Se guarda el código usado, no solo
                        el monto, para poder auditar de dónde salió.
       zz_monto       — el monto de esa línea, leído del documento.
+      zz_envio_codigo/ — 2026-08-30 (Daniel: "el ZZ envío por si hay
+      zz_envio_monto     despacho... identifícalo... que no se pierda ni se
+                       mezcle con el valor del servicio"): cuando el MISMO
+                       documento trae ADEMÁS una línea ZZENVIO, se guarda
+                       APARTE de zz_codigo/zz_monto -- es lo que el
+                       documento le cobra al cliente por transporte, NUNCA
+                       se suma a costo_proveedor/costo_despacho (esas son
+                       lo que ILUS le PAGA a un proveedor, signo contrario
+                       en el margen).
       finanzas_at /  — cuándo y quién declaró. La declaración es
       finanzas_por     REVERSIBLE ("podemos retractarnos y volver a
                        confirmar"), así que interesa el último estado y
@@ -75186,6 +75195,8 @@ def _ensure_ot_finanzas_cols():
         ("centro_costo",  "VARCHAR(20) NULL COMMENT 'sstt|logistica|comercial'"),
         ("zz_codigo",     "VARCHAR(30) NULL COMMENT 'Linea de servicio del ERP que cubre la OT'"),
         ("zz_monto",      "INT NULL COMMENT 'Monto de la linea ZZ, leido del documento'"),
+        ("zz_envio_codigo", "VARCHAR(30) NULL COMMENT 'Linea ZZENVIO del mismo documento, si trae despacho aparte'"),
+        ("zz_envio_monto",  "INT NULL COMMENT 'Monto de la linea ZZENVIO, leido del documento'"),
         ("finanzas_at",   "DATETIME NULL COMMENT 'Cuando se declaro la parte financiera'"),
         ("finanzas_por",  "VARCHAR(190) NULL"),
     ]
@@ -76475,6 +76486,21 @@ def ot2_api_crear():
         _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
+    # 2026-08-30 (Daniel: "el ZZ envío por si hay despacho... identifícalo
+    # ... que no se pierda ni se mezcle con el valor del servicio"): la
+    # línea ZZENVIO del MISMO documento se guarda APARTE de zz_codigo/
+    # zz_monto -- es lo que el documento le cobra al cliente por
+    # transporte (venta), nunca se mezcla con costo_proveedor/
+    # costo_despacho (lo que ILUS le paga a un proveedor -- signo
+    # contrario en el margen).
+    try:
+        _fin_zz_envio_m = (int(_fin.get("zz_envio_monto"))
+                           if str(_fin.get("zz_envio_monto") or "").strip() else None)
+    except (TypeError, ValueError):
+        return _ot2_err("El monto de la línea de envío no es válido.", "ZZ_ENVIO_INVALIDO")
+    _fin_zz_envio_c = (_fin.get("zz_envio_codigo") or "").strip().upper()[:30] or None
+    if not _fin_zz_envio_c:
+        _fin_zz_envio_m = None
     # 2026-08-28 (Daniel, trabajo interno de bodega: "debería hacer un
     # cálculo o por lo menos pedir los costos... solo para valorizarlo,
     # esto no se cobra"): reusa la columna `costo` genérica de mant_visitas
@@ -76590,7 +76616,8 @@ def ot2_api_crear():
             "  (numero_ot, cliente_id, titulo, descripcion, fecha_programada, "
             "   hora_inicio, hora_fin, tipo, estado, tecnico, tecnico_user_id, "
             "   acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas, "
-            "   centro_costo, zz_codigo, zz_monto, costo, modalidad_cobro, cubierto_por, "
+            "   centro_costo, zz_codigo, zz_monto, zz_envio_codigo, zz_envio_monto, "
+            "   costo, modalidad_cobro, cubierto_por, "
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
             "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
             "   documentos_extra, "
@@ -76600,7 +76627,7 @@ def ot2_api_crear():
             "   direccion_place_id, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
-            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
             "        %s,"
             "        %s,%s,%s,%s,"
@@ -76610,7 +76637,8 @@ def ot2_api_crear():
             (numero_ot, cliente_id, titulo, descripcion, _f,
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
              acc_asc, acc_est, acc_piso, acc_notas,
-             _fin_centro, _fin_zzc, _fin_zzm, _fin_costo_int,
+             _fin_centro, _fin_zzc, _fin_zzm, _fin_zz_envio_c, _fin_zz_envio_m,
+             _fin_costo_int,
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
