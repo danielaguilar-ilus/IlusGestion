@@ -409,6 +409,30 @@
   padding: 2px 8px; border-radius: 50px;
   display: inline-flex; align-items: center; gap: 3px;
 }
+
+/* Diagnóstico ESPECÍFICO de este equipo dentro de la OT (Daniel 2026-08-30:
+   "quiero ver el detalle de ESE producto ahí") — distinto del resumen
+   general de la OT (arriba, fondo gris neutro): acento rojo ILUS para
+   diferenciarlo a simple vista dentro de la misma card. */
+.hist-ot .resumen-equipo {
+  font-size: .78rem; color: #374151; margin-top: 6px; line-height: 1.4;
+  background: #fef2f2; border-left: 3px solid #dc2626;
+  padding: 6px 10px; border-radius: 6px;
+}
+.hist-ot .resumen-equipo .diag-audit {
+  margin-top: 4px; font-size: .7rem; color: #9ca3af;
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+}
+.diag-estado-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: .62rem; font-weight: 800; letter-spacing: .03em;
+  padding: 2px 8px; border-radius: 50px; text-transform: uppercase;
+  margin-right: 6px;
+}
+.diag-estado-verificado      { background: #dcfce7; color: #15803d; }
+.diag-estado-con_cambios     { background: #fef3c7; color: #92400e; }
+.diag-estado-saltado         { background: #f3f4f6; color: #6b7280; }
+.diag-estado-falla_detectada { background: #fee2e2; color: #991b1b; }
 </style>
 
 <div class="eq-wrap">
@@ -697,6 +721,45 @@
             <strong>Motivo:</strong> {{ o.descripcion|truncate(200) }}
           {% elif o.observaciones %}
             {{ o.observaciones|truncate(200) }}
+          {% endif %}
+        </div>
+        {% endif %}
+        {# Daniel (2026-08-30, por voz): "quiero ver el detalle de ESE
+           producto ahí" — diagnóstico puntual de ESTE equipo en esta
+           visita (mant_visita_equipos), no el de toda la OT (arriba).
+           Si el LEFT JOIN no trajo fila (OT vieja o equipo agregado sin
+           pasar por el checklist nuevo), este bloque simplemente no
+           aparece. #}
+        {% if o.diag_equipo or o.diag_estado %}
+        <div class="resumen-equipo">
+          {% if o.diag_estado %}
+          <span class="diag-estado-pill diag-estado-{{ o.diag_estado }}">
+            {% if o.diag_estado == 'saltado' %}<i class="bi bi-skip-forward-fill"></i>Saltado
+            {% elif o.diag_estado == 'falla_detectada' %}<i class="bi bi-exclamation-triangle-fill"></i>Falla detectada
+            {% elif o.diag_estado == 'con_cambios' %}<i class="bi bi-pencil-fill"></i>Con cambios
+            {% else %}<i class="bi bi-check-circle-fill"></i>Verificado
+            {% endif %}
+          </span>
+          {% endif %}
+          <strong>Diagnóstico de este equipo:</strong>
+          {% if o.diag_estado == 'saltado' and o.diag_razon_saltado %}
+            {{ o.diag_razon_saltado|replace('_',' ') }}
+          {% elif o.diag_equipo %}
+            {{ o.diag_equipo|truncate(200) }}
+          {% else %}
+            <span class="text-muted">Sin observación registrada</span>
+          {% endif %}
+          {# El QUIÉN (diag_revisado_por) ya viene vacío desde el backend
+             si quien mira esta ficha no es superadmin (ver
+             _es_superadmin_ficha en mant_maquina_ficha) — acá además se
+             oculta la línea completa fecha+responsable para no mostrar
+             una fecha "colgada" sin el responsable a un no-superadmin.
+             La fecha SIEMPRE por chile_fmt (REGLA #6), nunca ISO crudo. #}
+          {% if es_superadmin and o.diag_revisado_at %}
+          <div class="diag-audit">
+            <i class="bi bi-clock-history"></i> {{ o.diag_revisado_at|chile_fmt }}
+            {% if o.diag_revisado_por %} · <i class="bi bi-person-check-fill"></i> {{ o.diag_revisado_por }}{% endif %}
+          </div>
           {% endif %}
         </div>
         {% endif %}
