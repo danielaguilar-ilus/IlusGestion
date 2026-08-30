@@ -4961,6 +4961,18 @@ window.OT2C = (function(){
   function validarTodo(){
     var ps = pasos();
     for (var i=0;i<ps.length;i++){
+      // 2026-08-30 (Daniel, textual: "me está bloqueando si no lo
+      // resuelvo" / "que no sea impedimento, quiero crear la OT ya"):
+      // "Anexo" deja de ser un candado duro para poder crear la OT. La
+      // protección real (que el proveedor externo no pueda EMPEZAR a
+      // trabajar sin anexo firmado) ya vive en el backend
+      // (_anexo_bloquea_ot bloquea mant_visita_iniciar) y es INDEPENDIENTE
+      // de esto -- se mantiene intacta. Este paso sigue existiendo, se
+      // sigue pudiendo llenar y sigue creando/enviando el anexo si quedó
+      // completo (ver crear()), pero si falta algo ya NO impide crear la
+      // OT: el aviso "el Anexo quedó sin generar -- créalo desde el
+      // detalle de la OT" (agregado hoy en crear()) cubre ese caso.
+      if (ps[i].k === 'anexo') continue;
       if (!completo(ps[i].k)){
         if (window.ilusToast) ilusToast('Falta completar "'+ps[i].n+'"', {type:'warning'});
         irAncla(ps[i].k);
