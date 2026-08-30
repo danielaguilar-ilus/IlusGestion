@@ -246,6 +246,15 @@
   box-shadow:0 10px 24px rgba(10,10,10,.10)}
 .o2m-op.sel{border-color:var(--ilus-red,#dc2626);background:#fff5f5;
   box-shadow:0 4px 14px rgba(220,38,38,.18),0 0 0 1px var(--ilus-red,#dc2626)}
+/* 2026-08-30 (Daniel, viendo el paso Costos en vivo): "cuando selecciono
+   servicio técnico, no se pone verde... necesito que el contorno se ponga
+   en verde una vez que resuelvas ese objeto". Modificador NUEVO, scopeado
+   solo al selector de Centro de costo -- NO se toca `.o2m-op.sel` porque
+   esa clase la comparten Origen/Tipo, donde elegir es "una opción entre
+   varias" y el rojo sigue siendo el lenguaje correcto. Centro de costo es
+   distinto: es un requisito que se "resuelve" al elegir, como un check. */
+.o2m-op.sel-ok{border-color:#16a34a;background:#f0fdf4;
+  box-shadow:0 4px 14px rgba(22,163,74,.18),0 0 0 1px #16a34a}
 .o2m-op .ic{font-size:1.3rem;color:var(--ilus-red,#dc2626);display:block;margin-bottom:6px}
 .o2m-op .n{font-weight:800;font-size:.87rem;color:#0a0a0a;display:block}
 .o2m-op .l{font-size:.72rem;color:#6b7280;line-height:1.35;display:block;margin-top:3px}
@@ -739,8 +748,14 @@ window.OT2C = (function(){
          // 2026-08-29 — Contraparte: quién recibe al técnico y DÓNDE.
          // `origen` deja registrado de dónde salió (principal/secundario/
          // sucursal:<id>/manual) para poder auditarlo después.
+         // comuna/region (2026-08-30, Daniel: "cuando yo confirme la
+         // dirección del lugar, me va a rellenar la comuna y la región de
+         // manera automática") -- comuna se muestra y se puede corregir a
+         // mano; region se guarda igual aunque no tiene campo visible hoy
+         // (útil más adelante para costo de ruta, ver transporte_tarifas).
          contraparte:{nombre:'', cargo:'', tel:'', email:'', origen:'',
-                      direccion:'', lat:null, lng:null, place_id:''},
+                      direccion:'', lat:null, lng:null, place_id:'',
+                      comuna:'', region:''},
          // Origen "Factura o boleta": documento ERP de donde salió el
          // cliente (trazabilidad, ver crear()) y sus líneas de producto
          // (sugerencia informativa en la sección Equipos).
@@ -2318,8 +2333,8 @@ window.OT2C = (function(){
           (S.doc_origen
             ? 'El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+'</b> trae estos productos.'
             : 'El origen de esta OT trae estos productos.')+
-          ' Si alguno no aparece en la lista de abajo, primero hay que '+
-          'agregarlo como equipo en la ficha del cliente:'+
+          ' Si alguno no aparece en la lista de abajo, hay un botón para '+
+          'darlo de alta directo en la ficha del cliente.'+
           '<ul>'+S.doc_lineas.map(function(l){
             return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
           }).join('')+'</ul></div>'
@@ -2451,6 +2466,15 @@ window.OT2C = (function(){
           ? '<span style="color:#16a34a"><i class="bi bi-geo-alt-fill me-1"></i>Dirección confirmada — el GPS del técnico va a validar contra este punto.</span>'
           : '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>Elige una sugerencia para confirmar la ubicación. Sin esto el técnico no puede validar su llegada.</span>')+
         '</div></div>'+
+        // 2026-08-30 (Daniel: "la dirección en un campo y la comuna en
+        // otro... cuando yo confirme la dirección del lugar, me va a
+        // rellenar la comuna y la región de manera automática"). Queda
+        // editable a mano por si Google se equivoca o el técnico necesita
+        // corregirla -- no es un campo de solo-lectura.
+        '<div class="col-md-6"><label class="fl">Comuna</label>'+
+        '<input class="form-control" id="o2mCpComuna" maxlength="120" value="'+esc(cp.comuna||'')+'" '+
+        'placeholder="Se completa sola al confirmar la dirección" '+
+        'oninput="OT2C.setCpCampo(\'comuna\', this.value)"></div>'+
       '</div>';
     cargarContactosCliente();
     // Places se engancha después de que el input existe en el DOM.
@@ -2464,6 +2488,22 @@ window.OT2C = (function(){
           S.contraparte.direccion = p.direccion || '';
           S.contraparte.lat = p.lat; S.contraparte.lng = p.lng;
           S.contraparte.place_id = p.place_id || '';
+          // 2026-08-30 (Daniel: "cuando yo confirme la dirección del lugar,
+          // me va a rellenar la comuna y la región de manera automática") --
+          // MISMO parseo exacto que ya usa _cotWizInitDireccion en
+          // static/tickets_cotizaciones.js:708-721, no se inventa uno nuevo.
+          var comps = p.componentes || [];
+          var pick = function(){
+            for (var i = 0; i < arguments.length; i++){
+              var t = arguments[i];
+              var c = comps.find(function(x){ return (x.types || []).indexOf(t) >= 0; });
+              if (c) return c.long_name;
+            }
+            return '';
+          };
+          // CL: level_1=Región · level_3/locality=Comuna
+          S.contraparte.region = pick('administrative_area_level_1');
+          S.contraparte.comuna = pick('administrative_area_level_3', 'locality', 'sublocality_level_1');
           repintarSeccion('contraparte');
           refrescarAnclas();
         },
@@ -2587,10 +2627,44 @@ window.OT2C = (function(){
      la paleta/tipografía de ESTE wizard, no los colores del modal viejo.
      También agrega S/N (m.serie) y el RUT del cliente, que antes se
      recibían del backend pero no se pintaban en ningún lado. */
+  /* 2026-08-30 (Daniel, viendo un documento real del ERP en vivo): "yo
+     pienso que la orden de trabajo... tiene que traer los datos de la
+     factura... no sé dónde trajiste esos productos, la tabla tiene que
+     subir en cero" -- antes, un SKU que trajera el documento/cotización/
+     ticket y que NO existiera todavía en la ficha del cliente solo
+     generaba un aviso mudo (ver pintarEquipos), sin forma de resolverlo
+     sin salir del wizard. Este helper compara por SKU normalizado contra
+     cacheEquipos (ya cargado en este punto -- pintarListaEquipos solo se
+     llama después de que cargarEquipos() resuelve). */
+  function _o2mSkuNorm(s){ return String(s||'').trim().toUpperCase(); }
+  function _o2mEquiposFaltantesDeDoc(){
+    if (!S.doc_lineas || !S.doc_lineas.length) return [];
+    var existentes = (cacheEquipos||[]).map(function(m){ return _o2mSkuNorm(m.sku); });
+    return S.doc_lineas.filter(function(l){
+      return l && l.sku && existentes.indexOf(_o2mSkuNorm(l.sku)) === -1;
+    });
+  }
+  function _o2mBannerFaltantesHtml(faltantes){
+    if (!faltantes.length) return '';
+    var plural = faltantes.length > 1;
+    return '<div class="o2m-aviso" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a8a">'+
+      '<i class="bi bi-box-seam me-1"></i>'+
+      'El origen trajo '+faltantes.length+' producto'+(plural?'s':'')+' que todavía no '+
+      (plural?'están':'está')+' en la ficha del cliente:'+
+      '<ul>'+faltantes.map(function(l){
+        return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
+      }).join('')+'</ul>'+
+      '<button type="button" class="btn btn-sm btn-dark mt-1" style="min-height:44px" '+
+      'id="o2mBtnAltaFaltantes" onclick="OT2C.agregarEquiposFaltantes()">'+
+      '<i class="bi bi-plus-circle me-1"></i>Agregar '+
+      (plural ? 'estos '+faltantes.length+' equipos' : 'este equipo')+' a la ficha</button>'+
+    '</div>';
+  }
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
+    var bannerFaltantes = _o2mBannerFaltantesHtml(_o2mEquiposFaltantesDeDoc());
     if (!cacheEquipos.length){
-      c.innerHTML = '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
+      c.innerHTML = bannerFaltantes + '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
         'Un levantamiento por descubrimiento sirve justo para eso.</div>'; return;
     }
     var totalMarcados = cacheEquipos.filter(function(m){
@@ -2599,7 +2673,7 @@ window.OT2C = (function(){
     var todosMarcados = totalMarcados > 0 && totalMarcados === cacheEquipos.length;
     var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
 
-    c.innerHTML =
+    c.innerHTML = bannerFaltantes +
       '<div class="o2m-eq-card">'+
         '<div class="o2m-eq-toolbar">'+
           '<div class="o2m-eq-toolbar-txt">'+
@@ -2664,6 +2738,75 @@ window.OT2C = (function(){
         if (sels[i].getAttribute('onchange').indexOf('('+e.maquina_id+',')>=0) sels[i].value = e.plantilla_id;
       }
     });
+  }
+
+  /* 2026-08-30 (Daniel, viendo un documento real del ERP en vivo): "yo
+     pienso que la orden de trabajo... tiene que traer los datos de la
+     factura... la tabla tiene que subir en cero". Da de alta en la ficha
+     del cliente los SKU que trajo el documento/cotización/ticket y que
+     _o2mEquiposFaltantesDeDoc() detectó como ausentes -- MISMO endpoint que
+     ya usa la gestión de la ficha (mant_maquina_add, app.py ~62484), no se
+     reinventa nada.
+
+     DECISIÓN A CONFIRMAR CON DANIEL: se dejó como botón explícito (banner +
+     acción), no 100% automático/silencioso -- Daniel no pidió literalmente
+     que sea invisible, y crear registros PERMANENTES en la ficha del
+     cliente (que alimenta contratos/garantías) sin que se vea en pantalla
+     podría sorprender a quien gestiona esa ficha. Si prefiere que sea
+     automático sin botón, esto se puede disparar directo desde
+     cargarEquipos() en vez de esperar el clic. */
+  async function agregarEquiposFaltantes(){
+    var cid = S.cliente && S.cliente.id;
+    var faltantes = _o2mEquiposFaltantesDeDoc();
+    if (!cid || !faltantes.length) return;
+    var btn = document.getElementById('o2mBtnAltaFaltantes');
+    if (btn){
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agregando…';
+    }
+    var docOrigenTxt = S.doc_origen ? (S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '';
+    var creadosIds = [];
+    var errores = 0;
+    for (var i = 0; i < faltantes.length; i++){
+      var l = faltantes[i];
+      try {
+        var body = {sku: l.sku, nombre: l.nombre || l.sku, cantidad: l.qty || 1};
+        if (docOrigenTxt) body.doc_origen = docOrigenTxt;
+        var r = await fetch('/mantenciones/api/clientes/' + cid + '/maquinas', {
+          method: 'POST', credentials: 'same-origin', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+        if (r && r.ok){
+          if (r.id) creadosIds.push(r.id);
+          else if (Array.isArray(r.items)) r.items.forEach(function(it){ creadosIds.push(it.id); });
+        } else { errores++; }
+      } catch(e){ errores++; }
+    }
+    if (window.ilusToast && creadosIds.length){
+      ilusToast('✓ ' + creadosIds.length + ' equipo(s) agregado(s) a la ficha del cliente', {type:'success'});
+    }
+    if (window.ilusToast && errores){
+      ilusToast('No se pudieron agregar ' + errores + ' producto(s) -- revísalos manualmente en la ficha.', {type:'warning'});
+    }
+    // Recarga cacheEquipos para que la tabla refleje los recién creados y
+    // los preselecciona en S.equipos -- mismo patrón que la preselección
+    // por plan de mantención (ver cargarEquipos más arriba).
+    fetch('/mantenciones/api/clientes/' + cid + '/maquinas-list', {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        cacheEquipos = Array.isArray(res) ? res : (res.maquinas || []);
+        creadosIds.forEach(function(mid){
+          if (!S.equipos.some(function(e){ return e.maquina_id === mid; })){
+            S.equipos.push({maquina_id: mid, plantilla_id: null, plantilla_sugerida: false});
+            sugerirPlantillaEquipo(mid);
+          }
+        });
+        pintarListaEquipos();
+        refrescarAnclas();
+      })
+      .catch(function(){
+        if (window.ilusToast) ilusToast('Los equipos se crearon, pero no se pudo refrescar la lista -- reabre el paso.', {type:'warning'});
+      });
   }
 
   /* "Integrar/desintegrar" un equipo del plan de mantención del cliente
@@ -2953,74 +3096,129 @@ window.OT2C = (function(){
     {v:'logistica', n:'Logística'},
     {v:'comercial', n:'Comercial'}
   ];
+  /* Input de dinero con separador de miles chileno (2026-08-30, Daniel:
+     "es importante que siempre ponga los separadores de Chile" -- va a
+     pagarle a un proveedor externo $154.000 por un despacho, el campo
+     debe mostrar "154.000" mientras escribe, no "154000"). No existe un
+     helper reusable de "input de dinero" en el proyecto todavía -- se
+     construye chico y local a este archivo (si mañana se necesita en más
+     pantallas, ahí sí se generaliza). El input es type="text" a propósito:
+     un <input type="number"> nativo NO puede mostrar puntos de miles. */
+  function _o2mLimpiarNumero(v){
+    // Solo dígitos -- sirve igual si pegan "154.000" o escriben "154000".
+    // Sin decimales a propósito (mismo criterio que el resto de este
+    // archivo para montos: Math.round(x).toLocaleString('es-CL')).
+    return String(v||'').replace(/[^0-9]/g,'');
+  }
+  function _o2mFormatearMiles(v){
+    var digitos = _o2mLimpiarNumero(v);
+    if (!digitos) return '';
+    return parseInt(digitos, 10).toLocaleString('es-CL');
+  }
+  /* Reformatea el input mientras se escribe, guardando en S el valor
+     LIMPIO (sin puntos) -- todo el resto del archivo sigue leyendo
+     S.fin_costo_* con parseFloat(), que no entiende separadores de miles.
+     Mantiene la posición del cursor relativa al final del texto para que
+     no salte al final en cada tecla si se edita en el medio. */
+  function _o2mInputDineroCambio(el, campo){
+    var antes = el.value;
+    var restoDespuesDelCursor = antes.length - el.selectionStart;
+    var digitos = _o2mLimpiarNumero(antes);
+    var formateado = _o2mFormatearMiles(digitos);
+    S[campo] = digitos;
+    el.value = formateado;
+    var nuevaPos = Math.max(0, formateado.length - restoDespuesDelCursor);
+    try { el.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
+    _pintarFinMargenDom();
+  }
+  function setFinCostoProveedor(el){ _o2mInputDineroCambio(el, 'fin_costo_proveedor'); }
+  function setFinCostoDespacho(el){ _o2mInputDineroCambio(el, 'fin_costo_despacho'); }
   function pintarFinanzas(b){
     var docTxt = (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)
       ? S.fin_doc.tido + ' ' + S.fin_doc.nudo : null;
+    // 2026-08-30 (Daniel, viendo este paso en vivo): "primero lo primero
+    // que tenemos que hacer es seleccionar el centro de costo. Lo
+    // segundo... si está en documento, al menos tiene que haber uno" --
+    // progressive disclosure SOLO visual: mientras no hay centro elegido,
+    // Cobertura para abajo queda oculta detrás de un aviso. completo()
+    // NO cambia (sigue exigiendo centro Y (garantía O documento), ver
+    // línea ~969) -- esto es puro orden en pantalla, no una validación
+    // nueva.
+    var centroElegido = !!S.fin_centro;
     b.innerHTML =
       '<h6 class="t">Costos</h6>'+
       '<p class="d">Centro de costo, a qué queda cubierta esta OT, y cuánto cuesta de verdad (para medir margen).</p>'+
       '<label class="fl">Centro de costo *</label>'+
       '<div class="o2m-grid mb-3" style="grid-template-columns:repeat(3,minmax(120px,1fr))">'+
         _OT2M_CENTROS.map(function(c){
-          return '<button type="button" class="o2m-op '+(S.fin_centro===c.v?'sel':'')+'" '+
+          // 2026-08-30 (Daniel: "cuando selecciono servicio técnico, no se
+          // pone verde... necesito que el contorno se ponga en verde") --
+          // .sel-ok es un modificador NUEVO (ver CSS ~línea 247), no toca
+          // .sel que sigue en rojo para Origen/Tipo.
+          return '<button type="button" class="o2m-op '+(S.fin_centro===c.v?'sel-ok':'')+'" '+
             'onclick="OT2C.setFinCentro(\''+c.v+'\')" style="text-align:center;padding:12px 8px">'+
             '<span class="n">'+c.n+'</span></button>';
         }).join('') +
       '</div>'+
-      '<label class="fl">Cobertura *</label>'+
-      '<div class="d-flex gap-2 mb-2">'+
-        '<button type="button" class="btn btn-sm '+(!S.fin_garantia?'btn-dark':'btn-outline-secondary')+'" '+
-          'onclick="OT2C.setFinGarantia(false)"><i class="bi bi-receipt me-1"></i>Documento</button>'+
-        '<button type="button" class="btn btn-sm '+(S.fin_garantia?'btn-dark':'btn-outline-secondary')+'" '+
-          'onclick="OT2C.setFinGarantia(true)"><i class="bi bi-shield-check me-1"></i>Garantía</button>'+
-      '</div>'+
-      (S.fin_garantia
-        ? '<label class="fl">Motivo de la garantía</label>'+
-          '<textarea class="form-control mb-2" rows="2" maxlength="500" '+
-          'placeholder="Por qué queda cubierto sin cobrar…" '+
-          'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'
-        : (docTxt
-            ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
-              '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(docTxt)+'</b>'+
-              ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.limpiarFinDoc()">cambiar</button>'+
-              '</div>'+
-              '<div id="o2mFinZZ" class="mt-2"></div>'
-            : '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.abrirBusquedaFinDoc()">'+
-              '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'))+
-      '<div id="o2mFinEstimado" class="mt-3"><div class="text-muted small">'+
-      '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>'+
-      // 2026-08-29 (Daniel: "los costos y lo que nos cobra el proveedor...
-      // % de margen sí o sí... además del transporte"): costo_proveedor y
-      // costo_despacho van en columnas SEPARADAS (mismo criterio que ya usa
-      // mant_visitas desde 2026-08-27) porque más adelante se concilian
-      // contra facturas de proveedores distintos -- el del servicio y el
-      // del transporte -- mezclarlos impediría separarlos después.
-      '<div class="row g-2 mt-2">'+
-        '<div class="col-6">'+
-          '<label class="fl">Costo del proveedor'+(S.tipo==='instalacion'?' (instalación)':'')+'</label>'+
-          '<input type="number" class="form-control" min="0" step="1" '+
-          'value="'+esc(S.fin_costo_proveedor)+'" placeholder="Lo que le pagamos" '+
-          'oninput="OT2C.setFinCostoProveedor(this.value)">'+
-        '</div>'+
-        '<div class="col-6">'+
-          '<label class="fl">Costo del proveedor por despacho</label>'+
-          '<input type="number" class="form-control" min="0" step="1" '+
-          'value="'+esc(S.fin_costo_despacho)+'" placeholder="Si hay despacho, si no déjalo vacío" '+
-          'oninput="OT2C.setFinCostoDespacho(this.value)">'+
-        '</div>'+
-      '</div>'+
-      '<div id="o2mFinMargen" class="mt-2"></div>'+
-      // 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan
-      // poderse agregar documentos... ese boton persistira en todas las
-      // opciones para tener flexibilidad"). Vive en Finanzas porque es la
-      // única sección que se pinta para TODO origen no-interno -- así el
-      // botón está disponible venga la OT de donde venga. Sutil a
-      // propósito (hay poco espacio): una fila compacta por documento, sin
-      // tarjeta grande.
-      '<div id="o2mDocExtra" class="mt-3"></div>';
-    _o2mFinEstimar();
-    if (docTxt) _o2mFinCargarZZ(); else _pintarFinMargenDom();
-    _pintarDocExtraDom();
+      (!centroElegido
+        ? '<div class="o2m-aviso"><i class="bi bi-arrow-up-circle me-1"></i>'+
+          'Elige primero el centro de costo para continuar con la cobertura y los costos.</div>'
+        : '<label class="fl">Cobertura *</label>'+
+          '<div class="d-flex gap-2 mb-2">'+
+            '<button type="button" class="btn btn-sm '+(!S.fin_garantia?'btn-dark':'btn-outline-secondary')+'" '+
+              'onclick="OT2C.setFinGarantia(false)"><i class="bi bi-receipt me-1"></i>Documento</button>'+
+            '<button type="button" class="btn btn-sm '+(S.fin_garantia?'btn-dark':'btn-outline-secondary')+'" '+
+              'onclick="OT2C.setFinGarantia(true)"><i class="bi bi-shield-check me-1"></i>Garantía</button>'+
+          '</div>'+
+          (S.fin_garantia
+            ? '<label class="fl">Motivo de la garantía</label>'+
+              '<textarea class="form-control mb-2" rows="2" maxlength="500" '+
+              'placeholder="Por qué queda cubierto sin cobrar…" '+
+              'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'
+            : (docTxt
+                ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
+                  '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(docTxt)+'</b>'+
+                  ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.limpiarFinDoc()">cambiar</button>'+
+                  '</div>'+
+                  '<div id="o2mFinZZ" class="mt-2"></div>'
+                : '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.abrirBusquedaFinDoc()">'+
+                  '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'))+
+          '<div id="o2mFinEstimado" class="mt-3"><div class="text-muted small">'+
+          '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>'+
+          // 2026-08-29 (Daniel: "los costos y lo que nos cobra el proveedor...
+          // % de margen sí o sí... además del transporte"): costo_proveedor y
+          // costo_despacho van en columnas SEPARADAS (mismo criterio que ya usa
+          // mant_visitas desde 2026-08-27) porque más adelante se concilian
+          // contra facturas de proveedores distintos -- el del servicio y el
+          // del transporte -- mezclarlos impediría separarlos después.
+          '<div class="row g-2 mt-2">'+
+            '<div class="col-6">'+
+              '<label class="fl">Costo del proveedor'+(S.tipo==='instalacion'?' (instalación)':'')+'</label>'+
+              '<input type="text" inputmode="numeric" class="form-control" '+
+              'value="'+esc(_o2mFormatearMiles(S.fin_costo_proveedor))+'" placeholder="Lo que le pagamos" '+
+              'oninput="OT2C.setFinCostoProveedor(this)">'+
+            '</div>'+
+            '<div class="col-6">'+
+              '<label class="fl">Costo del proveedor por despacho</label>'+
+              '<input type="text" inputmode="numeric" class="form-control" '+
+              'value="'+esc(_o2mFormatearMiles(S.fin_costo_despacho))+'" placeholder="Si hay despacho, si no déjalo vacío" '+
+              'oninput="OT2C.setFinCostoDespacho(this)">'+
+            '</div>'+
+          '</div>'+
+          '<div id="o2mFinMargen" class="mt-2"></div>'+
+          // 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan
+          // poderse agregar documentos... ese boton persistira en todas las
+          // opciones para tener flexibilidad"). Vive en Finanzas porque es la
+          // única sección que se pinta para TODO origen no-interno -- así el
+          // botón está disponible venga la OT de donde venga. Sutil a
+          // propósito (hay poco espacio): una fila compacta por documento, sin
+          // tarjeta grande.
+          '<div id="o2mDocExtra" class="mt-3"></div>');
+    if (centroElegido){
+      _o2mFinEstimar();
+      if (docTxt) _o2mFinCargarZZ(); else _pintarFinMargenDom();
+      _pintarDocExtraDom();
+    }
   }
   function setFinCentro(v){ S.fin_centro = v; repintarSeccion('finanzas'); }
   function setFinGarantia(esGarantia){
@@ -3123,8 +3321,11 @@ window.OT2C = (function(){
     S.fin_zz_codigo = sku; S.fin_zz_monto = monto;
     _pintarFinZZDom(); _pintarFinMargenDom();
   }
-  function setFinCostoProveedor(v){ S.fin_costo_proveedor = v; _pintarFinMargenDom(); }
-  function setFinCostoDespacho(v){ S.fin_costo_despacho = v; _pintarFinMargenDom(); }
+  // setFinCostoProveedor/setFinCostoDespacho viven arriba, junto al resto
+  // del helper de input de dinero (2026-08-30) -- quedaban duplicadas acá
+  // desde antes de ese cambio; la versión de acá tomaba `this.value` ya
+  // formateado con puntos y lo guardaba tal cual en S, lo que habría roto
+  // parseFloat(S.fin_costo_*) en cuanto el monto pasara de 3 dígitos.
 
   /* ── Documentos asociados (2026-08-29) ───────────────────────────────
      "siempre deberan poderse agregar documentos validando con una
@@ -3588,6 +3789,19 @@ window.OT2C = (function(){
     // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
     // servicio) -- quedan como referencia informativa en la sección Equipos.
     S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; }) : [];
+
+    // 2026-08-30 (Daniel: "la dirección del documento, eso ya lo
+    // teníamos... hay que repararlo"): la fuente (documento/cotización/
+    // ticket) puede traer dirección/comuna del ERP -- se precarga como
+    // TEXTO en Contraparte para ahorrar tipeo (solo si el técnico/gestor
+    // todavía no escribió nada ahí), pero NUNCA con lat/lng: la ubicación
+    // sigue exigiendo pasar por Google Places para confirmarse (Daniel:
+    // "se valide con geolocalización") -- el texto precargado ahorra
+    // tipeo, no reemplaza la validación.
+    if ((header.direccion || '').trim() && !(S.contraparte.direccion || '').trim()){
+      S.contraparte.direccion = header.direccion.trim();
+      if ((header.comuna || '').trim()) S.contraparte.comuna = header.comuna.trim();
+    }
 
     if (window.ilusToast){
       ilusToast('✓ ' + (r.creado ? 'Ficha creada: ' : 'Cliente encontrado: ') + r.cliente.razon_social, {type:'success'});
@@ -4356,6 +4570,7 @@ window.OT2C = (function(){
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
+          agregarEquiposFaltantes:agregarEquiposFaltantes,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,
