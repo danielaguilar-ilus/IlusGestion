@@ -78423,6 +78423,7 @@ def _ensure_mant_anexos():
                     niveles_servicio   TEXT NULL,
                     hitos_pago         TEXT NULL,
                     alcance_servicio   TEXT NULL,
+                    clausulas_adicionales TEXT NULL COMMENT 'Independiente/caso fortuito/limitacion responsabilidad/indemnidad -- borrador pendiente de revision legal, ver _ANEXO_CLAUSULAS_DEFECTO',
                     estado             ENUM('borrador','enviado','visto','firmado',
                                             'rechazado','vencido','anulado')
                                        NOT NULL DEFAULT 'borrador',
@@ -78450,6 +78451,22 @@ def _ensure_mant_anexos():
                     INDEX idx_anx_estado (estado)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
+            # 2026-08-30: clausulas_adicionales agregada DESPUES de que
+            # mant_anexos ya existia en produccion -- CREATE TABLE IF NOT
+            # EXISTS de arriba no la agrega a una tabla vieja. Mismo patron
+            # _ensure_* idempotente usado toda la noche.
+            try:
+                cur.execute(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_anexos' "
+                    "   AND COLUMN_NAME='clausulas_adicionales'")
+                if not cur.fetchone():
+                    cur.execute(
+                        "ALTER TABLE mant_anexos ADD COLUMN clausulas_adicionales TEXT NULL "
+                        "COMMENT 'Independiente/caso fortuito/limitacion responsabilidad/indemnidad -- "
+                        "borrador pendiente de revision legal, ver _ANEXO_CLAUSULAS_DEFECTO'")
+            except Exception as e:
+                print(f"[ensure_mant_anexos] clausulas_adicionales: {e}", flush=True)
         conn.commit()
     finally:
         conn.close()
@@ -78520,6 +78537,66 @@ _ANEXO_ALCANCE_DEFECTO = (
     "conformidad del cliente. Se asumen penalizaciones monetarias por "
     "incumplimiento del servicio y el principio de reportabilidad tanto para "
     "el inicio del trabajo como para el término."
+)
+# 2026-08-30 (Daniel, textual: "hay que colocar las cláusulas y poder
+# cuidarnos... si alguien muere, si alguien le pasa algo, excluirme a mí y
+# a la empresa de cualquier acción legal en contra de nosotros... pero sin
+# inventar"). Los 2 anexos reales que compartió (Isabel Milling N°135,
+# Daniel Pulgar N°155) NO traen ninguna cláusula legal -- son solo los 6
+# campos de siempre (objetivo/precio/duración/niveles/hitos/alcance) más
+# la firma. Esta sección es NUEVA, agregada aparte, sin tocar ni una
+# palabra de esos 6 campos originales (Daniel: "el contrato lo hizo
+# Félix... lo más seguro es que va a querer que quede lo más idéntico
+# posible, cualquier cambio va a pedir participar").
+#
+# ⚠️ ESTO NO ES ASESORÍA LEGAL. Es un borrador con conceptos reales y
+# estándar del derecho chileno (independiente/no laboral, caso fortuito,
+# limitación de responsabilidad, indemnidad, firma electrónica Ley
+# 19.799) para que Félix (u otro abogado habilitado) lo revise, ajuste o
+# reemplace antes de usarse en un contrato real -- exactamente lo que ya
+# advertía el plan de este proyecto sobre firma electrónica ("no
+# corresponde que el sistema declare que una firma es legalmente válida;
+# eso lo determina un abogado"). Igual que niveles/hitos/alcance, es
+# EDITABLE por anexo (ver ot2_api_anexo_crear: "or _ANEXO_..._DEFECTO"),
+# no queda grabado a fuego.
+_ANEXO_CLAUSULAS_DEFECTO = (
+    "1. Naturaleza de la relación: El Proveedor presta los servicios "
+    "descritos en este Anexo en calidad de contratista independiente, sin "
+    "que ello genere vínculo de subordinación o dependencia, ni relación "
+    "laboral de ningún tipo con Sport and Health Solutions SPA (ILUS "
+    "Fitness), en los términos del artículo 3° del Código del Trabajo.\n\n"
+    "2. Caso fortuito o fuerza mayor: Ninguna de las partes será "
+    "responsable por el incumplimiento, total o parcial, de las "
+    "obligaciones de este Anexo cuando dicho incumplimiento se deba a "
+    "caso fortuito o fuerza mayor, en los términos del artículo 45 del "
+    "Código Civil, incluyendo -sin limitarse a- enfermedad grave, "
+    "accidente, incapacidad sobreviniente o fallecimiento de la persona "
+    "natural que presta el servicio, catástrofes naturales, actos de "
+    "autoridad, o cualquier circunstancia imprevista e irresistible ajena "
+    "a la voluntad de las partes.\n\n"
+    "3. Limitación de responsabilidad: La responsabilidad de Sport and "
+    "Health Solutions SPA (ILUS Fitness) derivada de este Anexo se limita, "
+    "en todo caso, al monto efectivamente pagado por el servicio objeto "
+    "del mismo. En ningún caso responderá por daños indirectos, lucro "
+    "cesante, ni perjuicios ocasionados a terceros con motivo de la "
+    "ejecución del servicio por parte del Proveedor.\n\n"
+    "4. Indemnidad: El Proveedor mantendrá indemne a Sport and Health "
+    "Solutions SPA (ILUS Fitness), sus representantes y trabajadores, de "
+    "cualquier reclamo, acción judicial o administrativa, multa o sanción "
+    "que terceros pudieran interponer con ocasión de hechos, actos u "
+    "omisiones atribuibles al Proveedor o a su personal en la ejecución "
+    "del servicio.\n\n"
+    "5. Desviaciones del servicio: Cualquier modificación al alcance, "
+    "productos o condiciones descritas en este Anexo -incluyendo cambios "
+    "de producto solicitados por el Cliente durante la ejecución- deberá "
+    "quedar registrada en la Orden de Trabajo respectiva y no altera la "
+    "validez del resto de este documento.\n\n"
+    "6. Firma electrónica: Las partes reconocen validez a la firma "
+    "electrónica simple estampada en este documento conforme a la Ley N° "
+    "19.799 sobre Documentos Electrónicos, Firma Electrónica y Servicios "
+    "de Certificación de dicha Firma, sirviendo el registro de fecha, "
+    "hora, dirección IP y dispositivo como respaldo de la manifestación "
+    "de voluntad del firmante."
 )
 
 
@@ -78593,8 +78670,8 @@ def ot2_api_anexo_crear():
             "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
             "   cliente_nombre, objetivo_servicio, precio_items_json, "
             "   fecha_inicio, fecha_termino, niveles_servicio, hitos_pago, "
-            "   alcance_servicio, created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "   alcance_servicio, clausulas_adicionales, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (numero, vid, d.get("tecnico_externo_id") or None,
              proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
              (d.get("cliente_nombre") or "").strip()[:200] or None,
@@ -78603,6 +78680,7 @@ def ot2_api_anexo_crear():
              (d.get("niveles_servicio") or "").strip() or _ANEXO_NIVELES_DEFECTO,
              (d.get("hitos_pago") or "").strip() or _ANEXO_HITOS_DEFECTO,
              (d.get("alcance_servicio") or "").strip() or _ANEXO_ALCANCE_DEFECTO,
+             (d.get("clausulas_adicionales") or "").strip() or _ANEXO_CLAUSULAS_DEFECTO,
              current_username()))
         aid = cur.lastrowid
         conn.commit()
@@ -78782,6 +78860,7 @@ def _anexo_publico_payload(a):
         "niveles_servicio": a.get("niveles_servicio") or "",
         "hitos_pago": a.get("hitos_pago") or "",
         "alcance_servicio": a.get("alcance_servicio") or "",
+        "clausulas_adicionales": a.get("clausulas_adicionales") or "",
     }
 
 
@@ -78900,6 +78979,7 @@ def ot2_api_anexo_preview_pdf():
         "niveles_servicio": _ANEXO_NIVELES_DEFECTO,
         "hitos_pago": _ANEXO_HITOS_DEFECTO,
         "alcance_servicio": _ANEXO_ALCANCE_DEFECTO,
+        "clausulas_adicionales": _ANEXO_CLAUSULAS_DEFECTO,
     }
     html = render_template(
         "ot2/anexo_documento.html",

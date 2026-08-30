@@ -91,6 +91,15 @@
 
   <p class="campo"><b>Alcance del Servicio:</b> {{ anexo.alcance_servicio }}</p>
 
+  {% if anexo.clausulas_adicionales %}
+  {# 2026-08-30 (Daniel: "cuidarnos y no exponernos... pero sin inventar" --
+     sección nueva, agregada aparte de los 6 campos originales del Anexo
+     que redactó Félix; ver _ANEXO_CLAUSULAS_DEFECTO en app.py. Borrador
+     pendiente de revisión legal, NO asesoría certificada. #}
+  <p class="campo"><b>Cláusulas Adicionales:</b></p>
+  <p class="campo" style="white-space:pre-line">{{ anexo.clausulas_adicionales }}</p>
+  {% endif %}
+
   <div class="firma-bloque">
     {% if firma %}
       {% if firma.firma_url %}<img class="firma-img" src="{{ firma.firma_url }}" alt="Firma">{% endif %}
