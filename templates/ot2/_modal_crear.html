@@ -2481,6 +2481,24 @@ window.OT2C = (function(){
       if (fechaBase < _hoyStr) fechaBase = _hoyStr;
 
       var encontrado = await _o2mDayBuscarHuecoRango(fechaBase, durMin, tecnicoIds, 14);
+      // 2026-08-30 (Daniel, insistiendo -- "son ya las seis y media... y lo
+      // agenda en el pasado"): candado FINAL, sin confiar en ningún cálculo
+      // intermedio -- se arma la fecha+hora real que devolvió la búsqueda y
+      // se compara contra el reloj real de ESTE navegador (new Date(), que
+      // en el celular/PC de Daniel corre en hora de Chile). Si por
+      // cualquier motivo (fecha vieja en caché, reloj distinto, un borde
+      // no contemplado arriba) el resultado quedó en el pasado, se
+      // descarta y se reintenta la búsqueda arrancando de HOY MISMO a la
+      // hora actual -- nunca se aplica un horario que ya pasó.
+      if (encontrado){
+        var _partes = encontrado.hora.split(':').map(Number);
+        var _dtReal = new Date(
+          encontrado.fecha.slice(0,4)*1, encontrado.fecha.slice(5,7)*1-1, encontrado.fecha.slice(8,10)*1,
+          _partes[0], _partes[1]);
+        if (_dtReal.getTime() < Date.now()){
+          encontrado = await _o2mDayBuscarHuecoRango(_o2mDayHoyStr(), durMin, tecnicoIds, 14);
+        }
+      }
       if (!encontrado){
         if (window.ilusToast) ilusToast('Sin huecos en los próximos 14 días para ese equipo de técnicos', {type:'warning'});
         return;
