@@ -2695,6 +2695,25 @@ window.OT2C = (function(){
           });
         }
       }
+      // 2026-08-30 (Daniel, caso real FCV 11382 -- Booty Builder Platinum /
+      // Dual Cable Ratio sin checklist pese a estar bien clasificados en el
+      // catálogo): sugerirPlantillaEquipo() exige S.tipo para consultar el
+      // backend ("if (!S.tipo) return", más abajo) -- pero en el origen
+      // "Factura o boleta" el documento puede resolverse (y con él, el alta
+      // automática de productos faltantes) ANTES de que el usuario llegue
+      // al Paso 1 a elegir el tipo de OT: el wizard permite moverse
+      // libremente, sin orden fijo. Esa primera sugerencia se pierde en
+      // silencio, y como el alta automática corre UNA sola vez por
+      // cliente+documento (ver _o2mAltaAutoFaltantesSiCorresponde), nunca se
+      // reintentaba sola. cargarEquipos() se vuelve a llamar cada vez que
+      // cambia el tipo (setTipo -> pintarFormulario), así que reintentar acá
+      // -- para cualquier equipo YA marcado que todavía no tenga plantilla --
+      // la recupera apenas S.tipo pasa a tener un valor real, sin pisar
+      // nunca una elegida a mano (misma guarda de siempre dentro de
+      // sugerirPlantillaEquipo: no pisa e.plantilla_id si ya existe).
+      S.equipos.forEach(function(e){
+        if (!e.plantilla_id) sugerirPlantillaEquipo(e.maquina_id);
+      });
       pintarListaEquipos();
       // ── Alta automática de equipos faltantes desde la fuente (2026-08-30) ──
       // Ver _o2mAltaAutoFaltantesSiCorresponde: cacheEquipos YA está cargado
