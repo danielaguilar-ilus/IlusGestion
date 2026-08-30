@@ -569,5 +569,43 @@ salvo que Daniel lo pida explícitamente.
 
 ---
 
-_Última actualización: 2026-07-25_
+## 🔲 REGLA #14 — Toda lista con selección múltiple lleva "marcar/desmarcar todo"
+
+**Pedido explícito de Daniel (2026-08-30, viendo en vivo la pestaña
+"Cotización interna" del modal de búsqueda de productos): "poder
+seleccionar todo con un checkbox de seleccionar y no seleccionar. Eso
+siempre déjalo como regla del proyecto".**
+
+Toda lista o tabla del proyecto donde el usuario marca ítems con
+checkboxes (líneas de un documento, productos de una cotización, filas de
+una tabla, etc.) debe traer un control único para marcar/desmarcar TODOS
+de una vez — no solo el toggle individual por fila.
+
+### Patrón de referencia
+
+`tkaToggleAllCli(idx)` en `templates/tickets/_tka_modal.html` (pestaña
+"Por RUT" del modal de búsqueda de productos), con su botón asociado:
+
+```html
+<button class="tka-doc-add-btn" style="background:#fff;color:#374151;border:1px solid #d1d5db"
+  onclick="tkaToggleAllCli(idx)">
+  <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
+</button>
+```
+
+Es un **toggle**, no dos botones separados: si ALGÚN ítem visible está sin
+marcar, la acción marca todos; si ya están todos marcados, la misma acción
+los desmarca todos (`inputs.some(inp => !inp.checked)` decide el sentido).
+
+Reutilizar siempre la función de toggle individual de la línea (línea por
+línea, no una lógica de selección duplicada) — así cualquier regla especial
+de esa lista (ej. "sin saldo pide motivo") se sigue respetando igual que si
+el usuario marcara una por una. Ver también `tkaToggleAllCotizacion()`
+(pestaña "Cotización interna", mismo archivo) como segundo ejemplo, y
+`tkaToggleAllDoc`/`.tka-master-bar` (pestaña "Por documento") como variante
+que además excluye a propósito ciertas filas (sin saldo) del "marcar todo".
+
+---
+
+_Última actualización: 2026-08-30_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

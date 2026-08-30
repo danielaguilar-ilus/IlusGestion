@@ -336,6 +336,22 @@
     letter-spacing:.02em;text-transform:uppercase;cursor:help;
   }
   .tka-line-tag-zero i{font-size:.86rem}
+  /* 2026-08-30 (Daniel, en vivo -- "al seleccionar un producto debemos
+     colocar más información y que no se corte"): precio unitario + clase
+     de producto dentro de la fila de la pestaña "Cotización interna".
+     Mismos tokens que ya existen en este archivo (verde de ln-qty-saldo
+     para plata, gris neutro de badge-pill para el chip) -- no se inventa
+     paleta nueva. */
+  .tka-line .ln-cot-precio{
+    display:inline-block;margin-left:8px;color:#16a34a;font-weight:800;
+    font-size:.86rem;font-variant-numeric:tabular-nums;
+  }
+  .tka-line .ln-cot-clase{
+    display:inline-flex;align-items:center;margin-left:6px;
+    font-size:.72rem;font-weight:700;color:#374151;text-transform:capitalize;
+    background:#f3f4f6;border:1px solid var(--tka-gray-2);
+    padding:2px 9px;border-radius:50px;letter-spacing:.02em;
+  }
   @media(max-width:600px){
     .tka-line{grid-template-columns:32px 1fr;gap:8px}
     .tka-line .ln-sku,.tka-line .ln-qty,.tka-line .ln-qty-input{grid-column:2}
@@ -2543,17 +2559,59 @@ async function _tkaCotizacionElegir(idx){
       </div>`;
       return;
     }
-    let html = `<div class="tka-mod-hint" style="margin-bottom:10px"><i class="bi bi-calculator"></i><div><strong>${_tkaEsc(c.numero_cotizacion || ('#' + c.id))}</strong> — ${_tkaEsc(c.empresa || 'Sin empresa')}</div></div><div class="tka-results">`;
+    // 2026-08-30 (Daniel, en vivo, viendo la pestaña "Cotización interna"):
+    // 3 pedidos sobre esta vista de productos.
+    // (1) "más información y que no se corte" -- .tka-bod-card nació para
+    // Bodega/Catálogo (nombres cortos) y trunca a 2 líneas con
+    // -webkit-line-clamp (ver CSS ~L414). Los productos ILUS reales
+    // ("Banco Olímpico Plano ILUS IP2", etc.) se cortan ahí. Se migra al
+    // layout de fila .tka-line que ya usan "Por documento"/"Por RUT" --
+    // mismo checkbox a la izquierda + SKU monospace, sin truncar el
+    // nombre, y con espacio para precio + clase de producto (datos que el
+    // backend YA traía en /tickets/api/cotizaciones/<id> pero esta vista
+    // descartaba).
+    // (2) "seleccionar todo con un checkbox" -- botón + tkaToggleAllCotizacion()
+    // más abajo, mismo patrón que tkaToggleAllCli (ver REGLA #14 en CLAUDE.md).
+    let html = `<div class="tka-mod-hint" style="margin-bottom:10px"><i class="bi bi-calculator"></i><div><strong>${_tkaEsc(c.numero_cotizacion || ('#' + c.id))}</strong> — ${_tkaEsc(c.empresa || 'Sin empresa')}</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.78rem;color:#6b7280;flex-wrap:wrap;gap:6px">
+      <span>${items.length} producto${items.length===1?'':'s'} disponible${items.length===1?'':'s'} · selecciona los que corresponden al ticket</span>
+      <button type="button" class="tka-doc-add-btn" style="background:#fff;color:#374151;border:1px solid #d1d5db"
+        onclick="tkaToggleAllCotizacion()">
+        <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
+      </button>
+    </div>
+    <div class="tka-results">`;
     items.forEach((it, i) => {
       const key = `${c.id}:${it.id}`;
       const isSel = _TKA.selCotizacion.has(key);
-      html += `<div class="tka-bod-card${isSel ? ' is-selected' : ''}" data-cotitem-idx="${i}" onclick="tkaToggleLineaCotizacion(${i})">
-        <div class="tka-chk${isSel ? ' is-checked' : ''}"><i class="bi bi-check-lg"></i></div>
-        <div class="tka-bod-thumb"><i class="bi bi-box-seam"></i></div>
-        <div class="tka-bod-info">
-          <div class="tka-bod-nombre">${_tkaEsc(it.nombre)}</div>
-          <div class="tka-bod-meta"><span class="tka-bod-sku">${_tkaEsc(it.sku || 's/SKU')}</span><span>${it.qty || 1} u.</span></div>
+      const sku = (it.sku || '').toUpperCase();
+      const qty = it.qty || 1;
+      // precio_manual (si el ejecutivo lo sobreescribió a mano) manda sobre
+      // el precio_unitario calculado por tarifa -- mismo criterio que usa
+      // el backend al guardar la cotización (tk_api_cotizacion_guardar).
+      const precioEfectivo = (it.precio_manual != null) ? it.precio_manual : it.precio_unitario;
+      const precioHtml = (precioEfectivo != null)
+        ? `<span class="ln-cot-precio">$${Math.round(precioEfectivo).toLocaleString('es-CL')}</span>` : '';
+      // clase_producto llega como slug (cat_clases_producto.slug) -- el
+      // mapeo slug→nombre legible vive solo en el backend
+      // (catalogo_module._cat_clases_map), no está disponible en este
+      // archivo. Se pinta el texto tal cual (sin inventar un catálogo de
+      // etiquetas), solo cambiando "_" por espacio para que no se vea
+      // pegado -- el CSS (.ln-cot-clase) ya capitaliza con text-transform.
+      const claseHtml = it.clase_producto
+        ? `<span class="ln-cot-clase">${_tkaEsc(String(it.clase_producto).replace(/_/g, ' '))}</span>` : '';
+      html += `<div class="tka-line${isSel ? ' is-selected' : ''}" data-cotitem-idx="${i}">
+        <label class="tka-chk${isSel ? ' is-checked' : ''}">
+          <input type="checkbox" ${isSel ? 'checked' : ''} data-cotitem-idx="${i}" onchange="tkaToggleLineaCotizacion(${i})">
+          <span class="tka-chk-mark">✓</span>
+        </label>
+        <div class="ln-sku">${_tkaEsc(sku) || '—'}</div>
+        <div class="ln-desc">
+          ${_tkaEsc(it.nombre)}
+          ${claseHtml}
+          ${precioHtml}
         </div>
+        <div class="ln-qty"><span>${qty} u.</span></div>
       </div>`;
     });
     html += '</div>';
@@ -2590,6 +2648,29 @@ function tkaToggleLineaCotizacion(i){
     if (chk) chk.classList.add('is-checked');
   }
   tkaUpdateCounter();
+}
+// 2026-08-30 (Daniel, en vivo -- "poder seleccionar todo con un checkbox de
+// seleccionar y no seleccionar. Eso siempre déjalo como regla del
+// proyecto" -- ver REGLA #14 en CLAUDE.md): mismo patrón que
+// tkaToggleAllCli (pestaña "Por RUT", más arriba en este archivo) pero
+// para los ítems de una cotización interna. Es un TOGGLE: si ALGUNO está
+// sin marcar, marca todos; si ya están todos marcados, los desmarca todos.
+// Reutiliza tkaToggleLineaCotizacion línea por línea para no duplicar la
+// lógica de selección (Map _TKA.selCotizacion + clases visuales) -- acá no
+// hace falta que sea async porque, a diferencia de tkaToggleLineaCli, no
+// existe el flujo de "motivo sin saldo" (los ítems de cotización no tienen
+// concepto de saldo ERP).
+function tkaToggleAllCotizacion(){
+  const cont = document.getElementById('tkaCotizacionItemsResult');
+  if (!cont) return;
+  const inputs = Array.from(cont.querySelectorAll('input[type="checkbox"][data-cotitem-idx]'));
+  if (!inputs.length) return;
+  const marcarTodo = inputs.some(inp => !inp.checked);
+  inputs.forEach(inp => {
+    if (inp.checked === marcarTodo) return;
+    inp.checked = marcarTodo;
+    tkaToggleLineaCotizacion(parseInt(inp.dataset.cotitemIdx, 10));
+  });
 }
 
 // ──────────────────────────────────────────────────────────────
