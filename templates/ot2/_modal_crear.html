@@ -828,6 +828,26 @@ window.OT2C = (function(){
          // a mano) y cuánto cobra el proveedor externo por el trabajo,
          // para comparar contra lo que se le cobra al cliente.
          fin_zz_lineas:[], fin_zz_codigo:null, fin_zz_monto:null,
+         // 2026-08-30 (Daniel, dictando en vivo: "el ZZ envío por si hay
+         // despacho... identifícalo"): línea ZZENVIO del MISMO documento,
+         // reconocida APARTE de fin_zz_codigo/fin_zz_monto -- nunca se
+         // ofrece ni se auto-elige como si fuera el valor del servicio, así
+         // no se pierde ni se mezcla con él (ver _o2mFinCargarZZ).
+         fin_zz_envio:null,
+         // Aviso (no bloqueante) cuando el documento elegido trae la línea
+         // de servicio (ZZINSTALACION/ZZMANTENCION) pero su RUT no coincide
+         // con el del cliente de la OT -- mismo criterio que "Documentos
+         // asociados" (_o2mRutCuerpo), Daniel: "que coincida con el RUT del
+         // cliente... eso es lo que se va a solicitar para avanzar con la
+         // documentación".
+         fin_doc_rut_difiere:false,
+         // Cotización interna elegida DESDE Finanzas cuando todavía no hay
+         // documento real del ERP (Daniel: "generar/asociar una cotización
+         // ahí mismo, para no dejar la OT sin valorizar") -- {id, numero,
+         // total}. Es un ayudante de VALORIZACIÓN (alimenta _ventaActual()
+         // para ver el margen), no reemplaza la cobertura documento/garantía
+         // que ya exige completo('finanzas').
+         fin_cotizacion:null,
          // costo_proveedor/costo_despacho van SEPARADOS a propósito (mismo
          // criterio que ya usa mant_visitas desde 2026-08-27): más adelante
          // se van a conciliar contra facturas de proveedores distintos
@@ -3280,7 +3300,13 @@ window.OT2C = (function(){
             ? '<label class="fl">Motivo de la garantía</label>'+
               '<textarea class="form-control mb-2" rows="2" maxlength="500" '+
               'placeholder="Por qué queda cubierto sin cobrar…" '+
-              'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'
+              'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'+
+              // 28-08-2026 (regla de negocio dictada por Daniel: "toda OT
+              // debe tener SIEMPRE una valorización del servicio, aunque
+              // termine cerrando como garantía sin cobro -- para medir
+              // costo/margen igual"): garantía no tiene documento, así que
+              // el mismo ayudante de cotización de abajo aplica acá también.
+              _o2mFinCotizacionHtml()
             : (docTxt
                 ? '<div class="o2m-aviso" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
                   '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(docTxt)+'</b>'+
@@ -3288,7 +3314,8 @@ window.OT2C = (function(){
                   '</div>'+
                   '<div id="o2mFinZZ" class="mt-2"></div>'
                 : '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.abrirBusquedaFinDoc()">'+
-                  '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'))+
+                  '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'+
+                  _o2mFinCotizacionHtml()))+
           '<div id="o2mFinEstimado" class="mt-3"><div class="text-muted small">'+
           '<span class="spinner-border spinner-border-sm me-1"></span>Calculando estimado…</div></div>'+
           // 2026-08-29 (Daniel: "los costos y lo que nos cobra el proveedor...
@@ -3331,6 +3358,7 @@ window.OT2C = (function(){
     S.fin_garantia = esGarantia;
     if (esGarantia){
       S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
+      S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
     } else {
       S.fin_garantia_motivo = '';
     }
@@ -3339,6 +3367,7 @@ window.OT2C = (function(){
   function setFinGarantiaMotivo(v){ S.fin_garantia_motivo = v; }
   function limpiarFinDoc(){
     S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
+    S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
     repintarSeccion('finanzas');
   }
   function abrirBusquedaFinDoc(){
@@ -3367,8 +3396,11 @@ window.OT2C = (function(){
       if (window.ilusToast) ilusToast('Ese resultado no trae un documento identificable.', {type:'warning'});
       return;
     }
-    S.fin_doc = {tido: header.tido, nudo: header.nudo};
+    // rut viaja acá para el chequeo de coincidencia contra S.cliente.rut
+    // que hace _o2mFinCargarZZ cuando encuentra la línea de servicio real.
+    S.fin_doc = {tido: header.tido, nudo: header.nudo, rut: header.rut || ''};
     S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
+    S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
     repintarSeccion('finanzas');
   }
 
@@ -3377,8 +3409,23 @@ window.OT2C = (function(){
      además del transporte"). Reusa GET /ot/api/lineas-zz, que YA devuelve
      TODA línea que empiece con ZZ (no solo las dos con nombre) y marca
      cuál es la sugerida según el tipo de OT -- si el documento trae una
-     línea de transporte con SKU tipo ZZTRANSPORTE, aparece igual en la
-     lista, sin tener que enseñarle nada nuevo al backend. */
+     línea de transporte con SKU ZZENVIO, aparece igual en la lista, sin
+     tener que enseñarle nada nuevo al backend.
+
+     2026-08-30 (Daniel, dictando en vivo, reforzado después): "solamente
+     la instalación lleva el reconocimiento del ZZ instalación y el ZZ
+     envío por si hay despacho, y el de la mantención es ZZ mantención" --
+     el mapeo tipo→línea sugerida YA es _OT2_LINEA_ZZ (backend, no se
+     duplica acá). Lo nuevo es reconocer ZZENVIO APARTE cuando convive con
+     la línea de servicio en el MISMO documento: nunca se ofrece ni se
+     auto-elige como si fuera el valor del servicio (fin_zz_envio queda en
+     una variable separada de fin_zz_codigo/fin_zz_monto), y cuando SÍ se
+     identificó la línea de servicio real (la sugerida), se valida que el
+     RUT del documento coincida con el del cliente de la OT -- "eso es lo
+     que se va a solicitar para poder avanzar con la documentación, y que
+     coincida con el RUT del cliente". Mismo criterio de comparación por
+     CUERPO de RUT que "Documentos asociados" (_o2mRutCuerpo, más abajo);
+     solo avisa, NO bloquea (Daniel no lo pidió para este caso). */
   var _finZZSeq = 0;
   function _o2mFinCargarZZ(){
     if (!S.fin_doc) return;
@@ -3391,11 +3438,33 @@ window.OT2C = (function(){
       .then(function(j){
         if (seq !== _finZZSeq) return;
         S.fin_zz_lineas = (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
-        // Auto-elige la sugerida (o la única que haya) sin pisar una
-        // elección manual ya hecha por el usuario.
+        var envioLn = S.fin_zz_lineas.find(function(l){ return (l.sku||'').toUpperCase() === 'ZZENVIO'; });
+        S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: envioLn.monto} : null;
+        // Auto-elige la sugerida (o la única que haya, EXCLUYENDO siempre
+        // ZZENVIO) sin pisar una elección manual ya hecha por el usuario.
+        var sug = null;
         if (!S.fin_zz_codigo && S.fin_zz_lineas.length){
-          var sug = S.fin_zz_lineas.find(function(l){ return l.sugerida; }) || S.fin_zz_lineas[0];
-          S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto;
+          var candidatas = S.fin_zz_lineas.filter(function(l){ return l !== envioLn; });
+          sug = S.fin_zz_lineas.find(function(l){ return l.sugerida; }) || candidatas[0] || null;
+          if (sug){ S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto; }
+        }
+        // ¿La línea de servicio real (la que corresponde al tipo de OT) se
+        // identificó de este documento? Puede venir recién elegida (sug) o
+        // ya estar elegida de antes (el usuario reabrió el paso).
+        var actual = sug || S.fin_zz_lineas.find(function(l){ return l.sku === S.fin_zz_codigo; });
+        var lineaServicioEncontrada = !!(actual && actual.sugerida);
+        var rutDoc = (S.fin_doc && S.fin_doc.rut) || '';
+        var rutCliente = (S.cliente && S.cliente.rut) || '';
+        var _difieraAntes = S.fin_doc_rut_difiere;
+        S.fin_doc_rut_difiere = !!(lineaServicioEncontrada && rutDoc && rutCliente &&
+          _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
+        // Toast solo en la TRANSICIÓN a "no coincide" -- el aviso ámbar de
+        // _pintarFinZZDom queda visible de forma permanente mientras dure,
+        // así que no hace falta repetir el toast cada vez que este paso se
+        // vuelve a pintar (ej. el usuario navega a otro paso y vuelve).
+        if (S.fin_doc_rut_difiere && !_difieraAntes && window.ilusToast){
+          ilusToast('⚠ El RUT del documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
+            {type:'warning', duration:6000});
         }
         _pintarFinZZDom();
         _pintarFinMargenDom();
@@ -3408,23 +3477,49 @@ window.OT2C = (function(){
   }
   function _pintarFinZZDom(){
     var c = document.getElementById('o2mFinZZ'); if (!c) return;
-    if (!S.fin_zz_lineas.length){
-      c.innerHTML = '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
-        'El documento no trae líneas de servicio (ZZ...) — puedes ingresar el monto a mano si corresponde.</div>';
+    // ZZENVIO nunca se ofrece como opción de "línea de servicio" -- se
+    // muestra aparte, como dato informativo de transporte.
+    var seleccionables = S.fin_zz_lineas.filter(function(l){ return (l.sku||'').toUpperCase() !== 'ZZENVIO'; });
+    var envioHtml = S.fin_zz_envio
+      ? '<div class="o2m-aviso" style="background:#dbeafe;border-color:#93c5fd;color:#1e3a8a;margin-top:8px">'+
+        '<i class="bi bi-truck me-1"></i>El documento trae además <b>'+esc(S.fin_zz_envio.sku)+'</b> (transporte): '+
+        '<b>$'+Math.round(S.fin_zz_envio.monto).toLocaleString('es-CL')+'</b>'+
+        ' — se reconoce aparte, no se mezcla con el valor del servicio.</div>'
+      : '';
+    var avisoRut = S.fin_doc_rut_difiere
+      ? '<div class="o2m-aviso" style="background:#fff8e1;border-color:#fde68a;color:#92400e;margin-top:8px">'+
+        '<i class="bi bi-exclamation-triangle-fill me-1"></i>El RUT de este documento no coincide con el del '+
+        'cliente de esta OT — revísalo antes de avanzar con la documentación.</div>'
+      : '';
+    if (!seleccionables.length){
+      c.innerHTML = (S.fin_zz_lineas.length
+        ? '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+          'El documento solo trae la línea de transporte (ZZENVIO) — ingresa el valor del servicio a mano si corresponde.</div>'
+        : '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
+          'El documento no trae líneas de servicio (ZZ...) — puedes ingresar el monto a mano si corresponde.</div>')
+        + envioHtml + avisoRut;
       return;
     }
     c.innerHTML = '<label class="fl">Línea de servicio del documento</label>'+
-      S.fin_zz_lineas.map(function(l){
+      seleccionables.map(function(l){
         var sel = (S.fin_zz_codigo === l.sku);
         return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.setFinZZ(\''+l.sku+'\','+l.monto+')">'+
           '<span class="o2m-chk">'+(sel?'<i class="bi bi-check"></i>':'')+'</span>'+
           '<span style="flex:1"><span class="nm">'+esc(l.sku)+(l.sugerida?' · sugerida':'')+'</span>'+
           '<span class="mt d-block">'+esc(l.descripcion||'')+'</span></span>'+
           '<b>$'+Math.round(l.monto).toLocaleString('es-CL')+'</b></div>';
-      }).join('');
+      }).join('') + envioHtml + avisoRut;
   }
   function setFinZZ(sku, monto){
     S.fin_zz_codigo = sku; S.fin_zz_monto = monto;
+    // El usuario puede haber elegido a mano una línea distinta a la
+    // sugerida -- se re-evalúa si corresponde mostrar el aviso de RUT
+    // (solo aplica cuando la elegida es realmente la de servicio).
+    var actual = S.fin_zz_lineas.find(function(l){ return l.sku === sku; });
+    var rutDoc = (S.fin_doc && S.fin_doc.rut) || '';
+    var rutCliente = (S.cliente && S.cliente.rut) || '';
+    S.fin_doc_rut_difiere = !!(actual && actual.sugerida && rutDoc && rutCliente &&
+      _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
     _pintarFinZZDom(); _pintarFinMargenDom();
   }
   // setFinCostoProveedor/setFinCostoDespacho viven arriba, junto al resto
@@ -3606,8 +3701,76 @@ window.OT2C = (function(){
      cálculo teórico). */
   function _ventaActual(){
     if (S.fin_zz_monto != null) return S.fin_zz_monto;
+    // 2026-08-30: una cotización interna elegida a mano en este mismo paso
+    // (ver _o2mFinCotizacionSeleccionada) es un número REAL, aunque no sea
+    // un documento del ERP -- manda sobre el estimado genérico por
+    // clasificación, pero sigue detrás de una línea ZZ real (el documento
+    // real siempre manda sobre cualquier otra fuente).
+    if (S.fin_cotizacion && S.fin_cotizacion.total != null) return S.fin_cotizacion.total;
     if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null) return S.fin_costo_estimado.total_neto;
     return null;
+  }
+  /* "Buscar/generar cotización" (2026-08-30, Daniel: "generar/asociar una
+     cotización ahí mismo, para no dejar la OT sin valorizar") -- ayudante
+     de VALORIZACIÓN para el caso sin documento ni cotización de origen con
+     monto claro (mantención sin ERP asociado, ticket sin cotización, o
+     garantía). Reusa la MISMA pestaña "Cotización interna" del buscador
+     compartido (_tka_modal.html) que ya usa el origen "Cotización" del
+     wizard -- no se embebe el cotizador completo acá, eso es un wizard
+     grande aparte y queda fuera de alcance. */
+  function _o2mFinCotizacionHtml(){
+    if (S.fin_cotizacion){
+      return '<div class="o2m-aviso" style="background:#dbeafe;border-color:#93c5fd;color:#1e3a8a;margin-top:8px">'+
+        '<i class="bi bi-calculator-fill me-1"></i>Cotización: <b>'+
+        esc(S.fin_cotizacion.numero || ('#'+S.fin_cotizacion.id))+'</b>'+
+        ' · $'+Math.round(S.fin_cotizacion.total).toLocaleString('es-CL')+
+        ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.limpiarFinCotizacion()">cambiar</button>'+
+        '</div>';
+    }
+    var linkNueva = (S.cliente && S.cliente.id)
+      ? '<a href="/tickets/cotizaciones?desde_cliente='+encodeURIComponent(S.cliente.id)+'" target="_blank" rel="noopener" '+
+        'class="btn btn-sm btn-outline-secondary"><i class="bi bi-box-arrow-up-right me-1"></i>Generar cotización nueva</a>'
+      : '';
+    return '<div class="o2m-aviso mt-2"><i class="bi bi-info-circle-fill me-1"></i>'+
+      '¿Todavía no tienes documento? Puedes valorizar con una cotización interna.</div>'+
+      '<div class="d-flex gap-2 flex-wrap mt-1">'+
+      '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="OT2C.abrirBusquedaFinCotizacion()">'+
+      '<i class="bi bi-search me-1"></i>Buscar cotización</button>'+
+      linkNueva+
+      '</div>'+
+      (linkNueva ? '<div class="text-muted small mt-1">Cuando la tengas, vuelve a este paso y búscala arriba.</div>' : '');
+  }
+  function abrirBusquedaFinCotizacion(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de cotizaciones no está disponible en esta pantalla.', {type:'error'});
+      return;
+    }
+    // Mismo candado de scroll que el resto de los buscadores de este paso.
+    var tkaEl = document.getElementById('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          var propio = document.getElementById('ot2ModalCrear');
+          if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+    }
+    tkaOpen({ mode: 'seleccionar', tabs: ['cotizacion'], onSeleccionar: _o2mFinCotizacionSeleccionada });
+  }
+  function _o2mFinCotizacionSeleccionada(items, header){
+    var total = Number(header && header.total || 0);
+    if (!header || !(total > 0)){
+      if (window.ilusToast) ilusToast('Esa cotización no trae un total identificable.', {type:'warning'});
+      return;
+    }
+    S.fin_cotizacion = {id: header.id || null, numero: header.numero_cotizacion || null, total: total};
+    repintarSeccion('finanzas');
+  }
+  function limpiarFinCotizacion(){
+    S.fin_cotizacion = null;
+    repintarSeccion('finanzas');
   }
   /* 2026-08-29 (Daniel, dictando el desglose exacto que necesita ver acá):
      "cuanto estoy cobrando... cuanto me cobro el proveedor... si estoy
@@ -3890,7 +4053,7 @@ window.OT2C = (function(){
     // crear la OT desde "Factura o boleta" dejaría Finanzas pidiendo
     // elegir el MISMO documento por segunda vez.
     if (S.doc_origen && ['FCV','BLV','NVV','NVI','WEB'].indexOf(S.doc_origen.tido) >= 0){
-      S.fin_doc = {tido: S.doc_origen.tido, nudo: S.doc_origen.nudo};
+      S.fin_doc = {tido: S.doc_origen.tido, nudo: S.doc_origen.nudo, rut: header.rut || ''};
     }
     // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
     // servicio) -- quedan como referencia informativa en la sección Equipos
@@ -4526,6 +4689,17 @@ window.OT2C = (function(){
           body.finanzas.zz_codigo = S.fin_zz_codigo;
           body.finanzas.zz_monto = S.fin_zz_monto;
         }
+        // 2026-08-30 (Daniel: "el ZZ envío por si hay despacho... que no se
+        // pierda ni se mezcle con el valor del servicio"): se manda APARTE,
+        // en columnas propias (zz_envio_codigo/zz_envio_monto) -- nunca
+        // dentro de costo_proveedor/costo_despacho, que son lo que le
+        // PAGAMOS a un proveedor (costo), mientras que ZZENVIO es lo que el
+        // documento le está cobrando AL CLIENTE (venta) -- mezclarlos
+        // invertiría el signo en el cálculo de margen.
+        if (S.fin_zz_envio && S.fin_zz_envio.monto != null){
+          body.finanzas.zz_envio_codigo = S.fin_zz_envio.sku;
+          body.finanzas.zz_envio_monto = S.fin_zz_envio.monto;
+        }
       }
       // 2026-08-29 (correćion sobre la primera versión de esta sección):
       // costo_proveedor/proveedor_tipo/proveedor_nombre/costo_despacho ya
@@ -4752,6 +4926,7 @@ window.OT2C = (function(){
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
           abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
+          abrirBusquedaFinCotizacion:abrirBusquedaFinCotizacion, limpiarFinCotizacion:limpiarFinCotizacion,
           setFinCostoProveedor:setFinCostoProveedor, setFinCostoDespacho:setFinCostoDespacho,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,

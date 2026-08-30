@@ -2551,7 +2551,17 @@ async function _tkaCotizacionElegir(idx){
       // "hoy": si created_at no viene o no es parseable, el consumidor
       // (ver _o2mAltaAutoFaltantes en _modal_crear.html) simplemente no
       // manda doc_fecha y queda NULL, igual que antes de este cambio.
-      fecha: cotHdr.created_at || ''
+      fecha: cotHdr.created_at || '',
+      // 2026-08-30 (OT 2.0, paso Costos: "Buscar/generar cotización" -- el
+      // botón que valoriza la OT con una cotización interna cuando no hay
+      // documento del ERP): id/numero/total son propios de esta pestaña
+      // (nunca los tenía "Por documento"/"Por RUT", que sí traen tido/nudo
+      // reales) -- únicos consumidos hoy por _o2mFinCotizacionSeleccionada
+      // en _modal_crear.html, aditivo, no le cambia nada a quien ya leía
+      // este objeto antes.
+      id: c.id || null,
+      numero_cotizacion: cotHdr.numero_cotizacion || c.numero_cotizacion || null,
+      total: Number(cotHdr.total || 0)
     };
     // Solo ítems tipo "producto" -- servicio/ruta/otro no son equipos que
     // se puedan declarar en un ticket (mismo criterio que "Por documento"
