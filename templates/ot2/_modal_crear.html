@@ -4593,6 +4593,34 @@ window.OT2C = (function(){
      siempre. NUNCA bloquea nada. Cubre cualquier origen de la OT (ficha,
      ticket, factura/boleta): la sugerencia se dispara por el EQUIPO real
      que se marca, no por de dónde vino la orden. */
+  /* 2026-08-30 (Daniel, en vivo: "estoy tratando de cambiarlo a mano,
+     inmediatamente que toco el dropdown, se cierra"): causa raíz real --
+     cargarEquipos() dispara UN sugerirPlantillaEquipo() por cada equipo
+     preseleccionado (plan de mantención / alta automática desde cotización),
+     todos en paralelo. Cada fetch que resuelve llamaba pintarListaEquipos()
+     (repinta TODA la tabla, destruyendo cualquier <input> con foco/combo
+     abierto en ese instante) -- si el usuario alcanzaba a hacer clic en el
+     dropdown de OTRO equipo mientras alguna de esas N sugerencias seguía
+     en camino, la respuesta que llegaba tarde le cerraba el combo en la
+     cara sin que hubiera elegido nada. Ahora la sugerencia actualiza SOLO
+     su propia fila (_o2mActualizarSugerenciaFila), nunca la tabla entera. */
+  function _o2mActualizarSugerenciaFila(mid){
+    if (_comboMidActivo === mid) return;   // el usuario está interactuando con ESTE combo -- no tocarlo
+    var inp = document.getElementById('o2mComboInp-'+mid);
+    if (!inp) return;                       // la fila no está en el DOM actual (equipo desmarcado, etc.)
+    var e = S.equipos.find(function(x){ return x.maquina_id===mid; });
+    if (!e) return;
+    inp.value = _o2mPlantNombre(e.plantilla_id);
+    var celda = inp.closest('td');
+    if (!celda) return;
+    var sug = celda.querySelector('.o2m-eq-sug');
+    if (e.plantilla_sugerida && !sug){
+      celda.insertAdjacentHTML('beforeend',
+        '<small class="o2m-eq-sug"><i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>');
+    } else if (!e.plantilla_sugerida && sug){
+      sug.remove();
+    }
+  }
   function sugerirPlantillaEquipo(mid){
     var m = cacheEquipos.find(function(x){ return x.id===mid; });
     if (!m || !m.sku || !S.tipo) return;
@@ -4607,7 +4635,7 @@ window.OT2C = (function(){
         if (!e || e.plantilla_id) return;
         e.plantilla_id = j.plantilla_id;
         e.plantilla_sugerida = true;
-        pintarListaEquipos(); refrescarAnclas();
+        _o2mActualizarSugerenciaFila(mid); refrescarAnclas();
       })
       .catch(function(){ /* sin sugerencia -- se elige a mano, como siempre */ });
   }
