@@ -31,11 +31,20 @@
                      mismo scroll — TODAS están en el DOM a la vez, nada
                      de "Siguiente"/"Atrás" entre ellas. El riel de arriba
                      (mismo lenguaje visual: círculo rojo→verde con check)
-                     pasó de ser PAGINACIÓN a ser un NAV DE ANCLAS: clic o
-                     scroll llevan a la sección, nunca bloquean.
-    completo(k) se mantiene (marca el check verde de cada ancla) y gatilla
-    la validación final al presionar "Crear orden" (ya no gatilla el
-    avance entre pasos, porque ya no hay pasos que avanzar).
+                     pasó de ser PAGINACIÓN a ser un NAV DE ANCLAS.
+
+    2026-08-30 (Daniel, confirmado dos veces cuando se le preguntó
+    directo): el nav de anclas volvió a bloquear, pero distinto a la
+    paginación vieja -- es bloqueo SECUENCIAL sobre el mismo scroll único.
+    Solo el primer paso incompleto (y todo lo anterior, para poder volver
+    a corregir) es interactivo; lo que viene después se ve apagado con
+    candado y no se puede tocar (`sec.inert`) hasta llegar ahí en orden.
+    Ver pasoActualIndex()/pintarAnclas()/irAncla(). completo(k) sigue
+    siendo el mismo gate de siempre (marca el check verde Y ahora también
+    decide qué se desbloquea) y gatilla la validación final al presionar
+    "Crear orden" -- 'anexo' sigue EXCLUIDO de esa validación final
+    (ver validarTodo()), aunque para ENTRAR a su sección sí respeta el
+    mismo bloqueo secuencial que cualquier otro paso.
 
   BUG REAL encontrado y corregido de paso: varios campos (Título,
   Descripción, Fecha, Horas, Piso, Notas de acceso) escribían con
@@ -218,13 +227,41 @@
   .o2m-step-circle.pulse::after{animation:none}
   .o2m-sec.is-complete .o2m-step-circle{transform:none}
 }
-.o2m-step-content{flex:1;min-width:0}
+.o2m-step-content{flex:1;min-width:0;position:relative}
 @media (max-width:575.98px){
   .o2m-sec{padding:14px;gap:12px}
   .o2m-step-circle-wrap{min-width:52px}
   .o2m-step-circle{width:48px;height:48px;font-size:1.65rem}
   .o2m-step-circle .chk{font-size:1.47rem}
   .o2m-step-circle-label{font-size:0.64rem}
+}
+
+/* ── Bloqueo secuencial de pasos (2026-08-30, Daniel: "que se complete
+   cada paso en orden, no que se pueda mover libremente") ────────────────
+   Solo el paso ACTUAL (primer `completo(k)===false` de pasos()) y los ya
+   completados antes que él quedan interactivos. Los siguientes se ven
+   apagados + candado, y `sec.inert` (puesto por JS, ver pintarAnclas())
+   les quita foco/clic de verdad -- pointer-events acá es solo el respaldo
+   visual para navegadores sin soporte de `inert`. NO se reconstruye HTML
+   en cada repintado: solo se alternan clases, así que no se pierde el
+   foco del input que el usuario esté llenando en el paso activo. */
+.o2m-sec.is-locked{background:#f9fafb;border-color:#e5e7eb;box-shadow:none}
+.o2m-sec.is-locked .o2m-step-circle{background:#d1d5db;box-shadow:none;color:#6b7280}
+.o2m-sec.is-locked .o2m-step-circle .num,
+.o2m-sec.is-locked .o2m-step-circle .chk{display:none}
+.o2m-sec.is-locked .o2m-step-circle .lock{display:block;font-size:1.5rem}
+.o2m-step-circle .lock{display:none}
+.o2m-sec.is-locked .o2m-step-circle-label{color:#9ca3af}
+.o2m-sec.is-locked .o2m-step-content{opacity:.4;pointer-events:none;filter:grayscale(.4);user-select:none}
+.o2m-lock-overlay{display:none}
+.o2m-sec.is-locked .o2m-lock-overlay{display:flex;position:absolute;inset:0;z-index:2;
+  align-items:center;justify-content:center;gap:8px;text-align:center;padding:10px;
+  background:rgba(249,250,251,.35);border-radius:8px;pointer-events:auto;cursor:not-allowed}
+.o2m-lock-overlay .msg{font-size:.82rem;font-weight:700;color:#6b7280;background:#fff;
+  border:1.5px solid #e5e7eb;border-radius:20px;padding:6px 14px;
+  box-shadow:0 2px 8px rgba(15,23,42,.06);white-space:nowrap}
+@media (max-width:575.98px){
+  .o2m-lock-overlay .msg{white-space:normal;font-size:.75rem}
 }
 
 .o2m-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;
@@ -1157,11 +1194,19 @@ window.OT2C = (function(){
     var nav = document.getElementById('o2mRiel');
     if (nav) nav.style.display = 'none';
     var ps = pasos();
+    // 2026-08-30 (Daniel, confirmado dos veces: bloqueo secuencial
+    // estricto): se calcula UNA vez por repintado -- todo lo posterior al
+    // paso activo queda bloqueado, ver pasoActualIndex(). Este cálculo
+    // corre en pintarAnclas() a propósito: esta función YA se llama
+    // después de CUALQUIER cambio de estado en todo el archivo (28 sitios
+    // distintos, ver refrescarAnclas()), así que el bloqueo se mantiene
+    // sincronizado gratis, sin agregar una llamada nueva en cada handler.
+    var idxActual = pasoActualIndex();
     // 2026-08-29: además del riel, cada TARJETA de paso (.o2m-sec) recibe
     // el mismo estado -- pulso UNA sola vez al pasar de pendiente a listo
     // (no en cada repintado, o el anillo verde parpadearía con cada campo
     // que se toca en cualquier parte del formulario).
-    ps.forEach(function(p){
+    ps.forEach(function(p, i){
       var sec = document.getElementById('o2mSec-'+p.k);
       if (!sec) return;
       var estado = estadoVisual(p.k);           // 'ok' | 'neutro' | 'pendiente'
@@ -1171,15 +1216,58 @@ window.OT2C = (function(){
       var circ = document.getElementById('o2mCirc-'+p.k);
       if (circ && estado === 'ok' && eraEstado !== 'ok') circ.classList.add('pulse');
       _o2mStepCompleteTracked[p.k] = estado;
+      // Bloqueo: solo pasos DESPUÉS del activo. `inert` va SOLO en el
+      // contenido interno (los campos), nunca en toda `.o2m-sec` -- si se
+      // pusiera en la sección completa, el candado/overlay clickeable
+      // (hermano del contenido, ver pintarFormulario) también quedaría
+      // inerte y su onclick jamás dispararía, dejando el candado mudo.
+      // pointer-events:none del CSS es el respaldo visual si `inert` no
+      // existe en el navegador del técnico.
+      var bloqueado = i > idxActual;
+      sec.classList.toggle('is-locked', bloqueado);
+      var contenido = document.getElementById('o2mSec-'+p.k+'-b');
+      if (contenido){ try { contenido.inert = bloqueado; } catch(_){} }
+      sec.setAttribute('aria-disabled', bloqueado ? 'true' : 'false');
     });
   }
   // Alias corto reusado por handlers inline generados en varias funciones.
   function refrescarAnclas(){ pintarAnclas(); }
 
-  /* Clic en un ancla: scroll suave a la sección. NUNCA bloquea -- Daniel:
-     "no como paginación que bloquea avanzar". */
+  /* 2026-08-30 (Daniel, confirmado dos veces: "que se complete cada paso
+     en orden estricto"): índice (0-based) del primer paso de pasos() que
+     todavía NO está completo() -- ese es el paso "activo". Todo lo que
+     esté ANTES ya se puede editar de vuelta (completo() ya validó que
+     estaba lleno; si el usuario borra algo ahí, en el siguiente repintado
+     este mismo cálculo lo vuelve a marcar como el activo y todo lo de
+     después se re-bloquea solo, sin lógica aparte). Todo lo que esté
+     DESPUÉS queda bloqueado. Si TODOS están completos, retorna
+     pasos().length -- ninguno queda bloqueado. */
+  function pasoActualIndex(){
+    var ps = pasos();
+    for (var i=0;i<ps.length;i++){ if (!completo(ps[i].k)) return i; }
+    return ps.length;
+  }
+
+  /* Clic en el candado de un paso bloqueado: antes esto scrolleaba sin
+     avisar nada (irAncla nunca bloqueaba). Ahora sí hay algo que explicar. */
+  function avisarBloqueado(k){
+    var ps = pasos(), idx = ps.findIndex(function(p){ return p.k===k; });
+    var anterior = idx>0 ? ps[idx-1].n : null;
+    if (window.ilusToast) ilusToast(
+      anterior ? 'Completa "'+anterior+'" antes de continuar' : 'Completa el paso anterior antes de continuar',
+      {type:'warning'});
+  }
+
+  /* Clic en un ancla: scroll suave a la sección -- SOLO si no está
+     bloqueada. 2026-08-30 (Daniel, confirmado dos veces cuando se le
+     preguntó directo): pasó de "nunca bloquea" a bloqueo secuencial
+     estricto -- ya no se puede saltar a un paso sin completar los
+     anteriores. Los pasos ya completados (antes del actual) SÍ se pueden
+     revisitar libremente para corregir algo. */
   function irAncla(k){
     if (k === 'origen'){ irAOrigen(); return; }
+    var ps = pasos(), idx = ps.findIndex(function(p){ return p.k===k; });
+    if (idx > pasoActualIndex()){ avisarBloqueado(k); return; }
     var el = document.getElementById('o2mSec-'+k);
     if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
   }
@@ -1224,7 +1312,10 @@ window.OT2C = (function(){
     atras.style.visibility = 'visible';
     sig.style.display = '';
     body.className = 'o2m-body';
-    document.getElementById('o2mSub').textContent = 'Completa lo que necesites — puedes moverte libremente';
+    // 2026-08-30 (Daniel, confirmado dos veces: "que se complete cada paso
+    // en orden estricto"): reemplaza el subtítulo viejo ("puedes moverte
+    // libremente") -- ver pasoActualIndex()/pintarAnclas() para el bloqueo real.
+    document.getElementById('o2mSub').textContent = 'Completa cada paso en orden para avanzar al siguiente';
     return pintarFormulario();
   }
 
@@ -1243,10 +1334,15 @@ window.OT2C = (function(){
         '<div class="o2m-step-circle-wrap">'+
           '<div class="o2m-step-circle-label">Paso '+(i+1)+'</div>'+
           '<div class="o2m-step-circle" id="o2mCirc-'+p.k+'">'+
-            '<span class="num">'+(i+1)+'</span><i class="bi bi-check-lg chk"></i>'+
+            '<span class="num">'+(i+1)+'</span><i class="bi bi-check-lg chk"></i><i class="bi bi-lock-fill lock"></i>'+
           '</div>'+
         '</div>'+
-        '<div class="o2m-step-content" id="o2mSec-'+p.k+'-b"></div>'+
+        '<div class="o2m-step-content-wrap" style="flex:1;min-width:0;position:relative">'+
+          '<div class="o2m-step-content" id="o2mSec-'+p.k+'-b"></div>'+
+          '<div class="o2m-lock-overlay" onclick="OT2C.avisarBloqueado(\''+p.k+'\')">'+
+            '<span class="msg"><i class="bi bi-lock-fill me-1"></i>Completa el paso anterior para llegar aquí</span>'+
+          '</div>'+
+        '</div>'+
       '</section>';
     }).join('');
     // 2026-08-29 (bug real encontrado en vivo, ver cargarEquipos): un error
@@ -5466,7 +5562,8 @@ window.OT2C = (function(){
      con quien lo haya llamado antes. */
   function abrirWizard(opts){ abrir(opts); }
 
-  return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, setOrigen:setOrigen, setTipo:setTipo,
+  return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, avisarBloqueado:avisarBloqueado,
+          setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
