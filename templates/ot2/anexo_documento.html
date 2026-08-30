@@ -90,6 +90,13 @@
   .firma-img{ display:block; max-height:22mm; max-width:70mm; margin:0 auto 2mm; }
   .firma-nombre{ margin-top: 2mm; }
   .firma-rut{ font-size:10.5pt; color:#333; }
+  {# 🔴 2026-08-30 (Daniel: "la firma no puede chocar con el nombre... dale
+     varios espacios hacia abajo"): antes "Firma: ___" venía pegado a
+     "Nombre: X" sin ningún espacio -- se lee como si la línea de firma
+     fuera parte del mismo renglón. `.firma-linea` da el espacio real (14mm)
+     que un firmante necesita para estampar la firma a mano si imprime el
+     PDF, además del caso de la firma electrónica ya capturada. #}
+  .firma-linea{ margin-top:14mm; }
 </style>
 </head>
 <body>
@@ -98,7 +105,12 @@
 
   <div class="fecha-top">{{ anexo.fecha }}</div>
 
-  <div class="titulo">Anexo de Servicios N° {{ anexo.numero }}</div>
+  {# 🔴 2026-08-30 (Daniel: "me gustaría que fuera enumerado con nombre
+     cliente y número tal"): SOLO cambia lo que se VE -- el número atómico
+     (anexo.numero) es el mismo que ya usa _anexo_render_canonico() para el
+     hash de verificación de anexos YA FIRMADOS; tocar ESE valor invalidaría
+     firmas existentes. Acá solo se agrega el cliente al título visible. #}
+  <div class="titulo">Anexo de Servicios N° {{ anexo.numero }}{% if anexo.cliente_nombre %} — {{ anexo.cliente_nombre }}{% endif %}</div>
 
   <p class="intro">El presente Anexo es parte integrante de Contrato Marco de
     Prestación de Servicios y tiene por objeto describir los servicios,
@@ -147,13 +159,13 @@
       {% if firma.firma_url %}<img class="firma-img" src="{{ firma.firma_url }}" alt="Firma">{% endif %}
       <div class="firma-nombre">Nombre: {{ firma.firmante_nombre }}</div>
       <div class="firma-rut">RUT: {{ firma.firmante_rut }}</div>
-      <div>Firma: {% if not firma.firma_url %}______________________{% endif %}</div>
+      <div class="firma-linea">Firma: {% if not firma.firma_url %}______________________{% endif %}</div>
       <div class="firma-rut">Firmado el {{ firma.firmado_en }} · firma electrónica simple
         con evidencia de trazabilidad (hash del documento, IP, dispositivo) --
         no constituye Firma Electrónica Avanzada.</div>
     {% else %}
-      <div style="margin-top:14mm">Nombre: {{ anexo.proveedor_nombre }}</div>
-      <div>Firma: ______________________</div>
+      <div class="firma-nombre" style="margin-top:14mm">Nombre: {{ anexo.proveedor_nombre }}</div>
+      <div class="firma-linea">Firma: ______________________</div>
     {% endif %}
   </div>
 
