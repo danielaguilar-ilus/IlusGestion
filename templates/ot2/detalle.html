@@ -244,47 +244,61 @@
    recorrido nunca tuvo su piel puesta.
    OJO al editar este bloque: por lo mismo, no escribir el símbolo de
    cierre de comentario CSS suelto dentro de la prosa de un comentario. */
-.otd-track-card{background:#fff;border:1px solid var(--line);border-radius:12px;
-  padding:16px 20px 14px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+/* 2026-08-30 (Daniel, viendo /ot/322 junto a ot_ejecutar.html: "mejorar el
+   recorrido con los íconos a color y fondo negro"). Pasa de tarjeta CLARA
+   a la MISMA piel oscura del hero de arriba (var(--ink) + textura +
+   bordes translúcidos) para que ambos bloques se lean como una sola
+   pieza, no como dos tarjetas de mundos distintos. Los colores de los
+   íconos (verde=hecho, rojo=en curso) se mantienen -- eso es lo que
+   Daniel pidió resaltar, no apagar. Reusa exactamente los mismos tokens
+   que .otd-hero/.otd-d de arriba (--ink, --comp, --ejec, rgba blancos). */
+.otd-track-card{position:relative;overflow:hidden;background:var(--ink);
+  border:1px solid rgba(255,255,255,.09);border-radius:14px;
+  padding:18px 22px 16px;margin-bottom:16px;
+  box-shadow:0 10px 30px -14px rgba(10,10,10,.55)}
+.otd-track-card::before{content:"";position:absolute;inset:0;
+  background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.03) 0 1px,transparent 1px 12px);
+  pointer-events:none}
+.otd-track-card > *{position:relative;z-index:1}
 .otd-track-card .ttl-row{display:flex;align-items:baseline;justify-content:space-between;
   gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .otd-track-card .ttl-row h3{margin:0;font-size:.76rem;font-weight:900;letter-spacing:.09em;
-  text-transform:uppercase;color:#0a0a0a;display:flex;align-items:center;gap:8px}
+  text-transform:uppercase;color:#fff;display:flex;align-items:center;gap:8px}
 .otd-track-card .ttl-row h3 i{color:var(--ilus-red,#dc2626);font-size:.9rem}
-.otd-track-card .ttl-row .sub{font-size:.72rem;color:#9ca3af;font-weight:700}
+.otd-track-card .ttl-row .sub{font-size:.72rem;color:#8b8b93;font-weight:700}
 
 .otd-track{display:flex;align-items:flex-start;gap:0}
 .otd-h{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;
   position:relative;text-align:center;min-width:0}
 .otd-h::before{content:"";position:absolute;top:15px;left:-50%;width:100%;height:2px;
-  background:#e5e7eb;transition:background-color .5s ease}
+  background:rgba(255,255,255,.14);transition:background-color .5s ease}
 .otd-h:first-child::before{display:none}
 .otd-h.ok::before{background:var(--comp)}
 .otd-h .p{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;
-  background:#f3f4f6;border:2px solid #e5e7eb;
-  color:#9ca3af;font-size:.82rem;z-index:1;
+  background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.16);
+  color:#71717a;font-size:.82rem;z-index:1;
   transition:transform .2s,background-color .4s ease,border-color .4s ease,color .4s ease}
 .otd-h.ok .p{background:var(--comp);border-color:var(--comp);color:#fff}
 .otd-h.now .p{background:var(--ejec);border-color:var(--ejec);color:#fff;
   animation:otdPulse 1.9s ease-out infinite}
 .otd-h:hover .p{transform:scale(1.12)}
-.otd-h .l{font-size:.66rem;font-weight:800;color:#6b7280;letter-spacing:.02em;
+.otd-h .l{font-size:.66rem;font-weight:800;color:#a1a1aa;letter-spacing:.02em;
   transition:color .4s ease}
-.otd-h.ok .l{color:var(--comp)}
-.otd-h.now .l{color:#0a0a0a}
-.otd-h .t{font-size:.6rem;color:#9ca3af;font-variant-numeric:tabular-nums}
+.otd-h.ok .l{color:#4ade80}
+.otd-h.now .l{color:#fff}
+.otd-h .t{font-size:.6rem;color:#71717a;font-variant-numeric:tabular-nums}
 .otd-h .ago{display:inline-block;margin-top:2px;padding:1px 7px;border-radius:99px;
   font-size:.56rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase}
-.otd-h.ok .ago{background:#dcfce7;color:#15803d}
-.otd-h.now .ago{background:#fee2e2;color:#b91c1c}
+.otd-h.ok .ago{background:rgba(22,163,74,.2);color:#4ade80}
+.otd-h.now .ago{background:rgba(220,38,38,.22);color:#fca5a5}
 
 /* Resumen del recorrido — tiempo total + paso actual con pulso */
 .otd-track-sum{display:flex;align-items:center;gap:14px;margin-top:12px;
-  padding-top:11px;border-top:1px dashed var(--line);
-  font-size:.74rem;color:#6b7280;flex-wrap:wrap}
-.otd-track-sum b{color:#0a0a0a;font-variant-numeric:tabular-nums}
+  padding-top:11px;border-top:1px dashed rgba(255,255,255,.12);
+  font-size:.74rem;color:#a1a1aa;flex-wrap:wrap}
+.otd-track-sum b{color:#fff;font-variant-numeric:tabular-nums}
 .otd-track-sum .now-tag{display:inline-flex;align-items:center;gap:6px;
-  color:var(--ejec);font-weight:800}
+  color:#fca5a5;font-weight:800}
 .otd-pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--ejec);
   animation:otdPulse 1.6s ease-out infinite}
 
@@ -292,19 +306,25 @@
    2026-08-27 (Daniel: "los técnicos no sabían que podían dejar
    evidencia... buscar la mejor manera de mostrarlo"). El dato ya existía;
    lo que faltaba era una pestaña que lo hiciera visible y explorable. */
-.otd-tabs{display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid var(--line);
+/* 2026-08-30 (Daniel: "que las pestañas de información y trabajo técnico
+   resalten un poco más"). El subrayado de 2px era casi invisible al lado
+   de la tarjeta oscura de arriba. Pasa a control segmentado (fondo gris +
+   píldora roja sólida en la activa) -- mismo patrón de "elección visible
+   de un vistazo" que ya usa el proyecto en otros selectores. */
+.otd-tabs{display:flex;gap:4px;margin-bottom:14px;padding:5px;
+  background:#f3f4f6;border:1px solid var(--line);border-radius:12px;
   overflow-x:auto}
-.otd-tab{display:inline-flex;align-items:center;gap:7px;background:none;border:0;
-  padding:10px 4px;margin-right:14px;font-size:.82rem;font-weight:800;color:#9ca3af;
-  cursor:pointer;white-space:nowrap;position:relative;transition:color .15s}
+.otd-tab{display:inline-flex;align-items:center;gap:7px;background:transparent;
+  border:0;border-radius:9px;padding:9px 16px;margin-right:0;
+  font-size:.8rem;font-weight:800;color:#6b7280;
+  cursor:pointer;white-space:nowrap;position:relative;transition:background .18s,color .18s}
 .otd-tab i{font-size:.95rem}
-.otd-tab .cnt{background:#f3f4f6;color:#6b7280;border-radius:99px;padding:1px 8px;
-  font-size:.7rem;font-weight:800}
-.otd-tab:hover{color:#374151}
-.otd-tab.on{color:var(--ilus-red,#dc2626)}
-.otd-tab.on .cnt{background:#fee2e2;color:var(--ilus-red,#dc2626)}
-.otd-tab.on::after{content:"";position:absolute;left:0;right:14px;bottom:-1px;height:2px;
-  background:var(--ilus-red,#dc2626);border-radius:2px}
+.otd-tab .cnt{background:rgba(0,0,0,.07);color:#6b7280;border-radius:99px;padding:1px 8px;
+  font-size:.7rem;font-weight:800;transition:background .18s,color .18s}
+.otd-tab:hover{color:#0a0a0a}
+.otd-tab.on{color:#fff;background:var(--ilus-red,#dc2626);
+  box-shadow:0 4px 12px -5px rgba(220,38,38,.6)}
+.otd-tab.on .cnt{background:rgba(255,255,255,.25);color:#fff}
 .otd-tabpanel{display:none}
 .otd-tabpanel.on{display:block}
 
