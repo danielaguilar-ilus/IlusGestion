@@ -360,6 +360,27 @@
 .o2m-aviso ul{margin:6px 0 0;padding-left:18px}
 .o2m-err{background:#fef2f2;border:1px solid #fecaca;border-radius:9px;
   padding:11px 13px;font-size:.85rem;color:#991b1b;font-weight:700;margin-bottom:14px}
+/* Contraparte (2026-08-29) — tarjetas de contactos ya guardados en la ficha
+   del cliente. Elegir uno de un toque es el camino normal; escribir a mano
+   es la salida. minmax(0,...) para que no desborden en movil. */
+.o2m-cp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));
+  gap:10px;margin-top:6px}
+.o2m-cp-card{position:relative;text-align:left;background:#fff;border:1.5px solid #e5e7eb;
+  border-radius:11px;padding:11px 13px;cursor:pointer;transition:all .14s;
+  display:flex;flex-direction:column;gap:2px;min-width:0}
+.o2m-cp-card:hover{border-color:#cbd5e1;background:#fafbfc}
+.o2m-cp-card.sel{border-color:#dc2626;background:#fef2f2;
+  box-shadow:0 0 0 1px rgba(220,38,38,.25)}
+.o2m-cp-lbl{font-size:.63rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+  color:#9ca3af}
+.o2m-cp-card.sel .o2m-cp-lbl{color:#dc2626}
+.o2m-cp-nom{font-size:.9rem;font-weight:750;color:#0a0a0a;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.o2m-cp-meta{font-size:.72rem;color:#6b7280;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.o2m-cp-check{position:absolute;top:9px;right:10px;width:20px;height:20px;border-radius:50%;
+  background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:.7rem}
 .o2m-res{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 .o2m-res .b{background:#fafbfc;border:1px solid #eaecf0;border-radius:10px;padding:12px}
 .o2m-res .b .k{font-size:.66rem;font-weight:800;letter-spacing:.07em;
@@ -715,6 +736,11 @@ window.OT2C = (function(){
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
          ticket_id:null,
+         // 2026-08-29 — Contraparte: quién recibe al técnico y DÓNDE.
+         // `origen` deja registrado de dónde salió (principal/secundario/
+         // sucursal:<id>/manual) para poder auditarlo después.
+         contraparte:{nombre:'', cargo:'', tel:'', email:'', origen:'',
+                      direccion:'', lat:null, lng:null, place_id:''},
          // Origen "Factura o boleta": documento ERP de donde salió el
          // cliente (trazabilidad, ver crear()) y sus líneas de producto
          // (sugerencia informativa en la sección Equipos).
@@ -836,6 +862,16 @@ window.OT2C = (function(){
     var p = [{k:'tipo', n:'Tipo'}];
     if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
     p.push({k:'detalle', n:'Detalle'});
+    // 2026-08-29 (Daniel: "agrégale un paso enumerado después del título de la
+    // OT los datos de la contraparte... con correo y todo, el teléfono, y con
+    // la dirección confirmada, la dirección del lugar"). Va inmediatamente
+    // después de Detalle (donde vive el Título) a propósito: es el dato que el
+    // técnico necesita ANTES que cualquier otra cosa -- a quién buscar y a
+    // dónde llegar. Las columnas mant_visitas.contacto_*/direccion_* existían
+    // desde mayo y la pantalla de ejecución ya las muestra ("Recibe en
+    // sitio"), pero nadie las llenaba: salía siempre vacío.
+    // Trabajo interno no visita a nadie, así que no aplica.
+    if (!esInterno()) p.push({k:'contraparte', n:'Contraparte'});
     // 2026-08-29 (Daniel: "los técnicos deberán estar antes de la agenda,
     // para saber qué agenda tienen ellos una vez seleccionados"): Técnicos
     // primero -- Agenda ya resalta choques de horario de QUIEN esté
@@ -918,6 +954,15 @@ window.OT2C = (function(){
       // 2026-08-29: separado de 'equipos' -- ver comentario en pasos().
       case 'acceso':
         return S.acceso.ascensor !== null && S.acceso.estacionamiento !== null;
+      // 2026-08-29: nombre + teléfono para poder llamar al llegar, y la
+      // dirección CONFIRMADA (con lat/lng de Places, no texto suelto) --
+      // ese punto es contra el que el GPS del técnico valida su llegada.
+      // El correo queda opcional: no todos los contactos de terreno tienen.
+      case 'contraparte':
+        return !!(S.contraparte.nombre||'').trim() &&
+               !!(S.contraparte.tel||'').trim() &&
+               !!(S.contraparte.direccion||'').trim() &&
+               S.contraparte.lat !== null && S.contraparte.lng !== null;
       // 2026-08-29 (Daniel): centro de costo SIEMPRE requerido; cobertura
       // es documento O garantía, excluyentes -- garantía exime del
       // documento ("si es garantía, no es necesario [el documento]").
@@ -1076,6 +1121,7 @@ window.OT2C = (function(){
       if (p.k==='tipo')     pintarTipo(b);
       if (p.k==='cliente')  pintarCliente(b);
       if (p.k==='detalle')  pintarDetalle(b);
+      if (p.k==='contraparte') pintarContraparte(b);
       if (p.k==='agenda')   pintarAgenda(b);
       if (p.k==='tecnicos') pintarTecnicos(b);
       if (p.k==='equipos')  pintarEquipos(b);
@@ -1104,6 +1150,7 @@ window.OT2C = (function(){
       if (k==='tipo')     pintarTipo(b);
       if (k==='cliente')  pintarCliente(b);
       if (k==='detalle')  pintarDetalle(b);
+      if (k==='contraparte') pintarContraparte(b);
       if (k==='agenda')   pintarAgenda(b);
       if (k==='tecnicos') pintarTecnicos(b);
       if (k==='equipos')  pintarEquipos(b);
@@ -2276,6 +2323,163 @@ window.OT2C = (function(){
      paso de equipo y el checklist... esa es la logística, no la ates al
      formulario de producto"). Paso propio, ver pasos()/completo('acceso').
      Mismo contenido que antes vivía al final de pintarEquipos(). */
+  /* ── CONTRAPARTE (2026-08-29) ────────────────────────────────────────
+     Daniel: "agrégale un paso enumerado después del título de la OT los datos
+     de la contraparte, eso es importante, además con datos persistentes" +
+     "con correo y todo, el teléfono, y con la dirección confirmada, la
+     dirección del lugar".
+
+     "Persistente" se resuelve sin inventar nada: la ficha del cliente YA
+     guarda contacto principal, secundario y encargados por sucursal, y hay un
+     endpoint que los devuelve juntos. El wizard los ofrece como tarjetas para
+     elegir de un toque; escribir a mano queda como salida, no como norma.
+
+     La dirección se confirma con Google Places (regla del proyecto para todo
+     formulario nuevo). No es cosmético: ese lat/lng es el mismo que alimenta
+     el semáforo de GPS del técnico en terreno -- sin dirección confirmada, su
+     "Llegada al lugar" no puede ponerse verde. */
+  var cacheContactos = null, cacheContactosCid = null;
+
+  function _o2mCpSet(campo, valor){
+    S.contraparte[campo] = valor;
+    // Escribir a mano deja de ser "el contacto de la ficha": se marca manual
+    // para no atribuirle a la ficha un dato que se editó acá.
+    if (['nombre','cargo','tel','email'].indexOf(campo) !== -1) {
+      S.contraparte.origen = 'manual';
+    }
+    refrescarAnclas();
+  }
+  function setCpCampo(campo, valor){ _o2mCpSet(campo, valor); }
+
+  function elegirContacto(i){
+    var c = (cacheContactos || [])[i];
+    if (!c) return;
+    S.contraparte.nombre = c.nombre || '';
+    S.contraparte.cargo  = c.cargo || '';
+    S.contraparte.tel    = c.tel || '';
+    S.contraparte.email  = c.email || '';
+    S.contraparte.origen = c.origen || 'manual';
+    repintarSeccion('contraparte');
+    refrescarAnclas();
+  }
+
+  function cargarContactosCliente(){
+    var cid = S.cliente && S.cliente.id;
+    if (!cid) { cacheContactos = []; return; }
+    if (cacheContactosCid === cid) { _pintarContactosDom(); return; }
+    cacheContactosCid = cid;
+    fetch('/mantenciones/api/clientes/'+cid+'/contactos', {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        cacheContactos = (j && Array.isArray(j.contactos)) ? j.contactos
+                       : (Array.isArray(j) ? j : []);
+        _pintarContactosDom();
+        // Si la ficha trae UN solo contacto y todavía no se eligió nada, se
+        // preselecciona: es el caso más común y ahorra un toque.
+        if (cacheContactos.length === 1 && !(S.contraparte.nombre||'').trim()){
+          elegirContacto(0);
+        }
+      })
+      .catch(function(){ cacheContactos = []; _pintarContactosDom(); });
+  }
+
+  function _pintarContactosDom(){
+    var c = document.getElementById('o2mCpLista'); if (!c) return;
+    if (!cacheContactos || !cacheContactos.length){
+      c.innerHTML = '<div class="o2m-aviso"><i class="bi bi-info-circle me-1"></i>'+
+        'Este cliente no tiene contactos guardados en su ficha todavía. '+
+        'Escribe los datos abajo y quedarán en esta OT.</div>';
+      return;
+    }
+    c.innerHTML = '<label class="fl">Contactos guardados de este cliente</label>'+
+      '<div class="o2m-cp-grid">'+
+      cacheContactos.map(function(ct, i){
+        var sel = (S.contraparte.origen === ct.origen &&
+                   (S.contraparte.nombre||'') === (ct.nombre||''));
+        return '<button type="button" class="o2m-cp-card'+(sel?' sel':'')+'" '+
+          'onclick="OT2C.elegirContacto('+i+')">'+
+          '<span class="o2m-cp-lbl">'+esc(ct.label || 'Contacto')+'</span>'+
+          '<span class="o2m-cp-nom">'+esc(ct.nombre||'')+'</span>'+
+          (ct.cargo ? '<span class="o2m-cp-meta">'+esc(ct.cargo)+'</span>' : '')+
+          '<span class="o2m-cp-meta">'+
+            (ct.tel ? '<i class="bi bi-telephone me-1"></i>'+esc(ct.tel) : '')+
+            (ct.tel && ct.email ? ' · ' : '')+
+            (ct.email ? '<i class="bi bi-envelope me-1"></i>'+esc(ct.email) : '')+
+          '</span>'+
+          (sel ? '<span class="o2m-cp-check"><i class="bi bi-check-lg"></i></span>' : '')+
+          '</button>';
+      }).join('')+'</div>';
+  }
+
+  function pintarContraparte(b){
+    var cp = S.contraparte;
+    var dirOk = !!(cp.lat && cp.lng);
+    b.innerHTML = '<h6 class="t">¿Quién recibe y dónde?</h6>'+
+      '<p class="d">Es lo primero que el técnico necesita saber: a quién buscar y a qué '+
+      'dirección llegar. Aparece en su pantalla apenas abre la OT.</p>'+
+      '<div id="o2mCpLista" class="mb-3"></div>'+
+      '<div class="row g-3">'+
+        '<div class="col-md-7"><label class="fl">Nombre de quien recibe *</label>'+
+        '<input class="form-control" id="o2mCpNombre" maxlength="200" value="'+esc(cp.nombre)+'" '+
+        'placeholder="Ej: Marcela Rojas" oninput="OT2C.setCpCampo(\'nombre\', this.value)"></div>'+
+        '<div class="col-md-5"><label class="fl">Cargo</label>'+
+        '<input class="form-control" id="o2mCpCargo" maxlength="120" value="'+esc(cp.cargo)+'" '+
+        'placeholder="Ej: Administradora" oninput="OT2C.setCpCampo(\'cargo\', this.value)"></div>'+
+        '<div class="col-md-5"><label class="fl">Teléfono *</label>'+
+        '<input class="form-control" id="o2mCpTel" maxlength="50" value="'+esc(cp.tel)+'" '+
+        'inputmode="tel" placeholder="+56 9 1234 5678" '+
+        'oninput="OT2C.setCpCampo(\'tel\', this.value)"></div>'+
+        '<div class="col-md-7"><label class="fl">Correo</label>'+
+        '<input class="form-control" id="o2mCpEmail" maxlength="200" value="'+esc(cp.email)+'" '+
+        'type="email" placeholder="contacto@cliente.cl" '+
+        'oninput="OT2C.setCpCampo(\'email\', this.value)"></div>'+
+        '<div class="col-12"><label class="fl">Dirección del lugar *</label>'+
+        '<input class="form-control" id="o2mCpDir" maxlength="400" value="'+esc(cp.direccion)+'" '+
+        'placeholder="Empieza a escribir y elige la sugerencia" '+
+        'oninput="OT2C.setCpDireccionTexto(this.value)">'+
+        '<div id="o2mCpDirEstado" class="mt-1" style="font-size:.72rem">'+
+        (dirOk
+          ? '<span style="color:#16a34a"><i class="bi bi-geo-alt-fill me-1"></i>Dirección confirmada — el GPS del técnico va a validar contra este punto.</span>'
+          : '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>Elige una sugerencia para confirmar la ubicación. Sin esto el técnico no puede validar su llegada.</span>')+
+        '</div></div>'+
+      '</div>';
+    cargarContactosCliente();
+    // Places se engancha después de que el input existe en el DOM.
+    setTimeout(function(){
+      var inp = document.getElementById('o2mCpDir');
+      if (!inp || inp.dataset.placesInit === '1') return;
+      if (typeof ilusPlacesAutocomplete !== 'function') return;
+      ilusPlacesAutocomplete('o2mCpDir', {
+        country: 'cl', types: ['geocode', 'establishment'],
+        onPlaceSelected: function(p){
+          S.contraparte.direccion = p.direccion || '';
+          S.contraparte.lat = p.lat; S.contraparte.lng = p.lng;
+          S.contraparte.place_id = p.place_id || '';
+          repintarSeccion('contraparte');
+          refrescarAnclas();
+        },
+      });
+    }, 60);
+  }
+
+  // Escribir a mano INVALIDA la confirmación previa: si el texto ya no es el
+  // que Google devolvió, el lat/lng guardado deja de corresponder y mandaría
+  // al técnico a un punto que no es. Mejor sin coordenadas que con las
+  // equivocadas.
+  function setCpDireccionTexto(v){
+    var cp = S.contraparte;
+    if ((v||'') !== (cp.direccion||'')){
+      cp.lat = null; cp.lng = null; cp.place_id = '';
+    }
+    cp.direccion = v || '';
+    var e = document.getElementById('o2mCpDirEstado');
+    if (e){
+      e.innerHTML = '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>'+
+        'Elige una sugerencia para confirmar la ubicación. Sin esto el técnico no puede validar su llegada.</span>';
+    }
+    refrescarAnclas();
+  }
+
   function pintarAcceso(b){
     b.innerHTML = '<h6 class="t">Acceso al lugar</h6>'+
       '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
@@ -3202,6 +3406,11 @@ window.OT2C = (function(){
         (S.doc_origen ? card('Documento origen', S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '') +
         card('Programada', S.fecha ? (S.fecha + ' · ' + S.hini + '–' + S.hfin) : '—') +
         card('Técnicos', nTec ? (nTec + (nTec===1?' asignado':' asignados')) : 'Sin asignar') +
+        (!esInterno() ? card('Contraparte',
+           (S.contraparte.nombre||'').trim()
+             ? (S.contraparte.nombre + (S.contraparte.tel?(' · '+S.contraparte.tel):'') +
+                (S.contraparte.lat ? ' · dirección confirmada' : ' · ⚠ sin dirección confirmada'))
+             : 'Sin definir') : '') +
         card('Trabajo', eqTxt) +
         card('Acceso', esInterno() ? '—' :
              ((S.acceso.ascensor?'Con ascensor':'Sin ascensor') + ' · ' +
@@ -3724,6 +3933,10 @@ window.OT2C = (function(){
       // `elif plantilla_suelta`), es el mismo mecanismo que usa levantamiento.
       plantilla_id: esInterno() ? (S.plantilla_id_interno || null) : null,
       acceso: esInterno() ? {} : S.acceso,
+      // 2026-08-29 — contraparte + dirección confirmada del lugar. Trabajo
+      // interno no visita a nadie, así que va vacío (el backend lo trata
+      // como ausente y deja las columnas en NULL).
+      contraparte: esInterno() ? {} : S.contraparte,
       ticket_id: S.ticket_id
     };
     // 26-08-2026: Capacitación/Control de calidad -> productos/tareas
@@ -3994,6 +4207,7 @@ window.OT2C = (function(){
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
+          setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,

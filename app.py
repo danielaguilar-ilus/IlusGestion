@@ -76172,6 +76172,53 @@ def ot2_api_crear():
                 "PISO_FUERA_DE_RANGO")
     acc_notas = (acc.get("notas") or "").strip()[:500] or None
 
+    # ── 4.5 CONTRAPARTE — quién recibe al técnico en el sitio ──────────
+    # 2026-08-29 (Daniel: "agrégale un paso enumerado después del título de
+    # la OT los datos de la contraparte, eso es importante, además con datos
+    # persistentes"). Las columnas mant_visitas.contacto_* existen desde el
+    # 2026-05-17 y la pantalla de ejecución YA las muestra ("Recibe en
+    # sitio") -- pero este endpoint nunca las guardaba, así que ese
+    # indicador salía siempre vacío y el técnico llegaba sin saber a quién
+    # buscar. "Persistente" = el wizard ofrece los contactos que ya tiene la
+    # ficha del cliente (GET /mantenciones/api/clientes/<cid>/contactos:
+    # principal, secundario y encargados de sucursal), y `contacto_origen`
+    # deja registrado de cuál salió -- o 'manual' si se escribió a mano.
+    _cp = d.get("contraparte") if isinstance(d.get("contraparte"), dict) else {}
+    _cp_nombre = (str(_cp.get("nombre") or "").strip())[:200] or None
+    _cp_cargo  = (str(_cp.get("cargo")  or "").strip())[:120] or None
+    _cp_tel    = (str(_cp.get("tel")    or "").strip())[:50]  or None
+    _cp_email  = (str(_cp.get("email")  or "").strip())[:200] or None
+    _cp_origen = (str(_cp.get("origen") or "").strip().lower())[:40] or None
+    if _cp_origen and not re.match(r"^(principal|secundario|manual|sucursal:\d+)$", _cp_origen):
+        _cp_origen = "manual"
+    if _cp_nombre and not _cp_origen:
+        _cp_origen = "manual"
+
+    # Dirección DEL LUGAR (Daniel: "con la dirección confirmada por favor, la
+    # dirección del lugar"). Puede diferir de la del cliente: una cadena tiene
+    # varias sedes, y el técnico va a UNA. Se guarda con lat/lng + place_id de
+    # Google Places (REGLA del proyecto: todo formulario nuevo valida
+    # direcciones con Places) -- ese lat/lng es además el que alimenta el
+    # semáforo de GPS y la geocerca en la pantalla de ejecución, así que una
+    # dirección confirmada acá es lo que hace que el "Llegada al lugar" del
+    # técnico pueda ponerse verde.
+    _cp_dir = (str(_cp.get("direccion") or "").strip())[:400] or None
+    try:
+        _cp_lat = float(_cp.get("lat")) if _cp.get("lat") not in (None, "") else None
+    except (TypeError, ValueError):
+        _cp_lat = None
+    try:
+        _cp_lng = float(_cp.get("lng")) if _cp.get("lng") not in (None, "") else None
+    except (TypeError, ValueError):
+        _cp_lng = None
+    _cp_place = (str(_cp.get("place_id") or "").strip())[:200] or None
+    # Coordenadas fuera de rango = dato corrupto, mejor sin coordenadas que
+    # con una geocerca que mande al técnico a otro continente.
+    if _cp_lat is not None and not (-90 <= _cp_lat <= 90):
+        _cp_lat = None
+    if _cp_lng is not None and not (-180 <= _cp_lng <= 180):
+        _cp_lng = None
+
     # ── 5. EQUIPOS + PLANTILLA POR EQUIPO ──────────────────────────────
     #    Daniel 2026-08-13: "no quiero nada automático, todo lo debe
     #    escoger el usuario y si no escoge no lo debe dejar avanzar".
@@ -76511,9 +76558,16 @@ def ot2_api_crear():
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
             "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
             "   documentos_extra, "
+            # 2026-08-29 — contraparte + dirección del lugar (ver bloque 4.5).
+            "   contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
+            "   contacto_origen, direccion_visita, direccion_lat, direccion_lng, "
+            "   direccion_place_id, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "        %s,%s,%s,%s,"
+            "        %s,"
+            "        %s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
             "        %s,"
             "        %s,%s,%s)",
@@ -76525,6 +76579,9 @@ def ot2_api_crear():
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
              _fin_docs_extra_json,
+             _cp_nombre, _cp_cargo, _cp_tel, _cp_email,
+             _cp_origen, _cp_dir, _cp_lat, _cp_lng,
+             _cp_place,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
              # conversión a hora Chile es cosa de la vista).
              datetime.utcnow() if _fin_declarada else None,
