@@ -565,8 +565,12 @@
           <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
           <div class="input-group input-group-sm">
             <span class="input-group-text">$</span>
+            {# 🔧 2026-08-30 (Daniel: "declaré datos... no se heredan"): `or ''`
+               trata 0 como "vacío" (0 es falsy en Jinja igual que en Python) --
+               un precio guardado como $0 se mostraba en blanco al recargar,
+               indistinguible de "nunca se llenó". `is none` sí distingue. #}
             <input type="number" id="finCosto" class="form-control" min="0" step="1000"
-                   value="{{ visita.costo or '' }}">
+                   value="{{ visita.costo if visita.costo is not none else '' }}">
           </div>
         </div>
         <div class="col-6">
@@ -629,19 +633,33 @@
          a una nota de venta, NVI o NVV". Mismo gate puede_metadata que el
          resto de esta card -- técnico jamás ve ni edita esto. #}
       <div class="row g-2 mb-2">
+        {# 🔗 2026-08-30 (Daniel: "declaré datos... no se heredan... FCV
+           11382"): documento_erp_tido/nudo es una columna aparte de
+           factura_tido/nudo (la que llena la extracción de línea ZZ y el
+           resto del pipeline financiero) -- si el documento se asoció por
+           ESE otro camino, este par quedaba vacío y el select mostraba
+           "Sin asociar" aunque hubiera una factura real. Se usa como
+           fallback de LECTURA (nunca sobre-escribe en silencio): guardar
+           acá ahora también espejea a factura_tido/nudo (ver PUT
+           /mantenciones/api/visitas/<vid> en app.py), así que de acá en
+           adelante ambos caminos quedan sincronizados. #}
+        {% set _doc_tido = visita.documento_erp_tido or visita.factura_tido %}
+        {% set _doc_nudo = visita.documento_erp_nudo or visita.factura_nudo %}
         <div class="col-4">
           <label class="form-label small fw-semibold mb-1">Documento ERP</label>
           <select id="finDocErpTido" class="form-select form-select-sm">
             <option value="">— Sin asociar —</option>
-            <option value="NVI" {% if visita.documento_erp_tido=='NVI' %}selected{% endif %}>NVI</option>
-            <option value="NVV" {% if visita.documento_erp_tido=='NVV' %}selected{% endif %}>NVV</option>
+            <option value="NVI" {% if _doc_tido=='NVI' %}selected{% endif %}>NVI</option>
+            <option value="NVV" {% if _doc_tido=='NVV' %}selected{% endif %}>NVV</option>
+            <option value="FCV" {% if _doc_tido=='FCV' %}selected{% endif %}>FCV (factura)</option>
+            <option value="BLV" {% if _doc_tido=='BLV' %}selected{% endif %}>BLV (boleta)</option>
           </select>
         </div>
         <div class="col-8">
           <label class="form-label small fw-semibold mb-1">Número</label>
           <input type="text" id="finDocErpNudo" class="form-control form-control-sm"
                  maxlength="20" placeholder="Ej: 552" inputmode="numeric"
-                 value="{{ visita.documento_erp_nudo or '' }}">
+                 value="{{ _doc_nudo or '' }}">
         </div>
       </div>
       <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
@@ -676,12 +694,14 @@
     {% endif %}
     {# Solo lectura para técnico: si ya hay documento asociado, mostrarlo
        (no editable — mismo dato, sin la card de finanzas alrededor). #}
-    {% if not puede_metadata and visita.documento_erp_tido and visita.documento_erp_nudo %}
+    {% set _doc_tido_ro = visita.documento_erp_tido or visita.factura_tido %}
+    {% set _doc_nudo_ro = visita.documento_erp_nudo or visita.factura_nudo %}
+    {% if not puede_metadata and _doc_tido_ro and _doc_nudo_ro %}
     <div class="info-card">
       <h5><i class="bi bi-file-earmark-text"></i>Documento asociado</h5>
       <div class="info-kv">
         <div class="k">Documento ERP</div>
-        <div class="v font-monospace">{{ visita.documento_erp_tido }}-{{ visita.documento_erp_nudo }}</div>
+        <div class="v font-monospace">{{ _doc_tido_ro }}-{{ _doc_nudo_ro }}</div>
       </div>
     </div>
     {% endif %}
@@ -755,6 +775,36 @@
           <i class="bi bi-hourglass-split"></i> Cargando adjuntos…
         </div>
       </div>
+
+      {# 🔗 2026-08-30 (Daniel: "no veo el anexo ahí, debe guardarlo en los
+         documentos... deberá avisar si el documento está firmado o no...
+         para que libere la OT"): el Anexo de Servicios vive en su propia
+         tabla (mant_anexos), no en mant_visita_adjuntos -- por eso no
+         aparecía en la lista de arriba aunque exista. Se muestra acá como
+         su propia fila, con el mismo lenguaje de semáforo que ya usa
+         ot2/detalle.html (firmado = el proveedor puede trabajar / pendiente
+         = todavía no) para que quede claro qué libera la OT. #}
+      {% if anexo %}
+      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #e2e8f0;
+                  display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="font-size:1.4rem;color:{{ '#16a34a' if anexo.estado == 'firmado' else '#f59e0b' }}">
+          <i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <b>Anexo N° {{ anexo.numero }} — {{ anexo.proveedor_nombre }}</b><br>
+          {% if anexo.estado == 'firmado' %}
+          <small class="text-muted">Firmado por {{ anexo.firmante_nombre or anexo.proveedor_nombre }}{% if anexo.firmado_at %} · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %} — el proveedor ya puede trabajar esta OT.</small>
+          {% elif anexo.estado in ('rechazado','vencido','anulado') %}
+          <small class="text-danger">{{ anexo.estado | title }} — este anexo ya no habilita el trabajo, avisa a gestión.</small>
+          {% else %}
+          <small class="text-warning" style="color:#b45309 !important">{{ anexo.estado | title }}{% if anexo.enviado_at %} · enviado {{ anexo.enviado_at | chile_fmt('%d/%m/%Y') }}{% endif %} — todavía NO está firmado, el proveedor no puede trabajar esta OT.</small>
+          {% endif %}
+        </div>
+        <a class="btn btn-sm btn-outline-dark" href="{{ url_for('ot2_api_anexo_pdf', aid=anexo.id) }}" target="_blank" rel="noopener">
+          <i class="bi bi-file-earmark-pdf-fill me-1"></i>Ver documento
+        </a>
+      </div>
+      {% endif %}
     </div>
 
     {# ════════════════════════════════════════════════════════════
@@ -3362,8 +3412,12 @@ const GEOF_ROL_EXENTO = {{ 'true' if geof_rol_exento else 'false' }};
   recalcular();
 
   window.guardarFinanzasOT = async function(){
+    // 2026-08-30 (Daniel: "declaré datos... no se heredan"): vacío ya no se
+    // manda como 0 -- un $0 real y "no lo he cotizado todavía" dejan de ser
+    // la misma cosa en la base de datos (ver también el fix de lectura,
+    // visita.costo is not none, en el <input> de arriba).
     const body = {
-      costo: parseFloat(elCosto.value || 0) || 0,
+      costo: elCosto.value.trim() === '' ? null : (parseFloat(elCosto.value) || 0),
       costo_proveedor: parseFloat(elCostoProv.value || 0) || 0,
       costo_despacho: parseFloat((elCostoDespacho && elCostoDespacho.value) || 0) || 0,
       proveedor_tipo: elTipo.value || '',

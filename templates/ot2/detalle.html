@@ -137,6 +137,13 @@
 .otd-d .k{font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:#8b8b93;font-weight:800}
 .otd-d .v{font-size:.86rem;font-weight:800;color:#fff;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+{# 🔴 2026-08-30 (Daniel: "los nombres se vean completos, no cortados" --
+   REGLA #15): el chip de Técnico venía cortando nombres reales ("Daniel
+   Aguilar Pr…") con la misma regla nowrap+ellipsis que sí tiene sentido
+   para fecha/hora/contadores. Técnico y Contraparte pueden llevar nombres
+   largos -- se les permite wrap sin tocar el resto de los chips. #}
+.d-tec .v, .d-con .v{white-space:normal;overflow:visible;text-overflow:clip;
+  line-height:1.25}
 .d-fec{--dc:#60a5fa} .d-hor{--dc:#c084fc} .d-tec{--dc:#4ade80}
 .d-eq{--dc:#fbbf24}  .d-fot{--dc:#f472b6} .d-ava{--dc:#dc2626}
 .d-con{--dc:#22d3ee} .d-auto{--dc:#4ade80}
@@ -375,7 +382,7 @@
   flex:none;display:grid;place-items:center;color:#c7cbd1;font-size:1rem}
 .otd-wk-item .nm{flex:1;min-width:0}
 .otd-wk-item .nm b{display:block;font-size:.88rem;color:#0a0a0a;font-weight:700;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  overflow-wrap:break-word;white-space:normal}
 .otd-wk-item .nm small{font-size:.7rem;color:#9ca3af}
 /* Mismo pill que .otd-eq .sel (tamaño/forma) -- se declara aparte porque
    este <span class="sel"> vive dentro de <summary>, no de .otd-eq. Los
@@ -510,8 +517,12 @@
 .otd-eq .th{width:38px;height:38px;border-radius:8px;object-fit:cover;background:#f3f4f6;
   flex:none;display:grid;place-items:center;color:#c7cbd1;font-size:1rem}
 .otd-eq .nm{flex:1;min-width:0}
+{# 🔴 2026-08-30 (Daniel: "los nombres se vean completos, no cortados" --
+   REGLA #15): nombres reales de equipo (ej. "ILUS Optimal Dual Cardio
+   Series") venían truncados con "…" -- se permite wrap en vez de una
+   sola línea con ellipsis. #}
 .otd-eq .nm b{display:block;font-size:.85rem;color:#0a0a0a;font-weight:700;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  overflow-wrap:break-word;white-space:normal}
 .otd-eq .nm small{font-size:.68rem;color:#9ca3af;font-variant-numeric:tabular-nums}
 .otd-eq .bar{width:74px;height:6px;border-radius:99px;background:#eef0f3;overflow:hidden;flex:none}
 .otd-eq .bar i{display:block;height:100%;border-radius:99px;background:var(--bc,#16a34a);
@@ -659,22 +670,28 @@
   </div>
 
   {# ── Acciones ─────────────────────────────────────────────────────── #}
+  {# 🔓🔓 2026-08-30 (Daniel, pedido explícito y repetido: "elimíname el
+     ejecutar OT y esas cuestiones raras, porque cuando presiono ejecutar
+     OT me lleva a la cuestión antigua, la ficha completa, no quiero asistir
+     allí. Esto es un módulo de gestión nomás. Y el cliente también elimina
+     lo de ahí"): se quitan los 3 botones que sacaban de OT 2.0 hacia
+     pantallas legacy -- "Ejecutar la OT" (mant_ot_ejecutar), "Ficha
+     completa" (mant_ot_ficha) y "Cliente" (mant_ficha). Las pestañas
+     Información/Trabajo/Evidencia/Documentos de esta misma pantalla ya
+     cubren ese contenido de forma nativa (checklist editable, firmas,
+     finanzas, anexo) -- ya no hacen falta como salida. El link "Abrir en
+     modo clásico" por-equipo dentro de la pestaña Trabajo se conserva
+     (REGLA #4.2) como red de respaldo silenciosa para el caso raro que
+     el checklist inline no cubra, pero deja de ofrecerse como camino
+     principal acá arriba. #}
   <div class="otd-acts">
-    <a class="otd-btn pri" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
-      <i class="bi bi-tools"></i> Ejecutar la OT</a>
-    <a class="otd-btn" href="{{ url_for('mant_ot_ficha', vid=v.id) }}">
-      <i class="bi bi-file-earmark-text"></i> Ficha completa</a>
     {# Compartir la OT firmada — SEPARADO del cierre a propósito (Daniel,
        21-08): si WhatsApp falla, la OT igual quedó cerrada y firmada.
        Solo aparece cuando ya hay documento que mandar. #}
     {% if v.estado in ('completada','cerrada') %}
-    <button type="button" class="otd-btn" id="otdBtnWa" onclick="otdCompartirWa()"
+    <button type="button" class="otd-btn pri" id="otdBtnWa" onclick="otdCompartirWa()"
             style="background:#25d366;border-color:#25d366;color:#fff">
       <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
-    {% endif %}
-    {% if v.cliente_id %}
-    <a class="otd-btn" href="{{ url_for('mant_ficha', cid=v.cliente_id) }}">
-      <i class="bi bi-building"></i> Cliente</a>
     {% endif %}
     {# 🆕 2026-08-28 (Daniel: "podemos eliminar la OT 134 o ponerme un botón
        para eliminarlas y agrega eso por el front en los roles") -- visible
@@ -872,8 +889,6 @@
       <a class="otd-qabtn mail" href="mailto:{{ v.contacto_email }}">
         <i class="bi bi-envelope-fill"></i> Correo</a>
       {% endif %}
-      <a class="otd-qabtn pri" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
-        <i class="bi bi-tools"></i> Ejecutar la OT</a>
     </div>
   </div>
 

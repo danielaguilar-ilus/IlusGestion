@@ -74009,6 +74009,25 @@ def mant_visita_update(vid):
         d["documento_erp_tido"] = (str(d.get("documento_erp_tido") or "").strip()[:10]) or None
     if "documento_erp_nudo" in d:
         d["documento_erp_nudo"] = (str(d.get("documento_erp_nudo") or "").strip()[:20]) or None
+    # 🔗 2026-08-30 (Daniel: "declaré datos en la OT que no se heredan...
+    # es necesario que esto se herede por trazabilidad"): esta card legacy
+    # ("Finanzas de la OT" en ot_ejecutar.html) escribe documento_erp_tido/
+    # nudo, un par de columnas DISTINTO al que usa el resto del pipeline
+    # financiero -- factura_tido/nudo, el que llena la extracción de línea
+    # ZZ, mant_ot_asociar_factura y ot2_api_finanzas, y el que decide si la
+    # OT puede cerrarse (_ot2_finanzas_estado). Sin este espejo, un
+    # documento asociado por esta card era invisible para todo lo demás
+    # (mostraba "Sin asociar" aunque ya hubiera una factura real declarada
+    # por el otro camino). Se escriben AMBOS pares en la misma transacción
+    # -- ninguna columna se elimina (REGLA #4.2), solo dejan de vivir
+    # aisladas una de la otra.
+    if "documento_erp_tido" in d or "documento_erp_nudo" in d:
+        d["factura_tido"] = d.get("documento_erp_tido")
+        d["factura_nudo"] = d.get("documento_erp_nudo")
+        if d["factura_nudo"]:
+            d["estado_facturacion"] = (
+                "con_nota_venta" if (d["factura_tido"] or "").upper() in ("NVV", "NVI")
+                else "facturado")
     # Mismo gate @_ot_can_metadata que el documento ERP de arriba — un valor
     # fuera de _OT2_CENTROS_COSTO se descarta en vez de guardar basura que
     # el resto del sistema (reportes, informe de pérdidas por área) no
@@ -74027,6 +74046,10 @@ def mant_visita_update(vid):
                "costo_proveedor","proveedor_tipo","proveedor_nombre","costo_despacho",
                # Documento ERP de origen (NVI/NVV), solo administrativo
                "documento_erp_tido","documento_erp_nudo",
+               # Espejo de trazabilidad (ver comentario arriba, 2026-08-30):
+               # el mismo documento también queda escrito en el par de
+               # columnas que usa el resto del pipeline financiero.
+               "factura_tido","factura_nudo",
                # 🔴 FIX 2026-08-27 (Daniel, OT-2026-00058 Vitacura, urgente:
                # "falta declarar centro de costo" bloqueaba la firma y NO
                # había forma de declararlo salvo al CREAR la OT). Mismas 3
@@ -78876,6 +78899,76 @@ def _anexo_precio_texto(items):
         for it in items) or "—"
 
 
+def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
+    """Header/footer NATIVOS de Playwright para el PDF del Anexo de Servicios
+    -- MISMO mecanismo que ya usa `_ot_pdf_header_footer_native` (ver ese
+    comentario, OT-2026-00058): `display_header_footer` + header_template/
+    footer_template hace que Chromium repita este HTML en TODA página física
+    real, a diferencia de un `<div class="doc-header">` incrustado en el
+    flujo del documento, que solo aparece en la primera hoja.
+
+    2026-08-30 (Daniel, viendo el PDF real: "el header no continúa como
+    corresponde... la página dos no tiene header, así que esto se tiene que
+    repetir constante por hojas"): el Anexo tenía el header como bloque
+    normal del documento (`.doc-header` en anexo_documento.html) -- se
+    reemplaza por este mecanismo nativo, calcado del compacto de la OT
+    (`_ot_pdf_header_footer_native(grande=False)`), con "ANEXO DE SERVICIOS"
+    en vez de "ORDEN DE TRABAJO". Todo estilo va INLINE a propósito: el
+    header/footer corre aislado, sin acceso al <style> del documento
+    principal (mismo criterio ya documentado ahí)."""
+    import html as _html
+    numero_txt = _html.escape(str(numero or ""))
+    cliente_txt = _html.escape((cliente_nombre or "").strip())
+    logo_ilus = _logo_data_url() or ""
+    logo_shs = _logo_shs_pdf_data_url() or ""
+
+    _ilus_logo_html = (
+        f'<img src="{logo_ilus}" style="height:11mm;max-width:42mm;object-fit:contain;">'
+        if logo_ilus else
+        '<span style="font-weight:900;font-size:15px;color:#ffffff;'
+        'letter-spacing:.02em;">ILUS<span style="color:#dc2626;">.</span></span>'
+    )
+    _shs_logo_html = (
+        '<div style="height:13.4mm;background:#ffffff;border-radius:1mm;'
+        'box-sizing:border-box;padding:1mm 2mm;display:flex;align-items:center;'
+        f'justify-content:center;"><img src="{logo_shs}" '
+        'style="height:11mm;width:auto;object-fit:contain;"></div>'
+        if logo_shs else ""
+    )
+    header_html = (
+        '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
+        '<div style="background:#0a0a0a;padding:3mm 12mm;box-sizing:border-box;'
+        'display:flex;justify-content:space-between;align-items:center;'
+        '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
+        f'<div style="display:flex;align-items:center;gap:3mm;">'
+        f'{_shs_logo_html}{_ilus_logo_html}</div>'
+        '<div style="text-align:right;max-width:100mm;min-width:0;overflow:hidden;">'
+        '<div style="font-size:10px;font-weight:800;color:#ffffff;'
+        'letter-spacing:-.01em;">ANEXO DE SERVICIOS</div>'
+        f'<div style="font-size:13px;font-weight:900;color:#dc2626;'
+        f'line-height:1.15;">N&#176; {numero_txt}</div>'
+        + (f'<div style="font-size:8.5px;font-weight:700;color:#e5e7eb;'
+           'line-height:1.2;margin-top:.5mm;white-space:nowrap;overflow:hidden;'
+           f'text-overflow:ellipsis;">{cliente_txt}</div>' if cliente_txt else '') +
+        '</div></div>'
+        '<div style="height:1.4mm;background:linear-gradient(90deg,#dc2626 0 25%,'
+        '#0a0a0a 25% 100%);-webkit-print-color-adjust:exact;'
+        'print-color-adjust:exact;"></div>'
+        '</div>'
+    )
+    footer_html = (
+        '<div style="width:100%;font-size:7px;font-family:Arial,Helvetica,sans-serif;'
+        'color:#6b7280;padding:3px 12mm 0;box-sizing:border-box;display:flex;'
+        'justify-content:space-between;align-items:center;border-top:1.5px solid #dc2626;">'
+        '<span><b style="color:#0a0a0a">ILUS Fitness</b> · Sport and Health Solutions SPA · '
+        'soportetec@sphs.cl</span>'
+        f'<span><b style="color:#0a0a0a">Anexo N&#176; {numero_txt}</b> · Página '
+        '<span class="pageNumber"></span> de <span class="totalPages"></span></span>'
+        '</div>'
+    )
+    return header_html, footer_html
+
+
 @app.route("/ot/api/anexos/<int:aid>/pdf", methods=["GET"])
 @_mant_required
 def ot2_api_anexo_pdf(aid):
@@ -78910,18 +79003,19 @@ def ot2_api_anexo_pdf(aid):
         precio_txt=_anexo_precio_texto(payload.get("precio_items")),
         firma=firma,
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
-        # 2026-08-30 (Daniel: "mejóralo con un header de ILUS y con SPHS
-        # con esos logos"): mismos helpers ya usados en el resto del
-        # proyecto (etiqueta de despacho, manifiesto de firma) -- no se
-        # recodifica ningún PNG nuevo.
-        logo_ilus=_logo_data_url(), logo_shs=_logo_shs_pdf_data_url(),
     )
     try:
-        # left/right en 0: el header/cuerpo ya traen su propio padding
-        # horizontal (.doc-header/.doc-body, 20mm) para que la línea roja
-        # del header llegue de borde a borde de la página.
+        # 2026-08-30 (Daniel: "el header no continúa... la página dos no
+        # tiene header, así que esto se tiene que repetir constante por
+        # hojas"): header/footer nativos de Chromium (ver
+        # _anexo_pdf_header_footer_native) -- se repiten en TODA página
+        # física real, no solo en la primera. margin.top ~26mm da espacio
+        # real al header (~20mm de alto); bottom 14mm al footer de una
+        # línea (mismas medidas ya probadas en el compacto de la OT).
+        _hdr, _ftr = _anexo_pdf_header_footer_native(a.get("numero"), a.get("cliente_nombre"))
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "0mm", "right": "0mm", "bottom": "18mm", "left": "0mm"})
+                        margin={"top": "26mm", "right": "14mm", "bottom": "14mm", "left": "14mm"},
+                        header_template=_hdr, footer_template=_ftr)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
     except Exception as e:
@@ -78996,11 +79090,12 @@ def ot2_api_anexo_preview_pdf():
         firma=None,
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
         es_vista_previa=True,
-        logo_ilus=_logo_data_url(), logo_shs=_logo_shs_pdf_data_url(),
     )
     try:
+        _hdr, _ftr = _anexo_pdf_header_footer_native("(vista previa)", payload.get("cliente_nombre"))
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "0mm", "right": "0mm", "bottom": "18mm", "left": "0mm"})
+                        margin={"top": "26mm", "right": "14mm", "bottom": "14mm", "left": "14mm"},
+                        header_template=_hdr, footer_template=_ftr)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
     except Exception as e:
@@ -82931,9 +83026,25 @@ def mant_ot_ejecutar(vid):
         except Exception as _e_lh:
             print(f"[ot_ejecutar] lev_huerfanos_count error: {_e_lh}", flush=True)
 
+    # 🔗 2026-08-30 (Daniel: "no veo el anexo ahí, debe guardarlo en los
+    # documentos de la OT... deberá avisar si el documento está firmado o
+    # no... para que libere la OT"): esta pantalla LEGACY (ot_ejecutar.html)
+    # nunca leía el Anexo de Servicios -- solo lo hacía ot2/detalle.html.
+    # Como técnicos y gestión de OT 2.0 siguen aterrizando acá vía "Abrir en
+    # modo clásico", el anexo tiene que verse en los dos lugares o parece
+    # "perdido". Mismo SELECT, sin montos (ver ot2_detalle), para no filtrar
+    # cifras del proveedor a un técnico que entre por esta pantalla.
+    anexo = mysql_fetchone(
+        "SELECT id, numero, estado, proveedor_nombre, firmante_nombre, "
+        "       firmado_at, enviado_at "
+        "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1",
+        (vid,)
+    )
+
     return render_template(
         "mantenciones/ot_ejecutar.html",
         visita=visita,
+        anexo=anexo,
         equipos=equipos,
         equipos_idx=equipos_idx,
         tareas_por_eq=tareas_por_eq,
