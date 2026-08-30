@@ -204,6 +204,20 @@ async function eqPlanMasivo(aplica) {
   }
 }
 
+// ── Imprimir etiquetas (N° de serie) de los equipos seleccionados ──────
+// 2026-08-30 (Daniel): "el número de serie deberá ser impreso y generar
+// etiquetas, siempre excluyendo los pisos y los accesorios". No se filtra
+// nada acá — el backend (mant_maquinas_print_labels) ya excluye pisos/
+// accesorios (vía _inc_clasificacion_sku) y avisa con un flash cuántos
+// quedaron fuera, así que mandamos TODOS los seleccionados tal cual.
+function eqImprimirEtiquetasSeleccion() {
+  const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'));
+  const ids = seleccionados.map(c => parseInt(c.dataset.id)).filter(Boolean);
+  if (!ids.length) { ilusToast('Selecciona al menos un equipo', { type: 'warning' }); return; }
+  const url = `/mantenciones/maquinas/imprimir?ids=${ids.join(',')}`;
+  window.open(url, '_blank', 'noopener');
+}
+
 // ════════════════════════════════════════════════════════════════════
 // FILTRO "MOSTRAR BAJAS" + BAJA MASIVA SELECTIVA (Daniel 2026-05-26)
 // ════════════════════════════════════════════════════════════════════

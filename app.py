@@ -60181,6 +60181,51 @@ def _inc_clasificacion_sku(sku: str) -> dict:
     }
 
 
+def _inc_clasificacion_skus_batch(skus) -> dict:
+    """Versión BATCH de _inc_clasificacion_sku(): una sola consulta con
+    IN(...) en vez de 1 query por SKU. Se usa en pantallas que listan
+    MUCHOS equipos a la vez (ej. la tabla de Equipos de la ficha del
+    cliente, para decidir por fila si se ofrece "Imprimir etiqueta" —
+    Daniel 2026-08-30: "el número de serie deberá ser impreso y generar
+    etiquetas, siempre excluyendo los pisos y los accesorios").
+
+    Mismo puente y misma regla que la función singular (NO se duplica
+    lógica de negocio, solo se agrupa la consulta): modelo_precio='fijo'
+    -> repetible=True (piso/accesorio); sin clasificar -> repetible=None.
+
+    Devuelve {sku: {"clase":..., "clase_nombre":..., "repetible":...}}.
+    Los SKU sin clasificación NO aparecen en el dict (mismo criterio que
+    usa el caller: `.get(sku, {}).get("repetible")` da None = sin dato).
+    """
+    skus_norm = sorted({(s or "").strip() for s in (skus or []) if (s or "").strip()})
+    if not skus_norm:
+        return {}
+    try:
+        ph = ",".join(["%s"] * len(skus_norm))
+        rows = mysql_fetchall(
+            f"SELECT p.sku AS sku, p.clase_producto AS slug, c.nombre, c.modelo_precio "
+            f"  FROM cat_productos p "
+            f"  LEFT JOIN cat_clases_producto c ON c.slug = p.clase_producto "
+            f" WHERE p.sku IN ({ph})",
+            tuple(skus_norm)
+        ) or []
+    except Exception as _e:
+        print(f"[_inc_clasificacion_skus_batch] {_e}", flush=True)
+        return {}
+    out = {}
+    for row in rows:
+        sku = (row.get("sku") or "").strip()
+        if not sku or not row.get("slug"):
+            continue
+        modelo = (row.get("modelo_precio") or "").strip().lower()
+        out[sku] = {
+            "clase": row.get("slug"),
+            "clase_nombre": row.get("nombre") or row.get("slug"),
+            "repetible": (modelo == "fijo") if modelo else None,
+        }
+    return out
+
+
 @app.route("/mantenciones/api/incidencias/buscar-ua", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -61427,6 +61472,23 @@ def _mant_ficha_impl(cid):
     maquinas     = [_norm_maquina(r)  for r in maquinas_raw]
     contratos    = [_norm_contrato(r) for r in contratos_raw]
     visitas_full = [_norm_visita(r)   for r in visitas_raw]
+
+    # 2026-08-30 (Daniel): "el número de serie deberá ser impreso y generar
+    # etiquetas, siempre excluyendo los pisos y los accesorios" — se calcula
+    # acá (1 sola query batch) si cada equipo PUEDE mostrar el botón
+    # "Imprimir etiqueta". Reusa _inc_clasificacion_sku (piso/accesorio =
+    # modelo_precio 'fijo' en el Catálogo, mismo puente que ya usa
+    # Incidencias y _equipo_lleva_serie_individual). Sin clasificar
+    # (repetible=None) => se PERMITE igual — mismo criterio conservador que
+    # ya usa el resto del proyecto para "sin dato": no bloquear por falta
+    # de información, solo bloquear cuando SÍ se sabe que es repetible.
+    try:
+        _clasif_map = _inc_clasificacion_skus_batch([m.get("sku") for m in maquinas])
+    except Exception:
+        _clasif_map = {}
+    for _m in maquinas:
+        _rep = (_clasif_map.get((_m.get("sku") or "").strip()) or {}).get("repetible")
+        _m["puede_etiqueta"] = (_rep is not True)
 
     # 2026-08-30 (Daniel, mismo pedido que ya se aplicó esta noche en
     # ot_ejecutar.html/commit 38faeae -- "quién gestionó qué... jamás se
@@ -102091,6 +102153,132 @@ def mant_lev_rematerializar(lid):
     except Exception:
         pass
     return jsonify({"ok": True, "creados": out.get("creados", 0), "errores": out.get("errores", 0)})
+
+
+def _mant_maquinas_para_etiqueta(ids):
+    """Trae los equipos (mant_maquinas) que van a imprimirse, YA excluidos
+    los pisos/accesorios -- Daniel 2026-08-30: "el número de serie deberá
+    ser impreso y generar etiquetas, siempre excluyendo los pisos y los
+    accesorios". El filtro se aplica ACÁ (no solo ocultando el botón en el
+    frontend) para que nadie pueda saltárselo armando la URL a mano.
+
+    Sin clasificar (repetible=None) -> se PERMITE igual, mismo criterio
+    conservador que usa el resto del proyecto (_equipo_lleva_serie_individual,
+    la ficha del cliente): no bloquear por falta de dato.
+
+    Devuelve (rows, excluidos) -- `excluidos` es la cantidad de ids pedidos
+    que SÍ eran piso/accesorio y se descartaron, para que el caller pueda
+    avisar en vez de fallar en silencio."""
+    ids = [int(x) for x in (ids or []) if str(x).strip().isdigit()]
+    if not ids:
+        return [], 0
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT m.id, m.nombre, m.sku, m.serie, m.marca, m.modelo, "
+        f"       m.ubicacion_sala, m.cantidad, m.estado, "
+        f"       c.razon_social AS cliente_nombre, c.rut AS cliente_rut, "
+        f"       c.id AS cliente_id "
+        f"  FROM mant_maquinas m "
+        f"  JOIN mant_clientes c ON c.id = m.cliente_id "
+        f" WHERE m.id IN ({ph}) "
+        f" ORDER BY m.nombre",
+        tuple(ids)
+    ) or []
+    rows = [dict(r) for r in rows]
+    clasif_map = _inc_clasificacion_skus_batch([r.get("sku") for r in rows])
+    permitidos = []
+    for r in rows:
+        rep = (clasif_map.get((r.get("sku") or "").strip()) or {}).get("repetible")
+        if rep is True:
+            continue  # piso/accesorio -- NUNCA se imprime etiqueta de equipo
+        permitidos.append(r)
+    excluidos = len(rows) - len(permitidos)
+    return permitidos, excluidos
+
+
+@app.route("/mantenciones/maquinas/etiquetas")
+@_mant_required
+def mant_maquinas_etiquetas_pdf():
+    """Genera el PDF de etiqueta(s) de EQUIPO para uno o varios
+    mant_maquinas.id -- 3ra variante del mismo motor de etiquetas del
+    proyecto (Catálogo/Productos y Bodega de Repuestos son las otras dos),
+    reusando _label_format()/_pw_pdf() tal cual (Daniel 2026-08-30: "el
+    número de serie deberá ser impreso y generar etiquetas, siempre
+    excluyendo los pisos y los accesorios").
+
+    El código de barras/caja principal de la etiqueta es el N° DE SERIE
+    (identifica esta unidad física exacta), no el SKU (que identifica el
+    modelo y se repite en muchas unidades) -- ver
+    templates/maquina_label_standalone.html."""
+    ids_raw = (request.args.get("ids") or "").strip()
+    ids = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "Sin equipos seleccionados"}), 400
+    fmt = request.args.get("fmt") or "100x50"
+    rows, _excluidos = _mant_maquinas_para_etiqueta(ids)
+    if not rows:
+        return jsonify({"ok": False, "error": "Ningún equipo válido para etiqueta "
+                         "(pisos y accesorios no llevan etiqueta de equipo)."}), 404
+    label_format = _label_format(fmt)
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    html = render_template(
+        "maquina_label_standalone.html",
+        maquinas=rows, fecha=fecha,
+        fmt=label_format["key"], label_format=label_format,
+        logo_url=_logo_data_url(),
+    )
+    pdf_bytes = _pw_pdf(
+        html, width=label_format["w"], height=label_format["h"],
+        wait_fn=(
+            "() => {"
+            "  const codes = Array.from(document.querySelectorAll('.barcode'));"
+            "  return codes.length > 0 && codes.every(c => c.dataset.rendered === '1');"
+            "}"
+        ),
+    )
+    resp = make_response(pdf_bytes)
+    resp.headers["Content-Type"] = "application/pdf"
+    disposition = "attachment" if request.args.get("download") == "1" else "inline"
+    resp.headers["Content-Disposition"] = f"{disposition}; filename=etiquetas-equipos.pdf"
+    return resp
+
+
+@app.route("/mantenciones/maquinas/imprimir")
+@_mant_required
+def mant_maquinas_print_labels():
+    """Vista previa de impresión de etiquetas de equipo -- mismo patrón UX
+    que repuestos_print_labels()/print_labels.html: toolbar + vista previa
+    HTML en vivo + panel de tamaño/acciones. El PDF real lo sigue generando
+    mant_maquinas_etiquetas_pdf() (mismo pipeline Playwright); esta vista
+    solo arma la previsualización y apunta los botones a esa misma ruta."""
+    ids_raw = (request.args.get("ids") or "").strip()
+    ids = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+    if not ids:
+        flash("Selecciona al menos un equipo para imprimir etiquetas.", "warning")
+        return redirect(url_for("mant_index"))
+    fmt = request.args.get("fmt") or "100x50"
+    label_format = _label_format(fmt)
+    rows, excluidos = _mant_maquinas_para_etiqueta(ids)
+    if not rows:
+        flash("Los equipos seleccionados son pisos/accesorios y no llevan "
+              "etiqueta de equipo, o no se encontraron.", "danger")
+        return redirect(url_for("mant_index"))
+    if excluidos:
+        flash(f"{excluidos} equipo(s) seleccionado(s) son piso/accesorio y se "
+              f"excluyeron automáticamente (no llevan etiqueta de equipo).", "warning")
+    fecha = _now_chile_str("%d-%m-%Y %H:%M")
+    ids_csv = ",".join(str(r["id"]) for r in rows)
+    cliente_id = rows[0].get("cliente_id") if len(set(r.get("cliente_id") for r in rows)) == 1 else None
+    response = make_response(render_template(
+        "maquina_print_labels.html",
+        maquinas=rows, fecha=fecha,
+        fmt=label_format["key"], label_format=label_format,
+        logo_url=_logo_data_url(), ids_csv=ids_csv,
+        cliente_id=cliente_id,
+    ))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.route("/mantenciones/maquinas/<int:mid>")

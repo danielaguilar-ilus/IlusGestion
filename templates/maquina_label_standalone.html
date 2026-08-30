@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etiquetas de equipos</title>
+<style>
+:root {
+  --label-w: {{ label_format.w }};
+  --label-h: {{ label_format.h }};
+}
+
+@page {
+  size: {{ label_format.w }} {{ label_format.h }};
+  margin: 0;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+html,
+body {
+  width: var(--label-w);
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: #fff;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Tercera variante del mismo esqueleto premium (2026-08-30, Daniel: "el
+   número de serie deberá ser impreso y generar etiquetas, siempre
+   excluyendo los pisos y los accesorios"). Clon de
+   templates/repuesto_label_standalone.html (que a su vez clona
+   templates/label_standalone.html del módulo Catálogo) -- NINGUNO de los
+   dos originales se toca, ninguno se reusa como archivo: esta es una
+   TERCERA copia adaptada a la ficha del CLIENTE (mant_maquinas), con
+   .cli-row en vez de .marca-row apuntando al cliente dueño del equipo,
+   y el código de barras/caja principal apuntando al N° DE SERIE (el
+   identificador único de ESTA unidad física) en vez del SKU (que
+   identifica el modelo, compartido por muchas unidades). */
+.label {
+  width: var(--label-w);
+  height: var(--label-h);
+  display: grid;
+  grid-template-rows: var(--hdr-h) var(--marca-h) var(--meta-h) var(--prod-h) minmax(0, 1fr) var(--stripe-h);
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  border: var(--label-border) solid #000;
+  border-radius: 0;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  page-break-after: always;
+  break-after: page;
+  isolation: isolate;
+}
+
+.label:last-child {
+  page-break-after: auto;
+  break-after: auto;
+}
+
+.label-head {
+  display: grid;
+  grid-template-columns: 44% 1px minmax(0, 1fr);
+  align-items: stretch;
+  background: #000;
+  color: #fff;
+}
+
+.rep-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--brand-pad-y) 1mm var(--brand-pad-bottom);
+  overflow: hidden;
+  text-align: center;
+  line-height: .88;
+}
+
+.rep-brand strong {
+  display: block;
+  font-size: var(--brand-size);
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.rep-brand span {
+  display: block;
+  margin-top: var(--brand-sub-gap);
+  color: #fff;
+  font-size: var(--brand-sub-size);
+  font-weight: 800;
+  letter-spacing: var(--brand-sub-spacing);
+}
+
+.brand-sep {
+  align-self: center;
+  width: .34mm;
+  height: 62%;
+  background: #fff;
+}
+
+.ilus-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 .6mm;
+  overflow: hidden;
+}
+
+.ilus-logo {
+  max-width: 104%;
+  max-height: 112%;
+  display: block;
+  object-fit: contain;
+  transform: translateY(var(--ilus-lift)) scale(var(--ilus-scale));
+  filter: grayscale(1) brightness(0) invert(1);
+  image-rendering: crisp-edges;
+}
+
+.marca-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: #dc2626;
+  color: #fff;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: var(--marca-size);
+  border-bottom: .32mm solid #000;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.marca-row.marca-row-vacio {
+  background: #6b7280;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .55fr) minmax(0, .75fr);
+  align-items: center;
+  border-bottom: .32mm solid #000;
+  background: #fff;
+  font-size: var(--meta-size);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.meta-cell {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-sm);
+  min-width: 0;
+  padding: 0 var(--cell-pad);
+  border-right: .24mm solid #aaa;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.meta-cell:last-child {
+  border-right: 0;
+}
+
+.box-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  flex: 0 0 auto;
+}
+
+.product-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: .45mm var(--pad-x);
+  border-bottom: .32mm solid #000;
+  overflow: hidden;
+}
+
+.product-name {
+  display: -webkit-box;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(var(--prod-h) - .7mm);
+  text-align: center;
+  overflow: hidden;
+  color: #000;
+  font-size: var(--product-size);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1.02;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-decoration: none;
+}
+
+.label-body {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr) var(--date-rail-w);
+  min-height: 0;
+}
+
+.dims {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--dim-gap);
+  padding: 0 var(--pad-x);
+  border-right: .32mm solid #000;
+  overflow: hidden;
+}
+
+.dim-item {
+  display: grid;
+  grid-template-columns: var(--dim-icon-w) var(--dim-label-w) minmax(var(--dim-value-w), 1fr);
+  align-items: baseline;
+  column-gap: var(--gap-sm);
+  min-width: 0;
+  color: #000;
+  font-size: var(--dim-size);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.dim-icon {
+  font-size: var(--dim-icon-size);
+  line-height: 1;
+  text-align: center;
+  font-family: "Segoe UI Symbol", Arial, sans-serif;
+  font-weight: 900;
+}
+
+.dim-label {
+  overflow: visible;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.dim-value {
+  justify-self: end;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.sku-box {
+  align-self: end;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: var(--sku-h);
+  border: .28mm solid #000;
+  background: #fff;
+}
+
+.sku-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--sku-title-h);
+  background: #000;
+  color: #fff;
+  font-size: var(--sku-title-size);
+  font-weight: 900;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.sku-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: .35mm 1mm;
+  overflow: hidden;
+  color: #000;
+  background: #fff;
+  font-size: var(--sku-size);
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.barcode-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: var(--barcode-gap);
+  min-width: 0;
+  padding: var(--barcode-pad-y) 1.5mm .9mm;
+  overflow: hidden;
+}
+
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.barcode {
+  width: var(--barcode-w);
+  height: var(--barcode-h);
+  max-height: var(--barcode-h);
+}
+
+.date-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: .24mm solid #000;
+  background: #fff;
+  overflow: hidden;
+}
+
+.date-rail span {
+  display: block;
+  font-size: var(--date-size);
+  font-weight: 750;
+  line-height: 1;
+  transform: rotate(-90deg);
+  white-space: nowrap;
+}
+
+/* Mismo control de rollback que label_standalone.html / repuesto_label_standalone.html */
+:root {
+  --label-footer-stripes: 0;
+}
+
+.hazard-stripe {
+  display: var(--hazard-display, none);
+  background: repeating-linear-gradient(135deg, #000 0 3.2mm, #fff 3.2mm 5.8mm);
+  border-top: calc(.32mm * var(--label-footer-stripes)) solid #000;
+}
+:root {
+  --hazard-display: none;
+}
+
+.label-150x100 {
+  --label-border: .38mm;
+  --hdr-h: 24mm;
+  --marca-h: 7mm;
+  --meta-h: 10mm;
+  --prod-h: 18mm;
+  --stripe-h: calc(8mm * var(--label-footer-stripes));
+  --pad-x: 4mm;
+  --cell-pad: 1.5mm;
+  --gap-sm: 1.1mm;
+  --brand-size: 6.4mm;
+  --brand-sub-size: 2.45mm;
+  --brand-sub-spacing: .9mm;
+  --brand-sub-gap: 1mm;
+  --brand-pad-y: 2.4mm;
+  --brand-pad-bottom: 1.8mm;
+  --ilus-scale: 1.25;
+  --ilus-lift: -1.85mm;
+  --marca-size: 4.2mm;
+  --meta-size: 3.5mm;
+  --product-size: 7mm;
+  --icon-size: 5mm;
+  --dim-icon-w: 6mm;
+  --dim-label-w: 15mm;
+  --dim-value-w: 16mm;
+  --dim-icon-size: 5mm;
+  --dim-size: 3.5mm;
+  --dim-gap: 2.2mm;
+  --barcode-pad-y: 1.2mm;
+  --barcode-gap: 2mm;
+  --barcode-w: 98%;
+  --barcode-h: 16mm;
+  --sku-h: 16mm;
+  --sku-title-h: 5mm;
+  --sku-title-size: 3mm;
+  --sku-size: 7mm;
+  --date-size: 2.8mm;
+  --date-rail-w: 5mm;
+}
+
+.label-100x50 {
+  --label-border: .28mm;
+  --hdr-h: 11.5mm;
+  --marca-h: 4mm;
+  --meta-h: 6mm;
+  --prod-h: 8mm;
+  --stripe-h: calc(4mm * var(--label-footer-stripes));
+  --pad-x: 1.8mm;
+  --cell-pad: .7mm;
+  --gap-sm: .42mm;
+  --brand-size: 3.1mm;
+  --brand-sub-size: 1.22mm;
+  --brand-sub-spacing: .32mm;
+  --brand-sub-gap: .35mm;
+  --ilus-scale: 1.32;
+  --ilus-lift: -.7mm;
+  --brand-pad-y: .85mm;
+  --brand-pad-bottom: .5mm;
+  --marca-size: 2.6mm;
+  --meta-size: 1.75mm;
+  --product-size: 3.3mm;
+  --icon-size: 2.7mm;
+  --dim-icon-w: 3mm;
+  --dim-label-w: 7.5mm;
+  --dim-value-w: 8mm;
+  --dim-icon-size: 2.5mm;
+  --dim-size: 1.8mm;
+  --dim-gap: .95mm;
+  --barcode-pad-y: .3mm;
+  --barcode-gap: .4mm;
+  --barcode-w: 94%;
+  --barcode-h: 7.2mm;
+  --sku-h: 9.2mm;
+  --sku-title-h: 2.8mm;
+  --sku-title-size: 1.35mm;
+  --sku-size: 3.6mm;
+  --date-size: 1.45mm;
+  --date-rail-w: 3mm;
+}
+</style>
+</head>
+<body>
+{% set format_key = fmt or label_format.key %}
+{% set logo_src = logo_url or url_for('static', filename='Logo.png') %}
+{% for m in maquinas %}
+  {% set codigo_barra = (m.serie or m.sku or '') %}
+  <article class="label label-{{ format_key }}">
+    <header class="label-head">
+      <div class="rep-brand">
+        <strong>EQUIPO</strong>
+        <span>ILUS FITNESS</span>
+      </div>
+      <div class="brand-sep"></div>
+      <div class="ilus-brand">
+        <img class="ilus-logo" src="{{ logo_src }}" alt="ILUS">
+      </div>
+    </header>
+
+    {# Marca del EQUIPO (Life Fitness, Technogym, etc.) -- mant_maquinas.marca.
+       No confundir con la marca ILUS de la cabecera. #}
+    <div class="marca-row {{ 'marca-row-vacio' if not m.marca else '' }}">{{ m.marca or 'SIN MARCA' }}</div>
+
+    {# Cliente dueño del equipo — la razón de ser de esta 3ra variante: la
+       etiqueta va pegada en el gimnasio del cliente, así que identificarlo
+       ayuda al técnico que revisa varias sedes. #}
+    <div class="meta-row">
+      <div class="meta-cell">
+        <svg class="box-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M3 21h18"></path><path d="M5 21V7l7-4 7 4v14"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="M9 13h1"></path><path d="M14 13h1"></path><path d="M9 21v-4h6v4"></path>
+        </svg>
+        <span>{{ m.cliente_nombre or '—' }}</span>
+      </div>
+      <div class="meta-cell"><span>RUT</span></div>
+      <div class="meta-cell"><span>{{ m.cliente_rut | rut_fmt if m.cliente_rut else '—' }}</span></div>
+    </div>
+
+    <div class="product-row">
+      <span class="product-name">{{ m.nombre }}</span>
+    </div>
+
+    <div class="label-body">
+      <div class="dims">
+        {% if m.sku %}<div class="dim-item"><span class="dim-icon">#</span><span class="dim-label">SKU:</span><span class="dim-value">{{ m.sku }}</span></div>{% endif %}
+        {% if m.modelo %}<div class="dim-item"><span class="dim-icon">&#9881;</span><span class="dim-label">Modelo:</span><span class="dim-value">{{ m.modelo }}</span></div>{% endif %}
+        {% if m.ubicacion_sala %}<div class="dim-item"><span class="dim-icon">&#9873;</span><span class="dim-label">Ubic:</span><span class="dim-value">{{ m.ubicacion_sala }}</span></div>{% endif %}
+      </div>
+
+      <div class="barcode-panel">
+        <div class="barcode-wrap">
+          <svg class="barcode" id="barcode-{{ loop.index0 }}" data-code="{{ codigo_barra }}"></svg>
+        </div>
+        <div class="sku-box">
+          <div class="sku-title">N° de serie</div>
+          <div class="sku-value">{{ m.serie or 'SIN SERIE' }}</div>
+        </div>
+      </div>
+
+      <div class="date-rail"><span>{{ fecha }}</span></div>
+    </div>
+
+    <div class="hazard-stripe"></div>
+  </article>
+{% endfor %}
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const formatKey = "{{ format_key }}";
+
+  function fitText(el, minPx) {
+    if (!el) return;
+    let size = parseFloat(getComputedStyle(el).fontSize) || 14;
+    el.style.fontSize = size + "px";
+    for (let i = 0; i < 80; i += 1) {
+      const tooWide = el.scrollWidth > el.clientWidth;
+      const tooTall = el.scrollHeight > el.clientHeight;
+      if ((!tooWide && !tooTall) || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function fitTextToBox(el, maxPx, minPx) {
+    if (!el) return;
+    let size = maxPx;
+    el.style.fontSize = size + "px";
+    el.style.lineHeight = "1.02";
+    for (let i = 0; i < 120; i += 1) {
+      const tooTall = el.scrollHeight > el.clientHeight + 1;
+      if (!tooTall || size <= minPx) break;
+      size -= 0.5;
+      el.style.fontSize = size + "px";
+    }
+  }
+
+  function renderBarcode(barcode) {
+    const code = barcode.dataset.code || "";
+    if (!code) { return; }
+    const wrap = barcode.closest(".barcode-wrap");
+    const wrapWidth = wrap ? wrap.clientWidth : 140;
+    const density = formatKey === "100x50" ? 11.5 : 9.4;
+    const maxWidth = formatKey === "100x50" ? 1.75 : 2.35;
+    const lineWidth = Math.max(0.7, Math.min(maxWidth, wrapWidth / Math.max(code.length * density, 1)));
+    const height = formatKey === "100x50" ? 27 : 50;
+
+    JsBarcode(barcode, code, {
+      format: "CODE128",
+      displayValue: false,
+      lineColor: "#000",
+      background: "#fff",
+      width: lineWidth,
+      height,
+      margin: 0
+    });
+    barcode.dataset.rendered = "1";
+  }
+
+  document.querySelectorAll(".barcode").forEach((barcode) => {
+    renderBarcode(barcode);
+    // Sin código (equipo sin serie NI sku) -- marcar como "renderizado" igual
+    // para que el wait_fn de Playwright no se cuelgue esperando un barcode
+    // que nunca se va a dibujar.
+    if (!barcode.dataset.rendered) barcode.dataset.rendered = "1";
+  });
+
+  document.querySelectorAll(".product-name").forEach((el) => {
+    fitTextToBox(el, formatKey === "100x50" ? 12 : 46, formatKey === "100x50" ? 6 : 12);
+  });
+
+  document.querySelectorAll(".sku-value").forEach((el) => {
+    fitText(el, formatKey === "100x50" ? 8 : 14);
+  });
+});
+</script>
+</body>
+</html>
