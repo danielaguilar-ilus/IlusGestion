@@ -107066,6 +107066,68 @@ def _ot_tipos_todos():
     return out
 
 
+def _ensure_plantilla_capacitacion_rica():
+    """Enriquece la plantilla "Capacitación" con asistencia + aprendizaje.
+
+    Daniel (2026-08-30, viendo la tarjeta real -- "1 item", badge "Sin
+    checklist"): "puedes agregar detalles de capacitación para llevar
+    asistencia y que los asistentes aprendan y comenten acerca del
+    aprendizaje... métele a esa y modifícala".
+
+    No hay un tipo_respuesta nativo de "lista de personas" en
+    mant_tarea_plantilla_items (ver ENUM: check/texto/sino/numero/
+    verificacion/gps/lista/fecha_hora/foto -- 'lista' es un SELECT de
+    opciones fijas, no una planilla libre de nombres) -- por eso la
+    asistencia se resuelve como un campo 'texto' con instrucciones claras
+    en la descripción ("un nombre por línea"), igual que ya se hace en
+    otras plantillas de este proyecto para datos libres del técnico
+    (ver "Observaciones del técnico" en el seed de Levantamiento, arriba).
+
+    Idempotente por TÍTULO dentro de la misma plantilla (no INSERT IGNORE
+    -- esta tabla no tiene una UNIQUE key sobre plantilla_id+titulo): si el
+    ítem ya existe (ej. porque esta función ya corrió antes, o alguien lo
+    agregó a mano desde el editor), no se duplica. Encuentra la plantilla
+    por nombre EXACTO 'Capacitación' -- si no existe todavía no hace nada
+    (no la crea de cero: ya existe en la base real, con su propio id y su
+    ítem original, que esta función NO toca ni reordena)."""
+    try:
+        p = mysql_fetchone(
+            "SELECT id FROM mant_tarea_plantillas WHERE nombre='Capacitación' LIMIT 1")
+        if not p:
+            return None
+        pid = p["id"]
+        existentes = mysql_fetchall(
+            "SELECT titulo FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,)) or []
+        titulos_hoy = {(r.get("titulo") or "").strip() for r in existentes}
+        # Orden alto (50+) para que queden AL FINAL, después del ítem
+        # original de la plantilla (que sigue siendo lo primero que ve el
+        # técnico -- REGLA #4.2, no se reordena lo que ya existía).
+        nuevos = [
+            (50, "Lista de asistencia",
+             "Un nombre completo por línea: quiénes asistieron a esta capacitación.",
+             "texto", 1, 0),
+            (60, "Comentarios y aprendizajes de los asistentes",
+             "Qué aprendieron, dudas que quedaron, sugerencias para la próxima "
+             "capacitación -- en las propias palabras de quienes asistieron.",
+             "texto", 0, 0),
+        ]
+        creados = []
+        for orden, titulo, desc, tipo, obligatoria, requiere_foto in nuevos:
+            if titulo in titulos_hoy:
+                continue
+            mysql_execute(
+                "INSERT INTO mant_tarea_plantilla_items "
+                "  (plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                "   obligatoria, requiere_foto) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (pid, orden, titulo, desc, tipo, obligatoria, requiere_foto))
+            creados.append(titulo)
+        return {"plantilla_id": pid, "creados": creados}
+    except Exception as e:
+        print(f"[ensure_plantilla_capacitacion] {e}", flush=True)
+        return None
+
+
 def _ensure_plantilla_repuesto():
     """Plantilla "Repuesto" (Daniel, 28-08-2026 -- auditoría de cobertura de
     clasificación): de las 19 clases de producto activas en el catálogo
@@ -112299,6 +112361,18 @@ try:
         print(f"[ILUS] Plantilla 'Repuesto' sembrada (skip-migrations): id={_pid_repuesto}", flush=True)
 except Exception as _ensure_repuesto_err:
     print(f"[ILUS][WARN] _ensure_plantilla_repuesto: {_ensure_repuesto_err}", flush=True)
+
+# CRÍTICO: plantilla "Capacitación" SIEMPRE (incluso skip-migrations) --
+# Daniel 2026-08-30, viendo la tarjeta real con "Sin checklist": agrega
+# asistencia + comentarios de aprendizaje si todavía no existen.
+try:
+    with app.app_context():
+        _cap_out = _ensure_plantilla_capacitacion_rica()
+    if _cap_out and _cap_out.get("creados"):
+        print(f"[ILUS] Plantilla 'Capacitación' enriquecida (skip-migrations): "
+              f"{_cap_out['creados']}", flush=True)
+except Exception as _ensure_cap_err:
+    print(f"[ILUS][WARN] _ensure_plantilla_capacitacion_rica: {_ensure_cap_err}", flush=True)
 
 # CRÍTICO: matriz clasificación x categoría SIEMPRE (incluso skip-migrations)
 # -- Daniel 2026-08-28: "quiero que la clasificación en mantenciones,
