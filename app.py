@@ -102047,6 +102047,18 @@ def mant_maquina_ficha(mid):
             flash("Este equipo no está en ninguna OT asignada a ti.", "warning")
             return redirect(url_for("mant_ots_list"))
 
+    # 🔒 2026-08-30 (Daniel, por voz): "al consultar cada producto, deberá
+    # indicar cada diagnóstico con el responsable, con fecha y hora — qué
+    # técnico lo hizo, cuál fue su diagnóstico". El QUIÉN (revisado_por) es
+    # el mismo tipo de dato "quién hizo qué tarea puntual" que Daniel ya
+    # pidió reservar SOLO para superadmin esta misma noche (ver
+    # _es_superadmin_ficha en mant_ficha ~app.py:61430 y es_superadmin_flag
+    # en mant_ot_ejecutar ~app.py:81907 — "jamás se enteren o lo vean los
+    # técnicos o los demás"). Se calcula UNA vez acá y se usa para no
+    # popular el campo sensible en el dict que arma `ots` más abajo: nunca
+    # se confía en esconderlo solo en el template.
+    _es_superadmin_ficha = bool((g.permissions or {}).get("superadmin"))
+
     # Historial COMPLETO de intervenciones (cronológico DESC) — Daniel:
     # "Igual sí me gustaría saber dentro de la ficha, parte, si es que
     # le hicieron mantención, cuándo, quién lo hizo, quién lo gestionó,
@@ -102054,6 +102066,19 @@ def mant_maquina_ficha(mid):
     # levantamientos), con info enriquecida: diagnóstico, observaciones,
     # número de fotos por equipo y flag de si el levantamiento se aplicó
     # a esta ficha.
+    #
+    # 2026-08-30 (Daniel, por voz): "quiero ver el detalle de ESE producto
+    # ahí" — v.diagnostico es el diagnóstico de TODA la OT (se repite igual
+    # en la ficha de cada equipo que tocó esa OT). Se agrega, vía LEFT JOIN
+    # a mant_visita_equipos (filtrado por ESTE mid), el diagnóstico
+    # ESPECÍFICO que el técnico dejó sobre este equipo en esa visita
+    # (observacion_tecnico/estado_revision/revisado_at/revisado_por). Es
+    # aditivo: v.diagnostico/v.observaciones NO se tocan.
+    # Las columnas de `ve` van con MAX() (nunca hay más de 1 fila por
+    # visita_id+maquina_id, UNIQUE KEY uq_visita_maquina) para no chocar
+    # con ONLY_FULL_GROUP_BY -- a diferencia del JOIN a `u` (arriba), que
+    # sí calza en la excepción de MySQL por unirse contra su PRIMARY KEY,
+    # `ve` se une por una UNIQUE KEY compuesta que MySQL no infiere sola.
     ots_rows = mysql_fetchall(
         "SELECT DISTINCT v.id, v.numero_ot, v.titulo, v.fecha_programada, "
         "       v.hora_inicio, v.hora_fin, v.tipo, v.estado, v.descripcion, "
@@ -102064,14 +102089,21 @@ def mant_maquina_ficha(mid):
         "          WHERE f.visita_id=v.id AND f.maquina_id=%s) AS fotos_count, "
         "       (SELECT MAX(ml.aplicado_a_ficha) "
         "          FROM mant_maquina_levantamientos ml "
-        "         WHERE ml.visita_id=v.id AND ml.maquina_id=%s) AS lev_aplicado "
+        "         WHERE ml.visita_id=v.id AND ml.maquina_id=%s) AS lev_aplicado, "
+        "       MAX(ve.observacion_tecnico) AS diag_equipo, "
+        "       MAX(ve.estado_revision) AS diag_estado, "
+        "       MAX(ve.revisado_at) AS diag_revisado_at, "
+        "       MAX(ve.revisado_por) AS diag_revisado_por, "
+        "       MAX(ve.razon_saltado) AS diag_razon_saltado "
         "  FROM mant_visitas v "
         "  JOIN mant_visita_tareas t ON t.visita_id = v.id "
         "  LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+        "  LEFT JOIN mant_visita_equipos ve "
+        "         ON ve.visita_id = v.id AND ve.maquina_id = %s "
         " WHERE t.maquina_id=%s "
         " GROUP BY v.id "
         " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 100",
-        (mid, mid, mid)
+        (mid, mid, mid, mid)
     ) or []
     # ── PERF 2026-05-18 (audit Daniel) ─────────────────────────────
     # Antes: N+1 — 1 query por cada OT en `ots_rows` para traer su primera
@@ -102120,6 +102152,19 @@ def mant_maquina_ficha(mid):
         d["lev_aplicado"] = bool(d.get("lev_aplicado"))
         # Foto destacada (batched arriba — sin queries individuales)
         d["foto_destacada"] = fotos_por_ot.get(d["id"])
+        # Diagnóstico específico de ESTE equipo en esta visita (puede venir
+        # NULL: OT vieja o equipo agregado sin pasar por el checklist nuevo
+        # con mant_visita_equipos — el LEFT JOIN simplemente no trae fila).
+        d["diag_equipo"] = d.get("diag_equipo") or ""
+        d["diag_estado"] = d.get("diag_estado") or ""
+        d["diag_razon_saltado"] = d.get("diag_razon_saltado") or ""
+        # diag_revisado_at se deja como datetime crudo (no stringificado):
+        # el template lo formatea con |chile_fmt (REGLA #6, nunca ISO crudo).
+        # 🔒 diag_revisado_por (el QUIÉN) se oculta acá si no es superadmin —
+        # ver _es_superadmin_ficha más arriba. Nunca viaja al HTML para
+        # nadie más, ni con DevTools.
+        if not _es_superadmin_ficha:
+            d["diag_revisado_por"] = ""
         ots.append(d)
 
     # Fotos cronológicas del equipo (de mant_maquina_fotos — capturadas
@@ -102314,6 +102359,8 @@ def mant_maquina_ficha(mid):
     ultimo_levantamiento = levantamientos[0] if levantamientos else None
 
     # ── Flag is_admin: el template muestra controles override de foto ──
+    # (superadmin U admin — a propósito NO se reusa para el diagnóstico por
+    # equipo: ese dato exige superadmin ESTRICTO, ver _es_superadmin_ficha).
     perms = g.get("permissions") or {}
     is_admin = bool(perms.get("superadmin") or perms.get("admin"))
 
@@ -102327,6 +102374,7 @@ def mant_maquina_ficha(mid):
         levantamientos=levantamientos,
         ultimo_levantamiento=ultimo_levantamiento,
         is_admin=is_admin,
+        es_superadmin=_es_superadmin_ficha,
     )
 
 
