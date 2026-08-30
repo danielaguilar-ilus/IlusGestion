@@ -77260,6 +77260,25 @@ def _ot_tv_datos(fecha=None):
             (f.get("direccion_visita") or f.get("cliente_direccion") or "").strip(),
             (f.get("cliente_comuna") or "").strip()) if p])
 
+        # 🆕 2026-08-29 (Daniel: "cuando quede al cien por ciento, no sabemos
+        # el estado de la firma... si firmó el técnico, si firmó el cliente o
+        # si se cerró completamente"). El checklist en 100% no dice nada del
+        # ciclo de firmas -- una OT puede estar "trabajo_listo" y seguir
+        # esperando horas a que el cliente o el supervisor firmen, y en el
+        # monitor eso se veía IGUAL que una OT que recién va a mitad de
+        # camino. `v.estado` ya distingue las 3 etapas reales del cierre
+        # (mismo estado que usa firmar-revision/firmar-cliente/aprobar-cierre
+        # para transicionar) -- solo faltaba traducirlo a la burbuja.
+        _estado_raw = (f.get("estado") or "").strip().lower()
+        if _estado_raw == "firmada_tecnico":
+            firma_estado = "tecnico"      # firmó el técnico, esperando al cliente
+        elif _estado_raw == "pendiente_aprobacion":
+            firma_estado = "cliente"      # firmó el cliente, esperando cierre
+        elif _estado_raw in _OT_TV_TERMINADAS:
+            firma_estado = "cerrada"      # las 3 firmas completas
+        else:
+            firma_estado = None           # todavía no hay nada que mostrar
+
         # 2026-08-27 (Daniel: "quisiera saber qué van a hacer, si es una
         # instalación, una mantención, una visita... todo eso necesito que
         # lo capturemos"): el tipo ya se guarda y ya se consulta (v.tipo),
@@ -77333,6 +77352,7 @@ def _ot_tv_datos(fecha=None):
                        "terminado" if terminada else
                        "atrasado" if atrasada else "pendiente"),
             "avance_pct": pct, "tipo": tipo_label,
+            "firma_estado": firma_estado,
         }
 
         tid = f.get("tec_id")

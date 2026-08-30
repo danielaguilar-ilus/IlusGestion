@@ -1140,6 +1140,43 @@
     .tvm-ot.o-atrasado::before{background:var(--amber-500)}
     .tvm-ot.o-atrasado .tvm-ot-chip{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.4);color:#fbbf24}
     .tvm-ot.o-atrasado .av-bar i{background:linear-gradient(90deg,#b45309,var(--amber-500))}
+
+    /* 🆕 2026-08-29 — píldora de estado de firma (Daniel: "si lo hace
+       espectacular dentro de la burbuja, excelente"). Ámbar mientras falta
+       alguien por firmar (con pulso — todavía hay algo pendiente de otro),
+       verde con un solo destello al llegar a cerrada (ese SÍ es el punto
+       final, no hay que seguir llamando la atención después). */
+    .tvm-firma{
+      display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 12px;
+      border-radius:10px;font-size:14px;font-weight:800;letter-spacing:-.01em;
+    }
+    .tvm-firma i{font-size:16px}
+    .tvm-firma-tecnico{
+      background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.4);color:#fbbf24;
+      animation:firmaEspera 2.2s ease-in-out infinite;
+    }
+    .tvm-firma-cliente{
+      background:rgba(96,165,250,.14);border:1px solid rgba(96,165,250,.4);color:#93c5fd;
+      animation:firmaEspera 2.2s ease-in-out infinite;
+    }
+    @keyframes firmaEspera{
+      0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}
+      50%{box-shadow:0 0 0 4px rgba(245,158,11,.16)}
+    }
+    .tvm-firma-cliente{animation-name:firmaEsperaAzul}
+    @keyframes firmaEsperaAzul{
+      0%,100%{box-shadow:0 0 0 0 rgba(96,165,250,0)}
+      50%{box-shadow:0 0 0 4px rgba(96,165,250,.18)}
+    }
+    .tvm-firma-cerrada{
+      background:linear-gradient(135deg,rgba(34,197,94,.22),rgba(21,128,61,.16));
+      border:1px solid rgba(74,222,128,.5);color:#86efac;
+      animation:firmaCerradaPop .6s var(--ease-spring);
+    }
+    @keyframes firmaCerradaPop{0%{transform:scale(.85);opacity:.4}100%{transform:scale(1);opacity:1}}
+    @media (prefers-reduced-motion:reduce){
+      .tvm-firma{animation:none !important}
+    }
     /* Acciones por OT dentro del modal (solo pantalla de control) */
     .tvm-ot-acc{display:flex;align-items:center;gap:7px;margin-top:12px;flex-wrap:wrap;
       padding-top:11px;border-top:1px solid var(--line-1)}
@@ -1421,6 +1458,14 @@
     atrasado:   'Atrasado',
     terminado:  'Terminado',
     pendiente:  'Pendiente',   // solo lo usan los bloques/modal, no las personas
+  };
+
+  // 🆕 2026-08-29 — píldora de estado de firma (ver comentario en el forEach
+  // de bloques). Colores: ámbar = falta alguien todavía, verde = cerrada.
+  const FIRMA_PILL = {
+    tecnico:  { icon: 'bi-pen-fill',           txt: 'Firmó el técnico — falta el cliente' },
+    cliente:  { icon: 'bi-check2-circle',      txt: 'Firmó el cliente — falta cerrar' },
+    cerrada:  { icon: 'bi-patch-check-fill',   txt: 'Cerrada — las 3 firmas completas' },
   };
 
   function setTexto(nodo, txt){
@@ -2123,6 +2168,21 @@
       const bpct = Math.max(0, Math.min(100, Math.round(b.avance_pct || (be === 'terminado' ? 100 : 0))));
       av.innerHTML = '<div class="av-bar"><i style="width:' + bpct + '%"></i></div><b>' + bpct + '% avance</b>';
       ot.appendChild(av);
+
+      // 🆕 2026-08-29 (Daniel: "cuando quede al cien por ciento, no sabemos
+      // el estado de la firma... si firmó el técnico, si firmó el cliente o
+      // si se cerró completamente... si lo hace espectacular dentro de la
+      // burbuja, excelente"). El checklist en 100% no cuenta nada del ciclo
+      // de firmas -- esta píldora es la traducción visual de
+      // bloque.firma_estado (armado en _ot_tv_datos desde v.estado, la
+      // misma columna que ya gobierna firmar-revision/firmar-cliente/
+      // aprobar-cierre, así que nunca puede desincronizarse del back).
+      if (FIRMA_PILL[b.firma_estado]){
+        const fp = FIRMA_PILL[b.firma_estado];
+        const pill = el('div', 'tvm-firma tvm-firma-' + b.firma_estado);
+        pill.innerHTML = '<i class="bi ' + fp.icon + '"></i><span>' + fp.txt + '</span>';
+        ot.appendChild(pill);
+      }
 
       // ── Acciones (2026-08-27, Daniel: "necesito poder editar las OT" /
       // "las fechas agregarle un día más o varios"). Solo con permiso de

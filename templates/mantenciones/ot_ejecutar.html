@@ -159,6 +159,18 @@
           <span class="v">{{ visita.fecha_programada | chile_fmt('%d/%m') if visita.fecha_programada else '—' }}</span>
           <span class="k">Fecha</span>
         </div>
+        {# 🆕 2026-08-29 (Daniel: "importante siempre expresar en el header
+           de la OT el técnico"). Antes el técnico principal solo aparecía
+           enterrado en "Información de la OT" (línea ~495) -- alguien que
+           solo mira el hero (gestión revisando de un vistazo, o un
+           colaborador confirmando quién es el principal) no lo veía. Va
+           SIN `tx-desk`: es importante también en el celular, no solo en
+           escritorio -- a diferencia de Equipos/Obligatorias/Autoguardado,
+           que son detalle de avance, esto es identidad de la OT. #}
+        <div class="hm">
+          <span class="v hm-txt">{{ visita.tecnico_principal or 'Sin asignar' }}</span>
+          <span class="k">Técnico</span>
+        </div>
         {# Tarjetas-dato extra del hero de escritorio (maqueta aprobada).
            Datos REALES ya disponibles: cantidad de equipos y el mismo
            contador de obligatorias que destraba el botón de firmar (se
