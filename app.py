@@ -74299,8 +74299,18 @@ def mant_cliente_maquinas_list(cid):
     -- ambos usados para proyectar qué accesorios/repuestos comprar, así
     que un equipo dado de baja no debe aparecer como opción.
     """
+    # 2026-08-30 (Daniel — trazabilidad "no debemos duplicar... identificar
+    # que la factura número diez tiene ese mismo producto"): se agrega
+    # doc_origen para que el wizard de creación de OT pueda distinguir "este
+    # SKU ya existe porque vino de ESTE documento" (no duplicar) de "este
+    # SKU ya existe pero vino de OTRO documento" (unidad físicamente
+    # distinta, sí crear una nueva) -- ver _o2mEquiposFaltantesDeDoc en
+    # templates/ot2/_modal_crear.html. Aditivo: los consumidores que ya
+    # usaban este endpoint (repuestos.html, Informe Post-Servicio) ignoran
+    # el campo nuevo sin romperse.
     rows = mysql_fetchall(
-        "SELECT id, nombre, sku, serie, estado_op, COALESCE(aplica_mantencion,1) AS aplica_mantencion "
+        "SELECT id, nombre, sku, serie, estado_op, doc_origen, "
+        "       COALESCE(aplica_mantencion,1) AS aplica_mantencion "
         "  FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
         " ORDER BY nombre", (cid,)
     ) or []

@@ -2693,11 +2693,39 @@ window.OT2C = (function(){
      cacheEquipos (ya cargado en este punto -- pintarListaEquipos solo se
      llama después de que cargarEquipos() resuelve). */
   function _o2mSkuNorm(s){ return String(s||'').trim().toUpperCase(); }
+  // 2026-08-30 (Daniel, en vivo -- "si un documento ya tiene ese producto,
+  // no debemos duplicarlo... identificar que la factura número diez tiene
+  // ese mismo producto"): mismo criterio de normalización tolerante que ya
+  // usa _doc_origen_normalizar en el backend (mayúsculas, sin separadores) --
+  // no hace falta byte-a-byte idéntico, solo que "FCV 11163" y "FCV-11163"
+  // no se traten como documentos distintos.
+  function _o2mDocOrigenNorm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
   function _o2mEquiposFaltantesDeDoc(){
     if (!S.doc_lineas || !S.doc_lineas.length) return [];
-    var existentes = (cacheEquipos||[]).map(function(m){ return _o2mSkuNorm(m.sku); });
+    // Antes esto comparaba SOLO por SKU: si el cliente ya tenía UNA unidad
+    // de un SKU, cualquier OTRA línea con el mismo SKU (de una factura
+    // DISTINTA -- ej. compró un segundo banco meses después) se daba por
+    // "ya existe" y nunca se creaba la segunda unidad real. Ahora se cruza
+    // SKU + documento de origen: por cada SKU, se guarda la lista de
+    // doc_origen que YA tiene la ficha.
+    var porSku = {};
+    (cacheEquipos||[]).forEach(function(m){
+      var sku = _o2mSkuNorm(m.sku);
+      (porSku[sku] = porSku[sku] || []).push(_o2mDocOrigenNorm(m.doc_origen));
+    });
     return S.doc_lineas.filter(function(l){
-      return l && l.sku && existentes.indexOf(_o2mSkuNorm(l.sku)) === -1;
+      if (!l || !l.sku) return false;
+      var sku = _o2mSkuNorm(l.sku);
+      var docsExistentes = porSku[sku];
+      if (!docsExistentes) return true;               // SKU nuevo del todo -> falta
+      var lineaDoc = (l.tido && l.nudo) ? _o2mDocOrigenNorm(l.tido + ' ' + l.nudo) : '';
+      if (!lineaDoc) return false;                     // sin documento propio (ej. ticket) ->
+                                                         // criterio conservador de siempre: no duplicar
+      if (docsExistentes.indexOf(lineaDoc) !== -1) return false;   // MISMO documento -> ya está
+      if (docsExistentes.indexOf('') !== -1) return false;         // hay un equipo legado sin
+                                                                    // doc_origen registrado -> ambiguo,
+                                                                    // no arriesgar un duplicado
+      return true;   // todos los existentes vienen de OTRO documento conocido -> unidad distinta
     });
   }
   /* 2026-08-30 (Daniel, corrigiendo en vivo: "el modal sigue trayendo los
