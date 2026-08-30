@@ -2544,7 +2544,14 @@ async function _tkaCotizacionElegir(idx){
       telefono: cotHdr.contacto_tel || cotHdr.telefono || '',
       direccion: cotHdr.direccion || '',
       comuna: cotHdr.comuna || '',
-      fecha: ''
+      // 2026-08-30 (Daniel, trazabilidad OT 2.0: "saber CUÁNDO... entró eso
+      // a la ficha de productos"): tk_cotizacion_items NO guarda una fecha
+      // propia por ítem -- la mejor fecha REAL a mano es cuándo se creó
+      // ESTA cotización (created_at de tk_cotizaciones). Nunca se inventa
+      // "hoy": si created_at no viene o no es parseable, el consumidor
+      // (ver _o2mAltaAutoFaltantes en _modal_crear.html) simplemente no
+      // manda doc_fecha y queda NULL, igual que antes de este cambio.
+      fecha: cotHdr.created_at || ''
     };
     // Solo ítems tipo "producto" -- servicio/ruta/otro no son equipos que
     // se puedan declarar en un ticket (mismo criterio que "Por documento"
@@ -2639,8 +2646,17 @@ function tkaToggleLineaCotizacion(i){
     if (row) row.classList.remove('is-selected');
     if (chk) chk.classList.remove('is-checked');
   } else {
+    // 2026-08-30 (Daniel, trazabilidad OT 2.0: "si hay varias facturas en
+    // la cotización, esa información debe ser trazable... CON QUÉ DOC"):
+    // antes acá se hardcodeaba tido/nudo a null, aunque `it` (el ítem real
+    // que devuelve GET /tickets/api/cotizaciones/<id>) SÍ trae su propio
+    // tido/nudo (alias de erp_tido/erp_nudo, ver tk_cotizacion_items) --
+    // una cotización puede combinar líneas de VARIOS documentos ERP
+    // distintos, cada una con el suyo. Se conserva tal cual venga (puede
+    // ser null si esa línea puntual no tiene documento ERP detrás, ej. un
+    // ítem con precio manual).
     _TKA.selCotizacion.set(key, {
-      tido: null, nudo: null,
+      tido: it.tido || null, nudo: it.nudo || null,
       sku: it.sku || '', nombre: it.nombre, qty: it.qty || 1,
       saldo: null, marcada_sin_saldo: false, motivo_sin_saldo: '',
     });
@@ -2947,10 +2963,15 @@ async function tkaAsociarSeleccion(){
         marcada_sin_saldo: false, motivo_sin_saldo: '',
       });
     });
+    // 2026-08-30: a diferencia de Bodega/Catálogo (líneas arriba, que
+    // nunca tienen un documento ERP detrás y por eso SÍ van null a
+    // propósito), una línea de Cotización puede traer su propio tido/nudo
+    // real (ver tkaToggleLineaCotizacion) -- se propaga tal cual, nunca se
+    // pisa a null acá.
     _TKA.selCotizacion.forEach(it => {
       if ((it.qty || 0) <= 0) return;
       items.push({
-        tido: null, nudo: null,
+        tido: it.tido || null, nudo: it.nudo || null,
         sku: it.sku, nombre: it.nombre, qty: it.qty,
         marcada_sin_saldo: false, motivo_sin_saldo: '',
       });
