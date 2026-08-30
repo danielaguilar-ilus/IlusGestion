@@ -1173,16 +1173,14 @@ window.OT2C = (function(){
       '<div class="o2m-grid">'+ ORIGENES.map(function(o){
         return '<button type="button" class="o2m-op '+(S.origen===o.v?'sel':'')+'" onclick="OT2C.setOrigen(\''+o.v+'\')">'+
           '<i class="bi '+o.i+' ic"></i><span class="n">'+o.n+'</span><span class="l">'+o.l+'</span></button>';
-      }).join('') +'</div>'+
-      // "Factura o boleta" ya está conectado (ver setOrigen/_o2mAbrirBusquedaDocumento):
-      // abre el buscador ERP real y de ahí sale el cliente solo. El aviso de
-      // "esto todavía no hace nada" queda SOLO para ticket/cotización, que
-      // Daniel no pidió conectar hoy.
-      (S.origen && S.origen!=='cliente' && S.origen!=='interno' && S.origen!=='documento'
-        ? '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
-          'Por ahora este origen se trabaja eligiendo el cliente a mano dentro del formulario. '+
-          'La búsqueda por ticket y cotización se conecta en la próxima etapa.</div>'
-        : '');
+      }).join('') +'</div>';
+      // 2026-08-30 (Daniel, dictado: "quiero que me traiga las cotizaciones
+      // de nuestro sistema... igual en los tickets debe poder buscar y
+      // traer los datos"): los 5 orígenes ya están conectados -- "Cotización"
+      // y "Ticket" abren el mismo buscador compartido que "Factura o
+      // boleta" (ver setOrigen/_o2mAbrirBusquedaCotizacion/
+      // _o2mAbrirBusquedaTicket), así que el aviso de "esto se conecta en
+      // la próxima etapa" ya no tiene ningún origen al que aplicarle.
   }
 
   /* 2026-08-27 (Daniel: "van a ser más de una docena"): buscador ARRIBA de
@@ -2301,15 +2299,26 @@ window.OT2C = (function(){
     if (esInterno()) return pintarTrabajoInterno(b);
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
       '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
-      // Origen "Factura o boleta": las líneas del documento son solo una
-      // REFERENCIA — no crean equipos automáticamente en la ficha (eso
-      // exige matchear SKU contra la clasificación del catálogo, un paso
-      // que no se resuelve acá). Si el equipo ya existe en la ficha del
-      // cliente, aparece abajo igual; si no, hay que darlo de alta primero.
-      (S.doc_origen && S.doc_lineas && S.doc_lineas.length
+      // Origen "Factura o boleta" / "Cotización" / "Ticket": las líneas que
+      // trajo la fuente son solo una REFERENCIA — no crean equipos
+      // automáticamente en la ficha (eso exige matchear SKU contra la
+      // clasificación del catálogo, un paso que no se resuelve acá). Si el
+      // equipo ya existe en la ficha del cliente, aparece abajo igual; si
+      // no, hay que darlo de alta primero.
+      // 2026-08-30: antes este aviso exigía S.doc_origen (solo documentos
+      // ERP reales) -- Cotización/Ticket dejan doc_origen en null a
+      // propósito (no son documentos del ERP, ver _o2mResolverClienteYEquipos)
+      // pero SÍ pueblan S.doc_lineas con productos reales, así que el aviso
+      // se quedaba mudo justo para esos dos orígenes nuevos. Ahora se pinta
+      // con cualquier S.doc_lineas, con el texto adaptado según haya o no
+      // un documento ERP detrás.
+      (S.doc_lineas && S.doc_lineas.length
         ? '<div class="o2m-aviso" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a8a">'+
-          '<i class="bi bi-receipt me-1"></i>El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+
-          '</b> trae estos productos. Si alguno no aparece en la lista de abajo, primero hay que '+
+          '<i class="bi bi-receipt me-1"></i>'+
+          (S.doc_origen
+            ? 'El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+'</b> trae estos productos.'
+            : 'El origen de esta OT trae estos productos.')+
+          ' Si alguno no aparece en la lista de abajo, primero hay que '+
           'agregarlo como equipo en la ficha del cliente:'+
           '<ul>'+S.doc_lineas.map(function(l){
             return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
@@ -3459,6 +3468,20 @@ window.OT2C = (function(){
       return;
     }
 
+    // 2026-08-30 (Daniel, dictado viendo el wizard en vivo: "quiero que me
+    // traiga las cotizaciones de nuestro sistema... igual en los tickets
+    // debe poder buscar y traer los datos, contactos, información y sobre
+    // todo productos"): mismo criterio que "Factura o boleta" -- se abre el
+    // buscador compartido en vez de pedir el cliente a mano.
+    if (v === 'cotizacion' && !S.cliente){
+      _o2mAbrirBusquedaCotizacion();
+      return;
+    }
+    if (v === 'ticket' && !S.cliente){
+      _o2mAbrirBusquedaTicket();
+      return;
+    }
+
     // Cualquier otro origen entra directo al formulario único con scroll.
     // "Cliente" es una SECCIÓN más ahí adentro (si el origen la necesita),
     // no un paso bloqueante aparte -- se busca/crea igual que siempre,
@@ -3512,16 +3535,17 @@ window.OT2C = (function(){
     });
   }
 
-  /* Con el documento elegido, el ERP entrega cliente (RUT/razón social) y
-     líneas de producto. Se resuelve el cliente reusando el MISMO endpoint
-     que ya usa crearFicha() (/ot/api/cliente): si ya existe una ficha con
-     ese RUT la reutiliza, si no la crea como prospecto -- cero lógica de
-     dedup nueva. El documento (tido/nudo) queda guardado para trazar la OT
-     (ver crear(), reusa factura_tido/factura_nudo -- el mismo campo que ya
-     existe para el Paso de Finanzas, no una columna inventada). */
-  async function _o2mDocumentoSeleccionado(items, header){
+  /* Con el documento/cotización/ticket elegido, la fuente entrega cliente
+     (RUT/razón social) y líneas de producto. Se resuelve el cliente reusando
+     el MISMO endpoint que ya usa crearFicha() (/ot/api/cliente): si ya existe
+     una ficha con ese RUT la reutiliza, si no la crea como prospecto -- cero
+     lógica de dedup nueva. Factorizado 2026-08-30 (Daniel: "intercambiar la
+     fuente de donde viene la información y traer sus productos") para que
+     "Cotización" y "Ticket" reusen EXACTAMENTE este mismo camino en vez de
+     duplicarlo -- antes solo lo llamaba _o2mDocumentoSeleccionado. */
+  async function _o2mResolverClienteYEquipos(header, items){
     if (!header || !header.rut || !header.cliente){
-      if (window.ilusToast) ilusToast('El documento no trajo datos de cliente identificables.', {type:'warning'});
+      if (window.ilusToast) ilusToast('No se encontraron datos de cliente identificables en esa selección.', {type:'warning'});
       pintar();
       return;
     }
@@ -3542,11 +3566,17 @@ window.OT2C = (function(){
     }).then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
 
     if (!r.ok || !r.cliente){
-      if (window.ilusToast) ilusToast(r.error || 'No pudimos identificar al cliente de ese documento.', {type:'error'});
+      if (window.ilusToast) ilusToast(r.error || 'No pudimos identificar al cliente de esa selección.', {type:'error'});
       pintar();
       return;
     }
 
+    // doc_origen solo queda poblado cuando la fuente es un documento REAL
+    // del ERP (tiene tido/nudo) -- una cotización interna o un ticket no lo
+    // son, así que ahí queda null (mismo comportamiento que elegir el
+    // cliente a mano): Finanzas sigue pidiendo su propio documento de
+    // cobertura en ese caso, tal como ya pasa hoy con cualquier otro origen
+    // sin documento ERP detrás.
     S.doc_origen = (header.tido && header.nudo) ? {tido:header.tido, nudo:header.nudo} : null;
     // 2026-08-29: si además es un documento de venta real, ya cubre el
     // requisito de la sección Finanzas (documento/garantía) -- sin esto,
@@ -3563,9 +3593,130 @@ window.OT2C = (function(){
       ilusToast('✓ ' + (r.creado ? 'Ficha creada: ' : 'Cliente encontrado: ') + r.cliente.razon_social, {type:'success'});
     }
     // Mismo camino que elegir el cliente a mano: setCli() setea S.cliente y
-    // entra al formulario único. header.rut es el RUT que trajo el propio
-    // documento ERP -- ya está a mano, no hace falta otra llamada.
+    // entra al formulario único. header.rut es el RUT que trajo la propia
+    // fuente -- ya está a mano, no hace falta otra llamada.
     setCli(r.cliente.id, r.cliente.razon_social, header.rut);
+  }
+
+  async function _o2mDocumentoSeleccionado(items, header){
+    await _o2mResolverClienteYEquipos(header, items);
+  }
+
+  /* Origen "Cotización": mismo buscador ERP compartido, ahora apuntando
+     SOLO a la pestaña "Cotización interna" (tk_cotizaciones -- ya usada hoy
+     por Tickets/Cotizaciones, ver templates/tickets/_tka_modal.html). Esa
+     pestaña entrega productos + header vía el MISMO contrato onSeleccionar
+     (items, header) que "Factura o boleta" -- ver el fix 2026-08-30 en
+     _tkaCotizacionElegir() (_tka_modal.html), que ahora sí deja
+     _TKA.loaded.docHeader con el cliente de la cotización elegida. */
+  function _o2mAbrirBusquedaCotizacion(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de cotizaciones no está disponible en esta pantalla.', {type:'error'});
+      pintar();
+      return;
+    }
+    pintar();
+    // Mismo candado de scroll que _o2mAbrirBusquedaDocumento -- tka_modal
+    // flota por su cuenta (z-index propio), pero al cerrarse libera
+    // document.body.style.overflow sin saber que este wizard sigue abierto.
+    var tkaEl = document.getElementById('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          var propio = document.getElementById('ot2ModalCrear');
+          if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+    }
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['cotizacion'],
+      onSeleccionar: _o2mDocumentoSeleccionado
+    });
+  }
+
+  /* Origen "Ticket": la pestaña "Por ticket" (ya construida para
+     Cotizaciones, 2026-07-25) entrega la selección por el contrato
+     onSeleccionarEntidad({tipo:'ticket', id}) -- ahí se elige el TICKET
+     completo, no productos sueltos, así que no calza con onSeleccionar
+     (items, header). Con el id se pide el detalle real (GET
+     /tickets/api/tickets/<id>, el mismo que ya usa la ficha del ticket)
+     para armar el MISMO header {cliente,rut,email,telefono,direccion,comuna}
+     y la lista de productos que espera _o2mResolverClienteYEquipos -- así
+     el ticket entra por el mismo camino que "Factura o boleta"/"Cotización",
+     sin inventar una tercera forma de resolver cliente. */
+  function _o2mAbrirBusquedaTicket(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de tickets no está disponible en esta pantalla.', {type:'error'});
+      pintar();
+      return;
+    }
+    pintar();
+    var tkaEl = document.getElementById('tkaModal');
+    if (tkaEl && window.MutationObserver){
+      var mo = new MutationObserver(function(){
+        if (!tkaEl.classList.contains('is-open')){
+          mo.disconnect();
+          var propio = document.getElementById('ot2ModalCrear');
+          if (propio && propio.classList.contains('show')) document.body.style.overflow = 'hidden';
+        }
+      });
+      mo.observe(tkaEl, {attributes:true, attributeFilter:['class']});
+    }
+    tkaOpen({
+      mode: 'seleccionar',
+      tabs: ['ticket'],
+      onSeleccionarEntidad: _o2mTicketSeleccionado
+    });
+  }
+
+  async function _o2mTicketSeleccionado(sel){
+    if (!sel || sel.tipo !== 'ticket' || !sel.id){ pintar(); return; }
+    if (window.ilusToast) ilusToast('Cargando el ticket…', {type:'info'});
+    var d = await fetch('/tickets/api/tickets/' + encodeURIComponent(sel.id), {credentials:'same-origin'})
+      .then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+    if (!d.ok || !d.ticket){
+      if (window.ilusToast) ilusToast((d && d.error) || 'No se pudo cargar el ticket.', {type:'error'});
+      pintar();
+      return;
+    }
+    var t = d.ticket;
+    // Trazabilidad: S.ticket_id ya viaja en el payload de crear() (ver más
+    // abajo, reusa el mismo campo que el deep-link OT2C.abrir({ticket_id})
+    // que usa la ficha del ticket) -- así la OT queda vinculada al ticket
+    // de origen sin inventar una columna nueva.
+    S.ticket_id = sel.id;
+    var header = {
+      tido: null, nudo: null,
+      cliente: t.empresa || '',
+      rut: t.rut || '',
+      email: t.email || '',
+      telefono: t.phone || '',
+      direccion: t.direccion || '',
+      comuna: t.comuna_nombre || ''
+    };
+    // Productos: los que el ticket ya declaró (tk_ticket_equipos) tienen
+    // prioridad. Si el ticket no declaró ninguno, se ofrecen los de su
+    // cotización asociada más reciente (si existe, ver tk_cotizaciones.
+    // ticket_id) -- un ticket de servicio técnico muchas veces no lleva
+    // equipos propios todavía, pero sí puede tener una cotización con los
+    // productos reales. DECISIÓN A CONFIRMAR CON DANIEL: si esto no es lo
+    // esperado, se puede quitar el fallback y dejar el ticket sin productos
+    // cuando no los declaró él mismo.
+    var items = (Array.isArray(d.equipos) ? d.equipos : []).map(function(e){
+      return {sku: e.sku, nombre: e.nombre, qty: e.cantidad || 1};
+    }).filter(function(it){ return it.sku; });
+    if (!items.length && Array.isArray(d.cotizaciones) && d.cotizaciones.length){
+      var dc = await fetch('/tickets/api/cotizaciones/' + encodeURIComponent(d.cotizaciones[0].id), {credentials:'same-origin'})
+        .then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
+      if (dc.ok && Array.isArray(dc.items)){
+        items = dc.items.filter(function(it){ return (!it.item_tipo || it.item_tipo === 'producto') && it.sku; })
+          .map(function(it){ return {sku: it.sku, nombre: it.nombre, qty: it.qty}; });
+      }
+    }
+    await _o2mResolverClienteYEquipos(header, items);
   }
 
   function setTipo(i){
