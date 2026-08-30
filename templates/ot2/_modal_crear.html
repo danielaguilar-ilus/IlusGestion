@@ -2467,7 +2467,17 @@ window.OT2C = (function(){
       var finActual = _o2mDayToMin(S.hfin);
       var durMin = (iniActual!=null && finActual!=null && finActual>iniActual) ? (finActual-iniActual) : 60;
       var tecnicoIds = (S.tecnicos || []).slice();
-      var fechaBase = o2mDay.fecha || S.fecha || _o2mDayHoyStr();
+      // 2026-08-30 (Daniel: "sugerir hora no toma la hora actual de Chile y
+      // agenda en pasado"): _o2mDayCalcularHueco SOLO compara contra "ahora"
+      // cuando el día que evalúa es exactamente hoy (fecha === _o2mDayHoyStr()) --
+      // si fechaBase venía de un o2mDay.fecha/S.fecha que quedó de un día
+      // YA PASADO (ej. el wizard se dejó abierto de un día para otro), la
+      // búsqueda arrancaba desde ese día viejo, nunca lo comparaba contra
+      // hoy, y devolvía "libre" un horario que ya no existe. Ahora fechaBase
+      // nunca puede ser anterior a hoy -- como mínimo, arranca hoy mismo.
+      var _hoyStr = _o2mDayHoyStr();
+      var fechaBase = o2mDay.fecha || S.fecha || _hoyStr;
+      if (fechaBase < _hoyStr) fechaBase = _hoyStr;
 
       var encontrado = await _o2mDayBuscarHuecoRango(fechaBase, durMin, tecnicoIds, 14);
       if (!encontrado){
