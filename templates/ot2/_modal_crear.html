@@ -3986,16 +3986,54 @@ window.OT2C = (function(){
       comuna: t.comuna_nombre || ''
     };
     // Productos: los que el ticket ya declaró (tk_ticket_equipos) tienen
-    // prioridad. Si el ticket no declaró ninguno, se ofrecen los de su
-    // cotización asociada más reciente (si existe, ver tk_cotizaciones.
-    // ticket_id) -- un ticket de servicio técnico muchas veces no lleva
-    // equipos propios todavía, pero sí puede tener una cotización con los
-    // productos reales. DECISIÓN A CONFIRMAR CON DANIEL: si esto no es lo
-    // esperado, se puede quitar el fallback y dejar el ticket sin productos
-    // cuando no los declaró él mismo.
+    // prioridad -- si el ticket los declaró a mano, esos mandan siempre.
     var items = (Array.isArray(d.equipos) ? d.equipos : []).map(function(e){
       return {sku: e.sku, nombre: e.nombre, qty: e.cantidad || 1};
     }).filter(function(it){ return it.sku; });
+    // 2026-08-30 (Daniel, en vivo: "cuando llamo de un origen como un
+    // ticket me debe traer la información del documento -- puede ser
+    // multidocumento -- así que los productos que tiene el ticket según el
+    // documento pueda venir sin alterar, sin traer lo de la ficha de
+    // producto"). Si el ticket no declaró equipos propios, se intenta con
+    // SUS documentos ERP reales (tk_ticket_documentos -- un ticket puede
+    // tener VARIOS, de ahí "multidocumento") ANTES de caer a la cotización
+    // asociada: reusa el MISMO endpoint que la pestaña "Por documento" del
+    // buscador compartido (POST /api/erp/documento, ver tkaBuscarPorDoc en
+    // _tka_modal.html) para traer las líneas TAL COMO están en el
+    // documento -- sin cruzarlas con la ficha de producto, que es justo lo
+    // que Daniel pidió evitar.
+    if (!items.length && Array.isArray(d.documentos) && d.documentos.length){
+      var itemsPorDoc = [];
+      for (var _idx = 0; _idx < d.documentos.length; _idx++){
+        var doc = d.documentos[_idx];
+        if (!doc.erp_tido || !doc.erp_nudo) continue;
+        var dd = await fetch('/api/erp/documento', {
+          method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({tido: doc.erp_tido, nudo: doc.erp_nudo})
+        }).then(function(x){ return x.json(); }).catch(function(){ return {error: 'red'}; });
+        if (dd.error || !Array.isArray(dd.lineas)) continue;
+        // Mismo filtro que tkaBuscarPorDoc (_tka_modal.html): las líneas
+        // ZZ son servicio/flete, no productos físicos que ocupen la
+        // sección Equipos.
+        dd.lineas.filter(function(l){ return !l.es_zz && l.sku; }).forEach(function(l){
+          // Combinadas SIN deduplicar -- cada línea de cada documento es
+          // real y queda separada, aunque el SKU se repita entre
+          // documentos (si Daniel pide consolidar cantidades repetidas,
+          // que lo pida explícito). tido/nudo/fecha por línea = mismo
+          // shape de trazabilidad que ya usa _o2mResolverClienteYEquipos
+          // para las líneas de cotización (commit de esta noche).
+          itemsPorDoc.push({
+            sku: l.sku, nombre: l.nombre, qty: parseFloat(l.cantidad) || 1,
+            tido: doc.erp_tido, nudo: doc.erp_nudo, fecha: doc.fecha || null
+          });
+        });
+      }
+      // Si ningún documento trajo líneas de producto reales (solo
+      // servicios, o el ERP no respondió), NO se corta acá -- se sigue
+      // al fallback de cotización que ya existía.
+      if (itemsPorDoc.length) items = itemsPorDoc;
+    }
     if (!items.length && Array.isArray(d.cotizaciones) && d.cotizaciones.length){
       var dc = await fetch('/tickets/api/cotizaciones/' + encodeURIComponent(d.cotizaciones[0].id), {credentials:'same-origin'})
         .then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
