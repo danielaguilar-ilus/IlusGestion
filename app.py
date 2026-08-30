@@ -85664,22 +85664,26 @@ def mant_visita_tarea_respuesta(vid, tid):
                 "error": "Solo se acepta GPS real del dispositivo. " +
                          "IP y manual están deshabilitados por política de auditoría."
             }), 403
-        # Validar accuracy — rechazar imprecisiones absurdas (>500m sugiere wifi/IP)
+        # 🔴 FIX 2026-08-30 (Daniel: "nunca lo limites, solo dime a cuántos
+        # metros está — empezaremos a medir dónde firmaron la OT"). Antes,
+        # accuracy > 500m rechazaba la captura ENTERA con 400 -- ni siquiera
+        # se guardaba lat/lng. Dentro de un gimnasio de losa/estructura
+        # metálica un teléfono da rutinariamente ±100-800m: el técnico podía
+        # quedar sin poder cerrar la OT en todo el día. La precisión pasa a
+        # ser un DATO que se guarda y se muestra (precision_baja=True),
+        # nunca una condición de bloqueo. El candado real de auditoría
+        # (rechazo de source ip/manual, arriba) no se toca.
         acc = None
         if isinstance(valor, dict) and valor.get("accuracy") is not None:
             try:
                 acc = float(valor["accuracy"])
-                if acc > 500:
-                    return jsonify({
-                        "ok": False,
-                        "error": f"Precisión GPS muy baja (±{int(acc)}m). " +
-                                 "Salí al aire libre y reintentá."
-                    }), 400
             except (TypeError, ValueError):
                 acc = None
         valor_norm = {"lat": lat, "lng": lng}
         if acc is not None:
             valor_norm["accuracy"] = acc
+            if acc > 500:
+                valor_norm["precision_baja"] = True
         # source siempre se normaliza a 'gps' (rechazamos otros arriba)
         valor_norm["source"] = "gps"
     else:

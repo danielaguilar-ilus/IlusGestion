@@ -1318,7 +1318,7 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       // GPS está denegado, el flujo envía al usuario a Ajustes (mostrarAyudaGPS).
       ctrlHtml = `<div class="ctrl">
         <div style="display:flex;flex-direction:column;gap:8px">
-          <button type="button" class="tx-btn-gps"
+          <button type="button" class="tx-btn-gps" id="btnGpsTarea-${t.id}"
             style="min-height:54px;font-size:.95rem;justify-content:center;font-weight:800"
             ${bloqueada ? 'disabled' : ''}
             onclick="capturarGPS(${t.id}, ${mid}, ${pid})">
@@ -1411,23 +1411,43 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
   // DESTINO_LAT/LNG), pero se recalcula acá en cada render para que el
   // color sea correcto también después de recargar la página -- el toast
   // de _validarRadio ya desapareció, esto queda pintado en la tarjeta.
-  let gpsClass = '', gpsFueraBadge = '';
+  // 2026-08-30 (Daniel: "nunca lo limites, solo dime a cuántos metros
+  // está"): la distancia se muestra SIEMPRE que hay captura, no solo cuando
+  // está lejos -- es un dato para medir, no una alerta reservada al caso
+  // malo. El color (verde/ámbar) sigue existiendo como guía visual rápida;
+  // el número siempre acompaña.
+  let gpsClass = '', gpsDistBadge = '', gpsSinSubirHtml = '';
   if (tipo === 'gps'){
     const gLat = Number(valor && valor.lat), gLng = Number(valor && valor.lng);
-    if (!isFinite(gLat) || !isFinite(gLng)){
+    const _pend = (typeof _gpsPendiente !== 'undefined') ? _gpsPendiente[t.id] : null;
+    if ((!isFinite(gLat) || !isFinite(gLng)) && _pend){
+      // 2026-08-30: capturado con éxito pero el POST falló (mala señal) --
+      // la coordenada NO se perdió (_gpsPendiente), solo falta subirla.
+      gpsClass = ' gps-fuera';
+      const _distPend = (DESTINO_LAT && DESTINO_LNG)
+        ? _fmtDistancia(_distanciaMetros(_pend.lat, _pend.lng, DESTINO_LAT, DESTINO_LNG)) : null;
+      gpsSinSubirHtml = `<div class="tx-gps-sin-subir">
+        <i class="bi bi-cloud-slash-fill"></i>
+        <span>Ubicación capturada${_distPend ? ' — a ' + _distPend + ' del cliente' : ''}, pero no se subió.</span>
+        <button type="button" onclick="_gpsReintentarEnvio(${t.id}, ${mid}, ${pid})">Reintentar envío</button>
+      </div>`;
+    } else if (!isFinite(gLat) || !isFinite(gLng)){
       gpsClass = ' gps-pendiente';
     } else if (DESTINO_LAT && DESTINO_LNG){
       const distM = _distanciaMetros(gLat, gLng, DESTINO_LAT, DESTINO_LNG);
+      const distTxt = _fmtDistancia(distM);
       if (distM <= RADIO_MAX_METROS){
         gpsClass = ' gps-ok';
+        gpsDistBadge = `<span class="tx-badge-gps-ok">📍 A ${distTxt} del cliente</span>`;
       } else {
         gpsClass = ' gps-fuera';
-        gpsFueraBadge = `<span class="tx-badge-gps-fuera">📍 A ${distM}m del cliente</span>`;
+        gpsDistBadge = `<span class="tx-badge-gps-fuera">📍 A ${distTxt} del cliente</span>`;
       }
     } else {
       // Sin coordenadas de destino conocidas para esta OT -- no se le puede
-      // exigir "zona" al técnico, así que no se penaliza (mismo criterio
-      // que _validarRadio: sin_destino → ok).
+      // medir "zona" al técnico, así que no se penaliza (mismo criterio
+      // que _validarRadio: sin_destino → ok), pero tampoco hay distancia
+      // que mostrar.
       gpsClass = ' gps-ok';
     }
   }
@@ -1449,12 +1469,13 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
                   ? '<span class="tx-badge-foto-falta">📷 Falta foto</span>'
                   : '<span class="tx-badge-foto">📷 Foto</span>')
               : ''}
-            ${gpsFueraBadge}
+            ${gpsDistBadge}
             <span class="tx-badge-tipo">${_escapeHtml(tipo)}</span>
             <span class="nxt-tag">Siguiente</span>
           </span>
         </div>
         ${t.descripcion ? `<div class="ttl-sub">${_escapeHtml(t.descripcion)}</div>` : ''}
+        ${gpsSinSubirHtml}
         ${lockBadge}
       </div>
     </div>
@@ -2632,9 +2653,15 @@ async function toggleCheck(tid, mid, pid){
   } catch(e){ ilusToast('Error de red', { type:'error' }); }
 }
 
+// 2026-08-30 (Daniel: "que funcione el GPS... sería invalidante para
+// avanzar"): guardarResp ahora devuelve SIEMPRE un boolean real (true = se
+// guardó, false = no) en vez de `undefined` en cada salida temprana. Es
+// retrocompatible: los ~10 call sites existentes ignoran el retorno y no
+// cambian de comportamiento -- lo nuevo es _gpsGuardarEnTarea (más abajo),
+// que sí lo usa para no perder una captura de GPS cuando falla el envío.
 async function guardarResp(tid, valor, mid, pid){
   // ── Lock + version check (concurrencia multitécnico) ──
-  if (!await tomarLockTarea(tid)) return;
+  if (!await tomarLockTarea(tid)) return false;
   const grupo = PLANTILLAS_POR_MAQUINA[mid].find(p => String(p.plantilla_id) === String(pid));
   const tar = grupo ? grupo.tareas.find(t => t.id === tid) : null;
   const ver = (tar && typeof tar.version === 'number') ? tar.version : 0;
@@ -2652,7 +2679,7 @@ async function guardarResp(tid, valor, mid, pid){
         type: 'warning',
       });
       window.location.reload();
-      return;
+      return false;
     }
     // 🔧 FIX 2026-08-29 (Daniel, en vivo: "Error: Tarea no encontrada" al
     // capturar GPS) -- misma familia de problema que el 409 de arriba, con
@@ -2672,10 +2699,10 @@ async function guardarResp(tid, valor, mid, pid){
           type: 'warning',
         });
         window.location.reload();
-        return;
+        return false;
       }
       ilusToast('Error: ' + (d.error || '?'), { type:'error' });
-      return;
+      return false;
     }
     const d = await r.json();
     if (d.ok){
@@ -2690,10 +2717,15 @@ async function guardarResp(tid, valor, mid, pid){
       } else if (d.completada){
         ilusToast('✓ Guardado', { type:'success', duration: 1200 });
       }
+      return true;
     } else {
       ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+      return false;
     }
-  } catch(e){ ilusToast('Error de red', { type:'error' }); }
+  } catch(e){
+    ilusToast('Error de red', { type:'error' });
+    return false;
+  }
 }
 
 // FIX 2026-08-27 (queja de Isabel Milling): alterna "N/A" en una tarea
@@ -2782,13 +2814,24 @@ function _textoOnBlur(inputEl, tid, mid, pid, minChars){
 
 // ════════════════════════════════════════════════════════
 //  VALIDACIÓN DE RADIO — distancia entre GPS y destino OT
-//  (Base para bloqueo futuro: <200m del cliente = OK)
 // ════════════════════════════════════════════════════════
-// 2026-08-29 (Daniel): "verde si está dentro de trescientos metros de la
-// zona" -- subido de 200 a 300m, único umbral para el toast de advertencia
-// Y para el semáforo visual de la tarea GPS (renderTareaHtml).
-const RADIO_MAX_METROS = 300;   // 300m — futuro: bloquear ejecución si excedido
-const RADIO_BLOQUEO_ACTIVO = false;  // por ahora solo advierte, no bloquea
+// 2026-08-30 (Daniel: "acá nunca lo limites, solo dime a cuántos metros
+// está, ya que empezaremos a medir dónde firmaron la OT"). Confirma en
+// letras lo que ya era el comportamiento real (RADIO_BLOQUEO_ACTIVO nunca
+// se prendió) — se deja explícito y se borra la rama muerta de bloqueo para
+// que no quede la sensación de que esto puede convertirse en un candado.
+// Esta distancia es, desde hoy, un DATO para medir (dónde se firmó), no una
+// condición para avanzar.
+const RADIO_MAX_METROS = 300;   // umbral solo visual (verde/ámbar del semáforo)
+
+// 2026-08-30 (Daniel: "después de 1000mt pasa a KM por favor"). Único
+// formateador de distancia de todo el archivo -- toasts, badges y el
+// resultado de la tarea GPS lo comparten para que el número se vea siempre
+// igual sin importar dónde se imprima.
+function _fmtDistancia(m){
+  if (m == null || !isFinite(m)) return '—';
+  return m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
+}
 
 function _distanciaMetros(lat1, lng1, lat2, lng2){
   // Fórmula Haversine
@@ -2802,25 +2845,18 @@ function _distanciaMetros(lat1, lng1, lat2, lng2){
   return Math.round(2 * R * Math.asin(Math.sqrt(a)));
 }
 
+// Ya NUNCA bloquea (ver comentario de arriba) — solo calcula la distancia y
+// avisa. `fuera` queda para que el semáforo visual (renderTareaHtml) sepa
+// si pintar ámbar o verde; el técnico sigue su OT exactamente igual en
+// cualquiera de los dos casos.
 async function _validarRadio(lat, lng){
-  // Si la OT no tiene lat/lng de destino, no podemos validar
+  // Si la OT no tiene lat/lng de destino, no hay contra qué medir.
   if (!DESTINO_LAT || !DESTINO_LNG) return { ok:true, motivo:'sin_destino' };
   const dist = _distanciaMetros(lat, lng, DESTINO_LAT, DESTINO_LNG);
   if (dist <= RADIO_MAX_METROS) return { ok:true, dist };
-  // Fuera de radio
-  if (RADIO_BLOQUEO_ACTIVO){
-    await ilusAlert({
-      title: '📍 Fuera de zona',
-      message: `Estás a <strong>${dist} m</strong> del cliente.<br>` +
-               `La OT solo puede gestionarse a ${RADIO_MAX_METROS} m o menos.`,
-      messageHtml: true,
-      sub: 'Acércate al lugar exacto y vuelve a capturar el GPS.',
-      type: 'warning',
-    });
-    return { ok:false, dist };
-  }
-  // Solo advertencia (no bloquea aún)
-  ilusToast(`⚠ Estás a ${dist}m del cliente (max permitido: ${RADIO_MAX_METROS}m)`, {
+  // Informativo, nunca un bloqueo: se registra la distancia igual que si
+  // hubiera dado dentro del radio.
+  ilusToast(`📍 A ${_fmtDistancia(dist)} del cliente`, {
     type: 'warning', duration: 4500,
   });
   return { ok:true, dist, fuera:true };
@@ -2980,7 +3016,14 @@ async function _gpsByIP(){
 //  Si todos fallan con code=1 (denied), se propaga para que el caller
 //  muestre el modal de ayuda. Cualquier otro error → fallback IP/manual.
 // ════════════════════════════════════════════════════════════════
-async function _gpsCascade(){
+// 2026-08-30 (Daniel: "que funcione el GPS... sería invalidante para
+// avanzar"): `onStage` es OPCIONAL -- pedirGPS() sigue llamando esto sin
+// argumento, comportamiento idéntico al de siempre, riesgo cero para la
+// barra superior. capturarGPS (botón de la tarea) lo usa para que el
+// técnico vea "buscando…" en vez de una pantalla muerta mientras corre
+// cada estrategia.
+async function _gpsCascade(onStage){
+  const _st = (s) => { if (onStage) try { onStage(s); } catch(_){} };
   if (!navigator.geolocation){
     const err = new Error('Geolocalización no soportada');
     err.code = 2;
@@ -2992,6 +3035,7 @@ async function _gpsCascade(){
   // el prompt nativo si nunca pidió, o devuelva error 1 si denied.
 
   // ── A) High accuracy (10s) — CALL DIRECTO desde gesto ──
+  _st({ etapa: 'alta', segs: 11 });
   try {
     _gpsLog('try_high_accuracy');
     const pos = await _gpsGetPosition(true, 10000);
@@ -3008,6 +3052,7 @@ async function _gpsCascade(){
   }
 
   // ── B) Low accuracy (6s) — workaround iOS ──
+  _st({ etapa: 'baja', segs: 8 });
   try {
     _gpsLog('try_low_accuracy');
     const pos = await _gpsGetPosition(false, 6000);
@@ -3024,6 +3069,7 @@ async function _gpsCascade(){
   }
 
   // ── C) watchPosition (8s) — fallback iOS idle bug ──
+  _st({ etapa: 'watch', segs: 8 });
   try {
     _gpsLog('try_watch');
     const pos = await _gpsWatch(8000);
@@ -3099,26 +3145,45 @@ async function capturarGPS(tid, mid, pid){
     const lng = pos.coords.longitude;
     const acc = pos.coords.accuracy || null;
     _gpsLog('tarea_gps_ok', { lat, lng, accuracy: acc, method: methodTag });
-    // Validar precisión razonable (GPS de iPhone suele dar <50m al aire libre,
-    // hasta 100-200m en edificios. Si excede 500m, sospechoso → rechazar).
-    if (acc && acc > 500){
-      _gpsLog('tarea_gps_accuracy_too_low', { acc });
-      await ilusAlert({
-        title: 'GPS impreciso',
-        message: `La precisión del GPS es de ±${Math.round(acc)} m, ` +
-                 'demasiado baja para auditar tu posición.',
-        sub: 'Sal al aire libre (lejos de paredes/metales) y reintenta.',
-        type: 'warning',
-      });
-      return;
-    }
-    ilusToast(`📍 GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)} ±${Math.round(acc||0)}m`, {
-      type: 'success', duration: 3500,
-    });
+    // 🔴 FIX 2026-08-30 (Daniel: "nunca lo limites, solo dime a cuántos
+    // metros está — empezaremos a medir dónde firmaron la OT"). Antes, una
+    // lectura con accuracy > 500m se RECHAZABA entera: no se guardaba nada,
+    // ni siquiera lat/lng. Dentro de un gimnasio de losa/estructura metálica
+    // un teléfono da rutinariamente ±100-800m — el técnico podía quedar sin
+    // poder cerrar la OT en todo el día. La precisión ahora es un DATO que
+    // se guarda y se muestra, nunca una condición para avanzar. El candado
+    // real de auditoría (source real del dispositivo, nunca IP ni manual)
+    // sigue exactamente igual, en el backend, sin tocar.
+    const distDestino = (DESTINO_LAT && DESTINO_LNG)
+      ? _distanciaMetros(lat, lng, DESTINO_LAT, DESTINO_LNG) : null;
+    const distTxt = distDestino != null ? ` — a ${_fmtDistancia(distDestino)} del cliente` : '';
+    const precisionBaja = !!(acc && acc > 500);
+    if (precisionBaja) _gpsLog('tarea_gps_accuracy_baja', { acc });
     try { await _validarRadio(lat, lng); } catch(_){}
-    await _gpsGuardarEnTarea(tid, mid, pid, {
+    // 2026-08-30 (Daniel: "invalidante para avanzar" si el GPS no funciona):
+    // el toast de éxito ahora se avisa DESPUÉS de confirmar que se guardó,
+    // no antes -- si el POST falla (mala señal), la lectura queda retenida
+    // en memoria (ver _gpsGuardarEnTarea/_gpsPendiente) y se avisa que falta
+    // subirla, en vez de celebrar un guardado que no ocurrió.
+    const okGuardado = await _gpsGuardarEnTarea(tid, mid, pid, {
       lat, lng, accuracy: acc, source: 'gps',
     });
+    if (okGuardado){
+      if (precisionBaja){
+        ilusToast(`📍 Ubicación guardada con precisión baja (±${Math.round(acc)} m)${distTxt}. ` +
+                   'Si puedes, sal un momento y vuelve a capturar para afinarla.', {
+          type: 'warning', duration: 6000,
+        });
+      } else {
+        ilusToast(`📍 GPS guardado (±${Math.round(acc||0)}m)${distTxt}`, {
+          type: 'success', duration: 3500,
+        });
+      }
+    } else {
+      ilusToast(`📍 GPS capturado${distTxt}, pero no se pudo subir — toca "Reintentar envío" en la tarjeta.`, {
+        type: 'warning', duration: 7000,
+      });
+    }
     // Refrescar barra GPS arriba
     try { await _gpsRegistrarResultado({ lat, lng, accuracy: acc, method: methodTag }); } catch(_){}
   };
@@ -3169,32 +3234,78 @@ async function capturarGPS(tid, mid, pid){
     });
   };
 
-  // getCurrentPosition DIRECTO — el prompt nativo iOS aparece acá si
-  // nunca preguntó antes. Si ya está granted, resuelve directo.
-  // Timeout 10s (no 15s) para que el técnico no piense que está colgado.
-  navigator.geolocation.getCurrentPosition(
-    (pos) => _onSuccess(pos, 'gps_high'),
-    (err) => {
-      _gpsLog('tarea_gps_high_fail', { code: err && err.code, msg: err && err.message });
-      // Si fue PERMISSION_DENIED → no insistir, ir directo al modal
-      if (err && err.code === 1){
-        _onErrorFinal(err);
-        return;
-      }
-      // TIMEOUT o POSITION_UNAVAILABLE → fallback a highAccuracy:false (6s).
-      // Funciona en iPhone 15 Pro Max indoor cuando highAccuracy:true falla.
-      // No requiere gesto nuevo porque ya tenemos el permiso del primer intento.
-      _gpsLog('tarea_gps_fallback_low_accuracy');
-      ilusToast('📡 Reintentando GPS (precisión estándar)…',
-                { type:'info', duration: 1500 });
-      navigator.geolocation.getCurrentPosition(
-        (pos) => _onSuccess(pos, 'gps_low'),
-        (err2) => _onErrorFinal(err2),
-        { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
-      );
-    },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-  );
+  // 🔴 FIX 2026-08-30 (Daniel: "que funcione el GPS, no tiene sentido tener
+  // algo que no funcione, sería invalidante para avanzar"). Antes este botón
+  // reimplementaba la captura A MANO con solo 2 intentos, sin el timeout
+  // EXTERNO ni el watchPosition que _gpsCascade (arriba, la MISMA que usa la
+  // barra superior desde siempre) ya tiene escritos justo para el bug de
+  // cuelgue de getCurrentPosition en iOS Safari 17/18. Si se colgaba, el
+  // técnico veía "Pidiendo GPS…" y después nada: sin spinner, sin error,
+  // botón nunca se re-habilitaba. Ahora usa el mismo motor de 3 estrategias
+  // con progreso visible, y el botón SIEMPRE vuelve a un estado accionable.
+  if (window.__gpsTareaBusy){
+    ilusToast('Ya estoy buscando señal, dame unos segundos…', { type:'info' });
+    return;
+  }
+  window.__gpsTareaBusy = true;
+
+  const _btnId = 'btnGpsTarea-' + tid;
+  const _btnHtmlOriginal = (document.getElementById(_btnId) || {}).innerHTML || '';
+  const _setBtn = (html, off) => {
+    const b = document.getElementById(_btnId);   // re-lookup: el DOM pudo re-renderizarse
+    if (!b) return;
+    b.disabled = !!off;
+    b.innerHTML = html;
+  };
+
+  let _restan = 11;
+  _setBtn('<i class="bi bi-arrow-repeat"></i> Buscando señal… ' + _restan + 's', true);
+  const _tick = setInterval(() => {
+    _restan = Math.max(0, _restan - 1);
+    _setBtn('<i class="bi bi-arrow-repeat"></i> Buscando señal… ' + _restan + 's', true);
+  }, 1000);
+
+  const _onStage = (s) => {
+    _restan = s.segs;
+    if (s.etapa === 'baja')  ilusToast('Reintentando con precisión estándar…', { type:'info', duration:1500 });
+    if (s.etapa === 'watch') ilusToast('Último intento (modo continuo)…',      { type:'info', duration:1500 });
+  };
+
+  try {
+    // Mismo macrotask del click en la práctica: _gpsCascade dispara
+    // getCurrentPosition sincrónicamente dentro de _gpsGetPosition, sin
+    // ningún await por delante que rompa el gesto en iOS.
+    const r = await _gpsCascade(_onStage);
+    clearInterval(_tick);
+    // Adaptador: _gpsCascade devuelve {lat,lng,accuracy,method} plano;
+    // _onSuccess espera un GeolocationPosition con .coords.
+    await _onSuccess(
+      { coords: { latitude: r.lat, longitude: r.lng, accuracy: r.accuracy } },
+      r.method
+    );
+    // Éxito → _gpsGuardarEnTarea re-renderiza la tarea a los 600ms, que
+    // reemplaza este botón por el resultado capturado. No hace falta
+    // restaurarlo a mano.
+  } catch (err){
+    clearInterval(_tick);
+    _setBtn(_btnHtmlOriginal || '<i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación (GPS)', false);
+    // code 99 = las 3 estrategias de _gpsCascade fallaron sin "denied".
+    // _onErrorFinal no conocía ese código (nunca antes lo alcanzaba) y caía
+    // al mensaje crudo "Todas las estrategias GPS nativas fallaron".
+    if (err && err.code === 99){
+      await ilusAlert({
+        title: 'No encontramos señal GPS',
+        message: 'Probamos tres formas distintas y ninguna respondió.',
+        sub: 'Sal a una zona con vista al cielo (puerta del gimnasio, patio) y toca "Capturar" otra vez.',
+        type: 'warning',
+      });
+    } else {
+      await _onErrorFinal(err || { code: 2, message: 'Error desconocido' });
+    }
+  } finally {
+    clearInterval(_tick);
+    window.__gpsTareaBusy = false;
+  }
 }
 
 // ─── DEPRECADO 2026-05-17 ───────────────────────────────────────
@@ -3229,10 +3340,31 @@ async function _capturarGPSManual_DEPRECATED(tid, mid, pid){
   });
 }
 
+// 2026-08-30 (Daniel: "invalidante para avanzar" si el GPS no funciona) —
+// lecturas de GPS capturadas con éxito pero que TODAVÍA no se subieron al
+// servidor (POST falló: mala señal en el gimnasio). En memoria, no
+// localStorage: vive mientras dure la pestaña, que es exactamente cuanto
+// dura la ventana en la que tiene sentido reintentar sin re-pedir GPS.
+const _gpsPendiente = {};
+
+function _gpsReintentarEnvio(tid, mid, pid){
+  const p = _gpsPendiente[tid];
+  if (!p){
+    ilusToast('No hay ninguna captura pendiente que reintentar — vuelve a tocar "Capturar".', { type:'warning' });
+    return;
+  }
+  _gpsGuardarEnTarea(tid, mid, pid, { lat: p.lat, lng: p.lng, accuracy: p.accuracy, source: 'gps' })
+    .then(ok => {
+      ilusToast(ok ? '✓ Ubicación subida' : 'Sigue sin poder subirse — revisa tu conexión y reintenta.',
+                { type: ok ? 'success' : 'error' });
+    });
+}
+
 // ── Guardar en backend con metadata robusta ──
 // Si la tarea es de tipo GPS → manda {lat, lng, accuracy, source, dir}
 // Si NO es tipo GPS → manda {_gps_extra:{...}} para que backend lo agregue
 // como metadata sin pisar el valor principal de la tarea.
+// Devuelve boolean (propaga guardarResp): true = se guardó, false = no.
 async function _gpsGuardarEnTarea(tid, mid, pid, payload){
   let esTipoGps = false;
   try {
@@ -3255,8 +3387,15 @@ async function _gpsGuardarEnTarea(tid, mid, pid, payload){
       dir: payload.dir || null,
     },
   };
-  await guardarResp(tid, valorPayload, mid, pid);
+  // Retener ANTES de intentar: si el POST falla, la coordenada — la parte
+  // difícil de conseguir — no se pierde, sin importar en qué paso falle.
+  if (esTipoGps){
+    _gpsPendiente[tid] = { lat: payload.lat, lng: payload.lng, accuracy: payload.accuracy, capturedAt: Date.now() };
+  }
+  const ok = await guardarResp(tid, valorPayload, mid, pid);
+  if (ok) delete _gpsPendiente[tid];
   setTimeout(() => renderTareas(mid, pid), 600);
+  return ok;
 }
 
 function _gpsMethodLabel(method){

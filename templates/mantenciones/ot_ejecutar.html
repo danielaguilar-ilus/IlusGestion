@@ -291,15 +291,14 @@
         {# FIX 2026-05-17 — Botón "Ingresar manual" ELIMINADO por política
            de auditoría: solo se acepta GPS real del dispositivo. Daniel
            necesita controlar que el técnico no manipule su ubicación. #}
-        {# FIX 2026-05-17 — Botón Diagnóstico GPS para debug remoto en iPhone #}
-        <button type="button" class="tx-gps-btn-diag"
-                onclick="mostrarDiagnosticoGPS()"
-                style="background:#fff;color:#475569;border:1px dashed #cbd5e1;
-                       border-radius:6px;padding:6px 10px;font-size:.7rem;font-weight:600;
-                       min-height:32px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"
-                title="Log de estrategias GPS — útil para reportar problemas">
-          <i class="bi bi-bug"></i> Diagnóstico
-        </button>
+        {# 🔧 FIX 2026-08-30 (Daniel, en vivo: "sácalo, eso no lo debe ver
+           nadie") — el botón "Diagnóstico" (FIX 2026-05-17, debug remoto de
+           GPS en iPhone) quedaba visible para CUALQUIER técnico en terreno.
+           Era una herramienta de soporte, no algo pensado para el flujo
+           normal de la OT. Se quita el botón de la vista; la función
+           mostrarDiagnosticoGPS() sigue existiendo en el JS por si algún
+           día hace falta invocarla manualmente desde la consola para
+           depurar un caso real. #}
       </div>
     </div>
   </div>

@@ -1882,6 +1882,24 @@
   display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;
   font-size:.66rem;font-weight:700;padding:2px 7px;border-radius:20px;
 }
+/* 2026-08-30 (Daniel: "nunca lo limites, solo dime a cuántos metros
+   está") -- la distancia se muestra siempre, no solo cuando está lejos. */
+.tx-badge-gps-ok{
+  display:inline-flex;align-items:center;gap:3px;background:#dcfce7;color:#15803d;
+  font-size:.66rem;font-weight:700;padding:2px 7px;border-radius:20px;
+}
+/* Captura exitosa que todavía no se subió (mala señal al guardar) -- la
+   coordenada no se perdió, solo falta un reintento de un toque. */
+.tx-gps-sin-subir{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;
+  background:#fef3c7;border:1px dashed #f59e0b;border-radius:8px;
+  padding:8px 10px;font-size:.74rem;color:#92400e;font-weight:600;
+}
+.tx-gps-sin-subir button{
+  margin-left:auto;background:#f59e0b;color:#fff;border:none;border-radius:7px;
+  padding:6px 12px;font-size:.72rem;font-weight:800;cursor:pointer;min-height:32px;
+}
+.tx-gps-sin-subir button:active{transform:scale(.96)}
 .tx-tarea .ttl{align-items:center;gap:11px;margin-bottom:0}
 .tx-tarea .ttl-info{order:1}
 .tx-tarea .ttl-chk{
