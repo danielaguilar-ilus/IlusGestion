@@ -61409,6 +61409,16 @@ def _mant_ficha_impl(cid):
     contratos    = [_norm_contrato(r) for r in contratos_raw]
     visitas_full = [_norm_visita(r)   for r in visitas_raw]
 
+    # 2026-08-30 (Daniel, mismo pedido que ya se aplicó esta noche en
+    # ot_ejecutar.html/commit 38faeae -- "quién gestionó qué... jamás se
+    # enteren o lo vean los técnicos o los demás"): esta ficha SÍ la ve el
+    # técnico (is_tecnico solo deshabilita controles de edición, no oculta
+    # la página) -- así que "quién hizo cada tarea" no puede viajar en el
+    # HTML para nadie que no sea superadmin. Se decide UNA vez aquí y se
+    # usa para no popular los campos sensibles más abajo -- nunca se
+    # confía en esconder esto solo en el template.
+    _es_superadmin_ficha = bool((g.permissions or {}).get("superadmin"))
+
     # ── 2026-05-21 (Daniel) — Última revisión por equipo ───────────────
     # Para cada máquina del cliente, traemos la última fila de
     # mant_visita_equipos. Lo pintamos en la tabla de equipos (badge
@@ -61448,7 +61458,7 @@ def _mant_ficha_impl(cid):
                     "razon_saltado":       _r.get("razon_saltado") or "",
                     "observacion":         _r.get("observacion_tecnico") or "",
                     "revisado_at":         _r.get("revisado_at"),
-                    "revisado_por":        _r.get("revisado_por") or "",
+                    "revisado_por":        (_r.get("revisado_por") or "") if _es_superadmin_ficha else "",
                     "numero_ot":           _r.get("numero_ot") or "",
                     "visita_id":           _r.get("visita_id"),
                     "visita_tipo":         _r.get("visita_tipo") or "",
@@ -61472,7 +61482,11 @@ def _mant_ficha_impl(cid):
     # Bloque independiente y defensivo a propósito: si esto falla, el
     # chip "ultima_revision" de arriba sigue funcionando igual (no lo
     # tocamos ni dependemos de su try/except).
-    if maquinas:
+    # 2026-08-30: gateado a superadmin (ver _es_superadmin_ficha arriba) --
+    # ni siquiera se consulta la tabla si quien mira la ficha no es
+    # superadmin, para no traer a Python un dato que después habría que
+    # acordarse de esconder.
+    if maquinas and _es_superadmin_ficha:
         try:
             _pares_mv = []
             for _m in maquinas:
