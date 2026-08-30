@@ -1186,20 +1186,128 @@
          "Finanzas de la OT", gate puede_metadata). `es_tecnico` ya vive
          en el contexto global (inject_globals), no hace falta pasarlo
          desde ot2_detalle(). #}
+      {# 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
+         [ejecutar] ... esto hay que aplicárselo a la orden de trabajo dos
+         punto cero"): la card "Cobro" de solo lectura se reemplaza por el
+         MISMO desglose que ya usa la pantalla clásica ("Finanzas de la OT"
+         en ot_ejecutar.html) -- Precio al cliente, Costo proveedor, Costo
+         de despacho, Tipo, Nombre proveedor, Centro de costo, Documento
+         ERP + margen calculado -- para no tener dos vistas distintas del
+         mismo dinero. Reusa el MISMO endpoint que ya está probado y ya
+         escribe ambos pares de columnas de documento (PUT
+         /mantenciones/api/visitas/<vid>, ver fix de esta misma noche) en
+         vez de inventar un segundo modelo financiero. `puede_metadata`
+         decide editable vs solo-lectura, igual que en la pantalla clásica;
+         `es_tecnico` sigue ocultando la card entera (REGLA de seguridad
+         2026-08-27, Isabel Milling). #}
       {% if not es_tecnico %}
-      <div class="otd-card">
-        <h3><i class="bi bi-cash-coin"></i> Cobro</h3>
-        <div class="otd-din">
-          <div class="row"><span>Modalidad</span>
-            <b>{{ (v.modalidad_cobro or 'sin declarar') | replace('_',' ') | title }}</b></div>
-          <div class="row"><span>Centro de costo</span>
-            <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
-          {% if v.factura_nudo %}
-          <div class="row"><span>Documento</span>
-            <b>{{ v.factura_tido or 'DOC' }} {{ v.factura_nudo }}</b></div>
+      <div class="otd-card" id="otdCardFinanzas">
+        <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT</h3>
+        <div style="padding:14px 16px">
+          {% if puede_metadata %}
+          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Precio al cliente (CLP)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" id="otdFinCosto" class="form-control" min="0" step="1000"
+                       value="{{ v.costo if v.costo is not none else '' }}">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Costo proveedor/interno (CLP)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" id="otdFinCostoProveedor" class="form-control" min="0" step="1000"
+                       value="{{ v.costo_proveedor if v.costo_proveedor is not none else '' }}">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Costo de despacho (opcional)</label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" id="otdFinCostoDespacho" class="form-control" min="0" step="1000"
+                       placeholder="0" value="{{ v.costo_despacho if v.costo_despacho is not none else '' }}">
+              </div>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Tipo</label>
+              <select id="otdFinProveedorTipo" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="interno" {% if v.proveedor_tipo=='interno' %}selected{% endif %}>Interno (técnico propio)</option>
+                <option value="externo" {% if v.proveedor_tipo=='externo' %}selected{% endif %}>Externo (contratado)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Nombre proveedor/instalador</label>
+              <input type="text" id="otdFinProveedorNombre" class="form-control form-control-sm"
+                     maxlength="200" placeholder="Ej: Instalaciones XYZ" value="{{ v.proveedor_nombre or '' }}">
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Centro de costo</label>
+              <select id="otdFinCentroCosto" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="sstt" {% if v.centro_costo=='sstt' %}selected{% endif %}>Servicio Técnico</option>
+                <option value="logistica" {% if v.centro_costo=='logistica' %}selected{% endif %}>Logística</option>
+                <option value="comercial" {% if v.centro_costo=='comercial' %}selected{% endif %}>Comercial</option>
+              </select>
+            </div>
+          </div>
+          {% set _doc_tido_fin = v.documento_erp_tido or v.factura_tido %}
+          {% set _doc_nudo_fin = v.documento_erp_nudo or v.factura_nudo %}
+          <div class="row g-2 mb-2" style="display:grid;grid-template-columns:1fr 2fr;gap:10px">
+            <div>
+              <label class="form-label small fw-semibold mb-1">Documento ERP</label>
+              <select id="otdFinDocErpTido" class="form-select form-select-sm">
+                <option value="">— Sin asociar —</option>
+                <option value="NVI" {% if _doc_tido_fin=='NVI' %}selected{% endif %}>NVI</option>
+                <option value="NVV" {% if _doc_tido_fin=='NVV' %}selected{% endif %}>NVV</option>
+                <option value="FCV" {% if _doc_tido_fin=='FCV' %}selected{% endif %}>FCV (factura)</option>
+                <option value="BLV" {% if _doc_tido_fin=='BLV' %}selected{% endif %}>BLV (boleta)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label small fw-semibold mb-1">Número</label>
+              <input type="text" id="otdFinDocErpNudo" class="form-control form-control-sm"
+                     maxlength="20" placeholder="Ej: 552" inputmode="numeric" value="{{ _doc_nudo_fin or '' }}">
+            </div>
+          </div>
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2"
+               style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px">
+            <div>
+              <div class="text-muted small">Margen</div>
+              <div class="fw-bold" id="otdFinMargen" style="font-size:1rem">—</div>
+            </div>
+            <div>
+              <div class="text-muted small">% Margen</div>
+              <div class="fw-bold" id="otdFinMargenPct" style="font-size:1rem">—</div>
+            </div>
+            <button type="button" class="btn btn-danger btn-sm" onclick="otdGuardarFinanzas()">
+              <i class="bi bi-check-lg me-1"></i>Guardar</button>
+          </div>
+          <div id="otdFinMargenWarn" style="display:none;margin-top:8px;background:#fff8e1;
+               border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.82rem;
+               color:#92400e;align-items:flex-start;gap:8px">
+            <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>
+            <span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico,
+              considera asignarla a Logística o Comercial arriba.</span>
+          </div>
+          {% else %}
+          <div class="otd-din">
+            <div class="row"><span>Precio al cliente</span>
+              <b>{{ '$' ~ '{:,}'.format(v.costo|int) if v.costo is not none else '—' }}</b></div>
+            <div class="row"><span>Centro de costo</span>
+              <b>{{ (v.centro_costo or '—') | replace('_',' ') | title }}</b></div>
+            {% set _doc_tido_ro2 = v.documento_erp_tido or v.factura_tido %}
+            {% set _doc_nudo_ro2 = v.documento_erp_nudo or v.factura_nudo %}
+            {% if _doc_nudo_ro2 %}
+            <div class="row"><span>Documento</span>
+              <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
+            {% endif %}
+          </div>
           {% endif %}
           {% if finanzas and finanzas.faltan %}
-          <div class="otd-warn">
+          <div class="otd-warn" style="margin-top:10px">
             <i class="bi bi-exclamation-triangle-fill"></i>
             <div>Falta declarar antes de pedir la firma:
               {{ finanzas.faltan | join(', ') }}.</div>
@@ -2022,6 +2130,81 @@ async function otdEliminarOT(){
     });
   }
 }
+
+/* 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
+   [ejecutar]... el margen debería salir allí"): MISMA fórmula y MISMO
+   endpoint que `recalcular()`/`guardarFinanzasOT()` en ot_ejecutar.html --
+   se clona el comportamiento, no se inventa un cálculo nuevo. */
+(function(){
+  const elCosto = document.getElementById('otdFinCosto');
+  if (!elCosto) return; // card no renderizada (técnico, o sin permiso)
+  const elCostoProv = document.getElementById('otdFinCostoProveedor');
+  const elCostoDespacho = document.getElementById('otdFinCostoDespacho');
+  const elMargen = document.getElementById('otdFinMargen');
+  const elMargenPct = document.getElementById('otdFinMargenPct');
+  const elMargenWarn = document.getElementById('otdFinMargenWarn');
+
+  function fmtCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
+
+  function recalcularOtdFin(){
+    const precio = parseFloat(elCosto.value || 0) || 0;
+    const costoProv = parseFloat(elCostoProv.value || 0) || 0;
+    const costoDespacho = parseFloat((elCostoDespacho && elCostoDespacho.value) || 0) || 0;
+    const costoTotal = costoProv + costoDespacho;
+    if (!precio && !costoTotal){
+      elMargen.textContent = '—'; elMargenPct.textContent = '—';
+      elMargen.style.color = ''; elMargenPct.style.color = '';
+      if (elMargenWarn) elMargenWarn.style.display = 'none';
+      return;
+    }
+    const margen = precio - costoTotal;
+    const pct = precio > 0 ? (margen / precio * 100) : 0;
+    elMargen.textContent = fmtCLP(margen);
+    elMargenPct.textContent = pct.toFixed(1) + '%';
+    const color = margen < 0 ? '#dc2626' : '#16a34a';
+    elMargen.style.color = color; elMargenPct.style.color = color;
+    if (elMargenWarn){
+      const cc = document.getElementById('otdFinCentroCosto');
+      const ccVal = cc ? cc.value : '';
+      const avisar = margen < 0 && (ccVal === '' || ccVal === 'sstt');
+      elMargenWarn.style.display = avisar ? 'flex' : 'none';
+    }
+  }
+  [elCosto, elCostoProv, elCostoDespacho].forEach(function(el){
+    if (el) el.addEventListener('input', recalcularOtdFin);
+  });
+  const ccSel = document.getElementById('otdFinCentroCosto');
+  if (ccSel) ccSel.addEventListener('change', recalcularOtdFin);
+  recalcularOtdFin();
+})();
+
+window.otdGuardarFinanzas = async function(){
+  const body = {
+    costo: document.getElementById('otdFinCosto').value.trim() === ''
+      ? null : (parseFloat(document.getElementById('otdFinCosto').value) || 0),
+    costo_proveedor: parseFloat(document.getElementById('otdFinCostoProveedor').value || 0) || 0,
+    costo_despacho: parseFloat(document.getElementById('otdFinCostoDespacho').value || 0) || 0,
+    proveedor_tipo: document.getElementById('otdFinProveedorTipo').value || '',
+    proveedor_nombre: document.getElementById('otdFinProveedorNombre').value.trim(),
+    documento_erp_tido: document.getElementById('otdFinDocErpTido').value || '',
+    documento_erp_nudo: document.getElementById('otdFinDocErpNudo').value.trim(),
+    centro_costo: document.getElementById('otdFinCentroCosto').value || '',
+  };
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/{{ v.id }}`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok !== false){
+      if (window.ilusToast) ilusToast('✓ Finanzas de la OT guardadas', {type: 'success'});
+    } else {
+      if (window.ilusToast) ilusToast(j.error || 'No se pudo guardar. Intenta de nuevo.', {type: 'error'});
+    }
+  } catch (e){
+    if (window.ilusToast) ilusToast('Error de conexión al guardar finanzas.', {type: 'error'});
+  }
+};
 
 /* Compartir la OT firmada por WhatsApp (Daniel, 21-08-2026).
    Abre la ventana ANTES del fetch: si se abre después, Safari/iOS y
