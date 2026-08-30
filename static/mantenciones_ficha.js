@@ -2717,3 +2717,107 @@ async function vhGuardar(){
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// TAB "COTIZACIONES" — 2026-08-30 (Daniel, ficha como HUB de trazabilidad)
+// Lee /mantenciones/api/clientes/<cid>/cotizaciones (tk_cotizaciones
+// cruzado por RUT). Paginación estilo Etiquetas (REGLA #4.3) pero via
+// fetch(), no recarga de página completa -- esta tab vive dentro del SPA
+// de la ficha, igual que Finanzas/Evidencias/Documentos.
+// Reutiliza _fmtMoney/_escH ya definidos arriba en este mismo archivo.
+// ══════════════════════════════════════════════════════════════════════
+window._cotFichaPage = 1;
+window._cotFichaTotalPages = 1;
+
+function _cotEstadoBadge(estado, vencida) {
+  if (vencida) return `<span class="badge" style="background:#fee2e2;color:#991b1b;font-weight:600">⏳ Vencida</span>`;
+  const map = {
+    draft:    ['#f3f4f6', '#374151', 'Borrador'],
+    sent:     ['#dbeafe', '#1e40af', 'Enviada'],
+    approved: ['#dcfce7', '#166534', 'Aprobada'],
+    rejected: ['#fee2e2', '#991b1b', 'Rechazada'],
+    expired:  ['#fee2e2', '#991b1b', 'Expirada'],
+  };
+  const [bg, fg, lbl] = map[estado] || ['#f3f4f6', '#374151', estado || '—'];
+  return `<span class="badge" style="background:${bg};color:${fg};font-weight:600">${lbl}</span>`;
+}
+
+async function cargarCotizacionesFicha(page) {
+  if (page) window._cotFichaPage = page;
+  const perPageEl = document.getElementById('cotFichaPerPage');
+  const perPage = perPageEl ? (parseInt(perPageEl.value, 10) || 20) : 20;
+  const tbody = document.getElementById('cotFichaTbody');
+  if (!tbody) return; // tab aún no renderizado en este ciclo
+  tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-muted">
+    <div class="spinner-border spinner-border-sm me-2"></div>Cargando cotizaciones…
+  </td></tr>`;
+  try {
+    const r = await fetch(`/mantenciones/api/clientes/${CID}/cotizaciones?page=${window._cotFichaPage}&per_page=${perPage}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Error desconocido');
+    window._cotFichaTotalPages = d.total_pages || 1;
+    window._cotFichaPage = d.page || 1;
+
+    const badge = document.getElementById('cotFichaCountBadge');
+    if (badge) {
+      if (d.total > 0) { badge.style.display = 'inline-block'; badge.textContent = d.total; }
+      else { badge.style.display = 'none'; }
+    }
+
+    if (!d.cotizaciones.length) {
+      tbody.innerHTML = `<tr><td colspan="7">
+        <div class="ilus-empty" style="padding:2rem 1rem">
+          <div class="e-icon"><i class="bi bi-receipt"></i></div>
+          <div class="e-title">${d.sin_rut ? 'Cliente sin RUT registrado' : 'Sin cotizaciones registradas'}</div>
+          <div class="e-sub">${d.sin_rut
+            ? 'Completa el RUT en el resumen del cliente para cruzar el historial del Cotizador.'
+            : 'Aún no se ha generado ninguna cotización para este cliente desde el módulo Tickets.'}</div>
+        </div>
+      </td></tr>`;
+    } else {
+      tbody.innerHTML = d.cotizaciones.map(c => `
+        <tr>
+          <td class="ps-3 font-monospace fw-bold">${_escH(c.numero_cotizacion)}</td>
+          <td class="font-monospace text-nowrap">${_escH(c.fecha_fmt)}</td>
+          <td>${_cotEstadoBadge(c.estado, c.vencida)}</td>
+          <td class="text-end font-monospace fw-bold">${_fmtMoney(c.total)}</td>
+          <td>${c.numero_ticket ? `<span class="badge bg-secondary">${_escH(c.numero_ticket)}</span>` : '<span class="text-muted">—</span>'}</td>
+          <td class="text-nowrap">${c.valida_hasta_fmt ? _escH(c.valida_hasta_fmt) : '<span class="text-muted">—</span>'}</td>
+          <td class="pe-3 text-end">
+            <a href="${c.url_ver}" target="_blank" rel="noopener" class="btn btn-xs btn-outline-secondary" title="Ver cotización">
+              <i class="bi bi-eye"></i>
+            </a>
+          </td>
+        </tr>`).join('');
+    }
+
+    // ── Paginación (Mostrando X–Y de Z + Página N de M + Anterior/Siguiente) ──
+    const info = document.getElementById('cotFichaPagInfo');
+    if (info) {
+      if (d.total > 0) {
+        const first = ((d.page - 1) * d.per_page) + 1;
+        const last  = Math.min(d.page * d.per_page, d.total);
+        info.innerHTML = `Mostrando <strong>${first}–${last}</strong> de <strong>${d.total}</strong>`;
+      } else {
+        info.textContent = 'Sin resultados';
+      }
+    }
+    const lbl = document.getElementById('cotFichaPagLabel');
+    if (lbl) lbl.textContent = `Página ${d.page} de ${d.total_pages}`;
+    const prevBtn = document.getElementById('cotFichaPagPrev');
+    const nextBtn = document.getElementById('cotFichaPagNext');
+    if (prevBtn) prevBtn.disabled = d.page <= 1;
+    if (nextBtn) nextBtn.disabled = d.page >= d.total_pages;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="alert alert-danger mb-0" style="font-size:.82rem">
+      <i class="bi bi-x-circle me-1"></i>Error cargando cotizaciones: ${e.message}
+    </div></td></tr>`;
+  }
+}
+
+function cotFichaCambiarPagina(delta) {
+  const next = window._cotFichaPage + delta;
+  if (next < 1 || next > window._cotFichaTotalPages) return;
+  cargarCotizacionesFicha(next);
+}
+

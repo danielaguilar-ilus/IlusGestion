@@ -216,6 +216,13 @@
     <button class="ftab-btn" data-tab="finanzas" onclick="switchTab('finanzas');cargarFinanzas()">
       <i class="bi bi-cash-coin"></i>Finanzas
     </button>
+    {# 2026-08-30 (Daniel — ficha como HUB de trazabilidad): historial de
+       tk_cotizaciones cruzado por RUT. Cierra el loop del botón "Generar
+       cotización" de arriba, que hasta ahora solo escribía y nunca leía. #}
+    <button class="ftab-btn" data-tab="cotizaciones" onclick="switchTab('cotizaciones');cargarCotizacionesFicha()">
+      <i class="bi bi-receipt"></i>Cotizaciones
+      <span id="cotFichaCountBadge" class="badge ms-1" style="font-size:.6rem;background:#fee2e2;color:#991b1b;display:none">0</span>
+    </button>
     <button class="ftab-btn" data-tab="documentos" onclick="switchTab('documentos');cargarDocumentos()">
       <i class="bi bi-folder-fill"></i>Documentos
     </button>
@@ -2749,6 +2756,84 @@
 
 </div>
 {# /tab-finanzas #}
+
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: COTIZACIONES — historial del Cotizador (tk_cotizaciones),
+   cruzado por RUT. 2026-08-30 (Daniel — ficha como HUB de
+   trazabilidad: "productos, OT, visitas, fechas, fotos, responsables,
+   todo"). Complementa (no duplica) el tab Finanzas: ahí se liga
+   manualmente un N° de cotización DEL ERP Random a una visita; acá se
+   lista el historial de cotizaciones generadas por ILUS mismo desde el
+   módulo Tickets/Cotizador para este cliente.
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-cotizaciones">
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-receipt me-2" style="color:var(--ilus-red)"></i>Cotizaciones</span>
+    <span class="text-muted ms-2" style="font-size:.78rem">Historial del Cotizador (módulo Tickets), cruzado por RUT</span>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="cargarCotizacionesFicha(1)">
+      <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+    </button>
+    <button class="btn btn-sm btn-ilus fw-bold" onclick="window.open('/tickets/cotizaciones?desde_cliente={{ cliente.id }}', '_blank')">
+      <i class="bi bi-file-earmark-plus me-1"></i>Nueva cotización
+    </button>
+  </div>
+</div>
+
+<div class="f-card">
+  <div class="f-card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:.82rem">
+        <thead style="background:#fafbfc;border-bottom:2px solid var(--border)">
+          <tr>
+            <th class="ps-3 py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">N° Cotización</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Fecha</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Estado</th>
+            <th class="py-2 text-end" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Total</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Ticket</th>
+            <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Válida hasta</th>
+            <th class="py-2 pe-3"></th>
+          </tr>
+        </thead>
+        <tbody id="cotFichaTbody">
+          <tr><td colspan="7" class="text-center py-4 text-muted">
+            <div class="spinner-border spinner-border-sm me-2"></div>Cargando cotizaciones…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Paginación REGLA #4.3 — mismo contrato visual que _partials/pagination.html
+     (Mostrando X–Y de Z + selector N por página + Anterior/Página/Siguiente),
+     pero disparando fetch() en vez de recargar la página completa: esta tab
+     vive dentro del SPA de la ficha, igual que Finanzas/Evidencias/Documentos. #}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2"
+       style="border-top:1px solid var(--border)">
+    <div style="font-size:.78rem;color:#6b7280" id="cotFichaPagInfo">—</div>
+    <div class="d-flex align-items-center gap-2">
+      <select id="cotFichaPerPage" class="form-select form-select-sm" style="width:auto;font-size:.78rem" onchange="cargarCotizacionesFicha(1)">
+        <option value="10">10 por página</option>
+        <option value="20" selected>20 por página</option>
+        <option value="50">50 por página</option>
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" id="cotFichaPagPrev" onclick="cotFichaCambiarPagina(-1)" disabled>
+        <i class="bi bi-chevron-left"></i> Anterior
+      </button>
+      <span class="badge" style="background:var(--ilus-red);color:#fff;font-size:.78rem;padding:6px 10px;border-radius:6px;font-weight:700" id="cotFichaPagLabel">Página 1 de 1</span>
+      <button class="btn btn-sm btn-ilus" id="cotFichaPagNext" onclick="cotFichaCambiarPagina(1)" disabled>
+        Siguiente <i class="bi bi-chevron-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+</div>
+{# /tab-cotizaciones #}
 
 
 {# ══════════════════════════════════════════════════════════════════
