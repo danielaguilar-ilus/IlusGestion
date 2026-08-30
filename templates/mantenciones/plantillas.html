@@ -181,6 +181,32 @@
   .pl-cat-card.active i{color:#dc2626}
   .pl-cat-card span{font-size:.78rem;font-weight:700;color:#374151}
   .pl-cat-card.active span{color:#991b1b}
+
+  /* ── CRUD "Tipos de trabajo interno" (30-08-2026) -- lenguaje visual de
+     Retiros (REGLA #15): tarjetas + semáforo, nombres nunca truncados. ── */
+  .pti-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .pti-card{border:1.5px solid #e5e7eb;border-radius:14px;padding:14px;background:#fff;
+            display:flex;flex-direction:column;gap:8px;position:relative;
+            box-shadow:0 1px 2px rgba(0,0,0,.03);transition:box-shadow .2s,border-color .2s}
+  .pti-card:hover{border-color:#d1d5db;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+  .pti-card.inactivo{opacity:.6;background:#fafafa}
+  .pti-top{display:flex;align-items:flex-start;gap:10px}
+  .pti-ic{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#1a1a1a,#0a0a0a);
+          color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex-shrink:0}
+  .pti-nm{font-weight:800;font-size:.95rem;color:#0f172a;line-height:1.25;overflow-wrap:anywhere}
+  .pti-clave{font-size:.68rem;color:#9ca3af;font-family:monospace}
+  .pti-desc{font-size:.8rem;color:#4b5563;line-height:1.35;overflow-wrap:anywhere}
+  .pti-semaforo{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;
+                padding:3px 9px;border-radius:99px;width:fit-content}
+  .pti-semaforo.on{background:#dcfce7;color:#166534}
+  .pti-semaforo.off{background:#f3f4f6;color:#6b7280}
+  .pti-semaforo .dot{width:7px;height:7px;border-radius:50%}
+  .pti-semaforo.on .dot{background:#16a34a}
+  .pti-semaforo.off .dot{background:#9ca3af}
+  .pti-plant{font-size:.74rem;color:#374151}
+  .pti-plant b{color:#0f172a}
+  .pti-acciones{display:flex;gap:6px;margin-top:auto;padding-top:6px}
+  .pti-acciones .btn{min-height:38px;flex:1}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -192,6 +218,15 @@
     <a href="{{ url_for('mant_ots_list') }}" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-arrow-left me-1"></i>Volver a OTs
     </a>
+    {# 30-08-2026 (Daniel, superadmin, textual): "quiero un CRUD ahí en los
+       trabajos internos". Gate doble -- este botón solo se DIBUJA si el
+       usuario es superadmin (los otros roles ni lo ven), y cada endpoint
+       de escritura lo vuelve a exigir en el backend (REQUIERE_SUPERADMIN). #}
+    {% if permissions and permissions.superadmin %}
+    <button class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirTiposInterno()">
+      <i class="bi bi-clipboard2-check me-1"></i>Tipos de trabajo interno
+    </button>
+    {% endif %}
     <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirEditor(null)">
       <i class="bi bi-plus-circle me-1"></i>Nueva plantilla
     </button>
@@ -536,6 +571,119 @@
           <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button class="btn btn-ilus fw-bold" onclick="guardarPlantilla()">
             <i class="bi bi-check-circle-fill me-1"></i>Guardar plantilla
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════════════════════════════════════════════════════════════
+   CRUD "Tipos de trabajo interno" (Daniel, superadmin, 30-08-2026, textual):
+   "quiero crear un tipo de orden nuevo... un CRUD aquí para estas tarjetas
+   de trabajo interno: eliminarla, editarla, mejorarla, crearla" + "quiero
+   un CRUD ahí en los trabajos internos, y que las plantillas se puedan
+   agregar -- una vez que aparezcan las plantillas, serán asignadas".
+
+   Alimenta las tarjetas del Paso 1 del wizard OT 2.0 cuando el usuario
+   elige origen "Trabajo interno" (ver cargarTiposInterno() en
+   templates/ot2/_modal_crear.html). Backend: /mantenciones/api/tipos-interno
+   (GET abierto a cualquiera con acceso a mantenciones -- lo necesita el
+   wizard --, POST/PUT/DELETE restringidos a superadmin en el backend
+   ADEMÁS del gate de este botón, ver _es_superadmin_actual en app.py).
+
+   Lenguaje visual de Retiros (REGLA #15): tarjetas + semáforo activo/
+   inactivo, nombres y descripciones SIEMPRE completos (sin line-clamp).
+   Un solo modal con dos vistas (lista de tarjetas <-> formulario) para no
+   apilar modales encima del wizard -- mismo criterio de "editor simple,
+   rápido" que pidió Daniel ("no necesitamos un panel elaborado"). #}
+<div class="modal fade" id="modalTiposInterno" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-clipboard2-check me-2"></i>Tipos de trabajo interno
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">
+          Estas son las tarjetas que aparecen en el wizard de "Crear OT" cuando el
+          origen es <b>Trabajo interno</b> (capacitación, bodega, control de calidad
+          y cualquier tipo nuevo que agregues acá). Desactivar un tipo no borra
+          ninguna orden ya creada con él -- solo deja de ofrecerse como tarjeta nueva.
+        </p>
+
+        {# ── Vista LISTA (tarjetas) ── #}
+        <div id="ptiVistaLista">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold small text-muted" id="ptiContador">Cargando…</span>
+            <button class="btn btn-sm btn-ilus fw-bold" onclick="ptiAbrirForm(null)">
+              <i class="bi bi-plus-circle me-1"></i>Nuevo tipo
+            </button>
+          </div>
+          <div class="pti-grid" id="ptiGrid">
+            <div class="text-muted small p-3">Cargando tipos de trabajo interno…</div>
+          </div>
+        </div>
+
+        {# ── Vista FORMULARIO (crear / editar) -- REGLA #8: >5 campos, va en
+           modal, no en ilusPrompt. Toggle simple de display, mismo modal. ── #}
+        <div id="ptiVistaForm" style="display:none">
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-3" onclick="ptiVolverALista()">
+            <i class="bi bi-arrow-left me-1"></i>Volver a la lista
+          </button>
+          <input type="hidden" id="ptiId" value="">
+          <div class="row g-2">
+            <div class="col-12 col-md-7">
+              <label class="form-label small fw-semibold">Nombre <span class="pl-req">*</span></label>
+              <input type="text" id="ptiNombre" class="form-control" style="font-size:16px"
+                     placeholder="Ej: Limpieza de bodega" oninput="ptiSugerirClave()">
+            </div>
+            <div class="col-12 col-md-5">
+              <label class="form-label small fw-semibold">
+                Clave interna
+                <i class="bi bi-info-circle text-muted" title="Se usa internamente para guardar la OT. No se puede cambiar después de creado."></i>
+              </label>
+              <input type="text" id="ptiClave" class="form-control" style="font-size:16px" placeholder="se genera sola">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Descripción</label>
+              <input type="text" id="ptiDescripcion" class="form-control" style="font-size:16px"
+                     maxlength="255" placeholder="Ej: Orden y limpieza general de la bodega">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold">Ícono</label>
+              <select id="ptiIcono" class="form-select" style="font-size:16px" onchange="ptiPintarPreviewIcono()"></select>
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small fw-semibold">
+                Plantilla de checklist (opcional)
+                <i class="bi bi-info-circle text-muted" title="Se sugiere sola al elegir este tipo en el wizard -- el usuario la puede cambiar."></i>
+              </label>
+              <select id="ptiPlantilla" class="form-select" style="font-size:16px">
+                <option value="">Sin plantilla asignada</option>
+              </select>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-2 mt-3 p-2" style="background:#f9fafb;border-radius:10px">
+            <div class="pti-ic" id="ptiPreviewIcono" style="width:36px;height:36px;font-size:1rem"><i class="bi bi-gear"></i></div>
+            <span class="small text-muted">Así se ve la tarjeta en el wizard: <b id="ptiPreviewNombre">—</b></span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-between" id="ptiFooterLista">
+        <div></div>
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+      <div class="modal-footer d-flex justify-content-between" id="ptiFooterForm" style="display:none">
+        <button class="btn btn-outline-danger btn-sm" id="ptiBtnDesactivar" onclick="ptiDesactivar()" style="display:none">
+          <i class="bi bi-slash-circle me-1"></i>Desactivar
+        </button>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" onclick="ptiVolverALista()">Cancelar</button>
+          <button class="btn btn-ilus fw-bold" onclick="ptiGuardar()">
+            <i class="bi bi-check-circle-fill me-1"></i>Guardar
           </button>
         </div>
       </div>
@@ -1546,5 +1694,217 @@ document.addEventListener('DOMContentLoaded', () => {
   cargarCoberturaClases();   // 28-08-2026: banner de clasificaciones sin checklist
   poblarAddTipoSelect();     // 29-08-2026: opciones del panel de alta rápida del Paso 2
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// CRUD "Tipos de trabajo interno" (30-08-2026, Daniel, superadmin, timebox
+// 16:00-18:00 Chile). Backend: /mantenciones/api/tipos-interno (app.py).
+// ══════════════════════════════════════════════════════════════════════
+const PTI_ICONOS = [
+  'bi-mortarboard','bi-building','bi-patch-check','bi-gear','bi-tools',
+  'bi-clipboard2-check','bi-box-seam','bi-bucket','bi-broom','bi-truck',
+  'bi-wrench-adjustable','bi-shield-check','bi-clipboard-check','bi-boxes',
+];
+let ptiTipos = [];
+let ptiPlantillasCache = [];
+
+async function abrirTiposInterno(){
+  ptiVolverALista();
+  new bootstrap.Modal(document.getElementById('modalTiposInterno')).show();
+  ptiCargarLista();
+  ptiCargarPlantillas();
+}
+
+async function ptiCargarLista(){
+  const g = document.getElementById('ptiGrid');
+  g.innerHTML = '<div class="text-muted small p-3">Cargando tipos de trabajo interno…</div>';
+  try{
+    const r = await fetch('/mantenciones/api/tipos-interno?incluir_inactivos=1', {credentials:'same-origin'});
+    const j = await r.json();
+    ptiTipos = (j.tipos || []);
+    ptiPintarGrid();
+  } catch(e){
+    g.innerHTML = '<div class="text-danger small p-3">No se pudo cargar la lista.</div>';
+  }
+}
+
+function ptiPintarGrid(){
+  const g = document.getElementById('ptiGrid');
+  const activos = ptiTipos.filter(t => t.activo).length;
+  document.getElementById('ptiContador').textContent =
+    `${activos} activo${activos===1?'':'s'} de ${ptiTipos.length} en total`;
+  if (!ptiTipos.length){
+    g.innerHTML = '<div class="text-muted small p-3">Sin tipos de trabajo interno todavía. Crea el primero.</div>';
+    return;
+  }
+  g.innerHTML = ptiTipos.map(t => `
+    <div class="pti-card ${t.activo ? '' : 'inactivo'}">
+      <div class="pti-top">
+        <div class="pti-ic"><i class="bi ${escHtml(t.icono || 'bi-gear')}"></i></div>
+        <div style="min-width:0;flex:1">
+          <div class="pti-nm">${escHtml(t.nombre)}</div>
+          <div class="pti-clave">${escHtml(t.clave)}</div>
+        </div>
+      </div>
+      ${t.descripcion ? `<div class="pti-desc">${escHtml(t.descripcion)}</div>` : ''}
+      <span class="pti-semaforo ${t.activo ? 'on' : 'off'}">
+        <span class="dot"></span>${t.activo ? 'Activo en el wizard' : 'Desactivado'}
+      </span>
+      <div class="pti-plant"><i class="bi bi-clipboard-check me-1"></i>${
+        t.plantilla_nombre ? `Checklist: <b>${escHtml(t.plantilla_nombre)}</b>` : 'Sin checklist asignado'
+      }</div>
+      <div class="pti-acciones">
+        <button class="btn btn-sm btn-outline-dark" onclick="ptiAbrirForm(${t.id})">
+          <i class="bi bi-pencil me-1"></i>Editar
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function ptiCargarPlantillas(){
+  try{
+    const r = await fetch('/mantenciones/api/plantillas?categoria=trabajo_interno&activa=1', {credentials:'same-origin'});
+    const j = await r.json();
+    ptiPlantillasCache = (j.plantillas || []).filter(p => (p.items_count||0) > 0);
+  } catch(e){ ptiPlantillasCache = []; }
+  const sel = document.getElementById('ptiPlantilla');
+  const actual = sel.value;
+  sel.innerHTML = '<option value="">Sin plantilla asignada</option>' +
+    ptiPlantillasCache.map(p => `<option value="${p.id}">${escHtml(p.nombre)} (${p.items_count} ítem${p.items_count===1?'':'s'})</option>`).join('');
+  if (actual) sel.value = actual;
+}
+
+function ptiPoblarIconos(seleccionado){
+  const sel = document.getElementById('ptiIcono');
+  sel.innerHTML = PTI_ICONOS.map(ic => `<option value="${ic}" ${ic===seleccionado?'selected':''}>${ic}</option>`).join('');
+}
+
+function ptiSugerirClave(){
+  // Solo mientras se está CREANDO (ptiId vacío) -- editar nunca toca la
+  // clave (ver docstring de PUT /mantenciones/api/tipos-interno/<id> en
+  // app.py: cambiarla dejaría huérfanas las OT ya creadas con la vieja).
+  if (document.getElementById('ptiId').value) { ptiPintarPreviewIcono(); return; }
+  const nombre = document.getElementById('ptiNombre').value;
+  const slug = nombre.normalize('NFKD').replace(/[̀-ͯ]/g,'')
+    .toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,60);
+  document.getElementById('ptiClave').value = slug;
+  ptiPintarPreviewIcono();
+}
+
+function ptiPintarPreviewIcono(){
+  const ic = document.getElementById('ptiIcono').value || 'bi-gear';
+  document.getElementById('ptiPreviewIcono').innerHTML = `<i class="bi ${escHtml(ic)}"></i>`;
+  document.getElementById('ptiPreviewNombre').textContent = document.getElementById('ptiNombre').value || '—';
+}
+
+function ptiAbrirForm(id){
+  document.getElementById('ptiVistaLista').style.display = 'none';
+  document.getElementById('ptiVistaForm').style.display = '';
+  document.getElementById('ptiFooterLista').style.display = 'none';
+  document.getElementById('ptiFooterForm').style.display = '';
+  const t = id ? ptiTipos.find(x => x.id === id) : null;
+  document.getElementById('ptiId').value = t ? t.id : '';
+  document.getElementById('ptiNombre').value = t ? t.nombre : '';
+  document.getElementById('ptiClave').value = t ? t.clave : '';
+  document.getElementById('ptiClave').disabled = !!t; // clave no editable al editar
+  document.getElementById('ptiDescripcion').value = t ? (t.descripcion || '') : '';
+  ptiPoblarIconos(t ? t.icono : PTI_ICONOS[0]);
+  ptiCargarPlantillas().then(() => {
+    document.getElementById('ptiPlantilla').value = (t && t.plantilla_id) ? t.plantilla_id : '';
+  });
+  ptiPintarPreviewIcono();
+  const btnDes = document.getElementById('ptiBtnDesactivar');
+  if (t){
+    btnDes.style.display = '';
+    btnDes.dataset.activo = t.activo ? '1' : '0';
+    btnDes.innerHTML = t.activo
+      ? '<i class="bi bi-slash-circle me-1"></i>Desactivar'
+      : '<i class="bi bi-arrow-counterclockwise me-1"></i>Reactivar';
+  } else {
+    btnDes.style.display = 'none';
+  }
+}
+
+function ptiVolverALista(){
+  document.getElementById('ptiVistaLista').style.display = '';
+  document.getElementById('ptiVistaForm').style.display = 'none';
+  document.getElementById('ptiFooterLista').style.display = '';
+  document.getElementById('ptiFooterForm').style.display = 'none';
+}
+
+async function ptiGuardar(){
+  const id = document.getElementById('ptiId').value;
+  const nombre = document.getElementById('ptiNombre').value.trim();
+  if (!nombre){
+    if (typeof ilusToast === 'function') ilusToast('Falta el nombre del tipo de trabajo', {type:'error'});
+    return;
+  }
+  const body = {
+    nombre,
+    descripcion: document.getElementById('ptiDescripcion').value.trim(),
+    icono: document.getElementById('ptiIcono').value,
+    plantilla_id: document.getElementById('ptiPlantilla').value || null,
+  };
+  if (!id) body.clave = document.getElementById('ptiClave').value.trim();
+  try{
+    const r = await fetch(id ? `/mantenciones/api/tipos-interno/${id}` : '/mantenciones/api/tipos-interno', {
+      method: id ? 'PUT' : 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!j.ok){
+      if (typeof ilusToast === 'function') ilusToast(j.error || 'No se pudo guardar', {type:'error'});
+      return;
+    }
+    if (typeof ilusToast === 'function') ilusToast('✓ Tipo de trabajo interno guardado', {type:'success'});
+    ptiVolverALista();
+    ptiCargarLista();
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red al guardar', {type:'error'});
+  }
+}
+
+async function ptiDesactivar(){
+  const id = document.getElementById('ptiId').value;
+  if (!id) return;
+  const activo = document.getElementById('ptiBtnDesactivar').dataset.activo === '1';
+  const ok = await ilusConfirm({
+    title: activo ? 'Desactivar tipo de trabajo interno' : 'Reactivar tipo de trabajo interno',
+    message: activo
+      ? 'Deja de ofrecerse como tarjeta nueva en el wizard. Las OT ya creadas con este tipo no se ven afectadas.'
+      : 'Vuelve a ofrecerse como tarjeta en el wizard de Crear OT.',
+    okLabel: activo ? 'Desactivar' : 'Reactivar',
+    cancelLabel: 'Cancelar',
+    danger: activo,
+  });
+  if (!ok) return;
+  try{
+    let r;
+    if (activo){
+      r = await fetch(`/mantenciones/api/tipos-interno/${id}`, {method:'DELETE', credentials:'same-origin'});
+    } else {
+      r = await fetch(`/mantenciones/api/tipos-interno/${id}`, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, credentials:'same-origin',
+        body: JSON.stringify({activo: true}),
+      });
+    }
+    const j = await r.json();
+    if (!j.ok){
+      if (typeof ilusToast === 'function') ilusToast(j.error || 'No se pudo actualizar', {type:'error'});
+      return;
+    }
+    if (typeof ilusToast === 'function') ilusToast('✓ Listo', {type:'success'});
+    ptiVolverALista();
+    ptiCargarLista();
+  } catch(e){
+    if (typeof ilusToast === 'function') ilusToast('Error de red', {type:'error'});
+  }
+}
+
+// escHtml (helper anti-XSS) ya está definido más arriba en este mismo
+// <script> (línea ~869) -- se reusa tal cual para pintar nombres/
+// descripciones que vienen de la BD, no se redeclara acá.
 </script>
 {% endblock %}

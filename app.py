@@ -74803,7 +74803,7 @@ def ot2_panel():
     # que él conoce: tipo, técnico y estado -- este último ya lo cubre el
     # filtro por fase de los KPI, así que no se duplica.
     f_tipo = (request.args.get("tipo") or "").strip().lower()
-    if f_tipo not in _OT_TIPOS_VALIDOS:
+    if f_tipo not in _ot_tipos_todos():
         f_tipo = ""
     try:
         f_tec = int(request.args.get("tecnico") or 0) or None
@@ -75342,6 +75342,14 @@ def _ensure_ot_tipos_enum():
     Preserva 'retroactiva', que no se ofrece en pantalla pero SÍ se escribe
     desde /mantenciones/api/clientes/<cid>/visitas/retroactiva — si se
     cayera del ENUM, ese endpoint empezaría a fallar en silencio.
+
+    GUARDA 2026-08-30 (CRUD de tipos de trabajo interno): _ensure_tipos_interno()
+    (más abajo) convierte esta MISMA columna de ENUM a VARCHAR(60) para que
+    un tipo interno nuevo no necesite ALTER TABLE. Si esta función corriera
+    DESPUÉS de esa conversión, el MODIFY COLUMN ... ENUM(...) de más abajo
+    la revertiría a ENUM sin querer. Por eso se sale temprano en cuanto la
+    columna deja de ser ENUM -- sin importar el orden de arranque de los
+    dos `_ensure_*`.
     """
     _todos = (
         "'preventiva','correctiva','garantia','inspeccion','levantamiento',"
@@ -75351,12 +75359,14 @@ def _ensure_ot_tipos_enum():
     )
     try:
         _r = mysql_fetchone(
-            "SELECT COLUMN_TYPE AS t FROM information_schema.COLUMNS "
+            "SELECT COLUMN_TYPE AS t, DATA_TYPE AS dt FROM information_schema.COLUMNS "
             " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
             "   AND COLUMN_NAME='tipo'")
         _t = ((_r or {}).get("t") or "").lower()
         if not _t:
             return False
+        if ((_r or {}).get("dt") or "").lower() != "enum":
+            return False  # ya es VARCHAR (ver _ensure_tipos_interno) -- nada que ampliar
         _faltan = [v for v in ("control_calidad", "movimiento_equipos")
                    if v not in _t]
         if not _faltan:
@@ -76391,7 +76401,10 @@ def ot2_api_crear():
     tipo_ot = (d.get("tipo_ot") or "").strip().lower()
     if not tipo_ot:
         return _ot2_err("Elige el tipo de orden de trabajo.", "TIPO_REQUERIDO")
-    if tipo_ot not in _OT_TIPOS_VALIDOS:
+    # 2026-08-30: _ot_tipos_todos() suma los tipos de trabajo interno creados
+    # desde el CRUD (mant_tipos_interno) a los fijos -- así un tipo nuevo se
+    # puede usar de inmediato, sin redeploy (ver _ensure_tipos_interno).
+    if tipo_ot not in _ot_tipos_todos():
         return _ot2_err("Ese tipo de orden de trabajo no existe.", "TIPO_INVALIDO")
 
     es_interna = _tipo_es_trabajo_interno(tipo_ot)
@@ -76657,9 +76670,21 @@ def ot2_api_crear():
             _tm_titulo = (_tm.get("titulo") or "").strip()[:300]
             if not _tm_titulo:
                 continue
+            # 2026-08-30 (Daniel, textual): "en la parte 5 de productos y
+            # tareas, tiene que estar una tarea manual, pero con cantidad --
+            # de momento solo cantidad, el costo estimado ya vemos cómo
+            # automatizarlo después". Solo el dato, sin conectar a ningún
+            # cálculo -- ver _ensure_visita_tarea_cantidad_col().
+            try:
+                _tm_cant = int(_tm.get("cantidad"))
+            except (TypeError, ValueError):
+                _tm_cant = 1
+            if _tm_cant < 1:
+                _tm_cant = 1
             tareas_manuales.append({
                 "titulo": _tm_titulo,
                 "descripcion": (_tm.get("descripcion") or "").strip()[:2000] or None,
+                "cantidad": _tm_cant,
             })
 
     if not equipos and not plantilla_suelta and not tareas_manuales:
@@ -77059,11 +77084,11 @@ def ot2_api_crear():
             orden += 1
             cur.execute(
                 "INSERT INTO mant_visita_tareas "
-                "  (visita_id, orden, titulo, descripcion, tipo, "
+                "  (visita_id, orden, titulo, descripcion, tipo, cantidad, "
                 "   tipo_respuesta, obligatoria, estado_trabajo, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,'check',1,'pendiente',%s)",
+                "VALUES (%s,%s,%s,%s,%s,%s,'check',1,'pendiente',%s)",
                 (vid, orden, _tm["titulo"], _tm["descripcion"], tarea_tipo,
-                 current_username()))
+                 _tm["cantidad"], current_username()))
             n_tareas += 1
 
         # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
@@ -78972,7 +78997,7 @@ def _ot2_filtros_export(args):
         desc.append(f'búsqueda "{q}"')
 
     f_tipo = (args.get("tipo") or "").strip().lower()
-    if f_tipo and f_tipo in _OT_TIPOS_VALIDOS:
+    if f_tipo and f_tipo in _ot_tipos_todos():
         where.append("v.tipo = %s")
         params.append(f_tipo)
         desc.append(_TIPO_OT_LABEL.get(f_tipo, f_tipo))
@@ -81001,6 +81026,208 @@ def mant_familias_checklist_crear():
     except Exception:
         pass
     return jsonify({"ok": True, "slug": slug, "nombre": nombre})
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CRUD "Tipos de trabajo interno" (Daniel, 30-08-2026, textual): "quiero
+# crear un tipo de orden nuevo... un CRUD aquí para estas tarjetas de
+# trabajo interno: eliminarla, editarla, mejorarla, crearla" -- "al menos
+# yo, como superadministrador". Alimenta las tarjetas del Paso 1 del
+# wizard OT 2.0 cuando origen='interno' (ver cargarTiposInterno en
+# _modal_crear.html). Tabla + conversión de ENUM: _ensure_tipos_interno()
+# (arriba, ~línea 106174).
+# ══════════════════════════════════════════════════════════════════════
+
+def _es_superadmin_actual():
+    return bool((g.permissions or {}).get("superadmin"))
+
+
+@app.route("/mantenciones/api/tipos-interno", methods=["GET"])
+@_mant_required
+def mant_tipos_interno_listar():
+    """Tipos de trabajo interno disponibles hoy -- alimenta las tarjetas
+    del wizard (cualquier usuario con acceso a mantenciones necesita
+    poder LEER esta lista para crear una OT interna) y el panel de
+    administración en /mantenciones/plantillas (solo superadmin puede
+    escribir, ver los otros 3 métodos).
+
+    ?incluir_inactivos=1 -- solo superadmin (el wizard normal jamás debe
+    ofrecer una tarjeta desactivada; el panel de administración sí
+    necesita verlas para poder reactivarlas)."""
+    incluir_inactivos = request.args.get("incluir_inactivos") == "1" and _es_superadmin_actual()
+    rows = _tipos_interno_listar(incluir_inactivos=incluir_inactivos)
+    return jsonify({"ok": True, "tipos": rows})
+
+
+@app.route("/mantenciones/api/tipos-interno", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_tipos_interno_crear():
+    """Crea un tipo de trabajo interno nuevo (Daniel, superadmin).
+
+    Body: {nombre, clave (opcional -- se autogenera del nombre si no
+    viene), descripcion, icono, plantilla_id, orden}.
+
+    La `clave` viaja como tipo_ot en TODO el sistema (mant_visitas.tipo,
+    mant_categoria_tipo_map, el filtro de plantillas) -- se normaliza a
+    slug ascii_minusculas_con_guion_bajo (mismo criterio que
+    _slugify_familia_checklist) para que quede estable y sin caracteres
+    raros, la pida el usuario o no.
+    """
+    if not _es_superadmin_actual():
+        return jsonify({
+            "ok": False,
+            "error": "Crear tipos de trabajo interno está restringido al superadministrador.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+    d = request.get_json(silent=True) or {}
+    nombre = (d.get("nombre") or "").strip()[:120]
+    if not nombre:
+        return jsonify({"ok": False, "error": "Falta el nombre del tipo de trabajo"}), 400
+    clave_in = (d.get("clave") or "").strip()
+    clave = _slugify_familia_checklist(clave_in or nombre)
+    if not clave:
+        return jsonify({"ok": False, "error": "Nombre/clave inválido"}), 400
+    if clave in _OT_TIPOS_VALIDOS:
+        return jsonify({"ok": False, "error": "Esa clave ya la usa un tipo de OT del sistema"}), 409
+    descripcion = (d.get("descripcion") or "").strip()[:255] or None
+    icono = (d.get("icono") or "").strip()[:60] or "bi-gear"
+    plantilla_id = d.get("plantilla_id")
+    try:
+        plantilla_id = int(plantilla_id) if plantilla_id not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        plantilla_id = None
+    if plantilla_id:
+        _pl = mysql_fetchone(
+            "SELECT id FROM mant_tarea_plantillas WHERE id=%s AND COALESCE(activa,1)=1",
+            (plantilla_id,))
+        if not _pl:
+            return jsonify({"ok": False, "error": "Esa plantilla de checklist no existe o está inactiva"}), 400
+    try:
+        existe = mysql_fetchone("SELECT id FROM mant_tipos_interno WHERE clave=%s", (clave,))
+        if existe:
+            return jsonify({"ok": False, "error": "Ya existe un tipo de trabajo interno con esa clave"}), 409
+        _max = mysql_fetchone("SELECT COALESCE(MAX(orden),0) AS m FROM mant_tipos_interno") or {}
+        orden = int(_max.get("m") or 0) + 10
+        mysql_execute(
+            "INSERT INTO mant_tipos_interno "
+            "  (clave, nombre, descripcion, icono, plantilla_id, orden, created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (clave, nombre, descripcion, icono, plantilla_id, orden, current_username() or "sistema"))
+        # mysql_execute() no devuelve lastrowid (helper genérico, ver su
+        # definición) -- se recupera con un SELECT por `clave`, que es UNIQUE.
+        _row_nuevo = mysql_fetchone("SELECT id FROM mant_tipos_interno WHERE clave=%s", (clave,)) or {}
+        nuevo_id = _row_nuevo.get("id")
+        # Sin esto, _tipo_es_trabajo_interno(clave) devolvería False (fail-closed)
+        # y el wizard pediría cliente para un tipo que nació para no tenerlo.
+        mysql_execute(
+            "INSERT IGNORE INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) "
+            "VALUES (%s,'trabajo_interno',%s)", (clave, current_username() or "sistema"))
+    except Exception as e:
+        print(f"[tipos_interno_crear] error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear el tipo de trabajo interno"}), 500
+    try:
+        _mant_log("tipo_interno", int(nuevo_id) if nuevo_id else 0, "creado", f"{nombre} ({clave})")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "id": nuevo_id, "clave": clave, "nombre": nombre,
+                     "descripcion": descripcion, "icono": icono, "plantilla_id": plantilla_id})
+
+
+@app.route("/mantenciones/api/tipos-interno/<int:tid>", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def mant_tipos_interno_editar(tid):
+    """Edita nombre/descripción/ícono/plantilla/orden/activo de un tipo de
+    trabajo interno. La `clave` NO se edita acá a propósito -- cambiarla
+    dejaría huérfanas las OT ya creadas con la clave vieja (mant_visitas.tipo
+    quedaría apuntando a un valor que ya nadie ofrece ni resuelve categoría).
+    Si en el futuro Daniel pide poder renombrar la clave, debe ser un paso
+    explícito y confirmado (rehacer mant_categoria_tipo_map + revisar OT
+    existentes), no un campo más de este formulario."""
+    if not _es_superadmin_actual():
+        return jsonify({
+            "ok": False,
+            "error": "Editar tipos de trabajo interno está restringido al superadministrador.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+    row = mysql_fetchone("SELECT * FROM mant_tipos_interno WHERE id=%s", (tid,))
+    if not row:
+        return jsonify({"ok": False, "error": "No encontramos ese tipo de trabajo interno"}), 404
+    d = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if "nombre" in d:
+        nombre = (d.get("nombre") or "").strip()[:120]
+        if not nombre:
+            return jsonify({"ok": False, "error": "El nombre no puede quedar vacío"}), 400
+        sets.append("nombre=%s"); params.append(nombre)
+    if "descripcion" in d:
+        sets.append("descripcion=%s"); params.append((d.get("descripcion") or "").strip()[:255] or None)
+    if "icono" in d:
+        sets.append("icono=%s"); params.append((d.get("icono") or "").strip()[:60] or "bi-gear")
+    if "orden" in d:
+        try:
+            sets.append("orden=%s"); params.append(int(d.get("orden")))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Orden inválido"}), 400
+    if "activo" in d:
+        sets.append("activo=%s"); params.append(1 if d.get("activo") else 0)
+    if "plantilla_id" in d:
+        plantilla_id = d.get("plantilla_id")
+        try:
+            plantilla_id = int(plantilla_id) if plantilla_id not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            plantilla_id = None
+        if plantilla_id:
+            _pl = mysql_fetchone(
+                "SELECT id FROM mant_tarea_plantillas WHERE id=%s AND COALESCE(activa,1)=1",
+                (plantilla_id,))
+            if not _pl:
+                return jsonify({"ok": False, "error": "Esa plantilla de checklist no existe o está inactiva"}), 400
+        sets.append("plantilla_id=%s"); params.append(plantilla_id)
+    if not sets:
+        return jsonify({"ok": False, "error": "Nada que actualizar"}), 400
+    try:
+        params.append(tid)
+        mysql_execute(f"UPDATE mant_tipos_interno SET {', '.join(sets)} WHERE id=%s", tuple(params))
+    except Exception as e:
+        print(f"[tipos_interno_editar] {tid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el cambio"}), 500
+    try:
+        _mant_log("tipo_interno", tid, "editado", f"clave={row.get('clave')}")
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/api/tipos-interno/<int:tid>", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def mant_tipos_interno_eliminar(tid):
+    """SOFT-delete (activo=0) -- nunca hard delete. Las OT ya creadas con
+    esta clave siguen intactas (mant_visitas.tipo es texto libre desde
+    _ensure_tipos_interno, no una FK); solo deja de ofrecerse como tarjeta
+    nueva en el wizard. Mismo criterio de confidencialidad/alcance que
+    mant_maquina_del: restringido a superadmin."""
+    if not _es_superadmin_actual():
+        return jsonify({
+            "ok": False,
+            "error": "Eliminar tipos de trabajo interno está restringido al superadministrador.",
+            "error_codigo": "REQUIERE_SUPERADMIN",
+        }), 403
+    row = mysql_fetchone("SELECT clave FROM mant_tipos_interno WHERE id=%s", (tid,))
+    if not row:
+        return jsonify({"ok": False, "error": "No encontramos ese tipo de trabajo interno"}), 404
+    try:
+        mysql_execute("UPDATE mant_tipos_interno SET activo=0 WHERE id=%s", (tid,))
+    except Exception as e:
+        print(f"[tipos_interno_eliminar] {tid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo desactivar"}), 500
+    try:
+        _mant_log("tipo_interno", tid, "desactivado", f"clave={row.get('clave')}")
+    except Exception:
+        pass
+    return jsonify({"ok": True})
 
 
 @app.route("/mantenciones/api/diagnostico/cobertura-clasificacion", methods=["GET"])
@@ -100043,7 +100270,7 @@ _OT_TIPO_LABEL_MENSAJE = {
 def _ot_resolver_tipo(data):
     """(tipo_ot, tarea_tipo). tipo_ot inválido o ausente -> 'levantamiento'."""
     tipo_ot = (data.get("tipo_ot") or "levantamiento").strip().lower()
-    if tipo_ot not in _OT_TIPOS_VALIDOS:
+    if tipo_ot not in _ot_tipos_todos():
         tipo_ot = "levantamiento"
     return tipo_ot, _tarea_tipo_seguro(tipo_ot)
 
@@ -106249,6 +106476,212 @@ def _ensure_familias_checklist_editable():
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════
+# CRUD de "Tipos de trabajo interno" (Daniel, 30-08-2026, textual):
+# "quiero crear un tipo de orden nuevo... un CRUD aquí para estas
+# tarjetas de trabajo interno: eliminarla, editarla, mejorarla, crearla".
+# Timebox 16:00-18:00 Chile.
+#
+# Antes de esto, los 3 tipos de trabajo interno (capacitación / Trabajo de
+# bodega / control de calidad) eran un array hardcodeado en el JS del
+# wizard (TIPOS, _modal_crear.html) -- agregar uno nuevo exigía tocar
+# código y desplegar. Se generaliza con el MISMO patrón que ya se usó
+# para familia_checklist (arriba) y categoria_admin: una tabla chica
+# editable (mant_tipos_interno) + la columna mant_visitas.tipo deja de
+# ser un ENUM cerrado (pasa a VARCHAR(60), validada en Python).
+#
+# _tipo_es_trabajo_interno() (app.py ~73473) YA generaliza sobre
+# mant_categoria_tipo_map -- NO hubo que tocarla: basta con que cada
+# clave nueva tenga su fila ahí con categoria='trabajo_interno' y
+# automáticamente "no necesita cliente" en TODO el sistema (creación,
+# checklist, endpoint /mantenciones/api/plantillas?tipo_ot=<clave>).
+# ══════════════════════════════════════════════════════════════════════
+
+# Semilla EXACTA de los 3 tipos que hoy ya existen hardcodeados en el
+# array TIPOS del wizard (_modal_crear.html ~línea 703) -- mismo v/n/i/l.
+# CRÍTICO (REGLA #4.2): si estos 3 no quedan sembrados con el mismo
+# nombre/ícono/descripción, las OT que YA EXISTEN en producción con
+# tipo='capacitacion'/'revision_interna'/'control_calidad' pierden su
+# tarjeta en el wizard (dejarían de ofrecerse, aunque el histórico sigue
+# intacto en la BD -- ver _ot_tipos_todos()).
+_TIPOS_INTERNO_SEED = [
+    ("capacitacion",     "Capacitación",        "Enseñar el uso de los equipos",      "bi-mortarboard", 10),
+    ("revision_interna", "Trabajo de bodega",    "Armado, piolas y trabajo interno",   "bi-building",    20),
+    ("control_calidad",  "Control de calidad",   "Revisar productos en bodega",        "bi-patch-check", 30),
+]
+
+
+def _ensure_tipos_interno():
+    """Tabla editable mant_tipos_interno + ENUM->VARCHAR de mant_visitas.tipo.
+    SIEMPRE corre, incluso con ILUS_SKIP_MIGRATIONS=1 (mismo criterio que
+    _ensure_familias_checklist_editable, arriba).
+
+    Pasos:
+      1. CREATE TABLE IF NOT EXISTS mant_tipos_interno.
+      2. Siembra (INSERT IGNORE, idempotente por clave) los 3 tipos que ya
+         existían hardcodeados -- ver _TIPOS_INTERNO_SEED.
+      3. Cada clave sembrada/existente queda registrada en
+         mant_categoria_tipo_map con categoria='trabajo_interno' (INSERT
+         IGNORE -- si Daniel algún día reasigna la categoría a mano desde
+         el editor de plantillas, este paso NUNCA la pisa de vuelta).
+      4. mant_visitas.tipo: SOLO si hoy sigue siendo ENUM (se verifica
+         contra information_schema antes de tocarla -- REGLA #5), se
+         convierte a VARCHAR(60) NOT NULL DEFAULT 'preventiva'. MySQL
+         preserva el valor de texto de cada fila (misma representación de
+         cadena) -- sin pérdida de datos existentes. Con esto, crear un
+         tipo interno nuevo desde el CRUD NUNCA requiere otro ALTER TABLE
+         sobre mant_visitas (la tabla más pesada del sistema): basta con
+         insertar en mant_tipos_interno -- "crear una OT con el chasquido
+         de los dedos" (Daniel, textual) queda cubierto sin ALTER en vivo.
+
+    IMPORTANTE: _ensure_ot_tipos_enum() (más arriba, ~línea 75324) hace un
+    MODIFY COLUMN tipo ENUM(...) -- si corriera DESPUÉS de esta conversión
+    revertiría mant_visitas.tipo a ENUM otra vez. Se la protegió con una
+    guarda de DATA_TYPE (ver ahí) para que se vuelva no-operativa en
+    cuanto la columna deja de ser ENUM, sin importar el orden de arranque.
+    """
+    out = {"tabla": False, "seed": [], "columna_convertida": False}
+    # 0. mant_categoria_tipo_map.tipo_ot nació VARCHAR(40) (Tarea 1,
+    # 2026-08-10) -- mant_tipos_interno.clave admite hasta 60. Sin ensanchar
+    # esto primero, una clave de admin de 41-60 chars truncaría/fallaría al
+    # insertarse en mant_categoria_tipo_map (columna es PRIMARY KEY) y
+    # _tipo_es_trabajo_interno() quedaría fail-closed para ese tipo (le
+    # pediría cliente a una OT que nació para no tenerlo). Solo ensancha,
+    # nunca acorta -- no hay pérdida de datos existentes.
+    try:
+        _col_map = mysql_fetchone(
+            "SELECT CHARACTER_MAXIMUM_LENGTH AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_categoria_tipo_map' "
+            "  AND COLUMN_NAME='tipo_ot'")
+        if _col_map and int(_col_map.get("n") or 0) < 60:
+            mysql_execute("ALTER TABLE mant_categoria_tipo_map MODIFY COLUMN tipo_ot VARCHAR(60) NOT NULL")
+            print("[ensure_tipos_interno] mant_categoria_tipo_map.tipo_ot ensanchada a VARCHAR(60)", flush=True)
+    except Exception as e_widen:
+        print(f"[ensure_tipos_interno] ensanchar tipo_ot falló: {e_widen}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_tipos_interno (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                clave        VARCHAR(60) NOT NULL UNIQUE,
+                nombre       VARCHAR(120) NOT NULL,
+                descripcion  VARCHAR(255) NULL,
+                icono        VARCHAR(60) NOT NULL DEFAULT 'bi-gear',
+                plantilla_id INT NULL,
+                activo       TINYINT(1) NOT NULL DEFAULT 1,
+                orden        INT NOT NULL DEFAULT 0,
+                created_by   VARCHAR(190) NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        out["tabla"] = True
+    except Exception as e_tbl:
+        print(f"[ensure_tipos_interno] CREATE TABLE falló: {e_tbl}", flush=True)
+        return out
+    for clave, nombre, descripcion, icono, orden in _TIPOS_INTERNO_SEED:
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_tipos_interno "
+                "  (clave, nombre, descripcion, icono, orden, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,'seed')",
+                (clave, nombre, descripcion, icono, orden))
+            out["seed"].append(clave)
+        except Exception as e_seed:
+            print(f"[ensure_tipos_interno] seed '{clave}' falló: {e_seed}", flush=True)
+        try:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) "
+                "VALUES (%s,'trabajo_interno','seed')", (clave,))
+        except Exception as e_map:
+            print(f"[ensure_tipos_interno] mapear '{clave}' falló: {e_map}", flush=True)
+
+    try:
+        col = mysql_fetchone(
+            "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "  AND COLUMN_NAME='tipo'")
+        if col and (col.get("DATA_TYPE") or "").lower() == "enum":
+            mysql_execute(
+                "ALTER TABLE mant_visitas MODIFY COLUMN tipo "
+                "VARCHAR(60) NOT NULL DEFAULT 'preventiva' "
+                "COMMENT 'Tipo de OT -- validado en Python contra _ot_tipos_todos() "
+                "(fijos + mant_tipos_interno.clave), ya no es ENUM cerrado (2026-08-30)'")
+            out["columna_convertida"] = True
+            print("[ensure_tipos_interno] mant_visitas.tipo convertida de ENUM a VARCHAR(60)", flush=True)
+    except Exception as e_col:
+        print(f"[ensure_tipos_interno] convertir columna falló: {e_col}", flush=True)
+    return out
+
+
+def _ensure_visita_tarea_cantidad_col():
+    """Columna 'cantidad' en mant_visita_tareas -- SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1. Daniel (30-08-2026, trabajo interno): las
+    tareas manuales (Capacitación/Control de calidad/Bodega y cualquier
+    tipo interno nuevo del CRUD de arriba) ahora llevan una CANTIDAD --
+    "de momento solo cantidad, el costo estimado ya veremos cómo
+    automatizarlo después" -- por ahora es solo un dato que se guarda,
+    sin conectarse a ningún cálculo de costo. Default 1 para no romper
+    ninguna lectura existente que asuma "una unidad" por tarea."""
+    try:
+        _r = mysql_fetchone(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_tareas' "
+            "   AND COLUMN_NAME='cantidad'")
+        if not _r:
+            mysql_execute(
+                "ALTER TABLE mant_visita_tareas ADD COLUMN cantidad INT NOT NULL DEFAULT 1 "
+                "COMMENT 'Cantidad de la tarea manual (trabajo interno, 2026-08-30) -- "
+                "solo dato para valorizacion, sin costo automatico todavia'")
+            print("[ensure_visita_tarea_cantidad] +cantidad", flush=True)
+    except Exception as e:
+        print(f"[ensure_visita_tarea_cantidad] {e}", flush=True)
+
+
+def _tipos_interno_listar(incluir_inactivos=False):
+    """Tipos de trabajo interno para el CRUD y para el wizard (Paso 1 de
+    OT interna). Fallback a la semilla fija si la tabla todavía no existe
+    o la consulta falla -- el wizard NUNCA debe quedar sin tarjetas."""
+    try:
+        where = "" if incluir_inactivos else "WHERE t.activo=1"
+        rows = mysql_fetchall(f"""
+            SELECT t.id, t.clave, t.nombre, t.descripcion, t.icono,
+                   t.plantilla_id, t.activo, t.orden,
+                   p.nombre AS plantilla_nombre
+              FROM mant_tipos_interno t
+              LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id
+              {where}
+             ORDER BY t.orden, t.nombre
+        """) or []
+        if rows:
+            return rows
+    except Exception as e:
+        print(f"[tipos_interno_listar] {e}", flush=True)
+    return [{"id": 0, "clave": c, "nombre": n, "descripcion": d, "icono": i,
+              "plantilla_id": None, "plantilla_nombre": None, "activo": 1, "orden": o}
+            for c, n, d, i, o in _TIPOS_INTERNO_SEED]
+
+
+def _ot_tipos_todos():
+    """Todos los tipo_ot válidos hoy para crear una OT: los fijos
+    (_OT_TIPOS_VALIDOS) + los tipos de trabajo interno creados desde el
+    CRUD (mant_tipos_interno.clave). Única fuente de verdad para validar
+    tipo_ot al crear (ver ot2_api_crear) -- reemplaza el chequeo directo
+    contra la tupla fija para que un tipo nuevo sea usable de inmediato,
+    sin redeploy ("chasquido de dedos", Daniel).
+
+    Incluye tipos DESACTIVADOS a propósito: desactivar un tipo (soft
+    delete) solo lo saca del selector del wizard -- las OT que YA se
+    crearon con esa clave (o que alguien intente recrear apuntando a ella)
+    no deben quedar con un tipo_ot que el backend rechace como inválido."""
+    out = set(_OT_TIPOS_VALIDOS)
+    try:
+        rows = mysql_fetchall("SELECT clave FROM mant_tipos_interno") or []
+        out |= {r["clave"] for r in rows if r.get("clave")}
+    except Exception as e:
+        print(f"[ot_tipos_todos] {e}", flush=True)
+    return out
+
+
 def _ensure_plantilla_repuesto():
     """Plantilla "Repuesto" (Daniel, 28-08-2026 -- auditoría de cobertura de
     clasificación): de las 19 clases de producto activas en el catálogo
@@ -111446,6 +111879,29 @@ try:
               "(skip-migrations)", flush=True)
 except Exception as _ensure_fam_chk_err:
     print(f"[ILUS][WARN] _ensure_familias_checklist_editable: {_ensure_fam_chk_err}", flush=True)
+
+# CRÍTICO: CRUD "Tipos de trabajo interno" SIEMPRE (incluso skip-migrations)
+# -- Daniel 2026-08-30 (timebox 16:00-18:00): tabla mant_tipos_interno +
+# siembra de los 3 tipos que ya existían hardcodeados + mant_visitas.tipo
+# de ENUM a VARCHAR(60). Corre DESPUÉS de categoria_admin (arriba) porque
+# necesita que mant_categoria_tipo_map ya exista para registrar cada
+# clave con categoria='trabajo_interno'.
+try:
+    with app.app_context():
+        _tipos_int_out = _ensure_tipos_interno()
+    if _tipos_int_out.get("columna_convertida"):
+        print("[ILUS] mant_visitas.tipo convertida de ENUM a VARCHAR "
+              "(skip-migrations)", flush=True)
+except Exception as _ensure_tipos_int_err:
+    print(f"[ILUS][WARN] _ensure_tipos_interno: {_ensure_tipos_int_err}", flush=True)
+
+# CRÍTICO: columna 'cantidad' en mant_visita_tareas SIEMPRE (incluso
+# skip-migrations) -- tareas manuales de trabajo interno (Daniel 2026-08-30).
+try:
+    with app.app_context():
+        _ensure_visita_tarea_cantidad_col()
+except Exception as _ensure_vt_cant_err:
+    print(f"[ILUS][WARN] _ensure_visita_tarea_cantidad_col: {_ensure_vt_cant_err}", flush=True)
 
 # CRÍTICO: plantilla "Repuesto" SIEMPRE (incluso skip-migrations) -- Daniel
 # 2026-08-28, auditoría de cobertura de clasificación: de 19 clases de
