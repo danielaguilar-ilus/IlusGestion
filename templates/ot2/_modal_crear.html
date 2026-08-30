@@ -733,6 +733,18 @@ window.OT2C = (function(){
   // así un repintado de la sección (p.ej. al cambiar el tipo de OT) no
   // pisa lo que Daniel ya marcó/desmarcó a mano para ese mismo cliente.
   var preseleccionEqCliente = null;
+  // 2026-08-30 (Daniel, dictado en vivo viendo el wizard: "en el paso 7 no
+  // tiene que ver con la ficha de cliente, debe traer todo de la fuente
+  // seleccionada... lo que sí deberá hacer es agregar los productos en la
+  // ficha con los datos. Siempre moverá la ficha, ya que la ficha es el
+  // centro de trazabilidad del cliente"): recuerda la FIRMA (cliente +
+  // SKUs de S.doc_lineas) para la que ya se evaluó/disparó la alta
+  // automática de equipos faltantes -- mismo criterio que
+  // preseleccionEqCliente de arriba, pero además sensible a la FUENTE
+  // (cotización/ticket/documento), no solo al cliente: si el usuario
+  // vuelve a elegir OTRA cotización para el mismo cliente, la firma
+  // cambia y se vuelve a evaluar (ver _o2mAltaAutoFaltantesSiCorresponde).
+  var altaAutoFaltantesCtx = null;
   var scrollObs = null;
   // 28-08-2026: plantillas de checklist para "trabajo interno" (bodega,
   // capacitación, control de calidad) -- filtradas por categoría según el
@@ -760,6 +772,13 @@ window.OT2C = (function(){
          // cliente (trazabilidad, ver crear()) y sus líneas de producto
          // (sugerencia informativa en la sección Equipos).
          doc_origen:null, doc_lineas:[],
+         // 2026-08-30 (Daniel, trazabilidad "bajo qué OT"): ids de
+         // mant_maquinas creados POR ESTE WIZARD vía alta automática (ver
+         // _o2mAltaAutoFaltantes) -- viajan en crear() para que
+         // ot2_api_crear les pise origen_visita_id con el vid real recién
+         // nacido. Equipos YA existentes en la ficha (marcados a mano o
+         // preseleccionados por plan) NUNCA entran acá.
+         _equiposAutoCreados:[],
          // 26-08-2026: Capacitación/Control de calidad arman su trabajo
          // con productos del catálogo o tareas sueltas (sin plantilla) en
          // vez de un checklist único.
@@ -826,6 +845,7 @@ window.OT2C = (function(){
     anclaActiva = null;
     _o2mStepCompleteTracked = {};
     preseleccionEqCliente = null;
+    altaAutoFaltantesCtx = null;
   }
 
   function esInterno(){ return S.origen === 'interno' ||
@@ -2315,11 +2335,14 @@ window.OT2C = (function(){
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
       '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
       // Origen "Factura o boleta" / "Cotización" / "Ticket": las líneas que
-      // trajo la fuente son solo una REFERENCIA — no crean equipos
-      // automáticamente en la ficha (eso exige matchear SKU contra la
-      // clasificación del catálogo, un paso que no se resuelve acá). Si el
-      // equipo ya existe en la ficha del cliente, aparece abajo igual; si
-      // no, hay que darlo de alta primero.
+      // trajo la fuente se agregan SOLAS a la ficha del cliente en cuanto
+      // se resuelve (ver cargarEquipos → _o2mAltaAutoFaltantesSiCorresponde)
+      // -- Daniel, 2026-08-30: "cada selección es única... siempre moverá
+      // la ficha, ya que la ficha es el centro de trazabilidad del
+      // cliente". Ya NO hace falta ningún botón ni paso manual: para
+      // cuando se pinta esta sección, la alta ya se disparó (o ya está en
+      // curso) y un toast breve avisó la novedad -- este aviso queda solo
+      // como referencia informativa de qué trajo la fuente.
       // 2026-08-30: antes este aviso exigía S.doc_origen (solo documentos
       // ERP reales) -- Cotización/Ticket dejan doc_origen en null a
       // propósito (no son documentos del ERP, ver _o2mResolverClienteYEquipos)
@@ -2333,8 +2356,7 @@ window.OT2C = (function(){
           (S.doc_origen
             ? 'El documento <b>'+esc(S.doc_origen.tido+' '+S.doc_origen.nudo)+'</b> trae estos productos.'
             : 'El origen de esta OT trae estos productos.')+
-          ' Si alguno no aparece en la lista de abajo, hay un botón para '+
-          'darlo de alta directo en la ficha del cliente.'+
+          ' Los que no existían en la ficha del cliente se agregan solos, sin pasos extra.'+
           '<ul>'+S.doc_lineas.map(function(l){
             return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
           }).join('')+'</ul></div>'
@@ -2610,6 +2632,10 @@ window.OT2C = (function(){
         }
       }
       pintarListaEquipos();
+      // ── Alta automática de equipos faltantes desde la fuente (2026-08-30) ──
+      // Ver _o2mAltaAutoFaltantesSiCorresponde: cacheEquipos YA está cargado
+      // en este punto, que es justo lo que ese chequeo necesita.
+      _o2mAltaAutoFaltantesSiCorresponde();
     }).catch(function(){
       var c=document.getElementById('o2mEqList');
       if(c) c.innerHTML='<div class="text-danger small">No se pudieron cargar los equipos del cliente.</div>';
@@ -2644,27 +2670,10 @@ window.OT2C = (function(){
       return l && l.sku && existentes.indexOf(_o2mSkuNorm(l.sku)) === -1;
     });
   }
-  function _o2mBannerFaltantesHtml(faltantes){
-    if (!faltantes.length) return '';
-    var plural = faltantes.length > 1;
-    return '<div class="o2m-aviso" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a8a">'+
-      '<i class="bi bi-box-seam me-1"></i>'+
-      'El origen trajo '+faltantes.length+' producto'+(plural?'s':'')+' que todavía no '+
-      (plural?'están':'está')+' en la ficha del cliente:'+
-      '<ul>'+faltantes.map(function(l){
-        return '<li>'+esc(l.sku||'')+' — '+esc(l.nombre||'')+(l.qty?' × '+esc(l.qty):'')+'</li>';
-      }).join('')+'</ul>'+
-      '<button type="button" class="btn btn-sm btn-dark mt-1" style="min-height:44px" '+
-      'id="o2mBtnAltaFaltantes" onclick="OT2C.agregarEquiposFaltantes()">'+
-      '<i class="bi bi-plus-circle me-1"></i>Agregar '+
-      (plural ? 'estos '+faltantes.length+' equipos' : 'este equipo')+' a la ficha</button>'+
-    '</div>';
-  }
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
-    var bannerFaltantes = _o2mBannerFaltantesHtml(_o2mEquiposFaltantesDeDoc());
     if (!cacheEquipos.length){
-      c.innerHTML = bannerFaltantes + '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
+      c.innerHTML = '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
         'Un levantamiento por descubrimiento sirve justo para eso.</div>'; return;
     }
     var totalMarcados = cacheEquipos.filter(function(m){
@@ -2673,7 +2682,7 @@ window.OT2C = (function(){
     var todosMarcados = totalMarcados > 0 && totalMarcados === cacheEquipos.length;
     var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
 
-    c.innerHTML = bannerFaltantes +
+    c.innerHTML =
       '<div class="o2m-eq-card">'+
         '<div class="o2m-eq-toolbar">'+
           '<div class="o2m-eq-toolbar-txt">'+
@@ -2740,30 +2749,45 @@ window.OT2C = (function(){
     });
   }
 
-  /* 2026-08-30 (Daniel, viendo un documento real del ERP en vivo): "yo
-     pienso que la orden de trabajo... tiene que traer los datos de la
-     factura... la tabla tiene que subir en cero". Da de alta en la ficha
-     del cliente los SKU que trajo el documento/cotización/ticket y que
-     _o2mEquiposFaltantesDeDoc() detectó como ausentes -- MISMO endpoint que
-     ya usa la gestión de la ficha (mant_maquina_add, app.py ~62484), no se
-     reinventa nada.
+  /* 2026-08-30 (Daniel, dictado en vivo probando el wizard -- verbatim):
+     "En el paso 7 no tiene que ver con la ficha de cliente, debe traer
+     todo de la fuente seleccionada — en este caso las cotizaciones — así
+     que aunque exista el cliente, cada selección es única. Lo que sí
+     deberá hacer es agregar los productos en la ficha con los datos.
+     Siempre moverá la ficha, ya que la ficha es el centro de trazabilidad
+     del cliente y queremos encontrar todo ahí, sí."
 
-     DECISIÓN A CONFIRMAR CON DANIEL: se dejó como botón explícito (banner +
-     acción), no 100% automático/silencioso -- Daniel no pidió literalmente
-     que sea invisible, y crear registros PERMANENTES en la ficha del
-     cliente (que alimenta contratos/garantías) sin que se vea en pantalla
-     podría sorprender a quien gestiona esa ficha. Si prefiere que sea
-     automático sin botón, esto se puede disparar directo desde
-     cargarEquipos() en vez de esperar el clic. */
-  async function agregarEquiposFaltantes(){
+     Da de alta en la ficha del cliente los SKU que trajo el documento/
+     cotización/ticket y que _o2mEquiposFaltantesDeDoc() detectó como
+     ausentes -- MISMO endpoint que ya usa la gestión de la ficha
+     (mant_maquina_add, app.py ~62484), no se reinventa nada.
+
+     Antes (commit anterior, mismo día) esto vivía detrás de un botón
+     manual en un banner ("Agregar estos N equipos a la ficha") -- ese
+     banner quedó descartado a propósito: Daniel confirmó EXPLÍCITAMENTE
+     que quiere que sea automático, sin ningún paso ni clic de por medio
+     (ver _o2mAltaAutoFaltantesSiCorresponde, que dispara esto solo desde
+     cargarEquipos() en cuanto cacheEquipos está listo). El MOTIVO por el
+     que la ficha se sigue alimentando -- y no se salta del todo -- es
+     técnico, no una decisión de UX: TODO el motor de ejecución de la OT
+     (checklist, tareas, fotos, candado GPS, auditoría) trabaja sobre
+     maquina_id de mant_maquinas, así que sin un registro real en la
+     ficha no hay forma de ejecutar el checklist sobre ese producto.
+
+     Transparencia (REGLA #4.2 -- no sorprender con cambios invisibles a
+     datos permanentes): como esto SÍ crea registros permanentes en la
+     ficha del cliente, se avisa con un ilusToast breve al terminar (ver
+     abajo) en vez de quedar completamente mudo. */
+  function _o2mFechaValida(s){
+    // Solo aceptar 'YYYY-MM-DD' real -- si viene en otro formato (ej. RFC
+    // 1123 de un jsonify sin normalizar, o vacío) se descarta en vez de
+    // mandar algo raro a doc_fecha: mejor NULL que un dato mal parseado.
+    var t = String(s||'').slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+  }
+  async function _o2mAltaAutoFaltantes(faltantes){
     var cid = S.cliente && S.cliente.id;
-    var faltantes = _o2mEquiposFaltantesDeDoc();
     if (!cid || !faltantes.length) return;
-    var btn = document.getElementById('o2mBtnAltaFaltantes');
-    if (btn){
-      btn.disabled = true;
-      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agregando…';
-    }
     var docOrigenTxt = S.doc_origen ? (S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '';
     var creadosIds = [];
     var errores = 0;
@@ -2771,7 +2795,17 @@ window.OT2C = (function(){
       var l = faltantes[i];
       try {
         var body = {sku: l.sku, nombre: l.nombre || l.sku, cantidad: l.qty || 1};
-        if (docOrigenTxt) body.doc_origen = docOrigenTxt;
+        // 2026-08-30 (Daniel, trazabilidad -- "CON QUÉ DOC entró eso a la
+        // ficha"): CADA línea puede tener su propio documento ERP real
+        // (una cotización combina varias facturas) -- eso manda primero;
+        // si esta línea puntual no trae el suyo, se usa el de la OT
+        // completa (ej. origen "Factura o boleta", un solo documento para
+        // todas las líneas). Si ninguno aplica, queda sin doc_origen, tal
+        // como ya pasaba antes de este cambio.
+        var itemDocOrigen = (l.tido && l.nudo) ? (l.tido + ' ' + l.nudo) : docOrigenTxt;
+        if (itemDocOrigen) body.doc_origen = itemDocOrigen;
+        var itemFecha = _o2mFechaValida(l.fecha);
+        if (itemFecha) body.doc_fecha = itemFecha;
         var r = await fetch('/mantenciones/api/clientes/' + cid + '/maquinas', {
           method: 'POST', credentials: 'same-origin', headers: {'Content-Type':'application/json'},
           body: JSON.stringify(body)
@@ -2783,11 +2817,18 @@ window.OT2C = (function(){
       } catch(e){ errores++; }
     }
     if (window.ilusToast && creadosIds.length){
-      ilusToast('✓ ' + creadosIds.length + ' equipo(s) agregado(s) a la ficha del cliente', {type:'success'});
+      var origenTxt = docOrigenTxt ? ('el documento ' + docOrigenTxt) : 'la cotización/ticket de origen';
+      ilusToast('✓ ' + creadosIds.length + ' equipo(s) agregado(s) automáticamente a la ficha desde ' + origenTxt + '.', {type:'success'});
     }
     if (window.ilusToast && errores){
-      ilusToast('No se pudieron agregar ' + errores + ' producto(s) -- revísalos manualmente en la ficha.', {type:'warning'});
+      ilusToast('No se pudieron agregar ' + errores + ' producto(s) automáticamente -- revísalos manualmente en la ficha.', {type:'warning'});
     }
+    if (!creadosIds.length) return;
+    // 2026-08-30 (Daniel, trazabilidad -- "BAJO QUÉ OT también"): estos ids
+    // viajan en el payload de crear() como equipos_auto_creados -- recién
+    // ahí existe el visita_id real, así que ot2_api_crear hace el UPDATE
+    // de origen_visita_id DESPUÉS de crear la OT (ver crear() más abajo).
+    S._equiposAutoCreados = (S._equiposAutoCreados || []).concat(creadosIds);
     // Recarga cacheEquipos para que la tabla refleje los recién creados y
     // los preselecciona en S.equipos -- mismo patrón que la preselección
     // por plan de mantención (ver cargarEquipos más arriba).
@@ -2807,6 +2848,24 @@ window.OT2C = (function(){
       .catch(function(){
         if (window.ilusToast) ilusToast('Los equipos se crearon, pero no se pudo refrescar la lista -- reabre el paso.', {type:'warning'});
       });
+  }
+
+  /* Dispara _o2mAltaAutoFaltantes() SOLO una vez por cada combinación real
+     cliente+fuente -- evita altas duplicadas si la sección "equipos" se
+     repinta (cambiar el tipo de OT, etc.) mientras la misma cotización/
+     ticket/documento sigue seleccionado. La firma incluye los SKU de
+     S.doc_lineas (no solo el cliente): si el usuario vuelve a abrir el
+     buscador y elige OTRA cotización para el mismo cliente, la firma
+     cambia y esto se vuelve a evaluar para ese nuevo contexto, tal como
+     pidió Daniel ("cada selección es única"). */
+  function _o2mAltaAutoFaltantesSiCorresponde(){
+    if (!S.cliente || !S.doc_lineas || !S.doc_lineas.length) return;
+    var firma = S.cliente.id + '::' + S.doc_lineas.map(function(l){ return _o2mSkuNorm(l.sku); }).sort().join(',');
+    if (altaAutoFaltantesCtx === firma) return;
+    altaAutoFaltantesCtx = firma;
+    var faltantes = _o2mEquiposFaltantesDeDoc();
+    if (!faltantes.length) return;
+    _o2mAltaAutoFaltantes(faltantes);
   }
 
   /* "Integrar/desintegrar" un equipo del plan de mantención del cliente
@@ -3787,8 +3846,23 @@ window.OT2C = (function(){
       S.fin_doc = {tido: S.doc_origen.tido, nudo: S.doc_origen.nudo};
     }
     // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
-    // servicio) -- quedan como referencia informativa en la sección Equipos.
-    S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; }) : [];
+    // servicio) -- quedan como referencia informativa en la sección Equipos
+    // Y son la fuente de la alta automática (ver _o2mAltaAutoFaltantes).
+    // 2026-08-30 (Daniel, trazabilidad: "saber... CON QUÉ DOC entró eso a
+    // la ficha de productos"): una cotización puede combinar líneas de
+    // VARIOS documentos ERP distintos -- cada `it` puede traer SU PROPIO
+    // tido/nudo real (ver el fix en _tka_modal.html, tkaToggleLineaCotizacion/
+    // tkaAsociarSeleccion), que acá se conserva tal cual (null si esa línea
+    // puntual no tenía documento ERP detrás -- nunca se inventa uno). La
+    // fecha por ítem no existe en el origen (tk_cotizacion_items no la
+    // guarda) -- `header.fecha` es la mejor real a mano (la propia fecha
+    // de la cotización/documento), nunca se usa "hoy" como relleno.
+    S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; })
+      .map(function(it){
+        return {sku: it.sku, nombre: it.nombre, qty: it.qty,
+                tido: it.tido || null, nudo: it.nudo || null,
+                fecha: it.fecha || header.fecha || null};
+      }) : [];
 
     // 2026-08-30 (Daniel: "la dirección del documento, eso ya lo
     // teníamos... hay que repararlo"): la fuente (documento/cotización/
@@ -3926,8 +4000,14 @@ window.OT2C = (function(){
       var dc = await fetch('/tickets/api/cotizaciones/' + encodeURIComponent(d.cotizaciones[0].id), {credentials:'same-origin'})
         .then(function(x){ return x.json(); }).catch(function(){ return {ok:false}; });
       if (dc.ok && Array.isArray(dc.items)){
+        // 2026-08-30 (trazabilidad -- mismo criterio que _tkaCotizacionElegir):
+        // cada ítem de la cotización puede traer su propio tido/nudo real
+        // (erp_tido/erp_nudo); la fecha por ítem no existe en el origen, así
+        // que se usa la de la cotización completa como mejor real a mano.
         items = dc.items.filter(function(it){ return (!it.item_tipo || it.item_tipo === 'producto') && it.sku; })
-          .map(function(it){ return {sku: it.sku, nombre: it.nombre, qty: it.qty}; });
+          .map(function(it){ return {sku: it.sku, nombre: it.nombre, qty: it.qty,
+                                      tido: it.tido || null, nudo: it.nudo || null}; });
+        header.fecha = (dc.cotizacion && dc.cotizacion.created_at) || '';
       }
     }
     await _o2mResolverClienteYEquipos(header, items);
@@ -4292,6 +4372,12 @@ window.OT2C = (function(){
       fecha_programada: S.fecha, hora_inicio: S.hini, hora_fin: S.hfin,
       tecnico_user_ids: S.tecnicos, tecnico_lider_id: S.lider,
       equipos: esInterno() ? [] : S.equipos,
+      // 2026-08-30 (Daniel, trazabilidad "bajo qué OT"): equipos que ESTE
+      // wizard dio de alta automáticamente desde la fuente (ver
+      // _o2mAltaAutoFaltantes) -- ot2_api_crear los usa SOLO para pisar
+      // mant_maquinas.origen_visita_id una vez que el vid ya existe, nunca
+      // para crear ni validar nada más.
+      equipos_auto_creados: esInterno() ? [] : (S._equiposAutoCreados || []),
       // 28-08-2026: trabajo interno manda su checklist (si eligió uno) por
       // este mismo campo -- el backend YA sabe aplicar una plantilla suelta
       // con maquina_id NULL cuando no hay equipos (ot2_api_crear, rama
@@ -4570,7 +4656,6 @@ window.OT2C = (function(){
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
-          agregarEquiposFaltantes:agregarEquiposFaltantes,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,

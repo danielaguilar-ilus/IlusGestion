@@ -76426,6 +76426,18 @@ def ot2_api_crear():
         ticket_id = int(ticket_id) if ticket_id else None
     except (TypeError, ValueError):
         ticket_id = None
+    # 2026-08-30 (Daniel, trazabilidad -- "bajo qué OT" entró un equipo dado
+    # de alta automáticamente desde la fuente, ver _o2mAltaAutoFaltantes en
+    # _modal_crear.html): lista de maquina_id que el wizard creó ÉL MISMO en
+    # ESTE flujo (no equipos preexistentes de la ficha) -- best-effort, NUNCA
+    # bloquea la creación de la OT si viene vacía, mal formada o si la
+    # columna todavía no existe (ver el UPDATE junto al commit, más abajo).
+    equipos_auto_creados = []
+    for _mid_ac in (d.get("equipos_auto_creados") or []):
+        try:
+            equipos_auto_creados.append(int(_mid_ac))
+        except (TypeError, ValueError):
+            continue
     tarea_tipo = _tarea_tipo_seguro(tipo_ot)
 
     # ── 7.b FINANZAS DEL PASO 8 ────────────────────────────────────────
@@ -76735,6 +76747,25 @@ def ot2_api_crear():
                     (vid, ticket_id))
             except Exception as _e_tk:
                 print(f"[ot2_crear] ticket {ticket_id}: {_e_tk}", flush=True)
+
+        # Trazabilidad "bajo qué OT" (2026-08-30, Daniel: "esa información
+        # debe ser trazable... bajo qué OT también"): recién acá existe el
+        # `vid` real, así que el UPDATE va DESPUÉS del INSERT de la visita
+        # -- mismo criterio best-effort que el vínculo de ticket de arriba:
+        # si la columna no existe todavía (BD vieja) o algo falla, se loguea
+        # y la OT se crea igual, nunca se aborta por esto. Se filtra por
+        # cliente_id además del id como candado extra (nunca reasignar el
+        # origen de un equipo de OTRO cliente por un id mal formado).
+        if equipos_auto_creados and cliente_id:
+            try:
+                _ph_eq = ",".join(["%s"] * len(equipos_auto_creados))
+                cur.execute(
+                    f"UPDATE mant_maquinas SET origen_visita_id=%s "
+                    f"WHERE id IN ({_ph_eq}) AND cliente_id=%s "
+                    f"  AND origen_visita_id IS NULL",
+                    tuple([vid] + equipos_auto_creados + [cliente_id]))
+            except Exception as _e_ov:
+                print(f"[ot2_crear] origen_visita_id {equipos_auto_creados}: {_e_ov}", flush=True)
 
         conn.commit()
 
@@ -104886,6 +104917,67 @@ def _ensure_mant_reportes_columns():
     return faltantes
 
 
+def _ensure_mant_maquinas_origen_visita_columna():
+    """Garantiza mant_maquinas.origen_visita_id SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1 (mismo patrón que _ensure_mant_reportes_columns).
+
+    2026-08-30 (Daniel, trazabilidad del wizard OT 2.0 -- verbatim: "si hay
+    varias facturas en la cotización, esa información debe ser trazable
+    hasta la ficha de cliente para saber CUÁNDO y CON QUÉ DOC entró eso a
+    la ficha de productos, y BAJO QUÉ OT también"): cuando el wizard de
+    creación de OT (ot2_api_crear) da de alta un equipo AUTOMÁTICAMENTE
+    desde una cotización/ticket/documento (ver _o2mAltaAutoFaltantes en
+    templates/ot2/_modal_crear.html), este equipo nace y su OT de origen
+    se crea prácticamente en el mismo instante -- pero el equipo se crea
+    ANTES de que exista el `visita_id` real (recién se genera al hacer el
+    POST completo a /ot/api/crear). Por eso NO alcanza con mandar el vid
+    al crear el equipo: hace falta volver a pisarlo una vez que el vid ya
+    existe (ver el UPDATE en ot2_api_crear, justo antes del commit).
+
+    Deliberadamente DISTINTA de las columnas que ya existían:
+      - `ultimo_levantamiento_vid`: última vez que un LEVANTAMIENTO tocó
+        este equipo (concepto de levantamiento, no de creación).
+      - `last_visita_id`: última OT que "actualizó" la ficha (se pisa en
+        cada visita que toca el equipo -- ver mant_maquinas ~53026 y su
+        UPDATE en la ejecución del checklist). Si reusáramos esa columna
+        para "bajo qué OT nació", una visita POSTERIOR cualquiera la
+        pisaría y se perdería el dato de creación para siempre.
+    `origen_visita_id` en cambio se escribe UNA sola vez (al nacer) y
+    nunca se vuelve a tocar -- es el registro permanente de "esta OT fue
+    la que trajo este equipo a la ficha"."""
+    needed = {
+        "origen_visita_id": "INT NULL COMMENT "
+            "'OT (mant_visitas.id) bajo la cual se creó este equipo -- "
+            "se escribe UNA vez al nacer, nunca se pisa después'",
+    }
+    existing = {
+        (r.get("COLUMN_NAME") or "").lower()
+        for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_maquinas'"
+        ) or [])
+    }
+    faltantes = [c for c in needed if c.lower() not in existing]
+    for col in faltantes:
+        try:
+            mysql_execute(f"ALTER TABLE mant_maquinas ADD COLUMN {col} {needed[col]}")
+            print(f"[ensure_maq_origen_visita] columna agregada: {col}", flush=True)
+        except Exception as e_add:
+            print(f"[ensure_maq_origen_visita] no se pudo agregar {col}: {e_add}", flush=True)
+    try:
+        _idx = mysql_fetchone(
+            "SELECT 1 AS x FROM information_schema.STATISTICS "
+            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_maquinas' "
+            "  AND INDEX_NAME='idx_maq_origen_visita' LIMIT 1")
+        if not _idx:
+            mysql_execute(
+                "ALTER TABLE mant_maquinas ADD INDEX idx_maq_origen_visita (origen_visita_id)")
+            print("[ensure_maq_origen_visita] índice idx_maq_origen_visita creado", flush=True)
+    except Exception as e_idx:
+        print(f"[ensure_maq_origen_visita] no se pudo crear índice: {e_idx}", flush=True)
+    return faltantes
+
+
 def _ensure_mant_sucursales_geo_columns():
     """Garantiza mant_sucursales.direccion_lat/lng/place_id SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). El modal de sucursal ahora valida la dirección con
@@ -110255,6 +110347,19 @@ try:
               f"{_faltaron_rep}", flush=True)
 except Exception as _ensure_rep_err:
     print(f"[ILUS][WARN] _ensure_mant_reportes_columns: {_ensure_rep_err}", flush=True)
+
+# CRÍTICO: garantizar mant_maquinas.origen_visita_id SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1 -- ot2_api_crear la usa para dejar registrado BAJO
+# QUÉ OT nació cada equipo dado de alta automáticamente desde el wizard
+# (2026-08-30, ver _ensure_mant_maquinas_origen_visita_columna).
+try:
+    with app.app_context():
+        _faltaron_maq_ov = _ensure_mant_maquinas_origen_visita_columna()
+    if _faltaron_maq_ov:
+        print(f"[ILUS] Columnas de mant_maquinas agregadas (skip-migrations): "
+              f"{_faltaron_maq_ov}", flush=True)
+except Exception as _ensure_maq_ov_err:
+    print(f"[ILUS][WARN] _ensure_mant_maquinas_origen_visita_columna: {_ensure_maq_ov_err}", flush=True)
 
 # CRÍTICO: garantizar mant_sucursales.direccion_lat/lng/place_id SIEMPRE (incluso
 # con ILUS_SKIP_MIGRATIONS=1). El modal de sucursal valida con Google Places y
