@@ -407,6 +407,78 @@
 .otd-wk-plant-lock{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;
   font-weight:700;color:#9ca3af}
 
+/* ══ CHECKLIST EDITABLE (pestaña Trabajo) — 2026-08-30 ══
+   Daniel: "termina llevando a la OT normal... no tiene sentido". Marcar
+   el checklist ya no obliga a saltar a /ejecutar -- vive acá mismo,
+   dentro de cada equipo de la pestaña Trabajo. Mismo lenguaje visual
+   claro/tarjeta de esta pantalla (NO se copia el tema oscuro de
+   ot_ejecutar.html). */
+.otd-chk-mount{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb}
+.otd-chk-skel{display:flex;flex-direction:column;gap:8px}
+.otd-chk-skel i{display:block;height:38px;border-radius:9px;
+  background:linear-gradient(90deg,#f3f4f6 25%,#e9ebef 37%,#f3f4f6 63%);
+  background-size:400% 100%;animation:otdShim 1.5s ease infinite}
+@keyframes otdShim{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.otd-chk-plant{margin-bottom:12px}
+.otd-chk-plant-nm{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
+  color:#9ca3af;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.otd-chk-plant-nm .pg{font-size:.68rem;color:#6b7280;font-weight:700;text-transform:none;
+  letter-spacing:0}
+.otd-chk-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  margin-bottom:8px;background:#fafbfc}
+.otd-chk-item.is-ok{border-color:#bbf7d0;background:#f0fdf4}
+.otd-chk-item.is-locked{opacity:.6}
+.otd-chk-item .hd{display:flex;align-items:flex-start;gap:8px}
+.otd-chk-item .hd b{flex:1;min-width:0;font-size:.84rem;color:#0a0a0a;font-weight:700;
+  line-height:1.3}
+.otd-chk-item .hd .obl{flex:none;font-size:.6rem;font-weight:900;color:#b91c1c;
+  background:#fee2e2;border-radius:99px;padding:2px 7px;letter-spacing:.03em}
+.otd-chk-item .desc{font-size:.74rem;color:#6b7280;margin:4px 0 8px}
+.otd-chk-item .lockmsg{font-size:.72rem;color:#a16207;background:#fff8e1;border-radius:7px;
+  padding:6px 9px;margin-top:6px;display:flex;align-items:center;gap:6px}
+.otd-chk-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.otd-chk-check{display:inline-flex;align-items:center;gap:8px;min-height:44px;
+  padding:0 6px;cursor:pointer;user-select:none}
+.otd-chk-check input{width:22px;height:22px;accent-color:#16a34a;cursor:pointer}
+.otd-chk-check span{font-size:.8rem;font-weight:700;color:#374151}
+.otd-chk-pill{display:inline-flex;align-items:center;gap:5px;min-height:38px;
+  padding:0 13px;border-radius:9px;border:1.5px solid #d1d5db;background:#fff;
+  font-size:.76rem;font-weight:800;color:#374151;cursor:pointer}
+.otd-chk-pill.on-si,.otd-chk-pill.on-aprobado{background:#dcfce7;border-color:#16a34a;color:#15803d}
+.otd-chk-pill.on-no,.otd-chk-pill.on-falla{background:#fee2e2;border-color:#dc2626;color:#b91c1c}
+.otd-chk-pill.on-na,.otd-chk-pill.on-alerta{background:#fff8e1;border-color:#f59e0b;color:#92400e}
+.otd-chk-input{flex:1;min-width:110px;min-height:44px;border-radius:9px;
+  border:1.5px solid #d1d5db;padding:0 12px;font-size:1rem;color:#0a0a0a;background:#fff}
+.otd-chk-input:focus{outline:none;border-color:var(--ilus-red,#dc2626)}
+.otd-chk-save{flex:none;min-height:38px;padding:0 13px;border-radius:9px;border:none;
+  background:var(--ilus-red,#dc2626);color:#fff;font-size:.76rem;font-weight:800;cursor:pointer}
+.otd-chk-save:hover{opacity:.9}
+.otd-chk-serie-quick{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.otd-chk-serie-quick button{min-height:34px;padding:0 10px;border-radius:7px;
+  border:1px solid #d1d5db;background:#fff;font-size:.72rem;font-weight:700;color:#374151;cursor:pointer}
+.otd-chk-fotobtn{flex:none;display:inline-flex;align-items:center;gap:5px;min-height:38px;
+  padding:0 12px;border-radius:9px;border:1.5px dashed #d1d5db;background:#fff;
+  font-size:.72rem;font-weight:800;color:#374151;cursor:pointer}
+.otd-chk-fotobtn.need{border-color:#dc2626;color:#b91c1c}
+.otd-chk-fotos{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.otd-chk-fotos img{width:52px;height:52px;object-fit:cover;border-radius:8px;
+  border:1px solid var(--line)}
+.otd-chk-fallback{font-size:.72rem;color:#6b7280;font-style:italic}
+
+/* Videos y documentos (adjuntos) — 2026-08-30 */
+.otd-adj-list{display:flex;flex-direction:column;gap:8px;padding:0 16px 14px}
+.otd-adj-item{display:flex;align-items:center;gap:10px;border:1px solid var(--line);
+  border-radius:10px;padding:9px 12px}
+.otd-adj-item .ic{width:38px;height:38px;border-radius:9px;background:#f3f4f6;
+  display:grid;place-items:center;font-size:1.05rem;color:#374151;flex:none}
+.otd-adj-item.tp-video .ic{background:#fee2e2;color:#b91c1c}
+.otd-adj-item.tp-pdf .ic{background:#dbeafe;color:#1d4ed8}
+.otd-adj-item .in{flex:1;min-width:0}
+.otd-adj-item .in b{display:block;font-size:.8rem;color:#0a0a0a;font-weight:700;
+  overflow-wrap:anywhere}
+.otd-adj-item .in small{font-size:.68rem;color:#9ca3af}
+.otd-adj-item a{flex:none;color:var(--ilus-red,#dc2626);font-size:1.1rem}
+
 /* Documentos — Anexo de Servicios */
 .otd-doc-card{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:14px 16px;
   border:1px solid var(--line);border-radius:10px}
@@ -842,14 +914,14 @@
       <i class="bi bi-camera-fill"></i> Evidencia <span class="cnt">{{ fotos|length }}</span></button>
     {# 🔓 2026-08-27: antes esta pestaña solo se dibujaba si YA existía un
        anexo -- la puerta de entrada para CREARLO nunca aparecía en
-       ninguna pantalla (Daniel, esta noche, repetido varias veces). Ahora
-       vive para toda gestión (mismo gate `not es_tecnico`, sin agregar
-       restricción nueva) y el contenido resuelve los 3 casos: sin anexo
-       todavía, anexo activo, o anexo que necesita reemplazo. #}
-    {% if not es_tecnico %}
+       ninguna pantalla (Daniel, esta noche, repetido varias veces).
+       🔓🔓 2026-08-30 (Daniel: "que se vea el anexo en la otra parte" --
+       feedback sobre la pantalla del técnico): la pestaña ahora se
+       dibuja para TODOS los roles, técnico incluido. Lo que sigue
+       exclusivo de gestión son los botones de crear/enviar/reemplazar
+       DENTRO del panel (`not es_tecnico`, sin cambios ahí). #}
     <button type="button" class="otd-tab" data-tab="documentos">
       <i class="bi bi-file-earmark-lock2-fill"></i> Documentos{% if anexo %} <span class="cnt">1</span>{% endif %}</button>
-    {% endif %}
   </div>
 
   {# ══ INFORMACIÓN (grilla original) ══ #}
@@ -1046,6 +1118,46 @@
       </div>
       {% endif %}
 
+      {# 🆕 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del
+         técnico: "que puedan grabar video y dejarlo ahí"). Reusa el
+         motor de adjuntos que YA existe desde antes para esta misma OT
+         (mant_visita_adjuntos / GET+POST /mantenciones/api/visitas/<id>/
+         adjuntos, ver app.py ~88920) -- distinto de la galería de FOTOS
+         de la pestaña Evidencia. Detecta tipo por mime/extensión en el
+         backend (video/pdf/documento/audio), sube a Cloudinary con
+         resource_type='video' para videos -- nada de esto es nuevo,
+         solo le faltaba pantalla. Gate de subida: `puede_ejecutar`
+         (mismo que el botón de fotos, el endpoint POST está protegido
+         por @_tecnico_owns_visita). La LISTA se ve siempre que se pueda
+         ver la OT (@_ot_can_view en el GET), sin gate adicional.
+         `capture="environment"` en el input de cámara activa grabar
+         video directo con la cámara trasera en celular (>99% del uso,
+         según Daniel) en vez de solo poder subir un archivo ya grabado. #}
+      <div class="otd-card">
+        <h3><i class="bi bi-camera-reels-fill"></i> Videos y documentos
+          <span class="n" id="otdAdjCount">—</span></h3>
+        {% if puede_ejecutar %}
+        <div class="otd-ev-add">
+          <div class="tx">
+            <b>¿Necesitas dejar un video o documento?</b>
+            <small>Graba con la cámara o sube un archivo — PDF, Word, video.</small>
+          </div>
+          <button type="button" class="otd-ev-btn" id="otdAdjBtn" onclick="otdAbrirSheetAdjunto()">
+            <i class="bi bi-camera-reels-fill"></i> Agregar
+          </button>
+          <input type="file" id="otdAdjVideoCam" accept="video/*" capture="environment"
+                 style="display:none" onchange="otdSubirAdjunto(this)">
+          <input type="file" id="otdAdjArchivo" accept="video/*,application/pdf,.doc,.docx,.xls,.xlsx,image/*"
+                 style="display:none" onchange="otdSubirAdjunto(this)">
+        </div>
+        {% endif %}
+        <div class="otd-adj-list" id="otdAdjList"></div>
+        <div class="otd-vacio" id="otdAdjEmpty" style="display:none">
+          <i class="bi bi-camera-reels" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+          Todavía no hay videos ni documentos adjuntos a esta OT.
+        </div>
+      </div>
+
       {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
          técnica externa: "le está saliendo centro de costos, sus costos,
          la parte financiera, la factura... eso no es para que ella la
@@ -1087,14 +1199,29 @@
   </div>
   {# ══ /INFORMACIÓN ══ #}
 
-  {# ══ TRABAJO — solo lectura, pensada para la mirada del técnico ══
+  {# ══ TRABAJO — pensada para la mirada del técnico ══
      2026-08-27 (Daniel: "una forma inteligente, mostrar los equipos...
      pensando en la mirada del técnico"). Es MÁS detalle que la card
      "Equipos de la OT" de arriba (diagnóstico, observación, obligatorias
-     por equipo) pero sigue siendo de solo lectura: marcar tareas, subir
-     fotos y firmar SIGUEN viviendo únicamente en /mantenciones/ot/<id>/
-     ejecutar (mant_visita_tarea_respuesta) -- duplicar esa escritura acá
-     sería tener dos lugares que puedan responder la misma tarea. #}
+     por equipo).
+
+     🔓🔓 2026-08-30 (Daniel, feedback fuerte y textual: "gestionar la
+     orden de trabajo es complicado en la 2.0. De hecho termina llevando
+     a la OT normal, entonces no tiene ningún sentido. Se supone que
+     íbamos a crear todo esto desde cero"). Hasta hoy esta pestaña era
+     100% de solo lectura -- el único camino para MARCAR el checklist era
+     saltar a /mantenciones/ot/<id>/ejecutar (la pantalla vieja). Ahora
+     cada equipo trae, además del resumen de siempre, un checklist
+     EDITABLE inline (`otdChkMount`, poblado por JS al abrir la pestaña
+     con GET /mantenciones/api/visitas/<id>/checklist -- lectura NUEVA y
+     aislada, ver app.py, no toca /ejecutar).
+     Las ESCRITURAS siguen siendo las de SIEMPRE: exactamente los mismos
+     endpoints que ya usa mantenciones_ot_ejecutar.js (lock, /respuesta,
+     PATCH tarea, /fotos/subir) -- CERO reglas de negocio nuevas o
+     duplicadas, solo una interfaz nueva y liviana sobre los mismos datos.
+     El link "Ejecutar la OT" NO se quita (REGLA #4.2) -- queda como modo
+     clásico de respaldo mientras esta pantalla nueva recibe tráfico real
+     y Daniel la valida a fondo. #}
   <div class="otd-tabpanel" data-tab="trabajo">
     <div class="otd-card">
       <h3><i class="bi bi-wrench-adjustable-circle-fill"></i> Equipos — detalle de trabajo
@@ -1111,7 +1238,7 @@
             {% endif %}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}</b>
-              <small>{% if e.serie %}S/N {{ e.serie }} · {% endif %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias</small>
+              <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias</small>
             </div>
             <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
             <i class="bi bi-chevron-right chev"></i>
@@ -1120,9 +1247,9 @@
             <div class="otd-wk-kv">
               {% if e.sku %}<div><div class="k">SKU</div><div class="v">{{ e.sku }}</div></div>{% endif %}
               {% if e.marca %}<div><div class="k">Marca</div><div class="v">{{ e.marca }}</div></div>{% endif %}
-              <div><div class="k">Checklist</div><div class="v">{{ e.n_ok }}/{{ e.n_tareas }} tareas</div></div>
+              <div><div class="k">Checklist</div><div class="v" id="otdWkChk-{{ e.id }}">{{ e.n_ok }}/{{ e.n_tareas }} tareas</div></div>
               <div><div class="k">Obligatorias</div>
-                <div class="v" style="{{ 'color:#b91c1c' if e.n_obl_falta else 'color:#15803d' }}">
+                <div class="v" id="otdWkObl-{{ e.id }}" style="{{ 'color:#b91c1c' if e.n_obl_falta else 'color:#15803d' }}">
                   {{ e.n_obl_ok }}/{{ e.n_obl }}{% if e.n_obl_falta %} · faltan {{ e.n_obl_falta }}{% endif %}</div></div>
               {% if e.estado_revision_label %}
               <div><div class="k">Última revisión</div><div class="v">{{ e.estado_revision_label }}</div></div>
@@ -1171,14 +1298,24 @@
               {% endfor %}
             </div>
             {% endif %}
-            {# Honesto (revisión de código 27-ago): el link SIEMPRE manda al
-               inicio de /ejecutar -- mant_ot_ejecutar.html arma sus tarjetas
-               de equipo por JS (PLANTILLAS_POR_MAQUINA) y no tiene anchors
-               ni ?maquina_id para hacer scroll a UNA en particular. Mejor
-               decir "Ejecutar la OT" (cierto) que "Ejecutar este equipo"
-               (implica un salto que no existe). #}
+
+            {# 🆕 2026-08-30 — checklist editable inline. Se rellena por JS
+               (otdRenderChecklist) cuando llegan los datos de
+               GET /mantenciones/api/visitas/<id>/checklist. Vacío hasta
+               entonces (skeleton corto en vez de spinner, REGLA visual del
+               proyecto). data-mid identifica a qué máquina pertenece este
+               mount point para que el JS sepa dónde insertar cada grupo. #}
+            <div class="otd-chk-mount" data-mid="{{ e.id }}">
+              <div class="otd-chk-skel"><i></i><i></i></div>
+            </div>
+
+            {# El link clásico se conserva a propósito (REGLA #4.2 -- no se
+               quita funcionalidad existente sin permiso explícito): sigue
+               siendo la red de respaldo si el checklist inline no cubre
+               algún caso (ej. tipo_respuesta='gps', que esta pantalla no
+               replica todavía -- ver resumen de la tarea). #}
             <a class="otd-wk-go" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
-              <i class="bi bi-tools"></i> Ejecutar la OT</a>
+              <i class="bi bi-tools"></i> Abrir en modo clásico</a>
           </div>
         </details>
         {% endfor %}
@@ -1253,18 +1390,48 @@
      de firma existe pero no hay ningún botón para crear o enviar un
      anexo". El backend YA existía desde anoche (ot2_api_anexo_crear /
      ot2_api_anexo_enviar, commit e007c43) -- lo que faltaba era ESTA
-     pantalla. Mismo gate que la card "Cobro" -- `not es_tecnico`, SIN
-     restricción nueva ("los mismos jefes van a firmarlo, así que no
-     ocultemos mucho"). Resuelve 3 casos: sin anexo todavía (CTA crear),
-     anexo activo (tarjeta ya existente, intacta) y anexo que ya no sirve
-     -- rechazado/vencido/anulado -- (se ve el histórico + CTA de
-     reemplazo). El botón de crear/reemplazar abre `_modal_anexo.html`
-     (OT2ANX), incluido al final de este archivo. #}
-  {% if not es_tecnico %}
+     pantalla. Resuelve 3 casos: sin anexo todavía (CTA crear), anexo
+     activo (tarjeta ya existente, intacta) y anexo que ya no sirve --
+     rechazado/vencido/anulado -- (se ve el histórico + CTA de reemplazo).
+     El botón de crear/reemplazar abre `_modal_anexo.html` (OT2ANX),
+     incluido al final de este archivo.
+
+     🔓🔓 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del
+     técnico: "que se vea el anexo en la otra parte"): el panel ya NO se
+     salta completo para técnico. Adentro hay DOS variantes:
+       - técnico → solo estado + proveedor + firmado/no firmado. SIN
+         botones de crear/enviar/reemplazar y SIN el link de descarga del
+         PDF: el Word que firma el proveedor SÍ trae precio_items/monto
+         (ver _modal_anexo.html, campo "monto" del formulario) -- sería
+         mostrarle al técnico exactamente la cifra que el resto del
+         proyecto le oculta en la card "Cobro" de la pestaña Información.
+       - gestión → todo el contenido de siempre, intacto. #}
   <div class="otd-tabpanel" data-tab="documentos">
     <div class="otd-card">
       <h3><i class="bi bi-file-earmark-lock2-fill"></i> Anexo de Servicios</h3>
 
+      {% if es_tecnico %}
+        {% if anexo %}
+        <div class="otd-doc-card {{ 'doc-firmado' if anexo.estado == 'firmado' else 'doc-pend' }}">
+          <div class="ic"><i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i></div>
+          <div class="in">
+            <b>Anexo N° {{ anexo.numero }} — {{ anexo.proveedor_nombre }}</b>
+            {% if anexo.estado == 'firmado' %}
+            <small>Firmado por {{ anexo.firmante_nombre or anexo.proveedor_nombre }}{% if anexo.firmado_at %} · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %} — el proveedor ya puede trabajar esta OT</small>
+            {% elif anexo.estado in ('rechazado','vencido','anulado') %}
+            <small>{{ anexo.estado | title }} — este anexo ya no habilita el trabajo, avisa a gestión</small>
+            {% else %}
+            <small>{{ anexo.estado | title }}{% if anexo.enviado_at %} · enviado {{ anexo.enviado_at | chile_fmt('%d/%m/%Y') }}{% endif %} — todavía no está firmado</small>
+            {% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div class="otd-vacio">
+          <i class="bi bi-file-earmark-lock2" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+          Esta OT todavía no tiene Anexo de Servicios. Consulta con gestión.
+        </div>
+        {% endif %}
+      {% else %}
       {% if anexo %}
       <div class="otd-doc-card {{ 'doc-firmado' if anexo.estado == 'firmado' else 'doc-pend' }}">
         <div class="ic"><i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i></div>
@@ -1309,9 +1476,9 @@
         Crea el anexo con el proveedor externo antes de que empiece a trabajar esta OT.
       </div>
       {% endif %}
+      {% endif %}
     </div>
   </div>
-  {% endif %}
 </div>
 
 {% if not es_tecnico %}
@@ -2317,6 +2484,466 @@ async function otdSubirFoto(input){
     if (btn) btn.disabled = false;
   }
 }
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   VIDEOS Y DOCUMENTOS (adjuntos) — 2026-08-30.
+   Daniel: "que puedan grabar video y dejarlo ahí". Reusa el motor de
+   mant_visita_adjuntos que YA existía (GET/POST /mantenciones/api/
+   visitas/<id>/adjuntos) -- esta pantalla solo le agrega vista. Se carga
+   apenas entra a la página porque vive en la pestaña Información (la
+   que abre por defecto).
+   ══════════════════════════════════════════════════════════════════════ */
+const OTD_VID = {{ v.id }};
+
+const OTD_ADJ_ICONS = {
+  video: 'bi-camera-reels-fill', pdf: 'bi-file-earmark-pdf-fill',
+  documento: 'bi-file-earmark-word-fill', audio: 'bi-mic-fill',
+  foto: 'bi-image', otro: 'bi-file-earmark-fill',
+};
+
+async function otdCargarAdjuntos(){
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/adjuntos`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) return;
+    const list = document.getElementById('otdAdjList');
+    const empty = document.getElementById('otdAdjEmpty');
+    const cnt = document.getElementById('otdAdjCount');
+    if (cnt) cnt.textContent = String(d.adjuntos.length);
+    if (!list) return;
+    if (!d.adjuntos.length){
+      list.innerHTML = '';
+      if (empty) empty.style.display = '';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    list.innerHTML = d.adjuntos.map(a => `
+      <div class="otd-adj-item tp-${a.tipo}">
+        <span class="ic"><i class="bi ${OTD_ADJ_ICONS[a.tipo] || 'bi-file-earmark-fill'}"></i></span>
+        <div class="in">
+          <b>${(a.archivo_nombre || 'Archivo').replace(/</g,'&lt;')}</b>
+          <small>${a.tipo === 'video' ? 'Video' : (a.tipo || 'Archivo')} · ${a.subido_por || 'Técnico'} · ${a.created_at || ''}</small>
+        </div>
+        ${a.url ? `<a href="${a.url}" target="_blank" rel="noopener" title="Ver / descargar"><i class="bi bi-box-arrow-up-right"></i></a>` : ''}
+      </div>`).join('');
+  } catch(e){ /* silencioso -- la card ya arrancó con "—" */ }
+}
+
+async function otdAbrirSheetAdjunto(){
+  if (typeof ilusActionSheet !== 'function'){
+    document.getElementById('otdAdjArchivo')?.click();
+    return;
+  }
+  const choice = await ilusActionSheet({
+    title: '🎥 Videos y documentos',
+    message: 'Elige qué quieres agregar',
+    options: [
+      { label:'Grabar video con la cámara', icon:'bi-camera-reels-fill', value:'video',   style:'dark' },
+      { label:'Subir un archivo',            icon:'bi-upload',           value:'archivo', style:'secondary' },
+    ],
+  });
+  if (!choice) return;
+  const inp = document.getElementById(choice === 'video' ? 'otdAdjVideoCam' : 'otdAdjArchivo');
+  if (!inp) return;
+  try { inp.value = ''; } catch(e){}
+  inp.click();
+}
+
+async function otdSubirAdjunto(input){
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  if (file.size > 100 * 1024 * 1024){
+    ilusToast(`Archivo demasiado grande (${(file.size/(1024*1024)).toFixed(1)} MB). Máx 100 MB para video.`, {type:'warning'});
+    return;
+  }
+  const btn = document.getElementById('otdAdjBtn');
+  if (btn) btn.disabled = true;
+  const toastSub = ilusToast('Subiendo…', {type:'info', duration:15000});
+  try {
+    const fd = new FormData();
+    fd.append('archivo', file);
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/adjuntos`, {method:'POST', body: fd});
+    const j = await r.json().catch(() => ({}));
+    if (toastSub && toastSub.close) toastSub.close();
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo subir el archivo.', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Subido', {type:'success'});
+    await otdCargarAdjuntos();
+  } catch(e){
+    if (toastSub && toastSub.close) toastSub.close();
+    ilusToast('Error de red al subir el archivo.', {type:'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', otdCargarAdjuntos);
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   CHECKLIST EDITABLE — pestaña "Trabajo", 2026-08-30.
+   Daniel, textual: "gestionar la orden de trabajo es complicado en la
+   2.0. De hecho termina llevando a la OT normal, entonces no tiene
+   ningún sentido. Se supone que íbamos a crear todo esto desde cero".
+   Esta pestaña dejó de ser solo lectura: cada equipo trae su checklist
+   real, editable acá mismo. Las escrituras van a los MISMOS endpoints
+   que ya usa mantenciones_ot_ejecutar.js -- CERO reglas nuevas.
+   Soporta tipo_respuesta: check, sino, verificacion, numero, texto,
+   lista, serie, fecha_hora. 'gps' no se replica acá todavía (necesita
+   geolocalización con la misma política de auditoría que ya vive en el
+   backend) -- esas tareas muestran un aviso con link a "Abrir en modo
+   clásico" en vez de fallar en silencio.
+   ══════════════════════════════════════════════════════════════════════ */
+const OTD_IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
+const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
+
+let OTD_CHK_DATA = null;      // plantillas_por_maquina, tal como llega del backend
+let OTD_CHK_LOADED = false;
+let OTD_CHK_LOADING = false;
+
+async function otdCargarChecklistSiHaceFalta(){
+  if (OTD_CHK_LOADED || OTD_CHK_LOADING) return;
+  OTD_CHK_LOADING = true;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/checklist`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      document.querySelectorAll('.otd-chk-mount').forEach(el => {
+        el.innerHTML = '<div class="otd-chk-fallback">No se pudo cargar el checklist acá — usa "Abrir en modo clásico".</div>';
+      });
+      return;
+    }
+    OTD_CHK_DATA = d.plantillas_por_maquina || {};
+    OTD_CHK_LOADED = true;
+    document.querySelectorAll('.otd-chk-mount').forEach(el => {
+      otdRenderChecklistEquipo(el.dataset.mid);
+    });
+  } catch(e){
+    document.querySelectorAll('.otd-chk-mount').forEach(el => {
+      el.innerHTML = '<div class="otd-chk-fallback">Sin conexión — usa "Abrir en modo clásico".</div>';
+    });
+  } finally {
+    OTD_CHK_LOADING = false;
+  }
+}
+
+function otdRenderChecklistEquipo(mid){
+  const mount = document.querySelector(`.otd-chk-mount[data-mid="${mid}"]`);
+  if (!mount || !OTD_CHK_DATA) return;
+  const grupos = OTD_CHK_DATA[String(mid)] || [];
+  if (!grupos.length){
+    mount.innerHTML = '<div class="otd-chk-fallback">Sin checklist asignado a este equipo.</div>';
+    return;
+  }
+  mount.innerHTML = grupos.map(g => `
+    <div class="otd-chk-plant">
+      <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${g.plantilla_nombre}
+        <span class="pg">${g.completas}/${g.total}</span></div>
+      ${g.tareas.map(t => otdChkTareaHtml(t)).join('')}
+    </div>`).join('');
+  // Actualiza los resúmenes de la cabecera del equipo (n_ok/n_tareas,
+  // obligatorias) con el dato fresco del checklist recién cargado --
+  // sin esto seguirían mostrando el valor con el que cargó la página.
+  let nTot = 0, nOk = 0, oblTot = 0, oblOk = 0;
+  grupos.forEach(g => g.tareas.forEach(t => {
+    nTot++; if (t.completada) nOk++;
+    if (t.obligatoria){ oblTot++; if (t.completada) oblOk++; }
+  }));
+  const elChk = document.getElementById(`otdWkChk-${mid}`);
+  if (elChk) elChk.textContent = `${nOk}/${nTot} tareas`;
+  const elObl = document.getElementById(`otdWkObl-${mid}`);
+  if (elObl){
+    const falta = oblTot - oblOk;
+    elObl.textContent = `${oblOk}/${oblTot}` + (falta ? ` · faltan ${falta}` : '');
+    elObl.style.color = falta ? '#b91c1c' : '#15803d';
+  }
+  const elSum = document.getElementById(`otdWkSum-${mid}`);
+  if (elSum){
+    const serieTxt = (elSum.textContent.match(/^S\/N [^·]+·\s*/) || [''])[0];
+    elSum.textContent = serieTxt + `${oblOk}/${oblTot} obligatorias`;
+  }
+}
+
+function otdChkEstaBloqueada(t){
+  if (OTD_IS_SUPERADMIN) return false;
+  if (!t.locked_by_user_id || t.locked_by_user_id === OTD_CURRENT_UID) return false;
+  if (!t.locked_at) return false;
+  const mins = (Date.now() - new Date(t.locked_at.replace(' ', 'T')).getTime()) / 60000;
+  return mins < 10;
+}
+
+function otdChkFotosHtml(t){
+  if (!t.fotos || !t.fotos.length) return '';
+  return `<div class="otd-chk-fotos">${t.fotos.map(f => `<img src="${f.url}" alt="" loading="lazy">`).join('')}</div>`;
+}
+
+function otdChkFotoBtnHtml(t){
+  if (!t.requiere_foto) return '';
+  const need = !(t.fotos && t.fotos.length);
+  return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"
+            onclick="otdChkAbrirFoto(${t.id}, ${t.maquina_id})">
+            <i class="bi bi-camera-fill"></i> ${need ? 'Falta foto' : 'Agregar otra'}</button>
+          <input type="file" id="otdChkFotoInp-${t.id}" accept="image/*" capture="environment"
+                 style="display:none" onchange="otdChkSubirFoto(this, ${t.id})">`;
+}
+
+function otdChkTareaHtml(t){
+  const tipo = (t.tipo_respuesta || 'check').toLowerCase();
+  const bloqueada = otdChkEstaBloqueada(t);
+  const oblBadge = t.obligatoria ? '<span class="obl">Obligatoria</span>' : '';
+  const lockMsg = bloqueada
+    ? `<div class="lockmsg"><i class="bi bi-lock-fill"></i> Otro técnico está respondiendo esta tarea ahora.</div>` : '';
+  let body = '';
+
+  if (tipo === 'check'){
+    body = `<label class="otd-chk-check">
+      <input type="checkbox" ${t.completada ? 'checked' : ''} ${bloqueada ? 'disabled' : ''}
+        onchange="otdChkToggleCheck(${t.id}, this)">
+      <span>${t.completada ? 'Completada' : 'Marcar como completada'}</span>
+    </label>`;
+  } else if (tipo === 'sino'){
+    const v = (t.valor_json && t.valor_json.valor) || '';
+    body = `<div class="otd-chk-row">
+      ${['si','no','na'].map(opt => `<button type="button" class="otd-chk-pill${v===opt?' on-'+opt:''}"
+        ${bloqueada?'disabled':''} onclick="otdChkGuardar(${t.id}, '${opt}')">
+        ${opt==='si'?'Sí':opt==='no'?'No':'N/A'}</button>`).join('')}
+    </div>`;
+  } else if (tipo === 'verificacion'){
+    const v = (t.valor_json && t.valor_json.valor) || '';
+    body = `<div class="otd-chk-row">
+      ${[['aprobado','Aprobado'],['alerta','Alerta'],['falla','Falla']].map(([opt,lbl]) =>
+        `<button type="button" class="otd-chk-pill${v===opt?' on-'+opt:''}"
+          ${bloqueada?'disabled':''} onclick="otdChkGuardar(${t.id}, '${opt}')">${lbl}</button>`).join('')}
+    </div>`;
+  } else if (tipo === 'numero'){
+    const v = (t.valor_json && t.valor_json.numero != null) ? t.valor_json.numero : '';
+    body = `<div class="otd-chk-row">
+      <input type="number" inputmode="decimal" class="otd-chk-input" id="otdChkVal-${t.id}"
+        value="${v}" placeholder="${t.unidad || 'Valor'}" ${bloqueada?'disabled':''}>
+      <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
+        onclick="otdChkGuardarInput(${t.id})">Guardar</button>
+    </div>`;
+  } else if (tipo === 'texto'){
+    const v = (t.valor_json && t.valor_json.texto) || '';
+    body = `<div class="otd-chk-row">
+      <input type="text" class="otd-chk-input" id="otdChkVal-${t.id}" value="${(v+'').replace(/"/g,'&quot;')}"
+        placeholder="Escribe la respuesta" ${bloqueada?'disabled':''}>
+      <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
+        onclick="otdChkGuardarInput(${t.id})">Guardar</button>
+    </div>`;
+  } else if (tipo === 'fecha_hora'){
+    const v = (t.valor_json && t.valor_json.fecha) || '';
+    body = `<div class="otd-chk-row">
+      <input type="datetime-local" class="otd-chk-input" id="otdChkVal-${t.id}" value="${v.replace(' ','T').slice(0,16)}"
+        ${bloqueada?'disabled':''}>
+      <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
+        onclick="otdChkGuardarInput(${t.id})">Guardar</button>
+    </div>`;
+  } else if (tipo === 'lista'){
+    let opciones = [];
+    try { opciones = JSON.parse(t.opciones_lista_json || '[]'); } catch(e){}
+    const v = (t.valor_json && t.valor_json.opcion) || '';
+    body = `<div class="otd-chk-row">
+      <select class="otd-chk-input" id="otdChkVal-${t.id}" ${bloqueada?'disabled':''}>
+        <option value="">Elige una opción…</option>
+        ${opciones.map(o => `<option value="${o}" ${o===v?'selected':''}>${o}</option>`).join('')}
+      </select>
+      <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
+        onclick="otdChkGuardarInput(${t.id})">Guardar</button>
+    </div>`;
+  } else if (tipo === 'serie'){
+    const v = (t.valor_json && t.valor_json.serie) || '';
+    const na = !!(t.valor_json && t.valor_json.na);
+    body = `<div class="otd-chk-row">
+      <input type="text" class="otd-chk-input" id="otdChkVal-${t.id}" value="${na ? '' : (v+'').replace(/"/g,'&quot;')}"
+        placeholder="N° de serie" ${bloqueada||na?'disabled':''}>
+      <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
+        onclick="otdChkGuardarInput(${t.id})">Guardar</button>
+    </div>
+    <div class="otd-chk-serie-quick">
+      <button type="button" ${bloqueada?'disabled':''} onclick="otdChkGuardar(${t.id}, 'na')">
+        <i class="bi bi-slash-circle"></i> No aplica</button>
+    </div>`;
+  } else if (tipo === 'gps'){
+    body = `<div class="otd-chk-fallback">Esta tarea necesita ubicación GPS — respóndela en
+      <a href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}" style="color:var(--ilus-red,#dc2626);font-weight:700">modo clásico</a>.</div>`;
+  } else {
+    body = `<div class="otd-chk-fallback">Tipo de respuesta no soportado acá todavía — respóndela en
+      <a href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}" style="color:var(--ilus-red,#dc2626);font-weight:700">modo clásico</a>.</div>`;
+  }
+
+  return `<div class="otd-chk-item${t.completada ? ' is-ok' : ''}${bloqueada ? ' is-locked' : ''}" id="otdChkItem-${t.id}">
+    <div class="hd"><b>${(t.titulo || '').replace(/</g,'&lt;')}</b>${oblBadge}</div>
+    ${t.descripcion ? `<div class="desc">${t.descripcion.replace(/</g,'&lt;')}</div>` : ''}
+    ${body}
+    ${otdChkFotoBtnHtml(t)}
+    ${otdChkFotosHtml(t)}
+    ${lockMsg}
+  </div>`;
+}
+
+function otdChkFindTarea(tid){
+  if (!OTD_CHK_DATA) return null;
+  for (const mid in OTD_CHK_DATA){
+    for (const g of OTD_CHK_DATA[mid]){
+      const t = g.tareas.find(x => x.id === tid);
+      if (t) return { t, mid };
+    }
+  }
+  return null;
+}
+
+async function otdChkTomarLock(tid){
+  if (OTD_IS_SUPERADMIN) return true;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/lock`, {method:'POST'});
+    if (r.status === 423){
+      const d = await r.json().catch(() => ({}));
+      ilusToast(d.error || 'Otro técnico está respondiendo esta tarea.', {type:'warning'});
+      return false;
+    }
+    return true;
+  } catch(e){ return true; }  // red caída: seguimos optimistas, el version-check protege
+}
+
+async function otdChkToggleCheck(tid, input){
+  const found = otdChkFindTarea(tid);
+  if (!found) return;
+  const { t, mid } = found;
+  const newVal = input.checked;
+  if (newVal && t.requiere_foto && !(t.fotos && t.fotos.length)){
+    input.checked = false;
+    ilusToast('Esta tarea exige una foto — adjúntala antes de marcarla', {type:'warning'});
+    return;
+  }
+  if (!await otdChkTomarLock(tid)){ input.checked = !newVal; return; }
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ completada: newVal ? 1 : 0, version: t.version || 0 })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 409){
+      ilusToast('Otro técnico modificó esta tarea. Recarga la página.', {type:'warning'});
+      return;
+    }
+    if (!r.ok || !d.ok){
+      input.checked = !newVal;
+      ilusToast('Error: ' + (d.error || '?'), {type:'error'});
+      return;
+    }
+    t.completada = newVal;
+    if (typeof d.version === 'number') t.version = d.version;
+    ilusToast(newVal ? '✓ Marcado' : '○ Desmarcado', {type:'success', duration:1200});
+    otdRenderChecklistEquipo(mid);
+  } catch(e){
+    input.checked = !newVal;
+    ilusToast('Error de red', {type:'error'});
+  }
+}
+
+async function otdChkGuardarInput(tid){
+  const inp = document.getElementById(`otdChkVal-${tid}`);
+  if (!inp) return;
+  await otdChkGuardar(tid, inp.value);
+}
+
+async function otdChkGuardar(tid, valorCrudo){
+  const found = otdChkFindTarea(tid);
+  if (!found) return;
+  const { t, mid } = found;
+  const tipo = (t.tipo_respuesta || 'check').toLowerCase();
+  let valor = valorCrudo;
+  if (tipo === 'numero') valor = valorCrudo === '' ? null : Number(valorCrudo);
+  if (tipo === 'fecha_hora') valor = valorCrudo;
+  if (!await otdChkTomarLock(tid)) return;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/respuesta`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ valor, version: t.version || 0 })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 409){
+      ilusToast('Otro técnico modificó esta tarea. Recarga la página.', {type:'warning'});
+      return;
+    }
+    if (r.status === 404){
+      ilusToast('El checklist de este equipo cambió — recarga la página.', {type:'warning'});
+      return;
+    }
+    if (!r.ok || !d.ok){
+      ilusToast('Error: ' + (d.error || '?'), {type:'error'});
+      return;
+    }
+    t.completada = d.completada;
+    t.valor_json = d.valor_norm;
+    if (typeof d.version === 'number') t.version = d.version;
+    if (d.warning) ilusToast(d.warning, {type:'warning'});
+    else if (d.completada) ilusToast('✓ Guardado', {type:'success', duration:1200});
+    otdRenderChecklistEquipo(mid);
+  } catch(e){
+    ilusToast('Error de red al guardar', {type:'error'});
+  }
+}
+
+function otdChkAbrirFoto(tid, mid){
+  const inp = document.getElementById(`otdChkFotoInp-${tid}`);
+  if (!inp) return;
+  try { inp.value = ''; } catch(e){}
+  inp.click();
+}
+
+async function otdChkSubirFoto(input, tid){
+  if (!input.files || !input.files[0]) return;
+  const found = otdChkFindTarea(tid);
+  if (!found) return;
+  const { t, mid } = found;
+  const file = input.files[0];
+  if (file.size > 20 * 1024 * 1024){
+    ilusToast(`Foto demasiado grande (${(file.size/(1024*1024)).toFixed(2)} MB). Máx 20 MB.`, {type:'warning'});
+    return;
+  }
+  const toastSub = ilusToast('Subiendo foto…', {type:'info', duration:6000});
+  try {
+    const fd = new FormData();
+    fd.append('foto', file);
+    fd.append('tipo_foto', 'general');
+    fd.append('tarea_id', String(tid));
+    if (t.maquina_id) fd.append('maquina_id', String(t.maquina_id));
+    const r = await fetch(`/mantenciones/api/visitas/${OTD_VID}/fotos/subir`, {method:'POST', body: fd});
+    const j = await r.json().catch(() => ({}));
+    if (toastSub && toastSub.close) toastSub.close();
+    if (!r.ok || !j.ok){
+      ilusToast((j && j.error) || 'No se pudo subir la foto.', {type:'error'});
+      return;
+    }
+    ilusToast('✓ Foto subida', {type:'success'});
+    const fo = (j.fotos && j.fotos[0]) || { id: null, url: j.url };
+    t.fotos = t.fotos || [];
+    if (fo.url) t.fotos.push({ id: fo.id, url: fo.url });
+    otdRenderChecklistEquipo(mid);
+  } catch(e){
+    if (toastSub && toastSub.close) toastSub.close();
+    ilusToast('Error de red al subir la foto.', {type:'error'});
+  }
+}
+
+/* Dispara la carga la primera vez que se abre la pestaña Trabajo -- no
+   antes, para no pagar esta consulta en cada apertura de la OT cuando
+   gestión solo mira Información. */
+document.addEventListener('DOMContentLoaded', () => {
+  const tabs = document.getElementById('otdTabs');
+  if (!tabs) return;
+  tabs.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.otd-tab');
+    if (btn && btn.dataset.tab === 'trabajo') otdCargarChecklistSiHaceFalta();
+  });
+});
 </script>
 
 <script>

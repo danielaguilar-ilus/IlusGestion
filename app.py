@@ -76015,26 +76015,23 @@ def ot2_detalle(vid):
             f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
         f["cuando"] = chile_fmt_filter(f.get("tomada_at"), "%d/%m %H:%M") if f.get("tomada_at") else ""
 
-    # ── Documentos — pestaña nueva: el Anexo de Servicios del proveedor
-    # vive aquí, visible SOLO para gestión (nunca técnico — regla explícita
-    # del Anexo, Capa 6.2). El query ya se salta por completo para técnico
-    # (queda `anexo=None`); el template AL MENOS repite el gate con
-    # `not es_tecnico` (2026-08-27, pedido explícito de Daniel) por el
-    # mismo motivo que la card Cobro: que la condición sea legible ahí
-    # mismo, sin depender de que quien lea el template sepa que el dato
-    # nunca llegó. Daniel fue explícito en que este gate NO debe ser más
-    # estricto que "no técnico": los jefes (admin/supervisor/ejecutivo)
-    # firman este mismo anexo, así que conservan acceso sin fricción.
-    anexo = None
-    _u_det = getattr(g, "user", None) or {}
-    _role_det = _rol_familia((_u_det.get("role") or "").lower())
-    if _role_det != "tecnico":
-        anexo = mysql_fetchone(
-            "SELECT id, numero, estado, proveedor_nombre, firmante_nombre, "
-            "       firmado_at, enviado_at "
-            "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1",
-            (vid,)
-        )
+    # ── Documentos — pestaña "Anexo de Servicios" del proveedor. ─────────
+    # 🔓 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del técnico:
+    # "que se vea el anexo en la otra parte"): hasta hoy este query se
+    # SALTABA por completo para técnico (quedaba `anexo=None` sin ni
+    # siquiera intentar leerlo) -- ahora se lee para TODOS los roles. Lo
+    # que sigue siendo exclusivo de gestión es CREAR/ENVIAR/REEMPLAZAR el
+    # anexo (esos botones siguen detrás de `{% if not es_tecnico %}` en el
+    # template, sin cambios). El SELECT nunca trajo montos/costos del
+    # proveedor -- solo numero/estado/firmante/fechas -- así que mostrarlo
+    # al técnico no expone ninguna cifra: solo le confirma si el proveedor
+    # YA puede trabajar esta OT (anexo firmado) o todavía no.
+    anexo = mysql_fetchone(
+        "SELECT id, numero, estado, proveedor_nombre, firmante_nombre, "
+        "       firmado_at, enviado_at "
+        "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1",
+        (vid,)
+    )
 
     return render_template(
         "ot2/detalle.html",
@@ -86705,6 +86702,114 @@ def mant_visita_tareas_locks(vid):
         "estado": est.get("estado"),
         "firma_cliente": bool(est.get("firma_cliente_url")),
     })
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 2026-08-30 (Daniel — feedback fuerte sobre la experiencia del TÉCNICO
+# en OT 2.0): "termina llevando a la OT normal, entonces no tiene ningún
+# sentido". Hasta hoy la pestaña "Trabajo" de ot2/detalle.html era de
+# SOLO LECTURA -- marcar el checklist obligaba a saltar a
+# /mantenciones/ot/<id>/ejecutar (la pantalla vieja, compartida con las
+# OT normales). Este endpoint es la LECTURA que le faltaba a esa pestaña
+# para poder responder tareas sin salir: agrupa por equipo→plantilla,
+# MISMO criterio/columnas que ya arma `mant_ot_ejecutar` para
+# `plantillas_por_maquina` (ver app.py ~82499), copiado a propósito (no
+# refactorizado en una función compartida) para no arriesgar la pantalla
+# que los técnicos usan HOY con datos reales -- este es un endpoint
+# nuevo y aislado, cero riesgo para /ejecutar.
+# Las ESCRITURAS (marcar/responder/bloquear tarea, subir foto) NO se
+# duplican: el frontend de esta pestaña llama a los MISMOS endpoints que
+# ya usa mantenciones_ot_ejecutar.js (/tareas/<tid>/respuesta, PATCH
+# /tareas/<tid>, /tareas/<tid>/lock, /fotos/subir) -- toda la validación
+# de negocio (obligatoriedad, rangos, GPS, target_field→ficha) sigue
+# viviendo en UN solo lugar.
+# ═════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/visitas/<int:vid>/checklist", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def mant_visita_checklist_get(vid):
+    """Checklist completo de la OT, agrupado por equipo→plantilla, para la
+    pestaña "Trabajo" de OT 2.0 (ot2/detalle.html). Solo lectura: las
+    respuestas se guardan con los endpoints ya existentes de ejecución."""
+    u = getattr(g, "user", None) or {}
+    es_superadmin = (_rol_familia((u.get("role") or "").lower()) == "superadmin")
+    tareas = mysql_fetchall(
+        "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, t.descripcion, "
+        "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, t.target_field, "
+        "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
+        "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
+        "       t.version, t.locked_by_user_id, t.locked_at, "
+        "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre "
+        "  FROM mant_visita_tareas t "
+        "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
+        " WHERE t.visita_id=%s "
+        " ORDER BY t.maquina_id, t.plantilla_id, t.orden, t.id",
+        (vid,)
+    ) or []
+    tareas = [dict(t) for t in tareas]
+    for t in tareas:
+        t["version"] = int(t.get("version") or 0)
+        if t.get("locked_at"):
+            t["locked_at"] = str(t["locked_at"])[:19]
+        if t.get("completada_at"):
+            t["completada_at"] = str(t["completada_at"])[:19]
+        # 🔧 valor_json llega de MySQL como STRING crudo (columna TEXT), no
+        # como objeto -- mismo patrón que mant_visita_tarea_respuesta
+        # (app.py ~86227). Sin este parseo, el frontend recibiría
+        # "{\"valor\":\"si\"}" en vez de {valor:"si"} y t.valor_json.valor
+        # rompería en silencio (undefined) para toda tarea ya respondida.
+        if isinstance(t.get("valor_json"), str):
+            try:
+                t["valor_json"] = json.loads(t["valor_json"])
+            except Exception:
+                t["valor_json"] = None
+        # 🔒 Mismo criterio de privacidad que mant_ot_ejecutar (2026-08-30):
+        # quién completó cada tarea es dato de auditoría, no viaja al
+        # técnico ni con DevTools.
+        if not es_superadmin:
+            t.pop("completada_por", None)
+
+    fotos_por_tarea = {}
+    try:
+        _fr = mysql_fetchall(
+            "SELECT id, tarea_id, cloudinary_url, archivo_path "
+            "  FROM mant_visita_fotos WHERE visita_id=%s AND tarea_id IS NOT NULL",
+            (vid,)
+        ) or []
+        for f in _fr:
+            url = f.get("cloudinary_url") or (
+                f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
+            if url:
+                fotos_por_tarea.setdefault(f["tarea_id"], []).append(
+                    {"id": f["id"], "url": url})
+    except Exception as _e_fpt:
+        print(f"[checklist_get] fotos_por_tarea vid={vid}: {_e_fpt}", flush=True)
+    for t in tareas:
+        t["fotos"] = fotos_por_tarea.get(t["id"], [])
+
+    grupos = []
+    grupo_idx = {}
+    for t in tareas:
+        mid = t.get("maquina_id") or 0
+        pid = t.get("plantilla_id") or 0
+        key = (mid, pid)
+        if key not in grupo_idx:
+            grupo_idx[key] = len(grupos)
+            grupos.append({
+                "maquina_id": mid, "plantilla_id": pid,
+                "plantilla_nombre": t.get("plantilla_nombre") or "Tareas manuales",
+                "tareas": [],
+            })
+        grupos[grupo_idx[key]]["tareas"].append(t)
+    for grp in grupos:
+        grp["total"] = len(grp["tareas"])
+        grp["completas"] = sum(1 for x in grp["tareas"] if x.get("completada"))
+
+    por_maquina = {}
+    for grp in grupos:
+        por_maquina.setdefault(str(grp["maquina_id"]), []).append(grp)
+
+    return jsonify({"ok": True, "plantillas_por_maquina": por_maquina})
 
 
 # ═════════════════════════════════════════════════════════════════════
