@@ -1307,11 +1307,21 @@
               </span>
             </td>
             <td style="text-align:center;vertical-align:middle">
+              {# 2026-08-30 (Daniel: "bloquéala para los técnicos por el
+                 front... colócalo en Usuarios y Roles"): antes se ocultaba
+                 con is_tecnico (comparación de rol EXACTA, dejaba pasar a
+                 tecnico_externo/tecnico_jr). Ahora usa es_tecnico
+                 (normalizado por _rol_familia, mismo criterio que el
+                 backend) MÁS el permiso granular cat_clasificacion -- si
+                 Daniel alguna vez le abre esta excepción a un técnico
+                 puntual desde /admin/roles, el control deja de estar
+                 deshabilitado sin necesitar otro deploy. Ver
+                 _requiere_permiso_clasificacion en app.py. #}
               <div class="form-check form-switch d-flex justify-content-center mb-0 p-0">
                 <input class="form-check-input eq-plan-sw" type="checkbox" role="switch"
                        id="swPlan-{{ m.id }}"
                        {% if _apl_row %}checked{% endif %}
-                       {% if not is_tecnico %}onchange="eqToggleMantencion({{ m.id }}, this)"{% else %}disabled{% endif %}
+                       {% if not es_tecnico or permissions.cat_clasificacion %}onchange="eqToggleMantencion({{ m.id }}, this)"{% else %}disabled{% endif %}
                        title="{{ 'En plan — click para excluir' if _apl_row else 'Sin mantención — click para incluir' }}">
               </div>
             </td>

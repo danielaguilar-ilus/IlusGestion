@@ -4414,6 +4414,27 @@ PERMS_KEYS = (
     # en False para todos los roles hasta que Daniel lo prenda por rol desde
     # /admin/roles; superadmin siempre puede vía el OR del gate real.
     "cotiz_eliminar_item",
+    # cat_clasificacion — permiso NOMBRADO para administrar la CLASIFICACIÓN
+    # de producto (aditivo 2026-08-30, Daniel: "en SSTT siempre debe regir
+    # esa clasificación y bloquéala para los técnicos por el front... quién
+    # puede ver este módulo, colócalo en Usuarios y Roles"). Antes vivía
+    # SOLO en decoradores hardcodeados que un programador tenía que tocar:
+    #   1) Crear/editar categorías de cat_clases_producto y sus tarifas
+    #      (antes: superadmin a secas, vía _catalogo_admin_required en
+    #      catalogo_module.py -- ahora _catalogo_clasificacion_required
+    #      acepta superadmin O este flag).
+    #   2) Decidir si un equipo puntual entra al plan de mantención (antes:
+    #      cualquier rol NO técnico, vía @_no_tecnico en
+    #      mant_maquina_aplica_mantencion -- ahora @_requiere_permiso_
+    #      clasificacion, que delega en _puede_gestionar_clasificacion()).
+    # Puramente aditivo en ambos puntos: los roles de gestión (no técnicos)
+    # y superadmin SIEMPRE pasan igual que antes -- este flag solo puede
+    # ABRIR una excepción puntual a un técnico (mismo espíritu que
+    # mant_ot_interna / caso Jaizer), nunca QUITAR acceso que alguien ya
+    # tenía. Nace en True para admin/superadmin (ver _ensure_permiso_cat_
+    # clasificacion_default) y en False para el resto hasta que Daniel lo
+    # prenda desde /admin/roles.
+    "cat_clasificacion",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4438,7 +4459,12 @@ def _legacy_permission_set(role):
                 # Backfill opcional aditivo (2026-07-12): admin ya entraba a
                 # Tickets vía "mantenciones" — esto solo refleja ese acceso
                 # real en los flags nuevos, no otorga nada extra.
-                "tk_ver": True, "tk_es_ejecutivo": True}
+                "tk_ver": True, "tk_es_ejecutivo": True,
+                # cat_clasificacion (2026-08-30): default-seguro para el
+                # fallback SIN filas en rol_permisos -- ver PERMS_KEYS y
+                # _ensure_permiso_cat_clasificacion_default (que siembra lo
+                # mismo en la matriz cuando admin SÍ tiene filas editadas).
+                "cat_clasificacion": True}
     if role == "ejecutivo":
         # Ejecutivo de mantenciones — accede SOLO al módulo de mantenciones.
         # Sin view/etiquetas/print legacy (esos abrían el catálogo de productos).
@@ -4561,6 +4587,10 @@ def _build_perms_from_matrix(role):
     # catalogo_module.py) sigue aceptando "superadmin" también vía OR.
     base["cat_eliminar"]  = bool(cat.get("eliminar"))
     base["cat_manual_descargar"] = bool(cat.get("descargar_manual"))
+    # cat_clasificacion (aditivo 2026-08-30) -- ver comentario junto a
+    # "cat_clasificacion" en PERMS_KEYS. Gobierna crear/editar categorías de
+    # cat_clases_producto Y el toggle "aplica al plan de mantención" por equipo.
+    base["cat_clasificacion"] = bool(cat.get("clasificacion"))
     base["tr_eliminar"]   = bool(tra.get("eliminar"))
     base["cotiz_eliminar_item"] = bool(man.get("cotizaciones_eliminar_item"))
 
@@ -12426,8 +12456,12 @@ PERMISSIONS_MATRIX = {
     # descargar_manual — aditivo 2026-08-25 (ver comentario junto a
     # cat_manual_descargar en PERMS_KEYS). Ver el manual en pantalla NO
     # pasa por esta matriz, sigue abierto a todo _catalogo_required.
+    # clasificacion — aditivo 2026-08-30 (ver comentario junto a
+    # cat_clasificacion en PERMS_KEYS). Antes /catalogo/clases y el toggle
+    # de plan por equipo vivían en decoradores hardcodeados; ahora Daniel
+    # decide quién más (aparte de superadmin/admin) puede tocarlos desde acá.
     "catalogo":       {"label":"Catálogo de Productos", "icon":"bi-box-seam",
-                       "acciones":["eliminar", "descargar_manual"]},
+                       "acciones":["eliminar", "descargar_manual", "clasificacion"]},
 }
 
 # Metadata UI de cada acción — Daniel 2026-06-03: la matriz se reorganiza en
@@ -12492,6 +12526,8 @@ PERMISSIONS_META = {
     "catalogo": {
         "eliminar": {"label": "Eliminar producto (archivar)", "tipo": "bloqueo", "icon": "bi-trash"},
         "descargar_manual": {"label": "Descargar manuales (PDF)", "tipo": "bloqueo", "icon": "bi-download"},
+        "clasificacion": {"label": "Editar clasificación de productos (categorías y plan de mantención)",
+                           "tipo": "bloqueo", "icon": "bi-diagram-3"},
     },
 }
 
@@ -50675,6 +50711,75 @@ def _no_tecnico(view):
     return wrapped
 
 
+def _puede_gestionar_clasificacion(user=None):
+    """¿Puede este usuario administrar la CLASIFICACIÓN de producto?
+
+    Cubre el punto que hoy vive en @_no_tecnico dentro de
+    mant_maquina_aplica_mantencion (decide si un equipo puntual entra al
+    plan de mantención y por lo tanto se cotiza). El otro punto (crear/
+    editar categorías de cat_clases_producto en catalogo_module.py) usa su
+    propio gate _catalogo_clasificacion_required, más estricto (superadmin
+    O este mismo flag) porque ahí el default histórico era superadmin a
+    secas, no "cualquier no técnico".
+
+    Pedido de Daniel (2026-08-30): "en SSTT siempre debe regir esa
+    clasificación y bloquéala para los técnicos por el front... colócalo en
+    Usuarios y Roles" -- quiere un permiso NOMBRADO y asignable, no un
+    decorador que solo un programador puede tocar.
+
+    MISMO patrón que _puede_crear_ot_interna(): los roles de gestión (no
+    técnicos) SIEMPRE pasan -- así nadie que ya podía hacer esto lo pierde
+    (Regla #4.2). Un técnico pasa SOLO si tiene marcado, en /admin/roles,
+    Catálogo de Productos → "Editar clasificación de productos" (flag
+    g.permissions['cat_clasificacion']). Nace en False para todo técnico
+    hasta que Daniel decida abrir una excepción puntual (mismo espíritu que
+    el caso Jaizer / mant_ot_interna) -- hoy nadie pierde acceso, y el día
+    anterior (2026-08-29) Daniel ya sacó a propósito el botón equivalente
+    del flujo de ejecución de OT para que el técnico NO decida esto en
+    terreno; este flag no reabre esa puerta por sí solo, solo la deja
+    configurable.
+    """
+    if not _es_rol_tecnico(user):
+        return True          # gestión (admin/supervisor/ejecutivo/superadmin)
+    try:
+        perms = getattr(g, "permissions", None) or {}
+        return bool(perms.get("cat_clasificacion"))
+    except Exception:
+        return False          # fail-closed: ante la duda, no deja editar
+
+
+def _requiere_permiso_clasificacion(view):
+    """Decorador: exige _puede_gestionar_clasificacion() para entrar.
+
+    Reemplaza a @_no_tecnico en mant_maquina_aplica_mantencion (2026-08-30).
+    Comportamiento IDÉNTICO a @_no_tecnico para cualquier rol de gestión
+    (siempre pasa, nunca se restringió nada); la única diferencia real es
+    que un técnico deja de estar bloqueado a fuego -- pasa si Daniel le
+    activó 'cat_clasificacion' desde /admin/roles. Mismo formato de
+    respuesta (403 JSON en AJAX / flash+redirect en GET) que @_no_tecnico,
+    para no romper ningún caller existente."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not _puede_gestionar_clasificacion():
+            is_ajax = (
+                request.headers.get("X-Wizard") == "1"
+                or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                or (request.headers.get("Accept") or "").startswith("application/json")
+                or request.is_json
+                or request.path.startswith("/mantenciones/api/")
+            )
+            if is_ajax:
+                return jsonify({
+                    "ok": False,
+                    "error": "No tienes permiso para editar la clasificación de este equipo.",
+                    "error_codigo": "SIN_PERMISO_CLASIFICACION",
+                }), 403
+            flash("No tienes permiso para editar la clasificación de este equipo.", "warning")
+            return redirect(url_for("mant_ots_list"))
+        return view(*args, **kwargs)
+    return wrapped
+
+
 # ═════════════════════════════════════════════════════════════════════
 # 🔐 MATRIZ DE PERMISOS POR ACCIÓN — OT (2026-05-18)
 # ─────────────────────────────────────────────────────────────────────
@@ -74204,8 +74309,14 @@ def mant_cliente_maquinas_list(cid):
 
 @app.route("/mantenciones/api/maquinas/<int:mid>/aplica-mantencion", methods=["PUT"])
 @_mant_required
-@_no_tecnico   # 2026-08-09: define si el equipo entra al plan de mantención
-               # (y por lo tanto se cotiza). Decisión de gestión, no de terreno.
+@_requiere_permiso_clasificacion
+# 2026-08-09: define si el equipo entra al plan de mantención (y por lo
+# tanto se cotiza). Decisión de gestión, no de terreno -- por default sigue
+# bloqueado para CUALQUIER técnico, igual que con el decorador anterior (ver
+# _puede_gestionar_clasificacion). 2026-08-30: este gate reemplazó al
+# bloqueo plano por rol para que Daniel pueda, si alguna vez lo necesita,
+# abrir una excepción puntual a un técnico desde /admin/roles (permiso
+# "cat_clasificacion", Catálogo de Productos) sin depender de un deploy.
 def mant_maquina_aplica_mantencion(mid):
     """Marca si al equipo se le realiza mantención (SÍ/NO). Sirve para segregar
     accesorios/productos que no requieren seguimiento ni se cotizan como mantención."""
@@ -111371,6 +111482,38 @@ try:
         _ensure_mant_horometro_tables()
 except Exception as _ensure_horo_err:
     print(f"[ILUS][WARN] _ensure_mant_horometro_tables: {_ensure_horo_err}", flush=True)
+
+
+def _ensure_permiso_cat_clasificacion_default():
+    """Default-seguro (Regla #4.2, aditivo) del permiso 'cat_clasificacion'
+    (2026-08-30, ver PERMS_KEYS) para el rol 'admin' en la matriz dinámica.
+
+    superadmin NO necesita fila acá: permission_set() ya le da TODOS los
+    PERMS_KEYS en True sin mirar rol_permisos. Pero admin SÍ pasa por
+    _build_perms_from_matrix() en cuanto tiene una sola fila editada en
+    /admin/roles (caso real de producción -- Daniel administra roles activamente),
+    y sin este seed el flag nacería en False para admin, cerrándole de golpe
+    /catalogo/clases (antes exclusivo de superadmin, ver
+    _catalogo_clasificacion_required) -- no es que admin "perdiera" ese
+    acceso (nunca lo tuvo), pero SÍ perdería lo que _legacy_permission_set
+    ya le da por defecto en el fallback sin filas. INSERT IGNORE -> si Daniel
+    ya tocó este permiso a mano desde /admin/roles, su valor manda siempre.
+    SIEMPRE corre, incluso con ILUS_SKIP_MIGRATIONS=1 (mismo patrón que el
+    resto de _ensure_*, ver CLAUDE.md)."""
+    try:
+        mysql_execute(
+            "INSERT IGNORE INTO rol_permisos (rol_slug,modulo,accion,permitido) "
+            "VALUES ('admin','catalogo','clasificacion',1)"
+        )
+    except Exception as e:
+        print(f"[ILUS][WARN] _ensure_permiso_cat_clasificacion_default: {e}", flush=True)
+
+
+try:
+    with app.app_context():
+        _ensure_permiso_cat_clasificacion_default()
+except Exception as _ensure_catcla_err:
+    print(f"[ILUS][WARN] _ensure_permiso_cat_clasificacion_default (fuera de contexto): {_ensure_catcla_err}", flush=True)
 
 # Plantilla editable 'plan_propuesto' (mantenciones/email) SIEMPRE sembrada
 # (incluso skip-migrations) — la usa /mantenciones/api/clientes/<cid>/proponer-plan-email.

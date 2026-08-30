@@ -18,15 +18,23 @@
        #4.2) -- el modal manual #catnModal y el endpoint de sync masivo
        (/catalogo/api/sync-erp) NO se borraron, solo quedan sin botón que
        los abra desde acá. #}
+    {# 2026-08-30 (Daniel: "bloquéala para los técnicos por el front...
+       colócalo en Usuarios y Roles"): antes este link vivía bajo el mismo
+       "solo superadmin" que "Fotos desde ecommerce" -- ahora tiene su
+       propio gate (permiso granular cat_clasificacion, ver
+       _catalogo_clasificacion_required en catalogo_module.py) para que
+       Daniel pueda abrirlo a otros roles sin tocar código. #}
+    {% if permissions.superadmin or permissions.cat_clasificacion %}
+    <a class="btn btn-ilus-outline" href="{{ url_for('cat_clases_page') }}"
+       title="Editar categorías de producto y sus horas de instalación/mantención">
+      <i class="bi bi-tags me-1"></i>Categorías</a>
+    {% endif %}
     {# 2026-07-14 (Daniel: "tráelos automáticos y déjalo vacío si da error"):
        backfill de fotos desde la tienda ilusfitness.com para los productos
        que aún no tienen ninguna. Solo superadmin (el backend igual lo
        gatea con _catalogo_admin_required). Botón secundario/outline a
        propósito — el CTA principal sigue siendo el rojo. #}
     {% if permissions.superadmin %}
-    <a class="btn btn-ilus-outline" href="{{ url_for('cat_clases_page') }}"
-       title="Editar categorías de producto y sus horas de instalación/mantención">
-      <i class="bi bi-tags me-1"></i>Categorías</a>
     <button class="btn btn-ilus-outline" id="btnFotosEcom" type="button"
             title="Buscar en ilusfitness.com la foto de cada producto sin foto (match por SKU)">
       <i class="bi bi-images me-1"></i>Fotos desde ecommerce</button>

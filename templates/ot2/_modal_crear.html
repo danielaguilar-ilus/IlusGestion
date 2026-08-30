@@ -713,6 +713,16 @@ window.OT2C = (function(){
   ];
 
   var S = {};   // estado del formulario
+
+  // Permiso "quién puede tocar el plan de mantención de un equipo" (2026-08-30,
+  // Daniel: "bloquéala para los técnicos por el front... colócalo en Usuarios
+  // y Roles"). Mismo criterio que el backend real (_puede_gestionar_
+  // clasificacion en app.py): cualquier rol de gestión SIEMPRE puede; un
+  // técnico solo si tiene activado el permiso granular cat_clasificacion.
+  // Por default nadie pierde nada -- hoy este botón se dibujaba SIN gate
+  // alguno (ni is_tecnico ni es_tecnico), así que un técnico lo veía activo
+  // y el backend lo rechazaba en silencio.
+  var O2M_PUEDE_TOGGLE_PLAN = {{ (not es_tecnico or permissions.cat_clasificacion) | tojson }};
   var fase = 'origen';   // 'origen' → pantalla de origen. 'form' → formulario único con scroll.
   // Qué pasos ya estaban "listos" la última vez que se pintaron las anclas
   // -- para que el pulso verde de la tarjeta (.o2m-step-circle.pulse) se
@@ -2738,9 +2748,14 @@ window.OT2C = (function(){
               (!enPlan ? ' <span class="o2m-eq-noplan">(sin mantención)</span>' : '')+'</span>'+
               (m.sku ? '<span class="sku">'+esc(m.sku)+'</span>' : '')+
               (m.serie ? '<span class="sku">S/N: '+esc(m.serie)+'</span>' : '')+'</td>'+
-            '<td class="plan"><button type="button" class="o2m-eq-plan-btn'+(enPlan?' on':'')+'" '+
-              'title="'+(enPlan?'Quitar del plan de mantención de este cliente':'Agregar al plan de mantención de este cliente')+'" '+
-              'onclick="OT2C.eqTogPlan('+m.id+')"><i class="bi '+(enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></button></td>'+
+            '<td class="plan">'+(O2M_PUEDE_TOGGLE_PLAN
+              ? '<button type="button" class="o2m-eq-plan-btn'+(enPlan?' on':'')+'" '+
+                'title="'+(enPlan?'Quitar del plan de mantención de este cliente':'Agregar al plan de mantención de este cliente')+'" '+
+                'onclick="OT2C.eqTogPlan('+m.id+')"><i class="bi '+(enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></button>'
+              : '<span class="o2m-eq-plan-btn" style="opacity:.4;cursor:not-allowed" '+
+                'title="Solo gestión puede modificar el plan de mantención"><i class="bi '+
+                (enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></span>'
+            )+'</td>'+
             '<td>'+(sel
               ? '<div class="o2m-combo">'+
                   '<input type="text" class="form-control form-control-sm o2m-combo-input" '+

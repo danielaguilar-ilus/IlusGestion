@@ -41,13 +41,22 @@
        2026-07-23 (2, Daniel: "el botón de clasificación está mal"): tenía
        color:#374151 (gris oscuro) sobre el hero negro -- se veía como
        DESHABILITADO. Ahora blanco con borde translúcido, mismo lenguaje
-       que el botón oscuro de Usuarios y roles. #}
+       que el botón oscuro de Usuarios y roles.
+       2026-08-30 (Daniel: "bloquéala para los técnicos por el front"): este
+       botón se veía IGUAL para cualquiera que entrara a Cotizaciones
+       (incluido un técnico, que llega por su permiso "mantenciones") aunque
+       el backend lo rechazara -- confuso ("¿por qué no me deja?"). Ahora se
+       oculta salvo que tenga permiso real (superadmin siempre, o el flag
+       granular cat_clasificacion desde /admin/roles). Ver
+       _catalogo_clasificacion_required en catalogo_module.py. #}
+    {% if permissions.superadmin or permissions.cat_clasificacion %}
     <a href="{{ url_for('cat_clases_page') }}" class="btn btn-lg"
        style="border:1.5px solid rgba(255,255,255,.45);color:#fff;background:transparent;font-weight:700;border-radius:10px;"
        title="Categorías y tarifas de productos"
        onmouseover="this.style.background='rgba(255,255,255,.12)'" onmouseout="this.style.background='transparent'">
       <i class="bi bi-tags-fill me-1"></i>Clasificación
     </a>
+    {% endif %}
     {# 2026-07-30 (Daniel: "vendedores externos no debe vivir en el menú...
        debe estar como una opción en los cotizadores, estoy tratando de
        reducir el menú") -- se saca el link del sidebar (base.html) y se
