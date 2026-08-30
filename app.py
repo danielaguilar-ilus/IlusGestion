@@ -98402,6 +98402,112 @@ def mant_cliente_evidencias(cid):
     })
 
 
+# ══════════════════════════════════════════════════════════════════════
+# TAB "COTIZACIONES" DE LA FICHA — 2026-08-30 (Daniel, dictado: "la ficha
+# del cliente debe ser un HUB de trazabilidad completo... productos, OT,
+# visitas, fechas, fotos, responsables, todo").
+#
+# La ficha ya tenía un hook de ESCRITURA hacia Cotizaciones (botón
+# "Generar cotización" que abre /tickets/cotizaciones?desde_cliente=<cid>,
+# PR-5 2026-07-23) pero nunca leía de vuelta el historial: si a este
+# cliente ya le habían cotizado algo desde el módulo Tickets, la ficha no
+# lo mostraba en ningún lado. Este endpoint cierra ese loop.
+#
+# tk_cotizaciones vive en MySQL igual que mant_clientes, pero es una
+# tabla de OTRO módulo (Tickets/Cotizador) sin FK a mant_clientes — el
+# único cruce posible es por RUT, y los RUT llegan con formato
+# inconsistente entre ambos módulos (con/sin puntos, con/sin dígito
+# verificador). Por eso NO se compara con `=` en SQL: se usa
+# `_rut_cuerpo()` (mismo criterio ya usado en tickets_module.py para
+# resolver cliente_id desde un ticket, línea ~7262) para comparar solo el
+# cuerpo del RUT en Python, sobre un lote acotado (LIMIT 3000 — muy por
+# encima del volumen real de tk_cotizaciones hoy).
+# ══════════════════════════════════════════════════════════════════════
+@app.route("/mantenciones/api/clientes/<int:cid>/cotizaciones", methods=["GET"])
+@_mant_required
+def mant_cliente_cotizaciones(cid):
+    """Historial de cotizaciones (tk_cotizaciones, módulo Cotizador de
+    Tickets) generadas para este cliente, cruzadas por cuerpo de RUT.
+
+    Paginado server-side (REGLA #4.3 — "toda tabla se pagina como
+    Etiquetas"): ?page=N&per_page=M (default 1 / 20, tope 100).
+    """
+    cliente = mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cid,))
+    if not cliente:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page", 20))
+    except (TypeError, ValueError):
+        per_page = 20
+    per_page = min(max(per_page, 5), 100)
+
+    rut_cuerpo_cliente = _rut_cuerpo(cliente.get("rut"))
+    if not rut_cuerpo_cliente:
+        # Cliente sin RUT registrado: no hay con qué cruzar. No es un error,
+        # es simplemente "sin cotizaciones que mostrar".
+        return jsonify({
+            "ok": True, "cotizaciones": [], "total": 0,
+            "page": 1, "per_page": per_page, "total_pages": 1,
+            "sin_rut": True,
+        })
+
+    rows = mysql_fetchall(
+        "SELECT c.id, c.numero_cotizacion, c.estado, c.empresa, c.rut, c.total, "
+        "       c.created_at, c.valida_hasta, c.ticket_id, tk.numero_ticket "
+        "  FROM tk_cotizaciones c "
+        "  LEFT JOIN tk_tickets tk ON tk.id = c.ticket_id "
+        " WHERE COALESCE(c.eliminada,0)=0 "
+        "   AND c.rut IS NOT NULL AND c.rut <> '' "
+        " ORDER BY c.created_at DESC "
+        " LIMIT 3000"
+    ) or []
+
+    matched = [r for r in rows if _rut_cuerpo(r.get("rut")) == rut_cuerpo_cliente]
+    matched.sort(key=lambda r: r.get("created_at") or datetime.min, reverse=True)
+
+    total = len(matched)
+    total_pages = max(1, -(-total // per_page))  # ceil sin importar math
+    page = min(page, total_pages)
+    start = (page - 1) * per_page
+    pagina = matched[start:start + per_page]
+
+    hoy = datetime.now().date()
+    cotizaciones = []
+    for r in pagina:
+        vh = r.get("valida_hasta")
+        vh_date = vh.date() if hasattr(vh, "date") else vh
+        vencida = bool(vh_date and vh_date < hoy and r.get("estado") in ("draft", "sent"))
+        cotizaciones.append({
+            "id": r["id"],
+            "numero_cotizacion": r.get("numero_cotizacion") or f"#{r['id']}",
+            "estado": r.get("estado") or "draft",
+            "vencida": vencida,
+            "empresa": r.get("empresa") or "",
+            "total": int(r.get("total") or 0),
+            # Formateadas a hora Chile EN EL BACKEND (REGLA #6) — el JSON
+            # nunca lleva un timestamp crudo que el frontend deba reinterpretar.
+            "fecha_fmt": chile_fmt_filter(r.get("created_at"), "%d/%m/%Y %H:%M") if r.get("created_at") else "—",
+            "valida_hasta_fmt": vh_date.strftime("%d/%m/%Y") if vh_date else None,
+            "ticket_id": r.get("ticket_id"),
+            "numero_ticket": r.get("numero_ticket") or "",
+            "url_ver": url_for("tk_cotizacion_ver", cid=r["id"]),
+        })
+
+    return jsonify({
+        "ok": True,
+        "cotizaciones": cotizaciones,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    })
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/documentos", methods=["POST"])
 @_mant_required
 def mant_cliente_documento_subir(cid):
