@@ -2457,6 +2457,7 @@ window.OT2C = (function(){
     S.fecha = fecha;
     o2mCalSelDia(fecha, {silencio:true});
     refrescarAnclas();
+    _o2mAnexoSincronizarFechas();
   }
   async function o2mDaySugerirHueco(){
     var btn = document.getElementById('o2mDaySugerirBtn');
@@ -4179,9 +4180,9 @@ window.OT2C = (function(){
         // encima podía verse vacía/"inválida" si el usuario llenó el Anexo
         // antes de pasar por Agenda.
         '<div class="col-md-6"><label class="fl">Fecha inicio</label>'+
-        '<input class="form-control" value="'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda')+'" disabled></div>'+
+        '<input class="form-control" id="o2mAnexoFechaIni" value="'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda')+'" disabled></div>'+
         '<div class="col-md-6"><label class="fl">Fecha término</label>'+
-        '<input class="form-control" value="'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda')+'" disabled></div>'+
+        '<input class="form-control" id="o2mAnexoFechaFin" value="'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda')+'" disabled></div>'+
       '</div>'+
       '<div class="o2m-fin-desglose mt-3">'+
         (a.items.length
@@ -4894,8 +4895,25 @@ window.OT2C = (function(){
     var nudo = String(v||'').trim();
     S.doc_origen = nudo ? {tido:'NVI', nudo:nudo} : null;
   }
+  // 2026-08-30 (Daniel, en vivo: "ya se definió y no pasa nada!!!"): la
+  // sección "Anexo" se construye UNA vez (típicamente disparada por
+  // tecTog() al marcar un técnico externo, que en pasos() ocurre ANTES
+  // que Agenda) -- sus 2 campos de fecha (solo lectura, ver pintarAnexo)
+  // quedaban congelados con el valor de S.fecha de ESE momento, casi
+  // siempre vacío todavía. Nada volvía a tocarlos después, aunque el
+  // usuario completara Agenda más tarde. Este helper los actualiza en
+  // vivo sin repintar toda la sección (evita perder el foco de otros
+  // campos del Anexo si el usuario está escribiendo ahí a la vez).
+  function _o2mAnexoSincronizarFechas(){
+    var txt = S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda';
+    var i1 = document.getElementById('o2mAnexoFechaIni');
+    var i2 = document.getElementById('o2mAnexoFechaFin');
+    if (i1) i1.value = txt;
+    if (i2) i2.value = txt;
+  }
   function setFecha(v){
     S.fecha = v; avisosAgenda(); refrescarAnclas();
+    _o2mAnexoSincronizarFechas();
     // Mini-calendario del paso Agenda: sigue la fecha del input, tipeada a
     // mano o fijada por un clic en el propio calendario (o2mCalClicDia
     // dispara el 'change' de #o2mFecha, que termina llamando acá mismo --
