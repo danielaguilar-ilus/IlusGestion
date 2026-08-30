@@ -78850,6 +78850,77 @@ def ot2_api_anexo_pdf(aid):
                      headers={"Content-Disposition": f'inline; filename="{fname}"'})
 
 
+@app.route("/ot/api/anexos/preview-pdf", methods=["POST"])
+@_mant_required
+def ot2_api_anexo_preview_pdf():
+    """Vista previa del Anexo ANTES de crear la OT (Daniel, textual: "necesito
+    un visor en PDF de cómo va a quedar el documento... agrega un PDF al
+    paso diez"). El wizard todavía no tiene ot_id ni numero real en este
+    punto -- a diferencia de ot2_api_anexo_pdf (aid), esto NO toca
+    mant_anexos ni graba nada: solo renderiza la MISMA plantilla
+    (ot2/anexo_documento.html) con los datos que el usuario ya escribió en
+    el paso Anexo, para que vea el documento exacto que se generaría al
+    crear la OT. numero/fecha se muestran como placeholder porque todavía
+    no existen de verdad."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    d = request.get_json(silent=True) or {}
+    proveedor = (d.get("proveedor_nombre") or "").strip()[:200]
+    if not proveedor:
+        return _ot2_err("Falta el nombre del proveedor.", "PROVEEDOR_REQUERIDO")
+    objetivo = (d.get("objetivo_servicio") or "").strip()
+    if not objetivo:
+        return _ot2_err("Falta el objetivo del servicio.", "OBJETIVO_REQUERIDO")
+    items_in = d.get("precio_items") or []
+    try:
+        items = [{"concepto": str(it.get("concepto") or "")[:120],
+                  "monto": int(it.get("monto") or 0)} for it in (items_in if isinstance(items_in, list) else [])]
+    except (TypeError, ValueError):
+        items = []
+    # _anexo_fecha_d() espera un objeto date/datetime (columna DATE real de
+    # mant_anexos) -- acá todavía no existe fila en la tabla, así que las
+    # fechas llegan como texto ISO 'YYYY-MM-DD' desde el wizard (S.fecha).
+    # Se parsean a mano en vez de reusar ese helper sobre un string crudo
+    # (fallaría en silencio y mostraría "—" siempre).
+    def _iso_a_dmy(s):
+        try:
+            return datetime.strptime((s or "")[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            return "—"
+    payload = {
+        "numero": "(vista previa)",
+        "fecha": _now_chile_str("%d/%m/%Y"),
+        "proveedor_nombre": proveedor,
+        "proveedor_rut": (d.get("proveedor_rut") or "").strip()[:20],
+        "objetivo_servicio": objetivo,
+        "cliente_nombre": (d.get("cliente_nombre") or "").strip()[:200],
+        "precio_items": items,
+        "fecha_inicio": _iso_a_dmy(d.get("fecha_inicio")),
+        "fecha_termino": _iso_a_dmy(d.get("fecha_termino")),
+        "niveles_servicio": _ANEXO_NIVELES_DEFECTO,
+        "hitos_pago": _ANEXO_HITOS_DEFECTO,
+        "alcance_servicio": _ANEXO_ALCANCE_DEFECTO,
+    }
+    html = render_template(
+        "ot2/anexo_documento.html",
+        anexo=payload,
+        precio_txt=_anexo_precio_texto(payload.get("precio_items")),
+        firma=None,
+        generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
+        es_vista_previa=True,
+    )
+    try:
+        data = _pw_pdf(html, page_format="Letter",
+                        margin={"top": "18mm", "right": "20mm", "bottom": "18mm", "left": "20mm"})
+    except PDFEngineUnavailable as e:
+        return (f"Motor PDF no disponible: {e}", 503)
+    except Exception as e:
+        print(f"[anexo_preview_pdf] {e}", flush=True)
+        return ("No pudimos generar la vista previa del PDF.", 500)
+    return Response(data, mimetype="application/pdf",
+                     headers={"Content-Disposition": 'inline; filename="anexo-vista-previa.pdf"'})
+
+
 @app.route("/firmar-anexo/<token>", methods=["GET"])
 def ot2_anexo_firma_publica(token):
     """Página pública (sin login) donde el proveedor lee y firma el anexo."""

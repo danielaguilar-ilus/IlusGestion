@@ -4047,8 +4047,21 @@ window.OT2C = (function(){
         '<input class="form-control" value="'+esc(a.proveedor_nombre)+'" '+
         'oninput="OT2C.setAnexoCampo(\'proveedor_nombre\',this.value)"></div>'+
         '<div class="col-md-5"><label class="fl">RUT del proveedor</label>'+
-        '<input class="form-control" value="'+esc(a.proveedor_rut)+'" placeholder="Opcional" '+
-        'oninput="OT2C.setAnexoCampo(\'proveedor_rut\',this.value)"></div>'+
+        '<input class="form-control" id="o2mAnexoRut" value="'+esc(a.proveedor_rut)+'" placeholder="Opcional" '+
+        'oninput="OT2C.setAnexoCampo(\'proveedor_rut\',this.value); OT2C._o2mAnexoPintarRutEstado()" '+
+        'onblur="this.value = OT2C._o2mFormatearRutSiValido(this.value); OT2C.setAnexoCampo(\'proveedor_rut\',this.value); OT2C._o2mAnexoPintarRutEstado()">'+
+        // 2026-08-30 (Daniel: "necesito que el RUT verificador me
+        // compruebe el RUT en el anexo de contrato"): mismo validador
+        // (_o2mValidarRut) ya usado en el paso Contraparte -- opcional
+        // (vacío es válido), pero si se escribe algo, tiene que ser un
+        // RUT chileno real.
+        '<div id="o2mAnexoRutEstado" class="mt-1" style="font-size:.72rem">'+
+        (a.proveedor_rut.trim()
+          ? (_o2mValidarRut(a.proveedor_rut)
+              ? '<span style="color:#16a34a"><i class="bi bi-check-circle-fill me-1"></i>RUT válido.</span>'
+              : '<span style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>RUT chileno inválido.</span>')
+          : '')+
+        '</div></div>'+
         '<div class="col-12"><label class="fl">Objetivo del servicio *</label>'+
         '<textarea class="form-control" rows="2" maxlength="500" '+
         'oninput="OT2C.setAnexoCampo(\'objetivo_servicio\',this.value)">'+esc(a.objetivo_servicio)+'</textarea></div>'+
@@ -4071,6 +4084,8 @@ window.OT2C = (function(){
             '<div class="fila total"><span>Total del anexo</span><b>$'+Math.round(totalItems).toLocaleString('es-CL')+'</b></div>'
           : '<div class="fila"><span class="text-muted">Declara el costo del proveedor en Finanzas para que aparezca acá.</span></div>')+
       '</div>'+
+      '<button type="button" class="btn btn-outline-dark btn-sm mt-2" style="min-height:44px" onclick="OT2C.anexoVerPdfPreview()">'+
+      '<i class="bi bi-file-earmark-pdf-fill me-1"></i>Vista previa del PDF</button>'+
       '<label class="fl mt-3">Enviar para firma</label>'+
       '<div class="row g-2">'+
         '<div class="col-md-7"><input type="email" class="form-control" value="'+esc(a.email_destino)+'" '+
@@ -4086,6 +4101,47 @@ window.OT2C = (function(){
       '</div>';
   }
   function setAnexoCampo(k,v){ S.anexo[k] = v; refrescarAnclas(); }
+  // Actualiza SOLO el aviso de validez del RUT (sin repintar toda la
+  // sección -- perdería el foco mientras el usuario escribe). Mismo
+  // patrón que _o2mPintarCpValidacion (paso Contraparte).
+  function _o2mAnexoPintarRutEstado(){
+    var el = document.getElementById('o2mAnexoRutEstado'); if (!el) return;
+    var v = (S.anexo.proveedor_rut||'').trim();
+    el.innerHTML = !v ? '' : (_o2mValidarRut(v)
+      ? '<span style="color:#16a34a"><i class="bi bi-check-circle-fill me-1"></i>RUT válido.</span>'
+      : '<span style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>RUT chileno inválido.</span>');
+  }
+  /* 2026-08-30 (Daniel: "necesito un visor en PDF de cómo va a quedar el
+     documento... agrega un PDF al paso diez"): antes de crear la OT, el
+     Anexo todavía no tiene ot_id/numero real -- se usa un endpoint de
+     VISTA PREVIA aparte (POST /ot/api/anexos/preview-pdf) que renderiza
+     el MISMO documento sin grabar nada en mant_anexos. Requiere solo lo
+     mínimo que ese endpoint valida (proveedor + objetivo); si falta algo,
+     avisa en vez de pedir un PDF vacío. */
+  function anexoVerPdfPreview(){
+    var a = S.anexo;
+    if (!a.proveedor_nombre.trim() || !a.objetivo_servicio.trim()){
+      if (window.ilusToast) ilusToast('Completa proveedor y objetivo del servicio para ver la vista previa.', {type:'warning'});
+      return;
+    }
+    fetch('/ot/api/anexos/preview-pdf', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        proveedor_nombre: a.proveedor_nombre, proveedor_rut: a.proveedor_rut,
+        objetivo_servicio: a.objetivo_servicio, precio_items: a.items,
+        fecha_inicio: a.fecha_inicio, fecha_termino: a.fecha_termino,
+        cliente_nombre: S.cliente ? S.cliente.nombre : ''
+      })
+    }).then(function(r){
+      if (!r.ok) return r.json().then(function(j){ throw new Error((j&&j.error)||'No se pudo generar la vista previa.'); });
+      return r.blob();
+    }).then(function(blob){
+      var url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    }).catch(function(e){
+      if (window.ilusToast) ilusToast(e.message || 'No se pudo generar la vista previa.', {type:'error'});
+    });
+  }
 
   /* "Venta" de referencia para el margen: el monto REAL del documento si
      ya se eligió una línea ZZ, si no el estimado por clasificación -- en
@@ -5416,6 +5472,7 @@ window.OT2C = (function(){
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
+          _o2mAnexoPintarRutEstado:_o2mAnexoPintarRutEstado, anexoVerPdfPreview:anexoVerPdfPreview,
           setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,
           _o2mFormatearRutSiValido:_o2mFormatearRutSiValido,
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
