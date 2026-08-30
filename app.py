@@ -63823,6 +63823,14 @@ def mant_tecnicos_list_api():
            "       'tecnico' AS nivel, "
            "       au.phone AS telefono, "
            "       au.username AS email, "
+           # 2026-08-30 (Daniel, textual: "el correo de firma lo tendremos
+           # que extraer en la ficha junto con el RUT y el teléfono"): el
+           # Anexo de Contrato del wizard OT 2.0 necesita el RUT del
+           # proveedor externo para prellenarlo -- la columna YA existe
+           # en app_users (agregada 2026-05-xx, ver ALTER TABLE ~línea
+           # 2961) pero este endpoint nunca la exponía. Ver
+           # _o2mAnexoAutoRellenar en _modal_crear.html.
+           "       au.rut AS rut, "
            "       NULL AS tarifa_visita, "
            "       au.active AS activo, "
            "       IF(COALESCE(te.id, ten.id) IS NOT NULL "

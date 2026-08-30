@@ -3524,6 +3524,14 @@ window.OT2C = (function(){
     if (!digitos) return '';
     return parseInt(digitos, 10).toLocaleString('es-CL');
   }
+  // S.fecha viaja en formato ISO 'YYYY-MM-DD' (mismo valor que usa
+  // <input type="date">) -- para mostrarla de solo lectura en el Anexo se
+  // pasa a DD/MM/AAAA (REGLA #6 del proyecto: fechas siempre día/mes/año,
+  // nunca ISO crudo, en cualquier pantalla que vea una persona).
+  function _o2mFechaBonita(iso){
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||''));
+    return m ? (m[3]+'/'+m[2]+'/'+m[1]) : String(iso||'');
+  }
   /* Reformatea el input mientras se escribe, guardando en S el valor
      LIMPIO (sin puntos) -- todo el resto del archivo sigue leyendo
      S.fin_costo_* con parseFloat(), que no entiende separadores de miles.
@@ -3972,6 +3980,20 @@ window.OT2C = (function(){
       var t = _primerTecnicoExterno();
       if (t) a.proveedor_nombre = t.nombre || '';
     }
+    // 2026-08-30 (Daniel, viendo el anexo en vivo, textual: "el correo de
+    // firma lo tendremos que extraer en la ficha junto con el RUT y el
+    // teléfono"): antes había que tipear RUT/correo/teléfono del proveedor
+    // a mano cada vez, aunque ya estén guardados en su ficha de usuario
+    // (app_users.rut/phone, /mantenciones/api/tecnicos ya trae
+    // telefono/email; rut se agregó hoy a ese mismo endpoint). Mismo
+    // criterio que proveedor_nombre arriba: solo rellena si el campo
+    // sigue vacío, nunca pisa algo que el usuario ya escribió a mano.
+    var _tExt = _primerTecnicoExterno();
+    if (_tExt){
+      if (!a.proveedor_rut.trim() && _tExt.rut) a.proveedor_rut = _tExt.rut;
+      if (!a.email_destino.trim() && _tExt.email) a.email_destino = _tExt.email;
+      if (!a.telefono.trim() && _tExt.telefono) a.telefono = _tExt.telefono;
+    }
     if (!a.objetivo_servicio.trim() && S.tipo){
       var tInfo = TIPOS.find(function(x){ return x.v === S.tipo; });
       var cliTxt = S.cliente ? (' al cliente ' + S.cliente.nombre) : '';
@@ -4030,12 +4052,17 @@ window.OT2C = (function(){
         '<div class="col-12"><label class="fl">Objetivo del servicio *</label>'+
         '<textarea class="form-control" rows="2" maxlength="500" '+
         'oninput="OT2C.setAnexoCampo(\'objetivo_servicio\',this.value)">'+esc(a.objetivo_servicio)+'</textarea></div>'+
+        // 2026-08-30 (Daniel, textual: "la fecha de inicio, ya te la
+        // declaré arriba, y la fecha de término también está declarada
+        // arriba"): dejan de ser inputs propios -- son SIEMPRE la fecha ya
+        // elegida en el paso Agenda (S.fecha), de solo lectura acá. Pedirla
+        // de nuevo era una segunda fuente de verdad para el mismo dato, y
+        // encima podía verse vacía/"inválida" si el usuario llenó el Anexo
+        // antes de pasar por Agenda.
         '<div class="col-md-6"><label class="fl">Fecha inicio</label>'+
-        '<input type="date" class="form-control" value="'+esc(a.fecha_inicio)+'" '+
-        'oninput="OT2C.setAnexoCampo(\'fecha_inicio\',this.value)"></div>'+
+        '<input class="form-control" value="'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda')+'" disabled></div>'+
         '<div class="col-md-6"><label class="fl">Fecha término</label>'+
-        '<input type="date" class="form-control" value="'+esc(a.fecha_termino)+'" '+
-        'oninput="OT2C.setAnexoCampo(\'fecha_termino\',this.value)"></div>'+
+        '<input class="form-control" value="'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir en Agenda')+'" disabled></div>'+
       '</div>'+
       '<div class="o2m-fin-desglose mt-3">'+
         (a.items.length
