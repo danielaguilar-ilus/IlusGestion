@@ -78910,10 +78910,18 @@ def ot2_api_anexo_pdf(aid):
         precio_txt=_anexo_precio_texto(payload.get("precio_items")),
         firma=firma,
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
+        # 2026-08-30 (Daniel: "mejóralo con un header de ILUS y con SPHS
+        # con esos logos"): mismos helpers ya usados en el resto del
+        # proyecto (etiqueta de despacho, manifiesto de firma) -- no se
+        # recodifica ningún PNG nuevo.
+        logo_ilus=_logo_data_url(), logo_shs=_logo_shs_pdf_data_url(),
     )
     try:
+        # left/right en 0: el header/cuerpo ya traen su propio padding
+        # horizontal (.doc-header/.doc-body, 20mm) para que la línea roja
+        # del header llegue de borde a borde de la página.
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "18mm", "right": "20mm", "bottom": "18mm", "left": "20mm"})
+                        margin={"top": "0mm", "right": "0mm", "bottom": "18mm", "left": "0mm"})
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
     except Exception as e:
@@ -78988,10 +78996,11 @@ def ot2_api_anexo_preview_pdf():
         firma=None,
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
         es_vista_previa=True,
+        logo_ilus=_logo_data_url(), logo_shs=_logo_shs_pdf_data_url(),
     )
     try:
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "18mm", "right": "20mm", "bottom": "18mm", "left": "20mm"})
+                        margin={"top": "0mm", "right": "0mm", "bottom": "18mm", "left": "0mm"})
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
     except Exception as e:
