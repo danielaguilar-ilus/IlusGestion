@@ -62298,6 +62298,85 @@ def _generar_serie_ilus(cid: int, sku: str = "", _intento: int = 0) -> str:
     return f"{base}-{seq}"
 
 
+def _series_sugeridas_bulk(cid, equipos):
+    """Igual que _generar_serie_ilus(), pero para TODOS los equipos de una OT
+    con 2 consultas en total en vez de 2 POR EQUIPO.
+
+    🔧 2026-08-29 (Daniel: "escalable para que tengamos unas diez mil OT y no
+    tengamos que pagar los precios por la velocidad"). La pantalla de
+    ejecución llamaba _generar_serie_ilus() dentro del loop de equipos, y esa
+    función hace 2 SELECT cada vez: el RUT del cliente (SIEMPRE el mismo para
+    toda la OT -- puro desperdicio) y las series ya usadas de ese cliente. En
+    una OT de 60 equipos eso son ~120 consultas por cada carga de la página,
+    para un dato que es solo una SUGERENCIA.
+
+    🔴 Además corrige un bug latente que el camino por-equipo tenía: como cada
+    llamada consultaba la base, y la sugerencia todavía no está guardada, dos
+    equipos del MISMO modelo recibían la misma serie sugerida (ambos "-1"). Si
+    el técnico aceptaba las dos, la UNIQUE KEY uq_cliente_serie rechazaba la
+    segunda. Acá el correlativo se reserva en memoria a medida que se asigna.
+
+    Devuelve dict {maquina_id: serie_sugerida}. Solo incluye equipos que
+    llevan serie individual y todavía no tienen una.
+    """
+    out = {}
+    pendientes = []
+    for eq in equipos or []:
+        if (eq.get("serie") or "").strip():
+            continue
+        try:
+            _lleva, _ = _equipo_lleva_serie_individual(eq)
+        except Exception:
+            _lleva = True   # ante la duda, sí pide serie (mismo criterio de siempre)
+        if _lleva:
+            pendientes.append(eq)
+    if not pendientes:
+        return out
+
+    # (1 de 2) RUT del cliente -- una sola vez para toda la OT.
+    rut_clean = "00000000"
+    try:
+        row = mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cid,))
+        if row and row.get("rut"):
+            raw = str(row["rut"]).replace(".", "").replace(" ", "").replace("-", "").upper()
+            rut_clean = raw[:-1] if len(raw) >= 8 else raw
+    except Exception:
+        pass
+
+    # (2 de 2) TODAS las series ya usadas por este cliente. Se filtra por el
+    # prefijo del RUT (mismo patrón que la versión por-equipo) y después se
+    # agrupa por base en Python -- una consulta cubre todos los SKU.
+    usados_por_base = {}
+    try:
+        rows = mysql_fetchall(
+            "SELECT serie FROM mant_maquinas WHERE cliente_id=%s AND serie LIKE %s",
+            (cid, f"{rut_clean}-%")
+        ) or []
+        for r in rows:
+            s = (r.get("serie") or "")
+            partes = s.rsplit("-", 1)
+            if len(partes) != 2:
+                continue
+            try:
+                usados_por_base.setdefault(partes[0], set()).add(int(partes[1]))
+            except Exception:
+                pass
+    except Exception as _e_bulk:
+        print(f"[_series_sugeridas_bulk] cid={cid}: {_e_bulk}", flush=True)
+
+    for eq in pendientes:
+        sku_clean = "".join(c for c in (eq.get("sku") or "AUTO").upper() if c.isalnum())
+        sku4 = sku_clean[-4:] if len(sku_clean) >= 4 else (sku_clean.rjust(4, "0") if sku_clean else "AUTO")
+        base = f"{rut_clean}-{sku4}"
+        usados = usados_por_base.setdefault(base, set())
+        seq = 1
+        while seq in usados:
+            seq += 1
+        usados.add(seq)   # reservado: el siguiente equipo del mismo modelo toma el que sigue
+        out[eq.get("id")] = f"{base}-{seq}"
+    return out
+
+
 # Formatos de serie que el SISTEMA generó (no vienen de la placa del
 # fabricante). Son tres porque se agregaron en momentos distintos:
 #   1. {RUT}-{SKU4}-{n}  → _generar_serie_ilus, el canónico
@@ -81452,20 +81531,25 @@ def mant_ot_ejecutar(vid):
     # de Ficha Técnica -- se agrega ACÁ TAMBIÉN (antes solo vivía ahí) para
     # que el nuevo tipo de checklist 'serie' pueda ofrecer auto/manual/N-A
     # sin pedirle al frontend una consulta aparte por cada equipo.
+    #
+    # ⚡ 2026-08-29: la sugerencia se calcula en BLOQUE (_series_sugeridas_bulk,
+    # 2 consultas para toda la OT) en vez de llamar _generar_serie_ilus() dentro
+    # del loop, que hacía 2 consultas POR EQUIPO -- ~120 en una OT de 60 equipos,
+    # en cada carga de esta página. Ver el docstring de esa función: también
+    # corrige que dos equipos del mismo modelo recibían la MISMA serie sugerida.
+    _sugeridas_bulk = {}
+    try:
+        _sugeridas_bulk = _series_sugeridas_bulk(visita.get("cliente_id"), equipos)
+    except Exception as _e_sb:
+        print(f"[ot_ejecutar] series sugeridas bulk vid={vid}: {_e_sb}", flush=True)
     for _eq_s in equipos:
-        _serie_actual_s = (_eq_s.get("serie") or "").strip()
         try:
             _lleva_s, _motivo_s = _equipo_lleva_serie_individual(_eq_s)
         except Exception:
             _lleva_s, _motivo_s = True, ""   # ante la duda, sí pide serie
         _eq_s["serie_lleva_individual"] = bool(_lleva_s)
         _eq_s["serie_no_aplica_motivo"] = _motivo_s or ""
-        _eq_s["serie_sugerida"] = None
-        if _lleva_s and not _serie_actual_s:
-            try:
-                _eq_s["serie_sugerida"] = _generar_serie_ilus(visita.get("cliente_id"), _eq_s.get("sku") or "")
-            except Exception:
-                _eq_s["serie_sugerida"] = None
+        _eq_s["serie_sugerida"] = _sugeridas_bulk.get(_eq_s.get("id"))
 
     # ── Técnicos colaboradores (mant_visita_tecnicos) — 2026-08-27 ──────
     # Mismo criterio que _ot_pdf_context (excluye al principal). Se agrega
