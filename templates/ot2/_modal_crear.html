@@ -5159,8 +5159,18 @@ window.OT2C = (function(){
         // si Daniel marcó "enviar apenas se cree", se manda el correo acto
         // seguido. Cualquier falla acá NUNCA bloquea la navegación a la OT
         // -- ya existe de verdad, solo se avisa que el anexo quedó pendiente.
-        var _liderFinal = S.lider ? cacheTec.find(function(t){ return t.id === S.lider; }) : null;
-        if (_liderFinal && _liderFinal.es_externo && S.anexo.proveedor_nombre.trim() &&
+        // 2026-08-30 (Daniel, textual: "aún no veo el anexo... de todos
+        // los técnicos externos"): este chequeo SOLO miraba a S.lider --
+        // idéntico bug al ya corregido en pasos()/_o2mAnexoAutoRellenar
+        // (ver _hayTecnicoExterno/_primerTecnicoExterno), pero se me
+        // había quedado ESTE tercer lugar, que es justo el que de verdad
+        // crea el anexo. Resultado real: con un líder interno + un
+        // segundo técnico externo, el paso "Anexo" se veía, el usuario lo
+        // llenaba, pero al crear la OT esta condición fallaba en
+        // silencio -- el POST /ot/api/anexos nunca se disparaba y la OT
+        // quedaba sin anexo, sin ningún aviso de que se había omitido.
+        var _tecExternoFinal = _primerTecnicoExterno();
+        if (_tecExternoFinal && S.anexo.proveedor_nombre.trim() &&
             S.anexo.objetivo_servicio.trim() && S.anexo.items.length){
           fetch('/ot/api/anexos', {
             method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
@@ -5173,7 +5183,7 @@ window.OT2C = (function(){
               fecha_inicio: S.anexo.fecha_inicio || null,
               fecha_termino: S.anexo.fecha_termino || null,
               cliente_nombre: S.cliente ? S.cliente.nombre : null,
-              tecnico_externo_id: _liderFinal.id
+              tecnico_externo_id: _tecExternoFinal.id
             })
           }).then(function(r){ return r.json(); }).then(function(ra){
             if (!ra || !ra.ok){
@@ -5210,6 +5220,14 @@ window.OT2C = (function(){
             _o2mIrADetalle();
           });
         } else {
+          // Si hay un técnico externo pero el anexo quedó incompleto (no se
+          // llegó a llenar proveedor/objetivo/ítems de precio), avisar en
+          // vez de navegar mudo -- Daniel: "aún no veo el anexo... no lo
+          // agregamos" fue justo este caso quedando en silencio.
+          if (_tecExternoFinal && window.ilusToast){
+            ilusToast('La OT se creó, pero el Anexo quedó sin generar (falta completar ese paso) — créalo desde el detalle de la OT.',
+              {type:'warning', duration:8000});
+          }
           _o2mIrADetalle();
         }
       })
