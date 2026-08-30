@@ -2510,6 +2510,26 @@ async function _tkaCotizacionElegir(idx){
       if (itemsRes) itemsRes.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>${_tkaEsc(d.error || 'No se pudo cargar la cotización')}</div>`;
       return;
     }
+    // 2026-08-30 (OT 2.0, origen "Cotización" del wizard de creación de OT):
+    // mismo bug ya corregido en la pestaña "Por RUT" (ver tkaToggleDocCli,
+    // 2026-07-23) -- _TKA.loaded.docHeader es lo ÚNICO que tkaAsociarSeleccion()
+    // manda como 2do argumento a onSeleccionar(items, header) en
+    // mode:'seleccionar'. Sin esto, elegir una cotización dejaba header
+    // SIEMPRE null y el módulo llamador perdía el rut/empresa del cliente.
+    // Aditivo: mode 'agregar'/'crear' (Tickets/Cotizaciones) NUNCA leen
+    // docHeader para ítems de cotización -- usan lineasManual (ver
+    // tkaAsociarSeleccion) -- así que este seteo no les cambia nada.
+    const cotHdr = d.cotizacion || {};
+    _TKA.loaded.docHeader = {
+      tido: null, nudo: null,
+      cliente: cotHdr.empresa || c.empresa || '',
+      rut: cotHdr.rut || c.rut || '',
+      email: cotHdr.contacto_email || cotHdr.email || '',
+      telefono: cotHdr.contacto_tel || cotHdr.telefono || '',
+      direccion: cotHdr.direccion || '',
+      comuna: cotHdr.comuna || '',
+      fecha: ''
+    };
     // Solo ítems tipo "producto" -- servicio/ruta/otro no son equipos que
     // se puedan declarar en un ticket (mismo criterio que "Por documento"
     // excluye líneas ZZ, ver _tk_filtrar_lineas_seleccion).
