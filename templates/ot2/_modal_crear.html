@@ -2670,23 +2670,47 @@ window.OT2C = (function(){
       return l && l.sku && existentes.indexOf(_o2mSkuNorm(l.sku)) === -1;
     });
   }
+  /* 2026-08-30 (Daniel, corrigiendo en vivo: "el modal sigue trayendo los
+     productos de la ficha, y debe ser único para cada origen -- si se
+     selecciona del ticket, debe traer los datos del ticket y sus
+     productos SOLAMENTE del ticket... si es cotización, solamente los
+     productos que están contenidos en la cotización"): cuando el origen
+     trajo su propia lista (S.doc_lineas -- cotización/ticket/documento),
+     este paso NO debe mostrar el resto de los equipos de la ficha del
+     cliente, aunque existan. Se filtra cacheEquipos por SKU normalizado
+     contra S.doc_lineas -- para este punto ya deberían existir todos ahí
+     (la alta automática ya corrió, ver _o2mAltaAutoFaltantesSiCorresponde).
+     Origen "Cliente existente"/"Trabajo interno" (sin doc_lineas) sigue
+     mostrando la ficha completa, tal como siempre. */
+  function _o2mEquiposVista(){
+    if (!S.doc_lineas || !S.doc_lineas.length) return cacheEquipos;
+    var skusFuente = {};
+    S.doc_lineas.forEach(function(l){ skusFuente[_o2mSkuNorm(l.sku)] = true; });
+    return cacheEquipos.filter(function(m){ return skusFuente[_o2mSkuNorm(m.sku)]; });
+  }
   function pintarListaEquipos(){
     var c = document.getElementById('o2mEqList'); if(!c) return;
-    if (!cacheEquipos.length){
-      c.innerHTML = '<div class="o2m-aviso">Este cliente no tiene equipos en su ficha. '+
-        'Un levantamiento por descubrimiento sirve justo para eso.</div>'; return;
+    var equiposVista = _o2mEquiposVista();
+    var esVistaFuente = equiposVista !== cacheEquipos;
+    if (!equiposVista.length){
+      c.innerHTML = '<div class="o2m-aviso">'+
+        (esVistaFuente
+          ? 'Los productos de la fuente todavía se están agregando a la ficha del cliente — un momento…'
+          : 'Este cliente no tiene equipos en su ficha. Un levantamiento por descubrimiento sirve justo para eso.')+
+        '</div>'; return;
     }
-    var totalMarcados = cacheEquipos.filter(function(m){
+    var totalMarcados = equiposVista.filter(function(m){
       return S.equipos.some(function(e){ return e.maquina_id===m.id; });
     }).length;
-    var todosMarcados = totalMarcados > 0 && totalMarcados === cacheEquipos.length;
+    var todosMarcados = totalMarcados > 0 && totalMarcados === equiposVista.length;
     var rutTxt = (S.cliente && S.cliente.rut) ? esc(S.cliente.rut) : '';
 
     c.innerHTML =
       '<div class="o2m-eq-card">'+
         '<div class="o2m-eq-toolbar">'+
           '<div class="o2m-eq-toolbar-txt">'+
-            '<i class="bi bi-info-circle me-1"></i>Equipos de la ficha del cliente'+
+            '<i class="bi bi-info-circle me-1"></i>'+
+            (esVistaFuente ? 'Productos de esta cotización/ticket/documento' : 'Equipos de la ficha del cliente')+
             (rutTxt ? ' · <span class="o2m-eq-rut">RUT '+rutTxt+'</span>' : '')+
             '. Marca los que el técnico debe atender — cada uno puede tener su propia plantilla.'+
           '</div>'+
@@ -2703,7 +2727,7 @@ window.OT2C = (function(){
             (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
           '</th>'+
         '</tr></thead><tbody>'+
-        cacheEquipos.map(function(m){
+        equiposVista.map(function(m){
           var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
           var cls = sel ? (sel.plantilla_id ? 'ok' : 'sel') : '';
           var enPlan = !!m.aplica_mantencion;
@@ -2907,13 +2931,21 @@ window.OT2C = (function(){
      (sugerirPlantillaEquipo), igual que si se marcara a mano uno por uno
      -- no se reimplementa esa lógica, solo se aplica en lote. */
   function eqTogTodos(){
-    var todosMarcados = cacheEquipos.length > 0 && cacheEquipos.every(function(m){
+    // 2026-08-30: "Marcar/desmarcar todos" opera sobre la MISMA vista que
+    // se está mostrando (_o2mEquiposVista) -- si el origen trajo su propia
+    // lista (cotización/ticket/documento), este botón no debe tocar el
+    // resto de los equipos de la ficha que ni siquiera están en pantalla.
+    var vista = _o2mEquiposVista();
+    var todosMarcados = vista.length > 0 && vista.every(function(m){
       return S.equipos.some(function(e){ return e.maquina_id === m.id; });
     });
     if (todosMarcados){
-      S.equipos = [];
+      vista.forEach(function(m){
+        var i = S.equipos.findIndex(function(e){ return e.maquina_id === m.id; });
+        if (i >= 0) S.equipos.splice(i, 1);
+      });
     } else {
-      cacheEquipos.forEach(function(m){
+      vista.forEach(function(m){
         if (!S.equipos.some(function(e){ return e.maquina_id === m.id; })){
           S.equipos.push({maquina_id:m.id, plantilla_id:null, plantilla_sugerida:false});
           sugerirPlantillaEquipo(m.id);

@@ -607,5 +607,36 @@ que además excluye a propósito ciertas filas (sin saldo) del "marcar todo".
 
 ---
 
+## 🎨 REGLA #15 — Todo formulario/lista nuevo usa el lenguaje visual de Retiros, sin que Daniel lo pida
+
+**Pedido explícito de Daniel (2026-08-30): "debemos creer en que el formato
+que diseñamos, como el formato de Retiros, debe predominar... no como me
+mostraste las cotizaciones, cómo se traía, no se entendía nada. Cuando
+construyas algo, yo no necesito decirte que debes hacerlo con el formato
+de Retiro, con las tarjetas, con semáforo, todo — en caso de que sea un
+formulario."**
+
+`/retiros/solicitar` es la referencia (ver también
+[[feedback_diseno_premium_referencia_retiros]] en memoria): tarjetas con
+step-circle rojo→verde con pulso, colores de estado tipo semáforo, y
+**nombres/datos siempre completos, nunca truncados o cortados** — el
+ejemplo negativo real fue la primera versión de la pestaña "Cotización
+interna" del modal de búsqueda de productos, donde el nombre del producto
+se cortaba a 2 líneas y no se entendía qué era.
+
+Esto aplica por defecto, sin que Daniel tenga que pedirlo en cada tarea:
+- Cualquier formulario nuevo → tarjetas + semáforo + progreso visual,
+  mismo lenguaje que Retiros.
+- Cualquier lista/tabla nueva de información real (productos, documentos,
+  equipos) → información completa y legible, nunca truncada por un
+  `line-clamp`/`overflow:hidden` puesto sin pensar en nombres largos
+  reales de ILUS.
+
+Ver también REGLA #4.3 (paginación) y REGLA #14 (seleccionar todo) —
+las tres son del mismo espíritu: los patrones de UI ya resueltos en un
+lugar del proyecto se replican, no se reinventan peor.
+
+---
+
 _Última actualización: 2026-08-30_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
