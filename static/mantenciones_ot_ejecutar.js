@@ -2645,6 +2645,29 @@ async function guardarResp(tid, valor, mid, pid){
       window.location.reload();
       return;
     }
+    // 🔧 FIX 2026-08-29 (Daniel, en vivo: "Error: Tarea no encontrada" al
+    // capturar GPS) -- misma familia de problema que el 409 de arriba, con
+    // la misma solución: la plantilla de este equipo se editó (agrega/
+    // reordena tareas) DESPUÉS de que esta pantalla cargó, así que el id
+    // que el navegador tiene guardado ya no existe -- se reemplazó por uno
+    // nuevo en el resync automático de mant_plantilla_actualizar(). Antes
+    // esto cayera al error genérico de abajo ("Error: Tarea no
+    // encontrada"), sin explicación ni salida. Mismo remedio: recargar.
+    if (r.status === 404){
+      const d = await r.json();
+      if ((d.error || '').toLowerCase().includes('no encontrada')){
+        await ilusAlert({
+          title: 'Esta pantalla quedó desactualizada',
+          message: 'El checklist de este equipo se actualizó (por ejemplo, se editó la plantilla) mientras tenías esta página abierta.',
+          sub: 'La página se va a recargar para mostrarte la versión actual y no perder tu trabajo siguiente.',
+          type: 'warning',
+        });
+        window.location.reload();
+        return;
+      }
+      ilusToast('Error: ' + (d.error || '?'), { type:'error' });
+      return;
+    }
     const d = await r.json();
     if (d.ok){
       if (tar){
