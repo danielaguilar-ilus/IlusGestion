@@ -832,6 +832,32 @@ def register_catalogo_routes(app, ctx):
             return view(*a, **k)
         return login_required(wrapped)
 
+    def _catalogo_clasificacion_required(view):
+        """2026-08-30 (Daniel, dictado): "en SSTT siempre debe regir esa
+        clasificación y bloquéala para los técnicos por el front... quién
+        puede ver este módulo, colócalo en Usuarios y Roles". Gate
+        específico para la pantalla /catalogo/clases y sus APIs (crear/
+        editar/reordenar categorías y sus tarifas). Antes vivía SOLO en
+        _catalogo_admin_required (superadmin a secas) -- acepta superadmin
+        (siempre) O el flag granular g.permissions['cat_clasificacion']
+        (matriz /admin/roles, módulo "catalogo" -> acción "clasificacion",
+        aditivo: admin ya nace con este flag en True vía
+        _ensure_permiso_cat_clasificacion_default en app.py, así que nadie
+        pierde acceso -- solo se abre la puerta a quien Daniel decida)."""
+        @wraps(view)
+        def wrapped(*a, **k):
+            perms = g.get("permissions") or {}
+            if not (perms.get("superadmin") or perms.get("cat_clasificacion")):
+                if _is_ajaxish():
+                    return jsonify({
+                        "ok": False,
+                        "error": "No tienes permiso para editar la clasificación del Catálogo.",
+                        "error_codigo": "SIN_PERMISO_CATALOGO_CLASIFICACION",
+                    }), 403
+                return redirect(url_for("index"))
+            return view(*a, **k)
+        return login_required(wrapped)
+
     def _manual_permite_descarga():
         """2026-08-25 (Daniel, dictado): vio a un técnico entrar con su
         propio perfil y DESCARGAR el manual de un producto, y lo consideró
@@ -902,12 +928,12 @@ def register_catalogo_routes(app, ctx):
             {"value": k, "label": v} for k, v in _cat_clases_map().items()]})
 
     @app.route("/catalogo/clases")
-    @_catalogo_admin_required
+    @_catalogo_clasificacion_required
     def cat_clases_page():
         return render_template("catalogo/clases.html")
 
     @app.route("/catalogo/api/clases/admin", methods=["GET"])
-    @_catalogo_admin_required
+    @_catalogo_clasificacion_required
     def cat_api_clases_admin():
         """Listado completo (activas + inactivas) con horas/técnicos por
         tipo_servicio, para /catalogo/clases (solo superadmin)."""
@@ -1084,7 +1110,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "uf": (_uf() if _uf else None)})
 
     @app.route("/catalogo/api/clases", methods=["POST"])
-    @_catalogo_admin_required
+    @_catalogo_clasificacion_required
     def cat_api_clases_create():
         """Crear categoría nueva (Daniel: "si sale un producto nuevo lo
         podemos crear"). Sin tarifas iniciales -- se cargan aparte por
@@ -1122,7 +1148,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True, "id": row["id"] if row else None, "slug": slug})
 
     @app.route("/catalogo/api/clases/<int:clid>", methods=["PATCH"])
-    @_catalogo_admin_required
+    @_catalogo_clasificacion_required
     def cat_api_clases_update(clid):
         """Renombrar / activar / desactivar / reordenar una categoría.
         Desactivar es SOFT (Regla #5): no se borra, solo deja de ofrecerse
@@ -1165,7 +1191,7 @@ def register_catalogo_routes(app, ctx):
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/clases/<int:clid>/tarifas", methods=["PATCH"])
-    @_catalogo_admin_required
+    @_catalogo_clasificacion_required
     def cat_api_clases_tarifas_update(clid):
         """Fija Hora/Técnicos de UNA categoría para UN tipo_servicio
         (mantención/instalación/visita técnica/venta de repuesto/otro —

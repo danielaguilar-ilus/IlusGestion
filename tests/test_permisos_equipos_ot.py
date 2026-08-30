@@ -66,11 +66,16 @@ FUENTE = "".join(LINEAS)
 # 1. ENDPOINTS SENSIBLES: deben exigir rol gestor (@_no_tecnico)
 # ══════════════════════════════════════════════════════════════════
 # Cada tupla es (ruta, metodo, por que es sensible).
+#
+# NOTA 2026-08-30: /mantenciones/api/maquinas/<mid>/aplica-mantencion SALIO
+# de esta lista -- ya no lleva @_no_tecnico a secas, ver seccion "1b" mas
+# abajo (Daniel: "en SSTT siempre debe regir esa clasificacion... colocalo
+# en Usuarios y Roles" -- ahora es el permiso granular cat_clasificacion,
+# via @_requiere_permiso_clasificacion / _puede_gestionar_clasificacion()).
+# El resto de la lista SI sigue con el bloqueo plano por rol, sin cambios.
 SENSIBLES = [
     ("/mantenciones/api/maquinas/<int:mid>/serie", "PUT",
      "cambiar el N. de serie reescribe la identidad del equipo en su ficha global"),
-    ("/mantenciones/api/maquinas/<int:mid>/aplica-mantencion", "PUT",
-     "decide si el equipo entra al plan de mantencion (y por tanto se cotiza)"),
     ("/mantenciones/api/maquinas/<int:mid>/horometro", "POST",
      "registro manual de horometro FUERA de una OT"),
     ("/mantenciones/api/maquinas/<int:mid>/horometro/<int:lid>", "DELETE",
@@ -102,6 +107,72 @@ for ruta, metodo, porque in SENSIBLES:
               f"{metodo} {ruta} lleva @_no_tecnico -- {porque}")
         check("@_mant_required" in blq,
               f"{metodo} {ruta} conserva @_mant_required (no se reemplazo el gate base)")
+
+
+# ══════════════════════════════════════════════════════════════════
+# 1b. aplica-mantencion: bloqueo plano -> permiso NOMBRADO (2026-08-30)
+# ══════════════════════════════════════════════════════════════════
+# Pedido de Daniel: "en SSTT siempre debe regir esa clasificacion y
+# bloqueala para los tecnicos por el front... quien puede ver este modulo,
+# colocalo en Usuarios y Roles". Se reemplazo @_no_tecnico (bloqueo plano,
+# sin excepcion posible) por @_requiere_permiso_clasificacion, que delega en
+# _puede_gestionar_clasificacion(): CUALQUIER rol de gestion sigue pasando
+# siempre (cero perdida de acceso, Regla #4.2) y un tecnico pasa SOLO si
+# tiene el permiso granular 'cat_clasificacion' (matriz /admin/roles,
+# modulo "catalogo"). No se ejecuta la funcion real (depende de `g` de
+# Flask, fuera de contexto en este test) -- se audita el TEXTO, igual que
+# el resto de esta bateria hace con @_no_tecnico/_es_rol_tecnico.
+print("\n1b. aplica-mantencion usa el permiso NOMBRADO cat_clasificacion")
+
+blq_apl = bloque_decoradores(
+    "/mantenciones/api/maquinas/<int:mid>/aplica-mantencion", "PUT")
+check(blq_apl is not None, "existe la ruta PUT .../aplica-mantencion")
+if blq_apl:
+    check("@_mant_required" in blq_apl,
+          "aplica-mantencion conserva @_mant_required (no se reemplazo el gate base)")
+    check("@_requiere_permiso_clasificacion" in blq_apl,
+          "aplica-mantencion usa @_requiere_permiso_clasificacion en vez del bloqueo plano")
+
+i_pgc = next((i for i, l in enumerate(LINEAS)
+              if l.startswith("def _puede_gestionar_clasificacion")), None)
+check(i_pgc is not None, "se encuentra def _puede_gestionar_clasificacion en app.py")
+
+cuerpo_pgc = ""
+if i_pgc is not None:
+    for l in LINEAS[i_pgc:i_pgc + 40]:
+        cuerpo_pgc += l
+        if l.startswith("def ") and not l.startswith("def _puede_gestionar_clasificacion"):
+            break
+
+check("_es_rol_tecnico(user)" in cuerpo_pgc,
+      "_puede_gestionar_clasificacion() usa _es_rol_tecnico() (misma familia normalizada, cubre tecnico_externo)")
+check('return True' in cuerpo_pgc,
+      "_puede_gestionar_clasificacion() deja pasar SIEMPRE a un rol de gestion (no técnico)")
+check("cat_clasificacion" in cuerpo_pgc,
+      "_puede_gestionar_clasificacion() consulta el flag granular g.permissions['cat_clasificacion'] para un tecnico")
+
+i_rpc = next((i for i, l in enumerate(LINEAS)
+              if l.startswith("def _requiere_permiso_clasificacion")), None)
+check(i_rpc is not None, "se encuentra def _requiere_permiso_clasificacion en app.py")
+
+cuerpo_rpc = ""
+if i_rpc is not None:
+    for l in LINEAS[i_rpc:i_rpc + 30]:
+        cuerpo_rpc += l
+        if l.startswith("def ") and not l.startswith("def _requiere_permiso_clasificacion"):
+            break
+
+check("_puede_gestionar_clasificacion()" in cuerpo_rpc,
+      "@_requiere_permiso_clasificacion delega en _puede_gestionar_clasificacion() (una sola fuente de verdad)")
+
+# El permiso debe existir en el catalogo PERMS_KEYS y nacer activado para
+# admin/superadmin (Regla #4.2: nadie que ya podia hacer esto lo pierde).
+check('"cat_clasificacion"' in FUENTE,
+      "el permiso 'cat_clasificacion' esta declarado en PERMS_KEYS")
+check('"cat_clasificacion": True' in FUENTE,
+      "el rol admin nace con cat_clasificacion=True en el fallback legacy (_legacy_permission_set)")
+check("_ensure_permiso_cat_clasificacion_default" in FUENTE,
+      "existe la migracion default-segura que siembra cat_clasificacion=1 para 'admin' en rol_permisos")
 
 
 # ══════════════════════════════════════════════════════════════════
