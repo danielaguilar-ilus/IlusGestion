@@ -710,6 +710,19 @@
 .rev-chip-falla_detectada{background:#fee2e2;color:#991b1b;border-color:#fecaca}
 .rev-chip-empty{background:#f3f4f6;color:#9ca3af;border-color:#e5e7eb}
 .rev-meta{display:block;font-size:.62rem;color:#9ca3af;margin-top:2px;line-height:1.2}
+
+/* 2026-08-30 (Daniel) — Clasificación de producto heredada del Catálogo,
+   en la celda SKU de la tabla de equipos. Mismo criterio visual que
+   .rev-chip (chip redondeado pequeño), colores propios para no confundir
+   con los estados de revisión. */
+.clasif-chip{display:inline-flex;align-items:center;gap:4px;
+             font-size:.62rem;font-weight:700;letter-spacing:.02em;
+             padding:2px 8px;border-radius:50px;border:1px solid transparent;
+             white-space:nowrap;}
+.clasif-chip i{font-size:.72rem}
+.clasif-chip-equipo{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+.clasif-chip-repetible{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.clasif-chip-vacio{background:#fffbeb;color:#92400e;border-color:#fde68a}
 /* 2026-07-24 (Daniel, por voz) — Desglose de técnicos por tarea cuando
    más de uno trabajó el mismo equipo (revisado_por solo guarda al
    último). Solo se pinta si hay >1 técnico distinto. */

@@ -1219,6 +1219,29 @@
               {% else %}
               <span class="text-muted">—</span>
               {% endif %}
+              {# 2026-08-30 (Daniel -- "que sepamos cómo hacer mantención y
+                 visitas" con la clasificación heredada del Catálogo).
+                 'fijo' (repetible=true) = piso/accesorio, 'horas'
+                 (repetible=false) = equipo. Sin clasificar -> chip neutro,
+                 no se afirma una clase que no existe (mismo criterio que
+                 Incidencias). #}
+              {% set _clasif = m.clasificacion or {} %}
+              {% if _clasif.repetible is sameas true %}
+              <div class="mt-1"><span class="clasif-chip clasif-chip-repetible"
+                    title="Clasificación del Catálogo: {{ _clasif.clase_nombre }} (repetible)">
+                <i class="bi bi-collection"></i>Piso/Accesorio
+              </span></div>
+              {% elif _clasif.repetible is sameas false %}
+              <div class="mt-1"><span class="clasif-chip clasif-chip-equipo"
+                    title="Clasificación del Catálogo: {{ _clasif.clase_nombre }} (equipo)">
+                <i class="bi bi-gear-fill"></i>Equipo
+              </span></div>
+              {% elif m.sku %}
+              <div class="mt-1"><span class="clasif-chip clasif-chip-vacio"
+                    title="Este SKU no tiene clasificación asignada en el Catálogo">
+                <i class="bi bi-question-circle"></i>Sin clasificar
+              </span></div>
+              {% endif %}
             </td>
             <td>
               {# N° serie editable con tracking auditable — Técnico sin acceso a edición #}

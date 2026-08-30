@@ -242,6 +242,7 @@
       <option value="racks_estructuras">Racks y estructuras</option>
       <option value="bancos">Bancos</option>
       <option value="accesorios">Accesorios</option>
+      <option value="pisos">Pisos</option>
       <option value="bicicletas">Bicicletas</option>
       <option value="trotadoras">Trotadoras</option>
       <option value="otros">Otros</option>
@@ -382,6 +383,7 @@
                   <option value="racks_estructuras">Racks y estructuras</option>
                   <option value="bancos">Bancos</option>
                   <option value="accesorios">Accesorios</option>
+                  <option value="pisos">Pisos</option>
                   <option value="bicicletas">Bicicletas</option>
                   <option value="trotadoras">Trotadoras</option>
                   <option value="otros">Otros</option>
@@ -500,6 +502,23 @@
               <label class="form-check-label small" for="ePActiva">
                 Plantilla activa (disponible para aplicar a nuevas OTs)
               </label>
+            </div>
+            {# 2026-08-30 (Daniel): "en las plantillas debemos colocar si ese
+               producto se agrega al plan de mantenciones o servicio postventa
+               o no... para identificar a qué se debe cotizar una mantención
+               y qué se debe atender en una orden de trabajo. Le agregaría ese
+               toggle de plan a todas las plantillas, menos a pisos y
+               accesorios." Por ahora es informativo -- no bloquea ni cambia
+               ninguna selección/sugerencia de plantilla existente. #}
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" id="ePAplicaPlan" checked>
+              <label class="form-check-label small" for="ePAplicaPlan">
+                Corresponde al plan de mantención/postventa
+              </label>
+            </div>
+            <div class="small text-muted mt-1" style="font-size:.72rem">
+              Informativo por ahora: ayuda a identificar qué se cotiza como mantención
+              y qué se atiende como OT puntual. Suele ir apagado en pisos/accesorios.
             </div>
             <div class="small text-muted mt-2" id="ePEsSistemaNota" style="display:none">
               <i class="bi bi-shield-lock me-1"></i>Plantilla del sistema: no se puede borrar, solo desactivar.
@@ -1035,6 +1054,7 @@ function abrirEditor(pid){
     _selFam.value = 'otro'; _selFam.dataset.prev = 'otro'; }
   document.getElementById('ePFamiliaActivo').value = 'todas';
   document.getElementById('ePActiva').checked = true;
+  document.getElementById('ePAplicaPlan').checked = true;
   document.getElementById('ePEsSistemaNota').style.display = 'none';
   document.getElementById('addTitulo').value = '';
   renderCategoriaCards('');
@@ -1080,6 +1100,7 @@ async function cargarDetalle(pid){
       _selFam.value = _famSlug; _selFam.dataset.prev = _famSlug; }
     document.getElementById('ePFamiliaActivo').value = p.familia_activo || 'todas';
     document.getElementById('ePActiva').checked = p.activa !== false;
+    document.getElementById('ePAplicaPlan').checked = p.aplica_plan_mantencion !== false;
     document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
     // 29-08-2026: bug real encontrado en vivo -- renderCategoriaCards() solo
     // pinta la tarjeta activa, nunca sincronizaba el input oculto con el dato
@@ -1459,6 +1480,7 @@ async function guardarPlantilla(){
     familia_activo: document.getElementById('ePFamiliaActivo').value,
     categoria_admin: categoriaAdmin || null,
     activa: document.getElementById('ePActiva').checked,
+    aplica_plan_mantencion: document.getElementById('ePAplicaPlan').checked,
     items: _items.map((it, idx) => ({
       orden: idx + 1,
       titulo: it.titulo.trim(),
