@@ -1351,6 +1351,20 @@
                 {# Las acciones de visita ahora son MÚLTIPLES — selecciona equipos con
                    los checkboxes y usa la barra flotante. El rayito individual se eliminó
                    por ser ineficiente para casos reales (ej: 4 trotadoras a cambiar). #}
+                {# Imprimir etiqueta con N° de serie — 2026-08-30 (Daniel: "el número
+                   de serie deberá ser impreso y generar etiquetas, siempre excluyendo
+                   los pisos y los accesorios"). m.puede_etiqueta ya viene calculado
+                   desde el backend (_inc_clasificacion_sku) — pisos/accesorios NUNCA
+                   ven este botón, y el backend lo vuelve a filtrar igual por si
+                   alguien arma la URL a mano. #}
+                {% if m.puede_etiqueta %}
+                <a class="btn btn-xs btn-outline-dark"
+                   href="{{ url_for('mant_maquinas_print_labels', ids=m.id) }}"
+                   target="_blank" rel="noopener"
+                   title="Imprimir etiqueta con N° de serie de este equipo">
+                  <i class="bi bi-tag"></i>
+                </a>
+                {% endif %}
                 {# 2026-05-22 (Daniel): "Eliminar equipo" se restringe a SUPERADMIN.
                    Aarón y demás ejecutivos NO ven el botón. Backend refuerza 403. #}
                 {% if permissions and permissions.superadmin %}
@@ -1631,6 +1645,17 @@
   <button class="btn btn-ilus fw-bold px-4" onclick="abrirVisitaMulti()" style="border-radius:50px;min-height:44px"
           title="Generar una Orden de Trabajo con los equipos seleccionados">
     <i class="bi bi-clipboard2-plus me-1"></i>Generar OT con los seleccionados
+  </button>
+  {# Imprimir etiquetas masivo — 2026-08-30 (Daniel: "el número de serie
+     deberá ser impreso y generar etiquetas, siempre excluyendo los pisos
+     y los accesorios"). eqImprimirEtiquetasSeleccion() manda TODOS los ids
+     marcados; el backend (mant_maquinas_print_labels) filtra pisos/
+     accesorios solo y avisa cuántos excluyó — no hace falta duplicar esa
+     lógica acá. #}
+  <button class="btn btn-sm fw-bold" onclick="eqImprimirEtiquetasSeleccion()"
+          style="border-radius:50px;min-height:44px;background:#1f2937;color:#fff;border:0"
+          title="Imprimir etiquetas con N° de serie de los equipos seleccionados">
+    <i class="bi bi-tag me-1"></i>Imprimir etiquetas
   </button>
   {% if not is_tecnico %}
   {# Atajo: marca solo las filas visibles que están en plan de mantención #}
