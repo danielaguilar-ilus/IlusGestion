@@ -775,9 +775,15 @@ window.OT2C = (function(){
          // manera automática") -- comuna se muestra y se puede corregir a
          // mano; region se guarda igual aunque no tiene campo visible hoy
          // (útil más adelante para costo de ruta, ver transporte_tarifas).
+         // _direccion_auto (2026-08-30, levantamiento de aislamiento por
+         // origen): true SOLO mientras direccion/comuna quedaron rellenas
+         // por el texto que trajo la FUENTE (ticket/cotización/documento,
+         // ver _o2mResolverClienteYEquipos) y el usuario todavía no las
+         // tocó -- así setOrigen() sabe que puede limpiarlas sin pisar un
+         // dato que el usuario ya escribió o confirmó a mano/Places.
          contraparte:{nombre:'', cargo:'', tel:'', email:'', origen:'',
                       direccion:'', lat:null, lng:null, place_id:'',
-                      comuna:'', region:''},
+                      comuna:'', region:'', _direccion_auto:false},
          // Origen "Factura o boleta": documento ERP de donde salió el
          // cliente (trazabilidad, ver crear()) y sus líneas de producto
          // (sugerencia informativa en la sección Equipos).
@@ -2561,6 +2567,8 @@ window.OT2C = (function(){
           S.contraparte.direccion = p.direccion || '';
           S.contraparte.lat = p.lat; S.contraparte.lng = p.lng;
           S.contraparte.place_id = p.place_id || '';
+          // Confirmación explícita del usuario -- ya no es "de la fuente".
+          S.contraparte._direccion_auto = false;
           // 2026-08-30 (Daniel: "cuando yo confirme la dirección del lugar,
           // me va a rellenar la comuna y la región de manera automática") --
           // MISMO parseo exacto que ya usa _cotWizInitDireccion en
@@ -2594,6 +2602,8 @@ window.OT2C = (function(){
       cp.lat = null; cp.lng = null; cp.place_id = '';
     }
     cp.direccion = v || '';
+    // El usuario está escribiendo a mano -- deja de ser "de la fuente".
+    cp._direccion_auto = false;
     var e = document.getElementById('o2mCpDirEstado');
     if (e){
       e.innerHTML = '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>'+
@@ -4090,7 +4100,43 @@ window.OT2C = (function(){
     // El documento de origen solo tiene sentido mientras el origen siga
     // siendo "documento" -- si el usuario cambia de idea y elige otro
     // origen, no debe arrastrarse una referencia a un documento ajeno.
+    //
+    // FIX 2026-08-30 (levantamiento de aislamiento por origen): el botón
+    // "Atrás" del formulario SIEMPRE vuelve a esta pantalla (irAOrigen(),
+    // ver header del wizard) -- un usuario puede resolver "Factura o
+    // boleta"/"Ticket" (lo que puebla S.fin_doc/S.ticket_id como
+    // subproducto, ver _o2mResolverClienteYEquipos/_o2mTicketSeleccionado),
+    // arrepentirse, volver acá y elegir OTRO origen (ej. "Cliente
+    // existente"). Antes, S.fin_doc y S.ticket_id NO se limpiaban -- la OT
+    // podía terminar creándose con el documento de cobertura de Finanzas
+    // de una factura ajena, o vinculada (ticket_id) a un ticket que el
+    // usuario explícitamente dejó de usar como origen. doc_origen/
+    // doc_lineas ya se limpiaban así desde antes; esto solo pareja
+    // fin_doc/ticket_id al mismo criterio.
+    //   - fin_doc: solo se limpia si AÚN coincide con el doc_origen que se
+    //     está abandonando (mismo tido+nudo) -- si el usuario ya lo había
+    //     cambiado a mano en el paso Finanzas (declaración independiente
+    //     del origen, pedido explícito de Daniel 2026-08-29: "ese botón
+    //     persistirá en todas las opciones"), ese gesto manual se respeta
+    //     y no se pisa.
+    //   - ticket_id: no tiene una vía "manual" equivalente (solo lo puebla
+    //     resolver un ticket como origen), así que se limpia siempre que
+    //     el origen deje de ser 'ticket'.
+    //   - contraparte.direccion/comuna: mismo criterio que fin_doc -- solo
+    //     se limpian si TODAVÍA son el texto que trajo la fuente Y el
+    //     usuario nunca las tocó/confirmó (_direccion_auto, ver
+    //     _o2mResolverClienteYEquipos/setCpDireccionTexto/Places).
+    if (S.doc_origen && S.fin_doc &&
+        S.fin_doc.tido === S.doc_origen.tido && S.fin_doc.nudo === S.doc_origen.nudo){
+      S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null;
+      S.fin_zz_monto = null; S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
+    }
+    if (S.contraparte._direccion_auto){
+      S.contraparte.direccion = ''; S.contraparte.comuna = ''; S.contraparte.region = '';
+      S.contraparte._direccion_auto = false;
+    }
     if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; }
+    if (v !== 'ticket'){ S.ticket_id = null; }
     if (v==='interno'){ S.cliente=null; }
     // 2026-08-29: generaliza el chequeo que antes solo corría al entrar a
     // 'interno' -- si el tipo ya elegido no es válido para el NUEVO origen
@@ -4256,6 +4302,9 @@ window.OT2C = (function(){
     if ((header.direccion || '').trim() && !(S.contraparte.direccion || '').trim()){
       S.contraparte.direccion = header.direccion.trim();
       if ((header.comuna || '').trim()) S.contraparte.comuna = header.comuna.trim();
+      // Queda marcada como "de la fuente" -- ver setOrigen(), que la limpia
+      // si el usuario abandona este origen sin haberla tocado/confirmado.
+      S.contraparte._direccion_auto = true;
     }
 
     if (window.ilusToast){
