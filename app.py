@@ -48043,6 +48043,16 @@ def init_comunicaciones_tables():
                 _MANT_TPL.append(('plan_propuesto', 'email', _pp_asu, _pp_cue))
             except Exception as _e_pp:
                 print(f"[init_comm][plan_propuesto] seed builder falló: {_e_pp}", flush=True)
+            # 6ª plantilla (2026-08-29, Daniel por voz): aviso de OT nueva +
+            # link para firmar el Anexo de Servicios. El HTML vive en
+            # _ot2_anexo_email_seed() (módulo-level, único source of truth —
+            # lo usa también _ensure_comm_template_ot2_anexo, que corre
+            # SIEMPRE en boot, incluso con ILUS_SKIP_MIGRATIONS=1).
+            try:
+                _oa_asu, _oa_cue = _ot2_anexo_email_seed()
+                _MANT_TPL.append(('anexo_nueva_ot', 'email', _oa_asu, _oa_cue))
+            except Exception as _e_oa:
+                print(f"[init_comm][anexo_nueva_ot] seed builder falló: {_e_oa}", flush=True)
             for _est, _can, _asu, _cue in _MANT_TPL:
                 try:
                     cur.execute(
@@ -78253,6 +78263,7 @@ def ot2_api_anexo_enviar(aid):
     # puedan desincronizar. Los datos de la OT son opcionales (un anexo
     # puede no estar ligado a una OT todavía) para no romper ese caso.
     _ot_ctx = ""
+    _v = None
     if a.get("ot_id"):
         try:
             _v = mysql_fetchone(
@@ -78269,19 +78280,63 @@ def ot2_api_anexo_enviar(aid):
                        + ".</p>")
 
     link = url_for("ot2_anexo_firma_publica", token=token, _external=True)
+
+    # 🆕 Daniel 2026-08-29 (por voz, probando el wizard de OT 2.0 en vivo):
+    # pidió una plantilla EDITABLE (comm_templates) para este correo, con el
+    # link del anexo Y el link a la orden de trabajo preseleccionada — antes
+    # salía 100% hardcodeado en Python. Solo aplica cuando el anexo SÍ está
+    # ligado a una OT (a['ot_id']): sin OT no hay nada que enlazar y seguimos
+    # con el flujo de siempre, más abajo.
+    #
+    # El link a la OT apunta a la ficha normal (mant_ot_ficha), NO a un
+    # mecanismo nuevo: esa pantalla YA está protegida por el mismo candado
+    # _anexo_bloquea_ot que usa _puede_ot_accion (~línea 50992) para
+    # 'ver'/'ejecutar'/etc — si el proveedor entra antes de firmar, el
+    # sistema lo bloquea solo. No hace falta (ni conviene) inventar un token
+    # de acceso sin sesión para esto.
+    _tpl_anexo = None
+    if a.get("ot_id") and _v:
+        _link_ot = url_for("mant_ot_ficha", vid=a["ot_id"], _external=True)
+        _variables_anexo = {
+            "proveedor_nombre": a.get("proveedor_nombre") or "",
+            "numero_anexo": a["numero"],
+            "numero_ot": _v.get("numero_ot") or f"#{a['ot_id']}",
+            "ot_titulo": _v.get("titulo") or "",
+            "cliente_nombre": _v.get("razon_social") or "",
+            "link_anexo": link,
+            "link_ot": _link_ot,
+        }
+        try:
+            _tpl_anexo = _render_comm_template("anexo_nueva_ot", "email",
+                                               _variables_anexo, modulo="mantenciones")
+        except Exception as _e_tpl:
+            print(f"[anexo_enviar] plantilla no disponible, uso HTML inline: {_e_tpl}", flush=True)
+
     enviado_correo = False
     if email_destino:
         try:
-            _send_ilus_email(
-                email_destino,
-                _brand_subject(f"Nueva orden de trabajo — firma el Anexo N° {a['numero']}"),
-                f"<p>Hola,</p>"
-                f"{_ot_ctx}"
-                f"<p><b>Antes de poder empezar</b> necesitamos que revises y firmes "
-                f"el Anexo de Servicios N° {a['numero']} con las condiciones del trabajo. "
-                f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
-                f'<p><a href="{link}">Revisar y firmar el Anexo N° {a["numero"]}</a></p>'
-                f"<p>El enlace vence en 15 días.</p>")
+            if _tpl_anexo:
+                _asunto_base, _cuerpo_tpl = _tpl_anexo
+                _asunto_base = (_asunto_base or "").strip() or \
+                    f"Nueva orden de trabajo — firma el Anexo N° {a['numero']}"
+                _html_final = _comm_render_email_document(
+                    _asunto_base, _cuerpo_tpl,
+                    subtitle=f"Anexo N° {a['numero']}")
+                _send_ilus_email(email_destino, _brand_subject(_asunto_base), _html_final)
+            else:
+                # Fallback hardcodeado histórico — se mantiene TAL CUAL (REGLA
+                # #4.2): garantiza que el correo SIEMPRE sale aunque la
+                # plantilla no exista, esté apagada, o el anexo no tenga OT.
+                _send_ilus_email(
+                    email_destino,
+                    _brand_subject(f"Nueva orden de trabajo — firma el Anexo N° {a['numero']}"),
+                    f"<p>Hola,</p>"
+                    f"{_ot_ctx}"
+                    f"<p><b>Antes de poder empezar</b> necesitamos que revises y firmes "
+                    f"el Anexo de Servicios N° {a['numero']} con las condiciones del trabajo. "
+                    f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
+                    f'<p><a href="{link}">Revisar y firmar el Anexo N° {a["numero"]}</a></p>'
+                    f"<p>El enlace vence en 15 días.</p>")
             enviado_correo = True
         except Exception as e:
             print(f"[anexo_enviar] correo: {e}", flush=True)
@@ -89070,6 +89125,61 @@ def _mant_plan_propuesto_seed():
     asunto = "Propuesta de plan de mantención {{anio}}"
     cuerpo = _mant_plan_email_cuerpo("{{cliente}}", "{{fechas_html}}",
                                      "{{mensaje_extra}}", "{{anio}}")
+    return asunto, cuerpo
+
+
+# ── Anexo de Servicios: aviso de OT nueva + link de firma (HTML compartido
+#    seed + fallback) ─────────────────────────────────────────────────
+# Daniel, 2026-08-29 (por voz, probando el wizard de OT 2.0 en vivo): pidió
+# una plantilla editable para "el envío del link del anexo y el envío de la
+# orden de trabajo preseleccionada". Consumida por ot2_api_anexo_enviar.
+
+def _ot2_anexo_email_cuerpo(proveedor_tok, numero_ot_tok, ot_titulo_tok,
+                             cliente_tok, numero_anexo_tok,
+                             link_anexo_tok, link_ot_tok):
+    """Cuerpo (fragmento) del correo 'Nueva orden de trabajo — firma el Anexo'.
+
+    Mismo patrón que _mant_plan_email_cuerpo: los *_tok son valores reales o
+    placeholders literales '{{proveedor_nombre}}' / '{{numero_ot}}' / etc.
+    (siembra de la plantilla editable 'anexo_nueva_ot'). El branding/header/
+    footer lo agrega _comm_render_email_document — acá NO se duplica footer.
+    """
+    return (
+        _mant_email_hero("Nueva orden de trabajo",
+                         numero_ot_tok,
+                         f"Anexo de Servicios N° {numero_anexo_tok}") +
+        f'<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+        f'Hola {proveedor_tok}, se te asignó una nueva orden de trabajo.</p>' +
+        _mant_email_field("Orden de trabajo", numero_ot_tok, accent=True) +
+        _mant_email_field("Detalle", ot_titulo_tok) +
+        _mant_email_field("Cliente", cliente_tok) +
+        '<p style="font-size:14px;color:#374151;line-height:1.65;margin:16px 0">'
+        '<b>Antes de poder empezar</b> necesitamos que revises y firmes el '
+        f'Anexo de Servicios N° {numero_anexo_tok} con las condiciones del '
+        'trabajo. Mientras no esté firmado, no podrás ver ni iniciar la '
+        'orden de trabajo.</p>' +
+        _mant_email_cta(f"Revisar y firmar el Anexo N° {numero_anexo_tok}",
+                        link_anexo_tok) +
+        '<p style="font-size:13px;color:#6b7280;line-height:1.6;margin:18px 0 0">'
+        'El enlace del anexo vence en 15 días. Una vez firmado, tu orden de '
+        f'trabajo estará disponible en: <a href="{link_ot_tok}" '
+        f'style="color:#dc2626;font-weight:700">{link_ot_tok}</a></p>'
+    )
+
+
+def _ot2_anexo_email_seed():
+    """(asunto, cuerpo) de la plantilla editable 'anexo_nueva_ot' de
+    comm_templates (modulo='mantenciones', canal='email').
+
+    Placeholders: {{proveedor_nombre}}, {{numero_anexo}}, {{numero_ot}},
+    {{ot_titulo}}, {{cliente_nombre}}, {{link_anexo}}, {{link_ot}}.
+    ÚNICO source of truth del HTML — lo consume _ensure_comm_template_ot2_anexo().
+    """
+    asunto = "Nueva orden de trabajo — firma el Anexo N° {{numero_anexo}}"
+    cuerpo = _ot2_anexo_email_cuerpo(
+        "{{proveedor_nombre}}", "{{numero_ot}}", "{{ot_titulo}}",
+        "{{cliente_nombre}}", "{{numero_anexo}}",
+        "{{link_anexo}}", "{{link_ot}}")
     return asunto, cuerpo
 
 
@@ -109128,6 +109238,39 @@ def _ensure_comm_template_plan_propuesto():
         return False
 
 
+def _ensure_comm_template_ot2_anexo():
+    """Siembra idempotente de la plantilla 'anexo_nueva_ot' (aviso de OT
+    nueva + link para firmar el Anexo de Servicios) AUNQUE
+    ILUS_SKIP_MIGRATIONS=1.
+
+    comm_templates tiene UNIQUE KEY uq_mod_estado_canal (modulo, estado,
+    canal) → INSERT IGNORE no pisa ediciones de Daniel desde /comunicaciones.
+    El HTML sale de _ot2_anexo_email_seed(). Placeholders:
+    {{proveedor_nombre}}, {{numero_anexo}}, {{numero_ot}}, {{ot_titulo}},
+    {{cliente_nombre}}, {{link_anexo}}, {{link_ot}}. Pedido de Daniel
+    2026-08-29 (por voz, wizard de OT 2.0 en vivo): "una plantilla ... para
+    el envío del link del anexo y el envío de la orden de trabajo
+    preseleccionada". La usa ot2_api_anexo_enviar."""
+    try:
+        existe = mysql_fetchone(
+            "SELECT id FROM comm_templates WHERE modulo='mantenciones' "
+            "  AND estado='anexo_nueva_ot' AND canal='email' LIMIT 1"
+        )
+        if existe:
+            return False
+        asunto, cuerpo = _ot2_anexo_email_seed()
+        mysql_execute(
+            "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+            "VALUES ('mantenciones','anexo_nueva_ot','email',%s,%s)",
+            (asunto, cuerpo)
+        )
+        print("[ensure_comm_tpl] plantilla 'anexo_nueva_ot' sembrada", flush=True)
+        return True
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar anexo_nueva_ot: {e}", flush=True)
+        return False
+
+
 def _ensure_comm_templates_columns():
     """Garantiza que comm_templates.activo exista SIEMPRE (incluso con
     ILUS_SKIP_MIGRATIONS=1). Sin esta columna el toggle 'activo' del editor de
@@ -110746,6 +110889,16 @@ try:
         _ensure_comm_template_plan_propuesto()
 except Exception as _ensure_pp_err:
     print(f"[ILUS][WARN] _ensure_comm_template_plan_propuesto: {_ensure_pp_err}", flush=True)
+
+# Plantilla editable 'anexo_nueva_ot' (mantenciones/email) SIEMPRE sembrada
+# (incluso skip-migrations) — la usa ot2_api_anexo_enviar cuando el Anexo de
+# Servicios está ligado a una OT. Pedido de Daniel 2026-08-29 (wizard OT 2.0
+# en vivo, por voz).
+try:
+    with app.app_context():
+        _ensure_comm_template_ot2_anexo()
+except Exception as _ensure_ot2a_err:
+    print(f"[ILUS][WARN] _ensure_comm_template_ot2_anexo: {_ensure_ot2a_err}", flush=True)
 
 # Editor de plantillas por módulo (2026-06-14) — SIEMPRE, incluso skip-migrations:
 # garantizar la columna 'activo' (toggle del editor) y sembrar transporte +
