@@ -53476,7 +53476,7 @@ def init_mantenciones_tables():
             for _mig_plant in [
                 "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_activo "
                 "ENUM('cardio','selectorizado','carga_libre','racks_estructuras',"
-                "     'bancos','accesorios','bicicletas','trotadoras','otros','todas') "
+                "     'bancos','accesorios','bicicletas','trotadoras','pisos','otros','todas') "
                 "DEFAULT 'todas' "
                 "COMMENT 'Familia del activo a la que aplica. todas = sirve para cualquier equipo.'",
                 "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_checklist "
@@ -53492,6 +53492,15 @@ def init_mantenciones_tables():
                 "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
                 "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL",
                 "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)",
+                # 2026-08-30 (Daniel — "le agregaría ese toggle de plan a
+                # todas las plantillas, menos a pisos y accesorios"):
+                # garantizado también fuera de este bloque vía
+                # _ensure_plantilla_aplica_plan_mantencion(), porque prod
+                # corre con ILUS_SKIP_MIGRATIONS=1.
+                "ALTER TABLE mant_tarea_plantillas ADD COLUMN aplica_plan_mantencion "
+                "TINYINT(1) NOT NULL DEFAULT 1 COMMENT "
+                "'Si esta plantilla corresponde al plan de mantención/postventa "
+                "(0 = pisos/accesorios, informativo, no bloquea nada aún)'",
             ]:
                 try: cur.execute(_mig_plant)
                 except Exception: pass
@@ -61479,6 +61488,29 @@ def _mant_ficha_impl(cid):
         except Exception as _e_ur:
             print(f"[MANT][ficha] ultima_revision load error: {_e_ur}", flush=True)
 
+    # ── 2026-08-30 (Daniel) — Clasificación heredada del Catálogo ────────
+    # "necesitamos que la clasificación de producto... se herede o se
+    # muestre en la ficha del cliente para cada equipo, así sabremos cómo
+    # hacer mantención y visitas". Reusa _inc_clasificacion_sku (Catálogo:
+    # cat_productos.clase_producto -> cat_clases_producto.modelo_precio),
+    # la MISMA función que ya usa Incidencias — no se inventa una taxonomía
+    # nueva. Cacheada por SKU (no por fila): un cliente puede tener decenas
+    # de unidades del mismo SKU (pisos, accesorios) y repetir la consulta
+    # por cada una sería innecesario.
+    if maquinas:
+        try:
+            _clasif_cache = {}
+            for _m in maquinas:
+                _sku_m = (_m.get("sku") or "").strip().upper()
+                if not _sku_m:
+                    _m["clasificacion"] = {"clase": None, "clase_nombre": None, "repetible": None}
+                    continue
+                if _sku_m not in _clasif_cache:
+                    _clasif_cache[_sku_m] = _inc_clasificacion_sku(_sku_m)
+                _m["clasificacion"] = _clasif_cache[_sku_m]
+        except Exception as _e_clas:
+            print(f"[MANT][ficha] clasificacion load error: {_e_clas}", flush=True)
+
     # ── 2026-07-24 (Daniel, por voz) — Desglose de técnicos por tarea ──
     # "Si le asignamos una OT a cinco técnicos, quiero saber quién hizo
     # qué." ultima_revision (arriba) es un UPSERT por (visita_id,
@@ -62582,7 +62614,22 @@ def mant_maquina_add(cid):
     # PLANIFICADOR 2026-06-10: accesorios (collarines, etc.) nacen excluidos de
     # mantención si el front lo pide. Va en el INSERT principal — NO en
     # _campos_extra (su filtro descarta el 0, que es justo el valor relevante).
-    _aplica_mant = 1 if d.get("aplica_mantencion", 1) in (1, True, "1", "true") else 0
+    #
+    # 2026-08-30 (Daniel — clasificación heredada del Catálogo, verbatim:
+    # "así sabremos cómo hacer mantención y visitas... con la clasificación
+    # heredada eso nos va a ayudar a controlar si va en un plan de post-
+    # venta... excluyamos esos productos del plan"): si el CALLER mandó
+    # aplica_mantencion explícito en el body, eso manda siempre (igual que
+    # antes — no lo pisamos). Si NO lo mandó, el default deja de ser fijo
+    # en 1: se calcula desde la clasificación del SKU en el Catálogo, MISMO
+    # criterio que ya usa _inc_clasificacion_sku en Incidencias (no se
+    # inventa uno nuevo) — repetible=True (piso/accesorio) → default 0;
+    # repetible=False o sin clasificar (None, "la UI no afirma nada") →
+    # default 1, igual que el comportamiento de siempre.
+    if "aplica_mantencion" in d:
+        _aplica_mant = 1 if d.get("aplica_mantencion") in (1, True, "1", "true") else 0
+    else:
+        _aplica_mant = 0 if _inc_clasificacion_sku(sku).get("repetible") is True else 1
 
     conn = get_mysql()
     creadas = []
@@ -80077,9 +80124,13 @@ def _familias_checklist_slugs():
 
 
 # Familia de MÁQUINA a la que aplica la plantilla.
+# 2026-08-30 (Daniel): 'pisos' se agrega como familia propia -- hasta hoy
+# compartía 'accesorios', pero un piso de caucho no es un accesorio de
+# equipo (collarín, agarre, etc.) y el toggle aplica_plan_mantencion
+# necesita poder distinguirlos si Daniel crea plantillas propias de piso.
 _PLANT_FAMILIA_ACTIVO = (
     "cardio", "selectorizado", "carga_libre", "racks_estructuras",
-    "bancos", "accesorios", "bicicletas", "trotadoras", "otros", "todas",
+    "bancos", "accesorios", "bicicletas", "trotadoras", "pisos", "otros", "todas",
 )
 # Agrupación de las familias de trabajo en las 4 PESTAÑAS que pidió Daniel
 # (2026-08-08): "quiero segmentarlas por Instalación, Mantención, Visitas,
@@ -80405,7 +80456,7 @@ def mant_plantillas_listar():
         where.append("familia_checklist=%s"); params.append(fchk)
     fact = (request.args.get("familia_activo") or "").strip().lower()
     _FAM_ACT_OK = ("cardio","selectorizado","carga_libre","racks_estructuras",
-                   "bancos","accesorios","bicicletas","trotadoras","otros","todas")
+                   "bancos","accesorios","bicicletas","trotadoras","pisos","otros","todas")
     if fact in _FAM_ACT_OK:
         # Buscar plantillas para esa familia O las que aplican a 'todas'
         where.append("(familia_activo=%s OR familia_activo='todas')")
@@ -80459,6 +80510,11 @@ def mant_plantillas_listar():
             "tiempo_estimado_min": r.get("tiempo_estimado_min"),
             "activa": bool(r.get("activa")),
             "es_sistema": bool(r.get("es_sistema")),
+            # 2026-08-30 (Daniel): toggle informativo -- ver
+            # _ensure_plantilla_aplica_plan_mantencion. Default True si la
+            # columna aún no existe en este boot (no debería pasar, pero
+            # evita un KeyError silencioso).
+            "aplica_plan_mantencion": bool(r.get("aplica_plan_mantencion", 1)),
             "items_count": int(r.get("items_count") or 0),
             "created_by": r.get("created_by") or "",
             "created_at": str(r["created_at"])[:16] if r.get("created_at") else "",
@@ -80913,6 +80969,7 @@ def mant_plantilla_detalle(pid):
             "tiempo_estimado_min": plant.get("tiempo_estimado_min"),
             "activa": bool(plant.get("activa")),
             "es_sistema": bool(plant.get("es_sistema")),
+            "aplica_plan_mantencion": bool(plant.get("aplica_plan_mantencion", 1)),
             "created_by": plant.get("created_by") or "",
             "created_at": str(plant["created_at"])[:16] if plant.get("created_at") else "",
             "de_clasificacion": _tarifa["de_clasificacion"],
@@ -80957,6 +81014,10 @@ def mant_plantilla_crear():
     # admin no la asignó todavía (queda en "Sin categoría" en la UI).
     cat_admin = (d.get("categoria_admin") or "").strip().lower()
     cat_admin = cat_admin if cat_admin in _PLANT_CATEGORIAS_ADMIN else None
+    # 2026-08-30 (Daniel): toggle informativo -- default True si el front no
+    # lo manda (ver _ensure_plantilla_aplica_plan_mantencion). NO bloquea
+    # nada todavía (REGLA #4.2).
+    aplica_plan = 1 if d.get("aplica_plan_mantencion", True) in (1, True, "1", "true") else 0
 
     items_in = d.get("items") or []
     items_norm = []
@@ -80974,9 +81035,10 @@ def mant_plantilla_crear():
             cur.execute(
                 "INSERT INTO mant_tarea_plantillas "
                 "(nombre, descripcion, tipo_visita, tiempo_estimado_min, "
-                " familia_checklist, familia_activo, categoria_admin, activa, es_sistema, created_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,1,0,%s)",
-                (nombre, desc, tv, tiempo, fam_chk, fam_act, cat_admin, current_username())
+                " familia_checklist, familia_activo, categoria_admin, "
+                " aplica_plan_mantencion, activa, es_sistema, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,0,%s)",
+                (nombre, desc, tv, tiempo, fam_chk, fam_act, cat_admin, aplica_plan, current_username())
             )
             pid = cur.lastrowid
             for it in items_norm:
@@ -81036,6 +81098,10 @@ def mant_plantilla_actualizar(pid):
     # Tarea 1.3: reasignación manual de categoria_admin desde el editor.
     cat_admin = (d.get("categoria_admin") or "").strip().lower()
     cat_admin = cat_admin if cat_admin in _PLANT_CATEGORIAS_ADMIN else None
+    # 2026-08-30 (Daniel): toggle informativo -- default True si el front no
+    # lo manda. NO bloquea nada todavía (REGLA #4.2, ver
+    # _ensure_plantilla_aplica_plan_mantencion).
+    aplica_plan = 1 if d.get("aplica_plan_mantencion", True) in (1, True, "1", "true") else 0
 
     items_in = d.get("items") or []
     items_norm = []
@@ -81055,9 +81121,10 @@ def mant_plantilla_actualizar(pid):
                 " nombre=%s, descripcion=%s, tipo_visita=%s, "
                 " tiempo_estimado_min=%s, activa=%s, "
                 " familia_checklist=%s, familia_activo=%s, categoria_admin=%s, "
+                " aplica_plan_mantencion=%s, "
                 " revisar_tecnico=0 "
                 "WHERE id=%s",
-                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, cat_admin, pid)
+                (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, cat_admin, aplica_plan, pid)
             )
             cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
             for it in items_norm:
@@ -105073,7 +105140,7 @@ def _ensure_plantillas_estandar_seed():
                 activa        TINYINT(1) DEFAULT 1,
                 es_sistema    TINYINT(1) DEFAULT 0,
                 familia_activo ENUM('cardio','selectorizado','carga_libre','racks_estructuras',
-                                    'bancos','accesorios','bicicletas','trotadoras','otros','todas')
+                                    'bancos','accesorios','bicicletas','trotadoras','pisos','otros','todas')
                                DEFAULT 'todas',
                 familia_checklist ENUM('instalacion','preventiva','correctivo','desinstalacion',
                                        'capacitacion','registro_productos','operacional_interno',
@@ -105090,7 +105157,7 @@ def _ensure_plantillas_estandar_seed():
         for _alt in (
             "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_activo "
             "ENUM('cardio','selectorizado','carga_libre','racks_estructuras',"
-            "     'bancos','accesorios','bicicletas','trotadoras','otros','todas') DEFAULT 'todas'",
+            "     'bancos','accesorios','bicicletas','trotadoras','pisos','otros','todas') DEFAULT 'todas'",
             "ALTER TABLE mant_tarea_plantillas ADD COLUMN familia_checklist "
             "ENUM('instalacion','preventiva','correctivo','desinstalacion',"
             "     'capacitacion','registro_productos','operacional_interno',"
@@ -105106,6 +105173,16 @@ def _ensure_plantillas_estandar_seed():
             "ENUM('instalacion','preventiva','correctivo','desinstalacion',"
             "     'capacitacion','registro_productos','operacional_interno',"
             "     'rendiciones','control_calidad','otro') DEFAULT 'otro'",
+            # 2026-08-30 (Daniel — clasificación heredada del Catálogo
+            # extendida a las plantillas): 'pisos' no existía en el ENUM,
+            # solo 'accesorios'. MISMO gotcha "ENUM angosto (1265)" de
+            # arriba — el ADD COLUMN de la línea de más arriba nunca corre
+            # en una tabla que ya existe (el caso real de prod), así que
+            # este MODIFY es el que de verdad la ensancha.
+            "ALTER TABLE mant_tarea_plantillas MODIFY COLUMN familia_activo "
+            "ENUM('cardio','selectorizado','carga_libre','racks_estructuras',"
+            "     'bancos','accesorios','bicicletas','trotadoras','pisos','otros','todas') "
+            "DEFAULT 'todas'",
         ):
             try: mysql_execute(_alt)
             except Exception: pass
@@ -106938,6 +107015,66 @@ def _ensure_col_revisar_tecnico():
             "TINYINT(1) NULL DEFAULT NULL")
     except Exception:
         pass
+
+
+def _ensure_plantilla_aplica_plan_mantencion():
+    """Columna `aplica_plan_mantencion` en mant_tarea_plantillas SIEMPRE,
+    incluso con ILUS_SKIP_MIGRATIONS=1 (mismo patrón defensivo que
+    _ensure_mant_maquinas_origen_visita_columna).
+
+    Daniel 2026-08-30 (misma noche, extendiendo a las PLANTILLAS la
+    clasificación heredada que ya se aplicó a la ficha del equipo):
+    "en las plantillas debemos colocar si ese producto se agrega al plan
+    de mantenciones o servicio postventa o no. Es para identificar a qué
+    se debe cotizar una mantención y qué se debe atender en una orden de
+    trabajo. Le agregaría ese toggle de plan a todas las plantillas,
+    menos a pisos y accesorios."
+
+    Por ahora es puramente INFORMATIVO -- no bloquea ni cambia ninguna
+    selección/sugerencia de plantilla que ya funcione (REGLA #4.2:
+    aditivo, no se toca comportamiento existente).
+
+    DEFAULT 1 (en el plan) para no re-etiquetar en silencio ninguna
+    plantilla existente. El backfill de abajo corre UNA SOLA VEZ, justo
+    en el mismo momento en que la columna recién se crea -- estructurado
+    así a propósito: en cualquier arranque POSTERIOR la columna ya existe,
+    así que este bloque entero se saltea y nunca vuelve a pisar el campo.
+    Si Daniel después activa a mano el plan en una plantilla de
+    accesorios/pisos, ningún reboot se lo revierte."""
+    try:
+        existing = {
+            (r.get("COLUMN_NAME") or "").lower()
+            for r in (mysql_fetchall(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_tarea_plantillas'"
+            ) or [])
+        }
+        if "aplica_plan_mantencion" in existing:
+            return 0  # ya existe -- no se re-ejecuta el backfill (ver docstring)
+        mysql_execute(
+            "ALTER TABLE mant_tarea_plantillas ADD COLUMN aplica_plan_mantencion "
+            "TINYINT(1) NOT NULL DEFAULT 1 COMMENT "
+            "'Si esta plantilla corresponde al plan de mantención/postventa "
+            "(0 = pisos/accesorios, informativo, no bloquea nada aún)'")
+        print("[ensure_plantilla_aplica_plan] columna agregada", flush=True)
+    except Exception as e_add:
+        print(f"[ensure_plantilla_aplica_plan] no se pudo agregar columna: {e_add}", flush=True)
+        return 0
+    # Backfill de datos -- corre UNA sola vez, inmediatamente después de crear
+    # la columna en este mismo boot (ver docstring). Las plantillas de
+    # 'accesorios' (única familia real hoy que es piso/accesorio) nacen
+    # fuera del plan; 'pisos' se incluye también por si alguna fila ya
+    # llegara a tener ese valor nuevo del ENUM.
+    try:
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_tarea_plantillas SET aplica_plan_mantencion=0 "
+            "WHERE familia_activo IN ('accesorios','pisos')")
+        print(f"[ensure_plantilla_aplica_plan] backfill inicial: {n} plantilla(s) "
+              f"de accesorios/pisos marcadas fuera del plan", flush=True)
+        return n
+    except Exception as e_bf:
+        print(f"[ensure_plantilla_aplica_plan] backfill falló: {e_bf}", flush=True)
+        return 0
 
 
 def _ensure_plantillas_autorrelleno():
@@ -110942,6 +111079,18 @@ try:
         _ensure_marcar_revision_tecnica_28ago()
 except Exception as _ensure_marcar_revision_err:
     print(f"[ILUS][WARN] _ensure_marcar_revision_tecnica_28ago (fuera de contexto): {_ensure_marcar_revision_err}", flush=True)
+
+# CRÍTICO: garantizar mant_tarea_plantillas.aplica_plan_mantencion SIEMPRE,
+# incluso con ILUS_SKIP_MIGRATIONS=1 -- editar/crear una plantilla con el
+# toggle de plan de mantención daría 'Unknown column' sin esto (2026-08-30,
+# ver _ensure_plantilla_aplica_plan_mantencion).
+try:
+    with app.app_context():
+        _n_plan_bf = _ensure_plantilla_aplica_plan_mantencion()
+    if _n_plan_bf:
+        print(f"[ILUS] aplica_plan_mantencion=0 backfill inicial: {_n_plan_bf} plantilla(s)", flush=True)
+except Exception as _ensure_plan_err:
+    print(f"[ILUS][WARN] _ensure_plantilla_aplica_plan_mantencion: {_ensure_plan_err}", flush=True)
 
 # CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
 try:
