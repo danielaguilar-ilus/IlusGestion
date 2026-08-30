@@ -762,6 +762,12 @@ window.OT2C = (function(){
   // tipo elegido (ver cargarPlantillasInterno). cachePlantInternoTipo guarda
   // para QUÉ tipo se cargó la lista, así un cambio de tipo dispara refetch.
   var cachePlantInterno = [], cachePlantInternoTipo = null, cachePlantInternoCargando = false;
+  // 30-08-2026 (Daniel, CRUD "Tipos de trabajo interno", timebox 16-18h):
+  // los 3 tipos interno:true de TIPOS (arriba) dejaron de ser el único
+  // universo posible -- se completan/reemplazan con lo que devuelva
+  // GET /mantenciones/api/tipos-interno (mant_tipos_interno, administrado
+  // desde /mantenciones/plantillas). Ver cargarTiposInterno().
+  var _tiposInternoCargados = false, _tiposInternoCargando = false;
 
   function reset(){
     S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
@@ -3272,6 +3278,13 @@ window.OT2C = (function(){
         if (!S.plantilla_id_interno && cachePlantInterno.length === 1){
           S.plantilla_id_interno = cachePlantInterno[0].id;
         }
+        // 30-08-2026: si la plantilla llegó PRE-sugerida por el tipo (ver
+        // setTipo/cargarTiposInterno, mant_tipos_interno.plantilla_id) pero
+        // ya no está activa o no tiene ítems, se limpia -- si no, quedaría
+        // un id "fantasma" en S que el <select> nunca muestra seleccionado.
+        if (S.plantilla_id_interno && !cachePlantInterno.some(function(p){ return p.id === S.plantilla_id_interno; })){
+          S.plantilla_id_interno = null;
+        }
         pintarPlantillaInternoSelect();
       })
       .catch(function(){
@@ -3310,6 +3323,42 @@ window.OT2C = (function(){
     S.plantilla_id_interno = v ? parseInt(v) : null;
     refrescarAnclas();
   }
+
+  /* ── CRUD "Tipos de trabajo interno" (30-08-2026, Daniel, timebox 16-18h) ──
+     Antes, TIPOS traía los 3 tipos interno:true (capacitación/bodega/
+     control de calidad) hardcodeados de fábrica. Ahora un superadmin puede
+     crear/editar/desactivar tipos nuevos desde /mantenciones/plantillas
+     (endpoints /mantenciones/api/tipos-interno) SIN redeploy -- este wizard
+     tiene que reflejarlos "con el chasquido de los dedos" (Daniel, textual).
+
+     Estrategia: se MUTA el mismo array TIPOS (splice), nunca se reasigna
+     la variable -- pintarTipoGrid()/setTipo(i)/pasos() usan TIPOS.indexOf(t)
+     y `TIPOS.find(...)` por referencia; reasignar TIPOS los dejaría
+     apuntando al array viejo. Si el fetch falla (red caída, endpoint no
+     disponible en esta build), se conservan las 3 entradas fijas de
+     siempre -- el Paso 1 NUNCA debe quedar sin tarjetas por un error de
+     red (mismo criterio que cargarPlantillasInterno, arriba). */
+  function cargarTiposInterno(){
+    if (_tiposInternoCargados || _tiposInternoCargando){ pintarTipoGrid(); return; }
+    _tiposInternoCargando = true;
+    fetch('/mantenciones/api/tipos-interno', {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        _tiposInternoCargando = false;
+        _tiposInternoCargados = true;
+        if (!j || !j.ok || !Array.isArray(j.tipos) || !j.tipos.length) return;
+        var nuevos = j.tipos.map(function(t){
+          return {v:t.clave, n:t.nombre, i:t.icono||'bi-gear', l:t.descripcion||'',
+                  interno:true, plantilla_id_sugerida: t.plantilla_id || null};
+        });
+        var idx0 = TIPOS.findIndex(function(t){ return t.interno; });
+        var cantViejos = TIPOS.filter(function(t){ return t.interno; }).length;
+        if (idx0 >= 0) TIPOS.splice.apply(TIPOS, [idx0, cantViejos].concat(nuevos));
+        else Array.prototype.push.apply(TIPOS, nuevos);
+        pintarTipoGrid();
+      })
+      .catch(function(){ _tiposInternoCargando = false; _tiposInternoCargados = true; });
+  }
   function pintarTareasManuales(){
     var c = document.getElementById('o2mTareasList'); if(!c) return;
     if (!S.tareas_manuales.length){
@@ -3317,11 +3366,27 @@ window.OT2C = (function(){
       return;
     }
     c.innerHTML = S.tareas_manuales.map(function(tm,i){
+      // 30-08-2026 (Daniel, textual): "tiene que estar una tarea manual,
+      // pero con cantidad -- de momento solo cantidad, el costo estimado
+      // ya vemos cómo automatizarlo después". Input numérico EN LA MISMA
+      // fila (no un prompt aparte) -- font-size 16px anti-zoom iOS (REGLA
+      // #3), min 1 (nunca 0 ni negativo, ver setCantidadTareaManual).
+      var cant = parseInt(tm.cantidad, 10); if (!cant || cant < 1) cant = 1;
       return '<div class="o2m-it"><i class="bi bi-check2-square text-muted"></i>'+
         '<span style="flex:1" class="nm">'+esc(tm.titulo)+'</span>'+
+        '<input type="number" class="form-control form-control-sm" inputmode="numeric" '+
+        'style="width:76px;font-size:16px;min-height:40px" min="1" step="1" value="'+cant+'" '+
+        'title="Cantidad" aria-label="Cantidad" '+
+        'onchange="OT2C.setCantidadTareaManual('+i+',this.value)">'+
         '<button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
         'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></div>';
     }).join('');
+  }
+  function setCantidadTareaManual(i, v){
+    var n = parseInt(v, 10);
+    if (!n || n < 1) n = 1;
+    if (S.tareas_manuales[i]) S.tareas_manuales[i].cantidad = n;
+    pintarTareasManuales();
   }
   function abrirProductoCatalogo(){
     if (typeof tkaOpen !== 'function'){
@@ -3334,9 +3399,11 @@ window.OT2C = (function(){
       onSeleccionar: function(items){
         (items||[]).forEach(function(it){
           if (!it || !it.sku) return;
+          var _qty = parseInt(it.qty, 10); if (!_qty || _qty < 1) _qty = 1;
           S.tareas_manuales.push({
             titulo: 'Producto: ' + it.sku + (it.nombre ? (' — ' + it.nombre) : '') + (it.qty ? (' × ' + it.qty) : ''),
-            descripcion: ''
+            descripcion: '',
+            cantidad: _qty
           });
         });
         pintarTareasManuales();
@@ -3352,7 +3419,7 @@ window.OT2C = (function(){
       required: true,
     });
     if (!texto) return;
-    S.tareas_manuales.push({titulo: texto.slice(0,300), descripcion:''});
+    S.tareas_manuales.push({titulo: texto.slice(0,300), descripcion:'', cantidad:1});
     pintarTareasManuales();
     refrescarAnclas();
   }
@@ -4226,7 +4293,12 @@ window.OT2C = (function(){
     }
     if (v !== 'documento'){ S.doc_origen = null; S.doc_lineas = []; }
     if (v !== 'ticket'){ S.ticket_id = null; }
-    if (v==='interno'){ S.cliente=null; }
+    // 30-08-2026: se dispara ANTES de pintar el formulario -- si el fetch
+    // todavía no vuelve, pintarTipo() ya renderiza con lo que haya en TIPOS
+    // (los 3 fijos u otra carga previa) y cargarTiposInterno() repinta solo
+    // la grilla (pintarTipoGrid) cuando el fetch resuelve, sin perder nada
+    // de lo ya elegido -- mismo idioma async que cargarPlantillasInterno.
+    if (v==='interno'){ S.cliente=null; cargarTiposInterno(); }
     // 2026-08-29: generaliza el chequeo que antes solo corría al entrar a
     // 'interno' -- si el tipo ya elegido no es válido para el NUEVO origen
     // (ej. traía 'instalacion' y el usuario retrocede a elegir 'cliente'),
@@ -4575,7 +4647,13 @@ window.OT2C = (function(){
     if (t.interno) S.origen = 'interno';
     // La plantilla de checklist sugerida es POR TIPO -- si el tipo cambia,
     // una plantilla elegida para el tipo anterior ya no aplica (28-08-2026).
-    S.plantilla_id_interno = null;
+    // 30-08-2026: si el tipo trae una plantilla asignada desde el CRUD de
+    // "Tipos de trabajo interno" (mant_tipos_interno.plantilla_id, ver
+    // cargarTiposInterno), se PRE-sugiere esa -- Daniel: "auto-asignar...
+    // el usuario debe poder cambiarlo a mano después". Nunca es forzoso:
+    // cargarPlantillasInterno() valida que siga existiendo/activa (ver ahí)
+    // y el <select> deja cambiarla sin problema.
+    S.plantilla_id_interno = t.plantilla_id_sugerida || null;
     // Elegir tipo puede cambiar qué pide "Cliente" (aparece/desaparece) y
     // qué muestra "Equipos" (bodega/producto-o-tarea/normal) -- se
     // reconstruye el formulario completo para no dejar secciones a medio
@@ -5304,7 +5382,8 @@ window.OT2C = (function(){
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
-          quitarTareaManual:quitarTareaManual, bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
+          quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
+          bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
