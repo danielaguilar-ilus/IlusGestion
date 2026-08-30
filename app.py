@@ -75420,6 +75420,17 @@ def _ensure_ot_finanzas_cols():
       finanzas_por     REVERSIBLE ("podemos retractarnos y volver a
                        confirmar"), así que interesa el último estado y
                        quién lo dejó así.
+      zz_motivo_manual/ — 2026-08-30 (Daniel: "si no trae esto se podrá
+      zz_envio_motivo_    declarar a mano, pero deberá reportarse con un
+      manual              argumento... si se absorbió, si es una concesión
+                       de comercial. Hay que ser bien riguroso y
+                       detallista con esto"): por qué zz_monto/zz_envio_monto
+                       terminaron en un valor distinto al que trajo el
+                       documento (o sin documento detrás). El frontend ya
+                       bloquea crear() sin este texto cuando corresponde
+                       (ver completo('finanzas') en _modal_crear.html) --
+                       se persiste para poder auditar el motivo después,
+                       no solo validar en el momento.
     """
     _cols = [
         ("centro_costo",  "VARCHAR(20) NULL COMMENT 'sstt|logistica|comercial'"),
@@ -75427,6 +75438,8 @@ def _ensure_ot_finanzas_cols():
         ("zz_monto",      "INT NULL COMMENT 'Monto de la linea ZZ, leido del documento'"),
         ("zz_envio_codigo", "VARCHAR(30) NULL COMMENT 'Linea ZZENVIO del mismo documento, si trae despacho aparte'"),
         ("zz_envio_monto",  "INT NULL COMMENT 'Monto de la linea ZZENVIO, leido del documento'"),
+        ("zz_motivo_manual", "VARCHAR(500) NULL COMMENT 'Por que zz_monto se declaro/edito a mano (absorbido, concesion comercial, etc)'"),
+        ("zz_envio_motivo_manual", "VARCHAR(500) NULL COMMENT 'Por que zz_envio_monto se declaro/edito a mano'"),
         ("finanzas_at",   "DATETIME NULL COMMENT 'Cuando se declaro la parte financiera'"),
         ("finanzas_por",  "VARCHAR(190) NULL"),
     ]
@@ -76729,6 +76742,15 @@ def ot2_api_crear():
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de envío no es válido.", "ZZ_ENVIO_INVALIDO")
     _fin_zz_envio_c = (_fin.get("zz_envio_codigo") or "").strip().upper()[:30] or None
+    # 2026-08-30 (Daniel: "deberá reportarse con un argumento... hay que
+    # ser bien riguroso y detallista con esto"): el frontend ya bloquea
+    # crear() sin este texto cuando el monto se declaró/editó a mano (ver
+    # completo('finanzas') en _modal_crear.html) -- acá solo se persiste,
+    # sin repetir la validación (confiar en el front sería un hueco, pero
+    # el candado real de "no se puede crear sin esto" ya vive en el propio
+    # botón Crear orden, que no se habilita hasta que completo() sea true).
+    _fin_zz_motivo_manual = (_fin.get("zz_motivo_manual") or "").strip()[:500] or None
+    _fin_zz_envio_motivo_manual = (_fin.get("zz_envio_motivo_manual") or "").strip()[:500] or None
     if not _fin_zz_envio_c:
         _fin_zz_envio_m = None
     # 2026-08-28 (Daniel, trabajo interno de bodega: "debería hacer un
@@ -76847,6 +76869,7 @@ def ot2_api_crear():
             "   hora_inicio, hora_fin, tipo, estado, tecnico, tecnico_user_id, "
             "   acceso_ascensor, acceso_estacionamiento, acceso_piso, acceso_notas, "
             "   centro_costo, zz_codigo, zz_monto, zz_envio_codigo, zz_envio_monto, "
+            "   zz_motivo_manual, zz_envio_motivo_manual, "
             "   costo, modalidad_cobro, cubierto_por, "
             "   garantia_motivo, factura_tido, factura_nudo, estado_facturacion, "
             "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
@@ -76857,7 +76880,7 @@ def ot2_api_crear():
             "   direccion_place_id, "
             "   finanzas_at, finanzas_por, created_by) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'programada',%s,%s,%s,%s,%s,%s,"
-            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
             "        %s,"
             "        %s,%s,%s,%s,"
@@ -76868,6 +76891,7 @@ def ot2_api_crear():
              hora_ini, hora_fin, tipo_ot, tecnico_nombre, lider_id,
              acc_asc, acc_est, acc_piso, acc_notas,
              _fin_centro, _fin_zzc, _fin_zzm, _fin_zz_envio_c, _fin_zz_envio_m,
+             _fin_zz_motivo_manual, _fin_zz_envio_motivo_manual,
              _fin_costo_int,
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,

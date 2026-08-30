@@ -834,6 +834,19 @@ window.OT2C = (function(){
          // ofrece ni se auto-elige como si fuera el valor del servicio, así
          // no se pierde ni se mezcla con él (ver _o2mFinCargarZZ).
          fin_zz_envio:null,
+         // 2026-08-30 (Daniel: "si la mantención o instalación no trae esto
+         // se podrá declarar a mano, pero deberá reportarse con un
+         // argumento... el ZZ envío necesito que lo reconozca y pueda ser
+         // también editable, igual que el precio de ZZ instalación"):
+         // ambos montos (servicio y envío) pasan a ser EDITABLES -- se
+         // guarda el valor ORIGINAL que trajo el documento (o null si nunca
+         // hubo documento) para poder comparar y saber si el usuario lo
+         // tocó. Si el monto vigente ya no coincide con el original (o
+         // nunca hubo original -- 100% manual), se exige un motivo escrito
+         // antes de poder crear la OT (ver completo('finanzas') y
+         // _o2mFinMotivoRequerido()).
+         fin_zz_monto_original:null, fin_zz_motivo_manual:'',
+         fin_zz_envio_original:null, fin_zz_envio_motivo_manual:'',
          // Aviso (no bloqueante) cuando el documento elegido trae la línea
          // de servicio (ZZINSTALACION/ZZMANTENCION) pero su RUT no coincide
          // con el del cliente de la OT -- mismo criterio que "Documentos
@@ -1032,8 +1045,16 @@ window.OT2C = (function(){
       // es documento O garantía, excluyentes -- garantía exime del
       // documento ("si es garantía, no es necesario [el documento]").
       case 'finanzas':
-        return !!S.fin_centro &&
-          (S.fin_garantia || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo));
+        if (!S.fin_centro) return false;
+        if (!(S.fin_garantia || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo))) return false;
+        // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
+        // pero deberá reportarse con un argumento... hay que ser bien
+        // riguroso y detallista con esto"): esto SÍ bloquea -- a diferencia
+        // del monto en sí (que sigue sin ser obligatorio), el motivo de un
+        // monto declarado/editado a mano no es opcional.
+        if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return false;
+        if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return false;
+        return true;
       // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
       // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
       // continuar" (bloquea el trabajo del proveedor en el sistema real).
@@ -3468,13 +3489,20 @@ window.OT2C = (function(){
         S.fin_zz_lineas = (j && j.ok && Array.isArray(j.lineas_zz)) ? j.lineas_zz : [];
         var envioLn = S.fin_zz_lineas.find(function(l){ return (l.sku||'').toUpperCase() === 'ZZENVIO'; });
         S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: envioLn.monto} : null;
+        // 2026-08-30 (Daniel: "el ZZ envío... pueda ser también editable"):
+        // se guarda el monto ORIGINAL del documento aparte del vigente --
+        // _pintarFinZZDom compara ambos para saber si el usuario lo tocó.
+        S.fin_zz_envio_original = envioLn ? envioLn.monto : null;
         // Auto-elige la sugerida (o la única que haya, EXCLUYENDO siempre
         // ZZENVIO) sin pisar una elección manual ya hecha por el usuario.
         var sug = null;
         if (!S.fin_zz_codigo && S.fin_zz_lineas.length){
           var candidatas = S.fin_zz_lineas.filter(function(l){ return l !== envioLn; });
           sug = S.fin_zz_lineas.find(function(l){ return l.sugerida; }) || candidatas[0] || null;
-          if (sug){ S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto; }
+          if (sug){
+            S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto;
+            S.fin_zz_monto_original = sug.monto;   // ver comentario de fin_zz_envio_original arriba
+          }
         }
         // ¿La línea de servicio real (la que corresponde al tipo de OT) se
         // identificó de este documento? Puede venir recién elegida (sug) o
@@ -3503,43 +3531,105 @@ window.OT2C = (function(){
         _pintarFinZZDom();
       });
   }
+  /* 2026-08-30 (Daniel: "si la mantención o instalación no trae esto se
+     podrá declarar a mano, pero deberá reportarse con un argumento... hay
+     que ser bien riguroso y detallista con esto... el ZZ envío necesito
+     que lo reconozca y pueda ser también editable, igual que el precio de
+     ZZ instalación"). Ambos montos (servicio y envío) son editables; "es
+     manual" = no hay documento detrás, O el número vigente ya no coincide
+     con el que trajo el documento -- en cualquiera de los dos casos se
+     exige un motivo escrito (ver completo('finanzas')). */
+  function _o2mFinEsManual(){
+    if (S.fin_zz_monto == null) return false;
+    return S.fin_zz_monto_original == null || S.fin_zz_monto !== S.fin_zz_monto_original;
+  }
+  function _o2mFinEnvioEsManual(){
+    if (!S.fin_zz_envio || S.fin_zz_envio.monto == null) return false;
+    return S.fin_zz_envio_original == null || S.fin_zz_envio.monto !== S.fin_zz_envio_original;
+  }
+  function _o2mFinMontoServicioCambio(el){
+    var digitos = _o2mLimpiarNumero(el.value);
+    S.fin_zz_monto = digitos ? parseInt(digitos, 10) : null;
+    el.value = _o2mFormatearMiles(digitos);
+    if (!_o2mFinEsManual()) S.fin_zz_motivo_manual = '';
+    _pintarFinZZDom(); _pintarFinMargenDom();
+  }
+  function _o2mFinMontoEnvioCambio(el){
+    var digitos = _o2mLimpiarNumero(el.value);
+    var monto = digitos ? parseInt(digitos, 10) : null;
+    if (!S.fin_zz_envio) S.fin_zz_envio = {sku:'ZZENVIO', monto:null};
+    S.fin_zz_envio.monto = monto;
+    el.value = _o2mFormatearMiles(digitos);
+    if (!_o2mFinEnvioEsManual()) S.fin_zz_envio_motivo_manual = '';
+    _pintarFinZZDom();
+  }
+  function setFinMotivoManual(v){ S.fin_zz_motivo_manual = v; }
+  function setFinEnvioMotivoManual(v){ S.fin_zz_envio_motivo_manual = v; }
   function _pintarFinZZDom(){
     var c = document.getElementById('o2mFinZZ'); if (!c) return;
     // ZZENVIO nunca se ofrece como opción de "línea de servicio" -- se
     // muestra aparte, como dato informativo de transporte.
     var seleccionables = S.fin_zz_lineas.filter(function(l){ return (l.sku||'').toUpperCase() !== 'ZZENVIO'; });
-    var envioHtml = S.fin_zz_envio
-      ? '<div class="o2m-aviso" style="background:#dbeafe;border-color:#93c5fd;color:#1e3a8a;margin-top:8px">'+
-        '<i class="bi bi-truck me-1"></i>El documento trae además <b>'+esc(S.fin_zz_envio.sku)+'</b> (transporte): '+
-        '<b>$'+Math.round(S.fin_zz_envio.monto).toLocaleString('es-CL')+'</b>'+
-        ' — se reconoce aparte, no se mezcla con el valor del servicio.</div>'
-      : '';
     var avisoRut = S.fin_doc_rut_difiere
       ? '<div class="o2m-aviso" style="background:#fff8e1;border-color:#fde68a;color:#92400e;margin-top:8px">'+
         '<i class="bi bi-exclamation-triangle-fill me-1"></i>El RUT de este documento no coincide con el del '+
         'cliente de esta OT — revísalo antes de avanzar con la documentación.</div>'
       : '';
-    if (!seleccionables.length){
-      c.innerHTML = (S.fin_zz_lineas.length
-        ? '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
-          'El documento solo trae la línea de transporte (ZZENVIO) — ingresa el valor del servicio a mano si corresponde.</div>'
-        : '<div class="text-muted small"><i class="bi bi-info-circle me-1"></i>'+
-          'El documento no trae líneas de servicio (ZZ...) — puedes ingresar el monto a mano si corresponde.</div>')
-        + envioHtml + avisoRut;
-      return;
+    // ── Línea de servicio (ZZINSTALACION/ZZMANTENCION) ──────────────────
+    var servicioHtml = seleccionables.length
+      ? '<label class="fl">Línea de servicio del documento</label>'+
+        seleccionables.map(function(l){
+          var sel = (S.fin_zz_codigo === l.sku);
+          return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.setFinZZ(\''+l.sku+'\','+l.monto+')">'+
+            '<span class="o2m-chk">'+(sel?'<i class="bi bi-check"></i>':'')+'</span>'+
+            '<span style="flex:1"><span class="nm">'+esc(l.sku)+(l.sugerida?' · sugerida':'')+'</span>'+
+            '<span class="mt d-block">'+esc(l.descripcion||'')+'</span></span>'+
+            '<b>$'+Math.round(l.monto).toLocaleString('es-CL')+'</b></div>';
+        }).join('')+
+        '<label class="fl mt-2">Monto del servicio'+(_o2mFinEsManual()?' <span style="color:#dc2626">(editado a mano)</span>':'')+'</label>'+
+        '<input type="text" inputmode="numeric" class="form-control" '+
+        'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" placeholder="Monto del servicio" '+
+        'oninput="OT2C._o2mFinMontoServicioCambio(this)">'
+      : '<label class="fl">'+(S.fin_zz_lineas.length
+          ? 'El documento solo trae la línea de transporte (ZZENVIO) — ingresa el valor del servicio a mano'
+          : 'El documento no trae líneas de servicio (ZZ…) — ingresa el valor del servicio a mano')+'</label>'+
+        '<input type="text" inputmode="numeric" class="form-control" '+
+        'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" placeholder="Valor del servicio" '+
+        'oninput="OT2C._o2mFinMontoServicioCambio(this)">';
+    var motivoServicioHtml = _o2mFinEsManual()
+      ? '<label class="fl mt-2">¿Por qué se declara a mano? *</label>'+
+        '<textarea class="form-control" rows="2" maxlength="500" '+
+        'placeholder="Ej: se absorbió el costo, concesión comercial, el documento aún no llega…" '+
+        'oninput="OT2C.setFinMotivoManual(this.value)">'+esc(S.fin_zz_motivo_manual)+'</textarea>'
+      : '';
+    // ── Línea de transporte (ZZENVIO), editable aparte ──────────────────
+    var envioHtml = '';
+    if (S.fin_zz_envio){
+      envioHtml = '<div class="mt-3" style="padding-top:10px;border-top:1px dashed #e5e7eb">'+
+        '<label class="fl"><i class="bi bi-truck me-1"></i>Transporte (ZZENVIO del documento)'+
+        (_o2mFinEnvioEsManual()?' <span style="color:#dc2626">(editado a mano)</span>':'')+'</label>'+
+        '<input type="text" inputmode="numeric" class="form-control" '+
+        'value="'+esc(_o2mFormatearMiles(S.fin_zz_envio.monto))+'" placeholder="Monto de transporte" '+
+        'oninput="OT2C._o2mFinMontoEnvioCambio(this)">'+
+        '<div class="text-muted" style="font-size:.72rem;margin-top:4px">Lo que el documento le cobra al cliente por transporte — '+
+        'se reconoce aparte, no se mezcla con el valor del servicio.</div>'+
+        (_o2mFinEnvioEsManual()
+          ? '<label class="fl mt-2">¿Por qué se declara a mano? *</label>'+
+            '<textarea class="form-control" rows="2" maxlength="500" '+
+            'placeholder="Ej: se absorbió el despacho, concesión comercial…" '+
+            'oninput="OT2C.setFinEnvioMotivoManual(this.value)">'+esc(S.fin_zz_envio_motivo_manual)+'</textarea>'
+          : '')+
+      '</div>';
     }
-    c.innerHTML = '<label class="fl">Línea de servicio del documento</label>'+
-      seleccionables.map(function(l){
-        var sel = (S.fin_zz_codigo === l.sku);
-        return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.setFinZZ(\''+l.sku+'\','+l.monto+')">'+
-          '<span class="o2m-chk">'+(sel?'<i class="bi bi-check"></i>':'')+'</span>'+
-          '<span style="flex:1"><span class="nm">'+esc(l.sku)+(l.sugerida?' · sugerida':'')+'</span>'+
-          '<span class="mt d-block">'+esc(l.descripcion||'')+'</span></span>'+
-          '<b>$'+Math.round(l.monto).toLocaleString('es-CL')+'</b></div>';
-      }).join('') + envioHtml + avisoRut;
+    c.innerHTML = servicioHtml + motivoServicioHtml + envioHtml + avisoRut;
   }
   function setFinZZ(sku, monto){
     S.fin_zz_codigo = sku; S.fin_zz_monto = monto;
+    // Elegir una línea REAL del documento (aunque no sea la sugerida) no es
+    // "declarar a mano" -- el número sigue siendo el que dice el ERP. El
+    // original se resetea a ESTE monto; si el usuario lo edita desde acá
+    // recién ahí se le pide motivo (ver _o2mFinMontoCambio).
+    S.fin_zz_monto_original = monto; S.fin_zz_motivo_manual = '';
     // El usuario puede haber elegido a mano una línea distinta a la
     // sugerida -- se re-evalúa si corresponde mostrar el aviso de RUT
     // (solo aplica cuando la elegida es realmente la de servicio).
@@ -4711,23 +4801,26 @@ window.OT2C = (function(){
       } else if (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
         body.finanzas.factura_tido = S.fin_doc.tido;
         body.finanzas.factura_nudo = S.fin_doc.nudo;
-        // Línea ZZ real elegida del documento (2026-08-29) -- solo tiene
-        // sentido junto a un documento, nunca junto a garantía.
-        if (S.fin_zz_codigo && S.fin_zz_monto != null){
-          body.finanzas.zz_codigo = S.fin_zz_codigo;
-          body.finanzas.zz_monto = S.fin_zz_monto;
-        }
-        // 2026-08-30 (Daniel: "el ZZ envío por si hay despacho... que no se
-        // pierda ni se mezcle con el valor del servicio"): se manda APARTE,
-        // en columnas propias (zz_envio_codigo/zz_envio_monto) -- nunca
-        // dentro de costo_proveedor/costo_despacho, que son lo que le
-        // PAGAMOS a un proveedor (costo), mientras que ZZENVIO es lo que el
-        // documento le está cobrando AL CLIENTE (venta) -- mezclarlos
-        // invertiría el signo en el cálculo de margen.
-        if (S.fin_zz_envio && S.fin_zz_envio.monto != null){
-          body.finanzas.zz_envio_codigo = S.fin_zz_envio.sku;
-          body.finanzas.zz_envio_monto = S.fin_zz_envio.monto;
-        }
+      }
+      // 2026-08-30 (Daniel: "valorizar el servicio siempre, aunque cierre
+      // como garantía"): el monto del servicio ya NO depende de que exista
+      // un documento -- puede venir de una línea ZZ real O ser 100%
+      // manual (ver _pintarFinZZDom). Se manda siempre que haya un valor,
+      // junto con el motivo cuando corresponda declarar por qué es manual.
+      if (S.fin_zz_monto != null){
+        body.finanzas.zz_codigo = S.fin_zz_codigo || null;
+        body.finanzas.zz_monto = S.fin_zz_monto;
+        if (_o2mFinEsManual()) body.finanzas.zz_motivo_manual = S.fin_zz_motivo_manual || '';
+      }
+      // ZZENVIO: aparte, en columnas propias (zz_envio_codigo/zz_envio_monto)
+      // -- nunca dentro de costo_proveedor/costo_despacho, que son lo que le
+      // PAGAMOS a un proveedor (costo), mientras que ZZENVIO es lo que el
+      // documento le está cobrando AL CLIENTE (venta) -- mezclarlos
+      // invertiría el signo en el cálculo de margen.
+      if (S.fin_zz_envio && S.fin_zz_envio.monto != null){
+        body.finanzas.zz_envio_codigo = S.fin_zz_envio.sku;
+        body.finanzas.zz_envio_monto = S.fin_zz_envio.monto;
+        if (_o2mFinEnvioEsManual()) body.finanzas.zz_envio_motivo_manual = S.fin_zz_envio_motivo_manual || '';
       }
       // 2026-08-29 (correćion sobre la primera versión de esta sección):
       // costo_proveedor/proveedor_tipo/proveedor_nombre/costo_despacho ya
@@ -4956,6 +5049,8 @@ window.OT2C = (function(){
           abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
           abrirBusquedaFinCotizacion:abrirBusquedaFinCotizacion, limpiarFinCotizacion:limpiarFinCotizacion,
           setFinCostoProveedor:setFinCostoProveedor, setFinCostoDespacho:setFinCostoDespacho,
+          _o2mFinMontoServicioCambio:_o2mFinMontoServicioCambio, _o2mFinMontoEnvioCambio:_o2mFinMontoEnvioCambio,
+          setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco};
