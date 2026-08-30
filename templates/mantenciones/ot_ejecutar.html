@@ -1875,7 +1875,19 @@
          data-rev="{{ _rev_estado }}"
          data-diag="{{ _rev_diag }}"
          onclick="goToPlantillas('{{ eq.id }}')">
-      <div class="eq-foto-wrap">
+      {# 🖼️ 2026-08-30 (Daniel: "acá siempre debemos tener al menos una
+         foto... mostrar las fotos de la OT y si hay varias poder rotarlas
+         en un modal con fecha, solo ver"). n_fotos_eq sale de FOTOS_VISITA
+         del lado del servidor -- se calcula en Python (no en Jinja, más
+         simple) y se pasa por equipo. Ver fotos_por_equipo_count más abajo
+         en app.py. Click en la miniatura abre el visor (solo lectura); no
+         navega al checklist -- de ahí el stopPropagation. #}
+      {% set n_fotos_eq = fotos_por_equipo_count.get(eq.id, 0) %}
+      <div class="eq-foto-wrap{% if n_fotos_eq %} tiene-fotos{% endif %}"
+           {% if n_fotos_eq %}
+           onclick="event.stopPropagation(); abrirGaleriaEquipo({{ eq.id }}, {{ (eq.nombre or 'Equipo') | tojson }})"
+           role="button" tabindex="0" title="Ver {{ n_fotos_eq }} foto{{ 's' if n_fotos_eq != 1 else '' }} de este equipo"
+           {% endif %}>
         {% if eq.foto_url %}
           {# PERF 2026-05-22: Cloudinary transforms 'card' (≤400px) en vez
              de la imagen original (3-8MB de iPhone). Reduce 80-95% el peso.
@@ -1889,7 +1901,24 @@
                fetchpriority="low"
                onerror="(function(el){const w=el.parentNode;w.innerHTML='<div class=\'eq-foto-empty\'><i class=\'bi bi-camera\'></i></div>';})(this);">
         {% else %}
-          <div class="eq-foto-empty"><i class="bi bi-camera"></i></div>
+          {# Sin foto principal en la ficha, pero SÍ hay evidencia tomada
+             durante checklist de esta (u otra) OT -- se avisa igual, no
+             se pierde el hecho de que hay fotos para ver. #}
+          <div class="eq-foto-empty{% if n_fotos_eq %} con-evidencia{% endif %}">
+            <i class="bi {{ 'bi-images' if n_fotos_eq else 'bi-camera' }}"></i>
+          </div>
+        {% endif %}
+        {% if n_fotos_eq %}
+        <span class="eq-foto-count"><i class="bi bi-images"></i> {{ n_fotos_eq }}</span>
+        {% elif stats.bloqueada %}
+        {# 2026-08-30 (Daniel: "acá siempre debemos tener al menos una
+           foto"). Equipo con checklist completo y CERO fotos -- por ahora
+           solo un aviso visual (Daniel: "solo ver, después que veamos que
+           funciona bien la vamos a restringir para que sea requisito
+           fundamental"). No bloquea nada todavía. #}
+        <span class="eq-foto-count eq-foto-count-falta" title="Este equipo quedó sin ninguna foto de evidencia">
+          <i class="bi bi-exclamation-triangle-fill"></i> Sin fotos
+        </span>
         {% endif %}
       </div>
       <div class="eq-info">
@@ -2371,6 +2400,49 @@
   setTimeout(sync, 900); setTimeout(sync, 2500);
 })();
 </script>
+
+{# ═════════ MODAL: Galería de fotos por equipo (2026-08-30 Daniel) ═════
+   "Es ideal mostrar las fotos de la OT y si hay varias poder rotarlas en
+   un modal con fecha, solo ver". Solo lectura -- no hay botón eliminar ni
+   subir acá; eso vive en el checklist de cada tarea. Contenido lo maneja
+   por completo abrirGaleriaEquipo()/galNav()/_galRender() en el JS.
+#}
+<div class="modal fade" id="modalGaleriaEquipo" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:14px;background:#0a0a0a;border:0">
+      <div class="modal-header" style="border:0;padding-bottom:0">
+        <h5 class="modal-title fw-bold text-white" style="font-size:.95rem">
+          <i class="bi bi-images me-2"></i><span id="galNombreEquipo">Equipo</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="padding-top:10px">
+        <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;
+             display:flex;align-items:center;justify-content:center;min-height:280px">
+          <img id="galImg" src="" alt="Foto del equipo"
+               style="max-width:100%;max-height:70vh;display:block;margin:auto">
+          <button type="button" id="galPrev" onclick="galNav(-1)"
+                  style="position:absolute;left:6px;top:50%;transform:translateY(-50%);
+                    width:40px;height:40px;border-radius:50%;border:none;
+                    background:rgba(255,255,255,.15);color:#fff;font-size:1.1rem;cursor:pointer">
+            <i class="bi bi-chevron-left"></i>
+          </button>
+          <button type="button" id="galNext" onclick="galNav(1)"
+                  style="position:absolute;right:6px;top:50%;transform:translateY(-50%);
+                    width:40px;height:40px;border-radius:50%;border:none;
+                    background:rgba(255,255,255,.15);color:#fff;font-size:1.1rem;cursor:pointer">
+            <i class="bi bi-chevron-right"></i>
+          </button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;
+             font-size:.76rem;color:#cbd5e1">
+          <span id="galFecha"><i class="bi bi-clock-history me-1"></i></span>
+          <span id="galContador" style="font-weight:700"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ═════════ MODAL: Saltar equipo (2026-05-21 Daniel) ═════════
    Pide razón (radios) + observación libre obligatoria (mín 5 chars).
@@ -3178,6 +3250,14 @@ const VISITA_COSTO = {{ (visita.costo | float) if (visita.costo and puede_metada
 // "siendo gestionada por X". Admin/supervisor SIEMPRE puede sobrescribir.
 const CURRENT_USER_ID = {{ current_user_id | tojson }};
 const IS_ADMIN_LOCK = {{ 'true' if is_admin_lock else 'false' }};
+// 2026-08-30 (Daniel: "vista SOLO superadministrador... que jamás se
+// enteren o lo vean los técnicos o los demás"). A propósito NO reusa
+// IS_ADMIN_LOCK (ese incluye admin, esto es más angosto). Ver
+// renderTareaHtml -- pinta quién y cuándo gestionó cada tarea, y el propio
+// backend (mant_ot_ejecutar) ya excluye completada_por del payload si
+// quien pide la página no es superadmin, así que ni con DevTools un
+// técnico puede leerlo desde acá.
+const ES_SUPERADMIN = {{ 'true' if es_superadmin else 'false' }};
 const LOCK_TTL_MIN = 10;
 // Map de locks vivos: { tareaId: { locked_by_user_id, locked_by_nombre, locked_at } }
 let TAREAS_LOCKS = {};

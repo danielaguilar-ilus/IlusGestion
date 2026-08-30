@@ -81810,7 +81810,7 @@ def mant_ot_ejecutar(vid):
         "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, t.descripcion, "
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
-        "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
+        "       t.completada, t.completada_at, t.completada_por, t.observaciones, t.valor_json, "
         "       t.version, t.locked_by_user_id, t.locked_at, "
         "       COALESCE(p.nombre, 'Gestión de tareas') AS plantilla_nombre, "
         "       COALESCE(p.tipo_visita, t.tipo, 'otro') AS plantilla_tipo "
@@ -81826,6 +81826,18 @@ def mant_ot_ejecutar(vid):
         _t["version"] = int(_t.get("version") or 0)
         if _t.get("locked_at"):
             _t["locked_at"] = str(_t["locked_at"])[:19]
+        if _t.get("completada_at"):
+            _t["completada_at"] = str(_t["completada_at"])[:19]
+    # 🔒 2026-08-30 (Daniel: "vista SOLO superadministrador... jamás se
+    # enteren o lo vean los técnicos". Quién completó cada tarea es dato
+    # sensible de auditoría/responsabilidad -- se saca del payload ACÁ, en
+    # el backend, para quien no sea superadmin. Nunca alcanza a viajar al
+    # navegador: ni con DevTools un técnico puede leerlo. `completada_at`
+    # (el CUÁNDO) ya era público desde antes de este cambio -- solo se
+    # oculta el QUIÉN, que es el dato nuevo que pidió Daniel.
+    if not es_superadmin_flag:
+        for _t in tareas:
+            _t.pop("completada_por", None)
 
     # ════════════════════════════════════════════════════════════════
     # Agrupar por (maquina_id, plantilla_id) — UNA card por equipo×plantilla.
@@ -81897,7 +81909,7 @@ def mant_ot_ejecutar(vid):
     # `tomada_at` no `created_at`. Tampoco hay `cloudinary_url` en el
     # CREATE TABLE original — se agregó vía migración idempotente).
     fotos = mysql_fetchall(
-        "SELECT id, tarea_id, archivo_path, cloudinary_url, tipo_foto, tomada_at "
+        "SELECT id, tarea_id, maquina_id, archivo_path, cloudinary_url, tipo_foto, tomada_at "
         "  FROM mant_visita_fotos WHERE visita_id=%s ORDER BY tomada_at",
         (vid,)
     ) or []
@@ -81918,10 +81930,26 @@ def mant_ot_ejecutar(vid):
     # 2026-08-18 (OT-2026-00097) — versión JSON-safe para el frontend
     # (tomada_at es datetime y rompería |tojson): el checklist renderiza
     # las fotos ya subidas de cada tarea con su botón de eliminar.
+    # 2026-08-30 (Daniel, viendo el listado de equipos: "acá siempre debemos
+    # tener al menos una foto... es ideal dejar y mostrar las fotos de la
+    # OT y si hay varias poder rotarlas en un modal con fecha"). Se agregan
+    # maquina_id (ya existe en la tabla, solo faltaba viajar al frontend) y
+    # la fecha en hora Chile (REGLA #6) para el visor por equipo.
     fotos_js = [
-        {"id": f["id"], "tarea_id": f.get("tarea_id"), "url": f["url"]}
+        {
+            "id": f["id"], "tarea_id": f.get("tarea_id"),
+            "maquina_id": f.get("maquina_id"), "url": f["url"],
+            "fecha": chile_fmt_filter(f.get("tomada_at"), "%d/%m/%Y %H:%M") if f.get("tomada_at") else "",
+        }
         for f in fotos if f.get("url")
     ]
+    # Conteo por equipo para la tarjeta (Jinja) -- cuántas fotos de evidencia
+    # tiene cada máquina en ESTA OT. Se calcula en Python, más simple que
+    # armar un Counter dentro de la plantilla.
+    fotos_por_equipo_count = {}
+    for _f in fotos_js:
+        if _f.get("maquina_id"):
+            fotos_por_equipo_count[_f["maquina_id"]] = fotos_por_equipo_count.get(_f["maquina_id"], 0) + 1
 
     # ════════════════════════════════════════════════════════════════
     # FIX 2026-05-17 — Keys stringificadas para JSON.
@@ -82057,6 +82085,7 @@ def mant_ot_ejecutar(vid):
         equipos_estado_revision=equipos_estado_revision,
         fotos=fotos,
         fotos_js=fotos_js,
+        fotos_por_equipo_count=fotos_por_equipo_count,
         current_user_id=_user_id_actual,
         is_admin_lock=_is_admin_lock,
         # 🔐 2026-05-18 — Si el usuario solo puede VER (admin/ejecutivo no

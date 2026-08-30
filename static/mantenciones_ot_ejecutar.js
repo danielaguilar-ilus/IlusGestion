@@ -1476,6 +1476,11 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
         </div>
         ${t.descripcion ? `<div class="ttl-sub">${_escapeHtml(t.descripcion)}</div>` : ''}
         ${gpsSinSubirHtml}
+        ${(typeof ES_SUPERADMIN !== 'undefined' && ES_SUPERADMIN && t.completada && t.completada_por) ? `
+        <div class="tx-audit-super" title="Visible solo para superadministrador">
+          <i class="bi bi-shield-lock-fill"></i>
+          <span>${_escapeHtml(t.completada_por)}${t.completada_at ? ' · ' + _escapeHtml(String(t.completada_at).replace('T',' ').slice(0,16)) : ''}</span>
+        </div>` : ''}
         ${lockBadge}
       </div>
     </div>
@@ -3500,6 +3505,69 @@ function _fotosIdx(){
     });
   _FOTOS_POR_TAREA_CACHE = idx;
   return idx;
+}
+
+// 2026-08-30 (Daniel: "acá siempre debemos tener al menos una foto... es
+// ideal mostrar las fotos de la OT y si hay varias poder rotarlas en un
+// modal con fecha"). Mismo array FOTOS_VISITA de _fotosIdx(), indexado por
+// equipo en vez de por tarea -- junta TODAS las fotos de un equipo sin
+// importar en qué tarea del checklist se tomaron.
+let _FOTOS_POR_EQUIPO_CACHE = null;
+function _fotosPorEquipoIdx(){
+  if (_FOTOS_POR_EQUIPO_CACHE) return _FOTOS_POR_EQUIPO_CACHE;
+  const idx = {};
+  (typeof FOTOS_VISITA !== 'undefined' && Array.isArray(FOTOS_VISITA) ? FOTOS_VISITA : [])
+    .forEach(f => {
+      if (!f || !f.maquina_id || !f.url) return;
+      (idx[f.maquina_id] = idx[f.maquina_id] || []).push(f);
+    });
+  _FOTOS_POR_EQUIPO_CACHE = idx;
+  return idx;
+}
+
+// ════════════════════════════════════════════════════════
+//  GALERÍA DE FOTOS POR EQUIPO — solo ver, de un toque desde la
+//  tarjeta del equipo (2026-08-30, Daniel). Sin editar/eliminar acá:
+//  eso ya vive en el checklist de cada tarea (subirFotoTarea/
+//  borrarFotoTarea) — esta es una vista de conjunto, de solo lectura.
+// ════════════════════════════════════════════════════════
+let _galFotos = [], _galIdx = 0, _galNombreEquipo = '';
+
+function abrirGaleriaEquipo(mid, nombreEquipo){
+  const fotos = _fotosPorEquipoIdx()[mid] || [];
+  if (!fotos.length) return;
+  _galFotos = fotos;
+  _galIdx = 0;
+  _galNombreEquipo = nombreEquipo || '';
+  _galRender();
+  const modalEl = document.getElementById('modalGaleriaEquipo');
+  if (modalEl && window.bootstrap){
+    (bootstrap.Modal.getOrCreateInstance(modalEl)).show();
+  }
+}
+
+function galNav(delta){
+  if (!_galFotos.length) return;
+  _galIdx = (_galIdx + delta + _galFotos.length) % _galFotos.length;
+  _galRender();
+}
+
+function _galRender(){
+  const f = _galFotos[_galIdx];
+  if (!f) return;
+  const img = document.getElementById('galImg');
+  const cont = document.getElementById('galContador');
+  const fecha = document.getElementById('galFecha');
+  const nombre = document.getElementById('galNombreEquipo');
+  const prev = document.getElementById('galPrev');
+  const next = document.getElementById('galNext');
+  if (img) img.src = cloudTx(f.url, 'gallery');
+  if (cont) cont.textContent = (_galIdx + 1) + ' de ' + _galFotos.length;
+  if (fecha) fecha.textContent = f.fecha || '';
+  if (nombre) nombre.textContent = _galNombreEquipo;
+  const varias = _galFotos.length > 1;
+  if (prev) prev.style.display = varias ? '' : 'none';
+  if (next) next.style.display = varias ? '' : 'none';
 }
 
 function _fotosTareaReadonly(){
