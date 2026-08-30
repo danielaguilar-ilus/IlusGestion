@@ -3906,16 +3906,25 @@ window.OT2C = (function(){
       var tInfo = TIPOS.find(function(x){ return x.v === S.tipo; });
       var cliTxt = S.cliente ? (' al cliente ' + S.cliente.nombre) : '';
       // 2026-08-29 (Daniel: "agregale hasta los productos de ser
-      // necesario"): si ya hay equipos elegidos en el paso Equipos, se
-      // listan por nombre (resueltos contra cacheEquipos, que ya está
-      // cargado para este cliente) -- deja explícito en el propio
-      // documento del anexo SOBRE QUÉ equipos es el servicio, sin
-      // inventar un campo nuevo en el backend (sigue siendo texto libre
-      // dentro de objetivo_servicio, que ya existe).
-      var nombresEq = (S.equipos||[]).map(function(e){
+      // necesario") + 2026-08-30 (Daniel, revisando el resultado: "deberían
+      // integrarse los productos, algo bien inteligente" -- listar cada
+      // equipo por separado repetía el mismo nombre tantas veces como
+      // unidades idénticas hubiera, ej. "Equipos: Banco Olímpico, Banco
+      // Olímpico, Banco Olímpico."). Ahora se agrupan por nombre con su
+      // cantidad ("3x Banco Olímpico"), ordenados de mayor a menor
+      // cantidad -- deja explícito en el propio documento del anexo SOBRE
+      // QUÉ y CUÁNTOS equipos es el servicio, sin inventar un campo nuevo
+      // en el backend (sigue siendo texto libre dentro de
+      // objetivo_servicio, que ya existe).
+      var conteoEq = {};
+      (S.equipos||[]).forEach(function(e){
         var m = cacheEquipos.find(function(x){ return x.id === e.maquina_id; });
-        return m ? (m.nombre || m.modelo || ('Equipo '+m.id)) : null;
-      }).filter(Boolean);
+        var nombre = m ? (m.nombre || m.modelo || ('Equipo '+m.id)) : null;
+        if (nombre) conteoEq[nombre] = (conteoEq[nombre]||0) + 1;
+      });
+      var nombresEq = Object.keys(conteoEq)
+        .sort(function(a2,b2){ return conteoEq[b2] - conteoEq[a2]; })
+        .map(function(n){ return conteoEq[n] > 1 ? (conteoEq[n]+'x '+n) : n; });
       var eqTxt = nombresEq.length ? (' Equipos: ' + nombresEq.join(', ') + '.') : '';
       a.objetivo_servicio = 'Ejecutar servicio de ' + (tInfo ? tInfo.n.toLowerCase() : S.tipo) + cliTxt + '.' + eqTxt;
     }
