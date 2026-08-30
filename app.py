@@ -75383,12 +75383,31 @@ _OT2_CENTROS_COSTO = (
 # Línea de servicio del ERP que corresponde a cada tipo de OT. Es el mismo
 # patrón de ZZENVIO en Transporte: el cobro viene DENTRO del documento, no
 # como documento aparte. Se LEE del ERP, nunca se escribe (REGLA #4.1).
+#
+# FIX 2026-08-30 (levantamiento de aislamiento por origen): "ZZVISITA"
+# (visita_tecnica/visita_correctiva) NUNCA aparece en ningún otro lugar del
+# proyecto -- ni en ZZ_SKUS (~línea 20869, el whitelist confirmado y usado
+# desde hace meses en Transporte), ni en el diccionario de tipo_operacion
+# de erp_engine.py (~línea 1071-1080), que sí reconoce "Visita Técnica"
+# pero bajo el código real "ZZSERVTEC". Era el mismo patrón de invención
+# plausible-pero-inexistente que causó el bug real de "VATOLI": nadie
+# citó nunca un documento real con una línea "ZZVISITA". Se corrige a
+# "ZZSERVTEC" (backend YA no filtra por whitelist en /ot/api/lineas-zz,
+# solo cambia CUÁL línea real queda pre-resaltada).
+#
+# "ZZMANTENCION" (preventiva/correctiva) NO se tocó: a diferencia de
+# ZZVISITA, sí tiene una segunda fuente independiente que la reconoce como
+# código propio (erp_engine.py, misma tabla, "ZZMANTENCION → Mantención",
+# separado de ZZSERVTEC), y Daniel la nombró tal cual el 2026-08-30 ("el de
+# la mantención es ZZ mantención", ver _o2mFinCargarZZ en _modal_crear.html)
+# -- no hay evidencia suficiente para tratarla como inventada. Pendiente
+# confirmar contra un documento real de mantención si hiciera falta.
 _OT2_LINEA_ZZ = {
     "instalacion":       "ZZINSTALACION",
     "preventiva":        "ZZMANTENCION",
     "correctiva":        "ZZMANTENCION",
-    "visita_tecnica":    "ZZVISITA",
-    "visita_correctiva": "ZZVISITA",
+    "visita_tecnica":    "ZZSERVTEC",
+    "visita_correctiva": "ZZSERVTEC",
 }
 
 
