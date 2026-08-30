@@ -1426,6 +1426,19 @@ window.OT2C = (function(){
     var lista0 = tiposParaOrigen();
     b.innerHTML = '<h6 class="t">Tipo de orden de trabajo</h6>'+
       '<p class="d">Define el checklist, si alimenta la ficha del cliente y qué se le exige al cerrar.</p>'+
+      // 2026-08-30 (Daniel, superadmin: "no veo CRUD ahí para el
+      // superadmin"): el CRUD de "Tipos de trabajo interno" existe y
+      // funciona (/mantenciones/plantillas), pero nada en el wizard
+      // apuntaba hacia él -- había que saber que existía. Gate doble
+      // (igual que el botón real en plantillas.html): esto SOLO decide si
+      // se dibuja el link, el backend vuelve a exigir superadmin en cada
+      // escritura. Abre en pestaña nueva (?abrir_tipos_interno=1 lo abre
+      // solo) para no perder el progreso del wizard.
+      '{% if permissions and permissions.superadmin %}'+
+      '<a href="{{ url_for("mant_plantillas_page") }}?abrir_tipos_interno=1" target="_blank" rel="noopener" '+
+      'class="d-inline-flex align-items-center gap-1 mb-2" style="font-size:.78rem;font-weight:800;color:#6b7280;text-decoration:none">'+
+      '<i class="bi bi-gear-fill"></i> Gestionar tipos de trabajo interno (superadmin)</a><br>'+
+      '{% endif %}'+
       (lista0.length > 6
         ? '<div class="input-group mb-3"><span class="input-group-text"><i class="bi bi-search"></i></span>'+
           '<input class="form-control" id="o2mTipoQ" placeholder="Buscar tipo… (ej: instalación, bodega)" '+

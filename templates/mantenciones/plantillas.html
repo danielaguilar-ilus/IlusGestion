@@ -1693,6 +1693,13 @@ document.addEventListener('DOMContentLoaded', () => {
   cargarFamiliasChecklist(); // 28-08-2026: agrega familias custom al selector (aditivo, ver arriba)
   cargarCoberturaClases();   // 28-08-2026: banner de clasificaciones sin checklist
   poblarAddTipoSelect();     // 29-08-2026: opciones del panel de alta rápida del Paso 2
+  // 2026-08-30 (Daniel: "no veo CRUD ahí para el superadmin" -- el wizard
+  // de creación de OT enlaza acá con ?abrir_tipos_interno=1 para que el
+  // botón "Tipos de trabajo interno" (superadmin) se abra solo, en vez de
+  // obligarlo a encontrarlo él mismo entre los demás botones de la página).
+  if (new URLSearchParams(location.search).get('abrir_tipos_interno') === '1' && typeof abrirTiposInterno === 'function'){
+    abrirTiposInterno();
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════
