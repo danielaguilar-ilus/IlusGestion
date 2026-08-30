@@ -2674,8 +2674,21 @@ window.OT2C = (function(){
       if (preseleccionEqCliente !== S.cliente.id){
         preseleccionEqCliente = S.cliente.id;
         if (!S.equipos.length){
+          // 2026-08-30 (Daniel, textual): "solo instalación toma todos los
+          // productos excluyendo el plan... porque si es instalación y
+          // estamos llevando los productos, tenemos que dejar evidencia de
+          // que sí los entregamos, con la plantilla de accesorio. Si es una
+          // visita, si es una mantención o algo más, no se debe considerar."
+          // Instalación: TODOS los equipos entran (con o sin plan) -- se
+          // está entregando/instalando de cero, el plan de mantención a
+          // futuro es irrelevante para lo que hay que dejar evidenciado hoy.
+          // Cualquier otro tipo (mantención, visita, etc.): sigue el
+          // criterio de siempre, solo entra lo que YA está en el plan --
+          // un accesorio suelto no amerita una visita técnica salvo que se
+          // agregue a mano como desviación explícita.
+          var esInstalacion = (S.tipo === 'instalacion');
           cacheEquipos.forEach(function(m){
-            if (m.aplica_mantencion){
+            if (m.aplica_mantencion || esInstalacion){
               S.equipos.push({maquina_id:m.id, plantilla_id:null, plantilla_sugerida:false});
               sugerirPlantillaEquipo(m.id);
             }
@@ -3897,47 +3910,68 @@ window.OT2C = (function(){
      peso y cuanto es mi porcentaje de ganancia". Antes solo se mostraba el
      % -- ahora se ve la cuenta completa, línea por línea, para que no haya
      que confiar a ciegas en el número final. */
+  /* 2026-08-30 (Daniel, caso real FCV 11382 -- textual): "necesito que se
+     calcule ahí... cuánto gané en transporte, cuánto gané en instalación,
+     y cuánto en total general -- un cuadro de costo bien armado". Antes
+     esto mezclaba todo en un solo margen (venta = SOLO el servicio,
+     restándole costo_proveedor + costo_despacho) -- un envío real de
+     $126.413 nunca entraba a la cuenta como venta, así que su costo de
+     despacho se veía como pérdida pura aunque el cliente sí lo pagó.
+     Ahora instalación/servicio y transporte se calculan como DOS negocios
+     separados (cada uno venta - su propio costo) y se suman al final para
+     el total general -- exactamente el orden en que Daniel lo pidió. */
   function _pintarFinMargenDom(){
     var c = document.getElementById('o2mFinMargen'); if (!c) return;
-    var costo = parseFloat(S.fin_costo_proveedor);
-    if (!isFinite(costo) || costo < 0) costo = null;
+    var costoInst = parseFloat(S.fin_costo_proveedor);
+    if (!isFinite(costoInst) || costoInst < 0) costoInst = null;
+    var costoEnvio = parseFloat(S.fin_costo_despacho);
+    if (!isFinite(costoEnvio) || costoEnvio < 0) costoEnvio = null;
+    var ventaInst = _ventaActual();
+    var hayVentaInst = ventaInst != null && ventaInst > 0;
+    var ventaEnvio = (S.fin_zz_envio && S.fin_zz_envio.monto != null) ? S.fin_zz_envio.monto : null;
+    var hayVentaEnvio = ventaEnvio != null && ventaEnvio > 0;
     // 2026-08-29 (Daniel: "necesito que el argumento salga en frente,
     // traelo al frente... establece una regla al implementar este modal"):
     // REGLA para este archivo -- ningun aviso que explique por qué falta
     // algo va en texto gris chico (.text-muted small); eso ya demostró
     // perderse de vista más de una vez. Todo mensaje explicativo usa
     // .o2m-aviso (mismo componente visible del resto del wizard).
-    var venta = _ventaActual();
-    if (venta == null || venta <= 0){
+    if (!hayVentaInst && !hayVentaEnvio){
       c.innerHTML = '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
         'Falta un monto de venta (documento o estimado) para calcular el margen.</div>';
       return;
     }
-    if (costo == null){
+    if (costoInst == null && costoEnvio == null){
       c.innerHTML = '<div class="o2m-aviso"><i class="bi bi-info-circle-fill me-1"></i>'+
         'Ingresa el costo del proveedor para ver el desglose y el margen.</div>';
       return;
     }
-    var despacho = parseFloat(S.fin_costo_despacho);
-    if (!isFinite(despacho) || despacho < 0) despacho = 0;
-    var costoTotalProveedor = costo + despacho;
-    // Misma fórmula que ya usa el reporte de margen real en app.py
-    // (Margen = costo cliente - (costo_proveedor + costo_despacho)).
-    var margenPeso = venta - costoTotalProveedor;
-    var margenPct = Math.round(margenPeso / venta * 100);
+    function $f(n){ return '$'+Math.round(n).toLocaleString('es-CL'); }
+    function bloque(titulo, venta, costo){
+      var c2 = costo != null ? costo : 0;
+      var m = venta - c2;
+      return '<div class="fila" style="font-weight:600;margin-top:6px"><span>'+esc(titulo)+'</span><span></span></div>'+
+        '<div class="fila"><span>Venta</span><b>'+$f(venta)+'</b></div>'+
+        '<div class="fila"><span>Costo proveedor</span><b>'+(costo!=null?$f(costo):'—')+'</b></div>'+
+        '<div class="fila total"><span>Gané en '+esc(titulo.toLowerCase())+'</span>'+
+        '<b style="color:'+(m<0?'#991b1b':'#166534')+'">'+$f(m)+'</b></div>';
+    }
+    var filas = '';
+    if (hayVentaInst) filas += bloque(S.tipo==='instalacion' ? 'Instalación' : 'Servicio', ventaInst, costoInst);
+    if (hayVentaEnvio) filas += bloque('Transporte', ventaEnvio, costoEnvio);
+    var ventaTotal = (hayVentaInst?ventaInst:0) + (hayVentaEnvio?ventaEnvio:0);
+    var costoTotal = (costoInst||0) + (costoEnvio||0);
+    var margenPeso = ventaTotal - costoTotal;
+    var margenPct = ventaTotal > 0 ? Math.round(margenPeso / ventaTotal * 100) : 0;
     // Informativo nada más -- Daniel: "identificando si hay margen o no da
     // lo mismo, pero estamos autorizados a trabajar sin margen". Nunca
     // bloquea nada, solo avisa con color si el margen es negativo.
     var color = margenPeso < 0 ? '#991b1b' : '#166534';
     var bg = margenPeso < 0 ? '#fef2f2' : '#f0fdf4';
-    function $f(n){ return '$'+Math.round(n).toLocaleString('es-CL'); }
     c.innerHTML =
-      '<div class="o2m-fin-desglose">'+
-        '<div class="fila"><span>Cuánto cobro (venta)</span><b>'+$f(venta)+'</b></div>'+
-        '<div class="fila"><span>Costo proveedor'+(S.tipo==='instalacion'?' (instalación)':'')+'</span><b>'+$f(costo)+'</b></div>'+
-        (despacho > 0 ? '<div class="fila"><span>Costo proveedor (despacho)</span><b>'+$f(despacho)+'</b></div>' : '')+
-        '<div class="fila total"><span>Costo total del proveedor</span><b>'+$f(costoTotalProveedor)+'</b></div>'+
-      '</div>'+
+      '<div class="o2m-fin-desglose">'+filas+'</div>'+
+      '<div class="fila total" style="margin-top:8px;border-top:2px solid #0a0a0a;padding-top:8px">'+
+        '<span style="font-weight:700">TOTAL GENERAL</span><span></span></div>'+
       '<div class="o2m-res">'+
         '<div class="b" style="background:'+bg+'">'+
           '<span class="k">Margen ($)</span><span class="v" style="color:'+color+'">'+$f(margenPeso)+'</span>'+

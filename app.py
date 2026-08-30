@@ -79487,9 +79487,16 @@ def ot2_api_lineas_zz(tido, nudo):
         if not sku.startswith("ZZ"):
             continue
         try:
-            # VATOLI (bruto) manda; VANELI (neto) es el respaldo — mismo
-            # criterio que _mant_erp_doc_montos, para no tener dos verdades.
-            monto = int(round(float(ln.get("VATOLI") or ln.get("VANELI")
+            # 2026-08-30 (Daniel, caso real FCV 11382 — ZZINSTALACION y
+            # ZZenvio llegaban en $0): esto leía "VATOLI"/"VANELI" en
+            # MAYÚSCULA, que son nombres de columna SQL Server crudos —
+            # pero `lineas` acá NO es la fila cruda de MAEDDO, es el dict
+            # YA NORMALIZADO que arma _cubicador_fetch(), cuyo contrato
+            # (ver docstring "NO TOCAR" de esa función) documenta el campo
+            # de valor como `vaneli` en MINÚSCULA. "VATOLI" nunca existió
+            # en ninguna otra parte del proyecto -- por eso esto SIEMPRE
+            # devolvía 0, para cualquier documento, desde que se escribió.
+            monto = int(round(float(ln.get("vaneli") or ln.get("VANELI")
                                     or ln.get("valor") or 0)))
         except (TypeError, ValueError):
             monto = 0
