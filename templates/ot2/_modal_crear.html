@@ -652,6 +652,7 @@
         <div class="o2m-body" id="o2mBody"></div>
       </div>
 
+      <div id="o2mErr" style="padding:0 20px"></div>
       <div class="o2m-foot">
         <button type="button" class="btn btn-outline-secondary btn-sm px-3"
                 style="min-height:44px" id="o2mAtras">
@@ -1024,7 +1025,11 @@ window.OT2C = (function(){
     // declaró en Finanzas), y crearlo/enviarlo en la misma llamada de
     // crear() encadenando ambos POST, sin esperar a la pantalla de detalle.
     if (!esInterno() && _hayTecnicoExterno()) p.push({k:'anexo', n:'Anexo'});
-    p.push({k:'revisar', n:'Revisar'});
+    // 2026-08-30 (Daniel, textual: "ese resumen no me está haciendo falta...
+    // sácalo de ahí"): el paso "Revisar" (tarjetas resumen) se quitó por
+    // pedido explícito -- el mensaje de error de crear() vive ahora en un
+    // <div id="o2mErr"> fijo en el footer (ver markup del modal), siempre
+    // visible, así que no necesita un paso propio para mostrarse.
     return p;
   }
 
@@ -1258,7 +1263,6 @@ window.OT2C = (function(){
       if (p.k==='acceso')   pintarAcceso(b);
       if (p.k==='finanzas') pintarFinanzas(b);
       if (p.k==='anexo')    pintarAnexo(b);
-      if (p.k==='revisar')  pintarRevisar(b);
       } catch(e){
         console.error('[OT2C] pintarFormulario, sección "'+p.k+'":', e);
         b.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
@@ -1287,7 +1291,6 @@ window.OT2C = (function(){
       if (k==='acceso')   pintarAcceso(b);
       if (k==='finanzas') pintarFinanzas(b);
       if (k==='anexo')    pintarAnexo(b);
-      if (k==='revisar')  pintarRevisar(b);
     } catch(e){
       console.error('[OT2C] repintarSeccion, sección "'+k+'":', e);
       b.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
@@ -4180,55 +4183,6 @@ window.OT2C = (function(){
       'Calculado según la clasificación de los equipos elegidos — no reemplaza el monto real del documento.</small>';
   }
 
-  function pintarRevisar(b){
-    var t = TIPOS.find(function(x){ return x.v===S.tipo && !!x.descubrimiento === !!S.descubrimiento; }) || {};
-    var nTec = S.tecnicos.length;
-    var eqTxt = '—';
-    if (S.tipo === 'revision_interna') eqTxt = S.bodega_fotos.length + ' foto(s) de evidencia';
-    else if (esInterno()) eqTxt = S.tareas_manuales.length + ' producto(s)/tarea(s)';
-    else eqTxt = S.equipos.length + ' con checklist';
-    // 28-08-2026: el checklist de trabajo interno es un dato aparte del
-    // conteo de arriba (aplica a la OT completa, no a un producto/foto).
-    if (esInterno() && S.plantilla_id_interno){
-      var _pInt = cachePlantInterno.find(function(p){ return p.id === S.plantilla_id_interno; });
-      eqTxt += ' · checklist: ' + (_pInt ? _pInt.nombre : ('#'+S.plantilla_id_interno));
-    }
-    b.innerHTML = '<h6 class="t">Resumen</h6><p class="d">Si algo no calza, toca el ancla correspondiente arriba.</p>'+
-      '<div id="o2mErr"></div>'+
-      '<div class="o2m-res">'+
-        card('Tipo', t.n || S.tipo) +
-        card('Cliente', esInterno() ? 'Trabajo interno (sin cliente)' : (S.cliente ? S.cliente.nombre : '—')) +
-        (S.doc_origen ? card('Documento origen', S.doc_origen.tido + ' ' + S.doc_origen.nudo) : '') +
-        card('Programada', S.fecha ? (S.fecha + ' · ' + S.hini + '–' + S.hfin) : '—') +
-        card('Técnicos', nTec ? (nTec + (nTec===1?' asignado':' asignados')) : 'Sin asignar') +
-        (!esInterno() ? card('Contraparte',
-           (S.contraparte.nombre||'').trim()
-             ? (S.contraparte.nombre + (S.contraparte.tel?(' · '+S.contraparte.tel):'') +
-                (S.contraparte.lat ? ' · dirección confirmada' : ' · ⚠ sin dirección confirmada'))
-             : 'Sin definir') : '') +
-        card('Trabajo', eqTxt) +
-        card('Acceso', esInterno() ? '—' :
-             ((S.acceso.ascensor?'Con ascensor':'Sin ascensor') + ' · ' +
-              (S.acceso.estacionamiento?'con estacionamiento':'sin estacionamiento') +
-              (S.acceso.piso!==''?(' · piso '+S.acceso.piso):''))) +
-        (esInterno() ? card('Costo estimado',
-           String(S.costo_interno||'').trim() !== ''
-             ? ('$'+S.costo_interno+' (referencial, no se factura)')
-             : 'Sin declarar') : '') +
-        (!esInterno() ? card('Centro de costo',
-           (_OT2M_CENTROS.find(function(c){return c.v===S.fin_centro;})||{}).n || 'Sin elegir') : '') +
-        (!esInterno() ? card('Cobertura',
-           S.fin_garantia ? 'Garantía' :
-           (S.fin_doc ? ('Documento ' + S.fin_doc.tido + ' ' + S.fin_doc.nudo) : 'Sin definir')) : '') +
-        (pasos().some(function(p){ return p.k==='anexo'; }) ? card('Anexo de Contrato',
-           S.anexo.proveedor_nombre.trim()
-             ? (S.anexo.proveedor_nombre + (S.anexo.enviar_ahora && S.anexo.email_destino.trim()
-                 ? (' · se envía a ' + S.anexo.email_destino) : ' · queda como borrador'))
-             : 'Falta completar el paso Anexo') : '') +
-      '</div>';
-    function card(k,v){ return '<div class="b"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
-  }
-
   /* ── Acciones ─────────────────────────────────────────────────────── */
   function setOrigen(v){
     S.origen = v;
@@ -4712,11 +4666,34 @@ window.OT2C = (function(){
   function setBodegaObs(v){ S.bodega_obs = v; }
   function setCostoInterno(v){ S.costo_interno = v; }
 
+  // Firma de qué pasos aplican ahora mismo -- si cambia, alguna sección
+  // condicional (hoy solo "Anexo", ver pasos()) entró o salió del formulario.
+  function _o2mPasosKeys(){ return pasos().map(function(p){ return p.k; }).join(','); }
   function tecTog(id){
+    // 2026-08-30 (Daniel, bloqueado en vivo: "me bloquea por eso y no sale
+    // en el modal... estamos bloqueados"): marcar un técnico externo hace
+    // que "Anexo" pase a ser obligatorio (ver pasos()/completo()), pero
+    // este handler solo repintaba la tarjeta de Técnicos -- la sección de
+    // Anexo NUNCA se creaba en el DOM (esa construcción completa solo
+    // corre en pintarFormulario(), que acá no se llamaba). Resultado real:
+    // el paso quedaba EXIGIDO por completo()/validarTodo() pero
+    // INALCANZABLE para llenarlo -- refrescarAnclas() lo buscaba
+    // (getElementById('o2mSec-anexo')), no lo encontraba, y se saltaba en
+    // silencio sin avisar que faltaba construirlo. Ahora, si el conjunto
+    // de pasos cambia con este toggle, se reconstruye el formulario
+    // completo (con scroll preservado) en vez de solo repintar Técnicos.
+    var pasosAntes = _o2mPasosKeys();
     var i = S.tecnicos.indexOf(id);
     if (i>=0){ S.tecnicos.splice(i,1); if (S.lider===id) S.lider = S.tecnicos[0]||null; }
     else { S.tecnicos.push(id); if (!S.lider) S.lider = id; }
-    pintarTecnicos(document.getElementById('o2mSec-tecnicos-b'));
+    if (_o2mPasosKeys() !== pasosAntes){
+      var body = document.getElementById('o2mBody');
+      var scrollY = body ? body.scrollTop : 0;
+      pintarFormulario();
+      if (body) body.scrollTop = scrollY;
+    } else {
+      pintarTecnicos(document.getElementById('o2mSec-tecnicos-b'));
+    }
     // 2026-08-29 (bug real, encontrado en vivo por Daniel: "ya tengo
     // seleccionado y sigue en [ambar]"): faltaba este llamado -- eqTog()
     // sí lo tenía, tecTog() nunca lo tuvo. Antes era invisible porque
@@ -4984,7 +4961,6 @@ window.OT2C = (function(){
   function validarTodo(){
     var ps = pasos();
     for (var i=0;i<ps.length;i++){
-      if (ps[i].k === 'revisar') continue;
       if (!completo(ps[i].k)){
         if (window.ilusToast) ilusToast('Falta completar "'+ps[i].n+'"', {type:'warning'});
         irAncla(ps[i].k);
@@ -5131,9 +5107,11 @@ window.OT2C = (function(){
         if (!res.j.ok){
           sig.disabled = false; sig.innerHTML = _origSig;
           var e = document.getElementById('o2mErr');
+          // 2026-08-30: #o2mErr vive ahora en el footer fijo del modal (ver
+          // markup) desde que se quitó el paso "Revisar" -- siempre visible,
+          // ya no hace falta navegar a ningún ancla para mostrarlo.
           if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
             esc(res.j.error || 'No se pudo crear la orden.')+'</div>';
-          irAncla('revisar');
           return;
         }
         if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
