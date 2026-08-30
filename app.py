@@ -75475,6 +75475,30 @@ def _ensure_ot_finanzas_cols():
             print(f"[ensure_ot_finanzas] {_nombre}: {e}", flush=True)
 
 
+def _ensure_ot_contacto_rut_col():
+    """RUT de la contraparte (quien recibe al técnico) -- SIEMPRE, incluso
+    con ILUS_SKIP_MIGRATIONS=1. Mismo patrón que _ensure_ot_finanzas_cols().
+
+    2026-08-30 (Daniel, textual): "necesito que valides del contacto el RUT
+    con RUT chileno... el teléfono... el correo". Las columnas contacto_*
+    (nombre/cargo/tel/email/origen) existen desde 2026-05-17 -- faltaba RUT.
+    Se guarda ya validado (dígito verificador correcto) por el wizard antes
+    de llegar acá; este campo es solo persistencia, no repite la validación.
+    """
+    try:
+        _r = mysql_fetchone(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "   AND COLUMN_NAME='contacto_rut'")
+        if not _r:
+            mysql_execute(
+                "ALTER TABLE mant_visitas ADD COLUMN contacto_rut VARCHAR(12) NULL "
+                "COMMENT 'RUT de la contraparte que recibe al tecnico, ya validado en el wizard'")
+            print("[ensure_ot_contacto] +contacto_rut", flush=True)
+    except Exception as e:
+        print(f"[ensure_ot_contacto] contacto_rut: {e}", flush=True)
+
+
 def _ot2_finanzas_estado(v):
     """¿La OT tiene resuelta su parte financiera? Devuelve (ok, faltan).
 
@@ -76490,6 +76514,19 @@ def ot2_api_crear():
         _cp_origen = "manual"
     if _cp_nombre and not _cp_origen:
         _cp_origen = "manual"
+    # 2026-08-30 (Daniel, textual: "necesito que valides del contacto el
+    # RUT con RUT chileno"): opcional (el paso Contraparte no lo exige,
+    # solo nombre/tel/dirección) pero SI viene, tiene que ser un RUT
+    # chileno real -- mismo validador (dígito verificador módulo 11) que
+    # ya usa el resto del proyecto para clientes, nunca uno nuevo.
+    _cp_rut_raw = (_cp.get("rut") or "").strip()
+    _cp_rut = None
+    if _cp_rut_raw:
+        _rut_ok, _rut_res = validar_rut(_cp_rut_raw)
+        if not _rut_ok:
+            return _ot2_err(f"El RUT del contacto no es válido: {_rut_res}.",
+                            "RUT_CONTACTO_INVALIDO")
+        _cp_rut = _rut_res[:12]
 
     # Dirección DEL LUGAR (Daniel: "con la dirección confirmada por favor, la
     # dirección del lugar"). Puede diferir de la del cliente: una cadena tiene
@@ -76894,7 +76931,8 @@ def ot2_api_crear():
             "   costo_proveedor, proveedor_tipo, proveedor_nombre, costo_despacho, "
             "   documentos_extra, "
             # 2026-08-29 — contraparte + dirección del lugar (ver bloque 4.5).
-            "   contacto_nombre, contacto_cargo, contacto_tel, contacto_email, "
+            # contacto_rut agregado 2026-08-30 (ver _ensure_ot_contacto_rut_col).
+            "   contacto_nombre, contacto_cargo, contacto_tel, contacto_email, contacto_rut, "
             "   contacto_origen, direccion_visita, direccion_lat, direccion_lng, "
             "   direccion_place_id, "
             "   finanzas_at, finanzas_por, created_by) "
@@ -76902,7 +76940,7 @@ def ot2_api_crear():
             "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
             "        %s,"
-            "        %s,%s,%s,%s,"
+            "        %s,%s,%s,%s,%s,"
             "        %s,%s,%s,%s,"
             "        %s,"
             "        %s,%s,%s)",
@@ -76916,7 +76954,7 @@ def ot2_api_crear():
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
              _fin_docs_extra_json,
-             _cp_nombre, _cp_cargo, _cp_tel, _cp_email,
+             _cp_nombre, _cp_cargo, _cp_tel, _cp_email, _cp_rut,
              _cp_origen, _cp_dir, _cp_lat, _cp_lng,
              _cp_place,
              # UTC naive, igual que el NOW() de MySQL (REGLA #6: la
@@ -111321,6 +111359,14 @@ try:
         _ensure_ot_finanzas_cols()
 except Exception as _ensure_fin_err:
     print(f"[ILUS][WARN] _ensure_ot_finanzas_cols: {_ensure_fin_err}", flush=True)
+
+# RUT de la contraparte (quien recibe al técnico en sitio),
+# Daniel 2026-08-30 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_ot_contacto_rut_col()
+except Exception as _ensure_cp_rut_err:
+    print(f"[ILUS][WARN] _ensure_ot_contacto_rut_col: {_ensure_cp_rut_err}", flush=True)
 
 # Diagnóstico por equipo (borrador, flujo rediseñado de Ejecutar OT,
 # 2026-08-12) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

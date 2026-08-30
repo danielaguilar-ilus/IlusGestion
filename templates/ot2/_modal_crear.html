@@ -781,7 +781,7 @@ window.OT2C = (function(){
          // ver _o2mResolverClienteYEquipos) y el usuario todavía no las
          // tocó -- así setOrigen() sabe que puede limpiarlas sin pisar un
          // dato que el usuario ya escribió o confirmó a mano/Places.
-         contraparte:{nombre:'', cargo:'', tel:'', email:'', origen:'',
+         contraparte:{nombre:'', cargo:'', tel:'', email:'', rut:'', origen:'',
                       direccion:'', lat:null, lng:null, place_id:'',
                       comuna:'', region:'', _direccion_auto:false},
          // Origen "Factura o boleta": documento ERP de donde salió el
@@ -907,7 +907,35 @@ window.OT2C = (function(){
      es_externo=0 para Isabel Milling, Rafael Naranjo y Daniel Pulgar,
      los 3 que Daniel acaba de nombrar como externos reales. Se corrige
      el dato en mant_tecnicos (ver migración en app.py), no la lógica.
-     El criterio sigue siendo "el líder elegido es externo" (pasos()). */
+
+     2026-08-30 (Daniel, textual: "necesito que crees el anexo si está
+     involucrado un técnico externo"): el criterio ERA "el líder elegido es
+     externo" -- pero S.lider es solo el PRIMERO que se marca (tecTog(), más
+     abajo), no necesariamente el único externo de la OT. Una OT con líder
+     interno + un segundo técnico externo asignado NUNCA mostraba el paso
+     Anexo, pese a que ese externo sí necesita firmarlo antes de poder
+     trabajar (candado real en _anexo_bloquea_ot, app.py). Ahora el criterio
+     es "hay AL MENOS UN técnico externo entre los asignados" -- no solo el
+     líder. */
+  function _hayTecnicoExterno(){
+    return (S.tecnicos||[]).some(function(id){
+      var t = cacheTec.find(function(x){ return x.id === id; });
+      return !!(t && t.es_externo);
+    });
+  }
+  /* Para prellenar el Anexo: el líder si él mismo es externo (caso más
+     común), si no el primer externo que se encuentre entre los asignados. */
+  function _primerTecnicoExterno(){
+    if (S.lider){
+      var tl = cacheTec.find(function(x){ return x.id === S.lider; });
+      if (tl && tl.es_externo) return tl;
+    }
+    for (var i=0;i<(S.tecnicos||[]).length;i++){
+      var t = cacheTec.find(function(x){ return x.id === S.tecnicos[i]; });
+      if (t && t.es_externo) return t;
+    }
+    return null;
+  }
   function _liderEsExterno(){
     if (!S.lider) return false;
     var t = cacheTec.find(function(x){ return x.id === S.lider; });
@@ -995,7 +1023,7 @@ window.OT2C = (function(){
     // (proveedor = técnico líder, precio = costo del proveedor que ya se
     // declaró en Finanzas), y crearlo/enviarlo en la misma llamada de
     // crear() encadenando ambos POST, sin esperar a la pantalla de detalle.
-    if (!esInterno() && _liderEsExterno()) p.push({k:'anexo', n:'Anexo'});
+    if (!esInterno() && _hayTecnicoExterno()) p.push({k:'anexo', n:'Anexo'});
     p.push({k:'revisar', n:'Revisar'});
     return p;
   }
@@ -1043,10 +1071,20 @@ window.OT2C = (function(){
       // ese punto es contra el que el GPS del técnico valida su llegada.
       // El correo queda opcional: no todos los contactos de terreno tienen.
       case 'contraparte':
+        // 2026-08-30 (Daniel: "necesito que valides... el RUT... el
+        // teléfono... el correo"): nombre/teléfono/dirección siguen siendo
+        // obligatorios (sin cambios); lo nuevo es que, si hay algo escrito
+        // en RUT/teléfono/correo, tiene que tener el FORMATO correcto --
+        // los 3 validadores devuelven true también cuando el campo está
+        // vacío, así que esto nunca bloquea por un campo opcional sin
+        // llenar, solo por uno llenado mal.
         return !!(S.contraparte.nombre||'').trim() &&
                !!(S.contraparte.tel||'').trim() &&
                !!(S.contraparte.direccion||'').trim() &&
-               S.contraparte.lat !== null && S.contraparte.lng !== null;
+               S.contraparte.lat !== null && S.contraparte.lng !== null &&
+               _o2mValidarRut(S.contraparte.rut) &&
+               _o2mValidarTelCl(S.contraparte.tel) &&
+               _o2mValidarEmail(S.contraparte.email);
       // 2026-08-29 (Daniel): centro de costo SIEMPRE requerido; cobertura
       // es documento O garantía, excluyentes -- garantía exime del
       // documento ("si es garantía, no es necesario [el documento]").
@@ -2443,14 +2481,85 @@ window.OT2C = (function(){
      "Llegada al lugar" no puede ponerse verde. */
   var cacheContactos = null, cacheContactosCid = null;
 
+  /* 2026-08-30 (Daniel, textual: "necesito que valides del contacto el RUT
+     con RUT chileno... el teléfono... el correo"). Mismo algoritmo (módulo
+     11) que ya usa el proyecto para RUT de clientes (ver validar_rut en
+     app.py) -- se clona acá porque este archivo nunca depende de otros
+     .js (regla ya establecida en este mismo archivo). Vacío siempre se
+     considera "válido" para estos 3 campos: ninguno es obligatorio salvo
+     que se empiece a escribir -- ahí sí tiene que quedar bien formado. */
+  function _o2mValidarRut(rut){
+    var limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+    if (!limpio) return true;
+    if (limpio.length < 7 || limpio.length > 9) return false;
+    var cuerpo = limpio.slice(0,-1), dv = limpio.slice(-1);
+    var suma = 0, mult = 2;
+    for (var i = cuerpo.length - 1; i >= 0; i--){
+      suma += parseInt(cuerpo[i],10) * mult;
+      mult = mult === 7 ? 2 : mult + 1;
+    }
+    var resto = 11 - (suma % 11);
+    var dvOk = resto === 11 ? '0' : (resto === 10 ? 'K' : String(resto));
+    return dv === dvOk;
+  }
+  function _o2mFormatearRut(rut){
+    var limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+    if (limpio.length < 2) return limpio;
+    var cuerpo = limpio.slice(0,-1), dv = limpio.slice(-1);
+    return cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
+  }
+  // Al salir del campo: si quedó válido, se prolija con puntos/guión (misma
+  // cortesía visual que ya hace static/cubicador_asignar.js con teléfonos).
+  // Si no es válido, se deja tal cual como el usuario lo escribió -- el
+  // aviso en rojo de _o2mPintarCpValidacion ya le explica qué corregir.
+  function _o2mFormatearRutSiValido(v){
+    if (!_o2mValidarRut(v)) return v;
+    var f = _o2mFormatearRut(v);
+    S.contraparte.rut = f;
+    return f;
+  }
+  // Mismo criterio tolerante que static/cubicador_asignar.js
+  // (_normalizarTelefonoCl): acepta con o sin +56/9 inicial, exige que
+  // quede en un móvil chileno de 9 dígitos empezando en 9.
+  function _o2mValidarTelCl(tel){
+    var d = String(tel||'').replace(/\D/g,'');
+    if (!d) return true;
+    d = d.replace(/^56/, '').replace(/^0+/, '');
+    if (d.length === 9 && d[0] === '9') return true;
+    if (d.length === 8) return true;
+    return false;
+  }
+  function _o2mValidarEmail(email){
+    var v = String(email||'').trim();
+    if (!v) return true;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
   function _o2mCpSet(campo, valor){
     S.contraparte[campo] = valor;
     // Escribir a mano deja de ser "el contacto de la ficha": se marca manual
     // para no atribuirle a la ficha un dato que se editó acá.
-    if (['nombre','cargo','tel','email'].indexOf(campo) !== -1) {
+    if (['nombre','cargo','tel','email','rut'].indexOf(campo) !== -1) {
       S.contraparte.origen = 'manual';
     }
+    if (campo === 'rut' || campo === 'tel' || campo === 'email') _o2mPintarCpValidacion();
     refrescarAnclas();
+  }
+  // Actualiza solo los 3 avisos de validación (sin repintar toda la
+  // sección -- perdería el foco del input mientras el usuario escribe).
+  function _o2mPintarCpValidacion(){
+    var cp = S.contraparte;
+    var specs = [
+      {campo:'rut',   id:'o2mCpRutEstado',   ok:_o2mValidarRut(cp.rut),     msg:'RUT chileno inválido.'},
+      {campo:'tel',   id:'o2mCpTelEstado',   ok:_o2mValidarTelCl(cp.tel),   msg:'Teléfono chileno inválido: +56 9 XXXX XXXX.'},
+      {campo:'email', id:'o2mCpEmailEstado', ok:_o2mValidarEmail(cp.email), msg:'Correo inválido.'},
+    ];
+    specs.forEach(function(s){
+      var el = document.getElementById(s.id); if (!el) return;
+      var v = (cp[s.campo]||'').trim();
+      el.innerHTML = !v ? '' : (s.ok
+        ? '<span style="color:#16a34a"><i class="bi bi-check-circle-fill me-1"></i>Formato correcto.</span>'
+        : '<span style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(s.msg)+'</span>');
+    });
   }
   function setCpCampo(campo, valor){ _o2mCpSet(campo, valor); }
 
@@ -2461,6 +2570,7 @@ window.OT2C = (function(){
     S.contraparte.cargo  = c.cargo || '';
     S.contraparte.tel    = c.tel || '';
     S.contraparte.email  = c.email || '';
+    S.contraparte.rut    = c.rut || '';
     S.contraparte.origen = c.origen || 'manual';
     repintarSeccion('contraparte');
     refrescarAnclas();
@@ -2528,14 +2638,25 @@ window.OT2C = (function(){
         '<div class="col-md-5"><label class="fl">Cargo</label>'+
         '<input class="form-control" id="o2mCpCargo" maxlength="120" value="'+esc(cp.cargo)+'" '+
         'placeholder="Ej: Administradora" oninput="OT2C.setCpCampo(\'cargo\', this.value)"></div>'+
-        '<div class="col-md-5"><label class="fl">Teléfono *</label>'+
+        // 2026-08-30 (Daniel: "necesito que valides del contacto el RUT con
+        // RUT chileno... el número de carnet chileno deberá ya validarse
+        // con ese formato"). Opcional -- si se llena, tiene que ser válido
+        // (ver _o2mValidarRut/completo('contraparte')).
+        '<div class="col-md-4"><label class="fl">RUT</label>'+
+        '<input class="form-control" id="o2mCpRut" maxlength="12" value="'+esc(cp.rut)+'" '+
+        'placeholder="12.345.678-9" oninput="OT2C.setCpCampo(\'rut\', this.value)" '+
+        'onblur="this.value = OT2C._o2mFormatearRutSiValido(this.value)">'+
+        '<div id="o2mCpRutEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
+        '<div class="col-md-4"><label class="fl">Teléfono *</label>'+
         '<input class="form-control" id="o2mCpTel" maxlength="50" value="'+esc(cp.tel)+'" '+
         'inputmode="tel" placeholder="+56 9 1234 5678" '+
-        'oninput="OT2C.setCpCampo(\'tel\', this.value)"></div>'+
-        '<div class="col-md-7"><label class="fl">Correo</label>'+
+        'oninput="OT2C.setCpCampo(\'tel\', this.value)">'+
+        '<div id="o2mCpTelEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
+        '<div class="col-md-4"><label class="fl">Correo</label>'+
         '<input class="form-control" id="o2mCpEmail" maxlength="200" value="'+esc(cp.email)+'" '+
         'type="email" placeholder="contacto@cliente.cl" '+
-        'oninput="OT2C.setCpCampo(\'email\', this.value)"></div>'+
+        'oninput="OT2C.setCpCampo(\'email\', this.value)">'+
+        '<div id="o2mCpEmailEstado" class="mt-1" style="font-size:.72rem"></div></div>'+
         '<div class="col-12"><label class="fl">Dirección del lugar *</label>'+
         '<input class="form-control" id="o2mCpDir" maxlength="400" value="'+esc(cp.direccion)+'" '+
         'placeholder="Empieza a escribir y elige la sugerencia" '+
@@ -2556,6 +2677,7 @@ window.OT2C = (function(){
         'oninput="OT2C.setCpCampo(\'comuna\', this.value)"></div>'+
       '</div>';
     cargarContactosCliente();
+    _o2mPintarCpValidacion();
     // Places se engancha después de que el input existe en el DOM.
     setTimeout(function(){
       var inp = document.getElementById('o2mCpDir');
@@ -3772,8 +3894,12 @@ window.OT2C = (function(){
      crearlo (+ enviarlo) encadenado a crear() sin esperar a detalle.html. */
   function _o2mAnexoAutoRellenar(){
     var a = S.anexo;
-    if (!a.proveedor_nombre.trim() && S.lider){
-      var t = cacheTec.find(function(x){ return x.id === S.lider; });
+    // 2026-08-30: antes prellenaba siempre con S.lider, aunque el líder
+    // fuera interno y el externo real fuera un segundo técnico asignado --
+    // el anexo terminaba nombrando a la persona equivocada. Ver
+    // _primerTecnicoExterno() (arriba, junto a _hayTecnicoExterno()).
+    if (!a.proveedor_nombre.trim()){
+      var t = _primerTecnicoExterno();
       if (t) a.proveedor_nombre = t.nombre || '';
     }
     if (!a.objetivo_servicio.trim() && S.tipo){
@@ -5169,6 +5295,7 @@ window.OT2C = (function(){
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,
+          _o2mFormatearRutSiValido:_o2mFormatearRutSiValido,
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
