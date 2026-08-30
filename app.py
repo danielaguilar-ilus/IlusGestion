@@ -69754,6 +69754,123 @@ def _ot_maquinas_excluidas_cierre(vid):
     return excluir_maquinas
 
 
+_OT_DIAG_MIN_CHARS = 20
+
+# Títulos de ítems de checklist que YA son un diagnóstico. Se comparan sobre el
+# título normalizado (sin acentos ni mayúsculas). Cubre las plantillas reales de
+# ILUS: "Diagnóstico y recomendación", "Observaciones adicionales",
+# "Falla reportada por el cliente".
+_OT_DIAG_TITULOS_RE = re.compile(
+    r"(diagnostic|recomendacion|observacion|falla\s+reportada|estado\s+final)", re.I
+)
+
+
+def _ot_diagnostico_efectivo(vid, solo_lectura_v=None):
+    """El diagnóstico REAL de la OT: el escrito a mano, o el que se compone con
+    el trabajo que el técnico YA hizo en el checklist.
+
+    ══════════════════════════════════════════════════════════════════════
+    Daniel (2026-08-29, después de que Isabel Milling y Daniel Pulgar se
+    toparan con lo mismo en terreno): *"necesito un cambio definitivo, que no
+    molestemos a los técnicos por esas pendejadas"*.
+    ══════════════════════════════════════════════════════════════════════
+    El caso que lo motiva es la OT-2026-00147: 72/72 tareas obligatorias
+    completas —incluyendo un ítem "Diagnóstico y recomendación" contestado en
+    CADA una de las 9 máquinas— y aun así el candado la rechazaba, porque ese
+    trabajo se guarda en `mant_visita_tareas.valor_json` y en
+    `mant_visita_equipos.diagnostico_texto`, mientras la regla interrogaba una
+    tercera columna (`mant_visitas.diagnostico`) que nadie había llenado.
+
+    O sea: el técnico SÍ diagnosticó. Pedirle que lo reescriba a mano en un
+    campo aparte es exactamente la pendejada que hay que matar.
+
+    Prioridad:
+      1. `mant_visitas.diagnostico` escrito a mano — si existe, manda siempre.
+         Nunca se pisa ni se "mejora" lo que una persona escribió.
+      2. Composición automática con lo ya registrado, en este orden:
+         a) diagnóstico por equipo (`mant_visita_equipos.diagnostico_texto`),
+            que además ya es obligatorio cuando el veredicto es observación o
+            falla;
+         b) respuestas de los ítems de checklist cuyo título es un diagnóstico
+            (ver _OT_DIAG_TITULOS_RE).
+
+    Returns: (texto, origen) — origen ∈ {'manual', 'compuesto', 'vacio'}.
+    El texto compuesto NO se escribe en la base acá: esta función solo
+    responde "¿hay diagnóstico?". Quien decide persistirlo es el cierre.
+    """
+    v = solo_lectura_v
+    if v is None:
+        v = mysql_fetchone(
+            "SELECT diagnostico FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    manual = (v.get("diagnostico") or "").strip()
+    if len(manual) >= _OT_DIAG_MIN_CHARS:
+        return manual, "manual"
+
+    partes = []
+
+    # (a) Diagnóstico por equipo — el que el técnico deja al cerrar cada máquina.
+    try:
+        for r in mysql_fetchall(
+            "SELECT COALESCE(m.nombre, CONCAT('Equipo #', ve.maquina_id)) AS nombre, "
+            "       ve.diagnostico_estado, ve.diagnostico_texto "
+            "  FROM mant_visita_equipos ve "
+            "  LEFT JOIN mant_maquinas m ON m.id = ve.maquina_id "
+            " WHERE ve.visita_id=%s "
+            "   AND COALESCE(TRIM(ve.diagnostico_texto),'') <> '' "
+            " ORDER BY nombre", (vid,)
+        ) or []:
+            _est = (r.get("diagnostico_estado") or "").strip()
+            _pref = {"aprobado": "OK", "observacion": "Observación",
+                     "falla": "Falla"}.get(_est, "")
+            partes.append(
+                f"{r['nombre']}{(' — ' + _pref) if _pref else ''}: "
+                f"{(r.get('diagnostico_texto') or '').strip()}"
+            )
+    except Exception as _e_de:
+        print(f"[_ot_diagnostico_efectivo][equipos] vid={vid}: {_e_de}", flush=True)
+
+    # (b) Ítems del checklist que ya SON un diagnóstico.
+    if not partes:
+        try:
+            for r in mysql_fetchall(
+                "SELECT COALESCE(m.nombre, '') AS nombre, t.titulo, t.tipo_respuesta, "
+                "       t.valor_json "
+                "  FROM mant_visita_tareas t "
+                "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
+                " WHERE t.visita_id=%s AND COALESCE(t.completada,0)=1 "
+                "   AND COALESCE(t.valor_json,'') <> '' "
+                " ORDER BY t.maquina_id, t.orden, t.id", (vid,)
+            ) or []:
+                if not _OT_DIAG_TITULOS_RE.search(r.get("titulo") or ""):
+                    continue
+                try:
+                    vj = r["valor_json"]
+                    vj = json.loads(vj) if isinstance(vj, str) else (vj or {})
+                except Exception:
+                    continue
+                if not isinstance(vj, dict):
+                    continue
+                # Mismas formas que guarda mant_visita_tarea_respuesta:
+                #   texto → {texto}, lista → {opcion}, sino/verificacion → {valor}
+                txt = (vj.get("texto") or vj.get("opcion") or vj.get("valor") or "")
+                txt = str(txt).strip()
+                if not txt or txt.lower() in ("na", "n/a", "-"):
+                    continue
+                _eq = (r.get("nombre") or "").strip()
+                partes.append(f"{_eq + ' — ' if _eq else ''}{r['titulo']}: {txt}")
+        except Exception as _e_dt:
+            print(f"[_ot_diagnostico_efectivo][tareas] vid={vid}: {_e_dt}", flush=True)
+
+    if partes:
+        compuesto = " · ".join(partes)[:5000]
+        if len(compuesto) >= _OT_DIAG_MIN_CHARS:
+            return compuesto, "compuesto"
+
+    # Nada compuesto alcanza: devolvemos lo manual aunque sea corto, para que
+    # quien avise al técnico pueda decirle cuánto le falta.
+    return manual, ("manual" if manual else "vacio")
+
+
 def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
     """R2 (diagnóstico ≥20 caracteres) + R3 (foto por tarea con
     requiere_foto=1). Devuelve una lista de razones bloqueantes (vacía si
@@ -69771,19 +69888,41 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
     no aplica todavía en ese punto del flujo).
     """
     v = mysql_fetchone(
-        "SELECT tipo, diagnostico, levantamiento_id, cliente_id "
+        "SELECT id, tipo, diagnostico, levantamiento_id, cliente_id "
         "  FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
         return ["OT no encontrada"]
 
     razones = []
-    es_levantamiento = _ot_es_levantamiento(v)
+    # 🧹 LIMPIEZA 2026-08-29 (Daniel: "necesito limpiar el código y que no se
+    # comporte como levantamiento"). Acá se usaba _ot_es_levantamiento(v), que
+    # devuelve True para CUALQUIER OT que tenga un vínculo a un levantamiento
+    # -- y hasta el 2026-08-12 ese vínculo se creaba también en preventivas,
+    # instalaciones e inspecciones. Consecuencia medida por la auditoría de
+    # esta noche: si una OT de Visita Técnica quedó enlazada, se eximía del
+    # diagnóstico para siempre; si no, se le exigía. La misma OT, el mismo
+    # trabajo, distinto veredicto según cómo quedó escrito un campo que el
+    # técnico nunca vio. Eso es lo que Daniel llamó "levantamiento por letras".
+    #
+    # Acá la exención pasa a depender del TIPO DECLARADO de la OT, que es lo
+    # que la persona eligió al crearla y lo que se ve en pantalla. Una OT de
+    # levantamiento sigue exenta (su diagnóstico se autogenera al cerrar);
+    # cualquier otro tipo responde por su diagnóstico, tenga o no un
+    # levantamiento colgando. _ot_es_levantamiento NO se toca: sigue siendo
+    # correcta para lo suyo (¿esta OT captura fichas de equipo?), que es una
+    # pregunta distinta de ¿esta OT necesita diagnóstico?.
+    es_levantamiento = (v.get("tipo") or "").strip().lower() == "levantamiento"
     if excluir_maquinas is None:
         excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
 
     if not es_levantamiento:
-        diag = (v.get("diagnostico") or "").strip()
-        if len(diag) < 20:
+        # 2026-08-29: ya no se interroga la columna cruda, sino el diagnóstico
+        # EFECTIVO -- que incluye el trabajo de diagnóstico que el técnico ya
+        # hizo por equipo o en el checklist. Ver _ot_diagnostico_efectivo:
+        # nace de que la OT-2026-00147 tenía las 9 máquinas diagnosticadas y
+        # el candado igual la rechazaba por mirar el lugar equivocado.
+        diag, _origen_diag = _ot_diagnostico_efectivo(vid, solo_lectura_v=v)
+        if len(diag) < _OT_DIAG_MIN_CHARS:
             razones.append(
                 "Diagnóstico obligatorio: debe explicar qué se hizo "
                 "(mínimo 20 caracteres) antes de firmar."
@@ -83081,6 +83220,27 @@ def mant_ot_firmar_revision(vid):
                 "faltantes": _razones_calidad,
             }), 400
 
+        # 📝 2026-08-29: si el diagnóstico que dejó pasar la validación fue
+        # COMPUESTO (armado con el trabajo por equipo / los ítems del
+        # checklist, ver _ot_diagnostico_efectivo), se persiste ahora en
+        # mant_visitas.diagnostico. Dos razones: el PDF y el informe leen esa
+        # columna, y a partir de la firma la OT es un documento — su
+        # diagnóstico tiene que quedar congelado, no recalcularse cada vez que
+        # alguien abra el PDF. Nunca pisa un texto escrito a mano (la propia
+        # función devuelve 'manual' cuando existe) y es best-effort: un fallo
+        # acá no puede impedir una firma ya validada.
+        try:
+            _diag_efec, _diag_origen = _ot_diagnostico_efectivo(vid)
+            if _diag_origen == "compuesto" and _diag_efec:
+                mysql_execute(
+                    "UPDATE mant_visitas SET diagnostico=%s "
+                    " WHERE id=%s AND COALESCE(TRIM(diagnostico),'')=''",
+                    (_diag_efec[:5000], vid))
+                _mant_log("visita", vid, "diagnostico_compuesto",
+                          f"{len(_diag_efec)} caracteres armados desde el checklist.")
+        except Exception as _e_dc:
+            print(f"[firmar_revision] diagnostico compuesto vid={vid}: {_e_dc}", flush=True)
+
         u = getattr(g, "user", None) or {}
         uid = u.get("id")
 
@@ -86964,6 +87124,28 @@ def mant_ot_diagnostico_guardar(vid):
         return jsonify({"ok": False,
                         "error": "La OT ya está cerrada: su diagnóstico no se modifica."}), 400
 
+    # 🔴 GUARDA ANTI-BORRADO (2026-08-29). Un POST con cadena vacía NO puede
+    # dejar en blanco un diagnóstico que ya tenía texto. Nace de un bug real y
+    # silencioso encontrado esta noche: el frontend re-sembraba el textarea del
+    # Resumen con la constante congelada en la carga de la página y disparaba
+    # un autoguardado a los 1200 ms, así que volver a entrar al Resumen
+    # BORRABA lo que el técnico ya había escrito -- y la pantalla confirmaba
+    # con "✓ Guardado". El frontend ya está corregido, pero la guarda se queda
+    # acá también: es la única capa que protege el dato pase lo que pase en el
+    # navegador (pestaña vieja, doble sesión, reintento offline).
+    # Borrar a propósito sigue siendo posible desde el PUT de metadata
+    # (gestión), que no pasa por acá.
+    if not diag:
+        _actual = mysql_fetchone(
+            "SELECT diagnostico FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if (_actual.get("diagnostico") or "").strip():
+            return jsonify({
+                "ok": True, "ignorado": True,
+                "largo": len((_actual.get("diagnostico") or "").strip()),
+                "suficiente": len((_actual.get("diagnostico") or "").strip()) >= 20,
+                "diagnostico": _actual.get("diagnostico") or "",
+            })
+
     try:
         mysql_execute("UPDATE mant_visitas SET diagnostico=%s WHERE id=%s", (diag, vid))
     except Exception as e:
@@ -86980,6 +87162,104 @@ def mant_ot_diagnostico_guardar(vid):
             pass
 
     return jsonify({"ok": True, "largo": len(diag), "suficiente": len(diag) >= 20})
+
+
+@app.route("/mantenciones/api/visitas/<int:vid>/puede-firmar", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def mant_ot_puede_firmar(vid):
+    """¿Puede el técnico firmar esta OT? Consulta previa, sin efectos.
+
+    ══════════════════════════════════════════════════════════════════════
+    Daniel (2026-08-29): *"eso no puede seguir fallando, nos hace quedar mal"*.
+    ══════════════════════════════════════════════════════════════════════
+    Hasta hoy el servidor recién opinaba DESPUÉS de que el técnico ya había
+    dibujado su firma en el canvas: la pantalla decía "Nada pendiente, listo
+    para el cliente", el técnico firmaba delante del cliente, y ahí aparecía
+    el rechazo. Eso es lo que hacía quedar mal a Isabel, a Pulgar y a Daniel
+    delante del cliente.
+
+    Este endpoint corre EXACTAMENTE los mismos tres candados que
+    `mant_ot_firmar_revision`, en el mismo orden, pero sin escribir nada — así
+    la pantalla puede preguntar antes de abrir el canvas y, si falta algo,
+    llevar al técnico al lugar donde lo resuelve.
+
+    🔴 No reemplaza la validación de firmar-revision: la de allá sigue siendo
+    la que manda (esto es una consulta, y entre la consulta y la firma puede
+    cambiar cualquier cosa). Es una cortesía para el técnico, no un permiso.
+    """
+    try:
+        faltantes = []
+        codigo = None
+
+        _sin_clasif = mysql_fetchall(
+            "SELECT m.nombre FROM mant_visita_equipos ve "
+            "  JOIN mant_maquinas m ON m.id = ve.maquina_id "
+            " WHERE ve.visita_id=%s AND ve.sin_clasificar=1 "
+            " ORDER BY m.nombre", (vid,)
+        ) or []
+        if _sin_clasif:
+            return jsonify({
+                "ok": True, "puede_firmar": False,
+                "error_codigo": "EQUIPOS_SIN_CLASIFICAR",
+                "titulo": "Hay equipos sin clasificar",
+                "detalle": ("Avisa a gestión para que los clasifique en el "
+                            "catálogo — no es algo que se resuelva en terreno."),
+                "faltantes": [r["nombre"] for r in _sin_clasif],
+            })
+
+        excluir_maquinas = _ot_maquinas_excluidas_cierre(vid)
+        _excl_ph = ",".join(["%s"] * len(excluir_maquinas)) if excluir_maquinas else None
+        _huerf_gate = _ot_tarea_no_trabajable_sql("t.")
+        faltan_rows = mysql_fetchall(
+            "SELECT t.maquina_id, "
+            "       COALESCE(m.nombre, CONCAT('Equipo #', t.maquina_id)) AS nombre, "
+            "       COUNT(*) AS n "
+            "  FROM mant_visita_tareas t "
+            "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE t.visita_id=%s AND t.obligatoria=1 AND COALESCE(t.completada,0)=0 "
+            + (f"   AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_excl_ph})) "
+               if excluir_maquinas else "")
+            + _huerf_gate +
+            " GROUP BY t.maquina_id, m.nombre "
+            " ORDER BY nombre",
+            (vid, *excluir_maquinas) if excluir_maquinas else (vid,)
+        ) or []
+        if faltan_rows:
+            return jsonify({
+                "ok": True, "puede_firmar": False,
+                "error_codigo": "TAREAS_PENDIENTES",
+                "titulo": "Quedan tareas obligatorias",
+                "detalle": "Complétalas o justifica el equipo para poder firmar.",
+                "faltantes": [f"{r['nombre']}: {int(r['n'])} tarea(s) sin completar"
+                              for r in faltan_rows],
+                "primer_equipo_id": faltan_rows[0].get("maquina_id"),
+            })
+
+        _razones = _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas)
+        if _razones:
+            _diag_efec, _origen = _ot_diagnostico_efectivo(vid)
+            _falta_diag = len(_diag_efec) < _OT_DIAG_MIN_CHARS
+            return jsonify({
+                "ok": True, "puede_firmar": False,
+                "error_codigo": "DIAGNOSTICO_O_FOTOS_FALTANTES",
+                "titulo": ("Falta el diagnóstico de la visita" if _falta_diag
+                           else "Faltan fotos obligatorias"),
+                "detalle": ("Cuéntanos en una línea qué encontraste y qué hiciste."
+                            if _falta_diag else
+                            "Hay tareas que piden foto y todavía no la tienen."),
+                "faltantes": _razones,
+                "falta_diagnostico": _falta_diag,
+                "diagnostico_largo": len(_diag_efec),
+                "diagnostico_min": _OT_DIAG_MIN_CHARS,
+            })
+
+        return jsonify({"ok": True, "puede_firmar": True})
+    except Exception as e:
+        # FAIL-OPEN deliberado: esto es una cortesía, no el candado. Si falla,
+        # el técnico sigue su camino y firmar-revision dirá la última palabra.
+        print(f"[puede_firmar] vid={vid}: {e}", flush=True)
+        return jsonify({"ok": True, "puede_firmar": True, "preflight_fallo": True})
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/firma-estado", methods=["GET"])

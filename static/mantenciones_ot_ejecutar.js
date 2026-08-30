@@ -371,9 +371,15 @@ function renderResumen(){
         <i class="bi bi-journal-text"></i> Diagnostico de la visita
         <span class="req" id="otDiagReq"></span>
       </label>
+      ${/* 2026-08-29: se siembra desde _otDiagValorVivo, NO desde
+           VISITA_DIAGNOSTICO. Esa constante queda congelada en la carga de la
+           pagina, asi que al volver por segunda vez al Resumen redibujaba el
+           campo vacio y el autoguardado borraba lo ya escrito. */ ''}
       <textarea id="otDiagnostico" rows="3" maxlength="5000"
         placeholder="Que se encontro y que se hizo. Lo lee el cliente en el informe."
-        oninput="_otDiagInput()" onblur="_otDiagGuardar()">${_escapeHtml(VISITA_DIAGNOSTICO || '')}</textarea>
+        oninput="_otDiagInput()" onblur="_otDiagGuardar()">${_escapeHtml(
+          (typeof window._otDiagValorVivo === 'string' && window._otDiagValorVivo)
+            ? window._otDiagValorVivo : (VISITA_DIAGNOSTICO || ''))}</textarea>
       <div class="resumen-diag-pie">
         <span id="otDiagEstado"></span>
       </div>
@@ -386,7 +392,10 @@ function renderResumen(){
   `;
   // Pinta el indicador con lo que YA hay guardado. Sin esto el tecnico no
   // sabe si su diagnostico alcanza hasta que toca el campo.
-  try { if (typeof _otDiagInput === 'function') _otDiagInput(); } catch(_){}
+  // 2026-08-29: con soloPintar=true -- dibujar el resumen NO es una edicion
+  // del usuario. Antes esta linea agendaba un guardado que posteaba el valor
+  // recien re-sembrado y borraba el diagnostico real (ver _otDiagValorVivo).
+  try { if (typeof _otDiagInput === 'function') _otDiagInput(true); } catch(_){}
 }
 
 function renderCrumbs(){
@@ -6100,7 +6109,66 @@ function _firmaSetStage(stage){
   }
 }
 
+// 🚦 PREFLIGHT 2026-08-29 (Daniel: "eso no puede seguir fallando, nos hace
+// quedar mal"). Le pregunta al servidor si la OT se puede firmar ANTES de
+// abrir el canvas -- antes el técnico dibujaba su firma delante del cliente y
+// recién ahí aparecía el rechazo. Si algo falta, no se limita a avisar: lleva
+// al técnico al lugar exacto donde lo resuelve.
+// Devuelve true si se puede seguir. Fail-open: si el preflight no responde, se
+// deja pasar (el candado real sigue siendo firmar-revision, que valida igual).
+async function _preflightFirma(){
+  let d;
+  try {
+    const r = await fetch(`/mantenciones/api/visitas/${VID}/puede-firmar`, {
+      credentials: 'same-origin',
+    });
+    d = await r.json();
+    if (!r.ok || !d || !d.ok) return true;
+  } catch(e){
+    return true;   // sin red: que el candado real decida
+  }
+  if (d.puede_firmar) return true;
+
+  const faltantes = Array.isArray(d.faltantes) ? d.faltantes : [];
+  const detalleHtml = faltantes.length
+    ? faltantes.slice(0, 6).map(f => '· ' + _escapeHtml(f)).join('<br>')
+    : _escapeHtml(d.detalle || '');
+
+  // Falta el diagnóstico: es lo único que el técnico resuelve escribiendo, así
+  // que en vez de mandarlo a buscarlo se le ofrece ir directo al campo.
+  if (d.error_codigo === 'DIAGNOSTICO_O_FOTOS_FALTANTES' && d.falta_diagnostico){
+    const ir = await ilusConfirm({
+      title: '📝 Falta el diagnóstico',
+      message: 'Cuéntanos en una línea qué encontraste y qué hiciste. Es lo que lee el cliente en el informe.',
+      sub: detalleHtml, subHtml: true,
+      okLabel: 'Escribirlo ahora', cancelLabel: 'Ahora no',
+    });
+    if (ir){
+      goToResumen();
+      setTimeout(() => {
+        const t = document.getElementById('otDiagnostico');
+        if (t){ t.scrollIntoView({block:'center', behavior:'smooth'}); t.focus(); }
+      }, 400);
+    }
+    return false;
+  }
+
+  // Faltan tareas / fotos: se ofrece saltar al primer equipo que las debe.
+  const irEquipo = (d.error_codigo === 'TAREAS_PENDIENTES' && d.primer_equipo_id);
+  const ok = await ilusConfirm({
+    title: '🚧 ' + (d.titulo || 'Todavía no se puede firmar'),
+    message: d.detalle || 'Falta completar algo antes de firmar.',
+    sub: detalleHtml, subHtml: true,
+    okLabel: irEquipo ? 'Ir a resolverlo' : 'Entendido',
+    cancelLabel: irEquipo ? 'Ahora no' : 'Cerrar',
+  });
+  if (ok && irEquipo) goToPlantillas(String(d.primer_equipo_id));
+  return false;
+}
+
 async function abrirModalFirma(){
+  // 2026-08-29: el servidor opina ANTES del canvas, no después de la firma.
+  if (!await _preflightFirma()) return;
   // Si hay tareas opcionales sin completar, pedir confirmación explícita.
   const ctx = _calcCtxGlobal();
   const pendTotal = ctx.total - ctx.completas;
@@ -8123,7 +8191,24 @@ async function guardarCentroCostoModal(){
     if (e){ e.textContent = txt; e.style.color = color || '#9ca3af'; }
   }
 
-  window._otDiagInput = function(){
+  // 🔴 FIX 2026-08-29 -- VALOR VIVO DEL DIAGNOSTICO.
+  // Bug real y destructivo encontrado en la auditoría de esta noche: el
+  // textarea del Resumen se re-sembraba con VISITA_DIAGNOSTICO, que es un
+  // `const` congelado en la CARGA DE LA PAGINA. Al volver por segunda vez al
+  // Resumen (botón inferior o "Ver resumen"), renderResumen redibujaba el
+  // campo con ese valor viejo -- vacío, en la mayoría de los casos -- y acto
+  // seguido disparaba el autoguardado, que posteaba '' y BORRABA de la base
+  // el diagnóstico que el técnico ya había escrito. La pantalla lo confirmaba
+  // con un "✓ Guardado". Esa es la razón por la que un técnico podía escribir
+  // el diagnóstico y ser rechazado igual al firmar.
+  // Este valor sobrevive a los re-render y es la fuente que usa renderResumen.
+  window._otDiagValorVivo = (typeof VISITA_DIAGNOSTICO !== 'undefined')
+    ? (VISITA_DIAGNOSTICO || '') : '';
+
+  // soloPintar=true -> refresca el contador sin agendar ningún guardado. Lo
+  // usa renderResumen al dibujar: un render NO es una edición del usuario, y
+  // tratarlo como tal es exactamente lo que producía el borrado.
+  window._otDiagInput = function(soloPintar){
     var t = document.getElementById('otDiagnostico');
     if (!t) return;
     var n = (t.value || '').trim().length;
@@ -8132,6 +8217,8 @@ async function guardarCentroCostoModal(){
       req.textContent = n >= 20 ? 'listo' : ('faltan ' + (20 - n));
       req.className = 'req' + (n >= 20 ? ' ok' : '');
     }
+    if (soloPintar === true) return;
+    window._otDiagValorVivo = (t.value || '');
     clearTimeout(_diagT);
     _diagT = setTimeout(window._otDiagGuardar, 1200);
   };
@@ -8150,7 +8237,24 @@ async function guardarCentroCostoModal(){
       });
       var d = await r.json().catch(function(){ return {}; });
       if (r.ok && d.ok){
+        // 2026-08-29: el backend puede IGNORAR un guardado vac\u00edo para no pisar
+        // un diagn\u00f3stico que ya exist\u00eda (guarda anti-borrado). En ese caso
+        // devuelve ignorado:true + el texto real, y la pantalla se re-sincroniza
+        // con la verdad en vez de quedarse mostrando el campo vac\u00edo.
+        if (d.ignorado && d.diagnostico){
+          t.value = d.diagnostico;
+          window._otDiagValorVivo = d.diagnostico;
+          _diagUltimo = d.diagnostico;
+          window._otDiagInput(true);
+          _pinta('\u2713 Guardado', '#15803d');
+          try { actualizarLockFirmar(_calcCtxGlobal()); } catch(_){}
+          return;
+        }
         _diagUltimo = val;
+        window._otDiagValorVivo = val;
+        // El bot\u00f3n de firmar depende del diagn\u00f3stico desde hoy: hay que
+        // repintarlo apenas se guarda, no esperar a que cambie otra cosa.
+        try { actualizarLockFirmar(_calcCtxGlobal()); } catch(_){}
         _pinta(d.suficiente ? '\u2713 Guardado' : '\u2713 Guardado (aun corto para el cierre)',
                d.suficiente ? '#15803d' : '#b45309');
       } else {
