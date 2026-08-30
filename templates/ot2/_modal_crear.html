@@ -1442,7 +1442,15 @@ window.OT2C = (function(){
       return t.n.toLowerCase().indexOf(q)>=0 || (t.l||'').toLowerCase().indexOf(q)>=0; });
     g.innerHTML = lista.length ? lista.map(function(t){
       var sel = (S.tipo===t.v && !!S.descubrimiento === !!t.descubrimiento);
-      return '<button type="button" class="o2m-op '+(sel?'sel':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
+      // 2026-08-30 (Daniel, viendo "Capacitación" seleccionada con el
+      // mismo rojo de Origen/Técnicos: "aún queda el contorno en rojo" --
+      // pidió verde acá específicamente, distinto del resto del wizard):
+      // `sel-ok` es la MISMA clase verde que ya usa el selector de Centro
+      // de costo (línea ~293) -- no es una clase nueva, solo se aplica acá
+      // también porque el Paso 1 ya se marca "completo" (círculo verde) en
+      // cuanto se elige un tipo, así que la tarjeta debía verse igual de
+      // resuelta, no como una selección roja "a medio confirmar".
+      return '<button type="button" class="o2m-op '+(sel?'sel-ok':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
         '<i class="bi '+t.i+' ic"></i><span class="n">'+t.n+'</span><span class="l">'+t.l+'</span></button>';
     }).join('') : '<div class="text-muted small" style="grid-column:1/-1">Sin resultados para "'+esc(S._tipoFiltro)+'".</div>';
   }
@@ -1487,21 +1495,7 @@ window.OT2C = (function(){
       '<small class="d-block mt-1" id="o2mDescHint" style="font-size:.72rem;color:'+(descOk?'#16a34a':'#9ca3af')+'">'+
       (descOk ? '<i class="bi bi-check-circle-fill me-1"></i>'+descLen+' caracteres'
               : descLen+' / '+O2M_DESC_MIN+' caracteres mínimos')+
-      '</small>'+
-      // 2026-08-27 (Daniel: "Capacitación... debe poder asociarse a una
-      // nota de venta interna, documento interno, opcional"): reusa el
-      // mismo S.doc_origen que ya alimenta factura_tido/factura_nudo en
-      // crear() -- una nota de venta interna (NVI) es, para efectos de
-      // trazabilidad en Finanzas, el mismo tipo de referencia que una
-      // factura/boleta, solo que se escribe a mano en vez de buscarla en
-      // el ERP (no amerita todo el buscador para un dato opcional).
-      (S.tipo === 'capacitacion'
-        ? '<label class="fl">N° de nota de venta interna (opcional)</label>'+
-          '<input class="form-control" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
-          'value="'+esc((S.doc_origen && S.doc_origen.tido==='NVI') ? S.doc_origen.nudo : '')+'" '+
-          'oninput="OT2C.setNotaVentaInterna(this.value)">'+
-          '<small class="text-muted d-block mt-1" style="font-size:.72rem">Queda registrada en la OT (Costos) como nota de venta interna NVI.</small>'
-        : '');
+      '</small>';
   }
 
   function pintarAgenda(b){
@@ -3348,6 +3342,20 @@ window.OT2C = (function(){
     b.innerHTML = '<h6 class="t">Productos y tareas</h6>'+
       '<p class="d">Agrega al menos un producto del catálogo o describe una tarea manual. '+
       'Si existe un checklist para este tipo de trabajo, se conecta solo abajo.</p>'+
+      // 🔀 2026-08-30 (Daniel: "sacar el número de nota de venta del paso
+      // [Detalle] y agregarlo al paso número cinco... para que pueda
+      // realizar la capacitación"): vivía en el paso "¿Qué hay que
+      // hacer?" -- se traslada acá, junto a la plantilla de checklist,
+      // porque es este paso el que de verdad necesita el dato para poder
+      // ejecutar la capacitación (no la descripción). Mismo S.doc_origen
+      // de siempre (alimenta factura_tido/factura_nudo en crear()), solo
+      // cambia DÓNDE se pinta el campo -- ver setNotaVentaInterna().
+      (S.tipo === 'capacitacion'
+        ? '<label class="fl">N° de nota de venta interna (opcional)</label>'+
+          '<input class="form-control mb-3" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
+          'value="'+esc((S.doc_origen && S.doc_origen.tido==='NVI') ? S.doc_origen.nudo : '')+'" '+
+          'oninput="OT2C.setNotaVentaInterna(this.value)">'
+        : '')+
       '<label class="fl">Plantilla de checklist (opcional)</label>'+
       '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
       '<div class="d-flex gap-2 mb-2 flex-wrap">'+
