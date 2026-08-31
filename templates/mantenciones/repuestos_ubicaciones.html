@@ -50,6 +50,8 @@
   {% for u in ubicaciones %}
   <div class="ubi-card {{ '' if u.activo else 'inactiva' }}">
     <div class="ubi-actions">
+      <button type="button" title="Imprimir etiqueta" onclick="ubiImprimirEtiqueta({{ u.id }}, '{{ u.codigo|e }}')">
+        <i class="bi bi-upc-scan"></i></button>
       <button type="button" title="Editar" onclick="ubiAbrirEditar({{ u.id }}, '{{ u.codigo|e }}', '{{ u.nombre or ''|e }}', '{{ u.tipo or '' }}')">
         <i class="bi bi-pencil"></i></button>
       {% if u.activo %}
@@ -58,6 +60,10 @@
       {% else %}
       <button type="button" class="ubi-act-reactivar" title="Reactivar" onclick="ubiReactivar({{ u.id }}, '{{ u.codigo|e }}')">
         <i class="bi bi-arrow-counterclockwise"></i></button>
+      {% if permissions and permissions.superadmin %}
+      <button type="button" class="ubi-act-eliminar" title="Eliminar definitivamente" onclick="ubiEliminarDefinitivo({{ u.id }}, '{{ u.codigo|e }}')">
+        <i class="bi bi-trash3-fill"></i></button>
+      {% endif %}
       {% endif %}
     </div>
     <div>
@@ -114,6 +120,8 @@
         </div>
       </div>
       <div class="modal-footer">
+        <button type="button" class="btn btn-outline-dark" id="btnUbiEtiqueta" style="display:none" onclick="ubiImprimirEtiqueta(document.getElementById('ubiId').value, document.getElementById('ubiCodigo').value)">
+          <i class="bi bi-upc-scan me-1"></i>Imprimir etiqueta</button>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-danger" id="btnUbiGuardar" onclick="ubiGuardar()">
           <i class="bi bi-check-lg me-1"></i>Guardar</button>
@@ -134,6 +142,7 @@ function ubiAbrirNuevo(){
   document.getElementById('ubiCodigo').value = '';
   document.getElementById('ubiTipo').value = '';
   document.getElementById('ubiNombre').value = '';
+  document.getElementById('btnUbiEtiqueta').style.display = 'none';
   (_ubiModal || new bootstrap.Modal(document.getElementById('modalUbicacion'))).show();
 }
 
@@ -143,7 +152,41 @@ function ubiAbrirEditar(id, codigo, nombre, tipo){
   document.getElementById('ubiCodigo').value = codigo || '';
   document.getElementById('ubiTipo').value = tipo || '';
   document.getElementById('ubiNombre').value = nombre || '';
+  document.getElementById('btnUbiEtiqueta').style.display = '';
   (_ubiModal || new bootstrap.Modal(document.getElementById('modalUbicacion'))).show();
+}
+
+function ubiImprimirEtiqueta(id, codigo){
+  if (!id) return;
+  openPdf(`/mantenciones/repuestos-stock/ubicaciones/etiqueta?ids=${id}&fmt=100x50`, {
+    title: `Etiqueta de ubicación ${codigo || ''}`,
+    downloadName: `Etiqueta-Ubicacion-${codigo || id}.pdf`,
+  });
+}
+
+async function ubiEliminarDefinitivo(id, codigo){
+  const texto = await ilusPrompt({
+    title: 'Eliminar definitivamente',
+    message: `Esto borra «${codigo}» de la base para siempre (no se puede deshacer). Escribe el código exacto para confirmar:`,
+    placeholder: codigo,
+    required: true,
+  });
+  if (!texto) return;
+  if (texto.trim() !== codigo){
+    ilusToast('El texto no coincide con el código -- no se eliminó nada', {type:'warning'});
+    return;
+  }
+  try{
+    const r = await fetch(`/mantenciones/api/repuestos-stock/ubicaciones/${id}/definitivo`, {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({confirm_text: texto.trim()}),
+    });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo eliminar', {type:'error'}); return; }
+    ilusToast('✓ Ubicación eliminada definitivamente', {type:'success'});
+    setTimeout(()=> location.reload(), 500);
+  }catch(e){ ilusToast('Sin conexión: no se pudo eliminar', {type:'error'}); }
 }
 
 async function ubiGuardar(){

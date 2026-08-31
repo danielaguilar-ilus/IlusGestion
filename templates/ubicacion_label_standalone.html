@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etiquetas de ubicaciones</title>
+<style>
+:root {
+  --label-w: {{ label_format.w }};
+  --label-h: {{ label_format.h }};
+}
+@page {
+  size: {{ label_format.w }} {{ label_format.h }};
+  margin: 0;
+}
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+html, body {
+  width: var(--label-w);
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: #fff;
+}
+body { font-family: Arial, Helvetica, sans-serif; }
+
+/* Cuarta variante del motor de etiquetas del proyecto (Catálogo/Productos,
+   Bodega de Repuestos, Equipos de mantención son las otras tres) -- pero
+   deliberadamente MINIMA (Daniel, 31-08-2026: "solo nomenclatura + codigo
+   de barras"), sin marca/cliente/dimensiones -- esta etiqueta se pega en
+   un estante/gaveta físico, no identifica un producto ni un cliente. */
+.label {
+  width: var(--label-w);
+  height: var(--label-h);
+  display: grid;
+  grid-template-rows: var(--hdr-h) minmax(0, 1fr) var(--code-h);
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  border: var(--label-border) solid #000;
+  color: #000;
+  page-break-after: always;
+  break-after: page;
+  isolation: isolate;
+}
+.label:last-child { page-break-after: auto; break-after: auto; }
+
+.label-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0a0a0a;
+  color: #fff;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-size: var(--hdr-size);
+  border-bottom: var(--label-border) solid #000;
+}
+
+.codigo-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad-y) var(--pad-x);
+  overflow: hidden;
+}
+.codigo {
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1;
+  color: #000;
+  text-align: center;
+  font-size: var(--codigo-size);
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+.barcode-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2mm var(--pad-y);
+  min-height: 0;
+  overflow: hidden;
+}
+.barcode { width: var(--barcode-w); height: var(--barcode-h); max-height: var(--barcode-h); }
+
+.label-100x50 {
+  --label-border: .28mm;
+  --hdr-h: 8mm;
+  --hdr-size: 2.6mm;
+  --code-h: 15mm;
+  --pad-x: 2mm;
+  --pad-y: 1mm;
+  --codigo-size: 8mm;
+  --barcode-w: 92%;
+  --barcode-h: 12mm;
+}
+.label-150x100 {
+  --label-border: .38mm;
+  --hdr-h: 14mm;
+  --hdr-size: 4.6mm;
+  --code-h: 26mm;
+  --pad-x: 4mm;
+  --pad-y: 2mm;
+  --codigo-size: 15mm;
+  --barcode-w: 94%;
+  --barcode-h: 22mm;
+}
+</style>
+</head>
+<body>
+{% set format_key = fmt or label_format.key %}
+{% for u in ubicaciones %}
+  <article class="label label-{{ format_key }}">
+    <header class="label-head">Ubicación · ILUS Fitness</header>
+    <div class="codigo-wrap"><span class="codigo">{{ u.codigo }}</span></div>
+    <div class="barcode-wrap">
+      <svg class="barcode" id="barcode-{{ loop.index0 }}" data-code="{{ u.codigo }}"></svg>
+    </div>
+  </article>
+{% endfor %}
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const formatKey = "{{ format_key }}";
+  document.querySelectorAll(".barcode").forEach((barcode) => {
+    const code = barcode.dataset.code || "";
+    if (code) {
+      const wrap = barcode.closest(".barcode-wrap");
+      const wrapWidth = wrap ? wrap.clientWidth : 140;
+      const density = formatKey === "100x50" ? 10 : 8.5;
+      const lineWidth = Math.max(0.8, Math.min(2.4, wrapWidth / Math.max(code.length * density, 1)));
+      const height = formatKey === "100x50" ? 40 : 70;
+      JsBarcode(barcode, code, {
+        format: "CODE128", displayValue: false, lineColor: "#000",
+        background: "#fff", width: lineWidth, height, margin: 0
+      });
+    }
+    barcode.dataset.rendered = "1";
+  });
+});
+</script>
+</body>
+</html>

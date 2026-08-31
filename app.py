@@ -98292,6 +98292,81 @@ def repstock_ubicacion_reactivar(uid):
     return jsonify({"ok": True})
 
 
+@app.route("/mantenciones/api/repuestos-stock/ubicaciones/<int:uid>/definitivo", methods=["DELETE"])
+@_mant_required
+@_no_tecnico
+def repstock_ubicacion_eliminar_definitivo(uid):
+    """Hard delete REAL (Regla #5: solo superadmin + confirm_text). Daniel
+    (31-08-2026): pidió un CRUD de ubicaciones para poder borrar de una
+    vez las que quedaron con nombre "test" durante pruebas -- el soft-
+    delete (arriba) las deja desactivadas para siempre, y quería sacarlas
+    de la base de verdad. NO reemplaza el soft-delete de uso diario: este
+    botón es para basura de prueba, no para operar."""
+    if not (g.permissions or {}).get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin puede eliminar definitivamente"}), 403
+    ubi = mysql_fetchone(
+        "SELECT codigo FROM mant_repuestos_ubicaciones WHERE id=%s", (uid,))
+    if not ubi:
+        return jsonify({"ok": False, "error": "Ubicación no encontrada"}), 404
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm_text") or "").strip() != ubi["codigo"]:
+        return jsonify({"ok": False, "error": "El texto de confirmación no coincide con el código"}), 400
+    en_uso = (mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_repuestos_stock WHERE ubicacion_id=%s", (uid,)
+    ) or {}).get("n", 0)
+    if en_uso:
+        return jsonify({
+            "ok": False,
+            "error": f"No se puede eliminar: hay {en_uso} repuesto(s) (activos o no) "
+                     f"referenciando '{ubi['codigo']}'.",
+        }), 400
+    _mant_log("repuesto_ubicacion", uid, "eliminar_definitivo", ubi.get("codigo") or "")
+    mysql_execute("DELETE FROM mant_repuestos_ubicaciones WHERE id=%s", (uid,))
+    return jsonify({"ok": True})
+
+
+@app.route("/mantenciones/repuestos-stock/ubicaciones/etiqueta")
+@_mant_required
+def repstock_ubicaciones_etiqueta_pdf():
+    """PDF de etiqueta(s) de UBICACIÓN de bodega -- 4ta variante del motor
+    de etiquetas del proyecto (ver templates/ubicacion_label_standalone.html).
+    Deliberadamente minimal (Daniel, 31-08-2026: "solo nomenclatura + código
+    de barras") -- se pega en el estante/gaveta físico, no identifica
+    producto ni cliente."""
+    ids_raw = (request.args.get("ids") or "").strip()
+    ids = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "Sin ubicaciones seleccionadas"}), 400
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall(
+        f"SELECT id, codigo FROM mant_repuestos_ubicaciones WHERE id IN ({ph}) ORDER BY codigo",
+        tuple(ids)
+    ) or []
+    if not rows:
+        return jsonify({"ok": False, "error": "Ubicaciones no encontradas"}), 404
+    fmt = request.args.get("fmt") or "100x50"
+    label_format = _label_format(fmt)
+    html = render_template(
+        "ubicacion_label_standalone.html",
+        ubicaciones=[dict(r) for r in rows],
+        fmt=label_format["key"], label_format=label_format,
+    )
+    pdf_bytes = _pw_pdf(
+        html, width=label_format["w"], height=label_format["h"],
+        wait_fn=(
+            "() => {"
+            "  const codes = Array.from(document.querySelectorAll('.barcode'));"
+            "  return codes.length > 0 && codes.every(c => c.dataset.rendered === '1');"
+            "}"
+        ),
+    )
+    resp = make_response(pdf_bytes)
+    resp.headers["Content-Type"] = "application/pdf"
+    disposition = "attachment" if request.args.get("download") == "1" else "inline"
+    resp.headers["Content-Disposition"] = f"{disposition}; filename=etiquetas-ubicaciones.pdf"
+    return resp
+
+
 @app.route("/mantenciones/api/repuestos-stock/marcas", methods=["POST"])
 @_mant_required
 def repstock_marca_crear():
