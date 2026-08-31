@@ -70198,10 +70198,14 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
     # caso Isabel Milling, ver mant_visita_tarea_respuesta tipo 'numero'),
     # pero esta consulta seguía exigiendo la FOTO igual, sin mirar si la
     # tarea ya se respondió como N/A -- un candado sin llave: no hay foto
-    # posible de una medición que no existe. Se excluye toda tarea cuyo
-    # valor_json.na sea true, sin importar tipo_respuesta (mismo criterio
-    # ya usado para 'numero' y 'serie'). No se toca la plantilla en sí
-    # (root cause de por qué "Wall Ball" heredó ese ítem queda aparte).
+    # posible de una medición que no existe. Se excluye toda tarea marcada
+    # N/A -- pero 'na' NO se guarda igual para todos los tipos: 'numero' y
+    # 'serie' usan {"na": true}, mientras 'sino' usa {"valor": "na"} (ver
+    # mant_visita_tarea_respuesta, cada tipo normaliza a su manera) -- se
+    # chequean AMBAS formas para no dejar la misma clase de bug abierta en
+    # 'sino' (encontrado al revisar OT-2026-00131, mismo patrón). No se
+    # toca la plantilla en sí (root cause de por qué "Wall Ball" heredó
+    # ese ítem queda aparte).
     tareas_sin_foto = []
     try:
         if excluir_maquinas:
@@ -70213,7 +70217,7 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
                 f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
                 f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
                 + _ot_tarea_no_trabajable_sql("t.") +
-                " AND NOT (t.valor_json IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true') "
+                " AND NOT (t.valor_json IS NOT NULL AND (JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true' OR JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.valor')) = 'na')) "
                 "GROUP BY t.id, t.titulo "
                 "HAVING COUNT(f.id) = 0",
                 (vid, *list(excluir_maquinas))
@@ -70225,7 +70229,7 @@ def _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas=None):
                 "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
                 "WHERE t.visita_id=%s AND t.requiere_foto=1 "
                 + _ot_tarea_no_trabajable_sql("t.") +
-                " AND NOT (t.valor_json IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true') "
+                " AND NOT (t.valor_json IS NOT NULL AND (JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true' OR JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.valor')) = 'na')) "
                 "GROUP BY t.id, t.titulo "
                 "HAVING COUNT(f.id) = 0",
                 (vid,)
@@ -70429,7 +70433,7 @@ def _ot_validar_cierre(vid):
             f"WHERE t.visita_id=%s AND t.requiere_foto=1 "
             f"  AND (t.maquina_id IS NULL OR t.maquina_id NOT IN ({_ph})) "
             + _ot_tarea_no_trabajable_sql("t.") +
-            " AND NOT (t.valor_json IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true') "
+            " AND NOT (t.valor_json IS NOT NULL AND (JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true' OR JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.valor')) = 'na')) "
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid, *list(excluir_maquinas))
@@ -70441,7 +70445,7 @@ def _ot_validar_cierre(vid):
             "LEFT JOIN mant_visita_fotos f ON f.tarea_id=t.id "
             "WHERE t.visita_id=%s AND t.requiere_foto=1 "
             + _ot_tarea_no_trabajable_sql("t.") +
-            " AND NOT (t.valor_json IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true') "
+            " AND NOT (t.valor_json IS NOT NULL AND (JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.na')) = 'true' OR JSON_UNQUOTE(JSON_EXTRACT(t.valor_json, '$.valor')) = 'na')) "
             "GROUP BY t.id, t.titulo "
             "HAVING COUNT(f.id) = 0",
             (vid,)
