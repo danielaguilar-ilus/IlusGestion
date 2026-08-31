@@ -1487,8 +1487,14 @@ async function lcCotizarFlete(){
 }
 var _lcFleteOpciones = [];
 function _lcMargenActualPct(){
-  var v = parseFloat($('lcMargenPct') ? $('lcMargenPct').value : 30);
-  return isFinite(v) && v >= 0 ? v : 30;
+  // FIX 2026-08-31 (Daniel, en vivo: "que cuando coloquen 30% sí cambie en
+  // el front que es quien debe regir" -- preocupado por si quedaba algun
+  // 30% escondido). Este fallback caía en el 30% viejo si el campo estaba
+  // vacío/invalido (ej. mientras se edita a mano) -- inconsistente con el
+  // resto de la función (lcRecalcular, línea ~1583) que ya caía en 0. La
+  // política vigente es 0%, no 30%, así que el fallback también es 0.
+  var v = parseFloat($('lcMargenPct') ? $('lcMargenPct').value : 0);
+  return isFinite(v) && v >= 0 ? v : 0;
 }
 function _lcRenderFleteResultados(items, comunaResuelta){
   _lcFleteOpciones = items.map(function(c){
@@ -1582,10 +1588,31 @@ function lcElegirCourier(idx){
        iva                 = subtotal × 19%
        total                = subtotal + iva
    ══════════════════════════════════════════════════════════════════════ */
+function _lcRefrescarGananciaCourierCards(){
+  // FIX 2026-08-31 (Daniel, en vivo: "que cuando coloquen 30% sí cambie en
+  // el front que es quien debe regir"). La tarjeta de courier del Paso 4
+  // (badge "Ganancia ILUS (X%)") se pintaba UNA vez, al cotizar/elegir --
+  // si despues se cambiaba el Margen % global en el Paso 6, el TOTAL real
+  // (lcRecalcular, mas abajo) sí se recalculaba en vivo, pero esta tarjeta
+  // se quedaba con el % viejo -- una tarjeta diciendo "0%" mientras el
+  // resumen ya cobraba con otro %. Se refresca junto con el resto.
+  var margenPct = _lcMargenActualPct();
+  document.querySelectorAll('#lcFleteResultados .lc-courier-card').forEach(function(card){
+    var idx = parseInt(card.getAttribute('data-idx'), 10);
+    var opcion = _lcFleteOpciones[idx];
+    if (!opcion) return;
+    var ganancia = Math.round((opcion.precio || 0) * margenPct / 100);
+    var elMargen = card.querySelector('.lc-cc-margen');
+    if (elMargen){
+      elMargen.innerHTML = '<i class="bi bi-graph-up-arrow"></i>Ganancia ILUS (' + margenPct + '%): ' + clp(ganancia);
+    }
+  });
+}
 function lcRecalcular(){
   if (!_LC) return;
   _lcObservarCambiosDeMedidas();
   _lcActualizarPesoTxt();
+  _lcRefrescarGananciaCourierCards();
 
   var costoCourierTotal = Math.max(parseInt($('lcCostoCourier').value, 10) || 0, 0);
   var margenPct = Math.max(parseFloat($('lcMargenPct').value) || 0, 0);
