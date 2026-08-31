@@ -1125,6 +1125,10 @@
     .tvm-ot-horas{margin-left:auto;font-size:16px;font-weight:800;color:var(--txt-2);white-space:nowrap}
     .tvm-ot-cli{margin-top:6px;font-size:19px;font-weight:800;color:var(--ink);letter-spacing:-.01em}
     .tvm-ot-dir{margin-top:2px;font-size:15px;font-weight:600;color:var(--txt-3)}
+    /* 2026-08-31 (Daniel: "las lucas" -- solo pantalla de control) */
+    .tvm-ot-fin{margin-top:6px;display:flex;align-items:center;gap:10px;
+      font-size:15px;font-weight:800;color:var(--ink)}
+    .tvm-ot-fin b{font-variant-numeric:tabular-nums}
     .tvm-ot-av{display:flex;align-items:center;gap:12px;margin-top:10px}
     .tvm-ot-av .av-bar{flex:1;height:7px;margin-top:0}
     .tvm-ot-av b{font-size:15px;font-weight:800;color:var(--txt-2);white-space:nowrap}
@@ -2182,6 +2186,25 @@
         const pill = el('div', 'tvm-firma tvm-firma-' + b.firma_estado);
         pill.innerHTML = '<i class="bi ' + fp.icon + '"></i><span>' + fp.txt + '</span>';
         ot.appendChild(pill);
+      }
+
+      // 🆕 2026-08-31 (Daniel: "necesito ver las finanzas para tomar
+      // decisiones y que se completen las OT... las lucas"). `b.precio`/
+      // `b.costo_proveedor`/`b.costo_despacho` SOLO llegan poblados en esta
+      // pantalla de CONTROL (`incluir_finanzas=True` en _ot_tv_datos,
+      // exclusivo de sesión gestión) -- en el televisor público quedan
+      // `null` y este bloque no dibuja nada. Margen = precio - (proveedor +
+      // despacho), mismo criterio ya usado en la card "Finanzas de la OT".
+      if (b.precio != null || b.costo_proveedor != null){
+        const precio = Number(b.precio || 0);
+        const costoTot = Number(b.costo_proveedor || 0) + Number(b.costo_despacho || 0);
+        const margen = precio - costoTot;
+        const fin = el('div', 'tvm-ot-fin');
+        const fmt = (n) => '$' + Math.round(n).toLocaleString('es-CL');
+        fin.innerHTML = '<span>' + fmt(precio) + '</span>' +
+          '<b style="color:' + (margen < 0 ? '#dc2626' : '#16a34a') + '">' +
+          (margen < 0 ? '−' : '+') + fmt(Math.abs(margen)) + '</b>';
+        ot.appendChild(fin);
       }
 
       // ── Acciones (2026-08-27, Daniel: "necesito poder editar las OT" /

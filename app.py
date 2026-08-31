@@ -77472,6 +77472,13 @@ _OT_TV_SELECT = (
     # Documento del ERP asociado (NVI/NVV) — Daniel: "tal vez nro de
     # documento". Es el dato que identifica la instalación en el ERP.
     "       v.documento_erp_tido, v.documento_erp_nudo, "
+    # 2026-08-31 (Daniel: "necesito ver las finanzas para tomar decisiones
+    # y que se completen las OT... nombre, horario, servicio y las lucas"):
+    # se seleccionan acá, PERO solo se exponen en el payload cuando
+    # `_ot_tv_datos(incluir_finanzas=True)` -- exclusivo de la pantalla de
+    # CONTROL (sesión + `_require_gestion_monitor`), NUNCA en el televisor
+    # público (`/tv/<token>`, sin sesión). Ver bloque más abajo.
+    "       v.costo, v.costo_proveedor, v.costo_despacho, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, "
     # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
@@ -77570,7 +77577,7 @@ def _ot_tv_dia_vecino(fecha, delta):
     return candidata
 
 
-def _ot_tv_datos(fecha=None):
+def _ot_tv_datos(fecha=None, incluir_finanzas=False):
     """Payload del monitor: un día agrupado por persona + próximos días.
 
     ⚠️ Pantalla pública: NUNCA montos, costos ni márgenes (mismo criterio
@@ -77804,6 +77811,15 @@ def _ot_tv_datos(fecha=None):
             "cliente": cliente_txt[:44],
             "ticket": f.get("numero_ticket") or None,
             "documento": _doc or None,
+            # 🆕 2026-08-31 (Daniel: "necesito ver las finanzas para tomar
+            # decisiones y que se completen las OT... las lucas"): SOLO se
+            # llenan si `incluir_finanzas=True` (pantalla de CONTROL, con
+            # sesión) -- en el televisor público quedan como None y el
+            # template no las imprime, mismo criterio que ya documenta el
+            # docstring de esta función ("NUNCA montos, costos ni márgenes").
+            "precio": (float(f.get("costo")) if incluir_finanzas and f.get("costo") is not None else None),
+            "costo_proveedor": (float(f.get("costo_proveedor")) if incluir_finanzas and f.get("costo_proveedor") is not None else None),
+            "costo_despacho": (float(f.get("costo_despacho")) if incluir_finanzas and f.get("costo_despacho") is not None else None),
             # 🆕 2026-08-28 (Daniel: "que en esa burbuja me diga... la
             # comuna, al menos la comuna") -- el dato YA se traía en
             # _OT_TV_SELECT (c.comuna AS cliente_comuna) para armar
@@ -78362,7 +78378,7 @@ def ot2_monitor_control():
     """
     return render_template(
         "ot2/monitor_tv.html",
-        datos=_ot_tv_datos(),
+        datos=_ot_tv_datos(incluir_finanzas=True),
         status_url=url_for("ot2_monitor_status"),
         datos_url=url_for("ot2_monitor_datos"),
         pantalla="Control",
@@ -78423,16 +78439,17 @@ def ot2_monitor_datos():
     if _vista in ("semana", "mes"):
         return jsonify(_ot_tv_datos_rango(fecha=_fecha_dt, vista=_vista))
 
-    if _fecha_dt is None or _fecha_dt == _now_chile().date():
-        import time as _time
-        ent = _OT_TV_CACHE.get("payload")
-        if ent and (_time.time() - ent["ts"]) < _OT_TV_TTL:
-            return jsonify(ent["payload"])
-        payload = _ot_tv_datos()
-        _OT_TV_CACHE["payload"] = {"payload": payload, "ts": _time.time()}
-        return jsonify(payload)
-
-    return jsonify(_ot_tv_datos(fecha=_fecha_dt))
+    # 🔴 2026-08-31 (Daniel: "necesito ver las finanzas... las lucas"):
+    # `_OT_TV_CACHE["payload"]` es la MISMA caché que lee el televisor
+    # PÚBLICO sin sesión (`ot_tv_datos`, arriba) -- si esta pantalla de
+    # control (con finanzas incluidas) escribiera ahí, el televisor de la
+    # pared podría mostrar montos reales dentro de la ventana de caché.
+    # Por eso esta ruta (gestión, sesión obligatoria vía
+    # @_require_gestion_monitor) YA NO lee ni escribe esa caché compartida
+    # -- calcula siempre fresco con incluir_finanzas=True. El costo extra
+    # es insignificante frente al riesgo de fuga (esta pantalla no la
+    # refresca nadie a alta frecuencia, a diferencia del televisor).
+    return jsonify(_ot_tv_datos(fecha=_fecha_dt, incluir_finanzas=True))
 
 
 # ══════════════════════════════════════════════════════════════════════
