@@ -2140,6 +2140,27 @@ function o2fRenderEquipos(){
       // secundaria, mismo patron/clase que la tabla de equipos de la ficha
       // (ver eq-name-sub ~linea 3119).
       + (e.notas ? '<div class="eq-name-sub text-truncate" style="max-width:220px" title="'+esc(e.notas)+'">'+esc(e.notas)+'</div>' : '')
+      // 🔧 FIX 2026-08-31 (Daniel, doc. ERP 11348: "me calcula 1 solo piso...
+      // la cantidad en todos los modales es necesaria"): este paso mostraba
+      // el equipo pero NUNCA la cantidad -- un piso/accesorio con cantidad
+      // real 3500 se veía igual que uno con cantidad 1, y no había forma de
+      // confirmarla ni corregirla acá. `e.cantidad` ya viaja en equiposCache
+      // (tk_ticket_equipos.cantidad) y ya se reenvía al backend
+      // (equiposTicket[].cantidad, ver abajo) -- solo faltaba mostrarla y
+      // dejarla editable, igual que ya hace la tabla de equipos de la ficha
+      // (tickets_ficha.js "N unidades"). Input muta `e.cantidad` DIRECTO
+      // (misma referencia que equiposCache[i]), sin necesitar otro lookup.
+      + (sinFicha
+          ? '<div class="eq-name-sub" style="margin-top:3px" onclick="event.stopPropagation()">'
+            + '<i class="bi bi-layers me-1"></i>Cantidad: '
+            + '<input type="number" min="1" value="'+(parseInt(e.cantidad)||1)+'" '
+            + 'style="width:64px;display:inline-block;padding:1px 4px;font-size:.78rem" class="form-control form-control-sm" '
+            + 'onchange="this.value=Math.max(1,parseInt(this.value)||1);(equiposCache.find(function(x){return _tkotEqKey(x)===\''+esc(key)+'\'})).cantidad=parseInt(this.value);" '
+            + 'title="Cuántas unidades reales de este equipo se están creando (viene del documento ERP)">'
+            + '</div>'
+          : ((parseInt(e.cantidad)||1) > 1
+              ? '<div class="eq-name-sub" style="margin-top:3px"><i class="bi bi-layers me-1"></i>'+parseInt(e.cantidad)+' unidades (ficha ya existente)</div>'
+              : ''))
       + '</td>'
       + '<td onclick="event.stopPropagation()">'
       // 2026-08-13 (Daniel probando en vivo, TK-2026-01313: "no puedo
