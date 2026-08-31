@@ -400,24 +400,21 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
          title="Descargar Excel con las OT del filtro actual">
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
       </a>
-      <a id="ot2RepCC"
-         href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}&cc=no_sstt"
-         class="btn btn-sm btn-outline-warning"
-         title="Solo OT con centro de costo Logística, Comercial o sin definir — cuánto dinero está comprometido fuera de Servicio Técnico">
-        <i class="bi bi-cash-stack me-1"></i>Fuera de Servicio Técnico
-      </a>
+      {# 🔴 2026-08-31 (Daniel: "cuando entro en las horas de trabajo, quisiera
+         borrar fuera de servicio técnico. No sé qué es eso" -- pedido
+         explícito de eliminar este botón, REGLA #4.2 satisfecha). Era el
+         acceso directo al reporte Excel filtrado por centro de costo
+         Logística/Comercial/sin definir -- confuso fuera de ese contexto.
+         El reporte general (con esa misma columna adentro) sigue intacto. #}
       <script>
       (function(){
         var sel = document.getElementById('ot2RepPeriodo');
         var a1  = document.getElementById('ot2RepGeneral');
-        var a2  = document.getElementById('ot2RepCC');
-        if (!sel || !a1 || !a2) return;
+        if (!sel || !a1) return;
         var base1 = a1.getAttribute('href');
-        var base2 = a2.getAttribute('href');
         sel.addEventListener('change', function(){
           var p = sel.value ? ('&periodo=' + encodeURIComponent(sel.value)) : '';
           a1.setAttribute('href', base1 + p);
-          a2.setAttribute('href', base2 + p);
         });
       })();
       </script>
