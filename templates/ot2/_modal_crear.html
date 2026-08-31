@@ -3352,6 +3352,28 @@ window.OT2C = (function(){
      tareas SIN plantilla (mant_visita_tareas.plantilla_id queda NULL, tal
      como ya preveía su propio comentario "NULL si tarea manual"). */
   function pintarTrabajoInterno(b){
+    // 🔗 2026-08-31 (Daniel: "un botón de agregar documento del ERP, y entre
+    // eso va a estar la nota de venta interna" -- confirmó tipos BLV/NVI/
+    // FCV/COV/NVV): además de escribir la NVI a mano, ahora se puede buscar
+    // un documento REAL del ERP (mismo buscador `tkaOpen` que ya usa el
+    // paso Costos para OTs externas, ver abrirBusquedaFinDoc/
+    // _o2mFinDocumentoSeleccionado) y asociarlo -- mismo S.doc_origen de
+    // siempre, solo que ahora puede venir de un documento real, no solo
+    // tipeado. Si ya hay un documento asociado (de cualquiera de los dos
+    // caminos), se muestra con opción de "cambiar" en vez del input.
+    var _docBloqueHtml;
+    if (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo){
+      _docBloqueHtml = '<div class="o2m-aviso mb-3" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
+        '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(S.doc_origen.tido)+' '+esc(S.doc_origen.nudo)+'</b>'+
+        ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.setNotaVentaInterna(\'\')">cambiar</button>'+
+        '</div>';
+    } else {
+      _docBloqueHtml = '<button type="button" class="btn btn-sm btn-outline-secondary mb-2" onclick="OT2C.abrirBusquedaDocInterno()">'+
+        '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'+
+        '<label class="fl">N° de nota de venta interna (opcional)</label>'+
+        '<input class="form-control mb-3" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
+        'value="" oninput="OT2C.setNotaVentaInterna(this.value)">';
+    }
     b.innerHTML = '<h6 class="t">Productos y tareas</h6>'+
       '<p class="d">Agrega al menos un producto del catálogo o describe una tarea manual. '+
       'Si existe un checklist para este tipo de trabajo, se conecta solo abajo.</p>'+
@@ -3363,12 +3385,7 @@ window.OT2C = (function(){
       // ejecutar la capacitación (no la descripción). Mismo S.doc_origen
       // de siempre (alimenta factura_tido/factura_nudo en crear()), solo
       // cambia DÓNDE se pinta el campo -- ver setNotaVentaInterna().
-      (S.tipo === 'capacitacion'
-        ? '<label class="fl">N° de nota de venta interna (opcional)</label>'+
-          '<input class="form-control mb-3" id="o2mNvi" maxlength="20" placeholder="Ej: 4521" '+
-          'value="'+esc((S.doc_origen && S.doc_origen.tido==='NVI') ? S.doc_origen.nudo : '')+'" '+
-          'oninput="OT2C.setNotaVentaInterna(this.value)">'
-        : '')+
+      (S.tipo === 'capacitacion' ? _docBloqueHtml : '')+
       '<label class="fl">Plantilla de checklist (opcional)</label>'+
       '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
       '<div class="d-flex gap-2 mb-2 flex-wrap">'+
@@ -4918,6 +4935,15 @@ window.OT2C = (function(){
     // cargarPlantillasInterno() valida que siga existiendo/activa (ver ahí)
     // y el <select> deja cambiarla sin problema.
     S.plantilla_id_interno = t.plantilla_id_sugerida || null;
+    // 🕘 2026-08-31 (Daniel: "se va a calcular la hora técnica... de la
+    // agenda, generalmente de 9 a 13 hrs"): bloque por defecto de una
+    // capacitación (4 horas), para no dejar la Agenda vacía esperando que
+    // alguien invente un horario -- se puede editar igual en el paso
+    // Agenda, esto solo pre-llena. Nunca pisa un horario que el usuario ya
+    // haya tocado a mano (solo si ambos siguen vacíos).
+    if (t.v === 'capacitacion' && !S.hini && !S.hfin){
+      S.hini = '09:00'; S.hfin = '13:00';
+    }
     // Elegir tipo puede cambiar qué pide "Cliente" (aparece/desaparece) y
     // qué muestra "Equipos" (bodega/producto-o-tarea/normal) -- se
     // reconstruye el formulario completo para no dejar secciones a medio
@@ -4967,7 +4993,32 @@ window.OT2C = (function(){
   }
   function setNotaVentaInterna(v){
     var nudo = String(v||'').trim();
+    var teniaDoc = !!S.doc_origen;
     S.doc_origen = nudo ? {tido:'NVI', nudo:nudo} : null;
+    // "cambiar" (botón del bloque "Documento: X") manda '' para limpiar --
+    // ahí SÍ hay que repintar para que vuelva a aparecer el buscador/input.
+    // Escribiendo letra por letra en el <input> normal NO repinta (perdería
+    // el foco/cursor, mismo criterio que setDescripcion de arriba).
+    if (teniaDoc && !nudo) repintarSeccion('equipos');
+  }
+  // 🔎 2026-08-31 (Daniel: "un botón de agregar documento del ERP... BLV,
+  // NVI, FCV, COV, NVV"): mismo buscador tkaOpen que ya usa el paso Costos
+  // (abrirBusquedaFinDoc) -- acá el resultado alimenta S.doc_origen (el
+  // mismo campo que ya usaba la NVI manual), no S.fin_doc (ese es exclusivo
+  // de OTs externas con línea ZZ, un mundo aparte).
+  function abrirBusquedaDocInterno(){
+    if (typeof tkaOpen !== 'function'){
+      if (window.ilusToast) ilusToast('El buscador de documentos ERP no está disponible en esta pantalla.', {type:'error'});
+      return;
+    }
+    tkaOpen({ mode:'seleccionar', tabs:['doc','cli'], onSeleccionar: function(items, header){
+      if (!header || !header.tido || !header.nudo){
+        if (window.ilusToast) ilusToast('Ese resultado no trae un documento identificable.', {type:'warning'});
+        return;
+      }
+      S.doc_origen = {tido: header.tido, nudo: header.nudo};
+      repintarSeccion('equipos');
+    }});
   }
   // 2026-08-30 (Daniel, en vivo: "ya se definió y no pasa nada!!!"): la
   // sección "Anexo" se construye UNA vez (típicamente disparada por
@@ -5667,7 +5718,8 @@ window.OT2C = (function(){
   return {abrir:abrir, abrirWizard:abrirWizard, irAncla:irAncla, avisarBloqueado:avisarBloqueado,
           setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
-          setNotaVentaInterna:setNotaVentaInterna, setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
+          setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,
+          setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
