@@ -1719,13 +1719,28 @@
             Si quien recibe no es {{ v.contacto_nombre or 'el contacto agendado' }},
             <strong>corrige el nombre</strong>: debe firmar quien realmente está presente.
           </div>
-          <input type="text" id="otfFirmaCliRut" class="form-control mb-2"
-                 placeholder="RUT de quien firma (ej: 12.345.678-9)">
+          {# 🔴 2026-08-31 (Daniel, viendo la firma en vivo: "agrégale un
+             validador de RUT en tiempo real, es buena impresión para el
+             cliente"): mismo algoritmo (módulo 11) ya usado en el wizard de
+             creación para Contraparte/Anexo (_o2mValidarRut), replicado acá
+             porque este modal vive en un archivo/scope JS distinto. Valida
+             en vivo mientras escribe y formatea al perder el foco. #}
+          <input type="text" id="otfFirmaCliRut" class="form-control mb-1"
+                 placeholder="RUT de quien firma (ej: 12.345.678-9)"
+                 oninput="otdPintarValidacionRutCli()" onblur="otdFormatearRutCliSiValido()">
+          <div id="otfFirmaCliRutEstado" class="mb-2" style="font-size:.76rem;min-height:1.1em"></div>
           <div class="row g-2 mb-1">
             <div class="col-12 col-sm-6"><input type="text" id="otfFirmaCliCargo" class="form-control form-control-sm" placeholder="Cargo / relación (opcional)" maxlength="120"></div>
-            <div class="col-6 col-sm-3"><input type="text" id="otfFirmaCliTel" class="form-control form-control-sm" placeholder="Teléfono (opc.)" maxlength="40"></div>
-            <div class="col-6 col-sm-3"><input type="email" id="otfFirmaCliEmail" class="form-control form-control-sm" placeholder="Email (opc.)" maxlength="190"></div>
+            <div class="col-6 col-sm-3">
+              <input type="text" id="otfFirmaCliTel" class="form-control form-control-sm" placeholder="Teléfono (opc.)" maxlength="40"
+                     oninput="otdPintarValidacionTelCli()">
+            </div>
+            <div class="col-6 col-sm-3">
+              <input type="email" id="otfFirmaCliEmail" class="form-control form-control-sm" placeholder="Email (opc.)" maxlength="190"
+                     oninput="otdPintarValidacionEmailCli()">
+            </div>
           </div>
+          <div id="otfFirmaCliTelEmailEstado" class="mb-1" style="font-size:.72rem;min-height:1.1em"></div>
           <small class="d-block text-muted mb-2" style="font-size:.7rem">
             <i class="bi bi-info-circle me-1"></i>Si el cliente firma, <b>nombre y RUT del firmante son obligatorios</b>. Sugerimos el contacto, pero cámbialo por quien realmente recibe (encargado, recepción, etc.).
           </small>
@@ -3312,6 +3327,86 @@ const OT2F = (function(){
     new bootstrap.Modal(document.getElementById('otfModalFirma')).show();
     setTimeout(() => initCanvas('otfCanvasCli'), 250);
   }
+
+  /* 🔴 2026-08-31 (Daniel, viendo la firma del cliente en vivo: "agrégale
+     un validador de RUT en tiempo real, es buena impresión para el
+     cliente" + "también el teléfono chileno y mail por favor"). MISMO
+     algoritmo (módulo 11 para RUT, mismo criterio tolerante de
+     cubicador_asignar.js para teléfono móvil chileno) que ya usa el
+     wizard de creación (_o2mValidarRut/_o2mValidarTelCl/_o2mValidarEmail
+     en _modal_crear.html) -- se replica acá porque este modal vive en un
+     <script> distinto. Solo feedback visual + formateo de cortesía; NUNCA
+     bloquea escribir (el gate real de "obligatorio si firma el cliente"
+     ya vive en confirmarFirmaCliente/guardarFirma más abajo). */
+  function _otdValidarRut(rut){
+    var limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+    if (!limpio) return true;
+    if (limpio.length < 7 || limpio.length > 9) return false;
+    var cuerpo = limpio.slice(0,-1), dv = limpio.slice(-1);
+    var suma = 0, mult = 2;
+    for (var i = cuerpo.length - 1; i >= 0; i--){
+      suma += parseInt(cuerpo[i],10) * mult;
+      mult = mult === 7 ? 2 : mult + 1;
+    }
+    var resto = 11 - (suma % 11);
+    var dvOk = resto === 11 ? '0' : (resto === 10 ? 'K' : String(resto));
+    return dv === dvOk;
+  }
+  function _otdFormatearRut(rut){
+    var limpio = String(rut||'').replace(/[^0-9kK]/g,'').toUpperCase();
+    if (limpio.length < 2) return limpio;
+    var cuerpo = limpio.slice(0,-1), dv = limpio.slice(-1);
+    return cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
+  }
+  function _otdValidarTelCl(tel){
+    var d = String(tel||'').replace(/\D/g,'');
+    if (!d) return true;
+    d = d.replace(/^56/, '').replace(/^0+/, '');
+    if (d.length === 9 && d[0] === '9') return true;
+    if (d.length === 8) return true;
+    return false;
+  }
+  function _otdValidarEmail(email){
+    var v = String(email||'').trim();
+    if (!v) return true;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+  window.otdPintarValidacionRutCli = function(){
+    var el = document.getElementById('otfFirmaCliRut');
+    var out = document.getElementById('otfFirmaCliRutEstado');
+    if (!el || !out) return;
+    var v = el.value.trim();
+    if (!v){ out.innerHTML = ''; el.classList.remove('is-invalid','is-valid'); return; }
+    var ok = _otdValidarRut(v);
+    el.classList.toggle('is-invalid', !ok);
+    el.classList.toggle('is-valid', ok);
+    out.innerHTML = ok
+      ? '<span style="color:#16a34a"><i class="bi bi-check-circle-fill me-1"></i>RUT válido</span>'
+      : '<span style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>RUT chileno inválido</span>';
+  };
+  window.otdFormatearRutCliSiValido = function(){
+    var el = document.getElementById('otfFirmaCliRut');
+    if (!el || !_otdValidarRut(el.value)) return;
+    el.value = _otdFormatearRut(el.value);
+  };
+  function _otdPintarTelEmailCli(){
+    var telEl = document.getElementById('otfFirmaCliTel');
+    var mailEl = document.getElementById('otfFirmaCliEmail');
+    var out = document.getElementById('otfFirmaCliTelEmailEstado');
+    if (!out) return;
+    var telOk = !telEl || _otdValidarTelCl(telEl.value);
+    var mailOk = !mailEl || _otdValidarEmail(mailEl.value);
+    if (telEl) telEl.classList.toggle('is-invalid', telEl.value.trim() !== '' && !telOk);
+    if (mailEl) mailEl.classList.toggle('is-invalid', mailEl.value.trim() !== '' && !mailOk);
+    var avisos = [];
+    if (telEl && telEl.value.trim() && !telOk) avisos.push('teléfono inválido');
+    if (mailEl && mailEl.value.trim() && !mailOk) avisos.push('email inválido');
+    out.innerHTML = avisos.length
+      ? '<span style="color:#dc2626"><i class="bi bi-exclamation-triangle-fill me-1"></i>' + avisos.join(' · ') + '</span>'
+      : '';
+  }
+  window.otdPintarValidacionTelCli = _otdPintarTelEmailCli;
+  window.otdPintarValidacionEmailCli = _otdPintarTelEmailCli;
 
   async function liberarFirmaTecnico(){
     const ok = await ilusConfirm({
