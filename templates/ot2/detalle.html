@@ -1553,13 +1553,13 @@
               <div class="otd-chk-skel"><i></i><i></i></div>
             </div>
 
-            {# El link clásico se conserva a propósito (REGLA #4.2 -- no se
-               quita funcionalidad existente sin permiso explícito): sigue
-               siendo la red de respaldo si el checklist inline no cubre
-               algún caso (ej. tipo_respuesta='gps', que esta pantalla no
-               replica todavía -- ver resumen de la tarea). #}
-            <a class="otd-wk-go" href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}">
-              <i class="bi bi-tools"></i> Abrir en modo clásico</a>
+            {# 🔴 2026-08-31 (Daniel, pedido explícito, viendo el botón en
+               vivo: "no me gusta que vayamos al modelo clásico... esta
+               debe ser independiente de las demás" -- REGLA #4.2
+               satisfecha): se quita el link "Abrir en modo clásico" de
+               esta pantalla. El caso que todavía cubría (tipo_respuesta=
+               'gps') sigue pendiente de construir nativo acá -- ver
+               aviso propio más abajo en vez de mandar afuera. #}
           </div>
         </details>
         {% endfor %}
@@ -2814,7 +2814,7 @@ async function otdCargarChecklistSiHaceFalta(){
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.ok){
       document.querySelectorAll('.otd-chk-mount').forEach(el => {
-        el.innerHTML = '<div class="otd-chk-fallback">No se pudo cargar el checklist acá — usa "Abrir en modo clásico".</div>';
+        el.innerHTML = '<div class="otd-chk-fallback">No se pudo cargar el checklist acá — recarga la página.</div>';
       });
       return;
     }
@@ -2825,7 +2825,7 @@ async function otdCargarChecklistSiHaceFalta(){
     });
   } catch(e){
     document.querySelectorAll('.otd-chk-mount').forEach(el => {
-      el.innerHTML = '<div class="otd-chk-fallback">Sin conexión — usa "Abrir en modo clásico".</div>';
+      el.innerHTML = '<div class="otd-chk-fallback">Sin conexión — reintenta en un momento.</div>';
     });
   } finally {
     OTD_CHK_LOADING = false;
