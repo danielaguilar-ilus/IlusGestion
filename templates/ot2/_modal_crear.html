@@ -3738,6 +3738,21 @@ window.OT2C = (function(){
       'De igual forma, describe qué se hizo y deja fotos de evidencia.</p>'+
       '<label class="fl">Plantilla de checklist</label>'+
       '<div id="o2mPlantInternoWrap" class="mb-3"><div class="text-muted small">Buscando plantillas…</div></div>'+
+      // 🆕 2026-08-31 (Daniel: "quiero ver una tabla maravillosa como la
+      // de los demás modales para agregar los productos a los que se le
+      // va a aplicar el checklist, aunque sea uno manual") -- ADITIVO,
+      // no reemplaza observación+fotos (REGLA #4.2). Reusa TAL CUAL la
+      // misma tabla de Capacitación/Control de Calidad (S.tareas_manuales,
+      // abrirProductoCatalogo/agregarTareaManual, ya la envían al backend
+      // como tareas propias) en vez de inventar una tabla nueva -- es
+      // exactamente lo que Daniel pidió: "como la de los demás modales".
+      '<label class="fl">Productos/equipos a los que aplica el checklist (opcional)</label>'+
+      '<div class="d-flex gap-2 mb-2 flex-wrap">'+
+      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
+      '<i class="bi bi-tag me-1"></i>Producto del catálogo</button>'+
+      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
+      '<i class="bi bi-plus-lg me-1"></i>Agregar manual</button></div>'+
+      '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       '<label class="fl">¿Qué se hizo? *</label>'+
       '<textarea class="form-control mb-3" id="o2mBodegaObs" rows="3" maxlength="1000" '+
       'placeholder="Ej: Se pegó la baranda de la sala 2 y se instalaron las pizarras del pasillo." '+
@@ -3749,6 +3764,7 @@ window.OT2C = (function(){
       '<i class="bi bi-camera-fill me-1"></i>Toca para tomar o subir fotos</div>'+
       '<div class="o2m-foto-grid mb-3" id="o2mBodegaFotoGrid"></div>'+
       _htmlCostoInterno();
+    pintarTareasManuales();
     pintarBodegaFotos();
     cargarPlantillasInterno();
   }
@@ -5542,7 +5558,12 @@ window.OT2C = (function(){
     if (esInterno()){
       if (S.tipo === 'revision_interna'){
         var obs = (S.bodega_obs||'').trim();
-        body.tareas_manuales = obs ? [{titulo:'Trabajo de bodega', descripcion:obs}] : [];
+        // 🆕 2026-08-31: la tabla de productos/equipos (S.tareas_manuales,
+        // "tabla maravillosa" pedida por Daniel) se suma ADEMÁS de la
+        // tarea de observación de siempre -- no la reemplaza, así una OT
+        // vieja sin productos sigue funcionando exactamente igual.
+        body.tareas_manuales = S.tareas_manuales.slice();
+        if (obs) body.tareas_manuales.push({titulo:'Trabajo de bodega', descripcion:obs});
       } else {
         body.tareas_manuales = S.tareas_manuales.slice();
       }
