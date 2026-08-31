@@ -1338,6 +1338,25 @@ function renderTareaHtml(t, bloqueada, mid, pid, index, esSiguiente){
       ctrlHtml = _fotoUploadBlockHtml(t, mid, pid, bloqueada);
       break;
     }
+    case 'asistencia': {
+      // 🆕 2026-08-30 (Daniel — checklist "Capacitación": "anota los
+      // asistentes, todos los técnicos en general, yo pasaría asistencia y
+      // haría preguntas personal a los asistentes, algo bien inteligente" +
+      // "utiliza los objetos varios que tenemos, sí, y con fotos cada
+      // técnico" + "identificando quién respondió"). En vez de texto libre,
+      // se marca presentes de la lista REAL de /mantenciones/api/tecnicos;
+      // cada presente responde "¿Qué aprendiste hoy?" y adjunta su propia
+      // foto. Ver _asistenciaCtrlHtml/_asisCargarTecnicos más abajo.
+      ctrlHtml = `<div id="asis-wrap-${t.id}">${_asistenciaCtrlHtml(t, mid, pid, bloqueada)}</div>`;
+      if (_ASIS_TECNICOS_CACHE === null){
+        _asisCargarTecnicos().then(() => {
+          const wrap = document.getElementById('asis-wrap-' + t.id);
+          const tActual = _asisBuscarTarea(mid, pid, t.id) || t;
+          if (wrap) wrap.innerHTML = _asistenciaCtrlHtml(tActual, mid, pid, bloqueada);
+        });
+      }
+      break;
+    }
   }
 
   // 2026-08-29 (Daniel: "que se mantengan las fotos obligatorias y las
@@ -3635,6 +3654,174 @@ function _fotoUploadBlockHtml(t, mid, pid, bloqueada){
 
     <div id="t-fotos-${t.id}" class="foto-result">${_fotosTareaTilesHtml(t.id, mid, pid)}</div>
   </div>`;
+}
+
+// ════════════════════════════════════════════════════════
+//  ASISTENCIA (tipo_respuesta='asistencia', 2026-08-30)
+//  Checklist "Capacitación": lista REAL de técnicos (no texto libre),
+//  marcar presentes, cada presente responde "¿Qué aprendiste hoy?" +
+//  adjunta su propia foto. Todo queda identificado por user_id + nombre
+//  en valor_json (ver mant_visita_tarea_respuesta, case 'asistencia' en
+//  app.py) -- "identificando quién respondió" (pedido de Daniel).
+// ════════════════════════════════════════════════════════
+let _ASIS_TECNICOS_CACHE = null;      // cache module-level, 1 fetch para toda la pantalla
+const _ASIS_ESTADO = {};              // { [tarea_id]: { [user_id]: {nombre, respuesta, foto_url} } }
+
+async function _asisCargarTecnicos(){
+  if (_ASIS_TECNICOS_CACHE !== null) return _ASIS_TECNICOS_CACHE;
+  try {
+    const r = await fetch('/mantenciones/api/tecnicos');
+    const d = await r.json();
+    _ASIS_TECNICOS_CACHE = Array.isArray(d) ? d : [];
+  } catch(e){
+    console.warn('[asistencia] no se pudo cargar /mantenciones/api/tecnicos', e);
+    _ASIS_TECNICOS_CACHE = [];
+  }
+  return _ASIS_TECNICOS_CACHE;
+}
+
+function _asisBuscarTarea(mid, pid, tid){
+  const grupo = (PLANTILLAS_POR_MAQUINA[mid] || []).find(p => String(p.plantilla_id) === String(pid));
+  return grupo ? grupo.tareas.find(x => x.id === tid) : null;
+}
+
+// Solo la PRIMERA vez que se renderiza esta tarea en la sesión: siembra el
+// estado local (presentes + sus respuestas/fotos) desde lo ya guardado en
+// valor_json. Renders siguientes reusan el estado en memoria (más rápido,
+// no se pierde lo que el técnico va tipeando entre repaints).
+function _asistenciaEstadoInit(t){
+  if (_ASIS_ESTADO[t.id]) return _ASIS_ESTADO[t.id];
+  let valor = {};
+  try { valor = t.valor_json ? (typeof t.valor_json === 'string' ? JSON.parse(t.valor_json) : t.valor_json) : {}; } catch(e){ valor = {}; }
+  const est = {};
+  (Array.isArray(valor.asistentes) ? valor.asistentes : []).forEach(a => {
+    if (a && a.user_id != null){
+      est[a.user_id] = {
+        nombre: a.nombre || '',
+        respuesta: a.respuesta || '',
+        foto_url: a.foto_url || null,
+      };
+    }
+  });
+  _ASIS_ESTADO[t.id] = est;
+  return est;
+}
+
+function _asistenciaCtrlHtml(t, mid, pid, bloqueada){
+  const est = _asistenciaEstadoInit(t);
+  const tecnicos = _ASIS_TECNICOS_CACHE || [];
+  if (_ASIS_TECNICOS_CACHE === null){
+    return `<div class="ctrl"><small class="text-muted"><i class="bi bi-hourglass-split"></i> Cargando lista de técnicos…</small></div>`;
+  }
+  if (!tecnicos.length){
+    return `<div class="ctrl"><small class="text-muted">No hay técnicos activos registrados en el sistema.</small></div>`;
+  }
+  const filas = tecnicos.map(tec => {
+    const uid = tec.id;
+    const presente = !!est[uid];
+    const datos = est[uid] || {};
+    const rowId = `asis-${t.id}-${uid}`;
+    return `<div class="tx-asis-row" style="border:1px solid #e5e7eb;border-radius:10px;
+        padding:10px 12px;margin-bottom:8px;background:${presente ? '#fef2f2' : '#fff'}">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:700;color:#0f172a;margin:0">
+        <input type="checkbox" id="${rowId}-chk" ${presente ? 'checked' : ''} ${bloqueada ? 'disabled' : ''}
+          style="width:20px;height:20px;accent-color:#dc2626;flex:none"
+          onchange="_asisTogglePresente(${t.id}, ${uid}, '${_escapeAttr(tec.nombre || '')}', ${mid}, ${pid}, this)">
+        <span>${_escapeHtml(tec.nombre || '(sin nombre)')}</span>
+        ${tec.es_externo ? '<span style="background:#f59e0b;color:#fff;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:99px">Externo</span>' : ''}
+      </label>
+      ${presente ? `<div style="margin-top:10px;padding-left:30px">
+        <label style="font-size:.78rem;font-weight:700;color:#374151;display:block;margin-bottom:4px">¿Qué aprendiste hoy?</label>
+        <textarea id="${rowId}-txt" rows="2" placeholder="Escribe tu respuesta…"
+          ${bloqueada ? 'disabled' : ''}
+          style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px;font-size:.85rem;font-family:inherit"
+          onblur="_asisGuardarRespuesta(${t.id}, ${uid}, ${mid}, ${pid}, this.value)">${_escapeHtml(datos.respuesta || '')}</textarea>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${datos.foto_url
+            ? `<div class="tx-foto-tile" style="width:64px;height:64px;flex:none">
+                 <img src="${_escapeAttr(cloudTx(datos.foto_url, 'card'))}" alt="Evidencia de ${_escapeAttr(tec.nombre || '')}"
+                      style="width:100%;height:100%;object-fit:cover;border-radius:8px">
+               </div>`
+            : ''}
+          <label class="tx-btn-pill" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;${bloqueada ? 'opacity:.5;pointer-events:none' : ''}">
+            <i class="bi bi-camera-fill"></i> ${datos.foto_url ? 'Cambiar foto' : 'Adjuntar foto'}
+            <input type="file" accept="image/*,image/heic,image/heif" style="display:none"
+              ${bloqueada ? 'disabled' : ''}
+              onchange="_asisSubirFoto(${t.id}, ${uid}, this, ${mid}, ${pid})">
+          </label>
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="ctrl">
+    <div style="font-size:.72rem;color:#6b7280;margin-bottom:8px">
+      <i class="bi bi-info-circle"></i> Marca a quienes asistieron. Cada asistente responde su propia pregunta y adjunta su propia foto.
+    </div>
+    ${filas}
+  </div>`;
+}
+
+function _asisRepintar(tid, mid, pid, bloqueada){
+  const wrap = document.getElementById('asis-wrap-' + tid);
+  const t = _asisBuscarTarea(mid, pid, tid);
+  if (wrap && t) wrap.innerHTML = _asistenciaCtrlHtml(t, mid, pid, !!bloqueada);
+}
+
+function _asisTogglePresente(tid, uid, nombre, mid, pid, chk){
+  const est = _ASIS_ESTADO[tid] || (_ASIS_ESTADO[tid] = {});
+  if (chk.checked){
+    if (!est[uid]) est[uid] = { nombre, respuesta: '', foto_url: null };
+  } else {
+    delete est[uid];
+  }
+  _asisRepintar(tid, mid, pid, chk.disabled);
+  _asisGuardarTodo(tid, mid, pid);
+}
+
+function _asisGuardarRespuesta(tid, uid, mid, pid, texto){
+  const est = _ASIS_ESTADO[tid] || {};
+  if (!est[uid]) return; // se desmarcó justo antes del blur -- nada que guardar
+  est[uid].respuesta = texto;
+  _asisGuardarTodo(tid, mid, pid);
+}
+
+async function _asisSubirFoto(tid, uid, input, mid, pid){
+  if (!input.files || !input.files[0]) return;
+  let file = input.files[0];
+  if (file.size > 20 * 1024 * 1024){
+    ilusToast(`Foto demasiado grande (${(file.size/(1024*1024)).toFixed(2)} MB). Máx 20 MB.`, { type:'warning' });
+    return;
+  }
+  if (!_esHeic(file)){
+    try { file = await _comprimirImagen(file); } catch(e){ console.warn('[asisSubirFoto] compresión falló, mando original:', e.message); }
+  }
+  const fd = new FormData();
+  fd.append('foto', file);
+  fd.append('tarea_id', String(tid));
+  if (mid) fd.append('maquina_id', String(mid));
+  const toastSub = ilusToast('Subiendo foto…', { type:'info', duration: 6000 });
+  const res = await _subirFotoIntento(fd, 1);
+  if (toastSub && toastSub.close) toastSub.close();
+  if (!res.ok){
+    ilusToast((res.data && res.data.error) || 'No se pudo subir la foto', { type:'error' });
+    return;
+  }
+  const url = (res.data && (res.data.url || res.data.cloudinary_url
+    || (Array.isArray(res.data.fotos) && res.data.fotos[0] && res.data.fotos[0].url))) || '';
+  const est = _ASIS_ESTADO[tid] || {};
+  if (est[uid] && url) est[uid].foto_url = url;
+  _asisRepintar(tid, mid, pid, false);
+  _asisGuardarTodo(tid, mid, pid);
+  if (url) ilusToast('✓ Foto adjuntada', { type:'success' });
+}
+
+async function _asisGuardarTodo(tid, mid, pid){
+  const est = _ASIS_ESTADO[tid] || {};
+  const asistentes = Object.keys(est).map(uidStr => {
+    const a = est[uidStr];
+    return { user_id: parseInt(uidStr, 10), nombre: a.nombre || '', respuesta: a.respuesta || '', foto_url: a.foto_url || null };
+  });
+  await guardarResp(tid, { asistentes }, mid, pid);
 }
 
 function _fotosTareaTilesHtml(tid, mid, pid){

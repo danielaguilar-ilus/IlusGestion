@@ -86684,6 +86684,40 @@ def mant_visita_tarea_respuesta(vid, tid):
                 valor_norm["precision_baja"] = True
         # source siempre se normaliza a 'gps' (rechazamos otros arriba)
         valor_norm["source"] = "gps"
+    elif tipo == "asistencia":
+        # 🆕 2026-08-30 (Daniel — checklist "Capacitación": lista de asistencia
+        # inteligente. "utiliza los objetos varios que tenemos... con fotos
+        # cada técnico... identificando quién respondió"). El frontend
+        # (mantenciones_ot_ejecutar.js, case 'asistencia') carga la lista real
+        # de /mantenciones/api/tecnicos, deja marcar presentes y para cada
+        # presente pide "¿Qué aprendiste hoy?" + foto. Solo entran acá los
+        # marcados presentes -- no se guardan los ausentes con respuesta vacía.
+        # Formato: {"asistentes": [{"user_id":.., "nombre":.., "respuesta":..,
+        # "foto_url":..}, ...]}
+        asistentes_in = valor.get("asistentes") if isinstance(valor, dict) else None
+        if not isinstance(asistentes_in, list):
+            return jsonify({"ok": False, "error": "Formato de asistencia inválido"}), 400
+        asistentes_norm = []
+        for a in asistentes_in:
+            if not isinstance(a, dict):
+                continue
+            try:
+                uid = int(a.get("user_id"))
+            except (TypeError, ValueError):
+                continue
+            nombre = str(a.get("nombre") or "").strip()[:120]
+            if not nombre:
+                continue
+            resp = str(a.get("respuesta") or "").strip()[:2000]
+            foto = str(a.get("foto_url") or "").strip()[:500] or None
+            asistentes_norm.append({
+                "user_id": uid, "nombre": nombre,
+                "respuesta": resp, "foto_url": foto,
+            })
+        valor_norm = {"asistentes": asistentes_norm}
+        # Se marca completada solo si quedó al menos un asistente registrado
+        # (mismo criterio que "texto": no perder lo escrito aunque no complete).
+        completar = len(asistentes_norm) > 0
     else:
         return jsonify({"ok": False, "error": f"Tipo no soportado por este endpoint: {tipo}"}), 400
 
@@ -110790,6 +110824,66 @@ def _ensure_visita_tareas_tipo_enum():
         return False
 
 
+def _ensure_tipo_respuesta_asistencia():
+    """Amplía el ENUM tipo_respuesta con 'asistencia' en las dos tablas que
+    lo usan (mant_tarea_plantilla_items y mant_visita_tareas), AUNQUE
+    ILUS_SKIP_MIGRATIONS=1.
+
+    Daniel (2026-08-30, dictando en vivo sobre el checklist "Capacitación"):
+    "anota los asistentes, todos los técnicos en general, yo pasaría
+    asistencia y haría preguntas personal a los asistentes, algo bien
+    inteligente" + "utiliza los objetos varios que tenemos, sí, y con fotos
+    cada técnico" + "identificando quién respondió". El ítem "Lista de
+    asistencia" de la plantilla Capacitación (antes tipo_respuesta='texto',
+    ver _ensure_plantilla_capacitacion_rica) pasa a este tipo nuevo: en vez
+    de texto libre, el técnico marca presentes de la lista REAL de
+    /mantenciones/api/tecnicos y cada presente responde "¿Qué aprendiste
+    hoy?" + adjunta una foto -- todo guardado con su user_id + nombre en
+    valor_json (ver mant_visita_tarea_respuesta, case 'asistencia').
+
+    Mismo patrón ya usado para 'serie' (2026-08-27, más abajo en este mismo
+    bloque de arranque): MODIFY COLUMN con el ENUM ampliado es idempotente y
+    no borra filas ni datos existentes -- se verifica antes con
+    information_schema para no repetir el ALTER en cada arranque."""
+    faltaron = []
+    try:
+        r1 = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_tarea_plantilla_items' "
+            "   AND COLUMN_NAME='tipo_respuesta'")
+        if r1 and "'asistencia'" not in (r1.get("COLUMN_TYPE") or ""):
+            mysql_execute(
+                "ALTER TABLE mant_tarea_plantilla_items MODIFY COLUMN tipo_respuesta "
+                "ENUM('check','texto','sino','numero','verificacion','gps','lista',"
+                "'fecha_hora','foto','serie','asistencia') DEFAULT 'check'")
+            faltaron.append("mant_tarea_plantilla_items.tipo_respuesta+asistencia")
+        r2 = mysql_fetchone(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visita_tareas' "
+            "   AND COLUMN_NAME='tipo_respuesta'")
+        if r2 and "'asistencia'" not in (r2.get("COLUMN_TYPE") or ""):
+            mysql_execute(
+                "ALTER TABLE mant_visita_tareas MODIFY COLUMN tipo_respuesta "
+                "ENUM('check','texto','sino','numero','verificacion','gps','lista',"
+                "'fecha_hora','foto','serie','asistencia') DEFAULT 'check'")
+            faltaron.append("mant_visita_tareas.tipo_respuesta+asistencia")
+    except Exception as e:
+        print(f"[ensure_tipo_respuesta_asistencia] {e}", flush=True)
+    # Migra el ítem "Lista de asistencia" de la plantilla Capacitación de
+    # 'texto' a 'asistencia' -- idempotente: solo si SIGUE siendo 'texto'
+    # (si alguien ya lo cambió a mano desde el editor, no lo pisa).
+    try:
+        mysql_execute(
+            "UPDATE mant_tarea_plantilla_items it "
+            "  JOIN mant_tarea_plantillas p ON p.id = it.plantilla_id "
+            "   SET it.tipo_respuesta='asistencia' "
+            " WHERE p.nombre='Capacitación' AND it.titulo='Lista de asistencia' "
+            "   AND it.tipo_respuesta='texto'")
+    except Exception as e:
+        print(f"[ensure_tipo_respuesta_asistencia] update item: {e}", flush=True)
+    return faltaron
+
+
 def _ensure_comm_template_plan_propuesto():
     """Siembra idempotente de la plantilla 'plan_propuesto' (propuesta de plan
     anual de mantención por email) AUNQUE ILUS_SKIP_MIGRATIONS=1.
@@ -112348,6 +112442,17 @@ try:
         _ensure_visita_tarea_cantidad_col()
 except Exception as _ensure_vt_cant_err:
     print(f"[ILUS][WARN] _ensure_visita_tarea_cantidad_col: {_ensure_vt_cant_err}", flush=True)
+
+# CRÍTICO: tipo_respuesta='asistencia' SIEMPRE (incluso skip-migrations) --
+# Daniel 2026-08-30: checklist "Capacitación" con lista de asistencia real
+# (técnicos del sistema, no texto libre) + pregunta "¿Qué aprendiste hoy?"
+# + foto por técnico, identificado por user_id. Sin este ENUM ampliado el
+# guardado de la respuesta fallaría con 'Data truncated' en producción.
+try:
+    with app.app_context():
+        _ensure_tipo_respuesta_asistencia()
+except Exception as _ensure_asis_err:
+    print(f"[ILUS][WARN] _ensure_tipo_respuesta_asistencia: {_ensure_asis_err}", flush=True)
 
 # CRÍTICO: plantilla "Repuesto" SIEMPRE (incluso skip-migrations) -- Daniel
 # 2026-08-28, auditoría de cobertura de clasificación: de 19 clases de
