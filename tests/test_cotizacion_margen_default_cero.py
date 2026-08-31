@@ -98,5 +98,53 @@ class TestElFallbackDeAgregarItemsYaNoPisaElCeroReal(unittest.TestCase):
         self.assertEqual(_margen_item, 0)
 
 
+class TestLaGananciaMostradaPorCourierNoTieneFallbackViejo(unittest.TestCase):
+    """Daniel, en vivo (mismo dia): "que cuando coloquen 30% si cambie en
+    el front que es quien debe regir" -- preocupado por si quedaba algun
+    30% escondido. _lcMargenActualPct() (la que calcula el badge "Ganancia
+    ILUS" de cada tarjeta de courier) tenia su PROPIO fallback a 30 si el
+    campo estaba vacio/invalido -- distinto del calculo real de items
+    (lcRecalcular), que ya caia en 0."""
+
+    def _fuente_margen_actual_pct(self):
+        i = HTML.index("function _lcMargenActualPct(){")
+        j = HTML.index("\n}", i)
+        return HTML[i:j]
+
+    def test_el_fallback_del_elemento_ausente_es_cero(self):
+        fragmento = self._fuente_margen_actual_pct()
+        self.assertIn("$('lcMargenPct').value : 0)", fragmento)
+        self.assertNotIn("$('lcMargenPct').value : 30)", fragmento)
+
+    def test_el_fallback_de_valor_invalido_es_cero(self):
+        fragmento = self._fuente_margen_actual_pct()
+        self.assertIn(": 0;", fragmento)
+        self.assertNotIn(": 30;", fragmento)
+
+
+class TestLaTarjetaDeCourierSeRefrescaAlCambiarElMargen(unittest.TestCase):
+    """La tarjeta de courier del Paso 4 (badge "Ganancia ILUS (X%)") se
+    pintaba una sola vez al cotizar -- si despues se cambiaba el Margen %
+    global en el Paso 6, el TOTAL real ya se recalculaba en vivo, pero la
+    tarjeta se quedaba mostrando el % viejo. Se agrega un refresco
+    explicito, enganchado a lcRecalcular() (que ya corre en cada
+    oninput del campo Margen %)."""
+
+    def test_existe_la_funcion_de_refresco(self):
+        self.assertIn("function _lcRefrescarGananciaCourierCards(){", HTML)
+
+    def test_lcrecalcular_la_llama(self):
+        i = HTML.index("function lcRecalcular(){")
+        fragmento = HTML[i:i + 300]
+        self.assertIn("_lcRefrescarGananciaCourierCards();", fragmento)
+
+    def test_el_refresco_lee_el_margen_actual_no_uno_cacheado(self):
+        i = HTML.index("function _lcRefrescarGananciaCourierCards(){")
+        j = HTML.index("\n}", i)
+        fragmento = HTML[i:j]
+        self.assertIn("_lcMargenActualPct()", fragmento)
+        self.assertIn("querySelectorAll('#lcFleteResultados .lc-courier-card')", fragmento)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
