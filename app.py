@@ -75849,6 +75849,29 @@ def ot2_detalle(vid):
         else:
             e["sello"], e["sello_cls"] = "Pendiente", "eq-pend"
 
+    # 🆕 2026-08-30 (Daniel: "estoy viendo un número de serie que no me
+    # está dando el formato... trae eso de allá [ot_ejecutar.html]"). Esta
+    # pantalla (ot2_detalle) nunca calculaba serie_sugerida/serie_lleva_
+    # individual/serie_no_aplica_motivo -- por eso la pestaña Trabajo
+    # renderizaba el campo "serie" pelado. MISMO cálculo en bloque que ya
+    # usa mant_ot_ejecutar (ver app.py ~82712-82735 y ~103902-103928):
+    # _series_sugeridas_bulk (2 consultas para toda la OT, no 2×equipo) +
+    # _equipo_lleva_serie_individual por equipo. Sin cambios de negocio,
+    # solo se agrega acá lo que ya existía en otro lado.
+    try:
+        _sugeridas_bulk_ot2 = _series_sugeridas_bulk(v.get("cliente_id"), equipos)
+    except Exception as _e_sb2:
+        print(f"[ot2_detalle] series sugeridas bulk vid={vid}: {_e_sb2}", flush=True)
+        _sugeridas_bulk_ot2 = {}
+    for e in equipos:
+        try:
+            _lleva_ot2, _motivo_ot2 = _equipo_lleva_serie_individual(e)
+        except Exception:
+            _lleva_ot2, _motivo_ot2 = True, ""
+        e["serie_lleva_individual"] = bool(_lleva_ot2)
+        e["serie_no_aplica_motivo"] = _motivo_ot2 or ""
+        e["serie_sugerida"] = _sugeridas_bulk_ot2.get(e.get("id"))
+
     # 🆕 2026-08-28 (Daniel): "no veo qué plantilla tienen los equipos...
     # quiero poder cambiarlas". Un equipo puede tener MÁS de una plantilla
     # aplicada (ej. una de instalación + una de accesorios) -- se agrupa
@@ -76056,9 +76079,25 @@ def ot2_detalle(vid):
         (vid,)
     )
 
+    # Mapa liviano {maquina_id: {...}} para el renderer JS del checklist
+    # (tipo 'serie', otdChkTareaHtml en ot2/detalle.html) -- evita mandar
+    # el objeto `equipos` completo dos veces (una vez para la grilla Jinja,
+    # otra para JS) y evita que el frontend tenga que buscar por id en una
+    # lista cada vez que dibuja una tarea.
+    equipos_serie_map = {
+        str(e["id"]): {
+            "serie": e.get("serie") or "",
+            "serie_sugerida": e.get("serie_sugerida"),
+            "serie_lleva_individual": e.get("serie_lleva_individual", True),
+            "serie_no_aplica_motivo": e.get("serie_no_aplica_motivo") or "",
+        }
+        for e in equipos
+    }
+
     return render_template(
         "ot2/detalle.html",
         v=v, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
+        equipos_serie_map=equipos_serie_map,
         finanzas={"ok": _fin_ok, "faltan": _fin_faltan},
         fotos=fotos, anexo=anexo,
         puede_metadata=puede_metadata, puede_ejecutar=puede_ejecutar,
