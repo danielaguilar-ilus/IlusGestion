@@ -1469,7 +1469,15 @@ window.OT2C = (function(){
     // propio APILADO sobre el wizard (nunca lo cierra), sin llevar a
     // ninguna otra pantalla. Gate: OT2_PUEDE_TIPO_INTERNO (superadmin O
     // el permiso mant_tipo_interno_crear).
-    if (OT2_PUEDE_TIPO_INTERNO){
+    // 🔧 FIX 2026-08-31 (Daniel: "Agregar trabajo interno solo debe
+    // funcionar para los trabajos internos... nos podemos desordenar"):
+    // esta tarjeta se agregaba SIEMPRE que el usuario tuviera el permiso,
+    // sin mirar qué grilla se estaba pintando -- aparecía mezclada con
+    // Instalación/Mantención/etc. (origen 'cliente'), donde no tiene
+    // sentido crear un tipo de TRABAJO INTERNO. Ahora solo se agrega
+    // cuando la grilla visible es la de trabajo interno (S.origen ===
+    // 'interno', mismo valor que ya filtra tiposParaOrigen()).
+    if (OT2_PUEDE_TIPO_INTERNO && S.origen === 'interno'){
       g.innerHTML += '<button type="button" class="o2m-op" style="border-style:dashed;color:#6b7280" '+
         'onclick="OT2C.abrirNuevoTipoInterno()">'+
         '<i class="bi bi-plus-circle ic"></i><span class="n">Agregar trabajo interno</span>'+
