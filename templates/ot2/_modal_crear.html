@@ -3564,11 +3564,23 @@ window.OT2C = (function(){
       c.innerHTML = '<div class="text-muted small">Buscando plantillas de checklist…</div>';
       return;
     }
+    // 🔧 FIX 2026-08-31 (Daniel, probando en vivo: "acabo de crear una
+    // plantilla y no me la asocia"): la caché (cachePlantInternoTipo) solo
+    // se invalida cuando cambia el TIPO elegido -- si el usuario crea la
+    // plantilla en OTRA pestaña (el aviso de abajo abre Plantillas con
+    // target="_blank" a propósito, para no perder el wizard) y vuelve
+    // acá, el wizard sigue mostrando la lista vieja para siempre, sin
+    // ninguna forma de refrescarla. Botón manual explícito en vez de
+    // adivinar con un evento de foco de ventana (poco confiable con
+    // pestañas nuevas y no vale la pena el riesgo de una recarga sola).
+    var _btnRefrescar = '<button type="button" class="btn btn-sm btn-outline-secondary mt-2" '+
+      'onclick="OT2C.recargarPlantillasInterno()" title="Volver a buscar plantillas (por si creaste una nueva)">'+
+      '<i class="bi bi-arrow-clockwise me-1"></i>Buscar de nuevo</button>';
     if (!cachePlantInterno.length){
       c.innerHTML = '<div class="o2m-aviso" style="background:#f3f4f6;border-color:#e5e7eb;color:#4b5563">'+
         '<i class="bi bi-info-circle-fill me-1"></i>Todavía no hay checklist para este tipo de trabajo interno. '+
         'Puedes seguir sin checklist, o crear uno en '+
-        '<a href="/mantenciones/plantillas" target="_blank" rel="noopener">Plantillas</a>.</div>';
+        '<a href="/mantenciones/plantillas" target="_blank" rel="noopener">Plantillas</a>.</div>'+_btnRefrescar;
       return;
     }
     var ops = '<option value="">Sin checklist (solo con lo de arriba)</option>' +
@@ -3579,7 +3591,12 @@ window.OT2C = (function(){
     var sugerida = cachePlantInterno.length===1 && S.plantilla_id_interno===cachePlantInterno[0].id;
     c.innerHTML = '<select class="form-select" id="o2mPlantInterno" onchange="OT2C.setPlantillaInterno(this.value)">'+ops+'</select>'+
       (sugerida ? '<small class="text-muted d-block mt-1" style="font-size:.72rem">'+
-        '<i class="bi bi-magic me-1"></i>Sugerida automáticamente para este tipo de trabajo.</small>' : '');
+        '<i class="bi bi-magic me-1"></i>Sugerida automáticamente para este tipo de trabajo.</small>' : '')+_btnRefrescar;
+  }
+
+  function recargarPlantillasInterno(){
+    cachePlantInternoTipo = null;
+    cargarPlantillasInterno();
   }
 
   function setPlantillaInterno(v){
@@ -5833,6 +5850,7 @@ window.OT2C = (function(){
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
+          recargarPlantillasInterno:recargarPlantillasInterno,
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
           abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,

@@ -2184,6 +2184,17 @@ function o2fRenderEquipos(){
             + 'style="font-size:.72rem;padding:.25rem .4rem;opacity:.4;pointer-events:none" '
             + 'onclick="o2fAbrirMultiPlantilla(\''+esc(key)+'\', \''+esc(nombre)+'\')" title="Selecciona el equipo primero">'
             + '<i class="bi bi-lock me-1"></i><span id="lev-pl-count-'+esc(key)+'">marca el equipo</span></button>')
+      // 🆕 2026-08-31 (Daniel: al asignar plantilla a un equipo -- ej. la
+      // elíptica -- esperaba ver reflejado el costo estimado. Decisión
+      // explícita: SOLO mostrar un estimado de referencia (Opción B),
+      // reusando /ot/api/estimar-costo tal cual -- NO se toca la
+      // cotización real ni su modelo de datos (ver investigación previa:
+      // tk_cotizacion_items no guarda a qué equipo pertenece cada línea,
+      // y el proyecto ya rechazó adivinar ese cruce por SKU en agosto).
+      // Solo aplica a equipos CON maquina_id real (el estimador clasifica
+      // por SKU vía cat_productos, que no existe para un equipo "sin
+      // ficha aún") -- ver _tkotActualizarEstimado().
+      + (e.maquina_id ? '<div id="lev-pl-est-'+esc(key)+'" class="small text-muted mt-1"></div>' : '')
       + '</td></tr>';
   }).join('');
   o2fRecalcEqCount();
@@ -2372,6 +2383,7 @@ function o2fGuardarMultiPlantilla(key){
   const ids = Array.from(modal.querySelectorAll('.mp-chk:checked')).map(function(c){ return parseInt(c.dataset.pid); });
   if(ids.length) _O2F.eqPlantillas[key] = new Set(ids); else delete _O2F.eqPlantillas[key];
   _tkotPintarBotonPlantilla(key);
+  _tkotActualizarEstimado(key);
   o2fRefreshStepStates();
   bootstrap.Modal.getInstance(modal)?.hide();
   if(ids.length){
@@ -2379,6 +2391,30 @@ function o2fGuardarMultiPlantilla(key){
   } else {
     ilusToast('Este equipo quedó sin plantilla — es obligatoria para crear la OT', {type:'warning'});
   }
+}
+
+// 🆕 2026-08-31 -- estimado de costo de REFERENCIA al asignar plantilla
+// (Opción B, ver comentario en o2fRenderEquipos). Best-effort puro: si el
+// tipo de OT no tiene tarifa configurada o el equipo no está clasificado,
+// no muestra nada -- nunca un error visible por esto, es solo un dato
+// informativo adicional, no bloquea ni valida nada.
+async function _tkotActualizarEstimado(key){
+  const el = document.getElementById('lev-pl-est-' + key);
+  if(!el) return;
+  const e = (equiposCache || []).find(function(x){ return _tkotEqKey(x) === key; });
+  if(!e || !e.maquina_id) return;
+  const tipoOt = document.getElementById('o2f_otTipo')?.value || '';
+  el.innerHTML = '<span class="spinner-border spinner-border-sm" style="width:.7rem;height:.7rem"></span> Calculando estimado…';
+  try{
+    const r = await fetch('/ot/api/estimar-costo', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo_ot: tipoOt, maquina_ids: [parseInt(e.maquina_id)] }),
+    });
+    const d = await r.json();
+    if(!d.ok || d.total_neto == null){ el.innerHTML = ''; return; }
+    el.innerHTML = '<i class="bi bi-calculator me-1"></i>Estimado: $' + d.total_neto.toLocaleString('es-CL')
+      + ' <span style="opacity:.7">(referencia, no es la cotización)</span>';
+  }catch(e){ el.innerHTML = ''; }
 }
 
 // ── Acceso y logística (idéntico a Mantenciones) ──
