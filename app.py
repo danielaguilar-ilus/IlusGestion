@@ -84676,6 +84676,25 @@ def _ot_firma_foto_thumb(url, tok=None):
     return url
 
 
+def _ot_firma_foto_full(url, tok=None):
+    """Versión de ALTA RESOLUCIÓN de una foto para el modal ampliado de la
+    página pública de firma (2026-08-31, Daniel: "que pueda acceder a las
+    fotos... un modal bien poderoso... con alta calidad"). Mismo criterio
+    de token que `_ot_firma_foto_thumb` -- si es una ruta interna `/f/<key>`
+    se le agrega el `tok=` de firma remota para que el cliente sin sesión
+    pueda verla; una URL absoluta legacy (Cloudinary) se sirve tal cual.
+    `w=1600` es suficiente para ver detalle en una pantalla de celular sin
+    descargar el original completo (que puede pesar varios MB)."""
+    if not url:
+        return ""
+    if url.startswith("/f/"):
+        full = url + "?w=1600"
+        if tok:
+            full += "&tok=" + tok
+        return full
+    return url
+
+
 def _ot_firma_equipos_detalle(vid, v, token=None):
     """Detalle liviano de equipos + checklist + miniaturas de fotos para la
     página pública de firma (`/firmar-ot/<token>`).
@@ -84702,7 +84721,9 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
         ver embed_images en _ot_pdf_context) -- entrega URLs de miniatura
         `/f/<key>?w=160` para que cargue rápido en el celular del cliente
         con cualquier calidad de conexión (link abierto desde WhatsApp o
-        correo).
+        correo), MÁS una versión ampliada `?w=1600` (2026-08-31, Daniel:
+        "un modal bien poderoso... con alta calidad") para el visor a
+        pantalla completa (ver firma_publica.html, otFotoModal).
       - Trunca checklist/fotos/equipos por los límites _OT_FIRMA_EQ_MAX_* --
         esto NO es el anexo completo del informe, es un resumen para que
         el cliente decida si firmar. El PDF/informe posterior sigue siendo
@@ -84713,7 +84734,7 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
         [{ "nombre", "sub" (marca/modelo o serie), "badge_txt", "badge_cls",
            "notas": [str,...],
            "tareas": [{"titulo","ok"}], "tareas_total", "tareas_ok", "tareas_extra",
-           "fotos": [url,...], "fotos_extra" (int) }]
+           "fotos": [{"thumb","full","caption","fecha"}, ...], "fotos_extra" (int) }]
       - equipos_extra: int, cuántos equipos quedaron fuera del tope (para
         que la página avise "+N equipos más" en vez de listarlos todos
         expandidos de una -- OT reales de este proyecto han llegado a 40
@@ -84781,13 +84802,22 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
                     if _txt:
                         notas.append(_txt[:220])
                 fotos_all = fotos_idx.get(it["id"], [])
+                _nom_eq = it.get("nombre_snap") or "Equipo"
                 equipos_out.append({
-                    "nombre": it.get("nombre_snap") or "Equipo",
+                    "nombre": _nom_eq,
                     "sub": it.get("serie_snap") or it.get("sku_snap") or "",
                     "badge_txt": badge_txt, "badge_cls": badge_cls,
                     "notas": notas[:2],
                     "tareas": [], "tareas_total": 0, "tareas_ok": 0, "tareas_extra": 0,
-                    "fotos": [_ot_firma_foto_thumb(u, tok=token) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
+                    # 2026-08-31 (Daniel: "un modal bien poderoso... alta
+                    # calidad y harta información"): cada foto ahora trae
+                    # su versión ampliada (`full`) además de la miniatura,
+                    # para el visor a pantalla completa (ver
+                    # firma_publica.html, otdFotoModal).
+                    "fotos": [{"thumb": _ot_firma_foto_thumb(u, tok=token),
+                               "full": _ot_firma_foto_full(u, tok=token),
+                               "caption": _nom_eq}
+                              for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
                     "fotos_extra": max(0, len(fotos_all) - _OT_FIRMA_EQ_MAX_FOTOS),
                 })
             equipos_extra = max(0, len(lev_items) - _OT_FIRMA_EQ_MAX_EQUIPOS)
@@ -84815,8 +84845,18 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
             tareas_idx = {}
             for t in tareas:
                 tareas_idx.setdefault(t["maquina_id"], []).append(t)
+            def _fchile(dt):
+                try:
+                    return chile_fmt_filter(dt, "%d/%m/%Y %H:%M") if dt else ""
+                except Exception:
+                    return ""
+            # 2026-08-31 (Daniel: "que pueda acceder a las fotos... harta
+            # información"): se suman tipo_foto/descripcion/tomada_at --
+            # ya existían en la tabla (misma usada por la pestaña Evidencia
+            # de OT 2.0), solo faltaba traerlos hasta acá.
             fotos = mysql_fetchall(
-                "SELECT maquina_id, archivo_path, cloudinary_url "
+                "SELECT maquina_id, archivo_path, cloudinary_url, "
+                "       tipo_foto, descripcion, tomada_at "
                 "  FROM mant_visita_fotos "
                 " WHERE visita_id=%s AND maquina_id IS NOT NULL "
                 " ORDER BY tomada_at", (vid,)) or []
@@ -84826,7 +84866,7 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
                     f"/static/{f['archivo_path']}"
                     if f.get("archivo_path") else "")
                 if url:
-                    fotos_idx.setdefault(f["maquina_id"], []).append(url)
+                    fotos_idx.setdefault(f["maquina_id"], []).append(f)
             for eq in equipos[:_OT_FIRMA_EQ_MAX_EQUIPOS]:
                 mid = eq["id"]
                 t_list = tareas_idx.get(mid, [])
@@ -84836,8 +84876,9 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
                 est = eq.get("estado_capturado") or "operativo"
                 badge_txt, badge_cls = _OT_FIRMA_EQ_BADGES.get(est, ("OK", "eq-ok"))
                 fotos_all = fotos_idx.get(mid, [])
+                _nom_eq2 = eq.get("nombre") or "Equipo"
                 equipos_out.append({
-                    "nombre": eq.get("nombre") or "Equipo",
+                    "nombre": _nom_eq2,
                     "sub": sub,
                     "badge_txt": badge_txt, "badge_cls": badge_cls,
                     "notas": [],
@@ -84845,7 +84886,14 @@ def _ot_firma_equipos_detalle(vid, v, token=None):
                                for t in t_list[:_OT_FIRMA_EQ_MAX_TAREAS]],
                     "tareas_total": t_total, "tareas_ok": t_ok,
                     "tareas_extra": max(0, t_total - _OT_FIRMA_EQ_MAX_TAREAS),
-                    "fotos": [_ot_firma_foto_thumb(u, tok=token) for u in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
+                    "fotos": [{
+                        "thumb": _ot_firma_foto_thumb(
+                            f.get("cloudinary_url") or (f"/static/{f['archivo_path']}" if f.get("archivo_path") else ""), tok=token),
+                        "full": _ot_firma_foto_full(
+                            f.get("cloudinary_url") or (f"/static/{f['archivo_path']}" if f.get("archivo_path") else ""), tok=token),
+                        "caption": (f.get("descripcion") or "").strip() or (f.get("tipo_foto") or "").replace("_"," ").title() or _nom_eq2,
+                        "fecha": _fchile(f.get("tomada_at")),
+                    } for f in fotos_all[:_OT_FIRMA_EQ_MAX_FOTOS]],
                     "fotos_extra": max(0, len(fotos_all) - _OT_FIRMA_EQ_MAX_FOTOS),
                 })
             equipos_extra = max(0, len(equipos) - _OT_FIRMA_EQ_MAX_EQUIPOS)

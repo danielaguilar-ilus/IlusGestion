@@ -520,10 +520,20 @@
                 </ul>
                 {% endif %}
                 {% for nota in eq.notas %}<div class="eq-nota">⚠ {{ nota }}</div>{% endfor %}
+                {# 🖼️ 2026-08-31 (Daniel: "que pueda acceder a las fotos...
+                   un modal bien poderoso... con alta calidad y harta
+                   información"): antes la miniatura no llevaba a ningún
+                   lado -- ahora abre `otFotoModal` con la versión ampliada
+                   (`foto.full`) + su descripción/fecha. `data-*` en vez de
+                   pasar el JSON por el atributo onclick -- una descripción
+                   con comillas rompería el HTML inline. #}
                 {% if eq.fotos %}
                 <div class="eq-fotos">
                   {% for foto in eq.fotos %}
-                  <img src="{{ foto }}" loading="lazy" decoding="async" alt="Foto de {{ eq.nombre }}">
+                  <img src="{{ foto.thumb }}" loading="lazy" decoding="async" alt="Foto de {{ eq.nombre }}"
+                       class="eq-foto-click" style="cursor:zoom-in"
+                       data-full="{{ foto.full }}" data-caption="{{ foto.caption }}" data-fecha="{{ foto.fecha or '' }}"
+                       onclick="otFotoModal.abrir(this)">
                   {% endfor %}
                   {% if eq.fotos_extra %}<span class="eq-fotos-extra">+{{ eq.fotos_extra }}</span>{% endif %}
                 </div>
@@ -911,6 +921,105 @@
     }
     window.addEventListener('pageshow', _syncSteps);
     _syncSteps();
+
+    // ════════════════════════════════════════════════════════
+    //  MODAL DE FOTOS (2026-08-31, Daniel: "que pueda acceder a las
+    //  fotos... un modal bien poderoso con respecto a las fotos, con
+    //  alta calidad y harta información"). Overlay a pantalla completa,
+    //  animado (fade + scale), navegable con ← → entre TODAS las fotos
+    //  del mismo equipo (mismo <div class="eq-fotos"> que la miniatura
+    //  clickeada). Sin dependencias -- vanilla JS, mismo criterio del
+    //  resto de esta página pública (sin librerías externas que puedan
+    //  fallar en una red de celular débil).
+    window.otFotoModal = (function(){
+      let overlay = null, imgEl = null, capEl = null, fechaEl = null, contEl = null;
+      let fotos = [], idx = 0;
+      function _construir(){
+        overlay = document.createElement('div');
+        overlay.id = 'otFotoModalOv';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(10,10,10,0);'+
+          'display:flex;align-items:center;justify-content:center;padding:4vw;'+
+          'opacity:0;transition:opacity .25s ease,background .25s ease;';
+        overlay.innerHTML =
+          '<button type="button" aria-label="Cerrar" style="position:absolute;top:14px;right:16px;'+
+          'width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.12);color:#fff;'+
+          'font-size:1.3rem;cursor:pointer;z-index:2" onclick="otFotoModal.cerrar()">&times;</button>'+
+          '<button type="button" aria-label="Anterior" id="otFmPrev" style="position:absolute;left:8px;top:50%;'+
+          'transform:translateY(-50%);width:46px;height:46px;border-radius:50%;border:0;background:rgba(255,255,255,.12);'+
+          'color:#fff;font-size:1.4rem;cursor:pointer;z-index:2">&lsaquo;</button>'+
+          '<button type="button" aria-label="Siguiente" id="otFmNext" style="position:absolute;right:8px;top:50%;'+
+          'transform:translateY(-50%);width:46px;height:46px;border-radius:50%;border:0;background:rgba(255,255,255,.12);'+
+          'color:#fff;font-size:1.4rem;cursor:pointer;z-index:2">&rsaquo;</button>'+
+          '<div id="otFmCont" style="max-width:min(94vw,900px);max-height:90vh;display:flex;flex-direction:column;'+
+          'align-items:center;transform:scale(.94);opacity:0;transition:transform .25s ease,opacity .25s ease">'+
+            '<img id="otFmImg" style="max-width:100%;max-height:72vh;border-radius:10px;'+
+            'box-shadow:0 20px 60px rgba(0,0,0,.5);background:#111;object-fit:contain">'+
+            '<div style="margin-top:12px;text-align:center;color:#f4f4f5">'+
+              '<div id="otFmCap" style="font-weight:800;font-size:.95rem"></div>'+
+              '<div id="otFmFecha" style="font-size:.78rem;color:#a1a1aa;margin-top:2px"></div>'+
+            '</div>'+
+          '</div>';
+        document.body.appendChild(overlay);
+        imgEl = overlay.querySelector('#otFmImg');
+        capEl = overlay.querySelector('#otFmCap');
+        fechaEl = overlay.querySelector('#otFmFecha');
+        contEl = overlay.querySelector('#otFmCont');
+        overlay.addEventListener('click', function(e){ if (e.target === overlay) cerrar(); });
+        overlay.querySelector('#otFmPrev').addEventListener('click', function(e){ e.stopPropagation(); mover(-1); });
+        overlay.querySelector('#otFmNext').addEventListener('click', function(e){ e.stopPropagation(); mover(1); });
+        document.addEventListener('keydown', function(e){
+          if (!overlay || overlay.style.display === 'none') return;
+          if (e.key === 'Escape') cerrar();
+          if (e.key === 'ArrowLeft') mover(-1);
+          if (e.key === 'ArrowRight') mover(1);
+        });
+      }
+      function pintar(){
+        const f = fotos[idx];
+        imgEl.style.opacity = '0';
+        const nueva = new Image();
+        nueva.onload = function(){ imgEl.src = f.full; imgEl.style.opacity = '1'; };
+        nueva.src = f.full;
+        capEl.textContent = f.caption || '';
+        fechaEl.textContent = f.fecha || '';
+        const multi = fotos.length > 1;
+        overlay.querySelector('#otFmPrev').style.display = multi ? '' : 'none';
+        overlay.querySelector('#otFmNext').style.display = multi ? '' : 'none';
+      }
+      function mover(delta){
+        idx = (idx + delta + fotos.length) % fotos.length;
+        pintar();
+      }
+      function abrir(imgClickeada){
+        if (!overlay) _construir();
+        imgEl.style.transition = 'opacity .18s ease';
+        const grupo = imgClickeada.closest('.eq-fotos');
+        const nodos = grupo ? Array.from(grupo.querySelectorAll('.eq-foto-click')) : [imgClickeada];
+        fotos = nodos.map(function(n){
+          return { full: n.dataset.full, caption: n.dataset.caption || '', fecha: n.dataset.fecha || '' };
+        });
+        idx = Math.max(0, nodos.indexOf(imgClickeada));
+        pintar();
+        document.body.style.overflow = 'hidden';
+        overlay.style.display = 'flex';
+        requestAnimationFrame(function(){
+          overlay.style.background = 'rgba(10,10,10,.92)';
+          overlay.style.opacity = '1';
+          contEl.style.transform = 'scale(1)';
+          contEl.style.opacity = '1';
+        });
+      }
+      function cerrar(){
+        if (!overlay) return;
+        overlay.style.opacity = '0';
+        overlay.style.background = 'rgba(10,10,10,0)';
+        contEl.style.transform = 'scale(.94)';
+        contEl.style.opacity = '0';
+        document.body.style.overflow = '';
+        setTimeout(function(){ if (overlay) overlay.style.display = 'none'; }, 250);
+      }
+      return { abrir: abrir, cerrar: cerrar };
+    })();
   </script>
   {% endif %}
 </body>
