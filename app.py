@@ -78612,6 +78612,27 @@ def _ensure_mant_anexos():
                         "borrador pendiente de revision legal, ver _ANEXO_CLAUSULAS_DEFECTO'")
             except Exception as e:
                 print(f"[ensure_mant_anexos] clausulas_adicionales: {e}", flush=True)
+            # 🔢 2026-08-31 (Daniel, textual: "quiero dejarte el último anexo
+            # para mantener el correlativo y partamos en el 160"): el
+            # próximo anexo debe salir con N° 160. `_next_anexo_numero_atomic`
+            # incrementa `n` antes de usarlo, así que hay que dejar la
+            # secuencia del año actual en 159 -- pero SOLO empujarla hacia
+            # ARRIBA (nunca hacia abajo, ni pisar un año con anexos reales
+            # que ya haya superado ese número): si ya existe un anexo con
+            # numero >= 160 este año, no se toca nada.
+            try:
+                _anio_actual = datetime.now().year
+                cur.execute(
+                    "SELECT COALESCE(MAX(numero),0) AS mx FROM mant_anexos "
+                    " WHERE YEAR(created_at)=%s", (_anio_actual,))
+                _max_num = (cur.fetchone() or {}).get("mx", 0) or 0
+                if _max_num < 160:
+                    cur.execute(
+                        "INSERT INTO mant_anexo_secuencia (anio, n) VALUES (%s, 159) "
+                        "ON DUPLICATE KEY UPDATE n = GREATEST(n, 159)",
+                        (_anio_actual,))
+            except Exception as e:
+                print(f"[ensure_mant_anexos] bump correlativo 160: {e}", flush=True)
         conn.commit()
     finally:
         conn.close()
@@ -79338,6 +79359,41 @@ def ot2_anexo_firma_submit(token):
                   f"hash_cli={(hash_cliente or '—')[:12]} · ip={ip} · {dispositivo}")
     except Exception:
         pass
+
+    # 📧 2026-08-31 (Daniel, urgente: "que nos avise que ya se firmó el
+    # anexo"): antes de esto, firmar el anexo no notificaba a NADIE -- la
+    # única forma de enterarse era entrar a revisar uno por uno. Se avisa
+    # a quien lo envió (a['enviado_por'], username -- en este proyecto es
+    # el email real, ej. daniel.aguilar@sphs.cl) y si no hay o no parece un
+    # email, cae al buzón de soporte genérico (REGLA #11). Best-effort: un
+    # correo que falla NO debe revertir la firma ya guardada.
+    try:
+        _dest_aviso = (a.get("enviado_por") or a.get("created_by") or "").strip()
+        if "@" not in _dest_aviso:
+            _brand_aviso = _get_brand_cfg()
+            _dest_aviso = _brand_aviso.get("support_email") or "soportetec@sphs.cl"
+        _ot_link_aviso = url_for("mant_ot_ficha", vid=a["ot_id"], _external=True) if a.get("ot_id") else None
+        _cuerpo_aviso = (
+            _mant_email_hero("Anexo firmado",
+                             f"N° {a['numero']}",
+                             f"{a.get('proveedor_nombre') or 'El proveedor'} ya firmó") +
+            _mant_email_field("Proveedor", nombre or a.get("proveedor_nombre") or "—", accent=True) +
+            _mant_email_field("RUT firmante", rut or "—") +
+            _mant_email_field("Fecha", chile_fmt_filter(datetime.now())) +
+            ('<p style="font-size:14px;color:#374151;line-height:1.65;margin:16px 0">'
+             'Ya puedes revisar el anexo firmado y, si corresponde, despachar la '
+             'orden de trabajo asociada.</p>' if a.get("ot_id") else "") +
+            (_mant_email_cta("Ver orden de trabajo", _ot_link_aviso) if _ot_link_aviso else "")
+        )
+        _send_ilus_email(
+            _dest_aviso,
+            _brand_subject(f"Anexo N° {a['numero']} firmado — {a.get('proveedor_nombre') or ''}".strip()),
+            _comm_render_email_document(
+                f"Anexo N° {a['numero']} firmado", _cuerpo_aviso,
+                subtitle=a.get("proveedor_nombre") or ""))
+    except Exception as _e_aviso:
+        print(f"[anexo_firmar] aviso de firma no se pudo enviar: {_e_aviso}", flush=True)
+
     return jsonify({"ok": True, "mensaje": "Anexo firmado correctamente."})
 
 
