@@ -1422,23 +1422,20 @@ window.OT2C = (function(){
      la grilla. El input vive fuera de pintarTipoGrid() a propósito -- si
      se re-pintara junto con la grilla en cada tecla, el campo perdería el
      foco a cada letra. */
+  // 2026-08-31 (Daniel: "el CRUD se puede realizar sin salir del modal...
+  // no necesariamente me tienes que llevar a plantillas"): reemplaza el
+  // link que mandaba a /mantenciones/plantillas en pestaña nueva -- ahora
+  // es una tarjeta MÁS dentro de la misma grilla del Paso 1 que abre un
+  // modal propio, apilado sobre el wizard (sin cerrarlo). Mismo gate que
+  // el botón real de plantillas.html (superadmin O el permiso nombrado
+  // mant_tipo_interno_crear, ver PERMS_KEYS en app.py) -- el backend
+  // vuelve a exigirlo en cada escritura, esto solo decide si se dibuja.
+  var OT2_PUEDE_TIPO_INTERNO = {{ 'true' if permissions and (permissions.superadmin or permissions.mant_tipo_interno_crear) else 'false' }};
+
   function pintarTipo(b){
     var lista0 = tiposParaOrigen();
     b.innerHTML = '<h6 class="t">Tipo de orden de trabajo</h6>'+
       '<p class="d">Define el checklist, si alimenta la ficha del cliente y qué se le exige al cerrar.</p>'+
-      // 2026-08-30 (Daniel, superadmin: "no veo CRUD ahí para el
-      // superadmin"): el CRUD de "Tipos de trabajo interno" existe y
-      // funciona (/mantenciones/plantillas), pero nada en el wizard
-      // apuntaba hacia él -- había que saber que existía. Gate doble
-      // (igual que el botón real en plantillas.html): esto SOLO decide si
-      // se dibuja el link, el backend vuelve a exigir superadmin en cada
-      // escritura. Abre en pestaña nueva (?abrir_tipos_interno=1 lo abre
-      // solo) para no perder el progreso del wizard.
-      '{% if permissions and permissions.superadmin %}'+
-      '<a href="{{ url_for("mant_plantillas_page") }}?abrir_tipos_interno=1" target="_blank" rel="noopener" '+
-      'class="d-inline-flex align-items-center gap-1 mb-2" style="font-size:.78rem;font-weight:800;color:#6b7280;text-decoration:none">'+
-      '<i class="bi bi-gear-fill"></i> Gestionar tipos de trabajo interno (superadmin)</a><br>'+
-      '{% endif %}'+
       (lista0.length > 6
         ? '<div class="input-group mb-3"><span class="input-group-text"><i class="bi bi-search"></i></span>'+
           '<input class="form-control" id="o2mTipoQ" placeholder="Buscar tipo… (ej: instalación, bodega)" '+
@@ -1466,8 +1463,111 @@ window.OT2C = (function(){
       return '<button type="button" class="o2m-op '+(sel?'sel-ok':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
         '<i class="bi '+t.i+' ic"></i><span class="n">'+t.n+'</span><span class="l">'+t.l+'</span></button>';
     }).join('') : '<div class="text-muted small" style="grid-column:1/-1">Sin resultados para "'+esc(S._tipoFiltro)+'".</div>';
+    // 2026-08-31 (Daniel: "un recuadro donde te diga agregar trabajo
+    // interno... refléjalo en la gestión de roles"): tarjeta MÁS al final
+    // de la grilla, mismo estilo `.o2m-op` que las demás -- abre un modal
+    // propio APILADO sobre el wizard (nunca lo cierra), sin llevar a
+    // ninguna otra pantalla. Gate: OT2_PUEDE_TIPO_INTERNO (superadmin O
+    // el permiso mant_tipo_interno_crear).
+    if (OT2_PUEDE_TIPO_INTERNO){
+      g.innerHTML += '<button type="button" class="o2m-op" style="border-style:dashed;color:#6b7280" '+
+        'onclick="OT2C.abrirNuevoTipoInterno()">'+
+        '<i class="bi bi-plus-circle ic"></i><span class="n">Agregar trabajo interno</span>'+
+        '<span class="l">Crea un tipo nuevo sin salir de acá</span></button>';
+    }
   }
   function filtrarTipo(v){ S._tipoFiltro = v; pintarTipoGrid(); }
+
+  /* ── Modal apilado "Agregar trabajo interno" (2026-08-31) ────────────
+     Daniel: "el CRUD se puede realizar sin salir del modal... no
+     necesariamente me tienes que llevar a plantillas... todos estos
+     trabajos se van a realizar con las plantillas de trabajo interno...
+     de momento déjalas manual" -- por eso este modal NO pide plantilla:
+     solo nombre/descripción/ícono. La plantilla se asigna después, a
+     mano, desde /mantenciones/plantillas (mismo endpoint, campo
+     plantilla_id opcional -- no se pierde nada, solo se difiere). */
+  function abrirNuevoTipoInterno(){
+    var old = document.getElementById('o2mNuevoTipoOv');
+    if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = 'o2mNuevoTipoOv';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,10,10,.6);'+
+      'display:flex;align-items:center;justify-content:center;padding:4vw;';
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:14px;width:100%;max-width:440px;'+
+      'box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden">'+
+        '<div style="background:#0a0a0a;padding:14px 18px;display:flex;align-items:center;'+
+        'justify-content:space-between;border-bottom:3px solid var(--ilus-red,#dc2626)">'+
+          '<b style="color:#fff;font-size:1rem"><i class="bi bi-plus-circle me-2" style="color:var(--ilus-red,#dc2626)"></i>'+
+          'Nuevo trabajo interno</b>'+
+          '<button type="button" onclick="document.getElementById(\'o2mNuevoTipoOv\').remove()" '+
+          'style="background:none;border:0;color:#fff;font-size:1.3rem;cursor:pointer;line-height:1">&times;</button>'+
+        '</div>'+
+        '<div style="padding:18px">'+
+          '<label class="fl">Nombre *</label>'+
+          '<input class="form-control mb-3" id="o2mNtNombre" maxlength="120" placeholder="Ej: Inventario de bodega" autofocus>'+
+          '<label class="fl">Descripción (opcional)</label>'+
+          '<input class="form-control mb-3" id="o2mNtDesc" maxlength="255" placeholder="Ej: Conteo físico de stock">'+
+          '<label class="fl">Ícono (opcional)</label>'+
+          '<input class="form-control mb-2" id="o2mNtIcono" maxlength="60" placeholder="bi-gear" value="bi-gear">'+
+          '<small class="text-muted d-block mb-3" style="font-size:.72rem">'+
+          '<i class="bi bi-info-circle me-1"></i>Nombre de un ícono de Bootstrap Icons (ej: bi-box-seam, bi-mortarboard). '+
+          'Sin plantilla de checklist por ahora — se asigna después, a mano, desde Mantenciones → Plantillas.</small>'+
+          '<div id="o2mNtErr" class="text-danger small mb-2" style="display:none"></div>'+
+          '<div class="d-flex gap-2 justify-content-end">'+
+            '<button type="button" class="btn btn-outline-secondary" onclick="document.getElementById(\'o2mNuevoTipoOv\').remove()">Cancelar</button>'+
+            '<button type="button" class="btn btn-danger fw-bold" id="o2mNtGuardar" onclick="OT2C._o2mNtGuardar()">'+
+            '<i class="bi bi-check-lg me-1"></i>Crear</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+    setTimeout(function(){ var i = document.getElementById('o2mNtNombre'); if (i) i.focus(); }, 50);
+  }
+  function _o2mNtGuardar(){
+    var nombre = (document.getElementById('o2mNtNombre').value || '').trim();
+    var err = document.getElementById('o2mNtErr');
+    err.style.display = 'none';
+    if (!nombre){
+      err.textContent = 'Falta el nombre.'; err.style.display = 'block'; return;
+    }
+    var btn = document.getElementById('o2mNtGuardar');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+    fetch('/mantenciones/api/tipos-interno', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        nombre: nombre,
+        descripcion: document.getElementById('o2mNtDesc').value || '',
+        icono: (document.getElementById('o2mNtIcono').value || '').trim() || 'bi-gear',
+      })
+    }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        if (!res.ok || !res.j || !res.j.ok){
+          err.textContent = (res.j && res.j.error) || 'No se pudo crear el tipo.';
+          err.style.display = 'block';
+          btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear';
+          return;
+        }
+        var ov = document.getElementById('o2mNuevoTipoOv'); if (ov) ov.remove();
+        if (window.ilusToast) ilusToast('✓ Tipo "'+nombre+'" creado', {type:'success'});
+        // Forzar recarga de la lista (mismo criterio que cargarPlantillasInterno:
+        // se resetea el flag "ya cargado" para que vuelva a pedirla al server)
+        // y seleccionarlo apenas llegue.
+        _tiposInternoCargados = false; _tiposInternoCargando = false;
+        cargarTiposInterno();
+        var _clave = res.j.clave;
+        setTimeout(function(){
+          if (!_clave) return;
+          var idx = TIPOS.findIndex(function(t){ return t.v === _clave; });
+          if (idx >= 0) setTipo(idx);
+        }, 400);
+      })
+      .catch(function(){
+        err.textContent = 'Error de conexión.'; err.style.display = 'block';
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Crear';
+      });
+  }
 
   function pintarCliente(b){
     b.innerHTML = '<h6 class="t">Cliente</h6>'+
@@ -5719,6 +5819,7 @@ window.OT2C = (function(){
           setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,
+          abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar,
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,

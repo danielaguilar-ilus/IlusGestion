@@ -4435,6 +4435,17 @@ PERMS_KEYS = (
     # clasificacion_default) y en False para el resto hasta que Daniel lo
     # prenda desde /admin/roles.
     "cat_clasificacion",
+    # mant_tipo_interno_crear — permiso para crear/editar tipos de trabajo
+    # interno (Capacitación, Trabajo de bodega, etc. -- mant_tipos_interno)
+    # desde el wizard de OT 2.0, sin ser superadmin (aditivo 2026-08-31,
+    # Daniel: "refléjalo en la gestión de roles para ver a quién se lo voy
+    # a otorgar después"). El endpoint POST/PUT/DELETE de tipos-interno
+    # seguía exigiendo superadmin a secas -- ahora acepta superadmin O este
+    # flag vía OR (mismo patrón que cat_eliminar/tr_eliminar): nace en
+    # False para todos los roles hasta que Daniel lo prenda desde
+    # /admin/roles. El GET (listar) no cambia -- ya lo puede ver cualquiera
+    # con acceso a mantenciones.
+    "mant_tipo_interno_crear",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -4534,6 +4545,9 @@ def _build_perms_from_matrix(role):
     # comentario de "mant_ot_interna" en PERMS_KEYS: el gate real deja pasar
     # igual a los roles de gestión, así que esto solo suma.
     base["mant_ot_interna"] = bool(man.get("ot_interna"))
+    # Crear/editar tipos de trabajo interno (aditivo 2026-08-31). Ver
+    # comentario de "mant_tipo_interno_crear" en PERMS_KEYS.
+    base["mant_tipo_interno_crear"] = bool(man.get("tipo_interno_crear"))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -12427,7 +12441,8 @@ PERMISSIONS_MATRIX = {
     "mantenciones":   {"label":"Mantenciones",   "icon":"bi-wrench-adjustable",
                        "acciones":["ver","crear","editar","eliminar",
                                    "calendario","ots","cotizaciones",
-                                   "ot_interna","cotizaciones_eliminar_item"]},
+                                   "ot_interna","tipo_interno_crear",
+                                   "cotizaciones_eliminar_item"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -12486,6 +12501,8 @@ PERMISSIONS_META = {
         "cotizaciones": {"label": "Cotizaciones",         "tipo": "submodulo", "icon": "bi-currency-dollar"},
         "ot_interna":   {"label": "Crear OT de trabajo interno (bodega)",
                          "tipo": "submodulo", "icon": "bi-box-seam"},
+        "tipo_interno_crear": {"label": "Crear tipos de trabajo interno",
+                         "tipo": "submodulo", "icon": "bi-clipboard2-check"},
         "eliminar":     {"label": "Eliminar OT / cliente","tipo": "bloqueo",   "icon": "bi-trash"},
         "cotizaciones_eliminar_item": {"label": "Quitar producto de una cotización",
                          "tipo": "bloqueo", "icon": "bi-x-circle"},
@@ -81372,6 +81389,20 @@ def _es_superadmin_actual():
     return bool((g.permissions or {}).get("superadmin"))
 
 
+def _puede_crear_tipo_interno():
+    """¿Puede este usuario crear/editar/desactivar tipos de trabajo interno?
+
+    Aditivo 2026-08-31 (Daniel: "refléjalo en la gestión de roles para ver
+    a quién se lo voy a otorgar después"). Antes era superadmin a secas;
+    ahora superadmin sigue pasando SIEMPRE (vía OR), y además cualquier rol
+    con el flag `mant_tipo_interno_crear` prendido desde /admin/roles."""
+    try:
+        perms = getattr(g, "permissions", None) or {}
+        return bool(perms.get("superadmin")) or bool(perms.get("mant_tipo_interno_crear"))
+    except Exception:
+        return False
+
+
 @app.route("/mantenciones/api/tipos-interno", methods=["GET"])
 @_mant_required
 def mant_tipos_interno_listar():
@@ -81404,11 +81435,11 @@ def mant_tipos_interno_crear():
     _slugify_familia_checklist) para que quede estable y sin caracteres
     raros, la pida el usuario o no.
     """
-    if not _es_superadmin_actual():
+    if not _puede_crear_tipo_interno():
         return jsonify({
             "ok": False,
-            "error": "Crear tipos de trabajo interno está restringido al superadministrador.",
-            "error_codigo": "REQUIERE_SUPERADMIN",
+            "error": "No tienes permiso para crear tipos de trabajo interno.",
+            "error_codigo": "REQUIERE_PERMISO",
         }), 403
     d = request.get_json(silent=True) or {}
     nombre = (d.get("nombre") or "").strip()[:120]
@@ -81475,11 +81506,11 @@ def mant_tipos_interno_editar(tid):
     Si en el futuro Daniel pide poder renombrar la clave, debe ser un paso
     explícito y confirmado (rehacer mant_categoria_tipo_map + revisar OT
     existentes), no un campo más de este formulario."""
-    if not _es_superadmin_actual():
+    if not _puede_crear_tipo_interno():
         return jsonify({
             "ok": False,
-            "error": "Editar tipos de trabajo interno está restringido al superadministrador.",
-            "error_codigo": "REQUIERE_SUPERADMIN",
+            "error": "No tienes permiso para editar tipos de trabajo interno.",
+            "error_codigo": "REQUIERE_PERMISO",
         }), 403
     row = mysql_fetchone("SELECT * FROM mant_tipos_interno WHERE id=%s", (tid,))
     if not row:

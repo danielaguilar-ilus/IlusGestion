@@ -222,7 +222,7 @@
        trabajos internos". Gate doble -- este botón solo se DIBUJA si el
        usuario es superadmin (los otros roles ni lo ven), y cada endpoint
        de escritura lo vuelve a exigir en el backend (REQUIERE_SUPERADMIN). #}
-    {% if permissions and permissions.superadmin %}
+    {% if permissions and (permissions.superadmin or permissions.mant_tipo_interno_crear) %}
     <button class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirTiposInterno()">
       <i class="bi bi-clipboard2-check me-1"></i>Tipos de trabajo interno
     </button>
