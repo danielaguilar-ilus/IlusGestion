@@ -397,6 +397,36 @@
 .otd-wk-note{background:#fff8e1;border:1px solid #fcd34d;color:#92400e;border-radius:9px;
   padding:9px 11px;font-size:.78rem;margin-top:4px;white-space:pre-wrap}
 .otd-wk-note.falla{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+
+/* 🆕 2026-08-30 -- check-in/check-out (REGLA #15: lenguaje de Retiros,
+   tarjetas + semáforo) y semáforo de equipo completo, con la misma
+   "palpitancia" que ya usa @keyframes otdPulse en esta pantalla. */
+.otd-checkin-bar{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.otd-checkin-bar .ci{display:flex;align-items:center;gap:10px;background:#fff;
+  border:1px solid var(--line);border-radius:12px;padding:12px 14px;
+  transition:border-color .3s ease,background .3s ease}
+.otd-checkin-bar .ci.ok{border-color:#86efac;background:#f0fdf4}
+.otd-checkin-bar .ci .ic{width:34px;height:34px;border-radius:50%;flex:none;
+  display:grid;place-items:center;background:#f3f4f6;color:#9ca3af;font-size:1rem}
+.otd-checkin-bar .ci.ok .ic{background:#dcfce7;color:#16a34a}
+.otd-checkin-bar .ci .tx{min-width:0}
+.otd-checkin-bar .ci .tx b{display:block;font-size:.68rem;text-transform:uppercase;
+  letter-spacing:.04em;color:#9ca3af;font-weight:800}
+.otd-checkin-bar .ci .tx span{font-size:.86rem;font-weight:700;color:#0a0a0a;
+  overflow-wrap:break-word}
+@media (max-width:520px){.otd-checkin-bar{grid-template-columns:1fr}}
+
+.otd-wk-banner-ok{display:flex;align-items:center;gap:10px;background:#dcfce7;
+  color:#15803d;border:1px solid #86efac;border-radius:10px;margin:0 16px 12px;
+  padding:10px 14px;font-size:.85rem;font-weight:700;animation:otdPulse 2.4s ease-out infinite}
+
+.otd-wk-item{transition:border-color .35s ease,background-color .35s ease,box-shadow .35s ease}
+.otd-wk-item.is-complete{border-color:#86efac;background:#f7fef9;box-shadow:0 0 0 1px #86efac inset}
+.otd-wk-item.is-complete .sel{animation:none}
+.otd-wk-item.is-complete summary .th{box-shadow:0 0 0 2px #86efac}
+#otdWkCard{transition:box-shadow .4s ease,border-color .4s ease}
+#otdWkCard.all-complete{border-color:#86efac;box-shadow:0 0 0 1px #86efac inset}
+@media (prefers-reduced-motion:reduce){.otd-wk-banner-ok{animation:none}}
 .otd-wk-go{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.78rem;
   font-weight:800;color:var(--ilus-red,#dc2626);text-decoration:none}
 .otd-wk-go:hover{text-decoration:underline}
@@ -463,6 +493,9 @@
 .otd-chk-serie-quick{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
 .otd-chk-serie-quick button{min-height:34px;padding:0 10px;border-radius:7px;
   border:1px solid #d1d5db;background:#fff;font-size:.72rem;font-weight:700;color:#374151;cursor:pointer}
+.otd-chk-serie-aviso{display:flex;align-items:flex-start;gap:7px;background:#f3f4f6;
+  border:1px solid #e5e7eb;color:#4b5563;border-radius:8px;padding:7px 10px;
+  font-size:.74rem;margin-bottom:6px}
 .otd-chk-fotobtn{flex:none;display:inline-flex;align-items:center;gap:5px;min-height:38px;
   padding:0 12px;border-radius:9px;border:1.5px dashed #d1d5db;background:#fff;
   font-size:.72rem;font-weight:800;color:#374151;cursor:pointer}
@@ -920,27 +953,31 @@
   </div>
 
   {# ══ PESTAÑAS ══ #}
+  {# 🔓 2026-08-30 (Daniel, pedido explícito): "cuando entro a gestionar la
+     orden de trabajo, quiero que aparezca siempre en trabajo" -- la pestaña
+     activa al cargar pasa de "info" a "trabajo". Información sigue siendo
+     la primera de la barra (no se reordena, solo cambia cuál abre por
+     default) y sigue accesible con un click.
+     🔓🔓 Mismo pedido, textual: "elimina evidencia y elimina documentos.
+     Eso no lo necesito para nada" -- permiso EXPLÍCITO (REGLA #4.2) para
+     borrar del todo esas dos pestañas. La evidencia fotográfica se
+     fusiona dentro de Información, en la card "Videos y documentos" (ver
+     más abajo) -- no se pierde capacidad, solo pestaña dedicada. El Anexo
+     de Servicios (antes "Documentos") deja de tener entrada en esta barra;
+     el motor (modal OT2ANX, botones crear/enviar, flujo ?abrir_anexo=1 del
+     wizard) sigue intacto más abajo en este archivo -- solo sin puerta de
+     entrada manual desde acá. Ver resumen final de la tarea: si gestión
+     necesita crear/reemplazar un anexo fuera del flujo del wizard, hay que
+     decidir con Daniel dónde vuelve a vivir ese botón. #}
   <div class="otd-tabs" id="otdTabs">
-    <button type="button" class="otd-tab on" data-tab="info">
+    <button type="button" class="otd-tab" data-tab="info">
       <i class="bi bi-clipboard2-data"></i> Información</button>
-    <button type="button" class="otd-tab" data-tab="trabajo">
+    <button type="button" class="otd-tab on" data-tab="trabajo">
       <i class="bi bi-wrench-adjustable-circle-fill"></i> Trabajo <span class="cnt">{{ kpis.equipos }}</span></button>
-    <button type="button" class="otd-tab" data-tab="evidencia">
-      <i class="bi bi-camera-fill"></i> Evidencia <span class="cnt">{{ fotos|length }}</span></button>
-    {# 🔓 2026-08-27: antes esta pestaña solo se dibujaba si YA existía un
-       anexo -- la puerta de entrada para CREARLO nunca aparecía en
-       ninguna pantalla (Daniel, esta noche, repetido varias veces).
-       🔓🔓 2026-08-30 (Daniel: "que se vea el anexo en la otra parte" --
-       feedback sobre la pantalla del técnico): la pestaña ahora se
-       dibuja para TODOS los roles, técnico incluido. Lo que sigue
-       exclusivo de gestión son los botones de crear/enviar/reemplazar
-       DENTRO del panel (`not es_tecnico`, sin cambios ahí). #}
-    <button type="button" class="otd-tab" data-tab="documentos">
-      <i class="bi bi-file-earmark-lock2-fill"></i> Documentos{% if anexo %} <span class="cnt">1</span>{% endif %}</button>
   </div>
 
   {# ══ INFORMACIÓN (grilla original) ══ #}
-  <div class="otd-tabpanel on" data-tab="info">
+  <div class="otd-tabpanel" data-tab="info">
   <div class="otd-grid">
 
     {# ── Equipos ── #}
@@ -1171,6 +1208,62 @@
           <i class="bi bi-camera-reels" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
           Todavía no hay videos ni documentos adjuntos a esta OT.
         </div>
+
+        {# 🔓 2026-08-30 (Daniel, pedido explícito, 3er punto del mismo
+           mensaje): "la evidencia se va a guardar como se guarda aquí en
+           video y documento, en información" -- la galería de fotos
+           (antes pestaña Evidencia propia, mant_visita_fotos vía
+           /fotos/subir, tipo_foto=general) se fusiona DENTRO de esta misma
+           card, como segunda sección. Sigue siendo un sistema de archivo
+           distinto al de arriba (mant_visita_adjuntos) -- eso NO se
+           unifica, solo la pantalla -- mismos ids (otdEvGrid/otdEvEmpty/
+           otdEvBtn/otdEvCount) y mismo JS de siempre (otdAbrirSheetFoto/
+           otdSubirFoto), sin tocar el backend. #}
+        <div style="margin:14px 16px 0;padding-top:14px;border-top:1px solid #f1f3f5">
+          <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:.82rem;
+               text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:10px">
+            <i class="bi bi-camera-fill"></i> Fotos
+            <span class="n" id="otdEvCount" style="margin-left:2px">{{ fotos|length }}</span>
+          </div>
+          {# Mismo gate de siempre: /fotos/subir solo lo puede llamar el
+             técnico dueño de la visita o superadmin (@_tecnico_owns_visita). #}
+          {% if puede_ejecutar %}
+          <div class="otd-ev-add">
+            <div class="tx">
+              <b>¿Falta evidencia?</b>
+              <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
+            </div>
+            <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
+              <i class="bi bi-camera-fill"></i> Agregar foto
+            </button>
+            <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
+                   style="display:none" onchange="otdSubirFoto(this)">
+            <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
+                   style="display:none" onchange="otdSubirFoto(this)">
+          </div>
+          {% endif %}
+          <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
+            {% for f in fotos %}
+            <div class="otd-ev-item">
+              {% if f.url %}
+                <img src="{{ f.url }}" alt="" loading="lazy">
+              {% else %}
+                <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
+                  <i class="bi bi-image" style="font-size:1.6rem"></i></div>
+              {% endif %}
+              <div class="meta">
+                <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
+                {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
+                <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
+            <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
+            Todavía no hay fotos subidas a esta OT.
+          </div>
+        </div>
       </div>
 
       {# 🔴 FIX 2026-08-27 (Daniel, reporte urgente de Isabel Milling —
@@ -1346,13 +1439,41 @@
      clásico de respaldo mientras esta pantalla nueva recibe tráfico real
      y Daniel la valida a fondo. #}
   <div class="otd-tabpanel" data-tab="trabajo">
-    <div class="otd-card">
+    {# 🆕 2026-08-30 (Daniel, 4to punto del mismo pedido, interpretado --
+       dicta por voz: "vas a agregar exactamente los documentos
+       considerando claramente cuando entres y cuando salgas para que se
+       sepa"): check-in/check-out del técnico en sitio. El dato YA existe
+       en mant_visitas (hora_real_inicio/hora_real_fin, ver ALTER en
+       app.py ~52960 y su uso real en mant_visita_tarea_iniciar/cerrar,
+       app.py ~69100-69180) -- acá solo se MUESTRA, de solo lectura, no se
+       inventa un sistema de geofence nuevo (eso es lo que ya usa
+       ot_ejecutar.html/el Monitor, sin GPS acá). Si `hora_real_inicio` es
+       null todavía no se ha marcado ninguna tarea como iniciada; si
+       `hora_real_fin` es null la OT no se ha cerrado -- placeholder
+       honesto en vez de inventar un dato. #}
+    <div class="otd-checkin-bar">
+      <div class="ci {{ 'ok' if v.hora_real_inicio }}">
+        <span class="ic"><i class="bi bi-box-arrow-in-right"></i></span>
+        <div class="tx"><b>Hora de llegada</b>
+          <span>{{ v.hora_real_inicio | chile_fmt('%d/%m/%Y %H:%M') if v.hora_real_inicio else 'Sin registrar todavía' }}</span></div>
+      </div>
+      <div class="ci {{ 'ok' if v.hora_real_fin }}">
+        <span class="ic"><i class="bi bi-box-arrow-right"></i></span>
+        <div class="tx"><b>Hora de salida</b>
+          <span>{{ v.hora_real_fin | chile_fmt('%d/%m/%Y %H:%M') if v.hora_real_fin else 'Sin registrar todavía' }}</span></div>
+      </div>
+    </div>
+    <div class="otd-card" id="otdWkCard">
       <h3><i class="bi bi-wrench-adjustable-circle-fill"></i> Equipos — detalle de trabajo
         <span class="n">{{ kpis.equipos }}</span></h3>
+      <div class="otd-wk-banner-ok" id="otdWkBannerOk" style="display:none">
+        <i class="bi bi-check-circle-fill"></i>
+        <span>Todos los equipos tienen sus obligatorias completas — ya puedes firmar y cerrar la OT.</span>
+      </div>
       {% if equipos %}
       <div class="otd-wk-list">
         {% for e in equipos %}
-        <details class="otd-wk-item">
+        <details class="otd-wk-item{{ ' is-complete' if e.n_obl and e.n_obl_ok == e.n_obl }}" data-obl="{{ e.n_obl }}" data-oblok="{{ e.n_obl_ok }}">
           <summary>
             {% if e.foto_url %}
               <img class="th" src="{{ e.foto_url }}" alt="" loading="lazy">
@@ -1453,155 +1574,13 @@
   </div>
   {# ══ /TRABAJO ══ #}
 
-  {# ══ EVIDENCIA ══ #}
-  <div class="otd-tabpanel" data-tab="evidencia">
-    <div class="otd-card">
-      <h3><i class="bi bi-camera-fill"></i> Evidencia fotográfica
-        <span class="n" id="otdEvCount">{{ fotos|length }}</span></h3>
-      {# 🆕 2026-08-27: antes esta pestaña era 100% de solo lectura -- Daniel
-         pidió agregar cómo subir foto (cámara o galería), mismo patrón e
-         idéntico endpoint que ya usa ot_ejecutar.html para fotos generales
-         de la OT (sin tarea_id -- tipo_foto=general).
-         Gate `puede_ejecutar` (revisión de código 27-ago): el endpoint
-         /fotos/subir está protegido por @_tecnico_owns_visita -- SOLO
-         superadmin + el técnico asignado pueden usarlo. Esta pantalla
-         también la abren admin/supervisor/ejecutivo (@_ot_can_view, más
-         permisivo) -- sin este gate el botón se dibujaba para gente que
-         el backend iba a rechazar con 403 al primer click, igual que se
-         cuidó con Reagendar/Reasignar (puede_metadata) más arriba. #}
-      {% if puede_ejecutar %}
-      <div class="otd-ev-add">
-        <div class="tx">
-          <b>¿Falta evidencia?</b>
-          <small>Sube una foto general de la OT — queda asociada de inmediato.</small>
-        </div>
-        <button type="button" class="otd-ev-btn" id="otdEvBtn" onclick="otdAbrirSheetFoto()">
-          <i class="bi bi-camera-fill"></i> Agregar foto
-        </button>
-        <input type="file" id="otdFotoCam" accept="image/*,image/heic,image/heif" capture="environment"
-               style="display:none" onchange="otdSubirFoto(this)">
-        <input type="file" id="otdFotoGal" accept="image/*,image/heic,image/heif"
-               style="display:none" onchange="otdSubirFoto(this)">
-      </div>
-      {% endif %}
-      <div class="otd-ev-grid{{ ' d-none' if not fotos }}" id="otdEvGrid">
-        {% for f in fotos %}
-        <div class="otd-ev-item">
-          {% if f.url %}
-            <img src="{{ f.url }}" alt="" loading="lazy">
-          {% else %}
-            <div style="height:120px;display:grid;place-items:center;color:#c7cbd1">
-              <i class="bi bi-image" style="font-size:1.6rem"></i></div>
-          {% endif %}
-          <div class="meta">
-            <div class="tipo">{{ (f.tipo_foto or 'general') | title }}{% if f.maquina_nombre %} · {{ f.maquina_nombre }}{% endif %}</div>
-            {% if f.descripcion %}<div class="desc">{{ f.descripcion }}</div>{% endif %}
-            <div class="who">{{ f.tomada_por or 'Técnico' }} · {{ f.cuando or '—' }}</div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-      <div class="otd-vacio{{ ' d-none' if fotos }}" id="otdEvEmpty">
-        <i class="bi bi-camera" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-        Todavía no hay fotos subidas a esta OT.
-      </div>
-    </div>
-  </div>
-
-  {# ══ DOCUMENTOS — Anexo de Servicios ══
-     🔓 2026-08-27 (Daniel, esta noche, repetido varias veces): "el motor
-     de firma existe pero no hay ningún botón para crear o enviar un
-     anexo". El backend YA existía desde anoche (ot2_api_anexo_crear /
-     ot2_api_anexo_enviar, commit e007c43) -- lo que faltaba era ESTA
-     pantalla. Resuelve 3 casos: sin anexo todavía (CTA crear), anexo
-     activo (tarjeta ya existente, intacta) y anexo que ya no sirve --
-     rechazado/vencido/anulado -- (se ve el histórico + CTA de reemplazo).
-     El botón de crear/reemplazar abre `_modal_anexo.html` (OT2ANX),
-     incluido al final de este archivo.
-
-     🔓🔓 2026-08-30 (Daniel, feedback fuerte sobre la pantalla del
-     técnico: "que se vea el anexo en la otra parte"): el panel ya NO se
-     salta completo para técnico. Adentro hay DOS variantes:
-       - técnico → solo estado + proveedor + firmado/no firmado. SIN
-         botones de crear/enviar/reemplazar y SIN el link de descarga del
-         PDF: el Word que firma el proveedor SÍ trae precio_items/monto
-         (ver _modal_anexo.html, campo "monto" del formulario) -- sería
-         mostrarle al técnico exactamente la cifra que el resto del
-         proyecto le oculta en la card "Cobro" de la pestaña Información.
-       - gestión → todo el contenido de siempre, intacto. #}
-  <div class="otd-tabpanel" data-tab="documentos">
-    <div class="otd-card">
-      <h3><i class="bi bi-file-earmark-lock2-fill"></i> Anexo de Servicios</h3>
-
-      {% if es_tecnico %}
-        {% if anexo %}
-        <div class="otd-doc-card {{ 'doc-firmado' if anexo.estado == 'firmado' else 'doc-pend' }}">
-          <div class="ic"><i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i></div>
-          <div class="in">
-            <b>Anexo N° {{ anexo.numero }} — {{ anexo.proveedor_nombre }}</b>
-            {% if anexo.estado == 'firmado' %}
-            <small>Firmado por {{ anexo.firmante_nombre or anexo.proveedor_nombre }}{% if anexo.firmado_at %} · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %} — el proveedor ya puede trabajar esta OT</small>
-            {% elif anexo.estado in ('rechazado','vencido','anulado') %}
-            <small>{{ anexo.estado | title }} — este anexo ya no habilita el trabajo, avisa a gestión</small>
-            {% else %}
-            <small>{{ anexo.estado | title }}{% if anexo.enviado_at %} · enviado {{ anexo.enviado_at | chile_fmt('%d/%m/%Y') }}{% endif %} — todavía no está firmado</small>
-            {% endif %}
-          </div>
-        </div>
-        {% else %}
-        <div class="otd-vacio">
-          <i class="bi bi-file-earmark-lock2" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-          Esta OT todavía no tiene Anexo de Servicios. Consulta con gestión.
-        </div>
-        {% endif %}
-      {% else %}
-      {% if anexo %}
-      <div class="otd-doc-card {{ 'doc-firmado' if anexo.estado == 'firmado' else 'doc-pend' }}">
-        <div class="ic"><i class="bi {{ 'bi-check-circle-fill' if anexo.estado == 'firmado' else 'bi-hourglass-split' }}"></i></div>
-        <div class="in">
-          <b>Anexo N° {{ anexo.numero }} — {{ anexo.proveedor_nombre }}</b>
-          {% if anexo.estado == 'firmado' %}
-          <small>Firmado por {{ anexo.firmante_nombre or anexo.proveedor_nombre }}{% if anexo.firmado_at %} · {{ anexo.firmado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}</small>
-          {% elif anexo.estado in ('rechazado','vencido','anulado') %}
-          <small>{{ anexo.estado | title }} — este anexo ya no habilita el trabajo</small>
-          {% else %}
-          <small>{{ anexo.estado | title }}{% if anexo.enviado_at %} · enviado {{ anexo.enviado_at | chile_fmt('%d/%m/%Y') }}{% endif %} — el proveedor todavía no puede trabajar esta OT</small>
-          {% endif %}
-        </div>
-      </div>
-      <div class="otd-ev-add" style="margin-top:0">
-        {% if anexo.estado == 'borrador' %}
-        <div class="tx"><b>Este anexo quedó sin enviar</b>
-          <small>Se creó pero el proveedor todavía no recibió el link de firma.</small></div>
-        <button type="button" class="otd-ev-btn" onclick="OT2ANX.abrirEnviar({{ anexo.id }})">
-          <i class="bi bi-send-fill"></i> Enviar ahora</button>
-        {% elif anexo.estado in ('rechazado','vencido','anulado') %}
-        <div class="tx"><b>¿Necesitas un anexo nuevo?</b>
-          <small>El anterior ya no habilita el trabajo — crea uno de reemplazo.</small></div>
-        <button type="button" class="otd-ev-btn" onclick="OT2ANX.abrir({{ v.id }})">
-          <i class="bi bi-file-earmark-plus-fill"></i> Crear nuevo anexo</button>
-        {% else %}
-        <div class="tx"><b>Documento del anexo</b>
-          <small>Descárgalo en el mismo formato del Word que firman los proveedores.</small></div>
-        <a class="otd-ev-btn" href="{{ url_for('ot2_api_anexo_pdf', aid=anexo.id) }}" target="_blank" rel="noopener">
-          <i class="bi bi-file-earmark-pdf-fill"></i> Descargar PDF</a>
-        {% endif %}
-      </div>
-      {% else %}
-      <div class="otd-ev-add" style="margin-top:0">
-        <div class="tx"><b>Todavía no hay Anexo de Servicios</b>
-          <small>Sin este documento firmado por el proveedor, la OT queda bloqueada para él en cuanto se envíe.</small></div>
-        <button type="button" class="otd-ev-btn" onclick="OT2ANX.abrir({{ v.id }})">
-          <i class="bi bi-file-earmark-plus-fill"></i> Crear Anexo</button>
-      </div>
-      <div class="otd-vacio">
-        <i class="bi bi-file-earmark-lock2" style="font-size:1.6rem;display:block;margin-bottom:6px"></i>
-        Crea el anexo con el proveedor externo antes de que empiece a trabajar esta OT.
-      </div>
-      {% endif %}
-      {% endif %}
-    </div>
-  </div>
+  {# ══ EVIDENCIA y DOCUMENTOS eliminadas (Daniel, 2026-08-30, pedido
+     explícito -- REGLA #4.2): la evidencia fotográfica se fusionó en la
+     card "Videos y documentos" de la pestaña Información (ver arriba). El
+     panel del Anexo de Servicios (antes pestaña Documentos) se retira de
+     esta barra; el motor sigue vivo (modal `_modal_anexo.html`/OT2ANX,
+     flujo ?abrir_anexo=1 del wizard, más abajo en este archivo) por si
+     Daniel pide reubicar la puerta de entrada más adelante. #}
 </div>
 
 {% if not es_tecnico %}
@@ -2063,7 +2042,8 @@ const _CAT_ADMIN_LABEL = {instalacion:'Instalación', mantencion:'Mantención', 
 // técnico" no vuelva a ofrecer a alguien que ya figura en el equipo.
 const OT_COLABORADORES_UIDS = {{ (tecnicos_colaboradores | map(attribute='tecnico_user_id') | list) | tojson }};
 
-/* Pestañas Información / Trabajo / Evidencia / Documentos (2026-08-27). */
+/* Pestañas Información / Trabajo (2026-08-27; Evidencia y Documentos
+   eliminadas 2026-08-30 -- ver comentario junto a #otdTabs). */
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.getElementById('otdTabs');
   if (!tabs) return;
@@ -2668,13 +2648,12 @@ async function otdSubirFoto(input){
         grid.prepend(div);
       }
     }
-    // Contadores -- pestaña Evidencia y encabezado de la card.
+    // Contador -- ahora vive dentro de la card "Videos y documentos" en
+    // Información (sin pestaña Evidencia propia desde 2026-08-30).
     ['otdEvCount'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.textContent = String((parseInt(el.textContent, 10) || 0) + 1);
     });
-    const tabCnt = document.querySelector('.otd-tab[data-tab="evidencia"] .cnt');
-    if (tabCnt) tabCnt.textContent = String((parseInt(tabCnt.textContent, 10) || 0) + 1);
   } catch(e){
     if (toastSub && toastSub.close) toastSub.close();
     ilusToast('Error de red al subir la foto.', {type:'error'});
@@ -2694,6 +2673,14 @@ async function otdSubirFoto(input){
    que abre por defecto).
    ══════════════════════════════════════════════════════════════════════ */
 const OTD_VID = {{ v.id }};
+
+// 🆕 2026-08-30 (Daniel: "estoy viendo un número de serie que no me está
+// dando el formato... trae eso de allá" -- comparando con ot_ejecutar.html).
+// `equipos` YA trae serie/serie_sugerida/serie_lleva_individual/
+// serie_no_aplica_motivo desde ot2_detalle() (app.py ~82712-82735, mismo
+// cálculo en bloque que usa la Ficha Técnica) -- se manda tal cual acá en
+// vez de duplicar la consulta o tocar el endpoint /checklist.
+const OTD_EQUIPOS_SERIE = {{ equipos_serie_map | tojson }};
 
 const OTD_ADJ_ICONS = {
   video: 'bi-camera-reels-fill', pdf: 'bi-file-earmark-pdf-fill',
@@ -2865,6 +2852,41 @@ function otdRenderChecklistEquipo(mid){
     const serieTxt = (elSum.textContent.match(/^S\/N [^·]+·\s*/) || [''])[0];
     elSum.textContent = serieTxt + `${oblOk}/${oblTot} obligatorias`;
   }
+  // 🆕 2026-08-30 (Daniel: "el borde del objeto en verde cuando se
+  // seleccionen todos los necesarios... al tercero se me ponen todos en
+  // verde y la tarjeta también en verde"): semáforo animado por equipo +
+  // banner de OT completa. Usa data-obl/data-oblok (ya en el <details>,
+  // valores de carga inicial) como fallback si un equipo no tiene tareas
+  // en el checklist inline (ej. solo tipo 'gps', no soportado acá) para
+  // no marcarlo "completo" por descuido con 0/0.
+  const item = mount.closest('.otd-wk-item');
+  if (item){
+    const completo = oblTot > 0 && oblOk >= oblTot;
+    item.classList.toggle('is-complete', completo);
+    item.dataset.oblok = String(oblOk);
+    item.dataset.obl = String(oblTot);
+  }
+  otdWkCheckAllComplete();
+}
+
+/* Banner "toda la OT lista para firmar" a nivel de card contenedora --
+   SOLO lectura de estado, no duplica el conteo real de obligatorias que
+   ya vive en `kpis.obl`/`kpis.obl_ok` (card "Firmar y cerrar OT", ver
+   `_obl_falta` en el bloque de arriba) -- se apoya en los MISMOS
+   data-obl/data-oblok que ya trae cada tarjeta desde el primer render. */
+function otdWkCheckAllComplete(){
+  const items = document.querySelectorAll('.otd-wk-item');
+  if (!items.length) return;
+  let todasOk = true;
+  items.forEach(it => {
+    const obl = parseInt(it.dataset.obl || '0', 10);
+    const oblOk = parseInt(it.dataset.oblok || '0', 10);
+    if (!(obl > 0 && oblOk >= obl)) todasOk = false;
+  });
+  const banner = document.getElementById('otdWkBannerOk');
+  const card = document.getElementById('otdWkCard');
+  if (banner) banner.style.display = todasOk ? 'flex' : 'none';
+  if (card) card.classList.toggle('all-complete', todasOk);
 }
 
 function otdChkEstaBloqueada(t){
@@ -2955,15 +2977,36 @@ function otdChkTareaHtml(t){
         onclick="otdChkGuardarInput(${t.id})">Guardar</button>
     </div>`;
   } else if (tipo === 'serie'){
-    const v = (t.valor_json && t.valor_json.serie) || '';
+    // 🆕 2026-08-30 (Daniel: "trae eso de allá [ot_ejecutar.html]") --
+    // misma experiencia de la pantalla clásica (static/mantenciones_ot_
+    // ejecutar.js, case 'serie'): prellenar con la serie YA conocida del
+    // equipo, ofrecer la sugerida ILUS cuando está vacío, y avisar si el
+    // equipo no necesita serie propia. `t.maquina_id` liga con
+    // OTD_EQUIPOS_SERIE (armado en Python, mismo cálculo que allá).
+    const eqS = OTD_EQUIPOS_SERIE[String(t.maquina_id)] || {};
+    const srLleva  = (eqS.serie_lleva_individual !== false);
+    const srMotivo = String(eqS.serie_no_aplica_motivo || '');
+    const srSug    = String(eqS.serie_sugerida || '');
     const na = !!(t.valor_json && t.valor_json.na);
-    body = `<div class="otd-chk-row">
-      <input type="text" class="otd-chk-input" id="otdChkVal-${t.id}" value="${na ? '' : (v+'').replace(/"/g,'&quot;')}"
+    const vRaw = (t.valor_json && t.valor_json.serie) || '';
+    const curVal = (!na && vRaw) ? String(vRaw) : (na ? '' : String(eqS.serie || '').trim());
+    let srBanner = '';
+    if (!srLleva && srMotivo && !na){
+      srBanner = `<div class="otd-chk-serie-aviso">
+        <i class="bi bi-info-circle-fill"></i>
+        <span>Este equipo no necesita N° de serie propio: ${srMotivo.replace(/</g,'&lt;')}</span>
+      </div>`;
+    }
+    body = `${srBanner}<div class="otd-chk-row">
+      <input type="text" class="otd-chk-input" id="otdChkVal-${t.id}" value="${(curVal+'').replace(/"/g,'&quot;')}"
         placeholder="N° de serie" ${bloqueada||na?'disabled':''}>
       <button type="button" class="otd-chk-save" ${bloqueada?'disabled':''}
         onclick="otdChkGuardarInput(${t.id})">Guardar</button>
     </div>
     <div class="otd-chk-serie-quick">
+      ${(srSug && !na) ? `<button type="button" ${bloqueada?'disabled':''}
+        onclick="otdChkUsarSerieSugerida(${t.id}, '${srSug.replace(/'/g,"\\'")}')">
+        <i class="bi bi-lightbulb-fill"></i> Usar sugerida (${srSug})</button>` : ''}
       <button type="button" ${bloqueada?'disabled':''} onclick="otdChkGuardar(${t.id}, 'na')">
         <i class="bi bi-slash-circle"></i> No aplica</button>
     </div>`;
@@ -3051,6 +3094,15 @@ async function otdChkGuardarInput(tid){
   await otdChkGuardar(tid, inp.value);
 }
 
+// 🆕 2026-08-30 -- "Usar sugerida" del checklist tipo 'serie' (ver
+// otdChkTareaHtml). Rellena el input y guarda de una, igual que
+// _usarSerieSugerida() en mantenciones_ot_ejecutar.js.
+async function otdChkUsarSerieSugerida(tid, sugerida){
+  const inp = document.getElementById(`otdChkVal-${tid}`);
+  if (inp) inp.value = sugerida;
+  await otdChkGuardar(tid, sugerida);
+}
+
 async function otdChkGuardar(tid, valorCrudo){
   const found = otdChkFindTarea(tid);
   if (!found) return;
@@ -3133,8 +3185,15 @@ async function otdChkSubirFoto(input, tid){
 
 /* Dispara la carga la primera vez que se abre la pestaña Trabajo -- no
    antes, para no pagar esta consulta en cada apertura de la OT cuando
-   gestión solo mira Información. */
+   gestión solo mira Información.
+   🔓 2026-08-30 (Daniel: "quiero que aparezca siempre en trabajo"): Trabajo
+   ahora ABRE por default -- sin un click sobre su botón, el listener de
+   abajo nunca disparaba y el checklist se quedaba en el skeleton corto
+   hasta que alguien clickeaba la pestaña (que ya estaba "on"). Se carga
+   también al entrar a la página. */
 document.addEventListener('DOMContentLoaded', () => {
+  otdWkCheckAllComplete();   // estado inicial con los datos con que cargó la página
+  otdCargarChecklistSiHaceFalta();
   const tabs = document.getElementById('otdTabs');
   if (!tabs) return;
   tabs.addEventListener('click', (ev) => {
