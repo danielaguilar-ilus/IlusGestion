@@ -677,6 +677,12 @@
        permissions.mantenciones, así que basta con quitar el gate propio
        de superadmin. /ot/diagnostico SIGUE siendo solo superadmin: es
        auditoría interna, no una pantalla de trabajo. #}
+    {# 🔴 2026-08-31 (Daniel, urgente: "bloquéale la OT 2.0 de la vista de
+       los técnicos"): el link deja de dibujarse para técnicos -- las
+       rutas ot2_panel/ot2_detalle ya los redirigen igual si llegan por
+       otro camino (favorito guardado, link viejo), esto solo evita
+       ofrecer una puerta que igual va a rebotar. #}
+    {% if not es_tecnico %}
     <a href="{{ url_for('ot2_panel') }}"
        class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico'] %} active{% endif %}"
        style="display:flex;align-items:center;gap:8px">
@@ -685,6 +691,7 @@
                    background:var(--ilus-red,#dc2626);color:#fff;border-radius:999px;
                    padding:1px 7px;line-height:1.5">BETA</span>
     </a>
+    {% endif %}
     {# ── Taller (2026-07-29, Daniel: "Servicio Técnico está muy largo, se
        tiene que contraer") — agrupa lo de apoyo al taller (plantillas de
        checklist, proveedores/repuestos, técnicos) detrás de un segundo

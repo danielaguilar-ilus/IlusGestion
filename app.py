@@ -74832,7 +74832,15 @@ def ot2_panel():
     tecnico_nombre es el snapshot que se guarda directo al asignar (más
     confiable que tecnico_id, que la auditoría del 18-08 encontró "zombie":
     8 lecturas, 0 escrituras — casi siempre vacío).
+
+    🔴 2026-08-31 (Daniel, urgente: "bloquéale la OT 2.0 de la vista de
+    los técnicos"): el técnico ya no ve este panel -- se redirige a su
+    calendario de siempre (mant_calendario), donde ya ve sus OT
+    asignadas por el camino legacy. Ver mismo bloqueo en ot2_detalle.
     """
+    if _es_rol_tecnico():
+        return redirect(url_for("mant_calendario"))
+
     import datetime as _dt
     import calendar as _calmod
 
@@ -75744,7 +75752,21 @@ def ot2_detalle(vid):
     Sin scroll salvo que haya muchas máquinas (Daniel: *"para no darles
     scroll, a menos que hayan más máquinas"*) — por eso la grilla de
     equipos es lo único que crece, y lo hace dentro de su propia caja.
+
+    🔴 2026-08-31 (Daniel, urgente, tras el falso bloqueo de firma en
+    OT-2026-00125: "bloquéale la OT 2.0 de la vista de los técnicos"):
+    los técnicos dejan de ver esta pantalla -- se redirigen a la pantalla
+    de ejecución LEGACY de la misma OT (mant_ot_ejecutar), no a un error
+    ni a una pantalla en blanco. Es un bloqueo de PANTALLA, no de datos:
+    los endpoints de API que ya usa el checklist inline de OT 2.0 (fotos,
+    respuesta de tarea, GPS, asistencia, etc.) NO se tocan -- solo dejan
+    de ser alcanzables porque el técnico ya no llega a esta página para
+    dispararlos. `_ot_can_view` sigue decidiendo si puede ver la OT en
+    absoluto (asignación); esto decide CUÁL de las dos pantallas ve.
     """
+    if _es_rol_tecnico():
+        return redirect(url_for("mant_ot_ejecutar", vid=vid))
+
     v = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cliente_rut, "
         "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
