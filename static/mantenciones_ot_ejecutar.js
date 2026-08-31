@@ -8176,9 +8176,30 @@ async function guardarCentroCostoModal(){
     return;
   }
   try {
-    const r = await fetch(`/mantenciones/api/visitas/${VID}`, {
-      method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ centro_costo: valor }),
+    // 🔧 FIX 2026-08-31 (OT-96): este modal aparece justo cuando la OT ya
+    // está sellada (pendiente_aprobacion) -- a esa altura PUT /visitas/<vid>
+    // (metadata) está bloqueado para todos salvo superadmin. El endpoint
+    // correcto es /ot/api/finanzas/<vid> (gate `cobertura`, sigue abierto
+    // hasta el cierre real), pero ese POST reemplaza TODO el bloque
+    // financiero de una vez -- hay que traer primero lo que ya existe
+    // (GET) y reenviarlo completo, para no borrar factura/garantía/ZZ ya
+    // declarados con tal de guardar solo el centro de costo.
+    const rGet = await fetch(`/ot/api/finanzas/${VID}`);
+    const dGet = await rGet.json().catch(() => ({}));
+    const fin = (dGet && dGet.finanzas) || {};
+    const esGarantia = (fin.modalidad_cobro || '') === 'garantia';
+    const r = await fetch(`/ot/api/finanzas/${VID}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        centro_costo: valor,
+        garantia_aplica: esGarantia,
+        garantia_motivo: fin.garantia_motivo || '',
+        factura_tido: fin.factura_tido || '',
+        factura_nudo: fin.factura_nudo || '',
+        costo: fin.costo,
+        zz_codigo: fin.zz_codigo || '',
+        zz_monto: fin.zz_monto,
+      }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo guardar el centro de costo');

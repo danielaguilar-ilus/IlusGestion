@@ -2883,11 +2883,19 @@
            Ya existía un selector de centro de costo en la card "Finanzas"
            de esta misma pantalla (guardarFinanzasOT(), más abajo) -- pero
            NO estaba visible desde este modal de firma, que es justo donde
-           Daniel se da cuenta de que falta. Mismo PUT que usa esa card
-           (/mantenciones/api/visitas/<vid>, campo centro_costo), gateado
-           igual (@_ot_can_metadata) -- solo se guarda ESTE campo, sin
-           tocar el resto de los datos financieros. #}
-        {% if puede_metadata and not visita.centro_costo %}
+           Daniel se da cuenta de que falta.
+
+           🔧 FIX 2026-08-31 (OT-96, Aarón trabado firmando el cierre):
+           esta condición usaba `puede_metadata`, que se SELLA apenas la OT
+           llega a pendiente_aprobacion (ot_sellada) -- exactamente el
+           estado en el que este candado empieza a exigir el centro de
+           costo. Resultado real: el aviso "falta declarar centro de
+           costo" salía, pero el único control para arreglarlo ya se había
+           escondido solo, dejando la OT trabada sin salida salvo
+           superadmin. `puede_cobertura` es el gate correcto -- ver
+           /ot/api/finanzas/<vid> (_ot_can_cobertura), que a propósito deja
+           esta ventana abierta hasta el cierre real. #}
+        {% if puede_cobertura and not visita.centro_costo %}
         <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
           <div class="fw-bold small mb-2" style="color:#92400e">
             <i class="bi bi-tag-fill me-1"></i>Falta el centro de costo
