@@ -504,6 +504,19 @@
 .otd-chk-fotos img{width:52px;height:52px;object-fit:cover;border-radius:8px;
   border:1px solid var(--line)}
 .otd-chk-fallback{font-size:.72rem;color:#6b7280;font-style:italic}
+.otd-chk-gpsbtn{width:100%;min-height:52px;border-radius:10px;border:none;
+  background:var(--ilus-red,#dc2626);color:#fff;font-size:.86rem;font-weight:800;
+  display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.otd-chk-gpsbtn:disabled{opacity:.7;cursor:wait}
+.otd-chk-gpsbtn.is-ok{background:#16a34a}
+.otd-chk-gps-hint{display:flex;align-items:center;gap:6px;background:#fef3c7;
+  border:1px dashed #f59e0b;color:#92400e;border-radius:8px;padding:6px 9px;
+  font-size:.68rem;margin-top:8px}
+.otd-chk-gps-result{display:flex;flex-direction:column;gap:2px;border-radius:8px;
+  padding:8px 10px;font-size:.76rem;font-weight:700;margin-top:8px}
+.otd-chk-gps-result.ok{background:#dcfce7;color:#15803d}
+.otd-chk-gps-result.baja{background:#fff8e1;color:#92400e}
+.otd-chk-gps-result small{font-weight:600;opacity:.85;font-size:.68rem}
 
 /* Videos y documentos (adjuntos) — 2026-08-30 */
 .otd-adj-list{display:flex;flex-direction:column;gap:8px;padding:0 16px 14px}
@@ -1553,13 +1566,14 @@
               <div class="otd-chk-skel"><i></i><i></i></div>
             </div>
 
-            {# 🔴 2026-08-31 (Daniel, pedido explícito, viendo el botón en
-               vivo: "no me gusta que vayamos al modelo clásico... esta
-               debe ser independiente de las demás" -- REGLA #4.2
-               satisfecha): se quita el link "Abrir en modo clásico" de
-               esta pantalla. El caso que todavía cubría (tipo_respuesta=
-               'gps') sigue pendiente de construir nativo acá -- ver
-               aviso propio más abajo en vez de mandar afuera. #}
+            {# 2026-08-31 (Daniel, pedido explícito: "no me gusta que vayamos
+               al modelo clásico... esta debe ser independiente de las
+               demás" -- REGLA #4.2 satisfecha) -- este link "Abrir en modo
+               clásico" existía como red de respaldo SOLO porque el
+               checklist inline no cubría tipo_respuesta='gps'. Ahora que el
+               GPS nativo vive acá mismo (ver otdCapturarGps más abajo), esta
+               pantalla ya no necesita salida hacia mantenciones_ot_ejecutar.
+               No reponer. #}
           </div>
         </details>
         {% endfor %}
@@ -2794,10 +2808,14 @@ document.addEventListener('DOMContentLoaded', otdCargarAdjuntos);
    real, editable acá mismo. Las escrituras van a los MISMOS endpoints
    que ya usa mantenciones_ot_ejecutar.js -- CERO reglas nuevas.
    Soporta tipo_respuesta: check, sino, verificacion, numero, texto,
-   lista, serie, fecha_hora. 'gps' no se replica acá todavía (necesita
-   geolocalización con la misma política de auditoría que ya vive en el
-   backend) -- esas tareas muestran un aviso con link a "Abrir en modo
-   clásico" en vez de fallar en silencio.
+   lista, serie, fecha_hora, asistencia, gps. 'gps' (2026-08-31) usa el
+   MISMO motor nativo de 3 estrategias en cascada que ya vivía en
+   static/mantenciones_ot_ejecutar.js (_gpsCascade/_gpsGetPosition/
+   _gpsWatch/capturarGPS), trasplantado acá como otdGpsCascade/
+   otdGpsGetPosition/otdGpsWatch/otdCapturarGps -- ver ese bloque más
+   abajo para los workarounds de iOS Safari que NO hay que perder.
+   Tipos verdaderamente exóticos (ninguno conocido hoy) caen en un
+   aviso simple, sin salida hacia pantallas fuera de OT 2.0.
    ══════════════════════════════════════════════════════════════════════ */
 const OTD_IS_SUPERADMIN = {{ 'true' if is_superadmin else 'false' }};
 const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
@@ -2927,6 +2945,221 @@ function otdChkFotoBtnHtml(t){
                  style="display:none" onchange="otdChkSubirFoto(this, ${t.id})">`;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   GPS nativo -- trasplantado de static/mantenciones_ot_ejecutar.js
+   (_gpsCascade/_gpsGetPosition/_gpsWatch/capturarGPS), 2026-08-31.
+   Motor de 3 estrategias en cascada peleado contra bugs reales de iOS
+   Safari 17/18 -- NO simplificar quitando ninguna etapa ni el timeout
+   EXTERNO (iOS no siempre respeta el timeout interno de la API):
+     A) getCurrentPosition alta precisión (10s) -- dispara el prompt
+     B) getCurrentPosition baja precisión (6s) -- workaround cuelgue iOS
+     C) watchPosition (8s) -- fallback bug de idle en iOS
+   ⚠️ CRÍTICO: ningún await puede ejecutarse ANTES de la primera llamada
+   a getCurrentPosition. En iOS Safari, un await previo rompe el gesto
+   de usuario del click y el navegador nunca muestra el prompt de
+   permiso (ver cómo otdCapturarGps llama a otdGpsCascade directo, sin
+   nada async por delante).
+   Política de auditoría (igual que backend, mant_visita_tarea_respuesta
+   caso 'gps'): solo se acepta GPS real -- 'gps_high'|'gps_low'|'watch'.
+   Nunca 'ip' ni 'manual'. La precisión (accuracy) nunca bloquea el
+   guardado, solo se muestra como dato.
+   ══════════════════════════════════════════════════════════════════════ */
+function otdGpsGetPosition(highAccuracy, timeoutMs){
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    const externalTimer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      reject({ code: 3, message: 'External timeout (iOS hang protection)' });
+    }, timeoutMs + 1500); // +1.5s de margen sobre el timeout interno
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { if (resolved) return; resolved = true; clearTimeout(externalTimer); resolve(pos); },
+      (err) => { if (resolved) return; resolved = true; clearTimeout(externalTimer); reject(err); },
+      { enableHighAccuracy: !!highAccuracy, timeout: timeoutMs, maximumAge: 30000 }
+    );
+  });
+}
+
+function otdGpsWatch(timeoutMs){
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation.watchPosition){
+      return reject({ code: 2, message: 'watchPosition no soportado' });
+    }
+    let resolved = false, wid = null;
+    const t = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      if (wid !== null) try { navigator.geolocation.clearWatch(wid); } catch(e){}
+      reject({ code: 3, message: 'watchPosition timeout' });
+    }, timeoutMs);
+    try {
+      wid = navigator.geolocation.watchPosition(
+        (pos) => { if (resolved) return; resolved = true; clearTimeout(t); try{ navigator.geolocation.clearWatch(wid); }catch(e){} resolve(pos); },
+        (err) => { if (resolved) return; resolved = true; clearTimeout(t); try{ navigator.geolocation.clearWatch(wid); }catch(e){} reject(err); },
+        { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 60000 }
+      );
+    } catch(e){
+      clearTimeout(t);
+      reject({ code: 2, message: e.message || 'watch threw' });
+    }
+  });
+}
+
+async function otdGpsCascade(onStage){
+  const _st = (s) => { if (onStage) try { onStage(s); } catch(_){} };
+  if (!navigator.geolocation){
+    const err = new Error('Geolocalización no soportada'); err.code = 2; throw err;
+  }
+  // ⚠️ Sin permissions.query acá -- ese await rompía el gesto en iOS.
+
+  _st({ etapa: 'alta', segs: 11 });
+  try {
+    const pos = await otdGpsGetPosition(true, 10000);
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null, method: 'gps_high' };
+  } catch(e){ if (e.code === 1) throw e; }
+
+  _st({ etapa: 'baja', segs: 8 });
+  try {
+    const pos = await otdGpsGetPosition(false, 6000);
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null, method: 'gps_low' };
+  } catch(e){ if (e.code === 1) throw e; }
+
+  _st({ etapa: 'watch', segs: 8 });
+  try {
+    const pos = await otdGpsWatch(8000);
+    return { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null, method: 'watch' };
+  } catch(e){ if (e.code === 1) throw e; }
+
+  const err = new Error('Todas las estrategias GPS nativas fallaron'); err.code = 99; throw err;
+}
+
+function otdGpsResultadoHtml(t){
+  const v = t.valor_json || {};
+  const lat = Number(v.lat), lng = Number(v.lng);
+  if (!isFinite(lat) || !isFinite(lng)) return '';
+  const acc = (v.accuracy != null && isFinite(v.accuracy)) ? Number(v.accuracy) : null;
+  const baja = !!(acc && acc > 500);
+  const accTxt = acc != null ? ` — precisión ±${Math.round(acc)}m` : '';
+  return `<div class="otd-chk-gps-result ${baja ? 'baja' : 'ok'}">
+    <span><i class="bi bi-${baja ? 'exclamation-triangle-fill' : 'check-circle-fill'}"></i>
+      Ubicación capturada${accTxt}</span>
+    <small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small>
+  </div>`;
+}
+
+// Ayuda simplificada para permiso denegado -- versión trasplantada y
+// recortada de mostrarAyudaGPS() en mantenciones_ot_ejecutar.js: se
+// dejaron fuera las 2 pestañas "Verificar"/"Otras opciones" y los
+// botones de fallback manual/IP, porque esos DEPENDEN de
+// capturarGPSManual/_gpsDismissHelpAnd (deprecados por política desde
+// 2026-05-17: "solo GPS real, nunca IP ni manual") y de globals que no
+// existen en esta pantalla (PLANTILLAS_POR_MAQUINA, renderTareas). El
+// contenido de los pasos para iOS/Android sí es el mismo texto real.
+async function otdGpsAyuda(){
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const sub = isIOS
+    ? 'Ajustes → Privacidad y Seguridad → Servicios de Ubicación: actívalo. ' +
+      'Luego Ajustes → Safari (o tu navegador) → Ubicación → elige "Preguntar" o "Permitir". ' +
+      'Vuelve acá y toca "Capturar mi ubicación" otra vez.'
+    : 'Ajustes del teléfono → Apps → tu navegador → Permisos → Ubicación: actívala. ' +
+      'Verifica también que la Ubicación esté encendida a nivel del teléfono. ' +
+      'Vuelve acá y toca "Capturar mi ubicación" otra vez.';
+  await ilusAlert({
+    title: '🔒 Activar GPS en tu teléfono',
+    message: 'Para auditar tu posición necesitamos que actives el GPS.',
+    sub,
+    type: 'warning',
+  });
+}
+
+async function otdCapturarGps(tid){
+  if (window.__otdGpsBusy){
+    ilusToast('Ya estoy buscando señal, dame unos segundos…', {type:'info'});
+    return;
+  }
+  window.__otdGpsBusy = true;
+  const btnId = `otdGpsBtn-${tid}`;
+  const setBtn = (html, off) => {
+    const b = document.getElementById(btnId);   // re-lookup: el DOM se re-renderiza
+    if (!b) return;
+    b.disabled = !!off;
+    b.innerHTML = html;
+  };
+  let restan = 11;
+  setBtn(`<i class="bi bi-arrow-repeat"></i> Buscando señal… ${restan}s`, true);
+  const tick = setInterval(() => {
+    restan = Math.max(0, restan - 1);
+    setBtn(`<i class="bi bi-arrow-repeat"></i> Buscando señal… ${restan}s`, true);
+  }, 1000);
+  const onStage = (s) => {
+    restan = s.segs;
+    if (s.etapa === 'baja')  ilusToast('Reintentando con precisión estándar…', {type:'info', duration:1500});
+    if (s.etapa === 'watch') ilusToast('Último intento (modo continuo)…',      {type:'info', duration:1500});
+  };
+  try {
+    // Mismo macrotask del click: otdGpsCascade dispara getCurrentPosition
+    // sincrónicamente dentro de otdGpsGetPosition, sin ningún await por
+    // delante que rompa el gesto de usuario en iOS.
+    const r = await otdGpsCascade(onStage);
+    clearInterval(tick);
+    const found = otdChkFindTarea(tid);
+    if (!found){
+      ilusToast('La tarea ya no existe en este checklist — recarga la página.', {type:'warning'});
+      return;
+    }
+    const acc = r.accuracy;
+    const baja = !!(acc && acc > 500);
+    await otdChkGuardar(tid, { lat: r.lat, lng: r.lng, accuracy: acc, source: r.method });
+    if (baja){
+      ilusToast(`📍 Ubicación guardada con precisión baja (±${Math.round(acc)}m). Si puedes, sal un momento y vuelve a capturar para afinarla.`, {type:'warning', duration:6000});
+    } else {
+      ilusToast(`📍 GPS guardado (±${Math.round(acc||0)}m)`, {type:'success', duration:3500});
+    }
+  } catch(err){
+    clearInterval(tick);
+    setBtn('<i class="bi bi-geo-alt-fill"></i> Capturar mi ubicación', false);
+    if (err && err.code === 1){
+      // PERMISSION_DENIED
+      const ver = await ilusConfirm({
+        title: '🔒 GPS bloqueado',
+        message: 'Para auditar tu posición necesitamos que actives el GPS en Ajustes.',
+        sub: 'Toca "Ver cómo activar" para el paso a paso. Una vez activado, vuelve y toca "Capturar mi ubicación" otra vez.',
+        type: 'warning', okLabel: 'Ver cómo activar', cancelLabel: 'Después',
+      });
+      if (ver) await otdGpsAyuda();
+    } else if (err && err.code === 2){
+      await ilusAlert({
+        title: 'GPS no disponible',
+        message: 'Tu teléfono no puede obtener señal GPS ahora.',
+        sub: 'Verifica que la Ubicación esté activa y sal a un lugar con vista al cielo.',
+        type: 'error',
+      });
+    } else if (err && err.code === 3){
+      await ilusAlert({
+        title: 'GPS tardó demasiado',
+        message: 'No respondió a tiempo. Prueba otra vez en un lugar con vista al cielo.',
+        type: 'warning',
+      });
+    } else if (err && err.code === 99){
+      await ilusAlert({
+        title: 'No encontramos señal GPS',
+        message: 'Probamos tres formas distintas y ninguna respondió.',
+        sub: 'Sal a una zona con vista al cielo (puerta del gimnasio, patio) y toca "Capturar" otra vez.',
+        type: 'warning',
+      });
+    } else {
+      await ilusAlert({
+        title: 'Error GPS',
+        message: (err && err.message) || 'Error desconocido al obtener ubicación.',
+        type: 'error',
+      });
+    }
+  } finally {
+    clearInterval(tick);
+    window.__otdGpsBusy = false;
+  }
+}
+
 function otdChkTareaHtml(t){
   const tipo = (t.tipo_respuesta || 'check').toLowerCase();
   const bloqueada = otdChkEstaBloqueada(t);
@@ -3026,11 +3259,23 @@ function otdChkTareaHtml(t){
         <i class="bi bi-slash-circle"></i> No aplica</button>
     </div>`;
   } else if (tipo === 'gps'){
-    body = `<div class="otd-chk-fallback">Esta tarea necesita ubicación GPS — respóndela en
-      <a href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}" style="color:var(--ilus-red,#dc2626);font-weight:700">modo clásico</a>.</div>`;
+    // 🆕 2026-08-31 -- GPS nativo trasplantado de mantenciones_ot_ejecutar.js
+    // (ver otdCapturarGps/otdGpsCascade más abajo). Sin link a modo clásico:
+    // esta pantalla ya cubre el tipo completo.
+    const yaCapturado = !!(t.valor_json && t.valor_json.lat != null && t.valor_json.lng != null);
+    body = `<div class="otd-chk-row" style="flex-direction:column;align-items:stretch">
+      <button type="button" class="otd-chk-gpsbtn${yaCapturado ? ' is-ok' : ''}" id="otdGpsBtn-${t.id}"
+        ${bloqueada?'disabled':''} onclick="otdCapturarGps(${t.id})">
+        <i class="bi bi-geo-alt-fill"></i> ${yaCapturado ? 'Volver a capturar ubicación' : 'Capturar mi ubicación'}
+      </button>
+      <div class="otd-chk-gps-hint"><i class="bi bi-shield-check"></i>
+        Solo se acepta GPS real del dispositivo para validar tu posición.</div>
+      ${otdGpsResultadoHtml(t)}
+    </div>`;
   } else {
-    body = `<div class="otd-chk-fallback">Tipo de respuesta no soportado acá todavía — respóndela en
-      <a href="{{ url_for('mant_ot_ejecutar', vid=v.id) }}" style="color:var(--ilus-red,#dc2626);font-weight:700">modo clásico</a>.</div>`;
+    // Tipos verdaderamente exóticos, ninguno emitido hoy por las plantillas
+    // reales -- ya no ofrece una salida hacia pantallas fuera de OT 2.0.
+    body = `<div class="otd-chk-fallback">Tipo de respuesta no disponible en esta vista todavía.</div>`;
   }
 
   return `<div class="otd-chk-item${t.completada ? ' is-ok' : ''}${bloqueada ? ' is-locked' : ''}" id="otdChkItem-${t.id}">
