@@ -8188,6 +8188,13 @@ async function guardarCentroCostoModal(){
     const dGet = await rGet.json().catch(() => ({}));
     const fin = (dGet && dGet.finanzas) || {};
     const esGarantia = (fin.modalidad_cobro || '') === 'garantia';
+    // 🔧 FIX 2026-08-31 (Daniel trabado en OT-140, ciclo sin poder guardar):
+    // costo/zz_monto son columnas DECIMAL -- Flask las serializa como
+    // STRING ("15000.00"), y el backend hace `int(d.get("costo"))` sin
+    // pasar por float antes. Reenviar el string tal cual como venía del
+    // GET rompía con "El monto no es válido" (MONTO_INVALIDO) cada vez,
+    // dejando el centro de costo sin guardarse nunca -- de ahí el ciclo.
+    const _numOrNull = (v) => (v === null || v === undefined || v === '') ? null : Math.round(parseFloat(v));
     const r = await fetch(`/ot/api/finanzas/${VID}`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
@@ -8196,9 +8203,9 @@ async function guardarCentroCostoModal(){
         garantia_motivo: fin.garantia_motivo || '',
         factura_tido: fin.factura_tido || '',
         factura_nudo: fin.factura_nudo || '',
-        costo: fin.costo,
+        costo: _numOrNull(fin.costo),
         zz_codigo: fin.zz_codigo || '',
-        zz_monto: fin.zz_monto,
+        zz_monto: _numOrNull(fin.zz_monto),
       }),
     });
     const d = await r.json().catch(() => ({}));

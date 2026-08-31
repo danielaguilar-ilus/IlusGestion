@@ -76434,12 +76434,20 @@ def ot2_api_finanzas(vid):
         f_nudo = (d.get("factura_nudo") or "").strip()[:20] or None
         motivo = None
 
+    # 🔧 FIX 2026-08-31 (Daniel trabado en OT-140, ciclo "El monto no es
+    # válido"): costo/zz_monto son columnas DECIMAL -- un caller que primero
+    # LEYÓ este mismo endpoint (GET) y reenvía el valor tal cual (ej. el
+    # modal de centro de costo de ot_ejecutar.html) recibe un string tipo
+    # "15000.00" (Flask serializa Decimal como str), y `int("15000.00")`
+    # revienta con ValueError. Pasar por float() primero acepta enteros,
+    # strings decimales y floats por igual -- nunca inventa un monto, solo
+    # deja de romperse con el formato que el propio backend acaba de emitir.
     try:
-        costo = int(d.get("costo")) if str(d.get("costo") or "").strip() else None
+        costo = int(round(float(d.get("costo")))) if str(d.get("costo") or "").strip() else None
     except (TypeError, ValueError):
         return _ot2_err("El monto no es válido.", "MONTO_INVALIDO")
     try:
-        zz_monto = int(d.get("zz_monto")) if str(d.get("zz_monto") or "").strip() else None
+        zz_monto = int(round(float(d.get("zz_monto")))) if str(d.get("zz_monto") or "").strip() else None
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
 

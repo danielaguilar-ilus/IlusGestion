@@ -2850,10 +2850,47 @@
         </div>
 
         {# ── SELLO factura↔OT (Daniel 2026-06-23): OT cobrable NO se firma
-              sin factura asociada. Garantía y sin costo quedan exentas. ── #}
+              sin factura asociada. Garantía y sin costo quedan exentas. ──
+
+           🔧 REORDEN 2026-08-31 (Daniel, OT-140, textual: "quiero que esto
+           sea con pasos enumerados... verificar que el centro de costo se
+           guarde, verificar que vamos con factura o boleta o cualquier
+           otro documento, y si no, declarar como garantía"): antes el
+           centro de costo se pintaba DESPUÉS de la cobertura, sin ningún
+           número que ordenara la secuencia -- ahora Paso 1 = centro de
+           costo, Paso 2 = documento o garantía, en ese orden visual. #}
         {% set _mod_cobro = (visita.modalidad_cobro or '')|lower %}
+
+        {% if puede_cobertura and not visita.centro_costo %}
+        <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
+          <div class="fw-bold small mb-2" style="color:#92400e">
+            <span class="badge rounded-pill" style="background:#92400e;color:#fff;font-size:.68rem">Paso 1</span>
+            <i class="bi bi-tag-fill me-1 ms-1"></i>Centro de costo
+          </div>
+          <div class="d-flex gap-2 flex-wrap align-items-end">
+            <div style="flex:1;min-width:160px">
+              <select id="modalCentroCosto" class="form-select form-select-sm">
+                <option value="">— Sin definir —</option>
+                <option value="sstt">Servicio Técnico</option>
+                <option value="logistica">Logística</option>
+                <option value="comercial">Comercial</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="guardarCentroCostoModal()">
+              <i class="bi bi-check-lg me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+        {% elif visita.centro_costo %}
+        <div class="alert py-1 px-3 small mb-3 d-flex align-items-center gap-2" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">
+          <span class="badge rounded-pill" style="background:#166534;color:#fff;font-size:.65rem">Paso 1 ✓</span>
+          Centro de costo: <strong>{{ {'sstt':'Servicio Técnico','logistica':'Logística','comercial':'Comercial'}.get(visita.centro_costo, visita.centro_costo) }}</strong>
+        </div>
+        {% endif %}
+
         {% if _mod_cobro in ('garantia', 'sin_costo') %}
         <div class="alert py-2 small mb-3" style="background:#f0fdf4;border:1px solid #86efac;color:#166534">
+          <span class="badge rounded-pill mb-1" style="background:#166534;color:#fff;font-size:.65rem">Paso 2 ✓</span><br>
           <i class="bi bi-shield-fill-check me-1"></i>
           <strong>Cobertura: {{ 'GARANTÍA' if _mod_cobro == 'garantia' else 'SIN COSTO' }}.</strong>
           Esta OT no requiere factura para cerrarse.
@@ -2878,46 +2915,9 @@
         </div>
         {% endif %}
 
-        {# 🔧 FIX 2026-08-28 (Daniel, urgente: "el centro de costo, al menos
-           déjame seleccionarlo porque falta pero no me da la opción").
-           Ya existía un selector de centro de costo en la card "Finanzas"
-           de esta misma pantalla (guardarFinanzasOT(), más abajo) -- pero
-           NO estaba visible desde este modal de firma, que es justo donde
-           Daniel se da cuenta de que falta.
-
-           🔧 FIX 2026-08-31 (OT-96, Aarón trabado firmando el cierre):
-           esta condición usaba `puede_metadata`, que se SELLA apenas la OT
-           llega a pendiente_aprobacion (ot_sellada) -- exactamente el
-           estado en el que este candado empieza a exigir el centro de
-           costo. Resultado real: el aviso "falta declarar centro de
-           costo" salía, pero el único control para arreglarlo ya se había
-           escondido solo, dejando la OT trabada sin salida salvo
-           superadmin. `puede_cobertura` es el gate correcto -- ver
-           /ot/api/finanzas/<vid> (_ot_can_cobertura), que a propósito deja
-           esta ventana abierta hasta el cierre real. #}
-        {% if puede_cobertura and not visita.centro_costo %}
-        <div class="mb-3 p-3" style="background:#fff8e1;border:1.5px solid #fde68a;border-radius:12px">
-          <div class="fw-bold small mb-2" style="color:#92400e">
-            <i class="bi bi-tag-fill me-1"></i>Falta el centro de costo
-          </div>
-          <div class="d-flex gap-2 flex-wrap align-items-end">
-            <div style="flex:1;min-width:160px">
-              <select id="modalCentroCosto" class="form-select form-select-sm">
-                <option value="">— Sin definir —</option>
-                <option value="sstt">Servicio Técnico</option>
-                <option value="logistica">Logística</option>
-                <option value="comercial">Comercial</option>
-              </select>
-            </div>
-            <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="guardarCentroCostoModal()">
-              <i class="bi bi-check-lg me-1"></i>Guardar
-            </button>
-          </div>
-        </div>
-        {% endif %}
-
         {% if _mod_cobro not in ('garantia', 'sin_costo') and visita.factura_nudo %}
         <div class="alert py-2 small mb-3" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a">
+          <span class="badge rounded-pill mb-1" style="background:#1e3a8a;color:#fff;font-size:.65rem">Paso 2 ✓</span><br>
           <i class="bi bi-receipt me-1"></i>
           <strong>{{ 'Nota de venta asociada' if visita.factura_tido in ('NVV','NVI') else 'Factura asociada' }}:</strong>
           {{ visita.factura_tido or 'FCV' }} N° {{ visita.factura_nudo }}
@@ -2927,10 +2927,23 @@
             RUT no coincidía — justificado: {{ (visita.factura_rut_justif or '')[:180] }}</div>
           {% endif %}
         </div>
-        {% else %}
+        {% elif _mod_cobro not in ('garantia', 'sin_costo') %}
+        {# 🔧 FIX 2026-08-31 (Daniel, OT-140, textual: "no me deja bloqueado
+           el tipo de factura, porque ya si es una garantía tiene que
+           dejarlo bloqueado, y estoy como un ciclo"): esta rama entera
+           (documento + botón de garantía) se renderizaba SIEMPRE que no
+           hubiera factura -- incluida una OT que YA declaró garantía (que
+           por diseño nunca tiene factura). El resultado real: la caja
+           verde "Cobertura: GARANTÍA" de arriba decía "no requiere
+           factura" y un metro más abajo esta caja roja contradecía eso
+           pidiendo "Firma bloqueada: OT cobrable sin documento" -- ambas
+           visibles a la vez. Ahora esta rama entera queda condicionada a
+           que la OT NO esté ya cubierta por garantía/sin_costo (ese caso
+           ya se resuelve arriba, con su propio botón "Quitar cobertura"). #}
         <div class="mb-3 p-3" id="factGate" style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:12px">
           <div class="fw-bold small mb-1" style="color:#991b1b">
-            <i class="bi bi-lock-fill me-1"></i>Firma bloqueada: OT cobrable sin documento
+            <span class="badge rounded-pill" style="background:#991b1b;color:#fff;font-size:.68rem">Paso 2</span>
+            <i class="bi bi-lock-fill me-1 ms-1"></i>Firma bloqueada: OT cobrable sin documento
           </div>
           <div class="small mb-2" style="color:#7f1d1d">
             Asocia el documento del ERP — factura, boleta o nota de venta — para
