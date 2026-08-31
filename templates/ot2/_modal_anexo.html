@@ -119,7 +119,20 @@
                 <input type="email" class="form-control form-control-sm" id="oaxManEmail"></div>
               <div class="col-6"><label class="fl">Teléfono</label>
                 <input class="form-control form-control-sm" id="oaxManTel"></div>
+              <div class="col-12"><label class="fl">Dirección</label>
+                <input class="form-control form-control-sm" id="oaxManDireccion"></div>
             </div>
+          </div>
+          {# 🆕 2026-08-31 (Daniel: "hay que ver a que empresa pertenece, el
+             RUT, direccion... para las variables del anexo"): visible SOLO
+             cuando se elige un proveedor de la lista (ya tiene ficha) --
+             es de solo lectura para confirmar que el dato que va a salir
+             en el PDF es el correcto; si falta, se corrige desde la ficha
+             del técnico externo, no acá (una sola fuente de verdad). #}
+          <div id="oaxProveedorDirWrap" style="display:none;margin-top:10px">
+            <label class="fl">Dirección de la empresa (de su ficha)</label>
+            <input class="form-control form-control-sm" id="oaxProveedorDirLectura" readonly
+                   style="background:#f9fafb;color:#6b7280">
           </div>
         </div>
 
@@ -239,7 +252,7 @@ window.OT2ANX = (function(){
     S = {
       ot_id: OT_ID,
       tecnico_externo_id: null,
-      proveedor_nombre: '', proveedor_rut: '', email: '', tel: '',
+      proveedor_nombre: '', proveedor_rut: '', proveedor_direccion: '', email: '', tel: '',
       objetivo_servicio: DEF_CLIENTE ? ('Ejecutar servicio para el cliente ' + DEF_CLIENTE + '.') : '',
       cliente_nombre: DEF_CLIENTE,
       items: [{concepto:'', monto:''}],
@@ -274,7 +287,8 @@ window.OT2ANX = (function(){
     document.getElementById('oaxAlcance').value = S.alcance_servicio;
     document.getElementById('oaxProveedorManual').checked = false;
     document.getElementById('oaxProveedorManualBox').style.display = 'none';
-    ['oaxManNombre','oaxManRut','oaxManEmail','oaxManTel'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('oaxProveedorDirWrap').style.display = 'none';
+    ['oaxManNombre','oaxManRut','oaxManEmail','oaxManTel','oaxManDireccion'].forEach(id => document.getElementById(id).value = '');
     var condBox = document.getElementById('oaxCondBox');
     condBox.style.display = 'none';
     document.getElementById('oaxCondToggle').classList.remove('on');
@@ -325,14 +339,26 @@ window.OT2ANX = (function(){
   function onProveedorChange(){
     var id = document.getElementById('oaxProveedorSel').value;
     var p = (proveedores || []).find(x => String(x.id) === String(id));
+    var dirWrap = document.getElementById('oaxProveedorDirWrap');
+    var dirLectura = document.getElementById('oaxProveedorDirLectura');
     if (p){
       S.tecnico_externo_id = p.id;
       S.proveedor_nombre = p.razon_social || '';
       S.proveedor_rut = p.rut_empresa || '';
+      // 🆕 2026-08-31: direccion_empresa ya vivia en mant_tecnicos_externos
+      // (no hacia falta columna nueva ahi) -- solo faltaba jalarla acá,
+      // igual que el RUT, en vez de dejarla fuera del anexo.
+      S.proveedor_direccion = p.direccion_empresa || '';
       S.email = p.contacto_email || '';
       S.tel = p.contacto_tel || '';
+      if (dirWrap){
+        dirWrap.style.display = S.proveedor_direccion ? '' : 'none';
+        if (dirLectura) dirLectura.value = S.proveedor_direccion;
+      }
     } else {
       S.tecnico_externo_id = null;
+      S.proveedor_direccion = '';
+      if (dirWrap) dirWrap.style.display = 'none';
     }
   }
 
@@ -389,6 +415,7 @@ window.OT2ANX = (function(){
     if (document.getElementById('oaxProveedorManual').checked){
       S.proveedor_nombre = document.getElementById('oaxManNombre').value.trim();
       S.proveedor_rut = document.getElementById('oaxManRut').value.trim();
+      S.proveedor_direccion = document.getElementById('oaxManDireccion').value.trim();
       S.email = document.getElementById('oaxManEmail').value.trim();
       S.tel = document.getElementById('oaxManTel').value.trim();
       S.tecnico_externo_id = null;
@@ -417,6 +444,7 @@ window.OT2ANX = (function(){
         body: JSON.stringify({
           ot_id: S.ot_id, tecnico_externo_id: S.tecnico_externo_id,
           proveedor_nombre: S.proveedor_nombre, proveedor_rut: S.proveedor_rut,
+          proveedor_direccion: S.proveedor_direccion,
           cliente_nombre: S.cliente_nombre, objetivo_servicio: S.objetivo_servicio,
           precio_items: items,
           fecha_inicio: S.fecha_inicio || null, fecha_termino: S.fecha_termino || null,

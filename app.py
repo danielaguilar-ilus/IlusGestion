@@ -78560,6 +78560,7 @@ def _ensure_mant_anexos():
                     tecnico_externo_id INT NULL COMMENT 'mant_tecnicos_externos.id, si aplica',
                     proveedor_nombre   VARCHAR(200) NOT NULL,
                     proveedor_rut      VARCHAR(20)  NULL,
+                    proveedor_direccion VARCHAR(400) NULL,
                     cliente_nombre     VARCHAR(200) NULL COMMENT 'a quien se le presta el servicio',
                     objetivo_servicio  TEXT NOT NULL,
                     precio_items_json  TEXT NOT NULL COMMENT '[{concepto,monto}], JSON',
@@ -78612,6 +78613,21 @@ def _ensure_mant_anexos():
                         "borrador pendiente de revision legal, ver _ANEXO_CLAUSULAS_DEFECTO'")
             except Exception as e:
                 print(f"[ensure_mant_anexos] clausulas_adicionales: {e}", flush=True)
+            # 2026-08-31 (Daniel: "tenemos que ver a que empresa pertenece,
+            # el RUT, direccion... para las variables del anexo") -- misma
+            # ALTER idempotente para una tabla ya viva en produccion (el
+            # CREATE TABLE IF NOT EXISTS de arriba no le agrega columnas a
+            # una tabla que ya existia sin esta).
+            try:
+                cur.execute(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                    " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_anexos' "
+                    "   AND COLUMN_NAME='proveedor_direccion'")
+                if not cur.fetchone():
+                    cur.execute(
+                        "ALTER TABLE mant_anexos ADD COLUMN proveedor_direccion VARCHAR(400) NULL")
+            except Exception as e:
+                print(f"[ensure_mant_anexos] proveedor_direccion: {e}", flush=True)
             # 🔢 2026-08-31 (Daniel, textual: "quiero dejarte el último anexo
             # para mantener el correlativo y partamos en el 160"): el
             # próximo anexo debe salir con N° 160. `_next_anexo_numero_atomic`
@@ -78834,12 +78850,14 @@ def ot2_api_anexo_crear():
         cur.execute(
             "INSERT INTO mant_anexos "
             "  (numero, ot_id, tecnico_externo_id, proveedor_nombre, proveedor_rut, "
+            "   proveedor_direccion, "
             "   cliente_nombre, objetivo_servicio, precio_items_json, "
             "   fecha_inicio, fecha_termino, niveles_servicio, hitos_pago, "
             "   alcance_servicio, clausulas_adicionales, created_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (numero, vid, d.get("tecnico_externo_id") or None,
              proveedor, (d.get("proveedor_rut") or "").strip()[:20] or None,
+             (d.get("proveedor_direccion") or "").strip()[:400] or None,
              (d.get("cliente_nombre") or "").strip()[:200] or None,
              objetivo, _json.dumps(items),
              d.get("fecha_inicio") or None, d.get("fecha_termino") or None,
@@ -79018,6 +79036,7 @@ def _anexo_publico_payload(a):
         "fecha": chile_fmt_filter(a.get("created_at"), "%d/%m/%Y") if a.get("created_at") else "—",
         "proveedor_nombre": a.get("proveedor_nombre") or "",
         "proveedor_rut": a.get("proveedor_rut") or "",
+        "proveedor_direccion": a.get("proveedor_direccion") or "",
         "objetivo_servicio": a.get("objetivo_servicio") or "",
         "cliente_nombre": a.get("cliente_nombre") or "",
         "precio_items": a.get("precio_items") or [],
@@ -79146,11 +79165,34 @@ def ot2_api_anexo_pdf(aid):
             "firma_url": a.get("firma_url"),
             "firmado_en": chile_fmt_filter(a.get("firmado_at"), "%d/%m/%Y %H:%M") if a.get("firmado_at") else "",
         }
+    # 🆕 2026-08-31 (Daniel: "los productos los estipulen en una tabla, que
+    # me pueda evidenciar tanto SKU, descripción y cantidad"): distinto del
+    # desglose de PRECIO por concepto (precio_items_json, ya existía) --
+    # esto son los equipos físicos a los que aplica el servicio. Se reusan
+    # los equipos YA asociados a la OT (mant_visita_tareas.maquina_id, "la
+    # fuente universal de qué equipo tiene una OT", ver comentario en
+    # app.py ~68765) en vez de pedirle a alguien que los vuelva a tipear a
+    # mano -- si el anexo no tiene OT (proveedor sin OT ligada todavía),
+    # simplemente no sale la tabla, no se inventa una captura manual nueva.
+    productos = []
+    if a.get("ot_id"):
+        try:
+            productos = mysql_fetchall(
+                "SELECT DISTINCT m.sku, m.nombre, COALESCE(m.cantidad,1) AS cantidad "
+                "  FROM mant_visita_tareas t "
+                "  JOIN mant_maquinas m ON m.id = t.maquina_id "
+                " WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL "
+                " ORDER BY m.nombre", (a["ot_id"],)) or []
+            productos = [dict(p) for p in productos]
+        except Exception as e:
+            print(f"[anexo_pdf] productos de la OT: {e}", flush=True)
+            productos = []
     html = render_template(
         "ot2/anexo_documento.html",
         anexo=payload,
         precio_txt=_anexo_precio_texto(payload.get("precio_items")),
         firma=firma,
+        productos=productos,
         generado_en=_now_chile_str("%d/%m/%Y %H:%M"),
     )
     try:

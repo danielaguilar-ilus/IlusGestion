@@ -140,6 +140,31 @@
 
   <p class="campo"><b>Alcance del Servicio:</b> {{ anexo.alcance_servicio }}</p>
 
+  {% if anexo.proveedor_direccion %}
+  {# 🆕 2026-08-31 (Daniel: "hay que ver a que empresa pertenece, el RUT,
+     direccion... para las variables del anexo") -- dato nuevo
+     (proveedor_direccion), solo se imprime si existe (anexos viejos no
+     lo tienen y no hay que inventarlo). #}
+  <p class="campo"><b>Dirección del Proveedor:</b> {{ anexo.proveedor_direccion }}</p>
+  {% endif %}
+
+  {% if productos %}
+  {# 🆕 2026-08-31 (Daniel: "los productos los estipulen en una tabla, que
+     me pueda evidenciar tanto SKU, descripción y cantidad") -- distinto
+     de la tabla de Precio (por concepto de cobro, más abajo): esto son
+     los equipos físicos de la OT a los que aplica el servicio. #}
+  <p class="campo"><b>Productos / Equipos del Servicio:</b></p>
+  <table class="precio">
+    <thead><tr><th>SKU</th><th>Descripción</th><th style="text-align:right">Cantidad</th></tr></thead>
+    <tbody>
+      {% for p in productos %}
+      <tr><td>{{ p.sku or '—' }}</td><td>{{ p.nombre or '—' }}</td>
+          <td class="monto">{{ p.cantidad }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
   {% if anexo.clausulas_adicionales %}
   {# 2026-08-30 (Daniel: "cuidarnos y no exponernos... pero sin inventar" --
      sección nueva, agregada aparte de los 6 campos originales del Anexo
@@ -171,7 +196,19 @@
     {% if firma %}
       {% if firma.firma_url %}<img class="firma-img" src="{{ firma.firma_url }}" alt="Firma">{% endif %}
       <div class="firma-nombre">Nombre: {{ firma.firmante_nombre }}</div>
-      <div class="firma-rut">RUT: {{ firma.firmante_rut }}</div>
+      {# 🔧 FIX 2026-08-31 (Daniel: "necesito que el RUT de la empresa, más
+         que el de la persona" -- confirmado tras confusión real en vivo:
+         antes acá SOLO salía firma.firmante_rut (el RUT PERSONAL de quien
+         firmó), nunca el RUT de la empresa proveedora -- por eso Daniel
+         pensaba que faltaba el RUT correcto. El de empresa (anexo.
+         proveedor_rut) va primero y en negrita por ser el prioritario; el
+         del representante se deja igual, como dato secundario. #}
+      {% if anexo.proveedor_rut %}
+      <div class="firma-rut"><b>RUT Empresa: {{ anexo.proveedor_rut }}</b></div>
+      {% endif %}
+      {% if firma.firmante_rut and firma.firmante_rut != anexo.proveedor_rut %}
+      <div class="firma-rut">RUT Representante: {{ firma.firmante_rut }}</div>
+      {% endif %}
       <div class="firma-linea">Firma: {% if not firma.firma_url %}______________________{% endif %}</div>
       <div class="firma-rut">Firmado el {{ firma.firmado_en }} · firma electrónica simple
         con evidencia de trazabilidad (hash del documento, IP, dispositivo) --
@@ -185,7 +222,7 @@
          usa el bloque firmado. #}
       <div class="firma-nombre" style="margin-top:14mm">Nombre: {{ anexo.proveedor_nombre }}</div>
       {% if anexo.proveedor_rut %}
-      <div class="firma-rut">RUT: {{ anexo.proveedor_rut }}</div>
+      <div class="firma-rut"><b>RUT Empresa: {{ anexo.proveedor_rut }}</b></div>
       {% endif %}
       <div class="firma-linea">Firma: ______________________</div>
     {% endif %}
