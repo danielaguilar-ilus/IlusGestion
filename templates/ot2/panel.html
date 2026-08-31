@@ -354,6 +354,40 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   .ot2-ch{font-size:0;padding:0;width:7px;height:7px;border-radius:50%;display:inline-block}
   .ot2-col{flex-basis:250px;width:250px}
 }
+
+/* ══════════════ TABLA RESPONSIVE EN CELULAR ══════════════
+   2026-08-31 (Daniel, urgente: "la tabla de la lista de las OT no se ve
+   bien responsivamente... hay que ir al final a seleccionar y si se
+   marea la fila te equivocas y no es amigable"). La tabla scrolleaba
+   horizontal (min-width:900px) -- en celular una fila quedaba cortada a
+   la mitad de la pantalla, así que tocar "Abrir" (al final, fuera de
+   vista) exigía scroll horizontal Y vertical a la vez, y la fila
+   equivocada quedaba fácil de tocar por error. Se convierte cada <tr>
+   en una tarjeta apilada (mismo truco clásico de tabla responsive):
+   se esconde el <thead>, cada <td> pasa a su propia línea con el
+   nombre de columna como etiqueta (`data-label`, puesto en el HTML de
+   abajo), y toda la fila -- ya clickeable entera -- queda dentro de una
+   sola tarjeta compacta, sin scroll lateral. */
+@media (max-width:760px){
+  .ot2-scroll{overflow-x:visible}
+  .ot2-tabla{min-width:0}
+  .ot2-tabla thead{display:none}
+  .ot2-tabla, .ot2-tabla tbody{display:block;width:100%}
+  .ot2-tabla tbody tr{display:block;width:100%;border:1px solid var(--ot-line);
+    border-left:4px solid var(--c);border-radius:12px;margin:10px;
+    padding:2px 0;min-height:44px}
+  .ot2-tabla tbody tr:first-child{margin-top:12px}
+  .ot2-tabla td{display:flex;align-items:center;justify-content:space-between;
+    gap:10px;padding:9px 14px;border:0;font-size:.86rem;min-height:40px}
+  .ot2-tabla td:first-child{border-left:0}
+  .ot2-tabla td:not(:last-child){border-bottom:1px dashed #eef0f2}
+  .ot2-tabla td[data-label]::before{content:attr(data-label);font-size:.62rem;
+    font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;
+    flex:none}
+  .ot2-cli{max-width:60%}
+  .ot2-abrir{min-height:44px;width:100%;justify-content:center}
+  .ot2-det{display:none !important}   /* el detalle expandido no aporta en celular; ya está todo en la tarjeta */
+}
 </style>
 
 <div class="ot2">
@@ -590,22 +624,22 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
           <tbody>
             {% for f in filas %}
             <tr class="f-{{ f.estado_fase or 'cancel' }}" onclick="location.href='{{ url_for('ot2_detalle', vid=f.id) }}'">
-              <td>
+              <td data-label="N° OT">
                 <span class="ot2-num">
                   {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
                   {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
                 </span>
                 {% if f.numero_ticket %}<span class="ot2-tk" title="Ticket de origen"><i class="bi bi-ticket-perforated-fill"></i>{{ f.numero_ticket }}</span>{% endif %}
               </td>
-              <td><div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div></td>
-              <td><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
-              <td>
+              <td data-label="Cliente"><div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div></td>
+              <td data-label="Tipo"><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
+              <td data-label="Estado">
                 <span class="ot2-est">
                   {% if f.estado_en_vivo %}<span class="ot2-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
                   {{ f.estado_label }}
                 </span>
               </td>
-              <td>
+              <td data-label="Técnico">
                 <div class="ot2-tec">
                   {% if f.tecnico_ini %}<span class="ot2-av">{{ f.tecnico_ini }}</span>
                   {% else %}<span class="ot2-av sin"><i class="bi bi-person"></i></span>{% endif %}
@@ -613,8 +647,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
                 </div>
               </td>
-              <td style="white-space:nowrap">{{ f.fecha_dia }}</td>
-              <td>
+              <td data-label="Fecha" style="white-space:nowrap">{{ f.fecha_dia }}</td>
+              <td data-label="Avance">
                 <div class="ot2-prog">
                   <span class="bar"><i style="width:{{ f.check_pct }}%"></i></span>
                   <span class="pc">{{ f.n_completas }}/{{ f.n_tareas }}</span>
