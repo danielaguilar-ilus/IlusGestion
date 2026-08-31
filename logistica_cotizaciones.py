@@ -1939,6 +1939,20 @@ def register_logistica_cotizaciones(app, ctx=None):
         items_calc = _lc_enriquecer_items_con_medidas(items_in)
         user = (current_username() if callable(current_username) else None) or "sistema"
         for it in items_calc:
+            # FIX 2026-08-31 (Daniel, urgente: "definimos que no debe venir
+            # con margen ya que fue anulado por la gerencia general"). Este
+            # fallback usaba `or` encadenado -- con margen_pct EN 0 (la
+            # política vigente, ver comentario cerca de la línea 2617), `0
+            # or 30` evalúa a 30 en Python (0 es falsy), así que CUALQUIER
+            # ítem nuevo agregado a una cotización ya creada con margen 0%
+            # terminaba guardado con 30% igual, silenciosamente. Se
+            # reemplaza por chequeos explícitos contra None/"" para que un 0
+            # real se respete, y el último fallback pasa de 30 a 0.
+            _margen_item = it["margen_pct_aplicado"]
+            if _margen_item in (None, ""):
+                _margen_item = cot.get("margen_pct")
+            if _margen_item in (None, ""):
+                _margen_item = 0
             mysql_execute(
                 "INSERT INTO transport_cotizacion_items "
                 "(cotizacion_id, erp_tido, erp_nudo, erp_kopr, descripcion, app_id, "
@@ -1947,7 +1961,7 @@ def register_logistica_cotizaciones(app, ctx=None):
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (cid, it["erp_tido"], it["erp_nudo"], it["erp_kopr"], it["descripcion"],
                  it["app_id"], it["cantidad"], it["total_bultos"], it["peso_kg"],
-                 it["volumen_cm3"], (it["margen_pct_aplicado"] or cot.get("margen_pct") or 30),
+                 it["volumen_cm3"], _margen_item,
                  it["descuento_pct"], it["notas"]))
 
         header = _lc_recalcular(cid, user)
