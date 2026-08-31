@@ -78922,22 +78922,28 @@ def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
     logo_ilus = _logo_data_url() or ""
     logo_shs = _logo_shs_pdf_data_url() or ""
 
+    # 🔴 2026-08-31 (Daniel: "el logo de ILUS sale desproporcionado, sale
+    # más pequeño... hazlo crecer un 80% más"): 11mm→20mm (+82%), y el
+    # cuadro blanco de SHS crece a la par (13.4mm→24mm) para que sigan
+    # viéndose como un mismo conjunto -- no se agranda uno solo y se
+    # desbalancea el header. El padding sube de 3mm a 4mm para que el
+    # logo más grande no quede pegado al borde de su propia franja negra.
     _ilus_logo_html = (
-        f'<img src="{logo_ilus}" style="height:11mm;max-width:42mm;object-fit:contain;">'
+        f'<img src="{logo_ilus}" style="height:20mm;max-width:70mm;object-fit:contain;">'
         if logo_ilus else
         '<span style="font-weight:900;font-size:15px;color:#ffffff;'
         'letter-spacing:.02em;">ILUS<span style="color:#dc2626;">.</span></span>'
     )
     _shs_logo_html = (
-        '<div style="height:13.4mm;background:#ffffff;border-radius:1mm;'
-        'box-sizing:border-box;padding:1mm 2mm;display:flex;align-items:center;'
+        '<div style="height:24mm;background:#ffffff;border-radius:1mm;'
+        'box-sizing:border-box;padding:1.5mm 3mm;display:flex;align-items:center;'
         f'justify-content:center;"><img src="{logo_shs}" '
-        'style="height:11mm;width:auto;object-fit:contain;"></div>'
+        'style="height:20mm;width:auto;object-fit:contain;"></div>'
         if logo_shs else ""
     )
     header_html = (
         '<div style="width:100%;font-family:Arial,Helvetica,sans-serif;">'
-        '<div style="background:#0a0a0a;padding:3mm 12mm;box-sizing:border-box;'
+        '<div style="background:#0a0a0a;padding:4mm 12mm;box-sizing:border-box;'
         'display:flex;justify-content:space-between;align-items:center;'
         '-webkit-print-color-adjust:exact;print-color-adjust:exact;">'
         f'<div style="display:flex;align-items:center;gap:3mm;">'
@@ -79014,7 +79020,7 @@ def ot2_api_anexo_pdf(aid):
         # línea (mismas medidas ya probadas en el compacto de la OT).
         _hdr, _ftr = _anexo_pdf_header_footer_native(a.get("numero"), a.get("cliente_nombre"))
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "26mm", "right": "14mm", "bottom": "14mm", "left": "14mm"},
+                        margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
                         header_template=_hdr, footer_template=_ftr)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
@@ -79026,7 +79032,13 @@ def ot2_api_anexo_pdf(aid):
         _mant_log("anexo", aid, "pdf_descargado", f"N°{a['numero']}")
     except Exception:
         pass
-    fname = f"anexo-servicios-{a['numero']}.pdf"
+    # 🔴 2026-08-31 (Daniel: "el nombre no ayuda en nada... necesito que
+    # diga anexo, ILUS, número tal"): nombre genérico "anexo-servicios-148"
+    # no dice a qué OT/cliente pertenece cuando hay varios PDF descargados
+    # en la misma carpeta -- se arma con el cliente (mismo slug ya usado
+    # para familias de checklist, reutilizado acá).
+    _cli_slug = _slugify_familia_checklist(a.get("cliente_nombre") or "")
+    fname = f"Anexo-ILUS-{a['numero']}" + (f"-{_cli_slug}" if _cli_slug else "") + ".pdf"
     return Response(data, mimetype="application/pdf",
                      headers={"Content-Disposition": f'inline; filename="{fname}"'})
 
@@ -79094,15 +79106,17 @@ def ot2_api_anexo_preview_pdf():
     try:
         _hdr, _ftr = _anexo_pdf_header_footer_native("(vista previa)", payload.get("cliente_nombre"))
         data = _pw_pdf(html, page_format="Letter",
-                        margin={"top": "26mm", "right": "14mm", "bottom": "14mm", "left": "14mm"},
+                        margin={"top": "40mm", "right": "14mm", "bottom": "16mm", "left": "14mm"},
                         header_template=_hdr, footer_template=_ftr)
     except PDFEngineUnavailable as e:
         return (f"Motor PDF no disponible: {e}", 503)
     except Exception as e:
         print(f"[anexo_preview_pdf] {e}", flush=True)
         return ("No pudimos generar la vista previa del PDF.", 500)
+    _cli_slug_prev = _slugify_familia_checklist(payload.get("cliente_nombre") or "")
+    _fname_prev = "Anexo-ILUS-vista-previa" + (f"-{_cli_slug_prev}" if _cli_slug_prev else "") + ".pdf"
     return Response(data, mimetype="application/pdf",
-                     headers={"Content-Disposition": 'inline; filename="anexo-vista-previa.pdf"'})
+                     headers={"Content-Disposition": f'inline; filename="{_fname_prev}"'})
 
 
 @app.route("/firmar-anexo/<token>", methods=["GET"])

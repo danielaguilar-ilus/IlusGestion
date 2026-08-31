@@ -65,7 +65,20 @@
 <meta charset="utf-8">
 <title>Anexo de Servicios N° {{ anexo.numero }}</title>
 <style>
-  @page { size: Letter; margin: 0; }
+  {# 🔴 2026-08-31 (Daniel: "¿dónde están los espacios?... no tiene márgenes
+     en ningún lado" -- BUG RAÍZ real, reproducido y confirmado local con
+     Playwright antes de este fix: `@page { margin: 0 }` le ganaba al
+     `margin` que _pw_pdf() le pasa a page.pdf() -- Chromium usa la regla
+     CSS para poner el CONTENIDO del documento pegado al borde real de la
+     hoja, mientras el header/footer nativos (que sí respetan el `margin`
+     de Playwright) quedaban flotando en su propia banda -- de ahí el
+     "Anexo de Servicios..." superpuesto encima del header con logos.
+     Quitar el `margin: 0` de acá deja que el único margen real sea el que
+     ya definen `_anexo_pdf_header_footer_native`/los endpoints de PDF
+     (26mm/40mm arriba, 14mm lados, 14mm abajo) -- verificado con una
+     reproducción local: con esta línea puesta, el título quedaba encima
+     del header; sin ella, el documento respira normal. #}
+  @page { size: Letter; }
   *{ box-sizing:border-box }
   body{
     margin:0; color:#111;
@@ -164,7 +177,16 @@
         con evidencia de trazabilidad (hash del documento, IP, dispositivo) --
         no constituye Firma Electrónica Avanzada.</div>
     {% else %}
+      {# 🔴 2026-08-31 (Daniel: "a la firma agregarle también el RUT
+         centrado y dejarle un espacio para la firma"): antes solo salía el
+         Nombre acá (el caso YA firmado sí traía RUT, ver arriba) -- se
+         agrega el RUT del proveedor (mismo dato ya declarado en el paso
+         Anexo del wizard) con el mismo estilo `.firma-rut` centrado que
+         usa el bloque firmado. #}
       <div class="firma-nombre" style="margin-top:14mm">Nombre: {{ anexo.proveedor_nombre }}</div>
+      {% if anexo.proveedor_rut %}
+      <div class="firma-rut">RUT: {{ anexo.proveedor_rut }}</div>
+      {% endif %}
       <div class="firma-linea">Firma: ______________________</div>
     {% endif %}
   </div>
