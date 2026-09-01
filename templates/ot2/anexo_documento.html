@@ -88,21 +88,31 @@
   .doc-body{ padding:0; }
   .fecha-top{ text-align:right; font-size:11pt; margin:0 0 4mm; }
   .titulo{
-    text-align:center; font-size:16pt; font-weight:700;
+    text-align:center; font-size:18pt; font-weight:700;
     margin: 4mm 0 10mm; letter-spacing:.01em;
   }
   p.intro{ text-align:justify; margin: 0 0 6mm; }
   p.campo{ text-align:justify; margin: 0 0 4.5mm; }
   p.campo b{ font-weight:700; }
-  table.precio{ width:100%; border-collapse:collapse; margin:2mm 0 6mm; font-size:11pt; }
-  table.precio th, table.precio td{ border:0.3mm solid #999; padding:2.2mm 3mm; }
-  table.precio th{ background:#f3f4f6; text-align:left; font-weight:700; }
+  {# 🎨 2026-09-01 (Daniel, viendo el PDF: "la tabla de precios... se ve
+     muy ordinaria... mejórala"): cabecera oscura (mismo negro del header
+     del documento, no un gris genérico de Word), filas alternadas y
+     bordes suaves en vez de grillas gruesas -- mismo lenguaje visual que
+     el resto del proyecto (REGLA #2 paleta ILUS), sin volverse una tabla
+     de catálogo. Reusada TAL CUAL por la tabla de Productos/Equipos. #}
+  table.precio{ width:100%; border-collapse:collapse; margin:2mm 0 6mm; font-size:10.5pt;
+    border:0.3mm solid #d1d5db; }
+  table.precio th, table.precio td{ border-bottom:0.25mm solid #e5e7eb; padding:2.6mm 3.5mm; }
+  table.precio th{ background:#0a0a0a; color:#fff; text-align:left; font-weight:700;
+    font-size:9.5pt; text-transform:uppercase; letter-spacing:.02em; border-bottom:0; }
+  table.precio tbody tr:nth-child(even){ background:#f9fafb; }
   table.precio td.monto{ text-align:right; font-variant-numeric:tabular-nums; }
-  table.precio tr.total td{ font-weight:700; background:#fafafa; }
+  table.precio tr.total td{ font-weight:700; background:#fef2f2; color:#991b1b;
+    border-top:0.4mm solid #dc2626; }
   .firma-bloque{ margin-top:16mm; text-align:center; }
   .firma-img{ display:block; max-height:22mm; max-width:70mm; margin:0 auto 2mm; }
-  .firma-nombre{ margin-top: 2mm; }
-  .firma-rut{ font-size:10.5pt; color:#333; }
+  .firma-nombre{ margin-top: 2mm; font-size:13pt; font-weight:700; }
+  .firma-rut{ font-size:11.5pt; color:#333; }
   {# 🔴 2026-08-30 (Daniel: "la firma no puede chocar con el nombre... dale
      varios espacios hacia abajo"): antes "Firma: ___" venía pegado a
      "Nombre: X" sin ningún espacio -- se lee como si la línea de firma

@@ -79132,17 +79132,24 @@ def _anexo_pdf_header_footer_native(numero, cliente_nombre=""):
     # viéndose como un mismo conjunto -- no se agranda uno solo y se
     # desbalancea el header. El padding sube de 3mm a 4mm para que el
     # logo más grande no quede pegado al borde de su propia franja negra.
+    # 🔴 2026-09-01 (Daniel, viendo el PDF real de nuevo: "necesito que el
+    # logo de ILUS lo hagas crecer un 80%, que se vea tan grande como el
+    # de Sport Health"): 20mm→30mm. El PNG de ILUS trae más aire/margen
+    # transparente alrededor de la marca que el de SHS, así que a igual
+    # altura de contenedor se ve más chico -- para compensar eso de raíz
+    # habría que recortar el archivo de imagen (fuera del alcance de un
+    # cambio de código); mientras tanto se sube la altura del contenedor.
     _ilus_logo_html = (
-        f'<img src="{logo_ilus}" style="height:20mm;max-width:70mm;object-fit:contain;">'
+        f'<img src="{logo_ilus}" style="height:28mm;max-width:90mm;object-fit:contain;">'
         if logo_ilus else
         '<span style="font-weight:900;font-size:15px;color:#ffffff;'
         'letter-spacing:.02em;">ILUS<span style="color:#dc2626;">.</span></span>'
     )
     _shs_logo_html = (
-        '<div style="height:24mm;background:#ffffff;border-radius:1mm;'
+        '<div style="height:26mm;background:#ffffff;border-radius:1mm;'
         'box-sizing:border-box;padding:1.5mm 3mm;display:flex;align-items:center;'
         f'justify-content:center;"><img src="{logo_shs}" '
-        'style="height:20mm;width:auto;object-fit:contain;"></div>'
+        'style="height:22mm;width:auto;object-fit:contain;"></div>'
         if logo_shs else ""
     )
     header_html = (
