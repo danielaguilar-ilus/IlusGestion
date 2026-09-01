@@ -1558,7 +1558,10 @@ window.OT2C = (function(){
         '</div>'+
       '</div>';
     ov.addEventListener('click', function(e){ if (e.target === ov) ov.remove(); });
-    document.body.appendChild(ov);
+    // 🐛 FIX 2026-09-01: mismo bug de foco que tenía "Agregar manual" -- este
+    // overlay colgaba de document.body y el focus trap del wizard le robaba
+    // el foco a Nombre/Descripción/Ícono. Ver _o2mAbrirOverlayApilado.
+    _o2mAbrirOverlayApilado(ov);
     setTimeout(function(){ var i = document.getElementById('o2mNtNombre'); if (i) i.focus(); }, 50);
   }
   function _o2mNtGuardar(){
@@ -3893,6 +3896,22 @@ window.OT2C = (function(){
   // filas SKU/Descripción/Cantidad editables en vivo -- cada fila se
   // pinta verde apenas los 3 campos están completos, con un botón chico
   // para sumar otra fila antes de guardar todo junto.
+  // 🐛 FIX 2026-09-01 (auditoria post-deploy del fix de foco): colgar un
+  // overlay apilado DENTRO de #ot2ModalCrear (para esquivar el focus trap de
+  // Bootstrap, ver comentario más abajo) tiene un efecto lateral: cualquier
+  // Escape presionado en ESE overlay ahora burbujea hasta el propio wizard,
+  // que SÍ escucha Escape (bootstrap.Modal se instancia con keyboard:true por
+  // defecto) -- y cierra la OT COMPLETA que el técnico venía llenando. Este
+  // helper centraliza el "cuélgate dentro del modal padre" + "pero no dejes
+  // que Escape se fugue hacia afuera", para que todo overlay apilado nuevo
+  // (hoy: Agregar manual, Nuevo trabajo interno) lo use igual y no repita
+  // ninguno de los dos bugs por separado.
+  function _o2mAbrirOverlayApilado(ov){
+    (document.getElementById('ot2ModalCrear') || document.body).appendChild(ov);
+    ov.addEventListener('keydown', function(e){
+      if (e.key === 'Escape'){ e.stopPropagation(); ov.remove(); }
+    });
+  }
   var _o2mTM = { filas: [] };
   function abrirTareaManualModal(){
     _o2mTM.filas = [{sku:'', descripcion:'', cantidad:1}];
@@ -3926,7 +3945,7 @@ window.OT2C = (function(){
     // enfoca algo que esté FUERA de él -- los inputs de este modal apilado
     // quedaban imposibles de escribir. Colgándolo dentro del propio modal,
     // Bootstrap lo considera parte suyo y deja de robarle el foco.
-    (document.getElementById('ot2ModalCrear') || document.body).appendChild(ov);
+    _o2mAbrirOverlayApilado(ov);
     _o2mTMPintarFilas();
     var _pf = ov.querySelector('input'); if (_pf) _pf.focus();
   }
@@ -6202,6 +6221,15 @@ window.OT2C = (function(){
      Todo `opts` es opcional. Lo que no venga, se pregunta. */
   function abrir(opts){
     reset();
+    // 🐛 FIX 2026-09-01: estos overlays apilados ahora cuelgan DENTRO de
+    // #ot2ModalCrear (_o2mAbrirOverlayApilado) -- si el wizard se cerró por
+    // una vía que no pasa por su propio botón "Guardar"/"×" (ej. el Escape
+    // que antes se fugaba, o un click en el backdrop), el overlay quedaba
+    // vivo dentro de un contenedor oculto y reaparecía como "fantasma" al
+    // reabrir el wizard, encima de un formulario recién reseteado.
+    ['o2mTareaManualOv', 'o2mNuevoTipoOv'].forEach(function(id){
+      var o = document.getElementById(id); if (o) o.remove();
+    });
     opts = opts || {};
     if (opts.origen)     S.origen     = opts.origen;
     if (opts.cliente)    S.cliente    = opts.cliente;
