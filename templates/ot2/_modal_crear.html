@@ -5874,6 +5874,23 @@ window.OT2C = (function(){
       // detalle de la OT" (agregado hoy en crear()) cubre ese caso.
       if (ps[i].k === 'anexo') continue;
       if (!completo(ps[i].k)){
+        // 🔧 FIX 2026-09-01 (Víctor, en vivo: "todo se ve marcado y me
+        // sigue pidiendo completar Equipos, no dice qué falta"): el
+        // aviso genérico no decía CUÁL equipo era el problema -- con 15+
+        // filas es imposible detectarlo a simple vista. Para 'equipos'
+        // se nombra el equipo exacto sin plantilla elegida.
+        if (ps[i].k === 'equipos' && !esInterno() && S.tipo !== 'revision_interna'){
+          var _sinPlant = (S.equipos||[]).filter(function(e){ return !e.plantilla_id; });
+          if (_sinPlant.length){
+            var _nombres = _sinPlant.map(function(e){
+              var _m = cacheEquipos.find(function(x){ return x.id===e.maquina_id; });
+              return (_m && (_m.nombre||_m.modelo)) || ('Equipo #'+e.maquina_id);
+            }).join(', ');
+            if (window.ilusToast) ilusToast('Falta elegir plantilla para: '+_nombres, {type:'warning'});
+            irAncla(ps[i].k);
+            return false;
+          }
+        }
         if (window.ilusToast) ilusToast('Falta completar "'+ps[i].n+'"', {type:'warning'});
         irAncla(ps[i].k);
         return false;
