@@ -3637,16 +3637,17 @@ window.OT2C = (function(){
       '<p class="d">Busca el ítem por producto, documento o RUT del cliente, o agrégalo a mano. '+
       'El checklist se asigna por fila en la tabla.</p>'+
       (S.tipo === 'capacitacion' ? _docBadgeHtml : '')+
-      // 🎨 2026-08-31: grupo de acción único ("un solo botón, y dentro la
-      // tarea manual también") -- "Buscar ítem" grande y con color (antes
-      // outline gris, se confundía con cualquier botón secundario), con
-      // "+ Tarea manual" como acción chica pegada debajo, mismo bloque
-      // visual en vez de dos botones sueltos.
-      '<div class="o2m-item-actions mb-2">'+
-      '<button type="button" class="btn btn-danger fw-bold w-100" style="min-height:48px" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-search me-2"></i>Buscar ítem (producto / documento / RUT)</button>'+
-      '<button type="button" class="btn btn-link btn-sm p-0 mt-2" onclick="OT2C.agregarTareaManual()">'+
-      '<i class="bi bi-plus-lg me-1"></i>Agregar tarea manual (SKU, descripción y cantidad)</button>'+
+      // 🎨 2026-08-31 (Daniel: "el botón es muy grande, gigante... más a
+      // su aire [tono suave]... el botón rojo de buscar ítem, poco más
+      // pequeño... no tan rojo"): "Buscar ítem" pasa de gigante/w-100/
+      // rojo-vivo a chico, outline suave, lupita a color -- deja de
+      // dominar visualmente el paso. "Agregar tarea manual" queda piola
+      // (link chico con ícono) al lado, abre su propio modal (ver abajo).
+      '<div class="o2m-item-actions mb-2 d-flex gap-2 flex-wrap align-items-center">'+
+      '<button type="button" class="btn btn-outline-danger btn-sm" onclick="OT2C.abrirProductoCatalogo()">'+
+      '<i class="bi bi-search me-1" style="color:var(--ilus-red,#dc2626)"></i>Buscar ítem</button>'+
+      '<button type="button" class="btn btn-link btn-sm p-0" onclick="OT2C.abrirTareaManualModal()">'+
+      '<i class="bi bi-plus-circle me-1" style="color:#16a34a"></i>Agregar manual</button>'+
       '</div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       _htmlCostoInterno();
@@ -3916,48 +3917,94 @@ window.OT2C = (function(){
   // para el técnico, con su propia foto/comentario). El campo "Cantidad"
   // de la tabla queda en 1 para cada una a propósito -- el conteo real ya
   // está en cuántas filas hay, no en un número dentro de una sola fila.
-  // 🔧 FIX 2026-08-31 (Daniel: "la tarea manual, insisto, tiene que
-  // colocar SKU, descripción y cantidad"): 3 pasos explícitos en vez de
-  // uno solo -- SKU opcional (vacío = se genera uno temporal MAN-xxx),
-  // Descripción obligatoria, Cantidad (repite en N filas independientes,
-  // cada una su propia foto/comentario).
-  async function agregarTareaManual(){
-    var skuTxt = await ilusPrompt({
-      title: 'Tarea manual — SKU',
-      message: 'SKU del ítem, si lo tiene (déjalo vacío si no aplica).',
-      placeholder: 'Ej: SD45HEP',
-    });
-    if (skuTxt === null) return;   // canceló
-    var texto = await ilusPrompt({
-      title: 'Tarea manual — Descripción',
-      message: 'Describe la tarea o el ítem (ej: "Instalar pizarra").',
-      placeholder: 'Ej: Armar repisa de bodega',
-      required: true,
-    });
-    if (!texto) return;
-    var cantTxt = await ilusPrompt({
-      title: 'Tarea manual — Cantidad',
-      message: '¿Cuántas veces se repite "' + texto.slice(0,60) + '"? Cada una queda como su propia fila (su propia foto/comentario).',
-      placeholder: '1',
-    });
-    var n = parseInt(cantTxt, 10);
-    if (!n || n < 1) n = 1;
-    if (n > 50) n = 50;   // mismo tope que ya usa el backend para tareas_manuales
-    // 🆕 2026-08-31 (Daniel: "en términos de no SKU... yo diría que
-    // creáramos SKU dinámico, de momento manuales, y ahí vemos cómo lo
-    // conectamos"): si no se tipeó un SKU real, se genera uno temporal
-    // legible (MAN-xxx) solo para que la fila tenga identidad visual en
-    // la tabla; NO se guarda en ninguna columna sku de la base
-    // (mant_visita_tareas no la tiene), es puramente de despliegue
-    // mientras se arma la OT.
-    var skuBase = skuTxt.trim();
-    for (var i = 0; i < n; i++){
-      S.tareas_manuales.push({
-        sku: skuBase || ('MAN-' + String(_o2mSkuManualSeq++).padStart(3,'0')),
-        titulo: (n > 1 ? texto.slice(0,290) + ' (' + (i+1) + '/' + n + ')' : texto.slice(0,300)),
-        descripcion: '', cantidad: 1, plantilla_id: null
-      });
+  // 🔧 FIX 2026-08-31 (Daniel: "el agregar SKU me gustaría que fuera un
+  // solo modal, ir agregando ítem dentro de ese mismo modal... coloreando
+  // la línea cada vez que se complete todo lo necesario... ahí se ponen
+  // verde y de ahí un botoncito piola que diga agregar un producto"):
+  // un solo modal apilado (mismo patrón que abrirNuevoTipoInterno) con
+  // filas SKU/Descripción/Cantidad editables en vivo -- cada fila se
+  // pinta verde apenas los 3 campos están completos, con un botón chico
+  // para sumar otra fila antes de guardar todo junto.
+  var _o2mTM = { filas: [] };
+  function abrirTareaManualModal(){
+    _o2mTM.filas = [{sku:'', descripcion:'', cantidad:1}];
+    var old = document.getElementById('o2mTareaManualOv');
+    if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = 'o2mTareaManualOv';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,10,10,.6);'+
+      'display:flex;align-items:center;justify-content:center;padding:4vw;';
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:14px;width:100%;max-width:560px;'+
+      'box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden">'+
+        '<div style="background:#0a0a0a;padding:14px 18px;display:flex;align-items:center;'+
+        'justify-content:space-between;border-bottom:3px solid var(--ilus-red,#dc2626)">'+
+          '<b style="color:#fff;font-size:1rem"><i class="bi bi-plus-circle me-2" style="color:#16a34a"></i>'+
+          'Agregar manual</b>'+
+          '<button type="button" onclick="document.getElementById(\'o2mTareaManualOv\').remove()" '+
+          'style="background:none;border:0;color:#fff;font-size:1.3rem;cursor:pointer;line-height:1">&times;</button>'+
+        '</div>'+
+        '<div style="padding:16px 18px;max-height:60vh;overflow-y:auto" id="o2mTareaManualFilas"></div>'+
+        '<div style="padding:12px 18px;border-top:1px solid #eee;display:flex;justify-content:space-between;align-items:center;background:#fafbfc">'+
+          '<button type="button" class="btn btn-link btn-sm p-0" onclick="OT2C._o2mTMAgregarFila()">'+
+          '<i class="bi bi-plus-lg me-1"></i>Agregar producto</button>'+
+          '<button type="button" class="btn btn-danger btn-sm fw-bold" onclick="OT2C._o2mTMGuardar()">'+
+          '<i class="bi bi-check-lg me-1"></i>Guardar</button>'+
+        '</div>'+
+      '</div>';
+    document.body.appendChild(ov);
+    _o2mTMPintarFilas();
+  }
+  function _o2mTMFilaCompleta(f){
+    return !!(f.sku||'').trim() && !!(f.descripcion||'').trim() && parseInt(f.cantidad,10) > 0;
+  }
+  function _o2mTMPintarFilas(){
+    var c = document.getElementById('o2mTareaManualFilas'); if (!c) return;
+    c.innerHTML = _o2mTM.filas.map(function(f,i){
+      var ok = _o2mTMFilaCompleta(f);
+      return '<div class="d-flex gap-2 mb-2 align-items-center" style="'+
+        (ok ? 'background:#dcfce7;border:1px solid #86efac' : 'background:#fafafa;border:1px solid #eee')+
+        ';border-radius:8px;padding:8px">'+
+        '<input class="form-control form-control-sm" style="width:110px;font-size:16px" placeholder="SKU" '+
+        'value="'+esc(f.sku)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'sku\',this.value)">'+
+        '<input class="form-control form-control-sm" style="flex:1;font-size:16px" placeholder="Descripción" '+
+        'value="'+esc(f.descripcion)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'descripcion\',this.value)">'+
+        '<input type="number" min="1" class="form-control form-control-sm" style="width:70px;font-size:16px" '+
+        'placeholder="Cant." value="'+(f.cantidad||1)+'" oninput="OT2C._o2mTMSetCampo('+i+',\'cantidad\',this.value)">'+
+        (ok ? '<i class="bi bi-check-circle-fill" style="color:#16a34a"></i>' : '<span style="width:16px"></span>')+
+        (_o2mTM.filas.length > 1 ? '<button type="button" class="btn btn-sm btn-link text-danger p-1" '+
+          'onclick="OT2C._o2mTMQuitarFila('+i+')"><i class="bi bi-x-lg"></i></button>' : '')+
+        '</div>';
+    }).join('');
+  }
+  function _o2mTMSetCampo(i, campo, v){
+    if (!_o2mTM.filas[i]) return;
+    _o2mTM.filas[i][campo] = campo === 'cantidad' ? (parseInt(v,10)||1) : v;
+    _o2mTMPintarFilas();
+  }
+  function _o2mTMAgregarFila(){ _o2mTM.filas.push({sku:'', descripcion:'', cantidad:1}); _o2mTMPintarFilas(); }
+  function _o2mTMQuitarFila(i){ _o2mTM.filas.splice(i,1); _o2mTMPintarFilas(); }
+  function _o2mTMGuardar(){
+    var validas = _o2mTM.filas.filter(_o2mTMFilaCompleta);
+    if (!validas.length){
+      if (window.ilusToast) ilusToast('Completa SKU, descripción y cantidad de al menos una fila.', {type:'warning'});
+      return;
     }
+    // Mismo criterio que ya usaba la tarea manual de un solo campo: cada
+    // UNIDAD de cantidad queda como su propia fila en la tabla final
+    // (su propia foto/comentario en terreno) -- ver comentario histórico
+    // más arriba sobre "6 fotos y 6 comentarios".
+    validas.forEach(function(f){
+      var n = Math.min(parseInt(f.cantidad,10) || 1, 50);
+      for (var i = 0; i < n; i++){
+        S.tareas_manuales.push({
+          sku: f.sku.trim(),
+          titulo: (n > 1 ? f.descripcion.trim().slice(0,290) + ' (' + (i+1) + '/' + n + ')' : f.descripcion.trim().slice(0,300)),
+          descripcion: '', cantidad: 1, plantilla_id: null
+        });
+      }
+    });
+    var ov = document.getElementById('o2mTareaManualOv'); if (ov) ov.remove();
     pintarTareasManuales();
     refrescarAnclas();
   }
@@ -4008,7 +4055,7 @@ window.OT2C = (function(){
       '<div class="d-flex gap-2 mb-2 flex-wrap">'+
       '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirProductoCatalogo()">'+
       '<i class="bi bi-tag me-1"></i>Buscar por producto</button>'+
-      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.agregarTareaManual()">'+
+      '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.abrirTareaManualModal()">'+
       '<i class="bi bi-plus-lg me-1"></i>Agregar manual</button></div>'+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       '<label class="fl">¿Qué se hizo? *</label>'+
@@ -6177,7 +6224,9 @@ window.OT2C = (function(){
           _o2mFormatearRutSiValido:_o2mFormatearRutSiValido,
           buscarCli:buscarCli, filtrarTipo:filtrarTipo,
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
-          abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
+          abrirProductoCatalogo:abrirProductoCatalogo, abrirTareaManualModal:abrirTareaManualModal,
+          _o2mTMAgregarFila:_o2mTMAgregarFila, _o2mTMQuitarFila:_o2mTMQuitarFila,
+          _o2mTMSetCampo:_o2mTMSetCampo, _o2mTMGuardar:_o2mTMGuardar,
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
           setPlantillaTareaManual:setPlantillaTareaManual,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
