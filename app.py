@@ -76814,10 +76814,22 @@ def ot2_api_crear():
                 _tm_cant = 1
             if _tm_cant < 1:
                 _tm_cant = 1
+            # 🆕 2026-08-31 (Daniel, en vivo, Capacitación con NVI 631):
+            # "la columna que estaría faltando es la del checklist" -- cada
+            # producto/tarea manual puede llevar SU PROPIA plantilla, no
+            # solo la única plantilla global de la OT. Se valida contra
+            # mant_tarea_plantilla_items más abajo (si el id no existe o no
+            # tiene ítems, se ignora en vez de fallar la creación completa
+            # de la OT por un id suelto).
+            try:
+                _tm_plantilla_id = int(_tm.get("plantilla_id")) if _tm.get("plantilla_id") else None
+            except (TypeError, ValueError):
+                _tm_plantilla_id = None
             tareas_manuales.append({
                 "titulo": _tm_titulo,
                 "descripcion": (_tm.get("descripcion") or "").strip()[:2000] or None,
                 "cantidad": _tm_cant,
+                "plantilla_id": _tm_plantilla_id,
             })
 
     if not equipos and not plantilla_suelta and not tareas_manuales:
@@ -77223,6 +77235,36 @@ def ot2_api_crear():
                 (vid, orden, _tm["titulo"], _tm["descripcion"], tarea_tipo,
                  _tm["cantidad"], current_username()))
             n_tareas += 1
+            # 🆕 2026-08-31: si este producto/tarea trae su PROPIA plantilla
+            # (columna "Checklist" del Paso 5), se copian sus ítems tal cual
+            # -- mismo INSERT que ya usa `_destinos` arriba para equipos con
+            # ficha, con maquina_id=NULL (trabajo interno no tiene ficha).
+            # La tarea-título de arriba queda como encabezado/ancla legible
+            # ("SD45HEP — Selectorized..."), y estos ítems son el detalle.
+            if _tm.get("plantilla_id"):
+                cur.execute(
+                    "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
+                    "       requiere_foto, unidad, rango_min, rango_max, "
+                    "       opciones_lista_json, target_field "
+                    "  FROM mant_tarea_plantilla_items "
+                    " WHERE plantilla_id=%s ORDER BY orden, id", (_tm["plantilla_id"],))
+                for it in cur.fetchall():
+                    orden += 1
+                    cur.execute(
+                        "INSERT INTO mant_visita_tareas "
+                        "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
+                        "   maquina_id, tipo_respuesta, target_field, obligatoria, "
+                        "   requiere_foto, unidad, rango_min, rango_max, "
+                        "   opciones_lista_json, estado_trabajo, created_by) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,"
+                        "        'pendiente',%s)",
+                        (vid, _tm["plantilla_id"], orden, (it.get("titulo") or "")[:300],
+                         it.get("descripcion"), tarea_tipo,
+                         it.get("tipo_respuesta") or "check", it.get("target_field"),
+                         it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                         it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
+                         it.get("opciones_lista_json"), current_username()))
+                    n_tareas += 1
 
         # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
         # EXCEPCIÓN, el levantamiento por descubrimiento: ahí el trabajo no
@@ -81946,6 +81988,27 @@ def _plantilla_tarifa_sugerida(nombre, categoria_admin):
     except Exception as _e_tar:
         print(f"[_plantilla_tarifa_sugerida] '{nombre}'/{cat_admin}: {_e_tar}", flush=True)
     return {"de_clasificacion": True, "tarifa_sugerida_min": tarifa_min}
+
+
+@app.route("/mantenciones/api/tarifa-hora-tecnica", methods=["GET"])
+@_mant_required
+def mant_tarifa_hora_tecnica():
+    """Valor $ de la hora técnica BASE (tk_settings.cotiz_valor_hh, mismo
+    dato que ya usa el Cotizador de Tickets -- una sola fuente de verdad
+    para lo que cuesta una hora-técnico, ver _tk_cotiz_pricing_config).
+
+    2026-08-31 (Daniel, en vivo, Capacitación): "el costo estimado sería
+    la hora técnica... eso tiene que ser dinámico, y eso lo determina la
+    agenda". El wizard de OT 2.0 multiplica esto por las horas de Agenda
+    (hini/hfin) para sugerir el costo interno -- sigue siendo un campo
+    editable, nunca un monto forzado."""
+    row = mysql_fetchone(
+        "SELECT valor FROM tk_settings WHERE clave='cotiz_valor_hh'")
+    try:
+        valor_hh = float(row["valor"]) if row and row.get("valor") else 20000.0
+    except (TypeError, ValueError):
+        valor_hh = 20000.0
+    return jsonify({"ok": True, "valor_hh": valor_hh})
 
 
 @app.route("/mantenciones/api/plantillas/tarifa-sugerida", methods=["GET"])

@@ -3647,34 +3647,48 @@ window.OT2C = (function(){
       })
       .catch(function(){ _tiposInternoCargando = false; _tiposInternoCargados = true; });
   }
+  // 🆕 2026-08-31 (Daniel, en vivo, Capacitación con NVI 631: "quiero
+  // traer siempre el producto... que se vea el SKU, la descripción, la
+  // cantidad y que se vea la plantilla"): tabla real con columnas fijas
+  // (Código/Descripción/Cantidad/Checklist) en vez de un título de texto
+  // libre con todo mezclado -- mismo formato que pidió por imagen.
   function pintarTareasManuales(){
     var c = document.getElementById('o2mTareasList'); if(!c) return;
     if (!S.tareas_manuales.length){
       c.innerHTML = '<div class="p-3 text-muted small">Sin productos ni tareas agregadas todavía.</div>';
       return;
     }
-    c.innerHTML = S.tareas_manuales.map(function(tm,i){
-      // 30-08-2026 (Daniel, textual): "tiene que estar una tarea manual,
-      // pero con cantidad -- de momento solo cantidad, el costo estimado
-      // ya vemos cómo automatizarlo después". Input numérico EN LA MISMA
-      // fila (no un prompt aparte) -- font-size 16px anti-zoom iOS (REGLA
-      // #3), min 1 (nunca 0 ni negativo, ver setCantidadTareaManual).
-      var cant = parseInt(tm.cantidad, 10); if (!cant || cant < 1) cant = 1;
-      return '<div class="o2m-it"><i class="bi bi-check2-square text-muted"></i>'+
-        '<span style="flex:1" class="nm">'+esc(tm.titulo)+'</span>'+
-        '<input type="number" class="form-control form-control-sm" inputmode="numeric" '+
-        'style="width:76px;font-size:16px;min-height:40px" min="1" step="1" value="'+cant+'" '+
-        'title="Cantidad" aria-label="Cantidad" '+
-        'onchange="OT2C.setCantidadTareaManual('+i+',this.value)">'+
-        '<button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
-        'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></div>';
-    }).join('');
+    var opsPlantilla = '<option value="">— Sin checklist —</option>' +
+      (cachePlantInterno||[]).map(function(p){ return '<option value="'+p.id+'">'+esc(p.nombre)+'</option>'; }).join('');
+    c.innerHTML =
+      '<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.82rem">'+
+      '<thead><tr><th>Código</th><th>Descripción</th><th style="width:90px">Cant.</th>'+
+      '<th style="min-width:170px">Checklist</th><th style="width:36px"></th></tr></thead><tbody>' +
+      S.tareas_manuales.map(function(tm,i){
+        var cant = parseInt(tm.cantidad, 10); if (!cant || cant < 1) cant = 1;
+        return '<tr>'+
+          '<td class="text-monospace">'+esc(tm.sku || '—')+'</td>'+
+          '<td>'+esc(tm.titulo)+'</td>'+
+          '<td><input type="number" class="form-control form-control-sm" inputmode="numeric" '+
+          'style="width:70px;font-size:16px" min="1" step="1" value="'+cant+'" '+
+          'title="Cantidad" aria-label="Cantidad" onchange="OT2C.setCantidadTareaManual('+i+',this.value)"></td>'+
+          '<td><select class="form-select form-select-sm" style="font-size:16px" '+
+          'onchange="OT2C.setPlantillaTareaManual('+i+',this.value)">'+
+          opsPlantilla.replace('value="'+(tm.plantilla_id||'')+'"', 'value="'+(tm.plantilla_id||'')+'" selected')+
+          '</select></td>'+
+          '<td><button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
+          'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></td>'+
+        '</tr>';
+      }).join('') + '</tbody></table></div>';
   }
   function setCantidadTareaManual(i, v){
     var n = parseInt(v, 10);
     if (!n || n < 1) n = 1;
     if (S.tareas_manuales[i]) S.tareas_manuales[i].cantidad = n;
     pintarTareasManuales();
+  }
+  function setPlantillaTareaManual(i, v){
+    if (S.tareas_manuales[i]) S.tareas_manuales[i].plantilla_id = v ? parseInt(v, 10) : null;
   }
   function abrirProductoCatalogo(){
     if (typeof tkaOpen !== 'function'){
@@ -3689,15 +3703,33 @@ window.OT2C = (function(){
           if (!it || !it.sku) return;
           var _qty = parseInt(it.qty, 10); if (!_qty || _qty < 1) _qty = 1;
           S.tareas_manuales.push({
-            titulo: 'Producto: ' + it.sku + (it.nombre ? (' — ' + it.nombre) : '') + (it.qty ? (' × ' + it.qty) : ''),
-            descripcion: '',
-            cantidad: _qty
+            sku: it.sku, titulo: it.nombre || it.sku,
+            descripcion: '', cantidad: _qty, plantilla_id: null
           });
         });
         pintarTareasManuales();
         refrescarAnclas();
       }
     });
+  }
+  // 🆕 2026-08-31 (Daniel: "quisiera traer siempre el producto de la nota
+  // de venta interna... que se vea el SKU, la descripción, la cantidad"):
+  // al asociar el documento (NVI/BLV/FCV/etc.) sus líneas se agregan SOLAS
+  // a la tabla de productos -- antes había que buscarlas otra vez a mano
+  // en el catálogo aunque ya vinieran en el documento recién elegido.
+  function _o2mAgregarProductosDeDoc(items){
+    (items||[]).forEach(function(it){
+      if (!it || !it.sku) return;
+      var _qty = parseInt(it.qty, 10); if (!_qty || _qty < 1) _qty = 1;
+      var yaExiste = S.tareas_manuales.some(function(tm){ return tm.sku === it.sku; });
+      if (yaExiste) return;
+      S.tareas_manuales.push({
+        sku: it.sku, titulo: it.nombre || it.sku,
+        descripcion: '', cantidad: _qty, plantilla_id: null
+      });
+    });
+    pintarTareasManuales();
+    refrescarAnclas();
   }
   async function agregarTareaManual(){
     var texto = await ilusPrompt({
@@ -3707,7 +3739,7 @@ window.OT2C = (function(){
       required: true,
     });
     if (!texto) return;
-    S.tareas_manuales.push({titulo: texto.slice(0,300), descripcion:'', cantidad:1});
+    S.tareas_manuales.push({sku:'', titulo: texto.slice(0,300), descripcion:'', cantidad:1, plantilla_id:null});
     pintarTareasManuales();
     refrescarAnclas();
   }
@@ -5158,6 +5190,12 @@ window.OT2C = (function(){
         return;
       }
       S.doc_origen = {tido: header.tido, nudo: header.nudo};
+      // 🆕 2026-08-31 (Daniel: "quisiera traer siempre el producto de la
+      // nota de venta interna"): las líneas del documento ya vienen en
+      // `items` (mismo shape que usa abrirProductoCatalogo) -- se agregan
+      // solas a la tabla de productos en vez de obligar a buscarlas de
+      // nuevo en el catálogo aparte.
+      _o2mAgregarProductosDeDoc(items);
       repintarSeccion('equipos');
     }});
   }
@@ -5213,9 +5251,42 @@ window.OT2C = (function(){
     // fuera de vista, pareciendo que no pasó nada.
     _o2mDayAutoScroll();
     o2mChequearChoqueDebounced();
+    _o2mCostoInternoAutoCalc();
   }
   function setBodegaObs(v){ S.bodega_obs = v; }
-  function setCostoInterno(v){ S.costo_interno = v; }
+  function setCostoInterno(v){ S.costo_interno = v; S._costoInternoManual = true; }
+
+  // 🆕 2026-08-31 (Daniel, en vivo, Capacitación: "el costo estimado sería
+  // la hora técnica... desde las nueve de la mañana hasta las doce. Eso
+  // tiene que ser dinámico, y eso lo determina la agenda. Si la agenda
+  // tiene para tres horas, hay que multiplicar el costo por tres"): horas
+  // = hfin - hini (Agenda), tarifa = /mantenciones/api/tarifa-hora-tecnica
+  // (mismo $/hora que ya usa el Cotizador). Se cachea la tarifa una vez
+  // por apertura del wizard -- no cambia mientras el modal está abierto.
+  // Si el usuario YA escribió un monto a mano (setCostoInterno), no se le
+  // pisa: el cálculo automático solo llena el campo, no lo controla para
+  // siempre.
+  var _o2mTarifaHoraCache = null;
+  async function _o2mCostoInternoAutoCalc(){
+    if (!esInterno() || S._costoInternoManual) return;
+    if (!S.hini || !S.hfin) return;
+    var el = document.getElementById('o2mCostoInterno');
+    if (!el) return;   // paso todavía no está pintado
+    try {
+      if (_o2mTarifaHoraCache === null){
+        var r = await fetch('/mantenciones/api/tarifa-hora-tecnica');
+        var j = await r.json();
+        _o2mTarifaHoraCache = (j && j.valor_hh) || 20000;
+      }
+      var mIni = parseInt(S.hini.slice(0,2),10)*60 + parseInt(S.hini.slice(3,5),10);
+      var mFin = parseInt(S.hfin.slice(0,2),10)*60 + parseInt(S.hfin.slice(3,5),10);
+      var horas = (mFin - mIni) / 60;
+      if (!(horas > 0)) return;
+      var costo = Math.round(horas * _o2mTarifaHoraCache);
+      S.costo_interno = costo;
+      el.value = costo;
+    } catch(e){ /* best-effort -- el campo sigue editable a mano si esto falla */ }
+  }
 
   // Firma de qué pasos aplican ahora mismo -- si cambia, alguna sección
   // condicional (hoy solo "Anexo", ver pasos()) entró o salió del formulario.
@@ -5877,6 +5948,7 @@ window.OT2C = (function(){
           setCli:setCli, crearFicha:crearFicha, avisosAgenda:avisosAgenda, refrescarAnclas:refrescarAnclas,
           abrirProductoCatalogo:abrirProductoCatalogo, agregarTareaManual:agregarTareaManual,
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
+          setPlantillaTareaManual:setPlantillaTareaManual,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
           recargarPlantillasInterno:recargarPlantillasInterno,
