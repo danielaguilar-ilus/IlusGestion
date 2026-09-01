@@ -33771,6 +33771,525 @@ def tr_diag_fedex():
     return jsonify(out)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  LABORATORIO DE COTIZACIÓN FEDEX (diagnóstico, SOLO superadmin, SOLO lectura)
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-09-01 (caso FCV 11431 · Copiapó · 13 bultos · 1.127,451 kg):
+#   - la tabla interna "FedEx Directo" cotiza $448.621
+#   - FedEx cobró de verdad $736.020 con el servicio "FedEx Carga Prioritaria"
+#   - nuestra Rate API devuelve FEDEX_PRIORITY_EXPRESS (paquetería) a ~$6.650/kg
+#     y rechaza con HTTP 400 el bulto único de 1.127 kg.
+# No sabemos QUÉ combinación de request reproduce los $736.020: hay al menos
+# cuatro sospechosos independientes (serviceType de CARGA vs paquetería,
+# multibulto real vs bulto único, rateRequestType ACCOUNT vs LIST, y el código
+# postal real vs la aproximación por zona). Adivinar de a uno editando
+# _fedex_calc_rate y desplegando es carísimo en tiempo.
+#
+# Este endpoint permite mandar VARIANTES del request a la Rate API real desde
+# el navegador y ver la respuesta CRUDA completa (todos los rateReplyDetails,
+# todos los serviceType, todos los surCharges) para descubrir empíricamente la
+# combinación correcta ANTES de tocar el cotizador de producción.
+#
+# Garantías (no negociables):
+#   · SOLO superadmin.
+#   · SOLO cotiza (POST a /rate/v1/rates/quotes). NUNCA crea envíos, NUNCA
+#     pide etiquetas, NUNCA escribe en MySQL ni en el ERP (REGLA #4.1).
+#   · NUNCA expone credenciales: el número de cuenta viaja enmascarado y TODA
+#     la respuesta pasa por _fedex_sanitizar_log antes de salir (REGLA #4).
+#   · Reusa _fedex_get_token() — no duplica el OAuth.
+#   · No modifica ni reemplaza _fedex_calc_rate ni /api/asignar/tarifa-fedex:
+#     convive con ellos (REGLA #4.2).
+
+# Variantes precargadas, ordenadas por probabilidad de reproducir los $736.020.
+# Cada una cambia UNA cosa respecto de la anterior para poder atribuir la
+# diferencia de precio a una causa concreta.
+_FEDEX_LAB_VARIANTES = {
+    # A — la hipótesis principal: dejar que FedEx ofrezca TODOS sus servicios
+    # (sin serviceType ni carrierCodes), con los 13 bultos reales declarados,
+    # pidiendo tarifa de cuenta. Si "FedEx Carga Prioritaria" existe para el
+    # par Santiago→Copiapó, tiene que aparecer acá con su enum real.
+    "A": {
+        "descripcion": "Multibulto real + SIN serviceType + SIN carrierCodes + ACCOUNT/LIST",
+        "service_type": None, "carrier_codes": None,
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": True,
+    },
+    # B — igual que A pero fijando el enum que, por descripción, corresponde a
+    # "FedEx Carga Prioritario (D6)". Si A no lo lista, B dirá si es que el
+    # servicio no está habilitado o si es que FedEx no lo ofrece para ese lane.
+    "B": {
+        "descripcion": "Multibulto real + serviceType FEDEX_PRIORITY_FREIGHT (D6)",
+        "service_type": "FEDEX_PRIORITY_FREIGHT", "carrier_codes": None,
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": True,
+    },
+    # C — la variante express de carga, "FedEx Carga Prioritario Express (D5)".
+    "C": {
+        "descripcion": "Multibulto real + serviceType FEDEX_PRIORITY_EXPRESS_FREIGHT (D5)",
+        "service_type": "FEDEX_PRIORITY_EXPRESS_FREIGHT", "carrier_codes": None,
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": True,
+    },
+    # D — CONTROL del efecto ACCOUNT vs LIST: mismo request de A pero pidiendo
+    # solo tarifa pública. La diferencia contra A es, exactamente, lo que vale
+    # nuestra tarifa negociada. Si A y D dan lo MISMO, la cuenta no tiene
+    # tarifas negociadas expuestas por API y ese es un problema comercial, no
+    # de código.
+    "D": {
+        "descripcion": "CONTROL tarifa pública: multibulto real + solo LIST",
+        "service_type": None, "carrier_codes": None,
+        "rate_request_types": ["LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": True,
+    },
+    # E — CONTROL del efecto multibulto: reproduce el request de HOY
+    # (_fedex_calc_rate), un bulto único con el peso total. Sirve para capturar
+    # el mensaje de error EXACTO del 400 y confirmar que el límite de 68 kg por
+    # pieza es la causa.
+    "E": {
+        "descripcion": "CONTROL bulto único (lo que hace hoy _fedex_calc_rate)",
+        "service_type": None, "carrier_codes": ["FDXE"],
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "DROPOFF_AT_FEDEX_LOCATION",
+        "con_dimensiones": False, "forzar_bulto_unico": True,
+    },
+    # F — CONTROL del efecto de las dimensiones: mismos 13 bultos pero sin
+    # declarar medidas. Aísla cuánto del precio lo pone el peso dimensional
+    # (nuestro divisor interno es 4000; el de FedEx Express suele ser 5000).
+    "F": {
+        "descripcion": "CONTROL sin dimensiones: multibulto real, solo pesos",
+        "service_type": None, "carrier_codes": None,
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": False,
+    },
+    # G — CONTROL del reparto: 13 bultos IGUALES de peso_total/13 y cajas
+    # 40x40x40, que es lo que hoy arma _tr_item_para_ship para la Ship API.
+    # Comparado con A dice si vale la pena leer app_bultos para cotizar.
+    "G": {
+        "descripcion": "CONTROL reparto parejo (lo que hace hoy _tr_item_para_ship)",
+        "service_type": None, "carrier_codes": None,
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": True, "forzar_reparto_parejo": True,
+    },
+}
+
+
+def _fedex_lab_bultos_de_doc(tido, nudo):
+    """Devuelve los bultos FÍSICOS REALES de un documento del ERP.
+
+    Cruce local: líneas del documento (_cubicador_fetch, solo SELECT al ERP)
+    × filas de `app_bultos` (MySQL de ILUS). El ERP Random NUNCA tiene medidas
+    por bulto y NUNCA se escribe (REGLA #4.1).
+
+    OJO con la trampa conocida: peso_kg_u / peso_vol_u / vol_u de la línea son
+    AGREGADOS SUM de TODA la ficha, no medidas de un bulto. Acá NO se usan:
+    cada bulto sale de su propia fila de app_bultos.
+
+    Devuelve (bultos, avisos) donde bultos es
+    [{"sku", "peso", "largo", "ancho", "alto", "bulto_num"}].
+    """
+    avisos = []
+    try:
+        _hdr, lineas = _cubicador_fetch(tido, nudo, fast=True)
+    except Exception as e:
+        return [], [f"No se pudo leer {tido} {nudo} del ERP: {str(e)[:180]}"]
+
+    # Solo carga real: las líneas ZZ (flete/servicio) y los descuentos no viajan.
+    lineas_carga = [l for l in (lineas or [])
+                    if not l.get("es_zz") and not l.get("es_descuento")]
+
+    app_ids = sorted({l["app_id"] for l in lineas_carga
+                      if l.get("tiene_bultos") and l.get("app_id")})
+    if not app_ids:
+        return [], [f"{tido} {nudo}: ninguna línea tiene bultos cargados en la ficha."]
+
+    ph = ",".join(["%s"] * len(app_ids))
+    filas = mysql_fetchall(
+        f"SELECT product_id, bulto_num, largo, ancho, alto, peso "
+        f"FROM `{BULTOS_TABLE}` WHERE product_id IN ({ph}) "
+        f"ORDER BY product_id, bulto_num",
+        tuple(app_ids),
+    ) or []
+
+    por_pid = {}
+    for f in filas:
+        por_pid.setdefault(f["product_id"], []).append(f)
+
+    bultos = []
+    for l in lineas_carga:
+        pid = l.get("app_id")
+        if not l.get("tiene_bultos") or not pid:
+            avisos.append(f"SKU {l.get('sku')}: sin medidas en la ficha — NO entra al request.")
+            continue
+        filas_ficha = por_pid.get(pid) or []
+        if not filas_ficha:
+            avisos.append(f"SKU {l.get('sku')}: la línea dice tener bultos pero app_bultos no devolvió filas.")
+            continue
+        # Los bultos de app_bultos son los de UNA unidad de venta: se repiten
+        # tantas veces como unidades físicas lleve la línea. El multiplicador
+        # correcto es bultos_equivalentes, NUNCA cantidad (SKUs que se venden
+        # de a par duplicarían el peso — bug real FCV 11225).
+        veces_f = float(l.get("bultos_equivalentes") or 1) or 1.0
+        veces = max(int(round(veces_f)), 1)
+        if abs(veces_f - veces) > 0.01:
+            avisos.append(f"SKU {l.get('sku')}: bultos_equivalentes={veces_f} no es entero, se redondeó a {veces}.")
+        for _ in range(veces):
+            for fb in filas_ficha:
+                bultos.append({
+                    "sku":       l.get("sku"),
+                    "bulto_num": int(fb["bulto_num"]),
+                    "peso":      float(fb["peso"]  or 0),
+                    "largo":     float(fb["largo"] or 0),
+                    "ancho":     float(fb["ancho"] or 0),
+                    "alto":      float(fb["alto"]  or 0),
+                })
+    return bultos, avisos
+
+
+def _fedex_lab_normalizar_bultos(bultos, con_dimensiones=True):
+    """Convierte la lista interna de bultos a requestedPackageLineItems.
+
+    Un elemento por bulto (groupPackageCount=1 + sequenceNumber 1-based), que
+    es lo que FedEx exige para multibulto real — el mismo patrón que ya usa
+    _fedex_create_shipment para la Ship API.
+    """
+    items = []
+    for idx, b in enumerate(bultos, start=1):
+        peso = max(round(float(b.get("peso") or 0), 1), 0.5)
+        item = {
+            "sequenceNumber":    idx,
+            "groupPackageCount": 1,
+            "weight": {"units": "KG", "value": peso},
+        }
+        if con_dimensiones:
+            largo = max(int(round(float(b.get("largo") or 0))), 1)
+            ancho = max(int(round(float(b.get("ancho") or 0))), 1)
+            alto  = max(int(round(float(b.get("alto")  or 0))), 1)
+            item["dimensions"] = {"length": largo, "width": ancho,
+                                  "height": alto, "units": "CM"}
+        items.append(item)
+    return items
+
+
+def _fedex_lab_resumen(data):
+    """Resume la respuesta de FedEx: un renglón por servicio ofrecido, con su
+    precio, su rateType (ACCOUNT = negociada / LIST = pública) y sus recargos
+    desglosados. Es lo que hay que mirar para encontrar los $736.020.
+    """
+    out = []
+    for r in (data.get("output", {}).get("rateReplyDetails") or []):
+        for d in (r.get("ratedShipmentDetails") or []):
+            srd = d.get("shipmentRateDetail") or {}
+            out.append({
+                "servicio":         r.get("serviceType"),
+                "servicio_nombre":  r.get("serviceName"),
+                "rate_type":        d.get("rateType"),
+                "rated_type_usado": d.get("ratedWeightMethod"),
+                "moneda":           d.get("currency"),
+                "total_neto":       d.get("totalNetCharge"),
+                "total_base":       d.get("totalBaseCharge"),
+                "total_recargos":   d.get("totalSurcharges"),
+                "total_descuentos": d.get("totalDiscounts"),
+                "peso_facturado":   (srd.get("totalBillingWeight") or {}),
+                "dim_divisor":      srd.get("dimDivisor"),
+                "recargos": [
+                    {"tipo": s.get("type"), "desc": s.get("description"),
+                     "monto": s.get("amount")}
+                    for s in (srd.get("surCharges") or [])
+                ],
+                "transito": (r.get("operationalDetail") or {}).get("transitTime")
+                            or r.get("commit", {}).get("dateDetail", {}).get("dayFormat"),
+            })
+    out.sort(key=lambda x: (float(x.get("total_neto") or 0)))
+    return out
+
+
+@app.route("/transporte/api/diagnostico/fedex-rate-lab", methods=["GET", "POST"])
+@login_required
+def tr_diag_fedex_rate_lab():
+    """Laboratorio de cotización FedEx — SOLO superadmin, SOLO lectura.
+
+    Manda una variante del request a la Rate API REAL y devuelve la respuesta
+    CRUDA completa + un resumen legible por servicio. No crea envíos.
+
+    USO RÁPIDO DESDE EL NAVEGADOR (variantes precargadas):
+      /transporte/api/diagnostico/fedex-rate-lab?variante=A&tido=FCV&nudo=11431&comuna=COPIAPO
+      ...&variante=todas   → corre A..G una tras otra y devuelve el comparativo
+      ...&variante=A&postal=1530000   → fuerza un código postal específico
+
+    USO AVANZADO (POST JSON, para armar un request a mano):
+      {
+        "tido": "FCV", "nudo": "11431",        # opcional: saca los bultos reales
+        "comuna": "COPIAPO",                    # o "postal_destino": "1530000"
+        "calle_destino": "Los Carrera 1234",
+        "ciudad_destino": "Copiapo",
+        "residencial": false,
+        "valor_declarado": 12345678, "moneda_declarada": "CLP",
+        "service_type": "FEDEX_PRIORITY_FREIGHT",   # o null = que FedEx ofrezca todo
+        "carrier_codes": null,                      # o ["FDXE"]
+        "rate_request_types": ["ACCOUNT", "LIST"],
+        "pickup_type": "USE_SCHEDULED_PICKUP",
+        "con_dimensiones": true,
+        "bultos": [{"peso": 390, "largo": 120, "ancho": 80, "alto": 60}, ...],
+        "peso_total": 1127.451, "n_bultos": 13      # fallback si no hay bultos
+      }
+    """
+    import json as _json
+    import requests as _req
+
+    # ── Gate: SOLO superadmin ────────────────────────────────────────────
+    if not g.permissions.get("superadmin"):
+        return jsonify({"ok": False, "error": "Solo superadmin"}), 403
+
+    if not (FEDEX_RATE_CLIENT_ID and FEDEX_RATE_CLIENT_SECRET and FEDEX_ACCOUNT):
+        return jsonify({"ok": False,
+                        "error": "La cotización con FedEx no está configurada. "
+                                 "Revisa /transporte/api/diagnostico/fedex."}), 503
+
+    body_in = request.get_json(silent=True, force=True) or {}
+    args    = request.args
+
+    def _p(clave, default=None):
+        """Parámetro: primero el JSON del POST, después el query string."""
+        if clave in body_in:
+            return body_in.get(clave)
+        return args.get(clave, default)
+
+    # ── Destino ──────────────────────────────────────────────────────────
+    comuna  = (_p("comuna") or "").strip()
+    postal  = _fedex_postal_cl(_p("postal_destino") or _p("postal") or "")
+    avisos  = []
+    if not postal and comuna:
+        postal = _fedex_postal_cl(_codigo_postal_chile(comuna))
+        if postal:
+            avisos.append(f"Código postal {postal} resuelto desde la comuna '{comuna}' "
+                          f"(tabla oficial FedEx cl_codigos_postales).")
+    if not postal:
+        return jsonify({"ok": False,
+                        "error": "Falta el destino: manda 'postal_destino' o 'comuna'."}), 400
+
+    ciudad_dest = _fedex_clean_str(_p("ciudad_destino") or comuna, 35)
+    calle_dest  = _fedex_split_address(_p("calle_destino") or "")
+    residencial = str(_p("residencial", "false")).strip().lower() in ("1", "true", "si", "sí")
+
+    # ── Origen (por defecto la bodega real de ILUS Fitness) ──────────────
+    postal_org = _fedex_postal_cl(_p("postal_origen") or FEDEX_ORIGIN_POSTAL)
+    ciudad_org = _fedex_clean_str(_p("ciudad_origen") or FEDEX_ORIGIN_CITY, 35)
+    calle_org  = _fedex_split_address(_p("calle_origen")
+                                      or ILUS_REMITENTE.get("bodega") or "")
+
+    # ── Bultos ───────────────────────────────────────────────────────────
+    bultos = _p("bultos") or []
+    tido   = (_p("tido") or "").strip().upper()
+    nudo   = (_p("nudo") or "").strip()
+    if not bultos and tido and nudo:
+        bultos, avisos_doc = _fedex_lab_bultos_de_doc(tido, nudo)
+        avisos.extend(avisos_doc)
+    if not bultos:
+        # Último recurso: reparto parejo con lo que el operador declare.
+        peso_total = float(_p("peso_total", 0) or 0)
+        n_bultos   = max(int(float(_p("n_bultos", 1) or 1)), 1)
+        if peso_total <= 0:
+            return jsonify({"ok": False,
+                            "error": "Sin bultos: manda 'bultos', o 'tido'+'nudo', "
+                                     "o 'peso_total'+'n_bultos'."}), 400
+        bultos = [{"sku": "(reparto parejo)", "bulto_num": i + 1,
+                   "peso": round(peso_total / n_bultos, 2),
+                   "largo": 40, "ancho": 40, "alto": 40} for i in range(n_bultos)]
+        avisos.append(f"Sin desglose real: {n_bultos} bultos parejos de "
+                      f"{round(peso_total / n_bultos, 2)} kg y cajas 40×40×40 cm.")
+    if len(bultos) > 100:
+        return jsonify({"ok": False, "error": "Máximo 100 bultos por consulta."}), 400
+
+    peso_total_real = round(sum(float(b.get("peso") or 0) for b in bultos), 3)
+    valor_declarado = float(_p("valor_declarado", 0) or 0)
+    moneda_decl     = (_p("moneda_declarada") or "CLP").strip().upper()
+
+    # ── Qué variantes correr ─────────────────────────────────────────────
+    var_pedida = (str(_p("variante") or "").strip().upper())
+    if var_pedida in ("TODAS", "ALL", "*"):
+        claves = list(_FEDEX_LAB_VARIANTES.keys())
+    elif var_pedida in _FEDEX_LAB_VARIANTES:
+        claves = [var_pedida]
+    elif var_pedida:
+        return jsonify({"ok": False,
+                        "error": f"Variante '{var_pedida}' no existe. "
+                                 f"Opciones: {', '.join(_FEDEX_LAB_VARIANTES)} o 'todas'."}), 400
+    else:
+        claves = [None]   # variante libre: se arma con lo que vino en el body
+
+    try:
+        token = _fedex_get_token()
+    except Exception as e:
+        print(f"[FEDEX][LAB] token: {_fedex_sanitizar_log(e)}", flush=True)
+        return jsonify({"ok": False,
+                        "error": "FedEx no aceptó las credenciales. "
+                                 "Revisa /transporte/api/diagnostico/fedex?token=1"}), 502
+
+    def _sanear(obj):
+        """Sanitiza credenciales de cualquier estructura antes de devolverla
+        al navegador (REGLA #4): serializa, tapa secretos, vuelve a parsear.
+        """
+        try:
+            return _json.loads(_fedex_sanitizar_log(_json.dumps(obj, ensure_ascii=False)))
+        except Exception:
+            return {"_no_serializable": _fedex_sanitizar_log(str(obj))[:4000]}
+
+    resultados = []
+    for clave in claves:
+        cfg = dict(_FEDEX_LAB_VARIANTES.get(clave) or {})
+        # Cualquier clave presente en el JSON del POST pisa a la variante
+        # precargada (así se puede correr "A pero con otro pickupType").
+        # Solo desde el body: por query string estos campos serían strings y
+        # carrier_codes/rate_request_types tienen que viajar como listas.
+        for k in ("service_type", "carrier_codes", "rate_request_types",
+                  "pickup_type", "con_dimensiones"):
+            if k in body_in:
+                cfg[k] = body_in.get(k)
+        service_type = cfg.get("service_type")
+        carrier_codes = cfg.get("carrier_codes")
+        rrt = cfg.get("rate_request_types") or ["ACCOUNT", "LIST"]
+        pickup = cfg.get("pickup_type") or "USE_SCHEDULED_PICKUP"
+        con_dims = bool(cfg.get("con_dimensiones", True))
+
+        bultos_var = bultos
+        if cfg.get("forzar_bulto_unico"):
+            bultos_var = [{"sku": "(bulto único)", "bulto_num": 1,
+                           "peso": peso_total_real, "largo": 40, "ancho": 40, "alto": 40}]
+        elif cfg.get("forzar_reparto_parejo"):
+            n = len(bultos)
+            bultos_var = [{"sku": "(parejo)", "bulto_num": i + 1,
+                           "peso": round(peso_total_real / n, 2),
+                           "largo": 40, "ancho": 40, "alto": 40} for i in range(n)]
+
+        rpl = _fedex_lab_normalizar_bultos(bultos_var, con_dimensiones=con_dims)
+        if valor_declarado > 0:
+            reparto = round(valor_declarado / len(rpl), 2)
+            for it in rpl:
+                it["declaredValue"] = {"amount": reparto, "currency": moneda_decl}
+
+        shipment = {
+            "shipper": {"address": {
+                "city":        ciudad_org,
+                "postalCode":  postal_org,
+                "countryCode": "CL",
+                "streetLines": calle_org,     # nunca [""] — FedEx lo rechaza
+                "residential": False,
+            }},
+            "recipient": {"address": {
+                "city":        ciudad_dest or "Santiago",
+                "postalCode":  postal,
+                "countryCode": "CL",
+                "streetLines": calle_dest,    # placeholder "Sin direccion" si no hay
+                "residential": residencial,
+            }},
+            "pickupType":                pickup,
+            "packagingType":             "YOUR_PACKAGING",
+            "rateRequestType":           rrt,
+            "totalPackageCount":         len(rpl),   # obligatorio en multibulto
+            "requestedPackageLineItems": rpl,
+        }
+        if service_type:
+            shipment["serviceType"] = service_type
+
+        body = {
+            "accountNumber":            {"value": FEDEX_ACCOUNT},
+            "requestedShipment":        shipment,
+            "returnLocalizedDateTime":  True,
+            "webSiteCountryCode":       "CL",
+        }
+        if carrier_codes:
+            body["carrierCodes"] = carrier_codes
+
+        item = {
+            "variante":      clave or "(libre)",
+            "descripcion":   cfg.get("descripcion", "Variante armada a mano desde el body"),
+            "service_type":  service_type,
+            "carrier_codes": carrier_codes,
+            "rate_request_types": rrt,
+            "pickup_type":   pickup,
+            "con_dimensiones": con_dims,
+            "n_bultos":      len(rpl),
+            "peso_total_kg": round(sum(i["weight"]["value"] for i in rpl), 2),
+        }
+
+        try:
+            resp = _req.post(
+                FEDEX_RATE_URL,
+                json=body,
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type":  "application/json",
+                         "X-locale":      "es_CL"},
+                timeout=30,
+            )
+        except Exception as e:
+            print(f"[FEDEX][LAB] variante={clave} red: {_fedex_sanitizar_log(e)}", flush=True)
+            item.update({"ok": False, "http": None,
+                         "error": "No hubo respuesta de FedEx (timeout o red)."})
+            resultados.append(item)
+            continue
+
+        item["http"] = resp.status_code
+        if resp.status_code >= 400:
+            errores, crudo = _fedex_errores_de_respuesta(resp)
+            detalle = "; ".join(f"{e['code']}: {e['message']}".strip(": ")
+                                for e in errores if (e["code"] or e["message"]))
+            print(f"[FEDEX][LAB] variante={clave} HTTP {resp.status_code} · "
+                  f"postal={postal} bultos={len(rpl)} peso={item['peso_total_kg']}kg · "
+                  f"errores=[{_fedex_sanitizar_log(detalle) or 'sin detalle'}]", flush=True)
+            item.update({
+                "ok": False,
+                # Diagnóstico superadmin: acá SÍ interesa el detalle exacto de
+                # FedEx (es la única pista del 400), ya sanitizado de secretos.
+                "errores_fedex": _sanear(errores),
+                "cuerpo_crudo":  crudo,
+                "mensaje_operador": _fedex_mensaje_usuario(errores),
+            })
+            resultados.append(item)
+            continue
+
+        try:
+            data = resp.json()
+        except Exception:
+            item.update({"ok": False, "error": "FedEx respondió 200 con un cuerpo no-JSON.",
+                         "cuerpo_crudo": _fedex_sanitizar_log((resp.text or "")[:2000])})
+            resultados.append(item)
+            continue
+
+        resumen = _fedex_lab_resumen(data)
+        item.update({
+            "ok": True,
+            "servicios_ofrecidos": sorted({(r.get("servicio") or "?") for r in resumen}),
+            "resumen": resumen,
+            "mas_barato": resumen[0] if resumen else None,
+            "respuesta_cruda": _sanear(data),
+        })
+        if not resumen:
+            item["ok"] = False
+            item["error"] = "FedEx respondió 200 pero sin ninguna tarifa para este envío."
+        resultados.append(item)
+
+    return jsonify({
+        "ok": True,
+        "solo_lectura": "Este endpoint solo cotiza. No crea envíos ni escribe nada.",
+        "destino":  {"comuna": comuna, "postal": postal, "ciudad": ciudad_dest,
+                     "residencial": residencial},
+        "origen":   {"ciudad": ciudad_org, "postal": postal_org, "calle": calle_org},
+        "carga":    {"n_bultos": len(bultos), "peso_total_kg": peso_total_real,
+                     "valor_declarado": valor_declarado,
+                     "bultos": bultos[:100]},
+        "avisos":   avisos,
+        "variantes_disponibles": {k: v["descripcion"] for k, v in _FEDEX_LAB_VARIANTES.items()},
+        "resultados": resultados,
+        "cuenta_fedex_usada": (FEDEX_ACCOUNT[:2] + "…" + FEDEX_ACCOUNT[-2:]) if len(FEDEX_ACCOUNT) >= 6 else "•••",
+    })
+
+
 @app.route("/transporte/api/items/<int:item_id>/crear-ot-fedex", methods=["POST"])
 @_tr_required
 def tr_crear_ot_fedex(item_id):

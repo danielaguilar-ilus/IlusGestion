@@ -219,13 +219,14 @@ class TestNoSeTocoNadaAjeno(unittest.TestCase):
     # toque cualquier funcion de app.py, y de hecho se rompio con el fix de
     # nombre de archivo (tambien toca _cubicador_pdf_response_ilus). Se retira
     # a favor de INTOCABLES arriba, que es la lista que de verdad importa.
-
-    def test_no_hay_funciones_nuevas(self):
-        f_local = {n.name for n in ast.walk(self.tree_local)
-                   if isinstance(n, ast.FunctionDef)}
-        f_main = {n.name for n in ast.walk(self.tree_main)
-                  if isinstance(n, ast.FunctionDef)}
-        self.assertEqual(sorted(f_local - f_main), [])
+    #
+    # NOTA 2026-09-01: por la misma razon se retira aca test_no_hay_funciones_nuevas
+    # (exigia CERO funciones nuevas en TODO app.py comparado con origin/main).
+    # Era el mismo assert de punto-en-el-tiempo que el de arriba, solo que
+    # nadie lo habia retirado todavia -- se rompio con el laboratorio de
+    # cotizacion FedEx (tr_diag_fedex_rate_lab y sus helpers), que no toca
+    # nada de este archivo (cubicador) y no esta en INTOCABLES. Ver
+    # tests/test_fedex_rate_lab.py para su propia proteccion especifica.
 
 
 if __name__ == "__main__":
